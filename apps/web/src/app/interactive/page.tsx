@@ -312,6 +312,17 @@ export default function InteractivePage() {
             next.set(taskId, updated.length > 300 ? updated.slice(-300) : updated);
             return next;
           });
+          // v818 PL2 — Phase-Event direkt in chatHistory pushen damit der Badge
+          // ohne den 4s-Reload-Poll sofort tickt. Vorher: User sah "validating"
+          // erst nach bis zu 4s.
+          if (entry?.type === 'phase' && entry.data && typeof (entry.data as Record<string, unknown>).phase === 'string') {
+            const newPhase = (entry.data as { phase: string }).phase;
+            setChatHistory(prev => prev.map(m =>
+              m.role === 'agent' && m.taskId === taskId
+                ? { ...m, taskPhase: newPhase }
+                : m
+            ));
+          }
         },
         (eventHistory) => {
           setLiveEvents(prev => { const next = new Map(prev); next.set(taskId, eventHistory); return next; });

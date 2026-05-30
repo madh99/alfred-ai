@@ -5,6 +5,43 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.818] - 2026-05-30
+
+### Audit-Follow-ups — Projects/Project-Agent/Sandbox-Chat (v818, 7 Themen)
+
+**Q1 — Legacy cAgent.execute Pfad-Audit**
+- Kommentar präzisiert: Der direkte `cAgent.execute()`-Pfad in `alfred.ts` ist kein Toter Code, sondern der Mode-Switch-Fallback wenn `mode='quick'` nicht via Skill-Routing kommt sondern aus dem alten Reasoning-Loop.
+- Keine Code-Änderung — nur dokumentiert um Verwirrung bei zukünftigem Refactoring zu vermeiden.
+
+**D1 — readOnly-Cap am Adapter-Boundary für Discuss**
+- `claude-code-adapter.ts`: Bei `opts.readOnly=true` wird `--disallowedTools Edit,Write,MultiEdit,NotebookEdit,Bash` an die CLI gehängt.
+- Vorher: Discuss-Mode war nur per System-Prompt eingeschränkt — Adapter-Boundary ist jetzt hart geschützt, selbst bei Prompt-Bypass.
+
+**P1f — Frontend-Add-Button für Project-Decisions**
+- `ProjectsPage.tsx`: Decisions-Sektion immer sichtbar (vorher nur bei existierenden Entscheidungen).
+- Inline-Form mit Choice + Rationale + Add-Button → POST an `/api/projects/:id/decisions` (Endpoint kam mit v815-P1).
+- Schließt die UI-Lücke: User können Entscheidungen ohne Chat-Skill-Aufruf hinzufügen.
+
+**P2 — Running-Indikator im collapsed Project-Chat**
+- `ProjectChat.tsx`: Session-Polling läuft auch im eingeklappten Modus (15s statt 5s).
+- Im Collapsed-Header erscheint ein 🤖 N laufend Badge mit grünem Pulse wenn aktive Agent-Sessions existieren.
+- Vorher: User wusste nicht ohne aufzuklappen ob noch Arbeit lief.
+
+**P3 — OpenItemMatcher UI-Feedback bei Auto-Resolve**
+- `alfred.ts` (classical-run + onMergeApplied): Wenn `OpenItemMatcher.matchAfterSession` Items resolved, wird eine 🤖 OpenItemMatcher Chat-Nachricht in den Projekt-Chat geschrieben.
+- `ProjectsPage.tsx`: `alert()` durch Inline-Notice ersetzt (8s Auto-Hide), zeigt resolved/matched Counts.
+- Vorher: Auto-Resolve geschah unsichtbar im Hintergrund.
+
+**PL2 — Phase-Badge via SSE-Push statt 4s-Poll**
+- `project-agent-runner.ts`: `lastEmittedPhase`-Cache + `appendOutputEvent(sessionId, 'phase', {...})` bei jedem echten Phase-Wechsel.
+- `interactive/page.tsx`: SSE-Stream-Handler erkennt `entry.type === 'phase'` und aktualisiert `taskPhase` der relevanten Chat-Nachricht optimistisch.
+- Vorher: Phase-Badge tickte erst nach 4s-Reload-Poll — jetzt sofort beim Wechsel.
+
+**CM2 — Persistenz-Asymmetrie Plan vs Quick**
+- `alfred.ts` (`onSandboxDiscarded`): Wenn eine Sandbox verworfen wird, werden zusätzlich zu den `project_sessions` (v812) auch die `project_agent_sessions` für diese Sandbox markiert — `failure_insight = 'Sandbox discarded — code not merged'`.
+- `current_phase` bleibt für byAgent-Analytik intakt.
+- Vorher: Project-Agents-Page zeigte Plan-Runs als 'done' obwohl ihr Code verworfen wurde.
+
 ## [0.19.0-multi-ha.817] - 2026-05-30
 
 ### Added — Sandbox-Lifecycle-Anzeige im Interactive-Header (v817)

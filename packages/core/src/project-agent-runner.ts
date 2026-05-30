@@ -12,7 +12,7 @@ import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig
 import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
-import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, markOutputEnded } from '@alfred/skills';
+import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded } from '@alfred/skills';
 import type { FileStore } from '@alfred/storage';
 
 const execFileAsync = promisify(execFile);
@@ -1016,6 +1016,7 @@ export class ProjectAgentRunner {
         this.logger.warn({ err, sessionId }, 'v810 lifecycle-guard failed');
       }
       removeAbortController(sessionId);
+      this.lastEmittedPhase.delete(sessionId); // v818 PL2 — Phase-Cache aufräumen
       try { markOutputEnded(sessionId); } catch { /* best-effort */ }
       // v665a — Projekt-Lock freigeben
       if (this.projectLockRelease) {
@@ -1368,6 +1369,10 @@ export class ProjectAgentRunner {
     }
   }
 
+  // v818 PL2 — Cache der zuletzt emittierten Phase pro Session damit wir nur
+  // bei tatsächlichem Wechsel ein Event pushen (statt bei jedem updateSession).
+  private lastEmittedPhase = new Map<string, string>();
+
   private async updateSession(sessionId: string, state: ProjectAgentMeta, buildPassed: boolean): Promise<void> {
     try {
       await this.sessionRepo.updateProgress(sessionId, {
@@ -1377,6 +1382,20 @@ export class ProjectAgentRunner {
         lastBuildPassed: buildPassed,
         lastCommitSha: state.lastCommitSha,
       });
+      // v818 PL2 — Phase-Event in den SSE-Stream pushen damit das Sandbox-Chat-UI
+      // den Phase-Badge ohne 4s-Polling sofort sieht. Nur bei Phase-Wechsel emittieren
+      // — sonst flutet jeder updateSession-Call (mehrfach pro Phase) den Stream.
+      const last = this.lastEmittedPhase.get(sessionId);
+      if (last !== state.projectPhase) {
+        this.lastEmittedPhase.set(sessionId, state.projectPhase);
+        try {
+          appendOutputEvent(sessionId, 'phase', {
+            phase: state.projectPhase,
+            iteration: state.projectIteration,
+            buildPassed,
+          });
+        } catch { /* buffer best-effort */ }
+      }
     } catch (err) {
       this.logger.warn({ err, sessionId }, 'Project agent: session update failed');
     }

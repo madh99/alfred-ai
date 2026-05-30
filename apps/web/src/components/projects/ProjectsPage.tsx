@@ -97,8 +97,14 @@ export function ProjectsPage() {
   const [nameInput, setNameInput] = useState('');
   const [newItemTitle, setNewItemTitle] = useState('');
   const [newItemPriority, setNewItemPriority] = useState<'low' | 'normal' | 'high'>('normal');
+  // v818 P1f — manuelle Decision-Erstellung (Backend in v815, hier das UI)
+  const [newDecisionChoice, setNewDecisionChoice] = useState('');
+  const [newDecisionRationale, setNewDecisionRationale] = useState('');
+  const [decisionFormOpen, setDecisionFormOpen] = useState(false);
   // v742 — Re-Match Open-Items mit OpenItemMatcher
   const [reMatching, setReMatching] = useState(false);
+  // v818 P3 — Inline-Notice statt alert() für Re-Match-Resultate
+  const [matcherNotice, setMatcherNotice] = useState<{ matched: number; resolved: number; ok: boolean; reason?: string } | null>(null);
   // v797 — Manueller Health-Check-Trigger
   const [healthChecking, setHealthChecking] = useState(false);
   // v641 — Multi-Select + Bulk-Work + Audit
@@ -293,6 +299,23 @@ export function ProjectsPage() {
     }
   }
 
+  // v818 P1f — manuelle Decision-Erstellung. choice ist Pflicht, rationale optional.
+  // Backend (v815): POST /api/projects/:id/decisions liefert das neue Decision-Objekt.
+  async function addDecision() {
+    if (!client || !detail || !newDecisionChoice.trim()) return;
+    const decision = await client.addProjectDecision(detail.project.id, {
+      title: newDecisionChoice.trim().slice(0, 100),
+      choice: newDecisionChoice.trim(),
+      rationale: newDecisionRationale.trim() || undefined,
+    });
+    if (decision) {
+      setDetail({ ...detail, decisions: [decision as any, ...detail.decisions] });
+      setNewDecisionChoice('');
+      setNewDecisionRationale('');
+      setDecisionFormOpen(false);
+    }
+  }
+
   async function resolveOpenItem(item: ProjectOpenItem) {
     if (!client) return;
     const ok = await client.updateProjectOpenItem(item.id, 'done');
@@ -362,18 +385,21 @@ export function ProjectsPage() {
     } finally { setWorkingOnItems(false); }
   }
 
-  // v742 — Re-Match Open-Items
+  // v742/v818 P3 — Re-Match Open-Items mit Inline-Notice (kein alert())
   async function runReMatch() {
     if (!client || !detail) return;
     setReMatching(true);
+    setMatcherNotice(null);
     try {
       const r = await client.reMatchProjectOpenItems(detail.project.id);
       if (r.ok) {
-        alert(`✓ Re-Match: ${r.matched ?? 0} Items analysiert, ${r.resolved ?? 0} als erledigt markiert.\n\nLade die Seite neu um die Confidence-Werte zu sehen.`);
+        setMatcherNotice({ matched: r.matched ?? 0, resolved: r.resolved ?? 0, ok: true });
         await loadDetail(detail.project.id);
       } else {
-        alert(`✗ Re-Match fehlgeschlagen: ${r.reason ?? 'unknown'}`);
+        setMatcherNotice({ matched: 0, resolved: 0, ok: false, reason: r.reason ?? 'unknown' });
       }
+      // Notice nach 8s automatisch ausblenden
+      setTimeout(() => setMatcherNotice(null), 8000);
     } finally { setReMatching(false); }
   }
 
@@ -687,13 +713,28 @@ export function ProjectsPage() {
                     <span>Offene Punkte ({activeItems.length})</span>
                   </button>
                   <div className="flex items-center gap-1">
-                    {/* v742 — Re-Match OpenItemMatcher gegen letzten Session-Lauf */}
+                    {/* v742/v818 P3 — Re-Match-Button + Inline-Notice mit Result */}
                     <button
                       onClick={runReMatch}
                       disabled={reMatching || auditing}
                       className="px-2 py-0.5 text-[10px] text-amber-400 hover:bg-amber-500/10 border border-amber-500/30 rounded disabled:opacity-60 disabled:cursor-wait"
                       title="LLM-Matcher gegen letzten erfolgreichen Project-Agent-Lauf manuell triggern — analysiert welche Items durch den letzten Code-Change implizit erledigt wurden"
                     >{reMatching ? '⏳ Re-Matche…' : '🤖 Re-Match'}</button>
+                    {matcherNotice && (
+                      <span className={`px-2 py-0.5 text-[10px] rounded border ${
+                        matcherNotice.ok
+                          ? matcherNotice.resolved > 0
+                            ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                            : 'bg-gray-500/10 text-gray-400 border-gray-500/30'
+                          : 'bg-red-500/10 text-red-300 border-red-500/30'
+                      }`}>
+                        {matcherNotice.ok
+                          ? matcherNotice.resolved > 0
+                            ? `✓ ${matcherNotice.resolved} auto-resolved (${matcherNotice.matched} analysiert)`
+                            : `${matcherNotice.matched} analysiert, 0 gematcht`
+                          : `✗ ${matcherNotice.reason}`}
+                      </span>
+                    )}
                     <button
                       onClick={runAudit}
                       disabled={auditing}
@@ -1036,27 +1077,57 @@ export function ProjectsPage() {
               )}
 
               {/* Decisions — v759: einklappbar */}
-              {detail.decisions.length > 0 && (
-                <div className="pt-2 border-t border-[#222]">
+              {/* v818 P1f — Decisions-Section: immer sichtbar (auch wenn 0), mit Add-Button + Inline-Form */}
+              <div className="pt-2 border-t border-[#222]">
+                <div className="flex items-center justify-between mb-2">
                   <button
                     onClick={() => setDecisionsExpanded(e => !e)}
-                    className="w-full flex items-center justify-between text-sm font-semibold text-gray-400 hover:text-gray-200 mb-2"
+                    className="flex items-center gap-2 text-sm font-semibold text-gray-400 hover:text-gray-200"
                   >
                     <span>⚖️ Entscheidungen ({detail.decisions.length})</span>
                     <span className="text-xs">{decisionsExpanded ? '▼' : '▶'}</span>
                   </button>
-                  {decisionsExpanded && (
-                    <div className="space-y-1.5">
-                      {detail.decisions.slice(0, 10).map(d => (
-                        <div key={d.id} className="text-xs">
-                          <div className="text-gray-300 font-medium">{d.choice}</div>
-                          {d.rationale && <div className="text-gray-500 mt-0.5 ml-2 italic">{d.rationale}</div>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <button
+                    onClick={() => setDecisionFormOpen(o => !o)}
+                    title="Entscheidung manuell hinzufügen"
+                    className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded border border-emerald-500/30 text-xs"
+                  >{decisionFormOpen ? '×' : '+ neu'}</button>
                 </div>
-              )}
+                {decisionFormOpen && (
+                  <div className="mb-2 p-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded space-y-1.5">
+                    <input
+                      value={newDecisionChoice}
+                      onChange={e => setNewDecisionChoice(e.target.value)}
+                      placeholder="Entscheidung (z.B. 'Postgres statt SQLite gewählt')"
+                      className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs text-gray-200"
+                    />
+                    <textarea
+                      value={newDecisionRationale}
+                      onChange={e => setNewDecisionRationale(e.target.value)}
+                      placeholder="Begründung (optional)"
+                      rows={2}
+                      className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs text-gray-200 resize-y"
+                    />
+                    <div className="flex justify-end gap-1.5">
+                      <button onClick={() => { setDecisionFormOpen(false); setNewDecisionChoice(''); setNewDecisionRationale(''); }} className="px-2 py-1 text-gray-500 text-xs hover:text-gray-300">Abbrechen</button>
+                      <button onClick={addDecision} disabled={!newDecisionChoice.trim()} className="px-3 py-1 bg-emerald-500/10 text-emerald-400 rounded border border-emerald-500/30 text-xs disabled:opacity-40">Speichern</button>
+                    </div>
+                  </div>
+                )}
+                {decisionsExpanded && detail.decisions.length > 0 && (
+                  <div className="space-y-1.5">
+                    {detail.decisions.slice(0, 10).map(d => (
+                      <div key={d.id} className="text-xs">
+                        <div className="text-gray-300 font-medium">{d.choice}</div>
+                        {d.rationale && <div className="text-gray-500 mt-0.5 ml-2 italic">{d.rationale}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {decisionsExpanded && detail.decisions.length === 0 && (
+                  <div className="text-xs text-gray-600 italic">Noch keine Entscheidungen. Per „+ neu" hinzufügen oder vom Project-Agent automatisch extrahieren lassen.</div>
+                )}
+              </div>
 
               {/* v665b — Storage-View (collapsible) */}
               <ProjectStorageView project={detail.project} onMoved={() => loadDetail(detail.project.id)} />

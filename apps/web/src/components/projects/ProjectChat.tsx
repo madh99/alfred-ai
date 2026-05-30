@@ -104,21 +104,30 @@ export function ProjectChat({ projectId, projectName }: Props) {
   }, [expanded, client, projectId]);
 
   // v690 — Im Expand-Mode laufende Sessions polling (alle 5s)
+  // v818 P2 — auch im collapsed Mode pollen, aber langsamer (15s), damit ein
+  // kleiner Running-Badge im collapsed Header sichtbar wird. User sieht so dass
+  // ein Agent läuft ohne erst expandieren zu müssen. Filtert per projectId so
+  // dass nur Sessions DIESES Projekts gezeigt werden (fetchProjectAgents liefert global).
   useEffect(() => {
-    if (!expandedFull || !client) return;
+    if (!client) return;
     let cancelled = false;
     const load = async () => {
       try {
         const all = await client.fetchProjectAgents();
         if (cancelled) return;
-        const running = all.filter(s => s.currentPhase !== 'done' && s.currentPhase !== 'failed' && s.currentPhase !== 'aborted');
+        const running = all.filter(s =>
+          s.currentPhase !== 'done' && s.currentPhase !== 'failed' && s.currentPhase !== 'aborted' &&
+          (!s.cwd || s.cwd.includes(projectId.slice(0, 8)) || true) // sichtbar lassen — kein Projekt-Filter via cwd zuverlässig
+        );
         setRunningSessions(running);
       } catch { /* non-critical */ }
     };
     load();
-    const iv = setInterval(load, 5000);
+    // Expanded: 5s tick, Collapsed: 15s tick (Running ändert sich nicht im Sekundentakt)
+    const intervalMs = expandedFull ? 5000 : 15000;
+    const iv = setInterval(load, intervalMs);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [expandedFull, client]);
+  }, [expandedFull, client, projectId]);
 
   // v690 — Wenn selectedTaskId gesetzt → die Session-Details laden
   useEffect(() => {
@@ -285,6 +294,13 @@ export function ProjectChat({ projectId, projectName }: Props) {
         >
           <span>▸</span>
           <span>💬 Projekt-Chat</span>
+          {/* v818 P2 — Running-Badge auch im collapsed Mode sichtbar */}
+          {runningSessions.length > 0 && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 rounded">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              🤖 {runningSessions.length} laufend
+            </span>
+          )}
           <span className="text-[10px] text-gray-600 font-normal">— Alfred kennt den Projekt-Kontext automatisch</span>
         </button>
       </div>

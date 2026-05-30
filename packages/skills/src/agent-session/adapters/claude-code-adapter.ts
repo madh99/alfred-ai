@@ -54,6 +54,14 @@ export class ClaudeCodeAdapter implements AgentSessionAdapter {
       '--output-format=stream-json',
       '--permission-mode', permMode,
     ];
+    // v818 D1 — Defense-in-Depth: explizite Disallow-Liste für Write-Tools im
+    // readOnly-Modus. Vorher verließ sich Discuss NUR auf --permission-mode=plan
+    // + nachgelagerten git-checkout-Revert als Safety-Net. Bei einem Adapter-
+    // Bug oder Plan-Mode-Bypass hätte der Agent Files schreiben können. Mit
+    // --disallowedTools lehnt claude-code die Tool-Calls hart ab BEVOR sie laufen.
+    if (opts.readOnly) {
+      args.push('--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit,Bash');
+    }
     if (opts.cliSessionId) {
       args.push('--resume', opts.cliSessionId);
     } else if (opts.preferredSessionId && /^[0-9a-f-]{36}$/i.test(opts.preferredSessionId)) {

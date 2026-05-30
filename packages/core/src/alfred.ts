@@ -1760,7 +1760,7 @@ export class Alfred {
                   );
                   void sessRow;
                 } catch { /* skip */ }
-                await matcher.matchAfterSession({
+                const matchResult = await matcher.matchAfterSession({
                   projectId: proj.id,
                   sessionId,
                   goal: cfg.goal,
@@ -1768,6 +1768,18 @@ export class Alfred {
                   changedFiles,
                   totalFilesChanged: state.totalFilesChanged,
                 });
+                // v818 P3 — UI-Feedback: bei resolved > 0 einen kurzen Chat-Eintrag
+                // im Project-Chat damit der User SIEHT was auto-resolved wurde.
+                // Vorher: silent. Bedingung: matched > 0 (LLM hat überhaupt geantwortet)
+                // damit kein leerer "0 resolved"-Hinweis bei kompletten Silent-Failures.
+                if (matchResult.resolved > 0 && this.conversationRepo) {
+                  try {
+                    const projOwnerId = proj.userId ?? userId;
+                    const conv = await this.conversationRepo.findOrCreateForProject(projOwnerId, proj.id);
+                    await this.conversationRepo.addMessage(conv.id, 'assistant',
+                      `🤖 **OpenItemMatcher**: ${matchResult.resolved} offene Punkt(e) automatisch als erledigt markiert (von ${matchResult.matched} analysiert).`);
+                  } catch { /* non-fatal */ }
+                }
               }
             }
           } catch (err) { this.logger.debug({ err, sessionId }, 'OpenItemMatcher failed (non-fatal)'); }
@@ -3628,11 +3640,13 @@ export class Alfred {
                   const changedFiles = merged.flatMap(s => s.summary?.filesTouched ?? []);
                   const goal = merged.map(s => s.summary?.whatWasDone ?? '').filter(Boolean).join('; ').slice(0, 500) || 'Sandbox merge';
                   // OpenItemMatcher gegen den jetzt angewendeten Stand (mutiert bestehende Items)
+                  // v818 P3 — Result capturen damit Chat-Eintrag unten den Resolved-Count zeigt
+                  let postMergeMatcherResolved = 0;
                   if (this.llmProvider) {
                     try {
                       const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
                       const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }), { service: embeddingService, repo: embeddingRepo });
-                      await matcher.matchAfterSession({
+                      const matchResult = await matcher.matchAfterSession({
                         projectId: proj.id,
                         sessionId: merged[0].id,
                         goal,
@@ -3640,6 +3654,7 @@ export class Alfred {
                         changedFiles,
                         totalFilesChanged: changedFiles.length,
                       });
+                      postMergeMatcherResolved = matchResult.resolved;
                     } catch (err) { this.logger.debug({ err, sandboxId }, 'v812 post-merge OpenItemMatcher failed'); }
                   }
                   // Workspace-Memory (jetzt ist die Arbeit wirklich im Projekt)
@@ -3662,7 +3677,7 @@ export class Alfred {
                       if (uid) {
                         const conv = await this.conversationRepo.findOrCreateForProject(uid, proj.id);
                         await this.conversationRepo.addMessage(conv.id, 'assistant',
-                          `✅ **Sandbox gemerged** — ${merged.length} Session(s) ins Projekt übernommen.${changedFiles.length > 0 ? `\n- Geänderte Dateien: ${changedFiles.length}` : ''}`);
+                          `✅ **Sandbox gemerged** — ${merged.length} Session(s) ins Projekt übernommen.${changedFiles.length > 0 ? `\n- Geänderte Dateien: ${changedFiles.length}` : ''}${postMergeMatcherResolved > 0 ? `\n- 🤖 ${postMergeMatcherResolved} offene Punkt(e) automatisch erledigt` : ''}`);
                       }
                     } catch (err) { this.logger.debug({ err }, 'v812 post-merge chat failed'); }
                   }
@@ -3676,6 +3691,22 @@ export class Alfred {
                 if (!this.projectRepo) return;
                 try {
                   const r = await this.projectRepo.discardSandboxSessionArtifacts(sandboxId);
+                  // v818 CM2 — Persistenz-Asymmetrie reparieren: project_agent_sessions
+                  // (Plan-Runtime-State, separate Tabelle) blieb nach Discard als
+                  // current_phase='done' stehen → Project-Agents-Page zeigte historische
+                  // Done-Runs deren Code verworfen ist. Wir setzen failure_insight als
+                  // Discard-Marker, current_phase bleibt für byAgent-Analytik intakt.
+                  try {
+                    const adapter = this.database?.getAdapter();
+                    if (adapter) {
+                      await adapter.execute(
+                        `UPDATE project_agent_sessions SET failure_insight = ?, updated_at = ? WHERE sandbox_id = ? AND (failure_insight IS NULL OR failure_insight = '')`,
+                        ['Sandbox discarded — code not merged', new Date().toISOString(), sandboxId],
+                      );
+                    }
+                  } catch (err) {
+                    this.logger.debug({ err, sandboxId }, 'v818 CM2 project_agent_sessions discard-mark failed (non-fatal)');
+                  }
                   if (r.sessions > 0) {
                     this.logger.info({ sandboxId, ...r }, 'v812 sandbox discarded — pending session-artefacts cleaned');
                     if (this.conversationRepo) {
@@ -7047,7 +7078,12 @@ ${augmentedMessage}`;
                 try { appendOutputLine(taskId, 'system', `💬 Discuss-Modus (read-only) startet im worktree ${sb.worktreePath}`); } catch { /* */ }
 
                 // v802 — AgentSession-Path bevorzugt (Live-Cards, finishSession, --permission-mode=plan).
-                // Legacy cAgent.execute() fallback nur wenn kein Session-Adapter da ist.
+                // v818 Q1-Audit: Legacy cAgent.execute() bleibt aktiver Fallback.
+                // Wird erreicht wenn: (a) agentSessionManager fehlt (selten),
+                // (b) der gewählte Adapter nicht registriert ist (config-Fehler),
+                // (c) der Adapter capabilities.structuredOutput=false hat (z.B. einige
+                // codex/vibe-Varianten ohne stream-json). v792's subpath-import-Issue
+                // betraf NUR appendOutputLine (live-output) — nicht den Skill selbst.
                 const sessionAdapterD = this.agentSessionManager?.listAdapters().find(a => a.name === defaultAgent);
                 const agentDefD = this.config.codeAgents?.agents.find(a => a.name === defaultAgent);
                 const runAsUserD = (agentDefD?.command === 'sudo' && agentDefD.argsTemplate?.[0] === '-u' && agentDefD.argsTemplate?.[1])
