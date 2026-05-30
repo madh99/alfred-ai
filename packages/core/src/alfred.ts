@@ -166,6 +166,64 @@ export class Alfred {
   private agentConventionsRepo?: import('@alfred/storage').AgentConventionsRepository;
   /** v824 — Agent-Conventions Skill-Instance (für API-Endpoints + Background-Jobs). */
   private agentConventionsSkillRef?: import('@alfred/skills').AgentConventionsSkill;
+
+  /**
+   * v830 Phase 4.5 — Embedding-Lookup-Helper für AgentSessionManager.embeddingLookup.
+   * Berechnet ein Prompt-Embedding, vergleicht via Cosine-Similarity gegen alle
+   * Lessons des Projekts, liefert Top-K Matches mit Similarity-Score zurück.
+   * Analog OpenItemMatcher.prefilterByEmbedding-Pattern.
+   * Returns undefined wenn embedding-service nicht verfügbar oder kein passendes Projekt.
+   */
+  private buildConventionsEmbeddingLookup(projectId: string | undefined, ownerUserId: string | undefined): ((prompt: string, cwd: string) => Promise<Array<{ text: string; source: string; similarity: number }>>) | undefined {
+    if (!projectId || !ownerUserId) return undefined;
+    if (!this.embeddingServiceRef || !this.embeddingRepoRef) return undefined;
+    if (!this.agentConventionsRepo) return undefined;
+    const cfg = (this.config as { agentConventions?: import('@alfred/types').AgentConventionsConfig }).agentConventions;
+    if (!cfg?.embeddingInjection) return undefined;
+
+    const convRepo = this.agentConventionsRepo;
+    const llmProvider = this.llmProvider;
+
+    return async (prompt: string, _cwd: string): Promise<Array<{ text: string; source: string; similarity: number }>> => {
+      try {
+        if (!llmProvider || !llmProvider.supportsEmbeddings?.()) return [];
+        const convList = await convRepo.listForProject(projectId).catch(() => []);
+        const lessons = convList.flatMap(c => c.neutralFormat.lessons.map(l => ({ ...l, packagePath: c.packagePath })));
+        if (lessons.length === 0) return [];
+
+        // In-memory: für jeden Lookup neu embedden. Bei mehr als ~50 Lessons sollte
+        // ein eigenes lesson_embeddings-Cache her — für jetzt pragmatisch.
+        const promptEmbResult = await llmProvider.embed(prompt.slice(0, 800));
+        if (!promptEmbResult) return [];
+        const promptEmb = promptEmbResult.embedding;
+
+        const lessonEmbs: Array<{ lesson: typeof lessons[0]; emb: number[] }> = [];
+        for (const l of lessons.slice(0, 50)) { // cap auf 50 lessons
+          const r = await llmProvider.embed(l.text.slice(0, 800)).catch(() => null);
+          if (r) lessonEmbs.push({ lesson: l, emb: r.embedding });
+        }
+        const cosine = (a: number[], b: number[]): number => {
+          let dot = 0, magA = 0, magB = 0;
+          for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; magA += a[i] * a[i]; magB += b[i] * b[i]; }
+          const denom = Math.sqrt(magA) * Math.sqrt(magB);
+          return denom === 0 ? 0 : dot / denom;
+        };
+
+        return lessonEmbs
+          .map(({ lesson, emb }) => ({
+            text: lesson.text,
+            source: `lesson:${lesson.source}:conf=${lesson.confidence.toFixed(2)}`,
+            similarity: cosine(promptEmb, emb),
+          }))
+          .filter(x => x.similarity > 0.55)
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, 5);
+      } catch (err) {
+        this.logger.debug({ err, projectId }, 'v830 conventions-embedding-lookup failed (non-fatal)');
+        return [];
+      }
+    };
+  }
   /** v813c — für OpenItemMatcher Embedding-Pre-Filter (vermeidet 12k-Truncation bei vielen Items). */
   private embeddingServiceRef?: EmbeddingService;
   private embeddingRepoRef?: EmbeddingRepository;
@@ -4058,6 +4116,49 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                       lesson_session_id: sessionId,
                     }, ctx);
                     this.logger.info({ sessionId, projectId: proj.id, source }, 'v825 lesson learned from plan-agent');
+
+                    // v830 Phase 4.2 — Auto-Violation-Trigger: prüfe ob der Fehler eine
+                    // EXISTING-Convention verletzt hat. Wenn ja → record_violation für
+                    // Health-Tracking (Inverse Learning). Lower-Trust-Source nur tracken
+                    // wenn Fix-Loop resolved hat (= Convention war evtl. zu eng).
+                    if (this.agentConventionsRepo && this.llmProvider) {
+                      try {
+                        const convs = await this.agentConventionsRepo.listForProject(proj.id);
+                        const rootConv = convs.find(c => c.packagePath === '');
+                        if (rootConv?.content) {
+                          // Kompakter LLM-Check: gegen welche Section ggf. verstoßen?
+                          const violationPrompt = `Aktuelle CLAUDE.md Auszug:\n${rootConv.content.slice(0, 4000)}\n\nFailure-Output:\n${buildOutput.slice(-2000)}\n\nHat der Agent gegen eine bestehende Konvention verstoßen? STRENG JSON: {"violated": true|false, "section": "stack|commands|testSetup|architecture|style|gotchas|doNotTouch", "excerpt": "betroffene Convention 1 Zeile", "confidence": 0..1}`;
+                          const vres = await this.llmProvider.complete({
+                            messages: [{ role: 'user', content: violationPrompt }],
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            tier: 'fast' as any,
+                            maxTokens: 250,
+                            temperature: 0.1,
+                          });
+                          const cleaned = vres.content.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+                          const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}');
+                          if (s >= 0 && e > s) {
+                            const v = JSON.parse(cleaned.slice(s, e + 1)) as { violated: boolean; section?: string; excerpt?: string; confidence?: number };
+                            if (v.violated && v.section && v.excerpt && (v.confidence ?? 0) >= 0.5) {
+                              await this.agentConventionsSkillRef.execute({
+                                action: 'record_violation',
+                                project_id: proj.id,
+                                package_path: '',
+                                section: v.section,
+                                excerpt: v.excerpt,
+                                session_id: sessionId,
+                                resolved_anyway: source === 'plan-fix-loop-resolved',
+                                manual_override: false,
+                                detection_source: `auto:${source}`,
+                              }, ctx);
+                              this.logger.info({ sessionId, projectId: proj.id, section: v.section, resolvedAnyway: source === 'plan-fix-loop-resolved' }, 'v830 convention-violation recorded');
+                            }
+                          }
+                        }
+                      } catch (err) {
+                        this.logger.debug({ err, sessionId }, 'v830 auto-violation-check failed (non-fatal)');
+                      }
+                    }
                   } catch (err) {
                     this.logger.debug({ err, sessionId, source }, 'v825 lesson-opportunity-hook failed (non-fatal)');
                   }
@@ -7436,6 +7537,7 @@ ${augmentedMessage}`;
                           signal: abortController.signal,
                           onEvent: onEventD,
                           readOnly: true, // v802 — claude bekommt --permission-mode=plan
+                          embeddingLookup: this.buildConventionsEmbeddingLookup(sb.projectId, sb.userId), // v830
                         });
                         resultSuccess = r.exitCode === 0;
                         resultError = resultSuccess ? undefined : (collectedErrorsD.join('; ') || 'discuss run failed');
@@ -7650,6 +7752,7 @@ Wichtig:
                         runAsUser,
                         signal: abortController.signal,
                         onEvent,
+                        embeddingLookup: this.buildConventionsEmbeddingLookup(sb.projectId, sb.userId), // v830
                       });
                       const success = r.exitCode === 0;
                       return {

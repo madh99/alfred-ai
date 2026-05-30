@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.830] - 2026-05-30
+
+### Added — Agent-Conventions Embedding-Injection + Auto-Violation-Trigger (v830)
+
+Zwei fehlende Wirings für Phase 4.5 + Phase 4.2.
+
+**Phase 4.5 — Embedding-Lookup-Wiring (Punkt 1)**
+- Neue private Methode `Alfred.buildConventionsEmbeddingLookup()`
+- Berechnet Prompt-Embedding + Cosine-Similarity gegen alle Lessons des Projekts
+- Top-5 Matches mit similarity > 0.55 werden in promptPrefix injected
+- An beiden `agentSessionManager.invoke()`-Sites verdrahtet (discuss + code-agent)
+- Cap auf 50 Lessons pro Lookup
+- Opt-in via `config.agentConventions.embeddingInjection: true`
+
+**Phase 4.2 — Auto-Violation-Trigger (Punkt 3)**
+- Erweitert den bestehenden `onLessonOpportunity`-Hook
+- Nach Lesson-Save: LLM-Check ob die Failure eine bestehende Convention verletzt hat
+- Wenn ja → `record_violation` mit `section`+`excerpt`+`resolvedAnyway`
+- `resolvedAnyway=true` wenn Fix-Loop am Ende doch resolved hat (Convention evtl. zu eng)
+- `resolvedAnyway=false` bei awaiting_user (Convention hat geholfen — Verstoß war Problem)
+- Tier 'fast', max 250 tokens, niedrige Cost (~$0.0005 pro Trigger)
+
+**Effekt:**
+- Bei einem Quick-Run "add field avatar_url" werden jetzt automatisch relevante
+  Lessons als Pre-Context an den Coding-Agent durchgereicht
+- Inverse-Learning sammelt erstmals echte Daten — nach Wochen Nutzung kann
+  Self-Modify-Agent überflüssige Conventions zur Entfernung vorschlagen
+
 ## [0.19.0-multi-ha.829] - 2026-05-30
 
 ### Added — Agent-Conventions Config-Wiring (v829)
