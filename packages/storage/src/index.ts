@@ -104,3 +104,4 @@ export type {
   ProjectConventions,
   ProjectStorageType,
 } from './repositories/project-repository.js';
+export { AgentConventionsRepository } from './repositories/agent-conventions-repository.js';

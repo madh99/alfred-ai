@@ -5,6 +5,49 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.823] - 2026-05-30
+
+### Added — Agent-Conventions System Foundation (v823, Phase 1-4 DB-Schema)
+
+Beginn der CLAUDE.md/AGENTS.md-Conventions-Verwaltung in Alfred. Diese
+Version legt nur das Fundament (Schema + Repo + Types). Funktionalität
+(Scanner, Generator, Skill, UI) folgt in v824-v828 inkrementell.
+
+**Migrations**
+- SQLite v99 + PG v103 — atomare Migration mit allen Tabellen für die
+  vollständige Phase 1-4 Roadmap:
+  - `agent_conventions` (primary, pro project_id + package_path)
+  - `agent_conventions_history` (Audit + Rollback, Phase 3.2)
+  - `convention_patterns` + `convention_pattern_sources` (Cross-Project, Phase 3.3)
+  - `convention_violations` (Inverse-Learning, Phase 4.2)
+  - `convention_test_runs` (Effectiveness-Tracking, Phase 4.6)
+- ADDITIV — keine existing-Tabelle wird verändert.
+
+**Types (`@alfred/types/agent-conventions.ts`)**
+- `AgentConventions`, `NeutralConventions`, `ConventionsLesson`,
+  `ConventionsScanSnapshot`, `ConventionsStatus`, `ConventionPattern`,
+  `ConventionViolation`, `ConventionTestRun`, `AgentConventionsConfig`.
+- Naming: `AgentConventions` (für Coding-Agents) — bewusst getrennt vom
+  bestehenden `ProjectConventions` (für README/CHANGELOG-Automation in
+  `project-repository.ts`).
+
+**Repository (`@alfred/storage/AgentConventionsRepository`)**
+- CRUD für conventions + draft-state
+- Lessons append/list (für Phase 2 Learning-Loop)
+- History add/list/rollback-mark (für Phase 3.2)
+- Patterns upsert/list/link-source/retire (für Phase 3.3 Cross-Project)
+- Violations record/list/health-stats (für Phase 4.2 Inverse-Learning)
+- Test-Runs record/list (für Phase 4.6 Effectiveness)
+
+**Architektur-Hinweis — Mistral + vibe explizit bedacht:**
+- claude-code liest CLAUDE.md nativ → kein Alfred-Code nötig
+- vibe (Mistral CLI Coding-Agent), codex, generic-plain — alle vier
+  Adapter honorieren `opts.promptPrefix`. Phase 1 wird einen
+  `loadConventionsForCwd()`-Helper im AgentSessionManager etablieren der
+  die aktive CLAUDE.md liest und in `promptPrefix` injectet.
+- Mistral als LLM-Provider für Generate/Refresh läuft transparent via
+  bestehendes Tier-System (`MistralProvider extends OpenAIProvider`).
+
 ## [0.19.0-multi-ha.822] - 2026-05-30
 
 ### Fixed — Merge-Gate-Fehler-Anzeige unlesbar wegen ANSI-Escape-Codes (v822)

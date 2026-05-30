@@ -1558,4 +1558,121 @@ export const PG_MIGRATIONS: PgMigration[] = [
       try { await db.execute(`UPDATE project_agent_sandboxes SET last_resumed_at = created_at WHERE last_resumed_at IS NULL AND status = 'running'`, []); } catch { /* */ }
     },
   },
+  {
+    version: 103,
+    description: 'v823 — project conventions + history + patterns + violations + test_runs (Phasen 1-4 atomar, PG-Spiegel zu SQLite v99).',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS agent_conventions (
+          project_id TEXT NOT NULL,
+          package_path TEXT NOT NULL DEFAULT '',
+          content TEXT NOT NULL DEFAULT '',
+          draft_content TEXT,
+          neutral_format TEXT NOT NULL DEFAULT '{}',
+          scan_hash TEXT NOT NULL DEFAULT '',
+          content_hash TEXT NOT NULL DEFAULT '',
+          generated_by TEXT NOT NULL DEFAULT 'manual',
+          generated_at TEXT,
+          last_applied_at TEXT,
+          last_drift_check_at TEXT,
+          drift_score REAL NOT NULL DEFAULT 0,
+          source_scan TEXT,
+          lessons TEXT NOT NULL DEFAULT '[]',
+          files_written TEXT NOT NULL DEFAULT '[]',
+          skill_contributions TEXT NOT NULL DEFAULT '{}',
+          language TEXT NOT NULL DEFAULT 'de',
+          inherits_from TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (project_id, package_path)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_project ON agent_conventions(project_id)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_drift ON agent_conventions(drift_score DESC)`, []);
+
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS agent_conventions_history (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          package_path TEXT NOT NULL DEFAULT '',
+          applied_at TEXT NOT NULL,
+          applied_by TEXT NOT NULL,
+          prev_content_hash TEXT,
+          new_content_hash TEXT NOT NULL,
+          prev_content_snapshot TEXT,
+          diff_summary TEXT,
+          trigger_source TEXT NOT NULL,
+          trigger_session_id TEXT,
+          rolled_back_at TEXT,
+          rolled_back_by TEXT
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_hist_project ON agent_conventions_history(project_id, package_path, applied_at DESC)`, []);
+
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS convention_patterns (
+          id TEXT PRIMARY KEY,
+          master_user_id TEXT NOT NULL,
+          pattern_text TEXT NOT NULL,
+          pattern_section TEXT NOT NULL DEFAULT 'gotchas',
+          category TEXT NOT NULL DEFAULT 'gotcha',
+          framework_tags TEXT NOT NULL DEFAULT '[]',
+          occurrence_count INTEGER NOT NULL DEFAULT 1,
+          applies_to_count INTEGER NOT NULL DEFAULT 0,
+          confidence REAL NOT NULL DEFAULT 0.5,
+          embedding_id TEXT,
+          first_observed_at TEXT NOT NULL,
+          last_observed_at TEXT NOT NULL,
+          retired_at TEXT
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_patterns_user ON convention_patterns(master_user_id, retired_at)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_patterns_occur ON convention_patterns(occurrence_count DESC)`, []);
+
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS convention_pattern_sources (
+          pattern_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          lesson_id TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          PRIMARY KEY (pattern_id, project_id, lesson_id)
+        )
+      `, []);
+
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS convention_violations (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          package_path TEXT NOT NULL DEFAULT '',
+          convention_section TEXT NOT NULL,
+          convention_excerpt TEXT NOT NULL,
+          session_id TEXT,
+          violated_at TEXT NOT NULL,
+          resolved_anyway INTEGER NOT NULL DEFAULT 0,
+          manual_override INTEGER NOT NULL DEFAULT 0,
+          detection_source TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_violations_project ON convention_violations(project_id, package_path, violated_at DESC)`, []);
+
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS convention_test_runs (
+          id TEXT PRIMARY KEY,
+          project_id TEXT,
+          conventions_version_hash TEXT NOT NULL,
+          canonical_task_id TEXT NOT NULL,
+          stack TEXT NOT NULL,
+          with_conventions INTEGER NOT NULL,
+          outcome_passed INTEGER NOT NULL,
+          outcome_details TEXT,
+          fix_attempts INTEGER NOT NULL DEFAULT 0,
+          duration_ms INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          ran_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_testruns_task ON convention_test_runs(canonical_task_id, ran_at DESC)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_testruns_proj ON convention_test_runs(project_id, ran_at DESC)`, []);
+    },
+  },
 ];
