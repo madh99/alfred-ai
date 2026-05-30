@@ -325,6 +325,8 @@ export class Alfred {
   private agentConventionsDriftTimer?: ReturnType<typeof setInterval>;
   /** v827 — Wöchentliches Pattern-Mining für Cross-Project-Conventions (Phase 3.3). */
   private agentConventionsPatternMiningTimer?: ReturnType<typeof setInterval>;
+  /** v828 — Periodischer Self-Modify-Agent für CLAUDE.md-Refactor (Phase 4.3). */
+  private agentConventionsSelfModifyTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
   /** v696 — Project-Agent Sandbox (opt-in). NUR initialisiert wenn `config.sandbox?.enabled === true` */
   private sandboxManager?: import('./sandbox-manager.js').SandboxManager;
@@ -3379,6 +3381,39 @@ export class Alfred {
                 this.agentConventionsPatternMiningTimer = setInterval(runMiningCycle, miningMs);
               }, 10 * 60_000); // 10 min nach Startup, danach wöchentlich
               this.logger.info({}, 'v827 cross-project pattern-mining scheduled (weekly)');
+            }
+
+            // v828 Phase 4.3 — Self-Modifying-Agent: periodischer Refactor der CLAUDE.md
+            // mit allen Lessons + Violations + Drift-Erkennung als Kontext.
+            if (cfg?.selfModifyAgent?.enabled) {
+              const selfModifyDays = cfg.selfModifyAgent.intervalDays ?? 7;
+              const selfModifyMs = selfModifyDays * 24 * 3_600_000;
+              const runSelfModifyCycle = async () => {
+                if (!this.agentConventionsSkillRef || !this.agentConventionsRepo) return;
+                try {
+                  const all = await this.agentConventionsRepo.listAllForDriftCheck();
+                  this.logger.info({ count: all.length, intervalDays: selfModifyDays }, 'v828 self-modify cycle start');
+                  for (const item of all) {
+                    try {
+                      const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+                      await this.agentConventionsSkillRef.execute({
+                        action: 'self_modify',
+                        project_id: item.projectId,
+                        package_path: item.packagePath,
+                      }, ctx);
+                    } catch (err) {
+                      this.logger.debug({ err, projectId: item.projectId }, 'v828 self-modify failed for project (non-fatal)');
+                    }
+                  }
+                } catch (err) {
+                  this.logger.debug({ err }, 'v828 self-modify cycle failed (non-fatal)');
+                }
+              };
+              setTimeout(() => {
+                runSelfModifyCycle();
+                this.agentConventionsSelfModifyTimer = setInterval(runSelfModifyCycle, selfModifyMs);
+              }, 15 * 60_000); // 15 min nach Startup
+              this.logger.info({ intervalDays: selfModifyDays }, 'v828 self-modify-agent scheduled');
             }
           }
         } catch (err) {
@@ -10561,6 +10596,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.agentConventionsPatternMiningTimer) {
       clearInterval(this.agentConventionsPatternMiningTimer);
       this.agentConventionsPatternMiningTimer = undefined;
+    }
+    if (this.agentConventionsSelfModifyTimer) {
+      clearInterval(this.agentConventionsSelfModifyTimer);
+      this.agentConventionsSelfModifyTimer = undefined;
     }
     if (this.cmdbHealthCheckTimer) {
       clearInterval(this.cmdbHealthCheckTimer);

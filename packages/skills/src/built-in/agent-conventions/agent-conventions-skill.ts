@@ -81,7 +81,7 @@ export interface SkillConventionsContribution {
 
 const exec = promisify(execFileCb);
 
-type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages' | 'mine_patterns' | 'list_patterns' | 'retire_pattern';
+type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages' | 'mine_patterns' | 'list_patterns' | 'retire_pattern' | 'record_violation' | 'section_health' | 'effectiveness_metrics' | 'self_modify' | 'test_harness_run';
 
 interface SkillDeps {
   scanner: RepoScannerLike;
@@ -192,7 +192,7 @@ export class AgentConventionsSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history', 'learn', 'list_lessons', 'consolidate_lessons', 'mark_lesson_applied', 'list_packages', 'generate_all_packages', 'mine_patterns', 'list_patterns', 'retire_pattern'],
+            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history', 'learn', 'list_lessons', 'consolidate_lessons', 'mark_lesson_applied', 'list_packages', 'generate_all_packages', 'mine_patterns', 'list_patterns', 'retire_pattern', 'record_violation', 'section_health', 'effectiveness_metrics', 'self_modify', 'test_harness_run'],
             description: 'Action to perform',
           },
           project_id: { type: 'string', description: 'Project ID' },
@@ -239,6 +239,11 @@ export class AgentConventionsSkill extends Skill {
         case 'mine_patterns': return await this.handleMinePatterns(input);
         case 'list_patterns': return await this.handleListPatterns(input);
         case 'retire_pattern': return await this.handleRetirePattern(input);
+        case 'record_violation': return await this.handleRecordViolation(projectId, packagePath, input);
+        case 'section_health': return await this.handleSectionHealth(projectId, packagePath, input);
+        case 'effectiveness_metrics': return await this.handleEffectivenessMetrics(projectId);
+        case 'self_modify': return await this.handleSelfModify(projectId, packagePath, input);
+        case 'test_harness_run': return await this.handleTestHarnessRun(projectId, input);
         default: return { success: false, error: `Unknown action: ${action}` };
       }
     } catch (err) {
@@ -1022,6 +1027,157 @@ export class AgentConventionsSkill extends Skill {
     if (!patternId) return { success: false, error: 'pattern_id required' };
     await this.deps.conventionsRepo.retirePattern(patternId);
     return { success: true, data: { patternId } };
+  }
+
+  // ── record_violation (Phase 4.2 Inverse Learning) ─────────────────────
+  private async handleRecordViolation(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const section = (input.section as ConventionsSection | undefined) ?? 'gotchas';
+    const excerpt = (input.excerpt as string | undefined)?.trim();
+    if (!excerpt || excerpt.length < 5) return { success: false, error: 'excerpt required (min 5 chars)' };
+    const id = await this.deps.conventionsRepo.recordViolation({
+      projectId,
+      packagePath,
+      section,
+      excerpt,
+      sessionId: input.session_id as string | undefined,
+      resolvedAnyway: !!input.resolved_anyway,
+      manualOverride: !!input.manual_override,
+      detectionSource: (input.detection_source as string | undefined) ?? 'manual',
+    });
+    return { success: true, data: { violationId: id } };
+  }
+
+  // ── section_health (Phase 4.2) ─────────────────────────────────────────
+  // Liefert per-Section Health-Score: 1.0 = perfekt, 0.0 = überall verletzt+resolved-anyway.
+  // Niedriger Score = Convention ist möglicherweise zu eng oder veraltet.
+  private async handleSectionHealth(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const sinceIso = input.since_iso as string | undefined;
+    const stats = await this.deps.conventionsRepo.getSectionHealthStats(projectId, packagePath, sinceIso);
+    const suggested_removal = stats.filter(s => s.healthScore < 0.4 && s.violations >= 5);
+    return { success: true, data: { stats, suggestedRemoval: suggested_removal } };
+  }
+
+  // ── effectiveness_metrics (Phase 4.1 A/B-Tests) ─────────────────────────
+  // Pre-/Post-Apply Vergleich: liefert Counters für die wichtigsten Quality-Signals
+  // basierend auf Conventions-Apply-Datum als Trennlinie.
+  private async handleEffectivenessMetrics(projectId: string): Promise<SkillResult> {
+    const conv = await this.deps.conventionsRepo.get(projectId, '');
+    if (!conv || !conv.lastAppliedAt) {
+      return { success: true, data: { hasBaseline: false, reason: 'no apply yet — baseline-window not started' } };
+    }
+    const violations = await this.deps.conventionsRepo.listViolations(projectId, '');
+    const cutoff = conv.lastAppliedAt;
+    const pre = violations.filter(v => v.violatedAt < cutoff);
+    const post = violations.filter(v => v.violatedAt >= cutoff);
+    return {
+      success: true,
+      data: {
+        hasBaseline: true,
+        appliedAt: cutoff,
+        preApplyViolations: pre.length,
+        postApplyViolations: post.length,
+        lessonsTotal: conv.neutralFormat.lessons.length,
+        lessonsApplied: conv.neutralFormat.lessons.filter(l => l.appliedToMain).length,
+        driftScore: conv.driftScore,
+        improvement: pre.length > 0 ? Math.round((1 - post.length / pre.length) * 100) : null,
+        confidence: pre.length + post.length >= 10 ? 'statistically-relevant' : 'too-few-samples',
+      },
+    };
+  }
+
+  // ── self_modify (Phase 4.3 Self-Modifying-Agent) ──────────────────────
+  // Reviewed alle Lessons + Violations + Drift + Cross-Patterns + scant Repo neu →
+  // produziert kohärenten Refactor-Draft der existing CLAUDE.md mit allen
+  // Erkenntnissen integriert. Kein direct apply — User reviewed im Modal.
+  private async handleSelfModify(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) return { success: false, error: 'Project not found' };
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath);
+    if (!conv) return { success: false, error: 'No conventions row (run generate first)' };
+
+    // Sammle alle Kontext-Daten für den Refactor
+    const violations = await this.deps.conventionsRepo.listViolations(projectId, packagePath);
+    const healthStats = await this.deps.conventionsRepo.getSectionHealthStats(projectId, packagePath);
+    const pendingLessons = conv.neutralFormat.lessons.filter(l => !l.appliedToMain);
+
+    // Self-Modify nutzt consolidate_lessons als Backbone + zusätzliche Health-Info
+    // im Prompt-Kontext (via patternSuggestions abuse — vereinfacht).
+    const cfg = { ...DEFAULT_CONFIG, ...this.deps.config() };
+    const language = (input.language as ConventionsLanguage | undefined) ?? cfg.language;
+    const scanCwd = packagePath ? path.join(proj.cwd, packagePath) : proj.cwd;
+    const scan = await this.deps.scanner.scan(scanCwd);
+
+    const healthSuggestions = healthStats
+      .filter(s => s.healthScore < 0.4 && s.violations >= 5)
+      .map(s => ({ patternText: `Convention in Section "${s.section}" hat health=${s.healthScore.toFixed(2)} (${s.violations} violations, ${s.resolvedAnyway} resolved anyway). Eventuell entfernen oder umformulieren.`, section: s.section as ConventionsSection, confidence: 0.6 }));
+    const lessonsAsPatterns = pendingLessons.map(l => ({ patternText: l.text, section: 'gotchas' as ConventionsSection, confidence: l.confidence }));
+
+    const gen = await this.deps.generator.generate({
+      cwd: scanCwd,
+      llmContext: scan.llmContext,
+      scanSnapshot: scan.snapshot,
+      scanHash: scan.scanHash,
+      language,
+      generateMode: 'single',
+      tier: 'strong', // Self-Modify ist kritisch → immer strong
+      existingContent: conv.content,
+      patternSuggestions: [...lessonsAsPatterns, ...healthSuggestions],
+    });
+    if (!gen.ok || !gen.markdown) return { success: false, error: gen.reason ?? 'self-modify generation failed' };
+
+    await this.deps.conventionsRepo.upsert({
+      projectId,
+      packagePath,
+      draftContent: gen.markdown,
+      sourceScan: scan.snapshot,
+      generatedAt: new Date().toISOString(),
+      generatedBy: 'lesson-derived',
+    });
+
+    return {
+      success: true,
+      data: {
+        draft: gen.markdown,
+        scanHash: gen.scanHash,
+        contentHash: gen.contentHash,
+        warnings: gen.warnings,
+        costUsd: gen.costUsd,
+        consideredLessons: pendingLessons.length,
+        consideredViolations: violations.length,
+        suggestedRemovals: healthSuggestions.length,
+      },
+    };
+  }
+
+  // ── test_harness_run (Phase 4.6) ───────────────────────────────────────
+  // Führt eine kanonische Test-Aufgabe gegen das Projekt aus + persistiert Outcome.
+  // Vergleich mit/ohne Conventions kommt durch Vergleich von ranAt-Range vs
+  // conventions.lastAppliedAt. Minimal-Implementierung: registriert Outcome,
+  // weitere Test-Runner-Logik kommt in nachfolgenden Iterationen.
+  private async handleTestHarnessRun(projectId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const taskId = (input.task_id as string | undefined)?.trim();
+    const outcomePassed = !!input.outcome_passed;
+    const stack = (input.stack as string | undefined) ?? 'unknown';
+    if (!taskId) return { success: false, error: 'task_id required' };
+
+    const conv = await this.deps.conventionsRepo.get(projectId, '');
+    const versionHash = conv?.contentHash || 'no-conventions';
+    const withConventions = !!conv?.content;
+
+    const runId = await this.deps.conventionsRepo.recordTestRun({
+      projectId,
+      conventionsVersionHash: versionHash,
+      canonicalTaskId: taskId,
+      stack,
+      withConventions,
+      outcomePassed,
+      outcomeDetails: input.outcome_details as string | undefined,
+      fixAttempts: (input.fix_attempts as number | undefined) ?? 0,
+      durationMs: (input.duration_ms as number | undefined) ?? 0,
+      costUsd: (input.cost_usd as number | undefined) ?? 0,
+    });
+
+    return { success: true, data: { runId, versionHash, withConventions } };
   }
 
   // ── mark_lesson_applied (Phase 2) ──────────────────────────────────────

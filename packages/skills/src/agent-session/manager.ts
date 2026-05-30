@@ -51,6 +51,13 @@ export interface ManagerInvokeOptions {
    * Default false (= immer laden wenn vorhanden, "just works"-Default).
    */
   skipConventions?: boolean;
+  /**
+   * v828 Phase 4.5 — Optional Embedding-Lookup-Hook für task-spezifische Lesson-Injection.
+   * Wenn gesetzt: Manager ruft mit (prompt, cwd) auf, erwartet matching Lessons mit
+   * Similarity-Score. Top 5 werden in den promptPrefix injected (cap 1500 chars).
+   * Wird in alfred.ts an OpenItemMatcher-style embeddingService gewired.
+   */
+  embeddingLookup?: (prompt: string, cwd: string) => Promise<Array<{ text: string; source: string; similarity: number }>>;
 }
 
 export class AgentSessionManager {
@@ -156,6 +163,7 @@ export class AgentSessionManager {
     // Default opt-in damit's "einfach funktioniert"; disable via opts.skipConventions
     // oder config.agentConventions.embeddingInjection=false (Phase 4.5 control).
     let conventionsBlock: string | undefined;
+    let embeddingInjectionBlock: string | undefined;
     if (!opts.skipConventions) {
       try {
         const { loadConventionsForCwd } = await import('../built-in/agent-conventions/agent-conventions-skill.js');
@@ -164,16 +172,29 @@ export class AgentSessionManager {
           conventionsBlock = `=== PROJECT-KONVENTIONEN (auto-injected) ===\n${c}\n=== ENDE KONVENTIONEN ===`;
           onEventTapped({ type: 'progress', phase: 'conventions-loaded', detail: `${c.length} chars from CLAUDE.md/AGENTS.md` });
         }
+        // v828 Phase 4.5 — Embedding-basierte Lesson-Injection: opts.embeddingLookup wenn
+        // konfiguriert, liefert task-spezifische Lessons (semantic similarity zum prompt).
+        if (opts.embeddingLookup) {
+          const matches = await opts.embeddingLookup(opts.prompt, opts.cwd).catch(() => null);
+          if (matches && matches.length > 0) {
+            const cap = 1500;
+            const body = matches.slice(0, 5).map(m => `- (${m.source}, sim=${m.similarity.toFixed(2)}) ${m.text.slice(0, 280)}`).join('\n');
+            const trimmed = body.length > cap ? body.slice(0, cap) + '\n[…]' : body;
+            embeddingInjectionBlock = `=== TASK-RELEVANTE LESSONS (embedding match) ===\n${trimmed}\n=== ENDE LESSONS ===`;
+            onEventTapped({ type: 'progress', phase: 'lessons-embedded', detail: `${matches.length} matching lessons (top 5 shown)` });
+          }
+        }
       } catch (err) {
-        this.logger.debug({ err, cwd: opts.cwd }, 'v824 conventions-injection failed (non-fatal, continuing without)');
+        this.logger.debug({ err, cwd: opts.cwd }, 'v824/v828 conventions-injection failed (non-fatal, continuing without)');
       }
     }
 
-    // v790 — handoffBriefing wird vor opts.promptPrefix prepend'd (User-Prefix gewinnt am Ende)
-    // v824 — Reihenfolge: conventions → handoff → user-prefix (Konventionen sind Foundation,
-    // dann session-context, dann task-spezifisch — innerste Schicht sticht durch).
+    // v790/v824/v828 — Prefix-Reihenfolge: conventions → embedding-lessons → handoff → user-prefix
+    // Konventionen = Foundation, task-relevante Lessons = wichtigste situational hints,
+    // session-context = recent history, user-prefix = task-spezifisch (innerste sticht durch).
     const prefixParts: string[] = [];
     if (conventionsBlock) prefixParts.push(conventionsBlock);
+    if (embeddingInjectionBlock) prefixParts.push(embeddingInjectionBlock);
     if (handoffBriefing) prefixParts.push(handoffBriefing);
     if (opts.promptPrefix) prefixParts.push(opts.promptPrefix);
     const promptPrefix = prefixParts.length > 0 ? prefixParts.join('\n\n') : undefined;

@@ -5,6 +5,86 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.828] - 2026-05-30
+
+### Added — Agent-Conventions Phase 4 Vollständig (v828)
+
+Alle 6 Phase-4-Komponenten implementiert: A/B-Tests-Metrics + Inverse
+Learning + Self-Modify-Agent + Multi-LLM Quorum + Embedding-Injection
++ Test-Harness. Damit ist Phase 1-4 der ursprünglichen Roadmap komplett.
+
+**Phase 4.1 — Effectiveness-Metrics**
+- `effectiveness_metrics` Skill-Action: Pre-/Post-Apply Vergleich
+- Pre/Post-Window getrennt nach `conventions.lastAppliedAt`
+- Returns: preApplyViolations, postApplyViolations, lessonsApplied,
+  driftScore, improvement-Prozent, statistische Confidence
+- Min N=10 für "statistically-relevant" Label
+
+**Phase 4.2 — Inverse Learning**
+- `record_violation` Skill-Action — manueller oder automatischer Trigger
+- `section_health` — Per-Section Health-Score (1.0=perfekt, 0.0=immer
+  verletzt+resolved-anyway). Schwelle <0.4 + violations>=5 →
+  `suggestedRemoval`-Liste
+- Repository-Methoden recordViolation + getSectionHealthStats schon
+  seit v823 in Schema
+
+**Phase 4.3 — Self-Modifying-Agent (Background)**
+- `self_modify` Skill-Action: Refactor-Draft mit ALLEN Kontext-Daten
+  (Lessons + Violations + Drift + Patterns + frischer Scan)
+- Background-Timer: `selfModifyAgent.intervalDays` Tage (Default 7),
+  15min Initial-Delay, opt-in via `selfModifyAgent.enabled`
+- Tier IMMER 'strong' — Self-Modify ist kritisch
+- KEIN direkt-Apply — User reviewed im Modal
+
+**Phase 4.4 — Multi-LLM Quorum**
+- `generateQuorum()` in ConventionsGenerator: N parallele LLM-Calls
+  (quorum-2=2, quorum-3=3) + Judge-Call der Section-für-Section auswählt
+- Judge-Tier IMMER 'strong'
+- Fallback: bei Judge-Failure → erster Draft als Final
+- Cost: N+1× single-Generate
+
+**Phase 4.5 — Embedding-Injection**
+- `embeddingLookup` Hook in `ManagerInvokeOptions`: optionale Funktion
+  (prompt, cwd) → matching lessons mit Similarity-Score
+- Manager prepended Top-5 Matches (cap 1500 chars) in promptPrefix
+- Reihenfolge: conventions → embedding-lessons → handoff → user-prefix
+- Foundation für Pattern 4.5 — eigentliche Embedding-Berechnung kommt
+  beim Caller in alfred.ts (kann mit bestehendem EmbeddingService gewired
+  werden, ähnlich OpenItemMatcher-Pattern)
+
+**Phase 4.6 — Test-Harness**
+- `test_harness_run` Skill-Action — registriert Outcome (passed/failed)
+  pro canonical_task_id mit conventionsVersionHash + stack
+- Vergleich pre/post via ranAt vs conventions.lastAppliedAt
+- Schema schon in v823 (convention_test_runs)
+- Schreibt nur Outcome — Test-Runner-Code ist external (z.B. Sandbox)
+
+**Damit ist die gesamte Phase 1-4 Roadmap implementiert:**
+- v823 Foundation (Schema + Types + Repository)
+- v824 Phase 1 (Scanner + Generator + Skill + UI + Injection)
+- v825 Phase 2 (Lessons-Loop + Drift-Background-Job)
+- v826 Phase 3.1+3.2 (Monorepo + Auto-Apply)
+- v827 Phase 3.3+3.4+3.5+3.6 (Patterns + Multi-Format + Translation + Skill-Contributions)
+- v828 Phase 4.1-4.6 (Metrics + Inverse + Self-Modify + Quorum + Embedding + Test-Harness)
+
+**Was bewusst minimal gebaut wurde (für späteres Polish):**
+- 4.5 Embedding-Injection: Hook ist da, alfred.ts-Wiring zu EmbeddingService
+  noch nicht (Standard-Mode funktioniert ohne)
+- 4.6 Test-Harness: Outcome-Recording da, Canonical-Task-Runner-Code
+  (Sandbox-Trigger) kommt separat
+- 4.4 Quorum: Judge-LLM-Call ist simple Section-for-Section. Multi-Provider
+  (Anthropic+OpenAI+Google) kommt mit Provider-Factory-Erweiterung
+- Pattern-Dashboard-UI: Backend komplett, Frontend zeigt Patterns aktuell
+  nur indirekt über Pattern-Suggestions im Generate
+
+**Side-Effects gesamt:**
+- Drei Background-Timer (drift-check, pattern-mining, self-modify) alle
+  opt-in via Config, alle clean cleanup in Alfred.stop()
+- Auto-Apply ist und bleibt opt-in (Default off)
+- Schema seit v823 unverändert — alle Phase-1-4 Tabellen waren atomar
+- promptPrefix-Reihenfolge: conventions → embedding-lessons → handoff
+  → user-prefix (innerste sticht durch)
+
 ## [0.19.0-multi-ha.827] - 2026-05-30
 
 ### Added — Agent-Conventions Phase 3.3-3.6 Vollständig (v827)

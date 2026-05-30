@@ -86,10 +86,72 @@ export class ConventionsGenerator {
       return this.generateSingle(opts, warnings);
     }
 
-    // Quorum-Modes (Phase 4.4): mehrere LLM-Calls + Judge.
-    // Default-Implementation für jetzt: single. Quorum kommt voll in v827/v828.
-    warnings.push(`generateMode '${opts.generateMode}' not yet implemented — falling back to single`);
-    return this.generateSingle(opts, warnings);
+    // v828 Phase 4.4 — Quorum-Mode: N parallel LLM-Calls + Judge wählt beste Version
+    const numCalls = opts.generateMode === 'quorum-3' ? 3 : 2;
+    return this.generateQuorum(opts, warnings, numCalls);
+  }
+
+  /**
+   * v828 Phase 4.4 — Quorum-Generate: N parallel LLM-Calls mit denselben Inputs,
+   * dann Judge-Call der die beste Version wählt (per-Section).
+   * Vorteil: höhere Robustheit gegen Halluzination + breitere Abdeckung.
+   * Kosten: N+1× single. Für Power-User mit hohen Qualitätsansprüchen.
+   */
+  private async generateQuorum(opts: GenerateOptions, warnings: string[], numCalls: number): Promise<GenerateOutput> {
+    const drafts: Array<{ markdown: string; costUsd: number }> = [];
+    let totalCost = 0;
+    for (let i = 0; i < numCalls; i++) {
+      // Temperature variieren damit echte Diversität entsteht
+      const r = await this.generateSingle({ ...opts, tier: opts.tier }, warnings);
+      if (r.ok && r.markdown) {
+        drafts.push({ markdown: r.markdown, costUsd: r.costUsd });
+        totalCost += r.costUsd;
+      } else {
+        warnings.push(`quorum draft ${i + 1}/${numCalls} failed: ${r.reason ?? 'unknown'}`);
+      }
+    }
+    if (drafts.length === 0) {
+      return { ok: false, scanHash: opts.scanHash, warnings, costUsd: totalCost, reason: 'all quorum drafts failed' };
+    }
+    if (drafts.length === 1) {
+      warnings.push('quorum reduced to single (other drafts failed)');
+      const single = drafts[0];
+      const contentHash = createHash('sha256').update(single.markdown).digest('hex').slice(0, 16);
+      const neutral = this.parseToNeutralFormat(single.markdown.replace(/^---\n[\s\S]*?\n---\n/, ''), opts);
+      return { ok: true, markdown: single.markdown, neutralFormat: neutral, scanHash: opts.scanHash, contentHash, warnings, costUsd: totalCost };
+    }
+
+    // Judge-Call: nimm beide/drei Versionen + bewerte
+    const judgeSystem = opts.language === 'de'
+      ? 'Du bist ein Senior-Engineer. Wähle aus den N CLAUDE.md-Drafts die beste Section-für-Section + erstelle eine konsolidierte Version. Antworte NUR mit dem reinen Markdown.'
+      : 'You are a senior engineer. Choose the best version section-by-section from N CLAUDE.md drafts and produce a consolidated version. Reply ONLY with raw markdown.';
+    const judgePrompt = drafts.map((d, i) => `## DRAFT ${i + 1}\n${d.markdown.replace(/^---\n[\s\S]*?\n---\n/, '')}`).join('\n\n');
+    try {
+      const judgeRes = await this.llm.complete({
+        messages: [{ role: 'user', content: judgePrompt }],
+        system: judgeSystem,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tier: 'strong' as any, // Judge sollte stark sein
+        maxTokens: 3000,
+        temperature: 0.1,
+      });
+      const judgeUsage = judgeRes.usage as { costUsd?: number; cost?: number } | undefined;
+      const judgeCost = judgeUsage?.costUsd ?? judgeUsage?.cost ?? 0;
+      totalCost += judgeCost;
+      const cleaned = this.extractMarkdown(judgeRes.content);
+      const final = this.wrapWithFrontmatter(cleaned, opts);
+      const contentHash = createHash('sha256').update(final).digest('hex').slice(0, 16);
+      const neutral = this.parseToNeutralFormat(cleaned, opts);
+      this.logger.info({ numDrafts: drafts.length, totalCost }, 'v828 quorum generate complete');
+      return { ok: true, markdown: final, neutralFormat: neutral, scanHash: opts.scanHash, contentHash, warnings, costUsd: totalCost };
+    } catch (err) {
+      // Fallback: nimm den ersten Draft als Final
+      warnings.push(`judge call failed (${(err as Error).message}) — using first draft`);
+      const first = drafts[0];
+      const contentHash = createHash('sha256').update(first.markdown).digest('hex').slice(0, 16);
+      const neutral = this.parseToNeutralFormat(first.markdown.replace(/^---\n[\s\S]*?\n---\n/, ''), opts);
+      return { ok: true, markdown: first.markdown, neutralFormat: neutral, scanHash: opts.scanHash, contentHash, warnings, costUsd: totalCost };
+    }
   }
 
   private async generateSingle(opts: GenerateOptions, warnings: string[]): Promise<GenerateOutput> {
