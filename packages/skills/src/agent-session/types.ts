@@ -92,6 +92,14 @@ export interface AgentInvokeOptions {
    * Default false (= normal write-able mode).
    */
   readOnly?: boolean;
+  /**
+   * v839 — NODE_OPTIONS=--max-old-space-size=<N> für die Agent-CLI-spawn (claude/vibe/...).
+   * Wird vom Adapter via augmentSpawnEnv in den child-env injiziert. Damit der Agent
+   * intern auch tsc/vitest ausführen kann ohne V8 SIGABRT (exit 134) bei großen
+   * Monorepos. Default 4096. Wird in alfred.ts aus config.projects.hostNodeMaxOldSpaceSizeMb
+   * durchgereicht.
+   */
+  nodeMaxOldSpaceSizeMb?: number;
 }
 
 

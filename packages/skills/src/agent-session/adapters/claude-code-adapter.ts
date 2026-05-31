@@ -100,9 +100,13 @@ export class ClaudeCodeAdapter implements AgentSessionAdapter {
   private runChild(cmd: string, args: string[], opts: AgentInvokeOptions): Promise<AgentInvokeResult> {
     return new Promise<AgentInvokeResult>((resolve) => {
       const isWindows = process.platform === 'win32';
+      // v839 — NODE_OPTIONS=--max-old-space-size=<N> für child + grandchild (tsc/vitest)
+      // damit V8 nicht bei ~1.4GB SIGABRT macht.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { augmentSpawnEnv } = require('../env-util.js') as typeof import('../env-util.js');
       const child = spawn(cmd, args, {
         cwd: opts.cwd,
-        env: { ...(process.env as Record<string, string>) },
+        env: augmentSpawnEnv(process.env, { nodeMaxOldSpaceSizeMb: opts.nodeMaxOldSpaceSizeMb }),
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: !isWindows,
       });

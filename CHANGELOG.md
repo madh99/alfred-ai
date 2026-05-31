@@ -5,6 +5,61 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.839] - 2026-05-31
+
+### Fixed — Agent-CLI-Subprocess Node-Heap (v839)
+
+User-Report nach v838: "auch der letzte gestartete project agent NICHT
+sandbox ist wieder gescheitert" — tsc-OOM trotz v838-Fix.
+
+**Root-Cause (4. übersehene Stelle):**
+
+v838 hat 3 Host-spawn-Stellen gefixt wo Alfred SELBST tsc/vitest spawnt.
+ABER: wenn der Plan-Agent läuft, spawnt er die CLI (claude/vibe/codex/
+generic-plain). Diese CLIs spawnen DANN intern via Bash-Tool z.B. `tsc
+--noEmit`. Diese GRAND-children erben nur Alfreds process.env — wenn
+da kein NODE_OPTIONS drin ist, hat tsc auch nichts → V8 SIGABRT.
+
+Alle 4 Adapter machten:
+```ts
+env: { ...(process.env as Record<string, string>) }
+```
+Kein NODE_OPTIONS-Override → grandchild-tsc Default 1.4GB Heap.
+
+**Fix — zentralisierter Env-Augmentor:**
+
+Neue Datei `packages/skills/src/agent-session/env-util.ts`:
+- `augmentSpawnEnv(parentEnv, opts?)` setzt NODE_OPTIONS=--max-old-space-size=<N>
+  wenn nicht schon im parent gesetzt
+- Default 4096 MB, konfigurierbar via opts.nodeMaxOldSpaceSizeMb
+- Vererbt existing parent-NODE_OPTIONS-Werte (kein Doppel)
+
+**Adapter-Migration (alle 4):**
+- claude-code-adapter, vibe-adapter, codex-adapter, generic-plain-adapter
+- Verwenden alle `augmentSpawnEnv(process.env, { nodeMaxOldSpaceSizeMb })`
+  statt direkt `process.env`
+
+**API-Erweiterung:**
+- `AgentInvokeOptions.nodeMaxOldSpaceSizeMb?` neu
+- `ManagerInvokeOptions.nodeMaxOldSpaceSizeMb?` neu
+- alfred.ts wired aus `config.projects.hostNodeMaxOldSpaceSizeMb` (Default 4096)
+  an beiden `agentSessionManager.invoke()`-Sites
+
+**Damit jetzt vollständig:**
+
+| Code-Pfad | Heap-Override | Version |
+|---|---|---|
+| Sandbox-Container (Plan-Mode in Sandbox) | Container 6GB + NODE_OPTIONS=4GB | v837 |
+| Host build-probe (Health-Check) | NODE_OPTIONS=4GB | v838 |
+| Host build-validator (Plan-Mode classical) | NODE_OPTIONS=4GB | v838 |
+| Host canonical-tasks (Test-Harness) | NODE_OPTIONS=4GB | v838 |
+| **Agent-CLI subprocess (alle 4 Adapter)** | **NODE_OPTIONS=4GB** | **v839** |
+| **Grandchild von Agent (tsc/vitest via Bash)** | **NODE_OPTIONS vererbt** | **v839** |
+
+Alle Stellen wo Alfred direkt oder transitiv Node-Prozesse erzeugt sind
+jetzt auf 4 GB Heap defaultet. Override via
+`config.projects.hostNodeMaxOldSpaceSizeMb`.
+
 ## [0.19.0-multi-ha.838] - 2026-05-30
 
 ### Fixed — Host-Subprocess Node-Heap OOM (v838)

@@ -89,9 +89,12 @@ export class CodexAdapter implements AgentSessionAdapter {
   private runChild(cmd: string, args: string[], opts: AgentInvokeOptions): Promise<AgentInvokeResult> {
     return new Promise<AgentInvokeResult>((resolve) => {
       const isWindows = process.platform === 'win32';
+      // v839 — NODE_OPTIONS Augmentor für codex + grandchildren
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { augmentSpawnEnv } = require('../env-util.js') as typeof import('../env-util.js');
       const child = spawn(cmd, args, {
         cwd: opts.cwd,
-        env: { ...(process.env as Record<string, string>) },
+        env: augmentSpawnEnv(process.env, { nodeMaxOldSpaceSizeMb: opts.nodeMaxOldSpaceSizeMb }),
         // stdin auf 'ignore' → kein hängender Read auf stdin
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: !isWindows,

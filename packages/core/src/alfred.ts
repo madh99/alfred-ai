@@ -7584,6 +7584,7 @@ ${augmentedMessage}`;
                           onEvent: onEventD,
                           readOnly: true, // v802 — claude bekommt --permission-mode=plan
                           embeddingLookup: this.buildConventionsEmbeddingLookup(sb.projectId, sb.userId), // v830
+                          nodeMaxOldSpaceSizeMb: this.config.projects?.hostNodeMaxOldSpaceSizeMb ?? 4096, // v839
                         });
                         resultSuccess = r.exitCode === 0;
                         resultError = resultSuccess ? undefined : (collectedErrorsD.join('; ') || 'discuss run failed');
@@ -7799,6 +7800,7 @@ Wichtig:
                         signal: abortController.signal,
                         onEvent,
                         embeddingLookup: this.buildConventionsEmbeddingLookup(sb.projectId, sb.userId), // v830
+                        nodeMaxOldSpaceSizeMb: this.config.projects?.hostNodeMaxOldSpaceSizeMb ?? 4096, // v839
                       });
                       const success = r.exitCode === 0;
                       return {

@@ -121,7 +121,11 @@ export class GenericPlainAdapter implements AgentSessionAdapter {
   ): Promise<AgentInvokeResult> {
     return new Promise<AgentInvokeResult>((resolve) => {
       const isWindows = process.platform === 'win32';
-      const envMerged = { ...(process.env as Record<string, string>), ...(this.config.env ?? {}) };
+      // v839 — augmentSpawnEnv um NODE_OPTIONS damit grandchildren (tsc/vitest) Heap haben
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { augmentSpawnEnv } = require('../env-util.js') as typeof import('../env-util.js');
+      const baseEnv = { ...(process.env as Record<string, string>), ...(this.config.env ?? {}) };
+      const envMerged = augmentSpawnEnv(baseEnv, { nodeMaxOldSpaceSizeMb: opts.nodeMaxOldSpaceSizeMb });
       const child = spawn(cmd, args, {
         cwd,
         env: envMerged,

@@ -51,6 +51,8 @@ export interface ManagerInvokeOptions {
    * Default false (= immer laden wenn vorhanden, "just works"-Default).
    */
   skipConventions?: boolean;
+  /** v839 — Wird an Adapter durchgereicht und in augmentSpawnEnv verwendet. */
+  nodeMaxOldSpaceSizeMb?: number;
   /**
    * v828 Phase 4.5 — Optional Embedding-Lookup-Hook für task-spezifische Lesson-Injection.
    * Wenn gesetzt: Manager ruft mit (prompt, cwd) auf, erwartet matching Lessons mit
@@ -214,6 +216,7 @@ export class AgentSessionManager {
       timeoutMs: opts.timeoutMs,
       promptPrefix,
       readOnly: opts.readOnly, // v802 — Discuss-Mode propagation
+      nodeMaxOldSpaceSizeMb: opts.nodeMaxOldSpaceSizeMb, // v839
     });
 
     // Falls Adapter neue session-id geliefert hat (z.B. erster Run)
