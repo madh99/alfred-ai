@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.841] - 2026-06-01
+
+### Fixed — Deploy-Live-Progress wurde nie ausgelöst (v841)
+
+User-Report: nach v840 zeigt das Modal weiterhin "Deploy gestartet,
+erste Events kommen gleich …" während der gesamte Deploy läuft, kein
+Live-Step erscheint. Erst am Ende sieht man die Step-Summary.
+
+**Root-Cause:** v840 fügte `progressTaskId` zum Frontend-Request +
+DeploySkill hinzu, ABER der `triggerDeploy`-Callback in `alfred.ts:9285`
+baut ein neues `params`-Object auf und vergaß `progressTaskId` mit
+weiterzureichen. Skill sah nie eine taskId → emitStep() wurde nie aufgerufen.
+
+**Fix:** Eine Zeile in alfred.ts triggerDeploy-Callback:
+```ts
+if (typeof input.progressTaskId === 'string' && input.progressTaskId.length > 0)
+  params.progressTaskId = input.progressTaskId;
+```
+
+Damit reicht der vollständige Path durch: Modal → HTTP → alfred.ts → Skill.
+emitStep() feuert jetzt pro Step, SSE-Stream transportiert sie, UI rendered
+sie live.
+
 ## [0.19.0-multi-ha.840] - 2026-06-01
 
 ### Added — Live-Deploy-Progress im ProjectDeployModal (v840)

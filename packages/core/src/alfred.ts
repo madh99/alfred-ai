@@ -9292,6 +9292,8 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               // v736 — ENV-Stage durchreichen (Deploy-Skill liest die als .env aufs Target)
               if (typeof input.env_stage === 'string' && input.env_stage.length > 0) params.env_stage = input.env_stage;
               if (input.skip_env === true) params.skip_env = true;
+              // v841 — progressTaskId durchreichen damit DeploySkill Live-Step-Events emittiert
+              if (typeof input.progressTaskId === 'string' && input.progressTaskId.length > 0) params.progressTaskId = input.progressTaskId;
               if (!this.skillSandbox) return { success: false, error: 'SkillSandbox nicht verfügbar' };
               const ownerChatId = this.config.security?.ownerUserId ?? '';
               const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: 'api', conversationId: '' } as any;
