@@ -1384,6 +1384,10 @@ export class AlfredClient {
     app_port?: number; branch?: string; repo_url?: string;
     install_command?: string; build_command?: string; start_command?: string;
     env_stage?: string; skip_env?: boolean;
+    /** v840 — Wenn gesetzt: Backend emittet Live-Step-Events via SSE-Stream
+     *  /api/project-agents/<taskId>/output. Frontend muss VOR dem POST den Stream
+     *  öffnen damit keine Events verloren gehen (Stream cached aber 5min). */
+    progressTaskId?: string;
   }): Promise<{ success: boolean; data?: unknown; error?: string; display?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/deploy`, {
       method: 'POST',

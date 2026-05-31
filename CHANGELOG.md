@@ -5,6 +5,42 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.840] - 2026-06-01
+
+### Added — Live-Deploy-Progress im ProjectDeployModal (v840)
+
+User-Problem: nach Click auf "Deploy starten" wartet das Modal eine
+Ewigkeit auf das Final-Result. Keine Sicht auf SSH-Pull/Install/Build/
+Restart-Fortschritt → User weiß nicht ob's noch läuft oder hängt.
+
+**Lösung — opt-in Live-Stream via existing SSE-Infrastruktur:**
+
+**DeploySkill (`packages/skills/src/built-in/deploy.ts`)**
+- Optional `progressTaskId` in input. Wenn gesetzt: nach jedem Step
+  `appendOutputLine` + `appendOutputEvent(... 'deploy-step', {...})`
+- 7 Live-Steps emittiert: ssh-test, git-clone/pull, env-write, install,
+  build, service-start, verify
+- Jeder Step hat status `started | done | failed` + optional message
+- `markOutputEnded` am Ende des Runs (auch bei Fehler)
+- Ohne progressTaskId: 100% identisches Verhalten wie vorher
+
+**Frontend (`AlfredClient.triggerProjectDeploy`)**
+- Neues optionales Feld `progressTaskId?: string` im Input
+
+**UI (`ProjectDeployModal`)**
+- submit() generiert UUID als taskId, öffnet SSE-Stream
+  (existing `openProjectAgentOutputStream`) VOR dem POST
+- Step-Liste im Modal mit Icons (⏳ started / ✓ done / ✗ failed)
+- Per-Step Timestamp + message
+- Stream-Cleanup 2s nach Result (letzte Events abfangen)
+
+**Side-Effects (verifiziert):**
+- Bestehende Chat-Trigger / API-Caller ohne progressTaskId: 100% unverändert
+- Backend-Skill-Code: nur additive emitStep-Calls neben den existing steps.push()
+- SSE-Stream-Failure: Modal zeigt nichts live, Sync-Result kommt trotzdem
+- Keine DB-Migration, keine Schema-Änderung, keine API-Breaking-Change
+- Nutzt 5min-Retain-Buffer der bestehenden SSE-Infrastruktur
+
 ## [0.19.0-multi-ha.839] - 2026-05-31
 
 ### Fixed — Agent-CLI-Subprocess Node-Heap (v839)

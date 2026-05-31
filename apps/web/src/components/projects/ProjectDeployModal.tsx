@@ -48,6 +48,9 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
   const [result, setResult] = useState<{ success: boolean; display?: string; error?: string; data?: unknown } | null>(null);
   // v738 — Preview-Toggle (zeigt was passieren würde, ohne Submit)
   const [previewOpen, setPreviewOpen] = useState(false);
+  // v840 — Live-Progress Step-Liste via SSE-Stream
+  type DeployStep = { step: string; status: 'started' | 'done' | 'failed'; message?: string; ts: number };
+  const [progressSteps, setProgressSteps] = useState<DeployStep[]>([]);
 
   const loadDeploys = useCallback(async () => {
     if (!client) return;
@@ -118,6 +121,33 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
     if (!client || !host.trim() || submitting) return;
     setSubmitting(true);
     setResult(null);
+    setProgressSteps([]);
+
+    // v840 — Generate progress-TaskId + open SSE-Stream BEFORE POST damit keine
+    // Events verloren gehen. Stream wird beim Modal-Close oder Result automatisch closed.
+    const taskId = `deploy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const es = client.openProjectAgentOutputStream(
+      taskId,
+      () => { /* lines ignorieren — wir nutzen nur structured events */ },
+      undefined,
+      (entry) => {
+        if (entry.type === 'deploy-step' && entry.data) {
+          const d = entry.data as { step: string; status: 'started' | 'done' | 'failed'; message?: string };
+          setProgressSteps(prev => {
+            // Update wenn gleicher step schon da (started → done/failed Übergang)
+            const idx = prev.findIndex(p => p.step === d.step);
+            const next: DeployStep = { step: d.step, status: d.status, message: d.message, ts: entry.ts };
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = next;
+              return copy;
+            }
+            return [...prev, next];
+          });
+        }
+      },
+    );
+
     try {
       const r = await client.triggerProjectDeploy(projectId, {
         host: host.trim(),
@@ -130,10 +160,13 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
         // v736 — ENV-Stage als .env aufs Target
         env_stage: skipEnv ? undefined : envStage,
         skip_env: skipEnv,
+        progressTaskId: taskId, // v840
       });
       setResult(r);
     } finally {
       setSubmitting(false);
+      // Stream nach kurzem Delay schließen — letzte Events könnten noch im Buffer sein
+      setTimeout(() => { try { es.close(); } catch { /* */ } }, 2000);
     }
   }
 
@@ -376,6 +409,32 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
             </div>
           );
         })()}
+
+        {/* v840 — Live-Progress Step-Liste während Deploy läuft */}
+        {(submitting || progressSteps.length > 0) && (
+          <div className="mt-3 p-3 rounded text-xs bg-[#0d0d0d] border border-[#1f1f1f]">
+            <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-2">
+              Deploy-Fortschritt {submitting && progressSteps.length === 0 && '— warte auf Backend …'}
+            </div>
+            {progressSteps.length === 0 && submitting && (
+              <div className="text-gray-500 italic text-[11px]">⏳ Deploy gestartet, erste Events kommen gleich …</div>
+            )}
+            <div className="space-y-1">
+              {progressSteps.map((s, i) => {
+                const icon = s.status === 'done' ? '✓' : s.status === 'failed' ? '✗' : '⏳';
+                const color = s.status === 'done' ? 'text-emerald-300' : s.status === 'failed' ? 'text-red-300' : 'text-amber-300';
+                return (
+                  <div key={`${s.step}-${i}`} className="flex items-start gap-2 text-[11px]">
+                    <span className={`font-mono w-4 ${color}`}>{icon}</span>
+                    <span className="font-mono w-28 text-gray-300">{s.step}</span>
+                    {s.message && <span className="text-gray-500 flex-1 break-words">{s.message}</span>}
+                    <span className="text-[9px] text-gray-600">{new Date(s.ts).toLocaleTimeString('de-AT')}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Result */}
         {result && (

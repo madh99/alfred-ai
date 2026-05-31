@@ -3,6 +3,8 @@ import { Skill } from '../skill.js';
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
+// v840 — Optional Live-Progress via existing SSE-Infrastruktur. opt-in via input.progressTaskId.
+import { appendOutputLine, appendOutputEvent, markOutputEnded } from './code-agent/project-agent-skill.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -320,9 +322,31 @@ export class DeploySkill extends Skill {
     if (branch && !validateBranch(branch)) return { success: false, error: 'Ungültiger Branch-Name' };
     if (appPort !== undefined && (appPort < 1 || appPort > 65535)) return { success: false, error: 'app_port muss zwischen 1-65535 sein' };
 
+    // v840 — Optional Live-Progress-Stream. Wenn progressTaskId gesetzt: emittet
+    // appendOutputLine + appendOutputEvent, die das Frontend via existing SSE-Stream
+    // (/api/project-agents/:id/output) live anzeigt. ohne progressTaskId: identisches
+    // Verhalten wie vorher (kein opt-out nötig, einfach nicht senden).
+    const progressTaskId = typeof input.progressTaskId === 'string' && input.progressTaskId.length > 0
+      ? (input.progressTaskId as string)
+      : null;
+    const emitStep = (step: string, status: 'started' | 'done' | 'failed', message?: string): void => {
+      if (!progressTaskId) return;
+      try {
+        const icon = status === 'done' ? '✓' : status === 'failed' ? '✗' : '⏳';
+        appendOutputLine(progressTaskId, 'system', `${icon} ${step}${message ? ` — ${message}` : ''}`);
+        appendOutputEvent(progressTaskId, 'deploy-step', { step, status, message });
+      } catch { /* non-fatal */ }
+    };
+
     // 1. Test SSH
+    emitStep('ssh-test', 'started');
     const sshOk = await this.testSsh(host, user);
-    if (!sshOk) return { success: false, error: `SSH zu ${user}@${host} fehlgeschlagen. Prüfe Verbindung und SSH Key.` };
+    if (!sshOk) {
+      emitStep('ssh-test', 'failed', `SSH zu ${user}@${host} fehlgeschlagen`);
+      if (progressTaskId) { try { markOutputEnded(progressTaskId); } catch { /* */ } }
+      return { success: false, error: `SSH zu ${user}@${host} fehlgeschlagen. Prüfe Verbindung und SSH Key.` };
+    }
+    emitStep('ssh-test', 'done', `${user}@${host}`);
 
     const projectDir = `/home/${user}/${project}`;
     const steps: string[] = [];
@@ -339,8 +363,10 @@ export class DeploySkill extends Skill {
             branch = match?.[1] ?? 'main';
           } catch { branch = 'main'; }
         }
+        emitStep('git-clone', 'started', `Branch ${branch}`);
         await this.ssh(host, user, `git clone --branch ${branch} ${repoUrl} ${projectDir}`);
         steps.push(`📦 Geklont: ${repoUrl} (Branch: ${branch})`);
+        emitStep('git-clone', 'done', `Branch ${branch}`);
       } else if (dirExists === 'yes') {
         // Temporarily set remote URL with token for authenticated pull, then restore
         let originalRemoteUrl: string | undefined;
@@ -356,8 +382,10 @@ export class DeploySkill extends Skill {
           } catch { branch = 'main'; }
         }
         try {
+          emitStep('git-pull', 'started', branch);
           await this.ssh(host, user, `cd ${projectDir} && git fetch origin && git checkout ${branch} && git pull origin ${branch}`);
           steps.push(`📥 Gepullt: ${branch}`);
+          emitStep('git-pull', 'done', branch);
         } finally {
           // Restore original remote URL (remove token from .git/config)
           if (originalRemoteUrl) {
@@ -374,6 +402,7 @@ export class DeploySkill extends Skill {
     // v733 — 2.5: ENV-File aus project_environments injizieren (opt-out via skip_env)
     if (this.envProvider && input.skip_env !== true) {
       const stage = typeof input.env_stage === 'string' && input.env_stage.length > 0 ? input.env_stage : 'prod';
+      emitStep('env-write', 'started', `stage=${stage}`);
       try {
         const envs = await this.envProvider(project, stage);
         if (envs && Object.keys(envs).length > 0) {
@@ -383,11 +412,14 @@ export class DeploySkill extends Skill {
           const b64 = Buffer.from(content, 'utf8').toString('base64');
           await this.ssh(host, user, `echo '${b64}' | base64 -d > ${projectDir}/.env && chmod 600 ${projectDir}/.env`);
           steps.push(`🔐 ENV-File aus stage="${stage}" geschrieben (${lines.length} Keys, chmod 600)`);
+          emitStep('env-write', 'done', `${lines.length} Keys`);
         } else {
           steps.push(`ℹ️ Keine ENVs in stage="${stage}" gesetzt — überspringe .env-Write`);
+          emitStep('env-write', 'done', 'no envs configured');
         }
       } catch (err) {
         steps.push(`⚠️ ENV-Injection fehlgeschlagen: ${err instanceof Error ? err.message.slice(0, 100) : 'unknown'}`);
+        emitStep('env-write', 'failed', err instanceof Error ? err.message.slice(0, 100) : 'unknown');
       }
     }
 
@@ -402,14 +434,18 @@ export class DeploySkill extends Skill {
         : runtime === 'python' ? 'pip install -r requirements.txt'
         : '');
     if (installCmd) {
+      emitStep('install', 'started', installCmd);
       try {
         await this.ssh(host, user, `cd ${projectDir} && ${installCmd}`);
         steps.push(`📦 Dependencies installiert`);
+        emitStep('install', 'done');
       } catch (err) {
         steps.push(`⚠️ Install-Warnung: ${err instanceof Error ? err.message.slice(0, 100) : ''}`);
+        emitStep('install', 'failed', err instanceof Error ? err.message.slice(0, 100) : '');
       }
     } else if (pm === 'docker-compose') {
       steps.push(`📦 Host-side install übersprungen (docker-compose baut deps im Container)`);
+      emitStep('install', 'done', 'skipped (docker-compose)');
     }
 
     // 4. Build
@@ -419,16 +455,20 @@ export class DeploySkill extends Skill {
         : runtime === 'node' ? 'npm run build --if-present'
         : '');
     if (buildCmd) {
+      emitStep('build', 'started', buildCmd);
       try {
         await this.ssh(host, user, `cd ${projectDir} && ${buildCmd}`);
         steps.push(`🔨 Build erfolgreich`);
+        emitStep('build', 'done');
       } catch (err) {
         steps.push(`⚠️ Build-Warnung: ${err instanceof Error ? err.message.slice(0, 100) : ''}`);
+        emitStep('build', 'failed', err instanceof Error ? err.message.slice(0, 100) : '');
       }
     }
 
     // 5. Start/Restart service
     const startCmd = (input.start_command as string) ?? (runtime === 'node' ? 'npm start' : runtime === 'python' ? 'python main.py' : '');
+    emitStep('service-start', 'started', pm);
     try {
       if (pm === 'pm2') {
         const portEnv = appPort ? `PORT=${appPort} ` : '';
@@ -455,22 +495,29 @@ export class DeploySkill extends Skill {
         await this.ssh(host, user, `cd ${projectDir} && ${composeUp}`);
         steps.push(`🐳 ${composeUp.split(' ').slice(0, 2).join(' ')} up: ${project}`);
       }
+      emitStep('service-start', 'done', pm);
     } catch (err) {
+      emitStep('service-start', 'failed', err instanceof Error ? err.message.slice(0, 150) : '');
+      if (progressTaskId) { try { markOutputEnded(progressTaskId); } catch { /* */ } }
       return { success: false, error: `Service-Start fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`, data: { steps } };
     }
 
     // 6. Verify
     let verifyOk = false;
     if (appPort) {
+      emitStep('verify', 'started', `port ${appPort}`);
       try {
         await new Promise(resolve => setTimeout(resolve, 3000)); // wait 3s for startup
         const result = await this.ssh(host, user, `curl -s -o /dev/null -w '%{http_code}' http://localhost:${appPort}/ || echo 000`);
         verifyOk = result.startsWith('2') || result.startsWith('3');
         steps.push(verifyOk ? `✅ Verify: HTTP ${result} auf Port ${appPort}` : `⚠️ Verify: HTTP ${result} auf Port ${appPort}`);
+        emitStep('verify', verifyOk ? 'done' : 'failed', `HTTP ${result}`);
       } catch {
         steps.push(`⚠️ Verify fehlgeschlagen`);
+        emitStep('verify', 'failed', 'curl-error');
       }
     }
+    if (progressTaskId) { try { markOutputEnded(progressTaskId); } catch { /* */ } }
 
     // v609/v691 — auto-memory: persist the successful deploy as a fact-memory.
     // v691: upsertSystemMemory bevorzugt (umgeht manual-Guard, sodass auch ein
