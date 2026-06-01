@@ -17,6 +17,9 @@ interface ContextRef {
 interface Props {
   projectId: string;
   projectName: string;
+  /** v842 — Optional: ohne projectCwd ist der Sessions-Filter wirkungslos (zeigt alle global).
+   *  Wenn gesetzt: nur Sessions deren cwd dem project.cwd entspricht. */
+  projectCwd?: string;
 }
 
 /**
@@ -29,7 +32,7 @@ interface Props {
  *  - "lass uns über Y brainstormen" → LLM nutzt brainstorming-skill
  *  - "was ist der Stand?"       → Direktantwort
  */
-export function ProjectChat({ projectId, projectName }: Props) {
+export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
   const { client, user } = useConfig();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
@@ -115,10 +118,15 @@ export function ProjectChat({ projectId, projectName }: Props) {
       try {
         const all = await client.fetchProjectAgents();
         if (cancelled) return;
-        const running = all.filter(s =>
-          s.currentPhase !== 'done' && s.currentPhase !== 'failed' && s.currentPhase !== 'aborted' &&
-          (!s.cwd || s.cwd.includes(projectId.slice(0, 8)) || true) // sichtbar lassen — kein Projekt-Filter via cwd zuverlässig
-        );
+        // v842 — Bug-Fix: vorheriger Filter hatte `|| true` und zeigte alle GLOBALEN
+        // Sessions. Jetzt strict gegen projectCwd. Falls projectCwd nicht gesetzt
+        // (Backward-Compat): fallback auf alte Liberalität damit nichts versteckt wird.
+        const running = all.filter(s => {
+          const phaseActive = s.currentPhase !== 'done' && s.currentPhase !== 'failed' && s.currentPhase !== 'aborted';
+          if (!phaseActive) return false;
+          if (!projectCwd) return true; // ohne cwd-Prop: alles zeigen (alter Bug, aber sichtbar)
+          return s.cwd === projectCwd || s.cwd?.startsWith(projectCwd + '/');
+        });
         setRunningSessions(running);
       } catch { /* non-critical */ }
     };
@@ -127,7 +135,7 @@ export function ProjectChat({ projectId, projectName }: Props) {
     const intervalMs = expandedFull ? 5000 : 15000;
     const iv = setInterval(load, intervalMs);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [expandedFull, client, projectId]);
+  }, [expandedFull, client, projectId, projectCwd]); // v842 — projectCwd in deps
 
   // v690 — Wenn selectedTaskId gesetzt → die Session-Details laden
   useEffect(() => {

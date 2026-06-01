@@ -13,6 +13,7 @@ import { ProjectWorkStatsView } from './ProjectWorkStatsView';
 import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
 import { AgentConventionsModal } from './AgentConventionsModal';
+import { ProjectActiveIndicator } from './ProjectActiveIndicator';
 import { ProjectRoadmapView } from './ProjectRoadmapView';
 import { ProjectAutomationsView } from './ProjectAutomationsView';
 import { ProjectEnvironmentsView } from './ProjectEnvironmentsView';
@@ -693,6 +694,15 @@ export function ProjectsPage() {
                 </div>
               )}
 
+              {/* v842 — Live-Indikator für aktive Sandboxes + Plan-Agents */}
+              {client && (
+                <ProjectActiveIndicator
+                  client={client}
+                  projectId={detail.project.id}
+                  projectCwd={detail.project.cwd ?? ''}
+                />
+              )}
+
               {/* Status + Health-Mode Switcher */}
               <div className="flex flex-wrap gap-3 pt-2 border-t border-[#222]">
                 <div>
@@ -1246,7 +1256,7 @@ export function ProjectsPage() {
               <ProjectWorkStatsView projectId={detail.project.id} />
 
               {/* v658 — Projekt-Chat-Pane (collapsible) */}
-              <ProjectChat projectId={detail.project.id} projectName={detail.project.name} />
+              <ProjectChat projectId={detail.project.id} projectName={detail.project.name} projectCwd={detail.project.cwd ?? undefined} />
 
               {/* v659 — Deploy-Modal */}
               {deployModalOpen && (

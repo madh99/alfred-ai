@@ -5,6 +5,47 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.842] - 2026-06-01
+
+### Added — Projekt-Detail Live-Activity-Indikator + ProjectChat-Filter-Fix (v842)
+
+User-Wunsch: auf der Projekt-Detail-Karte sehen wenn Sandbox/Code-Agent/
+Plan-Agent für dieses Projekt gerade aktiv ist — egal woher getriggert.
+
+**A) Neue Komponente `ProjectActiveIndicator`**
+- Position: zwischen Projekt-Header und Status/Health-Mode-Switcher
+- Pollt alle 5s 2 Quellen:
+  - `client.listSandboxes({ projectId })` → filter status `creating|running|paused|merging`
+  - `client.fetchProjectAgents()` → strict `s.cwd === projectCwd || startsWith` + phase active
+- Render: kompakter LIVE-Banner mit per-Item Karte
+  - Sandbox: 🧪 + status + branch + projectType + port + last-active
+  - Plan-Agent: 🤖 + phase + goal + iter + files-changed + last-progress
+- Click → öffnet Interactive (Sandbox) bzw. project-agents (Plan-Agent)
+- Wenn 0 aktiv: Komponente returnt `null` (kein Platzverbrauch)
+
+**B) Bug-Fix in ProjectChat**
+- Alter Filter: `(!s.cwd || s.cwd.includes(projectId.slice(0, 8)) || true)`
+- `|| true` machte den Filter wirkungslos → ProjectChat-Sidebar zeigte
+  GLOBALE Sessions statt projekt-spezifische
+- Neu: strict gegen `projectCwd` (neue Prop), Fallback zu old behavior
+  wenn Prop fehlt (Backward-Compat für andere Caller)
+- ProjectsPage gibt nun `projectCwd={detail.project.cwd}` durch
+
+**Was bewusst nicht abgedeckt (out-of-scope für v842):**
+- Quick-Code-Agent OHNE Sandbox via Telegram-Chat → läuft fire-and-forget
+  via `cAgent.execute`, nicht persistent als running-task getrackt. Bräuchte
+  eigene Tracking-Tabelle. Phase 2 falls gewünscht.
+- Discuss-Mode-Tasks: read-only Sandbox-Tasks → durch Sandbox-Indikator
+  abgedeckt (Sandbox-Status ist running).
+
+**Side-Effects-Check:**
+- Neue Komponente: additiv, keine API-Changes
+- Filter-Fix: User sieht plötzlich nur projekt-spezifische Sessions im
+  Chat-Pane (vorher zeigte das auch von anderen Projekten — Bug-Fix,
+  kein Risk weil `|| true` jeden cwd-Match aushebelte)
+- 5s-Polling für 2 Endpoints pro offener Detail-View — Last vernachlässigbar
+- Keine DB-Migration, kein Schema-Change
+
 ## [0.19.0-multi-ha.841] - 2026-06-01
 
 ### Fixed — Deploy-Live-Progress wurde nie ausgelöst (v841)
