@@ -1,6 +1,8 @@
 import pino from 'pino';
+import pretty from 'pino-pretty';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { RotatingFileStream } from './rotating-file-stream.js';
 
 const redactOpts = {
   paths: [
@@ -19,9 +21,13 @@ export interface LogFileConfig {
   path?: string;
   /** Max file size before rotation. Accepts '10m', '50m', '100m'. Default: '10m' */
   maxSize?: string;
-  /** Number of rotated files to keep. Default: 10 */
+  /** Number of rotated files to keep. Default: 30 */
   maxFiles?: number;
-  /** Rotation frequency: 'daily', 'hourly', or null (size-only). Default: 'daily' */
+  /**
+   * Rotation frequency. Kept for backwards-compat with v8xx and earlier configs.
+   * v843+: only 'daily' rotation is supported; 'hourly' is silently treated as
+   * 'daily', and `null` disables date-based rotation (size-only file naming).
+   */
   frequency?: 'daily' | 'hourly' | null;
 }
 
@@ -31,11 +37,21 @@ export interface LogFileConfig {
  */
 function isStdoutAvailable(): boolean {
   try {
-    // fd 1 not writable when detached (nohup without redirect, closed terminal)
     return process.stdout.writable !== false;
   } catch {
     return false;
   }
+}
+
+function parseSize(input: string | undefined): number {
+  const DEFAULT = 10 * 1024 * 1024;
+  if (!input) return DEFAULT;
+  const m = /^(\d+(?:\.\d+)?)\s*([kmg]?)b?$/i.exec(input.trim());
+  if (!m) return DEFAULT;
+  const v = parseFloat(m[1]);
+  const unit = m[2].toLowerCase();
+  const mult = unit === 'k' ? 1024 : unit === 'm' ? 1024 ** 2 : unit === 'g' ? 1024 ** 3 : 1;
+  return Math.max(1024, Math.floor(v * mult));
 }
 
 export function createLogger(name: string, level?: string, options?: { version?: string; file?: LogFileConfig }): pino.Logger {
@@ -60,7 +76,6 @@ export function createLogger(name: string, level?: string, options?: { version?:
     },
   };
 
-  // Inject version as a base binding so every log line includes it
   if (options?.version) {
     baseOpts.base = { pid: process.pid, version: options.version };
   }
@@ -68,88 +83,51 @@ export function createLogger(name: string, level?: string, options?: { version?:
   const fileConf = options?.file;
   const fileEnabled = fileConf?.enabled ?? (process.env.ALFRED_LOG_FILE_ENABLED === 'true');
 
-  // Build transport targets
-  const targets: pino.TransportTargetOptions[] = [];
-
-  // stdout transport: skip when running detached (nohup/systemd) AND file logging is
-  // configured anywhere (check ENV directly — the core logger doesn't get the file config
-  // but still needs to skip stdout to avoid EIO crashes).
-  const globalFileEnabled = fileEnabled || process.env.ALFRED_LOG_FILE_ENABLED === 'true';
   const stdoutAvailable = isStdoutAvailable();
-  const skipStdout = globalFileEnabled && !process.stdout.isTTY;
+  const skipStdout = fileEnabled && !process.stdout.isTTY;
 
+  const streams: Array<{ stream: NodeJS.WritableStream; level?: pino.Level }> = [];
+
+  // stdout / pretty stream
   if (!skipStdout && stdoutAvailable) {
     if (usePretty) {
-      targets.push({
-        target: 'pino-pretty',
-        options: { colorize: true },
-        level: logLevel,
-      });
+      // v843 — pino-pretty's default export is a factory returning a Transform
+      // stream. Pipe to stdout and pass the transform itself to multistream.
+      // Pre-v843 used pino.transport({ target: 'pino-pretty' }) which ran in
+      // a worker thread; this main-thread path matches the file stream's
+      // sequential write semantics and avoids worker-shutdown races.
+      const prettyStream = pretty({ colorize: true });
+      prettyStream.pipe(process.stdout);
+      streams.push({ stream: prettyStream, level: logLevel as pino.Level });
     } else {
-      targets.push({
-        target: 'pino/file',
-        options: { destination: 1 },
-        level: logLevel,
-      });
+      streams.push({ stream: process.stdout, level: logLevel as pino.Level });
     }
   }
 
+  // file stream — main-thread rotating writer
   if (fileEnabled) {
     const filePath = fileConf?.path ?? process.env.ALFRED_LOG_FILE_PATH ?? './data/logs/alfred.log';
-    const maxSize = fileConf?.maxSize ?? process.env.ALFRED_LOG_FILE_MAX_SIZE ?? '10m';
+    const maxSizeRaw = fileConf?.maxSize ?? process.env.ALFRED_LOG_FILE_MAX_SIZE ?? '10m';
     const maxFiles = fileConf?.maxFiles ?? (Number(process.env.ALFRED_LOG_FILE_MAX_FILES) || 30);
-    // v603 — pass `frequency` and `dateFormat` to pino-roll. Previously declared in
-    // LogFileConfig but not forwarded, which meant rotation was size-only despite
-    // daily being the documented default. Result: mixed numeric + dated file names
-    // in the wild. Daily default keeps files predictable (one per day) and
-    // co-operates with size-based rotation when daily files exceed maxSize.
-    const envFreq = process.env.ALFRED_LOG_FILE_FREQUENCY;
-    const frequency: 'daily' | 'hourly' | null = fileConf?.frequency
-      ?? (envFreq === 'daily' || envFreq === 'hourly' ? envFreq as 'daily' | 'hourly' : envFreq === 'null' ? null : 'daily');
-    const dateFormat = process.env.ALFRED_LOG_FILE_DATE_FORMAT ?? 'yyyy-MM-dd';
 
-    // Ensure directory exists (sync, runs once at startup)
-    try {
-      mkdirSync(dirname(filePath), { recursive: true });
-    } catch { /* directory may already exist */ }
+    try { mkdirSync(dirname(filePath), { recursive: true }); } catch { /* exists */ }
 
-    const pinoRollOptions: Record<string, unknown> = {
-      file: filePath,
-      size: maxSize,
-      limit: { count: maxFiles },
-      mkdir: true,
-      // v603 (pino-roll v4) — creates a stable symlink at <basename> pointing
-      // to the active rotated file. Lets you `tail -F alfred.log` regardless
-      // of date-suffix rotation.
+    const fileStream = new RotatingFileStream({
+      filePath,
+      maxSize: parseSize(maxSizeRaw),
+      maxFiles,
       symlink: true,
-    };
-    if (frequency) {
-      pinoRollOptions.frequency = frequency;
-      pinoRollOptions.dateFormat = dateFormat;
-    }
-
-    targets.push({
-      target: 'pino-roll',
-      options: pinoRollOptions,
-      level: logLevel,
     });
+    fileStream.on('error', (err) => {
+      try { process.stderr.write(`[logger] file stream error: ${(err as Error).message}\n`); } catch { /* */ }
+    });
+    streams.push({ stream: fileStream, level: logLevel as pino.Level });
   }
 
-  // Fallback: if no targets (file disabled + stdout unavailable), use stdout anyway
-  if (targets.length === 0) {
-    if (usePretty) {
-      const transport = pino.transport({ target: 'pino-pretty', options: { colorize: true } });
-      return pino(baseOpts, transport);
-    }
+  // Fallback when no stream resolved (file disabled + stdout unavailable)
+  if (streams.length === 0) {
     return pino(baseOpts);
   }
 
-  if (targets.length === 1) {
-    const transport = pino.transport(targets[0]);
-    return pino(baseOpts, transport);
-  }
-
-  // Multiple transports (stdout + file)
-  const transport = pino.transport({ targets });
-  return pino(baseOpts, transport);
+  return pino(baseOpts, pino.multistream(streams));
 }

@@ -5,6 +5,55 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.843] - 2026-06-03
+
+### Fixed — Log-Rotation Mitternacht-Race entschärft (v843)
+
+Alfred wurde mehrfach auf den Millisekundenbruch von Mitternacht (24.05.,
+25.05., 03.06.2026 jeweils `00:00:00.0XX` CEST) ohne `Received shutdown
+signal` und ohne `Uncaught exception` gestoppt. Ursache: `pino-roll@4`
+triggert daily-rotation aus einem Worker-Thread via `setTimeout`; ein
+gleichzeitiger Log-Write während des Rotation-Streamschwenks bringt den
+Logger in einen defekten Zustand, der kaskadiert zu `Alfred.stop()` führt.
+Race-Bug in der Library, nicht im Alfred-Code; trat empirisch in ~21 %
+der Nächte auf.
+
+**Behoben durch eigenen Main-Thread `RotatingFileStream`:**
+- `packages/logger/src/rotating-file-stream.ts` — neue `Writable`-Subklasse
+- Rotation passiert **sequenziell innerhalb von `_write`**: jeder Write
+  prüft Datum + Größe und rotiert vor dem Schreiben. Da pino-multistream
+  synchronen Hand-off macht, ist Race-by-Design ausgeschlossen.
+- Eigenes Mutex + Pending-Buffer für Writes während Rotation
+- `'error'`-Listener auf Stream → schreibt nach stderr statt zu crashen
+- Retention läuft alle 6h + beim Start (`setImmediate`)
+- Symlink-Update best-effort (Windows-NTFS-tolerant)
+
+**Was bewusst gleich bleibt — keine Funktion verloren:**
+- File-Naming `alfred.YYYY-MM-DD.N.log` identisch
+- Daily- und Size-Rotation funktional unverändert
+- Symlink `alfred.log` → aktives File
+- Retention `maxFiles: 30` (mtime-basiert)
+- ENV-Vars `ALFRED_LOG_FILE_*` unverändert
+- `LogFileConfig`-Interface unverändert (Caller-Code unberührt)
+- Stdout-Transport im TTY-Modus + pino-pretty im Dev-Modus
+- Redaction-Pfade, `pino.stdSerializers.err`, Version-Binding
+- Bestehende Logfiles werden beim Start erkannt und weiter beschrieben
+
+**Logger-Umbau (`packages/logger/src/logger.ts`):**
+- `pino.transport({ targets: [...] })` raus
+- `pino.multistream(streams)` rein — alle Streams im Main-Thread
+- pino-pretty als Factory-Transform statt Worker-Target
+
+**Audit-Log (`packages/logger/src/audit.ts`):** gleicher Umbau, gleiche
+30-Tage-Retention.
+
+**Dependencies entfernt:** `pino-roll@^4.0.0` aus `packages/logger/` und
+`packages/cli/package.json`.
+
+**Tests:** `packages/logger/src/rotating-file-stream.test.ts` mit 8 Cases
+inkl. Day-Roll, Size-Overflow, Resume-Index, Retention, Symlink, 100
+sequenzielle Writes als Race-Simulation.
+
 ## [0.19.0-multi-ha.842] - 2026-06-01
 
 ### Added — Projekt-Detail Live-Activity-Indikator + ProjectChat-Filter-Fix (v842)

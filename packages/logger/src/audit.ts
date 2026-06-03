@@ -2,6 +2,7 @@ import pino from 'pino';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { AuditEntry } from '@alfred/types';
+import { RotatingFileStream } from './rotating-file-stream.js';
 
 const auditRedactOpts = {
   paths: [
@@ -18,22 +19,21 @@ export class AuditLogger {
   private logger: pino.Logger;
 
   constructor(auditLogPath: string = './data/logs/audit.log') {
-    // Ensure directory exists
     try { mkdirSync(dirname(auditLogPath), { recursive: true }); } catch { /* exists */ }
 
-    const transport = pino.transport({
-      target: 'pino-roll',
-      options: {
-        file: auditLogPath,
-        size: '10m',
-        frequency: 'daily',
-        dateFormat: 'yyyy-MM-dd',
-        limit: { count: 30 }, // Audit logs: 30 days retention
-        mkdir: true,
-        symlink: true,
-      },
+    // v843 — replaced pino.transport({ target: 'pino-roll' }) with a main-thread
+    // RotatingFileStream. Same daily+size rotation behaviour, no worker-thread
+    // race at midnight. See packages/logger/src/rotating-file-stream.ts.
+    const stream = new RotatingFileStream({
+      filePath: auditLogPath,
+      maxSize: 10 * 1024 * 1024,
+      maxFiles: 30,
+      symlink: true,
     });
-    this.logger = pino({ name: 'audit', redact: auditRedactOpts }, transport);
+    stream.on('error', (err) => {
+      try { process.stderr.write(`[audit] file stream error: ${(err as Error).message}\n`); } catch { /* */ }
+    });
+    this.logger = pino({ name: 'audit', redact: auditRedactOpts }, stream);
   }
 
   log(entry: AuditEntry): void {
