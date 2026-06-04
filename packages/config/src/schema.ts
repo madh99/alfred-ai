@@ -216,6 +216,10 @@ export const CodeAgentDefinitionSchema = z.object({
   env: z.record(z.string()).optional(),
   cwd: z.string().optional(),
   timeoutMs: z.number().max(900_000).optional(),
+  // v844 — Stream-Output-Mode + Heartbeat-Pfade. Optional; default 'text' und
+  // keine zusätzlichen Pfade halten Backwards-Compat zu pre-v844 Configs.
+  outputFormat: z.enum(['text', 'claude-stream-json', 'codex-jsonl', 'vibe-streaming']).optional(),
+  additionalHeartbeatPaths: z.array(z.string()).optional(),
 });
 
 export const GitHubForgeConfigSchema = z.object({

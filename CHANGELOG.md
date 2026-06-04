@@ -5,6 +5,85 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.844] - 2026-06-04
+
+### Fixed — Project-Agent unfaire 600s-Kills bei Audit/Recherche-Phasen (v844)
+
+**Symptom:** ~37 % Failure-Rate bei `claude-code`-Sessions (Postgres 14-Tage-
+Stats: 50 done / 30 failed). Bei `/mnt/cluster-projects/sandbox-worktrees/...`
+sogar 67 %. Pattern in allen Fails identisch:
+`exitCode: 124, "killed: no output for 600s (last-activity=initial)"`. Häufig
+Phase 1/2/4 mit 0 geänderten Dateien, obwohl Claude bewiesenermaßen aktiv war.
+
+**Root-Cause (3 Layer):**
+
+1. **claude/codex/vibe default `--print` puffert stdout bis zum Ende.** Bei
+   großen Phasen (Repo-Audit, Multi-File-Recherche) laufen die Agents 10–
+   30 min stumm. Der `agent-executor` Inactivity-Timer (600 s) killt
+   mitten in der Arbeit. Empirisch verifiziert: Claude-Session-JSONL zeigte
+   Tool-Calls bis zur Sekunde des Kills, aber stdout blieb leer.
+
+2. **`fs-heartbeat` scannte nur `cwd`.** Claude schreibt seine Session-Files
+   in `$HOME/.claude/projects/...`, nicht im Projekt-cwd. Read-only-Phasen
+   (Audit) erzeugen keine cwd-Änderungen → `last-activity=initial` obwohl
+   Claude rege arbeitet.
+
+3. **Long-Phase-Regex erkannte Audit-Phasen nicht.** Pattern in
+   `project-agent-runner.ts:582` matchte nur `npm install|build|test|
+   migration|schema|refactor|…` aber nicht `audit|recherche|analyse|
+   projektstruktur|identifizier`. Audit-Phasen liefen mit 10 min Default-
+   Timeout statt 20 min.
+
+**Behoben — neue Stream-Output-Pipeline:**
+
+- **`packages/skills/src/built-in/code-agent/agent-output-parser.ts`** (neu)
+  — parst JSONL-Streams von Claude (`--output-format stream-json`), Codex
+  (`exec --json`) und Vibe (`-p --output streaming`). Extrahiert pro Event
+  ein human-readable Progress-Snippet (`🔧 Bash: ls src/`, `📖 Read: x.ts`,
+  `💬 (Antwort)`) plus den finalen Text-Content separat.
+
+- **`packages/skills/src/built-in/code-agent/agent-executor.ts`** —
+  - `upgradeAgentDef()`: auto-detect für legacy configs auf .92/.93. Bei
+    `command/argsTemplate` matching claude/codex/vibe werden Stream-Flags
+    + `outputFormat` + `additionalHeartbeatPaths` IN-MEMORY injected.
+    User-Config bleibt unverändert, expliziter `outputFormat` überschreibt.
+  - `snapshotMtimes(roots)`: nimmt jetzt Array von Pfaden statt single dir.
+  - stdout-Handler: line-buffered, parsed je nach Format. Bei Stream-Mode
+    werden Progress-Events nach SSE-Buffer + `onProgress` gepusht; finaler
+    Text wird in `extractedText` akkumuliert und als `result.stdout`
+    zurückgegeben (so bleibt der Caller-Code identisch).
+
+- **`packages/types/src/config.ts`** + **`packages/config/src/schema.ts`**
+  — `CodeAgentDefinitionConfig` um `outputFormat` und
+  `additionalHeartbeatPaths` erweitert.
+
+- **`packages/core/src/project-agent-runner.ts:582`** — Long-Phase-Regex
+  ergänzt um `audit|recherche|analyse|projektstruktur|repo-stand|
+  identifizier|lokalisier|isolier|review|exploration|inventar|scan|
+  prüfung|cleanup|bereinigen|gallery-schema`.
+
+- **`packages/cli/src/commands/setup.ts`** — Setup-Wizard generiert für
+  claude/codex neue Defaults mit Stream-Flags inline.
+
+**Was unverändert bleibt — keine Funktion verloren:**
+
+- Public API von `executeAgent()` identisch (`stdout`/`stderr`/`exitCode`/
+  `modifiedFiles`).
+- Bestehende user-configs ohne `outputFormat` werden automatisch upgegradet
+  — kein Config-Touch nötig auf .92/.93.
+- `text`-Mode bleibt erhalten als Fallback für unbekannte Agents.
+- SSE-Output-Buffer für UI bekommt jetzt human-readable Strings (`🔧 Bash:
+  …`) statt raw JSON — UI-Renderer unverändert.
+- Inactivity-Timer-Limits (10 min normal, 20 min long-phase, 60 min
+  absolute cap) unverändert.
+- pino-roll Mitternacht-Fix aus v843 bleibt aktiv.
+
+**Tests:** `packages/skills/src/built-in/code-agent/agent-output-parser.test.ts`
+mit 20 Cases — text-Passthrough, Claude-Events (system/assistant/tool_use/
+text/result/rate-limit/tool-error), Codex-Events (thread.started/turn.started/
+agent_message/shell_command/turn.completed), Vibe-Events (message/text/
+tool_use/done). Plus malformed-JSON Toleranz und Unknown-Event Skip.
+
 ## [0.19.0-multi-ha.843] - 2026-06-03
 
 ### Fixed — Log-Rotation Mitternacht-Race entschärft (v843)

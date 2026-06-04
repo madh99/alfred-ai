@@ -233,6 +233,21 @@ export interface CodeAgentDefinitionConfig {
   env?: Record<string, string>;
   cwd?: string;
   timeoutMs?: number;
+  /**
+   * v844 — Output-Format des Agents. Bestimmt wie der Parser stdout interpretiert.
+   * - 'text' (Default): Plain text, raw stdout wird durchgereicht
+   * - 'claude-stream-json': JSONL aus `claude --output-format stream-json`
+   * - 'codex-jsonl': JSONL aus `codex exec --json`
+   * - 'vibe-streaming': JSONL aus `vibe -p --output streaming`
+   */
+  outputFormat?: 'text' | 'claude-stream-json' | 'codex-jsonl' | 'vibe-streaming';
+  /**
+   * v844 — Zusätzliche Pfade die der fs-mtime-Heartbeat im inactivity-Timer
+   * scannen soll. Ergänzt cwd-Scan. Wichtig für Agents die ihre Session-Files
+   * außerhalb von cwd schreiben (z.B. claude: ~/.claude/projects/...).
+   * Unterstützt `~` und `$HOME` als Prefix.
+   */
+  additionalHeartbeatPaths?: string[];
 }
 
 export interface GitHubForgeConfig {

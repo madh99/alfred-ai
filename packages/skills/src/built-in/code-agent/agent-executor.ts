@@ -1,9 +1,11 @@
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
 import { appendOutputLine } from './project-agent-skill.js';
 import { killAgentTree } from './process-tree.js';
+import { createParserState, parseLine, type AgentOutputFormat } from './agent-output-parser.js';
 
 // v635 — Default auf 12min angehoben (war 10min v625). Praxisbefund Phase 24
 // (Datenmodell/Migration): claude-code ging 600s lang stdout-stumm obwohl
@@ -58,6 +60,89 @@ function preflightAgent(agentDef: CodeAgentDefinitionConfig): string | null {
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', '.cache']);
 
+/**
+ * v844 — Expandiert `~` und `$HOME` zu absolutem Pfad. Wird für
+ * `additionalHeartbeatPaths` benötigt damit configs Pfade wie
+ * `~/.claude/projects` schreiben können.
+ */
+function expandHome(p: string): string {
+  const home = os.homedir();
+  if (p === '~') return home;
+  if (p.startsWith('~/')) return path.join(home, p.slice(2));
+  return p.replace(/\$HOME/g, home);
+}
+
+/**
+ * v844 — Backwards-compat upgrade für agent-defs aus pre-v844 configs.
+ *
+ * Bestehende Installations (z.B. /root/alfred/config/default.yml auf .92)
+ * haben claude/codex/vibe mit Default-Output-Mode (text). Bei langen Phasen
+ * → 600s stdout-Stille → unfairer kill (siehe v844 changelog).
+ *
+ * Statt user-configs zu mutieren, detecten wir den Agent-Typ am `command`
+ * und injecten Stream-Flags + outputFormat IN-MEMORY. User-config bleibt
+ * unverändert; expliziter outputFormat in config überschreibt die Detection.
+ */
+function upgradeAgentDef(def: CodeAgentDefinitionConfig): CodeAgentDefinitionConfig {
+  if (def.outputFormat) return def; // user has explicit setting — respect it
+  const tpl = Array.isArray(def.argsTemplate) ? def.argsTemplate : [];
+
+  const isClaude = tpl.includes('claude') || /^|\/claude($|\s)/.test(def.command);
+  const isCodex  = tpl.includes('codex')  || /^|\/codex($|\s)/.test(def.command);
+  const isVibe   = tpl.includes('vibe')   || /^|\/vibe($|\s)/.test(def.command);
+
+  if (!isClaude && !isCodex && !isVibe) return def;
+
+  const updated: CodeAgentDefinitionConfig = { ...def, argsTemplate: [...tpl] };
+  const hasFlag = (flag: string) => updated.argsTemplate.includes(flag);
+
+  if (isClaude) {
+    updated.outputFormat = 'claude-stream-json';
+    // Required combo: --output-format stream-json + --verbose
+    if (!hasFlag('--output-format')) injectAfterClaudePrintFlag(updated.argsTemplate, ['--output-format', 'stream-json']);
+    if (!hasFlag('--verbose'))       injectAfterClaudePrintFlag(updated.argsTemplate, ['--verbose']);
+    const existing = updated.additionalHeartbeatPaths ?? [];
+    if (!existing.includes('~/.claude/projects')) {
+      updated.additionalHeartbeatPaths = [...existing, '~/.claude/projects'];
+    }
+  } else if (isCodex) {
+    updated.outputFormat = 'codex-jsonl';
+    if (!hasFlag('--json')) injectAfterCodexExec(updated.argsTemplate, ['--json']);
+    const existing = updated.additionalHeartbeatPaths ?? [];
+    if (!existing.includes('~/.codex/sessions')) {
+      updated.additionalHeartbeatPaths = [...existing, '~/.codex/sessions'];
+    }
+  } else if (isVibe) {
+    updated.outputFormat = 'vibe-streaming';
+    // vibe nutzt `--output text` als Default — auf streaming wechseln
+    const outputIdx = updated.argsTemplate.indexOf('--output');
+    if (outputIdx >= 0 && outputIdx + 1 < updated.argsTemplate.length) {
+      updated.argsTemplate[outputIdx + 1] = 'streaming';
+    } else {
+      updated.argsTemplate.push('--output', 'streaming');
+    }
+    const existing = updated.additionalHeartbeatPaths ?? [];
+    if (!existing.includes('~/.vibe/sessions')) {
+      updated.additionalHeartbeatPaths = [...existing, '~/.vibe/sessions'];
+    }
+  }
+  return updated;
+}
+
+/** Insert flags right after `--print` (claude) or at end if --print missing. */
+function injectAfterClaudePrintFlag(args: string[], flags: string[]): void {
+  const printIdx = args.findIndex(a => a === '--print' || a === '-p');
+  if (printIdx >= 0) args.splice(printIdx + 1, 0, ...flags);
+  else args.push(...flags);
+}
+
+/** Insert flags right after `exec` (codex subcommand). */
+function injectAfterCodexExec(args: string[], flags: string[]): void {
+  const idx = args.indexOf('exec');
+  if (idx >= 0) args.splice(idx + 1, 0, ...flags);
+  else args.unshift(...flags);
+}
+
 export interface AgentExecutionResult {
   stdout: string;
   stderr: string;
@@ -96,8 +181,12 @@ function truncateOutput(text: string): string {
 
 /**
  * Snapshot file mtimes in a directory, skipping ignored dirs.
+ * v844 — accepts multiple roots so the heartbeat can also watch agent-side
+ * session paths (claude `~/.claude/projects/...`) where the agent writes
+ * even when it stays silent on stdout.
  */
-function snapshotMtimes(dir: string): Map<string, number> {
+function snapshotMtimes(dirOrDirs: string | string[]): Map<string, number> {
+  const roots = Array.isArray(dirOrDirs) ? dirOrDirs : [dirOrDirs];
   const result = new Map<string, number>();
 
   function walk(current: string): void {
@@ -123,7 +212,9 @@ function snapshotMtimes(dir: string): Map<string, number> {
     }
   }
 
-  walk(dir);
+  for (const root of roots) {
+    if (root && fs.existsSync(root)) walk(root);
+  }
   return result;
 }
 
@@ -146,7 +237,7 @@ function detectModifiedFiles(
 }
 
 export async function executeAgent(
-  agentDef: CodeAgentDefinitionConfig,
+  agentDefRaw: CodeAgentDefinitionConfig,
   prompt: string,
   options: {
     cwd?: string;
@@ -166,6 +257,9 @@ export async function executeAgent(
     taskId?: string;
   } = {},
 ): Promise<AgentExecutionResult> {
+  // v844 — auto-upgrade legacy agent defs to stream-mode (claude/codex/vibe).
+  // No-op if user explicitly set outputFormat in config.
+  const agentDef = upgradeAgentDef(agentDefRaw);
   const cwd = options.cwd ?? agentDef.cwd ?? process.cwd();
 
   // v608 F5 — preflight: catch missing binary BEFORE spawning, so we don't
@@ -206,8 +300,25 @@ export async function executeAgent(
   // Use shell on Windows for .cmd/.bat wrappers
   const isWindows = process.platform === 'win32';
 
+  // v844 — Heartbeat-Roots: cwd + optional agent-spezifische Session-Pfade
+  // (~/.claude/projects/..., ~/.codex/sessions/..., etc.). Erkennt aktivität
+  // wenn der Agent dort schreibt obwohl im cwd nichts passiert (typisch für
+  // Audit/Read-only Phasen).
+  const heartbeatRoots: string[] = [cwd];
+  if (Array.isArray(agentDef.additionalHeartbeatPaths)) {
+    for (const p of agentDef.additionalHeartbeatPaths) {
+      if (typeof p === 'string' && p.length > 0) heartbeatRoots.push(expandHome(p));
+    }
+  }
+
+  // v844 — Output-Parser: bei stream-formats werden JSON-events in human-
+  // readable progress-zeilen umgewandelt und der finale text-content separat
+  // akkumuliert (wird als stdout returned). Default 'text' = passthrough.
+  const outputFormat: AgentOutputFormat = (agentDef.outputFormat as AgentOutputFormat) ?? 'text';
+  const parserState = createParserState(outputFormat);
+
   // Snapshot before execution
-  const beforeSnapshot = snapshotMtimes(cwd);
+  const beforeSnapshot = snapshotMtimes(heartbeatRoots);
   const startTime = Date.now();
 
   return new Promise<AgentExecutionResult>((resolve) => {
@@ -283,7 +394,7 @@ export async function executeAgent(
     let lastHeartbeatSnapshot = beforeSnapshot;
     const heartbeatInterval = setInterval(() => {
       try {
-        const nowSnapshot = snapshotMtimes(cwd);
+        const nowSnapshot = snapshotMtimes(heartbeatRoots);
         // Compare against last heartbeat snapshot — count files that changed since
         let changed = 0;
         for (const [fp, mtime] of nowSnapshot) {
@@ -305,17 +416,41 @@ export async function executeAgent(
       killAgentTree(child.pid, cwd, { detached: !isWindows, graceMs: 5_000 });
     }, ABSOLUTE_CAP_MS);
 
+    // v844 — Bei stream-formats akkumulieren wir den finalen text-content
+    // separat, damit codeResult.stdout für Caller (project-agent-runner,
+    // code-agent-skill) genauso aussieht wie bei text-Mode (human-readable).
+    // rawStdout bleibt für Debug verfügbar (wird nicht returned aber im
+    // stderr-Fall via fallback genutzt).
+    let extractedText = '';
+    let stdoutBuffer = ''; // partial line buffer (chunks können mid-line geteilt sein)
+    const isStreaming = outputFormat !== 'text';
+
     child.stdout?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stdout += text;
       options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
       resetInactivity('stdout'); // v619 D0 — extend inactivity timer on every chunk
-      // v651 — Live-Output-Buffer pro Zeile (max die letzten N Zeilen vorhalten)
-      if (options.taskId) {
-        for (const line of text.split('\n')) {
-          const trimmed = line.replace(/\r$/, '');
-          if (trimmed.length === 0) continue;
-          try { appendOutputLine(options.taskId, 'stdout', trimmed); } catch { /* best-effort */ }
+
+      stdoutBuffer += text;
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? ''; // keep incomplete last line for next chunk
+      for (const rawLine of lines) {
+        const trimmed = rawLine.replace(/\r$/, '');
+        if (trimmed.length === 0) continue;
+        if (isStreaming) {
+          const parsed = parseLine(parserState, trimmed);
+          for (const p of parsed.progress) {
+            if (options.taskId) {
+              try { appendOutputLine(options.taskId, 'stdout', p); } catch { /* */ }
+            }
+            options.onProgress?.(`[${agentDef.name}] ${p}`);
+          }
+          for (const f of parsed.finalTextChunks) extractedText += (extractedText ? '\n' : '') + f;
+        } else {
+          // text-mode: passthrough wie bisher
+          if (options.taskId) {
+            try { appendOutputLine(options.taskId, 'stdout', trimmed); } catch { /* */ }
+          }
         }
       }
     });
@@ -353,7 +488,23 @@ export async function executeAgent(
       if (halfwayTimer) clearTimeout(halfwayTimer);
       clearTimeout(absoluteTimer);
       clearInterval(heartbeatInterval);
+      // v844 — flush trailing partial line through parser
+      if (stdoutBuffer.length > 0) {
+        const trimmed = stdoutBuffer.replace(/\r$/, '');
+        if (trimmed.length > 0 && isStreaming) {
+          const parsed = parseLine(parserState, trimmed);
+          for (const p of parsed.progress) {
+            if (options.taskId) { try { appendOutputLine(options.taskId, 'stdout', p); } catch { /* */ } }
+          }
+          for (const f of parsed.finalTextChunks) extractedText += (extractedText ? '\n' : '') + f;
+        } else if (trimmed.length > 0 && options.taskId) {
+          try { appendOutputLine(options.taskId, 'stdout', trimmed); } catch { /* */ }
+        }
+        stdoutBuffer = '';
+      }
       const durationMs = Date.now() - startTime;
+      // v844 — afterSnapshot nur über cwd (für modifiedFiles), nicht über
+      // additionalHeartbeatPaths — der Caller will Files-im-Projekt zurück.
       const afterSnapshot = snapshotMtimes(cwd);
       const modifiedFiles = detectModifiedFiles(beforeSnapshot, afterSnapshot, cwd);
 
@@ -370,8 +521,15 @@ export async function executeAgent(
         finalStderr = stderr + `\n[agent-executor] killed: caller aborted (Stop-Signal)`;
       }
 
+      // v844 — bei stream-mode geben wir den extrahierten human-readable text
+      // zurück (statt raw JSON-lines). Fallback auf raw stdout falls der parser
+      // nichts extrahiert hat (z.B. Agent crashte vor erstem assistant_message).
+      const stdoutForCaller = isStreaming
+        ? (extractedText.length > 0 ? extractedText : stdout)
+        : stdout;
+
       resolve({
-        stdout: truncateOutput(stdout),
+        stdout: truncateOutput(stdoutForCaller),
         stderr: truncateOutput(finalStderr),
         exitCode: killed ? 124 : (code ?? 1),
         durationMs,

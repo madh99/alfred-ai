@@ -579,7 +579,13 @@ export class ProjectAgentRunner {
         // Datenmodell/Migration/Schema/Refactor/Gallery-Schema — diese Phasen
         // schreiben oft viele Dateien in stiller Folge (LLM-Thinking → File-Write
         // → kein stdout), wurden vorher mit 10min-Default fälschlich gekillt.
-        const longPhasePattern = /\bnpm\s+(install|run\s+build|run\s+lint|run\s+typecheck|test|run\s+test|ci)\b|\bvalidier|\bvalidation\b|\bvalidate\b|\bbuild-?fehler\b|\breproduzieren\b|\bdatenmodell\b|\bdata\s*model\b|\bdatamodel\b|\bmigration(?:en|s)?\b|\bschema\b|\brefactor(?:ing)?\b|\bumbau\b|\btypsystem\b|\btype\s*system\b/i;
+        // v844 — Audit/Recherche/Identify-Phasen brauchen ebenfalls 20min. Vorher
+        // wurden Phase 1 "Projektstruktur identifizieren" oder "Repo-Audit"
+        // routinemäßig als Normal-Phase (10min) klassifiziert und nach 600s
+        // stdout-Stille gekillt obwohl claude noch fleißig Read/Glob/Grep machte.
+        // Empirisch: in 14 Tagen 30 fails — 18 davon auf alpbyte-games, viele in
+        // Phase 1/2/4 mit `last-activity=initial` (siehe v844-Analyse).
+        const longPhasePattern = /\bnpm\s+(install|run\s+build|run\s+lint|run\s+typecheck|test|run\s+test|ci)\b|\bvalidier|\bvalidation\b|\bvalidate\b|\bbuild-?fehler\b|\breproduzieren\b|\bdatenmodell\b|\bdata\s*model\b|\bdatamodel\b|\bmigration(?:en|s)?\b|\bschema\b|\brefactor(?:ing)?\b|\bumbau\b|\btypsystem\b|\btype\s*system\b|\baudit\b|\brecherche\b|\banalyse\b|\banalysis\b|\binventar\b|\binventory\b|\bscan(?:nen|ning)?\b|\bpr(?:ü|ue)fung\b|\breview\b|\bexploration\b|\bprojektstruktur\b|\brepo-?stand\b|\bidentifizier\b|\blokalisier\b|\bisolier\b|\bauflisten\b|\bcleanup\b|\bbereinigen\b|\bgallery-?schema\b/i;
         const isLongPhase = longPhasePattern.test(phase);
         // v625 — Normal-Phase auf 10min angehoben (war 5min); Long-Phase bleibt 20min.
         const phaseTimeout = isLongPhase ? 20 * 60_000 : 10 * 60_000;

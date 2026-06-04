@@ -277,7 +277,9 @@ const KNOWN_AGENTS: KnownAgent[] = [
     name: 'claude-code',
     label: 'Claude Code',
     command: 'claude',
-    argsTemplate: ['-p', '{{prompt}}'],
+    // v844 — stream-json + --verbose damit der inactivity-Timer nicht von
+    // claude's stdout-Puffer ausgehungert wird (siehe v844 CHANGELOG).
+    argsTemplate: ['-p', '--output-format', 'stream-json', '--verbose', '{{prompt}}'],
     promptVia: 'arg',
     whichCmd: 'claude',
   },
@@ -285,7 +287,8 @@ const KNOWN_AGENTS: KnownAgent[] = [
     name: 'codex',
     label: 'OpenAI Codex CLI',
     command: 'codex',
-    argsTemplate: ['exec', '--dangerously-bypass-approvals-and-sandbox', '{{prompt}}'],
+    // v844 — --json für JSONL streaming events
+    argsTemplate: ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox', '{{prompt}}'],
     promptVia: 'arg',
     whichCmd: 'codex',
   },
