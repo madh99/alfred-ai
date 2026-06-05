@@ -1,6 +1,6 @@
 {
   "name": "@madh-io/alfred-ai",
-  "version": "0.19.0-multi-ha.851.1",
+  "version": "0.19.0-multi-ha.851.2",
   "description": "Alfred — Personal AI Assistant across Telegram, Discord, WhatsApp, Matrix & Signal",
   "type": "module",
   "bin": {
@@ -38,7 +38,6 @@
     "url": "https://github.com/madh99/alfred-ai/issues"
   },
   "dependencies": {
-    "@alfred/mcp-server": "workspace:*",
     "@anthropic-ai/sdk": "^0.39.0",
     "@google/genai": "^1.45.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
@@ -85,6 +84,7 @@
     "@alfred/config": "workspace:*",
     "@alfred/core": "workspace:*",
     "@alfred/logger": "workspace:*",
+    "@alfred/mcp-server": "workspace:*",
     "@alfred/security": "workspace:*",
     "@alfred/storage": "workspace:*",
     "@alfred/types": "workspace:*",

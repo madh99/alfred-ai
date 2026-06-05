@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.851.2] - 2026-06-05
+
+### Fixed — `npm install -g` schlägt durch leaked `workspace:*` fehl
+
+`v851.1` ließ sich nicht global installieren:
+
+```
+npm error code EUNSUPPORTEDPROTOCOL
+npm error Unsupported URL Type "workspace:": workspace:*
+```
+
+Ursache: `@alfred/mcp-server` war versehentlich in `dependencies` von
+`packages/cli/package.json` mit Protokoll `workspace:*` deklariert.
+`pnpm publish` würde rewriten — `npm publish` (manuell genutzt) tut
+das nicht, sodass das Protokoll im publizierten Tarball lebt und
+`npm install -g` daran zerbricht.
+
+`@alfred/mcp-server` ist außerdem `private: true` und wird vollständig
+in den CLI-Bundle eingebacken — eine Runtime-Auflösung über npm ist
+nicht notwendig.
+
+**Fix:** `@alfred/mcp-server` von `dependencies` nach `devDependencies`
+verschoben (selbe Stelle wie die anderen Workspace-Pakete
+`@alfred/core`, `@alfred/storage` etc., die seit jeher dort liegen
+und beim globalen Install korrekt ignoriert werden).
+
+Keine Funktionsänderung, reines Publish-Manifest-Fix.
+
 ## [0.19.0-multi-ha.851.1] - 2026-06-05
 
 ### Added — Semantic Feature-Search + Match-Phase + Snapshot-Import-Skill (v851.1)
