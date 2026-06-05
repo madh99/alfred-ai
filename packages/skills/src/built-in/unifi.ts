@@ -65,7 +65,11 @@ export class UniFiSkill extends Skill {
         },
         limit: {
           type: 'number',
-          description: 'Maximum number of items to return (for list_alerts, list_events)',
+          description: 'Maximum number of items to return (for list_alerts, default 200, max 1000)',
+        },
+        filter: {
+          type: 'string',
+          description: 'v845 — client-side key/msg substring filter for list_alerts (e.g. "EVT_IPS_IpsAlert" or "IPS"). Optional. UniFi server-side filtering is not supported.',
         },
         count: {
           type: 'number',
@@ -180,7 +184,7 @@ export class UniFiSkill extends Skill {
         case 'dpi_stats':
           return await this.dpiStats(input.mac as string | undefined);
         case 'list_alerts':
-          return await this.listAlerts(input.limit as number | undefined);
+          return await this.listAlerts(input.limit as number | undefined, input.filter as string | undefined);
         case 'list_events':
           return await this.listEvents(input.limit as number | undefined);
         case 'list_vouchers':
@@ -629,47 +633,98 @@ export class UniFiSkill extends Skill {
     return { success: true, data, display: lines.join('\n') || 'No DPI data.' };
   }
 
-  private async listAlerts(limit?: number): Promise<SkillResult> {
-    const n = Math.min(Math.max(1, limit ?? 20), 200);
-    const alerts = await this.request<any[]>('GET', `stat/alarm?_limit=${n}`);
+  /**
+   * v845 — Endpoint-Migration von `stat/alarm` → `list/alarm`.
+   *
+   * Hintergrund: UniFi Network Application hat in einer der letzten Versionen
+   * (Network App >= 8.x) die Alarm-API umgestellt. `stat/alarm` liefert jetzt
+   * `HTTP 404 api.err.NotFound`, der korrekte Endpoint ist `list/alarm`.
+   * Empirisch verifiziert gegen 192.168.1.1 — `list/alarm` liefert ~2400+
+   * Alarms inkl. IPS-Events.
+   *
+   * `filter` ist eine client-side key-substring-Suche (z.B. "EVT_IPS_IpsAlert"
+   * oder "IPS"), weil der `?key=...` Query-Param vom Controller akzeptiert
+   * aber ignoriert wird (verifiziert).
+   */
+  private async listAlerts(limit?: number, filter?: string): Promise<SkillResult> {
+    // v845 — Default-Limit 20→200, Cap 200→1000. Für Backlog-Triage müssen
+    // wir mehr als die letzten 20 Items sehen.
+    const n = Math.min(Math.max(1, limit ?? 200), 1000);
+    const alerts = await this.request<any[]>('GET', `list/alarm?_limit=${n}`);
 
-    const rows = (alerts ?? []).slice(0, n).map((a) => ({
+    let filtered = alerts ?? [];
+    if (filter && filter.length > 0) {
+      // Tolerantes Match: `EVT_IPS_IpsAlert`, `IPS`, oder
+      // `event_type:EVT_IPS_IpsAlert` (das letzte Format kam aus
+      // Reasoning-Engine watches → key extrahieren)
+      const needle = filter.replace(/^[a-z_]+:/i, '').toLowerCase();
+      filtered = filtered.filter((a) => {
+        const key = String(a.key ?? '').toLowerCase();
+        const msg = String(a.msg ?? '').toLowerCase();
+        return key.includes(needle) || msg.includes(needle);
+      });
+    }
+
+    // count-by-key stats — bei großem Backlog dem Caller einen Überblick geben
+    const countsByKey: Record<string, number> = {};
+    for (const a of filtered) {
+      const k = String(a.key ?? 'unknown');
+      countsByKey[k] = (countsByKey[k] ?? 0) + 1;
+    }
+
+    const rows = filtered.map((a) => ({
       time: a.datetime ?? a.time ?? '-',
       type: a.key ?? a.msg ?? '-',
-      device: a.device_name ?? a.ap_name ?? a.mac ?? '-',
+      device: a.device_name ?? a.ap_name ?? a.mac ?? a.src_ip ?? '-',
       archived: a.archived ? 'yes' : 'no',
     }));
 
+    const totalRaw = (alerts ?? []).length;
+    const totalFiltered = filtered.length;
+    const summary = filter
+      ? `${totalFiltered} of ${totalRaw} alerts match filter "${filter}".`
+      : `${totalRaw} alerts.`;
+    const topKeys = Object.entries(countsByKey)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([k, c]) => `${k}: ${c}`)
+      .join(', ');
+
     const table = rows.length === 0
-      ? 'No alerts.'
+      ? `No alerts${filter ? ` matching "${filter}"` : ''}.`
       : [
+          summary,
+          topKeys ? `Top keys: ${topKeys}` : '',
+          '',
           '| Time | Type | Device | Archived |',
           '|------|------|--------|----------|',
-          ...rows.map((r) => `| ${r.time} | ${r.type} | ${r.device} | ${r.archived} |`),
-        ].join('\n');
+          ...rows.slice(0, 50).map((r) => `| ${r.time} | ${r.type} | ${r.device} | ${r.archived} |`),
+          rows.length > 50 ? `\n_(showing first 50 of ${rows.length})_` : '',
+        ].filter(Boolean).join('\n');
 
-    return { success: true, data: alerts, display: table };
+    return {
+      success: true,
+      data: { alerts: filtered, count: totalFiltered, total: totalRaw, countsByKey },
+      display: table,
+    };
   }
 
-  private async listEvents(limit?: number): Promise<SkillResult> {
-    const n = Math.min(Math.max(1, limit ?? 20), 200);
-    const events = await this.request<any[]>('GET', `stat/event?_limit=${n}`);
-
-    const rows = (events ?? []).slice(0, n).map((e) => ({
-      time: e.datetime ?? e.time ?? '-',
-      type: e.key ?? '-',
-      message: e.msg ?? '-',
-    }));
-
-    const table = rows.length === 0
-      ? 'No events.'
-      : [
-          '| Time | Type | Message |',
-          '|------|------|---------|',
-          ...rows.map((r) => `| ${r.time} | ${r.type} | ${r.message} |`),
-        ].join('\n');
-
-    return { success: true, data: events, display: table };
+  /**
+   * v845 — `stat/event` ist seit UniFi Network App 8.x ebenfalls 404.
+   * Der ersatzweise `list/event`-Endpoint braucht POST mit spezifischem
+   * Filter-Body (Schema noch nicht reverse-engineered). Bis dahin geben
+   * wir einen klaren Hinweis statt eines silent fail, damit Watches/
+   * Reasoning nicht endlos retried.
+   */
+  private async listEvents(_limit?: number): Promise<SkillResult> {
+    return {
+      success: false,
+      error:
+        'list_events ist in der aktuellen UniFi-Version (Network App 8.x) ' +
+        'nicht unterstützt. Nutze stattdessen list_alerts (zeigt Alarms ' +
+        'inklusive IPS, GW, AP-Events) — optional mit filter="EVT_IPS_IpsAlert" ' +
+        'für IPS-only.',
+    };
   }
 
   private async listVouchers(): Promise<SkillResult> {
@@ -772,8 +827,13 @@ export class UniFiSkill extends Skill {
     return { success: true, data: { id, enabled: false }, display: `WLAN ${id} disabled.` };
   }
 
+  /**
+   * v845 — Endpoint-Migration von `POST cmd/evtmgr {cmd:'archive-all-alarms'}`
+   * → `POST list/alarm/archive {}`. Erstes liefert HTTP 404 seit Network App
+   * 8.x (verifiziert), letzteres 200. Body bleibt leer.
+   */
   private async archiveAlerts(): Promise<SkillResult> {
-    await this.request('POST', 'cmd/evtmgr', { cmd: 'archive-all-alarms' });
+    await this.request('POST', 'list/alarm/archive', {});
     return { success: true, data: {}, display: 'All alerts archived.' };
   }
 

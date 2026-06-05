@@ -5,6 +5,74 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.845] - 2026-06-05
+
+### Fixed — UniFi `stat/alarm` / `stat/event` / `cmd/evtmgr` → 404 (v845)
+
+**Symptom:** Alfreds `unifi.list_alerts` lieferte permanent `UniFi error: HTTP
+404 api.err.NotFound`. Mehrere Watches die das Triage-Backlog überwachen
+sollten schlugen seit Tagen periodisch fehl, Reasoning-Engine versuchte das
+Problem zu adressieren indem sie immer neue Watch-Varianten anlegte (4
+Duplikate in einem Tag) — keiner konnte funktionieren.
+
+**Root-Cause:** UniFi Network Application 8.x hat die alarm/event-API von
+`stat/*` auf `list/*` migriert. Andere Endpoints (`stat/device`, `stat/sta`,
+`rest/networkconf`, `stat/voucher`) sind unverändert. Im `unifi.ts` wurden
+3 alarm/event-bezogene Aufrufe nie nachgezogen.
+
+**Empirisch verifiziert gegen 192.168.1.1:**
+
+| Code (kaputt) | HTTP | Korrekt | HTTP |
+|---|---|---|---|
+| `GET stat/alarm` | 404 | `GET list/alarm` | 200 (2489 Items) |
+| `GET stat/event` | 404 | `POST list/event` mit Body | 400 (Schema unklar) |
+| `POST cmd/evtmgr {cmd:'archive-all-alarms'}` | 404 | `POST list/alarm/archive {}` | 200 |
+
+**Behoben in `packages/skills/src/built-in/unifi.ts`:**
+
+- `listAlerts(limit, filter?)`:
+  - Endpoint `stat/alarm` → `list/alarm`
+  - Default-Limit 20→200, Cap 200→1000 (Backlog-Triage braucht mehr)
+  - Neuer `filter`-Parameter für client-side key/msg-Substring-Suche
+    (z.B. `"EVT_IPS_IpsAlert"` oder `"IPS"`). Tolerantes Format:
+    `event_type:EVT_IPS_IpsAlert` wird zu `EVT_IPS_IpsAlert` normalisiert
+    (kompatibel mit Watch-Filter aus Reasoning-Engine).
+  - Server-side `?key=...` wird vom Controller akzeptiert aber ignoriert
+    (verifiziert), daher zwingend client-side.
+  - Neue Ausgabe: `countsByKey`-Stats + Top-5-Keys-Header für schnelle
+    Übersicht bei großem Backlog.
+
+- `archiveAlerts()`:
+  - `POST cmd/evtmgr {cmd:'archive-all-alarms'}` → `POST list/alarm/archive {}`
+
+- `listEvents()` (Option B aus dem Bericht):
+  - `list/event` braucht POST mit komplexem Filter-Body (Schema noch nicht
+    reverse-engineered). Bis dahin liefern wir klare deutsche Error-Message
+    mit Verweis auf `list_alerts` als Ersatz — verhindert dass Reasoning-
+    Engine endlos retried.
+
+- Schema: neuer `filter`-Parameter, Beschreibung von `limit` aktualisiert.
+
+**Was unverändert bleibt — keine Funktion verloren:**
+
+- Public API von `list_alerts` rückwärtskompatibel: ohne `filter` Parameter
+  identisches Verhalten (nur Endpoint geändert, das ist der eigentliche Fix).
+- `archive_alerts` Signatur identisch.
+- Alle anderen UniFi-Actions (`list_devices`, `restart_device`,
+  `list_clients`, `create_voucher`, etc.) unverändert.
+- ControllerMode-Detection (UniFi OS vs Classic) unverändert.
+
+**Empfehlung für nachfolgenden Cleanup auf .92** (NICHT Teil dieses Releases,
+separater Schritt nach Deploy):
+
+- 4 redundante Watches mit gleichem Zweck deaktivieren / mergen:
+  `UniFi IPS-Alert Backlog Triage Daily`,
+  `UniFi IPS-Alert Daily Backlog Triage`,
+  `UniFi IPS-Alert Event Count Monitor`, und Varianten.
+- Akkumulierte Memory-Keys aus dem Fail-Loop:
+  `unifi_ips_alert_backlog_*`, `unifi_ipsalert_*` — können gemerged oder
+  gelöscht werden sobald Watch wieder grün läuft.
+
 ## [0.19.0-multi-ha.844] - 2026-06-04
 
 ### Fixed — Project-Agent unfaire 600s-Kills bei Audit/Recherche-Phasen (v844)
