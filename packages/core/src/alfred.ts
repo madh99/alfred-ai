@@ -1468,7 +1468,41 @@ export class Alfred {
         projectRunner.setFeaturesRepository(featuresRepo);
         // owner-master-userId für feature.userId beim Auto-Insert
         if (this.ownerMasterUserId) projectRunner.setOwnerMasterUserId(this.ownerMasterUserId);
+        // v851.1 — EmbeddingService für semantic search + feature-embedding-store
+        if (this.embeddingServiceRef) {
+          projectRunner.setEmbeddingService({
+            embedAndStore: (uid, content, st, sid) => this.embeddingServiceRef!.embedAndStore(uid, content, st, sid),
+            semanticSearch: (uid, q, l) => this.embeddingServiceRef!.semanticSearch(uid, q, l),
+          });
+        }
         this.featuresRepoRef = featuresRepo;
+        // v851.1 — features-import-provider für project_agent.import_feature action
+        if (this.projectAgentSkillRef) {
+          this.projectAgentSkillRef.setFeaturesImportProvider(async (featureId: string, targetCwd: string) => {
+            try {
+              const feature = await featuresRepo.getById(featureId);
+              if (!feature) return { ok: false, error: `feature ${featureId} not found` };
+              if (feature.sourceFiles.length === 0) return { ok: false, error: 'feature has no source files registered' };
+              // Source-Projekt-cwd ermitteln
+              if (!this.projectRepo) return { ok: false, error: 'project-repo not available' };
+              const srcProject = await this.projectRepo.getByIdAnyOwner(feature.projectId).catch(() => null);
+              if (!srcProject?.cwd) return { ok: false, error: `source-project ${feature.projectId} has no cwd` };
+              const { importFeatureSnapshot } = await import('./features/snapshot-importer.js');
+              const r = await importFeatureSnapshot({
+                sourceProjectCwd: srcProject.cwd,
+                targetProjectCwd: targetCwd,
+                featureId: feature.id,
+                featureName: feature.name,
+                sourceFilePatterns: feature.sourceFiles,
+                sourceGitSha: feature.gitShaIntroduced ?? undefined,
+                logger: this.logger,
+              });
+              return { ok: true, snapshotDir: r.snapshotDir, importedFiles: r.importedFiles, skippedPatterns: r.skippedPatterns };
+            } catch (err) {
+              return { ok: false, error: (err as Error).message };
+            }
+          });
+        }
       } catch (err) { this.logger.warn({ err }, 'v851 Features-Repo wiring failed (non-fatal)'); }
 
       // v652 — Lessons-Repo + Auto-Resume-Callback

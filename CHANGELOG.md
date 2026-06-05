@@ -5,6 +5,88 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.851.1] - 2026-06-05
+
+### Added — Semantic Feature-Search + Match-Phase + Snapshot-Import-Skill (v851.1)
+
+Vier zusammenhängende Ergänzungen zu v851:
+
+**1. Feature-Embedding bei Auto-Extract**
+(`packages/core/src/features/auto-extractor.ts`)
+- Nach erfolgreichem `upsertOrBumpVersion` wird optional ein Embedding
+  generiert für `name + description + tech_stack` als
+  `sourceType='project_feature'`
+- `embedding_id` wird auf das Feature zurück-verlinkt
+  (`repo.setEmbeddingId(featureId, embeddingId)`)
+- Best-effort, non-critical: Embedding-Fehler bricht den Extraktor nicht
+- Neue Repo-Methoden: `setEmbeddingId`, `getByIds`
+
+**2. Goal-Matcher mit semantischer Suche**
+(`packages/core/src/features/goal-matcher.ts`)
+- `embeddingService.semanticSearch(query, sourceType='project_feature')`
+  läuft ergänzend zur Keyword-Suche
+- Score-Kombination:
+  - Mit semantic-Hit: `0.4 × keyword + 0.4 × semantic + 0.2 × confidence`
+  - Ohne semantic-Hit (oder failure): Fallback auf `0.6 × keyword +
+    0.4 × confidence` (v851-Verhalten)
+- MIN_MATCH_SCORE 0.5 → 0.4 (etwas toleranter weil semantic-Score
+  zusätzlichen Filter beisteuert)
+- Reason-String erweitert um semantic-Score wenn relevant
+
+**3. Match-Phase im Project-Agent-Runner**
+(`packages/core/src/project-agent-runner.ts`)
+- VOR `createProjectPlan`: `findGoalMatches` läuft mit aktuellem Goal +
+  EmbeddingService
+- Bei Matches: Chat-Banner mit Liste der gefundenen Cross-Project-Features
+  inkl. Name, Projekt, Confidence, Stack, Files
+- Plan-Goal wird mit `--- CROSS-PROJECT KNOWLEDGE ---` Block erweitert
+  damit Planner-LLM die bestehenden Implementierungen kennt
+- Non-critical: Fehler im Goal-Matcher bricht Plan-Erstellung nicht
+- Neue Runner-Setter: `setEmbeddingService(s)`
+
+**4. `project_agent.import_feature` Action**
+(`packages/skills/src/built-in/code-agent/project-agent-skill.ts`)
+- Neue action mit params `feature_id` + `target_cwd`
+- Ruft den `featuresImportProvider` (verdrahtet in `alfred.ts`):
+  1. Lookup Feature in DB
+  2. Lookup Source-Projekt-cwd via `projectRepo.getByIdAnyOwner`
+  3. `snapshot-importer.importFeatureSnapshot` ausführen
+  4. Snapshot landet in `target_cwd/.alfred/feature-imports/<feature-id>/`
+- Display zeigt Snapshot-Dir + Anzahl Files + Hinweis für Code-Agent
+- User-Flow nach Match-Vorschlag: "ich übernehme Feature X" → Alfred
+  ruft `project_agent.import_feature` → Snapshot da → User startet
+  Project-Agent mit "übernimm Snapshot in .alfred/feature-imports/X"
+
+**`alfred.ts` Wiring:**
+- Runner bekommt EmbeddingService-Adapter weitergereicht
+  (embedAndStore + semanticSearch)
+- `projectAgentSkillRef.setFeaturesImportProvider(...)` mit closure
+  über projectRepo + featuresRepo
+
+**Was UNVERÄNDERT bleibt:**
+- Pre-v851.1 Goal-Matcher-API rückwärtskompatibel (embeddingService optional)
+- `extractFeaturesFromSession`-API rückwärtskompatibel (embeddingService optional)
+- Bestehende `learned_recipes` / `convention_patterns` / `memories`
+  Embeddings unverändert
+- Snapshot-Importer-Pfade unverändert
+- v849/v850/v851 alle unverändert
+- Embedding-Fehler brechen kein Feature: alles ist best-effort
+
+**Tests:** 7 grün in `goal-matcher.test.ts` (5 alt + 2 neu):
+- semantic-search-boost mit keyword=0 → match via semantic+confidence
+- semantic-search throws → fallback auf keyword-only verhalten
+
+**Aktivierungs-Flow (kombiniert mit v851):**
+1. User startet Project-Agent in Projekt B mit Goal "Crowd Funding einbauen"
+2. Goal-Matcher findet Feature "Crowd Funding" aus Projekt A (semantic-Hit)
+3. Chat zeigt Match-Banner mit Feature-ID
+4. User-Antwort "übernehmen Feature <id>" → Alfred (via Reasoning) ruft
+   `project_agent.import_feature` mit feature_id + Projekt-B-cwd
+5. Snapshot in `.alfred/feature-imports/<feature-id>/` mit Source-Files
+6. User startet Project-Agent erneut mit "übernimm den Snapshot und
+   adaptiere ihn an unseren Stack" — Plan-Agent sieht Snapshot-Files +
+   README, adaptiert kontrolliert statt 1:1 zu kopieren
+
 ## [0.19.0-multi-ha.851] - 2026-06-05
 
 ### Added — Cross-Project Feature-Library (v851, Stufe 3/3)

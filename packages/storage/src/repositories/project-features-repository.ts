@@ -239,6 +239,26 @@ export class ProjectFeaturesRepository {
     );
   }
 
+  /** v851.1 — embedding_id-Spalte populieren nach EmbeddingService.embedAndStore. */
+  async setEmbeddingId(featureId: string, embeddingId: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `UPDATE project_features SET embedding_id = ?, updated_at = ? WHERE id = ?`,
+      [embeddingId, now, featureId],
+    );
+  }
+
+  /** v851.1 — Lookup mehrerer Features by IDs (für semantic-search-Resolve). */
+  async getByIds(ids: string[]): Promise<ProjectFeature[]> {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = await this.db.query(
+      `SELECT * FROM project_features WHERE id IN (${placeholders}) AND retired_at IS NULL`,
+      ids,
+    );
+    return rows.map(rowToFeature);
+  }
+
   async retire(featureId: string, reason?: string): Promise<void> {
     const now = new Date().toISOString();
     // Snapshot in history bevor wir retire setzen

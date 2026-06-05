@@ -272,6 +272,12 @@ export class ProjectAgentRunner {
   /** v851 — Owner-Master-UserId für feature.userId beim Auto-Insert. */
   private ownerMasterUserId?: string;
   setOwnerMasterUserId(id: string | undefined): void { this.ownerMasterUserId = id; }
+  /** v851.1 — EmbeddingService für semantic search + feature-embedding storage. */
+  private embeddingService?: {
+    embedAndStore(userId: string, content: string, sourceType: string, sourceId: string): Promise<string | undefined>;
+    semanticSearch(userId: string, query: string, limit?: number): Promise<Array<{ category: string; key: string; value: string; score: number; }>>;
+  };
+  setEmbeddingService(s: typeof this.embeddingService): void { this.embeddingService = s; }
 
   /** v652 — Set by alfred.ts: Lessons-Learned-Store für Pattern-Memorierung. */
   private lessonsRepo?: import('@alfred/storage').ProjectAgentLessonsRepository;
@@ -461,7 +467,41 @@ export class ProjectAgentRunner {
         }
       }
 
-      const plan = await createProjectPlan(config.goal, this.llm, previousSessions, recentChanges);
+      // v851.1 — Goal-Match-Phase: prüfe ob ähnliche Features in anderen
+      // Projekten bereits implementiert wurden (cross-project knowledge).
+      // Bei Match: User-Hinweis im Chat + Plan-Prompt-Enrichment.
+      let goalMatchHints: string[] = [];
+      if (this.featuresRepo && this.ownerMasterUserId) {
+        try {
+          const { findGoalMatches } = await import('./features/goal-matcher.js');
+          const projectId = this.projectIdResolver ? await this.projectIdResolver(config.cwd).catch(() => undefined) : undefined;
+          const matches = await findGoalMatches({
+            goal: config.goal,
+            userId: this.ownerMasterUserId,
+            repo: this.featuresRepo,
+            excludeProjectId: projectId,
+            embeddingService: this.embeddingService,
+          });
+          if (matches.length > 0) {
+            const lines = matches.map((m, i) => {
+              return `  ${i + 1}. **${m.feature.name}** (Projekt: ${m.feature.projectId.slice(0, 8)}…, conf ${Math.round(m.matchScore * 100)}%, ${m.reason})\n     ${m.feature.description.slice(0, 120)}\n     Stack: ${m.feature.techStack.slice(0, 4).join(', ')}\n     Files: ${m.feature.sourceFiles.slice(0, 3).join(', ')}${m.feature.sourceFiles.length > 3 ? ` (+${m.feature.sourceFiles.length - 3} more)` : ''}`;
+            }).join('\n\n');
+            await this.sendProgress(platform, chatId,
+              `🔗 **Cross-Project Match gefunden** — diese Features wurden bereits in anderen Projekten implementiert:\n\n${lines}\n\nDer Plan wird mit diesem Wissen erstellt. Falls du eines davon explizit übernehmen willst: nutze \`project_agent.import_feature\` Action mit feature-id.`);
+            // Plan-Prompt-Enrichment: Hint an LLM dass es ähnliche Implementierungen gibt
+            goalMatchHints = matches.map(m =>
+              `Ähnliches Feature "${m.feature.name}" existiert bereits in Projekt ${m.feature.projectId.slice(0, 8)} (${m.feature.techStack.join(', ')}). Source: ${m.feature.sourceFiles.join(', ')}`
+            );
+          }
+        } catch (err) {
+          this.logger.debug({ err: (err as Error).message, sessionId }, 'v851.1 goal-match failed (non-critical)');
+        }
+      }
+
+      const planGoal = goalMatchHints.length > 0
+        ? `${config.goal}\n\n--- CROSS-PROJECT KNOWLEDGE ---\n${goalMatchHints.join('\n')}\n--- /KNOWLEDGE ---`
+        : config.goal;
+      const plan = await createProjectPlan(planGoal, this.llm, previousSessions, recentChanges);
 
       // v846 — Plan-Banner mit Klassifikation + reasoning + Größen-Bias-Hinweis
       const kindLabel = plan.goalKind && plan.goalKind !== 'unknown' ? plan.goalKind : 'undefiniert';
@@ -1120,6 +1160,7 @@ export class ProjectAgentRunner {
               projectId,
               userId: this.ownerMasterUserId ?? '',
               gitSha: state.lastCommitSha ?? undefined,
+              embeddingService: this.embeddingService, // v851.1 — Embedding-Generierung
             });
             this.logger.info({ sessionId, projectId, ...result }, 'v851 feature extractor done');
           }

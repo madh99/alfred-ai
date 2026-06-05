@@ -374,7 +374,8 @@ Actions:
 - start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs"). WICHTIG zur cwd: das ist der LOKALE Entwicklungs-Pfad auf der Alfred-Node (z.B. /home/madh/projects/<projektname>), NICHT der Deploy-Target-Pfad auf einem Remote-Host. Wenn die Deploy-Memory sagt "Projekt X läuft auf 192.168.1.96 als ubuntu" ist das der Deploy-Target, NICHT der Workspace. Für Continue-Sessions desselben Projekts: gleichen cwd wie der letzte erfolgreiche Lauf benutzen (siehe project_workspace_<projektname> Memory falls vorhanden).
 - status: Check current status of a project agent session. Params: task_id. Returns currentPhase — if 'done' or 'failed', the session has ENDED and interject will not work; start a fresh one instead.
 - interject: Send a message to a CURRENTLY RUNNING project agent (e.g. "add feature X"). Params: task_id, message. DO NOT use interject if the session is already finished/done/failed — start a new session with action='start' instead. The skill will reject interject on terminated sessions with a clear error.
-- stop: Stop a running project agent. Params: task_id`,
+- stop: Stop a running project agent. Params: task_id
+- import_feature: v851.1 — Importiert ein bekanntes Feature aus einem anderen Projekt als Code-Snapshot ins target-Projekt. Params: feature_id (UUID aus Features-Library), target_cwd (wohin importieren). Snapshot landet in target_cwd/.alfred/feature-imports/<feature_id>/ mit README für den Code-Agent. Nutze diese Action wenn der Goal-Matcher Cross-Project-Treffer geliefert hat und User "übernehmen" sagt.`,
       riskLevel: 'admin',
       version: '1.0.0',
       timeoutMs: 30_000,
@@ -383,11 +384,14 @@ Actions:
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'status', 'interject', 'stop', 'resume'],
+            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature'],
             description: 'Project agent action',
           },
           goal: { type: 'string', description: 'What to build (for start)' },
           cwd: { type: 'string', description: 'Working directory for the project (for start)' },
+          // v851.1 — import_feature params
+          feature_id: { type: 'string', description: 'Feature-UUID aus Features-Library (für import_feature)' },
+          target_cwd: { type: 'string', description: 'Target-Projekt-cwd wohin der Snapshot importiert wird (für import_feature)' },
           agent: agentNames.length > 0 ? {
             type: 'string',
             enum: agentNames,
@@ -431,10 +435,56 @@ Actions:
         return this.stopProject(input, context);
       case 'resume':
         return this.resumeProject(input, context);
+      case 'import_feature':
+        return this.importFeature(input, context);
       default:
-        return { success: false, error: `Unknown action "${action}". Use start, status, interject, stop, or resume.` };
+        return { success: false, error: `Unknown action "${action}". Use start, status, interject, stop, resume, or import_feature.` };
     }
   }
+
+  /**
+   * v851.1 — Importiert ein Feature aus der Library als Snapshot in ein
+   * Target-Projekt. Nutzt den core snapshot-importer.
+   */
+  private async importFeature(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
+    const featureId = typeof input.feature_id === 'string' ? input.feature_id : '';
+    const targetCwd = typeof input.target_cwd === 'string' ? input.target_cwd : '';
+    if (!featureId || !targetCwd) {
+      return { success: false, error: 'import_feature requires feature_id + target_cwd' };
+    }
+    if (!this.featuresImportProvider) {
+      return { success: false, error: 'feature-import not configured (alfred startup)' };
+    }
+    try {
+      const result = await this.featuresImportProvider(featureId, targetCwd);
+      if (!result.ok) return { success: false, error: result.error ?? 'import failed' };
+      const imported = result.importedFiles ?? [];
+      const skipped = result.skippedPatterns ?? [];
+      return {
+        success: true,
+        data: { snapshotDir: result.snapshotDir, importedFiles: imported, skippedPatterns: skipped },
+        display: [
+          `✓ Snapshot importiert: ${result.snapshotDir ?? '(unknown)'}`,
+          `  ${imported.length} Files`,
+          skipped.length > 0 ? `  ${skipped.length} Pattern übersprungen (no match)` : '',
+          '',
+          'Der Code-Agent kann nun den Snapshot lesen und an den Target-Stack adaptieren.',
+        ].filter(Boolean).join('\n'),
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  /** v851.1 — Wird vom Alfred-Startup verdrahtet, ruft features-repo + snapshot-importer. */
+  private featuresImportProvider?: (featureId: string, targetCwd: string) => Promise<{
+    ok: boolean;
+    error?: string;
+    snapshotDir?: string;
+    importedFiles?: string[];
+    skippedPatterns?: string[];
+  }>;
+  setFeaturesImportProvider(p: typeof this.featuresImportProvider): void { this.featuresImportProvider = p; }
 
   /**
    * v648 — Resume eines fehlgeschlagenen Project-Agent-Laufs.

@@ -24,6 +24,14 @@ export interface GoalMatchInput {
   repo: ProjectFeaturesRepository;
   /** Optional: aktuelles Project-Id damit eigene features nicht als "match" erscheinen. */
   excludeProjectId?: string;
+  /**
+   * v851.1 — optional EmbeddingService. Wenn gesetzt: semantische Suche
+   * über `embeddings` (sourceType='project_feature') wird ergänzend zur
+   * Keyword-Suche gemacht. Cosine-Similarity-Score fließt in matchScore ein.
+   */
+  embeddingService?: {
+    semanticSearch(userId: string, query: string, limit?: number): Promise<Array<{ category: string; key: string; value: string; score: number; }>>;
+  };
 }
 
 export interface GoalMatch {
@@ -36,7 +44,7 @@ export interface GoalMatch {
   reason: string;
 }
 
-const MIN_MATCH_SCORE = 0.5;
+const MIN_MATCH_SCORE = 0.4;
 const MIN_TECH_OVERLAP = 0.5;
 
 export async function findGoalMatches(input: GoalMatchInput): Promise<GoalMatch[]> {
@@ -49,7 +57,7 @@ export async function findGoalMatches(input: GoalMatchInput): Promise<GoalMatch[
   if (keywords.length === 0) return [];
 
   // Sammele matches über mehrere keyword-queries
-  const candidates = new Map<string, { feature: ProjectFeature; hitCount: number }>();
+  const candidates = new Map<string, { feature: ProjectFeature; hitCount: number; semanticScore: number }>();
   for (const kw of keywords.slice(0, 5)) {
     const features = await input.repo.search(kw, {
       userId: input.userId,
@@ -60,21 +68,62 @@ export async function findGoalMatches(input: GoalMatchInput): Promise<GoalMatch[
       if (input.excludeProjectId && f.projectId === input.excludeProjectId) continue;
       const ex = candidates.get(f.id);
       if (ex) ex.hitCount++;
-      else candidates.set(f.id, { feature: f, hitCount: 1 });
+      else candidates.set(f.id, { feature: f, hitCount: 1, semanticScore: 0 });
     }
+  }
+
+  // v851.1 — semantic search via EmbeddingService falls verfügbar.
+  // Liefert features sortiert nach cosine-similarity. Ergänzt das Set
+  // um IDs die keyword-search ggf. nicht erwischt hat.
+  if (input.embeddingService) {
+    try {
+      const semanticHits = await input.embeddingService.semanticSearch(input.userId, query, 15);
+      // Resolve feature-IDs (sourceId in embeddings-Tabelle ist die feature.id)
+      const featureHits = semanticHits.filter(h => h.category === 'project_feature');
+      const featureIds = featureHits.map(h => h.key.startsWith('p') ? h.value.split(':')[0] : h.key);
+      // Embedding-Service returns key=sourceId für non-memory entries
+      const idsToFetch = featureHits.map(h => {
+        // EmbeddingService returns key=content.split(':')[0] OR sourceId. Wir nehmen sourceId-Pfad.
+        return h.value.includes(':') ? '' : '';
+      }).filter(Boolean);
+      // Pragmatisch: nutze direkt h.key wenn semantic-search keyed
+      // ist auf sourceId (was bei project_feature der Fall ist).
+      const realIds = featureHits.map(h => h.key);
+      if (realIds.length > 0) {
+        const fetched = await input.repo.getByIds(realIds);
+        for (const f of fetched) {
+          if (input.excludeProjectId && f.projectId === input.excludeProjectId) continue;
+          const score = featureHits.find(h => h.key === f.id)?.score ?? 0;
+          const ex = candidates.get(f.id);
+          if (ex) {
+            ex.semanticScore = Math.max(ex.semanticScore, score);
+          } else {
+            candidates.set(f.id, { feature: f, hitCount: 0, semanticScore: score });
+          }
+        }
+      }
+    } catch { /* semantic-search ist additiv, fail silent */ }
   }
 
   // Score-Berechnung
   const matches: GoalMatch[] = [];
   for (const c of candidates.values()) {
     // Keyword-Score: Anzahl Keyword-Hits / Total Keywords
-    const keywordScore = Math.min(1, c.hitCount / keywords.length);
+    const keywordScore = keywords.length > 0 ? Math.min(1, c.hitCount / keywords.length) : 0;
     // Tech-Stack-Overlap
     const techOverlap = input.currentTechStack && input.currentTechStack.length > 0
       ? jaccardSimilarity(input.currentTechStack, c.feature.techStack)
-      : 1.0; // wenn currentTechStack unknown: nicht filtern
-    // Match-Score: gewichtetes Mittel
-    const matchScore = 0.6 * keywordScore + 0.4 * c.feature.confidence;
+      : 1.0;
+    // v851.1 — kombinierter Match-Score: keyword + semantic + confidence
+    // Wenn KEIN semantic-Hit (score=0): re-normalisiere keyword + confidence
+    // damit pre-embedding-Verhalten reproduziert wird (sonst fallen reine
+    // Keyword-Matches systematisch durch die Schwelle).
+    let matchScore: number;
+    if (c.semanticScore > 0) {
+      matchScore = 0.4 * keywordScore + 0.4 * c.semanticScore + 0.2 * c.feature.confidence;
+    } else {
+      matchScore = 0.6 * keywordScore + 0.4 * c.feature.confidence;
+    }
 
     if (matchScore < MIN_MATCH_SCORE) continue;
     if (input.currentTechStack && input.currentTechStack.length > 0 && techOverlap < MIN_TECH_OVERLAP) continue;
@@ -83,7 +132,9 @@ export async function findGoalMatches(input: GoalMatchInput): Promise<GoalMatch[
       feature: c.feature,
       matchScore,
       techStackOverlap: techOverlap,
-      reason: `Hit ${c.hitCount}/${keywords.length} keywords, tech-overlap ${(techOverlap * 100).toFixed(0)}%`,
+      reason: c.semanticScore > 0
+        ? `Hit ${c.hitCount}/${keywords.length} keywords, semantic ${(c.semanticScore * 100).toFixed(0)}%, tech ${(techOverlap * 100).toFixed(0)}%`
+        : `Hit ${c.hitCount}/${keywords.length} keywords, tech-overlap ${(techOverlap * 100).toFixed(0)}%`,
     });
   }
 

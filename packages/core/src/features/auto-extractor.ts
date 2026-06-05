@@ -71,6 +71,16 @@ export interface FeatureExtractorInput {
   userId: string;
   /** Optional: git-sha des merge-commits. */
   gitSha?: string;
+  /**
+   * v851.1 — optional EmbeddingService. Wenn gesetzt: nach erfolgreichem
+   * feature-upsert wird ein embedding für `name + description + tech_stack`
+   * generiert und in der embeddings-Tabelle gespeichert. embedding_id wird
+   * auf das Feature zurück-verlinkt damit Goal-Matcher semantische Suche
+   * machen kann.
+   */
+  embeddingService?: {
+    embedAndStore(userId: string, content: string, sourceType: string, sourceId: string): Promise<string | undefined>;
+  };
 }
 
 export interface FeatureExtractorResult {
@@ -187,6 +197,25 @@ export async function extractFeaturesFromSession(input: FeatureExtractorInput): 
         projectId: input.projectId, featureId: result.id, name, confidence, status,
         bumped: !result.isNew,
       }, 'v851 feature extracted');
+
+      // v851.1 — Embedding generieren + speichern. Best-effort, non-critical.
+      if (input.embeddingService) {
+        try {
+          const embedText = [
+            name,
+            String(f.description ?? ''),
+            ...(Array.isArray(f.techStack) ? f.techStack.map(String) : []),
+          ].filter(Boolean).join(' · ');
+          const embeddingId = await input.embeddingService.embedAndStore(
+            input.userId, embedText, 'project_feature', result.id,
+          );
+          if (embeddingId) {
+            await input.repo.setEmbeddingId(result.id, embeddingId);
+          }
+        } catch (err) {
+          input.logger.debug({ err: (err as Error).message, featureId: result.id }, 'v851.1 feature-embedding failed (non-critical)');
+        }
+      }
     } catch (err) {
       input.logger.warn({ err: (err as Error).message, name }, 'v851 feature upsert failed');
       discarded++;

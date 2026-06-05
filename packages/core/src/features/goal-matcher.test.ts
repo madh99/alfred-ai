@@ -7,6 +7,7 @@ function makeRepo(features: ProjectFeature[]): ProjectFeaturesRepository {
     search: async (q: string) => features.filter(f =>
       f.name.toLowerCase().includes(q.toLowerCase()) || f.description.toLowerCase().includes(q.toLowerCase())
     ),
+    getByIds: async (ids: string[]) => features.filter(f => ids.includes(f.id)),
   } as unknown as ProjectFeaturesRepository;
 }
 
@@ -80,5 +81,32 @@ describe('findGoalMatches', () => {
     });
     expect(r.length).toBeLessThanOrEqual(3);
     if (r.length >= 2) expect(r[0].matchScore).toBeGreaterThanOrEqual(r[1].matchScore);
+  });
+
+  // v851.1 — semantic search integration
+  it('boosts match score when semantic search returns hit', async () => {
+    const f = makeFeature({ id: 'sem1', name: 'Payment Gateway Integration', confidence: 0.5 });
+    const semanticHits = [{ category: 'project_feature', key: 'sem1', value: 'Payment Gateway', score: 0.9 }];
+    const r = await findGoalMatches({
+      goal: 'Crowd Funding mit Zahlungsabwicklung',
+      userId: 'u1',
+      repo: makeRepo([f]),
+      embeddingService: { semanticSearch: async () => semanticHits },
+    });
+    // Trotz "no keyword hit" sollte semantic boost den match über MIN_MATCH_SCORE bringen
+    expect(r.length).toBe(1);
+    expect(r[0].reason).toContain('semantic');
+  });
+
+  it('semantic search failure does not break keyword matching', async () => {
+    const f = makeFeature({});
+    const r = await findGoalMatches({
+      goal: 'Crowd Funding implementieren',
+      userId: 'u1',
+      repo: makeRepo([f]),
+      embeddingService: { semanticSearch: async () => { throw new Error('boom'); } },
+    });
+    // sollte trotz exception keyword-match liefern
+    expect(r.length).toBe(1);
   });
 });
