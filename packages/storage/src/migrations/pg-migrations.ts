@@ -1718,4 +1718,49 @@ export const PG_MIGRATIONS: PgMigration[] = [
       try { await db.execute(`ALTER TABLE projects ADD COLUMN db_seed_strategy TEXT NOT NULL DEFAULT 'first-start-only' CHECK (db_seed_strategy IN ('none','first-start-only','every-start'))`, []); } catch { /* exists */ }
     },
   },
+  {
+    version: 107,
+    description: 'v851 — project_features + project_feature_history für Cross-Project Knowledge Transfer (PG-Spiegel zu SQLite v103).',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_features (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          tech_stack TEXT NOT NULL DEFAULT '[]',
+          source_files TEXT NOT NULL DEFAULT '[]',
+          git_sha_introduced TEXT,
+          version INTEGER NOT NULL DEFAULT 1,
+          visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private','role-shared','global')),
+          confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+          source TEXT NOT NULL DEFAULT 'auto' CHECK (source IN ('auto','manual','imported')),
+          status TEXT NOT NULL DEFAULT 'confirmed' CHECK (status IN ('pending','confirmed','rejected')),
+          embedding_id TEXT,
+          derived_from_feature_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          retired_at TEXT,
+          UNIQUE (project_id, name)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_features_project ON project_features(project_id, retired_at)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_features_visibility ON project_features(visibility, retired_at) WHERE retired_at IS NULL`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_features_pending ON project_features(status, project_id) WHERE status='pending'`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_features_user ON project_features(user_id, retired_at)`, []);
+
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_feature_history (
+          id TEXT PRIMARY KEY,
+          feature_id TEXT NOT NULL REFERENCES project_features(id) ON DELETE CASCADE,
+          version INTEGER NOT NULL,
+          snapshot_json TEXT NOT NULL,
+          archived_at TEXT NOT NULL,
+          archived_reason TEXT
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_feature_history_feature ON project_feature_history(feature_id, version DESC)`, []);
+    },
+  },
 ];

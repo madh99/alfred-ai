@@ -338,6 +338,8 @@ export class Alfred {
   private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
   private commitsRepoRef?: import('@alfred/storage').ProjectAgentCommitsRepository;
   private plansRepoRef?: import('@alfred/storage').ProjectAgentPlansRepository;
+  /** v851 — Feature-Library Reference für API-Callbacks. */
+  private featuresRepoRef?: import('@alfred/storage').ProjectFeaturesRepository;
   private delegateSkillRef?: import('@alfred/skills').DelegateSkill;
   private codeAgentSkillRef?: import('@alfred/skills').CodeAgentSkill;
   /** v850 — MCP-Token-Store für Per-Spawn-Tokens. Nur initialisiert wenn codeAgents.mcp.enabled. */
@@ -1458,6 +1460,16 @@ export class Alfred {
         projectRunner.setPlansRepository(plansRepo);
         this.plansRepoRef = plansRepo;
       } catch (err) { this.logger.warn({ err }, 'Plans-Repo wiring failed (non-fatal)'); }
+
+      // v851 — Feature-Library für Auto-Extractor nach Project-Agent-Done
+      try {
+        const { ProjectFeaturesRepository } = await import('@alfred/storage');
+        const featuresRepo = new ProjectFeaturesRepository(adapter);
+        projectRunner.setFeaturesRepository(featuresRepo);
+        // owner-master-userId für feature.userId beim Auto-Insert
+        if (this.ownerMasterUserId) projectRunner.setOwnerMasterUserId(this.ownerMasterUserId);
+        this.featuresRepoRef = featuresRepo;
+      } catch (err) { this.logger.warn({ err }, 'v851 Features-Repo wiring failed (non-fatal)'); }
 
       // v652 — Lessons-Repo + Auto-Resume-Callback
       try {
@@ -9044,6 +9056,37 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               const action = await repo.getById(actionId);
               return action as unknown as Record<string, unknown> | null;
             } catch (err) { this.logger.warn({ err, actionId }, 'Projects API getChatAction failed'); return null; }
+          },
+          // v851 — Feature-Library API
+          listProjectFeatures: async (projectId: string, opts?: { status?: string }) => {
+            if (!this.featuresRepoRef) return [];
+            try {
+              const features = await this.featuresRepoRef.listByProject(projectId, opts as { status?: 'pending' | 'confirmed' | 'rejected' } | undefined);
+              return features as unknown as Array<Record<string, unknown>>;
+            } catch (err) { this.logger.warn({ err, projectId }, 'v851 listProjectFeatures failed'); return []; }
+          },
+          searchFeatures: async (query: string, limit: number) => {
+            if (!this.featuresRepoRef) return [];
+            try {
+              const uid = await resolveOwnerProj();
+              const features = await this.featuresRepoRef.search(query, { userId: uid, limit });
+              return features as unknown as Array<Record<string, unknown>>;
+            } catch (err) { this.logger.warn({ err, query }, 'v851 searchFeatures failed'); return []; }
+          },
+          setFeatureVisibility: async (featureId: string, visibility: string) => {
+            if (!this.featuresRepoRef) return false;
+            try { await this.featuresRepoRef.setVisibility(featureId, visibility as 'private' | 'role-shared' | 'global'); return true; }
+            catch (err) { this.logger.warn({ err, featureId }, 'v851 setFeatureVisibility failed'); return false; }
+          },
+          confirmFeature: async (featureId: string, action: 'confirm' | 'reject') => {
+            if (!this.featuresRepoRef) return false;
+            try { await this.featuresRepoRef.setStatus(featureId, action === 'confirm' ? 'confirmed' : 'rejected'); return true; }
+            catch (err) { this.logger.warn({ err, featureId, action }, 'v851 confirmFeature failed'); return false; }
+          },
+          retireFeature: async (featureId: string, reason?: string) => {
+            if (!this.featuresRepoRef) return false;
+            try { await this.featuresRepoRef.retire(featureId, reason); return true; }
+            catch (err) { this.logger.warn({ err, featureId }, 'v851 retireFeature failed'); return false; }
           },
           // v665b — Cluster-Shares + Project-Move
           listClusterShares: async () => {

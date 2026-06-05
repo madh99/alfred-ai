@@ -676,6 +676,16 @@ export class HttpAdapter extends MessagingAdapter {
     listChatActions?: (id: string, limit: number) => Promise<Array<Record<string, unknown>>>;
     /** v847 — Chat-Action-Detail */
     getChatAction?: (actionId: string) => Promise<Record<string, unknown> | null>;
+    /** v851 — Liste der Features pro Projekt (status-filterbar). */
+    listProjectFeatures?: (projectId: string, opts?: { status?: string }) => Promise<Array<Record<string, unknown>>>;
+    /** v851 — Cross-Project-Suche im Feature-Library (visibility-respektiert). */
+    searchFeatures?: (query: string, limit: number) => Promise<Array<Record<string, unknown>>>;
+    /** v851 — Visibility eines Features ändern (manuell role-shared aktivieren). */
+    setFeatureVisibility?: (featureId: string, visibility: string) => Promise<boolean>;
+    /** v851 — Pending Feature confirmen (status=confirmed) oder rejecten. */
+    confirmFeature?: (featureId: string, action: 'confirm' | 'reject') => Promise<boolean>;
+    /** v851 — Feature retiren. */
+    retireFeature?: (featureId: string, reason?: string) => Promise<boolean>;
     /** v659 — Letzte Deploys aus Memory parsed + auto-detected runtime aus cwd */
     lastDeploys?: (id: string) => Promise<{
       deploys: Array<{ host: string; user: string; runtime?: string; processManager?: string; composeVariant?: string; port?: number; verified?: boolean; date?: string }>;
@@ -1367,6 +1377,18 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsChatActions(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/chat-actions\/[^/]+$/) && req.method === 'GET') {
       this.handleChatActionDetail(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/features$/) && req.method === 'GET') {
+      this.handleProjectFeaturesList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/features/search' && req.method === 'GET') {
+      this.handleFeaturesSearch(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/features\/[^/]+\/visibility$/) && req.method === 'PATCH') {
+      this.handleFeatureVisibility(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/features\/[^/]+\/confirm$/) && req.method === 'POST') {
+      this.handleFeatureConfirm(req, res, url, 'confirm').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/features\/[^/]+\/reject$/) && req.method === 'POST') {
+      this.handleFeatureConfirm(req, res, url, 'reject').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/features\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleFeatureRetire(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/chat-history$/) && req.method === 'GET') {
       this.handleProjectsChatHistory(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/last-deploys$/) && req.method === 'GET') {
@@ -3080,6 +3102,73 @@ export class HttpAdapter extends MessagingAdapter {
     const stats = await this.projectsCallbacks.workStats(projectId);
     res.writeHead(stats ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(stats ?? { error: 'not-found' }));
+  }
+
+  // v851 — Feature-Library API
+  private async handleProjectFeaturesList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listProjectFeatures) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const status = url.searchParams.get('status') ?? undefined;
+    const features = await this.projectsCallbacks.listProjectFeatures(projectId, status ? { status } : undefined);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ features }));
+  }
+  private async handleFeaturesSearch(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.searchFeatures) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const query = url.searchParams.get('q') ?? '';
+    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
+    const features = await this.projectsCallbacks.searchFeatures(query, limit);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ features }));
+  }
+  private async handleFeatureVisibility(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.setFeatureVisibility) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const featureId = parts[parts.length - 2];
+    const body = await this.readBody(req).then(b => { try { return JSON.parse(b); } catch { return {}; } });
+    const visibility = String((body as Record<string, unknown>)?.visibility ?? '');
+    if (!['private', 'role-shared', 'global'].includes(visibility)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'invalid visibility' })); return;
+    }
+    const ok = await this.projectsCallbacks.setFeatureVisibility(featureId, visibility);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok }));
+  }
+  private async handleFeatureConfirm(req: http.IncomingMessage, res: http.ServerResponse, url: URL, action: 'confirm' | 'reject'): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.confirmFeature) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const featureId = parts[parts.length - 2];
+    const ok = await this.projectsCallbacks.confirmFeature(featureId, action);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok }));
+  }
+  private async handleFeatureRetire(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.retireFeature) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const featureId = parts[parts.length - 1];
+    const body = await this.readBody(req).then(b => { try { return JSON.parse(b); } catch { return {}; } }).catch(() => ({}));
+    const reason = typeof (body as Record<string, unknown>)?.reason === 'string'
+      ? String((body as Record<string, unknown>).reason)
+      : undefined;
+    const ok = await this.projectsCallbacks.retireFeature(featureId, reason);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok }));
   }
 
   // v847 — Chat-Actions Liste pro Projekt (Tracking der Chat-getriggerten Skill-Arbeit)

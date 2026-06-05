@@ -107,3 +107,5 @@ export type {
 export { AgentConventionsRepository } from './repositories/agent-conventions-repository.js';
 export { ChatActionsRepository } from './repositories/chat-actions-repository.js';
 export type { ChatAction, ChatActionSkillCall, CreateChatActionInput } from './repositories/chat-actions-repository.js';
+export { ProjectFeaturesRepository } from './repositories/project-features-repository.js';
+export type { ProjectFeature, CreateFeatureInput, FeatureVisibility, FeatureStatus, FeatureSource, FeatureSearchOptions } from './repositories/project-features-repository.js';

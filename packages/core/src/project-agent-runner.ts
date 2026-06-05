@@ -264,6 +264,15 @@ export class ProjectAgentRunner {
     this.plansRepo = repo;
   }
 
+  /** v851 — Set by alfred.ts: Feature-Library für Auto-Extractor nach Run-Done. */
+  private featuresRepo?: import('@alfred/storage').ProjectFeaturesRepository;
+  setFeaturesRepository(repo: import('@alfred/storage').ProjectFeaturesRepository): void {
+    this.featuresRepo = repo;
+  }
+  /** v851 — Owner-Master-UserId für feature.userId beim Auto-Insert. */
+  private ownerMasterUserId?: string;
+  setOwnerMasterUserId(id: string | undefined): void { this.ownerMasterUserId = id; }
+
   /** v652 — Set by alfred.ts: Lessons-Learned-Store für Pattern-Memorierung. */
   private lessonsRepo?: import('@alfred/storage').ProjectAgentLessonsRepository;
   setLessonsRepository(repo: import('@alfred/storage').ProjectAgentLessonsRepository): void {
@@ -1085,6 +1094,39 @@ export class ProjectAgentRunner {
       const overallSuccess = !runFailed && anyPhaseProducedFiles && lastBuildActuallyPassed;
       state.projectPhase = overallSuccess ? 'done' : 'failed';
       await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+
+      // v851 — Auto-Feature-Extractor: nach erfolgreichem Run mit goalKind ∈
+      // {feature, refactor} UND >= 5 files: LLM-Call der erkennt welche
+      // Features implementiert wurden, persistiert in project_features.
+      if (overallSuccess && this.featuresRepo && this.projectIdResolver) {
+        try {
+          const { extractFeaturesFromSession } = await import('./features/auto-extractor.js');
+          const projectId = await this.projectIdResolver(config.cwd).catch(() => undefined);
+          if (projectId) {
+            const commitMessages = completedPhases.map(p => p.description).slice(-10);
+            const collectedFiles: string[] = [];
+            for (const p of completedPhases) for (const f of p.modifiedFiles) {
+              if (!collectedFiles.includes(f)) collectedFiles.push(f);
+            }
+            const result = await extractFeaturesFromSession({
+              goal: config.goal,
+              goalKind: plan.goalKind,
+              modifiedFiles: collectedFiles,
+              commitMessages,
+              buildPassed: lastBuildActuallyPassed,
+              repo: this.featuresRepo,
+              llm: this.llm,
+              logger: this.logger,
+              projectId,
+              userId: this.ownerMasterUserId ?? '',
+              gitSha: state.lastCommitSha ?? undefined,
+            });
+            this.logger.info({ sessionId, projectId, ...result }, 'v851 feature extractor done');
+          }
+        } catch (err) {
+          this.logger.debug({ err: (err as Error).message, sessionId }, 'v851 feature extractor failed (non-critical)');
+        }
+      }
 
       // ── GIT PUSH ── (only on success — pushing an empty repo is just noise)
       if (overallSuccess) {

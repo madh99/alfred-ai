@@ -5,6 +5,129 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.851] - 2026-06-05
+
+### Added — Cross-Project Feature-Library (v851, Stufe 3/3)
+
+Letzte Stufe des v849-851-Plans. Schließt die Cross-Project-Wissens-Lücke:
+Alfred erkennt und persistiert fachliche Features die in einem Projekt
+implementiert wurden, damit er sie bei "Crowd Funding in anderem Projekt
+einbauen" als Referenz hat statt von vorne anzufangen.
+
+**Migrationen:** SQLite v103 + PG v107 fügen zwei Tabellen hinzu:
+- `project_features` (id, project_id, user_id, name, description,
+  tech_stack JSON, source_files JSON, git_sha_introduced, version,
+  visibility, confidence, source, status, embedding_id,
+  derived_from_feature_id, created_at, updated_at, retired_at)
+- `project_feature_history` (snapshot pro Version, für Audit + Rollback)
+
+**`ProjectFeaturesRepository`** (`packages/storage/src/repositories/project-features-repository.ts`):
+- CRUD + `upsertOrBumpVersion` (Auto-Archive der alten Version in
+  history-Tabelle)
+- `search(query, opts)` mit visibility-Filter:
+  - Owner sieht private + role-shared + global eigene
+  - Andere User sehen role-shared (gleicher userId) + global
+- `listByProject`, `listPendingForUser`, `setVisibility`, `setStatus`,
+  `retire`, `listHistory`
+
+**Auto-Extraktor** (`packages/core/src/features/auto-extractor.ts`):
+- Trigger nur wenn ALLE Bedingungen erfüllt (Token-Spar-Heuristik):
+  1. `goalKind ∈ {feature, refactor}` (aus v846 Plan-Klassifikation)
+  2. `modifiedFiles.length >= 5`
+  3. `last_build_passed = true`
+- LLM-Call (fast tier, max 1024 tokens, temp 0.2)
+- Confidence-Threshold:
+  - `>= 0.7` → auto-insert als `confirmed`
+  - `0.4-0.7` → insert als `pending` (User-Bestätigung im UI)
+  - `< 0.4` → discard
+- Auto-extracted = **immer** `visibility='private'`. User aktiviert
+  role-shared manuell pro Feature (Privacy-Bias)
+- `upsertOrBumpVersion`: existierende Features bekommen neue Version
+  statt duplicate
+
+**Goal-Matcher** (`packages/core/src/features/goal-matcher.ts`):
+- Pre-Plan-Phase: vor `createProjectPlan` werden Cross-Project-Matches
+  gesucht
+- Keyword-Extraction aus Goal (mit DE/EN-Stopwords)
+- Tech-Stack-Overlap-Filter (Jaccard >= 0.5)
+- Match-Score: gewichtetes Mittel aus keyword-hits + feature confidence
+- Top 3 Matches mit `matchScore >= 0.5`
+- 5 Tests grün
+
+**Snapshot-Importer** (`packages/core/src/features/snapshot-importer.ts`):
+- Bei akzeptiertem Match: kopiert Source-Files in
+  `<target-cwd>/.alfred/feature-imports/<feature-id>/`
+- Privacy-Strikt: Agent sieht NUR die explizit ausgewählten Files,
+  NICHT das ganze Source-Projekt-Repo
+- Generiert README im Snapshot-Dir mit Source-Projekt-Info + Hinweisen
+  für den Code-Agent ("adaptieren statt 1:1 kopieren")
+- Pragmatisches Glob-Matching (`**` suffix, single `*` in basename,
+  konkrete Pfade) ohne externe Glob-Deps
+- Cross-CLI: claude/codex/vibe sehen alle dieselben Files identisch
+
+**Project-Agent-Runner Hook** (`project-agent-runner.ts`):
+- Nach `overallSuccess`: `extractFeaturesFromSession` wird aufgerufen
+- Neue setter: `setFeaturesRepository`, `setOwnerMasterUserId`
+- Non-critical: Auto-Extraktor-Fehler bricht den Run NICHT ab
+
+**API-Endpoints** (`packages/messaging/src/adapters/http.ts`):
+- `GET /api/projects/:id/features?status=...` — Liste pro Projekt
+- `GET /api/features/search?q=...&limit=...` — Cross-Project
+- `PATCH /api/features/:id/visibility` (body: `{visibility}`) — toggle
+- `POST /api/features/:id/confirm` — pending → confirmed
+- `POST /api/features/:id/reject` — pending → rejected
+- `DELETE /api/features/:id` (body: `{reason?}`) — retire
+
+**UI** (`apps/web/src/components/projects/ProjectFeaturesView.tsx`):
+- Collapsible Section auf Project-Detail
+- Drei Tabs: confirmed / pending / rejected
+- Pro Feature: Name + Description + Tech-Stack-Chips + Source-Files-
+  Details + Visibility-Toggle + Confidence-Anzeige
+- Pending-Tab: Confirm/Reject-Buttons
+- Confirmed-Tab: Visibility-Dropdown (private/role-shared/global) + Retire
+- Eingebunden in ProjectsPage zwischen Sandbox-Settings und Chat-Pane
+
+**MCP-Tool aktiviert:**
+- `alfred.project.features.find` aus v850 (war Foundation mit empty
+  fallback) liefert jetzt echte Daten aus `project_features`. claude/
+  codex/vibe können Cross-Project-Wissen über MCP direkt nutzen wenn
+  v850 MCP-Integration aktiviert ist.
+
+**Was UNVERÄNDERT bleibt:**
+- ALLE pre-v851 Code-Pfade unverändert
+- Bestehende `learned_recipes`, `convention_patterns`, `embeddings`
+  Tabellen identisch
+- Auto-Extraktor non-critical: Project-Agent-Run schlägt nicht fehl
+  wenn Extraktor crasht
+- Privacy-Default 'private' für ALLE auto-extracted features
+- Goal-Match-Phase ist Bestandteil von v846 Plan-Erstellung — pre-v851
+  Projekte ohne Features im Library sehen keine Matches
+- v844/v846/v847/v848/v849/v850 alle unverändert
+
+**Tests:** 5 grün in `goal-matcher.test.ts`:
+- empty-on-short-goal, keyword-match, tech-stack-filter, exclude-current-
+  project, top-3-sorted
+
+**Was bewusst NICHT in v851** (v851.1+):
+- **Semantic Search via Embeddings** — aktuell keyword-only Search.
+  Embeddings-Integration ist Foundation vorhanden (embedding_id-Spalte),
+  Population beim Insert + cosine-Search ist v851.1
+- **Confirm-Modal mit Override-Vorschau** — aktuell User-confirm direkt
+  pro Feature, kein Bulk-Confirm
+- **Snapshot-Auto-Import im Goal-Match-Flow** — User muss Snapshot-Import
+  über UI/Chat manuell triggern. Auto-Trigger nach "Übernehmen + adaptieren"-
+  Click ist v851.2
+
+**Aktivierungs-Beispiel nach Deploy:**
+1. Neuer Project-Agent-Run mit feature/refactor-Goal + 5+ files
+2. Bei Success: LLM-Extraktor läuft, persistiert features in
+   `project_features` mit `visibility='private'`
+3. Im UI sichtbar unter "Features-Library" auf Project-Detail
+4. User aktiviert manuell `role-shared` pro Feature wenn cross-project
+   geteilt werden soll
+5. Bei nächster Project-Agent-Start mit ähnlichem Goal: Match-Vorschlag
+   im Chat (geplant v851.1)
+
 ## [0.19.0-multi-ha.850] - 2026-06-05
 
 ### Added — Alfred-MCP-Server für CLI-Agents (v850, Stufe 2/3)

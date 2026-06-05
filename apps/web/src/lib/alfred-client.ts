@@ -1323,6 +1323,39 @@ export class AlfredClient {
     return await res.json();
   }
 
+  // v851 — Feature-Library
+  async fetchProjectFeatures(projectId: string, status?: string): Promise<ProjectFeatureDto[]> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/features${qs}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.features) ? data.features : [];
+  }
+  async searchFeatures(query: string, limit = 10): Promise<ProjectFeatureDto[]> {
+    const res = await fetch(`${this.baseUrl}/api/features/search?q=${encodeURIComponent(query)}&limit=${limit}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.features) ? data.features : [];
+  }
+  async setFeatureVisibility(featureId: string, visibility: 'private' | 'role-shared' | 'global'): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/features/${featureId}/visibility`, {
+      method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify({ visibility }),
+    });
+    return res.ok;
+  }
+  async confirmFeature(featureId: string, action: 'confirm' | 'reject'): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/features/${featureId}/${action}`, {
+      method: 'POST', headers: this.authHeaders,
+    });
+    return res.ok;
+  }
+  async retireFeature(featureId: string, reason?: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/features/${featureId}`, {
+      method: 'DELETE', headers: this.jsonHeaders, body: JSON.stringify({ reason }),
+    });
+    return res.ok;
+  }
+
   // v665b — Cluster-Shares + Project-Move
   async fetchClusterShares(): Promise<ClusterShareStatus[]> {
     const res = await fetch(`${this.baseUrl}/api/cluster/shares`, { headers: this.authHeaders });
@@ -2380,6 +2413,27 @@ export interface ChatActionSkillCallDto {
   success: boolean;
   error?: string;
   startedAt: number;
+}
+
+// v851 — Project-Features Cross-Project Knowledge-Library
+export interface ProjectFeatureDto {
+  id: string;
+  projectId: string;
+  userId: string;
+  name: string;
+  description: string;
+  techStack: string[];
+  sourceFiles: string[];
+  gitShaIntroduced: string | null;
+  version: number;
+  visibility: 'private' | 'role-shared' | 'global';
+  confidence: number;
+  source: 'auto' | 'manual' | 'imported';
+  status: 'pending' | 'confirmed' | 'rejected';
+  derivedFromFeatureId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  retiredAt: string | null;
 }
 
 export interface ChatActionDto {

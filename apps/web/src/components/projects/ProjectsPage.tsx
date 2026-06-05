@@ -12,6 +12,7 @@ import { RunningAgentsBanner } from './RunningAgentsBanner';
 import { ProjectWorkStatsView } from './ProjectWorkStatsView';
 import { ProjectChatActionsView } from './ProjectChatActionsView';
 import { ProjectSandboxSettingsView } from './ProjectSandboxSettingsView';
+import { ProjectFeaturesView } from './ProjectFeaturesView';
 import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
 import { AgentConventionsModal } from './AgentConventionsModal';
@@ -1262,6 +1263,9 @@ export function ProjectsPage() {
 
               {/* v849 — Sandbox-Settings (Single vs Compose-Stack) */}
               <ProjectSandboxSettingsView project={detail.project} onUpdated={(p) => setDetail(d => d ? { ...d, project: p } : d)} />
+
+              {/* v851 — Project-Features-Library (collapsible) */}
+              <ProjectFeaturesView projectId={detail.project.id} />
 
               {/* v658 — Projekt-Chat-Pane (collapsible) */}
               <ProjectChat projectId={detail.project.id} projectName={detail.project.name} projectCwd={detail.project.cwd ?? undefined} />
