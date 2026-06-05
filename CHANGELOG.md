@@ -5,6 +5,97 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.846] - 2026-06-05
+
+### Changed — Project-Plan-Agent: Bias + Mid-Run-Mutation + dynamische Caps (v846)
+
+**Symptom:** Project-Agent generierte für einfache Bug-Fixes routinemäßig 10-15
+Phasen, lief 3-8+ Stunden, änderte 45-70 Dateien (Ø 51 in 14 Tagen Postgres-Stats).
+Phasen-Beschreibungen waren 40-70 Wörter lang und überlappten sich semantisch,
+sodass die gleichen Dateien 3-11x in einer Session geändert wurden (User-Beobachtung
+"funktionierende Dinge werden zerstört" empirisch belegt: ChatClient.tsx 11x in
+2 Tagen).
+
+**Root-Cause-Analyse:** Im Bericht vor diesem Release dokumentiert. Hauptpunkte:
+1. Planner-Prompt biased "Software-Architekt" → architectural over-planning
+2. Keine Fix-vs-Feature-Klassifikation → gleiche Heuristik für triviale Fixes
+   wie für neue Projekte
+3. Plan war nach Generierung immutable — kein Mid-Run-Adjustment möglich
+4. Statische `maxDurationHours: 8` cap ohne Bezug zur Plan-Größe
+5. Phasen-Beschreibungen wurden 1:1 als Commit-Subject genutzt
+6. Reasoning-Engine wählte fast immer project_agent statt code_agent
+
+**Behoben — 8 koordinierte Änderungen:**
+
+**A') Planner mit Bias + reasoning-Zwang**
+(`packages/skills/src/built-in/code-agent/project-planner.ts`)
+- Neuer Prompt: Senior-Engineer statt Architekt
+- Explizite Goal-Klassifikation: `bug-fix | feature | refactor | audit | setup | unknown`
+- Typische Phasen-Spannen pro Kategorie (bug-fix 1-3, feature 3-8, etc.) — KEIN
+  hartes Cap, aber wenn Plan deutlich größer: `reasoning` PFLICHT
+- Phasen-Beschreibungen max 15 Wörter (vorher 40-70)
+- Neue Public API: `typicalPhaseRange(kind)`, Types `GoalKind`, `PlanMutation`
+
+**B'/B''/H) Mid-Run Plan-Mutation-Engine**
+(`packages/skills/src/built-in/code-agent/plan-assessor.ts`, neu)
+- Nach jeder gebauten Phase: LLM-Check (strong tier = Opus)
+- 6 Mutation-Typen: `done | proceed | skip | merge | extend | replace`
+- Plan ist jetzt MUTABLE — kann mid-run wachsen ODER schrumpfen
+- Fallback `proceed` bei LLM-Fehler oder malformed Output
+- 19 Unit-Tests in `plan-assessor.test.ts`
+
+**C) Resume-aware Planning**
+(`createProjectPlan(..., recentChanges)`)
+- Planner sieht git-log der letzten 7 Tage (max 30 Commits + Files)
+- Verhindert dass Continue-Sessions Phase 1-3 duplizieren
+
+**D) Commit-Subject kürzen**
+(`buildCommitSubject()` in `project-agent-runner.ts`)
+- Subject max 72 Zeichen, Body separat
+- Erkennt Conventional-Commit-Type via Keywords (fix/refactor/test/docs/...)
+- 9 Unit-Tests in `project-agent-runner.test.ts`
+
+**E) File-Thrash-Warner**
+(im Main-Loop)
+- In-Memory-Counter pro modifizierter Datei
+- Warnung im Chat nach 3+ Änderungen derselben Datei in einer Session
+- "⚠ File-Thrash erkannt — eventuell überschreibt sich der Plan selbst"
+
+**F-dynamisch) Adaptive Time-Caps**
+- Soft-Cap = `max(2h, phases × 30min + 1h Buffer)`, rekalkuliert nach Plan-Mutation
+- Warnungen bei 80 % und 100 % Soft-Cap (kein Kill)
+- User-konfigurierter `maxDurationHours` bleibt als oberes Limit
+- Emergency-Hard-Cap bei 24h gegen infinite Loops
+- → Eine legitim 15h-Session läuft durch wenn `maxDurationHours` entsprechend gesetzt
+
+**G) Skill-Description-Routing**
+(`project-agent-skill.ts`, `code-agent-skill.ts`)
+- Klare Trennung in Skill-Descriptions: code_agent für einfache fokussierte Tasks,
+  project_agent für Multi-Phase-Komplexität
+- Reasoning-Engine soll bei "fix typo", "increase timeout" etc. zu code_agent routen
+
+**H) Plan-Mutation umfasst auch Extension**
+- Im PlanAssessor: Kind `extend` fügt neue Phase ein wenn der Coder Mehrarbeit entdeckt
+- → Plan kann symmetrisch in beide Richtungen wachsen
+
+**Was bewusst NICHT geändert wurde:**
+- Public API von `createProjectPlan` rückwärtskompatibel (recentChanges optional)
+- `ProjectAgentMeta`-Schema in Postgres unverändert
+- Bestehende laufende Sessions werden NICHT beeinflusst (Plan-Mutation greift
+  erst für nach v846-Deploy gestartete Sessions)
+- `maxFixAttempts: 3` unverändert
+- Build-Validation-Loop unverändert
+- Secret-Scan-Logik unverändert
+- Git-Push-Workflow unverändert
+
+**Tests:** 28 neue Tests gesamt (19 plan-assessor, 9 buildCommitSubject).
+
+**Erwartete Wirkung in Postgres-Stats nach Deploy:**
+- Ø Phasen pro Session: 8 → 3-5
+- Ø Files-Changed pro Session: 51 → 10-20
+- Ø Session-Dauer für Bug-Fixes: 3-5h → 30min-1h
+- Failure-Rate sinkt weil weniger Plan-Inflation = weniger File-Thrash = weniger Build-Brüche
+
 ## [0.19.0-multi-ha.845] - 2026-06-05
 
 ### Fixed — UniFi `stat/alarm` / `stat/event` / `cmd/evtmgr` → 404 (v845)

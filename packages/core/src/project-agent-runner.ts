@@ -12,10 +12,53 @@ import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig
 import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
-import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded } from '@alfred/skills';
+import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded, assessPlanProgress, applyMutation, typicalPhaseRange } from '@alfred/skills';
+import type { ProjectPlan, PlanMutation } from '@alfred/skills';
 import type { FileStore } from '@alfred/storage';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * v846 — Erzeugt ein kompaktes Conventional-Commits Subject aus einer (oft
+ * sehr langen) Phase-Beschreibung.
+ *
+ * Strategie:
+ *  1. Conventional-Commit-Prefix anhand Keywords erkennen (feat/fix/test/...)
+ *  2. Den ersten Satz oder die ersten 60-72 Zeichen der Phase als Subject nehmen
+ *  3. Bei "X: Y" Pattern den Teil vor dem `:` als Topic, den Rest als Body
+ *
+ * Eingabe: "Channel-Leave/Rejoin-Logik korrigieren: beim expliziten Channel-Verlassen Membership beenden..."
+ * Ausgabe Subject: "fix: Channel-Leave/Rejoin-Logik korrigieren"
+ */
+export function buildCommitSubject(phase: string, phaseNum: number, convention?: string): string {
+  const lower = phase.toLowerCase();
+  let type = 'feat';
+  if (/fix|bug|repariere|behebe|error|correct|korrigier/.test(lower)) type = 'fix';
+  else if (/refactor|umstrukturier|cleanup|aufr(?:ä|ae)umen/.test(lower)) type = 'refactor';
+  else if (/test|spec/.test(lower)) type = 'test';
+  else if (/doc|readme|comment/.test(lower)) type = 'docs';
+  else if (/style|format|lint/.test(lower)) type = 'style';
+  else if (/perf|optimier/.test(lower)) type = 'perf';
+  else if (/chore|setup|config/.test(lower)) type = 'chore';
+
+  // Extract topic: first sentence or "X: Y" prefix
+  let topic = phase.trim();
+  const colonIdx = topic.indexOf(':');
+  if (colonIdx > 0 && colonIdx < 80) {
+    topic = topic.slice(0, colonIdx).trim();
+  } else {
+    // Split on first sentence end
+    const sentEnd = topic.search(/[.!?](?:\s|$)/);
+    if (sentEnd >= 5 && sentEnd < 80) topic = topic.slice(0, sentEnd).trim();
+  }
+  // Hard cap at 60 chars for the topic so total subject fits in 72
+  if (topic.length > 60) topic = topic.slice(0, 59).trimEnd() + '…';
+
+  if (convention === 'conventional') {
+    return `${type}: ${topic}`;
+  }
+  return `Phase ${phaseNum}: ${topic}`;
+}
 
 /** Run a git command, optionally as a different user via sudo -u. */
 async function gitExec(args: string[], cwd: string, runAsUser?: string): Promise<string> {
@@ -383,9 +426,50 @@ export class ProjectAgentRunner {
       await this.sendProgress(platform, chatId, '📋 Erstelle Projekt-Plan...');
 
       const previousSessions = await this.sessionRepo.getCompletedByCwd(config.cwd).catch(() => []);
-      const plan = await createProjectPlan(config.goal, this.llm, previousSessions);
-      await this.sendProgress(platform, chatId,
-        `📋 Plan erstellt: ${plan.phases.length} Phasen\n${plan.phases.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}`);
+
+      // v846 — Recent commits (last 7d) so the planner sees what was already done.
+      // Wichtig für Resume/Continue-Sessions: ohne diese Info hat der Planner
+      // empirisch routinemäßig Phase 1-3 dupliziert. Wir holen max 30 commits.
+      let recentChanges: Array<{ sha: string; message: string; files: string[] }> = [];
+      if (existsSync(path.join(config.cwd, '.git'))) {
+        try {
+          const log = await gitExec(['log', '--since=7.days.ago', '--pretty=format:%H%x09%s', '--name-only', '--max-count=30'], config.cwd, runAsUser).catch(() => '');
+          if (log) {
+            // Parse: "SHA<TAB>Message\nFile1\nFile2\n\nSHA<TAB>Message\n..."
+            const blocks = log.split(/\n\n+/).filter(Boolean);
+            for (const block of blocks) {
+              const lines = block.split('\n').filter(Boolean);
+              if (lines.length === 0) continue;
+              const header = lines[0].split('\t');
+              if (header.length < 2) continue;
+              const files = lines.slice(1).filter(l => !l.includes('\t')).slice(0, 20);
+              recentChanges.push({ sha: header[0], message: header[1], files });
+              if (recentChanges.length >= 30) break;
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err, cwd: config.cwd }, 'v846 git log for recent changes failed (non-fatal)');
+        }
+      }
+
+      const plan = await createProjectPlan(config.goal, this.llm, previousSessions, recentChanges);
+
+      // v846 — Plan-Banner mit Klassifikation + reasoning + Größen-Bias-Hinweis
+      const kindLabel = plan.goalKind && plan.goalKind !== 'unknown' ? plan.goalKind : 'undefiniert';
+      const typical = typicalPhaseRange(plan.goalKind);
+      const overSized = plan.phases.length > typical.max;
+      const banner = [
+        `📋 Plan erstellt: ${plan.phases.length} Phasen (Goal-Typ: ${kindLabel}, typisch ${typical.min}-${typical.max})`,
+        overSized
+          ? `⚠ Plan deutlich größer als typisch für ${kindLabel}. Begründung: ${plan.reasoning ?? '(keine angegeben)'}`
+          : '',
+        ...plan.phases.map((p, i) => `  ${i + 1}. ${p}`),
+      ].filter(Boolean).join('\n');
+      await this.sendProgress(platform, chatId, banner);
+      if (overSized) {
+        this.logger.warn({ sessionId, goalKind: plan.goalKind, phaseCount: plan.phases.length, typicalMax: typical.max },
+          'Project agent: plan oversized vs goal-kind heuristic');
+      }
       state.milestonesReached.push('Plan erstellt');
       await this.sessionRepo.addMilestone(sessionId, 'Plan erstellt');
 
@@ -445,7 +529,21 @@ export class ProjectAgentRunner {
       }
 
       const startTime = Date.now();
-      const maxDurationMs = config.maxDurationHours * 60 * 60 * 1000;
+      // v846 — Adaptive Caps. KEIN starres Limit mehr.
+      //  - softCap     = max(2h, phases × 30min + 1h Buffer)
+      //  - warn80      = Warnung wenn 80% softCap erreicht
+      //  - warn100     = Warnung wenn softCap erreicht (kein Kill)
+      //  - hardCap     = config.maxDurationHours (default 8h, kann user-überschrieben werden)
+      //                  ODER min(24h, plan.phases.length × 60min + 1h) wenn config nicht gesetzt
+      //  - emergency   = 24h absolutes Safety-Net gegen infinite Loops
+      // Bei Plan-Mutation (extend) wird softCap dynamisch neu berechnet.
+      const computeSoftCapMs = (): number =>
+        Math.max(2 * 3600_000, plan.phases.length * 30 * 60_000 + 60 * 60_000);
+      let softCapMs = computeSoftCapMs();
+      const emergencyHardCapMs = 24 * 3600_000;
+      const configuredHardCapMs = config.maxDurationHours * 3600_000;
+      let warned80 = false;
+      let warned100 = false;
 
       // ── L1 (v604) PRE-FLIGHT: cwd reachability check ─────────────────────
       // When the code-agent runs as a different user (e.g. sudo -u madh) we have
@@ -526,7 +624,17 @@ export class ProjectAgentRunner {
         }
       }
 
+      // v846 — Per-phase tracking für PlanAssessor + File-Thrash-Warner.
+      //  completedPhases  → wird in den Assessor gefüttert
+      //  fileModCount     → Counter pro Datei für Thrash-Warning
+      const completedPhases: Array<{ index: number; description: string; modifiedFiles: string[] }> = [];
+      const fileModCount = new Map<string, number>();
+
       // ── MAIN LOOP ──
+      // v846 — plan.phases ist jetzt MUTABLE: PlanAssessor (Mid-Run-Mutation)
+      // kann Phasen skippen/mergen/extenden/replacen. Wir laufen weiter so lange
+      // bis phaseIdx == plan.phases.length erreicht ist; mutations passieren
+      // VOR dem next-iteration-tick.
       for (let phaseIdx = 0; phaseIdx < plan.phases.length; phaseIdx++) {
         // Check abort signal
         if (abortController.signal.aborted) {
@@ -534,10 +642,37 @@ export class ProjectAgentRunner {
           return;
         }
 
-        // Check duration limit
-        if (Date.now() - startTime > maxDurationMs) {
-          await this.sendProgress(platform, chatId, `⏰ Max-Dauer (${config.maxDurationHours}h) überschritten. Agent gestoppt.`);
+        // v846 — Adaptive duration check (kein starres Limit).
+        const elapsed = Date.now() - startTime;
+        // Hard emergency safety-net — schützt vor infinite Loops
+        if (elapsed > emergencyHardCapMs) {
+          await this.sendProgress(platform, chatId, `🛑 Notfall-Limit (24h) erreicht — Session sicherheitshalber gestoppt. Falls legitim: neu starten.`);
+          this.logger.error({ sessionId, elapsedHours: (elapsed / 3600_000).toFixed(1) },
+            'Project agent: emergency hard cap hit (>24h)');
           return;
+        }
+        // User-konfigurierter hard cap (default 8h). User kann maxDurationHours
+        // hochsetzen (z.B. 48h) wenn lange legitime sessions erwartet werden.
+        if (elapsed > configuredHardCapMs) {
+          await this.sendProgress(platform, chatId, `⏰ Konfiguriertes Max-Dauer-Limit (${config.maxDurationHours}h) erreicht. Falls die Session legitim länger laufen soll: maxDurationHours in der Config hochsetzen. Session wird gestoppt.`);
+          return;
+        }
+        // Soft-Cap-Warnungen (kein Kill)
+        if (!warned100 && elapsed > softCapMs) {
+          warned100 = true;
+          const hrs = (softCapMs / 3600_000).toFixed(1);
+          await this.sendProgress(platform, chatId, `⚠ Session läuft über Plan-Budget hinaus (${hrs}h für ${plan.phases.length} Phasen vorgesehen). Falls noch sinnvoll: läuft weiter. Falls nicht: 'stop' senden.`);
+        } else if (!warned80 && elapsed > softCapMs * 0.8) {
+          warned80 = true;
+          const hrs = (softCapMs / 3600_000).toFixed(1);
+          await this.sendProgress(platform, chatId, `ℹ 80 % des Plan-Zeitbudgets (${hrs}h) erreicht.`);
+        }
+        // softCap kann durch Plan-Mutation (extend) gewachsen sein — recalc
+        const newSoftCap = computeSoftCapMs();
+        if (newSoftCap !== softCapMs) {
+          softCapMs = newSoftCap;
+          warned80 = warned80 && elapsed > softCapMs * 0.8;
+          warned100 = warned100 && elapsed > softCapMs;
         }
 
         state.projectIteration = phaseIdx + 1;
@@ -815,19 +950,11 @@ export class ProjectAgentRunner {
             }
             await gitExec(['add', '-A'], config.cwd, runAsUser);
             // v663a — Conventional Commits: Präfix anhand Heuristik
-            let commitMsg = `Phase ${phaseIdx + 1}: ${phase}`;
-            if (projectConventions?.commits?.convention === 'conventional') {
-              const lower = phase.toLowerCase();
-              let type = 'feat';
-              if (/fix|bug|repariere|behebe|error/.test(lower)) type = 'fix';
-              else if (/refactor|umstrukturier|cleanup|aufräumen/.test(lower)) type = 'refactor';
-              else if (/test|spec/.test(lower)) type = 'test';
-              else if (/doc|readme|comment/.test(lower)) type = 'docs';
-              else if (/style|format|lint/.test(lower)) type = 'style';
-              else if (/perf|optimier/.test(lower)) type = 'perf';
-              else if (/chore|setup|config/.test(lower)) type = 'chore';
-              commitMsg = `${type}: ${phase}`;
-            }
+            // v846 — Subject (max 72 Zeichen) + body separat. Vorher wurden 40+ Wörter
+            // Phasen-Beschreibungen direkt als Subject genutzt → `git log --oneline` unbrauchbar.
+            const subject = buildCommitSubject(phase, phaseIdx + 1, projectConventions?.commits?.convention);
+            const body = phase.length > subject.length - 10 ? phase : '';
+            const commitMsg = body ? `${subject}\n\n${body}` : subject;
             const stdout = await gitExec(['commit', '-m', commitMsg, '--allow-empty'], config.cwd, runAsUser);
             const shaMatch = stdout.match(/\[[\w-]+ ([a-f0-9]+)\]/);
             state.lastCommitSha = shaMatch?.[1];
@@ -862,6 +989,60 @@ export class ProjectAgentRunner {
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
           // v648 — Phase als done markieren
           if (this.plansRepo) { try { await this.plansRepo.markDone(sessionId, phaseIdx + 1); } catch { /* skip */ } }
+        }
+
+        // v846 — Phase abgeschlossen: record completion + thrash-check.
+        // codeResult.modifiedFiles enthält die Files die der Agent in DIESER
+        // Phase angefasst hat. Fix-Iterations und Test-Runs sind NICHT hier
+        // enthalten (würden zu sehr aufblähen).
+        completedPhases.push({
+          index: phaseIdx,
+          description: phase,
+          modifiedFiles: codeResult.modifiedFiles,
+        });
+        // File-Thrash-Counter (E)
+        for (const f of codeResult.modifiedFiles) {
+          fileModCount.set(f, (fileModCount.get(f) ?? 0) + 1);
+        }
+        // Thrash-Warning nach 3+ Modifikationen derselben Datei
+        const thrashed = Array.from(fileModCount.entries()).filter(([, c]) => c >= 3);
+        if (thrashed.length > 0 && phaseIdx % 2 === 0) {
+          // Nur jede 2. Phase warnen damit der Chat nicht spammt
+          const list = thrashed.slice(0, 3).map(([f, c]) => `${f}: ${c}x`).join(', ');
+          await this.sendProgress(platform, chatId,
+            `⚠ File-Thrash erkannt — dieselbe(n) Datei(en) in mehreren Phasen geändert: ${list}. Eventuell überschreibt sich der Plan selbst.`);
+        }
+
+        // v846 — Mid-Run Plan-Assessor (B'/B''/H).
+        // Nur bei buildPassed=true; bei failed Phasen ist die State unklar.
+        // Bei Plan mit <=1 verbleibender Phase überspringen (nichts zu mutieren).
+        if (buildPassed) {
+          const remaining = plan.phases.slice(phaseIdx + 1);
+          if (remaining.length > 0) {
+            try {
+              const mutation = await assessPlanProgress(this.llm, {
+                goal: config.goal,
+                completedPhases,
+                remainingPhases: remaining,
+                buildPassed: true,
+                buildOutput: undefined,
+              });
+              const isDone = mutation.kind === 'done';
+              if (mutation.kind !== 'proceed') {
+                await this.applyPlanMutation(plan, phaseIdx, mutation, platform, chatId, sessionId);
+              }
+              if (isDone) {
+                // Goal erfüllt — schleife sofort verlassen
+                this.logger.info({
+                  sessionId, completedAfterPhase: phaseIdx + 1,
+                  reasoning: mutation.kind === 'done' ? mutation.reasoning : undefined,
+                }, 'Project agent: assessor declared goal done, ending loop early');
+                break;
+              }
+            } catch (err) {
+              this.logger.warn({ err, sessionId, phaseIdx }, 'Project agent: assessor failed, proceeding as planned');
+            }
+          }
         }
 
         // L2 (v604) — track per-phase success for fail-fast
@@ -1316,6 +1497,67 @@ export class ProjectAgentRunner {
     } catch {
       return url;
     }
+  }
+
+  /**
+   * v846 — Wendet eine Plan-Mutation IN-PLACE auf plan.phases an und
+   * sendet einen Chat-Banner damit der User die Änderung sieht.
+   *
+   * Wichtig: plan.phases ist by-reference. Die Mutation passiert hier
+   * synchron; der Main-Loop sieht im nächsten Iteration-tick das neue
+   * Array (für skip/merge/replace verkleinert, für extend vergrößert).
+   */
+  private async applyPlanMutation(
+    plan: ProjectPlan,
+    currentPhaseIdx: number,
+    mutation: PlanMutation,
+    platform: string,
+    chatId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const remaining = plan.phases.slice(currentPhaseIdx + 1);
+    const { newRemaining } = applyMutation(remaining, currentPhaseIdx + 1, mutation);
+
+    // Mutate plan.phases in place: keep first (currentPhaseIdx+1) phases (the
+    // completed ones), then append newRemaining.
+    const completedSlice = plan.phases.slice(0, currentPhaseIdx + 1);
+    plan.phases.length = 0;
+    plan.phases.push(...completedSlice, ...newRemaining);
+
+    // User-facing banner
+    let bannerHeader = '';
+    switch (mutation.kind) {
+      case 'done':
+        bannerHeader = '🏁 Plan-Assessor: Goal bereits erfüllt — Session beendet';
+        break;
+      case 'skip':
+        bannerHeader = `✂ Plan-Assessor: ${mutation.phaseIndices.length} Phase(n) übersprungen`;
+        break;
+      case 'merge':
+        bannerHeader = `🔀 Plan-Assessor: ${mutation.phaseIndices.length} Phasen zusammengefasst`;
+        break;
+      case 'extend':
+        bannerHeader = `➕ Plan-Assessor: Neue Phase eingefügt`;
+        break;
+      case 'replace':
+        bannerHeader = `🔁 Plan-Assessor: ${mutation.phaseIndices.length} Phase(n) ersetzt durch ${mutation.newPhases.length}`;
+        break;
+      case 'proceed':
+        return;
+    }
+    // After the switch we're guaranteed mutation.kind !== 'proceed' (early-return above).
+    const reasoning = (mutation as { reasoning?: string }).reasoning;
+    const reasoningBlock = reasoning ? `\n  → ${reasoning}` : '';
+    const newSizeBlock = `\n  Plan-Größe nun: ${plan.phases.length} Phasen (${plan.phases.length - currentPhaseIdx - 1} verbleiben)`;
+    await this.sendProgress(platform, chatId, bannerHeader + reasoningBlock + newSizeBlock);
+
+    this.logger.info({
+      sessionId,
+      mutation: mutation.kind,
+      reasoning,
+      newPlanLength: plan.phases.length,
+      remainingAfter: plan.phases.length - currentPhaseIdx - 1,
+    }, 'Project agent: plan mutation applied');
   }
 
   private assemblePrompt(

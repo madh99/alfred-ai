@@ -13,8 +13,10 @@ export { ProjectAgentSkill, pushInterjection, drainInterjections, setInterjectio
 export type { AgentEventEntry } from './project-agent-skill.js';
 export { validateBuild } from './build-validator.js';
 export type { BuildValidationResult, CommandResult } from './build-validator.js';
-export { createProjectPlan } from './project-planner.js';
-export type { ProjectPlan } from './project-planner.js';
+export { createProjectPlan, typicalPhaseRange } from './project-planner.js';
+export type { ProjectPlan, PlanMutation, GoalKind } from './project-planner.js';
+export { assessPlanProgress, applyMutation } from './plan-assessor.js';
+export type { AssessInput } from './plan-assessor.js';
 export { extractBuildError } from './error-extractor.js';
 export type { ExtractedError } from './error-extractor.js';
 export { stageAssetsForProject, findAssetKeys } from './asset-bridge.js';

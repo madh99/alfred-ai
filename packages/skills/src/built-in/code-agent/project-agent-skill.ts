@@ -352,7 +352,24 @@ export class ProjectAgentSkill extends Skill {
     this.metadata = {
       name: 'project_agent',
       category: 'automation',
-      description: `Autonomous coding agent that creates and develops software projects end-to-end. Runs indefinitely until the goal is reached.
+      description: `Autonomous MULTI-PHASE coding agent for COMPLEX work that needs a plan. Creates and develops software projects end-to-end with planning, build-validation, and commit-per-phase.
+
+WANN DIESEN SKILL NUTZEN:
+- Neues Projekt von Grund auf
+- Mehrere zusammenhängende Features (3+ Schritte)
+- Komplexe Refactorings über mehrere Dateien/Module
+- Migrations mit Schema+Code+Tests
+- Wenn der User explizit "Project-Agent" / "build a project" sagt
+
+WANN NICHT NUTZEN — stattdessen code_agent.run:
+- Einzelner Bug-Fix in einer Datei
+- Kleine Anpassung wo offensichtlich ist was zu tun ist
+- Read-only Tasks (Code-Review, Dependency-Liste, Fragen beantworten)
+- Wenn der Plan trivial wäre (1-2 Schritte)
+- "Fix typo in X", "rename Y to Z", "increase timeout in Z" etc.
+
+Faustregel: Wenn du selbst sagen würdest "das sind 1-2 Edits" → code_agent. Sonst project_agent.
+
 Actions:
 - start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs"). WICHTIG zur cwd: das ist der LOKALE Entwicklungs-Pfad auf der Alfred-Node (z.B. /home/madh/projects/<projektname>), NICHT der Deploy-Target-Pfad auf einem Remote-Host. Wenn die Deploy-Memory sagt "Projekt X läuft auf 192.168.1.96 als ubuntu" ist das der Deploy-Target, NICHT der Workspace. Für Continue-Sessions desselben Projekts: gleichen cwd wie der letzte erfolgreiche Lauf benutzen (siehe project_workspace_<projektname> Memory falls vorhanden).
 - status: Check current status of a project agent session. Params: task_id. Returns currentPhase — if 'done' or 'failed', the session has ENDED and interject will not work; start a fresh one instead.

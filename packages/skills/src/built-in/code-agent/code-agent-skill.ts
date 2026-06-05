@@ -34,11 +34,16 @@ export class CodeAgentSkill extends Skill {
     category: 'automation',
     description:
       'Run a CLI-based coding agent (e.g. Claude Code, Codex, Gemini CLI, Aider) as a subprocess. ' +
+      'BEVORZUGT für EINFACHE, FOKUSSIERTE Tasks die KEINEN Multi-Phase-Plan brauchen: ' +
+      'einzelne Bug-Fixes, kleine Refactorings, Datei-Edits, Read-only Audits, Code-Review-Fragen. ' +
+      'Schneller als project_agent (1 Sub-Process statt LLM-Plan + N-Phase-Loop) und vermeidet das ' +
+      'File-Thrashing-Risiko des Multi-Phase-Agents. ' +
       'Use action "list_agents" to see available agents, "run" to execute one with a prompt, ' +
       '"orchestrate" to have the LLM decompose a task into parallel subtasks, ' +
       'or "push" to commit and push a project to GitLab/GitHub. ' +
       'IMPORTANT: For git push, ALWAYS use "push" action — NOT "run" with a git prompt. ' +
-      'The "push" action handles authentication automatically.',
+      'The "push" action handles authentication automatically. ' +
+      'WICHTIG: für KOMPLEXE Projekte mit Build-Validation und Multi-Phase-Plan → stattdessen project_agent nutzen.',
     riskLevel: 'admin',
     version: '1.0.0',
     timeoutMs: 600_000,
