@@ -5,6 +5,90 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.849] - 2026-06-05
+
+### Added — Compose-Stack-Sandbox-Foundation (v849, Stufe 1/3)
+
+Erste der drei Stufen aus dem v849-851-Plan. Schafft die Möglichkeit, in der
+Sandbox **docker-compose.yml-basierte Multi-Service-Stacks** (App + DB +
+Redis + MinIO etc.) zu betreiben — Voraussetzung für Projekte mit Datenbank.
+
+**Strict opt-in:** Default-Mode bleibt **'single'** für alle bestehenden
+Projekte. KEIN automatischer Switch, keine bestehende Sandbox wird migriert,
+pre-v849 Verhalten 100 % erhalten.
+
+**Migrationen:** SQLite v102 + PG v106 fügen drei Spalten zu `projects`:
+- `sandbox_mode TEXT DEFAULT 'single'` — `'single' | 'compose'`
+- `persist_db_volumes BOOLEAN DEFAULT false` — Volumes überleben Discard?
+- `db_seed_strategy TEXT DEFAULT 'first-start-only'` — `'none' | 'first-start-only' | 'every-start'`
+
+**Project-Detector erweitert** (`packages/core/src/sandbox/project-detect.ts`):
+- Erkennt `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`,
+  `compose.yaml` im Repo-Root
+- Neue Felder: `hasComposeFile: boolean`, `composeFile?: string`
+- WICHTIG: Detection sagt NUR "compose ist möglich". Sie schaltet den
+  Sandbox-Mode NICHT automatisch um. Switch passiert via
+  `project.sandboxMode = 'compose'` im UI.
+
+**Resource-Guard** (`packages/core/src/sandbox/resource-guard.ts`, neu):
+Pre-flight RAM-Check vor `docker compose up`:
+- Schätzt Need = serviceCount × 384 MB (default, konfigurierbar)
+- Fordert 512 MB Headroom für Host
+- Blockt mit klarer Fehlermeldung statt OOM-killer-Suizid
+- Liest Host-RAM via `free -m` (Linux) mit `os.freemem()` Fallback
+
+**Compose-Runner** (`packages/core/src/sandbox/compose-runner.ts`, neu):
+- `startComposeStack()` — Resource-Check → Override-File generieren →
+  `docker compose up -d --remove-orphans`
+- `stopComposeStack()` — `docker compose down (-v)` mit persistVolumes-Option
+- `waitForComposeHealthy()` — polled bis primary-service state='running'
+- `listComposeServices()` — `docker compose config --services`
+- User's `docker-compose.yml` wird NIE modifiziert. Sandbox-spezifische
+  Port-Mappings + ENV-Vars in separatem `.sandbox-state/<sandbox-id>/
+  docker-compose.override.yml` außerhalb des Repos
+- Compose-project-name = sandboxId → komplett isolierte Container/Networks/Volumes
+
+**SandboxManager-Routing** (`packages/core/src/sandbox-manager.ts`):
+- Neue optionale Dep `projectRepo` für sandboxMode-Lookup
+- In `createForSession()` nach Detection: wenn `project.sandboxMode === 'compose'`
+  UND `detection.hasComposeFile`: neuer Pfad `spinUpComposeAsync()`
+- Sonst: bestehender Pfad `spinUpContainerAsync()` (Single-Container, identisch zu pre-v849)
+- Fallback bei kaputtem Compose: rollback → status='failed' mit klarer Fehlermeldung
+- Primary-Service-Detection: `app|web|frontend|client|api` (case-insensitive), sonst erster Service
+
+**UI** (`apps/web/src/components/projects/ProjectSandboxSettingsView.tsx`, neu):
+- Collapsible Sektion auf Project-Detail
+- Toggle: Single-Container ↔ Compose-Stack
+- Bei Compose-Mode: persistDbVolumes Checkbox + Warning
+- DB-Seed-Strategy Dropdown
+- Eingebunden in `ProjectsPage.tsx` zwischen Chat-Actions und Projekt-Chat-Pane
+
+**Was UNVERÄNDERT bleibt:**
+- Bestehende Single-Container-Pfade in `sandbox-manager.ts` — 100 % identisch
+- `runSandboxContainer()` API-Signatur identisch
+- `detectProjectType()` Rückgabe-Type rückwärtskompatibel (nur neue Felder ergänzt)
+- HMR/Hot-Reload-Logik unverändert
+- Bestehende Sandboxen werden NICHT migriert
+- DB-Schema-Erweiterungen sind additiv (ALTER TABLE ADD COLUMN mit Default)
+
+**Tests:** 10 grün in 2 neuen Suites:
+- `resource-guard.test.ts` (5) — ok-Pfad, Block-Pfad, Logger-Calls, getHostFreeMb
+- `project-detect.test.ts` (5) — compose-detection bei verschiedenen Filenamen, keine
+  Single-Container-Regression bei Compose-Anwesenheit
+
+**Was noch FEHLT für v849.1** (geplant aber nicht in v849):
+- `discardSandbox` Compose-Cleanup-Pfad (aktuell wird stopComposeStack nur bei
+  spinUp-Failure gerufen, nicht beim normalen User-Discard)
+- DB-Seed-Anwendung nach DB-Health-Check (`project_db_seeds` lookup)
+- Multi-Port-UI auf Sandbox-Karte (zeigt aktuell nur primary hostPort)
+- `resume` für Compose-Sandboxen (aktuell nur für single)
+- Compose-Network-Sandbox-Isolation (aktuell project-name-scoped, sollte reichen)
+
+**Vorbedingung für sinnvollen Live-Betrieb:**
+- VM-Upgrade auf >= 4 GB RAM (auf .92 mit 1.9 GB würde Resource-Guard
+  jeden 3+-Service-Stack blockieren). User hat sandboxMode-Toggle aber sollte
+  ihn auf .92 NICHT aktivieren bis VM upgraded.
+
 ## [0.19.0-multi-ha.848] - 2026-06-05
 
 ### Fixed — code_agent unfairer Abort nach 2 Min Idle (v848)

@@ -3865,6 +3865,19 @@ export class Alfred {
                   return p?.maxConcurrentSandboxes ?? null;
                 } catch { return null; }
               },
+              // v849 — Project-Repo für sandboxMode + persistDbVolumes Lookup.
+              // SandboxManager fragt vor jedem Start: ist compose-Mode aktiv?
+              projectRepo: this.projectRepo ? {
+                getById: async (userId: string, id: string) => {
+                  const p = await this.projectRepo!.getById(userId, id);
+                  if (!p) return null;
+                  return {
+                    sandboxMode: p.sandboxMode,
+                    persistDbVolumes: p.persistDbVolumes,
+                    dbSeedStrategy: p.dbSeedStrategy,
+                  };
+                },
+              } : undefined,
               // v812 — Merge bestätigt: pending Sessions → merged, OpenItemMatcher gegen
               // gemergten Stand, Workspace-Memory + "applied"-Chat.
               onMergeApplied: async ({ sandboxId, projectId }) => {

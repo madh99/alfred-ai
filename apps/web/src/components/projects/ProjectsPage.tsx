@@ -11,6 +11,7 @@ import { ProjectChat } from './ProjectChat';
 import { RunningAgentsBanner } from './RunningAgentsBanner';
 import { ProjectWorkStatsView } from './ProjectWorkStatsView';
 import { ProjectChatActionsView } from './ProjectChatActionsView';
+import { ProjectSandboxSettingsView } from './ProjectSandboxSettingsView';
 import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
 import { AgentConventionsModal } from './AgentConventionsModal';
@@ -1258,6 +1259,9 @@ export function ProjectsPage() {
 
               {/* v847 — Chat-Aktionen Historie (collapsible) */}
               <ProjectChatActionsView projectId={detail.project.id} />
+
+              {/* v849 — Sandbox-Settings (Single vs Compose-Stack) */}
+              <ProjectSandboxSettingsView project={detail.project} onUpdated={(p) => setDetail(d => d ? { ...d, project: p } : d)} />
 
               {/* v658 — Projekt-Chat-Pane (collapsible) */}
               <ProjectChat projectId={detail.project.id} projectName={detail.project.name} projectCwd={detail.project.cwd ?? undefined} />

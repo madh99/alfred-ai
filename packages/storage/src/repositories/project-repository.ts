@@ -90,6 +90,33 @@ export interface Project {
   defaultDbSeedId?: string;
   /** v755 — Maximale gleichzeitig aktive Sandboxes für dieses Projekt. NULL = nutzt User-Quota. */
   maxConcurrentSandboxes?: number;
+  /**
+   * v849 — Sandbox-Mode pro Projekt.
+   * - 'single' (default): ein Docker-Container mit Node-Image (Status quo)
+   * - 'compose': docker compose stack — User's docker-compose.yml wird mit
+   *   Sandbox-spezifischem override-file ausgeführt. Multi-Service (App + DB
+   *   + Redis etc.). Erfordert mehr Host-RAM (Resource-Guard prüft pre-flight).
+   *
+   * Strict opt-in: Default 'single' damit ALLE bestehenden Projekte ihr
+   * aktuelles Verhalten behalten.
+   */
+  sandboxMode?: 'single' | 'compose';
+  /**
+   * v849 — Compose-Volume-Strategie.
+   * - false (default): Volumes scoped pro Sandbox, Discard löscht sie
+   * - true: Volume project-scoped, überlebt Sandbox-Discard
+   *
+   * Default false damit Test/Migration-Sandboxes nicht produktion-mock
+   * verseuchen. User aktiviert pro Projekt wenn Daten persistent sein müssen.
+   */
+  persistDbVolumes?: boolean;
+  /**
+   * v849 — Wann project_db_seeds beim Sandbox-Start angewendet werden:
+   * - 'none': nie automatisch
+   * - 'first-start-only' (default): nur beim ersten Start einer neuen Sandbox
+   * - 'every-start': bei jedem Sandbox-Start (auch resume)
+   */
+  dbSeedStrategy?: 'none' | 'first-start-only' | 'every-start';
 }
 
 export interface ProjectSessionSummary {
@@ -204,6 +231,10 @@ function rowToProject(row: Record<string, unknown>): Project {
     defaultEnvStage: (row.default_env_stage as string | null) ?? undefined,
     defaultDbSeedId: (row.default_db_seed_id as string | null) ?? undefined,
     maxConcurrentSandboxes: (row.max_concurrent_sandboxes as number | null) ?? undefined,
+    // v849 — Compose-Stack fields
+    sandboxMode: ((row.sandbox_mode as string | null) ?? 'single') as 'single' | 'compose',
+    persistDbVolumes: Boolean(row.persist_db_volumes),
+    dbSeedStrategy: ((row.db_seed_strategy as string | null) ?? 'first-start-only') as 'none' | 'first-start-only' | 'every-start',
   };
 }
 
@@ -348,7 +379,7 @@ export class ProjectRepository {
     return rows.map(rowToProject);
   }
 
-  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId' | 'maxConcurrentSandboxes'>>): Promise<Project | null> {
+  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId' | 'maxConcurrentSandboxes' | 'sandboxMode' | 'persistDbVolumes' | 'dbSeedStrategy'>>): Promise<Project | null> {
     const existing = await this.getById(userId, id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -377,6 +408,10 @@ export class ProjectRepository {
     if (patch.nodeId !== undefined) { sets.push('node_id = ?'); params.push(patch.nodeId); }
     // v755 — Per-Project-Quota
     if (patch.maxConcurrentSandboxes !== undefined) { sets.push('max_concurrent_sandboxes = ?'); params.push(patch.maxConcurrentSandboxes ?? null); }
+    // v849 — Compose-Stack fields
+    if (patch.sandboxMode !== undefined) { sets.push('sandbox_mode = ?'); params.push(patch.sandboxMode); }
+    if (patch.persistDbVolumes !== undefined) { sets.push('persist_db_volumes = ?'); params.push(patch.persistDbVolumes ? 1 : 0); }
+    if (patch.dbSeedStrategy !== undefined) { sets.push('db_seed_strategy = ?'); params.push(patch.dbSeedStrategy); }
     if (sets.length === 0) return existing;
     params.push(existing.id);
     await this.adapter.execute(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`, params);

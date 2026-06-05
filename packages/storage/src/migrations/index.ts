@@ -2392,4 +2392,18 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_actions_status ON project_chat_actions(status, started_at DESC) WHERE status='running'`);
     },
   },
+  {
+    version: 102,
+    description: 'v849 — projects.sandbox_mode + persist_db_volumes für Multi-Service Compose-Stack Support.',
+    up(db) {
+      // sandbox_mode: 'single' (default, ein Container) | 'compose' (docker compose stack mit DB/Services)
+      // Default 'single' damit ALLE bestehenden Projekte ihr aktuelles Verhalten behalten — strict opt-in.
+      try { db.exec(`ALTER TABLE projects ADD COLUMN sandbox_mode TEXT NOT NULL DEFAULT 'single' CHECK (sandbox_mode IN ('single','compose'))`); } catch { /* exists */ }
+      // persist_db_volumes: false (ephemer, Discard löscht Daten) | true (Volume project-scoped, überlebt Sandbox-Discard)
+      // Default false damit Tests/Migrations nicht produktion-mock verseuchen.
+      try { db.exec(`ALTER TABLE projects ADD COLUMN persist_db_volumes INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+      // db_seed_strategy: 'none' | 'first-start-only' | 'every-start' — wie project_db_seeds beim Sandbox-Start angewendet werden
+      try { db.exec(`ALTER TABLE projects ADD COLUMN db_seed_strategy TEXT NOT NULL DEFAULT 'first-start-only' CHECK (db_seed_strategy IN ('none','first-start-only','every-start'))`); } catch { /* exists */ }
+    },
+  },
 ];

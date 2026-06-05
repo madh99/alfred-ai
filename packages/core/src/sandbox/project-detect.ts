@@ -16,6 +16,20 @@ export interface ProjectDetection {
     devScript?: string;
     framework?: string;
   };
+  /**
+   * v849 — Compose-Stack-Capability: True wenn ein `docker-compose.yml` oder
+   * `docker-compose.yaml` ODER `compose.yml`/`compose.yaml` im Repo-Root liegt.
+   *
+   * WICHTIG: Diese Erkennung sagt NUR "compose ist möglich" — sie schaltet
+   * den Sandbox-Mode NICHT automatisch um. Der echte Switch passiert via
+   * `project.sandboxMode = 'compose'` (Opt-In im Project-Settings-UI).
+   *
+   * Default-Verhalten: bestehende Projekte (sandboxMode='single') ignorieren
+   * compose-Files komplett — pre-v849 Verhalten 1:1 erhalten.
+   */
+  hasComposeFile: boolean;
+  /** v849 — Pfad zur erkannten Compose-Datei (relativ zum worktreePath), falls vorhanden. */
+  composeFile?: string;
 }
 
 /**
@@ -27,7 +41,20 @@ export interface ProjectDetection {
  * type='unknown', hasDevServer=false → sandbox-preview wird im UI deaktiviert,
  * `sandbox`-Modus (nur Worktree-Isolation, kein Container) bleibt verfügbar.
  */
+/** v849 — Suche nach docker-compose-Datei im Repo-Root. */
+function detectComposeFile(worktreePath: string): string | undefined {
+  for (const name of ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml']) {
+    if (existsSync(path.join(worktreePath, name))) return name;
+  }
+  return undefined;
+}
+
 export function detectProjectType(worktreePath: string): ProjectDetection {
+  // v849 — Compose-Detection läuft unabhängig vom package.json-Check damit
+  // auch reine Service-Stacks (z.B. Postgres + Adminer ohne Node) erkannt werden.
+  const composeFile = detectComposeFile(worktreePath);
+  const hasComposeFile = composeFile !== undefined;
+
   const pkgPath = path.join(worktreePath, 'package.json');
   if (!existsSync(pkgPath)) {
     return {
@@ -36,6 +63,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: 0,
       hasDevServer: false,
       diagnostics: { packageManager: 'pnpm' },
+      hasComposeFile,
+      composeFile,
     };
   }
 
@@ -49,6 +78,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: 0,
       hasDevServer: false,
       diagnostics: { packageManager: 'pnpm' },
+      hasComposeFile,
+      composeFile,
     };
   }
 
@@ -88,6 +119,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: 3000,
       hasDevServer: Boolean(scripts.dev || scripts.start),
       diagnostics: { packageManager, devScript: scripts.dev ?? scripts.start, framework: 'next' },
+      hasComposeFile,
+      composeFile,
     };
   }
   // Astro
@@ -98,6 +131,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: 4321,
       hasDevServer: Boolean(scripts.dev),
       diagnostics: { packageManager, devScript: scripts.dev, framework: 'astro' },
+      hasComposeFile,
+      composeFile,
     };
   }
   // Remix
@@ -108,6 +143,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: 3000,
       hasDevServer: Boolean(scripts.dev),
       diagnostics: { packageManager, devScript: scripts.dev, framework: 'remix' },
+      hasComposeFile,
+      composeFile,
     };
   }
   // Create React App (legacy aber noch häufig)
@@ -118,6 +155,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: 3000,
       hasDevServer: Boolean(scripts.start),
       diagnostics: { packageManager, devScript: scripts.start, framework: 'cra' },
+      hasComposeFile,
+      composeFile,
     };
   }
   // Vite (sehr verbreitet — nach den spezifischeren Frameworks)
@@ -128,6 +167,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: 5173,
       hasDevServer: Boolean(scripts.dev),
       diagnostics: { packageManager, devScript: scripts.dev, framework: 'vite' },
+      hasComposeFile,
+      composeFile,
     };
   }
   // Generic Node-Projekt mit dev-Script
@@ -138,6 +179,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: tryParsePortFromScript(scripts.dev) ?? 3000,
       hasDevServer: true,
       diagnostics: { packageManager, devScript: scripts.dev, framework: 'generic' },
+      hasComposeFile,
+      composeFile,
     };
   }
   // Generic Node-Projekt mit start-Script
@@ -148,6 +191,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       internalPort: tryParsePortFromScript(scripts.start) ?? 3000,
       hasDevServer: true,
       diagnostics: { packageManager, devScript: scripts.start, framework: 'generic-start' },
+      hasComposeFile,
+      composeFile,
     };
   }
 
@@ -158,6 +203,8 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
     internalPort: 0,
     hasDevServer: false,
     diagnostics: { packageManager, framework: 'no-dev-script' },
+    hasComposeFile,
+    composeFile,
   };
 }
 

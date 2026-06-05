@@ -1709,4 +1709,13 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_chat_actions_running ON project_chat_actions(status, started_at DESC) WHERE status='running'`, []);
     },
   },
+  {
+    version: 106,
+    description: 'v849 — projects.sandbox_mode + persist_db_volumes für Multi-Service Compose-Stack Support (PG-Spiegel zu SQLite v102).',
+    async up(db) {
+      try { await db.execute(`ALTER TABLE projects ADD COLUMN sandbox_mode TEXT NOT NULL DEFAULT 'single' CHECK (sandbox_mode IN ('single','compose'))`, []); } catch { /* exists */ }
+      try { await db.execute(`ALTER TABLE projects ADD COLUMN persist_db_volumes BOOLEAN NOT NULL DEFAULT FALSE`, []); } catch { /* exists */ }
+      try { await db.execute(`ALTER TABLE projects ADD COLUMN db_seed_strategy TEXT NOT NULL DEFAULT 'first-start-only' CHECK (db_seed_strategy IN ('none','first-start-only','every-start'))`, []); } catch { /* exists */ }
+    },
+  },
 ];

@@ -23,6 +23,8 @@ import {
   getContainerStats,
   runContainerCommand,
 } from './sandbox/docker.js';
+// v849 — Compose-Stack-Support
+import { startComposeStack, stopComposeStack, waitForComposeHealthy, listComposeServices } from './sandbox/compose-runner.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -42,6 +44,13 @@ export interface SandboxManagerDeps {
   uploadSeedsPath?: string;
   /** v755 — Optional: Lookup-Callback für Per-Project-Quota. Liefert maxConcurrentSandboxes oder null. */
   projectQuotaLookup?: (projectId: string) => Promise<number | null>;
+  /**
+   * v849 — Optional: Project-Repository für sandbox_mode-Lookup.
+   * Wenn gesetzt: Sandboxen werden im compose-Mode gestartet wenn das Projekt
+   * `sandboxMode='compose'` hat UND ein docker-compose.yml im Worktree liegt.
+   * Wenn null: alle Sandboxen im single-mode (pre-v849 Verhalten).
+   */
+  projectRepo?: { getById: (userId: string, id: string) => Promise<{ sandboxMode?: 'single' | 'compose'; persistDbVolumes?: boolean; dbSeedStrategy?: string } | null> };
   /**
    * v812 — Wird nach erfolgreichem Merge gerufen: bestätigt die pending Projekt-
    * Sessions dieser Sandbox ('merged'), löst den OpenItemMatcher gegen den
@@ -260,6 +269,31 @@ export class SandboxManager {
     const detection = detectProjectType(wt.worktreePath);
     this.deps.logger.info({ detection, sessionId: input.sessionId }, 'Project-Type detected');
 
+    // v849 — sandboxMode aus dem Project. Default 'single' damit Bestand unangetastet bleibt.
+    // Compose-Mode wird strict opt-in über project.sandboxMode='compose' aktiviert
+    // (UI-Toggle in Project-Settings). Plus: compose-File MUSS vorhanden sein.
+    let composeMode = false;
+    let composeFile: string | undefined;
+    if (this.deps.projectRepo && input.projectId) {
+      try {
+        // Project-User auflösen — wir brauchen master-user-id für getById
+        const proj = await this.deps.projectRepo.getById(input.userId, input.projectId);
+        if (proj?.sandboxMode === 'compose') {
+          if (detection.hasComposeFile && detection.composeFile) {
+            composeMode = true;
+            composeFile = detection.composeFile;
+          } else {
+            this.deps.logger.warn(
+              { projectId: input.projectId, sessionId: input.sessionId },
+              'Project sandboxMode=compose aktiv aber kein docker-compose.yml im Worktree — fallback to single-container',
+            );
+          }
+        }
+      } catch (err) {
+        this.deps.logger.debug({ err, projectId: input.projectId }, 'v849: Project lookup failed, fallback to single-container');
+      }
+    }
+
     // Phase 1c — DB-Insert
     const image = this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
     const sandbox = await this.deps.repo.create({
@@ -290,20 +324,117 @@ export class SandboxManager {
     }
 
     // Phase 2 — Container-Start ASYNC starten (nicht awaited!) damit createForSession sofort returnt
-    void this.spinUpContainerAsync({
-      sandboxId: sandbox.id,
-      image,
-      worktreePath: wt.worktreePath,
-      branchName: wt.branchName,
-      projectCwd: input.projectCwd,
-      detection,
-      projectId: input.projectId,
-      envStage: input.envStage ?? 'sandbox',
-      dbSeed: input.dbSeed ?? { kind: 'empty' },
-    });
+    // v849 — Routing: compose-Mode → eigener Pfad, sonst Single-Container (Status quo)
+    if (composeMode && composeFile) {
+      void this.spinUpComposeAsync({
+        sandboxId: sandbox.id,
+        worktreePath: wt.worktreePath,
+        branchName: wt.branchName,
+        projectCwd: input.projectCwd,
+        detection,
+        projectId: input.projectId,
+        userId: input.userId,
+        composeFile,
+      });
+    } else {
+      void this.spinUpContainerAsync({
+        sandboxId: sandbox.id,
+        image,
+        worktreePath: wt.worktreePath,
+        branchName: wt.branchName,
+        projectCwd: input.projectCwd,
+        detection,
+        projectId: input.projectId,
+        envStage: input.envStage ?? 'sandbox',
+        dbSeed: input.dbSeed ?? { kind: 'empty' },
+      });
+    }
 
     // Phase 1 returnt sofort — Frontend pollt /api/sandbox/:id für Progress
     return { sandbox, detection, containerStarted: false };
+  }
+
+  /**
+   * v849 — Async-Pfad für Compose-Stack-Sandboxen.
+   * Parallel zu spinUpContainerAsync, nutzt User's docker-compose.yml + Override.
+   */
+  private async spinUpComposeAsync(opts: {
+    sandboxId: string;
+    worktreePath: string;
+    branchName: string;
+    projectCwd: string;
+    detection: ProjectDetection;
+    projectId: string;
+    userId: string;
+    composeFile: string;
+  }): Promise<void> {
+    try {
+      await this.deps.repo.updateStatus(opts.sandboxId, 'creating', 'compose-stack: services starten');
+
+      // 1. Project-Settings für Volume-Strategie holen
+      let persistDbVolumes = false;
+      try {
+        const proj = await this.deps.projectRepo?.getById(opts.userId, opts.projectId);
+        persistDbVolumes = Boolean(proj?.persistDbVolumes);
+      } catch { /* default false */ }
+
+      // 2. Primary-Service-Port allokieren (gleicher Slot wie single-mode)
+      const portStart = this.deps.config.hostPortRangeStart ?? 9100;
+      const portEnd = this.deps.config.hostPortRangeEnd ?? 9199;
+      const hostPort = await findFreePort(portStart, portEnd, this.deps.repo);
+
+      // 3. Primary-Service ableiten aus detection (web/app) oder erstem Service in compose
+      const services = await listComposeServices(opts.worktreePath, opts.composeFile);
+      const primaryService = services.find(s => /^(app|web|frontend|client|api)$/i.test(s)) ?? services[0];
+      if (!primaryService) {
+        throw new Error('Kein primary-service in compose erkennbar (versuche: app, web, frontend, client, api)');
+      }
+
+      // 4. Sandbox-State-Dir für Override-File (außerhalb des User-Repos)
+      const stateBase = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
+      const sandboxStateDir = path.join(stateBase, '.sandbox-state', opts.sandboxId);
+
+      // 5. Compose-Stack starten
+      const result = await startComposeStack({
+        sandboxId: opts.sandboxId,
+        worktreePath: opts.worktreePath,
+        composeFile: opts.composeFile,
+        sandboxStateDir,
+        primaryService,
+        primaryHostPort: hostPort,
+        envVars: { NODE_ENV: 'development' },
+        persistDbVolumes,
+        logger: this.deps.logger,
+      });
+
+      // 6. Primary-Container-ID + hostPort persistieren
+      const primaryContainerId = result.containerIds[0] ?? '';
+      await this.deps.repo.setContainerInfo(opts.sandboxId, primaryContainerId, hostPort);
+      await this.deps.repo.updateStatus(opts.sandboxId, 'creating', `compose: ${result.services.length} Services gestartet, warte auf health`);
+
+      // 7. Health-Wait auf primary-service
+      const healthy = await waitForComposeHealthy(opts.sandboxId, opts.worktreePath, opts.composeFile, primaryService, {
+        intervalMs: 2000,
+        timeoutMs: 5 * 60_000,
+        logger: this.deps.logger,
+      });
+      if (!healthy) {
+        throw new Error(`compose primary-service "${primaryService}" did not become healthy in 5 minutes`);
+      }
+
+      await this.deps.repo.markResumed(opts.sandboxId);
+      this.deps.logger.info({ sandboxId: opts.sandboxId, hostPort, services: result.services.length }, 'v849 Compose-Sandbox ready');
+    } catch (err) {
+      this.deps.logger.error({ err, sandboxId: opts.sandboxId }, 'v849 Compose-Sandbox spinUp failed');
+      // Cleanup: compose stoppen + state-dir entfernen
+      try {
+        const stateBase = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
+        const sandboxStateDir = path.join(stateBase, '.sandbox-state', opts.sandboxId);
+        await stopComposeStack(opts.sandboxId, opts.worktreePath, opts.composeFile, sandboxStateDir, false, this.deps.logger);
+      } catch { /* cleanup-effort */ }
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.deps.repo.updateStatus(opts.sandboxId, 'failed', `compose-start failed: ${msg.slice(0, 200)}`);
+    }
   }
 
   /**

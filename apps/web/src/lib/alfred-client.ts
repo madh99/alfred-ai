@@ -2560,6 +2560,12 @@ export interface Project {
   lockedByNodeId?: string;
   /** v665a — Lock-TTL */
   lockedUntil?: string;
+  /** v849 — Compose-Stack-Mode: 'single' (default) oder 'compose' (multi-service via docker-compose.yml) */
+  sandboxMode?: 'single' | 'compose';
+  /** v849 — Compose: Volumes überleben Sandbox-Discard (true) oder ephemer (false, default) */
+  persistDbVolumes?: boolean;
+  /** v849 — Wann project_db_seeds beim Sandbox-Start angewendet werden */
+  dbSeedStrategy?: 'none' | 'first-start-only' | 'every-start';
 }
 
 // v643 — Per-Phase Commit eines Project-Agent-Laufs
