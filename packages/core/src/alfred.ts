@@ -340,6 +340,8 @@ export class Alfred {
   private plansRepoRef?: import('@alfred/storage').ProjectAgentPlansRepository;
   private delegateSkillRef?: import('@alfred/skills').DelegateSkill;
   private codeAgentSkillRef?: import('@alfred/skills').CodeAgentSkill;
+  /** v850 — MCP-Token-Store für Per-Spawn-Tokens. Nur initialisiert wenn codeAgents.mcp.enabled. */
+  private mcpTokenStoreRef?: import('@alfred/mcp-server').McpTokenStore;
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
@@ -901,6 +903,53 @@ export class Alfred {
       skillRegistry.register(codeAgentSkill);
       this.codeAgentSkillRef = codeAgentSkill;
       this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
+
+      // v850 — MCP-Integration: opt-in via codeAgents.mcp.enabled.
+      // Wenn aktiv: McpTokenStore initialisieren, CLI-Configs patchen,
+      // Token-Provider an agent-executor verdrahten.
+      if (this.config.codeAgents.mcp?.enabled) {
+        try {
+          const { McpTokenStore, patchClaudeMcpConfig, patchCodexMcpConfig, patchVibeMcpConfig, defaultClaudeMcpPath, defaultCodexConfigPath, defaultVibeConfigPath } = await import('@alfred/mcp-server');
+          const { setMcpTokenProvider } = await import('@alfred/skills');
+          const mcpCfg = this.config.codeAgents.mcp;
+          const tokenStore = new McpTokenStore((mcpCfg.tokenTtlSeconds ?? 3600) * 1000);
+          this.mcpTokenStoreRef = tokenStore;
+
+          const alfredCommand = mcpCfg.alfredCommand ?? 'alfred';
+          const alfredArgs = mcpCfg.alfredArgs ?? ['mcp-server'];
+
+          // Patche CLI-Configs idempotent. Wenn Patching fehlschlägt: warnen
+          // aber NICHT abbrechen — MCP ist opt-in, alfred soll auch ohne weiterlaufen.
+          for (const agent of this.config.codeAgents.agents) {
+            const isClaude = agent.argsTemplate?.includes('claude') || /claude/.test(agent.command);
+            const isCodex = agent.argsTemplate?.includes('codex') || /codex/.test(agent.command);
+            const isVibe = agent.argsTemplate?.includes('vibe') || /vibe/.test(agent.command);
+            try {
+              if (isClaude) {
+                const r = patchClaudeMcpConfig(defaultClaudeMcpPath(), alfredCommand, alfredArgs);
+                this.logger.info({ agent: agent.name, ...r }, 'v850 MCP: claude config patched');
+              } else if (isCodex) {
+                const r = patchCodexMcpConfig(defaultCodexConfigPath(), alfredCommand, alfredArgs);
+                this.logger.info({ agent: agent.name, ...r }, 'v850 MCP: codex config patched');
+              } else if (isVibe) {
+                const r = patchVibeMcpConfig(defaultVibeConfigPath(), alfredCommand, alfredArgs);
+                this.logger.info({ agent: agent.name, ...r }, 'v850 MCP: vibe config patched');
+              }
+            } catch (err) {
+              this.logger.warn({ err: (err as Error).message, agent: agent.name }, 'v850 MCP: config-patch failed (non-critical)');
+            }
+          }
+
+          // Token-Provider an agent-executor verdrahten — per-spawn issue.
+          setMcpTokenProvider((opts) => {
+            try { return tokenStore.issue({ agentName: opts.agentName, cwd: opts.cwd }); }
+            catch { return null; }
+          });
+          this.logger.info({ tokenTtlSec: mcpCfg.tokenTtlSeconds ?? 3600 }, 'v850 MCP integration enabled');
+        } catch (err) {
+          this.logger.warn({ err: (err as Error).message }, 'v850 MCP integration init failed (non-critical, alfred continues)');
+        }
+      }
 
       // v779 — AgentSessionManager initialisieren.
       // v780 — ClaudeCodeAdapter registriert wenn claude-code in agents-config vorhanden.

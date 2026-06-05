@@ -236,6 +236,19 @@ function detectModifiedFiles(
   return modified.sort();
 }
 
+/**
+ * v850 — Optional MCP-Token-Provider. Wenn gesetzt: jeder agent-Spawn
+ * bekommt ein frisches One-Time-Token via env-var ALFRED_MCP_TOKEN damit
+ * der CLI-Agent über MCP-stdio auf Alfreds Knowledge-Stores zugreifen kann.
+ *
+ * Alfred setzt den Provider in alfred.ts beim Start wenn `codeAgents.mcp.enabled`.
+ */
+let mcpTokenProvider: ((opts: { agentName: string; cwd?: string }) => string | null) | null = null;
+
+export function setMcpTokenProvider(p: ((opts: { agentName: string; cwd?: string }) => string | null) | null): void {
+  mcpTokenProvider = p;
+}
+
 export async function executeAgent(
   agentDefRaw: CodeAgentDefinitionConfig,
   prompt: string,
@@ -296,6 +309,16 @@ export async function executeAgent(
     ...process.env as Record<string, string>,
     ...(agentDef.env ? resolveEnv(agentDef.env) : {}),
   };
+  // v850 — Per-spawn MCP-Token: wenn provider verdrahtet ist, ein frisches
+  // Token issuen und in env passieren. CLI-Agent gibt es transparent an
+  // sein MCP-stdio-process weiter (via spawn-env-Vererbung). Alfred-MCP-
+  // Server validiert das Token vor jedem tool-call.
+  if (mcpTokenProvider) {
+    try {
+      const token = mcpTokenProvider({ agentName: agentDef.name, cwd });
+      if (token) env.ALFRED_MCP_TOKEN = token;
+    } catch { /* token issue non-critical */ }
+  }
 
   // Use shell on Windows for .cmd/.bat wrappers
   const isWindows = process.platform === 'win32';

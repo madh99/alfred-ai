@@ -243,6 +243,13 @@ export const CodeAgentsConfigSchema = z.object({
   enabled: z.boolean(),
   agents: z.array(CodeAgentDefinitionSchema),
   forge: ForgeConfigSchema.optional(),
+  // v850 — MCP-Integration für CLI-Agents. Strict opt-in.
+  mcp: z.object({
+    enabled: z.boolean(),
+    tokenTtlSeconds: z.number().int().positive().optional(),
+    alfredCommand: z.string().optional(),
+    alfredArgs: z.array(z.string()).optional(),
+  }).optional(),
 });
 
 export const ProjectAgentTemplateSchema = z.object({

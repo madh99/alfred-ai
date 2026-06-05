@@ -22,6 +22,7 @@
     "@alfred/logger": "workspace:*",
     "@alfred/storage": "workspace:*",
     "@alfred/llm": "workspace:*",
+    "@alfred/mcp-server": "workspace:*",
     "@alfred/messaging": "workspace:*",
     "@alfred/security": "workspace:*",
     "@alfred/skills": "workspace:*",

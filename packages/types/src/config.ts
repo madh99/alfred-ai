@@ -271,6 +271,28 @@ export interface CodeAgentsConfig {
   enabled: boolean;
   agents: CodeAgentDefinitionConfig[];
   forge?: ForgeConfig;
+  /**
+   * v850 — MCP-Integration für CLI-Agents (claude-code, codex, vibe).
+   *
+   * Wenn enabled=true: Alfred patcht beim Start die jeweiligen CLI-Configs
+   * (~/.claude/mcp.json, ~/.codex/config.toml, ~/.vibe/config.toml) damit
+   * sie `alfred mcp-server` als stdio-MCP-Server kennen. Wird beim Agent-
+   * Spawn ein One-Time-Token via env-var übergeben damit der MCP-Server
+   * authentifizieren kann.
+   *
+   * Default: undefined → enabled=false (strict opt-in, sicher).
+   * User aktiviert manuell in config.yaml ODER via UI-Toggle in v850.1+.
+   */
+  mcp?: {
+    /** Master-Switch. Wenn false oder undefined: MCP-Integration deaktiviert. */
+    enabled: boolean;
+    /** Optional: Token-TTL in Sekunden (default 3600 = 1h). */
+    tokenTtlSeconds?: number;
+    /** Optional: command-Override falls alfred-binary nicht im PATH. */
+    alfredCommand?: string;
+    /** Optional: args-Override für `alfred mcp-server` invocation. */
+    alfredArgs?: string[];
+  };
 }
 
 export interface ProjectAgentTemplateConfig {

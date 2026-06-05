@@ -151,6 +151,15 @@ async function main(): Promise<void> {
       break;
     }
 
+    case 'mcp-server': {
+      // v850 — alfred als stdio MCP-Server starten. Wird von claude-code,
+      // codex, vibe als child-process gestartet (via --mcp-config oder
+      // mcp_servers config-block). Liest config aus env + DB-Adapter.
+      const { mcpServerCommand } = await import('./commands/mcp-server.js');
+      await mcpServerCommand();
+      break;
+    }
+
     case 'migrate-db': {
       const { migrateDbCommand } = await import('./commands/migrate-db.js');
       await migrateDbCommand({

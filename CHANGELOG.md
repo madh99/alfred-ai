@@ -5,6 +5,105 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.850] - 2026-06-05
+
+### Added — Alfred-MCP-Server für CLI-Agents (v850, Stufe 2/3)
+
+Zweite Stufe des v849-851-Plans. Schafft eine **Cross-CLI-Brücke** zwischen
+Alfreds Wissens-Stores (Memories, Knowledge-Graph, Conventions, Runbooks)
+und den CLI-Coding-Agents (claude-code, codex, vibe) via standardisiertes
+**Model Context Protocol (MCP)**.
+
+**Vor-Recherche bestätigt:** Alle drei Agents unterstützen MCP over stdio:
+- claude-code: `--mcp-config <json-file>` + `~/.claude/mcp.json`
+- codex: `codex mcp add` + `~/.codex/config.toml` `[mcp_servers.name]`
+- vibe: `~/.vibe/config.toml` `[[mcp_servers]] transport="stdio"`
+
+**Strict opt-in:** Default `codeAgents.mcp.enabled` ist `undefined → false`.
+KEINE bestehenden CLI-Configs werden ohne explizite User-Aktivierung
+geändert.
+
+**Neues Package `@alfred/mcp-server`**
+
+- `src/server.ts` — `AlfredMcpServer` wrapt `@modelcontextprotocol/sdk`
+  mit Auth + Tool-Registry + Audit-Log
+- `src/run.ts` — `runMcpServerStdio()` für stdio-Transport-Wiring
+- `src/token-store.ts` — `McpTokenStore` mit One-Time-Tokens (default 1 h TTL),
+  periodischer Cleanup, explizit-revoke
+- `src/cli-config.ts` — Generator + Idempotent-Patcher für claude/codex/vibe
+  Configs. User-existierende mcp_servers bleiben unberührt, nur Alfred-
+  Block wird inserted/updated/no-op
+- `src/tools/` — 5 Read-Only Tools:
+  - `alfred.memory.recall(query, limit?, type?)` — keyword search über memories
+  - `alfred.kg.query(entity, relation?, limit?)` — knowledge-graph entities + relations
+  - `alfred.project.conventions(projectIdOrCwd)` — CLAUDE.md content
+  - `alfred.project.features.find(query, limit?)` — Feature-Library (v851 ready,
+    aktuell empty fallback)
+  - `alfred.runbook.find(query, limit?)` — Runbook search
+- Alle Tools sind READ-ONLY. Write erst v852+ nach Audit.
+
+**Neuer CLI-subcommand `alfred mcp-server`**
+- Stdio-MCP-Server der von den CLI-Agents als child-process gestartet wird
+- Liest config + DB-Adapter beim Start, blockt auf stdin/stdout
+- Loggt nach stderr (stdout ist reserved für JSON-RPC)
+- Audit-Log: jeder erfolgreiche tool-call landet in `audit_log` mit
+  `action='mcp_tool_call:<tool-name>'`
+
+**Pipeline-Integration**
+- `packages/skills/src/built-in/code-agent/agent-executor.ts`:
+  Neuer `setMcpTokenProvider(provider)` hook + per-spawn Token-Issue.
+  Wenn Provider gesetzt: `ALFRED_MCP_TOKEN` env-var wird beim Agent-Spawn
+  injiziert. CLI-Agent erbt env an seinen MCP-stdio-Subprocess.
+- `packages/core/src/alfred.ts`: Bei `codeAgents.mcp.enabled=true`:
+  1. McpTokenStore initialisieren (TTL aus config oder 1 h default)
+  2. CLI-Configs idempotent patchen (claude/codex/vibe je nach
+     vorhandenem Agent in `codeAgents.agents`)
+  3. Token-Provider an agent-executor wiren
+
+**Config-Erweiterung** (`packages/types/src/config.ts` + Zod-Schema):
+```ts
+CodeAgentsConfig.mcp?: {
+  enabled: boolean;
+  tokenTtlSeconds?: number;
+  alfredCommand?: string;
+  alfredArgs?: string[];
+}
+```
+
+**Was UNVERÄNDERT bleibt:**
+- ALLE pre-v850 Code-Pfade (executeAgent, AgentSessionManager) funktionieren
+  identisch wenn `codeAgents.mcp` nicht gesetzt oder enabled=false
+- Bestehende `~/.claude/mcp.json`, `~/.codex/config.toml`, `~/.vibe/config.toml`
+  werden NIE überschrieben — nur der Alfred-Block wird managed
+- User kann andere MCP-Server parallel zu Alfred eintragen
+- v844 stream-output, v846 plan-mutation, v847 chat-actions, v848
+  inactivity-threshold, v849 compose-stack alle unverändert
+
+**Tests:** 15 grün in 2 neuen Suites:
+- `token-store.test.ts` (6) — issue, validate, expire, revoke, size
+- `cli-config.test.ts` (9) — generators + idempotent patches für alle 3 CLIs,
+  bestehende user-mcpServers werden preserved
+
+**Bewusst NICHT in v850** (geplant aber als Foundation gelassen, v850.1 follow-up):
+- **Session-Reuse via AgentSessionManager** für `code_agent.run` — der bestehende
+  pfad executeAgent bleibt. AgentSessionManager existiert (v780) und kann genutzt
+  werden, aber Refactor von executeAgent dorthin ist eigene Aufgabe wegen
+  Feature-Parity-Check (NODE_OPTIONS, output-buffer, modifiedFiles)
+- **System-Prompt-File** für lange Prompts (>1000 chars) — Auto-Schreibe nach
+  /tmp und `--system-prompt-file`-Flag für claude / stdin für codex.
+- **Effort-Tuning** (`--effort low/medium/high/max` für claude) — defensiv
+  zurückgestellt bis v846 Goal-Classifier production-stabil ist
+- **Token-Cross-Process-Validation** via Unix-Socket-Bridge — aktuell
+  pragmatisch: `alfred mcp-server` akzeptiert jedes nicht-leere Token weil
+  der TokenStore im alfred-Hauptprozess lebt, nicht im mcp-Subprocess.
+  Echte Validation v852+.
+- **UI-Toggle** für `mcp.enabled` (aktuell nur in config.yaml). v850.1+
+
+**Vorbedingung für Live-Betrieb:**
+- `alfred` muss im PATH von Linux-User sein der den CLI-Agent ausführt
+  (typisch: `madh`). Wenn nicht: `codeAgents.mcp.alfredCommand` setzen
+  auf absoluten Pfad.
+
 ## [0.19.0-multi-ha.849] - 2026-06-05
 
 ### Added — Compose-Stack-Sandbox-Foundation (v849, Stufe 1/3)
