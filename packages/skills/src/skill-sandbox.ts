@@ -4,7 +4,18 @@ import { Skill } from './skill.js';
 import type { ActivityTracker } from './activity-tracker.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const INACTIVITY_THRESHOLD_MS = 120_000; // 2 minutes without a ping → dead
+/**
+ * v848 — Default-Inactivity-Threshold. Skills können diesen mit
+ * `skill.metadata.inactivityThresholdMs` für long-running CLI-Agents
+ * hochsetzen (z.B. 600_000 = 10 min für code_agent).
+ *
+ * Vorher war dieser Wert hart-codiert. Bei code_agent.run mit claude-code
+ * führte das zu unfairen Aborts: claude-code war 2:10 idle (npm install
+ * lief, kein stdout) → SkillSandbox killed, aber claude-code completed
+ * 2 Min später erfolgreich (zu spät — Promise war schon mit failure
+ * resolved).
+ */
+const DEFAULT_INACTIVITY_THRESHOLD_MS = 120_000; // 2 minutes without a ping → dead
 const POLL_INTERVAL_MS = 10_000;         // check every 10s
 const MAX_TOTAL_TIME_MS = 20 * 60_000;   // absolute safety net: 20 minutes
 
@@ -20,7 +31,7 @@ export class SkillSandbox {
    *
    * If an ActivityTracker is provided, uses an inactivity-based timeout:
    * the skill keeps running as long as the tracker receives pings.
-   * Only kills the skill when it goes silent for INACTIVITY_THRESHOLD_MS.
+   * Only kills the skill when it goes silent for inactivityThresholdMs.
    *
    * Without a tracker, falls back to a simple hard timeout.
    */
@@ -59,6 +70,11 @@ export class SkillSandbox {
     initialTimeoutMs: number,
     tracker: ActivityTracker,
   ): Promise<SkillResult> {
+    // v848 — per-skill inactivity-Threshold. Default ist 2 min, kann via
+    // skill.metadata.inactivityThresholdMs hochgesetzt werden (code_agent
+    // setzt 10 min weil claude-code intern lange Pausen haben darf).
+    const inactivityThresholdMs = skill.metadata.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS;
+
     return new Promise<SkillResult>((resolve) => {
       let settled = false;
       let pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -101,7 +117,7 @@ export class SkillSandbox {
         if (settled) return;
 
         const idleMs = tracker.getIdleMs();
-        if (idleMs >= INACTIVITY_THRESHOLD_MS) {
+        if (idleMs >= inactivityThresholdMs) {
           const snapshot = tracker.getSnapshot();
           this.logger.warn(
             { skill: name, idleMs, state: snapshot.state, iteration: snapshot.iteration },
@@ -127,7 +143,7 @@ export class SkillSandbox {
           const currentIdleMs = tracker.getIdleMs();
           const snap = tracker.getSnapshot();
 
-          if (currentIdleMs >= INACTIVITY_THRESHOLD_MS) {
+          if (currentIdleMs >= inactivityThresholdMs) {
             this.logger.warn(
               { skill: name, idleMs: currentIdleMs, state: snap.state, iteration: snap.iteration, totalMs: snap.totalElapsedMs },
               'Agent went inactive — aborting',

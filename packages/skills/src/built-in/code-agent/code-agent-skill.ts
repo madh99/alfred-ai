@@ -47,6 +47,11 @@ export class CodeAgentSkill extends Skill {
     riskLevel: 'admin',
     version: '1.0.0',
     timeoutMs: 600_000,
+    // v848 — long-running CLI-Agent: 10min Inaktivitäts-Threshold statt
+    // SkillSandbox-Default 2min. Empirisch wurde claude-code nach 2:10
+    // idle gekillt obwohl er noch aktiv war (LLM-Generierung, npm install,
+    // Test-Suite haben oft 3-5min stdout-Pausen).
+    inactivityThresholdMs: 600_000,
     inputSchema: {
       type: 'object',
       properties: {

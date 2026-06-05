@@ -5,6 +5,78 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.848] - 2026-06-05
+
+### Fixed — code_agent unfairer Abort nach 2 Min Idle (v848)
+
+**Symptom:** code_agent.run mit claude-code lief 10:40 Min und wurde als
+fehlgeschlagen markiert — obwohl claude-code 2 Min später erfolgreich
+completed war. User-Bild: `✗ code_agent fehlgeschlagen (640.2s)` trotz
+funktionierender Skill-Execution.
+
+**Empirie aus dem Log:**
+- t=600 s: `Initial timeout reached but agent is active — extending`
+  (idleMs=89 s, state=processing)
+- t=640 s: `Agent went inactive — aborting` (idleMs=129 s > 120 s
+  threshold)
+- t=760 s: `Skill execution completed` success=true ← der ECHTE Abschluss,
+  aber finish() guard `if (settled) return` verwarf das Ergebnis
+
+**Root-Cause:** Zwei parallele Inactivity-Timer:
+1. `agent-executor` Default 12 min — funktioniert dank v844 Stream-JSON-
+   Aktivität korrekt
+2. `SkillSandbox.executeWithTracker` mit `INACTIVITY_THRESHOLD_MS = 120_000`
+   hardcoded — feuerte nach 2 Min ohne `tracker.ping()`
+
+Claude-code im Stream-JSON-Mode pingt zwar bei jedem stdout-chunk, aber
+interne Operationen (LLM-Generierung großer Antwort, `npm install`,
+Test-Suite via Bash-Tool) können legitim 2-3 Min ohne stdout-output sein.
+Der 2-min-Default war zu kurz für long-running CLI-Agents.
+
+**Fix — per-skill inactivity-Threshold:**
+
+`packages/types/src/skills.ts` — `SkillMetadata` erweitert:
+```ts
+inactivityThresholdMs?: number;
+```
+
+`packages/skills/src/built-in/code-agent/code-agent-skill.ts` — setzt:
+```ts
+inactivityThresholdMs: 600_000  // 10 min, matcht agent-executor 12-min-Default
+```
+
+`packages/skills/src/skill-sandbox.ts` — liest aus metadata:
+```ts
+const inactivityThresholdMs = skill.metadata.inactivityThresholdMs
+  ?? DEFAULT_INACTIVITY_THRESHOLD_MS; // default 120_000
+```
+
+**Was unverändert bleibt:**
+- Default 2 min für alle anderen Skills (shell, file, http, etc.) —
+  ein hängendes HTTP-Call soll weiterhin nach 2 Min aborted werden
+- `project_agent` Metadata bleibt `timeoutMs: 30_000` — die start-Action
+  returnt sofort, Multi-Stunden-Arbeit läuft im Background-Runner ohne
+  SkillSandbox-Tracker
+- `MAX_TOTAL_TIME_MS = 20_000_000` ms (20 min) absoluter Safety-Cap
+  unverändert
+- `agent-executor.ts` 12-min-Timer + Stream-JSON-Pipeline unverändert
+
+**Tests:** 2 neue in `skill-sandbox.test.ts`:
+- Skill mit `inactivityThresholdMs: 600_000` wird NICHT bei idleMs=300_000
+  abortet (würde mit default 120_000 abortet werden)
+- Skill OHNE Override fällt auf default 120_000 zurück und abortet bei
+  idleMs=130_000
+
+**Was bewusst NICHT gemacht wurde:**
+- KEIN Goal-Classifier vor Pipeline (war Symptom-Prävention für
+  ein Problem das nicht existierte — Alfred hatte korrekt zu code_agent
+  geroutet)
+- KEIN Read-Soft-Limit nach N shell/file-Calls (Heuristik ohne klaren
+  Nutzen)
+- KEINE Skill-Description-Kosmetik (Routing war korrekt)
+
+→ Minimal-Fix mit ~40 LOC, adressiert die Wurzel direkt.
+
 ## [0.19.0-multi-ha.847.1] - 2026-06-05
 
 ### Fixed — Progress-Events kommen jetzt auch im Project-Chat an (v847.1)

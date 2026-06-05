@@ -19,6 +19,22 @@ export interface SkillMetadata {
   inputSchema: Record<string, unknown>;
   /** Custom timeout in ms. Skills that make LLM calls (e.g. delegate) need more time. */
   timeoutMs?: number;
+  /**
+   * v848 — Inactivity-Threshold (ms) für SkillSandbox.executeWithTracker.
+   *
+   * Default 120_000 (2 min): wenn der ActivityTracker 2 Min keinen ping vom
+   * Skill bekommt, wird der Skill als hängend betrachtet und abgebrochen.
+   *
+   * Long-running CLI-Agents (code_agent, project_agent) können intern
+   * minutenlange Operationen haben (LLM-Generierung, npm install, Test-Suite)
+   * ohne stdout. Der 2-min-Default brach diese Skills unfair ab obwohl sie
+   * weiter aktiv arbeiten. Empirisch: 640 s Lauf wurde nach 2:10 idle
+   * gekillt, aber claude-code completed 2 Min später erfolgreich (zu spät —
+   * Promise war schon mit failure resolved).
+   *
+   * Long-running Skills setzen 600_000 (10 min); andere bleiben beim Default.
+   */
+  inactivityThresholdMs?: number;
   /** Skill category for context-based filtering. Defaults to 'core' if omitted. */
   category?: SkillCategory;
 }
