@@ -137,7 +137,28 @@ const MIN_MEMORY_SCORE = 0.1; // Minimum relevance score for memory inclusion
 const TOOL_LOOP_KEEP_RECENT = 3; // Keep last N tool pairs uncompressed during re-trimming
 const HISTORY_WITH_SUMMARY = 10; // When summary exists, load 10 recent messages (tool pairs consume 2 slots each)
 
-export type ProgressCallback = (status: string) => void;
+/**
+ * v847 — Strukturierter Progress-Callback.
+ *
+ * Pre-v847 war `ProgressCallback = (status: string) => void` und das UI
+ * konnte nur "Thinking..." anzeigen (Status wurde ständig überschrieben,
+ * Tool-Calls blitzten nur kurz auf). Mit kind kann der Client jetzt eine
+ * Timeline rendern: thinking | tool_call | tool_done | tool_error | status.
+ *
+ * Backwards-kompatibel: kind ist optional. Alte Callsites die nur `(text)`
+ * übergeben werden als `kind='status'` interpretiert.
+ */
+export interface ProgressEvent {
+  kind: 'thinking' | 'tool_call' | 'tool_done' | 'tool_error' | 'status';
+  text: string;
+  /** Bei tool_call/tool_done/tool_error: Skill-Name */
+  tool?: string;
+  /** Bei tool_call: zusammenfassende Beschreibung des Inputs */
+  toolInput?: string;
+  /** Bei tool_done/tool_error: Dauer */
+  durationMs?: number;
+}
+export type ProgressCallback = (status: string | ProgressEvent) => void;
 
 export interface PipelineResult {
   text: string;
@@ -224,6 +245,9 @@ export class MessagePipeline {
   /** v658 — Projekt-Chat: für System-Prompt-Injection des Projekt-Kontextes */
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   private projectAgentSessionRepo?: import('@alfred/storage').ProjectAgentSessionRepository;
+  /** v847 — Project-Chat-Action-Tracking: persistiert Chat-getriggerte Skill-Arbeit. */
+  private chatActionsRepo?: import('@alfred/storage').ChatActionsRepository;
+  setChatActionsRepo(r: import('@alfred/storage').ChatActionsRepository | undefined): void { this.chatActionsRepo = r; }
   /** v722 — Self-Learning: matchende LearnedRecipes als Hinweise in den System-Prompt injizieren. */
   private learnedRecipeRepo?: import('@alfred/storage').LearnedRecipeRepository;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
@@ -407,8 +431,8 @@ export class MessagePipeline {
     const abortController = new AbortController();
     this.activeRequests.set(requestKey, abortController);
 
-    // Show status immediately so user knows Alfred is working
-    onProgress?.('Thinking...');
+    // v847 — Show status immediately so user knows Alfred is working
+    onProgress?.({ kind: 'thinking', text: 'Alfred denkt nach…' });
 
     // Check for pending confirmation response
     if (this.confirmationQueue && message.text) {
@@ -426,6 +450,9 @@ export class MessagePipeline {
       if (handled) return { text: '' }; // confirmation queue already sent its response via adapter
     }
     tracePhase('confirmation_check');
+
+    // v847 — declared outside try so catch can reach it
+    let chatActionId: string | null = null;
 
     try {
       // 0b. HA Message dedup — ensure each message is processed by exactly one node
@@ -1147,7 +1174,55 @@ export class MessagePipeline {
       const usedSkillNames = new Set<string>();
       const accumulatedToolCalls: ToolCall[] = [];
       const accumulatedToolResults: LLMContentBlock[] = [];
-      onProgress?.('Thinking...');
+      onProgress?.({ kind: 'thinking', text: 'plant nächsten Schritt…' });
+
+      // v847 — ChatActions-Tracking für Project-Chats:
+      // Wenn die Message aus einem Project-Chat kommt, erstelle einen ChatAction-
+      // Record und sammle pro Skill-Call die Daten. Am Ende wird der Record mit
+      // response_text und status completed/error abgeschlossen.
+      if (projectIdForChat && this.chatActionsRepo) {
+        try {
+          chatActionId = await this.chatActionsRepo.create({
+            projectId: projectIdForChat,
+            conversationId: conversation.id,
+            userId: message.userId,
+            requestText: message.text ?? '',
+          });
+        } catch (err) {
+          this.logger.debug({ err, projectId: projectIdForChat }, 'v847 chat-action create failed (non-critical)');
+        }
+      }
+      const chatActionRecorder = chatActionId && this.chatActionsRepo
+        ? (call: import('@alfred/storage').ChatActionSkillCall, result?: { content: string; isError?: boolean }) => {
+            const repo = this.chatActionsRepo!;
+            const aid = chatActionId!;
+            repo.appendSkillCall(aid, call).catch(() => { /* non-critical */ });
+            // Extract commit-shas und modifiedFiles aus dem Skill-Result wenn verfügbar
+            if (result && !result.isError && typeof result.content === 'string') {
+              const text = result.content;
+              const shaMatch = text.match(/\b([0-9a-f]{7,40})\b\s*(?:\(commit\)|·|·\s*Commit|—\s*commit|✓\s*commit)/gi);
+              const shas: string[] = [];
+              if (shaMatch) {
+                for (const m of shaMatch) {
+                  const s = m.match(/[0-9a-f]{7,40}/);
+                  if (s) shas.push(s[0]);
+                }
+              }
+              // Strukturiertes commit-sha pattern für code_agent.push output
+              const pushShaMatch = text.match(/(?:commit|sha)[:\s]+([0-9a-f]{7,40})/i);
+              if (pushShaMatch) shas.push(pushShaMatch[1]);
+              if (shas.length > 0) repo.appendCommits(aid, shas).catch(() => { /* */ });
+              // Modified-files pattern: "- src/foo.ts\n- src/bar.ts" oder JSON modifiedFiles
+              const filesMatch = text.match(/(?:modified|geändert|Files?:)\s*[\n:]+((?:[-·•*]\s+\S+\n?)+)/i);
+              if (filesMatch) {
+                const files = filesMatch[1].split('\n')
+                  .map(l => l.replace(/^[-·•*\s]+/, '').trim())
+                  .filter(l => l.length > 0 && l.length < 200 && /[\w/.]/.test(l));
+                if (files.length > 0) repo.appendModifiedFiles(aid, files).catch(() => { /* */ });
+              }
+            }
+          }
+        : undefined;
 
       while (true) {
         // Check for abort before each LLM call
@@ -1281,6 +1356,7 @@ export class MessagePipeline {
           response.toolCalls,
           { ...baseContext, conversationId: conversation.id, timezone: resolvedTimezone },
           onProgress,
+          chatActionRecorder,
         );
         const toolResultBlocks = toolExecResult.blocks;
         if (toolExecResult.attachments.length > 0) {
@@ -1327,7 +1403,7 @@ export class MessagePipeline {
 
         // Add tool results as user message
         messages.push({ role: 'user', content: toolResultBlocks });
-        onProgress?.('Thinking...');
+        onProgress?.({ kind: 'thinking', text: 'verarbeitet Tool-Ergebnisse…' });
       }
 
       // Use the final response content, or fall back to the last assistant text
@@ -1455,6 +1531,11 @@ export class MessagePipeline {
           await this.usageRepo.record(lastModel ?? 'unknown', totalInputTokens, totalOutputTokens, 0, 0, requestCostUsd, alfredUser.id);
         } catch { /* non-critical */ }
       }
+      // v847 — ChatAction abschließen
+      if (chatActionId && this.chatActionsRepo) {
+        try { await this.chatActionsRepo.complete(chatActionId, responseText, 'completed'); }
+        catch (err) { this.logger.debug({ err, chatActionId }, 'v847 chat-action complete failed'); }
+      }
       this.activeRequests.delete(requestKey);
       return {
         text: responseText,
@@ -1465,6 +1546,11 @@ export class MessagePipeline {
       this.activeRequests.delete(requestKey);
       this.recordMetric(false, Date.now() - startTime);
       this.logger.error({ err: error }, 'Failed to process message');
+      // v847 — ChatAction mit Fehler abschließen
+      if (chatActionId && this.chatActionsRepo) {
+        try { await this.chatActionsRepo.complete(chatActionId, error instanceof Error ? error.message : String(error), 'error'); }
+        catch { /* non-critical */ }
+      }
 
       // Save error response to prevent orphaned user messages in history
       // (an orphaned user message without an assistant reply corrupts the
@@ -1639,6 +1725,8 @@ export class MessagePipeline {
     toolCalls: ToolCall[],
     context: SkillContext,
     onProgress?: ProgressCallback,
+    /** v847 — Per-call recording for ChatActions tracking. */
+    chatActionRecorder?: (call: import('@alfred/storage').ChatActionSkillCall, result?: { content: string; isError?: boolean }) => void,
   ): Promise<{ blocks: LLMContentBlock[]; attachments: SkillResultAttachment[] }> {
     const allAttachments: SkillResultAttachment[] = [];
 
@@ -1667,15 +1755,36 @@ export class MessagePipeline {
     if (toolCalls.length === 1) {
       const tc = toolCalls[0];
       const toolLabel = this.getToolLabel(tc.name, tc.input);
-      onProgress?.(toolLabel);
+      // v847 — strukturierter Event: tool_call → UI rendert "🔧 Tool: input"
+      onProgress?.({ kind: 'tool_call', text: toolLabel, tool: tc.name, toolInput: toolLabel });
+      // v847 — track skill-call duration + result for ChatActions
+      const callStart = Date.now();
       const result = await this.executeToolCall(tc, context, onProgress);
+      if (chatActionRecorder) {
+        const action = typeof tc.input === 'object' && tc.input !== null
+          ? (tc.input as Record<string, unknown>).action
+          : undefined;
+        chatActionRecorder({
+          skill: tc.name,
+          action: typeof action === 'string' ? action : undefined,
+          durationMs: Date.now() - callStart,
+          success: !result.isError,
+          error: result.isError ? result.content.slice(0, 300) : undefined,
+          startedAt: callStart,
+        }, result);
+      }
+      // v847 — tool_done/tool_error event nach Skill-Done
+      const durationMs = Date.now() - callStart;
+      onProgress?.(result.isError
+        ? { kind: 'tool_error', text: `${tc.name} fehlgeschlagen`, tool: tc.name, durationMs }
+        : { kind: 'tool_done',  text: `${tc.name} fertig`, tool: tc.name, durationMs });
       return { blocks: [buildBlock(tc, result)], attachments: allAttachments };
     }
 
     // Multiple tool calls: execute with per-skill concurrency limit
     // This prevents rate-limiting (429) when the LLM fires many calls to the same API
     const MAX_CONCURRENT_PER_SKILL = 3;
-    onProgress?.(`Running ${toolCalls.length} tools...`);
+    onProgress?.({ kind: 'tool_call', text: `${toolCalls.length} Tools parallel`, toolInput: toolCalls.map(t => t.name).join(', ') });
 
     // Group by skill name to detect skills that need throttling
     const skillGroups = new Map<string, number[]>();
@@ -1694,11 +1803,35 @@ export class MessagePipeline {
 
     let resultMap: Map<number, PromiseSettledResult<{ content: string; isError?: boolean; attachments?: SkillResultAttachment[] }>>;
 
+    // v847 — track each call's duration + result for ChatActions recorder + progress events
+    const trackedCall = async (tc: ToolCall) => {
+      const callStart = Date.now();
+      const toolLabel = this.getToolLabel(tc.name, tc.input);
+      onProgress?.({ kind: 'tool_call', text: toolLabel, tool: tc.name, toolInput: toolLabel });
+      const result = await this.executeToolCall(tc, context, onProgress);
+      const durationMs = Date.now() - callStart;
+      if (chatActionRecorder) {
+        const action = typeof tc.input === 'object' && tc.input !== null
+          ? (tc.input as Record<string, unknown>).action
+          : undefined;
+        chatActionRecorder({
+          skill: tc.name,
+          action: typeof action === 'string' ? action : undefined,
+          durationMs,
+          success: !result.isError,
+          error: result.isError ? result.content.slice(0, 300) : undefined,
+          startedAt: callStart,
+        }, result);
+      }
+      onProgress?.(result.isError
+        ? { kind: 'tool_error', text: `${tc.name} fehlgeschlagen`, tool: tc.name, durationMs }
+        : { kind: 'tool_done',  text: `${tc.name} fertig`, tool: tc.name, durationMs });
+      return result;
+    };
+
     if (!needsThrottling) {
       // All skills within limit — run everything in parallel
-      const settled = await Promise.allSettled(
-        toolCalls.map(tc => this.executeToolCall(tc, context, onProgress))
-      );
+      const settled = await Promise.allSettled(toolCalls.map(trackedCall));
       resultMap = new Map(settled.map((r, i) => [i, r]));
     } else {
       // Throttle: run each skill's calls in batches of MAX_CONCURRENT_PER_SKILL
@@ -1707,9 +1840,7 @@ export class MessagePipeline {
       const skillPromises = [...skillGroups.entries()].map(async ([_name, indices]) => {
         for (let batch = 0; batch < indices.length; batch += MAX_CONCURRENT_PER_SKILL) {
           const batchIndices = indices.slice(batch, batch + MAX_CONCURRENT_PER_SKILL);
-          const settled = await Promise.allSettled(
-            batchIndices.map(idx => this.executeToolCall(toolCalls[idx], context, onProgress))
-          );
+          const settled = await Promise.allSettled(batchIndices.map(idx => trackedCall(toolCalls[idx])));
           for (let j = 0; j < batchIndices.length; j++) {
             resultMap.set(batchIndices[j], settled[j]);
           }

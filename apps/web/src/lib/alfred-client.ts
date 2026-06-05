@@ -1,12 +1,26 @@
 import { readSseStream } from './sse-reader';
 import type { DashboardData, HealthData, Attachment } from '@/types/api';
 
+// v847 — Strukturiertes Progress-Event analog zu @alfred/core ProgressEvent.
+// Wenn der Client onProgress NICHT setzt, fällt der Stream auf legacy onStatus zurück.
+export interface ProgressEventDto {
+  kind: 'thinking' | 'tool_call' | 'tool_done' | 'tool_error' | 'status';
+  text: string;
+  tool?: string;
+  toolInput?: string;
+  durationMs?: number;
+  /** Optional ms-Timestamp damit UI sortieren kann (vom Adapter gesetzt). */
+  ts?: number;
+}
+
 export interface StreamCallbacks {
   onStatus: (text: string) => void;
   onResponse: (text: string) => void;
   onAttachment: (a: Attachment) => void;
   onDone: () => void;
   onError: (err: string) => void;
+  /** v847 — strukturiertes progress-event mit kind. Fallback auf onStatus wenn nicht gesetzt. */
+  onProgress?: (evt: ProgressEventDto) => void;
 }
 
 export class AlfredClient {
@@ -64,6 +78,20 @@ export class AlfredClient {
               case 'status':
                 callbacks.onStatus(parsed.text ?? parsed.status ?? data);
                 break;
+              case 'progress': {
+                // v847 — strukturiertes Progress-Event
+                const evt: ProgressEventDto = {
+                  kind: parsed.kind ?? 'status',
+                  text: parsed.text ?? '',
+                  tool: parsed.tool,
+                  toolInput: parsed.toolInput,
+                  durationMs: parsed.durationMs,
+                  ts: Date.now(),
+                };
+                if (callbacks.onProgress) callbacks.onProgress(evt);
+                else callbacks.onStatus(evt.text); // backwards-compat
+                break;
+              }
               case 'response':
                 callbacks.onResponse(parsed.text ?? data);
                 break;
@@ -1282,6 +1310,19 @@ export class AlfredClient {
     return await res.json();
   }
 
+  // v847 — Chat-Actions: Liste pro Projekt + Detail
+  async fetchProjectChatActions(projectId: string, limit = 50): Promise<ChatActionDto[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/chat-actions?limit=${limit}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.actions) ? data.actions : [];
+  }
+  async fetchChatAction(actionId: string): Promise<ChatActionDto | null> {
+    const res = await fetch(`${this.baseUrl}/api/chat-actions/${actionId}`, { headers: this.authHeaders });
+    if (!res.ok) return null;
+    return await res.json();
+  }
+
   // v665b — Cluster-Shares + Project-Move
   async fetchClusterShares(): Promise<ClusterShareStatus[]> {
     const res = await fetch(`${this.baseUrl}/api/cluster/shares`, { headers: this.authHeaders });
@@ -2312,6 +2353,35 @@ export interface ProjectWorkStats {
 export interface ProjectChatHistory {
   conversationId: string;
   messages: Array<{ id: string; role: string; content: string; createdAt: string }>;
+}
+
+// v847 — Project-Chat-Action-Tracking
+export interface ChatActionSkillCallDto {
+  skill: string;
+  action?: string;
+  durationMs: number;
+  costUsd?: number;
+  success: boolean;
+  error?: string;
+  startedAt: number;
+}
+
+export interface ChatActionDto {
+  id: string;
+  projectId: string;
+  conversationId: string | null;
+  userId: string;
+  requestText: string;
+  responseText: string | null;
+  skillsCalled: ChatActionSkillCallDto[];
+  totalSkillCount: number;
+  totalCostUsd: number;
+  totalDurationMs: number;
+  commitShas: string[];
+  modifiedFiles: string[];
+  status: 'running' | 'completed' | 'error';
+  startedAt: string;
+  endedAt: string | null;
 }
 
 // v629 — Confirmations + Reminders Side-Panel

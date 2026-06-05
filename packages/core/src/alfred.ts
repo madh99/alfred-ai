@@ -5689,8 +5689,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // prompt enumerates currently running sessions (valid interject targets).
     if (this.config.projectAgents?.enabled && this.config.codeAgents?.agents) {
       try {
-        const { ProjectAgentSessionRepository } = await import('@alfred/storage');
+        const { ProjectAgentSessionRepository, ChatActionsRepository } = await import('@alfred/storage');
         this.pipeline.setProjectAgentSessionRepo(new ProjectAgentSessionRepository(adapter));
+        // v847 — Chat-Actions-Tracking aktivieren wenn projects enabled sind
+        this.pipeline.setChatActionsRepo(new ChatActionsRepository(adapter));
       } catch (err) {
         this.logger.debug({ err }, 'Could not wire project-agent-session repo into pipeline (non-critical)');
       }
@@ -8964,6 +8966,23 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return await projRepo.getWorkStats(project.id);
             } catch (err) { this.logger.warn({ err, id }, 'Projects API workStats failed'); return null; }
           },
+          // v847 — Chat-Actions: Liste pro Projekt (Tracking der Chat-getriggerten Skill-Arbeit)
+          listChatActions: async (id: string, limit: number) => {
+            try {
+              const { ChatActionsRepository } = await import('@alfred/storage');
+              const repo = new ChatActionsRepository(this.database.getAdapter());
+              const actions = await repo.listByProject(id, limit);
+              return actions as unknown as Array<Record<string, unknown>>;
+            } catch (err) { this.logger.warn({ err, id }, 'Projects API listChatActions failed'); return []; }
+          },
+          getChatAction: async (actionId: string) => {
+            try {
+              const { ChatActionsRepository } = await import('@alfred/storage');
+              const repo = new ChatActionsRepository(this.database.getAdapter());
+              const action = await repo.getById(actionId);
+              return action as unknown as Record<string, unknown> | null;
+            } catch (err) { this.logger.warn({ err, actionId }, 'Projects API getChatAction failed'); return null; }
+          },
           // v665b — Cluster-Shares + Project-Move
           listClusterShares: async () => {
             if (!this.shareManager) return [];
@@ -11178,17 +11197,41 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         let statusMessageId: string | undefined;
         let lastStatus = '';
 
-        const onProgress = async (status: string) => {
-          if (status === lastStatus) return;
-          lastStatus = status;
+        // v847 — ProgressEvent kann jetzt struktur tragen (kind/tool/durationMs).
+        // Bei API-Adapter: nutze typed SSE-event 'progress' mit JSON-payload damit
+        // die UI eine Timeline rendern kann. Andere Adapter (Telegram, Discord)
+        // bekommen weiterhin nur den Text via editMessage.
+        const formatProgressString = (s: string | import('./message-pipeline.js').ProgressEvent): string => {
+          if (typeof s === 'string') return s;
+          const iconMap: Record<string, string> = {
+            thinking: '💭', tool_call: '🔧', tool_done: '✓', tool_error: '✗', status: '·',
+          };
+          const icon = iconMap[s.kind] ?? '·';
+          const dur = s.durationMs ? ` (${Math.round(s.durationMs / 100) / 10}s)` : '';
+          return `${icon} ${s.text}${dur}`;
+        };
+
+        const onProgress = async (status: string | import('./message-pipeline.js').ProgressEvent) => {
+          const stringRepr = formatProgressString(status);
+          if (stringRepr === lastStatus) return;
+          lastStatus = stringRepr;
           try {
             if (platform === 'api') {
-              // API adapter: always use editMessage (sends 'status' SSE event, not 'response')
-              await adapter.editMessage(message.chatId, statusMessageId ?? '', status);
+              // v847 — API adapter: bei strukturiertem Event ein 'progress' SSE-event
+              // mit JSON-payload pushen (UI parsed kind/tool/durationMs), sonst
+              // legacy 'status' fallback wie pre-v847.
+              if (typeof status === 'object' && (adapter as unknown as {
+                writeProgressEvent?: (chatId: string, evt: unknown) => Promise<void>;
+              }).writeProgressEvent) {
+                await (adapter as unknown as { writeProgressEvent: (chatId: string, evt: unknown) => Promise<void> })
+                  .writeProgressEvent(message.chatId, status);
+              } else {
+                await adapter.editMessage(message.chatId, statusMessageId ?? '', stringRepr);
+              }
             } else if (!statusMessageId) {
-              statusMessageId = await adapter.sendMessage(message.chatId, status);
+              statusMessageId = await adapter.sendMessage(message.chatId, stringRepr);
             } else {
-              await adapter.editMessage(message.chatId, statusMessageId, status);
+              await adapter.editMessage(message.chatId, statusMessageId, stringRepr);
             }
           } catch (err) {
             this.logger.debug({ err, chatId: message.chatId }, 'Status message edit failed');

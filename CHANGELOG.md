@@ -5,6 +5,95 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.847] - 2026-06-05
+
+### Added — Strukturierte Chat-Progress + Project-Chat-Action-Tracking (v847)
+
+**Symptom 1 (UI):** Im Project-Chat sah der User während Alfred arbeitete nur
+"Thinking..." — Tool-Aufrufe blitzten 200 ms auf und verschwanden hinter dem
+nächsten "Thinking..."-Status. 95 % der Verarbeitungs-Zeit blieb der konkrete
+Schritt unsichtbar. Symptom kommt aus `setStatus` das jeden vorherigen Wert
+überschrieb (`onStatus: (t) => setStatus(t)`).
+
+**Symptom 2 (Tracking):** Wenn der User im Project-Chat einen Fix anstieß
+(z.B. "Channel-Preview Auto-Join Bug"), führte Alfred mehrere Skill-Calls aus
+(`code_agent.orchestrate`, `shell`, `code_agent.push`) — diese Arbeit
+verursachte Cost, Commits und File-Änderungen, **war aber nirgendwo als
+Session sichtbar**: `project_agent_sessions` nur für volle Plan-Runs,
+`audit_log` nur low-level Security ohne Cost/Result, `project_sessions` nicht
+gefüllt für Chat-getriggerte Arbeit.
+
+**Behoben durch 4 koordinierte Änderungen:**
+
+**A) Status-Log statt überschreibender setStatus**
+(`apps/web/src/components/projects/ProjectChat.tsx`)
+- Neue State: `statusLog: ProgressEventDto[]` (additiv statt überschreibend)
+- Während Stream: vertikale Timeline mit Icons (💭/🔧/✓/✗) + Tool-Name + Dauer
+- Nach Done: kollabiertes `<details>`-Element "N Schritte ausführen"
+- Pre-v847 sichtbar: "Thinking..." (95 % Zeit)
+- Post-v847 sichtbar: "🔧 code_agent → orchestrate" / "✓ code_agent (8.2s)"
+
+**B) Strukturierte Progress-Events (Backend → Client)**
+(`packages/core/src/message-pipeline.ts`, `apps/web/src/lib/alfred-client.ts`)
+- Neue `ProgressEvent` Interface mit `kind: thinking|tool_call|tool_done|tool_error|status`
+- Plus `tool`, `toolInput`, `durationMs`
+- `ProgressCallback` akzeptiert `string | ProgressEvent` (rückwärtskompatibel)
+- Pipeline `onProgress?.(...)` Aufrufe annotiert: `Thinking...` → `{kind:'thinking', text:'…'}`
+- Tool-Calls: vor + nach jedem Skill ein `tool_call` / `tool_done` Event
+- HTTP-Adapter: neue `writeProgressEvent(chatId, evt)` Methode pusht
+  SSE-Event-Type `progress` mit JSON-Payload
+- Andere Adapter (Telegram, Discord, Matrix): fallback auf String-Form
+  via `formatProgressString` Helper
+
+**C) Throttle-Check**
+- SSE-Stream nutzt schon `writeSseEvent` ohne explicit Buffer/Nagle —
+  kein Throttle-Problem festgestellt
+- Pre-v847 Symptom war Überschreibung, nicht Buffer-Drain
+
+**D) Project-Chat-Action-Tracking**
+- **Migration v101 (SQLite) / v105 (PG):** neue Tabelle `project_chat_actions`
+  mit Schema: id, project_id, conversation_id, user_id, request_text,
+  response_text, skills_called (JSON), total_skill_count, total_cost_usd,
+  total_duration_ms, commit_shas (JSON), modified_files (JSON), status,
+  started_at, ended_at
+- **`ChatActionsRepository`** (`packages/storage/src/repositories/chat-actions-repository.ts`)
+  mit CRUD + appendSkillCall/Commits/ModifiedFiles + complete + listByProject +
+  listRunning + aggregateStats
+- **Pipeline-Hook** in `message-pipeline.ts:process()`:
+  - Bei `projectIdForChat` gesetzt → ChatAction-Record erstellen
+  - Pro Skill-Call wird Duration/Success/Cost in `skills_called` appendet
+  - Commit-SHAs aus Skill-Output (regex match) → `commit_shas`
+  - Modified-Files aus Skill-Output → `modified_files`
+  - Bei Done: `complete(actionId, responseText, 'completed')`
+  - Bei Error: `complete(actionId, errorMsg, 'error')`
+- **API-Endpoints:**
+  - `GET /api/projects/:id/chat-actions?limit=N` → Liste
+  - `GET /api/chat-actions/:id` → Detail
+- **UI-Komponente** `ProjectChatActionsView.tsx` (collapsible):
+  - Liste aller Actions mit Status-Badge, Request-Preview, Skill-Count, Dauer, Cost, Commits, Files
+  - Click → Modal mit voller Request/Response, alle Skill-Calls mit Duration,
+    Commits, Modified-Files
+- **ProjectActiveIndicator** erweitert: zeigt jetzt laufende Chat-Actions
+  als gelbe Karte (analog Sandbox/Plan-Agent)
+- Voll persistiert: request_text und response_text werden UNGEKÜRZT gespeichert
+  (User-Wunsch)
+
+**Was unverändert bleibt:**
+- `project_agent_sessions`, `audit_log`, `llm_usage` Schemas unverändert —
+  v847 ist additiv
+- Telegram/Matrix/Discord-Chats (nicht `project:*` chatId) erzeugen KEINE
+  ChatAction-Records — nur Project-Chat
+- Pre-v847 Code-Pfade (string-only `onProgress`) funktionieren weiter
+- Bestehende ProjectChat-Funktionalität (Refs, Drag&Drop, etc.) unverändert
+- ProjectWorkStatsView unverändert (Erweiterung um chatAction-Bucket optional v848)
+
+**Erwartete Wirkung:**
+- Project-Chat zeigt während Stream eine echte Timeline der Schritte
+- Jede Chat-Aktion erscheint sofort im ActiveIndicator + nach Done in der
+  ChatActionsView-Liste
+- Alle Skill-Calls inkl. Cost/Dauer/Commits sind retrospektiv reviewable
+- Tracking-Lücke der "unsichtbaren Arbeit" geschlossen
+
 ## [0.19.0-multi-ha.846] - 2026-06-05
 
 ### Changed — Project-Plan-Agent: Bias + Mid-Run-Mutation + dynamische Caps (v846)

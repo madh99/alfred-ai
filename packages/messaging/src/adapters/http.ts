@@ -672,6 +672,10 @@ export class HttpAdapter extends MessagingAdapter {
     } | null>;
     /** v658 — Chat-History für Projekt-Conversation */
     chatHistory?: (id: string, limit: number) => Promise<{ conversationId: string; messages: Array<{ id: string; role: string; content: string; createdAt: string }> } | null>;
+    /** v847 — Chat-Action-Tracking: Liste pro Projekt */
+    listChatActions?: (id: string, limit: number) => Promise<Array<Record<string, unknown>>>;
+    /** v847 — Chat-Action-Detail */
+    getChatAction?: (actionId: string) => Promise<Record<string, unknown> | null>;
     /** v659 — Letzte Deploys aus Memory parsed + auto-detected runtime aus cwd */
     lastDeploys?: (id: string) => Promise<{
       deploys: Array<{ host: string; user: string; runtime?: string; processManager?: string; composeVariant?: string; port?: number; verified?: boolean; date?: string }>;
@@ -865,6 +869,19 @@ export class HttpAdapter extends MessagingAdapter {
     const res = this.streams.get(chatId);
     if (res) {
       this.writeSseEvent(res, 'status', { type: 'status', text });
+    }
+  }
+
+  /**
+   * v847 — strukturiertes Progress-Event mit kind/tool/durationMs.
+   * Die UI kann damit eine richtige Timeline rendern statt der pre-v847
+   * "Thinking..."-Überschreibung. Adapter exposed via writeProgressEvent
+   * weil Alfred via duck-typing prüft ob diese Methode existiert.
+   */
+  async writeProgressEvent(chatId: string, evt: unknown): Promise<void> {
+    const res = this.streams.get(chatId);
+    if (res) {
+      this.writeSseEvent(res, 'progress', { type: 'progress', ...(typeof evt === 'object' && evt !== null ? evt : {}) });
     }
   }
 
@@ -1346,6 +1363,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsSessionCommits(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-stats$/) && req.method === 'GET') {
       this.handleProjectsWorkStats(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/chat-actions$/) && req.method === 'GET') {
+      this.handleProjectsChatActions(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/chat-actions\/[^/]+$/) && req.method === 'GET') {
+      this.handleChatActionDetail(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/chat-history$/) && req.method === 'GET') {
       this.handleProjectsChatHistory(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/last-deploys$/) && req.method === 'GET') {
@@ -3059,6 +3080,33 @@ export class HttpAdapter extends MessagingAdapter {
     const stats = await this.projectsCallbacks.workStats(projectId);
     res.writeHead(stats ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(stats ?? { error: 'not-found' }));
+  }
+
+  // v847 — Chat-Actions Liste pro Projekt (Tracking der Chat-getriggerten Skill-Arbeit)
+  private async handleProjectsChatActions(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listChatActions) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    const actions = await this.projectsCallbacks.listChatActions(projectId, limit);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ actions }));
+  }
+
+  // v847 — Chat-Action-Detail
+  private async handleChatActionDetail(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.getChatAction) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const actionId = parts[parts.length - 1];
+    const action = await this.projectsCallbacks.getChatAction(actionId);
+    res.writeHead(action ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(action ?? { error: 'not-found' }));
   }
 
   // v658 — Chat-History für die Projekt-Conversation

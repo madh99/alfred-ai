@@ -10,6 +10,7 @@ import { AuditModal } from './AuditModal';
 import { ProjectChat } from './ProjectChat';
 import { RunningAgentsBanner } from './RunningAgentsBanner';
 import { ProjectWorkStatsView } from './ProjectWorkStatsView';
+import { ProjectChatActionsView } from './ProjectChatActionsView';
 import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
 import { AgentConventionsModal } from './AgentConventionsModal';
@@ -1254,6 +1255,9 @@ export function ProjectsPage() {
 
               {/* v658 — Work-Stats (collapsible) */}
               <ProjectWorkStatsView projectId={detail.project.id} />
+
+              {/* v847 — Chat-Aktionen Historie (collapsible) */}
+              <ProjectChatActionsView projectId={detail.project.id} />
 
               {/* v658 — Projekt-Chat-Pane (collapsible) */}
               <ProjectChat projectId={detail.project.id} projectName={detail.project.name} projectCwd={detail.project.cwd ?? undefined} />

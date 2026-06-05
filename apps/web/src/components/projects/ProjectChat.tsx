@@ -38,6 +38,11 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // v847 — Status-Log statt überschreibendes setStatus.
+  // Pre-v847 sah der User nur "Thinking..." weil jeder Status den vorherigen
+  // überschrieb. Mit dem Log bleibt die ganze Timeline sichtbar.
+  const [statusLog, setStatusLog] = useState<Array<import('@/lib/alfred-client').ProgressEventDto>>([]);
+  const [showStatusLog, setShowStatusLog] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // v678 — Auto-expand wenn die Sidebar mit ?chat=open navigiert hat
   const [expanded, setExpanded] = useState(() => {
@@ -196,11 +201,17 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
     ]);
     setStreaming(true);
     setStatus('⏳ Sende an Alfred…');
+    setStatusLog([]); // v847 — fresh log per request
     let gotAnyResponse = false;
     // v687 — ContextRefs mitschicken
     const refsToSend = contextRefs.length > 0 ? contextRefs.map(r => ({ kind: r.kind, refId: r.refId, label: r.label })) : undefined;
     cancelRef.current = client.streamProjectMessage(projectId, text, userId, {
       onStatus: (t) => setStatus(t),
+      onProgress: (evt) => {
+        // v847 — strukturierter Event → in Timeline-Log einfügen
+        setStatusLog(prev => [...prev, evt].slice(-50));
+        setStatus(evt.text); // letzter status bleibt auch als Header
+      },
       onResponse: (t) => {
         gotAnyResponse = true;
         setMessages(prev => prev.map(m => m.id === asstMsgId ? { ...m, content: m.content + t } : m));
@@ -209,6 +220,7 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
       onDone: () => {
         setStreaming(false);
         setStatus(null);
+        // v847 — Log bleibt sichtbar (kollabiert) damit User die Schritte review'en kann
         if (!gotAnyResponse) {
           setError('Backend hat keine Antwort gesendet. Möglicherweise wurde die Nachricht von einem anderen Cluster-Node verarbeitet oder ein Pipeline-Fehler ist aufgetreten. Schau ins Server-Log für pipeline.phase-Einträge.');
           setMessages(prev => prev.filter(m => m.id !== asstMsgId));
@@ -353,10 +365,57 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
             </div>
           ))}
           {status && (
-            <div className="text-[10px] text-amber-400 italic animate-pulse flex items-center gap-1.5">
-              <span className="w-1 h-1 rounded-full bg-amber-400 inline-block" />
+            <div className="text-[10px] text-amber-400 italic flex items-center gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-amber-400 inline-block animate-pulse" />
               <span>{status}</span>
+              {statusLog.length > 0 && (
+                <button
+                  onClick={() => setShowStatusLog(s => !s)}
+                  className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 not-italic"
+                >
+                  {showStatusLog ? '↑' : '↓'} {statusLog.length} Schritt{statusLog.length === 1 ? '' : 'e'}
+                </button>
+              )}
             </div>
+          )}
+          {/* v847 — Status-Log: vertikale Timeline aller Progress-Events während des Streams */}
+          {statusLog.length > 0 && (status || showStatusLog) && (
+            <div className={"mt-1 border-l-2 border-amber-500/20 pl-2 space-y-0.5 " + (showStatusLog ? '' : 'max-h-20 overflow-hidden')}>
+              {statusLog.map((evt, i) => {
+                const icon = ({thinking:'💭',tool_call:'🔧',tool_done:'✓',tool_error:'✗',status:'·'} as Record<string,string>)[evt.kind] ?? '·';
+                const color = evt.kind === 'tool_error' ? 'text-red-300' : evt.kind === 'tool_done' ? 'text-emerald-300/80' : 'text-gray-400';
+                const dur = evt.durationMs ? ` (${(evt.durationMs / 1000).toFixed(1)}s)` : '';
+                return (
+                  <div key={i} className={`text-[10px] ${color} flex items-center gap-1.5`}>
+                    <span>{icon}</span>
+                    {evt.tool ? <span className="text-blue-300 font-medium">{evt.tool}</span> : null}
+                    <span className="truncate flex-1">{evt.text}{dur}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {/* v847 — Done-state: kollabierter Schritt-Trace nach Abschluss */}
+          {!status && statusLog.length > 0 && (
+            <details className="mt-1 text-[10px] text-gray-500" onToggle={(e) => setShowStatusLog((e.currentTarget as HTMLDetailsElement).open)}>
+              <summary className="cursor-pointer select-none hover:text-gray-300">
+                ▸ {statusLog.length} Schritt{statusLog.length === 1 ? '' : 'e'} ausführen
+              </summary>
+              <div className="border-l-2 border-[#222] pl-2 mt-1 space-y-0.5">
+                {statusLog.map((evt, i) => {
+                  const icon = ({thinking:'💭',tool_call:'🔧',tool_done:'✓',tool_error:'✗',status:'·'} as Record<string,string>)[evt.kind] ?? '·';
+                  const color = evt.kind === 'tool_error' ? 'text-red-300' : evt.kind === 'tool_done' ? 'text-emerald-300/80' : 'text-gray-500';
+                  const dur = evt.durationMs ? ` (${(evt.durationMs / 1000).toFixed(1)}s)` : '';
+                  return (
+                    <div key={i} className={`${color} flex items-center gap-1.5`}>
+                      <span>{icon}</span>
+                      {evt.tool ? <span className="text-blue-300/70">{evt.tool}</span> : null}
+                      <span className="truncate flex-1">{evt.text}{dur}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
           )}
         </div>
 

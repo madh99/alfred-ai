@@ -1682,4 +1682,31 @@ export const PG_MIGRATIONS: PgMigration[] = [
       try { await db.execute(`ALTER TABLE agent_conventions ADD COLUMN config_overrides TEXT NOT NULL DEFAULT '{}'`, []); } catch { /* exists */ }
     },
   },
+  {
+    version: 105,
+    description: 'v847 — project_chat_actions: tracking-table für Chat-getriggerte Skill-Arbeit (PG-Spiegel zu SQLite v101).',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_chat_actions (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          conversation_id TEXT,
+          user_id TEXT NOT NULL,
+          request_text TEXT NOT NULL,
+          response_text TEXT,
+          skills_called TEXT NOT NULL DEFAULT '[]',
+          total_skill_count INTEGER NOT NULL DEFAULT 0,
+          total_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+          total_duration_ms BIGINT NOT NULL DEFAULT 0,
+          commit_shas TEXT NOT NULL DEFAULT '[]',
+          modified_files TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','completed','error')),
+          started_at TEXT NOT NULL,
+          ended_at TEXT
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_chat_actions_project ON project_chat_actions(project_id, started_at DESC)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_chat_actions_running ON project_chat_actions(status, started_at DESC) WHERE status='running'`, []);
+    },
+  },
 ];

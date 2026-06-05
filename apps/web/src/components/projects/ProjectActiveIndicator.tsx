@@ -5,6 +5,7 @@ import type {
   AlfredClient,
   SandboxItem,
   ProjectAgentSession,
+  ChatActionDto,
 } from '../../lib/alfred-client';
 
 interface Props {
@@ -29,18 +30,18 @@ interface Props {
 export function ProjectActiveIndicator({ client, projectId, projectCwd }: Props) {
   const [sandboxes, setSandboxes] = useState<SandboxItem[]>([]);
   const [planAgents, setPlanAgents] = useState<ProjectAgentSession[]>([]);
+  // v847 — auch laufende Chat-Actions (status='running')
+  const [chatActions, setChatActions] = useState<ChatActionDto[]>([]);
 
   const load = useCallback(async () => {
     if (!projectCwd) return;
     try {
-      // Sandboxes pro Projekt
       const sbList = await client.listSandboxes({ projectId });
       const activeStates = new Set(['creating', 'running', 'paused', 'merging']);
       const activeSb = sbList.filter(s => activeStates.has(s.status));
       setSandboxes(activeSb);
     } catch { /* non-critical */ }
     try {
-      // Plan-Agent-Sessions strict gefiltert auf project.cwd
       const all = await client.fetchProjectAgents();
       const active = all.filter(s => {
         const phaseActive = s.currentPhase !== 'done' && s.currentPhase !== 'failed' && s.currentPhase !== 'aborted';
@@ -48,6 +49,11 @@ export function ProjectActiveIndicator({ client, projectId, projectCwd }: Props)
         return phaseActive && cwdMatches;
       });
       setPlanAgents(active);
+    } catch { /* non-critical */ }
+    // v847 — Chat-Actions
+    try {
+      const actions = await client.fetchProjectChatActions(projectId, 20);
+      setChatActions(actions.filter(a => a.status === 'running'));
     } catch { /* non-critical */ }
   }, [client, projectId, projectCwd]);
 
@@ -57,7 +63,7 @@ export function ProjectActiveIndicator({ client, projectId, projectCwd }: Props)
     return () => clearInterval(iv);
   }, [load]);
 
-  const totalActive = sandboxes.length + planAgents.length;
+  const totalActive = sandboxes.length + planAgents.length + chatActions.length;
   if (totalActive === 0) return null;
 
   function formatDuration(iso: string | null | undefined): string {
@@ -78,9 +84,24 @@ export function ProjectActiveIndicator({ client, projectId, projectCwd }: Props)
           🔴 LIVE · {sandboxes.length > 0 && `${sandboxes.length} Sandbox${sandboxes.length > 1 ? 'es' : ''}`}
           {sandboxes.length > 0 && planAgents.length > 0 && ' · '}
           {planAgents.length > 0 && `${planAgents.length} Plan-Agent${planAgents.length > 1 ? 's' : ''}`}
+          {(sandboxes.length > 0 || planAgents.length > 0) && chatActions.length > 0 && ' · '}
+          {chatActions.length > 0 && `${chatActions.length} Chat-Aktion${chatActions.length > 1 ? 'en' : ''}`}
         </span>
       </div>
       <div className="space-y-1">
+        {chatActions.map(a => (
+          <div
+            key={a.id}
+            className="block bg-[#0a0a0a] border border-amber-500/30 rounded px-2 py-1.5 text-[11px]"
+          >
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 bg-amber-500/15 text-amber-300 rounded font-mono">💬 chat</span>
+              <span className="text-gray-200 flex-1 truncate">{a.requestText.slice(0, 80)}</span>
+              <span className="text-[9px] text-gray-500">{a.totalSkillCount} skills</span>
+              <span className="text-[9px] text-emerald-400/80 font-mono">{formatDuration(a.startedAt)}</span>
+            </div>
+          </div>
+        ))}
         {sandboxes.map(s => (
           <a
             key={s.id}
