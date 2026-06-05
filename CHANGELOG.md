@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.847.1] - 2026-06-05
+
+### Fixed — Progress-Events kommen jetzt auch im Project-Chat an (v847.1)
+
+**Symptom:** Nach v847-Deploy zeigte der Project-Chat weiterhin nur "Sende an
+Alfred…" als einzigen Status — keine Live-Timeline, keine Tool-Calls
+sichtbar. User-Feedback: "merklich NICHTS verändert".
+
+**Root-Cause:** In `apps/web/src/lib/alfred-client.ts` existieren ZWEI separate
+SSE-Stream-Implementierungen:
+- `streamMessage` (Z.27) — für normalen Chat
+- `streamProjectMessage` (Z.1451) — für Project-Chat
+
+In v847 hatte ich nur `streamMessage` mit dem `case 'progress'` erweitert,
+`streamProjectMessage` hatte nur die alten cases `status|response|attachment|
+done|error`. → Backend sendete `progress`-Events brav, Client warf sie weg.
+
+**Fix:** identischer `case 'progress'` Block in `streamProjectMessage`.
+Code-Duplikation bewusst toleriert — die beiden Funktionen sind history-
+gewachsen und ihre Konsolidierung wäre eigene Aufgabe.
+
 ## [0.19.0-multi-ha.847] - 2026-06-05
 
 ### Added — Strukturierte Chat-Progress + Project-Chat-Action-Tracking (v847)

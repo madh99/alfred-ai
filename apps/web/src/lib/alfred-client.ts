@@ -1481,6 +1481,22 @@ export class AlfredClient {
             const parsed = JSON.parse(data);
             switch (event) {
               case 'status': callbacks.onStatus(parsed.text ?? parsed.status ?? data); break;
+              case 'progress': {
+                // v847.1 — strukturiertes Progress-Event (war v847 nur in streamMessage,
+                // hier vergessen). Ohne diesen case bleibt statusLog leer und der User
+                // sieht nur das initial "Sende an Alfred…".
+                const evt: ProgressEventDto = {
+                  kind: parsed.kind ?? 'status',
+                  text: parsed.text ?? '',
+                  tool: parsed.tool,
+                  toolInput: parsed.toolInput,
+                  durationMs: parsed.durationMs,
+                  ts: Date.now(),
+                };
+                if (callbacks.onProgress) callbacks.onProgress(evt);
+                else callbacks.onStatus(evt.text);
+                break;
+              }
               case 'response': callbacks.onResponse(parsed.text ?? data); break;
               case 'attachment': callbacks.onAttachment(parsed); break;
               case 'done': callbacks.onDone(); break;
