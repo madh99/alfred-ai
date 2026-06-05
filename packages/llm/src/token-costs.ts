@@ -33,6 +33,7 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['o3',              { input: 2.00, output: 8.00,  cacheRead: 0.50 }],
 
   // ── Anthropic ───────────────────────────────────────────────
+  ['claude-opus-4-8',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
   ['claude-opus-4-7',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
   ['claude-opus-4-6',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
   ['claude-opus-4-5',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],

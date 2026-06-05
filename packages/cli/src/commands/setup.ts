@@ -48,8 +48,9 @@ const PROVIDERS: ProviderDef[] = [
     envKeyName: 'ALFRED_ANTHROPIC_API_KEY',
     needsApiKey: true,
     models: [
+      { id: 'claude-opus-4-8',          desc: 'Opus 4.8 — most capable, agentic coding (latest)' },
       { id: 'claude-sonnet-4-6',        desc: 'Sonnet 4.6 — fast, smart, recommended' },
-      { id: 'claude-opus-4-7',          desc: 'Opus 4.7 — most capable, agentic coding' },
+      { id: 'claude-opus-4-7',          desc: 'Opus 4.7 — capable, agentic coding' },
       { id: 'claude-opus-4-6',          desc: 'Opus 4.6 — capable, extended thinking' },
       { id: 'claude-haiku-4-5-20251001', desc: 'Haiku 4.5 — fastest, cheapest' },
     ],
@@ -573,7 +574,7 @@ export async function setupCommand(): Promise<void> {
 
     if (enableMultiModel) {
       const tierDefs: { key: string; label: string; hint: string; defaultModel: string }[] = [
-        { key: 'strong', label: 'Strong', hint: 'complex reasoning, coding, long documents', defaultModel: 'claude-opus-4-7' },
+        { key: 'strong', label: 'Strong', hint: 'complex reasoning, coding, long documents', defaultModel: 'claude-opus-4-8' },
         { key: 'fast', label: 'Fast', hint: 'quick responses, simple tasks', defaultModel: 'claude-haiku-4-5-20251001' },
         { key: 'embeddings', label: 'Embeddings', hint: 'semantic search & memory', defaultModel: 'text-embedding-3-small' },
         { key: 'local', label: 'Local', hint: 'offline fallback via Ollama', defaultModel: 'llama3.2' },

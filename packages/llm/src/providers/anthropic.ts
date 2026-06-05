@@ -29,12 +29,12 @@ export class AnthropicProvider extends LLMProvider {
   /**
    * v608 F2 — Some Anthropic models reject `temperature` ("`temperature` is deprecated
    * for this model"). Filter it out for those models instead of bubbling a 400 error
-   * up to the caller. Currently applies to `claude-opus-4-7*` family; extend the list
-   * as Anthropic ships new reasoning-flavoured models.
+   * up to the caller. Applies to Opus 4.7 + 4.8 (and assumed-forward for newer Opus
+   * generations that ship adaptive thinking without sampling parameters).
    */
   private supportsTemperature(): boolean {
     const model = (this.config.model ?? '').toLowerCase();
-    if (model.includes('opus-4-7')) return false;
+    if (/opus-4-(7|8|9)/.test(model)) return false;
     return true;
   }
 

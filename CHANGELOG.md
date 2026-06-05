@@ -5,6 +5,64 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.852] - 2026-06-06
+
+### Added — Claude Opus 4.8 Support
+
+Anthropic hat **Claude Opus 4.8** (`claude-opus-4-8`) veröffentlicht — neues
+flagship Opus-Modell mit identischem Pricing zu 4.7 ($5 input / $25 output
+pro MTok, $6.25 5m-cache-write, $0.50 cache-read), 1M-Context-Window und
+128k Max-Output.
+
+**Verbesserungen ggü. 4.7:**
+- Long-horizon agentic coding (weniger Compactions, bessere Compaction-Recovery)
+- Effort-Calibration zuverlässiger auf allen Levels
+- Tool-Triggering: weniger ausgelassene Tool-Calls
+- Tool-Use System-Prompt: 290/410 statt 675/804 Tokens (signifikante
+  Input-Token-Ersparnis)
+- Mid-Conversation System-Messages erlaubt (Alfred nutzt sie nicht aktiv,
+  Eigenschaft aber kompatibel)
+- Default `effort: high` auf allen Surfaces
+
+**Keine Breaking-Changes** vs 4.7 — Code läuft 1:1. Selbe Sampling-Constraints
+(`temperature`/`top_p`/`top_k` weiterhin 400 bei non-default).
+
+### Code-Änderungen
+
+**`packages/llm/src/providers/anthropic.ts`** — `supportsTemperature()` filtert
+jetzt für Opus 4.7 **und** 4.8 (Regex `opus-4-(7|8|9)` als forward-compat).
+Ohne diese Erweiterung würde Opus 4.8 mit `temperature`-Parameter ein 400
+zurückgeben statt die Anfrage durchzulassen.
+
+**`packages/llm/src/provider.ts`** — Context-Window-Tabelle: Eintrag
+`claude-opus-4-8` mit 1M/128k. Ohne expliziten Eintrag würde der Fallback
+greifen (1.0.18-multi-ha.X hatte einst einen Bug, wo fehlende Einträge auf
+8k statt 1M defaultet sind — entsprechender CHANGELOG-Eintrag v13875 belegt
+das Risiko).
+
+**`packages/llm/src/token-costs.ts`** — Pricing-Eintrag `claude-opus-4-8`
+mit den Anthropic-bestätigten Raten. Cost-Tracker (Dashboard + LLM-Usage)
+zeigt damit korrekte Kosten an statt $0.
+
+**`packages/cli/src/commands/setup.ts`** — Interactive `alfred setup`:
+- Opus 4.8 als TOP-Eintrag in der Modell-Liste mit "(latest)" Tag
+- 4.7 bleibt selektierbar (für User die explizit zurück wollen)
+- Strong-Tier-Default für Multi-Model-Konfig: `claude-opus-4-7` →
+  `claude-opus-4-8`
+
+**Nicht angepasst (bewusst, da Alfred nicht nutzt):**
+- `effort`-Parameter (kein Adaptive-Thinking-Integration im Provider)
+- Mid-conversation system messages
+- Fast-Mode ($10/$50 input/output bei Opus 4.8)
+- 1h-Cache-Write ($10/MTok — Alfred nutzt nur 5m-Cache)
+
+### Migration für bestehende Nutzer
+
+Nichts zwingend zu tun — 4.7 läuft weiter. Wer auf 4.8 wechseln will:
+- Interaktiv: `alfred setup` → Anthropic-Provider → 4.8 aus Liste wählen
+- Per ENV: `ALFRED_LLM_STRONG_MODEL=claude-opus-4-8` (oder
+  `ALFRED_LLM_MODEL=claude-opus-4-8` für Single-Model)
+
 ## [0.19.0-multi-ha.851.2] - 2026-06-05
 
 ### Fixed — `npm install -g` schlägt durch leaked `workspace:*` fehl
