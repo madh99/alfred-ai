@@ -35,6 +35,23 @@ export interface SkillMetadata {
    * Long-running Skills setzen 600_000 (10 min); andere bleiben beim Default.
    */
   inactivityThresholdMs?: number;
+  /**
+   * v853 — Optionaler absoluter Hard-Cap (ms) für SkillSandbox.executeWithTracker.
+   *
+   * **Default: undefined → kein Hard-Cap.** Activity-Tracking (inactivityThresholdMs)
+   * ist die primäre Schutzlinie. Solange der Skill aktiv ist, läuft er weiter.
+   *
+   * Hintergrund: bis v852 lag hier ein hart-codierter 20-min-`safetyTimer`
+   * über der activity-aware Logik der mit deren "extending"-Verhalten in
+   * Konflikt stand. Bei code_agent/project_agent-Runs > 20 min wurde der
+   * Skill abgewürgt OBWOHL er fleißig pingte. Default ist jetzt: kein Cap.
+   *
+   * Setze nur dann einen Wert, wenn der Skill explizit nach X Zeit abgebrochen
+   * werden soll (z.B. teure External-API-Skills mit Cost-Ceiling). Bei CLI-
+   * Agents (code_agent, project_agent) bleibt undefined — die haben interne
+   * Process-Spawn-Caps in agent-executor.ts (`ABSOLUTE_CAP_MS`).
+   */
+  maxTotalTimeMs?: number;
   /** Skill category for context-based filtering. Defaults to 'core' if omitted. */
   category?: SkillCategory;
 }

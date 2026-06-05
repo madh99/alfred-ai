@@ -5,6 +5,77 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.853] - 2026-06-06
+
+### Fixed — SkillSandbox: kein hartes 20-min-Cap mehr über Activity-Tracking
+
+Bei langlaufenden Code-Sessions (code_agent für Multi-Bug-Fixes,
+project_agent für Multi-Phase-Refactors) wurden Skills regelmäßig
+nach exakt 20 Min mit der Meldung `force-killed after 20 minutes
+(safety limit)` abgebrochen — selbst wenn der ActivityTracker
+fleißig Pings vom Subprozess bekam und im Log "extending" stand.
+
+**Root-Cause (gefunden via Code-Analyse, nicht durch Vermutung):**
+
+`packages/skills/src/skill-sandbox.ts` hat zwei Mechanismen, die seit
+v0.7.1 (Einführung des Activity-aware Timeouts) **parallel** liefen:
+
+1. **`executeWithTracker`-Logik** — wartet `initialTimeoutMs`, dann
+   Poll alle 10s ob `idleMs < inactivityThresholdMs`. Solange aktiv:
+   "extending" (log line *"Initial timeout reached but agent is active
+   — extending"*). Das ist die richtige Activity-Tracking-Logik.
+
+2. **`safetyTimer` mit `MAX_TOTAL_TIME_MS = 20 * 60_000`** — ein
+   paralleler `setTimeout` der nach 20 Min hart abbricht, völlig
+   unabhängig vom Activity-Tracker. Negiert die Extension-Logik.
+
+Bei kurzen Reasoning-Loops (delegate-Skill, normale LLM-Calls) fiel
+das nicht auf weil die unter 20 Min bleiben. Erst seit `code_agent`
+als eigener Skill (v848) für direkte Multi-File-Refactors genutzt
+wird, schlägt der Cap zu.
+
+### Lösung
+
+**`MAX_TOTAL_TIME_MS` als Default-Konstante entfernt.** Hard-Cap nur
+noch wenn der Skill ihn explizit via `metadata.maxTotalTimeMs` setzt.
+
+- `SkillMetadata.maxTotalTimeMs?: number` — neues optionales Feld in
+  `packages/types/src/skills.ts`. Default undefined.
+- `skill-sandbox.ts executeWithTracker`: setzt `safetyTimer` nur wenn
+  `skill.metadata.maxTotalTimeMs` einen Wert > 0 hat.
+- Activity-Tracker (`inactivityThresholdMs`) bleibt die primäre
+  Schutzlinie. Default 2 min, code_agent/project_agent 10 min.
+
+**Was passiert jetzt bei …**
+
+- *normalem 45-min-Refactor mit Pings:* läuft durch, kein Kill.
+- *active-but-wedged Agent:* greift inner `agent-executor.ts
+  ABSOLUTE_CAP_MS` (jetzt 4 h, war 60 min). Worst-Case-Kosten ein
+  paar €10-Tokens, kein Geld-Burn ins Unendliche.
+- *truly idle (silent) Agent:* `inactivityThresholdMs` killt nach
+  10 min (code_agent) bzw. 2 min (default skills) — unverändert.
+
+### Zusätzlich
+
+- **`agent-executor.ts ABSOLUTE_CAP_MS` von 60 min → 4 h**, weil
+  reale Multi-Phase-Refactors 1-3 h legitim laufen. Override per
+  ENV `ALFRED_AGENT_EXECUTOR_ABSOLUTE_CAP_MS` möglich.
+- **Periodischer "still active" Log-Line alle 30 Min** für
+  Sichtbarkeit bei langen Sessions (`Long-running skill: still
+  active` mit totalMin + state + iteration).
+- **Bessere Kill-Meldungen:** statt "safety limit" steht jetzt
+  "skill-configured cap" wenn ein Skill seinen `maxTotalTimeMs`
+  selbst setzt — macht das Debugging eindeutig.
+
+### Migration
+
+Bestehende Skills brauchen nichts tun. `maxTotalTimeMs` ist optional.
+Wer einen alten 20-min-Cap explizit zurückwill setzt im Skill:
+
+```ts
+metadata: { ..., maxTotalTimeMs: 20 * 60_000 }
+```
+
 ## [0.19.0-multi-ha.852] - 2026-06-06
 
 ### Added — Claude Opus 4.8 Support

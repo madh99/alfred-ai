@@ -17,7 +17,17 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  */
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 120_000; // 2 minutes without a ping → dead
 const POLL_INTERVAL_MS = 10_000;         // check every 10s
-const MAX_TOTAL_TIME_MS = 20 * 60_000;   // absolute safety net: 20 minutes
+/**
+ * v853 — Periodischer "still active" log/progress damit User bei langen
+ * Sessions Sichtbarkeit hat. Feuert alle 30 Min ein Status-Update via
+ * onProgress wenn das vorhanden ist.
+ */
+const LONG_RUN_PROGRESS_INTERVAL_MS = 30 * 60_000; // 30 minutes
+/**
+ * v853 — kein globales hartes Cap mehr für tracker-mode (war 20min).
+ * Activity-Tracking ist die echte Schutzlinie. Skills die einen Hard-Cap
+ * wollen setzen `metadata.maxTotalTimeMs` explizit.
+ */
 
 export class SkillSandbox {
   private readonly logger: Logger;
@@ -75,16 +85,22 @@ export class SkillSandbox {
     // setzt 10 min weil claude-code intern lange Pausen haben darf).
     const inactivityThresholdMs = skill.metadata.inactivityThresholdMs ?? DEFAULT_INACTIVITY_THRESHOLD_MS;
 
+    // v853 — Hard-Cap nur wenn Skill explizit `maxTotalTimeMs` setzt.
+    // Default: undefined → kein Hard-Cap, nur Activity-Tracking entscheidet.
+    const maxTotalTimeMs = skill.metadata.maxTotalTimeMs;
+
     return new Promise<SkillResult>((resolve) => {
       let settled = false;
       let pollTimer: ReturnType<typeof setInterval> | undefined;
       let safetyTimer: ReturnType<typeof setTimeout> | undefined;
       let initialTimer: ReturnType<typeof setTimeout> | undefined;
+      let longRunTimer: ReturnType<typeof setInterval> | undefined;
 
       const cleanup = () => {
         if (pollTimer) clearInterval(pollTimer);
         if (safetyTimer) clearTimeout(safetyTimer);
         if (initialTimer) clearTimeout(initialTimer);
+        if (longRunTimer) clearInterval(longRunTimer);
       };
 
       const finish = (result: SkillResult) => {
@@ -161,19 +177,39 @@ export class SkillSandbox {
         }, POLL_INTERVAL_MS);
       }, initialTimeoutMs);
 
-      // Absolute safety net — never let anything run forever
-      safetyTimer = setTimeout(() => {
+      // v853 — Absolute Hard-Cap NUR wenn Skill `maxTotalTimeMs` explizit setzt.
+      // Default ist undefined → kein safetyTimer. Activity-Tracker via Polling
+      // ist die einzige Schutzlinie (idleMs > inactivityThresholdMs → kill).
+      if (typeof maxTotalTimeMs === 'number' && maxTotalTimeMs > 0) {
+        safetyTimer = setTimeout(() => {
+          if (settled) return;
+          const snap = tracker.getSnapshot();
+          this.logger.error(
+            { skill: name, totalMs: snap.totalElapsedMs, state: snap.state, iteration: snap.iteration, maxTotalTimeMs },
+            'Skill-configured hard cap reached — force killing agent',
+          );
+          finish({
+            success: false,
+            error: `Skill "${name}" force-killed after ${Math.round(maxTotalTimeMs / 60_000)} minutes (skill-configured cap)`,
+          });
+        }, maxTotalTimeMs);
+      }
+
+      // v853 — Periodischer "still active" log für lange Sessions.
+      // Gibt dem User Sichtbarkeit dass der Skill noch arbeitet ohne den
+      // inactivity-threshold aufzubrechen. Feuert nur wenn Skill noch läuft.
+      longRunTimer = setInterval(() => {
         if (settled) return;
         const snap = tracker.getSnapshot();
-        this.logger.error(
-          { skill: name, totalMs: snap.totalElapsedMs, state: snap.state, iteration: snap.iteration },
-          'Absolute time limit reached — force killing agent',
+        const totalMin = Math.round(snap.totalElapsedMs / 60_000);
+        this.logger.info(
+          { skill: name, totalMin, state: snap.state, iteration: snap.iteration, idleMs: snap.idleMs },
+          'Long-running skill: still active',
         );
-        finish({
-          success: false,
-          error: `Skill "${name}" force-killed after ${Math.round(MAX_TOTAL_TIME_MS / 60_000)} minutes (safety limit)`,
-        });
-      }, MAX_TOTAL_TIME_MS);
+        // Optional Progress an UI wenn Tracker einen onProgress hat (über die
+        // ping()-Schiene; hier loggen wir nur). Konsumenten können totalMs aus
+        // tracker.getSnapshot() ableiten.
+      }, LONG_RUN_PROGRESS_INTERVAL_MS);
     });
   }
 

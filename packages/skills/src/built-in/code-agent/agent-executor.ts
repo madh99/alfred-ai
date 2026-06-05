@@ -20,8 +20,21 @@ const MAX_TIMEOUT_MS = 1_800_000; // 30 minutes — used as inactivity threshold
 const MAX_OUTPUT_CHARS = 100_000;
 /** v619 D0 — Absolute safety cap. Sliding inactivity timer can extend indefinitely
  *  if the subprocess keeps producing output, but we never want a single agent
- *  invocation to run longer than this regardless of activity. */
-const ABSOLUTE_CAP_MS = 60 * 60 * 1000; // 60 minutes
+ *  invocation to run longer than this regardless of activity.
+ *
+ *  v853 — von 60min auf 4h erhöht. Realistische Multi-Phase-Refactors mit
+ *  Build/Test-Cycles laufen oft 1-3h legitim. Inaktivitäts-Timer (default
+ *  10min für code/project agents) bleibt die primäre Schutzlinie — der
+ *  ABSOLUTE_CAP fängt nur den seltenen "active-but-wedged" Fall ab.
+ *  Override via ENV `ALFRED_AGENT_EXECUTOR_ABSOLUTE_CAP_MS`. */
+const ABSOLUTE_CAP_MS = (() => {
+  const envVal = process.env['ALFRED_AGENT_EXECUTOR_ABSOLUTE_CAP_MS'];
+  if (envVal) {
+    const n = Number.parseInt(envVal, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 4 * 60 * 60 * 1000; // 4 hours
+})();
 
 /**
  * v608 F5 — Preflight: check the agent's binary is callable before spawning.
