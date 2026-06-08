@@ -5,6 +5,123 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.855] - 2026-06-08
+
+### Fixed — Re-Match resolved 0 Items wegen gpt-5.5 Reasoning-Empty-Content (v855)
+
+OpenItemMatcher hat seit Wochen für jeden Re-Match-Aufruf (via `POST
+/api/projects/:id/re-match-open-items`) `0 Items resolved` geliefert,
+obwohl Embedding-Prefilter sauber 30 Kandidaten aus 475+ offenen Items
+auswählte. Live-Verifikation auf .92 (08.06.2026, 6 Calls heute):
+
+```
+considered: 475-498, candidates: 30, prefilterUsed: "embedding"
+payloadChars: 8128-8291  (weit unter 16k cap → keine Truncation)
+llmResults: 0  → resolved: 0
+warn: "OpenItemMatcher: LLM lieferte 0 strukturierte Ergebnisse trotz
+       Kandidaten — möglicher Format-/Truncation-Issue"
+```
+
+### Root-Cause (Code-Befund)
+
+`open-item-matcher.ts:134-138`:
+```ts
+const res = await this.llm.complete({
+  messages: [...],
+  tier: 'default' as any,    // User-Config: gpt-5.5 (Reasoning-Model)
+  maxTokens: 1500,           // viel zu wenig für Reasoning + Output
+});
+```
+
+User-Config setzt `llm.default.model: gpt-5.4` (auto-resolved zu
+gpt-5.5-2026-04-23, einem **OpenAI-Reasoning-Model**). Bei
+`maxTokens: 1500` ist der Token-Pool für **hidden reasoning + visible
+content zusammen**. Reasoning frisst alle 1500 Tokens → `res.content`
+bleibt leer → `cleaned.indexOf('[') === -1` → `results = []` → kein
+Throw → fällt durch zur "möglicher Format-/Truncation-Issue"-Warnung
+(die irreführend ist: kein Truncation-Issue, sondern reasoning-empty-
+content).
+
+Gleiche Ursache wie der "(no response)"-Bug bei langen Plan-Anfragen
+vor 2 Tagen — gpt-5.5 frisst Output-Budget für Reasoning, nichts
+bleibt für visible content.
+
+### Lösung
+
+**Fix 1 — Matcher auf non-reasoning Model umstellen**
+(`packages/core/src/projects/open-item-matcher.ts`):
+
+```diff
+-  tier: 'default' as any,
+-  maxTokens: 1500,
++  tier: 'fast' as any,       // claude-haiku-4-5 (non-reasoning)
++  maxTokens: 4000,           // 30 Kandidaten × ~200 chars + Puffer
+```
+
+Begründung:
+- claude-haiku-4-5 ist **non-reasoning** → gibt direkt visible JSON-Output
+- **JSON-Tasks sind Haiku's Sweet-Spot** — sehr zuverlässig bei
+  strukturierten Outputs
+- **Kosten:** $1 input / $5 output per MTok → bei 8k input + ~2k output
+  ≈ $0.018 pro Call (vorher mit gpt-5.5: ~$0.04)
+- Match-Task ist Klassifikation pro Item, kein multi-step reasoning
+  notwendig
+- 4000 Tokens reichen großzügig für 30 Kandidaten + JSON-Overhead
+
+**Fix 2 — Empty-Content-Diagnostik präzisieren**
+(`packages/core/src/projects/open-item-matcher.ts`):
+
+Bei leerem `res.content` (kein `[` gefunden) wird die generische
+"Format-/Truncation"-Warnung durch eine echte Diagnose ersetzt:
+
+```ts
+if (!cleaned) {
+  this.logger.warn({
+    payloadChars, outputTokens, inputTokens,
+    suspectedCause: outputTokens > 100
+      ? 'Reasoning-Model verbrauchte Output-Budget ohne visible content'
+      : 'LLM lieferte echten leeren Output (Auth/Rate-Limit?)',
+  }, 'OpenItemMatcher: LLM-Content leer → 0 Items resolved');
+  return { matched: 0, resolved: 0, ... };
+}
+```
+
+Diskriminiert zwischen Reasoning-Bug (`outputTokens > 100` aber empty)
+und echtem 0-Output (Auth/Rate-Limit). Erleichtert künftiges Debugging.
+
+### Was unverändert bleibt
+
+- `alfred.ts:8849` `reMatchOpenItems` HTTP-Endpoint (LIMIT-1-Query — separates
+  UX-Issue, nicht der aktuelle Bug)
+- Embedding-Prefilter (`prefilterByEmbedding` funktioniert sauber)
+- `autoResolveOpenItem` Mechanismus
+- Confidence-Thresholds (0.4 / 0.6)
+- `SYSTEM_PROMPT`
+- Project-Agent-Run-Flow (matchAfterSession-Hook nach Phase-Completion
+  unverändert)
+- Frontend / HTTP-API / DB-Schema
+- Andere Stellen die `tier: 'default'` nutzen (orthogonal)
+
+### Tests
+
+- **5 neue Unit-Tests** in `open-item-matcher.test.ts`:
+  - tier:'fast' + maxTokens:4000 wird tatsächlich an LLM übergeben
+  - empty content + hohe outputTokens → diagnose-warn mit
+    suspectedCause="Reasoning-Model"
+  - empty content + 0 outputTokens → diagnose-warn mit
+    suspectedCause="Auth/Rate-Limit"
+  - normaler Pfad: valides JSON → Items werden korrekt resolved
+  - totalFilesChanged=0 → Early-Exit ohne LLM-Call
+- Alle 5 grün
+
+### Folge-Bug (separates Issue, NICHT in v855)
+
+User-Memory `followup_rematch_double_fix.md` (12 Tage alt) beschreibt
+ein UX-Issue mit `LIMIT 1` in der DB-Query (`alfred.ts:8863`). Das
+betrifft welche Session der Matcher analysiert, NICHT warum er 0
+zurückgibt. v855 fixt den 0-zurückgeben-Bug. LIMIT 1 → LIMIT 10 wäre
+v856-UX-Polish.
+
 ## [0.19.0-multi-ha.854.1] - 2026-06-08
 
 ### Fixed — v854 Sanitization war silent no-op im production-Bundle

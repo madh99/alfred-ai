@@ -130,13 +130,38 @@ export class OpenItemMatcher {
 
     let results: MatchResult[] = [];
     let llmCallFailed = false;
+    let llmResponse: { content: string; usage?: { outputTokens?: number; inputTokens?: number } } | undefined;
     try {
-      const res = await this.llm.complete({
+      // v855 — tier: 'default' → 'fast' (claude-haiku-4-5), maxTokens: 1500 → 4000.
+      // Vorher: bei gpt-5.5 als default-tier verbrauchte das Reasoning-Model die
+      // ganzen 1500 Tokens als hidden chain-of-thought → res.content blieb leer →
+      // results=[] → "0 strukturierte Ergebnisse" silent-failure-warn → 0 resolved.
+      // Haiku ist non-reasoning, gibt direkt JSON-Output. Match-Task braucht kein
+      // multi-step reasoning, ist Klassifikation pro Item.
+      // 4000 Tokens reichen für 30 Kandidaten × ~200 chars JSON-Output + Puffer.
+      llmResponse = await this.llm.complete({
         messages: [{ role: 'user', content: `${SYSTEM_PROMPT}\n\nDaten:\n\`\`\`json\n${fullPayloadJson.slice(0, PROMPT_JSON_CAP)}\n\`\`\`` }],
-        tier: 'default' as any,
-        maxTokens: 1500,
+        tier: 'fast' as any,
+        maxTokens: 4000,
       });
-      const cleaned = res.content.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+      const cleaned = llmResponse.content.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+      // v855 — Empty-Content-Detection: bei Reasoning-Modellen kann content leer
+      // sein obwohl outputTokens hoch ist (alles in hidden reasoning). Statt der
+      // generischen "Format-/Truncation"-Warnung unten geben wir hier präzisere
+      // Diagnose und returnen früh.
+      if (!cleaned) {
+        const outputTokens = llmResponse.usage?.outputTokens ?? 0;
+        this.logger.warn({
+          projectId: opts.projectId, sessionId: opts.sessionId,
+          payloadChars: fullPayloadJson.length,
+          outputTokens,
+          inputTokens: llmResponse.usage?.inputTokens ?? 0,
+          suspectedCause: outputTokens > 100
+            ? 'Reasoning-Model verbrauchte Output-Budget ohne visible content (gpt-5.5/o-Serie?)'
+            : 'LLM lieferte echten leeren Output (Auth/Rate-Limit?)',
+        }, 'OpenItemMatcher: LLM-Content leer → 0 Items resolved');
+        return { matched: 0, resolved: 0, considered: openItems.length, candidates: candidateItems.length };
+      }
       const start = cleaned.indexOf('[');
       const end = cleaned.lastIndexOf(']');
       if (start >= 0 && end > start) results = JSON.parse(cleaned.slice(start, end + 1));
