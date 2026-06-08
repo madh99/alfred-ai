@@ -5,6 +5,80 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.854.1] - 2026-06-08
+
+### Fixed — v854 Sanitization war silent no-op im production-Bundle
+
+v854 hat im Live-System trotz korrekt deployter Code-Pfade NICHTS gestrippt.
+Live-Verifikation auf .92 (Session vom 08.06. 15:07):
+
+- `alfred --version`: `0.19.0-multi-ha.854` ✓
+- Bundle hat 5x sanitize-Code-Stellen ✓
+- Project_agent.start mit `testCommands: ["npm test -- --runInBand …"]` ✓
+- `package.json` hat `"test": "vitest run"` ✓ → detectTestRunner sollte
+  `'vitest'` zurückgeben
+- **Erwartet:** Log-Eintrag `[project-agent] v854 test-runner sanitization`
+  in `nohup.out`, `--runInBand` aus testCommands gestrippt
+- **Realität:** **0 v854-Log-Einträge in irgendeiner Log-Datei**.
+  `--runInBand` blieb stehen. Jede Phase fiel mit
+  `vitest: error: unknown option --runInBand` ($11+ pro Session verbrannt).
+
+**Ursache — gefunden durch Bundle-Disassemblierung:**
+
+`test-runner-detect.ts:detectTestRunner` nutzte synchrones
+`require('node:fs')` und `require('node:path')`. Der production-Bundle
+ist pure ESM (esbuild output, `"type":"module"`). In ESM ist `require`
+keine globale Funktion → wirft `ReferenceError: require is not defined`
+zur Laufzeit. Mein outer `try {...} catch { return 'unknown'; }`
+verschluckte den Fehler und gab `'unknown'` zurück → `sanitizeTestCommands`
+machte korrekt no-op (Vertrag: bei unknown runner durchlassen) → **silent
+fail ohne jegliches Log-Indiz**.
+
+**Warum die Tests es nicht gefangen haben:** Vitest läuft als CommonJS-
+kompatible Test-Runtime mit `require` als Global → mein Code funktionierte
+in den 19 Unit-Tests einwandfrei. Production-Pfad war nicht abgedeckt.
+
+`autoDetectBuildCommands` in derselben Datei (`project-agent-skill.ts:180`)
+macht es seit langem richtig mit `await import('node:fs')` — der korrekte
+ESM-konforme Weg. Pattern jetzt angeglichen.
+
+### Lösung
+
+`detectTestRunner(cwd: string): TestRunner` →
+`detectTestRunner(cwd: string): Promise<TestRunner>` via `await import()`:
+
+```diff
+-export function detectTestRunner(cwd: string): TestRunner {
+-  const fs = require('node:fs') as typeof import('node:fs');
+-  const path = require('node:path') as typeof import('node:path');
++export async function detectTestRunner(cwd: string): Promise<TestRunner> {
++  const fs = await import('node:fs');
++  const path = await import('node:path');
+```
+
+Call-Site in `project-agent-skill.ts`:
+```diff
+-const runner = detectTestRunner(cwd);
++const runner = await detectTestRunner(cwd);
+```
+
+19 Unit-Tests von `expect(detectTestRunner(...))` auf
+`expect(await detectTestRunner(...))` umgestellt — 19/19 weiter grün.
+
+### Sicherheits-Check
+
+- `sanitizeTestCommands` und `looksLikeTestRunnerFlagMismatch` bleiben sync
+  (kein Modul-Import nötig) → keine weiteren Call-Site-Änderungen.
+- v854-Verhalten unverändert für alle bestehenden Skill-Tests.
+- Bundle clean.
+
+### Lesson
+
+Bei dynamischen Modul-Imports die in einen Bundle landen IMMER `await import()`
+statt `require()` nutzen. ESM-Bundle (esbuild output) hat kein `require` als
+Global. Vitest-Tests reproduzieren das nicht weil Test-Runtime CommonJS-
+kompatibel ist.
+
 ## [0.19.0-multi-ha.854] - 2026-06-08
 
 ### Fixed — Project-Agent endlos-Loop: "--runInBand ist Jest, nicht Vitest"

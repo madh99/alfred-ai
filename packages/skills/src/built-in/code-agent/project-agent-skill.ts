@@ -795,7 +795,7 @@ ${planSummary}${commits}${userNotes}
     if (testCommands.length > 0) {
       try {
         const { detectTestRunner, sanitizeTestCommands } = await import('./test-runner-detect.js');
-        const runner = detectTestRunner(cwd);
+        const runner = await detectTestRunner(cwd);
         const sanit = sanitizeTestCommands(testCommands, runner);
         if (sanit.strippedFlags.length > 0) {
           const stripped = sanit.strippedFlags.flatMap(s => s.flags);

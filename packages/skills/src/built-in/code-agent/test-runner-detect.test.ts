@@ -21,39 +21,39 @@ describe('detectTestRunner', () => {
     tmpDir = '';
   });
 
-  it('returns vitest when scripts.test references vitest', () => {
+  it('returns vitest when scripts.test references vitest', async () => {
     tmpDir = makeTempProject({ scripts: { test: 'vitest run' } });
-    expect(detectTestRunner(tmpDir)).toBe('vitest');
+    expect(await detectTestRunner(tmpDir)).toBe('vitest');
   });
 
-  it('returns jest when scripts.test references jest', () => {
+  it('returns jest when scripts.test references jest', async () => {
     tmpDir = makeTempProject({ scripts: { test: 'jest --runInBand' } });
-    expect(detectTestRunner(tmpDir)).toBe('jest');
+    expect(await detectTestRunner(tmpDir)).toBe('jest');
   });
 
-  it('returns vitest when only devDependencies has vitest', () => {
+  it('returns vitest when only devDependencies has vitest', async () => {
     tmpDir = makeTempProject({ scripts: { test: 'tsc --noEmit && node test.js' }, devDependencies: { vitest: '^1.0.0' } });
-    expect(detectTestRunner(tmpDir)).toBe('vitest');
+    expect(await detectTestRunner(tmpDir)).toBe('vitest');
   });
 
-  it('prefers script reference over devDependencies', () => {
+  it('prefers script reference over devDependencies', async () => {
     tmpDir = makeTempProject({ scripts: { test: 'jest' }, devDependencies: { vitest: '^1.0.0', jest: '^29.0.0' } });
-    expect(detectTestRunner(tmpDir)).toBe('jest');
+    expect(await detectTestRunner(tmpDir)).toBe('jest');
   });
 
-  it('returns unknown when no test runner found', () => {
+  it('returns unknown when no test runner found', async () => {
     tmpDir = makeTempProject({ scripts: { test: 'echo no tests' } });
-    expect(detectTestRunner(tmpDir)).toBe('unknown');
+    expect(await detectTestRunner(tmpDir)).toBe('unknown');
   });
 
-  it('returns unknown when package.json missing', () => {
+  it('returns unknown when package.json missing', async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'alfred-empty-'));
-    expect(detectTestRunner(tmpDir)).toBe('unknown');
+    expect(await detectTestRunner(tmpDir)).toBe('unknown');
   });
 
-  it('returns jest when ts-jest is present', () => {
+  it('returns jest when ts-jest is present', async () => {
     tmpDir = makeTempProject({ devDependencies: { 'ts-jest': '^29.0.0' } });
-    expect(detectTestRunner(tmpDir)).toBe('jest');
+    expect(await detectTestRunner(tmpDir)).toBe('jest');
   });
 });
 

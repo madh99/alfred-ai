@@ -27,18 +27,22 @@ export interface SanitizeResult {
 }
 
 /**
- * Liest package.json synchron und detected den Test-Runner aus deps.
+ * Liest package.json und detected den Test-Runner aus deps.
  * Vorrang: explizit in scripts.test referenziert (`vitest`/`jest`/`mocha`/`ava`)
  * → dann devDependencies → dann dependencies.
  * Return: 'unknown' wenn nicht eindeutig.
+ *
+ * v854.1 — async via `await import()`. v854 nutzte `require('node:fs')` was
+ * im production-ESM-Bundle (esbuild) zur Laufzeit `ReferenceError: require is
+ * not defined` warf. Das outer try-catch verschluckte den Fehler → 'unknown'
+ * → Sanitization war silent no-op. Lokal-Tests merkten es nicht (vitest läuft
+ * mit require als Globale). `autoDetectBuildCommands` in derselben Datei
+ * macht es bereits korrekt mit `await import` — Pattern angeglichen.
  */
-export function detectTestRunner(cwd: string): TestRunner {
+export async function detectTestRunner(cwd: string): Promise<TestRunner> {
   try {
-    // dynamic require to avoid top-level imports (test-friendlier + ESM-safe)
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('node:fs') as typeof import('node:fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('node:path') as typeof import('node:path');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
     const pkgPath = path.join(cwd, 'package.json');
     if (!fs.existsSync(pkgPath)) return 'unknown';
     const raw = fs.readFileSync(pkgPath, 'utf8');
