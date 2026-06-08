@@ -369,6 +369,21 @@ export class ProjectRepository {
     return row ? rowToProject(row) : null;
   }
 
+  /**
+   * v856 — Lookup ohne Owner-Filter via cwd. Wird vom ProjectAgent verifyTaskAccess
+   * benötigt um die Eigentümer-User-ID einer Session anhand der cwd zu ermitteln,
+   * ohne den ausführenden Caller zu kennen.
+   * NICHT für End-User-Endpoints verwenden — die müssen weiterhin findByCwd() mit
+   * explizitem userId-Filter nutzen.
+   */
+  async findByCwdAnyOwner(cwd: string): Promise<Project | null> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM projects WHERE cwd = ? AND status != 'archived' ORDER BY last_active_at DESC LIMIT 1`,
+      [cwd],
+    ) as Record<string, unknown> | undefined;
+    return row ? rowToProject(row) : null;
+  }
+
   async list(userId: string, filters?: { status?: ProjectStatus; limit?: number }): Promise<Project[]> {
     let sql = `SELECT * FROM projects WHERE user_id = ?`;
     const params: unknown[] = [userId];

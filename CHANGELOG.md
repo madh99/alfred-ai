@@ -5,6 +5,137 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.856] - 2026-06-08
+
+### Fixed — project_agent.status/interject/stop verweigerten Owner immer (v856)
+
+User-Beobachtung im Webchat: bei jeder neuen Anfrage feuert der
+Reasoning-LLM zuerst `project_agent {action:"status", task_id:"<UUID>"}`
+und bekommt nach 0.0s ein `success:false` mit "Task XXX nicht gefunden
+oder keine Berechtigung." zurück. Danach `project_agent {action:"start"}`
+mit 0.3s success. Pattern wiederholt sich 4× allein am 08.06.2026.
+
+### Live-Daten-Nachweis
+
+PG-DB-Query gegen die geprüften task_ids:
+```
+3abfc920-... → done   (2026-06-08 20:49)
+e555b72f-... → done   (2026-06-08 19:52)
+539e4e71-... → done   (2026-06-08 16:13)
+ebb47312-... → failed (2026-06-08 13:07)
+```
+
+→ Alle 4 Sessions **existieren** in `project_agent_sessions`. Die
+Status-Abfrage scheitert NICHT an einer fehlenden Session, sondern an
+einer broken Authorization-Logik.
+
+### Root-Cause aus Code
+
+`packages/skills/src/built-in/code-agent/project-agent-skill.ts:871-878`
+(vor v856):
+
+```ts
+private async verifyTaskAccess(taskId, context) {
+  const session = await this.sessionRepo.getByTaskId(taskId);
+  if (!session) return null;
+  if (context.chatId === (session as any).chatId) return session;   // ← broken
+  if (context.userRole === 'admin') return session;
+  return null;
+}
+```
+
+PG-Schema (`\d project_agent_sessions`) hat **KEINE `chat_id`-Spalte**:
+```
+id, task_id, goal, cwd, agent_name, current_phase, current_iteration,
+total_files_changed, last_build_passed, last_commit_sha, last_progress_at,
+milestones, created_at, updated_at, last_push_url, resumed_from_task_id,
+failure_insight, auto_resume_count, mode, sandbox_id, mentioned_item_ids
+```
+
+Der `as any`-Cast hat den TypeScript-Compiler stumm gehalten; zur
+Laufzeit war `(session as any).chatId` IMMER `undefined`. Vergleich
+`context.chatId === undefined` mit realem chatId-String → IMMER `false`
+→ Owner ohne `userRole='admin'` wurde IMMER abgewiesen.
+
+Zudem: in `sessionRepo.create()` wurde NIE ein chatId übergeben — selbst
+wenn die Spalte existierte, wäre sie leer. Der Check kann nicht repariert
+werden ohne Migration + create-Anpassung — beides nicht nötig.
+
+### Konsequenz für User
+
+Reasoning-LLM-Flow: status-check fails → LLM denkt "Task ist weg" →
+ruft `start` mit neuem Plan auf → ein zweiter Project-Plan-LLM-Call
+($1-3) wird verbrannt obwohl die alte Session noch im Speicher war
+und der Status korrekt hätte zurückgegeben werden können.
+
+### Lösung — Ownership via cwd → project → user_id
+
+Neue `verifyTaskAccess` prüft in 3 Stufen:
+
+1. **Admin-Bypass:** `context.userRole === 'admin'` → granted
+2. **Project-Owner-Match:** `session.cwd → findByCwdAnyOwner(cwd) →
+   project.userId === context.masterUserId` → granted
+3. **Single-User-Setup-Fallback:** `context.masterUserId === ownerUserId`
+   (gesetzt via `setProjectLookup` von alfred.ts) → granted
+
+Verweigert in allen anderen Fällen.
+
+### Neue Repository-Methode
+
+`packages/storage/src/repositories/project-repository.ts`:
+
+```ts
+async findByCwdAnyOwner(cwd: string): Promise<Project | null> {
+  const row = await this.adapter.queryOne(
+    `SELECT * FROM projects WHERE cwd = ? AND status != 'archived'
+     ORDER BY last_active_at DESC LIMIT 1`, [cwd],
+  );
+  return row ? rowToProject(row) : null;
+}
+```
+
+Analog zu existierendem `getByIdAnyOwner` für Cross-Owner-Lookups.
+**NICHT** für End-User-Endpoints — die nutzen weiter `findByCwd(userId, cwd)`.
+
+### Wiring
+
+`project-agent-skill.ts:projectRepo`-Type um `findByCwdAnyOwner?(cwd)`
+erweitert. `alfred.ts:1634` `setProjectLookup(this.projectRepo, ...)`
+übergibt bereits die volle ProjectRepository-Instance — die neue Methode
+wird strukturell mitgereicht, kein wiring-Change nötig.
+
+### Tests
+
+7 neue Unit-Tests in `verify-task-access.test.ts`, alle grün:
+
+1. Admin-Role bekommt Access (auch wenn project owner anderer ist)
+2. Owner via `findByCwdAnyOwner`-Match bekommt Access
+3. Single-User-Setup ownerUserId-Fallback funktioniert
+4. Random User ohne Admin/Owner: denied
+5. Session existiert nicht: denied (auch für Admin)
+6. masterUserId fehlt + nicht Admin: denied
+7. `findByCwdAnyOwner` wirft DB-Fehler: Admin/Owner-Fallback funktionieren
+   trotzdem; Non-Admin-Non-Owner bleibt denied
+
+### Was UNVERÄNDERT bleibt
+
+- `sessionRepo.getByTaskId` ✓
+- Admin-Bypass-Verhalten ✓
+- Skill-Result-Error-Strings ✓ (gleiche Message bei echter
+  Nichtberechtigung — kein API-Break)
+- `start`/`status`/`interject`/`stop`/`resume`/`import_feature`-Actions
+  ✓ (alle nutzen verifyTaskAccess, profitieren gleichermaßen)
+- DB-Schema ✓ (keine Migration nötig)
+- Bestehende Sessions in DB ✓ (verifyTaskAccess greift jetzt nur korrekt)
+- `setProjectLookup`-Signatur ✓
+
+### Erwarteter Effekt für User
+
+Reasoning-LLM ruft `project_agent.status` → bekommt jetzt echte Antwort
+(`done`/`failed`/`running`) statt "nicht gefunden". LLM kann
+informiert entscheiden ob ein neuer `start` notwendig ist. Spart
+realistisch 1-3 unnötige Plan-LLM-Calls pro Tag (~$1-3 Cost-Save).
+
 ## [0.19.0-multi-ha.855] - 2026-06-08
 
 ### Fixed — Re-Match resolved 0 Items wegen gpt-5.5 Reasoning-Empty-Content (v855)

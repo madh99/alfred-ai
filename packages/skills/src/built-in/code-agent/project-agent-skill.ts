@@ -304,8 +304,10 @@ export class ProjectAgentSkill extends Skill {
   /** Set by alfred.ts after construction — the runner that executes the loop. */
   private runner?: { run(sessionId: string, config: Record<string, unknown>, platform: string, chatId: string): Promise<void> };
   /** v615 M1 — set via alfred.ts after construction to enable project-name lookups */
+  /** v856 — findByCwdAnyOwner für verifyTaskAccess Owner-Check ergänzt. */
   private projectRepo?: {
     findByCwd?(userId: string, cwd: string): Promise<{ id: string; name: string; cwd?: string } | null>;
+    findByCwdAnyOwner?(cwd: string): Promise<{ id: string; name: string; userId: string; cwd?: string } | null>;
     list(userId: string, opts?: { status?: string; limit?: number }): Promise<Array<{ id: string; name: string; slug: string; cwd?: string }>>;
   };
   // v807 — UserUUID statt string. Compiler erkennt jetzt wenn ein Caller
@@ -867,13 +869,54 @@ ${planSummary}${commits}${userNotes}
     };
   }
 
-  /** Verify the caller owns or is admin for this task. */
+  /**
+   * Verify the caller owns or is admin for this task.
+   *
+   * v856 — bisheriger chatId-Check war broken:
+   * `(session as any).chatId` war IMMER undefined weil das DB-Schema von
+   * `project_agent_sessions` nie eine chat_id-Spalte hatte (auch keine Migration
+   * je dazu gemacht). Der `as any`-Cast hat den Compiler stumm gehalten, zur
+   * Laufzeit war die Prüfung immer `undefined !== "project:XXX"` → false →
+   * nur noch userRole==='admin' rettete den Aufruf. Bei Non-Admin-Ownern wurde
+   * jeder `status`/`interject`/`stop`-Call mit "Task ... nicht gefunden oder
+   * keine Berechtigung." abgewiesen, obwohl die Session existiert UND der
+   * Caller der Projekt-Eigentümer ist. Logs vom 08.06. zeigen 4× exakt diesen
+   * Pattern (LLM ruft status → fail → fallback auf start → unnötige Plan-LLM-Calls).
+   *
+   * Neuer Pfad (3 Erlaubnis-Quellen, in Reihenfolge geprüft):
+   *   1. Admin-Bypass: context.userRole === 'admin' → access granted
+   *   2. Owner-Match via session.cwd → projectRepo.findByCwdAnyOwner →
+   *      project.userId === context.masterUserId → access granted
+   *   3. Single-User-Setup-Fallback: context.masterUserId === ownerUserId
+   *      (this.ownerUserId stammt aus alfred.ts setProjectLookup-Injection)
+   *
+   * Verweigert (returnt null) bei:
+   *   - Session existiert nicht
+   *   - User ist nicht Admin, nicht Projekt-Owner, nicht Single-User-Owner
+   *   - context.masterUserId fehlt UND kein Admin (z.B. unauthenticated)
+   */
   private async verifyTaskAccess(taskId: string, context: SkillContext): Promise<import('@alfred/storage').ProjectAgentSession | null> {
     const session = await this.sessionRepo.getByTaskId(taskId);
     if (!session) return null;
-    // Task was started from the same chat, or user is admin
-    if (context.chatId === (session as any).chatId) return session;
+
+    // 1. Admin: immer erlaubt
     if (context.userRole === 'admin') return session;
+
+    const callerMasterId = context.masterUserId;
+
+    // 2. Owner-Match via cwd → project → owner-user_id
+    if (callerMasterId && this.projectRepo?.findByCwdAnyOwner && session.cwd) {
+      try {
+        const proj = await this.projectRepo.findByCwdAnyOwner(session.cwd);
+        if (proj?.userId === callerMasterId) return session;
+      } catch { /* DB-Fehler darf den Access-Check nicht silent verbieten — fall through */ }
+    }
+
+    // 3. Single-User-Setup Fallback: ownerUserId wurde via setProjectLookup gesetzt
+    if (callerMasterId && this.ownerUserId && callerMasterId === (this.ownerUserId as unknown as string)) {
+      return session;
+    }
+
     return null;
   }
 
