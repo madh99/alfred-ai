@@ -406,7 +406,10 @@ Actions:
           },
           testCommands: {
             type: 'array', items: { type: 'string' },
-            description: 'Commands to run tests (for start). Default: ["npm test"]',
+            description: 'Commands to run tests (for start). Optional — wenn leer wird automatisch aus package.json detected ' +
+              '(npm test für Node, cargo test für Rust, pytest für Python). NICHT überschreiben mit erfundenen Test-Runner-Flags ' +
+              '(z.B. --runInBand ist Jest-only, --no-threads/--pool ist Vitest-only) wenn du den Test-Runner des Projekts nicht ' +
+              'eindeutig kennst. Im Zweifel leer lassen und Auto-Detection vertrauen.',
           },
           template: { type: 'string', description: 'Project template name (for start, optional)' },
           task_id: { type: 'string', description: 'Task ID (for status/interject/stop)' },
@@ -778,10 +781,40 @@ ${planSummary}${commits}${userNotes}
       ?? template?.buildCommands
       ?? autoDetected?.build
       ?? ['npm install', 'npm run build'];
-    const testCommands = (input.testCommands as string[])
+    let testCommands = (input.testCommands as string[])
       ?? template?.testCommands
       ?? autoDetected?.test
       ?? [];
+
+    // v854 — Test-Runner-Sanitization: Pipeline-LLMs erfanden Jest-Flags
+    // (--runInBand) für Vitest-Projekte. testCommands sind in der Session-Config
+    // frozen — der Fix-Loop-Agent kann sie nicht korrigieren. Wir strippen
+    // inkompatible Cross-Runner-Flags hier einmal beim Start mit silent-strip
+    // + Log-Eintrag. Wenn der Runner nicht erkennbar ist: durchlassen.
+    let testCommandSanitizationHint: string | undefined;
+    if (testCommands.length > 0) {
+      try {
+        const { detectTestRunner, sanitizeTestCommands } = await import('./test-runner-detect.js');
+        const runner = detectTestRunner(cwd);
+        const sanit = sanitizeTestCommands(testCommands, runner);
+        if (sanit.strippedFlags.length > 0) {
+          const stripped = sanit.strippedFlags.flatMap(s => s.flags);
+          testCommands = sanit.testCommands;
+          testCommandSanitizationHint =
+            `Test-Runner "${runner}" erkannt. Inkompatible Cross-Runner-Flags entfernt: ${stripped.join(', ')}. ` +
+            `Falls diese Flags absichtlich gesetzt waren, korrigiere testCommands in der nächsten start-Anfrage.`;
+          console.warn('[project-agent] v854 test-runner sanitization:', {
+            runner,
+            stripped: sanit.strippedFlags,
+          });
+        }
+      } catch (err) {
+        // Detection oder Sanitization fehlgeschlagen → bestehendes Verhalten
+        // (unveränderte testCommands durchlassen). Niemals den Start blockieren
+        // weil die Validation kaputt ist.
+        console.warn('[project-agent] v854 test-runner detect failed (non-critical):', err);
+      }
+    }
 
     // Create session tracking
     // v721 — sandbox_id durchreichen damit Interactive-Chat-Tasks zum Original-Project binden
@@ -818,13 +851,14 @@ ${planSummary}${commits}${userNotes}
 
     return {
       success: true,
-      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint, preflightWarnings, sandboxValidationHint },
+      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint, preflightWarnings, sandboxValidationHint, testCommandSanitizationHint },
       display: `🚀 Project Agent gestartet (${session.taskId})\n` +
         `Ziel: ${goal}\n` +
         `Verzeichnis: ${cwd}\n` +
         `Agent: ${agentName}\n` +
         `Build: ${buildCommands.join(' && ')}\n` +
         (autoDetected ? `🔎 Auto-Detect: ${autoDetected.build.length} Build- + ${autoDetected.test.length} Test-Commands erkannt.\n` : '') +
+        (testCommandSanitizationHint ? `\n🧹 ${testCommandSanitizationHint}\n` : '') +
         (sandboxValidationHint ? `\n🌐 ${sandboxValidationHint}\n` : '') +
         (cwdRewriteHint ? `\n⚠️ ${cwdRewriteHint}\n` : '') +
         (previousAttemptHint ? `\nℹ️ ${previousAttemptHint}\n` : '') +

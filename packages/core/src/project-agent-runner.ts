@@ -952,7 +952,29 @@ export class ProjectAgentRunner {
             }
           }
 
-          const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}${devServerCrashLog}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
+          // v854 — Test-Runner-Mismatch erkennen und den Agent darauf hinweisen.
+          // Wenn der Build-Output typische "unknown CLI flag"-Fehler eines Test-
+          // Runners zeigt (Vitest bekam --runInBand, Jest bekam --no-threads etc.),
+          // ist die Ursache eine vom Caller extern übergebene testCommand-Liste die
+          // der Agent NICHT verändern kann. Statt blind weiter zu reparieren soll
+          // er das dem User mitteilen oder ohne diese Flags weiterfahren.
+          let testRunnerMismatchHint = '';
+          try {
+            const { looksLikeTestRunnerFlagMismatch } = await import('@alfred/skills');
+            if (looksLikeTestRunnerFlagMismatch(buildResult.combinedOutput)) {
+              testRunnerMismatchHint =
+                `\n\n--- v854 Test-Runner-Hinweis ---\n` +
+                `Der Test-Command wurde extern als Parameter übergeben und ist Session-konstant. ` +
+                `Wenn das hier eine Test-Runner-Inkompatibilität ist (Vitest-Projekt erhält Jest-Flag oder umgekehrt), ` +
+                `kannst DU den Test-Command NICHT für die nächste Phase ändern. Optionen:\n` +
+                `  1. Test überspringen und im phase-summary klar erwähnen dass externer testCommand falsch konfiguriert ist\n` +
+                `  2. NICHT package.json scripts.test umschreiben — der Konflikt liegt in der CLI-Argument-Liste, nicht im script\n` +
+                `  3. Wenn möglich: nur die korrekten Tests in src/ ändern, Build sollte sonst durchlaufen\n` +
+                `--- /Hinweis ---`;
+            }
+          } catch { /* import-Fehler darf den Fix-Prompt nicht blockieren */ }
+
+          const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}${devServerCrashLog}${testRunnerMismatchHint}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
           const fixResult = await executeAgent(agentDef, fixPrompt, {
             cwd: config.cwd,
             // v624 D — Fix-Läufe rufen oft `npm run build` zum Reparieren auf → langer Timeout

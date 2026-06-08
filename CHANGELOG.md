@@ -5,6 +5,95 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.854] - 2026-06-08
+
+### Fixed — Project-Agent endlos-Loop: "--runInBand ist Jest, nicht Vitest"
+
+Wenn das Pipeline-LLM (gpt-5.5 reasoning model) für einen `project_agent.start`-
+Aufruf gegen ein Vitest-Projekt fälschlich Jest-Flags in `testCommands`
+erfindet (`--runInBand`, `--detectOpenHandles` etc.), bekam jede Phase den
+selben fehlerhaften Test-Command. Der Fix-Loop-Agent erkannte zwar die
+Inkompatibilität korrekt im Output, konnte sie aber strukturell nicht
+beheben — `testCommands` sind in der Session-Config frozen und der
+package.json `scripts.test` ist korrekt. Resultat: derselbe Hinweis nach
+jeder Phase, kein Fortschritt, kein sauberer Abbruch.
+
+### Lösung — 5 Layer, additiv, nicht-degradierend
+
+**1. Neues Modul `test-runner-detect.ts`**
+(`packages/skills/src/built-in/code-agent/test-runner-detect.ts`)
+
+- `detectTestRunner(cwd)` — liest `package.json` und identifiziert
+  `vitest` / `jest` / `mocha` / `ava` / `unknown` (Reihenfolge:
+  `scripts.test`-Referenz → devDependencies → dependencies)
+- `sanitizeTestCommands(cmds, runner)` — strippt Cross-Runner-Flags
+  (z.B. `--runInBand` für Vitest, `--no-threads` für Jest). Bei
+  `runner === 'unknown'`: no-op, Commands unverändert durchgereicht
+- `looksLikeTestRunnerFlagMismatch(output)` — pattern-Match für
+  typische "unknown CLI flag"-Fehler aus Test-Runner-Output
+- Generische Flags wie `--reporter`, `--watch` werden NICHT
+  gestripped (beide Runner kennen sie)
+
+**2. Skill-Boundary-Validation in `project-agent-skill.ts`**
+
+Beim `start`-Action: nach `autoDetectBuildCommands` werden übergebene
+`testCommands` einmalig sanitized. Bei strip-Treffern wird ein
+`testCommandSanitizationHint` ins Skill-Result eingefügt und im Display
+mit 🧹-Marker angezeigt. Detection-Fehler blockieren niemals den Start —
+Fallback ist unveränderte Weiterreichung.
+
+**3. Skill-Description-Härtung**
+(`testCommands` JSON-Schema description erweitert)
+
+Hinweis im Schema dass das LLM testCommands im Zweifel leer lassen soll
+und keine Test-Runner-Flags erfinden darf. Reduziert Halluzinationen
+bei zukünftigen Pipeline-LLM-Calls.
+
+**4. Fix-Prompt-Hinweis in `project-agent-runner.ts`**
+
+Wenn `validateBuild` einen Output liefert der nach Test-Runner-Mismatch
+aussieht (per `looksLikeTestRunnerFlagMismatch`), wird in den Fix-Prompt
+ein klärender Block eingefügt: testCommand ist Session-konstant, der
+Agent soll NICHT package.json umschreiben (Konflikt liegt in der CLI-
+Argument-Liste), sondern den User in der Phase-Summary informieren.
+
+**5. Auto-Detect-Verhalten unverändert**
+
+`autoDetectBuildCommands` emittiert weiter `npm test` ohne Extras — kein
+Output-Format-Change, alle 10 bestehenden Tests passieren unverändert.
+
+### Tests
+
+- **19 neue Unit-Tests** in `test-runner-detect.test.ts`:
+  - Runner-Detection (vitest/jest/mocha/ava/unknown) inkl. Edge-Cases
+    (script-Referenz vs devDependencies-Vorrang)
+  - Sanitize: Cross-Runner-Strip, generic-flag-preservation,
+    unknown-runner-passthrough, command-order-preserved
+  - Mismatch-Detection: vitest-Output, jest-Output, yargs-Output,
+    unrelated-build-error negative
+- **10 bestehende Tests in `auto-detect-build.test.ts`**: unverändert grün
+- **9 bestehende Tests in `project-agent-runner.test.ts`**: unverändert grün
+
+### Was unverändert bleibt
+
+- `validateBuild`-Mechanik (Build → Test sequenz)
+- maxFixAttempts (3)
+- autoDetectBuildCommands-Output (`npm test` Default)
+- Pipeline-Reasoning-Engine (nur Skill-Description-Text geändert,
+  kein Code-Pfad)
+- Bestehende Sandbox/Compose-Pfade
+- Storage / DB Schema
+
+### Einschränkungen
+
+- Wenn `detectTestRunner` 'unknown' zurückgibt (kein vitest/jest/mocha/ava
+  in deps und kein script-Hinweis), bleiben Cross-Runner-Flags drin.
+  Bewusst konservativ: lieber falsch durchlassen als legitime Custom-Flags
+  killen. Log-Eintrag `[project-agent] v854 test-runner detect failed`
+  zeigt das.
+- Sanitization wirkt nur beim **Session-Start**. Bestehende Sessions die
+  schon mit kaputten testCommands laufen brauchen einen Neustart.
+
 ## [0.19.0-multi-ha.853] - 2026-06-06
 
 ### Fixed — SkillSandbox: kein hartes 20-min-Cap mehr über Activity-Tracking
