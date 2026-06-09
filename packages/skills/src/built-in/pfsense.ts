@@ -142,19 +142,44 @@ export class PfSenseSkill extends Skill {
     return res.json();
   }
 
+  /**
+   * v857 Fix B — Helper für dual-endpoint List-Calls mit ehrlichem Success-Tracking.
+   * Vorher: try-catch-try-catch mit skip-Kommentar → bei beiden Fails wurde
+   * leeres Array mit success:true zurückgegeben → Caller (CMDB-Discoverer
+   * o.ä.) sah "success + empty" statt "unreachable". Silent-Failure.
+   *
+   * Jetzt: tracks ob mindestens ein Endpoint erfolgreich war. Bei totalem Fail
+   * wirft die Funktion einen Error mit der letzten Endpoint-Fehlermeldung — der
+   * Caller bekommt success:false über das umschließende return. Echter HTTP-200
+   * mit leerem `data:[]` ist weiterhin success:true (legitime leere Liste).
+   */
+  private async fetchDualEndpoint<T>(
+    primaryPath: string,
+    fallbackPath: string,
+  ): Promise<T[]> {
+    let lastError: unknown;
+    try {
+      const data = await this.pfFetch(primaryPath) as { data?: T[] };
+      return data.data ?? [];
+    } catch (err) {
+      lastError = err;
+    }
+    try {
+      const data = await this.pfFetch(fallbackPath) as { data?: T[] };
+      return data.data ?? [];
+    } catch (err) {
+      lastError = err;
+    }
+    throw new Error(`pfSense unerreichbar (beide Endpoints ${primaryPath} + ${fallbackPath}): ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+  }
+
   private async listRules(iface?: string): Promise<SkillResult> {
     const query = iface ? `?interface=${encodeURIComponent(iface)}` : '';
-    // v2.7.6+ uses /firewall/rules (plural) for listing, /firewall/rule/{id} for single
-    let rules: Array<Record<string, unknown>> = [];
+    let rules: Array<Record<string, unknown>>;
     try {
-      const data = await this.pfFetch(`/firewall/rules${query}`) as { data: Array<Record<string, unknown>> };
-      rules = data.data ?? [];
-    } catch {
-      // Fallback for older API versions using singular endpoint
-      try {
-        const data = await this.pfFetch(`/firewall/rule${query}`) as { data: Array<Record<string, unknown>> };
-        rules = data.data ?? [];
-      } catch { /* both failed */ }
+      rules = await this.fetchDualEndpoint<Record<string, unknown>>(`/firewall/rules${query}`, `/firewall/rule${query}`);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
 
     const lines = rules.map((r: any, i: number) => {
@@ -217,13 +242,11 @@ export class PfSenseSkill extends Skill {
   }
 
   private async listInterfaces(): Promise<SkillResult> {
-    // v2.7.6+ uses /interfaces (plural)
-    let interfaces: Array<Record<string, unknown>> = [];
+    let interfaces: Array<Record<string, unknown>>;
     try {
-      const data = await this.pfFetch('/interfaces') as { data: Array<Record<string, unknown>> };
-      interfaces = data.data ?? [];
-    } catch {
-      try { const data = await this.pfFetch('/interface') as { data: Array<Record<string, unknown>> }; interfaces = data.data ?? []; } catch { /* both failed */ }
+      interfaces = await this.fetchDualEndpoint<Record<string, unknown>>('/interfaces', '/interface');
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
 
     const lines = interfaces.map((i: any) =>
@@ -235,12 +258,11 @@ export class PfSenseSkill extends Skill {
   }
 
   private async listVlans(): Promise<SkillResult> {
-    let vlans: Array<Record<string, unknown>> = [];
+    let vlans: Array<Record<string, unknown>>;
     try {
-      const data = await this.pfFetch('/interface/vlans') as { data: Array<Record<string, unknown>> };
-      vlans = data.data ?? [];
-    } catch {
-      try { const data = await this.pfFetch('/interface/vlan') as { data: Array<Record<string, unknown>> }; vlans = data.data ?? []; } catch { /* skip */ }
+      vlans = await this.fetchDualEndpoint<Record<string, unknown>>('/interface/vlans', '/interface/vlan');
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
 
     const lines = vlans.map((v: any) =>
@@ -251,12 +273,11 @@ export class PfSenseSkill extends Skill {
   }
 
   private async listGateways(): Promise<SkillResult> {
-    let gateways: Array<Record<string, unknown>> = [];
+    let gateways: Array<Record<string, unknown>>;
     try {
-      const data = await this.pfFetch('/routing/gateways') as { data: Array<Record<string, unknown>> };
-      gateways = data.data ?? [];
-    } catch {
-      try { const data = await this.pfFetch('/routing/gateway') as { data: Array<Record<string, unknown>> }; gateways = data.data ?? []; } catch { /* skip */ }
+      gateways = await this.fetchDualEndpoint<Record<string, unknown>>('/routing/gateways', '/routing/gateway');
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
 
     const lines = gateways.map((g: any) =>
@@ -267,12 +288,11 @@ export class PfSenseSkill extends Skill {
   }
 
   private async listDhcpLeases(): Promise<SkillResult> {
-    let leases: Array<Record<string, unknown>> = [];
+    let leases: Array<Record<string, unknown>>;
     try {
-      const data = await this.pfFetch('/services/dhcpd/leases') as { data: Array<Record<string, unknown>> };
-      leases = data.data ?? [];
-    } catch {
-      try { const data = await this.pfFetch('/services/dhcpd/lease') as { data: Array<Record<string, unknown>> }; leases = data.data ?? []; } catch { /* skip */ }
+      leases = await this.fetchDualEndpoint<Record<string, unknown>>('/services/dhcpd/leases', '/services/dhcpd/lease');
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
 
     const lines = leases.map((l: any) =>
@@ -283,12 +303,11 @@ export class PfSenseSkill extends Skill {
   }
 
   private async listArp(): Promise<SkillResult> {
-    let entries: Array<Record<string, unknown>> = [];
+    let entries: Array<Record<string, unknown>>;
     try {
-      const data = await this.pfFetch('/diagnostics/arp') as { data: Array<Record<string, unknown>> };
-      entries = data.data ?? [];
-    } catch {
-      try { const data = await this.pfFetch('/diagnostics/arp_table') as { data: Array<Record<string, unknown>> }; entries = data.data ?? []; } catch { /* skip */ }
+      entries = await this.fetchDualEndpoint<Record<string, unknown>>('/diagnostics/arp', '/diagnostics/arp_table');
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
 
     const lines = entries.map((e: any) =>

@@ -2664,66 +2664,78 @@ export class Alfred {
 
         wrapSkillAsSource('nginx_proxy_manager', async () => {
           const assets: any[] = [];
+          // v857 Fix D — Skill-Call-Failures tracken damit CMDB-Result-Display
+          // zwischen "wirklich 0 Hosts" und "NPM unerreichbar" unterscheidet.
+          let failedCalls = 0;
+          let failedReason: string | undefined;
           try {
             const hostsResult = await skillSandbox.execute(skillRegistry.get('nginx_proxy_manager')!, { action: 'list_hosts' }, {} as any);
             if (hostsResult.success && Array.isArray(hostsResult.data)) {
               for (const h of hostsResult.data) {
                 assets.push({ name: h.domain_names?.[0] ?? `host-${h.id}`, assetType: 'proxy_host', sourceSkill: 'nginx_proxy_manager', sourceId: `host:${h.id}`, attributes: { domain_names: h.domain_names, forward_host: h.forward_host, forward_port: h.forward_port, forward_scheme: h.forward_scheme, ssl_forced: h.ssl_forced } });
               }
+            } else if (!hostsResult.success) {
+              failedCalls++;
+              failedReason = hostsResult.error;
             }
             const certsResult = await skillSandbox.execute(skillRegistry.get('nginx_proxy_manager')!, { action: 'list_certificates' }, {} as any);
             if (certsResult.success && Array.isArray(certsResult.data)) {
               for (const c of certsResult.data) {
                 assets.push({ name: c.nice_name || c.domain_names?.[0] || `cert-${c.id}`, assetType: 'certificate', sourceSkill: 'nginx_proxy_manager', sourceId: `cert:${c.id}`, attributes: { domain_names: c.domain_names, expires_on: c.expires_on, provider: c.provider } });
               }
+            } else if (!certsResult.success) {
+              failedCalls++;
+              failedReason = failedReason ?? certsResult.error;
             }
           } catch { /* skip */ }
-          return { assets, relations: [] };
+          return { assets, relations: [], failedCalls, failedReason } as any;
         });
 
         wrapSkillAsSource('pfsense', async () => {
           const assets: any[] = [];
           const pfSkill = skillRegistry.get('pfsense')!;
+          // v857 Fix D — failedCalls tracking analog NPM
+          let failedCalls = 0;
+          let failedReason: string | undefined;
+          const tracked = async (action: string, harvester: (data: any[]) => void) => {
+            try {
+              const r = await skillSandbox.execute(pfSkill, { action }, {} as any);
+              if (r.success && Array.isArray(r.data)) {
+                harvester(r.data);
+              } else if (!r.success) {
+                failedCalls++;
+                failedReason = failedReason ?? r.error;
+              }
+            } catch { failedCalls++; }
+          };
           // Firewall Rules
-          try {
-            const rulesResult = await skillSandbox.execute(pfSkill, { action: 'list_rules' }, {} as any);
-            if (rulesResult.success && Array.isArray(rulesResult.data)) {
-              for (const r of rulesResult.data) {
-                assets.push({ name: r.descr || `rule-${r.id}`, assetType: 'firewall_rule', sourceSkill: 'pfsense', sourceId: `rule:${r.id}`, attributes: { type: r.type, interface: r.interface, protocol: r.protocol, source: r.source, destination: r.destination, destination_address: r.destination?.address } });
-              }
+          await tracked('list_rules', (rules) => {
+            for (const r of rules) {
+              assets.push({ name: r.descr || `rule-${r.id}`, assetType: 'firewall_rule', sourceSkill: 'pfsense', sourceId: `rule:${r.id}`, attributes: { type: r.type, interface: r.interface, protocol: r.protocol, source: r.source, destination: r.destination, destination_address: r.destination?.address } });
             }
-          } catch { /* skip */ }
+          });
           // Interfaces (network segments with IP/Subnet)
-          try {
-            const ifResult = await skillSandbox.execute(pfSkill, { action: 'list_interfaces' }, {} as any);
-            if (ifResult.success && Array.isArray(ifResult.data)) {
-              for (const i of ifResult.data) {
-                const name = i.descr || i.name || i.if || 'unknown';
-                const ip = i.ipaddr && i.ipaddr !== 'dhcp' ? i.ipaddr : undefined;
-                const subnet = i.subnet ? `${ip ?? ''}/${i.subnet}` : undefined;
-                assets.push({ name, assetType: 'network', sourceSkill: 'pfsense', sourceId: `if:${i.if ?? name}`, ipAddress: ip, attributes: { interface: i.if, subnet, vlan: i.tag, enable: i.enable, gateway: i.gateway } });
-              }
+          await tracked('list_interfaces', (ifs) => {
+            for (const i of ifs) {
+              const name = i.descr || i.name || i.if || 'unknown';
+              const ip = i.ipaddr && i.ipaddr !== 'dhcp' ? i.ipaddr : undefined;
+              const subnet = i.subnet ? `${ip ?? ''}/${i.subnet}` : undefined;
+              assets.push({ name, assetType: 'network', sourceSkill: 'pfsense', sourceId: `if:${i.if ?? name}`, ipAddress: ip, attributes: { interface: i.if, subnet, vlan: i.tag, enable: i.enable, gateway: i.gateway } });
             }
-          } catch { /* skip */ }
+          });
           // VLANs
-          try {
-            const vlanResult = await skillSandbox.execute(pfSkill, { action: 'list_vlans' }, {} as any);
-            if (vlanResult.success && Array.isArray(vlanResult.data)) {
-              for (const v of vlanResult.data) {
-                assets.push({ name: v.descr || `VLAN ${v.tag}`, assetType: 'network', sourceSkill: 'pfsense', sourceId: `vlan:${v.tag}`, attributes: { vlan_tag: v.tag, parent_if: v.parentif ?? v.if?.split('.')[0], vlanif: v.vlanif ?? v.if } });
-              }
+          await tracked('list_vlans', (vlans) => {
+            for (const v of vlans) {
+              assets.push({ name: v.descr || `VLAN ${v.tag}`, assetType: 'network', sourceSkill: 'pfsense', sourceId: `vlan:${v.tag}`, attributes: { vlan_tag: v.tag, parent_if: v.parentif ?? v.if?.split('.')[0], vlanif: v.vlanif ?? v.if } });
             }
-          } catch { /* skip */ }
+          });
           // Gateways
-          try {
-            const gwResult = await skillSandbox.execute(pfSkill, { action: 'list_gateways' }, {} as any);
-            if (gwResult.success && Array.isArray(gwResult.data)) {
-              for (const g of gwResult.data) {
-                assets.push({ name: g.name || `gw-${g.interface}`, assetType: 'network', sourceSkill: 'pfsense', sourceId: `gw:${g.name ?? g.interface}`, ipAddress: g.gateway as string, attributes: { interface: g.interface, monitor: g.monitor, status: g.status, default: g.defaultgw } });
-              }
+          await tracked('list_gateways', (gws) => {
+            for (const g of gws) {
+              assets.push({ name: g.name || `gw-${g.interface}`, assetType: 'network', sourceSkill: 'pfsense', sourceId: `gw:${g.name ?? g.interface}`, ipAddress: g.gateway as string, attributes: { interface: g.interface, monitor: g.monitor, status: g.status, default: g.defaultgw } });
             }
-          } catch { /* skip */ }
-          return { assets, relations: [] };
+          });
+          return { assets, relations: [], failedCalls, failedReason } as any;
         });
 
         wrapSkillAsSource('homeassistant', async () => {
@@ -2765,7 +2777,16 @@ export class Alfred {
               for (const i of (ifaces as any[])) {
                 if (i.type === 'bridge' || i.type === 'loopback') continue;
                 assets.push({ name: `${routerName}/${i.name}`, assetType: 'network' as const, sourceSkill: 'mikrotik', sourceId: `if:${cfg.name}:${i.name}`, attributes: { type: i.type, mac: i['mac-address'], running: i.running, mtu: i['actual-mtu'] } });
-                relations.push({ sourceEntityName: `${routerName}/${i.name}`, targetEntityName: routerName, relationType: 'part_of' });
+                // v857 Fix A — sourceKey/targetKey statt sourceEntityName/targetEntityName.
+                // cmdb.discover() erwartet rel.sourceKey/targetKey (siehe proxmox/docker
+                // Discoverer als Vorbild). Mit dem alten Schema crashed jeder mikrotik-
+                // Discovery-Run mit "Cannot read properties of undefined (reading 'split')"
+                // beim ersten Relations-Item, weil rel.sourceKey undefined war.
+                relations.push({
+                  sourceKey: `mikrotik:if:${cfg.name}:${i.name}`,
+                  targetKey: `mikrotik:router:${cfg.name}`,
+                  relationType: 'part_of' as const,
+                });
               }
 
               // Firewall rules

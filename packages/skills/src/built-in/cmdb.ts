@@ -147,7 +147,13 @@ export class CmdbSkill extends Skill {
 
     for (const [name, source] of this.discoverySources) {
       try {
-        const { assets, relations } = await source();
+        const sourceResult = await source();
+        const { assets, relations } = sourceResult;
+        // v857 Fix D — Source kann optional failedCalls reporten damit der Result-
+        // Text zwischen "wirklich 0 Assets" und "Skill-Calls failed → 0 Assets"
+        // unterscheidet. Backwards-compat: wenn nicht gesetzt, weiterhin nur asset-count.
+        const failedCalls = (sourceResult as { failedCalls?: number }).failedCalls;
+        const failedReason = (sourceResult as { failedReason?: string }).failedReason;
         for (const a of assets) {
           await this.repo.upsertAsset(userId, {
             name: a.name,
@@ -165,7 +171,22 @@ export class CmdbSkill extends Skill {
         totalAssets += assets.length;
 
         // Auto-relations from this source
+        // v857 Fix C — Defensive Guard: relations die nicht das erwartete
+        // {sourceKey, targetKey, relationType}-Schema haben werden geskippt statt
+        // den ganzen Source-Lauf zu crashen (war v857 Mikrotik-Bug: pushte
+        // sourceEntityName/targetEntityName → split(undefined) → TypeError →
+        // catch → "mikrotik: Fehler — Cannot read properties...").
+        let droppedRelations = 0;
         for (const rel of relations) {
+          if (
+            !rel || typeof rel !== 'object' ||
+            typeof rel.sourceKey !== 'string' || rel.sourceKey.length === 0 ||
+            typeof rel.targetKey !== 'string' || rel.targetKey.length === 0 ||
+            typeof rel.relationType !== 'string'
+          ) {
+            droppedRelations++;
+            continue;
+          }
           const srcAsset = await this.repo.getAssetBySource(userId, rel.sourceKey.split(':')[0], rel.sourceKey.split(':').slice(1).join(':'));
           const tgtAsset = await this.repo.getAssetBySource(userId, rel.targetKey.split(':')[0], rel.targetKey.split(':').slice(1).join(':'));
           if (srcAsset && tgtAsset) {
@@ -176,7 +197,15 @@ export class CmdbSkill extends Skill {
 
         // Mark stale assets
         const stale = await this.repo.markStaleAssets(userId, name, runStart, this.staleThresholdDays);
-        results.push(`${name}: ${assets.length} Assets${stale > 0 ? `, ${stale} stale` : ''}`);
+        // v857 Fix C + D — Result-Line ergänzt um sichtbare droppedRelations + failedCalls
+        // damit Schema-Drift bzw. Connectivity-Probleme nicht still bleiben.
+        let line = `${name}: ${assets.length} Assets`;
+        if (stale > 0) line += `, ${stale} stale`;
+        if (droppedRelations > 0) line += ` (${droppedRelations} Relations skipped: malformed)`;
+        if (assets.length === 0 && typeof failedCalls === 'number' && failedCalls > 0) {
+          line += ` — ${failedCalls} Skill-Call${failedCalls === 1 ? '' : 's'} fehlgeschlagen${failedReason ? `: ${failedReason.slice(0, 80)}` : ''}`;
+        }
+        results.push(line);
       } catch (err: any) {
         results.push(`${name}: Fehler — ${err.message?.slice(0, 100)}`);
       }

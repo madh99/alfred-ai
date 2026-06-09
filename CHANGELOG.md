@@ -5,6 +5,141 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.857] - 2026-06-09
+
+### Fixed — CMDB Discovery: Mikrotik-Crash, pfsense-Silent-Failure, NPM-Sichtbarkeit (v857)
+
+User-Beobachtung (`cmdb discover`-Result von .92):
+```
+- proxmox: 57 Assets
+- unifi: 43 Assets
+- cloudflare_dns: 407 Assets
+- nginx_proxy_manager: 0 Assets
+- pfsense: 0 Assets
+- homeassistant: 1503 Assets
+- mikrotik: Fehler — Cannot read properties of undefined (reading 'split')
+- ip-resolution: 7 IPs via MAC zugeordnet
+```
+
+Drei orthogonale Bugs in einer Discovery-Run.
+
+### Fix A — Mikrotik-Relations Schema-Match (alfred.ts:2768)
+
+**Vorher:**
+```ts
+relations.push({ sourceEntityName: ..., targetEntityName: ..., relationType: 'part_of' });
+```
+
+`cmdb.ts:169` erwartet aber `rel.sourceKey`/`rel.targetKey` (siehe proxmox-
+Discoverer als Vorbild). `rel.sourceKey` war `undefined` → `undefined.split(':')`
+→ `TypeError: Cannot read properties of undefined (reading 'split')` →
+outer-catch zeigt es als "mikrotik: Fehler — …".
+
+**Mikrotik war der EINZIGE Discoverer mit falschem Feld-Schema.** proxmox
+(2529, 2548, 2600) und docker (2620) verwenden korrekt sourceKey/targetKey.
+
+**Nachher:**
+```ts
+relations.push({
+  sourceKey: `mikrotik:if:${cfg.name}:${i.name}`,
+  targetKey: `mikrotik:router:${cfg.name}`,
+  relationType: 'part_of' as const,
+});
+```
+
+Format passt zur sourceId der jeweiligen Assets (Asset-Lines 2760+2767).
+Mit `mikrotik:` Prefix matched es via `getAssetBySource(userId, sourceSkill,
+sourceId)`.
+
+### Fix B — pfsense Silent-Failure aufgelöst (pfsense.ts)
+
+**Vorher (6 List-Funktionen identisches Pattern):**
+```ts
+let rules = [];
+try {
+  const data = await this.pfFetch('/firewall/rules');
+  rules = data.data ?? [];
+} catch {
+  try { const data = await this.pfFetch('/firewall/rule'); rules = data.data ?? []; } catch { /* skip */ }
+}
+return { success: true, data: rules, display };  // ← ALWAYS true
+```
+
+Wenn **beide** pfFetch-Versuche crashed (Connection-Refused, Auth-Fail, TLS),
+wurde `success:true` mit leerem Array zurückgegeben. Live-Logs zeigten alle
+6 pfsense-Actions mit `success:true` in **1-2 ms** — viel zu schnell für
+echte REST-Roundtrips → fail-fast war silent-success.
+
+**Nachher:** Neuer Helper `fetchDualEndpoint<T>(primary, fallback)` wirft
+einen Error wenn beide Endpoints failen. Die 6 List-Funktionen returnen
+dann `success:false` mit echter Fehlermeldung.
+
+Refaktoriert in `listRules`, `listInterfaces`, `listVlans`, `listGateways`,
+`listDhcpLeases`, `listArp`. Echter HTTP-200 mit leerem `data:[]` ist
+weiterhin legitim → `success:true`.
+
+### Fix C — CMDB defensive Guard gegen Schema-Drift (cmdb.ts:168-202)
+
+Jeder zukünftige Discoverer mit falschem Relation-Schema würde wieder die
+gesamte Source-Result-Line auf "Fehler" werfen und den asset-count
+unterdrücken. Defensiver Guard pro Relation:
+
+```ts
+if (!rel?.sourceKey || typeof rel.sourceKey !== 'string' || ... ) {
+  droppedRelations++;
+  continue;  // skip statt crash
+}
+```
+
+Result-Line bekommt sichtbares Suffix `(X Relations skipped: malformed)`.
+Asset-count bleibt korrekt geführt, Drift wird nicht versteckt.
+
+### Fix D — Skill-Call-Failure-Tracking in CMDB-Discovery-Result (alfred.ts + cmdb.ts)
+
+Vorher: `nginx_proxy_manager: 0 Assets` war doppeldeutig — "wirklich 0 Hosts"
+vs "NPM unerreichbar (fetch failed)". Live-Log zeigte aber klar 2× "fetch failed".
+
+Erweiterung: nginx_proxy_manager und pfsense Discoverer reporten optional
+`failedCalls` + `failedReason`. CMDB-discover() zeigt bei
+`assets.length === 0 && failedCalls > 0`:
+
+```
+nginx_proxy_manager: 0 Assets — 2 Skill-Calls fehlgeschlagen: fetch failed
+```
+
+statt nur "0 Assets". Backwards-compat: ohne `failedCalls`-Field unverändertes
+Verhalten.
+
+### Tests
+
+**5 neue Unit-Tests** in `cmdb-discover.test.ts`, alle grün:
+- Malformed Relations werden geskippt + count in Result-Line (Fix C)
+- All-malformed Relations crashen NICHT mehr (Fix C, mikrotik-Reproduktion)
+- failedCalls > 0 + 0 assets → Skill-Calls-Hinweis im Result (Fix D)
+- failedCalls > 0 + assets > 0 → KEIN Hinweis (Fix D backwards-compat)
+- Legacy-Source ohne failedCalls field funktioniert (backwards-compat)
+
+### Was UNVERÄNDERT bleibt
+
+- proxmox/unifi/cloudflare_dns/homeassistant Discoverer
+- DB-Schema (CMDB-Tabellen unverändert)
+- CMDB-Skill-Metadata, Action-Enum
+- Asset-/Relation-Repository
+- Cross-source IP-Resolution
+- KG-Sync
+- Stale-Marking-Logik
+- pfsense create_rule / delete_rule / status (nur die 6 List-Funktionen geändert)
+- HTTP-Endpoints
+- Frontend / WebUI
+
+### Was NICHT in v857 ist (orthogonale Infra-Issues)
+
+- NPM ist tatsächlich unerreichbar von .92 — Config/Container-Issue (kein Code-Bug)
+- pfsense ist tatsächlich unerreichbar — Config/Auth-Issue (kein Code-Bug)
+
+v857 macht beide Probleme **sichtbar** im Result statt sie zu verstecken.
+Die Root-Cause der Connectivity selbst muss du auf Infra-Ebene prüfen.
+
 ## [0.19.0-multi-ha.856] - 2026-06-08
 
 ### Fixed — project_agent.status/interject/stop verweigerten Owner immer (v856)
