@@ -269,7 +269,8 @@ export class WatchSkill extends Skill {
       // "list_entities" / "get_state" / "check_job_runtime" from being persisted
       // into long-lived watch configs that then fail on every poll.
       const { validateSkillAction } = await import('../validate-skill-action.js');
-      const actionCheck = validateSkillAction(this.skillRegistry, skillName, skillParams);
+      // v861 — heal:true: eindeutige Synonym-Halluzinationen korrigieren statt ablehnen.
+      const actionCheck = validateSkillAction(this.skillRegistry, skillName, skillParams, { heal: true });
       if (!actionCheck.ok) {
         return { success: false, error: actionCheck.error };
       }

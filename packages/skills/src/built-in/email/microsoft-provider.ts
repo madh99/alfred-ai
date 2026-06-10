@@ -3,6 +3,8 @@ import { EmailProvider } from './email-provider.js';
 import type { EmailMessage, EmailDetail, EmailAttachment, SendEmailInput } from './email-provider.js';
 
 export class MicrosoftGraphEmailProvider extends EmailProvider {
+  /** v861 — für Graph-ID-Routing im Email-Skill. */
+  readonly providerType = 'microsoft' as const;
   private accessToken = '';
   /**
    * Graph API user path. '/me' for own mailbox,

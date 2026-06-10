@@ -5,6 +5,100 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.861] - 2026-06-10
+
+### Fixed — Email Graph-ID-Routing: aWATTar-Rechnungsverarbeitung (v861)
+
+Vorfall 10.06.: aWATTar-Rechnung 05/2026 kam um 09:50 in Outlook an, die
+Scheduled-Checks fanden sie nicht bzw. konnten sie nicht verarbeiten.
+Live-Diagnose ergab die Fehlerkette (alle 4 Schritte verifiziert):
+
+1. `email.search` (account:"outlook") liefert composite-IDs `outlook::AAMk…`
+2. Das LLM übergibt beim read die **nackte Graph-ID** (Prefix verloren)
+3. `decodeId` findet kein `::` → Fallback auf `providers[0]` =
+   **GmailMarkus (IMAP)** — `handleRead`/`handleAttachment` ignorierten
+   den `account`-Param komplett (anders als `handleSearch`)
+4. `parseInt("AAMk…")` → "messageId must be a positive number"; eine
+   numerische ID liest dann per **IMAP-Sequenznummer die älteste
+   Gmail-Mail von 2017**
+
+**„Wer hat den Default geändert?"** — Niemand: `[...providers.keys()][0]`
+ist Insertion-Order der `config.email.accounts`. GmailMarkus steht vor
+outlook. Der „Default" war nie eine Einstellung, sondern ein Array-Index.
+
+### Fixes
+
+**`email/index.ts` — `decodeId(compositeId, explicitAccount?)`** mit
+Prioritätskette:
+1. composite `account::rawId`-Prefix (spezifischste Quelle)
+2. expliziter `account`-Param (NEU — vorher ignoriert)
+3. **Graph-ID-Selfheal**: ID matcht `^A[AQ]Mk[A-Za-z0-9+/=_-]{20,}` UND
+   genau EIN Microsoft-Account existiert → dorthin routen (IMAP-IDs sind
+   immer numerisch — keine Kollision möglich)
+4. Fallback: `configuredDefaultAccount ?? providers[0]` (wie bisher)
+
+**`handleRead` + `handleAttachment`** reichen `input.account` durch.
+
+**`EmailProvider.providerType: 'microsoft' | 'imap'`** — neues Pflichtfeld
+im Interface für das Selfheal-Routing (beide Implementierungen markiert).
+
+**`standard-provider.ts`** — bei Graph-artiger ID klare Diagnose
+(„…ist eine Microsoft-Graph-Message-ID — dieser Account ist ein
+IMAP-Postfach. account angeben") statt kryptischem parseInt-Fehler.
+
+**`config.email.defaultAccount`** (Schema + Types + Wiring) — expliziter
+Default statt fragiler Insertion-Order. Optional; ohne Eintrag bleibt
+das bisherige Verhalten exakt erhalten.
+
+### Fixed — Action-Synonym-Heal für Workflow/Watch/Scheduled/Background (v861)
+
+Der von Alfred erzeugte Workflow scheiterte am 10.06. mit
+`Step 2: Skill "file" has no action "save"` — das war die **bereits
+existierende** `validateSkillAction`-Validierung (v595), die korrekt
+ablehnte. Was fehlte: Heilen statt nur Ablehnen.
+
+- **`healActionSynonym` + `ACTION_SYNONYMS` von core nach
+  `@alfred/skills/validate-skill-action.ts` verschoben** (Dependency-
+  Richtung) — `ReasoningEngine.healActionSynonym` delegiert jetzt dorthin
+  (v859-Tests laufen unverändert, 11/11 grün)
+- **`validateSkillAction(…, { heal: true })`**: bei invalider Action mit
+  GENAU EINEM Synonym-Kandidaten im Ziel-Enum wird in-place korrigiert
+  und `healed: {from, to}` reportet
+- Aktiviert an allen 4 Callsites: **workflow.create, watch.create,
+  scheduled_task.create, background_task.create**
+- **Bewusste Grenze:** `save: ['write', 'write_binary']` — bei `file`
+  matchen BEIDE → ambiguous → bleibt Fehler. Begründung: `save→write`
+  hätte beim aWATTar-PDF-Workflow das **Binary als Text korrumpiert**.
+  Bei Skills mit nur `write` im Enum heilt es eindeutig.
+
+### Wichtiger Deployment-Hinweis
+
+Alfreds Live-Self-Patch vom 10.06. 22:49 (`bundle/index.js` auf .92,
+gleiche decodeId-Logik, via claude-code direkt auf der Installation)
+wird durch dieses Release **ersetzt** — v861 ist die offizielle,
+getestete Version desselben Fixes im Source-Repo. Ohne v861 hätte das
+nächste `npm install -g` den Live-Patch kommentarlos überschrieben und
+den Bug zurückgebracht.
+
+### Tests
+
+14 neue, alle grün:
+- `email-id-routing.test.ts` (8): composite-ID, nackte Graph-ID ±
+  account-Param, Selfheal, numerische Legacy-IDs, attachment-Routing,
+  IMAP-Fehlertext, setDefaultAccount (inkl. unknown-Account-Guard)
+- `validate-skill-action-heal.test.ts` (6): todo.create→add in-place,
+  file.save bleibt ambiguous-Fehler, save→write bei eindeutigem Enum,
+  ohne-heal-Verhalten unverändert, valide Action, unknown skill
+
+### Was unverändert bleibt
+
+- `handleSearch`/`handleInbox`/send/draft/reply (nutzten account-Param
+  schon korrekt)
+- IMAP/Gmail: numerische IDs, Watches mit account:"GmailMarkus",
+  impliziter Default (solange `defaultAccount` nicht gesetzt)
+- Bestehende Workflows/Watches in der DB (Validation nur beim Anlegen)
+- Reasoning-Engine-Selfheal (delegiert, identisches Verhalten)
+
 ## [0.19.0-multi-ha.860] - 2026-06-10
 
 ### Added — Claude Fable 5 Support (v860)

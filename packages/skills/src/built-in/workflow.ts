@@ -202,7 +202,10 @@ export class WorkflowSkill extends Skill {
         // v595: validate inputMapping.action against target skill's enum
         if (this.skillRegistry) {
           const { validateSkillAction } = await import('../validate-skill-action.js');
-          const check = validateSkillAction(this.skillRegistry, a.skillName, a.inputMapping as Record<string, unknown>);
+          // v861 — heal:true: eindeutige Synonym-Halluzinationen (create→add) werden
+          // korrigiert statt abgelehnt; semantisch ambiguous (file.save → write vs
+          // write_binary) bleibt bewusst ein Fehler (Binary-Korruptions-Schutz).
+          const check = validateSkillAction(this.skillRegistry, a.skillName, a.inputMapping as Record<string, unknown>, { heal: true });
           if (!check.ok) return { success: false, error: `Step ${i}: ${check.error}` };
         }
       }

@@ -23,6 +23,9 @@ export class EmailSkill extends Skill {
   private readonly defaultAccount: string;
   private readonly multiAccount: boolean;
   private llm?: EmailLLM;
+  /** v861 — expliziter Default aus config.email.defaultAccount (via setDefaultAccount).
+   *  Hat Vorrang vor der impliziten Insertion-Order. */
+  private configuredDefaultAccount?: string;
 
   /** Per-request override for user-specific providers (set in execute, cleared in finally). */
   private activeProviders?: Map<string, EmailProvider>;
@@ -270,20 +273,59 @@ export class EmailSkill extends Skill {
     return { provider, account };
   }
 
+  /** v861 — von alfred.ts gesetzt wenn config.email.defaultAccount existiert.
+   *  Hat Vorrang vor der impliziten Insertion-Order (accounts[0]). */
+  setDefaultAccount(account: string): void {
+    if (this.providers.has(account)) {
+      this.configuredDefaultAccount = account;
+    }
+  }
+
   private encodeId(account: string, rawId: string): string {
     return this.multiAccount ? `${account}::${rawId}` : rawId;
   }
 
-  private decodeId(compositeId: string): { account: string; rawId: string } {
+  /** v861 — Microsoft-Graph-Message-IDs beginnen mit AAMk/AQMk (base64-Prefix
+   *  des EWS/Graph-ID-Formats). IMAP-IDs sind immer numerisch — keine Kollision. */
+  private static readonly GRAPH_ID_PATTERN = /^A[AQ]Mk[A-Za-z0-9+/=_-]{20,}/;
+
+  /**
+   * v861 — Account-Auflösung für read/attachment, in Prioritätsreihenfolge:
+   *  1. composite `account::rawId`-Prefix (spezifischste Quelle — die ID selbst)
+   *  2. expliziter `account`-Param vom Caller (vorher KOMPLETT ignoriert — der
+   *     Kern-Bug: search lieferte `outlook::AAMk…`, das LLM übergab die nackte
+   *     Graph-ID, decodeId fiel auf providers[0] = Gmail/IMAP zurück →
+   *     parseInt("AAMk…") → Fehler; numerische ID las dann die älteste
+   *     Gmail-Mail per IMAP-Sequenznummer)
+   *  3. Graph-ID-Selfheal: sieht die ID nach Microsoft-Graph aus UND es gibt
+   *     GENAU EINEN Microsoft-Account → dorthin routen
+   *  4. Fallback: erster Account der Map (bisheriges Verhalten)
+   */
+  private decodeId(compositeId: string, explicitAccount?: string): { account: string; rawId: string } {
     const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     const isMulti = providers.size > 1;
+    // 1. composite-Prefix gewinnt (spezifischste Information)
     if (isMulti) {
       const idx = compositeId.indexOf('::');
       if (idx >= 0) {
         return { account: compositeId.slice(0, idx), rawId: compositeId.slice(idx + 2) };
       }
     }
-    const defaultAccount = [...providers.keys()][0] ?? this.defaultAccount;
+    // 2. expliziter account-Param
+    if (explicitAccount && providers.has(explicitAccount)) {
+      return { account: explicitAccount, rawId: compositeId };
+    }
+    // 3. Graph-ID-Selfheal — nur bei eindeutig EINEM Microsoft-Provider
+    if (EmailSkill.GRAPH_ID_PATTERN.test(compositeId)) {
+      const msAccounts = [...providers.entries()]
+        .filter(([, p]) => (p as { providerType?: string }).providerType === 'microsoft')
+        .map(([name]) => name);
+      if (msAccounts.length === 1) {
+        return { account: msAccounts[0], rawId: compositeId };
+      }
+    }
+    // 4. Fallback (bisheriges Verhalten)
+    const defaultAccount = this.configuredDefaultAccount ?? [...providers.keys()][0] ?? this.defaultAccount;
     return { account: defaultAccount, rawId: compositeId };
   }
 
@@ -345,7 +387,8 @@ export class EmailSkill extends Skill {
       return { success: false, error: 'messageId is required.' };
     }
 
-    const { account, rawId } = this.decodeId(messageId);
+    // v861 — account-Param wird jetzt respektiert (vorher ignoriert)
+    const { account, rawId } = this.decodeId(messageId, input.account as string | undefined);
     const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
@@ -597,7 +640,8 @@ export class EmailSkill extends Skill {
     if (!messageId) return { success: false, error: '"messageId" is required.' };
     if (!attachmentId) return { success: false, error: '"attachmentId" is required.' };
 
-    const { account, rawId } = this.decodeId(messageId);
+    // v861 — account-Param wird jetzt respektiert (vorher ignoriert)
+    const { account, rawId } = this.decodeId(messageId, input.account as string | undefined);
     const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };

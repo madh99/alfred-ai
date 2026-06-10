@@ -3,6 +3,8 @@ import { EmailProvider } from './email-provider.js';
 import type { EmailMessage, EmailDetail, SendEmailInput } from './email-provider.js';
 
 export class StandardEmailProvider extends EmailProvider {
+  /** v861 — für Graph-ID-Routing im Email-Skill. */
+  readonly providerType = 'imap' as const;
   constructor(private readonly config: EmailAccountConfig) {
     super();
   }
@@ -34,6 +36,14 @@ export class StandardEmailProvider extends EmailProvider {
   async readMessage(id: string): Promise<EmailDetail> {
     const seq = parseInt(id, 10);
     if (isNaN(seq) || seq < 1) {
+      // v861 — klare Diagnose statt kryptischem Fehler: Graph-IDs landen hier
+      // wenn das Account-Routing fehlging (z.B. composite-Prefix verloren).
+      if (/^A[AQ]Mk/.test(id)) {
+        throw new Error(
+          `"${id.slice(0, 20)}…" ist eine Microsoft-Graph-Message-ID — dieser Account ist aber ein IMAP-Postfach. ` +
+          `Bitte account:"<outlook-account>" beim read/attachment-Aufruf mit angeben.`,
+        );
+      }
       throw new Error('messageId must be a positive number (sequence number).');
     }
 

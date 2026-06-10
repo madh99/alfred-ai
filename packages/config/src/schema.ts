@@ -114,7 +114,14 @@ export const EmailAccountConfigSchema = z.object({
 });
 
 export const EmailConfigSchema = z.union([
-  z.object({ accounts: z.array(EmailAccountConfigSchema) }),
+  z.object({
+    accounts: z.array(EmailAccountConfigSchema),
+    // v861 — expliziter Default-Account für nicht-account-qualifizierte
+    // Operationen. Vorher implizit accounts[0] (Insertion-Order) — was beim
+    // Hinzufügen eines Accounts VOR dem bisherigen den "Default" still
+    // verschob (aWATTar-Vorfall 10.06.: GmailMarkus rutschte vor outlook).
+    defaultAccount: z.string().optional(),
+  }),
   EmailAccountConfigSchema,
 ]);
 

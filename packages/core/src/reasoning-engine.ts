@@ -16,6 +16,7 @@ import type {
   WorkflowRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
+import { healActionSynonym } from '@alfred/skills';
 import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
@@ -1271,35 +1272,14 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   // Everything else = HIGH_RISK -> always confirmation
 
   /**
-   * v859 — Synonym-Kandidaten für LLM-halluzinierte Action-Namen.
-   * Das LLM rät generische CRUD-Verben; die Skills nutzen spezifische Enums.
-   * Mapping ist Kandidaten-Liste: der ERSTE Kandidat der im Ziel-Enum existiert
-   * gewinnt. Existieren MEHRERE Kandidaten im Enum → ambiguous → kein Heal
-   * (lieber reject als falsch raten).
-   */
-  private static readonly ACTION_SYNONYMS: Record<string, string[]> = {
-    create: ['add', 'save', 'set', 'start'],
-    update: ['edit', 'set'],
-    get: ['recall', 'list', 'status'],
-    fetch: ['recall', 'list'],
-    store: ['save', 'add'],
-    remove: ['delete', 'cancel'],
-    mark_done: ['complete'],
-    done: ['complete'],
-    finish: ['complete'],
-    check: ['status', 'list'],
-  };
-
-  /**
-   * v859 — versucht eine halluzinierte Action auf eine valide zu mappen.
-   * Returns die geheilte Action oder null wenn kein eindeutiges Mapping existiert.
+   * v859 — Synonym-Selfheal für halluzinierte Actions.
+   * v861 — Implementierung nach @alfred/skills (validate-skill-action.ts)
+   * verschoben, damit watch/scheduled_task/workflow-Validation dieselbe
+   * Heilung nutzen. Statische Methode bleibt als Delegation erhalten
+   * (Tests + bestehende Aufrufer unverändert).
    */
   static healActionSynonym(hallucinated: string, validActions: string[]): string | null {
-    const candidates = ReasoningEngine.ACTION_SYNONYMS[hallucinated.toLowerCase()];
-    if (!candidates) return null;
-    const matches = candidates.filter(c => validActions.includes(c));
-    // Nur bei GENAU einem Treffer heilen — Ambiguität = reject bleibt sicherer.
-    return matches.length === 1 ? matches[0] : null;
+    return healActionSynonym(hallucinated, validActions);
   }
 
   private async getAutonomyLevel(): Promise<'confirm_all' | 'proactive' | 'autonomous'> {

@@ -49,6 +49,12 @@ export interface SendEmailInput {
 }
 
 export abstract class EmailProvider {
+  /**
+   * v861 — Provider-Typ für ID-Routing. Microsoft-Graph-IDs (AAMk…) können
+   * vom Email-Skill automatisch zum Microsoft-Provider geroutet werden,
+   * statt im IMAP-Provider an parseInt() zu scheitern.
+   */
+  abstract readonly providerType: 'microsoft' | 'imap';
   abstract initialize(): Promise<void>;
   abstract fetchInbox(count: number): Promise<EmailMessage[]>;
   abstract readMessage(id: string): Promise<EmailDetail>;

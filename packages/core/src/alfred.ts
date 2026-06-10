@@ -772,6 +772,11 @@ export class Alfred {
       }
       const emailSkill = providers.size > 0 ? new EmailSkill(providers) : new EmailSkill();
       emailSkill.setLLM(llmProvider);
+      // v861 — expliziter Default-Account aus config.email.defaultAccount
+      const emailCfg = this.config.email as { defaultAccount?: string } | undefined;
+      if (emailCfg?.defaultAccount) {
+        emailSkill.setDefaultAccount(emailCfg.defaultAccount);
+      }
       skillRegistry.register(emailSkill);
     } else {
       const emailSkill = new EmailSkill();

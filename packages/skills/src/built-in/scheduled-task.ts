@@ -141,7 +141,8 @@ export class ScheduledTaskSkill extends Skill {
     // v595: validate skill_input.action against target skill's enum (prevents hallucinated actions)
     if (skillName && skillInput && this.skillRegistry) {
       const { validateSkillAction } = await import('../validate-skill-action.js');
-      const check = validateSkillAction(this.skillRegistry, skillName, skillInput);
+      // v861 — heal:true: eindeutige Synonym-Halluzinationen korrigieren statt ablehnen.
+      const check = validateSkillAction(this.skillRegistry, skillName, skillInput, { heal: true });
       if (!check.ok) return { success: false, error: check.error };
     }
 

@@ -127,6 +127,10 @@ export interface EmailAccountConfig {
 
 export interface EmailConfig {
   accounts: EmailAccountConfig[];
+  /** v861 — expliziter Default-Account für nicht-account-qualifizierte Operationen.
+   *  Ohne diesen Wert gilt accounts[0] (Insertion-Order) — fragil, weil das
+   *  Hinzufügen eines Accounts VOR dem bisherigen den Default still verschiebt. */
+  defaultAccount?: string;
 }
 
 export interface SpeechConfig {
