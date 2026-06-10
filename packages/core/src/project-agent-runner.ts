@@ -179,6 +179,10 @@ export interface ProjectAgentConfig {
   selfHeal?: boolean;
   /** v862 — Checkout-Lock-Release, vom Skill injiziert. Wird im finally gerufen. */
   selfHealReleaseLock?: () => void;
+  /** v862.1 — MR/PR-Ziel-Branch für Self-Healing (= selfHealing.baseBranch).
+   *  NICHT forge.baseBranch verwenden: das ist der Default-Branch der
+   *  USER-Projekte (z.B. master) und würde Self-Heal-MRs falsch targeten. */
+  selfHealBaseBranch?: string;
 }
 
 export type ProjectAgentCompletionCallback = (
@@ -335,6 +339,7 @@ export class ProjectAgentRunner {
       // config geht nicht durch JSON)
       selfHeal: configInput.selfHeal === true,
       selfHealReleaseLock: configInput.selfHealReleaseLock as (() => void) | undefined,
+      selfHealBaseBranch: configInput.selfHealBaseBranch as string | undefined,
     };
 
     const agentDef = this.agents.get(config.agentName);
@@ -1218,7 +1223,9 @@ export class ProjectAgentRunner {
         if (config.selfHeal && this.forgeConfig) {
           try {
             const branch = await gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], config.cwd, runAsUser);
-            const baseBranch = this.forgeConfig.baseBranch ?? 'main';
+            // v862.1 — selfHealBaseBranch (z.B. feature/multi-user) hat Vorrang;
+            // forge.baseBranch zeigt auf den Default der USER-Projekte (master).
+            const baseBranch = config.selfHealBaseBranch ?? this.forgeConfig.baseBranch ?? 'main';
             const { createForgeClient, parseRemoteUrl, gitGetRemoteUrl } = await import('@alfred/skills');
             const prTitle = `Self-Healing: ${config.goal.slice(0, 100)}`;
             const prBody = `Automatisch erstellter Fix-Vorschlag (Self-Healing-Pipeline v862).\n\n` +

@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.862.1] - 2026-06-11
+
+### Fixed — Self-Heal-MR-Ziel war forge.baseBranch statt selfHealing.baseBranch
+
+Beim Config-Review des Users aufgefallen, VOR dem ersten Deploy: der
+v862-MR-Block nutzte `forge.baseBranch` als MR-Ziel. Das Feld zeigt bei
+Multi-Projekt-Setups aber auf den Default-Branch der **User-Projekte**
+(hier: `master` für alpbyte etc.) — Self-Heal-MRs wären gegen `master`
+statt `feature/multi-user` gegangen.
+
+Fix: `selfHealBaseBranch` wird vom Skill (aus `selfHealing.baseBranch`)
+durch die Runner-Config gereicht und hat Vorrang:
+```ts
+const baseBranch = config.selfHealBaseBranch ?? this.forgeConfig.baseBranch ?? 'main';
+```
+Damit ist `selfHealing.baseBranch` wie dokumentiert Checkout-Basis UND
+MR-Ziel; `forge.baseBranch` bleibt unverändert für User-Projekte.
+
 ## [0.19.0-multi-ha.862] - 2026-06-11
 
 ### Added — Self-Healing-Pipeline (v862)

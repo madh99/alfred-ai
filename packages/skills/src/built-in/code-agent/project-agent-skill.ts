@@ -886,9 +886,12 @@ ${planSummary}${commits}${userNotes}
       confirmPlan: input.confirmPlan === true || input.confirm_plan === true,
       // v652 — Auto-Resume opt-in
       autoResume: input.autoResume === true || input.auto_resume === true,
-      // v862 — Self-Healing: Runner erstellt nach Erfolg MR/PR + released den Checkout-Lock
+      // v862 — Self-Healing: Runner erstellt nach Erfolg MR/PR + released den Checkout-Lock.
+      // selfHealBaseBranch ist das MR-Ziel — NICHT forge.baseBranch (das zeigt bei
+      // Multi-Projekt-Setups auf den Default-Branch der USER-Projekte, z.B. master).
       selfHeal,
       selfHealReleaseLock,
+      selfHealBaseBranch: selfHeal ? this.selfHealingConfig?.baseBranch : undefined,
     };
 
     // Fire-and-forget: start the runner loop asynchronously
