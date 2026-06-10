@@ -5,6 +5,72 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.858] - 2026-06-10
+
+### Fixed — BMW Token-DB-Persistenz seit v286-v300 broken (FK-Violation, v858)
+
+PG-Log auf .91 zeigte wiederkehrend (08.06., 10.06., jeweils ~18:0x):
+```
+ERROR: insert or update on table "user_services" violates foreign key
+       constraint "user_services_user_id_fkey"
+DETAIL: Key (user_id)=(f165df7a-…) is not present in table "alfred_users".
+```
+
+### Root-Cause
+
+`bmw.ts:setServiceResolver` setzte `tokenUserId = ownerMasterUserId` — das
+ist eine **`users.id`** (Master-User-Tabelle). `resolveDbAccess()` reichte
+diese ID an `saveServiceConfig` → INSERT in `user_services` — deren
+`user_id` aber eine **FK auf `alfred_users.id`** hat. Die Master-ID existiert
+dort nicht → jeder DB-Token-Save schlug fehl.
+
+**Silent seit ~3 Monaten**, weil alle 3 Call-Sites in
+`try { } catch { /* best effort */ }` steckten. Beweis in der DB: der letzte
+erfolgreiche `bmw_tokens`-Write unter der korrekten ID (91df4602) stammt vom
+**20.03.2026** — vor dem v286-v300-BMW-Rework.
+
+**Konsequenz:** Die HA-Token-Persistenz (DB = auf allen Nodes verfügbar) war
+wirkungslos. Nur der Disk-Fallback (node-lokal!) funktionierte. Bei
+HA-Failover auf node-b wäre BMW nicht authentifiziert gewesen.
+
+Gleiche Bug-Klasse wie v798/v800/v803 (masterUserId vs. alfredUserId).
+Spotify ist NICHT betroffen (nutzt korrekt `context.alfredUserId`).
+
+### Lösung
+
+**1. `bmw.ts` — neues Feld `dbUserId`** (alfred_users.id, FK-konform):
+- `setServiceResolver(resolver, ownerMasterUserId?, dbUserId?)` — dritter Param
+- `resolveDbAccess()`: `dbUserId` hat Vorrang für DB-Operationen
+- `tokenUserId` (Disk-Pfad) bleibt die Master-ID — **keine Disk-Migration nötig**
+
+**2. `alfred.ts` — Owner-alfred_user-Lookup beim Wiring:**
+```ts
+const adminUser = await pipelineUserRepo.getUserByPlatform('telegram', ownerPlatformId);
+bmwDbUserId = adminUser?.id;
+```
+Fallback bei Lookup-Fail: bisheriges Verhalten (Disk-only) + WARN-Log.
+
+**3. `loadTokens()` freshness-aware** — kritisch für den Deploy:
+In der DB liegt ein **stale Eintrag vom 20.03.** unter der korrekten ID.
+Die alte Logik (DB gewinnt blind) hätte nach dem Fix die frischen
+Disk-Tokens mit den 3 Monate alten DB-Tokens überdeckt → Auth-Bruch.
+Jetzt: beide Quellen laden, die mit höherem `expiresAt` gewinnt.
+Selbstheilend: der nächste Refresh persistiert FK-konform in die DB und
+beide Quellen konvergieren.
+
+**4. Silent-Catches → `console.warn`** an allen 3 Save-Sites
+(saveTokens, savePartialTokens, Pending-Code-Cleanup) mit userId im
+Log-Text. Der Bug war 3 Monate unsichtbar — das passiert nicht nochmal.
+
+### Was unverändert bleibt
+
+- Disk-Token-Pfad + Migration (`migrateTokenFiles`)
+- MQTT-Streaming, REST-Lookup, Telematic-Repo
+- Spotify/andere Skills (waren korrekt)
+- DB-Schema (keine Migration — FK ist ja richtig, der Caller war falsch)
+- `user_services`-Bestandsdaten (stale bmw_tokens-Eintrag wird beim
+  nächsten Refresh via ON CONFLICT überschrieben)
+
 ## [0.19.0-multi-ha.857] - 2026-06-09
 
 ### Fixed — CMDB Discovery: Mikrotik-Crash, pfsense-Silent-Failure, NPM-Sichtbarkeit (v857)

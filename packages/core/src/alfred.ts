@@ -5907,7 +5907,23 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       }
       // Inject service resolver + telematic repo into BMW skill
       if (this.bmwSkill && 'setServiceResolver' in this.bmwSkill) {
-        (this.bmwSkill as any).setServiceResolver(serviceResolver, this.ownerMasterUserId);
+        // v858 — alfred_users.id des Owners für DB-Writes auflösen.
+        // user_services.user_id hat FK auf alfred_users.id; ownerMasterUserId
+        // ist eine users.id → jeder DB-Token-Save schlug mit FK-Violation fehl
+        // (PG-Log: "Key (user_id)=(f165df7a-…) is not present in table alfred_users").
+        // Lookup über die Owner-Platform-ID aus security.ownerUserId (Telegram).
+        let bmwDbUserId: string | undefined;
+        try {
+          const ownerPlatformId = this.config.security?.ownerUserId;
+          if (ownerPlatformId) {
+            const adminUser = await pipelineUserRepo.getUserByPlatform('telegram', ownerPlatformId);
+            bmwDbUserId = adminUser?.id;
+          }
+        } catch { /* fallback: bisheriges Verhalten (Disk-only Persistenz) */ }
+        if (!bmwDbUserId) {
+          this.logger.warn('BMW: alfred_users-Eintrag für Owner nicht auflösbar — Token-Persistenz nur auf Disk (nicht HA-safe)');
+        }
+        (this.bmwSkill as any).setServiceResolver(serviceResolver, this.ownerMasterUserId, bmwDbUserId);
         const bmwTelematicRepo = new BmwTelematicRepository(adapter);
         (this.bmwSkill as any).setTelematicRepo(bmwTelematicRepo);
         this.bmwTelematicRepo = bmwTelematicRepo;

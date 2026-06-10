@@ -208,6 +208,8 @@ export class BMWSkill extends Skill {
   private activeUserId = 'default';
   /** The stable userId for token file/DB storage. Set once by setServiceResolver, never changes. */
   private tokenUserId = 'default';
+  /** v858 — alfred_users.id für user_services-DB-Writes (FK-konform). Siehe setServiceResolver. */
+  private dbUserId?: string;
 
   /** Injected from alfred.ts — available on ALL nodes, not just the one running execute(). */
   private injectedServiceResolver?: SkillContext['userServiceResolver'];
@@ -253,10 +255,21 @@ export class BMWSkill extends Skill {
     this.config = config;
   }
 
-  /** Inject service resolver from alfred.ts so token persistence works on ALL HA nodes. */
-  setServiceResolver(resolver: SkillContext['userServiceResolver'], ownerMasterUserId?: string): void {
+  /**
+   * Inject service resolver from alfred.ts so token persistence works on ALL HA nodes.
+   *
+   * v858 — dritter Param `dbUserId`: die **alfred_users.id** des Owners für
+   * DB-Writes. `user_services.user_id` hat eine FK auf `alfred_users.id` —
+   * `ownerMasterUserId` ist aber eine `users.id` (Master-User-Tabelle). Seit dem
+   * v286-v300-Rework schrieb der Skill mit der Master-ID → JEDER DB-Token-Save
+   * schlug mit FK-Violation fehl (silent, best-effort-catch) → HA-Persistenz
+   * war wirkungslos, nur Disk-Fallback (node-lokal!) funktionierte.
+   * tokenUserId (Disk-Pfad) bleibt unverändert die Master-ID — keine Disk-Migration.
+   */
+  setServiceResolver(resolver: SkillContext['userServiceResolver'], ownerMasterUserId?: string, dbUserId?: string): void {
     this.injectedServiceResolver = resolver;
     this.injectedAlfredUserId = ownerMasterUserId;
+    this.dbUserId = dbUserId;
     // Set the stable token userId — all token reads/writes use this path
     if (ownerMasterUserId) {
       this.tokenUserId = ownerMasterUserId;
@@ -607,7 +620,10 @@ export class BMWSkill extends Skill {
                 delete svc.codeVerifier;
                 await db.resolver!.saveServiceConfig(db.userId, 'bmw_tokens', 'partial', svc);
               }
-            } catch { /* best effort */ }
+            } catch (err) {
+              // v858 — silent-catch versteckte den FK-Bug. Mindestens warnen.
+              console.warn(`[BMW] Pending-Code-DB-Cleanup fehlgeschlagen (userId=${db.userId}): ${err instanceof Error ? err.message.slice(0, 150) : String(err)}`);
+            }
           }
           // Fall through to generate new device code
         } else if (isFresh) {
@@ -984,23 +1000,39 @@ export class BMWSkill extends Skill {
   /** Resolve the best available service resolver + userId for DB token persistence. */
   private resolveDbAccess(): { resolver: SkillContext['userServiceResolver']; userId: string } | null {
     const resolver = this.injectedServiceResolver ?? this.activeContext?.userServiceResolver;
-    // Always use tokenUserId for consistent DB key (not activeContext.alfredUserId which varies per request)
-    const userId = this.tokenUserId !== 'default' ? this.tokenUserId : (this.injectedAlfredUserId ?? '__global__');
+    // v858 — dbUserId (alfred_users.id, FK-konform) hat Vorrang. Die alte Logik
+    // nutzte tokenUserId (= masterUserId / users.id) → user_services-FK-Violation
+    // bei jedem Write. Fallback bleibt für Setups ohne aufgelösten alfred_user.
+    const userId = this.dbUserId
+      ?? (this.tokenUserId !== 'default' ? this.tokenUserId : (this.injectedAlfredUserId ?? '__global__'));
     if (!resolver) return null;
     return { resolver, userId };
   }
 
   private async loadTokens(): Promise<BMWTokens | null> {
     if (this.tokens) return this.tokens;
-    // Try DB first (HA-safe), then file fallback
+    // v858 — BEIDE Quellen laden und den frischeren nehmen (höheres expiresAt).
+    // Vorher gewann die DB blind. Problem: durch den FK-Bug (siehe
+    // setServiceResolver) schlugen DB-Writes monatelang fehl — in der DB kann
+    // also ein STALE Eintrag von vor dem Bug liegen (z.B. 2026-03-20 unter der
+    // korrekten alfred_users.id). Würde der blind gewinnen, verdeckte er die
+    // frischen Disk-Tokens → Auth-Bruch direkt nach dem v858-Deploy.
+    // Selbstheilend: der nächste erfolgreiche Refresh persistiert wieder in die
+    // DB (jetzt FK-konform) und beide Quellen konvergieren.
     const db = this.resolveDbAccess();
+    let dbTokens: BMWTokens | null = null;
     if (db) {
       try {
         const svc = await db.resolver!.getServiceConfig(db.userId, 'bmw_tokens', 'tokens');
-        if (svc) { this.tokens = svc as unknown as BMWTokens; return this.tokens; }
+        if (svc) dbTokens = svc as unknown as BMWTokens;
       } catch { /* fallback to disk */ }
     }
-    return await this.loadTokensFromDisk();
+    const diskTokens = await this.loadTokensFromDisk();
+    const best = [dbTokens, diskTokens]
+      .filter((t): t is BMWTokens => !!t)
+      .sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))[0] ?? null;
+    if (best) this.tokens = best;
+    return best;
   }
 
   /** Read tokens from disk, bypassing in-memory cache. Always uses tokenUserId for consistent path. */
@@ -1037,7 +1069,10 @@ export class BMWSkill extends Skill {
         await db.resolver!.saveServiceConfig(
           db.userId, 'bmw_tokens', 'tokens', tokens as unknown as Record<string, unknown>,
         );
-      } catch { /* best-effort DB write */ }
+      } catch (err) {
+        // v858 — silent-catch versteckte den FK-Bug 3 Monate lang. Mindestens warnen.
+        console.warn(`[BMW] Token-DB-Persist fehlgeschlagen (userId=${db.userId}): ${err instanceof Error ? err.message.slice(0, 150) : String(err)}`);
+      }
     }
     // Always write to disk as backup (backward compat + fallback)
     try {
@@ -1066,7 +1101,10 @@ export class BMWSkill extends Skill {
         await db.resolver!.saveServiceConfig(
           db.userId, 'bmw_tokens', 'partial', merged as unknown as Record<string, unknown>,
         );
-      } catch { /* best-effort DB write */ }
+      } catch (err) {
+        // v858 — silent-catch versteckte den FK-Bug. Mindestens warnen.
+        console.warn(`[BMW] Partial-Token-DB-Persist fehlgeschlagen (userId=${db.userId}): ${err instanceof Error ? err.message.slice(0, 150) : String(err)}`);
+      }
     }
 
     // Always write to disk as backup
