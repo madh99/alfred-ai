@@ -117,6 +117,14 @@ export class CodeAgentSkill extends Skill {
   private readonly agents: Map<string, CodeAgentDefinitionConfig>;
   private readonly forgeConfig?: ForgeConfig;
   private onSessionCompletion?: (info: CodeAgentSessionInfo) => void | Promise<void>;
+  /** v863 — Projekt-Lookup für die Branch-Integritäts-Warnung beim Push
+   *  (gepushter Branch vs. projects.default_branch). Via alfred.ts injiziert. */
+  private projectLookup?: {
+    findByCwdAnyOwner?(cwd: string): Promise<{ defaultBranch?: string; name?: string } | null>;
+  };
+  setProjectLookup(repo: typeof this.projectLookup): void {
+    this.projectLookup = repo;
+  }
 
   constructor(
     config: CodeAgentSkillConfig,
@@ -633,14 +641,32 @@ export class CodeAgentSkill extends Skill {
       // Sanitize URL for display
       const displayUrl = remoteUrl.replace(/\/\/[^@]+@/, '//');
 
+      // v863 — Branch-Integritäts-Warnung: weicht der gepushte Branch vom
+      // Deploy-Branch des Projekts (projects.default_branch) ab, prominent
+      // warnen. Vorfall 11.06.: Push ging auf 'main', Projekt deployed von
+      // 'master' — der User fand es erst NACH dem Deploy ("keine Änderungen
+      // feststellbar"). Kein Auto-Verschieben (History-Schutz) — nur ehrlich
+      // sichtbar machen.
+      let branchMismatchWarning: string | undefined;
+      try {
+        const proj = await this.projectLookup?.findByCwdAnyOwner?.(cwd);
+        if (proj?.defaultBranch && proj.defaultBranch !== branchName) {
+          branchMismatchWarning =
+            `⚠️ Gepusht auf "${branchName}" — dieses Projekt deployed von "${proj.defaultBranch}". ` +
+            `Falls der Push fürs Deploy gedacht ist: \`git push origin ${commitSha ?? branchName}:${proj.defaultBranch}\``;
+          warnings.push(branchMismatchWarning);
+        }
+      } catch { /* lookup best-effort — Push-Ergebnis bleibt unberührt */ }
+
       return {
         success: true,
-        data: { branch: branchName, commitSha, remoteUrl: displayUrl, pushSucceeded, warnings },
+        data: { branch: branchName, commitSha, remoteUrl: displayUrl, pushSucceeded, warnings, branchMismatchWarning },
         display: `Git Push erfolgreich:\n` +
           `- Branch: ${branchName}\n` +
           (commitSha ? `- Commit: ${commitSha}\n` : '- Keine neuen Änderungen\n') +
           `- Remote: ${displayUrl}\n` +
-          (warnings.length > 0 ? `- Hinweise: ${warnings.join(', ')}` : ''),
+          (branchMismatchWarning ? `\n${branchMismatchWarning}\n` : '') +
+          (warnings.length > 0 && !branchMismatchWarning ? `- Hinweise: ${warnings.join(', ')}` : ''),
       };
     } catch (err) {
       return {

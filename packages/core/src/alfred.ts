@@ -1279,6 +1279,11 @@ export class Alfred {
       }
 
       if (this.codeAgentSkillRef) {
+        // v863 — Projekt-Lookup für Branch-Integritäts-Warnung beim Push
+        // (gepushter Branch vs. projects.default_branch)
+        if (this.projectRepo) {
+          this.codeAgentSkillRef.setProjectLookup(this.projectRepo);
+        }
         this.codeAgentSkillRef.setSessionCompletionCallback(async (info) => {
           if (!isSubstantialSession({
             toolCalls: info.toolCalls, filesChanged: info.filesChanged, durationMs: info.durationMs,

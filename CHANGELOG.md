@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.863] - 2026-06-11
+
+### Added — Ziel-Bindung + Branch-Integritäts-Warnung (v863)
+
+Zwei Lehren aus dem Audio-Feature-Vorfall vom 11.06.:
+
+**1. Ziel-Bindung im Projekt-Chat** (`message-pipeline.ts`,
+Projekt-Chat-Kontext-Block):
+
+Ein Auftrag im alfred-ai-Projekt-Chat („dem Chat fehlen Audio-Hinweise",
+versehentlich im falschen Chat eingegeben) führte dazu, dass das LLM nach
+dem v862-Guard-Block per Shell ALLE Projekte absuchte und eigenmächtig auf
+alpbyte-games weiterarbeitete. Dass es das gewünschte Ziel traf, war Glück —
+es hätte jedes andere Projekt sein können.
+
+Neue Prompt-Regel im Projekt-Chat-Kontext:
+> ZIEL-BINDUNG: Arbeite NUR am Projekt dieses Chats. Wenn ein Tool-Aufruf
+> geblockt wird oder das Ziel unklar ist: folge dem Hinweis in der
+> Fehlermeldung ODER frage den User. Wechsle NIEMALS eigenmächtig auf ein
+> anderes Projekt/Verzeichnis.
+
+**2. Branch-Integritäts-Warnung bei `code_agent.push`**
+(`code-agent-skill.ts` + Wiring):
+
+Der Audio-Commit wurde auf `main` gepusht, das Projekt deployed aber von
+`master` — aufgefallen erst NACH dem Deploy („keine Änderungen
+feststellbar"). Jetzt: nach jedem erfolgreichen Push wird das Projekt via
+cwd aufgelöst (`findByCwdAnyOwner`); weicht der gepushte Branch von
+`projects.default_branch` ab, enthält das Result eine prominente Warnung
+inkl. fertigem Korrektur-Befehl:
+
+> ⚠️ Gepusht auf "main" — dieses Projekt deployed von "master".
+> Falls der Push fürs Deploy gedacht ist: `git push origin <sha>:master`
+
+Bewusst KEIN Auto-Verschieben von Commits (History-Schutz) — nur ehrlich
+sichtbar machen. Alle drei Ursachen des Vorfalls waren STILLE Schritte.
+
+### Seiteneffekt-Analyse (geprüft)
+
+- Push-Verhalten funktional identisch — nur zusätzliche Warnzeile bei
+  Branch-Mismatch
+- Projekte ohne `defaultBranch`: keine Warnung, exakt wie vorher
+- Ohne projectLookup-Wiring (z.B. Tests, Minimal-Setups): kein Lookup,
+  kein Fehler (backwards-compat, getestet)
+- Lookup-Fehler (DB down): Push-Ergebnis unberührt (best-effort, getestet)
+- Prompt-Regel: reiner Text, normale Projekt-Chats arbeiten ohnehin am
+  eigenen Projekt
+
+### Tests
+
+4 neue in `push-branch-warning.test.ts` (echtes Temp-Git-Repo + Bare-
+Remote), alle grün: Warnung bei Mismatch, keine Warnung bei Match,
+backwards-compat ohne Lookup, best-effort bei Lookup-Fehler.
+
+### Bewusst NICHT umgesetzt (nach Abstimmung)
+
+- Branch-Drift-Detection nach Agent-Läufen — Urheber des master→main-
+  Wechsels war nicht belegbar (kann auch der User gewesen sein); die
+  Push-Warnung deckt die Konsequenz ab
+- Commit-Message-Validierung gegen Diff — kosmetisches Problem
+
 ## [0.19.0-multi-ha.862.1] - 2026-06-11
 
 ### Fixed — Self-Heal-MR-Ziel war forge.baseBranch statt selfHealing.baseBranch

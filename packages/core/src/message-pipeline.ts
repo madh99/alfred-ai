@@ -1004,6 +1004,10 @@ export class MessagePipeline {
             }
             lines.push(`\n### Anweisungen für diesen Projekt-Chat`);
             lines.push(`- Du arbeitest gerade an diesem Projekt — nutze cwd, repo und Kontext automatisch.`);
+            // v863 — Ziel-Bindung: verhindert stilles Projekt-Hopping (Vorfall 11.06.:
+            // Auftrag im alfred-ai-Chat → Guard blockte → LLM suchte per Shell alle
+            // Projekte ab und arbeitete eigenmächtig auf alpbyte-games weiter).
+            lines.push(`- **ZIEL-BINDUNG**: Arbeite NUR am Projekt dieses Chats. Wenn ein Tool-Aufruf geblockt wird oder das Ziel unklar ist: folge dem Hinweis in der Fehlermeldung ODER frage den User. Wechsle NIEMALS eigenmächtig auf ein anderes Projekt/Verzeichnis — auch nicht, wenn eine Suche dort etwas Passendes findet.`);
             lines.push(`- **ALLE Tools** sind verfügbar: project_agent, code_agent, shell, deploy, file, git, brainstorming. Behaupte NIEMALS „kein Tool zur Verfügung" — wenn du eine Aufgabe nicht direkt erledigen kannst, ruf das passende Tool auf.`);
             lines.push(`- "baue X ein" / "fix Y" / "implementiere Z" → project_agent.start mit dem Projekt-cwd. Direkter Code-Eingriff geht via code_agent + shell.`);
             lines.push(`- UI-/Code-Bugs werden ebenfalls über project_agent oder code_agent gefixt — kein Tool fehlt.`);
