@@ -5,6 +5,89 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.859] - 2026-06-10
+
+### Fixed — KG-Location-Hygiene: "Drei Sensoren" war eine User-Home-Location (v859)
+
+Log-Audit fand 41-48× täglich:
+```
+KG cross-extractor: multiple user-home candidates — picking earliest firstSeenAt
+candidates: ["Linz","Wien","Altlengbach","Österreich","Niederösterreich",
+ "Drei Sensoren","Drei Temperatur","Alerts","Geräte","Deutschland",
+ "Alerts Backlog","Home Assistant","Vier Sensoren"]
+```
+
+DB-Analyse: 8 Garbage-Entities vom Typ `location` mit `isUserHome=true`,
+alle mit `sources:["memories"]` und Insight-Texten im address-Attribut.
+
+### Root-Cause-Kette
+
+1. **Memory-Suche nach "home"** in `syncMemoryEntities` matcht Alfreds
+   eigene Insight-Keys (`smart_home_*`, `home_assistant_*`) — der
+   `INTERNAL_MEMORY_KEY_PREFIXES`-Filter existierte in `extractFromMemories`,
+   fehlte aber im Memory-Location-Sync.
+2. **`PLZ_CITY_REGEX` matcht Datums-/Zahlen-Kontexte** in Insight-Texten:
+   `"seit 27.05.2026\nVier Sensoren"` → PLZ=2026, Stadt="Vier Sensoren";
+   `"(2514 Alerts Backlog)"` → Stadt="Alerts Backlog";
+   `"1506 Home Assistant"` → Stadt="Home Assistant".
+3. **`cities.add()` lief VOR dem Quality-Gate** — `registerLocation()` hatte
+   das Plausibility-Gate, der direkte Entity-Upsert daneben nicht.
+4. Durch den home-Key bekamen die Garbage-Entities `isUserHome=true` →
+   13 Kandidaten im Cross-Extractor → Warning bei jedem Reasoning-Pass.
+
+### Fixes
+
+- **`PLZ_CITY_REGEX`**: negative Lookbehind `(?<![\d.,])` — Jahreszahlen
+  nach Datumspunkten matchen nicht mehr
+- **`LOCATION_DISQUALIFIERS`** erweitert um Insight-/Monitoring-Vokabular
+  (alert, backlog, sensor, gerät, batterie, status, assistant, event …)
+- **`NUMBER_WORD_PREFIX`**: deutsche Zahlwörter als Erstwort disqualifizieren
+  ("Drei Sensoren", "Vier Geräte")
+- **Plausibility-Gate** jetzt auch auf den beiden ungatedeten
+  PLZ-Treffer-Pfaden (extractFromMemories + syncMemoryEntities)
+- **`INTERNAL_MEMORY_KEY_PREFIXES`-Filter** im Memory-Location-Sync —
+  Insight-Memories sind keine Adress-Quelle
+- **Maintenance-Cleanup (selbstheilend)**: implausible location-Entities
+  werden gelöscht; `isUserHome` wird auf die earliest-firstSeenAt-Location
+  konsolidiert (= dieselbe deterministische Wahl die der Cross-Extractor
+  trifft). Kein manuelles SQL nötig — läuft auf jedem Node.
+- **Warning-Dedupe**: multi-home-Warning nur noch 1× pro Kandidaten-Set
+  statt bei jedem half_hourly-Pass (41-48×/Tag → ~1×)
+
+### Fixed — Reasoning: hallucinated Actions selbstheilen statt verwerfen (v859)
+
+Log-Befund (08.-10.06.): 6× `todo.create`, 4× `memory.create`,
+2× `todo.update`, je 1× `memory.get`/`todo.mark_done` — das LLM rät
+kanonische CRUD-Namen statt der Alfred-Enums (`add`, `save`, `complete`).
+Jeder Reject = verschwendeter LLM-Output + verlorene proaktive Aktion.
+
+- **`ReasoningEngine.healActionSynonym`**: konservative Kandidaten-Tabelle
+  (create→add/save/set/start, mark_done→complete, remove→delete/cancel …).
+  Heilt NUR wenn genau EIN Kandidat im Ziel-Enum existiert — Ambiguität
+  (z.B. memory.get → recall ODER list) bleibt rejected.
+- **Prompt-Cookbook** um todo-/memory-Enums erweitert (reduziert die
+  Entstehung; reminder.set stand schon drin, todo/memory fehlten)
+
+### Tests
+
+27 neue Tests, alle grün:
+- `kg-location-hygiene.test.ts` (16): PLZ-Regex-Vertrag (Datums-Kontexte,
+  echte PLZ+Stadt, zweiteilige Namen), Disqualifier-Vertrag (6 Garbage-
+  Namen geblockt, 5 echte Orte durchgelassen)
+- `action-synonym-heal.test.ts` (11): alle Log-Fälle (todo.create→add,
+  memory.create→save, mark_done→complete), Ambiguitäts-Rejects
+  (memory.get, todo.update), case-insensitivity
+
+### Was unverändert bleibt
+
+- Geocoding-Validation (Nominatim) + Seed-Locations
+- extractLocations (GEO_PATTERNS-Pfad war bereits sauber gehärtet)
+- Cross-Extractor-Wahllogik (earliest firstSeenAt)
+- Bestehende KORREKTE location-Entities (Altlengbach bleibt kanonisches
+  Zuhause — earliest firstSeenAt 01.04. 07:18:19.576)
+- Action-Reject-Pfad für echte Halluzinationen ohne eindeutiges Mapping
+- AUTO_SKILLS/PROACTIVE_SKILLS-Klassifikation
+
 ## [0.19.0-multi-ha.858] - 2026-06-10
 
 ### Fixed — BMW Token-DB-Persistenz seit v286-v300 broken (FK-Violation, v858)

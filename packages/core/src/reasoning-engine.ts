@@ -886,6 +886,8 @@ PATTERN-COOKBOOK (vermeidet typische Halluzinationen):
 - "Schritt-Folge automatisieren" → workflow.create mit steps[]
 - "Erinnern an Datum" → reminder.set mit triggerAt
 - UniFi-Skill action für IPS-Alerts: list_alerts (NICHT get_alerts). Andere UniFi-Actions: list_devices, list_clients, list_events, archive_alerts.
+- Todo anlegen: action "add" (NICHT create/update). Erledigt markieren: "complete" (NICHT mark_done/done). Todo-Actions: add, list, complete, uncomplete, delete, lists, clear.
+- Memory speichern: action "save" (NICHT create/store). Abrufen: "recall" oder "search" (NICHT get). Memory-Actions: save, recall, search, list, delete.
 
 AKTIONSTYPEN:
 1. Skill direkt ausführen: {"type":"execute_skill","description":"...","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}
@@ -1268,6 +1270,38 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
   // Everything else = HIGH_RISK -> always confirmation
 
+  /**
+   * v859 — Synonym-Kandidaten für LLM-halluzinierte Action-Namen.
+   * Das LLM rät generische CRUD-Verben; die Skills nutzen spezifische Enums.
+   * Mapping ist Kandidaten-Liste: der ERSTE Kandidat der im Ziel-Enum existiert
+   * gewinnt. Existieren MEHRERE Kandidaten im Enum → ambiguous → kein Heal
+   * (lieber reject als falsch raten).
+   */
+  private static readonly ACTION_SYNONYMS: Record<string, string[]> = {
+    create: ['add', 'save', 'set', 'start'],
+    update: ['edit', 'set'],
+    get: ['recall', 'list', 'status'],
+    fetch: ['recall', 'list'],
+    store: ['save', 'add'],
+    remove: ['delete', 'cancel'],
+    mark_done: ['complete'],
+    done: ['complete'],
+    finish: ['complete'],
+    check: ['status', 'list'],
+  };
+
+  /**
+   * v859 — versucht eine halluzinierte Action auf eine valide zu mappen.
+   * Returns die geheilte Action oder null wenn kein eindeutiges Mapping existiert.
+   */
+  static healActionSynonym(hallucinated: string, validActions: string[]): string | null {
+    const candidates = ReasoningEngine.ACTION_SYNONYMS[hallucinated.toLowerCase()];
+    if (!candidates) return null;
+    const matches = candidates.filter(c => validActions.includes(c));
+    // Nur bei GENAU einem Treffer heilen — Ambiguität = reject bleibt sicherer.
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   private async getAutonomyLevel(): Promise<'confirm_all' | 'proactive' | 'autonomous'> {
     try {
       const mem = await this.memoryRepo.recall(this.resolvedOwnerUserId || this.defaultChatId, 'autonomy_level');
@@ -1575,9 +1609,22 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           const schema = preCheckSkill.metadata.inputSchema as { properties?: { action?: { enum?: string[] } } } | undefined;
           const validActions = schema?.properties?.action?.enum;
           if (validActions && !validActions.includes(action.skillParams.action as string)) {
-            this.logger.warn({ skillName: action.skillName, action: action.skillParams.action, validActions: validActions.join(',') },
-              'Reasoning: hallucinated action rejected before execution');
-            continue; // Silently skip — user sees nothing
+            // v859 — Synonym-Selfheal: das LLM rät kanonische CRUD-Namen (create,
+            // update, get, mark_done) statt der Alfred-Enums (add, save, complete …).
+            // Log-Befund (08.-10.06.): 6x todo.create, 4x memory.create, 2x todo.update,
+            // je 1x memory.get / todo.mark_done — alle verworfen obwohl die Intention
+            // eindeutig war. Konservatives Mapping: nur korrigieren wenn GENAU EIN
+            // Kandidat im Ziel-Enum existiert; sonst weiterhin reject.
+            const healed = ReasoningEngine.healActionSynonym(action.skillParams.action as string, validActions);
+            if (healed) {
+              this.logger.info({ skillName: action.skillName, from: action.skillParams.action, to: healed },
+                'Reasoning: hallucinated action self-healed via synonym mapping');
+              action.skillParams.action = healed;
+            } else {
+              this.logger.warn({ skillName: action.skillName, action: action.skillParams.action, validActions: validActions.join(',') },
+                'Reasoning: hallucinated action rejected before execution');
+              continue; // Silently skip — user sees nothing
+            }
           }
         }
 

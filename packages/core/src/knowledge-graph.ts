@@ -18,7 +18,13 @@ const SEED_LOCATIONS = [
 ];
 
 /** PLZ pattern: "3033 Altlengbach" or "80331 München" → extracts city name */
-const PLZ_CITY_REGEX = /\b(\d{4,5})\s+([A-ZÄÖÜ][a-zäöüß]{2,}(?:[\s-][A-ZÄÖÜ][a-zäöüß]+)?)\b/g;
+// v859 — negative Lookbehind `(?<![\d.,])`: verhindert dass Datums-/Zahlen-Kontexte
+// als PLZ matchen. Vorher: "überfällig seit 27.05.2026\nVier Sensoren" → PLZ=2026,
+// Stadt="Vier Sensoren"; "(2514 Alerts Backlog)" → Stadt="Alerts Backlog";
+// "1506 Home Assistant" → Stadt="Home Assistant". Diese Garbage-Entities bekamen
+// via Memory-Sync sogar isUserHome=true (Key-Match auf "home" in smart_home_*-Keys)
+// und fluteten den Cross-Extractor mit 13 user-home-Kandidaten (41-48 Warnings/Tag).
+const PLZ_CITY_REGEX = /(?<![\d.,])\b(\d{4,5})\s+([A-ZÄÖÜ][a-zäöüß]{2,}(?:[\s-][A-ZÄÖÜ][a-zäöüß]+)?)\b/g;
 
 /** Approximate distances between Austrian cities (km, one-direction). */
 const DISTANCE_TABLE: Record<string, Record<string, number>> = {
@@ -239,6 +245,8 @@ export class KnowledgeGraphService {
   private lastGeocodeFetchAt = 0;
   /** Cached user real name from profile (resolved once). */
   private userRealName?: string;
+  /** v859 — dedupe für die multi-user-home Warning (1x pro Kandidaten-Set statt pro Pass). */
+  private lastMultiHomeWarnKey?: string;
 
   constructor(
     private readonly kgRepo: KnowledgeGraphRepository,
@@ -255,8 +263,13 @@ export class KnowledgeGraphService {
   /** German noun suffixes that never appear in city names. */
   private static readonly NOUN_SUFFIXES = /(?:ung|heit|keit|schaft|tion|tät|nis|ment|tag|zeit|stück)$/i;
 
-  /** Words that disqualify a location candidate (tech, cloud, generic terms). */
-  private static readonly LOCATION_DISQUALIFIERS = /\b(cloud|stack|platform|service|engine|server|cluster|virtual|online|digital|smart|hub|lab|edge|node|zone|tier|core|base|space|net)\b/i;
+  /** Words that disqualify a location candidate (tech, cloud, generic terms).
+   *  v859 — erweitert um Insight-/Monitoring-Vokabular das via PLZ-Regex-Fehlmatch
+   *  als "Stadt" durchrutschte (Alerts, Sensoren, Geräte, Backlog, Assistant …). */
+  private static readonly LOCATION_DISQUALIFIERS = /\b(cloud|stack|platform|service|engine|server|cluster|virtual|online|digital|smart|hub|lab|edge|node|zone|tier|core|base|space|net|alert|alerts|backlog|sensor|sensoren|gerät|geräte|batterie|batterien|status|assistant|update|updates|backup|backups|event|events|incident|temperatur)\b/i;
+
+  /** v859 — Deutsche Zahlwörter als Erstwort disqualifizieren ("Drei Sensoren", "Vier Geräte"). */
+  private static readonly NUMBER_WORD_PREFIX = /^(ein|eine|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf)\s/i;
 
   /** Check if a name looks like a valid geographic location. */
   private static isPlausibleLocation(name: string): boolean {
@@ -265,6 +278,7 @@ export class KnowledgeGraphService {
     if (PERSON_BLACKLIST.has(name.toLowerCase())) return false;
     if (KnowledgeGraphService.NOUN_SUFFIXES.test(name)) return false;
     if (KnowledgeGraphService.LOCATION_DISQUALIFIERS.test(name)) return false;
+    if (KnowledgeGraphService.NUMBER_WORD_PREFIX.test(name)) return false;
     return true;
   }
 
@@ -1387,6 +1401,49 @@ export class KnowledgeGraphService {
           }
         } catch { /* non-critical */ }
 
+        // v859 — Garbage-Location-Cleanup: location-Entities deren Name das
+        // (erweiterte) Plausibility-Gate nicht besteht, löschen. Bestandsdaten wie
+        // "Drei Sensoren", "Alerts Backlog", "Home Assistant" entstanden durch den
+        // PLZ-Regex-Fehlmatch auf Insight-Texte (vor v859 ungated). Selbstheilend
+        // auf jedem Node — kein manuelles SQL nötig.
+        let implausibleLocationsCleaned = 0;
+        try {
+          const locs = await this.kgRepo.getEntitiesByType(userId, 'location');
+          for (const loc of locs) {
+            if (!KnowledgeGraphService.isPlausibleLocation(loc.name)) {
+              await this.kgRepo.deleteEntity(loc.id);
+              implausibleLocationsCleaned++;
+              this.logger.info({ location: loc.name }, 'KG maintenance: deleted implausible location entity');
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'KG maintenance: implausible location cleanup failed');
+        }
+
+        // v859 — isUserHome-Konsolidierung: das Flag darf nur auf EINER Location
+        // stehen (der Cross-Extractor wählt deterministisch earliest firstSeenAt —
+        // dieselbe Regel hier anwenden und die übrigen Flags clearen). Vorher
+        // akkumulierten sich isUserHome-Flags auf Wien/Linz/Österreich/Deutschland
+        // durch home-Key-Memories deren Value diese Orte nur ERWÄHNTE.
+        let userHomeConsolidated = 0;
+        try {
+          const locs = await this.kgRepo.getEntitiesByType(userId, 'location');
+          const flagged = locs
+            .filter(l => (l.attributes as Record<string, unknown> | undefined)?.isUserHome === true)
+            .sort((a, b) => (a.firstSeenAt ?? '').localeCompare(b.firstSeenAt ?? ''));
+          // flagged[0] = earliest = kanonisches Zuhause (bleibt). Rest: Flag entfernen.
+          for (const loc of flagged.slice(1)) {
+            const cleaned = { ...(loc.attributes as Record<string, unknown>) };
+            delete cleaned.isUserHome;
+            await this.kgRepo.setEntityAttributes(loc.id, cleaned);
+            userHomeConsolidated++;
+            this.logger.info({ location: loc.name, canonical: flagged[0]?.name },
+              'KG maintenance: cleared duplicate isUserHome (canonical home wins by earliest firstSeenAt)');
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'KG maintenance: isUserHome consolidation failed');
+        }
+
         // Clear stale isHome/isWork on locations whose sole evidence references another
         // person (mother/father/friend/...). These flags were set by older code paths
         // before describesOtherPersonsHome() existed — once set, the "only-set-true"
@@ -1416,7 +1473,7 @@ export class KnowledgeGraphService {
           this.logger.debug({ err }, 'KG maintenance: stale isHome cleanup failed');
         }
 
-        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared }, 'KG maintenance completed');
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared, implausibleLocationsCleaned, userHomeConsolidated }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');
@@ -1569,6 +1626,10 @@ export class KnowledgeGraphService {
         let plzMatch;
         while ((plzMatch = PLZ_CITY_REGEX.exec(value)) !== null) {
           const city = plzMatch[2];
+          // v859 — Plausibility-Gate auch hier. Vorher konnte ein Regex-Fehlmatch
+          // ("2514 Alerts Backlog") direkt als location-Entity upgeserted werden —
+          // registerLocation() hatte das Gate, der upsert daneben aber nicht.
+          if (!KnowledgeGraphService.isPlausibleLocation(city)) continue;
           if (!this.knownLocationsLower.has(city.toLowerCase())) {
             this.registerLocation(city);
             await this.kgRepo.upsertEntity(userId, city, 'location', { ...homeAttr, detectedBy: 'plz_pattern' }, 'memories');
@@ -1822,9 +1883,16 @@ export class KnowledgeGraphService {
         && !describesOtherPersonsHome(String(l.attributes?.address ?? ''))
       );
       const homeLocations = userHomeCandidates.length > 0 ? userHomeCandidates : legacyHomeCandidates;
+      // v859 — Warning nur 1x pro Prozess + Kandidaten-Set. Der Cross-Extractor läuft
+      // bei jedem Reasoning-Pass (half_hourly) → die identische Warnung flutete das
+      // Log mit 41-48 Einträgen/Tag ohne neuen Informationswert.
       if (homeLocations.length > 1) {
-        this.logger.warn({ candidates: homeLocations.map(l => l.name) },
-          'KG cross-extractor: multiple user-home candidates — picking earliest firstSeenAt');
+        const candidateKey = homeLocations.map(l => l.name).sort().join('|');
+        if (this.lastMultiHomeWarnKey !== candidateKey) {
+          this.lastMultiHomeWarnKey = candidateKey;
+          this.logger.warn({ candidates: homeLocations.map(l => l.name) },
+            'KG cross-extractor: multiple user-home candidates — picking earliest firstSeenAt');
+        }
       }
       const homeLocation = homeLocations
         .sort((a, b) => (a.firstSeenAt ?? '').localeCompare(b.firstSeenAt ?? ''))[0];
@@ -2163,6 +2231,13 @@ export class KnowledgeGraphService {
       for (const query of ['adress', 'address', 'heim', 'home', 'büro', 'office', 'wohn']) {
         const facts = await this.memoryRepo.search(userId, query);
         for (const fact of facts.slice(0, 5)) {
+          // v859 — Alfred-interne Memories (insight_, connection_, pattern_ …) NICHT
+          // als Adress-Quelle verwenden. Die Suche nach "home" matcht sonst Keys wie
+          // smart_home_sensor_batteries / home_assistant_status — deren Insight-Texte
+          // enthalten Title-Case-Phrasen + Zahlen die als PLZ+Stadt fehlmatchen UND
+          // bekommen durch den "home"-Key isUserHome=true. Genau so entstanden
+          // "Drei Sensoren", "Alerts Backlog", "Home Assistant" als User-Home-Locations.
+          if (INTERNAL_MEMORY_KEY_PREFIXES.test(fact.key)) continue;
           // Collect cities: known locations + PLZ pattern matches
           const cities = new Set<string>();
           for (const city of this.getKnownLocations()) {
@@ -2172,6 +2247,9 @@ export class KnowledgeGraphService {
           let plzMatch;
           while ((plzMatch = PLZ_CITY_REGEX.exec(fact.value)) !== null) {
             const city = plzMatch[2];
+            // v859 — Plausibility-Gate VOR cities.add. Vorher: cities.add lief
+            // ungated, der upsert unten erstellte Garbage-Locations mit isUserHome.
+            if (!KnowledgeGraphService.isPlausibleLocation(city)) continue;
             cities.add(city);
             this.registerLocation(city);
           }
