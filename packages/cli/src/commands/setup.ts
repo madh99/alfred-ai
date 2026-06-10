@@ -48,7 +48,8 @@ const PROVIDERS: ProviderDef[] = [
     envKeyName: 'ALFRED_ANTHROPIC_API_KEY',
     needsApiKey: true,
     models: [
-      { id: 'claude-opus-4-8',          desc: 'Opus 4.8 — most capable, agentic coding (latest)' },
+      { id: 'claude-fable-5',           desc: 'Fable 5 — most capable, $10/$50 per MTok (2x Opus-Preis)' },
+      { id: 'claude-opus-4-8',          desc: 'Opus 4.8 — most capable Opus-tier, agentic coding' },
       { id: 'claude-sonnet-4-6',        desc: 'Sonnet 4.6 — fast, smart, recommended' },
       { id: 'claude-opus-4-7',          desc: 'Opus 4.7 — capable, agentic coding' },
       { id: 'claude-opus-4-6',          desc: 'Opus 4.6 — capable, extended thinking' },

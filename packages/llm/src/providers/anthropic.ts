@@ -31,11 +31,31 @@ export class AnthropicProvider extends LLMProvider {
    * for this model"). Filter it out for those models instead of bubbling a 400 error
    * up to the caller. Applies to Opus 4.7 + 4.8 (and assumed-forward for newer Opus
    * generations that ship adaptive thinking without sampling parameters).
+   * v860 — Fable 5 / Mythos 5 erben die Constraint (Migration-Guide: "sampling
+   * parameters rejected" gilt unverändert weiter).
    */
   private supportsTemperature(): boolean {
     const model = (this.config.model ?? '').toLowerCase();
     if (/opus-4-(7|8|9)/.test(model)) return false;
+    if (/fable-5|mythos-5/.test(model)) return false;
     return true;
+  }
+
+  /**
+   * v860 — Claude Fable 5 hat Safety-Classifier die Requests ablehnen können.
+   * Der server-seitige `fallbacks`-Param (beta, Claude API) retried refused
+   * Requests automatisch auf dem angegebenen Modell. Die Response kommt dann
+   * mit dem TATSÄCHLICH genutzten Modell zurück → Cost-Tracking (hängt am
+   * response.model) stimmt automatisch; Fallback-Credit (Cache-Kosten-
+   * Erstattung) verrechnet Anthropic serverseitig.
+   * Nur für fable-5 gesetzt — mythos-5 hat keine Classifier.
+   */
+  private fallbacksParam(): Record<string, unknown> {
+    const model = (this.config.model ?? '').toLowerCase();
+    if (/^claude-fable-5/.test(model)) {
+      return { fallbacks: ['claude-opus-4-8'] };
+    }
+    return {};
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
@@ -48,6 +68,9 @@ export class AnthropicProvider extends LLMProvider {
       ...(this.supportsTemperature()
         ? { temperature: request.temperature ?? this.config.temperature }
         : {}),
+      // v860 — server-side refusal-fallback für Fable 5 (beta-Param; SDK-Typen
+      // kennen das Feld noch nicht → kommt über den unknown-cast unten mit).
+      ...this.fallbacksParam(),
       system: request.system ? [
         {
           type: 'text' as const,
@@ -74,6 +97,8 @@ export class AnthropicProvider extends LLMProvider {
       ...(this.supportsTemperature()
         ? { temperature: request.temperature ?? this.config.temperature }
         : {}),
+      // v860 — server-side refusal-fallback für Fable 5 (beta).
+      ...this.fallbacksParam(),
       system: request.system ? [
         {
           type: 'text' as const,
@@ -188,6 +213,20 @@ export class AnthropicProvider extends LLMProvider {
           input: block.input as Record<string, unknown>,
         });
       }
+    }
+
+    // v860 — Refusal-Handling (Claude Fable 5 Safety-Classifier).
+    // Refusals kommen als HTTP-200 mit stop_reason:"refusal" und (meist) leerem
+    // Content. Ohne diese Behandlung würde der leere Content downstream als
+    // "(no response)" enden (gleiche Bug-Klasse wie der gpt-5.5-Reasoning-Bug).
+    // Greift nur wenn der server-side fallbacks-Param nicht half (z.B. auch
+    // der Fallback refused, oder fallbacks nicht verfügbar).
+    // Cast: SDK 0.39-Typen kennen 'refusal' noch nicht (neuere API-Semantik).
+    if ((response.stop_reason as string) === 'refusal' && !textContent) {
+      const category = (response as unknown as { stop_details?: { category?: string | null } }).stop_details?.category;
+      textContent = `Die Anfrage wurde vom Safety-Classifier des Modells abgelehnt` +
+        `${category ? ` (Kategorie: ${category})` : ''}. ` +
+        `Bitte formuliere die Anfrage um oder nutze ein anderes Modell (z.B. claude-opus-4-8).`;
     }
 
     return {

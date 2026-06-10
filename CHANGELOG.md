@@ -5,6 +5,86 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.860] - 2026-06-10
+
+### Added — Claude Fable 5 Support (v860)
+
+Anthropic hat **Claude Fable 5** (`claude-fable-5`) veröffentlicht (GA seit
+09.06.2026) — das leistungsfähigste allgemein verfügbare Modell, Nachfolger
+oberhalb der Opus-Linie. Specs: $10/$50 per MTok (2× Opus 4.8), 1M Context,
+128k Output, gleicher Tokenizer wie 4.7/4.8, Cache-Minimum 512 Tokens.
+
+**API-Besonderheiten von Fable 5:**
+- **Adaptive Thinking always-on** — `thinking:{type:"disabled"}` → Error;
+  ohne thinking-Field denkt das Modell trotzdem
+- **Sampling-Parameter rejected** (temperature/top_p/top_k → 400, wie 4.7/4.8)
+- **NEU: Safety-Classifier** — Refusals kommen als HTTP-200 mit
+  `stop_reason:"refusal"` + `stop_details.category` (cyber/bio/…)
+- Erzwungene 30-Tage-Datenhaltung (kein ZDR)
+
+### Code-Änderungen
+
+**`providers/anthropic.ts`:**
+- `supportsTemperature()` erweitert um `fable-5|mythos-5` — sonst 400 bei
+  jedem Call
+- **`fallbacksParam()`**: bei fable-5 wird der server-seitige
+  `fallbacks: ['claude-opus-4-8']`-Param (beta) mitgesendet. Refused
+  Requests retried die API automatisch auf Opus 4.8; die Response trägt
+  das tatsächlich genutzte Modell → **Cost-Tracking stimmt automatisch**
+  (record() hängt am response.model), Fallback-Credit verrechnet Anthropic
+  serverseitig. Schlanker als client-seitiger Retry (~5 statt ~30 Zeilen).
+- **Refusal-Handling in `mapResponse()`**: `stop_reason:"refusal"` mit
+  leerem Content (z.B. wenn auch der Fallback refused) wird in eine klare
+  Meldung übersetzt statt downstream als "(no response)" zu enden —
+  gleiche Bug-Klasse wie der gpt-5.5-Reasoning-Empty-Content-Bug (v855).
+
+**`provider.ts`** — Context-Window-Einträge `claude-fable-5` +
+`claude-mythos-5` (1M/128k).
+
+**`token-costs.ts`** — Pricing-Einträge: $10/$50, cacheRead $1.00,
+cacheWrite $12.50. Ohne Eintrag hätte das Dashboard $0 gezeigt
+(`calculateCost` returnt 0 für unbekannte Modelle).
+
+**`setup.ts`** — Fable 5 als TOP-Eintrag mit explizitem Preishinweis
+"(2x Opus-Preis)".
+
+### Kosten-/Usage-Tracking — verifiziert
+
+- `model-router.ts:executeComplete` trackt am **response.model** → bei
+  server-side Fallback wird der 4.8-Retry korrekt mit 4.8-Preisen erfasst
+- Refused-vor-Output wird von Anthropic **nicht gebillt** → API liefert
+  keine Usage → kein falscher Track
+- Kein Long-Context-Premium bei Fable 5 → `longPromptMultiplier`
+  unverändert (nur gpt-5.5)
+- `llm_usage`-Tabelle: model-Spalte ist Text → kein Schema-Change
+
+### Bewusste Entscheidungen
+
+- **Strong-Tier-Default bleibt `claude-opus-4-8`** — Fable 5 würde alle
+  Strong-Calls (Brainstorming, Project-Planner …) im Preis verdoppeln.
+  Wer wechseln will: `ALFRED_LLM_STRONG_MODEL=claude-fable-5` oder
+  `alfred setup`.
+- Fallback-Ziel `claude-opus-4-8` ist hartkodiert konservativ — bei deinen
+  Infra-Workloads (pfSense/UniFi/IPS-Themen) sind classifier-False-
+  Positives realistisch, der Fallback verhindert Silent-Deadends.
+- `effort`-Parameter weiterhin nicht implementiert (Alfred nutzt ihn auf
+  keinem Modell; Fable 5 default ist `high` — laut Doku für die meisten
+  Tasks optimal).
+
+### Tests
+
+5 neue Tests in `fable-5-support.test.ts`, alle grün: Pricing-Eintrag
+(inkl. realistischem Cost-Beispiel mit Cache-Read), Mythos-Parität,
+keine Prefix-Kollision mit opus-4-8, Context-Window-Eintrag.
+
+### Was unverändert bleibt
+
+- Alle bestehenden Modell-Einträge + Defaults
+- OpenAI/Mistral/Google-Provider
+- Streaming-Pfad-Logik (fallbacks-Param zusätzlich, Verhalten für andere
+  Modelle identisch)
+- Tool-Use, Caching-Strategie (system-prompt + tools ephemeral)
+
 ## [0.19.0-multi-ha.859] - 2026-06-10
 
 ### Fixed — KG-Location-Hygiene: "Drei Sensoren" war eine User-Home-Location (v859)

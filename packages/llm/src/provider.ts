@@ -19,7 +19,9 @@ export interface EmbeddingResult {
 
 // Known context window sizes for popular models
 const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
-  // Anthropic — Claude 4.8 / 4.7 / 4.6 / 4.5 / 4.x / 3.5 / 3.x
+  // Anthropic — Fable 5 / Claude 4.8 / 4.7 / 4.6 / 4.5 / 4.x / 3.5 / 3.x
+  'claude-fable-5':               { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
+  'claude-mythos-5':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-opus-4-8':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-opus-4-7':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-opus-4-6':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
