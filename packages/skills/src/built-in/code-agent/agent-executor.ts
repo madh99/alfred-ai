@@ -288,6 +288,27 @@ export async function executeAgent(
   const agentDef = upgradeAgentDef(agentDefRaw);
   const cwd = options.cwd ?? agentDef.cwd ?? process.cwd();
 
+  // v862 — Hard-Guard (letzte Verteidigung): Code-Agents dürfen NIE direkt in
+  // Alfreds eigener Installation arbeiten. Der reguläre Pfad ist der Self-
+  // Healing-Redirect im project_agent (Repo-Checkout + MR/PR). Dieser Guard
+  // fängt Umgehungen (z.B. delegate→code_agent.run mit Installations-cwd —
+  // exakt der Vorfall vom 10.06.2026, claude-code patchte bundle/index.js).
+  {
+    const { isSelfInstallPath } = await import('./self-healing.js');
+    if (isSelfInstallPath(cwd)) {
+      return {
+        stdout: '',
+        stderr: `cwd "${cwd}" ist Alfreds eigene Installation — Code-Agents dürfen dort nicht arbeiten ` +
+          `(Patches sind flüchtig, unreviewt und werden beim nächsten npm install überschrieben). ` +
+          `Nutze stattdessen project_agent mit demselben cwd: der Self-Healing-Redirect arbeitet ` +
+          `automatisch im Repo-Checkout und erstellt einen MR/PR zur Review.`,
+        exitCode: 126,
+        durationMs: 0,
+        modifiedFiles: [],
+      };
+    }
+  }
+
   // v608 F5 — preflight: catch missing binary BEFORE spawning, so we don't
   // burn the 10-minute initial-timeout on a process that silently dies.
   const preflightError = preflightAgent(agentDef);

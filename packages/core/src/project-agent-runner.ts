@@ -173,6 +173,12 @@ export interface ProjectAgentConfig {
   /** v652 — opt-in: bei terminal-failure 30s warten dann automatisch resume.
    *  Hardlimit max 2 Auto-Resumes pro Session-Kette gegen Infinite-Loops. */
   autoResume?: boolean;
+  /** v862 — Self-Healing-Run (cwd wurde auf Repo-Checkout umgeleitet).
+   *  Nach erfolgreichem Push: MR (GitLab) + PR (GitHub) gegen den base-Branch
+   *  erstellen statt nur zu pushen. branchPerSession ist dabei erzwungen. */
+  selfHeal?: boolean;
+  /** v862 — Checkout-Lock-Release, vom Skill injiziert. Wird im finally gerufen. */
+  selfHealReleaseLock?: () => void;
 }
 
 export type ProjectAgentCompletionCallback = (
@@ -325,6 +331,10 @@ export class ProjectAgentRunner {
       branchPerSession: configInput.branchPerSession === true,
       confirmPlan: configInput.confirmPlan === true,
       autoResume: configInput.autoResume === true,
+      // v862 — Self-Healing-Flags (Funktions-Referenz wird direkt durchgereicht,
+      // config geht nicht durch JSON)
+      selfHeal: configInput.selfHeal === true,
+      selfHealReleaseLock: configInput.selfHealReleaseLock as (() => void) | undefined,
     };
 
     const agentDef = this.agents.get(config.agentName);
@@ -1201,6 +1211,56 @@ export class ProjectAgentRunner {
         if (this.commitsRepo) {
           try { await this.commitsRepo.markSessionPushed(sessionId, pushUrl); } catch { /* skip */ }
         }
+
+        // v862 — Self-Healing: nach Push MR (GitLab) + PR (GitHub) erstellen.
+        // Der MR enthält NUR Code+Tests (kein Version-Bump/Bundle — die
+        // Release-Mechanik bleibt ein bewusster Schritt nach dem Review).
+        if (config.selfHeal && this.forgeConfig) {
+          try {
+            const branch = await gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], config.cwd, runAsUser);
+            const baseBranch = this.forgeConfig.baseBranch ?? 'main';
+            const { createForgeClient, parseRemoteUrl, gitGetRemoteUrl } = await import('@alfred/skills');
+            const prTitle = `Self-Healing: ${config.goal.slice(0, 100)}`;
+            const prBody = `Automatisch erstellter Fix-Vorschlag (Self-Healing-Pipeline v862).\n\n` +
+              `**Goal:** ${config.goal.slice(0, 800)}\n\n` +
+              `**Session:** ${sessionId}\n` +
+              `**Milestones:**\n${state.milestonesReached.map(m => `- ${m}`).join('\n')}\n\n` +
+              `Enthält nur Code + Tests — Version-Bump/CHANGELOG/Bundle folgen beim offiziellen Release nach Review.`;
+            const prUrls: string[] = [];
+            for (const provider of ['gitlab', 'github'] as const) {
+              try {
+                if (!this.forgeConfig[provider]) continue;
+                // gitlab = primäres Remote "origin"; github hängt als zweites Remote
+                // namens "github" (Konvention aus gitExecBoth/pushToRemote)
+                const remoteName = provider === 'gitlab' ? 'origin' : 'github';
+                const remoteUrl = await gitGetRemoteUrl(remoteName, { cwd: config.cwd }).catch(() => null);
+                if (!remoteUrl) continue;
+                const repoId = parseRemoteUrl(remoteUrl);
+                if (!repoId) continue;
+                const client = createForgeClient({ ...this.forgeConfig, provider });
+                const pr = await client.createPullRequest(
+                  { owner: repoId.owner, repo: repoId.repo },
+                  { title: prTitle, body: prBody, head: branch, base: baseBranch },
+                );
+                prUrls.push(pr.url);
+              } catch (err) {
+                this.logger.warn({ err: (err as Error).message?.slice(0, 200), provider, sessionId }, 'v862 self-heal PR creation failed (non-fatal)');
+              }
+            }
+            if (prUrls.length > 0) {
+              await this.sendProgress(platform, chatId,
+                `🩺 **Self-Healing abgeschlossen** — Fix liegt als Review-Vorschlag bereit:\n` +
+                prUrls.map(u => `- ${u}`).join('\n') +
+                `\n\nKein Live-Patch angewendet — die Installation ist unverändert. ` +
+                `Nach Review + Merge: offizielles Release wie gewohnt.`);
+            } else {
+              await this.sendProgress(platform, chatId,
+                `🩺 Self-Healing: Branch \`${branch}\` gepusht, aber MR/PR-Erstellung fehlgeschlagen — bitte manuell anlegen (Basis: ${baseBranch}).`);
+            }
+          } catch (err) {
+            this.logger.warn({ err, sessionId }, 'v862 self-heal MR/PR block failed (non-fatal)');
+          }
+        }
         // v663a — Auto-Tag bei aktivierter Convention (SemVer-Patch-Bump)
         if (projectConventions?.versioning?.autoTag && projectConventions.versioning.scheme === 'semver') {
           try {
@@ -1355,6 +1415,10 @@ export class ProjectAgentRunner {
       // v665a — Projekt-Lock freigeben
       if (this.projectLockRelease) {
         try { await this.projectLockRelease(config.cwd, sessionId); } catch { /* skip */ }
+      }
+      // v862 — Self-Healing-Checkout-Lock freigeben (auch bei Failure/Abort)
+      if (config.selfHealReleaseLock) {
+        try { config.selfHealReleaseLock(); } catch { /* best-effort */ }
       }
       // v605 M5 — drain the interjection inbox so any messages that arrive after
       // session termination (e.g. user thinks the agent still runs and sends

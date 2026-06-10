@@ -257,6 +257,18 @@ export const CodeAgentsConfigSchema = z.object({
     alfredCommand: z.string().optional(),
     alfredArgs: z.array(z.string()).optional(),
   }).optional(),
+  // v862 — Self-Healing-Pipeline: Code-Agents die auf Alfreds EIGENE
+  // Installation zielen werden auf einen Repo-Checkout umgeleitet und
+  // liefern MR/PR statt Live-Patches (Vorfall 10.06.: claude-code patchte
+  // /usr/lib/node_modules/@madh-io/alfred-ai/bundle/index.js — flüchtig,
+  // unreviewt, beim nächsten npm install überschrieben).
+  selfHealing: z.object({
+    repoUrl: z.string(),
+    checkoutPath: z.string(),
+    baseBranch: z.string(),
+    /** Optionales zweites Remote (z.B. GitHub) für den Branch-Push. */
+    secondaryRemoteUrl: z.string().optional(),
+  }).optional(),
 });
 
 export const ProjectAgentTemplateSchema = z.object({

@@ -889,6 +889,7 @@ PATTERN-COOKBOOK (vermeidet typische Halluzinationen):
 - UniFi-Skill action für IPS-Alerts: list_alerts (NICHT get_alerts). Andere UniFi-Actions: list_devices, list_clients, list_events, archive_alerts.
 - Todo anlegen: action "add" (NICHT create/update). Erledigt markieren: "complete" (NICHT mark_done/done). Todo-Actions: add, list, complete, uncomplete, delete, lists, clear.
 - Memory speichern: action "save" (NICHT create/store). Abrufen: "recall" oder "search" (NICHT get). Memory-Actions: save, recall, search, list, delete.
+- Bugs in ALFRED SELBST (Email-Skill, Reasoning, eigene Installation): project_agent.start mit dem Installations-cwd — der Self-Healing-Redirect arbeitet automatisch im Repo-Checkout und erstellt MR/PR zur Review. NIEMALS shell/code_agent auf /usr/lib/node_modules/@madh-io/alfred-ai oder bundle/index.js — Live-Patches sind flüchtig und unreviewt.
 
 AKTIONSTYPEN:
 1. Skill direkt ausführen: {"type":"execute_skill","description":"...","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}

@@ -21,5 +21,7 @@ export { extractBuildError } from './error-extractor.js';
 export type { ExtractedError } from './error-extractor.js';
 export { detectTestRunner, sanitizeTestCommands, looksLikeTestRunnerFlagMismatch } from './test-runner-detect.js';
 export type { TestRunner, SanitizeResult } from './test-runner-detect.js';
+export { isSelfInstallPath, prepareSelfHealCheckout } from './self-healing.js';
+export type { SelfHealingConfig, CheckoutResult, CheckoutFailure } from './self-healing.js';
 export { stageAssetsForProject, findAssetKeys } from './asset-bridge.js';
 export type { ExtractedAsset, StageAssetsResult } from './asset-bridge.js';

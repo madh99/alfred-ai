@@ -326,6 +326,12 @@ export class ProjectAgentSkill extends Skill {
     this.ownerUserId = ownerUserId;
   }
 
+  /** v862 — Self-Healing-Konfiguration (codeAgents.selfHealing), via setSelfHealing aus alfred.ts. */
+  private selfHealingConfig?: import('./self-healing.js').SelfHealingConfig;
+  setSelfHealing(cfg: import('./self-healing.js').SelfHealingConfig | undefined): void {
+    this.selfHealingConfig = cfg;
+  }
+
   /** v727 — Sandbox-Repo damit der Skill running Sandboxes erkennen + Build entsprechend anpassen kann. */
   private sandboxRepo?: {
     listByProject(projectId: string, statuses?: string[]): Promise<Array<{ id: string; worktreePath: string; hostPort: number | null; status: string; projectId: string }>>;
@@ -362,6 +368,10 @@ WANN DIESEN SKILL NUTZEN:
 - Komplexe Refactorings über mehrere Dateien/Module
 - Migrations mit Schema+Code+Tests
 - Wenn der User explizit "Project-Agent" / "build a project" sagt
+- Bugs in ALFRED SELBST: cwd auf die Alfred-Installation setzen — der
+  Self-Healing-Redirect (v862) arbeitet automatisch im Repo-Checkout,
+  erstellt einen Hotfix-Branch und liefert MR/PR zur Review. NIEMALS
+  versuchen die installierte Kopie (bundle/index.js) direkt zu patchen.
 
 WANN NICHT NUTZEN — stattdessen code_agent.run:
 - Einzelner Bug-Fix in einer Datei
@@ -611,6 +621,37 @@ ${planSummary}${commits}${userNotes}
       cwd = newCwd;
     }
 
+    // v862 — Self-Healing-Redirect: zeigt das cwd auf Alfreds EIGENE
+    // Installation, wird auf den Repo-Checkout umgeleitet. Der Run arbeitet
+    // dann im Source (mit Tests), pusht einen Hotfix-Branch und erstellt
+    // MR/PR — statt die installierte Kopie zu patchen (flüchtig, unreviewt,
+    // beim nächsten npm install überschrieben; Vorfall 10.06.2026).
+    let selfHeal = false;
+    let selfHealReleaseLock: (() => void) | undefined;
+    let selfHealHint: string | undefined;
+    {
+      const { isSelfInstallPath, prepareSelfHealCheckout } = await import('./self-healing.js');
+      if (isSelfInstallPath(cwd)) {
+        if (!this.selfHealingConfig) {
+          return {
+            success: false,
+            error: `cwd "${cwd}" zeigt auf Alfreds eigene Installation — dort darf nicht gearbeitet werden ` +
+              `(Patches sind flüchtig und unreviewt). Self-Healing ist nicht konfiguriert: ` +
+              `codeAgents.selfHealing (repoUrl, checkoutPath, baseBranch) in der Config setzen, ` +
+              `dann wird automatisch im Repo-Checkout gearbeitet und ein MR/PR erstellt.`,
+          };
+        }
+        const prep = await prepareSelfHealCheckout(this.selfHealingConfig);
+        if (!prep.ok) return { success: false, error: prep.reason };
+        selfHeal = true;
+        selfHealReleaseLock = prep.releaseLock;
+        selfHealHint = `Self-Healing-Modus: cwd \`${cwd}\` → Repo-Checkout \`${prep.checkoutPath}\` ` +
+          `(Basis: origin/${prep.baseBranch}, frisch resettet). Hotfix-Branch wird erstellt, ` +
+          `nach Erfolg: Push + MR/PR zur Review — KEIN Live-Patch auf die Installation.`;
+        cwd = prep.checkoutPath;
+      }
+    }
+
     // v617 — Wenn ein Projekt mit GENAU diesem cwd schon existiert, ist auto-bind
     // explizit gewollt. M1 + M2 dürfen dann NICHT blocken (sonst wird der korrekte
     // Continue-Pfad blockiert nur weil irgendwo ein anderes Projekt mit ähnlichem
@@ -840,25 +881,32 @@ ${planSummary}${commits}${userNotes}
       maxFixAttempts: this.config.maxFixAttemptsPerIteration ?? 3,
       buildTimeoutMs: this.config.buildCommandTimeoutMs ?? 300_000,
       // v650 — opt-in flags
-      branchPerSession: input.branchPerSession === true || input.branch_per_session === true,
+      // v862 — selfHeal erzwingt branchPerSession (Hotfix-Branch ist Pflicht im Self-Healing)
+      branchPerSession: selfHeal || input.branchPerSession === true || input.branch_per_session === true,
       confirmPlan: input.confirmPlan === true || input.confirm_plan === true,
       // v652 — Auto-Resume opt-in
       autoResume: input.autoResume === true || input.auto_resume === true,
+      // v862 — Self-Healing: Runner erstellt nach Erfolg MR/PR + released den Checkout-Lock
+      selfHeal,
+      selfHealReleaseLock,
     };
 
     // Fire-and-forget: start the runner loop asynchronously
     this.runner.run(session.taskId, config, context.platform, context.chatId).catch((err) => {
       console.error('[project-agent] Runner failed:', err);
+      // v862 — Lock auch bei Runner-Crash freigeben
+      try { selfHealReleaseLock?.(); } catch { /* best effort */ }
     });
 
     return {
       success: true,
-      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint, preflightWarnings, sandboxValidationHint, testCommandSanitizationHint },
+      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint, preflightWarnings, sandboxValidationHint, testCommandSanitizationHint, selfHeal },
       display: `🚀 Project Agent gestartet (${session.taskId})\n` +
         `Ziel: ${goal}\n` +
         `Verzeichnis: ${cwd}\n` +
         `Agent: ${agentName}\n` +
         `Build: ${buildCommands.join(' && ')}\n` +
+        (selfHealHint ? `\n🩺 ${selfHealHint}\n` : '') +
         (autoDetected ? `🔎 Auto-Detect: ${autoDetected.build.length} Build- + ${autoDetected.test.length} Test-Commands erkannt.\n` : '') +
         (testCommandSanitizationHint ? `\n🧹 ${testCommandSanitizationHint}\n` : '') +
         (sandboxValidationHint ? `\n🌐 ${sandboxValidationHint}\n` : '') +

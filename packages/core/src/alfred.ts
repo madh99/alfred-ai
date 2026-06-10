@@ -1452,6 +1452,11 @@ export class Alfred {
         this.config.codeAgents.forge,
       );
       projectAgentSkill.setRunner(projectRunner);
+      // v862 — Self-Healing-Konfiguration durchreichen (Redirect auf Repo-Checkout
+      // wenn ein Run auf Alfreds eigene Installation zielt)
+      if (this.config.codeAgents.selfHealing) {
+        projectAgentSkill.setSelfHealing(this.config.codeAgents.selfHealing);
+      }
       // v727 — Ref für späte SandboxRepo-Verdrahtung
       this.projectAgentSkillRef = projectAgentSkill;
       // v604 L8 — file-store is initialized later in init(), so we hold a ref

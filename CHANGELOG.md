@@ -5,6 +5,105 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.862] - 2026-06-11
+
+### Added — Self-Healing-Pipeline (v862)
+
+Vorfall 10.06.: Auf den Auftrag „behebe das vollumfänglich" hat Alfred
+claude-code direkt auf seine eigene Installation losgelassen und
+`bundle/index.js` (minified) live gepatcht. Der Fix funktionierte —
+war aber unreviewt, lief gegen keine Test-Suite, existierte nicht im
+Source-Repo und wurde beim v861-Deploy kommentarlos überschrieben.
+
+**Design-Ziel (mit User abgestimmt): das Verhalten nicht verbieten,
+sondern in den offiziellen Kanal lenken.** Die Eigeninitiative ist
+erwünscht — der Output muss nur als reviewbarer MR/PR landen.
+
+### Die drei Schichten
+
+**1. Redirect (`project_agent.start`):** Zeigt das cwd auf Alfreds
+eigene Installation, wird automatisch umgeleitet:
+- Repo-Checkout vorbereiten (`codeAgents.selfHealing.checkoutPath`):
+  clone falls neu, sonst `fetch` + **hard-reset auf
+  `origin/<baseBranch>`** + clean (Checkout ist Wegwerf-Arbeitsfläche;
+  node_modules bleibt als Build-Cache)
+- **Existenz-Guard**: baseBranch muss remote existieren — Tippfehler ⇒
+  sofortiger Fehler, kein stiller Fallback (Lektion aus dem
+  Email-Default-Bug)
+- **Checkout-Lock**: ein Self-Heal zur Zeit; zweiter Lauf bekommt eine
+  klare Meldung statt Working-Tree-Kollision (stale nach 6h)
+- `branchPerSession` erzwungen → `hotfix/agent-<session>`-Branch
+- Nach Erfolg (Build+Tests grün, Push zu beiden Remotes):
+  **MR auf GitLab + PR auf GitHub** gegen den baseBranch, mit Goal,
+  Session-ID und Milestones im Body
+- Der MR enthält **nur Code + Tests** — kein Version-Bump, kein
+  CHANGELOG, kein Bundle. Die Release-Mechanik bleibt ein bewusster
+  Schritt nach dem Review (verhindert auch Merge-Konflikte auf
+  package.json/bundle bei parallelen Releases)
+
+**2. Wissen (Prompts):** Reasoning-Cookbook + project_agent-Description
+erklären den Kanal („Bugs in Alfred selbst → project_agent, Redirect
+übernimmt; NIEMALS bundle/index.js patchen").
+
+**3. Hard-Guard (`executeAgent`):** Letzte Verteidigung — Code-Agents
+mit Installations-cwd werden mit exitCode 126 und Redirect-Hinweis
+abgelehnt (fängt Umgehungen wie delegate→code_agent.run, exakt der
+Pfad vom 10.06.).
+
+### Konfiguration
+
+```yaml
+codeAgents:
+  selfHealing:
+    repoUrl: http://git.lokalkraft.at/madh/alfred-ai.git
+    checkoutPath: /root/alfred-src
+    baseBranch: feature/multi-user
+```
+Ohne diese Config: Self-Install-cwds werden mit klarer Fehlermeldung
+abgelehnt (Guard wirkt immer; der Redirect braucht die Config).
+Branch-Wechsel später: `baseBranch` in der Config ändern + restart.
+
+### Bewusste Entscheidungen (mit User abgestimmt)
+
+- **Kein Live-Hotfix** nach dem MR — der Publish-Zyklus ist schnell
+  genug; die Brücke lohnt das Risiko nicht (später als opt-in denkbar)
+- **Self-Restart bleibt wie es ist**: Alfred FRAGT, der User restartet —
+  das war am 10.06. bereits das korrekte Verhalten (Restarts kamen vom
+  User auf Alfreds Nachfrage, nicht von Alfred selbst)
+- `isSelfInstallPath` erkennt: npm-Global-Pfade
+  (`node_modules/@madh-io/alfred-ai`), das Verzeichnis des laufenden
+  Entrypoints (`process.argv[1]`), optional das Daten-Verzeichnis
+
+### Flow nach einem Alfred-Fix
+
+```
+User: „behebe X" → Redirect → Checkout (frisch) → hotfix-Branch
+→ Phasen mit pnpm build + Tests → Push (gitlab+github)
+→ MR !N + PR #N → Chat-Meldung mit URLs
+→ User reviewed + merged → offizielles Release (Version+CHANGELOG+
+  Bundle+publish) → Deploy
+```
+
+### Voraussetzungen auf den Nodes
+
+- git + pnpm auf .92/.93 (für Build/Tests im Checkout)
+- ~2 GB Disk für Checkout + node_modules (nach Cleanup: 11 GB frei)
+- forge-Tokens bereits konfiguriert (`codeAgents.forge`)
+
+### Tests
+
+7 neue in `self-healing.test.ts`, alle grün: npm-Global-Pfade
+(Linux + nvm + Windows), Daten-Verzeichnis, normale Projekt-cwds
+durchgelassen, **der Self-Heal-Checkout selbst ist KEIN Self-Target**,
+fremde node_modules durchgelassen, case-/separator-tolerant.
+
+### Was unverändert bleibt
+
+- Normale project_agent/code_agent-Läufe auf User-Projekten
+- Sandbox-/Compose-Pfade
+- pushToRemote/Auto-Tag-Mechanik (MR/PR-Block kommt danach, additiv)
+- Self-Restart-Verhalten (kein Code — Status quo war korrekt)
+
 ## [0.19.0-multi-ha.861] - 2026-06-10
 
 ### Fixed — Email Graph-ID-Routing: aWATTar-Rechnungsverarbeitung (v861)

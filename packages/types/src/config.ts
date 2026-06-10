@@ -297,6 +297,22 @@ export interface CodeAgentsConfig {
     /** Optional: args-Override für `alfred mcp-server` invocation. */
     alfredArgs?: string[];
   };
+  /**
+   * v862 — Self-Healing-Pipeline. Code-Agents mit cwd auf Alfreds eigener
+   * Installation werden auf einen frischen Repo-Checkout umgeleitet
+   * (fetch + hard-reset auf baseBranch vor jedem Lauf) und liefern am Ende
+   * MR (GitLab) + PR (GitHub) statt Live-Patches auf die Installation.
+   */
+  selfHealing?: {
+    /** Clone-URL des Alfred-Source-Repos (primäres Remote, z.B. GitLab). */
+    repoUrl: string;
+    /** Lokaler Checkout-Pfad auf dem Node (z.B. /root/alfred-src). */
+    checkoutPath: string;
+    /** Basis-Branch für Hotfix-Branches + MR-Ziel. Muss remote existieren (Guard). */
+    baseBranch: string;
+    /** Optionales zweites Remote (z.B. GitHub) für den Branch-Push. */
+    secondaryRemoteUrl?: string;
+  };
 }
 
 export interface ProjectAgentTemplateConfig {
