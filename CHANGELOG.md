@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.868.2] - 2026-06-11
+
+### Fixed — explizite Tier-Keys schlagen mistralApiKey-Propagation (v868.2)
+
+Die standalone-`mistralApiKey`-Propagation überschrieb Tier-Keys bei
+`provider: mistral` unconditional — auch explizit im YAML/ENV gesetzte.
+Gemeint war nur die Korrektur GEERBTER Fehl-Keys (Shared-Vererbung kopiert
+den llm-weiten Key, z.B. Anthropic, auch in Mistral-Tiers).
+
+Jetzt: Der Loader merkt sich VOR der Shared-Vererbung, welche Tiers einen
+expliziten eigenen Key haben — die Propagation ersetzt nur noch fehlende
+oder geerbte Keys. Ein bewusst abweichender Key (z.B. zweiter
+Mistral-Account für den Notfall-Fallback) bleibt unangetastet.
+Bestehende Setups ohne explizite Tier-Keys: Verhalten unverändert.
+
+### Tests
+
+2 neue Loader-Tests: expliziter fallback-Key überlebt die Propagation;
+geerbter Fehl-Key wird weiterhin korrigiert.
+
 ## [0.19.0-multi-ha.868.1] - 2026-06-11
 
 ### Fixed — fallback-Tier vollständig durchgereicht (v868.1)

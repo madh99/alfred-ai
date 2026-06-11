@@ -461,7 +461,16 @@ export class ConfigLoader {
 
     // Propagate top-level LLM apiKey to tiers that lack their own
     const llmConfig = validated.llm as Record<string, unknown>;
+    // v868.2 — VOR der Shared-Vererbung merken, welche Tiers einen EXPLIZITEN
+    // eigenen Key haben (aus YAML oder ALFRED_LLM_<TIER>_API_KEY). Die
+    // Mistral-Propagation unten darf nur fehlende/geerbte Keys ersetzen —
+    // explizite Config schlägt implizite Propagation.
+    const explicitTierKeys = new Set<string>();
     if (llmConfig && typeof llmConfig === 'object') {
+      for (const tier of ['default', 'strong', 'fast', 'embeddings', 'local', 'fallback']) {
+        const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
+        if (tierConfig?.apiKey) explicitTierKeys.add(tier);
+      }
       const sharedApiKey = (llmConfig as Record<string, unknown>).apiKey as string | undefined
         ?? ((llmConfig.default as Record<string, unknown> | undefined)?.apiKey as string | undefined);
 
@@ -483,13 +492,15 @@ export class ConfigLoader {
       if (defaultTier?.provider === 'mistral' && !defaultTier.apiKey) {
         defaultTier.apiKey = mistralApiKey;
       }
-      // Also fill tier keys when tier provider is mistral
-      // (override any inherited default-tier key — e.g. Anthropic key from shared propagation)
-      // v868.1 — inkl. fallback: `fallback: {provider: mistral}` ohne eigenen Key
-      // soll den vorhandenen standalone mistralApiKey bekommen.
+      // Tier-Keys bei provider=mistral befüllen. Historie: die Shared-Vererbung
+      // oben kopiert den llm-weiten Key (z.B. Anthropic) auch in Mistral-Tiers —
+      // solche GEERBTEN Fehl-Keys werden hier korrigiert.
+      // v868.2 — aber NUR geerbte/fehlende: ein explizit im YAML/ENV gesetzter
+      // Tier-Key (z.B. zweiter Mistral-Account für den Notfall-Fallback) bleibt
+      // unangetastet. Vorher überschrieb die Propagation unconditional.
       for (const tier of ['strong', 'fast', 'embeddings', 'local', 'fallback']) {
         const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
-        if (tierConfig?.provider === 'mistral') {
+        if (tierConfig?.provider === 'mistral' && !explicitTierKeys.has(tier)) {
           tierConfig.apiKey = mistralApiKey;
         }
       }

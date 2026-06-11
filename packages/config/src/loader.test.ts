@@ -75,6 +75,44 @@ describe('ConfigLoader', () => {
     }
   });
 
+  // v868.2 — expliziter Tier-Key schlägt die standalone-mistralApiKey-Propagation
+  it('v868.2: explicit fallback tier key survives standalone mistralApiKey propagation', () => {
+    process.env['ALFRED_LLM_PROVIDER'] = 'anthropic';
+    process.env['ALFRED_LLM_FALLBACK_PROVIDER'] = 'mistral';
+    process.env['ALFRED_LLM_FALLBACK_MODEL'] = 'mistral-large-latest';
+    process.env['ALFRED_LLM_FALLBACK_API_KEY'] = 'expliziter-zweit-key';
+    process.env['ALFRED_MISTRAL_API_KEY'] = 'standalone-key';
+    try {
+      const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');
+      // explizit gesetzter Key gewinnt — Propagation darf ihn nicht ersetzen
+      expect(config.llm.fallback?.apiKey).toBe('expliziter-zweit-key');
+    } finally {
+      delete process.env['ALFRED_LLM_FALLBACK_PROVIDER'];
+      delete process.env['ALFRED_LLM_FALLBACK_MODEL'];
+      delete process.env['ALFRED_LLM_FALLBACK_API_KEY'];
+      delete process.env['ALFRED_MISTRAL_API_KEY'];
+    }
+  });
+
+  // v868.2 — GEERBTER Fehl-Key (Shared-Vererbung) wird weiterhin korrigiert
+  it('v868.2: inherited shared key on mistral tier is still corrected by mistralApiKey', () => {
+    process.env['ALFRED_LLM_PROVIDER'] = 'anthropic';
+    process.env['ALFRED_ANTHROPIC_API_KEY'] = 'anthropic-shared-key';
+    process.env['ALFRED_LLM_FALLBACK_PROVIDER'] = 'mistral';
+    process.env['ALFRED_LLM_FALLBACK_MODEL'] = 'mistral-large-latest';
+    process.env['ALFRED_MISTRAL_API_KEY'] = 'standalone-key';
+    try {
+      const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');
+      // ohne eigenen Key: erst erbt der Tier den Anthropic-Key, dann korrigiert
+      // die Mistral-Propagation auf den standalone Key — NICHT der geerbte
+      expect(config.llm.fallback?.apiKey).toBe('standalone-key');
+    } finally {
+      delete process.env['ALFRED_LLM_FALLBACK_PROVIDER'];
+      delete process.env['ALFRED_LLM_FALLBACK_MODEL'];
+      delete process.env['ALFRED_MISTRAL_API_KEY'];
+    }
+  });
+
   // v868.1 — standalone mistralApiKey propagiert in den fallback-Tier (provider mistral)
   it('v868: standalone ALFRED_MISTRAL_API_KEY fills mistral fallback tier key', () => {
     process.env['ALFRED_LLM_PROVIDER'] = 'anthropic';
