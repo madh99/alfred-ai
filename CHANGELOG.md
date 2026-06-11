@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.869.1] - 2026-06-11
+
+### Added — Billing-Recovery-Entwarnung + Cooldown (v869.1, besprochen als „v868.3")
+
+**1. Recovery-Meldung**: Hatte ein Tier einen Billing-Alert, sendet der
+nächste erfolgreiche Call auf diesem Tier einmalig „✅ Provider wieder
+verfügbar". Dabei werden Alert-Flag UND 6h-Dedupe-Fenster zurückgesetzt —
+ein ERNEUTER Ausfall nach der Gut-Meldung alarmiert sofort wieder (das
+Dedupe gilt nur innerhalb einer ungebrochenen Störung).
+
+**2. Billing-Cooldown (5 min/Tier)**: Nach einem Guthaben-/Quota-Fehler
+wird der Primary des Tiers 5 Minuten übersprungen (direkt Fallback-Kette)
+— spart den toten 400er pro Call, solange das Guthaben bekannt leer ist.
+Auch die Fallback-Kette überspringt Tiers im Cooldown. Nach Ablauf
+automatischer Re-Probe; Erfolg → Entwarnung + kompletter Reset. Rein
+zeitbasiert, kein Hängenbleiben möglich.
+
+**3. Bewusst NICHT**: Cooldown für Transient-Fehler (529/Overload) —
+SDK-Retries gelingen dort meist; ein Breaker würde regelmäßig unnötig
+auf andere Modelle ausweichen (Qualitätsverlust bei strong-Calls).
+
+### Tests
+
+4 neue: Cooldown verhindert tote Primary-Calls; 529 bleibt stateless;
+Recovery-Zyklus (failure → recovered → sofortiger erneuter failure-Alert);
+Fallback-Kette überspringt Cooldown-Tiers.
+
 ## [0.19.0-multi-ha.869] - 2026-06-11
 
 ### Fixed — Offene-Punkte-Pipeline: Auto-Done, Triage, Reopen, Dedup (v869)

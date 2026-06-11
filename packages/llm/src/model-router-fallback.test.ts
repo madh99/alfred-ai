@@ -114,3 +114,102 @@ describe('v868 ModelRouter Billing-Fallback', () => {
     expect(res.content).toBe('antwort-von-haiku');
   });
 });
+
+/** v868.3 — Billing-Cooldown + Recovery-Entwarnung. */
+describe('v868.3 Billing-Cooldown + Recovery', () => {
+  /** Provider mit umschaltbarem Verhalten + Call-Zähler. */
+  function togglableProvider(label: string) {
+    const state = { behavior: 'ok' as 'ok' | 'billing', calls: 0 };
+    const provider = {
+      async initialize() { /* noop */ },
+      async complete(): Promise<LLMResponse> {
+        state.calls++;
+        if (state.behavior === 'billing') throw CREDIT_ERROR;
+        return { content: `antwort-von-${label}`, model: label, usage: { inputTokens: 1, outputTokens: 1 } } as LLMResponse;
+      },
+      async *stream() { yield { type: 'text', text: label }; },
+      async embed() { return undefined; },
+      supportsEmbeddings() { return false; },
+      isAvailable() { return true; },
+      getContextWindow() { return { total: 100000, maxOutput: 4096 }; },
+    } as unknown as LLMProvider;
+    return { provider, state };
+  }
+
+  it('Cooldown: nach Billing-Fehler wird der Primary 5 min übersprungen (kein toter 400er pro Call)', async () => {
+    const fast = togglableProvider('haiku');
+    fast.state.behavior = 'billing';
+    const router = buildRouter({ fast: fast.provider, default: mockProvider('ok', 'gpt') });
+    await router.complete({ messages: [{ role: 'user', content: 'a' }], tier: 'fast' }); // Fehler → Cooldown
+    expect(fast.state.calls).toBe(1);
+    const res = await router.complete({ messages: [{ role: 'user', content: 'b' }], tier: 'fast' }); // Cooldown aktiv
+    expect(res.content).toBe('antwort-von-gpt');
+    expect(fast.state.calls).toBe(1); // Primary NICHT erneut probiert
+  });
+
+  it('Transient (529) setzt KEINEN Cooldown — Primary wird beim nächsten Call wieder probiert', async () => {
+    let calls = 0;
+    const overloaded: LLMProvider = {
+      ...mockProvider('ok', 'x'),
+      async complete() { calls++; throw new Error('529 overloaded_error'); },
+    } as unknown as LLMProvider;
+    const router = buildRouter({ fast: overloaded, default: mockProvider('ok', 'gpt') });
+    await router.complete({ messages: [{ role: 'user', content: 'a' }], tier: 'fast' });
+    await router.complete({ messages: [{ role: 'user', content: 'b' }], tier: 'fast' });
+    expect(calls).toBe(2); // jedes Mal regulär probiert — stateless wie gehabt
+  });
+
+  it('Recovery: Re-Probe nach Cooldown-Ablauf → Entwarnung + Dedupe-Reset → erneuter Ausfall alarmiert sofort', async () => {
+    const fast = togglableProvider('haiku');
+    fast.state.behavior = 'billing';
+    const router = buildRouter({ fast: fast.provider, default: mockProvider('ok', 'gpt') });
+    const alerts: Array<{ kind: string; tier: string }> = [];
+    router.setBillingAlertCallback((info) => alerts.push({ kind: info.kind, tier: info.tier }));
+
+    // 1. Ausfall → failure-Alert + Cooldown
+    await router.complete({ messages: [{ role: 'user', content: 'a' }], tier: 'fast' });
+    expect(alerts).toEqual([{ kind: 'failure', tier: 'fast' }]);
+
+    // Cooldown künstlich ablaufen lassen + Provider erholt sich (User hat aufgeladen)
+    (router as unknown as { billingCooldownUntil: Map<string, number> }).billingCooldownUntil.set('fast', Date.now() - 1);
+    fast.state.behavior = 'ok';
+
+    // 2. Re-Probe erfolgreich → recovered-Entwarnung
+    const res = await router.complete({ messages: [{ role: 'user', content: 'b' }], tier: 'fast' });
+    expect(res.content).toBe('antwort-von-haiku');
+    expect(alerts).toEqual([
+      { kind: 'failure', tier: 'fast' },
+      { kind: 'recovered', tier: 'fast' },
+    ]);
+
+    // 3. ERNEUTER Ausfall direkt danach → alarmiert SOFORT wieder (Dedupe wurde resettet)
+    fast.state.behavior = 'billing';
+    await router.complete({ messages: [{ role: 'user', content: 'c' }], tier: 'fast' });
+    expect(alerts).toEqual([
+      { kind: 'failure', tier: 'fast' },
+      { kind: 'recovered', tier: 'fast' },
+      { kind: 'failure', tier: 'fast' },
+    ]);
+  });
+
+  it('Fallback-Kette überspringt Tiers im Cooldown (bekannt leer)', async () => {
+    const fast = togglableProvider('haiku');
+    const def = togglableProvider('gpt');
+    fast.state.behavior = 'billing';
+    def.state.behavior = 'billing';
+    const router = buildRouter(
+      { fast: fast.provider, default: def.provider, fallback: mockProvider('ok', 'mistral') },
+      { fallback: { provider: 'mistral', model: 'mistral-test' } } as Partial<MultiModelConfig>,
+    );
+    // 1. Call: fast billing → Kette: default billing → mistral ok (beide bekommen Cooldown)
+    const r1 = await router.complete({ messages: [{ role: 'user', content: 'a' }], tier: 'fast' });
+    expect(r1.content).toBe('antwort-von-mistral');
+    const fastCalls = fast.state.calls;
+    const defCalls = def.state.calls;
+    // 2. Call: beide im Cooldown → direkt mistral, keine weiteren toten Versuche
+    const r2 = await router.complete({ messages: [{ role: 'user', content: 'b' }], tier: 'fast' });
+    expect(r2.content).toBe('antwort-von-mistral');
+    expect(fast.state.calls).toBe(fastCalls);
+    expect(def.state.calls).toBe(defCalls);
+  });
+});

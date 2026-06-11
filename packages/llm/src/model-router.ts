@@ -13,13 +13,23 @@ import type { TokenCostSummary, UsagePersistFn } from './token-costs.js';
 
 const TIERS: ModelTier[] = ['default', 'strong', 'fast', 'embeddings', 'local', 'fallback'];
 
-/** v868 — Payload des Billing-Alert-Callbacks (Owner-Benachrichtigung). */
+/** v868 — Payload des Billing-Alert-Callbacks (Owner-Benachrichtigung).
+ *  v868.3 — kind: 'failure' (Guthaben/Quota-Fehler) | 'recovered' (Entwarnung). */
 export interface BillingAlertInfo {
+  kind: 'failure' | 'recovered';
   tier: ModelTier;
   provider: string;
   model: string;
   message: string;
 }
+
+/** v868.3 — Billing-Cooldown: nach einem Guthaben-Fehler wird der Primary des
+ *  Tiers 5 min übersprungen (direkt Fallback-Kette) — ein leeres Guthaben heilt
+ *  nicht in Sekunden. Danach automatischer Re-Probe; Erfolg → Entwarnung +
+ *  kompletter Reset (auch des Alert-Dedupe-Fensters, damit ein ERNEUTER Ausfall
+ *  sofort wieder alarmiert). Bewusst NUR für Billing — 529/Transient bleiben
+ *  stateless (SDK-Retries gelingen dort meist, ein Breaker würde Qualität kosten). */
+const BILLING_COOLDOWN_MS = 5 * 60_000;
 
 /** v868 — Fallback-Reihenfolge: 'fallback' (Notfall-Provider, z.B. Mistral)
  *  steht bewusst am ENDE — er springt nur ein wenn alle regulären Tiers
@@ -133,8 +143,17 @@ export class ModelRouter extends LLMProvider {
       { requestedTier: sanitized.tier ?? 'default', resolvedTier, model: tierConfig?.model },
       'LLM routing request',
     );
+    // v868.3 — Billing-Cooldown: Primary für 5 min überspringen statt pro Call
+    // einen toten 400er zu produzieren. Nach Ablauf automatischer Re-Probe.
+    if (this.isInBillingCooldown(resolvedTier)) {
+      this.logger?.info({ tier: resolvedTier }, 'v868.3 billing-cooldown aktiv — Primary übersprungen, Fallback-Kette');
+      return this.completeWithFallback(withEffort, resolvedTier, new Error(`Tier "${resolvedTier}" im Billing-Cooldown (Guthaben/Quota-Fehler vor < 5 min)`));
+    }
     try {
-      return await this.executeComplete(provider, resolvedTier, withEffort);
+      const response = await this.executeComplete(provider, resolvedTier, withEffort);
+      // v868.3 — Re-Probe erfolgreich → Entwarnung + Reset (inkl. Alert-Dedupe)
+      this.maybeNotifyRecovery(resolvedTier);
+      return response;
     } catch (err) {
       // v868 — Billing-Fehler (Guthaben leer, Quota erschöpft) lösen jetzt
       // ebenfalls den Tier-Fallback aus. Vorher: 400 → sofort throw, der
@@ -142,7 +161,7 @@ export class ModelRouter extends LLMProvider {
       // Anthropic-Guthaben-Vorfall 11.06. fielen dadurch Insight/Reasoning/
       // Summarizer aus, obwohl OpenAI als default-Tier verfügbar war.
       const billing = this.isBillingError(err);
-      if (billing) this.notifyBillingError(resolvedTier, err);
+      if (billing) this.registerBillingFailure(resolvedTier, err);
       if (!billing && !this.isRetryableError(err)) throw err;
       this.logger?.warn(
         { err, tier: resolvedTier, billing },
@@ -167,7 +186,43 @@ export class ModelRouter extends LLMProvider {
   /** v868 — Owner-Alert bei Billing-Fehlern, dedupe 6h pro Tier. */
   private billingAlertCallback?: (info: BillingAlertInfo) => void;
   private lastBillingAlertAt = new Map<ModelTier, number>();
+  /** v868.3 — Cooldown pro Tier (Primary überspringen bis Timestamp). */
+  private billingCooldownUntil = new Map<ModelTier, number>();
+  /** v868.3 — Tiers mit offenem Billing-Vorfall (für die Entwarnung). */
+  private pendingRecovery = new Set<ModelTier>();
   setBillingAlertCallback(cb: (info: BillingAlertInfo) => void): void { this.billingAlertCallback = cb; }
+
+  /** v868.3 — zentraler Einstieg für Billing-Fehler: Cooldown setzen + Alert (deduped). */
+  private registerBillingFailure(tier: ModelTier, err: unknown): void {
+    this.billingCooldownUntil.set(tier, Date.now() + BILLING_COOLDOWN_MS);
+    this.pendingRecovery.add(tier);
+    this.notifyBillingError(tier, err);
+  }
+
+  private isInBillingCooldown(tier: ModelTier): boolean {
+    return (this.billingCooldownUntil.get(tier) ?? 0) > Date.now();
+  }
+
+  /** v868.3 — erfolgreicher Call auf einem Tier mit offenem Billing-Vorfall:
+   *  Entwarnung senden + ALLES zurücksetzen, inkl. Alert-Dedupe-Fenster —
+   *  ein erneuter Ausfall nach der Gut-Meldung alarmiert sofort wieder. */
+  private maybeNotifyRecovery(tier: ModelTier): void {
+    if (!this.pendingRecovery.has(tier)) return;
+    this.pendingRecovery.delete(tier);
+    this.lastBillingAlertAt.delete(tier);
+    this.billingCooldownUntil.delete(tier);
+    const cfg = this.multiConfig[tier];
+    try {
+      this.billingAlertCallback?.({
+        kind: 'recovered',
+        tier,
+        provider: cfg?.provider ?? 'unknown',
+        model: cfg?.model ?? 'unknown',
+        message: 'Provider antwortet wieder regulär — Fallback nicht mehr aktiv.',
+      });
+    } catch { /* Alert darf nichts brechen */ }
+  }
+
   private notifyBillingError(tier: ModelTier, err: unknown): void {
     if (!this.billingAlertCallback) return;
     const last = this.lastBillingAlertAt.get(tier) ?? 0;
@@ -176,6 +231,7 @@ export class ModelRouter extends LLMProvider {
     const cfg = this.multiConfig[tier];
     try {
       this.billingAlertCallback({
+        kind: 'failure',
         tier,
         provider: cfg?.provider ?? 'unknown',
         model: cfg?.model ?? 'unknown',
@@ -223,14 +279,18 @@ export class ModelRouter extends LLMProvider {
     // v868 — 'fallback'-Tier (Notfall-Provider) ans Ende der Kette
     const fallbackOrder = FALLBACK_ORDER.filter(t => t !== failedTier);
     for (const tier of fallbackOrder) {
+      // v868.3 — Tiers im Billing-Cooldown überspringen (bekannt leer)
+      if (this.isInBillingCooldown(tier)) continue;
       const provider = this.providers.get(tier);
       if (!provider) continue;
       try {
         this.logger?.info({ tier }, 'Fallback to tier');
-        return await this.executeComplete(provider, tier, request);
+        const response = await this.executeComplete(provider, tier, request);
+        this.maybeNotifyRecovery(tier); // v868.3 — Tier hat sich bewiesen
+        return response;
       } catch (err) {
-        // v868 — auch Billing-Fehler im Fallback-Tier melden (dedupe greift)
-        if (this.isBillingError(err)) this.notifyBillingError(tier, err);
+        // v868/v868.3 — Billing-Fehler im Fallback-Tier: Cooldown + Alert (deduped)
+        if (this.isBillingError(err)) this.registerBillingFailure(tier, err);
         continue;
       }
     }
@@ -240,37 +300,52 @@ export class ModelRouter extends LLMProvider {
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
     const { provider, resolvedTier } = this.resolve(request.tier);
     const withEffort = this.withTierEffort(request, resolvedTier);
+    // v868.3 — Billing-Cooldown: Primary überspringen, direkt Fallback-Kette
+    if (this.isInBillingCooldown(resolvedTier)) {
+      this.logger?.info({ tier: resolvedTier }, 'v868.3 billing-cooldown aktiv — Stream direkt über Fallback-Kette');
+      yield* this.streamFallback(request, resolvedTier, new Error(`Tier "${resolvedTier}" im Billing-Cooldown`));
+      return;
+    }
     let hasYielded = false;
     try {
       for await (const event of provider.stream(withEffort)) {
         hasYielded = true;
         yield event;
       }
+      this.maybeNotifyRecovery(resolvedTier); // v868.3 — Re-Probe erfolgreich
+      return;
     } catch (err) {
       // If we already yielded chunks, fallback would produce a spliced/garbled stream
       // v868 — Billing-Fehler (Guthaben/Quota) lösen den Fallback ebenfalls aus
       const billing = this.isBillingError(err);
-      if (billing) this.notifyBillingError(resolvedTier, err);
+      if (billing) this.registerBillingFailure(resolvedTier, err);
       if (hasYielded || (!billing && !this.isRetryableError(err))) throw err;
       this.logger?.warn(
         { err, tier: resolvedTier, billing },
         'Stream provider failed before first chunk, attempting fallback',
       );
-      const fallbackOrder = FALLBACK_ORDER.filter(t => t !== resolvedTier);
-      for (const tier of fallbackOrder) {
-        const fbProvider = this.providers.get(tier);
-        if (!fbProvider) continue;
-        try {
-          this.logger?.info({ tier }, 'Stream fallback to tier');
-          yield* fbProvider.stream(this.withTierEffort(request, tier));
-          return;
-        } catch (fbErr) {
-          if (this.isBillingError(fbErr)) this.notifyBillingError(tier, fbErr);
-          continue;
-        }
-      }
-      throw err;
+      yield* this.streamFallback(request, resolvedTier, err);
     }
+  }
+
+  /** v868.3 — Fallback-Kette für Streams (Cooldown-aware, mit Recovery-Check). */
+  private async *streamFallback(request: LLMRequest, failedTier: ModelTier, originalErr: unknown): AsyncIterable<LLMStreamEvent> {
+    const fallbackOrder = FALLBACK_ORDER.filter(t => t !== failedTier);
+    for (const tier of fallbackOrder) {
+      if (this.isInBillingCooldown(tier)) continue; // bekannt leer — überspringen
+      const fbProvider = this.providers.get(tier);
+      if (!fbProvider) continue;
+      try {
+        this.logger?.info({ tier }, 'Stream fallback to tier');
+        yield* fbProvider.stream(this.withTierEffort(request, tier));
+        this.maybeNotifyRecovery(tier);
+        return;
+      } catch (fbErr) {
+        if (this.isBillingError(fbErr)) this.registerBillingFailure(tier, fbErr);
+        continue;
+      }
+    }
+    throw originalErr;
   }
 
   async embed(text: string): Promise<EmbeddingResult | undefined> {

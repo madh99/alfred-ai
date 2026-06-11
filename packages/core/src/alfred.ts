@@ -559,13 +559,15 @@ export class Alfred {
           : this.config.discord?.enabled ? 'discord' : undefined;
         const adapterRef = platform ? this.adapters.get(platform as Platform) : undefined;
         if (!adapterRef) return;
-        void adapterRef.sendMessage(ownerChatId,
-          `⚠️ **LLM-Billing-Fehler** — Provider "${info.provider}" (Tier ${info.tier}, ${info.model}):\n` +
-          `${info.message}\n\n` +
-          `Tier-Fallback auf andere Provider ist aktiv. Bitte Guthaben/Quota prüfen — ` +
-          `bis dahin laufen Calls über die verbleibenden Provider (ggf. teurer/anderes Modell).`,
-        ).catch(() => { /* Alert best-effort */ });
-        this.logger.warn({ ...info }, 'v868 LLM billing failure — owner alerted');
+        // v868.3 — Entwarnung vs. Ausfall unterscheiden
+        const text = info.kind === 'recovered'
+          ? `✅ **LLM-Provider wieder verfügbar** — "${info.provider}" (Tier ${info.tier}, ${info.model}) antwortet wieder regulär. Fallback nicht mehr aktiv.`
+          : `⚠️ **LLM-Billing-Fehler** — Provider "${info.provider}" (Tier ${info.tier}, ${info.model}):\n` +
+            `${info.message}\n\n` +
+            `Tier-Fallback auf andere Provider ist aktiv (Primary wird 5 min übersprungen, danach automatischer Re-Probe). ` +
+            `Bitte Guthaben/Quota prüfen — bis dahin laufen Calls über die verbleibenden Provider (ggf. teurer/anderes Modell).`;
+        void adapterRef.sendMessage(ownerChatId, text).catch(() => { /* Alert best-effort */ });
+        this.logger.warn({ ...info }, info.kind === 'recovered' ? 'v868.3 LLM billing recovered — owner informed' : 'v868 LLM billing failure — owner alerted');
       } catch { /* Alert darf nichts brechen */ }
     });
 
