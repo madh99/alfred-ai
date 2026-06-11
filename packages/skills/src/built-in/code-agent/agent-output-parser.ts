@@ -22,6 +22,15 @@
 
 export type AgentOutputFormat = 'text' | 'claude-stream-json' | 'codex-jsonl' | 'vibe-streaming';
 
+/** v866 — Token-Usage eines Agent-Laufs (aus result-/turn.completed-Events). */
+export interface ParsedUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  /** API-Äquivalent-Kosten laut CLI (bei Subscriptions informativ, nicht abgerechnet). */
+  costUsd?: number;
+}
+
 export interface ParsedChunk {
   /** Menschenlesbare Progress-Zeilen (mehrere möglich pro Input-Zeile). */
   progress: string[];
@@ -29,6 +38,10 @@ export interface ParsedChunk {
   finalTextChunks: string[];
   /** True wenn Agent ein Terminal-Event (result/turn.completed) gemeldet hat. */
   ended: boolean;
+  /** v866 — Token-Usage, wenn dieses Event welche meldet (vorher verworfen). */
+  usage?: ParsedUsage;
+  /** v866 — Modell aus dem init-Event (z.B. claude-fable-5). */
+  model?: string;
 }
 
 const EMPTY: ParsedChunk = { progress: [], finalTextChunks: [], ended: false };
@@ -96,7 +109,8 @@ function parseClaudeEvent(evt: Record<string, unknown>): ParsedChunk {
       const subtype = evt.subtype as string | undefined;
       if (subtype === 'init') {
         const model = (evt.model as string) ?? 'unknown';
-        return { progress: [`🚀 Claude init (model=${model})`], finalTextChunks: [], ended: false };
+        // v866 — model strukturiert mitliefern (für CLI-Usage-Tracking)
+        return { progress: [`🚀 Claude init (model=${model})`], finalTextChunks: [], ended: false, model };
       }
       return { progress: [`ℹ system/${subtype ?? '?'}`], finalTextChunks: [], ended: false };
     }
@@ -142,7 +156,16 @@ function parseClaudeEvent(evt: Record<string, unknown>): ParsedChunk {
       const cost = evt.total_cost_usd as number | undefined;
       const progress = [`🏁 result (${success ? 'success' : 'error'}${cost !== undefined ? `, $${cost.toFixed(4)}` : ''})`];
       const finalTextChunks = text && text.length > 0 ? [text] : [];
-      return { progress, finalTextChunks, ended: true };
+      // v866 — Usage strukturiert extrahieren (vorher: nur Kosten als Progress-
+      // String gerendert, Token-Zahlen komplett verworfen).
+      const u = evt.usage as Record<string, unknown> | undefined;
+      const usage = u ? {
+        inputTokens: Number(u.input_tokens ?? 0),
+        outputTokens: Number(u.output_tokens ?? 0),
+        cacheReadTokens: Number(u.cache_read_input_tokens ?? 0),
+        costUsd: cost,
+      } : (cost !== undefined ? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: cost } : undefined);
+      return { progress, finalTextChunks, ended: true, usage };
     }
     default:
       return EMPTY;
@@ -202,7 +225,13 @@ function parseCodexEvent(evt: Record<string, unknown>): ParsedChunk {
     case 'turn.completed': {
       const usage = evt.usage as Record<string, unknown> | undefined;
       const out = usage?.output_tokens ?? 0;
-      return { progress: [`🏁 turn completed (out=${out})`], finalTextChunks: [], ended: true };
+      // v866 — Usage strukturiert (codex meldet input/cached_input/output)
+      const parsedUsage = usage ? {
+        inputTokens: Number(usage.input_tokens ?? 0),
+        outputTokens: Number(usage.output_tokens ?? 0),
+        cacheReadTokens: Number(usage.cached_input_tokens ?? 0),
+      } : undefined;
+      return { progress: [`🏁 turn completed (out=${out})`], finalTextChunks: [], ended: true, usage: parsedUsage };
     }
     case 'error': {
       const msg = String(evt.message ?? evt.error ?? 'unknown');

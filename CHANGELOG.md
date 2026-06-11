@@ -5,6 +5,61 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.866] - 2026-06-11
+
+### Added — CLI-Agent-Usage-Tracking + Arbeitszeit-Statistik-Fixes (v866)
+
+**A) „Laufend"-Zähler funktioniert jetzt wirklich.** Die project_sessions-Zeile
+wurde erst bei Session-ENDE erstellt (`finishSession` mit rückwirkender
+Startzeit) — `attachSession()` existierte seit v668, hatte aber null Aufrufer.
+Der Laufend-Zähler (ended_at NULL) konnte strukturell nie >0 sein. Jetzt:
+- Runner ruft beim START `attachSession()` (inkl. Sandbox→Projekt-Resolution
+  wie im Completion-Pfad) → Laufend zählt live, Gesamtzeit tickt mit
+- Orphan-Guard in `getWorkStats`: Session ohne ended_at, deren Task aber
+  terminal ist (Crash/Restart) → zählt nicht als laufend, Ende = letztes
+  Task-Update (HA-safe, rein lesend)
+
+**B) CLI-Usage-Tracking — bewusst GETRENNT von Alfreds Kostenrechnung.**
+claude-code/codex laufen auf eigenen Subscriptions/API-Keys — ihre Tokens
+gehören nicht in llm_usage/AI-Services. Neue Tabelle `cli_agent_runs`
+(Migration PG v109 + SQLite v105) mit einer Zeile pro
+Agent-Lauf: user_id (auslösender User), project_id, session_type, agent_name,
+**agent_version** (CLI-Binary via `--version`, gecached), **model** (aus dem
+stream-json init-Event, z.B. claude-fable-5), tokens_in/out, cache_read,
+cost_usd (API-Äquivalent laut CLI), duration, success.
+- Parser extrahiert `usage` aus claude `result`- und codex
+  `turn.completed`-Events strukturiert (vorher: nur als Progress-Text
+  gerendert und verworfen) + `model` aus dem init-Event
+- Executor aggregiert in `AgentExecutionResult.usage/.model`
+- Project-Agent-Runner summiert über Phasen + Fix-Läufe und persistiert
+  pro Session; code_agent.run persistiert pro Lauf (VOR dem
+  isSubstantialSession-Gate — auch kleine Runs verbrauchen Tokens)
+
+**C) Projekt-Detail (Arbeitszeit-Statistik) erweitert:**
+- Tokens In/Out + Kosten-Äquivalent gesamt und pro Typ
+- Neue Sektion „Nach Agent / Version / Modell" (z.B.
+  `claude-code · 2.1.x · claude-fable-5 — 12 Runs — 6h 21m`)
+- Historische Sessions ohne Usage-Daten zeigen schlicht nichts (Felder
+  optional, kein Fake)
+
+**D) Neue WebUI-Seite „CLI-Usage"** (Nav neben Project Agents,
+Endpoint `GET /api/cli-usage?days=…`):
+- Totals + Aufschlüsselung nach User (Anzeigename aufgelöst), Projekt,
+  Typ, Agent/Version/Modell und Modell
+- Zeitraum-Filter 7/30/90 Tage/alles
+- Deutlicher Hinweis: eigene Subscriptions/Keys, nicht in
+  Alfred-Betriebskosten enthalten
+
+Nebenbei behoben: code_agent-Sessions hatten nie eine Agent-Zuordnung in
+der Statistik (Random-sourceId ohne Verknüpfung) — über cli_agent_runs
+sind sie jetzt inkl. Agent/Version/Modell erfasst.
+
+### Tests
+
+5 neue Parser-Tests (claude result-usage inkl. cache+cost, init-model,
+codex turn.completed, kein usage auf assistant-Events, cost-only-Fallback);
+alle 130 code-agent-Tests grün.
+
 ## [0.19.0-multi-ha.865] - 2026-06-11
 
 ### Added — Cluster-Seite: Node-Details, Versions-Drift, Storage, Infrastruktur (v865)

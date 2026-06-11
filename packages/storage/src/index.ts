@@ -109,3 +109,5 @@ export { ChatActionsRepository } from './repositories/chat-actions-repository.js
 export type { ChatAction, ChatActionSkillCall, CreateChatActionInput } from './repositories/chat-actions-repository.js';
 export { ProjectFeaturesRepository } from './repositories/project-features-repository.js';
 export type { ProjectFeature, CreateFeatureInput, FeatureVisibility, FeatureStatus, FeatureSource, FeatureSearchOptions } from './repositories/project-features-repository.js';
+export { CliAgentRunsRepository } from './repositories/cli-agent-runs-repository.js';
+export type { CliAgentRunInput, CliUsageOverview, CliUsageGroupRow } from './repositories/cli-agent-runs-repository.js';

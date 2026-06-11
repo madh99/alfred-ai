@@ -337,6 +337,8 @@ export class Alfred {
   private agentSessionManager?: import('@alfred/skills').AgentSessionManager;
   private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
   private commitsRepoRef?: import('@alfred/storage').ProjectAgentCommitsRepository;
+  /** v866 — CLI-Usage-Tracking (eigene Subscriptions/Keys, getrennt von llm_usage). */
+  private cliRunsRepoRef?: import('@alfred/storage').CliAgentRunsRepository;
   private plansRepoRef?: import('@alfred/storage').ProjectAgentPlansRepository;
   /** v851 — Feature-Library Reference für API-Callbacks. */
   private featuresRepoRef?: import('@alfred/storage').ProjectFeaturesRepository;
@@ -1285,6 +1287,47 @@ export class Alfred {
           this.codeAgentSkillRef.setProjectLookup(this.projectRepo);
         }
         this.codeAgentSkillRef.setSessionCompletionCallback(async (info) => {
+          // v866 — CLI-Usage IMMER erfassen, auch für kleine Runs (Tokens fielen an).
+          // Bewusst VOR dem isSubstantialSession-Gate — das filtert nur die
+          // Projekt-Historie. Getrennt von llm_usage (eigene Subscription/Key).
+          if (this.cliRunsRepoRef && info.action === 'run' && info.agentName) {
+            try {
+              const uid = info.context.masterUserId ?? this.tryOwner() ?? '';
+              if (uid) {
+                let projId: string | undefined;
+                try {
+                  if (info.cwd && info.cwd.includes('/sandbox-worktrees/') && this.database) {
+                    const sbRow = await this.database.getAdapter().queryOne(
+                      `SELECT project_id FROM project_agent_sandboxes WHERE worktree_path = ?`, [info.cwd],
+                    ).catch(() => null) as { project_id?: string } | null;
+                    projId = sbRow?.project_id ?? undefined;
+                  }
+                  if (!projId && info.cwd && this.projectRepo) {
+                    const proj = await this.projectRepo.findByCwdAnyOwner(info.cwd).catch(() => null);
+                    projId = proj?.id;
+                  }
+                } catch { /* best-effort — Run wird auch ohne Projekt-Zuordnung erfasst */ }
+                await this.cliRunsRepoRef.record({
+                  userId: uid,
+                  projectId: projId,
+                  sessionType: 'code_agent',
+                  sourceId: `code-agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+                  agentName: info.agentName,
+                  agentVersion: info.agentVersion,
+                  model: info.model,
+                  tokensIn: info.usage?.inputTokens ?? 0,
+                  tokensOut: info.usage?.outputTokens ?? 0,
+                  cacheReadTokens: info.usage?.cacheReadTokens ?? 0,
+                  costUsd: info.usage?.costUsd ?? 0,
+                  durationS: Math.floor((info.durationMs ?? 0) / 1000),
+                  success: info.success,
+                  startedAt: new Date(Date.now() - (info.durationMs ?? 0)).toISOString(),
+                  endedAt: new Date().toISOString(),
+                });
+              }
+            } catch (err) { this.logger.debug({ err }, 'v866 cli-usage record (code_agent) failed'); }
+          }
+
           if (!isSubstantialSession({
             toolCalls: info.toolCalls, filesChanged: info.filesChanged, durationMs: info.durationMs,
           }, thresholdConfig)) {
@@ -1609,6 +1652,58 @@ export class Alfred {
           },
         );
       } catch (err) { this.logger.warn({ err }, 'Commits-Repo wiring failed (non-fatal)'); }
+
+      // v866 — CLI-Usage-Tracking + Session-Start-Attach
+      try {
+        const { CliAgentRunsRepository } = await import('@alfred/storage');
+        const cliRunsRepo = new CliAgentRunsRepository(adapter);
+        this.cliRunsRepoRef = cliRunsRepo;
+        projectRunner.setCliRunsRepository(cliRunsRepo);
+
+        // Session-Start-Hook: legt die project_sessions-Zeile beim START an
+        // (ended_at NULL) → "Laufend"-Zähler der Arbeitszeit-Statistik zeigt
+        // echte Live-Runs. finishSession reused die Zeile (findSessionBySource)
+        // und schließt sie. Sandbox→Project-Resolution wie im Completion-Callback.
+        projectRunner.setSessionStartCallback(async (info) => {
+          if (!this.projectManager) return;
+          const userId = info.userId ?? this.tryOwner() ?? '';
+          if (!userId) return;
+          let resolvedCwd = info.cwd;
+          let resolvedProjectId: string | undefined;
+          let resolvedSandboxId: string | undefined;
+          try {
+            const dbA = this.database?.getAdapter();
+            if (dbA) {
+              const sessRow = await dbA.queryOne(
+                `SELECT sandbox_id FROM project_agent_sessions WHERE task_id = ?`,
+                [info.sessionId],
+              ).catch(() => null) as { sandbox_id?: string } | null;
+              resolvedSandboxId = sessRow?.sandbox_id ?? undefined;
+              if (resolvedSandboxId) {
+                const sbRow = await dbA.queryOne(
+                  `SELECT project_id FROM project_agent_sandboxes WHERE id = ?`,
+                  [resolvedSandboxId],
+                ).catch(() => null) as { project_id?: string } | null;
+                if (sbRow?.project_id && this.projectRepo) {
+                  const proj = await this.projectRepo.getByIdAnyOwner(sbRow.project_id).catch(() => null);
+                  if (proj?.cwd) { resolvedCwd = proj.cwd; resolvedProjectId = proj.id; }
+                }
+              }
+            }
+          } catch { /* best-effort — fällt auf cwd-Heuristik zurück */ }
+          await this.projectManager.attachSession({
+            userId,
+            sourceId: info.sessionId,
+            sessionType: 'project_agent',
+            goal: info.goal,
+            cwd: resolvedCwd,
+            projectId: resolvedProjectId,
+            startedAt: info.startedAt,
+            mergeState: resolvedSandboxId ? 'pending' : undefined,
+            sandboxId: resolvedSandboxId,
+          });
+        });
+      } catch (err) { this.logger.warn({ err }, 'v866 CLI-Usage wiring failed (non-fatal)'); }
 
       // v642 — LLM-Callback für deep audit der project-skill
       if (this.projectSkillRef && this.llmProvider) {
@@ -10461,6 +10556,31 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             },
           };
         },
+      });
+    }
+
+    // v866 — CLI-Agent-Usage-Übersicht (eigene Subscriptions/Keys, getrennt von llm_usage)
+    if (logApiAdapter && 'setCliUsageCallback' in logApiAdapter) {
+      (logApiAdapter as any).setCliUsageCallback(async (days?: number) => {
+        if (!this.cliRunsRepoRef) return null;
+        try {
+          const overview = await this.cliRunsRepoRef.overview(days);
+          // user_id (UUID) → Anzeigename best-effort auflösen
+          try {
+            const userRows = await this.database.getAdapter().query(
+              `SELECT id, COALESCE(display_name, username, id) AS label FROM users`, [],
+            ) as Array<{ id: string; label: string }>;
+            const labelById = new Map(userRows.map(r => [r.id, r.label]));
+            for (const row of overview.byUser) {
+              const label = labelById.get(row.key);
+              if (label && label !== row.key) { row.subKey = row.key; row.key = label; }
+            }
+          } catch { /* Anzeige fällt auf IDs zurück */ }
+          return overview as unknown as Record<string, unknown>;
+        } catch (err) {
+          this.logger.warn({ err }, 'v866 cli-usage overview failed');
+          return null;
+        }
       });
     }
 

@@ -1770,4 +1770,34 @@ export const PG_MIGRATIONS: PgMigration[] = [
       try { await db.execute(`ALTER TABLE node_heartbeats ADD COLUMN metrics TEXT NOT NULL DEFAULT '{}'`, []); } catch { /* exists */ }
     },
   },
+  {
+    version: 109,
+    description: 'v866 — cli_agent_runs: separates Usage-Tracking für CLI-Agents (eigene Subscriptions/Keys, NICHT in llm_usage).',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS cli_agent_runs (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          project_id TEXT,
+          session_type TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          agent_name TEXT NOT NULL,
+          agent_version TEXT,
+          model TEXT,
+          tokens_in INTEGER NOT NULL DEFAULT 0,
+          tokens_out INTEGER NOT NULL DEFAULT 0,
+          cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+          duration_s INTEGER NOT NULL DEFAULT 0,
+          success INTEGER NOT NULL DEFAULT 1,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          created_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_cli_runs_user ON cli_agent_runs(user_id, started_at DESC)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_cli_runs_project ON cli_agent_runs(project_id)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_cli_runs_source ON cli_agent_runs(source_id)`, []);
+    },
+  },
 ];

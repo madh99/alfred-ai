@@ -769,9 +769,12 @@ export class HttpAdapter extends MessagingAdapter {
   private clusterCallbacks?: {
     getHealth: () => Promise<Record<string, unknown>>;
   };
+  /** v866 — CLI-Agent-Usage-Übersicht (eigene Subscriptions/Keys, getrennt von llm_usage). */
+  private cliUsageCallback?: (days?: number) => Promise<Record<string, unknown> | null>;
 
   setLogCallbacks(cbs: typeof HttpAdapter.prototype.logCallbacks): void { this.logCallbacks = cbs; }
   setClusterCallbacks(cbs: typeof HttpAdapter.prototype.clusterCallbacks): void { this.clusterCallbacks = cbs; }
+  setCliUsageCallback(cb: typeof HttpAdapter.prototype.cliUsageCallback): void { this.cliUsageCallback = cb; }
 
   async connect(): Promise<void> {
     this.status = 'connecting';
@@ -1427,6 +1430,9 @@ export class HttpAdapter extends MessagingAdapter {
     // ── Cluster / HA Operations API ──
     } else if (url.pathname === '/api/cluster/health' && req.method === 'GET') {
       this.handleClusterHealth(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/cli-usage' && req.method === 'GET') {
+      // v866 — CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt von llm_usage)
+      this.handleCliUsage(req, res, url).catch(err => this.safeError(res, err));
     // ── CMDB API ──
     } else if (url.pathname === '/api/cmdb/assets' && req.method === 'GET') {
       this.handleCmdbRoute(req, res, async (cbs, userId) => {
@@ -5387,5 +5393,20 @@ export class HttpAdapter extends MessagingAdapter {
     const data = await this.clusterCallbacks.getHealth();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
+  }
+
+  /** v866 — CLI-Agent-Usage-Übersicht: ?days=30 (0/fehlend = alles). */
+  private async handleCliUsage(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.cliUsageCallback) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'cli-usage not available' }));
+      return;
+    }
+    const daysRaw = Number(url.searchParams.get('days') ?? 0);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(daysRaw, 3650) : undefined;
+    const data = await this.cliUsageCallback(days);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data ?? { totals: null }));
   }
 }

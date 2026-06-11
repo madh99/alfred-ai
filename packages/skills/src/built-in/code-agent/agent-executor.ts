@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
 import { appendOutputLine } from './project-agent-skill.js';
 import { killAgentTree } from './process-tree.js';
-import { createParserState, parseLine, type AgentOutputFormat } from './agent-output-parser.js';
+import { createParserState, parseLine, type AgentOutputFormat, type ParsedUsage } from './agent-output-parser.js';
 
 // v635 — Default auf 12min angehoben (war 10min v625). Praxisbefund Phase 24
 // (Datenmodell/Migration): claude-code ging 600s lang stdout-stumm obwohl
@@ -69,6 +69,37 @@ function preflightAgent(agentDef: CodeAgentDefinitionConfig): string | null {
   } catch {
     return null; // best-effort — don't block on the preflight itself
   }
+}
+
+/**
+ * v866 — Binary-Version eines CLI-Agents (`claude --version`, `codex --version`).
+ * Pro command gecached (1 Spawn pro Prozess-Lifetime, nicht pro Run). Bei
+ * sudo-Wrappern wird das echte Binary aufgelöst (gleiche Logik wie preflight).
+ * Best-effort: bei Fehler/Timeout → undefined, blockiert nie.
+ */
+const agentVersionCache = new Map<string, string | undefined>();
+export function getAgentVersion(agentDef: CodeAgentDefinitionConfig): string | undefined {
+  let probeCommand = agentDef.command;
+  if (agentDef.command === 'sudo' && Array.isArray(agentDef.argsTemplate)) {
+    const sudoArgs = [...agentDef.argsTemplate];
+    let i = 0;
+    while (i < sudoArgs.length && sudoArgs[i].startsWith('-')) {
+      if (sudoArgs[i] === '-u' || sudoArgs[i] === '--user') { i += 2; continue; }
+      i += 1;
+    }
+    if (i < sudoArgs.length) probeCommand = sudoArgs[i];
+  }
+  if (agentVersionCache.has(probeCommand)) return agentVersionCache.get(probeCommand);
+  let version: string | undefined;
+  try {
+    const result = spawnSync(probeCommand, ['--version'], { timeout: 5000, encoding: 'utf8', shell: process.platform === 'win32' });
+    if (result.status === 0 && result.stdout?.trim()) {
+      // erste Zeile, ohne Binary-Namen-Präfix ("2.1.39 (Claude Code)" / "codex-cli 0.x.y")
+      version = result.stdout.trim().split('\n')[0].slice(0, 100);
+    }
+  } catch { /* best-effort */ }
+  agentVersionCache.set(probeCommand, version);
+  return version;
 }
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', '.cache']);
@@ -162,6 +193,13 @@ export interface AgentExecutionResult {
   exitCode: number;
   durationMs: number;
   modifiedFiles: string[];
+  /** v866 — Token-Usage aus den Stream-Events (claude result / codex turn.completed).
+   *  Läuft auf der EIGENEN Subscription/API-Key des CLI-Agents — wird bewusst
+   *  NICHT in Alfreds llm_usage/service_usage gezählt, sondern separat in
+   *  cli_agent_runs persistiert. */
+  usage?: ParsedUsage;
+  /** v866 — Modell aus dem init-Event (z.B. claude-fable-5). */
+  model?: string;
 }
 
 /**
@@ -510,6 +548,25 @@ export async function executeAgent(
     let extractedText = '';
     let stdoutBuffer = ''; // partial line buffer (chunks können mid-line geteilt sein)
     const isStreaming = outputFormat !== 'text';
+    // v866 — Usage + Modell aus den Stream-Events akkumulieren (mehrere
+    // result-Events möglich, z.B. bei Sub-Sessions → summieren).
+    let usageAcc: ParsedUsage | undefined;
+    let modelSeen: string | undefined;
+    const accumulate = (parsed: { usage?: ParsedUsage; model?: string }): void => {
+      if (parsed.model) modelSeen = parsed.model;
+      if (parsed.usage) {
+        if (!usageAcc) {
+          usageAcc = { ...parsed.usage };
+        } else {
+          usageAcc.inputTokens += parsed.usage.inputTokens;
+          usageAcc.outputTokens += parsed.usage.outputTokens;
+          usageAcc.cacheReadTokens += parsed.usage.cacheReadTokens;
+          if (parsed.usage.costUsd !== undefined) {
+            usageAcc.costUsd = (usageAcc.costUsd ?? 0) + parsed.usage.costUsd;
+          }
+        }
+      }
+    };
 
     child.stdout?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
@@ -525,6 +582,7 @@ export async function executeAgent(
         if (trimmed.length === 0) continue;
         if (isStreaming) {
           const parsed = parseLine(parserState, trimmed);
+          accumulate(parsed); // v866 — usage/model einsammeln
           for (const p of parsed.progress) {
             if (options.taskId) {
               try { appendOutputLine(options.taskId, 'stdout', p); } catch { /* */ }
@@ -579,6 +637,7 @@ export async function executeAgent(
         const trimmed = stdoutBuffer.replace(/\r$/, '');
         if (trimmed.length > 0 && isStreaming) {
           const parsed = parseLine(parserState, trimmed);
+          accumulate(parsed); // v866 — usage/model auch aus der trailing line
           for (const p of parsed.progress) {
             if (options.taskId) { try { appendOutputLine(options.taskId, 'stdout', p); } catch { /* */ } }
           }
@@ -620,6 +679,8 @@ export async function executeAgent(
         exitCode: killed ? 124 : (code ?? 1),
         durationMs,
         modifiedFiles,
+        usage: usageAcc,   // v866
+        model: modelSeen,  // v866
       });
     });
 

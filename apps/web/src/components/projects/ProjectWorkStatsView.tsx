@@ -29,6 +29,13 @@ function typeLabel(t: string): string {
   } as Record<string, string>)[t] ?? t;
 }
 
+/** v866 — kompakte Token-Anzeige: 1234 → "1.2k", 2500000 → "2.5M". */
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 /**
  * v658 — Work-Stats: Gesamt-Arbeitszeit aller Sessions pro Projekt, aufgeteilt
  * nach Session-Type und Agent (claude-code, codex, etc.).
@@ -110,6 +117,24 @@ export function ProjectWorkStatsView({ projectId }: Props) {
             </div>
           </div>
 
+          {/* v866 — CLI-Token-Usage (eigene Subscriptions/Keys — nicht in Alfred-Betriebskosten) */}
+          {(stats.total.tokensIn ?? 0) + (stats.total.tokensOut ?? 0) > 0 && (
+            <div className="bg-[#0f0f0f] border border-[#222] rounded p-3 grid grid-cols-3 gap-2 text-xs">
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Tokens In</div>
+                <div className="text-base font-semibold text-gray-200">{formatTokens(stats.total.tokensIn ?? 0)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Tokens Out</div>
+                <div className="text-base font-semibold text-gray-200">{formatTokens(stats.total.tokensOut ?? 0)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5" title="API-Äquivalent laut CLI — eigene Subscription/Key, nicht in Alfred-Betriebskosten">Kosten-Äquiv.</div>
+                <div className="text-base font-semibold text-amber-400">${(stats.total.costUsd ?? 0).toFixed(2)}</div>
+              </div>
+            </div>
+          )}
+
           {/* byType — v668: fertig/abgebrochen separat anzeigen */}
           {stats.byType.length > 0 && (
             <div>
@@ -123,6 +148,12 @@ export function ProjectWorkStatsView({ projectId }: Props) {
                   return (
                     <div key={t.sessionType} className="flex items-center gap-2 text-xs">
                       <span className="flex-1 text-gray-300">{typeLabel(t.sessionType)}</span>
+                      {/* v866 — Tokens pro Typ (nur wenn Daten vorhanden — ab v866-Deploy) */}
+                      {(t.tokensIn ?? 0) + (t.tokensOut ?? 0) > 0 && (
+                        <span className="text-gray-500 text-[10px] font-mono" title={`Tokens in/out · Kosten-Äquivalent $${(t.costUsd ?? 0).toFixed(2)}`}>
+                          {formatTokens(t.tokensIn ?? 0)}↓ {formatTokens(t.tokensOut ?? 0)}↑
+                        </span>
+                      )}
                       <span className="text-gray-500 text-[10px]" title={failed > 0 ? `${failed} abgebrochen/fehlgeschlagen` : undefined}>{counts}</span>
                       <span className="font-mono text-blue-400">{formatDuration(t.totalSeconds)}</span>
                     </div>
@@ -142,6 +173,28 @@ export function ProjectWorkStatsView({ projectId }: Props) {
                     <span className="flex-1 font-mono text-gray-300">{a.agent}</span>
                     <span className="text-gray-500 text-[10px]">{a.count}</span>
                     <span className="font-mono text-blue-400">{formatDuration(a.totalSeconds)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* v866 — Agent / CLI-Version / Modell (aus cli_agent_runs, ab v866-Deploy) */}
+          {stats.byAgentDetail && stats.byAgentDetail.length > 0 && (
+            <div>
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1" title="CLI-Binary-Version · Modell — Daten ab v866; eigene Subscriptions/Keys">
+                Nach Agent / Version / Modell
+              </div>
+              <div className="space-y-0.5">
+                {stats.byAgentDetail.map((d, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-gray-300">{d.agent}</span>
+                    <span className="flex-1 text-gray-500 text-[10px] font-mono truncate" title={d.detail}>{d.detail}</span>
+                    <span className="text-gray-500 text-[10px] font-mono" title={`Kosten-Äquivalent $${d.costUsd.toFixed(2)}`}>
+                      {formatTokens(d.tokensIn)}↓ {formatTokens(d.tokensOut)}↑
+                    </span>
+                    <span className="text-gray-500 text-[10px]">{d.runs}</span>
+                    <span className="font-mono text-blue-400">{formatDuration(d.durationS)}</span>
                   </div>
                 ))}
               </div>

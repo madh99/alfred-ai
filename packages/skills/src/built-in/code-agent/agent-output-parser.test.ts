@@ -148,3 +148,42 @@ describe('parseLine: vibe-streaming', () => {
     expect(r.progress[0]).toBe('🔧 Read: /etc/hosts');
   });
 });
+
+// v866 — Usage + Modell strukturiert extrahieren (vorher verworfen)
+describe('parseLine: v866 usage/model extraction', () => {
+  const claude = () => createParserState('claude-stream-json');
+  const codex = () => createParserState('codex-jsonl');
+
+  it('claude init liefert model strukturiert', () => {
+    const r = parseLine(claude(), JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-fable-5' }));
+    expect(r.model).toBe('claude-fable-5');
+  });
+
+  it('claude result liefert usage (tokens + cost)', () => {
+    const evt = {
+      type: 'result', subtype: 'success', result: 'fertig', total_cost_usd: 1.2345,
+      usage: { input_tokens: 1200, output_tokens: 800, cache_read_input_tokens: 50000 },
+    };
+    const r = parseLine(claude(), JSON.stringify(evt));
+    expect(r.ended).toBe(true);
+    expect(r.usage).toEqual({ inputTokens: 1200, outputTokens: 800, cacheReadTokens: 50000, costUsd: 1.2345 });
+  });
+
+  it('claude result ohne usage aber mit cost → usage mit 0-Tokens + cost', () => {
+    const r = parseLine(claude(), JSON.stringify({ type: 'result', subtype: 'success', total_cost_usd: 0.5 }));
+    expect(r.usage?.costUsd).toBe(0.5);
+    expect(r.usage?.inputTokens).toBe(0);
+  });
+
+  it('claude assistant-event hat KEINE usage (nur result zählt)', () => {
+    const r = parseLine(claude(), JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } }));
+    expect(r.usage).toBeUndefined();
+  });
+
+  it('codex turn.completed liefert usage', () => {
+    const evt = { type: 'turn.completed', usage: { input_tokens: 300, cached_input_tokens: 100, output_tokens: 42 } };
+    const r = parseLine(codex(), JSON.stringify(evt));
+    expect(r.ended).toBe(true);
+    expect(r.usage).toEqual({ inputTokens: 300, outputTokens: 42, cacheReadTokens: 100 });
+  });
+});

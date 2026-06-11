@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { Skill } from '../../skill.js';
-import { executeAgent } from './agent-executor.js';
+import { executeAgent, getAgentVersion } from './agent-executor.js';
 import { orchestrate, orchestrateWithGit, type OrchestrationResult, type GitOrchestrationResult } from './orchestrator.js';
 
 const execFileAsync = promisify(execFile);
@@ -17,7 +17,7 @@ export interface CodeAgentSkillConfig {
 
 export interface CodeAgentSessionInfo {
   action: 'run' | 'orchestrate';
-  agentOrTask: string;          // agent name for "run", task text for "orchestrate"
+  agentOrTask: string;          // prompt for "run", task text for "orchestrate"
   cwd?: string;
   context: { masterUserId?: string; userId: string; chatId: string; platform: string };
   toolCalls: number;            // for run: 1 (single agent); for orchestrate: subtask count
@@ -26,6 +26,14 @@ export interface CodeAgentSessionInfo {
   durationMs: number;
   success: boolean;
   finalOutput?: string;
+  /** v866 — expliziter Agent-Name (bei run; orchestrate nutzt mehrere Agents). */
+  agentName?: string;
+  /** v866 — CLI-Binary-Version (z.B. "2.1.39 (Claude Code)"), best-effort. */
+  agentVersion?: string;
+  /** v866 — Modell aus dem Stream-init-Event (z.B. claude-fable-5). */
+  model?: string;
+  /** v866 — Token-Usage des Laufs (eigene Subscription/Key — NICHT llm_usage). */
+  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; costUsd?: number };
 }
 
 export class CodeAgentSkill extends Skill {
@@ -251,6 +259,11 @@ export class CodeAgentSkill extends Skill {
       durationMs: result.durationMs,
       success: result.exitCode === 0,
       finalOutput: (result.stdout || result.stderr).slice(0, 4000),
+      // v866 — CLI-Usage-Daten für cli_agent_runs (Recording macht alfred.ts)
+      agentName,
+      agentVersion: getAgentVersion(agentDef),
+      model: result.model,
+      usage: result.usage,
     });
 
     const parts: string[] = [];

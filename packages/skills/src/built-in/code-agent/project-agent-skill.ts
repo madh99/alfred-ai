@@ -892,6 +892,9 @@ ${planSummary}${commits}${userNotes}
       selfHeal,
       selfHealReleaseLock,
       selfHealBaseBranch: selfHeal ? this.selfHealingConfig?.baseBranch : undefined,
+      // v866 — auslösender User für CLI-Usage-Tracking + Session-Start-Attach
+      // (masterUserId bevorzugt — cli_agent_runs.user_id ist die users.id)
+      userId: context.masterUserId ?? context.userId,
     };
 
     // Fire-and-forget: start the runner loop asynchronously

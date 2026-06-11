@@ -1310,6 +1310,15 @@ export class AlfredClient {
     return await res.json();
   }
 
+  // v866 — Globale CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt vom Alfred-Usage-Tracking)
+  async fetchCliUsage(days?: number): Promise<CliUsageOverview | null> {
+    const qs = days && days > 0 ? `?days=${days}` : '';
+    const res = await fetch(`${this.baseUrl}/api/cli-usage${qs}`, { headers: this.authHeaders });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.totals ? data as CliUsageOverview : null;
+  }
+
   // v847 — Chat-Actions: Liste pro Projekt + Detail
   async fetchProjectChatActions(projectId: string, limit = 50): Promise<ChatActionDto[]> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/chat-actions?limit=${limit}`, { headers: this.authHeaders });
@@ -2394,9 +2403,32 @@ export interface ProjectLastDeploy {
 // v658 — Project Work-Stats + Chat-History
 export interface ProjectWorkStats {
   // v668 — failedCount (cancelled/failed Sessions) separat ausgewiesen
-  total: { count: number; totalSeconds: number; runningCount: number; failedCount?: number };
-  byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount?: number }>;
+  // v866 — tokensIn/Out + costUsd (CLI-eigene Subscriptions, Daten ab v866-Deploy)
+  total: { count: number; totalSeconds: number; runningCount: number; failedCount?: number; tokensIn?: number; tokensOut?: number; costUsd?: number };
+  byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount?: number; tokensIn?: number; tokensOut?: number; costUsd?: number }>;
   byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
+  /** v866 — pro Agent/Version/Modell aus cli_agent_runs. */
+  byAgentDetail?: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; costUsd: number }>;
+}
+
+/** v866 — Globale CLI-Agent-Usage-Übersicht (eigene Subscriptions/Keys). */
+export interface CliUsageGroupRow {
+  key: string;
+  subKey?: string;
+  runs: number;
+  durationS: number;
+  tokensIn: number;
+  tokensOut: number;
+  cacheReadTokens: number;
+  costUsd: number;
+}
+export interface CliUsageOverview {
+  totals: { runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number };
+  byUser: CliUsageGroupRow[];
+  byProject: CliUsageGroupRow[];
+  byType: CliUsageGroupRow[];
+  byAgent: CliUsageGroupRow[];
+  byModel: CliUsageGroupRow[];
 }
 
 export interface ProjectChatHistory {

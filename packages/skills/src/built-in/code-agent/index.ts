@@ -1,7 +1,8 @@
 export { CodeAgentSkill } from './code-agent-skill.js';
 export type { CodeAgentSkillConfig, CodeAgentSessionInfo } from './code-agent-skill.js';
-export { executeAgent, setMcpTokenProvider, isTransientApiFailure } from './agent-executor.js';
+export { executeAgent, setMcpTokenProvider, isTransientApiFailure, getAgentVersion } from './agent-executor.js';
 export type { AgentExecutionResult } from './agent-executor.js';
+export type { ParsedUsage } from './agent-output-parser.js';
 export { killProcessesByCwd, killAgentTree } from './process-tree.js';
 export { orchestrate, orchestrateWithGit } from './orchestrator.js';
 export type { OrchestrationPlan, SubTask, SubTaskResult, OrchestrationResult, GitOrchestrationResult, GitOrchestrationOptions, GitInfo } from './orchestrator.js';

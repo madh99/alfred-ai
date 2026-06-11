@@ -12,7 +12,7 @@ import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig
 import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
-import { executeAgent, isTransientApiFailure, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded, assessPlanProgress, applyMutation, typicalPhaseRange } from '@alfred/skills';
+import { executeAgent, isTransientApiFailure, getAgentVersion, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded, assessPlanProgress, applyMutation, typicalPhaseRange } from '@alfred/skills';
 import type { ProjectPlan, PlanMutation } from '@alfred/skills';
 import type { FileStore } from '@alfred/storage';
 
@@ -183,6 +183,8 @@ export interface ProjectAgentConfig {
    *  NICHT forge.baseBranch verwenden: das ist der Default-Branch der
    *  USER-Projekte (z.B. master) und würde Self-Heal-MRs falsch targeten. */
   selfHealBaseBranch?: string;
+  /** v866 — auslösender User (masterUserId) für CLI-Usage-Tracking + Session-Start. */
+  userId?: string;
 }
 
 export type ProjectAgentCompletionCallback = (
@@ -335,6 +337,21 @@ export class ProjectAgentRunner {
     this.autoResumeCallback = cb;
   }
 
+  /** v866 — Set by alfred.ts: CLI-Usage-Recording (cli_agent_runs, getrennt von llm_usage). */
+  private cliRunsRepo?: import('@alfred/storage').CliAgentRunsRepository;
+  setCliRunsRepository(repo: import('@alfred/storage').CliAgentRunsRepository): void {
+    this.cliRunsRepo = repo;
+  }
+
+  /** v866 — Set by alfred.ts: Session-Start-Hook → projectManager.attachSession.
+   *  Legt die project_sessions-Zeile beim START an (ended_at NULL) damit der
+   *  "Laufend"-Zähler der Arbeitszeit-Statistik echte Live-Runs zeigt. Vorher
+   *  wurde die Zeile erst bei finishSession erstellt → Laufend war immer 0. */
+  private sessionStartCallback?: (info: { sessionId: string; goal: string; cwd: string; userId?: string; startedAt: string }) => Promise<void>;
+  setSessionStartCallback(cb: typeof this.sessionStartCallback): void {
+    this.sessionStartCallback = cb;
+  }
+
   async run(sessionId: string, configInput: Record<string, unknown>, platform: string, chatId: string): Promise<void> {
     return currentSession.run({ sessionId }, () => this._runInner(sessionId, configInput, platform, chatId));
   }
@@ -396,6 +413,33 @@ export class ProjectAgentRunner {
     // Register abort controller for stop signals
     const abortController = new AbortController();
     registerAbortController(sessionId, abortController);
+
+    // v866 — CLI-Usage-Tracking (getrennt von llm_usage: eigene Subscription/Key).
+    // Summiert über alle executeAgent-Läufe der Session (Phasen + Fix-Versuche).
+    const runStartedAtIso = new Date().toISOString();
+    const cliUsage = { tokensIn: 0, tokensOut: 0, cacheRead: 0, costUsd: 0 };
+    let cliModel: string | undefined;
+    const accumulateCliUsage = (r: { usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; costUsd?: number }; model?: string }): void => {
+      if (r.model) cliModel = r.model;
+      if (r.usage) {
+        cliUsage.tokensIn += r.usage.inputTokens;
+        cliUsage.tokensOut += r.usage.outputTokens;
+        cliUsage.cacheRead += r.usage.cacheReadTokens;
+        cliUsage.costUsd += r.usage.costUsd ?? 0;
+      }
+    };
+    // Binary-Version best-effort (gecached, 1 Spawn pro Prozess-Lifetime)
+    const cliAgentVersion = getAgentVersion(agentDef);
+
+    // v866 — Session beim START an den Projekt-Container binden (project_sessions
+    // mit ended_at NULL) → "Laufend"-Zähler + Live-Gesamtzeit in der Statistik.
+    if (this.sessionStartCallback) {
+      try {
+        await this.sessionStartCallback({ sessionId, goal: config.goal, cwd: config.cwd, userId: config.userId, startedAt: runStartedAtIso });
+      } catch (err) {
+        this.logger.debug({ err, sessionId }, 'v866 sessionStartCallback failed (non-fatal)');
+      }
+    }
 
     const state: ProjectAgentMeta = {
       projectPhase: 'planning',
@@ -839,6 +883,7 @@ export class ProjectAgentRunner {
             this.sendProgressThrottled(platform, chatId, `  [${config.agentName}] ${status}`);
           },
         }, platform, chatId, `Phase ${phaseIdx + 1}`);
+        accumulateCliUsage(codeResult); // v866 — Tokens/Modell der Phase einsammeln
 
         state.totalFilesChanged += codeResult.modifiedFiles.length;
 
@@ -1054,6 +1099,7 @@ export class ProjectAgentRunner {
               this.sendProgressThrottled(platform, chatId, `  [fix] ${status}`);
             },
           }, platform, chatId, `Fix-Versuch ${fixAttempt + 1}`);
+          accumulateCliUsage(fixResult); // v866 — auch Fix-Läufe zählen zur Usage
           // v618 B1 — auch der Fix-Lauf darf nicht still durchrutschen wenn der
           // Agent crashte. Bei exitCode != 0: Fix-Loop verlassen, Build wird im
           // nächsten Iteration-Check als gescheitert behandelt und nach maxFixAttempts
@@ -1474,6 +1520,32 @@ export class ProjectAgentRunner {
         }
       } catch (err) {
         this.logger.warn({ err, sessionId }, 'v810 lifecycle-guard failed');
+      }
+      // v866 — CLI-Usage-Run persistieren (auch bei Failure/Abort — die Zeit/Tokens
+      // fielen an). user_id: auslösender User, Fallback Owner. Best-effort.
+      if (this.cliRunsRepo) {
+        try {
+          const projectId = this.projectIdResolver ? await this.projectIdResolver(config.cwd).catch(() => undefined) : undefined;
+          await this.cliRunsRepo.record({
+            userId: config.userId ?? this.ownerMasterUserId ?? '',
+            projectId,
+            sessionType: 'project_agent',
+            sourceId: sessionId,
+            agentName: config.agentName,
+            agentVersion: cliAgentVersion,
+            model: cliModel,
+            tokensIn: cliUsage.tokensIn,
+            tokensOut: cliUsage.tokensOut,
+            cacheReadTokens: cliUsage.cacheRead,
+            costUsd: cliUsage.costUsd,
+            durationS: Math.floor((Date.now() - new Date(runStartedAtIso).getTime()) / 1000),
+            success: state.projectPhase === 'done',
+            startedAt: runStartedAtIso,
+            endedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          this.logger.debug({ err, sessionId }, 'v866 cli-usage record failed (non-fatal)');
+        }
       }
       removeAbortController(sessionId);
       this.lastEmittedPhase.delete(sessionId); // v818 PL2 — Phase-Cache aufräumen

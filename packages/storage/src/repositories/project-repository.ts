@@ -549,9 +549,11 @@ export class ProjectRepository {
    * der User die Live-Zeit aktiv laufender Agents sieht.
    */
   async getWorkStats(projectId: string): Promise<{
-    total: { count: number; totalSeconds: number; runningCount: number; failedCount: number; discardedCount: number; discardedSeconds: number };
-    byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount: number }>;
+    total: { count: number; totalSeconds: number; runningCount: number; failedCount: number; discardedCount: number; discardedSeconds: number; tokensIn?: number; tokensOut?: number; costUsd?: number };
+    byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount: number; tokensIn?: number; tokensOut?: number; costUsd?: number }>;
     byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
+    /** v866 — pro Agent/Version/Modell aus cli_agent_runs (Daten ab v866-Deploy). */
+    byAgentDetail?: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; costUsd: number }>;
   }> {
     // v668 — summary_json enthält status (success/failed/partial). Wir extrahieren das
     // damit "abgebrochene" Sessions separat zählbar sind. Die Duration kommt aus
@@ -563,12 +565,17 @@ export class ProjectRepository {
     ) as Array<{ id: string; session_type: string; source_id: string | null; started_at: string; ended_at: string | null; summary_json: string | null; merge_state: string | null }>;
 
     // Map source_id → agent_name aus project_agent_sessions (alle in einem Roundtrip, dann lookup)
+    // v866 — zusätzlich current_phase + updated_at für den Orphan-Guard (siehe unten)
     const agentNameByTaskId = new Map<string, string>();
+    const taskStateByTaskId = new Map<string, { phase: string; updatedAt: string }>();
     try {
       const agentRows = await this.adapter.query(
-        `SELECT task_id, agent_name FROM project_agent_sessions`,
-      ) as Array<{ task_id: string; agent_name: string }>;
-      for (const r of agentRows) agentNameByTaskId.set(r.task_id, r.agent_name);
+        `SELECT task_id, agent_name, current_phase, updated_at FROM project_agent_sessions`,
+      ) as Array<{ task_id: string; agent_name: string; current_phase?: string; updated_at?: string }>;
+      for (const r of agentRows) {
+        agentNameByTaskId.set(r.task_id, r.agent_name);
+        if (r.current_phase) taskStateByTaskId.set(r.task_id, { phase: r.current_phase, updatedAt: r.updated_at ?? '' });
+      }
     } catch { /* table may not exist in test contexts */ }
 
     let totalSeconds = 0;
@@ -583,10 +590,20 @@ export class ProjectRepository {
 
     for (const s of sessionRows) {
       const start = new Date(s.started_at).getTime();
-      const end = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
+      // v866 — Orphan-Guard: Session ohne ended_at, deren Task aber terminal ist
+      // (Crash/Restart zwischen attachSession und finishSession) → zählt NICHT
+      // als laufend; Ende = letztes Task-Update statt now() (sonst wächst die
+      // Gesamtzeit solcher Leichen unbegrenzt). HA-safe: rein lesend.
+      const TERMINAL = ['done', 'failed'];
+      const taskState = s.source_id ? taskStateByTaskId.get(s.source_id) : undefined;
+      const orphaned = !s.ended_at && !!taskState && TERMINAL.includes(taskState.phase);
+      const effectiveEnd = s.ended_at
+        ? new Date(s.ended_at).getTime()
+        : orphaned && taskState?.updatedAt ? new Date(taskState.updatedAt).getTime() : Date.now();
+      const end = effectiveEnd;
       const sec = Math.max(0, Math.floor((end - start) / 1000));
       totalSeconds += sec;
-      if (!s.ended_at) runningCount++;
+      if (!s.ended_at && !orphaned) runningCount++;
       if (s.merge_state === 'discarded') { discardedCount++; discardedSeconds += sec; }
 
       // v668 — failed/cancelled-Status aus summary_json extrahieren (best-effort)
@@ -617,14 +634,55 @@ export class ProjectRepository {
       }
     }
 
+    // v866 — Tokens/Kosten + Agent/Version/Modell-Detail aus cli_agent_runs.
+    // Eigene Subscription/Keys der CLI-Agents — getrennt von llm_usage. Daten
+    // existieren erst ab v866-Deploy; Fehler (Tabelle fehlt in Tests) → skip.
+    let cliTotals: { tokensIn: number; tokensOut: number; costUsd: number } | undefined;
+    const cliByType = new Map<string, { tokensIn: number; tokensOut: number; costUsd: number }>();
+    let byAgentDetail: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; costUsd: number }> | undefined;
+    try {
+      const typeRows = await this.adapter.query(
+        `SELECT session_type, COALESCE(SUM(tokens_in),0) AS tin, COALESCE(SUM(tokens_out),0) AS tout, COALESCE(SUM(cost_usd),0) AS cost
+         FROM cli_agent_runs WHERE project_id = ? GROUP BY session_type`,
+        [projectId],
+      ) as Array<{ session_type: string; tin: number | string; tout: number | string; cost: number | string }>;
+      for (const r of typeRows) {
+        cliByType.set(r.session_type, { tokensIn: Number(r.tin), tokensOut: Number(r.tout), costUsd: Number(r.cost) });
+      }
+      if (typeRows.length > 0) {
+        cliTotals = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+        for (const v of cliByType.values()) {
+          cliTotals.tokensIn += v.tokensIn; cliTotals.tokensOut += v.tokensOut; cliTotals.costUsd += v.costUsd;
+        }
+      }
+      const detailRows = await this.adapter.query(
+        `SELECT agent_name, agent_version, model, COUNT(*) AS runs, COALESCE(SUM(duration_s),0) AS dur,
+                COALESCE(SUM(tokens_in),0) AS tin, COALESCE(SUM(tokens_out),0) AS tout, COALESCE(SUM(cost_usd),0) AS cost
+         FROM cli_agent_runs WHERE project_id = ? GROUP BY agent_name, agent_version, model ORDER BY dur DESC`,
+        [projectId],
+      ) as Array<Record<string, unknown>>;
+      if (detailRows.length > 0) {
+        byAgentDetail = detailRows.map(r => ({
+          agent: String(r.agent_name),
+          detail: `${r.agent_version ?? '?'} · ${r.model ?? '?'}`,
+          runs: Number(r.runs), durationS: Number(r.dur),
+          tokensIn: Number(r.tin), tokensOut: Number(r.tout), costUsd: Number(r.cost),
+        }));
+      }
+    } catch { /* cli_agent_runs fehlt (alte DB / Test) — Stats ohne Tokens */ }
+
     return {
-      total: { count: sessionRows.length, totalSeconds, runningCount, failedCount, discardedCount, discardedSeconds },
+      total: { count: sessionRows.length, totalSeconds, runningCount, failedCount, discardedCount, discardedSeconds, ...(cliTotals ?? {}) },
       byType: [...byTypeMap.entries()]
-        .map(([sessionType, v]) => ({ sessionType, count: v.count, totalSeconds: v.seconds, completedCount: v.completed, failedCount: v.failed }))
+        .map(([sessionType, v]) => ({
+          sessionType, count: v.count, totalSeconds: v.seconds, completedCount: v.completed, failedCount: v.failed,
+          ...(cliByType.get(sessionType) ?? {}),
+        }))
         .sort((a, b) => b.totalSeconds - a.totalSeconds),
       byAgent: [...byAgentMap.entries()]
         .map(([agent, v]) => ({ agent, count: v.count, totalSeconds: v.seconds }))
         .sort((a, b) => b.totalSeconds - a.totalSeconds),
+      byAgentDetail,
     };
   }
 
