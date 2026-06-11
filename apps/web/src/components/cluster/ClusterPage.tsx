@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import clsx from 'clsx';
-import type { ClusterHealthData, ClusterNode, AdapterClaim, ReasoningSlotEntry } from '@/types/api';
+import type { ClusterHealthData, ClusterNode, AdapterClaim, ReasoningSlotEntry, NodeDiskMetric } from '@/types/api';
 import type { SandboxItem } from '@/lib/alfred-client';
 
 function formatUptime(seconds: number): string {
@@ -26,6 +26,37 @@ function formatSlotTime(isoDate: string): string {
   return new Date(isoDate).toLocaleString('de-AT', {
     day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
   });
+}
+
+/** v865 — "11.06. 08:26" für Offline-seit-Anzeige. */
+function formatDateTime(isoDate: string): string {
+  return new Date(isoDate).toLocaleString('de-AT', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+/** v865 — Farbe für Auslastungs-Balken: grün < 80%, gelb < 90%, rot ≥ 90%. */
+function usageColor(pct: number): string {
+  if (pct >= 90) return 'bg-red-500/80';
+  if (pct >= 80) return 'bg-amber-500/80';
+  return 'bg-emerald-500/70';
+}
+
+/** v865 — Schmaler Auslastungs-Balken mit Label. */
+function UsageBar({ label, pct, detail }: { label: string; pct: number; detail: string }) {
+  return (
+    <div>
+      <div className="flex justify-between text-[10px] text-gray-500 mb-0.5">
+        <span>{label}</span>
+        <span className={clsx(pct >= 90 ? 'text-red-400' : pct >= 80 ? 'text-amber-400' : 'text-gray-400')}>
+          {detail}
+        </span>
+      </div>
+      <div className="h-1.5 bg-[#1f1f1f] rounded overflow-hidden">
+        <div className={clsx('h-full rounded', usageColor(pct))} style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
+    </div>
+  );
 }
 
 interface NodeSandboxStats {
@@ -107,6 +138,17 @@ export function ClusterPage() {
         <button onClick={refresh} className="text-sm text-blue-400 hover:text-blue-300">Aktualisieren</button>
       </div>
 
+      {/* v865 — Versions-Drift-Warnung: laufende Nodes mit unterschiedlichen Versionen */}
+      {(() => {
+        const liveVersions = [...new Set(data.nodes.filter(n => n.alive && n.version).map(n => n.version))];
+        if (liveVersions.length <= 1) return null;
+        return (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 text-sm text-amber-300">
+            ⚠ Versions-Drift: aktive Nodes laufen auf unterschiedlichen Versionen ({liveVersions.join(' vs. ')}).
+          </div>
+        );
+      })()}
+
       {/* Nodes */}
       <section>
         <h2 className="text-sm font-medium text-gray-400 mb-3">Nodes</h2>
@@ -116,6 +158,34 @@ export function ClusterPage() {
           ))}
         </div>
       </section>
+
+      {/* v865 — Infrastruktur: DB / Redis / FileStore */}
+      {data.infra && (data.infra.database || data.infra.redis || data.infra.fileStore) && (
+        <section>
+          <h2 className="text-sm font-medium text-gray-400 mb-3">Infrastruktur</h2>
+          <div className="grid gap-3 grid-cols-1 md:grid-cols-3">
+            {data.infra.database && (
+              <InfraCard
+                name={data.infra.database.type === 'postgres' ? 'PostgreSQL' : 'SQLite'}
+                ok={data.infra.database.ok}
+                detail={data.infra.database.sizeMb !== undefined ? `DB-Größe: ${data.infra.database.sizeMb >= 1024 ? `${(data.infra.database.sizeMb / 1024).toFixed(1)} GB` : `${data.infra.database.sizeMb} MB`}` : undefined}
+                error={data.infra.database.error}
+              />
+            )}
+            {data.infra.redis && (
+              <InfraCard name="Redis" ok={data.infra.redis.ok} detail="Cluster Pub/Sub + Locks" />
+            )}
+            {data.infra.fileStore && (
+              <InfraCard
+                name={data.infra.fileStore.backend === 's3' ? 'MinIO / S3' : `FileStore (${data.infra.fileStore.backend})`}
+                ok={data.infra.fileStore.ok}
+                detail="Datei-Uploads"
+                error={data.infra.fileStore.error}
+              />
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Adapter Claims */}
       {data.claims.length > 0 && (
@@ -215,7 +285,12 @@ function NodeCard({ node, isThis, sandboxStats }: { node: ClusterNode; isThis: b
         <span className={clsx('w-2.5 h-2.5 rounded-full', node.alive ? 'bg-green-500' : 'bg-red-500')} />
         <span className="text-sm font-medium text-gray-200">{node.nodeId}</span>
         {isThis && <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">this</span>}
-        {node.version && <span className="text-[10px] text-gray-500 ml-auto font-mono">{node.version}</span>}
+        {/* v865 — Version prominent als Badge statt grauem Kleintext */}
+        {node.version && (
+          <span className="text-[10px] px-1.5 py-0.5 bg-violet-500/15 text-violet-300 rounded ml-auto font-mono">
+            v{node.version.replace(/^v/, '')}
+          </span>
+        )}
       </div>
       <div className="space-y-1 text-xs text-gray-400">
         <div className="flex justify-between">
@@ -229,7 +304,8 @@ function NodeCard({ node, isThis, sandboxStats }: { node: ClusterNode; isThis: b
         <div className="flex justify-between">
           <span>Last Seen</span>
           <span className={clsx(node.alive ? 'text-green-400' : 'text-red-400')}>
-            {formatAgo(node.lastSeenAt)}
+            {/* v865 — offline-Nodes zeigen Datum statt "500h ago" */}
+            {node.alive ? formatAgo(node.lastSeenAt) : `offline seit ${formatDateTime(node.lastSeenAt)}`}
           </span>
         </div>
         {node.adapters.length > 0 && (
@@ -238,7 +314,47 @@ function NodeCard({ node, isThis, sandboxStats }: { node: ClusterNode; isThis: b
             <span className="text-gray-300">{node.adapters.join(', ')}</span>
           </div>
         )}
+        {/* v865 — System-Details aus dem Heartbeat (fehlt bei alten Alfred-Versionen) */}
+        {node.metrics?.platform && (
+          <div className="flex justify-between">
+            <span>System</span>
+            <span className="text-gray-300">
+              {node.metrics.platform}{node.metrics.osRelease ? ` ${node.metrics.osRelease}` : ''}
+              {node.metrics.nodeJs ? ` · Node ${node.metrics.nodeJs.replace(/^v/, '')}` : ''}
+            </span>
+          </div>
+        )}
+        {node.metrics?.cpuCores !== undefined && (
+          <div className="flex justify-between">
+            <span>CPU-Load (1m)</span>
+            <span className={clsx(
+              (node.metrics.cpuLoad1m ?? 0) >= node.metrics.cpuCores ? 'text-red-400'
+                : (node.metrics.cpuLoad1m ?? 0) >= node.metrics.cpuCores * 0.7 ? 'text-amber-400'
+                : 'text-gray-300',
+            )}>
+              {node.metrics.cpuLoad1m ?? 0} / {node.metrics.cpuCores} Cores
+            </span>
+          </div>
+        )}
       </div>
+      {/* v865 — RAM + Disk-Auslastung (nur bei alive-Nodes sinnvoll, Daten sind sonst veraltet) */}
+      {node.alive && node.metrics?.memTotalMb !== undefined && node.metrics.memTotalMb > 0 && (
+        <div className="mt-3 pt-3 border-t border-[#1f1f1f] space-y-2">
+          <UsageBar
+            label={`RAM${node.metrics.rssMb ? ` (Alfred: ${node.metrics.rssMb} MB)` : ''}`}
+            pct={Math.round((1 - (node.metrics.memFreeMb ?? 0) / node.metrics.memTotalMb) * 100)}
+            detail={`${(((node.metrics.memTotalMb - (node.metrics.memFreeMb ?? 0)) / 1024)).toFixed(1)} / ${(node.metrics.memTotalMb / 1024).toFixed(1)} GB`}
+          />
+          {(node.metrics.disks ?? []).map((disk: NodeDiskMetric) => (
+            <UsageBar
+              key={disk.path}
+              label={`Disk ${disk.path}`}
+              pct={disk.usedPct}
+              detail={`${disk.usedPct}% · ${disk.freeGb} GB frei von ${disk.totalGb} GB`}
+            />
+          ))}
+        </div>
+      )}
       {/* v754 — Sandbox-Verteilung pro Node */}
       <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
         <div className="flex items-center justify-between text-xs mb-2">
@@ -298,6 +414,23 @@ function NodeCard({ node, isThis, sandboxStats }: { node: ClusterNode; isThis: b
           <span className="text-[10px] text-gray-600 italic">— keine —</span>
         )}
       </div>
+    </div>
+  );
+}
+
+/** v865 — Status-Karte für PG/Redis/MinIO in der Infrastruktur-Sektion. */
+function InfraCard({ name, ok, detail, error }: { name: string; ok: boolean; detail?: string; error?: string }) {
+  return (
+    <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+      <div className="flex items-center gap-2">
+        <span className={clsx('w-2.5 h-2.5 rounded-full', ok ? 'bg-green-500' : 'bg-red-500')} />
+        <span className="text-sm font-medium text-gray-200">{name}</span>
+        <span className={clsx('ml-auto text-xs', ok ? 'text-green-400' : 'text-red-400')}>
+          {ok ? 'erreichbar' : 'down'}
+        </span>
+      </div>
+      {detail && <div className="mt-2 text-xs text-gray-400">{detail}</div>}
+      {!ok && error && <div className="mt-1 text-[10px] text-red-400/80 font-mono break-all">{error}</div>}
     </div>
   );
 }

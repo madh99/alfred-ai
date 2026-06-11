@@ -36,6 +36,12 @@ export interface FileStore {
   list(userId: string): Promise<StoredFile[]>;
   delete(key: string, requestingUserId?: string): Promise<boolean>;
   exists(key: string): Promise<boolean>;
+  /**
+   * v865 — Erreichbarkeits-Check für die Cluster-Seite. Wichtig: `exists()`
+   * schluckt Fehler (404 und Endpoint-down sehen gleich aus) — healthCheck
+   * unterscheidet das: S3 macht HeadBucket, Local prüft basePath-Schreibbarkeit.
+   */
+  healthCheck(): Promise<{ ok: boolean; error?: string }>;
 }
 
 // ── Local / NFS File Store ──────────────────────────────────
@@ -106,6 +112,16 @@ export class LocalFileStore implements FileStore {
   async exists(key: string): Promise<boolean> {
     const filePath = path.resolve(this.basePath, key);
     return filePath.startsWith(path.resolve(this.basePath)) && fs.existsSync(filePath);
+  }
+
+  /** v865 — basePath existiert + ist schreibbar. */
+  async healthCheck(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      fs.accessSync(this.basePath, fs.constants.W_OK);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message.slice(0, 200) };
+    }
   }
 
   private sanitize(name: string): string {
@@ -210,6 +226,18 @@ export class S3FileStore implements FileStore {
       await client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return true;
     } catch { return false; }
+  }
+
+  /** v865 — HeadBucket gegen den Endpoint (unterscheidet down vs. not-found). */
+  async healthCheck(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const client = await this.getClient();
+      const { HeadBucketCommand } = await (Function('return import("@aws-sdk/client-s3")')() as Promise<any>);
+      await client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message.slice(0, 200) };
+    }
   }
 }
 

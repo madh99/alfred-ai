@@ -16,6 +16,7 @@ function makeStubStore(data: Record<string, Buffer>): FileStore {
     async list() { return []; },
     async delete() { return false; },
     async exists(key: string) { return key in data; },
+    async healthCheck() { return { ok: true }; },
   };
 }
 

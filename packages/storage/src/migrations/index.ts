@@ -2453,4 +2453,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_feature_history_feature ON project_feature_history(feature_id, version DESC)`);
     },
   },
+  {
+    version: 104,
+    description: 'v865 — node_heartbeats.metrics (JSON: CPU/RAM/Disk/Node.js) für die Cluster-Seite (SQLite-Spiegel zu PG v108).',
+    up(db) {
+      try { db.exec(`ALTER TABLE node_heartbeats ADD COLUMN metrics TEXT NOT NULL DEFAULT '{}'`); } catch { /* exists */ }
+    },
+  },
 ];

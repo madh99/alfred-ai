@@ -250,6 +250,27 @@ export interface SlaReport {
 
 // ── Cluster / HA Operations ─────────────────────────────────
 
+/** v865 — Disk-Belegung eines Mounts (aus fs.statfs im Node-Heartbeat). */
+export interface NodeDiskMetric {
+  path: string;
+  totalGb: number;
+  freeGb: number;
+  usedPct: number;
+}
+
+/** v865 — System-Metriken pro Node (Heartbeat-Spalte node_heartbeats.metrics). */
+export interface NodeMetrics {
+  cpuLoad1m?: number;
+  cpuCores?: number;
+  memTotalMb?: number;
+  memFreeMb?: number;
+  rssMb?: number;
+  nodeJs?: string;
+  platform?: string;
+  osRelease?: string;
+  disks?: NodeDiskMetric[];
+}
+
 export interface ClusterNode {
   nodeId: string;
   host: string;
@@ -259,6 +280,15 @@ export interface ClusterNode {
   adapters: string[];
   version: string;
   alive: boolean;
+  /** v865 — fehlt bei Heartbeats älterer Alfred-Versionen. */
+  metrics?: NodeMetrics;
+}
+
+/** v865 — Infrastruktur-Status (DB/Redis/FileStore) für die Cluster-Seite. */
+export interface InfraStatus {
+  database?: { type: string; ok: boolean; sizeMb?: number; error?: string };
+  redis?: { ok: boolean };
+  fileStore?: { backend: string; ok: boolean; error?: string };
 }
 
 export interface AdapterClaim {
@@ -300,5 +330,7 @@ export interface ClusterHealthData {
   nodes: ClusterNode[];
   claims: AdapterClaim[];
   recentReasoningSlots: ReasoningSlotEntry[];
+  /** v865 — DB/Redis/FileStore-Erreichbarkeit + DB-Größe. */
+  infra?: InfraStatus;
   operations: OperationsStatus;
 }

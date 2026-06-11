@@ -10,6 +10,20 @@
  * For shared state, nodes sync via Redis pub/sub.
  */
 import type { Logger } from 'pino';
+import os from 'node:os';
+import { collectNodeMetrics } from './node-metrics.js';
+
+/**
+ * v865 — Statische Node-Infos die der Heartbeat mitschreibt. Wird von
+ * alfred.ts nach der Initialisierung gesetzt; adapters ist ein Callback,
+ * weil die Adapter-Liste erst NACH dem Cluster-Init feststeht.
+ */
+export interface NodeInfo {
+  version?: string;
+  adapters?: () => string[];
+  /** Pfade deren Filesystems im Heartbeat als Disk-Metriken landen ('/', Daten-Dir, Cluster-Mounts). */
+  diskPaths?: string[];
+}
 
 export interface ClusterConfig {
   enabled: boolean;
@@ -73,13 +87,31 @@ export class ClusterManager {
 
   // ── Heartbeat ──────────────────────────────────────────────
 
+  // v865 — Statische Node-Infos (Version, Adapter, Disk-Pfade) für den Heartbeat.
+  private nodeInfo?: NodeInfo;
+  setNodeInfo(info: NodeInfo): void { this.nodeInfo = info; }
+
+  /** v865 — Metriken einsammeln (best-effort, darf den Heartbeat nie blockieren). */
+  private async collectMetricsSafe(): Promise<string> {
+    try {
+      return JSON.stringify(await collectNodeMetrics(this.nodeInfo?.diskPaths ?? ['/']));
+    } catch {
+      return '{}';
+    }
+  }
+
   private async sendHeartbeat(): Promise<void> {
     try {
+      const uptimeS = Math.floor(process.uptime());
       const data = JSON.stringify({
         id: this.config.nodeId,
         role: this.config.role,
         timestamp: new Date().toISOString(),
-        uptime: Math.floor(process.uptime()),
+        uptime: uptimeS,
+        // v865 — angereicherte Felder (vorher nur id/role/timestamp/uptime)
+        host: os.hostname(),
+        version: this.nodeInfo?.version ?? '',
+        adapters: this.nodeInfo?.adapters?.() ?? [],
       });
       await this.redis.set(`alfred:cluster:heartbeat:${this.config.nodeId}`, data, 'EX', Math.ceil(this.failoverMs / 1000));
     } catch (err) {
@@ -268,16 +300,51 @@ export class ClusterManager {
     if (!this.pgAdapter) return;
     try {
       const now = new Date().toISOString();
+      const uptimeS = Math.floor(process.uptime());
+      // v865 — vorher wurden host/version/adapters NIE geschrieben (Spalten
+      // existierten seit der HA-Migration, blieben leer) und started_at blieb
+      // beim Wert des allerersten Inserts hängen. Jetzt: started_at = echter
+      // Prozess-Start (now − uptime, korrekt nach jedem Restart) + Metriken.
+      const startedAt = new Date(Date.now() - uptimeS * 1000).toISOString();
+      const metrics = await this.collectMetricsSafe();
       await this.pgAdapter.execute(
-        `INSERT INTO node_heartbeats (node_id, host, last_seen_at, started_at, uptime_s)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO node_heartbeats (node_id, host, last_seen_at, started_at, uptime_s, adapters, version, metrics)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (node_id) DO UPDATE SET
+           host = excluded.host,
            last_seen_at = excluded.last_seen_at,
-           uptime_s = excluded.uptime_s`,
-        [this.config.nodeId, '', now, now, Math.floor(process.uptime())],
+           started_at = excluded.started_at,
+           uptime_s = excluded.uptime_s,
+           adapters = excluded.adapters,
+           version = excluded.version,
+           metrics = excluded.metrics`,
+        [
+          this.config.nodeId,
+          os.hostname(),
+          now,
+          startedAt,
+          uptimeS,
+          JSON.stringify(this.nodeInfo?.adapters?.() ?? []),
+          this.nodeInfo?.version ?? '',
+          metrics,
+        ],
       );
     } catch (err) {
       this.logger.debug({ err }, 'PG heartbeat write failed');
+    }
+  }
+
+  /** v865 — Echter Redis-Ping (isConnected sagt nur "Client erstellt"). */
+  async pingRedis(): Promise<boolean> {
+    if (!this.redis) return false;
+    try {
+      const result = await Promise.race([
+        this.redis.ping(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('ping timeout')), 2000)),
+      ]);
+      return result === 'PONG';
+    } catch {
+      return false;
     }
   }
 

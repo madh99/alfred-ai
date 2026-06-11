@@ -1763,4 +1763,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_feature_history_feature ON project_feature_history(feature_id, version DESC)`, []);
     },
   },
+  {
+    version: 108,
+    description: 'v865 — node_heartbeats.metrics (JSON: CPU/RAM/Disk/Node.js) für die Cluster-Seite.',
+    async up(db) {
+      try { await db.execute(`ALTER TABLE node_heartbeats ADD COLUMN metrics TEXT NOT NULL DEFAULT '{}'`, []); } catch { /* exists */ }
+    },
+  },
 ];

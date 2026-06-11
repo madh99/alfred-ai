@@ -5,6 +5,50 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.865] - 2026-06-11
+
+### Added — Cluster-Seite: Node-Details, Versions-Drift, Storage, Infrastruktur (v865)
+
+Die Cluster-Seite zeigte pro Node nur Uptime/Last-Seen — Version, Host und
+Adapter blieben leer, weil der PG-Heartbeat die (seit der HA-Migration
+existierenden) Spalten nie befüllte. `started_at` blieb beim allerersten
+Insert hängen.
+
+**Heartbeat angereichert** (`cluster-manager.ts`):
+- `host` (Hostname), `version` (Alfred-Version), `adapters` (aktive Adapter)
+  werden jetzt geschrieben; `started_at` = echter Prozess-Start (korrekt
+  nach jedem Restart). Redis-Heartbeat trägt dieselben Felder.
+- Neue Spalte `node_heartbeats.metrics` (JSON; Migration PG v108 +
+  SQLite v104): CPU-Load/Cores, RAM total/frei, Alfred-RSS, Node.js-Version,
+  OS, Disk-Belegung via `fs.statfs` (Node-builtin, kein neues Paket) für
+  `/`, Daten-Verzeichnis, FileStore-Pfad und alle Cluster-Share-Mounts —
+  Pfade auf demselben Filesystem werden dedupliziert.
+
+**Cluster-Seite (WebUI)**:
+- Version pro Node als Badge + **Versions-Drift-Warnung** wenn aktive
+  Nodes unterschiedliche Versionen laufen
+- System-Zeile (OS, Node.js), CPU-Load/Cores (gelb/rot bei Last)
+- RAM-Balken (inkl. Alfred-RSS) + **Disk-Balken pro Mount**
+  (gelb ≥ 80%, rot ≥ 90% — Konsequenz aus dem 98%-Disk-Vorfall)
+- Offline-Nodes zeigen „offline seit <Datum>" statt nur rotem Punkt
+- Neue Sektion **Infrastruktur**: PostgreSQL/SQLite (Erreichbarkeit +
+  DB-Größe), Redis (echter PING statt „Client existiert"), MinIO/S3
+  (HeadBucket — unterscheidet down von not-found)
+
+**Neu dafür**: `FileStore.healthCheck()` (Local: basePath schreibbar,
+S3: HeadBucket), `ClusterManager.pingRedis()`, `collectNodeMetrics()`
+(core/cluster/node-metrics.ts). Single-Node-Modus bekommt Version +
+Metriken über den synthetischen Node-Eintrag (dabei auch ein latentes
+ESM-Problem entfernt: `require('os')` im Bundle-Pfad → `await import`).
+
+Abwärtskompatibel: Heartbeat-Zeilen älterer Versionen ohne `metrics`
+rendern wie bisher (Felder optional).
+
+### Tests
+
+5 neue in `node-metrics.test.ts` (plausible Werte, usedPct-Grenzen,
+FS-Deduplizierung, nicht existierende Pfade, leere Liste).
+
 ## [0.19.0-multi-ha.864] - 2026-06-11
 
 ### Fixed — Project-Agent: transiente API-Fehler, Build-Status, Insight-Fakten, Assessor-Kontext (v864)

@@ -514,7 +514,8 @@ CREATE TABLE IF NOT EXISTS node_heartbeats (
   started_at   TEXT NOT NULL,
   uptime_s     INTEGER NOT NULL DEFAULT 0,
   adapters     TEXT NOT NULL DEFAULT '[]',
-  version      TEXT NOT NULL DEFAULT ''
+  version      TEXT NOT NULL DEFAULT '',
+  metrics      TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS reasoning_slots (

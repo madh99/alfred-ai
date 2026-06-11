@@ -5382,6 +5382,22 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const { PgMigrator, PG_MIGRATIONS } = await import('@alfred/storage');
       const pgMigrator = new PgMigrator(adapter);
       await pgMigrator.migrate(PG_MIGRATIONS);
+      // v865 — Node-Infos für den Heartbeat: Version, Adapter (lazy — Liste steht
+      // erst nach Adapter-Init fest), Disk-Pfade für die Cluster-Seite.
+      {
+        const pkg = await import('../../cli/package.json', { with: { type: 'json' } }).catch(() => ({ default: { version: '' } }));
+        const diskPaths = [
+          '/',
+          this.config.storage?.path,
+          this.config.fileStore?.basePath,
+          ...(this.config.infra?.shares ?? []).map(s => s.mountPath),
+        ].filter((p): p is string => typeof p === 'string' && p.length > 0);
+        this.clusterManager.setNodeInfo({
+          version: (pkg.default as { version?: string }).version ?? '',
+          adapters: () => [...(this.adapters?.keys() ?? [])],
+          diskPaths,
+        });
+      }
       // Start PG heartbeat as fallback
       this.clusterManager.startPgHeartbeat(adapter);
 
@@ -10346,6 +10362,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               const nodeRows = await dbAdapter.query('SELECT * FROM node_heartbeats ORDER BY last_seen_at DESC', []);
               const now = Date.now();
               for (const row of nodeRows as any[]) {
+                // v865 — metrics (JSON-Spalte) mit durchreichen
+                let metrics: Record<string, unknown> = {};
+                try { metrics = JSON.parse(row.metrics ?? '{}'); } catch { /* alte Rows */ }
                 nodes.push({
                   nodeId: row.node_id,
                   host: row.host ?? '',
@@ -10355,6 +10374,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
                   adapters: JSON.parse(row.adapters ?? '[]'),
                   version: row.version ?? '',
                   alive: (now - new Date(row.last_seen_at).getTime()) < 60_000,
+                  metrics,
                 });
               }
             } catch { /* table may not exist in SQLite mode */ }
@@ -10391,10 +10411,41 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           if (!clusterEnabled && nodes.length === 0) {
             const uptimeS = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
             const adapterList = [...(this.adapters?.keys() ?? [])];
+            // v865 — auch der Single-Node bekommt Version + Live-Metriken
+            const { collectNodeMetrics } = await import('./cluster/node-metrics.js');
+            const pkg = await import('../../cli/package.json', { with: { type: 'json' } }).catch(() => ({ default: { version: '' } }));
+            const diskPaths = ['/', this.config.storage?.path, this.config.fileStore?.basePath]
+              .filter((p): p is string => typeof p === 'string' && p.length > 0);
+            const metrics = await collectNodeMetrics(diskPaths).catch(() => undefined);
+            const { hostname } = await import('node:os');
             nodes.push({
-              nodeId, host: require('os').hostname(), lastSeenAt: new Date().toISOString(),
-              startedAt, uptimeS, adapters: adapterList, version: '', alive: true,
+              nodeId, host: hostname(), lastSeenAt: new Date().toISOString(),
+              startedAt, uptimeS, adapters: adapterList,
+              version: (pkg.default as { version?: string }).version ?? '',
+              alive: true, metrics,
             });
+          }
+
+          // v865 — Infrastruktur-Status: DB (+Größe), Redis, FileStore/MinIO
+          const infra: Record<string, unknown> = {};
+          try {
+            if (dbAdapter?.type === 'postgres') {
+              const r = await dbAdapter.query('SELECT pg_database_size(current_database()) AS size', []);
+              infra.database = { type: 'postgres', ok: true, sizeMb: Math.round(Number((r[0] as any)?.size ?? 0) / 1024 / 1024) };
+            } else if (dbAdapter && this.config.storage?.path) {
+              const { stat } = await import('node:fs/promises');
+              const st = await stat(this.config.storage.path).catch(() => null);
+              infra.database = { type: 'sqlite', ok: true, sizeMb: st ? Math.round(st.size / 1024 / 1024) : undefined };
+            }
+          } catch (err) {
+            infra.database = { type: dbAdapter?.type ?? 'unknown', ok: false, error: (err as Error).message.slice(0, 200) };
+          }
+          if (clusterEnabled) {
+            infra.redis = { ok: await this.clusterManager?.pingRedis().catch(() => false) ?? false };
+          }
+          if (this.fileStoreRef) {
+            const check = await this.fileStoreRef.healthCheck().catch(err => ({ ok: false, error: (err as Error).message.slice(0, 200) }));
+            infra.fileStore = { backend: this.config.fileStore?.backend ?? 'local', ...check };
           }
 
           return {
@@ -10403,6 +10454,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             nodes,
             claims,
             recentReasoningSlots: reasoningSlots,
+            infra,
             operations: {
               reasoning: { schedule: reasoningSchedule },
               backup: this.config.backup?.schedule ? { schedule: this.config.backup.schedule } : undefined,
