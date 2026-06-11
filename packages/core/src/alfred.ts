@@ -1780,7 +1780,9 @@ export class Alfred {
 
         // v869 — Code-Agent-Runner für die Open-Items-Triage (1-2 einfache Fixes
         // brauchen keinen Multi-Phase-Project-Agent).
-        this.projectSkillRef.setCodeAgentRunner(async ({ cwd, prompt }) => {
+        // v869.3 — taskId wird durchgereicht → executeAgent streamt jede Zeile in
+        // den outputBuffer → SSE-Live-Panel in der WebUI.
+        this.projectSkillRef.setCodeAgentRunner(async ({ cwd, prompt, taskId }) => {
           const codeSkill = this.codeAgentSkillRef;
           if (!codeSkill) throw new Error('Code-Agent-Skill nicht verfügbar');
           const agentName = this.config.codeAgents?.agents?.[0]?.name;
@@ -1791,12 +1793,25 @@ export class Alfred {
             : this.config.discord?.enabled ? 'discord'
             : 'api');
           const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as unknown as import('@alfred/types').SkillContext;
-          const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt, cwd }, ctx);
+          const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt, cwd, taskId }, ctx);
           const data = result.data as { stdout?: string; stderr?: string } | undefined;
           return {
             success: result.success,
             output: (data?.stdout || data?.stderr || result.error || '').slice(0, 8000),
           };
+        });
+
+        // v869.3 — Owner-Notifier für async Open-Items-Code-Läufe (Telegram, lazy)
+        this.projectSkillRef.setOwnerNotifier((text) => {
+          try {
+            const ownerChatId = this.config.security?.ownerUserId;
+            if (!ownerChatId || !this.adapters) return;
+            const platform = this.config.telegram?.enabled ? 'telegram'
+              : this.config.matrix?.enabled ? 'matrix'
+              : this.config.discord?.enabled ? 'discord' : undefined;
+            const adapterRef = platform ? this.adapters.get(platform as Platform) : undefined;
+            if (adapterRef) void adapterRef.sendMessage(ownerChatId, text).catch(() => { /* best-effort */ });
+          } catch { /* Notification darf nichts brechen */ }
         });
       }
 
@@ -9031,7 +9046,9 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 { userId: uid, masterUserId: uid } as any,
               );
               if (!result.success) return { ok: false, reason: result.error };
-              return { ok: true, taskId: (result.data as any)?.taskId };
+              // v869.3 — mode + liveTaskId für das Live-Output-Panel der WebUI
+              const d = result.data as { taskId?: string; mode?: string; liveTaskId?: string } | undefined;
+              return { ok: true, taskId: d?.taskId, mode: d?.mode, liveTaskId: d?.liveTaskId };
             } catch (err) {
               return { ok: false, reason: (err as Error).message };
             }

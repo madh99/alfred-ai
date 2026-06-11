@@ -6,6 +6,9 @@ import type {
 } from '@alfred/storage';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { randomUUID } from 'node:crypto';
+// v869.3 — Live-Output-Infrastruktur (Ring-Buffer + SSE) ist taskId-generisch
+import { appendOutputLine, markOutputEnded } from './code-agent/project-agent-skill.js';
 const pExecFile = promisify(execFile);
 
 type LlmAuditCallback = (prompt: string, tier?: string) => Promise<string>;
@@ -82,8 +85,13 @@ export class ProjectSkill extends Skill {
   /** v642 — LLM callback for the deep-audit pass. */
   private llmAuditCallback?: LlmAuditCallback;
   /** v869 — Code-Agent-Runner für die Triage: 1-2 einfache Items brauchen keinen
-   *  Multi-Phase-Project-Agent (gleiche Regel wie im Chat-Prompt-Builder). */
-  private runCodeAgent?: (opts: { cwd: string; prompt: string }) => Promise<{ success: boolean; output: string }>;
+   *  Multi-Phase-Project-Agent (gleiche Regel wie im Chat-Prompt-Builder).
+   *  v869.3 — taskId: Live-Output-Streaming in den outputBuffer (SSE in der WebUI). */
+  private runCodeAgent?: (opts: { cwd: string; prompt: string; taskId?: string }) => Promise<{ success: boolean; output: string }>;
+  /** v869.3 — Owner-Benachrichtigung (Telegram) für async Code-Läufe. Set by alfred.ts. */
+  private ownerNotify?: (text: string) => void;
+  /** v869.3 — Doppel-Start-Guard: pro Projekt max. 1 laufender Open-Items-Code-Lauf. */
+  private runningCodeJobs = new Map<string, string>();
 
   constructor(private readonly repo: ProjectRepository) {
     super();
@@ -100,8 +108,13 @@ export class ProjectSkill extends Skill {
   }
 
   /** v869 — Inject the code-agent runner for single-item triage. */
-  setCodeAgentRunner(fn: (opts: { cwd: string; prompt: string }) => Promise<{ success: boolean; output: string }>): void {
+  setCodeAgentRunner(fn: (opts: { cwd: string; prompt: string; taskId?: string }) => Promise<{ success: boolean; output: string }>): void {
     this.runCodeAgent = fn;
+  }
+
+  /** v869.3 — Inject the owner notifier (Telegram) for async code runs. */
+  setOwnerNotifier(fn: (text: string) => void): void {
+    this.ownerNotify = fn;
   }
 
   /** v642 — Inject the LLM callback for deep audit. */
@@ -471,30 +484,74 @@ ${decLines.join('\n') || '  _keine_'}`;
 
     const itemIds = items.map(i => i.id);
 
-    // v869 — Code-Agent-Pfad: läuft synchron; bei Erfolg werden die Items
-    // DIREKT als done markiert (deterministisch, kein Matcher-Raten).
+    // v869.3 — Code-Agent-Pfad: ASYNC mit Live-Output. v869 lief synchron — der
+    // WebUI-Button hing minutenlang am HTTP-Request (Vorfall 11.06., 195s-Lauf;
+    // Läufe >5min wären in den Request-Timeout gelaufen). Jetzt: sofortige
+    // Antwort mit liveTaskId (SSE-Panel), Items → in_progress, Continuation
+    // markiert done bzw. re-opened mit Notiz + Telegram-Meldung.
     if (mode === 'code' && this.runCodeAgent) {
-      try {
-        const result = await this.runCodeAgent({ cwd: project.cwd, prompt: goal });
-        if (result.success) {
-          let marked = 0;
-          for (const id of itemIds) {
-            try { if (await this.repo.updateOpenItemStatus(id, 'done')) marked++; } catch { /* skip */ }
-          }
-          return {
-            success: true,
-            data: { mode: 'code', projectId, items: itemIds, markedDone: marked },
-            display: `✅ Code-Agent hat ${items.length} Item(s) direkt abgearbeitet — ${marked} als erledigt markiert.\n\n${result.output.slice(0, 2000)}`,
-          };
-        }
+      const alreadyRunning = this.runningCodeJobs.get(projectId);
+      if (alreadyRunning) {
         return {
           success: false,
-          data: { mode: 'code', projectId, items: itemIds },
-          error: `Code-Agent fehlgeschlagen — Items bleiben offen. Output (Ende): ${result.output.slice(-600)}`,
+          error: `Für dieses Projekt läuft bereits ein Open-Items-Code-Lauf (${alreadyRunning.slice(0, 8)}). Bitte warten, bis er fertig ist.`,
         };
-      } catch (err) {
-        return { success: false, error: `Code-Agent-Lauf fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
       }
+      const liveTaskId = randomUUID();
+      this.runningCodeJobs.set(projectId, liveTaskId);
+      // Items sofort sichtbar "in Arbeit" — bei Alfred-Restart mitten im Lauf
+      // bleiben sie so stehen (sichtbar + per Reopen behebbar) statt spurlos.
+      for (const id of itemIds) {
+        try { await this.repo.updateOpenItemStatus(id, 'in_progress'); } catch { /* skip */ }
+      }
+      appendOutputLine(liveTaskId, 'system',
+        `🚀 Code-Agent gestartet — ${items.length} Item(s): ${items.map(i => i.title).join(' | ').slice(0, 300)}`);
+
+      const itemsSnapshot = items.map(i => ({ id: i.id, title: i.title, description: i.description }));
+      const projectName = project.name;
+      const cwd = project.cwd;
+      void (async () => {
+        try {
+          const result = await this.runCodeAgent!({ cwd, prompt: goal, taskId: liveTaskId });
+          if (result.success) {
+            let marked = 0;
+            for (const it of itemsSnapshot) {
+              try { if (await this.repo.updateOpenItemStatus(it.id, 'done')) marked++; } catch { /* skip */ }
+            }
+            appendOutputLine(liveTaskId, 'system', `✅ Fertig — ${marked} Item(s) als erledigt markiert.`);
+            this.ownerNotify?.(`✅ Open-Items-Fix fertig (${projectName}): ${itemsSnapshot.map(i => i.title).join(' | ').slice(0, 300)} — ${marked} Item(s) erledigt markiert.`);
+          } else {
+            // Fehlschlag: zurück auf open + datierte Notiz (Kontext für nächsten Versuch)
+            const dateStr = new Date().toISOString().slice(0, 10);
+            for (const it of itemsSnapshot) {
+              try {
+                await this.repo.updateOpenItemStatus(it.id, 'open');
+                await this.repo.updateOpenItemFields(it.id, {
+                  description: `${it.description ? `${it.description}\n\n` : ''}[Code-Agent-Lauf ${dateStr} fehlgeschlagen: ${result.output.slice(-200)}]`,
+                });
+              } catch { /* skip */ }
+            }
+            appendOutputLine(liveTaskId, 'system', `❌ Fehlgeschlagen — Items wieder geöffnet (mit Notiz). Output-Ende: ${result.output.slice(-400)}`);
+            this.ownerNotify?.(`❌ Open-Items-Fix fehlgeschlagen (${projectName}): ${itemsSnapshot.map(i => i.title).join(' | ').slice(0, 200)}\nOutput-Ende: ${result.output.slice(-400)}`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          for (const it of itemsSnapshot) {
+            try { await this.repo.updateOpenItemStatus(it.id, 'open'); } catch { /* skip */ }
+          }
+          appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)} — Items wieder geöffnet.`);
+          this.ownerNotify?.(`❌ Open-Items-Fix Fehler (${projectName}): ${msg.slice(0, 300)}`);
+        } finally {
+          this.runningCodeJobs.delete(projectId);
+          try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
+        }
+      })();
+
+      return {
+        success: true,
+        data: { mode: 'code', liveTaskId, projectId, items: itemIds },
+        display: `🚀 Code-Agent gestartet (Hintergrund) — ${items.length} Item(s) auf "in Arbeit". Live-Output im Panel; bei Erfolg automatisch erledigt, bei Fehlschlag mit Notiz wieder geöffnet. Telegram-Meldung folgt.`,
+      };
     }
 
     try {

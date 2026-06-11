@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.869.3] - 2026-06-11
+
+### Fixed — Open-Items-Code-Lauf async + Live-Output-Panel (v869.3)
+
+Der v869-Code-Modus lief SYNCHRON — der WebUI-Button hing minutenlang am
+HTTP-Request (beobachtet: 195s „Starte …"); Läufe > Request-Timeout hätten
+eine Fehlermeldung gezeigt, obwohl serverseitig alles weiterlief. Geprüfte
+Alternativen: Background-Task-Infra scheidet aus (5-min-Hard-Kill in
+background-task-runner.ts:17 — realer Lauf heute: 757 s; HA-claimPending
+könnte auf dem falschen Node ohne Projekt-cwd landen).
+
+**Neu:**
+- Code-Modus startet **asynchron**: sofortige Antwort mit `liveTaskId`,
+  Items sofort auf **in_progress** (bei Alfred-Restart mitten im Lauf
+  bleiben sie sichtbar stehen statt spurlos — Reopen-Button existiert)
+- **Live-Output-Panel** in der Projekt-Seite: streamt den claude-Lauf in
+  Echtzeit über die vorhandene taskId-generische SSE-Infrastruktur
+  (outputBuffer + `/api/project-agents/:taskId/output` — kein neuer
+  Endpoint). Abschluss-Status im Panel, danach automatischer
+  Detail-Reload (Items ☑ bzw. wieder offen)
+- **Continuation**: Erfolg → Items done; Fehlschlag → Items zurück auf
+  open + datierte Notiz mit Output-Ende in der Beschreibung
+- **Telegram-Meldung** bei Abschluss (✅/❌ mit Item-Titeln) über neuen
+  Owner-Notifier
+- **Doppel-Start-Guard**: pro Projekt max. 1 laufender
+  Open-Items-Code-Lauf („läuft bereits" statt Parallel-Lauf im selben cwd)
+- Button heißt jetzt ehrlich „Abarbeiten (Auto-Triage: Code- oder
+  Project-Agent)"
+
+Project-Agent-Modus unverändert (war schon immer asynchron).
+
 ## [0.19.0-multi-ha.869.2] - 2026-06-11
 
 ### Fixed — deterministischer Echo-Filter für Open-Items (v869.2)

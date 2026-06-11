@@ -1636,14 +1636,15 @@ export class AlfredClient {
   }
 
   // v641 — Bulk-Work + Audit für Open-Items
-  async projectWorkOnOpenItems(projectId: string, itemIds: string[], maxItems = 10): Promise<{ ok: boolean; taskId?: string; reason?: string }> {
+  async projectWorkOnOpenItems(projectId: string, itemIds: string[], maxItems = 10): Promise<{ ok: boolean; taskId?: string; mode?: string; liveTaskId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/work-on-items`, {
       method: 'POST', headers: this.jsonHeaders,
       body: JSON.stringify({ item_ids: itemIds, max_items: maxItems }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, reason: data.error ?? `http-${res.status}` };
-    return { ok: true, taskId: data.taskId };
+    if (!res.ok) return { ok: false, reason: data.error ?? data.reason ?? `http-${res.status}` };
+    // v869.3 — mode 'code' liefert liveTaskId fürs Live-Output-Panel
+    return { ok: true, taskId: data.taskId, mode: data.mode, liveTaskId: data.liveTaskId };
   }
 
   async projectAuditOpenItems(projectId: string): Promise<{ data?: any; display?: string }> {

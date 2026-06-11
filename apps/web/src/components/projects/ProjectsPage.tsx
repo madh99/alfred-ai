@@ -28,6 +28,7 @@ import { ProjectWizardModal } from './ProjectWizardModal';
 import { ProjectSandboxesView } from './ProjectSandboxesView';
 import { ProjectDeployHistoryView } from './ProjectDeployHistoryView';
 import { SandboxQuickCreateModal } from './SandboxQuickCreateModal';
+import { CodeRunLivePanel } from './CodeRunLivePanel';
 import { ProjectStorageView } from './ProjectStorageView';
 
 const STATUS_BADGES: Record<string, string> = {
@@ -128,6 +129,8 @@ export function ProjectsPage() {
   // v641 — Multi-Select + Bulk-Work + Audit
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [workingOnItems, setWorkingOnItems] = useState(false);
+  // v869.3 — Live-Output-Panel für async Open-Items-Code-Läufe
+  const [codeRunTaskId, setCodeRunTaskId] = useState<string | null>(null);
   const [auditing, setAuditing] = useState(false);
   // v642 — strukturiertes Audit-Modal
   const [auditData, setAuditData] = useState<any | null>(null);
@@ -418,13 +421,19 @@ export function ProjectsPage() {
 
   async function bulkWorkOnSelected() {
     if (!client || !detail || selectedItemIds.size === 0) return;
-    if (!confirm(`Project-Agent mit ${selectedItemIds.size} ausgewählten Items als Goal starten?`)) return;
+    if (!confirm(`Agent mit ${selectedItemIds.size} ausgewählten Items starten? (Triage entscheidet: einfacher Fix → Code-Agent, sonst Project-Agent)`)) return;
     setWorkingOnItems(true);
     try {
       const r = await client.projectWorkOnOpenItems(detail.project.id, [...selectedItemIds]);
       if (r.ok) {
-        alert(`▶ Project-Agent gestartet${r.taskId ? ` (taskId ${r.taskId.slice(0, 8)})` : ''}.\nNach Abschluss prüft Alfred automatisch welche Items erledigt wurden.`);
         setSelectedItemIds(new Set());
+        // v869.3 — Code-Modus: async + Live-Output-Panel statt Alert
+        if (r.mode === 'code' && r.liveTaskId) {
+          setCodeRunTaskId(r.liveTaskId);
+          loadDetail(detail.project.id); // Items stehen jetzt auf in_progress
+        } else {
+          alert(`▶ Project-Agent gestartet${r.taskId ? ` (taskId ${r.taskId.slice(0, 8)})` : ''}.\nNach erfolgreichem Abschluss werden genau diese Items automatisch als erledigt markiert.`);
+        }
       } else {
         alert(`Fehler: ${r.reason}`);
       }
@@ -851,6 +860,15 @@ export function ProjectsPage() {
                   </div>
                 </div>
                 {openItemsExpanded && (<>
+                {/* v869.3 — Live-Output des async Open-Items-Code-Laufs */}
+                {codeRunTaskId && client && (
+                  <CodeRunLivePanel
+                    client={client}
+                    taskId={codeRunTaskId}
+                    onEnded={() => { if (detail) loadDetail(detail.project.id); }}
+                    onClose={() => setCodeRunTaskId(null)}
+                  />
+                )}
                 {/* v668 — Audit-Loading-Banner: User sieht sofort dass etwas passiert */}
                 {auditing && (
                   <div className="bg-blue-500/10 border border-blue-500/30 rounded px-3 py-2 mb-2 text-xs text-blue-200 flex items-center gap-2 animate-pulse">
@@ -869,7 +887,7 @@ export function ProjectsPage() {
                       onClick={bulkWorkOnSelected}
                       disabled={workingOnItems}
                       className="px-2 py-0.5 text-[10px] bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded"
-                    >{workingOnItems ? 'Starte …' : '▶ Mit Project-Agent abarbeiten'}</button>
+                    >{workingOnItems ? 'Starte …' : '▶ Abarbeiten (Auto-Triage: Code- oder Project-Agent)'}</button>
                   </div>
                 )}
 

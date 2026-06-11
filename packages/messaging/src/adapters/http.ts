@@ -721,7 +721,7 @@ export class HttpAdapter extends MessagingAdapter {
     addDecision?: (projectId: string, input: { title: string; choice: string; rationale?: string }) => Promise<any | null>;
     listHealthLog: (id: string, limit: number) => Promise<any[]>;
     // v641 — Bulk-Work + Audit
-    workOnOpenItems?: (projectId: string, itemIds: string[], maxItems: number) => Promise<{ ok: boolean; taskId?: string; reason?: string }>;
+    workOnOpenItems?: (projectId: string, itemIds: string[], maxItems: number) => Promise<{ ok: boolean; taskId?: string; mode?: string; liveTaskId?: string; reason?: string }>;
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
     // v642 — Bulk-Close
     bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
