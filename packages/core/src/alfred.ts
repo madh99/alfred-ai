@@ -547,6 +547,28 @@ export class Alfred {
       usageRepo.record(model, inp, out, cacheR, cacheW, cost).catch(() => {});
     });
 
+    // v868 — Billing-Alert: Guthaben-/Quota-Fehler an den Owner melden
+    // (Dedupe 6h/Tier sitzt im Router). Adapter sind beim Call-Zeitpunkt
+    // verbunden — Lookup erfolgt lazy.
+    llmProvider.setBillingAlertCallback((info) => {
+      try {
+        const ownerChatId = this.config.security?.ownerUserId;
+        if (!ownerChatId || !this.adapters) return;
+        const platform = this.config.telegram?.enabled ? 'telegram'
+          : this.config.matrix?.enabled ? 'matrix'
+          : this.config.discord?.enabled ? 'discord' : undefined;
+        const adapterRef = platform ? this.adapters.get(platform as Platform) : undefined;
+        if (!adapterRef) return;
+        void adapterRef.sendMessage(ownerChatId,
+          `⚠️ **LLM-Billing-Fehler** — Provider "${info.provider}" (Tier ${info.tier}, ${info.model}):\n` +
+          `${info.message}\n\n` +
+          `Tier-Fallback auf andere Provider ist aktiv. Bitte Guthaben/Quota prüfen — ` +
+          `bis dahin laufen Calls über die verbleibenden Provider (ggf. teurer/anderes Modell).`,
+        ).catch(() => { /* Alert best-effort */ });
+        this.logger.warn({ ...info }, 'v868 LLM billing failure — owner alerted');
+      } catch { /* Alert darf nichts brechen */ }
+    });
+
     // Service usage tracking (STT, TTS, OCR, Moderation)
     const serviceUsageRepo = new ServiceUsageRepository(adapter);
     this.serviceUsageRepo = serviceUsageRepo;

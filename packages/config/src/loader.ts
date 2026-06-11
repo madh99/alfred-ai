@@ -62,6 +62,11 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_LLM_LOCAL_PROVIDER: ['llm', 'local', 'provider'],
   ALFRED_LLM_LOCAL_MODEL: ['llm', 'local', 'model'],
   ALFRED_LLM_LOCAL_BASE_URL: ['llm', 'local', 'baseUrl'],
+  // v868 — Notfall-Fallback-Tier (z.B. Mistral)
+  ALFRED_LLM_FALLBACK_PROVIDER: ['llm', 'fallback', 'provider'],
+  ALFRED_LLM_FALLBACK_MODEL: ['llm', 'fallback', 'model'],
+  ALFRED_LLM_FALLBACK_API_KEY: ['llm', 'fallback', 'apiKey'],
+  ALFRED_LLM_FALLBACK_BASE_URL: ['llm', 'fallback', 'baseUrl'],
   ALFRED_STORAGE_PATH: ['storage', 'path'],
   ALFRED_STORAGE_BACKEND: ['storage', 'backend'],
   ALFRED_STORAGE_CONNECTION_STRING: ['storage', 'connectionString'],

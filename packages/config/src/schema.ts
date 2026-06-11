@@ -78,6 +78,8 @@ export const MultiModelConfigSchema = z.object({
   fast: LLMProviderConfigSchema.optional(),
   embeddings: LLMProviderConfigSchema.optional(),
   local: LLMProviderConfigSchema.optional(),
+  // v868 — Notfall-Provider ans Ende der Fallback-Kette (z.B. Mistral)
+  fallback: LLMProviderConfigSchema.optional(),
 }).passthrough();
 
 export const LLMConfigSchema = z.union([LLMProviderConfigSchema, MultiModelConfigSchema]);

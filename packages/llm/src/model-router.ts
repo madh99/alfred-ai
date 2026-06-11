@@ -11,7 +11,21 @@ import { createLLMProvider } from './provider-factory.js';
 import { TokenCostTracker } from './token-costs.js';
 import type { TokenCostSummary, UsagePersistFn } from './token-costs.js';
 
-const TIERS: ModelTier[] = ['default', 'strong', 'fast', 'embeddings', 'local'];
+const TIERS: ModelTier[] = ['default', 'strong', 'fast', 'embeddings', 'local', 'fallback'];
+
+/** v868 — Payload des Billing-Alert-Callbacks (Owner-Benachrichtigung). */
+export interface BillingAlertInfo {
+  tier: ModelTier;
+  provider: string;
+  model: string;
+  message: string;
+}
+
+/** v868 — Fallback-Reihenfolge: 'fallback' (Notfall-Provider, z.B. Mistral)
+ *  steht bewusst am ENDE — er springt nur ein wenn alle regulären Tiers
+ *  ausgefallen sind. 'fallback' wird nie regulär geroutet (resolve() kennt
+ *  ihn nicht als Request-Tier-Ziel; er lebt nur in dieser Kette). */
+const FALLBACK_ORDER: ModelTier[] = ['default', 'strong', 'fast', 'fallback'];
 
 /**
  * Default reasoning_effort per tier — only applied when the underlying model is a
@@ -71,7 +85,8 @@ export class ModelRouter extends LLMProvider {
   }
 
   private resolve(tier?: ModelTier): { provider: LLMProvider; resolvedTier: ModelTier } {
-    if (tier && this.providers.has(tier)) {
+    // v868 — 'fallback' ist kein reguläres Routing-Ziel (nur Notfall-Kette)
+    if (tier && tier !== 'fallback' && this.providers.has(tier)) {
       return { provider: this.providers.get(tier)!, resolvedTier: tier };
     }
     const defaultProvider = this.providers.get('default');
@@ -121,13 +136,52 @@ export class ModelRouter extends LLMProvider {
     try {
       return await this.executeComplete(provider, resolvedTier, withEffort);
     } catch (err) {
-      if (!this.isRetryableError(err)) throw err;
+      // v868 — Billing-Fehler (Guthaben leer, Quota erschöpft) lösen jetzt
+      // ebenfalls den Tier-Fallback aus. Vorher: 400 → sofort throw, der
+      // Fallback-Code eine Zeile darunter wurde nie erreicht — beim
+      // Anthropic-Guthaben-Vorfall 11.06. fielen dadurch Insight/Reasoning/
+      // Summarizer aus, obwohl OpenAI als default-Tier verfügbar war.
+      const billing = this.isBillingError(err);
+      if (billing) this.notifyBillingError(resolvedTier, err);
+      if (!billing && !this.isRetryableError(err)) throw err;
       this.logger?.warn(
-        { err, tier: resolvedTier },
-        'Provider failed, attempting fallback',
+        { err, tier: resolvedTier, billing },
+        billing ? 'Provider billing failure (credit/quota), attempting fallback' : 'Provider failed, attempting fallback',
       );
       return this.completeWithFallback(withEffort, resolvedTier, err);
     }
+  }
+
+  /** v868 — Guthaben-/Quota-Fehler: nicht retrybar beim selben Provider,
+   *  aber ein ANDERER Provider kann übernehmen. */
+  private isBillingError(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    const msg = err.message.toLowerCase();
+    return msg.includes('credit balance is too low') ||
+      msg.includes('insufficient_quota') ||
+      msg.includes('insufficient credits') ||
+      msg.includes('exceeded your current quota') ||
+      msg.includes('billing') && msg.includes('error');
+  }
+
+  /** v868 — Owner-Alert bei Billing-Fehlern, dedupe 6h pro Tier. */
+  private billingAlertCallback?: (info: BillingAlertInfo) => void;
+  private lastBillingAlertAt = new Map<ModelTier, number>();
+  setBillingAlertCallback(cb: (info: BillingAlertInfo) => void): void { this.billingAlertCallback = cb; }
+  private notifyBillingError(tier: ModelTier, err: unknown): void {
+    if (!this.billingAlertCallback) return;
+    const last = this.lastBillingAlertAt.get(tier) ?? 0;
+    if (Date.now() - last < 6 * 3600_000) return;
+    this.lastBillingAlertAt.set(tier, Date.now());
+    const cfg = this.multiConfig[tier];
+    try {
+      this.billingAlertCallback({
+        tier,
+        provider: cfg?.provider ?? 'unknown',
+        model: cfg?.model ?? 'unknown',
+        message: (err as Error).message.slice(0, 300),
+      });
+    } catch { /* Alert darf nichts brechen */ }
   }
 
   private async executeComplete(provider: LLMProvider, resolvedTier: ModelTier, request: LLMRequest): Promise<LLMResponse> {
@@ -166,14 +220,17 @@ export class ModelRouter extends LLMProvider {
   }
 
   private async completeWithFallback(request: LLMRequest, failedTier: ModelTier, originalErr: unknown): Promise<LLMResponse> {
-    const fallbackOrder = (['default', 'strong', 'fast'] as ModelTier[]).filter(t => t !== failedTier);
+    // v868 — 'fallback'-Tier (Notfall-Provider) ans Ende der Kette
+    const fallbackOrder = FALLBACK_ORDER.filter(t => t !== failedTier);
     for (const tier of fallbackOrder) {
       const provider = this.providers.get(tier);
       if (!provider) continue;
       try {
         this.logger?.info({ tier }, 'Fallback to tier');
         return await this.executeComplete(provider, tier, request);
-      } catch {
+      } catch (err) {
+        // v868 — auch Billing-Fehler im Fallback-Tier melden (dedupe greift)
+        if (this.isBillingError(err)) this.notifyBillingError(tier, err);
         continue;
       }
     }
@@ -191,12 +248,15 @@ export class ModelRouter extends LLMProvider {
       }
     } catch (err) {
       // If we already yielded chunks, fallback would produce a spliced/garbled stream
-      if (hasYielded || !this.isRetryableError(err)) throw err;
+      // v868 — Billing-Fehler (Guthaben/Quota) lösen den Fallback ebenfalls aus
+      const billing = this.isBillingError(err);
+      if (billing) this.notifyBillingError(resolvedTier, err);
+      if (hasYielded || (!billing && !this.isRetryableError(err))) throw err;
       this.logger?.warn(
-        { err, tier: resolvedTier },
+        { err, tier: resolvedTier, billing },
         'Stream provider failed before first chunk, attempting fallback',
       );
-      const fallbackOrder = (['default', 'strong', 'fast'] as ModelTier[]).filter(t => t !== resolvedTier);
+      const fallbackOrder = FALLBACK_ORDER.filter(t => t !== resolvedTier);
       for (const tier of fallbackOrder) {
         const fbProvider = this.providers.get(tier);
         if (!fbProvider) continue;
@@ -204,7 +264,8 @@ export class ModelRouter extends LLMProvider {
           this.logger?.info({ tier }, 'Stream fallback to tier');
           yield* fbProvider.stream(this.withTierEffort(request, tier));
           return;
-        } catch {
+        } catch (fbErr) {
+          if (this.isBillingError(fbErr)) this.notifyBillingError(tier, fbErr);
           continue;
         }
       }

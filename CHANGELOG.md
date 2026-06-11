@@ -5,6 +5,54 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.868] - 2026-06-11
+
+### Fixed — Billing-Fehler lösen Provider-Fallback aus + Owner-Alert (v868)
+
+Vorfall 11.06., 13:30: Anthropic-Guthaben erschöpft (`400 credit balance is
+too low`). Der Model-Router warf 4xx sofort durch (`isRetryableError` →
+false) — **der vorhandene Tier-Fallback eine Zeile darunter wurde nie
+erreicht**, obwohl OpenAI als default-Tier verfügbar war. Folge: Reasoning-
+Pass failed, Run-Zusammenfassungen (failure_insight) fielen still aus
+(debug-Log, NULL in DB, Box verschwand kommentarlos aus der UI).
+
+**1. `isBillingError()`** — Guthaben-/Quota-Fehler (credit balance too low,
+insufficient_quota, exceeded your current quota) lösen jetzt den Tier-
+Fallback aus (complete + stream). Anthropic leer → gpt-5.5 übernimmt.
+Echte 4xx-Fehler (z.B. max_tokens-Limit) werfen weiterhin sofort.
+
+**2. Owner-Alert mit Dedupe** (1×/6h pro Tier): Billing-Fehler eines
+Providers → sofortige Nachricht an den Owner („Tier-Fallback aktiv,
+bitte Guthaben/Quota prüfen") statt Diagnose über fehlende Features.
+
+**3. Run-Zusammenfassung verschwindet nie mehr kommentarlos**:
+`generateFailureInsight` speichert bei LLM-Fehlern einen ehrlichen
+Platzhalter („Keine Zusammenfassung — Guthaben/Quota erschöpft …")
+statt NULL; Log warn statt debug.
+
+**4. Neuer optionaler `llm.fallback`-Tier** (z.B. Mistral): reiner
+Notfall-Provider am ENDE der Fallback-Kette (`default → strong → fast →
+fallback`), wird nie regulär geroutet (auch nicht bei explizitem
+tier-Request). Config:
+
+```yaml
+llm:
+  fallback:
+    provider: mistral
+    model: mistral-large-latest
+    apiKey: ...
+```
+
+ENV: `ALFRED_LLM_FALLBACK_PROVIDER/MODEL/API_KEY/BASE_URL`. Nicht
+konfiguriert → exakt bisheriges Verhalten.
+
+### Tests
+
+7 neue in `model-router-fallback.test.ts`: Vorfalls-Szenario (Anthropic-
+Billing → OpenAI), Mistral-Notfall-Kette, fallback nie regulär geroutet,
+echte 4xx werfen weiter, Alert-Dedupe, 529 unverändert, OpenAI-
+insufficient_quota-Wortlaut.
+
 ## [0.19.0-multi-ha.867] - 2026-06-11
 
 ### Fixed — Project-Agent Push-Guard gegen Hauptbranch-Verwechslung (v867)

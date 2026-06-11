@@ -2110,8 +2110,15 @@ WICHTIG: Wenn ein Block ABBRUCH-URSACHE (FAKTEN) vorhanden ist, ist das die verb
       const text = (resp.content ?? '').trim();
       return text.length > 10 ? text.slice(0, 1200) : null;
     } catch (err) {
-      this.logger.debug({ err }, 'generateFailureInsight failed');
-      return null;
+      // v868 — NICHT mehr still null: beim Anthropic-Guthaben-Vorfall 11.06.
+      // verschwand die Zusammenfassungs-Box kommentarlos aus der UI (debug-Log,
+      // failure_insight NULL). Jetzt: ehrlicher Platzhalter mit Ursache + warn.
+      const msg = (err as Error).message ?? String(err);
+      this.logger.warn({ err, goal: state.projectGoal?.slice(0, 60) }, 'generateFailureInsight failed — Platzhalter gespeichert');
+      const cause = /credit balance|insufficient_quota|quota|billing/i.test(msg)
+        ? 'LLM-Provider-Guthaben/Quota erschöpft'
+        : `LLM-Fehler: ${msg.slice(0, 150)}`;
+      return `⚠️ Keine Zusammenfassung verfügbar — ${cause}. Der Run selbst ist davon nicht betroffen (siehe Milestones/Build-Status).`;
     }
   }
 

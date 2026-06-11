@@ -7,7 +7,10 @@ export interface LLMProviderConfig {
   maxTokens?: number;
 }
 
-export type ModelTier = 'default' | 'strong' | 'fast' | 'embeddings' | 'local';
+/** v868 — 'fallback': reiner Notfall-Provider (z.B. Mistral). Wird nie regulär
+ *  geroutet, steht nur am Ende der Fallback-Kette wenn default/strong/fast
+ *  ausfallen (Transient- oder Billing-Fehler). */
+export type ModelTier = 'default' | 'strong' | 'fast' | 'embeddings' | 'local' | 'fallback';
 
 export type MultiModelConfig = {
   [K in ModelTier]?: LLMProviderConfig;
