@@ -1801,6 +1801,21 @@ export class Alfred {
           };
         });
 
+        // v869.4 — Push-Sicherungsnetz für Open-Items-Code-Läufe: code_agent.push
+        // (committet nur bei dirty Tree, pusht aktuellen Branch, v863-Warnung inkl.)
+        this.projectSkillRef.setPushProject(async ({ cwd, commitMessage }) => {
+          const codeSkill = this.codeAgentSkillRef;
+          if (!codeSkill) return { success: false, summary: 'Code-Agent-Skill nicht verfügbar' };
+          const ownerChatId = this.config.security?.ownerUserId ?? '';
+          const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+          const result = await codeSkill.execute({ action: 'push', cwd, commitMessage }, ctx);
+          const d = result.data as { branch?: string; commitSha?: string; branchMismatchWarning?: string } | undefined;
+          const summary = result.success
+            ? `Branch "${d?.branch ?? '?'}"${d?.commitSha ? `, Commit ${d.commitSha.slice(0, 8)}` : ' (kein neuer Commit nötig)'}${d?.branchMismatchWarning ? ` — ${d.branchMismatchWarning}` : ''}`
+            : (result.error ?? 'unbekannter Fehler').slice(0, 200);
+          return { success: result.success, summary };
+        });
+
         // v869.3 — Owner-Notifier für async Open-Items-Code-Läufe (Telegram, lazy)
         this.projectSkillRef.setOwnerNotifier((text) => {
           try {

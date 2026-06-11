@@ -7,6 +7,8 @@ import type {
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 // v869.3 — Live-Output-Infrastruktur (Ring-Buffer + SSE) ist taskId-generisch
 import { appendOutputLine, markOutputEnded } from './code-agent/project-agent-skill.js';
 const pExecFile = promisify(execFile);
@@ -90,6 +92,9 @@ export class ProjectSkill extends Skill {
   private runCodeAgent?: (opts: { cwd: string; prompt: string; taskId?: string }) => Promise<{ success: boolean; output: string }>;
   /** v869.3 — Owner-Benachrichtigung (Telegram) für async Code-Läufe. Set by alfred.ts. */
   private ownerNotify?: (text: string) => void;
+  /** v869.4 — Sicherungsnetz: code_agent.push (committet nur bei dirty Tree,
+   *  pusht aktuellen Branch, inkl. v863-Branch-Mismatch-Warnung). Set by alfred.ts. */
+  private pushProject?: (opts: { cwd: string; commitMessage: string }) => Promise<{ success: boolean; summary: string }>;
   /** v869.3 — Doppel-Start-Guard: pro Projekt max. 1 laufender Open-Items-Code-Lauf. */
   private runningCodeJobs = new Map<string, string>();
 
@@ -115,6 +120,11 @@ export class ProjectSkill extends Skill {
   /** v869.3 — Inject the owner notifier (Telegram) for async code runs. */
   setOwnerNotifier(fn: (text: string) => void): void {
     this.ownerNotify = fn;
+  }
+
+  /** v869.4 — Inject the push safety-net (code_agent.push). */
+  setPushProject(fn: (opts: { cwd: string; commitMessage: string }) => Promise<{ success: boolean; summary: string }>): void {
+    this.pushProject = fn;
   }
 
   /** v642 — Inject the LLM callback for deep audit. */
@@ -510,16 +520,40 @@ ${decLines.join('\n') || '  _keine_'}`;
       const itemsSnapshot = items.map(i => ({ id: i.id, title: i.title, description: i.description }));
       const projectName = project.name;
       const cwd = project.cwd;
+      // v869.4 — Schicht 1 (Prompt): Agent soll selbst committen (fachlich gute
+      // Message). Push übernimmt deterministisch das Sicherungsnetz unten.
+      const codeGoal = `${goal}\n\nAbschluss: Committe deine Änderungen mit aussagekräftiger Conventional-Commits-Message (fix(scope): …). Kein Push nötig — der erfolgt automatisch. Wenn nichts zu ändern war: kein Commit, dokumentiere kurz warum.`;
       void (async () => {
         try {
-          const result = await this.runCodeAgent!({ cwd, prompt: goal, taskId: liveTaskId });
+          const result = await this.runCodeAgent!({ cwd, prompt: codeGoal, taskId: liveTaskId });
           if (result.success) {
             let marked = 0;
             for (const it of itemsSnapshot) {
               try { if (await this.repo.updateOpenItemStatus(it.id, 'done')) marked++; } catch { /* skip */ }
             }
-            appendOutputLine(liveTaskId, 'system', `✅ Fertig — ${marked} Item(s) als erledigt markiert.`);
-            this.ownerNotify?.(`✅ Open-Items-Fix fertig (${projectName}): ${itemsSnapshot.map(i => i.title).join(' | ').slice(0, 300)} — ${marked} Item(s) erledigt markiert.`);
+            // v869.4 — Schicht 2 (deterministisch): Änderungen ins Remote sichern.
+            // code_agent.push committet nur bei dirty Tree (kein Leer-Commit) und
+            // pusht den aktuellen Branch (no-op wenn der Agent schon gepusht hat).
+            // "Weich" (User-Entscheid): Items bleiben done auch bei Push-Fehlschlag —
+            // dann aber laute Warnung mit Kontext.
+            let secureNote = '';
+            if (this.pushProject) {
+              try {
+                if (!existsSync(path.join(cwd, '.git'))) {
+                  secureNote = '⚠️ Kein Git-Repo im Projekt — Commit/Push übersprungen.';
+                } else {
+                  const commitMsg = `fix: ${itemsSnapshot.map(i => i.title).join(' | ').slice(0, 140)}`;
+                  const push = await this.pushProject({ cwd, commitMessage: commitMsg });
+                  secureNote = push.success
+                    ? `📤 Gesichert: ${push.summary}`
+                    : `⚠️ Push fehlgeschlagen — Änderungen liegen lokal, bitte manuell pushen. ${push.summary}`;
+                }
+              } catch (err) {
+                secureNote = `⚠️ Sicherungs-Push fehlgeschlagen: ${(err instanceof Error ? err.message : String(err)).slice(0, 150)} — Änderungen liegen lokal.`;
+              }
+            }
+            appendOutputLine(liveTaskId, 'system', `✅ Fertig — ${marked} Item(s) als erledigt markiert.${secureNote ? `\n${secureNote}` : ''}`);
+            this.ownerNotify?.(`✅ Open-Items-Fix fertig (${projectName}): ${itemsSnapshot.map(i => i.title).join(' | ').slice(0, 300)} — ${marked} Item(s) erledigt markiert.${secureNote ? `\n${secureNote}` : ''}`);
           } else {
             // Fehlschlag: zurück auf open + datierte Notiz (Kontext für nächsten Versuch)
             const dateStr = new Date().toISOString().slice(0, 10);

@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.869.4] - 2026-06-11
+
+### Fixed — Open-Items-Code-Läufe sichern Änderungen ins Remote (v869.4)
+
+Befund nach dem ersten 869.3-Lauf: Der Code-Agent fixte korrekt, die Items
+wurden done — aber **ChatClient.tsx + community.css lagen uncommitted im
+Working Tree**. Ob der Agent committet, war Zufall (LLM-Goal ohne
+Commit-Anweisung). „done" hieß nicht „deploybar".
+
+**Geschichtete Lösung** (User-Entscheid: 1 geschichtet, 2 current-branch,
+3 weich):
+- **Schicht 1 (Prompt)**: Code-Mode-Goal endet jetzt mit „Committe deine
+  Änderungen (Conventional Commits) — kein Push nötig, erfolgt automatisch"
+  → fachlich gute Commit-Messages
+- **Schicht 2 (deterministisch)**: Continuation ruft nach Erfolg
+  `code_agent.push` als Sicherungsnetz — committet NUR bei dirty Tree
+  (kein Leer-Commit), pusht den aktuellen Branch (No-op wenn der Agent
+  schon gepusht hat), inkl. v863-Branch-Mismatch-Warnung
+- **Weich**: Items bleiben auch bei Push-Fehlschlag done — aber mit lauter
+  ⚠️-Meldung in Panel + Telegram („Änderungen liegen lokal, bitte manuell
+  pushen")
+- Projekt-cwd **ohne** Git-Repo: Netz überspringt sauber mit Hinweis
+  (kein Überraschungs-git-init)
+- Panel/Telegram melden den Sicherungs-Status explizit:
+  „📤 Gesichert: Branch master, Commit abc12345"
+
+**Klarstellung**: Der generische `code_agent.run` (Chat, Delegate,
+beliebige cwd ohne Repo/Projekt) ist von alldem unberührt — die Logik
+lebt ausschließlich im Open-Items-Pfad des Project-Skills.
+
 ## [0.19.0-multi-ha.869.3] - 2026-06-11
 
 ### Fixed — Open-Items-Code-Lauf async + Live-Output-Panel (v869.3)
