@@ -350,6 +350,31 @@ export function ProjectsPage() {
     }
   }
 
+  // v869 — erledigtes/verworfenes Item wieder öffnen, mit Pflicht-Notiz warum
+  // (z.B. "funktioniert doch nicht bei X" / "nicht vollständig — Y fehlt").
+  async function reopenOpenItem(item: ProjectOpenItem) {
+    if (!client) return;
+    const note = window.prompt(
+      `"${item.title}" wieder öffnen — warum? (z.B. funktioniert doch nicht / unvollständig)`,
+      '',
+    );
+    if (note === null) return; // abgebrochen
+    if (!note.trim()) { alert('Bitte eine kurze Begründung angeben — sie hilft dem nächsten Agent-Lauf.'); return; }
+    const dateStr = new Date().toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const newDescription = `${item.description ? `${item.description}\n\n` : ''}[Wieder geöffnet ${dateStr}: ${note.trim()}]`;
+    const ok = await client.patchProjectOpenItem(item.id, { status: 'open', description: newDescription });
+    if (ok && detail) {
+      setDetail({
+        ...detail,
+        openItems: detail.openItems.map(it => it.id === item.id
+          ? { ...it, status: 'open' as const, description: newDescription, resolvedAt: undefined }
+          : it),
+      });
+    } else if (!ok) {
+      alert('Wieder-Öffnen fehlgeschlagen.');
+    }
+  }
+
   // v668 — Open-Item zur Roadmap hinzufügen / aus der Roadmap entfernen
   function openRoadmapEdit(item: ProjectOpenItem) {
     setRoadmapForm({
@@ -1073,6 +1098,12 @@ export function ProjectsPage() {
                                 <span className="text-[10px] text-gray-600" title={it.resolvedAt ? `Erledigt: ${formatDateTime(it.resolvedAt)}` : ''}>
                                   {it.resolvedAt ? formatDateTime(it.resolvedAt) : '—'}
                                 </span>
+                                {/* v869 — Reopen mit Pflicht-Notiz (z.B. "funktioniert doch nicht") */}
+                                <button
+                                  onClick={() => reopenOpenItem(it)}
+                                  className="px-1.5 py-0.5 text-[10px] text-amber-400 hover:bg-amber-500/10 border border-amber-500/30 rounded"
+                                  title="Wieder öffnen — mit Notiz, was doch nicht funktioniert oder fehlt"
+                                >↺ Reopen</button>
                               </div>
                               {isExpanded && hasDetails && (
                                 <div className="ml-10 mt-0.5 mb-1 text-[11px] text-gray-500 space-y-0.5 border-l border-[#222] pl-2">

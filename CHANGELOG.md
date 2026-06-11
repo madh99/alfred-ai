@@ -5,6 +5,47 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.869] - 2026-06-11
+
+### Fixed — Offene-Punkte-Pipeline: Auto-Done, Triage, Reopen, Dedup (v869)
+
+Vier User-Befunde, vier Ursachen, vier Fixes:
+
+**1. Abgearbeitete Punkte werden jetzt wirklich als erledigt markiert.**
+Der v731-Auto-Done-Mechanismus (mentioned_item_ids → done bei Erfolg)
+existierte, aber `setProjectAgentStarter` verwarf die Item-IDs —
+`work_on_open_items` kannte sie exakt und reichte sie nie durch. Jetzt:
+IDs gehen bis zur Agent-Session; nach erfolgreichem Run werden GENAU die
+übergebenen Items deterministisch done (kein Matcher-Raten mehr nötig).
+Irreführender Erfolgs-Text korrigiert.
+
+**2. Triage + LLM-Auftrag statt Roh-Template.** `work_on_open_items`
+fragt jetzt das fast-LLM: 1–2 klar umrissene Einzel-Fixes → direkt
+`code_agent.run` (synchron; bei Erfolg Items sofort done) — gleiche Regel
+wie der Chat. Sonst Project-Agent mit präzise formuliertem Arbeitsauftrag
+(LLM-generiert, Fallback aufs bisherige Template). Übersteuerbar per
+`force_agent: project|code`.
+
+**3. Reopen im UI.** Erledigte Punkte haben jetzt einen ↺-Reopen-Button
+mit Pflicht-Notiz („funktioniert doch nicht / unvollständig, weil …") —
+Notiz wird datiert an die Beschreibung gehängt, damit der nächste
+Agent-Lauf den Kontext hat. Status zurück auf open.
+
+**4. Kein Geister-Wachstum mehr.** Der Summarizer erfand nach jedem Run
+bis zu 8 „offensichtliche Nachfolgeschritte" — inklusive gerade
+implementierter Punkte — und `addOpenItem` hatte null Dedup (Bestand:
+554 Items!). Jetzt: Prompt verbietet explizit Erledigtes + erfundene
+Folge-TODOs; Insert dedupliziert per Titel-Ähnlichkeit (Jaccard ≥ 0.7)
+gegen bestehende offene Items inkl. Intra-Batch.
+
+Bestand aufräumen: `project audit_open_items` (mit LLM-Pass) über die
+554 Alt-Items laufen lassen — v869 stoppt nur das weitere Wachstum.
+
+### Tests
+
+5 neue in `open-item-dedup.test.ts` (identisch, Umformulierung ≥ 0.7,
+verschiedene Punkte < 0.7, Case/Sonderzeichen, Leerstrings).
+
 ## [0.19.0-multi-ha.868.2] - 2026-06-11
 
 ### Fixed — explizite Tier-Keys schlagen mistralApiKey-Propagation (v868.2)

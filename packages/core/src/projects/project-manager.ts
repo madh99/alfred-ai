@@ -94,6 +94,27 @@ export function deriveProjectName(cwd: string | undefined, goal: string, sourceI
 }
 
 /**
+ * v869 — Titel-Ähnlichkeit für Open-Item-Dedup (Jaccard über normalisierte
+ * Wort-Tokens, Stopwort-arm durch Mindestlänge 3). 0.7 ≈ "im Kern derselbe
+ * Punkt, anders formuliert". Exportiert für Tests.
+ */
+export function openItemTitleSimilarity(a: string, b: string): number {
+  const tokenize = (s: string): Set<string> => new Set(
+    s.toLowerCase()
+      .replace(/[^a-zà-ž0-9äöüß\s-]/gi, ' ')
+      .split(/[\s-]+/)
+      .filter(w => w.length >= 3),
+  );
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (ta.size === 0 || tb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase() ? 1 : 0;
+  let intersection = 0;
+  for (const w of ta) if (tb.has(w)) intersection++;
+  const union = ta.size + tb.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/**
  * Glue layer: binds incoming sessions to long-lived Project containers,
  * runs the LLM summarizer on completion, and persists extracted open items + decisions.
  */
@@ -198,7 +219,21 @@ export class ProjectManager {
       await this.repo.updateSessionSummary(session.id, summary, new Date().toISOString());
 
       if (summary.openItems && summary.openItems.length > 0) {
+        // v869 — Titel-Dedup gegen BESTEHENDE offene Items des Projekts. Vorher
+        // wurde jedes Summarizer-Item blind eingefügt → die Liste wuchs auf 500+
+        // Einträge, viele davon Duplikate/Varianten desselben Punkts.
+        let existingTitles: string[] = [];
+        try {
+          const existing = await this.repo.listOpenItemsForProject(project.id, ['open', 'in_progress']);
+          existingTitles = existing.map(e => e.title);
+        } catch { /* Dedup best-effort — ohne Bestand wird normal eingefügt */ }
+        let skippedDup = 0;
         for (const item of summary.openItems) {
+          if (existingTitles.some(t => openItemTitleSimilarity(t, item.title) >= 0.7)) {
+            skippedDup++;
+            continue;
+          }
+          existingTitles.push(item.title); // auch Intra-Batch-Duplikate verhindern
           await this.repo.addOpenItem(project.id, {
             title: item.title,
             description: item.description,
@@ -206,6 +241,9 @@ export class ProjectManager {
             sessionId: session.id,
             linkedIncidentId: item.linkedIncidentId,
           });
+        }
+        if (skippedDup > 0) {
+          this.logger.info({ projectId: project.id, skippedDup, total: summary.openItems.length }, 'v869 open-item dedup: Duplikate übersprungen');
         }
       }
 

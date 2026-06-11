@@ -89,7 +89,10 @@ Erzeuge AUSSCHLIESSLICH valides JSON nach diesem Schema (KEINE Markdown-Fences, 
 
 Regeln:
 - key_decisions: nur Architektur-/Stack-/Trade-off-Entscheidungen. Max 5. Bei trivialer Session: [].
-- open_items: explizite TODOs aus dem Transkript ODER offensichtliche Nachfolgeschritte. Max 8.
+- open_items: AUSSCHLIESSLICH Punkte, die im Transkript EXPLIZIT als offen/unerledigt/fehlgeschlagen benannt sind. Max 8.
+  WICHTIG (v869): NIEMALS Punkte aufnehmen, die in DIESER Session bereits erledigt wurden — auch nicht als
+  "verifizieren"/"testen"-Variante des Erledigten. KEINE erfundenen Nachfolgeschritte, KEINE generischen
+  Verbesserungsideen ("könnte man noch optimieren"). Wenn nichts explizit offen blieb: [].
 - files_touched: nur aus den oben gelisteten FILES auswählen, keine erfinden.
 - next_check_in_days: 7 bei aktiven Themen, 14 default, 30 wenn klar abgeschlossen ohne offene Punkte.
 - Sprache: Deutsch.

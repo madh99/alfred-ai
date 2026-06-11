@@ -1755,19 +1755,46 @@ export class Alfred {
       // v641 — wire ProjectSkill.setProjectAgentStarter so `project work_on_open_items`
       // kann den Project-Agent direkt starten ohne LLM-Round-Trip.
       if (this.projectSkillRef) {
-        this.projectSkillRef.setProjectAgentStarter(async ({ cwd, goal, projectId }) => {
+        this.projectSkillRef.setProjectAgentStarter(async ({ cwd, goal, projectId, mentionedItemIds }) => {
           const ownerChatId = this.config.security?.ownerUserId ?? '';
           const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
             : this.config.matrix?.enabled ? 'matrix'
             : this.config.discord?.enabled ? 'discord'
             : 'api');
           const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as unknown as import('@alfred/types').SkillContext;
-          const result = await projectAgentSkill.execute({ action: 'start', goal, cwd }, ctx);
+          // v869 — mentioned_item_ids durchreichen: wird auf der Session persistiert,
+          // der v731-Auto-Done markiert die Items nach erfolgreichem Run als done.
+          // Vorher wurden die IDs hier verworfen → Items blieben ewig offen.
+          const result = await projectAgentSkill.execute({
+            action: 'start', goal, cwd,
+            mentioned_item_ids: mentionedItemIds && mentionedItemIds.length > 0 ? mentionedItemIds : undefined,
+          }, ctx);
           if (!result.success) throw new Error(result.error ?? 'project-agent start failed');
           const taskId = (result.data as any)?.taskId as string;
           if (!taskId) throw new Error('no taskId returned');
           void projectId;
           return { taskId };
+        });
+
+        // v869 — Code-Agent-Runner für die Open-Items-Triage (1-2 einfache Fixes
+        // brauchen keinen Multi-Phase-Project-Agent).
+        this.projectSkillRef.setCodeAgentRunner(async ({ cwd, prompt }) => {
+          const codeSkill = this.codeAgentSkillRef;
+          if (!codeSkill) throw new Error('Code-Agent-Skill nicht verfügbar');
+          const agentName = this.config.codeAgents?.agents?.[0]?.name;
+          if (!agentName) throw new Error('Kein Code-Agent konfiguriert');
+          const ownerChatId = this.config.security?.ownerUserId ?? '';
+          const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
+            : this.config.matrix?.enabled ? 'matrix'
+            : this.config.discord?.enabled ? 'discord'
+            : 'api');
+          const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+          const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt, cwd }, ctx);
+          const data = result.data as { stdout?: string; stderr?: string } | undefined;
+          return {
+            success: result.success,
+            output: (data?.stdout || data?.stderr || result.error || '').slice(0, 8000),
+          };
         });
       }
 

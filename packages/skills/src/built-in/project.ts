@@ -74,10 +74,16 @@ export class ProjectSkill extends Skill {
   /** Set by alfred.ts — called when an open-item with linkedIncidentId is resolved. */
   private incidentCascade?: IncidentCascadeFn;
 
-  /** v641 — Callback to start a Project-Agent with a constructed goal. Set by alfred.ts. */
-  private startProjectAgent?: (opts: { cwd: string; goal: string; projectId: string }) => Promise<{ taskId: string }>;
+  /** v641 — Callback to start a Project-Agent with a constructed goal. Set by alfred.ts.
+   *  v869 — mentionedItemIds: die Item-IDs werden auf der Agent-Session persistiert,
+   *  damit der v731-Auto-Done-Mechanismus sie nach erfolgreichem Run als done markiert.
+   *  Vorher fehlte die Durchreichung komplett → Items blieben ewig offen. */
+  private startProjectAgent?: (opts: { cwd: string; goal: string; projectId: string; mentionedItemIds?: string[] }) => Promise<{ taskId: string }>;
   /** v642 — LLM callback for the deep-audit pass. */
   private llmAuditCallback?: LlmAuditCallback;
+  /** v869 — Code-Agent-Runner für die Triage: 1-2 einfache Items brauchen keinen
+   *  Multi-Phase-Project-Agent (gleiche Regel wie im Chat-Prompt-Builder). */
+  private runCodeAgent?: (opts: { cwd: string; prompt: string }) => Promise<{ success: boolean; output: string }>;
 
   constructor(private readonly repo: ProjectRepository) {
     super();
@@ -89,8 +95,13 @@ export class ProjectSkill extends Skill {
   }
 
   /** v641 — Inject the start-project-agent callback. */
-  setProjectAgentStarter(fn: (opts: { cwd: string; goal: string; projectId: string }) => Promise<{ taskId: string }>): void {
+  setProjectAgentStarter(fn: (opts: { cwd: string; goal: string; projectId: string; mentionedItemIds?: string[] }) => Promise<{ taskId: string }>): void {
     this.startProjectAgent = fn;
+  }
+
+  /** v869 — Inject the code-agent runner for single-item triage. */
+  setCodeAgentRunner(fn: (opts: { cwd: string; prompt: string }) => Promise<{ success: boolean; output: string }>): void {
+    this.runCodeAgent = fn;
   }
 
   /** v642 — Inject the LLM callback for deep audit. */
@@ -406,7 +417,8 @@ ${decLines.join('\n') || '  _keine_'}`;
     items = items.slice(0, maxItems);
     if (items.length === 0) return { success: false, error: 'Keine offenen Items zum Abarbeiten gefunden' };
 
-    const goalLines = [
+    // Fallback-Goal (Template) — wird genutzt wenn die LLM-Aufbereitung scheitert
+    const templateGoal = [
       `Arbeite die folgenden offenen Punkte des Projekts "${project.name}" ab. Pro Punkt: prüfe ob er noch zutrifft, implementiere die Änderung sauber, schreibe ggf. Tests. Halte dich an den bestehenden Code-Stil im Repo.`,
       '',
       ...items.map((it, idx) => {
@@ -417,15 +429,82 @@ ${decLines.join('\n') || '  _keine_'}`;
       }),
       '',
       `Wenn ein Punkt nicht (mehr) zutrifft, dokumentiere kurz warum statt ihn blind umzusetzen.`,
-    ];
-    const goal = goalLines.join('\n');
+    ].join('\n');
+
+    // v869 — Triage + LLM-Goal: gleiche Regel wie der Chat-Prompt-Builder.
+    // 1-2 einfache, fokussierte Items → code_agent (1 Subprozess, schneller,
+    // kein File-Thrash-Risiko). Mehr/komplexer → project_agent mit präzise
+    // formuliertem Auftrag statt Roh-Template. force_agent übersteuert.
+    const forceAgent = input.force_agent as 'project' | 'code' | undefined;
+    let mode: 'project' | 'code' = 'project';
+    let goal = templateGoal;
+    if (this.llmAuditCallback) {
+      try {
+        const triagePrompt = [
+          `Du bereitest offene Projekt-Punkte für einen Coding-Agent auf. Projekt: "${project.name}".`,
+          '',
+          'ITEMS:',
+          ...items.map((it, i) => `${i + 1}. ${it.title}${it.description ? ` — ${it.description}` : ''}${it.priority === 'high' ? ' (high prio)' : ''}`),
+          '',
+          'Entscheide:',
+          '- mode "code": NUR wenn 1-2 Items UND alle klar umrissene, fokussierte Einzel-Fixes sind (Bug-Fix, kleine UI-Korrektur, einzelne Datei-Änderung) die KEINEN Multi-Phase-Plan brauchen.',
+          '- mode "project": bei allem anderen (mehrere Items, Feature-Arbeit, Datenmodell/Migration, unklarer Scope).',
+          '',
+          'Formuliere zusätzlich einen präzisen Arbeitsauftrag (deutsch) für den Agent: konkret was zu tun ist, erwartetes Verhalten, was NICHT angefasst werden soll. Erfinde nichts dazu, was nicht in den Items steht.',
+          '',
+          'Antworte NUR mit validem JSON: {"mode": "code"|"project", "goal": "Arbeitsauftrag…"}',
+        ].join('\n');
+        const raw = await this.llmAuditCallback(triagePrompt, 'fast');
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]) as { mode?: string; goal?: string };
+          if (parsed.goal && parsed.goal.trim().length > 20) {
+            goal = `${parsed.goal.trim()}\n\nBetroffene offene Punkte:\n${items.map((it, i) => `${i + 1}. ${it.title}`).join('\n')}\n\nWenn ein Punkt nicht (mehr) zutrifft, dokumentiere kurz warum statt ihn blind umzusetzen.`;
+          }
+          if (parsed.mode === 'code' && items.length <= 2) mode = 'code';
+        }
+      } catch { /* Triage best-effort — Fallback: project_agent + Template */ }
+    }
+    if (forceAgent === 'project') mode = 'project';
+    if (forceAgent === 'code') mode = 'code';
+    if (mode === 'code' && !this.runCodeAgent) mode = 'project'; // Runner nicht verkabelt
+
+    const itemIds = items.map(i => i.id);
+
+    // v869 — Code-Agent-Pfad: läuft synchron; bei Erfolg werden die Items
+    // DIREKT als done markiert (deterministisch, kein Matcher-Raten).
+    if (mode === 'code' && this.runCodeAgent) {
+      try {
+        const result = await this.runCodeAgent({ cwd: project.cwd, prompt: goal });
+        if (result.success) {
+          let marked = 0;
+          for (const id of itemIds) {
+            try { if (await this.repo.updateOpenItemStatus(id, 'done')) marked++; } catch { /* skip */ }
+          }
+          return {
+            success: true,
+            data: { mode: 'code', projectId, items: itemIds, markedDone: marked },
+            display: `✅ Code-Agent hat ${items.length} Item(s) direkt abgearbeitet — ${marked} als erledigt markiert.\n\n${result.output.slice(0, 2000)}`,
+          };
+        }
+        return {
+          success: false,
+          data: { mode: 'code', projectId, items: itemIds },
+          error: `Code-Agent fehlgeschlagen — Items bleiben offen. Output (Ende): ${result.output.slice(-600)}`,
+        };
+      } catch (err) {
+        return { success: false, error: `Code-Agent-Lauf fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    }
 
     try {
-      const { taskId } = await this.startProjectAgent({ cwd: project.cwd, goal, projectId });
+      // v869 — mentionedItemIds durchreichen: der v731-Auto-Done-Mechanismus
+      // markiert nach erfolgreichem Run GENAU diese Items als done.
+      const { taskId } = await this.startProjectAgent({ cwd: project.cwd, goal, projectId, mentionedItemIds: itemIds });
       return {
         success: true,
-        data: { taskId, projectId, items: items.map(i => i.id) },
-        display: `▶ Project-Agent gestartet (taskId ${taskId.slice(0, 8)}) mit ${items.length} Items als Goal.\n\nNach Abschluss versucht der OpenItemMatcher automatisch zu erkennen, welche Items erledigt wurden, und markiert sie als done.`,
+        data: { mode: 'project', taskId, projectId, items: itemIds },
+        display: `▶ Project-Agent gestartet (taskId ${taskId.slice(0, 8)}) mit ${items.length} Item(s).\n\nNach erfolgreichem Abschluss werden genau diese Items automatisch als erledigt markiert.`,
       };
     } catch (err) {
       return { success: false, error: `Project-Agent-Start fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
