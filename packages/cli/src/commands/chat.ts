@@ -195,7 +195,7 @@ export async function chatCommand(flags: { model?: string; tier?: string }): Pro
     if (tierConfig) {
       config.llm.default = tierConfig;
     } else {
-      console.error(`Unknown tier: ${flags.tier}. Available tiers: default, strong, fast, embeddings, local`);
+      console.error(`Unknown tier: ${flags.tier}. Available tiers: default, strong, fast, embeddings, local, fallback`);
       process.exit(1);
     }
   }

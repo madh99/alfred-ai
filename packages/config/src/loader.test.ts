@@ -58,6 +58,39 @@ describe('ConfigLoader', () => {
     expect(config.llm.default.provider).toBe('openai');
   });
 
+  // v868.1 — fallback-Tier: ENV-Override + Pre-Normalisierung (flat default +
+  // fallback-Subobjekt darf NICHT in default geschoben/gestrippt werden)
+  it('v868: configures fallback tier from env and survives flat-config normalization', () => {
+    process.env['ALFRED_LLM_PROVIDER'] = 'anthropic';
+    process.env['ALFRED_LLM_FALLBACK_PROVIDER'] = 'mistral';
+    process.env['ALFRED_LLM_FALLBACK_MODEL'] = 'mistral-large-latest';
+    try {
+      const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');
+      expect(config.llm.default.provider).toBe('anthropic');
+      expect(config.llm.fallback?.provider).toBe('mistral');
+      expect(config.llm.fallback?.model).toBe('mistral-large-latest');
+    } finally {
+      delete process.env['ALFRED_LLM_FALLBACK_PROVIDER'];
+      delete process.env['ALFRED_LLM_FALLBACK_MODEL'];
+    }
+  });
+
+  // v868.1 — standalone mistralApiKey propagiert in den fallback-Tier (provider mistral)
+  it('v868: standalone ALFRED_MISTRAL_API_KEY fills mistral fallback tier key', () => {
+    process.env['ALFRED_LLM_PROVIDER'] = 'anthropic';
+    process.env['ALFRED_LLM_FALLBACK_PROVIDER'] = 'mistral';
+    process.env['ALFRED_LLM_FALLBACK_MODEL'] = 'mistral-large-latest';
+    process.env['ALFRED_MISTRAL_API_KEY'] = 'mistral-test-key';
+    try {
+      const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');
+      expect(config.llm.fallback?.apiKey).toBe('mistral-test-key');
+    } finally {
+      delete process.env['ALFRED_LLM_FALLBACK_PROVIDER'];
+      delete process.env['ALFRED_LLM_FALLBACK_MODEL'];
+      delete process.env['ALFRED_MISTRAL_API_KEY'];
+    }
+  });
+
   it('should validate config schema', () => {
     const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');
 

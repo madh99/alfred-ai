@@ -75,7 +75,7 @@ export async function statusCommand(): Promise<void> {
   if (defaultLlm.baseUrl) {
     console.log(`  Base URL: ${defaultLlm.baseUrl}`);
   }
-  for (const tier of ['strong', 'fast', 'embeddings', 'local'] as const) {
+  for (const tier of ['strong', 'fast', 'embeddings', 'local', 'fallback'] as const) {
     const tierConfig = config.llm[tier];
     if (tierConfig) {
       console.log(`  ${tier}: ${tierConfig.provider}/${tierConfig.model}`);

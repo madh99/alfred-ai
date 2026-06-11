@@ -432,7 +432,7 @@ export class ConfigLoader {
     // When env vars set both flat keys (provider, model) and tier sub-objects
     // (strong, fast), the Zod union would pick the flat schema and strip tiers.
     // Move flat keys into `default` so MultiModelConfigSchema is matched.
-    const tiers = ['strong', 'fast', 'embeddings', 'local'] as const;
+    const tiers = ['strong', 'fast', 'embeddings', 'local', 'fallback'] as const; // v868.1 — fallback-Tier
     const preLlm = withEnv.llm as Record<string, unknown> | undefined;
     if (preLlm && 'provider' in preLlm) {
       const hasTierSubObjects = tiers.some(t => preLlm[t] && typeof preLlm[t] === 'object');
@@ -466,7 +466,7 @@ export class ConfigLoader {
         ?? ((llmConfig.default as Record<string, unknown> | undefined)?.apiKey as string | undefined);
 
       if (sharedApiKey) {
-        for (const tier of ['default', 'strong', 'fast', 'embeddings', 'local']) {
+        for (const tier of ['default', 'strong', 'fast', 'embeddings', 'local', 'fallback']) {
           const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
           if (tierConfig && !tierConfig.apiKey) {
             tierConfig.apiKey = sharedApiKey;
@@ -485,7 +485,9 @@ export class ConfigLoader {
       }
       // Also fill tier keys when tier provider is mistral
       // (override any inherited default-tier key — e.g. Anthropic key from shared propagation)
-      for (const tier of ['strong', 'fast', 'embeddings', 'local']) {
+      // v868.1 — inkl. fallback: `fallback: {provider: mistral}` ohne eigenen Key
+      // soll den vorhandenen standalone mistralApiKey bekommen.
+      for (const tier of ['strong', 'fast', 'embeddings', 'local', 'fallback']) {
         const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
         if (tierConfig?.provider === 'mistral') {
           tierConfig.apiKey = mistralApiKey;

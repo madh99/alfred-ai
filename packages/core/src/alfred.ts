@@ -6019,7 +6019,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         apiKey = this.config.mistralApiKey;
       }
       if (!apiKey) {
-        for (const tier of ['default', 'strong', 'fast'] as const) {
+        for (const tier of ['default', 'strong', 'fast', 'fallback'] as const) {
           const tierConfig = this.config.llm[tier];
           if (tierConfig?.provider === provider && tierConfig.apiKey) {
             apiKey = tierConfig.apiKey;

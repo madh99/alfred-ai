@@ -72,7 +72,7 @@ export async function startCommand(): Promise<void> {
     } else if (llm?.provider) {
       refreshCacheInBackground(llm.provider, undefined, llm.baseUrl);
     }
-    for (const tier of ['strong', 'fast'] as const) {
+    for (const tier of ['strong', 'fast', 'fallback'] as const) {
       const tc = llm?.[tier];
       if (tc?.provider) {
         refreshCacheInBackground(tc.provider, tc.apiKey, tc.baseUrl);

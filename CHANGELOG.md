@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.868.1] - 2026-06-11
+
+### Fixed — fallback-Tier vollständig durchgereicht (v868.1)
+
+Review-Nachfrage „ist der fallback wirklich überall durchgereicht?" — nein,
+war er nicht. Drei echte Lücken + Kosmetik:
+
+- **Loader Pre-Normalisierung** (kritisch): flache llm-Config + `fallback`-
+  Subobjekt hätte `fallback` in `default` geschoben → von Zod gestrippt →
+  Config stillschweigend verloren
+- **Shared-ApiKey-Vererbung**: fallback erbt jetzt den llm-weiten Key
+- **`mistralApiKey`-Propagation**: `fallback: {provider: mistral}` ohne
+  eigenen Key bekommt den vorhandenen standalone Mistral-Key (der
+  wahrscheinlichste Setup-Weg)
+- Setup-Wizard bietet den Fallback-Tier jetzt an (inkl. Erkennung
+  bestehender Config), `alfred status` zeigt ihn, `--tier`-Fehlermeldung
+  und Model-Discovery beim Start kennen ihn, Mistral-Key-Ableitung für
+  Services berücksichtigt ihn
+- Bewusst NICHT aufgenommen: Conventions-Quorum (v835) — der Notfall-
+  Provider soll keine regulären Mehrfach-Calls bekommen
+
+### Tests
+
+2 neue Loader-Tests: ENV-konfigurierter fallback-Tier überlebt die
+Flat-Config-Normalisierung; `ALFRED_MISTRAL_API_KEY` füllt den
+mistral-fallback-Tier.
+
 ## [0.19.0-multi-ha.868] - 2026-06-11
 
 ### Fixed — Billing-Fehler lösen Provider-Fallback aus + Owner-Alert (v868)

@@ -323,7 +323,7 @@ interface TierConfig {
 
 interface ExistingConfig {
   name?: string;
-  llm?: { provider?: string; model?: string; baseUrl?: string; default?: TierConfig; strong?: TierConfig; fast?: TierConfig; embeddings?: TierConfig; local?: TierConfig };
+  llm?: { provider?: string; model?: string; baseUrl?: string; default?: TierConfig; strong?: TierConfig; fast?: TierConfig; embeddings?: TierConfig; local?: TierConfig; fallback?: TierConfig };
   telegram?: { token?: string; enabled?: boolean };
   discord?: { token?: string; enabled?: boolean };
   whatsapp?: { enabled?: boolean; dataPath?: string };
@@ -427,7 +427,7 @@ function loadExistingConfig(projectRoot: string): {
   const llm = config.llm as Record<string, any> | undefined;
   const multiModelTiers: Record<string, TierConfig> = {};
   if (llm) {
-    for (const tier of ['strong', 'fast', 'embeddings', 'local'] as const) {
+    for (const tier of ['strong', 'fast', 'embeddings', 'local', 'fallback'] as const) {
       if (llm[tier]?.provider && llm[tier]?.model) {
         multiModelTiers[tier] = llm[tier];
       }
@@ -579,6 +579,8 @@ export async function setupCommand(): Promise<void> {
         { key: 'fast', label: 'Fast', hint: 'quick responses, simple tasks', defaultModel: 'claude-haiku-4-5-20251001' },
         { key: 'embeddings', label: 'Embeddings', hint: 'semantic search & memory', defaultModel: 'text-embedding-3-small' },
         { key: 'local', label: 'Local', hint: 'offline fallback via Ollama', defaultModel: 'llama3.2' },
+        // v868.1 — Notfall-Provider: springt nur ein wenn default/strong/fast ausfallen (Outage/Guthaben)
+        { key: 'fallback', label: 'Fallback', hint: 'emergency provider if others fail (outage/credits) — never routed normally', defaultModel: 'mistral-large-latest' },
       ];
 
       for (const tier of tierDefs) {
