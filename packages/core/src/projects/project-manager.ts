@@ -98,12 +98,19 @@ export function deriveProjectName(cwd: string | undefined, goal: string, sourceI
  * Wort-Tokens, Stopwort-arm durch Mindestlänge 3). 0.7 ≈ "im Kern derselbe
  * Punkt, anders formuliert". Exportiert für Tests.
  */
+const TITLE_STOPWORDS = new Set([
+  'der', 'die', 'das', 'und', 'für', 'fuer', 'von', 'den', 'dem', 'des',
+  'ein', 'eine', 'einen', 'einem', 'mit', 'bei', 'auf', 'aus', 'nach',
+  'zum', 'zur', 'sich', 'nicht', 'noch', 'auch', 'als', 'wird', 'werden',
+  'sind', 'ist', 'soll', 'sollen', 'the', 'and', 'for', 'with',
+]);
+
 export function openItemTitleSimilarity(a: string, b: string): number {
   const tokenize = (s: string): Set<string> => new Set(
     s.toLowerCase()
       .replace(/[^a-zà-ž0-9äöüß\s-]/gi, ' ')
       .split(/[\s-]+/)
-      .filter(w => w.length >= 3),
+      .filter(w => w.length >= 3 && !TITLE_STOPWORDS.has(w)),
   );
   const ta = tokenize(a);
   const tb = tokenize(b);
@@ -112,6 +119,61 @@ export function openItemTitleSimilarity(a: string, b: string): number {
   for (const w of ta) if (tb.has(w)) intersection++;
   const union = ta.size + tb.size - intersection;
   return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * v869.2 — Zentraler Echo-/Duplikat-Filter für Summarizer-Open-Items.
+ *
+ * Vorfall 11.06. (Session 85f9d56e): der Summarizer echote die ABGESCHLOSSENEN
+ * Phasen-Milestones wörtlich als "offene" Punkte zurück ("Phase 1: Chat-Komponente
+ * … lokalisieren" → Open-Item "Chat-Komponente … lokalisieren"). Der v869-Prompt-
+ * Appell allein ist auf LLM-Gehorsam angewiesen — dieser Filter ist die
+ * deterministische Schicht dahinter. Drei Regeln:
+ *
+ *  1. milestone-echo: Titel ≈ erreichter Milestone (≥0.7, "Phase N:"-Präfix
+ *     gestrippt) → skip. Milestones enthalten NUR abgeschlossene Phasen
+ *     (markDone ist build-gated), gilt daher auch bei failed Sessions.
+ *  2. goal-echo (NUR bei success=true): Titel ≈ einer Goal-Zeile (≥0.7,
+ *     Listen-Marker gestrippt) → skip. Bei Erfolg beschreibt das Goal erledigte
+ *     Arbeit (work_on_open_items listet jeden Punkt als Goal-Zeile). Bei
+ *     failed/partial NICHT filtern — dort kann Goal-Inhalt legitim offen sein.
+ *  3. duplicate: Titel ≈ bestehendes offenes Item oder früheres Item desselben
+ *     Batches (≥0.7) → skip (v869, jetzt zentralisiert — gilt neu auch für den
+ *     Orphan-/Misc-Pfad, der vorher GAR KEINEN Dedup hatte).
+ */
+export function filterEchoOpenItems<T extends { title: string }>(
+  items: T[],
+  ctx: { milestones?: string[]; goal?: string; success?: boolean; existingTitles?: string[] },
+): { kept: T[]; skipped: Array<{ title: string; reason: 'milestone-echo' | 'goal-echo' | 'duplicate' }> } {
+  const milestoneTexts = (ctx.milestones ?? [])
+    .filter(m => m !== 'Plan erstellt')
+    .map(m => m.replace(/^Phase\s+\d+\s*:\s*/i, ''));
+  const goalLines = ctx.success === true && ctx.goal
+    ? ctx.goal.split('\n')
+        .map(l => l.replace(/^\s*(?:\d+\.|[-*•])\s*/, '').replace(/\*\*/g, '').trim())
+        .filter(l => l.length >= 20)
+    : [];
+  const seenTitles = [...(ctx.existingTitles ?? [])];
+
+  const kept: T[] = [];
+  const skipped: Array<{ title: string; reason: 'milestone-echo' | 'goal-echo' | 'duplicate' }> = [];
+  for (const item of items) {
+    if (milestoneTexts.some(m => openItemTitleSimilarity(m, item.title) >= 0.7)) {
+      skipped.push({ title: item.title, reason: 'milestone-echo' });
+      continue;
+    }
+    if (goalLines.some(l => openItemTitleSimilarity(l, item.title) >= 0.7)) {
+      skipped.push({ title: item.title, reason: 'goal-echo' });
+      continue;
+    }
+    if (seenTitles.some(t => openItemTitleSimilarity(t, item.title) >= 0.7)) {
+      skipped.push({ title: item.title, reason: 'duplicate' });
+      continue;
+    }
+    seenTitles.push(item.title);
+    kept.push(item);
+  }
+  return { kept, skipped };
 }
 
 /**
@@ -219,21 +281,21 @@ export class ProjectManager {
       await this.repo.updateSessionSummary(session.id, summary, new Date().toISOString());
 
       if (summary.openItems && summary.openItems.length > 0) {
-        // v869 — Titel-Dedup gegen BESTEHENDE offene Items des Projekts. Vorher
-        // wurde jedes Summarizer-Item blind eingefügt → die Liste wuchs auf 500+
-        // Einträge, viele davon Duplikate/Varianten desselben Punkts.
+        // v869/v869.2 — Echo- + Duplikat-Filter (deterministisch, zusätzlich zum
+        // Prompt-Appell): Milestone-Echos, Goal-Echos (bei success) und Duplikate
+        // gegen Bestand/Batch werden verworfen. Siehe filterEchoOpenItems.
         let existingTitles: string[] = [];
         try {
           const existing = await this.repo.listOpenItemsForProject(project.id, ['open', 'in_progress']);
           existingTitles = existing.map(e => e.title);
         } catch { /* Dedup best-effort — ohne Bestand wird normal eingefügt */ }
-        let skippedDup = 0;
-        for (const item of summary.openItems) {
-          if (existingTitles.some(t => openItemTitleSimilarity(t, item.title) >= 0.7)) {
-            skippedDup++;
-            continue;
-          }
-          existingTitles.push(item.title); // auch Intra-Batch-Duplikate verhindern
+        const { kept, skipped } = filterEchoOpenItems(summary.openItems, {
+          milestones: params.milestones,
+          goal: params.goal,
+          success: params.success,
+          existingTitles,
+        });
+        for (const item of kept) {
           await this.repo.addOpenItem(project.id, {
             title: item.title,
             description: item.description,
@@ -242,8 +304,11 @@ export class ProjectManager {
             linkedIncidentId: item.linkedIncidentId,
           });
         }
-        if (skippedDup > 0) {
-          this.logger.info({ projectId: project.id, skippedDup, total: summary.openItems.length }, 'v869 open-item dedup: Duplikate übersprungen');
+        if (skipped.length > 0) {
+          this.logger.info(
+            { projectId: project.id, skipped, total: summary.openItems.length },
+            'v869.2 open-item filter: Echos/Duplikate übersprungen',
+          );
         }
       }
 
@@ -397,12 +462,28 @@ export class ProjectManager {
       await this.repo.updateSessionSummary(session.id, summary, new Date().toISOString());
 
       if (summary.openItems && summary.openItems.length > 0) {
-        for (const item of summary.openItems) {
+        // v869.2 — Echo-/Duplikat-Filter auch im Orphan-/Misc-Pfad (hatte vorher
+        // GAR KEINEN Dedup — v869-Lücke).
+        let existingTitles: string[] = [];
+        try {
+          const existing = await this.repo.listOpenItemsForProject(misc.id, ['open', 'in_progress']);
+          existingTitles = existing.map(e => e.title);
+        } catch { /* best-effort */ }
+        const { kept, skipped } = filterEchoOpenItems(summary.openItems, {
+          milestones: params.milestones,
+          goal: params.goal,
+          success: params.success,
+          existingTitles,
+        });
+        for (const item of kept) {
           await this.repo.addOpenItem(misc.id, {
             title: item.title, description: item.description,
             priority: item.priority ?? 'normal', sessionId: session.id,
             linkedIncidentId: item.linkedIncidentId,
           });
+        }
+        if (skipped.length > 0) {
+          this.logger.info({ projectId: misc.id, skipped }, 'v869.2 open-item filter (orphan): Echos/Duplikate übersprungen');
         }
       }
       this.logger.info({

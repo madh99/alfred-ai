@@ -5,6 +5,43 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.869.2] - 2026-06-11
+
+### Fixed — deterministischer Echo-Filter für Open-Items (v869.2)
+
+Nachweis aus Session 85f9d56e (15:51, lief noch auf 868.2): Der Summarizer
+echote die ABGESCHLOSSENEN Phasen-Milestones wörtlich als „offene" Punkte
+zurück („Phase 1: Chat-Komponente … lokalisieren" → Open-Item „Chat-
+Komponente … lokalisieren"). Der v869-Prompt-Appell allein ist auf
+LLM-Gehorsam angewiesen — unzureichend durchdacht. v869.2 ergänzt die
+deterministische Schicht (`filterEchoOpenItems`, zentral für BEIDE
+Summarizer-Pfade):
+
+1. **milestone-echo**: Item-Titel ≈ erreichter Milestone (≥ 0.7,
+   „Phase N:"-Präfix gestrippt) → verworfen. Milestones enthalten nur
+   abgeschlossene Phasen (build-gated) — gilt daher auch bei failed
+   Sessions korrekt.
+2. **goal-echo** (nur bei success): Item-Titel ≈ Goal-Zeile → verworfen.
+   Bei Erfolg beschreibt das Goal erledigte Arbeit (work_on_open_items
+   listet jeden Punkt als Goal-Zeile). Bei failed/partial bewusst NICHT
+   gefiltert — dort kann Goal-Inhalt legitim offen sein.
+3. **duplicate**: v869-Dedup zentralisiert — und damit erstmals auch im
+   Orphan-/Misc-Bucket-Pfad aktiv (hatte vorher GAR KEINEN Dedup,
+   v869-Lücke).
+
+Zusätzlich: Titel-Similarity ignoriert jetzt deutsche Stopwörter
+(der/die/für/mit/…) — „Galerie-Lazy-Loading einbauen" vs. „Lazy-Loading
+für die Galerie einbauen" wurde vorher mit 0.667 knapp verfehlt.
+
+Skips werden mit Grund geloggt (`v869.2 open-item filter`).
+
+### Tests
+
+6 neue (inkl. Realdaten-Fixture des Vorfalls: 2 Phasen-Echos verworfen,
+legitimes Rest-Item bleibt; Goal-Echo nur bei success; failed-Session-
+Semantik; Orphan-Dedup; Stopwort-Fall; „Plan erstellt" filtert nichts
+Falsches).
+
 ## [0.19.0-multi-ha.869.1] - 2026-06-11
 
 ### Added — Billing-Recovery-Entwarnung + Cooldown (v869.1, besprochen als „v868.3")
