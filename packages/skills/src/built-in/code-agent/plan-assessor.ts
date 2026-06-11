@@ -22,9 +22,16 @@ const ASSESSOR_PROMPT = `Du bist ein Senior-Engineer der nach jeder Phase prüft
 
 Du bekommst:
 - GOAL: das ursprüngliche Ziel der Session
-- COMPLETED PHASES: Was bereits erledigt wurde (Phasen-Beschreibungen + welche Dateien geändert wurden)
+- COMPLETED PHASES: Was bereits erledigt wurde (Phasen-Beschreibungen + welche Dateien geändert wurden + ERGEBNIS-Zitat des Agents)
 - REMAINING PHASES: Was noch geplant ist
 - BUILD STATUS: Aktueller Build-Status (passed / failed mit Output)
+
+Das ERGEBNIS-Zitat ist der Abschluss-Text des Coding-Agents der jeweiligen Phase —
+es ist die verlässlichste Quelle. Wenn es klar sagt, dass remaining-Arbeit bereits
+erledigt/verifiziert/gepusht ist (z.B. ein Audit mit Befund "Feature komplett, Build
+grün, keine offenen Arbeiten"), dann SKIP die obsoleten Phasen oder DONE — auch wenn
+der GOAL-Text Gegenteiliges behauptet. Der GOAL-Text ist eine Momentaufnahme von
+VOR der Session und kann veraltete Annahmen enthalten (z.B. "Build rot").
 
 Entscheide:
 1. Ist das GOAL bereits erfüllt? → "done"
@@ -54,7 +61,11 @@ Antworte NUR mit validem JSON:
 
 export interface AssessInput {
   goal: string;
-  completedPhases: Array<{ index: number; description: string; modifiedFiles: string[] }>;
+  /** v864 — resultSummary: letzte ~500 Zeichen des Agent-Abschluss-Texts der Phase.
+   *  Vorher sah der Assessor nur Beschreibung + Dateinamen — das Audit-Fazit
+   *  "alles bereits fertig" (b67ed039 Phase 1) erreichte ihn nie und er konnte
+   *  redundante Folge-Phasen nicht skippen. */
+  completedPhases: Array<{ index: number; description: string; modifiedFiles: string[]; resultSummary?: string }>;
   remainingPhases: string[];
   buildPassed: boolean;
   buildOutput?: string;
@@ -100,7 +111,12 @@ function formatAssessorInput(input: AssessInput): string {
             ? '(keine)'
             : p.modifiedFiles.slice(0, 10).join(', ') +
               (p.modifiedFiles.length > 10 ? ` und ${p.modifiedFiles.length - 10} weitere` : '');
-          return `  ${p.index + 1}. ${p.description.slice(0, 200)}\n     Files: ${files}`;
+          // v864 — Agent-Abschluss-Text (Ende) mitgeben; einzeilig gequetscht
+          // damit das Prompt-Format stabil bleibt.
+          const summary = p.resultSummary?.trim()
+            ? `\n     Ergebnis: ${p.resultSummary.replace(/\s+/g, ' ').slice(-400)}`
+            : '';
+          return `  ${p.index + 1}. ${p.description.slice(0, 200)}\n     Files: ${files}${summary}`;
         })
         .join('\n');
 

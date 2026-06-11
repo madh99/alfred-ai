@@ -5,6 +5,63 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.864] - 2026-06-11
+
+### Fixed — Project-Agent: transiente API-Fehler, Build-Status, Insight-Fakten, Assessor-Kontext (v864)
+
+Vollanalyse der Sessions 494ae636 → b67ed039 (11.06.): Phase 4 starb nach 38s
+an einem Anthropic `529 Overloaded` — drei grüne Phasen + 5485 grüne Tests
+blieben ungepusht. Der Folge-Run plante daraufhin 3 Phasen für Probleme, die
+nie existierten. Vier Ursachen, vier Fixes:
+
+**1. Transiente LLM-API-Fehler werden retried statt die Session zu killen**
+- Neu: `isTransientApiFailure()` (agent-executor) — erkennt 529/5xx/429,
+  `overloaded_error`, Rate-Limit, Netzwerkfehler (ECONNRESET/ETIMEDOUT/
+  fetch failed) am Ende von stdout+stderr. Auth (401) und fehlende Binaries
+  bleiben permanente Fehler ohne Retry.
+- Runner: Coding-Phasen UND Fix-Läufe laufen über `executeAgentWithApiRetry`
+  — bis zu 2 Retries mit Backoff (90s/180s), abbrechbar via Stop-Signal.
+- Neue Diagnose im Abbruch-Fall: „LLM-API-Fehler (Overload/Rate-Limit/Netz)
+  … der Code ist NICHT das Problem" statt generischem exitCode-Report.
+- Kontext: Alfreds eigene LLM-Calls hatten das längst (anthropic maxRetries=5,
+  model-router isRetryableError) — nur der externe CLI-Agent-Pfad nicht.
+
+**2. `last_build_passed` spiegelt wieder den letzten ECHTEN Build**
+- Der per-Phase-Reset (seit v0.15.2; machte die v636-„sticky"-Kommentare
+  unwahr) ist entfernt. Ein Coding-Abbruch VOR der Validierung meldete
+  „Build rot", obwohl der letzte reale Build grün war — genau daraus baute
+  `resume` das falsche „Build-Status: zuletzt rot" ins Continuation-Goal.
+- Jetzt: Flag ändert sich nur durch tatsächliche validateBuild-Ergebnisse
+  (grün → true, rot → false). `overallSuccess` bleibt über den
+  `runFailed`-Guard (v636) korrekt.
+
+**3. failure_insight bekommt Fakten statt Spekulationsfreiheit**
+- Der Insight-LLM erhält jetzt den Block ABBRUCH-URSACHE (FAKTEN): Phase,
+  exitCode, stdout/stderr-Ende, Transient-API-Klassifikation — plus
+  System-Prompt-Regel: bei transientem API-Fehler ist die Root-Cause
+  verbindlich „Provider-Ausfall, kein Code-Problem".
+- Vorher: STATUS=failed + grüner Build-Output → halluzinierte Analyse
+  („Komponente nicht gebaut, keine Tests"), die den Resume-Run vergiftete.
+
+**4. PlanAssessor sieht Phase-ERGEBNISSE und kann jetzt wirklich skippen**
+- `completedPhases` trägt neu `resultSummary` (letzte 500 Zeichen des
+  Agent-Abschluss-Texts) — im Assessor-Prompt als „Ergebnis: …"-Zeile.
+- Prompt-Erweiterung: das Ergebnis-Zitat ist die verlässlichste Quelle;
+  wenn es sagt „remaining-Arbeit bereits erledigt", SKIP/DONE — auch wenn
+  der (veraltete) GOAL-Text Gegenteiliges behauptet.
+- Vorher lief der Assessor (v846) zwar nach jeder Phase, sah aber nur
+  Beschreibung + Dateinamen — das Audit-Fazit „Feature war bereits fertig"
+  konnte ihn nie erreichen → `proceed`, 2 redundante Phasen.
+
+### Tests
+
+- 8 neue in `transient-api-failure.test.ts` (529-Originalfall, 429,
+  Netzfehler, 401/Binary permanent, exitCode-0-Guard, Tail-Window)
+- 3 neue in `plan-assessor.test.ts` (resultSummary im Prompt, backwards-compat
+  ohne Summary, 400-Zeichen-Kürzung + Newline-Quetschung)
+- Alle 125 code-agent-Tests grün; 9 WatchEngine/ReasoningEngine-Failures in
+  core sind pre-existing (auf v863-HEAD identisch) und unabhängig von v864
+
 ## [0.19.0-multi-ha.863] - 2026-06-11
 
 ### Added — Ziel-Bindung + Branch-Integritäts-Warnung (v863)

@@ -12,7 +12,7 @@ import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig
 import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
-import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded, assessPlanProgress, applyMutation, typicalPhaseRange } from '@alfred/skills';
+import { executeAgent, isTransientApiFailure, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded, assessPlanProgress, applyMutation, typicalPhaseRange } from '@alfred/skills';
 import type { ProjectPlan, PlanMutation } from '@alfred/skills';
 import type { FileStore } from '@alfred/storage';
 
@@ -191,6 +191,23 @@ export type ProjectAgentCompletionCallback = (
   state: { milestonesReached: string[]; totalFilesChanged: number; projectIteration: number },
   success: boolean,
 ) => Promise<void>;
+
+/**
+ * v864 — Delay der auf ein AbortSignal hört (für API-Retry-Backoff).
+ * Returnt true wenn abgebrochen wurde, false wenn die Zeit normal ablief.
+ */
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) { resolve(true); return; }
+    const onAbort = (): void => { cleanup(); resolve(true); };
+    const timer = setTimeout(() => { cleanup(); resolve(false); }, ms);
+    function cleanup(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 export class ProjectAgentRunner {
   private lastProgressAt = 0;
@@ -446,6 +463,12 @@ export class ProjectAgentRunner {
     // zieht — denn lastBuildActuallyPassed ist sticky (einmal true von früherer Phase
     // → immer true). v630 hat diesen Fall übersehen.
     let runFailed = false;
+    // v864 — Fakten des letzten harten Abbruchs für generateFailureInsight.
+    // Vorher bekam der Insight-LLM nur Goal/Status/Build-Output (der grün sein
+    // konnte!) und halluzinierte Root-Causes ("Komponente nicht gebaut") während
+    // die echte Ursache ein API-529 war — diese falsche Analyse vergiftete dann
+    // das Continuation-Goal des Resume-Runs (siehe 494ae636 → b67ed039).
+    let lastHardFailure: { phase: number; exitCode: number; stderrTail: string; stdoutTail: string; transientApi: boolean } | undefined;
 
     try {
       await this.sendProgress(platform, chatId, `🚀 Project Agent gestartet: ${config.goal}`);
@@ -691,7 +714,7 @@ export class ProjectAgentRunner {
       // v846 — Per-phase tracking für PlanAssessor + File-Thrash-Warner.
       //  completedPhases  → wird in den Assessor gefüttert
       //  fileModCount     → Counter pro Datei für Thrash-Warning
-      const completedPhases: Array<{ index: number; description: string; modifiedFiles: string[] }> = [];
+      const completedPhases: Array<{ index: number; description: string; modifiedFiles: string[]; resultSummary?: string }> = [];
       const fileModCount = new Map<string, number>();
 
       // ── MAIN LOOP ──
@@ -742,7 +765,16 @@ export class ProjectAgentRunner {
         state.projectIteration = phaseIdx + 1;
         state.projectPhase = 'coding';
         state.consecutiveFixFailures = 0;
-        lastBuildActuallyPassed = false;
+        // v864 — KEIN Reset von lastBuildActuallyPassed mehr pro Phase (war seit
+        // v0.15.2 drin und machte die v636-"sticky"-Kommentare unwahr). Folge des
+        // Resets: Coding-Failure VOR der Validierung (z.B. API-529 in Phase 4 von
+        // 494ae636) → DB last_build_passed=0 → Resume-Goal behauptete "Build-Status:
+        // zuletzt rot" obwohl der letzte echte Build 5485 grüne Tests hatte → der
+        // Continuation-Planner plante eine "Buildfehler beheben"-Phase für Fehler
+        // die nie existierten. Jetzt: Flag spiegelt den letzten TATSÄCHLICHEN
+        // validateBuild-Ausgang (true bei pass Z.~905, false bei fail unten im
+        // Fix-Loop). Für overallSuccess ist das safe: harte Abbrüche setzen
+        // weiterhin runFailed=true (v636-Guard).
         const filesBeforePhase = state.totalFilesChanged;
         await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
@@ -795,7 +827,10 @@ export class ProjectAgentRunner {
 
         // ── CODING ──
         this.logger.info({ sessionId, phase: phaseIdx + 1, description: phase }, 'Project agent: coding phase');
-        const codeResult = await executeAgent(agentDef, prompt, {
+        // v864 — Coding-Lauf mit Transient-API-Retry. Vorfall 494ae636: Anthropic
+        // 529 Overloaded in Phase 4 → CLI gab nach internen Retries auf (exitCode 1)
+        // → Runner wertete das als harten Crash und warf 3 grüne Phasen weg.
+        const codeResult = await this.executeAgentWithApiRetry(agentDef, prompt, {
           cwd: config.cwd,
           timeoutMs: phaseTimeout,
           signal: abortController.signal,
@@ -803,7 +838,7 @@ export class ProjectAgentRunner {
           onProgress: (status) => {
             this.sendProgressThrottled(platform, chatId, `  [${config.agentName}] ${status}`);
           },
-        });
+        }, platform, chatId, `Phase ${phaseIdx + 1}`);
 
         state.totalFilesChanged += codeResult.modifiedFiles.length;
 
@@ -841,6 +876,10 @@ export class ProjectAgentRunner {
             hint = `\n\n🔑 **Diagnose: Auth-Fehler.** Der Code-Agent "${config.agentName}" konnte sich nicht beim LLM-Provider anmelden. Login als Runtime-User (sudo -u ${runAsUser ?? 'madh'} ${config.agentName} login) durchführen oder API-Key in der agent-Config setzen.`;
           } else if (/command not found|ENOENT|not found in PATH/i.test(stderrTail)) {
             hint = `\n\n🔍 **Diagnose: Binary fehlt.** Der Befehl "${agentDef.command}" ist im PATH von User "${runAsUser ?? 'process-owner'}" nicht erreichbar. Installation prüfen oder Pfad in der agent-Config absolut angeben.`;
+          } else if (isTransientApiFailure(codeResult)) {
+            // v864 — nach 2 erfolglosen Retries (executeAgentWithApiRetry) landen
+            // wir hier: ehrlich sagen dass es die API war, nicht der Code.
+            hint = `\n\n🌐 **Diagnose: LLM-API-Fehler (Overload/Rate-Limit/Netz).** Der Provider war trotz 2 Retries (90s/180s Wartezeit) nicht erreichbar. Die bisherige Arbeit ist committed — Session später per Resume fortsetzen, der Code ist NICHT das Problem.`;
           }
           await this.sendProgress(platform, chatId,
             `❌ Phase ${phaseIdx + 1}/${plan.phases.length} fehlgeschlagen — Coding-Agent exitCode=${codeResult.exitCode}.\n\n` +
@@ -851,7 +890,16 @@ export class ProjectAgentRunner {
           this.logger.error({
             sessionId, phase: phaseIdx + 1, agentName: config.agentName,
             exitCode: codeResult.exitCode, stderrTail: stderr.slice(-400),
+            transientApi: isTransientApiFailure(codeResult),
           }, 'Project agent: coding phase exited non-zero — aborting');
+          // v864 — Fakten für den Failure-Insight festhalten (statt LLM-Spekulation)
+          lastHardFailure = {
+            phase: phaseIdx + 1,
+            exitCode: codeResult.exitCode,
+            stderrTail: stderr.slice(-400),
+            stdoutTail: (codeResult.stdout ?? '').trim().slice(-600),
+            transientApi: isTransientApiFailure(codeResult),
+          };
           // v620 — 'failed' ist jetzt im Type erlaubt (vorher Workaround mit 'done').
           // Die UI zeigt 'failed' rot mit 🔴-Build-Icon. Die Post-Loop-Logik
           // (anyPhaseProducedFiles + lastBuildActuallyPassed) ist unabhängig
@@ -906,6 +954,9 @@ export class ProjectAgentRunner {
           }
 
           // Build failed
+          // v864 — echter roter Build überschreibt den letzten Build-Status
+          // (vorher per-Phase-Reset; siehe Kommentar am Phasen-Anfang).
+          lastBuildActuallyPassed = false;
           state.consecutiveFixFailures++;
           if (fixAttempt >= config.maxFixAttempts) {
             // L5 (v604) — intelligent error extraction instead of blind .slice(-500)
@@ -990,7 +1041,10 @@ export class ProjectAgentRunner {
           } catch { /* import-Fehler darf den Fix-Prompt nicht blockieren */ }
 
           const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}${devServerCrashLog}${testRunnerMismatchHint}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
-          const fixResult = await executeAgent(agentDef, fixPrompt, {
+          // v864 — auch Fix-Läufe nicht an transienten API-Fehlern sterben lassen
+          // (ein 529 hätte sonst einen Fix-Versuch verbrannt → maxFixAttempts →
+          // awaiting_user mit irreführender Build-Diagnose).
+          const fixResult = await this.executeAgentWithApiRetry(agentDef, fixPrompt, {
             cwd: config.cwd,
             // v624 D — Fix-Läufe rufen oft `npm run build` zum Reparieren auf → langer Timeout
             timeoutMs: 20 * 60_000,
@@ -999,7 +1053,7 @@ export class ProjectAgentRunner {
             onProgress: (status) => {
               this.sendProgressThrottled(platform, chatId, `  [fix] ${status}`);
             },
-          });
+          }, platform, chatId, `Fix-Versuch ${fixAttempt + 1}`);
           // v618 B1 — auch der Fix-Lauf darf nicht still durchrutschen wenn der
           // Agent crashte. Bei exitCode != 0: Fix-Loop verlassen, Build wird im
           // nächsten Iteration-Check als gescheitert behandelt und nach maxFixAttempts
@@ -1085,6 +1139,11 @@ export class ProjectAgentRunner {
           index: phaseIdx,
           description: phase,
           modifiedFiles: codeResult.modifiedFiles,
+          // v864 — Abschluss-Text des Agents (Ende) für den PlanAssessor. Beim
+          // stream-json-Format ist stdout der extrahierte finale Assistant-Text.
+          // Ohne das konnte der Assessor ein Audit-Fazit wie "Feature war bereits
+          // fertig, keine offenen Arbeiten" nie sehen und skippte nichts (b67ed039).
+          resultSummary: (codeResult.stdout ?? '').trim().slice(-500),
         });
         // File-Thrash-Counter (E)
         for (const f of codeResult.modifiedFiles) {
@@ -1318,7 +1377,7 @@ export class ProjectAgentRunner {
           config,
           state,
           plan.phases,
-          { overallSuccess, runFailed, lastBuildOutput: state.lastBuildOutput },
+          { overallSuccess, runFailed, lastBuildOutput: state.lastBuildOutput, hardFailure: lastHardFailure },
         );
         if (insight) {
           await this.sessionRepo.setFailureInsight(sessionId, insight);
@@ -1796,17 +1855,72 @@ export class ProjectAgentRunner {
    * Done UND Failed aufgerufen (Erfolg = "was war effektiv", Misserfolg = "was
    * blockierte und wie weiter"). 5 Zeilen, deutsch, konkret.
    */
+  /**
+   * v864 — executeAgent mit Retry bei TRANSIENTEN LLM-API-Fehlern (529 Overloaded,
+   * Rate-Limit, Netzwerk). Der CLI-Agent retried intern und gibt dann mit
+   * exitCode≠0 auf — solche Exits sind kein Code-Problem. Hier: bis zu 2 weitere
+   * Versuche mit Backoff (90s, dann 180s), abbrechbar via AbortSignal.
+   * Permanente Fehler (Auth 401, Binary fehlt, Inactivity-Kill 124) gehen
+   * unverändert durch. Vorfall: 494ae636 — ein 529 in Phase 4 warf 3 grüne
+   * Phasen + 5485 grüne Tests weg.
+   */
+  private async executeAgentWithApiRetry(
+    agentDef: CodeAgentDefinitionConfig,
+    prompt: string,
+    options: Parameters<typeof executeAgent>[2],
+    platform: string,
+    chatId: string,
+    label: string,
+  ): Promise<Awaited<ReturnType<typeof executeAgent>>> {
+    let result = await executeAgent(agentDef, prompt, options);
+    let delayMs = 90_000;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (result.exitCode === 0 || !isTransientApiFailure(result)) break;
+      if (options?.signal?.aborted) break;
+      this.logger.warn(
+        { taskId: options?.taskId, attempt, delayMs, exitCode: result.exitCode },
+        'v864 Project agent: transient LLM-API failure — retrying agent run',
+      );
+      await this.sendProgress(platform, chatId,
+        `🌐 ${label}: transienter LLM-API-Fehler (Overload/Rate-Limit) — Retry ${attempt}/2 in ${Math.round(delayMs / 1000)}s …`);
+      const aborted = await abortableDelay(delayMs, options?.signal);
+      if (aborted) break;
+      result = await executeAgent(agentDef, prompt, options);
+      delayMs *= 2;
+    }
+    return result;
+  }
+
   private async generateFailureInsight(
     config: ProjectAgentConfig,
     state: ProjectAgentMeta,
     phases: string[],
-    final: { overallSuccess: boolean; runFailed: boolean; lastBuildOutput?: string },
+    final: {
+      overallSuccess: boolean;
+      runFailed: boolean;
+      lastBuildOutput?: string;
+      /** v864 — Fakten des harten Abbruchs (Coding-Agent exitCode≠0). */
+      hardFailure?: { phase: number; exitCode: number; stderrTail: string; stdoutTail: string; transientApi: boolean };
+    },
   ): Promise<string | null> {
     try {
       const extracted = final.lastBuildOutput ? extractBuildError(final.lastBuildOutput) : null;
       const reachedPhases = phases.slice(0, state.projectIteration);
       const remainingPhases = phases.slice(state.projectIteration);
-      const sys = `Du bist Senior-Engineer. Analysiere kurz (max 5 Zeilen, deutsch) was der Project-Agent ${final.overallSuccess ? 'gut gemacht' : 'verfehlt'} hat. Konkret, nicht generisch. Bei Fehlschlag: nenne Root-Cause + konkretem nächsten Schritt.`;
+      // v864 — Spekulationsverbot: vorher bekam der LLM nur STATUS=failed + einen
+      // (oft GRÜNEN) Build-Output und erfand Root-Causes wie "Komponente nicht
+      // gebaut, keine Tests" während die echte Ursache ein API-529 war (494ae636).
+      const sys = `Du bist Senior-Engineer. Analysiere kurz (max 5 Zeilen, deutsch) was der Project-Agent ${final.overallSuccess ? 'gut gemacht' : 'verfehlt'} hat. Konkret, nicht generisch. Bei Fehlschlag: nenne Root-Cause + konkretem nächsten Schritt.
+WICHTIG: Wenn ein Block ABBRUCH-URSACHE (FAKTEN) vorhanden ist, ist das die verbindliche Root-Cause — übernimm sie wörtlich. Bei "transienter LLM-API-Fehler: ja" lautet die Root-Cause IMMER "LLM-Provider-Ausfall (Overload/Rate-Limit), kein Code-Problem" und der nächste Schritt "Session per Resume fortsetzen". Spekuliere in diesem Fall NICHT über Build-, Test- oder Code-Qualität.`;
+      const hardFailureBlock = final.hardFailure
+        ? [
+            `ABBRUCH-URSACHE (FAKTEN):`,
+            `Coding-Agent in Phase ${final.hardFailure.phase} mit exitCode=${final.hardFailure.exitCode} beendet.`,
+            `Transienter LLM-API-Fehler: ${final.hardFailure.transientApi ? 'ja' : 'nein'}`,
+            final.hardFailure.stdoutTail ? `Agent-Output (Ende): ${final.hardFailure.stdoutTail}` : '',
+            final.hardFailure.stderrTail ? `stderr (Ende): ${final.hardFailure.stderrTail}` : '',
+          ].filter(Boolean).join('\n')
+        : '';
       const user = [
         `ZIEL: ${config.goal}`,
         `CWD: ${config.cwd}`,
@@ -1815,6 +1929,7 @@ export class ProjectAgentRunner {
         `PHASEN VERSUCHT: ${state.projectIteration}`,
         `DATEIEN GEÄNDERT: ${state.totalFilesChanged}`,
         `MILESTONES: ${state.milestonesReached.join(', ') || '—'}`,
+        hardFailureBlock,
         reachedPhases.length ? `ERREICHTE PHASEN:\n${reachedPhases.slice(-5).map((p, i) => `${i + 1}. ${p}`).join('\n')}` : '',
         remainingPhases.length ? `OFFENE PHASEN:\n${remainingPhases.slice(0, 5).map((p, i) => `${i + 1}. ${p}`).join('\n')}` : '',
         extracted?.recognized ? `BUILD-FEHLER: ${extracted.summary}` : '',

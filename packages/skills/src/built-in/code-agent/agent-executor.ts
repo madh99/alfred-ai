@@ -165,6 +165,35 @@ export interface AgentExecutionResult {
 }
 
 /**
+ * v864 — Erkennt ob ein non-zero Agent-Exit ein TRANSIENTER LLM-API-Fehler war
+ * (Provider überlastet, Rate-Limit, Netzwerk) statt eines echten Crashes.
+ *
+ * Hintergrund (Vorfall 494ae636, 11.06.): Phase 4 starb nach 38s an einem
+ * Anthropic `529 Overloaded` — der claude CLI retried intern, gibt dann auf
+ * und exitet 1. Der Runner behandelte das wie einen Auth-/Binary-Fehler und
+ * brach die ganze Session ab; 3 grüne Phasen + 5485 grüne Tests blieben
+ * ungepusht liegen. Alfreds EIGENE LLM-Calls haben Retry/Fallback
+ * (anthropic.ts maxRetries=5, model-router isRetryableError) — der externe
+ * CLI-Agent-Pfad hatte bis v864 keinerlei Klassifikation.
+ *
+ * Geprüft wird nur das ENDE von stdout+stderr (je 2000 Zeichen): beim
+ * stream-json-Format ist stdout der extrahierte finale Assistant-Text, dort
+ * landet der Fehler („API Error: 529 …"). Bewusst NICHT matchen: 401/403
+ * (Auth — permanent), "command not found" (Binary — permanent).
+ */
+export function isTransientApiFailure(result: Pick<AgentExecutionResult, 'stdout' | 'stderr' | 'exitCode'>): boolean {
+  if (result.exitCode === 0) return false;
+  const tail = `${(result.stdout ?? '').slice(-2000)}\n${(result.stderr ?? '').slice(-2000)}`;
+  return (
+    /API Error:?\s*5\d\d/i.test(tail) ||
+    /API Error:?\s*429/i.test(tail) ||
+    /overloaded_error|"overloaded"|\bOverloaded\b/i.test(tail) ||
+    /rate.?limit(ed|s)?\b|too many requests/i.test(tail) ||
+    /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network error/i.test(tail)
+  );
+}
+
+/**
  * Resolve `${VAR_NAME}` placeholders in env values against process.env.
  */
 function resolveEnv(env: Record<string, string>): Record<string, string> {

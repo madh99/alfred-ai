@@ -103,6 +103,62 @@ describe('assessPlanProgress', () => {
     if (m.kind === 'replace') expect(m.newPhases).toEqual(['A', 'B']);
   });
 
+  // v864 — resultSummary (Agent-Abschluss-Text) muss im Assessor-Prompt landen.
+  // Vorher sah der Assessor nur Beschreibung + Dateinamen — das Audit-Fazit
+  // "alles bereits fertig" erreichte ihn nie (Vorfall b67ed039: 2 redundante Phasen).
+  it('v864: resultSummary der completed Phase landet im Prompt', async () => {
+    let captured = '';
+    const llm: LLMProvider = {
+      async complete(req: { messages: Array<{ content: string }> }) {
+        captured = req.messages[0].content;
+        return { content: '{"kind":"proceed"}', model: 'test', costUsd: 0, inputTokens: 0, outputTokens: 0 };
+      },
+    } as unknown as LLMProvider;
+    await assessPlanProgress(llm, {
+      ...baseInput,
+      completedPhases: [{
+        index: 0,
+        description: 'Repo-Stand auditieren',
+        modifiedFiles: ['docs/audit.md'],
+        resultSummary: 'Audit abgeschlossen — das Feature war bereits fertig, Build grün, nur Push fehlte (erledigt). Keine offenen Arbeiten.',
+      }],
+    });
+    expect(captured).toContain('Ergebnis: Audit abgeschlossen');
+    expect(captured).toContain('Keine offenen Arbeiten');
+  });
+
+  it('v864: ohne resultSummary keine Ergebnis-Zeile (backwards-compat)', async () => {
+    let captured = '';
+    const llm: LLMProvider = {
+      async complete(req: { messages: Array<{ content: string }> }) {
+        captured = req.messages[0].content;
+        return { content: '{"kind":"proceed"}', model: 'test', costUsd: 0, inputTokens: 0, outputTokens: 0 };
+      },
+    } as unknown as LLMProvider;
+    await assessPlanProgress(llm, baseInput);
+    expect(captured).not.toContain('Ergebnis:');
+    expect(captured).toContain('Analyze code');
+  });
+
+  it('v864: resultSummary wird auf 400 Zeichen (Ende) gekürzt und einzeilig', async () => {
+    let captured = '';
+    const llm: LLMProvider = {
+      async complete(req: { messages: Array<{ content: string }> }) {
+        captured = req.messages[0].content;
+        return { content: '{"kind":"proceed"}', model: 'test', costUsd: 0, inputTokens: 0, outputTokens: 0 };
+      },
+    } as unknown as LLMProvider;
+    const longSummary = 'A'.repeat(500) + '\nMehrzeiliges\nFazit ENDE-MARKER';
+    await assessPlanProgress(llm, {
+      ...baseInput,
+      completedPhases: [{ index: 0, description: 'X', modifiedFiles: [], resultSummary: longSummary }],
+    });
+    expect(captured).toContain('ENDE-MARKER');
+    expect(captured).toContain('Mehrzeiliges Fazit ENDE-MARKER'); // newlines gequetscht
+    const line = captured.split('\n').find(l => l.includes('Ergebnis:'))!;
+    expect(line.length).toBeLessThan(430);
+  });
+
   it('LLM error → fallback proceed', async () => {
     const llm: LLMProvider = { async complete() { throw new Error('LLM down'); } } as unknown as LLMProvider;
     const m = await assessPlanProgress(llm, baseInput);
