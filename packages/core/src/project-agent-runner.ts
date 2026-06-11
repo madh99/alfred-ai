@@ -195,6 +195,38 @@ export type ProjectAgentCompletionCallback = (
 ) => Promise<void>;
 
 /**
+ * v867 — Hauptbranch-Namen für den Push-Guard. Ein Push von einem dieser
+ * Branches auf ein Projekt, das von einem ANDEREN Hauptbranch deployed,
+ * ist praktisch immer eine Verwechslung (Vorfall alpbyte 11.06.: Workspace
+ * stand nach einem Incident auf `main`, Projekt deployed von `master` —
+ * alle Agent-Pushes des Tages landeten unbemerkt auf main).
+ */
+const MAINLINE_BRANCHES = ['main', 'master', 'trunk'];
+
+/**
+ * v867 — Entscheidung: Mainline-Push blockieren?
+ * Pure Function für Testbarkeit. Blockiert NUR die Hauptbranch-Verwechslung:
+ *  - Feature-Branches (branchPerSession/selfHeal oder Nicht-Mainline-Name)
+ *    pushen immer durch — das ist gewollte Arbeitsweise.
+ *  - Ohne bekannten Deploy-Branch keine Blockade (kein Raten).
+ */
+export function shouldBlockMainlinePush(input: {
+  currentBranch: string;
+  deployBranch?: string;
+  branchPerSession?: boolean;
+  selfHeal?: boolean;
+}): { block: boolean; reason?: string } {
+  if (input.branchPerSession || input.selfHeal) return { block: false };
+  if (!input.deployBranch) return { block: false };
+  if (input.currentBranch === input.deployBranch) return { block: false };
+  if (!MAINLINE_BRANCHES.includes(input.currentBranch)) return { block: false };
+  return {
+    block: true,
+    reason: `Workspace-Branch "${input.currentBranch}" ist ein Hauptbranch, aber dieses Projekt deployed von "${input.deployBranch}"`,
+  };
+}
+
+/**
  * v864 — Delay der auf ein AbortSignal hört (für API-Retry-Backoff).
  * Returnt true wenn abgebrochen wurde, false wenn die Zeit normal ablief.
  */
@@ -343,6 +375,13 @@ export class ProjectAgentRunner {
     this.cliRunsRepo = repo;
   }
 
+  /** v867 — Set by alfred.ts: Deploy-Branch eines Projekts (projects.default_branch,
+   *  Fallback conventions.branching.prTarget). Für Push-Guard + Start-Warnung. */
+  private deployBranchResolver?: (cwd: string) => Promise<string | undefined>;
+  setDeployBranchResolver(fn: (cwd: string) => Promise<string | undefined>): void {
+    this.deployBranchResolver = fn;
+  }
+
   /** v866 — Set by alfred.ts: Session-Start-Hook → projectManager.attachSession.
    *  Legt die project_sessions-Zeile beim START an (ended_at NULL) damit der
    *  "Laufend"-Zähler der Arbeitszeit-Statistik echte Live-Runs zeigt. Vorher
@@ -438,6 +477,28 @@ export class ProjectAgentRunner {
         await this.sessionStartCallback({ sessionId, goal: config.goal, cwd: config.cwd, userId: config.userId, startedAt: runStartedAtIso });
       } catch (err) {
         this.logger.debug({ err, sessionId }, 'v866 sessionStartCallback failed (non-fatal)');
+      }
+    }
+
+    // v867 — Branch-Mismatch-Warnung beim START (Vorfall alpbyte 11.06.: Workspace
+    // stand seit einem Incident auf `main`, Projekt deployed von `master` — der
+    // User sah es erst NACH dem Deploy). Kein Auto-Switch (History-Schutz), nur
+    // sofortige Sichtbarkeit. Der harte Stopp sitzt im Push-Guard (pushToRemote).
+    if (this.deployBranchResolver && existsSync(path.join(config.cwd, '.git'))) {
+      try {
+        const deployBranch = await this.deployBranchResolver(config.cwd);
+        if (deployBranch) {
+          const current = await gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], config.cwd, runAsUser).catch(() => undefined);
+          if (current && current !== deployBranch && MAINLINE_BRANCHES.includes(current)) {
+            await this.sendProgress(platform, chatId,
+              `⚠️ **Branch-Achtung**: Workspace steht auf "${current}" — dieses Projekt deployed von "${deployBranch}". ` +
+              `Der Agent arbeitet auf "${current}" und der finale Push wird verweigert werden. ` +
+              `Falls das falsch ist: 'stop' senden und Branch wechseln (\`git checkout ${deployBranch}\`).`);
+            this.logger.warn({ sessionId, current, deployBranch, cwd: config.cwd }, 'v867 workspace on wrong mainline branch');
+          }
+        }
+      } catch (err) {
+        this.logger.debug({ err, sessionId }, 'v867 start branch-check failed (non-fatal)');
       }
     }
 
@@ -1313,7 +1374,8 @@ export class ProjectAgentRunner {
 
       // ── GIT PUSH ── (only on success — pushing an empty repo is just noise)
       if (overallSuccess) {
-        const pushUrl = await this.pushToRemote(config.cwd, platform, chatId, runAsUser);
+        const pushUrl = await this.pushToRemote(config.cwd, platform, chatId, runAsUser,
+          { branchPerSession: config.branchPerSession, selfHeal: config.selfHeal }); // v867 — Guard-Kontext
         // v643 — Push-URL auf der Session + auf allen pending Commits speichern
         if (pushUrl || true) {
           try { await this.sessionRepo.updateProgress(sessionId, { lastPushUrl: pushUrl ?? undefined }); } catch { /* skip */ }
@@ -1600,7 +1662,8 @@ export class ProjectAgentRunner {
    * - If .git/ but no remote → create repo on forge if configured
    * - If remote exists → push, embedding forge token temporarily if needed
    */
-  private async pushToRemote(cwd: string, platform: string, chatId: string, runAsUser?: string): Promise<string | undefined> {
+  private async pushToRemote(cwd: string, platform: string, chatId: string, runAsUser?: string,
+    guardCtx?: { branchPerSession?: boolean; selfHeal?: boolean }): Promise<string | undefined> {
     // Check if this is a git repository — if not, initialize one
     const hasGitDir = existsSync(path.join(cwd, '.git'));
     if (!hasGitDir) {
@@ -1721,6 +1784,36 @@ export class ProjectAgentRunner {
     } catch {
       this.logger.warn({ cwd }, 'Project agent: could not determine current branch');
       return;
+    }
+
+    // v867 — Push-Guard: Hauptbranch-Verwechslung hart stoppen. Vorfall alpbyte
+    // 11.06.: Workspace stand auf `main`, Projekt deployed von `master` — alle
+    // Runner-Pushes des Tages gingen still auf main, der User fand es erst nach
+    // dem Deploy ("keine Änderung erkennbar"). Feature-Branch-Pushes
+    // (branchPerSession/selfHeal oder Nicht-Mainline-Name) bleiben unberührt.
+    if (this.deployBranchResolver) {
+      try {
+        const deployBranch = await this.deployBranchResolver(cwd);
+        const verdict = shouldBlockMainlinePush({
+          currentBranch: branch,
+          deployBranch,
+          branchPerSession: guardCtx?.branchPerSession,
+          selfHeal: guardCtx?.selfHeal,
+        });
+        if (verdict.block) {
+          this.logger.warn({ cwd, branch, deployBranch }, 'v867 mainline push blocked (branch mismatch)');
+          await this.sendProgress(platform, chatId,
+            `⛔ **Push VERWEIGERT**: ${verdict.reason}.\n` +
+            `Die Commits sind lokal auf "${branch}" vorhanden — nichts ist verloren.\n` +
+            `Korrektur (manuell prüfen!):\n` +
+            `\`git checkout ${deployBranch} && git merge ${branch} && git push origin ${deployBranch}\`\n` +
+            `Oder, falls "${branch}" wirklich das Ziel sein soll: default_branch des Projekts anpassen und erneut pushen.`);
+          return undefined;
+        }
+      } catch (err) {
+        // Resolver-Fehler darf den Push nicht verhindern (Guard ist best-effort)
+        this.logger.debug({ err, cwd }, 'v867 push-guard resolver failed (push continues)');
+      }
     }
 
     // Check if remote URL already contains credentials (token embedded)

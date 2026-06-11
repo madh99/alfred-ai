@@ -5,6 +5,49 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.867] - 2026-06-11
+
+### Fixed — Project-Agent Push-Guard gegen Hauptbranch-Verwechslung (v867)
+
+Vorfall alpbyte 11.06.: Der Workspace stand seit einem Incident in der Nacht
+auf `main` (Reflog: `00:56 moving from master to main`), das Projekt deployed
+von `master`. Der Runner-Push (`pushToRemote`) pusht schlicht den AKTUELLEN
+Branch — alle Agent-Runs des Tages (Hovercards, beide UGC-Fixes) landeten
+still auf `origin/main`; der User fand es erst nach dem Deploy („keine
+Änderung erkennbar"). Die v863-Warnung griff nicht: sie sitzt nur in
+`code_agent.push`, der Runner hat einen eigenen Push-Pfad.
+
+**1. Push-Guard im Runner** (`shouldBlockMainlinePush`, pure + getestet):
+- Vor jedem Runner-Push: aktueller Branch vs. Deploy-Branch des Projekts
+  (`projects.default_branch`, Fallback `conventions.branching.prTarget`).
+- Mismatch UND aktueller Branch ∈ {main, master, trunk} → **Push verweigert**
+  mit klarer Meldung inkl. Korrektur-Befehlen. Commits bleiben lokal erhalten.
+- Feature-Branch-Pushes (branchPerSession/selfHeal oder Nicht-Mainline-Name)
+  laufen unverändert durch; ohne bekannten Deploy-Branch keine Blockade.
+
+**2. Branch-Warnung beim Runner-START**: Steht der Workspace auf einem
+falschen Hauptbranch, kommt die ⚠️-Meldung sofort in den Chat — nicht erst
+nach 40 Minuten Arbeit. Kein Auto-Switch (History-Schutz).
+
+**3. `conventions.branching.prTarget` hat erstmals eine Funktion**: Vorher
+war die Einstellung ein toter Schalter (von keinem Runtime-Code konsumiert,
+nur UI + Typ — UI-Default „main" konnte so folgenlos in der DB landen).
+Jetzt: Fallback für den Deploy-Branch in Guard + Start-Warnung. Das
+Conventions-Formular erklärt das jetzt auch.
+
+**Klarstellung zur Ursache**: Die Projekt-Conventions wurden NICHT
+zurückgesetzt (Logs zeigen ganztägig alle 5 Sektionen geladen) — und
+`prTarget` hatte ohnehin keine Wirkung. Ursache war ausschließlich der
+Workspace-Branch. Die „main-Falle" im alpbyte-Repo ist beseitigt
+(lokaler + remote `main`-Branch gelöscht; war vollständig in `master`
+enthalten).
+
+### Tests
+
+8 neue in `project-agent-push-guard.test.ts` (Vorfalls-Szenario beide
+Richtungen, Match, Feature-Branches, branchPerSession, selfHeal,
+unbekannter Deploy-Branch, trunk).
+
 ## [0.19.0-multi-ha.866] - 2026-06-11
 
 ### Added — CLI-Agent-Usage-Tracking + Arbeitszeit-Statistik-Fixes (v866)

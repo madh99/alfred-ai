@@ -1604,6 +1604,19 @@ export class Alfred {
         };
         projectRunner.setCommitsRepository(commitsRepo, projectIdResolver);
         this.commitsRepoRef = commitsRepo;
+        // v867 — Deploy-Branch-Resolver für Push-Guard + Start-Warnung:
+        // projects.default_branch, Fallback conventions.branching.prTarget
+        // (damit die Conventions-Einstellung erstmals eine echte Wirkung hat).
+        projectRunner.setDeployBranchResolver(async (cwd: string) => {
+          if (!this.projectRepo) return undefined;
+          const uid = this.tryOwner();
+          if (!uid) return undefined;
+          try {
+            const list = await this.projectRepo.list(uid);
+            const proj = list.find(p => p.cwd === cwd) ?? list.find(p => p.cwd && cwd.startsWith(p.cwd));
+            return proj?.defaultBranch || proj?.conventions?.branching?.prTarget || undefined;
+          } catch { return undefined; }
+        });
         // v663a — Conventions-Resolver: cwd → Project.conventions
         projectRunner.setProjectConventionsResolver(async (cwd: string) => {
           if (!this.projectRepo) return undefined;

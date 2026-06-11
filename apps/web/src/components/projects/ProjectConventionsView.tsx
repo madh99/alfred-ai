@@ -187,6 +187,11 @@ export function ProjectConventionsView({ project, onSaved }: Props) {
               />
             </label>
           </div>
+          {/* v867 — vorher war prTarget ein toter Schalter (von keinem Code konsumiert) */}
+          <div className="mt-1 text-[10px] text-gray-600">
+            PR-Target dient als Fallback für den Deploy-Branch (wenn default_branch des Projekts leer ist):
+            Project-Agent warnt beim Start und verweigert Hauptbranch-Pushes auf den falschen Branch.
+          </div>
         </div>
 
         {/* Versioning */}
