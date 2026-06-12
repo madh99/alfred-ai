@@ -1311,7 +1311,14 @@ export class ProjectAgentRunner {
                 await this.applyPlanMutation(plan, phaseIdx, mutation, platform, chatId, sessionId);
               }
               if (isDone) {
-                // Goal erfüllt — schleife sofort verlassen
+                // Goal erfüllt — schleife sofort verlassen.
+                // v875.2 — Early-Done zählt als erfolgreiche Phase: der break
+                // übersprang die L2-Buchhaltung darunter → anyPhaseProducedFiles
+                // blieb false → overallSuccess=false → Session fälschlich 'failed'
+                // (Signatur: Done nach Phase 1, Build grün — typisch für Audit-/
+                // Doku-Aufträge; Vorfälle 41a07159 + a5c84010, 12.06.). Wir stehen
+                // hier ohnehin nur bei buildPassed===true.
+                anyPhaseProducedFiles = true;
                 this.logger.info({
                   sessionId, completedAfterPhase: phaseIdx + 1,
                   reasoning: mutation.kind === 'done' ? mutation.reasoning : undefined,

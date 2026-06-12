@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.875.2] - 2026-06-12
+
+### Fixed
+
+- **Early-Done-Sessions wurden fälschlich als `failed` markiert**: Beendet
+  der Plan-Assessor einen Lauf vorzeitig als erfüllt („done" nach Phase N),
+  übersprang der Schleifen-`break` die Phasen-Buchhaltung —
+  `anyPhaseProducedFiles` blieb bei Done nach Phase 1 `false` und das
+  Erfolgs-Urteil kippte auf `failed`, obwohl Build grün war und die
+  Ergebnisse committed waren. Typische Signatur: Audit-/Doku-Aufträge, die
+  nur eine Phase brauchen — die Session bekam ❌ statt 🎉, und die
+  Lessons-Analyse rätselte über einen Fehlschlag, den es nie gab. Jetzt
+  zählt Early-Done als erfolgreiche Phase; damit greift auch der
+  Doku-only-Hinweis („implementiert wurde nichts — zur Umsetzung …")
+  wieder korrekt
+
 ## [0.19.0-multi-ha.875.1] - 2026-06-12
 
 ### Fixed
