@@ -413,7 +413,7 @@ export class ProjectAgentRunner {
       testCommands: configInput.testCommands as string[],
       maxDurationHours: (configInput.maxDurationHours as number) ?? 8,
       maxFixAttempts: (configInput.maxFixAttempts as number) ?? 3,
-      buildTimeoutMs: (configInput.buildTimeoutMs as number) ?? 300_000,
+      buildTimeoutMs: (configInput.buildTimeoutMs as number) ?? 600_000, // v877.1 — 300s war zu knapp für gewachsene Testsuiten
       branchPerSession: configInput.branchPerSession === true,
       confirmPlan: configInput.confirmPlan === true,
       autoResume: configInput.autoResume === true,
@@ -1173,7 +1173,22 @@ export class ProjectAgentRunner {
             }
           } catch { /* import-Fehler darf den Fix-Prompt nicht blockieren */ }
 
-          const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}${devServerCrashLog}${testRunnerMismatchHint}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
+          // v877.1 — Timeout-Fälle deterministisch markieren: ein abgebrochener
+          // (aber inhaltlich grüner) Test-Lauf ist KEIN Code-Fehler — der Fix-Agent
+          // soll Laufzeit prüfen statt nach Bugs zu suchen (Vorfall 12.06.: Suite
+          // 307s bei 300s-Limit → 3 Fix-Versuche für einen Bug, den es nie gab).
+          let timeoutHint = '';
+          const timedOutCmds = buildResult.commands.filter(c => c.timedOut);
+          if (timedOutCmds.length > 0) {
+            timeoutHint = `\n\n--- WICHTIG: Timeout statt Fehler ---\n` +
+              timedOutCmds.map(c => `Der Command \`${c.command}\` wurde nach ${Math.round(c.durationMs / 1000)}s wegen Zeitlimit (${Math.round(config.buildTimeoutMs / 1000)}s) abgebrochen.`).join('\n') +
+              `\nWenn der Output bis zum Abbruch fehlerfrei ist, gibt es KEINEN Code-Bug — die Laufzeit ist das Problem. ` +
+              `Suche NICHT nach einem nicht existierenden Fehler. Prüfe stattdessen, ob sich die Laufzeit legitim senken lässt ` +
+              `(z.B. Test-Parallelisierung/Sharding, unnötig langsame Tests). Ist die Laufzeit gerechtfertigt, dokumentiere kurz, ` +
+              `dass das Zeitlimit (projectAgents.buildCommandTimeoutMs) erhöht werden muss — und ändere nichts auf Verdacht.\n--- /WICHTIG ---`;
+          }
+
+          const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}${timeoutHint}${devServerCrashLog}${testRunnerMismatchHint}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
           // v864 — auch Fix-Läufe nicht an transienten API-Fehlern sterben lassen
           // (ein 529 hätte sonst einen Fix-Versuch verbrannt → maxFixAttempts →
           // awaiting_user mit irreführender Build-Diagnose).

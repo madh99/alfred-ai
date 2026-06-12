@@ -879,7 +879,7 @@ ${planSummary}${commits}${userNotes}
       goal, cwd, agentName, buildCommands, testCommands,
       maxDurationHours: this.config.defaultMaxDurationHours ?? 8,
       maxFixAttempts: this.config.maxFixAttemptsPerIteration ?? 3,
-      buildTimeoutMs: this.config.buildCommandTimeoutMs ?? 300_000,
+      buildTimeoutMs: this.config.buildCommandTimeoutMs ?? 600_000, // v877.1
       // v650 — opt-in flags
       // v862 — selfHeal erzwingt branchPerSession (Hotfix-Branch ist Pflicht im Self-Healing)
       branchPerSession: selfHeal || input.branchPerSession === true || input.branch_per_session === true,

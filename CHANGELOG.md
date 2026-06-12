@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.877.1] - 2026-06-12
+
+### Fixed — Phantom-Fix-Loop bei Test-Timeout (v877.1)
+
+Vorfall 12.06.: Die alpbyte-Testsuite (5816 Tests, vom Agent selbst
+erweitert) braucht inzwischen 307s — das validateBuild-Limit lag bei
+300s. Der Test-Command wurde per SIGTERM abgebrochen, vitest druckte
+trotzdem die GRÜNE Summary, und der Fix-Loop suchte dreimal vergeblich
+nach einem Bug, den es nie gab (Header und Timeout-Info waren aus dem
+8k-gekürzten Fix-Prompt herausgeschnitten).
+
+- **Timeouts sind jetzt explizit markiert**: Command-Header zeigt
+  `⏱ TIMEOUT — Prozess nach Xs abgebrochen; … das Problem ist die
+  LAUFZEIT, kein Code-Fehler` statt nur `exit 124`
+- **Command-Übersicht überlebt die Tail-Kürzung**: bei >8k Output wird
+  dem gekürzten Tail eine Übersicht aller Commands (Exit-Code, Dauer,
+  Timeout-Flag) vorangestellt — der Fix-Agent sieht immer, WAS
+  fehlschlug
+- **Deterministischer Fix-Prompt-Hinweis** bei Timeout: „Suche NICHT
+  nach einem nicht existierenden Fehler — prüfe Laufzeit/Parallelisierung
+  oder dokumentiere, dass das Zeitlimit erhöht werden muss"
+- **Default-Timeout 300s → 600s** pro Command (konfigurierbar bleibt
+  `projectAgents.buildCommandTimeoutMs`)
+- 4 neue validateBuild-Tests (pass/fail/timeout/Übersicht-bei-Kürzung)
+
 ## [0.19.0-multi-ha.877] - 2026-06-12
 
 ### Added

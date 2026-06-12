@@ -16,7 +16,7 @@ export interface BuildValidationResult {
   durationMs: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes per command
+const DEFAULT_TIMEOUT_MS = 600_000; // v877.1 — 10 min pro Command (300s war zu knapp für gewachsene Testsuiten, Vorfall 12.06.: 307s)
 const MAX_OUTPUT_CHARS = 8_000;
 
 function truncateOutput(text: string, max = MAX_OUTPUT_CHARS): string {
@@ -151,14 +151,29 @@ export async function validateBuild(
   }
 
   const passed = commands.every(c => c.exitCode === 0);
+  // v877.1 — Timeout EXPLIZIT ausweisen: vorher stand nur "exit 124" im Header
+  // und der Fix-Agent rätselte über fehlerfreien (grünen) Output. Vorfall 12.06.:
+  // Testsuite brauchte 307s bei 300s-Limit → SIGTERM → vitest druckte trotzdem
+  // die grüne Summary → Fix-Loop suchte einen Bug, den es nie gab.
+  const header = (c: CommandResult) =>
+    `$ ${c.command} (exit ${c.exitCode}, ${Math.round(c.durationMs / 1000)}s)` +
+    (c.timedOut ? ` ⏱ TIMEOUT — Prozess nach ${Math.round(timeoutMs / 1000)}s abgebrochen; der Output kann fehlerfrei aussehen, das Problem ist die LAUFZEIT, kein Code-Fehler` : '');
   const combinedOutput = commands
-    .map(c => `$ ${c.command} (exit ${c.exitCode}, ${c.durationMs}ms)\n${[c.stderr, c.stdout].filter(Boolean).join('\n')}`)
+    .map(c => `${header(c)}\n${[c.stderr, c.stdout].filter(Boolean).join('\n')}`)
     .join('\n\n');
+
+  // v877.1 — Command-Übersicht überlebt die Tail-Kürzung: vorher schnitt der
+  // 8k-Tail die "$ cmd (exit …)"-Header weg → der Fix-Agent sah weder WAS
+  // fehlschlug noch den Exit-Code.
+  const overview = commands.map(header).join('\n');
+  const truncated = combinedOutput.length > MAX_OUTPUT_CHARS
+    ? `## Command-Übersicht\n${overview}\n\n[...truncated...]\n${combinedOutput.slice(-MAX_OUTPUT_CHARS)}`
+    : combinedOutput;
 
   return {
     passed,
     commands,
-    combinedOutput: truncateOutput(combinedOutput),
+    combinedOutput: truncated,
     durationMs: Date.now() - startTime,
   };
 }
