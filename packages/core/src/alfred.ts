@@ -10785,6 +10785,34 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       });
     }
 
+    // v871.1 — Verwaiste `implementing:`-Marker aufräumen: Items die ein durch
+    // Restart unterbrochener Open-Items-Lauf in_progress hinterließ, zurück auf
+    // open. HA-safe: Marker mit AKTIVER project_agent_session werden übersprungen
+    // (könnte auf einem anderen Node laufen). Code-Mode-Läufe (kein Session-Row)
+    // sind nach Restart sicher tot — falls doch ein anderer Node läuft, gewinnt
+    // dessen finaler done/revert-Write ohnehin (selbstkorrigierend).
+    if (this.projectRepo) {
+      try {
+        const markers = await this.projectRepo.listImplementingMarkers();
+        let reverted = 0;
+        for (const m of markers) {
+          try {
+            const sess = await this.database.getAdapter().queryOne(
+              `SELECT current_phase FROM project_agent_sessions WHERE task_id = ?`, [m.taskId],
+            ).catch(() => null) as { current_phase?: string } | null;
+            const active = sess?.current_phase && !['done', 'failed'].includes(sess.current_phase);
+            if (active) continue;
+            reverted += await this.projectRepo.revertItemsForSession(m.taskId);
+          } catch { /* einzelner Marker best-effort */ }
+        }
+        if (reverted > 0) {
+          this.logger.warn({ reverted, markers: markers.length }, 'v871.1 Startup: verwaiste in_progress-Items (implementing:-Marker) auf open zurückgesetzt');
+        }
+      } catch (err) {
+        this.logger.debug({ err }, 'v871.1 implementing-marker cleanup skipped');
+      }
+    }
+
     // Startup cleanup — retain audit/summary/activity/usage data
     try {
       const cleaned = {

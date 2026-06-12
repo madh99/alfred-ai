@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.871.1] - 2026-06-12
+
+### Fixed — Projects-Review Paket P2: Korrektheit (v871.1)
+
+**1. Stuck-`in_progress`-Aufräumer** (Restart-Lücke aus v869.3 geschlossen):
+- Open-Items-Code-Läufe nutzen jetzt die vorhandene v705-Marker-
+  Infrastruktur (`implementing:<taskId>` via markItemsWorkingOnSession;
+  Erfolg → resolveItemsForSession, Fehlschlag → revertItemsForSession
+  inkl. Marker-Cleanup) statt nacktem Status-Set
+- Neuer Startup-Aufräumer: verwaiste `implementing:`-Marker (Task
+  terminal oder unbekannt) → Items zurück auf open. HA-safe: Marker mit
+  aktiver project_agent_session werden übersprungen; für node-lokale
+  Code-Läufe gewinnt im Zweifel der finale Write des lebenden Laufs
+  (selbstkorrigierend)
+
+**2. UI-Korrektheit**:
+- `loadDetail`-Fehler riss vorher die GESAMTE Detail-Ansicht weg
+  (`setDetail(null)`) — jetzt: alter Stand bleibt, rotes Fehlerbanner
+  mit „Erneut laden" („Anzeige kann veraltet sein")
+- `saveItemEdit`: stiller Fehlschlag schloss die Form, als wäre
+  gespeichert — jetzt explizite Fehlermeldung
+
+**3. `deepVerifyResults`-Sweep auch beim Lauf-Start** (vorher nur im
+Getter — Map konnte wachsen, wenn Ergebnisse nie abgeholt wurden)
+
+**Verifiziert statt blind übernommen**: Der Review-Befund „saveItemEdit
+updated State ohne ok-Check" war falsch (Check existierte) — nur das
+Fehler-Feedback fehlte. Statuscode-Vereinheitlichung der Alt-Endpoints
+bewusst NICHT angefasst (Client verträgt beide Formen; Churn > Nutzen).
+
 ## [0.19.0-multi-ha.871] - 2026-06-12
 
 ### Fixed — Projects-Review Paket P1: unsichtbare Items + Ownership (v871)

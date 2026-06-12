@@ -871,6 +871,21 @@ export class ProjectRepository {
     return result.changes ?? 0;
   }
 
+  /**
+   * v871.1 — Alle distinct `implementing:<taskId>`-Marker auf in_progress-Items.
+   * Für den Startup-Aufräumer: verwaiste Marker (Task terminal/unbekannt nach
+   * Restart) werden zurück auf open gesetzt statt ewig in_progress zu hängen.
+   */
+  async listImplementingMarkers(): Promise<Array<{ taskId: string; itemCount: number }>> {
+    const rows = await this.adapter.query(
+      `SELECT auto_resolved_by AS marker, COUNT(*) AS cnt
+       FROM project_open_items
+       WHERE status = 'in_progress' AND auto_resolved_by LIKE 'implementing:%'
+       GROUP BY auto_resolved_by`,
+    ) as Array<{ marker: string; cnt: number | string }>;
+    return rows.map(r => ({ taskId: r.marker.slice('implementing:'.length), itemCount: Number(r.cnt) }));
+  }
+
   /** Helper: alle nicht-erledigten Items eines Projekts holen für den Matcher. */
   async listOpenItemsForProject(projectId: string, statuses: OpenItemStatus[] = ['open', 'in_progress']): Promise<ProjectOpenItem[]> {
     const placeholders = statuses.map(() => '?').join(',');

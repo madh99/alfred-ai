@@ -584,11 +584,10 @@ ${decLines.join('\n') || '  _keine_'}`;
       }
       const liveTaskId = randomUUID();
       this.runningCodeJobs.set(projectId, liveTaskId);
-      // Items sofort sichtbar "in Arbeit" — bei Alfred-Restart mitten im Lauf
-      // bleiben sie so stehen (sichtbar + per Reopen behebbar) statt spurlos.
-      for (const id of itemIds) {
-        try { await this.repo.updateOpenItemStatus(id, 'in_progress'); } catch { /* skip */ }
-      }
+      // v871.1 — v705-Marker statt nacktem in_progress: `implementing:<taskId>`
+      // macht die Items dem Startup-Aufräumer zuordenbar (Restart mitten im
+      // Lauf → automatischer Revert auf open statt ewig in_progress).
+      try { await this.repo.markItemsWorkingOnSession(itemIds, liveTaskId); } catch { /* best-effort */ }
       appendOutputLine(liveTaskId, 'system',
         `🚀 Code-Agent gestartet — ${items.length} Item(s): ${items.map(i => i.title).join(' | ').slice(0, 300)}`);
 
@@ -602,9 +601,13 @@ ${decLines.join('\n') || '  _keine_'}`;
         try {
           const result = await this.runCodeAgent!({ cwd, prompt: codeGoal, taskId: liveTaskId });
           if (result.success) {
+            // v871.1 — v705-Success-Pfad: setzt done + `implemented:<taskId>`-Marker
             let marked = 0;
-            for (const it of itemsSnapshot) {
-              try { if (await this.repo.updateOpenItemStatus(it.id, 'done')) marked++; } catch { /* skip */ }
+            try { marked = await this.repo.resolveItemsForSession(liveTaskId, 0.95); } catch { /* fallback unten */ }
+            if (marked === 0) {
+              for (const it of itemsSnapshot) {
+                try { if (await this.repo.updateOpenItemStatus(it.id, 'done')) marked++; } catch { /* skip */ }
+              }
             }
             // v869.4 — Schicht 2 (deterministisch): Änderungen ins Remote sichern.
             // code_agent.push committet nur bei dirty Tree (kein Leer-Commit) und
@@ -631,22 +634,30 @@ ${decLines.join('\n') || '  _keine_'}`;
             this.ownerNotify?.(`✅ Open-Items-Fix fertig (${projectName}): ${itemsSnapshot.map(i => i.title).join(' | ').slice(0, 300)} — ${marked} Item(s) erledigt markiert.${secureNote ? `\n${secureNote}` : ''}`);
           } else {
             // Fehlschlag: zurück auf open + datierte Notiz (Kontext für nächsten Versuch)
+            // v871.1 — revertItemsForSession räumt auch den implementing:-Marker ab
             const dateStr = new Date().toISOString().slice(0, 10);
             for (const it of itemsSnapshot) {
               try {
-                await this.repo.updateOpenItemStatus(it.id, 'open');
                 await this.repo.updateOpenItemFields(it.id, {
                   description: `${it.description ? `${it.description}\n\n` : ''}[Code-Agent-Lauf ${dateStr} fehlgeschlagen: ${result.output.slice(-200)}]`,
                 });
               } catch { /* skip */ }
+            }
+            try { await this.repo.revertItemsForSession(liveTaskId); } catch {
+              for (const it of itemsSnapshot) {
+                try { await this.repo.updateOpenItemStatus(it.id, 'open'); } catch { /* skip */ }
+              }
             }
             appendOutputLine(liveTaskId, 'system', `❌ Fehlgeschlagen — Items wieder geöffnet (mit Notiz). Output-Ende: ${result.output.slice(-400)}`);
             this.ownerNotify?.(`❌ Open-Items-Fix fehlgeschlagen (${projectName}): ${itemsSnapshot.map(i => i.title).join(' | ').slice(0, 200)}\nOutput-Ende: ${result.output.slice(-400)}`);
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          for (const it of itemsSnapshot) {
-            try { await this.repo.updateOpenItemStatus(it.id, 'open'); } catch { /* skip */ }
+          // v871.1 — revertItemsForSession räumt Status + implementing:-Marker ab
+          try { await this.repo.revertItemsForSession(liveTaskId); } catch {
+            for (const it of itemsSnapshot) {
+              try { await this.repo.updateOpenItemStatus(it.id, 'open'); } catch { /* skip */ }
+            }
           }
           appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)} — Items wieder geöffnet.`);
           this.ownerNotify?.(`❌ Open-Items-Fix Fehler (${projectName}): ${msg.slice(0, 300)}`);
@@ -753,6 +764,12 @@ ${decLines.join('\n') || '  _keine_'}`;
 
     const liveTaskId = randomUUID();
     this.runningVerifyJobs.set(projectId, liveTaskId);
+    // v871.1 — TTL-Sweep auch beim Start (vorher nur im Getter → Map konnte
+    // wachsen, wenn Ergebnisse nie abgeholt wurden)
+    const sweepCutoff = Date.now() - 30 * 60_000;
+    for (const [k, v] of this.deepVerifyResults) {
+      if (v.ts < sweepCutoff) this.deepVerifyResults.delete(k);
+    }
     this.deepVerifyResults.set(liveTaskId, { status: 'running', findings: [], ts: Date.now() });
     appendOutputLine(liveTaskId, 'system', `🔬 Deep-Verify gestartet — ${items.length} Item(s) gegen die aktuelle Codebase${skippedForCap > 0 ? ` (${skippedForCap} weitere über der Kappe von ${maxItems} — späterer Lauf)` : ''}.`);
 

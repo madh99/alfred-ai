@@ -139,6 +139,8 @@ export function ProjectsPage() {
   // v871 — Suche + Prio-Filter für die (jetzt vollständige) Open-Items-Liste
   const [itemSearch, setItemSearch] = useState('');
   const [itemPrioFilter, setItemPrioFilter] = useState<'all' | 'high' | 'normal' | 'low'>('all');
+  // v871.1 — Reload-Fehler sichtbar machen statt Detail still zu verwerfen
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [auditing, setAuditing] = useState(false);
   // v642 — strukturiertes Audit-Modal
   const [auditData, setAuditData] = useState<any | null>(null);
@@ -200,6 +202,9 @@ export function ProjectsPage() {
           ? { ...it, title: itemEditForm.title.trim(), description: itemEditForm.description.trim() || undefined }
           : it),
       });
+    } else if (!ok) {
+      // v871.1 — vorher stiller Fehlschlag: Form schloss sich, User glaubte gespeichert
+      alert('Speichern fehlgeschlagen — Änderung wurde NICHT übernommen.');
     }
     setItemEditId(null);
   }
@@ -249,13 +254,24 @@ export function ProjectsPage() {
     if (!client) return;
     try {
       const d = await client.fetchProject(id);
-      setDetail(d);
+      // v871.1 — Fehler beim Reload NICHT mehr still in setDetail(null) münden
+      // lassen (riss die ganze Ansicht weg); bei null trotz vorherigem Detail:
+      // alten Stand behalten + Fehlerbanner.
+      if (d) {
+        setDetail(d);
+        setDetailError(null);
+      } else {
+        setDetailError('Projekt-Detail konnte nicht geladen werden (Server lieferte kein Ergebnis).');
+      }
       // v824 — Agent-Conventions Badge laden (best-effort, non-blocking)
       client.conventionsStatus(id).then(r => {
         if (r.ok && r.data) setConventionsBadge(r.data.badge);
         else setConventionsBadge(null);
       }).catch(() => setConventionsBadge(null));
-    } catch { setDetail(null); }
+    } catch (err) {
+      // v871.1 — alten Stand behalten, Fehler sichtbar machen statt still
+      setDetailError(`Aktualisierung fehlgeschlagen: ${err instanceof Error ? err.message : String(err)} — Anzeige kann veraltet sein.`);
+    }
   }, [client]);
 
   useEffect(() => {
@@ -692,6 +708,15 @@ export function ProjectsPage() {
           )}
           {detail && (
             <div className="space-y-4">
+              {/* v871.1 — Reload-Fehler sichtbar (Anzeige kann veraltet sein) */}
+              {detailError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-xs text-red-300 flex items-center gap-2">
+                  <span>⚠️</span>
+                  <span className="flex-1">{detailError}</span>
+                  <button onClick={() => loadDetail(detail.project.id)} className="text-[10px] px-2 py-0.5 border border-red-500/40 rounded hover:bg-red-500/10">Erneut laden</button>
+                  <button onClick={() => setDetailError(null)} className="text-gray-500 hover:text-gray-300">×</button>
+                </div>
+              )}
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 {editingName ? (
                   <div className="flex gap-2 flex-1">
