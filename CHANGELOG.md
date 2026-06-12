@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.871] - 2026-06-12
+
+### Fixed — Projects-Review Paket P1: unsichtbare Items + Ownership (v871)
+
+Vollumfänglicher Projects-Review (3 parallele Code-Reviews + Live-DB-
+Verifikation) — P1 behebt die zwei kritischen Befunde:
+
+**1. 253 offene Punkte waren in der UI unsichtbar.** Der Detail-Endpoint
+lud `limit: 200, created_at DESC` — bei 445 offenen Items (Live-DB
+Alpbyte) sahen UI und User nur die neuesten 200; Audit/Deep-Verify
+arbeiteten serverseitig aber auf ALLEN. Jetzt:
+- Endpoint liefert ALLE aktiven Items (open/in_progress, ungekappt) +
+  erledigte/verworfene separat gekappt (80/40 — UI zeigt eh max 50)
+- UI: Suchfeld + Prio-Filter ab 15 Items, Header zeigt echte Gesamtzahl
+  („X von Y" bei aktivem Filter), Render-Kappe bei 150 mit ehrlichem
+  „+N weitere — Suche/Filter nutzen"-Hinweis (DOM-Schutz)
+
+**2. Ownership-Lücken geschlossen** (Single-Owner: Defense-in-depth;
+Multi-User: Blocker):
+- `bulkCloseItems`: nutzte `void projectId` — schloss beliebige Items
+  ohne Owner-/Projekt-Prüfung. Jetzt: Projekt-Ownership + pro Item
+  Zugehörigkeits-Check
+- Open-Item-PATCH + Roadmap-PATCH: Ownership-Guard über Item→Projekt→
+  Owner (neuer zentraler `ownsOpenItem`-Helper)
+- Feature-Mutationen (visibility/confirm/retire): Feature.userId-Check
+- Automation-Update/Delete: v808-Ownership-Muster von runAutomationNow
+  übernommen (vorher nur dort)
+- 15 Conventions-Callbacks liefen mit `userId: ''` (kein User-Kontext) —
+  jetzt mit aufgelöstem Owner
+- Input-Validierung beim Item-PATCH: Status-Enum, title ≤ 200,
+  description ≤ 4000 Zeichen
+
+P2 (Korrektheit), P3 (Performance) und P4 (UX) folgen als eigene
+Releases.
+
 ## [0.19.0-multi-ha.870.1] - 2026-06-12
 
 ### Fixed — Deep-Verify-Parser: [slug]-Pfade + Tail-Truncation (v870.1)

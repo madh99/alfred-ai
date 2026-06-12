@@ -8949,6 +8949,19 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             return user.masterUserId ?? user.id;
           } catch { return ownerId; }
         };
+        // v871 — Ownership-Guard: gehört das Open-Item zu einem Projekt des Owners?
+        // Vorher konnten Item-Mutationen (PATCH/bulk-close/roadmap) per beliebiger
+        // itemId OHNE Projekt-/Owner-Prüfung durchgeführt werden — im Single-Owner-
+        // Betrieb begrenzt riskant, für Multi-User ein Blocker.
+        const ownsOpenItem = async (itemId: string): Promise<boolean> => {
+          try {
+            const uid = await resolveOwnerProj();
+            const item = await projRepo.getOpenItemByIdRaw(itemId);
+            if (!item) return false;
+            const proj = await projRepo.getById(uid, item.projectId);
+            return !!proj;
+          } catch { return false; }
+        };
         (apiAdapter as any).setProjectsCallbacks({
           list: async (filter?: { status?: string }) => {
             try {
@@ -8961,13 +8974,21 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               const uid = await resolveOwnerProj();
               const project = await projRepo.getById(uid, id);
               if (!project) return null;
-              const [sessions, openItems, decisions, health] = await Promise.all([
+              // v871 — KRITISCHER FIX: vorher listOpenItems(limit: 200, created_at DESC)
+              // → bei 445 offenen Items waren die 253 ÄLTESTEN in der UI komplett
+              // unsichtbar (während Audit/Deep-Verify serverseitig ALLE sahen).
+              // Jetzt: ALLE aktiven Items (open/in_progress, ohne Kappe) + erledigte
+              // separat gekappt (die UI zeigt davon ohnehin max 50 + "+N weitere").
+              const [sessions, activeItems, doneItems, cancelledItems, decisions, health] = await Promise.all([
                 projRepo.listSessions(project.id, 50),
-                projRepo.listOpenItems(uid, { projectId: project.id, limit: 200 }),
+                projRepo.listOpenItemsForProject(project.id, ['open', 'in_progress']),
+                projRepo.listOpenItems(uid, { projectId: project.id, status: 'done', limit: 80 }),
+                projRepo.listOpenItems(uid, { projectId: project.id, status: 'cancelled', limit: 40 }),
                 projRepo.listDecisions(project.id, 50),
                 projRepo.getCurrentHealthSummary(project.id),
               ]);
-              return { project, sessions, openItems, decisions, health };
+              const openItems = [...activeItems, ...doneItems, ...cancelledItems];
+              return { project, sessions, openItems, decisions, health, openItemTotals: { active: activeItems.length } };
             } catch (err) { this.logger.warn({ err }, 'Projects API get failed'); return null; }
           },
           create: async (input: Record<string, unknown>) => {
@@ -9015,6 +9036,12 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           // v704 — Erweitert: status + title + description
           updateOpenItem: async (itemId: string, patch: { status?: string; title?: string; description?: string | null }) => {
             try {
+              // v871 — Ownership-Check (vorher: Mutation per beliebiger itemId möglich)
+              if (!(await ownsOpenItem(itemId))) return false;
+              // v871 — Input-Validierung: Status-Enum + Längen-Kappen
+              if (patch.status && !['open', 'in_progress', 'done', 'cancelled'].includes(patch.status)) return false;
+              if (typeof patch.title === 'string') patch.title = patch.title.slice(0, 200);
+              if (typeof patch.description === 'string') patch.description = patch.description.slice(0, 4000);
               let anyChange = false;
               // Field-Update (title/description) zuerst
               if (patch.title != null || patch.description !== undefined) {
@@ -9108,16 +9135,24 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             }
           },
           // v642 — Bulk-Close
+          // v871 — projectId wird jetzt GENUTZT (vorher `void projectId`): Ownership
+          // einmal prüfen, dann pro Item verifizieren dass es zu DIESEM Projekt gehört.
           bulkCloseItems: async (projectId: string, itemIds: string[]) => {
-            void projectId;
             let closed = 0;
             const failed: string[] = [];
-            for (const id of itemIds) {
-              try {
-                const ok = await projRepo.updateOpenItemStatus(id, 'done');
-                if (ok) closed++; else failed.push(id);
-              } catch { failed.push(id); }
-            }
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return { closed: 0, failed: itemIds };
+              for (const id of itemIds) {
+                try {
+                  const item = await projRepo.getOpenItemByIdRaw(id);
+                  if (!item || item.projectId !== project.id) { failed.push(id); continue; }
+                  const ok = await projRepo.updateOpenItemStatus(id, 'done');
+                  if (ok) closed++; else failed.push(id);
+                } catch { failed.push(id); }
+              }
+            } catch { return { closed, failed: itemIds }; }
             return { closed, failed };
           },
           // v643 — Commits per Project + Session
@@ -9216,13 +9251,15 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           // v824 — Agent-Conventions Callbacks (Phase 1 vollständig, alle 7 Actions)
           conventionsStatus: async (projectId: string, packagePath?: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'status', project_id: projectId, package_path: packagePath ?? '' }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsGenerate: async (projectId: string, opts: { packagePath?: string; language?: 'de' | 'en'; tier?: 'fast' | 'default' | 'strong' }) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({
               action: 'generate',
               project_id: projectId,
@@ -9234,7 +9271,8 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           },
           conventionsApply: async (projectId: string, opts: { packagePath?: string; content?: string; commitToGit?: boolean; outputs?: string[] }) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({
               action: 'apply',
               project_id: projectId,
@@ -9247,7 +9285,8 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           },
           conventionsRefresh: async (projectId: string, opts: { packagePath?: string; language?: 'de' | 'en' }) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({
               action: 'refresh',
               project_id: projectId,
@@ -9258,55 +9297,64 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           },
           conventionsDriftCheck: async (projectId: string, packagePath?: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'drift_check', project_id: projectId, package_path: packagePath ?? '' }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsHistory: async (projectId: string, packagePath?: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'history', project_id: projectId, package_path: packagePath ?? '' }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsRollback: async (projectId: string, historyId: string, packagePath?: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'rollback', project_id: projectId, package_path: packagePath ?? '', history_id: historyId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsListLessons: async (projectId: string, packagePath?: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'list_lessons', project_id: projectId, package_path: packagePath ?? '' }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsConsolidateLessons: async (projectId: string, packagePath?: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'consolidate_lessons', project_id: projectId, package_path: packagePath ?? '' }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsListPackages: async (projectId: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'list_packages', project_id: projectId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsGenerateAllPackages: async (projectId: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'generate_all_packages', project_id: projectId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsEffectiveness: async (projectId: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'effectiveness_metrics', project_id: projectId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsSectionHealth: async (projectId: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'section_health', project_id: projectId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
@@ -9320,13 +9368,15 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           },
           conventionsGetConfigOverrides: async (projectId: string) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'get_config_overrides', project_id: projectId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           conventionsSetConfigOverrides: async (projectId: string, overrides: Record<string, unknown>) => {
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
-            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const ctxUid = await resolveOwnerProj(); // v871 — vorher userId: '' (kein User-Kontext)
+            const ctx = { userId: ctxUid, masterUserId: ctxUid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'set_config_overrides', project_id: projectId, overrides }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
@@ -9391,19 +9441,35 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return features as unknown as Array<Record<string, unknown>>;
             } catch (err) { this.logger.warn({ err, query }, 'v851 searchFeatures failed'); return []; }
           },
+          // v871 — Ownership-Guard für Feature-Mutationen (vorher: beliebige featureId)
           setFeatureVisibility: async (featureId: string, visibility: string) => {
             if (!this.featuresRepoRef) return false;
-            try { await this.featuresRepoRef.setVisibility(featureId, visibility as 'private' | 'role-shared' | 'global'); return true; }
+            try {
+              const uid = await resolveOwnerProj();
+              const feature = await this.featuresRepoRef.getById(featureId);
+              if (!feature || feature.userId !== uid) return false;
+              await this.featuresRepoRef.setVisibility(featureId, visibility as 'private' | 'role-shared' | 'global'); return true;
+            }
             catch (err) { this.logger.warn({ err, featureId }, 'v851 setFeatureVisibility failed'); return false; }
           },
           confirmFeature: async (featureId: string, action: 'confirm' | 'reject') => {
             if (!this.featuresRepoRef) return false;
-            try { await this.featuresRepoRef.setStatus(featureId, action === 'confirm' ? 'confirmed' : 'rejected'); return true; }
+            try {
+              const uid = await resolveOwnerProj();
+              const feature = await this.featuresRepoRef.getById(featureId);
+              if (!feature || feature.userId !== uid) return false;
+              await this.featuresRepoRef.setStatus(featureId, action === 'confirm' ? 'confirmed' : 'rejected'); return true;
+            }
             catch (err) { this.logger.warn({ err, featureId, action }, 'v851 confirmFeature failed'); return false; }
           },
           retireFeature: async (featureId: string, reason?: string) => {
             if (!this.featuresRepoRef) return false;
-            try { await this.featuresRepoRef.retire(featureId, reason); return true; }
+            try {
+              const uid = await resolveOwnerProj();
+              const feature = await this.featuresRepoRef.getById(featureId);
+              if (!feature || feature.userId !== uid) return false;
+              await this.featuresRepoRef.retire(featureId, reason); return true;
+            }
             catch (err) { this.logger.warn({ err, featureId }, 'v851 retireFeature failed'); return false; }
           },
           // v665b — Cluster-Shares + Project-Move
@@ -9495,6 +9561,10 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           updateAutomation: async (id: string, patch: Record<string, unknown>) => {
             try {
               if (!this.projectAutomationsRepo) return false;
+              // v871 — Ownership-Guard (gleiches Muster wie runAutomationNow v808)
+              const autoRow = await this.projectAutomationsRepo.getById(id);
+              const ownerCheck = this.tryOwner();
+              if (!autoRow || (ownerCheck && autoRow.userId !== ownerCheck)) return false;
               const mappedPatch: Record<string, unknown> = {};
               if (typeof patch.name === 'string') mappedPatch.name = patch.name;
               if (typeof patch.schedule === 'string' || patch.schedule === null) mappedPatch.schedule = patch.schedule;
@@ -9511,7 +9581,14 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             } catch { return false; }
           },
           deleteAutomation: async (id: string) => {
-            try { return this.projectAutomationsRepo ? await this.projectAutomationsRepo.delete(id) : false; } catch { return false; }
+            try {
+              if (!this.projectAutomationsRepo) return false;
+              // v871 — Ownership-Guard (gleiches Muster wie runAutomationNow v808)
+              const autoRow = await this.projectAutomationsRepo.getById(id);
+              const ownerCheck = this.tryOwner();
+              if (!autoRow || (ownerCheck && autoRow.userId !== ownerCheck)) return false;
+              return await this.projectAutomationsRepo.delete(id);
+            } catch { return false; }
           },
           runAutomationNow: async (id: string) => {
             try {
@@ -9540,7 +9617,10 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           },
           // v663a — Roadmap-Felder eines Items setzen
           updateOpenItemRoadmap: async (itemId: string, patch: { milestone?: string | null; order?: number | null; estimatedHours?: number | null }) => {
-            try { return await projRepo.updateOpenItemRoadmap(itemId, patch); } catch { return false; }
+            try {
+              if (!(await ownsOpenItem(itemId))) return false; // v871 — Ownership
+              return await projRepo.updateOpenItemRoadmap(itemId, patch);
+            } catch { return false; }
           },
           // v663a — Implement-Milestone: aggregiert open items als Goal + startet project_agent
           implementMilestone: async (id: string, milestone: string) => {

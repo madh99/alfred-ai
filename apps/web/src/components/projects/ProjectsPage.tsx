@@ -136,6 +136,9 @@ export function ProjectsPage() {
   const [deepVerifyTaskId, setDeepVerifyTaskId] = useState<string | null>(null);
   const [deepVerifyFindings, setDeepVerifyFindings] = useState<DeepVerifyFinding[] | null>(null);
   const [deepVerifyStarting, setDeepVerifyStarting] = useState(false);
+  // v871 — Suche + Prio-Filter für die (jetzt vollständige) Open-Items-Liste
+  const [itemSearch, setItemSearch] = useState('');
+  const [itemPrioFilter, setItemPrioFilter] = useState<'all' | 'high' | 'normal' | 'low'>('all');
   const [auditing, setAuditing] = useState(false);
   // v642 — strukturiertes Audit-Modal
   const [auditData, setAuditData] = useState<any | null>(null);
@@ -840,7 +843,13 @@ export function ProjectsPage() {
               {/* Open Items — v654: open + in_progress in einer Liste, expandable Details */}
               <div className="pt-2 border-t border-[#222]">
                 {(() => {
-                  const activeItems = detail.openItems.filter(it => it.status === 'open' || it.status === 'in_progress');
+                  // v871 — Suche + Prio-Filter (die Liste ist jetzt VOLLSTÄNDIG —
+                  // vorher zeigte das 200er-Endpoint-Limit nur die neuesten Items)
+                  const allActive = detail.openItems.filter(it => it.status === 'open' || it.status === 'in_progress');
+                  const q = itemSearch.trim().toLowerCase();
+                  const activeItems = allActive.filter(it =>
+                    (itemPrioFilter === 'all' || it.priority === itemPrioFilter) &&
+                    (!q || it.title.toLowerCase().includes(q) || (it.description ?? '').toLowerCase().includes(q)));
                   const resolvedItems = detail.openItems
                     .filter(it => it.status === 'done' || it.status === 'cancelled')
                     .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''));
@@ -852,7 +861,7 @@ export function ProjectsPage() {
                     className="flex items-center gap-2 text-sm font-semibold text-gray-400 hover:text-gray-200"
                   >
                     <span className="text-xs">{openItemsExpanded ? '▼' : '▶'}</span>
-                    <span>Offene Punkte ({activeItems.length})</span>
+                    <span>Offene Punkte ({(q || itemPrioFilter !== 'all') ? `${activeItems.length} von ${allActive.length}` : allActive.length})</span>
                   </button>
                   <div className="flex items-center gap-1">
                     {/* v742/v818 P3 — Re-Match-Button + Inline-Notice mit Result */}
@@ -951,8 +960,27 @@ export function ProjectsPage() {
                   </div>
                 )}
 
+                {/* v871 — Suche + Prio-Filter (Liste ist jetzt vollständig, kann 400+ sein) */}
+                {allActive.length > 15 && (
+                  <div className="flex items-center gap-2 mb-2">
+                    <input
+                      type="text"
+                      value={itemSearch}
+                      onChange={(e) => setItemSearch(e.target.value)}
+                      placeholder={`In ${allActive.length} offenen Punkten suchen…`}
+                      className="flex-1 px-2 py-1 bg-[#0d0d0d] border border-[#2a2a2a] rounded text-xs text-gray-200"
+                    />
+                    {(['all', 'high', 'normal', 'low'] as const).map(p => (
+                      <button
+                        key={p}
+                        onClick={() => setItemPrioFilter(p)}
+                        className={`px-2 py-1 text-[10px] rounded border ${itemPrioFilter === p ? 'bg-blue-500/20 border-blue-500/40 text-blue-300' : 'border-[#1f1f1f] text-gray-500 hover:text-gray-300'}`}
+                      >{p === 'all' ? 'Alle' : p === 'high' ? '🔴' : p === 'normal' ? '🟡' : '⚪'}</button>
+                    ))}
+                  </div>
+                )}
                 <div className="space-y-1 mb-2">
-                  {activeItems.map(it => {
+                  {activeItems.slice(0, 150).map(it => {
                     const possiblyDone = it.autoResolvedBy && it.autoResolvedConfidence != null;
                     const isExpanded = expandedItemIds.has(it.id);
                     const hasDetails = !!(it.description || it.dueAt || it.linkedIncidentId || it.linkedChangeId || it.sessionId || it.autoResolvedBy);
@@ -1129,6 +1157,12 @@ export function ProjectsPage() {
                       </div>
                     );
                   })}
+                  {/* v871 — Render-Kappe mit ehrlichem Hinweis (DOM-Schutz bei 400+ Items) */}
+                  {activeItems.length > 150 && (
+                    <div className="text-[11px] text-amber-400/80 py-1">
+                      +{activeItems.length - 150} weitere Punkte — Suche oder Prio-Filter nutzen, um sie einzugrenzen.
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-1.5">
                   <input value={newItemTitle} onChange={e => setNewItemTitle(e.target.value)} placeholder="Neuer Punkt..." className="flex-1 px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs text-gray-200" />
