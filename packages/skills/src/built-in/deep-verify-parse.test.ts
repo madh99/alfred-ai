@@ -40,4 +40,32 @@ describe('parseDeepVerifyFindings', () => {
     expect(parseDeepVerifyFindings('Agent erzählte nur Prosa.', valid)).toEqual([]);
     expect(parseDeepVerifyFindings('', valid)).toEqual([]);
   });
+
+  // v870.1 — REALER Vorfall 12.06. (Lauf 860f0740): Next.js-Routen-Pfade mit
+  // [slug]/[id] in den Evidence-Strings brachen die alte Regex-Extraktion —
+  // 15 perfekte Verdikte geliefert, 0 geparst.
+  it('v870.1: Brackets in Evidence-Strings ([slug]-Pfade) brechen den Parser nicht mehr', () => {
+    const out = `Analyse fertig. Hier die Bewertung:\n\n\`\`\`json\n[` +
+      `{"id":"${idA}","verdict":"implemented","confidence":0.95,"evidence":"news.status/publishAt in src/lib/migrations.ts; Preview-Route src/app/api/news/[slug]/preview/route.ts + preview.test.ts; Admin-Link news/page.tsx:32"},` +
+      `{"id":"${idB}","verdict":"implemented","confidence":0.9,"evidence":"Detailseite src/app/community/ugc/[id]/page.tsx rendert Medien typabhängig"}` +
+      `]\n\`\`\``;
+    const f = parseDeepVerifyFindings(out, valid);
+    expect(f).toHaveLength(2);
+    expect(f[0].evidence).toContain('[slug]');
+    expect(f[1].evidence).toContain('[id]');
+  });
+
+  it('v870.1: escaped quotes in Evidence-Strings werden korrekt überlaufen', () => {
+    const out = `[{"id":"${idA}","verdict":"obsolete","confidence":0.8,"evidence":"Feature \\"Galerie [alt]\\" wurde entfernt"}]`;
+    const f = parseDeepVerifyFindings(out, valid);
+    expect(f).toHaveLength(1);
+    expect(f[0].evidence).toContain('Galerie [alt]');
+  });
+
+  it('v870.1: [slug]-Listen VOR dem Verdikt-Array stören nicht', () => {
+    const out = `Geprüfte Routen: [slug], [id], [...catchall]\n\n[{"id":"${idA}","verdict":"not-implemented","confidence":0.7,"evidence":"kein Treffer in src/app/api"}]`;
+    const f = parseDeepVerifyFindings(out, valid);
+    expect(f).toHaveLength(1);
+    expect(f[0].verdict).toBe('not-implemented');
+  });
 });

@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.870.1] - 2026-06-12
+
+### Fixed — Deep-Verify-Parser: [slug]-Pfade + Tail-Truncation (v870.1)
+
+Erster Live-Lauf (860f0740): Der Agent lieferte **15 perfekte Verdikte**
+(13 implemented mit Code-Beleg, 1 partially, 1 not-implemented) — der
+Parser parste **0**. Ursache: non-greedy Regex `\[[\s\S]*?\]` bricht an
+der nächstgelegenen `]` — und Next.js-Evidence-Pfade wie
+`src/app/api/news/[slug]/preview/route.ts` stehen mitten im Array.
+
+- **String-bewusstes Bracket-Matching** statt Regex: Scanner mit
+  String-/Escape-Zustand ignoriert Brackets innerhalb von JSON-Strings;
+  von hinten suchend, ID-validiert wie bisher. Der Algorithmus wurde
+  vorab erfolgreich gegen den echten Lauf-Output verifiziert (15/15
+  rekonstruiert).
+- **Zweiter latenter Bug behoben**: Der runCodeAgent-Wrapper kürzte
+  Output Kopf-erhaltend (`slice(0, 8000)`) — das Verdikt-JSON steht am
+  ENDE. Jetzt Tail-erhaltend (16k).
+
+### Tests
+
+3 neue mit der echten Vorfalls-Fixture ([slug]/[id]-Pfade in Evidence,
+escaped Quotes, [slug]-Aufzählungen vor dem Array); alle 8
+Parser-Tests grün.
+
 ## [0.19.0-multi-ha.870] - 2026-06-12
 
 ### Added — Deep-Verify: Open-Items gegen die echte Codebase prüfen (v870)

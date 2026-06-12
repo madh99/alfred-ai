@@ -1795,9 +1795,12 @@ export class Alfred {
           const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as unknown as import('@alfred/types').SkillContext;
           const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt, cwd, taskId }, ctx);
           const data = result.data as { stdout?: string; stderr?: string } | undefined;
+          // v870.1 — TAIL-erhaltend kürzen (vorher slice(0, 8000) = Kopf):
+          // das Deep-Verify-Verdikt-JSON und Fehler stehen am ENDE des Outputs.
+          const raw = data?.stdout || data?.stderr || result.error || '';
           return {
             success: result.success,
-            output: (data?.stdout || data?.stderr || result.error || '').slice(0, 8000),
+            output: raw.length > 16000 ? raw.slice(-16000) : raw,
           };
         });
 

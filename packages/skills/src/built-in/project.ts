@@ -34,19 +34,49 @@ export interface DeepVerifyFinding {
 }
 
 /**
- * v870 — Parse der Deep-Verify-Agent-Antwort: letztes JSON-Array im Output,
- * validiert gegen die geprüften Item-IDs. Exportiert für Tests.
+ * v870.1 — String-bewusstes Bracket-Matching: findet das schließende `]` zum
+ * `[` an Position start, ignoriert dabei Brackets INNERHALB von JSON-Strings.
+ * Nötig weil Evidence-Belege Next.js-Pfade wie `[slug]`/`[id]` enthalten —
+ * die brachen die alte non-greedy Regex-Extraktion (Vorfall 12.06., Lauf
+ * 860f0740: 15 perfekte Verdikte geliefert, 0 geparst).
+ */
+function matchJsonArrayEnd(s: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (inString) {
+      if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * v870 — Parse der Deep-Verify-Agent-Antwort: letztes valides Verdikt-Array
+ * im Output (Agent darf davor frei erzählen), validiert gegen die geprüften
+ * Item-IDs. Exportiert für Tests.
  */
 export function parseDeepVerifyFindings(output: string, validIds: Set<string>): DeepVerifyFinding[] {
   const findings: DeepVerifyFinding[] = [];
-  // letztes JSON-Array im Output suchen (Agent darf davor frei erzählen)
-  const matches = output.match(/\[[\s\S]*?\]/g);
-  if (!matches) return findings;
-  for (let i = matches.length - 1; i >= 0; i--) {
+  const VERDICTS = ['implemented', 'partially', 'not-implemented', 'obsolete'];
+  // v870.1 — von hinten nach vorn jedes '[' string-bewusst matchen
+  for (let start = output.lastIndexOf('['); start >= 0; start = start > 0 ? output.lastIndexOf('[', start - 1) : -1) {
+    const end = matchJsonArrayEnd(output, start);
+    if (end < 0) continue;
     try {
-      const parsed = JSON.parse(matches[i]);
+      const parsed = JSON.parse(output.slice(start, end + 1));
       if (!Array.isArray(parsed) || parsed.length === 0) continue;
-      const VERDICTS = ['implemented', 'partially', 'not-implemented', 'obsolete'];
       const valid = parsed.filter((r): r is Record<string, unknown> =>
         !!r && typeof r === 'object' &&
         typeof (r as Record<string, unknown>).id === 'string' &&
@@ -63,7 +93,7 @@ export function parseDeepVerifyFindings(output: string, validIds: Set<string>): 
         });
       }
       return findings; // erstes valides Array von hinten gewinnt
-    } catch { /* nächstes Kandidaten-Array probieren */ }
+    } catch { /* nächsten Kandidaten probieren */ }
   }
   return findings;
 }
