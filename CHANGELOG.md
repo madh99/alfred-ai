@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.881] - 2026-06-13
+
+### Changed — Automation-Templates: Versprechen wahr machen, Teil 1 (v881)
+
+Review-Befund 13.06.: Viele der 23 Templates versprachen im Prompt Dinge,
+die die Engine ihnen nie als Daten gab (Code-Review sah nur `diff --stat`,
+Cost-Tracking hatte GAR KEINE Datenquelle und erfand Zahlen, Auto-Rebase
+sah keine einzige Branch, „Drift zu letzter Woche" hatte nie eine
+Vergleichsbasis). v881 löst die Versprechen ein:
+
+- **Vorheriger-Lauf-Block (M2)**: jeder Lauf bekommt den Output des
+  letzten erfolgreichen Laufs als explizite Vergleichsbasis — Drift-/
+  Trend-Aussagen (Coverage, Performance, Weekly) sind jetzt ECHT;
+  Erstläufe sagen das ausdrücklich statt zu raten
+- **10 neue Collectors (M1)**: echter Diff-Patch (Code-Review),
+  CHANGELOG-Head + Tags (Release-Pflege), README-Inhalt
+  (Documentation-Drift), `git log --name-only` (Recurring-Bug-Detector),
+  `git shortlog` (Activity-Digest), Branch-Lage mit ahead/behind +
+  **merge-tree-Konflikt-Dry-Run** (Auto-Rebase), license-checker-Summary
+  (License-Audit), Bench-Ausführung (Performance-Baseline),
+  **echte Kosten aus cli_agent_runs + llm_usage** (Cost-Tracking),
+  **Forge-API-MRs** (PR-Pflege — funktioniert jetzt auch auf GitLab)
+- **Projekt-Kontext erweitert**: ALLE aktiven Items mit IDs (vorher 15
+  Titel — Triage über 100+ Items war unmöglich), erledigte Items der
+  letzten 14 Tage (Standup/Weekly/Demo-Day ehrlich), letzter
+  Health-/Build-Stand aus `project_health_log`
+- **Anti-Halluzinations-Leitplanke** in System-Prompt + Aufgabe: nur
+  gelieferte Daten verwenden, fehlende Daten explizit benennen,
+  Trends nur mit Vergleichsbasis. maxTokens 1500 → 2000
+- 13 Template-Prompts auf die echten Datenquellen umgestellt
+
+Teil 2 (v882) folgt: `runVia: deep_agent` für Code-lesende/Datei-
+schreibende Templates (Onboarding-Doc, ADR, tiefes Code-Review) +
+Aktions-Stufen (Auto-Rebase ausführen, Security→ITSM-Incident).
+
 ## [0.19.0-multi-ha.880.1] - 2026-06-13
 
 ### Fixed

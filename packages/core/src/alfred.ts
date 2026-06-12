@@ -1140,9 +1140,79 @@ export class Alfred {
           ownerChatIdForAuto,
           ownerPlatformForAuto,
         );
+        // v881 — echte Daten-Provider: Cost-Tracking liest cli_agent_runs +
+        // llm_usage (vorher ERFAND das Template Zahlen — keine Datenquelle);
+        // forge_prs nutzt die Forge-API (GitLab+GitHub) statt nur gh.
+        engine.setDataProviders({
+          costStats: async (projectId: string) => {
+            const lines: string[] = [];
+            try {
+              if (this.cliRunsRepoRef) {
+                const now = Date.now();
+                const d30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+                const d60 = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
+                const [last30, last60] = await Promise.all([
+                  this.cliRunsRepoRef.spentForProjectSince(projectId, d30),
+                  this.cliRunsRepoRef.spentForProjectSince(projectId, d60),
+                ]);
+                const prev30 = Math.max(0, last60 - last30);
+                lines.push(`### CLI-Agent-Kosten dieses Projekts (cli_agent_runs)`);
+                lines.push(`- letzte 30 Tage: $${last30.toFixed(2)}`);
+                lines.push(`- 30 Tage davor: $${prev30.toFixed(2)}`);
+                const detail = await this.cliRunsRepoRef.forProject(projectId);
+                lines.push(`- nach Session-Typ: ${detail.byType.map(t => `${t.key}: $${t.costUsd.toFixed(2)} (${t.runs} Runs, ${Math.round(t.durationS / 60)}min)`).join(' · ') || '(keine Runs)'}`);
+                lines.push(`- nach Agent: ${detail.byAgent.map(a => `${a.key}: $${a.costUsd.toFixed(2)}`).join(' · ') || '(keine)'}`);
+              }
+              if (this.usageRepo) {
+                const today = new Date();
+                const d30s = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+                const d60s = new Date(today.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+                const todayS = today.toISOString().slice(0, 10);
+                const [cur, prev] = await Promise.all([
+                  this.usageRepo.getRange(d30s, todayS),
+                  this.usageRepo.getRange(d60s, d30s),
+                ]);
+                const sum = (rows: Array<{ totalCostUsd: number }>) => rows.reduce((acc, r) => acc + Number(r.totalCostUsd ?? 0), 0);
+                lines.push(`### Globaler LLM-Verbrauch (alle Projekte/Chat, llm_usage)`);
+                lines.push(`- letzte 30 Tage: $${sum(cur).toFixed(2)} · 30 Tage davor: $${sum(prev).toFixed(2)}`);
+              }
+            } catch (err) {
+              this.logger.debug({ err }, 'v881 costStats provider failed');
+            }
+            return lines.join('\n');
+          },
+          forgePrs: async (cwd: string) => {
+            try {
+              const forge = this.config.codeAgents?.forge;
+              if (!forge) return '';
+              const { gitGetRemoteUrl, parseRemoteUrl } = await import('@alfred/skills');
+              const out: string[] = [];
+              const seen = new Set<string>();
+              for (const remoteName of ['origin', 'github']) {
+                const remoteUrl = await gitGetRemoteUrl(remoteName, { cwd }).catch(() => null);
+                if (!remoteUrl) continue;
+                const repoId = parseRemoteUrl(remoteUrl);
+                if (!repoId) continue;
+                const provider: 'gitlab' | 'github' = repoId.baseUrl.includes('github.com') ? 'github' : 'gitlab';
+                if (seen.has(provider) || !forge[provider]) continue;
+                seen.add(provider);
+                const fc = createForgeClient({ ...forge, provider });
+                const prs = await fc.listPullRequests({ owner: repoId.owner, repo: repoId.repo }, 'open');
+                out.push(`### ${provider} (${prs.length} offen)`);
+                for (const pr of prs.slice(0, 15)) {
+                  out.push(`- !${pr.number} "${pr.title}" ${pr.sourceBranch}→${pr.targetBranch} (seit ${pr.createdAt.slice(0, 10)})`);
+                }
+              }
+              return out.join('\n');
+            } catch (err) {
+              this.logger.debug({ err }, 'v881 forgePrs provider failed');
+              return '';
+            }
+          },
+        });
         this.automationEngine = engine;
         engine.start();
-        this.logger.info('Automation Engine started (v663b)');
+        this.logger.info('Automation Engine started (v663b, v881 Daten-Provider aktiv)');
       } catch (err) {
         this.logger.warn({ err }, 'AutomationEngine wiring failed (non-fatal)');
       }

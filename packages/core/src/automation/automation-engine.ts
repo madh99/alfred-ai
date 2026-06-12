@@ -19,8 +19,39 @@ const execFileAsync = promisify(execFile);
  *  4) Output an Destination (telegram/project_chat/email/web_notification)
  *  5) Result persistieren + nextRunAt nach Cron neu berechnen
  */
+/**
+ * v881 — externe Daten-Provider (von alfred.ts injiziert): liefern ECHTE
+ * Zahlen/Listen aus DB und Forge, damit Templates wie Cost-Tracking oder
+ * PR-Pflege nicht halluzinieren müssen.
+ */
+export interface AutomationDataProviders {
+  /** Echte Kosten: cli_agent_runs pro Projekt + globale llm_usage (Monat vs. Vormonat). */
+  costStats?: (projectId: string) => Promise<string>;
+  /** Offene MRs/PRs via Forge-API (GitLab/GitHub — nicht nur gh). */
+  forgePrs?: (cwd: string) => Promise<string>;
+}
+
+/**
+ * v881 — Vergleichsbasis aus dem letzten Lauf: macht "Drift/Trend zur
+ * Vorwoche" zu einer ECHTEN Aussage statt einer Halluzination. Beim ersten
+ * Lauf gibt es bewusst keinen Block — der Prompt weist das LLM an, das
+ * dann explizit zu sagen. Exportiert für Tests.
+ */
+export function buildPreviousRunBlock(lastRunAt?: string, lastRunStatus?: string, lastRunOutput?: string, maxChars = 2500): string {
+  if (!lastRunOutput || lastRunStatus !== 'success') return '';
+  const ts = lastRunAt ? lastRunAt.slice(0, 16).replace('T', ' ') : 'unbekannt';
+  const body = lastRunOutput.length > maxChars ? lastRunOutput.slice(0, maxChars) + '\n[... gekürzt]' : lastRunOutput;
+  return [
+    `# Vorheriger Lauf (${ts}) — VERGLEICHSBASIS`,
+    `Nutze diesen früheren Output für echte Vergleichs-/Trend-Aussagen. Erfinde KEINE Trends, die sich daraus nicht belegen lassen.`,
+    body,
+  ].join('\n');
+}
+
 export class AutomationEngine {
   private timer: ReturnType<typeof setInterval> | undefined;
+  /** v881 — optionale Daten-Provider (alfred.ts injiziert DB-/Forge-Zugriffe). */
+  private dataProviders: AutomationDataProviders = {};
 
   constructor(
     private readonly repo: ProjectAutomationsRepository,
@@ -32,6 +63,10 @@ export class AutomationEngine {
     private readonly ownerChatId: string,
     private readonly ownerPlatform: Platform,
   ) {}
+
+  setDataProviders(p: AutomationDataProviders): void {
+    this.dataProviders = p;
+  }
 
   /** Periodischer Sweep: prüft alle 60s ob Automations fällig sind. */
   start(): void {
@@ -74,19 +109,37 @@ export class AutomationEngine {
     }
 
     // 1. Projekt-Kontext
-    const [sessions, openItems, decisions] = await Promise.all([
+    // v881 — ALLE aktiven Items mit IDs (vorher 15 Titel — Triage über 100+
+    // Items war strukturell unmöglich) + erledigte der letzten 14 Tage +
+    // letzter Health/Build-Stand (= echter "Code-Stand" statt Vermutung).
+    const [sessions, openItems, decisions, resolvedItems, health] = await Promise.all([
       this.projectRepo.listSessions(project.id, 10).catch(() => []),
       this.projectRepo.listOpenItemsForProject(project.id, ['open', 'in_progress']).catch(() => []),
       this.projectRepo.listDecisions(project.id, 10).catch(() => []),
+      this.projectRepo.listOpenItemsForProject(project.id, ['done', 'cancelled']).catch(() => []),
+      this.projectRepo.getCurrentHealthSummary(project.id).catch(() => ({} as Record<string, { status: string; details?: string; checkedAt: string }>)),
     ]);
+    const cutoff14d = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const recentDone = resolvedItems
+      .filter(it => (it.resolvedAt ?? '') >= cutoff14d)
+      .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''))
+      .slice(0, 40);
+    const healthLines = Object.entries(health as Record<string, { status: string; details?: string; checkedAt: string }>)
+      .map(([probe, e]) => `- ${probe}: ${e.status}${e.details ? ` (${e.details.slice(0, 120)})` : ''} @ ${e.checkedAt.slice(0, 16)}`);
     const contextLines: string[] = [
       `# Projekt: ${project.name}`,
       project.cwd ? `cwd: ${project.cwd}` : '',
       project.repoUrl ? `repo: ${project.repoUrl}` : '',
       project.description ? `desc: ${project.description}` : '',
       '',
-      `## Offene Items (${openItems.length})`,
-      ...openItems.slice(0, 15).map(it => `- [${it.priority}] ${it.title}${it.dueAt ? ` (due ${it.dueAt.slice(0, 10)})` : ''}`),
+      `## Offene Items (${openItems.length} aktiv${openItems.length > 100 ? ', erste 100 gelistet' : ''})`,
+      ...openItems.slice(0, 100).map(it => `- [${it.priority}] ${it.id.slice(0, 8)} ${it.title}${it.dueAt ? ` (due ${it.dueAt.slice(0, 10)})` : ''}${it.status === 'in_progress' ? ' (in Arbeit)' : ''}`),
+      '',
+      `## Erledigt in den letzten 14 Tagen (${recentDone.length})`,
+      ...recentDone.map(it => `- [${it.status}] ${it.title} @ ${(it.resolvedAt ?? '').slice(0, 10)}`),
+      '',
+      `## Letzter Health-/Build-Stand`,
+      ...(healthLines.length > 0 ? healthLines : ['(keine Health-Daten)']),
       '',
       `## Letzte Sessions`,
       ...sessions.slice(0, 5).map(s => `- ${s.sessionType} (${s.endedAt ? 'fertig' : 'laufend'}) @ ${s.startedAt.slice(0, 16)}`),
@@ -95,34 +148,46 @@ export class AutomationEngine {
       contextLines.push('', `## Letzte Decisions`, ...decisions.slice(0, 5).map(d => `- ${d.title}: ${d.choice.slice(0, 100)}`));
     }
 
-    // 2. Collectors
+    // 2. Collectors (v881: cost_stats/forge_prs laufen über injizierte Provider — echte DB-/Forge-Daten)
     const collectorOutputs: string[] = [];
     for (const coll of tmpl.collectors ?? []) {
       try {
-        const out = await this.runCollector(coll, project.cwd);
-        if (out) collectorOutputs.push(`## ${coll}\n${out.slice(0, 3000)}`);
+        let out: string;
+        if (coll === 'cost_stats') {
+          out = this.dataProviders.costStats ? await this.dataProviders.costStats(project.id) : '';
+        } else if (coll === 'forge_prs') {
+          out = this.dataProviders.forgePrs && project.cwd ? await this.dataProviders.forgePrs(project.cwd) : '';
+        } else {
+          out = await this.runCollector(coll, project.cwd);
+        }
+        if (out) collectorOutputs.push(`## ${coll}\n${out.slice(0, 9000)}`);
       } catch (err) {
         this.logger.debug({ err, coll, project: project.id }, 'Collector failed (non-fatal)');
       }
     }
 
     // 3. LLM-Call
+    // v881 — Vorheriger-Lauf-Block: echte Drift-/Trend-Vergleiche
+    const prevRunBlock = buildPreviousRunBlock(auto.lastRunAt, auto.lastRunStatus, auto.lastRunOutput);
     const finalPrompt = auto.promptOverride?.trim() || tmpl.defaultPrompt;
     const userMessage = [
       contextLines.filter(Boolean).join('\n'),
-      collectorOutputs.length > 0 ? '\n# Collector-Output\n' + collectorOutputs.join('\n\n') : '',
+      collectorOutputs.length > 0 ? '\n# Collector-Output (ECHTE Daten — nutze NUR diese, erfinde keine Zahlen/Dateien)\n' + collectorOutputs.join('\n\n') : '',
+      prevRunBlock,
       '',
       '# Aufgabe',
       finalPrompt,
+      '',
+      'WICHTIG: Stütze jede Aussage auf die oben gelieferten Daten. Fehlen Daten für einen Teil der Aufgabe, sage das EXPLIZIT ("keine Daten zu X") statt zu raten. Trend-/Vergleichsaussagen NUR wenn ein Vorheriger-Lauf-Block existiert.',
     ].filter(Boolean).join('\n\n');
 
     let output: string;
     try {
       const r = await this.llm.complete({
-        system: `Du bist ein präziser, hilfreicher Projekt-Assistent. Antworte konkret, knapp, mit konkreten Datei-/Item-Referenzen wenn möglich. Deutsch.`,
+        system: `Du bist ein präziser, hilfreicher Projekt-Assistent. Antworte konkret, knapp, mit konkreten Datei-/Item-Referenzen wenn möglich. Erfinde NIEMALS Zahlen, Dateien oder Befunde — nur was die gelieferten Daten belegen. Deutsch.`,
         messages: [{ role: 'user', content: userMessage }],
         tier: 'fast',
-        maxTokens: 1500,
+        maxTokens: 2000,
         temperature: 0.3,
       });
       output = (r.content ?? '').trim();
@@ -196,6 +261,77 @@ export class AutomationEngine {
         case 'pr_open': {
           const { stdout } = await execFileAsync('gh', ['pr', 'list', '--state', 'open', '--json', 'number,title,author,updatedAt'], { cwd, maxBuffer: 2 * 1024 * 1024 }).catch(() => ({ stdout: '' }));
           return stdout.slice(0, 3000);
+        }
+        // ── v881 — neue Collectors: machen die Template-Versprechen wahr ──
+        case 'changelog_head': {
+          // Release-Pflege: "Lies CHANGELOG.md" — vorher gab es den Inhalt nie
+          const fs = await import('node:fs/promises');
+          const path = await import('node:path');
+          const head = await fs.readFile(path.join(cwd, 'CHANGELOG.md'), 'utf-8').then(c => c.slice(0, 4000)).catch(() => '(kein CHANGELOG.md)');
+          const { stdout: tags } = await execFileAsync('git', ['tag', '--sort=-creatordate'], { cwd, maxBuffer: 256 * 1024 }).catch(() => ({ stdout: '' }));
+          return `### CHANGELOG.md (Anfang)\n${head}\n\n### Letzte Tags\n${tags.split('\n').slice(0, 10).join('\n') || '(keine Tags)'}`;
+        }
+        case 'readme_content': {
+          // Documentation-Drift: README-Inhalt war nie im Kontext
+          const fs = await import('node:fs/promises');
+          const path = await import('node:path');
+          return await fs.readFile(path.join(cwd, 'README.md'), 'utf-8').then(c => c.slice(0, 5000)).catch(() => '(kein README.md)');
+        }
+        case 'git_log_files': {
+          // Recurring-Bug-Detector: Datei-Gruppierung braucht --name-only
+          const { stdout } = await execFileAsync('git', ['log', '--since=30.days.ago', '--name-only', '--pretty=format:%h|%ad|%s', '--date=short'], { cwd, maxBuffer: 2 * 1024 * 1024 });
+          return stdout.slice(0, 6000);
+        }
+        case 'git_diff_patch': {
+          // Code-Review-Quick: der ECHTE Diff statt nur --stat
+          const { stdout } = await execFileAsync('git', ['diff', 'HEAD~5..HEAD', '--unified=2'], { cwd, maxBuffer: 4 * 1024 * 1024 }).catch(() => ({ stdout: '' }));
+          return stdout.slice(0, 9000);
+        }
+        case 'git_shortlog': {
+          // Activity-Digest: Commits pro Autor — echt statt geschätzt
+          const { stdout } = await execFileAsync('git', ['shortlog', '-sn', '--since=7.days.ago', 'HEAD'], { cwd, maxBuffer: 256 * 1024 }).catch(() => ({ stdout: '' }));
+          return stdout.slice(0, 1500);
+        }
+        case 'branch_status': {
+          // Auto-Rebase: echte Branch-Lage + Konflikt-Dry-Run via merge-tree
+          const { stdout: defRaw } = await execFileAsync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', '--short'], { cwd, maxBuffer: 64 * 1024 }).catch(() => ({ stdout: '' }));
+          const defaultBranch = defRaw.trim().replace(/^origin\//, '') ||
+            await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, maxBuffer: 64 * 1024 }).then(r => r.stdout.trim()).catch(() => 'main');
+          const { stdout: branches } = await execFileAsync('git', ['for-each-ref', 'refs/heads', '--format=%(refname:short)'], { cwd, maxBuffer: 256 * 1024 });
+          const lines: string[] = [`default branch: ${defaultBranch}`];
+          for (const b of branches.split('\n').map(s => s.trim()).filter(b => b && b !== defaultBranch).slice(0, 10)) {
+            try {
+              const { stdout: counts } = await execFileAsync('git', ['rev-list', '--left-right', '--count', `${defaultBranch}...${b}`], { cwd, maxBuffer: 64 * 1024 });
+              const [behind, ahead] = counts.trim().split(/\s+/, 2);
+              // Konflikt-Dry-Run: merge-tree (Output mit Konfliktmarkern = Konflikt erwartet)
+              let conflict = 'unbekannt';
+              try {
+                const { stdout: base } = await execFileAsync('git', ['merge-base', defaultBranch, b], { cwd, maxBuffer: 64 * 1024 });
+                const { stdout: mt } = await execFileAsync('git', ['merge-tree', base.trim(), defaultBranch, b], { cwd, maxBuffer: 4 * 1024 * 1024 });
+                conflict = mt.includes('<<<<<<<') ? 'KONFLIKT erwartet' : 'konfliktfrei';
+              } catch { /* merge-tree-Variante nicht verfügbar */ }
+              lines.push(`- ${b}: ${ahead} ahead / ${behind} behind ${defaultBranch} — Rebase: ${conflict}`);
+            } catch { lines.push(`- ${b}: (Vergleich fehlgeschlagen)`); }
+          }
+          if (lines.length === 1) lines.push('(keine weiteren lokalen Branches)');
+          return lines.join('\n');
+        }
+        case 'license_summary': {
+          // License-Audit: echte Lizenzliste statt Vermutung
+          if (!await this.exists(cwd, 'package.json')) return '';
+          const { stdout } = await execFileAsync('npx', ['--yes', 'license-checker', '--summary', '--excludePrivatePackages'], { cwd, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 }).catch(() => ({ stdout: '' }));
+          return stdout ? stdout.slice(0, 3000) : '(license-checker nicht verfügbar — keine Lizenzdaten)';
+        }
+        case 'bench_run': {
+          // Performance-Baseline: Bench wirklich ausführen (nur wenn Script existiert)
+          const fs = await import('node:fs/promises');
+          const path = await import('node:path');
+          try {
+            const pkg = JSON.parse(await fs.readFile(path.join(cwd, 'package.json'), 'utf-8')) as { scripts?: Record<string, string> };
+            if (!pkg.scripts?.bench) return '(kein bench-Script in package.json — keine Performance-Daten)';
+          } catch { return ''; }
+          const { stdout, stderr } = await execFileAsync('npm', ['run', 'bench', '--silent'], { cwd, timeout: 180_000, maxBuffer: 4 * 1024 * 1024 }).catch((e: { stdout?: string; stderr?: string }) => ({ stdout: e.stdout ?? '', stderr: e.stderr ?? '' }));
+          return (stdout || stderr).slice(0, 4000);
         }
         default: return '';
       }

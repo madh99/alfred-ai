@@ -17,7 +17,14 @@ export interface AutomationTemplate {
   /** Default-Prompt — kann pro Automation überschrieben werden. */
   defaultPrompt: string;
   /** Optionale Daten-Collectors die VOR dem LLM-Call laufen (Output wird in Prompt eingespeist). */
-  collectors?: Array<'git_log_recent' | 'git_diff_summary' | 'npm_outdated' | 'pip_outdated' | 'npm_audit' | 'test_coverage' | 'tree_overview' | 'pr_open'>;
+  collectors?: Array<
+    | 'git_log_recent' | 'git_diff_summary' | 'npm_outdated' | 'pip_outdated' | 'npm_audit'
+    | 'test_coverage' | 'tree_overview' | 'pr_open'
+    // v881 — neue Collectors: echte Daten statt Versprechen ohne Grundlage
+    | 'changelog_head' | 'readme_content' | 'git_log_files' | 'git_diff_patch'
+    | 'git_shortlog' | 'branch_status' | 'license_summary' | 'bench_run'
+    | 'cost_stats' | 'forge_prs'
+  >;
 }
 
 export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemplate> = {
@@ -46,8 +53,9 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '🚀',
     defaultSchedule: 'manual',
     description: 'Bereitet ein Release vor: CHANGELOG [Unreleased] → [X.Y.Z], Tag, Notes',
-    defaultPrompt: 'Bereite ein Release vor: (1) Lies CHANGELOG.md und Sektion [Unreleased]. (2) Generiere passende Versionsnummer (semver). (3) Erstelle finale Release Notes als Markdown — gruppiert nach Added/Changed/Fixed/Removed. (4) Schlage Tag-Befehl vor. Setze die Änderungen NICHT um — gib nur den Vorschlag zur Bestätigung.',
-    collectors: ['git_log_recent'],
+    // v881 — CHANGELOG-Inhalt + Tag-Liste liegen jetzt wirklich im Kontext
+    defaultPrompt: 'Bereite ein Release vor (CHANGELOG-Inhalt + letzte Tags liegen im Collector-Output): (1) Analysiere die [Unreleased]-Sektion. (2) Generiere passende Versionsnummer (semver, anschließend an die Tag-Liste). (3) Erstelle finale Release Notes als Markdown — gruppiert nach Added/Changed/Fixed/Removed. (4) Schlage Tag-Befehl vor. Setze die Änderungen NICHT um — gib nur den Vorschlag zur Bestätigung.',
+    collectors: ['changelog_head', 'git_log_recent'],
   },
   code_review: {
     kind: 'code_review',
@@ -55,8 +63,10 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '🔍',
     defaultSchedule: 'manual',
     description: 'Review der letzten N Commits: Bugs, Best-Practices, Tests',
-    defaultPrompt: 'Code-Review der letzten 5 Commits: (1) Mögliche Bugs / Race Conditions. (2) Style/Best-Practice-Verstöße. (3) Fehlende Tests für neue Features. (4) Sicherheits-Bedenken. Strukturiert nach Severity (critical/high/low). Konkret mit Datei-Pfaden und Zeilen wenn möglich.',
-    collectors: ['git_diff_summary', 'git_log_recent'],
+    // v881 — vorher nur git_diff_summary (--stat = Dateinamen ohne Inhalt):
+    // "Bugs mit Datei:Zeile" war ohne Diff-Inhalt eine Halluzinations-Aufforderung.
+    defaultPrompt: 'Code-Review des gelieferten Diffs der letzten 5 Commits (Collector git_diff_patch): (1) Mögliche Bugs / Race Conditions. (2) Style/Best-Practice-Verstöße. (3) Fehlende Tests für neue Features. (4) Sicherheits-Bedenken. Strukturiert nach Severity (critical/high/low), mit Datei-Pfaden aus dem Diff. Bewerte NUR was im Diff sichtbar ist — für ein Komplett-Review der Codebase auf 🔍 Codebase-Review im Projekt-Detail verweisen.',
+    collectors: ['git_diff_patch', 'git_log_recent'],
   },
   dependency_check: {
     kind: 'dependency_check',
@@ -81,8 +91,9 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '📝',
     defaultSchedule: '0 10 1 * *',
     description: 'README/Docs vs. tatsächlicher Code-State — Lücken identifizieren',
-    defaultPrompt: 'Documentation-Drift-Check: (1) Liste Features die im Code existieren aber nicht in README. (2) README-Sektionen die veraltet sind (z.B. obsolete Setup-Schritte). (3) Fehlende API-Doku für public exports. Konkrete Verbesserungsvorschläge mit Datei-Pfaden.',
-    collectors: ['tree_overview'],
+    // v881 — README-Inhalt war vorher NIE im Kontext (nur Dateibaum)
+    defaultPrompt: 'Documentation-Drift-Check (README-Inhalt, Dateibaum und letzte Commits liegen im Collector-Output): (1) Themen aus letzten Commits/Dateibaum, die im README fehlen. (2) README-Sektionen die laut Dateibaum/Commits veraltet wirken. (3) Konkrete Verbesserungsvorschläge mit Datei-Pfaden. Bewerte NUR anhand der gelieferten Daten — tiefer Code-vs-Doku-Abgleich braucht den 🔍 Codebase-Review.',
+    collectors: ['tree_overview', 'readme_content', 'git_log_recent'],
   },
 
   // ── Erweiterungen (Prompt-basiert mit Projekt-Kontext) ──
@@ -92,7 +103,8 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '🧪',
     defaultSchedule: '0 11 * * 1',
     description: 'Coverage-Diff zu letzter Woche, neue uncovered lines',
-    defaultPrompt: 'Test-Coverage-Analyse: (1) Welche neuen Files seit letzter Woche haben keine Tests. (2) Welche existierenden Files haben sinkende Coverage. (3) Top 3 Test-Lücken die am wichtigsten zu schließen sind. Empfehle konkrete Test-Cases.',
+    // v881 — Drift-Aussagen jetzt über den Vorheriger-Lauf-Block (echte Vergleichsbasis)
+    defaultPrompt: 'Test-Coverage-Analyse (coverage-summary.json im Collector-Output; Vergleichsbasis = Vorheriger-Lauf-Block): (1) Aktuelle Gesamt-Coverage + schwächste Bereiche. (2) Diff zur Vergleichsbasis — NUR wenn ein Vorheriger-Lauf-Block existiert, sonst explizit "Erstlauf, keine Vergleichsbasis". (3) Top 3 Test-Lücken mit konkreten Test-Case-Empfehlungen. Fehlt coverage-summary.json: sage das klar und empfehle Coverage-Aktivierung im Test-Script.',
     collectors: ['test_coverage'],
   },
   activity_digest: {
@@ -101,8 +113,9 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '📊',
     defaultSchedule: '0 18 * * 0',
     description: 'Wer hat was wann gemacht — sinnvoll für Multi-User-Teams',
-    defaultPrompt: 'Activity-Digest der letzten Woche: (1) Commits pro Autor mit Themen. (2) Open-Items pro Autor (created/closed). (3) Project-Agent-Sessions pro Trigger-Quelle. Tabellarisch + Highlights.',
-    collectors: ['git_log_recent'],
+    // v881 — Commits pro Autor jetzt echt via git shortlog
+    defaultPrompt: 'Activity-Digest der letzten Woche (Commits pro Autor = git_shortlog im Collector-Output): (1) Commits pro Autor mit Themen aus den Messages. (2) Erledigte vs. neue Open-Items (aus dem Projekt-Kontext). (3) Sessions der Woche. Tabellarisch + Highlights.',
+    collectors: ['git_shortlog', 'git_log_recent'],
   },
   auto_rebase: {
     kind: 'auto_rebase',
@@ -110,7 +123,10 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '🔄',
     defaultSchedule: '0 6 * * *',
     description: 'Feature-Branches gegen main rebasen',
-    defaultPrompt: 'Branch-Rebase-Status: (1) Liste Feature-Branches die hinter main sind. (2) Welche können automatisch rebased werden (kein Konflikt erwartet). (3) Welche brauchen manuelles Eingreifen. NUR Vorschlag — Rebase nicht selbst durchführen.',
+    // v881 — vorher KEIN Branch-Collector: das Template sah keine einzige
+    // Branch. Jetzt: echte ahead/behind-Lage + merge-tree-Konflikt-Dry-Run.
+    defaultPrompt: 'Branch-Rebase-Status (echte Branch-Lage inkl. ahead/behind + Konflikt-Dry-Run im Collector-Output): (1) Branches hinter dem Default-Branch. (2) Welche laut Dry-Run konfliktfrei rebased werden können. (3) Welche manuelles Eingreifen brauchen. NUR Vorschlag — Rebase nicht selbst durchführen.',
+    collectors: ['branch_status'],
   },
   brainstorming_pulse: {
     kind: 'brainstorming_pulse',
@@ -127,7 +143,8 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     defaultSchedule: '0 14 * * 1-5',
     description: 'Offene PRs analysieren — review-bereit, stale, conflict',
     defaultPrompt: 'PR-Pflege: (1) Stale PRs (>7d offen) zum Schließen. (2) Review-fertige PRs die warten. (3) PRs mit Merge-Conflict die rebase brauchen. (4) Generiere für PRs ohne Body einen Vorschlag aus den Commits.',
-    collectors: ['pr_open'],
+    // v881 — forge_prs: funktioniert auch auf GitLab (pr_open nutzt gh = nur GitHub)
+    collectors: ['forge_prs', 'pr_open'],
   },
   security_sentinel: {
     kind: 'security_sentinel',
@@ -144,7 +161,9 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '⚡',
     defaultSchedule: '0 3 * * 1',
     description: 'Bench-Regression-Detection — wo wurden wir langsamer',
-    defaultPrompt: 'Performance-Baseline-Check: (1) Falls bench-Script existiert: vergleiche aktuelle Werte mit Werten von vor 1 Woche. (2) Identifiziere Regressionen (>10% slowdown). (3) Verlinke wahrscheinliche Commits die das verursacht haben. (4) Empfehle profiling-Schritte.',
+    // v881 — Bench wird wirklich ausgeführt; Vergleich über Vorheriger-Lauf-Block
+    defaultPrompt: 'Performance-Baseline-Check (Bench-Output im Collector, Vergleichsbasis = Vorheriger-Lauf-Block): (1) Aktuelle Bench-Werte zusammenfassen. (2) Regressionen >10% gegenüber der Vergleichsbasis — NUR wenn ein Vorheriger-Lauf-Block existiert, sonst explizit "Erstlauf = neue Baseline". (3) Wahrscheinliche Verursacher-Commits aus dem git-Kontext. (4) Profiling-Schritte. Ohne bench-Script: sage das klar.',
+    collectors: ['bench_run', 'git_log_recent'],
   },
   onboarding_doc: {
     kind: 'onboarding_doc',
@@ -161,7 +180,10 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '💰',
     defaultSchedule: '0 9 1 * *',
     description: 'Pro Projekt: LLM-Tokens + Compute-Stunden + Trend',
-    defaultPrompt: 'Cost-Tracking-Report: (1) LLM-Token-Verbrauch dieser Monat vs Vormonat (input/output/cache). (2) Project-Agent-Compute-Stunden. (3) Top 3 teuerste Sessions. (4) Empfehlung: wo kann Kosten reduziert werden (z.B. fast statt strong tier für bestimmte Phasen).',
+    // v881 — vorher OHNE jede Datenquelle: das Template ERFAND Token-Zahlen.
+    // Jetzt: echte Zahlen aus cli_agent_runs (pro Projekt) + llm_usage (global).
+    defaultPrompt: 'Cost-Tracking-Report (ECHTE Zahlen im Collector cost_stats — verwende ausschließlich diese, erfinde KEINE): (1) CLI-Agent-Kosten dieses Projekts: letzte 30 Tage vs. 30 Tage davor. (2) Verteilung nach Agent/Session-Typ. (3) Globaler LLM-Verbrauch als Einordnung. (4) Konkrete Spar-Empfehlungen aus den Zahlen.',
+    collectors: ['cost_stats'],
   },
   stakeholder_briefing: {
     kind: 'stakeholder_briefing',
@@ -178,7 +200,9 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '⚖',
     defaultSchedule: '0 8 1 */3 *',
     description: 'Dependency-Licenses checken, GPL/AGPL-Konflikte flaggen',
-    defaultPrompt: 'License-Audit: (1) Liste alle Dependencies + ihre Licenses. (2) Identifiziere GPL/AGPL/Copyleft-Konflikte mit dem Projekt-License-Modell. (3) Schlage Alternativen für problematische Deps vor. (4) Empfehle ob ein license-Header-Update für package.json/LICENSE nötig ist.',
+    // v881 — echte Lizenzliste via license-checker statt Vermutung
+    defaultPrompt: 'License-Audit (echte Lizenz-Summary im Collector-Output): (1) Lizenz-Verteilung zusammenfassen. (2) GPL/AGPL/Copyleft-Risiken gegen das Projekt-Lizenzmodell flaggen. (3) Alternativen für problematische Deps. (4) Ist ein license-Feld/LICENSE-Update nötig? Ohne Lizenzdaten: sage das klar.',
+    collectors: ['license_summary'],
   },
   pre_mortem: {
     kind: 'pre_mortem',
@@ -210,8 +234,9 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '🐛',
     defaultSchedule: '0 10 1 * *',
     description: 'Pattern in Bug-Fixes finden — wo strukturelle Lösung nötig',
-    defaultPrompt: 'Recurring-Bug-Analyse: (1) Liste alle Bug-fix-Commits der letzten 30 Tage. (2) Gruppiere nach betroffenen Files/Modulen. (3) Identifiziere Pattern (>2 Bugs in selber Datei). (4) Schlage strukturelle Lösung vor (Refactoring, Test-Lücke, Architektur-Issue).',
-    collectors: ['git_log_recent'],
+    // v881 — git log mit --name-only: Datei-Gruppierung war vorher unmöglich
+    defaultPrompt: 'Recurring-Bug-Analyse (Commits inkl. betroffener Dateien im Collector git_log_files): (1) Bug-fix-Commits der letzten 30 Tage. (2) Gruppiere nach betroffenen Files/Modulen. (3) Pattern: >2 Bugs in derselben Datei. (4) Strukturelle Lösung vorschlagen (Refactoring, Test-Lücke, Architektur-Issue).',
+    collectors: ['git_log_files'],
   },
 
   custom: {
