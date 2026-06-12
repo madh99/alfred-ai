@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { openItemTitleSimilarity, filterEchoOpenItems, isDocsOnlyRun, pickPrimaryDoc } from './project-manager.js';
+import { openItemTitleSimilarity, openItemTitleContainment, filterEchoOpenItems, isDocsOnlyRun, pickPrimaryDoc } from './project-manager.js';
 
 /** v869 — Titel-Dedup gegen das ungebremste Open-Item-Wachstum (554 Items). */
 describe('openItemTitleSimilarity', () => {
@@ -141,5 +141,80 @@ describe('isDocsOnlyRun', () => {
   it('pickPrimaryDoc überspringt CHANGELOG/README', () => {
     expect(pickPrimaryDoc(['CHANGELOG.md', 'README.md', 'docs/proposal.md'])).toBe('docs/proposal.md');
     expect(pickPrimaryDoc(['CHANGELOG.md'])).toBeUndefined();
+  });
+});
+
+/** v878 — Containment + Template-Echos. Fixtures = REALE Geister vom 12.06.
+ *  (Sessions 362a28f7 + 68a08f61): 6 Items an einem Tag trotz v869.2-Filter. */
+describe('filterEchoOpenItems v878 (Containment + Template-Echos)', () => {
+  it('Klammer-Suffix-Duplikate werden gefangen (Jaccard 0.60/0.57 versagte)', () => {
+    const existingTitles = [
+      'Temporäre Bans durchsetzen (duration wird nie angewendet)',
+      'Mute-Expiry konsistent aufheben (unmute-Aktion/History)',
+      'BUG-MOD-03: Moderations-Notifications implementieren (approve/reject/delete/ban/mute/warn)',
+    ];
+    const { kept, skipped } = filterEchoOpenItems(
+      [
+        { title: 'Temporäre Bans durchsetzen' },
+        { title: 'Mute-Expiry konsistent aufheben' },
+        { title: 'Moderations-Notifications implementieren' },
+      ],
+      { existingTitles, success: false },
+    );
+    expect(kept).toEqual([]);
+    expect(skipped.map(s => s.reason)).toEqual(['duplicate', 'duplicate', 'duplicate']);
+  });
+
+  it('Flexions-Variante im Suffix wird gefangen (anwenden vs angewendet)', () => {
+    const { skipped } = filterEchoOpenItems(
+      [{ title: 'Temporäre Bans durchsetzen (duration anwenden)' }],
+      { existingTitles: ['Temporäre Bans durchsetzen (duration wird nie angewendet)'], success: true },
+    );
+    expect(skipped[0]?.reason).toBe('duplicate');
+  });
+
+  it('Template-Echos werden auch bei FAILED Sessions verworfen', () => {
+    const { kept, skipped } = filterEchoOpenItems(
+      [
+        { title: 'Build wieder grün bekommen' },
+        { title: 'Fehlende Teile umsetzen ohne bestehende Arbeit zu überschreiben' },
+        { title: 'Push zum Remote verifizieren' },
+        { title: 'Reporter-Rückmeldung zum Ausgang der eigenen Meldung' },
+      ],
+      { success: false },
+    );
+    expect(skipped.map(s => s.reason)).toEqual(['template-echo', 'template-echo', 'template-echo']);
+    expect(kept.map(k => k.title)).toEqual(['Reporter-Rückmeldung zum Ausgang der eigenen Meldung']);
+  });
+
+  it('goal-echo per Containment: kurzer Titel matcht jetzt lange Goal-Zeile', () => {
+    const goal = 'Untersuche den Repo-Stand.\nDanach: UGC-Owner-Bypass für Autoren implementieren und Moderations-Notifications ergänzen, Build verifizieren.';
+    const { skipped } = filterEchoOpenItems(
+      [{ title: 'UGC-Owner-Bypass implementieren' }],
+      { goal, success: true },
+    );
+    expect(skipped[0]?.reason).toBe('goal-echo');
+  });
+
+  it('verschiedene Items bleiben weiterhin getrennt (kein Über-Filtern)', () => {
+    const { kept } = filterEchoOpenItems(
+      [
+        { title: 'Forum-Queue: Pagination statt hartkodiertem limit=100' },
+        { title: 'Members: User-Dossier mit Moderations-Historie' },
+      ],
+      { existingTitles: ['Reports: Bulk-Aktion für Duplikate (gleicher Content N-fach gemeldet)'], success: true },
+    );
+    expect(kept).toHaveLength(2);
+  });
+
+  it('openItemTitleContainment: Suffix-Variante = 1.0, Verschiedenes bleibt niedrig', () => {
+    expect(openItemTitleContainment(
+      'Temporäre Bans durchsetzen',
+      'Temporäre Bans durchsetzen (duration wird nie angewendet)',
+    )).toBe(1);
+    expect(openItemTitleContainment(
+      'Chat-Sounds bei neuen Nachrichten abspielen',
+      'Admin-Reviewroute statusunabhängig machen',
+    )).toBeLessThan(0.5);
   });
 });

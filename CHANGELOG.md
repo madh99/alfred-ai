@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.878] - 2026-06-12
+
+### Fixed — Geister-Items: Echo-Filter geschärft (v878)
+
+DB-Befund 12.06.: trotz v869.2-Filter entstanden an einem Tag 6 neue
+Open-Items für bereits erledigte Arbeit. Drei Leck-Klassen, drei
+deterministische Schärfungen:
+
+- **Duplicate-Check per Containment statt Jaccard**: „Temporäre Bans
+  durchsetzen" vs „Temporäre Bans durchsetzen (duration wird nie
+  angewendet)" hatte Jaccard 0.60 < 0.7 — der Klammer-Zusatz bläht die
+  Union auf. Containment (overlap/min) = 1.0 → gefiltert. Fängt auch
+  Flexions-Varianten im Suffix (anwenden/angewendet)
+- **Goal-Echo per Containment**: kurze Titel matchten lange Goal-Zeilen
+  per Jaccard nie (3 gemeinsame Tokens / riesige Union) — jetzt zählt,
+  ob der Titel in der Zeile enthalten ist
+- **Template-Echo-Blacklist** (greift auch bei failed Sessions):
+  Anweisungs-Phrasen aus Runner-/Resume-Templates („Build grün
+  bekommen", „Fehlende Teile umsetzen", „Push zum Remote verifizieren",
+  …) sind nie legitime Items
+- **Duplikat-Basis um kürzlich Erledigtes erweitert**: auch
+  done/cancelled-Items der letzten 14 Tage zählen — gerade Erledigtes
+  kann nicht sofort wieder auferstehen (Stale-Claim-Echo aus
+  veraltetem Agent-Schlusstext)
+- 6 neue Tests mit den realen Geister-Fixtures vom 12.06.
+
 ## [0.19.0-multi-ha.877.2] - 2026-06-12
 
 ### Fixed

@@ -107,21 +107,57 @@ const TITLE_STOPWORDS = new Set([
   'sind', 'ist', 'soll', 'sollen', 'the', 'and', 'for', 'with',
 ]);
 
-export function openItemTitleSimilarity(a: string, b: string): number {
-  const tokenize = (s: string): Set<string> => new Set(
+function tokenizeTitle(s: string): Set<string> {
+  return new Set(
     s.toLowerCase()
       .replace(/[^a-zà-ž0-9äöüß\s-]/gi, ' ')
       .split(/[\s-]+/)
       .filter(w => w.length >= 3 && !TITLE_STOPWORDS.has(w)),
   );
-  const ta = tokenize(a);
-  const tb = tokenize(b);
+}
+
+export function openItemTitleSimilarity(a: string, b: string): number {
+  const ta = tokenizeTitle(a);
+  const tb = tokenizeTitle(b);
   if (ta.size === 0 || tb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase() ? 1 : 0;
   let intersection = 0;
   for (const w of ta) if (tb.has(w)) intersection++;
   const union = ta.size + tb.size - intersection;
   return union === 0 ? 0 : intersection / union;
 }
+
+/**
+ * v878 — Containment-Ähnlichkeit: overlap / min(|A|,|B|).
+ *
+ * Jaccard (openItemTitleSimilarity) versagt bei Suffix-Varianten, weil der
+ * Zusatz die Union aufbläht: "Temporäre Bans durchsetzen" vs "Temporäre Bans
+ * durchsetzen (duration wird nie angewendet)" = 0.60 < 0.7 → Duplikat rutschte
+ * durch (Vorfall 12.06., 6 Geister-Items an einem Tag). Containment misst
+ * stattdessen, ob der KÜRZERE Titel im längeren enthalten ist → 1.0.
+ */
+export function openItemTitleContainment(a: string, b: string): number {
+  const ta = tokenizeTitle(a);
+  const tb = tokenizeTitle(b);
+  if (ta.size === 0 || tb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase() ? 1 : 0;
+  let intersection = 0;
+  for (const w of ta) if (tb.has(w)) intersection++;
+  return intersection / Math.min(ta.size, tb.size);
+}
+
+/**
+ * v878 — Anweisungs-Phrasen aus Runner-/Resume-Templates, die der Summarizer
+ * regelmäßig als "offene Punkte" zurückechot (DB-Belege 12.06.: "Build wieder
+ * grün bekommen", "Fehlende Teile umsetzen ohne bestehende Arbeit zu
+ * überschreiben"; älter: "Push zum Remote verifizieren"). Diese Phrasen sind
+ * NIE legitime Items — sie gelten daher auch bei failed Sessions.
+ */
+const TEMPLATE_ECHO_PHRASES = [
+  'Build grün bekommen',
+  'Fehlende Teile umsetzen',
+  'Bestehende Arbeit nicht überschreiben',
+  'Push zum Remote verifizieren',
+  'Normal committen und pushen',
+];
 
 /**
  * v869.2 — Zentraler Echo-/Duplikat-Filter für Summarizer-Open-Items.
@@ -135,18 +171,22 @@ export function openItemTitleSimilarity(a: string, b: string): number {
  *  1. milestone-echo: Titel ≈ erreichter Milestone (≥0.7, "Phase N:"-Präfix
  *     gestrippt) → skip. Milestones enthalten NUR abgeschlossene Phasen
  *     (markDone ist build-gated), gilt daher auch bei failed Sessions.
- *  2. goal-echo (NUR bei success=true): Titel ≈ einer Goal-Zeile (≥0.7,
- *     Listen-Marker gestrippt) → skip. Bei Erfolg beschreibt das Goal erledigte
- *     Arbeit (work_on_open_items listet jeden Punkt als Goal-Zeile). Bei
+ *  2. goal-echo (NUR bei success=true): Titel in einer Goal-Zeile enthalten
+ *     (v878: Containment ≥0.75 — Jaccard matchte kurze Titel nie gegen lange
+ *     Zeilen). Bei Erfolg beschreibt das Goal erledigte Arbeit. Bei
  *     failed/partial NICHT filtern — dort kann Goal-Inhalt legitim offen sein.
- *  3. duplicate: Titel ≈ bestehendes offenes Item oder früheres Item desselben
- *     Batches (≥0.7) → skip (v869, jetzt zentralisiert — gilt neu auch für den
- *     Orphan-/Misc-Pfad, der vorher GAR KEINEN Dedup hatte).
+ *  3. duplicate: Titel ≈ bestehendes Item oder früheres Item desselben Batches
+ *     (v878: Containment ≥0.75 statt Jaccard ≥0.7 — fängt Klammer-Suffix-
+ *     Varianten; Basis umfasst jetzt auch in den letzten 14 Tagen erledigte
+ *     Items, damit gerade Erledigtes nicht sofort wieder aufersteht).
+ *  0. template-echo (v878, läuft zuerst, gilt AUCH bei failed): bekannte
+ *     Anweisungs-Phrasen aus Runner-/Resume-Templates ("Build grün bekommen",
+ *     "Fehlende Teile umsetzen", …) sind nie legitime Items.
  */
 export function filterEchoOpenItems<T extends { title: string }>(
   items: T[],
   ctx: { milestones?: string[]; goal?: string; success?: boolean; existingTitles?: string[] },
-): { kept: T[]; skipped: Array<{ title: string; reason: 'milestone-echo' | 'goal-echo' | 'duplicate' }> } {
+): { kept: T[]; skipped: Array<{ title: string; reason: 'milestone-echo' | 'goal-echo' | 'duplicate' | 'template-echo' }> } {
   const milestoneTexts = (ctx.milestones ?? [])
     .filter(m => m !== 'Plan erstellt')
     .map(m => m.replace(/^Phase\s+\d+\s*:\s*/i, ''));
@@ -158,17 +198,27 @@ export function filterEchoOpenItems<T extends { title: string }>(
   const seenTitles = [...(ctx.existingTitles ?? [])];
 
   const kept: T[] = [];
-  const skipped: Array<{ title: string; reason: 'milestone-echo' | 'goal-echo' | 'duplicate' }> = [];
+  const skipped: Array<{ title: string; reason: 'milestone-echo' | 'goal-echo' | 'duplicate' | 'template-echo' }> = [];
   for (const item of items) {
+    // v878 — Template-Echos zuerst (gelten IMMER, auch bei failed — Anweisungs-
+    // Phrasen aus Runner-/Resume-Templates sind nie legitime Items)
+    if (TEMPLATE_ECHO_PHRASES.some(p => openItemTitleContainment(p, item.title) >= 0.75)) {
+      skipped.push({ title: item.title, reason: 'template-echo' });
+      continue;
+    }
     if (milestoneTexts.some(m => openItemTitleSimilarity(m, item.title) >= 0.7)) {
       skipped.push({ title: item.title, reason: 'milestone-echo' });
       continue;
     }
-    if (goalLines.some(l => openItemTitleSimilarity(l, item.title) >= 0.7)) {
+    // v878 — goal-echo per Containment: Jaccard matchte kurze Titel nie gegen
+    // lange Goal-Zeilen (3 gemeinsame Tokens / riesige Union)
+    if (goalLines.some(l => openItemTitleContainment(item.title, l) >= 0.75)) {
       skipped.push({ title: item.title, reason: 'goal-echo' });
       continue;
     }
-    if (seenTitles.some(t => openItemTitleSimilarity(t, item.title) >= 0.7)) {
+    // v878 — duplicate per Containment ≥0.75 statt Jaccard ≥0.7: fängt
+    // Klammer-Suffix-Varianten ("X" vs "X (Detail)"), die vorher durchrutschten
+    if (seenTitles.some(t => openItemTitleContainment(t, item.title) >= 0.75)) {
       skipped.push({ title: item.title, reason: 'duplicate' });
       continue;
     }
@@ -309,6 +359,12 @@ export class ProjectManager {
         try {
           const existing = await this.repo.listOpenItemsForProject(project.id, ['open', 'in_progress']);
           existingTitles = existing.map(e => e.title);
+          // v878 — auch KÜRZLICH erledigte Items zählen als Duplikat-Basis:
+          // sonst legt der Summarizer gerade Erledigtes sofort wieder an
+          // (Stale-Claim-Echo, Vorfall 12.06.)
+          const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+          const resolved = await this.repo.listOpenItemsForProject(project.id, ['done', 'cancelled']);
+          existingTitles.push(...resolved.filter(e => (e.resolvedAt ?? '') >= cutoff).map(e => e.title));
         } catch { /* Dedup best-effort — ohne Bestand wird normal eingefügt */ }
         const { kept, skipped } = filterEchoOpenItems(summary.openItems, {
           milestones: params.milestones,
@@ -577,6 +633,10 @@ export class ProjectManager {
         try {
           const existing = await this.repo.listOpenItemsForProject(misc.id, ['open', 'in_progress']);
           existingTitles = existing.map(e => e.title);
+          // v878 — wie im Haupt-Pfad: kürzlich Erledigtes ist Duplikat-Basis
+          const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+          const resolved = await this.repo.listOpenItemsForProject(misc.id, ['done', 'cancelled']);
+          existingTitles.push(...resolved.filter(e => (e.resolvedAt ?? '') >= cutoff).map(e => e.title));
         } catch { /* best-effort */ }
         const { kept, skipped } = filterEchoOpenItems(summary.openItems, {
           milestones: params.milestones,
