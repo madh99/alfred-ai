@@ -26,6 +26,17 @@ export interface PipelineStatus {
   url?: string;
 }
 
+/** v874 — offener MR/PR für die Projekt-UI (vereinheitlicht GitLab/GitHub). */
+export interface PullRequestInfo {
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  sourceBranch: string;
+  targetBranch: string;
+  createdAt: string;
+}
+
 export interface CreateProjectInput {
   name: string;
   description?: string;
@@ -44,6 +55,8 @@ export abstract class ForgeClient {
   abstract createPullRequest(repo: RepoIdentifier, input: PullRequestInput): Promise<PullRequestResult>;
   abstract getPipelineStatus(repo: RepoIdentifier, ref: string): Promise<PipelineStatus>;
   abstract createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
+  /** v874 — offene MRs/PRs auflisten (für die Projekt-UI). */
+  abstract listPullRequests(repo: RepoIdentifier, state?: 'open' | 'all'): Promise<PullRequestInfo[]>;
 }
 
 // ── GitHub ───────────────────────────────────────────────────────────────
@@ -109,6 +122,27 @@ class GitHubForgeClient extends ForgeClient {
       error: 'failure',
     };
     return { state: stateMap[ghState] ?? 'unknown' };
+  }
+
+  async listPullRequests(repo: RepoIdentifier, state: 'open' | 'all' = 'open'): Promise<PullRequestInfo[]> {
+    const url = `${this.baseUrl}/repos/${repo.owner}/${repo.repo}/pulls?state=${state === 'open' ? 'open' : 'all'}&per_page=20&sort=created&direction=desc`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        Accept: 'application/vnd.github+json',
+      },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as Array<Record<string, unknown>>;
+    return data.map(pr => ({
+      number: pr.number as number,
+      title: (pr.title as string) ?? '',
+      url: (pr.html_url as string) ?? '',
+      state: (pr.state as string) ?? 'open',
+      sourceBranch: ((pr.head as Record<string, unknown>)?.ref as string) ?? '',
+      targetBranch: ((pr.base as Record<string, unknown>)?.ref as string) ?? '',
+      createdAt: (pr.created_at as string) ?? '',
+    }));
   }
 
   async createProject(input: CreateProjectInput): Promise<CreateProjectResult> {
@@ -211,6 +245,26 @@ class GitLabForgeClient extends ForgeClient {
       state: stateMap[glStatus] ?? 'unknown',
       url: pipeline.web_url as string | undefined,
     };
+  }
+
+  async listPullRequests(repo: RepoIdentifier, state: 'open' | 'all' = 'open'): Promise<PullRequestInfo[]> {
+    const projectPath = encodeURIComponent(`${repo.owner}/${repo.repo}`);
+    const stateParam = state === 'open' ? '&state=opened' : '';
+    const url = `${this.baseUrl}/api/v4/projects/${projectPath}/merge_requests?per_page=20&order_by=created_at&sort=desc${stateParam}`;
+    const res = await fetch(url, {
+      headers: { 'PRIVATE-TOKEN': this.config.token },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as Array<Record<string, unknown>>;
+    return data.map(mr => ({
+      number: mr.iid as number,
+      title: (mr.title as string) ?? '',
+      url: (mr.web_url as string) ?? '',
+      state: (mr.state as string) ?? 'opened',
+      sourceBranch: (mr.source_branch as string) ?? '',
+      targetBranch: (mr.target_branch as string) ?? '',
+      createdAt: (mr.created_at as string) ?? '',
+    }));
   }
 
   async createProject(input: CreateProjectInput): Promise<CreateProjectResult> {

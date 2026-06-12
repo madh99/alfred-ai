@@ -1393,34 +1393,16 @@ export class ProjectAgentRunner {
             // v862.1 — selfHealBaseBranch (z.B. feature/multi-user) hat Vorrang;
             // forge.baseBranch zeigt auf den Default der USER-Projekte (master).
             const baseBranch = config.selfHealBaseBranch ?? this.forgeConfig.baseBranch ?? 'main';
-            const { createForgeClient, parseRemoteUrl, gitGetRemoteUrl } = await import('@alfred/skills');
             const prTitle = `Self-Healing: ${config.goal.slice(0, 100)}`;
             const prBody = `Automatisch erstellter Fix-Vorschlag (Self-Healing-Pipeline v862).\n\n` +
               `**Goal:** ${config.goal.slice(0, 800)}\n\n` +
               `**Session:** ${sessionId}\n` +
               `**Milestones:**\n${state.milestonesReached.map(m => `- ${m}`).join('\n')}\n\n` +
               `Enthält nur Code + Tests — Version-Bump/CHANGELOG/Bundle folgen beim offiziellen Release nach Review.`;
-            const prUrls: string[] = [];
-            for (const provider of ['gitlab', 'github'] as const) {
-              try {
-                if (!this.forgeConfig[provider]) continue;
-                // gitlab = primäres Remote "origin"; github hängt als zweites Remote
-                // namens "github" (Konvention aus gitExecBoth/pushToRemote)
-                const remoteName = provider === 'gitlab' ? 'origin' : 'github';
-                const remoteUrl = await gitGetRemoteUrl(remoteName, { cwd: config.cwd }).catch(() => null);
-                if (!remoteUrl) continue;
-                const repoId = parseRemoteUrl(remoteUrl);
-                if (!repoId) continue;
-                const client = createForgeClient({ ...this.forgeConfig, provider });
-                const pr = await client.createPullRequest(
-                  { owner: repoId.owner, repo: repoId.repo },
-                  { title: prTitle, body: prBody, head: branch, base: baseBranch },
-                );
-                prUrls.push(pr.url);
-              } catch (err) {
-                this.logger.warn({ err: (err as Error).message?.slice(0, 200), provider, sessionId }, 'v862 self-heal PR creation failed (non-fatal)');
-              }
-            }
+            // v874 — gemeinsamer Helper mit dem Review-Gate (gleiche Remote-Konvention)
+            const prUrls = await this.createMergeRequestsForBranch({
+              cwd: config.cwd, branch, baseBranch, title: prTitle, body: prBody, sessionId,
+            });
             if (prUrls.length > 0) {
               await this.sendProgress(platform, chatId,
                 `🩺 **Self-Healing abgeschlossen** — Fix liegt als Review-Vorschlag bereit:\n` +
@@ -1433,6 +1415,43 @@ export class ProjectAgentRunner {
             }
           } catch (err) {
             this.logger.warn({ err, sessionId }, 'v862 self-heal MR/PR block failed (non-fatal)');
+          }
+        }
+
+        // v874 — Review-Gate: branchPerSession-Sessions (Convention feature-branches
+        // oder per-Run-Option) bekommen nach dem Push automatisch einen MR/PR auf
+        // den Deploy-Branch. Vorher dangelte der Session-Branch ohne Review-Pfad —
+        // nur Self-Healing (v862) erstellte MRs.
+        if (!config.selfHeal && config.branchPerSession && this.forgeConfig && existsSync(path.join(config.cwd, '.git'))) {
+          try {
+            const branch = await gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], config.cwd, runAsUser);
+            const baseBranch = (this.deployBranchResolver
+              ? await this.deployBranchResolver(config.cwd).catch(() => undefined)
+              : undefined) ?? this.forgeConfig.baseBranch ?? 'main';
+            // Nur wenn wir wirklich auf einem Feature-Branch stehen — bei
+            // fehlgeschlagener Branch-Erstellung (Fallback auf Mainline) kein MR.
+            if (branch && branch !== baseBranch && !MAINLINE_BRANCHES.includes(branch)) {
+              const prUrls = await this.createMergeRequestsForBranch({
+                cwd: config.cwd, branch, baseBranch,
+                title: `Agent: ${config.goal.slice(0, 100)}`,
+                body: `Automatisch erstellter Review-MR (Review-Gate).\n\n` +
+                  `**Goal:** ${config.goal.slice(0, 800)}\n\n` +
+                  `**Session:** ${sessionId}\n` +
+                  `**Branch:** \`${branch}\` → \`${baseBranch}\`\n` +
+                  `**Milestones:**\n${state.milestonesReached.map(m => `- ${m}`).join('\n')}`,
+                sessionId,
+              });
+              if (prUrls.length > 0) {
+                await this.sendProgress(platform, chatId,
+                  `🛡 Review-MR erstellt:\n${prUrls.map(u => `- ${u}`).join('\n')}\n\n` +
+                  `Nach Review + Merge ist der Stand auf \`${baseBranch}\`.`);
+              } else {
+                await this.sendProgress(platform, chatId,
+                  `🛡 Branch \`${branch}\` gepusht — MR-Erstellung nicht möglich (kein Forge-Remote erkannt). Bitte manuell anlegen (Basis: \`${baseBranch}\`).`);
+              }
+            }
+          } catch (err) {
+            this.logger.warn({ err, sessionId }, 'v874 review-gate MR block failed (non-fatal)');
           }
         }
         // v663a — Auto-Tag bei aktivierter Convention (SemVer-Patch-Bump)
@@ -1662,6 +1681,39 @@ export class ProjectAgentRunner {
     } catch (err) {
       return { ok: false, reason: `probe error: ${err instanceof Error ? err.message : String(err)}` };
     }
+  }
+
+  /**
+   * v874 — MR/PR für einen Branch auf allen konfigurierten Forge-Providern
+   * erstellen. Remote-Konvention wie v862: gitlab = "origin", github = zweites
+   * Remote namens "github". Fehler pro Provider sind non-fatal (Log + skip).
+   * Gemeinsam genutzt von Self-Healing (v862) und Review-Gate (v874).
+   */
+  private async createMergeRequestsForBranch(opts: {
+    cwd: string; branch: string; baseBranch: string; title: string; body: string; sessionId: string;
+  }): Promise<string[]> {
+    const prUrls: string[] = [];
+    if (!this.forgeConfig) return prUrls;
+    const { createForgeClient, parseRemoteUrl, gitGetRemoteUrl } = await import('@alfred/skills');
+    for (const provider of ['gitlab', 'github'] as const) {
+      try {
+        if (!this.forgeConfig[provider]) continue;
+        const remoteName = provider === 'gitlab' ? 'origin' : 'github';
+        const remoteUrl = await gitGetRemoteUrl(remoteName, { cwd: opts.cwd }).catch(() => null);
+        if (!remoteUrl) continue;
+        const repoId = parseRemoteUrl(remoteUrl);
+        if (!repoId) continue;
+        const client = createForgeClient({ ...this.forgeConfig, provider });
+        const pr = await client.createPullRequest(
+          { owner: repoId.owner, repo: repoId.repo },
+          { title: opts.title, body: opts.body, head: opts.branch, base: opts.baseBranch },
+        );
+        prUrls.push(pr.url);
+      } catch (err) {
+        this.logger.warn({ err: (err as Error).message?.slice(0, 200), provider, sessionId: opts.sessionId }, 'MR/PR creation failed (non-fatal)');
+      }
+    }
+    return prUrls;
   }
 
   /**

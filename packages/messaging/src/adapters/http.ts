@@ -729,6 +729,8 @@ export class HttpAdapter extends MessagingAdapter {
     repoStatus?: (projectId: string) => Promise<Record<string, unknown>>;
     /** v872 — CI-Pipeline-Status des aktuellen Branches je konfiguriertem Forge-Provider. */
     pipelineStatus?: (projectId: string) => Promise<{ pipelines: Array<{ provider: string; state: string; url?: string; ref: string }>; reason?: string }>;
+    /** v874 — offene MRs/PRs des Projekts je konfiguriertem Forge-Provider. */
+    listMergeRequests?: (projectId: string) => Promise<{ mergeRequests: Array<Record<string, unknown>>; reason?: string }>;
     /** v873 — Docs-Tab: Markdown-Dateien des Projekt-CWDs auflisten/lesen (traversal-sicher). */
     listDocs?: (projectId: string) => Promise<{ files: Array<{ path: string; sizeBytes: number; modifiedAt: string }>; error?: string }>;
     readDoc?: (projectId: string, relPath: string) => Promise<Record<string, unknown>>;
@@ -1383,6 +1385,9 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/pipeline-status$/) && req.method === 'GET') {
       // v872 — CI-Pipeline-Badge (Forge-API)
       this.handleProjectsPipelineStatus(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/merge-requests$/) && req.method === 'GET') {
+      // v874 — offene MRs/PRs (Forge-API)
+      this.handleProjectsMergeRequests(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/docs$/) && req.method === 'GET') {
       // v873 — Docs-Tab: Markdown-Liste
       this.handleProjectsListDocs(req, res, url).catch(err => this.safeError(res, err));
@@ -3101,6 +3106,19 @@ export class HttpAdapter extends MessagingAdapter {
     const parts = url.pathname.split('/');
     const projectId = parts[parts.length - 2];
     const result = await this.projectsCallbacks.pipelineStatus(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v874 — GET /api/projects/:id/merge-requests — offene MRs/PRs je Forge-Provider. */
+  private async handleProjectsMergeRequests(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listMergeRequests) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.listMergeRequests(projectId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }

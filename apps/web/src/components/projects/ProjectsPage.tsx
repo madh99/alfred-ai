@@ -850,9 +850,15 @@ export function ProjectsPage() {
                 </div>
               </div>
 
-              {/* v872 — Repo-Status-Karte: frischer Git-Zustand + CI-Badge */}
+              {/* v872 — Repo-Status-Karte: frischer Git-Zustand + CI-Badge
+                  v874 — + offene MRs + Review-Gate-Schalter */}
               {client && detail.project.cwd && (
-                <RepoStatusCard client={client} projectId={detail.project.id} />
+                <RepoStatusCard
+                  client={client}
+                  projectId={detail.project.id}
+                  project={detail.project}
+                  onProjectUpdated={(p) => setDetail(d => d ? { ...d, project: p } : d)}
+                />
               )}
 
               {/* Health-Probes */}

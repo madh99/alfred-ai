@@ -9183,6 +9183,41 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return { pipelines: [], reason: (err as Error).message.slice(0, 200) };
             }
           },
+          // v874 — offene MRs/PRs des Projekts (Forge-API, gleiche Provider-
+          // Erkennung wie pipelineStatus). Self-Healing + Review-Gate erstellen
+          // MRs — sichtbar waren sie bisher nur im Forge selbst.
+          listMergeRequests: async (projectId: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project?.cwd) return { mergeRequests: [], reason: project ? 'Projekt hat kein cwd konfiguriert' : 'Projekt nicht gefunden' };
+              const forge = this.config.codeAgents?.forge;
+              if (!forge) return { mergeRequests: [], reason: 'codeAgents.forge nicht konfiguriert' };
+              const { gitGetRemoteUrl, parseRemoteUrl } = await import('@alfred/skills');
+              const mergeRequests: Array<Record<string, unknown>> = [];
+              const seenProviders = new Set<string>();
+              for (const remoteName of ['origin', 'github']) {
+                const remoteUrl = await gitGetRemoteUrl(remoteName, { cwd: project.cwd }).catch(() => null);
+                if (!remoteUrl) continue;
+                const repoId = parseRemoteUrl(remoteUrl);
+                if (!repoId) continue;
+                const provider: 'gitlab' | 'github' = repoId.baseUrl.includes('github.com') ? 'github' : 'gitlab';
+                if (seenProviders.has(provider)) continue;
+                if (!forge[provider]) continue;
+                seenProviders.add(provider);
+                try {
+                  const fc = createForgeClient({ ...forge, provider });
+                  const list = await fc.listPullRequests({ owner: repoId.owner, repo: repoId.repo }, 'open');
+                  mergeRequests.push(...list.map(m => ({ ...m, provider })));
+                } catch (err) {
+                  this.logger.debug({ err: (err as Error).message?.slice(0, 150), provider, projectId }, 'v874 listPullRequests failed (non-fatal)');
+                }
+              }
+              return { mergeRequests };
+            } catch (err) {
+              return { mergeRequests: [], reason: (err as Error).message.slice(0, 200) };
+            }
+          },
           // v873 — Docs-Tab: Markdown-Dateien des Projekt-CWDs (Root + docs/).
           // readProjectDoc ist traversal-sicher (nur .md, kanonischer Pfad muss
           // im cwd liegen) — Tests in project-docs.test.ts.

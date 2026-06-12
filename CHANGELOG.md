@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.874] - 2026-06-12
+
+### Added — Projects „Forge-Flow": Review-Gate komplett + MR-Liste (v874)
+
+- **Review-Gate vervollständigt**: Agent-Sessions mit Feature-Branch
+  (Convention `branching: feature-branches` oder per-Run-Option
+  `branchPerSession`) erstellen nach dem Push jetzt **automatisch einen
+  MR/PR** auf den Deploy-Branch (default_branch → prTarget →
+  forge.baseBranch). Vorher dangelte der Session-Branch ohne Review-Pfad —
+  nur Self-Healing (v862) erstellte MRs. Gemeinsamer Helper
+  (`createMergeRequestsForBranch`) für beide Pfade; kein MR, wenn die
+  Branch-Erstellung fehlschlug und die Session auf einem Mainline-Branch
+  lief (kein Selbst-MR main→main)
+- **Review-Gate-Schalter** prominent in der Repo-Status-Karte: ein Klick
+  schaltet `feature-branches` ↔ `main-only` (mit Erklärung, was sich
+  ändert). Der Schalter existierte nur versteckt im Conventions-Formular
+- **MR/PR-Liste**: offene Merge-Requests des Projekts je Forge-Provider
+  in der Repo-Status-Karte (Titel, Branch → Ziel, Link). Neu im
+  Forge-Client: `listPullRequests` (GitLab + GitHub) — Endpoint
+  `GET /api/projects/:id/merge-requests`
+
 ## [0.19.0-multi-ha.873] - 2026-06-12
 
 ### Added — Projects „Docs + Deps": Doku-Tab + Dependency-Panel (v873)

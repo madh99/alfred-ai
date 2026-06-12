@@ -1718,6 +1718,14 @@ export class AlfredClient {
     return { pipelines: data.pipelines ?? [], reason: data.reason };
   }
 
+  /** v874 — offene MRs/PRs des Projekts je Forge-Provider. */
+  async fetchProjectMergeRequests(id: string): Promise<{ mergeRequests: ProjectMergeRequest[]; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/merge-requests`, { headers: this.authHeaders });
+    if (!res.ok) return { mergeRequests: [], reason: `http-${res.status}` };
+    const data = await res.json().catch(() => ({ mergeRequests: [] }));
+    return { mergeRequests: data.mergeRequests ?? [], reason: data.reason };
+  }
+
   /** v873 — Docs-Tab: Markdown-Dateien des Projekt-CWDs. */
   async fetchProjectDocs(id: string): Promise<{ files: ProjectDocFile[]; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/docs`, { headers: this.authHeaders });
@@ -2837,6 +2845,18 @@ export interface ProjectPipelineInfo {
   state: 'pending' | 'running' | 'success' | 'failure' | 'unknown';
   url?: string;
   ref: string;
+}
+
+/** v874 — offener MR/PR (vereinheitlicht GitLab/GitHub) für die Projekt-UI. */
+export interface ProjectMergeRequest {
+  provider: string;
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  sourceBranch: string;
+  targetBranch: string;
+  createdAt: string;
 }
 
 /** v873 — Markdown-Datei im Projekt-CWD (Docs-Tab). */
