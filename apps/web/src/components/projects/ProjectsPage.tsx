@@ -31,6 +31,8 @@ import { SandboxQuickCreateModal } from './SandboxQuickCreateModal';
 import { CodeRunLivePanel } from './CodeRunLivePanel';
 import { DeepVerifyModal, type DeepVerifyFinding } from './DeepVerifyModal';
 import { ProjectStorageView } from './ProjectStorageView';
+import { RepoStatusCard } from './RepoStatusCard';
+import { HealthTrendView } from './HealthTrendView';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -846,6 +848,11 @@ export function ProjectsPage() {
                 </div>
               </div>
 
+              {/* v872 — Repo-Status-Karte: frischer Git-Zustand + CI-Badge */}
+              {client && detail.project.cwd && (
+                <RepoStatusCard client={client} projectId={detail.project.id} />
+              )}
+
               {/* Health-Probes */}
               <div className="pt-2 border-t border-[#222]">
                 <div className="flex items-center justify-between mb-2">
@@ -877,6 +884,8 @@ export function ProjectsPage() {
                     })}
                   </div>
                 )}
+                {/* v872 — Trend über project_health_log (Daten existierten, UI fehlte) */}
+                {client && <HealthTrendView client={client} projectId={detail.project.id} />}
               </div>
 
               {/* Open Items — v654: open + in_progress in einer Liste, expandable Details */}

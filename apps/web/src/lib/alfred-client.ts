@@ -1702,6 +1702,22 @@ export class AlfredClient {
     return data.entries ?? [];
   }
 
+  /** v872 — Repo-Status-Karte: frischer Git-Zustand (nicht der 6h-Health-Cache). */
+  async fetchProjectRepoStatus(id: string): Promise<ProjectRepoStatus | { error: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/repo-status`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({ error: `http-${res.status}` }));
+    if (!res.ok) return { error: data.error ?? `http-${res.status}` };
+    return data as ProjectRepoStatus;
+  }
+
+  /** v872 — CI-Pipeline-Status des aktuellen Branches je Forge-Provider. */
+  async fetchProjectPipelineStatus(id: string): Promise<{ pipelines: ProjectPipelineInfo[]; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/pipeline-status`, { headers: this.authHeaders });
+    if (!res.ok) return { pipelines: [], reason: `http-${res.status}` };
+    const data = await res.json().catch(() => ({ pipelines: [] }));
+    return { pipelines: data.pipelines ?? [], reason: data.reason };
+  }
+
   async updateKgRelation(relationId: string, updates: Record<string, unknown>): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/knowledge-graph/relation/${relationId}`, {
       method: 'PATCH',
@@ -2764,6 +2780,29 @@ export interface ProjectDetail {
   openItems: ProjectOpenItem[];
   decisions: ProjectDecision[];
   health: Partial<Record<HealthProbe, ProjectHealthEntry>>;
+}
+
+/** v872 — frischer Git-Zustand für die Repo-Status-Karte. */
+export interface ProjectRepoStatus {
+  branch: string;
+  sha: string;
+  commitAgeDays: number;
+  lastCommitAt: string;
+  dirtyCount: number;
+  dirtyFiles: string[];
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  defaultBranch?: string;
+  onDefaultBranch?: boolean;
+}
+
+/** v872 — CI-Pipeline-Status (Forge-API) für das Badge in der Repo-Status-Karte. */
+export interface ProjectPipelineInfo {
+  provider: string;
+  state: 'pending' | 'running' | 'success' | 'failure' | 'unknown';
+  url?: string;
+  ref: string;
 }
 
 // v699 — Sandbox-Types

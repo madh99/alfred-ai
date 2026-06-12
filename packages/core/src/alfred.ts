@@ -1478,6 +1478,9 @@ export class Alfred {
             ? `Dependencies von "${event.project.name}" sind veraltet. Updates prüfen?`
             : event.probe === 'http'
             ? `Deploy-URL von "${event.project.name}" antwortet nicht mehr (${event.from} → ${event.to}). Prüfen?`
+            // v872 — git-Probe warnt jetzt auch bei dirty/unpushed (nicht nur stale)
+            : event.probe === 'git'
+            ? `Repo von "${event.project.name}" hat uncommittete oder ungepushte Änderungen bzw. ist stale (${event.from} → ${event.to}). Prüfen?`
             : `Health-Probe "${event.probe}" für "${event.project.name}" hat sich verschlechtert (${event.from} → ${event.to}).`;
           try {
             await this.confirmationQueue.enqueue({
@@ -9119,6 +9122,66 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             try {
               return (this.projectSkillRef?.getDeepVerifyResult(taskId) ?? null) as Record<string, unknown> | null;
             } catch { return null; }
+          },
+          // v872 — Repo-Status-Karte: frischer Git-Zustand on-demand (dirty/ahead/
+          // behind/Branch-Vergleich). Die Health-Probe läuft nur alle 6h — für die
+          // Karte zählt der Zustand JETZT (uncommittete Fixes, ungepushte Commits).
+          repoStatus: async (projectId: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return { error: 'Projekt nicht gefunden' };
+              if (!project.cwd) return { error: 'Projekt hat kein cwd konfiguriert' };
+              const { collectRepoStatus } = await import('./projects/repo-status.js');
+              // Deploy-Branch-Auflösung wie im Runner (v867): default_branch vor prTarget
+              const defaultBranch = project.defaultBranch ?? project.conventions?.branching?.prTarget;
+              const rs = await collectRepoStatus(project.cwd, { defaultBranch });
+              return rs as unknown as Record<string, unknown>;
+            } catch (err) {
+              return { error: (err as Error).message.slice(0, 300) };
+            }
+          },
+          // v872 — CI-Pipeline-Status des aktuellen Branches. getPipelineStatus war
+          // in beiden Forge-Clients seit jeher implementiert, hatte aber keinen
+          // einzigen Konsumenten. Provider wird pro Remote über den Host bestimmt
+          // (github.com → github, sonst gitlab — deckt self-hosted GitLab ab).
+          pipelineStatus: async (projectId: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return { pipelines: [], reason: 'Projekt nicht gefunden' };
+              if (!project.cwd) return { pipelines: [], reason: 'Projekt hat kein cwd konfiguriert' };
+              const forge = this.config.codeAgents?.forge;
+              if (!forge) return { pipelines: [], reason: 'codeAgents.forge nicht konfiguriert' };
+              const { gitGetRemoteUrl, parseRemoteUrl } = await import('@alfred/skills');
+              const { collectRepoStatus } = await import('./projects/repo-status.js');
+              // Pipelines laufen auf gepushten Branches — ref ist der aktuelle Branch
+              const rs = await collectRepoStatus(project.cwd).catch(() => null);
+              const ref = rs?.branch ?? project.defaultBranch ?? 'main';
+              const pipelines: Array<{ provider: string; state: string; url?: string; ref: string }> = [];
+              const seenProviders = new Set<string>();
+              // Remote-Konvention wie Self-Healing (v862): origin primär, github optional zweites Remote
+              for (const remoteName of ['origin', 'github']) {
+                const remoteUrl = await gitGetRemoteUrl(remoteName, { cwd: project.cwd }).catch(() => null);
+                if (!remoteUrl) continue;
+                const repoId = parseRemoteUrl(remoteUrl);
+                if (!repoId) continue;
+                const provider: 'gitlab' | 'github' = repoId.baseUrl.includes('github.com') ? 'github' : 'gitlab';
+                if (seenProviders.has(provider)) continue;
+                if (!forge[provider]) continue; // kein Token für diesen Provider konfiguriert
+                seenProviders.add(provider);
+                try {
+                  const fc = createForgeClient({ ...forge, provider });
+                  const ps = await fc.getPipelineStatus({ owner: repoId.owner, repo: repoId.repo }, ref);
+                  pipelines.push({ provider, state: ps.state, url: ps.url, ref });
+                } catch {
+                  pipelines.push({ provider, state: 'unknown', ref });
+                }
+              }
+              return { pipelines, reason: pipelines.length === 0 ? 'Kein Remote mit konfiguriertem Forge-Provider gefunden' : undefined };
+            } catch (err) {
+              return { pipelines: [], reason: (err as Error).message.slice(0, 200) };
+            }
           },
           auditOpenItems: async (projectId: string) => {
             try {

@@ -1,10 +1,7 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ProbeContext, ProbeResult } from './probe-types.js';
-
-const execFileAsync = promisify(execFile);
+import { collectRepoStatus } from '../repo-status.js';
 
 const DEFAULT_GIT_TIMEOUT = 15_000;
 
@@ -12,8 +9,10 @@ const DEFAULT_GIT_TIMEOUT = 15_000;
  * git-probe — minimal repo health check.
  *
  * Returns:
- *  - 'ok'      : .git exists, HEAD readable, commit within 30 days
- *  - 'warning' : .git exists, last commit > 30 days ago (stale repo)
+ *  - 'ok'      : .git exists, HEAD readable, commit within 30 days, clean + gepusht
+ *  - 'warning' : last commit > 30 days ago (stale) ODER uncommittete Dateien
+ *                ODER ungepushte Commits (v872 — genau die Zustände, die diese
+ *                Woche teuer waren: dirty cwd, ahead of origin)
  *  - 'error'   : cwd missing OR not a git repo OR HEAD unreadable
  *  - 'skipped' : no cwd configured
  */
@@ -32,18 +31,18 @@ export async function gitProbe(ctx: ProbeContext): Promise<ProbeResult> {
   }
 
   try {
-    const [head, log] = await Promise.all([
-      execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: ctx.cwd, timeout: timeoutMs }),
-      execFileAsync('git', ['log', '-1', '--format=%H %ct'], { cwd: ctx.cwd, timeout: timeoutMs }),
-    ]);
-    const branch = head.stdout.trim();
-    const logLine = log.stdout.trim();
-    const [sha, ctRaw] = logLine.split(/\s+/, 2);
-    const commitTime = Number(ctRaw) * 1000;
-    const ageDays = Math.floor((Date.now() - commitTime) / (24 * 60 * 60 * 1000));
+    // v872 — gemeinsamer Collector mit dem Repo-Status-Endpoint (eine Implementierung)
+    const rs = await collectRepoStatus(ctx.cwd, { timeoutMs });
 
-    const status: 'ok' | 'warning' = ageDays > 30 ? 'warning' : 'ok';
-    const details = `branch=${branch} sha=${sha.slice(0, 8)} age_days=${ageDays}`;
+    const reasons: string[] = [];
+    if (rs.commitAgeDays > 30) reasons.push('stale');
+    if (rs.dirtyCount > 0) reasons.push(`dirty=${rs.dirtyCount}`);
+    if ((rs.ahead ?? 0) > 0) reasons.push(`unpushed=${rs.ahead}`);
+    const status: 'ok' | 'warning' = reasons.length > 0 ? 'warning' : 'ok';
+
+    const details = `branch=${rs.branch} sha=${rs.sha} age_days=${rs.commitAgeDays}` +
+      ` dirty=${rs.dirtyCount}` +
+      (rs.upstream ? ` ahead=${rs.ahead} behind=${rs.behind}` : ' upstream=none');
     return { probe: 'git', status, details, durationMs: Date.now() - startedAt };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -725,6 +725,10 @@ export class HttpAdapter extends MessagingAdapter {
     /** v870 — Deep-Verify: read-only Codebase-Prüfung markierter/aller Items. */
     deepVerifyItems?: (projectId: string, itemIds: string[] | undefined, maxItems: number) => Promise<{ ok: boolean; liveTaskId?: string; itemCount?: number; skippedForCap?: number; reason?: string }>;
     deepVerifyResult?: (taskId: string) => Promise<Record<string, unknown> | null>;
+    /** v872 — Repo-Status-Karte: frischer Git-Zustand (branch/sha/dirty/ahead/behind) on-demand. */
+    repoStatus?: (projectId: string) => Promise<Record<string, unknown>>;
+    /** v872 — CI-Pipeline-Status des aktuellen Branches je konfiguriertem Forge-Provider. */
+    pipelineStatus?: (projectId: string) => Promise<{ pipelines: Array<{ provider: string; state: string; url?: string; ref: string }>; reason?: string }>;
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
     // v642 — Bulk-Close
     bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
@@ -1367,6 +1371,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsAddDecision(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/health-log$/) && req.method === 'GET') {
       this.handleProjectsHealthLog(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/repo-status$/) && req.method === 'GET') {
+      // v872 — Repo-Status-Karte (on-demand, nicht 6h-Health-Cache)
+      this.handleProjectsRepoStatus(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/pipeline-status$/) && req.method === 'GET') {
+      // v872 — CI-Pipeline-Badge (Forge-API)
+      this.handleProjectsPipelineStatus(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-on-items$/) && req.method === 'POST') {
       this.handleProjectsWorkOnItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deep-verify$/) && req.method === 'POST') {
@@ -3049,6 +3059,32 @@ export class HttpAdapter extends MessagingAdapter {
     const entries = await this.projectsCallbacks.listHealthLog(projectId, limit);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ entries }));
+  }
+
+  /** v872 — GET /api/projects/:id/repo-status — frischer Git-Zustand für die Repo-Status-Karte. */
+  private async handleProjectsRepoStatus(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.repoStatus) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.repoStatus(projectId);
+    res.writeHead('error' in result ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v872 — GET /api/projects/:id/pipeline-status — CI-Status des aktuellen Branches. */
+  private async handleProjectsPipelineStatus(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.pipelineStatus) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.pipelineStatus(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
   }
 
   // v641 — Bulk-Work + Audit handlers

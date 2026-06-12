@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.872] - 2026-06-12
+
+### Added — Projects „Sichtbarkeit": Repo-Status, CI-Badge, Health-Trend (v872)
+
+- **Repo-Status-Karte** im Projekt-Detail: liest den Git-Zustand on-demand
+  (nicht den 6h-Health-Cache) — aktueller Branch mit Warnung bei Abweichung
+  vom Default-/Deploy-Branch, kurzer SHA, Commit-Alter, **uncommittete
+  Dateien** (aufklappbare Liste), **ungepushte Commits** (ahead) und
+  behind-Stand gegenüber dem Upstream. Zustände, die bisher erst
+  forensisch auffielen (Arbeit auf falschem Branch, vergessene
+  Commits/Pushes), sind jetzt auf einen Blick sichtbar
+- **CI-Pipeline-Badge**: Status der letzten Pipeline des aktuellen
+  Branches je Forge-Provider (GitLab/GitHub) in der Repo-Status-Karte,
+  verlinkt auf die Pipeline. `getPipelineStatus` war in beiden
+  Forge-Clients fertig implementiert, hatte aber keinen Konsumenten —
+  jetzt: `GET /api/projects/:id/pipeline-status`. Provider wird pro
+  Remote über den Host bestimmt (github.com → GitHub, sonst GitLab —
+  deckt self-hosted GitLab ab)
+- **Health-Verlauf (📈)**: Trend-Ansicht über `project_health_log` —
+  pro Probe eine Status-Punkte-Reihe (letzte 40 Checks, alt → neu) plus
+  Build-Dauer als Mini-Balken (Ausreißer = Regressions-Hinweis). Daten,
+  Endpoint und Client-Methode existierten bereits, es fehlte nur die UI
+- **git-Probe erweitert**: erfasst jetzt `dirty` (uncommittete Dateien)
+  und `ahead/behind` (Upstream) und meldet `warning` nicht mehr nur bei
+  stale (>30 Tage), sondern auch bei dirty>0 oder ungepushten Commits.
+  Gemeinsamer Collector (`collectRepoStatus`) für Probe und Endpoint,
+  damit beide nie auseinanderlaufen; Repos ohne Upstream bleiben bei
+  sauberem Tree `ok` (`upstream=none`). 16 neue Tests (Collector + Probe
+  mit lokalem Bare-Remote)
+- Neuer Endpoint `GET /api/projects/:id/repo-status`
+
 ## [0.19.0-multi-ha.871.3] - 2026-06-12
 
 ### Fixed — Projects-Review Paket P4: UX (v871.3)
