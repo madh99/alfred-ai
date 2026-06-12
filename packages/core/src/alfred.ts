@@ -1801,10 +1801,15 @@ export class Alfred {
         // brauchen keinen Multi-Phase-Project-Agent).
         // v869.3 — taskId wird durchgereicht → executeAgent streamt jede Zeile in
         // den outputBuffer → SSE-Live-Panel in der WebUI.
-        this.projectSkillRef.setCodeAgentRunner(async ({ cwd, prompt, taskId }) => {
+        this.projectSkillRef.setCodeAgentRunner(async ({ cwd, prompt, taskId, agent }) => {
           const codeSkill = this.codeAgentSkillRef;
           if (!codeSkill) throw new Error('Code-Agent-Skill nicht verfügbar');
-          const agentName = this.config.codeAgents?.agents?.[0]?.name;
+          // v879 — wählbarer Agent (Review/Gegenprüfung); Default bleibt agents[0]
+          const agentNames = (this.config.codeAgents?.agents ?? []).map(a => a.name);
+          if (agent && !agentNames.includes(agent)) {
+            throw new Error(`Code-Agent "${agent}" ist nicht konfiguriert (verfügbar: ${agentNames.join(', ')})`);
+          }
+          const agentName = agent ?? agentNames[0];
           if (!agentName) throw new Error('Kein Code-Agent konfiguriert');
           const ownerChatId = this.config.security?.ownerUserId ?? '';
           const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
@@ -9332,6 +9337,40 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             } catch (err) {
               return { budgetWeeklyUsd: null, spent7dUsd: 0, error: (err as Error).message.slice(0, 200) };
             }
+          },
+          // v879 — Codebase-Review: Standard-/gewählter Agent reviewt read-only,
+          // optionale Gegenprüfung durch 1-2 ANDERE konfigurierte Agents.
+          reviewCodebase: async (projectId: string, opts?: { scope?: string; reviewAgent?: string; crossCheckAgents?: string[] }) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { ok: false, reason: 'project-skill not registered' };
+              // Agent-Namen früh validieren (klarer Fehler statt Lauf-Abbruch)
+              const agentNames = (this.config.codeAgents?.agents ?? []).map(a => a.name);
+              for (const a of [opts?.reviewAgent, ...(opts?.crossCheckAgents ?? [])]) {
+                if (a && !agentNames.includes(a)) return { ok: false, reason: `Agent "${a}" nicht konfiguriert (verfügbar: ${agentNames.join(', ')})` };
+              }
+              const result = await skill.execute(
+                { action: 'review_codebase', project_id: projectId, scope: opts?.scope, review_agent: opts?.reviewAgent, cross_check_agents: opts?.crossCheckAgents },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              if (!result.success) return { ok: false, reason: result.error };
+              const d = result.data as { liveTaskId?: string } | undefined;
+              return { ok: true, liveTaskId: d?.liveTaskId };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
+          reviewResult: async (taskId: string) => {
+            try {
+              return (this.projectSkillRef?.getReviewResult(taskId) ?? null) as Record<string, unknown> | null;
+            } catch { return null; }
+          },
+          // v879 — verfügbare CLI-Agents für die Agent-Auswahl im Review-Dialog
+          listCodeAgents: async () => {
+            try {
+              return { agents: (this.config.codeAgents?.agents ?? []).map(a => a.name) };
+            } catch { return { agents: [] }; }
           },
           updateDependencies: async (projectId: string, packages?: string[]) => {
             try {

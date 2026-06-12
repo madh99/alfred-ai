@@ -23,7 +23,7 @@ type Action =
   | 'list_open_items' | 'add_open_item' | 'resolve_open_item'
   | 'list_sessions' | 'list_decisions' | 'archive'
   | 'work_on_open_items' | 'audit_open_items' | 'deep_verify_items'
-  | 'update_dependencies';
+  | 'update_dependencies' | 'review_codebase';
 
 /** v870 — Deep-Verify-Verdikt eines Items (read-only Codebase-Prüfung). */
 export interface DeepVerifyFinding {
@@ -99,6 +99,84 @@ export function parseDeepVerifyFindings(output: string, validIds: Set<string>): 
   return findings;
 }
 
+/** v879 — Befund eines Codebase-Reviews (review_codebase). */
+export interface ReviewFinding {
+  /** Lauf-lokale ID f1..fn — Referenz für die Gegenprüfung. */
+  id: string;
+  title: string;
+  kind: 'security' | 'bug' | 'gap' | 'quality';
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  evidence: string;
+  confidence: number;
+  suggestedMilestone?: string;
+  /** Verdikte der optionalen Gegenprüfer-Agents. */
+  crossChecks?: Array<{ agent: string; verdict: 'confirmed' | 'refuted' | 'unclear'; note?: string }>;
+}
+
+const REVIEW_KINDS = ['security', 'bug', 'gap', 'quality'];
+const REVIEW_SEVERITIES = ['critical', 'high', 'medium', 'low'];
+
+/**
+ * v879 — Parse der Review-Agent-Antwort: letztes valides Befund-Array im
+ * Output (string-bewusstes Bracket-Matching wie Deep-Verify — Evidence enthält
+ * [slug]-Pfade). IDs werden lauf-lokal vergeben (f1..fn). Exportiert für Tests.
+ */
+export function parseReviewFindings(output: string): ReviewFinding[] {
+  for (let start = output.lastIndexOf('['); start >= 0; start = start > 0 ? output.lastIndexOf('[', start - 1) : -1) {
+    const end = matchJsonArrayEnd(output, start);
+    if (end < 0) continue;
+    try {
+      const parsed = JSON.parse(output.slice(start, end + 1));
+      if (!Array.isArray(parsed)) continue;
+      const valid = parsed.filter((r): r is Record<string, unknown> =>
+        !!r && typeof r === 'object' &&
+        typeof (r as Record<string, unknown>).title === 'string' &&
+        ((r as Record<string, unknown>).title as string).trim().length > 0 &&
+        REVIEW_KINDS.includes((r as Record<string, unknown>).kind as string) &&
+        REVIEW_SEVERITIES.includes((r as Record<string, unknown>).severity as string));
+      if (valid.length === 0) continue;
+      return valid.slice(0, 25).map((r, i) => ({
+        id: `f${i + 1}`,
+        title: String(r.title).trim().slice(0, 200),
+        kind: r.kind as ReviewFinding['kind'],
+        severity: r.severity as ReviewFinding['severity'],
+        evidence: String(r.evidence ?? '').slice(0, 300),
+        confidence: Math.max(0, Math.min(1, Number(r.confidence ?? 0.5))),
+        suggestedMilestone: typeof r.suggestedMilestone === 'string' ? r.suggestedMilestone.trim().slice(0, 80) : undefined,
+      }));
+    } catch { /* nächsten Kandidaten probieren */ }
+  }
+  return [];
+}
+
+/**
+ * v879 — Parse der Gegenprüfer-Antwort (Verdikte pro Befund-ID).
+ * Exportiert für Tests.
+ */
+export function parseCrossCheckVerdicts(output: string, validIds: Set<string>): Array<{ id: string; verdict: 'confirmed' | 'refuted' | 'unclear'; note?: string }> {
+  const VERDICTS = ['confirmed', 'refuted', 'unclear'];
+  for (let start = output.lastIndexOf('['); start >= 0; start = start > 0 ? output.lastIndexOf('[', start - 1) : -1) {
+    const end = matchJsonArrayEnd(output, start);
+    if (end < 0) continue;
+    try {
+      const parsed = JSON.parse(output.slice(start, end + 1));
+      if (!Array.isArray(parsed)) continue;
+      const valid = parsed.filter((r): r is Record<string, unknown> =>
+        !!r && typeof r === 'object' &&
+        typeof (r as Record<string, unknown>).id === 'string' &&
+        validIds.has((r as Record<string, unknown>).id as string) &&
+        VERDICTS.includes((r as Record<string, unknown>).verdict as string));
+      if (valid.length === 0) continue;
+      return valid.map(r => ({
+        id: r.id as string,
+        verdict: r.verdict as 'confirmed' | 'refuted' | 'unclear',
+        note: typeof r.note === 'string' ? r.note.slice(0, 250) : undefined,
+      }));
+    } catch { /* nächsten Kandidaten probieren */ }
+  }
+  return [];
+}
+
 const VALID_STATUS: ProjectStatus[] = ['active', 'paused', 'completed', 'maintenance', 'archived'];
 const VALID_HEALTH: ProjectHealthMode[] = ['full', 'minimal', 'off'];
 
@@ -132,7 +210,7 @@ export class ProjectSkill extends Skill {
             'list_open_items', 'add_open_item', 'resolve_open_item',
             'list_sessions', 'list_decisions', 'archive',
             'work_on_open_items', 'audit_open_items', 'deep_verify_items',
-            'update_dependencies',
+            'update_dependencies', 'review_codebase',
           ],
         },
         project_id: { type: 'string', description: 'Project-ID oder Prefix (für get/rename/...)' },
@@ -148,6 +226,9 @@ export class ProjectSkill extends Skill {
         title: { type: 'string', description: 'Open-Item-Titel (für add_open_item)' },
         priority: { type: 'string', description: 'low/normal/high' },
         packages: { type: 'array', items: { type: 'string' }, description: 'Optionale Paket-Teilmenge (für update_dependencies — leer = alle outdated)' },
+        scope: { type: 'string', description: 'Review-Scope (für review_codebase — leer = Security, Bugs, Lücken, Qualität)' },
+        review_agent: { type: 'string', description: 'CLI-Agent für das Review (für review_codebase — leer = Standard-Agent)' },
+        cross_check_agents: { type: 'array', items: { type: 'string' }, description: 'Gegenprüfer-Agents (für review_codebase, optional)' },
       },
       required: ['action'],
     },
@@ -166,7 +247,7 @@ export class ProjectSkill extends Skill {
   /** v869 — Code-Agent-Runner für die Triage: 1-2 einfache Items brauchen keinen
    *  Multi-Phase-Project-Agent (gleiche Regel wie im Chat-Prompt-Builder).
    *  v869.3 — taskId: Live-Output-Streaming in den outputBuffer (SSE in der WebUI). */
-  private runCodeAgent?: (opts: { cwd: string; prompt: string; taskId?: string }) => Promise<{ success: boolean; output: string }>;
+  private runCodeAgent?: (opts: { cwd: string; prompt: string; taskId?: string; agent?: string }) => Promise<{ success: boolean; output: string }>;
   /** v869.3 — Owner-Benachrichtigung (Telegram) für async Code-Läufe. Set by alfred.ts. */
   private ownerNotify?: (text: string) => void;
   /** v869.4 — Sicherungsnetz: code_agent.push (committet nur bei dirty Tree,
@@ -190,7 +271,7 @@ export class ProjectSkill extends Skill {
   }
 
   /** v869 — Inject the code-agent runner for single-item triage. */
-  setCodeAgentRunner(fn: (opts: { cwd: string; prompt: string; taskId?: string }) => Promise<{ success: boolean; output: string }>): void {
+  setCodeAgentRunner(fn: (opts: { cwd: string; prompt: string; taskId?: string; agent?: string }) => Promise<{ success: boolean; output: string }>): void {
     this.runCodeAgent = fn;
   }
 
@@ -231,6 +312,7 @@ export class ProjectSkill extends Skill {
       case 'audit_open_items': return this.auditOpenItems(userId, input);
       case 'deep_verify_items': return this.deepVerifyItems(userId, input);
       case 'update_dependencies': return this.updateDependencies(userId, input);
+      case 'review_codebase': return this.reviewCodebase(userId, input);
       default:
         return { success: false, error: `Unbekannte action "${String(action)}".` };
     }
@@ -828,6 +910,154 @@ ${decLines.join('\n') || '  _keine_'}`;
       success: true,
       data: { liveTaskId, projectId },
       display: `📦 Dependency-Update gestartet (Hintergrund) — Live-Output im Panel, Telegram-Meldung am Ende.`,
+    };
+  }
+
+  /** v879 — Ergebnisse der Codebase-Reviews (TTL-Sweep wie Deep-Verify). */
+  private reviewResults = new Map<string, { status: 'running' | 'done' | 'failed'; findings: ReviewFinding[]; reviewAgent?: string; error?: string; ts: number }>();
+
+  getReviewResult(taskId: string): { status: 'running' | 'done' | 'failed'; findings: ReviewFinding[]; reviewAgent?: string; error?: string } | null {
+    const r = this.reviewResults.get(taskId);
+    if (!r) return null;
+    return { status: r.status, findings: r.findings, reviewAgent: r.reviewAgent, error: r.error };
+  }
+
+  /**
+   * v879 — Codebase-Review: Standard- (oder gewählter) CLI-Agent reviewt das
+   * Repo read-only entlang des Scopes (Default: Security, Bugs, Lücken,
+   * Qualität), hinterfragt seine Befunde selbst (zweistufiger Prompt) und
+   * schreibt ein Review-Doc nach docs/. Optional prüfen 1–2 ANDERE Agents die
+   * Befunde adversarial gegen (REFUTE-Auftrag). Ergebnis landet im
+   * reviewResults-Store — die Ableitung in Items + Roadmap macht der User im
+   * Ergebnis-Modal (nichts wird automatisch angelegt).
+   */
+  private async reviewCodebase(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.runCodeAgent) return { success: false, error: 'Code-Agent-Runner nicht verkabelt' };
+    const projectId = await this.resolveProjectId(userId, input.project_id as string);
+    if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+    const project = await this.repo.getById(userId, projectId);
+    if (!project) return { success: false, error: 'Project nicht gefunden' };
+    if (!project.cwd) return { success: false, error: 'Project hat keinen cwd' };
+    if (!existsSync(project.cwd)) return { success: false, error: `cwd existiert nicht: ${project.cwd}` };
+
+    const alreadyRunning = this.runningCodeJobs.get(projectId);
+    if (alreadyRunning) {
+      return { success: false, error: `Für dieses Projekt läuft bereits ein Code-Lauf (${alreadyRunning.slice(0, 8)}). Bitte warten.` };
+    }
+
+    const scope = typeof input.scope === 'string' && input.scope.trim().length > 0
+      ? input.scope.trim().slice(0, 500)
+      : 'Security (Auth, Permissions, Injection, Secrets), Bugs (Logikfehler, Race-Conditions, Fehlerbehandlung), Lücken (fehlende Validierung, unvollständige Features, tote Pfade), Qualität (Konsistenz, Test-Abdeckung kritischer Pfade)';
+    const reviewAgent = typeof input.review_agent === 'string' && input.review_agent.trim() ? input.review_agent.trim() : undefined;
+    const crossCheckAgents = Array.isArray(input.cross_check_agents)
+      ? (input.cross_check_agents as unknown[]).filter((a): a is string => typeof a === 'string' && a.trim().length > 0).slice(0, 2)
+      : [];
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const reviewPrompt = [
+      `Du bist ein gründlicher, skeptischer Code-Reviewer. Analysiere die Codebase des Projekts "${project.name}" READ-ONLY.`,
+      `Einzige erlaubte Schreiboperation: EIN Review-Dokument unter docs/codebase-review-${dateStr}.md erstellen und committen (docs(review): …). KEINE Code-Änderungen, KEIN Push.`,
+      ``,
+      `SCOPE: ${scope}`,
+      ``,
+      `VORGEHEN (zweistufig, WICHTIG):`,
+      `1. SAMMELN: Untersuche systematisch (API-Routen, Auth/Permissions, DB/Migrationen, Input-Validierung, Fehlerbehandlung, Secrets/Konfiguration, kritische Pfade ohne Tests). Notiere Kandidaten mit Datei:Zeile.`,
+      `2. SELBST-HINTERFRAGEN: Prüfe JEDEN Kandidaten adversarial gegen den Code: Stimmt die Fundstelle wirklich? Echtes Problem oder bewusste Design-Entscheidung (Kommentare/Tests/Doku dazu lesen)? Bereits anderswo abgesichert? Verwirf alles ohne harten Beleg. Setze confidence ehrlich.`,
+      ``,
+      `Schreibe die BESTÄTIGTEN Befunde strukturiert ins Review-Dokument (nach Severity gruppiert, mit Fundstellen) und committe es.`,
+      ``,
+      `Antworte AM ENDE mit GENAU EINEM JSON-Array (Markdown-Fences erlaubt):`,
+      `[{"title":"kurz und umsetzbar (max 150 Zeichen)","kind":"security|bug|gap|quality","severity":"critical|high|medium|low","evidence":"Datei:Zeile + 1 Satz Beleg","confidence":0.0-1.0,"suggestedMilestone":"kurzer Milestone-Name (z.B. 'Review: Security')"}]`,
+      `Maximal 25 Befunde — die wichtigsten zuerst. Wenn nichts gefunden: [].`,
+    ].join('\n');
+
+    const liveTaskId = randomUUID();
+    this.runningCodeJobs.set(projectId, liveTaskId);
+    const sweepCutoff = Date.now() - 30 * 60_000;
+    for (const [k, v] of this.reviewResults) {
+      if (v.ts < sweepCutoff) this.reviewResults.delete(k);
+    }
+    this.reviewResults.set(liveTaskId, { status: 'running', findings: [], reviewAgent, ts: Date.now() });
+    appendOutputLine(liveTaskId, 'system',
+      `🔍 Codebase-Review gestartet (${reviewAgent ?? 'Standard-Agent'}) — Scope: ${scope.slice(0, 120)}…${crossCheckAgents.length > 0 ? ` Gegenprüfung: ${crossCheckAgents.join(', ')}.` : ''}`);
+
+    const projectName = project.name;
+    const cwd = project.cwd;
+    void (async () => {
+      try {
+        const result = await this.runCodeAgent!({ cwd, prompt: reviewPrompt, taskId: liveTaskId, agent: reviewAgent });
+        if (!result.success) {
+          this.reviewResults.set(liveTaskId, { status: 'failed', findings: [], reviewAgent, error: `Review-Lauf fehlgeschlagen: ${result.output.slice(-300)}`, ts: Date.now() });
+          appendOutputLine(liveTaskId, 'system', `❌ Review-Lauf fehlgeschlagen. Output-Ende: ${result.output.slice(-400)}`);
+          this.ownerNotify?.(`❌ Codebase-Review fehlgeschlagen (${projectName}).`);
+          return;
+        }
+        const findings = parseReviewFindings(result.output);
+        appendOutputLine(liveTaskId, 'system', `📋 Review fertig — ${findings.length} Befund(e).`);
+
+        // Review-Doc sichern (committet der Agent selbst; Push deterministisch hier)
+        if (this.pushProject) {
+          try {
+            const push = await this.pushProject({ cwd, commitMessage: `docs(review): Codebase-Review ${dateStr}` });
+            appendOutputLine(liveTaskId, 'system', push.success ? `📤 Review-Doc gesichert: ${push.summary}` : `⚠️ Push fehlgeschlagen: ${push.summary}`);
+          } catch { /* best-effort */ }
+        }
+
+        // v879 — optionale Gegenprüfung durch ANDERE Agents (adversarial: REFUTE)
+        if (findings.length > 0 && crossCheckAgents.length > 0) {
+          const validIds = new Set(findings.map(f => f.id));
+          const crossPrompt = [
+            `Du bist ein unabhängiger Gegenprüfer. Ein anderer Agent hat beim Codebase-Review des Projekts "${projectName}" die folgenden Befunde gemeldet.`,
+            `Deine Aufgabe: VERSUCHE SIE ZU WIDERLEGEN. Prüfe jeden Befund READ-ONLY direkt im Code (Fundstelle öffnen, Kontext lesen). Bestätige NUR mit eigenem Beleg. KEINE Dateiänderungen, KEINE Commits.`,
+            ``,
+            `BEFUNDE:`,
+            JSON.stringify(findings.map(f => ({ id: f.id, title: f.title, evidence: f.evidence })), null, 1),
+            ``,
+            `Antworte AM ENDE mit GENAU EINEM JSON-Array: [{"id":"<id>","verdict":"confirmed|refuted|unclear","note":"1 Satz Beleg/Begründung"}]`,
+            `Jede id genau einmal. verdict "refuted" NUR wenn du konkret belegen kannst, warum der Befund falsch ist.`,
+          ].join('\n');
+          for (const agent of crossCheckAgents) {
+            appendOutputLine(liveTaskId, 'system', `🧪 Gegenprüfung durch ${agent} läuft…`);
+            try {
+              const cc = await this.runCodeAgent!({ cwd, prompt: crossPrompt, taskId: liveTaskId, agent });
+              const verdicts = cc.success ? parseCrossCheckVerdicts(cc.output, validIds) : [];
+              if (verdicts.length === 0) {
+                appendOutputLine(liveTaskId, 'system', `⚠️ ${agent}: kein parsebares Verdikt — wird im Ergebnis als "unclear" geführt.`);
+              }
+              for (const f of findings) {
+                const v = verdicts.find(x => x.id === f.id);
+                (f.crossChecks ??= []).push(v
+                  ? { agent, verdict: v.verdict, note: v.note }
+                  : { agent, verdict: 'unclear', note: cc.success ? 'kein Verdikt geliefert' : 'Gegenprüf-Lauf fehlgeschlagen' });
+              }
+              const confirmed = verdicts.filter(v => v.verdict === 'confirmed').length;
+              const refuted = verdicts.filter(v => v.verdict === 'refuted').length;
+              appendOutputLine(liveTaskId, 'system', `🧪 ${agent}: ${confirmed} bestätigt, ${refuted} widerlegt, ${findings.length - confirmed - refuted} unklar.`);
+            } catch (err) {
+              appendOutputLine(liveTaskId, 'system', `⚠️ Gegenprüfung ${agent} fehlgeschlagen: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+              for (const f of findings) (f.crossChecks ??= []).push({ agent, verdict: 'unclear', note: 'Lauf-Fehler' });
+            }
+          }
+        }
+
+        this.reviewResults.set(liveTaskId, { status: 'done', findings, reviewAgent, ts: Date.now() });
+        appendOutputLine(liveTaskId, 'system', `✅ Codebase-Review abgeschlossen — ${findings.length} Befund(e). Ergebnis-Modal öffnet sich.`);
+        this.ownerNotify?.(`✅ Codebase-Review fertig (${projectName}): ${findings.length} Befund(e)${crossCheckAgents.length > 0 ? `, gegengeprüft von ${crossCheckAgents.join(', ')}` : ''}. Übernahme in Items/Roadmap in der WebUI.`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.reviewResults.set(liveTaskId, { status: 'failed', findings: [], reviewAgent, error: msg.slice(0, 300), ts: Date.now() });
+        appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)}`);
+        this.ownerNotify?.(`❌ Codebase-Review Fehler (${projectName}): ${msg.slice(0, 300)}`);
+      } finally {
+        this.runningCodeJobs.delete(projectId);
+        try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
+      }
+    })();
+
+    return {
+      success: true,
+      data: { liveTaskId, projectId, reviewAgent: reviewAgent ?? null, crossCheckAgents },
+      display: `🔍 Codebase-Review gestartet (Hintergrund) — Live-Output im Panel, Ergebnis-Modal nach Abschluss. Es wird NICHTS automatisch geändert (nur ein Review-Doc in docs/).`,
     };
   }
 

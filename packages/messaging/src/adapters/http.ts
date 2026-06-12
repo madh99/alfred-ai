@@ -740,6 +740,10 @@ export class HttpAdapter extends MessagingAdapter {
     /** v873 — Dependency-Panel: strukturierte Outdated-Liste + Update-Lauf (async Code-Agent). */
     depsStatus?: (projectId: string) => Promise<Record<string, unknown>>;
     updateDependencies?: (projectId: string, packages?: string[]) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
+    /** v879 — Codebase-Review (read-only, optional Gegenprüfung durch andere CLI-Agents). */
+    reviewCodebase?: (projectId: string, opts?: { scope?: string; reviewAgent?: string; crossCheckAgents?: string[] }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
+    reviewResult?: (taskId: string) => Promise<Record<string, unknown> | null>;
+    listCodeAgents?: () => Promise<{ agents: string[] }>;
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
     // v642 — Bulk-Close
     bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
@@ -1367,6 +1371,10 @@ export class HttpAdapter extends MessagingAdapter {
     // sonst matched die generic Route und interpretiert z.B. "automation-templates" als Projekt-ID.
     } else if (url.pathname === '/api/projects/automation-templates' && req.method === 'GET') {
       this.handleAutomationTemplates(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/projects/code-agents' && req.method === 'GET') {
+      // v879 — verfügbare CLI-Agents (für Agent-Auswahl im Review-Dialog).
+      // MUSS vor der generic :id-Route stehen (sonst "code-agents" = Projekt-ID).
+      this.handleProjectsCodeAgents(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'GET') {
       this.handleProjectsGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'PATCH') {
@@ -1406,6 +1414,11 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/update-deps$/) && req.method === 'POST') {
       // v873 — Dependency-Update-Lauf (async Code-Agent)
       this.handleProjectsUpdateDeps(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/review$/) && req.method === 'POST') {
+      // v879 — Codebase-Review (async, optional Gegenprüfung)
+      this.handleProjectsReview(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/review\/[^/]+\/result$/) && req.method === 'GET') {
+      this.handleProjectsReviewResult(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-on-items$/) && req.method === 'POST') {
       this.handleProjectsWorkOnItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deep-verify$/) && req.method === 'POST') {
@@ -3178,6 +3191,48 @@ export class HttpAdapter extends MessagingAdapter {
     const parts = url.pathname.split('/');
     const projectId = parts[parts.length - 2];
     const result = await this.projectsCallbacks.depsStatus(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v879 — POST /api/projects/:id/review {scope?, review_agent?, cross_check_agents?} — async Codebase-Review. */
+  private async handleProjectsReview(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.reviewCodebase) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { scope?: string; review_agent?: string; cross_check_agents?: string[] };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const result = await this.projectsCallbacks.reviewCodebase(projectId, {
+      scope: data.scope, reviewAgent: data.review_agent, crossCheckAgents: data.cross_check_agents,
+    });
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v879 — GET /api/projects/review/:taskId/result */
+  private async handleProjectsReviewResult(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.reviewResult) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const taskId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.reviewResult(taskId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result ?? { status: 'unknown' }));
+  }
+
+  /** v879 — GET /api/projects/code-agents — Namen der konfigurierten CLI-Agents. */
+  private async handleProjectsCodeAgents(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listCodeAgents) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const result = await this.projectsCallbacks.listCodeAgents();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }

@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.879] - 2026-06-12
+
+### Added — Codebase-Review mit Mehr-Agent-Gegenprüfung (v879)
+
+- **„🔍 Codebase-Review"** im Projekt-Detail: ein CLI-Agent (wählbar,
+  Default Standard-Agent) reviewt das gesamte Repo **read-only** entlang
+  des Scopes (Default: Security, Bugs, Lücken, Qualität — Freitext
+  anpassbar) mit **zweistufiger Selbst-Hinterfragung** (erst Kandidaten
+  sammeln, dann jeden adversarial gegen den eigenen Beleg prüfen — ohne
+  harten Beleg verworfen). Ergebnis zusätzlich als Review-Doc in `docs/`
+  (committet + gepusht, im Doku-Tab lesbar)
+- **Optionale Gegenprüfung durch 1–2 ANDERE konfigurierte CLI-Agents**
+  (z.B. codex, mistral-vibe): REFUTE-Auftrag — widerlegen statt
+  bestätigen, Verdikt pro Befund (confirmed/refuted/unclear) mit
+  Begründung. Dissens wird im Ergebnis sichtbar markiert statt
+  verschwiegen
+- **Ergebnis-Modal mit Übernahme**: Befunde nach Severity gruppiert,
+  widerlegte vorab abgewählt (durchgestrichen) — ausgewählte werden als
+  Open-Items (Severity → Priorität) mit **Roadmap-Milestone** angelegt
+  (Agent-Vorschlag, z.B. „Review: Security"). Es wird NICHTS automatisch
+  geändert
+- Der Code-Agent-Runner für Projekt-Läufe akzeptiert jetzt einen
+  Agent-Parameter (vorher hart `agents[0]`); neue Endpoints
+  `POST /api/projects/:id/review`, `GET /api/projects/review/:taskId/result`,
+  `GET /api/projects/code-agents`. 7 neue Parser-Tests (inkl.
+  `[slug]`-Pfade in Belegen)
+
 ## [0.19.0-multi-ha.878] - 2026-06-12
 
 ### Fixed — Geister-Items: Echo-Filter geschärft (v878)

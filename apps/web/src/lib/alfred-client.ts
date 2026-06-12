@@ -1756,6 +1756,31 @@ export class AlfredClient {
     return { manifest: data.manifest ?? null, deps: data.deps ?? [], error: data.error };
   }
 
+  /** v879 — konfigurierte CLI-Agents (für Agent-Auswahl im Review-Dialog). */
+  async fetchCodeAgents(): Promise<string[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects/code-agents`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({ agents: [] }));
+    return data.agents ?? [];
+  }
+
+  /** v879 — Codebase-Review starten (async, optional Gegenprüfung durch andere Agents). */
+  async projectReviewCodebase(id: string, opts?: { scope?: string; reviewAgent?: string; crossCheckAgents?: string[] }): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/review`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ scope: opts?.scope, review_agent: opts?.reviewAgent, cross_check_agents: opts?.crossCheckAgents }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return { ok: true, liveTaskId: data.liveTaskId };
+  }
+
+  async projectReviewResult(taskId: string): Promise<{ status: 'running' | 'done' | 'failed' | 'unknown'; findings?: CodebaseReviewFinding[]; reviewAgent?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/review/${taskId}/result`, { headers: this.authHeaders });
+    if (!res.ok) return { status: 'unknown' };
+    return res.json().catch(() => ({ status: 'unknown' }));
+  }
+
   /** v873 — Dependency-Update-Lauf starten (async Code-Agent, liveTaskId für SSE-Panel). */
   async projectUpdateDeps(id: string, packages?: string[]): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/update-deps`, {
@@ -2875,6 +2900,18 @@ export interface ProjectDocFile {
   path: string;
   sizeBytes: number;
   modifiedAt: string;
+}
+
+/** v879 — Befund eines Codebase-Reviews. */
+export interface CodebaseReviewFinding {
+  id: string;
+  title: string;
+  kind: 'security' | 'bug' | 'gap' | 'quality';
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  evidence: string;
+  confidence: number;
+  suggestedMilestone?: string;
+  crossChecks?: Array<{ agent: string; verdict: 'confirmed' | 'refuted' | 'unclear'; note?: string }>;
 }
 
 /** v873 — veraltete direkte Dependency (Dependency-Panel). */

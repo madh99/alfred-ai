@@ -36,6 +36,7 @@ import { HealthTrendView } from './HealthTrendView';
 import { ProjectDocsView } from './ProjectDocsView';
 import { ProjectDepsView } from './ProjectDepsView';
 import { ProjectBudgetView } from './ProjectBudgetView';
+import { CodebaseReviewModal } from './CodebaseReviewModal';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -154,6 +155,8 @@ export function ProjectsPage() {
     setItemSort(s);
     try { localStorage.setItem('alfred-item-sort', s); } catch { /* private mode */ }
   }
+  // v879 — Codebase-Review-Modal
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
   // v871.1 — Reload-Fehler sichtbar machen statt Detail still zu verwerfen
   const [detailError, setDetailError] = useState<string | null>(null);
   // v871.3 — Inline-Notice statt alert()-Wildwuchs (success blendet sich selbst aus)
@@ -1001,6 +1004,12 @@ export function ProjectsPage() {
                       className="px-2 py-0.5 text-[10px] text-violet-400 hover:bg-violet-500/10 border border-violet-500/30 rounded disabled:opacity-60 disabled:cursor-wait"
                       title="Markierte (oder alle, max 15) Items per read-only Code-Agent-Lauf gegen die AKTUELLE Codebase prüfen — mit Code-Beleg pro Verdikt"
                     >{deepVerifyStarting ? '⏳ Starte…' : '🔬 Deep-Verify'}</button>
+                    {/* v879 — Codebase-Review: ganzes Repo, optional Gegenprüfung durch andere Agents */}
+                    <button
+                      onClick={() => setReviewModalOpen(true)}
+                      className="px-2 py-0.5 text-[10px] text-fuchsia-400 hover:bg-fuchsia-500/10 border border-fuchsia-500/30 rounded"
+                      title="Ganze Codebase read-only reviewen (Security, Bugs, Lücken, Qualität — Scope anpassbar). Optional prüfen andere CLI-Agents die Befunde adversarial gegen. Übernahme in Items + Roadmap per Auswahl."
+                    >🔍 Codebase-Review</button>
                   </div>
                 </div>
                 {openItemsExpanded && (<>
@@ -1424,6 +1433,17 @@ export function ProjectsPage() {
                     setDeepVerifyTaskId(null);
                     void runDeepVerify({ skipConfirm: true });
                   }}
+                />
+              )}
+
+              {/* v879 — Codebase-Review (Start-Dialog → Live-Output → Übernahme) */}
+              {reviewModalOpen && client && (
+                <CodebaseReviewModal
+                  client={client}
+                  projectId={detail.project.id}
+                  onClose={() => setReviewModalOpen(false)}
+                  onApplied={() => loadDetail(detail.project.id)}
+                  notify={notify}
                 />
               )}
 
