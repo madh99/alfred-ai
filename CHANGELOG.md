@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.880.1] - 2026-06-13
+
+### Fixed
+
+- **Consolidate Lessons räumte pending Lessons nie ab**: `markLessonApplied`
+  lief nur im Auto-Apply-Pfad — der dokumentierte manuelle Flow
+  „Consolidate → Review → Apply" ließ alle Lessons dauerhaft auf pending,
+  und der nächste Consolidate arbeitete dieselben erneut in den Draft ein
+  (Endlosschleife; Praxis-Nachweis 10.–12.06.: 9 Lessons trotz korrektem
+  Apply pending). Apply markiert jetzt alle pending Lessons als
+  angewendet, wenn der angewendete Draft aus einer Konsolidierung stammt
+  (`generatedBy = lesson-derived` — ein normaler Refresh-Apply räumt
+  weiterhin keine fremden Lessons ab). Die Apply-Antwort meldet die
+  Anzahl (`lessonsMarkedApplied`), die UI zeigt sie an und lädt die
+  Lessons-Liste neu; die Consolidate-Meldung erklärt jetzt explizit,
+  dass pending erst beim Apply abgeräumt wird
+
 ## [0.19.0-multi-ha.880] - 2026-06-12
 
 ### Added — Feature-Discovery mit Plan-Ausarbeitung (v880)

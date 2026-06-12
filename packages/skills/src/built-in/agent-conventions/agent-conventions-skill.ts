@@ -541,6 +541,30 @@ export class AgentConventionsSkill extends Skill {
       }
     }
 
+    // v880.1 — Konsolidierte Lessons beim Apply abräumen. VORHER wurde
+    // markLessonApplied NUR im Auto-Apply-Pfad gerufen — der dokumentierte
+    // manuelle Flow "Consolidate → Review → Apply" ließ alle Lessons ewig
+    // pending, und der nächste Consolidate arbeitete dieselben erneut ein
+    // (Vorfall 12.06., Alpbyte: 9 Lessons trotz Apply am 10.06. pending).
+    // Gate auf generatedBy='lesson-derived': nur wenn der angewendete Draft
+    // nachweislich aus einer Konsolidierung stammt — ein normaler
+    // Refresh-Apply räumt KEINE fremden Lessons ab.
+    let lessonsMarkedApplied = 0;
+    if (conv.generatedBy === 'lesson-derived') {
+      const pending = conv.neutralFormat.lessons.filter(l => !l.appliedToMain);
+      for (const l of pending) {
+        try {
+          await this.deps.conventionsRepo.markLessonApplied(projectId, packagePath, l.id);
+          lessonsMarkedApplied++;
+        } catch (err) {
+          this.deps.logger.warn({ err, lessonId: l.id }, 'v880.1 markLessonApplied on apply failed');
+        }
+      }
+      if (lessonsMarkedApplied > 0) {
+        this.deps.logger.info({ projectId, packagePath, lessonsMarkedApplied }, 'v880.1 apply: konsolidierte Lessons als angewendet markiert');
+      }
+    }
+
     return {
       success: true,
       data: {
@@ -548,6 +572,7 @@ export class AgentConventionsSkill extends Skill {
         commitSha,
         historyId,
         backupCreated: !!prevSnapshot,
+        lessonsMarkedApplied,
       },
     };
   }

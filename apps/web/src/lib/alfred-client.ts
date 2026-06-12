@@ -3056,6 +3056,8 @@ export interface AgentConventionsApplyData {
   commitSha?: string;
   historyId: string;
   backupCreated: boolean;
+  /** v880.1 — beim Apply eines lesson-derived Drafts abgeräumte pending Lessons. */
+  lessonsMarkedApplied?: number;
 }
 
 export interface AgentConventionsPackage {

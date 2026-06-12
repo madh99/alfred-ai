@@ -179,12 +179,15 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
     try {
       const r = await client.conventionsApply(projectId, { packagePath: selectedPackagePath, content: draft, commitToGit });
       if (r.ok && r.data) {
-        setNotice(`✓ Apply: ${r.data.filesWritten.join(', ')}${r.data.commitSha ? ` · commit ${r.data.commitSha}` : ''}${r.data.backupCreated ? ' · Backup erstellt' : ''}`);
+        // v880.1 — abgeräumte Lessons sichtbar machen + Lessons-Liste neu laden
+        const lessonsNote = (r.data.lessonsMarkedApplied ?? 0) > 0 ? ` · 💡 ${r.data.lessonsMarkedApplied} Lessons als angewendet markiert` : '';
+        setNotice(`✓ Apply: ${r.data.filesWritten.join(', ')}${r.data.commitSha ? ` · commit ${r.data.commitSha}` : ''}${r.data.backupCreated ? ' · Backup erstellt' : ''}${lessonsNote}`);
         setDraft('');
         setDraftMeta(null);
         setTab('view');
         await loadStatus();
         await loadHistory();
+        await loadLessons();
       } else {
         setError(r.reason ?? 'Apply failed');
       }
@@ -199,7 +202,7 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
         setDraft(r.data.draft);
         setDraftMeta(r.data);
         setTab('draft');
-        setNotice(`✓ ${r.data.consolidatedLessonsCount} Lessons in Draft integriert. Review + Apply nicht vergessen!`);
+        setNotice(`✓ ${r.data.consolidatedLessonsCount} Lessons in den Draft integriert — sie bleiben "pending", bis du den Draft per Apply anwendest (erst dann werden sie abgeräumt).`);
       } else {
         setError(r.reason ?? 'Consolidate failed');
       }
