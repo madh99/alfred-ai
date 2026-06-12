@@ -2195,7 +2195,10 @@ WICHTIG: Wenn ein Block ABBRUCH-URSACHE (FAKTEN) vorhanden ist, ist das die verb
         temperature: 0.3,
       });
       const text = (resp.content ?? '').trim();
-      return text.length > 10 ? text.slice(0, 1200) : null;
+      // v875.1 — Kappe 1200 → 4000: maxTokens 600 erzeugt ≈2000+ Zeichen deutschen
+      // Text, die alte Kappe schnitt die strukturierte Analyse mitten im Wort ab.
+      // 4000 deckt 600 Tokens vollständig und bleibt unter dem Telegram-Limit (4096).
+      return text.length > 10 ? text.slice(0, 4000) : null;
     } catch (err) {
       // v868 — NICHT mehr still null: beim Anthropic-Guthaben-Vorfall 11.06.
       // verschwand die Zusammenfassungs-Box kommentarlos aus der UI (debug-Log,

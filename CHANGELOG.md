@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.875.1] - 2026-06-12
+
+### Fixed
+
+- **Lessons-Text nicht mehr abgeschnitten**: Die Failure-Insight/Lessons-
+  Zusammenfassung des Project-Agents wurde beim Speichern auf 1200 Zeichen
+  gekappt — das LLM darf aber bis 600 Tokens (≈ 2000+ Zeichen) generieren,
+  die strukturierte Analyse brach dadurch mitten im Wort ab. Kappe auf
+  4000 Zeichen erhöht (deckt 600 Tokens vollständig, bleibt unter dem
+  Telegram-Nachrichtenlimit)
+
 ## [0.19.0-multi-ha.875] - 2026-06-12
 
 ### Added — Projects „Planung & Kontrolle": Kosten-Budget + Item-Abhängigkeiten (v875)
