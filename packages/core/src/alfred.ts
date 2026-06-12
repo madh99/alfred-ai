@@ -9372,6 +9372,78 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return { agents: (this.config.codeAgents?.agents ?? []).map(a => a.name) };
             } catch { return { agents: [] }; }
           },
+          // v880 — Feature-Discovery: Agents schlagen Features vor; Bestand
+          // (confirmed + rejected aus der Features-Library) wird mitgegeben,
+          // damit nichts doppelt oder erneut Abgelehntes kommt.
+          suggestFeatures: async (projectId: string, opts?: { focus?: string; agents?: string[] }) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { ok: false, reason: 'project-skill not registered' };
+              const agentNames = (this.config.codeAgents?.agents ?? []).map(a => a.name);
+              for (const a of opts?.agents ?? []) {
+                if (!agentNames.includes(a)) return { ok: false, reason: `Agent "${a}" nicht konfiguriert (verfügbar: ${agentNames.join(', ')})` };
+              }
+              let known: string[] = [];
+              let rejected: string[] = [];
+              if (this.featuresRepoRef) {
+                try {
+                  known = (await this.featuresRepoRef.listByProject(projectId, { status: 'confirmed' })).map(f => f.name);
+                  rejected = (await this.featuresRepoRef.listByProject(projectId, { status: 'rejected' })).map(f => f.name);
+                } catch { /* ohne Library-Kontext trotzdem laufen */ }
+              }
+              const result = await skill.execute(
+                { action: 'suggest_features', project_id: projectId, focus: opts?.focus, agents: opts?.agents, known_features: known, rejected_features: rejected },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              if (!result.success) return { ok: false, reason: result.error };
+              const d = result.data as { liveTaskId?: string } | undefined;
+              return { ok: true, liveTaskId: d?.liveTaskId };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
+          suggestResult: async (taskId: string) => {
+            try {
+              return (this.projectSkillRef?.getSuggestResult(taskId) ?? null) as Record<string, unknown> | null;
+            } catch { return null; }
+          },
+          // v880 — Entscheidung pro Vorschlag: reject → Library 'rejected'
+          // (wird nie wieder vorgeschlagen); accept → Library 'confirmed' +
+          // Plan-Lauf (Arbeitspakete → Items + Roadmap, ⛓-verkettet).
+          featureDecision: async (projectId: string, opts: { title: string; description?: string; decision: 'accept' | 'reject'; agent?: string }) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const title = (opts.title ?? '').trim().slice(0, 150);
+              if (!title) return { ok: false, reason: 'title fehlt' };
+              if (opts.decision !== 'accept' && opts.decision !== 'reject') return { ok: false, reason: 'decision muss accept|reject sein' };
+              if (this.featuresRepoRef) {
+                try {
+                  await this.featuresRepoRef.upsertOrBumpVersion({
+                    projectId, userId: uid, name: title,
+                    description: (opts.description ?? '').slice(0, 800),
+                    source: 'manual',
+                    status: opts.decision === 'accept' ? 'confirmed' : 'rejected',
+                    confidence: 0.9,
+                  });
+                } catch (err) {
+                  this.logger.warn({ err, title }, 'v880 feature library write failed (non-fatal)');
+                }
+              }
+              if (opts.decision === 'reject') return { ok: true };
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { ok: false, reason: 'project-skill not registered' };
+              const result = await skill.execute(
+                { action: 'plan_feature', project_id: projectId, title, description: opts.description, agent: opts.agent },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              if (!result.success) return { ok: false, reason: result.error };
+              const d = result.data as { liveTaskId?: string } | undefined;
+              return { ok: true, liveTaskId: d?.liveTaskId };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
           updateDependencies: async (projectId: string, packages?: string[]) => {
             try {
               const uid = await resolveOwnerProj();

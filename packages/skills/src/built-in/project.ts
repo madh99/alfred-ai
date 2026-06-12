@@ -23,7 +23,8 @@ type Action =
   | 'list_open_items' | 'add_open_item' | 'resolve_open_item'
   | 'list_sessions' | 'list_decisions' | 'archive'
   | 'work_on_open_items' | 'audit_open_items' | 'deep_verify_items'
-  | 'update_dependencies' | 'review_codebase';
+  | 'update_dependencies' | 'review_codebase'
+  | 'suggest_features' | 'plan_feature';
 
 /** v870 — Deep-Verify-Verdikt eines Items (read-only Codebase-Prüfung). */
 export interface DeepVerifyFinding {
@@ -149,6 +150,79 @@ export function parseReviewFindings(output: string): ReviewFinding[] {
   return [];
 }
 
+/** v880 — Feature-Vorschlag aus dem Discovery-Lauf. */
+export interface FeatureSuggestion {
+  /** Lauf-lokale ID s1..sn. */
+  id: string;
+  title: string;
+  value: string;
+  effort: 'S' | 'M' | 'L';
+  rationale: string;
+  /** Agents, die diese Idee (unabhängig) vorgeschlagen haben. */
+  proposedBy: string[];
+}
+
+/**
+ * v880 — Parse der Discovery-Antwort: letztes valides Vorschlags-Array.
+ * Exportiert für Tests.
+ */
+export function parseFeatureSuggestions(output: string): Array<Omit<FeatureSuggestion, 'id' | 'proposedBy'>> {
+  for (let start = output.lastIndexOf('['); start >= 0; start = start > 0 ? output.lastIndexOf('[', start - 1) : -1) {
+    const end = matchJsonArrayEnd(output, start);
+    if (end < 0) continue;
+    try {
+      const parsed = JSON.parse(output.slice(start, end + 1));
+      if (!Array.isArray(parsed)) continue;
+      const valid = parsed.filter((r): r is Record<string, unknown> =>
+        !!r && typeof r === 'object' &&
+        typeof (r as Record<string, unknown>).title === 'string' &&
+        ((r as Record<string, unknown>).title as string).trim().length > 0);
+      if (valid.length === 0) continue;
+      return valid.slice(0, 10).map(r => ({
+        title: String(r.title).trim().slice(0, 150),
+        value: String(r.value ?? '').trim().slice(0, 400),
+        effort: ['S', 'M', 'L'].includes(String(r.effort).toUpperCase()) ? (String(r.effort).toUpperCase() as 'S' | 'M' | 'L') : 'M',
+        rationale: String(r.rationale ?? '').trim().slice(0, 400),
+      }));
+    } catch { /* nächsten Kandidaten probieren */ }
+  }
+  return [];
+}
+
+/**
+ * v880 — Parse der Plan-Antwort: Phasen-Array des Umsetzungsplans.
+ * Exportiert für Tests.
+ */
+export function parseFeaturePlanPhases(output: string): Array<{ title: string; description: string }> {
+  for (let start = output.lastIndexOf('['); start >= 0; start = start > 0 ? output.lastIndexOf('[', start - 1) : -1) {
+    const end = matchJsonArrayEnd(output, start);
+    if (end < 0) continue;
+    try {
+      const parsed = JSON.parse(output.slice(start, end + 1));
+      if (!Array.isArray(parsed)) continue;
+      const valid = parsed.filter((r): r is Record<string, unknown> =>
+        !!r && typeof r === 'object' &&
+        typeof (r as Record<string, unknown>).title === 'string' &&
+        ((r as Record<string, unknown>).title as string).trim().length > 0);
+      if (valid.length === 0) continue;
+      return valid.slice(0, 10).map(r => ({
+        title: String(r.title).trim().slice(0, 200),
+        description: String(r.description ?? '').trim().slice(0, 800),
+      }));
+    } catch { /* nächsten Kandidaten probieren */ }
+  }
+  return [];
+}
+
+/** v880 — simple Token-Containment für das Mergen von Vorschlägen zweier Agents. */
+function suggestionOverlap(a: string, b: string): number {
+  const tok = (s: string) => new Set(s.toLowerCase().replace(/[^a-zà-ž0-9äöüß\s-]/gi, ' ').split(/[\s-]+/).filter(w => w.length >= 3));
+  const ta = tok(a); const tb = tok(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let o = 0; for (const w of ta) if (tb.has(w)) o++;
+  return o / Math.min(ta.size, tb.size);
+}
+
 /**
  * v879 — Parse der Gegenprüfer-Antwort (Verdikte pro Befund-ID).
  * Exportiert für Tests.
@@ -211,6 +285,7 @@ export class ProjectSkill extends Skill {
             'list_sessions', 'list_decisions', 'archive',
             'work_on_open_items', 'audit_open_items', 'deep_verify_items',
             'update_dependencies', 'review_codebase',
+            'suggest_features', 'plan_feature',
           ],
         },
         project_id: { type: 'string', description: 'Project-ID oder Prefix (für get/rename/...)' },
@@ -229,6 +304,9 @@ export class ProjectSkill extends Skill {
         scope: { type: 'string', description: 'Review-Scope (für review_codebase — leer = Security, Bugs, Lücken, Qualität)' },
         review_agent: { type: 'string', description: 'CLI-Agent für das Review (für review_codebase — leer = Standard-Agent)' },
         cross_check_agents: { type: 'array', items: { type: 'string' }, description: 'Gegenprüfer-Agents (für review_codebase, optional)' },
+        focus: { type: 'string', description: 'Themen-Fokus (für suggest_features, optional)' },
+        agents: { type: 'array', items: { type: 'string' }, description: 'CLI-Agents für die Discovery (für suggest_features, 1-2, leer = Standard)' },
+        agent: { type: 'string', description: 'CLI-Agent (für plan_feature, optional)' },
       },
       required: ['action'],
     },
@@ -313,6 +391,8 @@ export class ProjectSkill extends Skill {
       case 'deep_verify_items': return this.deepVerifyItems(userId, input);
       case 'update_dependencies': return this.updateDependencies(userId, input);
       case 'review_codebase': return this.reviewCodebase(userId, input);
+      case 'suggest_features': return this.suggestFeatures(userId, input);
+      case 'plan_feature': return this.planFeature(userId, input);
       default:
         return { success: false, error: `Unbekannte action "${String(action)}".` };
     }
@@ -1058,6 +1138,240 @@ ${decLines.join('\n') || '  _keine_'}`;
       success: true,
       data: { liveTaskId, projectId, reviewAgent: reviewAgent ?? null, crossCheckAgents },
       display: `🔍 Codebase-Review gestartet (Hintergrund) — Live-Output im Panel, Ergebnis-Modal nach Abschluss. Es wird NICHTS automatisch geändert (nur ein Review-Doc in docs/).`,
+    };
+  }
+
+  /** v880 — Ergebnisse der Feature-Discovery-Läufe (TTL-Sweep wie Review). */
+  private suggestResults = new Map<string, { status: 'running' | 'done' | 'failed'; suggestions: FeatureSuggestion[]; error?: string; ts: number }>();
+
+  getSuggestResult(taskId: string): { status: 'running' | 'done' | 'failed'; suggestions: FeatureSuggestion[]; error?: string } | null {
+    const r = this.suggestResults.get(taskId);
+    if (!r) return null;
+    return { status: r.status, suggestions: r.suggestions, error: r.error };
+  }
+
+  /**
+   * v880 — Feature-Discovery: 1–2 CLI-Agents analysieren das Repo read-only
+   * und schlagen nützliche neue Features vor. Bestand wird mitgegeben
+   * (vorhandene + abgelehnte Features, offene Items) damit nichts doppelt
+   * oder erneut Abgelehntes kommt. Bei 2 Agents werden die Vorschläge per
+   * Titel-Containment gemerged — was BEIDE unabhängig vorschlagen, trägt
+   * beide Namen (starkes Signal fürs Modal).
+   */
+  private async suggestFeatures(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.runCodeAgent) return { success: false, error: 'Code-Agent-Runner nicht verkabelt' };
+    const projectId = await this.resolveProjectId(userId, input.project_id as string);
+    if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+    const project = await this.repo.getById(userId, projectId);
+    if (!project) return { success: false, error: 'Project nicht gefunden' };
+    if (!project.cwd) return { success: false, error: 'Project hat keinen cwd' };
+    if (!existsSync(project.cwd)) return { success: false, error: `cwd existiert nicht: ${project.cwd}` };
+
+    const alreadyRunning = this.runningCodeJobs.get(projectId);
+    if (alreadyRunning) {
+      return { success: false, error: `Für dieses Projekt läuft bereits ein Code-Lauf (${alreadyRunning.slice(0, 8)}). Bitte warten.` };
+    }
+
+    const focus = typeof input.focus === 'string' && input.focus.trim() ? input.focus.trim().slice(0, 300) : undefined;
+    const agents = Array.isArray(input.agents)
+      ? (input.agents as unknown[]).filter((a): a is string => typeof a === 'string' && a.trim().length > 0).slice(0, 2)
+      : [];
+    const runAgents: Array<string | undefined> = agents.length > 0 ? agents : [undefined];
+    const knownFeatures = Array.isArray(input.known_features)
+      ? (input.known_features as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 60)
+      : [];
+    const rejectedFeatures = Array.isArray(input.rejected_features)
+      ? (input.rejected_features as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 60)
+      : [];
+    const openItems = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress']).catch(() => []);
+    const openTitles = openItems.map(i => i.title).slice(0, 60);
+
+    const prompt = [
+      `Du bist ein Produkt-Berater mit Code-Zugriff. Analysiere das Projekt "${project.name}" READ-ONLY (KEINE Dateiänderungen, KEINE Commits) und schlage 5-10 NÜTZLICHE neue Features vor.`,
+      ``,
+      `FOKUS: ${focus ?? 'allgemein — was bringt den Nutzern/Betreibern dieses Projekts am meisten?'}`,
+      ``,
+      knownFeatures.length > 0 ? `BEREITS VORHANDEN (NICHT vorschlagen):\n${knownFeatures.map(f => `- ${f}`).join('\n')}` : '',
+      rejectedFeatures.length > 0 ? `BEREITS ABGELEHNT (NIEMALS wieder vorschlagen):\n${rejectedFeatures.map(f => `- ${f}`).join('\n')}` : '',
+      openTitles.length > 0 ? `BEREITS GEPLANT (offene Punkte, nicht doppeln):\n${openTitles.map(t => `- ${t}`).join('\n')}` : '',
+      ``,
+      `VORGEHEN:`,
+      `1. Verschaffe dir einen echten Überblick (README, Routen/API, Datenmodelle, UI-Seiten).`,
+      `2. SELBST-HINTERFRAGEN pro Idee: Existiert das schon (im Code nachsehen!)? Passt es zu Stack und Zielgruppe? Steht es in den Listen oben? Verwirf, was nicht besteht.`,
+      ``,
+      `Antworte AM ENDE mit GENAU EINEM JSON-Array:`,
+      `[{"title":"max 120 Zeichen","value":"Nutzen in 1-2 Sätzen","effort":"S|M|L","rationale":"warum DIESES Projekt das braucht, 1-2 Sätze"}]`,
+    ].filter(Boolean).join('\n');
+
+    const liveTaskId = randomUUID();
+    this.runningCodeJobs.set(projectId, liveTaskId);
+    const sweepCutoff = Date.now() - 30 * 60_000;
+    for (const [k, v] of this.suggestResults) {
+      if (v.ts < sweepCutoff) this.suggestResults.delete(k);
+    }
+    this.suggestResults.set(liveTaskId, { status: 'running', suggestions: [], ts: Date.now() });
+    appendOutputLine(liveTaskId, 'system',
+      `💡 Feature-Discovery gestartet (${runAgents.map(a => a ?? 'Standard-Agent').join(' + ')})${focus ? ` — Fokus: ${focus}` : ''}.`);
+
+    const projectName = project.name;
+    const cwd = project.cwd;
+    void (async () => {
+      try {
+        const merged: FeatureSuggestion[] = [];
+        let anySuccess = false;
+        for (const agent of runAgents) {
+          const label = agent ?? 'Standard-Agent';
+          appendOutputLine(liveTaskId, 'system', `💡 ${label} analysiert…`);
+          try {
+            const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent });
+            if (!result.success) {
+              appendOutputLine(liveTaskId, 'system', `⚠️ ${label} fehlgeschlagen. Output-Ende: ${result.output.slice(-200)}`);
+              continue;
+            }
+            anySuccess = true;
+            const parsed = parseFeatureSuggestions(result.output);
+            appendOutputLine(liveTaskId, 'system', `💡 ${label}: ${parsed.length} Vorschlag/Vorschläge.`);
+            for (const s of parsed) {
+              // Merge: gleicher Vorschlag von beiden Agents → ein Eintrag, beide Namen
+              const existing = merged.find(m => suggestionOverlap(m.title, s.title) >= 0.6);
+              if (existing) {
+                if (!existing.proposedBy.includes(label)) existing.proposedBy.push(label);
+              } else {
+                merged.push({ id: `s${merged.length + 1}`, ...s, proposedBy: [label] });
+              }
+            }
+          } catch (err) {
+            appendOutputLine(liveTaskId, 'system', `⚠️ ${label} Fehler: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+          }
+        }
+        if (!anySuccess) {
+          this.suggestResults.set(liveTaskId, { status: 'failed', suggestions: [], error: 'Alle Discovery-Läufe fehlgeschlagen', ts: Date.now() });
+          appendOutputLine(liveTaskId, 'system', `❌ Feature-Discovery fehlgeschlagen.`);
+          this.ownerNotify?.(`❌ Feature-Discovery fehlgeschlagen (${projectName}).`);
+          return;
+        }
+        this.suggestResults.set(liveTaskId, { status: 'done', suggestions: merged, ts: Date.now() });
+        appendOutputLine(liveTaskId, 'system', `✅ Feature-Discovery abgeschlossen — ${merged.length} Vorschlag/Vorschläge. Auswahl im Modal.`);
+        this.ownerNotify?.(`✅ Feature-Discovery fertig (${projectName}): ${merged.length} Vorschlag/Vorschläge — Annehmen/Ablehnen in der WebUI.`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.suggestResults.set(liveTaskId, { status: 'failed', suggestions: [], error: msg.slice(0, 300), ts: Date.now() });
+        appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)}`);
+      } finally {
+        this.runningCodeJobs.delete(projectId);
+        try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
+      }
+    })();
+
+    return {
+      success: true,
+      data: { liveTaskId, projectId },
+      display: `💡 Feature-Discovery gestartet (Hintergrund) — Vorschläge erscheinen im Modal, nichts wird automatisch angelegt.`,
+    };
+  }
+
+  /**
+   * v880 — Umsetzungsplan für ein ANGENOMMENES Feature: Agent arbeitet den
+   * Plan aus (docs/feature-plan-<slug>.md, committet) und liefert Phasen —
+   * daraus entstehen Open-Items mit Roadmap-Milestone "Feature: <Titel>",
+   * roadmap_order = Phasenreihenfolge und depends_on-Verkettung (Phase N
+   * blockiert von Phase N-1). Die Items sind die einzige automatische
+   * Anlage — sie folgt der EXPLIZITEN Zustimmung im Vorschlags-Modal.
+   */
+  private async planFeature(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.runCodeAgent) return { success: false, error: 'Code-Agent-Runner nicht verkabelt' };
+    const projectId = await this.resolveProjectId(userId, input.project_id as string);
+    if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+    const project = await this.repo.getById(userId, projectId);
+    if (!project) return { success: false, error: 'Project nicht gefunden' };
+    if (!project.cwd) return { success: false, error: 'Project hat keinen cwd' };
+    const title = typeof input.title === 'string' ? input.title.trim().slice(0, 150) : '';
+    if (!title) return { success: false, error: 'Missing required field "title"' };
+    const description = typeof input.description === 'string' ? input.description.trim().slice(0, 800) : '';
+    const agent = typeof input.agent === 'string' && input.agent.trim() ? input.agent.trim() : undefined;
+
+    const alreadyRunning = this.runningCodeJobs.get(projectId);
+    if (alreadyRunning) {
+      return { success: false, error: `Für dieses Projekt läuft bereits ein Code-Lauf (${alreadyRunning.slice(0, 8)}). Bitte warten.` };
+    }
+
+    const slug = title.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'feature';
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const prompt = [
+      `Das Feature "${title}" wurde für das Projekt "${project.name}" beschlossen. Arbeite einen UMSETZUNGSPLAN aus — implementiere NICHTS.`,
+      description ? `\nFEATURE-BESCHREIBUNG:\n${description}` : '',
+      ``,
+      `VORGEHEN:`,
+      `1. Analysiere READ-ONLY die relevanten Teile der Codebase (betroffene Routen, Models, UI, bestehende Muster).`,
+      `2. Entwirf 3-8 aufeinander aufbauende Arbeitspakete (Phasen) — jedes eigenständig umsetz- und testbar, konkret genug für einen Code-Agent (mit betroffenen Dateien/Bereichen).`,
+      `3. Schreibe den Plan als docs/feature-plan-${slug}.md (Überblick, Phasen, Risiken, betroffene Bereiche) und committe NUR dieses Dokument (docs(plan): …). Kein Push.`,
+      ``,
+      `Antworte AM ENDE mit GENAU EINEM JSON-Array (Reihenfolge = Umsetzungsreihenfolge):`,
+      `[{"title":"Arbeitspaket, max 150 Zeichen","description":"was konkret zu tun ist inkl. betroffener Dateien/Bereiche, 2-4 Sätze"}]`,
+    ].filter(Boolean).join('\n');
+
+    const liveTaskId = randomUUID();
+    this.runningCodeJobs.set(projectId, liveTaskId);
+    appendOutputLine(liveTaskId, 'system', `🗺 Umsetzungsplan für "${title}" wird ausgearbeitet…`);
+
+    const projectName = project.name;
+    const cwd = project.cwd;
+    void (async () => {
+      try {
+        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent });
+        if (!result.success) {
+          appendOutputLine(liveTaskId, 'system', `❌ Plan-Lauf fehlgeschlagen. Output-Ende: ${result.output.slice(-300)}`);
+          this.ownerNotify?.(`❌ Feature-Plan fehlgeschlagen (${projectName}: ${title}).`);
+          return;
+        }
+        const phases = parseFeaturePlanPhases(result.output);
+        if (phases.length === 0) {
+          appendOutputLine(liveTaskId, 'system', `⚠️ Kein parsebarer Phasen-Plan — Plan-Doc liegt ggf. trotzdem in docs/ (Doku-Tab). Items bitte manuell anlegen.`);
+          this.ownerNotify?.(`⚠️ Feature-Plan (${projectName}: ${title}): kein parsebarer Phasen-Plan.`);
+          return;
+        }
+        // Plan-Doc sichern (Push deterministisch — Agent committet nur)
+        if (this.pushProject) {
+          try {
+            const push = await this.pushProject({ cwd, commitMessage: `docs(plan): Umsetzungsplan ${title.slice(0, 80)}` });
+            appendOutputLine(liveTaskId, 'system', push.success ? `📤 Plan-Doc gesichert: ${push.summary}` : `⚠️ Push fehlgeschlagen: ${push.summary}`);
+          } catch { /* best-effort */ }
+        }
+        // Items mit Milestone + Reihenfolge + Abhängigkeits-Kette anlegen
+        const milestone = `Feature: ${title}`.slice(0, 80);
+        let prevId: string | undefined;
+        let created = 0;
+        for (let i = 0; i < phases.length; i++) {
+          try {
+            const item = await this.repo.addOpenItem(projectId, {
+              title: phases[i].title,
+              description: `${phases[i].description}\n[Quelle: Feature-Plan docs/feature-plan-${slug}.md]`.slice(0, 1500),
+              priority: 'normal',
+            });
+            try { await this.repo.updateOpenItemRoadmap(item.id, { milestone, order: i + 1 }); } catch { /* best-effort */ }
+            if (prevId) {
+              try { await this.repo.updateOpenItemFields(item.id, { dependsOn: [prevId] }); } catch { /* best-effort */ }
+            }
+            prevId = item.id;
+            created++;
+          } catch { /* einzelnes Paket darf nicht den Rest verhindern */ }
+        }
+        appendOutputLine(liveTaskId, 'system', `✅ Umsetzungsplan fertig — ${created} Arbeitspakete als Items angelegt (Milestone "${milestone}", ⛓-verkettet). Plan-Doc im Doku-Tab.`);
+        this.ownerNotify?.(`✅ Feature-Plan fertig (${projectName}): "${title}" — ${created} Arbeitspakete in der Roadmap.`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)}`);
+        this.ownerNotify?.(`❌ Feature-Plan Fehler (${projectName}: ${title}): ${msg.slice(0, 300)}`);
+      } finally {
+        this.runningCodeJobs.delete(projectId);
+        try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
+      }
+    })();
+
+    return {
+      success: true,
+      data: { liveTaskId, projectId, milestone: `Feature: ${title}`.slice(0, 80) },
+      display: `🗺 Umsetzungsplan wird ausgearbeitet (Hintergrund) — danach stehen die Arbeitspakete ⛓-verkettet in der Roadmap.`,
     };
   }
 

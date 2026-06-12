@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.880] - 2026-06-12
+
+### Added — Feature-Discovery mit Plan-Ausarbeitung (v880)
+
+- **„💡 Features"** im Projekt-Detail: 1–2 wählbare CLI-Agents analysieren
+  das Repo read-only und schlagen 5–10 nützliche neue Features vor
+  (optionaler Themen-Fokus). Der Bestand wird ausgeklammert — vorhandene
+  Features (Library `confirmed`), offene Punkte und **früher abgelehnte
+  Vorschläge** (`rejected` = dauerhaftes „nie wieder vorschlagen").
+  Selbst-Hinterfragung pro Idee („existiert das schon? passt es zu
+  Stack/Zielgruppe?"). Bei zwei Agents werden die Vorschläge unabhängig
+  generiert und per Titel-Containment gemerged — was **beide** Agents
+  unabhängig vorschlagen, trägt ein ✦-Badge (starkes Signal)
+- **Entscheidung pro Vorschlag**: ❌ Ablehnen → Features-Library
+  `rejected`; ✅ Annehmen → Library `confirmed` + **Plan-Lauf**: der Agent
+  arbeitet den Umsetzungsplan aus (`docs/feature-plan-<slug>.md`,
+  committet + gepusht, im Doku-Tab lesbar) und legt die 3–8 Arbeitspakete
+  als Open-Items an — Roadmap-Milestone „Feature: \<Titel\>",
+  `roadmap_order` = Phasenreihenfolge, **⛓-verkettet** (Phase N blockiert
+  von Phase N−1, Abarbeiten respektiert die Reihenfolge)
+- Endpoints: `POST /api/projects/:id/suggest-features`,
+  `GET /api/projects/suggest/:taskId/result`,
+  `POST /api/projects/:id/feature-decision`. Neue Skill-Actions
+  `project.suggest_features` + `project.plan_feature`. 5 neue Parser-Tests
+
 ## [0.19.0-multi-ha.879] - 2026-06-12
 
 ### Added — Codebase-Review mit Mehr-Agent-Gegenprüfung (v879)

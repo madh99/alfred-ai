@@ -37,6 +37,7 @@ import { ProjectDocsView } from './ProjectDocsView';
 import { ProjectDepsView } from './ProjectDepsView';
 import { ProjectBudgetView } from './ProjectBudgetView';
 import { CodebaseReviewModal } from './CodebaseReviewModal';
+import { FeatureDiscoveryModal } from './FeatureDiscoveryModal';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -157,6 +158,8 @@ export function ProjectsPage() {
   }
   // v879 — Codebase-Review-Modal
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  // v880 — Feature-Discovery-Modal
+  const [discoveryModalOpen, setDiscoveryModalOpen] = useState(false);
   // v871.1 — Reload-Fehler sichtbar machen statt Detail still zu verwerfen
   const [detailError, setDetailError] = useState<string | null>(null);
   // v871.3 — Inline-Notice statt alert()-Wildwuchs (success blendet sich selbst aus)
@@ -1010,6 +1013,12 @@ export function ProjectsPage() {
                       className="px-2 py-0.5 text-[10px] text-fuchsia-400 hover:bg-fuchsia-500/10 border border-fuchsia-500/30 rounded"
                       title="Ganze Codebase read-only reviewen (Security, Bugs, Lücken, Qualität — Scope anpassbar). Optional prüfen andere CLI-Agents die Befunde adversarial gegen. Übernahme in Items + Roadmap per Auswahl."
                     >🔍 Codebase-Review</button>
+                    {/* v880 — Feature-Discovery: Vorschläge → Zustimmung → Plan → Roadmap */}
+                    <button
+                      onClick={() => setDiscoveryModalOpen(true)}
+                      className="px-2 py-0.5 text-[10px] text-blue-400 hover:bg-blue-500/10 border border-blue-500/30 rounded"
+                      title="1-2 CLI-Agents schlagen nützliche neue Features vor (read-only, Bestand + Abgelehntes ausgeklammert). Annehmen → Umsetzungsplan + Arbeitspakete in der Roadmap."
+                    >💡 Features</button>
                   </div>
                 </div>
                 {openItemsExpanded && (<>
@@ -1442,6 +1451,17 @@ export function ProjectsPage() {
                   client={client}
                   projectId={detail.project.id}
                   onClose={() => setReviewModalOpen(false)}
+                  onApplied={() => loadDetail(detail.project.id)}
+                  notify={notify}
+                />
+              )}
+
+              {/* v880 — Feature-Discovery (Vorschläge → Entscheidung → Plan) */}
+              {discoveryModalOpen && client && (
+                <FeatureDiscoveryModal
+                  client={client}
+                  projectId={detail.project.id}
+                  onClose={() => setDiscoveryModalOpen(false)}
                   onApplied={() => loadDetail(detail.project.id)}
                   notify={notify}
                 />

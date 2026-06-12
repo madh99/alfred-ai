@@ -744,6 +744,10 @@ export class HttpAdapter extends MessagingAdapter {
     reviewCodebase?: (projectId: string, opts?: { scope?: string; reviewAgent?: string; crossCheckAgents?: string[] }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
     reviewResult?: (taskId: string) => Promise<Record<string, unknown> | null>;
     listCodeAgents?: () => Promise<{ agents: string[] }>;
+    /** v880 — Feature-Discovery: Vorschläge generieren, Entscheidung pro Vorschlag (reject→Library, accept→Plan-Lauf). */
+    suggestFeatures?: (projectId: string, opts?: { focus?: string; agents?: string[] }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
+    suggestResult?: (taskId: string) => Promise<Record<string, unknown> | null>;
+    featureDecision?: (projectId: string, opts: { title: string; description?: string; decision: 'accept' | 'reject'; agent?: string }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
     // v642 — Bulk-Close
     bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
@@ -1419,6 +1423,14 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsReview(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/review\/[^/]+\/result$/) && req.method === 'GET') {
       this.handleProjectsReviewResult(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/suggest-features$/) && req.method === 'POST') {
+      // v880 — Feature-Discovery (async)
+      this.handleProjectsSuggestFeatures(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/suggest\/[^/]+\/result$/) && req.method === 'GET') {
+      this.handleProjectsSuggestResult(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/feature-decision$/) && req.method === 'POST') {
+      // v880 — Annehmen (→ Plan-Lauf) / Ablehnen (→ Library rejected)
+      this.handleProjectsFeatureDecision(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-on-items$/) && req.method === 'POST') {
       this.handleProjectsWorkOnItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deep-verify$/) && req.method === 'POST') {
@@ -3234,6 +3246,58 @@ export class HttpAdapter extends MessagingAdapter {
     }
     const result = await this.projectsCallbacks.listCodeAgents();
     res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v880 — POST /api/projects/:id/suggest-features {focus?, agents?} — async Feature-Discovery. */
+  private async handleProjectsSuggestFeatures(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.suggestFeatures) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { focus?: string; agents?: string[] };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const result = await this.projectsCallbacks.suggestFeatures(projectId, { focus: data.focus, agents: data.agents });
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v880 — GET /api/projects/suggest/:taskId/result */
+  private async handleProjectsSuggestResult(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.suggestResult) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const taskId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.suggestResult(taskId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result ?? { status: 'unknown' }));
+  }
+
+  /** v880 — POST /api/projects/:id/feature-decision {title, description?, decision, agent?} */
+  private async handleProjectsFeatureDecision(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.featureDecision) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { title?: string; description?: string; decision?: 'accept' | 'reject'; agent?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.title || (data.decision !== 'accept' && data.decision !== 'reject')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'title und decision (accept|reject) erforderlich' }));
+      return;
+    }
+    const result = await this.projectsCallbacks.featureDecision(projectId, {
+      title: data.title, description: data.description, decision: data.decision, agent: data.agent,
+    });
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }
 

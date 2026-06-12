@@ -1781,6 +1781,33 @@ export class AlfredClient {
     return res.json().catch(() => ({ status: 'unknown' }));
   }
 
+  /** v880 — Feature-Discovery starten (1-2 Agents, async). */
+  async projectSuggestFeatures(id: string, opts?: { focus?: string; agents?: string[] }): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/suggest-features`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ focus: opts?.focus, agents: opts?.agents }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return { ok: true, liveTaskId: data.liveTaskId };
+  }
+
+  async projectSuggestResult(taskId: string): Promise<{ status: 'running' | 'done' | 'failed' | 'unknown'; suggestions?: FeatureSuggestionItem[]; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/suggest/${taskId}/result`, { headers: this.authHeaders });
+    if (!res.ok) return { status: 'unknown' };
+    return res.json().catch(() => ({ status: 'unknown' }));
+  }
+
+  /** v880 — Entscheidung pro Vorschlag: reject → Library, accept → Plan-Lauf (liveTaskId). */
+  async projectFeatureDecision(id: string, opts: { title: string; description?: string; decision: 'accept' | 'reject'; agent?: string }): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/feature-decision`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(opts),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return { ok: true, liveTaskId: data.liveTaskId };
+  }
+
   /** v873 — Dependency-Update-Lauf starten (async Code-Agent, liveTaskId für SSE-Panel). */
   async projectUpdateDeps(id: string, packages?: string[]): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/update-deps`, {
@@ -2912,6 +2939,16 @@ export interface CodebaseReviewFinding {
   confidence: number;
   suggestedMilestone?: string;
   crossChecks?: Array<{ agent: string; verdict: 'confirmed' | 'refuted' | 'unclear'; note?: string }>;
+}
+
+/** v880 — Feature-Vorschlag aus der Discovery. */
+export interface FeatureSuggestionItem {
+  id: string;
+  title: string;
+  value: string;
+  effort: 'S' | 'M' | 'L';
+  rationale: string;
+  proposedBy: string[];
 }
 
 /** v873 — veraltete direkte Dependency (Dependency-Panel). */
