@@ -177,6 +177,25 @@ export function filterEchoOpenItems<T extends { title: string }>(
 }
 
 /**
+ * v869.5 — Doku-only-Erkennung: Session hat AUSSCHLIESSLICH Markdown-Dateien
+ * geändert (Analyse-/Proposal-Lauf). Gate bewusst hart: eine einzige
+ * Nicht-.md-Datei → false → Verhalten exakt wie bisher. Leere Liste → false.
+ */
+export function isDocsOnlyRun(files: string[] | undefined): boolean {
+  if (!files || files.length === 0) return false;
+  return files.every(f => /\.(md|markdown)$/i.test(f.trim()));
+}
+
+/**
+ * v869.5 — Aus einem Doku-only-Lauf das Haupt-Dokument bestimmen (erstes .md
+ * das nicht CHANGELOG/README ist) für das "Umsetzen:"-Open-Item.
+ */
+export function pickPrimaryDoc(files: string[]): string | undefined {
+  const candidates = files.filter(f => !/(^|\/)(CHANGELOG|README)\.md$/i.test(f.trim()));
+  return candidates[0] ?? undefined;
+}
+
+/**
  * Glue layer: binds incoming sessions to long-lived Project containers,
  * runs the LLM summarizer on completion, and persists extracted open items + decisions.
  */
@@ -309,6 +328,35 @@ export class ProjectManager {
             { projectId: project.id, skipped, total: summary.openItems.length },
             'v869.2 open-item filter: Echos/Duplikate übersprungen',
           );
+        }
+      }
+
+      // v869.5 — Doku-only-Lauf (Analyse/Proposal): genau EIN "Umsetzen:"-Item
+      // anlegen, damit der Folge-Schritt nicht verloren geht (Vorfall f3a8d888:
+      // 500-Zeilen-Proposal erzeugt, aber kein Item/Hinweis zur Umsetzung — die
+      // v869-Anti-Geister-Regel unterdrückt LLM-"Nachfolgeschritte" bewusst).
+      // Gate hart: nur wenn ALLE geänderten Dateien .md sind UND success.
+      // Nicht-Doku-Läufe: exakt unverändertes Verhalten.
+      if (params.success === true && isDocsOnlyRun(params.files)) {
+        try {
+          const doc = pickPrimaryDoc(params.files ?? []);
+          if (doc) {
+            const base = doc.split('/').pop()?.replace(/\.(md|markdown)$/i, '') ?? doc;
+            const title = `Umsetzen: ${base} (${doc})`;
+            const existing = await this.repo.listOpenItemsForProject(project.id, ['open', 'in_progress']).catch(() => []);
+            const isDup = existing.some(e => openItemTitleSimilarity(e.title, title) >= 0.7);
+            if (!isDup) {
+              await this.repo.addOpenItem(project.id, {
+                title: title.slice(0, 200),
+                description: `Dieser Lauf hat nur Analyse/Dokumentation erzeugt (${(params.files ?? []).join(', ').slice(0, 300)}). Die dort beschriebene Roadmap/Lösung ist noch NICHT implementiert — per Abarbeiten-Button starten oder Resume mit Notiz.`,
+                priority: 'normal',
+                sessionId: session.id,
+              });
+              this.logger.info({ projectId: project.id, doc }, 'v869.5 Doku-only-Lauf → Umsetzen-Item angelegt');
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'v869.5 Umsetzen-Item skipped (non-fatal)');
         }
       }
 

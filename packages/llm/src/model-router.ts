@@ -264,6 +264,12 @@ export class ModelRouter extends LLMProvider {
       if (msg.includes('econnrefused') || msg.includes('enotfound') ||
           msg.includes('etimedout') || msg.includes('econnreset') ||
           msg.includes('socket hang up') || msg.includes('fetch failed')) return true;
+      // v869.5 — DNS-/Verbindungsfehler (Vorfall 11.06. 23:05: getaddrinfo
+      // EAI_AGAIN api.anthropic.com → Reasoning+Insight starben ohne einen
+      // einzigen Fallback-Versuch). Schlechtester Fall: alle Tiers scheitern
+      // → derselbe Original-Fehler wie vorher, nur Sekunden später.
+      if (msg.includes('eai_again') || msg.includes('getaddrinfo') ||
+          msg.includes('connection error')) return true;
       // HTTP status-based
       if (msg.includes('500') || msg.includes('502') || msg.includes('503') ||
           msg.includes('504') || msg.includes('529') || msg.includes('rate limit') ||

@@ -1460,10 +1460,18 @@ export class ProjectAgentRunner {
 
       // L6 (v604) — honest end-message: don't celebrate failures
       if (overallSuccess) {
+        // v869.5 — Doku-only-Lauf: ohne Hinweis blieb unklar, dass NICHTS
+        // implementiert wurde und wie es weitergeht (Vorfall f3a8d888).
+        const allFiles = completedPhases.flatMap(p => p.modifiedFiles);
+        const docsOnly = allFiles.length > 0 && allFiles.every(f => /\.(md|markdown)$/i.test(f.trim()));
         await this.sendProgress(platform, chatId,
           `🎉 Project Agent fertig!\n` +
           `${state.projectIteration} Phasen, ${state.totalFilesChanged} Dateien geändert.\n` +
-          `Milestones: ${state.milestonesReached.join(', ')}`);
+          `Milestones: ${state.milestonesReached.join(', ')}` +
+          (docsOnly
+            ? `\n\n📄 Hinweis: Dieser Lauf hat NUR Analyse/Dokumentation erzeugt — implementiert wurde nichts. ` +
+              `Zur Umsetzung: Open-Item "Umsetzen: …" per Abarbeiten-Button starten oder diese Session per Resume mit entsprechender Notiz fortsetzen.`
+            : ''));
       } else {
         const failedReason = consecutiveCompletePhaseFailures >= MAX_CONSECUTIVE_PHASE_FAILURES
           ? `Abgebrochen nach ${consecutiveCompletePhaseFailures} ergebnislosen Phasen in Folge`

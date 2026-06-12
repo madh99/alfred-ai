@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.869.5] - 2026-06-12
+
+### Fixed — DNS-Fehler-Fallback + Umsetzen-Item für Analyse-Läufe (v869.5)
+
+**a) Router-Retry bei DNS-/Verbindungsfehlern**: Beim DNS-Ausfall am 11.06.
+23:05 (`getaddrinfo EAI_AGAIN api.anthropic.com`) starben Reasoning-Pass und
+Insight sofort — `isRetryableError` kannte die Muster nicht, die Fallback-
+Kette wurde nie versucht. Neu erkannt: `eai_again`, `getaddrinfo`,
+`connection error`. Schlechtester Fall unverändert (alle Tiers scheitern →
+derselbe Original-Fehler), bester Fall rettet den Call. Betrifft NUR
+Alfreds eigene LLM-Calls (model-router) — der CLI-Agent-Pfad ist unberührt.
+
+**b) Analyse-/Proposal-Läufe verlieren ihren Folge-Schritt nicht mehr**:
+Vorfall f3a8d888 — 500-Zeilen-Proposal erzeugt, aber kein Open-Item und
+kein Hinweis zur Umsetzung (die v869-Anti-Geister-Regel unterdrückt
+LLM-„Nachfolgeschritte" bewusst; der Echo-Filter verwarf die 2 Phasen-Echos
+korrekt, übrig blieb nur 1 Teilaspekt-Item). Neu, hinter hartem Gate
+(success UND ausnahmslos alle geänderten Dateien `.md`):
+- genau EIN deterministisches Open-Item „Umsetzen: <Doc> (docs/…)" mit
+  Erklärungs-Beschreibung — läuft durch den normalen Dedup (zweite Analyse
+  zum selben Thema erzeugt kein Duplikat)
+- 🎉-Abschluss-Meldung ergänzt: „Dieser Lauf hat NUR Analyse/Doku erzeugt —
+  Umsetzung per Abarbeiten-Button oder Resume mit Notiz"
+
+**Zusicherung (per Tests festgepinnt)**: Nicht-Doku-Läufe (irgendeine
+Nicht-.md-Datei, Misch-Läufe, failed, 0 Dateien) verhalten sich exakt wie
+bisher — das Gate greift dort nie.
+
+### Tests
+
+5 neue Gate-Tests (Vorfalls-Fixture, Code-Lauf, Misch-Lauf, leer,
+pickPrimaryDoc) + 1 Router-Test (EAI_AGAIN-Originalfehler → Fallback).
+
 ## [0.19.0-multi-ha.869.4] - 2026-06-11
 
 ### Fixed — Open-Items-Code-Läufe sichern Änderungen ins Remote (v869.4)

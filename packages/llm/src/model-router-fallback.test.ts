@@ -95,6 +95,16 @@ describe('v868 ModelRouter Billing-Fallback', () => {
     expect(alerts[0]).toEqual({ tier: 'fast', provider: 'anthropic' });
   });
 
+  it('v869.5: DNS-/Connection-Fehler (EAI_AGAIN) löst Fallback aus (Vorfall 11.06. 23:05)', async () => {
+    const dnsDead: LLMProvider = {
+      ...mockProvider('ok', 'x'),
+      async complete() { throw new Error('Connection error.: request to https://api.anthropic.com/v1/messages failed, reason: getaddrinfo EAI_AGAIN api.anthropic.com'); },
+    } as unknown as LLMProvider;
+    const router = buildRouter({ fast: dnsDead, default: mockProvider('ok', 'gpt') });
+    const res = await router.complete({ messages: [{ role: 'user', content: 'hi' }], tier: 'fast' });
+    expect(res.content).toBe('antwort-von-gpt');
+  });
+
   it('529/overloaded fällt weiterhin zurück (bestehendes Verhalten unverändert)', async () => {
     const router = buildRouter({
       fast: mockProvider('overloaded', 'haiku'),

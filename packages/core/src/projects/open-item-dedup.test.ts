@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { openItemTitleSimilarity, filterEchoOpenItems } from './project-manager.js';
+import { openItemTitleSimilarity, filterEchoOpenItems, isDocsOnlyRun, pickPrimaryDoc } from './project-manager.js';
 
 /** v869 — Titel-Dedup gegen das ungebremste Open-Item-Wachstum (554 Items). */
 describe('openItemTitleSimilarity', () => {
@@ -111,5 +111,35 @@ describe('filterEchoOpenItems', () => {
       { milestones: ['Plan erstellt'] },
     );
     expect(kept.length).toBe(1);
+  });
+});
+
+/** v869.5 — Doku-only-Gate: das Verhalten von Nicht-Doku-Läufen darf sich
+ *  NICHT ändern (Zusicherung an den User, per Test festgepinnt). */
+describe('isDocsOnlyRun', () => {
+  it('Vorfalls-Fixture f3a8d888 (2 Docs + CHANGELOG) → true', () => {
+    expect(isDocsOnlyRun([
+      'docs/profile-privacy-gdpr-audit.md',
+      'docs/profile-privacy-consolidation-proposal.md',
+      'CHANGELOG.md',
+    ])).toBe(true);
+  });
+
+  it('normaler Code-Lauf → false (eine .tsx reicht)', () => {
+    expect(isDocsOnlyRun(['src/app/community/chat/ChatClient.tsx', 'CHANGELOG.md'])).toBe(false);
+  });
+
+  it('Misch-Lauf (Code + Docs) → false (konservativ)', () => {
+    expect(isDocsOnlyRun(['docs/proposal.md', 'src/lib/auth.ts'])).toBe(false);
+  });
+
+  it('leere Liste / undefined → false', () => {
+    expect(isDocsOnlyRun([])).toBe(false);
+    expect(isDocsOnlyRun(undefined)).toBe(false);
+  });
+
+  it('pickPrimaryDoc überspringt CHANGELOG/README', () => {
+    expect(pickPrimaryDoc(['CHANGELOG.md', 'README.md', 'docs/proposal.md'])).toBe('docs/proposal.md');
+    expect(pickPrimaryDoc(['CHANGELOG.md'])).toBeUndefined();
   });
 });
