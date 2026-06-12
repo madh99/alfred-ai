@@ -382,6 +382,15 @@ export class ProjectAgentRunner {
     this.deployBranchResolver = fn;
   }
 
+  /** v875 — Set by alfred.ts: Wochen-Budget-Status eines Projekts (cwd → Soft-Budget
+   *  + CLI-Kosten der letzten 7 Tage). Soft-Limit: Überschreitung warnt beim
+   *  Session-Start, blockiert aber NICHT (sonst würde ein Budget versehentlich
+   *  Self-Healing oder dringende Fixes aushebeln). */
+  private budgetStatusResolver?: (cwd: string) => Promise<{ budgetWeeklyUsd: number; spent7dUsd: number } | undefined>;
+  setBudgetStatusResolver(fn: (cwd: string) => Promise<{ budgetWeeklyUsd: number; spent7dUsd: number } | undefined>): void {
+    this.budgetStatusResolver = fn;
+  }
+
   /** v866 — Set by alfred.ts: Session-Start-Hook → projectManager.attachSession.
    *  Legt die project_sessions-Zeile beim START an (ended_at NULL) damit der
    *  "Laufend"-Zähler der Arbeitszeit-Statistik echte Live-Runs zeigt. Vorher
@@ -499,6 +508,24 @@ export class ProjectAgentRunner {
         }
       } catch (err) {
         this.logger.debug({ err, sessionId }, 'v867 start branch-check failed (non-fatal)');
+      }
+    }
+
+    // v875 — Wochen-Budget-Check (Soft-Limit): bei Überschreitung Warnung an den
+    // Chat, der Lauf startet trotzdem (bewusst kein Hard-Stop — sonst blockiert
+    // ein Budget versehentlich Self-Healing oder dringende Fixes).
+    if (this.budgetStatusResolver) {
+      try {
+        const budget = await this.budgetStatusResolver(config.cwd);
+        if (budget && budget.budgetWeeklyUsd > 0 && budget.spent7dUsd >= budget.budgetWeeklyUsd) {
+          await this.sendProgress(platform, chatId,
+            `💸 **Budget-Hinweis**: Dieses Projekt hat in den letzten 7 Tagen bereits ` +
+            `$${budget.spent7dUsd.toFixed(2)} CLI-Kosten verursacht (Wochen-Budget: $${budget.budgetWeeklyUsd.toFixed(2)}). ` +
+            `Der Lauf startet trotzdem — falls unerwünscht: 'stop' senden.`);
+          this.logger.warn({ sessionId, cwd: config.cwd, spent7dUsd: budget.spent7dUsd, budgetWeeklyUsd: budget.budgetWeeklyUsd }, 'v875 weekly cost budget exceeded (soft limit)');
+        }
+      } catch (err) {
+        this.logger.debug({ err, sessionId }, 'v875 budget check failed (non-fatal)');
       }
     }
 

@@ -90,6 +90,9 @@ export interface Project {
   defaultDbSeedId?: string;
   /** v755 — Maximale gleichzeitig aktive Sandboxes für dieses Projekt. NULL = nutzt User-Quota. */
   maxConcurrentSandboxes?: number;
+  /** v875 — Soft-Budget für CLI-Agent-Kosten pro Woche (USD). NULL = kein Budget.
+   *  Soft-Limit: Überschreitung warnt (Runner-Start + UI), blockiert aber nichts. */
+  costBudgetWeeklyUsd?: number;
   /**
    * v849 — Sandbox-Mode pro Projekt.
    * - 'single' (default): ein Docker-Container mit Node-Image (Status quo)
@@ -161,6 +164,9 @@ export interface ProjectOpenItem {
   autoResolvedBy?: string;
   /** v641 — Konfidenz des LLM-Auto-Resolvers (0..1). */
   autoResolvedConfidence?: number;
+  /** v875 — IDs anderer Open-Items dieses Projekts, die VOR diesem erledigt sein müssen.
+   *  Abarbeiten/Triage überspringt blockierte Items; Zyklen werden beim Setzen verhindert. */
+  dependsOn?: string[];
   /** v663a — Roadmap-Milestone (frei: 'v2.0', 'Beta', 'Q3-2026'). Items mit Milestone = Roadmap-Items. */
   roadmapMilestone?: string;
   /** v663a — Sortierung innerhalb des Milestones (0 = oben) */
@@ -231,6 +237,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     defaultEnvStage: (row.default_env_stage as string | null) ?? undefined,
     defaultDbSeedId: (row.default_db_seed_id as string | null) ?? undefined,
     maxConcurrentSandboxes: (row.max_concurrent_sandboxes as number | null) ?? undefined,
+    costBudgetWeeklyUsd: row.cost_budget_weekly_usd != null ? Number(row.cost_budget_weekly_usd) : undefined,
     // v849 — Compose-Stack fields
     sandboxMode: ((row.sandbox_mode as string | null) ?? 'single') as 'single' | 'compose',
     persistDbVolumes: Boolean(row.persist_db_volumes),
@@ -273,7 +280,22 @@ function rowToOpenItem(row: Record<string, unknown>): ProjectOpenItem {
     estimatedHours: row.estimated_hours != null ? Number(row.estimated_hours) : undefined,
     // v671 — Spiegel-Link zu Todo
     linkedTodoId: (row.linked_todo_id as string | null) ?? undefined,
+    // v875 — Abhängigkeiten (JSON-Array von Item-IDs)
+    dependsOn: parseDependsOn(row.depends_on),
   };
+}
+
+/** v875 — defensives Parsen des depends_on-JSON (NULL/kaputt → undefined). */
+function parseDependsOn(raw: unknown): string[] | undefined {
+  if (typeof raw !== 'string' || raw.length === 0) return undefined;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      const ids = arr.filter((x): x is string => typeof x === 'string');
+      return ids.length > 0 ? ids : undefined;
+    }
+  } catch { /* kaputtes JSON → undefined */ }
+  return undefined;
 }
 
 function rowToDecision(row: Record<string, unknown>): ProjectDecision {
@@ -394,7 +416,7 @@ export class ProjectRepository {
     return rows.map(rowToProject);
   }
 
-  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId' | 'maxConcurrentSandboxes' | 'sandboxMode' | 'persistDbVolumes' | 'dbSeedStrategy'>>): Promise<Project | null> {
+  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId' | 'maxConcurrentSandboxes' | 'costBudgetWeeklyUsd' | 'sandboxMode' | 'persistDbVolumes' | 'dbSeedStrategy'>>): Promise<Project | null> {
     const existing = await this.getById(userId, id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -423,6 +445,8 @@ export class ProjectRepository {
     if (patch.nodeId !== undefined) { sets.push('node_id = ?'); params.push(patch.nodeId); }
     // v755 — Per-Project-Quota
     if (patch.maxConcurrentSandboxes !== undefined) { sets.push('max_concurrent_sandboxes = ?'); params.push(patch.maxConcurrentSandboxes ?? null); }
+    // v875 — Kosten-Soft-Budget pro Woche (USD)
+    if (patch.costBudgetWeeklyUsd !== undefined) { sets.push('cost_budget_weekly_usd = ?'); params.push(patch.costBudgetWeeklyUsd ?? null); }
     // v849 — Compose-Stack fields
     if (patch.sandboxMode !== undefined) { sets.push('sandbox_mode = ?'); params.push(patch.sandboxMode); }
     if (patch.persistDbVolumes !== undefined) { sets.push('persist_db_volumes = ?'); params.push(patch.persistDbVolumes ? 1 : 0); }
@@ -751,11 +775,16 @@ export class ProjectRepository {
   }
 
   /** v671 — Titel + Beschreibung eines Open-Items aktualisieren (für Cross-Sync mit Todo). */
-  async updateOpenItemFields(id: string, patch: { title?: string; description?: string | null }): Promise<boolean> {
+  async updateOpenItemFields(id: string, patch: { title?: string; description?: string | null; dependsOn?: string[] | null }): Promise<boolean> {
     const sets: string[] = [];
     const params: unknown[] = [];
     if (patch.title !== undefined) { sets.push('title = ?'); params.push(patch.title); }
     if (patch.description !== undefined) { sets.push('description = ?'); params.push(patch.description); }
+    // v875 — Abhängigkeiten: leeres Array oder null löscht (NULL in der Spalte)
+    if (patch.dependsOn !== undefined) {
+      sets.push('depends_on = ?');
+      params.push(patch.dependsOn && patch.dependsOn.length > 0 ? JSON.stringify(patch.dependsOn) : null);
+    }
     if (sets.length === 0) return false;
     params.push(id);
     const result = await this.adapter.execute(

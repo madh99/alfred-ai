@@ -2490,4 +2490,12 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_cli_runs_source ON cli_agent_runs(source_id)`);
     },
   },
+  {
+    version: 106,
+    description: 'v875 — projects.cost_budget_weekly_usd (Soft-Budget für CLI-Kosten) + project_open_items.depends_on (JSON-Array von Item-IDs; SQLite-Spiegel zu PG v110).',
+    up(db) {
+      try { db.exec(`ALTER TABLE projects ADD COLUMN cost_budget_weekly_usd REAL`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN depends_on TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

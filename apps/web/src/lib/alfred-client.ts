@@ -1624,7 +1624,7 @@ export class AlfredClient {
   }
 
   // v704 — Open-Item title/description editieren
-  async patchProjectOpenItem(itemId: string, patch: { title?: string; description?: string | null; status?: string }): Promise<boolean> {
+  async patchProjectOpenItem(itemId: string, patch: { title?: string; description?: string | null; status?: string; depends_on?: string[] | null }): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/projects/open-items/${itemId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
@@ -1716,6 +1716,13 @@ export class AlfredClient {
     if (!res.ok) return { pipelines: [], reason: `http-${res.status}` };
     const data = await res.json().catch(() => ({ pipelines: [] }));
     return { pipelines: data.pipelines ?? [], reason: data.reason };
+  }
+
+  /** v875 — Wochen-Budget-Status (Soft-Budget + CLI-Kosten der letzten 7 Tage). */
+  async fetchProjectBudget(id: string): Promise<{ budgetWeeklyUsd: number | null; spent7dUsd: number; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/budget`, { headers: this.authHeaders });
+    if (!res.ok) return { budgetWeeklyUsd: null, spent7dUsd: 0, error: `http-${res.status}` };
+    return res.json().catch(() => ({ budgetWeeklyUsd: null, spent7dUsd: 0 }));
   }
 
   /** v874 — offene MRs/PRs des Projekts je Forge-Provider. */
@@ -2704,6 +2711,8 @@ export interface Project {
   defaultDbSeedId?: string;
   /** v755 — Per-Project-Quota für gleichzeitig aktive Sandboxes (NULL = User-Quota). */
   maxConcurrentSandboxes?: number;
+  /** v875 — Soft-Budget für CLI-Agent-Kosten pro Woche (USD). NULL = kein Budget. */
+  costBudgetWeeklyUsd?: number;
   status: ProjectStatus;
   healthMode: ProjectHealthMode;
   tags: string[];
@@ -2785,6 +2794,8 @@ export interface ProjectOpenItem {
   autoResolvedBy?: string;
   /** v641 — Konfidenz (0..1) des Auto-Resolvers. */
   autoResolvedConfidence?: number;
+  /** v875 — IDs anderer Open-Items, die VOR diesem erledigt sein müssen (⛓-Badge, Abarbeiten überspringt). */
+  dependsOn?: string[];
   /** v663a — Roadmap-Milestone (frei: 'v2.0', 'Beta', 'Q3-2026') */
   roadmapMilestone?: string;
   /** v663a — Sortierung innerhalb des Milestones */

@@ -35,6 +35,7 @@ import { RepoStatusCard } from './RepoStatusCard';
 import { HealthTrendView } from './HealthTrendView';
 import { ProjectDocsView } from './ProjectDocsView';
 import { ProjectDepsView } from './ProjectDepsView';
+import { ProjectBudgetView } from './ProjectBudgetView';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -189,13 +190,13 @@ export function ProjectsPage() {
   // v668 — Roadmap-Edit pro Open-Item (Inline statt Modal)
   const [roadmapEditId, setRoadmapEditId] = useState<string | null>(null);
   const [roadmapForm, setRoadmapForm] = useState<{ milestone: string; order: string; estimatedHours: string }>({ milestone: '', order: '', estimatedHours: '' });
-  // v704 — Inline-Edit für Title + Description
+  // v704 — Inline-Edit für Title + Description (v875: + dependsOn)
   const [itemEditId, setItemEditId] = useState<string | null>(null);
-  const [itemEditForm, setItemEditForm] = useState<{ title: string; description: string }>({ title: '', description: '' });
+  const [itemEditForm, setItemEditForm] = useState<{ title: string; description: string; dependsOn: string[] }>({ title: '', description: '', dependsOn: [] });
 
-  function startItemEdit(item: { id: string; title: string; description?: string | null }) {
+  function startItemEdit(item: { id: string; title: string; description?: string | null; dependsOn?: string[] }) {
     setItemEditId(item.id);
-    setItemEditForm({ title: item.title, description: item.description ?? '' });
+    setItemEditForm({ title: item.title, description: item.description ?? '', dependsOn: item.dependsOn ?? [] });
     setExpandedItemIds(prev => { const next = new Set(prev); next.add(item.id); return next; });
   }
 
@@ -204,17 +205,20 @@ export function ProjectsPage() {
     const ok = await client.patchProjectOpenItem(itemId, {
       title: itemEditForm.title.trim(),
       description: itemEditForm.description.trim() || null,
+      // v875 — leeres Array löscht serverseitig (NULL)
+      depends_on: itemEditForm.dependsOn,
     });
     if (ok && detail) {
       setDetail({
         ...detail,
         openItems: detail.openItems.map(it => it.id === itemId
-          ? { ...it, title: itemEditForm.title.trim(), description: itemEditForm.description.trim() || undefined }
+          ? { ...it, title: itemEditForm.title.trim(), description: itemEditForm.description.trim() || undefined, dependsOn: itemEditForm.dependsOn.length > 0 ? itemEditForm.dependsOn : undefined }
           : it),
       });
     } else if (!ok) {
       // v871.1 — vorher stiller Fehlschlag: Form schloss sich, User glaubte gespeichert
-      notify('error', 'Speichern fehlgeschlagen — Änderung wurde NICHT übernommen.');
+      // v875 — kann jetzt auch eine abgelehnte Abhängigkeit sein (Zyklus/fremdes Projekt)
+      notify('error', 'Speichern fehlgeschlagen — Änderung wurde NICHT übernommen (ggf. Abhängigkeits-Zyklus).');
     }
     setItemEditId(null);
   }
@@ -1077,6 +1081,13 @@ export function ProjectsPage() {
                           {overdue && (
                             <span className="text-[10px] text-red-400" title={`Fällig: ${formatDateTime(it.dueAt)}`}>⏰ überfällig</span>
                           )}
+                          {/* v875 — blockiert solange eine Abhängigkeit noch aktiv (open/in_progress) ist */}
+                          {(it.dependsOn ?? []).some(d => allActive.some(a => a.id === d)) && (
+                            <span
+                              className="text-[10px] text-amber-400 cursor-help"
+                              title={`⛓ Blockiert von: ${(it.dependsOn ?? []).map(d => allActive.find(a => a.id === d)?.title).filter(Boolean).join(' | ').slice(0, 200)} — Abarbeiten überspringt dieses Item, bis die Abhängigkeiten erledigt sind`}
+                            >⛓ blockiert</span>
+                          )}
                           {possiblyDone && (
                             <span
                               className="text-[10px] text-amber-400 cursor-help"
@@ -1105,6 +1116,37 @@ export function ProjectsPage() {
                               rows={4}
                               className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200 resize-y font-mono text-[10px]"
                             />
+                            {/* v875 — Abhängigkeiten: ⛓ blockiert von … (Zyklen lehnt der Server ab) */}
+                            <div className="space-y-1">
+                              <div className="text-[10px] text-gray-500">⛓ Blockiert von (muss zuerst erledigt sein):</div>
+                              {itemEditForm.dependsOn.map(depId => {
+                                const dep = detail.openItems.find(o => o.id === depId);
+                                return (
+                                  <div key={depId} className="flex items-center gap-1.5 pl-2">
+                                    <span className="text-gray-300 truncate flex-1">{dep?.title ?? depId.slice(0, 8)}</span>
+                                    <button
+                                      onClick={() => setItemEditForm(f => ({ ...f, dependsOn: f.dependsOn.filter(d => d !== depId) }))}
+                                      className="text-gray-600 hover:text-red-400"
+                                      title="Abhängigkeit entfernen"
+                                    >✕</button>
+                                  </div>
+                                );
+                              })}
+                              <select
+                                value=""
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  if (v) setItemEditForm(f => f.dependsOn.includes(v) ? f : { ...f, dependsOn: [...f.dependsOn, v] });
+                                }}
+                                className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-400 text-[10px]"
+                              >
+                                <option value="">+ Abhängigkeit hinzufügen…</option>
+                                {allActive
+                                  .filter(o => o.id !== it.id && !itemEditForm.dependsOn.includes(o.id))
+                                  .slice(0, 100)
+                                  .map(o => <option key={o.id} value={o.id}>{o.title.slice(0, 80)}</option>)}
+                              </select>
+                            </div>
                             <div className="flex gap-1.5 justify-end">
                               <button
                                 onClick={() => setItemEditId(null)}
@@ -1461,6 +1503,15 @@ export function ProjectsPage() {
                   if (detail.project.id) setDetail({ ...detail, project: { ...detail.project, maxConcurrentSandboxes: newMax ?? undefined } });
                 }}
               />
+
+              {/* v875 — Wochen-Kosten-Budget (Soft-Limit, CLI-Agent-Kosten) */}
+              {client && (
+                <ProjectBudgetView
+                  client={client}
+                  project={detail.project}
+                  onProjectUpdated={(p) => setDetail(d => d ? { ...d, project: p } : d)}
+                />
+              )}
 
               {/* v737 — Sandboxes-Übersicht mit Quick-Actions */}
               <ProjectSandboxesView projectId={detail.project.id} projectName={detail.project.name} />

@@ -715,8 +715,9 @@ export class HttpAdapter extends MessagingAdapter {
     update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
     archive: (id: string) => Promise<boolean>;
     addOpenItem: (projectId: string, input: Record<string, unknown>) => Promise<any | null>;
-    /** v704 — Erweitert: status + title + description. Status-only bleibt rückwärtskompatibel. */
-    updateOpenItem: (itemId: string, patch: { status?: string; title?: string; description?: string | null }) => Promise<boolean>;
+    /** v704 — Erweitert: status + title + description. Status-only bleibt rückwärtskompatibel.
+     *  v875 — depends_on: Item-Abhängigkeiten (Array von Item-IDs; null/[] löscht). */
+    updateOpenItem: (itemId: string, patch: { status?: string; title?: string; description?: string | null; depends_on?: string[] | null }) => Promise<boolean>;
     /** v815 P1 — manuelle Decision-Erstellung (vorher nur via Session-Summary). */
     addDecision?: (projectId: string, input: { title: string; choice: string; rationale?: string }) => Promise<any | null>;
     listHealthLog: (id: string, limit: number) => Promise<any[]>;
@@ -731,6 +732,8 @@ export class HttpAdapter extends MessagingAdapter {
     pipelineStatus?: (projectId: string) => Promise<{ pipelines: Array<{ provider: string; state: string; url?: string; ref: string }>; reason?: string }>;
     /** v874 — offene MRs/PRs des Projekts je konfiguriertem Forge-Provider. */
     listMergeRequests?: (projectId: string) => Promise<{ mergeRequests: Array<Record<string, unknown>>; reason?: string }>;
+    /** v875 — Wochen-Budget-Status (Soft-Budget + CLI-Kosten der letzten 7 Tage). */
+    budgetStatus?: (projectId: string) => Promise<{ budgetWeeklyUsd: number | null; spent7dUsd: number; error?: string }>;
     /** v873 — Docs-Tab: Markdown-Dateien des Projekt-CWDs auflisten/lesen (traversal-sicher). */
     listDocs?: (projectId: string) => Promise<{ files: Array<{ path: string; sizeBytes: number; modifiedAt: string }>; error?: string }>;
     readDoc?: (projectId: string, relPath: string) => Promise<Record<string, unknown>>;
@@ -1388,6 +1391,9 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/merge-requests$/) && req.method === 'GET') {
       // v874 — offene MRs/PRs (Forge-API)
       this.handleProjectsMergeRequests(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/budget$/) && req.method === 'GET') {
+      // v875 — Wochen-Budget-Status (Soft-Budget)
+      this.handleProjectsBudget(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/docs$/) && req.method === 'GET') {
       // v873 — Docs-Tab: Markdown-Liste
       this.handleProjectsListDocs(req, res, url).catch(err => this.safeError(res, err));
@@ -3061,11 +3067,11 @@ export class HttpAdapter extends MessagingAdapter {
     if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const itemId = url.pathname.split('/').pop()!;
     const body = await this.readBody(req);
-    let patch: { status?: string; title?: string; description?: string | null };
+    let patch: { status?: string; title?: string; description?: string | null; depends_on?: string[] | null };
     try { patch = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
-    if (!patch.status && patch.title == null && patch.description === undefined) {
+    if (!patch.status && patch.title == null && patch.description === undefined && patch.depends_on === undefined) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'status, title oder description required' }));
+      res.end(JSON.stringify({ error: 'status, title, description oder depends_on required' }));
       return;
     }
     const ok = await this.projectsCallbacks.updateOpenItem(itemId, patch);
@@ -3106,6 +3112,19 @@ export class HttpAdapter extends MessagingAdapter {
     const parts = url.pathname.split('/');
     const projectId = parts[parts.length - 2];
     const result = await this.projectsCallbacks.pipelineStatus(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v875 — GET /api/projects/:id/budget — Wochen-Soft-Budget + CLI-Kosten 7d. */
+  private async handleProjectsBudget(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.budgetStatus) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.budgetStatus(projectId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }

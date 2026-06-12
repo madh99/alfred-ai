@@ -516,6 +516,18 @@ ${decLines.join('\n') || '  _keine_'}`;
     const maxItems = (input.max_items as number) ?? 10;
 
     let items = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress']);
+    // v875 — blockierte Items überspringen: eine Abhängigkeit (depends_on)
+    // blockiert, solange sie nicht done/cancelled ist. Deterministisch hier,
+    // nicht nur als Prompt-Hinweis.
+    let skippedBlocked: string[] = [];
+    {
+      const allActive = items;
+      const activeIds = new Map(allActive.map(i => [i.id, i]));
+      const isBlocked = (it: { dependsOn?: string[] }): boolean =>
+        (it.dependsOn ?? []).some(depId => activeIds.has(depId)); // aktive (open/in_progress) Abhängigkeit = blockiert
+      skippedBlocked = allActive.filter(isBlocked).map(i => i.title);
+      items = allActive.filter(i => !isBlocked(i));
+    }
     if (requestedIds && requestedIds.length > 0) {
       items = items.filter(i => requestedIds.includes(i.id) || requestedIds.some(p => i.id.startsWith(p)));
     }
@@ -527,7 +539,14 @@ ${decLines.join('\n') || '  _keine_'}`;
       return a.createdAt.localeCompare(b.createdAt);
     });
     items = items.slice(0, maxItems);
-    if (items.length === 0) return { success: false, error: 'Keine offenen Items zum Abarbeiten gefunden' };
+    if (items.length === 0) {
+      return {
+        success: false,
+        error: skippedBlocked.length > 0
+          ? `Keine abarbeitbaren Items: ${skippedBlocked.length} sind durch Abhängigkeiten blockiert (${skippedBlocked.slice(0, 3).join(' | ').slice(0, 200)}${skippedBlocked.length > 3 ? ' …' : ''}). Erst die Abhängigkeiten erledigen.`
+          : 'Keine offenen Items zum Abarbeiten gefunden',
+      };
+    }
 
     // Fallback-Goal (Template) — wird genutzt wenn die LLM-Aufbereitung scheitert
     const templateGoal = [
@@ -684,7 +703,7 @@ ${decLines.join('\n') || '  _keine_'}`;
       return {
         success: true,
         data: { mode: 'code', liveTaskId, projectId, items: itemIds },
-        display: `🚀 Code-Agent gestartet (Hintergrund) — ${items.length} Item(s) auf "in Arbeit". Live-Output im Panel; bei Erfolg automatisch erledigt, bei Fehlschlag mit Notiz wieder geöffnet. Telegram-Meldung folgt.`,
+        display: `🚀 Code-Agent gestartet (Hintergrund) — ${items.length} Item(s) auf "in Arbeit". Live-Output im Panel; bei Erfolg automatisch erledigt, bei Fehlschlag mit Notiz wieder geöffnet. Telegram-Meldung folgt.${skippedBlocked.length > 0 ? `\n⛓ ${skippedBlocked.length} Item(s) wegen offener Abhängigkeiten übersprungen.` : ''}`,
       };
     }
 
@@ -695,7 +714,7 @@ ${decLines.join('\n') || '  _keine_'}`;
       return {
         success: true,
         data: { mode: 'project', taskId, projectId, items: itemIds },
-        display: `▶ Project-Agent gestartet (taskId ${taskId.slice(0, 8)}) mit ${items.length} Item(s).\n\nNach erfolgreichem Abschluss werden genau diese Items automatisch als erledigt markiert.`,
+        display: `▶ Project-Agent gestartet (taskId ${taskId.slice(0, 8)}) mit ${items.length} Item(s).\n\nNach erfolgreichem Abschluss werden genau diese Items automatisch als erledigt markiert.${skippedBlocked.length > 0 ? `\n⛓ ${skippedBlocked.length} Item(s) wegen offener Abhängigkeiten übersprungen.` : ''}`,
       };
     } catch (err) {
       return { success: false, error: `Project-Agent-Start fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };

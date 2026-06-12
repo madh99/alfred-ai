@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.875] - 2026-06-12
+
+### Added — Projects „Planung & Kontrolle": Kosten-Budget + Item-Abhängigkeiten (v875)
+
+- **Wochen-Kosten-Budget pro Projekt** (Soft-Limit):
+  `projects.cost_budget_weekly_usd` (Migration SQLite v106 / PG v110).
+  Neue Sektion „💸 Kosten-Budget" im Projekt-Detail mit Wochenbalken
+  (CLI-Agent-Kosten der letzten 7 Tage aus `cli_agent_runs` gegen das
+  Budget, >80 % amber, Überschreitung rot). Beim Start eines
+  Project-Agent-Laufs warnt eine Budget-Meldung bei Überschreitung —
+  der Lauf startet trotzdem (bewusst kein Hard-Stop, sonst hebelt ein
+  Budget versehentlich Self-Healing aus). Endpoint
+  `GET /api/projects/:id/budget`; nur CLI-Kosten (llm_usage der
+  Chat-Calls bleibt außen vor)
+- **Item-Abhängigkeiten** (`project_open_items.depends_on`,
+  JSON-Array): im Item-Edit als „⛓ Blockiert von …" wählbar
+  (max. 20, nur Items desselben Projekts). Der Server lehnt
+  Selbstbezug und Zyklen ab — auch transitive (A→B→C→A); 10 Tests
+  für Zyklen-/Blockiert-Logik. Die Items-Liste zeigt ein
+  „⛓ blockiert"-Badge solange eine Abhängigkeit offen ist, und
+  **Abarbeiten überspringt blockierte Items deterministisch** (mit
+  Hinweis, wie viele übersprungen wurden). Gelöschte Abhängigkeiten
+  blockieren nicht (kein Für-immer-gesperrt). Bewusst schlank: keine
+  Graph-Visualisierung, keine transitive Auflösung in Audit/Re-Match
+
 ## [0.19.0-multi-ha.874] - 2026-06-12
 
 ### Added — Projects „Forge-Flow": Review-Gate komplett + MR-Liste (v874)

@@ -1655,6 +1655,21 @@ export class Alfred {
             return proj?.conventions;
           } catch { return undefined; }
         });
+        // v875 — Budget-Resolver: cwd → Wochen-Soft-Budget + CLI-Kosten 7d.
+        // Nur Projekte MIT gesetztem Budget liefern einen Wert (sonst kein Check).
+        projectRunner.setBudgetStatusResolver(async (cwd: string) => {
+          if (!this.projectRepo || !this.cliRunsRepoRef) return undefined;
+          const uid = this.tryOwner();
+          if (!uid) return undefined;
+          try {
+            const list = await this.projectRepo.list(uid);
+            const proj = list.find(p => p.cwd === cwd) ?? list.find(p => p.cwd && cwd.startsWith(p.cwd));
+            if (!proj?.costBudgetWeeklyUsd) return undefined;
+            const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const spent7dUsd = await this.cliRunsRepoRef.spentForProjectSince(proj.id, sinceIso);
+            return { budgetWeeklyUsd: proj.costBudgetWeeklyUsd, spent7dUsd };
+          } catch { return undefined; }
+        });
 
         // v665a — Cluster-Lock-Hooks: bei shared Projekten zwingend, bei local skip.
         // Routing-Reject: bei storage_type='local' + falsche node_id → Lock-Verweigerung mit Erklärung.
@@ -9003,6 +9018,12 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           update: async (id: string, patch: Record<string, unknown>) => {
             try {
               const uid = await resolveOwnerProj();
+              // v875 — Budget-Feld koercieren: leere/ungültige Eingaben → null (kein Budget)
+              if ('costBudgetWeeklyUsd' in patch) {
+                const v = patch.costBudgetWeeklyUsd;
+                const n = v === null || v === undefined || v === '' ? null : Number(v);
+                patch.costBudgetWeeklyUsd = n !== null && Number.isFinite(n) && n > 0 ? n : null;
+              }
               return await projRepo.update(uid, id, patch as any);
             } catch (err) { this.logger.warn({ err }, 'Projects API update failed'); return null; }
           },
@@ -9037,7 +9058,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             } catch (err) { this.logger.warn({ err }, 'Projects API addDecision failed'); return null; }
           },
           // v704 — Erweitert: status + title + description
-          updateOpenItem: async (itemId: string, patch: { status?: string; title?: string; description?: string | null }) => {
+          updateOpenItem: async (itemId: string, patch: { status?: string; title?: string; description?: string | null; depends_on?: string[] | null }) => {
             try {
               // v871 — Ownership-Check (vorher: Mutation per beliebiger itemId möglich)
               if (!(await ownsOpenItem(itemId))) return false;
@@ -9045,12 +9066,33 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               if (patch.status && !['open', 'in_progress', 'done', 'cancelled'].includes(patch.status)) return false;
               if (typeof patch.title === 'string') patch.title = patch.title.slice(0, 200);
               if (typeof patch.description === 'string') patch.description = patch.description.slice(0, 4000);
+              // v875 — Abhängigkeiten validieren: nur Items DESSELBEN Projekts,
+              // max. 20, kein Selbstbezug, kein Zyklus (auch transitiv).
+              let dependsOnValidated: string[] | null | undefined;
+              if (patch.depends_on !== undefined) {
+                if (patch.depends_on === null || (Array.isArray(patch.depends_on) && patch.depends_on.length === 0)) {
+                  dependsOnValidated = null; // löschen
+                } else if (Array.isArray(patch.depends_on)) {
+                  const deps = patch.depends_on.filter((d): d is string => typeof d === 'string').slice(0, 20);
+                  const item = await projRepo.getOpenItemByIdRaw(itemId);
+                  if (!item) return false;
+                  const allItems = await projRepo.listOpenItemsForProject(item.projectId, ['open', 'in_progress', 'done', 'cancelled']);
+                  const validIds = new Set(allItems.map(i => i.id));
+                  if (!deps.every(d => validIds.has(d))) return false; // fremde/unbekannte IDs
+                  const { wouldCreateDependencyCycle } = await import('./projects/item-deps.js');
+                  if (wouldCreateDependencyCycle(allItems, itemId, deps)) return false;
+                  dependsOnValidated = deps;
+                } else {
+                  return false;
+                }
+              }
               let anyChange = false;
-              // Field-Update (title/description) zuerst
-              if (patch.title != null || patch.description !== undefined) {
-                const fieldPatch: { title?: string; description?: string | null } = {};
+              // Field-Update (title/description/dependsOn) zuerst
+              if (patch.title != null || patch.description !== undefined || dependsOnValidated !== undefined) {
+                const fieldPatch: { title?: string; description?: string | null; dependsOn?: string[] | null } = {};
                 if (patch.title != null) fieldPatch.title = patch.title;
                 if (patch.description !== undefined) fieldPatch.description = patch.description;
+                if (dependsOnValidated !== undefined) fieldPatch.dependsOn = dependsOnValidated;
                 const ok = await projRepo.updateOpenItemFields(itemId, fieldPatch);
                 if (ok) anyChange = true;
               }
@@ -9256,6 +9298,22 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return await collectOutdatedDeps(project.cwd) as unknown as Record<string, unknown>;
             } catch (err) {
               return { manifest: null, deps: [], error: (err as Error).message.slice(0, 200) };
+            }
+          },
+          // v875 — Wochen-Budget-Status: konfiguriertes Soft-Budget + CLI-Kosten
+          // der letzten 7 Tage (cli_agent_runs). Soft-Limit: nur Anzeige/Warnung.
+          budgetStatus: async (projectId: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return { budgetWeeklyUsd: null, spent7dUsd: 0, error: 'Projekt nicht gefunden' };
+              const sinceIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+              const spent7dUsd = this.cliRunsRepoRef
+                ? await this.cliRunsRepoRef.spentForProjectSince(project.id, sinceIso)
+                : 0;
+              return { budgetWeeklyUsd: project.costBudgetWeeklyUsd ?? null, spent7dUsd };
+            } catch (err) {
+              return { budgetWeeklyUsd: null, spent7dUsd: 0, error: (err as Error).message.slice(0, 200) };
             }
           },
           updateDependencies: async (projectId: string, packages?: string[]) => {

@@ -1800,4 +1800,12 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_cli_runs_source ON cli_agent_runs(source_id)`, []);
     },
   },
+  {
+    version: 110,
+    description: 'v875 — projects.cost_budget_weekly_usd (Soft-Budget für CLI-Kosten) + project_open_items.depends_on (JSON-Array von Item-IDs).',
+    async up(db) {
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS cost_budget_weekly_usd DOUBLE PRECISION`, []);
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS depends_on TEXT`, []);
+    },
+  },
 ];

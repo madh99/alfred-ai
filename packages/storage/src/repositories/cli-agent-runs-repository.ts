@@ -142,4 +142,14 @@ export class CliAgentRunsRepository {
     )).map(r => mapGroup(r, String(r.agent_name), `${r.agent_version ?? '?'} · ${r.model ?? '?'}`));
     return { byType, byAgent };
   }
+
+  /** v875 — CLI-Kosten eines Projekts seit Zeitpunkt (für das Wochen-Soft-Budget).
+   *  started_at ist ISO-8601 → lexikographischer Vergleich ist chronologisch korrekt. */
+  async spentForProjectSince(projectId: string, sinceIso: string): Promise<number> {
+    const row = await this.adapter.queryOne(
+      `SELECT COALESCE(SUM(cost_usd),0) AS spent FROM cli_agent_runs WHERE project_id = ? AND started_at >= ?`,
+      [projectId, sinceIso],
+    ) as Record<string, unknown> | undefined;
+    return Number(row?.spent ?? 0);
+  }
 }
