@@ -1046,7 +1046,38 @@ export class MessagePipeline {
               } else if (ref.kind === 'document') {
                 refBlocks.push(`### 📄 Document: ${ref.label ?? ref.refId}\n- document-id: \`${ref.refId}\` (RAG-indexiert, frage explizit nach Inhalten falls relevant)`);
               } else if (ref.kind === 'file' || ref.kind === 'upload') {
-                refBlocks.push(`### 📎 Datei: ${ref.label ?? ref.refId}\n- file-key: \`${ref.refId}\` (im FileStore, frage falls Inhalt benötigt)`);
+                // v877 — Bild-Refs als ECHTES Bild anhängen (Vision) statt nur als
+                // file-key-Text. Vorher konnte das Chat-LLM hochgeladene Screenshots
+                // prinzipiell nicht sehen ("kann den Screenshot nicht ansehen").
+                // Deterministische Schichten: nur Bild-Endungen, 5-MB-Kappe, max 3
+                // Bilder pro Nachricht; alles andere bleibt exakt der Text-Hinweis.
+                const imgMatch = (ref.label ?? ref.refId).match(/\.(png|jpe?g|gif|webp)$/i);
+                const imagesSoFar = (message.attachments ?? []).filter(a => a.type === 'image').length;
+                let attachedAsImage = false;
+                if (imgMatch && this.fileStore && imagesSoFar < 3) {
+                  try {
+                    const buf = await this.fileStore.read(ref.refId, baseContext.masterUserId);
+                    if (buf.length > 0 && buf.length <= 5 * 1024 * 1024) {
+                      const ext = imgMatch[1].toLowerCase();
+                      const mime = ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+                      message.attachments = [...(message.attachments ?? []), {
+                        type: 'image',
+                        mimeType: mime,
+                        fileName: ref.label ?? ref.refId,
+                        size: buf.length,
+                        data: buf,
+                      }];
+                      refBlocks.push(`### 🖼 Bild: ${ref.label ?? ref.refId}\n(als Bild angehängt — du kannst es direkt sehen; FileStore-Key für Weitergabe an Agents: \`${ref.refId}\`)`);
+                      attachedAsImage = true;
+                      this.logger.info({ key: ref.refId, size: buf.length }, 'v877 upload-ref als Vision-Bild angehängt');
+                    }
+                  } catch (imgErr) {
+                    this.logger.debug({ imgErr, key: ref.refId }, 'v877 image-ref read failed — Fallback Text-Hinweis');
+                  }
+                }
+                if (!attachedAsImage) {
+                  refBlocks.push(`### 📎 Datei: ${ref.label ?? ref.refId}\n- file-key: \`${ref.refId}\` (im FileStore, frage falls Inhalt benötigt)`);
+                }
               } else if (ref.kind === 'url') {
                 refBlocks.push(`### 🔗 URL: ${ref.label ?? ref.refId}\n${ref.refId}`);
               }

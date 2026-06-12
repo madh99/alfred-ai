@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.877] - 2026-06-12
+
+### Added
+
+- **Sortierung der offenen Punkte**: Dropdown neben dem Prio-Filter —
+  Älteste zuerst (Default, bisheriges Verhalten), Neueste zuerst,
+  Priorität (high → low), Thema/Milestone (nach `roadmap_milestone`
+  gruppiert, innerhalb nach Roadmap-Reihenfolge). Auswahl wird in
+  localStorage gemerkt
+
+### Fixed
+
+- **Bilder im Projekt-Chat sind jetzt wirklich sichtbar**: Hochgeladene
+  Screenshots (📎/Drag&Drop) wurden bisher nur als file-key-Textzeile in
+  den Prompt eingefügt — das Chat-LLM konnte das Bild prinzipiell nie
+  sehen („kann den Screenshot nicht ansehen"). Bild-Refs (png/jpg/gif/
+  webp) werden jetzt aus dem FileStore gelesen und als echter
+  Vision-Block angehängt (max. 3 Bilder, 5-MB-Kappe; andere Dateitypen
+  unverändert als Text-Hinweis)
+- **Asset-Staging auch im Code-Agent-Pfad**: file-store-Keys im Prompt
+  (z.B. weitergereichter Screenshot) werden jetzt auch bei
+  code_agent-Läufen (Abarbeiten-Code-Modus, Dependency-Update,
+  Deep-Verify) nach `cwd/uploads/` gestaged und der Prompt auf lokale
+  Pfade umgeschrieben — vorher tat das nur der Project-Agent-Runner,
+  der CLI-Agent bekam einen unlesbaren Key
+
 ## [0.19.0-multi-ha.876] - 2026-06-12
 
 ### Added

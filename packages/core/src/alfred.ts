@@ -55,6 +55,7 @@ import {
   appendOutputEvent,
   markOutputEnded,
   createForgeClient,
+  stageAssetsForProject,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
@@ -1811,7 +1812,23 @@ export class Alfred {
             : this.config.discord?.enabled ? 'discord'
             : 'api');
           const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as unknown as import('@alfred/types').SkillContext;
-          const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt, cwd, taskId }, ctx);
+          // v877 — Asset-Bridge auch im code_agent-Pfad: file-store-keys im Prompt
+          // (z.B. Screenshot aus dem Projekt-Chat) werden nach cwd/uploads/ gestaged
+          // und der Prompt auf lokale Pfade umgeschrieben. Vorher staged nur der
+          // project_agent-Runner — der CLI-Agent bekam hier einen unlesbaren Key.
+          let effectivePrompt = prompt;
+          if (this.fileStoreRef) {
+            try {
+              const stage = await stageAssetsForProject(prompt, cwd, this.fileStoreRef);
+              if (stage.staged.length > 0) {
+                effectivePrompt = stage.rewrittenGoal;
+                this.logger.info({ cwd, staged: stage.staged.map(s => s.relativePath) }, 'v877 code-agent asset staging');
+              }
+            } catch (err) {
+              this.logger.debug({ err }, 'v877 code-agent asset staging failed (non-fatal)');
+            }
+          }
+          const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt: effectivePrompt, cwd, taskId }, ctx);
           const data = result.data as { stdout?: string; stderr?: string } | undefined;
           // v870.1 — TAIL-erhaltend kürzen (vorher slice(0, 8000) = Kopf):
           // das Deep-Verify-Verdikt-JSON und Fehler stehen am ENDE des Outputs.

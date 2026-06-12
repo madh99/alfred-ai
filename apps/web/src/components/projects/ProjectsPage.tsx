@@ -144,6 +144,16 @@ export function ProjectsPage() {
   // v871 — Suche + Prio-Filter für die (jetzt vollständige) Open-Items-Liste
   const [itemSearch, setItemSearch] = useState('');
   const [itemPrioFilter, setItemPrioFilter] = useState<'all' | 'high' | 'normal' | 'low'>('all');
+  // v877 — Sortierung der offenen Punkte (Default: älteste zuerst = bisheriges Verhalten)
+  const [itemSort, setItemSort] = useState<'oldest' | 'newest' | 'priority' | 'milestone'>(() => {
+    if (typeof window === 'undefined') return 'oldest';
+    const saved = localStorage.getItem('alfred-item-sort');
+    return (saved === 'newest' || saved === 'priority' || saved === 'milestone') ? saved : 'oldest';
+  });
+  function changeItemSort(s: 'oldest' | 'newest' | 'priority' | 'milestone') {
+    setItemSort(s);
+    try { localStorage.setItem('alfred-item-sort', s); } catch { /* private mode */ }
+  }
   // v871.1 — Reload-Fehler sichtbar machen statt Detail still zu verwerfen
   const [detailError, setDetailError] = useState<string | null>(null);
   // v871.3 — Inline-Notice statt alert()-Wildwuchs (success blendet sich selbst aus)
@@ -907,9 +917,23 @@ export function ProjectsPage() {
                   // vorher zeigte das 200er-Endpoint-Limit nur die neuesten Items)
                   const allActive = detail.openItems.filter(it => it.status === 'open' || it.status === 'in_progress');
                   const q = itemSearch.trim().toLowerCase();
+                  // v877 — Sortierung (Default: älteste zuerst = bisheriges Verhalten)
+                  const PRIO_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
+                  const sortFns: Record<typeof itemSort, (a: ProjectOpenItem, b: ProjectOpenItem) => number> = {
+                    oldest: (a, b) => a.createdAt.localeCompare(b.createdAt),
+                    newest: (a, b) => b.createdAt.localeCompare(a.createdAt),
+                    priority: (a, b) => (PRIO_RANK[a.priority] ?? 1) - (PRIO_RANK[b.priority] ?? 1) || a.createdAt.localeCompare(b.createdAt),
+                    milestone: (a, b) => {
+                      // Items MIT Milestone zuerst (A–Z), innerhalb nach roadmapOrder, Rest nach Alter
+                      const am = a.roadmapMilestone ?? '￿';
+                      const bm = b.roadmapMilestone ?? '￿';
+                      return am.localeCompare(bm) || ((a.roadmapOrder ?? 999) - (b.roadmapOrder ?? 999)) || a.createdAt.localeCompare(b.createdAt);
+                    },
+                  };
                   const activeItems = allActive.filter(it =>
                     (itemPrioFilter === 'all' || it.priority === itemPrioFilter) &&
-                    (!q || it.title.toLowerCase().includes(q) || (it.description ?? '').toLowerCase().includes(q)));
+                    (!q || it.title.toLowerCase().includes(q) || (it.description ?? '').toLowerCase().includes(q)))
+                    .sort(sortFns[itemSort]);
                   const resolvedItems = detail.openItems
                     .filter(it => it.status === 'done' || it.status === 'cancelled')
                     .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''));
@@ -1037,6 +1061,18 @@ export function ProjectsPage() {
                         className={`px-2 py-1 text-[10px] rounded border ${itemPrioFilter === p ? 'bg-blue-500/20 border-blue-500/40 text-blue-300' : 'border-[#1f1f1f] text-gray-500 hover:text-gray-300'}`}
                       >{p === 'all' ? 'Alle' : p === 'high' ? '🔴' : p === 'normal' ? '🟡' : '⚪'}</button>
                     ))}
+                    {/* v877 — Sortierung (localStorage-persistiert) */}
+                    <select
+                      value={itemSort}
+                      onChange={(e) => changeItemSort(e.target.value as typeof itemSort)}
+                      className="px-1.5 py-1 text-[10px] bg-[#0d0d0d] border border-[#2a2a2a] rounded text-gray-400"
+                      title="Sortierung der offenen Punkte"
+                    >
+                      <option value="oldest">Älteste zuerst</option>
+                      <option value="newest">Neueste zuerst</option>
+                      <option value="priority">Priorität</option>
+                      <option value="milestone">Thema/Milestone</option>
+                    </select>
                   </div>
                 )}
                 <div className="space-y-1 mb-2">
