@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.873] - 2026-06-12
+
+### Added — Projects „Docs + Deps": Doku-Tab + Dependency-Panel (v873)
+
+- **Doku-Tab** im Projekt-Detail: rendert die Markdown-Dateien des
+  Projekt-CWDs (Root-`*.md` + `docs/` rekursiv) — Agent-Artefakte wie
+  Security-Reviews, Proposals und Audits sind damit direkt in der UI
+  lesbar statt nur per Repo-Zugriff. Lesen ist traversal-sicher (nur
+  `.md`, kanonischer Pfad muss im cwd liegen, 1-MB-Kappe; 11 Tests
+  inkl. `../`-, verschachtelter und absoluter Pfad-Angriffe).
+  Endpoints: `GET /api/projects/:id/docs` + `…/docs/content?path=…`
+- **Dependency-Panel**: strukturierte Outdated-Tabelle
+  (installiert/wanted/latest, Major-Sprünge markiert) statt des
+  gekürzten Probe-Strings — die deps-Probe warf die npm-outdated-Daten
+  bisher weg. Gemeinsamer Collector (`collectOutdatedDeps`) für Probe
+  und Panel. Endpoint: `GET /api/projects/:id/deps-status`
+- **Dependency-Update-Lauf**: „🔄 Update-Lauf starten" (alle oder
+  ausgewählte Pakete) startet einen async Code-Agent mit Live-Panel —
+  konservative Updates (bevorzugt Semver-Range), Install + Build/Tests
+  als Verifikation, Commit + automatischer Push (v869.4-Sicherungsnetz),
+  Telegram-Meldung am Ende. Gleiche Guards wie der Open-Items-Code-Pfad
+  (max. 1 Code-Lauf pro Projekt). Neue Skill-Action
+  `project.update_dependencies`, Endpoint `POST /api/projects/:id/update-deps`
+
 ## [0.19.0-multi-ha.872] - 2026-06-12
 
 ### Added — Projects „Sichtbarkeit": Repo-Status, CI-Badge, Health-Trend (v872)

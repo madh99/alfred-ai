@@ -22,7 +22,8 @@ type Action =
   | 'list' | 'get' | 'create' | 'rename' | 'set_status' | 'set_health_mode'
   | 'list_open_items' | 'add_open_item' | 'resolve_open_item'
   | 'list_sessions' | 'list_decisions' | 'archive'
-  | 'work_on_open_items' | 'audit_open_items' | 'deep_verify_items';
+  | 'work_on_open_items' | 'audit_open_items' | 'deep_verify_items'
+  | 'update_dependencies';
 
 /** v870 — Deep-Verify-Verdikt eines Items (read-only Codebase-Prüfung). */
 export interface DeepVerifyFinding {
@@ -131,6 +132,7 @@ export class ProjectSkill extends Skill {
             'list_open_items', 'add_open_item', 'resolve_open_item',
             'list_sessions', 'list_decisions', 'archive',
             'work_on_open_items', 'audit_open_items', 'deep_verify_items',
+            'update_dependencies',
           ],
         },
         project_id: { type: 'string', description: 'Project-ID oder Prefix (für get/rename/...)' },
@@ -145,6 +147,7 @@ export class ProjectSkill extends Skill {
         item_status: { type: 'string', description: 'open/in_progress/done/cancelled' },
         title: { type: 'string', description: 'Open-Item-Titel (für add_open_item)' },
         priority: { type: 'string', description: 'low/normal/high' },
+        packages: { type: 'array', items: { type: 'string' }, description: 'Optionale Paket-Teilmenge (für update_dependencies — leer = alle outdated)' },
       },
       required: ['action'],
     },
@@ -227,6 +230,7 @@ export class ProjectSkill extends Skill {
       case 'work_on_open_items': return this.workOnOpenItems(userId, input);
       case 'audit_open_items': return this.auditOpenItems(userId, input);
       case 'deep_verify_items': return this.deepVerifyItems(userId, input);
+      case 'update_dependencies': return this.updateDependencies(userId, input);
       default:
         return { success: false, error: `Unbekannte action "${String(action)}".` };
     }
@@ -721,6 +725,93 @@ ${decLines.join('\n') || '  _keine_'}`;
    * wird NICHT automatisch angewendet — die UI zeigt es im Modal mit
    * Bulk-Aktionen (User entscheidet).
    */
+  /**
+   * v873 — Dependency-Update-Lauf: async Code-Agent aktualisiert outdated Deps
+   * (alle oder eine Teilmenge) und verifiziert per Install + Build/Tests.
+   * Gleiche Mechanik wie der Open-Items-Code-Pfad (v869.3): sofortige Antwort
+   * mit liveTaskId (SSE-Panel), runningCodeJobs-Guard (max. 1 Code-Lauf pro
+   * Projekt), pushProject-Sicherungsnetz (v869.4), Owner-Telegram am Ende.
+   */
+  private async updateDependencies(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.runCodeAgent) return { success: false, error: 'Code-Agent-Runner nicht verkabelt' };
+    const projectId = await this.resolveProjectId(userId, input.project_id as string);
+    if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+    const project = await this.repo.getById(userId, projectId);
+    if (!project) return { success: false, error: 'Project nicht gefunden' };
+    if (!project.cwd) return { success: false, error: 'Project hat keinen cwd' };
+    if (!existsSync(project.cwd)) return { success: false, error: `cwd existiert nicht: ${project.cwd}` };
+    if (!existsSync(path.join(project.cwd, 'package.json'))) {
+      return { success: false, error: 'Kein package.json im Projekt — Dependency-Update aktuell nur für Node-Projekte' };
+    }
+
+    const alreadyRunning = this.runningCodeJobs.get(projectId);
+    if (alreadyRunning) {
+      return { success: false, error: `Für dieses Projekt läuft bereits ein Code-Lauf (${alreadyRunning.slice(0, 8)}). Bitte warten.` };
+    }
+
+    const packages = Array.isArray(input.packages)
+      ? (input.packages as unknown[]).filter((p): p is string => typeof p === 'string' && /^[@a-z0-9._/-]+$/i.test(p)).slice(0, 50)
+      : [];
+
+    const prompt = [
+      `Aktualisiere die veralteten npm-Dependencies des Projekts "${project.name}".`,
+      packages.length > 0
+        ? `NUR diese Pakete: ${packages.join(', ')}`
+        : `Ermittle die veralteten direkten Dependencies selbst (z.B. \`npm outdated --depth=0\`).`,
+      ``,
+      `Regeln:`,
+      `- Konservativ: bevorzuge Updates innerhalb der bestehenden Semver-Range (wanted). Major-Bumps nur, wenn der Changelog/Breaking-Umfang überschaubar ist UND Build + Tests danach grün sind — sonst auslassen und im Abschluss-Kommentar dokumentieren.`,
+      `- Nach den Updates: Install ausführen, dann Build und (falls vorhanden) Tests laufen lassen. Schlägt etwas fehl: betroffenes Update zurücknehmen statt den Build kaputt zu hinterlassen.`,
+      `- Lockfile mitcommitten.`,
+      `- Abschluss: Committe mit aussagekräftiger Message (chore(deps): …). Kein Push nötig — der erfolgt automatisch.`,
+      `- Wenn nichts zu aktualisieren war: kein Commit, kurz dokumentieren warum.`,
+    ].join('\n');
+
+    const liveTaskId = randomUUID();
+    this.runningCodeJobs.set(projectId, liveTaskId);
+    appendOutputLine(liveTaskId, 'system',
+      `📦 Dependency-Update gestartet — ${packages.length > 0 ? packages.join(', ').slice(0, 300) : 'alle veralteten direkten Dependencies'}.`);
+
+    const projectName = project.name;
+    const cwd = project.cwd;
+    void (async () => {
+      try {
+        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId });
+        if (result.success) {
+          let secureNote = '';
+          if (this.pushProject) {
+            try {
+              const push = await this.pushProject({ cwd, commitMessage: `chore(deps): Dependency-Updates${packages.length > 0 ? ` (${packages.join(', ').slice(0, 100)})` : ''}` });
+              secureNote = push.success
+                ? `📤 Gesichert: ${push.summary}`
+                : `⚠️ Push fehlgeschlagen — Änderungen liegen lokal. ${push.summary}`;
+            } catch (err) {
+              secureNote = `⚠️ Sicherungs-Push fehlgeschlagen: ${(err instanceof Error ? err.message : String(err)).slice(0, 150)}`;
+            }
+          }
+          appendOutputLine(liveTaskId, 'system', `✅ Dependency-Update fertig.${secureNote ? `\n${secureNote}` : ''}`);
+          this.ownerNotify?.(`✅ Dependency-Update fertig (${projectName}).${secureNote ? `\n${secureNote}` : ''}`);
+        } else {
+          appendOutputLine(liveTaskId, 'system', `❌ Dependency-Update fehlgeschlagen. Output-Ende: ${result.output.slice(-400)}`);
+          this.ownerNotify?.(`❌ Dependency-Update fehlgeschlagen (${projectName}). Output-Ende: ${result.output.slice(-300)}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)}`);
+        this.ownerNotify?.(`❌ Dependency-Update Fehler (${projectName}): ${msg.slice(0, 300)}`);
+      } finally {
+        this.runningCodeJobs.delete(projectId);
+        try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
+      }
+    })();
+
+    return {
+      success: true,
+      data: { liveTaskId, projectId },
+      display: `📦 Dependency-Update gestartet (Hintergrund) — Live-Output im Panel, Telegram-Meldung am Ende.`,
+    };
+  }
+
   private async deepVerifyItems(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
     if (!this.runCodeAgent) return { success: false, error: 'Code-Agent-Runner nicht verkabelt' };
     const projectId = await this.resolveProjectId(userId, input.project_id as string);

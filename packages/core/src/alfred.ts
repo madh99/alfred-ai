@@ -9183,6 +9183,62 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return { pipelines: [], reason: (err as Error).message.slice(0, 200) };
             }
           },
+          // v873 — Docs-Tab: Markdown-Dateien des Projekt-CWDs (Root + docs/).
+          // readProjectDoc ist traversal-sicher (nur .md, kanonischer Pfad muss
+          // im cwd liegen) — Tests in project-docs.test.ts.
+          listDocs: async (projectId: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project?.cwd) return { files: [], error: project ? 'Projekt hat kein cwd konfiguriert' : 'Projekt nicht gefunden' };
+              const { listProjectDocs } = await import('./projects/project-docs.js');
+              const files = await listProjectDocs(project.cwd);
+              return { files };
+            } catch (err) {
+              return { files: [], error: (err as Error).message.slice(0, 200) };
+            }
+          },
+          readDoc: async (projectId: string, relPath: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project?.cwd) return { error: project ? 'Projekt hat kein cwd konfiguriert' : 'Projekt nicht gefunden' };
+              const { readProjectDoc } = await import('./projects/project-docs.js');
+              const doc = await readProjectDoc(project.cwd, relPath);
+              return doc as unknown as Record<string, unknown>;
+            } catch (err) {
+              return { error: (err as Error).message.slice(0, 200) };
+            }
+          },
+          // v873 — Dependency-Panel: frische strukturierte Outdated-Liste
+          // (gemeinsamer Collector mit der deps-Probe).
+          depsStatus: async (projectId: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project?.cwd) return { manifest: null, deps: [], error: project ? 'Projekt hat kein cwd konfiguriert' : 'Projekt nicht gefunden' };
+              const { collectOutdatedDeps } = await import('./projects/deps-status.js');
+              return await collectOutdatedDeps(project.cwd) as unknown as Record<string, unknown>;
+            } catch (err) {
+              return { manifest: null, deps: [], error: (err as Error).message.slice(0, 200) };
+            }
+          },
+          updateDependencies: async (projectId: string, packages?: string[]) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { ok: false, reason: 'project-skill not registered' };
+              const result = await skill.execute(
+                { action: 'update_dependencies', project_id: projectId, packages },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              if (!result.success) return { ok: false, reason: result.error };
+              const d = result.data as { liveTaskId?: string } | undefined;
+              return { ok: true, liveTaskId: d?.liveTaskId };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
           auditOpenItems: async (projectId: string) => {
             try {
               const uid = await resolveOwnerProj();

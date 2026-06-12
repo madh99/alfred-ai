@@ -33,6 +33,8 @@ import { DeepVerifyModal, type DeepVerifyFinding } from './DeepVerifyModal';
 import { ProjectStorageView } from './ProjectStorageView';
 import { RepoStatusCard } from './RepoStatusCard';
 import { HealthTrendView } from './HealthTrendView';
+import { ProjectDocsView } from './ProjectDocsView';
+import { ProjectDepsView } from './ProjectDepsView';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -1470,6 +1472,14 @@ export function ProjectsPage() {
                 project={detail.project}
                 onSaved={(p) => setDetail({ ...detail, project: p })}
               />
+
+              {/* v873 — Doku (Markdown im Repo) + Dependencies (collapsible) */}
+              {client && detail.project.cwd && (
+                <>
+                  <ProjectDocsView client={client} projectId={detail.project.id} />
+                  <ProjectDepsView client={client} projectId={detail.project.id} notify={notify} />
+                </>
+              )}
 
               {/* v658 — Work-Stats (collapsible) */}
               <ProjectWorkStatsView projectId={detail.project.id} />

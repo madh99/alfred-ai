@@ -1718,6 +1718,40 @@ export class AlfredClient {
     return { pipelines: data.pipelines ?? [], reason: data.reason };
   }
 
+  /** v873 — Docs-Tab: Markdown-Dateien des Projekt-CWDs. */
+  async fetchProjectDocs(id: string): Promise<{ files: ProjectDocFile[]; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/docs`, { headers: this.authHeaders });
+    if (!res.ok) return { files: [], error: `http-${res.status}` };
+    const data = await res.json().catch(() => ({ files: [] }));
+    return { files: data.files ?? [], error: data.error };
+  }
+
+  async fetchProjectDocContent(id: string, path: string): Promise<{ path?: string; content?: string; truncated?: boolean; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/docs/content?path=${encodeURIComponent(path)}`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({ error: `http-${res.status}` }));
+    if (!res.ok) return { error: data.error ?? `http-${res.status}` };
+    return data;
+  }
+
+  /** v873 — Dependency-Panel: strukturierte Outdated-Liste. */
+  async fetchProjectDepsStatus(id: string): Promise<{ manifest: string | null; deps: ProjectOutdatedDep[]; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/deps-status`, { headers: this.authHeaders });
+    if (!res.ok) return { manifest: null, deps: [], error: `http-${res.status}` };
+    const data = await res.json().catch(() => ({ manifest: null, deps: [] }));
+    return { manifest: data.manifest ?? null, deps: data.deps ?? [], error: data.error };
+  }
+
+  /** v873 — Dependency-Update-Lauf starten (async Code-Agent, liveTaskId für SSE-Panel). */
+  async projectUpdateDeps(id: string, packages?: string[]): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/update-deps`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ packages: packages && packages.length > 0 ? packages : undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return { ok: true, liveTaskId: data.liveTaskId };
+  }
+
   async updateKgRelation(relationId: string, updates: Record<string, unknown>): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/knowledge-graph/relation/${relationId}`, {
       method: 'PATCH',
@@ -2803,6 +2837,22 @@ export interface ProjectPipelineInfo {
   state: 'pending' | 'running' | 'success' | 'failure' | 'unknown';
   url?: string;
   ref: string;
+}
+
+/** v873 — Markdown-Datei im Projekt-CWD (Docs-Tab). */
+export interface ProjectDocFile {
+  path: string;
+  sizeBytes: number;
+  modifiedAt: string;
+}
+
+/** v873 — veraltete direkte Dependency (Dependency-Panel). */
+export interface ProjectOutdatedDep {
+  name: string;
+  current?: string;
+  wanted?: string;
+  latest?: string;
+  type?: string;
 }
 
 // v699 — Sandbox-Types

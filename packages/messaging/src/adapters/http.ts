@@ -729,6 +729,12 @@ export class HttpAdapter extends MessagingAdapter {
     repoStatus?: (projectId: string) => Promise<Record<string, unknown>>;
     /** v872 — CI-Pipeline-Status des aktuellen Branches je konfiguriertem Forge-Provider. */
     pipelineStatus?: (projectId: string) => Promise<{ pipelines: Array<{ provider: string; state: string; url?: string; ref: string }>; reason?: string }>;
+    /** v873 — Docs-Tab: Markdown-Dateien des Projekt-CWDs auflisten/lesen (traversal-sicher). */
+    listDocs?: (projectId: string) => Promise<{ files: Array<{ path: string; sizeBytes: number; modifiedAt: string }>; error?: string }>;
+    readDoc?: (projectId: string, relPath: string) => Promise<Record<string, unknown>>;
+    /** v873 — Dependency-Panel: strukturierte Outdated-Liste + Update-Lauf (async Code-Agent). */
+    depsStatus?: (projectId: string) => Promise<Record<string, unknown>>;
+    updateDependencies?: (projectId: string, packages?: string[]) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
     // v642 — Bulk-Close
     bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
@@ -1377,6 +1383,18 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/pipeline-status$/) && req.method === 'GET') {
       // v872 — CI-Pipeline-Badge (Forge-API)
       this.handleProjectsPipelineStatus(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/docs$/) && req.method === 'GET') {
+      // v873 — Docs-Tab: Markdown-Liste
+      this.handleProjectsListDocs(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/docs\/content$/) && req.method === 'GET') {
+      // v873 — Docs-Tab: Datei-Inhalt (?path=…)
+      this.handleProjectsReadDoc(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deps-status$/) && req.method === 'GET') {
+      // v873 — Dependency-Panel: strukturierte Outdated-Liste
+      this.handleProjectsDepsStatus(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/update-deps$/) && req.method === 'POST') {
+      // v873 — Dependency-Update-Lauf (async Code-Agent)
+      this.handleProjectsUpdateDeps(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-on-items$/) && req.method === 'POST') {
       this.handleProjectsWorkOnItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deep-verify$/) && req.method === 'POST') {
@@ -3084,6 +3102,62 @@ export class HttpAdapter extends MessagingAdapter {
     const projectId = parts[parts.length - 2];
     const result = await this.projectsCallbacks.pipelineStatus(projectId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v873 — GET /api/projects/:id/docs — Markdown-Dateien des Projekt-CWDs. */
+  private async handleProjectsListDocs(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listDocs) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.listDocs(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v873 — GET /api/projects/:id/docs/content?path=… — Markdown-Inhalt (traversal-sicher im Callback). */
+  private async handleProjectsReadDoc(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.readDoc) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 3];
+    const relPath = url.searchParams.get('path') ?? '';
+    const result = await this.projectsCallbacks.readDoc(projectId, relPath);
+    res.writeHead('error' in result ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v873 — GET /api/projects/:id/deps-status — strukturierte Outdated-Dependency-Liste. */
+  private async handleProjectsDepsStatus(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.depsStatus) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.depsStatus(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v873 — POST /api/projects/:id/update-deps {packages?} — async Dependency-Update-Lauf. */
+  private async handleProjectsUpdateDeps(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.updateDependencies) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { packages?: string[] };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const result = await this.projectsCallbacks.updateDependencies(projectId, data.packages);
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }
 
