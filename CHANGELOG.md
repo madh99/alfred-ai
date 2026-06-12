@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.871.2] - 2026-06-12
+
+### Fixed — Projects-Review Paket P3: Performance (v871.2)
+
+Alle vier Befunde am Code verifiziert, dann behoben:
+
+- **N+1 in `list_open_items`**: `formatOpenItem` machte einen
+  `getById`-Roundtrip PRO Item (445 Items → 445 Queries). Jetzt:
+  Projektnamen einmal pro distinct projectId aufgelöst
+- **`getCurrentHealthSummary`**: 4 sequenzielle Queries bei JEDEM
+  UI-Detail-Load → eine Query (letzte 60 Einträge, neuester pro Probe
+  clientseitig)
+- **Audit-Duplikat-Detektion**: tokenisierte das Vergleichs-Item im
+  inneren Loop jedes Mal neu (~99k Regex-Tokenisierungen bei 445 Items,
+  Event-Loop-Hänger) → Tokens einmal vorberechnet, innerer Loop nur
+  noch Set-Vergleiche ohne Array-Spreads
+- **`resolveProjectId`**: lud ALLE Projekte des Users und suchte in JS
+  → DB-seitige Auflösung per ID-Prefix/Namens-LIKE
+  (`findIdByPrefixOrName`, Wildcards escaped, neuestes Projekt gewinnt)
+
 ## [0.19.0-multi-ha.871.1] - 2026-06-12
 
 ### Fixed — Projects-Review Paket P2: Korrektheit (v871.1)

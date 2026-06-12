@@ -368,7 +368,17 @@ ${decLines.join('\n') || '  _keine_'}`;
     const status = (input.item_status as OpenItemStatus | undefined) ?? 'open';
     const items = await this.repo.listOpenItems(userId, { projectId, status });
     if (items.length === 0) return { success: true, data: [], display: '_Keine offenen Punkte._' };
-    const lines = await Promise.all(items.map(async it => this.formatOpenItem(userId, it)));
+    // v871.2 — N+1-Fix: vorher getById pro Item (445 Items → 445 Queries).
+    // Jetzt: Projektnamen einmal pro DISTINCT projectId auflösen.
+    const nameByProjectId = new Map<string, string>();
+    for (const pid of new Set(items.map(i => i.projectId))) {
+      try {
+        const p = await this.repo.getById(userId, pid);
+        nameByProjectId.set(pid, p?.name ?? '?');
+      } catch { nameByProjectId.set(pid, '?'); }
+    }
+    const lines = items.map(it =>
+      `- ${this.priorityIcon(it.priority)} **${it.title}** _(${nameByProjectId.get(it.projectId) ?? '?'})_ · ID: ${it.id.slice(0, 8)}`);
     return { success: true, data: items, display: `## Offene Punkte (${items.length})\n\n${lines.join('\n')}` };
   }
 
@@ -872,15 +882,21 @@ ${decLines.join('\n') || '  _keine_'}`;
     // Title-Similarity-Duplikat-Detektion
     const used = new Set<string>();
     const duplicateGroups: Array<ProjectOpenItem[]> = [];
+    // v871.2 — Tokens EINMAL pro Item vorberechnen. Vorher wurde tokB im inneren
+    // Loop jedes Mal neu tokenisiert: bei 445 Items ~99k Tokenisierungen + Regex-
+    // Splits im Event-Loop. Jetzt: O(n) Tokenisierung, O(n²) nur Set-Vergleiche.
+    const tokens: Array<Set<string>> = allItems.map(it =>
+      new Set(it.title.toLowerCase().split(/\s+/).filter(t => t.length >= 4)));
     for (let i = 0; i < allItems.length; i++) {
       if (used.has(allItems[i].id)) continue;
-      const tokA = new Set(allItems[i].title.toLowerCase().split(/\s+/).filter(t => t.length >= 4));
+      const tokA = tokens[i];
       const group: ProjectOpenItem[] = [allItems[i]];
       for (let j = i + 1; j < allItems.length; j++) {
         if (used.has(allItems[j].id)) continue;
-        const tokB = new Set(allItems[j].title.toLowerCase().split(/\s+/).filter(t => t.length >= 4));
-        const intersection = [...tokA].filter(t => tokB.has(t)).length;
-        const union = new Set([...tokA, ...tokB]).size;
+        const tokB = tokens[j];
+        let intersection = 0;
+        for (const t of tokA) if (tokB.has(t)) intersection++;
+        const union = tokA.size + tokB.size - intersection;
         const jaccard = union === 0 ? 0 : intersection / union;
         if (jaccard >= 0.7) { group.push(allItems[j]); used.add(allItems[j].id); }
       }
@@ -997,8 +1013,8 @@ ${decLines.join('\n') || '  _keine_'}`;
   private async resolveProjectId(userId: string, input: string): Promise<string | null> {
     if (!input) return null;
     if (input.length === 36) return input;
-    const all = await this.repo.list(userId);
-    return all.find(p => p.id.startsWith(input) || p.name.toLowerCase().includes(input.toLowerCase()))?.id ?? null;
+    // v871.2 — DB-seitig statt repo.list() + .find() (lud ALLE Projekte des Users)
+    return this.repo.findIdByPrefixOrName(userId, input);
   }
 }
 

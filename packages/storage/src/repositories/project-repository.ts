@@ -872,6 +872,22 @@ export class ProjectRepository {
   }
 
   /**
+   * v871.2 — DB-seitige Projekt-Auflösung per ID-Prefix oder Namens-Substring
+   * (vorher: repo.list() lud ALLE Projekte des Users + .find() in JS).
+   * LIKE-Wildcards im Input werden escaped.
+   */
+  async findIdByPrefixOrName(userId: string, query: string): Promise<string | null> {
+    const escaped = query.replace(/[%_\\]/g, (c) => `\\${c}`);
+    const row = await this.adapter.queryOne(
+      `SELECT id FROM projects
+       WHERE user_id = ? AND (id LIKE ? ESCAPE '\\' OR LOWER(name) LIKE ? ESCAPE '\\')
+       ORDER BY last_active_at DESC LIMIT 1`,
+      [userId, `${escaped}%`, `%${escaped.toLowerCase()}%`],
+    ) as { id?: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  /**
    * v871.1 — Alle distinct `implementing:<taskId>`-Marker auf in_progress-Items.
    * Für den Startup-Aufräumer: verwaiste Marker (Task terminal/unbekannt nach
    * Restart) werden zurück auf open gesetzt statt ewig in_progress zu hängen.
@@ -1017,10 +1033,25 @@ export class ProjectRepository {
 
   /** Get the most recent entry per probe — used for the dashboard summary. */
   async getCurrentHealthSummary(projectId: string): Promise<Partial<Record<HealthProbe, ProjectHealthEntry>>> {
+    // v871.2 — EINE Query statt 4 sequenzieller (lief bei jedem UI-Detail-Load):
+    // letzte ~60 Einträge holen, neuesten pro Probe clientseitig picken.
     const out: Partial<Record<HealthProbe, ProjectHealthEntry>> = {};
-    for (const probe of ['git', 'build', 'deps', 'http'] as HealthProbe[]) {
-      const latest = await this.getLatestHealth(projectId, probe);
-      if (latest) out[probe] = latest;
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_health_log WHERE project_id = ? ORDER BY checked_at DESC LIMIT 60`,
+      [projectId],
+    ) as Record<string, unknown>[];
+    for (const row of rows) {
+      const probe = row.probe as HealthProbe;
+      if (out[probe]) continue; // neuester gewinnt (DESC-sortiert)
+      out[probe] = {
+        id: row.id as string,
+        projectId: row.project_id as string,
+        probe,
+        status: row.status as HealthStatus,
+        details: (row.details as string | null) ?? undefined,
+        durationMs: Number(row.duration_ms ?? 0),
+        checkedAt: row.checked_at as string,
+      };
     }
     return out;
   }
