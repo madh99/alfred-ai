@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.871.3] - 2026-06-12
+
+### Fixed — Projects-Review Paket P4: UX (v871.3)
+
+- **Duplikat-Gruppen sind jetzt lösbar**: Audit-Modal hat pro Gruppe den
+  Button „✓ Erstes behalten, N schließen" (vorher wurden Gruppen nur
+  gemeldet — die Auflösung musste man sich selbst zusammenklicken)
+- **Deep-Verify-Iteration**: Ergebnis-Modal hat „🔬 Nächste 15 prüfen" —
+  schließt das Modal und startet direkt die nächste Tranche (ohne
+  erneuten Bestätigungs-Dialog). Der 445er-Bestand lässt sich damit
+  Tranche für Tranche durchklicken; der Kappen-Hinweis erklärt das
+- **Inline-Notices statt alert()**: Erfolgs-/Fehler-/Info-Meldungen der
+  Items-Aktionen (Abarbeiten-Start, Deep-Verify, Reopen, Item-Edit)
+  erscheinen als farbiges Banner im Detail (Erfolg/Info blendet sich
+  nach 8 s aus, Fehler bleibt bis zum Schließen)
+- **„+N weitere" konsistent**: Sessions (>10) und Entscheidungen (>10)
+  zeigen jetzt ehrlich an, dass mehr existieren (vorher stilles
+  Abschneiden; bei Erledigt-Items gab es den Hinweis bereits)
+
+Damit sind alle vier Pakete des Projects-Reviews vom 12.06. umgesetzt
+(P1 Items+Ownership, P2 Korrektheit, P3 Performance, P4 UX).
+
 ## [0.19.0-multi-ha.871.2] - 2026-06-12
 
 ### Fixed — Projects-Review Paket P3: Performance (v871.2)

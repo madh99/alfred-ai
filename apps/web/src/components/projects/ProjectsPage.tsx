@@ -141,6 +141,12 @@ export function ProjectsPage() {
   const [itemPrioFilter, setItemPrioFilter] = useState<'all' | 'high' | 'normal' | 'low'>('all');
   // v871.1 — Reload-Fehler sichtbar machen statt Detail still zu verwerfen
   const [detailError, setDetailError] = useState<string | null>(null);
+  // v871.3 — Inline-Notice statt alert()-Wildwuchs (success blendet sich selbst aus)
+  const [pageNotice, setPageNotice] = useState<{ kind: 'success' | 'error' | 'info'; text: string } | null>(null);
+  function notify(kind: 'success' | 'error' | 'info', text: string) {
+    setPageNotice({ kind, text });
+    if (kind !== 'error') setTimeout(() => setPageNotice(p => (p?.text === text ? null : p)), 8000);
+  }
   const [auditing, setAuditing] = useState(false);
   // v642 — strukturiertes Audit-Modal
   const [auditData, setAuditData] = useState<any | null>(null);
@@ -204,7 +210,7 @@ export function ProjectsPage() {
       });
     } else if (!ok) {
       // v871.1 — vorher stiller Fehlschlag: Form schloss sich, User glaubte gespeichert
-      alert('Speichern fehlgeschlagen — Änderung wurde NICHT übernommen.');
+      notify('error', 'Speichern fehlgeschlagen — Änderung wurde NICHT übernommen.');
     }
     setItemEditId(null);
   }
@@ -386,7 +392,7 @@ export function ProjectsPage() {
       '',
     );
     if (note === null) return; // abgebrochen
-    if (!note.trim()) { alert('Bitte eine kurze Begründung angeben — sie hilft dem nächsten Agent-Lauf.'); return; }
+    if (!note.trim()) { notify('error', 'Bitte eine kurze Begründung angeben — sie hilft dem nächsten Agent-Lauf.'); return; }
     const dateStr = new Date().toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
     const newDescription = `${item.description ? `${item.description}\n\n` : ''}[Wieder geöffnet ${dateStr}: ${note.trim()}]`;
     const ok = await client.patchProjectOpenItem(item.id, { status: 'open', description: newDescription });
@@ -398,7 +404,7 @@ export function ProjectsPage() {
           : it),
       });
     } else if (!ok) {
-      alert('Wieder-Öffnen fehlgeschlagen.');
+      notify('error', 'Wieder-Öffnen fehlgeschlagen.');
     }
   }
 
@@ -456,24 +462,23 @@ export function ProjectsPage() {
           setCodeRunTaskId(r.liveTaskId);
           loadDetail(detail.project.id); // Items stehen jetzt auf in_progress
         } else {
-          alert(`▶ Project-Agent gestartet${r.taskId ? ` (taskId ${r.taskId.slice(0, 8)})` : ''}.\nNach erfolgreichem Abschluss werden genau diese Items automatisch als erledigt markiert.`);
+          notify('success', `▶ Project-Agent gestartet${r.taskId ? ` (${r.taskId.slice(0, 8)})` : ''} — nach erfolgreichem Abschluss werden genau diese Items automatisch erledigt markiert.`);
         }
       } else {
-        alert(`Fehler: ${r.reason}`);
+        notify('error', `Start fehlgeschlagen: ${r.reason}`);
       }
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
+      notify('error', e instanceof Error ? e.message : String(e));
     } finally { setWorkingOnItems(false); }
   }
 
   // v870 — Deep-Verify: markierte (oder alle) offenen Items read-only gegen die
   // aktuelle Codebase prüfen lassen (echter claude-Lauf, async mit Live-Panel).
-  async function runDeepVerify() {
+  async function runDeepVerify(opts?: { skipConfirm?: boolean }) {
     if (!client || !detail || deepVerifyStarting) return;
     const ids = selectedItemIds.size > 0 ? [...selectedItemIds] : undefined;
-    const count = ids ? ids.length : Math.min(detail.openItems.filter(it => it.status === 'open' || it.status === 'in_progress').length, 15);
-    if (!confirm(
-      `Deep-Verify für ${ids ? `${ids.length} markierte` : `alle offenen (max 15 pro Lauf)`} Items starten?\n\n` +
+    if (!opts?.skipConfirm && !confirm(
+      `Deep-Verify für ${ids ? `${ids.length} markierte` : `alle offenen (max 15 pro Lauf, älteste/wichtigste zuerst)`} Items starten?\n\n` +
       `Ein read-only Code-Agent-Lauf prüft die Punkte gegen die aktuelle Codebase (dauert einige Minuten, nutzt die CLI-Subscription). Es wird NICHTS automatisch geändert — du entscheidest danach im Ergebnis-Modal.`,
     )) return;
     setDeepVerifyStarting(true);
@@ -484,14 +489,13 @@ export function ProjectsPage() {
         setDeepVerifyTaskId(r.liveTaskId);
         setSelectedItemIds(new Set());
         if ((r.skippedForCap ?? 0) > 0) {
-          alert(`Hinweis: ${r.skippedForCap} Items liegen über der Kappe von 15 — bitte in einem weiteren Lauf prüfen.`);
+          notify('info', `🔬 Deep-Verify gestartet (${r.itemCount} Items) — ${r.skippedForCap} weitere liegen über der 15er-Kappe: nach diesem Lauf einfach „Nächste 15 prüfen" im Ergebnis-Modal.`);
         }
-        void count;
       } else {
-        alert(`Deep-Verify-Start fehlgeschlagen: ${r.reason}`);
+        notify('error', `Deep-Verify-Start fehlgeschlagen: ${r.reason}`);
       }
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
+      notify('error', e instanceof Error ? e.message : String(e));
     } finally { setDeepVerifyStarting(false); }
   }
 
@@ -501,7 +505,7 @@ export function ProjectsPage() {
     if (r.status === 'done' && r.findings && r.findings.length > 0) {
       setDeepVerifyFindings(r.findings);
     } else if (r.status === 'failed') {
-      alert(`Deep-Verify fehlgeschlagen: ${r.error ?? 'unbekannt'}`);
+      notify('error', `Deep-Verify fehlgeschlagen: ${r.error ?? 'unbekannt'}`);
     }
   }
 
@@ -708,6 +712,16 @@ export function ProjectsPage() {
           )}
           {detail && (
             <div className="space-y-4">
+              {/* v871.3 — Inline-Notice (ersetzt die prominentesten alert()s) */}
+              {pageNotice && (
+                <div className={`rounded px-3 py-2 text-xs flex items-center gap-2 border ${
+                  pageNotice.kind === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                  : pageNotice.kind === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-300'
+                  : 'bg-blue-500/10 border-blue-500/30 text-blue-200'}`}>
+                  <span className="flex-1 whitespace-pre-wrap">{pageNotice.text}</span>
+                  <button onClick={() => setPageNotice(null)} className="text-gray-500 hover:text-gray-300">×</button>
+                </div>
+              )}
               {/* v871.1 — Reload-Fehler sichtbar (Anzeige kann veraltet sein) */}
               {detailError && (
                 <div className="bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-xs text-red-300 flex items-center gap-2">
@@ -937,7 +951,7 @@ export function ProjectsPage() {
                     >{auditing ? '⏳ Audit läuft…' : '🔍 Audit'}</button>
                     {/* v870 — Deep-Verify: liest den Code wirklich (read-only Agent-Lauf) */}
                     <button
-                      onClick={runDeepVerify}
+                      onClick={() => void runDeepVerify()}
                       disabled={deepVerifyStarting || !!deepVerifyTaskId && !deepVerifyFindings}
                       className="px-2 py-0.5 text-[10px] text-violet-400 hover:bg-violet-500/10 border border-violet-500/30 rounded disabled:opacity-60 disabled:cursor-wait"
                       title="Markierte (oder alle, max 15) Items per read-only Code-Agent-Lauf gegen die AKTUELLE Codebase prüfen — mit Code-Beleg pro Verdikt"
@@ -1309,6 +1323,12 @@ export function ProjectsPage() {
                   items={detail.openItems}
                   onClose={() => { setDeepVerifyFindings(null); setDeepVerifyTaskId(null); }}
                   onApplied={() => loadDetail(detail.project.id)}
+                  onNext={() => {
+                    // v871.3 — Iteration: Modal schließen + nächste Tranche (ohne erneuten Confirm)
+                    setDeepVerifyFindings(null);
+                    setDeepVerifyTaskId(null);
+                    void runDeepVerify({ skipConfirm: true });
+                  }}
                 />
               )}
 
@@ -1332,6 +1352,10 @@ export function ProjectsPage() {
                           repoUrl={detail.project.repoUrl}
                         />
                       ))}
+                      {/* v871.3 — ehrlicher Hinweis statt stillem Abschneiden */}
+                      {detail.sessions.length > 10 && (
+                        <div className="text-[10px] text-gray-600">+{detail.sessions.length - 10} weitere Sessions</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1383,6 +1407,10 @@ export function ProjectsPage() {
                         {d.rationale && <div className="text-gray-500 mt-0.5 ml-2 italic">{d.rationale}</div>}
                       </div>
                     ))}
+                    {/* v871.3 — ehrlicher Hinweis statt stillem Abschneiden */}
+                    {detail.decisions.length > 10 && (
+                      <div className="text-[10px] text-gray-600">+{detail.decisions.length - 10} weitere Entscheidungen</div>
+                    )}
                   </div>
                 )}
                 {decisionsExpanded && detail.decisions.length === 0 && (

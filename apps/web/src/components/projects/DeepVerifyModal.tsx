@@ -29,13 +29,15 @@ const VERDICT_META: Record<DeepVerifyFinding['verdict'], { label: string; cls: s
   obsolete: { label: '🗑️ Obsolet', cls: 'text-red-300' },
 };
 
-export function DeepVerifyModal({ client, findings, items, onClose, onApplied }: {
+export function DeepVerifyModal({ client, findings, items, onClose, onApplied, onNext }: {
   client: AlfredClient;
   findings: DeepVerifyFinding[];
   items: ProjectOpenItem[];
   onClose: () => void;
   /** Nach Anwendung von Ableitungen — Caller lädt das Projekt-Detail neu. */
   onApplied: () => void;
+  /** v871.3 — startet den nächsten Deep-Verify-Lauf (nächste 15 älteste/wichtigste). */
+  onNext?: () => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -149,6 +151,15 @@ export function DeepVerifyModal({ client, findings, items, onClose, onApplied }:
           <span className="text-xs text-gray-500">{selected.size} ausgewählt</span>
           <div className="flex-1" />
           <button onClick={onClose} className="px-3 py-1 text-xs text-gray-400 hover:text-gray-200 border border-[#2a2a2a] rounded">Schließen</button>
+          {/* v871.3 — Iteration: nach dem Anwenden direkt die nächste Tranche prüfen */}
+          {onNext && (
+            <button
+              onClick={onNext}
+              disabled={busy}
+              className="px-3 py-1 text-xs bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded"
+              title="Schließt das Modal und startet Deep-Verify für die nächsten 15 ältesten/wichtigsten offenen Items"
+            >🔬 Nächste 15 prüfen</button>
+          )}
           <button
             onClick={applySelected}
             disabled={busy || selected.size === 0}

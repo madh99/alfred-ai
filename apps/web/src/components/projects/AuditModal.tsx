@@ -218,7 +218,21 @@ export function AuditModal({ data, onClose, onBulkClose, onBulkWork }: Props) {
             >
               {data.duplicateGroups.map((group, gi) => (
                 <div key={gi} className="border-l-2 border-amber-500/30 pl-2 my-1">
-                  <div className="text-[10px] text-amber-400/70 uppercase mb-1">Gruppe {gi + 1} ({group.length})</div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[10px] text-amber-400/70 uppercase">Gruppe {gi + 1} ({group.length})</span>
+                    {/* v871.3 — Direkt-Aktion: vorher wurden Gruppen nur gemeldet, nicht lösbar */}
+                    <button
+                      onClick={async () => {
+                        if (busy !== null) return;
+                        if (!confirm(`"${group[0].title.slice(0, 60)}" behalten und die ${group.length - 1} Duplikat(e) als erledigt schließen?`)) return;
+                        setBusy('close');
+                        try { await onBulkClose(group.slice(1).map(i => i.id)); }
+                        finally { setBusy(null); }
+                      }}
+                      disabled={busy !== null}
+                      className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded hover:bg-amber-500/20 disabled:opacity-50"
+                    >✓ Erstes behalten, {group.length - 1} schließen</button>
+                  </div>
                   {group.map(i => itemRow(i.id))}
                 </div>
               ))}
