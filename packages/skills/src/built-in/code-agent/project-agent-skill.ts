@@ -571,10 +571,15 @@ ${planSummary}${commits}${userNotes}
 `;
 
     // Start fresh with same cwd + agent
+    // v877.2 — mentioned_item_ids der Quell-Session vererben: vorher verlor der
+    // Resume die Item-Bindung → der v731-Auto-Done lief nach erfolgreichem Resume
+    // ins Leere (Vorfall 12.06.: 5 P1-Items blieben open trotz Fixes+Push; Session
+    // 6338c02a hatte mentioned_item_ids=NULL, Quelle 0abe8271 trug sie).
     const startInput = {
       cwd: failed.cwd,
       goal: continuationGoal,
       agent: failed.agentName,
+      mentioned_item_ids: failed.mentionedItemIds,
       _resumedFromTaskId: failedTaskId, // internal marker
     };
     const result = await this.startProject(startInput, context);

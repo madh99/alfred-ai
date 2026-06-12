@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.877.2] - 2026-06-12
+
+### Fixed
+
+- **Resume vererbt jetzt die Item-Bindung**: Beim Fortsetzen eines
+  fehlgeschlagenen Project-Agent-Laufs verlor die neue Session die
+  `mentioned_item_ids` der Quell-Session — der v731-Auto-Done-Mechanismus
+  lief nach erfolgreichem Resume ins Leere, die abgearbeiteten Open-Items
+  blieben auf `open` (Vorfall 12.06.: 5 P1-Items trotz implementierter +
+  gepushter Fixes). Resume reicht die Liste jetzt an die neue Session
+  durch; nach Erfolg werden genau diese Items wieder automatisch erledigt
+
 ## [0.19.0-multi-ha.877.1] - 2026-06-12
 
 ### Fixed — Phantom-Fix-Loop bei Test-Timeout (v877.1)
