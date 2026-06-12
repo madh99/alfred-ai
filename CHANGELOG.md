@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.882] - 2026-06-13
+
+### Added — Automation-Templates: Versprechen wahr machen, Teil 2 (v882)
+
+- **`runVia: deep_agent`**: Templates können als echter CLI-Agent-Lauf im
+  Repo ausgeführt werden (statt 1-Call-LLM über Metadaten). Umgestellt:
+  **Onboarding-Doc** und **ADR** — beide schreiben ihre Dateien jetzt
+  WIRKLICH (`ONBOARDING.md`, `docs/adr/NNNN-*.md`), committen, und der
+  Commit wird deterministisch gepusht (vorher versprachen die
+  Beschreibungen Dateien, der Output war Chat-Text)
+- **Neues Template „🔬 Deep-Code-Review (Agent)"**: read-only Agent-Lauf
+  mit Selbst-Hinterfragung — Bugs/Security mit echtem Datei:Zeile-Beleg
+  (das Quick-Template „Code-Review" bleibt als günstiger Diff-Check)
+- **Neues Template „⚙ Auto-Rebase ausführen"** (deterministisch, kein
+  LLM): rebased konfliktfreie Feature-Branches wirklich — nur bei
+  sauberem Working-Tree, nur was der merge-tree-Dry-Run als konfliktfrei
+  einstuft, `rebase --abort` bei Fehlschlag, Rückkehr zum
+  Ausgangs-Branch, kein Push. Opt-in über die Template-Wahl
+- **Neues Template „🚨 Security-Incident-Gate"** (deterministisch):
+  `npm audit --json` wird ausgewertet — bei CRITICAL wird wirklich ein
+  **ITSM-Incident** angelegt (mit betroffenen Paketen; Dedup gegen
+  bereits offene Incidents)
+- Bestehende Automations ändern ihr Verhalten NICHT — die
+  Aktions-Stufen sind eigene, bewusst zu wählende Templates
+
 ## [0.19.0-multi-ha.881] - 2026-06-13
 
 ### Changed — Automation-Templates: Versprechen wahr machen, Teil 1 (v881)

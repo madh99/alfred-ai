@@ -34,6 +34,10 @@ export type AutomationTemplateKind =
   | 'adr_decisions'
   | 'demo_day_prep'
   | 'recurring_bug_detector'
+  // v882 — Agent-/Aktions-Templates (echte Läufe/Aktionen statt LLM-Text):
+  | 'deep_code_review'
+  | 'auto_rebase_execute'
+  | 'security_incident_gate'
   // Custom:
   | 'custom';
 

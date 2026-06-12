@@ -29,6 +29,12 @@ export interface AutomationDataProviders {
   costStats?: (projectId: string) => Promise<string>;
   /** Offene MRs/PRs via Forge-API (GitLab/GitHub — nicht nur gh). */
   forgePrs?: (cwd: string) => Promise<string>;
+  /** v882 — echter CLI-Agent-Lauf im Repo (für runVia: 'deep_agent'). */
+  deepRunner?: (opts: { cwd: string; prompt: string }) => Promise<{ success: boolean; output: string }>;
+  /** v882 — deterministischer Commit+Push (Sicherungsnetz für Datei-schreibende Templates). */
+  pushProject?: (opts: { cwd: string; commitMessage: string }) => Promise<{ success: boolean; summary: string }>;
+  /** v882 — ITSM-Incident anlegen (Security-Gate). Provider dedupliziert selbst. */
+  createIncident?: (projectId: string, input: { title: string; severity: string; symptoms: string }) => Promise<{ created: boolean; id?: string; reason?: string }>;
 }
 
 /**
@@ -148,6 +154,66 @@ export class AutomationEngine {
       contextLines.push('', `## Letzte Decisions`, ...decisions.slice(0, 5).map(d => `- ${d.title}: ${d.choice.slice(0, 100)}`));
     }
 
+    // v882 — Aktions-Templates: deterministisch ausführen, KEIN LLM-Call.
+    // Opt-in über die Template-Wahl selbst (eigene Kinds) — bestehende
+    // Automations ändern ihr Verhalten nicht.
+    if (tmpl.action === 'rebase_clean_branches') {
+      const output = await this.runAutoRebaseExecute(project.cwd);
+      const header = `${tmpl.icon} **${tmpl.label}** — ${project.name}\n`;
+      await this.deliverOutput(auto, header + '\n' + output, project.id);
+      const next = this.computeNextRun(auto.schedule);
+      await this.repo.recordRun(auto.id, 'success', output, next);
+      return output;
+    }
+    if (tmpl.action === 'incident_on_critical') {
+      const output = await this.runSecurityIncidentGate(auto, project.id, project.cwd, project.name);
+      const header = `${tmpl.icon} **${tmpl.label}** — ${project.name}\n`;
+      await this.deliverOutput(auto, header + '\n' + output, project.id);
+      const next = this.computeNextRun(auto.schedule);
+      await this.repo.recordRun(auto.id, 'success', output, next);
+      return output;
+    }
+
+    // v882 — Deep-Agent-Templates: echter CLI-Agent-Lauf im Repo statt
+    // 1-Call-LLM. Damit können Templates wie Onboarding-Doc/ADR ihre
+    // Versprechen (Dateien schreiben, Code wirklich lesen) einlösen.
+    if (tmpl.runVia === 'deep_agent') {
+      if (!this.dataProviders.deepRunner || !project.cwd) {
+        const reason = !project.cwd ? 'Projekt hat kein cwd' : 'Deep-Runner nicht verkabelt';
+        const next = this.computeNextRun(auto.schedule);
+        await this.repo.recordRun(auto.id, 'failed', reason, next);
+        return '';
+      }
+      const finalPromptDeep = auto.promptOverride?.trim() || tmpl.defaultPrompt;
+      const deepPrompt = [
+        contextLines.filter(Boolean).join('\n'),
+        '',
+        '# Aufgabe',
+        finalPromptDeep,
+      ].join('\n');
+      const run = await this.dataProviders.deepRunner({ cwd: project.cwd, prompt: deepPrompt });
+      let output = run.output.length > 4000 ? '[...]\n' + run.output.slice(-4000) : run.output;
+      if (!run.success) {
+        const next = this.computeNextRun(auto.schedule);
+        await this.repo.recordRun(auto.id, 'failed', `Agent-Lauf fehlgeschlagen: ${output.slice(-500)}`, next);
+        await this.deliverOutput(auto, `${tmpl.icon} **${tmpl.label}** — ${project.name}\n\n❌ Agent-Lauf fehlgeschlagen.\n${output.slice(-800)}`, project.id);
+        return '';
+      }
+      // Datei-schreibende Templates: Commit des Agents deterministisch sichern
+      if (tmpl.writesFiles && this.dataProviders.pushProject) {
+        try {
+          const push = await this.dataProviders.pushProject({ cwd: project.cwd, commitMessage: `docs: ${tmpl.label} (Automation)` });
+          output += `\n\n📤 ${push.success ? `Gesichert: ${push.summary}` : `Push fehlgeschlagen: ${push.summary}`}`;
+        } catch { /* best-effort */ }
+      }
+      const header = `${tmpl.icon} **${tmpl.label}** — ${project.name}\n`;
+      await this.deliverOutput(auto, header + '\n' + output, project.id);
+      const next = this.computeNextRun(auto.schedule);
+      await this.repo.recordRun(auto.id, 'success', output, next);
+      this.logger.info({ id: auto.id, kind: auto.templateKind, outputChars: output.length, next }, 'Automation deep-agent run success');
+      return output;
+    }
+
     // 2. Collectors (v881: cost_stats/forge_prs laufen über injizierte Provider — echte DB-/Forge-Daten)
     const collectorOutputs: string[] = [];
     for (const coll of tmpl.collectors ?? []) {
@@ -207,6 +273,106 @@ export class AutomationEngine {
     await this.repo.recordRun(auto.id, 'success', output, next);
     this.logger.info({ id: auto.id, kind: auto.templateKind, outputChars: output.length, next }, 'Automation run success');
     return output;
+  }
+
+  /**
+   * v882 — Auto-Rebase WIRKLICH ausführen (opt-in via eigenes Template):
+   * nur bei sauberem Working-Tree, nur Branches die der merge-tree-Dry-Run
+   * als konfliktfrei einstuft; bei Fehlschlag sofort `rebase --abort` und
+   * zurück auf den Ausgangs-Branch. Deterministisch — kein LLM beteiligt.
+   */
+  private async runAutoRebaseExecute(cwd?: string): Promise<string> {
+    if (!cwd) return '❌ Projekt hat kein cwd.';
+    const lines: string[] = [];
+    try {
+      const { stdout: status } = await execFileAsync('git', ['status', '--porcelain'], { cwd, maxBuffer: 1024 * 1024 });
+      if (status.trim().length > 0) {
+        return '⏭ Übersprungen: Working-Tree ist nicht sauber (uncommittete Änderungen) — kein Rebase auf einem dirty Workspace.';
+      }
+      const { stdout: origRaw } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd, maxBuffer: 64 * 1024 });
+      const original = origRaw.trim();
+      const { stdout: defRaw } = await execFileAsync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', '--short'], { cwd, maxBuffer: 64 * 1024 }).catch(() => ({ stdout: '' }));
+      const defaultBranch = defRaw.trim().replace(/^origin\//, '') || original;
+      const { stdout: branchesRaw } = await execFileAsync('git', ['for-each-ref', 'refs/heads', '--format=%(refname:short)'], { cwd, maxBuffer: 256 * 1024 });
+      const branches = branchesRaw.split('\n').map(s => s.trim()).filter(b => b && b !== defaultBranch && b !== original).slice(0, 10);
+      if (branches.length === 0) return `✓ Keine Feature-Branches zum Rebasen (default: ${defaultBranch}).`;
+      let rebased = 0, skippedConflict = 0, failed = 0;
+      for (const b of branches) {
+        try {
+          const { stdout: counts } = await execFileAsync('git', ['rev-list', '--left-right', '--count', `${defaultBranch}...${b}`], { cwd, maxBuffer: 64 * 1024 });
+          const [behind] = counts.trim().split(/\s+/, 2);
+          if (Number(behind) === 0) { lines.push(`- ${b}: bereits aktuell`); continue; }
+          const { stdout: base } = await execFileAsync('git', ['merge-base', defaultBranch, b], { cwd, maxBuffer: 64 * 1024 });
+          const { stdout: mt } = await execFileAsync('git', ['merge-tree', base.trim(), defaultBranch, b], { cwd, maxBuffer: 4 * 1024 * 1024 }).catch(() => ({ stdout: '<<<<<<<' }));
+          if (mt.includes('<<<<<<<')) {
+            skippedConflict++;
+            lines.push(`- ${b}: ⏭ übersprungen (Konflikt laut Dry-Run — manuell rebasen)`);
+            continue;
+          }
+          try {
+            await execFileAsync('git', ['rebase', defaultBranch, b], { cwd, maxBuffer: 4 * 1024 * 1024, timeout: 60_000 });
+            rebased++;
+            lines.push(`- ${b}: ✓ rebased auf ${defaultBranch} (${behind} Commits aufgeholt)`);
+          } catch (err) {
+            failed++;
+            await execFileAsync('git', ['rebase', '--abort'], { cwd, maxBuffer: 64 * 1024 }).catch(() => undefined);
+            lines.push(`- ${b}: ❌ Rebase fehlgeschlagen trotz Dry-Run — abgebrochen (${(err as Error).message.slice(0, 100)})`);
+          }
+        } catch (err) {
+          lines.push(`- ${b}: ❌ Analyse fehlgeschlagen (${(err as Error).message.slice(0, 80)})`);
+        }
+      }
+      // Immer zurück auf den Ausgangs-Branch (rebase checkt Branches aus)
+      await execFileAsync('git', ['checkout', original], { cwd, maxBuffer: 1024 * 1024 }).catch(() => undefined);
+      lines.unshift(`Auto-Rebase gegen ${defaultBranch}: ${rebased} rebased, ${skippedConflict} mit Konflikt übersprungen, ${failed} fehlgeschlagen. (Nur lokal — kein Push.)`);
+      return lines.join('\n');
+    } catch (err) {
+      return `❌ Auto-Rebase fehlgeschlagen: ${(err as Error).message.slice(0, 200)}`;
+    }
+  }
+
+  /**
+   * v882 — Security-Gate: npm audit deterministisch auswerten; bei CRITICAL
+   * wird über den Provider ein ITSM-Incident angelegt (Provider dedupliziert).
+   * Kein LLM beteiligt — die Zahlen kommen 1:1 aus npm audit.
+   */
+  private async runSecurityIncidentGate(auto: ProjectAutomation, projectId: string, cwd: string | undefined, projectName: string): Promise<string> {
+    if (!cwd) return '❌ Projekt hat kein cwd.';
+    try {
+      const { stdout } = await execFileAsync('npm', ['audit', '--json'], { cwd, maxBuffer: 8 * 1024 * 1024 })
+        .catch((e: { stdout?: string }) => ({ stdout: e.stdout ?? '' }));
+      if (!stdout.trim()) return '⏭ Kein npm-audit-Output (kein package.json oder npm-Fehler).';
+      let parsed: { metadata?: { vulnerabilities?: Record<string, number> }; vulnerabilities?: Record<string, { severity?: string; via?: unknown[] }> };
+      try { parsed = JSON.parse(stdout); } catch { return '⏭ npm-audit-Output nicht parsebar.'; }
+      const counts = parsed.metadata?.vulnerabilities ?? {};
+      const critical = Number(counts.critical ?? 0);
+      const high = Number(counts.high ?? 0);
+      const lines = [`npm audit: ${critical} critical, ${high} high, ${Number(counts.moderate ?? 0)} moderate, ${Number(counts.low ?? 0)} low.`];
+      if (critical > 0) {
+        const criticalNames = Object.entries(parsed.vulnerabilities ?? {})
+          .filter(([, v]) => v.severity === 'critical')
+          .map(([name]) => name)
+          .slice(0, 10);
+        if (this.dataProviders.createIncident) {
+          const r = await this.dataProviders.createIncident(projectId, {
+            title: `Security: ${critical} kritische Vulnerability/ies in ${projectName}`,
+            severity: 'critical',
+            symptoms: `npm audit (Automation ${auto.id.slice(0, 8)}): ${critical} critical, ${high} high.\nBetroffen (critical): ${criticalNames.join(', ') || '(Namen nicht extrahierbar)'}\nNächster Schritt: \`npm audit fix\` prüfen bzw. Dependency-Update-Lauf im Projekt-Detail.`,
+          });
+          lines.push(r.created
+            ? `🚨 ITSM-Incident angelegt: ${r.id?.slice(0, 8) ?? '?'}`
+            : `ℹ Kein neuer Incident: ${r.reason ?? 'bereits ein offener Incident vorhanden'}`);
+        } else {
+          lines.push('⚠ createIncident-Provider nicht verkabelt — kein Incident angelegt.');
+        }
+        lines.push(`Betroffene critical-Pakete: ${criticalNames.join(', ') || '(siehe npm audit)'}`);
+      } else {
+        lines.push('✓ Keine kritischen Vulnerabilities — kein Incident nötig.');
+      }
+      return lines.join('\n');
+    } catch (err) {
+      return `❌ Security-Gate fehlgeschlagen: ${(err as Error).message.slice(0, 200)}`;
+    }
   }
 
   private async runCollector(kind: string, cwd?: string): Promise<string> {

@@ -1209,6 +1209,56 @@ export class Alfred {
               return '';
             }
           },
+          // v882 — echter Agent-Lauf für runVia:'deep_agent'-Templates
+          deepRunner: async ({ cwd, prompt }) => {
+            const codeSkill = this.codeAgentSkillRef;
+            const agentName = this.config.codeAgents?.agents?.[0]?.name;
+            if (!codeSkill || !agentName) return { success: false, output: 'Code-Agent nicht konfiguriert' };
+            const ownerChatId = this.config.security?.ownerUserId ?? '';
+            const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt, cwd }, ctx);
+            const data = result.data as { stdout?: string; stderr?: string } | undefined;
+            const raw = data?.stdout || data?.stderr || result.error || '';
+            return { success: result.success, output: raw.length > 16000 ? raw.slice(-16000) : raw };
+          },
+          // v882 — deterministisches Commit+Push-Sicherungsnetz (Onboarding/ADR)
+          pushProject: async ({ cwd, commitMessage }) => {
+            const codeSkill = this.codeAgentSkillRef;
+            if (!codeSkill) return { success: false, summary: 'Code-Agent-Skill nicht verfügbar' };
+            const ownerChatId = this.config.security?.ownerUserId ?? '';
+            const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const result = await codeSkill.execute({ action: 'push', cwd, commitMessage }, ctx);
+            const d = result.data as { branch?: string; commitSha?: string } | undefined;
+            return {
+              success: result.success,
+              summary: result.success ? `Branch "${d?.branch ?? '?'}"${d?.commitSha ? `, Commit ${d.commitSha.slice(0, 8)}` : ''}` : (result.error ?? 'Fehler').slice(0, 200),
+            };
+          },
+          // v882 — Security-Gate: ITSM-Incident mit Titel-Dedup gegen offene Incidents
+          createIncident: async (_projectId, input) => {
+            try {
+              const itsm = this.skillRegistry?.get('itsm');
+              if (!itsm) return { created: false, reason: 'ITSM-Skill nicht registriert' };
+              const ownerChatId = this.config.security?.ownerUserId ?? '';
+              const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+              // Dedup: existiert ein offener Incident mit gleichem Titel-Anfang?
+              const list = await itsm.execute({ action: 'list_incidents' }, ctx);
+              if (list.success && Array.isArray(list.data)) {
+                const activeStatuses = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
+                const titleKey = input.title.slice(0, 40).toLowerCase();
+                const dup = (list.data as Array<{ id: string; title: string; status: string }>).find(
+                  i => activeStatuses.has(i.status) && i.title.toLowerCase().startsWith(titleKey.split(':')[0].toLowerCase()),
+                );
+                if (dup) return { created: false, id: dup.id, reason: `offener Incident ${dup.id.slice(0, 8)} existiert bereits ("${dup.title.slice(0, 60)}")` };
+              }
+              const r = await itsm.execute({ action: 'create_incident', title: input.title, severity: input.severity, symptoms: input.symptoms }, ctx);
+              if (!r.success) return { created: false, reason: r.error };
+              const d = r.data as { id?: string } | undefined;
+              return { created: true, id: d?.id };
+            } catch (err) {
+              return { created: false, reason: (err as Error).message.slice(0, 150) };
+            }
+          },
         });
         this.automationEngine = engine;
         engine.start();

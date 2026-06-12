@@ -25,6 +25,12 @@ export interface AutomationTemplate {
     | 'git_shortlog' | 'branch_status' | 'license_summary' | 'bench_run'
     | 'cost_stats' | 'forge_prs'
   >;
+  /** v882 — 'deep_agent': echter CLI-Agent-Lauf im Repo statt 1-Call-LLM (kann Code lesen/Dateien schreiben). */
+  runVia?: 'llm' | 'deep_agent';
+  /** v882 — deep_agent-Template schreibt Dateien → Commit wird deterministisch gepusht. */
+  writesFiles?: boolean;
+  /** v882 — deterministische Aktion statt LLM-Call (opt-in über die Template-Wahl). */
+  action?: 'rebase_clean_branches' | 'incident_on_critical';
 }
 
 export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemplate> = {
@@ -171,8 +177,11 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '👋',
     defaultSchedule: 'manual',
     description: 'Generiere ONBOARDING.md aus Architektur-Analyse',
-    defaultPrompt: 'Erstelle ein ONBOARDING.md für neue Repo-Member: (1) Quick-Setup (Clone + Install + Dev-Server). (2) Architektur-Übersicht (Module + ihre Verantwortlichkeiten). (3) Wo starten? — was sollte ein neuer Mitarbeiter zuerst lesen/verstehen. (4) Häufige Tasks + ihre Workflows. Max 200 Zeilen, sehr praktisch.',
-    collectors: ['tree_overview'],
+    // v882 — läuft als echter Agent-Lauf: schreibt die Datei WIRKLICH
+    // (vorher: Beschreibung versprach ONBOARDING.md, Output war nur Chat-Text)
+    defaultPrompt: 'Erstelle oder aktualisiere ONBOARDING.md für neue Repo-Member (analysiere dafür die Codebase wirklich): (1) Quick-Setup (Clone + Install + Dev-Server). (2) Architektur-Übersicht (Module + ihre Verantwortlichkeiten). (3) Wo starten? — was zuerst lesen/verstehen. (4) Häufige Tasks + Workflows. Max 200 Zeilen, sehr praktisch. NUR diese eine Datei ändern, dann committen (docs: …). Kein Push. Antworte am Ende mit einer kurzen Zusammenfassung, was geschrieben/geändert wurde.',
+    runVia: 'deep_agent',
+    writesFiles: true,
   },
   cost_tracking: {
     kind: 'cost_tracking',
@@ -218,7 +227,11 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     icon: '📜',
     defaultSchedule: 'manual',
     description: 'ADR aus letzten project_decisions generieren',
-    defaultPrompt: 'Generiere ADRs (Architecture Decision Records) aus den letzten project_decisions: pro Decision eine Markdown-Datei docs/adr/NNNN-title.md mit Sections: Status, Context, Decision, Consequences, Alternatives. Saubere ADR-Format gemäß Michael Nygard.',
+    // v882 — echter Agent-Lauf: die ADR-Dateien werden WIRKLICH geschrieben
+    // (die letzten Decisions stehen im Projekt-Kontext-Block der Aufgabe)
+    defaultPrompt: 'Generiere ADRs (Architecture Decision Records) aus den im Kontext gelisteten Decisions: pro Decision eine Markdown-Datei docs/adr/NNNN-titel.md (NNNN fortlaufend an bestehende ADRs anschließend) mit Sections: Status, Context, Decision, Consequences, Alternatives — Format gemäß Michael Nygard. Bereits vorhandene ADRs NICHT überschreiben. NUR docs/adr/ ändern, dann committen (docs(adr): …). Kein Push. Antworte am Ende mit der Liste der erstellten Dateien.',
+    runVia: 'deep_agent',
+    writesFiles: true,
   },
   demo_day_prep: {
     kind: 'demo_day_prep',
@@ -237,6 +250,35 @@ export const AUTOMATION_TEMPLATES: Record<AutomationTemplateKind, AutomationTemp
     // v881 — git log mit --name-only: Datei-Gruppierung war vorher unmöglich
     defaultPrompt: 'Recurring-Bug-Analyse (Commits inkl. betroffener Dateien im Collector git_log_files): (1) Bug-fix-Commits der letzten 30 Tage. (2) Gruppiere nach betroffenen Files/Modulen. (3) Pattern: >2 Bugs in derselben Datei. (4) Strukturelle Lösung vorschlagen (Refactoring, Test-Lücke, Architektur-Issue).',
     collectors: ['git_log_files'],
+  },
+
+  // ── v882 — Agent-/Aktions-Templates (echte Läufe/Aktionen, opt-in per Wahl) ──
+  deep_code_review: {
+    kind: 'deep_code_review',
+    label: 'Deep-Code-Review (Agent)',
+    icon: '🔬',
+    defaultSchedule: 'manual',
+    description: 'Echter CLI-Agent-Lauf: liest den Code wirklich (read-only) — Bugs/Security mit Datei:Zeile-Beleg',
+    defaultPrompt: 'Führe ein gründliches READ-ONLY Code-Review der Codebase durch (KEINE Dateiänderungen, KEINE Commits): (1) Bugs/Race-Conditions. (2) Security-Probleme (Auth, Injection, Secrets). (3) Lücken/fehlende Validierung. Pro Befund: Severity (critical/high/medium/low), Datei:Zeile, 1-Satz-Beleg aus dem Code. SELBST-HINTERFRAGEN: prüfe jeden Befund gegen den Kontext (Design-Entscheidung? bereits abgesichert?) bevor du ihn meldest. Maximal 15 Befunde, die wichtigsten zuerst.',
+    runVia: 'deep_agent',
+  },
+  auto_rebase_execute: {
+    kind: 'auto_rebase_execute',
+    label: 'Auto-Rebase ausführen',
+    icon: '⚙',
+    defaultSchedule: 'manual',
+    description: 'Rebased konfliktfreie Feature-Branches WIRKLICH (deterministisch: Dry-Run-Check, Abort bei Fehler, nur lokal, kein Push)',
+    defaultPrompt: '(deterministisch — kein Prompt: sauberer Working-Tree vorausgesetzt; nur Branches, die der merge-tree-Dry-Run als konfliktfrei einstuft; bei Fehlschlag sofort rebase --abort)',
+    action: 'rebase_clean_branches',
+  },
+  security_incident_gate: {
+    kind: 'security_incident_gate',
+    label: 'Security-Incident-Gate',
+    icon: '🚨',
+    defaultSchedule: '0 5 * * 1',
+    description: 'npm audit deterministisch — bei CRITICAL wird wirklich ein ITSM-Incident angelegt (dedupliziert)',
+    defaultPrompt: '(deterministisch — kein Prompt: npm audit --json wird ausgewertet; critical > 0 → ITSM-Incident mit betroffenen Paketen, Dedup gegen offene Incidents)',
+    action: 'incident_on_critical',
   },
 
   custom: {
