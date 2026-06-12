@@ -29,6 +29,7 @@ import { ProjectSandboxesView } from './ProjectSandboxesView';
 import { ProjectDeployHistoryView } from './ProjectDeployHistoryView';
 import { SandboxQuickCreateModal } from './SandboxQuickCreateModal';
 import { CodeRunLivePanel } from './CodeRunLivePanel';
+import { DeepVerifyModal, type DeepVerifyFinding } from './DeepVerifyModal';
 import { ProjectStorageView } from './ProjectStorageView';
 
 const STATUS_BADGES: Record<string, string> = {
@@ -131,6 +132,10 @@ export function ProjectsPage() {
   const [workingOnItems, setWorkingOnItems] = useState(false);
   // v869.3 — Live-Output-Panel für async Open-Items-Code-Läufe
   const [codeRunTaskId, setCodeRunTaskId] = useState<string | null>(null);
+  // v870 — Deep-Verify: Live-Panel-TaskId + Ergebnis-Modal
+  const [deepVerifyTaskId, setDeepVerifyTaskId] = useState<string | null>(null);
+  const [deepVerifyFindings, setDeepVerifyFindings] = useState<DeepVerifyFinding[] | null>(null);
+  const [deepVerifyStarting, setDeepVerifyStarting] = useState(false);
   const [auditing, setAuditing] = useState(false);
   // v642 — strukturiertes Audit-Modal
   const [auditData, setAuditData] = useState<any | null>(null);
@@ -440,6 +445,45 @@ export function ProjectsPage() {
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
     } finally { setWorkingOnItems(false); }
+  }
+
+  // v870 — Deep-Verify: markierte (oder alle) offenen Items read-only gegen die
+  // aktuelle Codebase prüfen lassen (echter claude-Lauf, async mit Live-Panel).
+  async function runDeepVerify() {
+    if (!client || !detail || deepVerifyStarting) return;
+    const ids = selectedItemIds.size > 0 ? [...selectedItemIds] : undefined;
+    const count = ids ? ids.length : Math.min(detail.openItems.filter(it => it.status === 'open' || it.status === 'in_progress').length, 15);
+    if (!confirm(
+      `Deep-Verify für ${ids ? `${ids.length} markierte` : `alle offenen (max 15 pro Lauf)`} Items starten?\n\n` +
+      `Ein read-only Code-Agent-Lauf prüft die Punkte gegen die aktuelle Codebase (dauert einige Minuten, nutzt die CLI-Subscription). Es wird NICHTS automatisch geändert — du entscheidest danach im Ergebnis-Modal.`,
+    )) return;
+    setDeepVerifyStarting(true);
+    try {
+      const r = await client.projectDeepVerify(detail.project.id, ids);
+      if (r.ok && r.liveTaskId) {
+        setDeepVerifyFindings(null);
+        setDeepVerifyTaskId(r.liveTaskId);
+        setSelectedItemIds(new Set());
+        if ((r.skippedForCap ?? 0) > 0) {
+          alert(`Hinweis: ${r.skippedForCap} Items liegen über der Kappe von 15 — bitte in einem weiteren Lauf prüfen.`);
+        }
+        void count;
+      } else {
+        alert(`Deep-Verify-Start fehlgeschlagen: ${r.reason}`);
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally { setDeepVerifyStarting(false); }
+  }
+
+  async function onDeepVerifyEnded() {
+    if (!client || !deepVerifyTaskId) return;
+    const r = await client.projectDeepVerifyResult(deepVerifyTaskId);
+    if (r.status === 'done' && r.findings && r.findings.length > 0) {
+      setDeepVerifyFindings(r.findings);
+    } else if (r.status === 'failed') {
+      alert(`Deep-Verify fehlgeschlagen: ${r.error ?? 'unbekannt'}`);
+    }
   }
 
   // v742/v818 P3 — Re-Match Open-Items mit Inline-Notice (kein alert())
@@ -855,8 +899,15 @@ export function ProjectsPage() {
                       onClick={runAudit}
                       disabled={auditing}
                       className="px-2 py-0.5 text-[10px] text-blue-400 hover:bg-blue-500/10 border border-blue-500/30 rounded disabled:opacity-60 disabled:cursor-wait"
-                      title={auditing ? 'Audit läuft — LLM prüft Items auf Stale/Duplikate/Erledigt' : 'Stale + Duplikate + möglicherweise-erledigte finden'}
+                      title={auditing ? 'Audit läuft — LLM prüft Items auf Stale/Duplikate/Erledigt' : 'Stale + Duplikate + möglicherweise-erledigte finden (Metadaten: Commits + Dateinamen)'}
                     >{auditing ? '⏳ Audit läuft…' : '🔍 Audit'}</button>
+                    {/* v870 — Deep-Verify: liest den Code wirklich (read-only Agent-Lauf) */}
+                    <button
+                      onClick={runDeepVerify}
+                      disabled={deepVerifyStarting || !!deepVerifyTaskId && !deepVerifyFindings}
+                      className="px-2 py-0.5 text-[10px] text-violet-400 hover:bg-violet-500/10 border border-violet-500/30 rounded disabled:opacity-60 disabled:cursor-wait"
+                      title="Markierte (oder alle, max 15) Items per read-only Code-Agent-Lauf gegen die AKTUELLE Codebase prüfen — mit Code-Beleg pro Verdikt"
+                    >{deepVerifyStarting ? '⏳ Starte…' : '🔬 Deep-Verify'}</button>
                   </div>
                 </div>
                 {openItemsExpanded && (<>
@@ -867,6 +918,15 @@ export function ProjectsPage() {
                     taskId={codeRunTaskId}
                     onEnded={() => { if (detail) loadDetail(detail.project.id); }}
                     onClose={() => setCodeRunTaskId(null)}
+                  />
+                )}
+                {/* v870 — Live-Output des Deep-Verify-Laufs */}
+                {deepVerifyTaskId && client && (
+                  <CodeRunLivePanel
+                    client={client}
+                    taskId={deepVerifyTaskId}
+                    onEnded={() => { void onDeepVerifyEnded(); }}
+                    onClose={() => setDeepVerifyTaskId(null)}
                   />
                 )}
                 {/* v668 — Audit-Loading-Banner: User sieht sofort dass etwas passiert */}
@@ -1179,6 +1239,17 @@ export function ProjectsPage() {
                   onClose={() => setAuditData(null)}
                   onBulkClose={handleAuditBulkClose}
                   onBulkWork={handleAuditBulkWork}
+                />
+              )}
+
+              {/* v870 — Deep-Verify-Ergebnis: Verdikte mit Code-Beleg + Bulk-Ableitungen */}
+              {deepVerifyFindings && client && (
+                <DeepVerifyModal
+                  client={client}
+                  findings={deepVerifyFindings}
+                  items={detail.openItems}
+                  onClose={() => { setDeepVerifyFindings(null); setDeepVerifyTaskId(null); }}
+                  onApplied={() => loadDetail(detail.project.id)}
                 />
               )}
 

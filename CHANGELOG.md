@@ -5,6 +5,42 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.870] - 2026-06-12
+
+### Added — Deep-Verify: Open-Items gegen die echte Codebase prüfen (v870)
+
+Lücke: Re-Match prüft nur gegen den LETZTEN Agent-Lauf, das Audit-LLM sieht
+nur Commit-Messages + Datei-NAMEN — niemand liest den Code. „Schon
+implementiert?" war damit Plausibilisierung, keine Verifikation.
+
+**Neu: 🔬 Deep-Verify** (dritter Button neben Re-Match/Audit):
+- Markierte Items oder alle offenen (Kappe 15/Lauf, high-prio + älteste
+  zuerst; Überhang wird gemeldet)
+- **Read-only code_agent-Lauf**: der Agent durchsucht und LIEST die
+  aktuelle Codebase (strikt: keine Edits/Commits/Builds) und liefert pro
+  Item ein Verdikt mit **Code-Beleg**: `implemented` / `partially`
+  (+ was fehlt) / `not-implemented` / `obsolete`
+- Async mit dem vorhandenen Live-Output-Panel (v869.3-Infrastruktur);
+  Ergebnis 30 min abrufbar (`GET /api/projects/deep-verify/:taskId/result`)
+- **Nichts wird automatisch geändert** — Ergebnis-Modal mit Sektionen pro
+  Verdikt und Bulk-„Ableitungen anwenden": implemented → done (Beleg in
+  Beschreibung) · partially → Item bleibt offen, Beschreibung um
+  „Rest: …" präzisiert · obsolete → verworfen (Begründung) ·
+  not-implemented → unverändert
+- Doppel-Start-Guard pro Projekt; robuster Antwort-Parser (letztes
+  valides JSON-Array, ID-validiert, Confidence geclamped)
+- Audit-Button-Tooltip stellt jetzt ehrlich klar, dass er nur
+  Metadaten sieht
+
+Skill-Action: `project deep_verify_items` (project_id, item_ids?,
+max_items) — auch per Chat nutzbar.
+
+### Tests
+
+5 neue Parser-Tests (sauberes Array, letztes-Array-Wahl bei
+Prosa/Listen davor, Markdown-Fences + Fremd-ID/Verdikt-Filter,
+Confidence-Clamp, kein-JSON-Fall).
+
 ## [0.19.0-multi-ha.869.5] - 2026-06-12
 
 ### Fixed — DNS-Fehler-Fallback + Umsetzen-Item für Analyse-Läufe (v869.5)

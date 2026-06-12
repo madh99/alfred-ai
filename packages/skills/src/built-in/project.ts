@@ -22,7 +22,51 @@ type Action =
   | 'list' | 'get' | 'create' | 'rename' | 'set_status' | 'set_health_mode'
   | 'list_open_items' | 'add_open_item' | 'resolve_open_item'
   | 'list_sessions' | 'list_decisions' | 'archive'
-  | 'work_on_open_items' | 'audit_open_items';
+  | 'work_on_open_items' | 'audit_open_items' | 'deep_verify_items';
+
+/** v870 — Deep-Verify-Verdikt eines Items (read-only Codebase-Prüfung). */
+export interface DeepVerifyFinding {
+  id: string;
+  verdict: 'implemented' | 'partially' | 'not-implemented' | 'obsolete';
+  confidence: number;
+  evidence: string;
+  missing?: string;
+}
+
+/**
+ * v870 — Parse der Deep-Verify-Agent-Antwort: letztes JSON-Array im Output,
+ * validiert gegen die geprüften Item-IDs. Exportiert für Tests.
+ */
+export function parseDeepVerifyFindings(output: string, validIds: Set<string>): DeepVerifyFinding[] {
+  const findings: DeepVerifyFinding[] = [];
+  // letztes JSON-Array im Output suchen (Agent darf davor frei erzählen)
+  const matches = output.match(/\[[\s\S]*?\]/g);
+  if (!matches) return findings;
+  for (let i = matches.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(matches[i]);
+      if (!Array.isArray(parsed) || parsed.length === 0) continue;
+      const VERDICTS = ['implemented', 'partially', 'not-implemented', 'obsolete'];
+      const valid = parsed.filter((r): r is Record<string, unknown> =>
+        !!r && typeof r === 'object' &&
+        typeof (r as Record<string, unknown>).id === 'string' &&
+        validIds.has((r as Record<string, unknown>).id as string) &&
+        VERDICTS.includes((r as Record<string, unknown>).verdict as string));
+      if (valid.length === 0) continue;
+      for (const r of valid) {
+        findings.push({
+          id: r.id as string,
+          verdict: r.verdict as DeepVerifyFinding['verdict'],
+          confidence: Math.max(0, Math.min(1, Number(r.confidence ?? 0.5))),
+          evidence: String(r.evidence ?? '').slice(0, 300),
+          missing: typeof r.missing === 'string' ? r.missing.slice(0, 300) : undefined,
+        });
+      }
+      return findings; // erstes valides Array von hinten gewinnt
+    } catch { /* nächstes Kandidaten-Array probieren */ }
+  }
+  return findings;
+}
 
 const VALID_STATUS: ProjectStatus[] = ['active', 'paused', 'completed', 'maintenance', 'archived'];
 const VALID_HEALTH: ProjectHealthMode[] = ['full', 'minimal', 'off'];
@@ -56,7 +100,7 @@ export class ProjectSkill extends Skill {
             'list', 'get', 'create', 'rename', 'set_status', 'set_health_mode',
             'list_open_items', 'add_open_item', 'resolve_open_item',
             'list_sessions', 'list_decisions', 'archive',
-            'work_on_open_items', 'audit_open_items',
+            'work_on_open_items', 'audit_open_items', 'deep_verify_items',
           ],
         },
         project_id: { type: 'string', description: 'Project-ID oder Prefix (für get/rename/...)' },
@@ -152,6 +196,7 @@ export class ProjectSkill extends Skill {
       case 'archive': return this.archiveProject(userId, input);
       case 'work_on_open_items': return this.workOnOpenItems(userId, input);
       case 'audit_open_items': return this.auditOpenItems(userId, input);
+      case 'deep_verify_items': return this.deepVerifyItems(userId, input);
       default:
         return { success: false, error: `Unbekannte action "${String(action)}".` };
     }
@@ -600,6 +645,121 @@ ${decLines.join('\n') || '  _keine_'}`;
     } catch (err) {
       return { success: false, error: `Project-Agent-Start fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
     }
+  }
+
+  /** v870 — Deep-Verify-Resultate pro liveTaskId (in-memory, TTL 30 min).
+   *  Die UI pollt das Ergebnis nach Lauf-Ende über den Result-Endpoint. */
+  private deepVerifyResults = new Map<string, { status: 'running' | 'done' | 'failed'; findings: DeepVerifyFinding[]; error?: string; ts: number }>();
+  private runningVerifyJobs = new Map<string, string>();
+
+  getDeepVerifyResult(taskId: string): { status: 'running' | 'done' | 'failed'; findings: DeepVerifyFinding[]; error?: string } | null {
+    // TTL-Cleanup nebenbei
+    const cutoff = Date.now() - 30 * 60_000;
+    for (const [k, v] of this.deepVerifyResults) {
+      if (v.ts < cutoff) this.deepVerifyResults.delete(k);
+    }
+    const r = this.deepVerifyResults.get(taskId);
+    return r ? { status: r.status, findings: r.findings, error: r.error } : null;
+  }
+
+  /**
+   * v870 — Deep-Verify: markierte (oder alle) offenen Items READ-ONLY gegen die
+   * AKTUELLE Codebase prüfen. Re-Match kennt nur den letzten Lauf, das Audit-LLM
+   * nur Commit-Messages + Dateinamen — hier liest ein code_agent-Lauf den Code
+   * wirklich (Grep/Read) und liefert pro Item ein belegtes Verdikt. Ergebnis
+   * wird NICHT automatisch angewendet — die UI zeigt es im Modal mit
+   * Bulk-Aktionen (User entscheidet).
+   */
+  private async deepVerifyItems(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.runCodeAgent) return { success: false, error: 'Code-Agent-Runner nicht verkabelt' };
+    const projectId = await this.resolveProjectId(userId, input.project_id as string);
+    if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+    const project = await this.repo.getById(userId, projectId);
+    if (!project) return { success: false, error: 'Project nicht gefunden' };
+    if (!project.cwd) return { success: false, error: 'Project hat keinen cwd' };
+    if (!existsSync(project.cwd)) return { success: false, error: `cwd existiert nicht: ${project.cwd}` };
+
+    const alreadyRunning = this.runningVerifyJobs.get(projectId);
+    if (alreadyRunning) {
+      return { success: false, error: `Deep-Verify läuft bereits für dieses Projekt (${alreadyRunning.slice(0, 8)}).` };
+    }
+
+    const requestedIds = input.item_ids as string[] | undefined;
+    const maxItems = Math.min((input.max_items as number) ?? 15, 25);
+    let items = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress']);
+    if (requestedIds && requestedIds.length > 0) {
+      items = items.filter(i => requestedIds.includes(i.id) || requestedIds.some(p => i.id.startsWith(p)));
+    }
+    // gleiche Sortierung wie work_on_open_items: high prio zuerst, dann älteste
+    items.sort((a, b) => {
+      const pri = { high: 0, normal: 1, low: 2 } as Record<string, number>;
+      const dp = (pri[a.priority] ?? 1) - (pri[b.priority] ?? 1);
+      if (dp !== 0) return dp;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+    const skippedForCap = Math.max(0, items.length - maxItems);
+    items = items.slice(0, maxItems);
+    if (items.length === 0) return { success: false, error: 'Keine offenen Items zum Prüfen gefunden' };
+
+    const prompt = [
+      `Du bist ein Code-Auditor. Prüfe READ-ONLY, ob die folgenden offenen Punkte des Projekts "${project.name}" im AKTUELLEN Code bereits umgesetzt sind.`,
+      ``,
+      `STRIKT: KEINE Dateiänderungen, KEINE Commits, KEINE Builds — ausschließlich Suchen (grep/glob) und Lesen relevanter Dateien.`,
+      ``,
+      `PUNKTE:`,
+      ...items.map((it, i) => `${i + 1}. id=${it.id}\n   ${it.title}${it.description ? `\n   ${it.description.slice(0, 300)}` : ''}`),
+      ``,
+      `Für JEDEN Punkt: prüfe im Code und entscheide:`,
+      `- "implemented": vollständig umgesetzt (Beleg: Datei + ggf. Zeile/Funktion)`,
+      `- "partially": teilweise umgesetzt (Beleg + was konkret fehlt → Feld "missing")`,
+      `- "not-implemented": nicht umgesetzt`,
+      `- "obsolete": Punkt trifft nicht mehr zu (z.B. Feature entfernt/anders gelöst — begründen)`,
+      ``,
+      `Antworte AM ENDE mit GENAU EINEM JSON-Array (keine Markdown-Fences nötig, aber erlaubt):`,
+      `[{"id":"<exakte-uuid-von-oben>","verdict":"implemented|partially|not-implemented|obsolete","confidence":0.0-1.0,"evidence":"Datei:Zeile bzw. knapper Beleg (max 200 Zeichen)","missing":"nur bei partially"}]`,
+      ``,
+      `Sei konservativ: implemented nur bei klarem Code-Beleg. Jede id aus PUNKTE muss genau einmal vorkommen.`,
+    ].join('\n');
+
+    const liveTaskId = randomUUID();
+    this.runningVerifyJobs.set(projectId, liveTaskId);
+    this.deepVerifyResults.set(liveTaskId, { status: 'running', findings: [], ts: Date.now() });
+    appendOutputLine(liveTaskId, 'system', `🔬 Deep-Verify gestartet — ${items.length} Item(s) gegen die aktuelle Codebase${skippedForCap > 0 ? ` (${skippedForCap} weitere über der Kappe von ${maxItems} — späterer Lauf)` : ''}.`);
+
+    const validIds = new Set(items.map(i => i.id));
+    const cwd = project.cwd;
+    void (async () => {
+      try {
+        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId });
+        const findings = parseDeepVerifyFindings(result.output, validIds);
+        if (result.success && findings.length > 0) {
+          this.deepVerifyResults.set(liveTaskId, { status: 'done', findings, ts: Date.now() });
+          const counts = { implemented: 0, partially: 0, 'not-implemented': 0, obsolete: 0 } as Record<string, number>;
+          for (const f of findings) counts[f.verdict]++;
+          appendOutputLine(liveTaskId, 'system',
+            `✅ Analyse abgeschlossen — ${findings.length}/${items.length} Verdikte: ` +
+            `${counts.implemented} implemented, ${counts.partially} partially, ${counts['not-implemented']} offen, ${counts.obsolete} obsolet. ` +
+            `Ergebnis im Modal — nichts wurde automatisch geändert.`);
+        } else {
+          const why = !result.success ? `Agent-Lauf fehlgeschlagen: ${result.output.slice(-300)}` : 'Agent lieferte kein parsebares Verdikt-JSON.';
+          this.deepVerifyResults.set(liveTaskId, { status: 'failed', findings, error: why, ts: Date.now() });
+          appendOutputLine(liveTaskId, 'system', `❌ Deep-Verify fehlgeschlagen — ${why.slice(0, 300)}`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.deepVerifyResults.set(liveTaskId, { status: 'failed', findings: [], error: msg.slice(0, 300), ts: Date.now() });
+        appendOutputLine(liveTaskId, 'system', `❌ Deep-Verify Fehler: ${msg.slice(0, 300)}`);
+      } finally {
+        this.runningVerifyJobs.delete(projectId);
+        try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
+      }
+    })();
+
+    return {
+      success: true,
+      data: { liveTaskId, projectId, itemCount: items.length, skippedForCap },
+      display: `🔬 Deep-Verify gestartet (Hintergrund, ${items.length} Item(s)${skippedForCap > 0 ? `, ${skippedForCap} über der Kappe` : ''}) — read-only Codebase-Prüfung. Ergebnis erscheint im Modal; nichts wird automatisch geändert.`,
+    };
   }
 
   /**

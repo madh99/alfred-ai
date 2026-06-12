@@ -722,6 +722,9 @@ export class HttpAdapter extends MessagingAdapter {
     listHealthLog: (id: string, limit: number) => Promise<any[]>;
     // v641 — Bulk-Work + Audit
     workOnOpenItems?: (projectId: string, itemIds: string[], maxItems: number) => Promise<{ ok: boolean; taskId?: string; mode?: string; liveTaskId?: string; reason?: string }>;
+    /** v870 — Deep-Verify: read-only Codebase-Prüfung markierter/aller Items. */
+    deepVerifyItems?: (projectId: string, itemIds: string[] | undefined, maxItems: number) => Promise<{ ok: boolean; liveTaskId?: string; itemCount?: number; skippedForCap?: number; reason?: string }>;
+    deepVerifyResult?: (taskId: string) => Promise<Record<string, unknown> | null>;
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
     // v642 — Bulk-Close
     bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
@@ -1366,6 +1369,11 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsHealthLog(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-on-items$/) && req.method === 'POST') {
       this.handleProjectsWorkOnItems(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deep-verify$/) && req.method === 'POST') {
+      // v870 — read-only Codebase-Prüfung offener Items
+      this.handleProjectsDeepVerify(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/deep-verify\/[^/]+\/result$/) && req.method === 'GET') {
+      this.handleProjectsDeepVerifyResult(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/audit-items$/) && req.method === 'POST') {
       this.handleProjectsAuditItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/bulk-close-items$/) && req.method === 'POST') {
@@ -3057,6 +3065,35 @@ export class HttpAdapter extends MessagingAdapter {
     const result = await this.projectsCallbacks.workOnOpenItems(projectId, data.item_ids ?? [], data.max_items ?? 10);
     res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+  }
+
+  /** v870 — POST /api/projects/:id/deep-verify {item_ids?, max_items?} */
+  private async handleProjectsDeepVerify(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.deepVerifyItems) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { item_ids?: string[]; max_items?: number };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const result = await this.projectsCallbacks.deepVerifyItems(projectId, data.item_ids, data.max_items ?? 15);
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v870 — GET /api/projects/deep-verify/:taskId/result */
+  private async handleProjectsDeepVerifyResult(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.deepVerifyResult) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const taskId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.deepVerifyResult(taskId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result ?? { status: 'unknown' }));
   }
 
   private async handleProjectsAuditItems(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

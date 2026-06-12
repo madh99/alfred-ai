@@ -9068,6 +9068,28 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return { ok: false, reason: (err as Error).message };
             }
           },
+          // v870 — Deep-Verify: read-only Codebase-Prüfung markierter/aller Items
+          deepVerifyItems: async (projectId: string, itemIds: string[] | undefined, maxItems: number) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { ok: false, reason: 'project-skill not registered' };
+              const result = await skill.execute(
+                { action: 'deep_verify_items', project_id: projectId, item_ids: itemIds, max_items: maxItems },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              if (!result.success) return { ok: false, reason: result.error };
+              const d = result.data as { liveTaskId?: string; itemCount?: number; skippedForCap?: number } | undefined;
+              return { ok: true, liveTaskId: d?.liveTaskId, itemCount: d?.itemCount, skippedForCap: d?.skippedForCap };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
+          deepVerifyResult: async (taskId: string) => {
+            try {
+              return (this.projectSkillRef?.getDeepVerifyResult(taskId) ?? null) as Record<string, unknown> | null;
+            } catch { return null; }
+          },
           auditOpenItems: async (projectId: string) => {
             try {
               const uid = await resolveOwnerProj();

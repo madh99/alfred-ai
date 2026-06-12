@@ -1647,6 +1647,23 @@ export class AlfredClient {
     return { ok: true, taskId: data.taskId, mode: data.mode, liveTaskId: data.liveTaskId };
   }
 
+  // v870 — Deep-Verify: read-only Codebase-Prüfung (markierte oder alle offenen Items)
+  async projectDeepVerify(projectId: string, itemIds?: string[], maxItems = 15): Promise<{ ok: boolean; liveTaskId?: string; itemCount?: number; skippedForCap?: number; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/deep-verify`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ item_ids: itemIds && itemIds.length > 0 ? itemIds : undefined, max_items: maxItems }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return { ok: true, liveTaskId: data.liveTaskId, itemCount: data.itemCount, skippedForCap: data.skippedForCap };
+  }
+
+  async projectDeepVerifyResult(taskId: string): Promise<{ status: 'running' | 'done' | 'failed' | 'unknown'; findings?: Array<{ id: string; verdict: 'implemented' | 'partially' | 'not-implemented' | 'obsolete'; confidence: number; evidence: string; missing?: string }>; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/deep-verify/${taskId}/result`, { headers: this.authHeaders });
+    if (!res.ok) return { status: 'unknown' };
+    return await res.json();
+  }
+
   async projectAuditOpenItems(projectId: string): Promise<{ data?: any; display?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/audit-items`, {
       method: 'POST', headers: this.authHeaders,
