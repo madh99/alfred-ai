@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.876] - 2026-06-12
+
+### Added
+
+- **Befund-Extraktion bei Doku-only-Läufen**: Erzeugt ein erfolgreicher
+  Analyse-/Audit-Lauf nur Markdown, liest `finishSession` jetzt den Inhalt
+  des Primär-Dokuments (16k-Kappe, traversal-sicher) und legt die dort
+  dokumentierten Befunde (Bugs, Lücken, Empfehlungen) als einzelne
+  Open-Items an — mit Fundstellen und Priorität aus dem Dokument
+  (P1→high, P2→normal, P3→low). Vorher sah der Summarizer nur
+  Datei-Pfade + Agent-Schlusstext, die eigentliche Arbeitsliste blieb im
+  Dokument vergraben (Vorfall 12.06.: 19 Gaps im Moderations-Audit,
+  Items sagten nur „nochmal prüfen"). Deterministische Schichten:
+  max. 15 Items, Dedup gegen Bestand und innerhalb des Batches
+  (Titel-Ähnlichkeit ≥ 0.7), nur success+docs-only; liefert die
+  Extraktion nichts, bleibt das v869.5-„Umsetzen:"-Item als Fallback.
+  7 neue Parser-Tests
+
 ## [0.19.0-multi-ha.875.2] - 2026-06-12
 
 ### Fixed

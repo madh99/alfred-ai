@@ -1,4 +1,6 @@
 import type { Logger } from 'pino';
+import { promises as fsp } from 'node:fs';
+import path from 'node:path';
 import type {
   Project, ProjectRepository, ProjectSession, ProjectSessionSummary, ProjectSessionType,
 } from '@alfred/storage';
@@ -337,26 +339,37 @@ export class ProjectManager {
       // v869-Anti-Geister-Regel unterdrückt LLM-"Nachfolgeschritte" bewusst).
       // Gate hart: nur wenn ALLE geänderten Dateien .md sind UND success.
       // Nicht-Doku-Läufe: exakt unverändertes Verhalten.
+      // v876 — Befund-Extraktion zuerst: der Summarizer sieht nur Pfade +
+      // Agent-Schlusstext, die dokumentierten Gaps/Bugs stehen aber IM Dokument
+      // (Vorfall 12.06.: 19 Gaps im Moderations-Audit, Items sagten nur
+      // "nochmal prüfen"). Liefert die Extraktion ≥1 Item, ersetzt sie das
+      // pauschale "Umsetzen:"-Item; sonst bleibt v869.5 als Fallback.
       if (params.success === true && isDocsOnlyRun(params.files)) {
         try {
           const doc = pickPrimaryDoc(params.files ?? []);
           if (doc) {
-            const base = doc.split('/').pop()?.replace(/\.(md|markdown)$/i, '') ?? doc;
-            const title = `Umsetzen: ${base} (${doc})`;
-            const existing = await this.repo.listOpenItemsForProject(project.id, ['open', 'in_progress']).catch(() => []);
-            const isDup = existing.some(e => openItemTitleSimilarity(e.title, title) >= 0.7);
-            if (!isDup) {
-              await this.repo.addOpenItem(project.id, {
-                title: title.slice(0, 200),
-                description: `Dieser Lauf hat nur Analyse/Dokumentation erzeugt (${(params.files ?? []).join(', ').slice(0, 300)}). Die dort beschriebene Roadmap/Lösung ist noch NICHT implementiert — per Abarbeiten-Button starten oder Resume mit Notiz.`,
-                priority: 'normal',
-                sessionId: session.id,
-              });
-              this.logger.info({ projectId: project.id, doc }, 'v869.5 Doku-only-Lauf → Umsetzen-Item angelegt');
+            let findingsCreated = 0;
+            if (params.cwd) {
+              findingsCreated = await this.extractAndAddDocFindings(project.id, session.id, params.cwd, doc, params.goal);
+            }
+            if (findingsCreated === 0) {
+              const base = doc.split('/').pop()?.replace(/\.(md|markdown)$/i, '') ?? doc;
+              const title = `Umsetzen: ${base} (${doc})`;
+              const existing = await this.repo.listOpenItemsForProject(project.id, ['open', 'in_progress']).catch(() => []);
+              const isDup = existing.some(e => openItemTitleSimilarity(e.title, title) >= 0.7);
+              if (!isDup) {
+                await this.repo.addOpenItem(project.id, {
+                  title: title.slice(0, 200),
+                  description: `Dieser Lauf hat nur Analyse/Dokumentation erzeugt (${(params.files ?? []).join(', ').slice(0, 300)}). Die dort beschriebene Roadmap/Lösung ist noch NICHT implementiert — per Abarbeiten-Button starten oder Resume mit Notiz.`,
+                  priority: 'normal',
+                  sessionId: session.id,
+                });
+                this.logger.info({ projectId: project.id, doc }, 'v869.5 Doku-only-Lauf → Umsetzen-Item angelegt');
+              }
             }
           }
         } catch (err) {
-          this.logger.debug({ err }, 'v869.5 Umsetzen-Item skipped (non-fatal)');
+          this.logger.debug({ err }, 'v869.5/v876 Doku-only-Items skipped (non-fatal)');
         }
       }
 
@@ -412,6 +425,54 @@ export class ProjectManager {
       }
     }
     return { renamed, skipped };
+  }
+
+  /**
+   * v876 — liest das Doku-only-Artefakt aus dem cwd und legt die dokumentierten
+   * Befunde als Open-Items an. Deterministische Schichten: nur .md, Pfad muss
+   * im cwd bleiben, 16k-Lese-Kappe, max 15 Items (Parser-Kappe), Dedup gegen
+   * bestehende Items UND innerhalb des Batches via openItemTitleSimilarity.
+   * Returns Anzahl angelegter Items (0 → Caller nutzt v869.5-Fallback).
+   */
+  private async extractAndAddDocFindings(projectId: string, sessionId: string, cwd: string, doc: string, goal: string): Promise<number> {
+    const MAX_DOC_CHARS = 16_000;
+    try {
+      if (!/\.(md|markdown)$/i.test(doc) || path.isAbsolute(doc)) return 0;
+      const resolvedCwd = path.resolve(cwd);
+      const resolved = path.resolve(resolvedCwd, doc);
+      if (resolved !== resolvedCwd && !resolved.startsWith(resolvedCwd + path.sep)) return 0;
+      const content = await fsp.readFile(resolved, 'utf8');
+      const findings = await this.summarizer.extractDocFindings({
+        goal,
+        docPath: doc,
+        docContent: content.slice(0, MAX_DOC_CHARS),
+      });
+      if (!findings || findings.length === 0) return 0;
+
+      const existing = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress']).catch(() => []);
+      const acceptedTitles: string[] = [];
+      let created = 0;
+      for (const f of findings) {
+        const dupExisting = existing.some(e => openItemTitleSimilarity(e.title, f.title) >= 0.7);
+        const dupBatch = acceptedTitles.some(t => openItemTitleSimilarity(t, f.title) >= 0.7);
+        if (dupExisting || dupBatch) continue;
+        acceptedTitles.push(f.title);
+        await this.repo.addOpenItem(projectId, {
+          title: f.title.slice(0, 200),
+          description: `${f.description ? `${f.description} ` : ''}[Quelle: ${doc}]`.slice(0, 600),
+          priority: f.priority,
+          sessionId,
+        });
+        created++;
+      }
+      if (created > 0) {
+        this.logger.info({ projectId, doc, created, extracted: findings.length }, 'v876 Doku-Befunde → Open-Items angelegt');
+      }
+      return created;
+    } catch (err) {
+      this.logger.debug({ err, doc }, 'v876 doc-findings extraction failed (non-fatal) — Fallback Umsetzen-Item');
+      return 0;
+    }
   }
 
   private async findOrCreate(params: AttachSessionParams): Promise<Project> {

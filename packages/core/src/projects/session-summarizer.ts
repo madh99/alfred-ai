@@ -183,4 +183,77 @@ hänge die ID als zusätzliches Feld an statt sie als generischen TODO zu dupliz
 
     return summary;
   }
+
+  /**
+   * v876 — Befund-Extraktion aus dem INHALT eines Doku-only-Artefakts
+   * (Audit/Review/Proposal). Der reguläre Summarizer sieht nur Datei-Pfade
+   * und den Agent-Schlusstext — die dokumentierten Gaps/Bugs mit Fundstellen
+   * stehen aber im Dokument selbst (Vorfall 12.06.: 19 Gaps im Audit-Doc,
+   * Items sagten nur "nochmal prüfen"). Returns null bei LLM-/Parse-Fehler —
+   * Caller fällt auf das v869.5-"Umsetzen:"-Item zurück.
+   */
+  async extractDocFindings(input: { goal: string; docPath: string; docContent: string }): Promise<DocFinding[] | null> {
+    const prompt = [
+      `Ein Analyse-/Audit-Lauf hat das folgende Dokument erzeugt. Extrahiere die dort DOKUMENTIERTEN offenen Befunde (Bugs, Lücken, fehlende Features, konkrete Empfehlungen) als umsetzbare Arbeitspunkte.`,
+      ``,
+      `ZIEL DES LAUFS: ${input.goal.slice(0, 400)}`,
+      `DOKUMENT (${input.docPath}):`,
+      `---`,
+      input.docContent,
+      `---`,
+      ``,
+      `Antworte AUSSCHLIESSLICH mit einem validen JSON-Array (keine Fences, kein Text davor/danach):`,
+      `[{"title": "kurzer umsetzbarer Titel (max 150 Zeichen)", "priority": "low|normal|high", "description": "1-2 Sätze inkl. Fundstelle (Datei:Zeile) wenn im Dokument genannt"}]`,
+      ``,
+      `Regeln:`,
+      `- NUR Punkte, die das Dokument explizit als offen/fehlend/fehlerhaft benennt — NICHTS erfinden.`,
+      `- KEINE Punkte, die das Dokument als erledigt/vollständig/funktionierend beschreibt.`,
+      `- KEINE Wiederholung der Prüf-/Audit-Frage selbst ("X prüfen/verifizieren") — die Prüfung IST dieses Dokument.`,
+      `- Priorität aus dem Dokument übernehmen wenn vorhanden (P1/kritisch/Bug → high, P2 → normal, P3/nice-to-have → low).`,
+      `- Max 15 Punkte; bei mehr: die wichtigsten. Wenn das Dokument keine offenen Befunde enthält: [].`,
+      `- Sprache: Deutsch.`,
+    ].join('\n');
+    let raw: string;
+    try {
+      const response = await this.llm.complete({
+        messages: [{ role: 'user', content: prompt }],
+        tier: this.tier,
+        maxTokens: 1800,
+      });
+      raw = response.content;
+    } catch {
+      return null;
+    }
+    return parseDocFindings(raw);
+  }
+}
+
+/** v876 — Befund aus einem Doku-Artefakt (extrahiert für Open-Item-Erzeugung). */
+export interface DocFinding {
+  title: string;
+  priority: 'low' | 'normal' | 'high';
+  description?: string;
+}
+
+/** v876 — pure Parser für die Befund-Extraktion (separat exportiert für Tests). */
+export function parseDocFindings(raw: string): DocFinding[] | null {
+  const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  // JSON-Array auch dann finden, wenn das LLM Prosa drumherum gesetzt hat
+  const start = trimmed.indexOf('[');
+  const end = trimmed.lastIndexOf(']');
+  if (start === -1 || end === -1 || end <= start) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(trimmed.slice(start, end + 1)); } catch { return null; }
+  if (!Array.isArray(parsed)) return null;
+  return parsed
+    .filter((it): it is Record<string, unknown> => !!it && typeof it === 'object')
+    .map(it => ({
+      title: String(it.title ?? '').trim().slice(0, 200),
+      priority: (typeof it.priority === 'string' && ['low', 'normal', 'high'].includes(it.priority))
+        ? (it.priority as 'low' | 'normal' | 'high')
+        : 'normal',
+      description: typeof it.description === 'string' ? it.description.trim().slice(0, 600) : undefined,
+    }))
+    .filter(it => it.title.length > 0)
+    .slice(0, 15);
 }
