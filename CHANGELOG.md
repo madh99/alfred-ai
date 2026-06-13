@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.888] - 2026-06-13
+
+### Fixed — Roadmap-Reihenfolge des Projekt-Wizards geht nicht mehr verloren (v888)
+
+Der Wizard generierte zu jedem Open-Item `roadmapMilestone` + `roadmapOrder`
+(sichtbar in der README-Roadmap) und übergab sie auch — aber
+`projRepo.addOpenItem` **verwarf sie** (die Spalten existieren seit v663a,
+wurden in dieser Methode aber nie persistiert). Folge: Alle Wizard-Items
+landeten mit `roadmap_milestone = NULL` / `roadmap_order = NULL` in der DB —
+keine Milestone-Gruppierung, keine Reihenfolge, die Roadmap-Ansicht blieb
+leer, der User konnte nicht erkennen, womit zu beginnen ist.
+
+- **`addOpenItem` persistiert jetzt `roadmapMilestone`/`roadmapOrder`/
+  `estimatedHours`** (additiv — bestehende Aufrufer ohne diese Felder
+  verhalten sich unverändert). Damit erscheinen Wizard-Projekte korrekt
+  milestone-gruppiert und in Phasen-Reihenfolge (Sortierung „Thema/
+  Milestone", v877 + Roadmap-Ansicht)
+- **Wizard-Prompt** generiert Milestone-Namen jetzt mit Phasen-Nummer-Präfix
+  („1. …", „2. …"), damit die (alphabetische) Milestone-Sortierung die
+  Phasen in der richtigen Reihenfolge zeigt
+
 ## [0.19.0-multi-ha.887] - 2026-06-13
 
 ### Fixed — Projekt-cwd am Agent-User-Home ausrichten (v887)

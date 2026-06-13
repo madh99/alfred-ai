@@ -714,22 +714,28 @@ export class ProjectRepository {
 
   // ── Open Items ──────────────────────────────────────────────────────────
 
-  async addOpenItem(projectId: string, input: { title: string; description?: string; priority?: OpenItemPriority; dueAt?: string; sessionId?: string; linkedIncidentId?: string; linkedChangeId?: string }): Promise<ProjectOpenItem> {
+  async addOpenItem(projectId: string, input: { title: string; description?: string; priority?: OpenItemPriority; dueAt?: string; sessionId?: string; linkedIncidentId?: string; linkedChangeId?: string; roadmapMilestone?: string; roadmapOrder?: number; estimatedHours?: number }): Promise<ProjectOpenItem> {
     const id = randomUUID();
     const now = new Date().toISOString();
+    // v888 — roadmap_milestone/order/estimated_hours mitschreiben: der Projekt-
+    // Wizard generiert die Reihenfolge (roadmapOrder) + Milestone-Gruppierung,
+    // übergab sie auch — aber addOpenItem verwarf sie (Spalten seit v663a da,
+    // nur nie persistiert). Dadurch fehlte jede sichtbare Reihenfolge.
     await this.adapter.execute(
-      `INSERT INTO project_open_items (id, project_id, session_id, title, description, priority, status, due_at, created_at, linked_incident_id, linked_change_id)
-       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+      `INSERT INTO project_open_items (id, project_id, session_id, title, description, priority, status, due_at, created_at, linked_incident_id, linked_change_id, roadmap_milestone, roadmap_order, estimated_hours)
+       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, projectId, input.sessionId ?? null, input.title, input.description ?? null,
         input.priority ?? 'normal', input.dueAt ?? null, now,
         input.linkedIncidentId ?? null, input.linkedChangeId ?? null,
+        input.roadmapMilestone ?? null, input.roadmapOrder ?? null, input.estimatedHours ?? null,
       ],
     );
     return {
       id, projectId, sessionId: input.sessionId, title: input.title, description: input.description,
       priority: input.priority ?? 'normal', status: 'open', dueAt: input.dueAt, createdAt: now,
       linkedIncidentId: input.linkedIncidentId, linkedChangeId: input.linkedChangeId,
+      roadmapMilestone: input.roadmapMilestone, roadmapOrder: input.roadmapOrder, estimatedHours: input.estimatedHours,
     };
   }
 
