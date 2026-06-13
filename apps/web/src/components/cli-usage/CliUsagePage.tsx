@@ -87,7 +87,10 @@ export function CliUsagePage() {
       <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-4 py-2.5 text-xs text-amber-300/80">
         ℹ️ CLI-Agents (claude-code, codex, …) laufen auf <strong>eigenen Subscriptions/API-Keys</strong> —
         diese Zahlen sind NICHT in Alfreds Betriebskosten (Dashboard → AI Services) enthalten.
-        Kosten-Werte sind das vom CLI gemeldete API-Äquivalent. Daten werden seit v866 erfasst.
+        Kosten-Werte sind das vom CLI gemeldete API-Äquivalent (reale Subscription-Kosten können abweichen).
+        Bei Claude-Code ist <strong>Cache-Read</strong> meist der größte Token-Posten (Prompt-Caching des
+        wiederholten Kontexts) und der Haupttreiber der Kosten-Äquiv. — „Tokens In" zeigt nur den ungecachten Anteil.
+        Daten werden seit v866 erfasst.
       </div>
 
       {loading && !data && <div className="text-gray-500 text-sm">Laden…</div>}
@@ -96,10 +99,14 @@ export function CliUsagePage() {
       {data && (
         <>
           {/* Totals */}
-          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4 grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4 grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
             <Stat label="Runs" value={String(data.totals.runs)} />
             <Stat label="Laufzeit" value={formatDuration(data.totals.durationS)} accent="text-blue-400" />
             <Stat label="Tokens In" value={formatTokens(data.totals.tokensIn)} />
+            {/* v885 — Cache-Read sichtbar: bei Claude-Code der mit Abstand größte
+                Posten (Prompt-Caching) und Haupttreiber der Kosten. Ohne diese
+                Spalte wirkte "13k In → $205" unerklärlich. */}
+            <Stat label="Cache-Read" value={formatTokens(data.totals.cacheReadTokens)} accent="text-purple-400" />
             <Stat label="Tokens Out" value={formatTokens(data.totals.tokensOut)} />
             <Stat label="Kosten-Äquiv." value={`$${data.totals.costUsd.toFixed(2)}`} accent="text-amber-400" />
           </div>
@@ -144,6 +151,7 @@ function GroupTable({ title, rows, keyHeader, subHeader }: { title: string; rows
               <th className="px-4 py-2 text-right">Runs</th>
               <th className="px-4 py-2 text-right">Laufzeit</th>
               <th className="px-4 py-2 text-right">Tokens In</th>
+              <th className="px-4 py-2 text-right">Cache-Read</th>
               <th className="px-4 py-2 text-right">Tokens Out</th>
               <th className="px-4 py-2 text-right">Kosten-Äquiv.</th>
             </tr>
@@ -156,6 +164,7 @@ function GroupTable({ title, rows, keyHeader, subHeader }: { title: string; rows
                 <td className="px-4 py-2 text-right text-gray-400">{r.runs}</td>
                 <td className="px-4 py-2 text-right font-mono text-blue-400">{formatDuration(r.durationS)}</td>
                 <td className="px-4 py-2 text-right font-mono text-gray-300">{formatTokens(r.tokensIn)}</td>
+                <td className="px-4 py-2 text-right font-mono text-purple-400">{formatTokens(r.cacheReadTokens)}</td>
                 <td className="px-4 py-2 text-right font-mono text-gray-300">{formatTokens(r.tokensOut)}</td>
                 <td className="px-4 py-2 text-right font-mono text-amber-400">${r.costUsd.toFixed(2)}</td>
               </tr>

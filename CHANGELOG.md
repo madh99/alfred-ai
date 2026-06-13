@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.885] - 2026-06-13
+
+### Fixed
+
+- **CLI-Usage: Cache-Read-Tokens sichtbar**: Die CLI-Usage-Seite zeigte
+  nur „Tokens In/Out" — bei Claude-Code ist aber **Cache-Read** der mit
+  Abstand größte Posten (Prompt-Caching des wiederholten Kontexts, oft
+  100+ Mio Tokens) und der Haupttreiber der Kosten-Äquiv. Dadurch wirkte
+  „13k In → $205" unerklärlich. Neue Spalte „Cache-Read" in den Totals
+  und allen Gruppierungs-Tabellen (Daten lagen längst in
+  `cli_agent_runs.cache_read_tokens` + im Client-Typ, nur die Anzeige
+  fehlte). Hinweis-Text präzisiert: Kosten-Äquiv = API-Gegenwert (reale
+  Subscription-Kosten können abweichen), „Tokens In" = nur ungecachter
+  Anteil
+
 ## [0.19.0-multi-ha.884] - 2026-06-13
 
 ### Fixed — Reply-bewusste Bestätigungen (v884)
