@@ -446,6 +446,7 @@ export class MessagePipeline {
       });
       const handled = await this.confirmationQueue.checkForConfirmation(
         message.chatId, message.platform, message.text, confContext,
+        message.replyToMessageId, // v884 — Reply auf eine bestimmte Bestätigungs-Nachricht trifft genau die
       );
       if (handled) return { text: '' }; // confirmation queue already sent its response via adapter
     }
@@ -2394,9 +2395,14 @@ export class MessagePipeline {
   private buildReplyContextPrefix(message: NormalizedMessage): string {
     if (!message.replyToText || message.replyToText.trim().length === 0) return '';
     const from = message.replyToFrom?.trim() || 'vorherige Nachricht';
-    const text = message.replyToText.slice(0, 300).replace(/\s+/g, ' ').trim();
-    if (text.length === 0) return '';
-    return `[User antwortet auf Nachricht von ${from}: "${text}${message.replyToText.length > 300 ? '…' : ''}"]\n\n`;
+    // v884 — Kappe 300 → 1500: bei 300 wurden lange Bot-Nachrichten (z.B.
+    // Options-/Frage-Listen "1… 2… 3…") abgeschnitten, sodass der LLM den Bezug
+    // einer Antwort wie "ok mach es so" nicht auflösen konnte. Newlines erhalten,
+    // damit nummerierte Optionen lesbar bleiben.
+    const CAP = 1500;
+    const raw = message.replyToText.slice(0, CAP).replace(/[ \t]+/g, ' ').trim();
+    if (raw.length === 0) return '';
+    return `[Der User ANTWORTET DIREKT auf folgende vorherige Nachricht von ${from} — beziehe dich konkret darauf:\n"${raw}${message.replyToText.length > CAP ? '…' : ''}"]\n\n`;
   }
 
   private async buildUserContent(

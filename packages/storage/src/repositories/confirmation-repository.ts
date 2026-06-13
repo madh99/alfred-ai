@@ -87,6 +87,29 @@ export class ConfirmationRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  /** v884 — pending Confirmation, auf deren gesendete Nachricht der User per Reply
+   *  geantwortet hat. Löst das "neueste pending"-Problem bei mehreren offenen
+   *  Bestätigungen — antwortest du auf eine bestimmte Frage, triffst du genau die. */
+  async findPendingBySentMessageId(chatId: string, platform: string, sentMessageId: string): Promise<PendingConfirmation | undefined> {
+    try {
+      const row = await this.adapter.queryOne(
+        `SELECT * FROM pending_confirmations WHERE chat_id = ? AND platform = ? AND sent_message_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
+        [chatId, platform, sentMessageId],
+      ) as Record<string, unknown> | undefined;
+      return row ? this.mapRow(row) : undefined;
+    } catch { return undefined; } // Spalte fehlt (DB nicht migriert) → kein Reply-Matching
+  }
+
+  /** v884 — message_id der gesendeten Bestätigungs-Nachricht nachtragen (nach dem Versand). */
+  async setSentMessageId(id: string, sentMessageId: string): Promise<void> {
+    try {
+      await this.adapter.execute(
+        `UPDATE pending_confirmations SET sent_message_id = ? WHERE id = ?`,
+        [sentMessageId, id],
+      );
+    } catch { /* Spalte fehlt → Reply-Matching inaktiv, Rest unberührt */ }
+  }
+
   async resolve(id: string, status: 'approved' | 'rejected' | 'expired'): Promise<void> {
     const now = new Date().toISOString();
     await this.adapter.execute(
@@ -137,6 +160,7 @@ export class ConfirmationRepository {
       createdAt: row.created_at as string,
       expiresAt: row.expires_at as string,
       resolvedAt: row.resolved_at as string | undefined,
+      sentMessageId: (row.sent_message_id as string | null) ?? undefined,
     };
   }
 }

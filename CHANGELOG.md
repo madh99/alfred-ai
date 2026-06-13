@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.884] - 2026-06-13
+
+### Fixed — Reply-bewusste Bestätigungen (v884)
+
+Antwortete man per Reply auf eine bestimmte Bestätigungs-/Frage-Nachricht,
+wurde dieser Bezug komplett ignoriert: die Confirmation-Queue löste blind
+„die neueste pending" auf (Vorfall 13.06.: ein „ok" bestätigte die
+v872-git-Warnung statt der gemeinten Frage), und freie Antworten wie
+„ok mach es so" wurden gar nicht als Bestätigung erkannt.
+
+- **Reply trifft die richtige Confirmation**: Die gesendete
+  Telegram-message_id wird jetzt gespeichert (`pending_confirmations.
+  sent_message_id`, Migration SQLite v107 / PG v111). Antwortest du per
+  Reply auf eine bestimmte Bestätigung, wird **genau diese** aufgelöst —
+  unabhängig davon, welche die neueste ist
+- **Breitere Zustimmung NUR bei Reply-Bezug**: „ok mach es so", „ja passt"
+  zählen als Bestätigung, wenn der Reply eindeutig auf die Frage zeigt;
+  ohne Reply bleibt es bei der strengen Wortliste (sonst würde freies
+  Geplauder blind die neueste Confirmation auslösen). Rückfragen
+  (Fragezeichen) und gemischte Signale → keine Auslösung. Deterministische,
+  getestete Klassifikation (`classifyConfirmationReply`, 17 Tests)
+- **Reply-Kontext nicht mehr abgeschnitten**: Der zitierte Text im
+  LLM-Pfad war auf 300 Zeichen gekappt — lange Options-/Frage-Listen
+  fehlten dem Modell. Kappe auf 1500 erhöht, Zeilenstruktur erhalten,
+  klarerer „User antwortet direkt darauf"-Hinweis
+
 ## [0.19.0-multi-ha.883] - 2026-06-13
 
 ### Fixed

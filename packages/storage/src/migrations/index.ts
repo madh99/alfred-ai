@@ -2498,4 +2498,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE project_open_items ADD COLUMN depends_on TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 107,
+    description: 'v884 — pending_confirmations.sent_message_id: Telegram-message_id der Bestätigungs-Nachricht, damit ein Reply darauf die RICHTIGE Confirmation auflöst (SQLite-Spiegel zu PG v111).',
+    up(db) {
+      try { db.exec(`ALTER TABLE pending_confirmations ADD COLUMN sent_message_id TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

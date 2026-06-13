@@ -1808,4 +1808,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS depends_on TEXT`, []);
     },
   },
+  {
+    version: 111,
+    description: 'v884 — pending_confirmations.sent_message_id: Telegram-message_id der Bestätigungs-Nachricht für Reply-basiertes Matching.',
+    async up(db) {
+      await db.execute(`ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS sent_message_id TEXT`, []);
+    },
+  },
 ];

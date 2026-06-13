@@ -205,6 +205,9 @@ export interface PendingConfirmation {
   createdAt: string;
   expiresAt: string;
   resolvedAt?: string;
+  /** v884 — message_id der gesendeten Bestätigungs-Nachricht (Telegram), damit
+   *  ein Reply darauf GENAU diese Confirmation auflöst statt "neueste pending". */
+  sentMessageId?: string;
 }
 
 export interface Document {

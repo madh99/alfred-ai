@@ -19,6 +19,34 @@ import type { FeedbackService } from './feedback/feedback-service.js';
  *
  * Returns null when no usable signal is available (caller should NOT auto-dedup).
  */
+/**
+ * v884 — Klassifiziert eine Freitext-Antwort als Bestätigung/Ablehnung.
+ *
+ * Strenge Wortliste (exakte Tokens) gilt IMMER. Breitere Phrasen
+ * ("ok mach es so", "ja passt") NUR bei eindeutigem Reply-Bezug (`hasReplyContext`):
+ * ohne Reply würde freies Geplauder sonst blind die neueste Confirmation auslösen
+ * (gefährlich). Mit Reply hat der User explizit auf genau diese Frage geantwortet.
+ * Gemischte Signale (ja+nein) → 'none' (kein Raten).
+ */
+export function classifyConfirmationReply(normalized: string, hasReplyContext: boolean): 'yes' | 'no' | 'none' {
+  const STRICT_YES = ['ja', 'ok', 'yes', 'bestätigen', 'j'];
+  const STRICT_NO = ['nein', 'no', 'abbrechen', 'n', 'nö'];
+  if (STRICT_YES.includes(normalized)) return 'yes';
+  if (STRICT_NO.includes(normalized)) return 'no';
+  if (!hasReplyContext) return 'none';
+  // Eine Rückfrage ist keine Bestätigung (z.B. "was genau?", "ist das ok?").
+  if (normalized.includes('?')) return 'none';
+  // Bewusst KONSERVATIV: nur eindeutig affirmative Kommando-/Zustimmungswörter.
+  // Mehrdeutige Wörter (genau/richtig) sind raus — sie kommen oft in Rückfragen vor.
+  const LOOSE_YES_RE = /\b(ok|okay|ja|jo|jup|jep|passt|mach|machs|los|approve|freigabe|freigeben)\b/;
+  const LOOSE_NO_RE = /\b(nein|nicht|stop|stopp|abbrechen|lass|verwerfen|niemals)\b/;
+  const yes = LOOSE_YES_RE.test(normalized);
+  const no = LOOSE_NO_RE.test(normalized);
+  if (yes && !no) return 'yes';
+  if (no && !yes) return 'no';
+  return 'none';
+}
+
 export function computeTopicKey(c: PendingConfirmation): string | null {
   const skill = c.skillName;
   const action = (c.skillParams?.action as string | undefined) ?? '';
@@ -128,11 +156,15 @@ export class ConfirmationQueue {
             }
             if (currentRow.length > 0) inlineKeyboard.push(currentRow);
           }
-          await adapter.sendMessage(opts.chatId, msg, {
+          const sentId = await adapter.sendMessage(opts.chatId, msg, {
             replyMarkup: { inlineKeyboard },
           });
+          // v884 — message_id persistieren: ein Reply darauf löst GENAU diese
+          // Confirmation auf (statt blind "neueste pending").
+          if (sentId) { try { await this.confirmRepo.setSentMessageId(confirmId, sentId); } catch { /* best-effort */ } }
         } else {
-          await adapter.sendMessage(opts.chatId, msg);
+          const sentId = await adapter.sendMessage(opts.chatId, msg);
+          if (sentId && confirmId) { try { await this.confirmRepo.setSentMessageId(confirmId, sentId); } catch { /* best-effort */ } }
         }
       } catch (err) {
         this.logger.error({ err }, 'Failed to send confirmation request');
@@ -170,23 +202,35 @@ export class ConfirmationQueue {
    * Check if an incoming message is a confirmation response.
    * Returns true if the message was handled (consumed), false if it should proceed normally.
    */
-  async checkForConfirmation(chatId: string, platform: string, text: string, context: SkillContext): Promise<boolean> {
+  async checkForConfirmation(chatId: string, platform: string, text: string, context: SkillContext, replyToMessageId?: string): Promise<boolean> {
     const normalized = text.trim().toLowerCase();
 
     // Handle inline keyboard callback data: confirm:<id>:<key>
     // <key> kann 'approve' / 'reject' / oder ein custom extraAction-key sein
     const callbackMatch = /^confirm:([^:]+):([a-z0-9_-]+)$/i.exec(text.trim());
     const callbackKey = callbackMatch?.[2]?.toLowerCase();
-    const isYes = callbackKey === 'approve' || (!callbackMatch && ['ja', 'ok', 'yes', 'best\u00E4tigen', 'j'].includes(normalized));
-    const isNo = callbackKey === 'reject' || (!callbackMatch && ['nein', 'no', 'abbrechen', 'n', 'n\u00F6'].includes(normalized));
+
+    // v884 \u2014 Reply-Bezug: hat der User per Reply auf eine BESTIMMTE
+    // Best\u00E4tigungs-Nachricht geantwortet? Dann ist eindeutig, welche Confirmation
+    // gemeint ist \u2014 unabh\u00E4ngig davon, welche die neueste ist.
+    let replyPending: PendingConfirmation | undefined;
+    if (!callbackMatch && replyToMessageId) {
+      replyPending = await this.confirmRepo.findPendingBySentMessageId(chatId, platform, replyToMessageId);
+    }
+
+    // v884 \u2014 Affirmativ-Klassifikation in pure Funktion ausgelagert (deterministisch,
+    // getestet). Bei Reply-Bezug greifen breitere Phrasen ("ok mach es so").
+    const verdict = classifyConfirmationReply(normalized, !!replyPending);
+    const isYes = callbackKey === 'approve' || (!callbackMatch && verdict === 'yes');
+    const isNo = callbackKey === 'reject' || (!callbackMatch && verdict === 'no');
     const isExtraAction = callbackMatch && !!callbackKey && callbackKey !== 'approve' && callbackKey !== 'reject';
 
     if (!isYes && !isNo && !isExtraAction) return false;
 
-    // Use specific confirmation ID from callback button, or fall back to most recent pending
+    // Priorit\u00E4t: Callback-ID > Reply-referenzierte Confirmation > neueste pending
     const pending = callbackMatch
       ? await this.confirmRepo.getById(callbackMatch[1])
-      : await this.confirmRepo.findPending(chatId, platform);
+      : (replyPending ?? await this.confirmRepo.findPending(chatId, platform));
 
     const adapter = this.adapters.get(platform as Platform);
 
