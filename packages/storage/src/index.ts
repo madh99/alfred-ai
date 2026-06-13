@@ -103,6 +103,7 @@ export type {
   ProjectHealthEntry, HealthProbe, HealthStatus,
   ProjectConventions,
   ProjectStorageType,
+  AgentStrategy,
 } from './repositories/project-repository.js';
 export { AgentConventionsRepository } from './repositories/agent-conventions-repository.js';
 export { ChatActionsRepository } from './repositories/chat-actions-repository.js';

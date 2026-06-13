@@ -1815,4 +1815,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS sent_message_id TEXT`, []);
     },
   },
+  {
+    version: 112,
+    description: 'v889 — projects.agent_strategy (JSON): CLI-Agent-Wahl/Ausweich-Strategie pro Projekt.',
+    async up(db) {
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS agent_strategy TEXT`, []);
+    },
+  },
 ];

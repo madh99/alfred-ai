@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.889a] - 2026-06-13
+
+### Added — CLI-Agent-Strategie: Fundament (v889a)
+
+Vorbereitung dafür, dass parallele Projekt-Läufe nicht blind dieselbe CLI
+(und damit dasselbe Provider-Kontingent) belegen. **Reines Backend-Fundament
+— noch ohne Verhaltensänderung an den Live-Pfaden** (eingehängt in v889b):
+
+- **`projects.agent_strategy`** (JSON, Migration SQLite v108 / PG v112):
+  `{ mode: 'auto'|'manual', preferred, fallbackOrder }` — pro Projekt
+  steuerbare CLI-Wahl/Ausweich-Reihenfolge. NULL = Default (auto, preferred =
+  erster konfigurierter Agent) → identisches Verhalten wie bisher
+- **`AgentBusyRegistry`** (in-memory, node-lokal): das einzige Register, das
+  ALLE CLI-Lauftypen sieht — auch die `runCodeAgent`-Pfade (Abarbeiten/
+  Review/Discovery/Dependency), die keine `project_agent_session` anlegen
+- **`resolveAgentForRun()`** (zentrale Auflösung, getestet): expliziter
+  Picker-Wert > Resume-Kontinuität > Strategie (auto: preferred, bei
+  Belegung fallbackOrder durch; manual: interaktiv Vorauswahl, an
+  automatischen Pfaden Fallback auf auto/preferred **mit Vermerk**)
+- 18 Tests (Resolver + Register)
+
+v889b folgt: Resolver an allen Start-Pfaden einhängen, UI-Sektion
+„CLI-Strategie", Picker-Defaults aus Projekt-Präferenz, Busy-Badge.
+
 ## [0.19.0-multi-ha.888] - 2026-06-13
 
 ### Fixed — Roadmap-Reihenfolge des Projekt-Wizards geht nicht mehr verloren (v888)

@@ -3,6 +3,22 @@ import type { AsyncDbAdapter } from '../db-adapter.js';
 
 export type ProjectStatus = 'active' | 'paused' | 'completed' | 'maintenance' | 'archived';
 export type ProjectHealthMode = 'full' | 'minimal' | 'off';
+
+/**
+ * v889 — CLI-Agent-Wahl-/Ausweich-Strategie pro Projekt.
+ *  - mode 'auto'   : preferred nehmen; ist sie belegt (anderes Projekt läuft
+ *                    gerade damit), der fallbackOrder nach erste freie nehmen.
+ *  - mode 'manual' : bei interaktiven Starts den User wählen lassen; an
+ *                    automatischen Pfaden (Cron/Reflector/Reasoning) gibt es
+ *                    keine Rückfragemöglichkeit → Fallback auf auto/preferred,
+ *                    mit Vermerk im Output.
+ *  preferred/fallbackOrder beziehen sich auf die Namen aus codeAgents.agents[].
+ */
+export interface AgentStrategy {
+  mode: 'auto' | 'manual';
+  preferred?: string;
+  fallbackOrder?: string[];
+}
 /**
  * v665a — Speicher-Typ eines Projekts:
  *  - 'local'  : an eine Cluster-Node gebunden (node_id gesetzt)
@@ -93,6 +109,9 @@ export interface Project {
   /** v875 — Soft-Budget für CLI-Agent-Kosten pro Woche (USD). NULL = kein Budget.
    *  Soft-Limit: Überschreitung warnt (Runner-Start + UI), blockiert aber nichts. */
   costBudgetWeeklyUsd?: number;
+  /** v889 — CLI-Agent-Wahl-/Ausweich-Strategie pro Projekt. NULL = Default
+   *  (auto, preferred = erster konfigurierter Agent). */
+  agentStrategy?: AgentStrategy;
   /**
    * v849 — Sandbox-Mode pro Projekt.
    * - 'single' (default): ein Docker-Container mit Node-Image (Status quo)
@@ -208,6 +227,22 @@ function parseSummary(raw: unknown): ProjectSessionSummary | undefined {
   try { return JSON.parse(raw) as ProjectSessionSummary; } catch { return undefined; }
 }
 
+/** v889 — defensives Parsen der agent_strategy-Spalte (kaputt/NULL → undefined). */
+function parseAgentStrategy(raw: unknown): AgentStrategy | undefined {
+  if (typeof raw !== 'string' || !raw) return undefined;
+  try {
+    const v = JSON.parse(raw) as Partial<AgentStrategy>;
+    if (v && (v.mode === 'auto' || v.mode === 'manual')) {
+      return {
+        mode: v.mode,
+        preferred: typeof v.preferred === 'string' ? v.preferred : undefined,
+        fallbackOrder: Array.isArray(v.fallbackOrder) ? v.fallbackOrder.filter((x): x is string => typeof x === 'string') : undefined,
+      };
+    }
+  } catch { /* kaputt → undefined */ }
+  return undefined;
+}
+
 function rowToProject(row: Record<string, unknown>): Project {
   let conventions: ProjectConventions | undefined;
   if (row.conventions) {
@@ -238,6 +273,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     defaultDbSeedId: (row.default_db_seed_id as string | null) ?? undefined,
     maxConcurrentSandboxes: (row.max_concurrent_sandboxes as number | null) ?? undefined,
     costBudgetWeeklyUsd: row.cost_budget_weekly_usd != null ? Number(row.cost_budget_weekly_usd) : undefined,
+    agentStrategy: parseAgentStrategy(row.agent_strategy),
     // v849 — Compose-Stack fields
     sandboxMode: ((row.sandbox_mode as string | null) ?? 'single') as 'single' | 'compose',
     persistDbVolumes: Boolean(row.persist_db_volumes),
@@ -416,7 +452,7 @@ export class ProjectRepository {
     return rows.map(rowToProject);
   }
 
-  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId' | 'maxConcurrentSandboxes' | 'costBudgetWeeklyUsd' | 'sandboxMode' | 'persistDbVolumes' | 'dbSeedStrategy'>>): Promise<Project | null> {
+  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId' | 'maxConcurrentSandboxes' | 'costBudgetWeeklyUsd' | 'agentStrategy' | 'sandboxMode' | 'persistDbVolumes' | 'dbSeedStrategy'>>): Promise<Project | null> {
     const existing = await this.getById(userId, id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -447,6 +483,8 @@ export class ProjectRepository {
     if (patch.maxConcurrentSandboxes !== undefined) { sets.push('max_concurrent_sandboxes = ?'); params.push(patch.maxConcurrentSandboxes ?? null); }
     // v875 — Kosten-Soft-Budget pro Woche (USD)
     if (patch.costBudgetWeeklyUsd !== undefined) { sets.push('cost_budget_weekly_usd = ?'); params.push(patch.costBudgetWeeklyUsd ?? null); }
+    // v889 — CLI-Agent-Strategie (JSON)
+    if (patch.agentStrategy !== undefined) { sets.push('agent_strategy = ?'); params.push(patch.agentStrategy ? JSON.stringify(patch.agentStrategy) : null); }
     // v849 — Compose-Stack fields
     if (patch.sandboxMode !== undefined) { sets.push('sandbox_mode = ?'); params.push(patch.sandboxMode); }
     if (patch.persistDbVolumes !== undefined) { sets.push('persist_db_volumes = ?'); params.push(patch.persistDbVolumes ? 1 : 0); }

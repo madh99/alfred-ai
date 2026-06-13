@@ -2505,4 +2505,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE pending_confirmations ADD COLUMN sent_message_id TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 108,
+    description: 'v889 — projects.agent_strategy (JSON: {mode,preferred,fallbackOrder}) — CLI-Agent-Wahl/Ausweich-Strategie pro Projekt (SQLite-Spiegel zu PG v112).',
+    up(db) {
+      try { db.exec(`ALTER TABLE projects ADD COLUMN agent_strategy TEXT`); } catch { /* exists */ }
+    },
+  },
 ];
