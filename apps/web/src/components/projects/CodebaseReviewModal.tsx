@@ -26,9 +26,11 @@ const KIND_ICON: Record<CodebaseReviewFinding['kind'], string> = {
 
 const DEFAULT_SCOPE = 'Security, Bugs, Lücken, Qualität';
 
-export function CodebaseReviewModal({ client, projectId, onClose, onApplied, notify }: {
+export function CodebaseReviewModal({ client, projectId, preferredAgent, onClose, onApplied, notify }: {
   client: AlfredClient;
   projectId: string;
+  /** v889b — Default-Vorauswahl aus der Projekt-CLI-Strategie (statt agents[0]). */
+  preferredAgent?: string;
   onClose: () => void;
   /** Nach Übernahme von Befunden — Caller lädt das Projekt-Detail neu. */
   onApplied: () => void;
@@ -50,7 +52,8 @@ export function CodebaseReviewModal({ client, projectId, onClose, onApplied, not
     void (async () => {
       const a = await client.fetchCodeAgents();
       setAgents(a);
-      if (a.length > 0) setReviewAgent(a[0]);
+      // v889b — Projekt-preferred bevorzugen, sonst erster Agent
+      if (a.length > 0) setReviewAgent(preferredAgent && a.includes(preferredAgent) ? preferredAgent : a[0]);
     })();
   }, [client]);
 

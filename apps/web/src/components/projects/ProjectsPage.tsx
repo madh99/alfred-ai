@@ -36,6 +36,7 @@ import { HealthTrendView } from './HealthTrendView';
 import { ProjectDocsView } from './ProjectDocsView';
 import { ProjectDepsView } from './ProjectDepsView';
 import { ProjectBudgetView } from './ProjectBudgetView';
+import { ProjectAgentStrategyView } from './ProjectAgentStrategyView';
 import { CodebaseReviewModal } from './CodebaseReviewModal';
 import { FeatureDiscoveryModal } from './FeatureDiscoveryModal';
 
@@ -1450,6 +1451,7 @@ export function ProjectsPage() {
                 <CodebaseReviewModal
                   client={client}
                   projectId={detail.project.id}
+                  preferredAgent={detail.project.agentStrategy?.preferred}
                   onClose={() => setReviewModalOpen(false)}
                   onApplied={() => loadDetail(detail.project.id)}
                   notify={notify}
@@ -1461,6 +1463,7 @@ export function ProjectsPage() {
                 <FeatureDiscoveryModal
                   client={client}
                   projectId={detail.project.id}
+                  preferredAgent={detail.project.agentStrategy?.preferred}
                   onClose={() => setDiscoveryModalOpen(false)}
                   onApplied={() => loadDetail(detail.project.id)}
                   notify={notify}
@@ -1586,6 +1589,15 @@ export function ProjectsPage() {
                   client={client}
                   project={detail.project}
                   onProjectUpdated={(p) => setDetail(d => d ? { ...d, project: p } : d)}
+                />
+              )}
+
+              {/* v889b — CLI-Agent-Strategie (Standard-CLI + Ausweich-Reihenfolge) */}
+              {client && (
+                <ProjectAgentStrategyView
+                  client={client}
+                  project={detail.project}
+                  onUpdated={(p) => setDetail(d => d ? { ...d, project: p } : d)}
                 />
               )}
 

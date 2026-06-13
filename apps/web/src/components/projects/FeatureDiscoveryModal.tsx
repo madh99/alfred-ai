@@ -21,9 +21,11 @@ const EFFORT_META: Record<'S' | 'M' | 'L', { label: string; cls: string }> = {
 
 type Decision = 'accepted' | 'rejected' | 'planning';
 
-export function FeatureDiscoveryModal({ client, projectId, onClose, onApplied, notify }: {
+export function FeatureDiscoveryModal({ client, projectId, preferredAgent, onClose, onApplied, notify }: {
   client: AlfredClient;
   projectId: string;
+  /** v889b — Default-Vorauswahl aus der Projekt-CLI-Strategie (statt agents[0]). */
+  preferredAgent?: string;
   onClose: () => void;
   /** Nach Plan-Abschluss (Items angelegt) — Caller lädt das Projekt-Detail neu. */
   onApplied: () => void;
@@ -45,7 +47,8 @@ export function FeatureDiscoveryModal({ client, projectId, onClose, onApplied, n
     void (async () => {
       const a = await client.fetchCodeAgents();
       setAgents(a);
-      if (a.length > 0) setSelectedAgents(new Set([a[0]]));
+      // v889b — Projekt-preferred bevorzugen, sonst erster Agent
+      if (a.length > 0) setSelectedAgents(new Set([preferredAgent && a.includes(preferredAgent) ? preferredAgent : a[0]]));
     })();
   }, [client]);
 

@@ -744,6 +744,8 @@ export class HttpAdapter extends MessagingAdapter {
     reviewCodebase?: (projectId: string, opts?: { scope?: string; reviewAgent?: string; crossCheckAgents?: string[] }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
     reviewResult?: (taskId: string) => Promise<Record<string, unknown> | null>;
     listCodeAgents?: () => Promise<{ agents: string[] }>;
+    /** v889b — laufende CLI-Agents (für Busy-Badge). */
+    agentBusy?: () => Promise<{ busy: Array<{ cli: string; projectId: string; kind: string }> }>;
     /** v880 — Feature-Discovery: Vorschläge generieren, Entscheidung pro Vorschlag (reject→Library, accept→Plan-Lauf). */
     suggestFeatures?: (projectId: string, opts?: { focus?: string; agents?: string[] }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
     suggestResult?: (taskId: string) => Promise<Record<string, unknown> | null>;
@@ -1375,6 +1377,9 @@ export class HttpAdapter extends MessagingAdapter {
     // sonst matched die generic Route und interpretiert z.B. "automation-templates" als Projekt-ID.
     } else if (url.pathname === '/api/projects/automation-templates' && req.method === 'GET') {
       this.handleAutomationTemplates(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/projects/agent-busy' && req.method === 'GET') {
+      // v889b — laufende CLI-Agents (Busy-Badge). Vor generic :id-Route.
+      this.handleProjectsAgentBusy(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/projects/code-agents' && req.method === 'GET') {
       // v879 — verfügbare CLI-Agents (für Agent-Auswahl im Review-Dialog).
       // MUSS vor der generic :id-Route stehen (sonst "code-agents" = Projekt-ID).
@@ -3245,6 +3250,17 @@ export class HttpAdapter extends MessagingAdapter {
       res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
     }
     const result = await this.projectsCallbacks.listCodeAgents();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v889b — GET /api/projects/agent-busy — laufende CLI-Agents (Busy-Badge). */
+  private async handleProjectsAgentBusy(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.agentBusy) {
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ busy: [] })); return;
+    }
+    const result = await this.projectsCallbacks.agentBusy();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }

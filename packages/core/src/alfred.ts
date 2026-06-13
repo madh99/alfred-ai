@@ -58,6 +58,8 @@ import {
   stageAssetsForProject,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
+import { AgentBusyRegistry } from './projects/agent-busy-registry.js';
+import { resolveAgentForRun } from './projects/resolve-agent.js';
 import { MessagePipeline } from './message-pipeline.js';
 import { ReminderScheduler } from './reminder-scheduler.js';
 import { SpeechTranscriber } from './speech-transcriber.js';
@@ -340,6 +342,10 @@ export class Alfred {
   private commitsRepoRef?: import('@alfred/storage').ProjectAgentCommitsRepository;
   /** v866 — CLI-Usage-Tracking (eigene Subscriptions/Keys, getrennt von llm_usage). */
   private cliRunsRepoRef?: import('@alfred/storage').CliAgentRunsRepository;
+  /** v889b — globales Register laufender CLI-Agents (für Last-/Kontingent-Ausweichen). */
+  private readonly agentBusyRegistry = new AgentBusyRegistry();
+  /** v889b — Ref für die Busy-Erkennung: laufende project_agent-Sessions (DB) zählen mit. */
+  private projectSessionRepoRef?: import('@alfred/storage').ProjectAgentSessionRepository;
   private plansRepoRef?: import('@alfred/storage').ProjectAgentPlansRepository;
   /** v851 — Feature-Library Reference für API-Callbacks. */
   private featuresRepoRef?: import('@alfred/storage').ProjectFeaturesRepository;
@@ -432,6 +438,43 @@ export class Alfred {
    */
   private tryOwner(): import('@alfred/types').UserUUID | undefined {
     return this.ownerMasterUserId;
+  }
+
+  /**
+   * v889b — Löst die CLI für einen Lauf auf: expliziter Picker-Wert gewinnt;
+   * sonst Projekt-Strategie (agent_strategy) + Ausweichen, wenn die CLI gerade
+   * in einem ANDEREN Projekt aktiv ist (Kontingent-Konkurrenz vermeiden).
+   * isAutomatic=true bei Cron/Reflector/Reasoning (kein interaktives Fragen).
+   */
+  private async resolveCliAgent(
+    projectId: string | undefined,
+    requestedAgent: string | undefined,
+    opts?: { isAutomatic?: boolean; resumeAgent?: string },
+  ): Promise<{ agent: string; note?: string }> {
+    const available = (this.config.codeAgents?.agents ?? []).map(a => a.name);
+    let strategy: import('@alfred/storage').AgentStrategy | undefined;
+    if (projectId && this.projectRepo) {
+      try {
+        const uid = this.tryOwner();
+        if (uid) strategy = (await this.projectRepo.getById(uid, projectId))?.agentStrategy;
+      } catch { /* Default-Strategie */ }
+    }
+    // busy: CLIs, die in ANDEREN Projekten gerade laufen (eigenes Projekt zählt nicht).
+    // Quelle 1: in-memory-Register (runCodeAgent-Pfade — legen keine Session an).
+    const busy = new Set<string>();
+    for (const cli of available) {
+      if (this.agentBusyRegistry.isBusy(cli, projectId)) busy.add(cli);
+    }
+    // Quelle 2: laufende project_agent-Sessions (DB) — teilen dasselbe Kontingent.
+    try {
+      if (this.projectSessionRepoRef) {
+        const running = await this.projectSessionRepoRef.listRunning();
+        for (const s of running) {
+          if (s.agentName && available.includes(s.agentName)) busy.add(s.agentName);
+        }
+      }
+    } catch { /* DB-Fehler → nur in-memory-Quelle */ }
+    return resolveAgentForRun({ available, strategy, requestedAgent, busy, isAutomatic: opts?.isAutomatic, resumeAgent: opts?.resumeAgent });
   }
   private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
   private readonly startedAt = new Date().toISOString();
@@ -1219,13 +1262,23 @@ export class Alfred {
             }
           },
           // v882 — echter Agent-Lauf für runVia:'deep_agent'-Templates
-          deepRunner: async ({ cwd, prompt }) => {
+          deepRunner: async ({ cwd, prompt, projectId }) => {
             const codeSkill = this.codeAgentSkillRef;
-            const agentName = this.config.codeAgents?.agents?.[0]?.name;
-            if (!codeSkill || !agentName) return { success: false, output: 'Code-Agent nicht konfiguriert' };
+            if (!codeSkill) return { success: false, output: 'Code-Agent nicht konfiguriert' };
+            // v889b — automatischer Pfad (Cron-Automation): isAutomatic → manual
+            // fällt still auf auto/preferred zurück, Ausweichen bei busy.
+            const resolved = await this.resolveCliAgent(projectId, undefined, { isAutomatic: true });
+            const agentName = resolved.agent;
+            if (!agentName) return { success: false, output: 'Code-Agent nicht konfiguriert' };
             const ownerChatId = this.config.security?.ownerUserId ?? '';
             const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
-            const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt, cwd }, ctx);
+            const busyToken = this.agentBusyRegistry.register(agentName, projectId ?? cwd, 'automation', Date.now());
+            let result;
+            try {
+              result = await codeSkill.execute({ action: 'run', agent: agentName, prompt, cwd }, ctx);
+            } finally {
+              this.agentBusyRegistry.release(busyToken);
+            }
             const data = result.data as { stdout?: string; stderr?: string } | undefined;
             const raw = data?.stdout || data?.stderr || result.error || '';
             return { success: result.success, output: raw.length > 16000 ? raw.slice(-16000) : raw };
@@ -1639,6 +1692,7 @@ export class Alfred {
       const { ProjectAgentSkill, setInterjectionRepo } = await import('@alfred/skills');
       const { ProjectAgentSessionRepository, ProjectAgentInterjectionRepository } = await import('@alfred/storage');
       const projectSessionRepo = new ProjectAgentSessionRepository(adapter);
+      this.projectSessionRepoRef = projectSessionRepo; // v889b — Busy-Erkennung
       setInterjectionRepo(new ProjectAgentInterjectionRepository(adapter));
       const projectAgentSkill = new ProjectAgentSkill(
         { ...this.config.projectAgents, agents: this.config.codeAgents.agents },
@@ -1912,17 +1966,21 @@ export class Alfred {
             : this.config.discord?.enabled ? 'discord'
             : 'api');
           const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+          // v889b — CLI nach Projekt-Strategie wählen (Ausweichen wenn die
+          // preferred-CLI in einem anderen Projekt läuft). project_agent-Läufe
+          // sind über listRunning() als busy sichtbar.
+          const resolved = await this.resolveCliAgent(projectId, undefined);
           // v869 — mentioned_item_ids durchreichen: wird auf der Session persistiert,
           // der v731-Auto-Done markiert die Items nach erfolgreichem Run als done.
           // Vorher wurden die IDs hier verworfen → Items blieben ewig offen.
           const result = await projectAgentSkill.execute({
             action: 'start', goal, cwd,
+            agent: resolved.agent || undefined,
             mentioned_item_ids: mentionedItemIds && mentionedItemIds.length > 0 ? mentionedItemIds : undefined,
           }, ctx);
           if (!result.success) throw new Error(result.error ?? 'project-agent start failed');
           const taskId = (result.data as any)?.taskId as string;
           if (!taskId) throw new Error('no taskId returned');
-          void projectId;
           return { taskId };
         });
 
@@ -1930,16 +1988,21 @@ export class Alfred {
         // brauchen keinen Multi-Phase-Project-Agent).
         // v869.3 — taskId wird durchgereicht → executeAgent streamt jede Zeile in
         // den outputBuffer → SSE-Live-Panel in der WebUI.
-        this.projectSkillRef.setCodeAgentRunner(async ({ cwd, prompt, taskId, agent }) => {
+        this.projectSkillRef.setCodeAgentRunner(async ({ cwd, prompt, taskId, agent, projectId }) => {
           const codeSkill = this.codeAgentSkillRef;
           if (!codeSkill) throw new Error('Code-Agent-Skill nicht verfügbar');
-          // v879 — wählbarer Agent (Review/Gegenprüfung); Default bleibt agents[0]
+          // v879 — wählbarer Agent (Review/Gegenprüfung).
           const agentNames = (this.config.codeAgents?.agents ?? []).map(a => a.name);
           if (agent && !agentNames.includes(agent)) {
             throw new Error(`Code-Agent "${agent}" ist nicht konfiguriert (verfügbar: ${agentNames.join(', ')})`);
           }
-          const agentName = agent ?? agentNames[0];
+          // v889b — zentrale Auflösung: expliziter Picker-Wert gewinnt, sonst
+          // Projekt-Strategie + Ausweichen, wenn die CLI in einem ANDEREN Projekt
+          // gerade läuft (Kontingent-Konkurrenz vermeiden).
+          const resolved = await this.resolveCliAgent(projectId, agent);
+          const agentName = resolved.agent;
           if (!agentName) throw new Error('Kein Code-Agent konfiguriert');
+          if (resolved.note && taskId) { try { appendOutputLine(taskId, 'system', `🔀 CLI: ${agentName} — ${resolved.note}`); } catch { /* */ } }
           const ownerChatId = this.config.security?.ownerUserId ?? '';
           const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
             : this.config.matrix?.enabled ? 'matrix'
@@ -1962,7 +2025,14 @@ export class Alfred {
               this.logger.debug({ err }, 'v877 code-agent asset staging failed (non-fatal)');
             }
           }
-          const result = await codeSkill.execute({ action: 'run', agent: agentName, prompt: effectivePrompt, cwd, taskId }, ctx);
+          // v889b — Lauf im globalen Busy-Register führen (release garantiert)
+          const busyToken = this.agentBusyRegistry.register(agentName, projectId ?? cwd, 'code-agent', Date.now());
+          let result;
+          try {
+            result = await codeSkill.execute({ action: 'run', agent: agentName, prompt: effectivePrompt, cwd, taskId }, ctx);
+          } finally {
+            this.agentBusyRegistry.release(busyToken);
+          }
           const data = result.data as { stdout?: string; stderr?: string } | undefined;
           // v870.1 — TAIL-erhaltend kürzen (vorher slice(0, 8000) = Kopf):
           // das Deep-Verify-Verdikt-JSON und Fehler stehen am ENDE des Outputs.
@@ -9500,6 +9570,20 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             try {
               return { agents: (this.config.codeAgents?.agents ?? []).map(a => a.name) };
             } catch { return { agents: [] }; }
+          },
+          // v889b — welche CLIs laufen gerade (in-memory-Register + laufende
+          // project_agent-Sessions) — für das Busy-Badge in der UI.
+          agentBusy: async () => {
+            try {
+              const busy = this.agentBusyRegistry.snapshot().map(e => ({ cli: e.cli, projectId: e.projectId, kind: e.kind }));
+              if (this.projectSessionRepoRef) {
+                const running = await this.projectSessionRepoRef.listRunning().catch(() => []);
+                for (const s of running) {
+                  if (s.agentName) busy.push({ cli: s.agentName, projectId: (s as { projectId?: string }).projectId ?? s.cwd ?? '?', kind: 'project-agent' });
+                }
+              }
+              return { busy };
+            } catch { return { busy: [] }; }
           },
           // v880 — Feature-Discovery: Agents schlagen Features vor; Bestand
           // (confirmed + rejected aus der Features-Library) wird mitgegeben,

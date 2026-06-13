@@ -29,8 +29,8 @@ export interface AutomationDataProviders {
   costStats?: (projectId: string) => Promise<string>;
   /** Offene MRs/PRs via Forge-API (GitLab/GitHub — nicht nur gh). */
   forgePrs?: (cwd: string) => Promise<string>;
-  /** v882 — echter CLI-Agent-Lauf im Repo (für runVia: 'deep_agent'). */
-  deepRunner?: (opts: { cwd: string; prompt: string }) => Promise<{ success: boolean; output: string }>;
+  /** v882 — echter CLI-Agent-Lauf im Repo (für runVia: 'deep_agent'). v889b — + projectId für CLI-Strategie. */
+  deepRunner?: (opts: { cwd: string; prompt: string; projectId?: string }) => Promise<{ success: boolean; output: string }>;
   /** v882 — deterministischer Commit+Push (Sicherungsnetz für Datei-schreibende Templates). */
   pushProject?: (opts: { cwd: string; commitMessage: string }) => Promise<{ success: boolean; summary: string }>;
   /** v882 — ITSM-Incident anlegen (Security-Gate). Provider dedupliziert selbst. */
@@ -191,7 +191,7 @@ export class AutomationEngine {
         '# Aufgabe',
         finalPromptDeep,
       ].join('\n');
-      const run = await this.dataProviders.deepRunner({ cwd: project.cwd, prompt: deepPrompt });
+      const run = await this.dataProviders.deepRunner({ cwd: project.cwd, prompt: deepPrompt, projectId: project.id });
       let output = run.output.length > 4000 ? '[...]\n' + run.output.slice(-4000) : run.output;
       if (!run.success) {
         const next = this.computeNextRun(auto.schedule);

@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.889b] - 2026-06-14
+
+### Added — CLI-Agent-Strategie: eingehängt + UI (v889b)
+
+Schaltet das Fundament aus v889a scharf — parallele Läufe belegen nicht mehr
+blind dieselbe CLI (geteiltes Provider-Kontingent).
+
+- **Resolver an den Start-Pfaden eingehängt**: Der zentrale
+  `runCodeAgent`-Wrapper (Abarbeiten, Codebase-Review, Feature-Discovery,
+  Dependency-Update, Feature-Plan), der `deepRunner` (Cron-Automationen,
+  `isAutomatic`) und der project_agent-Starter lösen die CLI jetzt über
+  `resolveAgentForRun` auf: expliziter Picker-Wert gewinnt, sonst
+  Projekt-Strategie + Ausweichen, wenn die CLI gerade woanders läuft. Ein
+  Ausweichen/Vermerk wird in den Live-Output geschrieben (z.B.
+  „🔀 CLI: codex — claude-code läuft bereits — ausgewichen")
+- **Busy-Erkennung kombiniert zwei Quellen**: das In-Memory-Register
+  (runCodeAgent/Automation — legen keine Session an) **und** laufende
+  `project_agent`-Sessions aus der DB. Damit ist jeder Lauftyp sichtbar
+- **UI „🔀 CLI-Strategie"** im Projekt-Detail: Modus auto/manuell,
+  bevorzugte CLI, sortierbare Ausweich-Reihenfolge, Anzeige gerade
+  laufender CLIs. Speichert in `projects.agent_strategy`
+- **Picker-Defaults**: Codebase-Review- und Feature-Discovery-Dialog
+  belegen die CLI jetzt mit dem Projekt-`preferred` vor (statt agents[0])
+- Neuer Endpoint `GET /api/projects/agent-busy`
+- `manual` an automatischen Pfaden fällt wie besprochen still auf
+  auto/preferred zurück — mit Vermerk im Output
+
 ## [0.19.0-multi-ha.889a] - 2026-06-13
 
 ### Added — CLI-Agent-Strategie: Fundament (v889a)

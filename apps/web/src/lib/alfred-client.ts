@@ -1764,6 +1764,14 @@ export class AlfredClient {
     return data.agents ?? [];
   }
 
+  /** v889b — welche CLI-Agents gerade in welchem Projekt laufen (für Busy-Badge). */
+  async fetchAgentBusy(): Promise<Array<{ cli: string; projectId: string; kind: string }>> {
+    const res = await fetch(`${this.baseUrl}/api/projects/agent-busy`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({ busy: [] }));
+    return data.busy ?? [];
+  }
+
   /** v879 — Codebase-Review starten (async, optional Gegenprüfung durch andere Agents). */
   async projectReviewCodebase(id: string, opts?: { scope?: string; reviewAgent?: string; crossCheckAgents?: string[] }): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/review`, {
@@ -2765,6 +2773,8 @@ export interface Project {
   maxConcurrentSandboxes?: number;
   /** v875 — Soft-Budget für CLI-Agent-Kosten pro Woche (USD). NULL = kein Budget. */
   costBudgetWeeklyUsd?: number;
+  /** v889 — CLI-Agent-Wahl-/Ausweich-Strategie pro Projekt. */
+  agentStrategy?: { mode: 'auto' | 'manual'; preferred?: string; fallbackOrder?: string[] };
   status: ProjectStatus;
   healthMode: ProjectHealthMode;
   tags: string[];

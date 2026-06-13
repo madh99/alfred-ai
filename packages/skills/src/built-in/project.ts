@@ -325,7 +325,7 @@ export class ProjectSkill extends Skill {
   /** v869 — Code-Agent-Runner für die Triage: 1-2 einfache Items brauchen keinen
    *  Multi-Phase-Project-Agent (gleiche Regel wie im Chat-Prompt-Builder).
    *  v869.3 — taskId: Live-Output-Streaming in den outputBuffer (SSE in der WebUI). */
-  private runCodeAgent?: (opts: { cwd: string; prompt: string; taskId?: string; agent?: string }) => Promise<{ success: boolean; output: string }>;
+  private runCodeAgent?: (opts: { cwd: string; prompt: string; taskId?: string; agent?: string; projectId?: string }) => Promise<{ success: boolean; output: string }>;
   /** v869.3 — Owner-Benachrichtigung (Telegram) für async Code-Läufe. Set by alfred.ts. */
   private ownerNotify?: (text: string) => void;
   /** v869.4 — Sicherungsnetz: code_agent.push (committet nur bei dirty Tree,
@@ -349,7 +349,7 @@ export class ProjectSkill extends Skill {
   }
 
   /** v869 — Inject the code-agent runner for single-item triage. */
-  setCodeAgentRunner(fn: (opts: { cwd: string; prompt: string; taskId?: string; agent?: string }) => Promise<{ success: boolean; output: string }>): void {
+  setCodeAgentRunner(fn: (opts: { cwd: string; prompt: string; taskId?: string; agent?: string; projectId?: string }) => Promise<{ success: boolean; output: string }>): void {
     this.runCodeAgent = fn;
   }
 
@@ -794,7 +794,7 @@ ${decLines.join('\n') || '  _keine_'}`;
       const codeGoal = `${goal}\n\nAbschluss: Committe deine Änderungen mit aussagekräftiger Conventional-Commits-Message (fix(scope): …). Kein Push nötig — der erfolgt automatisch. Wenn nichts zu ändern war: kein Commit, dokumentiere kurz warum.`;
       void (async () => {
         try {
-          const result = await this.runCodeAgent!({ cwd, prompt: codeGoal, taskId: liveTaskId });
+          const result = await this.runCodeAgent!({ cwd, prompt: codeGoal, taskId: liveTaskId, projectId });
           if (result.success) {
             // v871.1 — v705-Success-Pfad: setzt done + `implemented:<taskId>`-Marker
             let marked = 0;
@@ -957,7 +957,7 @@ ${decLines.join('\n') || '  _keine_'}`;
     const cwd = project.cwd;
     void (async () => {
       try {
-        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId });
+        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, projectId });
         if (result.success) {
           let secureNote = '';
           if (this.pushProject) {
@@ -1065,7 +1065,7 @@ ${decLines.join('\n') || '  _keine_'}`;
     const cwd = project.cwd;
     void (async () => {
       try {
-        const result = await this.runCodeAgent!({ cwd, prompt: reviewPrompt, taskId: liveTaskId, agent: reviewAgent });
+        const result = await this.runCodeAgent!({ cwd, prompt: reviewPrompt, taskId: liveTaskId, agent: reviewAgent, projectId });
         if (!result.success) {
           this.reviewResults.set(liveTaskId, { status: 'failed', findings: [], reviewAgent, error: `Review-Lauf fehlgeschlagen: ${result.output.slice(-300)}`, ts: Date.now() });
           appendOutputLine(liveTaskId, 'system', `❌ Review-Lauf fehlgeschlagen. Output-Ende: ${result.output.slice(-400)}`);
@@ -1099,7 +1099,7 @@ ${decLines.join('\n') || '  _keine_'}`;
           for (const agent of crossCheckAgents) {
             appendOutputLine(liveTaskId, 'system', `🧪 Gegenprüfung durch ${agent} läuft…`);
             try {
-              const cc = await this.runCodeAgent!({ cwd, prompt: crossPrompt, taskId: liveTaskId, agent });
+              const cc = await this.runCodeAgent!({ cwd, prompt: crossPrompt, taskId: liveTaskId, agent, projectId });
               const verdicts = cc.success ? parseCrossCheckVerdicts(cc.output, validIds) : [];
               if (verdicts.length === 0) {
                 appendOutputLine(liveTaskId, 'system', `⚠️ ${agent}: kein parsebares Verdikt — wird im Ergebnis als "unclear" geführt.`);
@@ -1223,7 +1223,7 @@ ${decLines.join('\n') || '  _keine_'}`;
           const label = agent ?? 'Standard-Agent';
           appendOutputLine(liveTaskId, 'system', `💡 ${label} analysiert…`);
           try {
-            const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent });
+            const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent, projectId });
             if (!result.success) {
               appendOutputLine(liveTaskId, 'system', `⚠️ ${label} fehlgeschlagen. Output-Ende: ${result.output.slice(-200)}`);
               continue;
@@ -1318,7 +1318,7 @@ ${decLines.join('\n') || '  _keine_'}`;
     const cwd = project.cwd;
     void (async () => {
       try {
-        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent });
+        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent, projectId });
         if (!result.success) {
           appendOutputLine(liveTaskId, 'system', `❌ Plan-Lauf fehlgeschlagen. Output-Ende: ${result.output.slice(-300)}`);
           this.ownerNotify?.(`❌ Feature-Plan fehlgeschlagen (${projectName}: ${title}).`);
@@ -1441,7 +1441,7 @@ ${decLines.join('\n') || '  _keine_'}`;
     const cwd = project.cwd;
     void (async () => {
       try {
-        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId });
+        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, projectId });
         const findings = parseDeepVerifyFindings(result.output, validIds);
         if (result.success && findings.length > 0) {
           this.deepVerifyResults.set(liveTaskId, { status: 'done', findings, ts: Date.now() });
