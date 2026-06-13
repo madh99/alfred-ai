@@ -119,10 +119,15 @@ export function ProjectWorkStatsView({ projectId }: Props) {
 
           {/* v866 — CLI-Token-Usage (eigene Subscriptions/Keys — nicht in Alfred-Betriebskosten) */}
           {(stats.total.tokensIn ?? 0) + (stats.total.tokensOut ?? 0) > 0 && (
-            <div className="bg-[#0f0f0f] border border-[#222] rounded p-3 grid grid-cols-3 gap-2 text-xs">
+            <div className="bg-[#0f0f0f] border border-[#222] rounded p-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
               <div>
                 <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Tokens In</div>
                 <div className="text-base font-semibold text-gray-200">{formatTokens(stats.total.tokensIn ?? 0)}</div>
+              </div>
+              {/* v886 — Cache-Read: bei Claude-Code größter Posten + Haupt-Kostentreiber */}
+              <div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5" title="Prompt-Cache-Reads — bei Claude-Code meist der größte Token-Posten und Haupttreiber der Kosten-Äquiv.; 'Tokens In' zeigt nur ungecacht">Cache-Read</div>
+                <div className="text-base font-semibold text-purple-400">{formatTokens(stats.total.cacheReadTokens ?? 0)}</div>
               </div>
               <div>
                 <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Tokens Out</div>
@@ -150,8 +155,8 @@ export function ProjectWorkStatsView({ projectId }: Props) {
                       <span className="flex-1 text-gray-300">{typeLabel(t.sessionType)}</span>
                       {/* v866 — Tokens pro Typ (nur wenn Daten vorhanden — ab v866-Deploy) */}
                       {(t.tokensIn ?? 0) + (t.tokensOut ?? 0) > 0 && (
-                        <span className="text-gray-500 text-[10px] font-mono" title={`Tokens in/out · Kosten-Äquivalent $${(t.costUsd ?? 0).toFixed(2)}`}>
-                          {formatTokens(t.tokensIn ?? 0)}↓ {formatTokens(t.tokensOut ?? 0)}↑
+                        <span className="text-gray-500 text-[10px] font-mono" title={`Tokens in/out · Cache-Read ${formatTokens(t.cacheReadTokens ?? 0)} · Kosten-Äquivalent $${(t.costUsd ?? 0).toFixed(2)}`}>
+                          {formatTokens(t.tokensIn ?? 0)}↓ {formatTokens(t.tokensOut ?? 0)}↑{(t.cacheReadTokens ?? 0) > 0 ? ` ⟳${formatTokens(t.cacheReadTokens ?? 0)}` : ''}
                         </span>
                       )}
                       <span className="text-gray-500 text-[10px]" title={failed > 0 ? `${failed} abgebrochen/fehlgeschlagen` : undefined}>{counts}</span>
@@ -190,8 +195,8 @@ export function ProjectWorkStatsView({ projectId }: Props) {
                   <div key={i} className="flex items-center gap-2 text-xs">
                     <span className="font-mono text-gray-300">{d.agent}</span>
                     <span className="flex-1 text-gray-500 text-[10px] font-mono truncate" title={d.detail}>{d.detail}</span>
-                    <span className="text-gray-500 text-[10px] font-mono" title={`Kosten-Äquivalent $${d.costUsd.toFixed(2)}`}>
-                      {formatTokens(d.tokensIn)}↓ {formatTokens(d.tokensOut)}↑
+                    <span className="text-gray-500 text-[10px] font-mono" title={`Tokens in/out · Cache-Read ${formatTokens(d.cacheReadTokens ?? 0)} · Kosten-Äquivalent $${d.costUsd.toFixed(2)}`}>
+                      {formatTokens(d.tokensIn)}↓ {formatTokens(d.tokensOut)}↑{(d.cacheReadTokens ?? 0) > 0 ? ` ⟳${formatTokens(d.cacheReadTokens ?? 0)}` : ''}
                     </span>
                     <span className="text-gray-500 text-[10px]">{d.runs}</span>
                     <span className="font-mono text-blue-400">{formatDuration(d.durationS)}</span>

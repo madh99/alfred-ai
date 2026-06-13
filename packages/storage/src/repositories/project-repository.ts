@@ -573,11 +573,11 @@ export class ProjectRepository {
    * der User die Live-Zeit aktiv laufender Agents sieht.
    */
   async getWorkStats(projectId: string): Promise<{
-    total: { count: number; totalSeconds: number; runningCount: number; failedCount: number; discardedCount: number; discardedSeconds: number; tokensIn?: number; tokensOut?: number; costUsd?: number };
-    byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount: number; tokensIn?: number; tokensOut?: number; costUsd?: number }>;
+    total: { count: number; totalSeconds: number; runningCount: number; failedCount: number; discardedCount: number; discardedSeconds: number; tokensIn?: number; tokensOut?: number; cacheReadTokens?: number; costUsd?: number };
+    byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount: number; tokensIn?: number; tokensOut?: number; cacheReadTokens?: number; costUsd?: number }>;
     byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
-    /** v866 — pro Agent/Version/Modell aus cli_agent_runs (Daten ab v866-Deploy). */
-    byAgentDetail?: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; costUsd: number }>;
+    /** v866 — pro Agent/Version/Modell aus cli_agent_runs (Daten ab v866-Deploy). v886 — + cacheReadTokens. */
+    byAgentDetail?: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number }>;
   }> {
     // v668 — summary_json enthält status (success/failed/partial). Wir extrahieren das
     // damit "abgebrochene" Sessions separat zählbar sind. Die Duration kommt aus
@@ -661,27 +661,29 @@ export class ProjectRepository {
     // v866 — Tokens/Kosten + Agent/Version/Modell-Detail aus cli_agent_runs.
     // Eigene Subscription/Keys der CLI-Agents — getrennt von llm_usage. Daten
     // existieren erst ab v866-Deploy; Fehler (Tabelle fehlt in Tests) → skip.
-    let cliTotals: { tokensIn: number; tokensOut: number; costUsd: number } | undefined;
-    const cliByType = new Map<string, { tokensIn: number; tokensOut: number; costUsd: number }>();
-    let byAgentDetail: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; costUsd: number }> | undefined;
+    // v886 — cacheReadTokens mitführen: bei Claude-Code der größte Token-Posten
+    // (Prompt-Caching) und Haupt-Kostentreiber. Spalte existiert seit v866.
+    let cliTotals: { tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number } | undefined;
+    const cliByType = new Map<string, { tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number }>();
+    let byAgentDetail: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number }> | undefined;
     try {
       const typeRows = await this.adapter.query(
-        `SELECT session_type, COALESCE(SUM(tokens_in),0) AS tin, COALESCE(SUM(tokens_out),0) AS tout, COALESCE(SUM(cost_usd),0) AS cost
+        `SELECT session_type, COALESCE(SUM(tokens_in),0) AS tin, COALESCE(SUM(tokens_out),0) AS tout, COALESCE(SUM(cache_read_tokens),0) AS cache, COALESCE(SUM(cost_usd),0) AS cost
          FROM cli_agent_runs WHERE project_id = ? GROUP BY session_type`,
         [projectId],
-      ) as Array<{ session_type: string; tin: number | string; tout: number | string; cost: number | string }>;
+      ) as Array<{ session_type: string; tin: number | string; tout: number | string; cache: number | string; cost: number | string }>;
       for (const r of typeRows) {
-        cliByType.set(r.session_type, { tokensIn: Number(r.tin), tokensOut: Number(r.tout), costUsd: Number(r.cost) });
+        cliByType.set(r.session_type, { tokensIn: Number(r.tin), tokensOut: Number(r.tout), cacheReadTokens: Number(r.cache), costUsd: Number(r.cost) });
       }
       if (typeRows.length > 0) {
-        cliTotals = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+        cliTotals = { tokensIn: 0, tokensOut: 0, cacheReadTokens: 0, costUsd: 0 };
         for (const v of cliByType.values()) {
-          cliTotals.tokensIn += v.tokensIn; cliTotals.tokensOut += v.tokensOut; cliTotals.costUsd += v.costUsd;
+          cliTotals.tokensIn += v.tokensIn; cliTotals.tokensOut += v.tokensOut; cliTotals.cacheReadTokens += v.cacheReadTokens; cliTotals.costUsd += v.costUsd;
         }
       }
       const detailRows = await this.adapter.query(
         `SELECT agent_name, agent_version, model, COUNT(*) AS runs, COALESCE(SUM(duration_s),0) AS dur,
-                COALESCE(SUM(tokens_in),0) AS tin, COALESCE(SUM(tokens_out),0) AS tout, COALESCE(SUM(cost_usd),0) AS cost
+                COALESCE(SUM(tokens_in),0) AS tin, COALESCE(SUM(tokens_out),0) AS tout, COALESCE(SUM(cache_read_tokens),0) AS cache, COALESCE(SUM(cost_usd),0) AS cost
          FROM cli_agent_runs WHERE project_id = ? GROUP BY agent_name, agent_version, model ORDER BY dur DESC`,
         [projectId],
       ) as Array<Record<string, unknown>>;
@@ -690,7 +692,7 @@ export class ProjectRepository {
           agent: String(r.agent_name),
           detail: `${r.agent_version ?? '?'} · ${r.model ?? '?'}`,
           runs: Number(r.runs), durationS: Number(r.dur),
-          tokensIn: Number(r.tin), tokensOut: Number(r.tout), costUsd: Number(r.cost),
+          tokensIn: Number(r.tin), tokensOut: Number(r.tout), cacheReadTokens: Number(r.cache), costUsd: Number(r.cost),
         }));
       }
     } catch { /* cli_agent_runs fehlt (alte DB / Test) — Stats ohne Tokens */ }

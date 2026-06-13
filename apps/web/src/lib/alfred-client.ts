@@ -2539,11 +2539,11 @@ export interface ProjectLastDeploy {
 export interface ProjectWorkStats {
   // v668 — failedCount (cancelled/failed Sessions) separat ausgewiesen
   // v866 — tokensIn/Out + costUsd (CLI-eigene Subscriptions, Daten ab v866-Deploy)
-  total: { count: number; totalSeconds: number; runningCount: number; failedCount?: number; tokensIn?: number; tokensOut?: number; costUsd?: number };
-  byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount?: number; tokensIn?: number; tokensOut?: number; costUsd?: number }>;
+  total: { count: number; totalSeconds: number; runningCount: number; failedCount?: number; tokensIn?: number; tokensOut?: number; cacheReadTokens?: number; costUsd?: number };
+  byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount?: number; tokensIn?: number; tokensOut?: number; cacheReadTokens?: number; costUsd?: number }>;
   byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
   /** v866 — pro Agent/Version/Modell aus cli_agent_runs. */
-  byAgentDetail?: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; costUsd: number }>;
+  byAgentDetail?: Array<{ agent: string; detail: string; runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens?: number; costUsd: number }>;
 }
 
 /** v866 — Globale CLI-Agent-Usage-Übersicht (eigene Subscriptions/Keys). */

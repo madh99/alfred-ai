@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.886] - 2026-06-13
+
+### Fixed
+
+- **Projekt-Arbeitszeit-Statistik zeigt Cache-Read-Tokens** (Fortsetzung
+  von v885 für die projekt-interne Ansicht): `getWorkStats` summiert jetzt
+  `cache_read_tokens` mit (Spalte existiert seit v866, wurde nur nicht
+  selektiert) — neue „Cache-Read"-Kachel in den Token-Totals und der
+  Wert in den Tooltips/Zeilen von „Nach Typ" und „Nach Agent/Version/
+  Modell" (⟳-Markierung). Rein additiv, keine Migration, alle bestehenden
+  Felder unverändert
+
 ## [0.19.0-multi-ha.885] - 2026-06-13
 
 ### Fixed
