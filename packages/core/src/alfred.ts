@@ -6261,6 +6261,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     if (this.skillHealthRepo) this.pipeline.setSkillHealthRepo(this.skillHealthRepo);
     if (insightTracker) this.pipeline.setInsightTracker(insightTracker);
 
+    // v890 — Projekt-Chat-CLI-Auflösung: der Chat-Picker (bzw. 'auto'→Strategie)
+    // bestimmt die CLI deterministisch. Zeigt auf dasselbe resolveCliAgent wie die
+    // programmatischen Pfade (Strategie + Busy-Ausweichen).
+    if (this.pipeline.setProjectAgentResolver) {
+      this.pipeline.setProjectAgentResolver((projectId, requested) => this.resolveCliAgent(projectId, requested));
+    }
+
     // Wire reasoning engine into pipeline for post-skill triggers
     if (this.reasoningEngine) {
       this.pipeline.setReasoningEngine(this.reasoningEngine);

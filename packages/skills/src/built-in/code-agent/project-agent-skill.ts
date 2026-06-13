@@ -593,7 +593,10 @@ ${planSummary}${commits}${userNotes}
   private async startProject(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const rawGoal = input.goal as string | undefined;
     let cwd = input.cwd as string | undefined;
-    const agentName = (input.agent as string) ?? [...this.agents.keys()][0];
+    // v890 — Projekt-Chat-CLI-Override gewinnt über die LLM-Vermutung (input.agent).
+    // Ändert NUR welche CLI läuft, nicht ob ein Project-Agent-Run das Richtige ist
+    // (diese Entscheidung trifft weiterhin das LLM, indem es diese action wählt).
+    const agentName = context.forcedCodeAgent || (input.agent as string) || [...this.agents.keys()][0];
 
     if (!rawGoal) return { success: false, error: 'Missing required field "goal"' };
     if (!cwd) return { success: false, error: 'Missing required field "cwd"' };
@@ -901,6 +904,12 @@ ${planSummary}${commits}${userNotes}
       // (masterUserId bevorzugt — cli_agent_runs.user_id ist die users.id)
       userId: context.masterUserId ?? context.userId,
     };
+
+    // v890 — Vermerk zur CLI-Auflösung (Ausweichen/auto) sichtbar machen, sobald
+    // der Lauf wirklich startet (nicht eager, sonst Hinweis ohne Run).
+    if (context.forcedCodeAgent && context.forcedCodeAgentNote) {
+      try { context.onProgress?.(`🔀 CLI: ${agentName} — ${context.forcedCodeAgentNote}`); } catch { /* best effort */ }
+    }
 
     // Fire-and-forget: start the runner loop asynchronously
     this.runner.run(session.taskId, config, context.platform, context.chatId).catch((err) => {

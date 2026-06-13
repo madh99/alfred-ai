@@ -68,6 +68,11 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
   const [runningSessions, setRunningSessions] = useState<ProjectAgentSession[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<ProjectAgentSession | null>(null);
+  // v890 — CLI-Wahl für Agent-Läufe aus diesem Chat. 'auto' = Projekt-Strategie
+  // (preferred + Ausweichen), sonst die gewählte CLI. Ändert NUR welche CLI ein
+  // project_agent/code_agent-Run nutzt — nicht ob/welcher Run gestartet wird.
+  const [agentChoice, setAgentChoice] = useState<string>('auto');
+  const [agentNames, setAgentNames] = useState<string[]>([]);
 
   const userId = user?.userId ?? 'web-user';
 
@@ -106,6 +111,11 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
       try {
         const notes = await client.fetchNotes({ limit: 200 });
         if (!cancelled) setAllNotes(notes);
+      } catch { /* non-critical */ }
+      // v890 — konfigurierte CLIs für den Picker laden
+      try {
+        const a = await client.fetchCodeAgents();
+        if (!cancelled) setAgentNames(a);
       } catch { /* non-critical */ }
     })();
     return () => { cancelled = true; };
@@ -227,7 +237,7 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
         }
       },
       onError: (e) => { setError(e); setStreaming(false); setStatus(null); },
-    }, undefined, refsToSend);
+    }, undefined, refsToSend, agentChoice);
     // v687 — Refs nach Send zurücksetzen
     setContextRefs([]);
   }
@@ -428,6 +438,21 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
           <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
             <button onClick={() => setShowOpenItemPicker(true)} disabled={streaming} className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded hover:bg-amber-500/20 disabled:opacity-40" title="Open-Item">📌 Open-Item</button>
             <button onClick={() => setShowAttachmentPicker(true)} disabled={streaming} className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded hover:bg-blue-500/20 disabled:opacity-40" title="Anhang">📎 Anhang</button>
+            {/* v890 — CLI-Wahl für Agent-Läufe aus diesem Chat. 'auto' = Projekt-Strategie. */}
+            {agentNames.length > 0 && (
+              <span className="inline-flex items-center gap-1" title="Welche CLI ein Agent-Lauf aus diesem Chat nutzt. „Automatisch“ wendet die eingestellte Projekt-CLI-Strategie an (bevorzugte CLI + Ausweichen). Beeinflusst NUR die CLI, nicht ob/welcher Lauf gestartet wird.">
+                <span className="text-[10px] text-gray-500">🔀</span>
+                <select
+                  value={agentChoice}
+                  onChange={(e) => setAgentChoice(e.target.value)}
+                  disabled={streaming}
+                  className="text-[10px] px-1 py-0.5 bg-[#1a1a1a] border border-purple-500/30 text-purple-300 rounded disabled:opacity-40 focus:outline-none"
+                >
+                  <option value="auto">Automatisch (Strategie)</option>
+                  {agentNames.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </span>
+            )}
             <span className="text-[10px] text-gray-600">Tipp: <code>@</code> im Text, Drag&amp;Drop für Files</span>
             {contextRefs.map((r, i) => (
               <span key={`${r.kind}-${r.refId}-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-[#0d0d0d] border border-blue-500/40 text-blue-200 rounded">

@@ -105,6 +105,16 @@ export interface SkillContext {
   };
   /** AbortSignal for cooperative cancellation (e.g. pause). */
   abortSignal?: AbortSignal;
+  /** v890 — Per-Turn-CLI-Override aus dem Projekt-Chat-Picker. Wenn gesetzt,
+   *  nutzen project_agent/code_agent DIESE CLI statt input.agent/agents[0].
+   *  Nur der Projekt-Chat setzt ihn (er kennt das Projekt + dessen agentStrategy);
+   *  bei allgemeinen code_agent-Aufrufen ohne Projekt bleibt er undefined → altes
+   *  Verhalten. Überschreibt AUSSCHLIESSLICH die CLI-Wahl, nie ob/welcher Run-Typ
+   *  (project_agent vs. code_agent) gestartet wird — das entscheidet weiterhin das LLM. */
+  forcedCodeAgent?: string;
+  /** v890 — Menschlicher Vermerk zur CLI-Auflösung (z.B. Ausweichen bei Busy), den
+   *  die Skill beim tatsächlichen Start in den Live-Output/Progress schreibt. */
+  forcedCodeAgentNote?: string;
   /** FileStore for cloud-backed file operations (S3/NFS). Undefined in single-instance local mode. */
   fileStore?: {
     readonly backend: string;

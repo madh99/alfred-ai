@@ -1498,6 +1498,8 @@ export class AlfredClient {
     replyTo?: { messageId?: string; text?: string; from?: string },
     /** v687 — Context-Refs (Open-Items, Notes, Documents, Files) die per Toolbar/@-Mention angefügt wurden */
     contextRefs?: Array<{ kind: string; refId: string; label?: string }>,
+    /** v890 — CLI-Wahl des Projekt-Chat-Pickers ('auto' = Projekt-Strategie, sonst konkrete CLI) */
+    agentChoice?: string,
   ): () => void {
     const controller = new AbortController();
     (async () => {
@@ -1510,6 +1512,9 @@ export class AlfredClient {
         }
         if (contextRefs && contextRefs.length > 0) {
           body.contextRefs = contextRefs;
+        }
+        if (agentChoice && agentChoice.length > 0) {
+          body.agentChoice = agentChoice;
         }
         const res = await fetch(`${this.baseUrl}/api/message`, {
           method: 'POST',

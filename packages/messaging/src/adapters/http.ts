@@ -5449,6 +5449,8 @@ export class HttpAdapter extends MessagingAdapter {
         const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string; replyToText?: string; replyToFrom?: string; replyToMessageId?: string; projectId?: string;
           // v687 — Project-Chat: optionale Context-Refs für In-Chat-Attachments/@-Mentions
           contextRefs?: Array<{ kind: string; refId: string; label?: string }>;
+          // v890 — Project-Chat: CLI-Wahl des Pickers ('auto' = Projekt-Strategie, sonst konkrete CLI)
+          agentChoice?: string;
         };
         const text = parsed.text;
         if (!text || typeof text !== 'string') {
@@ -5516,6 +5518,8 @@ export class HttpAdapter extends MessagingAdapter {
             ? { metadata: {
                 ...(projectId ? { projectId } : {}),
                 ...(Array.isArray(parsed.contextRefs) && parsed.contextRefs.length > 0 ? { contextRefs: parsed.contextRefs } : {}),
+                // v890 — CLI-Wahl des Projekt-Chat-Pickers (nur bei projectId relevant)
+                ...(projectId && typeof parsed.agentChoice === 'string' && parsed.agentChoice.length > 0 ? { agentChoice: parsed.agentChoice } : {}),
               } }
             : {}),
         };

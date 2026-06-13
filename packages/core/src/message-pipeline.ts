@@ -245,6 +245,10 @@ export class MessagePipeline {
   /** v658 — Projekt-Chat: für System-Prompt-Injection des Projekt-Kontextes */
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   private projectAgentSessionRepo?: import('@alfred/storage').ProjectAgentSessionRepository;
+  /** v890 — Projekt-Chat-CLI-Auflösung (zeigt auf alfred.resolveCliAgent): liefert
+   *  zur projectId + (optionaler) gewählter CLI die effektive CLI + Vermerk. */
+  private resolveProjectAgentFn?: (projectId: string, requestedAgent: string | undefined) => Promise<{ agent: string; note?: string }>;
+  setProjectAgentResolver(fn: (projectId: string, requestedAgent: string | undefined) => Promise<{ agent: string; note?: string }>): void { this.resolveProjectAgentFn = fn; }
   /** v847 — Project-Chat-Action-Tracking: persistiert Chat-getriggerte Skill-Arbeit. */
   private chatActionsRepo?: import('@alfred/storage').ChatActionsRepository;
   setChatActionsRepo(r: import('@alfred/storage').ChatActionsRepository | undefined): void { this.chatActionsRepo = r; }
@@ -561,6 +565,26 @@ export class MessagePipeline {
         }
       }
       tracePhase('project_owner_resolve', { override: !!projectOwnerOverride });
+
+      // v890 — Projekt-Chat-CLI-Wahl: der Chat-Picker bestimmt die CLI, nicht das LLM.
+      // 'auto' (oder kein Choice) → Projekt-Strategie (preferred + Ausweichen bei Busy);
+      // konkrete CLI → diese (über den Resolver validiert). Ergebnis als per-Turn-Override
+      // in den Skill-Context — project_agent/code_agent nutzen ihn statt input.agent.
+      // Setzt AUSSCHLIESSLICH die CLI; ob/welcher Run-Typ läuft, entscheidet weiter das LLM.
+      if (projectIdHint && this.resolveProjectAgentFn) {
+        const choiceRaw = message.metadata?.agentChoice as string | undefined;
+        const choice = (choiceRaw ?? '').trim();
+        const requested = (choice && choice !== 'auto') ? choice : undefined;
+        try {
+          const r = await this.resolveProjectAgentFn(projectIdHint, requested);
+          if (r.agent) {
+            baseContext.forcedCodeAgent = r.agent;
+            if (r.note) baseContext.forcedCodeAgentNote = r.note;
+          }
+        } catch (err) {
+          this.logger.debug({ err, projectId: projectIdHint, choice: choiceRaw }, 'v890 Projekt-Chat-CLI-Auflösung fehlgeschlagen — Default-Verhalten');
+        }
+      }
 
       // 2. Find or create conversation
       const conversation = await this.conversationManager.getOrCreateConversation(

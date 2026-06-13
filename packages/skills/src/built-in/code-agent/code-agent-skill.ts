@@ -206,7 +206,10 @@ export class CodeAgentSkill extends Skill {
     input: Record<string, unknown>,
     context: SkillContext,
   ): Promise<SkillResult> {
-    const agentName = input.agent as string | undefined;
+    // v890 — Projekt-Chat-CLI-Override (context.forcedCodeAgent) gewinnt über die
+    // LLM-Vermutung (input.agent). Greift nur, wenn der Projekt-Chat ihn gesetzt
+    // hat; bei allgemeinen code_agent-Aufrufen ohne Projekt bleibt es input.agent.
+    const agentName = (context.forcedCodeAgent || (input.agent as string)) as string | undefined;
     const prompt = input.prompt as string | undefined;
 
     if (!agentName || typeof agentName !== 'string') {
@@ -229,6 +232,12 @@ export class CodeAgentSkill extends Skill {
     const timeoutMs = typeof input.timeout === 'number' ? input.timeout : undefined;
     // v769 — taskId für Live-Output-Streaming (Reuse der project-agent outputBuffer/SSE-Infrastruktur)
     const liveTaskId = typeof input.taskId === 'string' ? input.taskId : undefined;
+
+    // v890 — Vermerk zur CLI-Auflösung (Ausweichen/auto) sichtbar machen, sobald
+    // der Override tatsächlich genutzt wird.
+    if (context.forcedCodeAgent && context.forcedCodeAgentNote) {
+      try { context.onProgress?.(`🔀 CLI: ${agentName} — ${context.forcedCodeAgentNote}`); } catch { /* best effort */ }
+    }
 
     // v608 F4 — bridge the subprocess into the sandbox's ActivityTracker.
     // Each stdout/stderr chunk fires onActivity, which calls tracker.ping('processing'),

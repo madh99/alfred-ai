@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.890] - 2026-06-14
+
+### Added — Projekt-Chat: CLI-Picker + „Automatisch" (v890)
+
+Der Projekt-Chat bestimmt jetzt selbst, welche CLI ein daraus gestarteter Agent-Lauf
+nutzt — bisher rateten LLM-getriggerte `project_agent start` / `code_agent run`-Aufrufe
+die CLI (immer `agents[0]`, z.B. claude-code) und ignorierten die eingestellte
+Projekt-CLI-Strategie komplett (Vorfall fussball-cc: preferred=mistral-vibe, lief
+trotzdem claude-code).
+
+- Neuer Picker im Projekt-Chat: **„Automatisch (Strategie)"** (Default) oder eine
+  konkrete CLI. „Automatisch" wendet die Projekt-CLI-Strategie an (bevorzugte CLI +
+  Ausweichen bei Belegung), eine konkrete Wahl erzwingt diese CLI.
+- Deterministische Auflösung über das bestehende `resolveCliAgent` (Strategie + Busy),
+  als per-Turn-Override (`SkillContext.forcedCodeAgent`) bis zum Agent-Start durchgereicht.
+- Der Override gewinnt über die LLM-Vermutung (`input.agent`) in `project_agent` und
+  `code_agent`. Er ändert **ausschließlich** die CLI — ob bzw. welcher Run-Typ
+  (project_agent vs. code_agent) startet, entscheidet weiterhin das LLM.
+- Kein Projekt-Kontext (allgemeiner `code_agent`-Aufruf) → kein Override → unverändertes
+  Verhalten. Vermerk zum Ausweichen erscheint beim tatsächlichen Start im Status-Log.
+
 ## [0.19.0-multi-ha.889b] - 2026-06-14
 
 ### Added — CLI-Agent-Strategie: eingehängt + UI (v889b)

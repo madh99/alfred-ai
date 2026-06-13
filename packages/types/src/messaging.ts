@@ -37,6 +37,9 @@ export interface NormalizedMessage {
      *  via Toolbar oder @-Mention in den Chat eingefügt wurden. Pipeline löst sie
      *  zu Markdown-Blöcken in die User-Message vor dem LLM-Call. */
     contextRefs?: Array<{ kind: string; refId: string; label?: string }>;
+    /** v890 — Project-Chat: CLI-Wahl des Pickers ('auto' = Projekt-Strategie, sonst
+     *  konkrete CLI). Bestimmt nur welche CLI ein Agent-Lauf nutzt, nicht ob/welcher. */
+    agentChoice?: string;
   };
 }
 
