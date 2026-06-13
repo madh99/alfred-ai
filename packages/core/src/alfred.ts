@@ -8085,7 +8085,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 if (!cAgent || codeAgents.length === 0) {
                   return { ok: false, userMessageId: userMsg.id, reason: 'code-agent nicht konfiguriert (config.codeAgents.enabled + agents) — Discuss-Modus braucht ihn für Codebase-Zugriff' };
                 }
-                const defaultAgent = codeAgents[0].name;
+                // v891 — Sandbox-Picker (agentNameOverride) gewinnt, sonst Projekt-Strategie
+                // (preferred + Busy-Ausweichen) statt hart codeAgents[0].
+                const defaultAgent = (await this.resolveCliAgent(sb.projectId, agentNameOverride)).agent || codeAgents[0].name;
 
                 // Chat-History als Context (gleiche Hybrid-Cap wie code-agent)
                 const allHistoryD = await sandboxChatRepo.list(sandboxId);
@@ -8291,10 +8293,9 @@ ${augmentedMessage}`;
                   return { ok: false, userMessageId: userMsg.id, reason: 'code-agent nicht konfiguriert (config.codeAgents.enabled + agents)' };
                 }
                 // v787 — Frontend kann via agentNameOverride eine spezifische CLI wählen.
-                // Wir nehmen die nur wenn sie tatsächlich konfiguriert ist (sonst silent fallback auf default).
-                const requestedAgent = agentNameOverride && codeAgents.some(a => a.name === agentNameOverride)
-                  ? agentNameOverride
-                  : codeAgents[0].name;
+                // v891 — Picker gewinnt (resolveCliAgent Priority 1); sonst Projekt-Strategie
+                // (preferred + Busy-Ausweichen) statt hart codeAgents[0].
+                const requestedAgent = (await this.resolveCliAgent(sb.projectId, agentNameOverride)).agent || codeAgents[0].name;
                 const defaultAgent = requestedAgent;
 
                 // Hybrid-Cap: letzte 15 Messages ODER ~4000 Tokens (~16000 chars), min 3 behalten
@@ -8624,11 +8625,14 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 // gerade nicht erreichbar während des project-planner-Calls) ein Mal mit
                 // 2s Pause neu versuchen. Quick hatte das seit v760, Plan nicht — der
                 // Audit deckte diese Asymmetrie auf.
+              // v891 — CLI nach Sandbox-Picker (agentNameOverride) / Projekt-Strategie statt agents[0] in startProject.
+              const planAgent = (await this.resolveCliAgent(sb.projectId, agentNameOverride)).agent || undefined;
               try {
                 let result = await skill.execute({
                   action: 'start',
                   goal: planGoal,
                   cwd: sb.worktreePath,
+                  agent: planAgent,
                   // v721 — sandbox_id mitgeben damit Completion-Callback zum Original-Project bindet statt Ghost-Project zu erzeugen
                   sandbox_id: sandboxId,
                   // v731 — mention-IDs ans skill → session-Persist → completion-callback macht Auto-Done-Mark
@@ -8641,6 +8645,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                     action: 'start',
                     goal: planGoal,
                     cwd: sb.worktreePath,
+                    agent: planAgent,
                     sandbox_id: sandboxId,
                     mentioned_item_ids: mentions && mentions.length > 0 ? mentions.map(m => m.id) : undefined,
                   }, ctx);
@@ -10211,7 +10216,10 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               const ownerChatId = this.config.security?.ownerUserId ?? '';
               const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.matrix?.enabled ? 'matrix' : 'api');
               const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as any;
-              const r = await skill.execute({ action: 'start', goal, cwd: project.cwd, link_open_item_ids: items.map(i => i.id) }, ctx);
+              // v891 — CLI nach Projekt-Strategie (preferred + Busy-Ausweichen) statt agents[0]
+              // in startProject. Roadmap-„Implementieren" lief sonst immer auf claude-code.
+              const resolvedMs = await this.resolveCliAgent(project.id, undefined);
+              const r = await skill.execute({ action: 'start', goal, cwd: project.cwd, agent: resolvedMs.agent || undefined, link_open_item_ids: items.map(i => i.id) }, ctx);
               const taskId = (r.data as any)?.taskId;
               // v705 — Items beim Start als "in_progress" markieren damit der Completion-Callback
               // sie als zur Session gehörig erkennen kann (auch wenn der LLM-Matcher sie nicht
@@ -10678,7 +10686,9 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                   if (!cAgent || codeAgents.length === 0) {
                     this.logger.warn({ scaffoldMode: 'agent' }, 'v767 AI-Scaffold gewählt aber code-agent nicht konfiguriert — skip');
                   } else {
-                    const defaultAgent = codeAgents[0].name;
+                    // v891 — neues Projekt hat noch keine Strategie; resolveCliAgent gibt den
+                    // Default, weicht aber einer gerade belegten CLI aus (statt hart agents[0]).
+                    const defaultAgent = (await this.resolveCliAgent(undefined, undefined)).agent || codeAgents[0].name;
                     const scaffoldGoal = `Scaffold the initial structure for a new project.
 
 PROJECT
@@ -11651,6 +11661,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           runbookRepo: this.runbookRepo, // v614 L2 (passed for symmetry, used elsewhere)
           ownerUserId: this.tryOwner(), // v614 L1
           confirmationQueue: this.confirmationQueue, // v657 — für Multi-Action-Open-Item-Eskalation
+          resolveAgent: (projectId: string) => this.resolveCliAgent(projectId, undefined), // v891 — Strategie-CLI für Eskalations-Starts
           skillRegistry: this.skillRegistry,
           skillSandbox: this.skillSandbox,
           llm: this.llmProvider,

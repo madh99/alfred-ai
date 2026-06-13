@@ -36,6 +36,9 @@ export interface OpenItemsReflectorDeps {
   logger: Logger;
   /** v657 — optional: confirmationQueue für Multi-Action-Buttons (Eskalation als Confirmation enqueued). */
   confirmationQueue?: ConfirmationQueue;
+  /** v891 — optional: CLI nach Projekt-Strategie auflösen (preferred + Busy-Ausweichen),
+   *  damit der per Bestätigung gestartete Project-Agent nicht hart auf agents[0] fällt. */
+  resolveAgent?: (projectId: string) => Promise<{ agent: string; note?: string }>;
 }
 
 export class OpenItemsReflector {
@@ -136,11 +139,13 @@ export class OpenItemsReflector {
             sourceId: `open_item:${item.id}`,
             description,
             // 'ja' startet einen Project-Agent für genau dieses Item
+            // v891 — CLI nach Projekt-Strategie (statt agents[0] in startProject)
             skillName: 'project_agent',
             skillParams: {
               action: 'start',
               goal: item.title + (item.description ? `\n\n${item.description}` : ''),
               cwd: project?.cwd,
+              agent: this.deps.resolveAgent ? (await this.deps.resolveAgent(item.projectId).catch(() => null))?.agent : undefined,
               link_open_item_id: item.id,
             },
             extraActions,

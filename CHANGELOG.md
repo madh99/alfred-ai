@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.891] - 2026-06-14
+
+### Fixed — CLI-Strategie: alle verbleibenden Agent-Start-Pfade abgedeckt (v891)
+
+Vollständige Inventur aller CLI-Agent-Start-Pfade ergab 6 Stellen, die `project_agent`/
+`code_agent` ohne CLI-Auflösung starteten und damit hart auf `agents[0]` (z.B. claude-code)
+fielen — die Projekt-CLI-Strategie wurde ignoriert (Vorfall: Roadmap-„Implementieren"
+lief auf claude-code statt preferred=mistral-vibe). Jeder Aufrufer löst jetzt über das
+projektbezogene `resolveCliAgent` auf (Strategie + Busy-Ausweichen):
+
+- **Roadmap „⚡ Implementieren"** (`implementMilestone`) → CLI nach Projekt-Strategie.
+- **Reflector-Eskalation** (High-Prio-Item-Bestätigung „ja") → CLI nach Projekt-Strategie
+  (Resolver in die Reflector-Deps injiziert).
+- **Sandbox-Chat** (discuss/quick/plan) → Sandbox-Picker (`agentNameOverride`) gewinnt,
+  sonst Projekt-Strategie statt `agents[0]`.
+- **Wizard-AI-Scaffold** → Busy-Ausweichen (neues Projekt hat noch keine Strategie).
+
+Korrektur einer falschen Annahme aus v890: `project_agent` ist **nicht** immer
+projektgebunden (frisches cwd/Scaffold ohne Projekt-Zeile; Sandbox-cwd ≠ project.cwd) —
+die CLI wird daher beim Aufrufer aufgelöst, der das Projekt kennt, nicht in der Skill
+per cwd geraten. `resume`-Pfade bleiben unverändert (übernehmen die CLI der Session).
+
 ## [0.19.0-multi-ha.890] - 2026-06-14
 
 ### Added — Projekt-Chat: CLI-Picker + „Automatisch" (v890)

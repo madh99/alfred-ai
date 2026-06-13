@@ -83,6 +83,7 @@ export class ReflectionEngine {
         ownerUserId: deps.ownerUserId,
         logger: deps.logger.child({ component: 'open-items-reflector' }),
         confirmationQueue: deps.confirmationQueue,
+        resolveAgent: deps.resolveAgent,
       });
     }
 

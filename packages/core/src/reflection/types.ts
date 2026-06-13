@@ -75,6 +75,8 @@ export interface ReflectorDeps {
   ownerUserId?: string;
   /** v657 — ConfirmationQueue für Multi-Action-Eskalationen (Open-Item) */
   confirmationQueue?: import('../confirmation-queue.js').ConfirmationQueue;
+  /** v891 — CLI-Auflösung nach Projekt-Strategie für per-Bestätigung gestartete Project-Agents. */
+  resolveAgent?: (projectId: string) => Promise<{ agent: string; note?: string }>;
   nodeId: string;
   config: Required<ReflectionConfig>;
 }
