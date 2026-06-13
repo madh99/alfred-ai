@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.883] - 2026-06-13
+
+### Fixed
+
+- **Lessons-/Insight-Analyse bekommt die Commits des Laufs als
+  Faktenbasis**: Die Abschluss-Analyse sah bisher nur die auf 5 gekappte
+  Phasen-Liste und folgerte daraus Fehlalarme („Items 1–3 fehlen" —
+  obwohl alle einzeln committed waren; Vorfall 12.06., Session
+  7030a4f9). Jetzt wird die vollständige Commit-Liste der Session
+  (`project_agent_commits`) in den Insight-Prompt eingespeist, mit
+  explizitem Verbot, Committetes als fehlend zu behaupten; die
+  Phasen-Liste ist als gekürzt gekennzeichnet
+
 ## [0.19.0-multi-ha.882] - 2026-06-13
 
 ### Added — Automation-Templates: Versprechen wahr machen, Teil 2 (v882)

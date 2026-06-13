@@ -1562,6 +1562,7 @@ export class ProjectAgentRunner {
           state,
           plan.phases,
           { overallSuccess, runFailed, lastBuildOutput: state.lastBuildOutput, hardFailure: lastHardFailure },
+          sessionId, // v883 — Commit-Faktenbasis
         );
         if (insight) {
           await this.sessionRepo.setFailureInsight(sessionId, insight);
@@ -2176,11 +2177,27 @@ export class ProjectAgentRunner {
       /** v864 — Fakten des harten Abbruchs (Coding-Agent exitCode≠0). */
       hardFailure?: { phase: number; exitCode: number; stderrTail: string; stdoutTail: string; transientApi: boolean };
     },
+    /** v883 — Session-ID für die Commit-Faktenbasis (commitsRepo.listBySession). */
+    sessionId?: string,
   ): Promise<string | null> {
     try {
       const extracted = final.lastBuildOutput ? extractBuildError(final.lastBuildOutput) : null;
       const reachedPhases = phases.slice(0, state.projectIteration);
       const remainingPhases = phases.slice(state.projectIteration);
+      // v883 — Commits des Laufs als FAKTENBASIS: die gekappte Phasen-Liste
+      // (max 5) führte zu Fehlalarmen ("Items 1-3 fehlen in ERREICHTE PHASEN",
+      // obwohl einzeln committed — Vorfall 12.06., Session 7030a4f9). Die
+      // Commit-Liste ist vollständig und beweist, was wirklich umgesetzt wurde.
+      let commitsBlock = '';
+      try {
+        if (this.commitsRepo && sessionId) {
+          const commits = await this.commitsRepo.listBySession(sessionId);
+          if (commits.length > 0) {
+            commitsBlock = `COMMITS DIESES LAUFS (${commits.length} — vollständige Faktenbasis; behaupte NICHT, etwas fehle, das hier committed ist):\n` +
+              commits.slice(0, 40).map(c => `- ${c.sha.slice(0, 8)} ${c.message.slice(0, 110)}${c.filesChanged ? ` (${c.filesChanged} Dateien)` : ''}`).join('\n');
+          }
+        }
+      } catch { /* best-effort — Insight läuft auch ohne Commit-Block */ }
       // v864 — Spekulationsverbot: vorher bekam der LLM nur STATUS=failed + einen
       // (oft GRÜNEN) Build-Output und erfand Root-Causes wie "Komponente nicht
       // gebaut, keine Tests" während die echte Ursache ein API-529 war (494ae636).
@@ -2203,8 +2220,9 @@ WICHTIG: Wenn ein Block ABBRUCH-URSACHE (FAKTEN) vorhanden ist, ist das die verb
         `PHASEN VERSUCHT: ${state.projectIteration}`,
         `DATEIEN GEÄNDERT: ${state.totalFilesChanged}`,
         `MILESTONES: ${state.milestonesReached.join(', ') || '—'}`,
+        commitsBlock,
         hardFailureBlock,
-        reachedPhases.length ? `ERREICHTE PHASEN:\n${reachedPhases.slice(-5).map((p, i) => `${i + 1}. ${p}`).join('\n')}` : '',
+        reachedPhases.length ? `ERREICHTE PHASEN (gekürzt auf die letzten 5 — die Commit-Liste oben ist die vollständige Quelle):\n${reachedPhases.slice(-5).map((p, i) => `${i + 1}. ${p}`).join('\n')}` : '',
         remainingPhases.length ? `OFFENE PHASEN:\n${remainingPhases.slice(0, 5).map((p, i) => `${i + 1}. ${p}`).join('\n')}` : '',
         extracted?.recognized ? `BUILD-FEHLER: ${extracted.summary}` : '',
         extracted ? `BUILD-OUTPUT (Auszug):\n${extracted.contextSnippet}` : '',
