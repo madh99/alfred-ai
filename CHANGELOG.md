@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.887] - 2026-06-13
+
+### Fixed — Projekt-cwd am Agent-User-Home ausrichten (v887)
+
+Der Projekt-Wizard legte neue Projekte unter `os.homedir()/.alfred/projects`
+an — bei root-Prozess also `/root/.alfred/projects/<slug>`. Das ist für die
+als `sudo -u madh` laufenden Code-Agents per `drwx------` auf `/root`
+**nicht traversierbar** (EACCES), und die als root laufende Repo-Status-Karte
+(v872) warf „dubious ownership" auf dem zu madh ge-chownten Verzeichnis
+(Vorfall 13.06., Projekt fussball-cc). Drei Code-Stellen leiteten den Pfad aus
+dem **Prozess-User-Home** (root) statt aus dem **Agent-User-Home** (madh) ab.
+
+- **Zentrale `resolveProjectsBase()`** (mit Tests): richtet die Projekt-Basis
+  am Home des Code-Agent-Users aus (`/home/<runAsUser>/projects` — konsistent
+  mit der etablierten L4-Konvention in project-agent-skill.ts). Priorität:
+  `ALFRED_PROJECTS_BASE` > `config.projects.localBase` > Agent-User-Home >
+  Prozess-Home. Genutzt von **Wizard UND ProjectMoveService** (Cluster-Move),
+  damit auch ein HA-Failover Projekte nicht ins unzugängliche `/root/projects`
+  schiebt (vorher latenter Bug — selbe Falle)
+- **Pre-Check im Wizard**: liegt die Basis wider Erwarten unter `/root`
+  während der Agent non-root ist, bricht der Wizard mit Klartext-Hinweis ab,
+  statt ein totes Projekt zu erzeugen
+- Hinweis: `config.projects.localBase: /root/projects` (sofern gesetzt) ist
+  falsch und sollte entfernt werden — dann greift die korrekte Auto-Ableitung
+
 ## [0.19.0-multi-ha.886] - 2026-06-13
 
 ### Fixed

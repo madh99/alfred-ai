@@ -1102,7 +1102,16 @@ export class Alfred {
 
         // v665b — ProjectMoveService aufsetzen
         const { ProjectMoveService } = await import('./cluster/project-move.js');
-        const localBase = this.config.projects?.localBase ?? path.join(os.homedir(), 'projects');
+        // v887 — gleiche zentrale Ableitung wie der Wizard: am Agent-User-Home
+        // ausrichten. Vorher os.homedir() (root) → Cluster-Move hätte Projekte
+        // nach /root/projects geschoben (latenter EACCES-Bug, gleiche Falle).
+        const { resolveProjectsBase, deriveAgentRunAsUser } = await import('./projects/projects-base.js');
+        const localBase = resolveProjectsBase({
+          localBase: this.config.projects?.localBase,
+          agentRunAsUser: deriveAgentRunAsUser(this.config.codeAgents?.agents?.[0]),
+          envBase: process.env.ALFRED_PROJECTS_BASE,
+          processHome: os.homedir(),
+        });
         const defaultExcludes = this.config.projects?.rsyncExcludes ?? ['node_modules', 'dist', 'build', '.next', '__pycache__', '.cache', 'target', 'coverage'];
         const myNodeId = this.config.cluster?.nodeId ?? 'single';
         this.projectMoveService = new ProjectMoveService(
@@ -10460,10 +10469,26 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 if (!uid) return { ok: false, reason: 'Kein Owner-User' };
                 const slug = (input.slug ?? input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')).slice(0, 80);
 
-                // v766 — Project-CWD generieren (default ~/.alfred/projects/<slug>)
+                // v887 — Project-CWD am Home des AGENT-Users ausrichten (nicht am
+                // root-Prozess-Home). Vorher: os.homedir()/.alfred/projects → bei
+                // root-Prozess /root/.alfred/projects, für den als 'madh' laufenden
+                // Code-Agent per drwx------ unzugänglich (Vorfall 13.06. fussball-cc).
+                // Nutzt jetzt die zentrale Ableitung + L4-Konvention /home/<user>/projects.
                 const fs = await import('node:fs');
                 const path = await import('node:path');
-                const projectsBase = process.env.ALFRED_PROJECTS_BASE ?? path.join(os.homedir(), '.alfred', 'projects');
+                const { resolveProjectsBase, deriveAgentRunAsUser, projectsBaseUnreachableForAgent } = await import('./projects/projects-base.js');
+                const agentRunAsUser = deriveAgentRunAsUser(this.config.codeAgents?.agents?.[0]);
+                const projectsBase = resolveProjectsBase({
+                  localBase: this.config.projects?.localBase,
+                  agentRunAsUser,
+                  envBase: process.env.ALFRED_PROJECTS_BASE,
+                  processHome: os.homedir(),
+                });
+                // Pre-Check: liegt die Base (z.B. explizit gesetzter localBase) unter
+                // /root während der Agent non-root ist → abbrechen statt totes Projekt.
+                if (projectsBaseUnreachableForAgent(projectsBase, agentRunAsUser)) {
+                  return { ok: false, reason: `Projekt-Basis "${projectsBase}" liegt unter /root, der Code-Agent läuft aber als "${agentRunAsUser}" (kann /root nicht betreten). Setze projects.localBase auf /home/${agentRunAsUser}/projects oder entferne die Zeile (dann automatisch).` };
+                }
                 const projectCwd = path.join(projectsBase, slug);
 
                 // v766 — Repo-Create im Forge (wenn gewählt UND Forge konfiguriert)
