@@ -1821,6 +1821,16 @@ export class AlfredClient {
     return { ok: true, liveTaskId: data.liveTaskId };
   }
 
+  /** v897 — Mehrere zusammengehörige Facetten zu EINEM konsolidierten Plan/Milestone. */
+  async projectPlanFeaturesCombined(id: string, opts: { features: Array<{ title: string; description?: string }>; name?: string; agent?: string }): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/plan-features-combined`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(opts),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return { ok: true, liveTaskId: data.liveTaskId };
+  }
+
   /** v873 — Dependency-Update-Lauf starten (async Code-Agent, liveTaskId für SSE-Panel). */
   async projectUpdateDeps(id: string, packages?: string[]): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/update-deps`, {

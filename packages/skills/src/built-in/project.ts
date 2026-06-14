@@ -24,7 +24,7 @@ type Action =
   | 'list_sessions' | 'list_decisions' | 'archive'
   | 'work_on_open_items' | 'audit_open_items' | 'deep_verify_items'
   | 'update_dependencies' | 'review_codebase'
-  | 'suggest_features' | 'plan_feature';
+  | 'suggest_features' | 'plan_feature' | 'plan_features';
 
 /** v870 — Deep-Verify-Verdikt eines Items (read-only Codebase-Prüfung). */
 export interface DeepVerifyFinding {
@@ -285,7 +285,7 @@ export class ProjectSkill extends Skill {
             'list_sessions', 'list_decisions', 'archive',
             'work_on_open_items', 'audit_open_items', 'deep_verify_items',
             'update_dependencies', 'review_codebase',
-            'suggest_features', 'plan_feature',
+            'suggest_features', 'plan_feature', 'plan_features',
           ],
         },
         project_id: { type: 'string', description: 'Project-ID oder Prefix (für get/rename/...)' },
@@ -306,7 +306,8 @@ export class ProjectSkill extends Skill {
         cross_check_agents: { type: 'array', items: { type: 'string' }, description: 'Gegenprüfer-Agents (für review_codebase, optional)' },
         focus: { type: 'string', description: 'Themen-Fokus (für suggest_features, optional)' },
         agents: { type: 'array', items: { type: 'string' }, description: 'CLI-Agents für die Discovery (für suggest_features, 1-2, leer = Standard)' },
-        agent: { type: 'string', description: 'CLI-Agent (für plan_feature, optional)' },
+        agent: { type: 'string', description: 'CLI-Agent (für plan_feature/plan_features, optional)' },
+        features: { type: 'array', items: { type: 'object' }, description: 'v897 — Liste {title,description} zusammengehöriger Facetten (für plan_features, ≥2) — erzeugt EINEN konsolidierten Plan/Milestone' },
       },
       required: ['action'],
     },
@@ -393,6 +394,7 @@ export class ProjectSkill extends Skill {
       case 'review_codebase': return this.reviewCodebase(userId, input);
       case 'suggest_features': return this.suggestFeatures(userId, input);
       case 'plan_feature': return this.planFeature(userId, input);
+      case 'plan_features': return this.planFeaturesCombined(userId, input);
       default:
         return { success: false, error: `Unbekannte action "${String(action)}".` };
     }
@@ -1372,6 +1374,122 @@ ${decLines.join('\n') || '  _keine_'}`;
       success: true,
       data: { liveTaskId, projectId, milestone: `Feature: ${title}`.slice(0, 80) },
       display: `🗺 Umsetzungsplan wird ausgearbeitet (Hintergrund) — danach stehen die Arbeitspakete ⛓-verkettet in der Roadmap.`,
+    };
+  }
+
+  /**
+   * v897 — KONSOLIDIERTER Plan für mehrere zusammengehörige Feature-Facetten
+   * (eines Use-Cases). Anders als planFeature (1 Feature → 1 Plan) erzeugt dies
+   * EINEN deduplizierten Plan: gemeinsames Fundament genau EINMAL, facetten-
+   * spezifische Phasen darauf aufgesetzt → EIN Milestone "Feature: <name>",
+   * roadmap_order = Phasenreihenfolge, depends_on-Kette. Der Einzelweg planFeature
+   * bleibt unangetastet.
+   */
+  private async planFeaturesCombined(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.runCodeAgent) return { success: false, error: 'Code-Agent-Runner nicht verkabelt' };
+    const projectId = await this.resolveProjectId(userId, input.project_id as string);
+    if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+    const project = await this.repo.getById(userId, projectId);
+    if (!project) return { success: false, error: 'Project nicht gefunden' };
+    if (!project.cwd) return { success: false, error: 'Project hat keinen cwd' };
+
+    const rawFeatures = Array.isArray(input.features) ? input.features as Array<Record<string, unknown>> : [];
+    const features = rawFeatures
+      .map(f => ({
+        title: (typeof f.title === 'string' ? f.title : '').trim().slice(0, 150),
+        description: (typeof f.description === 'string' ? f.description : '').trim().slice(0, 800),
+      }))
+      .filter(f => f.title.length > 0);
+    if (features.length < 2) return { success: false, error: 'plan_features braucht mindestens 2 Facetten (für ein einzelnes Feature plan_feature nutzen)' };
+
+    const name = ((typeof input.name === 'string' && input.name.trim())
+      ? input.name.trim()
+      : `${features[0].title} + ${features.length - 1} weitere`).slice(0, 120);
+    const agent = typeof input.agent === 'string' && input.agent.trim() ? input.agent.trim() : undefined;
+
+    const alreadyRunning = this.runningCodeJobs.get(projectId);
+    if (alreadyRunning) {
+      return { success: false, error: `Für dieses Projekt läuft bereits ein Code-Lauf (${alreadyRunning.slice(0, 8)}). Bitte warten.` };
+    }
+
+    const slug = name.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'feature';
+    const featureList = features.map((f, i) => `${i + 1}. ${f.title}${f.description ? ` — ${f.description}` : ''}`).join('\n');
+    const prompt = [
+      `Für das Projekt "${project.name}" wurden mehrere ZUSAMMENGEHÖRIGE Feature-Facetten beschlossen, die GEMEINSAM EIN Produkt/einen Use-Case bilden. Arbeite EINEN gemeinsamen UMSETZUNGSPLAN aus — implementiere NICHTS.`,
+      ``,
+      `AUSGEWÄHLTE FACETTEN:`,
+      featureList,
+      ``,
+      `VORGEHEN:`,
+      `1. Analysiere READ-ONLY die relevanten Teile der Codebase (betroffene Routen, Models, UI, bestehende Muster).`,
+      `2. Entwirf EINEN kohärenten, DEDUPLIZIERTEN Plan: gemeinsames Fundament (z.B. Datenmodell/Migration, Backend/API, Frontend-Grundgerüst) erscheint GENAU EINMAL als frühe Phase; die facetten-spezifischen Teile bauen darauf auf. KEINE doppelten Fundament-Phasen pro Facette.`,
+      `3. 4-12 aufeinander aufbauende Arbeitspakete (Phasen) — jedes eigenständig umsetz- und testbar, konkret genug für einen Code-Agent (mit betroffenen Dateien/Bereichen).`,
+      `4. Schreibe den Plan als docs/feature-plan-${slug}.md (Überblick, welche Facetten abgedeckt sind, Phasen, Risiken, betroffene Bereiche) und committe NUR dieses Dokument (docs(plan): …). Kein Push.`,
+      ``,
+      `Antworte AM ENDE mit GENAU EINEM JSON-Array (Reihenfolge = Umsetzungsreihenfolge):`,
+      `[{"title":"Arbeitspaket, max 150 Zeichen","description":"was konkret zu tun ist inkl. betroffener Dateien/Bereiche, 2-4 Sätze"}]`,
+    ].join('\n');
+
+    const liveTaskId = randomUUID();
+    this.runningCodeJobs.set(projectId, liveTaskId);
+    appendOutputLine(liveTaskId, 'system', `🧩 Gemeinsamer Umsetzungsplan "${name}" (${features.length} Facetten) wird ausgearbeitet…`);
+
+    const projectName = project.name;
+    const cwd = project.cwd;
+    const milestone = `Feature: ${name}`.slice(0, 80);
+    void (async () => {
+      try {
+        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent, projectId });
+        if (!result.success) {
+          appendOutputLine(liveTaskId, 'system', `❌ Plan-Lauf fehlgeschlagen. Output-Ende: ${result.output.slice(-300)}`);
+          this.ownerNotify?.(`❌ Gemeinsamer Feature-Plan fehlgeschlagen (${projectName}: ${name}).`);
+          return;
+        }
+        const phases = parseFeaturePlanPhases(result.output);
+        if (phases.length === 0) {
+          appendOutputLine(liveTaskId, 'system', `⚠️ Kein parsebarer Phasen-Plan — Plan-Doc liegt ggf. trotzdem in docs/ (Doku-Tab). Items bitte manuell anlegen.`);
+          this.ownerNotify?.(`⚠️ Gemeinsamer Feature-Plan (${projectName}: ${name}): kein parsebarer Phasen-Plan.`);
+          return;
+        }
+        if (this.pushProject) {
+          try {
+            const push = await this.pushProject({ cwd, commitMessage: `docs(plan): Umsetzungsplan ${name.slice(0, 80)}` });
+            appendOutputLine(liveTaskId, 'system', push.success ? `📤 Plan-Doc gesichert: ${push.summary}` : `⚠️ Push fehlgeschlagen: ${push.summary}`);
+          } catch { /* best-effort */ }
+        }
+        let prevId: string | undefined;
+        let created = 0;
+        for (let i = 0; i < phases.length; i++) {
+          try {
+            const item = await this.repo.addOpenItem(projectId, {
+              title: phases[i].title,
+              description: `${phases[i].description}\n[Quelle: Feature-Plan docs/feature-plan-${slug}.md]`.slice(0, 1500),
+              priority: 'normal',
+            });
+            try { await this.repo.updateOpenItemRoadmap(item.id, { milestone, order: i + 1 }); } catch { /* best-effort */ }
+            if (prevId) {
+              try { await this.repo.updateOpenItemFields(item.id, { dependsOn: [prevId] }); } catch { /* best-effort */ }
+            }
+            prevId = item.id;
+            created++;
+          } catch { /* einzelnes Paket darf nicht den Rest verhindern */ }
+        }
+        appendOutputLine(liveTaskId, 'system', `✅ Gemeinsamer Umsetzungsplan fertig — ${created} Arbeitspakete als Items angelegt (Milestone "${milestone}", ⛓-verkettet, ${features.length} Facetten konsolidiert). Plan-Doc im Doku-Tab.`);
+        this.ownerNotify?.(`✅ Gemeinsamer Feature-Plan fertig (${projectName}): "${name}" — ${created} Arbeitspakete in der Roadmap.`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)}`);
+        this.ownerNotify?.(`❌ Gemeinsamer Feature-Plan Fehler (${projectName}: ${name}): ${msg.slice(0, 300)}`);
+      } finally {
+        this.runningCodeJobs.delete(projectId);
+        try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
+      }
+    })();
+
+    return {
+      success: true,
+      data: { liveTaskId, projectId, milestone },
+      display: `🧩 Gemeinsamer Umsetzungsplan (${features.length} Facetten) wird ausgearbeitet (Hintergrund) — danach stehen die Arbeitspakete ⛓-verkettet in der Roadmap.`,
     };
   }
 

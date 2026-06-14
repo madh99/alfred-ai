@@ -9669,6 +9669,37 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return { ok: false, reason: (err as Error).message };
             }
           },
+          planFeaturesCombined: async (projectId: string, opts: { features: Array<{ title: string; description?: string }>; name?: string; agent?: string }) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const features = (Array.isArray(opts.features) ? opts.features : [])
+                .map(f => ({ title: (f.title ?? '').trim().slice(0, 150), description: (f.description ?? '').slice(0, 800) }))
+                .filter(f => f.title.length > 0);
+              if (features.length < 2) return { ok: false, reason: 'mindestens 2 Facetten nötig' };
+              // v897 — alle ausgewählten Facetten als confirmed in der Features-Library merken
+              if (this.featuresRepoRef) {
+                for (const f of features) {
+                  try {
+                    await this.featuresRepoRef.upsertOrBumpVersion({
+                      projectId, userId: uid, name: f.title, description: f.description,
+                      source: 'manual', status: 'confirmed', confidence: 0.9,
+                    });
+                  } catch (err) { this.logger.warn({ err, title: f.title }, 'v897 feature library write failed (non-fatal)'); }
+                }
+              }
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { ok: false, reason: 'project-skill not registered' };
+              const result = await skill.execute(
+                { action: 'plan_features', project_id: projectId, features, name: opts.name, agent: opts.agent },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              if (!result.success) return { ok: false, reason: result.error };
+              const d = result.data as { liveTaskId?: string } | undefined;
+              return { ok: true, liveTaskId: d?.liveTaskId };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
           updateDependencies: async (projectId: string, packages?: string[]) => {
             try {
               const uid = await resolveOwnerProj();

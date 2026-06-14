@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.897] - 2026-06-15
+
+### Added — Feature-Discovery: mehrere Facetten zu EINEM konsolidierten Plan (v897)
+
+Bei einem konkreten Use-Case liefert die Feature-Discovery oft **Facetten EINES**
+Produkts (z.B. Album-Tracker + Tausch-Matching + Marktplatz), keine unabhängigen
+Features. Bisher erzeugte jedes „Annehmen + planen" einen **eigenen** Plan mit
+**eigenem** Milestone → überlappende, doppelte Fundament-Phasen (Datenmodell/
+Backend/Frontend mehrfach).
+
+- **Mehrfachauswahl** in der Feature-Vorschläge-Modal (Checkbox je Vorschlag) +
+  Aktion **„🧩 Gemeinsam planen"** (ab 2 Auswahlen) mit optionalem Namen → **ein**
+  konsolidierter, **deduplizierter** Plan: gemeinsames Fundament einmal, facetten-
+  spezifische Phasen darauf aufgesetzt, **ein** Roadmap-Milestone `Feature: <name>`,
+  `roadmap_order` + `depends_on`-Kette.
+- Neue Skill-Action `plan_features` (`planFeaturesCombined`) — der Einzelweg
+  `plan_feature` bleibt **unverändert** (kein Regressionsrisiko). Alle gewählten
+  Facetten werden in der Features-Library als `confirmed` markiert.
+- Neuer Pfad: `projectPlanFeaturesCombined` (Client) → `POST /api/projects/:id/
+  plan-features-combined` → `planFeaturesCombined`-Callback → Skill.
+- 4 neue Tests (Validierung ≥2 Facetten, Milestone-/Name-Ableitung).
+
 ## [0.19.0-multi-ha.896] - 2026-06-14
 
 ### Fixed — vibe: Projekt als vertrauenswürdiges Workspace (--workdir/--add-dir) (v896)

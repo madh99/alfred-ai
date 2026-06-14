@@ -750,6 +750,8 @@ export class HttpAdapter extends MessagingAdapter {
     suggestFeatures?: (projectId: string, opts?: { focus?: string; agents?: string[] }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
     suggestResult?: (taskId: string) => Promise<Record<string, unknown> | null>;
     featureDecision?: (projectId: string, opts: { title: string; description?: string; decision: 'accept' | 'reject'; agent?: string }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
+    // v897 — mehrere Facetten zu EINEM konsolidierten Plan/Milestone
+    planFeaturesCombined?: (projectId: string, opts: { features: Array<{ title: string; description?: string }>; name?: string; agent?: string }) => Promise<{ ok: boolean; liveTaskId?: string; reason?: string }>;
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
     // v642 — Bulk-Close
     bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
@@ -1436,6 +1438,9 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/feature-decision$/) && req.method === 'POST') {
       // v880 — Annehmen (→ Plan-Lauf) / Ablehnen (→ Library rejected)
       this.handleProjectsFeatureDecision(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/plan-features-combined$/) && req.method === 'POST') {
+      // v897 — mehrere Facetten → EIN konsolidierter Plan
+      this.handleProjectsPlanFeaturesCombined(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-on-items$/) && req.method === 'POST') {
       this.handleProjectsWorkOnItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deep-verify$/) && req.method === 'POST') {
@@ -3312,6 +3317,32 @@ export class HttpAdapter extends MessagingAdapter {
     }
     const result = await this.projectsCallbacks.featureDecision(projectId, {
       title: data.title, description: data.description, decision: data.decision, agent: data.agent,
+    });
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v897 — POST /api/projects/:id/plan-features-combined {features:[{title,description}], name?, agent?} */
+  private async handleProjectsPlanFeaturesCombined(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.planFeaturesCombined) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { features?: Array<{ title?: string; description?: string }>; name?: string; agent?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const features = Array.isArray(data.features)
+      ? data.features.filter(f => f && typeof f.title === 'string' && f.title.trim().length > 0).map(f => ({ title: f.title!.trim(), description: f.description }))
+      : [];
+    if (features.length < 2) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'mindestens 2 Facetten (features[]) erforderlich' }));
+      return;
+    }
+    const result = await this.projectsCallbacks.planFeaturesCombined(projectId, {
+      features, name: data.name, agent: data.agent,
     });
     res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));

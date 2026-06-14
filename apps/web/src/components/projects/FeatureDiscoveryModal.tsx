@@ -42,6 +42,9 @@ export function FeatureDiscoveryModal({ client, projectId, preferredAgent, onClo
   const [decisions, setDecisions] = useState<Map<string, Decision>>(new Map());
   const [planTaskId, setPlanTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // v897 — Mehrfachauswahl für EINEN konsolidierten Plan (mehrere zusammengehörige Facetten)
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [combineName, setCombineName] = useState('');
 
   useEffect(() => {
     void (async () => {
@@ -107,6 +110,31 @@ export function FeatureDiscoveryModal({ client, projectId, preferredAgent, onClo
         if (r.liveTaskId) setPlanTaskId(r.liveTaskId);
         notify('info', `🗺 Umsetzungsplan für "${s.title}" wird ausgearbeitet — Arbeitspakete erscheinen danach in der Roadmap.`);
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // v897 — ausgewählte Facetten zu EINEM konsolidierten, deduplizierten Plan zusammenführen
+  async function planCombined() {
+    if (busy || planTaskId) return;
+    const chosen = (suggestions ?? []).filter(s => selected.has(s.id) && !decisions.get(s.id));
+    if (chosen.length < 2) return;
+    const name = combineName.trim() || (focus.trim() || `${chosen[0].title} + ${chosen.length - 1} weitere`);
+    if (!confirm(
+      `${chosen.length} Facetten GEMEINSAM planen als "${name}"?\n\nEs entsteht EIN deduplizierter Umsetzungsplan (gemeinsames Fundament einmal) mit EINEM Roadmap-Milestone "Feature: ${name}". Nutzt die CLI-Subscription.`,
+    )) return;
+    setBusy(true);
+    try {
+      const r = await client.projectPlanFeaturesCombined(projectId, {
+        name,
+        features: chosen.map(s => ({ title: s.title, description: [s.value, s.rationale].filter(Boolean).join(' — ').slice(0, 800) })),
+      });
+      if (!r.ok) { notify('error', `Gemeinsam planen fehlgeschlagen: ${r.reason ?? 'unbekannt'}`); return; }
+      setDecisions(prev => { const n = new Map(prev); chosen.forEach(s => n.set(s.id, 'planning')); return n; });
+      setSelected(new Set());
+      if (r.liveTaskId) setPlanTaskId(r.liveTaskId);
+      notify('info', `🧩 Gemeinsamer Umsetzungsplan "${name}" (${chosen.length} Facetten) wird ausgearbeitet — Arbeitspakete erscheinen danach unter einem Milestone in der Roadmap.`);
     } finally {
       setBusy(false);
     }
@@ -181,6 +209,15 @@ export function FeatureDiscoveryModal({ client, projectId, preferredAgent, onClo
                 return (
                   <div key={s.id} className={`border rounded p-2 text-xs ${d === 'rejected' ? 'border-[#1f1f1f] opacity-50' : d ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-[#2a2a2a]'}`}>
                     <div className="flex items-center gap-2 mb-1">
+                      {!d && !planTaskId && (
+                        <input
+                          type="checkbox"
+                          checked={selected.has(s.id)}
+                          onChange={() => setSelected(prev => { const n = new Set(prev); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })}
+                          title="Für gemeinsamen Plan auswählen (mehrere zusammengehörige Facetten → ein Plan)"
+                          className="accent-violet-500"
+                        />
+                      )}
                       <span className="text-gray-200 font-semibold flex-1">{s.title}</span>
                       <span className={`text-[10px] ${EFFORT_META[s.effort].cls}`}>{EFFORT_META[s.effort].label}</span>
                       {s.proposedBy.length > 1 && (
@@ -214,8 +251,22 @@ export function FeatureDiscoveryModal({ client, projectId, preferredAgent, onClo
                 />
               )}
             </div>
+            {/* v897 — Mehrfachauswahl → EIN konsolidierter Plan */}
+            {selected.size >= 2 && !planTaskId && (
+              <div className="px-4 py-2 border-t border-violet-500/30 bg-violet-500/5 flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] text-violet-200">🧩 {selected.size} Facetten gewählt → <b>ein</b> gemeinsamer Plan:</span>
+                <input
+                  value={combineName}
+                  onChange={e => setCombineName(e.target.value)}
+                  placeholder={focus.trim() || 'Name des Gesamt-Features (optional)'}
+                  className="flex-1 min-w-[160px] px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200 text-xs"
+                />
+                <button onClick={() => setSelected(new Set())} disabled={busy} className="px-2 py-1 text-[10px] text-gray-400 hover:text-gray-200 border border-[#2a2a2a] rounded disabled:opacity-50">Auswahl leeren</button>
+                <button onClick={() => void planCombined()} disabled={busy} className="px-3 py-1 text-xs bg-violet-600 hover:bg-violet-500 text-white rounded disabled:opacity-50" title="Erzeugt EINEN deduplizierten Plan + EIN Roadmap-Milestone aus den gewählten Facetten">🧩 Gemeinsam planen ({selected.size})</button>
+              </div>
+            )}
             <footer className="px-4 py-3 border-t border-[#1f1f1f] flex items-center gap-2">
-              <span className="text-[10px] text-gray-600">Abgelehntes merkt sich die Features-Library dauerhaft. Ein Plan-Lauf zur Zeit.</span>
+              <span className="text-[10px] text-gray-600">Einzeln „Annehmen+planen" = eigener Plan/Milestone · mehrere ☑ wählen = ein gemeinsamer Plan. Abgelehntes merkt die Library dauerhaft. Ein Plan-Lauf zur Zeit.</span>
               <div className="flex-1" />
               <button onClick={onClose} className="px-3 py-1 text-xs text-gray-400 hover:text-gray-200 border border-[#2a2a2a] rounded">Schließen</button>
             </footer>
