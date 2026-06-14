@@ -127,13 +127,25 @@ function expandHome(p: string): string {
  * und injecten Stream-Flags + outputFormat IN-MEMORY. User-config bleibt
  * unverändert; expliziter outputFormat in config überschreibt die Detection.
  */
-function upgradeAgentDef(def: CodeAgentDefinitionConfig): CodeAgentDefinitionConfig {
+export function upgradeAgentDef(def: CodeAgentDefinitionConfig): CodeAgentDefinitionConfig {
   if (def.outputFormat) return def; // user has explicit setting — respect it
   const tpl = Array.isArray(def.argsTemplate) ? def.argsTemplate : [];
 
-  const isClaude = tpl.includes('claude') || /^|\/claude($|\s)/.test(def.command);
-  const isCodex  = tpl.includes('codex')  || /^|\/codex($|\s)/.test(def.command);
-  const isVibe   = tpl.includes('vibe')   || /^|\/vibe($|\s)/.test(def.command);
+  // v893 — Agent-Erkennung per Basename. Trifft das bare Binary ("vibe") UND
+  // einen vollen Pfad ("/home/madh/.local/bin/vibe"), egal ob als `command`
+  // oder als Element der argsTemplate (z.B. hinter `sudo -u madh`).
+  // FIX: die alte Regex `/^|\/claude($|\s)/` war durch die `^`-Alternative für
+  // JEDEN String wahr → isClaude/isCodex/isVibe IMMER alle true → da `isClaude`
+  // zuerst greift, bekamen vibe UND codex fälschlich den claude-Zweig, also die
+  // claude-only-Flags `--verbose --output-format stream-json` injiziert, die
+  // ihre CLIs nicht kennen → argparse-Fehler (exitCode 2). claude-code bleibt
+  // unverändert (es enthält weiterhin das Element "claude" → isClaude true).
+  const cmdBase = (def.command || '').split('/').pop() ?? '';
+  const has = (name: string): boolean =>
+    cmdBase === name || tpl.some((a) => a === name || a.endsWith('/' + name));
+  const isClaude = has('claude');
+  const isCodex  = has('codex');
+  const isVibe   = has('vibe');
 
   if (!isClaude && !isCodex && !isVibe) return def;
 
@@ -165,9 +177,12 @@ function upgradeAgentDef(def: CodeAgentDefinitionConfig): CodeAgentDefinitionCon
     } else {
       updated.argsTemplate.push('--output', 'streaming');
     }
+    // v893 — Heartbeat am tatsächlichen vibe-Session-Log-Pfad. vibe schreibt
+    // nach VIBE_HOME/logs/session (SESSION_LOG_DIR in vibe), NICHT ~/.vibe/sessions
+    // — der alte Pfad existierte nie → Heartbeat lief ins Leere.
     const existing = updated.additionalHeartbeatPaths ?? [];
-    if (!existing.includes('~/.vibe/sessions')) {
-      updated.additionalHeartbeatPaths = [...existing, '~/.vibe/sessions'];
+    if (!existing.includes('~/.vibe/logs/session')) {
+      updated.additionalHeartbeatPaths = [...existing, '~/.vibe/logs/session'];
     }
   }
   return updated;

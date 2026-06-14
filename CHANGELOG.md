@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.893] - 2026-06-14
+
+### Fixed — Agent-Typ-Erkennung: claude-Flags wurden in vibe/codex injiziert (v893)
+
+**Reale Ursache der mistral-vibe-Abbrüche (exitCode 2).** Die Agent-Erkennung in
+`upgradeAgentDef` nutzte die Regex `/^|\/claude($|\s)/` — deren `^`-Alternative
+matcht JEDEN String, womit `isClaude` (und `isCodex`, `isVibe`) **immer alle true**
+waren. Da `if (isClaude)` zuerst greift, bekam **jeder** Agent den claude-Zweig:
+mistral-vibe wurde mit den claude-only-Flags `--verbose --output-format stream-json`
+gestartet, die vibes CLI nicht kennt → **argparse-Fehler, exitCode 2**, stderr endet
+mit den „unrecognized arguments" (= dem Prompt-Text — genau die beobachtete Signatur).
+mistral-vibe konnte dadurch **nie** über Alfred laufen.
+
+- **Erkennung per Basename** (`agent-executor.ts`): trifft das bare Binary (`vibe`)
+  UND einen vollen Pfad (`/home/madh/.local/bin/vibe`), als `command` oder als
+  Element der `argsTemplate` (z.B. hinter `sudo -u madh`). Ermöglicht zugleich, vibe
+  künftig korrekt als `sudo -u madh <voller-Pfad>` zu konfigurieren.
+- **codex** bekam durch denselben Bug ebenfalls fälschlich claude-Flags → jetzt
+  korrekt der codex-Zweig.
+- **claude-code bleibt unverändert** (enthält weiterhin das Element `claude` →
+  identischer Zweig, identische Flags) — durch Test abgesichert.
+- Bonus: vibe-Heartbeat-Pfad korrigiert (`~/.vibe/logs/session` statt des nie
+  existierenden `~/.vibe/sessions`).
+- 7 neue Tests (`upgrade-agent-def.test.ts`).
+
 ## [0.19.0-multi-ha.892] - 2026-06-14
 
 ### Fixed — vibe MCP-Config: ungültiges TOML behoben (v892)
