@@ -1522,9 +1522,11 @@ ${decLines.join('\n') || '  _keine_'}`;
    *
    * Vorgehen — nicht-destruktiv, Fortschritt bleibt erhalten:
    *  1. Re-Tag (deterministisch, sofort): alle Items der gewählten Milestones
-   *     werden auf den neuen Milestone „Feature: <name>" umgehängt und global
-   *     neu durchnummeriert (relative Reihenfolge bleibt). Status/Beschreibung/
-   *     Abhängigkeiten der Items bleiben unangetastet; die alten (nun leeren)
+   *     werden auf den neuen Milestone „Feature: <name>" umgehängt, global neu
+   *     durchnummeriert (relative Reihenfolge bleibt) und durchgehend
+   *     depends_on-verkettet (jedes Item am Vorgänger der neuen Reihenfolge).
+   *     Status/Beschreibung bleiben unangetastet; bestehende Abhängigkeiten
+   *     bleiben erhalten (Kettenlink kommt nur hinzu); die alten (nun leeren)
    *     Milestones verschwinden dadurch aus der Roadmap.
    *  2. Optionaler Plan-Lauf (with_plan, Default true): ein Agent arbeitet einen
    *     konsolidierten Plan-Doc aus und schlägt nur noch NICHT abgedeckte
@@ -1564,11 +1566,21 @@ ${decLines.join('\n') || '  _keine_'}`;
       });
     if (selected.length === 0) return { success: false, error: 'Keine Roadmap-Items in den gewählten Milestones gefunden' };
 
-    // 1. Re-Tag (deterministisch, sofort)
+    // 1. Re-Tag (deterministisch, sofort) + durchgehende Neuverkettung über alle
+    //    zusammengeführten Milestones hinweg: jedes Item hängt in der neuen globalen
+    //    Reihenfolge am Vorgänger. NICHT-DESTRUKTIV — bestehende depends_on bleiben
+    //    erhalten, der Kettenlink kommt nur hinzu. Da die Reihenfolge (Milestone-
+    //    Index → roadmapOrder) bestehende Deps respektiert, entstehen keine
+    //    Rückwärtskanten/Zyklen.
     let retagged = 0;
     for (let i = 0; i < selected.length; i++) {
       try {
         await this.repo.updateOpenItemRoadmap(selected[i].id, { milestone: newMilestone, order: i + 1 });
+        if (i > 0) {
+          const prevId = selected[i - 1].id;
+          const merged = Array.from(new Set([...(selected[i].dependsOn ?? []), prevId]));
+          try { await this.repo.updateOpenItemFields(selected[i].id, { dependsOn: merged }); } catch { /* best-effort */ }
+        }
         retagged++;
       } catch { /* einzelnes Item darf nicht den Rest verhindern */ }
     }

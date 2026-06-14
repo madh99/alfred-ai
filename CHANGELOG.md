@@ -31,8 +31,10 @@ mehr zu einem gemeinsamen Feature zusammenfassen.
 - In der **Roadmap-Ansicht** lassen sich ≥2 Milestones per Checkbox auswählen und
   über **„🧩 Zu einem Feature zusammenführen"** zu einem gemeinsamen
   `Feature: <name>` vereinen. **Re-Tag-Strategie (nicht-destruktiv):** die Items
-  behalten Status/Fortschritt/Abhängigkeiten und werden nur umgehängt + neu
-  durchnummeriert; die alten (leeren) Milestones verschwinden.
+  behalten Status/Fortschritt und werden umgehängt, neu durchnummeriert und
+  **durchgehend `depends_on`-verkettet** (jedes Item hängt am Vorgänger der neuen
+  Reihenfolge; bestehende Abhängigkeiten bleiben erhalten, der Kettenlink kommt
+  nur hinzu); die alten (leeren) Milestones verschwinden.
 - Optional (Default an) arbeitet ein Agent danach einen **konsolidierten Plan-Doc**
   aus und ergänzt nur noch **fehlende Lücken** als zusätzliche Items.
 - 4 neue Tests (`consolidate-milestones.test.ts`: Validierung, Re-Tag-Mechanik,
