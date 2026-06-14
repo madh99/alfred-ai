@@ -157,6 +157,11 @@ describe('parseLine: vibe-streaming (v894 LLMMessage-Format)', () => {
     expect(r.progress[0]).toMatch(/^❌/);
   });
 
+  it('v894.1 — Permission-Ablehnung → ⚠ (nicht ✓)', () => {
+    const r = parseLine(state(), JSON.stringify({ role: 'tool', content: 'Tool execution not permitted.', tool_call_id: 'a' }));
+    expect(r.progress[0]).toMatch(/^⚠/);
+  });
+
   it('reine Denk-Runde (nur reasoning_content) → 💭', () => {
     const r = parseLine(state(), JSON.stringify({ role: 'assistant', content: '', tool_calls: null, reasoning_content: 'Let me look at the repo first.' }));
     expect(r.progress[0]).toMatch(/^💭/);

@@ -283,8 +283,12 @@ function parseVibeEvent(evt: Record<string, unknown>): ParsedChunk {
   if (role === 'tool') {
     const content = typeof evt.content === 'string' ? evt.content.trim() : '';
     if (content.length === 0) return { progress: ['✓ tool result'], finalTextChunks: [], ended: false };
-    const isErr = /(^|\n)\s*(error|traceback|command failed|exit code [1-9])/i.test(content);
-    return { progress: [`${isErr ? '❌' : '✓'} ${truncate(content, 140)}`], finalTextChunks: [], ended: false };
+    // v894.1 — Permission-Ablehnungen (vibe-Sandbox: cp/mv außerhalb Workdir etc.)
+    // als ⚠ kennzeichnen, nicht als ✓ — sonst sieht eine Sperre aus wie ein Erfolg.
+    const isDenied = /(not permitted|not allowed|permission denied|command denied|denylist)/i.test(content);
+    const isErr = !isDenied && /(^|\n)\s*(error|traceback|command failed|exit code [1-9])/i.test(content);
+    const icon = isDenied ? '⚠' : isErr ? '❌' : '✓';
+    return { progress: [`${icon} ${truncate(content, 140)}`], finalTextChunks: [], ended: false };
   }
 
   return EMPTY;

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.894.1] - 2026-06-14
+
+### Fixed — vibe-Live-Output: Permission-Ablehnungen als ⚠ statt ✓ (v894.1)
+
+Tool-Ergebnisse mit Permission-Ablehnung (vibe-Sandbox blockt z.B. `cp`/`mv` auf
+Pfade außerhalb des Workdir → „Tool execution not permitted") wurden im Panel mit
+✓ angezeigt — sah aus wie ein Erfolg. Jetzt: ⚠ für Ablehnungen (`not permitted`/
+`not allowed`/`permission denied`/`command denied`/`denylist`), ❌ für echte Fehler,
+✓ nur bei echtem Erfolg.
+
 ## [0.19.0-multi-ha.894] - 2026-06-14
 
 ### Fixed — vibe-Live-Output: Parser an das echte Stream-Format angepasst (v894)
