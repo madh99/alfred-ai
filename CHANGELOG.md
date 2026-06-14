@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.895] - 2026-06-14
+
+### Fixed — vibe: Tokens/Kosten/Modell in cli_agent_runs (v895)
+
+vibe-Läufe zeigten `model=unbekannt` und 0 Tokens/Kosten, weil vibe diese Daten —
+anders als claude/codex — **nicht im Stream** ausgibt (`StreamingJsonOutputFormatter`
+schreibt nur LLMMessages). Sie liegen aber in vibes **Session-`meta.json`**
+(`stats.session_prompt_tokens`/`session_completion_tokens`/`session_cost`,
+`config.active_model`).
+
+- `executeAgent` reichert das Ergebnis bei vibe-Läufen aus der zur Invokation
+  gehörenden Session-`meta.json` an (neueste Session, deren `start_time` im
+  Run-Fenster liegt). Greift in beide Recorder (project_agent-Akkumulation +
+  code_agent), claude/codex bleiben unverändert (nur `outputFormat==='vibe-streaming'`).
+- Neue, reine Extraktion `parseVibeMetaStats()` (testbar) + best-effort
+  `readVibeSessionStats()` (liest die Logs des Run-Users; fehlt die Datei → no-op).
+- 4 neue Tests.
+
 ## [0.19.0-multi-ha.894.1] - 2026-06-14
 
 ### Fixed — vibe-Live-Output: Permission-Ablehnungen als ⚠ statt ✓ (v894.1)

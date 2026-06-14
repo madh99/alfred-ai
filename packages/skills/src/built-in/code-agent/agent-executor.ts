@@ -202,6 +202,64 @@ function injectAfterCodexExec(args: string[], flags: string[]): void {
   else args.unshift(...flags);
 }
 
+/**
+ * v895 — vibe liefert Tokens/Kosten/Modell NICHT im Stream (StreamingJsonOutput-
+ * Formatter gibt nur LLMMessages aus), sondern in der Session-`meta.json`
+ * (`stats` + `config`). Reine, testbare Extraktion aus dem geparsten meta-Objekt.
+ *   stats.session_prompt_tokens / session_completion_tokens / session_cost,
+ *   config.active_model.
+ */
+export function parseVibeMetaStats(meta: Record<string, unknown>): { model?: string; usage?: ParsedUsage } {
+  const stats = (meta.stats ?? {}) as Record<string, unknown>;
+  const cfg = (meta.config ?? {}) as Record<string, unknown>;
+  const model = typeof cfg.active_model === 'string' && cfg.active_model.length > 0 ? cfg.active_model : undefined;
+  const inTok = Number(stats.session_prompt_tokens ?? 0);
+  const outTok = Number(stats.session_completion_tokens ?? 0);
+  const cost = Number(stats.session_cost ?? 0);
+  const hasUsage = inTok > 0 || outTok > 0 || cost > 0;
+  return {
+    model,
+    usage: hasUsage ? { inputTokens: inTok, outputTokens: outTok, cacheReadTokens: 0, costUsd: cost } : undefined,
+  };
+}
+
+/**
+ * v895 — Lokalisiert die zu DIESEM vibe-Lauf gehörende Session-`meta.json`
+ * (neueste Session, deren `start_time` um/nach dem Run-Start liegt) und
+ * extrahiert usage/model. Best-effort: fehlt die Datei (oder anderes OS) → null.
+ * Alfred läuft als root und darf die madh-eigenen Logs lesen (/home/<user> ist
+ * für root traversierbar). VIBE_HOME-Auflösung wie vibe: env > ~/.vibe des
+ * Run-Users (sudo -u <user> → /home/<user>, sonst Prozess-Home).
+ */
+function readVibeSessionStats(def: CodeAgentDefinitionConfig, startTimeMs: number): { model?: string; usage?: ParsedUsage } | null {
+  try {
+    const runAsUser = (def.command === 'sudo' && Array.isArray(def.argsTemplate) && def.argsTemplate[0] === '-u')
+      ? def.argsTemplate[1] : undefined;
+    const envHome = def.env && typeof def.env.VIBE_HOME === 'string' ? def.env.VIBE_HOME : undefined;
+    const vibeHome = envHome ? expandHome(envHome) : path.join(runAsUser ? `/home/${runAsUser}` : os.homedir(), '.vibe');
+    const sessRoot = path.join(vibeHome, 'logs', 'session');
+    if (!fs.existsSync(sessRoot)) return null;
+    const dirs = fs.readdirSync(sessRoot)
+      .map((name) => { try { return { name, mt: fs.statSync(path.join(sessRoot, name)).mtimeMs }; } catch { return null; } })
+      .filter((x): x is { name: string; mt: number } => x !== null)
+      .sort((a, b) => b.mt - a.mt);
+    for (const { name } of dirs.slice(0, 5)) {
+      const metaPath = path.join(sessRoot, name, 'meta.json');
+      if (!fs.existsSync(metaPath)) continue;
+      let meta: Record<string, unknown>;
+      try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as Record<string, unknown>; } catch { continue; }
+      const sessStart = typeof meta.start_time === 'string' ? Date.parse(meta.start_time) : NaN;
+      // Session muss um/nach dem Run-Start begonnen haben (10s Slack für Uhren-Skew).
+      if (!Number.isNaN(sessStart) && sessStart >= startTimeMs - 10_000) {
+        return parseVibeMetaStats(meta);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export interface AgentExecutionResult {
   stdout: string;
   stderr: string;
@@ -688,14 +746,26 @@ export async function executeAgent(
         ? (extractedText.length > 0 ? extractedText : stdout)
         : stdout;
 
+      // v895 — vibe gibt usage/model nicht im Stream aus → aus der Session-meta.json
+      // nachtragen (nur wenn der Parser nichts hatte; claude/codex bleiben unberührt).
+      let finalUsage = usageAcc;
+      let finalModel = modelSeen;
+      if (outputFormat === 'vibe-streaming' && (!finalModel || !finalUsage)) {
+        const m = readVibeSessionStats(agentDef, startTime);
+        if (m) {
+          if (!finalModel && m.model) finalModel = m.model;
+          if (!finalUsage && m.usage) finalUsage = m.usage;
+        }
+      }
+
       resolve({
         stdout: truncateOutput(stdoutForCaller),
         stderr: truncateOutput(finalStderr),
         exitCode: killed ? 124 : (code ?? 1),
         durationMs,
         modifiedFiles,
-        usage: usageAcc,   // v866
-        model: modelSeen,  // v866
+        usage: finalUsage,   // v866 + v895 (vibe via meta.json)
+        model: finalModel,   // v866 + v895
       });
     });
 
