@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.894] - 2026-06-14
+
+### Fixed — vibe-Live-Output: Parser an das echte Stream-Format angepasst (v894)
+
+mistral-vibe-Läufe zeigten **keinen Live-Output** im Panel (Phasen liefen trotzdem
+korrekt durch). Ursache: `parseVibeEvent` erwartete ein Anthropic-artiges Schema
+(`{type:'message', content:[{type:'text'|'tool_use'}]}`) — vibe schreibt aber pro
+Zeile **ein `LLMMessage`-Objekt** (`StreamingJsonOutputFormatter.on_message_added →
+message.model_dump`): OpenAI-Stil mit `role` / `content` / `reasoning_content` /
+`tool_calls:[{function:{name,arguments}}]`, **ohne** `type`-Feld. Der Parser fiel
+daher bei JEDER Zeile auf `EMPTY` → null Fortschritts-Zeilen.
+
+- `parseVibeEvent` liest jetzt das echte Format: assistant-`content` → 💬 + Final-Text,
+  `tool_calls` → 🔧 (mit eigenem vibe-Label-Picker für `bash`/`read_file`/`write_file`/
+  `search_replace`/`grep`/`todo`/`web_*`/`task`), `role:'tool'` → ✓/❌, reine
+  Denk-Runden (`reasoning_content`) → 💭; `system`/`user`-Echo wird übersprungen.
+- `tool_calls.function.arguments` (JSON-String) wird geparst.
+- Quelle verifiziert: vibe `core/output_formatters.py` + `core/types.py` (LLMMessage).
+- 7 neue Parser-Tests; claude/codex-Parsing unverändert.
+
 ## [0.19.0-multi-ha.893] - 2026-06-14
 
 ### Fixed — Agent-Typ-Erkennung: claude-Flags wurden in vibe/codex injiziert (v893)

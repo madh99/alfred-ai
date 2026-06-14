@@ -245,48 +245,74 @@ function parseCodexEvent(evt: Record<string, unknown>): ParsedChunk {
 // ────────────────────────────── Vibe ──────────────────────────────
 
 function parseVibeEvent(evt: Record<string, unknown>): ParsedChunk {
-  // vibe streaming format: gleiches Schema wie Anthropic Messages API
-  // {type:'message', role:'assistant', content:[{type:'text',text:'...'}|{type:'tool_use',...}]}
-  // plus {type:'tool_result',...} und {type:'done'/'result',...}
-  const type = evt.type as string | undefined;
-  if (!type) return EMPTY;
+  // v894 — vibe `--output streaming` schreibt pro Message EIN LLMMessage-Objekt
+  // (StreamingJsonOutputFormatter.on_message_added → message.model_dump(json)).
+  // Schema (OpenAI-Stil, NICHT Anthropic): { role, content, reasoning_content,
+  //   tool_calls: [{ id, type:'function', function:{ name, arguments:<json-string> } }],
+  //   tool_call_id }. `on_event` ist ein No-op → keine separaten Event-Typen.
+  // Das alte Schema (`type` / `content:[{type:'text'|'tool_use'}]`) traf NIE zu
+  // → parseVibeEvent gab IMMER EMPTY zurück → null Live-Zeilen im Panel.
+  const role = evt.role as string | undefined;
+  // System-Prompt + User-Prompt sind nur Echo (riesig) — kein Fortschritt.
+  if (role === 'system' || role === 'user' || !role) return EMPTY;
 
-  switch (type) {
-    case 'message':
-    case 'assistant_message': {
-      const content = Array.isArray(evt.content) ? evt.content as Array<Record<string, unknown>> : [];
-      const progress: string[] = [];
-      const finalTextChunks: string[] = [];
-      for (const item of content) {
-        if (item.type === 'text') {
-          const txt = String(item.text ?? '').trim();
-          if (txt.length === 0) continue;
-          progress.push(`💬 ${truncate(txt, 200)}`);
-          finalTextChunks.push(txt);
-        } else if (item.type === 'tool_use') {
-          progress.push(formatClaudeToolUse(item));
-        }
-      }
-      return { progress, finalTextChunks, ended: false };
+  if (role === 'assistant') {
+    const progress: string[] = [];
+    const finalTextChunks: string[] = [];
+    const toolCalls = Array.isArray(evt.tool_calls) ? evt.tool_calls as Array<Record<string, unknown>> : [];
+    for (const tc of toolCalls) {
+      const fn = (tc.function ?? {}) as Record<string, unknown>;
+      const name = String(fn.name ?? tc.name ?? '?');
+      const args = parseToolArgs(fn.arguments ?? tc.arguments);
+      const label = pickVibeToolLabel(name, args);
+      progress.push(`🔧 ${name}${label ? `: ${label}` : ''}`);
     }
-    case 'tool_use':
-      return { progress: [formatClaudeToolUse(evt)], finalTextChunks: [], ended: false };
-    case 'tool_result': {
-      const isErr = evt.is_error === true;
-      return { progress: [isErr ? '❌ tool error' : '✓ tool result'], finalTextChunks: [], ended: false };
+    const content = typeof evt.content === 'string' ? evt.content.trim() : '';
+    if (content.length > 0) {
+      progress.push(`💬 ${truncate(content, 200)}`);
+      finalTextChunks.push(content);
+    } else if (toolCalls.length === 0) {
+      // Reine Denk-Runde (nur reasoning_content) — kurzer Aktivitäts-Hinweis,
+      // damit das Panel nicht „tot" wirkt während vibe nachdenkt.
+      const reasoning = typeof evt.reasoning_content === 'string' ? evt.reasoning_content.trim() : '';
+      if (reasoning.length > 0) progress.push(`💭 ${truncate(reasoning, 160)}`);
     }
-    case 'text': {
-      const text = String(evt.text ?? '').trim();
-      if (text.length === 0) return EMPTY;
-      return { progress: [`💬 ${truncate(text, 200)}`], finalTextChunks: [text], ended: false };
-    }
-    case 'done':
-    case 'result':
-      return { progress: ['🏁 done'], finalTextChunks: [], ended: true };
-    case 'error':
-      return { progress: [`❌ ${truncate(String(evt.message ?? evt.error ?? 'unknown'), 200)}`], finalTextChunks: [], ended: false };
-    default:
-      return EMPTY;
+    return { progress, finalTextChunks, ended: false };
+  }
+
+  if (role === 'tool') {
+    const content = typeof evt.content === 'string' ? evt.content.trim() : '';
+    if (content.length === 0) return { progress: ['✓ tool result'], finalTextChunks: [], ended: false };
+    const isErr = /(^|\n)\s*(error|traceback|command failed|exit code [1-9])/i.test(content);
+    return { progress: [`${isErr ? '❌' : '✓'} ${truncate(content, 140)}`], finalTextChunks: [], ended: false };
+  }
+
+  return EMPTY;
+}
+
+/** v894 — vibe tool_calls.function.arguments ist ein JSON-String → in Objekt parsen. */
+function parseToolArgs(raw: unknown): Record<string, unknown> | undefined {
+  if (raw && typeof raw === 'object') return raw as Record<string, unknown>;
+  if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+    try { return JSON.parse(raw) as Record<string, unknown>; } catch { return undefined; }
+  }
+  return undefined;
+}
+
+/** v894 — Label für vibe-Tools (eigene Namen/Arg-Keys, NICHT die claude-Namen). */
+function pickVibeToolLabel(name: string, input?: Record<string, unknown>): string {
+  if (!input) return '';
+  switch (name) {
+    case 'bash':           return truncate(String(input.command ?? ''), 80);
+    case 'read_file':      return String(input.path ?? input.file_path ?? '');
+    case 'write_file':
+    case 'search_replace': return String(input.file_path ?? input.path ?? '');
+    case 'grep':           return String(input.pattern ?? '');
+    case 'todo':           return `${Array.isArray(input.todos) ? input.todos.length : 0} todos`;
+    case 'web_search':     return truncate(String(input.query ?? ''), 60);
+    case 'web_fetch':      return String(input.url ?? '');
+    case 'task':           return truncate(String(input.description ?? input.prompt ?? ''), 60);
+    default:               return '';
   }
 }
 

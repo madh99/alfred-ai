@@ -122,30 +122,49 @@ describe('parseLine: codex-jsonl', () => {
   });
 });
 
-describe('parseLine: vibe-streaming', () => {
+// v894 — echtes vibe-Format: pro Zeile EIN LLMMessage (role/content/tool_calls),
+// wie StreamingJsonOutputFormatter es schreibt. (Vorher testete dies das nie
+// zutreffende `type`-Schema → Parser gab immer EMPTY → 0 Live-Zeilen.)
+describe('parseLine: vibe-streaming (v894 LLMMessage-Format)', () => {
   const state = () => createParserState('vibe-streaming');
 
-  it('extracts assistant message text', () => {
-    const evt = { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'Vibe response' }] };
+  it('assistant-content → 💬 Text + finalText', () => {
+    const evt = { role: 'assistant', content: 'Vibe response', tool_calls: null, reasoning_content: null };
     const r = parseLine(state(), JSON.stringify(evt));
     expect(r.finalTextChunks).toEqual(['Vibe response']);
     expect(r.progress[0]).toContain('Vibe response');
   });
 
-  it('handles standalone text event', () => {
-    const r = parseLine(state(), JSON.stringify({ type: 'text', text: 'standalone' }));
-    expect(r.finalTextChunks).toEqual(['standalone']);
-  });
-
-  it('marks done as ended', () => {
-    const r = parseLine(state(), JSON.stringify({ type: 'done' }));
-    expect(r.ended).toBe(true);
-  });
-
-  it('extracts tool_use', () => {
-    const evt = { type: 'tool_use', name: 'Read', input: { file_path: '/etc/hosts' } };
+  it('assistant tool_call read_file → 🔧 mit Pfad (arguments als JSON-String)', () => {
+    const evt = { role: 'assistant', content: '', tool_calls: [{ id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"README.md"}' } }] };
     const r = parseLine(state(), JSON.stringify(evt));
-    expect(r.progress[0]).toBe('🔧 Read: /etc/hosts');
+    expect(r.progress[0]).toBe('🔧 read_file: README.md');
+  });
+
+  it('assistant tool_call bash → 🔧 mit command', () => {
+    const evt = { role: 'assistant', content: '', tool_calls: [{ function: { name: 'bash', arguments: '{"command":"ls -la"}' } }] };
+    const r = parseLine(state(), JSON.stringify(evt));
+    expect(r.progress[0]).toBe('🔧 bash: ls -la');
+  });
+
+  it('tool-result (role=tool) → ✓', () => {
+    const r = parseLine(state(), JSON.stringify({ role: 'tool', content: 'total 12\nfoo', tool_call_id: 'a' }));
+    expect(r.progress[0]).toMatch(/^✓/);
+  });
+
+  it('tool-result mit Fehler → ❌', () => {
+    const r = parseLine(state(), JSON.stringify({ role: 'tool', content: 'error: file not found', tool_call_id: 'a' }));
+    expect(r.progress[0]).toMatch(/^❌/);
+  });
+
+  it('reine Denk-Runde (nur reasoning_content) → 💭', () => {
+    const r = parseLine(state(), JSON.stringify({ role: 'assistant', content: '', tool_calls: null, reasoning_content: 'Let me look at the repo first.' }));
+    expect(r.progress[0]).toMatch(/^💭/);
+  });
+
+  it('system- und user-Message werden übersprungen (Prompt-Echo)', () => {
+    expect(parseLine(state(), JSON.stringify({ role: 'system', content: 'huge system prompt' })).progress).toEqual([]);
+    expect(parseLine(state(), JSON.stringify({ role: 'user', content: 'the task' })).progress).toEqual([]);
   });
 });
 
