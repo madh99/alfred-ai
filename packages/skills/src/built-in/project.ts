@@ -24,7 +24,7 @@ type Action =
   | 'list_sessions' | 'list_decisions' | 'archive'
   | 'work_on_open_items' | 'audit_open_items' | 'deep_verify_items'
   | 'update_dependencies' | 'review_codebase'
-  | 'suggest_features' | 'plan_feature' | 'plan_features';
+  | 'suggest_features' | 'plan_feature' | 'plan_features' | 'consolidate_milestones';
 
 /** v870 — Deep-Verify-Verdikt eines Items (read-only Codebase-Prüfung). */
 export interface DeepVerifyFinding {
@@ -285,7 +285,7 @@ export class ProjectSkill extends Skill {
             'list_sessions', 'list_decisions', 'archive',
             'work_on_open_items', 'audit_open_items', 'deep_verify_items',
             'update_dependencies', 'review_codebase',
-            'suggest_features', 'plan_feature', 'plan_features',
+            'suggest_features', 'plan_feature', 'plan_features', 'consolidate_milestones',
           ],
         },
         project_id: { type: 'string', description: 'Project-ID oder Prefix (für get/rename/...)' },
@@ -308,6 +308,8 @@ export class ProjectSkill extends Skill {
         agents: { type: 'array', items: { type: 'string' }, description: 'CLI-Agents für die Discovery (für suggest_features, 1-2, leer = Standard)' },
         agent: { type: 'string', description: 'CLI-Agent (für plan_feature/plan_features, optional)' },
         features: { type: 'array', items: { type: 'object' }, description: 'v897 — Liste {title,description} zusammengehöriger Facetten (für plan_features, ≥2) — erzeugt EINEN konsolidierten Plan/Milestone' },
+        milestones: { type: 'array', items: { type: 'string' }, description: 'v898 — bestehende Roadmap-Milestone-Namen (für consolidate_milestones, ≥2) — deren Items werden zu EINEM Feature-Milestone zusammengeführt' },
+        with_plan: { type: 'boolean', description: 'v898 — bei consolidate_milestones zusätzlich Agent-Plan-Doc + Lücken-Analyse ausarbeiten (Default true)' },
       },
       required: ['action'],
     },
@@ -332,6 +334,9 @@ export class ProjectSkill extends Skill {
   /** v869.4 — Sicherungsnetz: code_agent.push (committet nur bei dirty Tree,
    *  pusht aktuellen Branch, inkl. v863-Branch-Mismatch-Warnung). Set by alfred.ts. */
   private pushProject?: (opts: { cwd: string; commitMessage: string }) => Promise<{ success: boolean; summary: string }>;
+  /** v898 — Discovery-Vorschläge als 'pending' in der Features-Library festhalten
+   *  (Vorschlags-Historie). Set by alfred.ts; ohne Verkabelung kein Persistieren. */
+  private recordSuggestions?: (projectId: string, userId: string, suggestions: Array<{ title: string; value: string }>) => Promise<void>;
   /** v869.3 — Doppel-Start-Guard: pro Projekt max. 1 laufender Open-Items-Code-Lauf. */
   private runningCodeJobs = new Map<string, string>();
 
@@ -362,6 +367,11 @@ export class ProjectSkill extends Skill {
   /** v869.4 — Inject the push safety-net (code_agent.push). */
   setPushProject(fn: (opts: { cwd: string; commitMessage: string }) => Promise<{ success: boolean; summary: string }>): void {
     this.pushProject = fn;
+  }
+
+  /** v898 — Inject the suggestion-recorder (Discovery-Vorschläge → Features-Library 'pending'). */
+  setSuggestionRecorder(fn: (projectId: string, userId: string, suggestions: Array<{ title: string; value: string }>) => Promise<void>): void {
+    this.recordSuggestions = fn;
   }
 
   /** v642 — Inject the LLM callback for deep audit. */
@@ -395,6 +405,7 @@ export class ProjectSkill extends Skill {
       case 'suggest_features': return this.suggestFeatures(userId, input);
       case 'plan_feature': return this.planFeature(userId, input);
       case 'plan_features': return this.planFeaturesCombined(userId, input);
+      case 'consolidate_milestones': return this.consolidateMilestones(userId, input);
       default:
         return { success: false, error: `Unbekannte action "${String(action)}".` };
     }
@@ -1253,6 +1264,15 @@ ${decLines.join('\n') || '  _keine_'}`;
           return;
         }
         this.suggestResults.set(liveTaskId, { status: 'done', suggestions: merged, ts: Date.now() });
+        // v898 — Vorschläge als 'pending' in der Features-Library festhalten (Historie),
+        // damit auch unentschiedene Vorschläge später sichtbar bleiben (nicht nur 30 min im Cache).
+        if (this.recordSuggestions && merged.length > 0) {
+          try {
+            await this.recordSuggestions(projectId, userId, merged.map(m => ({ title: m.title, value: m.value })));
+          } catch (err) {
+            appendOutputLine(liveTaskId, 'system', `⚠️ Vorschlags-Historie nicht gespeichert: ${(err instanceof Error ? err.message : String(err)).slice(0, 150)}`);
+          }
+        }
         appendOutputLine(liveTaskId, 'system', `✅ Feature-Discovery abgeschlossen — ${merged.length} Vorschlag/Vorschläge. Auswahl im Modal.`);
         this.ownerNotify?.(`✅ Feature-Discovery fertig (${projectName}): ${merged.length} Vorschlag/Vorschläge — Annehmen/Ablehnen in der WebUI.`);
       } catch (err) {
@@ -1490,6 +1510,165 @@ ${decLines.join('\n') || '  _keine_'}`;
       success: true,
       data: { liveTaskId, projectId, milestone },
       display: `🧩 Gemeinsamer Umsetzungsplan (${features.length} Facetten) wird ausgearbeitet (Hintergrund) — danach stehen die Arbeitspakete ⛓-verkettet in der Roadmap.`,
+    };
+  }
+
+  /**
+   * v898 — Bestehende Roadmap-Milestones NACHTRÄGLICH zu EINEM Feature
+   * konsolidieren (Re-Tag-Strategie „B-a"): wenn man Vorschläge zunächst
+   * einzeln (oder mehrere unzusammenhängend) geplant hat, lassen sich die
+   * entstandenen Milestones im Nachhinein per Auswahl zu einem gemeinsamen
+   * Feature zusammenführen.
+   *
+   * Vorgehen — nicht-destruktiv, Fortschritt bleibt erhalten:
+   *  1. Re-Tag (deterministisch, sofort): alle Items der gewählten Milestones
+   *     werden auf den neuen Milestone „Feature: <name>" umgehängt und global
+   *     neu durchnummeriert (relative Reihenfolge bleibt). Status/Beschreibung/
+   *     Abhängigkeiten der Items bleiben unangetastet; die alten (nun leeren)
+   *     Milestones verschwinden dadurch aus der Roadmap.
+   *  2. Optionaler Plan-Lauf (with_plan, Default true): ein Agent arbeitet einen
+   *     konsolidierten Plan-Doc aus und schlägt nur noch NICHT abgedeckte
+   *     LÜCKEN als zusätzliche Items vor (ans Ende des Milestones angehängt).
+   */
+  private async consolidateMilestones(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const projectId = await this.resolveProjectId(userId, input.project_id as string);
+    if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+    const project = await this.repo.getById(userId, projectId);
+    if (!project) return { success: false, error: 'Project nicht gefunden' };
+
+    const rawMs = Array.isArray(input.milestones) ? input.milestones as unknown[] : [];
+    const milestones = Array.from(new Set(
+      rawMs.map(m => (typeof m === 'string' ? m.trim() : '')).filter(m => m.length > 0),
+    ));
+    if (milestones.length < 2) return { success: false, error: 'consolidate_milestones braucht mindestens 2 Milestones' };
+
+    const stripFeaturePrefix = (s: string) => s.replace(/^Feature:\s*/i, '').trim();
+    const name = ((typeof input.name === 'string' && input.name.trim())
+      ? input.name.trim()
+      : `${stripFeaturePrefix(milestones[0])} + ${milestones.length - 1} weitere`).slice(0, 120);
+    const newMilestone = `Feature: ${name}`.slice(0, 80);
+    const agent = typeof input.agent === 'string' && input.agent.trim() ? input.agent.trim() : undefined;
+    const withPlan = input.with_plan !== false;
+
+    // Items aller gewählten Milestones lesen (alle Status — Fortschritt bleibt erhalten)
+    const allItems = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress', 'done', 'cancelled']);
+    const msIndex = new Map(milestones.map((m, i) => [m, i]));
+    const selected = allItems
+      .filter(i => i.roadmapMilestone && msIndex.has(i.roadmapMilestone))
+      .sort((a, b) => {
+        const dm = (msIndex.get(a.roadmapMilestone!) ?? 0) - (msIndex.get(b.roadmapMilestone!) ?? 0);
+        if (dm !== 0) return dm;
+        const da = (a.roadmapOrder ?? 9999) - (b.roadmapOrder ?? 9999);
+        if (da !== 0) return da;
+        return a.createdAt.localeCompare(b.createdAt);
+      });
+    if (selected.length === 0) return { success: false, error: 'Keine Roadmap-Items in den gewählten Milestones gefunden' };
+
+    // 1. Re-Tag (deterministisch, sofort)
+    let retagged = 0;
+    for (let i = 0; i < selected.length; i++) {
+      try {
+        await this.repo.updateOpenItemRoadmap(selected[i].id, { milestone: newMilestone, order: i + 1 });
+        retagged++;
+      } catch { /* einzelnes Item darf nicht den Rest verhindern */ }
+    }
+
+    // 2. Optionaler Plan-Lauf (Lücken-Analyse) — nur wenn frei und gewünscht
+    const alreadyRunning = this.runningCodeJobs.get(projectId);
+    const canPlan = withPlan && !!this.runCodeAgent && project.cwd && existsSync(project.cwd) && !alreadyRunning;
+    if (!canPlan) {
+      const note = !withPlan ? '' : alreadyRunning
+        ? ' (Plan-Lauf übersprungen — es läuft bereits ein Code-Lauf)'
+        : !this.runCodeAgent ? ' (Plan-Lauf nicht verfügbar)'
+        : ' (Plan-Lauf übersprungen — kein gültiger cwd)';
+      return {
+        success: true,
+        data: { projectId, milestone: newMilestone, retagged, sourceMilestones: milestones, planned: false },
+        display: `🧩 ${retagged} Items aus ${milestones.length} Milestones zu „${newMilestone}" zusammengeführt${note}.`,
+      };
+    }
+
+    const slug = name.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'feature';
+    const byMs = new Map<string, string[]>();
+    for (const it of selected) {
+      const arr = byMs.get(it.roadmapMilestone!) ?? [];
+      arr.push(it.title);
+      byMs.set(it.roadmapMilestone!, arr);
+    }
+    const existingOverview = milestones
+      .map(m => `### ${m}\n${(byMs.get(m) ?? []).map(t => `- ${t}`).join('\n')}`)
+      .join('\n');
+
+    const prompt = [
+      `Für das Projekt "${project.name}" werden mehrere bestehende Roadmap-Milestones zu EINEM gemeinsamen Feature "${name}" zusammengeführt. Die bestehenden Arbeitspakete bleiben erhalten (sind bereits umgehängt). Arbeite einen KONSOLIDIERTEN Plan-Doc aus und finde nur LÜCKEN — implementiere NICHTS.`,
+      ``,
+      `BEREITS VORHANDENE ARBEITSPAKETE (NICHT erneut vorschlagen — sie existieren schon):`,
+      existingOverview,
+      ``,
+      `VORGEHEN:`,
+      `1. Analysiere READ-ONLY die relevanten Teile der Codebase (betroffene Routen, Models, UI, bestehende Muster).`,
+      `2. Schreibe den konsolidierten Plan als docs/feature-plan-${slug}.md (Überblick über das vereinte Feature, wie die bisherigen Milestones zusammenhängen, Gesamt-Phasen, Risiken) und committe NUR dieses Dokument (docs(plan): …). Kein Push.`,
+      `3. Bestimme, welche Arbeit für ein KOHÄRENTES Gesamt-Feature NOCH FEHLT (Integration der Teile, gemeinsames Fundament, Übergänge) und die NICHT in der Liste oben steht.`,
+      ``,
+      `Antworte AM ENDE mit GENAU EINEM JSON-Array NUR der fehlenden Lücken-Arbeitspakete (leeres Array [] wenn nichts fehlt):`,
+      `[{"title":"fehlendes Arbeitspaket, max 150 Zeichen","description":"was konkret zu tun ist inkl. betroffener Dateien/Bereiche, 2-4 Sätze"}]`,
+    ].join('\n');
+
+    const liveTaskId = randomUUID();
+    this.runningCodeJobs.set(projectId, liveTaskId);
+    appendOutputLine(liveTaskId, 'system', `🧩 „${newMilestone}": ${retagged} Items zusammengeführt — konsolidierter Plan + Lücken-Analyse läuft…`);
+
+    const projectName = project.name;
+    const cwd = project.cwd!; // canPlan stellt sicher: cwd ist gesetzt + existiert
+    const baseOrder = selected.length;
+    let lastExistingId = selected[selected.length - 1]?.id;
+    void (async () => {
+      try {
+        const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent, projectId });
+        if (!result.success) {
+          appendOutputLine(liveTaskId, 'system', `⚠️ Plan-Lauf fehlgeschlagen — Items sind aber zusammengeführt. Output-Ende: ${result.output.slice(-300)}`);
+          this.ownerNotify?.(`⚠️ Milestone-Konsolidierung (${projectName}): „${newMilestone}" zusammengeführt, Plan-Lauf fehlgeschlagen.`);
+          return;
+        }
+        if (this.pushProject) {
+          try {
+            const push = await this.pushProject({ cwd, commitMessage: `docs(plan): Konsolidierung ${name.slice(0, 70)}` });
+            appendOutputLine(liveTaskId, 'system', push.success ? `📤 Plan-Doc gesichert: ${push.summary}` : `⚠️ Push fehlgeschlagen: ${push.summary}`);
+          } catch { /* best-effort */ }
+        }
+        const gaps = parseFeaturePlanPhases(result.output);
+        let added = 0;
+        for (let i = 0; i < gaps.length; i++) {
+          try {
+            const item = await this.repo.addOpenItem(projectId, {
+              title: gaps[i].title,
+              description: `${gaps[i].description}\n[Quelle: Konsolidierung docs/feature-plan-${slug}.md]`.slice(0, 1500),
+              priority: 'normal',
+            });
+            try { await this.repo.updateOpenItemRoadmap(item.id, { milestone: newMilestone, order: baseOrder + i + 1 }); } catch { /* best-effort */ }
+            if (lastExistingId) {
+              try { await this.repo.updateOpenItemFields(item.id, { dependsOn: [lastExistingId] }); } catch { /* best-effort */ }
+            }
+            lastExistingId = item.id;
+            added++;
+          } catch { /* einzelnes Paket darf nicht den Rest verhindern */ }
+        }
+        appendOutputLine(liveTaskId, 'system', `✅ Konsolidierung fertig — „${newMilestone}": ${retagged} bestehende + ${added} neue Lücken-Items. Plan-Doc im Doku-Tab.`);
+        this.ownerNotify?.(`✅ Milestone-Konsolidierung fertig (${projectName}): „${newMilestone}" — ${retagged} bestehende + ${added} neue Items.`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)}`);
+        this.ownerNotify?.(`❌ Milestone-Konsolidierung Fehler (${projectName}: ${name}): ${msg.slice(0, 300)}`);
+      } finally {
+        this.runningCodeJobs.delete(projectId);
+        try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
+      }
+    })();
+
+    return {
+      success: true,
+      data: { liveTaskId, projectId, milestone: newMilestone, retagged, sourceMilestones: milestones, planned: true },
+      display: `🧩 ${retagged} Items zu „${newMilestone}" zusammengeführt — konsolidierter Plan + Lücken-Analyse läuft (Hintergrund).`,
     };
   }
 

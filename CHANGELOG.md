@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898] - 2026-06-15
+
+### Added — Feature-Historie + nachträgliche Milestone-Konsolidierung (v898)
+
+Aufbauend auf der Feature-Discovery (v880/v897): man konnte bisher **nicht sehen**,
+welche Vorschläge in der Vergangenheit gemacht, abgelehnt oder in ein Feature
+überführt wurden — und einmal **getrennt** geplante Milestones ließen sich nicht
+mehr zu einem gemeinsamen Feature zusammenfassen.
+
+**Vorschlags-Historie (A):**
+- Discovery-Vorschläge werden jetzt sofort als `pending` in der Features-Library
+  festgehalten (vorher nur 30 min im Lauf-Cache, danach verloren). Idempotent:
+  bereits entschiedene Vorschläge (`confirmed`/`rejected`) bleiben unverändert.
+- Neue Spalte `project_features.planned_milestone` (SQLite v109 / PG v113): zeigt
+  pro bestätigtem Feature, **in welchen Roadmap-Milestone** es überführt wurde —
+  in der Features-Library als „→ übernommen in …" sichtbar.
+- Die Features-Library (Tab `pending`) erlaubt nun, einen alten Vorschlag
+  nachträglich **„🗺 In Feature planen"** (Plan-Lauf wie im Discovery-Modal) oder
+  abzulehnen.
+
+**Nachträgliche Milestone-Konsolidierung (B):**
+- Neue Skill-Action `consolidate_milestones` + Pfad `projectConsolidateMilestones`
+  (Client) → `POST /api/projects/:id/consolidate-milestones` → Callback → Skill.
+- In der **Roadmap-Ansicht** lassen sich ≥2 Milestones per Checkbox auswählen und
+  über **„🧩 Zu einem Feature zusammenführen"** zu einem gemeinsamen
+  `Feature: <name>` vereinen. **Re-Tag-Strategie (nicht-destruktiv):** die Items
+  behalten Status/Fortschritt/Abhängigkeiten und werden nur umgehängt + neu
+  durchnummeriert; die alten (leeren) Milestones verschwinden.
+- Optional (Default an) arbeitet ein Agent danach einen **konsolidierten Plan-Doc**
+  aus und ergänzt nur noch **fehlende Lücken** als zusätzliche Items.
+- 4 neue Tests (`consolidate-milestones.test.ts`: Validierung, Re-Tag-Mechanik,
+  Namensableitung).
+
 ## [0.19.0-multi-ha.897] - 2026-06-15
 
 ### Added — Feature-Discovery: mehrere Facetten zu EINEM konsolidierten Plan (v897)

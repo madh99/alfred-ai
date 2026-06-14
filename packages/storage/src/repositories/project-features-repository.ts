@@ -36,6 +36,8 @@ export interface ProjectFeature {
   status: FeatureStatus;
   embeddingId: string | null;
   derivedFromFeatureId: string | null;
+  /** v898 — Roadmap-Milestone, in den das Feature beim Planen überführt wurde (für "übernommen in"-Historie). */
+  plannedMilestone: string | null;
   createdAt: string;
   updatedAt: string;
   retiredAt: string | null;
@@ -54,6 +56,7 @@ export interface CreateFeatureInput {
   source?: FeatureSource;
   status?: FeatureStatus;
   derivedFromFeatureId?: string;
+  plannedMilestone?: string;
 }
 
 export interface FeatureSearchOptions {
@@ -94,6 +97,7 @@ function rowToFeature(r: DbRow): ProjectFeature {
     status: ((r.status as string) ?? 'confirmed') as FeatureStatus,
     embeddingId: (r.embedding_id as string | null) ?? null,
     derivedFromFeatureId: (r.derived_from_feature_id as string | null) ?? null,
+    plannedMilestone: (r.planned_milestone as string | null) ?? null,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
     retiredAt: (r.retired_at as string | null) ?? null,
@@ -110,8 +114,8 @@ export class ProjectFeaturesRepository {
       `INSERT INTO project_features
        (id, project_id, user_id, name, description, tech_stack, source_files,
         git_sha_introduced, version, visibility, confidence, source, status,
-        derived_from_feature_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+        derived_from_feature_id, planned_milestone, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, input.projectId, input.userId, input.name,
         input.description ?? '',
@@ -123,6 +127,7 @@ export class ProjectFeaturesRepository {
         input.source ?? 'auto',
         input.status ?? 'confirmed',
         input.derivedFromFeatureId ?? null,
+        input.plannedMilestone ?? null,
         now, now,
       ],
     );
@@ -237,6 +242,32 @@ export class ProjectFeaturesRepository {
       `UPDATE project_features SET status = ?, updated_at = ? WHERE id = ?`,
       [status, now, featureId],
     );
+  }
+
+  /**
+   * v898 — Roadmap-Milestone setzen, in den dieses Feature beim Planen
+   * überführt wurde (für die "übernommen in"-Anzeige der Feature-Historie).
+   */
+  async setPlannedMilestone(featureId: string, milestone: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `UPDATE project_features SET planned_milestone = ?, updated_at = ? WHERE id = ?`,
+      [milestone, now, featureId],
+    );
+  }
+
+  /**
+   * v898 — Feature-Vorschlag aus der Discovery als 'pending' festhalten, damit
+   * die Vorschlags-Historie auch unentschiedene Vorschläge zeigt. Idempotent:
+   * existiert (project_id, name) bereits, bleibt der bestehende Eintrag inkl.
+   * seines Status (confirmed/rejected/pending) UNVERÄNDERT — ein einmal
+   * angenommener oder abgelehnter Vorschlag wird nie auf 'pending' zurückgesetzt.
+   */
+  async recordSuggestionPending(input: CreateFeatureInput): Promise<{ id: string; isNew: boolean }> {
+    const existing = await this.findByProjectAndName(input.projectId, input.name);
+    if (existing) return { id: existing.id, isNew: false };
+    const id = await this.create({ ...input, status: 'pending', source: input.source ?? 'auto' });
+    return { id, isNew: true };
   }
 
   /** v851.1 — embedding_id-Spalte populieren nach EmbeddingService.embedAndStore. */

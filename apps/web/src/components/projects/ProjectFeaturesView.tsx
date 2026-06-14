@@ -51,6 +51,16 @@ export function ProjectFeaturesView({ projectId }: Props) {
     await client.confirmFeature(f.id, action);
     load();
   }
+  // v898 — Pending-Vorschlag aus der Historie nachträglich in ein Feature überführen
+  // (Plan-Lauf wie im Discovery-Modal) bzw. ablehnen.
+  async function decidePending(f: ProjectFeatureDto, decision: 'accept' | 'reject') {
+    if (!client) return;
+    if (decision === 'accept' && !confirm(`Vorschlag „${f.name}" als Feature planen?\nEin Agent arbeitet den Umsetzungsplan aus und legt die Arbeitspakete in der Roadmap an.`)) return;
+    const r = await client.projectFeatureDecision(projectId, { title: f.name, description: f.description, decision });
+    if (!r.ok) { alert(`Fehler: ${r.reason}`); return; }
+    if (decision === 'accept') alert(`🗺 Plan-Lauf gestartet für „${f.name}" — Arbeitspakete erscheinen anschließend in der Roadmap.`);
+    load();
+  }
   async function retire(f: ProjectFeatureDto) {
     if (!client) return;
     if (!confirm(`Feature "${f.name}" zurückziehen?`)) return;
@@ -122,6 +132,9 @@ export function ProjectFeaturesView({ projectId }: Props) {
                 )}
               </div>
               {f.description && <div className="text-[10px] text-gray-400">{f.description}</div>}
+              {f.plannedMilestone && (
+                <div className="text-[9px] text-emerald-300/80">→ übernommen in <span className="font-medium">{f.plannedMilestone}</span></div>
+              )}
               {f.techStack.length > 0 && (
                 <div className="flex gap-1 flex-wrap">
                   {f.techStack.slice(0, 6).map(t => (
@@ -140,8 +153,8 @@ export function ProjectFeaturesView({ projectId }: Props) {
               <div className="flex gap-1 pt-1 border-t border-[#1a1a1a]">
                 {tab === 'pending' && (
                   <>
-                    <button onClick={() => confirmOrReject(f, 'confirm')} className="text-[10px] px-2 py-0.5 bg-emerald-500/15 text-emerald-300 rounded hover:bg-emerald-500/25">✓ Bestätigen</button>
-                    <button onClick={() => confirmOrReject(f, 'reject')} className="text-[10px] px-2 py-0.5 bg-red-500/10 text-red-300 rounded hover:bg-red-500/20">✗ Ablehnen</button>
+                    <button onClick={() => decidePending(f, 'accept')} className="text-[10px] px-2 py-0.5 bg-emerald-500/15 text-emerald-300 rounded hover:bg-emerald-500/25">🗺 In Feature planen</button>
+                    <button onClick={() => decidePending(f, 'reject')} className="text-[10px] px-2 py-0.5 bg-red-500/10 text-red-300 rounded hover:bg-red-500/20">✗ Ablehnen</button>
                   </>
                 )}
                 {tab === 'confirmed' && (

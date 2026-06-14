@@ -2512,4 +2512,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE projects ADD COLUMN agent_strategy TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 109,
+    description: 'v898 — project_features.planned_milestone: in welchen Roadmap-Milestone ein bestätigtes Feature überführt wurde (Feature-Historie "übernommen in"; SQLite-Spiegel zu PG v113).',
+    up(db) {
+      try { db.exec(`ALTER TABLE project_features ADD COLUMN planned_milestone TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

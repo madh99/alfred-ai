@@ -1822,4 +1822,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS agent_strategy TEXT`, []);
     },
   },
+  {
+    version: 113,
+    description: 'v898 — project_features.planned_milestone: in welchen Roadmap-Milestone ein bestätigtes Feature überführt wurde (Feature-Historie "übernommen in").',
+    async up(db) {
+      await db.execute(`ALTER TABLE project_features ADD COLUMN IF NOT EXISTS planned_milestone TEXT`, []);
+    },
+  },
 ];

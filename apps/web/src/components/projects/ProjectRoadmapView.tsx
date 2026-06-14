@@ -32,6 +32,11 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [implementing, setImplementing] = useState<string | null>(null);
+  // v898 — Milestones nachträglich zu EINEM Feature zusammenführen (Re-Tag)
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [combineName, setCombineName] = useState('');
+  const [withPlan, setWithPlan] = useState(true);
+  const [consolidating, setConsolidating] = useState(false);
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -65,6 +70,41 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
       }
     } finally {
       setImplementing(null);
+    }
+  }
+
+  function toggleSelected(ms: string) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(ms)) next.delete(ms); else next.add(ms);
+      return next;
+    });
+  }
+
+  async function consolidate() {
+    if (!client || selected.size < 2) return;
+    const list = Array.from(selected);
+    const msg = withPlan
+      ? `${list.length} Milestones zu EINEM Feature zusammenführen?\n\nDie Items behalten ihren Fortschritt und werden umgehängt. Anschließend arbeitet ein Agent einen konsolidierten Plan aus und ergänzt fehlende Lücken-Items.`
+      : `${list.length} Milestones zu EINEM Feature zusammenführen?\n\nDie Items behalten ihren Fortschritt und werden nur umgehängt (kein Agent-Lauf).`;
+    if (!confirm(msg)) return;
+    setConsolidating(true);
+    try {
+      const r = await client.projectConsolidateMilestones(projectId, {
+        milestones: list,
+        name: combineName.trim() || undefined,
+        withPlan,
+      });
+      if (r.ok) {
+        setSelected(new Set());
+        setCombineName('');
+        alert(`🧩 Zusammengeführt zu „${r.milestone}"\n${r.retagged} Items umgehängt${r.planned ? '\nKonsolidierter Plan + Lücken-Analyse läuft im Hintergrund.' : ''}`);
+        load();
+      } else {
+        alert(`Fehler: ${r.reason}`);
+      }
+    } finally {
+      setConsolidating(false);
     }
   }
 
@@ -108,6 +148,37 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
         </div>
       )}
 
+      {/* v898 — Konsolidierungs-Aktionsleiste (ab 2 ausgewählten Milestones) */}
+      {selected.size >= 2 && (
+        <div className="mb-3 bg-[#0f1420] border border-blue-500/30 rounded p-2.5 space-y-2">
+          <div className="text-[11px] text-blue-200 flex items-center gap-1.5">
+            <span>🧩</span>
+            <span>{selected.size} Milestones zu EINEM Feature zusammenführen</span>
+          </div>
+          <input
+            type="text"
+            value={combineName}
+            onChange={e => setCombineName(e.target.value)}
+            placeholder="Name des gemeinsamen Features (optional)"
+            className="w-full text-xs bg-[#0a0a0a] border border-[#222] rounded px-2 py-1 text-gray-200"
+          />
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <label className="text-[10px] text-gray-400 flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={withPlan} onChange={e => setWithPlan(e.target.checked)} />
+              <span>Plan-Doc + Lücken-Analyse durch Agent (sonst nur umhängen)</span>
+            </label>
+            <div className="flex gap-1.5">
+              <button onClick={() => setSelected(new Set())} className="text-[10px] px-2 py-1 text-gray-400 hover:text-gray-200 rounded border border-[#222]">Abbrechen</button>
+              <button
+                onClick={consolidate}
+                disabled={consolidating}
+                className="text-[10px] px-2.5 py-1 bg-blue-600/30 border border-blue-500/50 text-blue-200 rounded hover:bg-blue-600/50 disabled:opacity-40"
+              >{consolidating ? '⏳ Führe zusammen…' : `🧩 Zu einem Feature zusammenführen (${selected.size})`}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-3">
         {sortedMilestones.map(ms => {
           const items = milestones[ms];
@@ -115,9 +186,16 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
           const doneCount = items.filter(i => i.status === 'done').length;
           const totalHours = items.reduce((s, i) => s + (i.estimatedHours ?? 0), 0);
           return (
-            <div key={ms} className="bg-[#0f0f0f] border border-[#222] rounded">
+            <div key={ms} className={`bg-[#0f0f0f] border rounded ${selected.has(ms) ? 'border-blue-500/50' : 'border-[#222]'}`}>
               {/* Milestone-Header */}
               <div className="flex items-center gap-2 px-3 py-2 border-b border-[#222]">
+                <input
+                  type="checkbox"
+                  checked={selected.has(ms)}
+                  onChange={() => toggleSelected(ms)}
+                  title="Für Zusammenführung auswählen"
+                  className="cursor-pointer"
+                />
                 <span className="font-semibold text-blue-300">{ms}</span>
                 <span className="text-[10px] text-gray-500">{openCount} offen · {doneCount} fertig · {items.length} gesamt{totalHours > 0 ? ` · ~${totalHours}h` : ''}</span>
                 <div className="flex-1" />

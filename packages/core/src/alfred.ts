@@ -2070,6 +2070,21 @@ export class Alfred {
             if (adapterRef) void adapterRef.sendMessage(ownerChatId, text).catch(() => { /* best-effort */ });
           } catch { /* Notification darf nichts brechen */ }
         });
+
+        // v898 — Discovery-Vorschläge als 'pending' in der Features-Library
+        // festhalten (Vorschlags-Historie). Idempotent: bereits entschiedene
+        // Vorschläge (confirmed/rejected) bleiben unverändert.
+        this.projectSkillRef.setSuggestionRecorder(async (projectId, uid, suggestions) => {
+          if (!this.featuresRepoRef) return;
+          for (const s of suggestions) {
+            try {
+              await this.featuresRepoRef.recordSuggestionPending({
+                projectId, userId: uid, name: s.title.slice(0, 150),
+                description: (s.value ?? '').slice(0, 800), source: 'auto', confidence: 0.5,
+              });
+            } catch (err) { this.logger.warn({ err, title: s.title }, 'v898 suggestion-history write failed (non-fatal)'); }
+          }
+        });
       }
 
       // v615 M1 — Wire project-lookup so startProject can reject a cwd that
@@ -9644,13 +9659,17 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               if (opts.decision !== 'accept' && opts.decision !== 'reject') return { ok: false, reason: 'decision muss accept|reject sein' };
               if (this.featuresRepoRef) {
                 try {
-                  await this.featuresRepoRef.upsertOrBumpVersion({
+                  const up = await this.featuresRepoRef.upsertOrBumpVersion({
                     projectId, userId: uid, name: title,
                     description: (opts.description ?? '').slice(0, 800),
                     source: 'manual',
                     status: opts.decision === 'accept' ? 'confirmed' : 'rejected',
                     confidence: 0.9,
                   });
+                  // v898 — bei Annahme den Ziel-Milestone verknüpfen (Feature-Historie "übernommen in")
+                  if (opts.decision === 'accept') {
+                    try { await this.featuresRepoRef.setPlannedMilestone(up.id, `Feature: ${title}`.slice(0, 80)); } catch { /* non-fatal */ }
+                  }
                 } catch (err) {
                   this.logger.warn({ err, title }, 'v880 feature library write failed (non-fatal)');
                 }
@@ -9677,13 +9696,17 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 .filter(f => f.title.length > 0);
               if (features.length < 2) return { ok: false, reason: 'mindestens 2 Facetten nötig' };
               // v897 — alle ausgewählten Facetten als confirmed in der Features-Library merken
+              // v898 — gemeinsamen Ziel-Milestone pro Facette verknüpfen (Feature-Historie "übernommen in")
+              const combinedName = (opts.name?.trim() || `${features[0].title} + ${features.length - 1} weitere`).slice(0, 120);
+              const combinedMilestone = `Feature: ${combinedName}`.slice(0, 80);
               if (this.featuresRepoRef) {
                 for (const f of features) {
                   try {
-                    await this.featuresRepoRef.upsertOrBumpVersion({
+                    const up = await this.featuresRepoRef.upsertOrBumpVersion({
                       projectId, userId: uid, name: f.title, description: f.description,
                       source: 'manual', status: 'confirmed', confidence: 0.9,
                     });
+                    try { await this.featuresRepoRef.setPlannedMilestone(up.id, combinedMilestone); } catch { /* non-fatal */ }
                   } catch (err) { this.logger.warn({ err, title: f.title }, 'v897 feature library write failed (non-fatal)'); }
                 }
               }
@@ -9696,6 +9719,39 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               if (!result.success) return { ok: false, reason: result.error };
               const d = result.data as { liveTaskId?: string } | undefined;
               return { ok: true, liveTaskId: d?.liveTaskId };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
+          // v898 — Bestehende Roadmap-Milestones nachträglich zu EINEM Feature
+          // zusammenführen (Re-Tag-Strategie). Items behalten ihren Fortschritt.
+          consolidateMilestones: async (projectId: string, opts: { milestones: string[]; name?: string; agent?: string; withPlan?: boolean }) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const milestones = (Array.isArray(opts.milestones) ? opts.milestones : [])
+                .map(m => (typeof m === 'string' ? m.trim() : '')).filter(m => m.length > 0);
+              if (milestones.length < 2) return { ok: false, reason: 'mindestens 2 Milestones nötig' };
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { ok: false, reason: 'project-skill not registered' };
+              const result = await skill.execute(
+                { action: 'consolidate_milestones', project_id: projectId, milestones, name: opts.name, agent: opts.agent, with_plan: opts.withPlan },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              if (!result.success) return { ok: false, reason: result.error };
+              const d = result.data as { liveTaskId?: string; milestone?: string; retagged?: number; planned?: boolean } | undefined;
+              // v898 — konsolidiertes Feature für die Historie festhalten (mit Ziel-Milestone)
+              if (this.featuresRepoRef && d?.milestone) {
+                try {
+                  const name = d.milestone.replace(/^Feature:\s*/i, '').trim();
+                  const up = await this.featuresRepoRef.upsertOrBumpVersion({
+                    projectId, userId: uid, name,
+                    description: `Konsolidiert aus: ${milestones.join(', ')}`.slice(0, 800),
+                    source: 'manual', status: 'confirmed', confidence: 0.9,
+                  });
+                  try { await this.featuresRepoRef.setPlannedMilestone(up.id, d.milestone); } catch { /* non-fatal */ }
+                } catch (err) { this.logger.warn({ err }, 'v898 consolidate feature-history write failed (non-fatal)'); }
+              }
+              return { ok: true, liveTaskId: d?.liveTaskId, milestone: d?.milestone, retagged: d?.retagged, planned: d?.planned };
             } catch (err) {
               return { ok: false, reason: (err as Error).message };
             }

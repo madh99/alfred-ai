@@ -20,7 +20,7 @@ function makeFeature(over: Partial<ProjectFeature>): ProjectFeature {
     sourceFiles: ['src/lib/funding/**'],
     gitShaIntroduced: 'abc123', version: 1,
     visibility: 'role-shared', confidence: 0.9, source: 'auto', status: 'confirmed',
-    embeddingId: null, derivedFromFeatureId: null,
+    embeddingId: null, derivedFromFeatureId: null, plannedMilestone: null,
     createdAt: '2026-01-01', updatedAt: '2026-01-01', retiredAt: null,
     ...over,
   };

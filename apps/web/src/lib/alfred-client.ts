@@ -1831,6 +1831,16 @@ export class AlfredClient {
     return { ok: true, liveTaskId: data.liveTaskId };
   }
 
+  /** v898 — Bestehende Roadmap-Milestones nachträglich zu EINEM Feature zusammenführen (Re-Tag). */
+  async projectConsolidateMilestones(id: string, opts: { milestones: string[]; name?: string; agent?: string; withPlan?: boolean }): Promise<{ ok: boolean; liveTaskId?: string; milestone?: string; retagged?: number; planned?: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/consolidate-milestones`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(opts),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return { ok: true, liveTaskId: data.liveTaskId, milestone: data.milestone, retagged: data.retagged, planned: data.planned };
+  }
+
   /** v873 — Dependency-Update-Lauf starten (async Code-Agent, liveTaskId für SSE-Panel). */
   async projectUpdateDeps(id: string, packages?: string[]): Promise<{ ok: boolean; liveTaskId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/update-deps`, {
@@ -2621,6 +2631,8 @@ export interface ProjectFeatureDto {
   source: 'auto' | 'manual' | 'imported';
   status: 'pending' | 'confirmed' | 'rejected';
   derivedFromFeatureId: string | null;
+  /** v898 — Roadmap-Milestone, in den das Feature überführt wurde ("übernommen in"). */
+  plannedMilestone?: string | null;
   createdAt: string;
   updatedAt: string;
   retiredAt: string | null;
