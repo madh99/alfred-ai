@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.896] - 2026-06-14
+
+### Fixed — vibe: Projekt als vertrauenswürdiges Workspace (--workdir/--add-dir) (v896)
+
+vibe lehnte schreibende Operationen im Headless-Modus ab („Tool execution not
+permitted") — u.a. `mkdir`/`write_file` für Next.js-`[param]`-Dynamic-Routes, die
+dadurch **nicht angelegt** wurden (echter Blocker). Ursache: Alfred startete vibe
+zwar mit `cwd=<projekt>`, aber **ohne** `--workdir`/`--trust`/`--add-dir` → vibes
+Sandbox kannte das Projekt nicht als vertrauenswürdiges Workspace (leere
+`project_roots`, kein trusted Workdir).
+
+- `executeAgent` hängt für vibe nun `--workdir <cwd>` (chdir + trust) und
+  `--add-dir <cwd>` (trusted root) mit dem echten Lauf-cwd an. Eigener,
+  idempotenter Helfer `injectVibeWorkspaceFlags()` — nur `outputFormat==='vibe-streaming'`,
+  claude/codex unberührt.
+- 5 neue Tests.
+
 ## [0.19.0-multi-ha.895] - 2026-06-14
 
 ### Fixed — vibe: Tokens/Kosten/Modell in cli_agent_runs (v895)

@@ -203,6 +203,22 @@ function injectAfterCodexExec(args: string[], flags: string[]): void {
 }
 
 /**
+ * v896 — vibe braucht das Projekt als VERTRAUENSWÜRDIGES Workspace, sonst lehnt
+ * seine Sandbox schreibende Ops im Headless-Modus ab ("Tool execution not
+ * permitted" — z.B. mkdir/write_file für Next.js-`[param]`-Routes). Anders als
+ * claude/codex kennt vibe kein implizites Trust übers Spawn-cwd. Wir setzen den
+ * Lauf-cwd explizit als `--workdir` (chdir + trust) und `--add-dir` (trusted root).
+ * Idempotent; nur für vibe (outputFormat 'vibe-streaming'); claude/codex unberührt.
+ */
+export function injectVibeWorkspaceFlags(args: string[], outputFormat: string | undefined, cwd: string): string[] {
+  if (outputFormat !== 'vibe-streaming' || !cwd) return args;
+  const out = [...args];
+  if (!out.includes('--workdir')) out.push('--workdir', cwd);
+  if (!out.includes('--add-dir')) out.push('--add-dir', cwd);
+  return out;
+}
+
+/**
  * v895 — vibe liefert Tokens/Kosten/Modell NICHT im Stream (StreamingJsonOutput-
  * Formatter gibt nur LLMMessages aus), sondern in der Session-`meta.json`
  * (`stats` + `config`). Reine, testbare Extraktion aus dem geparsten meta-Objekt.
@@ -478,7 +494,7 @@ export async function executeAgent(
   const rawTimeout = options.timeoutMs ?? agentDef.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Math.min(rawTimeout, MAX_TIMEOUT_MS);
 
-  const args = buildArgs(agentDef.argsTemplate, prompt);
+  const args = injectVibeWorkspaceFlags(buildArgs(agentDef.argsTemplate, prompt), agentDef.outputFormat, cwd);
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
     ...(agentDef.env ? resolveEnv(agentDef.env) : {}),
