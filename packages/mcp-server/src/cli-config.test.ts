@@ -97,6 +97,27 @@ describe('idempotent patching', () => {
     expect(r2.changed).toBe(false);
   });
 
+  it('vibe: removes the static `mcp_servers = []` that conflicts with [[mcp_servers]] (v892)', () => {
+    const p = join(dir, 'config.toml');
+    // simuliert vibes Default-Scaffold: leeres statisches Array mitten in der Datei
+    require('node:fs').writeFileSync(p, '[settings]\nactive_model = "mistral-medium"\nmcp_servers = []\n\n[tools.bash]\npermission = "always"\n');
+    patchVibeMcpConfig(p, 'alfred', ['mcp-server']);
+    const content = readFileSync(p, 'utf-8');
+    // die kollidierende leere Deklaration ist weg → TOML wäre sonst invalide
+    expect(content).not.toMatch(/^[ \t]*mcp_servers[ \t]*=[ \t]*\[[ \t]*\]/m);
+    // genau EINE mcp_servers-Top-Level-Deklaration bleibt: das Array-of-Tables
+    expect(content).toContain('[[mcp_servers]]');
+    expect(content).toContain('[tools.bash]');
+  });
+
+  it('vibe: leaves a NON-empty static mcp_servers untouched (nur leeres Array wird entfernt)', () => {
+    const p = join(dir, 'config.toml');
+    require('node:fs').writeFileSync(p, 'mcp_servers = [{ name = "other" }]\n');
+    patchVibeMcpConfig(p, 'alfred', ['mcp-server']);
+    const content = readFileSync(p, 'utf-8');
+    expect(content).toContain('mcp_servers = [{ name = "other" }]');
+  });
+
   it('updates existing Alfred block', () => {
     const p = join(dir, 'config.toml');
     patchCodexMcpConfig(p, 'alfred', ['mcp-server']);

@@ -105,6 +105,18 @@ export function patchCodexMcpConfig(configPath: string, alfredCommand: string, a
  * Alfred-Block wird durch Marker identifiziert.
  */
 export function patchVibeMcpConfig(configPath: string, alfredCommand: string, alfredArgs: string[]): { changed: boolean; reason: string } {
+  // v892 — vibes eigenes Scaffold (`vibe --setup`) schreibt `mcp_servers = []`
+  // (statisches leeres Array). Das ist mit unserem `[[mcp_servers]]` (Array-of-
+  // Tables) inkompatibel → TOML-Fehler "Cannot mutate immutable namespace" →
+  // vibe crasht beim Config-Load (exit, 0 Tokens). Eine leere statische
+  // mcp_servers-Deklaration daher entfernen, bevor der Block angehängt wird.
+  // Nur das LEERE Array wird entfernt — ein vom User befülltes `mcp_servers = [...]`
+  // bleibt unangetastet (dort müsste der User selbst migrieren).
+  if (existsSync(configPath)) {
+    const content = readFileSync(configPath, 'utf-8');
+    const cleaned = content.replace(/^[ \t]*mcp_servers[ \t]*=[ \t]*\[[ \t]*\][ \t]*\r?\n/m, '');
+    if (cleaned !== content) writeFileSync(configPath, cleaned);
+  }
   const newBlock = generateMcpConfigForVibe(alfredCommand, alfredArgs);
   return patchTomlBlock(configPath, newBlock, '# ─── Alfred MCP Server', '# ─── /Alfred ───');
 }

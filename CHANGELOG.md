@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.892] - 2026-06-14
+
+### Fixed — vibe MCP-Config: ungültiges TOML behoben (v892)
+
+`patchVibeMcpConfig` hängte den `[[mcp_servers]]`-Block (Array-of-Tables) an die
+vibe-Config an, ohne ein von vibes eigenem Scaffold (`vibe --setup`) geschriebenes
+`mcp_servers = []` (statisches leeres Array) zu berücksichtigen. Beide zusammen sind
+in TOML inkompatibel ("Cannot mutate immutable namespace") → vibe crasht beim
+Config-Load → jeder mistral-vibe-Lauf scheiterte sofort (exit, 0 Tokens). Latent,
+weil bis zur korrekten CLI-Strategie-Auflösung (v889–v891) nie real auf vibe geroutet
+wurde.
+
+- Eine **leere** statische `mcp_servers = []`-Deklaration wird vor dem Anhängen entfernt;
+  ein vom User befülltes `mcp_servers = [...]` bleibt unangetastet.
+- **Nur der vibe-Pfad** (`patchVibeMcpConfig`) ist betroffen — `patchClaudeMcpConfig`
+  (claude-code) und `patchCodexMcpConfig` sind unverändert.
+- Hinweis: behebt **nur** den Config-Crash; die Eignung von mistral-vibe als
+  Projekt-Agent-Backend ist davon unabhängig und wird separat validiert.
+
 ## [0.19.0-multi-ha.891] - 2026-06-14
 
 ### Fixed — CLI-Strategie: alle verbleibenden Agent-Start-Pfade abgedeckt (v891)
