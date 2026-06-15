@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.9] - 2026-06-15
+
+### Fixed — Compose-Sandbox: Preview-Port-Mapping host:host statt host:container (v898.9)
+
+Nach dem Multi-User-Fix (v898.8) kam die Compose-Sandbox korrekt hoch (Postgres
+healthy, App gebaut, `prisma db push` ok, `next start` Ready auf Port 3000) — die
+Live-Preview zeigte aber **502 / socket hang up**.
+
+- `compose-runner.generateOverrideFile` mappte den Primary-Service als
+  `${hostPort}:${hostPort}` (z.B. `9100:9100`). Die App lauscht aber auf ihrem
+  Container-Port (3000) → auf 9100 lauschte im Container nichts → Preview-Proxy
+  bekam „socket hang up" / 502.
+- Fix: `ComposeStartInput.primaryContainerPort` ergänzt; Override mappt jetzt
+  `${hostPort}:${primaryContainerPort}` (z.B. `9100:3000`). `spinUpComposeAsync`
+  reicht `detection.internalPort` (Default 3000) durch.
+
 ## [0.19.0-multi-ha.898.8] - 2026-06-15
 
 ### Fixed — Compose-Stack-Sandbox: Multi-User getById-Mismatch (v898.8)

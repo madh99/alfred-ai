@@ -412,6 +412,7 @@ export class SandboxManager {
         sandboxStateDir,
         primaryService,
         primaryHostPort: hostPort,
+        primaryContainerPort: opts.detection.internalPort || 3000, // v898.9 — App-Port im Container
         envVars: { NODE_ENV: 'development' },
         persistDbVolumes,
         logger: this.deps.logger,

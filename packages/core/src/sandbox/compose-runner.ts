@@ -47,6 +47,8 @@ export interface ComposeStartInput {
   primaryService: string;
   /** Host-Port-Mapping für den Primary-Service. */
   primaryHostPort: number;
+  /** Container-Port, auf dem der Primary-Service lauscht (z.B. 3000 bei Next). v898.9 */
+  primaryContainerPort: number;
   /** Optional: weitere Service-Port-Mappings: serviceName -> { containerPort, hostPort }. */
   extraPortMappings?: Record<string, { containerPort: number; hostPort: number }>;
   /** ENV-Vars die in jeden Service-Container injiziert werden. */
@@ -86,9 +88,11 @@ export async function listComposeServices(worktreePath: string, composeFile: str
 function generateOverrideFile(input: ComposeStartInput): string {
   const services: Record<string, Record<string, unknown>> = {};
 
-  // Primary-Service: Port-Mapping (intern → hostPort)
+  // Primary-Service: Port-Mapping hostPort → Container-Port (z.B. 9100:3000).
+  // v898.9 — vorher host:host (9100:9100) → Preview-Proxy traf einen Port, auf dem
+  // im Container nichts lauschte (App auf 3000) → 502 socket hang up.
   services[input.primaryService] = {
-    ports: [`${input.primaryHostPort}:${input.primaryHostPort}`],
+    ports: [`${input.primaryHostPort}:${input.primaryContainerPort}`],
   };
 
   // Extra Service-Mappings (DB, Redis, etc.)
