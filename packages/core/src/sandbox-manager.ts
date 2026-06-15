@@ -1183,60 +1183,74 @@ export class SandboxManager {
     }
   }
 
+  /**
+   * v899.3 — Führt `fn` aus, während die origin-URL temporär den Forge-Token trägt
+   * (`https://oauth2:<token>@host/…`), damit `git fetch/push` gegen http-Remotes
+   * ohne Credentials funktioniert ("could not read Username"). Die Original-URL wird
+   * danach IMMER wiederhergestellt (kein Token bleibt im Repo). Greift nur bei
+   * http(s)-Remotes ohne vorhandene Credentials; SSH/auth-URLs bleiben unberührt.
+   * cwd kann der Main-Repo-Pfad ODER ein Worktree sein (teilen sich die Remotes).
+   */
+  private async withForgeAuthedOrigin<T>(cwd: string, forgeConfig: import('@alfred/types').ForgeConfig | undefined, fn: () => Promise<T>): Promise<T> {
+    const token = forgeConfig?.github?.token ?? forgeConfig?.gitlab?.token;
+    let originUrl = '';
+    try { originUrl = (await runGit(['remote', 'get-url', 'origin'], cwd)).trim(); } catch { /* kein origin */ }
+    let injected = false;
+    if (originUrl && token && /^https?:\/\//i.test(originUrl)) {
+      try {
+        const u = new URL(originUrl);
+        if (!u.username) {
+          u.username = 'oauth2';
+          u.password = token;
+          await runGit(['remote', 'set-url', 'origin', u.toString()], cwd);
+          injected = true;
+        }
+      } catch { /* URL-Parse-Fehler → ohne Token versuchen */ }
+    }
+    try {
+      return await fn();
+    } finally {
+      if (injected) {
+        try { await runGit(['remote', 'set-url', 'origin', originUrl], cwd); }
+        catch (e) { this.deps.logger.error({ err: e, cwd }, 'v899.3 restore origin URL failed'); }
+      }
+    }
+  }
+
   private async mergeDirect(sb: Sandbox, opts: { commitMessage?: string; projectCwd: string; defaultBranch?: string; forgeConfig?: import('@alfred/types').ForgeConfig }): Promise<{ ok: boolean; reason?: string; mergedSha?: string }> {
     const baseBranch = opts.defaultBranch ?? 'main';
-    // v899.2 — Forge-Token in die origin-URL injizieren (wie project-agent-runner),
-    // sonst scheitert `git fetch/push` an http-Remotes ohne Credentials
-    // ("could not read Username"). Original-URL wird im finally wiederhergestellt.
-    let originUrl = '';
-    let authInjected = false;
-    try { originUrl = (await runGit(['remote', 'get-url', 'origin'], opts.projectCwd)).trim(); } catch { /* kein origin */ }
-    const token = opts.forgeConfig?.github?.token ?? opts.forgeConfig?.gitlab?.token;
     try {
-      if (originUrl && token && /^https?:\/\//i.test(originUrl)) {
+      return await this.withForgeAuthedOrigin(opts.projectCwd, opts.forgeConfig, async () => {
+        // Im MAIN-Repo (projectCwd), nicht im worktree
+        await runGit(['fetch', 'origin'], opts.projectCwd);
+        const currentBranch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], opts.projectCwd)).trim();
+        if (currentBranch !== baseBranch) {
+          await runGit(['checkout', baseBranch], opts.projectCwd);
+        }
+        await runGit(['merge', '--squash', sb.branchName], opts.projectCwd);
+        const msg = opts.commitMessage ?? `Squash-merge from sandbox ${sb.id.slice(0, 8)} (${sb.branchName})`;
+        await runGit(['-c', 'user.name=Alfred', '-c', 'user.email=alfred@local', 'commit', '-m', msg], opts.projectCwd);
+        const sha = (await runGit(['rev-parse', 'HEAD'], opts.projectCwd)).trim();
         try {
-          const u = new URL(originUrl);
-          if (!u.username) {
-            u.username = 'oauth2';
-            u.password = token;
-            await runGit(['remote', 'set-url', 'origin', u.toString()], opts.projectCwd);
-            authInjected = true;
-          }
-        } catch { /* URL-Parse-Fehler → ohne Token versuchen */ }
-      }
-      // Im MAIN-Repo (projectCwd), nicht im worktree
-      await runGit(['fetch', 'origin'], opts.projectCwd);
-      const currentBranch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], opts.projectCwd)).trim();
-      if (currentBranch !== baseBranch) {
-        await runGit(['checkout', baseBranch], opts.projectCwd);
-      }
-      await runGit(['merge', '--squash', sb.branchName], opts.projectCwd);
-      const msg = opts.commitMessage ?? `Squash-merge from sandbox ${sb.id.slice(0, 8)} (${sb.branchName})`;
-      await runGit(['-c', 'user.name=Alfred', '-c', 'user.email=alfred@local', 'commit', '-m', msg], opts.projectCwd);
-      const sha = (await runGit(['rev-parse', 'HEAD'], opts.projectCwd)).trim();
-      // Push wenn remote vorhanden
-      try {
-        await runGit(['push', 'origin', baseBranch], opts.projectCwd);
-      } catch (err) {
-        this.deps.logger.warn({ err }, 'Direct-merge push failed — commit ist lokal, manueller Push nötig');
-        return { ok: true, mergedSha: sha, reason: 'Local commit OK, push failed — push manually' };
-      }
-      return { ok: true, mergedSha: sha };
+          await runGit(['push', 'origin', baseBranch], opts.projectCwd);
+        } catch (err) {
+          this.deps.logger.warn({ err }, 'Direct-merge push failed — commit ist lokal, manueller Push nötig');
+          return { ok: true, mergedSha: sha, reason: 'Local commit OK, push failed — push manually' };
+        }
+        return { ok: true, mergedSha: sha };
+      });
     } catch (err) {
       return { ok: false, reason: `Direct merge failed: ${(err as Error).message.slice(0, 300)}` };
-    } finally {
-      // Original-URL (ohne Token) IMMER wiederherstellen
-      if (authInjected) {
-        try { await runGit(['remote', 'set-url', 'origin', originUrl], opts.projectCwd); }
-        catch (e) { this.deps.logger.error({ err: e, cwd: opts.projectCwd }, 'v899.2 restore origin URL after merge failed'); }
-      }
     }
   }
 
   private async mergeViaPr(sb: Sandbox, opts: { prTitle?: string; prBody?: string; projectCwd: string; forgeConfig?: import('@alfred/types').ForgeConfig; defaultBranch?: string; repoUrl?: string }): Promise<{ ok: boolean; prUrl?: string; reason?: string }> {
     try {
-      // Branch pushen vom WORKTREE aus (dort lebt der Branch)
-      const { stderr } = await runGitBoth(['push', '-u', 'origin', sb.branchName], sb.worktreePath);
+      // Branch pushen vom WORKTREE aus (dort lebt der Branch). v899.3 — Forge-Token
+      // in die origin-URL injizieren (Worktree teilt die Remotes mit dem Main-Repo),
+      // sonst scheitert der Push an http-Remotes ohne Credentials.
+      const { stderr } = await this.withForgeAuthedOrigin(sb.worktreePath, opts.forgeConfig, () =>
+        runGitBoth(['push', '-u', 'origin', sb.branchName], sb.worktreePath));
       // PR-URL aus stderr extrahieren (GitLab/GitHub schreiben das hin)
       const urlMatch = stderr.match(/https?:\/\/[^\s]+(?:merge_requests\/new|pull\/new|compare)[^\s]*/);
       const hintedUrl = urlMatch ? urlMatch[0] : undefined;

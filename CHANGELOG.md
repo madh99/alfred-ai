@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.899.3] - 2026-06-15
+
+### Fixed — PR-Merge: Branch-Push mit Forge-Token-Auth (v899.3)
+
+`mergeViaPr` pushte den Branch (`git push -u origin <branch>`) ohne Forge-Token →
+gleicher `could not read Username`-Fehler wie zuvor beim Direct-Merge, sobald die
+PR-Strategie gegen einen http-Remote läuft.
+
+- Token-Injektion in einen gemeinsamen Helper `withForgeAuthedOrigin` extrahiert
+  (origin-URL temporär mit `oauth2:<token>@host`, danach immer wiederhergestellt).
+- `mergeViaPr` nutzt ihn jetzt für den Branch-Push (Worktree teilt die Remotes mit
+  dem Main-Repo); `mergeDirect` (v899.2) auf denselben Helper entdoppelt.
+
 ## [0.19.0-multi-ha.899.2] - 2026-06-15
 
 ### Fixed — Direct-Merge: git fetch/push ohne Forge-Token-Auth (v899.2)
