@@ -36,7 +36,9 @@ mehr zu einem gemeinsamen Feature zusammenfassen.
   Reihenfolge; bestehende Abhängigkeiten bleiben erhalten, der Kettenlink kommt
   nur hinzu); die alten (leeren) Milestones verschwinden.
 - Optional (Default an) arbeitet ein Agent danach einen **konsolidierten Plan-Doc**
-  aus und ergänzt nur noch **fehlende Lücken** als zusätzliche Items.
+  aus und ergänzt nur noch **fehlende Lücken** als zusätzliche Items. Mit
+  **CLI-Picker** für den Plan-Lauf (Default „Automatisch (Strategie)" = bevorzugte
+  CLI des Projekts; alternativ explizite CLI wählbar).
 - 4 neue Tests (`consolidate-milestones.test.ts`: Validierung, Re-Tag-Mechanik,
   Namensableitung).
 

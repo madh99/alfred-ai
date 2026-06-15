@@ -37,6 +37,9 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
   const [combineName, setCombineName] = useState('');
   const [withPlan, setWithPlan] = useState(true);
   const [consolidating, setConsolidating] = useState(false);
+  // v898 — CLI-Picker für den optionalen Plan-Lauf ('' = Automatisch/Projekt-Strategie)
+  const [agents, setAgents] = useState<string[]>([]);
+  const [consolidateAgent, setConsolidateAgent] = useState('');
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -50,6 +53,11 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
   }, [client, projectId]);
 
   useEffect(() => { if (expanded) load(); }, [expanded, load]);
+  // v898 — verfügbare CLI-Agents für den Plan-Picker laden (einmalig beim Aufklappen)
+  useEffect(() => {
+    if (!expanded || !client) return;
+    void client.fetchCodeAgents().then(setAgents).catch(() => setAgents([]));
+  }, [expanded, client]);
 
   async function implement(milestone: string) {
     if (!client) return;
@@ -94,6 +102,7 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
         milestones: list,
         name: combineName.trim() || undefined,
         withPlan,
+        agent: withPlan ? (consolidateAgent || undefined) : undefined,
       });
       if (r.ok) {
         setSelected(new Set());
@@ -167,6 +176,20 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
               <input type="checkbox" checked={withPlan} onChange={e => setWithPlan(e.target.checked)} />
               <span>Plan-Doc + Lücken-Analyse durch Agent (sonst nur umhängen)</span>
             </label>
+            {withPlan && (
+              <label className="text-[10px] text-gray-400 flex items-center gap-1.5">
+                <span>CLI:</span>
+                <select
+                  value={consolidateAgent}
+                  onChange={e => setConsolidateAgent(e.target.value)}
+                  className="text-[10px] bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-gray-200"
+                  title="CLI-Agent für den Plan-Lauf — Automatisch nutzt die Projekt-Strategie (preferred)"
+                >
+                  <option value="">Automatisch (Strategie)</option>
+                  {agents.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </label>
+            )}
             <div className="flex gap-1.5">
               <button onClick={() => setSelected(new Set())} className="text-[10px] px-2 py-1 text-gray-400 hover:text-gray-200 rounded border border-[#222]">Abbrechen</button>
               <button
