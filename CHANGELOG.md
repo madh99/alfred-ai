@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.1] - 2026-06-15
+
+### Improved — Milestone-Konsolidierung: durchgehende Verkettung + CLI-Picker (v898.1)
+
+Nachzug zur Milestone-Konsolidierung aus v898:
+
+- **Durchgehende `depends_on`-Verkettung** über alle zusammengeführten Milestones:
+  jedes re-getaggte Item hängt in der neuen globalen Reihenfolge am Vorgänger
+  (die optionalen Lücken-Items setzen die Kette am Ende fort). **Nicht-destruktiv:**
+  bestehende Abhängigkeiten bleiben erhalten, der Kettenlink kommt nur hinzu; da
+  die Reihenfolge (Milestone-Index → `roadmap_order`) bestehende Deps respektiert,
+  entstehen keine Rückwärtskanten/Zyklen.
+- **CLI-Picker** in der Konsolidierungs-Leiste (sichtbar, wenn der Plan-Lauf aktiv
+  ist): Default „Automatisch (Strategie)" reicht `agent=undefined` durch →
+  `resolveCliAgent` nutzt die **bevorzugte CLI des Projekts** (`agent_strategy.
+  preferred`) inkl. Busy-Ausweichen; alternativ explizite CLI wählbar.
+- Test um Verkettungs-Assertion erweitert (5 Tests `consolidate-milestones.test.ts`).
+
 ## [0.19.0-multi-ha.898] - 2026-06-15
 
 ### Added — Feature-Historie + nachträgliche Milestone-Konsolidierung (v898)
@@ -31,14 +49,10 @@ mehr zu einem gemeinsamen Feature zusammenfassen.
 - In der **Roadmap-Ansicht** lassen sich ≥2 Milestones per Checkbox auswählen und
   über **„🧩 Zu einem Feature zusammenführen"** zu einem gemeinsamen
   `Feature: <name>` vereinen. **Re-Tag-Strategie (nicht-destruktiv):** die Items
-  behalten Status/Fortschritt und werden umgehängt, neu durchnummeriert und
-  **durchgehend `depends_on`-verkettet** (jedes Item hängt am Vorgänger der neuen
-  Reihenfolge; bestehende Abhängigkeiten bleiben erhalten, der Kettenlink kommt
-  nur hinzu); die alten (leeren) Milestones verschwinden.
+  behalten Status/Fortschritt/Abhängigkeiten und werden nur umgehängt + neu
+  durchnummeriert; die alten (leeren) Milestones verschwinden.
 - Optional (Default an) arbeitet ein Agent danach einen **konsolidierten Plan-Doc**
-  aus und ergänzt nur noch **fehlende Lücken** als zusätzliche Items. Mit
-  **CLI-Picker** für den Plan-Lauf (Default „Automatisch (Strategie)" = bevorzugte
-  CLI des Projekts; alternativ explizite CLI wählbar).
+  aus und ergänzt nur noch **fehlende Lücken** als zusätzliche Items.
 - 4 neue Tests (`consolidate-milestones.test.ts`: Validierung, Re-Tag-Mechanik,
   Namensableitung).
 
