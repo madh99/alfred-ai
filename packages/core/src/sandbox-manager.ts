@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, statSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Logger } from 'pino';
@@ -898,6 +898,9 @@ export class SandboxManager {
       persist = Boolean((await this.deps.projectRepo?.getById(sb.userId, sb.projectId))?.persistDbVolumes);
     } catch { /* default false */ }
     await stopComposeStack(sb.id, sb.worktreePath, composeFile, sandboxStateDir, persist, this.deps.logger);
+    // v898.11 — leeres State-Dir mitentfernen (stopComposeStack löscht nur das
+    // Override-File, nicht das Verzeichnis) — sonst sammeln sich leere Ordner an.
+    try { rmSync(sandboxStateDir, { recursive: true, force: true }); } catch { /* nicht kritisch */ }
     return true;
   }
 

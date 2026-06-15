@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.11] - 2026-06-15
+
+### Fixed — Compose-Teardown entfernt auch das leere State-Verzeichnis (v898.11)
+
+`stopComposeStack` löscht beim Teardown nur das Override-File, nicht den nun
+leeren State-Ordner (`…/.sandbox-state/<id>/`). Über viele Discards sammelten sich
+leere 4-KB-Verzeichnisse an. `teardownComposeIfAny` entfernt das State-Dir jetzt
+nach dem Stack-Down vollständig (`rmSync recursive/force`).
+
 ## [0.19.0-multi-ha.898.10] - 2026-06-15
 
 ### Fixed — Compose-Sandbox: Discard/Merge räumen den ganzen Stack ab (v898.10)
