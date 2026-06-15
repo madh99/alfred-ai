@@ -7,7 +7,7 @@ import type {
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 // v869.3 — Live-Output-Infrastruktur (Ring-Buffer + SSE) ist taskId-generisch
 import { appendOutputLine, markOutputEnded } from './code-agent/project-agent-skill.js';
@@ -1607,10 +1607,25 @@ ${decLines.join('\n') || '  _keine_'}`;
     const preserved = selected.filter(i => i.status === 'done' || i.status === 'in_progress');
     const openItems = selected.filter(i => i.status === 'open');
 
-    // Quell-Plan-Dokumente aus den Item-Beschreibungen einsammeln (die Detailpläne der Einzelteile)
-    const docPaths = Array.from(new Set(
-      selected.flatMap(i => Array.from(((i.description ?? '')).matchAll(/docs\/feature-plan-[^\s\]]+\.md/g)).map(m => m[0])),
-    ));
+    // v898.6 — Quell-Plan-Dokumente: NICHT nur die aus Item-Zitaten (die nach
+    // Re-Runs lückenhaft sind), sondern ALLE docs/feature-plan-*.md im Repo →
+    // robuster Scope, der das Verengen ganzer Stränge verhindert.
+    const citedDocs = selected.flatMap(i =>
+      Array.from(((i.description ?? '')).matchAll(/docs\/feature-plan-[^\s\]]+\.md/g)).map(m => m[0]));
+    let repoDocs: string[] = [];
+    try {
+      const docsDir = path.join(project.cwd!, 'docs');
+      if (existsSync(docsDir)) {
+        repoDocs = readdirSync(docsDir)
+          .filter(f => /^feature-plan-.+\.md$/i.test(f))
+          .map(f => `docs/${f}`);
+      }
+    } catch { /* best-effort */ }
+    const docPaths = Array.from(new Set([...citedDocs, ...repoDocs]));
+    // Strang-Namen aus den Dateinamen ableiten (echte Bausteine, statt nur Milestone-Name)
+    const humanizeDoc = (p: string) => p
+      .replace(/^docs\/feature-plan-/i, '').replace(/\.md$/i, '').replace(/-/g, ' ').trim();
+    const mustCover = docPaths.length > 0 ? docPaths.map(humanizeDoc) : milestones.map(stripFeaturePrefix);
     const slug = name.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'feature';
 
     const byMs = new Map<string, string[]>();
@@ -1625,10 +1640,6 @@ ${decLines.join('\n') || '  _keine_'}`;
     const doneOverview = preserved.length > 0
       ? preserved.map(i => `- ${i.title} [${i.status}]`).join('\n')
       : '(keine — alles noch offen)';
-    // v898.5 — Bausteine, die ALLE im Plan vorkommen MÜSSEN (gegen stilles Weglassen
-    // von Strängen). Quell-Milestone-Namen + die Detailpläne nennen weitere.
-    const mustCover = milestones.map(stripFeaturePrefix);
-
     const prompt = [
       `Für das Projekt "${project.name}" ${milestones.length > 1
         ? `werden ${milestones.length} bisher GETRENNT geplante Features zu EINEM gemeinsamen, kohärenten Feature "${name}" zusammengeführt`
@@ -1643,9 +1654,9 @@ ${decLines.join('\n') || '  _keine_'}`;
       `BEREITS ERLEDIGT (NICHT erneut einplanen — bleibt bestehen):`,
       doneOverview,
       ``,
-      `VOLLSTÄNDIGKEIT — DIESE BAUSTEINE/STRÄNGE MÜSSEN ALLE im Plan vorkommen (KEINEN weglassen, auch wenn der Plan dadurch lang wird):`,
+      `VOLLSTÄNDIGKEIT — DIESE ${mustCover.length} BAUSTEINE/STRÄNGE MÜSSEN ALLE als eigene Phasenstränge im Plan vorkommen (KEINEN weglassen, auch wenn der Plan dadurch lang wird):`,
       `${mustCover.map(m => `- ${m}`).join('\n')}`,
-      docPaths.length > 0 ? `PLUS alle weiteren Bausteine, die die obigen Plan-Dokumente nennen (z.B. unter „welche Teile dieser Plan abdeckt"). Lasse KEINEN davon aus.` : '',
+      `VERBOTEN: den Umfang zu „fokussieren"/zu verengen oder einen Baustein als „später"/„out of scope" abzutun. Wenn ein Baustein im Code noch fehlt, ist genau DAS sein Phasenstrang. Der Plan deckt ALLE ${mustCover.length} ab.`,
       ``,
       `VORGEHEN:`,
       `1. Lies die oben genannten Plan-Dokumente vollständig und liste für dich die ABGEDECKTEN BAUSTEINE auf — es müssen ALLE oben genannten sein.`,

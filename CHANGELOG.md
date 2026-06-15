@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.6] - 2026-06-15
+
+### Fixed — Konsolidierung: Scope aus den echten Plan-Docs statt aus dem Milestone-Namen (v898.6)
+
+Trotz .898.5 verengte der Agent den Umfang weiter (Commit-Titel „fokussiert auf
+Album+Matching") und ließ Marktplatz/Tauschbörse weg. Ursache: die „MÜSSEN ALLE
+vorkommen"-Liste wurde aus dem **Milestone-Namen** gebaut — und der hieß nach dem
+ersten Merge nur noch „Feature: Tausch-Matching: …" (einer von vier Strängen) →
+das bestärkte das Verengen sogar. Re-Runs lasen zudem nur die zuletzt (immer
+schmaler) geschriebene Doc.
+
+- **Scope aus dem Repo:** Beim Konsolidieren werden jetzt **alle
+  `docs/feature-plan-*.md`** des Projekts als Quellen gelesen; die Pflicht-Bausteine
+  (`mustCover`) werden aus deren **Dateinamen** abgeleitet — nicht mehr aus dem
+  (oft einseitigen) Milestone-Namen.
+- **Verengen verboten:** Prompt-Regel „den Umfang NICHT fokussieren/verengen; jeder
+  der N Bausteine MUSS ein eigener Phasenstrang sein" + Phasenanzahl als Selbstkontrolle.
+- **Coverage-Prüfung** gegen die Doc-Strang-Namen → ⚠ im Live-Output, wenn einer fehlt.
+
 ## [0.19.0-multi-ha.898.5] - 2026-06-15
 
 ### Fixed — Konsolidierung ließ Stränge weg (Vollständigkeit erzwingen) (v898.5)
