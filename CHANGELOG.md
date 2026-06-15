@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.899.2] - 2026-06-15
+
+### Fixed — Direct-Merge: git fetch/push ohne Forge-Token-Auth (v899.2)
+
+Das Merge-Gate bestand (Tests liefen im Dev-Container), aber der eigentliche
+Direct-Merge scheiterte: `git fetch origin` → `could not read Username for
+'http://…'`. Ursache: `mergeDirect` nutzte plain `git fetch/push origin` **ohne**
+Forge-Token, während Alfreds normaler Push (project-agent-runner) den Token in die
+origin-URL injiziert.
+
+- `mergeDirect` injiziert jetzt den Forge-Token (`forgeConfig.{gitlab,github}.token`)
+  temporär in die origin-URL (`https://oauth2:<token>@host/…`) für `fetch`+`push`
+  und stellt die Original-URL danach **immer** wieder her (kein Token im Repo).
+- Greift nur bei http(s)-Remotes ohne vorhandene Credentials; SSH-/bereits
+  authentifizierte Remotes unberührt.
+
 ## [0.19.0-multi-ha.899.1] - 2026-06-15
 
 ### Fixed — Hybrid-Compose: NODE_ENV=production überschrieb development (v899.1)

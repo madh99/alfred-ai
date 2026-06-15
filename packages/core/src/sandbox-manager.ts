@@ -1183,9 +1183,27 @@ export class SandboxManager {
     }
   }
 
-  private async mergeDirect(sb: Sandbox, opts: { commitMessage?: string; projectCwd: string; defaultBranch?: string }): Promise<{ ok: boolean; reason?: string; mergedSha?: string }> {
+  private async mergeDirect(sb: Sandbox, opts: { commitMessage?: string; projectCwd: string; defaultBranch?: string; forgeConfig?: import('@alfred/types').ForgeConfig }): Promise<{ ok: boolean; reason?: string; mergedSha?: string }> {
     const baseBranch = opts.defaultBranch ?? 'main';
+    // v899.2 — Forge-Token in die origin-URL injizieren (wie project-agent-runner),
+    // sonst scheitert `git fetch/push` an http-Remotes ohne Credentials
+    // ("could not read Username"). Original-URL wird im finally wiederhergestellt.
+    let originUrl = '';
+    let authInjected = false;
+    try { originUrl = (await runGit(['remote', 'get-url', 'origin'], opts.projectCwd)).trim(); } catch { /* kein origin */ }
+    const token = opts.forgeConfig?.github?.token ?? opts.forgeConfig?.gitlab?.token;
     try {
+      if (originUrl && token && /^https?:\/\//i.test(originUrl)) {
+        try {
+          const u = new URL(originUrl);
+          if (!u.username) {
+            u.username = 'oauth2';
+            u.password = token;
+            await runGit(['remote', 'set-url', 'origin', u.toString()], opts.projectCwd);
+            authInjected = true;
+          }
+        } catch { /* URL-Parse-Fehler → ohne Token versuchen */ }
+      }
       // Im MAIN-Repo (projectCwd), nicht im worktree
       await runGit(['fetch', 'origin'], opts.projectCwd);
       const currentBranch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], opts.projectCwd)).trim();
@@ -1206,6 +1224,12 @@ export class SandboxManager {
       return { ok: true, mergedSha: sha };
     } catch (err) {
       return { ok: false, reason: `Direct merge failed: ${(err as Error).message.slice(0, 300)}` };
+    } finally {
+      // Original-URL (ohne Token) IMMER wiederherstellen
+      if (authInjected) {
+        try { await runGit(['remote', 'set-url', 'origin', originUrl], opts.projectCwd); }
+        catch (e) { this.deps.logger.error({ err: e, cwd: opts.projectCwd }, 'v899.2 restore origin URL after merge failed'); }
+      }
     }
   }
 
