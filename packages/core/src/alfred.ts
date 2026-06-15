@@ -4445,8 +4445,14 @@ export class Alfred {
               // v849 — Project-Repo für sandboxMode + persistDbVolumes Lookup.
               // SandboxManager fragt vor jedem Start: ist compose-Mode aktiv?
               projectRepo: this.projectRepo ? {
-                getById: async (userId: string, id: string) => {
-                  const p = await this.projectRepo!.getById(userId, id);
+                // v898.8 — Config-Lookup (sandboxMode/seed/persist) ist KEINE Auth-Grenze.
+                // getById filtert strikt nach Owner; im Multi-User-Fall startet aber ein
+                // Web-User (requestUserId) ≠ Projekt-Owner die Sandbox → getById liefert
+                // null → sandboxMode=undefined → compose-Modus wurde nie aktiviert.
+                // getByIdAnyOwner löst rein die Projekt-Config (Ownership ist beim
+                // Sandbox-Start bereits oberhalb geprüft).
+                getById: async (_userId: string, id: string) => {
+                  const p = await this.projectRepo!.getByIdAnyOwner(id);
                   if (!p) return null;
                   return {
                     sandboxMode: p.sandboxMode,

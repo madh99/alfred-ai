@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.8] - 2026-06-15
+
+### Fixed — Compose-Stack-Sandbox: Multi-User getById-Mismatch (v898.8)
+
+Eine als `compose` konfigurierte Sandbox kam trotz vorhandener `docker-compose.yml`
+immer als Single-Container hoch (kein DB → Prisma-Fehler). Die v898.7-Diagnose
+zeigte die Ursache: `sandboxMode=undef` trotz `sandbox_mode='compose'` in der DB.
+
+- Der SandboxManager-Config-Lookup nutzte `projectRepo.getById(userId, id)`, das
+  **strikt nach Owner filtert** (`WHERE id=? AND user_id=?`). Im Multi-User-Fall
+  startet ein Web-User (`requestUserId` aus dem HTTP-Token) ≠ Projekt-Owner die
+  Sandbox → `getById` liefert `null` → `sandboxMode=undefined` → Compose-Modus
+  wurde nie aktiviert.
+- Fix: Lookup über `getByIdAnyOwner(id)` — die Projekt-Config (sandboxMode/Seed/
+  Persist) ist **keine** Auth-Grenze; die Ownership wird beim Sandbox-Start bereits
+  oberhalb geprüft.
+- Die v898.7-Diagnosezeile (`[sandbox-compose] …`) bleibt vorerst zur Verifikation
+  und wird nach Bestätigung entfernt.
+
 ## [0.19.0-multi-ha.898.7] - 2026-06-15
 
 ### Diagnostics — Sandbox Compose-Mode-Entscheidung sichtbar machen (v898.7)
