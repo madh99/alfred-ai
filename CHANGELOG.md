@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.7] - 2026-06-15
+
+### Diagnostics — Sandbox Compose-Mode-Entscheidung sichtbar machen (v898.7)
+
+Eine als Compose-Stack konfigurierte Sandbox kam trotz vorhandener
+`docker-compose.yml` im Worktree als Single-Container hoch (kein DB → Prisma-
+Fehler). Die strukturierten (pino-)Logs erscheinen nicht in journald, daher war
+die `composeMode`-Entscheidung zur Laufzeit nicht nachvollziehbar.
+
+- **Temporäre Diagnose-Zeile** (`console.warn` → erscheint in journald) am
+  `composeMode`-Entscheidungspunkt in `sandbox-manager.ts`: zeigt `projectId`,
+  `projectRepoWired`, `sandboxMode`, `hasComposeFile`, `composeFile`, `mode` und
+  das resultierende `composeMode`. Ändert kein Verhalten; nur Logging.
+
 ## [0.19.0-multi-ha.898.6] - 2026-06-15
 
 ### Fixed — Konsolidierung: Scope aus den echten Plan-Docs statt aus dem Milestone-Namen (v898.6)

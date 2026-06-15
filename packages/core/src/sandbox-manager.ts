@@ -274,10 +274,13 @@ export class SandboxManager {
     // (UI-Toggle in Project-Settings). Plus: compose-File MUSS vorhanden sein.
     let composeMode = false;
     let composeFile: string | undefined;
+    let diagSandboxMode: string | undefined; // v898.7 Diagnose
+    let diagLookupErr: string | undefined;
     if (this.deps.projectRepo && input.projectId) {
       try {
         // Project-User auflösen — wir brauchen master-user-id für getById
         const proj = await this.deps.projectRepo.getById(input.userId, input.projectId);
+        diagSandboxMode = proj?.sandboxMode;
         if (proj?.sandboxMode === 'compose') {
           if (detection.hasComposeFile && detection.composeFile) {
             composeMode = true;
@@ -290,9 +293,16 @@ export class SandboxManager {
           }
         }
       } catch (err) {
+        diagLookupErr = err instanceof Error ? err.message : String(err);
         this.deps.logger.debug({ err, projectId: input.projectId }, 'v849: Project lookup failed, fallback to single-container');
       }
     }
+    // v898.7 — Diagnose ins Journal (pino-Logs erscheinen dort nicht): zeigt exakt,
+    // warum compose vs single gewählt wurde. Temporär bis die Ursache geklärt ist.
+    try {
+      // eslint-disable-next-line no-console
+      console.warn(`[sandbox-compose] projectId=${input.projectId ?? 'NONE'} projectRepoWired=${!!this.deps.projectRepo} sandboxMode=${diagSandboxMode ?? 'undef'} hasComposeFile=${detection.hasComposeFile} composeFile=${detection.composeFile ?? '-'} lookupErr=${diagLookupErr ?? '-'} mode=${input.mode} -> composeMode=${composeMode}`);
+    } catch { /* */ }
 
     // Phase 1c — DB-Insert
     const image = this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
