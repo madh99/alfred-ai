@@ -10655,11 +10655,39 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               repoMode?: 'gitlab' | 'github' | 'local';
               scaffoldMode?: 'template' | 'agent' | 'none';
               repoVisibility?: 'private' | 'public';
+              runtime?: string;
+              deployTarget?: 'static' | 'single' | 'docker' | 'compose' | 'serverless';
             }) => {
               try {
                 const uid = await resolveOwnerWiz();
                 if (!uid) return { ok: false, reason: 'Kein Owner-User' };
                 const slug = (input.slug ?? input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')).slice(0, 80);
+
+                // v900 (Phase 1/2) — Runtime/Deploy-Ziel → Compose-Sandbox + Container-Fundament.
+                // DB (außer SQLite) ODER Compose-Deploy ⇒ die Sandbox braucht einen DB-Service
+                // → sandbox_mode=compose + ein erster „Fundament"-Punkt mit präziser Container-Spec
+                // (genau die Lehren aus dem fussball-cc-Compose-Debug), den der erste Agent-Lauf umsetzt.
+                const dbLc = (input.stack?.database || '').toLowerCase();
+                const dbKind = dbLc.includes('postgres') ? 'postgres' : dbLc.includes('mysql') || dbLc.includes('maria') ? 'mysql' : dbLc.includes('mongo') ? 'mongo' : null;
+                const needsCompose = input.deployTarget === 'compose' || !!dbKind;
+                const dbSvc = dbKind === 'postgres'
+                  ? { image: 'postgres:16', port: 5432, env: `DATABASE_URL=postgresql://app:app@db:5432/${slug}?schema=public`, health: 'pg_isready -U app' }
+                  : dbKind === 'mysql'
+                  ? { image: 'mysql:8', port: 3306, env: `DATABASE_URL=mysql://app:app@db:3306/${slug}`, health: 'mysqladmin ping -h localhost' }
+                  : dbKind === 'mongo'
+                  ? { image: 'mongo:7', port: 27017, env: `MONGODB_URI=mongodb://db:27017/${slug}`, health: "mongosh --quiet --eval 'db.runCommand({ping:1})'" }
+                  : null;
+                const containerSpec = needsCompose ? [
+                  `Containerisierung + lokale Compose-Umgebung herstellen, sodass \`docker compose up\` UND Alfreds Compose-Sandbox die App ${dbSvc ? '+ DB ' : ''}ohne manuelle Schritte starten.`,
+                  `1. Dockerfile (multi-stage wenn Build nötig): Schema/Build-Manifeste VOR dem Dependency-Install kopieren (Postinstall-Hooks wie \`prisma generate\` brauchen das Schema); optionale, evtl. fehlende Verzeichnisse sicherstellen (z.B. Next.js \`public/\`).`,
+                  dbSvc
+                    ? `2. docker-compose.yml: App-Service + DB-Service \`${dbSvc.image}\` mit Healthcheck (\`${dbSvc.health}\`). KEINE festen \`container_name\` (Sandbox-Isolation). Verbindung über den Service-Namen \`db\` (NICHT localhost): \`${dbSvc.env}\`. App \`depends_on: { db: { condition: service_healthy } }\`.`
+                    : `2. docker-compose.yml: App-Service.`,
+                  dbSvc
+                    ? `3. Entrypoint: auf DB-Ready warten → Migrationen/Schema anwenden (je nach Stack: \`prisma migrate deploy\`/\`db push\`, \`alembic upgrade\`, \`python manage.py migrate\`, \`php artisan migrate --force\`, \`rails db:migrate\`) → App starten.`
+                    : `3. Entrypoint: App starten.`,
+                  `4. \`.dockerignore\` (node_modules / vendor / Build-Output / .git / .env*).`,
+                ].join('\n') : '';
 
                 // v887 — Project-CWD am Home des AGENT-Users ausrichten (nicht am
                 // root-Prozess-Home). Vorher: os.homedir()/.alfred/projects → bei
@@ -10800,7 +10828,9 @@ TASKS
 3. Set up minimum config so the dev-server starts without errors.
 4. DO NOT implement business logic — only scaffolding. The roadmap will be tackled in later iterations.
 5. Respect existing README.md and .gitignore — do not overwrite, only add to them if necessary.
-
+${needsCompose ? `
+CONTAINERISIERUNG (PFLICHT — Teil des Scaffolds, Deploy-Ziel = ${input.deployTarget ?? 'docker/compose'}):
+${containerSpec}` : ''}
 A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or equivalent) should work.`;
 
                     (async () => {
@@ -10848,6 +10878,21 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
                   defaultBranch: 'main',
                   tags: input.tags ?? [],
                 } as any);
+                // v900 (Phase 2) — Container-Fundament als ERSTER Roadmap-Punkt (Milestone
+                // "0. Fundament & Setup", vor allen Feature-Milestones), wenn Compose nötig.
+                if (needsCompose) {
+                  try {
+                    await projRepo.addOpenItem(project.id, {
+                      title: 'Fundament: Containerisierung & lokale Compose-Umgebung',
+                      description: containerSpec.slice(0, 1500),
+                      priority: 'high',
+                      roadmapMilestone: '0. Fundament & Setup',
+                      roadmapOrder: 1,
+                    } as any);
+                  } catch (err) {
+                    this.logger.warn({ err }, 'v900 wizard foundation item failed (continuing)');
+                  }
+                }
                 // Open-Items
                 for (const it of input.items) {
                   try {
@@ -10883,9 +10928,14 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
                         backend: input.stack.backend,
                         database: input.stack.database,
                         extras: input.stack.extras,
+                        runtime: input.runtime,
+                        deployTarget: input.deployTarget,
                       },
                       stackRationale: input.stack.rationale,
                     } as any,
+                    // v900 — Compose-Sandbox automatisch aktivieren, wenn DB/Compose nötig.
+                    sandboxMode: needsCompose ? 'compose' : undefined,
+                    persistDbVolumes: false,
                   } as any);
                 } catch (err) {
                   this.logger.warn({ err }, 'v764 wizard conventions update failed (continuing)');

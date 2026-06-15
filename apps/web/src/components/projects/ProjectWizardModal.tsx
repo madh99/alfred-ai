@@ -65,6 +65,9 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
   const [manualBackend, setManualBackend] = useState('Node/Express');
   const [manualDatabase, setManualDatabase] = useState('PostgreSQL');
   const [manualExtras, setManualExtras] = useState<string[]>(['TypeScript']);
+  // v900 — Runtime + Deploy-Ziel (Phase 1/2: Compose-Sandbox + Container-Fundament)
+  const [runtime, setRuntime] = useState('node');
+  const [deployTarget, setDeployTarget] = useState<'static' | 'single' | 'docker' | 'compose' | 'serverless'>('docker');
 
   // Step 4 — Plan-Review
   const [items, setItems] = useState<PlanItem[]>([]);
@@ -193,6 +196,8 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
         repoMode,
         scaffoldMode,
         repoVisibility,
+        runtime,
+        deployTarget,
       });
       if (!r.ok || !r.projectId) {
         setError(r.reason ?? 'Erstellung fehlgeschlagen');
@@ -347,6 +352,29 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
                   </div>
                 </div>
               )}
+
+              {/* v900 — Runtime & Deployment (granular: steuert Compose-Sandbox + Container-Fundament) */}
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#222]">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Runtime</label>
+                  <select value={runtime} onChange={(e) => setRuntime(e.target.value)} className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200">
+                    {['node', 'python', 'php', 'ruby', 'go', 'static'].map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Deployment / Runtime-Umgebung</label>
+                  <select value={deployTarget} onChange={(e) => setDeployTarget(e.target.value as typeof deployTarget)} className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200">
+                    <option value="static">Static (kein Server)</option>
+                    <option value="single">Single-Process (kein Docker)</option>
+                    <option value="docker">Docker (single Container)</option>
+                    <option value="compose">Docker Compose (App + DB/Services)</option>
+                    <option value="serverless">Serverless</option>
+                  </select>
+                </div>
+                <div className="col-span-2 text-[10px] text-gray-500 italic">
+                  Bei einer DB (außer SQLite) oder „Docker Compose" richtet Alfred die Sandbox automatisch als Compose-Stack ein und legt einen ersten Punkt „Fundament: Containerisierung" an — der erste Agent-Lauf erzeugt Dockerfile + compose.yml passend.
+                </div>
+              </div>
             </div>
           )}
 

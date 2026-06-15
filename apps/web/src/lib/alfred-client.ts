@@ -474,6 +474,8 @@ export class AlfredClient {
     repoMode?: 'gitlab' | 'github' | 'local';
     scaffoldMode?: 'template' | 'agent' | 'none';
     repoVisibility?: 'private' | 'public';
+    runtime?: string;
+    deployTarget?: 'static' | 'single' | 'docker' | 'compose' | 'serverless';
   }): Promise<{ ok: boolean; projectId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/wizard/create`, {
       method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input),

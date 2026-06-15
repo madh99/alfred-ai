@@ -202,6 +202,10 @@ export interface ProjectWizardCreateInput {
   scaffoldMode?: 'template' | 'agent' | 'none';
   /** v766 — Visibility für Remote-Repo (default private). */
   repoVisibility?: 'private' | 'public';
+  /** v900 — Runtime (node/python/php/ruby/go/static) — informiert Scaffold + spätere Sandbox-Detection. */
+  runtime?: string;
+  /** v900 — Deploy-Ziel; 'compose' (oder DB≠SQLite) ⇒ Compose-Sandbox + Container-Fundament. */
+  deployTarget?: 'static' | 'single' | 'docker' | 'compose' | 'serverless';
 }
 
 export interface ProjectWizardCallbacks {

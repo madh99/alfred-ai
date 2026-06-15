@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.900] - 2026-06-15
+
+### Added — Wizard: Runtime/Deploy-Ziel + Container-Fundament für den ersten Lauf (v900, Phase 1/2)
+
+Der Projekt-Wizard erfasste den Stack, aber das **Deploy-Ziel war nur ein loser
+„Docker"-Extra-Tag ohne Wirkung** — eine DB-Wahl richtete keinen Compose-Stack ein.
+Folge: jedes DB-Projekt startete als Single-Container und die gesamte
+Compose-Einrichtung musste mühsam von Hand nachgezogen werden.
+
+**Phase 1 — Runtime & Deployment im Wizard:**
+- Neue Auswahl in Step 3: **Runtime** (node/python/php/ruby/go/static) +
+  **Deploy-Ziel** (Static · Single-Process · Docker · **Docker Compose** · Serverless).
+- DB≠SQLite **oder** Compose-Ziel ⇒ `sandbox_mode=compose` wird automatisch gesetzt
+  (kein manuelles Umstellen mehr); `persistDbVolumes=false` als sicherer Default.
+
+**Phase 2 — erster Agent-Lauf wird vorbereitet:**
+- Ein **erster Roadmap-Punkt** „Fundament: Containerisierung & lokale Compose-Umgebung"
+  (Milestone „0. Fundament & Setup", vor allen Feature-Milestones) mit **präziser
+  Spec** — destilliert aus dem fussball-cc-Compose-Debug: Dockerfile (Schema/Deps-
+  Reihenfolge), `docker-compose.yml` (App + passender DB-Service `${image}`,
+  healthcheck, **`DATABASE_URL=@db`**, keine festen `container_name`), Entrypoint
+  (wait-db + migrate + start), `.dockerignore`.
+- Bei AI-Scaffold (`scaffoldMode='agent'`) wird die Container-Spec zusätzlich in den
+  Scaffold-Prompt injiziert → der erste Lauf erzeugt ein **lauffähiges** Setup,
+  Sandbox läuft sofort.
+
+(Phase 3 — Sandbox-Detection für Django/PHP/Rails/Go — folgt separat.)
+
 ## [0.19.0-multi-ha.899.3] - 2026-06-15
 
 ### Fixed — PR-Merge: Branch-Push mit Forge-Token-Auth (v899.3)
