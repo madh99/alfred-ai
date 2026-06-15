@@ -3367,9 +3367,9 @@ export class HttpAdapter extends MessagingAdapter {
     const milestones = Array.isArray(data.milestones)
       ? data.milestones.filter((m): m is string => typeof m === 'string' && m.trim().length > 0).map(m => m.trim())
       : [];
-    if (milestones.length < 2) {
+    if (milestones.length < 1) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, reason: 'mindestens 2 Milestones erforderlich' }));
+      res.end(JSON.stringify({ ok: false, reason: 'mindestens 1 Milestone erforderlich' }));
       return;
     }
     const result = await this.projectsCallbacks.consolidateMilestones(projectId, {

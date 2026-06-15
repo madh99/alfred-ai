@@ -9730,7 +9730,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               const uid = await resolveOwnerProj();
               const milestones = (Array.isArray(opts.milestones) ? opts.milestones : [])
                 .map(m => (typeof m === 'string' ? m.trim() : '')).filter(m => m.length > 0);
-              if (milestones.length < 2) return { ok: false, reason: 'mindestens 2 Milestones nötig' };
+              if (milestones.length < 1) return { ok: false, reason: 'mindestens 1 Milestone nötig' };
               const skill = this.skillRegistry?.get('project');
               if (!skill) return { ok: false, reason: 'project-skill not registered' };
               const result = await skill.execute(

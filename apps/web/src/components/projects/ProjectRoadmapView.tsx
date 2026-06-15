@@ -95,11 +95,12 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
   }
 
   async function consolidate() {
-    if (!client || selected.size < 2) return;
+    if (!client || selected.size < 1) return;
     const list = Array.from(selected);
+    const verb = list.length > 1 ? `${list.length} Milestones zu EINEM Feature zusammenführen` : `Milestone „${list[0]}" als Feature neu planen`;
     const msg = withPlan
-      ? `${list.length} Milestones zu EINEM Feature zusammenführen?\n\nDie Items behalten ihren Fortschritt und werden umgehängt. Anschließend arbeitet ein Agent einen konsolidierten Plan aus und ergänzt fehlende Lücken-Items.`
-      : `${list.length} Milestones zu EINEM Feature zusammenführen?\n\nDie Items behalten ihren Fortschritt und werden nur umgehängt (kein Agent-Lauf).`;
+      ? `${verb}?\n\nEin Agent liest die bisherigen Plan-Dokumente + das Projekt und plant das Feature KOMPLETT NEU (ein deduplizierter Plan). Erledigte Punkte bleiben, OFFENE Alt-Punkte werden ersetzt.`
+      : `${verb}?\n\nNur umhängen (kein Agent-Lauf, keine Neuplanung) — die Punkte behalten ihren Stand.`;
     if (!confirm(msg)) return;
     setConsolidating(true);
     try {
@@ -117,7 +118,7 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
           // Plan-Lauf läuft im Hintergrund → Live-Output anzeigen (statt blindem Alert)
           setRunTaskId(r.liveTaskId);
         } else {
-          alert(`🧩 ${r.retagged} Items zu „${r.milestone}" zusammengeführt (nur umgehängt — kein Plan-Lauf).`);
+          alert(`🧩 ${r.retagged} Items zu „${r.milestone}" umgehängt (nur umgehängt — keine Neuplanung).`);
         }
       } else {
         alert(`Fehler: ${r.reason}`);
@@ -179,12 +180,14 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
         </div>
       )}
 
-      {/* v898 — Konsolidierungs-Aktionsleiste (ab 2 ausgewählten Milestones) */}
-      {selected.size >= 2 && (
+      {/* v898 — Konsolidierungs-Aktionsleiste (ab 1 ausgewähltem Milestone) */}
+      {selected.size >= 1 && (
         <div className="mb-3 bg-[#0f1420] border border-blue-500/30 rounded p-2.5 space-y-2">
           <div className="text-[11px] text-blue-200 flex items-center gap-1.5">
             <span>🧩</span>
-            <span>{selected.size} Milestones zu EINEM Feature zusammenführen</span>
+            <span>{selected.size > 1
+              ? `${selected.size} Milestones zu EINEM Feature zusammenführen + neu planen`
+              : `Milestone als Feature komplett neu planen`}</span>
           </div>
           <input
             type="text"
@@ -196,7 +199,7 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <label className="text-[10px] text-gray-400 flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" checked={withPlan} onChange={e => setWithPlan(e.target.checked)} />
-              <span>Plan-Doc + Lücken-Analyse durch Agent (sonst nur umhängen)</span>
+              <span>Komplett neu planen durch Agent (sonst nur umhängen)</span>
             </label>
             {withPlan && (
               <label className="text-[10px] text-gray-400 flex items-center gap-1.5">
@@ -218,7 +221,7 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
                 onClick={consolidate}
                 disabled={consolidating}
                 className="text-[10px] px-2.5 py-1 bg-blue-600/30 border border-blue-500/50 text-blue-200 rounded hover:bg-blue-600/50 disabled:opacity-40"
-              >{consolidating ? '⏳ Führe zusammen…' : `🧩 Zu einem Feature zusammenführen (${selected.size})`}</button>
+              >{consolidating ? '⏳ Starte…' : (selected.size > 1 ? `🧩 Zusammenführen + neu planen (${selected.size})` : '🧩 Als Feature neu planen')}</button>
             </div>
           </div>
         </div>

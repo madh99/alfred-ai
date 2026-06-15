@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.3] - 2026-06-15
+
+### Changed — Milestone-Konsolidierung = echte Neuplanung statt Stapeln (v898.3)
+
+Die Re-Tag-Strategie (v898) hängte die Items mehrerer Milestones nur zusammen →
+das gemeinsame Fundament („Phase 1: Datenmodell & Migration") stand danach
+mehrfach im konsolidierten Milestone. Das ist keine Konsolidierung. Neu:
+
+- **Konsolidieren = der Agent plant das Feature KOMPLETT NEU.** Er **liest die
+  bisherigen Plan-Dokumente** (`docs/feature-plan-*.md`, aus den Quellverweisen
+  der Items) **und analysiert READ-ONLY das bestehende Projekt**, dann liefert er
+  EINEN vollständigen, **deduplizierten** Gesamtplan (Fundament genau einmal,
+  Stränge darauf, Integrations-Phasen) + committet einen konsolidierten Plan-Doc.
+- **Bestandsumbau erst bei Erfolg (sicherer Rollback):** erledigte/laufende Items
+  bleiben (umgehängt + dem Agent als „erledigt" mitgegeben), **offene Alt-Punkte
+  werden storniert (ersetzt)**, der neue Plan kommt als frische, durchgehend
+  verkettete Items. Schlägt der Lauf fehl, bleibt **alles unverändert**.
+- **Akzeptiert jetzt ≥1 Milestone:** 1 = bestehenden (z.B. bereits verschmolzenen)
+  Milestone sauber neu planen; ≥2 = zusammenführen + neu planen. Dadurch lässt
+  sich auch ein bereits „gestapelter" Milestone nachträglich bereinigen.
+- Fallback (Häkchen „Komplett neu planen" aus, oder kein Agent/cwd): nur umhängen
+  (Re-Tag), **keine** Dedup/Neuplanung — mit klarem Hinweis.
+- Tests erweitert (7, inkl. Sync-Return des echten Plan-Laufs).
+
 ## [0.19.0-multi-ha.898.2] - 2026-06-15
 
 ### Fixed — Milestone-Konsolidierung & Implementieren: Live-Output sichtbar (v898.2)

@@ -1514,23 +1514,26 @@ ${decLines.join('\n') || '  _keine_'}`;
   }
 
   /**
-   * v898 — Bestehende Roadmap-Milestones NACHTRÄGLICH zu EINEM Feature
-   * konsolidieren (Re-Tag-Strategie „B-a"): wenn man Vorschläge zunächst
-   * einzeln (oder mehrere unzusammenhängend) geplant hat, lassen sich die
-   * entstandenen Milestones im Nachhinein per Auswahl zu einem gemeinsamen
-   * Feature zusammenführen.
+   * v898.3 — Bestehende Roadmap-Milestone(s) NACHTRÄGLICH zu EINEM Feature
+   * konsolidieren = vom Agent KOMPLETT NEU planen lassen. Wenn man Vorschläge
+   * zunächst einzeln (oder mehrere unzusammenhängend) geplant hat, ist das
+   * Ergebnis ein Stapel mit mehrfachem Fundament (4× „Datenmodell"). Diese
+   * Aktion ersetzt das durch EINEN deduplizierten, ins Projekt passenden Plan.
    *
-   * Vorgehen — nicht-destruktiv, Fortschritt bleibt erhalten:
-   *  1. Re-Tag (deterministisch, sofort): alle Items der gewählten Milestones
-   *     werden auf den neuen Milestone „Feature: <name>" umgehängt, global neu
-   *     durchnummeriert (relative Reihenfolge bleibt) und durchgehend
-   *     depends_on-verkettet (jedes Item am Vorgänger der neuen Reihenfolge).
-   *     Status/Beschreibung bleiben unangetastet; bestehende Abhängigkeiten
-   *     bleiben erhalten (Kettenlink kommt nur hinzu); die alten (nun leeren)
-   *     Milestones verschwinden dadurch aus der Roadmap.
-   *  2. Optionaler Plan-Lauf (with_plan, Default true): ein Agent arbeitet einen
-   *     konsolidierten Plan-Doc aus und schlägt nur noch NICHT abgedeckte
-   *     LÜCKEN als zusätzliche Items vor (ans Ende des Milestones angehängt).
+   * Echte Konsolidierung (with_plan=true, Default — der Normalfall):
+   *  - Der Agent LIEST die bisherigen Plan-Dokumente (docs/feature-plan-*.md aus
+   *    den Item-Quellverweisen) UND analysiert READ-ONLY das bestehende Projekt.
+   *  - Er liefert EINEN vollständigen, deduplizierten Gesamtplan (Fundament genau
+   *    einmal, Stränge darauf, Integrations-Phasen) + committet einen Plan-Doc.
+   *  - Bestandsumbau ERST BEI ERFOLG (sicherer Rollback): erledigte/laufende
+   *    Items bleiben (umgehängt + dem Agent als „erledigt" mitgegeben), OFFENE
+   *    Alt-Punkte werden storniert (ersetzt), der neue Plan kommt als frische,
+   *    durchgehend verkettete Items unter „Feature: <name>".
+   *  - Akzeptiert ≥1 Milestone: 1 = bestehenden (z.B. bereits verschmolzenen)
+   *    Milestone neu planen; ≥2 = zusammenführen + neu planen.
+   *
+   * Fallback (with_plan=false ODER kein Agent/cwd/bereits Lauf): nur umhängen
+   *  (Re-Tag, durchgehend verkettet) — KEINE Dedup/Neuplanung.
    */
   private async consolidateMilestones(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
     const projectId = await this.resolveProjectId(userId, input.project_id as string);
@@ -1542,21 +1545,23 @@ ${decLines.join('\n') || '  _keine_'}`;
     const milestones = Array.from(new Set(
       rawMs.map(m => (typeof m === 'string' ? m.trim() : '')).filter(m => m.length > 0),
     ));
-    if (milestones.length < 2) return { success: false, error: 'consolidate_milestones braucht mindestens 2 Milestones' };
+    if (milestones.length < 1) return { success: false, error: 'consolidate_milestones braucht mindestens 1 Milestone' };
 
     const stripFeaturePrefix = (s: string) => s.replace(/^Feature:\s*/i, '').trim();
     const name = ((typeof input.name === 'string' && input.name.trim())
       ? input.name.trim()
-      : `${stripFeaturePrefix(milestones[0])} + ${milestones.length - 1} weitere`).slice(0, 120);
+      : milestones.length > 1
+        ? `${stripFeaturePrefix(milestones[0])} + ${milestones.length - 1} weitere`
+        : stripFeaturePrefix(milestones[0])).slice(0, 120);
     const newMilestone = `Feature: ${name}`.slice(0, 80);
     const agent = typeof input.agent === 'string' && input.agent.trim() ? input.agent.trim() : undefined;
     const withPlan = input.with_plan !== false;
 
-    // Items aller gewählten Milestones lesen (alle Status — Fortschritt bleibt erhalten)
+    // Items aller gewählten Milestones lesen (alle Status)
     const allItems = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress', 'done', 'cancelled']);
     const msIndex = new Map(milestones.map((m, i) => [m, i]));
     const selected = allItems
-      .filter(i => i.roadmapMilestone && msIndex.has(i.roadmapMilestone))
+      .filter(i => i.roadmapMilestone && msIndex.has(i.roadmapMilestone) && i.status !== 'cancelled')
       .sort((a, b) => {
         const dm = (msIndex.get(a.roadmapMilestone!) ?? 0) - (msIndex.get(b.roadmapMilestone!) ?? 0);
         if (dm !== 0) return dm;
@@ -1566,111 +1571,153 @@ ${decLines.join('\n') || '  _keine_'}`;
       });
     if (selected.length === 0) return { success: false, error: 'Keine Roadmap-Items in den gewählten Milestones gefunden' };
 
-    // 1. Re-Tag (deterministisch, sofort) + durchgehende Neuverkettung über alle
-    //    zusammengeführten Milestones hinweg: jedes Item hängt in der neuen globalen
-    //    Reihenfolge am Vorgänger. NICHT-DESTRUKTIV — bestehende depends_on bleiben
-    //    erhalten, der Kettenlink kommt nur hinzu. Da die Reihenfolge (Milestone-
-    //    Index → roadmapOrder) bestehende Deps respektiert, entstehen keine
-    //    Rückwärtskanten/Zyklen.
-    let retagged = 0;
-    for (let i = 0; i < selected.length; i++) {
-      try {
-        await this.repo.updateOpenItemRoadmap(selected[i].id, { milestone: newMilestone, order: i + 1 });
-        if (i > 0) {
-          const prevId = selected[i - 1].id;
-          const merged = Array.from(new Set([...(selected[i].dependsOn ?? []), prevId]));
-          try { await this.repo.updateOpenItemFields(selected[i].id, { dependsOn: merged }); } catch { /* best-effort */ }
-        }
-        retagged++;
-      } catch { /* einzelnes Item darf nicht den Rest verhindern */ }
-    }
-
-    // 2. Optionaler Plan-Lauf (Lücken-Analyse) — nur wenn frei und gewünscht
     const alreadyRunning = this.runningCodeJobs.get(projectId);
     const canPlan = withPlan && !!this.runCodeAgent && project.cwd && existsSync(project.cwd) && !alreadyRunning;
+
+    // ── Fallback ohne Plan-Lauf: nur umhängen (Re-Tag, KEINE echte Neuplanung) ──
+    // Nicht-destruktiv, durchgehend verkettet. Sinnvoll nur als reines Umgruppieren;
+    // eine echte Konsolidierung (Dedup + Neuplanung) passiert nur mit Plan-Lauf.
     if (!canPlan) {
-      const note = !withPlan ? '' : alreadyRunning
-        ? ' (Plan-Lauf übersprungen — es läuft bereits ein Code-Lauf)'
-        : !this.runCodeAgent ? ' (Plan-Lauf nicht verfügbar)'
-        : ' (Plan-Lauf übersprungen — kein gültiger cwd)';
+      let retagged = 0;
+      for (let i = 0; i < selected.length; i++) {
+        try {
+          await this.repo.updateOpenItemRoadmap(selected[i].id, { milestone: newMilestone, order: i + 1 });
+          if (i > 0) {
+            const merged = Array.from(new Set([...(selected[i].dependsOn ?? []), selected[i - 1].id]));
+            try { await this.repo.updateOpenItemFields(selected[i].id, { dependsOn: merged }); } catch { /* best-effort */ }
+          }
+          retagged++;
+        } catch { /* einzelnes Item darf nicht den Rest verhindern */ }
+      }
+      const note = !withPlan ? ' (nur umgehängt — keine Neuplanung gewünscht)' : alreadyRunning
+        ? ' (Neuplanung übersprungen — es läuft bereits ein Code-Lauf)'
+        : !this.runCodeAgent ? ' (Neuplanung nicht verfügbar)'
+        : ' (Neuplanung übersprungen — kein gültiger cwd)';
       return {
         success: true,
         data: { projectId, milestone: newMilestone, retagged, sourceMilestones: milestones, planned: false },
-        display: `🧩 ${retagged} Items aus ${milestones.length} Milestones zu „${newMilestone}" zusammengeführt${note}.`,
+        display: `🧩 ${retagged} Items zu „${newMilestone}" umgehängt${note}.`,
       };
     }
 
+    // ── Echte Konsolidierung: der Agent plant das Feature KOMPLETT NEU ──
+    // Er liest die bisherigen Plan-Dokumente + das bestehende Projekt und liefert
+    // EINEN vollständigen, deduplizierten Plan. Der Bestand wird ERST BEI ERFOLG
+    // umgebaut (sicherer Rollback: schlägt der Lauf fehl, bleibt alles unverändert).
+    const preserved = selected.filter(i => i.status === 'done' || i.status === 'in_progress');
+    const openItems = selected.filter(i => i.status === 'open');
+
+    // Quell-Plan-Dokumente aus den Item-Beschreibungen einsammeln (die Detailpläne der Einzelteile)
+    const docPaths = Array.from(new Set(
+      selected.flatMap(i => Array.from(((i.description ?? '')).matchAll(/docs\/feature-plan-[^\s\]]+\.md/g)).map(m => m[0])),
+    ));
     const slug = name.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'feature';
+
     const byMs = new Map<string, string[]>();
     for (const it of selected) {
       const arr = byMs.get(it.roadmapMilestone!) ?? [];
       arr.push(it.title);
       byMs.set(it.roadmapMilestone!, arr);
     }
-    const existingOverview = milestones
+    const partsOverview = milestones
       .map(m => `### ${m}\n${(byMs.get(m) ?? []).map(t => `- ${t}`).join('\n')}`)
       .join('\n');
+    const doneOverview = preserved.length > 0
+      ? preserved.map(i => `- ${i.title} [${i.status}]`).join('\n')
+      : '(keine — alles noch offen)';
 
     const prompt = [
-      `Für das Projekt "${project.name}" werden mehrere bestehende Roadmap-Milestones zu EINEM gemeinsamen Feature "${name}" zusammengeführt. Die bestehenden Arbeitspakete bleiben erhalten (sind bereits umgehängt). Arbeite einen KONSOLIDIERTEN Plan-Doc aus und finde nur LÜCKEN — implementiere NICHTS.`,
+      `Für das Projekt "${project.name}" ${milestones.length > 1
+        ? `werden ${milestones.length} bisher GETRENNT geplante Features zu EINEM gemeinsamen, kohärenten Feature "${name}" zusammengeführt`
+        : `wird das Feature "${name}" als EIN kohärentes Feature neu durchgeplant`}. Plane dieses Feature KOMPLETT NEU — implementiere NICHTS.`,
       ``,
-      `BEREITS VORHANDENE ARBEITSPAKETE (NICHT erneut vorschlagen — sie existieren schon):`,
-      existingOverview,
+      `BISHERIGE (getrennte) PLANUNG — diese ERSETZT du durch EINEN konsolidierten Plan:`,
+      partsOverview,
+      docPaths.length > 0
+        ? `\nLIES ZUERST diese bestehenden Plan-Dokumente — sie enthalten die Detailplanung der Einzelteile:\n${docPaths.map(p => `- ${p}`).join('\n')}`
+        : '',
+      ``,
+      `BEREITS ERLEDIGT (NICHT erneut einplanen — bleibt bestehen):`,
+      doneOverview,
       ``,
       `VORGEHEN:`,
-      `1. Analysiere READ-ONLY die relevanten Teile der Codebase (betroffene Routen, Models, UI, bestehende Muster).`,
-      `2. Schreibe den konsolidierten Plan als docs/feature-plan-${slug}.md (Überblick über das vereinte Feature, wie die bisherigen Milestones zusammenhängen, Gesamt-Phasen, Risiken) und committe NUR dieses Dokument (docs(plan): …). Kein Push.`,
-      `3. Bestimme, welche Arbeit für ein KOHÄRENTES Gesamt-Feature NOCH FEHLT (Integration der Teile, gemeinsames Fundament, Übergänge) und die NICHT in der Liste oben steht.`,
+      `1. Lies die oben genannten Plan-Dokumente und verschaffe dir einen echten Überblick über die Einzelteile.`,
+      `2. Analysiere READ-ONLY das BESTEHENDE Projekt (Routen, Datenmodelle, UI, vorhandene Muster), damit sich der Plan SAUBER ins bestehende Projekt einfügt.`,
+      `3. Entwirf das Feature als EINEN kohärenten, DEDUPLIZIERTEN Gesamtplan: das gemeinsame Fundament (Datenmodell/Migration, Backend/Service, Frontend-Grundgerüst) erscheint GENAU EINMAL als frühe Phase; die einzelnen Stränge bauen darauf auf; abschließende Integrations-/Übergangs-Phasen verbinden sie. KEINE Phase doppelt (kein 4× „Datenmodell").`,
+      `4. Schreibe den vollständigen Plan als docs/feature-plan-${slug}.md (Überblick, welche Teile abgedeckt sind, ALLE Phasen, Risiken, betroffene Bereiche) und committe NUR dieses Dokument (docs(plan): …). Kein Push.`,
       ``,
-      `Antworte AM ENDE mit GENAU EINEM JSON-Array NUR der fehlenden Lücken-Arbeitspakete (leeres Array [] wenn nichts fehlt):`,
-      `[{"title":"fehlendes Arbeitspaket, max 150 Zeichen","description":"was konkret zu tun ist inkl. betroffener Dateien/Bereiche, 2-4 Sätze"}]`,
-    ].join('\n');
+      `Antworte AM ENDE mit GENAU EINEM JSON-Array — dem VOLLSTÄNDIGEN, deduplizierten Phasenplan in Umsetzungsreihenfolge (NICHT nur Lücken; die oben als erledigt markierten NICHT enthalten):`,
+      `[{"title":"Arbeitspaket, max 150 Zeichen","description":"was konkret zu tun ist inkl. betroffener Dateien/Bereiche, 2-4 Sätze"}]`,
+    ].filter(Boolean).join('\n');
 
     const liveTaskId = randomUUID();
     this.runningCodeJobs.set(projectId, liveTaskId);
-    appendOutputLine(liveTaskId, 'system', `🧩 „${newMilestone}": ${retagged} Items zusammengeführt — konsolidierter Plan + Lücken-Analyse läuft…`);
+    appendOutputLine(liveTaskId, 'system', `🧩 „${newMilestone}": Feature wird KOMPLETT NEU geplant — Agent liest ${docPaths.length} Plan-Doc(s) + analysiert das Projekt…`);
 
     const projectName = project.name;
     const cwd = project.cwd!; // canPlan stellt sicher: cwd ist gesetzt + existiert
-    const baseOrder = selected.length;
-    let lastExistingId = selected[selected.length - 1]?.id;
     void (async () => {
       try {
         const result = await this.runCodeAgent!({ cwd, prompt, taskId: liveTaskId, agent, projectId });
         if (!result.success) {
-          appendOutputLine(liveTaskId, 'system', `⚠️ Plan-Lauf fehlgeschlagen — Items sind aber zusammengeführt. Output-Ende: ${result.output.slice(-300)}`);
-          this.ownerNotify?.(`⚠️ Milestone-Konsolidierung (${projectName}): „${newMilestone}" zusammengeführt, Plan-Lauf fehlgeschlagen.`);
+          appendOutputLine(liveTaskId, 'system', `❌ Neuplanung fehlgeschlagen — Bestand UNVERÄNDERT. Output-Ende: ${result.output.slice(-300)}`);
+          this.ownerNotify?.(`❌ Konsolidierung fehlgeschlagen (${projectName}: ${name}) — nichts verändert.`);
           return;
         }
+        const phases = parseFeaturePlanPhases(result.output);
+        if (phases.length === 0) {
+          appendOutputLine(liveTaskId, 'system', `⚠️ Kein parsebarer Plan — Bestand UNVERÄNDERT, Plan-Doc liegt ggf. trotzdem in docs/ (Doku-Tab).`);
+          this.ownerNotify?.(`⚠️ Konsolidierung (${projectName}: ${name}): kein parsebarer Plan — nichts verändert.`);
+          return;
+        }
+        // Erst JETZT (Erfolg) den Bestand umbauen:
         if (this.pushProject) {
           try {
             const push = await this.pushProject({ cwd, commitMessage: `docs(plan): Konsolidierung ${name.slice(0, 70)}` });
             appendOutputLine(liveTaskId, 'system', push.success ? `📤 Plan-Doc gesichert: ${push.summary}` : `⚠️ Push fehlgeschlagen: ${push.summary}`);
           } catch { /* best-effort */ }
         }
-        const gaps = parseFeaturePlanPhases(result.output);
-        let added = 0;
-        for (let i = 0; i < gaps.length; i++) {
+        let order = 0;
+        let prevId: string | undefined;
+        // a) Erledigte/laufende Items behalten → auf neuen Milestone, vorne, verkettet
+        for (const it of preserved) {
+          order++;
+          try { await this.repo.updateOpenItemRoadmap(it.id, { milestone: newMilestone, order }); } catch { /* best-effort */ }
+          if (prevId) {
+            const merged = Array.from(new Set([...(it.dependsOn ?? []), prevId]));
+            try { await this.repo.updateOpenItemFields(it.id, { dependsOn: merged }); } catch { /* best-effort */ }
+          }
+          prevId = it.id;
+        }
+        // b) Offene Alt-Punkte stornieren (werden durch den neuen Plan ERSETZT)
+        let replaced = 0;
+        for (const it of openItems) {
+          try { await this.repo.updateOpenItemStatus(it.id, 'cancelled'); replaced++; } catch { /* best-effort */ }
+        }
+        // c) Vollständigen neuen Plan als frische Items anlegen, durchgehend verkettet
+        let created = 0;
+        for (let i = 0; i < phases.length; i++) {
           try {
             const item = await this.repo.addOpenItem(projectId, {
-              title: gaps[i].title,
-              description: `${gaps[i].description}\n[Quelle: Konsolidierung docs/feature-plan-${slug}.md]`.slice(0, 1500),
+              title: phases[i].title,
+              description: `${phases[i].description}\n[Quelle: Konsolidierung docs/feature-plan-${slug}.md]`.slice(0, 1500),
               priority: 'normal',
             });
-            try { await this.repo.updateOpenItemRoadmap(item.id, { milestone: newMilestone, order: baseOrder + i + 1 }); } catch { /* best-effort */ }
-            if (lastExistingId) {
-              try { await this.repo.updateOpenItemFields(item.id, { dependsOn: [lastExistingId] }); } catch { /* best-effort */ }
+            order++;
+            try { await this.repo.updateOpenItemRoadmap(item.id, { milestone: newMilestone, order }); } catch { /* best-effort */ }
+            if (prevId) {
+              try { await this.repo.updateOpenItemFields(item.id, { dependsOn: [prevId] }); } catch { /* best-effort */ }
             }
-            lastExistingId = item.id;
-            added++;
+            prevId = item.id;
+            created++;
           } catch { /* einzelnes Paket darf nicht den Rest verhindern */ }
         }
-        appendOutputLine(liveTaskId, 'system', `✅ Konsolidierung fertig — „${newMilestone}": ${retagged} bestehende + ${added} neue Lücken-Items. Plan-Doc im Doku-Tab.`);
-        this.ownerNotify?.(`✅ Milestone-Konsolidierung fertig (${projectName}): „${newMilestone}" — ${retagged} bestehende + ${added} neue Items.`);
+        appendOutputLine(liveTaskId, 'system', `✅ Konsolidierung fertig — „${newMilestone}": Feature komplett neu geplant (${created} Arbeitspakete${preserved.length > 0 ? `, ${preserved.length} erledigte behalten` : ''}, ${replaced} alte offene Punkte ersetzt). Plan-Doc im Doku-Tab.`);
+        this.ownerNotify?.(`✅ Konsolidierung fertig (${projectName}): „${newMilestone}" — Feature komplett neu geplant (${created} Pakete, ${replaced} ersetzt).`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         appendOutputLine(liveTaskId, 'system', `❌ Lauf-Fehler: ${msg.slice(0, 300)}`);
-        this.ownerNotify?.(`❌ Milestone-Konsolidierung Fehler (${projectName}: ${name}): ${msg.slice(0, 300)}`);
+        this.ownerNotify?.(`❌ Konsolidierung Fehler (${projectName}: ${name}): ${msg.slice(0, 300)}`);
       } finally {
         this.runningCodeJobs.delete(projectId);
         try { markOutputEnded(liveTaskId); } catch { /* best-effort */ }
@@ -1679,8 +1726,8 @@ ${decLines.join('\n') || '  _keine_'}`;
 
     return {
       success: true,
-      data: { liveTaskId, projectId, milestone: newMilestone, retagged, sourceMilestones: milestones, planned: true },
-      display: `🧩 ${retagged} Items zu „${newMilestone}" zusammengeführt — konsolidierter Plan + Lücken-Analyse läuft (Hintergrund).`,
+      data: { liveTaskId, projectId, milestone: newMilestone, sourceMilestones: milestones, planned: true, preserved: preserved.length, toReplace: openItems.length },
+      display: `🧩 Feature „${newMilestone}" wird vom Agent KOMPLETT NEU geplant (Hintergrund) — liest ${docPaths.length} Plan-Doc(s) + analysiert das Projekt; offene Alt-Punkte werden danach ersetzt.`,
     };
   }
 
