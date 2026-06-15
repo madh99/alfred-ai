@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.899.1] - 2026-06-15
+
+### Fixed — Hybrid-Compose: NODE_ENV=production überschrieb development (v899.1)
+
+Der Hybrid-Dev-Container kam hoch (`next dev` „Ready"), lieferte aber **500** mit
+`ENOENT .next/required-server-files.json`. Ursache: die aus der Compose-App-Config
+extrahierte Env (für `DATABASE_URL`) enthielt `NODE_ENV=production` und überschrieb
+beim Spread unser `NODE_ENV=development` → `next dev` lief im **Prod-Modus** und
+suchte Production-Server-Dateien. Fix: `NODE_ENV=development` steht jetzt als letzter
+Eintrag (gewinnt immer); `DATABASE_URL`/`AUTH_*` aus der Compose-Config bleiben.
+
 ## [0.19.0-multi-ha.899] - 2026-06-15
 
 ### Added — Compose-Sandbox im Dev-Modus (HMR + DB), Merge-Gate-Fix (v899)

@@ -429,10 +429,15 @@ export class SandboxManager {
       const cpus = this.deps.config.cpus ?? 2;
       const nodeHeapMb = this.deps.config.nodeMaxOldSpaceSizeMb ?? Math.floor(memoryMb * 0.67);
       const containerEnvs: Record<string, string> = {
-        CI: '', NODE_ENV: 'development', ALFRED_DATA_DIR: '/workspace/.alfred-data',
+        CI: '', ALFRED_DATA_DIR: '/workspace/.alfred-data',
         NODE_OPTIONS: `--max-old-space-size=${nodeHeapMb}`,
-        ...appEnv,        // DATABASE_URL=@db:5432 etc. aus der Compose-App-Config
+        ...appEnv,        // DATABASE_URL=@db:5432, AUTH_* etc. aus der Compose-App-Config
         ...projectEnvs,   // Project-ENVs haben Vorrang (user-controlled)
+        // v899.1 — NODE_ENV MUSS development sein und ZULETZT stehen: die User-
+        // compose.yml setzt für den App-Service oft NODE_ENV=production, das via
+        // appEnv unser development überschrieb → `next dev` lief im Prod-Modus und
+        // brach mit ENOENT .next/required-server-files.json (500).
+        NODE_ENV: 'development',
       };
 
       appContainerId = await runSandboxContainer({
