@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.10] - 2026-06-15
+
+### Fixed — Compose-Sandbox: Discard/Merge räumen den ganzen Stack ab (v898.10)
+
+`discard()` und `merge()` (via `cleanupAfterMerge`) entfernten nur den **Primary-
+Container** (die App). Bei Compose-Sandboxen blieben **DB-Container, Netzwerk und
+Volumes** zurück (Leak + Namenskonflikte beim nächsten Start).
+
+- Neuer Helper `teardownComposeIfAny(sb)`: erkennt Compose-Sandboxen am
+  Override-File (`…/.sandbox-state/<id>/docker-compose.override.yml`) und räumt den
+  **gesamten Stack** via `stopComposeStack` (`docker compose down --remove-orphans`,
+  `-v` außer bei `persistDbVolumes`) ab; sonst Single-Container wie bisher.
+- Eingehängt in `discard()` und `cleanupAfterMerge()`.
+- Temporäre Diagnose-Zeile aus v898.7 (`[sandbox-compose] …`) wieder entfernt
+  (Ursache geklärt: Multi-User getById-Mismatch, gefixt in v898.8).
+
 ## [0.19.0-multi-ha.898.9] - 2026-06-15
 
 ### Fixed — Compose-Sandbox: Preview-Port-Mapping host:host statt host:container (v898.9)

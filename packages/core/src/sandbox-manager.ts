@@ -274,13 +274,11 @@ export class SandboxManager {
     // (UI-Toggle in Project-Settings). Plus: compose-File MUSS vorhanden sein.
     let composeMode = false;
     let composeFile: string | undefined;
-    let diagSandboxMode: string | undefined; // v898.7 Diagnose
-    let diagLookupErr: string | undefined;
     if (this.deps.projectRepo && input.projectId) {
       try {
-        // Project-User auflösen — wir brauchen master-user-id für getById
+        // v898.8 — getByIdAnyOwner via Wrapper (Config-Lookup, keine Auth-Grenze):
+        // im Multi-User-Fall startet ein Web-User ≠ Owner die Sandbox.
         const proj = await this.deps.projectRepo.getById(input.userId, input.projectId);
-        diagSandboxMode = proj?.sandboxMode;
         if (proj?.sandboxMode === 'compose') {
           if (detection.hasComposeFile && detection.composeFile) {
             composeMode = true;
@@ -293,16 +291,9 @@ export class SandboxManager {
           }
         }
       } catch (err) {
-        diagLookupErr = err instanceof Error ? err.message : String(err);
         this.deps.logger.debug({ err, projectId: input.projectId }, 'v849: Project lookup failed, fallback to single-container');
       }
     }
-    // v898.7 — Diagnose ins Journal (pino-Logs erscheinen dort nicht): zeigt exakt,
-    // warum compose vs single gewählt wurde. Temporär bis die Ursache geklärt ist.
-    try {
-      // eslint-disable-next-line no-console
-      console.warn(`[sandbox-compose] projectId=${input.projectId ?? 'NONE'} projectRepoWired=${!!this.deps.projectRepo} sandboxMode=${diagSandboxMode ?? 'undef'} hasComposeFile=${detection.hasComposeFile} composeFile=${detection.composeFile ?? '-'} lookupErr=${diagLookupErr ?? '-'} mode=${input.mode} -> composeMode=${composeMode}`);
-    } catch { /* */ }
 
     // Phase 1c — DB-Insert
     const image = this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
@@ -886,6 +877,30 @@ export class SandboxManager {
     }
   }
 
+  /**
+   * v898.10 — Vollständiger Container-Teardown. Compose-Sandboxen werden über
+   * `stopComposeStack` (docker compose down -v --remove-orphans) abgeräumt, damit
+   * NICHT nur der Primary-Container, sondern auch DB/Netzwerk/Volumes verschwinden.
+   * Erkennung über das Override-File, das ausschließlich für Compose-Sandboxen
+   * erzeugt wird. Gibt true zurück, wenn als Compose-Stack abgeräumt wurde (Caller
+   * muss dann keinen Single-Container mehr entfernen). persistDbVolumes wird
+   * respektiert.
+   */
+  private async teardownComposeIfAny(sb: Sandbox): Promise<boolean> {
+    const stateBase = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
+    const sandboxStateDir = path.join(stateBase, '.sandbox-state', sb.id);
+    if (!existsSync(path.join(sandboxStateDir, 'docker-compose.override.yml'))) return false;
+    const composeFile = ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml']
+      .find(n => existsSync(path.join(sb.worktreePath, n)));
+    if (!composeFile) return false;
+    let persist = false;
+    try {
+      persist = Boolean((await this.deps.projectRepo?.getById(sb.userId, sb.projectId))?.persistDbVolumes);
+    } catch { /* default false */ }
+    await stopComposeStack(sb.id, sb.worktreePath, composeFile, sandboxStateDir, persist, this.deps.logger);
+    return true;
+  }
+
   async discard(sandboxId: string, projectCwd: string): Promise<void> {
     const sb = await this.deps.repo.getById(sandboxId);
     if (!sb) throw new Error(`Sandbox not found: ${sandboxId}`);
@@ -893,7 +908,10 @@ export class SandboxManager {
     if (sb.containerId) {
       try { await stopContainer(sb.containerId, 5); } catch { /* */ }
       await this.snapshotDevServerLog(sb); // v810 — Logs sichern bevor Container weg
-      try { await removeContainer(sb.containerId, true); } catch { /* */ }
+    }
+    // v898.10 — Compose-Stack komplett abräumen (DB/Netzwerk/Volumes); sonst Single-Container.
+    if (!(await this.teardownComposeIfAny(sb))) {
+      if (sb.containerId) { try { await removeContainer(sb.containerId, true); } catch { /* */ } }
     }
     this.killWorktreeHolders(sb.worktreePath);
     await this.fireSandboxDiscarded(sb); // v812 — pending Projekt-Metadaten aufräumen
@@ -1164,9 +1182,11 @@ export class SandboxManager {
   }
 
   private async cleanupAfterMerge(sb: Sandbox, projectCwd: string): Promise<void> {
-    // Container weg
-    if (sb.containerId) {
-      try { await removeContainer(sb.containerId, true); } catch { /* */ }
+    // v898.10 — Compose-Stack komplett abräumen (DB/Netzwerk/Volumes); sonst Single-Container.
+    if (!(await this.teardownComposeIfAny(sb))) {
+      if (sb.containerId) {
+        try { await removeContainer(sb.containerId, true); } catch { /* */ }
+      }
     }
     // Worktree weg — Branch behalten falls direct-push (history bleibt), bei PR auch behalten (Forge zeigt's)
     try {
