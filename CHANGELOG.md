@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.899] - 2026-06-15
+
+### Added — Compose-Sandbox im Dev-Modus (HMR + DB), Merge-Gate-Fix (v899)
+
+Bisher liefen Compose-Sandboxen als **Production-Build** (`next start` aus dem
+User-Dockerfile). Folge: keine HMR/Live-Edit, „Restart" zeigte nichts, und das
+Merge-Gate scheiterte (falscher Workdir + keine Dev-Deps im Prod-Container).
+
+**Hybrid-Compose (Interactive-Dev):**
+- Nur die **Backing-Services** (db/redis …) laufen über Compose
+  (`startComposeBackingServices`); die **App** läuft als **Dev-Container**
+  (Alfred-Sandbox-Image, Worktree-Bind-Mount auf `/workspace`, `<pm> install` +
+  `next dev`) auf **demselben Compose-Netz** — die DB ist per Service-Namen
+  (`@db:5432`) erreichbar (DATABASE_URL wird aus der Compose-Config extrahiert).
+- Ergebnis: **HMR/Live-Edit funktioniert MIT DB**, „Restart" greift wieder, und das
+  **Merge-Gate kann Tests fahren** (Dev-Deps + `/workspace` im App-Container).
+- Prisma erkannt (`prisma/schema.prisma`) → `prisma db push` läuft beim Start gegen
+  die Compose-DB.
+- `runSandboxContainer` kann jetzt einem Docker-Netz beitreten (`network`/
+  `networkAlias`). Der User-Dockerfile bleibt für echtes Deploy unangetastet.
+
+**Teardown (Hybrid):** `discard`/`merge` entfernen den App-Dev-Container UND räumen
+die Backing-Services via `docker compose down -v --remove-orphans` ab
+(`downComposeProject`), Marker `compose-hybrid.json`.
+
+**Merge-Gate-Workdir-Fix:** das Gate ermittelt jetzt die echte Container-WorkingDir
+(statt hart `/workspace`) → kein `chdir failed` (exit 127) mehr bei abweichendem
+Workdir.
+
 ## [0.19.0-multi-ha.898.11] - 2026-06-15
 
 ### Fixed — Compose-Teardown entfernt auch das leere State-Verzeichnis (v898.11)

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, statSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Logger } from 'pino';
@@ -24,7 +24,7 @@ import {
   runContainerCommand,
 } from './sandbox/docker.js';
 // v849 — Compose-Stack-Support
-import { startComposeStack, stopComposeStack, waitForComposeHealthy, listComposeServices } from './sandbox/compose-runner.js';
+import { startComposeBackingServices, downComposeProject, waitForComposeHealthy, listComposeServices } from './sandbox/compose-runner.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -369,71 +369,93 @@ export class SandboxManager {
     userId: string;
     composeFile: string;
   }): Promise<void> {
+    // v899 — HYBRID-Compose (Interactive-Dev): NUR die Backing-Services (db/redis)
+    // laufen über Compose; die App läuft als Dev-Container (Bind-Mount + next dev,
+    // HMR) auf demselben Compose-Netz. Das gibt Live-Edit MIT DB und macht Merge-
+    // Gate-Tests möglich (Dev-Deps + /workspace im App-Container vorhanden).
+    const stateBase = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
+    const sandboxStateDir = path.join(stateBase, '.sandbox-state', opts.sandboxId);
+    let appContainerId = '';
     try {
-      await this.deps.repo.updateStatus(opts.sandboxId, 'creating', 'compose-stack: services starten');
+      await this.deps.repo.updateStatus(opts.sandboxId, 'creating', 'compose-stack: Backing-Services starten');
 
-      // 1. Project-Settings für Volume-Strategie holen
+      // Volume-Strategie
       let persistDbVolumes = false;
       try {
         const proj = await this.deps.projectRepo?.getById(opts.userId, opts.projectId);
         persistDbVolumes = Boolean(proj?.persistDbVolumes);
       } catch { /* default false */ }
 
-      // 2. Primary-Service-Port allokieren (gleicher Slot wie single-mode)
+      // Primary-Service (App) ableiten
+      const services = await listComposeServices(opts.worktreePath, opts.composeFile);
+      const primaryService = services.find(s => /^(app|web|frontend|client|api)$/i.test(s)) ?? services[0];
+      if (!primaryService) throw new Error('Kein primary-service in compose erkennbar (app/web/frontend/client/api)');
+
+      // Port allokieren
       const portStart = this.deps.config.hostPortRangeStart ?? 9100;
       const portEnd = this.deps.config.hostPortRangeEnd ?? 9199;
       const hostPort = await findFreePort(portStart, portEnd, this.deps.repo);
 
-      // 3. Primary-Service ableiten aus detection (web/app) oder erstem Service in compose
-      const services = await listComposeServices(opts.worktreePath, opts.composeFile);
-      const primaryService = services.find(s => /^(app|web|frontend|client|api)$/i.test(s)) ?? services[0];
-      if (!primaryService) {
-        throw new Error('Kein primary-service in compose erkennbar (versuche: app, web, frontend, client, api)');
+      // Nur Backing-Services hochfahren + Netz-Name + App-Env (DATABASE_URL=@db) ermitteln
+      const { networkName, appEnv, backingServices } = await startComposeBackingServices({
+        sandboxId: opts.sandboxId, worktreePath: opts.worktreePath, composeFile: opts.composeFile,
+        primaryService, perServiceMb: this.deps.config.memoryMb, logger: this.deps.logger,
+      });
+      // Teardown-Marker (Hybrid)
+      try {
+        mkdirSync(sandboxStateDir, { recursive: true });
+        writeFileSync(path.join(sandboxStateDir, 'compose-hybrid.json'), JSON.stringify({ composeFile: opts.composeFile, primaryService }), 'utf8');
+      } catch { /* nicht kritisch */ }
+
+      // Backing-Services healthy abwarten (db muss bereit sein für prisma db push)
+      for (const svc of backingServices) {
+        const ok = await waitForComposeHealthy(opts.sandboxId, opts.worktreePath, opts.composeFile, svc, { intervalMs: 2000, timeoutMs: 5 * 60_000, logger: this.deps.logger });
+        if (!ok) throw new Error(`compose backing-service "${svc}" nicht healthy in 5 min`);
       }
 
-      // 4. Sandbox-State-Dir für Override-File (außerhalb des User-Repos)
-      const stateBase = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
-      const sandboxStateDir = path.join(stateBase, '.sandbox-state', opts.sandboxId);
+      // App als Dev-Container (wie Single-Container) auf dem Compose-Netz
+      await this.deps.repo.updateStatus(opts.sandboxId, 'creating', 'compose-stack: App-Dev-Container (next dev / HMR) startet');
+      const image = this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
+      await ensureImage({ image, dockerfilesDir: this.dockerfilesDir, logger: this.deps.logger });
+      const projectEnvs = await this.loadProjectEnvironments(opts.projectId, 'sandbox');
 
-      // 5. Compose-Stack starten
-      const result = await startComposeStack({
-        sandboxId: opts.sandboxId,
-        worktreePath: opts.worktreePath,
-        composeFile: opts.composeFile,
-        sandboxStateDir,
-        primaryService,
-        primaryHostPort: hostPort,
-        primaryContainerPort: opts.detection.internalPort || 3000, // v898.9 — App-Port im Container
-        envVars: { NODE_ENV: 'development' },
-        persistDbVolumes,
+      const pm = opts.detection.diagnostics.packageManager;
+      const devCmd = opts.detection.devCommand.join(' ');
+      const usesPrisma = existsSync(path.join(opts.worktreePath, 'prisma', 'schema.prisma'));
+      const dbPush = usesPrisma ? ' && npx prisma db push --skip-generate' : '';
+      const fullCmd = `${pm} install && ${pm} rebuild${dbPush} && exec ${devCmd}`;
+
+      const memoryMb = this.deps.config.memoryMb ?? 6144;
+      const cpus = this.deps.config.cpus ?? 2;
+      const nodeHeapMb = this.deps.config.nodeMaxOldSpaceSizeMb ?? Math.floor(memoryMb * 0.67);
+      const containerEnvs: Record<string, string> = {
+        CI: '', NODE_ENV: 'development', ALFRED_DATA_DIR: '/workspace/.alfred-data',
+        NODE_OPTIONS: `--max-old-space-size=${nodeHeapMb}`,
+        ...appEnv,        // DATABASE_URL=@db:5432 etc. aus der Compose-App-Config
+        ...projectEnvs,   // Project-ENVs haben Vorrang (user-controlled)
+      };
+
+      appContainerId = await runSandboxContainer({
+        image, name: `alfred-sandbox-${opts.sandboxId.slice(0, 8)}`, workdir: '/workspace',
+        binds: [{ host: opts.worktreePath, container: '/workspace' }],
+        envVars: containerEnvs, ports: [[hostPort, opts.detection.internalPort || 3000]],
+        memoryMb, cpus, command: ['sh', '-c', `"${fullCmd}"`], restartPolicy: 'no',
+        network: networkName ?? undefined, networkAlias: primaryService,
         logger: this.deps.logger,
       });
+      await this.deps.repo.setContainerInfo(opts.sandboxId, appContainerId, hostPort);
+      await this.deps.repo.updateStatus(opts.sandboxId, 'creating', `compose: deps-install + ${devCmd} (port ${opts.detection.internalPort})`);
 
-      // 6. Primary-Container-ID + hostPort persistieren
-      const primaryContainerId = result.containerIds[0] ?? '';
-      await this.deps.repo.setContainerInfo(opts.sandboxId, primaryContainerId, hostPort);
-      await this.deps.repo.updateStatus(opts.sandboxId, 'creating', `compose: ${result.services.length} Services gestartet, warte auf health`);
-
-      // 7. Health-Wait auf primary-service
-      const healthy = await waitForComposeHealthy(opts.sandboxId, opts.worktreePath, opts.composeFile, primaryService, {
-        intervalMs: 2000,
-        timeoutMs: 5 * 60_000,
-        logger: this.deps.logger,
-      });
-      if (!healthy) {
-        throw new Error(`compose primary-service "${primaryService}" did not become healthy in 5 minutes`);
-      }
+      const healthy = await waitForDevServer(hostPort, { intervalMs: 2000, timeoutMs: 6 * 60_000, logger: this.deps.logger });
+      if (!healthy) throw new Error('compose app dev-server did not respond within 6 minutes');
 
       await this.deps.repo.markResumed(opts.sandboxId);
-      this.deps.logger.info({ sandboxId: opts.sandboxId, hostPort, services: result.services.length }, 'v849 Compose-Sandbox ready');
+      this.deps.logger.info({ sandboxId: opts.sandboxId, hostPort, networkName, backing: backingServices.length }, 'v899 Hybrid-Compose-Sandbox ready');
     } catch (err) {
-      this.deps.logger.error({ err, sandboxId: opts.sandboxId }, 'v849 Compose-Sandbox spinUp failed');
-      // Cleanup: compose stoppen + state-dir entfernen
-      try {
-        const stateBase = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
-        const sandboxStateDir = path.join(stateBase, '.sandbox-state', opts.sandboxId);
-        await stopComposeStack(opts.sandboxId, opts.worktreePath, opts.composeFile, sandboxStateDir, false, this.deps.logger);
-      } catch { /* cleanup-effort */ }
+      this.deps.logger.error({ err, sandboxId: opts.sandboxId }, 'v899 Hybrid-Compose spinUp failed');
+      try { if (appContainerId) await removeContainer(appContainerId, true); } catch { /* */ }
+      try { await downComposeProject(opts.sandboxId, opts.worktreePath, opts.composeFile, false, this.deps.logger); } catch { /* */ }
+      try { rmSync(sandboxStateDir, { recursive: true, force: true }); } catch { /* */ }
       const msg = err instanceof Error ? err.message : String(err);
       await this.deps.repo.updateStatus(opts.sandboxId, 'failed', `compose-start failed: ${msg.slice(0, 200)}`);
     }
@@ -799,6 +821,21 @@ export class SandboxManager {
    * ist nur `echo`-Stub. Container muss vor dem Aufruf gestoppt sein damit kein
    * konkurrierender `npm rebuild` im Container den State wieder auf musl kippt.
    */
+  /**
+   * v899 — Echte WorkingDir eines Containers ermitteln (für merge-gate exec).
+   * Single-Container: /workspace; Compose-App-Container: dessen Dockerfile-WORKDIR
+   * (z.B. /app). Fallback /workspace, falls inspect scheitert.
+   */
+  private async inspectContainerWorkdir(containerId: string): Promise<string> {
+    try {
+      const { stdout } = await execFileAsync('docker', ['inspect', '--format', '{{.Config.WorkingDir}}', containerId], { timeout: 10_000 });
+      const wd = stdout.trim();
+      return wd.length > 0 ? wd : '/workspace';
+    } catch {
+      return '/workspace';
+    }
+  }
+
   private async runMergeGateTests(sb: Sandbox, sandboxId?: string): Promise<{ ok: boolean; skipped?: boolean; output: string; reason?: string }> {
     let hasTest = false;
     let packageManagerInstall = 'npm rebuild';
@@ -844,7 +881,11 @@ export class SandboxManager {
         this.deps.logger.info({ sandboxId: sb.id, containerId: sb.containerId }, 'v837 merge-gate: running npm test in container (eliminates env-asymmetry)');
         // Container könnte gestoppt sein → erst starten falls nötig
         try { await startContainer(sb.containerId); } catch { /* may already be running */ }
-        const r = await runContainerCommand(sb.containerId, 'npm test', { cwd: '/workspace', timeoutMs: 10 * 60_000 });
+        // v899 — Workdir NICHT hart /workspace: Single-Container nutzt /workspace,
+        // Compose-App-Container hat seine eigene WORKDIR (z.B. /app). Falsche Workdir
+        // → `chdir failed: no such file or directory` (exit 127). Echte WorkingDir lesen.
+        const gateCwd = await this.inspectContainerWorkdir(sb.containerId);
+        const r = await runContainerCommand(sb.containerId, 'npm test', { cwd: gateCwd, timeoutMs: 10 * 60_000 });
         const combined = `$ npm test (in container, exit ${r.exitCode}, ${r.durationMs}ms)\n${r.stderr}\n${r.stdout}`;
         return {
           ok: r.exitCode === 0,
@@ -878,28 +919,40 @@ export class SandboxManager {
   }
 
   /**
-   * v898.10 — Vollständiger Container-Teardown. Compose-Sandboxen werden über
-   * `stopComposeStack` (docker compose down -v --remove-orphans) abgeräumt, damit
-   * NICHT nur der Primary-Container, sondern auch DB/Netzwerk/Volumes verschwinden.
-   * Erkennung über das Override-File, das ausschließlich für Compose-Sandboxen
-   * erzeugt wird. Gibt true zurück, wenn als Compose-Stack abgeräumt wurde (Caller
-   * muss dann keinen Single-Container mehr entfernen). persistDbVolumes wird
-   * respektiert.
+   * v899 — Vollständiger Teardown einer (Hybrid-)Compose-Sandbox: der App-Dev-
+   * Container (sb.containerId) wird per docker rm entfernt UND die Backing-Services
+   * (db/redis) + Netz + Volumes per `docker compose down` abgeräumt. Erkennung über
+   * den Marker `compose-hybrid.json` (bzw. ein Legacy-Override-File). Gibt true
+   * zurück, wenn als Compose-Sandbox abgeräumt wurde (Caller muss dann nichts mehr
+   * entfernen). persistDbVolumes wird respektiert; das State-Dir wird mit entfernt.
    */
   private async teardownComposeIfAny(sb: Sandbox): Promise<boolean> {
     const stateBase = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
     const sandboxStateDir = path.join(stateBase, '.sandbox-state', sb.id);
-    if (!existsSync(path.join(sandboxStateDir, 'docker-compose.override.yml'))) return false;
-    const composeFile = ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml']
-      .find(n => existsSync(path.join(sb.worktreePath, n)));
-    if (!composeFile) return false;
-    let persist = false;
-    try {
-      persist = Boolean((await this.deps.projectRepo?.getById(sb.userId, sb.projectId))?.persistDbVolumes);
-    } catch { /* default false */ }
-    await stopComposeStack(sb.id, sb.worktreePath, composeFile, sandboxStateDir, persist, this.deps.logger);
-    // v898.11 — leeres State-Dir mitentfernen (stopComposeStack löscht nur das
-    // Override-File, nicht das Verzeichnis) — sonst sammeln sich leere Ordner an.
+    const markerPath = path.join(sandboxStateDir, 'compose-hybrid.json');
+    const legacyOverride = path.join(sandboxStateDir, 'docker-compose.override.yml');
+    if (!existsSync(markerPath) && !existsSync(legacyOverride)) return false;
+
+    // composeFile aus Marker, sonst im Worktree suchen
+    let composeFile: string | undefined;
+    try { composeFile = (JSON.parse(readFileSync(markerPath, 'utf8')) as { composeFile?: string }).composeFile; } catch { /* */ }
+    if (!composeFile) {
+      composeFile = ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml']
+        .find(n => existsSync(path.join(sb.worktreePath, n)));
+    }
+
+    // 1. App-Dev-Container entfernen
+    if (sb.containerId) {
+      try { await stopContainer(sb.containerId, 5); } catch { /* */ }
+      try { await removeContainer(sb.containerId, true); } catch { /* */ }
+    }
+    // 2. Backing-Services + Netz + Volumes
+    if (composeFile) {
+      let persist = false;
+      try { persist = Boolean((await this.deps.projectRepo?.getById(sb.userId, sb.projectId))?.persistDbVolumes); } catch { /* */ }
+      await downComposeProject(sb.id, sb.worktreePath, composeFile, persist, this.deps.logger);
+    }
+    // 3. State-Dir entfernen
     try { rmSync(sandboxStateDir, { recursive: true, force: true }); } catch { /* nicht kritisch */ }
     return true;
   }

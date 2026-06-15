@@ -284,3 +284,86 @@ export async function waitForComposeHealthy(
   options.logger.warn({ sandboxId, primaryService, timeoutMs }, 'v849 Compose: primary-service did not become healthy in time');
   return false;
 }
+
+/**
+ * v899 (Hybrid-Compose, Interactive-Dev) — Nur die BACKING-Services (db/redis …)
+ * via Compose hochfahren; der Primary-Service (App) wird NICHT über Compose
+ * gestartet, sondern separat als Dev-Container (Bind-Mount + next dev) auf dasselbe
+ * Compose-Netz gehängt. Liefert Netz-Namen + die aufgelöste App-Env (v.a.
+ * DATABASE_URL = …@db:5432, damit der Dev-Container die DB per Service-Namen
+ * erreicht).
+ */
+export async function startComposeBackingServices(input: {
+  sandboxId: string;
+  worktreePath: string;
+  composeFile: string;
+  primaryService: string;
+  perServiceMb?: number;
+  logger: Logger;
+}): Promise<{ networkName: string | null; appEnv: Record<string, string>; backingServices: string[] }> {
+  const services = await listComposeServices(input.worktreePath, input.composeFile);
+  const backing = services.filter(s => s !== input.primaryService);
+  const composePath = path.join(input.worktreePath, input.composeFile);
+
+  // App-Env aus aufgelöster Compose-Config lesen (DATABASE_URL etc.)
+  const appEnv: Record<string, string> = {};
+  try {
+    const { stdout } = await execFileAsync(
+      'docker', ['compose', '--project-name', input.sandboxId, '-f', composePath, 'config', '--format', 'json'],
+      { cwd: input.worktreePath, timeout: 20_000, maxBuffer: 10 * 1024 * 1024 },
+    );
+    const cfg = JSON.parse(stdout) as { services?: Record<string, { environment?: unknown }> };
+    const envRaw = cfg.services?.[input.primaryService]?.environment;
+    if (envRaw && typeof envRaw === 'object' && !Array.isArray(envRaw)) {
+      for (const [k, v] of Object.entries(envRaw as Record<string, unknown>)) if (v != null) appEnv[k] = String(v);
+    } else if (Array.isArray(envRaw)) {
+      for (const item of envRaw) { const s = String(item); const i = s.indexOf('='); if (i > 0) appEnv[s.slice(0, i)] = s.slice(i + 1); }
+    }
+  } catch (err) {
+    input.logger.warn({ err, sandboxId: input.sandboxId }, 'v899 compose config env-extract failed');
+  }
+
+  if (backing.length > 0) {
+    const rc = await checkResourcesForCompose({ serviceCount: backing.length, perServiceMb: input.perServiceMb, logger: input.logger });
+    if (!rc.ok) throw new Error(`Compose-Backing blockiert vom Resource-Guard: ${rc.reason}`);
+    const args = ['compose', '--project-name', input.sandboxId, '-f', composePath, 'up', '-d', '--remove-orphans', ...backing];
+    try {
+      await execFileAsync('docker', args, { cwd: input.worktreePath, timeout: 5 * 60_000, maxBuffer: 10 * 1024 * 1024 });
+    } catch (err) {
+      throw new Error(`docker compose up (backing) failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Netz-Namen vom ersten Backing-Container ermitteln
+  let networkName: string | null = null;
+  if (backing.length > 0) {
+    try {
+      const { stdout: cid } = await execFileAsync('docker', ['compose', '--project-name', input.sandboxId, 'ps', '-q', backing[0]], { cwd: input.worktreePath, timeout: 10_000 });
+      const containerId = cid.trim().split('\n').map(s => s.trim()).filter(Boolean)[0];
+      if (containerId) {
+        const { stdout: net } = await execFileAsync('docker', ['inspect', '--format', '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}', containerId], { timeout: 10_000 });
+        networkName = net.trim().split(/\s+/).filter(Boolean)[0] ?? null;
+      }
+    } catch (err) {
+      input.logger.warn({ err, sandboxId: input.sandboxId }, 'v899 compose network-discovery failed');
+    }
+  }
+  return { networkName, appEnv, backingServices: backing };
+}
+
+/**
+ * v899 — Compose-Projekt (Backing-Services + Netz/Volumes) abräumen. Für den
+ * Hybrid-Teardown: der App-Dev-Container wird separat per `docker rm` entfernt.
+ */
+export async function downComposeProject(
+  sandboxId: string, worktreePath: string, composeFile: string, persistVolumes: boolean, logger: Logger,
+): Promise<void> {
+  const composePath = path.join(worktreePath, composeFile);
+  const args = ['compose', '--project-name', sandboxId, '-f', composePath, 'down', ...(persistVolumes ? [] : ['-v']), '--remove-orphans'];
+  try {
+    await execFileAsync('docker', args, { cwd: worktreePath, timeout: 60_000, maxBuffer: 5 * 1024 * 1024 });
+    logger.info({ sandboxId, persistVolumes }, 'v899 compose backing-services gestoppt');
+  } catch (err) {
+    logger.warn({ err, sandboxId }, 'v899 compose down (backing) fehlgeschlagen — evtl. schon down');
+  }
+}

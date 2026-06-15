@@ -23,6 +23,11 @@ export interface RunContainerInput {
   command: string[];
   /** Restart-Policy: 'no' für sandbox (wir managen Lifecycle selbst). */
   restartPolicy?: 'no' | 'unless-stopped';
+  /** v899 — Docker-Netz, dem der Container beitritt (Hybrid-Compose: App auf dem
+   *  Compose-Netz, damit der DB-Service per Service-Name erreichbar ist). */
+  network?: string;
+  /** v899 — Netz-Alias des Containers (z.B. der Compose-Service-Name). */
+  networkAlias?: string;
   logger: Logger;
 }
 
@@ -39,6 +44,10 @@ export async function runSandboxContainer(input: RunContainerInput): Promise<str
     '--cap-drop', 'ALL',
     '--restart', input.restartPolicy ?? 'no',
   ];
+  if (input.network) {
+    args.push('--network', input.network);
+    if (input.networkAlias) args.push('--network-alias', input.networkAlias);
+  }
   for (const b of input.binds) {
     args.push('-v', `${b.host}:${b.container}${b.readOnly ? ':ro' : ''}`);
   }
