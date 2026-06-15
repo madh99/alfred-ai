@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.5] - 2026-06-15
+
+### Fixed — Konsolidierung ließ Stränge weg (Vollständigkeit erzwingen) (v898.5)
+
+Nach dem Cap-Fix (.898.4) erzeugte die Neuplanung zwar mehr als 10 Phasen, der
+Agent ließ aber **ganze Stränge weg** (z.B. Marktplatz + Tauschbörse von 4
+zusammengeführten Features) — er schrieb einen vollständigen Plan-Doc, emittierte
+am Ende aber ein lückenhaftes JSON-Array. Verschärft durch Re-Runs (planten nur
+noch aus dem bereits reduzierten Bestand).
+
+- **Prompt härtet Vollständigkeit:** explizite „Diese Bausteine MÜSSEN ALLE
+  vorkommen"-Liste (Quell-Milestones + alle in den Plan-Docs genannten); das
+  finale JSON-Array muss JEDE Phase enthalten (keine Zusammenfassung/Auslassung),
+  mit vorangestellter Phasenanzahl als Selbstkontrolle.
+- **Coverage-Heuristik:** wird ein Quell-Baustein im erzeugten Plan nicht erwähnt,
+  erscheint im Live-Output ein ⚠ (Übernahme erfolgt trotzdem, aber sichtbar).
+
 ## [0.19.0-multi-ha.898.4] - 2026-06-15
 
 ### Fixed — Konsolidierungs-/Kombi-Pläne wurden auf 10 Phasen abgeschnitten (v898.4)

@@ -1625,6 +1625,9 @@ ${decLines.join('\n') || '  _keine_'}`;
     const doneOverview = preserved.length > 0
       ? preserved.map(i => `- ${i.title} [${i.status}]`).join('\n')
       : '(keine — alles noch offen)';
+    // v898.5 — Bausteine, die ALLE im Plan vorkommen MÜSSEN (gegen stilles Weglassen
+    // von Strängen). Quell-Milestone-Namen + die Detailpläne nennen weitere.
+    const mustCover = milestones.map(stripFeaturePrefix);
 
     const prompt = [
       `Für das Projekt "${project.name}" ${milestones.length > 1
@@ -1634,19 +1637,23 @@ ${decLines.join('\n') || '  _keine_'}`;
       `BISHERIGE (getrennte) PLANUNG — diese ERSETZT du durch EINEN konsolidierten Plan:`,
       partsOverview,
       docPaths.length > 0
-        ? `\nLIES ZUERST diese bestehenden Plan-Dokumente — sie enthalten die Detailplanung der Einzelteile:\n${docPaths.map(p => `- ${p}`).join('\n')}`
+        ? `\nLIES ZUERST diese bestehenden Plan-Dokumente — sie enthalten die Detailplanung der Einzelteile UND nennen ALLE Bausteine/Stränge des Features:\n${docPaths.map(p => `- ${p}`).join('\n')}`
         : '',
       ``,
       `BEREITS ERLEDIGT (NICHT erneut einplanen — bleibt bestehen):`,
       doneOverview,
       ``,
+      `VOLLSTÄNDIGKEIT — DIESE BAUSTEINE/STRÄNGE MÜSSEN ALLE im Plan vorkommen (KEINEN weglassen, auch wenn der Plan dadurch lang wird):`,
+      `${mustCover.map(m => `- ${m}`).join('\n')}`,
+      docPaths.length > 0 ? `PLUS alle weiteren Bausteine, die die obigen Plan-Dokumente nennen (z.B. unter „welche Teile dieser Plan abdeckt"). Lasse KEINEN davon aus.` : '',
+      ``,
       `VORGEHEN:`,
-      `1. Lies die oben genannten Plan-Dokumente und verschaffe dir einen echten Überblick über die Einzelteile.`,
+      `1. Lies die oben genannten Plan-Dokumente vollständig und liste für dich die ABGEDECKTEN BAUSTEINE auf — es müssen ALLE oben genannten sein.`,
       `2. Analysiere READ-ONLY das BESTEHENDE Projekt (Routen, Datenmodelle, UI, vorhandene Muster), damit sich der Plan SAUBER ins bestehende Projekt einfügt.`,
-      `3. Entwirf das Feature als EINEN kohärenten, DEDUPLIZIERTEN Gesamtplan: das gemeinsame Fundament (Datenmodell/Migration, Backend/Service, Frontend-Grundgerüst) erscheint GENAU EINMAL als frühe Phase; die einzelnen Stränge bauen darauf auf; abschließende Integrations-/Übergangs-Phasen verbinden sie. KEINE Phase doppelt (kein 4× „Datenmodell").`,
+      `3. Entwirf das Feature als EINEN kohärenten, DEDUPLIZIERTEN Gesamtplan: das gemeinsame Fundament (Datenmodell/Migration, Backend/Service, Frontend-Grundgerüst) erscheint GENAU EINMAL als frühe Phase; danach kommt für JEDEN Baustein sein eigener Strang an Phasen; abschließende Integrations-/Übergangs-Phasen verbinden sie. KEINE Phase doppelt (kein 4× „Datenmodell"), aber AUCH KEIN Baustein fehlt.`,
       `4. Schreibe den vollständigen Plan als docs/feature-plan-${slug}.md (Überblick, welche Teile abgedeckt sind, ALLE Phasen, Risiken, betroffene Bereiche) und committe NUR dieses Dokument (docs(plan): …). Kein Push.`,
       ``,
-      `Antworte AM ENDE mit GENAU EINEM JSON-Array — dem VOLLSTÄNDIGEN, deduplizierten Phasenplan in Umsetzungsreihenfolge (NICHT nur Lücken; die oben als erledigt markierten NICHT enthalten):`,
+      `Antworte AM ENDE mit GENAU EINEM JSON-Array — dem VOLLSTÄNDIGEN, deduplizierten Phasenplan in Umsetzungsreihenfolge. PFLICHT: das Array enthält JEDE Phase deines Plans (keine Zusammenfassung, keine Auslassung) und deckt ALLE oben genannten Bausteine ab; die als erledigt markierten NICHT enthalten. Stelle dem Array EINE Zeile „PHASEN: <Anzahl>" voran und liefere danach exakt so viele Einträge:`,
       `[{"title":"Arbeitspaket, max 150 Zeichen","description":"was konkret zu tun ist inkl. betroffener Dateien/Bereiche, 2-4 Sätze"}]`,
     ].filter(Boolean).join('\n');
 
@@ -1669,6 +1676,16 @@ ${decLines.join('\n') || '  _keine_'}`;
           appendOutputLine(liveTaskId, 'system', `⚠️ Kein parsebarer Plan — Bestand UNVERÄNDERT, Plan-Doc liegt ggf. trotzdem in docs/ (Doku-Tab).`);
           this.ownerNotify?.(`⚠️ Konsolidierung (${projectName}: ${name}): kein parsebarer Plan — nichts verändert.`);
           return;
+        }
+        // v898.5 — Coverage-Heuristik: erwähnt der Plan jeden Quell-Baustein? (best-effort,
+        // gegen stilles Weglassen ganzer Stränge — übernimmt trotzdem, warnt nur sichtbar)
+        const planText = phases.map(p => `${p.title} ${p.description}`).join(' ').toLowerCase();
+        const missing = mustCover.filter(strand => {
+          const kw = strand.toLowerCase().split(/[^a-zäöüß0-9]+/).filter(w => w.length >= 4);
+          return kw.length > 0 && !kw.some(w => planText.includes(w));
+        });
+        if (missing.length > 0) {
+          appendOutputLine(liveTaskId, 'system', `⚠️ Möglicherweise nicht abgedeckte Bausteine: ${missing.join(', ')} — bitte Plan-Doc prüfen, ggf. erneut neu planen.`);
         }
         // Erst JETZT (Erfolg) den Bestand umbauen:
         if (this.pushProject) {
