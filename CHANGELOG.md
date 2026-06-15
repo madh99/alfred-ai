@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.4] - 2026-06-15
+
+### Fixed — Konsolidierungs-/Kombi-Pläne wurden auf 10 Phasen abgeschnitten (v898.4)
+
+`parseFeaturePlanPhases` kappte das Phasen-Array **hart bei 10** (`.slice(0,10)`).
+Bei der Konsolidierung von 4 Features erzeugte der Agent einen vollständigen
+deduplizierten Plan (S0–S5, ~24 Phasen) + Plan-Doc, aber nur die ersten 10
+Arbeitspakete wurden als Items angelegt (S0+S1+halbes S2; Marktplatz, Tauschbörse,
+Integration fehlten). Betraf auch `plan_features` (v897, „4–12 Phasen").
+
+- `parseFeaturePlanPhases(output, maxPhases = 10)` — Limit als Parameter.
+- `plan_features` (konsolidiert) und `consolidate_milestones` übergeben **40** →
+  vollständiger Plan. `plan_feature` (Einzel, Prompt 3–8) bleibt beim Default 10.
+- Hinweis: bereits durch den gekappten Lauf entstandene Milestones (z.B. mit nur
+  10 Items) liefern nach erneutem „🧩 Als Feature neu planen" den vollen Plan.
+- Test erweitert (maxPhases-Parameter).
+
 ## [0.19.0-multi-ha.898.3] - 2026-06-15
 
 ### Changed — Milestone-Konsolidierung = echte Neuplanung statt Stapeln (v898.3)

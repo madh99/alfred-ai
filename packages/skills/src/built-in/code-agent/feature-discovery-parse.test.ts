@@ -40,9 +40,19 @@ describe('parseFeaturePlanPhases', () => {
     expect(r[1].description).toContain('[id]');
   });
 
-  it('caps at 10, garbage → []', () => {
+  it('caps at 10 by default, garbage → []', () => {
     const many = Array.from({ length: 12 }, (_, i) => ({ title: `Phase ${i}`, description: 'd' }));
     expect(parseFeaturePlanPhases(JSON.stringify(many))).toHaveLength(10);
     expect(parseFeaturePlanPhases('nope')).toEqual([]);
+  });
+
+  it('v898.4 — maxPhases-Parameter hebt das Limit an (Konsolidierung großer Pläne)', () => {
+    const many = Array.from({ length: 28 }, (_, i) => ({ title: `Phase ${i}`, description: 'd' }));
+    // Default kappt weiterhin bei 10 (plan_feature unverändert)
+    expect(parseFeaturePlanPhases(JSON.stringify(many))).toHaveLength(10);
+    // Höheres Limit (plan_features / consolidate) liefert den vollständigen Plan
+    expect(parseFeaturePlanPhases(JSON.stringify(many), 40)).toHaveLength(28);
+    // unterhalb des Limits unverändert
+    expect(parseFeaturePlanPhases(JSON.stringify(many.slice(0, 6)), 40)).toHaveLength(6);
   });
 });

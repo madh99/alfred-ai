@@ -193,7 +193,7 @@ export function parseFeatureSuggestions(output: string): Array<Omit<FeatureSugge
  * v880 — Parse der Plan-Antwort: Phasen-Array des Umsetzungsplans.
  * Exportiert für Tests.
  */
-export function parseFeaturePlanPhases(output: string): Array<{ title: string; description: string }> {
+export function parseFeaturePlanPhases(output: string, maxPhases = 10): Array<{ title: string; description: string }> {
   for (let start = output.lastIndexOf('['); start >= 0; start = start > 0 ? output.lastIndexOf('[', start - 1) : -1) {
     const end = matchJsonArrayEnd(output, start);
     if (end < 0) continue;
@@ -205,7 +205,7 @@ export function parseFeaturePlanPhases(output: string): Array<{ title: string; d
         typeof (r as Record<string, unknown>).title === 'string' &&
         ((r as Record<string, unknown>).title as string).trim().length > 0);
       if (valid.length === 0) continue;
-      return valid.slice(0, 10).map(r => ({
+      return valid.slice(0, Math.max(1, maxPhases)).map(r => ({
         title: String(r.title).trim().slice(0, 200),
         description: String(r.description ?? '').trim().slice(0, 800),
       }));
@@ -1465,7 +1465,7 @@ ${decLines.join('\n') || '  _keine_'}`;
           this.ownerNotify?.(`❌ Gemeinsamer Feature-Plan fehlgeschlagen (${projectName}: ${name}).`);
           return;
         }
-        const phases = parseFeaturePlanPhases(result.output);
+        const phases = parseFeaturePlanPhases(result.output, 40); // mehrere Facetten → großer Phasenplan
         if (phases.length === 0) {
           appendOutputLine(liveTaskId, 'system', `⚠️ Kein parsebarer Phasen-Plan — Plan-Doc liegt ggf. trotzdem in docs/ (Doku-Tab). Items bitte manuell anlegen.`);
           this.ownerNotify?.(`⚠️ Gemeinsamer Feature-Plan (${projectName}: ${name}): kein parsebarer Phasen-Plan.`);
@@ -1664,7 +1664,7 @@ ${decLines.join('\n') || '  _keine_'}`;
           this.ownerNotify?.(`❌ Konsolidierung fehlgeschlagen (${projectName}: ${name}) — nichts verändert.`);
           return;
         }
-        const phases = parseFeaturePlanPhases(result.output);
+        const phases = parseFeaturePlanPhases(result.output, 40); // Konsolidierung mehrerer Features → großer Phasenplan
         if (phases.length === 0) {
           appendOutputLine(liveTaskId, 'system', `⚠️ Kein parsebarer Plan — Bestand UNVERÄNDERT, Plan-Doc liegt ggf. trotzdem in docs/ (Doku-Tab).`);
           this.ownerNotify?.(`⚠️ Konsolidierung (${projectName}: ${name}): kein parsebarer Plan — nichts verändert.`);
