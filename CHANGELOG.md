@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.898.2] - 2026-06-15
+
+### Fixed — Milestone-Konsolidierung & Implementieren: Live-Output sichtbar (v898.2)
+
+Der optionale Plan-Lauf der Konsolidierung lief korrekt durch (CLI-Run, Plan-Doc-
+Commit, Lücken-Items), war in der Roadmap-Ansicht aber **unsichtbar**: die
+zurückgegebene `liveTaskId` wurde verworfen, es gab nur ein sofortiges `alert()`
+(vor Lauf-Ende) und eine Telegram-Notify. Behoben:
+
+- Roadmap-Ansicht zeigt den Lauf jetzt im wiederverwendbaren `CodeRunLivePanel`
+  (Live-Output via SSE, ✅/❌-Abschlusserkennung → Auto-Reload der Roadmap).
+- Gilt auch für **„⚡ Implementieren"** (`implementMilestone`): der Project-Agent-
+  Lauf wird live angezeigt statt nur per Alert quittiert.
+- Nur Re-Tag ohne Plan-Lauf → weiterhin kurzer Hinweis-Alert.
+
 ## [0.19.0-multi-ha.898.1] - 2026-06-15
 
 ### Improved — Milestone-Konsolidierung: durchgehende Verkettung + CLI-Picker (v898.1)

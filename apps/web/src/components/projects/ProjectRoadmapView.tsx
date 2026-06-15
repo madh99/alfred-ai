@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import type { ProjectOpenItem } from '@/lib/alfred-client';
+import { CodeRunLivePanel } from './CodeRunLivePanel';
 
 interface Props {
   projectId: string;
@@ -40,6 +41,8 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
   // v898 — CLI-Picker für den optionalen Plan-Lauf ('' = Automatisch/Projekt-Strategie)
   const [agents, setAgents] = useState<string[]>([]);
   const [consolidateAgent, setConsolidateAgent] = useState('');
+  // v898.2 — Live-Output des Konsolidierungs-Plan-Laufs (vorher unsichtbar)
+  const [runTaskId, setRunTaskId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -71,8 +74,10 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
     setImplementing(milestone);
     try {
       const r = await client.implementMilestone(projectId, milestone);
-      if (r.ok) {
-        alert(`▶ Project-Agent gestartet (${r.itemCount} Items)\nTask: ${r.taskId?.slice(0, 8) ?? '?'}`);
+      if (r.ok && r.taskId) {
+        setRunTaskId(r.taskId); // v898.2 — Live-Output statt blindem Alert
+      } else if (r.ok) {
+        alert(`▶ Project-Agent gestartet (${r.itemCount} Items).`);
       } else {
         alert(`Fehler: ${r.error}`);
       }
@@ -107,8 +112,13 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
       if (r.ok) {
         setSelected(new Set());
         setCombineName('');
-        alert(`🧩 Zusammengeführt zu „${r.milestone}"\n${r.retagged} Items umgehängt${r.planned ? '\nKonsolidierter Plan + Lücken-Analyse läuft im Hintergrund.' : ''}`);
         load();
+        if (r.planned && r.liveTaskId) {
+          // Plan-Lauf läuft im Hintergrund → Live-Output anzeigen (statt blindem Alert)
+          setRunTaskId(r.liveTaskId);
+        } else {
+          alert(`🧩 ${r.retagged} Items zu „${r.milestone}" zusammengeführt (nur umgehängt — kein Plan-Lauf).`);
+        }
       } else {
         alert(`Fehler: ${r.reason}`);
       }
@@ -148,6 +158,18 @@ export function ProjectRoadmapView({ projectId, projectName }: Props) {
         </button>
         <button onClick={load} disabled={loading} className="text-[10px] text-gray-500 hover:text-blue-400 px-2 py-0.5 rounded border border-[#1f1f1f]">↻</button>
       </div>
+
+      {/* v898.2 — Live-Output des Konsolidierungs-Plan-Laufs (Plan-Doc + Lücken-Analyse) */}
+      {runTaskId && client && (
+        <div className="mb-3">
+          <CodeRunLivePanel
+            client={client}
+            taskId={runTaskId}
+            onEnded={() => load()}
+            onClose={() => setRunTaskId(null)}
+          />
+        </div>
+      )}
 
       {loading && <div className="text-xs text-gray-500 italic">Lade…</div>}
       {!loading && sortedMilestones.length === 0 && (
