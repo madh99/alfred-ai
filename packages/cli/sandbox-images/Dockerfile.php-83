@@ -1,0 +1,20 @@
+# v901 — Alfred Sandbox Image: PHP 8.3 CLI + Composer (Laravel / generic PHP)
+# Non-root user UID 1000 (passt zum Worktree-Bind-Mount des Agent-Users).
+FROM php:8.3-cli
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git curl bash dumb-init unzip \
+      libpq-dev libzip-dev libonig-dev \
+  && docker-php-ext-install pdo pdo_pgsql pdo_mysql mysqli mbstring zip \
+  && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd -m -u 1000 -s /bin/bash sandbox \
+  && mkdir -p /workspace && chown -R sandbox:sandbox /workspace
+
+WORKDIR /workspace
+USER sandbox
+
+ENV PATH=/home/sandbox/.composer/vendor/bin:$PATH
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["bash"]

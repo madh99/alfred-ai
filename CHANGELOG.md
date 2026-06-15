@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.901] - 2026-06-15
+
+### Added — Sandbox Multi-Stack: Python/PHP/Ruby/Go (v901, Phase 3)
+
+Die Sandbox lief bisher nur für Node-Stacks (`project-detect` + Image waren
+node-only). Django/PHP/Rails/Go/FastAPI → `unknown` → keine Preview. Jetzt
+unterstützt die Sandbox alle gängigen Backends/Frontends (User-Wahl: eigene
+Runtime-Images statt offizieller Base-Images).
+
+- **Eigene Runtime-Images** (`packages/cli/sandbox-images/`): `Dockerfile.python-312`,
+  `Dockerfile.php-83` (+Composer+pdo-Extensions), `Dockerfile.ruby-33`,
+  `Dockerfile.go-122` — je non-root (UID 1000, passt zum Worktree-Bind-Mount),
+  git/curl/dumb-init, DB-Client-Libs. `ensureImage` baut sie beim ersten Lauf.
+- **Detection** (`project-detect`): `python-django` (manage.py), `python-fastapi`
+  (requirements/pyproject + fastapi/uvicorn), `python-generic`, `php-laravel`
+  (artisan), `php-generic` (composer.json/index.php), `ruby-rails` (Gemfile+config.ru),
+  `go` (go.mod) — je mit `image` + `setupCommand` (pip/composer/bundle/go) +
+  `devCommand` + `internalPort` + `dbMigrateCommand`. Node-Frameworks behalten Vorrang.
+- **Wiring:** Single-Container **und** Hybrid-Compose nutzen jetzt `detection.image`
+  + `detection.setupCommand` + `detection.dbMigrateCommand` (statt hart Node/npm).
+  Node-Verhalten unverändert (Defaults greifen). 6 neue Detection-Tests.
+
+(Hinweis: die neuen Images bauen beim ersten Sandbox-Lauf je Runtime — erster Start
+dauert entsprechend; Live-Validierung pro Stack empfohlen.)
+
 ## [0.19.0-multi-ha.900] - 2026-06-15
 
 ### Added — Wizard: Runtime/Deploy-Ziel + Container-Fundament für den ersten Lauf (v900, Phase 1/2)

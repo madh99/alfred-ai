@@ -3,7 +3,13 @@ import type { AsyncDbAdapter, DbRow } from '../db-adapter.js';
 
 export type SandboxStatus = 'creating' | 'running' | 'paused' | 'merging' | 'discarded' | 'failed' | 'cleaned';
 export type SandboxResult = 'merged_to_main' | 'merged_via_pr' | 'discarded' | 'failed' | null;
-export type SandboxProjectType = 'node-vite' | 'node-next' | 'node-astro' | 'node-remix' | 'node-cra' | 'node-generic' | 'unknown';
+export type SandboxProjectType =
+  | 'node-vite' | 'node-next' | 'node-astro' | 'node-remix' | 'node-cra' | 'node-generic'
+  // v901 — Multi-Stack-Sandbox: Python/PHP/Ruby/Go
+  | 'python-django' | 'python-fastapi' | 'python-generic'
+  | 'php-laravel' | 'php-generic'
+  | 'ruby-rails' | 'go'
+  | 'unknown';
 
 export interface Sandbox {
   id: string;

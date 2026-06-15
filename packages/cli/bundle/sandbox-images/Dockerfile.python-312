@@ -1,0 +1,21 @@
+# v901 — Alfred Sandbox Image: Python 3.12 (Django / FastAPI / Flask)
+# Non-root user UID 1000 (passt zum Worktree-Bind-Mount des Agent-Users).
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git curl bash dumb-init build-essential pkg-config \
+      libpq-dev default-libmysqlclient-dev \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd -m -u 1000 -s /bin/bash sandbox \
+  && mkdir -p /workspace && chown -R sandbox:sandbox /workspace
+
+WORKDIR /workspace
+USER sandbox
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/home/sandbox/.local/bin:$PATH
+
+# Default-command wird von docker run überschrieben (sh -c "<setup> && <dev>")
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["bash"]

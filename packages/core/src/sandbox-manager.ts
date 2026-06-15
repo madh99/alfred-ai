@@ -296,7 +296,8 @@ export class SandboxManager {
     }
 
     // Phase 1c — DB-Insert
-    const image = this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
+    // v901 — Stack-Image aus der Detection (python/php/ruby/go), sonst Node-Default.
+    const image = detection.image ?? this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
     const sandbox = await this.deps.repo.create({
       projectId: input.projectId,
       sessionId: input.sessionId ?? null,
@@ -415,15 +416,23 @@ export class SandboxManager {
 
       // App als Dev-Container (wie Single-Container) auf dem Compose-Netz
       await this.deps.repo.updateStatus(opts.sandboxId, 'creating', 'compose-stack: App-Dev-Container (next dev / HMR) startet');
-      const image = this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
+      // v901 — Stack-Image aus Detection (python/php/ruby/go), sonst Node-Default.
+      const image = opts.detection.image ?? this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
       await ensureImage({ image, dockerfilesDir: this.dockerfilesDir, logger: this.deps.logger });
       const projectEnvs = await this.loadProjectEnvironments(opts.projectId, 'sandbox');
 
       const pm = opts.detection.diagnostics.packageManager;
       const devCmd = opts.detection.devCommand.join(' ');
+      // v901 — Setup stack-spezifisch; sonst Node-Default.
+      const setupCmd = (opts.detection.setupCommand && opts.detection.setupCommand.length > 0)
+        ? opts.detection.setupCommand.join(' && ')
+        : `${pm} install && ${pm} rebuild`;
+      // DB-Migration vor dev: Stack-Command aus Detection, sonst Node+Prisma-Heuristik.
       const usesPrisma = existsSync(path.join(opts.worktreePath, 'prisma', 'schema.prisma'));
-      const dbPush = usesPrisma ? ' && npx prisma db push --skip-generate' : '';
-      const fullCmd = `${pm} install && ${pm} rebuild${dbPush} && exec ${devCmd}`;
+      const migrate = opts.detection.dbMigrateCommand
+        ? ` && ${opts.detection.dbMigrateCommand}`
+        : (usesPrisma ? ' && npx prisma db push --skip-generate' : '');
+      const fullCmd = `${setupCmd}${migrate} && exec ${devCmd}`;
 
       const memoryMb = this.deps.config.memoryMb ?? 6144;
       const cpus = this.deps.config.cpus ?? 2;
@@ -524,9 +533,12 @@ export class SandboxManager {
       // `pnpm rebuild` triggert Postinstall-Scripts → prebuild-Downloads für Alpine/musl.
       const pm = detection.diagnostics.packageManager;
       const installCmd = `${pm} install`;
-      const rebuildCmd = `${pm} rebuild`;
       const devCmd = detection.devCommand.join(' ');
-      const fullCmd = `${installCmd} && ${rebuildCmd} && exec ${devCmd}`;
+      // v901 — Setup stack-spezifisch (pip/composer/bundle/go), sonst Node-Default.
+      const setupCmd = (detection.setupCommand && detection.setupCommand.length > 0)
+        ? detection.setupCommand.join(' && ')
+        : `${pm} install && ${pm} rebuild`;
+      const fullCmd = `${setupCmd} && exec ${devCmd}`;
 
       // v726 — Project-ENVs + Default-ENVs zusammenführen. Defaults dürfen NICHT von Project überschrieben werden? Doch — Project hat Vorrang (user-controlled).
       // v837 — Resource-Limits + NODE_OPTIONS aus Config. Hardcoded 2GB war zu wenig

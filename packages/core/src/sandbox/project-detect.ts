@@ -30,6 +30,15 @@ export interface ProjectDetection {
   hasComposeFile: boolean;
   /** v849 — Pfad zur erkannten Compose-Datei (relativ zum worktreePath), falls vorhanden. */
   composeFile?: string;
+  /** v901 — Sandbox-Image für diesen Stack (z.B. 'alfred-sandbox:python-312').
+   *  Undefined → Node-Default ('alfred-sandbox:node-22'). */
+  image?: string;
+  /** v901 — Setup/Install-Schritte VOR dem dev-Command (z.B. ['pip install -r requirements.txt']).
+   *  Undefined → Node-Default ('<pm> install && <pm> rebuild'). */
+  setupCommand?: string[];
+  /** v901 — Migrations-/Schema-Command, der bei vorhandener DB (Hybrid-Compose) VOR dem
+   *  dev-Server läuft (z.B. 'python manage.py migrate'). Node+Prisma wird separat erkannt. */
+  dbMigrateCommand?: string;
 }
 
 /**
@@ -49,6 +58,97 @@ function detectComposeFile(worktreePath: string): string | undefined {
   return undefined;
 }
 
+/**
+ * v901 — Nicht-Node-Stacks (Python/PHP/Ruby/Go) per Marker-Datei erkennen. Liefert
+ * Image + Setup/Dev/Migrate-Commands + Port. Node-Frameworks haben Vorrang (werden
+ * in detectProjectType zuerst geprüft); dies greift, wenn kein package.json / kein
+ * Node-dev-Script vorhanden ist.
+ */
+type NonNodeDetection = Omit<ProjectDetection, 'hasComposeFile' | 'composeFile'>;
+function readIfExists(worktreePath: string, file: string): string {
+  try { return existsSync(path.join(worktreePath, file)) ? readFileSync(path.join(worktreePath, file), 'utf-8') : ''; }
+  catch { return ''; }
+}
+function detectNonNode(worktreePath: string): NonNodeDetection | null {
+  const has = (p: string) => existsSync(path.join(worktreePath, p));
+  // Django (manage.py)
+  if (has('manage.py')) {
+    return {
+      type: 'python-django', image: 'alfred-sandbox:python-312',
+      setupCommand: ['pip install -r requirements.txt'],
+      dbMigrateCommand: 'python manage.py migrate --noinput',
+      devCommand: ['python', 'manage.py', 'runserver', '0.0.0.0:8000'],
+      internalPort: 8000, hasDevServer: true,
+      diagnostics: { packageManager: 'npm', framework: 'django' },
+    };
+  }
+  // Rails (Gemfile + config.ru/bin/rails)
+  if (has('Gemfile') && (has('config.ru') || has('bin/rails'))) {
+    return {
+      type: 'ruby-rails', image: 'alfred-sandbox:ruby-33',
+      setupCommand: ['bundle install'],
+      dbMigrateCommand: 'bundle exec rails db:prepare',
+      devCommand: ['bundle', 'exec', 'rails', 'server', '-b', '0.0.0.0', '-p', '3000'],
+      internalPort: 3000, hasDevServer: true,
+      diagnostics: { packageManager: 'npm', framework: 'rails' },
+    };
+  }
+  // Laravel (artisan)
+  if (has('artisan')) {
+    return {
+      type: 'php-laravel', image: 'alfred-sandbox:php-83',
+      setupCommand: ['composer install --no-interaction'],
+      dbMigrateCommand: 'php artisan migrate --force',
+      devCommand: ['php', 'artisan', 'serve', '--host', '0.0.0.0', '--port', '8000'],
+      internalPort: 8000, hasDevServer: true,
+      diagnostics: { packageManager: 'npm', framework: 'laravel' },
+    };
+  }
+  // FastAPI (requirements/pyproject mit fastapi/uvicorn)
+  const pyDeps = readIfExists(worktreePath, 'requirements.txt') + '\n' + readIfExists(worktreePath, 'pyproject.toml');
+  if ((has('requirements.txt') || has('pyproject.toml')) && /fastapi|uvicorn/i.test(pyDeps)) {
+    return {
+      type: 'python-fastapi', image: 'alfred-sandbox:python-312',
+      setupCommand: ['pip install -r requirements.txt'],
+      devCommand: ['uvicorn', 'main:app', '--reload', '--host', '0.0.0.0', '--port', '8000'],
+      internalPort: 8000, hasDevServer: true,
+      diagnostics: { packageManager: 'npm', framework: 'fastapi' },
+    };
+  }
+  // Generic Python
+  if (has('requirements.txt') || has('pyproject.toml')) {
+    return {
+      type: 'python-generic', image: 'alfred-sandbox:python-312',
+      setupCommand: ['pip install -r requirements.txt || pip install -e .'],
+      devCommand: ['python', 'main.py'],
+      internalPort: 8000, hasDevServer: has('main.py'),
+      diagnostics: { packageManager: 'npm', framework: 'python' },
+    };
+  }
+  // Generic PHP (composer.json / index.php ohne artisan)
+  if (has('composer.json') || has('public/index.php') || has('index.php')) {
+    const docroot = has('public/index.php') ? 'public' : '.';
+    return {
+      type: 'php-generic', image: 'alfred-sandbox:php-83',
+      setupCommand: has('composer.json') ? ['composer install --no-interaction'] : [],
+      devCommand: ['php', '-S', '0.0.0.0:8000', '-t', docroot],
+      internalPort: 8000, hasDevServer: true,
+      diagnostics: { packageManager: 'npm', framework: 'php' },
+    };
+  }
+  // Go
+  if (has('go.mod')) {
+    return {
+      type: 'go', image: 'alfred-sandbox:go-122',
+      setupCommand: ['go mod download'],
+      devCommand: ['go', 'run', '.'],
+      internalPort: 8080, hasDevServer: true,
+      diagnostics: { packageManager: 'npm', framework: 'go' },
+    };
+  }
+  return null;
+}
+
 export function detectProjectType(worktreePath: string): ProjectDetection {
   // v849 — Compose-Detection läuft unabhängig vom package.json-Check damit
   // auch reine Service-Stacks (z.B. Postgres + Adminer ohne Node) erkannt werden.
@@ -57,6 +157,9 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
 
   const pkgPath = path.join(worktreePath, 'package.json');
   if (!existsSync(pkgPath)) {
+    // v901 — kein package.json → Nicht-Node-Stack prüfen (Django/PHP/Rails/Go)
+    const nn = detectNonNode(worktreePath);
+    if (nn) return { ...nn, hasComposeFile, composeFile };
     return {
       type: 'unknown',
       devCommand: [],
@@ -195,6 +298,11 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
       composeFile,
     };
   }
+
+  // v901 — package.json ohne dev/start-Script → könnte Tooling für einen Nicht-Node-
+  // Stack sein (z.B. Vite-Frontend-Build neben Django-Backend). Nicht-Node prüfen.
+  const nn = detectNonNode(worktreePath);
+  if (nn) return { ...nn, hasComposeFile, composeFile };
 
   // Kein dev-Script → kein preview-Container (sandbox-only Mode wäre noch ok)
   return {

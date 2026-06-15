@@ -1,0 +1,18 @@
+# v901 — Alfred Sandbox Image: Go 1.22 (generic Go web services)
+# Non-root user UID 1000 (passt zum Worktree-Bind-Mount des Agent-Users).
+FROM golang:1.22-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git curl bash dumb-init \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd -m -u 1000 -s /bin/bash sandbox \
+  && mkdir -p /workspace /go/pkg /go/bin \
+  && chown -R sandbox:sandbox /workspace /go
+
+WORKDIR /workspace
+USER sandbox
+
+ENV GOFLAGS=-buildvcs=false
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["bash"]
