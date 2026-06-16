@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.904] - 2026-06-16
+
+### Fixed — codex „at capacity" als transienten API-Fehler retryen (v904)
+
+Ein codex-Lauf brach in Phase 1 ab, weil OpenAI das Modell serverseitig mit
+„at capacity" ablehnte (Modell-Überlast, NICHT das Account-Rate-Limit — das lag
+laut Rollout bei 7-9 %). Die Transient-Erkennung (`isTransientApiFailure`, v864)
+kannte bisher nur Anthropics `529`/`overloaded`/Rate-Limit, also lief der codex-
+Fall direkt auf `failed` statt in den vorhandenen Retry (2×, 90s/180s).
+
+- `isTransientApiFailure` matcht jetzt zusätzlich `at capacity`, `high demand`,
+  `service unavailable`/`temporarily unavailable`. Damit greift der bestehende
+  Transient-Retry des Project-Agents auch für codex.
+- `\bat capacity\b` ist bewusst eng gefasst und matcht NICHT das Wort „capacity"
+  in Prompt-/Ziel-Texten (z.B. ein Datenmodell-Feld `capacity`).
+
 ## [0.19.0-multi-ha.903] - 2026-06-16
 
 ### Fixed — codex: Modell in der CLI-Usage-Statistik (v903)
