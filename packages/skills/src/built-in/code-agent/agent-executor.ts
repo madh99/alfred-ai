@@ -362,12 +362,12 @@ export interface AgentExecutionResult {
  * landet der Fehler („API Error: 529 …"). Bewusst NICHT matchen: 401/403
  * (Auth — permanent), "command not found" (Binary — permanent).
  *
- * v904 — codex/OpenAI meldet serverseitige Modell-Überlast als „at capacity"
- * (auch „high demand"/„service unavailable") OHNE 5xx-Code im CLI-Text. Das ist
- * — wie Anthropics 529 — transient und unabhängig vom Account-Rate-Limit (Vorfall
- * codex-Session 84bb67d3, 16.06.: rate_limits.used_percent 7-9 %, trotzdem
- * „at capacity"). Daher zusätzlich matchen. `\bat capacity\b` matcht bewusst
- * NICHT das Wort „capacity" in Prompt-Texten (z.B. Datenmodell-Feld „capacity").
+ * v905 — codex „Selected model is at capacity. Please try a different model."
+ * wird bewusst NICHT als transient behandelt (v904 zurückgenommen): das ist ein
+ * Modell-wechseln-Signal, kein warten-und-wiederholen. Ein Retry träfe dasselbe
+ * dauerhaft volle Modell erneut → 2 zusätzliche, ebenso scheiternde Läufe +
+ * 90s/180s Wartezeit ohne Erfolgschance. Echte transiente Überlast (Anthropic
+ * 529/overloaded, 429, Netz) bleibt abgedeckt.
  */
 export function isTransientApiFailure(result: Pick<AgentExecutionResult, 'stdout' | 'stderr' | 'exitCode'>): boolean {
   if (result.exitCode === 0) return false;
@@ -376,7 +376,6 @@ export function isTransientApiFailure(result: Pick<AgentExecutionResult, 'stdout
     /API Error:?\s*5\d\d/i.test(tail) ||
     /API Error:?\s*429/i.test(tail) ||
     /overloaded_error|"overloaded"|\bOverloaded\b/i.test(tail) ||
-    /\bat capacity\b|high demand|service unavailable|temporarily unavailable/i.test(tail) ||
     /rate.?limit(ed|s)?\b|too many requests/i.test(tail) ||
     /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|fetch failed|network error/i.test(tail)
   );

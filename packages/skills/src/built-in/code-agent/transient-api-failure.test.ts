@@ -50,16 +50,12 @@ describe('isTransientApiFailure', () => {
     })).toBe(false);
   });
 
-  it('v904 — erkennt codex „at capacity" (serverseitige Überlast)', () => {
-    expect(isTransientApiFailure({ exitCode: 1, stdout: '', stderr: 'stream error: the model is at capacity, please try again later' })).toBe(true);
-    expect(isTransientApiFailure({ exitCode: 1, stdout: "We're currently experiencing high demand.", stderr: '' })).toBe(true);
-    expect(isTransientApiFailure({ exitCode: 1, stdout: '', stderr: '503 Service Unavailable' })).toBe(true);
-  });
-
-  it('v904 — das Wort „capacity" im Prompt/Output ist KEIN transient-failure', () => {
+  it('v905 — codex „at capacity / try a different model" ist KEIN Retry-Fall (v904 zurückgenommen)', () => {
+    // Modell-wechseln-Signal, kein warten-und-wiederholen: Retry träfe dasselbe
+    // dauerhaft volle Modell erneut.
     expect(isTransientApiFailure({
       exitCode: 1,
-      stdout: 'Datenmodell-Feld: capacity optional, ageRestriction optional — Build rot.',
+      stdout: 'Selected model is at capacity. Please try a different model.',
       stderr: '',
     })).toBe(false);
   });

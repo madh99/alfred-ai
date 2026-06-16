@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.905] - 2026-06-16
+
+### Reverted — codex „at capacity"-Retry (v904 zurückgenommen)
+
+v904 hatte codex „at capacity" als transienten Fehler eingestuft und in den
+Retry geschickt. Analyse der realen Läufe ergab: die codex-Meldung lautet
+„Selected model is at capacity. **Please try a different model.**" — ein
+Modell-wechseln-Signal, kein warten-und-wiederholen. Das betroffene Modell
+(`gpt-5.5`, codex-Default als root) ist tagsüber dauerhaft voll; ein Retry trifft
+es erneut → 2 zusätzliche, ebenso scheiternde Läufe plus 90s/180s Wartezeit, ohne
+Erfolgschance. Der Retry machte den Fehlschlag also nur langsamer und teurer.
+
+- `isTransientApiFailure` matcht „at capacity"/„high demand"/„service
+  unavailable" nicht mehr — zurück auf die bewährte v864-Logik (Anthropic
+  529/overloaded, 429, Netzwerkfehler bleiben abgedeckt).
+- Test stellt sicher, dass „Selected model is at capacity …" NICHT retried wird.
+- v903 (Modell-Anzeige in der CLI-Usage) bleibt unverändert.
+
 ## [0.19.0-multi-ha.904] - 2026-06-16
 
 ### Fixed — codex „at capacity" als transienten API-Fehler retryen (v904)
