@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.902] - 2026-06-16
+
+### Fixed — Compose-Sandbox: Host-Port-Konflikt der Backing-Services (v902)
+
+Eine Compose-Sandbox (Hybrid-Dev) startet die Backing-Services (z.B. PostgreSQL)
+über die `docker-compose.yml` des Projekts. Published diese — wie üblich — feste
+Host-Ports (`db: "5432:5432"`), kollidierte der Start mit bereits belegten Ports
+(Infra, eine zweite Sandbox, ein paralleler Deploy-Verify) und brach mit
+`Bind for 0.0.0.0:5432 failed: port is already allocated` ab — die Sandbox ließ
+sich nicht mehr starten.
+
+- **Host-Port-Strip-Override:** `startComposeBackingServices` generiert nun einen
+  Sandbox-Override (`ports: !reset []`) für alle Backing-Services und hängt ihn an
+  den `docker compose up`. Die publizierten Host-Ports entfallen in der Sandbox;
+  der App-Dev-Container erreicht die Dienste weiterhin per Service-Namen
+  (`db:5432`) über das Compose-Netz.
+- Die `docker-compose.yml` des Projekts bleibt unangetastet — ein regulärer
+  Deploy nutzt sie ohne diesen Override und behält seine Host-Ports.
+- Mehrere Compose-Sandboxen desselben Projekts laufen damit konfliktfrei parallel.
+
 ## [0.19.0-multi-ha.901] - 2026-06-15
 
 ### Added — Sandbox Multi-Stack: Python/PHP/Ruby/Go (v901, Phase 3)

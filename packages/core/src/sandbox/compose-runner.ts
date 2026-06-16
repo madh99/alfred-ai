@@ -124,6 +124,25 @@ function generateOverrideFile(input: ComposeStartInput): string {
 }
 
 /**
+ * v902 — Override-File, das die publizierten Host-Ports der Backing-Services
+ * entfernt (`ports: !reset []`). Compose merged `ports` sonst additiv, d.h. ein
+ * leeres `ports: []` würde die Originale NICHT überschreiben — nur der `!reset`-Tag
+ * (Compose Spec ≥ 2.24) setzt die Liste tatsächlich zurück. Wird als YAML (nicht
+ * JSON) geschrieben, da JSON den `!reset`-Tag nicht ausdrücken kann.
+ */
+function generateBackingPortStripOverride(stateDir: string, backingServices: string[]): string {
+  const lines: string[] = ['services:'];
+  for (const svc of backingServices) {
+    lines.push(`  ${svc}:`);
+    lines.push('    ports: !reset []');
+  }
+  const filePath = path.join(stateDir, 'sandbox-backing-override.yml');
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(filePath, lines.join('\n') + '\n');
+  return filePath;
+}
+
+/**
  * Startet den Compose-Stack. Wirft bei Resource-Mangel oder Compose-Fehler.
  */
 export async function startComposeStack(input: ComposeStartInput): Promise<ComposeStartResult> {
@@ -298,6 +317,8 @@ export async function startComposeBackingServices(input: {
   worktreePath: string;
   composeFile: string;
   primaryService: string;
+  /** Pfad zum Sandbox-State-Dir (außerhalb des Repos) — für den Port-Strip-Override. */
+  sandboxStateDir: string;
   perServiceMb?: number;
   logger: Logger;
 }): Promise<{ networkName: string | null; appEnv: Record<string, string>; backingServices: string[] }> {
@@ -326,7 +347,14 @@ export async function startComposeBackingServices(input: {
   if (backing.length > 0) {
     const rc = await checkResourcesForCompose({ serviceCount: backing.length, perServiceMb: input.perServiceMb, logger: input.logger });
     if (!rc.ok) throw new Error(`Compose-Backing blockiert vom Resource-Guard: ${rc.reason}`);
-    const args = ['compose', '--project-name', input.sandboxId, '-f', composePath, 'up', '-d', '--remove-orphans', ...backing];
+    // v902 — Host-Port-Strip-Override: Die User-compose published für Backing-Services
+    // (z.B. db: 5432:5432) oft feste Host-Ports. In der Sandbox kollidiert das mit der
+    // Infra / einer zweiten Sandbox / einem Deploy-Verify ("port is already allocated").
+    // Der App-Dev-Container erreicht die DB ohnehin per Service-Namen (db:5432) über das
+    // Compose-Netz — der Host-Publish ist hier unnötig. `ports: !reset []` entfernt ihn,
+    // ohne die User-compose.yml anzufassen (Deploy nutzt sie ohne diesen Override).
+    const portStripOverride = generateBackingPortStripOverride(input.sandboxStateDir, backing);
+    const args = ['compose', '--project-name', input.sandboxId, '-f', composePath, '-f', portStripOverride, 'up', '-d', '--remove-orphans', ...backing];
     try {
       await execFileAsync('docker', args, { cwd: input.worktreePath, timeout: 5 * 60_000, maxBuffer: 10 * 1024 * 1024 });
     } catch (err) {

@@ -400,7 +400,7 @@ export class SandboxManager {
       // Nur Backing-Services hochfahren + Netz-Name + App-Env (DATABASE_URL=@db) ermitteln
       const { networkName, appEnv, backingServices } = await startComposeBackingServices({
         sandboxId: opts.sandboxId, worktreePath: opts.worktreePath, composeFile: opts.composeFile,
-        primaryService, perServiceMb: this.deps.config.memoryMb, logger: this.deps.logger,
+        primaryService, sandboxStateDir, perServiceMb: this.deps.config.memoryMb, logger: this.deps.logger,
       });
       // Teardown-Marker (Hybrid)
       try {
