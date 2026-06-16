@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.903] - 2026-06-16
+
+### Fixed — codex: Modell in der CLI-Usage-Statistik (v903)
+
+codex-Läufe wurden in der CLI-Usage-Statistik ohne Modell geführt („?" bzw.
+„(unbekannt)"). Grund: codex `exec --json` gibt das Modell — anders als claude —
+nirgends im Stream aus (nur `usage` im `turn.completed`). Damit blieb die
+`model`-Spalte leer.
+
+- **Modell aus der Rollout-Session lesen:** `executeAgent` trägt das Modell für
+  codex jetzt aus der zum Lauf gehörenden Rollout-Session
+  (`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, `turn_context.payload.model`)
+  nach — analog zum vibe-Mechanismus (v895). CODEX_HOME-Auflösung wie codex
+  (env > `~/.codex` des Run-Users). Greift nur, wenn der Stream kein Modell
+  lieferte; claude/vibe bleiben unberührt.
+- Wirkt für neue Läufe; bereits erfasste Alt-Läufe bleiben ohne Modell.
+
 ## [0.19.0-multi-ha.902] - 2026-06-16
 
 ### Fixed — Compose-Sandbox: Host-Port-Konflikt der Backing-Services (v902)

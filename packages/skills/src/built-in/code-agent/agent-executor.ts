@@ -240,6 +240,60 @@ export function parseVibeMetaStats(meta: Record<string, unknown>): { model?: str
 }
 
 /**
+ * v903 — codex liefert das Modell NICHT im `--json`-Stream (nur `usage` im
+ * `turn.completed`). Es steht in der Rollout-Session
+ * (`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`) im `turn_context`-Event als
+ * `payload.model`. Reine, testbare Extraktion: erste Zeile mit `payload.model`.
+ */
+export function parseCodexRolloutModel(content: string): string | undefined {
+  for (const line of content.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    let obj: Record<string, unknown>;
+    try { obj = JSON.parse(s) as Record<string, unknown>; } catch { continue; }
+    const payload = obj.payload as Record<string, unknown> | undefined;
+    if (payload && typeof payload.model === 'string' && payload.model.length > 0) return payload.model;
+  }
+  return undefined;
+}
+
+/**
+ * v903 — Lokalisiert die zu DIESEM codex-Lauf gehörende Rollout-Session
+ * (neueste `rollout-*.jsonl`, deren mtime um/nach dem Run-Start liegt) und liest
+ * das Modell. Best-effort: fehlt die Datei (oder anderes OS) → undefined. Alfred
+ * läuft als root und darf die Session-Files lesen. CODEX_HOME-Auflösung wie codex:
+ * env > ~/.codex des Run-Users (sudo -u <user> → /home/<user>, sonst Prozess-Home).
+ */
+function readCodexSessionModel(def: CodeAgentDefinitionConfig, startTimeMs: number): string | undefined {
+  try {
+    const runAsUser = (def.command === 'sudo' && Array.isArray(def.argsTemplate) && def.argsTemplate[0] === '-u')
+      ? def.argsTemplate[1] : undefined;
+    const envHome = def.env && typeof def.env.CODEX_HOME === 'string' ? def.env.CODEX_HOME : undefined;
+    const codexHome = envHome ? expandHome(envHome) : path.join(runAsUser ? `/home/${runAsUser}` : os.homedir(), '.codex');
+    const sessRoot = path.join(codexHome, 'sessions');
+    if (!fs.existsSync(sessRoot)) return undefined;
+    // codex legt rollout-Files in einem YYYY/MM/DD-Baum ab → rekursiv sammeln.
+    const files = (fs.readdirSync(sessRoot, { recursive: true }) as string[])
+      .map(String)
+      .filter((p) => p.endsWith('.jsonl') && path.basename(p).startsWith('rollout-'))
+      .map((rel) => { const full = path.join(sessRoot, rel); try { return { full, mt: fs.statSync(full).mtimeMs }; } catch { return null; } })
+      .filter((x): x is { full: string; mt: number } => x !== null)
+      .sort((a, b) => b.mt - a.mt);
+    for (const { full, mt } of files.slice(0, 8)) {
+      // Session muss um/nach dem Run-Start geschrieben sein (10s Slack für Uhren-Skew).
+      if (mt < startTimeMs - 10_000) break;
+      let content: string;
+      try { content = fs.readFileSync(full, 'utf8'); } catch { continue; }
+      const model = parseCodexRolloutModel(content);
+      if (model) return model;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * v895 — Lokalisiert die zu DIESEM vibe-Lauf gehörende Session-`meta.json`
  * (neueste Session, deren `start_time` um/nach dem Run-Start liegt) und
  * extrahiert usage/model. Best-effort: fehlt die Datei (oder anderes OS) → null.
@@ -772,6 +826,12 @@ export async function executeAgent(
           if (!finalModel && m.model) finalModel = m.model;
           if (!finalUsage && m.usage) finalUsage = m.usage;
         }
+      }
+      // v903 — codex liefert das Modell nicht im --json-Stream → aus der Rollout-
+      // Session nachtragen (Usage kommt aus turn.completed, bleibt unberührt).
+      if (outputFormat === 'codex-jsonl' && !finalModel) {
+        const m = readCodexSessionModel(agentDef, startTime);
+        if (m) finalModel = m;
       }
 
       resolve({
