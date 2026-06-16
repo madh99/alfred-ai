@@ -5039,7 +5039,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                     getVars: async (projectId: string, stage: string, reveal: boolean) => {
                       const entry = await envRepoLocal.get(projectId, stage);
                       if (!entry) return {};
-                      const vars = envCryptoLocal.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+                      // v907 — Decrypt kann fehlschlagen, wenn die Daten mit einem
+                      // früheren (flüchtigen) Schlüssel verschlüsselt wurden. Statt
+                      // hartem 500 ein erkennbares Signal werfen → Handler liefert 422
+                      // mit klarer Meldung (analog listStages keyCount=-1).
+                      let vars: Record<string, string>;
+                      try { vars = envCryptoLocal.decrypt(entry.varsEncrypted, entry.iv, entry.authTag); }
+                      catch { throw new Error('ENV_UNREADABLE'); }
                       if (reveal) return vars;
                       const masked: Record<string, string> = {};
                       for (const [k, v] of Object.entries(vars)) {
@@ -7522,7 +7528,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               getVars: async (projectId: string, stage: string, reveal: boolean) => {
                 const entry = await envRepoLocal.get(projectId, stage);
                 if (!entry) return {};
-                const vars = envCryptoLocal.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+                // v907 — Decrypt kann fehlschlagen (Daten mit früherem/flüchtigem
+                // Schlüssel verschlüsselt) → erkennbares Signal statt hartem 500.
+                let vars: Record<string, string>;
+                try { vars = envCryptoLocal.decrypt(entry.varsEncrypted, entry.iv, entry.authTag); }
+                catch { throw new Error('ENV_UNREADABLE'); }
                 if (reveal) return vars;
                 const masked: Record<string, string> = {};
                 for (const [k, v] of Object.entries(vars)) {

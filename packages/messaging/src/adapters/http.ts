@@ -4550,6 +4550,18 @@ export class HttpAdapter extends MessagingAdapter {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ stage, vars, reveal }));
     } catch (err) {
+      // v907 — Daten mit früherem/flüchtigem Schlüssel verschlüsselt → kein harter
+      // 500, sondern 422 mit klarer, umsetzbarer Meldung. Reset via „Stage löschen".
+      if ((err as Error).message === 'ENV_UNREADABLE') {
+        res.writeHead(422, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          unreadable: true,
+          error: `Stage „${stage}" wurde mit einem früheren Verschlüsselungs-Schlüssel gespeichert und ist nicht mehr lesbar ` +
+            `(der Schlüssel hat sich bei einem Neustart geändert). Bitte die Stage löschen und die Keys neu setzen. ` +
+            `Dauerhaft beheben: security.envEncryptionKey in der Config setzen (stabiler 32-Byte-Key), dann überleben ENVs Neustarts.`,
+        }));
+        return;
+      }
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));
     }

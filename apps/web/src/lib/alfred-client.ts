@@ -671,7 +671,12 @@ export class AlfredClient {
   }
   async fetchEnvironmentVars(projectId: string, stage: string, reveal = false): Promise<Record<string, string>> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/environments/${encodeURIComponent(stage)}${reveal ? '?reveal=1' : ''}`, { headers: this.authHeaders });
-    if (!res.ok) throw new Error(`environments-get: HTTP ${res.status}`);
+    if (!res.ok) {
+      // v907 — klare Backend-Meldung durchreichen (z.B. „Stage … nicht mehr lesbar …")
+      // statt nur des HTTP-Codes.
+      const data = await res.json().catch(() => ({} as { error?: string }));
+      throw new Error(data.error ?? `environments-get: HTTP ${res.status}`);
+    }
     const data = await res.json();
     return (data.vars ?? {}) as Record<string, string>;
   }

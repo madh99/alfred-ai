@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.907] - 2026-06-16
+
+### Fixed — Environments: klare Meldung statt HTTP 500 bei nicht lesbarer Stage (v907)
+
+Ist `security.envEncryptionKey` nicht in der Config gesetzt, erzeugt Alfred bei
+jedem Start einen flüchtigen Schlüssel — nach einem Neustart sind die mit dem
+alten Schlüssel verschlüsselten ENVs nicht mehr entschlüsselbar. `getVars` warf
+dann einen harten HTTP 500 („environments-get: HTTP 500"), die UI brach ab.
+
+- `getVars` fängt den Decrypt-Fehler ab und signalisiert ihn (analog zu
+  `listStages`, das schon `keyCount=-1` liefert). Der Handler antwortet mit
+  **HTTP 422 + klarer, umsetzbarer Meldung** statt 500: „Stage … nicht mehr
+  lesbar … Stage löschen und neu setzen … security.envEncryptionKey setzen".
+- Der Web-Client reicht die Backend-Meldung in die Fehleranzeige durch (statt
+  nur des HTTP-Codes); der vorhandene „Stage löschen"-Button dient als Reset.
+- Hinweis: `security.envEncryptionKey` (base64, 32 Bytes) in der Config setzen
+  lässt ENVs Neustarts überleben. Ohne ihn gehen verschlüsselte ENVs bei jedem
+  Neustart verloren.
+
 ## [0.19.0-multi-ha.906] - 2026-06-16
 
 ### Added — codex „at capacity": langer Backoff + Session-Resume (v906)
