@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.906] - 2026-06-16
+
+### Added — codex „at capacity": langer Backoff + Session-Resume (v906)
+
+Belegt am Live-System: codex `gpt-5.5` „at capacity" ist intermittierend
+(fiel 12:10 aus, lief 12:24 wieder) — also transient wie Anthropics 529, nur mit
+Minuten-Fenster. v904 (Retry mit 90s/180s) griff zu kurz, v905 (kein Retry) ließ
+recoverbare Läufe sterben. v906 nutzt die richtige Strategie: **langer Backoff +
+codex-eigenes Session-Resume**, statt die Phase von vorn zu starten.
+
+- **Erkennung** `isCodexAtCapacity` — getrennt vom schnellen Transient-Pfad
+  (529/429/Netz behält 90s/180s, Frisch-Re-Run). `\bat capacity\b` matcht nicht
+  das Wort „capacity" in Prompt-Texten.
+- **Backoff 5 / 10 / 15 Min** (3 Versuche), überbrückt das Kapazitätsfenster.
+- **Session-Resume:** codex `thread.started.thread_id` wird erfasst
+  (`AgentExecutionResult.sessionId`); der Retry setzt per `codex exec resume
+  <id>` fort → Repo-Audit und bereits geänderte Dateien bleiben erhalten. Ohne
+  erfasste ID Fallback auf Frisch-Re-Run.
+- **Erfolgreiche Läufe sind bit-identisch:** der Resume-Pfad ist strikt hinter
+  `exitCode≠0 && at-capacity` gegated; die thread_id-Erfassung ist passiv.
+  Erfolgreiche/andere Läufe laufen exakt wie zuvor.
+
 ## [0.19.0-multi-ha.905] - 2026-06-16
 
 ### Reverted — codex „at capacity"-Retry (v904 zurückgenommen)

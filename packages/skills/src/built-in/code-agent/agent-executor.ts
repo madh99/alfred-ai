@@ -343,6 +343,39 @@ export interface AgentExecutionResult {
   usage?: ParsedUsage;
   /** v866 — Modell aus dem init-Event (z.B. claude-fable-5). */
   model?: string;
+  /** v906 — codex Session-/Thread-ID (aus `thread.started`), für Resume-Retry. */
+  sessionId?: string;
+}
+
+/**
+ * v906 — codex „Selected model is at capacity. Please try a different model."
+ * (auch generisch „… at capacity"). Bewusst GETRENNT von isTransientApiFailure:
+ * dieser Fall braucht eine andere Strategie (langer Backoff + Session-Resume statt
+ * 90s/180s-Frisch-Re-Run), weil das Modell-Kapazitätsfenster Minuten dauern kann.
+ * `\bat capacity\b` matcht NICHT das Wort „capacity" in Prompt-/Ziel-Texten.
+ */
+export function isCodexAtCapacity(result: Pick<AgentExecutionResult, 'stdout' | 'stderr' | 'exitCode'>): boolean {
+  if (result.exitCode === 0) return false;
+  const tail = `${(result.stdout ?? '').slice(-2000)}\n${(result.stderr ?? '').slice(-2000)}`;
+  return /\bat capacity\b/i.test(tail);
+}
+
+/**
+ * v906 — Wandelt eine aufgewertete codex-argsTemplate in die Resume-Form:
+ * `exec <flags> {{prompt}}` → `exec resume <flags> <sessionId> {{prompt}}`.
+ * Damit setzt der Retry die unterbrochene codex-Session fort (erhält die bereits
+ * geleistete Arbeit) statt von vorn zu starten. Idempotent (kein doppeltes resume).
+ */
+export function toCodexResumeArgsTemplate(argsTemplate: string[], sessionId: string): string[] {
+  const args = [...argsTemplate];
+  const execIdx = args.indexOf('exec');
+  if (execIdx < 0 || args[execIdx + 1] === 'resume') return args;
+  args.splice(execIdx + 1, 0, 'resume');
+  // sessionId als Positional unmittelbar vor den Prompt-Platzhalter (resume [OPTIONS] [SESSION_ID] [PROMPT]).
+  const promptIdx = args.indexOf('{{prompt}}');
+  if (promptIdx >= 0) args.splice(promptIdx, 0, sessionId);
+  else args.push(sessionId);
+  return args;
 }
 
 /**
@@ -498,11 +531,19 @@ export async function executeAgent(
      *  outputBuffers). Wenn gesetzt: jede stdout/stderr-Zeile wird in den
      *  Ring-Buffer geschoben damit SSE-Subscriber live mitlesen können. */
     taskId?: string;
+    /** v906 — codex: bestehende Session per `exec resume <id>` fortsetzen statt
+     *  neu starten (nur beim at-capacity-Retry gesetzt). */
+    resumeSessionId?: string;
   } = {},
 ): Promise<AgentExecutionResult> {
   // v844 — auto-upgrade legacy agent defs to stream-mode (claude/codex/vibe).
   // No-op if user explicitly set outputFormat in config.
-  const agentDef = upgradeAgentDef(agentDefRaw);
+  let agentDef = upgradeAgentDef(agentDefRaw);
+  // v906 — Resume-Form NUR wenn explizit angefordert (at-capacity-Retry) und codex.
+  // Der normale Lauf bleibt unverändert (resumeSessionId ist dann undefined).
+  if (options.resumeSessionId && agentDef.outputFormat === 'codex-jsonl') {
+    agentDef = { ...agentDef, argsTemplate: toCodexResumeArgsTemplate(agentDef.argsTemplate, options.resumeSessionId) };
+  }
   const cwd = options.cwd ?? agentDef.cwd ?? process.cwd();
 
   // v862 — Hard-Guard (letzte Verteidigung): Code-Agents dürfen NIE direkt in
@@ -702,8 +743,10 @@ export async function executeAgent(
     // result-Events möglich, z.B. bei Sub-Sessions → summieren).
     let usageAcc: ParsedUsage | undefined;
     let modelSeen: string | undefined;
-    const accumulate = (parsed: { usage?: ParsedUsage; model?: string }): void => {
+    let sessionSeen: string | undefined; // v906 — codex thread.started thread_id (für Resume)
+    const accumulate = (parsed: { usage?: ParsedUsage; model?: string; sessionId?: string }): void => {
       if (parsed.model) modelSeen = parsed.model;
+      if (parsed.sessionId) sessionSeen = parsed.sessionId;
       if (parsed.usage) {
         if (!usageAcc) {
           usageAcc = { ...parsed.usage };
@@ -849,6 +892,7 @@ export async function executeAgent(
         modifiedFiles,
         usage: finalUsage,   // v866 + v895 (vibe via meta.json)
         model: finalModel,   // v866 + v895
+        sessionId: sessionSeen, // v906 — codex thread.started thread_id (für Resume)
       });
     });
 

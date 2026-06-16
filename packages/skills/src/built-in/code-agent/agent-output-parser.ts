@@ -42,6 +42,8 @@ export interface ParsedChunk {
   usage?: ParsedUsage;
   /** v866 — Modell aus dem init-Event (z.B. claude-fable-5). */
   model?: string;
+  /** v906 — Session-/Thread-ID (codex `thread.started`), für Resume nach „at capacity". */
+  sessionId?: string;
 }
 
 const EMPTY: ParsedChunk = { progress: [], finalTextChunks: [], ended: false };
@@ -203,7 +205,9 @@ function parseCodexEvent(evt: Record<string, unknown>): ParsedChunk {
   switch (type) {
     case 'thread.started': {
       const id = evt.thread_id as string | undefined;
-      return { progress: [`🚀 codex thread started${id ? ` (${id.slice(0, 8)}…)` : ''}`], finalTextChunks: [], ended: false };
+      // v906 — sessionId mitgeben: ermöglicht `codex exec resume <id>` beim
+      // at-capacity-Retry (Fortsetzen statt Neustart).
+      return { progress: [`🚀 codex thread started${id ? ` (${id.slice(0, 8)}…)` : ''}`], finalTextChunks: [], ended: false, sessionId: id };
     }
     case 'turn.started':
       return { progress: ['▶ turn started'], finalTextChunks: [], ended: false };

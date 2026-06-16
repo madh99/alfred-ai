@@ -12,7 +12,7 @@ import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig
 import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
-import { executeAgent, isTransientApiFailure, getAgentVersion, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded, assessPlanProgress, applyMutation, typicalPhaseRange } from '@alfred/skills';
+import { executeAgent, isTransientApiFailure, isCodexAtCapacity, getAgentVersion, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, appendOutputEvent, markOutputEnded, assessPlanProgress, applyMutation, typicalPhaseRange } from '@alfred/skills';
 import type { ProjectPlan, PlanMutation } from '@alfred/skills';
 import type { FileStore } from '@alfred/storage';
 
@@ -2148,6 +2148,38 @@ export class ProjectAgentRunner {
     label: string,
   ): Promise<Awaited<ReturnType<typeof executeAgent>>> {
     let result = await executeAgent(agentDef, prompt, options);
+
+    // v906 — codex „at capacity" (Modell-Kapazität): intermittierend, kommt nach
+    // Minuten zurück (belegt: gpt-5.5 fiel 12:10 aus, lief 12:24 wieder). Daher
+    // LANGER Backoff (5/10/15 min) UND Session-RESUME statt Frisch-Re-Run — so
+    // geht die schon geleistete Arbeit (Repo-Audit, geänderte Dateien) nicht
+    // verloren. Bewusst getrennt vom schnellen Transient-Pfad unten. Greift NUR
+    // bei codex-at-capacity; erfolgreiche/andere Läufe sind unberührt.
+    if (result.exitCode !== 0 && isCodexAtCapacity(result)) {
+      const capacityDelays = [5 * 60_000, 10 * 60_000, 15 * 60_000];
+      for (let attempt = 1; attempt <= capacityDelays.length; attempt++) {
+        if (result.exitCode === 0 || !isCodexAtCapacity(result)) break;
+        if (options?.signal?.aborted) break;
+        const delayMs = capacityDelays[attempt - 1];
+        const sid = result.sessionId;
+        this.logger.warn(
+          { taskId: options?.taskId, attempt, delayMs, sessionId: sid, resume: Boolean(sid) },
+          'v906 Project agent: codex model at capacity — backoff + resume',
+        );
+        await this.sendProgress(platform, chatId,
+          `🌐 ${label}: Modell „at capacity" — ${sid ? 'Resume-' : ''}Retry ${attempt}/3 in ${Math.round(delayMs / 60_000)} min …`);
+        const aborted = await abortableDelay(delayMs, options?.signal);
+        if (aborted) break;
+        // Mit Session-ID fortsetzen (Arbeit erhalten); ohne ID frischer Re-Run.
+        result = sid
+          ? await executeAgent(agentDef, 'Fahre an der unterbrochenen Stelle weiter und schließe die aktuelle Phase vollständig ab.', { ...options, resumeSessionId: sid })
+          : await executeAgent(agentDef, prompt, options);
+      }
+      return result;
+    }
+
+    // v864 — schneller Transient-Pfad (Anthropic 529/overloaded, 429, Netz):
+    // kommt in Sekunden zurück → kurzer Backoff, Frisch-Re-Run. UNVERÄNDERT.
     let delayMs = 90_000;
     for (let attempt = 1; attempt <= 2; attempt++) {
       if (result.exitCode === 0 || !isTransientApiFailure(result)) break;
