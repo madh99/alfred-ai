@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.910] - 2026-06-18
+
+### Fixed — Deploy: Build-Cache vor `--build` prunen (kein „no space left" mehr) (v910)
+
+Ein docker-compose-Deploy baut das Image jedes Mal neu (`up -d --build`). Der
+BuildKit-Cache auf dem Ziel-Host wächst dabei unbegrenzt und füllte die Disk
+(Vorfall .96: `failed to extract layer … no space left on device` beim
+Webpack-Cache-Write).
+
+- Vor dem `--build` läuft jetzt `docker builder prune -f` auf dem Target →
+  reclaimt stale Build-Cache, der Build hat wieder Platz. Best-effort: schlägt
+  der Prune fehl, läuft der Deploy normal weiter; die freigegebene Menge wird im
+  Deploy-Fortschritt angezeigt.
+
 ## [0.19.0-multi-ha.909] - 2026-06-18
 
 ### Fixed — Wizard-containerSpec: `env_file` für Compose-Projekte (v909)

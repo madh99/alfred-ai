@@ -491,6 +491,14 @@ export class DeploySkill extends Skill {
         await this.ssh(host, user, `sudo systemctl restart ${project}`);
         steps.push(`🔄 systemd restart: ${project}`);
       } else if (pm === 'docker-compose') {
+        // v910 — Build-Cache VOR dem --build prunen: jeder Deploy baut neu, der
+        // BuildKit-Cache wächst sonst unbegrenzt und füllt die Target-Disk
+        // ("no space left on device" beim Layer-Extract, Vorfall .96 18.06.).
+        // Best-effort: schlägt der Prune fehl, läuft der Deploy normal weiter.
+        try {
+          const freed = (await this.ssh(host, user, 'docker builder prune -f 2>/dev/null | tail -1')).trim();
+          if (freed) steps.push(`🧹 Build-Cache bereinigt vor Build (${freed.replace(/^Total:\s*/i, '')})`);
+        } catch { /* best effort — Prune ist optional */ }
         const composeUp = await this.composeCmd(host, user, 'up -d --build');
         await this.ssh(host, user, `cd ${projectDir} && ${composeUp}`);
         steps.push(`🐳 ${composeUp.split(' ').slice(0, 2).join(' ')} up: ${project}`);
