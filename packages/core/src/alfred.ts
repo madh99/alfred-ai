@@ -10691,8 +10691,8 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                   `Containerisierung + lokale Compose-Umgebung herstellen, sodass \`docker compose up\` UND Alfreds Compose-Sandbox die App ${dbSvc ? '+ DB ' : ''}ohne manuelle Schritte starten.`,
                   `1. Dockerfile (multi-stage wenn Build nötig): Schema/Build-Manifeste VOR dem Dependency-Install kopieren (Postinstall-Hooks wie \`prisma generate\` brauchen das Schema); optionale, evtl. fehlende Verzeichnisse sicherstellen (z.B. Next.js \`public/\`).`,
                   dbSvc
-                    ? `2. docker-compose.yml: App-Service + DB-Service \`${dbSvc.image}\` mit Healthcheck (\`${dbSvc.health}\`). KEINE festen \`container_name\` (Sandbox-Isolation). Verbindung über den Service-Namen \`db\` (NICHT localhost): \`${dbSvc.env}\`. App \`depends_on: { db: { condition: service_healthy } }\`.`
-                    : `2. docker-compose.yml: App-Service.`,
+                    ? `2. docker-compose.yml: App-Service + DB-Service \`${dbSvc.image}\` mit Healthcheck (\`${dbSvc.health}\`). KEINE festen \`container_name\` (Sandbox-Isolation). Verbindung über den Service-Namen \`db\` (NICHT localhost): \`${dbSvc.env}\`. App \`depends_on: { db: { condition: service_healthy } }\`. App-Service MUSS \`env_file: [{ path: .env, required: false }]\` haben, damit ALLE Deploy-/Panel-ENVs aus der \`.env\` in den Container kommen (nicht nur eine \`environment:\`-Whitelist) — neue Keys wirken so ohne Compose-Änderung; \`environment:\` behält Vorrang.`
+                    : `2. docker-compose.yml: App-Service mit \`env_file: [{ path: .env, required: false }]\`, damit ALLE Deploy-/Panel-ENVs aus der \`.env\` in den Container kommen (nicht nur eine \`environment:\`-Whitelist) — neue Keys wirken ohne Compose-Änderung.`,
                   dbSvc
                     ? `3. Entrypoint: auf DB-Ready warten → Migrationen/Schema anwenden (je nach Stack: \`prisma migrate deploy\`/\`db push\`, \`alembic upgrade\`, \`python manage.py migrate\`, \`php artisan migrate --force\`, \`rails db:migrate\`) → App starten.`
                     : `3. Entrypoint: App starten.`,

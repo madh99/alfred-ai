@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.909] - 2026-06-18
+
+### Fixed — Wizard-containerSpec: `env_file` für Compose-Projekte (v909)
+
+Compose-Projekte mit reiner `environment:`-Whitelist (ohne `env_file`) bekamen
+neue ENV-Keys aus dem Projekt-Panel beim Deploy NICHT in den Container — sie
+standen in der `.env`, aber nur explizit gelistete Keys wurden durchgereicht.
+
+- Die Wizard-`containerSpec` (v900) gibt jetzt vor, dass der App-Service
+  `env_file: [{ path: .env, required: false }]` enthält. Damit landen **alle**
+  Deploy-/Panel-ENVs im Container; neue Keys wirken ohne Compose-Änderung,
+  `environment:` behält Vorrang.
+
 ## [0.19.0-multi-ha.908] - 2026-06-18
 
 ### Fixed — Deploy-Verify: Poll + HTTPS statt falschem „HTTP 000" (v908)
