@@ -503,14 +503,27 @@ export class DeploySkill extends Skill {
     }
 
     // 6. Verify
+    // v908 — Poll statt Einzel-Check: nach `compose up`/Restart braucht die App
+    // (Build + Migrationen + Start) Zeit, bis sie antwortet — ein sofortiger Check
+    // lieferte fälschlich „HTTP 000" obwohl der Deploy klappte. Zudem HTTPS-fähig:
+    // erst `https` (-k für self-signed Certs), dann `http`-Fallback — sonst scheitert
+    // der Check bei HTTPS-Apps (z.B. Port 3003) selbst wenn sie laufen. Bis ~90s.
     let verifyOk = false;
     if (appPort) {
-      emitStep('verify', 'started', `port ${appPort}`);
+      emitStep('verify', 'started', `port ${appPort} (poll bis ~90s)`);
       try {
-        await new Promise(resolve => setTimeout(resolve, 3000)); // wait 3s for startup
-        const result = await this.ssh(host, user, `curl -s -o /dev/null -w '%{http_code}' http://localhost:${appPort}/ || echo 000`);
+        const probe =
+          `for i in $(seq 1 18); do ` +
+          `c=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 https://localhost:${appPort}/ 2>/dev/null || echo 000); ` +
+          `case "$c" in 2*|3*) echo "$c"; exit 0;; esac; ` +
+          `c=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:${appPort}/ 2>/dev/null || echo 000); ` +
+          `case "$c" in 2*|3*) echo "$c"; exit 0;; esac; ` +
+          `sleep 5; done; echo "$c"`;
+        const result = (await this.ssh(host, user, probe)).trim();
         verifyOk = result.startsWith('2') || result.startsWith('3');
-        steps.push(verifyOk ? `✅ Verify: HTTP ${result} auf Port ${appPort}` : `⚠️ Verify: HTTP ${result} auf Port ${appPort}`);
+        steps.push(verifyOk
+          ? `✅ Verify: HTTP ${result} auf Port ${appPort}`
+          : `⚠️ Verify: HTTP ${result} auf Port ${appPort} (auch nach ~90s — App evtl. noch im Aufbau, später erneut prüfen)`);
         emitStep('verify', verifyOk ? 'done' : 'failed', `HTTP ${result}`);
       } catch {
         steps.push(`⚠️ Verify fehlgeschlagen`);

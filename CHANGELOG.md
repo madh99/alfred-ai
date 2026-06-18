@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.908] - 2026-06-18
+
+### Fixed — Deploy-Verify: Poll + HTTPS statt falschem „HTTP 000" (v908)
+
+Der Verify-Schritt eines docker-compose-Deploys prüfte die App **sofort** nach
+`compose up` und nur über `http://`. Die App braucht aber nach Build/Migrationen
+Zeit bis sie antwortet, und HTTPS-Apps (z.B. fussball-cc auf Port 3003) antworten
+gar nicht auf `http://` → der Check meldete fälschlich „HTTP 000", obwohl der
+Deploy erfolgreich war und die App kurz darauf lief.
+
+- Verify **pollt jetzt bis ~90s** (statt einmaligem Check nach 3s).
+- Pro Versuch erst `https://` (`-k`, akzeptiert self-signed Certs), dann
+  `http://`-Fallback — erstes 2xx/3xx gewinnt.
+- Schlägt es auch nach ~90s fehl, sagt die Meldung klar, dass die App evtl. noch
+  im Aufbau ist (statt eines harten Fehlers).
+
 ## [0.19.0-multi-ha.907] - 2026-06-16
 
 ### Fixed — Environments: klare Meldung statt HTTP 500 bei nicht lesbarer Stage (v907)
