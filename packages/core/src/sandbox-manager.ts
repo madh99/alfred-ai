@@ -447,16 +447,18 @@ export class SandboxManager {
         // appEnv unser development überschrieb → `next dev` lief im Prod-Modus und
         // brach mit ENOENT .next/required-server-files.json (500).
         NODE_ENV: 'development',
-        // v911 — prod-server-spezifische Compose-Env-Vars neutralisieren, die im
+        // v911/v912 — prod-server-spezifische Compose-Env-Vars korrigieren, die im
         // Sandbox-`next dev` schaden (kommen via appEnv aus der App-`environment:`,
         // sind aber nur für den Prod-Container/`server-https.js` gedacht):
-        //  - INTERNAL_BASE_URL zeigt auf den :3001-Loopback, den nur server-https.js
-        //    startet — next dev bedient ihn NICHT → Middleware-Self-Calls liefen ins
-        //    Leere (fetch failed → /setup/database-error → 🚫). Leer = Middleware
-        //    fällt auf req.url zurück (in next dev korrekt; verifiziert :3000 ok).
+        //  - INTERNAL_BASE_URL zeigt in der compose auf den :3001-Loopback, den nur
+        //    server-https.js (Prod) startet — next dev bedient ihn NICHT. v911 setzte
+        //    es auf '' (→ Middleware-Fallback req.url); in der Sandbox trägt req.url
+        //    aber den EXTERNEN Proxy-Host, den der Container nicht zu sich zurück
+        //    erreicht → weiterhin `fetch failed`. KORREKT: auf den eigenen Dev-Port
+        //    zeigen → Self-Call trifft deterministisch das laufende `next dev`.
         //  - HTTPS: next dev serviert http, nicht das selbstsignierte HTTPS.
         // ZULETZT, damit sie appEnv UND projectEnvs überschreiben.
-        INTERNAL_BASE_URL: '',
+        INTERNAL_BASE_URL: `http://127.0.0.1:${opts.detection.internalPort || 3000}`,
         HTTPS: 'false',
       };
 

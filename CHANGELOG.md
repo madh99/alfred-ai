@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.912] - 2026-06-20
+
+### Fixed — Compose-Sandbox: `INTERNAL_BASE_URL` auf eigenen Dev-Port statt leer (v912)
+
+Korrektur zu v911: Das Leeren von `INTERNAL_BASE_URL` ließ die Middleware auf
+`req.url` zurückfallen. In der Sandbox läuft die Preview über Alfreds Proxy →
+`req.url` trägt den externen Proxy-Host, den der Container nicht zu sich
+zurückerreicht → weiterhin `fetch failed`.
+
+- Die Sandbox setzt `INTERNAL_BASE_URL` jetzt auf `http://127.0.0.1:<dev-port>`
+  (eigener `next dev`-Port aus der Detection) → der Middleware-Self-Call trifft
+  deterministisch das laufende `next dev`, unabhängig vom externen Host.
+
 ## [0.19.0-multi-ha.911] - 2026-06-20
 
 ### Fixed — Compose-Sandbox: prod-Server-Env-Leaks im `next dev` neutralisieren (v911)
