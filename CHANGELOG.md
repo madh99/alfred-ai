@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.911] - 2026-06-20
+
+### Fixed — Compose-Sandbox: prod-Server-Env-Leaks im `next dev` neutralisieren (v911)
+
+Die Hybrid-Compose-Sandbox übernimmt die App-`environment:`-Werte der
+`docker-compose.yml` (via `appEnv`) in den Dev-Container. Seit dem HTTPS-Deploy-
+Umbau enthält die compose `INTERNAL_BASE_URL=http://127.0.0.1:3001` (der Loopback,
+den nur `server-https.js` im Prod-Container startet). Im Sandbox-`next dev` läuft
+dieser Listener NICHT → die Middleware-Self-Calls (`/api/setup/install-status`)
+liefen ins Leere (`fetch failed` → `/setup/database-error`) → die Live-Preview
+blieb blockiert.
+
+- Die Sandbox überschreibt jetzt — zusätzlich zum bereits erzwungenen
+  `NODE_ENV=development` — die prod-server-spezifischen Leaks: `INTERNAL_BASE_URL`
+  leer (Middleware fällt auf `req.url` zurück, in next dev korrekt) und
+  `HTTPS=false` (next dev serviert http). Greift für ALLE Compose-Projekte mit
+  solchen Server-only-Vars.
+
 ## [0.19.0-multi-ha.910] - 2026-06-18
 
 ### Fixed — Deploy: Build-Cache vor `--build` prunen (kein „no space left" mehr) (v910)
