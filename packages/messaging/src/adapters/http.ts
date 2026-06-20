@@ -4088,6 +4088,30 @@ export class HttpAdapter extends MessagingAdapter {
           : rewriteCookie(setCookies);
       }
 
+      // v913 — Location-Header (Redirects) auf den /preview/<id>/-Pfad umschreiben.
+      // Apps leiten oft um (z.B. / → /setup beim First-Run-Wizard, oder zu /login).
+      // Ohne Rewrite folgt der iframe-Browser dem root-relativen Pfad und VERLÄSST
+      // /preview/<id>/ → landet auf Alfred selbst (404) → iframe zeigt 🚫. Root-
+      // relative Locations und absolute auf den Upstream (127.0.0.1) bekommen den
+      // Prefix; externe Absolut-URLs (z.B. echte Auth-URL) bleiben unangetastet.
+      const loc = respHeaders['location'];
+      if (typeof loc === 'string' && loc.length > 0) {
+        const safeIdForLoc = sandboxId.replace(/[^a-zA-Z0-9-]/g, '');
+        const locPrefix = `/preview/${safeIdForLoc}`;
+        let rewritten: string | null = null;
+        if (loc.startsWith('/') && !loc.startsWith('/preview/')) {
+          rewritten = `${locPrefix}${loc}`;
+        } else if (/^https?:\/\//i.test(loc)) {
+          try {
+            const u = new URL(loc);
+            if (u.hostname === '127.0.0.1' || u.hostname === 'localhost') {
+              rewritten = `${locPrefix}${u.pathname}${u.search}${u.hash}`;
+            }
+          } catch { /* kein parsebarer URL → unverändert lassen */ }
+        }
+        if (rewritten) respHeaders['location'] = rewritten;
+      }
+
       // v725 — Link-Header rewriten (Server-Push-Hints für preload):</path>; rel=preload
       // wird vom Browser als preload-fetch mit ABSOLUTE path getriggert → braucht prefix.
       const linkHeader = respHeaders['link'];

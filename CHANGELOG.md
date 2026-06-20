@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.913] - 2026-06-20
+
+### Fixed — Sandbox-Preview: Redirect-`Location` auf `/preview/<id>/` umschreiben (v913)
+
+Der Preview-Proxy reichte den `Location`-Header von App-Redirects unverändert
+durch. Leitet die App um (z.B. `/` → `/setup` beim First-Run-Wizard, oder zu
+`/login`), folgte der iframe-Browser dem root-relativen Pfad und verließ den
+`/preview/<id>/`-Pfad → landete auf Alfred selbst (404) → die Live-Preview zeigte
+nur das 🚫-Blocker-Symbol.
+
+- Der Proxy schreibt jetzt — analog zu Set-Cookie (v757) und Link (v725) — auch
+  `Location` auf den `/preview/<id>/`-Prefix um (root-relative + auf den Upstream
+  zeigende absolute URLs). Externe Absolut-URLs (echte Auth-/Redirect-Ziele)
+  bleiben unangetastet. Damit funktionieren Preview + Redirect-basierte Flows
+  (Setup-Wizard, Login) wieder.
+
 ## [0.19.0-multi-ha.912] - 2026-06-20
 
 ### Fixed — Compose-Sandbox: `INTERNAL_BASE_URL` auf eigenen Dev-Port statt leer (v912)
