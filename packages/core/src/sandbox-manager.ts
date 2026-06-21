@@ -429,9 +429,14 @@ export class SandboxManager {
         : `${pm} install && ${pm} rebuild`;
       // DB-Migration vor dev: Stack-Command aus Detection, sonst Node+Prisma-Heuristik.
       const usesPrisma = existsSync(path.join(opts.worktreePath, 'prisma', 'schema.prisma'));
+      // v914 — --accept-data-loss: Die Sandbox-DB ist eine ephemere Wegwerf-Dev-DB.
+      // Schema-Änderungen des Agents (neue Unique-Constraints, Spalten-Drops) lässt
+      // `prisma db push` sonst mit „Use --accept-data-loss" fehlschlagen → der
+      // Container exitet 1 → Resume/Start = HTTP 500 (Vorfall iqmr7dm3: stickers
+      // [editionId,code]-Constraint). In der Sandbox ist Datenverlust akzeptabel.
       const migrate = opts.detection.dbMigrateCommand
         ? ` && ${opts.detection.dbMigrateCommand}`
-        : (usesPrisma ? ' && npx prisma db push --skip-generate' : '');
+        : (usesPrisma ? ' && npx prisma db push --skip-generate --accept-data-loss' : '');
       const fullCmd = `${setupCmd}${migrate} && exec ${devCmd}`;
 
       const memoryMb = this.deps.config.memoryMb ?? 6144;

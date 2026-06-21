@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.914] - 2026-06-21
+
+### Fixed — Compose-Sandbox: Resume/Start bei Prisma-Schema-Änderungen (v914)
+
+Eine Compose-Sandbox crashte beim Resume/Start (HTTP 500), wenn die Arbeit des
+Agents eine Prisma-Schema-Änderung enthielt, die `prisma db push` als möglichen
+Datenverlust einstuft (z.B. neue Unique-Constraint `stickers[editionId,code]`).
+Der Spin-up führte `prisma db push --skip-generate` ohne `--accept-data-loss` aus
+→ Prisma brach ab → Container-Kommandokette exitete 1 → `next dev` startete nie →
+Resume = HTTP 500.
+
+- Der Sandbox-Spin-up nutzt jetzt `prisma db push --skip-generate
+  --accept-data-loss`. Die Sandbox-DB ist eine ephemere Wegwerf-Dev-DB; in ihr ist
+  Datenverlust akzeptabel und erwartet. Resume/Start sind damit robust gegen
+  Constraint-Änderungen und Spalten-Drops im Agent-Schema.
+
 ## [0.19.0-multi-ha.913] - 2026-06-20
 
 ### Fixed — Sandbox-Preview: Redirect-`Location` auf `/preview/<id>/` umschreiben (v913)
