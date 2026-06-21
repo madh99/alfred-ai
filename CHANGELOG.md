@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.917] - 2026-06-21
+
+### Changed — Wurzel-Fix: `@anthropic-ai/sdk` 0.39 → 0.105 (node-fetch v2 raus) (v917)
+
+Nachhaltige Behebung der „Premature close"-Ursache (ergänzt v916): Das alte
+`@anthropic-ai/sdk@0.39.0` zog `node-fetch@2.7.0`, dessen gzip-Handling die
+`ERR_STREAM_PREMATURE_CLOSE`-Fehler verursachte. Aktualisiert auf `^0.105.0`:
+
+- Das neue SDK nutzt **Nodes natives `fetch` (undici)** statt node-fetch v2 →
+  die fehlerhafte gzip-Stream-Behandlung entfällt an der Wurzel. `node-fetch`
+  wird nicht mehr über das Anthropic-SDK gezogen.
+- Build grün (13/13); LLM-Tests 56/56, Skills 383, die genutzte SDK-API-Fläche
+  (messages.create/stream, cache_control, fallbacks-Beta, usage, refusal)
+  kompiliert unverändert. Die 9 vorbestehenden core-Test-Failures (reasoning-/
+  watch-engine) scheitern identisch auf 0.39 → nicht durch dieses Upgrade.
+- Der v916-Retry bleibt als Sicherheitsnetz für sonstige transiente Abbrüche.
+
 ## [0.19.0-multi-ha.916] - 2026-06-21
 
 ### Fixed — LLM/Embeddings: Retry bei node-fetch „Premature close" (v916, pragmatisch)
