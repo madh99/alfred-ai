@@ -8,7 +8,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from '@alfred/types';
-import { LLMProvider, lookupContextWindow } from '../provider.js';
+import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../provider.js';
 
 export class AnthropicProvider extends LLMProvider {
   private client!: Anthropic;
@@ -82,7 +82,8 @@ export class AnthropicProvider extends LLMProvider {
       tools,
     };
 
-    const response = await this.client.messages.create(params);
+    // v916 — Retry bei transientem node-fetch „Premature close" (gzip-Stream-Abbruch).
+    const response = await withPrematureCloseRetry(() => this.client.messages.create(params));
 
     return this.mapResponse(response);
   }

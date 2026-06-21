@@ -17,6 +17,42 @@ export interface EmbeddingResult {
   totalTokens?: number;
 }
 
+/**
+ * v916 — Erkennt einen transienten Stream-Abbruch: `ERR_STREAM_PREMATURE_CLOSE`
+ * bzw. „Premature close". Ursache: das von `@anthropic-ai/sdk@0.39` (und dem
+ * Embeddings-Pfad) genutzte `node-fetch@2.7.0` wirft beim gzip-Entpacken einen
+ * fatalen Fehler, wenn die Antwortverbindung kurz unterbrochen wird — der
+ * SDK-eigene `maxRetries` greift hier NICHT (er retried Request-Fehler, nicht
+ * Body-Stream-Abbrüche nach Header-Empfang). Der Fehler ist transient (Einzel-
+ * Retry kommt durch), daher fangen wir ihn gezielt ab.
+ */
+export function isPrematureCloseError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string; cause?: { code?: string; message?: string } } | undefined;
+  if (!e) return false;
+  return e.code === 'ERR_STREAM_PREMATURE_CLOSE'
+    || e.cause?.code === 'ERR_STREAM_PREMATURE_CLOSE'
+    || /premature close/i.test(e.message ?? '')
+    || /premature close/i.test(e.cause?.message ?? '');
+}
+
+/**
+ * v916 — Wiederholt `fn` bei transientem „Premature close" (kurzer Backoff).
+ * Andere Fehler werden unverändert durchgereicht. Default 3 Versuche.
+ */
+export async function withPrematureCloseRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isPrematureCloseError(err) || i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, 300 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 // Known context window sizes for popular models
 const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   // Anthropic — Fable 5 / Claude 4.8 / 4.7 / 4.6 / 4.5 / 4.x / 3.5 / 3.x

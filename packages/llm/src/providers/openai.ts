@@ -8,7 +8,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from '@alfred/types';
-import { LLMProvider, lookupContextWindow } from '../provider.js';
+import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../provider.js';
 
 export class OpenAIProvider extends LLMProvider {
   private client!: OpenAI;
@@ -47,7 +47,8 @@ export class OpenAIProvider extends LLMProvider {
       ...this.extraRequestParams(request),
     } as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming;
 
-    const response = await this.client.chat.completions.create(params);
+    // v916 — Retry bei transientem node-fetch „Premature close" (gzip-Stream-Abbruch).
+    const response = await withPrematureCloseRetry(() => this.client.chat.completions.create(params));
 
     return this.mapResponse(response);
   }
@@ -187,10 +188,11 @@ export class OpenAIProvider extends LLMProvider {
   async embed(text: string): Promise<import('../provider.js').EmbeddingResult | undefined> {
     try {
       const embeddingModel = this.config.model ?? 'text-embedding-3-small';
-      const response = await this.client.embeddings.create({
+      // v916 — Retry bei transientem node-fetch „Premature close" (gzip-Stream-Abbruch).
+      const response = await withPrematureCloseRetry(() => this.client.embeddings.create({
         model: embeddingModel,
         input: text,
-      });
+      }));
       const data = response.data[0];
       return {
         embedding: data.embedding,

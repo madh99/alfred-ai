@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.916] - 2026-06-21
+
+### Fixed — LLM/Embeddings: Retry bei node-fetch „Premature close" (v916, pragmatisch)
+
+Root Cause: `@anthropic-ai/sdk@0.39.0` nutzt intern `node-fetch@2.7.0`. node-fetch
+v2 wirft beim gzip-Entpacken `ERR_STREAM_PREMATURE_CLOSE` („Premature close"),
+wenn die Antwortverbindung transient unterbrochen wird — fatal, und der SDK-eigene
+`maxRetries` greift dabei nicht (er retried Request-Fehler, nicht Body-Stream-
+Abbrüche nach Header-Empfang). Folge: sporadische `reasoning-engine`-Fehler
+(Anthropic /v1/messages) und ausgefallene Embeddings (Mistral /v1/embeddings) —
+nicht Key/Provider/Config/Netz (per curl bewiesen: Provider antworten sauber).
+
+- Neuer Helper `withPrematureCloseRetry` (provider.ts) fängt genau diesen
+  transienten Fehler ab und wiederholt (3 Versuche, 300/600 ms Backoff); andere
+  Fehler (401, Rate-Limit, Netz) werden unverändert durchgereicht.
+- Eingehängt in `AnthropicProvider.complete`, `OpenAIProvider.complete` und
+  `OpenAIProvider.embed` (deckt auch den Mistral-Embeddings- und -Chat-Pfad ab,
+  da `MistralProvider` von `OpenAIProvider` erbt).
+- Symptom-Fix mit sofortiger Wirkung. Die nachhaltige Wurzel-Behebung
+  (`@anthropic-ai/sdk`-Upgrade → natives `fetch`/undici statt node-fetch v2)
+  folgt separat (v917).
+
 ## [0.19.0-multi-ha.915] - 2026-06-21
 
 ### Fixed — Sandbox-Resume erstellt den Container neu statt ihn nur zu starten (v915)
