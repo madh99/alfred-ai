@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.919] - 2026-06-21
+
+### Changed — Wurzel-Fix konsistent: `openai`-SDK 4.104 → 6.44 (node-fetch raus) (v919)
+
+Konsistent zum Anthropic-SDK-Upgrade (v917): Auch das `openai`-SDK wird auf die
+aktuelle Major-Version (6.44) gehoben, die intern **natives `fetch` (undici)**
+nutzt und **kein `node-fetch`** mehr zieht. Damit ist die „Premature close"-Wurzel
+auch für den OpenAI-/Mistral-Pfad durch ein modernes SDK behoben — nicht nur durch
+den fetch-Override (v918, bleibt als Gürtel-und-Hosenträger).
+
+- `openai` 4.104 → 6.44 (cli + llm). `pnpm why node-fetch` für anthropic UND
+  openai = 0 → node-fetch v2 ist aus allen aktiven LLM-Provider-Pfaden raus.
+- Eine Breaking Change angepasst: openai v6 macht `tool_calls` zu einer Union
+  (function|custom) → `mapResponse` narrowt jetzt per `tc.type === 'function'`,
+  bevor es `tc.function` liest.
+- Build 13/13, LLM-Tests 56/56. Major-SDK-Sprung auf dem Default-LLM-Pfad
+  (gpt-5.5) → nach Deploy Live-Smoke-Test empfohlen; v916-Retry bleibt Netz.
+
 ## [0.19.0-multi-ha.918] - 2026-06-21
 
 ### Fixed — Premature close: auch der OpenAI-/Mistral-Pfad (Lücke aus v916/v917 geschlossen)

@@ -22,11 +22,10 @@ export class OpenAIProvider extends LLMProvider {
       apiKey: this.config.apiKey,
       baseURL: this.config.baseUrl,
       maxRetries: 5,
-      // v918 — Wurzel-Fix: Das openai-SDK v4 nutzt intern `node-fetch@2.7.0`, dessen
-      // gzip-Handling `ERR_STREAM_PREMATURE_CLOSE` wirft (siehe v916/v917). Nodes
-      // natives `fetch` (undici, ab Node 18) umgeht node-fetch komplett → behebt die
-      // „Premature close"-Fehler für openai UND mistral (MistralProvider erbt hiervon)
-      // an der Wurzel, ohne riskanten Major-SDK-Upgrade.
+      // v919 — Wurzel-Fix: Das openai-SDK ist auf v6 aktualisiert (nutzt natives
+      // `fetch`/undici, KEIN node-fetch v2 mehr → behebt „Premature close" für openai
+      // UND mistral an der Wurzel). Der explizite `fetch: globalThis.fetch` bleibt als
+      // Gürtel-und-Hosenträger (erzwingt nativen fetch unabhängig vom SDK-Default).
       fetch: globalThis.fetch as unknown as NonNullable<ConstructorParameters<typeof OpenAI>[0]>['fetch'],
     });
     const cw = lookupContextWindow(this.config.model);
@@ -358,11 +357,18 @@ export class OpenAIProvider extends LLMProvider {
     const message = choice?.message;
 
     const content = message?.content ?? '';
-    const toolCalls: ToolCall[] | undefined = message?.tool_calls?.map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      input: (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })(),
-    }));
+    // v919 — openai-SDK v6: `tool_calls` ist eine Union (function|custom);
+    // `.function` existiert nur beim function-Typ → per `tc.type` narrowen.
+    const toolCalls: ToolCall[] | undefined = message?.tool_calls
+      ?.map((tc): ToolCall | undefined => {
+        if (tc.type !== 'function') return undefined;
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          input: (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })(),
+        };
+      })
+      .filter((x): x is ToolCall => x !== undefined);
 
     return {
       content,
