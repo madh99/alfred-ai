@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.915] - 2026-06-21
+
+### Fixed — Sandbox-Resume erstellt den Container neu statt ihn nur zu starten (v915)
+
+`resume()` führte `docker start` auf den bestehenden Container aus. Dessen
+Kommando (`npm install && rebuild && prisma db push && next dev`) wird beim Start
+ohnehin komplett neu ausgeführt — Wiederverwenden brachte also keinen Vorteil,
+fror aber das Kommando vom Erstell-Zeitpunkt ein. Spin-up-Verbesserungen (z.B.
+v914 `prisma db push --accept-data-loss`) erreichten pausierte Sandboxen so nie →
+Resume crashte reproduzierbar (Vorfall iqmr7dm3).
+
+- `resume()` entfernt jetzt den alten App-Container und fährt den Spin-up frisch
+  hoch (re-detect + Compose-/Single-Container-Routing wie beim ersten Start,
+  async mit Status `creating`→`running`). Damit greifen Spin-up-Fixes auch beim
+  Resume, neue Dependencies werden installiert, und das Resume kehrt sofort zurück
+  (kein Block bis dev-server) — das Frontend pollt den Status wie beim Create.
+
 ## [0.19.0-multi-ha.914] - 2026-06-21
 
 ### Fixed — Compose-Sandbox: Resume/Start bei Prisma-Schema-Änderungen (v914)

@@ -668,17 +668,43 @@ export class SandboxManager {
     if (!sb.containerId) {
       throw new Error('Cannot resume sandbox without container_id — was discarded, please re-create');
     }
-    const status = await getContainerStatus(sb.containerId);
-    if (status === null) {
-      throw new Error('Container no longer exists — please discard and re-create the sandbox');
+
+    // v915 — App-Container NEU erstellen statt nur `docker start`. Begründung: das
+    // beim Erstellen eingebackene Kommando (npm install/rebuild/prisma db push/next
+    // dev) läuft beim Start ohnehin komplett neu → Wiederverwenden spart nichts,
+    // friert aber das Kommando vom Erstell-Zeitpunkt ein. Spin-up-Fixes (z.B. v914
+    // prisma --accept-data-loss) erreichten pausierte Sandboxen so nie → Resume
+    // crashte reproduzierbar (Vorfall iqmr7dm3: alter Container ohne --accept-data-loss).
+    // Wir entfernen den alten Container und fahren den Spin-up frisch hoch — async,
+    // Status creating→running, Frontend pollt (identisch zu createForSession Phase 2).
+    const detection = detectProjectType(sb.worktreePath);
+    let composeMode = false;
+    let composeFile: string | undefined;
+    if (this.deps.projectRepo && sb.projectId) {
+      try {
+        const proj = await this.deps.projectRepo.getById(sb.userId, sb.projectId);
+        if (proj?.sandboxMode === 'compose' && detection.hasComposeFile && detection.composeFile) {
+          composeMode = true;
+          composeFile = detection.composeFile;
+        }
+      } catch { /* fallback single-container */ }
     }
-    await startContainer(sb.containerId);
-    if (sb.hostPort) {
-      const healthy = await waitForDevServer(sb.hostPort, { intervalMs: 1500, timeoutMs: 60_000, logger: this.deps.logger });
-      if (!healthy) throw new Error('dev-server did not respond after resume');
+
+    try { await removeContainer(sb.containerId, true); } catch { /* evtl. schon entfernt */ }
+    await this.deps.repo.updateStatus(sandboxId, 'creating', 'resume: recreating container');
+
+    const image = detection.image ?? this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
+    if (composeMode && composeFile) {
+      void this.spinUpComposeAsync({
+        sandboxId: sb.id, worktreePath: sb.worktreePath, branchName: sb.branchName,
+        projectCwd: sb.worktreePath, detection, projectId: sb.projectId, userId: sb.userId, composeFile,
+      });
+    } else {
+      void this.spinUpContainerAsync({
+        sandboxId: sb.id, image, worktreePath: sb.worktreePath, branchName: sb.branchName,
+        projectCwd: sb.worktreePath, detection, projectId: sb.projectId, envStage: 'sandbox', dbSeed: { kind: 'empty' },
+      });
     }
-    // v817 — markResumed statt updateStatus: setzt last_resumed_at für Live-Counter.
-    await this.deps.repo.markResumed(sandboxId);
   }
 
   /**
