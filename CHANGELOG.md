@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.918] - 2026-06-21
+
+### Fixed — Premature close: auch der OpenAI-/Mistral-Pfad (Lücke aus v916/v917 geschlossen)
+
+v916 (Retry) + v917 (Anthropic-SDK → native fetch) deckten den OpenAI-Pfad NICHT
+ab: Das `openai`-SDK v4.104 zieht weiterhin `node-fetch@2.7.0`, und die
+Haupt-Message-Pipeline (Default-Modell gpt-5.5 → `OpenAIProvider.complete`) sowie
+die Mistral-Embeddings (erben von `OpenAIProvider`) liefen weiter darüber → erneut
+`ERR_STREAM_PREMATURE_CLOSE` (Vorfall `api.openai.com/v1/chat/completions`,
+14:31). Der v916-Retry mildert das nur, beseitigt die Wurzel nicht.
+
+- `OpenAIProvider` übergibt dem SDK jetzt Nodes natives `fetch` (undici,
+  `globalThis.fetch`) → node-fetch v2 wird für ALLE openai- und mistral-Calls
+  (complete/stream/embed) umgangen, ohne riskanten Major-SDK-Upgrade.
+- Damit ist node-fetch v2 aus ALLEN LLM-Provider-Pfaden raus: Anthropic (v917,
+  SDK 0.105), OpenAI + Mistral (v918, native-fetch-Override). Der v916-Retry
+  bleibt als zusätzliches Sicherheitsnetz.
+
 ## [0.19.0-multi-ha.917] - 2026-06-21
 
 ### Changed — Wurzel-Fix: `@anthropic-ai/sdk` 0.39 → 0.105 (node-fetch v2 raus) (v917)

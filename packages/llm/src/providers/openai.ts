@@ -22,6 +22,12 @@ export class OpenAIProvider extends LLMProvider {
       apiKey: this.config.apiKey,
       baseURL: this.config.baseUrl,
       maxRetries: 5,
+      // v918 — Wurzel-Fix: Das openai-SDK v4 nutzt intern `node-fetch@2.7.0`, dessen
+      // gzip-Handling `ERR_STREAM_PREMATURE_CLOSE` wirft (siehe v916/v917). Nodes
+      // natives `fetch` (undici, ab Node 18) umgeht node-fetch komplett → behebt die
+      // „Premature close"-Fehler für openai UND mistral (MistralProvider erbt hiervon)
+      // an der Wurzel, ohne riskanten Major-SDK-Upgrade.
+      fetch: globalThis.fetch as unknown as NonNullable<ConstructorParameters<typeof OpenAI>[0]>['fetch'],
     });
     const cw = lookupContextWindow(this.config.model);
     if (cw) this.contextWindow = cw;
