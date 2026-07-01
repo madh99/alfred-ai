@@ -33,11 +33,15 @@ export class AnthropicProvider extends LLMProvider {
    * generations that ship adaptive thinking without sampling parameters).
    * v860 — Fable 5 / Mythos 5 erben die Constraint (Migration-Guide: "sampling
    * parameters rejected" gilt unverändert weiter).
+   * v920 — Sonnet 5 (und weitere Gen-5-Chat-Modelle) lehnen `temperature` ebenfalls ab
+   * (live bewiesen: HTTP 400 "`temperature` is deprecated for this model"). Das \b nach
+   * der 5 verhindert Fehltreffer bei "3-5-sonnet"/"3-5-haiku" (Claude 3.5, die temperature
+   * unterstützen).
    */
   private supportsTemperature(): boolean {
     const model = (this.config.model ?? '').toLowerCase();
     if (/opus-4-(7|8|9)/.test(model)) return false;
-    if (/fable-5|mythos-5/.test(model)) return false;
+    if (/(fable|mythos|sonnet|opus|haiku)-5\b/.test(model)) return false;
     return true;
   }
 

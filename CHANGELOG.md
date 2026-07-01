@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.920] - 2026-06-29
+
+### Added — Claude Sonnet 5 Support (v920)
+
+Neues Modell `claude-sonnet-5` (Live über die Models API deines Accounts
+verifiziert): 1M Kontext / 128K Output, adaptive thinking, effort bis `xhigh`/
+`max`, Tokenizer wie Opus 4.7+. Standard-Pricing $3/$15 per MTok (Einführungspreis
+$2/$10 bis 2026-08-31). Alfred ist jetzt „fit" dafür:
+
+- **Kritisch:** `AnthropicProvider.supportsTemperature()` schließt Gen-5-Chat-Modelle
+  aus (`(fable|mythos|sonnet|opus|haiku)-5\b`) — Sonnet 5 lehnt `temperature` mit
+  HTTP 400 ab (live bewiesen: „`temperature` is deprecated for this model"). Ohne
+  diesen Fix wäre **jeder** Sonnet-5-Call fehlgeschlagen. Das `\b` verhindert
+  Fehltreffer bei Claude 3.5 (`3-5-sonnet`/`3-5-haiku`, die `temperature` behalten).
+- **Context-Window:** expliziter Eintrag `claude-sonnet-5` = 1M/128K (sonst hätte
+  der generische `claude-`-Fallback fälschlich 64K Output geliefert).
+- **Kosten-Tracking:** Pricing-Eintrag `claude-sonnet-5` = $3/$15 (ohne den wäre das
+  Dashboard bei $0 geblieben); Kommentar mit dem $2/$10-Einführungspreis bis 31.08.
+- **Setup-Wizard:** Sonnet 5 als empfohlenes Sonnet auswählbar; Wizard-Default auf
+  `claude-sonnet-5` (Sonnet 4.6 als Vorgänger gelistet).
+- 7 Tests (`sonnet-5-support.test.ts`), inkl. der 3.5-Grenze.
+
 ## [0.19.0-multi-ha.919] - 2026-06-21
 
 ### Changed — Wurzel-Fix konsistent: `openai`-SDK 4.104 → 6.44 (node-fetch raus) (v919)

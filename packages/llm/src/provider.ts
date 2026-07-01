@@ -61,6 +61,7 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'claude-opus-4-8':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-opus-4-7':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-opus-4-6':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
+  'claude-sonnet-5':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-sonnet-4-6':            { maxInputTokens: 1_000_000, maxOutputTokens: 64_000 },
   'claude-opus-4-5-20251101':     { maxInputTokens: 1_000_000, maxOutputTokens: 64_000 },
   'claude-opus-4-20250514':       { maxInputTokens: 200_000, maxOutputTokens: 32_000 },

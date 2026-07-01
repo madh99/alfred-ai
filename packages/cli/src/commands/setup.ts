@@ -44,13 +44,14 @@ const PROVIDERS: ProviderDef[] = [
   {
     name: 'anthropic',
     label: 'Anthropic (Claude) — recommended',
-    defaultModel: 'claude-sonnet-4-6',
+    defaultModel: 'claude-sonnet-5',
     envKeyName: 'ALFRED_ANTHROPIC_API_KEY',
     needsApiKey: true,
     models: [
       { id: 'claude-fable-5',           desc: 'Fable 5 — most capable, $10/$50 per MTok (2x Opus-Preis)' },
       { id: 'claude-opus-4-8',          desc: 'Opus 4.8 — most capable Opus-tier, agentic coding' },
-      { id: 'claude-sonnet-4-6',        desc: 'Sonnet 4.6 — fast, smart, recommended' },
+      { id: 'claude-sonnet-5',          desc: 'Sonnet 5 — best speed+intelligence, 1M/128K, $3/$15 ($2/$10 bis 31.08.), recommended' },
+      { id: 'claude-sonnet-4-6',        desc: 'Sonnet 4.6 — Vorgänger, 1M/64K, $3/$15' },
       { id: 'claude-opus-4-7',          desc: 'Opus 4.7 — capable, agentic coding' },
       { id: 'claude-opus-4-6',          desc: 'Opus 4.6 — capable, extended thinking' },
       { id: 'claude-haiku-4-5-20251001', desc: 'Haiku 4.5 — fastest, cheapest' },
