@@ -2115,6 +2115,75 @@ export class AlfredClient {
     return res.json();
   }
 
+  // ── v922: SLA + Analytics + Service-Komposition (vorher chat-only) ──
+
+  async slaCompliance(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/sla/compliance`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`SLA: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async slaBreaches(period?: string): Promise<any[]> {
+    const params = period ? `?period=${encodeURIComponent(period)}` : '';
+    const res = await fetch(`${this.baseUrl}/api/sla/breaches${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`SLA: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async slaSet(targetType: 'service' | 'asset', targetId: string, sla: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/sla/set`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ targetType, targetId, sla }),
+    });
+    if (!res.ok) throw new Error(`SLA: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  /** kind: mttr | capacity | health | cascades | breach_risk | pir */
+  async itsmAnalytics(kind: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/analytics?kind=${encodeURIComponent(kind)}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Analytics: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async serviceAddComponent(serviceId: string, component: { name: string; role?: string; assetId?: string; required?: boolean }): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/services/${serviceId}/components`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(component),
+    });
+    if (!res.ok) throw new Error(`Service-Component: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async serviceRemoveComponent(serviceId: string, componentName: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/services/${serviceId}/components/${encodeURIComponent(componentName)}`, {
+      method: 'DELETE', headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Service-Component: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async serviceAddFailureMode(serviceId: string, fm: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/services/${serviceId}/failure-modes`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(fm),
+    });
+    if (!res.ok) throw new Error(`Failure-Mode: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async serviceRemoveFailureMode(serviceId: string, name: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/services/${serviceId}/failure-modes/${encodeURIComponent(name)}`, {
+      method: 'DELETE', headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failure-Mode: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async serviceImpact(serviceId: string): Promise<{ service: string; impact: Array<{ id: string; name: string; criticality?: string }>; failureModes: any[] }> {
+    const res = await fetch(`${this.baseUrl}/api/services/${serviceId}/impact`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Impact: HTTP ${res.status}`);
+    return res.json();
+  }
+
   // ── Docs API ──
 
   async docsGenerate(type: string, params?: Record<string, unknown>): Promise<any> {

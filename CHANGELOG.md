@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.922] - 2026-07-02
+
+### Added/Fixed — ITSM: UI-Vervollständigung + gebündelte Incident-Benachrichtigung (v922)
+
+Rund ein Drittel der ITSM-Funktionen war nur per Chat erreichbar und Auto-Incidents
+entstanden stumm:
+
+- **Gebündelte Incident-Benachrichtigung:** Der 30-Min-Sweep meldet neue
+  monitor-erkannte Incidents jetzt als EINE Sammel-Nachricht (max. 10 gelistet,
+  Rest gezählt) — vorher wurde nur bei Pattern-Promotion zum Problem benachrichtigt,
+  Einzel-Incidents blieben unsichtbar. Start = Prozessstart (kein Nachmelden von
+  Altbeständen nach Restart).
+- **SLA-Tab in der Web-UI:** Compliance-Übersicht, Breach-Liste und „SLA setzen"
+  pro Service — die HTTP-Routen existierten, aber weder Client-Methoden noch UI.
+- **Analytics-Tab:** MTTR-Report, Capacity-Forecast, Service-Health-Score,
+  Cascades, SLA-Breach-Risk und offene PIRs — vorher nur per Chat/Tagesreflexion.
+  Neue Route `GET /api/itsm/analytics?kind=…` mit doppelter Whitelist
+  (Route + Callback, nur read-only Aktionen).
+- **Service-Komposition editierbar:** Components und Failure-Modes (Grundlage von
+  Health-Check und Impact-Analyse) lassen sich jetzt im Service-Detail hinzufügen/
+  entfernen — vorher nur per Chat-Skill. Neue Routen POST/DELETE
+  `/api/services/:id/components(/:name)`.
+- **Impact-Route repariert:** `/api/services/:id/impact` las ein nie befülltes
+  Feld (`dependencyMap.downstream`) und lieferte immer leer — berechnet Downstream-
+  Dependents jetzt real aus den `dependencies` der übrigen Services.
+- **MikroTik-Registrierungs-Bug:** Bei MikroTik-only-Konfiguration lieferte jede
+  CMDB/ITSM-Web-Anfrage 404, weil die API-Verdrahtung mikrotik nicht kannte
+  (die Skill-Registrierung schon) — Bedingung ergänzt.
+
 ## [0.19.0-multi-ha.921] - 2026-07-02
 
 ### Fixed — Knowledge Graph: Infra-Layer, Wartungs-Gating, Stale-Cache (v921)

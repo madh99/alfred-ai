@@ -3640,7 +3640,29 @@ export class Alfred {
               : this.config.discord?.enabled ? 'discord'
               : this.config.whatsapp?.enabled ? 'whatsapp'
               : 'api');
+            // v922 — Auto-Incidents waren STUMM: der Monitor legte Incidents an, aber
+            // benachrichtigt wurde nur bei Pattern-Promotion zum Problem. Jetzt fasst
+            // der 30-Min-Sweep neue monitor-erkannte Incidents zu EINER Sammel-Nachricht
+            // zusammen (gebündelt, kein per-Incident-Spam; Start = Prozessstart, damit
+            // ein Restart keine Altbestände nachmeldet).
+            let lastIncidentNotifyCheck = new Date().toISOString();
             const sweepInterval = setInterval(async () => {
+              try {
+                const sinceCheck = lastIncidentNotifyCheck;
+                lastIncidentNotifyCheck = new Date().toISOString();
+                const recent = await itsmRepo.listIncidents(ownerUidForSweep, { limit: 50 });
+                const fresh = recent.filter(i => i.detectedBy === 'monitor' && i.createdAt > sinceCheck);
+                if (fresh.length > 0) {
+                  const adapter = this.adapters.get(ownerPlatformForSweep as any);
+                  if (adapter) {
+                    const sevIcon: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
+                    const lines = fresh.slice(0, 10).map(i => `${sevIcon[i.severity ?? 'medium'] ?? '⚪'} ${i.title.slice(0, 90)} (\`${i.id.slice(0, 8)}\`)`);
+                    if (fresh.length > 10) lines.push(`… und ${fresh.length - 10} weitere`);
+                    await adapter.sendMessage(this.config.security?.ownerUserId ?? '',
+                      `🚨 **${fresh.length} neue${fresh.length === 1 ? 'r' : ''} Incident${fresh.length === 1 ? '' : 's'}** (automatisch erkannt, letzte 30 Min):\n\n${lines.join('\n')}`);
+                  }
+                }
+              } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v922 incident-bundle notify failed (non-fatal)'); }
               try {
                 const patterns = await problemRepo.detectPatterns(ownerUidForSweep, { windowDays: 14, minIncidents: 3 });
                 for (const p of patterns.slice(0, 5)) {
@@ -10963,7 +10985,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     }
 
     // Wire CMDB/ITSM/Docs API on HTTP adapter (only when CMDB skills are registered)
-    if (this.config.cmdb?.enabled !== false && (this.config.proxmox || this.config.unifi || this.config.docker || this.config.cloudflare || this.config.nginxProxyManager || this.config.pfsense || this.config.homeassistant)) {
+    // v922 — mikrotik ergänzt: die Skill-Registrierung (s.o.) kannte mikrotik, die
+    // Web-API-Verdrahtung hier nicht → bei MikroTik-only-Konfiguration lieferte
+    // jede CMDB/ITSM-Web-UI-Anfrage 404 obwohl der Chat-Pfad funktionierte.
+    if (this.config.cmdb?.enabled !== false && (this.config.proxmox || this.config.unifi || this.config.docker || this.config.cloudflare || this.config.nginxProxyManager || this.config.pfsense || this.config.homeassistant || this.config.mikrotik)) {
       const apiAdapter = this.adapters.get('api');
       const dbAdapter = this.database.getAdapter();
       if (apiAdapter && 'setCmdbCallbacks' in apiAdapter) {
@@ -11227,6 +11252,16 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           getSlaBreaches: async (uid: string, period?: string) => {
             const userId = await resolveUser(uid);
             return itsmRepo.getSlaBreaches(userId, period ? new Date(period).toISOString() : undefined);
+          },
+          // v922 — Analytics-Durchgriff für die Web-UI (vorher chat-only). Doppelte
+          // Whitelist (Route + hier): nur read-only Analytics-Aktionen.
+          skillAction: async (uid: string, action: string, params?: Record<string, unknown>) => {
+            const ALLOWED = new Set(['mttr_report', 'capacity_forecast', 'service_health_score', 'list_cascades', 'sla_breach_risk', 'pir_pending']);
+            if (!ALLOWED.has(action)) return { success: false, error: `Action not allowed via HTTP: ${action}` };
+            const userId = await resolveUser(uid);
+            const itsmSkill = this.skillRegistry?.get('itsm');
+            if (itsmSkill) return itsmSkill.execute({ action, ...(params ?? {}) }, { userId, masterUserId: userId } as any);
+            return { success: false, error: 'ITSM skill not registered' };
           },
         });
 

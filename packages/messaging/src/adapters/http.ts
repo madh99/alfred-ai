@@ -99,6 +99,8 @@ export interface ItsmCallbacks {
   getSlaReport: (userId: string, targetType: string, targetId: string, period?: string) => Promise<any>;
   checkSlaCompliance: (userId: string) => Promise<any>;
   getSlaBreaches: (userId: string, period?: string) => Promise<any[]>;
+  /** v922 — generischer ITSM-Skill-Durchgriff für Analytics (mttr_report, capacity_forecast, …). Aktion wird in der Route gewhitelistet. */
+  skillAction?: (userId: string, action: string, params?: Record<string, unknown>) => Promise<any>;
 }
 
 export interface DocsCallbacks {
@@ -1577,8 +1579,35 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleItsmRoute(req, res, async (cbs, userId) => {
         const svc = await cbs.getService(userId, svcId);
         if (!svc) return { error: 'Service not found' };
-        const dependents = svc.dependencyMap?.downstream || [];
+        // v922 — vorher Stub: las svc.dependencyMap.downstream, ein Feld das nie
+        // befüllt wurde → Impact war immer leer. Downstream-Dependents werden jetzt
+        // real berechnet: alle Services, deren dependencies diesen Service referenzieren.
+        const all = await cbs.listServices(userId);
+        const dependents = (all || []).filter((s: any) =>
+          s.id !== svc.id && Array.isArray(s.dependencies) &&
+          s.dependencies.some((d: string) => d === svc.id || d?.toLowerCase?.() === String(svc.name).toLowerCase()),
+        ).map((s: any) => ({ id: s.id, name: s.name, criticality: s.criticality }));
         return { service: svc.name, impact: dependents, failureModes: svc.failureModes || [] };
+      });
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+\/components\/[^/]+$/) && req.method === 'DELETE') {
+      // v922 — Components per UI editierbar (gleiches Muster wie failure-modes)
+      const cparts = url.pathname.split('/');
+      const csvcId = cparts[3];
+      const compName = decodeURIComponent(cparts[5]);
+      this.handleItsmRoute(req, res, async (cbs, userId) => {
+        const svc = await cbs.getService(userId, csvcId);
+        if (!svc) return { error: 'Service not found' };
+        svc.components = (svc.components || []).filter((c: any) => c.name !== compName);
+        return cbs.updateService(userId, csvcId, { components: svc.components });
+      });
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+\/components$/) && req.method === 'POST') {
+      const csvcId = url.pathname.split('/')[3];
+      this.handleItsmBodyRoute(req, res, async (cbs, userId, body) => {
+        const svc = await cbs.getService(userId, csvcId);
+        if (!svc) return { error: 'Service not found' };
+        const comps = svc.components || [];
+        comps.push(body);
+        return cbs.updateService(userId, csvcId, { components: comps });
       });
     } else if (url.pathname.match(/^\/api\/services\/[^/]+\/generate-docs$/) && req.method === 'POST') {
       const svcId = url.pathname.split('/')[3];
@@ -1610,6 +1639,24 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleItsmRoute(req, res, (cbs, userId) => cbs.getSlaReport(userId, targetType, targetId, url.searchParams.get('period') ?? undefined));
     } else if (url.pathname === '/api/sla/set' && req.method === 'POST') {
       this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.setSla(userId, body.targetType as string, body.targetId as string, body.sla as Record<string, unknown>));
+    } else if (url.pathname === '/api/itsm/analytics' && req.method === 'GET') {
+      // v922 — Analytics-Aktionen des ITSM-Skills für die Web-UI (vorher chat-only).
+      // Whitelist-Map: nur diese read-only Aktionen sind über HTTP erreichbar.
+      const ANALYTICS_KINDS: Record<string, string> = {
+        mttr: 'mttr_report', capacity: 'capacity_forecast', health: 'service_health_score',
+        cascades: 'list_cascades', breach_risk: 'sla_breach_risk', pir: 'pir_pending',
+      };
+      const kind = url.searchParams.get('kind') ?? '';
+      const action = ANALYTICS_KINDS[kind];
+      if (!action) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Unknown analytics kind: ${kind}. Valid: ${Object.keys(ANALYTICS_KINDS).join(', ')}` }));
+      } else {
+        this.handleItsmRoute(req, res, (cbs, userId) => {
+          if (!cbs.skillAction) return Promise.resolve({ error: 'analytics not wired' });
+          return cbs.skillAction(userId, action, {});
+        });
+      }
     // ── ITSM API ──
     } else if (url.pathname === '/api/itsm/incidents' && req.method === 'GET') {
       this.handleItsmRoute(req, res, (cbs, userId) => {

@@ -87,6 +87,8 @@ interface Service {
   maintenanceWindow: string;
   tags: string[];
   components: ServiceComponent[];
+  /** v922 — Failure-Modes im UI editierbar */
+  failureModes?: Array<{ name: string; trigger?: string; serviceImpact?: string; affectedComponents?: string[] }>;
 }
 
 interface Problem {
@@ -115,7 +117,7 @@ interface Problem {
   closedAt: string | null;
 }
 
-type Tab = 'incidents' | 'changes' | 'services' | 'problems' | 'patterns';
+type Tab = 'incidents' | 'changes' | 'services' | 'problems' | 'patterns' | 'sla' | 'analytics';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -365,6 +367,22 @@ export function ItsmPage() {
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [selectedChange, setSelectedChange] = useState<ChangeRequest | null>(null);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
+  // v922 — Service-Komposition-Editoren
+  const [newCompName, setNewCompName] = useState('');
+  const [newCompRole, setNewCompRole] = useState('other');
+  const [newCompRequired, setNewCompRequired] = useState(true);
+  const [newFmName, setNewFmName] = useState('');
+  const [newFmTrigger, setNewFmTrigger] = useState('');
+  const [newFmImpact, setNewFmImpact] = useState('degraded');
+  // v922 — SLA-Tab
+  const [slaCompliance, setSlaCompliance] = useState<any>(null);
+  const [slaBreaches, setSlaBreaches] = useState<any[]>([]);
+  const [slaTargetId, setSlaTargetId] = useState('');
+  const [slaAvailability, setSlaAvailability] = useState('99.9');
+  // v922 — Analytics-Tab
+  const [analyticsKind, setAnalyticsKind] = useState('mttr');
+  const [analyticsResult, setAnalyticsResult] = useState<any>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   // Filters
   // v645 — default 'active' = open/acknowledged/investigating/mitigating (closed/resolved werden ausgeblendet)
@@ -473,6 +491,33 @@ export function ItsmPage() {
 
   // Load patterns when entering the tab or filters change
   useEffect(() => { if (tab === 'patterns') loadPatterns(); }, [tab, loadPatterns]);
+
+  // v922 — SLA-Daten laden wenn Tab aktiv
+  useEffect(() => {
+    if (tab !== 'sla') return;
+    (async () => {
+      try {
+        const [comp, breaches] = await Promise.all([
+          client.slaCompliance().catch(() => null),
+          client.slaBreaches().catch(() => []),
+        ]);
+        setSlaCompliance(comp);
+        setSlaBreaches(Array.isArray(breaches) ? breaches : []);
+      } catch (e) { setError((e as Error).message); }
+    })();
+  }, [tab, client]);
+
+  // v922 — Analytics laden bei Tab/Kind-Wechsel
+  useEffect(() => {
+    if (tab !== 'analytics') return;
+    (async () => {
+      setAnalyticsLoading(true);
+      try {
+        setAnalyticsResult(await client.itsmAnalytics(analyticsKind));
+      } catch (e) { setError((e as Error).message); setAnalyticsResult(null); }
+      setAnalyticsLoading(false);
+    })();
+  }, [tab, analyticsKind, client]);
 
   function toggleIncSelect(id: string) {
     setSelectedIncidentIds(prev => {
@@ -728,6 +773,50 @@ export function ItsmPage() {
     setGeneratingRunbook(false);
   }
 
+  // v922 — Service-Komposition (Components + Failure-Modes) in der UI editierbar;
+  // vorher nur per Chat-Skill pflegbar, obwohl Health-Check + Impact davon abhängen.
+  async function refreshSelectedService(serviceId: string) {
+    const updated = (await client.itsmListServices()) as Service[];
+    setServices(Array.isArray(updated) ? updated : []);
+    const svc = updated.find(s => s.id === serviceId);
+    if (svc) setSelectedService(svc);
+  }
+
+  async function addComponent(serviceId: string) {
+    if (!newCompName.trim()) return;
+    try {
+      await client.serviceAddComponent(serviceId, { name: newCompName.trim(), role: newCompRole || 'other', required: newCompRequired });
+      setNewCompName('');
+      await refreshSelectedService(serviceId);
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function removeComponent(serviceId: string, name: string) {
+    try {
+      await client.serviceRemoveComponent(serviceId, name);
+      await refreshSelectedService(serviceId);
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function addFailureMode(serviceId: string) {
+    if (!newFmName.trim()) return;
+    try {
+      await client.serviceAddFailureMode(serviceId, {
+        name: newFmName.trim(), trigger: newFmTrigger || 'unbekannt',
+        serviceImpact: newFmImpact, affectedComponents: [],
+      });
+      setNewFmName(''); setNewFmTrigger('');
+      await refreshSelectedService(serviceId);
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function removeFailureMode(serviceId: string, name: string) {
+    try {
+      await client.serviceRemoveFailureMode(serviceId, name);
+      await refreshSelectedService(serviceId);
+    } catch (e) { setError((e as Error).message); }
+  }
+
   async function loadServiceDocs(serviceId: string) {
     try {
       const docs = await client.cmdbListDocuments({ linked_entity_type: 'service', linked_entity_id: serviceId });
@@ -918,6 +1007,8 @@ export function ItsmPage() {
     { key: 'services', label: 'Services', count: services.length },
     { key: 'problems', label: 'Problems', count: problems.length },
     { key: 'patterns', label: '🔁 Patterns', count: patterns.length },
+    { key: 'sla', label: '📐 SLA', count: slaBreaches.length },
+    { key: 'analytics', label: '📈 Analytics', count: 0 },
   ];
 
   return (
@@ -1751,10 +1842,66 @@ export function ItsmPage() {
                             </p>
                           )}
                         </div>
+                        <button onClick={() => removeComponent(selectedService.id, comp.name)}
+                          title="Komponente entfernen"
+                          className="text-gray-600 hover:text-red-400 shrink-0">✕</button>
                       </div>
                     ))}
                   </div>
                 )}
+                {/* v922 — Komponente hinzufügen (vorher nur per Chat-Skill) */}
+                <div className="flex gap-1.5 mt-2 items-center flex-wrap">
+                  <input value={newCompName} onChange={e => setNewCompName(e.target.value)} placeholder="Neue Komponente…"
+                    className="flex-1 min-w-32 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200" />
+                  <select value={newCompRole} onChange={e => setNewCompRole(e.target.value)}
+                    className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200">
+                    {['frontend', 'backend', 'database', 'cache', 'queue', 'proxy', 'storage', 'other'].map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <label className="text-[10px] text-gray-400 flex items-center gap-1">
+                    <input type="checkbox" checked={newCompRequired} onChange={e => setNewCompRequired(e.target.checked)} /> required
+                  </label>
+                  <button onClick={() => addComponent(selectedService.id)} disabled={!newCompName.trim()}
+                    className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white rounded">+</button>
+                </div>
+              </div>
+
+              {/* v922 — Failure-Modes editierbar (Grundlage für Health-Check + Impact-Analyse) */}
+              <div>
+                <p className="text-xs text-gray-500 mb-2">Failure-Modes</p>
+                {(!selectedService.failureModes || selectedService.failureModes.length === 0) ? (
+                  <p className="text-xs text-gray-500 italic">Keine Failure-Modes definiert.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {(selectedService.failureModes as any[]).map((fm, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2">
+                        <div className="flex-1 min-w-0">
+                          <span className="text-gray-200">{fm.name}</span>
+                          <span className={clsx('ml-2 text-[10px] px-1.5 py-0 rounded',
+                            fm.serviceImpact === 'down' ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-400')}>
+                            {fm.serviceImpact ?? 'degraded'}
+                          </span>
+                          {fm.trigger && <p className="text-gray-500 mt-0.5">Trigger: {fm.trigger}</p>}
+                        </div>
+                        <button onClick={() => removeFailureMode(selectedService.id, fm.name)}
+                          title="Failure-Mode entfernen"
+                          className="text-gray-600 hover:text-red-400 shrink-0">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-1.5 mt-2 items-center flex-wrap">
+                  <input value={newFmName} onChange={e => setNewFmName(e.target.value)} placeholder="Neuer Failure-Mode…"
+                    className="flex-1 min-w-28 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200" />
+                  <input value={newFmTrigger} onChange={e => setNewFmTrigger(e.target.value)} placeholder="Trigger"
+                    className="w-28 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200" />
+                  <select value={newFmImpact} onChange={e => setNewFmImpact(e.target.value)}
+                    className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200">
+                    <option value="degraded">degraded</option>
+                    <option value="down">down</option>
+                  </select>
+                  <button onClick={() => addFailureMode(selectedService.id)} disabled={!newFmName.trim()}
+                    className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white rounded">+</button>
+                </div>
               </div>
 
               {/* Runbook Generation */}
@@ -2254,6 +2401,99 @@ export function ItsmPage() {
               </details>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* v922 — SLA-Tab: Compliance + Breaches + SLA setzen (Routen existierten, UI fehlte) */}
+      {!loading && tab === 'sla' && (
+        <div className="space-y-4">
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-gray-200">SLA setzen</h3>
+            <div className="flex gap-2 items-end flex-wrap">
+              <label className="text-xs text-gray-400">
+                Service
+                <select value={slaTargetId} onChange={e => setSlaTargetId(e.target.value)}
+                  className="block mt-1 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1.5 text-sm text-gray-200 min-w-56">
+                  <option value="">— wählen —</option>
+                  {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-gray-400">
+                Verfügbarkeits-Ziel (%)
+                <input value={slaAvailability} onChange={e => setSlaAvailability(e.target.value)}
+                  className="block mt-1 w-24 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1.5 text-sm text-gray-200" />
+              </label>
+              <button
+                disabled={!slaTargetId}
+                onClick={async () => {
+                  try {
+                    await client.slaSet('service', slaTargetId, { availabilityTarget: Number(slaAvailability) });
+                    setSlaCompliance(await client.slaCompliance().catch(() => null));
+                    alert('SLA gesetzt');
+                  } catch (e) { setError((e as Error).message); }
+                }}
+                className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white rounded">
+                Setzen
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-5">
+            <h3 className="text-sm font-semibold text-gray-200 mb-3">Compliance</h3>
+            {!slaCompliance ? (
+              <p className="text-xs text-gray-500 italic">Keine Compliance-Daten (noch keine SLAs gesetzt oder keine Messwerte).</p>
+            ) : (
+              <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono max-h-96 overflow-y-auto">
+                {typeof slaCompliance === 'string' ? slaCompliance : (slaCompliance.display ?? JSON.stringify(slaCompliance.data ?? slaCompliance, null, 2))}
+              </pre>
+            )}
+          </div>
+
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-5">
+            <h3 className="text-sm font-semibold text-gray-200 mb-3">Breaches ({slaBreaches.length})</h3>
+            {slaBreaches.length === 0 ? (
+              <p className="text-xs text-gray-500 italic">Keine SLA-Verletzungen. 🎉</p>
+            ) : (
+              <div className="space-y-1.5">
+                {slaBreaches.map((b: any, i: number) => (
+                  <div key={i} className="text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-gray-300">
+                    <span className="text-red-400 mr-2">⛔</span>
+                    {b.serviceName ?? b.targetId ?? '?'} — {b.reason ?? b.eventType ?? JSON.stringify(b).slice(0, 120)}
+                    {b.createdAt && <span className="text-gray-500 ml-2">{fmtDate(b.createdAt)}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* v922 — Analytics-Tab: MTTR/Capacity/Health/Cascades/Breach-Risk/PIR (vorher chat-only) */}
+      {!loading && tab === 'analytics' && (
+        <div className="space-y-4">
+          <div className="flex gap-1 flex-wrap">
+            {[
+              ['mttr', 'MTTR'], ['capacity', 'Capacity-Forecast'], ['health', 'Health-Score'],
+              ['cascades', 'Cascades'], ['breach_risk', 'SLA-Breach-Risk'], ['pir', 'PIR offen'],
+            ].map(([k, label]) => (
+              <button key={k} onClick={() => setAnalyticsKind(k)}
+                className={clsx('px-3 py-1.5 text-xs rounded',
+                  analyticsKind === k ? 'bg-blue-600 text-white' : 'bg-[#1f1f1f] text-gray-400 hover:bg-[#2a2a2a]')}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-5">
+            {analyticsLoading ? (
+              <p className="text-xs text-gray-500">Lade…</p>
+            ) : !analyticsResult ? (
+              <p className="text-xs text-gray-500 italic">Keine Daten.</p>
+            ) : (
+              <pre className="text-sm text-gray-300 whitespace-pre-wrap font-mono max-h-[calc(100vh-320px)] overflow-y-auto">
+                {analyticsResult.display ?? JSON.stringify(analyticsResult.data ?? analyticsResult, null, 2)}
+              </pre>
+            )}
+          </div>
         </div>
       )}
 
