@@ -100,6 +100,28 @@ export class TodoSkill extends Skill {
     }
   }
 
+  /**
+   * v924 — Ähnlichkeits-Dedup: verhindert semantische Duplikate wie die 45 offenen
+   * „Sensor-Batterien"-Todos (Reasoning formulierte dasselbe Todo immer neu:
+   * HEUTE/JETZT/SOFORT/URGENT/KRITISCH…). Match = ≥3 gemeinsame Keywords (≥4 Zeichen)
+   * ODER ≥60% Keyword-Überlappung des kürzeren Titels (mind. 2) — Muster analog
+   * Reminder-Dedup (reasoning-engine) und filterEchoOpenItems (project-manager).
+   */
+  static findSimilarTodo(title: string, existing: Array<{ id: string; title: string }>): { id: string; title: string } | null {
+    const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 4));
+    const newTokens = tokens(title);
+    if (newTokens.size === 0) return null;
+    for (const t of existing) {
+      const exTokens = tokens(t.title);
+      if (exTokens.size === 0) continue;
+      let common = 0;
+      for (const w of newTokens) if (exTokens.has(w)) common++;
+      const minSize = Math.min(newTokens.size, exTokens.size);
+      if (common >= 3 || (common >= 2 && common / minSize >= 0.6)) return t;
+    }
+    return null;
+  }
+
   private async addTodo(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const title = input.title as string | undefined;
 
@@ -111,6 +133,21 @@ export class TodoSkill extends Skill {
     const description = input.description as string | undefined;
     const priority = input.priority as string | undefined;
     const dueDate = input.dueDate as string | undefined;
+
+    // v924 — Duplikat-Prävention vor dem Insert (force: true überschreibt bewusst)
+    if (input.force !== true) {
+      try {
+        const open = await this.todoRepo.list(effectiveUserId(context));
+        const similar = TodoSkill.findSimilarTodo(title, open);
+        if (similar) {
+          return {
+            success: true,
+            data: { todoId: similar.id, title: similar.title, duplicate: true },
+            display: `⚠️ Sehr ähnliches offenes Todo existiert bereits: "${similar.title}" (\`${similar.id.slice(0, 8)}\`). KEIN Duplikat angelegt — bestehendes Todo aktualisieren/erledigen, oder mit force:true erzwingen.`,
+          };
+        }
+      } catch { /* Dedup ist best-effort — Anlage nie blockieren */ }
+    }
 
     const entry = await this.todoRepo.add(effectiveUserId(context), title, {
       list,

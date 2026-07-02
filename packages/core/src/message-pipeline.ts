@@ -233,6 +233,8 @@ export class MessagePipeline {
   private readonly personality?: { tone?: string; humor?: string; directness?: string; language?: string; custom?: string };
 
   private confirmationQueue?: import('./confirmation-queue.js').ConfirmationQueue;
+  /** v924 — Quick-Actions (todo:/reminder:-Callbacks) vor dem LLM. */
+  private quickActions?: import('./quick-actions.js').QuickActionHandler;
   private activityLogger?: import('./activity-logger.js').ActivityLogger;
   private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
   /** v607 D7 — direct access to skill-health-repo for prompt enrichment with host-failure history. */
@@ -297,6 +299,11 @@ export class MessagePipeline {
 
   setConfirmationQueue(queue: import('./confirmation-queue.js').ConfirmationQueue): void {
     this.confirmationQueue = queue;
+  }
+
+  /** v924 — Quick-Actions (todo:/reminder:-Callbacks) vor dem LLM abfangen. */
+  setQuickActions(handler: import('./quick-actions.js').QuickActionHandler): void {
+    this.quickActions = handler;
   }
 
   setActivityLogger(logger: import('./activity-logger.js').ActivityLogger): void {
@@ -437,6 +444,13 @@ export class MessagePipeline {
 
     // v847 — Show status immediately so user knows Alfred is working
     onProgress?.({ kind: 'thinking', text: 'Alfred denkt nach…' });
+
+    // v924 — Quick-Action-Callbacks (todo:<id>:done etc.) VOR allem anderen:
+    // das sind Button-Klicks, nie LLM-Input.
+    if (this.quickActions && message.text) {
+      const handledQuick = await this.quickActions.handle(message.chatId, message.platform, message.text);
+      if (handledQuick) return { text: '' }; // Antwort kam bereits via Adapter
+    }
 
     // Check for pending confirmation response
     if (this.confirmationQueue && message.text) {

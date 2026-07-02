@@ -108,7 +108,16 @@ export class TodoWatcher {
     if (!adapter) return;
 
     try {
-      await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
+      // v924 — Quick-Action-Buttons: ohne sie konnte der User nicht reagieren,
+      // das Todo blieb offen und der Overdue-Alarm wiederholte sich täglich.
+      await adapter.sendMessage(this.defaultChatId, lines.join('\n'), {
+        replyMarkup: {
+          inlineKeyboard: [[
+            { text: '✅ Erledigt', callbackData: `todo:${todoId}:done` },
+            { text: '⏰ Morgen', callbackData: `todo:${todoId}:snooze` },
+          ]],
+        },
+      });
       // markNotified already done by claimNotification above
       this.logger.info({ todoId, title, kind }, 'Todo reminder sent');
       this.onTodoNotified?.(todoId, title, kind);

@@ -50,6 +50,12 @@ export class ReminderRepository {
     return entry;
   }
 
+  /** v924 — für Quick-Action-Snooze: Original-Reminder per ID nachschlagen. */
+  async getById(id: string): Promise<ReminderEntry | undefined> {
+    const row = await this.adapter.queryOne(`SELECT * FROM reminders WHERE id = ?`, [id]) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
   async getDue(): Promise<ReminderEntry[]> {
     const now = new Date().toISOString();
 

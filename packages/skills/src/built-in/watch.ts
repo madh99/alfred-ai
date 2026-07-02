@@ -281,6 +281,34 @@ export class WatchSkill extends Skill {
     const primaryOperator = (conditionOperator ?? (compositeCondition ? compositeCondition.conditions[0].operator : 'changed')) as WatchCondition['operator'];
     const primaryValue = conditionValue ?? (compositeCondition ? compositeCondition.conditions[0].value : undefined);
 
+    // v924 — Duplikat-Prävention: „Daily Sensor Battery Check" existierte 2× (mit
+    // jeweils GERATENEN, unterschiedlichen entity_ids) + 1 verwandte — nichts
+    // prüfte vor dem Insert. Duplikat = gleiche skill+entity_id ODER ≥3 gemeinsame
+    // Namens-Keywords. force: true überschreibt bewusst.
+    if (input.force !== true) {
+      try {
+        const existing = await this.watchRepo.findByChatId(context.chatId, context.platform);
+        const newEntity = (skillParams as Record<string, unknown> | undefined)?.entity_id as string | undefined;
+        const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 4));
+        const newTokens = tokens(name);
+        for (const w of existing) {
+          if (!w.enabled) continue;
+          const wEntity = (w.skillParams as Record<string, unknown> | undefined)?.entity_id as string | undefined;
+          const sameTarget = w.skillName === skillName && !!newEntity && wEntity === newEntity;
+          let common = 0;
+          const wTokens = tokens(w.name ?? '');
+          for (const t of newTokens) if (wTokens.has(t)) common++;
+          if (sameTarget || common >= 3) {
+            return {
+              success: true,
+              data: { watchId: w.id, name: w.name, duplicate: true },
+              display: `⚠️ Sehr ähnliche Watch existiert bereits: "${w.name}" (\`${w.id.slice(0, 8)}\`${sameTarget ? `, gleiche Entity ${wEntity}` : ''}). KEIN Duplikat angelegt — bestehende Watch anpassen/löschen, oder mit force:true erzwingen.`,
+            };
+          }
+        }
+      } catch { /* Dedup ist best-effort — Anlage nie blockieren */ }
+    }
+
     const watch = await this.watchRepo.create({
       userId: effectiveUserId(context),
       chatId: context.chatId,

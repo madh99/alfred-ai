@@ -1,8 +1,9 @@
 import type { Logger } from 'pino';
 import type { ReminderRepository } from '@alfred/storage';
-import type { Platform } from '@alfred/types';
+import type { Platform, SendMessageOptions } from '@alfred/types';
 
-export type SendMessageFn = (platform: Platform, chatId: string, text: string) => Promise<void>;
+// v924 — options durchgereicht, damit Reminder Quick-Action-Buttons tragen können
+export type SendMessageFn = (platform: Platform, chatId: string, text: string, options?: SendMessageOptions) => Promise<void>;
 
 /** Minimal interface to resolve linked users for cross-platform reminder delivery. */
 export interface LinkedUserResolver {
@@ -51,6 +52,15 @@ export class ReminderScheduler {
       for (const reminder of due) {
         try {
           const text = `\u23F0 Reminder: ${reminder.message}`;
+          // v924 \u2014 Quick-Action-Buttons: Ok (Kenntnisnahme) / in 1h erneut
+          const options: SendMessageOptions = {
+            replyMarkup: {
+              inlineKeyboard: [[
+                { text: '\u2705 Ok', callbackData: `reminder:${reminder.id}:ok` },
+                { text: '\u23F0 +1h', callbackData: `reminder:${reminder.id}:snooze1h` },
+              ]],
+            },
+          };
           let delivered = false;
 
           // Send to the original platform
@@ -59,6 +69,7 @@ export class ReminderScheduler {
               reminder.platform as Platform,
               reminder.chatId,
               text,
+              options,
             );
             delivered = true;
           } catch (primaryErr) {
@@ -75,7 +86,7 @@ export class ReminderScheduler {
                 const conv = await this.linkedUsers.findConversation(user.platform, user.id);
                 if (conv) {
                   try {
-                    await this.sendMessage(user.platform as Platform, conv.chatId, text);
+                    await this.sendMessage(user.platform as Platform, conv.chatId, text, options);
                     delivered = true;
                   } catch (xErr) {
                     this.logger.debug({ err: xErr, reminderId: reminder.id, platform: user.platform }, 'Cross-platform delivery failed');

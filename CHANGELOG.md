@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.924] - 2026-07-02
+
+### Added/Fixed — Quick-Action-Buttons + Erstell-Dedup gegen Nachrichten-Spam (v924)
+
+Paket-1-Fix Teil 1. Realfall: 45 offene „Sensor-Batterien"-Todos (jedes Mal neu
+formuliert: HEUTE/JETZT/SOFORT/URGENT/KRITISCH) + dieselbe Watch 2× mit jeweils
+geratenen, nicht existierenden Entity-Namen — und auf Erinnerungen konnte man
+nicht reagieren, also wiederholten sie sich täglich.
+
+- **Quick-Action-Buttons:** Todo-fällig/überfällig-Nachrichten tragen jetzt
+  „✅ Erledigt" / „⏰ Morgen", Reminder „✅ Ok" / „⏰ +1h" (Telegram Inline-
+  Keyboard; Infrastruktur existierte, wurde aber nur von der Confirmation-Queue
+  genutzt). Neuer `QuickActionHandler` fängt die Callbacks VOR dem LLM ab
+  (`todo:<id>:done|snooze`, `reminder:<id>:ok|snooze1h`): Erledigt-Klick
+  completed das Todo und beendet damit die tägliche Wiederholung; Snooze
+  verschiebt +24h bzw. legt den Reminder in 1h neu.
+- **Erstell-Dedup Todos:** `todo.add` prüft vor dem Insert auf semantisch
+  ähnliche offene Todos (≥3 gemeinsame Keywords oder ≥60% Überlappung — exakter
+  Titelvergleich fand bei den 45 Duplikaten NULL Treffer) und verweist statt
+  Neuanlage auf das bestehende Todo. `force: true` überschreibt bewusst.
+- **Erstell-Dedup Watches:** `watch.create` lehnt Duplikate ab (gleiche
+  Skill+entity_id ODER ≥3 gemeinsame Namens-Keywords) mit Verweis auf die
+  bestehende Watch. `force: true` überschreibt.
+- Reminder-Sendepfad reicht `SendMessageOptions` durch (Cross-Platform inkl.);
+  `ReminderRepository.getById` neu für Snooze.
+- 9 Tests (`quick-actions.test.ts`, `create-dedup.test.ts`).
+- Zusätzlich live bereinigt (ohne Deploy): 44 Duplikat-Todos geschlossen (1
+  behalten), 2 funktionslose Duplikat-Watches gelöscht, verbleibende Watch auf
+  die real existierende HA-Entity korrigiert.
+
 ## [0.19.0-multi-ha.923] - 2026-07-02
 
 ### Added/Fixed — ITSM: Known-Error-Wissenskreislauf geschlossen (v923)

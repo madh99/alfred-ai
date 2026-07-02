@@ -5910,10 +5910,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // 6. Initialize reminder scheduler
     this.reminderScheduler = new ReminderScheduler(
       reminderRepo,
-      async (platform, chatId, text) => {
+      async (platform, chatId, text, options) => {
         const adapter = this.adapters.get(platform);
         if (adapter) {
-          await adapter.sendMessage(chatId, text);
+          await adapter.sendMessage(chatId, text, options); // v924 — Buttons durchreichen
         } else {
           this.logger.warn({ platform, chatId }, 'No adapter for reminder platform');
         }
@@ -6322,6 +6322,14 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
 
     // Wire confirmation queue, activity logger, skill health tracker, and insight tracker into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
+    // v924 — Quick-Actions (todo:/reminder:-Button-Callbacks) vor dem LLM abfangen
+    if (this.todoRepo && this.reminderRepo) {
+      const { QuickActionHandler } = await import('./quick-actions.js');
+      this.pipeline.setQuickActions(new QuickActionHandler(
+        this.todoRepo, this.reminderRepo, this.adapters,
+        this.logger.child({ component: 'quick-actions' }),
+      ));
+    }
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
     // v685 — Owner-Master-User-ID an Pipeline durchreichen für Role-Fallback.
