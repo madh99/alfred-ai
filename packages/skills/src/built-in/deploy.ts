@@ -42,7 +42,11 @@ export class DeploySkill extends Skill {
       'Template-Erkennung: ubuntu→User ubuntu, rocky/alma/centos→User cloud-user. SSH-Key wird automatisch injiziert.',
     riskLevel: 'admin',
     version: '1.0.0',
-    timeoutMs: 300_000, // 5 min for deploy
+    // v931 — 20 min: docker-compose-Deploys mit Image-Rebuild (Next.js-Build auf
+    // kleiner VM) brauchen regelmäßig >5 min; der alte 300s-Timeout killte die
+    // SSH-Session mitten im `compose up` und ließ Container im Status „Created"
+    // zurück (Vorfall .96 02.07.). Der Compose-Start läuft zudem jetzt detached.
+    timeoutMs: 1_200_000,
     inputSchema: {
       type: 'object',
       properties: {
@@ -173,6 +177,40 @@ export class DeploySkill extends Skill {
     ], { maxBuffer: 5 * 1024 * 1024, timeout: 300_000 });
     if (stderr && !stdout) return stderr.trim();
     return stdout.trim();
+  }
+
+  /**
+   * v931 — Pollt das Log eines detached gestarteten Deploy-Kommandos bis zum
+   * OK/FAIL-Marker. Jeder Poll ist ein kurzer SSH-Aufruf — ein Abbruch der
+   * ursprünglichen Session kann den laufenden Build nicht mehr killen.
+   */
+  private async pollDeployLog(
+    host: string, user: string, logFile: string, maxWaitMs: number,
+    onProgress?: (elapsedMs: number) => void,
+  ): Promise<{ ok: boolean; tail: string; elapsedMs: number }> {
+    const start = Date.now();
+    const intervalMs = 10_000;
+    let lastProgressMinute = 0;
+    for (;;) {
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      const elapsedMs = Date.now() - start;
+      let tail = '';
+      try {
+        tail = await this.ssh(host, user, `tail -20 ${logFile} 2>/dev/null || true`);
+      } catch { /* transienter SSH-Fehler → weiter pollen */ }
+      if (tail.includes('ALFRED_DEPLOY_OK')) return { ok: true, tail, elapsedMs };
+      if (tail.includes('ALFRED_DEPLOY_FAIL')) {
+        return { ok: false, tail: tail.replace('ALFRED_DEPLOY_FAIL', '').trim().slice(-300), elapsedMs };
+      }
+      if (elapsedMs >= maxWaitMs) {
+        return { ok: false, tail: `Timeout nach ${Math.round(maxWaitMs / 60_000)} min — läuft evtl. noch, Log: ${logFile}`, elapsedMs };
+      }
+      const minute = Math.floor(elapsedMs / 60_000);
+      if (minute > lastProgressMinute) {
+        lastProgressMinute = minute;
+        onProgress?.(elapsedMs);
+      }
+    }
   }
 
   /** Test SSH connectivity. */
@@ -499,9 +537,21 @@ export class DeploySkill extends Skill {
           const freed = (await this.ssh(host, user, 'docker builder prune -f 2>/dev/null | tail -1')).trim();
           if (freed) steps.push(`🧹 Build-Cache bereinigt vor Build (${freed.replace(/^Total:\s*/i, '')})`);
         } catch { /* best effort — Prune ist optional */ }
+        // v931 — DETACHED starten + Log pollen statt synchron in der SSH-Session:
+        // Ein Rebuild (Next.js auf 2-Core-VM) sprengte den 300s-Timeout, der
+        // Session-Kill riss `compose up` mitten im Start ab → Container blieben
+        // dauerhaft auf „Created" (Vorfall .96 02.07.). Mit nohup überlebt der
+        // Start jeden Verbindungsabbruch; wir pollen das Log bis OK/FAIL.
         const composeUp = await this.composeCmd(host, user, 'up -d --build');
-        await this.ssh(host, user, `cd ${projectDir} && ${composeUp}`);
-        steps.push(`🐳 ${composeUp.split(' ').slice(0, 2).join(' ')} up: ${project}`);
+        const logFile = `/tmp/alfred-deploy-${project.replace(/[^a-zA-Z0-9_-]/g, '_')}.log`;
+        await this.ssh(host, user,
+          `cd ${projectDir} && rm -f ${logFile} && nohup sh -c "${composeUp} && echo ALFRED_DEPLOY_OK || echo ALFRED_DEPLOY_FAIL" >${logFile} 2>&1 </dev/null & echo started`);
+        const composeResult = await this.pollDeployLog(host, user, logFile, 15 * 60_000,
+          elapsed => emitStep('service-start', 'started', `${pm} — Build läuft (${Math.round(elapsed / 1000)}s)`));
+        if (!composeResult.ok) {
+          throw new Error(`compose up fehlgeschlagen: ${composeResult.tail}`);
+        }
+        steps.push(`🐳 ${composeUp.split(' ').slice(0, 2).join(' ')} up: ${project} (${Math.round(composeResult.elapsedMs / 1000)}s)`);
       }
       emitStep('service-start', 'done', pm);
     } catch (err) {

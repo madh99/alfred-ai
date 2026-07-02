@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.931] - 2026-07-02
+
+### Fixed — Deploy-Skill: Docker-Builds überleben jetzt Timeouts (v931)
+
+Realfall (.96, 02.07.): fussball-cc-Deploy schlug mit „Skill deploy timed out
+after 300000ms" fehl. `service-start` führte `docker compose up -d --build`
+synchron in der SSH-Session aus — der Next.js-Image-Rebuild auf der 2-Core-VM
+brauchte länger als 5 Minuten, der Skill-Timeout killte die Session und riss
+compose zwischen „Created" und „Started" ab: das Image war fertig gebaut, aber
+app/scheduler blieben als „Created"-Leichen liegen.
+
+- `docker compose up -d --build` läuft jetzt **detached** (nohup, Log nach
+  `/tmp/alfred-deploy-<projekt>.log`) — ein Verbindungsabbruch kann den
+  laufenden Build nicht mehr killen.
+- Der Skill pollt das Log (alle 10 s, bis 15 min) auf OK/FAIL-Marker;
+  Fehler liefern den Log-Auszug, Fortschritt wird 1×/Minute gemeldet
+  („Build läuft (120s)"). Transiente SSH-Fehler beim Polling brechen nicht ab.
+- Skill-Timeout von 5 auf 20 Minuten erhöht (deckt Build + Polling + Verify).
+- pm2/systemd-Deploys unverändert (dort gibt es keine langen Builds).
+- 6 Tests (`deploy-detached.test.ts`).
+
 ## [0.19.0-multi-ha.930] - 2026-07-02
 
 ### Added — Interessen-Radar: Autonomie + UI (v930, letzte Stufe des Plans)
