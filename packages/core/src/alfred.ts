@@ -260,6 +260,8 @@ export class Alfred {
   /** v658 — Projekt-Chat: ConversationRepository für chatHistory-Endpoint */
   private conversationRepo?: import('@alfred/storage').ConversationRepository;
   private insightsRepo?: import('@alfred/storage').InsightsRepository;
+  /** v927 — zentraler Notification-Router (Stiller Modus). */
+  private notificationRouter?: import('./notification-router.js').NotificationRouter;
   private insightEngine?: import('./insights/insight-engine.js').InsightEngine;
   /** v694 — Legacy-Daten-UIDs: pre-multi-user user-ids die KG/Conversation-Daten halten
    *  aber nicht (mehr) in alfred_users stehen. Werden nur dann via linkedUserIds in
@@ -5456,7 +5458,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // 4q. Briefing (always available — gathers data from registered skills, reads memories for addresses)
     {
       const { BriefingSkill } = await import('@alfred/skills');
-      skillRegistry.register(new BriefingSkill(skillRegistry, this.config, memoryRepo));
+      const briefingSkill = new BriefingSkill(skillRegistry, this.config, memoryRepo);
+      // v927 — silent_digest braucht Zugriff auf die stille Router-Ablage
+      if (this.insightsRepo) briefingSkill.setInsightsRepo(this.insightsRepo);
+      skillRegistry.register(briefingSkill);
       this.logger.info('Briefing skill registered');
     }
 
@@ -6233,6 +6238,28 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       if ((this.reasoningEngine as any).collector?.setPlanningAgent) {
         (this.reasoningEngine as any).collector.setPlanningAgent(planningAgent);
       }
+    }
+
+    // v927 — Stiller Modus: Notification-Router (Reasoning-Insights unter Schwelle
+    // landen still in der Insights-UI statt im Chat; nichts geht verloren).
+    // Ablage NUR unter ownerMasterUserId (v805) — sonst sieht die Insights-UI die
+    // Einträge nicht. Ohne Master-UUID bleibt der Router aus (= Verhalten wie bisher).
+    if (this.reasoningEngine && this.insightsRepo && this.ownerMasterUserId) {
+      const { NotificationRouter } = await import('./notification-router.js');
+      this.notificationRouter = new NotificationRouter(
+        this.insightsRepo, this.adapters,
+        {
+          minUrgency: this.config.notifications?.minUrgency ?? 'high',
+          perSource: this.config.notifications?.perSource,
+          devMode: this.config.notifications?.devMode ?? false,
+        },
+        this.logger.child({ component: 'notification-router' }),
+        this.ownerMasterUserId,
+      );
+      this.reasoningEngine.setNotificationRouter(this.notificationRouter);
+      this.logger.info({ minUrgency: this.config.notifications?.minUrgency ?? 'high', devMode: this.config.notifications?.devMode ?? false }, 'v927 notification router active');
+    } else if (this.reasoningEngine && !this.ownerMasterUserId) {
+      this.logger.warn('v927 notification router NOT active (no ownerMasterUserId) — sending behaviour unchanged');
     }
 
     // Wire KG service into pipeline for dynamic device context in chat prompts

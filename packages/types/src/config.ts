@@ -503,6 +503,19 @@ export interface LLMLinkingConfig {
   maxEntitiesPerPass?: number;
 }
 
+/**
+ * v927 — Zentraler Notification-Router („Stiller Modus"): proaktive Meldungen
+ * unter der Schwelle landen still in der Insights-UI statt im Chat.
+ */
+export interface NotificationsConfig {
+  /** Ab dieser Dringlichkeit wird gesendet (Default 'high'). */
+  minUrgency?: 'low' | 'normal' | 'high' | 'urgent';
+  /** Schwellen-Override je Quelle, z.B. { reasoning: 'urgent' }. */
+  perSource?: Record<string, 'low' | 'normal' | 'high' | 'urgent'>;
+  /** true = Dev-Mode: alles senden wie früher. */
+  devMode?: boolean;
+}
+
 export interface ReasoningConfig {
   enabled?: boolean;
   /** 'morning_noon_evening' = 3×/Tag (7h,12h,18h), 'hourly', 'half_hourly' */
@@ -1118,6 +1131,8 @@ export interface AlfredConfig {
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;
+  /** v927 — Stiller Modus / Notification-Router. */
+  notifications?: NotificationsConfig;
   reflection?: ReflectionConfig;
   webhooks?: WebhookConfig[];
   proxmoxBackup?: ProxmoxBackupConfig;

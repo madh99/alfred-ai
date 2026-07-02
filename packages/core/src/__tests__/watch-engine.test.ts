@@ -7,6 +7,12 @@ function createMockWatchRepo(watches: any[] = []) {
     updateAfterCheck: vi.fn(),
     updateActionError: vi.fn(),
     updateSkillParams: vi.fn(),
+    // v595-Auto-Repair-Pfad ruft diese auf jedem Check auf — ohne sie wirft
+    // checkWatch einen TypeError und kein Alert wird gesendet
+    resetFailures: vi.fn(),
+    incrementFailures: vi.fn(() => 1),
+    getEnabled: vi.fn(() => watches),
+    getById: vi.fn((id: string) => watches.find(w => w.id === id)),
   } as any;
 }
 

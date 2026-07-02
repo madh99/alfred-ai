@@ -55,7 +55,7 @@ function isNoInsights(text: string): boolean {
 
 interface ScanResult {
   hasInsights: boolean;
-  items: Array<{ summary: string; urgency: 'urgent' | 'high' | 'normal' | 'low' }>;
+  items: Array<{ summary: string; urgency: 'urgent' | 'high' | 'normal' | 'low'; warum?: string }>;
 }
 
 function parseScanResponse(text: string): ScanResult {
@@ -117,9 +117,14 @@ export class ReasoningEngine {
   private readonly collector: ReasoningContextCollector;
   private deliveryScheduler?: DeliveryScheduler;
   private planningAgent?: import('./planning-agent.js').PlanningAgent;
+  /** v927 — zentraler Notification-Router: unter Schwelle → still ins Wissen statt Telegram. */
+  private notificationRouter?: import('./notification-router.js').NotificationRouter;
 
   /** Set optional planning agent for autonomous multi-step plans. */
   setPlanningAgent(agent: import('./planning-agent.js').PlanningAgent): void { this.planningAgent = agent; }
+
+  /** v927 — Router setzen (Stiller Modus für Reasoning-Insights). */
+  setNotificationRouter(router: import('./notification-router.js').NotificationRouter): void { this.notificationRouter = router; }
   private resolvedOwnerUserId?: string;
   private activityProfile?: ActivityProfile;
   // Note: tickRunning guard is a local variable inside start() — intentionally not a class field
@@ -472,10 +477,26 @@ ${this.buildTopicInstructions()}`;
       // Urgency-Gate: only proceed with urgent/high items for immediate delivery
       const urgentItems = scanResult.items.filter(i => i.urgency === 'urgent' || i.urgency === 'high');
       const normalItems = scanResult.items.filter(i => i.urgency === 'normal');
-      // low items are dropped entirely (routine status)
+
+      // v927 — low-Items wurden vorher KOMPLETT VERWORFEN. Mit Router werden sie
+      // still als Wissen abgelegt (Insights-UI + silent_digest) — nichts geht verloren.
+      const lowItems = scanResult.items.filter(i => i.urgency === 'low');
+      if (this.notificationRouter && lowItems.length > 0) {
+        for (const item of lowItems) {
+          if (await this.wasRecentlySent(item.summary)) continue;
+          await this.notificationRouter.store({
+            source: 'reasoning', urgency: 'low',
+            title: item.summary.split('\n')[0].slice(0, 120),
+            body: item.summary,
+            reasons: item.warum ? [item.warum] : undefined,
+            chatId: this.defaultChatId, platform: this.defaultPlatform,
+          });
+          await this.markSent(item.summary);
+        }
+      }
 
       if (urgentItems.length === 0 && normalItems.length === 0) {
-        this.logger.info({ durationMs: scanDurationMs }, 'Reasoning pass: only low-urgency items, skipping');
+        this.logger.info({ durationMs: scanDurationMs, lowStored: lowItems.length }, 'Reasoning pass: only low-urgency items (stored silently)');
         return;
       }
 
@@ -791,10 +812,12 @@ ODER wenn Auffälligkeiten:
 {
   "hasInsights": true,
   "items": [
-    {"summary": "BMW SoC 3%, Termin in 2h", "urgency": "urgent"},
-    {"summary": "Relevanter RSS-Artikel zu KI", "urgency": "normal"}
+    {"summary": "BMW SoC 3%, Termin in 2h", "urgency": "urgent", "warum": "Deadline < 2h und Mobilität betroffen"},
+    {"summary": "Relevanter RSS-Artikel zu KI", "urgency": "normal", "warum": "wissenswert, kein Zeitdruck"}
   ]
 }
+
+Das Feld "warum" (1 kurzer Satz) begründet die Einstufung — es wird dem User als Transparenz angezeigt.
 
 Urgency-Stufen:
 - "urgent": Sofort handeln (Ausfall, Sicherheit, < 24h Deadline, kritischer Fehler)
@@ -1360,6 +1383,33 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // The fix for hallucinated dates lives in the prompt rule — see ABSOLUTE-DATEN-REGEL —
     // which forbids the LLM from computing dates itself and requires it to copy from
     // the relevant Calendar/Memory entry verbatim.
+
+    // v927 — Stiller Modus: unter der Router-Schwelle wird NICHT gesendet, sondern
+    // jedes Insight still in alfred_insights abgelegt (Insights-UI + silent_digest).
+    // Vorgeschlagene Aktionen wandern mit in die Ablage (erste als ausführbare
+    // UI-Aktion) statt Confirmations zu erzeugen — Alfred denkt weiter wie bisher,
+    // nur der Ausgang wechselt von „Telegram“ zu „internes Wissen“.
+    if (this.notificationRouter && insights.length > 0 && !this.notificationRouter.shouldSend('reasoning', urgency === 'urgent' ? 'urgent' : urgency)) {
+      for (const insight of insights) {
+        const firstAction = actions[0];
+        const actionsSuffix = actions.length > 0
+          ? `\n\n**Vorgeschlagene Aktionen:**\n${actions.slice(0, 5).map(a => `\u26A1 ${a.description}`).join('\n')}`
+          : '';
+        await this.notificationRouter.store({
+          source: 'reasoning',
+          urgency,
+          title: insight.split('\n')[0].slice(0, 120),
+          body: `${insight}${actionsSuffix}`,
+          chatId: this.defaultChatId,
+          platform: this.defaultPlatform,
+          actionSkill: firstAction?.skillName,
+          actionParams: firstAction?.skillParams as Record<string, unknown> | undefined,
+        });
+        await this.markSent(insight);
+      }
+      this.logger.info({ urgency, insights: insights.length, actions: actions.length }, 'v927 Reasoning: insights stored silently (below notify threshold)');
+      return;
+    }
 
     // Build message
     let message = '';

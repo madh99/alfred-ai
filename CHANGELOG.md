@@ -5,6 +5,47 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.927] - 2026-07-02
+
+### Added — Stiller Modus: Notification-Router + Wichtigkeits-Begründung (v927)
+
+Erste Stufe des Interessen-Radar-Plans (`docs/specs/interessen-radar-plan-v927-v930.md`):
+proaktive Meldungen unterhalb einer Dringlichkeits-Schwelle werden nicht mehr
+gesendet, sondern still als internes Wissen abgelegt — Alfred arbeitet
+unverändert weiter (Reasoning alle ~30 Min, Watches, Sammeln), nur der Ausgang
+wechselt von „Telegram-Nachricht" zu „Insights-Ablage".
+
+- Neuer `NotificationRouter` (core): `shouldSend(source, urgency)` gegen
+  konfigurierbare Schwelle, `route()`/`store()` legen Meldungen als Insight in
+  `alfred_insights` ab (Kategorie = Quelle, `sourceData.router=true`). Ohne
+  Ablage-Möglichkeit wird weiterhin gesendet — nichts geht verloren.
+- Konfiguration `notifications`: `minUrgency` (Default `high`), `perSource`
+  (Schwellen-Override je Quelle) und `devMode` (alles senden wie bisher).
+- Reasoning-Engine angebunden: Insights unter der Schwelle landen samt
+  vorgeschlagener Aktionen in der Ablage statt im Chat; `low`-Items (vorher
+  komplett verworfen) werden jetzt ebenfalls still gespeichert.
+- Score v1 — Transparenz der Einstufung: der Scan-Pass liefert je Item eine
+  `warum`-Begründung (1 Satz), die sichtbar am Insight gespeichert wird
+  („Einstufung (low): …"). Erweiterte Kriterien und Lernen aus Feedback folgen
+  in v930.
+- Briefing-Skill: neue Aktion `silent_digest` — „Was ist angefallen?" fasst die
+  still gesammelten Einträge (Standard: letzte 24 h) nach Quelle gruppiert
+  zusammen; abrufbar per Chat oder UI.
+- Noch nicht durch den Router geleitet (bewusst, kein Spam-Treiber): tägliche
+  ITSM-Reflexion und Automation-Reports — folgt mit den nächsten Stufen.
+- 14 Tests (`notification-router.test.ts`).
+
+### Fixed — Veraltete Test-Mocks Watch-/Reasoning-Engine
+
+- `watch-engine.test.ts`: dem Mock-Repository fehlten `resetFailures`/
+  `incrementFailures` (seit dem Auto-Repair-Umbau auf jedem Check aufgerufen) —
+  7 Tests schlugen dadurch mit TypeError fehl, ohne dass der Watch-Code defekt
+  war. Mock vervollständigt, alle 11 Tests grün.
+- `reasoning-engine.test.ts`: Erwartungen stammten aus dem Ein-Phasen-Design
+  (Prosa-Antwort → sofort senden) und einem alten Section-Label. Auf das
+  Zwei-Phasen-Design (Scan-JSON mit Dringlichkeit + Detail-Pass) und
+  „User-Erinnerungen" aktualisiert.
+
 ## [0.19.0-multi-ha.926] - 2026-07-02
 
 ### Fixed — Telegram-Alben: eine Nachricht statt N parallele Antworten (v926)

@@ -763,6 +763,12 @@ export const AlfredConfigSchema = z.object({
   marketplace: MarketplaceConfigSchema.optional(),
   briefing: BriefingConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),
+  // v927 — Stiller Modus / Notification-Router
+  notifications: z.object({
+    minUrgency: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+    perSource: z.record(z.string(), z.enum(['low', 'normal', 'high', 'urgent'])).optional(),
+    devMode: z.boolean().optional(),
+  }).optional(),
   reflection: ReflectionConfigSchema.optional(),
   webhooks: z.array(WebhookConfigSchema).optional(),
   proxmoxBackup: ProxmoxBackupConfigSchema.optional(),

@@ -12,7 +12,12 @@ export type InsightCategory =
   | 'goal-drift'
   | 'skill-workflow'
   | 'finance'
-  | 'meta';
+  | 'meta'
+  // v927 — Notification-Router legt still zugestellte Meldungen unter ihrer Quelle ab
+  | 'reasoning'
+  | 'itsm-reflection'
+  | 'automation'
+  | (string & {});
 
 export interface Insight {
   id: string;

@@ -168,7 +168,12 @@ describe('ReasoningEngine', () => {
   it('should send insights to user when LLM returns content', async () => {
     vi.setSystemTime(new Date('2026-03-11T11:59:00'));
     const insightText = 'Du hast einen Arzttermin in Wien um 14:00 und die RTX 5090 Watch zeigt ein Angebot in Wien — Abholung wäre auf dem Rückweg möglich.';
-    const { engine, adapter, notifRepo } = createEngine({ llmResponse: insightText });
+    const { engine, adapter, notifRepo, llm } = createEngine();
+    // Zwei-Phasen-Design: Scan-Pass liefert JSON mit Dringlichkeit (nur urgent/high
+    // wird sofort zugestellt), Detail-Pass liefert den Insight-Text
+    llm.complete
+      .mockResolvedValueOnce({ content: '{"hasInsights": true, "items": [{"summary": "Arzttermin Wien + RTX 5090 Angebot", "urgency": "high", "warum": "zeitnah relevant"}]}' })
+      .mockResolvedValueOnce({ content: insightText });
     engine.start();
 
     vi.advanceTimersByTime(60_000); // → 12:00
@@ -240,7 +245,7 @@ describe('ReasoningEngine', () => {
     expect(prompt).toContain('Kalender');
     expect(prompt).toContain('Offene Todos');
     expect(prompt).toContain('Aktive Watches');
-    expect(prompt).toContain('Erinnerungen über den User');
+    expect(prompt).toContain('User-Erinnerungen');
     expect(prompt).toContain('Aktivität');
     expect(prompt).toContain('Wetter');
     expect(prompt).toContain('Energiepreise');

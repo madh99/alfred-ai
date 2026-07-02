@@ -1,10 +1,10 @@
 import type { SkillMetadata, SkillContext, SkillResult, AlfredConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { SkillRegistry } from '../skill-registry.js';
-import type { MemoryRepository } from '@alfred/storage';
+import type { MemoryRepository, InsightsRepository } from '@alfred/storage';
 import { allUserIds } from '../user-utils.js';
 
-type BriefingAction = 'run' | 'modules';
+type BriefingAction = 'run' | 'modules' | 'silent_digest';
 
 interface BriefingModule {
   name: string;
@@ -83,8 +83,8 @@ export class BriefingSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['run', 'modules'],
-          description: 'run = Briefing ausführen, modules = verfügbare Module anzeigen',
+          enum: ['run', 'modules', 'silent_digest'],
+          description: 'run = Briefing ausführen, modules = verfügbare Module anzeigen, silent_digest = still gesammelte Insights zusammenfassen ("Was ist angefallen?")',
         },
         location: {
           type: 'string',
@@ -100,6 +100,9 @@ export class BriefingSkill extends Skill {
     },
   };
 
+  /** v927 — für silent_digest (still gesammelte Router-Insights abrufen). */
+  private insightsRepo?: InsightsRepository;
+
   constructor(
     private readonly skillRegistry: SkillRegistry,
     private readonly alfredConfig: AlfredConfig,
@@ -108,14 +111,82 @@ export class BriefingSkill extends Skill {
     super();
   }
 
+  setInsightsRepo(repo: InsightsRepository): void {
+    this.insightsRepo = repo;
+  }
+
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = (input.action as BriefingAction | undefined) ?? 'run';
 
     switch (action) {
       case 'run': return this.runBriefing(input, context);
       case 'modules': return this.showModules();
+      case 'silent_digest': return this.silentDigest(input, context);
       default: return { success: false, error: `Unbekannte Aktion: ${action}` };
     }
+  }
+
+  /**
+   * v927 — „Was ist angefallen?": fasst still abgelegte Router-Insights
+   * (sourceData.router=true, status pending) zusammen, gruppiert nach Quelle.
+   */
+  private async silentDigest(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    if (!this.insightsRepo) {
+      return { success: false, error: 'Insights-Ablage nicht verfügbar.' };
+    }
+    const sinceHours = typeof input.since_hours === 'number' && input.since_hours > 0
+      ? Math.min(input.since_hours, 24 * 14)
+      : 24;
+    const cutoff = Date.now() - sinceHours * 60 * 60 * 1000;
+
+    const pending = await this.insightsRepo.list(context.userId, { status: 'pending', limit: 200 });
+    const routed = pending.filter(i => {
+      const sd = i.sourceData as Record<string, unknown> | undefined;
+      if (!sd || sd.router !== true) return false;
+      const storedAt = typeof sd.storedAt === 'string' ? Date.parse(sd.storedAt) : NaN;
+      const created = i.createdAt ? new Date(i.createdAt).getTime() : NaN;
+      const ts = Number.isFinite(storedAt) ? storedAt : created;
+      return !Number.isFinite(ts) || ts >= cutoff;
+    });
+
+    if (routed.length === 0) {
+      return {
+        success: true,
+        data: { count: 0, sinceHours },
+        display: `Keine still gesammelten Meldungen der letzten ${sinceHours}h — alles Wichtige wurde direkt zugestellt.`,
+      };
+    }
+
+    // Nach Quelle (category) gruppieren, neueste zuerst
+    const bySource = new Map<string, typeof routed>();
+    for (const item of routed) {
+      const key = item.category || 'sonstiges';
+      const list = bySource.get(key) ?? [];
+      list.push(item);
+      bySource.set(key, list);
+    }
+
+    const sections: string[] = [];
+    for (const [source, items] of bySource) {
+      const lines = items.slice(0, 15).map(i => {
+        const urgency = (i.sourceData as Record<string, unknown> | undefined)?.urgency;
+        const tag = urgency === 'normal' ? '•' : '◦';
+        return `${tag} ${i.title}`;
+      });
+      const more = items.length > 15 ? `\n  … und ${items.length - 15} weitere` : '';
+      sections.push(`*${source}* (${items.length}):\n${lines.join('\n')}${more}`);
+    }
+
+    return {
+      success: true,
+      data: {
+        count: routed.length,
+        sinceHours,
+        sources: [...bySource.keys()],
+        items: routed.map(i => ({ id: i.id, category: i.category, title: i.title, body: i.body })),
+      },
+      display: `📥 Still gesammelt (letzte ${sinceHours}h, ${routed.length} Einträge):\n\n${sections.join('\n\n')}\n\n_Details in der Insights-UI; einzelne Punkte kann ich auf Nachfrage vertiefen._`,
+    };
   }
 
   private getAvailableModules(): BriefingModule[] {
