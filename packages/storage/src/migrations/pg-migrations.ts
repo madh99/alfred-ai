@@ -1851,4 +1851,53 @@ export const PG_MIGRATIONS: PgMigration[] = [
       )`, []);
     },
   },
+  {
+    version: 116,
+    description: 'v929 — Interessen-Radar: interest_topics, topic_sources, topic_items, topic_digests (PG-Spiegel zu SQLite v112).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS interest_topics (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        keywords TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'active',
+        origin TEXT NOT NULL DEFAULT 'manual',
+        notify_threshold TEXT NOT NULL DEFAULT 'high',
+        created_at TEXT NOT NULL,
+        last_activity_at TEXT
+      )`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_interest_topics_user ON interest_topics(user_id, status)`, []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS topic_sources (
+        id TEXT PRIMARY KEY,
+        topic_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        config TEXT NOT NULL DEFAULT '{}',
+        added_by TEXT NOT NULL DEFAULT 'manual',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_checked_at TEXT,
+        created_at TEXT NOT NULL
+      )`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_topic_sources_topic ON topic_sources(topic_id, enabled)`, []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS topic_items (
+        id TEXT PRIMARY KEY,
+        topic_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        url TEXT,
+        summary TEXT,
+        source_kind TEXT NOT NULL,
+        published_at TEXT,
+        importance REAL,
+        dedupe_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`, []);
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_topic_items_dedupe ON topic_items(topic_id, dedupe_hash)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_topic_items_topic ON topic_items(topic_id, created_at)`, []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS topic_digests (
+        topic_id TEXT PRIMARY KEY,
+        summary TEXT NOT NULL,
+        items_since_update INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      )`, []);
+    },
+  },
 ];

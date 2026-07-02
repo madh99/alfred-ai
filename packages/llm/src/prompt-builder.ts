@@ -79,6 +79,10 @@ export interface SystemPromptContext {
     count: number;
     lastSeen: string;
   }>;
+  /** v929 — aktive Interessen-Themen (Interessen-Radar). Bei Fragen nach
+   *  Neuigkeiten zu einem dieser Themen soll das LLM interests/topic_briefing
+   *  nutzen statt einer frischen Web-Suche — dort liegt das gesammelte Dossier. */
+  interestTopics?: string[];
 }
 
 /**
@@ -402,6 +406,14 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
           const ago = relativeAgo(f.lastSeen);
           prompt += `- \`${f.skillName}\` @ \`${f.host}\` → ${f.errorClass} (${f.count}× seen, last ${ago})\n`;
         }
+      }
+
+      // v929 — Interessen-Radar: aktive Themen, zu denen stündlich gesammelt wird.
+      // Fragen nach Neuigkeiten zu einem dieser Themen → interests/topic_briefing
+      // (Dossier + gesammelte Beiträge), NICHT frisch per web_search suchen.
+      const interestTopics = context.interestTopics ?? [];
+      if (interestTopics.length > 0) {
+        prompt += `\n\n## Beobachtete Interessen-Themen (Interessen-Radar)\nZu diesen Themen sammelt Alfred laufend Beiträge: ${interestTopics.map(t => `„${t}"`).join(', ')}.\nBei Fragen wie "was gibt's Neues zu <Thema>" zu einem dieser Themen: NUTZE das interests-Tool mit action=topic_briefing — dort liegt das aktuelle Dossier. Web-Suche nur als Ergänzung, wenn das Dossier die Frage nicht beantwortet.`;
       }
     }
 

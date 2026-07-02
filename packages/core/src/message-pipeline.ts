@@ -239,6 +239,8 @@ export class MessagePipeline {
   private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
   /** v607 D7 — direct access to skill-health-repo for prompt enrichment with host-failure history. */
   private skillHealthRepo?: import('@alfred/storage').SkillHealthRepository;
+  /** v929 — Interessen-Radar (Themen-Namen für den System-Prompt). */
+  private interestsRepo?: import('@alfred/storage').InterestsRepository;
   private insightTracker?: import('./insight-tracker.js').InsightTracker;
   private moderationService?: import('@alfred/security').ModerationService;
   private reasoningEngine?: import('./reasoning-engine.js').ReasoningEngine;
@@ -317,6 +319,11 @@ export class MessagePipeline {
   /** v607 D7 — also accept a direct repo ref for prompt enrichment. */
   setSkillHealthRepo(repo: import('@alfred/storage').SkillHealthRepository): void {
     this.skillHealthRepo = repo;
+  }
+
+  /** v929 — Interessen-Radar: aktive Themen-Namen in den System-Prompt. */
+  setInterestsRepo(repo: import('@alfred/storage').InterestsRepository): void {
+    this.interestsRepo = repo;
   }
 
   setInsightTracker(tracker: import('./insight-tracker.js').InsightTracker): void {
@@ -957,6 +964,16 @@ export class MessagePipeline {
         } catch { /* non-critical */ }
       }
 
+      // v929 — aktive Interessen-Themen: Fragen nach Neuigkeiten dazu sollen
+      // über interests/topic_briefing (gesammeltes Dossier) beantwortet werden.
+      let interestTopics: string[] | undefined;
+      if (this.interestsRepo) {
+        try {
+          const topics = await this.interestsRepo.listTopics(masterUserId, 'active');
+          if (topics.length > 0) interestTopics = topics.map(t => t.name);
+        } catch { /* non-critical */ }
+      }
+
       let system = this.promptBuilder.buildSystemPrompt({
         memories,
         skills: skillMetas,
@@ -969,6 +986,7 @@ export class MessagePipeline {
         personality: this.personality,
         runningProjectAgentSessions,
         recentHostFailures,
+        interestTopics,
       });
 
       tracePhase('system_prompt_built', { chars: system.length });

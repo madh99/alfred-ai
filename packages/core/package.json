@@ -27,6 +27,7 @@
     "@alfred/security": "workspace:*",
     "@alfred/skills": "workspace:*",
     "js-yaml": "^4.1.0",
+    "rss-parser": "^3.13.0",
     "pino": "^9.6.0"
   },
   "devDependencies": {

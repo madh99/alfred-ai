@@ -93,6 +93,7 @@ export { MarketplaceSkill } from './built-in/marketplace/index.js';
 export { TravelSkill } from './built-in/travel/index.js';
 export { BriefingSkill } from './built-in/briefing.js';
 export { FeedReaderSkill } from './built-in/feed-reader.js';
+export { InterestsSkill } from './built-in/interests.js';
 export { HelpSkill } from './built-in/help.js';
 export { YouTubeSkill } from './built-in/youtube.js';
 export { DatabaseSkill } from './built-in/database/index.js';

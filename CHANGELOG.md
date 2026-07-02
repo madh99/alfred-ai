@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.929] - 2026-07-02
+
+### Added — Interessen-Radar: Themen, Quellen, stiller Sammler, Dossiers (v929)
+
+Dritte Stufe des Interessen-Radar-Plans — das Fundament für „Alfred beobachtet
+Themen laufend und beantwortet ‚Was gibt's Neues zu X?' aus gesammeltem Wissen":
+
+- **Neue Tabellen** (SQLite v112 / PG v116): `interest_topics` (Name, Keywords,
+  Status active|paused|archived, Origin auto|manual, notify_threshold),
+  `topic_sources` (rss|web_search je Thema), `topic_items` (gesammelte
+  Beiträge, dedupliziert per URL/Titel-Hash mit Unique-Index),
+  `topic_digests` (rollendes Dossier je Thema). Dazu `InterestsRepository`
+  in @alfred/storage.
+- **Skill `interests`:** create_topic, list_topics, add_source, remove_source
+  (Kurz-IDs aus der Liste funktionieren), topic_briefing, collect_now,
+  set_status. `topic_briefing` liefert Dossier + neueste Beiträge; sind seit
+  dem letzten Dossier neue Items eingelaufen, wird es beim Abruf lazy per LLM
+  aktualisiert (rolling summary, best-effort).
+- **TopicCollector** (Kern): läuft stündlich, HA-dedupliziert über Slot
+  `topic-collect:<stunde>` (reasoning_slots, nur PG). Holt je aktivem Thema
+  alle aktivierten Quellen — RSS via rss-parser (jetzt auch core-Dependency),
+  web_search via Skill — und legt neue Items dedupliziert ab. Sendet NICHTS;
+  Quellen-Fehler brechen den Lauf nicht ab. `importance` = Anteil gefundener
+  Topic-Keywords (Basis für die v930-Score-Kriterien).
+- **System-Prompt:** aktive Themen-Namen werden injiziert mit der Anweisung,
+  Fragen nach Neuigkeiten dazu über `interests`/`topic_briefing` zu
+  beantworten statt frisch zu suchen.
+- 22 Tests (Repository-CRUD + Dedup, Collector inkl. Fehlerpfad, Skill inkl.
+  Briefing-Format und LLM-Refresh).
+- Ausblick v930 (letzte Stufe): automatische Themen-Erkennung aus Gesprächen,
+  Quellen-Provisionierung, täglicher Digest über den Notification-Router,
+  Interessen-Seite in der UI.
+
 ## [0.19.0-multi-ha.928] - 2026-07-02
 
 ### Changed — Insights-UX-Rework: sprechende Aktionen, Eingabefelder, Gruppierung (v928)

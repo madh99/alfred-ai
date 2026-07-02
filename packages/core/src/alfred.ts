@@ -411,6 +411,10 @@ export class Alfred {
   private patternAnalyzerTimer?: ReturnType<typeof setInterval>;
   private temporalAnalyzerTimer?: ReturnType<typeof setInterval>;
   private kgMaintenanceTimer?: ReturnType<typeof setInterval>;
+  /** v929 — Interessen-Radar */
+  private interestsRepo?: import('@alfred/storage').InterestsRepository;
+  private interestsSkillRef?: import('@alfred/skills').InterestsSkill;
+  private topicCollector?: import('./topic-collector.js').TopicCollector;
   private insightExpiryTimer?: ReturnType<typeof setInterval>;
   private clusterMonitorTimer?: ReturnType<typeof setInterval>;
   private cmdbDiscoveryTimer?: ReturnType<typeof setInterval>;
@@ -5469,6 +5473,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     skillRegistry.register(new FeedReaderSkill(skillStateRepo));
     this.logger.info('Feed reader skill registered');
 
+    // 4s1b. v929 — Interessen-Radar: Themen + Quellen + Dossiers (Collector startet später)
+    if (this.database) {
+      const { InterestsRepository } = await import('@alfred/storage');
+      this.interestsRepo = new InterestsRepository(this.database.getAdapter());
+      const { InterestsSkill } = await import('@alfred/skills');
+      this.interestsSkillRef = new InterestsSkill(this.interestsRepo, this.llmProvider);
+      skillRegistry.register(this.interestsSkillRef);
+      this.logger.info('Interests skill registered (v929)');
+    }
+
     // 4s2. Help skill (always available — shows available skills)
     // ROLE_SKILL_ACCESS is imported later; we set it after user management init
     const helpSkill = new HelpSkill(skillRegistry);
@@ -6378,6 +6392,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // Wire reasoning engine into pipeline for post-skill triggers
     if (this.reasoningEngine) {
       this.pipeline.setReasoningEngine(this.reasoningEngine);
+    }
+
+    // v929 — Interessen-Radar: Themen-Namen in den System-Prompt + stündlicher
+    // Collector (RSS/web_search je Topic-Quelle, HA-Slot topic-collect:<stunde>).
+    if (this.interestsRepo) {
+      this.pipeline.setInterestsRepo(this.interestsRepo);
+      const { TopicCollector } = await import('./topic-collector.js');
+      this.topicCollector = new TopicCollector(
+        this.interestsRepo, this.skillRegistry, this.skillSandbox,
+        this.logger.child({ component: 'topic-collector' }),
+        { dbAdapter: this.database?.getAdapter(), nodeId: this.config.cluster?.nodeId },
+      );
+      this.topicCollector.start();
+      const collector = this.topicCollector;
+      this.interestsSkillRef?.setCollector(topic => topic ? collector.collectTopic(topic) : collector.collectAll());
     }
 
     // Wire runbook-repo so chat-pipeline can inject matching Runbooks into system prompt
@@ -12268,6 +12297,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.insightExpiryTimer) {
       clearInterval(this.insightExpiryTimer);
       this.insightExpiryTimer = undefined;
+    }
+    if (this.topicCollector) {
+      this.topicCollector.stop();
+      this.topicCollector = undefined;
     }
     if (this.clusterMonitorTimer) {
       clearInterval(this.clusterMonitorTimer);

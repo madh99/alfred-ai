@@ -86,6 +86,8 @@ export { MetricSamplesRepository } from './repositories/metric-samples-repositor
 export type { MetricSample, MetricForecast } from './repositories/metric-samples-repository.js';
 export { InsightsRepository } from './repositories/insights-repository.js';
 export type { Insight, InsightCandidate, InsightCategory, InsightStatus } from './repositories/insights-repository.js';
+export { InterestsRepository, topicItemDedupeHash } from './repositories/interests-repository.js';
+export type { InterestTopic, TopicSource, TopicItem, TopicDigest, TopicStatus, TopicOrigin, TopicSourceKind } from './repositories/interests-repository.js';
 export { SandboxRepository } from './repositories/sandbox-repository.js';
 export type { Sandbox, SandboxInsert, SandboxStatus, SandboxResult, SandboxProjectType } from './repositories/sandbox-repository.js';
 export { SandboxChatRepository } from './repositories/sandbox-chat-repository.js';
