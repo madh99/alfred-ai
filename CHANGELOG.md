@@ -5,6 +5,43 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.928] - 2026-07-02
+
+### Changed — Insights-UX-Rework: sprechende Aktionen, Eingabefelder, Gruppierung (v928)
+
+Zweite Stufe des Interessen-Radar-Plans. Die Insights-Seite war mit 70 offenen
+Karten und Buttons wie „▶ memory" (roher Skill-Name) praktisch unbenutzbar —
+und die KG-Gap-Aktion konnte nie gelingen: sie rief eine nicht existierende
+memory-Aktion `add` auf und konnte die nötige Information (z. B. das
+Geburtsdatum) gar nicht erfragen.
+
+- **Sprechende Aktionen mit Eingabefeldern:** Insights deklarieren in
+  `source_data` optional `actionLabel` („Geburtstag eintragen") und
+  `inputFields` (date/text/number) — keine Schema-Migration nötig. Beim
+  Ausführen werden `{{key}}`-Platzhalter in den actionParams mit den
+  User-Eingaben gefüllt (`insight-action-input.ts`, validiert fehlende
+  Eingaben). Der act-Endpoint (`POST /api/insights/:id/act`) akzeptiert dafür
+  `{params}` im Body.
+- **KG-Gap-Aktionen funktionieren jetzt wirklich:** alle vier Gap-Typen
+  (Geburtstag, Beziehung, Org-Infos, Adresse) nutzen die echte memory-Aktion
+  `save` mit sinnvollem key/value und bringen Label + Eingabefeld mit.
+- **Fehlerehrlichkeit:** schlägt der Aktions-Skill fehl (`success:false`),
+  wird das Insight nicht mehr fälschlich als „acted" markiert, sondern der
+  Fehler zurückgegeben.
+- **UI-Rework InsightsPage:** Gruppierung nach Kategorie (einklappbar, Zähler),
+  Bulk-Erledigen je Gruppe, Batch-Eingabe (z. B. mehrere Geburtstage in einer
+  Tabelle → ein Klick), Inline-Eingabeformulare am Insight, „💬 Mit Alfred
+  besprechen" (öffnet den Chat mit vorbefülltem Kontext via `?draft=`),
+  Anzeige der Router-Einstufung („still abgelegt (low)") samt Begründung im
+  Text.
+- **„Solche nicht mehr" (Kategorie-Mute):** neue Tabelle
+  `insight_category_prefs` (SQLite v111 / PG v115). Gemutete Kategorien werden
+  zentral in `upsertCandidate` abgefangen — gilt für alle Erzeuger (Sweep,
+  Notification-Router). Endpoints `POST /api/insights/mute-category`,
+  `GET /api/insights/muted`; UI-Button je Gruppe, wieder aktivierbar.
+- 12 Tests (`insight-action-input.test.ts`, `insight-category-mute.test.ts` —
+  letzterer mit Stub-Adapter, läuft auch ohne better-sqlite3).
+
 ## [0.19.0-multi-ha.927] - 2026-07-02
 
 ### Added — Stiller Modus: Notification-Router + Wichtigkeits-Begründung (v927)

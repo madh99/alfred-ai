@@ -58,9 +58,15 @@ export class InsightsRepository {
    * we update the existing row's body/confidence/sourceData (in case the underlying signal
    * changed) rather than inserting a duplicate. If it exists with 'dismissed'/'acted'/'expired'
    * we still skip — the user already decided about this topic, don't re-surface immediately.
+   *
+   * v928: Gemutete Kategorien („solche nicht mehr") werden hier zentral abgefangen —
+   * gilt für ALLE Erzeuger (Insight-Engine-Sweep, Notification-Router, künftige Quellen).
    */
-  async upsertCandidate(userId: string, candidate: InsightCandidate): Promise<{ inserted: boolean; id: string }> {
+  async upsertCandidate(userId: string, candidate: InsightCandidate): Promise<{ inserted: boolean; id: string; muted?: boolean }> {
     const now = new Date().toISOString();
+    if (await this.isCategoryMuted(userId, candidate.category)) {
+      return { inserted: false, id: '', muted: true };
+    }
     if (candidate.dedupeKey) {
       const existing = await this.db.queryOne(
         `SELECT id, status FROM alfred_insights WHERE user_id = ? AND dedupe_key = ?`,
@@ -95,6 +101,51 @@ export class InsightsRepository {
        now, now],
     );
     return { inserted: true, id };
+  }
+
+  // ── v928 — Kategorie-Präferenzen („solche Insights nicht mehr") ──────────
+
+  async setCategoryMuted(userId: string, category: string, muted: boolean): Promise<void> {
+    const now = new Date().toISOString();
+    const existing = await this.db.queryOne(
+      `SELECT category FROM insight_category_prefs WHERE user_id = ? AND category = ?`,
+      [userId, category],
+    );
+    if (existing) {
+      await this.db.execute(
+        `UPDATE insight_category_prefs SET muted = ?, updated_at = ? WHERE user_id = ? AND category = ?`,
+        [muted ? 1 : 0, now, userId, category],
+      );
+    } else {
+      await this.db.execute(
+        `INSERT INTO insight_category_prefs (user_id, category, muted, updated_at) VALUES (?, ?, ?, ?)`,
+        [userId, category, muted ? 1 : 0, now],
+      );
+    }
+  }
+
+  async isCategoryMuted(userId: string, category: string): Promise<boolean> {
+    try {
+      const row = await this.db.queryOne(
+        `SELECT muted FROM insight_category_prefs WHERE user_id = ? AND category = ?`,
+        [userId, category],
+      ) as { muted: number | boolean } | undefined;
+      return row ? (row.muted === 1 || row.muted === true) : false;
+    } catch {
+      return false; // Tabelle fehlt (Migration noch nicht gelaufen) → nichts muten
+    }
+  }
+
+  async listMutedCategories(userId: string): Promise<string[]> {
+    try {
+      const rows = await this.db.query(
+        `SELECT category FROM insight_category_prefs WHERE user_id = ? AND muted = 1`,
+        [userId],
+      ) as Array<{ category: string }>;
+      return rows.map(r => r.category);
+    } catch {
+      return [];
+    }
   }
 
   async list(userId: string, opts?: { status?: InsightStatus | InsightStatus[]; category?: InsightCategory; limit?: number; includeExpiredSnoozes?: boolean }): Promise<Insight[]> {

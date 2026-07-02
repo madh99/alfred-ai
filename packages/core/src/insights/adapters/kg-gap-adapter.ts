@@ -59,6 +59,12 @@ const ADDRESS_KEYWORDS_RE = /\b(straße|strasse|gasse|adresse|wohnt|liegt\s+in|p
 
 const ORG_INFO_KEYWORDS_RE = /\b(website|webseite|url|http|www\.|branche|industrie|tätigkeit|geschäftsfeld|firma|gmbh|ag|kg|gehört\s+zu)\b/i;
 
+/** v928 — memory-Key aus Entity-Namen („Hannah Maier" → hannah_maier). */
+function slug(name: string): string {
+  return name.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'unbekannt';
+}
+
 /**
  * v695 — Reichere Existenz-Checks BEVOR ein Gap-Insight erzeugt wird.
  * Verhindert Spam für Beziehungen/Geburtstage/Adressen die der KG/Memory schon kennt
@@ -185,9 +191,15 @@ export class KgGapAdapter implements DomainAdapter {
               title: `Geburtstag für ${e.name} fehlt`,
               body: `**${e.name}** wurde ${mentions}× erwähnt aber hat noch keinen Geburtstag im Knowledge-Graph.\n\nWenn du den Geburtstag ergänzt, kann Alfred dich rechtzeitig vor dem Datum erinnern.`,
               confidence: Math.min(0.9, 0.4 + mentions * 0.05),
-              sourceData: { entityId: e.id, mentions, attrType: 'birthday' },
+              // v928 — actionLabel/inputFields: UI zeigt „Geburtstag eintragen" + Datumsfeld;
+              // {{birthday}} wird beim act mit der Eingabe gefüllt (insight-action-input.ts)
+              sourceData: {
+                entityId: e.id, mentions, attrType: 'birthday',
+                actionLabel: 'Geburtstag eintragen',
+                inputFields: [{ key: 'birthday', label: 'Geburtsdatum', type: 'date' }],
+              },
               actionSkill: 'memory',
-              actionParams: { action: 'add', text: `Geburtstag von ${e.name} ist YYYY-MM-DD (bitte ergänzen)` },
+              actionParams: { action: 'save', type: 'fact', key: `geburtstag_${slug(e.name)}`, value: `Geburtstag von ${e.name} ist {{birthday}}` },
               dedupeKey: `kg-gap:person-birthday:${e.id}`,
             });
           }
@@ -200,7 +212,13 @@ export class KgGapAdapter implements DomainAdapter {
               title: `Beziehung zu ${e.name} unklar`,
               body: `**${e.name}** wird häufig erwähnt (${mentions}×) — wie steht ihr zueinander? (Familie, Freund, Kollege, …)\n\nDas hilft Alfred bei Familien-Reminders, Geburtstags-Cascades und Kontext-Verständnis in Chats.`,
               confidence: 0.55 + Math.min(0.3, mentions * 0.02),
-              sourceData: { entityId: e.id, mentions, attrType: 'relation' },
+              sourceData: {
+                entityId: e.id, mentions, attrType: 'relation',
+                actionLabel: 'Beziehung speichern',
+                inputFields: [{ key: 'relation', label: 'Beziehung (z.B. Kollege, Schwester)', type: 'text' }],
+              },
+              actionSkill: 'memory',
+              actionParams: { action: 'save', type: 'entity', key: `beziehung_${slug(e.name)}`, value: `${e.name} ist {{relation}} des Users` },
               dedupeKey: `kg-gap:person-relation:${e.id}`,
             });
           }
@@ -219,7 +237,13 @@ export class KgGapAdapter implements DomainAdapter {
             title: `Org-Daten zu ${e.name} unvollständig`,
             body: `**${e.name}** wurde ${mentions}× erwähnt, aber Felder fehlen: ${missing.join(', ')}.\n\nSinnvoll für Kontext-Verständnis in Chats und Routing-/Termin-Logik.`,
             confidence: 0.5 + Math.min(0.3, mentions * 0.02),
-            sourceData: { entityId: e.id, mentions, missingFields: missing },
+            sourceData: {
+              entityId: e.id, mentions, missingFields: missing,
+              actionLabel: 'Infos ergänzen',
+              inputFields: [{ key: 'info', label: `Fehlende Infos (${missing.join(', ')})`, type: 'text' }],
+            },
+            actionSkill: 'memory',
+            actionParams: { action: 'save', type: 'entity', key: `org_${slug(e.name)}`, value: `${e.name}: {{info}}` },
             dedupeKey: `kg-gap:org-incomplete:${e.id}`,
           });
         }
@@ -233,7 +257,13 @@ export class KgGapAdapter implements DomainAdapter {
             title: `Adresse für ${e.name} fehlt`,
             body: `**${e.name}** wurde ${mentions}× erwähnt, hat aber noch keine Adresse — Routing/Termin-Logik kann's so nicht nutzen.`,
             confidence: 0.5,
-            sourceData: { entityId: e.id, mentions, attrType: 'address' },
+            sourceData: {
+              entityId: e.id, mentions, attrType: 'address',
+              actionLabel: 'Adresse speichern',
+              inputFields: [{ key: 'address', label: 'Adresse', type: 'text' }],
+            },
+            actionSkill: 'memory',
+            actionParams: { action: 'save', type: 'fact', key: `adresse_${slug(e.name)}`, value: `Adresse von ${e.name}: {{address}}` },
             dedupeKey: `kg-gap:location-address:${e.id}`,
           });
         }

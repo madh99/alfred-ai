@@ -18,6 +18,13 @@ export function ChatPage() {
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   // v657 — Reply-Kontext (gesetzt durch Reply-Button auf Hover über einer Nachricht)
   const [replyTo, setReplyTo] = useState<{ messageId?: string; text: string; from?: string } | null>(null);
+  // v928 — „Mit Alfred besprechen": ?draft=<text> befüllt die Eingabezeile (z.B. von der Insights-Seite)
+  const [urlDraft, setUrlDraft] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const d = new URLSearchParams(window.location.search).get('draft');
+    if (d) setUrlDraft(d);
+  }, []);
 
   // Restore side-panel state from localStorage
   useEffect(() => {
@@ -125,10 +132,12 @@ export function ChatPage() {
         </div>
       </div>
       <InputBar
+        key={urlDraft ? 'url-draft' : 'default'}
         onSend={sendMessage}
         onCancel={cancel}
         onClear={clearMessages}
         streaming={streaming}
+        initialDraft={urlDraft}
         replyTo={replyTo}
         onClearReplyTo={() => setReplyTo(null)}
       />

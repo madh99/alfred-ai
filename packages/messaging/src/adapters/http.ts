@@ -492,7 +492,9 @@ export class HttpAdapter extends MessagingAdapter {
   private insightsListFn?: (filter?: { category?: string; status?: string; limit?: number }) => Promise<any[]>;
   private insightsDismissFn?: (id: string) => Promise<void>;
   private insightsSnoozeFn?: (id: string, hours: number) => Promise<void>;
-  private insightsActFn?: (id: string) => Promise<{ ok: boolean; result?: any; reason?: string }>;
+  private insightsActFn?: (id: string, params?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; reason?: string }>;
+  private insightsMuteCategoryFn?: (category: string, muted: boolean) => Promise<void>;
+  private insightsListMutedFn?: () => Promise<string[]>;
   private insightsSweepFn?: () => Promise<{ inserted: number; refreshed: number; perAdapter: Record<string, number>; errors: string[] }>;
   private insightsStatsFn?: () => Promise<Record<string, number>>;
   // v695 — Bulk-Dismiss aller offenen Insights einer Kategorie (für „kg-gap"-Cleanup nach v695)
@@ -653,10 +655,14 @@ export class HttpAdapter extends MessagingAdapter {
     list: (filter?: { category?: string; status?: string; limit?: number }) => Promise<any[]>;
     dismiss: (id: string) => Promise<void>;
     snooze: (id: string, hours: number) => Promise<void>;
-    act: (id: string) => Promise<{ ok: boolean; result?: any; reason?: string }>;
+    /** v928 — params: User-Eingaben für Aktionen mit inputFields ({{key}}-Platzhalter). */
+    act: (id: string, params?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; reason?: string }>;
     sweep: () => Promise<{ inserted: number; refreshed: number; perAdapter: Record<string, number>; errors: string[] }>;
     stats: () => Promise<Record<string, number>>;
     dismissCategory?: (category: string) => Promise<number>;
+    /** v928 — Kategorie-Mute („solche nicht mehr"). */
+    muteCategory?: (category: string, muted: boolean) => Promise<void>;
+    listMutedCategories?: () => Promise<string[]>;
   }): void {
     this.insightsListFn = opts.list;
     this.insightsDismissFn = opts.dismiss;
@@ -665,6 +671,8 @@ export class HttpAdapter extends MessagingAdapter {
     this.insightsSweepFn = opts.sweep;
     this.insightsStatsFn = opts.stats;
     this.insightsDismissCategoryFn = opts.dismissCategory;
+    this.insightsMuteCategoryFn = opts.muteCategory;
+    this.insightsListMutedFn = opts.listMutedCategories;
   }
 
   private projectsCallbacks?: {
@@ -1243,6 +1251,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleInsightsSweep(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/insights/dismiss-category' && req.method === 'POST') {
       this.handleInsightsDismissCategory(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/insights/mute-category' && req.method === 'POST') {
+      this.handleInsightsMuteCategory(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/insights/muted' && req.method === 'GET') {
+      this.handleInsightsListMuted(req, res).catch(err => this.safeError(res, err));
     // v699 — Sandbox-CRUD-API
     } else if (url.pathname === '/api/sandbox/status' && req.method === 'GET') {
       this.handleSandboxStatus(req, res).catch(err => this.safeError(res, err));
@@ -2927,9 +2939,43 @@ export class HttpAdapter extends MessagingAdapter {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.insightsActFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const id = url.pathname.split('/')[3];
-    const result = await this.insightsActFn(id);
+    // v928 — optionaler Body {params: {...}} mit User-Eingaben für inputFields
+    let params: Record<string, unknown> | undefined;
+    const body = await this.readBody(req);
+    if (body) {
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed && typeof parsed.params === 'object' && parsed.params !== null) params = parsed.params;
+      } catch { /* kein/kaputter Body → wie bisher ohne params */ }
+    }
+    const result = await this.insightsActFn(id, params);
     res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+  }
+
+  // v928 — Kategorie-Mute („solche Insights nicht mehr")
+  private async handleInsightsMuteCategory(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsMuteCategoryFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let category = ''; let muted = true;
+    try {
+      const parsed = JSON.parse(body);
+      category = String(parsed.category ?? '');
+      muted = parsed.muted !== false;
+    } catch { /* invalid */ }
+    if (!category) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'category required' })); return; }
+    await this.insightsMuteCategoryFn(category, muted);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, category, muted }));
+  }
+
+  private async handleInsightsListMuted(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsListMutedFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const muted = await this.insightsListMutedFn();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ muted }));
   }
 
   // ── Goals handlers (v639) ──

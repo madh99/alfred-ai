@@ -388,11 +388,29 @@ export class AlfredClient {
     });
     if (!res.ok) throw new Error(`Snooze: HTTP ${res.status}`);
   }
-  async actOnInsight(id: string): Promise<{ ok: boolean; result?: any; reason?: string }> {
-    const res = await fetch(`${this.baseUrl}/api/insights/${id}/act`, { method: 'POST', headers: this.authHeaders });
+  // v928 — params: User-Eingaben für Aktionen mit inputFields (z.B. Geburtstag)
+  async actOnInsight(id: string, params?: Record<string, unknown>): Promise<{ ok: boolean; result?: any; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/insights/${id}/act`, {
+      method: 'POST',
+      headers: params ? this.jsonHeaders : this.authHeaders,
+      body: params ? JSON.stringify({ params }) : undefined,
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
+  }
+  // v928 — Kategorie-Mute („solche Insights nicht mehr")
+  async muteInsightCategory(category: string, muted: boolean): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/insights/mute-category`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ category, muted }),
+    });
+    if (!res.ok) throw new Error(`Mute: HTTP ${res.status}`);
+  }
+  async fetchMutedInsightCategories(): Promise<string[]> {
+    const res = await fetch(`${this.baseUrl}/api/insights/muted`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    return data.muted ?? [];
   }
   // v695 — Bulk-Dismiss aller offenen Insights einer Kategorie (für „kg-gap"-Cleanup)
   async dismissInsightsCategory(category: string): Promise<{ success: boolean; dismissed: number }> {

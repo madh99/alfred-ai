@@ -2528,4 +2528,17 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_kg_entities_layer ON kg_entities(user_id, layer)`);
     },
   },
+  {
+    version: 111,
+    description: 'v928 — insight_category_prefs: Kategorie-Mute („solche Insights nicht mehr"). Gemutete Kategorien erzeugen keine neuen Insight-Kandidaten (SQLite-Spiegel zu PG v115).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS insight_category_prefs (
+        user_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        muted INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, category)
+      )`);
+    },
+  },
 ];

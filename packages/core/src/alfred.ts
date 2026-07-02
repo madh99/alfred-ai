@@ -7549,15 +7549,23 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           dismiss: async (id: string) => { if (ownerUidForInsights) await insightsRepo.dismiss(ownerUidForInsights, id); },
           snooze: async (id: string, hours: number) => { if (ownerUidForInsights) await insightsRepo.snooze(ownerUidForInsights, id, hours); },
-          act: async (id: string) => {
+          // v928 — akzeptiert User-Eingaben (params) für Aktionen mit inputFields
+          // (z.B. Geburtstag): {{key}}-Platzhalter in actionParams werden gefüllt.
+          act: async (id: string, params?: Record<string, unknown>) => {
             if (!ownerUidForInsights) return { ok: false, reason: 'no-owner' };
             const insight = await insightsRepo.getById(ownerUidForInsights, id);
             if (!insight) return { ok: false, reason: 'not-found' };
             if (!insight.actionSkill) return { ok: false, reason: 'no-action' };
             const skill = this.skillRegistry?.get(insight.actionSkill);
             if (!skill) return { ok: false, reason: `skill ${insight.actionSkill} not registered` };
+            const { extractInputFields, applyActionInputs } = await import('./insight-action-input.js');
+            const applied = applyActionInputs(insight.actionParams ?? {}, extractInputFields(insight.sourceData), params);
+            if (!applied.ok) return { ok: false, reason: `missing-input:${applied.missing.join(',')}` };
             try {
-              const result = await skill.execute(insight.actionParams ?? {}, { userId: ownerUidForInsights, masterUserId: ownerUidForInsights } as any);
+              const result = await skill.execute(applied.params, { userId: ownerUidForInsights, masterUserId: ownerUidForInsights } as any);
+              if (result && typeof result === 'object' && 'success' in result && (result as { success: boolean }).success === false) {
+                return { ok: false, reason: (result as { error?: string }).error ?? 'skill-failed' };
+              }
               await insightsRepo.markActed(ownerUidForInsights, id);
               return { ok: true, result };
             } catch (err) {
@@ -7577,6 +7585,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           dismissCategory: async (category: string) => {
             if (!ownerUidForInsights) return 0;
             return insightsRepo.dismissCategory(ownerUidForInsights, category as any);
+          },
+          // v928 — Kategorie-Mute („solche nicht mehr"): gemutete Kategorien erzeugen
+          // keine neuen Kandidaten mehr (zentral in upsertCandidate abgefangen).
+          muteCategory: async (category: string, muted: boolean) => {
+            if (!ownerUidForInsights) return;
+            await insightsRepo.setCategoryMuted(ownerUidForInsights, category, muted);
+          },
+          listMutedCategories: async () => {
+            if (!ownerUidForInsights) return [];
+            return insightsRepo.listMutedCategories(ownerUidForInsights);
           },
         });
         this.logger.info('Insights API registered');
