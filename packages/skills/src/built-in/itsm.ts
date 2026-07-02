@@ -14,7 +14,7 @@ type Action =
   | 'set_sla' | 'get_sla_report' | 'check_sla_compliance' | 'list_sla_breaches'
   | 'backfill_assets' | 'bulk_link_to_problem'
   | 'mttr_report' | 'capacity_forecast'
-  | 'service_health_score' | 'list_cascades' | 'sla_breach_risk' | 'pir_pending';
+  | 'service_health_score' | 'list_cascades' | 'sla_breach_risk' | 'pir_pending' | 'search_history';
 
 export class ItsmSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -43,6 +43,7 @@ export class ItsmSkill extends Skill {
       '"promote_to_problem" erstellt Problem aus Incident(s) (incident_id, linked_incident_ids). ' +
       '"create_fix_change" erstellt Change Request als Fix (problem_id, title, implementation_plan). ' +
       '"mark_known_error" setzt Known-Error-Flag (problem_id, known_error_description). ' +
+      '"search_history" durchsucht die GESAMTE Vorfalls-Historie (geschlossene Incidents inkl. resolution/root_cause, Known-Errors/Problems, Changes) per Stichworten (query). WICHTIG: Bei JEDEM Infrastruktur-/System-/Serverfehler (volle Disk, Log-Flut, Dienst down, Hardware-Fehler etc.) ZUERST search_history mit den Fehler-Stichworten aufrufen — häufig wurde dasselbe Problem schon einmal gelöst und die dokumentierte Lösung erspart die Neu-Diagnose. ' +
       '"detect_problem_patterns" erkennt Incident-Muster (pattern_window_days, min_incidents). ' +
       '"problem_dashboard" zeigt Problem-Übersicht. ' +
       '"add_service" registriert einen Service (name, category, url, health_check_url, criticality, asset_ids, dependencies). ' +
@@ -75,12 +76,13 @@ export class ItsmSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem', 'mttr_report', 'capacity_forecast', 'service_health_score', 'list_cascades', 'sla_breach_risk', 'pir_pending'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem', 'mttr_report', 'capacity_forecast', 'service_health_score', 'list_cascades', 'sla_breach_risk', 'pir_pending', 'search_history'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         problem_id: { type: 'string' },
         service_id: { type: 'string' },
         asset_id: { type: 'string' },
+        query: { type: 'string', description: 'Stichworte für search_history (z.B. Fehlermeldung, Hostname, Komponente)' },
         title: { type: 'string' },
         description: { type: 'string' },
         severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
@@ -253,6 +255,7 @@ export class ItsmSkill extends Skill {
         case 'list_cascades': return await this.listCascadesAction(userId, input);
         case 'sla_breach_risk': return await this.slaBreachRiskAction(userId);
         case 'pir_pending': return await this.pirPendingAction(userId, input);
+        case 'search_history': return await this.searchHistory(userId, input);
         case 'add_service': return await this.addService(userId, input);
         case 'update_service': return await this.updateService(userId, input);
         case 'add_component': return await this.addComponent(userId, input);
@@ -374,7 +377,12 @@ export class ItsmSkill extends Skill {
     if (this.projectItemCascade && (result.status === 'resolved' || result.status === 'closed')) {
       try { await this.projectItemCascade(result.id); } catch { /* non-critical */ }
     }
-    return { success: true, data: result, display: `✅ Incident ${result.title} aktualisiert (Status: ${result.status})` };
+    // v923 A — auch der resolve-Pfad konserviert die Lösung als Known-Error
+    let keNote = '';
+    if (result.status === 'resolved' || result.status === 'closed') {
+      keNote = await this.captureKnownError(userId, result);
+    }
+    return { success: true, data: result, display: `✅ Incident ${result.title} aktualisiert (Status: ${result.status})${keNote}` };
   }
 
   private async listIncidents(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
@@ -439,7 +447,118 @@ export class ItsmSkill extends Skill {
     if (this.projectItemCascade) {
       try { await this.projectItemCascade(result.id); } catch { /* non-critical */ }
     }
-    return { success: true, data: result, display: `✅ Incident **${result.title}** geschlossen` };
+    // v923 A — Wissen konservieren: dokumentierte Lösung → Known-Error-DB
+    const keNote = await this.captureKnownError(userId, result);
+    return { success: true, data: result, display: `✅ Incident **${result.title}** geschlossen${keNote}` };
+  }
+
+  /**
+   * v923 A — Auto-Known-Error beim Incident-Abschluss. Der zed/AER-Vorfall (Incident
+   * 75032cb9, 21.05.) war sauber mit resolution+root_cause dokumentiert, aber beim
+   * Wiederauftreten wusste Alfred nichts davon: findKnownErrorMatch durchsucht NUR
+   * cmdb_problems mit is_known_error=true — und die blieb leer, weil nichts das
+   * Wissen beim Abschluss dorthin überführte. Legt jetzt automatisch einen
+   * Known-Error an (Dedup per Keyword-Überlappung gegen bestehende Known-Errors).
+   * Non-fatal: Fehler hier brechen den Abschluss nie.
+   */
+  private async captureKnownError(
+    userId: string,
+    incident: { id: string; title: string; resolution?: string; rootCause?: string; affectedAssetIds?: string[]; affectedServiceIds?: string[] },
+  ): Promise<string> {
+    try {
+      if (!this.problem) return '';
+      const resolution = (incident.resolution ?? '').trim();
+      if (resolution.length < 20) return ''; // ohne substanzielle Lösung kein Known-Error
+
+      // Dedup: existiert schon ein Known-Error mit ≥2 gemeinsamen Keywords?
+      const keywords = incident.title.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 4);
+      const existing = await this.problem.listProblems(userId, { isKnownError: true, limit: 100 });
+      for (const p of existing) {
+        const t = p.title.toLowerCase();
+        if (keywords.filter(k => t.includes(k)).length >= 2) {
+          // Bereits bekannt → Incident verlinken statt Duplikat anlegen
+          try { await this.problem.linkIncident(userId, p.id, incident.id); } catch { /* evtl. schon verlinkt */ }
+          return `\n📚 Known-Error existiert bereits (\`${p.id.slice(0, 8)}\`) — Incident verlinkt.`;
+        }
+      }
+
+      const created = await this.problem.createProblem(userId, {
+        title: incident.title,
+        description: `Automatisch aus Incident-Abschluss übernommen (Incident ${incident.id.slice(0, 8)}).`,
+        linkedIncidentIds: [incident.id],
+        affectedAssetIds: incident.affectedAssetIds ?? [],
+        affectedServiceIds: incident.affectedServiceIds ?? [],
+        detectedBy: 'manual',
+        workaround: resolution,
+      });
+      await this.problem.updateProblem(userId, created.id, {
+        isKnownError: true,
+        knownErrorDescription: incident.rootCause ?? incident.title,
+        status: 'resolved',
+      } as any);
+      return `\n📚 Known-Error angelegt (\`${created.id.slice(0, 8)}\`) — bei Wiederauftreten wird die Lösung automatisch vorgeschlagen.`;
+    } catch {
+      return ''; // non-fatal
+    }
+  }
+
+  /**
+   * v923 C — Volltext-Suche über die gesamte Vorfalls-Historie: geschlossene
+   * Incidents (title/root_cause/resolution/symptoms), Problems/Known-Errors
+   * (title/known_error/workaround) und Changes (title/description/plan).
+   * Für den Chat-Troubleshooting-Pfad: „syslog voll" → findet den zed/AER-Fall
+   * vom 21.05. samt dokumentierter Lösung, statt bei Null anzufangen.
+   */
+  private async searchHistory(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const query = (input.query as string ?? '').trim();
+    if (query.length < 3) return { success: false, error: 'query erforderlich (min. 3 Zeichen, z.B. Fehlermeldung/Hostname)' };
+    const keywords = query.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 3);
+    if (keywords.length === 0) return { success: false, error: 'Keine verwertbaren Stichworte in query' };
+
+    const score = (...fields: Array<string | undefined | null>): number => {
+      const text = fields.filter(Boolean).join(' ').toLowerCase();
+      return keywords.filter(k => text.includes(k)).length;
+    };
+
+    type Hit = { kind: string; id: string; title: string; date: string; status: string; solution?: string; matches: number };
+    const hits: Hit[] = [];
+
+    const [incidents, problems, changes] = await Promise.all([
+      this.itsm.listIncidents(userId, { limit: 300 }).catch(() => []),
+      this.problem ? this.problem.listProblems(userId, { limit: 100 }).catch(() => []) : Promise.resolve([]),
+      this.itsm.listChangeRequests(userId, { limit: 200 }).catch(() => []),
+    ]);
+
+    for (const i of incidents as any[]) {
+      const m = score(i.title, i.rootCause, i.resolution, i.symptoms);
+      if (m >= 2) hits.push({ kind: 'Incident', id: i.id, title: i.title, date: (i.createdAt ?? '').slice(0, 10), status: i.status, solution: i.resolution ?? i.workaround, matches: m });
+    }
+    for (const p of problems as any[]) {
+      const m = score(p.title, p.knownErrorDescription, p.workaround, p.rootCauseDescription);
+      if (m >= 2) hits.push({ kind: p.isKnownError ? 'Known-Error' : 'Problem', id: p.id, title: p.title, date: (p.createdAt ?? '').slice(0, 10), status: p.status, solution: p.workaround ?? p.knownErrorDescription, matches: m });
+    }
+    for (const c of changes as any[]) {
+      const m = score(c.title, c.description, c.implementationPlan);
+      if (m >= 2) hits.push({ kind: 'Change', id: c.id, title: c.title, date: (c.createdAt ?? '').slice(0, 10), status: c.status, solution: c.implementationPlan, matches: m });
+    }
+
+    hits.sort((a, b) => b.matches - a.matches);
+    const top = hits.slice(0, 8);
+    if (top.length === 0) {
+      return { success: true, data: { hits: [] }, display: `🔍 Keine früheren Vorfälle zu „${query}" gefunden — das ist ein neues Problem.` };
+    }
+
+    const lines = top.map(h => {
+      const sol = (h.solution ?? '').trim();
+      return `### ${h.kind === 'Known-Error' ? '📚' : h.kind === 'Incident' ? '🚨' : h.kind === 'Change' ? '🔧' : '🧩'} ${h.kind} \`${h.id.slice(0, 8)}\` — ${h.title.slice(0, 90)}\n` +
+        `${h.date} · Status: ${h.status}` +
+        (sol ? `\n**Damalige Lösung:** ${sol.slice(0, 400)}${sol.length > 400 ? '…' : ''}` : '');
+    });
+    return {
+      success: true,
+      data: { hits: top },
+      display: `## 🔍 Vorfalls-Historie zu „${query}" (${top.length} Treffer)\n\n${lines.join('\n\n')}`,
+    };
   }
 
   // ── Change Requests ────────────────────────────────────────

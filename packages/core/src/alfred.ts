@@ -111,17 +111,37 @@ async function findKnownErrorMatch(
   userId: string,
   alertMessage: string,
   alertKeywords: string[],
-): Promise<{ id: string; title: string; workaround?: string; knownErrorDescription?: string } | null> {
-  const knownErrors = await problemRepo.listProblems(userId, { isKnownError: true, limit: 50 });
-  if (knownErrors.length === 0) return null;
+  // v923 B — optional: auch geschlossene Incidents mit dokumentierter resolution
+  // durchsuchen. Vorher wurde NUR die Known-Error-DB durchsucht — war die leer
+  // (zed/AER-Fall), blieb selbst ein perfekt dokumentierter Alt-Vorfall unsichtbar.
+  itsmRepo?: { listIncidents: (uid: string, f?: Record<string, unknown>) => Promise<Array<{ id: string; title: string; status: string; resolution?: string; rootCause?: string }>> },
+): Promise<{ id: string; title: string; workaround?: string; knownErrorDescription?: string; sourceKind: 'problem' | 'incident' } | null> {
   const msgLower = alertMessage.toLowerCase();
   const kwLower = alertKeywords.map(k => k.toLowerCase()).filter(k => k.length >= 4);
+  const matchScore = (text: string): number =>
+    kwLower.filter(k => text.includes(k) || msgLower.split(/\s+/).some(w => text.includes(w.toLowerCase()) && w.length >= 4)).length;
+
+  const knownErrors = await problemRepo.listProblems(userId, { isKnownError: true, limit: 50 });
   for (const p of knownErrors) {
     if (!p.workaround && !p.knownErrorDescription) continue;
-    const titleLower = p.title.toLowerCase();
-    // Cross-match: keywords from alert against problem title
-    const matchCount = kwLower.filter(k => titleLower.includes(k) || msgLower.split(/\s+/).some(w => p.title.toLowerCase().includes(w.toLowerCase()) && w.length >= 4)).length;
-    if (matchCount >= 2) return p;
+    if (matchScore(p.title.toLowerCase()) >= 2) return { ...p, sourceKind: 'problem' };
+  }
+
+  // v923 B — Fallback: geschlossene/gelöste Incidents mit resolution
+  if (itsmRepo) {
+    try {
+      const incidents = await itsmRepo.listIncidents(userId, { limit: 300 });
+      let best: { inc: typeof incidents[0]; score: number } | null = null;
+      for (const inc of incidents) {
+        if (inc.status !== 'closed' && inc.status !== 'resolved') continue;
+        if (!inc.resolution || inc.resolution.trim().length < 20) continue;
+        const s = matchScore(`${inc.title} ${inc.rootCause ?? ''}`.toLowerCase());
+        if (s >= 2 && (!best || s > best.score)) best = { inc, score: s };
+      }
+      if (best) {
+        return { id: best.inc.id, title: best.inc.title, workaround: best.inc.resolution, knownErrorDescription: best.inc.rootCause, sourceKind: 'incident' };
+      }
+    } catch { /* non-fatal — Recall ist best-effort */ }
   }
   return null;
 }
@@ -3421,9 +3441,11 @@ export class Alfred {
                     // der User direkt sieht was der Workaround ist.
                     let symptoms = alert.message;
                     try {
-                      const knownErrorMatch = await findKnownErrorMatch(problemRepo, userId, alert.message, keywords);
+                      // v923 B — sucht jetzt auch geschlossene Incidents (nicht nur Known-Error-DB)
+                      const knownErrorMatch = await findKnownErrorMatch(problemRepo, userId, alert.message, keywords, itsmRepo);
                       if (knownErrorMatch) {
-                        symptoms = `🔁 **Bekannte Lösung aus Problem ${knownErrorMatch.id.slice(0, 8)}** ("${knownErrorMatch.title.slice(0, 60)}"):\n${knownErrorMatch.workaround ?? knownErrorMatch.knownErrorDescription ?? '(siehe Problem-Details)'}\n\n---\n\n${alert.message}`;
+                        const srcLabel = knownErrorMatch.sourceKind === 'incident' ? 'früherem Incident' : 'Problem';
+                        symptoms = `🔁 **Bekannte Lösung aus ${srcLabel} ${knownErrorMatch.id.slice(0, 8)}** ("${knownErrorMatch.title.slice(0, 60)}"):\n${knownErrorMatch.workaround ?? knownErrorMatch.knownErrorDescription ?? '(siehe Details)'}\n\n---\n\n${alert.message}`;
                       }
                     } catch { /* best effort */ }
 

@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.923] - 2026-07-02
+
+### Added/Fixed — ITSM: Known-Error-Wissenskreislauf geschlossen (v923)
+
+Auslöser: Ein dokumentierter Vorfall (syslog-Logflut durch zed/NVMe-AER auf pve,
+Incident + Change vom 21.05.) wurde beim Wiederauftreten nicht wiedererkannt —
+die Diagnose begann von vorn. Ursache: Die Known-Error-Datenbank blieb leer
+(nichts überführte Abschluss-Wissen dorthin), die Wiedererkennung durchsuchte
+nur diese leere DB, und der Chat-Pfad hatte gar keine Historien-Suche.
+
+- **A — Wissen konservieren:** `close_incident`/`update_incident`→resolved mit
+  dokumentierter Lösung legt automatisch einen Known-Error an (Problem mit
+  `is_known_error`, Workaround = resolution, Incident verlinkt). Dedup per
+  Keyword-Überlappung: existiert der Known-Error schon, wird nur verlinkt.
+  Non-fatal — bricht den Abschluss nie.
+- **B — Wiedererkennung verbreitert:** `findKnownErrorMatch` durchsucht
+  zusätzlich geschlossene/gelöste Incidents mit dokumentierter resolution
+  (Keyword-Match auf Titel + root_cause) — funktioniert damit rückwirkend für
+  alle Alt-Vorfälle, auch ohne gepflegte Known-Error-DB. Meldung unterscheidet
+  Quelle („Bekannte Lösung aus Problem/früherem Incident").
+- **C — Chat-Troubleshooting:** Neue Skill-Aktion `search_history` (query) —
+  Volltext über Incidents (resolution/root_cause/symptoms), Problems/Known-Errors
+  und Changes, gerankt nach Treffern, mit „Damalige Lösung"-Auszug. Die
+  Skill-Beschreibung leitet das Modell an, bei Infrastruktur-Fehlern ZUERST die
+  Historie zu durchsuchen.
+- 6 Tests (`itsm-known-error.test.ts`).
+
 ## [0.19.0-multi-ha.922] - 2026-07-02
 
 ### Added/Fixed — ITSM: UI-Vervollständigung + gebündelte Incident-Benachrichtigung (v922)
