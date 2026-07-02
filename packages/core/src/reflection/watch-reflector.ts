@@ -18,13 +18,84 @@ export class WatchReflector {
     private readonly config: WatchConfig,
   ) {}
 
+  /**
+   * v925 — Duplikat-Erkennung: gleiche skill+entity_id ODER ≥3 gemeinsame
+   * Namens-Keywords. Realfall: „Daily Sensor Battery Check" existierte 2× mit
+   * jeweils geratenen (unterschiedlichen, nicht existenten) Entity-Namen — der
+   * Reflector räumte nur einzelne stale Watches ab, nie Duplikate.
+   */
+  static findDuplicateGroups(watches: Array<{ id: string; name: string; skillName: string; skillParams?: Record<string, unknown>; createdAt: string }>): Array<{ keep: { id: string; name: string }; drop: Array<{ id: string; name: string }> }> {
+    const tokens = (s: string) => new Set((s ?? '').toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 4));
+    const groups: Array<{ keep: { id: string; name: string }; drop: Array<{ id: string; name: string }> }> = [];
+    const assigned = new Set<string>();
+    const sorted = [...watches].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '')); // neueste zuerst
+
+    for (let i = 0; i < sorted.length; i++) {
+      if (assigned.has(sorted[i].id)) continue;
+      const a = sorted[i];
+      const aEntity = a.skillParams?.entity_id as string | undefined;
+      const aTokens = tokens(a.name);
+      const dups: Array<{ id: string; name: string }> = [];
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (assigned.has(sorted[j].id)) continue;
+        const b = sorted[j];
+        const bEntity = b.skillParams?.entity_id as string | undefined;
+        const sameTarget = a.skillName === b.skillName && !!aEntity && aEntity === bEntity;
+        const bTokens = tokens(b.name);
+        let common = 0;
+        for (const t of aTokens) if (bTokens.has(t)) common++;
+        if (sameTarget || common >= 3) {
+          dups.push({ id: b.id, name: b.name });
+          assigned.add(b.id);
+        }
+      }
+      if (dups.length > 0) groups.push({ keep: { id: a.id, name: a.name }, drop: dups });
+    }
+    return groups;
+  }
+
   async reflect(userId: string): Promise<ReflectionResult[]> {
     const results: ReflectionResult[] = [];
     // Use getEnabled() since there's no user-scoped listAll
     const watches = await this.watchRepo.getEnabled();
     const now = Date.now();
 
+    // v925 — Selbstheilung 1: Duplikat-Watches mergen (neueste behalten, Rest löschen)
+    const dupGroups = WatchReflector.findDuplicateGroups(watches as any);
+    const droppedIds = new Set<string>();
+    for (const g of dupGroups) {
+      for (const d of g.drop) {
+        droppedIds.add(d.id);
+        results.push({
+          target: { type: 'watch', id: d.id, name: d.name },
+          finding: `Watch "${d.name}" ist ein Duplikat von "${g.keep.name}"`,
+          action: 'delete',
+          risk: 'proactive',
+          reasoning: `v925 Duplikat-Merge: überwacht dasselbe wie "${g.keep.name}" (\`${g.keep.id.slice(0, 8)}\`). Neueste bleibt, Duplikat wird gelöscht.`,
+        });
+      }
+    }
+
     for (const watch of watches) {
+      if (droppedIds.has(watch.id)) continue; // v925 — bereits als Duplikat markiert
+
+      // v925 — Selbstheilung 2: Watch liefert dauerhaft unknown/unavailable und hat
+      // nie getriggert → prüft vermutlich eine geratene/nicht existente Entity
+      // (Realfall: sensor.garage_temp_batterie existierte nicht in HA). Deaktivieren
+      // + melden statt still weiterlaufen lassen.
+      const deadAgeDays = (now - new Date(watch.createdAt).getTime()) / 86400_000;
+      const deadValue = watch.lastValue !== null && ['unknown', 'unavailable', ''].includes(String(watch.lastValue).trim().toLowerCase());
+      if (deadValue && !watch.lastTriggeredAt && watch.lastCheckedAt && deadAgeDays >= 3) {
+        results.push({
+          target: { type: 'watch', id: watch.id, name: watch.name },
+          finding: `Watch "${watch.name}" liefert seit Erstellung nur "${watch.lastValue}" — Ziel-Entity existiert vermutlich nicht`,
+          action: 'deactivate',
+          risk: 'proactive',
+          reasoning: `v925: skill_params zeigen vermutlich auf eine nicht existente Entity (Wert dauerhaft "${watch.lastValue}", nie getriggert, ${Math.round(deadAgeDays)}d alt). Deaktiviert — bitte Entity-Namen prüfen.`,
+        });
+        continue;
+      }
+
       const ageDays = (now - new Date(watch.createdAt).getTime()) / 86400_000;
       const lastTriggerDays = watch.lastTriggeredAt
         ? (now - new Date(watch.lastTriggeredAt).getTime()) / 86400_000

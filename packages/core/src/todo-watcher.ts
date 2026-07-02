@@ -18,6 +18,8 @@ export class TodoWatcher {
   private readonly minutesBefore: number;
   private readonly overdueCheck: boolean;
   private lastOverdueCheck = 0;
+  /** v925 — täglicher Duplikat-Dedup-Pass über offene Todos. */
+  private lastDedupCheck = 0;
 
   /** Optional callback when a todo notification is sent (for reasoning triggers). */
   public onTodoNotified?: (todoId: string, title: string, kind: 'upcoming' | 'overdue') => void;
@@ -69,8 +71,63 @@ export class TodoWatcher {
           await this.notify(todo.id, todo.title, todo.dueDate!, todo.list, todo.priority, 'overdue');
         }
       }
+
+      // v925 — Selbstheilung: 1×/Tag semantische Duplikat-Todos schließen.
+      // Realfall: 45 offene „Sensor-Batterien"-Todos, weil die Reasoning-Engine
+      // dasselbe Todo immer neu formulierte und nichts den Bestand bereinigte.
+      if (now - this.lastDedupCheck > 24 * 3_600_000) {
+        this.lastDedupCheck = now;
+        await this.dedupOpenTodos();
+      }
     } catch (err) {
       this.logger.error({ err }, 'Todo watcher tick failed');
+    }
+  }
+
+  /**
+   * v925 — Cluster offener Todos per Keyword-Ähnlichkeit (gleiche Metrik wie
+   * der v924-Erstell-Dedup in todo.ts): neuestes Todo je Cluster bleibt, ältere
+   * werden als Duplikat geschlossen. Eine Sammel-Meldung an den Owner.
+   */
+  private async dedupOpenTodos(): Promise<void> {
+    if (!this.ownerUserId) return;
+    try {
+      const open = await this.todoRepo.list(this.ownerUserId);
+      if (open.length < 2) return;
+      const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 4));
+      const sorted = [...open].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? '')); // neueste zuerst
+      const kept: Array<{ title: string; tok: Set<string> }> = [];
+      const closed: string[] = [];
+
+      for (const todo of sorted) {
+        const tok = tokens(todo.title);
+        let dupOf: string | null = null;
+        for (const k of kept) {
+          let common = 0;
+          for (const t of tok) if (k.tok.has(t)) common++;
+          const minSize = Math.min(tok.size, k.tok.size);
+          if (common >= 3 || (common >= 2 && minSize > 0 && common / minSize >= 0.6)) { dupOf = k.title; break; }
+        }
+        if (dupOf) {
+          await this.todoRepo.complete(todo.id);
+          closed.push(todo.title);
+          this.logger.info({ todoId: todo.id, title: todo.title, dupOf }, 'v925 todo-dedup: duplicate closed');
+        } else {
+          kept.push({ title: todo.title, tok });
+        }
+      }
+
+      if (closed.length > 0) {
+        const adapter = this.adapters.get(this.defaultPlatform);
+        const list = closed.slice(0, 6).map(t => `• ${t.slice(0, 70)}`).join('\n');
+        const more = closed.length > 6 ? `\n… und ${closed.length - 6} weitere` : '';
+        try {
+          await adapter?.sendMessage(this.defaultChatId,
+            `🧹 **${closed.length} Duplikat-Todo${closed.length === 1 ? '' : 's'} automatisch geschlossen** (jeweils neueste Version bleibt offen):\n${list}${more}`);
+        } catch { /* non-fatal */ }
+      }
+    } catch (err) {
+      this.logger.warn({ err }, 'v925 todo-dedup failed (non-fatal)');
     }
   }
 

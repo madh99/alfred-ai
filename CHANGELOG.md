@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.925] - 2026-07-02
+
+### Added — Selbstheilung für Duplikat-Todos/-Watches + Dead-Entity-Erkennung (v925)
+
+Paket-1-Fix Teil 2 (ergänzt v924, das nur NEUE Duplikate verhindert — v925 heilt
+den Bestand und erkennt funktionslose Watches):
+
+- **Watch-Duplikat-Merge:** Der Watch-Reflector erkennt jetzt Duplikate
+  (gleiche Skill+entity_id ODER ≥3 gemeinsame Namens-Keywords) und löscht alle
+  bis auf die neueste (proaktive Reflection-Aktion mit Begründung).
+- **Dead-Entity-Erkennung:** Watches, die seit ≥3 Tagen nur
+  „unknown"/„unavailable" liefern und nie getriggert haben, werden deaktiviert
+  und gemeldet — vorher liefen Watches auf geratene, nicht existente
+  Home-Assistant-Entities stumm und wirkungslos weiter (Realfall:
+  `sensor.garage_temp_batterie` existierte nicht).
+- **Täglicher Todo-Dedup-Pass:** Der Todo-Watcher schließt 1×/Tag semantische
+  Duplikat-Todos (gleiche Ähnlichkeits-Metrik wie der v924-Erstell-Dedup);
+  das neueste Todo je Cluster bleibt offen, eine Sammel-Meldung informiert.
+- 3 Tests (`watch-dedup.test.ts`).
+
 ## [0.19.0-multi-ha.924] - 2026-07-02
 
 ### Added/Fixed — Quick-Action-Buttons + Erstell-Dedup gegen Nachrichten-Spam (v924)
