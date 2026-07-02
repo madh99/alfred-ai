@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DeploySkill } from './deploy.js';
+import { DeploySkill, buildDetachedLaunch } from './deploy.js';
+
+describe('buildDetachedLaunch (v931.1)', () => {
+  it('backgroundet NUR das nohup in einer Subshell-Klammer — nie die ganze &&-Kette', () => {
+    const cmd = buildDetachedLaunch('/home/u/app', 'docker compose up -d --build', '/tmp/x.log');
+    // Regression .96 02.07.: ohne Klammer hielt die backgroundete Kette die
+    // SSH-Session offen bis der Build fertig war → Skill-Timeout.
+    expect(cmd).toContain('&& (nohup sh -c');
+    expect(cmd).toMatch(/<\/dev\/null &\) && echo started$/);
+    expect(cmd).toContain('>/tmp/x.log 2>&1');
+    expect(cmd).toContain('docker compose up -d --build && echo ALFRED_DEPLOY_OK || echo ALFRED_DEPLOY_FAIL');
+  });
+});
 
 /**
  * v931 — Detached Compose-Start: der Skill-/SSH-Timeout darf einen laufenden

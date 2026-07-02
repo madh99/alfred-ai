@@ -8,6 +8,18 @@ import { appendOutputLine, appendOutputEvent, markOutputEnded } from './code-age
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * v931.1 — Baut den detached Compose-Start. Die Subshell-Klammer `(nohup … &)`
+ * ist PFLICHT: `cd && rm && nohup … &` backgroundet sonst die GESAMTE &&-Kette —
+ * die wartende Subshell hält stdout/stderr der SSH-Session offen bis compose
+ * fertig ist, ssh blockiert die volle Build-Dauer und läuft in den Timeout
+ * (Realfall .96 02.07. 20:09). Mit der Klammer endet die Subshell sofort,
+ * ssh kehrt in <1s zurück (live auf .96 verifiziert: 0,36s statt Build-Dauer).
+ */
+export function buildDetachedLaunch(projectDir: string, command: string, logFile: string): string {
+  return `cd ${projectDir} && rm -f ${logFile} && (nohup sh -c "${command} && echo ALFRED_DEPLOY_OK || echo ALFRED_DEPLOY_FAIL" >${logFile} 2>&1 </dev/null &) && echo started`;
+}
+
 type Action = 'deploy' | 'full_deploy' | 'provision' | 'status' | 'logs' | 'stop' | 'start' | 'restart' | 'rollback' | 'setup_node' | 'setup_python';
 type SkillCallback = (input: Record<string, unknown>) => Promise<SkillResult>;
 
@@ -544,8 +556,7 @@ export class DeploySkill extends Skill {
         // Start jeden Verbindungsabbruch; wir pollen das Log bis OK/FAIL.
         const composeUp = await this.composeCmd(host, user, 'up -d --build');
         const logFile = `/tmp/alfred-deploy-${project.replace(/[^a-zA-Z0-9_-]/g, '_')}.log`;
-        await this.ssh(host, user,
-          `cd ${projectDir} && rm -f ${logFile} && nohup sh -c "${composeUp} && echo ALFRED_DEPLOY_OK || echo ALFRED_DEPLOY_FAIL" >${logFile} 2>&1 </dev/null & echo started`);
+        await this.ssh(host, user, buildDetachedLaunch(projectDir, composeUp, logFile));
         const composeResult = await this.pollDeployLog(host, user, logFile, 15 * 60_000,
           elapsed => emitStep('service-start', 'started', `${pm} — Build läuft (${Math.round(elapsed / 1000)}s)`));
         if (!composeResult.ok) {

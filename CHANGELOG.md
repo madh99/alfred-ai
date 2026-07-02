@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.932] - 2026-07-02
+
+### Fixed — Deploy-Detach: Subshell-Klammer, ssh kehrt sofort zurück (v932)
+
+Nachtest von v931 auf .96 schlug weiter mit Timeout fehl — mit wichtigem
+Detail: das Deployment selbst LIEF durch (Log endete mit OK, Container
+healthy), nur die startende SSH-Session kehrte nicht zurück. Ursache ist
+Shell-Präzedenz: in `cd … && rm … && nohup … & echo started` bindet das `&`
+die GESAMTE `&&`-Kette — die backgroundete Subshell wartet auf compose und
+hält dabei stdout/stderr der SSH-Session offen, ssh blockiert die volle
+Build-Dauer und läuft in den Exec-Timeout.
+
+- Fix: `(nohup … &)` — nur das nohup wird in einer sofort endenden Subshell
+  backgroundet. Live auf .96 verifiziert: ssh kehrt in 0,36 s zurück (vorher
+  = volle Build-Dauer), der Hintergrund-Build läuft durch (OK-Marker,
+  Container healthy).
+- Launch-Kommando als `buildDetachedLaunch()` extrahiert + Regressionstest,
+  der die Subshell-Klammer festschreibt.
+
 ## [0.19.0-multi-ha.931] - 2026-07-02
 
 ### Fixed — Deploy-Skill: Docker-Builds überleben jetzt Timeouts (v931)
