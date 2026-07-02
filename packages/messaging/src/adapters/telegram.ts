@@ -16,6 +16,48 @@ export class TelegramAdapter extends MessagingAdapter {
   private bot: Bot;
   private readonly token: string;
 
+  /**
+   * v926 — Media-Group-Aggregation: Telegram sendet Alben als N EINZELNE Updates
+   * mit gemeinsamer media_group_id (Caption nur an einem Teil). Ohne Bündelung
+   * wurde jedes Bild ein eigener Pipeline-Lauf → N parallele LLM-Antworten auf
+   * EINE User-Anfrage (Realfall 02.07.: 1 Album mit 6 Bildern = 6 Antworten,
+   * teils englisch, weil die parallelen Läufe den Konversationskontext verloren).
+   * Album-Teile werden gepuffert und nach Debounce als EINE Nachricht mit
+   * Attachment-Array emittiert.
+   */
+  private readonly mediaGroups = new Map<string, {
+    parts: Array<{ attachment?: Attachment; caption?: string }>;
+    firstMsg: Message;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  private static readonly MEDIA_GROUP_DEBOUNCE_MS = 2500;
+
+  /** v926 — Album-Teil puffern; Debounce-Timer startet bei jedem Teil neu. */
+  private collectMediaGroupPart(groupId: string, msg: Message, attachment: Attachment | undefined, caption: string): void {
+    let group = this.mediaGroups.get(groupId);
+    if (!group) {
+      group = { parts: [], firstMsg: msg, timer: setTimeout(() => this.flushMediaGroup(groupId), TelegramAdapter.MEDIA_GROUP_DEBOUNCE_MS) };
+      this.mediaGroups.set(groupId, group);
+    } else {
+      clearTimeout(group.timer);
+      group.timer = setTimeout(() => this.flushMediaGroup(groupId), TelegramAdapter.MEDIA_GROUP_DEBOUNCE_MS);
+    }
+    group.parts.push({ attachment, caption: caption || undefined });
+  }
+
+  /** v926 — gesammeltes Album als EINE Nachricht emittieren. */
+  private flushMediaGroup(groupId: string): void {
+    const group = this.mediaGroups.get(groupId);
+    if (!group) return;
+    this.mediaGroups.delete(groupId);
+    const attachments = group.parts.map(p => p.attachment).filter((a): a is Attachment => !!a);
+    const captions = group.parts.map(p => p.caption).filter((c): c is string => !!c);
+    const text = captions.join('\n') || `[Album mit ${attachments.length} Medien]`;
+    const normalized = this.normalizeMessage(group.firstMsg, text);
+    normalized.attachments = attachments.length > 0 ? attachments : undefined;
+    this.emit('message', normalized);
+  }
+
   constructor(token: string) {
     super();
     this.token = token;
@@ -52,6 +94,12 @@ export class TelegramAdapter extends MessagingAdapter {
       // Get the largest photo
       const photo = msg.photo[msg.photo.length - 1];
       const attachment = await this.downloadAttachment(photo.file_id, 'image', 'image/jpeg');
+
+      // v926 — Album-Teil? Puffern statt einzeln emittieren (sonst N Antworten auf 1 Album)
+      if (msg.media_group_id) {
+        this.collectMediaGroupPart(msg.media_group_id, msg, attachment ?? undefined, caption);
+        return;
+      }
 
       const normalized = this.normalizeMessage(msg, text);
       normalized.attachments = attachment ? [attachment] : undefined;
@@ -99,6 +147,12 @@ export class TelegramAdapter extends MessagingAdapter {
         msg.video.mime_type ?? 'video/mp4',
       );
 
+      // v926 — Album-Teil? Puffern statt einzeln emittieren
+      if (msg.media_group_id) {
+        this.collectMediaGroupPart(msg.media_group_id, msg, attachment ?? undefined, caption);
+        return;
+      }
+
       const normalized = this.normalizeMessage(msg, text);
       normalized.attachments = attachment ? [attachment] : undefined;
       this.emit('message', normalized);
@@ -116,6 +170,12 @@ export class TelegramAdapter extends MessagingAdapter {
         doc.mime_type ?? 'application/octet-stream',
         doc.file_name,
       );
+
+      // v926 — Album-Teil? Puffern statt einzeln emittieren
+      if (msg.media_group_id) {
+        this.collectMediaGroupPart(msg.media_group_id, msg, attachment ?? undefined, caption);
+        return;
+      }
 
       const normalized = this.normalizeMessage(msg, text);
       normalized.attachments = attachment ? [attachment] : undefined;
@@ -221,6 +281,12 @@ export class TelegramAdapter extends MessagingAdapter {
   }
 
   async disconnect(): Promise<void> {
+    // v926 — angefangene Alben noch ausliefern statt verlieren
+    for (const groupId of [...this.mediaGroups.keys()]) {
+      const g = this.mediaGroups.get(groupId);
+      if (g) clearTimeout(g.timer);
+      this.flushMediaGroup(groupId);
+    }
     await this.bot.stop();
     this.status = 'disconnected';
     this.emit('disconnected');

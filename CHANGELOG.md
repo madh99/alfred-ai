@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.926] - 2026-07-02
+
+### Fixed — Telegram-Alben: eine Nachricht statt N parallele Antworten (v926)
+
+Ein Telegram-Album (mehrere Bilder in einer Nachricht) kommt technisch als N
+einzelne Updates mit gemeinsamer `media_group_id` an — der Adapter behandelte
+jedes Bild als eigenständige Nachricht. Folge: N parallele Pipeline-Läufe und
+N LLM-Antworten auf EINE Anfrage, teils ohne Konversationskontext (Realfall:
+6 Bilder vom Rig → 6 Antworten, zwei davon auf Englisch).
+
+- Foto-/Video-/Dokument-Updates mit `media_group_id` werden jetzt gepuffert
+  (Debounce 2,5 s, startet mit jedem Album-Teil neu) und als EINE Nachricht mit
+  Attachment-Array + Caption emittiert (ohne Caption: „[Album mit N Medien]").
+- Einzelbilder ohne `media_group_id` verhalten sich unverändert.
+- Angefangene Alben werden bei `disconnect()` noch ausgeliefert statt verworfen.
+- Die Pipeline unterstützt mehrere Bilder pro Nachricht bereits (ein
+  Vision-Block je Attachment) — der Fix ist rein adapter-seitig.
+- 4 Tests (`telegram-media-group.test.ts`, messaging-Paket hat jetzt ein
+  test-Script).
+
 ## [0.19.0-multi-ha.925] - 2026-07-02
 
 ### Added — Selbstheilung für Duplikat-Todos/-Watches + Dead-Entity-Erkennung (v925)
