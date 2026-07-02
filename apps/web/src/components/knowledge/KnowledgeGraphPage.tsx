@@ -76,6 +76,9 @@ export function KnowledgeGraphPage() {
     } catch { return ''; }
   });
   const [showEvents, setShowEvents] = useState(false);
+  // v921 — IT-Infrastruktur (CMDB-Layer) standardmäßig ausgeblendet, damit der
+  // persönliche Graph nicht von network_devices/services dominiert wird.
+  const [showInfra, setShowInfra] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editName, setEditName] = useState('');
   const [editType, setEditType] = useState('');
@@ -103,6 +106,9 @@ export function KnowledgeGraphPage() {
 
     // Hide events by default (they dominate the graph)
     if (!showEvents) filteredEntities = filteredEntities.filter(e => e.entityType !== 'event');
+
+    // v921 — IT-Infrastruktur (CMDB-Layer) default ausblenden
+    if (!showInfra) filteredEntities = filteredEntities.filter(e => e.layer !== 'infra');
 
     if (filterType !== 'all') {
       filteredEntities = filteredEntities.filter(e => e.entityType === filterType);
@@ -146,7 +152,7 @@ export function KnowledgeGraphPage() {
       }));
 
     return { nodes, links };
-  }, [entities, relations, filterType, searchQuery, showEvents]);
+  }, [entities, relations, filterType, searchQuery, showEvents, showInfra]);
 
   useEffect(() => {
     if (graphRef.current) {
@@ -157,10 +163,13 @@ export function KnowledgeGraphPage() {
   }, [graphData]);
 
   const stats = useMemo(() => {
+    // v921 — Typ-Zähler folgen dem Infra-Toggle, sonst dominieren CMDB-Typen die Leiste
+    const visible = showInfra ? entities : entities.filter(e => e.layer !== 'infra');
     const types: Record<string, number> = {};
-    for (const e of entities) types[e.entityType] = (types[e.entityType] ?? 0) + 1;
-    return { totalEntities: entities.length, totalRelations: relations.length, types };
-  }, [entities, relations]);
+    for (const e of visible) types[e.entityType] = (types[e.entityType] ?? 0) + 1;
+    const infraCount = entities.filter(e => e.layer === 'infra').length;
+    return { totalEntities: visible.length, totalRelations: relations.length, types, infraCount };
+  }, [entities, relations, showInfra]);
 
   // Find connected entities for highlighting
   const connectedIds = useMemo(() => {
@@ -252,6 +261,13 @@ export function KnowledgeGraphPage() {
             className={`px-2 py-1 text-xs rounded ${filterType === 'all' && showEvents ? 'bg-blue-600 text-white' : 'bg-[#1f1f1f] text-gray-400 hover:bg-[#2a2a2a]'}`}
           >
             Alle + Events
+          </button>
+          <button
+            onClick={() => setShowInfra(v => !v)}
+            title="CMDB-synchronisierte IT-Infrastruktur (Server, Netzwerkgeräte, Services) ein-/ausblenden"
+            className={`px-2 py-1 text-xs rounded ${showInfra ? 'bg-amber-600 text-white' : 'bg-[#1f1f1f] text-gray-400 hover:bg-[#2a2a2a]'}`}
+          >
+            🖥 IT-Infra ({stats.infraCount})
           </button>
           {Object.entries(stats.types).map(([type, count]) => (
             <button

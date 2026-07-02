@@ -179,7 +179,7 @@ export class LLMEntityLinker {
     // Load existing relations for context (so LLM can identify stale/wrong ones)
     let existingRelations: Array<{ source: string; target: string; type: string; strength: number }> = [];
     try {
-      const graph = await this.kgRepo.getFullGraph(userId);
+      const graph = await this.kgRepo.getFullGraph(userId, 'personal');
       const entityById = new Map(allEntities.map(e => [e.id, e.name]));
       existingRelations = graph.relations
         .filter(r => entityById.has(r.sourceEntityId) && entityById.has(r.targetEntityId))

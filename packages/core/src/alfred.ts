@@ -388,6 +388,7 @@ export class Alfred {
   private memoryConsolidatorTimer?: ReturnType<typeof setInterval>;
   private patternAnalyzerTimer?: ReturnType<typeof setInterval>;
   private temporalAnalyzerTimer?: ReturnType<typeof setInterval>;
+  private kgMaintenanceTimer?: ReturnType<typeof setInterval>;
   private insightExpiryTimer?: ReturnType<typeof setInterval>;
   private clusterMonitorTimer?: ReturnType<typeof setInterval>;
   private cmdbDiscoveryTimer?: ReturnType<typeof setInterval>;
@@ -749,7 +750,7 @@ export class Alfred {
         if (!this.kgServiceRef) return '';
         // Always use ownerMasterUserId — alfredUserId is different from KG user_id
         const resolvedUid = this.ownerMasterUserId ?? _userId;
-        const graph = await new KnowledgeGraphRepository(adapter).getFullGraph(resolvedUid);
+        const graph = await new KnowledgeGraphRepository(adapter).getFullGraph(resolvedUid, 'personal');
         const topicLower = topic.toLowerCase();
         const relevant = graph.entities.filter(e =>
           e.name.toLowerCase().includes(topicLower) ||
@@ -11680,8 +11681,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               if (report.trends.length > 0 || report.anomalies.length > 0) {
                 this.logger.info({ userId: user.id, trends: report.trends.length, anomalies: report.anomalies.length }, 'Temporal analysis completed');
               }
-              // KG maintenance: decay old entities, prune weak ones
-              if (kgService) await kgService.maintenance(user.id);
+              // v921 — KG maintenance läuft jetzt TÄGLICH im eigenen kgMaintenanceTimer
+              // (04:30), nicht mehr nur sonntags hier. Wöchentlich war zu selten:
+              // Duplikate/Garbage akkumulierten 7 Tage.
               // Action feedback: acceptance rates → memories
               if (this.activityRepo && this.memoryRepo) {
                 const feedbackTracker = new ActionFeedbackTracker(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'action-feedback' }));
@@ -11783,6 +11785,42 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             this.logger.warn({ err }, 'Weekly service-discovery failed');
           }
         }, 60 * 60_000); // Check every hour, only acts on Sunday 4 AM
+
+        // v921 — TÄGLICHE KG-Maintenance (04:30). Vorher lief sie nur sonntags im
+        // Temporal-Block: Duplikate, Garbage-Locations und Typ-Konflikte
+        // akkumulierten bis zu 7 Tage. Idempotent, HA-dedupliziert per Tages-Slot.
+        let lastKgMaintenanceDay = '';
+        this.kgMaintenanceTimer = setInterval(async () => {
+          const now = new Date();
+          const today = now.toISOString().slice(0, 10);
+          if (now.getHours() !== 4 || now.getMinutes() < 30 || lastKgMaintenanceDay === today) return;
+          lastKgMaintenanceDay = today;
+
+          // HA distributed dedup: nur ein Node pro Tag
+          if (this.database.getAdapter().type === 'postgres') {
+            try {
+              const slotResult = await this.database.getAdapter().execute(
+                'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+                [`kg-maintenance:${today}`, this.config.cluster?.nodeId ?? 'single', now.toISOString()],
+              );
+              if (slotResult.changes === 0) return;
+            } catch { /* proceed on error (table might not exist yet) */ }
+          }
+
+          try {
+            const kgServiceDaily = new KnowledgeGraphService(
+              new KnowledgeGraphRepository(this.database.getAdapter()),
+              this.logger.child({ component: 'knowledge-graph' }), this.memoryRepo,
+            );
+            const users = await userRepoRef.listAll();
+            for (const user of users) {
+              await kgServiceDaily.maintenance(user.id);
+            }
+            this.logger.info({ users: users.length }, 'v921 daily KG maintenance completed');
+          } catch (err) {
+            this.logger.warn({ err }, 'v921 daily KG maintenance failed');
+          }
+        }, 60 * 60_000); // Check every hour, only acts at 04:30
       }
     }
 
@@ -12112,6 +12150,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.temporalAnalyzerTimer) {
       clearInterval(this.temporalAnalyzerTimer);
       this.temporalAnalyzerTimer = undefined;
+    }
+    if (this.kgMaintenanceTimer) {
+      clearInterval(this.kgMaintenanceTimer);
+      this.kgMaintenanceTimer = undefined;
     }
     if (this.insightExpiryTimer) {
       clearInterval(this.insightExpiryTimer);

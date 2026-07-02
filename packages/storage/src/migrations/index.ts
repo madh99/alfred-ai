@@ -2519,4 +2519,13 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE project_features ADD COLUMN planned_milestone TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 110,
+    description: 'v921 — kg_entities.layer: trennt IT-Infrastruktur (CMDB-Sync) vom persönlichen Wissensgraph. Backfill: Entities mit cmdb-Source → layer=infra (SQLite-Spiegel zu PG v114).',
+    up(db) {
+      try { db.exec(`ALTER TABLE kg_entities ADD COLUMN layer TEXT NOT NULL DEFAULT 'personal'`); } catch { /* exists */ }
+      db.exec(`UPDATE kg_entities SET layer = 'infra' WHERE sources LIKE '%"cmdb"%'`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_kg_entities_layer ON kg_entities(user_id, layer)`);
+    },
+  },
 ];

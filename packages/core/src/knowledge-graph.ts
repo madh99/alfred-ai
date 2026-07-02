@@ -284,7 +284,7 @@ export class KnowledgeGraphService {
 
   private async refreshKnownLocations(userId: string): Promise<void> {
     try {
-      const graph = await this.kgRepo.getFullGraph(userId);
+      const graph = await this.kgRepo.getFullGraph(userId, 'personal');
       // CRITICAL: ONLY load entities that are explicitly geocode-validated.
       // Source-based trust ('memories', 'bmw', etc.) is unreliable because `sources`
       // contains sectionKey strings, not actual provenance. A regex hit in a memory text
@@ -601,6 +601,7 @@ export class KnowledgeGraphService {
 
     // Rebuild blacklist atomically (collect then swap)
     const newNames = new Set<string>();
+    let skippedAssets = 0;
 
     for (const asset of assets) {
       const kgType = kgTypeMap[asset.assetType] ?? 'service';
@@ -616,26 +617,36 @@ export class KnowledgeGraphService {
         await this.kgRepo.upsertEntity(userId, asset.name, kgType as any, attrs, 'cmdb');
         newNames.add(asset.name.toLowerCase());
       } catch {
-        // Constraint violation — skip
+        skippedAssets++; // Constraint violation — skip
       }
     }
 
-    for (const rel of relations) {
-      try {
-        const allEntities = await this.kgRepo.getAllEntities(userId);
-        const src = allEntities.find(e => e.name.toLowerCase() === rel.sourceEntityName.toLowerCase());
-        const tgt = allEntities.find(e => e.name.toLowerCase() === rel.targetEntityName.toLowerCase());
-        if (src && tgt) {
-          await this.kgRepo.upsertRelation(userId, src.id, tgt.id, rel.relationType, 'cmdb');
+    // v921 — Entities EINMAL laden statt pro Relation (vorher O(n) Full-Scans)
+    let skippedRelations = 0;
+    try {
+      const allEntities = await this.kgRepo.getAllEntities(userId);
+      const byName = new Map(allEntities.map(e => [e.name.toLowerCase(), e]));
+      for (const rel of relations) {
+        try {
+          const src = byName.get(rel.sourceEntityName.toLowerCase());
+          const tgt = byName.get(rel.targetEntityName.toLowerCase());
+          if (src && tgt) {
+            await this.kgRepo.upsertRelation(userId, src.id, tgt.id, rel.relationType, 'cmdb');
+          } else {
+            skippedRelations++;
+          }
+        } catch {
+          skippedRelations++;
         }
-      } catch {
-        // Skip
       }
+    } catch (err) {
+      this.logger.warn({ err }, 'CMDB → KG relation sync failed');
     }
 
     // Atomic swap of blacklist
     this.cmdbEntityNames = newNames;
-    this.logger.info({ count: assets.length }, 'CMDB → KG sync complete');
+    // v921 — Skips sind jetzt sichtbar statt stumm verschluckt
+    this.logger.info({ count: assets.length, skippedAssets, skippedRelations }, 'CMDB → KG sync complete (layer=infra)');
   }
 
   /**
@@ -650,7 +661,10 @@ export class KnowledgeGraphService {
     try {
       await this.extractEntitiesFromText(userId, 'chat', chatText);
       await this.extractLocations(userId, 'chat', chatText);
-    } catch { /* non-critical */ }
+    } catch (err) {
+      // v921 — vorher stumm verschluckt: ein kaputter Chat-Extraktor war unsichtbar
+      this.logger.debug({ err }, 'KG extractFromChat failed (non-critical)');
+    }
   }
 
   async ingest(userId: string, sections: ReasoningSection[]): Promise<void> {
@@ -660,27 +674,33 @@ export class KnowledgeGraphService {
 
       for (const section of sections) {
         if (!section.content || section.key === 'knowledge_graph') continue;
-        switch (section.key) {
-          case 'calendar': await this.extractFromCalendar(userId, section.content); break;
-          case 'todos': await this.extractFromTodos(userId, section.content); break;
-          case 'watches': await this.extractFromWatches(userId, section.content); break;
-          case 'bmw': await this.extractFromVehicle(userId, section.content); break;
-          case 'memories': await this.extractFromMemories(userId, section.content); break;
-          case 'email': await this.extractFromEmail(userId, section.content); break;
-          case 'weather': await this.extractFromWeather(userId, section.content); break;
-          case 'energy': await this.extractFromEnergy(userId, section.content); break;
-          case 'smarthome': await this.extractFromSmartHome(userId, section.content); break;
-          case 'crypto': await this.extractFromCrypto(userId, section.content); break;
-          case 'feeds': await this.extractFromFeeds(userId, section.content); break;
-          case 'charger': await this.extractFromCharger(userId, section.content); break;
-          case 'notes': await this.extractFromNotes(userId, section.content); break;
-          case 'documents': await this.extractFromDocuments(userId, section.content); break;
-          case 'reminders': await this.extractFromReminders(userId, section.content); break;
-          default: break;
+        // v921 — per-Section try/catch: vorher brach EIN fehlerhafter Extractor den
+        // gesamten Ingest ab, und der Log verriet nicht, welche Section schuld war.
+        try {
+          switch (section.key) {
+            case 'calendar': await this.extractFromCalendar(userId, section.content); break;
+            case 'todos': await this.extractFromTodos(userId, section.content); break;
+            case 'watches': await this.extractFromWatches(userId, section.content); break;
+            case 'bmw': await this.extractFromVehicle(userId, section.content); break;
+            case 'memories': await this.extractFromMemories(userId, section.content); break;
+            case 'email': await this.extractFromEmail(userId, section.content); break;
+            case 'weather': await this.extractFromWeather(userId, section.content); break;
+            case 'energy': await this.extractFromEnergy(userId, section.content); break;
+            case 'smarthome': await this.extractFromSmartHome(userId, section.content); break;
+            case 'crypto': await this.extractFromCrypto(userId, section.content); break;
+            case 'feeds': await this.extractFromFeeds(userId, section.content); break;
+            case 'charger': await this.extractFromCharger(userId, section.content); break;
+            case 'notes': await this.extractFromNotes(userId, section.content); break;
+            case 'documents': await this.extractFromDocuments(userId, section.content); break;
+            case 'reminders': await this.extractFromReminders(userId, section.content); break;
+            default: break;
+          }
+          // Generic extraction for all sections
+          await this.extractLocations(userId, section.key, section.content);
+          await this.extractEntitiesFromText(userId, section.key, section.content);
+        } catch (err) {
+          this.logger.warn({ err, section: section.key }, 'KG ingest: section extractor failed (continuing)');
         }
-        // Generic extraction for all sections
-        await this.extractLocations(userId, section.key, section.content);
-        await this.extractEntitiesFromText(userId, section.key, section.content);
       }
       // Sync Memory entities/relationships/connections/patterns/feedback into KG
       await this.syncMemoryEntities(userId);
@@ -709,7 +729,7 @@ export class KnowledgeGraphService {
    */
   async buildConnectionMap(userId: string): Promise<string> {
     try {
-      const { entities, relations } = await this.kgRepo.getFullGraph(userId);
+      const { entities, relations } = await this.kgRepo.getFullGraph(userId, 'personal');
       if (entities.length >= 5000) {
         this.logger.warn({ count: entities.length }, 'KG: Entity cap reached (5000) — some entities excluded from connection map');
       }
@@ -883,7 +903,10 @@ export class KnowledgeGraphService {
   private personalContextCache?: { text: string; ts: number; userId: string; kgVersion: string };
 
   /** Mark the personal context cache as stale (called after KG ingest). */
-  markPersonalContextDirty(): void { /* no-op — cache invalidation is now DB-based (cross-node safe) */ }
+  // v921 — war ein No-Op mit irreführendem Kommentar („DB-based" existierte nie):
+  // nach einem Ingest blieb der Chat-Kontext bis zu 5 Min stale. Invalidiert jetzt
+  // wirklich den lokalen Cache (pro Node; der 5-Min-TTL bleibt als Obergrenze).
+  markPersonalContextDirty(): void { this.personalContextCache = undefined; }
 
   /**
    * Build a compact personal context for the chat system prompt.
@@ -899,7 +922,7 @@ export class KnowledgeGraphService {
     }
 
     try {
-      const graph = await this.kgRepo.getFullGraph(userId);
+      const graph = await this.kgRepo.getFullGraph(userId, 'personal');
       const { entities, relations } = graph;
       const entityMap = new Map(entities.map(e => [e.id, e]));
 
@@ -1079,7 +1102,7 @@ export class KnowledgeGraphService {
    */
   private async buildFamilyInference(userId: string): Promise<void> {
     try {
-      const graph = await this.kgRepo.getFullGraph(userId);
+      const graph = await this.kgRepo.getFullGraph(userId, 'personal');
       const { entities, relations } = graph;
 
       const entityById = new Map(entities.map(e => [e.id, e]));
@@ -1160,11 +1183,10 @@ export class KnowledgeGraphService {
   private async buildGenericEntityLinks(userId: string): Promise<void> {
     try {
       const rawEntities = await this.kgRepo.getAllEntities(userId);
-      // Filter out CMDB-only entities to avoid O(n²) explosion with 2000+ infra assets
-      const allEntities = rawEntities.filter(e => {
-        const sources = e.sources ?? [];
-        return !(sources.length === 1 && sources[0] === 'cmdb');
-      });
+      // v921 — Infra-Layer ausschließen (vorher Source-Heuristik, die promoted
+      // Entities mit Zweitquelle übersah): verhindert O(n²)-Explosion mit 2000+
+      // Infra-Assets und Name-Match-Rauschen personal↔infra.
+      const allEntities = rawEntities.filter(e => e.layer !== 'infra');
       if (allEntities.length < 2) return;
 
       // Build a lookup: normalized name → entity + word-boundary regex
@@ -1303,7 +1325,12 @@ export class KnowledgeGraphService {
         }
       }
 
-      if (decayed > 0 || prunedEntities > 0 || prunedRelations > 0 || prunedEvents > 0 || mergedDupes > 0) {
+      // v921 — Gating-Bug behoben: Diese Cleanups (Phantom-Merge, Org-Dedup,
+      // Typ-Konflikte, invalid Persons, Garbage-Locations, isUserHome/isHome)
+      // liefen vorher NUR wenn Decay/Prune/Dedup oben etwas fand — eine Woche
+      // ohne Decay übersprang sämtliche Bereinigung. Sie sind idempotent und
+      // laufen jetzt unbedingt bei jeder Maintenance.
+      {
         // Phantom user-name detection: find person entities whose name contains
         // all tokens of the User entity's realName → migrate relations to User
         let phantomsMerged = 0;
@@ -1805,7 +1832,7 @@ export class KnowledgeGraphService {
     // Load existing KG entities to find relevant_news matches
     let existingEntities: KGEntity[] = [];
     try {
-      const graph = await this.kgRepo.getFullGraph(userId);
+      const graph = await this.kgRepo.getFullGraph(userId, 'personal');
       existingEntities = graph.entities.filter(e => e.entityType !== 'event'); // Skip other feed articles
     } catch { /* skip matching */ }
 
@@ -1849,7 +1876,7 @@ export class KnowledgeGraphService {
    */
   private async buildCrossExtractorRelations(userId: string): Promise<void> {
     try {
-      const { entities } = await this.kgRepo.getFullGraph(userId);
+      const { entities } = await this.kgRepo.getFullGraph(userId, 'personal');
       if (entities.length < 2) return;
 
       // Index by type

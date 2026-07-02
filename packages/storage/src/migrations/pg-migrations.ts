@@ -1829,4 +1829,13 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE project_features ADD COLUMN IF NOT EXISTS planned_milestone TEXT`, []);
     },
   },
+  {
+    version: 114,
+    description: 'v921 — kg_entities.layer: trennt IT-Infrastruktur (CMDB-Sync) vom persönlichen Wissensgraph. Backfill: Entities mit cmdb-Source → layer=infra (PG-Spiegel zu SQLite v110).',
+    async up(db) {
+      await db.execute(`ALTER TABLE kg_entities ADD COLUMN IF NOT EXISTS layer TEXT NOT NULL DEFAULT 'personal'`, []);
+      await db.execute(`UPDATE kg_entities SET layer = 'infra' WHERE sources LIKE '%"cmdb"%'`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_kg_entities_layer ON kg_entities(user_id, layer)`, []);
+    },
+  },
 ];

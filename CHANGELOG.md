@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.921] - 2026-07-02
+
+### Fixed — Knowledge Graph: Infra-Layer, Wartungs-Gating, Stale-Cache (v921)
+
+Der Knowledge Graph wurde von CMDB-synchronisierter IT-Infrastruktur dominiert
+(über 1300 network_devices von ~2600 Entities) und mehrere Wartungs-/Cache-Defekte
+machten ihn unzuverlässig:
+
+- **Eigener Infra-Layer:** Neue Spalte `kg_entities.layer` ('personal' | 'infra',
+  SQLite v110 / PG v114, mit Backfill bestehender CMDB-Entities). Der CMDB→KG-Sync
+  landet im Infra-Layer; Chat-Kontext, Reasoning-Verbindungskarte, Family-Inference,
+  LLM-Entity-Linking und Generic-Links arbeiten nur noch auf dem persönlichen Graph.
+  Promote-only: einmal infra bleibt infra. Web-UI: „🖥 IT-Infra"-Toggle (Default aus),
+  Typ-Zähler folgen dem Toggle.
+- **Wartungs-Gating-Bug:** Phantom-Merge, Org-Dedup, Typ-Konflikte, invalide
+  Personen, Garbage-Locations und isUserHome-Konsolidierung liefen nur, wenn
+  Decay/Prune vorher etwas fand — eine Woche ohne Decay übersprang sämtliche
+  Bereinigung. Laufen jetzt unbedingt.
+- **Wartung täglich statt wöchentlich:** eigener 04:30-Timer (HA-dedupliziert per
+  Tages-Slot) statt nur sonntags im Temporal-Block — Duplikate und Garbage
+  akkumulierten bis zu 7 Tage.
+- **Stale-Cache:** `markPersonalContextDirty()` war ein No-Op mit irreführendem
+  Kommentar — nach einem Ingest blieb der Chat-Kontext bis zu 5 Minuten alt.
+  Invalidiert jetzt wirklich.
+- **Fehler sichtbar:** per-Section try/catch im Ingest (eine kaputte Section bricht
+  nicht mehr alles ab und der Log nennt die Section), extractFromChat und
+  CMDB-Sync-Skips werden geloggt statt stumm verschluckt. CMDB-Relation-Sync lädt
+  Entities einmal statt pro Relation (vorher O(n) Full-Scans).
+- 4 Tests (`kg-layer.test.ts`).
+
 ## [0.19.0-multi-ha.920] - 2026-06-29
 
 ### Added — Claude Sonnet 5 Support (v920)

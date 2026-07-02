@@ -18,7 +18,12 @@ export interface KGEntity {
   firstSeenAt: string;
   lastSeenAt: string;
   mentionCount: number;
+  /** v921 — 'infra' = CMDB-synchronisierte IT-Infrastruktur (eigener Layer), 'personal' = persönlicher Graph. */
+  layer: 'personal' | 'infra';
 }
+
+/** v921 — Layer-Filter für Graph-Abfragen. */
+export type KGLayer = 'personal' | 'infra';
 
 export interface KGRelation {
   id: string;
@@ -66,6 +71,9 @@ export class KnowledgeGraphRepository {
     const sourcesJson = source ? JSON.stringify([source]) : '[]';
     const attrsJson = attributes ? JSON.stringify(attributes) : '{}';
     const increment = this.confidenceIncrement(source);
+    // v921 — CMDB-Sync landet im Infra-Layer; alles andere im persönlichen Graph.
+    // Promote-only: eine einmal als infra markierte Entity wird nie zurückgestuft.
+    const layer: KGLayer = source === 'cmdb' ? 'infra' : 'personal';
 
     // First try: check if entity exists and merge sources + attributes
     const existing = await this.adapter.queryOne(
@@ -92,7 +100,7 @@ export class KnowledgeGraphRepository {
           sources = ?,
           confidence = (CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END),
           last_seen_at = ?,
-          mention_count = mention_count + 1
+          mention_count = mention_count + 1${layer === 'infra' ? ", layer = 'infra'" : ''}
         WHERE id = ?
       `, [JSON.stringify(mergedAttrs), JSON.stringify(existingSources), now, existing.id]);
 
@@ -181,13 +189,14 @@ export class KnowledgeGraphRepository {
     // New entity — atomic INSERT with ON CONFLICT fallback for HA safety.
     try {
       await this.adapter.execute(`
-        INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, 1)
+        INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count, layer)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, 1, ?)
         ON CONFLICT (user_id, entity_type, normalized_name) DO UPDATE SET
           confidence = CASE WHEN kg_entities.confidence + ${increment} > 1.0 THEN 1.0 ELSE kg_entities.confidence + ${increment} END,
           last_seen_at = excluded.last_seen_at,
-          mention_count = kg_entities.mention_count + 1
-      `, [id, userId, name, normalized, entityType, attrsJson, sourcesJson, now, now]);
+          mention_count = kg_entities.mention_count + 1,
+          layer = CASE WHEN excluded.layer = 'infra' THEN 'infra' ELSE kg_entities.layer END
+      `, [id, userId, name, normalized, entityType, attrsJson, sourcesJson, now, now, layer]);
     } catch {
       // Race condition or constraint violation — entity was created by parallel call, fetch it
     }
@@ -200,7 +209,7 @@ export class KnowledgeGraphRepository {
     return row ? this.mapEntity(row) : {
       id, userId, name, normalizedName: normalized, entityType,
       attributes: attributes ?? {}, sources: source ? [source] : [],
-      confidence: 0.5, firstSeenAt: now, lastSeenAt: now, mentionCount: 1,
+      confidence: 0.5, firstSeenAt: now, lastSeenAt: now, mentionCount: 1, layer,
     };
   }
 
@@ -398,11 +407,18 @@ export class KnowledgeGraphRepository {
     return rows.map(r => this.mapEntity(r));
   }
 
-  /** Get full graph for a user (entities + relations). Capped for performance. */
-  async getFullGraph(userId: string): Promise<{ entities: KGEntity[]; relations: KGRelation[] }> {
+  /**
+   * Get full graph for a user (entities + relations). Capped for performance.
+   * v921 — optionaler Layer-Filter: 'personal' liefert den persönlichen Graph ohne
+   * CMDB-Infrastruktur, 'infra' nur die Infrastruktur. Ohne Filter: alles.
+   * Relations werden bei Filterung auf die geladenen Entities eingeschränkt.
+   */
+  async getFullGraph(userId: string, layer?: KGLayer): Promise<{ entities: KGEntity[]; relations: KGRelation[] }> {
     const entities = await this.adapter.query(
-      'SELECT * FROM kg_entities WHERE user_id = ? ORDER BY confidence DESC, mention_count DESC LIMIT 5000',
-      [userId],
+      layer
+        ? 'SELECT * FROM kg_entities WHERE user_id = ? AND layer = ? ORDER BY confidence DESC, mention_count DESC LIMIT 5000'
+        : 'SELECT * FROM kg_entities WHERE user_id = ? ORDER BY confidence DESC, mention_count DESC LIMIT 5000',
+      layer ? [userId, layer] : [userId],
     ) as Record<string, unknown>[];
 
     const relations = await this.adapter.query(
@@ -410,10 +426,14 @@ export class KnowledgeGraphRepository {
       [userId],
     ) as Record<string, unknown>[];
 
-    return {
-      entities: entities.map(r => this.mapEntity(r)),
-      relations: relations.map(r => this.mapRelation(r)),
-    };
+    const mappedEntities = entities.map(r => this.mapEntity(r));
+    let mappedRelations = relations.map(r => this.mapRelation(r));
+    if (layer) {
+      const ids = new Set(mappedEntities.map(e => e.id));
+      mappedRelations = mappedRelations.filter(r => ids.has(r.sourceEntityId) && ids.has(r.targetEntityId));
+    }
+
+    return { entities: mappedEntities, relations: mappedRelations };
   }
 
   /** Get all entities for a user (for maintenance dedup). */
@@ -597,6 +617,7 @@ export class KnowledgeGraphRepository {
       firstSeenAt: row.first_seen_at as string,
       lastSeenAt: row.last_seen_at as string,
       mentionCount: row.mention_count as number,
+      layer: (row.layer as string) === 'infra' ? 'infra' : 'personal',
     };
   }
 

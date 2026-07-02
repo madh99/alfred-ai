@@ -2351,6 +2351,8 @@ export interface KGEntity {
   firstSeenAt: string;
   lastSeenAt: string;
   mentionCount: number;
+  /** v921 — 'infra' = CMDB-synchronisierte IT-Infrastruktur, 'personal' = persönlicher Graph. */
+  layer?: 'personal' | 'infra';
 }
 
 export interface KGRelation {
