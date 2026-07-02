@@ -125,6 +125,10 @@ export class ReasoningEngine {
 
   /** v927 — Router setzen (Stiller Modus für Reasoning-Insights). */
   setNotificationRouter(router: import('./notification-router.js').NotificationRouter): void { this.notificationRouter = router; }
+
+  /** v930 — Score-Kriterium 4: Items zu aktiven Interessen-Themen anheben. */
+  private interestsRepo?: import('@alfred/storage').InterestsRepository;
+  setInterestsRepo(repo: import('@alfred/storage').InterestsRepository): void { this.interestsRepo = repo; }
   private resolvedOwnerUserId?: string;
   private activityProfile?: ActivityProfile;
   // Note: tickRunning guard is a local variable inside start() — intentionally not a class field
@@ -463,6 +467,19 @@ ${this.buildTopicInstructions()}`;
       this.logger.debug({ response: scanText.slice(0, 500), durationMs: scanDurationMs }, 'Reasoning scan response');
 
       const scanResult = parseScanResponse(scanText);
+
+      // v930 — Score-Kriterium 4 (Themen-Relevanz): Items zu aktiven
+      // Interessen-Themen eine Stufe anheben (max high) + warum ergänzen.
+      if (this.interestsRepo && scanResult.items.length > 0) {
+        try {
+          const userId = await this.resolveUserId();
+          const topics = await this.interestsRepo.listTopics(userId, 'active');
+          if (topics.length > 0) {
+            const { boostByTopicRelevance } = await import('./topic-relevance.js');
+            scanResult.items = boostByTopicRelevance(scanResult.items, topics);
+          }
+        } catch { /* non-critical — Score bleibt wie vom LLM */ }
+      }
 
       if (!scanResult.hasInsights || scanResult.items.length === 0) {
         this.logger.info({ durationMs: scanDurationMs }, 'Reasoning pass: no insights (scan)');

@@ -675,6 +675,23 @@ export class HttpAdapter extends MessagingAdapter {
     this.insightsListMutedFn = opts.listMutedCategories;
   }
 
+  // v930 — Interessen-Radar-API (Themen/Quellen/Items) + Router-Einstellungen
+  private interestsCallbacks?: {
+    listTopics: () => Promise<any[]>;
+    createTopic: (data: { name: string; keywords?: string[] }) => Promise<any>;
+    updateTopic: (id: string, patch: { status?: string; notifyThreshold?: string; keywords?: string[] }) => Promise<{ ok: boolean; reason?: string }>;
+    addSource: (topicId: string, data: { kind: string; url?: string; query?: string }) => Promise<{ ok: boolean; source?: any; reason?: string }>;
+    removeSource: (topicId: string, sourceId: string) => Promise<boolean>;
+    listItems: (topicId: string, limit?: number) => Promise<any[]>;
+    collectNow: (topicId?: string) => Promise<number>;
+    getNotificationSettings: () => Promise<Record<string, unknown>>;
+    setNotificationSettings: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  };
+
+  setInterestsCallbacks(cb: NonNullable<HttpAdapter['interestsCallbacks']>): void {
+    this.interestsCallbacks = cb;
+  }
+
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
@@ -1255,6 +1272,25 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleInsightsMuteCategory(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/insights/muted' && req.method === 'GET') {
       this.handleInsightsListMuted(req, res).catch(err => this.safeError(res, err));
+    // ── v930 — Interessen-Radar ──
+    } else if (url.pathname === '/api/interests/topics' && req.method === 'GET') {
+      this.handleInterests(req, res, () => this.interestsCallbacks!.listTopics().then(topics => ({ topics }))).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/interests/topics' && req.method === 'POST') {
+      this.handleInterestsCreateTopic(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/interests\/topics\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleInterestsUpdateTopic(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/interests\/topics\/[^/]+\/sources$/) && req.method === 'POST') {
+      this.handleInterestsAddSource(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/interests\/topics\/[^/]+\/sources\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleInterestsRemoveSource(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/interests\/topics\/[^/]+\/items$/) && req.method === 'GET') {
+      this.handleInterestsListItems(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/interests/collect' && req.method === 'POST') {
+      this.handleInterestsCollect(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/notifications/settings' && req.method === 'GET') {
+      this.handleInterests(req, res, () => this.interestsCallbacks!.getNotificationSettings()).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/notifications/settings' && req.method === 'POST') {
+      this.handleNotificationSettingsUpdate(req, res).catch(err => this.safeError(res, err));
     // v699 — Sandbox-CRUD-API
     } else if (url.pathname === '/api/sandbox/status' && req.method === 'GET') {
       this.handleSandboxStatus(req, res).catch(err => this.safeError(res, err));
@@ -2976,6 +3012,99 @@ export class HttpAdapter extends MessagingAdapter {
     const muted = await this.insightsListMutedFn();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ muted }));
+  }
+
+  // ── v930 — Interessen-Radar-Handler ──────────────────────────────────
+
+  /** Gemeinsamer Wrapper: Auth + Callback-Check + JSON-Antwort. */
+  private async handleInterests(req: http.IncomingMessage, res: http.ServerResponse, fn: () => Promise<unknown>): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const result = await fn();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  private async handleInterestsCreateTopic(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let data: { name?: string; keywords?: string[] } = {};
+    try { data = JSON.parse(body); } catch { /* invalid */ }
+    if (!data.name || typeof data.name !== 'string') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'name required' })); return; }
+    const topic = await this.interestsCallbacks.createTopic({ name: data.name, keywords: Array.isArray(data.keywords) ? data.keywords.map(String) : undefined });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ topic }));
+  }
+
+  private async handleInterestsUpdateTopic(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/')[4];
+    const body = await this.readBody(req);
+    let patch: Record<string, unknown> = {};
+    try { patch = JSON.parse(body); } catch { /* invalid */ }
+    const r = await this.interestsCallbacks.updateTopic(id, {
+      status: typeof patch.status === 'string' ? patch.status : undefined,
+      notifyThreshold: typeof patch.notifyThreshold === 'string' ? patch.notifyThreshold : undefined,
+      keywords: Array.isArray(patch.keywords) ? patch.keywords.map(String) : undefined,
+    });
+    res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(r));
+  }
+
+  private async handleInterestsAddSource(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const topicId = url.pathname.split('/')[4];
+    const body = await this.readBody(req);
+    let data: { kind?: string; url?: string; query?: string } = {};
+    try { data = JSON.parse(body); } catch { /* invalid */ }
+    if (data.kind !== 'rss' && data.kind !== 'web_search') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'kind must be rss|web_search' })); return; }
+    const r = await this.interestsCallbacks.addSource(topicId, { kind: data.kind, url: data.url, query: data.query });
+    res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(r));
+  }
+
+  private async handleInterestsRemoveSource(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const removed = await this.interestsCallbacks.removeSource(parts[4], parts[6]);
+    res.writeHead(removed ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: removed }));
+  }
+
+  private async handleInterestsListItems(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const topicId = url.pathname.split('/')[4];
+    const limit = Number(url.searchParams.get('limit') ?? 30);
+    const items = await this.interestsCallbacks.listItems(topicId, Number.isFinite(limit) ? limit : 30);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ items }));
+  }
+
+  private async handleInterestsCollect(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let topicId: string | undefined;
+    try { const p = JSON.parse(body); if (typeof p.topicId === 'string') topicId = p.topicId; } catch { /* alle */ }
+    const newItems = await this.interestsCallbacks.collectNow(topicId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, newItems }));
+  }
+
+  private async handleNotificationSettingsUpdate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let patch: Record<string, unknown> = {};
+    try { patch = JSON.parse(body); } catch { /* invalid */ }
+    const settings = await this.interestsCallbacks.setNotificationSettings(patch);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(settings));
   }
 
   // ── Goals handlers (v639) ──

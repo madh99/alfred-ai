@@ -5,6 +5,48 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.930] - 2026-07-02
+
+### Added — Interessen-Radar: Autonomie + UI (v930, letzte Stufe des Plans)
+
+Der Interessen-Radar ist damit vollständig: Alfred erkennt Interessen selbst,
+abonniert Quellen automatisch, fasst täglich zusammen und meldet nur, was die
+Schwellen übersteigt — alles andere landet still in der Ablage.
+
+- **Interest-Detector** (täglich 05:15, HA-Slot `interest-detect:<tag>`):
+  erkennt wiederkehrende Interessen aus KG-Entities (personal layer, Top-30
+  nach Erwähnungen) + jüngsten Memories per LLM. Starkes Signal → Thema wird
+  automatisch angelegt (origin=auto, still, mit Info-Eintrag in der Ablage);
+  mittleres Signal → Vorschlag als Insight mit Aktion „Thema anlegen"
+  (bestätigen in der Insights- oder Interessen-UI). Bereits beobachtete
+  Themen werden übersprungen.
+- **Source-Provisioner:** bestückt neue Themen automatisch — Web-Suche
+  „<Thema> rss feed" → Feed-Kandidaten (Heuristik + LLM-Auswahl), jede
+  Kandidaten-URL wird per Probe-Parse validiert (kaputte fliegen raus), dazu
+  1–2 stehende Such-Queries. Greift bei Chat-Anlage (interests-Skill), UI-
+  Anlage und Auto-Anlage; alles `added_by=auto` und in der UI verwaltbar.
+- **Digest-Builder** (täglich 06:30, HA-Slot `topic-digest:<tag>`): je Thema
+  mit neuen Beiträgen wird das Dossier per LLM fortgeschrieben und EINE
+  gebündelte Meldung erzeugt — doppelt gegated: erst das per-Topic
+  `notify_threshold`, dann die globale Router-Schwelle. Unter der Schwelle:
+  stille Ablage.
+- **Score-Kriterien 4+5 komplett:** (4) Themen-Relevanz — Reasoning-Items,
+  die zu einem aktiven Interessen-Thema passen, steigen eine Stufe (max
+  high), Begründung wird ergänzt („passt zu Interessen-Thema X"); (5)
+  Präferenz — Kategorie-Mutes aus v928 wirken zentral auf alle Erzeuger.
+- **UI „Interessen"-Seite** (Sidebar 📡): Topic-Karten mit Dossier-Vorschau,
+  Quellen und Aktivität; Detail mit Item-Timeline (Relevanz-%), Quellen-CRUD,
+  Melde-Schwelle je Thema, Pausieren/Archivieren, „Jetzt sammeln";
+  „Vorgeschlagene Themen" mit Bestätigen/Ablehnen. Dazu die
+  **Router-Einstellungen** (Stiller Modus): Sende-Schwelle + Dev-Mode-Schalter
+  — wirken sofort, werden persistiert (skill_state `router-override`, gewinnt
+  beim Start über die YAML) und überleben Neustarts.
+- **API:** `/api/interests/topics` (GET/POST/PATCH), `.../sources`
+  (POST/DELETE), `.../items` (GET), `/api/interests/collect` (POST),
+  `/api/notifications/settings` (GET/POST).
+- 15 Tests (Detector-Parsing + strong/medium-Pfade, Provisioner inkl.
+  Feed-Validierung, Digest-Builder inkl. Schwellen-Gating, Themen-Boost).
+
 ## [0.19.0-multi-ha.929] - 2026-07-02
 
 ### Added — Interessen-Radar: Themen, Quellen, stiller Sammler, Dossiers (v929)

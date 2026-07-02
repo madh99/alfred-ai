@@ -45,10 +45,30 @@ export class NotificationRouter {
   constructor(
     private readonly insightsRepo: InsightsRepository | undefined,
     private readonly adapters: Map<Platform, MessagingAdapter>,
-    private readonly config: RouterConfig,
+    private config: RouterConfig,
     private readonly logger: Logger,
     private readonly ownerUserId: string,
   ) {}
+
+  /** v930 — aktuelle Einstellungen (für die UI). */
+  getConfig(): RouterConfig {
+    return {
+      minUrgency: this.config.minUrgency ?? 'high',
+      perSource: { ...(this.config.perSource ?? {}) },
+      devMode: this.config.devMode === true,
+    };
+  }
+
+  /** v930 — Laufzeit-Update aus der UI (Persistenz macht der Aufrufer). */
+  updateConfig(patch: Partial<RouterConfig>): RouterConfig {
+    this.config = {
+      minUrgency: patch.minUrgency ?? this.config.minUrgency,
+      perSource: patch.perSource !== undefined ? patch.perSource : this.config.perSource,
+      devMode: patch.devMode !== undefined ? patch.devMode : this.config.devMode,
+    };
+    this.logger.info(this.getConfig(), 'v930 notification router config updated');
+    return this.getConfig();
+  }
 
   /** Entscheidung ohne Seiteneffekt (für Aufrufer, die den Sendepfad selbst besitzen). */
   shouldSend(source: string, urgency: NotificationUrgency): boolean {

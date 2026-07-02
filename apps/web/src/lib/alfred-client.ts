@@ -412,6 +412,67 @@ export class AlfredClient {
     const data = await res.json().catch(() => ({}));
     return data.muted ?? [];
   }
+
+  // ── v930 — Interessen-Radar ──
+  async fetchInterestTopics(): Promise<InterestTopicItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/interests/topics`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Interests: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.topics ?? [];
+  }
+  async createInterestTopic(name: string, keywords?: string[]): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/interests/topics`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ name, keywords }),
+    });
+    if (!res.ok) throw new Error(`Create topic: HTTP ${res.status}`);
+  }
+  async updateInterestTopic(id: string, patch: { status?: string; notifyThreshold?: string; keywords?: string[] }): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/interests/topics/${id}`, {
+      method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`Update topic: HTTP ${res.status}`);
+  }
+  async addInterestSource(topicId: string, data: { kind: 'rss' | 'web_search'; url?: string; query?: string }): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/interests/topics/${topicId}/sources`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.reason ?? `Add source: HTTP ${res.status}`);
+    }
+  }
+  async removeInterestSource(topicId: string, sourceId: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/interests/topics/${topicId}/sources/${sourceId}`, {
+      method: 'DELETE', headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Remove source: HTTP ${res.status}`);
+  }
+  async fetchInterestItems(topicId: string, limit = 30): Promise<InterestItemEntry[]> {
+    const res = await fetch(`${this.baseUrl}/api/interests/topics/${topicId}/items?limit=${limit}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Items: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.items ?? [];
+  }
+  async collectInterestsNow(topicId?: string): Promise<number> {
+    const res = await fetch(`${this.baseUrl}/api/interests/collect`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(topicId ? { topicId } : {}),
+    });
+    if (!res.ok) throw new Error(`Collect: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.newItems ?? 0;
+  }
+  async fetchNotificationSettings(): Promise<NotificationSettings> {
+    const res = await fetch(`${this.baseUrl}/api/notifications/settings`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Settings: HTTP ${res.status}`);
+    return res.json();
+  }
+  async updateNotificationSettings(patch: Partial<NotificationSettings>): Promise<NotificationSettings> {
+    const res = await fetch(`${this.baseUrl}/api/notifications/settings`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`Settings: HTTP ${res.status}`);
+    return res.json();
+  }
   // v695 — Bulk-Dismiss aller offenen Insights einer Kategorie (für „kg-gap"-Cleanup)
   async dismissInsightsCategory(category: string): Promise<{ success: boolean; dismissed: number }> {
     const res = await fetch(`${this.baseUrl}/api/insights/dismiss-category`, {
@@ -2509,6 +2570,51 @@ export interface InsightItem {
   dedupeKey?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// v930 — Interessen-Radar
+export interface InterestSourceEntry {
+  id: string;
+  topicId: string;
+  kind: 'rss' | 'web_search';
+  config: { url?: string; query?: string };
+  addedBy: 'auto' | 'manual';
+  enabled: boolean;
+  lastCheckedAt?: string;
+  createdAt: string;
+}
+
+export interface InterestTopicItem {
+  id: string;
+  userId: string;
+  name: string;
+  keywords: string[];
+  status: 'active' | 'paused' | 'archived';
+  origin: 'auto' | 'manual';
+  notifyThreshold: string;
+  createdAt: string;
+  lastActivityAt?: string;
+  sources: InterestSourceEntry[];
+  digest?: { topicId: string; summary: string; itemsSinceUpdate: number; updatedAt: string } | null;
+  itemsLast7d: number;
+}
+
+export interface InterestItemEntry {
+  id: string;
+  topicId: string;
+  title: string;
+  url?: string;
+  summary?: string;
+  sourceKind: string;
+  publishedAt?: string;
+  importance?: number;
+  createdAt: string;
+}
+
+export interface NotificationSettings {
+  minUrgency: 'urgent' | 'high' | 'normal' | 'low';
+  perSource: Record<string, 'urgent' | 'high' | 'normal' | 'low'>;
+  devMode: boolean;
 }
 
 // v639 — Goals

@@ -415,6 +415,25 @@ export class Alfred {
   private interestsRepo?: import('@alfred/storage').InterestsRepository;
   private interestsSkillRef?: import('@alfred/skills').InterestsSkill;
   private topicCollector?: import('./topic-collector.js').TopicCollector;
+  /** v930 — Autonomie: Detector/Provisioner/Digest-Builder */
+  private sourceProvisioner?: import('./source-provisioner.js').SourceProvisioner;
+  private interestDetector?: import('./interest-detector.js').InterestDetector;
+  private topicDigestBuilder?: import('./topic-digest-builder.js').TopicDigestBuilder;
+  private interestsDailyTimer?: ReturnType<typeof setInterval>;
+
+  /** v930 — HA-Tages-Slot über reasoning_slots (nur PG; Single-Node/SQLite → immer true). */
+  private async claimDailySlot(slotKey: string): Promise<boolean> {
+    if (this.database?.getAdapter().type !== 'postgres') return true;
+    try {
+      const r = await this.database.getAdapter().execute(
+        'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+        [slotKey, this.config.cluster?.nodeId ?? 'single', new Date().toISOString()],
+      );
+      return (r.changes ?? 0) > 0;
+    } catch {
+      return true; // Tabelle fehlt evtl. noch → lieber laufen als still ausfallen
+    }
+  }
   private insightExpiryTimer?: ReturnType<typeof setInterval>;
   private clusterMonitorTimer?: ReturnType<typeof setInterval>;
   private cmdbDiscoveryTimer?: ReturnType<typeof setInterval>;
@@ -6260,12 +6279,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // Einträge nicht. Ohne Master-UUID bleibt der Router aus (= Verhalten wie bisher).
     if (this.reasoningEngine && this.insightsRepo && this.ownerMasterUserId) {
       const { NotificationRouter } = await import('./notification-router.js');
+      // v930 — UI-Einstellungen (skill_state notifications/router-override) gewinnen über YAML
+      let routerOverride: { minUrgency?: 'urgent' | 'high' | 'normal' | 'low'; perSource?: Record<string, 'urgent' | 'high' | 'normal' | 'low'>; devMode?: boolean } = {};
+      if (this.database) {
+        try {
+          const raw = await new SkillStateRepository(this.database.getAdapter())
+            .get(this.ownerMasterUserId, 'notifications', 'router-override');
+          if (raw) routerOverride = JSON.parse(raw);
+        } catch { /* kein Override */ }
+      }
       this.notificationRouter = new NotificationRouter(
         this.insightsRepo, this.adapters,
         {
-          minUrgency: this.config.notifications?.minUrgency ?? 'high',
-          perSource: this.config.notifications?.perSource,
-          devMode: this.config.notifications?.devMode ?? false,
+          minUrgency: routerOverride.minUrgency ?? this.config.notifications?.minUrgency ?? 'high',
+          perSource: routerOverride.perSource ?? this.config.notifications?.perSource,
+          devMode: routerOverride.devMode ?? this.config.notifications?.devMode ?? false,
         },
         this.logger.child({ component: 'notification-router' }),
         this.ownerMasterUserId,
@@ -6407,6 +6435,77 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.topicCollector.start();
       const collector = this.topicCollector;
       this.interestsSkillRef?.setCollector(topic => topic ? collector.collectTopic(topic) : collector.collectAll());
+
+      // v930 — Score-Kriterium 4: Reasoning-Items zu Interessen-Themen anheben
+      this.reasoningEngine?.setInterestsRepo(this.interestsRepo);
+
+      // v930 — Source-Provisioner: neue Themen automatisch mit Quellen bestücken
+      const { SourceProvisioner } = await import('./source-provisioner.js');
+      this.sourceProvisioner = new SourceProvisioner(
+        this.interestsRepo, this.skillRegistry, this.skillSandbox, this.llmProvider,
+        this.logger.child({ component: 'source-provisioner' }),
+      );
+      const provisioner = this.sourceProvisioner;
+      this.interestsSkillRef?.setProvisioner(topic => provisioner.provision(topic));
+
+      // v930 — Interest-Detector (täglich 05:15) + Digest-Builder (täglich 06:30),
+      // beide HA-dedupliziert über reasoning_slots-Tages-Slots.
+      if (this.ownerMasterUserId && this.llmProvider) {
+        const ownerUid = this.ownerMasterUserId as string;
+        const { InterestDetector } = await import('./interest-detector.js');
+        const { TopicDigestBuilder } = await import('./topic-digest-builder.js');
+        const kgRepoForDetector = this.database
+          ? new KnowledgeGraphRepository(this.database.getAdapter())
+          : undefined;
+        const memoryRepoRef = this.memoryRepo;
+        this.interestDetector = new InterestDetector(
+          this.interestsRepo, this.insightsRepo, this.llmProvider, this.sourceProvisioner,
+          async () => {
+            const entities = kgRepoForDetector
+              ? (await kgRepoForDetector.getAllEntities(ownerUid))
+                  .filter(e => e.layer === 'personal')
+                  .sort((a, b) => b.mentionCount - a.mentionCount)
+                  .slice(0, 30)
+                  .map(e => ({ name: e.name, type: e.entityType, mentions: e.mentionCount }))
+              : [];
+            const memories = memoryRepoRef ? await memoryRepoRef.getRecentForPrompt(ownerUid, 15) : [];
+            return { entities, recentSummaries: memories.map(m => `${m.key}: ${m.value}`) };
+          },
+          this.logger.child({ component: 'interest-detector' }),
+          ownerUid,
+        );
+        const digestDelivery = {
+          chatId: this.config.security?.ownerUserId ?? '',
+          platform: (this.config.telegram?.enabled ? 'telegram' : 'api') as Platform,
+        };
+        this.topicDigestBuilder = new TopicDigestBuilder(
+          this.interestsRepo, this.llmProvider, this.notificationRouter,
+          this.logger.child({ component: 'topic-digest-builder' }), digestDelivery,
+        );
+
+        let lastInterestDay = '';
+        let lastDigestDay = '';
+        this.interestsDailyTimer = setInterval(async () => {
+          const now = new Date();
+          const today = now.toISOString().slice(0, 10);
+          // 05:15 — Interest-Detection
+          if (now.getHours() === 5 && now.getMinutes() >= 15 && lastInterestDay !== today) {
+            lastInterestDay = today;
+            if (await this.claimDailySlot(`interest-detect:${today}`)) {
+              try { await this.interestDetector?.runDetection(); }
+              catch (err) { this.logger.warn({ err }, 'v930 interest detection failed'); }
+            }
+          }
+          // 06:30 — Digest-Builder
+          if (now.getHours() === 6 && now.getMinutes() >= 30 && lastDigestDay !== today) {
+            lastDigestDay = today;
+            if (await this.claimDailySlot(`topic-digest:${today}`)) {
+              try { await this.topicDigestBuilder?.run(); }
+              catch (err) { this.logger.warn({ err }, 'v930 topic digest failed'); }
+            }
+          }
+        }, 10 * 60_000); // 10-Min-Raster, handelt nur in den Zielfenstern
+      }
     }
 
     // Wire runbook-repo so chat-pipeline can inject matching Runbooks into system prompt
@@ -7627,6 +7726,87 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
         });
         this.logger.info('Insights API registered');
+      }
+
+      // v930 — Interessen-Radar-API (Themen/Quellen/Items) + Router-Einstellungen
+      if (apiAdapter && this.interestsRepo && this.ownerMasterUserId && 'setInterestsCallbacks' in apiAdapter) {
+        const interestsRepo = this.interestsRepo;
+        const ownerUid = this.ownerMasterUserId as string;
+        const collector = this.topicCollector;
+        const provisioner = this.sourceProvisioner;
+        (apiAdapter as any).setInterestsCallbacks({
+          listTopics: async () => {
+            const topics = await interestsRepo.listTopics(ownerUid);
+            return Promise.all(topics.map(async t => {
+              const [sources, digest, recentCount] = await Promise.all([
+                interestsRepo.listSources(t.id),
+                interestsRepo.getDigest(t.id),
+                interestsRepo.countItemsSince(t.id, new Date(Date.now() - 7 * 24 * 3_600_000).toISOString()),
+              ]);
+              return { ...t, sources, digest, itemsLast7d: recentCount };
+            }));
+          },
+          createTopic: async (data: { name: string; keywords?: string[] }) => {
+            const existing = await interestsRepo.findTopicByName(ownerUid, data.name);
+            if (existing) return existing;
+            const topic = await interestsRepo.createTopic(ownerUid, { name: data.name, keywords: data.keywords });
+            try { await provisioner?.provision(topic); } catch { /* best-effort */ }
+            return topic;
+          },
+          updateTopic: async (id: string, patch: { status?: string; notifyThreshold?: string; keywords?: string[] }) => {
+            const topic = await interestsRepo.getTopicById(ownerUid, id);
+            if (!topic) return { ok: false, reason: 'not-found' };
+            const status = patch.status === 'active' || patch.status === 'paused' || patch.status === 'archived' ? patch.status : undefined;
+            await interestsRepo.updateTopic(ownerUid, id, { status, notifyThreshold: patch.notifyThreshold, keywords: patch.keywords });
+            return { ok: true };
+          },
+          addSource: async (topicId: string, data: { kind: string; url?: string; query?: string }) => {
+            const topic = await interestsRepo.getTopicById(ownerUid, topicId);
+            if (!topic) return { ok: false, reason: 'not-found' };
+            if (data.kind === 'rss' && !data.url) return { ok: false, reason: 'url required' };
+            if (data.kind === 'web_search' && !data.query) return { ok: false, reason: 'query required' };
+            const source = await interestsRepo.addSource(topicId, {
+              kind: data.kind as 'rss' | 'web_search',
+              config: data.kind === 'rss' ? { url: data.url } : { query: data.query },
+              addedBy: 'manual',
+            });
+            return { ok: true, source };
+          },
+          removeSource: async (topicId: string, sourceId: string) => interestsRepo.removeSource(topicId, sourceId),
+          listItems: async (topicId: string, limit?: number) => interestsRepo.listItems(topicId, { limit: limit ?? 30 }),
+          collectNow: async (topicId?: string) => {
+            if (!collector) return 0;
+            if (topicId) {
+              const topic = await interestsRepo.getTopicById(ownerUid, topicId);
+              return topic ? collector.collectTopic(topic) : 0;
+            }
+            return collector.collectAll();
+          },
+          getNotificationSettings: async () => this.notificationRouter?.getConfig() ?? {
+            minUrgency: this.config.notifications?.minUrgency ?? 'high',
+            perSource: this.config.notifications?.perSource ?? {},
+            devMode: this.config.notifications?.devMode ?? false,
+            routerActive: false,
+          },
+          setNotificationSettings: async (patch: Record<string, unknown>) => {
+            const clean: Record<string, unknown> = {};
+            if (patch.minUrgency === 'urgent' || patch.minUrgency === 'high' || patch.minUrgency === 'normal' || patch.minUrgency === 'low') clean.minUrgency = patch.minUrgency;
+            if (typeof patch.devMode === 'boolean') clean.devMode = patch.devMode;
+            if (patch.perSource && typeof patch.perSource === 'object') clean.perSource = patch.perSource;
+            const updated = this.notificationRouter?.updateConfig(clean as any) ?? clean;
+            // Persistenz: übersteht Restarts (gewinnt über YAML beim nächsten Start)
+            if (this.database) {
+              try {
+                await new SkillStateRepository(this.database.getAdapter())
+                  .set(ownerUid, 'notifications', 'router-override', JSON.stringify(updated));
+              } catch (err) {
+                this.logger.warn({ err }, 'v930 router-override persist failed');
+              }
+            }
+            return updated as Record<string, unknown>;
+          },
+        });
+        this.logger.info('Interests API registered (v930)');
       }
 
       // v770 — Storage-Only-Callbacks (env / db-seeds / sandbox-templates) UNABHÄNGIG von sandboxManager registrieren.
@@ -12301,6 +12481,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.topicCollector) {
       this.topicCollector.stop();
       this.topicCollector = undefined;
+    }
+    if (this.interestsDailyTimer) {
+      clearInterval(this.interestsDailyTimer);
+      this.interestsDailyTimer = undefined;
     }
     if (this.clusterMonitorTimer) {
       clearInterval(this.clusterMonitorTimer);

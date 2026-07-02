@@ -18,6 +18,8 @@ const CATEGORY_ICONS: Record<string, string> = {
   'reasoning': '💭',
   'itsm-reflection': '🛠️',
   'automation': '🔁',
+  'interests': '📡',
+  'interest-suggestion': '📡',
 };
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -33,6 +35,8 @@ const CATEGORY_LABEL: Record<string, string> = {
   'reasoning': 'Beobachtungen (still)',
   'itsm-reflection': 'ITSM-Reflexion',
   'automation': 'Automationen',
+  'interests': 'Interessen-Digest',
+  'interest-suggestion': 'Themen-Vorschläge',
 };
 
 // v928 — Fallback-Labels wenn ein Insight kein sprechendes actionLabel mitbringt.

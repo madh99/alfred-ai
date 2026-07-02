@@ -69,6 +69,8 @@ export class InterestsSkill extends Skill {
 
   /** v929 — Collector-Referenz für collect_now (vom Kern injiziert). */
   private collectNowFn?: (topic?: InterestTopic) => Promise<number>;
+  /** v930 — Source-Provisioner: bestückt neue Themen automatisch mit Quellen. */
+  private provisionFn?: (topic: InterestTopic) => Promise<{ rssAdded: string[]; queriesAdded: string[] }>;
 
   constructor(
     private readonly repo: InterestsRepository,
@@ -79,6 +81,10 @@ export class InterestsSkill extends Skill {
 
   setCollector(fn: (topic?: InterestTopic) => Promise<number>): void {
     this.collectNowFn = fn;
+  }
+
+  setProvisioner(fn: (topic: InterestTopic) => Promise<{ rssAdded: string[]; queriesAdded: string[] }>): void {
+    this.provisionFn = fn;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -112,10 +118,22 @@ export class InterestsSkill extends Skill {
     }
     const keywords = Array.isArray(input.keywords) ? input.keywords.map(String) : [];
     const topic = await this.repo.createTopic(userId, { name, keywords });
+
+    // v930 — Quellen automatisch bestücken (best-effort; manuell geht weiterhin)
+    let provisionNote = '\nQuellen hinzufügen mit add_source (rss-URL oder web_search-Query) — gesammelt wird stündlich.';
+    if (this.provisionFn) {
+      try {
+        const p = await this.provisionFn(topic);
+        if (p.rssAdded.length + p.queriesAdded.length > 0) {
+          provisionNote = `\nAutomatisch bestückt: ${p.rssAdded.length} RSS-Feed(s)${p.rssAdded.length ? ` (${p.rssAdded.join(', ')})` : ''} + ${p.queriesAdded.length} Such-Query(s). Weitere per add_source.`;
+        }
+      } catch { /* best-effort */ }
+    }
+
     return {
       success: true,
       data: { topic },
-      display: `📡 Thema **${name}** angelegt${keywords.length ? ` (Stichwörter: ${keywords.join(', ')})` : ''}.\nQuellen hinzufügen mit add_source (rss-URL oder web_search-Query) — gesammelt wird stündlich.`,
+      display: `📡 Thema **${name}** angelegt${keywords.length ? ` (Stichwörter: ${keywords.join(', ')})` : ''}.${provisionNote}`,
     };
   }
 
