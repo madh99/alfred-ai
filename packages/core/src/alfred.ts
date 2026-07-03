@@ -411,6 +411,9 @@ export class Alfred {
   private patternAnalyzerTimer?: ReturnType<typeof setInterval>;
   private temporalAnalyzerTimer?: ReturnType<typeof setInterval>;
   private kgMaintenanceTimer?: ReturnType<typeof setInterval>;
+  /** v933 — Social-Media-Betrieb */
+  private socialRepo?: import('@alfred/storage').SocialRepository;
+  private socialSkillRef?: import('@alfred/skills').SocialSkill;
   /** v929 — Interessen-Radar */
   private interestsRepo?: import('@alfred/storage').InterestsRepository;
   private interestsSkillRef?: import('@alfred/skills').InterestsSkill;
@@ -5500,6 +5503,46 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.interestsSkillRef = new InterestsSkill(this.interestsRepo, this.llmProvider);
       skillRegistry.register(this.interestsSkillRef);
       this.logger.info('Interests skill registered (v929)');
+    }
+
+    // 4s1c. v933 — Social-Media-Betrieb: Kanäle + Content-Pipeline + Provider
+    // (Publishing-Engine folgt v934, Content-Studio v935 — Plan docs/specs/social-media-plan-v933-v938.md)
+    if (this.database) {
+      const { SocialRepository } = await import('@alfred/storage');
+      this.socialRepo = new SocialRepository(this.database.getAdapter());
+      const { SocialSkill, TelegramChannelProvider, RestProvider } = await import('@alfred/skills');
+      const socialSkill = new SocialSkill(this.socialRepo);
+      socialSkill.registerProvider(new TelegramChannelProvider(
+        this.config.telegram?.enabled ? this.config.telegram.token : undefined,
+      ));
+      socialSkill.registerProvider(new RestProvider());
+      // Secrets: project_environments[channel.config.env_stage ?? 'social'] des gebundenen
+      // Projekts, entschlüsselt via envCryptoRef (v733-Muster) — NIE Klartext in der DB.
+      socialSkill.setSecretsResolver(async (channel) => {
+        if (!channel.projectId || !this.envRepoRef || !this.envCryptoRef) return {};
+        const stage = typeof channel.config.env_stage === 'string' ? channel.config.env_stage : 'social';
+        try {
+          const entry = await this.envRepoRef.get(channel.projectId, stage);
+          if (!entry) return {};
+          return this.envCryptoRef.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+        } catch (err) {
+          this.logger.debug({ err, channel: channel.name, stage }, 'v933 social secrets lookup failed');
+          return {};
+        }
+      });
+      socialSkill.setProjectResolver(async (nameOrId) => {
+        if (!this.projectRepo) return null;
+        const ownerUid = this.tryOwner();
+        if (!ownerUid) return null;
+        try {
+          const projects = await this.projectRepo.list(ownerUid);
+          const p = projects.find(x => x.id === nameOrId || x.slug === nameOrId || x.name.toLowerCase() === nameOrId.toLowerCase());
+          return p?.id ?? null;
+        } catch { return null; }
+      });
+      skillRegistry.register(socialSkill);
+      this.socialSkillRef = socialSkill;
+      this.logger.info('Social skill registered (v933)');
     }
 
     // 4s2. Help skill (always available — shows available skills)

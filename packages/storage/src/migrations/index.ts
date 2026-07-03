@@ -2590,4 +2590,65 @@ export const MIGRATIONS: Migration[] = [
       )`);
     },
   },
+  {
+    version: 113,
+    description: 'v933 — Social-Media-Betrieb: social_channels (Kanäle je Plattform, optional projekt-gebunden, Modus suggest|approve|autonomous), content_items (Pipeline idea→draft→scheduled→approved→published), channel_metrics (Performance für den Lern-Loop) (SQLite-Spiegel zu PG v117).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS social_channels (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        project_id TEXT,
+        platform TEXT NOT NULL,
+        name TEXT NOT NULL,
+        handle TEXT,
+        mode TEXT NOT NULL DEFAULT 'suggest',
+        publish_mode TEXT NOT NULL DEFAULT 'prepare',
+        planning_horizon_days INTEGER NOT NULL DEFAULT 14,
+        posting_slots TEXT NOT NULL DEFAULT '[]',
+        persona TEXT,
+        blacklist TEXT NOT NULL DEFAULT '[]',
+        max_posts_per_day INTEGER NOT NULL DEFAULT 3,
+        approved_streak INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'active',
+        config TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_social_channels_user ON social_channels(user_id, status)`);
+      db.exec(`CREATE TABLE IF NOT EXISTS content_items (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        title TEXT,
+        body TEXT NOT NULL DEFAULT '',
+        media TEXT NOT NULL DEFAULT '[]',
+        hashtags TEXT NOT NULL DEFAULT '[]',
+        scheduled_at TEXT,
+        published_at TEXT,
+        external_id TEXT,
+        external_url TEXT,
+        error TEXT,
+        performance TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_content_items_channel ON content_items(channel_id, status)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_content_items_sched ON content_items(status, scheduled_at)`);
+      db.exec(`CREATE TABLE IF NOT EXISTS channel_metrics (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        item_id TEXT,
+        date TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        value REAL NOT NULL,
+        meta TEXT,
+        created_at TEXT NOT NULL
+      )`);
+      // COALESCE: NULLs sind in Unique-Indizes distinct — Kanal-Metriken (item_id NULL)
+      // würden sonst nicht dedupliziert
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_metrics_dedupe ON channel_metrics(channel_id, COALESCE(item_id, ''), date, kind)`);
+    },
+  },
 ];

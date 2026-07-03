@@ -5,6 +5,42 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.933] - 2026-07-03
+
+### Added — Social-Media-Betrieb: Fundament (v933, Stufe 1 von 6)
+
+Start des Social-Media-Plans (`docs/specs/social-media-plan-v933-v938.md`):
+Alfred kann Social-Kanäle verwalten und Content über eine geordnete Pipeline
+veröffentlichen — pro Projekt (z. B. fussball-cc) oder standalone.
+
+- **Neue Tabellen** (SQLite v113 / PG v117): `social_channels` (Plattform,
+  Modus suggest|approve|autonomous, publish_mode api|prepare,
+  Planungshorizont, Slots, Persona, Blacklist, Tages-Limit,
+  Erstpost-Streak), `content_items` (Pipeline
+  idea→draft→scheduled→approved→publishing→published/failed/rejected, mit
+  validierten Übergängen — ungültige werfen), `channel_metrics`
+  (Performance-Basis für den v936-Lern-Loop).
+- **Skill `social`:** Kanal-CRUD (optional projekt-gebunden), Content anlegen/
+  terminieren/freigeben/ablehnen, `publish_now`, `mark_published` (manuell
+  gepostete Beiträge tracken), `delete_remote`, `attach_media`,
+  `validate_auth`, `pause_all` („Social-Stopp", Not-Aus).
+- **Provider-Architektur** (Muster marketplace/): `telegram_channel`
+  (Bot-API, Text/Foto, t.me-Link, löschen) und `rest` (generische eigene
+  Plattform-API, z. B. fussball.cc: base_url + Template-Body + Bearer aus
+  Secrets, self-signed-TLS-Option). Jede Plattform kann `api` (Alfred
+  postet) oder `prepare` (fertige Aufbereitung zum 2-Tap-Posten) fahren.
+- **Leitplanken schon aktiv** (gelten auch für manuelles publish_now):
+  Tages-Limit je Kanal (Default 3), Blacklist-Scan blockiert Treffer,
+  Erstpost-Streak zählt Freigaben (5 nötig bevor autonomous wirkt; Ablehnung
+  setzt zurück), pausierte Kanäle posten nicht.
+- **Secrets:** ausschließlich aus verschlüsselten `project_environments`
+  (Stage `social`, konfigurierbar) — nie Klartext in Social-Tabellen.
+- 32 Tests (Pipeline-Übergänge, Repository, Skill inkl. Leitplanken, beide
+  Provider mit gemocktem HTTP).
+- Nächste Stufen laut Plan: v934 Publishing-Engine + Freigabe-Flow, v935
+  Content-Studio, v936 YouTube/Meta/X + Lern-Loop, v937 UI + Autonomie,
+  v938 Video-Pipeline.
+
 ## [0.19.0-multi-ha.932] - 2026-07-02
 
 ### Fixed — Deploy-Detach: Subshell-Klammer, ssh kehrt sofort zurück (v932)
