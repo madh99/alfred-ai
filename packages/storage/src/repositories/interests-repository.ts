@@ -163,6 +163,11 @@ export class InterestsRepository {
     await this.db.execute(`UPDATE topic_sources SET enabled = ? WHERE id = ?`, [enabled ? 1 : 0, sourceId]);
   }
 
+  /** v940 — Quellen-Config aktualisieren (z.B. Strike-Zähler der Quellen-Pflege). */
+  async updateSourceConfig(sourceId: string, config: Record<string, unknown>): Promise<void> {
+    await this.db.execute(`UPDATE topic_sources SET config = ? WHERE id = ?`, [JSON.stringify(config), sourceId]);
+  }
+
   async markSourceChecked(sourceId: string): Promise<void> {
     await this.db.execute(`UPDATE topic_sources SET last_checked_at = ? WHERE id = ?`, [new Date().toISOString(), sourceId]);
   }

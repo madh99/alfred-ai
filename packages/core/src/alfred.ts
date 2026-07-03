@@ -429,6 +429,8 @@ export class Alfred {
   private sourceProvisioner?: import('./source-provisioner.js').SourceProvisioner;
   private interestDetector?: import('./interest-detector.js').InterestDetector;
   private topicDigestBuilder?: import('./topic-digest-builder.js').TopicDigestBuilder;
+  /** v940 — wöchentliche Quellen-Pflege (Feeds ausmisten + nachbestücken) */
+  private sourceMaintenance?: import('./source-maintenance.js').SourceMaintenance;
   private interestsDailyTimer?: ReturnType<typeof setInterval>;
 
   /** v930 — HA-Tages-Slot über reasoning_slots (nur PG; Single-Node/SQLite → immer true). */
@@ -6563,8 +6565,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           this.logger.child({ component: 'topic-digest-builder' }), digestDelivery,
         );
 
+        // v940 — Quellen-Pflege: wöchentlich Feeds proben/ausmisten + nachbestücken
+        const { SourceMaintenance } = await import('./source-maintenance.js');
+        this.sourceMaintenance = new SourceMaintenance(
+          this.interestsRepo, this.sourceProvisioner, this.insightsRepo,
+          this.logger.child({ component: 'source-maintenance' }), ownerUid,
+        );
+
         let lastInterestDay = '';
         let lastDigestDay = '';
+        let lastMaintenanceDay = '';
         this.interestsDailyTimer = setInterval(async () => {
           const now = new Date();
           const today = now.toISOString().slice(0, 10);
@@ -6574,6 +6584,14 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (await this.claimDailySlot(`interest-detect:${today}`)) {
               try { await this.interestDetector?.runDetection(); }
               catch (err) { this.logger.warn({ err }, 'v930 interest detection failed'); }
+            }
+          }
+          // v940 — samstags 05:45: Quellen-Pflege (nach der Detection, vor dem Digest)
+          if (now.getDay() === 6 && now.getHours() === 5 && now.getMinutes() >= 45 && lastMaintenanceDay !== today) {
+            lastMaintenanceDay = today;
+            if (await this.claimDailySlot(`source-maintenance:${today}`)) {
+              try { await this.sourceMaintenance?.runWeekly(); }
+              catch (err) { this.logger.warn({ err }, 'v940 source maintenance failed'); }
             }
           }
           // 06:30 — Digest-Builder

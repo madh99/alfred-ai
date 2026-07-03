@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.940] - 2026-07-03
+
+### Added — Interessen-Radar: automatische Quellen-Pflege (v940)
+
+Feeds bestücken sich jetzt auch bei BESTEHENDEN Themen selbst nach (bisher
+war die Feed-Suche ein einmaliger Schritt bei der Themen-Anlage):
+
+- **Wöchentlicher Pflege-Lauf** (samstags 05:45, HA-Slot) über alle aktiven
+  Interessen-Themen:
+  1. **Ausmisten:** jeder aktive RSS-Feed wird direkt geprobt (Parse) und auf
+     Staleness geprüft (neuestes Item älter als 45 Tage). Ein Fehlschlag =
+     ein Strike (persistiert) — erst der **zweite Strike in Folge**
+     deaktiviert die Quelle, transiente Ausfälle überleben also. Gesunde
+     Probe setzt Strikes zurück. Deaktivierte Quellen bleiben in der
+     Interessen-UI sichtbar (mit Grund) und sind reaktivierbar.
+  2. **Nachbestücken:** hat ein Thema danach weniger als 2 funktionierende
+     Feeds, sucht der Source-Provisioner erneut (Websuche → Probe-Parse-
+     Validierung, Dedupe gegen Bestand — auch Such-Queries werden nicht
+     dupliziert).
+  3. **Transparenz:** Änderungen als EIN stiller Insights-Eintrag
+     („Quellen-Pflege: 2 Feed(s) neu, 1 deaktiviert" mit Details je Thema).
+- Muster analog zur v925-Selbstheilung (Watches): Strike-Logik in Code,
+  nichts wird still gelöscht.
+- 7 Tests (Strike-Aufbau/-Reset, Staleness, Deaktivierung mit Grund,
+  Nachbestücken, No-Op ohne Änderungen, web_search/deaktivierte ausgenommen).
+
 ## [0.19.0-multi-ha.939] - 2026-07-03
 
 ### Added — Config-Schalter `social.enabled` (v939)
