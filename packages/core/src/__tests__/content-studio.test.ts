@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ContentStudio, nextFreeSlots, parseIdeas } from '../content-studio.js';
+import { ContentStudio, nextFreeSlots, parseIdeas, stripMetaLines } from '../content-studio.js';
 import type { SocialRepository, SocialChannel, ContentItem, InterestsRepository, InsightsRepository } from '@alfred/storage';
 
 const OWNER = 'owner-1';
@@ -59,6 +59,36 @@ describe('parseIdeas (v935)', () => {
   it('leere/kaputte Antworten → []; zu kurze bodies gefiltert', () => {
     expect(parseIdeas('KEINE')).toEqual([]);
     expect(parseIdeas('[{"title":"x","body":"kurz"}]')).toEqual([]);
+  });
+
+  it('v941: bildidee wird als eigenes Feld geparst (auch image_idea-Alias)', () => {
+    const out = parseIdeas('[{"title":"T","body":"Ein ordentlich langer Post-Text hier.","bildidee":"Sechs Team-Wappen im Kreis"}]');
+    expect(out[0].bildidee).toBe('Sechs Team-Wappen im Kreis');
+    const alias = parseIdeas('[{"title":"T","body":"Ein ordentlich langer Post-Text hier.","image_idea":"Stadion bei Nacht"}]');
+    expect(alias[0].bildidee).toBe('Stadion bei Nacht');
+  });
+
+  it('v941: „Bildidee:"-Meta-Zeilen werden aus dem body gestrippt (Realfall 03.07.)', () => {
+    const out = parseIdeas(JSON.stringify([{
+      title: 'Titelfavoriten-Check',
+      body: 'Wer holt den Pokal? Spanien und Frankreich vorn.\n\nBildidee: Sechs Team-Wappen im Kreis angeordnet mit Fragezeichen.\n\nEuer Tipp?',
+      hashtags: ['WM2026'],
+    }]));
+    expect(out[0].body).toContain('Wer holt den Pokal?');
+    expect(out[0].body).toContain('Euer Tipp?');
+    expect(out[0].body).not.toContain('Bildidee');
+    expect(out[0].body).not.toContain('Team-Wappen');
+  });
+});
+
+describe('stripMetaLines (v941)', () => {
+  it('entfernt Bildidee/Bildvorschlag/Thumbnail-Idee/Image-idea-Zeilen, Rest bleibt', () => {
+    const body = 'Zeile 1\nBildidee: X\nBild-Idee: Y\nBildvorschlag: Z\nThumbnail-Idee: W\nImage idea: V\nZeile 2';
+    expect(stripMetaLines(body)).toBe('Zeile 1\nZeile 2');
+  });
+
+  it('kollabiert entstehende Leerzeilen-Löcher', () => {
+    expect(stripMetaLines('A\n\nBildidee: X\n\nB')).toBe('A\n\nB');
   });
 });
 

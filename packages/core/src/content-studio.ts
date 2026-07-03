@@ -57,6 +57,22 @@ interface GeneratedIdea {
   body: string;
   hashtags: string[];
   warum: string;
+  /** v941 — Bildvorschlag als eigenes Feld (wird NIE mitgepostet; dient als Prompt für image_generate). */
+  bildidee?: string;
+}
+
+/**
+ * v941 — Meta-Zeilen wie „Bildidee: …" haben im Post-Text nichts verloren
+ * (Realfall 03.07.: „Bildidee: Sechs Team-Wappen…" wäre mitgepostet worden).
+ * Defense-in-depth zusätzlich zur Prompt-Regel.
+ */
+export function stripMetaLines(body: string): string {
+  return body
+    .split('\n')
+    .filter(line => !/^\s*(bild-?idee|bildvorschlag|image idea|thumbnail-?idee)\s*:/i.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /** Tolerantes Parsen der LLM-Ideen (JSON-Array). */
@@ -70,11 +86,14 @@ export function parseIdeas(text: string): GeneratedIdea[] {
       .filter((i: any) => i && typeof i.body === 'string' && i.body.trim().length > 10)
       .map((i: any) => ({
         title: typeof i.title === 'string' ? i.title.slice(0, 200) : '',
-        body: String(i.body).slice(0, 8000),
+        body: stripMetaLines(String(i.body).slice(0, 8000)),
         hashtags: Array.isArray(i.hashtags) ? i.hashtags.map(String).slice(0, 10)
           : Array.isArray(i.tags) ? i.tags.map(String).slice(0, 10) : [],
         warum: typeof i.warum === 'string' ? i.warum.slice(0, 300) : '',
+        bildidee: typeof i.bildidee === 'string' && i.bildidee.trim().length > 0 ? i.bildidee.slice(0, 400)
+          : typeof i.image_idea === 'string' && i.image_idea.trim().length > 0 ? i.image_idea.slice(0, 400) : undefined,
       }))
+      .filter((i: GeneratedIdea) => i.body.length > 10)
       .slice(0, 10);
   } catch {
     return [];
@@ -208,9 +227,10 @@ Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
 - Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
 - 3-6 Hashtags je Post.
+- body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
 ${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
-[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt"}]`;
+[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "bildidee": "optional: Bildvorschlag für dieses Posting"}]`;
   }
 
   private buildYoutubePrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
@@ -220,9 +240,10 @@ Erzeuge ${count} komplette Video-Konzepte. Das body-Feld MUSS enthalten:
 HOOK (erste 15 Sekunden), dann SCRIPT mit Kapitel-Überschriften und Sprechtext,
 dann eine Zeile "---" und darunter BESCHREIBUNG (YouTube-Description mit Kapitelmarken).
 Der User kann das Video selbst drehen (Script ablesen) oder Alfred Material geben.
+Ein Thumbnail-Vorschlag gehört NICHT in den body, sondern ins separate Feld "bildidee".
 ${channel.blacklist.length ? `TABU: ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
-[{"title": "Video-Titel (max 100 Zeichen)", "body": "HOOK…\\nSCRIPT…\\n---\\nBESCHREIBUNG…", "hashtags": ["tag1", "tag2"], "warum": "1 Satz warum dieses Video jetzt"}]`;
+[{"title": "Video-Titel (max 100 Zeichen)", "body": "HOOK…\\nSCRIPT…\\n---\\nBESCHREIBUNG…", "hashtags": ["tag1", "tag2"], "warum": "1 Satz warum dieses Video jetzt", "bildidee": "optional: Thumbnail-Vorschlag"}]`;
   }
 
   private async topicDossier(channel: SocialChannel): Promise<string> {
@@ -279,8 +300,10 @@ Antworte NUR mit einem JSON-Array:
     }
 
     try {
+      // v941 — die Bildidee des Studios ist der beste Prompt (Fallback: Titel/Body)
+      const motif = idea.bildidee ?? `Social-Media-Bild für: ${idea.title || idea.body.slice(0, 150)}`;
       const result = await this.skillSandbox.execute(skill, {
-        prompt: `Social-Media-Bild für: ${idea.title || idea.body.slice(0, 150)}. Stil: ${channel.persona ?? 'modern, freundlich'}. Kein Text im Bild.`,
+        prompt: `${motif}. Stil: ${channel.persona ?? 'modern, freundlich'}. Kein Text im Bild.`,
       }, { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
       if (!result.success) return [];
       const data = result.data as Record<string, unknown> | undefined;

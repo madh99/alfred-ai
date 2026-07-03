@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.941] - 2026-07-03
+
+### Fixed — Content-Studio: Bildideen landen nie mehr im Post-Text (v941)
+
+Realfall (03.07., FussballCC News): ein Studio-Entwurf enthielt „Bildidee:
+Sechs Team-Wappen im Kreis…" mitten im Post-Text — wäre bei „Sofort posten"
+mitveröffentlicht worden.
+
+- **Eigenes Feld statt Meta-Zeile:** die Ideen-Prompts (Posts UND
+  YouTube-Konzepte) verlangen Bild-/Thumbnail-Vorschläge jetzt explizit im
+  separaten JSON-Feld `bildidee` — der body ist ausschließlich der fertige
+  Post-Text.
+- **Defense-in-depth:** `stripMetaLines()` entfernt beim Parsen zusätzlich
+  alle „Bildidee:/Bildvorschlag:/Thumbnail-Idee:/Image idea:"-Zeilen aus dem
+  body (falls das LLM die Regel ignoriert) und kollabiert entstehende
+  Leerzeilen.
+- **Besseres Bild obendrein:** ist Bild-Generierung am Kanal aktiv, wird die
+  `bildidee` als Prompt für image_generate verwendet (vorher: generischer
+  Titel-Prompt) — der Bildvorschlag des Studios wird also genutzt statt
+  weggeworfen.
+- 4 neue Tests (Feld-Parsing inkl. image_idea-Alias, Strip-Realfall,
+  Leerzeilen-Kollaps).
+
 ## [0.19.0-multi-ha.940] - 2026-07-03
 
 ### Added — Interessen-Radar: automatische Quellen-Pflege (v940)
