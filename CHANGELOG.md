@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.967] - 2026-07-03
+
+### Added — Social-UI: Analytics (v967, Paket D)
+
+- **Analytics-Sektion je Kanal:** Verlaufslinien (Sparklines) der
+  wichtigsten Engagement-Metriken aus dem täglichen Analytics-Collector,
+  mit Summen — plus **Top-Beiträge** nach Performance mit Titel.
+  Bild-Budget-Zählungen sind bewusst ausgenommen (Kosten, kein
+  Engagement); der Verbrauch steht als Balken an der Kanalkarte (v965).
+
 ## [0.19.0-multi-ha.966] - 2026-07-03
 
 ### Added — Social-UI: Wochenraster, Composer, Crosspost (v966, Paket C)

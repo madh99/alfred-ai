@@ -49,6 +49,19 @@ function toLocalInput(iso?: string): string {
 
 type QueueTab = 'pending' | 'history';
 
+/** v967 — Mini-Verlaufslinie (SVG) für Kanal-Metriken. */
+function Sparkline({ points }: { points: number[] }) {
+  if (points.length < 2) return null;
+  const max = Math.max(...points, 1);
+  const w = 120; const h = 26;
+  const d = points.map((v, i) => `${i === 0 ? 'M' : 'L'}${((i / (points.length - 1)) * w).toFixed(1)},${(h - (v / max) * (h - 3) - 1).toFixed(1)}`).join(' ');
+  return (
+    <svg width={w} height={h} className="text-emerald-400">
+      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 export function SocialPage() {
   const { client } = useConfig();
   const [channels, setChannels] = useState<SocialChannelItem[]>([]);
@@ -375,6 +388,39 @@ export function SocialPage() {
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [calendar, filterByChannel]);
+
+  // v967 — Analytics: Zeitreihen je Metrik-Art + Top-Beiträge je Kanal
+  const analytics = useMemo(() => {
+    const titleById = new Map<string, string>();
+    for (const i of [...publishedRecent, ...pending, ...calendar, ...history]) {
+      titleById.set(i.id, i.title ?? i.body.slice(0, 60));
+    }
+    return channels.map(c => {
+      const entries = metrics[c.id] ?? [];
+      // Zeitreihen: je kind die Tageswerte aufsummiert (gen_image ist Budget, kein Engagement)
+      const byKind = new Map<string, Map<string, number>>();
+      const byItem = new Map<string, number>();
+      for (const e of entries) {
+        if (e.kind === 'gen_image') continue;
+        const days = byKind.get(e.kind) ?? new Map<string, number>();
+        days.set(e.date, (days.get(e.date) ?? 0) + e.value);
+        byKind.set(e.kind, days);
+        if (e.itemId) byItem.set(e.itemId, (byItem.get(e.itemId) ?? 0) + e.value);
+      }
+      const series = [...byKind.entries()]
+        .map(([kind, days]) => {
+          const sorted = [...days.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+          return { kind, total: sorted.reduce((s, [, v]) => s + v, 0), points: sorted.map(([, v]) => v) };
+        })
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 3);
+      const topPosts = [...byItem.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([id, total]) => ({ id, total, title: titleById.get(id) ?? id.slice(0, 8) }));
+      return { channel: c, series, topPosts };
+    }).filter(a => a.series.length > 0 || a.topPosts.length > 0);
+  }, [channels, metrics, publishedRecent, pending, calendar, history]);
 
   function channelMetricSummary(channelId: string): string {
     const m = metrics[channelId] ?? [];
@@ -841,6 +887,47 @@ export function SocialPage() {
           ))}
         </div>
       </div>
+
+      {/* v967 — Analytics: Verlauf je Metrik + Top-Beiträge (aus channel_metrics) */}
+      {analytics.length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold text-gray-200 mb-2">📊 Analytics</h2>
+          <div className="grid gap-3 md:grid-cols-2">
+            {analytics.map(({ channel: c, series, topPosts }) => (
+              <div key={c.id} className="border border-[#1f1f1f] rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span>{PLATFORM_ICON[c.platform] ?? '📣'}</span>
+                  <span className="font-semibold text-gray-100 text-sm">{c.name}</span>
+                </div>
+                {series.length === 0 && <div className="text-xs text-gray-600">Noch keine Engagement-Daten — der Analytics-Collector sammelt täglich.</div>}
+                <div className="space-y-1.5">
+                  {series.map(s => (
+                    <div key={s.kind} className="flex items-center gap-3">
+                      <span className="text-[11px] text-gray-400 w-20 truncate" title={s.kind}>{s.kind}</span>
+                      <Sparkline points={s.points} />
+                      <span className="text-[11px] text-emerald-400">{s.total}</span>
+                    </div>
+                  ))}
+                </div>
+                {topPosts.length > 0 && (
+                  <div className="mt-3">
+                    <div className="text-[11px] text-gray-500 mb-1">🏆 Top-Beiträge</div>
+                    <div className="space-y-0.5">
+                      {topPosts.map((p, idx) => (
+                        <div key={p.id} className="text-[11px] text-gray-300 flex items-center gap-2">
+                          <span className="text-gray-600">{idx + 1}.</span>
+                          <span className="flex-1 truncate" title={p.title}>{p.title}</span>
+                          <span className="text-emerald-400">{p.total}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
