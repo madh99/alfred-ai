@@ -38,6 +38,33 @@ describe('selectCategories', () => {
     }
   });
 
+  it('v945: Social-Phrasen erreichen automation (Realfall „Skill nicht in Tool-Liste")', () => {
+    for (const msg of [
+      'Nutze den social-Skill mit action update_channel, channel FussballCC News, config {"generate_images": true}',
+      'Aktualisiere den Kanal FussballCC News: config generate_images: true',
+      'Schreibe einen Post für FussballCC News und poste ihn',
+      'Erzeuge Content für FussballCC News',
+      'Starte das Content-Studio für FussballCC News',
+      'Gib die Entwürfe für Instagram frei',
+      'Veröffentliche das auf Facebook und Threads',
+    ]) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('automation'), `"${msg}" should match automation`).toBe(true);
+    }
+  });
+
+  it('v945: Interessen-Phrasen erreichen information', () => {
+    for (const msg of [
+      'Was gibt es Neues zu meinem Thema Claude Fable?',
+      'Zeige meine Interessen-Themen',
+      'Beobachte das Topic GPU-Preise für mich',
+      'Wie ist die aktuelle Entwicklung rund um das Fable-Modell?',
+    ]) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('information'), `"${msg}" should match information`).toBe(true);
+    }
+  });
+
   it('matches automation keywords', () => {
     for (const msg of ['run in background', 'execute shell command', 'schedule a cron job', 'use code_agent']) {
       const result = selectCategories(msg, available(...ALL_CATEGORIES));

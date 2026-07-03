@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.945] - 2026-07-03
+
+### Fixed — Skill-Filter: social/interests waren je nach Wortlaut unsichtbar (v945)
+
+Root Cause zum Realfall „Der social-Skill existiert, ist aber in meiner
+Tool-Liste nicht direkt aufrufbar": Der Keyword-basierte Skill-Filter
+(Token-Sparmechanismus) kannte KEINE Social-Wörter. Nachrichten wie
+„Aktualisiere den Kanal … generate_images" matchten nur „Kanal/News" →
+Kategorie *information* — der social-Skill (Kategorie *automation*) wurde
+aus der Tool-Liste gefiltert, und das LLM improvisierte mit Sub-Agenten
+(v944-Symptom). Ob es funktionierte, hing vom zufälligen Wortlaut ab.
+
+- Kategorie **automation** um Social-Vokabular erweitert: social, post/
+  posten, veröffentlichen/publish, Instagram/Facebook/Threads/TikTok/
+  Tweet/Twitter, Draft/Entwurf, Freigabe, Content, Studio, Hashtag,
+  Reels/Shorts, config, generate.
+- Kategorie **information** um Interessen-Vokabular erweitert: Interesse,
+  Thema/Topic, Dossier, beobachten, Entwicklung — „Was gibt's Neues zu
+  meinem Thema X?" erreicht jetzt zuverlässig den interests-Skill.
+- 2 Tests mit den echten Fehl-Formulierungen aus dem Chat (7 Social- +
+  4 Interessen-Phrasen).
+
 ## [0.19.0-multi-ha.944] - 2026-07-03
 
 ### Fixed — social-Skill: LLM-Routing für Kanal-Einstellungen geschärft (v944)
