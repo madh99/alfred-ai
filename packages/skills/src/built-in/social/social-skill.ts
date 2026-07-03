@@ -141,6 +141,23 @@ export class SocialSkill extends Skill {
     this.replanFn = fn;
   }
 
+  /** v962 — Bild-Generierung für Ad-hoc-Items (Studio-Leitplanken, vom Kern injiziert). */
+  private imageFn?: (channel: SocialChannel, item: { title?: string; body: string }) => Promise<ContentMedia[]>;
+
+  setImageGenerator(fn: (channel: SocialChannel, item: { title?: string; body: string }) => Promise<ContentMedia[]>): void {
+    this.imageFn = fn;
+  }
+
+  /** v962 — Bild für Ad-hoc-Item, wenn der Kanal generate_images hat (best-effort). */
+  private async maybeAdhocImage(channel: SocialChannel, item: { title?: string; body: string }): Promise<ContentMedia[]> {
+    if (channel.config.generate_images !== true || !this.imageFn) return [];
+    try {
+      return await this.imageFn(channel, item);
+    } catch {
+      return []; // Bild ist nice-to-have — der Post selbst darf nie daran scheitern
+    }
+  }
+
   registerProvider(provider: SocialProvider): void {
     this.providers.set(provider.platform, provider);
   }
@@ -303,20 +320,27 @@ export class SocialSkill extends Skill {
     if (!channel) return { success: false, error: `Kanal nicht gefunden: ${String(input.channel ?? '')}` };
     const body = typeof input.body === 'string' ? input.body : '';
     if (!body.trim()) return { success: false, error: 'body erforderlich' };
-    const media: ContentMedia[] = typeof input.media_url === 'string' && input.media_url.trim()
+    const title = typeof input.title === 'string' ? input.title : undefined;
+    let media: ContentMedia[] = typeof input.media_url === 'string' && input.media_url.trim()
       ? [{ type: (input.media_type === 'video' || input.media_type === 'audio' ? input.media_type : 'image'), source: 'user', pathOrUrl: input.media_url.trim() }]
       : [];
+    // v962 — Kanal mit generate_images: auch Ad-hoc-Posts bekommen ein Bild
+    // (Studio-Leitplanken: Bildnisrecht-Policy, Vision-Gate, Monats-Budget)
+    if (media.length === 0) media = await this.maybeAdhocImage(channel, { title, body });
     const item = await this.repo.createItem(userId, channel.id, {
-      title: typeof input.title === 'string' ? input.title : undefined,
+      title,
       body,
       hashtags: Array.isArray(input.hashtags) ? input.hashtags.map(String) : [],
       media,
       scheduledAt: typeof input.scheduled_at === 'string' ? input.scheduled_at : undefined,
     });
+    const withImage = media.some(m => m.source === 'generated') ? ' — mit generiertem Bild' : '';
+    const noImageWarn = channel.config.generate_images === true && media.length === 0
+      ? '\n⚠️ Kein Bild: Generierung nicht möglich (Budget/Bildprüfung) — Post geht ohne Bild raus.' : '';
     return {
       success: true,
       data: { item },
-      display: `📝 Entwurf [${item.id.slice(0, 8)}] für **${channel.name}** angelegt${item.scheduledAt ? `, Wunschtermin ${item.scheduledAt.slice(0, 16).replace('T', ' ')}` : ''}.\nWeiter mit schedule_content (terminieren) oder publish_now.`,
+      display: `📝 Entwurf [${item.id.slice(0, 8)}] für **${channel.name}** angelegt${item.scheduledAt ? `, Wunschtermin ${item.scheduledAt.slice(0, 16).replace('T', ' ')}` : ''}${withImage}.${noImageWarn}\nWeiter mit schedule_content (terminieren) oder publish_now.`,
     };
   }
 
@@ -555,9 +579,12 @@ export class SocialSkill extends Skill {
           if (rewritten) ({ title, body, hashtags } = rewritten);
         } catch { /* Anpassung best-effort — wörtliche Kopie als Fallback */ }
       }
+      // v962 — Quelle ohne Medien + Ziel-Kanal mit generate_images: Bild erzeugen
+      const media = item.media.length > 0 ? item.media
+        : await this.maybeAdhocImage(target, { title: title ?? undefined, body });
       const copy = await this.repo.createItem(userId, target.id, {
         title, body, hashtags,
-        media: item.media,
+        media,
         scheduledAt: typeof input.scheduled_at === 'string' ? input.scheduled_at : undefined,
         source: 'manual',
       });

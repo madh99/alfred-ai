@@ -302,6 +302,16 @@ export class ContentStudio {
     return moved;
   }
 
+  /**
+   * v962 — Bild für ein AD-HOC-Item erzeugen („Poste X auf …" via add_content/
+   * crosspost): gleiche Leitplanken wie Studio-Posts (Bildnisrecht-Policy,
+   * Vision-Gate, Monats-Budget). Liefert [] wenn generate_images aus ist,
+   * das Budget erschöpft ist oder das Bild die Prüfung nicht besteht.
+   */
+  async generateImageForItem(channel: SocialChannel, item: { title?: string; body: string }): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }>> {
+    return this.maybeGenerateImage(channel, { title: item.title ?? '', body: item.body, hashtags: [], warum: '' });
+  }
+
   // ── Wissens-Kontext + Ideen ───────────────────────────────────────────
 
   private async generateIdeas(channel: SocialChannel, count: number, familyBlock: string): Promise<GeneratedIdea[]> {

@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.962] - 2026-07-03
+
+### Added — Bilder auch für Ad-hoc-Posts (v962)
+
+- „Poste X auf <Kanal>" (add_content) und Crossposts ohne mitgebrachtes
+  Bild erzeugen jetzt automatisch ein Bild, wenn der Kanal
+  `generate_images` aktiviert hat — mit denselben Leitplanken wie
+  Studio-Posts (Bildnisrecht-Policy, Vision-Prüfung, Monats-Budget).
+  Bisher bekamen nur die vom Content-Studio geplanten Beiträge Bilder;
+  spontan erstellte gingen kommentarlos ohne Bild raus. Ein vom User
+  mitgegebenes `media_url` hat weiterhin Vorrang; scheitert die
+  Generierung (Budget erschöpft, Bildprüfung), geht der Post ohne Bild
+  raus und die Antwort weist darauf hin.
+
 ## [0.19.0-multi-ha.961] - 2026-07-03
 
 ### Fixed — Hashtags standen zusätzlich im Post-Text (v961)

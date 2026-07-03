@@ -343,6 +343,44 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(r.display).toContain('umgeplant');
   });
 
+  it('v962: add_content generiert ein Bild, wenn der Kanal generate_images hat', async () => {
+    const { skill, spies } = makeSkill(makeChannel({ config: { generate_images: true } }), makeItem());
+    const gen = vi.fn(async () => [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/bild.png' }]);
+    skill.setImageGenerator(gen as any);
+    const r = await skill.execute({ action: 'add_content', channel: 'Testkanal', body: 'Ein ausreichend langer Ad-hoc-Beitrag.' }, CTX);
+    expect(r.success).toBe(true);
+    expect(gen).toHaveBeenCalledOnce();
+    expect((spies.createItem as any).mock.calls[0][2].media).toEqual([{ type: 'image', source: 'generated', pathOrUrl: '/tmp/bild.png' }]);
+    expect(r.display).toContain('mit generiertem Bild');
+  });
+
+  it('v962: add_content ohne generate_images ruft den Generator nicht', async () => {
+    const { skill, spies } = makeSkill(makeChannel(), makeItem());
+    const gen = vi.fn(async () => []);
+    skill.setImageGenerator(gen as any);
+    const r = await skill.execute({ action: 'add_content', channel: 'Testkanal', body: 'Ein ausreichend langer Ad-hoc-Beitrag.' }, CTX);
+    expect(r.success).toBe(true);
+    expect(gen).not.toHaveBeenCalled();
+    expect((spies.createItem as any).mock.calls[0][2].media).toEqual([]);
+  });
+
+  it('v962: media_url des Users hat Vorrang vor der Generierung', async () => {
+    const { skill, spies } = makeSkill(makeChannel({ config: { generate_images: true } }), makeItem());
+    const gen = vi.fn(async () => [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/bild.png' }]);
+    skill.setImageGenerator(gen as any);
+    await skill.execute({ action: 'add_content', channel: 'Testkanal', body: 'Ein ausreichend langer Ad-hoc-Beitrag.', media_url: 'https://ex.at/foto.jpg' }, CTX);
+    expect(gen).not.toHaveBeenCalled();
+    expect((spies.createItem as any).mock.calls[0][2].media[0].pathOrUrl).toBe('https://ex.at/foto.jpg');
+  });
+
+  it('v962: Generator-Fehlschlag blockiert den Post nicht (ohne Bild, mit Warnhinweis)', async () => {
+    const { skill } = makeSkill(makeChannel({ config: { generate_images: true } }), makeItem());
+    skill.setImageGenerator(vi.fn(async () => { throw new Error('image API down'); }) as any);
+    const r = await skill.execute({ action: 'add_content', channel: 'Testkanal', body: 'Ein ausreichend langer Ad-hoc-Beitrag.' }, CTX);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('Kein Bild');
+  });
+
   it('v959: update_channel mit posting_slots weist auf replan_channel hin', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'update_channel', channel: 'Testkanal', posting_slots: ['Sa 10:00', 'So 19:00'] }, CTX);
