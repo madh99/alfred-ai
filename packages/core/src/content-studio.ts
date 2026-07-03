@@ -68,7 +68,10 @@ export function isNearDuplicateTitle(candidate: string, existingTitles: string[]
     let common = 0;
     for (const t of cand) if (ex.has(t)) common++;
     const overlap = common / Math.min(cand.size, ex.size);
-    if (common >= 3 || (overlap >= 0.6 && common >= 2)) return true;
+    // v958 — Schwelle 0.5: der echte Einzelkritik-Doppelfall hatte nur 2 gemeinsame
+    // Tokens bei 50% Overlap. Bewusst leicht aggressiv — lieber eine Idee zu viel
+    // verwerfen (Nachschub ist billig) als Doppelungen in der Familie.
+    if (common >= 3 || (overlap >= 0.5 && common >= 2)) return true;
   }
   return false;
 }
@@ -212,7 +215,16 @@ export class ContentStudio {
       ...family.siblingTitles,
     ];
     const before = ideas.length;
-    ideas = ideas.filter(idea => !isNearDuplicateTitle(idea.title || idea.body.slice(0, 60), blockedTitles));
+    // v958 — auch INNERHALB des Batches deduplizieren: akzeptierte Titel wandern
+    // in die Sperrliste (Realfall: zwei Einzelkritik-Posts aus EINEM Lauf).
+    const accepted: GeneratedIdea[] = [];
+    for (const idea of ideas) {
+      const title = idea.title || idea.body.slice(0, 60);
+      if (isNearDuplicateTitle(title, blockedTitles)) continue;
+      blockedTitles.push(title);
+      accepted.push(idea);
+    }
+    ideas = accepted;
     if (ideas.length < before) {
       this.logger.info({ channel: channel.name, dropped: before - ideas.length }, 'v957 near-duplicate ideas dropped (family dedup)');
     }

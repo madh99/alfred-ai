@@ -66,6 +66,8 @@ describe('buildSafeImagePrompt (v950 Schicht 1)', () => {
     expect(p).toContain('Lookalikes');
     expect(p).toContain('Logos');
     expect(p).toContain('Stadion bei Nacht');
+    // v958 — Nationalflaggen sind erlaubt (Vision wertete rot-weiß-rot als „Logo")
+    expect(p).toContain('Nationalflaggen');
   });
 
   it('people_ok: nur Basis-Prompt, keine Regeln', () => {

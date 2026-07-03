@@ -93,7 +93,8 @@ WICHTIGE REGELN (Bildnisrecht, zwingend):
 - KEINE realen oder identifizierbaren Personen, KEINE Lookalikes von Personen des öffentlichen Lebens (Sportler, Trainer, Prominente).
 - Wenn Menschen nötig wirken: nur anonym (von hinten, Silhouette, unkenntlich, Menge aus der Ferne) — besser ganz ohne Menschen.
 - KEINE Vereins-, Verbands- oder Marken-Logos, keine erkennbaren Trikot-Embleme.
-- Bevorzugt Symbolik: Stadion, Ball, Rasen, Taktiktafel, Fahnen ohne Embleme, abstrakte Grafik.`;
+- ERLAUBT sind Nationalflaggen und Länderfarben (rot-weiß-rot etc.) — das sind keine geschützten Logos.
+- Bevorzugt Symbolik: Stadion, Ball, Rasen, Taktiktafel, Flaggen, abstrakte Grafik.`;
 }
 
 /** Strenges Retry-Motiv nach einem Vision-Verstoß. */
@@ -129,7 +130,7 @@ export async function verifyImagePolicy(
             type: 'text',
             text: 'Prüfe dieses KI-generierte Bild für einen öffentlichen Social-Media-Kanal:\n'
               + '1. person: Zeigt es eine identifizierbare (auch nur ähnlich aussehende) reale Person, insbesondere Personen des öffentlichen Lebens (Sportler, Trainer, Promis)? Anonyme Silhouetten/Rückenansichten/unkenntliche Menschenmengen zählen NICHT.\n'
-              + '2. logo: Zeigt es erkennbare Vereins-, Verbands- oder Markenlogos?\n'
+              + '2. logo: Zeigt es erkennbare Vereins-, Verbands- oder MARKEN-Logos (z.B. Puma/Adidas, Klub-Wappen)? WICHTIG: Nationalflaggen, Länderfarben und generische Wappen-Silhouetten zählen NICHT als Logo — nur bei eindeutig zuordenbaren Marken/Vereinen logo=true.\n'
               + 'Antworte NUR mit JSON: {"person": true|false, "logo": true|false, "begruendung": "1 Satz"}',
           },
         ],

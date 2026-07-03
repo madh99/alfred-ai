@@ -233,6 +233,24 @@ describe('ContentStudio (v935)', () => {
     expect(createdItems[0].title).toContain('Panini');
   });
 
+  it('v958: Doppelungen INNERHALB eines Batches werden verworfen (Realfall 2× Einzelkritik)', async () => {
+    const channel = makeChannel();
+    const { studio, createdItems } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([
+        { title: 'Einzelkritik im Blick: ÖFB-Spieler analysiert', body: 'Ein ausführlicher Beitrag über die Einzelkritik mit allen Details und Einordnung.', hashtags: ['oefb'], warum: 'x' },
+        { title: 'Noten für die ÖFB-Spieler: Wie war eure Einzelkritik?', body: 'Ein weiterer ausführlicher Beitrag zur Einzelkritik mit Community-Frage am Ende.', hashtags: ['oefb'], warum: 'y' },
+        { title: 'Panini-Tauschbörse: Diese Sticker sind heiß begehrt', body: 'Ein ausführlicher Beitrag über die Tauschbörse mit konkreten Beispielen und Frage.', hashtags: ['panini'], warum: 'z' },
+      ]),
+    });
+    const created = await studio.fillChannel(channel);
+    expect(created).toBe(2); // zweite Einzelkritik im selben Batch verworfen
+    expect(createdItems.map(i => i.title)).toEqual([
+      'Einzelkritik im Blick: ÖFB-Spieler analysiert',
+      'Panini-Tauschbörse: Diese Sticker sind heiß begehrt',
+    ]);
+  });
+
   it('v955: Fakten-Regel + Kanal-Lektionen landen im Prompt', async () => {
     const channel = makeChannel({ config: { topic_id: 't-1', lessons: ['Es ist die WM 2026, nicht die EM — auch in Hashtags.'] } });
     const { studio, llm } = makeStack({ channel });

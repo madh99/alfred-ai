@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.958] - 2026-07-03
+
+### Fixed — Batch-Dedup, schärfere Ähnlichkeits-Schwelle, Flaggen ≠ Logos (v958)
+
+Drei Live-Befunde nach dem .957-Test:
+
+- **Dedup auch INNERHALB eines Studio-Laufs:** zwei Einzelkritik-Posts
+  kamen aus demselben Batch — die Sperre prüfte nur gegen bestehende
+  Beiträge. Akzeptierte Titel wandern jetzt sofort in die Sperrliste.
+- **Ähnlichkeits-Schwelle 0,6 → 0,5:** der echte Einzelkritik-Doppelfall
+  hatte nur 2 gemeinsame Tokens bei 50 % Überlappung und rutschte durch.
+  Bewusst leicht aggressiv — lieber eine Idee zu viel verwerfen (Nachschub
+  ist billig) als Doppelungen in der Familie.
+- **Vision-Gate: Nationalflaggen sind keine Logos.** Das Gate verwarf
+  Bilder wegen „rot-weißer Flagge als erkennbarem nationalen Symbol" —
+  übervorsichtig und teuer (jeder Verwurf = Retry = doppelte Generierung;
+  so war das 30er-Monats-Budget des Telegram-Kanals nach einem Testtag
+  leer → „post ohne Bild"). Bild-Prompt und Vision-Prüfung stellen jetzt
+  klar: Nationalflaggen/Länderfarben erlaubt, logo=true nur bei eindeutig
+  zuordenbaren Marken/Vereinen (Puma, Klub-Wappen).
+- Hinweis Budget: `config.image_budget_per_month` je Kanal anpassbar; der
+  Zähler beginnt mit dem Kalendermonat neu.
+
 ## [0.19.0-multi-ha.957] - 2026-07-03
 
 ### Fixed — Familien-Dedup deterministisch + kein Selbst-Verweis (v957)
