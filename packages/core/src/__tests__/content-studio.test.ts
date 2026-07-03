@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ContentStudio, nextFreeSlots, parseIdeas, stripMetaLines, decodeHtmlEntities } from '../content-studio.js';
+import { ContentStudio, nextFreeSlots, parseIdeas, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle } from '../content-studio.js';
 import type { SocialRepository, SocialChannel, ContentItem, InterestsRepository, InsightsRepository } from '@alfred/storage';
 
 const OWNER = 'owner-1';
@@ -203,6 +203,36 @@ describe('ContentStudio (v935)', () => {
     expect(prompt).toContain('BESCHREIBUNG');
   });
 
+  it('v957: isNearDuplicateTitle erkennt den Alaba-Realfall, lässt Verschiedenes durch', () => {
+    const existing = ['Alaba lässt Zukunft im Nationalteam offen', 'Arnautovic: Schluss mit Nationalteam'];
+    expect(isNearDuplicateTitle('Alaba lässt Zukunft im Nationalteam offen', existing)).toBe(true);
+    expect(isNearDuplicateTitle('Alaba-Zukunft im Nationalteam weiter offen', existing)).toBe(true);
+    expect(isNearDuplicateTitle('Panini-Tauschbörse: Die gefragtesten Sticker', existing)).toBe(false);
+    expect(isNearDuplicateTitle('Spaniens Presse feiert den Sieg', existing)).toBe(false);
+  });
+
+  it('v957: Ideen mit Geschwister-Doppelung werden deterministisch verworfen', async () => {
+    const telegram = makeChannel({ id: 'ch-tg', name: 'FussballCC News', projectId: 'proj-1' });
+    const platform = makeChannel({ id: 'ch-cc', name: 'fussball.cc', platform: 'rest', projectId: 'proj-1' });
+    const { studio, socialRepo, createdItems } = makeStack({
+      channel: telegram,
+      llmResponse: JSON.stringify([
+        { title: 'Alaba lässt Zukunft im Nationalteam offen', body: 'Ein ausführlicher Beitrag über die offene Zukunft mit allem Drum und Dran.', hashtags: ['alaba'], warum: 'x' },
+        { title: 'Panini-Tauschbörse boomt', body: 'Ein ausführlicher Beitrag über die Tauschbörse mit Community-Frage am Ende.', hashtags: ['panini'], warum: 'y' },
+      ]),
+    });
+    (socialRepo.listChannels as any) = vi.fn(async () => [telegram, platform]);
+    (socialRepo.listItems as any) = vi.fn(async (_u: string, q: any) => {
+      if (q?.channelId === 'ch-cc') return [{ id: 'x1', channelId: 'ch-cc', title: 'Alaba lässt Zukunft im Nationalteam offen', body: '', media: [], hashtags: [], status: 'scheduled', source: 'studio', createdAt: 'x', updatedAt: 'x' }];
+      return [];
+    });
+
+    const created = await studio.fillChannel(telegram);
+    expect(created).toBe(1); // Alaba-Doppelung verworfen, nur Panini bleibt
+    expect(createdItems.length).toBe(1);
+    expect(createdItems[0].title).toContain('Panini');
+  });
+
   it('v955: Fakten-Regel + Kanal-Lektionen landen im Prompt', async () => {
     const channel = makeChannel({ config: { topic_id: 't-1', lessons: ['Es ist die WM 2026, nicht die EM — auch in Hashtags.'] } });
     const { studio, llm } = makeStack({ channel });
@@ -360,6 +390,8 @@ describe('ContentStudio (v935)', () => {
     // v956 — Realfall: Telegram versprach nicht existierende fussball.cc-Analysen
     expect(prompt).toContain('QUERVERWEISE NUR AUF EXISTIERENDES');
     expect(prompt).toContain('NIEMALS Inhalte versprechen');
+    // v957 — Realfall: fussball.cc-Post verwies auf fussball.cc selbst
+    expect(prompt).toContain('NIE auf den EIGENEN Kanal');
     // Fremde Familie taucht NICHT auf
     expect(prompt).not.toContain('Games-Kanal');
   });

@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.957] - 2026-07-03
+
+### Fixed — Familien-Dedup deterministisch + kein Selbst-Verweis (v957)
+
+Realfall trotz v954-Prompt-Regel: „Alaba lässt Zukunft im Nationalteam
+offen" erschien nahezu wortgleich auf Telegram UND fussball.cc; der
+fussball.cc-Beitrag verwies zudem auf „die ausführliche Einzelkritik auf
+fussball.cc" — auf sich selbst.
+
+- **Deterministische Doppelungs-Sperre** (Prompt-Appelle reichen nicht):
+  generierte Ideen, deren Titel einem geplanten/veröffentlichten Beitrag
+  des eigenen Kanals ODER eines Geschwister-Kanals zu ähnlich ist
+  (Token-Overlap-Heuristik, v924-Muster), werden im Code verworfen und
+  geloggt — der Alaba-Realfall ist als Test verewigt.
+- **Prompt geschärft:** Geschwister-Themen grundsätzlich meiden (anderes
+  Dossier-Thema wählen), Ausnahme nur mit klar anderem Blickwinkel UND
+  komplett anderem Titel; **nie auf den eigenen Kanal verweisen** (der
+  Leser ist schon dort).
+- Hinweis Wochenend-Posts: kein Bug — die Default-Slots sind Mo/Mi/Fr
+  18:00; Wochenende einfach per Kanal-Slots konfigurieren
+  („Setze die Posting-Slots auf Mo 18:00, Fr 18:00, Sa 10:00, So 19:00").
+
 ## [0.19.0-multi-ha.956] - 2026-07-03
 
 ### Fixed — Familien-Regeln: keine Querverweise auf nicht existierende Inhalte (v956)

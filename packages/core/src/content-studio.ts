@@ -52,6 +52,27 @@ export function nextFreeSlots(
   return out.sort();
 }
 
+/**
+ * v957 — deterministischer Doppelungs-Check über Kanalgrenzen (Muster v924):
+ * Tokens ≥4 Zeichen, Duplikat bei ≥3 gemeinsamen ODER ≥60% Überlappung.
+ * Realfall: „Alaba lässt Zukunft im Nationalteam offen" erschien wortgleich
+ * auf Telegram UND fussball.cc — die Prompt-Regel allein hielt nicht.
+ */
+export function isNearDuplicateTitle(candidate: string, existingTitles: string[]): boolean {
+  const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(t => t.length >= 4));
+  const cand = tokens(candidate);
+  if (cand.size === 0) return false;
+  for (const existing of existingTitles) {
+    const ex = tokens(existing);
+    if (ex.size === 0) continue;
+    let common = 0;
+    for (const t of cand) if (ex.has(t)) common++;
+    const overlap = common / Math.min(cand.size, ex.size);
+    if (common >= 3 || (overlap >= 0.6 && common >= 2)) return true;
+  }
+  return false;
+}
+
 interface GeneratedIdea {
   title: string;
   body: string;
@@ -179,7 +200,22 @@ export class ContentStudio {
     const needed = Math.max(0, slots.length - backlog);
     if (needed === 0) return 0;
 
-    const ideas = await this.generateIdeas(channel, needed);
+    const family = await this.familyContext(channel);
+    let ideas = await this.generateIdeas(channel, needed, family.block);
+    if (ideas.length === 0) return 0;
+
+    // v957 — deterministische Doppelungs-Sperre über Kanalgrenzen: Ideen, deren
+    // Titel einem geplanten/veröffentlichten Beitrag des Kanals ODER eines
+    // Geschwister-Kanals zu ähnlich ist, werden verworfen (Prompt-Regel reicht nicht).
+    const blockedTitles = [
+      ...planned.map(i => i.title ?? i.body.slice(0, 60)),
+      ...family.siblingTitles,
+    ];
+    const before = ideas.length;
+    ideas = ideas.filter(idea => !isNearDuplicateTitle(idea.title || idea.body.slice(0, 60), blockedTitles));
+    if (ideas.length < before) {
+      this.logger.info({ channel: channel.name, dropped: before - ideas.length }, 'v957 near-duplicate ideas dropped (family dedup)');
+    }
     if (ideas.length === 0) return 0;
 
     const isYoutube = channel.platform === 'youtube';
@@ -221,19 +257,18 @@ export class ContentStudio {
 
   // ── Wissens-Kontext + Ideen ───────────────────────────────────────────
 
-  private async generateIdeas(channel: SocialChannel, count: number): Promise<GeneratedIdea[]> {
-    const [dossier, bestPerformers, recentTitles, familyContext] = await Promise.all([
+  private async generateIdeas(channel: SocialChannel, count: number, familyBlock: string): Promise<GeneratedIdea[]> {
+    const [dossier, bestPerformers, recentTitles] = await Promise.all([
       this.topicDossier(channel),
       this.bestPerformers(channel),
       this.recentPublishedTitles(channel),
-      this.familyContext(channel),
     ]);
 
     const isYoutube = channel.platform === 'youtube';
     const prompt = (isYoutube
       ? this.buildYoutubePrompt(channel, count, dossier, bestPerformers, recentTitles)
       : this.buildPostPrompt(channel, count, dossier, bestPerformers, recentTitles))
-      + familyContext;
+      + familyBlock;
 
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 3000, tier: 'fast' });
     return parseIdeas(response.content ?? '');
@@ -246,31 +281,35 @@ export class ContentStudio {
    * seine ROLLE statt denselben Stoff zu doppeln; Cross-Verweise erwünscht,
    * bewusstes Verteilen läuft weiter über crosspost.
    */
-  private async familyContext(channel: SocialChannel): Promise<string> {
+  private async familyContext(channel: SocialChannel): Promise<{ block: string; siblingTitles: string[] }> {
     const family = ContentStudio.familyKey(channel);
-    if (!family) return '';
+    if (!family) return { block: '', siblingTitles: [] };
     try {
       const siblings = (await this.socialRepo.listChannels(this.ownerUserId))
         .filter(c => c.id !== channel.id && c.status !== 'archived' && ContentStudio.familyKey(c) === family);
-      if (siblings.length === 0) return '';
+      if (siblings.length === 0) return { block: '', siblingTitles: [] };
       const sections: string[] = [];
+      const siblingTitles: string[] = [];
       for (const sibling of siblings) {
         const items = await this.socialRepo.listItems(this.ownerUserId, {
           channelId: sibling.id, status: ['scheduled', 'approved', 'published'], limit: 15,
         });
         const titles = items.map(i => (i.title ?? i.body.slice(0, 60))).slice(0, 15);
+        siblingTitles.push(...titles);
         sections.push(`- **${sibling.name}** (${sibling.platform})${sibling.persona ? ` — Rolle: ${sibling.persona.slice(0, 140)}` : ''}${titles.length ? `\n  Geplant/zuletzt dort: ${titles.join(' · ')}` : ''}`);
       }
-      return `\n\n## Kanal-Familie (abgestimmte Arbeitsteilung)
+      const block = `\n\n## Kanal-Familie (abgestimmte Arbeitsteilung)
 Dieser Kanal gehört zu einer Familie. Die Geschwister-Kanäle:
 ${sections.join('\n')}
 
 REGELN für die Abstimmung:
-- KEINE inhaltliche Doppelung: Stoff, der oben bei einem Geschwister-Kanal geplant/veröffentlicht ist, hier NICHT nochmal als eigener Beitrag bringen — außer aus der EIGENEN Rolle heraus mit anderem Blickwinkel (z.B. Community-Frage statt Analyse).
+- KEINE inhaltliche Doppelung (zwingend): Themen, die oben bei einem Geschwister-Kanal geplant/veröffentlicht sind, hier NICHT nochmal bringen — wähle stattdessen ANDERE Dossier-Themen. Ausnahme nur mit KLAR anderem Blickwinkel UND komplett anderem Titel (nie denselben/ähnlichen Titel). Im Zweifel: anderes Thema.
 - Spiele die ROLLE dieses Kanals (siehe Persona) — was die Geschwister besser abdecken, denen überlassen.
-- QUERVERWEISE NUR AUF EXISTIERENDES (zwingend): Auf einen Geschwister-Beitrag darfst du NUR verweisen, wenn er OBEN in dessen Liste („Geplant/zuletzt dort") tatsächlich steht — dann benenne ihn so wie gelistet. NIEMALS Inhalte versprechen, die dort nicht stehen („die ausführliche Analyse auf X" ohne dass es sie gibt = verboten). Hat ein Geschwister-Kanal keine passenden Beiträge, dann KEIN Verweis — der Post muss für sich allein stehen.
+- QUERVERWEISE NUR AUF EXISTIERENDES (zwingend): Auf einen Geschwister-Beitrag darfst du NUR verweisen, wenn er OBEN in dessen Liste („Geplant/zuletzt dort") tatsächlich steht — dann benenne ihn so wie gelistet. NIEMALS Inhalte versprechen, die dort nicht stehen. Hat ein Geschwister-Kanal keine passenden Beiträge, dann KEIN Verweis — der Post muss für sich allein stehen.
+- NIE auf den EIGENEN Kanal verweisen („mehr dazu auf ${channel.name}" ist verboten — der Leser IST schon dort).
 - Cross-Promo auf dauerhafte ANGEBOTE/Features der Geschwister (z.B. Sammelalbum-Tracker, Tauschbörse) ist ok — die existieren unabhängig von einzelnen Beiträgen. Dosiert einsetzen, nicht in jedem Post.`;
-    } catch { return ''; }
+      return { block, siblingTitles };
+    } catch { return { block: '', siblingTitles: [] }; }
   }
 
   private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
