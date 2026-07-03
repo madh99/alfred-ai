@@ -39,7 +39,7 @@ export class SocialSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'social',
     category: 'automation',
-    description: 'Social-Media-Kanäle betreiben: Kanäle je Projekt oder standalone verwalten (Telegram-Kanal, eigene Plattform via REST; weitere folgen), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten zum manuellen Posten (prepare-Modus). "Social-Stopp" = pause_all. Bei "poste auf <Kanal>" oder "plane einen Post": diesen Skill nutzen.',
+    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now.',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 120_000,
@@ -59,7 +59,7 @@ export class SocialSkill extends Skill {
         platform: { type: 'string', enum: ['telegram_channel', 'rest'], description: 'create_channel: Plattform (v933: telegram_channel, rest; YouTube/Meta folgen)' },
         name: { type: 'string', description: 'create_channel: Anzeigename des Kanals' },
         project: { type: 'string', description: 'create_channel: optional Projekt-Name/-ID (Kanal hängt am Projekt, Secrets aus dessen ENVs)' },
-        config: { type: 'object', description: 'create_channel/update_channel: Provider-Config (telegram_channel: {chat_id}; rest: {base_url, publish_path?, insecure_tls?, env_stage?})' },
+        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird gemergt — z.B. {generate_images: true}, {image_budget_per_month: 30}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}' },
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },

@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.944] - 2026-07-03
+
+### Fixed — social-Skill: LLM-Routing für Kanal-Einstellungen geschärft (v944)
+
+Realfall (03.07.): „Aktualisiere den Kanal FussballCC News: config
+generate_images: true" — das LLM schickte einen Sub-Agenten Richtung
+Datenbank (der an der social_channels-Tabelle scheiterte), statt schlicht
+`social update_channel` aufzurufen.
+
+- Skill-Beschreibung stellt jetzt unmissverständlich klar: JEDE
+  Kanal-Einstellung (Modus, Slots, Persona, Blacklist, Limits,
+  generate_images, config-Werte) läuft AUSSCHLIESSLICH über
+  `action=update_channel` — niemals über DB/Shell/delegate/Sub-Agents.
+  Dazu explizites Phrasen-Mapping („Erzeuge Content für X" →
+  generate_content, „Social-Stopp" → pause_all, „Poste auf X" →
+  add_content + publish_now).
+- config-Parameter-Doku um alle Plattform-Beispiele erweitert
+  (generate_images, image_budget_per_month, youtube/instagram/facebook/
+  threads/x-Felder, rest-Templates) — das LLM sieht damit direkt, dass
+  generate_images ein config-Wert dieses Skills ist.
+
 ## [0.19.0-multi-ha.943] - 2026-07-03
 
 ### Added — rest-Provider: verschachtelte API-Antworten + URL-Templates (v943)
