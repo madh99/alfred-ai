@@ -22,6 +22,7 @@ function makeRepo(overrides: Partial<Record<keyof InterestsRepository, any>> = {
     listTopics: vi.fn(async () => [TOPIC]),
     getTopicById: vi.fn(async () => TOPIC),
     findTopicByName: vi.fn(async (_u: string, q: string) => q.toLowerCase().includes('fable') ? TOPIC : null),
+    findTopicByNameExact: vi.fn(async (_u: string, q: string) => q.toLowerCase().trim() === 'claude fable' ? TOPIC : null),
     updateTopic: vi.fn(async () => {}),
     touchActivity: vi.fn(async () => {}),
     listAllActiveTopics: vi.fn(async () => [TOPIC]),
@@ -59,18 +60,32 @@ describe('formatTopicBriefing', () => {
 
 describe('InterestsSkill', () => {
   it('create_topic legt an; existierendes Thema wird nicht dupliziert', async () => {
-    const repo = makeRepo({ findTopicByName: vi.fn(async () => null) });
+    const repo = makeRepo({ findTopicByNameExact: vi.fn(async () => null) });
     const skill = new InterestsSkill(repo);
     const r = await skill.execute({ action: 'create_topic', name: 'HW-Verkauf', keywords: ['gpu'] }, CTX);
     expect(r.success).toBe(true);
     expect((repo.createTopic as any).mock.calls[0][1]).toEqual({ name: 'HW-Verkauf', keywords: ['gpu'] });
 
-    const repo2 = makeRepo(); // findet TOPIC
+    const repo2 = makeRepo(); // exakter Name existiert
     const skill2 = new InterestsSkill(repo2);
     const r2 = await skill2.execute({ action: 'create_topic', name: 'Claude Fable' }, CTX);
     expect(r2.success).toBe(true);
     expect((r2.data as any).existed).toBe(true);
     expect(repo2.createTopic).not.toHaveBeenCalled();
+  });
+
+  it('v952: Keyword-Kollision blockiert das Anlegen NICHT mehr (Realfall Panini)', async () => {
+    // Fuzzy findet ein fremdes Topic (Keyword „Panini" in FussballCC News) —
+    // der Duplikat-Check muss trotzdem EXAKT prüfen und anlegen
+    const repo = makeRepo({
+      findTopicByName: vi.fn(async () => TOPIC),          // fuzzy: Treffer (falsch für create)
+      findTopicByNameExact: vi.fn(async () => null),      // exakt: existiert nicht
+    });
+    const skill = new InterestsSkill(repo);
+    const r = await skill.execute({ action: 'create_topic', name: 'Panini-Sammelalbum WM 2026', keywords: ['panini', 'sticker'] }, CTX);
+    expect(r.success).toBe(true);
+    expect((r.data as any).existed).toBeUndefined();
+    expect(repo.createTopic).toHaveBeenCalledTimes(1);
   });
 
   it('add_source validiert kind/url/query', async () => {

@@ -96,7 +96,19 @@ export class InterestsRepository {
     return row ? this.mapTopic(row) : null;
   }
 
-  /** Fuzzy-Suche nach Name (exakt → enthält → Keyword-Treffer). */
+  /**
+   * v952 — Exakter Namens-Match (case-insensitive, getrimmt). Für den
+   * Duplikat-Check beim ANLEGEN — die Fuzzy-Suche unten ist dafür zu locker
+   * (Realfall: „Panini-Sammelalbum WM 2026" matchte via Keyword „Panini"
+   * fälschlich auf „FussballCC News" → Anlegen verweigert).
+   */
+  async findTopicByNameExact(userId: string, name: string): Promise<InterestTopic | null> {
+    const topics = await this.listTopics(userId);
+    const q = name.toLowerCase().trim();
+    return topics.find(t => t.name.toLowerCase().trim() === q) ?? null;
+  }
+
+  /** Fuzzy-Suche nach Name (exakt → enthält → Keyword als GANZES WORT) — für Lookups (briefing, link). */
   async findTopicByName(userId: string, name: string): Promise<InterestTopic | null> {
     const topics = await this.listTopics(userId);
     const q = name.toLowerCase().trim();
@@ -104,7 +116,14 @@ export class InterestsRepository {
     if (exact) return exact;
     const contains = topics.find(t => t.name.toLowerCase().includes(q) || q.includes(t.name.toLowerCase()));
     if (contains) return contains;
-    return topics.find(t => t.keywords.some(k => k.toLowerCase() === q || q.includes(k.toLowerCase()))) ?? null;
+    // v952 — Keyword nur als ganzes Wort und ≥4 Zeichen (vorher: rohes includes —
+    // kurze Keywords grabschten sich fremde Anfragen)
+    return topics.find(t => t.keywords.some(k => {
+      const kw = k.toLowerCase().trim();
+      if (kw.length < 4) return kw === q;
+      if (kw === q) return true;
+      return new RegExp(`(^|[^a-zä-ü0-9])${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-zä-ü0-9]|$)`, 'i').test(q);
+    })) ?? null;
   }
 
   async updateTopic(userId: string, id: string, patch: {

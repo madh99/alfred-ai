@@ -108,7 +108,10 @@ export class InterestsSkill extends Skill {
       ? input.name.trim()
       : (typeof input.topic === 'string' ? input.topic.trim() : '');
     if (!name) return { success: false, error: 'name erforderlich' };
-    const existing = await this.repo.findTopicByName(userId, name);
+    // v952 — Duplikat-Check EXAKT statt fuzzy: die Keyword-Fuzzy-Suche matchte
+    // „Panini-Sammelalbum WM 2026" fälschlich auf ein Topic mit Keyword „Panini"
+    // und verweigerte das Anlegen. Ähnliche Topics sind gewollt möglich.
+    const existing = await this.repo.findTopicByNameExact(userId, name);
     if (existing) {
       return {
         success: true,

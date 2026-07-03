@@ -64,11 +64,17 @@ describe.skipIf(!hasBetterSqlite3)('InterestsRepository (v929)', () => {
     expect(listed.length).toBe(1);
     expect(listed[0].keywords).toEqual(['claude', 'fable', 'anthropic']);
 
-    // Fuzzy: exakt, enthält, Keyword
+    // Fuzzy: exakt, enthält, Keyword (als ganzes Wort)
     expect((await repo.findTopicByName(USER, 'claude fable'))?.id).toBe(topic.id);
     expect((await repo.findTopicByName(USER, 'Fable'))?.id).toBe(topic.id);
     expect((await repo.findTopicByName(USER, 'was gibts zu anthropic'))?.id).toBe(topic.id);
     expect(await repo.findTopicByName(USER, 'Bitcoin')).toBeNull();
+
+    // v952 — Exakt-Suche für den Anlege-Duplikat-Check
+    expect((await repo.findTopicByNameExact(USER, '  Claude Fable '))?.id).toBe(topic.id);
+    expect(await repo.findTopicByNameExact(USER, 'Claude Fable 5 Sammelalbum')).toBeNull();
+    // Keyword nur als ganzes Wort: „anthropics" (Teilwort) darf NICHT matchen
+    expect(await repo.findTopicByName(USER, 'anthropics roadmap')).toBeNull();
 
     await repo.updateTopic(USER, topic.id, { status: 'paused', notifyThreshold: 'normal' });
     const updated = await repo.getTopicById(USER, topic.id);

@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.952] - 2026-07-03
+
+### Fixed — Themen-Anlage: Keyword-Kollision blockierte create_topic (v952)
+
+Realfall: „Lege ein Interessen-Thema *Panini-Sammelalbum WM 2026* an" wurde
+verweigert — der Duplikat-Check nutzte die Fuzzy-Suche, und die matchte über
+das Keyword „Panini" des bestehenden Topics „FussballCC News" (dessen
+Keywords u. a. WM 2026/Panini/Sticker enthalten).
+
+- **Duplikat-Check beim Anlegen ist jetzt EXAKT** (Name, case-insensitive,
+  getrimmt — neue Repo-Methode `findTopicByNameExact`). Ähnlich benannte
+  Themen sind gewollt möglich.
+- **Fuzzy-Suche bleibt für Lookups** (topic_briefing, link_topic), aber
+  Keyword-Treffer zählen nur noch als **ganzes Wort** und ab 4 Zeichen —
+  vorher grabschte sich ein rohes `includes` mit kurzen Keywords fremde
+  Anfragen.
+- 3 neue/erweiterte Tests inkl. des Panini-Realfalls und
+  Teilwort-Gegenbeispiel („anthropics" matcht Keyword „anthropic" nicht).
+
 ## [0.19.0-multi-ha.951] - 2026-07-03
 
 ### Added — Social: ein Kanal kann mehrere Interessen-Themen speisen (v951)
