@@ -209,16 +209,18 @@ export class ContentStudio {
     const planned = await this.socialRepo.listItems(this.ownerUserId, {
       channelId: channel.id, status: ['scheduled', 'approved', 'draft', 'idea'], limit: 100,
     });
-    const slots = nextFreeSlots(channel, planned, Math.max(0, 10 - planned.length), now);
+    // v971 — Kapazität am Planungshorizont statt hartem 10er-Deckel: der alte
+    // Deckel ließ bei 9 offenen Items genau 1 neues zu, egal wie viele Slots
+    // konfiguriert waren (Realfall: 11 Slots/Woche → „1 neuer Entwurf").
+    // MAX_IN_FLIGHT bleibt als Schutz für LLM-/Bild-Budget.
+    const MAX_IN_FLIGHT = 30;
+    const slots = nextFreeSlots(channel, planned, Math.max(0, MAX_IN_FLIGHT - planned.length), now);
     // Entwürfe/Ideen ohne Termin zählen als Vorrat — nicht doppelt erzeugen
     const backlog = planned.filter(i => (i.status === 'draft' || i.status === 'idea') && !i.scheduledAt).length;
     const needed = Math.max(0, slots.length - backlog);
     if (needed === 0) return 0;
 
     const family = await this.familyContext(channel);
-    let ideas = await this.generateIdeas(channel, needed, family.block);
-    if (ideas.length === 0) return 0;
-
     // v957 — deterministische Doppelungs-Sperre über Kanalgrenzen: Ideen, deren
     // Titel einem geplanten/veröffentlichten Beitrag des Kanals ODER eines
     // Geschwister-Kanals zu ähnlich ist, werden verworfen (Prompt-Regel reicht nicht).
@@ -226,44 +228,53 @@ export class ContentStudio {
       ...planned.map(i => i.title ?? i.body.slice(0, 60)),
       ...family.siblingTitles,
     ];
-    const before = ideas.length;
-    // v958 — auch INNERHALB des Batches deduplizieren: akzeptierte Titel wandern
-    // in die Sperrliste (Realfall: zwei Einzelkritik-Posts aus EINEM Lauf).
-    const accepted: GeneratedIdea[] = [];
-    for (const idea of ideas) {
-      const title = idea.title || idea.body.slice(0, 60);
-      if (isNearDuplicateTitle(title, blockedTitles)) continue;
-      blockedTitles.push(title);
-      accepted.push(idea);
-    }
-    ideas = accepted;
-    if (ideas.length < before) {
-      this.logger.info({ channel: channel.name, dropped: before - ideas.length }, 'v957 near-duplicate ideas dropped (family dedup)');
-    }
-    if (ideas.length === 0) return 0;
 
     const isYoutube = channel.platform === 'youtube';
     let created = 0;
     const createdTitles: string[] = [];
-    for (let i = 0; i < ideas.length && i < needed; i++) {
-      const idea = ideas[i];
-      const media = await this.maybeGenerateImage(channel, idea);
-      const item = await this.socialRepo.createItem(this.ownerUserId, channel.id, {
-        status: 'draft',
-        title: idea.title || undefined,
-        body: idea.body,
-        hashtags: idea.hashtags,
-        media,
-        source: 'studio',
-      });
-      await this.socialRepo.mergePerformance(this.ownerUserId, item.id, { warum: idea.warum });
-      if (channel.mode === 'approve' || channel.mode === 'autonomous') {
-        const slot = slots[created];
-        if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+    // v971 — in BATCHES generieren (LLM liefert je Aufruf max. ~10 brauchbare
+    // Ideen): weitere Runden bis der Bedarf gedeckt ist oder keine neuen,
+    // dedup-überlebenden Ideen mehr kommen.
+    for (let round = 0; round < 4 && created < needed; round++) {
+      const batchSize = Math.min(8, needed - created);
+      const ideas = await this.generateIdeas(channel, batchSize, family.block);
+      if (ideas.length === 0) break;
+
+      // v958 — auch INNERHALB des Batches deduplizieren: akzeptierte Titel wandern
+      // in die Sperrliste (Realfall: zwei Einzelkritik-Posts aus EINEM Lauf).
+      const accepted: GeneratedIdea[] = [];
+      for (const idea of ideas) {
+        const title = idea.title || idea.body.slice(0, 60);
+        if (isNearDuplicateTitle(title, blockedTitles)) continue;
+        blockedTitles.push(title);
+        accepted.push(idea);
       }
-      createdTitles.push(idea.title || idea.body.slice(0, 60));
-      created++;
+      if (accepted.length < ideas.length) {
+        this.logger.info({ channel: channel.name, dropped: ideas.length - accepted.length }, 'v957 near-duplicate ideas dropped (family dedup)');
+      }
+      if (accepted.length === 0) break; // nur noch Duplikate → Thema erschöpft
+
+      for (const idea of accepted) {
+        if (created >= needed) break;
+        const media = await this.maybeGenerateImage(channel, idea);
+        const item = await this.socialRepo.createItem(this.ownerUserId, channel.id, {
+          status: 'draft',
+          title: idea.title || undefined,
+          body: idea.body,
+          hashtags: idea.hashtags,
+          media,
+          source: 'studio',
+        });
+        await this.socialRepo.mergePerformance(this.ownerUserId, item.id, { warum: idea.warum });
+        if (channel.mode === 'approve' || channel.mode === 'autonomous') {
+          const slot = slots[created];
+          if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+        }
+        createdTitles.push(idea.title || idea.body.slice(0, 60));
+        created++;
+      }
     }
+    if (created === 0) return 0;
 
     // suggest-Modus: EIN stiller Sammel-Insight statt aktivem Nachfragen
     if (created > 0 && channel.mode === 'suggest' && this.insightsRepo) {

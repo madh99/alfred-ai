@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.971] - 2026-07-04
+
+### Fixed — Studio füllt jetzt alle konfigurierten Slots (v971)
+
+- Das Content-Studio hielt hart bei **10 offenen Beiträgen je Kanal** —
+  wer mehr Posting-Slots konfigurierte, bekam trotzdem nur einen neuen
+  Entwurf, sobald 9 in der Pipeline lagen („Erzeuge Content" → „1 neuer
+  Entwurf" trotz 11 Slots/Woche). Die Kapazität richtet sich jetzt nach
+  dem Planungshorizont (Schutzgrenze: 30 offene je Kanal), und die
+  Ideen werden in **Batches** generiert, bis der Bedarf gedeckt ist oder
+  das Thema erschöpft ist (nur noch Duplikate) — die Duplikat-Sperren
+  aus v957/v958 gelten über alle Batches hinweg.
+
 ## [0.19.0-multi-ha.970] - 2026-07-04
 
 ### Fixed — Instagram: Unterstützung für „API mit Instagram-Anmeldung" (v970)

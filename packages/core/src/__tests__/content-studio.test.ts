@@ -249,6 +249,33 @@ describe('ContentStudio (v935)', () => {
     expect(candidate.sourceData.router).toBe(true);
   });
 
+  it('v971: kein 10er-Deckel mehr — Batches füllen den Horizont (Realfall: 11 Slots/Woche → „1 neuer Entwurf")', async () => {
+    const channel = makeChannel({
+      postingSlots: ['Mo 08:00', 'Mo 12:00', 'Di 08:00', 'Di 12:00', 'Mi 08:00', 'Mi 12:00', 'Do 08:00', 'Do 12:00', 'Fr 08:00', 'Fr 12:00', 'Sa 08:00', 'Sa 12:00', 'So 08:00', 'So 12:00'],
+      planningHorizonDays: 7,
+    });
+    const { studio, llm, createdItems } = makeStack({ channel });
+    let n = 0;
+    (llm.complete as any).mockImplementation(async () => ({
+      content: JSON.stringify(Array.from({ length: 8 }, () => {
+        n++;
+        return { title: `Exklusivthema${n}`, body: `Ein ausreichend langer Beitrag Nummer ${n} mit Substanz, Kontext und einer Frage an die Community?`, hashtags: ['wm'] };
+      })),
+    }));
+    const created = await studio.fillChannel(channel);
+    expect(created).toBeGreaterThan(10); // alter Deckel: hart 10 offene Items je Kanal
+    expect(createdItems.length).toBe(created);
+    expect((llm.complete as any).mock.calls.length).toBeGreaterThan(1); // Batches
+  });
+
+  it('v971: Batch-Schleife stoppt, wenn nur noch Duplikate kommen', async () => {
+    const channel = makeChannel({ postingSlots: ['Mo 08:00', 'Di 08:00', 'Mi 08:00', 'Do 08:00', 'Fr 08:00', 'Sa 08:00', 'So 08:00'], planningHorizonDays: 14 });
+    const { studio, llm } = makeStack({ channel }); // Mock liefert IMMER dieselben 2 Ideen
+    const created = await studio.fillChannel(channel);
+    expect(created).toBe(2); // Runde 2 liefert nur Duplikate → Abbruch statt Endlosschleife
+    expect((llm.complete as any).mock.calls.length).toBe(2);
+  });
+
   it('voller Planungshorizont: keine neuen Items, kein LLM-Call', async () => {
     const channel = makeChannel();
     // Alle freien Slots des Horizonts sind bereits belegt (TZ-agnostisch berechnet)
@@ -377,15 +404,14 @@ describe('ContentStudio (v935)', () => {
       }),
     };
     const registry = { get: vi.fn(() => ({ metadata: { name: 'image_generate' } })) };
-    let llmCall = 0;
     const llm = {
+      // v971 — Ideen-Calls haben String-Content, Vision-Calls einen Bild-Block:
+      // an der Request-Form unterscheiden (Batch-Schleife ruft Ideen mehrfach ab;
+      // Runde 2 liefert dieselbe Idee → Dedup beendet die Schleife)
       complete: vi.fn(async (req: any) => {
-        llmCall++;
-        // Call 1 = Ideen; alle weiteren = Vision-Verdicts (immer Verstoß)
-        if (llmCall === 1) {
+        if (typeof req.messages[0].content === 'string') {
           return { content: JSON.stringify([{ title: 'Marko Arnautovic tritt ab', body: 'Ein ausführlicher Beitrag über den Rücktritt mit Einordnung und allem Drum und Dran für die Community.', hashtags: ['oefb'], bildidee: 'Marko Arnautovic winkt den Fans' }]) };
         }
-        expect(Array.isArray(req.messages[0].content)).toBe(true); // Vision-Call mit Bild-Block
         return { content: '{"person": true, "logo": false, "begruendung": "erkennbarer Spieler"}' };
       }),
     } as any;
@@ -442,11 +468,15 @@ describe('ContentStudio (v935)', () => {
 
     const created = await studio.fillChannel(channel);
     expect(created).toBe(1);
-    // Nur 1 Generierung, Prompt enthält den Namen (Opt-in), KEIN Vision-Call (llm nur 1× für Ideen)
+    // Nur 1 Generierung, Prompt enthält den Namen (Opt-in), KEIN Vision-Call
+    // (v971: LLM-Calls sind Ideen-Batches — Runde 2 liefert dieselbe Idee, Dedup bricht ab;
+    // entscheidend ist, dass KEIN Call ein Vision-Call mit Bild-Block ist)
     const prompt = (sandbox.execute as any).mock.calls[0][1].prompt as string;
     expect(prompt).toContain('David Alaba');
     expect(prompt).not.toContain('KEINE realen');
-    expect((llm.complete as any).mock.calls.length).toBe(1);
+    for (const call of (llm.complete as any).mock.calls) {
+      expect(typeof call[0].messages[0].content).toBe('string'); // nie Vision (Bild-Block)
+    }
     expect((createdMedia[0] as unknown[]).length).toBe(1);
   });
 
