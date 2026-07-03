@@ -299,6 +299,41 @@ Antworte NUR mit einem JSON-Array:
     }
   }
 
+  /**
+   * v936 — Wöchentlicher Nischen-Report (Lern-Loop sichtbar machen): fasst je
+   * Kanal Bestperformer + Themen-Trends zusammen und legt EINEN stillen
+   * Insights-Eintrag ab. @returns true wenn ein Report erzeugt wurde.
+   */
+  async weeklyNicheReport(): Promise<boolean> {
+    if (!this.insightsRepo) return false;
+    const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+    if (channels.length === 0) return false;
+    const sections: string[] = [];
+    for (const channel of channels) {
+      const [best, dossier] = await Promise.all([this.bestPerformers(channel), this.topicDossier(channel)]);
+      const weekStart = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
+      const publishedCount = await this.socialRepo.countPublishedSince(channel.id, weekStart);
+      sections.push(`**${channel.name}** (${channel.platform}) — ${publishedCount} Posts diese Woche${best ? `\nBestperformer:\n${best}` : ''}${dossier ? `\nThemen-Lage: ${dossier.slice(0, 300)}` : ''}`);
+    }
+    let analysis = '';
+    try {
+      const response = await this.llm.complete({
+        messages: [{ role: 'user', content: `Analysiere die Wochendaten dieser Social-Kanäle und leite 3-5 konkrete Nischen-/Format-Empfehlungen ab (deutsch, direkt umsetzbar, keine Allgemeinplätze):\n\n${sections.join('\n\n')}` }],
+        maxTokens: 800, tier: 'fast',
+      });
+      analysis = response.content?.trim() ?? '';
+    } catch { /* Report auch ohne LLM-Analyse abliefern */ }
+    await this.insightsRepo.upsertCandidate(this.ownerUserId, {
+      category: 'social',
+      title: `Wochen-Report Social (${new Date().toISOString().slice(0, 10)})`,
+      body: `${sections.join('\n\n')}${analysis ? `\n\n**Empfehlungen:**\n${analysis}` : ''}`,
+      confidence: 0.6,
+      sourceData: { router: true, urgency: 'low', storedAt: new Date().toISOString() },
+      dedupeKey: `social-weekly:${new Date().toISOString().slice(0, 10)}`,
+    });
+    return true;
+  }
+
   // ── Auto-Interessen-Topic je Kanal ────────────────────────────────────
 
   private async ensureTopic(channel: SocialChannel): Promise<void> {

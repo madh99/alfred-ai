@@ -29,6 +29,18 @@ export abstract class SocialProvider {
   async deletePost(_externalId: string, _channel: SocialChannel, _secrets: Record<string, string>): Promise<boolean> {
     return false;
   }
+
+  /**
+   * v936 — Optional: Performance-Metriken zu veröffentlichten Posts
+   * (Analytics-Collector ruft täglich; Basis des Lern-Loops).
+   */
+  async fetchMetrics(
+    _items: Array<{ id: string; externalId: string }>,
+    _channel: SocialChannel,
+    _secrets: Record<string, string>,
+  ): Promise<Array<{ itemId: string; kind: string; value: number }>> {
+    return [];
+  }
 }
 
 /** Baut den fertigen Post-Text (Body + Hashtags) mit optionalem Längen-Limit. */

@@ -253,6 +253,15 @@ export class SocialRepository {
     );
   }
 
+  /** v936 — published-Posts seit Zeitpunkt (Monats-Limits, z.B. X-Free-Tier). */
+  async countPublishedSince(channelId: string, sinceIso: string): Promise<number> {
+    const row = await this.db.queryOne(
+      `SELECT COUNT(*) AS c FROM content_items WHERE channel_id = ? AND status = 'published' AND published_at >= ?`,
+      [channelId, sinceIso],
+    ) as { c: number | string } | undefined;
+    return row ? Number(row.c) : 0;
+  }
+
   /** Tages-Limit-Check (Leitplanke 2): published-Posts eines Kanals am Tag (UTC). */
   async countPublishedToday(channelId: string, dayIso?: string): Promise<number> {
     const day = (dayIso ?? new Date().toISOString()).slice(0, 10);

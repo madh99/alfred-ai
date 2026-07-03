@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.936] - 2026-07-03
+
+### Added — Social-Media: YouTube/Meta/X-Provider + Analytics-Lern-Loop (v936, Stufe 4 von 6)
+
+- **YouTube-Provider:** Resumable-Upload über die Data API v3 (OAuth2 via
+  Refresh-Token aus ENV-Stage `social`), Titel/Beschreibung/Tags aus dem
+  Studio-Konzept (Teil nach `---` wird die Beschreibung mit Kapitelmarken),
+  Thumbnail best-effort, privacy_status konfigurierbar (Default unlisted),
+  Löschen, Analytics (Views/Likes/Comments je Video).
+- **Meta-Provider** (eine Klasse, drei Plattformen): Instagram
+  (Container-Flow, Bild + Reels mit Status-Polling, Permalink), Facebook-Pages
+  (Feed/Foto, löschbar), Threads (Text/Bild-Container). Solange die
+  Meta-App-Review läuft: Kanal einfach mit publish_mode `prepare` fahren —
+  dieselben Items werden fertig aufbereitet.
+- **X-Provider** (API v2, Free-Tier-tauglich): Text-Posts (280 Zeichen,
+  automatisch gekürzt), Token-Refresh optional, Löschen, public_metrics.
+- **Monats-Limit generisch** (neue Leitplanke): `config.max_posts_per_month`
+  je Kanal — schützt API-Kontingente (X Free-Tier: 450 setzen); wird wie das
+  Tages-Limit in Code erzwungen.
+- **Analytics-Collector** (täglich 07:00, HA-Slot, VOR dem Studio-Lauf):
+  holt Metriken der letzten 30 veröffentlichten Posts je Kanal →
+  `channel_metrics` + performance-JSON am Item. Damit ist der **Lern-Loop
+  geschlossen**: das Content-Studio gewichtet ab sofort mit echten
+  Bestperformern statt Vermutungen.
+- **Wochen-Report** (sonntags): Posts/Bestperformer/Themen-Lage je Kanal +
+  3–5 konkrete Nischen-Empfehlungen per LLM — als stiller Insights-Eintrag.
+- 12 neue Tests (alle drei Provider mit gemocktem HTTP, Monats-Limit,
+  Collector).
+
 ## [0.19.0-multi-ha.935] - 2026-07-03
 
 ### Added — Social-Media: Content-Studio (v935, Stufe 3 von 6)

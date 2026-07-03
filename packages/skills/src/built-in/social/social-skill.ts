@@ -349,6 +349,15 @@ export class SocialSkill extends Skill {
     if (publishedToday >= channel.maxPostsPerDay) {
       return { success: false, error: `Tages-Limit erreicht (${publishedToday}/${channel.maxPostsPerDay} auf ${channel.name}) — max_posts_per_day anpassen oder morgen posten.` };
     }
+    // v936 — optionales Monats-Limit (z.B. X-Free-Tier: config.max_posts_per_month=450)
+    const monthlyCap = typeof channel.config.max_posts_per_month === 'number' ? channel.config.max_posts_per_month : undefined;
+    if (monthlyCap !== undefined) {
+      const monthStart = `${new Date().toISOString().slice(0, 7)}-01T00:00:00Z`;
+      const publishedMonth = await this.repo.countPublishedSince(channel.id, monthStart);
+      if (publishedMonth >= monthlyCap) {
+        return { success: false, error: `Monats-Limit erreicht (${publishedMonth}/${monthlyCap} auf ${channel.name}) — API-Kontingent geschont.` };
+      }
+    }
     // Leitplanke 3 — Blacklist-Scan
     const haystack = `${item.title ?? ''} ${item.body}`.toLowerCase();
     const hit = channel.blacklist.find(w => w.trim().length > 0 && haystack.includes(w.toLowerCase()));
@@ -422,6 +431,38 @@ export class SocialSkill extends Skill {
     return ok
       ? { success: true, display: `🗑 Post [${item.id.slice(0, 8)}] auf ${channel.name} gelöscht.` }
       : { success: false, error: `Löschen auf ${channel.platform} fehlgeschlagen oder nicht unterstützt.` };
+  }
+
+  /**
+   * v936 — Analytics-Collector: Metriken für zuletzt veröffentlichte Posts
+   * aller Kanäle holen (Provider mit supportsMetrics) → channel_metrics +
+   * performance-JSON am Item. Vom Kern täglich aufgerufen (Lern-Loop-Futter).
+   */
+  async collectMetrics(userId: string): Promise<number> {
+    const channels = await this.repo.listChannels(userId, 'active');
+    const today = new Date().toISOString().slice(0, 10);
+    let collected = 0;
+    for (const channel of channels) {
+      const provider = this.providers.get(channel.platform);
+      if (!provider || !provider.capabilities().supportsMetrics) continue;
+      const published = (await this.repo.listItems(userId, { channelId: channel.id, status: 'published', limit: 30 }))
+        .filter(i => i.externalId)
+        .map(i => ({ id: i.id, externalId: i.externalId! }));
+      if (published.length === 0) continue;
+      try {
+        const metrics = await provider.fetchMetrics(published, channel, await this.secrets(channel));
+        const perItem = new Map<string, Record<string, number>>();
+        for (const m of metrics) {
+          await this.repo.upsertMetric(channel.id, { itemId: m.itemId, date: today, kind: m.kind, value: m.value });
+          perItem.set(m.itemId, { ...(perItem.get(m.itemId) ?? {}), [m.kind]: m.value });
+          collected++;
+        }
+        for (const [itemId, perf] of perItem) {
+          await this.repo.mergePerformance(userId, itemId, perf).catch(() => { /* non-critical */ });
+        }
+      } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
+    }
+    return collected;
   }
 
   /** v935 — Content-Studio sofort für einen Kanal laufen lassen. */

@@ -5515,12 +5515,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     if (this.database) {
       const { SocialRepository } = await import('@alfred/storage');
       this.socialRepo = new SocialRepository(this.database.getAdapter());
-      const { SocialSkill, TelegramChannelProvider, RestProvider } = await import('@alfred/skills');
+      const { SocialSkill, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider } = await import('@alfred/skills');
       const socialSkill = new SocialSkill(this.socialRepo);
       socialSkill.registerProvider(new TelegramChannelProvider(
         this.config.telegram?.enabled ? this.config.telegram.token : undefined,
       ));
       socialSkill.registerProvider(new RestProvider());
+      // v936 — Plattform-Provider (Secrets aus ENV-Stage 'social'; solange z.B.
+      // die Meta-App-Review läuft, den Kanal einfach mit publish_mode 'prepare' fahren)
+      socialSkill.registerProvider(new YouTubeProvider());
+      socialSkill.registerProvider(new MetaProvider('instagram'));
+      socialSkill.registerProvider(new MetaProvider('facebook'));
+      socialSkill.registerProvider(new MetaProvider('threads'));
+      socialSkill.registerProvider(new XProvider());
       // Secrets: project_environments[channel.config.env_stage ?? 'social'] des gebundenen
       // Projekts, entschlüsselt via envCryptoRef (v733-Muster) — NIE Klartext in der DB.
       socialSkill.setSecretsResolver(async (channel) => {
@@ -6611,9 +6618,22 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const studio = this.contentStudio;
         socialSkill.setStudio(channel => studio.fillChannel(channel));
         let lastStudioDay = '';
+        let lastAnalyticsDay = '';
         this.contentStudioTimer = setInterval(async () => {
           const now = new Date();
           const today = now.toISOString().slice(0, 10);
+          // v936 — 07:00 Analytics einsammeln (vor dem Studio, damit
+          // Bestperformer frisch sind); sonntags zusätzlich Nischen-Report
+          if (now.getHours() === 7 && now.getMinutes() < 30 && lastAnalyticsDay !== today) {
+            lastAnalyticsDay = today;
+            if (await this.claimDailySlot(`social-analytics:${today}`)) {
+              try {
+                const n = await socialSkill.collectMetrics(ownerUid);
+                if (n > 0) this.logger.info({ metrics: n }, 'v936 social analytics collected');
+                if (now.getDay() === 0) await studio.weeklyNicheReport();
+              } catch (err) { this.logger.warn({ err }, 'v936 social analytics failed'); }
+            }
+          }
           if (now.getHours() !== 7 || now.getMinutes() < 30 || lastStudioDay === today) return;
           lastStudioDay = today;
           if (await this.claimDailySlot(`content-studio:${today}`)) {
