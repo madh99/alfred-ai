@@ -5,3 +5,4 @@ export { RestProvider } from './rest-provider.js';
 export { YouTubeProvider } from './youtube-provider.js';
 export { MetaProvider } from './meta-provider.js';
 export { XProvider } from './x-provider.js';
+export { parsePublicMediaConfig, publishPublicMedia, type PublicMediaConfig } from './public-media.js';

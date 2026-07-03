@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.969] - 2026-07-03
+
+### Added — Public-Media-Host je Kanal: Instagram & Co. mit generierten Bildern (v969)
+
+- Meta-Plattformen (Instagram, Facebook, Threads) laden Medien nicht hoch,
+  sondern holen sie per öffentlicher http-URL ab — lokal generierte Bilder
+  konnten dort bisher nicht gepostet werden. Neu: **`public_media` als
+  Kanal-Eigenschaft** — jeder Kanal bestimmt seinen eigenen Ablageort:
+  - `{provider: "rest", base_url, path?, url_field?}` — Medienbibliothek
+    der Projekt-Website (z. B. fussball.cc `/api/integrations/media`);
+    relative Antwort-URLs werden automatisch absolut.
+  - `{provider: "s3", endpoint, bucket, region?, public_base_url?}` —
+    S3-kompatibler Cloud-Bucket (R2/B2/S3, SigV4 ohne SDK-Abhängigkeit);
+    nur ausgehende Verbindungen, das eigene Netz bleibt zu.
+- Beim Publish wird ein lokales Medium automatisch über den Host des
+  Kanals veröffentlicht und die öffentliche URL verwendet. Ohne
+  konfigurierten Host: verständlicher Fehler mit Handlungsanweisung
+  (statt stillem Post ohne Bild); `create_channel` warnt bei
+  Meta-Plattformen im api-Modus ohne `public_media`.
+- Kanal-Einstellungen (UI) zeigen den Medien-Ablageort bei
+  Meta-Plattformen an.
+
 ## [0.19.0-multi-ha.968] - 2026-07-03
 
 ### Fixed — Kanal-Anlage kannte nur Telegram/REST (v968)

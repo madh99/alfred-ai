@@ -1,5 +1,6 @@
-import type { SocialChannel, ContentItem } from '@alfred/storage';
+import type { SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
 import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult } from './social-provider.js';
+import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 const THREADS = 'https://graph.threads.net/v1.0';
@@ -61,13 +62,33 @@ export class MetaProvider extends SocialProvider {
     return data;
   }
 
+  /**
+   * v969 — Meta holt Medien per öffentlicher http-URL ab. Lokale Dateien
+   * (generierte Bilder) werden vorher über den Public-Media-Host des Kanals
+   * (channel.config.public_media: Projekt-Medienbibliothek ODER S3-Bucket)
+   * veröffentlicht; ohne Host gibt es einen verständlichen Fehler statt
+   * eines stillen Posts ohne Bild.
+   */
+  private async ensurePublicUrl(
+    media: ContentMedia | undefined, item: ContentItem, channel: SocialChannel, secrets: Record<string, string>,
+  ): Promise<ContentMedia | undefined> {
+    if (!media || media.pathOrUrl.startsWith('http')) return media;
+    const cfg = parsePublicMediaConfig(channel.config.public_media);
+    if (!cfg) {
+      throw new Error(`${this.platform}: Medium ist eine lokale Datei — die Plattform braucht eine öffentliche URL. `
+        + `channel.config.public_media konfigurieren (Medien-Ablageort: Projekt-Medienbibliothek oder S3-Bucket) oder publish_mode 'prepare' nutzen.`);
+    }
+    const url = await publishPublicMedia(cfg, media.pathOrUrl, secrets, item.title ?? undefined);
+    return { ...media, pathOrUrl: url };
+  }
+
   async publish(item: ContentItem, channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
     const token = this.token(secrets);
     const target = this.targetId(channel);
     const caps = this.capabilities();
     const text = composePostText(item, caps.maxTextLength);
-    const image = item.media.find(m => m.type === 'image' && m.pathOrUrl.startsWith('http'));
-    const video = item.media.find(m => m.type === 'video' && m.pathOrUrl.startsWith('http'));
+    const image = await this.ensurePublicUrl(item.media.find(m => m.type === 'image'), item, channel, secrets);
+    const video = await this.ensurePublicUrl(item.media.find(m => m.type === 'video'), item, channel, secrets);
 
     if (this.platform === 'instagram') {
       // Container-Flow: media → (Status-Poll bei Video) → media_publish

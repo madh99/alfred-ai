@@ -779,6 +779,17 @@ export function SocialPage() {
                       )}
                     </div>
                   </div>
+                  {/* v969 — Medien-Ablageort (für Instagram/Meta: Plattform holt Medien per öffentlicher URL) */}
+                  {['instagram', 'facebook', 'threads'].includes(c.platform) && (
+                    <div className="text-[11px] text-gray-500">
+                      🌐 Medien-Ablageort (public_media): {(() => {
+                        const pm = c.config.public_media as { provider?: string; base_url?: string; endpoint?: string; bucket?: string } | undefined;
+                        if (pm?.provider === 'rest' && pm.base_url) return `Medienbibliothek ${pm.base_url}`;
+                        if (pm?.provider === 's3' && pm.endpoint) return `S3-Bucket ${pm.endpoint}/${pm.bucket ?? ''}`;
+                        return '⚠️ nicht konfiguriert — generierte Bilder können nicht gepostet werden (per Chat: „Aktualisiere den Kanal … config public_media")';
+                      })()}
+                    </div>
+                  )}
                   {/* Lektionen */}
                   <div>
                     <label className="text-[11px] text-gray-500">📚 Lektionen (fließen zwingend in jeden Studio-Lauf ein)</label>
