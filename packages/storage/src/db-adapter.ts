@@ -177,30 +177,51 @@ export class PostgresAsyncAdapter implements AsyncDbAdapter {
    * are handled at the repository level via adapter.type branching.
    */
   private adaptSql(sql: string): string {
-    // Replace ? with $N, skipping ? inside string literals ('...')
-    let idx = 0;
-    let adapted = '';
-    let inString = false;
-    for (let i = 0; i < sql.length; i++) {
-      const ch = sql[i];
-      if (ch === "'" && (i === 0 || sql[i - 1] !== "'")) {
-        inString = !inString;
-        adapted += ch;
-      } else if (ch === '?' && !inString) {
-        adapted += `$${++idx}`;
-      } else {
-        adapted += ch;
-      }
-    }
-
-    return adapted
-      // datetime('now') → NOW()
-      .replace(/datetime\s*\(\s*'now'\s*\)/gi, 'NOW()')
-      // date('now') → CURRENT_DATE
-      .replace(/date\s*\(\s*'now'\s*\)/gi, 'CURRENT_DATE')
-      // SQLite LIKE is case-insensitive by default, PostgreSQL isn't
-      .replace(/\bLIKE\b/gi, 'ILIKE');
+    return adaptSqliteToPostgres(sql);
   }
+}
+
+/**
+ * v947 — als Funktion extrahiert und String-Scanner repariert: Die alte
+ * Look-behind-Logik (`sql[i-1] !== "'"`) kippte bei LEEREN Literalen `''` —
+ * der in-String-Zustand blieb dauerhaft an, alle folgenden `?` wurden nicht
+ * mehr zu `$n` konvertiert. Realfall 03.07.: `COALESCE(item_id, '') = ?`
+ * im Budget-Zähler → PG "syntax error at or near AND" → fertig generierte
+ * Studio-Bilder wurden verworfen. Jetzt korrektes Look-AHEAD: `''` INNERHALB
+ * eines Strings ist ein escaptes Quote, `''` außerhalb ein leeres Literal.
+ */
+export function adaptSqliteToPostgres(sql: string): string {
+  let idx = 0;
+  let adapted = '';
+  let inString = false;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (inString) {
+      adapted += ch;
+      if (ch === "'") {
+        if (sql[i + 1] === "'") {
+          adapted += sql[++i]; // escaptes '' — bleibt im String
+        } else {
+          inString = false;
+        }
+      }
+    } else if (ch === "'") {
+      inString = true;
+      adapted += ch;
+    } else if (ch === '?') {
+      adapted += `$${++idx}`;
+    } else {
+      adapted += ch;
+    }
+  }
+
+  return adapted
+    // datetime('now') → NOW()
+    .replace(/datetime\s*\(\s*'now'\s*\)/gi, 'NOW()')
+    // date('now') → CURRENT_DATE
+    .replace(/date\s*\(\s*'now'\s*\)/gi, 'CURRENT_DATE')
+    // SQLite LIKE is case-insensitive by default, PostgreSQL isn't
+    .replace(/\bLIKE\b/gi, 'ILIKE');
 }
 
 /**

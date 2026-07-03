@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.947] - 2026-07-03
+
+### Fixed — PG-Adapter-Bug fraß Studio-Bilder + Posts waren nur Schlagzeilen (v947)
+
+Live-Befund (03.07., FussballCC News mit generate_images=true): Bilder wurden
+via gpt-image-1 ERZEUGT, dann aber verworfen — Log: „v935 image generation
+failed: syntax error at or near AND".
+
+- **Root Cause im PG-Adapter** (betrifft potenziell JEDE Query): der
+  ?→$n-Platzhalter-Scanner kippte bei **leeren String-Literalen** `''` — die
+  Look-behind-Logik hielt den in-String-Zustand dauerhaft offen, alle
+  folgenden `?` blieben unkonvertiert. Getriggert durch
+  `COALESCE(item_id, '') = ?` im Bild-Budget-Zähler. Scanner auf korrektes
+  Look-ahead umgebaut (`''` im String = escaptes Quote, außerhalb = leeres
+  Literal), als testbare Funktion `adaptSqliteToPostgres()` extrahiert —
+  6 Tests inkl. des Realfall-Querys.
+- **„Nur noch Schlagzeilen":** seit das Dossier echte News liefert, schrieb
+  das LLM knappe Teaser. Der Studio-Prompt verlangt jetzt vollwertige
+  Beiträge (4–8 Sätze, eigener Mehrwert — Einordnung, Details,
+  Community-Frage; Dossier = Rohstoff, kein Abschreibmaterial).
+- Nach dem Deploy: Entwürfe neu erzeugen lassen — dann mit Bild UND Substanz.
+
 ## [0.19.0-multi-ha.946] - 2026-07-03
 
 ### Added — Social: Crossposting über Kanäle (v946)

@@ -202,6 +202,15 @@ describe('ContentStudio (v935)', () => {
     expect(prompt).toContain('BESCHREIBUNG');
   });
 
+  it('v947: Prompt verlangt vollwertige Beiträge statt Schlagzeilen', async () => {
+    const channel = makeChannel();
+    const { studio, llm } = makeStack({ channel });
+    await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('4-8 Sätzen');
+    expect(prompt).toContain('NIEMALS nur Schlagzeile');
+  });
+
   it('Blacklist landet als TABU im Prompt', async () => {
     const channel = makeChannel({ blacklist: ['schiedsrichter'] });
     const { studio, llm } = makeStack({ channel });

@@ -242,6 +242,7 @@ export class ContentStudio {
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS VERÖFFENTLICHT (nicht wiederholen):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
 - Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
+- body = VOLLWERTIGER Beitrag mit 4-8 Sätzen und eigenem Mehrwert (Einordnung, Details, Frage an die Community) — NIEMALS nur Schlagzeile plus ein Satz. Dossier-Beiträge sind Rohstoff, kein Abschreibmaterial.
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
 - 3-6 Hashtags je Post.
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
