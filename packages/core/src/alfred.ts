@@ -5538,6 +5538,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       socialSkill.registerProvider(new MetaProvider('facebook'));
       socialSkill.registerProvider(new MetaProvider('threads'));
       socialSkill.registerProvider(new XProvider());
+      // v946 — LLM für formatgerechtes Crossposting
+      if (this.llmProvider) socialSkill.setLlm(this.llmProvider);
       // Secrets: project_environments[channel.config.env_stage ?? 'social'] des gebundenen
       // Projekts, entschlüsselt via envCryptoRef (v733-Muster) — NIE Klartext in der DB.
       socialSkill.setSecretsResolver(async (channel) => {

@@ -176,6 +176,68 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(r.display).toContain('Social-Stopp');
   });
 
+  it('crosspost: kopiert formatgerecht auf Ziel-Kanäle, überspringt die Quelle', async () => {
+    const source = makeChannel({ id: 'ch-1', name: 'Telegram-Kanal' });
+    const target = makeChannel({ id: 'ch-2', name: 'fussball.cc', platform: 'rest', persona: 'redaktionell' });
+    const item = makeItem({ channelId: 'ch-1', title: 'Derby-Sieg', hashtags: ['fussball'] });
+    const createdItems: any[] = [];
+    const repo = {
+      getChannel: vi.fn(async (_u: string, id: string) => (id === 'ch-1' ? source : id === 'ch-2' ? target : null)),
+      findChannelByName: vi.fn(async (_u: string, q: string) =>
+        q.toLowerCase().includes('fussball.cc') ? target : q.toLowerCase().includes('telegram') ? source : null),
+      getItem: vi.fn(async () => item),
+      listItems: vi.fn(async () => [item]),
+      createItem: vi.fn(async (_u: string, chId: string, o: any) => {
+        const copy = { ...makeItem(), ...o, channelId: chId, id: `copy-${createdItems.length + 1}` };
+        createdItems.push(copy);
+        return copy;
+      }),
+      transition: vi.fn(async () => item),
+    } as unknown as SocialRepository;
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+    skill.setLlm({
+      complete: vi.fn(async () => ({ content: '{"title":"Derby-Sieg: Die Analyse","body":"Redaktionell aufbereiteter Beitrag zum Derby-Sieg mit allen Details.","hashtags":["fussball","derby"]}' })),
+    } as any);
+
+    const r = await skill.execute({ action: 'crosspost', item_id: 'item-0001-aaaa', channels: ['fussball.cc', 'Telegram-Kanal'] }, CTX);
+    expect(r.success).toBe(true);
+    // Quelle (Telegram-Kanal) übersprungen — nur EINE Kopie auf fussball.cc
+    expect(createdItems.length).toBe(1);
+    expect(createdItems[0].channelId).toBe('ch-2');
+    expect(createdItems[0].body).toContain('Redaktionell aufbereiteter');
+    expect(createdItems[0].hashtags).toEqual(['fussball', 'derby']);
+    expect(createdItems[0].media).toEqual(item.media);
+  });
+
+  it('crosspost ohne LLM: wörtliche Kopie; unbekannter Ziel-Kanal → Fehler', async () => {
+    const source = makeChannel({ id: 'ch-1', name: 'Quelle' });
+    const target = makeChannel({ id: 'ch-2', name: 'Ziel', platform: 'rest' });
+    const item = makeItem({ channelId: 'ch-1', body: 'Original-Text bleibt wörtlich erhalten.' });
+    const createdItems: any[] = [];
+    const repo = {
+      getChannel: vi.fn(async (_u: string, id: string) => (id === 'ch-2' ? target : id === 'ch-1' ? source : null)),
+      findChannelByName: vi.fn(async (_u: string, q: string) => (q === 'Ziel' ? target : null)),
+      getItem: vi.fn(async () => item),
+      listItems: vi.fn(async () => [item]),
+      createItem: vi.fn(async (_u: string, chId: string, o: any) => {
+        const copy = { ...makeItem(), ...o, channelId: chId, id: 'copy-1' };
+        createdItems.push(copy);
+        return copy;
+      }),
+      transition: vi.fn(async () => item),
+    } as unknown as SocialRepository;
+    const skill = new SocialSkill(repo);
+
+    const ok = await skill.execute({ action: 'crosspost', item_id: 'item-0001-aaaa', channels: ['Ziel'] }, CTX);
+    expect(ok.success).toBe(true);
+    expect(createdItems[0].body).toBe('Original-Text bleibt wörtlich erhalten.');
+
+    const bad = await skill.execute({ action: 'crosspost', item_id: 'item-0001-aaaa', channels: ['GibtEsNicht'] }, CTX);
+    expect(bad.success).toBe(false);
+    expect(bad.error).toContain('GibtEsNicht');
+  });
+
   it('create_channel verweigert unbekannte Plattform mit Liste der vorhandenen', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'create_channel', platform: 'instagram', name: 'IG' }, CTX);

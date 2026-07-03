@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.946] - 2026-07-03
+
+### Added — Social: Crossposting über Kanäle (v946)
+
+- Neue Aktion **`crosspost`**: kopiert ein Content-Item auf beliebige andere
+  Kanäle — „Übernimm den Beitrag auch für fussball.cc" oder in der
+  Mehrzahl („… auf fussball.cc und Instagram").
+- **Formatgerecht statt stumpf:** mit LLM wird der Text je Ziel-Kanal
+  umgeschrieben (Plattform-Limit aus den Provider-Capabilities, z. B. X 280
+  Zeichen, plus Persona des Ziel-Kanals) — Fakten bleiben, Form passt sich
+  an. `adapt: false` oder ohne LLM: wörtliche Kopie. Medien werden
+  übernommen.
+- **Saubere Trennung bleibt:** jede Kopie ist ein eigenes Item auf dem
+  Ziel-Kanal und durchläuft dessen normale Freigabe, Leitplanken und
+  Tracking (optional mit `scheduled_at` direkt terminiert). Die Quelle
+  selbst wird beim Crossposting übersprungen.
+- 2 Tests (Anpassung via LLM + Quelle-Skip, wörtliche Kopie + Fehlerfall).
+
 ## [0.19.0-multi-ha.945] - 2026-07-03
 
 ### Fixed — Skill-Filter: social/interests waren je nach Wortlaut unsichtbar (v945)

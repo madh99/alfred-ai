@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../../skill.js';
 import type { SocialRepository, SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
+import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
 import { composePostText } from './social-provider.js';
 
@@ -9,7 +10,7 @@ type SocialAction =
   | 'validate_auth' | 'pause_all' | 'resume_channel'
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media'
-  | 'generate_content' | 'render_video';
+  | 'generate_content' | 'render_video' | 'crosspost';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
@@ -39,7 +40,7 @@ export class SocialSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'social',
     category: 'automation',
-    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now.',
+    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 120_000,
@@ -52,7 +53,7 @@ export class SocialSkill extends Skill {
             'validate_auth', 'pause_all', 'resume_channel',
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media',
-            'generate_content', 'render_video'],
+            'generate_content', 'render_video', 'crosspost'],
           description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos).',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
@@ -75,6 +76,8 @@ export class SocialSkill extends Skill {
         media_url: { type: 'string', description: 'add_content/attach_media: Bild-/Video-URL oder lokaler Pfad' },
         media_type: { type: 'string', enum: ['image', 'video', 'audio'], description: 'attach_media: Medientyp (Default image)' },
         format: { type: 'string', enum: ['9:16', '16:9'], description: 'render_video: Hochformat (Shorts/Reels, Default) oder Querformat' },
+        channels: { type: 'array', items: { type: 'string' }, description: 'crosspost: Ziel-Kanäle (Namen/IDs), auf die das Item kopiert wird' },
+        adapt: { type: 'boolean', description: 'crosspost: Text formatgerecht je Ziel-Kanal umschreiben (Default true; false = wörtliche Kopie)' },
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
         external_url: { type: 'string', description: 'mark_published: URL des manuell geposteten Beitrags' },
@@ -99,6 +102,13 @@ export class SocialSkill extends Skill {
 
   setVideoTools(tools: NonNullable<SocialSkill['videoTools']>): void {
     this.videoTools = tools;
+  }
+
+  /** v946 — LLM für formatgerechtes Umschreiben beim Crossposting (vom Kern injiziert). */
+  private llm?: LLMProvider;
+
+  setLlm(llm: LLMProvider): void {
+    this.llm = llm;
   }
 
   constructor(private readonly repo: SocialRepository) {
@@ -144,6 +154,7 @@ export class SocialSkill extends Skill {
         case 'attach_media': return await this.attachMedia(userId, input);
         case 'generate_content': return await this.generateContent(userId, input);
         case 'render_video': return await this.renderVideo(userId, input);
+        case 'crosspost': return await this.crosspost(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
     } catch (err) {
@@ -474,6 +485,89 @@ export class SocialSkill extends Skill {
       } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
     }
     return collected;
+  }
+
+  /**
+   * v946 — Crossposting: ein Item formatgerecht auf andere Kanäle kopieren.
+   * Jede Kopie ist ein EIGENES Item auf dem Ziel-Kanal (eigene Freigabe,
+   * eigene Leitplanken, eigenes Tracking). Mit LLM wird der Text an
+   * Plattform-Limit + Persona des Ziel-Kanals angepasst (adapt=false oder
+   * ohne LLM: wörtliche Kopie). Medien werden übernommen.
+   */
+  private async crosspost(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const item = await this.resolveItem(userId, input);
+    if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
+    const channelNames = Array.isArray(input.channels) ? input.channels.map(String) : [];
+    if (channelNames.length === 0) return { success: false, error: 'channels erforderlich (Ziel-Kanal-Namen)' };
+
+    const targets: SocialChannel[] = [];
+    for (const name of channelNames) {
+      const c = (await this.repo.getChannel(userId, name)) ?? (await this.repo.findChannelByName(userId, name));
+      if (!c) return { success: false, error: `Ziel-Kanal nicht gefunden: ${name}` };
+      if (c.id === item.channelId) continue; // Quelle überspringen
+      targets.push(c);
+    }
+    if (targets.length === 0) return { success: false, error: 'Keine gültigen Ziel-Kanäle (Quelle selbst zählt nicht).' };
+
+    const adapt = input.adapt !== false;
+    const created: string[] = [];
+    for (const target of targets) {
+      let title = item.title;
+      let body = item.body;
+      let hashtags = item.hashtags;
+      if (adapt && this.llm) {
+        try {
+          const caps = this.providers.get(target.platform)?.capabilities();
+          const rewritten = await this.adaptForChannel(item, target, caps?.maxTextLength);
+          if (rewritten) ({ title, body, hashtags } = rewritten);
+        } catch { /* Anpassung best-effort — wörtliche Kopie als Fallback */ }
+      }
+      const copy = await this.repo.createItem(userId, target.id, {
+        title, body, hashtags,
+        media: item.media,
+        scheduledAt: typeof input.scheduled_at === 'string' ? input.scheduled_at : undefined,
+        source: 'manual',
+      });
+      if (typeof input.scheduled_at === 'string' && !Number.isNaN(Date.parse(input.scheduled_at))) {
+        await this.repo.transition(userId, copy.id, 'scheduled', { scheduledAt: new Date(input.scheduled_at).toISOString() });
+      }
+      created.push(`[${copy.id.slice(0, 8)}] → ${target.name}`);
+    }
+    return {
+      success: true,
+      data: { created: created.length },
+      display: `🔁 Crosspost von [${item.id.slice(0, 8)}] angelegt:\n${created.map(c => `• ${c}`).join('\n')}\n${adapt && this.llm ? 'Texte wurden je Kanal angepasst. ' : ''}Jede Kopie durchläuft die normale Freigabe des Ziel-Kanals (publish_now zum Sofort-Posten).`,
+    };
+  }
+
+  private async adaptForChannel(
+    item: ContentItem, target: SocialChannel, maxLength?: number,
+  ): Promise<{ title?: string; body: string; hashtags: string[] } | null> {
+    if (!this.llm) return null;
+    const prompt = `Passe diesen Social-Media-Beitrag für den Ziel-Kanal an.
+Ziel: ${target.name} (Plattform ${target.platform})${maxLength ? `, MAXIMAL ${maxLength} Zeichen Text` : ''}${target.persona ? `\nPersona/Tonalität: ${target.persona}` : ''}
+
+Original:
+Titel: ${item.title ?? '(ohne)'}
+Text: ${item.body}
+Hashtags: ${item.hashtags.join(', ') || '(keine)'}
+
+Regeln: Inhalt und Fakten beibehalten, nur Form/Länge/Ton an den Ziel-Kanal anpassen. Keine Meta-Zeilen.
+Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 1500, tier: 'fast' });
+    const match = response.content?.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      const parsed = JSON.parse(match[0]);
+      if (typeof parsed.body !== 'string' || parsed.body.trim().length < 10) return null;
+      return {
+        title: typeof parsed.title === 'string' && parsed.title.trim().length > 0 ? parsed.title.slice(0, 200) : item.title,
+        body: parsed.body.slice(0, 10_000),
+        hashtags: Array.isArray(parsed.hashtags) ? parsed.hashtags.map(String).slice(0, 10) : item.hashtags,
+      };
+    } catch {
+      return null;
+    }
   }
 
   /** v935 — Content-Studio sofort für einen Kanal laufen lassen. */
