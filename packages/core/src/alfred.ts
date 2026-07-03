@@ -419,6 +419,8 @@ export class Alfred {
   /** v935 — Content-Studio (täglicher Ideen-/Entwurfs-Generator) */
   private contentStudio?: import('./content-studio.js').ContentStudio;
   private contentStudioTimer?: ReturnType<typeof setInterval>;
+  /** v938 — Video-Pipeline (Slideshow-Renderer; TTS-Ref für Voiceover) */
+  private speechSynthesizerRef?: import('./speech-synthesizer.js').SpeechSynthesizer;
   /** v929 — Interessen-Radar */
   private interestsRepo?: import('@alfred/storage').InterestsRepository;
   private interestsSkillRef?: import('@alfred/skills').InterestsSkill;
@@ -5849,6 +5851,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       synthesizer.setUsageCallback((model, units) => {
         serviceUsageRepo.record('tts', model, units).catch(() => {});
       });
+      this.speechSynthesizerRef = synthesizer; // v938 — Voiceover für die Video-Pipeline
       skillRegistry.register(new TTSSkill(synthesizer));
       const effectiveTtsProvider = this.config.speech.ttsProvider ?? 'openai';
       this.logger.info({ provider: effectiveTtsProvider }, 'Text-to-speech skill registered');
@@ -6617,6 +6620,34 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         );
         const studio = this.contentStudio;
         socialSkill.setStudio(channel => studio.fillChannel(channel));
+
+        // v938 — Video-Pipeline: Slideshow-Renderer (ffmpeg + TTS-Voiceover +
+        // Untertitel) für render_video + ffprobe-Check für User-Videos.
+        {
+          const { SlideshowVideoRenderer } = await import('./video-pipeline.js');
+          const synth = this.speechSynthesizerRef;
+          const renderer = new SlideshowVideoRenderer(
+            this.logger.child({ component: 'video-pipeline' }),
+            {
+              workDir: path.resolve(path.dirname(this.config.storage.path), 'social-videos'),
+              synthesize: synth ? (text: string) => synth.synthesize(text, ownerUid) : undefined,
+            },
+          );
+          socialSkill.setVideoTools({
+            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9') => {
+              const images = item.media
+                .filter((m: { type: string; pathOrUrl: string }) => m.type === 'image' && !m.pathOrUrl.startsWith('http'))
+                .map((m: { pathOrUrl: string }) => m.pathOrUrl);
+              if (images.length === 0) throw new Error('Keine lokalen Bilder am Item (http-URLs kann der Renderer nicht einlesen).');
+              const voiceover = item.body.split(/\n-{3,}\n/)[0]?.trim();
+              return renderer.render({
+                images, voiceoverText: voiceover, format,
+                outBaseName: `${item.id.slice(0, 8)}-${format.replace(':', 'x')}`,
+              });
+            },
+            probe: (p: string) => renderer.probeVideo(p),
+          });
+        }
         let lastStudioDay = '';
         let lastAnalyticsDay = '';
         this.contentStudioTimer = setInterval(async () => {

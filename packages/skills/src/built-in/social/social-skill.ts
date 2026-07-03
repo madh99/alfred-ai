@@ -9,7 +9,7 @@ type SocialAction =
   | 'validate_auth' | 'pause_all' | 'resume_channel'
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media'
-  | 'generate_content';
+  | 'generate_content' | 'render_video';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
@@ -52,8 +52,8 @@ export class SocialSkill extends Skill {
             'validate_auth', 'pause_all', 'resume_channel',
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media',
-            'generate_content'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort für einen Kanal laufen lassen (Ideen/Entwürfe erzeugen).',
+            'generate_content', 'render_video'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos).',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest'], description: 'create_channel: Plattform (v933: telegram_channel, rest; YouTube/Meta folgen)' },
@@ -74,6 +74,7 @@ export class SocialSkill extends Skill {
         hashtags: { type: 'array', items: { type: 'string' }, description: 'add_content: Hashtags' },
         media_url: { type: 'string', description: 'add_content/attach_media: Bild-/Video-URL oder lokaler Pfad' },
         media_type: { type: 'string', enum: ['image', 'video', 'audio'], description: 'attach_media: Medientyp (Default image)' },
+        format: { type: 'string', enum: ['9:16', '16:9'], description: 'render_video: Hochformat (Shorts/Reels, Default) oder Querformat' },
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
         external_url: { type: 'string', description: 'mark_published: URL des manuell geposteten Beitrags' },
@@ -90,6 +91,15 @@ export class SocialSkill extends Skill {
   private resolveProjectFn?: (nameOrId: string) => Promise<string | null>;
   /** v935 — Content-Studio-Aufruf für generate_content (vom Kern injiziert). */
   private studioFn?: (channel: SocialChannel) => Promise<number>;
+  /** v938 — Video-Pipeline (Slideshow-Renderer + ffprobe-Check, vom Kern injiziert). */
+  private videoTools?: {
+    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9') => Promise<{ videoPath: string; durationSec: number }>;
+    probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
+  };
+
+  setVideoTools(tools: NonNullable<SocialSkill['videoTools']>): void {
+    this.videoTools = tools;
+  }
 
   constructor(private readonly repo: SocialRepository) {
     super();
@@ -133,6 +143,7 @@ export class SocialSkill extends Skill {
         case 'delete_remote': return await this.deleteRemote(userId, input);
         case 'attach_media': return await this.attachMedia(userId, input);
         case 'generate_content': return await this.generateContent(userId, input);
+        case 'render_video': return await this.renderVideo(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
     } catch (err) {
@@ -485,11 +496,58 @@ export class SocialSkill extends Skill {
     if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
     const url = typeof input.media_url === 'string' ? input.media_url.trim() : '';
     if (!url) return { success: false, error: 'media_url erforderlich' };
-    const media: ContentMedia[] = [...item.media, {
-      type: (input.media_type === 'video' || input.media_type === 'audio' ? input.media_type : 'image'),
-      source: 'user', pathOrUrl: url,
-    }];
+    const type = (input.media_type === 'video' || input.media_type === 'audio' ? input.media_type : 'image');
+    // v938 — Transcode-Check für lokale User-Videos (best-effort via ffprobe):
+    // kaputte Dateien früh abweisen statt beim YouTube-Upload zu scheitern
+    let probeNote = '';
+    if (type === 'video' && !url.startsWith('http') && this.videoTools?.probe) {
+      const probe = await this.videoTools.probe(url);
+      if (!probe.ok) {
+        return { success: false, error: `Videodatei nicht lesbar (${probe.detail ?? 'ffprobe-Fehler'}) — Pfad/Format prüfen.` };
+      }
+      probeNote = ` (geprüft, ${Math.round(probe.durationSec ?? 0)}s)`;
+    }
+    const media: ContentMedia[] = [...item.media, { type, source: 'user', pathOrUrl: url }];
     await this.repo.updateItemContent(userId, item.id, { media });
-    return { success: true, display: `📎 Medium an [${item.id.slice(0, 8)}] angehängt (${media.length} gesamt).` };
+    return { success: true, display: `📎 Medium an [${item.id.slice(0, 8)}] angehängt${probeNote} (${media.length} gesamt).` };
+  }
+
+  /**
+   * v938 — Slideshow-Video aus einem Item rendern (Bilder + TTS-Voiceover +
+   * Untertitel via ffmpeg, kostenlos). Voiceover = Script-Teil vor '---'.
+   * Monats-Budget: config.video_budget_per_month (Default 10).
+   */
+  private async renderVideo(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.videoTools) return { success: false, error: 'Video-Pipeline nicht verfügbar.' };
+    const item = await this.resolveItem(userId, input);
+    if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
+    const channel = await this.repo.getChannel(userId, item.channelId);
+    if (!channel) return { success: false, error: 'Kanal nicht gefunden' };
+    if (!item.media.some(m => m.type === 'image')) {
+      return { success: false, error: 'Item hat keine Bilder — erst Bilder generieren/anhängen (das Video ist eine Bild-Slideshow mit Voiceover).' };
+    }
+
+    // Monats-Budget (Leitplanke 5)
+    const budget = typeof channel.config.video_budget_per_month === 'number' ? channel.config.video_budget_per_month : 10;
+    const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+    const used = (await this.repo.listMetrics(channel.id, { kind: 'gen_video', sinceDate: monthStart }))
+      .reduce((sum, m) => sum + m.value, 0);
+    if (used >= budget) {
+      return { success: false, error: `Video-Monats-Budget erreicht (${used}/${budget} auf ${channel.name}) — config.video_budget_per_month anpassen.` };
+    }
+
+    const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
+    const result = await this.videoTools.render(item, channel, format);
+    const media: ContentMedia[] = [...item.media, { type: 'video', source: 'generated', pathOrUrl: result.videoPath }];
+    await this.repo.updateItemContent(userId, item.id, { media });
+    const today = new Date().toISOString().slice(0, 10);
+    const todayUsed = (await this.repo.listMetrics(channel.id, { kind: 'gen_video', sinceDate: today }))
+      .find(m => m.date === today && !m.itemId)?.value ?? 0;
+    await this.repo.upsertMetric(channel.id, { date: today, kind: 'gen_video', value: todayUsed + 1 });
+    return {
+      success: true,
+      data: { videoPath: result.videoPath, durationSec: result.durationSec },
+      display: `🎬 Video gerendert (${format}, ${Math.round(result.durationSec)}s) und an [${item.id.slice(0, 8)}] angehängt:\n${result.videoPath}\nVeröffentlichen mit publish_now.`,
+    };
   }
 }

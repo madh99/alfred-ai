@@ -198,3 +198,79 @@ describe('SocialSkill v936 — Monats-Limit + collectMetrics', () => {
     expect(repo.mergePerformance).toHaveBeenCalledWith('u1', 'i1', { views: 42 });
   });
 });
+
+// ── v938 — render_video + attach_media-Probe ──────────────────────────
+
+describe('SocialSkill v938 — Video-Pipeline', () => {
+  const CTX = { userId: 'u1', masterUserId: 'u1' } as unknown as SkillContext;
+
+  function makeVideoRepo(channel: SocialChannel, item: ContentItem, videosUsed = 0) {
+    return {
+      getChannel: vi.fn(async () => channel),
+      findChannelByName: vi.fn(async () => channel),
+      getItem: vi.fn(async () => item),
+      listItems: vi.fn(async () => [item]),
+      updateItemContent: vi.fn(async () => {}),
+      listMetrics: vi.fn(async (_c: string, q: any) => q?.kind === 'gen_video' && videosUsed > 0
+        ? [{ date: '2026-07-01', kind: 'gen_video', value: videosUsed }] : []),
+      upsertMetric: vi.fn(async () => {}),
+    } as unknown as SocialRepository;
+  }
+
+  it('render_video: rendert, hängt Video an und zählt das Budget', async () => {
+    const channel = makeChannel('youtube');
+    const item = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: '/data/img1.png' }] });
+    const repo = makeVideoRepo(channel, item);
+    const skill = new SocialSkill(repo);
+    const render = vi.fn(async () => ({ videoPath: '/data/social-videos/v.mp4', durationSec: 32 }));
+    skill.setVideoTools({ render });
+
+    const r = await skill.execute({ action: 'render_video', item_id: 'i1', format: '9:16' }, CTX);
+    expect(r.success).toBe(true);
+    expect(render).toHaveBeenCalledWith(item, channel, '9:16');
+    const media = (repo.updateItemContent as any).mock.calls[0][2].media;
+    expect(media.some((m: any) => m.type === 'video' && m.source === 'generated')).toBe(true);
+    expect((repo.upsertMetric as any).mock.calls[0][1]).toMatchObject({ kind: 'gen_video', value: 1 });
+  });
+
+  it('render_video: Monats-Budget erreicht → verweigert', async () => {
+    const channel = makeChannel('youtube', { video_budget_per_month: 10 });
+    const item = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: '/data/img1.png' }] });
+    const skill = new SocialSkill(makeVideoRepo(channel, item, 10));
+    skill.setVideoTools({ render: vi.fn() });
+    const r = await skill.execute({ action: 'render_video', item_id: 'i1' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Budget');
+  });
+
+  it('render_video ohne Bilder am Item → klarer Hinweis', async () => {
+    const channel = makeChannel('youtube');
+    const skill = new SocialSkill(makeVideoRepo(channel, makeItem()));
+    skill.setVideoTools({ render: vi.fn() });
+    const r = await skill.execute({ action: 'render_video', item_id: 'i1' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Bilder');
+  });
+
+  it('attach_media: kaputtes lokales Video wird per ffprobe abgewiesen', async () => {
+    const channel = makeChannel('youtube');
+    const item = makeItem();
+    const repo = makeVideoRepo(channel, item);
+    const skill = new SocialSkill(repo);
+    skill.setVideoTools({ render: vi.fn(), probe: vi.fn(async () => ({ ok: false, detail: 'moov atom not found' })) });
+    const r = await skill.execute({ action: 'attach_media', item_id: 'i1', media_url: '/tmp/kaputt.mp4', media_type: 'video' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('moov atom');
+    expect(repo.updateItemContent).not.toHaveBeenCalled();
+  });
+
+  it('attach_media: valides Video wird mit Dauer bestätigt', async () => {
+    const channel = makeChannel('youtube');
+    const repo = makeVideoRepo(channel, makeItem());
+    const skill = new SocialSkill(repo);
+    skill.setVideoTools({ render: vi.fn(), probe: vi.fn(async () => ({ ok: true, durationSec: 63 })) });
+    const r = await skill.execute({ action: 'attach_media', item_id: 'i1', media_url: '/tmp/video.mp4', media_type: 'video' }, CTX);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('63s');
+  });
+});

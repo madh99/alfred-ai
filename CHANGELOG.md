@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.938] - 2026-07-03
+
+### Added — Social-Media: Video-Pipeline (v938, letzte Stufe des Plans)
+
+Der Social-Media-Plan (v933–v938) ist damit vollständig umgesetzt.
+
+- **Slideshow-Renderer (Stufe 1, lokal, kostenlos):** `social render_video`
+  rendert aus den Bildern eines Content-Items ein MP4 via ffmpeg —
+  Hochformat 9:16 (Shorts/Reels, Default) oder 16:9, TTS-Voiceover
+  (Script-Teil vor `---`, via SpeechSynthesizer), eingebrannte Untertitel
+  (satzweise gewichtet über die Laufzeit verteilt), 1080p/30fps. Ausgabe
+  unter `data/social-videos/`, wird automatisch ans Item gehängt →
+  publish_now lädt es z. B. zu YouTube hoch.
+- **Monats-Budget für Videos** (Leitplanke 5):
+  `config.video_budget_per_month` je Kanal (Default 10), gezählt in
+  channel_metrics.
+- **User-Videos:** `attach_media` prüft lokale Videodateien jetzt per
+  ffprobe (Transcode-Check) — kaputte Dateien werden mit Klartext-Fehler
+  abgewiesen statt erst beim YouTube-Upload zu scheitern; valide werden mit
+  Dauer bestätigt. Telegram-Upload → Asset-Bridge → attach_media bleibt der
+  Weg für selbstgedrehte Videos.
+- **Externer Video-Generator vorbereitet:** `VideoGenProvider`-Interface
+  (Runway/Kling/Veo) mit Placeholder, der bei Aufruf die Aktivierungs-
+  Schritte nennt (API-Key in ENV-Stage `social` + Config) statt still zu
+  scheitern — Anbindung ist ein kleiner Folgeschritt sobald ein Anbieter
+  gewählt ist.
+- ffmpeg fehlt auf dem Host → klarer Hinweis (`apt install ffmpeg`);
+  9 neue Tests (SRT-Verteilung, Dauer-Schätzung, render_video inkl. Budget,
+  ffprobe-Abweisung, Placeholder-Hinweis).
+
 ## [0.19.0-multi-ha.937] - 2026-07-03
 
 ### Added — Social-Media: Web-UI + Autonomie komplett (v937, Stufe 5 von 6)
