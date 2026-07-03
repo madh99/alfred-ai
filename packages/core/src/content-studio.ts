@@ -267,8 +267,9 @@ ${sections.join('\n')}
 
 REGELN für die Abstimmung:
 - KEINE inhaltliche Doppelung: Stoff, der oben bei einem Geschwister-Kanal geplant/veröffentlicht ist, hier NICHT nochmal als eigener Beitrag bringen — außer aus der EIGENEN Rolle heraus mit anderem Blickwinkel (z.B. Community-Frage statt Analyse).
-- Spiele die ROLLE dieses Kanals (siehe Persona) — was die Geschwister besser abdecken, denen überlassen und stattdessen querverweisen (z.B. „die ausführliche Analyse gibt's auf fussball.cc").
-- Cross-Promo ist erwünscht: gelegentlich auf Geschwister-Angebote hinweisen (Beiträge, Features wie Sammelalbum-Tracker/Tauschbörse), ohne dass jeder Post Werbung wird.`;
+- Spiele die ROLLE dieses Kanals (siehe Persona) — was die Geschwister besser abdecken, denen überlassen.
+- QUERVERWEISE NUR AUF EXISTIERENDES (zwingend): Auf einen Geschwister-Beitrag darfst du NUR verweisen, wenn er OBEN in dessen Liste („Geplant/zuletzt dort") tatsächlich steht — dann benenne ihn so wie gelistet. NIEMALS Inhalte versprechen, die dort nicht stehen („die ausführliche Analyse auf X" ohne dass es sie gibt = verboten). Hat ein Geschwister-Kanal keine passenden Beiträge, dann KEIN Verweis — der Post muss für sich allein stehen.
+- Cross-Promo auf dauerhafte ANGEBOTE/Features der Geschwister (z.B. Sammelalbum-Tracker, Tauschbörse) ist ok — die existieren unabhängig von einzelnen Beiträgen. Dosiert einsetzen, nicht in jedem Post.`;
     } catch { return ''; }
   }
 

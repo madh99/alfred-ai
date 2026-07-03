@@ -357,6 +357,9 @@ describe('ContentStudio (v935)', () => {
     expect(prompt).toContain('Arnautovic: Die große Analyse');
     expect(prompt).toContain('KEINE inhaltliche Doppelung');
     expect(prompt).toContain('Cross-Promo');
+    // v956 — Realfall: Telegram versprach nicht existierende fussball.cc-Analysen
+    expect(prompt).toContain('QUERVERWEISE NUR AUF EXISTIERENDES');
+    expect(prompt).toContain('NIEMALS Inhalte versprechen');
     // Fremde Familie taucht NICHT auf
     expect(prompt).not.toContain('Games-Kanal');
   });

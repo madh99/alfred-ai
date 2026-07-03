@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.956] - 2026-07-03
+
+### Fixed — Familien-Regeln: keine Querverweise auf nicht existierende Inhalte (v956)
+
+Realfall: Telegram-Entwürfe verwiesen auf „die ausführliche Analyse auf
+fussball.cc" — dort existierte aber kein einziger Beitrag (dessen Studio war
+nie gelaufen). Die v954-Regeln ermunterten zum Querverweisen, ohne Existenz
+zu fordern.
+
+- Neue zwingende Regel im Familien-Kontext: **Querverweise NUR auf
+  Beiträge, die in der Geschwister-Liste tatsächlich stehen** (geplant/
+  veröffentlicht), benannt wie gelistet. Niemals Inhalte versprechen, die
+  es nicht gibt; hat das Geschwister nichts Passendes → kein Verweis, der
+  Post steht für sich.
+- Cross-Promo bleibt erlaubt für **dauerhafte Features** (Sammelalbum-
+  Tracker, Tauschbörse) — die existieren unabhängig von Einzelbeiträgen.
+- Praxis-Tipp bleibt: in einer Familie zuerst den „Tiefen"-Kanal
+  (fussball.cc) vom Studio befüllen lassen, dann den verweisenden
+  (Telegram) — dann gibt es sofort echte Verweisziele.
+
 ## [0.19.0-multi-ha.955] - 2026-07-03
 
 ### Added — Social: Beiträge korrigieren + Kanal lernt aus Korrekturen (v955)
