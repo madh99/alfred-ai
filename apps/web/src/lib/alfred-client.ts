@@ -496,6 +496,15 @@ export class AlfredClient {
     });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
+  // v965 — Kanal-Aktionen (Studio-Lauf, Umplanung, Auth-Check, Themen)
+  async socialChannelAction(id: string, action: 'generate' | 'replan' | 'validate-auth' | 'link-topic' | 'unlink-topic', extra?: { topic?: string }): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/channels/${id}/${action}`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(extra ?? {}),
+    });
+    if (!res.ok) throw new Error(`Social channel action: HTTP ${res.status}`);
+    return res.json();
+  }
+
   async fetchSocialCalendar(fromIso?: string, toIso?: string): Promise<SocialContentItem[]> {
     const params = new URLSearchParams();
     if (fromIso) params.set('from', fromIso);
@@ -2698,6 +2707,11 @@ export interface SocialChannelItem {
   config: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  // v965 — vom Server angereichert
+  effectiveSlots?: { slots: string[]; source: 'user' | 'best-practice' };
+  publishedToday?: number;
+  imageBudget?: { used: number; total: number };
+  topics?: Array<{ id: string; name: string }>;
 }
 
 export interface SocialContentItem {

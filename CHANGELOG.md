@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.965] - 2026-07-03
+
+### Added — Social-UI: vollständige Kanal-Verwaltung (v965, Paket B)
+
+- **Einstellungs-Panel je Kanal** (⚙️): Persona/Rolle, Posting-Slots
+  (mit Anzeige der effektiv geltenden Slots und Best-Practice-Kennung),
+  Blacklist, Posts/Tag, Planungshorizont, Bilder-generieren-Schalter,
+  Bild-Budget — alles ohne Chat direkt in der UI änderbar.
+- **Kanal-Aktionen:** „Studio jetzt" (Content sofort erzeugen),
+  „Beiträge umplanen" (Bestand in die aktuellen Slots), „Auth prüfen".
+- **Themen-Verwaltung:** verknüpfte Interessen-Themen sichtbar,
+  verknüpfen/lösen per Dropdown.
+- **Lektionen-Editor:** die Korrektur-Lektionen des Kanals ansehen,
+  ergänzen und entfernen.
+- **Kanalkarten zeigen jetzt:** heutige Posts vs. Tages-Limit, effektive
+  Slots, Bild-Budget-Verbrauch (Balken), verknüpfte Themen.
+- Neue API: angereicherte Kanal-Daten (effektive Slots, Budget, Themen,
+  Tages-Zähler) und Kanal-Aktions-Endpunkte — alle Aktionen laufen über
+  den Social-Skill und damit über dieselben Leitplanken wie der Chat.
+
 ## [0.19.0-multi-ha.964] - 2026-07-03
 
 ### Added — Social-UI: Beitrags-Workflow komplett (v964, Paket A)

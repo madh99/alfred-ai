@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
-import type { SocialChannelItem, SocialContentItem } from '@/lib/alfred-client';
+import type { InterestTopicItem, SocialChannelItem, SocialContentItem } from '@/lib/alfred-client';
 
 const PLATFORM_ICON: Record<string, string> = {
   youtube: '▶️', instagram: '📸', facebook: '👥', threads: '🧵',
@@ -73,6 +73,15 @@ export function SocialPage() {
   // v955 — Inline-Editor (Korrektur + optionale Lektion, aus der der Kanal lernt)
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; body: string; hashtags: string; lesson: string }>({ title: '', body: '', hashtags: '', lesson: '' });
+  // v965 — Kanal-Einstellungen (Panel je Kanal) + Themen-Verknüpfung
+  const [settingsId, setSettingsId] = useState<string | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<{
+    persona: string; slots: string; blacklist: string; maxPostsPerDay: number;
+    planningHorizonDays: number; generateImages: boolean; imageBudgetTotal: number;
+    lessons: string[]; newLesson: string;
+  }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '' });
+  const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
+  const [linkTopicSel, setLinkTopicSel] = useState<string>('');
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -216,6 +225,54 @@ export function SocialPage() {
       const r = await client!.socialItemAction(item.id, 'schedule', { scheduled_at: at.toISOString() });
       if (!r.success) throw new Error(r.error ?? 'Umterminieren fehlgeschlagen');
       setReschedulingId(null);
+      await load();
+    });
+  }
+
+  // ── v965 — Kanal-Einstellungen ──
+  function openSettings(c: SocialChannelItem) {
+    setSettingsId(c.id);
+    setLinkTopicSel('');
+    setSettingsDraft({
+      persona: c.persona ?? '',
+      slots: c.postingSlots.join(', '),
+      blacklist: c.blacklist.join(', '),
+      maxPostsPerDay: c.maxPostsPerDay,
+      planningHorizonDays: c.planningHorizonDays,
+      generateImages: c.config.generate_images === true,
+      imageBudgetTotal: typeof c.config.image_budget_per_month === 'number' ? c.config.image_budget_per_month : 30,
+      lessons: Array.isArray(c.config.lessons) ? c.config.lessons.map(String) : [],
+      newLesson: '',
+    });
+    if (interestTopics.length === 0) {
+      client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
+    }
+  }
+
+  async function saveSettings(c: SocialChannelItem) {
+    const d = settingsDraft;
+    const csv = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean);
+    const lessons = d.newLesson.trim() ? [...d.lessons, d.newLesson.trim()] : d.lessons;
+    await withBusy(c.id, async () => {
+      await client!.updateSocialChannel(c.id, {
+        persona: d.persona,
+        postingSlots: csv(d.slots),
+        blacklist: csv(d.blacklist),
+        maxPostsPerDay: d.maxPostsPerDay,
+        planningHorizonDays: d.planningHorizonDays,
+        config: { generate_images: d.generateImages, image_budget_per_month: d.imageBudgetTotal, lessons },
+      });
+      setSettingsId(null);
+      await load();
+    });
+  }
+
+  // v965 — Kanal-Aktionen (Studio-Lauf, Umplanung, Auth-Check, Themen verknüpfen)
+  async function channelAction(c: SocialChannelItem, action: 'generate' | 'replan' | 'validate-auth' | 'link-topic' | 'unlink-topic', extra?: { topic?: string }) {
+    await withBusy(`${c.id}:${action}`, async () => {
+      const r = await client!.socialChannelAction(c.id, action, extra);
+      if (!r.success) throw new Error(r.error ?? 'Aktion fehlgeschlagen');
+      if (r.display) setNotice(r.display);
       await load();
     });
   }
@@ -429,12 +486,33 @@ export function SocialPage() {
                 {c.status !== 'active' && <span className="text-[10px] px-1.5 py-0.5 bg-red-500/20 text-red-300 rounded uppercase">{c.status}</span>}
               </div>
               <div className="text-[11px] text-gray-500 mt-1.5 space-x-2">
-                <span className={clsx((publishedTodayByChannel[c.id] ?? 0) >= c.maxPostsPerDay && 'text-amber-400')}>
-                  Heute {publishedTodayByChannel[c.id] ?? 0}/{c.maxPostsPerDay}
+                <span className={clsx((c.publishedToday ?? publishedTodayByChannel[c.id] ?? 0) >= c.maxPostsPerDay && 'text-amber-400')}>
+                  Heute {c.publishedToday ?? publishedTodayByChannel[c.id] ?? 0}/{c.maxPostsPerDay}
                 </span>
                 <span>· Horizont {c.planningHorizonDays}d</span>
                 <span>· Erstpost-Streak {Math.min(c.approvedStreak, 5)}/5{c.approvedStreak >= 5 ? ' ✓' : ''}</span>
               </div>
+              {/* v965 — effektive Slots + Bild-Budget auf einen Blick */}
+              {c.effectiveSlots && (
+                <div className="text-[11px] text-gray-500 mt-1">
+                  🕐 {c.effectiveSlots.slots.join(' · ')}
+                  <span className={clsx('ml-1.5 px-1 py-0.5 rounded text-[9px] uppercase', c.effectiveSlots.source === 'user' ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300')}>
+                    {c.effectiveSlots.source === 'user' ? 'eigene' : 'Best-Practice'}
+                  </span>
+                </div>
+              )}
+              {c.imageBudget && (
+                <div className="text-[11px] text-gray-500 mt-1 flex items-center gap-2">
+                  🎨 Bild-Budget {c.imageBudget.used}/{c.imageBudget.total}
+                  <span className="inline-block w-24 h-1.5 bg-[#1a1a1a] rounded overflow-hidden">
+                    <span className={clsx('block h-full rounded', c.imageBudget.used >= c.imageBudget.total ? 'bg-red-500' : 'bg-emerald-500')}
+                      style={{ width: `${Math.min(100, Math.round((c.imageBudget.used / Math.max(1, c.imageBudget.total)) * 100))}%` }} />
+                  </span>
+                </div>
+              )}
+              {(c.topics?.length ?? 0) > 0 && (
+                <div className="text-[11px] text-gray-500 mt-1">🧭 Themen: {c.topics!.map(t => t.name).join(', ')}</div>
+              )}
               {channelMetricSummary(c.id) && (
                 <div className="text-[11px] text-emerald-400 mt-1">📈 {channelMetricSummary(c.id)}</div>
               )}
@@ -447,12 +525,122 @@ export function SocialPage() {
                   <span className="text-[10px] text-amber-400" title="Erstpost-Sperre: erst 5 Freigaben ohne Korrektur">🔒 wirkt nach {5 - c.approvedStreak} Freigaben</span>
                 )}
                 <div className="flex-1" />
+                <button onClick={() => (settingsId === c.id ? setSettingsId(null) : openSettings(c))} disabled={busy === c.id}
+                  className={clsx('px-2 py-1 text-xs rounded border', settingsId === c.id ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a]')}>
+                  ⚙️ Einstellungen
+                </button>
                 <button onClick={() => toggleChannelStatus(c)} disabled={busy === c.id}
                   className={clsx('px-2 py-1 text-xs rounded border',
                     c.status === 'active' ? 'border-gray-500/40 text-gray-400 hover:bg-gray-500/15' : 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15')}>
                   {c.status === 'active' ? '⏸ Pausieren' : '▶ Aktivieren'}
                 </button>
               </div>
+              {/* v965 — Kanal-Aktionen + Einstellungs-Panel */}
+              {settingsId === c.id && (
+                <div className="mt-3 pt-3 border-t border-[#1f1f1f] space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button onClick={() => channelAction(c, 'generate')} disabled={busy === `${c.id}:generate`}
+                      title="Content-Studio sofort laufen lassen (kann mit Bildern einige Minuten dauern)"
+                      className="px-2 py-1 text-xs border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 disabled:opacity-50 rounded">
+                      {busy === `${c.id}:generate` ? '⏳ Studio läuft …' : '✨ Studio jetzt'}
+                    </button>
+                    <button onClick={() => channelAction(c, 'replan')} disabled={busy === `${c.id}:replan`}
+                      title="Bereits geplante Beiträge in die aktuellen Slots umverteilen"
+                      className="px-2 py-1 text-xs border border-blue-500/40 text-blue-300 hover:bg-blue-500/15 disabled:opacity-50 rounded">📅 Beiträge umplanen</button>
+                    <button onClick={() => channelAction(c, 'validate-auth')} disabled={busy === `${c.id}:validate-auth`}
+                      className="px-2 py-1 text-xs border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 disabled:opacity-50 rounded">🔑 Auth prüfen</button>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-500">Persona / Rolle (Ton, Länge, Blickwinkel — die Geschwister-Kanäle sehen sie als Rollenbeschreibung)</label>
+                    <textarea value={settingsDraft.persona} onChange={e => setSettingsDraft(d => ({ ...d, persona: e.target.value }))} rows={3}
+                      className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-500">Posting-Slots (kommagetrennt, Ortszeit, z. B. „Mo 18:00, Sa 10:00" — leer = Plattform-Best-Practice inkl. Wochenende)</label>
+                    <input value={settingsDraft.slots} onChange={e => setSettingsDraft(d => ({ ...d, slots: e.target.value }))}
+                      placeholder={c.effectiveSlots?.source === 'best-practice' ? `Best-Practice aktiv: ${c.effectiveSlots.slots.join(', ')}` : ''}
+                      className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                    <div className="text-[10px] text-gray-600 mt-0.5">Nach Slot-Änderung „Beiträge umplanen" klicken, damit Bestandstermine mitziehen.</div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div>
+                      <label className="text-[11px] text-gray-500">Posts/Tag</label>
+                      <input type="number" min={1} value={settingsDraft.maxPostsPerDay} onChange={e => setSettingsDraft(d => ({ ...d, maxPostsPerDay: Number(e.target.value) }))}
+                        className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-gray-500">Horizont (Tage)</label>
+                      <input type="number" min={1} value={settingsDraft.planningHorizonDays} onChange={e => setSettingsDraft(d => ({ ...d, planningHorizonDays: Number(e.target.value) }))}
+                        className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-gray-500">Bild-Budget/Monat</label>
+                      <input type="number" min={0} value={settingsDraft.imageBudgetTotal} onChange={e => setSettingsDraft(d => ({ ...d, imageBudgetTotal: Number(e.target.value) }))}
+                        className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                    </div>
+                    <div className="flex items-end pb-1">
+                      <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={settingsDraft.generateImages} onChange={e => setSettingsDraft(d => ({ ...d, generateImages: e.target.checked }))} />
+                        Bilder generieren
+                      </label>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-500">Blacklist / Tabu-Themen (kommagetrennt)</label>
+                    <input value={settingsDraft.blacklist} onChange={e => setSettingsDraft(d => ({ ...d, blacklist: e.target.value }))}
+                      className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                  </div>
+                  {/* Themen verknüpfen/lösen */}
+                  <div>
+                    <label className="text-[11px] text-gray-500">Interessen-Themen (speisen das Content-Studio)</label>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      {(c.topics ?? []).map(t => (
+                        <span key={t.id} className="text-[11px] px-1.5 py-0.5 bg-[#1a1a1a] text-gray-300 rounded flex items-center gap-1">
+                          {t.name}
+                          <button onClick={() => channelAction(c, 'unlink-topic', { topic: t.name })} disabled={busy === `${c.id}:unlink-topic`}
+                            className="text-red-400 hover:text-red-300" title="Thema lösen">✕</button>
+                        </span>
+                      ))}
+                      {interestTopics.filter(t => !(c.topics ?? []).some(l => l.id === t.id)).length > 0 && (
+                        <>
+                          <select value={linkTopicSel} onChange={e => setLinkTopicSel(e.target.value)}
+                            className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1.5 py-0.5 text-[11px] text-gray-200">
+                            <option value="">Thema wählen …</option>
+                            {interestTopics.filter(t => !(c.topics ?? []).some(l => l.id === t.id)).map(t => (
+                              <option key={t.id} value={t.name}>{t.name}</option>
+                            ))}
+                          </select>
+                          <button onClick={() => linkTopicSel && channelAction(c, 'link-topic', { topic: linkTopicSel })}
+                            disabled={!linkTopicSel || busy === `${c.id}:link-topic`}
+                            className="px-1.5 py-0.5 text-[11px] border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 disabled:opacity-40 rounded">+ verknüpfen</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {/* Lektionen */}
+                  <div>
+                    <label className="text-[11px] text-gray-500">📚 Lektionen (fließen zwingend in jeden Studio-Lauf ein)</label>
+                    <div className="space-y-1 mt-1">
+                      {settingsDraft.lessons.map((l, idx) => (
+                        <div key={idx} className="flex items-start gap-1.5 text-[11px] text-gray-300">
+                          <span className="flex-1">• {l}</span>
+                          <button onClick={() => setSettingsDraft(d => ({ ...d, lessons: d.lessons.filter((_, i) => i !== idx) }))}
+                            className="text-red-400 hover:text-red-300" title="Lektion entfernen">✕</button>
+                        </div>
+                      ))}
+                      <input value={settingsDraft.newLesson} onChange={e => setSettingsDraft(d => ({ ...d, newLesson: e.target.value }))}
+                        placeholder='Neue Lektion, z. B. „Es ist die WM 2026, nicht die EM — auch in Hashtags"'
+                        className="w-full bg-[#0a0a0a] border border-purple-500/30 rounded px-2 py-1 text-[11px] text-purple-200" />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => saveSettings(c)} disabled={busy === c.id}
+                      className="px-2.5 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">✓ Einstellungen speichern</button>
+                    <button onClick={() => setSettingsId(null)}
+                      className="px-2.5 py-1 text-xs border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 rounded">Abbrechen</button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

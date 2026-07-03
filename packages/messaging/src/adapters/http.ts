@@ -701,6 +701,8 @@ export class HttpAdapter extends MessagingAdapter {
     pauseAll?: () => Promise<number>;
     listItems?: (filter: { channelId?: string; status?: string; limit?: number }) => Promise<any[]>;
     itemAction?: (id: string, action: 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v965 — Kanal-Aktionen (Studio-Lauf, Umplanung, Auth-Check, Themen verknüpfen). */
+    channelAction?: (id: string, action: 'generate' | 'replan' | 'validate-auth' | 'link-topic' | 'unlink-topic', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1334,6 +1336,12 @@ export class HttpAdapter extends MessagingAdapter {
         const parts = url.pathname.split('/');
         if (!this.socialCallbacks?.itemAction) return { error: 'not supported' };
         return this.socialCallbacks.itemAction(parts[4], parts[5] as 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete', body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/channels\/[^/]+\/(generate|replan|validate-auth|link-topic|unlink-topic)$/) && req.method === 'POST') {
+      this.handleSocialBody(req, res, async (body) => {
+        const parts = url.pathname.split('/');
+        if (!this.socialCallbacks?.channelAction) return { error: 'not supported' };
+        return this.socialCallbacks.channelAction(parts[4], parts[5] as 'generate' | 'replan' | 'validate-auth' | 'link-topic' | 'unlink-topic', body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/social\/channels\/[^/]+\/metrics$/) && req.method === 'GET') {
       this.handleSocial(req, res, async () => ({

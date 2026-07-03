@@ -8027,8 +8027,37 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const socialOwner = this.ownerMasterUserId as string;
         const socialSkillForApi = this.socialSkillRef;
         const socialCtx = { userId: socialOwner, masterUserId: socialOwner } as never;
+        const interestsRepoForApi = this.interestsRepo;
         (apiAdapter as any).setSocialCallbacks({
-          listChannels: async () => socialRepo.listChannels(socialOwner),
+          // v965 — Kanäle angereichert: effektive Slots (Best-Practice-Fallback),
+          // heutige Posts, Bild-Budget-Verbrauch, verknüpfte Themen mit Namen
+          listChannels: async () => {
+            const { effectiveSlots } = await import('@alfred/skills');
+            const channels = await socialRepo.listChannels(socialOwner);
+            const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+            return Promise.all(channels.map(async c => {
+              const topicIds = [...new Set([
+                ...(Array.isArray(c.config.topic_ids) ? c.config.topic_ids.map(String) : []),
+                ...(typeof c.config.topic_id === 'string' ? [c.config.topic_id] : []),
+              ])];
+              const topics = (await Promise.all(topicIds.map(async id => {
+                const t = await interestsRepoForApi?.getTopicById(socialOwner, id).catch(() => null);
+                return t ? { id: t.id, name: t.name } : null;
+              }))).filter((t): t is { id: string; name: string } => t !== null);
+              const imageBudget = c.config.generate_images === true ? {
+                used: (await socialRepo.listMetrics(c.id, { kind: 'gen_image', sinceDate: monthStart }).catch(() => []))
+                  .reduce((sum, m) => sum + m.value, 0),
+                total: typeof c.config.image_budget_per_month === 'number' ? c.config.image_budget_per_month : 30,
+              } : undefined;
+              return {
+                ...c,
+                effectiveSlots: effectiveSlots(c),
+                publishedToday: await socialRepo.countPublishedToday(c.id).catch(() => 0),
+                imageBudget,
+                topics,
+              };
+            }));
+          },
           calendar: async (fromIso: string, toIso: string) => {
             const items = await socialRepo.listItems(socialOwner, {
               status: ['scheduled', 'approved', 'published'], limit: 300,
@@ -8080,6 +8109,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               ...(action === 'edit' ? {
                 title: extra?.title, body: extra?.body, hashtags: extra?.hashtags, lesson: extra?.lesson,
               } : {}),
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error };
+          },
+          // v965 — Kanal-Aktionen aus der UI (laufen über den Skill = Leitplanken)
+          channelAction: async (id: string, action: string, extra?: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const skillAction = action === 'generate' ? 'generate_content'
+              : action === 'replan' ? 'replan_channel'
+              : action === 'validate-auth' ? 'validate_auth'
+              : action === 'link-topic' ? 'link_topic'
+              : action === 'unlink-topic' ? 'unlink_topic' : '';
+            if (!skillAction) return { success: false, error: `unknown action ${action}` };
+            const r = await socialSkillForApi.execute({
+              action: skillAction, channel: id,
+              ...(typeof extra?.topic === 'string' ? { topic: extra.topic } : {}),
             }, socialCtx);
             return { success: r.success, display: r.display, error: r.error };
           },
