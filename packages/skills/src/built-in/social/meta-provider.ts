@@ -3,6 +3,7 @@ import { SocialProvider, composePostText, type ProviderCapabilities, type Publis
 import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
+const IG_GRAPH = 'https://graph.instagram.com/v21.0';
 const THREADS = 'https://graph.threads.net/v1.0';
 
 /**
@@ -39,6 +40,19 @@ export class MetaProvider extends SocialProvider {
       : secrets.META_ACCESS_TOKEN;
     if (!t) throw new Error(`Meta-Token fehlt (META_ACCESS_TOKEN in ENV-Stage social)`);
     return t;
+  }
+
+  /**
+   * v970 — Meta hat ZWEI Instagram-APIs: „mit Facebook-Anmeldung" (Page-Token
+   * `EAA…` → graph.facebook.com) und „mit Instagram-Anmeldung" (Token `IG…` →
+   * graph.instagram.com). Realfall 04.07.: User-App war der neue IG-Login-Typ,
+   * der Provider sprach nur graph.facebook.com → „Cannot parse access token".
+   * Erkennung am Token-Präfix — kein Config-Schalter nötig.
+   */
+  private graphBase(secrets: Record<string, string>): string {
+    if (this.platform === 'threads') return THREADS;
+    if (this.platform === 'instagram' && secrets.META_ACCESS_TOKEN?.startsWith('IG')) return IG_GRAPH;
+    return GRAPH;
   }
 
   private targetId(channel: SocialChannel): string {
@@ -93,16 +107,17 @@ export class MetaProvider extends SocialProvider {
     if (this.platform === 'instagram') {
       // Container-Flow: media → (Status-Poll bei Video) → media_publish
       if (!image && !video) throw new Error('Instagram braucht ein Bild oder Video (öffentliche URL).');
+      const base = this.graphBase(secrets);
       const containerParams: Record<string, string> = { access_token: token, caption: text };
       if (video) { containerParams.media_type = 'REELS'; containerParams.video_url = video.pathOrUrl; }
       else if (image) { containerParams.image_url = image.pathOrUrl; }
-      const container = await this.graphPost(`${GRAPH}/${target}/media`, containerParams);
+      const container = await this.graphPost(`${base}/${target}/media`, containerParams);
       const creationId = String(container.id ?? '');
       if (!creationId) throw new Error('Instagram: kein Container erstellt');
-      if (video) await this.waitForContainer(creationId, token);
-      const published = await this.graphPost(`${GRAPH}/${target}/media_publish`, { access_token: token, creation_id: creationId });
+      if (video) await this.waitForContainer(creationId, token, base);
+      const published = await this.graphPost(`${base}/${target}/media_publish`, { access_token: token, creation_id: creationId });
       const mediaId = String(published.id ?? '');
-      return { externalId: mediaId, url: await this.igPermalink(mediaId, token) };
+      return { externalId: mediaId, url: await this.igPermalink(mediaId, token, base) };
     }
 
     if (this.platform === 'facebook') {
@@ -126,10 +141,10 @@ export class MetaProvider extends SocialProvider {
     return { externalId: String(published.id ?? creationId) };
   }
 
-  private async waitForContainer(creationId: string, token: string): Promise<void> {
+  private async waitForContainer(creationId: string, token: string, base: string = GRAPH): Promise<void> {
     for (let i = 0; i < 12; i++) {
       await new Promise(r => setTimeout(r, 5_000));
-      const res = await fetch(`${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`);
+      const res = await fetch(`${base}/${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`);
       const data = await res.json().catch(() => ({})) as { status_code?: string };
       if (data.status_code === 'FINISHED') return;
       if (data.status_code === 'ERROR') throw new Error('Instagram: Video-Verarbeitung fehlgeschlagen');
@@ -137,9 +152,9 @@ export class MetaProvider extends SocialProvider {
     throw new Error('Instagram: Video-Verarbeitung Timeout (60s)');
   }
 
-  private async igPermalink(mediaId: string, token: string): Promise<string | undefined> {
+  private async igPermalink(mediaId: string, token: string, base: string = GRAPH): Promise<string | undefined> {
     try {
-      const res = await fetch(`${GRAPH}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(token)}`);
+      const res = await fetch(`${base}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(token)}`);
       const data = await res.json() as { permalink?: string };
       return data.permalink;
     } catch { return undefined; }
@@ -149,7 +164,7 @@ export class MetaProvider extends SocialProvider {
     try {
       const token = this.token(secrets);
       const target = this.targetId(channel);
-      const base = this.platform === 'threads' ? THREADS : GRAPH;
+      const base = this.graphBase(secrets);
       const field = this.platform === 'facebook' ? 'name' : 'username';
       const res = await fetch(`${base}/${target}?fields=${field}&access_token=${encodeURIComponent(token)}`);
       const data = await res.json().catch(() => ({})) as Record<string, unknown>;
@@ -175,7 +190,7 @@ export class MetaProvider extends SocialProvider {
     secrets: Record<string, string>,
   ): Promise<Array<{ itemId: string; kind: string; value: number }>> {
     const token = this.token(secrets);
-    const base = this.platform === 'threads' ? THREADS : GRAPH;
+    const base = this.graphBase(secrets);
     const fields = this.platform === 'facebook'
       ? 'likes.summary(true),comments.summary(true),shares'
       : 'like_count,comments_count';

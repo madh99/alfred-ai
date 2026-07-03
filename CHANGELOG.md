@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.970] - 2026-07-04
+
+### Fixed — Instagram: Unterstützung für „API mit Instagram-Anmeldung" (v970)
+
+- Meta betreibt zwei Instagram-APIs: die klassische über Facebook-Login
+  (Page-Token `EAA…`, graph.facebook.com) und die neue über
+  Instagram-Login (Token `IG…`, graph.instagram.com). Der Provider
+  sprach nur graph.facebook.com — mit einem Instagram-Login-Token
+  schlug die Auth-Prüfung mit „Cannot parse access token" fehl
+  (Realfall bei der fussball.cc-IG-Einrichtung). Der Provider erkennt
+  den Token-Typ jetzt am Präfix und nutzt automatisch den passenden
+  Endpunkt — Auth, Container-Flow, Permalink und Metriken.
+
 ## [0.19.0-multi-ha.969] - 2026-07-03
 
 ### Added — Public-Media-Host je Kanal: Instagram & Co. mit generierten Bildern (v969)

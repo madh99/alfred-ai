@@ -138,4 +138,32 @@ describe('MetaProvider + public_media (v969)', () => {
     await expect(provider.publish(makeItem(), makeChannel({ ig_user_id: 'ig-9' }), { META_ACCESS_TOKEN: 'MT' }))
       .rejects.toThrow(/public_media/);
   });
+
+  it('v970: IG-Login-Token (IG…) → graph.instagram.com, Page-Token (EAA…) → graph.facebook.com', async () => {
+    const provider = new MetaProvider('instagram');
+    const channel = makeChannel({ ig_user_id: '17841417218854772' });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ username: 'fussball.cc' }));
+    await provider.validateAuth(channel, { META_ACCESS_TOKEN: 'IGAAxyz' });
+    expect(String(fetchMock.mock.calls[0][0])).toContain('https://graph.instagram.com/');
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ username: 'fussball.cc' }));
+    await provider.validateAuth(channel, { META_ACCESS_TOKEN: 'EAAxyz' });
+    expect(String(fetchMock.mock.calls[1][0])).toContain('https://graph.facebook.com/');
+  });
+
+  it('v970: Publish mit IG-Login-Token nutzt den Container-Flow auf graph.instagram.com', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ ok: true, data: { url: '/uploads/x.webp' } })) // public_media
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'post-1' }))
+      .mockResolvedValueOnce(jsonResponse({ permalink: 'https://instagram.com/p/1' }));
+    const provider = new MetaProvider('instagram');
+    const r = await provider.publish(makeItem(), makeChannel({
+      ig_user_id: '17841417218854772',
+      public_media: { provider: 'rest', base_url: 'https://fussball.cc' },
+    }), { META_ACCESS_TOKEN: 'IGAAxyz', API_TOKEN: 'fcc_1' });
+    expect(r.externalId).toBe('post-1');
+    expect(String(fetchMock.mock.calls[1][0])).toBe('https://graph.instagram.com/v21.0/17841417218854772/media');
+    expect(String(fetchMock.mock.calls[2][0])).toBe('https://graph.instagram.com/v21.0/17841417218854772/media_publish');
+  });
 });
