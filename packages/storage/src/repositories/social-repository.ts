@@ -242,11 +242,16 @@ export class SocialRepository {
     await this.db.execute(`UPDATE content_items SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`, params);
   }
 
-  /** v959 — geplanten Termin eines scheduled-Items verschieben (Slot-Umplanung). */
-  async reschedule(userId: string, id: string, scheduledAt: string): Promise<boolean> {
+  /**
+   * v959 — geplanten Termin verschieben, Status bleibt erhalten. Default nur
+   * scheduled (Slot-Umplanung); v964: Umterminieren aus der UI darf auch
+   * approved-Termine verschieben, ohne die Freigabe zu verlieren.
+   */
+  async reschedule(userId: string, id: string, scheduledAt: string, statuses: ContentStatus[] = ['scheduled']): Promise<boolean> {
+    const placeholders = statuses.map(() => '?').join(', ');
     const r = await this.db.execute(
-      `UPDATE content_items SET scheduled_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'scheduled'`,
-      [scheduledAt, new Date().toISOString(), id, userId],
+      `UPDATE content_items SET scheduled_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status IN (${placeholders})`,
+      [scheduledAt, new Date().toISOString(), id, userId, ...statuses],
     );
     return (r.changes ?? 0) > 0;
   }

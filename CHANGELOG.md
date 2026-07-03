@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.964] - 2026-07-03
+
+### Added — Social-UI: Beitrags-Workflow komplett (v964, Paket A)
+
+- **Umterminieren** direkt am Beitrag (Datum/Zeit-Picker) — statuserhaltend:
+  geplante bleiben geplant, freigegebene behalten ihre Freigabe (vorher
+  scheiterte das Umterminieren geplanter Beiträge an der
+  Pipeline-Validierung).
+- **Löschen-Button** für veröffentlichte Beiträge (mit Rückfrage) — löscht
+  über die delete_remote-Leitplanke auf der Plattform UND in Alfred.
+- **Alle Zeiten in Lokalzeit** („Fr, 04.07., 08:00 (in 13 Std.)") statt
+  roher UTC-ISO-Strings — die 2-Stunden-Verwirrung in der Anzeige ist weg.
+- **Blockade-Hinweise am Beitrag:** überfällige Beiträge zeigen den Grund
+  („Tages-Limit erreicht (3/3) — postet nach Mitternacht oder Limit
+  erhöhen", „wartet noch auf deine Freigabe") — vorher stand das nur im
+  Server-Log. Kanalkarten zeigen „Heute X/Y" gepostet.
+- **Tabs + Kanal-Filter:** „Wartet auf dich" (jetzt inkl. freigegebener
+  Beiträge) und neuer **Verlauf** (veröffentlicht/fehlgeschlagen/abgelehnt),
+  beides nach Kanal filterbar; Kalender filtert mit.
+
 ## [0.19.0-multi-ha.963] - 2026-07-03
 
 ### Fixed — Kanal-Config wird feldweise gemergt, auch verschachtelt (v963)

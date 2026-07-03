@@ -8071,7 +8071,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               : action === 'reject' ? 'reject_content'
               : action === 'publish' ? 'publish_now'
               : action === 'schedule' ? 'schedule_content'
-              : action === 'edit' ? 'edit_content' : '';
+              : action === 'edit' ? 'edit_content'
+              : action === 'delete' ? 'delete_remote' : '';
             if (!skillAction) return { success: false, error: `unknown action ${action}` };
             const r = await socialSkillForApi.execute({
               action: skillAction, item_id: id,

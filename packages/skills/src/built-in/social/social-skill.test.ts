@@ -56,6 +56,7 @@ function makeRepo(channel: SocialChannel, item: ContentItem) {
       return state.item;
     }),
     updateItemContent: vi.fn(async () => {}),
+    reschedule: vi.fn(async (_u: string, _id: string, at: string) => { state.item = { ...state.item, scheduledAt: at }; return true; }),
     countPublishedToday: vi.fn(async () => 0),
     upsertMetric: vi.fn(async () => {}),
     listMetrics: vi.fn(async () => []),
@@ -341,6 +342,33 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(replan).toHaveBeenCalledOnce();
     expect(r.display).toContain('3');
     expect(r.display).toContain('umgeplant');
+  });
+
+  it('v964: schedule_content termininiert scheduled-Items STATUSERHALTEND um', async () => {
+    const { skill, state, spies } = makeSkill(makeChannel(), makeItem({ status: 'scheduled', scheduledAt: '2026-07-10T18:00:00.000Z' }));
+    const r = await skill.execute({ action: 'schedule_content', item_id: 'item-0001-aaaa', scheduled_at: '2026-07-11T10:00:00.000Z' }, CTX);
+    expect(r.success).toBe(true);
+    expect(spies.reschedule).toHaveBeenCalledWith('u1', 'item-0001-aaaa', '2026-07-11T10:00:00.000Z', ['scheduled', 'approved']);
+    expect(spies.transition).not.toHaveBeenCalled();
+    expect(state.item.status).toBe('scheduled');
+    expect(state.item.scheduledAt).toBe('2026-07-11T10:00:00.000Z');
+  });
+
+  it('v964: approved-Item behält beim Umterminieren seine Freigabe', async () => {
+    const { skill, state, spies } = makeSkill(makeChannel(), makeItem({ status: 'approved', scheduledAt: '2026-07-10T18:00:00.000Z' }));
+    const r = await skill.execute({ action: 'schedule_content', item_id: 'item-0001-aaaa', scheduled_at: '2026-07-12T08:00:00.000Z' }, CTX);
+    expect(r.success).toBe(true);
+    expect(spies.transition).not.toHaveBeenCalled();
+    expect(state.item.status).toBe('approved');
+    expect(r.display).toContain('Status bleibt approved');
+  });
+
+  it('v964: draft-Item wird wie bisher via Transition terminiert', async () => {
+    const { skill, spies } = makeSkill(makeChannel(), makeItem({ status: 'draft' }));
+    const r = await skill.execute({ action: 'schedule_content', item_id: 'item-0001-aaaa', scheduled_at: '2026-07-12T08:00:00.000Z' }, CTX);
+    expect(r.success).toBe(true);
+    expect(spies.transition).toHaveBeenCalledWith('u1', 'item-0001-aaaa', 'scheduled', { scheduledAt: '2026-07-12T08:00:00.000Z' });
+    expect(spies.reschedule).not.toHaveBeenCalled();
   });
 
   it('v962: add_content generiert ein Bild, wenn der Kanal generate_images hat', async () => {

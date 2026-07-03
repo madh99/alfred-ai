@@ -25,16 +25,49 @@ const STATUS_BADGE: Record<string, string> = {
   publishing: 'bg-amber-500/20 text-amber-300',
 };
 
+// ── v964 — Zeiten LOKAL anzeigen (vorher roher UTC-ISO-String: „Mo 18:00"
+// erschien als 16:00Z und stiftete Slot-Verwirrung) ──
+function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('de-AT', {
+    weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function fmtRelative(iso: string): string {
+  const diffMin = Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
+  const abs = Math.abs(diffMin);
+  const txt = abs < 60 ? `${abs} min` : abs < 48 * 60 ? `${Math.round(abs / 60)} Std.` : `${Math.round(abs / 1440)} Tagen`;
+  return diffMin >= 0 ? `in ${txt}` : `vor ${txt}`;
+}
+
+/** ISO → Wert für <input type="datetime-local"> (lokale Zeit). */
+function toLocalInput(iso?: string): string {
+  const d = iso ? new Date(iso) : new Date(Date.now() + 3_600_000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+type QueueTab = 'pending' | 'history';
+
 export function SocialPage() {
   const { client } = useConfig();
   const [channels, setChannels] = useState<SocialChannelItem[]>([]);
   const [pending, setPending] = useState<SocialContentItem[]>([]);
+  const [history, setHistory] = useState<SocialContentItem[]>([]);
   const [calendar, setCalendar] = useState<SocialContentItem[]>([]);
+  const [publishedRecent, setPublishedRecent] = useState<SocialContentItem[]>([]);
   const [metrics, setMetrics] = useState<Record<string, Array<{ kind: string; value: number; date: string; itemId?: string }>>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
+  // v964 — Queue-Tabs + Kanal-Filter
+  const [tab, setTab] = useState<QueueTab>('pending');
+  const [channelFilter, setChannelFilter] = useState<string>('');
+  // v964 — Umterminieren (Inline-Datepicker je Item)
+  const [reschedulingId, setReschedulingId] = useState<string | null>(null);
+  const [rescheduleAt, setRescheduleAt] = useState<string>('');
   // v948 — Bild-Vorschauen: Blob-URLs je Item (Auth via Bearer, daher kein direktes <img src>)
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
   // v955 — Inline-Editor (Korrektur + optionale Lektion, aus der der Kanal lernt)
@@ -45,14 +78,19 @@ export function SocialPage() {
     if (!client) return;
     setLoading(true); setError(null);
     try {
-      const [ch, sched, drafts, cal] = await Promise.all([
+      const [ch, sched, drafts, approved, published, cal] = await Promise.all([
         client.fetchSocialChannels(),
         client.fetchSocialItems({ status: 'scheduled', limit: 50 }),
         client.fetchSocialItems({ status: 'draft', limit: 50 }),
+        client.fetchSocialItems({ status: 'approved', limit: 50 }),
+        client.fetchSocialItems({ status: 'published', limit: 100 }),
         client.fetchSocialCalendar(new Date().toISOString(), new Date(Date.now() + 14 * 24 * 3_600_000).toISOString()),
       ]);
       setChannels(ch);
-      setPending([...sched, ...drafts]);
+      // v964 — auch approved gehört in die Queue (vorher unsichtbar, bis es im Kalender auftauchte)
+      const byTime = (a: SocialContentItem, b: SocialContentItem) => (a.scheduledAt ?? '9999').localeCompare(b.scheduledAt ?? '9999');
+      setPending([...approved, ...sched, ...drafts].sort(byTime));
+      setPublishedRecent(published);
       setCalendar(cal);
       // Metriken der aktiven Kanäle (best-effort)
       const m: typeof metrics = {};
@@ -67,10 +105,28 @@ export function SocialPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // v964 — Verlauf (published/failed/rejected) erst beim Tab-Wechsel laden
+  const loadHistory = useCallback(async () => {
+    if (!client) return;
+    try {
+      const [published, failed, rejected] = await Promise.all([
+        client.fetchSocialItems({ status: 'published', limit: 50 }),
+        client.fetchSocialItems({ status: 'failed', limit: 25 }),
+        client.fetchSocialItems({ status: 'rejected', limit: 25 }),
+      ]);
+      const ts = (i: SocialContentItem) => i.publishedAt ?? i.scheduledAt ?? i.createdAt;
+      setHistory([...published, ...failed, ...rejected].sort((a, b) => ts(b).localeCompare(ts(a))));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [client]);
+
+  useEffect(() => { if (tab === 'history') loadHistory(); }, [tab, loadHistory]);
+
   // v948 — Bild-Vorschauen nachladen (erstes image je Item)
   useEffect(() => {
     if (!client) return;
-    const items = [...pending, ...calendar];
+    const items = [...pending, ...calendar, ...history];
     for (const item of items) {
       if (mediaUrls[item.id] !== undefined) continue;
       const image = item.media?.find(m => m.type === 'image');
@@ -82,9 +138,35 @@ export function SocialPage() {
     }
     // mediaUrls bewusst nicht in deps — sonst Endlosschleife durch eigene Updates
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, pending, calendar]);
+  }, [client, pending, calendar, history]);
 
   const channelName = useCallback((id: string) => channels.find(c => c.id === id)?.name ?? id.slice(0, 8), [channels]);
+
+  // v964 — heutige Veröffentlichungen je Kanal (fürs Tages-Limit-Signal)
+  const publishedTodayByChannel = useMemo(() => {
+    const today = new Date();
+    const isToday = (iso?: string) => {
+      if (!iso) return false;
+      const d = new Date(iso);
+      return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+    };
+    const counts: Record<string, number> = {};
+    for (const i of publishedRecent) if (isToday(i.publishedAt)) counts[i.channelId] = (counts[i.channelId] ?? 0) + 1;
+    return counts;
+  }, [publishedRecent]);
+
+  /** v964 — warum liegt ein fälliger Beitrag noch herum? (Tages-Limit war im Log unsichtbar) */
+  function blockedHint(item: SocialContentItem): string | null {
+    if (!item.scheduledAt || new Date(item.scheduledAt).getTime() > Date.now()) return null;
+    if (item.status === 'scheduled') return 'Termin verstrichen — wartet noch auf deine Freigabe.';
+    if (item.status !== 'approved') return null;
+    const channel = channels.find(c => c.id === item.channelId);
+    const today = publishedTodayByChannel[item.channelId] ?? 0;
+    if (channel && today >= channel.maxPostsPerDay) {
+      return `Tages-Limit erreicht (${today}/${channel.maxPostsPerDay}) — postet nach Mitternacht, oder Limit im Kanal erhöhen.`;
+    }
+    return 'Überfällig — die Engine postet beim nächsten Tick (≤ 5 min). Bleibt das so, Logs prüfen.';
+  }
 
   async function withBusy(key: string, fn: () => Promise<void>) {
     setBusy(key); setError(null);
@@ -110,10 +192,30 @@ export function SocialPage() {
     });
   }
 
-  async function itemAction(item: SocialContentItem, action: 'approve' | 'reject' | 'publish') {
+  async function itemAction(item: SocialContentItem, action: 'approve' | 'reject' | 'publish' | 'delete') {
+    if (action === 'delete' && !confirm('Beitrag auf der Plattform UND in Alfred löschen?')) return;
     await withBusy(item.id, async () => {
       const r = await client!.socialItemAction(item.id, action);
       if (!r.success) throw new Error(r.error ?? 'Aktion fehlgeschlagen');
+      if (r.display) setNotice(r.display);
+      await load();
+      if (tab === 'history') await loadHistory();
+    });
+  }
+
+  // v964 — Umterminieren: Datepicker → schedule mit Wunschtermin
+  function startReschedule(item: SocialContentItem) {
+    setReschedulingId(item.id);
+    setRescheduleAt(toLocalInput(item.scheduledAt));
+  }
+
+  async function saveReschedule(item: SocialContentItem) {
+    const at = new Date(rescheduleAt);
+    if (Number.isNaN(at.getTime())) { setError('Ungültiger Zeitpunkt.'); return; }
+    await withBusy(item.id, async () => {
+      const r = await client!.socialItemAction(item.id, 'schedule', { scheduled_at: at.toISOString() });
+      if (!r.success) throw new Error(r.error ?? 'Umterminieren fehlgeschlagen');
+      setReschedulingId(null);
       await load();
     });
   }
@@ -143,16 +245,27 @@ export function SocialPage() {
     });
   }
 
-  /** Kalender nach Tag gruppiert (kommende 14 Tage). */
+  // v964 — Kanal-Filter auf Queue, Verlauf und Kalender
+  const filterByChannel = useCallback(
+    (items: SocialContentItem[]) => (channelFilter ? items.filter(i => i.channelId === channelFilter) : items),
+    [channelFilter],
+  );
+  const visiblePending = useMemo(() => filterByChannel(pending), [pending, filterByChannel]);
+  const visibleHistory = useMemo(() => filterByChannel(history), [history, filterByChannel]);
+
+  /** Kalender nach Tag gruppiert (kommende 14 Tage) — v964: lokale Tage. */
   const calendarByDay = useMemo(() => {
     const map = new Map<string, SocialContentItem[]>();
-    for (const item of calendar) {
-      const day = (item.scheduledAt ?? item.publishedAt ?? '').slice(0, 10);
-      if (!day) continue;
+    for (const item of filterByChannel(calendar)) {
+      const iso = item.scheduledAt ?? item.publishedAt;
+      if (!iso) continue;
+      const d = new Date(iso);
+      const p = (n: number) => String(n).padStart(2, '0');
+      const day = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
       map.set(day, [...(map.get(day) ?? []), item]);
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [calendar]);
+  }, [calendar, filterByChannel]);
 
   function channelMetricSummary(channelId: string): string {
     const m = metrics[channelId] ?? [];
@@ -169,17 +282,25 @@ export function SocialPage() {
     const isOpen = expandedItem === item.id;
     const previewUrl = mediaUrls[item.id];
     const hasVideo = item.media?.some(m => m.type === 'video');
+    const hint = blockedHint(item);
     return (
       <div key={item.id} className="border border-[#1f1f1f] rounded-lg p-3">
         <div className="flex items-center gap-2 flex-wrap text-xs">
           <span className={clsx('px-1.5 py-0.5 rounded uppercase text-[10px]', STATUS_BADGE[item.status] ?? '')}>{item.status}</span>
           <span className="text-gray-400">{channelName(item.channelId)}</span>
-          {item.scheduledAt && <span className="text-gray-500">⏰ {item.scheduledAt.slice(0, 16).replace('T', ' ')}</span>}
+          {item.scheduledAt && item.status !== 'published' && (
+            <span className="text-gray-500" title={item.scheduledAt}>⏰ {fmtDateTime(item.scheduledAt)} <span className="text-gray-600">({fmtRelative(item.scheduledAt)})</span></span>
+          )}
+          {item.publishedAt && <span className="text-gray-500" title={item.publishedAt}>✅ {fmtDateTime(item.publishedAt)}</span>}
           {item.source === 'studio' && <span className="text-purple-400 text-[10px]">Studio</span>}
           {item.error && <span className="text-red-400 truncate max-w-[200px]" title={item.error}>⚠ {item.error.slice(0, 40)}</span>}
           <div className="flex-1" />
           <span className="font-mono text-gray-600">{item.id.slice(0, 8)}</span>
         </div>
+        {/* v964 — sichtbarer Blockade-Grund (Tages-Limit stand vorher nur im Server-Log) */}
+        {hint && (
+          <div className="mt-2 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">⏳ {hint}</div>
+        )}
         {/* v955 — Inline-Editor: Korrektur + optionale Lektion */}
         {editingId === item.id ? (
           <div className="mt-2 space-y-2">
@@ -227,11 +348,22 @@ export function SocialPage() {
             )}
           </>
         )}
+        {/* v964 — Umterminieren */}
+        {reschedulingId === item.id && (
+          <div className="flex items-center gap-2 mt-2">
+            <input type="datetime-local" value={rescheduleAt} onChange={e => setRescheduleAt(e.target.value)}
+              className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200" />
+            <button onClick={() => saveReschedule(item)} disabled={busy === item.id}
+              className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded">✓ Termin setzen</button>
+            <button onClick={() => setReschedulingId(null)}
+              className="px-2 py-1 text-xs border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 rounded">Abbrechen</button>
+          </div>
+        )}
         <div className="flex items-center gap-2 mt-2 flex-wrap">
           {item.externalUrl && (
             <a href={item.externalUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:text-blue-300">🔗 Post öffnen</a>
           )}
-          {showActions && editingId !== item.id && (item.status === 'draft' || item.status === 'scheduled' || item.status === 'failed' || item.status === 'approved') && (
+          {showActions && editingId !== item.id && reschedulingId !== item.id && (item.status === 'draft' || item.status === 'scheduled' || item.status === 'failed' || item.status === 'approved') && (
             <>
               {item.status !== 'failed' && item.status !== 'approved' && (
                 <button onClick={() => itemAction(item, 'approve')} disabled={busy === item.id}
@@ -239,11 +371,18 @@ export function SocialPage() {
               )}
               <button onClick={() => itemAction(item, 'publish')} disabled={busy === item.id}
                 className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded">🚀 Sofort posten</button>
+              <button onClick={() => startReschedule(item)} disabled={busy === item.id}
+                className="px-2 py-1 text-xs border border-blue-500/40 text-blue-400 hover:bg-blue-500/15 rounded">📅 Umterminieren</button>
               <button onClick={() => startEdit(item)} disabled={busy === item.id}
                 className="px-2 py-1 text-xs border border-amber-500/40 text-amber-400 hover:bg-amber-500/15 rounded">✏️ Bearbeiten</button>
               <button onClick={() => itemAction(item, 'reject')} disabled={busy === item.id}
                 className="px-2 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded">✕ Ablehnen</button>
             </>
+          )}
+          {/* v964 — published: auf der Plattform löschen (delete_remote-Leitplanke) */}
+          {item.status === 'published' && (
+            <button onClick={() => itemAction(item, 'delete')} disabled={busy === item.id}
+              className="px-2 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded">🗑 Löschen</button>
           )}
         </div>
       </div>
@@ -263,6 +402,12 @@ export function SocialPage() {
       </div>
 
       {error && <div className="bg-red-500/10 border border-red-500/40 rounded px-3 py-2 text-sm text-red-400">{error}</div>}
+      {notice && (
+        <div className="bg-emerald-500/10 border border-emerald-500/40 rounded px-3 py-2 text-sm text-emerald-300 flex items-start gap-2">
+          <span className="flex-1 whitespace-pre-wrap">{notice}</span>
+          <button onClick={() => setNotice(null)} className="text-emerald-400 hover:text-emerald-200">✕</button>
+        </div>
+      )}
       {loading && <div className="text-gray-500 text-sm">Lade …</div>}
 
       {!loading && channels.length === 0 && (
@@ -284,7 +429,9 @@ export function SocialPage() {
                 {c.status !== 'active' && <span className="text-[10px] px-1.5 py-0.5 bg-red-500/20 text-red-300 rounded uppercase">{c.status}</span>}
               </div>
               <div className="text-[11px] text-gray-500 mt-1.5 space-x-2">
-                <span>Limit {c.maxPostsPerDay}/Tag</span>
+                <span className={clsx((publishedTodayByChannel[c.id] ?? 0) >= c.maxPostsPerDay && 'text-amber-400')}>
+                  Heute {publishedTodayByChannel[c.id] ?? 0}/{c.maxPostsPerDay}
+                </span>
                 <span>· Horizont {c.planningHorizonDays}d</span>
                 <span>· Erstpost-Streak {Math.min(c.approvedStreak, 5)}/5{c.approvedStreak >= 5 ? ' ✓' : ''}</span>
               </div>
@@ -311,15 +458,39 @@ export function SocialPage() {
         </div>
       )}
 
-      {/* Freigabe-Queue */}
-      {pending.length > 0 && (
-        <div>
-          <h2 className="text-sm font-semibold text-gray-200 mb-2">📤 Wartet auf dich ({pending.length})</h2>
-          <div className="space-y-2">
-            {pending.map(i => renderItemCard(i, true))}
-          </div>
+      {/* v964 — Queue mit Tabs (Wartend/Verlauf) + Kanal-Filter */}
+      <div>
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          <button onClick={() => setTab('pending')}
+            className={clsx('px-2.5 py-1 text-xs rounded border', tab === 'pending' ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a]')}>
+            📤 Wartet auf dich ({visiblePending.length})
+          </button>
+          <button onClick={() => setTab('history')}
+            className={clsx('px-2.5 py-1 text-xs rounded border', tab === 'history' ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a]')}>
+            🗂 Verlauf
+          </button>
+          <div className="flex-1" />
+          {channels.length > 1 && (
+            <select value={channelFilter} onChange={e => setChannelFilter(e.target.value)}
+              className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200">
+              <option value="">Alle Kanäle</option>
+              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
         </div>
-      )}
+        {tab === 'pending' && (
+          <div className="space-y-2">
+            {visiblePending.length === 0 && <div className="text-xs text-gray-600">Nichts offen — alles freigegeben oder noch nichts erzeugt.</div>}
+            {visiblePending.map(i => renderItemCard(i, true))}
+          </div>
+        )}
+        {tab === 'history' && (
+          <div className="space-y-2">
+            {visibleHistory.length === 0 && <div className="text-xs text-gray-600">Noch kein Verlauf.</div>}
+            {visibleHistory.map(i => renderItemCard(i, i.status === 'failed'))}
+          </div>
+        )}
+      </div>
 
       {/* Content-Kalender */}
       <div>
@@ -329,7 +500,7 @@ export function SocialPage() {
           {calendarByDay.map(([day, items]) => (
             <div key={day}>
               <div className="text-xs text-gray-500 mb-1.5 font-medium">
-                {new Date(day + 'T12:00:00Z').toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' })}
+                {new Date(day + 'T12:00:00').toLocaleDateString('de-AT', { weekday: 'long', day: '2-digit', month: '2-digit' })}
               </div>
               <div className="space-y-2">
                 {items.map(i => renderItemCard(i, i.status !== 'published'))}

@@ -398,7 +398,16 @@ export class SocialSkill extends Skill {
     if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
     const at = typeof input.scheduled_at === 'string' ? input.scheduled_at : '';
     if (!at || Number.isNaN(Date.parse(at))) return { success: false, error: 'scheduled_at (ISO) erforderlich' };
-    const updated = await this.repo.transition(userId, item.id, 'scheduled', { scheduledAt: new Date(at).toISOString() });
+    const iso = new Date(at).toISOString();
+    // v964 — Umterminieren STATUSERHALTEND: scheduled bleibt scheduled, approved
+    // bleibt approved (vorher scheiterte scheduled→scheduled an der
+    // Transition-Validierung, und approved hätte die Freigabe verloren).
+    if (item.status === 'scheduled' || item.status === 'approved') {
+      const ok = await this.repo.reschedule(userId, item.id, iso, ['scheduled', 'approved']);
+      if (!ok) return { success: false, error: 'Umterminieren fehlgeschlagen.' };
+      return { success: true, data: { item: { ...item, scheduledAt: iso } }, display: `⏰ [${item.id.slice(0, 8)}] umterminiert auf ${iso.slice(0, 16).replace('T', ' ')} (Status bleibt ${item.status}).` };
+    }
+    const updated = await this.repo.transition(userId, item.id, 'scheduled', { scheduledAt: iso });
     return { success: true, data: { item: updated }, display: `⏰ [${item.id.slice(0, 8)}] geplant für ${updated.scheduledAt!.slice(0, 16).replace('T', ' ')}. Freigabe: approve_content.` };
   }
 
