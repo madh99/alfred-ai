@@ -43,7 +43,11 @@ export class SocialSkill extends Skill {
     description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle).',
     riskLevel: 'write',
     version: '1.0.0',
-    timeoutMs: 120_000,
+    // v949 — 10 min: generate_content erzeugt bis zu ~10 Posts inkl. je ~20s
+    // Bild-Generierung (Realfall: 5 Posts ≈ 2-3 min); der alte 120s-Timeout
+    // brach die Chat-Antwort ab, während die Arbeit im Hintergrund fertig
+    // lief („wieder Timeout nach 120s, aber 5 Beiträge terminiert").
+    timeoutMs: 600_000,
     inputSchema: {
       type: 'object',
       properties: {

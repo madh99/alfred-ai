@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.949] - 2026-07-03
+
+### Fixed — social-Skill-Timeout deckt Bild-Generierung ab (v949)
+
+Realfall: „Content-Studio ist gestartet — wieder Timeout nach 120s, aber es
+hat 5 neue Beiträge terminiert." `generate_content` braucht mit
+Bild-Generierung ~20 s pro Post (5 Posts ≈ 2–3 min) — der Skill-Timeout von
+120 s brach die Chat-Antwort ab, während die Arbeit im Hintergrund korrekt
+fertig lief. Verwirrend und mit Doppel-Lauf-Risiko (erneutes „Starte…"
+erzeugt weitere Posts).
+
+- Skill-Timeout von 2 auf **10 Minuten** erhöht — deckt einen vollen
+  Studio-Lauf mit Bildern ab; die Chat-Antwort listet jetzt zuverlässig die
+  erzeugten Beiträge.
+
 ## [0.19.0-multi-ha.948] - 2026-07-03
 
 ### Added — Social-UI zeigt die generierten Bilder (v948)
