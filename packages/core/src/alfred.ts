@@ -6641,6 +6641,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           this.socialRepo, this.interestsRepo, this.insightsRepo, this.llmProvider,
           this.skillRegistry, this.skillSandbox, this.sourceProvisioner,
           this.logger.child({ component: 'content-studio' }), ownerUid,
+          path.resolve(path.dirname(this.config.storage.path), 'social-media'), // v942 — Ablage generierter Bilder
         );
         const studio = this.contentStudio;
         socialSkill.setStudio(channel => studio.fillChannel(channel));

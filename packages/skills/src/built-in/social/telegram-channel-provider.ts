@@ -36,21 +36,30 @@ export class TelegramChannelProvider extends SocialProvider {
     const text = composePostText(item, 4096);
     const image = item.media.find(m => m.type === 'image');
 
-    let endpoint: string;
-    let payload: Record<string, unknown>;
+    let res: Response;
     if (image && image.pathOrUrl.startsWith('http')) {
-      endpoint = 'sendPhoto';
-      payload = { chat_id: chatId, photo: image.pathOrUrl, caption: text.slice(0, 1024) };
+      res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, photo: image.pathOrUrl, caption: text.slice(0, 1024) }),
+      });
+    } else if (image) {
+      // v942 — lokale Datei (z.B. Studio-generiert): Multipart-Upload
+      const { readFile } = await import('node:fs/promises');
+      const bytes = await readFile(image.pathOrUrl);
+      const form = new FormData();
+      form.append('chat_id', chatId);
+      form.append('caption', text.slice(0, 1024));
+      form.append('photo', new Blob([new Uint8Array(bytes)], { type: 'image/png' }), 'photo.png');
+      res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
     } else {
-      endpoint = 'sendMessage';
-      payload = { chat_id: chatId, text };
+      res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text }),
+      });
     }
 
-    const res = await fetch(`https://api.telegram.org/bot${token}/${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
     const data = await res.json() as { ok: boolean; result?: { message_id: number }; description?: string };
     if (!data.ok || !data.result) {
       throw new Error(`Telegram: ${data.description ?? `HTTP ${res.status}`}`);

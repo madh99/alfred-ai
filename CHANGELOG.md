@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.942] - 2026-07-03
+
+### Fixed — Social: saubere Titel + Bild-Kette repariert (v942)
+
+- **HTML-Entities dekodiert** (Realfall: „WM-Modus &amp;amp; Format" in der
+  Freigabe-Queue): das LLM liefert gelegentlich HTML-escapte Texte —
+  `decodeHtmlEntities()` läuft jetzt beim Parsen über Titel UND Body
+  (&amp;amp;, &amp;lt;, &amp;quot;, &amp;#39;, &amp;nbsp; …).
+- **Bild-Generierung funktioniert jetzt wirklich end-to-end** — beim
+  Verdrahten der Aktivierungs-Anleitung fielen zwei echte Lücken auf:
+  1. `image_generate` liefert das Bild als **Buffer-Attachment**, das Studio
+     erwartete aber eine URL — generierte Bilder wären nie am Post gelandet.
+     Das Studio persistiert Attachments jetzt nach `data/social-media/` und
+     hängt den lokalen Pfad ans Item (URL-Antworten weiter unterstützt).
+  2. Der Telegram-Provider konnte nur http-Bild-URLs senden — lokale Dateien
+     (genau das, was das Studio erzeugt) werden jetzt per
+     **Multipart-Upload** (sendPhoto mit FormData) gepostet.
+- Aktivierung je Kanal bleibt wie dokumentiert:
+  `config.generate_images: true` (+ optional `image_budget_per_month`,
+  Default 30); Voraussetzung ist ein auto-erkannter Bild-Provider
+  (OpenAI-/Gemini-Key in der LLM-Config).
+- 3 neue Tests (Entity-Dekodierung in parseIdeas, Multipart-Upload mit
+  echter Temp-Datei).
+
 ## [0.19.0-multi-ha.941] - 2026-07-03
 
 ### Fixed — Content-Studio: Bildideen landen nie mehr im Post-Text (v941)

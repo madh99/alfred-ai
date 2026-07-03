@@ -61,6 +61,31 @@ describe('TelegramChannelProvider (v933)', () => {
     expect(JSON.parse((init as RequestInit).body as string).photo).toBe('https://ex.at/bild.png');
   });
 
+  it('v942: lokale Bilddatei → Multipart-Upload (sendPhoto mit FormData)', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const tmpFile = join(tmpdir(), `alfred-test-photo-${Date.now()}.png`);
+    writeFileSync(tmpFile, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    try {
+      fetchMock.mockResolvedValue(jsonResponse({ ok: true, result: { message_id: 80 } }));
+      const provider = new TelegramChannelProvider('T');
+      const r = await provider.publish(
+        makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: tmpFile }] }),
+        channel, {},
+      );
+      expect(r.externalId).toBe('80');
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toContain('/sendPhoto');
+      expect((init as RequestInit).body).toBeInstanceOf(FormData);
+      const form = (init as RequestInit).body as FormData;
+      expect(form.get('chat_id')).toBe('@fussballcc');
+      expect(String(form.get('caption'))).toContain('Derby-Sieg');
+    } finally {
+      unlinkSync(tmpFile);
+    }
+  });
+
   it('API-Fehler wird als Error mit description geworfen', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: false, description: 'chat not found' }, 400));
     const provider = new TelegramChannelProvider('T');

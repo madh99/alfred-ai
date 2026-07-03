@@ -62,6 +62,21 @@ interface GeneratedIdea {
 }
 
 /**
+ * v942 — LLMs liefern gelegentlich HTML-escapte Texte („WM-Modus &amp; Format",
+ * Realfall 03.07.) — vor dem Speichern dekodieren.
+ */
+export function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&nbsp;/gi, ' ');
+}
+
+/**
  * v941 — Meta-Zeilen wie „Bildidee: …" haben im Post-Text nichts verloren
  * (Realfall 03.07.: „Bildidee: Sechs Team-Wappen…" wäre mitgepostet worden).
  * Defense-in-depth zusätzlich zur Prompt-Regel.
@@ -85,8 +100,8 @@ export function parseIdeas(text: string): GeneratedIdea[] {
     return parsed
       .filter((i: any) => i && typeof i.body === 'string' && i.body.trim().length > 10)
       .map((i: any) => ({
-        title: typeof i.title === 'string' ? i.title.slice(0, 200) : '',
-        body: stripMetaLines(String(i.body).slice(0, 8000)),
+        title: typeof i.title === 'string' ? decodeHtmlEntities(i.title).slice(0, 200) : '',
+        body: stripMetaLines(decodeHtmlEntities(String(i.body)).slice(0, 8000)),
         hashtags: Array.isArray(i.hashtags) ? i.hashtags.map(String).slice(0, 10)
           : Array.isArray(i.tags) ? i.tags.map(String).slice(0, 10) : [],
         warum: typeof i.warum === 'string' ? i.warum.slice(0, 300) : '',
@@ -131,6 +146,8 @@ export class ContentStudio {
     private readonly provisioner: SourceProvisioner | undefined,
     private readonly logger: Logger,
     private readonly ownerUserId: string,
+    /** v942 — Ablageort für generierte Bilder (image_generate liefert Buffer-Attachments). */
+    private readonly mediaDir?: string,
   ) {}
 
   /** Täglicher Lauf über alle aktiven Kanäle. @returns Anzahl erzeugter Items. */
@@ -306,10 +323,23 @@ Antworte NUR mit einem JSON-Array:
         prompt: `${motif}. Stil: ${channel.persona ?? 'modern, freundlich'}. Kein Text im Bild.`,
       }, { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
       if (!result.success) return [];
-      const data = result.data as Record<string, unknown> | undefined;
-      const url = typeof data?.url === 'string' ? data.url
-        : typeof data?.path === 'string' ? data.path
-        : typeof data?.filePath === 'string' ? data.filePath : undefined;
+      // v942 — image_generate liefert das Bild als Buffer-Attachment (nicht als URL):
+      // in mediaDir persistieren; URL-Formen bleiben als Fallback unterstützt.
+      let url: string | undefined;
+      const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string }> }).attachments?.[0];
+      if (attachment?.data && Buffer.isBuffer(attachment.data) && this.mediaDir) {
+        const { writeFile, mkdir } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        await mkdir(this.mediaDir, { recursive: true });
+        const file = join(this.mediaDir, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+        await writeFile(file, attachment.data);
+        url = file;
+      } else {
+        const data = result.data as Record<string, unknown> | undefined;
+        url = typeof data?.url === 'string' ? data.url
+          : typeof data?.path === 'string' ? data.path
+          : typeof data?.filePath === 'string' ? data.filePath : undefined;
+      }
       if (!url) return [];
       const today = new Date().toISOString().slice(0, 10);
       const todayUsed = (await this.socialRepo.listMetrics(channel.id, { kind: 'gen_image', sinceDate: today }))

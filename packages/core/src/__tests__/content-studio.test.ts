@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ContentStudio, nextFreeSlots, parseIdeas, stripMetaLines } from '../content-studio.js';
+import { ContentStudio, nextFreeSlots, parseIdeas, stripMetaLines, decodeHtmlEntities } from '../content-studio.js';
 import type { SocialRepository, SocialChannel, ContentItem, InterestsRepository, InsightsRepository } from '@alfred/storage';
 
 const OWNER = 'owner-1';
@@ -78,6 +78,19 @@ describe('parseIdeas (v935)', () => {
     expect(out[0].body).toContain('Euer Tipp?');
     expect(out[0].body).not.toContain('Bildidee');
     expect(out[0].body).not.toContain('Team-Wappen');
+  });
+});
+
+describe('decodeHtmlEntities (v942)', () => {
+  it('dekodiert HTML-Entities in Titel und Body (Realfall „WM-Modus &amp; Format")', () => {
+    expect(decodeHtmlEntities('WM-Modus &amp; Format erklärt')).toBe('WM-Modus & Format erklärt');
+    expect(decodeHtmlEntities('&lt;b&gt;fett&lt;/b&gt; &quot;zitiert&quot; &#39;x&#39;&nbsp;!')).toBe(`<b>fett</b> "zitiert" 'x' !`);
+  });
+
+  it('parseIdeas wendet die Dekodierung auf title UND body an', () => {
+    const out = parseIdeas('[{"title":"ÖFB-Rückblick &amp; Rangnick-Ära","body":"Kopf hoch &amp; weiter — ein langer Text hier."}]');
+    expect(out[0].title).toBe('ÖFB-Rückblick & Rangnick-Ära');
+    expect(out[0].body).toContain('Kopf hoch & weiter');
   });
 });
 
