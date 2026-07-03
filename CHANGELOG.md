@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.943] - 2026-07-03
+
+### Added — rest-Provider: verschachtelte API-Antworten + URL-Templates (v943)
+
+Anlass: die frisch gebaute fussball.cc-Management-API antwortet mit einer
+Hülle `{ ok, data: { id, slug } }` — der Provider las id/url bisher nur auf
+oberster Ebene, das Post-Tracking wäre leer geblieben.
+
+- `id_field`/`url_field` unterstützen **Dot-Pfade** (`data.id`); zusätzlich
+  greift automatisch ein `data.<feld>`-Fallback — Standard-Hüllen
+  funktionieren damit ganz ohne Extra-Config.
+- Neu: `url_template` baut die öffentliche Post-URL aus Antwortfeldern,
+  z. B. `https://fussball.cc/news/{data.slug}`; unaufgelöste Platzhalter →
+  keine URL statt kaputtem Link.
+- 2 Tests (fussball.cc-Antwortformat explizit + Fallback, Platzhalter-Schutz).
+
 ## [0.19.0-multi-ha.942] - 2026-07-03
 
 ### Fixed — Social: saubere Titel + Bild-Kette repariert (v942)

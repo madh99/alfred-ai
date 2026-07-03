@@ -136,4 +136,27 @@ describe('RestProvider (v933)', () => {
     const provider = new RestProvider();
     await expect(provider.publish(makeItem(), makeChannel({}, 'rest'), {})).rejects.toThrow(/base_url/);
   });
+
+  it('v943: Antwort-Hülle { ok, data: {…} } — id via Dot-Pfad/Fallback + url_template (fussball.cc)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, data: { id: 'cmc31', slug: 'wm-auftakt-2026' } }, 201));
+    const provider = new RestProvider();
+    // Variante 1: explizite Dot-Pfade + URL-Template
+    const explicitChannel = makeChannel({
+      base_url: 'https://fussball.cc', publish_path: '/api/integrations/news',
+      id_field: 'data.id', url_template: 'https://fussball.cc/news/{data.slug}',
+    }, 'rest');
+    const r1 = await provider.publish(makeItem(), explicitChannel, { API_TOKEN: 't' });
+    expect(r1).toEqual({ externalId: 'cmc31', url: 'https://fussball.cc/news/wm-auftakt-2026' });
+    // Variante 2: ohne Config — data.<id>-Fallback greift automatisch
+    const r2 = await provider.publish(makeItem(), makeChannel({ base_url: 'https://fussball.cc' }, 'rest'), {});
+    expect(r2.externalId).toBe('cmc31');
+  });
+
+  it('v943: unaufgelöste url_template-Platzhalter → keine URL statt kaputtem Link', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, data: { id: 'x1' } }));
+    const provider = new RestProvider();
+    const ch = makeChannel({ base_url: 'https://ex.at', url_template: 'https://ex.at/news/{data.slug}' }, 'rest');
+    const r = await provider.publish(makeItem(), ch, {});
+    expect(r.url).toBeUndefined();
+  });
 });

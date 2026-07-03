@@ -12,11 +12,23 @@ import { SocialProvider, composePostText, type ProviderCapabilities, type Publis
  *   auth_prefix     z.B. 'Bearer ' (Default)
  *   insecure_tls    true = self-signed Certs akzeptieren
  *   body_template   optional: JSON-Objekt mit {{title}}/{{body}}/{{hashtags}}/{{media}}-Platzhaltern
- *   id_field        Feld der Antwort mit der Post-ID (Default 'id')
- *   url_field       Feld der Antwort mit der Post-URL (optional)
+ *   id_field        Feld der Antwort mit der Post-ID (Default 'id'; v943: Dot-Pfad wie 'data.id')
+ *   url_field       Feld der Antwort mit der Post-URL (optional; Dot-Pfad möglich)
+ *   url_template    optional: baut die Post-URL aus Antwortfeldern, z.B.
+ *                   'https://fussball.cc/news/{data.slug}' (v943; gewinnt über url_field)
  *
  * Secrets: { API_TOKEN } — wird als `${auth_prefix}${API_TOKEN}` gesendet.
  */
+
+/** v943 — Dot-Pfad-Zugriff auf verschachtelte Antworten ({ ok, data: { id } }). */
+export function resolvePath(obj: unknown, dotPath: string): unknown {
+  let current: unknown = obj;
+  for (const key of dotPath.split('.')) {
+    if (current === null || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
 export class RestProvider extends SocialProvider {
   readonly platform = 'rest';
 
@@ -102,10 +114,23 @@ export class RestProvider extends SocialProvider {
     const data = await res.json().catch(() => ({})) as Record<string, unknown>;
     const idField = typeof channel.config.id_field === 'string' ? channel.config.id_field : 'id';
     const urlField = typeof channel.config.url_field === 'string' ? channel.config.url_field : 'url';
-    return {
-      externalId: String(data[idField] ?? ''),
-      url: typeof data[urlField] === 'string' ? data[urlField] as string : undefined,
-    };
+    // v943 — Dot-Pfade für Antwort-Hüllen ({ ok, data: { id, slug } }) + Fallback
+    // auf gängige Nester, damit Standard-Antworten ohne Config funktionieren
+    const rawId = resolvePath(data, idField) ?? resolvePath(data, `data.${idField}`);
+    const externalId = rawId !== undefined && rawId !== null ? String(rawId) : '';
+    let url: string | undefined;
+    const urlTemplate = channel.config.url_template;
+    if (typeof urlTemplate === 'string' && urlTemplate.length > 0) {
+      url = urlTemplate.replace(/\{([a-zA-Z0-9_.]+)\}/g, (m, p: string) => {
+        const v = resolvePath(data, p);
+        return v === undefined || v === null ? m : String(v);
+      });
+      if (url.includes('{')) url = undefined; // unaufgelöste Platzhalter → keine URL
+    } else {
+      const rawUrl = resolvePath(data, urlField) ?? resolvePath(data, `data.${urlField}`);
+      url = typeof rawUrl === 'string' ? rawUrl : undefined;
+    }
+    return { externalId, url };
   }
 
   async validateAuth(channel: SocialChannel, secrets: Record<string, string>): Promise<{ ok: boolean; detail?: string }> {
