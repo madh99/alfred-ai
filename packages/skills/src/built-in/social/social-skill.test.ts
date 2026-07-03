@@ -381,6 +381,28 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(r.display).toContain('Kein Bild');
   });
 
+  it('v963: update_channel merged config verschachtelt — body_template bleibt vollständig', async () => {
+    const channel = makeChannel({
+      config: {
+        generate_images: true,
+        body_template: { title: '{{title}}', content: '{{body}}', status: 'DRAFT', tags: '{{hashtags}}' },
+      },
+    });
+    const { skill, state } = makeSkill(channel, makeItem());
+    const r = await skill.execute({ action: 'update_channel', channel: 'Testkanal', config: { body_template: { status: 'PUBLISHED' } } }, CTX);
+    expect(r.success).toBe(true);
+    expect((state.channel.config as any).body_template).toEqual({ title: '{{title}}', content: '{{body}}', status: 'PUBLISHED', tags: '{{hashtags}}' });
+    expect((state.channel.config as any).generate_images).toBe(true);
+  });
+
+  it('v963: null in der Config löscht den Schlüssel, Arrays werden ersetzt', async () => {
+    const channel = makeChannel({ config: { media_upload: { path: '/api/media' }, topic_ids: ['a', 'b'] } });
+    const { skill, state } = makeSkill(channel, makeItem());
+    await skill.execute({ action: 'update_channel', channel: 'Testkanal', config: { media_upload: null, topic_ids: ['c'] } }, CTX);
+    expect('media_upload' in (state.channel.config as any)).toBe(false);
+    expect((state.channel.config as any).topic_ids).toEqual(['c']);
+  });
+
   it('v959: update_channel mit posting_slots weist auf replan_channel hin', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'update_channel', channel: 'Testkanal', posting_slots: ['Sa 10:00', 'So 19:00'] }, CTX);

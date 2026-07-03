@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.963] - 2026-07-03
+
+### Fixed — Kanal-Config wird feldweise gemergt, auch verschachtelt (v963)
+
+- `update_channel` ersetzte verschachtelte Config-Objekte bisher als
+  Ganzes: wer nur `body_template.status` ändern wollte, musste das
+  komplette Template mitschicken — sonst waren title/content/tags-Mapping
+  weg. Jetzt wird feldweise rekursiv gemergt: `{body_template: {status:
+  "PUBLISHED"}}` ändert nur den Status, alle übrigen Felder bleiben.
+  Arrays und Einzelwerte werden weiterhin ersetzt; `null` löscht einen
+  Schlüssel gezielt (z. B. `{media_upload: null}`).
+
 ## [0.19.0-multi-ha.962] - 2026-07-03
 
 ### Added — Bilder auch für Ad-hoc-Posts (v962)

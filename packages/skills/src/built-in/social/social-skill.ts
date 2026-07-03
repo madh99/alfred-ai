@@ -32,6 +32,29 @@ export function formatPreparedPost(item: ContentItem, channel: SocialChannel): s
 }
 
 /**
+ * v963 — update_channel-Config FELDWEISE mergen, auch verschachtelt: bisher
+ * ersetzte {config: {body_template: {status: "PUBLISHED"}}} das KOMPLETTE
+ * body_template und zerstörte title/content/tags-Mapping (Realfall-Gefahr
+ * 03.07., User musste das volle Template mitschicken). Regeln: plain objects
+ * rekursiv mergen; Arrays/Primitive ersetzen; `null` löscht den Schlüssel.
+ */
+export function deepMergeConfig(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+  const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete out[key];
+    } else if (isPlainObject(value) && isPlainObject(out[key])) {
+      out[key] = deepMergeConfig(out[key] as Record<string, unknown>, value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
  * v933 — Social-Media-Betrieb: Kanäle verwalten, Content-Pipeline
  * (idea→draft→scheduled→approved→published), publishen via Provider (api-Modus)
  * oder fertig aufbereiten (prepare-Modus). Publishing-Engine/Modi-Automatik
@@ -66,7 +89,7 @@ export class SocialSkill extends Skill {
         platform: { type: 'string', enum: ['telegram_channel', 'rest'], description: 'create_channel: Plattform (v933: telegram_channel, rest; YouTube/Meta folgen)' },
         name: { type: 'string', description: 'create_channel: Anzeigename des Kanals' },
         project: { type: 'string', description: 'create_channel: optional Projekt-Name/-ID (Kanal hängt am Projekt, Secrets aus dessen ENVs)' },
-        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird gemergt — z.B. {generate_images: true}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}' },
+        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}' },
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },
@@ -270,7 +293,7 @@ export class SocialSkill extends Skill {
     if (Array.isArray(input.blacklist)) patch.blacklist = input.blacklist.map(String);
     if (typeof input.max_posts_per_day === 'number') patch.maxPostsPerDay = input.max_posts_per_day;
     if (typeof input.planning_horizon_days === 'number') patch.planningHorizonDays = input.planning_horizon_days;
-    if (input.config && typeof input.config === 'object') patch.config = { ...channel.config, ...(input.config as Record<string, unknown>) };
+    if (input.config && typeof input.config === 'object') patch.config = deepMergeConfig(channel.config, input.config as Record<string, unknown>);
     if (typeof input.name === 'string' && input.name.trim()) patch.name = input.name.trim();
     if (Object.keys(patch).length === 0) return { success: false, error: 'Nichts zu ändern übergeben.' };
     await this.repo.updateChannel(userId, channel.id, patch);
