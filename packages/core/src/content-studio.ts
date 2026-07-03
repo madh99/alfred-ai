@@ -5,7 +5,8 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
-import { effectiveSlots } from '@alfred/skills';
+import { effectiveSlots, extractTrailingHashtags, mergeHashtags } from '@alfred/skills';
+export { extractTrailingHashtags };
 import type { SourceProvisioner } from './source-provisioner.js';
 
 const WEEKDAYS: Record<string, number> = { so: 0, mo: 1, di: 2, mi: 3, do: 4, fr: 5, sa: 6 };
@@ -127,15 +128,22 @@ export function parseIdeas(text: string): GeneratedIdea[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((i: any) => i && typeof i.body === 'string' && i.body.trim().length > 10)
-      .map((i: any) => ({
-        title: typeof i.title === 'string' ? decodeHtmlEntities(i.title).slice(0, 200) : '',
-        body: stripMetaLines(decodeHtmlEntities(String(i.body)).slice(0, 8000)),
-        hashtags: Array.isArray(i.hashtags) ? i.hashtags.map(String).slice(0, 10)
-          : Array.isArray(i.tags) ? i.tags.map(String).slice(0, 10) : [],
-        warum: typeof i.warum === 'string' ? i.warum.slice(0, 300) : '',
-        bildidee: typeof i.bildidee === 'string' && i.bildidee.trim().length > 0 ? i.bildidee.slice(0, 400)
-          : typeof i.image_idea === 'string' && i.image_idea.trim().length > 0 ? i.image_idea.slice(0, 400) : undefined,
-      }))
+      .map((i: any) => {
+        const { body, tags: bodyTags } = extractTrailingHashtags(
+          stripMetaLines(decodeHtmlEntities(String(i.body)).slice(0, 8000)),
+        );
+        const fieldTags: string[] = Array.isArray(i.hashtags) ? i.hashtags.map(String)
+          : Array.isArray(i.tags) ? i.tags.map(String) : [];
+        return {
+          title: typeof i.title === 'string' ? decodeHtmlEntities(i.title).slice(0, 200) : '',
+          body,
+          // v961 — Feld-Tags + aus dem Body extrahierte mergen (Dedup ohne #, case-insensitiv)
+          hashtags: mergeHashtags(fieldTags, bodyTags),
+          warum: typeof i.warum === 'string' ? i.warum.slice(0, 300) : '',
+          bildidee: typeof i.bildidee === 'string' && i.bildidee.trim().length > 0 ? i.bildidee.slice(0, 400)
+            : typeof i.image_idea === 'string' && i.image_idea.trim().length > 0 ? i.image_idea.slice(0, 400) : undefined,
+        };
+      })
       .filter((i: GeneratedIdea) => i.body.length > 10)
       .slice(0, 10);
   } catch {
@@ -359,7 +367,7 @@ Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
 ${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
 - body = VOLLWERTIGER Beitrag mit 4-8 Sätzen und eigenem Mehrwert (Einordnung, Details, Frage an die Community) — NIEMALS nur Schlagzeile plus ein Satz. Dossier-Beiträge sind Rohstoff, kein Abschreibmaterial.
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
-- 3-6 Hashtags je Post.
+- 3-6 Hashtags je Post — AUSSCHLIESSLICH ins Feld "hashtags", NIEMALS in den body (weder am Ende noch als eigene Zeile; sie werden beim Posten automatisch angehängt).
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
 ${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
@@ -374,7 +382,7 @@ HOOK (erste 15 Sekunden), dann SCRIPT mit Kapitel-Überschriften und Sprechtext,
 dann eine Zeile "---" und darunter BESCHREIBUNG (YouTube-Description mit Kapitelmarken).
 Der User kann das Video selbst drehen (Script ablesen) oder Alfred Material geben.
 FAKTEN-TREUE (zwingend): Turnier-/Event-Namen, Jahreszahlen und Fakten NUR aus dem Dossier — niemals aus dem Trainingswissen raten (WM bleibt WM, nicht EM); auch in Tags.
-${this.lessonsBlock(channel)}Ein Thumbnail-Vorschlag gehört NICHT in den body, sondern ins separate Feld "bildidee".
+${this.lessonsBlock(channel)}Ein Thumbnail-Vorschlag gehört NICHT in den body, sondern ins separate Feld "bildidee". Hashtags AUSSCHLIESSLICH ins Feld "hashtags", niemals in den body.
 ${channel.blacklist.length ? `TABU: ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
 [{"title": "Video-Titel (max 100 Zeichen)", "body": "HOOK…\\nSCRIPT…\\n---\\nBESCHREIBUNG…", "hashtags": ["tag1", "tag2"], "warum": "1 Satz warum dieses Video jetzt", "bildidee": "optional: Thumbnail-Vorschlag"}]`;

@@ -3,7 +3,7 @@ import { Skill } from '../../skill.js';
 import type { SocialRepository, SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
-import { composePostText, effectiveSlots } from './social-provider.js';
+import { composePostText, effectiveSlots, extractTrailingHashtags, mergeHashtags } from './social-provider.js';
 
 type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
@@ -585,7 +585,7 @@ Titel: ${item.title ?? '(ohne)'}
 Text: ${item.body}
 Hashtags: ${item.hashtags.join(', ') || '(keine)'}
 
-Regeln: Inhalt und Fakten beibehalten, nur Form/Länge/Ton an den Ziel-Kanal anpassen. Keine Meta-Zeilen.
+Regeln: Inhalt und Fakten beibehalten, nur Form/Länge/Ton an den Ziel-Kanal anpassen. Keine Meta-Zeilen. Hashtags AUSSCHLIESSLICH ins Feld "hashtags", niemals in den Text.
 Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 1500, tier: 'fast' });
     const match = response.content?.match(/\{[\s\S]*\}/);
@@ -593,10 +593,12 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     try {
       const parsed = JSON.parse(match[0]);
       if (typeof parsed.body !== 'string' || parsed.body.trim().length < 10) return null;
+      // v961 — Hashtags am Body-Ende deterministisch abtrennen (gleiche Schicht wie im Studio)
+      const { body, tags } = extractTrailingHashtags(parsed.body.slice(0, 10_000));
       return {
         title: typeof parsed.title === 'string' && parsed.title.trim().length > 0 ? parsed.title.slice(0, 200) : item.title,
-        body: parsed.body.slice(0, 10_000),
-        hashtags: Array.isArray(parsed.hashtags) ? parsed.hashtags.map(String).slice(0, 10) : item.hashtags,
+        body,
+        hashtags: mergeHashtags(Array.isArray(parsed.hashtags) ? parsed.hashtags.map(String) : item.hashtags, tags),
       };
     } catch {
       return null;

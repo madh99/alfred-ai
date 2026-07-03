@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ContentStudio, nextFreeSlots, parseIdeas, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle } from '../content-studio.js';
+import { ContentStudio, nextFreeSlots, parseIdeas, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle, extractTrailingHashtags } from '../content-studio.js';
 import type { SocialRepository, SocialChannel, ContentItem, InterestsRepository, InsightsRepository } from '@alfred/storage';
 
 const OWNER = 'owner-1';
@@ -117,6 +117,56 @@ describe('stripMetaLines (v941)', () => {
 
   it('kollabiert entstehende Leerzeilen-Löcher', () => {
     expect(stripMetaLines('A\n\nBildidee: X\n\nB')).toBe('A\n\nB');
+  });
+});
+
+describe('extractTrailingHashtags (v961)', () => {
+  it('Realfall: Hashtag-Lauf nach der Community-Frage wird abgetrennt', () => {
+    const { body, tags } = extractTrailingHashtags('Wie hat euch das Match gefallen? #ÖFB #Spanien #Turnier');
+    expect(body).toBe('Wie hat euch das Match gefallen?');
+    expect(tags).toEqual(['#ÖFB', '#Spanien', '#Turnier']);
+  });
+
+  it('Realfall: reine Hashtag-Schlusszeile wird entfernt (auch nach Leerzeile)', () => {
+    const { body, tags } = extractTrailingHashtags('Stolz auf das Team.\n\nDanke, Burschen. ❤️\n\n#FussballCC #WM2026 #Österreich');
+    expect(body).toBe('Stolz auf das Team.\n\nDanke, Burschen. ❤️');
+    expect(tags).toEqual(['#FussballCC', '#WM2026', '#Österreich']);
+  });
+
+  it('einzelner, in den Satz integrierter Hashtag bleibt stehen', () => {
+    const { body, tags } = extractTrailingHashtags('Wir sind stolz auf das #Nationalteam');
+    expect(body).toBe('Wir sind stolz auf das #Nationalteam');
+    expect(tags).toEqual([]);
+  });
+
+  it('Hashtag mitten im Text bleibt unangetastet', () => {
+    const input = 'Das #ÖFB-Team kämpft weiter.\nMorgen geht es los.';
+    expect(extractTrailingHashtags(input)).toEqual({ body: input, tags: [] });
+  });
+
+  it('Schlusszeile UND Lauf davor werden beide eingesammelt', () => {
+    const { body, tags } = extractTrailingHashtags('Was denkt ihr? #Alaba #ÖFB\n#Zukunft #Nationalteam');
+    expect(body).toBe('Was denkt ihr?');
+    expect(tags).toEqual(['#Alaba', '#ÖFB', '#Zukunft', '#Nationalteam']);
+  });
+});
+
+describe('parseIdeas — Hashtag-Bereinigung (v961)', () => {
+  it('Body-Hashtags werden abgetrennt und ohne Duplikate ins Feld gemergt', () => {
+    const out = parseIdeas(JSON.stringify([{
+      title: 'Spanien schickt Österreich nach Hause',
+      body: 'Ein bitterer Abend für das Nationalteam. Wie hat euch das Match gefallen? #ÖFB #Spanien #Turnier',
+      hashtags: ['#ÖFB', '#Spanien', '#Ausscheiden'],
+    }]));
+    expect(out[0].body).toBe('Ein bitterer Abend für das Nationalteam. Wie hat euch das Match gefallen?');
+    expect(out[0].hashtags).toEqual(['#ÖFB', '#Spanien', '#Ausscheiden', '#Turnier']);
+  });
+
+  it('Dedup ist case-insensitiv und ignoriert das #-Präfix', () => {
+    const out = parseIdeas(JSON.stringify([{
+      title: 'T', body: 'Ein ausreichend langer Text für den Filter. #WM2026 #Österreich', hashtags: ['wm2026'],
+    }]));
+    expect(out[0].hashtags).toEqual(['wm2026', '#Österreich']);
   });
 });
 

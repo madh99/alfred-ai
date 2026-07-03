@@ -67,6 +67,52 @@ export function effectiveSlots(channel: { postingSlots: string[]; platform: stri
   return { slots: BEST_PRACTICE_SLOTS[channel.platform] ?? FALLBACK_SLOTS, source: 'best-practice' };
 }
 
+/**
+ * v961 — Hashtags gehören ins hashtags-Feld, nicht in den Text: das LLM hängt
+ * sie trotzdem oft ZUSÄTZLICH ans Body-Ende (Realfall 03.07.: „… Wie hat euch
+ * das Match gefallen? #ÖFB #Spanien #Turnier" plus identisches hashtags-Feld
+ * → beim Posten doppelt, auf fussball.cc mitten im Artikeltext).
+ * Deterministische Schicht (v957-Lektion): abschließende Hashtag-Läufe vom
+ * Body abtrennen und als Tags zurückgeben. Bewusst konservativ: reine
+ * Hashtag-Schlusszeilen immer; Läufe am Satzende nur ab 2 Tags, damit ein
+ * einzelner, in den Satz integrierter Hashtag („… stolz auf das #Nationalteam")
+ * den Satz nicht verstümmelt.
+ */
+export function extractTrailingHashtags(body: string): { body: string; tags: string[] } {
+  const HASHTAG = /#[\p{L}\p{N}_]+/gu;
+  const tags: string[] = [];
+  let text = body.trimEnd();
+  for (;;) {
+    const lines = text.split('\n');
+    const last = lines[lines.length - 1].trim();
+    // Schlusszeile, die NUR aus Hashtags (+ Trennzeichen) besteht
+    if (lines.length > 1 && last.length > 0 && /^(?:#[\p{L}\p{N}_]+[\s,;·|]*)+$/u.test(last)) {
+      tags.unshift(...(last.match(HASHTAG) ?? []));
+      text = lines.slice(0, -1).join('\n').trimEnd();
+      continue;
+    }
+    // Lauf aus ≥2 Hashtags am Ende der letzten Textzeile
+    const m = text.match(/(?:\s+#[\p{L}\p{N}_]+){2,}\s*$/u);
+    if (m && m.index !== undefined && m.index > 0) {
+      tags.unshift(...(m[0].match(HASHTAG) ?? []));
+      text = text.slice(0, m.index).trimEnd();
+      continue;
+    }
+    break;
+  }
+  return { body: text.replace(/\n{3,}/g, '\n\n').trim(), tags };
+}
+
+/** v961 — Tags mergen (Dedup ohne #, case-insensitiv), Feld-Format bleibt erhalten. */
+export function mergeHashtags(fieldTags: string[], bodyTags: string[], max = 10): string[] {
+  const norm = (t: string) => t.replace(/^#/, '').toLowerCase();
+  const merged: string[] = [];
+  for (const t of [...fieldTags, ...bodyTags]) {
+    if (t.trim() && !merged.some(x => norm(x) === norm(t))) merged.push(t);
+  }
+  return merged.slice(0, max);
+}
+
 /** Baut den fertigen Post-Text (Body + Hashtags) mit optionalem Längen-Limit. */
 export function composePostText(item: ContentItem, maxLength?: number): string {
   const tags = item.hashtags.length > 0 ? '\n\n' + item.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ') : '';

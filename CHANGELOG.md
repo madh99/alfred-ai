@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.961] - 2026-07-03
+
+### Fixed — Hashtags standen zusätzlich im Post-Text (v961)
+
+- Das Studio-LLM hängte die Hashtags trotz separatem `hashtags`-Feld oft
+  auch ans Ende des Post-Texts („… Wie hat euch das Match gefallen?
+  #ÖFB #Spanien #Turnier") — beim Veröffentlichen wurden sie dadurch
+  doppelt angehängt, auf REST-Kanälen (fussball.cc) landeten sie mitten
+  im Artikeltext. Neue deterministische Bereinigung: abschließende
+  Hashtag-Läufe und reine Hashtag-Schlusszeilen werden vom Text abgetrennt
+  und ohne Duplikate ins Hashtag-Feld übernommen (einzelne, in den Satz
+  integrierte Hashtags bleiben unangetastet). Gilt für Studio-Ideen UND
+  Crosspost-Anpassungen; zusätzlich verschärfte Prompt-Regeln.
+- Release-Reparatur: `package.json`-Beschreibung und README waren im
+  .960-Release durch einen Encoding-Fehler beim Versions-Bump beschädigt
+  (Umlaute/Sonderzeichen) — aus v958 wiederhergestellt.
+
 ## [0.19.0-multi-ha.960] - 2026-07-03
 
 ### Fixed — Installation von .959 schlug fehl (BOM in package.json)

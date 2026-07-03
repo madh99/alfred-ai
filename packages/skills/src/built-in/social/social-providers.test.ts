@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TelegramChannelProvider } from './telegram-channel-provider.js';
 import { RestProvider } from './rest-provider.js';
-import { BEST_PRACTICE_SLOTS, effectiveSlots } from './social-provider.js';
+import { BEST_PRACTICE_SLOTS, effectiveSlots, extractTrailingHashtags, mergeHashtags } from './social-provider.js';
 import type { SocialChannel, ContentItem } from '@alfred/storage';
 
 function makeChannel(config: Record<string, unknown>, platform = 'test'): SocialChannel {
@@ -56,6 +56,19 @@ describe('effectiveSlots (v959)', () => {
     for (const [platform, slots] of Object.entries(BEST_PRACTICE_SLOTS)) {
       expect(slots.some(s => /^(Sa|So) /.test(s)), platform).toBe(true);
     }
+  });
+});
+
+describe('extractTrailingHashtags/mergeHashtags (v961)', () => {
+  it('trennt Hashtag-Läufe am Body-Ende ab', () => {
+    const { body, tags } = extractTrailingHashtags('Haltet ihr Glasner für reif? #Glasner #Nottingham #Trainer');
+    expect(body).toBe('Haltet ihr Glasner für reif?');
+    expect(tags).toEqual(['#Glasner', '#Nottingham', '#Trainer']);
+  });
+
+  it('mergeHashtags dedupliziert ohne #-Präfix und case-insensitiv, Limit 10', () => {
+    expect(mergeHashtags(['#ÖFB', 'wm2026'], ['#öfb', '#WM2026', '#Neu'])).toEqual(['#ÖFB', 'wm2026', '#Neu']);
+    expect(mergeHashtags([], Array.from({ length: 15 }, (_, i) => `#t${i}`)).length).toBe(10);
   });
 });
 
