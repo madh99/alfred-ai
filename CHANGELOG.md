@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.939] - 2026-07-03
+
+### Added — Config-Schalter `social.enabled` (v939)
+
+- Neuer Schalter in der Config (Default **true** — Verhalten unverändert):
+
+  ```yaml
+  social:
+    enabled: false
+  ```
+
+- `false` deaktiviert das **gesamte** Social-Modul an der Wurzel: der
+  social-Skill wird nicht registriert (verschwindet aus dem LLM-Tool-Set),
+  und weil Publishing-Engine, Content-Studio, Video-Pipeline,
+  Freigabe-Buttons und die Social-API alle auf diese Registrierung gegated
+  sind, startet auch kein Timer und kein Endpoint. Log-Zeile
+  „Social module disabled via config" macht den Zustand sichtbar.
+- Ohne den Block bleibt alles wie bisher (und ohne angelegte Kanäle ist das
+  Modul ohnehin inert).
+
 ## [0.19.0-multi-ha.938] - 2026-07-03
 
 ### Added — Social-Media: Video-Pipeline (v938, letzte Stufe des Plans)

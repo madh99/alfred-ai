@@ -5513,8 +5513,14 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     }
 
     // 4s1c. v933 — Social-Media-Betrieb: Kanäle + Content-Pipeline + Provider
-    // (Publishing-Engine folgt v934, Content-Studio v935 — Plan docs/specs/social-media-plan-v933-v938.md)
-    if (this.database) {
+    // (Plan docs/specs/social-media-plan-v933-v938.md).
+    // v939 — social.enabled=false schaltet das GESAMTE Modul ab: ohne socialRepo/
+    // socialSkillRef greifen auch Publishing-Engine (v934), Content-Studio (v935),
+    // Video-Pipeline (v938), Quick-Action-Buttons und die Social-API nicht —
+    // alle Folgeblöcke sind auf diese Referenzen gegated.
+    if (this.config.social?.enabled === false) {
+      this.logger.info('Social module disabled via config (social.enabled=false)');
+    } else if (this.database) {
       const { SocialRepository } = await import('@alfred/storage');
       this.socialRepo = new SocialRepository(this.database.getAdapter());
       const { SocialSkill, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider } = await import('@alfred/skills');

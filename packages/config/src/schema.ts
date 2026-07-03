@@ -769,6 +769,10 @@ export const AlfredConfigSchema = z.object({
     perSource: z.record(z.string(), z.enum(['low', 'normal', 'high', 'urgent'])).optional(),
     devMode: z.boolean().optional(),
   }).optional(),
+  // v939 — Social-Media-Modul (enabled=false schaltet Skill+Engine+Studio+API ab)
+  social: z.object({
+    enabled: z.boolean().optional(),
+  }).optional(),
   reflection: ReflectionConfigSchema.optional(),
   webhooks: z.array(WebhookConfigSchema).optional(),
   proxmoxBackup: ProxmoxBackupConfigSchema.optional(),

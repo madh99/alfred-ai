@@ -140,6 +140,26 @@ describe('ConfigLoader', () => {
     expect(config).toHaveProperty('security');
   });
 
+  it('v939: social.enabled=false wird geparst; ohne Block bleibt das Modul default-aktiv', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+
+    // Default (kein social-Block): Modul aktiv — das Gate prüft `enabled === false`
+    const defaults = loader.loadConfig('./nonexistent-path/nonexistent.yml');
+    expect(defaults.social?.enabled === false).toBe(false);
+
+    // Expliziter Schalter überlebt Schema-Validierung
+    const tmp = path.join(os.tmpdir(), `alfred-test-social-config-${Date.now()}.yml`);
+    fs.writeFileSync(tmp, 'social:\n  enabled: false\n', 'utf8');
+    try {
+      const config = loader.loadConfig(tmp);
+      expect(config.social?.enabled).toBe(false);
+    } finally {
+      fs.unlinkSync(tmp);
+    }
+  });
+
   it('should propagate top-level apiKey to strong/fast tiers', () => {
     process.env['ALFRED_ANTHROPIC_API_KEY'] = 'sk-test-shared';
     process.env['ALFRED_LLM_STRONG_PROVIDER'] = 'anthropic';

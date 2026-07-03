@@ -516,6 +516,16 @@ export interface NotificationsConfig {
   devMode?: boolean;
 }
 
+/**
+ * v939 — Social-Media-Betrieb (v933–v938): enabled=false deaktiviert das
+ * gesamte Modul (Skill, Publishing-Engine, Content-Studio, Video-Pipeline,
+ * Social-API) — nichts wird registriert, keine Timer laufen.
+ */
+export interface SocialConfig {
+  /** Default true. */
+  enabled?: boolean;
+}
+
 export interface ReasoningConfig {
   enabled?: boolean;
   /** 'morning_noon_evening' = 3×/Tag (7h,12h,18h), 'hourly', 'half_hourly' */
@@ -1133,6 +1143,8 @@ export interface AlfredConfig {
   reasoning?: ReasoningConfig;
   /** v927 — Stiller Modus / Notification-Router. */
   notifications?: NotificationsConfig;
+  /** v939 — Social-Media-Modul (Default an; enabled=false schaltet alles ab). */
+  social?: SocialConfig;
   reflection?: ReflectionConfig;
   webhooks?: WebhookConfig[];
   proxmoxBackup?: ProxmoxBackupConfig;
