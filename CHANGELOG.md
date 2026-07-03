@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.948] - 2026-07-03
+
+### Added — Social-UI zeigt die generierten Bilder (v948)
+
+Live-Befund nach dem .947-Deploy: die Bilder kamen jetzt korrekt an den
+Items an (DB + Dateien unter data/social-media/ verifiziert) — aber die
+Social-Seite zeigte sie nirgends, und es gab keinen Endpoint, der lokale
+Mediendateien ausliefert. Beim Telegram-Publish waren sie trotzdem dabei
+(Multipart, v942) — man konnte es nur nicht sehen.
+
+- Neuer Endpoint `GET /api/social/media/:basename` (auth-pflichtig,
+  Basename-only — kein Pfad-Traversal) liefert generierte Bilder/Videos
+  aus data/social-media/.
+- Social-Seite rendert jetzt eine **Bild-Vorschau** an jeder Content-Karte
+  (Blob-URL via authentifiziertem Fetch, da <img> keine Bearer-Header
+  kann) plus 🎬-Badge wenn ein Video angehängt ist.
+
 ## [0.19.0-multi-ha.947] - 2026-07-03
 
 ### Fixed — PG-Adapter-Bug fraß Studio-Bilder + Posts waren nur Schlagzeilen (v947)

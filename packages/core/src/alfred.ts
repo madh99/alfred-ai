@@ -8061,6 +8061,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { success: r.success, display: r.display, error: r.error };
           },
           channelMetrics: async (channelId: string) => socialRepo.listMetrics(channelId, { limit: 120 }),
+          // v948 — generierte Bilder für die UI-Vorschau (nur Basename, kein Traversal)
+          mediaFile: async (basename: string) => {
+            const safe = path.basename(basename);
+            if (safe !== basename || !/^[\w.-]+$/.test(safe)) return null;
+            const mediaDir = path.resolve(path.dirname(this.config.storage.path), 'social-media');
+            try {
+              const { readFile } = await import('node:fs/promises');
+              const data = await readFile(path.join(mediaDir, safe));
+              const mimeType = safe.endsWith('.png') ? 'image/png'
+                : safe.endsWith('.jpg') || safe.endsWith('.jpeg') ? 'image/jpeg'
+                : safe.endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream';
+              return { data, mimeType };
+            } catch { return null; }
+          },
         });
         this.logger.info('Social API registered (v934/v937)');
       }

@@ -35,6 +35,8 @@ export function SocialPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
+  // v948 — Bild-Vorschauen: Blob-URLs je Item (Auth via Bearer, daher kein direktes <img src>)
+  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -61,6 +63,23 @@ export function SocialPage() {
   }, [client]);
 
   useEffect(() => { load(); }, [load]);
+
+  // v948 — Bild-Vorschauen nachladen (erstes image je Item)
+  useEffect(() => {
+    if (!client) return;
+    const items = [...pending, ...calendar];
+    for (const item of items) {
+      if (mediaUrls[item.id] !== undefined) continue;
+      const image = item.media?.find(m => m.type === 'image');
+      if (!image) continue;
+      setMediaUrls(prev => ({ ...prev, [item.id]: '' })); // in-flight-Marker
+      client.fetchSocialMediaObjectUrl(image.pathOrUrl).then(url => {
+        if (url) setMediaUrls(prev => ({ ...prev, [item.id]: url }));
+      });
+    }
+    // mediaUrls bewusst nicht in deps — sonst Endlosschleife durch eigene Updates
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, pending, calendar]);
 
   const channelName = useCallback((id: string) => channels.find(c => c.id === id)?.name ?? id.slice(0, 8), [channels]);
 
@@ -120,6 +139,8 @@ export function SocialPage() {
 
   function renderItemCard(item: SocialContentItem, showActions: boolean) {
     const isOpen = expandedItem === item.id;
+    const previewUrl = mediaUrls[item.id];
+    const hasVideo = item.media?.some(m => m.type === 'video');
     return (
       <div key={item.id} className="border border-[#1f1f1f] rounded-lg p-3">
         <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -132,6 +153,15 @@ export function SocialPage() {
           <span className="font-mono text-gray-600">{item.id.slice(0, 8)}</span>
         </div>
         <div className="mt-1.5 text-sm text-gray-200 font-medium">{item.title ?? item.body.slice(0, 80)}</div>
+        {/* v948 — Medien-Vorschau: generierte/angehängte Bilder + Video-Badge */}
+        {(previewUrl || hasVideo) && (
+          <div className="flex items-center gap-2 mt-2">
+            {previewUrl && (
+              <img src={previewUrl} alt="" className="h-24 rounded border border-[#2a2a2a] object-cover" />
+            )}
+            {hasVideo && <span className="text-[10px] px-1.5 py-0.5 bg-purple-500/20 text-purple-300 rounded">🎬 Video angehängt</span>}
+          </div>
+        )}
         <div className={clsx('text-xs text-gray-400 whitespace-pre-wrap break-words mt-1', !isOpen && 'line-clamp-2')}>
           {item.body}
           {item.hashtags.length > 0 && <div className="text-blue-400 mt-1">{item.hashtags.map(h => `#${h.replace(/^#/, '')}`).join(' ')}</div>}

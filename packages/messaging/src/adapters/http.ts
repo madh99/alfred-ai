@@ -702,6 +702,8 @@ export class HttpAdapter extends MessagingAdapter {
     listItems?: (filter: { channelId?: string; status?: string; limit?: number }) => Promise<any[]>;
     itemAction?: (id: string, action: 'approve' | 'reject' | 'publish' | 'schedule', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
+    /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
+    mediaFile?: (basename: string) => Promise<{ data: Buffer; mimeType: string } | null>;
   };
 
   setSocialCallbacks(cb: NonNullable<HttpAdapter['socialCallbacks']>): void {
@@ -1337,6 +1339,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSocial(req, res, async () => ({
         metrics: await this.socialCallbacks!.channelMetrics?.(url.pathname.split('/')[4]) ?? [],
       })).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/media\/[^/]+$/) && req.method === 'GET') {
+      this.handleSocialMedia(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notifications/settings' && req.method === 'GET') {
       this.handleInterests(req, res, () => this.interestsCallbacks!.getNotificationSettings()).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notifications/settings' && req.method === 'POST') {
@@ -3082,6 +3086,17 @@ export class HttpAdapter extends MessagingAdapter {
     const result = await fn();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+  }
+
+  /** v948 — generierte Social-Medien (Bilder) für die UI ausliefern. */
+  private async handleSocialMedia(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.socialCallbacks?.mediaFile) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const basename = decodeURIComponent(url.pathname.split('/')[4] ?? '');
+    const file = await this.socialCallbacks.mediaFile(basename);
+    if (!file) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': file.mimeType, 'Content-Length': String(file.data.byteLength), 'Cache-Control': 'private, max-age=3600' });
+    res.end(file.data);
   }
 
   /** v937 — Social-Wrapper mit JSON-Body; success:false → HTTP 400. */

@@ -504,6 +504,18 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Calendar: HTTP ${res.status}`);
     return (await res.json()).items ?? [];
   }
+  // v948 — generiertes Bild/Video als Blob-URL (Auth via Bearer, daher kein direktes <img src>)
+  async fetchSocialMediaObjectUrl(pathOrUrl: string): Promise<string | null> {
+    if (pathOrUrl.startsWith('http')) return pathOrUrl;
+    const basename = pathOrUrl.split(/[\\/]/).pop();
+    if (!basename) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/api/social/media/${encodeURIComponent(basename)}`, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return URL.createObjectURL(await res.blob());
+    } catch { return null; }
+  }
+
   async fetchSocialMetrics(channelId: string): Promise<Array<{ itemId?: string; date: string; kind: string; value: number }>> {
     const res = await fetch(`${this.baseUrl}/api/social/channels/${channelId}/metrics`, { headers: this.authHeaders });
     if (!res.ok) return [];
