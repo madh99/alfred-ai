@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.953] - 2026-07-03
+
+### Added — rest-Provider: Bild-Posts via Medienbibliothek-Zweischritt (v953)
+
+fussball.cc-Beiträge gingen bisher ohne Bild raus — die Plattform-API will
+Bilder als separaten Multipart-Upload (`/api/integrations/media`) und dann
+`featuredMediaId` am Beitrag; der generische rest-Provider konnte diesen
+Zweischritt nicht.
+
+- Neue Kanal-Config `media_upload`: `{ path, file_field?: 'file',
+  id_field?: 'data.id', attach_field?: 'featuredMediaId' }` — der Provider
+  lädt das erste Bild des Items (lokale Datei ODER URL) per multipart hoch
+  (altText = Beitragstitel) und hängt die Medien-ID unter `attach_field`
+  in den Post-Body (auch bei body_template).
+- **Kein stilles Degradieren:** schlägt der Upload fehl, scheitert der
+  Publish mit klarem Fehler (Retry-Logik der Engine greift) statt den
+  Beitrag heimlich ohne Bild zu veröffentlichen.
+- 2 Tests (fussball.cc-Flow: Upload→featuredMediaId; Upload-Fehler →
+  Publish wirft, kein Post-Call).
+
 ## [0.19.0-multi-ha.952] - 2026-07-03
 
 ### Fixed — Themen-Anlage: Keyword-Kollision blockierte create_topic (v952)

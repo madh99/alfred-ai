@@ -16,6 +16,11 @@ import { SocialProvider, composePostText, type ProviderCapabilities, type Publis
  *   url_field       Feld der Antwort mit der Post-URL (optional; Dot-Pfad möglich)
  *   url_template    optional: baut die Post-URL aus Antwortfeldern, z.B.
  *                   'https://fussball.cc/news/{data.slug}' (v943; gewinnt über url_field)
+ *   media_upload    optional (v953): Zwei-Schritt für APIs mit separater
+ *                   Medienbibliothek (fussball.cc): erst Bild als multipart
+ *                   hochladen, dann die Medien-ID am Beitrag referenzieren.
+ *                   { path: '/api/integrations/media', file_field?: 'file',
+ *                     id_field?: 'data.id', attach_field?: 'featuredMediaId' }
  *
  * Secrets: { API_TOKEN } — wird als `${auth_prefix}${API_TOKEN}` gesendet.
  */
@@ -101,11 +106,73 @@ export class RestProvider extends SocialProvider {
     }
   }
 
+  /**
+   * v953 — Bild in die Medienbibliothek der Ziel-API hochladen (multipart).
+   * Wirft bei Fehlschlag: ein Post, der ein Bild haben sollte, geht nicht
+   * still ohne Bild raus.
+   */
+  private async uploadMedia(
+    imagePathOrUrl: string, altText: string | undefined,
+    channel: SocialChannel, secrets: Record<string, string>,
+    mu: Record<string, unknown>,
+  ): Promise<string> {
+    const uploadPath = typeof mu.path === 'string' ? mu.path : '/api/integrations/media';
+    let bytes: Buffer;
+    let fileName: string;
+    if (imagePathOrUrl.startsWith('http')) {
+      const res = await this.doFetch(imagePathOrUrl, { method: 'GET' }, channel);
+      if (!res.ok) throw new Error(`Media-Download HTTP ${res.status}`);
+      bytes = Buffer.from(await res.arrayBuffer());
+      fileName = imagePathOrUrl.split('/').pop() ?? 'image.png';
+    } else {
+      const { readFile } = await import('node:fs/promises');
+      bytes = await readFile(imagePathOrUrl);
+      fileName = imagePathOrUrl.split(/[\\/]/).pop() ?? 'image.png';
+    }
+    const mime = fileName.endsWith('.webp') ? 'image/webp'
+      : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' : 'image/png';
+    const form = new FormData();
+    form.append(typeof mu.file_field === 'string' ? mu.file_field : 'file',
+      new Blob([new Uint8Array(bytes)], { type: mime }), fileName);
+    if (altText) form.append('altText', altText.slice(0, 300));
+    const headers = this.headers(channel, secrets);
+    delete headers['Content-Type']; // multipart-Boundary setzt fetch selbst
+    const res = await this.doFetch(this.endpoint(channel, uploadPath), {
+      method: 'POST', headers, body: form,
+    }, channel);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Media-Upload HTTP ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await res.json().catch(() => ({})) as Record<string, unknown>;
+    const idField = typeof mu.id_field === 'string' ? mu.id_field : 'data.id';
+    const mediaId = resolvePath(data, idField) ?? resolvePath(data, 'id');
+    if (mediaId === undefined || mediaId === null || mediaId === '') {
+      throw new Error('Media-Upload: keine Medien-ID in der Antwort');
+    }
+    return String(mediaId);
+  }
+
   async publish(item: ContentItem, channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
+    const body = this.buildBody(item, channel);
+
+    // v953 — Zwei-Schritt: Bild erst in die Medienbibliothek, dann als
+    // featuredMediaId (o.ä.) am Beitrag referenzieren
+    const mu = channel.config.media_upload;
+    if (mu && typeof mu === 'object') {
+      const image = item.media.find(m => m.type === 'image');
+      if (image) {
+        const mediaId = await this.uploadMedia(image.pathOrUrl, item.title ?? undefined, channel, secrets, mu as Record<string, unknown>);
+        const attachField = typeof (mu as Record<string, unknown>).attach_field === 'string'
+          ? (mu as Record<string, unknown>).attach_field as string : 'featuredMediaId';
+        body[attachField] = mediaId;
+      }
+    }
+
     const res = await this.doFetch(this.endpoint(channel), {
       method: 'POST',
       headers: this.headers(channel, secrets),
-      body: JSON.stringify(this.buildBody(item, channel)),
+      body: JSON.stringify(body),
     }, channel);
     if (!res.ok) {
       const text = await res.text().catch(() => '');

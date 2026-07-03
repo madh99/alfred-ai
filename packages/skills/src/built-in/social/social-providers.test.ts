@@ -152,6 +152,57 @@ describe('RestProvider (v933)', () => {
     expect(r2.externalId).toBe('cmc31');
   });
 
+  it('v953: media_upload — Bild erst in die Medienbibliothek, dann featuredMediaId am Beitrag (fussball.cc)', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const tmpFile = join(tmpdir(), `alfred-test-media-${Date.now()}.png`);
+    writeFileSync(tmpFile, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    try {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ ok: true, data: { id: 'media-7' } }, 201))          // Upload
+        .mockResolvedValueOnce(jsonResponse({ ok: true, data: { id: 'p-1', slug: 'derby' } }, 201)); // Post
+      const ch = makeChannel({
+        base_url: 'https://cc.example', publish_path: '/api/integrations/news',
+        media_upload: { path: '/api/integrations/media' },
+      }, 'rest');
+      const provider = new RestProvider();
+      const r = await provider.publish(
+        makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: tmpFile }] }),
+        ch, { API_TOKEN: 'tok' },
+      );
+      expect(r.externalId).toBe('p-1');
+      // Call 1: multipart-Upload mit Bearer, Call 2: Post mit featuredMediaId
+      const [uploadUrl, uploadInit] = fetchMock.mock.calls[0];
+      expect(uploadUrl).toBe('https://cc.example/api/integrations/media');
+      expect((uploadInit as RequestInit).body).toBeInstanceOf(FormData);
+      expect(((uploadInit as RequestInit).headers as Record<string, string>).Authorization).toBe('Bearer tok');
+      const postBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+      expect(postBody.featuredMediaId).toBe('media-7');
+      expect(postBody.title).toBe('Derby-Sieg');
+    } finally {
+      unlinkSync(tmpFile);
+    }
+  });
+
+  it('v953: Media-Upload-Fehlschlag → Publish wirft (kein stiller Post ohne Bild)', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const tmpFile = join(tmpdir(), `alfred-test-media-fail-${Date.now()}.png`);
+    writeFileSync(tmpFile, Buffer.from([1]));
+    try {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ ok: false, code: 'VALIDATION_FAILED' }, 400));
+      const ch = makeChannel({ base_url: 'https://cc.example', media_upload: { path: '/api/integrations/media' } }, 'rest');
+      await expect(new RestProvider().publish(
+        makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: tmpFile }] }), ch, { API_TOKEN: 't' },
+      )).rejects.toThrow(/Media-Upload HTTP 400/);
+      expect(fetchMock.mock.calls.length).toBe(1); // kein Post-Call
+    } finally {
+      unlinkSync(tmpFile);
+    }
+  });
+
   it('v943: unaufgelöste url_template-Platzhalter → keine URL statt kaputtem Link', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true, data: { id: 'x1' } }));
     const provider = new RestProvider();
