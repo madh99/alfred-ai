@@ -416,6 +416,9 @@ export class Alfred {
   private socialSkillRef?: import('@alfred/skills').SocialSkill;
   /** v934 — Publishing-Engine (Modi + Freigabe-Flow + Retry) */
   private publishingEngine?: import('./publishing-engine.js').PublishingEngine;
+  /** v935 — Content-Studio (täglicher Ideen-/Entwurfs-Generator) */
+  private contentStudio?: import('./content-studio.js').ContentStudio;
+  private contentStudioTimer?: ReturnType<typeof setInterval>;
   /** v929 — Interessen-Radar */
   private interestsRepo?: import('@alfred/storage').InterestsRepository;
   private interestsSkillRef?: import('@alfred/skills').InterestsSkill;
@@ -6594,6 +6597,31 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         },
       );
       this.publishingEngine.start();
+
+      // v935 — Content-Studio: füllt täglich (07:30, HA-Slot) den Planungshorizont
+      // jedes Kanals mit Ideen/Entwürfen (Interessen-Dossiers + Bestperformer als
+      // Wissen, Bild optional mit Monats-Budget, YouTube = komplette Video-Konzepte).
+      if (this.llmProvider) {
+        const { ContentStudio } = await import('./content-studio.js');
+        this.contentStudio = new ContentStudio(
+          this.socialRepo, this.interestsRepo, this.insightsRepo, this.llmProvider,
+          this.skillRegistry, this.skillSandbox, this.sourceProvisioner,
+          this.logger.child({ component: 'content-studio' }), ownerUid,
+        );
+        const studio = this.contentStudio;
+        socialSkill.setStudio(channel => studio.fillChannel(channel));
+        let lastStudioDay = '';
+        this.contentStudioTimer = setInterval(async () => {
+          const now = new Date();
+          const today = now.toISOString().slice(0, 10);
+          if (now.getHours() !== 7 || now.getMinutes() < 30 || lastStudioDay === today) return;
+          lastStudioDay = today;
+          if (await this.claimDailySlot(`content-studio:${today}`)) {
+            try { await this.contentStudio?.runDaily(); }
+            catch (err) { this.logger.warn({ err }, 'v935 content studio failed'); }
+          }
+        }, 10 * 60_000);
+      }
     }
 
     // Wire runbook-repo so chat-pipeline can inject matching Runbooks into system prompt
@@ -12596,6 +12624,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.publishingEngine) {
       this.publishingEngine.stop();
       this.publishingEngine = undefined;
+    }
+    if (this.contentStudioTimer) {
+      clearInterval(this.contentStudioTimer);
+      this.contentStudioTimer = undefined;
     }
     if (this.clusterMonitorTimer) {
       clearInterval(this.clusterMonitorTimer);

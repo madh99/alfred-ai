@@ -8,7 +8,8 @@ type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
   | 'validate_auth' | 'pause_all' | 'resume_channel'
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
-  | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media';
+  | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media'
+  | 'generate_content';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
@@ -50,8 +51,9 @@ export class SocialSkill extends Skill {
           enum: ['create_channel', 'list_channels', 'update_channel', 'set_channel_status',
             'validate_auth', 'pause_all', 'resume_channel',
             'add_content', 'list_content', 'schedule_content', 'approve_content',
-            'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp").',
+            'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media',
+            'generate_content'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort für einen Kanal laufen lassen (Ideen/Entwürfe erzeugen).',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest'], description: 'create_channel: Plattform (v933: telegram_channel, rest; YouTube/Meta folgen)' },
@@ -86,9 +88,15 @@ export class SocialSkill extends Skill {
   private resolveSecretsFn?: (channel: SocialChannel) => Promise<Record<string, string>>;
   /** Projekt-Resolver: Name/ID → Projekt-ID (optional). */
   private resolveProjectFn?: (nameOrId: string) => Promise<string | null>;
+  /** v935 — Content-Studio-Aufruf für generate_content (vom Kern injiziert). */
+  private studioFn?: (channel: SocialChannel) => Promise<number>;
 
   constructor(private readonly repo: SocialRepository) {
     super();
+  }
+
+  setStudio(fn: (channel: SocialChannel) => Promise<number>): void {
+    this.studioFn = fn;
   }
 
   registerProvider(provider: SocialProvider): void {
@@ -124,6 +132,7 @@ export class SocialSkill extends Skill {
         case 'mark_published': return await this.markPublished(userId, input);
         case 'delete_remote': return await this.deleteRemote(userId, input);
         case 'attach_media': return await this.attachMedia(userId, input);
+        case 'generate_content': return await this.generateContent(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
     } catch (err) {
@@ -413,6 +422,21 @@ export class SocialSkill extends Skill {
     return ok
       ? { success: true, display: `🗑 Post [${item.id.slice(0, 8)}] auf ${channel.name} gelöscht.` }
       : { success: false, error: `Löschen auf ${channel.platform} fehlgeschlagen oder nicht unterstützt.` };
+  }
+
+  /** v935 — Content-Studio sofort für einen Kanal laufen lassen. */
+  private async generateContent(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.studioFn) return { success: false, error: 'Content-Studio nicht verfügbar.' };
+    const channel = await this.resolveChannel(userId, input);
+    if (!channel) return { success: false, error: `Kanal nicht gefunden: ${String(input.channel ?? '')}` };
+    const created = await this.studioFn(channel);
+    return {
+      success: true,
+      data: { created },
+      display: created > 0
+        ? `🎨 Content-Studio: ${created} neue Entwürfe für **${channel.name}** erstellt${channel.mode === 'suggest' ? ' (list_content zeigt sie; terminieren mit schedule_content)' : ' und terminiert — die Freigabe kommt zum geplanten Zeitpunkt'}.`
+        : `Content-Studio: Planungshorizont von **${channel.name}** ist bereits gefüllt (oder keine Ideen erzeugbar).`,
+    };
   }
 
   private async attachMedia(userId: string, input: Record<string, unknown>): Promise<SkillResult> {

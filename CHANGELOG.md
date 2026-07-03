@@ -5,6 +5,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.935] - 2026-07-03
+
+### Added — Social-Media: Content-Studio (v935, Stufe 3 von 6)
+
+Alfred erzeugt jetzt selbst Content — wissensbasiert statt generisch:
+
+- **Täglicher Studio-Lauf** (07:30, HA-Slot): berechnet je aktivem Kanal die
+  freien Posting-Slots im Planungshorizont (konfigurierte Slots wie
+  „Mo 18:00" oder Default Mo/Mi/Fr) und füllt die Lücken mit Entwürfen.
+  Auf Zuruf: `social generate_content` für einen Kanal sofort.
+- **Wissens-Kontext:** Interessen-Dossier des Kanal-Themas + neueste
+  gesammelte Beiträge, Bestperformer aus channel_metrics („was zuletzt gut
+  lief"), bereits veröffentlichte Titel (keine Wiederholungen), Persona und
+  Blacklist (als hartes TABU im Prompt).
+- **Auto-Themen-Anlage:** beim ersten Lauf bekommt jeder Kanal ein
+  Interessen-Topic (origin=auto, Nische aus config.niche oder Kanal-Name,
+  Quellen via Source-Provisioner) — der stündliche TopicCollector sammelt
+  ab dann Futter für die Ideen.
+- **YouTube-Planungsflow:** Video-Konzepte statt Posts — Titel, kompletter
+  Script (HOOK, Kapitel, Sprechtext) und YouTube-Beschreibung mit
+  Kapitelmarken. Der User dreht selbst (Script ablesen) und hängt die Datei
+  per attach_media an, oder lässt später die Video-Pipeline (v938) rendern.
+- **Bild-Erstellung mit Budget:** optional je Kanal
+  (config.generate_images=true) via image_generate; Monats-Budget
+  (Default 30, config.image_budget_per_month) wird in channel_metrics
+  gezählt — Budget erschöpft → Post ohne Bild statt Kostenexplosion.
+- **Modus-gerecht:** suggest → Entwürfe + EIN stiller Sammel-Insight;
+  approve/autonomous → direkt in die Slots terminiert (Publishing-Engine
+  übernimmt Freigabe bzw. Auto-Publish samt Leitplanken).
+- 12 Tests (Slot-Berechnung, Ideen-Parsing, alle Modi, YouTube-Format,
+  TABU-Prompt, Auto-Topic).
+
 ## [0.19.0-multi-ha.934] - 2026-07-03
 
 ### Added — Social-Media: Publishing-Engine, Modi und Freigabe-Flow (v934, Stufe 2 von 6)
