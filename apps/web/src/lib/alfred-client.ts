@@ -461,6 +461,55 @@ export class AlfredClient {
     const data = await res.json();
     return data.newItems ?? 0;
   }
+  // ── v937 — Social ──
+  async fetchSocialChannels(): Promise<SocialChannelItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/social/channels`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Social: HTTP ${res.status}`);
+    return (await res.json()).channels ?? [];
+  }
+  async updateSocialChannel(id: string, patch: Record<string, unknown>): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/social/channels/${id}`, {
+      method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error ?? `HTTP ${res.status}`);
+    }
+  }
+  async socialPauseAll(): Promise<number> {
+    const res = await fetch(`${this.baseUrl}/api/social/pause-all`, { method: 'POST', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()).paused ?? 0;
+  }
+  async fetchSocialItems(filter?: { channel?: string; status?: string; limit?: number }): Promise<SocialContentItem[]> {
+    const params = new URLSearchParams();
+    if (filter?.channel) params.set('channel', filter.channel);
+    if (filter?.status) params.set('status', filter.status);
+    if (filter?.limit) params.set('limit', String(filter.limit));
+    const res = await fetch(`${this.baseUrl}/api/social/items${params.toString() ? '?' + params : ''}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Social items: HTTP ${res.status}`);
+    return (await res.json()).items ?? [];
+  }
+  async socialItemAction(id: string, action: 'approve' | 'reject' | 'publish' | 'schedule', extra?: { scheduled_at?: string }): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/items/${id}/${action}`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(extra ?? {}),
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+  async fetchSocialCalendar(fromIso?: string, toIso?: string): Promise<SocialContentItem[]> {
+    const params = new URLSearchParams();
+    if (fromIso) params.set('from', fromIso);
+    if (toIso) params.set('to', toIso);
+    const res = await fetch(`${this.baseUrl}/api/social/calendar${params.toString() ? '?' + params : ''}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Calendar: HTTP ${res.status}`);
+    return (await res.json()).items ?? [];
+  }
+  async fetchSocialMetrics(channelId: string): Promise<Array<{ itemId?: string; date: string; kind: string; value: number }>> {
+    const res = await fetch(`${this.baseUrl}/api/social/channels/${channelId}/metrics`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    return (await res.json()).metrics ?? [];
+  }
+
   async fetchNotificationSettings(): Promise<NotificationSettings> {
     const res = await fetch(`${this.baseUrl}/api/notifications/settings`, { headers: this.authHeaders });
     if (!res.ok) throw new Error(`Settings: HTTP ${res.status}`);
@@ -2615,6 +2664,45 @@ export interface NotificationSettings {
   minUrgency: 'urgent' | 'high' | 'normal' | 'low';
   perSource: Record<string, 'urgent' | 'high' | 'normal' | 'low'>;
   devMode: boolean;
+}
+
+// v937 — Social
+export interface SocialChannelItem {
+  id: string;
+  userId: string;
+  projectId?: string;
+  platform: string;
+  name: string;
+  handle?: string;
+  mode: 'suggest' | 'approve' | 'autonomous';
+  publishMode: 'api' | 'prepare';
+  planningHorizonDays: number;
+  postingSlots: string[];
+  persona?: string;
+  blacklist: string[];
+  maxPostsPerDay: number;
+  approvedStreak: number;
+  status: 'active' | 'paused' | 'archived';
+  config: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SocialContentItem {
+  id: string;
+  channelId: string;
+  status: 'idea' | 'draft' | 'scheduled' | 'approved' | 'publishing' | 'published' | 'failed' | 'rejected';
+  title?: string;
+  body: string;
+  media: Array<{ type: string; source: string; pathOrUrl: string }>;
+  hashtags: string[];
+  scheduledAt?: string;
+  publishedAt?: string;
+  externalUrl?: string;
+  error?: string;
+  performance?: Record<string, unknown>;
+  source: string;
+  createdAt: string;
 }
 
 // v639 — Goals

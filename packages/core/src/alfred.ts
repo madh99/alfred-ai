@@ -7945,10 +7945,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         this.logger.info('Interests API registered (v930)');
       }
 
-      // v934 — Social-API: Kanäle + Content-Kalender (volle UI folgt v937)
+      // v934/v937 — Social-API: Kanäle, Kalender, Items, Aktionen, Metriken
       if (apiAdapter && this.socialRepo && this.ownerMasterUserId && 'setSocialCallbacks' in apiAdapter) {
         const socialRepo = this.socialRepo;
         const socialOwner = this.ownerMasterUserId as string;
+        const socialSkillForApi = this.socialSkillRef;
+        const socialCtx = { userId: socialOwner, masterUserId: socialOwner } as never;
         (apiAdapter as any).setSocialCallbacks({
           listChannels: async () => socialRepo.listChannels(socialOwner),
           calendar: async (fromIso: string, toIso: string) => {
@@ -7960,8 +7962,49 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return t !== undefined && t >= fromIso && t <= toIso;
             });
           },
+          // v937 — Aktionen laufen über den Skill (Streak + Leitplanken an EINER Stelle)
+          updateChannel: async (id: string, patch: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'update_channel', channel: id,
+              mode: patch.mode, publish_mode: patch.publishMode, persona: patch.persona,
+              posting_slots: patch.postingSlots, blacklist: patch.blacklist,
+              max_posts_per_day: patch.maxPostsPerDay, planning_horizon_days: patch.planningHorizonDays,
+              config: patch.config,
+            }, socialCtx);
+            if (r.success && (patch.status === 'active' || patch.status === 'paused' || patch.status === 'archived')) {
+              await socialSkillForApi.execute({ action: 'set_channel_status', channel: id, status: patch.status }, socialCtx);
+            }
+            // Nur-Status-Änderungen: update_channel meldet „nichts zu ändern" → Status trotzdem setzen
+            if (!r.success && (patch.status === 'active' || patch.status === 'paused' || patch.status === 'archived') && Object.keys(patch).length === 1) {
+              const s = await socialSkillForApi.execute({ action: 'set_channel_status', channel: id, status: patch.status }, socialCtx);
+              return { success: s.success, error: s.error };
+            }
+            return { success: r.success, error: r.error };
+          },
+          pauseAll: async () => socialRepo.pauseAll(socialOwner),
+          listItems: async (filter: { channelId?: string; status?: string; limit?: number }) =>
+            socialRepo.listItems(socialOwner, {
+              channelId: filter.channelId,
+              status: filter.status as never,
+              limit: filter.limit ?? 100,
+            }),
+          itemAction: async (id: string, action: string, extra?: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const skillAction = action === 'approve' ? 'approve_content'
+              : action === 'reject' ? 'reject_content'
+              : action === 'publish' ? 'publish_now'
+              : action === 'schedule' ? 'schedule_content' : '';
+            if (!skillAction) return { success: false, error: `unknown action ${action}` };
+            const r = await socialSkillForApi.execute({
+              action: skillAction, item_id: id,
+              ...(extra?.scheduled_at ? { scheduled_at: extra.scheduled_at } : {}),
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error };
+          },
+          channelMetrics: async (channelId: string) => socialRepo.listMetrics(channelId, { limit: 120 }),
         });
-        this.logger.info('Social API registered (v934)');
+        this.logger.info('Social API registered (v934/v937)');
       }
 
       // v770 — Storage-Only-Callbacks (env / db-seeds / sandbox-templates) UNABHÄNGIG von sandboxManager registrieren.

@@ -692,10 +692,16 @@ export class HttpAdapter extends MessagingAdapter {
     this.interestsCallbacks = cb;
   }
 
-  // v934 — Social: Kanäle + Content-Kalender (volle UI folgt v937)
+  // v934/v937 — Social: Kanäle, Content-Kalender, Items, Aktionen, Metriken
   private socialCallbacks?: {
     listChannels: () => Promise<any[]>;
     calendar: (fromIso: string, toIso: string) => Promise<any[]>;
+    /** v937 */
+    updateChannel?: (id: string, patch: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+    pauseAll?: () => Promise<number>;
+    listItems?: (filter: { channelId?: string; status?: string; limit?: number }) => Promise<any[]>;
+    itemAction?: (id: string, action: 'approve' | 'reject' | 'publish' | 'schedule', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
+    channelMetrics?: (channelId: string) => Promise<any[]>;
   };
 
   setSocialCallbacks(cb: NonNullable<HttpAdapter['socialCallbacks']>): void {
@@ -1297,7 +1303,7 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleInterestsListItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/interests/collect' && req.method === 'POST') {
       this.handleInterestsCollect(req, res).catch(err => this.safeError(res, err));
-    // ── v934 — Social ──
+    // ── v934/v937 — Social ──
     } else if (url.pathname === '/api/social/channels' && req.method === 'GET') {
       this.handleSocial(req, res, () => this.socialCallbacks!.listChannels().then(channels => ({ channels }))).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/social/calendar' && req.method === 'GET') {
@@ -1306,6 +1312,31 @@ export class HttpAdapter extends MessagingAdapter {
         const to = url.searchParams.get('to') ?? new Date(Date.now() + 14 * 24 * 3_600_000).toISOString();
         return this.socialCallbacks!.calendar(from, to).then(items => ({ items, from, to }));
       }).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/channels\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.updateChannel) return { error: 'not supported' };
+        return this.socialCallbacks.updateChannel(url.pathname.split('/')[4], body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/pause-all' && req.method === 'POST') {
+      this.handleSocial(req, res, async () => ({ paused: await this.socialCallbacks!.pauseAll?.() ?? 0 })).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/items' && req.method === 'GET') {
+      this.handleSocial(req, res, async () => ({
+        items: await this.socialCallbacks!.listItems?.({
+          channelId: url.searchParams.get('channel') ?? undefined,
+          status: url.searchParams.get('status') ?? undefined,
+          limit: Number(url.searchParams.get('limit') ?? 100),
+        }) ?? [],
+      })).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/items\/[^/]+\/(approve|reject|publish|schedule)$/) && req.method === 'POST') {
+      this.handleSocialBody(req, res, async (body) => {
+        const parts = url.pathname.split('/');
+        if (!this.socialCallbacks?.itemAction) return { error: 'not supported' };
+        return this.socialCallbacks.itemAction(parts[4], parts[5] as 'approve' | 'reject' | 'publish' | 'schedule', body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/channels\/[^/]+\/metrics$/) && req.method === 'GET') {
+      this.handleSocial(req, res, async () => ({
+        metrics: await this.socialCallbacks!.channelMetrics?.(url.pathname.split('/')[4]) ?? [],
+      })).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notifications/settings' && req.method === 'GET') {
       this.handleInterests(req, res, () => this.interestsCallbacks!.getNotificationSettings()).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notifications/settings' && req.method === 'POST') {
@@ -3050,6 +3081,18 @@ export class HttpAdapter extends MessagingAdapter {
     if (!this.socialCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const result = await fn();
     res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v937 — Social-Wrapper mit JSON-Body; success:false → HTTP 400. */
+  private async handleSocialBody(req: http.IncomingMessage, res: http.ServerResponse, fn: (body: Record<string, unknown>) => Promise<Record<string, unknown>>): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.socialCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    let body: Record<string, unknown> = {};
+    try { const raw = await this.readBody(req); if (raw) body = JSON.parse(raw); } catch { /* leerer Body ok */ }
+    const result = await fn(body);
+    const failed = result.success === false || typeof result.error === 'string';
+    res.writeHead(failed ? 400 : 200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }
 

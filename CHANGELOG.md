@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.937] - 2026-07-03
+
+### Added — Social-Media: Web-UI + Autonomie komplett (v937, Stufe 5 von 6)
+
+- **Neue Seite „Social Media"** (Sidebar 📣):
+  - **Kanal-Karten** mit Plattform, publish_mode, Limits, Erstpost-Streak
+    (x/5 mit 🔒-Hinweis wann autonomous wirksam wird), Performance-Summe
+    (Views/Likes/Comments aus channel_metrics), Modus-Umschalter
+    (Vorschlagen/Mit Freigabe/Autonom) und Pausieren je Kanal.
+  - **„Wartet auf dich"** — Freigabe-Queue aller Entwürfe/geplanten Posts mit
+    Vorschau, ✅ Freigeben / 🚀 Sofort posten / ✕ Ablehnen.
+  - **Content-Kalender** (14 Tage, nach Tag gruppiert) mit Status-Badges,
+    Studio-Markierung, Fehleranzeige und Link zum veröffentlichten Post.
+  - **🛑 Social-Stopp** (Not-Aus): pausiert alle Kanäle mit einem Klick —
+    Leitplanke 4 damit auch in der UI.
+- **API komplettiert:** PATCH /api/social/channels/:id (Modus/Status/Limits),
+  POST /api/social/pause-all, GET /api/social/items,
+  POST /api/social/items/:id/(approve|reject|publish|schedule),
+  GET /api/social/channels/:id/metrics. Alle Item-Aktionen laufen über den
+  social-Skill — Erstpost-Streak und Leitplanken bleiben an einer Stelle.
+- Damit ist der autonome Modus end-to-end bedienbar: Modus in der UI auf
+  „Autonom" stellen → die ersten 5 Posts laufen über die Freigabe-Queue →
+  danach published Alfred selbst, sichtbar in Insights und Kalender.
+
 ## [0.19.0-multi-ha.936] - 2026-07-03
 
 ### Added — Social-Media: YouTube/Meta/X-Provider + Analytics-Lern-Loop (v936, Stufe 4 von 6)
