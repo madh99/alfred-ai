@@ -10,7 +10,7 @@ type SocialAction =
   | 'validate_auth' | 'pause_all' | 'resume_channel'
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media'
-  | 'generate_content' | 'render_video' | 'crosspost';
+  | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
@@ -40,7 +40,7 @@ export class SocialSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'social',
     category: 'automation',
-    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle).',
+    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle). "Verknüpfe Thema X mit Kanal Y" = action=link_topic — ein Kanal kann MEHRERE Interessen-Themen speisen.',
     riskLevel: 'write',
     version: '1.0.0',
     // v949 — 10 min: generate_content erzeugt bis zu ~10 Posts inkl. je ~20s
@@ -57,7 +57,7 @@ export class SocialSkill extends Skill {
             'validate_auth', 'pause_all', 'resume_channel',
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media',
-            'generate_content', 'render_video', 'crosspost'],
+            'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic'],
           description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos).',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
@@ -82,6 +82,7 @@ export class SocialSkill extends Skill {
         format: { type: 'string', enum: ['9:16', '16:9'], description: 'render_video: Hochformat (Shorts/Reels, Default) oder Querformat' },
         channels: { type: 'array', items: { type: 'string' }, description: 'crosspost: Ziel-Kanäle (Namen/IDs), auf die das Item kopiert wird' },
         adapt: { type: 'boolean', description: 'crosspost: Text formatgerecht je Ziel-Kanal umschreiben (Default true; false = wörtliche Kopie)' },
+        topic: { type: 'string', description: 'link_topic/unlink_topic: Interessen-Thema (Name, fuzzy) — ein Kanal kann MEHRERE Themen speisen (z.B. „WM 2026" + „Panini-Sammelalbum")' },
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
         external_url: { type: 'string', description: 'mark_published: URL des manuell geposteten Beitrags' },
@@ -113,6 +114,13 @@ export class SocialSkill extends Skill {
 
   setLlm(llm: LLMProvider): void {
     this.llm = llm;
+  }
+
+  /** v951 — Interessen-Topic-Resolver für link_topic/unlink_topic (vom Kern injiziert). */
+  private topicResolver?: (nameOrId: string) => Promise<{ id: string; name: string } | null>;
+
+  setTopicResolver(fn: (nameOrId: string) => Promise<{ id: string; name: string } | null>): void {
+    this.topicResolver = fn;
   }
 
   constructor(private readonly repo: SocialRepository) {
@@ -159,6 +167,8 @@ export class SocialSkill extends Skill {
         case 'generate_content': return await this.generateContent(userId, input);
         case 'render_video': return await this.renderVideo(userId, input);
         case 'crosspost': return await this.crosspost(userId, input);
+        case 'link_topic': return await this.linkTopic(userId, input, true);
+        case 'unlink_topic': return await this.linkTopic(userId, input, false);
         default: return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
     } catch (err) {
@@ -572,6 +582,45 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     } catch {
       return null;
     }
+  }
+
+  /**
+   * v951 — Interessen-Thema an einen Kanal koppeln/lösen. Ein Kanal kann
+   * MEHRERE Themen speisen (config.topic_ids[]): das Studio zieht dann aus
+   * allen Dossiers und verteilt die Posts über die Themen.
+   */
+  private async linkTopic(userId: string, input: Record<string, unknown>, link: boolean): Promise<SkillResult> {
+    if (!this.topicResolver) return { success: false, error: 'Interessen-Modul nicht verfügbar.' };
+    const channel = await this.resolveChannel(userId, input);
+    if (!channel) return { success: false, error: `Kanal nicht gefunden: ${String(input.channel ?? '')}` };
+    const topicQuery = typeof input.topic === 'string' ? input.topic.trim() : '';
+    if (!topicQuery) return { success: false, error: 'topic erforderlich (Themen-Name)' };
+    const topic = await this.topicResolver(topicQuery);
+    if (!topic) return { success: false, error: `Interessen-Thema nicht gefunden: ${topicQuery} — mit interests create_topic anlegen.` };
+
+    const current = new Set<string>();
+    if (Array.isArray(channel.config.topic_ids)) {
+      for (const id of channel.config.topic_ids) if (typeof id === 'string') current.add(id);
+    }
+    if (typeof channel.config.topic_id === 'string' && channel.config.topic_id) current.add(channel.config.topic_id);
+
+    if (link) {
+      if (current.has(topic.id)) return { success: true, display: `Thema **${topic.name}** ist bereits mit **${channel.name}** verknüpft.` };
+      current.add(topic.id);
+    } else {
+      if (!current.has(topic.id)) return { success: false, error: `Thema ${topic.name} ist nicht mit ${channel.name} verknüpft.` };
+      current.delete(topic.id);
+    }
+    const config = { ...channel.config, topic_ids: [...current] };
+    delete (config as Record<string, unknown>).topic_id; // Legacy-Feld in topic_ids überführt
+    await this.repo.updateChannel(userId, channel.id, { config });
+    return {
+      success: true,
+      data: { topicIds: [...current] },
+      display: link
+        ? `🔗 Thema **${topic.name}** mit **${channel.name}** verknüpft (${current.size} Thema/Themen gesamt) — das Studio zieht ab dem nächsten Lauf aus allen Dossiers.`
+        : `Thema **${topic.name}** von **${channel.name}** gelöst (${current.size} verbleibend).`,
+    };
   }
 
   /** v935 — Content-Studio sofort für einen Kanal laufen lassen. */

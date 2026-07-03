@@ -238,6 +238,36 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(bad.error).toContain('GibtEsNicht');
   });
 
+  it('v951: link_topic/unlink_topic pflegen config.topic_ids (Legacy topic_id wird überführt)', async () => {
+    const channel = makeChannel({ config: { topic_id: 't-legacy' } });
+    const state = { config: channel.config as Record<string, unknown> };
+    const repo = {
+      getChannel: vi.fn(async () => ({ ...channel, config: state.config })),
+      findChannelByName: vi.fn(async () => ({ ...channel, config: state.config })),
+      updateChannel: vi.fn(async (_u: string, _id: string, patch: any) => { state.config = patch.config; }),
+    } as unknown as SocialRepository;
+    const skill = new SocialSkill(repo);
+    skill.setTopicResolver(async (q: string) =>
+      q.toLowerCase().includes('panini') ? { id: 't-panini', name: 'Panini-Sammelalbum' }
+        : q === 't-legacy' ? { id: 't-legacy', name: 'WM 2026' } : null);
+
+    // Verknüpfen: Legacy-topic_id wird in topic_ids überführt + neues Topic dazu
+    const r = await skill.execute({ action: 'link_topic', channel: 'Testkanal', topic: 'Panini' }, CTX);
+    expect(r.success).toBe(true);
+    expect(state.config.topic_ids).toEqual(expect.arrayContaining(['t-legacy', 't-panini']));
+    expect(state.config.topic_id).toBeUndefined();
+
+    // Lösen
+    const r2 = await skill.execute({ action: 'unlink_topic', channel: 'Testkanal', topic: 'Panini' }, CTX);
+    expect(r2.success).toBe(true);
+    expect(state.config.topic_ids).toEqual(['t-legacy']);
+
+    // Unbekanntes Thema → klarer Fehler mit create_topic-Hinweis
+    const bad = await skill.execute({ action: 'link_topic', channel: 'Testkanal', topic: 'GibtEsNicht' }, CTX);
+    expect(bad.success).toBe(false);
+    expect(bad.error).toContain('create_topic');
+  });
+
   it('create_channel verweigert unbekannte Plattform mit Liste der vorhandenen', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'create_channel', platform: 'instagram', name: 'IG' }, CTX);

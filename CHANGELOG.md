@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.951] - 2026-07-03
+
+### Added — Social: ein Kanal kann mehrere Interessen-Themen speisen (v951)
+
+Anwendungsfall fussball.cc: der Kanal soll aus „WM 2026" UND
+„Panini-Sammelalbum" schöpfen — als getrennte Themen mit je eigenen
+Quellen und Dossiers (die auch andere Kanäle teilen können).
+
+- **Mehrfach-Verknüpfung:** `config.topic_ids[]` statt nur einem Topic
+  (Legacy `topic_id` wird beim ersten link/unlink automatisch überführt,
+  bestehende Kanäle funktionieren unverändert).
+- **Studio zieht aus allen Dossiers:** je Thema eine eigene Sektion im
+  Ideen-Prompt („### Thema ‚WM 2026'…") plus Anweisung, die Posts sinnvoll
+  über ALLE Themen zu verteilen — kein Auto-Topic mehr, sobald mindestens
+  ein Thema verknüpft ist.
+- **Bequem per Chat:** neue Aktionen `link_topic`/`unlink_topic` mit
+  Fuzzy-Themennamen — „Verknüpfe das Thema Panini-Sammelalbum mit
+  fussball.cc". Unbekanntes Thema → Hinweis auf interests/create_topic.
+- 2 neue Tests (Multi-Dossier-Prompt + kein Auto-Topic; link/unlink inkl.
+  Legacy-Überführung und Fehlerfall).
+
 ## [0.19.0-multi-ha.950] - 2026-07-03
 
 ### Added — Bildnisrecht-Schutz für generierte Social-Bilder, dreischichtig (v950)

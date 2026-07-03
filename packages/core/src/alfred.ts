@@ -5540,6 +5540,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       socialSkill.registerProvider(new XProvider());
       // v946 — LLM für formatgerechtes Crossposting
       if (this.llmProvider) socialSkill.setLlm(this.llmProvider);
+      // v951 — Themen-Verknüpfung (ein Kanal kann mehrere Interessen-Themen speisen).
+      // ownerMasterUserId LAZY auflösen — bei der Registrierung ist er noch nicht gesetzt
+      // (User-Init kommt später im initialize-Flow).
+      if (this.interestsRepo) {
+        const interestsForSocial = this.interestsRepo;
+        socialSkill.setTopicResolver(async (nameOrId: string) => {
+          const ownerForTopics = this.ownerMasterUserId as string | undefined;
+          if (!ownerForTopics) return null;
+          const byId = await interestsForSocial.getTopicById(ownerForTopics, nameOrId).catch(() => null);
+          const topic = byId ?? await interestsForSocial.findTopicByName(ownerForTopics, nameOrId);
+          return topic ? { id: topic.id, name: topic.name } : null;
+        });
+      }
       // Secrets: project_environments[channel.config.env_stage ?? 'social'] des gebundenen
       // Projekts, entschlüsselt via envCryptoRef (v733-Muster) — NIE Klartext in der DB.
       socialSkill.setSecretsResolver(async (channel) => {

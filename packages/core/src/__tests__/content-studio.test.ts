@@ -135,6 +135,7 @@ function makeStack(opts: {
   } as unknown as SocialRepository;
 
   const interestsRepo = {
+    getTopicById: vi.fn(async (_u: string, id: string) => ({ id, userId: OWNER, name: 'Fußball NÖ', keywords: [], status: 'active', origin: 'auto', notifyThreshold: 'high', createdAt: 'x' })),
     getDigest: vi.fn(async () => ({ topicId: 't-1', summary: 'Derby-Woche in Niederösterreich.', itemsSinceUpdate: 0, updatedAt: 'x' })),
     listItems: vi.fn(async () => [{ id: 'ti1', topicId: 't-1', title: 'Transfergerücht XY', sourceKind: 'rss', createdAt: 'x' }]),
     findTopicByName: vi.fn(async () => null),
@@ -304,6 +305,25 @@ describe('ContentStudio (v935)', () => {
     expect(prompt).not.toContain('KEINE realen');
     expect((llm.complete as any).mock.calls.length).toBe(1);
     expect((createdMedia[0] as unknown[]).length).toBe(1);
+  });
+
+  it('v951: mehrere verknüpfte Themen → je Topic eine Dossier-Sektion + Verteilungs-Hinweis', async () => {
+    const channel = makeChannel({ config: { topic_ids: ['t-1', 't-2'] } });
+    const { studio, llm, interestsRepo } = makeStack({ channel });
+    (interestsRepo.getTopicById as any) = vi.fn(async (_u: string, id: string) =>
+      id === 't-1' ? { id: 't-1', name: 'WM 2026' } : { id: 't-2', name: 'Panini-Sammelalbum' });
+    (interestsRepo.getDigest as any) = vi.fn(async (id: string) =>
+      id === 't-1' ? { topicId: 't-1', summary: 'Österreich-Aus, Favoriten-Check.', itemsSinceUpdate: 0, updatedAt: 'x' }
+        : { topicId: 't-2', summary: 'Neue Sticker-Serie erschienen.', itemsSinceUpdate: 0, updatedAt: 'x' });
+    (interestsRepo.listItems as any) = vi.fn(async () => []);
+
+    await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('Thema „WM 2026"');
+    expect(prompt).toContain('Thema „Panini-Sammelalbum"');
+    expect(prompt).toContain('Verteile die Posts sinnvoll über ALLE obigen Themen');
+    // kein Auto-Topic angelegt — Themen sind ja verknüpft
+    expect(interestsRepo.createTopic).not.toHaveBeenCalled();
   });
 
   it('ohne topic_id: Interessen-Topic wird auto-angelegt und am Kanal gespeichert', async () => {

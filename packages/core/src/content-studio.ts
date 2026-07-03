@@ -264,18 +264,42 @@ Antworte NUR mit einem JSON-Array:
 [{"title": "Video-Titel (max 100 Zeichen)", "body": "HOOK…\\nSCRIPT…\\n---\\nBESCHREIBUNG…", "hashtags": ["tag1", "tag2"], "warum": "1 Satz warum dieses Video jetzt", "bildidee": "optional: Thumbnail-Vorschlag"}]`;
   }
 
+  /** v951 — alle verknüpften Topic-IDs eines Kanals (topic_ids[] + Legacy topic_id). */
+  static linkedTopicIds(channel: Pick<SocialChannel, 'config'>): string[] {
+    const ids = new Set<string>();
+    if (Array.isArray(channel.config.topic_ids)) {
+      for (const id of channel.config.topic_ids) if (typeof id === 'string' && id) ids.add(id);
+    }
+    if (typeof channel.config.topic_id === 'string' && channel.config.topic_id) ids.add(channel.config.topic_id);
+    return [...ids];
+  }
+
+  /**
+   * v951 — Kanäle können MEHRERE Themen speisen (z.B. „WM 2026" + „Panini-
+   * Sammelalbum"): je Topic eine eigene Dossier-Sektion, das LLM verteilt
+   * die Posts über alle Themen.
+   */
   private async topicDossier(channel: SocialChannel): Promise<string> {
     if (!this.interestsRepo) return '';
-    try {
-      const topicId = typeof channel.config.topic_id === 'string' ? channel.config.topic_id : undefined;
-      if (!topicId) return '';
-      const [digest, items] = await Promise.all([
-        this.interestsRepo.getDigest(topicId),
-        this.interestsRepo.listItems(topicId, { limit: 8 }),
-      ]);
-      const itemLines = items.map(i => `- ${i.title}`).join('\n');
-      return `${digest?.summary ?? ''}${itemLines ? `\nNeueste Beiträge:\n${itemLines}` : ''}`.trim();
-    } catch { return ''; }
+    const topicIds = ContentStudio.linkedTopicIds(channel);
+    if (topicIds.length === 0) return '';
+    const sections: string[] = [];
+    for (const topicId of topicIds) {
+      try {
+        const [topic, digest, items] = await Promise.all([
+          this.interestsRepo.getTopicById(this.ownerUserId, topicId),
+          this.interestsRepo.getDigest(topicId),
+          this.interestsRepo.listItems(topicId, { limit: 8 }),
+        ]);
+        const itemLines = items.map(i => `- ${i.title}`).join('\n');
+        const body = `${digest?.summary ?? ''}${itemLines ? `\nNeueste Beiträge:\n${itemLines}` : ''}`.trim();
+        if (body) sections.push(topicIds.length > 1 ? `### Thema „${topic?.name ?? topicId.slice(0, 8)}"\n${body}` : body);
+      } catch { /* einzelnes Topic überspringen */ }
+    }
+    if (sections.length > 1) {
+      sections.push('(Verteile die Posts sinnvoll über ALLE obigen Themen — nicht alles zu einem Thema.)');
+    }
+    return sections.join('\n\n');
   }
 
   private async bestPerformers(channel: SocialChannel): Promise<string> {
@@ -430,7 +454,8 @@ Antworte NUR mit einem JSON-Array:
 
   private async ensureTopic(channel: SocialChannel): Promise<void> {
     if (!this.interestsRepo) return;
-    if (typeof channel.config.topic_id === 'string' && channel.config.topic_id.length > 0) return;
+    // v951 — nur auto-anlegen, wenn GAR KEIN Topic verknüpft ist (topic_ids ODER topic_id)
+    if (ContentStudio.linkedTopicIds(channel).length > 0) return;
     try {
       const niche = typeof channel.config.niche === 'string' && channel.config.niche.trim().length > 0
         ? channel.config.niche.trim() : channel.name;
