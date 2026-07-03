@@ -318,35 +318,73 @@ Antworte NUR mit einem JSON-Array:
     }
 
     try {
+      const {
+        resolveImagePolicy, extractNameCandidates, scrubMotif,
+        buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy,
+      } = await import('./image-policy.js');
+      const policy = resolveImagePolicy(channel.config);
+
       // v941 — die Bildidee des Studios ist der beste Prompt (Fallback: Titel/Body)
-      const motif = idea.bildidee ?? `Social-Media-Bild für: ${idea.title || idea.body.slice(0, 150)}`;
-      const result = await this.skillSandbox.execute(skill, {
-        prompt: `${motif}. Stil: ${channel.persona ?? 'modern, freundlich'}. Kein Text im Bild.`,
-      }, { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
-      if (!result.success) return [];
-      // v942 — image_generate liefert das Bild als Buffer-Attachment (nicht als URL):
-      // in mediaDir persistieren; URL-Formen bleiben als Fallback unterstützt.
-      let url: string | undefined;
-      const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string }> }).attachments?.[0];
-      if (attachment?.data && Buffer.isBuffer(attachment.data) && this.mediaDir) {
-        const { writeFile, mkdir } = await import('node:fs/promises');
-        const { join } = await import('node:path');
-        await mkdir(this.mediaDir, { recursive: true });
-        const file = join(this.mediaDir, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
-        await writeFile(file, attachment.data);
-        url = file;
-      } else {
-        const data = result.data as Record<string, unknown> | undefined;
-        url = typeof data?.url === 'string' ? data.url
-          : typeof data?.path === 'string' ? data.path
-          : typeof data?.filePath === 'string' ? data.filePath : undefined;
+      let motif = idea.bildidee ?? `Social-Media-Bild für: ${idea.title || idea.body.slice(0, 150)}`;
+      // v950 Schicht 2 — deterministisch: Personen-Namen aus dem Motiv schrubben
+      if (policy === 'symbolic') {
+        const names = extractNameCandidates(idea.title, idea.body, idea.bildidee);
+        const scrubbedResult = scrubMotif(motif, names);
+        if (scrubbedResult.scrubbed) {
+          this.logger.info({ channel: channel.name, names }, 'v950 motif scrubbed (image policy symbolic)');
+        }
+        motif = scrubbedResult.motif;
       }
-      if (!url) return [];
-      const today = new Date().toISOString().slice(0, 10);
-      const todayUsed = (await this.socialRepo.listMetrics(channel.id, { kind: 'gen_image', sinceDate: today }))
-        .find(m => m.date === today && !m.itemId)?.value ?? 0;
-      await this.socialRepo.upsertMetric(channel.id, { date: today, kind: 'gen_image', value: todayUsed + 1 });
-      return [{ type: 'image', source: 'generated', pathOrUrl: url }];
+
+      // v950 Schicht 1+3 — bis zu 2 Versuche: normal → Vision-Verstoß → strenges Symbolmotiv
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const prompt = attempt === 0
+          ? buildSafeImagePrompt(motif, channel.persona, policy)
+          : strictRetryPrompt(channel.persona);
+        const result = await this.skillSandbox.execute(skill, { prompt },
+          { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
+        if (!result.success) return [];
+
+        // v942 — image_generate liefert das Bild als Buffer-Attachment
+        const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string }> }).attachments?.[0];
+        const buffer = attachment?.data && Buffer.isBuffer(attachment.data) ? attachment.data : undefined;
+
+        // v950 Schicht 3 — Vision-Output-Gate (nur symbolic; fail-closed bei Ausfall)
+        if (policy === 'symbolic' && buffer) {
+          const verdict = await verifyImagePolicy(this.llm, buffer);
+          if (verdict === null) {
+            this.logger.warn({ channel: channel.name }, 'v950 vision check unavailable — Bild verworfen (fail-closed)');
+            return [];
+          }
+          if (verdict.person || verdict.logo) {
+            this.logger.info({ channel: channel.name, attempt, verdict }, 'v950 image policy violation — Bild verworfen');
+            if (attempt === 0) continue; // ein Retry mit strengem Symbolmotiv
+            return []; // zweiter Verstoß → Post ohne Bild
+          }
+        }
+
+        let url: string | undefined;
+        if (buffer && this.mediaDir) {
+          const { writeFile, mkdir } = await import('node:fs/promises');
+          const { join } = await import('node:path');
+          await mkdir(this.mediaDir, { recursive: true });
+          const file = join(this.mediaDir, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+          await writeFile(file, buffer);
+          url = file;
+        } else {
+          const data = result.data as Record<string, unknown> | undefined;
+          url = typeof data?.url === 'string' ? data.url
+            : typeof data?.path === 'string' ? data.path
+            : typeof data?.filePath === 'string' ? data.filePath : undefined;
+        }
+        if (!url) return [];
+        const today = new Date().toISOString().slice(0, 10);
+        const todayUsed = (await this.socialRepo.listMetrics(channel.id, { kind: 'gen_image', sinceDate: today }))
+          .find(m => m.date === today && !m.itemId)?.value ?? 0;
+        await this.socialRepo.upsertMetric(channel.id, { date: today, kind: 'gen_image', value: todayUsed + 1 });
+        return [{ type: 'image', source: 'generated', pathOrUrl: url }];
+      }
+      return [];
     } catch (err) {
       this.logger.warn({ err: (err as Error).message, channel: channel.name }, 'v935 image generation failed');
       return [];

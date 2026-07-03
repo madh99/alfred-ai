@@ -5,6 +5,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.950] - 2026-07-03
+
+### Added — Bildnisrecht-Schutz für generierte Social-Bilder, dreischichtig (v950)
+
+Anlass: das Studio erzeugte fotorealistische **Lookalikes echter Personen**
+(Spieler/Trainer in ÖFB-Optik) für einen öffentlichen Kanal — rechtlich
+heikel und für Follower nicht als KI erkennbar. Bewusst KEIN reiner
+Prompt-Appell, sondern drei Schichten:
+
+1. **Policy je Kanal:** `config.image_policy` — **`symbolic` (Default,
+   sicher)** verbietet reale/identifizierbare Personen und Logos;
+   `people_ok` ist ein explizites Opt-in und überspringt alle Gates.
+2. **Deterministisches Input-Gate:** Personen-Namen (Sequenzen ≥2
+   kapitalisierter Wörter, mit Stopwort-Beschneidung — „Während David
+   Alaba" → „David Alaba", „Das Stadion" → kein Name) werden aus dem
+   Bild-Motiv **geschrubbt**, bevor es zum Generator geht; bleibt kein
+   tragfähiges Motiv, greift ein generisches Fußball-Symbolmotiv. Der
+   Prompt trägt zusätzlich harte Regeln (keine Personen/Lookalikes/Logos,
+   Menschen nur anonym).
+3. **Vision-Output-Gate:** das ERZEUGTE Bild wird per Vision-LLM geprüft
+   („identifizierbare Person? Logo?"). Verstoß → ein Retry mit strengem
+   Symbolmotiv ganz ohne Menschen; erneuter Verstoß **oder Vision-Ausfall →
+   kein Bild** (fail-closed — Sicherheit vor Schönheit). Verworfene Bilder
+   verbrauchen kein Monats-Budget.
+
+- 14 neue Tests (Policy-Default, Namens-Extraktion inkl. Stopwörter,
+  Scrubbing + Fallback-Motiv, Prompt-Regeln, Vision-Verdict-Parsing +
+  fail-closed, Studio-Integration: Verstoß→Retry→ohne Bild sowie
+  people_ok-Bypass).
+- Hinweis: bestehende Entwürfe mit Personen-Bildern sind davon unberührt —
+  ablehnen und neu erzeugen lassen, wenn der Kanal öffentlich geht.
+
 ## [0.19.0-multi-ha.949] - 2026-07-03
 
 ### Fixed — social-Skill-Timeout deckt Bild-Generierung ab (v949)

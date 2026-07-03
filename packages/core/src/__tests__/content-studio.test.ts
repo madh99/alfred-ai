@@ -220,6 +220,92 @@ describe('ContentStudio (v935)', () => {
     expect(prompt).toContain('schiedsrichter');
   });
 
+  it('v950: symbolic-Policy — Namen geschrubbt, Vision-Verstoß → Retry, 2. Verstoß → kein Bild', async () => {
+    const os = await import('node:os');
+    const channel = makeChannel({ config: { topic_id: 't-1', generate_images: true } });
+    const { studio: base } = makeStack({ channel });
+    // Eigener Stack mit Bild-Sandbox + Vision-LLM
+    const sandboxCalls: string[] = [];
+    const sandbox = {
+      execute: vi.fn(async (_s: unknown, input: { prompt: string }) => {
+        sandboxCalls.push(input.prompt);
+        return { success: true, attachments: [{ fileName: 'image.png', data: Buffer.from('png'), mimeType: 'image/png' }] };
+      }),
+    };
+    const registry = { get: vi.fn(() => ({ metadata: { name: 'image_generate' } })) };
+    let llmCall = 0;
+    const llm = {
+      complete: vi.fn(async (req: any) => {
+        llmCall++;
+        // Call 1 = Ideen; alle weiteren = Vision-Verdicts (immer Verstoß)
+        if (llmCall === 1) {
+          return { content: JSON.stringify([{ title: 'Marko Arnautovic tritt ab', body: 'Ein ausführlicher Beitrag über den Rücktritt mit Einordnung und allem Drum und Dran für die Community.', hashtags: ['oefb'], bildidee: 'Marko Arnautovic winkt den Fans' }]) };
+        }
+        expect(Array.isArray(req.messages[0].content)).toBe(true); // Vision-Call mit Bild-Block
+        return { content: '{"person": true, "logo": false, "begruendung": "erkennbarer Spieler"}' };
+      }),
+    } as any;
+    const { ContentStudio } = await import('../content-studio.js');
+    const repo = (base as any).socialRepo ?? undefined; // nicht nutzbar — eigener Mini-Repo:
+    const createdMedia: unknown[] = [];
+    const miniRepo = {
+      listItems: vi.fn(async (_u: string, q: any) => (q?.status === 'published' ? [] : [])),
+      createItem: vi.fn(async (_u: string, chId: string, o: any) => { createdMedia.push(o.media); return { id: 'g1', channelId: chId, ...o, createdAt: 'x', updatedAt: 'x' }; }),
+      transition: vi.fn(async () => ({})),
+      mergePerformance: vi.fn(async () => {}),
+      updateChannel: vi.fn(async () => {}),
+      listMetrics: vi.fn(async () => []),
+      upsertMetric: vi.fn(async () => {}),
+      listChannels: vi.fn(async () => [channel]),
+    } as any;
+    const interests = {
+      getDigest: vi.fn(async () => null), listItems: vi.fn(async () => []),
+      findTopicByName: vi.fn(async () => null), createTopic: vi.fn(async () => ({ id: 't-1' })),
+    } as any;
+    const studio = new ContentStudio(miniRepo, interests, undefined, llm, registry as any, sandbox as any, undefined, makeLogger(), OWNER, os.tmpdir());
+
+    const created = await studio.fillChannel(channel);
+    expect(created).toBe(1);
+    // Prompt 1: Name geschrubbt + Policy-Regeln; Prompt 2: strenges Symbolmotiv (Retry)
+    expect(sandboxCalls.length).toBe(2);
+    expect(sandboxCalls[0]).not.toContain('Arnautovic');
+    expect(sandboxCalls[0]).toContain('KEINE realen oder identifizierbaren Personen');
+    expect(sandboxCalls[1]).toContain('Symbolbild Fußball');
+    // Beide Versuche verletzten die Policy → Post OHNE Bild
+    expect(createdMedia[0]).toEqual([]);
+    expect(miniRepo.upsertMetric).not.toHaveBeenCalled(); // kein Budget verbraucht ohne Bild
+  });
+
+  it('v950: people_ok-Policy überspringt Scrubbing und Vision-Gate', async () => {
+    const os = await import('node:os');
+    const channel = makeChannel({ config: { topic_id: 't-1', generate_images: true, image_policy: 'people_ok' } });
+    const sandbox = { execute: vi.fn(async (_s: unknown, input: { prompt: string }) => ({ success: true, attachments: [{ fileName: 'image.png', data: Buffer.from('png'), mimeType: 'image/png' }] })) };
+    const registry = { get: vi.fn(() => ({ metadata: { name: 'image_generate' } })) };
+    const llm = {
+      complete: vi.fn(async () => ({ content: JSON.stringify([{ title: 'Alaba bleibt', body: 'Ein ausführlicher Beitrag über die Zukunft mit Einordnung und Community-Frage am Ende dabei.', hashtags: ['oefb'], bildidee: 'David Alaba Porträt' }]) })),
+    } as any;
+    const createdMedia: unknown[] = [];
+    const miniRepo = {
+      listItems: vi.fn(async () => []),
+      createItem: vi.fn(async (_u: string, chId: string, o: any) => { createdMedia.push(o.media); return { id: 'g1', channelId: chId, ...o, createdAt: 'x', updatedAt: 'x' }; }),
+      transition: vi.fn(async () => ({})), mergePerformance: vi.fn(async () => {}),
+      updateChannel: vi.fn(async () => {}), listMetrics: vi.fn(async () => []),
+      upsertMetric: vi.fn(async () => {}), listChannels: vi.fn(async () => [channel]),
+    } as any;
+    const interests = { getDigest: vi.fn(async () => null), listItems: vi.fn(async () => []), findTopicByName: vi.fn(async () => null), createTopic: vi.fn(async () => ({ id: 't-1' })) } as any;
+    const { ContentStudio } = await import('../content-studio.js');
+    const studio = new ContentStudio(miniRepo, interests, undefined, llm, registry as any, sandbox as any, undefined, makeLogger(), OWNER, os.tmpdir());
+
+    const created = await studio.fillChannel(channel);
+    expect(created).toBe(1);
+    // Nur 1 Generierung, Prompt enthält den Namen (Opt-in), KEIN Vision-Call (llm nur 1× für Ideen)
+    const prompt = (sandbox.execute as any).mock.calls[0][1].prompt as string;
+    expect(prompt).toContain('David Alaba');
+    expect(prompt).not.toContain('KEINE realen');
+    expect((llm.complete as any).mock.calls.length).toBe(1);
+    expect((createdMedia[0] as unknown[]).length).toBe(1);
+  });
+
   it('ohne topic_id: Interessen-Topic wird auto-angelegt und am Kanal gespeichert', async () => {
     const channel = makeChannel({ config: { niche: 'Amateurfußball NÖ' } });
     const { studio, interestsRepo, socialRepo } = makeStack({ channel });
