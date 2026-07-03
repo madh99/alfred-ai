@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.959] - 2026-07-03
+
+### Added — Best-Practice-Posting-Slots je Plattform, inkl. Wochenende (v959)
+
+- **Kanäle ohne eigene Posting-Slots bekommen automatisch Best-Practice-Slots
+  ihrer Plattform** (z. B. Telegram: Di 12:00, Do 18:30, Sa 10:00, So 19:00) —
+  jedes Preset deckt das Wochenende ab. Vom User konfigurierte `posting_slots`
+  überstimmen die Presets immer; `create_channel` zeigt die geltenden Slots an.
+- **Neue Aktion `replan_channel`:** „Plane die Beiträge von <Kanal> um"
+  verteilt bereits geplante (noch nicht freigegebene) Beiträge in die aktuellen
+  Slots — nötig nach Slot-Änderungen, da Bestandstermine sonst unverändert
+  bleiben. Reihenfolge bleibt erhalten; `update_channel` weist bei
+  Slot-Änderungen auf die Umplanung hin.
+
+### Fixed — Posting-Slots galten in UTC statt Server-Ortszeit (v959)
+
+- „Mo 18:00" wurde auf dem Europe/Vienna-Host um **20:00** veröffentlicht:
+  die Slot-Berechnung rechnete in UTC. Slots gelten jetzt in Server-Ortszeit —
+  18:00 heißt 18:00.
+
 ## [0.19.0-multi-ha.958] - 2026-07-03
 
 ### Fixed — Batch-Dedup, schärfere Ähnlichkeits-Schwelle, Flaggen ≠ Logos (v958)

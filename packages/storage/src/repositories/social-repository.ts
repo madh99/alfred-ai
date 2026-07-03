@@ -242,6 +242,15 @@ export class SocialRepository {
     await this.db.execute(`UPDATE content_items SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`, params);
   }
 
+  /** v959 — geplanten Termin eines scheduled-Items verschieben (Slot-Umplanung). */
+  async reschedule(userId: string, id: string, scheduledAt: string): Promise<boolean> {
+    const r = await this.db.execute(
+      `UPDATE content_items SET scheduled_at = ?, updated_at = ? WHERE id = ? AND user_id = ? AND status = 'scheduled'`,
+      [scheduledAt, new Date().toISOString(), id, userId],
+    );
+    return (r.changes ?? 0) > 0;
+  }
+
   /** v934 — Performance-/Meta-JSON mergen (z.B. Retry-Zähler der Publishing-Engine). */
   async mergePerformance(userId: string, id: string, patch: Record<string, unknown>): Promise<void> {
     const item = await this.getItem(userId, id);

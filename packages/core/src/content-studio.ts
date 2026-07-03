@@ -5,22 +5,24 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
+import { effectiveSlots } from '@alfred/skills';
 import type { SourceProvisioner } from './source-provisioner.js';
 
 const WEEKDAYS: Record<string, number> = { so: 0, mo: 1, di: 2, mi: 3, do: 4, fr: 5, sa: 6 };
 
 /**
  * v935 — Nächste freie Posting-Slots eines Kanals (pure, testbar).
- * Slots wie ["Mo 18:00", "Do 19:30"]; ohne Slots: Mo/Mi/Fr 18:00.
- * Belegte Zeitpunkte (bestehende geplante Items) werden übersprungen.
+ * Slots wie ["Mo 18:00", "Do 19:30"] in SERVER-ORTSZEIT (v959); ohne eigene
+ * Slots gelten Plattform-Best-Practices inkl. Wochenende (effectiveSlots) —
+ * User-Konfiguration überstimmt immer.
  */
 export function nextFreeSlots(
-  channel: Pick<SocialChannel, 'postingSlots' | 'planningHorizonDays'>,
+  channel: Pick<SocialChannel, 'postingSlots' | 'planningHorizonDays'> & { platform?: string },
   taken: Array<Pick<ContentItem, 'scheduledAt'>>,
   count: number,
   fromIso: string,
 ): string[] {
-  const slotDefs = (channel.postingSlots.length > 0 ? channel.postingSlots : ['Mo 18:00', 'Mi 18:00', 'Fr 18:00'])
+  const slotDefs = effectiveSlots({ postingSlots: channel.postingSlots, platform: channel.platform ?? '' }).slots
     .map(s => {
       const m = s.trim().match(/^([A-Za-zäö]{2})\s+(\d{1,2}):(\d{2})$/);
       if (!m) return null;
@@ -39,8 +41,10 @@ export function nextFreeSlots(
   for (let day = 0; day <= channel.planningHorizonDays && out.length < count; day++) {
     const date = new Date(from.getTime() + day * 24 * 3_600_000);
     for (const slot of slotDefs) {
-      if (date.getUTCDay() !== slot.weekday) continue;
-      const at = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), slot.hour, slot.minute));
+      // v959 — LOKALE Server-Zeit (vorher UTC: „Mo 18:00" wurde auf einem
+      // Europe/Vienna-Host um 20:00 Ortszeit veröffentlicht)
+      if (date.getDay() !== slot.weekday) continue;
+      const at = new Date(date.getFullYear(), date.getMonth(), date.getDate(), slot.hour, slot.minute);
       if (at.getTime() <= from.getTime() || at.getTime() > horizonEnd) continue;
       const key = at.toISOString().slice(0, 16);
       if (takenSet.has(key)) continue;
@@ -265,6 +269,29 @@ export class ContentStudio {
       }).catch(() => { /* non-critical */ });
     }
     return created;
+  }
+
+  /**
+   * v959 — Bestehende GEPLANTE (nicht freigegebene) Beiträge eines Kanals in
+   * die aktuellen Slots umplanen — für „Slots geändert, Bestand nachziehen".
+   * Reihenfolge bleibt erhalten; approved/published werden nicht angefasst.
+   */
+  async replanChannel(channel: SocialChannel): Promise<number> {
+    const scheduled = (await this.socialRepo.listItems(this.ownerUserId, {
+      channelId: channel.id, status: 'scheduled', limit: 100,
+    })).sort((a, b) => (a.scheduledAt ?? '').localeCompare(b.scheduledAt ?? ''));
+    if (scheduled.length === 0) return 0;
+    const taken = await this.socialRepo.listItems(this.ownerUserId, {
+      channelId: channel.id, status: ['approved', 'published'], limit: 100,
+    });
+    const slots = nextFreeSlots(channel, taken, scheduled.length, new Date().toISOString());
+    let moved = 0;
+    for (let i = 0; i < scheduled.length && i < slots.length; i++) {
+      if (scheduled[i].scheduledAt === slots[i]) continue;
+      if (await this.socialRepo.reschedule(this.ownerUserId, scheduled[i].id, slots[i])) moved++;
+    }
+    this.logger.info({ channel: channel.name, moved, of: scheduled.length }, 'v959 channel replanned');
+    return moved;
   }
 
   // ── Wissens-Kontext + Ideen ───────────────────────────────────────────

@@ -331,4 +331,22 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(r.success).toBe(false);
     expect(r.error).toContain('test');
   });
+
+  it('v959: replan_channel ruft den Replanner und meldet die Anzahl', async () => {
+    const { skill } = makeSkill(makeChannel(), makeItem());
+    const replan = vi.fn(async () => 3);
+    skill.setReplanner(replan);
+    const r = await skill.execute({ action: 'replan_channel', channel: 'Testkanal' }, CTX);
+    expect(r.success).toBe(true);
+    expect(replan).toHaveBeenCalledOnce();
+    expect(r.display).toContain('3');
+    expect(r.display).toContain('umgeplant');
+  });
+
+  it('v959: update_channel mit posting_slots weist auf replan_channel hin', async () => {
+    const { skill } = makeSkill(makeChannel(), makeItem());
+    const r = await skill.execute({ action: 'update_channel', channel: 'Testkanal', posting_slots: ['Sa 10:00', 'So 19:00'] }, CTX);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('replan_channel');
+  });
 });

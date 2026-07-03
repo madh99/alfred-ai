@@ -6660,6 +6660,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         );
         const studio = this.contentStudio;
         socialSkill.setStudio(channel => studio.fillChannel(channel));
+        // v959 — Umplanung bestehender geplanter Beiträge in die aktuellen Slots
+        socialSkill.setReplanner(channel => studio.replanChannel(channel));
 
         // v938 — Video-Pipeline: Slideshow-Renderer (ffmpeg + TTS-Voiceover +
         // Untertitel) für render_video + ffprobe-Check für User-Videos.

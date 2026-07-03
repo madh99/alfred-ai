@@ -3,7 +3,7 @@ import { Skill } from '../../skill.js';
 import type { SocialRepository, SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
-import { composePostText } from './social-provider.js';
+import { composePostText, effectiveSlots } from './social-provider.js';
 
 type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
@@ -11,7 +11,7 @@ type SocialAction =
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
-  | 'get_content' | 'edit_content' | 'add_lesson';
+  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
@@ -59,8 +59,8 @@ export class SocialSkill extends Skill {
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
-            'get_content', 'edit_content', 'add_lesson'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos).',
+            'get_content', 'edit_content', 'add_lesson', 'replan_channel'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um").',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest'], description: 'create_channel: Plattform (v933: telegram_channel, rest; YouTube/Meta folgen)' },
@@ -70,7 +70,7 @@ export class SocialSkill extends Skill {
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },
-        posting_slots: { type: 'array', items: { type: 'string' }, description: 'update_channel: bevorzugte Slots, z.B. ["Mo 18:00", "Do 19:30"]' },
+        posting_slots: { type: 'array', items: { type: 'string' }, description: 'update_channel: bevorzugte Slots in Server-Ortszeit, z.B. ["Mo 18:00", "Sa 10:00"]. Leer/nicht gesetzt = Plattform-Best-Practice-Slots (inkl. Wochenende) gelten automatisch. Nach Änderung ggf. replan_channel für bereits geplante Beiträge.' },
         blacklist: { type: 'array', items: { type: 'string' }, description: 'update_channel: Tabu-Wörter/-Themen (Leitplanke)' },
         max_posts_per_day: { type: 'number', description: 'update_channel: Tages-Limit (Default 3)' },
         planning_horizon_days: { type: 'number', description: 'update_channel: wie weit Alfred vorausplant (Default 14)' },
@@ -134,6 +134,13 @@ export class SocialSkill extends Skill {
     this.studioFn = fn;
   }
 
+  /** v959 — Umplanen bestehender scheduled-Items in die aktuellen Slots. */
+  private replanFn?: (channel: SocialChannel) => Promise<number>;
+
+  setReplanner(fn: (channel: SocialChannel) => Promise<number>): void {
+    this.replanFn = fn;
+  }
+
   registerProvider(provider: SocialProvider): void {
     this.providers.set(provider.platform, provider);
   }
@@ -175,6 +182,7 @@ export class SocialSkill extends Skill {
         case 'get_content': return await this.getContent(userId, input);
         case 'edit_content': return await this.editContent(userId, input);
         case 'add_lesson': return await this.addLesson(userId, input);
+        case 'replan_channel': return await this.replanChannel(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
     } catch (err) {
@@ -202,10 +210,12 @@ export class SocialSkill extends Skill {
       publishMode: input.publish_mode === 'api' ? 'api' : 'prepare',
       config: (input.config && typeof input.config === 'object' ? input.config : {}) as Record<string, unknown>,
     });
+    const eff = effectiveSlots(channel);
     return {
       success: true,
       data: { channel },
       display: `📣 Kanal **${name}** (${platform}) angelegt — Modus: suggest, Publish: ${channel.publishMode}${projectId ? `, Projekt-gebunden` : ''}.\n`
+        + `Posting-Slots (Plattform-Best-Practice, anpassbar via posting_slots): ${eff.slots.join(', ')}.\n`
         + `Erstpost-Sperre aktiv: die ersten 5 Posts brauchen deine Freigabe. Auth prüfen: validate_auth.`,
     };
   }
@@ -250,6 +260,9 @@ export class SocialSkill extends Skill {
     let note = '';
     if (patch.mode === 'autonomous' && channel.approvedStreak < 5) {
       note = `\n⚠️ Erstpost-Sperre: autonomous wird erst nach 5 Freigaben ohne Korrektur wirksam (aktuell ${channel.approvedStreak}/5) — bis dahin verhält sich der Kanal wie approve.`;
+    }
+    if (patch.postingSlots) {
+      note += `\nℹ️ Bereits geplante Beiträge behalten ihre Termine — mit „Plane die Beiträge von ${channel.name} um" (replan_channel) werden sie in die neuen Slots verteilt.`;
     }
     return { success: true, display: `Kanal **${channel.name}** aktualisiert (${Object.keys(patch).join(', ')}).${note}` };
   }
@@ -626,6 +639,20 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
       display: link
         ? `🔗 Thema **${topic.name}** mit **${channel.name}** verknüpft (${current.size} Thema/Themen gesamt) — das Studio zieht ab dem nächsten Lauf aus allen Dossiers.`
         : `Thema **${topic.name}** von **${channel.name}** gelöst (${current.size} verbleibend).`,
+    };
+  }
+
+  /** v959 — bestehende geplante Beiträge in die aktuellen Slots umplanen. */
+  private async replanChannel(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.replanFn) return { success: false, error: 'Umplanung nicht verfügbar.' };
+    const channel = await this.resolveChannel(userId, input);
+    if (!channel) return { success: false, error: `Kanal nicht gefunden: ${String(input.channel ?? '')}` };
+    const moved = await this.replanFn(channel);
+    const eff = effectiveSlots(channel);
+    return {
+      success: true,
+      data: { moved },
+      display: `📅 ${moved} Beitrag/Beiträge von **${channel.name}** in die aktuellen Slots umgeplant (${eff.slots.join(', ')}${eff.source === 'best-practice' ? ' — Plattform-Best-Practice' : ''}). Freigegebene/veröffentlichte Termine bleiben unberührt.`,
     };
   }
 

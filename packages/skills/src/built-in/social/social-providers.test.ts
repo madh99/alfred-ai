@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TelegramChannelProvider } from './telegram-channel-provider.js';
 import { RestProvider } from './rest-provider.js';
+import { BEST_PRACTICE_SLOTS, effectiveSlots } from './social-provider.js';
 import type { SocialChannel, ContentItem } from '@alfred/storage';
 
 function makeChannel(config: Record<string, unknown>, platform = 'test'): SocialChannel {
@@ -32,6 +33,31 @@ afterEach(() => { globalThis.fetch = originalFetch; });
 function jsonResponse(body: unknown, status = 200) {
   return { ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) };
 }
+
+describe('effectiveSlots (v959)', () => {
+  it('User-Slots gewinnen immer', () => {
+    const eff = effectiveSlots({ postingSlots: ['Mo 18:00'], platform: 'telegram_channel' });
+    expect(eff).toEqual({ slots: ['Mo 18:00'], source: 'user' });
+  });
+
+  it('ohne User-Slots: Plattform-Best-Practice', () => {
+    const eff = effectiveSlots({ postingSlots: [], platform: 'instagram' });
+    expect(eff.source).toBe('best-practice');
+    expect(eff.slots).toEqual(BEST_PRACTICE_SLOTS.instagram);
+  });
+
+  it('unbekannte Plattform: Fallback mit Sonntag', () => {
+    const eff = effectiveSlots({ postingSlots: [], platform: 'tiktok' });
+    expect(eff.source).toBe('best-practice');
+    expect(eff.slots.some(s => s.startsWith('So '))).toBe(true);
+  });
+
+  it('jedes Best-Practice-Preset deckt das Wochenende ab', () => {
+    for (const [platform, slots] of Object.entries(BEST_PRACTICE_SLOTS)) {
+      expect(slots.some(s => /^(Sa|So) /.test(s)), platform).toBe(true);
+    }
+  });
+});
 
 describe('TelegramChannelProvider (v933)', () => {
   const channel = makeChannel({ chat_id: '@fussballcc' }, 'telegram_channel');

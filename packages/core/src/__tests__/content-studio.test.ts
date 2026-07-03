@@ -18,31 +18,46 @@ function makeChannel(overrides: Partial<SocialChannel> = {}): SocialChannel {
   };
 }
 
-describe('nextFreeSlots (v935)', () => {
-  // Mi 01.07.2026 12:00 UTC
-  const FROM = '2026-07-01T12:00:00.000Z';
+describe('nextFreeSlots (v935/v959 — Server-Ortszeit)', () => {
+  // Mi 01.07.2026 12:00 LOKAL — v959: Slots gelten in Server-Ortszeit, nicht UTC
+  // (Realfall: „Mo 18:00" wurde auf dem Europe/Vienna-Host um 20:00 gepostet).
+  const FROM = new Date(2026, 6, 1, 12, 0).toISOString();
+  const local = (day: number, hour: number, minute = 0) => new Date(2026, 6, day, hour, minute).toISOString();
 
-  it('liefert kommende Slots im Horizont, sortiert', () => {
+  it('liefert kommende Slots im Horizont, sortiert — in Ortszeit', () => {
     const slots = nextFreeSlots(
       { postingSlots: ['Mo 18:00', 'Do 18:00'], planningHorizonDays: 7 },
       [], 4, FROM,
     );
     // Do 02.07. + Mo 06.07. liegen im 7-Tage-Horizont
-    expect(slots).toEqual(['2026-07-02T18:00:00.000Z', '2026-07-06T18:00:00.000Z']);
+    expect(slots).toEqual([local(2, 18), local(6, 18)]);
   });
 
   it('überspringt bereits belegte Zeitpunkte', () => {
     const slots = nextFreeSlots(
       { postingSlots: ['Do 18:00'], planningHorizonDays: 7 },
-      [{ scheduledAt: '2026-07-02T18:00:00.000Z' }], 3, FROM,
+      [{ scheduledAt: local(2, 18) }], 3, FROM,
     );
     expect(slots).toEqual([]);
   });
 
-  it('ohne konfigurierte Slots: Default Mo/Mi/Fr 18:00', () => {
+  it('v959: ohne konfigurierte Slots gelten Plattform-Best-Practices inkl. Wochenende', () => {
+    const slots = nextFreeSlots({ postingSlots: [], planningHorizonDays: 7, platform: 'telegram_channel' }, [], 10, FROM);
+    // Do 02.07. 18:30, Sa 04.07. 10:00, So 05.07. 19:00, Di 07.07. 12:00
+    expect(slots).toEqual([local(2, 18, 30), local(4, 10), local(5, 19), local(7, 12)]);
+    // Wochenende ist abgedeckt
+    expect(slots.some(s => [0, 6].includes(new Date(s).getDay()))).toBe(true);
+  });
+
+  it('v959: unbekannte Plattform → Fallback-Slots inkl. Sonntag', () => {
     const slots = nextFreeSlots({ postingSlots: [], planningHorizonDays: 7 }, [], 10, FROM);
-    expect(slots.length).toBe(3); // Fr 03., Mo 06., Mi 08. — Mi 01. 18:00 liegt nach from? 12:00<18:00 → 4? prüfen unten
-    expect(slots[0] > FROM).toBe(true);
+    // Mi 01. 18:00, Fr 03. 18:00, So 05. 10:00, Mo 06. 18:00 (Mi 08. 18:00 > Horizont-Ende Mi 08. 12:00)
+    expect(slots).toEqual([local(1, 18), local(3, 18), local(5, 10), local(6, 18)]);
+  });
+
+  it('v959: User-Slots überstimmen Best-Practice', () => {
+    const slots = nextFreeSlots({ postingSlots: ['Fr 09:00'], planningHorizonDays: 7, platform: 'telegram_channel' }, [], 10, FROM);
+    expect(slots).toEqual([local(3, 9)]);
   });
 
   it('kaputte Slot-Strings werden ignoriert', () => {
@@ -132,6 +147,7 @@ function makeStack(opts: {
     updateChannel: vi.fn(async () => {}),
     listMetrics: vi.fn(async () => []),
     upsertMetric: vi.fn(async () => {}),
+    reschedule: vi.fn(async () => true),
   } as unknown as SocialRepository;
 
   const interestsRepo = {
@@ -185,12 +201,30 @@ describe('ContentStudio (v935)', () => {
 
   it('voller Planungshorizont: keine neuen Items, kein LLM-Call', async () => {
     const channel = makeChannel();
-    const planned: ContentItem[] = ['2026-07-02T18:00:00.000Z', '2026-07-06T18:00:00.000Z', '2026-07-09T18:00:00.000Z', '2026-07-13T18:00:00.000Z']
+    // Alle freien Slots des Horizonts sind bereits belegt (TZ-agnostisch berechnet)
+    const planned: ContentItem[] = nextFreeSlots(channel, [], 10, new Date().toISOString())
       .map((at, i) => ({ id: `p${i}`, channelId: 'ch-1', userId: OWNER, status: 'scheduled', body: 'x', media: [], hashtags: [], source: 'studio', scheduledAt: at, createdAt: 'x', updatedAt: 'x' } as ContentItem));
     const { studio, llm } = makeStack({ channel, planned });
     const created = await studio.fillChannel(channel);
     expect(created).toBe(0);
     expect(llm.complete).not.toHaveBeenCalled();
+  });
+
+  it('v959: replanChannel verteilt geplante Beiträge in die aktuellen Slots (Reihenfolge bleibt)', async () => {
+    const channel = makeChannel({ postingSlots: ['Sa 10:00', 'So 19:00'] });
+    const { studio, socialRepo } = makeStack({ channel });
+    const mk = (id: string, at: string) => ({ id, channelId: 'ch-1', userId: OWNER, status: 'scheduled', body: 'x', media: [], hashtags: [], source: 'studio', scheduledAt: at, createdAt: 'x', updatedAt: 'x' } as ContentItem);
+    // Alt-Termine liegen NICHT auf den neuen Slots (z.B. nach Slot-Änderung); s2 ist früher als s1
+    const scheduled = [mk('s1', '2099-01-08T18:00:00.000Z'), mk('s2', '2099-01-06T18:00:00.000Z')];
+    (socialRepo.listItems as any).mockImplementation(async (_u: string, q: any) => (q?.status === 'scheduled' ? scheduled : []));
+    const moved = await studio.replanChannel(channel);
+    expect(moved).toBe(2);
+    const calls = (socialRepo.reschedule as any).mock.calls;
+    // frühester Alt-Termin bekommt den frühesten neuen Slot
+    expect(calls[0][1]).toBe('s2');
+    expect(calls[1][1]).toBe('s1');
+    // neue Termine liegen ausschließlich auf Sa/So (Ortszeit)
+    for (const c of calls) expect([0, 6]).toContain(new Date(c[2] as string).getDay());
   });
 
   it('YouTube-Kanal: Video-Konzept-Prompt (Hook/Script/Beschreibung)', async () => {

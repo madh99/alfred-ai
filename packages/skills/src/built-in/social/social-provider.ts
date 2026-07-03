@@ -43,6 +43,30 @@ export abstract class SocialProvider {
   }
 }
 
+/**
+ * v959 — Best-Practice-Posting-Slots je Plattform (Server-Ortszeit, Wochenende
+ * bewusst enthalten — gerade Sport-Content lebt vom Wochenende). Gelten als
+ * Default, solange der Kanal keine eigenen posting_slots konfiguriert hat;
+ * User-Slots überstimmen immer.
+ */
+export const BEST_PRACTICE_SLOTS: Record<string, string[]> = {
+  telegram_channel: ['Di 12:00', 'Do 18:30', 'Sa 10:00', 'So 19:00'],
+  rest:             ['Mo 08:00', 'Mi 12:30', 'Fr 17:00', 'So 10:00'],
+  instagram:        ['Di 11:00', 'Do 17:00', 'Sa 11:00', 'So 19:00'],
+  facebook:         ['Mi 13:00', 'Fr 09:00', 'Sa 12:00', 'So 19:00'],
+  threads:          ['Di 12:00', 'Do 18:00', 'So 20:00'],
+  youtube:          ['Fr 15:00', 'So 11:00'],
+  x:                ['Mo 08:30', 'Mi 12:00', 'Fr 17:30', 'Sa 20:00'],
+};
+
+const FALLBACK_SLOTS = ['Mo 18:00', 'Mi 18:00', 'Fr 18:00', 'So 10:00'];
+
+/** Effektive Slots eines Kanals: User-Konfiguration gewinnt, sonst Plattform-Best-Practice. */
+export function effectiveSlots(channel: { postingSlots: string[]; platform: string }): { slots: string[]; source: 'user' | 'best-practice' } {
+  if (channel.postingSlots.length > 0) return { slots: channel.postingSlots, source: 'user' };
+  return { slots: BEST_PRACTICE_SLOTS[channel.platform] ?? FALLBACK_SLOTS, source: 'best-practice' };
+}
+
 /** Baut den fertigen Post-Text (Body + Hashtags) mit optionalem Längen-Limit. */
 export function composePostText(item: ContentItem, maxLength?: number): string {
   const tags = item.hashtags.length > 0 ? '\n\n' + item.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ') : '';
