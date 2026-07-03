@@ -496,6 +496,24 @@ export class AlfredClient {
     });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
+  // v966 — Composer: Beitrag anlegen (optional terminieren/sofort posten)
+  async socialCreateItem(payload: { channel: string; title?: string; body: string; hashtags?: string[]; media_url?: string; scheduled_at?: string; publish_now?: boolean }): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/items`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`Social create: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // v966 — Crosspost auf andere Kanäle
+  async socialCrosspost(id: string, channels: string[]): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/items/${id}/crosspost`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ channels }),
+    });
+    if (!res.ok) throw new Error(`Social crosspost: HTTP ${res.status}`);
+    return res.json();
+  }
+
   // v965 — Kanal-Aktionen (Studio-Lauf, Umplanung, Auth-Check, Themen)
   async socialChannelAction(id: string, action: 'generate' | 'replan' | 'validate-auth' | 'link-topic' | 'unlink-topic', extra?: { topic?: string }): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/channels/${id}/${action}`, {

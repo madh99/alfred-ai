@@ -8112,6 +8112,33 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             }, socialCtx);
             return { success: r.success, display: r.display, error: r.error };
           },
+          // v966 — Composer: Beitrag anlegen, optional terminieren oder sofort posten
+          createItem: async (payload: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'add_content',
+              channel: payload.channel,
+              title: payload.title, body: payload.body, hashtags: payload.hashtags,
+              ...(typeof payload.media_url === 'string' && payload.media_url ? { media_url: payload.media_url } : {}),
+              ...(typeof payload.scheduled_at === 'string' && payload.scheduled_at ? { scheduled_at: payload.scheduled_at } : {}),
+            }, socialCtx);
+            if (!r.success) return { success: false, error: r.error };
+            const itemId = (r.data as { item?: { id?: string } } | undefined)?.item?.id;
+            if (itemId && typeof payload.scheduled_at === 'string' && payload.scheduled_at) {
+              await socialSkillForApi.execute({ action: 'schedule_content', item_id: itemId, scheduled_at: payload.scheduled_at }, socialCtx);
+            }
+            if (itemId && payload.publish_now === true) {
+              const p = await socialSkillForApi.execute({ action: 'publish_now', item_id: itemId }, socialCtx);
+              return { success: p.success, display: p.display ?? r.display, error: p.error };
+            }
+            return { success: true, display: r.display };
+          },
+          // v966 — Crosspost auf andere Kanäle (formatgerecht via LLM)
+          crosspost: async (id: string, channelNames: string[]) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({ action: 'crosspost', item_id: id, channels: channelNames }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error };
+          },
           // v965 — Kanal-Aktionen aus der UI (laufen über den Skill = Leitplanken)
           channelAction: async (id: string, action: string, extra?: Record<string, unknown>) => {
             if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };

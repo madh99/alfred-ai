@@ -703,6 +703,10 @@ export class HttpAdapter extends MessagingAdapter {
     itemAction?: (id: string, action: 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v965 — Kanal-Aktionen (Studio-Lauf, Umplanung, Auth-Check, Themen verknüpfen). */
     channelAction?: (id: string, action: 'generate' | 'replan' | 'validate-auth' | 'link-topic' | 'unlink-topic', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v966 — Beitrag aus der UI anlegen (Composer; optional terminieren/sofort posten). */
+    createItem?: (payload: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v966 — Beitrag auf andere Kanäle übernehmen (formatgerecht umgeschrieben). */
+    crosspost?: (id: string, channels: string[]) => Promise<{ success: boolean; display?: string; error?: string }>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1336,6 +1340,17 @@ export class HttpAdapter extends MessagingAdapter {
         const parts = url.pathname.split('/');
         if (!this.socialCallbacks?.itemAction) return { error: 'not supported' };
         return this.socialCallbacks.itemAction(parts[4], parts[5] as 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete', body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/items' && req.method === 'POST') {
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.createItem) return { error: 'not supported' };
+        return this.socialCallbacks.createItem(body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/items\/[^/]+\/crosspost$/) && req.method === 'POST') {
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.crosspost) return { error: 'not supported' };
+        const channels = Array.isArray((body as { channels?: unknown }).channels) ? (body as { channels: unknown[] }).channels.map(String) : [];
+        return this.socialCallbacks.crosspost(url.pathname.split('/')[4], channels);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/social\/channels\/[^/]+\/(generate|replan|validate-auth|link-topic|unlink-topic)$/) && req.method === 'POST') {
       this.handleSocialBody(req, res, async (body) => {

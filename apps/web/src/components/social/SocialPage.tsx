@@ -82,6 +82,12 @@ export function SocialPage() {
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '' });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
+  // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composer, setComposer] = useState<{ channel: string; title: string; body: string; hashtags: string; mediaUrl: string; scheduledAt: string }>(
+    { channel: '', title: '', body: '', hashtags: '', mediaUrl: '', scheduledAt: '' });
+  const [crosspostId, setCrosspostId] = useState<string | null>(null);
+  const [crosspostSel, setCrosspostSel] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -225,6 +231,52 @@ export function SocialPage() {
       const r = await client!.socialItemAction(item.id, 'schedule', { scheduled_at: at.toISOString() });
       if (!r.success) throw new Error(r.error ?? 'Umterminieren fehlgeschlagen');
       setReschedulingId(null);
+      await load();
+    });
+  }
+
+  // ── v966 — Composer: Beitrag anlegen (Entwurf / terminiert / sofort) ──
+  async function submitComposer(kind: 'draft' | 'schedule' | 'publish') {
+    if (!composer.channel || composer.body.trim().length < 10) {
+      setError('Kanal und Text (mindestens 10 Zeichen) erforderlich.');
+      return;
+    }
+    if (kind === 'schedule' && !composer.scheduledAt) {
+      setError('Bitte einen Zeitpunkt wählen.');
+      return;
+    }
+    await withBusy('composer', async () => {
+      const r = await client!.socialCreateItem({
+        channel: composer.channel,
+        title: composer.title.trim() || undefined,
+        body: composer.body,
+        hashtags: composer.hashtags.split(',').map(h => h.trim().replace(/^#/, '')).filter(Boolean),
+        media_url: composer.mediaUrl.trim() || undefined,
+        scheduled_at: kind === 'schedule' ? new Date(composer.scheduledAt).toISOString() : undefined,
+        publish_now: kind === 'publish',
+      });
+      if (!r.success) throw new Error(r.error ?? 'Anlegen fehlgeschlagen');
+      if (r.display) setNotice(r.display);
+      setComposerOpen(false);
+      setComposer(c => ({ channel: c.channel, title: '', body: '', hashtags: '', mediaUrl: '', scheduledAt: '' }));
+      await load();
+    });
+  }
+
+  // v966 — Crosspost: Item formatgerecht auf andere Kanäle übernehmen
+  function startCrosspost(item: SocialContentItem) {
+    setCrosspostId(item.id);
+    setCrosspostSel({});
+  }
+
+  async function doCrosspost(item: SocialContentItem) {
+    const targets = channels.filter(c => crosspostSel[c.id]).map(c => c.name);
+    if (targets.length === 0) { setError('Mindestens einen Ziel-Kanal wählen.'); return; }
+    await withBusy(item.id, async () => {
+      const r = await client!.socialCrosspost(item.id, targets);
+      if (!r.success) throw new Error(r.error ?? 'Crosspost fehlgeschlagen');
+      if (r.display) setNotice(r.display);
+      setCrosspostId(null);
       await load();
     });
   }
@@ -436,12 +488,32 @@ export function SocialPage() {
                 className="px-2 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded">✕ Ablehnen</button>
             </>
           )}
+          {/* v966 — Crosspost auf andere Kanäle (formatgerecht umgeschrieben) */}
+          {channels.length > 1 && item.status !== 'rejected' && (
+            <button onClick={() => (crosspostId === item.id ? setCrosspostId(null) : startCrosspost(item))} disabled={busy === item.id}
+              className="px-2 py-1 text-xs border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 rounded">🔁 Crosspost</button>
+          )}
           {/* v964 — published: auf der Plattform löschen (delete_remote-Leitplanke) */}
           {item.status === 'published' && (
             <button onClick={() => itemAction(item, 'delete')} disabled={busy === item.id}
               className="px-2 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded">🗑 Löschen</button>
           )}
         </div>
+        {crosspostId === item.id && (
+          <div className="flex items-center gap-2 mt-2 flex-wrap text-xs">
+            <span className="text-gray-500">Ziel-Kanäle:</span>
+            {channels.filter(c => c.id !== item.channelId).map(c => (
+              <label key={c.id} className="flex items-center gap-1 text-gray-300 cursor-pointer">
+                <input type="checkbox" checked={crosspostSel[c.id] === true}
+                  onChange={e => setCrosspostSel(s => ({ ...s, [c.id]: e.target.checked }))} />
+                {PLATFORM_ICON[c.platform] ?? '📣'} {c.name}
+              </label>
+            ))}
+            <button onClick={() => doCrosspost(item)} disabled={busy === item.id}
+              className="px-2 py-1 text-xs bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded">Übernehmen</button>
+            <span className="text-gray-600 text-[10px]">Text wird je Ziel-Kanal angepasst; Kopien durchlaufen die normale Freigabe.</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -453,10 +525,54 @@ export function SocialPage() {
           <h1 className="text-2xl font-bold text-gray-100">📣 Social Media</h1>
           <p className="text-sm text-gray-500">Kanäle, Content-Kalender und Freigaben — Alfred plant, du entscheidest (oder er, wenn du ihn lässt).</p>
         </div>
-        <button onClick={pauseAll} disabled={busy === 'pause-all'}
-          className="px-3 py-1.5 text-sm border border-red-500/40 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded"
-          title="Not-Aus: pausiert sofort alle Kanäle">🛑 Social-Stopp</button>
+        <div className="flex items-center gap-2">
+          {channels.length > 0 && (
+            <button onClick={() => { setComposerOpen(o => !o); if (!composer.channel && channels[0]) setComposer(c => ({ ...c, channel: channels[0].name })); }}
+              className={clsx('px-3 py-1.5 text-sm rounded border', composerOpen ? 'border-emerald-500/50 text-emerald-300 bg-emerald-500/10' : 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15')}>
+              ➕ Neuer Beitrag
+            </button>
+          )}
+          <button onClick={pauseAll} disabled={busy === 'pause-all'}
+            className="px-3 py-1.5 text-sm border border-red-500/40 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded"
+            title="Not-Aus: pausiert sofort alle Kanäle">🛑 Social-Stopp</button>
+        </div>
       </div>
+
+      {/* v966 — Composer: eigener Beitrag (Bild kommt automatisch, wenn der Kanal generate_images hat) */}
+      {composerOpen && (
+        <div className="border border-emerald-500/30 rounded-lg p-4 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs text-gray-500">Kanal:</label>
+            <select value={composer.channel} onChange={e => setComposer(c => ({ ...c, channel: e.target.value }))}
+              className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200">
+              {channels.map(c => <option key={c.id} value={c.name}>{PLATFORM_ICON[c.platform] ?? ''} {c.name}</option>)}
+            </select>
+            {(() => { const ch = channels.find(c => c.name === composer.channel); return ch?.config.generate_images === true
+              ? <span className="text-[10px] text-purple-300">🎨 Bild wird automatisch generiert (falls kein eigenes angegeben)</span> : null; })()}
+          </div>
+          <input value={composer.title} onChange={e => setComposer(c => ({ ...c, title: e.target.value }))} placeholder="Titel (optional)"
+            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200" />
+          <textarea value={composer.body} onChange={e => setComposer(c => ({ ...c, body: e.target.value }))} rows={5} placeholder="Post-Text …"
+            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200" />
+          <div className="grid md:grid-cols-2 gap-2">
+            <input value={composer.hashtags} onChange={e => setComposer(c => ({ ...c, hashtags: e.target.value }))} placeholder="Hashtags (kommagetrennt)"
+              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200" />
+            <input value={composer.mediaUrl} onChange={e => setComposer(c => ({ ...c, mediaUrl: e.target.value }))} placeholder="Bild-/Video-URL (optional)"
+              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200" />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => submitComposer('draft')} disabled={busy === 'composer'}
+              className="px-2.5 py-1 text-xs border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 disabled:opacity-50 rounded">📝 Als Entwurf</button>
+            <input type="datetime-local" value={composer.scheduledAt} onChange={e => setComposer(c => ({ ...c, scheduledAt: e.target.value }))}
+              className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200" />
+            <button onClick={() => submitComposer('schedule')} disabled={busy === 'composer'}
+              className="px-2.5 py-1 text-xs border border-blue-500/40 text-blue-300 hover:bg-blue-500/15 disabled:opacity-50 rounded">📅 Terminieren</button>
+            <button onClick={() => submitComposer('publish')} disabled={busy === 'composer'}
+              className="px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded">🚀 Sofort posten</button>
+            {busy === 'composer' && <span className="text-xs text-gray-500">⏳ wird angelegt … (mit Bild-Generierung bis zu einer Minute)</span>}
+          </div>
+        </div>
+      )}
 
       {error && <div className="bg-red-500/10 border border-red-500/40 rounded px-3 py-2 text-sm text-red-400">{error}</div>}
       {notice && (
@@ -683,6 +799,34 @@ export function SocialPage() {
       {/* Content-Kalender */}
       <div>
         <h2 className="text-sm font-semibold text-gray-200 mb-2">🗓 Content-Kalender (14 Tage)</h2>
+        {/* v966 — Wochenraster: 2×7 Tage auf einen Blick, Klick öffnet die Karte unten */}
+        {calendar.length > 0 && (
+          <div className="grid grid-cols-7 gap-1 mb-3">
+            {Array.from({ length: 14 }, (_, d) => {
+              const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() + d);
+              const p = (n: number) => String(n).padStart(2, '0');
+              const key = `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+              const items = calendarByDay.find(([day]) => day === key)?.[1] ?? [];
+              const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+              return (
+                <div key={key} className={clsx('border rounded p-1 min-h-[64px]', isWeekend ? 'border-purple-500/20 bg-purple-500/5' : 'border-[#1f1f1f]', d === 0 && 'border-blue-500/40')}>
+                  <div className="text-[9px] text-gray-500 mb-0.5">
+                    {date.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                  </div>
+                  <div className="space-y-0.5">
+                    {items.map(i => (
+                      <button key={i.id} onClick={() => setExpandedItem(expandedItem === i.id ? null : i.id)}
+                        title={`${i.title ?? i.body.slice(0, 60)} (${channelName(i.channelId)}, ${i.status})`}
+                        className={clsx('block w-full text-left text-[9px] px-1 py-0.5 rounded truncate', STATUS_BADGE[i.status] ?? 'bg-gray-500/20 text-gray-300')}>
+                        {(i.scheduledAt ?? i.publishedAt) ? new Date((i.scheduledAt ?? i.publishedAt)!).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' }) : ''} {PLATFORM_ICON[channels.find(c => c.id === i.channelId)?.platform ?? ''] ?? ''} {(i.title ?? i.body).slice(0, 14)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {calendarByDay.length === 0 && <div className="text-xs text-gray-600">Nichts geplant — das Content-Studio füllt täglich um 07:30 oder per Chat: „Erzeuge Content für Kanal X".</div>}
         <div className="space-y-3">
           {calendarByDay.map(([day, items]) => (

@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.966] - 2026-07-03
+
+### Added — Social-UI: Wochenraster, Composer, Crosspost (v966, Paket C)
+
+- **Wochenraster:** die kommenden 14 Tage als 2×7-Übersicht über dem
+  Kalender — jeder Beitrag als farbiger Chip (Status, Uhrzeit, Plattform),
+  Wochenende hervorgehoben, Klick öffnet die Detailkarte.
+- **„Neuer Beitrag"-Composer:** eigenen Beitrag direkt in der UI verfassen
+  (Kanal, Titel, Text, Hashtags, optionales Medium) und wahlweise als
+  Entwurf speichern, terminieren oder sofort posten. Hat der Kanal
+  Bild-Generierung aktiv, bekommt der Beitrag automatisch ein Bild (v962).
+- **Crosspost aus der UI:** Beitrag per Checkbox-Auswahl formatgerecht auf
+  andere Kanäle übernehmen — Kopien durchlaufen die normale Freigabe des
+  Ziel-Kanals.
+
 ## [0.19.0-multi-ha.965] - 2026-07-03
 
 ### Added — Social-UI: vollständige Kanal-Verwaltung (v965, Paket B)
