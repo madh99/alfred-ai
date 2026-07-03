@@ -20,6 +20,13 @@ import type { MessagingAdapter } from '@alfred/messaging';
  *   reminder:<id>:snooze1h → neuen Reminder in 1h anlegen
  */
 export class QuickActionHandler {
+  /** v934 — Social-Freigabe-Buttons (content:<id>:approve|publish|reject). */
+  private socialHandlers?: {
+    approve: (itemId: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+    publish: (itemId: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+    reject: (itemId: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+  };
+
   constructor(
     private readonly todoRepo: TodoRepository,
     private readonly reminderRepo: ReminderRepository,
@@ -27,9 +34,13 @@ export class QuickActionHandler {
     private readonly logger: Logger,
   ) {}
 
+  setSocialHandlers(handlers: NonNullable<QuickActionHandler['socialHandlers']>): void {
+    this.socialHandlers = handlers;
+  }
+
   /** @returns true wenn die Nachricht eine Quick-Action war (Pipeline stoppt vor dem LLM). */
   async handle(chatId: string, platform: Platform, text: string): Promise<boolean> {
-    const m = (text ?? '').trim().match(/^(todo|reminder):([0-9a-fA-F-]{8,40}):(done|snooze|ok|snooze1h)$/);
+    const m = (text ?? '').trim().match(/^(todo|reminder|content):([0-9a-fA-F-]{8,40}):(done|snooze|ok|snooze1h|approve|publish|reject)$/);
     if (!m) return false;
     const [, kind, id, action] = m;
 
@@ -55,6 +66,21 @@ export class QuickActionHandler {
           await reply(`⏰ Auf ${next.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} verschoben: ${todo.title}`);
           return true;
         }
+      }
+
+      // v934 — Social-Freigabe: approve = freigeben (Engine published zum Termin),
+      // publish = sofort veröffentlichen, reject = ablehnen (Streak-Reset im Skill)
+      if (kind === 'content') {
+        if (!this.socialHandlers) { await reply('⚠️ Social-Modul nicht verfügbar.'); return true; }
+        const fn = action === 'approve' ? this.socialHandlers.approve
+          : action === 'publish' ? this.socialHandlers.publish
+          : action === 'reject' ? this.socialHandlers.reject
+          : undefined;
+        if (!fn) return false;
+        const r = await fn(id);
+        this.logger.info({ itemId: id, action, ok: r.success }, 'v934 quick-action: content');
+        await reply(r.success ? (r.display ?? '✅ Erledigt.') : `⚠️ ${r.error ?? 'Aktion fehlgeschlagen'}`);
+        return true;
       }
 
       if (kind === 'reminder') {

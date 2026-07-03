@@ -242,6 +242,17 @@ export class SocialRepository {
     await this.db.execute(`UPDATE content_items SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`, params);
   }
 
+  /** v934 — Performance-/Meta-JSON mergen (z.B. Retry-Zähler der Publishing-Engine). */
+  async mergePerformance(userId: string, id: string, patch: Record<string, unknown>): Promise<void> {
+    const item = await this.getItem(userId, id);
+    if (!item) return;
+    const merged = { ...(item.performance ?? {}), ...patch };
+    await this.db.execute(
+      `UPDATE content_items SET performance = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+      [JSON.stringify(merged), new Date().toISOString(), id, userId],
+    );
+  }
+
   /** Tages-Limit-Check (Leitplanke 2): published-Posts eines Kanals am Tag (UTC). */
   async countPublishedToday(channelId: string, dayIso?: string): Promise<number> {
     const day = (dayIso ?? new Date().toISOString()).slice(0, 10);

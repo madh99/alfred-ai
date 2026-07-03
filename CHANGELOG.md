@@ -5,6 +5,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.934] - 2026-07-03
+
+### Added — Social-Media: Publishing-Engine, Modi und Freigabe-Flow (v934, Stufe 2 von 6)
+
+Die Kanal-Modi arbeiten jetzt automatisch (5-Minuten-Raster):
+
+- **approve** (und autonomous solange Erstpost-Streak < 5): fällige geplante
+  Posts werden EINMAL zur Freigabe ausgespielt — Telegram-Nachricht mit
+  Vorschau und Buttons (✅ Freigeben · 🚀 Sofort posten · ✕ Ablehnen,
+  Quick-Action-Muster v924) plus Insight-Karte („Post-Freigaben" mit
+  „Freigeben & veröffentlichen"-Aktion in der UI). Dedupe über den
+  Insight-Schlüssel — kein wiederholtes Nachfragen.
+- **autonomous** (Streak ≥ 5): fällige Posts werden automatisch freigegeben
+  und veröffentlicht; greift eine Code-Leitplanke (Tages-Limit, Blacklist,
+  pausierter Kanal), wandert der Post stattdessen in die Freigabe-Queue mit
+  Begründung. Jeder autonome Post erscheint still über den
+  Notification-Router in der Insights-UI (lückenlose Transparenz).
+- **suggest**: kein aktives Nachfragen — freigegebene Posts werden trotzdem
+  zum geplanten Zeitpunkt veröffentlicht.
+- **Retry-Politik:** fehlgeschlagene Publishes werden nach 15 Minuten genau
+  einmal erneut versucht; schlägt auch der Retry fehl → high-Insight
+  „endgültig fehlgeschlagen" mit Fehlertext.
+- **HA-sicher:** exactly-once pro Post über reasoning_slots-Item-Slots
+  (inkl. Slot-Freigabe nach Fehlschlag, damit Wiederholungen nicht blockieren).
+- **Buttons vor dem LLM:** `content:<id>:approve|publish|reject` läuft über
+  den QuickActionHandler direkt in den social-Skill — Streak-Logik und
+  Leitplanken bleiben an einer Stelle.
+- **API:** `GET /api/social/channels` + `GET /api/social/calendar?from&to`
+  (Content-Kalender-Daten; volle UI folgt v937).
+- 11 Tests (`publishing-engine.test.ts`: alle Modi, Dedupe, Erstpost-Sperre,
+  Leitplanken-Fallback, Retry-Pfade).
+
 ## [0.19.0-multi-ha.933] - 2026-07-03
 
 ### Added — Social-Media-Betrieb: Fundament (v933, Stufe 1 von 6)

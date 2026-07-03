@@ -692,6 +692,16 @@ export class HttpAdapter extends MessagingAdapter {
     this.interestsCallbacks = cb;
   }
 
+  // v934 — Social: Kanäle + Content-Kalender (volle UI folgt v937)
+  private socialCallbacks?: {
+    listChannels: () => Promise<any[]>;
+    calendar: (fromIso: string, toIso: string) => Promise<any[]>;
+  };
+
+  setSocialCallbacks(cb: NonNullable<HttpAdapter['socialCallbacks']>): void {
+    this.socialCallbacks = cb;
+  }
+
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
@@ -1287,6 +1297,15 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleInterestsListItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/interests/collect' && req.method === 'POST') {
       this.handleInterestsCollect(req, res).catch(err => this.safeError(res, err));
+    // ── v934 — Social ──
+    } else if (url.pathname === '/api/social/channels' && req.method === 'GET') {
+      this.handleSocial(req, res, () => this.socialCallbacks!.listChannels().then(channels => ({ channels }))).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/calendar' && req.method === 'GET') {
+      this.handleSocial(req, res, () => {
+        const from = url.searchParams.get('from') ?? new Date().toISOString();
+        const to = url.searchParams.get('to') ?? new Date(Date.now() + 14 * 24 * 3_600_000).toISOString();
+        return this.socialCallbacks!.calendar(from, to).then(items => ({ items, from, to }));
+      }).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notifications/settings' && req.method === 'GET') {
       this.handleInterests(req, res, () => this.interestsCallbacks!.getNotificationSettings()).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notifications/settings' && req.method === 'POST') {
@@ -3020,6 +3039,15 @@ export class HttpAdapter extends MessagingAdapter {
   private async handleInterests(req: http.IncomingMessage, res: http.ServerResponse, fn: () => Promise<unknown>): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const result = await fn();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  /** v934 — Social-Wrapper (gleiches Muster). */
+  private async handleSocial(req: http.IncomingMessage, res: http.ServerResponse, fn: () => Promise<unknown>): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.socialCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const result = await fn();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));

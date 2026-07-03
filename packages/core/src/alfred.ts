@@ -414,6 +414,8 @@ export class Alfred {
   /** v933 — Social-Media-Betrieb */
   private socialRepo?: import('@alfred/storage').SocialRepository;
   private socialSkillRef?: import('@alfred/skills').SocialSkill;
+  /** v934 — Publishing-Engine (Modi + Freigabe-Flow + Retry) */
+  private publishingEngine?: import('./publishing-engine.js').PublishingEngine;
   /** v929 — Interessen-Radar */
   private interestsRepo?: import('@alfred/storage').InterestsRepository;
   private interestsSkillRef?: import('@alfred/skills').InterestsSkill;
@@ -6437,10 +6439,26 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // v924 — Quick-Actions (todo:/reminder:-Button-Callbacks) vor dem LLM abfangen
     if (this.todoRepo && this.reminderRepo) {
       const { QuickActionHandler } = await import('./quick-actions.js');
-      this.pipeline.setQuickActions(new QuickActionHandler(
+      const quickActions = new QuickActionHandler(
         this.todoRepo, this.reminderRepo, this.adapters,
         this.logger.child({ component: 'quick-actions' }),
-      ));
+      );
+      // v934 — Social-Freigabe-Buttons (content:<id>:approve|publish|reject) laufen
+      // über den social-Skill (Streak-Logik + Leitplanken bleiben an EINER Stelle)
+      if (this.socialSkillRef && this.ownerMasterUserId) {
+        const socialSkill = this.socialSkillRef;
+        const ownerCtx = { userId: this.ownerMasterUserId, masterUserId: this.ownerMasterUserId } as never;
+        const run = (action: string) => async (itemId: string) => {
+          const r = await socialSkill.execute({ action, item_id: itemId }, ownerCtx);
+          return { success: r.success, display: r.display, error: r.error };
+        };
+        quickActions.setSocialHandlers({
+          approve: run('approve_content'),
+          publish: run('publish_now'),
+          reject: run('reject_content'),
+        });
+      }
+      this.pipeline.setQuickActions(quickActions);
     }
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
@@ -6549,6 +6567,33 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           }
         }, 10 * 60_000); // 10-Min-Raster, handelt nur in den Zielfenstern
       }
+    }
+
+    // v934 — Publishing-Engine: setzt die Kanal-Modi um (approve → Freigabe-Buttons
+    // + Insight; autonomous mit Streak ≥ 5 → auto-publish mit Leitplanken; approved
+    // → Veröffentlichung zum geplanten Zeitpunkt; 1 Retry nach 15 min).
+    if (this.socialRepo && this.socialSkillRef && this.ownerMasterUserId) {
+      const { PublishingEngine } = await import('./publishing-engine.js');
+      const socialSkill = this.socialSkillRef;
+      const ownerUid = this.ownerMasterUserId as string;
+      const ownerCtx = { userId: ownerUid, masterUserId: ownerUid } as never;
+      this.publishingEngine = new PublishingEngine(
+        this.socialRepo,
+        async (itemId: string) => {
+          const r = await socialSkill.execute({ action: 'publish_now', item_id: itemId }, ownerCtx);
+          return { success: r.success, error: r.error, display: r.display };
+        },
+        this.insightsRepo, this.notificationRouter, this.adapters,
+        this.logger.child({ component: 'publishing-engine' }),
+        {
+          ownerUserId: ownerUid,
+          chatId: this.config.security?.ownerUserId ?? '',
+          platform: (this.config.telegram?.enabled ? 'telegram' : 'api') as Platform,
+          dbAdapter: this.database?.getAdapter(),
+          nodeId: this.config.cluster?.nodeId,
+        },
+      );
+      this.publishingEngine.start();
     }
 
     // Wire runbook-repo so chat-pipeline can inject matching Runbooks into system prompt
@@ -7850,6 +7895,25 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
         });
         this.logger.info('Interests API registered (v930)');
+      }
+
+      // v934 — Social-API: Kanäle + Content-Kalender (volle UI folgt v937)
+      if (apiAdapter && this.socialRepo && this.ownerMasterUserId && 'setSocialCallbacks' in apiAdapter) {
+        const socialRepo = this.socialRepo;
+        const socialOwner = this.ownerMasterUserId as string;
+        (apiAdapter as any).setSocialCallbacks({
+          listChannels: async () => socialRepo.listChannels(socialOwner),
+          calendar: async (fromIso: string, toIso: string) => {
+            const items = await socialRepo.listItems(socialOwner, {
+              status: ['scheduled', 'approved', 'published'], limit: 300,
+            });
+            return items.filter(i => {
+              const t = i.scheduledAt ?? i.publishedAt;
+              return t !== undefined && t >= fromIso && t <= toIso;
+            });
+          },
+        });
+        this.logger.info('Social API registered (v934)');
       }
 
       // v770 — Storage-Only-Callbacks (env / db-seeds / sandbox-templates) UNABHÄNGIG von sandboxManager registrieren.
@@ -12528,6 +12592,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.interestsDailyTimer) {
       clearInterval(this.interestsDailyTimer);
       this.interestsDailyTimer = undefined;
+    }
+    if (this.publishingEngine) {
+      this.publishingEngine.stop();
+      this.publishingEngine = undefined;
     }
     if (this.clusterMonitorTimer) {
       clearInterval(this.clusterMonitorTimer);
