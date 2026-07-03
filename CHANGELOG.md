@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.960] - 2026-07-03
+
+### Fixed — Installation von .959 schlug fehl (BOM in package.json)
+
+- Die `package.json` des CLI-Pakets wurde beim .959-Release mit UTF-8-BOM
+  geschrieben; strikte JSON-Parser in Install-Scripts (u. a. Puppeteer via
+  cosmiconfig) brachen mit „Unexpected token" ab — `npm install -g` schlug
+  fehl. Datei BOM-frei neu geschrieben; .959 nicht verwenden, direkt .960
+  installieren (inhaltlich identisch mit .959).
+
 ## [0.19.0-multi-ha.959] - 2026-07-03
 
 ### Added — Best-Practice-Posting-Slots je Plattform, inkl. Wochenende (v959)
