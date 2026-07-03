@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.968] - 2026-07-03
+
+### Fixed — Kanal-Anlage kannte nur Telegram/REST (v968)
+
+- Das Aktions-Schema von `create_channel` listete noch den v933-Stand
+  (telegram_channel, rest) — die längst vorhandenen Provider für
+  Instagram, Facebook, Threads, YouTube und X waren dadurch im Chat
+  praktisch nicht anlegbar. Schema aktualisiert, inklusive Hinweisen zu
+  den je Plattform nötigen Secrets und der Instagram-Anforderung
+  (Medium mit öffentlicher URL zwingend).
+
 ## [0.19.0-multi-ha.967] - 2026-07-03
 
 ### Added — Social-UI: Analytics (v967, Paket D)
