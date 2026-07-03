@@ -222,19 +222,54 @@ export class ContentStudio {
   // ── Wissens-Kontext + Ideen ───────────────────────────────────────────
 
   private async generateIdeas(channel: SocialChannel, count: number): Promise<GeneratedIdea[]> {
-    const [dossier, bestPerformers, recentTitles] = await Promise.all([
+    const [dossier, bestPerformers, recentTitles, familyContext] = await Promise.all([
       this.topicDossier(channel),
       this.bestPerformers(channel),
       this.recentPublishedTitles(channel),
+      this.familyContext(channel),
     ]);
 
     const isYoutube = channel.platform === 'youtube';
-    const prompt = isYoutube
+    const prompt = (isYoutube
       ? this.buildYoutubePrompt(channel, count, dossier, bestPerformers, recentTitles)
-      : this.buildPostPrompt(channel, count, dossier, bestPerformers, recentTitles);
+      : this.buildPostPrompt(channel, count, dossier, bestPerformers, recentTitles))
+      + familyContext;
 
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 3000, tier: 'fast' });
     return parseIdeas(response.content ?? '');
+  }
+
+  /**
+   * v954 — Kanal-Familien-Koordination: Geschwister-Kanäle derselben Familie
+   * (gleiches Projekt oder config.family) werden mit Rolle und deren
+   * geplanten/kürzlichen Titeln in den Prompt gegeben — der Kanal spielt
+   * seine ROLLE statt denselben Stoff zu doppeln; Cross-Verweise erwünscht,
+   * bewusstes Verteilen läuft weiter über crosspost.
+   */
+  private async familyContext(channel: SocialChannel): Promise<string> {
+    const family = ContentStudio.familyKey(channel);
+    if (!family) return '';
+    try {
+      const siblings = (await this.socialRepo.listChannels(this.ownerUserId))
+        .filter(c => c.id !== channel.id && c.status !== 'archived' && ContentStudio.familyKey(c) === family);
+      if (siblings.length === 0) return '';
+      const sections: string[] = [];
+      for (const sibling of siblings) {
+        const items = await this.socialRepo.listItems(this.ownerUserId, {
+          channelId: sibling.id, status: ['scheduled', 'approved', 'published'], limit: 15,
+        });
+        const titles = items.map(i => (i.title ?? i.body.slice(0, 60))).slice(0, 15);
+        sections.push(`- **${sibling.name}** (${sibling.platform})${sibling.persona ? ` — Rolle: ${sibling.persona.slice(0, 140)}` : ''}${titles.length ? `\n  Geplant/zuletzt dort: ${titles.join(' · ')}` : ''}`);
+      }
+      return `\n\n## Kanal-Familie (abgestimmte Arbeitsteilung)
+Dieser Kanal gehört zu einer Familie. Die Geschwister-Kanäle:
+${sections.join('\n')}
+
+REGELN für die Abstimmung:
+- KEINE inhaltliche Doppelung: Stoff, der oben bei einem Geschwister-Kanal geplant/veröffentlicht ist, hier NICHT nochmal als eigener Beitrag bringen — außer aus der EIGENEN Rolle heraus mit anderem Blickwinkel (z.B. Community-Frage statt Analyse).
+- Spiele die ROLLE dieses Kanals (siehe Persona) — was die Geschwister besser abdecken, denen überlassen und stattdessen querverweisen (z.B. „die ausführliche Analyse gibt's auf fussball.cc").
+- Cross-Promo ist erwünscht: gelegentlich auf Geschwister-Angebote hinweisen (Beiträge, Features wie Sammelalbum-Tracker/Tauschbörse), ohne dass jeder Post Werbung wird.`;
+    } catch { return ''; }
   }
 
   private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
@@ -262,6 +297,16 @@ Ein Thumbnail-Vorschlag gehört NICHT in den body, sondern ins separate Feld "bi
 ${channel.blacklist.length ? `TABU: ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
 [{"title": "Video-Titel (max 100 Zeichen)", "body": "HOOK…\\nSCRIPT…\\n---\\nBESCHREIBUNG…", "hashtags": ["tag1", "tag2"], "warum": "1 Satz warum dieses Video jetzt", "bildidee": "optional: Thumbnail-Vorschlag"}]`;
+  }
+
+  /**
+   * v954 — Familien-Schlüssel eines Kanals: Projekt-Bindung oder explizites
+   * config.family (für Familien ohne Projekt, z.B. „games"). null = solo.
+   */
+  static familyKey(channel: Pick<SocialChannel, 'projectId' | 'config'>): string | null {
+    if (typeof channel.config.family === 'string' && channel.config.family.trim()) return `family:${channel.config.family.trim().toLowerCase()}`;
+    if (channel.projectId) return `project:${channel.projectId}`;
+    return null;
   }
 
   /** v951 — alle verknüpften Topic-IDs eines Kanals (topic_ids[] + Legacy topic_id). */

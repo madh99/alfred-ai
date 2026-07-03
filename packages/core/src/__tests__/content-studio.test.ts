@@ -326,6 +326,48 @@ describe('ContentStudio (v935)', () => {
     expect(interestsRepo.createTopic).not.toHaveBeenCalled();
   });
 
+  it('v954: Geschwister-Kanäle derselben Familie → Rollen + Titel + Anti-Doppelungs-Regeln im Prompt', async () => {
+    const telegram = makeChannel({ id: 'ch-tg', name: 'FussballCC News', projectId: 'proj-1', persona: 'Community-Kanal: kurz, Termine, Interaktion' });
+    const platform = makeChannel({ id: 'ch-cc', name: 'fussball.cc', platform: 'rest', projectId: 'proj-1', persona: 'redaktionelle News' });
+    const fremd = makeChannel({ id: 'ch-games', name: 'Games-Kanal', projectId: 'proj-games' });
+    const { studio, llm, socialRepo } = makeStack({ channel: telegram });
+    (socialRepo.listChannels as any) = vi.fn(async () => [telegram, platform, fremd]);
+    (socialRepo.listItems as any) = vi.fn(async (_u: string, q: any) => {
+      if (q?.channelId === 'ch-cc') return [{ id: 'x1', channelId: 'ch-cc', title: 'Arnautovic: Die große Analyse', body: '', media: [], hashtags: [], status: 'scheduled', source: 'studio', createdAt: 'x', updatedAt: 'x' }];
+      if (q?.status === 'published') return [];
+      return [];
+    });
+
+    await studio.fillChannel(telegram);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('Kanal-Familie');
+    expect(prompt).toContain('fussball.cc');
+    expect(prompt).toContain('redaktionelle News');
+    expect(prompt).toContain('Arnautovic: Die große Analyse');
+    expect(prompt).toContain('KEINE inhaltliche Doppelung');
+    expect(prompt).toContain('Cross-Promo');
+    // Fremde Familie taucht NICHT auf
+    expect(prompt).not.toContain('Games-Kanal');
+  });
+
+  it('v954: config.family gruppiert auch ohne Projekt; solo-Kanäle bekommen keine Familien-Sektion', async () => {
+    const gamesA = makeChannel({ id: 'g1', name: 'Games YouTube', config: { topic_id: 't-1', family: 'games' } });
+    const gamesB = makeChannel({ id: 'g2', name: 'Games Telegram', config: { topic_id: 't-1', family: 'games' } });
+    const solo = makeChannel({ id: 's1', name: 'Solo-Kanal', config: { topic_id: 't-1' } });
+    const { studio, llm, socialRepo } = makeStack({ channel: gamesA });
+    (socialRepo.listChannels as any) = vi.fn(async () => [gamesA, gamesB, solo]);
+
+    await studio.fillChannel(gamesA);
+    const prompt1 = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt1).toContain('Games Telegram');
+    expect(prompt1).not.toContain('Solo-Kanal');
+
+    (llm.complete as any).mockClear();
+    await studio.fillChannel(solo);
+    const prompt2 = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt2).not.toContain('Kanal-Familie');
+  });
+
   it('ohne topic_id: Interessen-Topic wird auto-angelegt und am Kanal gespeichert', async () => {
     const channel = makeChannel({ config: { niche: 'Amateurfußball NÖ' } });
     const { studio, interestsRepo, socialRepo } = makeStack({ channel });

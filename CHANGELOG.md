@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.954] - 2026-07-03
+
+### Added — Content-Studio: Kanal-Familien-Koordination (v954)
+
+Kanäle einer Familie (z. B. fussball.cc: Telegram + Plattform) produzierten
+denselben Stoff doppelt — das Studio behandelte jeden Kanal isoliert.
+
+- **Familie = Projekt** (Kanäle mit gleichem `project`) oder explizit
+  `config.family: "games"` für Familien ohne Projekt — Familien sind strikt
+  voneinander getrennt (der Games-Fall berührt fussball.cc nie).
+- **Familien-bewusster Studio-Lauf:** beim Befüllen eines Kanals sieht der
+  Ideen-Prompt die Geschwister-Kanäle mit Rolle (Persona) und deren
+  geplanten/kürzlich veröffentlichten Titeln — mit harten Regeln: keine
+  inhaltliche Doppelung (außer mit eigenem Rollen-Blickwinkel), die eigene
+  Rolle spielen und querverweisen („ausführlich auf fussball.cc"),
+  Cross-Promo auf Geschwister-Angebote (Sammelalbum-Tracker, Tauschbörse)
+  erwünscht, aber dosiert.
+- Bewusstes Verteilen einer Meldung auf ALLE Kanäle läuft weiterhin über
+  `crosspost` (v946) — das ist der gewollte Weg für „in eigener Sache".
+- 2 Tests (Projekt-Familie: Geschwister-Titel + Regeln im Prompt, fremde
+  Familie ausgeschlossen; config.family ohne Projekt + Solo-Kanal ohne
+  Familien-Sektion).
+
 ## [0.19.0-multi-ha.953] - 2026-07-03
 
 ### Added — rest-Provider: Bild-Posts via Medienbibliothek-Zweischritt (v953)
