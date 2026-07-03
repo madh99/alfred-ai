@@ -10,7 +10,8 @@ type SocialAction =
   | 'validate_auth' | 'pause_all' | 'resume_channel'
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media'
-  | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic';
+  | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
+  | 'get_content' | 'edit_content' | 'add_lesson';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
@@ -40,7 +41,7 @@ export class SocialSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'social',
     category: 'automation',
-    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle). "Verknüpfe Thema X mit Kanal Y" = action=link_topic — ein Kanal kann MEHRERE Interessen-Themen speisen.',
+    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle). "Verknüpfe Thema X mit Kanal Y" = action=link_topic — ein Kanal kann MEHRERE Interessen-Themen speisen. "Korrigiere Beitrag X" = erst get_content (voller Text), dann edit_content mit korrigiertem title/body/hashtags UND einer lesson (was künftig zu beachten ist — der Kanal lernt daraus). "Merke dir für Kanal X: …" = add_lesson.',
     riskLevel: 'write',
     version: '1.0.0',
     // v949 — 10 min: generate_content erzeugt bis zu ~10 Posts inkl. je ~20s
@@ -57,7 +58,8 @@ export class SocialSkill extends Skill {
             'validate_auth', 'pause_all', 'resume_channel',
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media',
-            'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic'],
+            'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
+            'get_content', 'edit_content', 'add_lesson'],
           description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos).',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
@@ -83,6 +85,7 @@ export class SocialSkill extends Skill {
         channels: { type: 'array', items: { type: 'string' }, description: 'crosspost: Ziel-Kanäle (Namen/IDs), auf die das Item kopiert wird' },
         adapt: { type: 'boolean', description: 'crosspost: Text formatgerecht je Ziel-Kanal umschreiben (Default true; false = wörtliche Kopie)' },
         topic: { type: 'string', description: 'link_topic/unlink_topic: Interessen-Thema (Name, fuzzy) — ein Kanal kann MEHRERE Themen speisen (z.B. „WM 2026" + „Panini-Sammelalbum")' },
+        lesson: { type: 'string', description: 'edit_content/add_lesson: Lektion für künftige Studio-Läufe des Kanals, z.B. "Es ist die WM 2026, nicht die EM — auch in Hashtags" — wird zwingend in künftige Prompts aufgenommen' },
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
         external_url: { type: 'string', description: 'mark_published: URL des manuell geposteten Beitrags' },
@@ -169,6 +172,9 @@ export class SocialSkill extends Skill {
         case 'crosspost': return await this.crosspost(userId, input);
         case 'link_topic': return await this.linkTopic(userId, input, true);
         case 'unlink_topic': return await this.linkTopic(userId, input, false);
+        case 'get_content': return await this.getContent(userId, input);
+        case 'edit_content': return await this.editContent(userId, input);
+        case 'add_lesson': return await this.addLesson(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
     } catch (err) {
@@ -621,6 +627,54 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
         ? `🔗 Thema **${topic.name}** mit **${channel.name}** verknüpft (${current.size} Thema/Themen gesamt) — das Studio zieht ab dem nächsten Lauf aus allen Dossiers.`
         : `Thema **${topic.name}** von **${channel.name}** gelöst (${current.size} verbleibend).`,
     };
+  }
+
+  /** v955 — vollständigen Item-Inhalt lesen (für gezielte Korrekturen). */
+  private async getContent(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const item = await this.resolveItem(userId, input);
+    if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
+    return {
+      success: true,
+      data: { item },
+      display: `[${item.id.slice(0, 8)}] ${item.status.toUpperCase()}${item.scheduledAt ? ` ⏰ ${item.scheduledAt.slice(0, 16).replace('T', ' ')}` : ''}\n**${item.title ?? '(ohne Titel)'}**\n\n${item.body}\n\nHashtags: ${item.hashtags.join(', ') || '(keine)'}`,
+    };
+  }
+
+  /**
+   * v955 — Item korrigieren (Titel/Text/Hashtags), z.B. „EM" → „WM".
+   * Mit optionaler `lesson` lernt der Kanal daraus: die Lektion landet
+   * zwingend in allen künftigen Studio-Prompts (config.lessons).
+   */
+  private async editContent(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const item = await this.resolveItem(userId, input);
+    if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
+    if (item.status === 'published') return { success: false, error: 'Veröffentlichte Beiträge können nicht mehr editiert werden (delete_remote + neu posten).' };
+    const patch: { title?: string; body?: string; hashtags?: string[] } = {};
+    if (typeof input.title === 'string') patch.title = input.title;
+    if (typeof input.body === 'string' && input.body.trim().length > 0) patch.body = input.body;
+    if (Array.isArray(input.hashtags)) patch.hashtags = input.hashtags.map(String);
+    if (Object.keys(patch).length === 0) return { success: false, error: 'Nichts zu ändern übergeben (title/body/hashtags).' };
+    await this.repo.updateItemContent(userId, item.id, patch);
+    let lessonNote = '';
+    if (typeof input.lesson === 'string' && input.lesson.trim().length > 0) {
+      const lessonResult = await this.addLesson(userId, { channel: item.channelId, lesson: input.lesson });
+      if (lessonResult.success) lessonNote = `\n📚 Lektion gespeichert — künftige Entwürfe beachten sie.`;
+    }
+    return { success: true, display: `✏️ [${item.id.slice(0, 8)}] korrigiert (${Object.keys(patch).join(', ')}).${lessonNote}` };
+  }
+
+  /** v955 — Kanal-Lektion speichern (fließt zwingend in künftige Studio-Prompts). */
+  private async addLesson(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const channel = await this.resolveChannel(userId, input);
+    if (!channel) return { success: false, error: `Kanal nicht gefunden: ${String(input.channel ?? '')}` };
+    const lesson = typeof input.lesson === 'string' ? input.lesson.trim() : '';
+    if (!lesson) return { success: false, error: 'lesson erforderlich' };
+    const lessons = Array.isArray(channel.config.lessons)
+      ? (channel.config.lessons as unknown[]).filter((l): l is string => typeof l === 'string')
+      : [];
+    if (!lessons.includes(lesson)) lessons.push(lesson);
+    await this.repo.updateChannel(userId, channel.id, { config: { ...channel.config, lessons: lessons.slice(-20) } });
+    return { success: true, display: `📚 Lektion für **${channel.name}** gespeichert (${lessons.length} gesamt): „${lesson}"` };
   }
 
   /** v935 — Content-Studio sofort für einen Kanal laufen lassen. */

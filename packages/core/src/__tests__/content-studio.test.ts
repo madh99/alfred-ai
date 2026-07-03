@@ -203,6 +203,17 @@ describe('ContentStudio (v935)', () => {
     expect(prompt).toContain('BESCHREIBUNG');
   });
 
+  it('v955: Fakten-Regel + Kanal-Lektionen landen im Prompt', async () => {
+    const channel = makeChannel({ config: { topic_id: 't-1', lessons: ['Es ist die WM 2026, nicht die EM — auch in Hashtags.'] } });
+    const { studio, llm } = makeStack({ channel });
+    await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('FAKTEN-TREUE');
+    expect(prompt).toContain('NIEMALS aus dem Trainingswissen');
+    expect(prompt).toContain('KORREKTUREN AUS DER VERGANGENHEIT');
+    expect(prompt).toContain('WM 2026, nicht die EM');
+  });
+
   it('v947: Prompt verlangt vollwertige Beiträge statt Schlagzeilen', async () => {
     const channel = makeChannel();
     const { studio, llm } = makeStack({ channel });

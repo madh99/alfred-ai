@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.955] - 2026-07-03
+
+### Added — Social: Beiträge korrigieren + Kanal lernt aus Korrekturen (v955)
+
+Realfall: Studio-Entwürfe schrieben „EM-Aus" statt „WM-Aus" (sogar
+#EURO2024 als Hashtag) — das LLM fiel auf sein Trainingswissen zurück, es
+gab keine Korrektur-Möglichkeit und keinen Lern-Mechanismus.
+
+- **Fakten-Treue-Regel im Studio-Prompt** (Posts UND YouTube): Turnier-/
+  Event-Namen, Jahreszahlen und Fakten NUR aus dem Dossier — niemals aus
+  dem Trainingswissen raten, auch in Hashtags; Unbelegtes weglassen.
+- **Korrigieren per Chat:** neue Aktionen `get_content` (voller Text),
+  `edit_content` (Titel/Text/Hashtags; veröffentlichte Beiträge bewusst
+  nicht editierbar) und `add_lesson`. „Korrigiere Beitrag X: EM durch WM
+  ersetzen" funktioniert damit direkt.
+- **Korrigieren in der UI:** ✏️-Bearbeiten an jeder Karte — Inline-Editor
+  für Titel/Text/Hashtags plus optionales Lektions-Feld.
+- **Der Kanal LERNT daraus:** Lektionen („Es ist die WM 2026, nicht die
+  EM") werden am Kanal gespeichert (max. 20, dedupliziert) und landen als
+  zwingende „KORREKTUREN AUS DER VERGANGENHEIT" in jedem künftigen
+  Studio-Prompt.
+- 3 neue Tests (edit+lesson-Realfall, published-Schutz/get/dedupe,
+  Fakten-Regel+Lektionen im Prompt).
+
 ## [0.19.0-multi-ha.954] - 2026-07-03
 
 ### Added — Content-Studio: Kanal-Familien-Koordination (v954)

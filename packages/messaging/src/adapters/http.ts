@@ -700,7 +700,7 @@ export class HttpAdapter extends MessagingAdapter {
     updateChannel?: (id: string, patch: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
     pauseAll?: () => Promise<number>;
     listItems?: (filter: { channelId?: string; status?: string; limit?: number }) => Promise<any[]>;
-    itemAction?: (id: string, action: 'approve' | 'reject' | 'publish' | 'schedule', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
+    itemAction?: (id: string, action: 'approve' | 'reject' | 'publish' | 'schedule' | 'edit', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1329,11 +1329,11 @@ export class HttpAdapter extends MessagingAdapter {
           limit: Number(url.searchParams.get('limit') ?? 100),
         }) ?? [],
       })).catch(err => this.safeError(res, err));
-    } else if (url.pathname.match(/^\/api\/social\/items\/[^/]+\/(approve|reject|publish|schedule)$/) && req.method === 'POST') {
+    } else if (url.pathname.match(/^\/api\/social\/items\/[^/]+\/(approve|reject|publish|schedule|edit)$/) && req.method === 'POST') {
       this.handleSocialBody(req, res, async (body) => {
         const parts = url.pathname.split('/');
         if (!this.socialCallbacks?.itemAction) return { error: 'not supported' };
-        return this.socialCallbacks.itemAction(parts[4], parts[5] as 'approve' | 'reject' | 'publish' | 'schedule', body);
+        return this.socialCallbacks.itemAction(parts[4], parts[5] as 'approve' | 'reject' | 'publish' | 'schedule' | 'edit', body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/social\/channels\/[^/]+\/metrics$/) && req.method === 'GET') {
       this.handleSocial(req, res, async () => ({

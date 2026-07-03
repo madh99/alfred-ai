@@ -268,6 +268,63 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(bad.error).toContain('create_topic');
   });
 
+  it('v955: edit_content korrigiert Text/Hashtags; lesson wird am Kanal gespeichert (Realfall EM→WM)', async () => {
+    const channel = makeChannel();
+    const item = makeItem({ status: 'scheduled', body: 'Nach dem EM-Aus gegen Spanien folgt die harte Analyse.', hashtags: ['EURO2024'] });
+    const state = { config: channel.config as Record<string, unknown> };
+    const repo = {
+      getItem: vi.fn(async () => item),
+      listItems: vi.fn(async () => [item]),
+      getChannel: vi.fn(async () => ({ ...channel, config: state.config })),
+      findChannelByName: vi.fn(async () => ({ ...channel, config: state.config })),
+      updateItemContent: vi.fn(async () => {}),
+      updateChannel: vi.fn(async (_u: string, _id: string, patch: any) => { state.config = patch.config; }),
+    } as unknown as SocialRepository;
+    const skill = new SocialSkill(repo);
+
+    const r = await skill.execute({
+      action: 'edit_content', item_id: 'item-0001-aaaa',
+      body: 'Nach dem WM-Aus gegen Spanien folgt die harte Analyse.',
+      hashtags: ['WM2026'],
+      lesson: 'Es ist die WM 2026, nicht die EM — auch in Hashtags.',
+    }, CTX);
+    expect(r.success).toBe(true);
+    expect((repo.updateItemContent as any).mock.calls[0][2]).toEqual({
+      body: 'Nach dem WM-Aus gegen Spanien folgt die harte Analyse.',
+      hashtags: ['WM2026'],
+    });
+    expect(state.config.lessons).toEqual(['Es ist die WM 2026, nicht die EM — auch in Hashtags.']);
+    expect(r.display).toContain('Lektion gespeichert');
+  });
+
+  it('v955: edit_content verweigert bei published; get_content liefert vollen Text; add_lesson dedupliziert', async () => {
+    const channel = makeChannel({ config: { lessons: ['Alte Lektion'] } });
+    const published = makeItem({ status: 'published' });
+    const state = { config: channel.config as Record<string, unknown> };
+    const repo = {
+      getItem: vi.fn(async () => published),
+      listItems: vi.fn(async () => [published]),
+      getChannel: vi.fn(async () => ({ ...channel, config: state.config })),
+      findChannelByName: vi.fn(async () => ({ ...channel, config: state.config })),
+      updateItemContent: vi.fn(async () => {}),
+      updateChannel: vi.fn(async (_u: string, _id: string, patch: any) => { state.config = patch.config; }),
+    } as unknown as SocialRepository;
+    const skill = new SocialSkill(repo);
+
+    const edit = await skill.execute({ action: 'edit_content', item_id: 'item-0001-aaaa', body: 'Neuer Text hier.' }, CTX);
+    expect(edit.success).toBe(false);
+    expect(edit.error).toContain('Veröffentlichte');
+
+    const get = await skill.execute({ action: 'get_content', item_id: 'item-0001-aaaa' }, CTX);
+    expect(get.success).toBe(true);
+    expect(get.display).toContain('Hallo Welt');
+
+    await skill.execute({ action: 'add_lesson', channel: 'Testkanal', lesson: 'Alte Lektion' }, CTX);
+    expect(state.config.lessons).toEqual(['Alte Lektion']); // dedupliziert
+    await skill.execute({ action: 'add_lesson', channel: 'Testkanal', lesson: 'Neue Lektion' }, CTX);
+    expect(state.config.lessons).toEqual(['Alte Lektion', 'Neue Lektion']);
+  });
+
   it('create_channel verweigert unbekannte Plattform mit Liste der vorhandenen', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'create_channel', platform: 'instagram', name: 'IG' }, CTX);

@@ -37,6 +37,9 @@ export function SocialPage() {
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
   // v948 — Bild-Vorschauen: Blob-URLs je Item (Auth via Bearer, daher kein direktes <img src>)
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+  // v955 — Inline-Editor (Korrektur + optionale Lektion, aus der der Kanal lernt)
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<{ title: string; body: string; hashtags: string; lesson: string }>({ title: '', body: '', hashtags: '', lesson: '' });
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -115,6 +118,31 @@ export function SocialPage() {
     });
   }
 
+  // v955 — Korrektur speichern (optional mit Lektion → Kanal lernt daraus)
+  function startEdit(item: SocialContentItem) {
+    setEditingId(item.id);
+    setEditDraft({
+      title: item.title ?? '',
+      body: item.body,
+      hashtags: item.hashtags.join(', '),
+      lesson: '',
+    });
+  }
+
+  async function saveEdit(item: SocialContentItem) {
+    await withBusy(item.id, async () => {
+      const r = await client!.socialItemAction(item.id, 'edit', {
+        title: editDraft.title,
+        body: editDraft.body,
+        hashtags: editDraft.hashtags.split(',').map(h => h.trim().replace(/^#/, '')).filter(Boolean),
+        ...(editDraft.lesson.trim() ? { lesson: editDraft.lesson.trim() } : {}),
+      });
+      if (!r.success) throw new Error(r.error ?? 'Speichern fehlgeschlagen');
+      setEditingId(null);
+      await load();
+    });
+  }
+
   /** Kalender nach Tag gruppiert (kommende 14 Tage). */
   const calendarByDay = useMemo(() => {
     const map = new Map<string, SocialContentItem[]>();
@@ -152,7 +180,31 @@ export function SocialPage() {
           <div className="flex-1" />
           <span className="font-mono text-gray-600">{item.id.slice(0, 8)}</span>
         </div>
-        <div className="mt-1.5 text-sm text-gray-200 font-medium">{item.title ?? item.body.slice(0, 80)}</div>
+        {/* v955 — Inline-Editor: Korrektur + optionale Lektion */}
+        {editingId === item.id ? (
+          <div className="mt-2 space-y-2">
+            <input value={editDraft.title} onChange={e => setEditDraft(d => ({ ...d, title: e.target.value }))}
+              placeholder="Titel"
+              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200" />
+            <textarea value={editDraft.body} onChange={e => setEditDraft(d => ({ ...d, body: e.target.value }))}
+              rows={6}
+              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200" />
+            <input value={editDraft.hashtags} onChange={e => setEditDraft(d => ({ ...d, hashtags: e.target.value }))}
+              placeholder="Hashtags (kommagetrennt)"
+              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200" />
+            <input value={editDraft.lesson} onChange={e => setEditDraft(d => ({ ...d, lesson: e.target.value }))}
+              placeholder='📚 Lektion für künftige Entwürfe (optional), z.B. "Es ist die WM 2026, nicht die EM"'
+              className="w-full bg-[#0a0a0a] border border-purple-500/30 rounded px-2 py-1.5 text-xs text-purple-200" />
+            <div className="flex gap-2">
+              <button onClick={() => saveEdit(item)} disabled={busy === item.id}
+                className="px-2 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">✓ Speichern</button>
+              <button onClick={() => setEditingId(null)}
+                className="px-2 py-1 text-xs border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 rounded">Abbrechen</button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-1.5 text-sm text-gray-200 font-medium">{item.title ?? item.body.slice(0, 80)}</div>
+        )}
         {/* v948 — Medien-Vorschau: generierte/angehängte Bilder + Video-Badge */}
         {(previewUrl || hasVideo) && (
           <div className="flex items-center gap-2 mt-2">
@@ -162,27 +214,33 @@ export function SocialPage() {
             {hasVideo && <span className="text-[10px] px-1.5 py-0.5 bg-purple-500/20 text-purple-300 rounded">🎬 Video angehängt</span>}
           </div>
         )}
-        <div className={clsx('text-xs text-gray-400 whitespace-pre-wrap break-words mt-1', !isOpen && 'line-clamp-2')}>
-          {item.body}
-          {item.hashtags.length > 0 && <div className="text-blue-400 mt-1">{item.hashtags.map(h => `#${h.replace(/^#/, '')}`).join(' ')}</div>}
-        </div>
-        {item.body.length > 150 && (
-          <button onClick={() => setExpandedItem(isOpen ? null : item.id)} className="text-[11px] text-blue-400 hover:text-blue-300 mt-1">
-            {isOpen ? '▲ einklappen' : '▼ ganzen Text zeigen'}
-          </button>
+        {editingId !== item.id && (
+          <>
+            <div className={clsx('text-xs text-gray-400 whitespace-pre-wrap break-words mt-1', !isOpen && 'line-clamp-2')}>
+              {item.body}
+              {item.hashtags.length > 0 && <div className="text-blue-400 mt-1">{item.hashtags.map(h => `#${h.replace(/^#/, '')}`).join(' ')}</div>}
+            </div>
+            {item.body.length > 150 && (
+              <button onClick={() => setExpandedItem(isOpen ? null : item.id)} className="text-[11px] text-blue-400 hover:text-blue-300 mt-1">
+                {isOpen ? '▲ einklappen' : '▼ ganzen Text zeigen'}
+              </button>
+            )}
+          </>
         )}
         <div className="flex items-center gap-2 mt-2 flex-wrap">
           {item.externalUrl && (
             <a href={item.externalUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:text-blue-300">🔗 Post öffnen</a>
           )}
-          {showActions && (item.status === 'draft' || item.status === 'scheduled' || item.status === 'failed') && (
+          {showActions && editingId !== item.id && (item.status === 'draft' || item.status === 'scheduled' || item.status === 'failed' || item.status === 'approved') && (
             <>
-              {item.status !== 'failed' && (
+              {item.status !== 'failed' && item.status !== 'approved' && (
                 <button onClick={() => itemAction(item, 'approve')} disabled={busy === item.id}
                   className="px-2 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">✅ Freigeben</button>
               )}
               <button onClick={() => itemAction(item, 'publish')} disabled={busy === item.id}
                 className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded">🚀 Sofort posten</button>
+              <button onClick={() => startEdit(item)} disabled={busy === item.id}
+                className="px-2 py-1 text-xs border border-amber-500/40 text-amber-400 hover:bg-amber-500/15 rounded">✏️ Bearbeiten</button>
               <button onClick={() => itemAction(item, 'reject')} disabled={busy === item.id}
                 className="px-2 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded">✕ Ablehnen</button>
             </>

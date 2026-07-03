@@ -8065,11 +8065,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const skillAction = action === 'approve' ? 'approve_content'
               : action === 'reject' ? 'reject_content'
               : action === 'publish' ? 'publish_now'
-              : action === 'schedule' ? 'schedule_content' : '';
+              : action === 'schedule' ? 'schedule_content'
+              : action === 'edit' ? 'edit_content' : '';
             if (!skillAction) return { success: false, error: `unknown action ${action}` };
             const r = await socialSkillForApi.execute({
               action: skillAction, item_id: id,
               ...(extra?.scheduled_at ? { scheduled_at: extra.scheduled_at } : {}),
+              ...(action === 'edit' ? {
+                title: extra?.title, body: extra?.body, hashtags: extra?.hashtags, lesson: extra?.lesson,
+              } : {}),
             }, socialCtx);
             return { success: r.success, display: r.display, error: r.error };
           },

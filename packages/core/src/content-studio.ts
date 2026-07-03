@@ -276,7 +276,8 @@ REGELN für die Abstimmung:
     return `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS VERÖFFENTLICHT (nicht wiederholen):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
-- Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
+- FAKTEN-TREUE (zwingend): Turnier-/Event-Namen, Jahreszahlen, Ergebnisse und Personalien NUR aus dem Dossier oben übernehmen — NIEMALS aus dem Trainingswissen raten. Steht im Dossier „WM", schreibe WM (nicht EM/EURO); auch in Hashtags. Ist ein Fakt nicht im Dossier belegt, lass ihn weg.
+${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
 - body = VOLLWERTIGER Beitrag mit 4-8 Sätzen und eigenem Mehrwert (Einordnung, Details, Frage an die Community) — NIEMALS nur Schlagzeile plus ein Satz. Dossier-Beiträge sind Rohstoff, kein Abschreibmaterial.
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
 - 3-6 Hashtags je Post.
@@ -293,7 +294,8 @@ Erzeuge ${count} komplette Video-Konzepte. Das body-Feld MUSS enthalten:
 HOOK (erste 15 Sekunden), dann SCRIPT mit Kapitel-Überschriften und Sprechtext,
 dann eine Zeile "---" und darunter BESCHREIBUNG (YouTube-Description mit Kapitelmarken).
 Der User kann das Video selbst drehen (Script ablesen) oder Alfred Material geben.
-Ein Thumbnail-Vorschlag gehört NICHT in den body, sondern ins separate Feld "bildidee".
+FAKTEN-TREUE (zwingend): Turnier-/Event-Namen, Jahreszahlen und Fakten NUR aus dem Dossier — niemals aus dem Trainingswissen raten (WM bleibt WM, nicht EM); auch in Tags.
+${this.lessonsBlock(channel)}Ein Thumbnail-Vorschlag gehört NICHT in den body, sondern ins separate Feld "bildidee".
 ${channel.blacklist.length ? `TABU: ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
 [{"title": "Video-Titel (max 100 Zeichen)", "body": "HOOK…\\nSCRIPT…\\n---\\nBESCHREIBUNG…", "hashtags": ["tag1", "tag2"], "warum": "1 Satz warum dieses Video jetzt", "bildidee": "optional: Thumbnail-Vorschlag"}]`;
@@ -324,6 +326,19 @@ Antworte NUR mit einem JSON-Array:
    * Sammelalbum"): je Topic eine eigene Dossier-Sektion, das LLM verteilt
    * die Posts über alle Themen.
    */
+  /**
+   * v955 — Kanal-Lektionen: vom User gemeldete Korrekturen (config.lessons[])
+   * landen als zwingende Regeln im Prompt — der Kanal LERNT aus Fehlern
+   * (Realfall: „EM-Aus" statt „WM-Aus", #EURO2024 statt #WM2026).
+   */
+  private lessonsBlock(channel: SocialChannel): string {
+    const lessons = Array.isArray(channel.config.lessons)
+      ? (channel.config.lessons as unknown[]).filter((l): l is string => typeof l === 'string' && l.trim().length > 0)
+      : [];
+    if (lessons.length === 0) return '';
+    return `- KORREKTUREN AUS DER VERGANGENHEIT (zwingend beachten):\n${lessons.slice(-20).map(l => `  • ${l}`).join('\n')}\n`;
+  }
+
   private async topicDossier(channel: SocialChannel): Promise<string> {
     if (!this.interestsRepo) return '';
     const topicIds = ContentStudio.linkedTopicIds(channel);
