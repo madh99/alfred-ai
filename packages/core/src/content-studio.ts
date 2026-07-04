@@ -72,6 +72,20 @@ interface GeneratedIdea {
   terminBis?: string;
 }
 
+/** v977 — Kommender Termin aus einer Event-Quelle (at = ISO, Ort in summary). */
+interface UpcomingEvent {
+  title: string;
+  summary?: string;
+  at: string;
+}
+
+/** v977 — ISO in Server-Lokalzeit lesbar machen („04.07.2026 19:00") für Prompts. */
+export function formatLocalDateTime(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /**
  * v975 — Termin-Zeit aus Event-Titeln parsen („… – 04.07.2026, 19:00").
  * Interpretation in Server-Lokalzeit — dieselbe wie nextFreeSlots, damit
@@ -217,7 +231,13 @@ export class ContentStudio {
     // Entwürfe/Ideen ohne Termin zählen als Vorrat — nicht doppelt erzeugen
     const backlog = planned.filter(i => (i.status === 'draft' || i.status === 'idea') && !i.scheduledAt).length;
     const needed = Math.max(0, slots.length - backlog);
-    if (needed === 0) return 0;
+    // v977 — Termine haben Vorrang vor der Kapazität: ein voller Kanal
+    // (needed=0) generierte gar nicht — Ankündigungen für morgige Spiele
+    // hatten nie eine Chance (Realfall 04.07.). Der MAX_IN_FLIGHT-Deckel
+    // bleibt als Budget-Schutz bestehen.
+    const upcoming = await this.upcomingEvents(channel);
+    if (needed === 0 && upcoming.length === 0) return 0;
+    if (planned.length >= MAX_IN_FLIGHT) return 0;
 
     const family = await this.familyContext(channel);
     // v973 — VOLLSTÄNDIGE Story-Sperrliste (DB-bewiesene Lücken geschlossen):
@@ -250,12 +270,23 @@ export class ContentStudio {
     let created = 0;
     const createdTitles: string[] = [];
     const slotPool = [...slots];
+    // v977 — Termin-Vorrang: bei vollem Kanal (needed=0) läuft ein reiner
+    // Termin-Durchlauf für noch unangekündigte, kommende Termine.
+    const announcedNow = new Set(blocked.map(b => b.terminAt).filter(Boolean));
+    const unannounced = upcoming.filter(e => !announcedNow.has(e.at));
+    const terminOnly = needed === 0;
+    const target = terminOnly ? Math.min(unannounced.length, 4) : needed;
+    if (target === 0) return 0;
+    // v977 — Veröffentlichungsfenster für den Prompt: das LLM kennt sonst das
+    // Erscheinungsdatum nicht und schreibt „heute Nacht" für ein Spiel, dessen
+    // Post zwei Tage später erscheint (Realfall Argentinien 04./05.07.).
+    const window = slotPool.length > 0 ? { from: slotPool[0], to: slotPool[slotPool.length - 1] } : undefined;
     // v971 — in BATCHES generieren (LLM liefert je Aufruf max. ~10 brauchbare
     // Ideen): weitere Runden bis der Bedarf gedeckt ist oder keine neuen,
     // dedup-überlebenden Ideen mehr kommen.
-    for (let round = 0; round < 4 && created < needed; round++) {
-      const batchSize = Math.min(8, needed - created);
-      const ideas = await this.generateIdeas(channel, batchSize, family.block, blocked);
+    for (let round = 0; round < 4 && created < target; round++) {
+      const batchSize = Math.min(8, target - created);
+      const ideas = await this.generateIdeas(channel, batchSize, family.block, blocked, upcoming, window);
       if (ideas.length === 0) break;
 
       // v973 — Token-Gate + semantisches Gate (Embeddings/Judge) in einem:
@@ -289,25 +320,39 @@ export class ContentStudio {
           accepted.push(idea);
         }
       }
-      // Termine zuerst: sie sind an feste Slots vor dem Anpfiff gebunden
-      accepted = [...terminCands, ...accepted];
+      // Termine zuerst: sie sind an feste Slots vor dem Anpfiff gebunden.
+      // Im Termin-Durchlauf (voller Kanal) werden NUR Termine angelegt.
+      accepted = terminOnly ? terminCands : [...terminCands, ...accepted];
       if (accepted.length === 0) break; // nur noch Duplikate → Thema erschöpft
 
       for (const idea of accepted) {
-        if (created >= needed) break;
+        if (created >= target) break;
         // v975 — Slot-Wahl VOR dem Anlegen: eine Termin-Ankündigung braucht
-        // einen Slot VOR dem Anpfiff (den spätesten davor — nah am Termin);
-        // gibt es keinen, wird die Idee verworfen (danach wäre sie wertlos).
+        // einen Slot VOR dem Anpfiff (den spätesten davor — nah am Termin).
+        // v977 — gibt das Raster keinen her, schlägt der Termin das Raster:
+        // Ad-hoc-Slot max(jetzt+30min, Anpfiff − Vorlauf). Erst wenn selbst
+        // das nach dem Anpfiff läge, wird verworfen — und der Termin für die
+        // restlichen Runden gesperrt (vorher wurde dieselbe unplatzierbare
+        // Idee jede Runde neu generiert und verbrannte Batch-Kapazität).
         let slot: string | undefined;
         if (channel.mode === 'approve' || channel.mode === 'autonomous') {
           if (idea.terminBis) {
             const before = slotPool.filter(s => s < idea.terminBis!);
-            if (before.length === 0) {
-              this.logger.info({ channel: channel.name, termin: idea.terminBis, title: idea.title }, 'v975 termin idea dropped (kein freier Slot vor dem Termin)');
-              continue;
+            if (before.length > 0) {
+              slot = before[before.length - 1];
+              slotPool.splice(slotPool.indexOf(slot), 1);
+            } else {
+              const leadMs = this.terminLeadHours(channel) * 3_600_000;
+              const adhoc = new Date(Math.max(Date.now() + 30 * 60_000, Date.parse(idea.terminBis) - leadMs)).toISOString();
+              if (adhoc < idea.terminBis) {
+                slot = adhoc;
+                this.logger.info({ channel: channel.name, termin: idea.terminBis, slot }, 'v977 termin ad-hoc slot (Raster hatte keinen Platz vor dem Anpfiff)');
+              } else {
+                this.logger.info({ channel: channel.name, termin: idea.terminBis, title: idea.title }, 'v975 termin idea dropped (kein Slot vor dem Termin möglich)');
+                blocked.push({ title: idea.title || idea.body.slice(0, 60), terminAt: idea.terminBis });
+                continue;
+              }
             }
-            slot = before[before.length - 1];
-            slotPool.splice(slotPool.indexOf(slot), 1);
           } else {
             slot = slotPool.shift();
           }
@@ -385,9 +430,12 @@ export class ContentStudio {
 
   // ── Wissens-Kontext + Ideen ───────────────────────────────────────────
 
-  private async generateIdeas(channel: SocialChannel, count: number, familyBlock: string, blocked: BlockedStory[]): Promise<GeneratedIdea[]> {
+  private async generateIdeas(
+    channel: SocialChannel, count: number, familyBlock: string, blocked: BlockedStory[],
+    events: UpcomingEvent[] = [], window?: { from: string; to: string },
+  ): Promise<GeneratedIdea[]> {
     const [dossier, bestPerformers] = await Promise.all([
-      this.topicDossier(channel, blocked),
+      this.topicDossier(channel, blocked, events),
       this.bestPerformers(channel),
     ]);
     // v973 — Prompt-Sperrliste = die KOMPLETTE Blockliste (vorher nur 15
@@ -398,11 +446,17 @@ export class ContentStudio {
     const isYoutube = channel.platform === 'youtube';
     const prompt = (isYoutube
       ? this.buildYoutubePrompt(channel, count, dossier, bestPerformers, blockedTitles)
-      : this.buildPostPrompt(channel, count, dossier, bestPerformers, blockedTitles))
+      : this.buildPostPrompt(channel, count, dossier, bestPerformers, blockedTitles, window))
       + familyBlock;
 
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 3000, tier: 'fast' });
     return parseIdeas(response.content ?? '');
+  }
+
+  /** v977 — konfigurierbarer Ankündigungs-Vorlauf (config.termin_lead_hours, Default 3h, Cap 48h). */
+  private terminLeadHours(channel: SocialChannel): number {
+    const raw = Number(channel.config.termin_lead_hours);
+    return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 48) : 3;
   }
 
   /**
@@ -449,15 +503,21 @@ REGELN für die Abstimmung:
     } catch { return { block: '', siblingStories: [] }; }
   }
 
-  private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
+  private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[], window?: { from: string; to: string }): string {
     // v975 — Termin-Ankündigungen: nur anweisen, wenn das Dossier Termine führt
     const terminRule = dossier.includes('KOMMENDE TERMINE')
-      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Posts ohne Termin-Bezug: KEIN "terminBis"-Feld.\n`
+      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis".\n`
+      : '';
+    // v977 — das LLM kennt sonst das Erscheinungsdatum nicht und schreibt
+    // „heute Nacht" für ein Spiel, dessen Post zwei Tage später erscheint
+    const windowLine = window
+      ? `\nVERÖFFENTLICHUNGSZEITRAUM: Diese Posts erscheinen zwischen ${formatLocalDateTime(window.from)} und ${formatLocalDateTime(window.to)} — formuliere so, dass der Text zu JEDEM Zeitpunkt in diesem Fenster stimmt.\n`
       : '';
     return `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
-${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS BEHANDELT — dieser STOFF ist gesperrt (auch umformuliert/mit anderem Titel VERBOTEN; wähle ANDERE Ereignisse/Geschichten):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
+${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${windowLine}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS BEHANDELT — dieser STOFF ist gesperrt (auch umformuliert/mit anderem Titel VERBOTEN; wähle ANDERE Ereignisse/Geschichten):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
 - FAKTEN-TREUE (zwingend): Turnier-/Event-Namen, Jahreszahlen, Ergebnisse und Personalien NUR aus dem Dossier oben übernehmen — NIEMALS aus dem Trainingswissen raten. Steht im Dossier „WM", schreibe WM (nicht EM/EURO); auch in Hashtags. Ist ein Fakt nicht im Dossier belegt, lass ihn weg.
+- ZEITBEZUG (zwingend): Ist der Post eine VORSCHAU/Ankündigung auf ein datiertes Ereignis (Spiel, Termin, Deadline), setze "terminBis" auf den ISO-Zeitpunkt des Ereignisses — der Post wird dann garantiert VOR dem Ereignis veröffentlicht. NIE relative Zeitwörter („heute", „morgen", „heute Nacht") — nenne stattdessen Datum/Uhrzeit. Rückblicke auf Vergangenes brauchen KEIN "terminBis".
 ${terminRule}${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
 - body = VOLLWERTIGER Beitrag mit 4-8 Sätzen und eigenem Mehrwert (Einordnung, Details, Frage an die Community) — NIEMALS nur Schlagzeile plus ein Satz. Dossier-Beiträge sind Rohstoff, kein Abschreibmaterial.
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
@@ -465,7 +525,7 @@ ${terminRule}${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkre
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
 ${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
-[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung: die ISO-Zeit aus der Termin-Zeile"}]`;
+[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses"}]`;
   }
 
   private buildYoutubePrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
@@ -520,19 +580,36 @@ Antworte NUR mit einem JSON-Array:
     return `- KORREKTUREN AUS DER VERGANGENHEIT (zwingend beachten):\n${lessons.slice(-20).map(l => `  • ${l}`).join('\n')}\n`;
   }
 
-  private async topicDossier(channel: SocialChannel, blocked?: BlockedStory[]): Promise<string> {
+  /**
+   * v975/v977 — Kommende Termine (Event-Items der verknüpften Themen): nur
+   * Zukunft, über Topics hinweg per Titel dedupliziert (derselbe Feed hängt
+   * oft an mehreren Themen), zeitlich sortiert. Event-Items laufen NICHT im
+   * News-Strom mit — dort verdrängte jeder Collector-Lauf sie aus den Top-8
+   * (Realfall Public Viewing), und ihr ORT steckt in der summary.
+   */
+  private async upcomingEvents(channel: SocialChannel): Promise<UpcomingEvent[]> {
+    if (!this.interestsRepo) return [];
+    const events = new Map<string, UpcomingEvent>();
+    const nowIso = new Date().toISOString();
+    for (const topicId of ContentStudio.linkedTopicIds(channel)) {
+      try {
+        const items = await this.interestsRepo.listItems(topicId, { limit: 30 });
+        for (const ev of items.filter(i => i.sourceKind === 'events')) {
+          const at = parseEventTime(ev.title);
+          if (!at || at <= nowIso) continue; // vorbei oder Zeit nicht lesbar
+          if (!events.has(ev.title)) events.set(ev.title, { title: ev.title, summary: ev.summary, at });
+        }
+      } catch { /* einzelnes Topic überspringen */ }
+    }
+    return [...events.values()].sort((a, b) => a.at.localeCompare(b.at));
+  }
+
+  private async topicDossier(channel: SocialChannel, blocked?: BlockedStory[], events: UpcomingEvent[] = []): Promise<string> {
     if (!this.interestsRepo) return '';
     const topicIds = ContentStudio.linkedTopicIds(channel);
     if (topicIds.length === 0) return '';
     const blockedTitles = blocked?.map(b => b.title) ?? [];
     const sections: string[] = [];
-    // v975 — Event-Items (Quelle mit config.events=true) laufen NICHT im
-    // News-Strom mit: dort verdrängte jeder Collector-Lauf sie aus den Top-8
-    // (Realfall Public Viewing), und ihr ORT steckt in der summary, die der
-    // News-Block nie rendert. Über Topics hinweg per Titel dedupliziert
-    // (derselbe Feed hängt oft an mehreren Themen).
-    const events = new Map<string, { title: string; summary?: string; at: string }>();
-    const nowIso = new Date().toISOString();
     for (const topicId of topicIds) {
       try {
         const [topic, digest, items] = await Promise.all([
@@ -540,11 +617,6 @@ Antworte NUR mit einem JSON-Array:
           this.interestsRepo.getDigest(topicId),
           this.interestsRepo.listItems(topicId, { limit: 30 }),
         ]);
-        for (const ev of items.filter(i => i.sourceKind === 'events')) {
-          const at = parseEventTime(ev.title);
-          if (!at || at <= nowIso) continue; // vorbei oder Zeit nicht lesbar
-          if (!events.has(ev.title)) events.set(ev.title, { title: ev.title, summary: ev.summary, at });
-        }
         // v973 — Rohstoff-Hygiene: Dossier-Beiträge, die dieser Kanal (oder die
         // Familie) schon behandelt hat, werden markiert — das LLM greift zu
         // anderem Stoff statt dieselbe Story neu zu erzählen.
@@ -560,10 +632,7 @@ Antworte NUR mit einem JSON-Array:
     // Identität = Termin-Zeit; parallele Termine zur selben Zeit teilen sich
     // eine Ankündigung (dann beide in EINEM Post nennen).
     const announced = new Set((blocked ?? []).map(b => b.terminAt).filter(Boolean));
-    const upcoming = [...events.values()]
-      .filter(e => !announced.has(e.at))
-      .sort((a, b) => a.at.localeCompare(b.at))
-      .slice(0, 10);
+    const upcoming = events.filter(e => !announced.has(e.at)).slice(0, 10);
     if (upcoming.length > 0) {
       sections.push(`### KOMMENDE TERMINE (ankündigen — der Post muss VOR dem Termin erscheinen)\n${upcoming.map(e => `- ${e.title}${e.summary ? ` — Ort: ${e.summary}` : ''} [terminBis: ${e.at}]`).join('\n')}`);
     }

@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.977] - 2026-07-04
+
+### Fixed — Termine erreichen die Kanäle wirklich; keine Posts mehr nach dem Ereignis (v977)
+
+Log-/DB-Befund vom ersten v975-Tag: Die Kanada–Marokko-Ankündigung wurde
+korrekt erzeugt, aber verworfen (kein Raster-Slot vor dem Anpfiff), volle
+Kanäle generierten gar nicht erst, die unplatzierbare Idee wurde jede
+Batch-Runde neu erzeugt — und ein datierter News-Post („Heute Nacht startet
+Argentinien…", Spiel 04.07. 00:00) stand auf einem Slot am 05.07. 22:00.
+
+- Ad-hoc-Slot: Findet das Raster keinen freien Slot vor dem Anpfiff,
+  bekommt die Ankündigung `max(jetzt + 30 min, Anpfiff − Vorlauf)` —
+  Termine schlagen das Slot-Raster. Vorlauf konfigurierbar über
+  `config.termin_lead_hours` (Default 3 h, Cap 48 h).
+- Termin-Vorrang vor Kapazität: Auch ein voller Kanal (kein Slot-Bedarf)
+  fährt einen reinen Termin-Durchlauf für kommende, noch nicht
+  angekündigte Termine (Cap 4 je Lauf; MAX_IN_FLIGHT bleibt Budget-Schutz).
+- Drop-Gedächtnis: Ein endgültig unplatzierbarer Termin wird für die
+  restlichen Batch-Runden gesperrt statt jede Runde neu generiert.
+- Zeitbezug generalisiert: Der Prompt nennt jetzt das Veröffentlichungs-
+  fenster der offenen Slots, verbietet relative Zeitwörter („heute",
+  „morgen") und verlangt `terminBis` für JEDE Vorschau auf ein datiertes
+  Ereignis — damit greift die Slot-vor-Ereignis-Logik auch für News-Posts;
+  Rückblicke bleiben ausgenommen.
+- 5 neue Tests (Ad-hoc-Slot, Vorlauf-Override, kein LLM-Call ohne Termine,
+  Runden-Sperre, Prompt-Fenster/Zeitbezug-Regel).
+
 ## [0.19.0-multi-ha.975] - 2026-07-04
 
 ### Added — Termin-Ankündigungen aus Event-Feeds (v975)

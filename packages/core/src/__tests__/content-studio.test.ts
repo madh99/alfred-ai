@@ -648,6 +648,72 @@ describe('ContentStudio — Termin-Ankündigungen (v975)', () => {
     expect(createdItems.length).toBe(0);
   });
 
+  it('v977: Ad-hoc-Slot — voller/slotloser Kanal legt Termin trotzdem an (Anpfiff − Vorlauf)', async () => {
+    // Unparsebare Slots → Raster leer → needed=0: ohne Termin-Vorrang liefe hier gar nichts
+    const channel = makeChannel({ mode: 'approve', postingSlots: ['Zz 99:99'] });
+    const { studio, llm, createdItems, transitions, interestsRepo } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([
+        { title: 'Public Viewing: Kanada gegen Marokko', body: 'Wir schauen das Match gemeinsam im Dublin Irish Pub in Wien — kommt vorbei!', hashtags: [], warum: 'Termin', terminBis: EVENT_ISO },
+      ]),
+    });
+    (interestsRepo.listItems as any) = vi.fn(async () => [EVENT_ITEM]);
+
+    const created = await studio.fillChannel(channel);
+    expect(created).toBe(1);
+    expect(createdItems[0].title).toContain('Public Viewing');
+    const slot = transitions.find(t => t.to === 'scheduled')!.at!;
+    expect(slot).toBe(new Date(Date.parse(EVENT_ISO) - 3 * 3_600_000).toISOString()); // Default-Vorlauf 3h
+    expect((llm.complete as any).mock.calls.length).toBe(1);
+  });
+
+  it('v977: config.termin_lead_hours übersteuert den Ad-hoc-Vorlauf', async () => {
+    const channel = makeChannel({ mode: 'approve', postingSlots: ['Zz 99:99'], config: { topic_id: 't-1', termin_lead_hours: 6 } });
+    const { studio, transitions, interestsRepo } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([
+        { title: 'Public Viewing: Kanada gegen Marokko', body: 'Wir schauen das Match gemeinsam im Dublin Irish Pub in Wien — kommt vorbei!', hashtags: [], warum: 'Termin', terminBis: EVENT_ISO },
+      ]),
+    });
+    (interestsRepo.listItems as any) = vi.fn(async () => [EVENT_ITEM]);
+    await studio.fillChannel(channel);
+    expect(transitions.find(t => t.to === 'scheduled')!.at).toBe(new Date(Date.parse(EVENT_ISO) - 6 * 3_600_000).toISOString());
+  });
+
+  it('v977: voller Kanal OHNE Termine generiert weiterhin nichts (kein LLM-Call)', async () => {
+    const channel = makeChannel({ mode: 'approve', postingSlots: ['Zz 99:99'] });
+    const { studio, llm, interestsRepo } = makeStack({ channel });
+    (interestsRepo.listItems as any) = vi.fn(async () => []);
+    expect(await studio.fillChannel(channel)).toBe(0);
+    expect((llm.complete as any).mock.calls.length).toBe(0);
+  });
+
+  it('v977: unplatzierbarer Termin wird für die restlichen Runden gesperrt (keine Wiederholungs-Generierung)', async () => {
+    const soon = new Date(Date.now() + 10 * 60_000).toISOString(); // Anpfiff in 10 min — auch ad-hoc (jetzt+30min) zu spät
+    const channel = makeChannel({ mode: 'approve' });
+    const { studio, llm, createdItems } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([
+        { title: 'Public Viewing gleich', body: 'Ganz kurzfristige Ankündigung für das Match in wenigen Minuten im Pub!', hashtags: [], warum: 'Termin', terminBis: soon },
+      ]),
+    });
+    expect(await studio.fillChannel(channel)).toBe(0);
+    expect(createdItems.length).toBe(0);
+    // Runde 1 generiert + verwirft; Runde 2 filtert den gesperrten Termin → accepted leer → Abbruch
+    expect((llm.complete as any).mock.calls.length).toBe(2);
+  });
+
+  it('v977: Prompt trägt Veröffentlichungsfenster und ZEITBEZUG-Regel', async () => {
+    const channel = makeChannel({ mode: 'approve' });
+    const { studio, llm } = makeStack({ channel });
+    await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('VERÖFFENTLICHUNGSZEITRAUM');
+    expect(prompt).toContain('erscheinen zwischen');
+    expect(prompt).toContain('ZEITBEZUG');
+    expect(prompt).toContain('NIE relative Zeitwörter');
+  });
+
   it('Termin-Idee läuft am Token-Gate vorbei (Ort/Format teilen sich alle Ankündigungen)', async () => {
     const channel = makeChannel({ mode: 'approve' });
     // Geplanter NORMALER Post mit fast gleichen Titel-Tokens (anderes Match, kein terminAt)
