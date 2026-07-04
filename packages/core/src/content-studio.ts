@@ -128,12 +128,66 @@ export function stripMetaLines(body: string): string {
 }
 
 /** Tolerantes Parsen der LLM-Ideen (JSON-Array). */
+/**
+ * v978 — LLMs liefern gelegentlich fast-valides JSON (Realfall 04.07., DB/Live
+ * bewiesen: deutsches Zitat „mehr als aufgetankt" — öffnend typografisch,
+ * schließend ASCII-Quote → String vorzeitig beendet, JSON.parse kaputt, der
+ * ganze Batch verworfen). Reparatur: ASCII-Schließzeichen nach „ typografisch
+ * machen; greift NUR im Muster „…" und lässt strukturelle Quotes unangetastet.
+ */
+export function repairGermanQuotes(text: string): string {
+  return text.replace(/„([^„"“]*)"/g, '„$1“');
+}
+
+/**
+ * v978 — ersten balancierten Top-Level-JSON-Array im Text finden (String-/
+ * Escape-bewusst). Der alte Greedy-Regex `\[[\s\S]*\]` riss von der ersten [
+ * bis zur LETZTEN ] — Prosa mit Klammern vor/nach dem Array machte den Parse
+ * kaputt.
+ */
+export function extractJsonArray(text: string): unknown[] | null {
+  /** Index der zum `[` bei start passenden `]` (String-/Escape-bewusst), -1 wenn keine. */
+  const matchBalanced = (t: string, start: number): number => {
+    let depth = 0, inStr = false, esc = false;
+    for (let i = start; i < t.length; i++) {
+      const ch = t[i];
+      if (esc) { esc = false; continue; }
+      if (inStr) {
+        if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === '[') depth++;
+      else if (ch === ']' && --depth === 0) return i;
+    }
+    return -1;
+  };
+  // Reparierte Variante ZUERST: bei kaputten Zitaten liest der Scanner sonst
+  // String-Grenzen falsch und findet nur innere Felder (z.B. das hashtags-Array).
+  const variants = [repairGermanQuotes(text), text];
+  let scalarFallback: unknown[] | null = null;
+  for (const t of variants) {
+    for (let start = t.indexOf('['); start !== -1; start = t.indexOf('[', start + 1)) {
+      const end = matchBalanced(t, start);
+      if (end === -1) continue;
+      try {
+        const parsed = JSON.parse(t.slice(start, end + 1));
+        if (Array.isArray(parsed)) {
+          // Ideen sind Objekte — ein reines Skalar-Array ist ein inneres Feld
+          if (parsed.some(e => e !== null && typeof e === 'object' && !Array.isArray(e))) return parsed;
+          scalarFallback ??= parsed;
+        }
+      } catch { /* nächste Startposition probieren */ }
+    }
+  }
+  return scalarFallback;
+}
+
 export function parseIdeas(text: string): GeneratedIdea[] {
-  const match = text?.match(/\[[\s\S]*\]/);
-  if (!match) return [];
+  const parsed = extractJsonArray(text ?? '');
+  if (!parsed) return [];
   try {
-    const parsed = JSON.parse(match[0]);
-    if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((i: any) => i && typeof i.body === 'string' && i.body.trim().length > 10)
       .map((i: any) => {
@@ -287,7 +341,10 @@ export class ContentStudio {
     for (let round = 0; round < 4 && created < target; round++) {
       const batchSize = Math.min(8, target - created);
       const ideas = await this.generateIdeas(channel, batchSize, family.block, blocked, upcoming, window);
-      if (ideas.length === 0) break;
+      // v978 — ein leerer/unparsebarer Batch beendet den Lauf NICHT mehr
+      // (vorher: erster kaputter Batch → Kanal blieb komplett leer); die
+      // nächste Runde ist ein frischer LLM-Wurf.
+      if (ideas.length === 0) continue;
 
       // v973 — Token-Gate + semantisches Gate (Embeddings/Judge) in einem:
       // Paraphrasen derselben Story („geringfügig anders geschrieben") werden
@@ -323,6 +380,7 @@ export class ContentStudio {
       // Termine zuerst: sie sind an feste Slots vor dem Anpfiff gebunden.
       // Im Termin-Durchlauf (voller Kanal) werden NUR Termine angelegt.
       accepted = terminOnly ? terminCands : [...terminCands, ...accepted];
+      this.logger.info({ channel: channel.name, round, ideas: ideas.length, termine: terminCands.length, akzeptiert: accepted.length, created }, 'v978 studio round');
       if (accepted.length === 0) break; // nur noch Duplikate → Thema erschöpft
 
       for (const idea of accepted) {
@@ -450,7 +508,14 @@ export class ContentStudio {
       + familyBlock;
 
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 3000, tier: 'fast' });
-    return parseIdeas(response.content ?? '');
+    const content = response.content ?? '';
+    const ideas = parseIdeas(content);
+    // v978 — Beobachtbarkeit: ein unparsebarer Batch war bisher UNSICHTBAR
+    // (stiller Abbruch, „Horizont bereits gefüllt") — Realfall 04.07.
+    if (ideas.length === 0 && content.trim().length > 0) {
+      this.logger.warn({ channel: channel.name, head: content.slice(0, 200) }, 'v978 LLM-Batch unparseable — Runde übersprungen');
+    }
+    return ideas;
   }
 
   /** v977 — konfigurierbarer Ankündigungs-Vorlauf (config.termin_lead_hours, Default 3h, Cap 48h). */
@@ -524,7 +589,7 @@ ${terminRule}${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkre
 - 3-6 Hashtags je Post — AUSSCHLIESSLICH ins Feld "hashtags", NIEMALS in den body (weder am Ende noch als eigene Zeile; sie werden beim Posten automatisch angehängt).
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
 ${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
-Antworte NUR mit einem JSON-Array:
+Antworte NUR mit einem VALIDEN JSON-Array (Zitate in Texten typografisch „…“ oder mit \\" escapen — nie nackte " im String):
 [{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses"}]`;
   }
 

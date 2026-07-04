@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.978] - 2026-07-04
+
+### Fixed — Studio erzeugte gar nichts mehr: fast-valides LLM-JSON verwarf den ganzen Batch (v978)
+
+Live-Befund nach dem .977-Deploy (Dry-Run gegen Prod-DB reproduziert): Haiku
+schreibt deutsche Zitate als „mehr als aufgetankt" — öffnend typografisch,
+schließend ASCII-Anführungszeichen. Das beendet den JSON-String vorzeitig,
+`JSON.parse` scheiterte, der komplette Batch wurde still verworfen und der
+erste leere Batch beendete den ganzen Kanal-Lauf („Planungshorizont bereits
+gefüllt" ohne einen einzigen Logeintrag).
+
+- `repairGermanQuotes`: ASCII-Schließzeichen nach „ wird typografisch
+  repariert (greift nur im Muster „…", strukturelle Quotes bleiben).
+- `extractJsonArray`: balancierter, String-bewusster Array-Scan statt
+  Greedy-Regex (Prosa mit Klammern vor/nach dem JSON bricht den Parse nicht
+  mehr); Objekt-Arrays werden bevorzugt, innere Skalar-Felder (hashtags)
+  nicht mehr fälschlich als Ergebnis genommen.
+- Batch-Resilienz: ein unparsebarer Batch überspringt nur die Runde (mit
+  warn-Log inkl. Antwort-Anfang) statt den Lauf zu beenden — die nächste
+  Runde ist ein frischer Wurf.
+- Beobachtbarkeit: jede Studio-Runde loggt Ideen/Termine/akzeptiert/created;
+  Prompt verlangt explizit valides JSON (Zitate typografisch oder escaped).
+- Verifiziert per Dry-Run gegen die Produktions-DB: aus der zuvor komplett
+  verworfenen Antwort entstehen 6 Beiträge, davon 3 Public-Viewing-
+  Ankündigungen mit Slot vor Anpfiff (inkl. Ad-hoc-Slot Anpfiff−3h).
+
 ## [0.19.0-multi-ha.977] - 2026-07-04
 
 ### Fixed — Termine erreichen die Kanäle wirklich; keine Posts mehr nach dem Ereignis (v977)

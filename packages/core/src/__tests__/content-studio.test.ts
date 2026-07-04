@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ContentStudio, nextFreeSlots, parseIdeas, parseEventTime, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle, extractTrailingHashtags } from '../content-studio.js';
+import { ContentStudio, nextFreeSlots, parseIdeas, parseEventTime, extractJsonArray, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle, extractTrailingHashtags } from '../content-studio.js';
 import type { SocialRepository, SocialChannel, ContentItem, InterestsRepository, InsightsRepository } from '@alfred/storage';
 
 const OWNER = 'owner-1';
@@ -553,6 +553,40 @@ describe('ContentStudio (v935)', () => {
     await studio.fillChannel(channel);
     expect((interestsRepo.createTopic as any).mock.calls[0][1]).toMatchObject({ name: 'Amateurfußball NÖ', origin: 'auto' });
     expect((socialRepo.updateChannel as any).mock.calls[0][2].config.topic_id).toBe('t-new');
+  });
+});
+
+describe('parseIdeas — Format-Reparatur (v978)', () => {
+  it('Realfall 04.07.: deutsches Zitat mit ASCII-Schließzeichen bricht das JSON nicht mehr', () => {
+    const broken = '```json\n[{"title": "Klopp zum DFB", "body": "Der Coach fühlt sich nach eigener Aussage „mehr als aufgetankt" und offen für die Aufgabe. Die Gespräche laufen weiter ohne Zeitdruck dabei.", "hashtags": ["Klopp"], "warum": "aktuell"}]\n```';
+    const out = parseIdeas(broken);
+    expect(out.length).toBe(1);
+    expect(out[0].body).toContain('„mehr als aufgetankt“');
+  });
+
+  it('Prosa mit Klammern vor und nach dem Array stört den Parse nicht', () => {
+    const noisy = 'Hier die Posts [Stand 04.07.]:\n[{"title": "T", "body": "Ein ausreichend langer Beitragstext für den Filter hier.", "hashtags": []}]\nHinweis: [terminBis] wurde gesetzt.';
+    expect(parseIdeas(noisy).length).toBe(1);
+  });
+
+  it('extractJsonArray: sauberes gefenctes JSON wie bisher', () => {
+    expect(extractJsonArray('```json\n[1, 2, [3]]\n```')).toEqual([1, 2, [3]]);
+    expect(extractJsonArray('kein array hier')).toBeNull();
+  });
+});
+
+describe('ContentStudio — Batch-Resilienz (v978)', () => {
+  it('unparsebarer erster Batch beendet den Lauf nicht — nächste Runde liefert', async () => {
+    const channel = makeChannel({ mode: 'approve' });
+    const { studio, llm, createdItems } = makeStack({ channel });
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: 'Sorry, hier ist Prosa statt JSON — kein Array weit und breit.' })
+      .mockResolvedValueOnce({ content: JSON.stringify([
+        { title: 'Zweite Runde', body: 'Ein vollwertiger Beitrag aus dem zweiten LLM-Wurf mit genug Substanz.', hashtags: [], warum: 'x' },
+      ]) });
+    const created = await studio.fillChannel(channel);
+    expect(created).toBeGreaterThanOrEqual(1);
+    expect(createdItems.some(i => i.title === 'Zweite Runde')).toBe(true);
   });
 });
 
