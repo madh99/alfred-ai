@@ -507,7 +507,7 @@ export class ContentStudio {
       : this.buildPostPrompt(channel, count, dossier, bestPerformers, blockedTitles, window))
       + familyBlock;
 
-    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 3000, tier: 'fast' });
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 3000, tier: this.modelTier(channel) });
     const content = response.content ?? '';
     const ideas = parseIdeas(content);
     // v978 — Beobachtbarkeit: ein unparsebarer Batch war bisher UNSICHTBAR
@@ -522,6 +522,18 @@ export class ContentStudio {
   private terminLeadHours(channel: SocialChannel): number {
     const raw = Number(channel.config.termin_lead_hours);
     return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 48) : 3;
+  }
+
+  /**
+   * v979 — Modell-Tier für die Content-Erzeugung je Kanal (config.model_tier):
+   * 'fast' (Default, unverändert) | 'medium' (hochwertige Serienproduktion,
+   * z.B. Sonnet für Redaktionstexte) | 'default' | 'strong'. Unbekannte Werte
+   * fallen auf 'fast'; ein nicht konfiguriertes medium-Tier routet der
+   * ModelRouter ohnehin auf default.
+   */
+  private modelTier(channel: SocialChannel): 'fast' | 'medium' | 'default' | 'strong' {
+    const raw = channel.config.model_tier;
+    return raw === 'medium' || raw === 'default' || raw === 'strong' ? raw : 'fast';
   }
 
   /**

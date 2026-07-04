@@ -75,6 +75,9 @@ export const LLMProviderConfigSchema = z.object({
 export const MultiModelConfigSchema = z.object({
   default: LLMProviderConfigSchema,
   strong: LLMProviderConfigSchema.optional(),
+  // v979 — hochwertige Serienproduktion (Studio-Texte u.ä.): Qualität über
+  // fast, Kosten unter strong; nicht konfiguriert → Router nutzt default
+  medium: LLMProviderConfigSchema.optional(),
   fast: LLMProviderConfigSchema.optional(),
   embeddings: LLMProviderConfigSchema.optional(),
   local: LLMProviderConfigSchema.optional(),

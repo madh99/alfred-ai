@@ -575,6 +575,27 @@ describe('parseIdeas — Format-Reparatur (v978)', () => {
   });
 });
 
+describe('ContentStudio — Modell-Tier je Kanal (v979)', () => {
+  it('config.model_tier steuert das LLM-Tier der Content-Erzeugung', async () => {
+    const channel = makeChannel({ config: { topic_id: 't-1', model_tier: 'medium' } });
+    const { studio, llm } = makeStack({ channel });
+    await studio.fillChannel(channel);
+    expect((llm.complete as any).mock.calls[0][0].tier).toBe('medium');
+  });
+
+  it('ohne bzw. mit ungültigem model_tier bleibt fast (Default unverändert)', async () => {
+    const plain = makeChannel({});
+    const { studio, llm } = makeStack({ channel: plain });
+    await studio.fillChannel(plain);
+    expect((llm.complete as any).mock.calls[0][0].tier).toBe('fast');
+
+    const invalid = makeChannel({ config: { topic_id: 't-1', model_tier: 'turbo' } });
+    const { studio: s2, llm: llm2 } = makeStack({ channel: invalid });
+    await s2.fillChannel(invalid);
+    expect((llm2.complete as any).mock.calls[0][0].tier).toBe('fast');
+  });
+});
+
 describe('ContentStudio — Batch-Resilienz (v978)', () => {
   it('unparsebarer erster Batch beendet den Lauf nicht — nächste Runde liefert', async () => {
     const channel = makeChannel({ mode: 'approve' });

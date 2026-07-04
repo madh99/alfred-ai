@@ -91,8 +91,8 @@ export function SocialPage() {
   const [settingsDraft, setSettingsDraft] = useState<{
     persona: string; slots: string; blacklist: string; maxPostsPerDay: number;
     planningHorizonDays: number; generateImages: boolean; imageBudgetTotal: number;
-    lessons: string[]; newLesson: string;
-  }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '' });
+    lessons: string[]; newLesson: string; modelTier: string;
+  }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast' });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
@@ -308,6 +308,7 @@ export function SocialPage() {
       imageBudgetTotal: typeof c.config.image_budget_per_month === 'number' ? c.config.image_budget_per_month : 30,
       lessons: Array.isArray(c.config.lessons) ? c.config.lessons.map(String) : [],
       newLesson: '',
+      modelTier: typeof c.config.model_tier === 'string' ? c.config.model_tier : 'fast',
     });
     if (interestTopics.length === 0) {
       client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
@@ -325,7 +326,7 @@ export function SocialPage() {
         blacklist: csv(d.blacklist),
         maxPostsPerDay: d.maxPostsPerDay,
         planningHorizonDays: d.planningHorizonDays,
-        config: { generate_images: d.generateImages, image_budget_per_month: d.imageBudgetTotal, lessons },
+        config: { generate_images: d.generateImages, image_budget_per_month: d.imageBudgetTotal, lessons, model_tier: d.modelTier },
       });
       setSettingsId(null);
       await load();
@@ -746,6 +747,16 @@ export function SocialPage() {
                         Bilder generieren
                       </label>
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-500">Text-Modell (LLM-Qualität für die Content-Erzeugung dieses Kanals)</label>
+                    <select value={settingsDraft.modelTier} onChange={e => setSettingsDraft(d => ({ ...d, modelTier: e.target.value }))}
+                      className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1">
+                      <option value="fast">fast — Standard, günstig (kurze Community-Posts)</option>
+                      <option value="medium">medium — hochwertige Serienproduktion (Redaktionstexte)</option>
+                      <option value="default">default — Alltagsmodell des Assistenten</option>
+                      <option value="strong">strong — Topmodell (höchste Qualität, teuer)</option>
+                    </select>
                   </div>
                   <div>
                     <label className="text-[11px] text-gray-500">Blacklist / Tabu-Themen (kommagetrennt)</label>

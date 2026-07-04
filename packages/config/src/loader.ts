@@ -53,6 +53,9 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_LLM_STRONG_PROVIDER: ['llm', 'strong', 'provider'],
   ALFRED_LLM_STRONG_MODEL: ['llm', 'strong', 'model'],
   ALFRED_LLM_STRONG_API_KEY: ['llm', 'strong', 'apiKey'],
+  ALFRED_LLM_MEDIUM_PROVIDER: ['llm', 'medium', 'provider'],
+  ALFRED_LLM_MEDIUM_MODEL: ['llm', 'medium', 'model'],
+  ALFRED_LLM_MEDIUM_API_KEY: ['llm', 'medium', 'apiKey'],
   ALFRED_LLM_FAST_PROVIDER: ['llm', 'fast', 'provider'],
   ALFRED_LLM_FAST_MODEL: ['llm', 'fast', 'model'],
   ALFRED_LLM_FAST_API_KEY: ['llm', 'fast', 'apiKey'],
@@ -432,7 +435,7 @@ export class ConfigLoader {
     // When env vars set both flat keys (provider, model) and tier sub-objects
     // (strong, fast), the Zod union would pick the flat schema and strip tiers.
     // Move flat keys into `default` so MultiModelConfigSchema is matched.
-    const tiers = ['strong', 'fast', 'embeddings', 'local', 'fallback'] as const; // v868.1 — fallback-Tier
+    const tiers = ['strong', 'medium', 'fast', 'embeddings', 'local', 'fallback'] as const; // v868.1 fallback + v979 medium
     const preLlm = withEnv.llm as Record<string, unknown> | undefined;
     if (preLlm && 'provider' in preLlm) {
       const hasTierSubObjects = tiers.some(t => preLlm[t] && typeof preLlm[t] === 'object');
@@ -467,7 +470,7 @@ export class ConfigLoader {
     // explizite Config schlägt implizite Propagation.
     const explicitTierKeys = new Set<string>();
     if (llmConfig && typeof llmConfig === 'object') {
-      for (const tier of ['default', 'strong', 'fast', 'embeddings', 'local', 'fallback']) {
+      for (const tier of ['default', 'strong', 'medium', 'fast', 'embeddings', 'local', 'fallback']) {
         const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
         if (tierConfig?.apiKey) explicitTierKeys.add(tier);
       }
@@ -475,7 +478,7 @@ export class ConfigLoader {
         ?? ((llmConfig.default as Record<string, unknown> | undefined)?.apiKey as string | undefined);
 
       if (sharedApiKey) {
-        for (const tier of ['default', 'strong', 'fast', 'embeddings', 'local', 'fallback']) {
+        for (const tier of ['default', 'strong', 'medium', 'fast', 'embeddings', 'local', 'fallback']) {
           const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
           if (tierConfig && !tierConfig.apiKey) {
             tierConfig.apiKey = sharedApiKey;

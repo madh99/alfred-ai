@@ -94,6 +94,7 @@ export class SocialSkill extends Skill {
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },
+        model_tier: { type: 'string', enum: ['fast', 'medium', 'default', 'strong'], description: 'update_channel: LLM-Qualität für die Content-Erzeugung dieses Kanals (fast=Standard/billig, medium=hochwertige Serienproduktion z.B. Sonnet, strong=Topmodell)' },
         posting_slots: { type: 'array', items: { type: 'string' }, description: 'update_channel: bevorzugte Slots in Server-Ortszeit, z.B. ["Mo 18:00", "Sa 10:00"]. Leer/nicht gesetzt = Plattform-Best-Practice-Slots (inkl. Wochenende) gelten automatisch. Nach Änderung ggf. replan_channel für bereits geplante Beiträge.' },
         blacklist: { type: 'array', items: { type: 'string' }, description: 'update_channel: Tabu-Wörter/-Themen (Leitplanke)' },
         max_posts_per_day: { type: 'number', description: 'update_channel: Tages-Limit (Default 3)' },
@@ -300,7 +301,11 @@ export class SocialSkill extends Skill {
     if (Array.isArray(input.blacklist)) patch.blacklist = input.blacklist.map(String);
     if (typeof input.max_posts_per_day === 'number') patch.maxPostsPerDay = input.max_posts_per_day;
     if (typeof input.planning_horizon_days === 'number') patch.planningHorizonDays = input.planning_horizon_days;
-    if (input.config && typeof input.config === 'object') patch.config = deepMergeConfig(channel.config, input.config as Record<string, unknown>);
+    // v979 — Modell-Tier für die Content-Erzeugung (landet in config.model_tier)
+    if (input.model_tier === 'fast' || input.model_tier === 'medium' || input.model_tier === 'default' || input.model_tier === 'strong') {
+      patch.config = deepMergeConfig(channel.config, { model_tier: input.model_tier });
+    }
+    if (input.config && typeof input.config === 'object') patch.config = deepMergeConfig((patch.config as Record<string, unknown>) ?? channel.config, input.config as Record<string, unknown>);
     if (typeof input.name === 'string' && input.name.trim()) patch.name = input.name.trim();
     if (Object.keys(patch).length === 0) return { success: false, error: 'Nichts zu ändern übergeben.' };
     await this.repo.updateChannel(userId, channel.id, patch);

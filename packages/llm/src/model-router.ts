@@ -11,7 +11,7 @@ import { createLLMProvider } from './provider-factory.js';
 import { TokenCostTracker } from './token-costs.js';
 import type { TokenCostSummary, UsagePersistFn } from './token-costs.js';
 
-const TIERS: ModelTier[] = ['default', 'strong', 'fast', 'embeddings', 'local', 'fallback'];
+const TIERS: ModelTier[] = ['default', 'strong', 'medium', 'fast', 'embeddings', 'local', 'fallback'];
 
 /** v868 — Payload des Billing-Alert-Callbacks (Owner-Benachrichtigung).
  *  v868.3 — kind: 'failure' (Guthaben/Quota-Fehler) | 'recovered' (Entwarnung). */
@@ -35,7 +35,7 @@ const BILLING_COOLDOWN_MS = 5 * 60_000;
  *  steht bewusst am ENDE — er springt nur ein wenn alle regulären Tiers
  *  ausgefallen sind. 'fallback' wird nie regulär geroutet (resolve() kennt
  *  ihn nicht als Request-Tier-Ziel; er lebt nur in dieser Kette). */
-const FALLBACK_ORDER: ModelTier[] = ['default', 'strong', 'fast', 'fallback'];
+const FALLBACK_ORDER: ModelTier[] = ['default', 'strong', 'medium', 'fast', 'fallback'];
 
 /**
  * Default reasoning_effort per tier — only applied when the underlying model is a
@@ -46,6 +46,7 @@ const FALLBACK_ORDER: ModelTier[] = ['default', 'strong', 'fast', 'fallback'];
  */
 const TIER_DEFAULT_EFFORT: Partial<Record<ModelTier, 'none' | 'low' | 'medium' | 'high' | 'xhigh'>> = {
   fast: 'low',
+  medium: 'medium', // v979 — nur relevant, wenn medium auf ein Reasoning-Modell zeigt
   default: 'medium',
   strong: 'high',
 };

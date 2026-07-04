@@ -461,4 +461,16 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(r.success).toBe(true);
     expect(r.display).toContain('replan_channel');
   });
+
+  it('v979: update_channel model_tier landet in config.model_tier (bestehende Config bleibt)', async () => {
+    const channel = makeChannel({ config: { generate_images: true } });
+    const { skill, state } = makeSkill(channel, makeItem());
+    const r = await skill.execute({ action: 'update_channel', channel: 'Testkanal', model_tier: 'medium' }, CTX);
+    expect(r.success).toBe(true);
+    expect((state.channel.config as any).model_tier).toBe('medium');
+    expect((state.channel.config as any).generate_images).toBe(true);
+    // ungültiger Wert wird ignoriert
+    const r2 = await skill.execute({ action: 'update_channel', channel: 'Testkanal', model_tier: 'turbo' }, CTX);
+    expect(r2.success).toBe(false); // nichts zu ändern
+  });
 });

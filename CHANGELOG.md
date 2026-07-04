@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.979] - 2026-07-04
+
+### Added — LLM-Tier „medium" + Modellwahl je Social-Kanal (v979)
+
+Bisher schrieb das fast-Modell (Haiku) alle Studio-Texte — auch die
+redaktionellen Artikel der öffentlichen Website. Ein stärkeres Modell nur
+für diese Serienproduktion war nicht konfigurierbar, ohne das Chat-Modell
+(default) global umzustellen.
+
+- Neues Modell-Tier **`medium`** (Types, Config-Schema, ENV-Variablen
+  `ALFRED_LLM_MEDIUM_*`, ModelRouter inkl. Fallback-Kette default → strong
+  → medium → fast → fallback): hochwertige Serienproduktion, entkoppelt vom
+  Chat-Alltag. Nicht konfiguriert → Router fällt auf default zurück.
+- **`config.model_tier` je Social-Kanal** (`fast` | `medium` | `default` |
+  `strong`, Default `fast` — Verhalten unverändert): steuert das LLM der
+  Content-Erzeugung dieses Kanals. Setzbar per `update_channel model_tier`,
+  UI-Feld „Text-Modell" im Kanal-Einstellungs-Panel.
+- 3 neue Tests (Studio-Tier aus Kanal-Config, Fallback bei ungültigem Wert,
+  Skill-Feld mit Config-Merge).
+
 ## [0.19.0-multi-ha.978] - 2026-07-04
 
 ### Fixed — Studio erzeugte gar nichts mehr: fast-valides LLM-JSON verwarf den ganzen Batch (v978)
