@@ -68,6 +68,20 @@ interface GeneratedIdea {
   warum: string;
   /** v941 — Bildvorschlag als eigenes Feld (wird NIE mitgepostet; dient als Prompt für image_generate). */
   bildidee?: string;
+  /** v975 — Termin-Ankündigung: ISO-Zeit des Termins; der Post muss VOR diesem Zeitpunkt erscheinen. */
+  terminBis?: string;
+}
+
+/**
+ * v975 — Termin-Zeit aus Event-Titeln parsen („… – 04.07.2026, 19:00").
+ * Interpretation in Server-Lokalzeit — dieselbe wie nextFreeSlots, damit
+ * Slot-vor-Termin-Vergleiche konsistent sind. null = kein Termin erkennbar.
+ */
+export function parseEventTime(title: string): string | null {
+  const m = title.match(/(\d{1,2})\.(\d{1,2})\.(\d{4}),?\s*(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const at = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]), Number(m[4]), Number(m[5]));
+  return Number.isFinite(at.getTime()) ? at.toISOString() : null;
 }
 
 /**
@@ -122,6 +136,9 @@ export function parseIdeas(text: string): GeneratedIdea[] {
           warum: typeof i.warum === 'string' ? i.warum.slice(0, 300) : '',
           bildidee: typeof i.bildidee === 'string' && i.bildidee.trim().length > 0 ? i.bildidee.slice(0, 400)
             : typeof i.image_idea === 'string' && i.image_idea.trim().length > 0 ? i.image_idea.slice(0, 400) : undefined,
+          // v975 — auf kanonisches ISO normalisieren (Vergleich mit Slot-ISO-Strings)
+          terminBis: typeof i.terminBis === 'string' && Number.isFinite(Date.parse(i.terminBis))
+            ? new Date(i.terminBis).toISOString() : undefined,
         };
       })
       .filter((i: GeneratedIdea) => i.body.length > 10)
@@ -215,16 +232,24 @@ export class ContentStudio {
       this.socialRepo.listItems(this.ownerUserId, { channelId: channel.id, status: 'published', updatedSince: publishedWindow, limit: 200 }),
       this.socialRepo.listItems(this.ownerUserId, { channelId: channel.id, status: 'rejected', updatedSince: rejectedWindow, limit: 200 }),
     ]);
+    // v975 — eigene Termin-Ankündigungen tragen ihr terminAt (performance.
+    // terminBis) mit: sie sperren NUR denselben Termin, nicht den Text
+    // (Ort/Format teilen sich alle Ankündigungen).
+    const asBlocked = (i: ContentItem): BlockedStory => {
+      const t = i.performance?.terminBis;
+      return { id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body, terminAt: typeof t === 'string' ? t : undefined };
+    };
     const blocked: BlockedStory[] = [
-      ...planned.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body })),
-      ...ownPublished.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body })),
-      ...ownRejected.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body })),
+      ...planned.map(asBlocked),
+      ...ownPublished.map(asBlocked),
+      ...ownRejected.map(asBlocked),
       ...family.siblingStories,
     ];
 
     const isYoutube = channel.platform === 'youtube';
     let created = 0;
     const createdTitles: string[] = [];
+    const slotPool = [...slots];
     // v971 — in BATCHES generieren (LLM liefert je Aufruf max. ~10 brauchbare
     // Ideen): weitere Runden bis der Bedarf gedeckt ist oder keine neuen,
     // dedup-überlebenden Ideen mehr kommen.
@@ -236,10 +261,22 @@ export class ContentStudio {
       // v973 — Token-Gate + semantisches Gate (Embeddings/Judge) in einem:
       // Paraphrasen derselben Story („geringfügig anders geschrieben") werden
       // jetzt auch gefangen, nicht nur nah-wortgleiche Titel.
+      // v975 — Termin-Ankündigungen laufen an beiden Gates VORBEI: ihre
+      // Identität ist der Termin selbst (exaktes terminBis), der Text teilt
+      // sich Ort/Format mit jeder anderen Ankündigung.
       const candidates = ideas.map(i => ({ ...i, title: i.title || i.body.slice(0, 60) }));
+      const announcedAt = new Set(blocked.map(b => b.terminAt).filter((t): t is string => !!t));
+      const terminCands: GeneratedIdea[] = [];
+      for (const c of candidates) {
+        if (!c.terminBis || announcedAt.has(c.terminBis)) continue; // Termin schon angekündigt (oder im Batch doppelt)
+        announcedAt.add(c.terminBis);
+        terminCands.push(c);
+      }
+      const normalCands = candidates.filter(c => !c.terminBis);
+      const normalBlocked = blocked.filter(b => !b.terminAt);
       let accepted: GeneratedIdea[];
       if (this.storyDeduper) {
-        const result = await this.storyDeduper.filterCandidates(candidates, blocked);
+        const result = await this.storyDeduper.filterCandidates(normalCands, normalBlocked);
         accepted = result.accepted;
         if (result.droppedToken + result.droppedSemantic > 0) {
           this.logger.info({ channel: channel.name, droppedToken: result.droppedToken, droppedSemantic: result.droppedSemantic }, 'v973 duplicate ideas dropped');
@@ -247,15 +284,34 @@ export class ContentStudio {
       } else {
         // Fallback ohne Deduper: reines Token-Gate (v957-Verhalten)
         accepted = [];
-        for (const idea of candidates) {
-          if (isNearDuplicateTitle(idea.title, [...blocked.map(b => b.title), ...accepted.map(a => a.title!)])) continue;
+        for (const idea of normalCands) {
+          if (isNearDuplicateTitle(idea.title, [...normalBlocked.map(b => b.title), ...accepted.map(a => a.title!)])) continue;
           accepted.push(idea);
         }
       }
+      // Termine zuerst: sie sind an feste Slots vor dem Anpfiff gebunden
+      accepted = [...terminCands, ...accepted];
       if (accepted.length === 0) break; // nur noch Duplikate → Thema erschöpft
 
       for (const idea of accepted) {
         if (created >= needed) break;
+        // v975 — Slot-Wahl VOR dem Anlegen: eine Termin-Ankündigung braucht
+        // einen Slot VOR dem Anpfiff (den spätesten davor — nah am Termin);
+        // gibt es keinen, wird die Idee verworfen (danach wäre sie wertlos).
+        let slot: string | undefined;
+        if (channel.mode === 'approve' || channel.mode === 'autonomous') {
+          if (idea.terminBis) {
+            const before = slotPool.filter(s => s < idea.terminBis!);
+            if (before.length === 0) {
+              this.logger.info({ channel: channel.name, termin: idea.terminBis, title: idea.title }, 'v975 termin idea dropped (kein freier Slot vor dem Termin)');
+              continue;
+            }
+            slot = before[before.length - 1];
+            slotPool.splice(slotPool.indexOf(slot), 1);
+          } else {
+            slot = slotPool.shift();
+          }
+        }
         const media = await this.maybeGenerateImage(channel, idea);
         const item = await this.socialRepo.createItem(this.ownerUserId, channel.id, {
           status: 'draft',
@@ -265,14 +321,15 @@ export class ContentStudio {
           media,
           source: 'studio',
         });
-        await this.socialRepo.mergePerformance(this.ownerUserId, item.id, { warum: idea.warum });
-        // v973 — Embedding des neuen Items persistieren (künftige Läufe lesen es)
-        await this.storyDeduper?.embedStory(item.id, { title: idea.title, body: idea.body });
-        if (channel.mode === 'approve' || channel.mode === 'autonomous') {
-          const slot = slots[created];
-          if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
-        }
-        blocked.push({ id: item.id, title: idea.title || idea.body.slice(0, 60), body: idea.body });
+        await this.socialRepo.mergePerformance(this.ownerUserId, item.id, {
+          warum: idea.warum,
+          ...(idea.terminBis ? { terminBis: idea.terminBis } : {}),
+        });
+        // v973 — Embedding des neuen Items persistieren (künftige Läufe lesen
+        // es); Termin-Posts nicht — sie nehmen an den Gates nicht teil.
+        if (!idea.terminBis) await this.storyDeduper?.embedStory(item.id, { title: idea.title, body: idea.body });
+        if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+        blocked.push({ id: item.id, title: idea.title || idea.body.slice(0, 60), body: idea.body, terminAt: idea.terminBis });
         createdTitles.push(idea.title || idea.body.slice(0, 60));
         created++;
       }
@@ -368,9 +425,12 @@ export class ContentStudio {
       // deckte 15 keinen Tag ab); der Prompt-Block bleibt bei 15 Titeln.
       const siblingWindow = new Date(Date.now() - 60 * 24 * 3_600_000).toISOString();
       for (const sibling of siblings) {
-        const items = await this.socialRepo.listItems(this.ownerUserId, {
+        const allItems = await this.socialRepo.listItems(this.ownerUserId, {
           channelId: sibling.id, status: ['scheduled', 'approved', 'published'], updatedSince: siblingWindow, limit: 150,
         });
+        // v975 — Termin-Ankündigungen der Geschwister sperren hier NICHTS:
+        // jeder Kanal darf (und soll) denselben Termin selbst ankündigen.
+        const items = allItems.filter(i => typeof i.performance?.terminBis !== 'string');
         siblingStories.push(...items.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body })));
         const titles = items.map(i => (i.title ?? i.body.slice(0, 60))).slice(0, 15);
         sections.push(`- **${sibling.name}** (${sibling.platform})${sibling.persona ? ` — Rolle: ${sibling.persona.slice(0, 140)}` : ''}${titles.length ? `\n  Geplant/zuletzt dort: ${titles.join(' · ')}` : ''}`);
@@ -390,18 +450,22 @@ REGELN für die Abstimmung:
   }
 
   private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
+    // v975 — Termin-Ankündigungen: nur anweisen, wenn das Dossier Termine führt
+    const terminRule = dossier.includes('KOMMENDE TERMINE')
+      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Posts ohne Termin-Bezug: KEIN "terminBis"-Feld.\n`
+      : '';
     return `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS BEHANDELT — dieser STOFF ist gesperrt (auch umformuliert/mit anderem Titel VERBOTEN; wähle ANDERE Ereignisse/Geschichten):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
 - FAKTEN-TREUE (zwingend): Turnier-/Event-Namen, Jahreszahlen, Ergebnisse und Personalien NUR aus dem Dossier oben übernehmen — NIEMALS aus dem Trainingswissen raten. Steht im Dossier „WM", schreibe WM (nicht EM/EURO); auch in Hashtags. Ist ein Fakt nicht im Dossier belegt, lass ihn weg.
-${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
+${terminRule}${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
 - body = VOLLWERTIGER Beitrag mit 4-8 Sätzen und eigenem Mehrwert (Einordnung, Details, Frage an die Community) — NIEMALS nur Schlagzeile plus ein Satz. Dossier-Beiträge sind Rohstoff, kein Abschreibmaterial.
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
 - 3-6 Hashtags je Post — AUSSCHLIESSLICH ins Feld "hashtags", NIEMALS in den body (weder am Ende noch als eigene Zeile; sie werden beim Posten automatisch angehängt).
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
 ${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
-[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "bildidee": "optional: Bildvorschlag für dieses Posting"}]`;
+[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung: die ISO-Zeit aus der Termin-Zeile"}]`;
   }
 
   private buildYoutubePrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
@@ -462,23 +526,46 @@ Antworte NUR mit einem JSON-Array:
     if (topicIds.length === 0) return '';
     const blockedTitles = blocked?.map(b => b.title) ?? [];
     const sections: string[] = [];
+    // v975 — Event-Items (Quelle mit config.events=true) laufen NICHT im
+    // News-Strom mit: dort verdrängte jeder Collector-Lauf sie aus den Top-8
+    // (Realfall Public Viewing), und ihr ORT steckt in der summary, die der
+    // News-Block nie rendert. Über Topics hinweg per Titel dedupliziert
+    // (derselbe Feed hängt oft an mehreren Themen).
+    const events = new Map<string, { title: string; summary?: string; at: string }>();
+    const nowIso = new Date().toISOString();
     for (const topicId of topicIds) {
       try {
         const [topic, digest, items] = await Promise.all([
           this.interestsRepo.getTopicById(this.ownerUserId, topicId),
           this.interestsRepo.getDigest(topicId),
-          this.interestsRepo.listItems(topicId, { limit: 8 }),
+          this.interestsRepo.listItems(topicId, { limit: 30 }),
         ]);
+        for (const ev of items.filter(i => i.sourceKind === 'events')) {
+          const at = parseEventTime(ev.title);
+          if (!at || at <= nowIso) continue; // vorbei oder Zeit nicht lesbar
+          if (!events.has(ev.title)) events.set(ev.title, { title: ev.title, summary: ev.summary, at });
+        }
         // v973 — Rohstoff-Hygiene: Dossier-Beiträge, die dieser Kanal (oder die
         // Familie) schon behandelt hat, werden markiert — das LLM greift zu
         // anderem Stoff statt dieselbe Story neu zu erzählen.
-        const itemLines = items.map(i => {
+        const itemLines = items.filter(i => i.sourceKind !== 'events').slice(0, 8).map(i => {
           const covered = blockedTitles.length > 0 && isNearDuplicateTitle(i.title, blockedTitles);
           return `- ${i.title}${covered ? ' [BEREITS BEHANDELT — nicht erneut verwenden]' : ''}`;
         }).join('\n');
         const body = `${digest?.summary ?? ''}${itemLines ? `\nNeueste Beiträge:\n${itemLines}` : ''}`.trim();
         if (body) sections.push(topicIds.length > 1 ? `### Thema „${topic?.name ?? topicId.slice(0, 8)}"\n${body}` : body);
       } catch { /* einzelnes Topic überspringen */ }
+    }
+    // Bereits angekündigte Termine (performance.terminBis) nicht erneut anbieten.
+    // Identität = Termin-Zeit; parallele Termine zur selben Zeit teilen sich
+    // eine Ankündigung (dann beide in EINEM Post nennen).
+    const announced = new Set((blocked ?? []).map(b => b.terminAt).filter(Boolean));
+    const upcoming = [...events.values()]
+      .filter(e => !announced.has(e.at))
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .slice(0, 10);
+    if (upcoming.length > 0) {
+      sections.push(`### KOMMENDE TERMINE (ankündigen — der Post muss VOR dem Termin erscheinen)\n${upcoming.map(e => `- ${e.title}${e.summary ? ` — Ort: ${e.summary}` : ''} [terminBis: ${e.at}]`).join('\n')}`);
     }
     if (sections.length > 1) {
       sections.push('(Verteile die Posts sinnvoll über ALLE obigen Themen — nicht alles zu einem Thema.)');

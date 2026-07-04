@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.975] - 2026-07-04
+
+### Added — Termin-Ankündigungen aus Event-Feeds (v975)
+
+Befund: Public-Viewing-Termine erreichten nie einen Post, obwohl der Events-Feed
+als Themen-Quelle hing — Event-Items wurden im Dossier von jedem Collector-Lauf
+aus den neuesten 8 verdrängt, ihr Ort stand nur in der nie gerenderten
+Beschreibung, und die Planung kannte kein „muss VOR dem Termin erscheinen".
+
+- Quellen mit `config.events: true` stempeln ihre Items als `sourceKind
+  'events'`; das Studio-Dossier führt sie als eigene Sektion „KOMMENDE
+  TERMINE" mit Ort (aus der Beschreibung) und Termin-ISO — getrennt vom
+  News-Strom, nur zukünftige Termine, über Themen hinweg dedupliziert.
+- Der Ideen-Prompt erzeugt für Termine Ankündigungs-Posts mit Ort/Datum/
+  Uhrzeit und liefert die Termin-Zeit im neuen Idea-Feld `terminBis`; die
+  Slot-Vergabe wählt den spätesten freien Slot VOR dem Termin und verwirft
+  die Idee, wenn keiner existiert (nach Anpfiff wäre sie wertlos).
+- `terminBis` wird am Item persistiert (performance): derselbe Termin wird
+  nicht erneut angekündigt (auch nicht umformuliert). Ankündigungen laufen
+  an den Token-/Embedding-Gates VORBEI — ihre Identität ist der Termin,
+  nicht der Text (Ort/Format teilen sich alle Ankündigungen) — und
+  Geschwister-Kanäle dürfen denselben Termin selbst ankündigen.
+- 7 neue Tests: Collector-Stempel, Dossier-Sektion mit Ort/ISO, Slot vor
+  Anpfiff, Verwerfen ohne passenden Slot, Wiederholungs-Sperre über
+  persistiertes `terminBis`, Token-Gate-Ausnahme für Ankündigungen.
+
 ## [0.19.0-multi-ha.973] - 2026-07-04
 
 ### Fixed — Studio erzeugte dieselbe Story mehrfach („geringfügig anders geschrieben") (v973)

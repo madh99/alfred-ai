@@ -8,6 +8,13 @@ export interface BlockedStory {
   id?: string;
   title: string;
   body?: string;
+  /**
+   * v975 — Termin-Ankündigungen (performance.terminBis): ihre Identität ist
+   * der TERMIN, nicht der Text — Ort/Format teilen sich alle Ankündigungen
+   * („Public Viewing im …-Pub"), Token- und Embedding-Nähe sind hier normal.
+   * Einträge mit terminAt gehören NICHT in die Token-/Semantik-Gates.
+   */
+  terminAt?: string;
 }
 
 export interface CandidateStory {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ContentStudio, nextFreeSlots, parseIdeas, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle, extractTrailingHashtags } from '../content-studio.js';
+import { ContentStudio, nextFreeSlots, parseIdeas, parseEventTime, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle, extractTrailingHashtags } from '../content-studio.js';
 import type { SocialRepository, SocialChannel, ContentItem, InterestsRepository, InsightsRepository } from '@alfred/storage';
 
 const OWNER = 'owner-1';
@@ -553,5 +553,117 @@ describe('ContentStudio (v935)', () => {
     await studio.fillChannel(channel);
     expect((interestsRepo.createTopic as any).mock.calls[0][1]).toMatchObject({ name: 'Amateurfußball NÖ', origin: 'auto' });
     expect((socialRepo.updateChannel as any).mock.calls[0][2].config.topic_id).toBe('t-new');
+  });
+});
+
+describe('ContentStudio — Termin-Ankündigungen (v975)', () => {
+  // Realfall Public Viewing: Event-Titel tragen den Termin, der Ort steht in
+  // der summary („Dublin Irish Pub, Wien") — beides muss beim LLM ankommen.
+  const EVENT_LOCAL = new Date(2099, 6, 4, 19, 0); // 04.07.2099 19:00 Server-Ortszeit
+  const EVENT_ISO = EVENT_LOCAL.toISOString();
+  const EVENT_ITEM = {
+    id: 'ev1', topicId: 't-1', title: 'Kanada - Marokko – Canada – Morocco – 04.07.2099, 19:00',
+    summary: 'Dublin Irish Pub, Wien', sourceKind: 'events', createdAt: '2026-01-01',
+  };
+
+  it('parseEventTime: Termin aus Event-Titel, Server-Ortszeit wie nextFreeSlots', () => {
+    expect(parseEventTime(EVENT_ITEM.title)).toBe(EVENT_ISO);
+    expect(parseEventTime('Kein Termin hier')).toBeNull();
+  });
+
+  it('Dossier: Event überlebt den News-Strom (eigene Termin-Sektion mit ORT und ISO), News auf 8 gekappt', async () => {
+    const channel = makeChannel({});
+    const { studio, llm, interestsRepo } = makeStack({ channel });
+    const news = Array.from({ length: 9 }, (_, i) => ({
+      id: `n${i}`, topicId: 't-1', title: `News-Story Nummer ${i + 1}`, sourceKind: 'rss', createdAt: 'x',
+    }));
+    // Event ist das ÄLTESTE Item — im alten News-Strom wäre es längst verdrängt
+    (interestsRepo.listItems as any) = vi.fn(async () => [...news, EVENT_ITEM]);
+
+    await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('KOMMENDE TERMINE');
+    expect(prompt).toContain('Ort: Dublin Irish Pub, Wien');
+    expect(prompt).toContain(`[terminBis: ${EVENT_ISO}]`);
+    expect(prompt).toContain('TERMIN-ANKÜNDIGUNGEN');
+    expect(prompt).toContain('News-Story Nummer 8');
+    expect(prompt).not.toContain('News-Story Nummer 9'); // News-Kappe bleibt bei 8
+  });
+
+  it('Termin-Idee bekommt den SPÄTESTEN Slot vor dem Anpfiff; terminBis wird persistiert', async () => {
+    const channel = makeChannel({ mode: 'approve', postingSlots: ['Mo 18:00', 'Do 18:00'] });
+    const { studio, createdItems, transitions, socialRepo } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([
+        { title: 'Public Viewing: Kanada gegen Marokko', body: 'Kommt vorbei — wir schauen das Match gemeinsam im Dublin Irish Pub in Wien!', hashtags: ['pv'], warum: 'Termin', terminBis: EVENT_ISO },
+        { title: 'Transfer-Update', body: 'Was ist dran am Gerücht um XY? Die Fakten im Überblick und die Einordnung.', hashtags: ['transfer'], warum: 'Dossier' },
+      ]),
+    });
+    const created = await studio.fillChannel(channel);
+    expect(created).toBe(2);
+    const terminItem = createdItems.find(i => i.title?.includes('Public Viewing'))!;
+    const terminSlot = transitions.find(t => t.id === terminItem.id)!.at!;
+    const normalSlot = transitions.find(t => t.id !== terminItem.id)!.at!;
+    // Termin weit außerhalb des Horizonts → spätester Horizont-Slot; normale Idee bekommt den frühesten
+    expect(terminSlot < EVENT_ISO).toBe(true);
+    expect(terminSlot > normalSlot).toBe(true);
+    const perf = (socialRepo.mergePerformance as any).mock.calls.find((c: any[]) => c[1] === terminItem.id)![2];
+    expect(perf.terminBis).toBe(EVENT_ISO);
+  });
+
+  it('kein freier Slot vor dem Termin → Termin-Idee wird verworfen, normale Ideen laufen weiter', async () => {
+    const pastTermin = new Date().toISOString(); // alle Slots liegen NACH jetzt
+    const channel = makeChannel({ mode: 'approve' });
+    const { studio, createdItems } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([
+        { title: 'Public Viewing heute', body: 'Kurzfristige Ankündigung für das heutige Match im Pub — kommt vorbei!', hashtags: [], warum: 'Termin', terminBis: pastTermin },
+        { title: 'Transfer-Update', body: 'Was ist dran am Gerücht um XY? Die Fakten im Überblick und die Einordnung.', hashtags: [], warum: 'Dossier' },
+      ]),
+    });
+    await studio.fillChannel(channel);
+    expect(createdItems.some(i => i.title === 'Public Viewing heute')).toBe(false);
+    expect(createdItems.some(i => i.title === 'Transfer-Update')).toBe(true);
+  });
+
+  it('bereits angekündigter Termin (performance.terminBis) sperrt Idee UND Dossier-Zeile', async () => {
+    const channel = makeChannel({ mode: 'approve' });
+    const announced: ContentItem = {
+      id: 'old-pv', channelId: 'ch-1', userId: OWNER, status: 'scheduled', title: 'Public Viewing: Kanada gegen Marokko',
+      body: 'Wir schauen gemeinsam im Dublin Irish Pub!', hashtags: [], media: [], source: 'studio',
+      performance: { terminBis: EVENT_ISO }, createdAt: 'x', updatedAt: 'x',
+    } as unknown as ContentItem;
+    const { studio, llm, createdItems, interestsRepo } = makeStack({
+      channel, planned: [announced],
+      llmResponse: JSON.stringify([
+        { title: 'Public Viewing: Match im Pub', body: 'Kommt zum gemeinsamen Schauen ins Pub — Anpfiff am Abend, wir freuen uns!', hashtags: [], warum: 'Termin', terminBis: EVENT_ISO },
+      ]),
+    });
+    (interestsRepo.listItems as any) = vi.fn(async () => [EVENT_ITEM]);
+
+    const created = await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).not.toContain('KOMMENDE TERMINE'); // Dossier bietet den Termin nicht erneut an
+    expect(created).toBe(0);
+    expect(createdItems.length).toBe(0);
+  });
+
+  it('Termin-Idee läuft am Token-Gate vorbei (Ort/Format teilen sich alle Ankündigungen)', async () => {
+    const channel = makeChannel({ mode: 'approve' });
+    // Geplanter NORMALER Post mit fast gleichen Titel-Tokens (anderes Match, kein terminAt)
+    const similar: ContentItem = {
+      id: 'old', channelId: 'ch-1', userId: OWNER, status: 'scheduled', title: 'Public Viewing: Brasilien gegen Norwegen im Dublin Irish Pub',
+      body: 'Rückblick auf den Public-Viewing-Abend.', hashtags: [], media: [], source: 'studio',
+      createdAt: 'x', updatedAt: 'x',
+    } as unknown as ContentItem;
+    const { studio, createdItems } = makeStack({
+      channel, planned: [similar],
+      llmResponse: JSON.stringify([
+        { title: 'Public Viewing: Kanada gegen Marokko im Dublin Irish Pub', body: 'Nächster Termin — wir schauen das Achtelfinale gemeinsam, kommt vorbei!', hashtags: [], warum: 'Termin', terminBis: EVENT_ISO },
+      ]),
+    });
+    const created = await studio.fillChannel(channel);
+    expect(created).toBe(1);
+    expect(createdItems[0].title).toContain('Kanada gegen Marokko');
   });
 });

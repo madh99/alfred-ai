@@ -117,4 +117,18 @@ describe('TopicCollector', () => {
     expect(await collector.collectTopic(TOPIC)).toBe(0);
     expect(spies.insertItem).not.toHaveBeenCalled();
   });
+
+  it('v975: Quelle mit config.events=true stempelt Items als sourceKind events', async () => {
+    const eventsSource: TopicSource = {
+      ...WEB_SOURCE, id: 's-ev',
+      config: { query: 'public viewing termine', events: true },
+    };
+    const { repo, spies } = makeFakeRepo([eventsSource]);
+    const { registry, sandbox } = makeSearchStack([
+      { title: 'Kanada - Marokko – 04.07.2026, 19:00', url: 'https://fussball.cc/public-viewing/termine/x1' },
+    ]);
+    const collector = new TopicCollector(repo, registry, sandbox, makeLogger());
+    expect(await collector.collectTopic(TOPIC)).toBe(1);
+    expect((spies.insertItem as any).mock.calls[0][1]).toMatchObject({ sourceKind: 'events' });
+  });
 });

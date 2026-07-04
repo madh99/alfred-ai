@@ -120,7 +120,11 @@ export class TopicCollector {
           title: item.title,
           url: item.url,
           summary: item.summary,
-          sourceKind: source.kind,
+          // v975 — Quellen mit config.events=true (z.B. Termin-Feeds wie
+          // Public-Viewing) stempeln ihre Items als 'events': das Studio-
+          // Dossier führt sie als eigene Termin-Sektion statt im News-Strom,
+          // wo jeder Collector-Lauf sie aus den Top-8 verdrängt hat.
+          sourceKind: source.config.events === true ? 'events' : source.kind,
           publishedAt: item.publishedAt,
           importance: keywordImportance(topic, item),
         });
