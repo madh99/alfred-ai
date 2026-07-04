@@ -526,7 +526,10 @@ export class ContentStudio {
     // MIT ins Output-Budget und schreiben längere Artikel — bei 3000 war die
     // Antwort abgeschnitten (kein schließendes ]) oder bestand NUR aus
     // Thinking (leerer Text). Live bewiesen: 8 Sonnet-Calls exakt bei 3000.
-    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 12_000, tier: this.modelTier(channel) });
+    // v981 — reasoningEffort 'low': schaltet bei Gen-5-Modellen das adaptive
+    // Thinking ab (Sonnet verbrannte sonst das GESAMTE Token-Budget mit
+    // Denken und lieferte null Text — 4 leere Runden am IG-Kanal, live).
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 12_000, tier: this.modelTier(channel), reasoningEffort: 'low' });
     const content = response.content ?? '';
     const ideas = parseIdeas(content);
     // v978 — Beobachtbarkeit: ein unparsebarer Batch war bisher UNSICHTBAR

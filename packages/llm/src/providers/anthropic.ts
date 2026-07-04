@@ -62,6 +62,22 @@ export class AnthropicProvider extends LLMProvider {
     return {};
   }
 
+  /**
+   * v981 — Adaptive-Thinking-Steuerung für Gen-5-/Opus-4.8-Modelle:
+   * reasoningEffort 'none'/'low' schaltet das Thinking ab. Live-Realfall
+   * 04.07.: Sonnet 5 verbrannte beim Studio-Prompt ALLE 12000 maxTokens im
+   * Thinking-Block (stop_reason max_tokens, null Text) — vier Runden lang.
+   * Serienproduktion (JSON-Batches) braucht keine Deliberation; mit
+   * thinking:disabled kam dieselbe Anfrage mit 3227 Tokens sauber zurück.
+   * 'medium'/'high'/unset lassen das adaptive Verhalten unangetastet.
+   */
+  private thinkingParam(request: LLMRequest): Record<string, unknown> {
+    if (this.supportsTemperature()) return {}; // ältere Modelle: kein Thinking-Param
+    const effort = request.reasoningEffort;
+    if (effort === 'none' || effort === 'low') return { thinking: { type: 'disabled' } };
+    return {};
+  }
+
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const messages = this.mapMessages(request.messages);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
@@ -72,6 +88,7 @@ export class AnthropicProvider extends LLMProvider {
       ...(this.supportsTemperature()
         ? { temperature: request.temperature ?? this.config.temperature }
         : {}),
+      ...this.thinkingParam(request),
       // v860 — server-side refusal-fallback für Fable 5 (beta-Param; SDK-Typen
       // kennen das Feld noch nicht → kommt über den unknown-cast unten mit).
       ...this.fallbacksParam(),
@@ -102,6 +119,7 @@ export class AnthropicProvider extends LLMProvider {
       ...(this.supportsTemperature()
         ? { temperature: request.temperature ?? this.config.temperature }
         : {}),
+      ...this.thinkingParam(request),
       // v860 — server-side refusal-fallback für Fable 5 (beta).
       ...this.fallbacksParam(),
       system: request.system ? [

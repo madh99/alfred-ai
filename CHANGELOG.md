@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.981] - 2026-07-04
+
+### Fixed — Sonnet dachte sich das Token-Budget leer: Thinking für Studio-Batches abgeschaltet (v981)
+
+Live-Befund nach dem .980-Deploy (per Dry-Run gegen die Prod-DB
+reproduziert): Beim Instagram-Kanal verbrannte Sonnet 5 in allen vier
+Studio-Runden das KOMPLETTE 12000-Token-Budget im adaptiven
+Thinking-Block (`stop_reason: max_tokens`, null Text) — der Kanal bekam
+keine einzige Idee. Mit deaktiviertem Thinking beantwortete dasselbe
+Prompt die Anfrage sauber mit 3227 Tokens (8 Ideen, 3 Termine).
+
+- Anthropic-Provider: `reasoningEffort 'none'/'low'` mappt bei
+  Adaptive-Thinking-Modellen (Gen-5, Opus 4.8) auf
+  `thinking: { type: 'disabled' }` — in complete() und stream().
+  'medium'/'high'/unset lassen das adaptive Verhalten unangetastet;
+  ältere Modelle (inkl. Haiku 4.5) bekommen keinen Thinking-Param.
+  Opus 4.8 mit disabled live gegengeprüft.
+- Content-Studio: Ideen-Generierung ruft explizit mit
+  `reasoningEffort: 'low'` — Serienproduktion von JSON-Batches braucht
+  keine Deliberation, das Budget gehört dem Artikeltext.
+
 ## [0.19.0-multi-ha.980] - 2026-07-04
 
 ### Fixed — Sonnet-Batches liefen ins 3000-Token-Limit (v980)
