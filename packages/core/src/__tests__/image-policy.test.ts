@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  resolveImagePolicy, extractNameCandidates, scrubMotif,
+  resolveImagePolicy, extractNameCandidates, scrubMotif, scrubTextDirectives,
   buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy,
 } from '../image-policy.js';
 
@@ -89,7 +89,7 @@ describe('verifyImagePolicy (v950 Schicht 3)', () => {
   it('parst das Vision-Verdict (person/logo/begruendung)', async () => {
     const llm = { complete: vi.fn(async () => ({ content: '{"person": true, "logo": false, "begruendung": "zeigt erkennbar einen Fußballprofi"}' })) };
     const v = await verifyImagePolicy(llm as any, IMG);
-    expect(v).toEqual({ person: true, logo: false, begruendung: 'zeigt erkennbar einen Fußballprofi' });
+    expect(v).toEqual({ person: true, logo: false, text: false, begruendung: 'zeigt erkennbar einen Fußballprofi' });
     // Vision-Call enthält das Bild als base64-Block
     const msg = (llm.complete as any).mock.calls[0][0].messages[0];
     expect(msg.content[0].type).toBe('image');
@@ -100,5 +100,50 @@ describe('verifyImagePolicy (v950 Schicht 3)', () => {
     expect(await verifyImagePolicy({ complete: vi.fn(async () => ({ content: 'kein json' })) } as any, IMG)).toBeNull();
     expect(await verifyImagePolicy({ complete: vi.fn(async () => { throw new Error('down'); }) } as any, IMG)).toBeNull();
     expect(await verifyImagePolicy({ complete: vi.fn(async () => ({ content: '{"person": "vielleicht"}' })) } as any, IMG)).toBeNull();
+  });
+
+  it('v982: text-Kriterium wird geparst (halluzinierte Daten im Bild)', async () => {
+    const llm = { complete: vi.fn(async () => ({ content: '{"person": false, "logo": false, "text": true, "begruendung": "zeigt Datum 23.04. und Uhrzeit 21:00"}' })) };
+    const v = await verifyImagePolicy(llm as any, IMG);
+    expect(v?.text).toBe(true);
+    // Prompt fragt explizit nach gerendertem Text
+    const q = (llm.complete as any).mock.calls[0][0].messages[0].content[1].text as string;
+    expect(q).toContain('text:');
+  });
+});
+
+describe('scrubTextDirectives (v982)', () => {
+  it('Realfall 04.07.: „Datum & Uhrzeit als Overlay" fliegt raus, das Motiv bleibt', () => {
+    const r = scrubTextDirectives('Split-Screen mit Flaggen Kanada/Marokko vor Pub-Kulisse, Datum & Uhrzeit als Overlay');
+    expect(r.scrubbed).toBe(true);
+    expect(r.motif).toBe('Split-Screen mit Flaggen Kanada/Marokko vor Pub-Kulisse');
+  });
+
+  it('konkrete Datums- und Uhrzeitangaben werden entfernt', () => {
+    const r = scrubTextDirectives('Stadion-Panorama mit Anzeige 04.07.2026 und 19:00 Uhr, dramatisches Flutlicht');
+    expect(r.scrubbed).toBe(true);
+    expect(r.motif).not.toMatch(/04\.07|19:00/);
+    expect(r.motif).toContain('Flutlicht');
+  });
+
+  it('bleibt nach dem Schrubben nichts Tragfähiges → Symbolmotiv', () => {
+    const r = scrubTextDirectives('Countdown 12:00 Uhr Overlay');
+    expect(r.motif).toContain('Symbolbild Fußball');
+  });
+
+  it('Motiv ohne Text-Direktiven bleibt unverändert', () => {
+    const motif = 'Aufgeschlagenes Sammelalbum mit bunten Stickern auf Holztisch';
+    expect(scrubTextDirectives(motif)).toEqual({ motif, scrubbed: false });
+  });
+});
+
+describe('extractNameCandidates — Motiv-Substantive (v982)', () => {
+  it('Realfall: „Flaggen Kanada" ist kein Personenname — Kanada bleibt im Bild', () => {
+    const names = extractNameCandidates('Split-Screen mit Flaggen Kanada/Marokko vor Pub-Kulisse');
+    expect(names).not.toContain('Flaggen Kanada');
+  });
+
+  it('echte Personennamen werden weiter erkannt', () => {
+    expect(extractNameCandidates('David Alaba jubelt vor Flaggen Kanadas')).toContain('David Alaba');
   });
 });

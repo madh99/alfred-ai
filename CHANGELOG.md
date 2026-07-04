@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.982] - 2026-07-04
+
+### Fixed — Halluzinierte Daten in generierten Bildern; Länder-Flaggen überlebten den Namens-Schrubber nicht (v982)
+
+Realfall 04.07.: Die Instagram-Ankündigung „Kanada – Marokko" (Termin
+04.07., 19:00) bekam ein Bild mit „23.04." und „21:00" — die Bildidee des
+LLM verlangte „Datum & Uhrzeit als Overlay", und Bildmodelle rendern Text
+falsch. Zusätzlich hielt der Bildnisrecht-Schrubber „Flaggen Kanada" für
+einen Personennamen — nur die Marokko-Flagge blieb im Motiv.
+
+- Prompt-Regel: „bildidee" beschreibt NUR Motive — niemals Datum/Uhrzeit/
+  Zahlen/Schriftzüge (Fakten gehören in den Beitragstext); Termin-Regel
+  entsprechend ergänzt.
+- Deterministischer Schrubber `scrubTextDirectives` (beide Policies):
+  Datums-/Uhrzeit-Muster und Overlay-/Schriftzug-Direktiven werden aus dem
+  Motiv entfernt, bevor es zum Generator geht; der Basis-Prompt verbietet
+  Text im Bild jetzt hart statt als Nachsatz.
+- Vision-Gate: drittes Kriterium `text` — klar lesbarer gerenderter Text/
+  Zahlen im erzeugten Bild führt zu Verwerfen + Symbolmotiv-Retry (gleiche
+  Mechanik wie person/logo).
+- Namens-Schrubber: gängige Motiv-Substantive (Flaggen, Stadion, Team,
+  Public Viewing, …) sind Stopwörter — „Flaggen Kanada" wird nicht mehr
+  als Personenname geschrubbt, Länder bleiben im Bild.
+- 7 neue Tests (inkl. des Realfalls als Fixture).
+
 ## [0.19.0-multi-ha.981] - 2026-07-04
 
 ### Fixed — Sonnet dachte sich das Token-Budget leer: Thinking für Studio-Batches abgeschaltet (v981)

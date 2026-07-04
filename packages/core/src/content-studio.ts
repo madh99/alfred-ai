@@ -606,7 +606,7 @@ REGELN für die Abstimmung:
   private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[], window?: { from: string; to: string }): string {
     // v975 — Termin-Ankündigungen: nur anweisen, wenn das Dossier Termine führt
     const terminRule = dossier.includes('KOMMENDE TERMINE')
-      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis".\n`
+      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Ort/Datum/Uhrzeit gehören in den BODY-TEXT — niemals in die "bildidee".\n`
       : '';
     // v977 — das LLM kennt sonst das Erscheinungsdatum nicht und schreibt
     // „heute Nacht" für ein Spiel, dessen Post zwei Tage später erscheint
@@ -623,6 +623,7 @@ ${terminRule}${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkre
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
 - 3-6 Hashtags je Post — AUSSCHLIESSLICH ins Feld "hashtags", NIEMALS in den body (weder am Ende noch als eigene Zeile; sie werden beim Posten automatisch angehängt).
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
+- BILDIDEE ohne Text: "bildidee" beschreibt NUR Motive (Szenen, Objekte, Stimmung) — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Bildmodelle schreiben Text FALSCH; Fakten gehören in den body).
 ${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem VALIDEN JSON-Array (Zitate in Texten typografisch „…“ oder mit \\" escapen — nie nackte " im String):
 [{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses"}]`;
@@ -776,7 +777,7 @@ Antworte NUR mit einem JSON-Array:
 
     try {
       const {
-        resolveImagePolicy, extractNameCandidates, scrubMotif,
+        resolveImagePolicy, extractNameCandidates, scrubMotif, scrubTextDirectives,
         buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy,
       } = await import('./image-policy.js');
       const policy = resolveImagePolicy(channel.config);
@@ -792,6 +793,14 @@ Antworte NUR mit einem JSON-Array:
         }
         motif = scrubbedResult.motif;
       }
+      // v982 — Text-/Datums-Direktiven schrubben (BEIDE Policies): Bildmodelle
+      // rendern Text falsch — „Datum & Uhrzeit als Overlay" wurde zu „23.04.
+      // 21:00" für einen Termin am 04.07. 19:00 (Realfall).
+      const textScrub = scrubTextDirectives(motif);
+      if (textScrub.scrubbed) {
+        this.logger.info({ channel: channel.name, motif: textScrub.motif }, 'v982 text directives scrubbed');
+      }
+      motif = textScrub.motif;
 
       // v950 Schicht 1+3 — bis zu 2 Versuche: normal → Vision-Verstoß → strenges Symbolmotiv
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -813,7 +822,8 @@ Antworte NUR mit einem JSON-Array:
             this.logger.warn({ channel: channel.name }, 'v950 vision check unavailable — Bild verworfen (fail-closed)');
             return [];
           }
-          if (verdict.person || verdict.logo) {
+          // v982 — auch gerenderter Text/Zahlen ist ein Verstoß (halluzinierte Daten)
+          if (verdict.person || verdict.logo || verdict.text) {
             this.logger.info({ channel: channel.name, attempt, verdict }, 'v950 image policy violation — Bild verworfen');
             if (attempt === 0) continue; // ein Retry mit strengem Symbolmotiv
             return []; // zweiter Verstoß → Post ohne Bild

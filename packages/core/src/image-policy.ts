@@ -36,6 +36,16 @@ const NAME_STOPWORDS = new Set([
   'ihren', 'ihrem', 'unser', 'euer', 'kein', 'keine', 'alle', 'viele', 'mehr', 'heute',
   'morgen', 'gestern', 'jetzt', 'hier', 'dort', 'so', 'also', 'diese', 'dieser', 'dieses',
   'neue', 'neuer', 'neues', 'erste', 'zweite', 'letzte', 'dann', 'noch', 'schon', 'auch',
+  // v982 — gängige MOTIV-Substantive: „Flaggen Kanada" ist kein Personenname
+  // (Realfall 04.07.: der Schrubber fraß „Kanada" aus dem Bild-Motiv — nur die
+  // Marokko-Flagge blieb übrig). Beschneidung an den Rändern lässt vom Rest
+  // ein Einzelwort übrig, das ohnehin nicht geblockt wird.
+  'flagge', 'flaggen', 'fahne', 'fahnen', 'stadion', 'fans', 'team', 'teams', 'beide',
+  'public', 'viewing', 'pub', 'kulisse', 'spiel', 'spieler', 'match', 'anpfiff',
+  'sechzehntelfinale', 'achtelfinale', 'viertelfinale', 'halbfinale', 'finale',
+  'schritt', 'richtung', 'split', 'screen', 'sticker', 'album', 'wappen', 'trikot',
+  'trikots', 'ball', 'rasen', 'tor', 'tore', 'jubel', 'szene', 'grafik', 'collage',
+  'symbolbild', 'stimmung', 'atmosphäre',
 ]);
 
 /**
@@ -84,9 +94,39 @@ export function scrubMotif(motif: string, nameCandidates: string[]): { motif: st
   return { motif: result, scrubbed };
 }
 
+/**
+ * v982 — Text-Anweisungen aus dem Motiv schrubben: Bildmodelle rendern Text
+ * FALSCH (Realfall 04.07.: Bildidee „Datum & Uhrzeit als Overlay" → gpt-image-1
+ * halluzinierte „23.04." und „21:00" für einen Termin am 04.07. 19:00).
+ * Entfernt Datums-/Uhrzeit-Angaben und Overlay-/Schriftzug-Direktiven; Fakten
+ * gehören in den Beitragstext, nie ins Bild.
+ */
+const DATE_TIME_PATTERN = /\b\d{1,2}\.\s?\d{1,2}\.(?:\d{2,4})?\b|\b\d{1,2}[:.]\d{2}(?:\s?uhr)?\b|\b\d{1,2}\s?uhr\b/gi;
+const TEXT_DIRECTIVE_PATTERN = /\b(datum|uhrzeit|zeitangabe|anstoßzeit|countdown|text-?overlay|overlay|schriftzug|beschriftung|typografi\w*|lettering|headline|slogan)\b[^,.;]*/gi;
+
+export function scrubTextDirectives(motif: string): { motif: string; scrubbed: boolean } {
+  let result = motif.replace(DATE_TIME_PATTERN, '').replace(TEXT_DIRECTIVE_PATTERN, '');
+  const scrubbed = result !== motif;
+  result = result
+    .replace(/\b(mit|als|und|samt|inkl\.?)\s*(?=[,.;]|$)/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.!?;])/g, '$1')
+    .replace(/[,;]\s*(?=[,;.])/g, '')
+    .trim()
+    .replace(/^[,;.\s]+/, '')
+    .replace(/[,;\s]+$/, '');
+  const meaningful = result.replace(/[^a-zA-ZäöüÄÖÜß]/g, '');
+  if (meaningful.length < 15) {
+    return { motif: SYMBOLIC_FALLBACK_MOTIF, scrubbed: true };
+  }
+  return { motif: result, scrubbed };
+}
+
 /** Schicht 1 — Prompt mit harten Policy-Regeln bauen. */
 export function buildSafeImagePrompt(motif: string, persona: string | undefined, policy: ImagePolicy): string {
-  const base = `${motif}. Stil: ${persona ?? 'modern, freundlich'}. Kein Text im Bild.`;
+  // v982 — verschärft: der weiche Appell „Kein Text" verlor gegen Motive, die
+  // explizit Overlays bestellten; Zahlen/Daten macht das Modell ohnehin falsch.
+  const base = `${motif}. Stil: ${persona ?? 'modern, freundlich'}. Absolut KEIN Text im Bild — keine Wörter, Zahlen, Daten, Uhrzeiten oder Schrift-Overlays.`;
   if (policy === 'people_ok') return base;
   return `${base}
 WICHTIGE REGELN (Bildnisrecht, zwingend):
@@ -100,7 +140,7 @@ WICHTIGE REGELN (Bildnisrecht, zwingend):
 /** Strenges Retry-Motiv nach einem Vision-Verstoß. */
 export function strictRetryPrompt(persona: string | undefined): string {
   return buildSafeImagePrompt(
-    `${SYMBOLIC_FALLBACK_MOTIF}. Absolut keine Menschen, keine Gesichter, keine Logos`,
+    `${SYMBOLIC_FALLBACK_MOTIF}. Absolut keine Menschen, keine Gesichter, keine Logos, keinerlei Text oder Zahlen`,
     persona, 'symbolic',
   );
 }
@@ -108,6 +148,8 @@ export function strictRetryPrompt(persona: string | undefined): string {
 export interface VisionVerdict {
   person: boolean;
   logo: boolean;
+  /** v982 — gerenderter Text/Zahlen im Bild (Bildmodelle halluzinieren Daten/Uhrzeiten). */
+  text: boolean;
   begruendung?: string;
 }
 
@@ -131,7 +173,8 @@ export async function verifyImagePolicy(
             text: 'Prüfe dieses KI-generierte Bild für einen öffentlichen Social-Media-Kanal:\n'
               + '1. person: Zeigt es eine identifizierbare (auch nur ähnlich aussehende) reale Person, insbesondere Personen des öffentlichen Lebens (Sportler, Trainer, Promis)? Anonyme Silhouetten/Rückenansichten/unkenntliche Menschenmengen zählen NICHT.\n'
               + '2. logo: Zeigt es erkennbare Vereins-, Verbands- oder MARKEN-Logos (z.B. Puma/Adidas, Klub-Wappen)? WICHTIG: Nationalflaggen, Länderfarben und generische Wappen-Silhouetten zählen NICHT als Logo — nur bei eindeutig zuordenbaren Marken/Vereinen logo=true.\n'
-              + 'Antworte NUR mit JSON: {"person": true|false, "logo": true|false, "begruendung": "1 Satz"}',
+              + '3. text: Enthält es klar LESBAREN gerenderten Text oder Zahlen (Wörter, Datum, Uhrzeit, Anzeigetafel-Ziffern)? KI-Bilder halluzinieren falsche Daten — deshalb prüfen. Unleserliche Pseudo-Schrift/Textur zählt NICHT.\n'
+              + 'Antworte NUR mit JSON: {"person": true|false, "logo": true|false, "text": true|false, "begruendung": "1 Satz"}',
           },
         ],
       }],
@@ -145,6 +188,7 @@ export async function verifyImagePolicy(
     return {
       person: parsed.person,
       logo: parsed.logo === true,
+      text: parsed.text === true,
       begruendung: typeof parsed.begruendung === 'string' ? parsed.begruendung.slice(0, 200) : undefined,
     };
   } catch {
