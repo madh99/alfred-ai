@@ -573,6 +573,12 @@ describe('parseIdeas — Format-Reparatur (v978)', () => {
     expect(extractJsonArray('```json\n[1, 2, [3]]\n```')).toEqual([1, 2, [3]]);
     expect(extractJsonArray('kein array hier')).toBeNull();
   });
+
+  it('v980: abgeschnittene Antwort (maxTokens) — vollständige Objekte werden gerettet', () => {
+    const truncated = '```json\n[{"title": "Erster", "body": "Ein ausreichend langer Beitragstext für den Filter hier drin.", "hashtags": []}, {"title": "Zweiter", "body": "Auch dieser Text ist lang genug für den Body-Filter im Parser.", "hashtags": []}, {"title": "Abgeschnitten", "body": "Dieser Text endet mitt';
+    const out = parseIdeas(truncated);
+    expect(out.map(i => i.title)).toEqual(['Erster', 'Zweiter']);
+  });
 });
 
 describe('ContentStudio — Modell-Tier je Kanal (v979)', () => {

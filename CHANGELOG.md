@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.980] - 2026-07-04
+
+### Fixed — Sonnet-Batches liefen ins 3000-Token-Limit (v980)
+
+Live-Befund nach dem .979-Deploy: alle 8 Studio-Calls der medium-Kanäle
+endeten exakt bei `outputTokens: 3000` — Gen-5-Modelle denken adaptiv MIT
+ins Output-Budget und schreiben längere Artikel. Ergebnis: Antwort mitten
+im JSON abgeschnitten (fussball.cc) oder komplett leerer Text, weil das
+Thinking das ganze Budget fraß (Facebook/Instagram — dadurch auch kein
+Warn-Log, der prüfte nur nicht-leeren Content).
+
+- `generateIdeas` maxTokens 3000 → 12000.
+- Truncation-Rettung in `extractJsonArray`: bei abgeschnittenem JSON werden
+  die vollständigen Objekte bis zum letzten `}` gerettet statt den ganzen
+  Batch zu verlieren; leere innere Arrays (hashtags) sind kein Fallback mehr.
+- Unparseable-Warnung feuert jetzt auch bei leerem Content (inkl.
+  contentLength) — Thinking-Only-Antworten sind sichtbar.
+
 ## [0.19.0-multi-ha.979] - 2026-07-04
 
 ### Added — LLM-Tier „medium" + Modellwahl je Social-Kanal (v979)

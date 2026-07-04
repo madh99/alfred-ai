@@ -174,14 +174,29 @@ export function extractJsonArray(text: string): unknown[] | null {
       try {
         const parsed = JSON.parse(t.slice(start, end + 1));
         if (Array.isArray(parsed)) {
-          // Ideen sind Objekte — ein reines Skalar-Array ist ein inneres Feld
+          // Ideen sind Objekte — ein reines Skalar-Array ist ein inneres Feld;
+          // leere Arrays (z.B. "hashtags": []) taugen nicht mal als Fallback
           if (parsed.some(e => e !== null && typeof e === 'object' && !Array.isArray(e))) return parsed;
-          scalarFallback ??= parsed;
+          if (parsed.length > 0) scalarFallback ??= parsed;
         }
       } catch { /* nächste Startposition probieren */ }
     }
   }
-  return scalarFallback;
+  if (scalarFallback) return scalarFallback;
+  // v980 — Truncation-Rettung: wurde die Antwort mitten im JSON abgeschnitten
+  // (maxTokens), fehlt das schließende ]. Bis zum letzten kompletten Objekt
+  // schneiden und schließen — vollständige Ideen überleben den Abschnitt.
+  const start = text.indexOf('[');
+  const lastObj = text.lastIndexOf('}');
+  if (start !== -1 && lastObj > start) {
+    for (const t of [text, repairGermanQuotes(text)]) {
+      try {
+        const parsed = JSON.parse(`${t.slice(start, t.lastIndexOf('}') + 1)}]`);
+        if (Array.isArray(parsed) && parsed.some(e => e !== null && typeof e === 'object' && !Array.isArray(e))) return parsed;
+      } catch { /* Rettung fehlgeschlagen */ }
+    }
+  }
+  return null;
 }
 
 export function parseIdeas(text: string): GeneratedIdea[] {
@@ -507,13 +522,18 @@ export class ContentStudio {
       : this.buildPostPrompt(channel, count, dossier, bestPerformers, blockedTitles, window))
       + familyBlock;
 
-    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 3000, tier: this.modelTier(channel) });
+    // v980 — 12000 statt 3000 maxTokens: Gen-5-Modelle (Sonnet) denken adaptiv
+    // MIT ins Output-Budget und schreiben längere Artikel — bei 3000 war die
+    // Antwort abgeschnitten (kein schließendes ]) oder bestand NUR aus
+    // Thinking (leerer Text). Live bewiesen: 8 Sonnet-Calls exakt bei 3000.
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 12_000, tier: this.modelTier(channel) });
     const content = response.content ?? '';
     const ideas = parseIdeas(content);
     // v978 — Beobachtbarkeit: ein unparsebarer Batch war bisher UNSICHTBAR
     // (stiller Abbruch, „Horizont bereits gefüllt") — Realfall 04.07.
-    if (ideas.length === 0 && content.trim().length > 0) {
-      this.logger.warn({ channel: channel.name, head: content.slice(0, 200) }, 'v978 LLM-Batch unparseable — Runde übersprungen');
+    // v980 — auch bei LEEREM Content loggen (Thinking fraß das ganze Budget).
+    if (ideas.length === 0) {
+      this.logger.warn({ channel: channel.name, contentLength: content.length, head: content.slice(0, 200) }, 'v978 LLM-Batch unparseable/leer — Runde übersprungen');
     }
     return ideas;
   }
