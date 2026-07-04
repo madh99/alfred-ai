@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.973] - 2026-07-04
+
+### Fixed — Studio erzeugte dieselbe Story mehrfach („geringfügig anders geschrieben") (v973)
+
+DB-Befund: „Alaba-Zukunft" existierte in 5 Formulierungs-Varianten im selben
+Kanal, derselbe Arnautovic-Titel wurde 4× wörtlich neu erzeugt, und „WM-Aus
+für Österreich…" ging wortgleich ZWEIMAL auf fussball.cc live. Drei
+strukturelle Lücken, dreischichtig geschlossen:
+
+- **Schicht 1 — vollständige Story-Sperrliste:** das Erzeugungs-Gate blockt
+  jetzt auch **published** (60-Tage-Fenster) und **rejected** (21 Tage) des
+  eigenen Kanals — eine Ablehnung sperrt die STORY, nicht nur den Wortlaut
+  (vorher regenerierte jeder Lauf die abgelehnten Geschichten). Geschwister-
+  Sperrliste mit Zeitfenster statt Limit 15 (das deckte bei 20 Posts/Tag
+  keinen Tag ab). Neuer `updatedSince`-Filter im Repository.
+- **Schicht 2 — semantische Dedup (der Kern):** Story-Identität
+  (Titel + Body-Anfang) als **Embedding** je Content-Item persistiert
+  (EmbeddingRepository, sourceType `social-item`; pgvector-fähig);
+  Kandidaten mit Cosine ≥ 0.85 zu einem gesperrten Item werden verworfen —
+  fängt Paraphrasen wie „Alaba hält sich alle Optionen offen" vs. „Alaba
+  lässt Zukunft offen — Comeback möglich?" (40 % Token-Overlap, dieselbe
+  Story). Ohne Embedding-Support: **LLM-Judge-Fallback** (ein Call pro
+  Batch); fällt auch der aus → fail-open auf die Token-Schicht.
+- **Schicht 3 — Rohstoff-Hygiene:** die Prompt-Sperrliste ist jetzt die
+  komplette Blockliste („BEREITS BEHANDELT — Stoff gesperrt, auch
+  umformuliert verboten", Cap 60) statt 15 published; Dossier-Beiträge, die
+  der Kanal/die Familie schon behandelt hat, werden als
+  „[BEREITS BEHANDELT]" markiert, damit das LLM anderen Stoff wählt.
+- **Doppel-Publish-Gate für ALLE Pfade:** `publish_now` (auch via Buttons,
+  add_content, crosspost) verweigert, wenn dieselbe Story in den letzten
+  7 Tagen auf dem Kanal schon veröffentlicht wurde — bewusster Re-Post via
+  `force: true`.
+- `isNearDuplicateTitle` nach @alfred/skills verschoben (Skill-Gate braucht
+  sie; re-exportiert für Bestands-Importe).
+- 15 neue Tests — die echten DB-Fälle als Fixtures (Alaba-Paraphrase,
+  Arnautovic-Wortgleichheit, Postecoglou-Batch-Fall, WM-Aus-Doppel-Publish),
+  Embedding-Persistenz/-Wiederverwendung, Judge-Fallback inkl. fail-open.
+
 ## [0.19.0-multi-ha.971] - 2026-07-04
 
 ### Fixed — Studio füllt jetzt alle konfigurierten Slots (v971)

@@ -6652,11 +6652,28 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       // Wissen, Bild optional mit Monats-Budget, YouTube = komplette Video-Konzepte).
       if (this.llmProvider) {
         const { ContentStudio } = await import('./content-studio.js');
+        // v973 — semantische Story-Dedup: Embeddings (falls Provider sie kann,
+        // Mistral-Embeddings laufen auf .92) + LLM-Judge-Fallback. Embeddings
+        // werden je Content-Item persistiert (sourceType 'social-item').
+        const { StoryDeduper } = await import('./story-dedup.js');
+        const llmForDedup = this.llmProvider;
+        const embedFn = llmForDedup.supportsEmbeddings?.()
+          ? async (text: string) => {
+            const r = await llmForDedup.embed?.(text);
+            return r ? { embedding: r.embedding, model: r.model, dimensions: r.dimensions } : undefined;
+          }
+          : undefined;
+        const dedupEmbeddingRepo = this.database ? new EmbeddingRepository(this.database.getAdapter()) : undefined;
+        const storyDeduper = new StoryDeduper(
+          embedFn, dedupEmbeddingRepo, this.llmProvider,
+          this.logger.child({ component: 'story-dedup' }), ownerUid,
+        );
         this.contentStudio = new ContentStudio(
           this.socialRepo, this.interestsRepo, this.insightsRepo, this.llmProvider,
           this.skillRegistry, this.skillSandbox, this.sourceProvisioner,
           this.logger.child({ component: 'content-studio' }), ownerUid,
           path.resolve(path.dirname(this.config.storage.path), 'social-media'), // v942 — Ablage generierter Bilder
+          storyDeduper, // v973
         );
         const studio = this.contentStudio;
         socialSkill.setStudio(channel => studio.fillChannel(channel));

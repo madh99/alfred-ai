@@ -4,6 +4,7 @@ import type { SocialRepository, SocialChannel, ContentItem, ContentMedia } from 
 import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
 import { composePostText, effectiveSlots, extractTrailingHashtags, mergeHashtags } from './social-provider.js';
+import { isNearDuplicateTitle } from './dedup.js';
 
 type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
@@ -112,6 +113,7 @@ export class SocialSkill extends Skill {
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
         external_url: { type: 'string', description: 'mark_published: URL des manuell geposteten Beitrags' },
+        force: { type: 'boolean', description: 'publish_now: bewusster Re-Post trotz sehr ähnlichem, kürzlich veröffentlichtem Beitrag (Doppel-Publish-Gate übergehen)' },
       },
       required: ['action'],
     },
@@ -479,6 +481,26 @@ export class SocialSkill extends Skill {
     const hit = channel.blacklist.find(w => w.trim().length > 0 && haystack.includes(w.toLowerCase()));
     if (hit) {
       return { success: false, error: `Blacklist-Treffer „${hit}" — Post nicht veröffentlicht. Text anpassen oder Blacklist ändern.` };
+    }
+    // v973 — Doppel-Publish-Gate für ALLE Pfade (Studio/add_content/crosspost/
+    // Buttons): dieselbe Story wurde auf dem Kanal in den letzten 7 Tagen schon
+    // veröffentlicht → Fehler statt Doppel-Post (DB-bewiesen: „WM-Aus für
+    // Österreich…" ging wortgleich 2× auf fussball.cc live). Bewusster
+    // Re-Post: force: true.
+    if (input.force !== true) {
+      const weekAgo = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
+      const recentPublished = await this.repo.listItems(userId, {
+        channelId: channel.id, status: 'published', updatedSince: weekAgo, limit: 200,
+      });
+      const candidateTitle = item.title ?? item.body.slice(0, 60);
+      const dupOf = recentPublished.find(p => p.id !== item.id
+        && isNearDuplicateTitle(candidateTitle, [p.title ?? p.body.slice(0, 60)]));
+      if (dupOf) {
+        return {
+          success: false,
+          error: `Sehr ähnlicher Beitrag wurde auf ${channel.name} bereits veröffentlicht: „${(dupOf.title ?? dupOf.body.slice(0, 60))}" [${dupOf.id.slice(0, 8)}]${dupOf.externalUrl ? ` (${dupOf.externalUrl})` : ''}. Bewusster Re-Post: force: true.`,
+        };
+      }
     }
 
     // In den approved-Zustand bringen (falls noch draft/scheduled)

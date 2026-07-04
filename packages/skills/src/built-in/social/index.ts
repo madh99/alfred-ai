@@ -6,3 +6,4 @@ export { YouTubeProvider } from './youtube-provider.js';
 export { MetaProvider } from './meta-provider.js';
 export { XProvider } from './x-provider.js';
 export { parsePublicMediaConfig, publishPublicMedia, type PublicMediaConfig } from './public-media.js';
+export { isNearDuplicateTitle, storyIdentity, cosineSimilarity } from './dedup.js';

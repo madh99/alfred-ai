@@ -185,6 +185,8 @@ export class SocialRepository {
   async listItems(userId: string, opts?: {
     channelId?: string; status?: ContentStatus | ContentStatus[]; limit?: number;
     scheduledBefore?: string;
+    /** v973 — Zeitfenster für Dedup-Sperrlisten (published/rejected der letzten N Tage). */
+    updatedSince?: string;
   }): Promise<ContentItem[]> {
     const where = ['user_id = ?'];
     const params: unknown[] = [userId];
@@ -195,6 +197,7 @@ export class SocialRepository {
       params.push(...statuses);
     }
     if (opts?.scheduledBefore) { where.push('scheduled_at IS NOT NULL AND scheduled_at <= ?'); params.push(opts.scheduledBefore); }
+    if (opts?.updatedSince) { where.push('updated_at >= ?'); params.push(opts.updatedSince); }
     params.push(opts?.limit ?? 100);
     const rows = await this.db.query(
       `SELECT * FROM content_items WHERE ${where.join(' AND ')} ORDER BY COALESCE(scheduled_at, created_at) LIMIT ?`,

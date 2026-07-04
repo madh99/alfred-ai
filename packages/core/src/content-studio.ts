@@ -5,9 +5,10 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
-import { effectiveSlots, extractTrailingHashtags, mergeHashtags } from '@alfred/skills';
-export { extractTrailingHashtags };
+import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle } from '@alfred/skills';
+export { extractTrailingHashtags, isNearDuplicateTitle };
 import type { SourceProvisioner } from './source-provisioner.js';
+import type { StoryDeduper, BlockedStory } from './story-dedup.js';
 
 const WEEKDAYS: Record<string, number> = { so: 0, mo: 1, di: 2, mi: 3, do: 4, fr: 5, sa: 6 };
 
@@ -57,29 +58,8 @@ export function nextFreeSlots(
   return out.sort();
 }
 
-/**
- * v957 — deterministischer Doppelungs-Check über Kanalgrenzen (Muster v924):
- * Tokens ≥4 Zeichen, Duplikat bei ≥3 gemeinsamen ODER ≥60% Überlappung.
- * Realfall: „Alaba lässt Zukunft im Nationalteam offen" erschien wortgleich
- * auf Telegram UND fussball.cc — die Prompt-Regel allein hielt nicht.
- */
-export function isNearDuplicateTitle(candidate: string, existingTitles: string[]): boolean {
-  const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(t => t.length >= 4));
-  const cand = tokens(candidate);
-  if (cand.size === 0) return false;
-  for (const existing of existingTitles) {
-    const ex = tokens(existing);
-    if (ex.size === 0) continue;
-    let common = 0;
-    for (const t of cand) if (ex.has(t)) common++;
-    const overlap = common / Math.min(cand.size, ex.size);
-    // v958 — Schwelle 0.5: der echte Einzelkritik-Doppelfall hatte nur 2 gemeinsame
-    // Tokens bei 50% Overlap. Bewusst leicht aggressiv — lieber eine Idee zu viel
-    // verwerfen (Nachschub ist billig) als Doppelungen in der Familie.
-    if (common >= 3 || (overlap >= 0.5 && common >= 2)) return true;
-  }
-  return false;
-}
+// v973 — isNearDuplicateTitle lebt jetzt in @alfred/skills (social/dedup.ts),
+// weil auch das Publish-Gate im social-Skill sie braucht; hier re-exportiert.
 
 interface GeneratedIdea {
   title: string;
@@ -184,6 +164,8 @@ export class ContentStudio {
     private readonly ownerUserId: string,
     /** v942 — Ablageort für generierte Bilder (image_generate liefert Buffer-Attachments). */
     private readonly mediaDir?: string,
+    /** v973 — semantische Story-Dedup (Embeddings + LLM-Judge-Fallback). */
+    private readonly storyDeduper?: StoryDeduper,
   ) {}
 
   /** Täglicher Lauf über alle aktiven Kanäle. @returns Anzahl erzeugter Items. */
@@ -221,12 +203,23 @@ export class ContentStudio {
     if (needed === 0) return 0;
 
     const family = await this.familyContext(channel);
-    // v957 — deterministische Doppelungs-Sperre über Kanalgrenzen: Ideen, deren
-    // Titel einem geplanten/veröffentlichten Beitrag des Kanals ODER eines
-    // Geschwister-Kanals zu ähnlich ist, werden verworfen (Prompt-Regel reicht nicht).
-    const blockedTitles = [
-      ...planned.map(i => i.title ?? i.body.slice(0, 60)),
-      ...family.siblingTitles,
+    // v973 — VOLLSTÄNDIGE Story-Sperrliste (DB-bewiesene Lücken geschlossen):
+    // planned (wie bisher) + PUBLISHED des eigenen Kanals (60 Tage — vorher nur
+    // Prompt-Appell: „WM-Aus…" wurde wortgleich ZWEIMAL veröffentlicht) +
+    // REJECTED (21 Tage — Ablehnung sperrt die STORY, nicht nur den Wortlaut;
+    // vorher wurde derselbe Arnautovic-Titel 4× wörtlich neu erzeugt) +
+    // Geschwister-Beiträge der Familie.
+    const publishedWindow = new Date(Date.now() - 60 * 24 * 3_600_000).toISOString();
+    const rejectedWindow = new Date(Date.now() - 21 * 24 * 3_600_000).toISOString();
+    const [ownPublished, ownRejected] = await Promise.all([
+      this.socialRepo.listItems(this.ownerUserId, { channelId: channel.id, status: 'published', updatedSince: publishedWindow, limit: 200 }),
+      this.socialRepo.listItems(this.ownerUserId, { channelId: channel.id, status: 'rejected', updatedSince: rejectedWindow, limit: 200 }),
+    ]);
+    const blocked: BlockedStory[] = [
+      ...planned.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body })),
+      ...ownPublished.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body })),
+      ...ownRejected.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body })),
+      ...family.siblingStories,
     ];
 
     const isYoutube = channel.platform === 'youtube';
@@ -237,20 +230,27 @@ export class ContentStudio {
     // dedup-überlebenden Ideen mehr kommen.
     for (let round = 0; round < 4 && created < needed; round++) {
       const batchSize = Math.min(8, needed - created);
-      const ideas = await this.generateIdeas(channel, batchSize, family.block);
+      const ideas = await this.generateIdeas(channel, batchSize, family.block, blocked);
       if (ideas.length === 0) break;
 
-      // v958 — auch INNERHALB des Batches deduplizieren: akzeptierte Titel wandern
-      // in die Sperrliste (Realfall: zwei Einzelkritik-Posts aus EINEM Lauf).
-      const accepted: GeneratedIdea[] = [];
-      for (const idea of ideas) {
-        const title = idea.title || idea.body.slice(0, 60);
-        if (isNearDuplicateTitle(title, blockedTitles)) continue;
-        blockedTitles.push(title);
-        accepted.push(idea);
-      }
-      if (accepted.length < ideas.length) {
-        this.logger.info({ channel: channel.name, dropped: ideas.length - accepted.length }, 'v957 near-duplicate ideas dropped (family dedup)');
+      // v973 — Token-Gate + semantisches Gate (Embeddings/Judge) in einem:
+      // Paraphrasen derselben Story („geringfügig anders geschrieben") werden
+      // jetzt auch gefangen, nicht nur nah-wortgleiche Titel.
+      const candidates = ideas.map(i => ({ ...i, title: i.title || i.body.slice(0, 60) }));
+      let accepted: GeneratedIdea[];
+      if (this.storyDeduper) {
+        const result = await this.storyDeduper.filterCandidates(candidates, blocked);
+        accepted = result.accepted;
+        if (result.droppedToken + result.droppedSemantic > 0) {
+          this.logger.info({ channel: channel.name, droppedToken: result.droppedToken, droppedSemantic: result.droppedSemantic }, 'v973 duplicate ideas dropped');
+        }
+      } else {
+        // Fallback ohne Deduper: reines Token-Gate (v957-Verhalten)
+        accepted = [];
+        for (const idea of candidates) {
+          if (isNearDuplicateTitle(idea.title, [...blocked.map(b => b.title), ...accepted.map(a => a.title!)])) continue;
+          accepted.push(idea);
+        }
       }
       if (accepted.length === 0) break; // nur noch Duplikate → Thema erschöpft
 
@@ -266,10 +266,13 @@ export class ContentStudio {
           source: 'studio',
         });
         await this.socialRepo.mergePerformance(this.ownerUserId, item.id, { warum: idea.warum });
+        // v973 — Embedding des neuen Items persistieren (künftige Läufe lesen es)
+        await this.storyDeduper?.embedStory(item.id, { title: idea.title, body: idea.body });
         if (channel.mode === 'approve' || channel.mode === 'autonomous') {
           const slot = slots[created];
           if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
         }
+        blocked.push({ id: item.id, title: idea.title || idea.body.slice(0, 60), body: idea.body });
         createdTitles.push(idea.title || idea.body.slice(0, 60));
         created++;
       }
@@ -325,17 +328,20 @@ export class ContentStudio {
 
   // ── Wissens-Kontext + Ideen ───────────────────────────────────────────
 
-  private async generateIdeas(channel: SocialChannel, count: number, familyBlock: string): Promise<GeneratedIdea[]> {
-    const [dossier, bestPerformers, recentTitles] = await Promise.all([
-      this.topicDossier(channel),
+  private async generateIdeas(channel: SocialChannel, count: number, familyBlock: string, blocked: BlockedStory[]): Promise<GeneratedIdea[]> {
+    const [dossier, bestPerformers] = await Promise.all([
+      this.topicDossier(channel, blocked),
       this.bestPerformers(channel),
-      this.recentPublishedTitles(channel),
     ]);
+    // v973 — Prompt-Sperrliste = die KOMPLETTE Blockliste (vorher nur 15
+    // published — bei 20 Posts/Tag deckte das keinen Tag ab). Dedupliziert,
+    // Cap 60 gegen Token-Aufblähung; das harte Gate bleibt ohnehin in Code.
+    const blockedTitles = [...new Set(blocked.map(b => b.title))].slice(0, 60);
 
     const isYoutube = channel.platform === 'youtube';
     const prompt = (isYoutube
-      ? this.buildYoutubePrompt(channel, count, dossier, bestPerformers, recentTitles)
-      : this.buildPostPrompt(channel, count, dossier, bestPerformers, recentTitles))
+      ? this.buildYoutubePrompt(channel, count, dossier, bestPerformers, blockedTitles)
+      : this.buildPostPrompt(channel, count, dossier, bestPerformers, blockedTitles))
       + familyBlock;
 
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 3000, tier: 'fast' });
@@ -349,21 +355,24 @@ export class ContentStudio {
    * seine ROLLE statt denselben Stoff zu doppeln; Cross-Verweise erwünscht,
    * bewusstes Verteilen läuft weiter über crosspost.
    */
-  private async familyContext(channel: SocialChannel): Promise<{ block: string; siblingTitles: string[] }> {
+  private async familyContext(channel: SocialChannel): Promise<{ block: string; siblingStories: BlockedStory[] }> {
     const family = ContentStudio.familyKey(channel);
-    if (!family) return { block: '', siblingTitles: [] };
+    if (!family) return { block: '', siblingStories: [] };
     try {
       const siblings = (await this.socialRepo.listChannels(this.ownerUserId))
         .filter(c => c.id !== channel.id && c.status !== 'archived' && ContentStudio.familyKey(c) === family);
-      if (siblings.length === 0) return { block: '', siblingTitles: [] };
+      if (siblings.length === 0) return { block: '', siblingStories: [] };
       const sections: string[] = [];
-      const siblingTitles: string[] = [];
+      const siblingStories: BlockedStory[] = [];
+      // v973 — Gate-Liste mit Zeitfenster statt Limit 15 (bei 20 Posts/Tag
+      // deckte 15 keinen Tag ab); der Prompt-Block bleibt bei 15 Titeln.
+      const siblingWindow = new Date(Date.now() - 60 * 24 * 3_600_000).toISOString();
       for (const sibling of siblings) {
         const items = await this.socialRepo.listItems(this.ownerUserId, {
-          channelId: sibling.id, status: ['scheduled', 'approved', 'published'], limit: 15,
+          channelId: sibling.id, status: ['scheduled', 'approved', 'published'], updatedSince: siblingWindow, limit: 150,
         });
+        siblingStories.push(...items.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body })));
         const titles = items.map(i => (i.title ?? i.body.slice(0, 60))).slice(0, 15);
-        siblingTitles.push(...titles);
         sections.push(`- **${sibling.name}** (${sibling.platform})${sibling.persona ? ` — Rolle: ${sibling.persona.slice(0, 140)}` : ''}${titles.length ? `\n  Geplant/zuletzt dort: ${titles.join(' · ')}` : ''}`);
       }
       const block = `\n\n## Kanal-Familie (abgestimmte Arbeitsteilung)
@@ -376,13 +385,13 @@ REGELN für die Abstimmung:
 - QUERVERWEISE NUR AUF EXISTIERENDES (zwingend): Auf einen Geschwister-Beitrag darfst du NUR verweisen, wenn er OBEN in dessen Liste („Geplant/zuletzt dort") tatsächlich steht — dann benenne ihn so wie gelistet. NIEMALS Inhalte versprechen, die dort nicht stehen. Hat ein Geschwister-Kanal keine passenden Beiträge, dann KEIN Verweis — der Post muss für sich allein stehen.
 - NIE auf den EIGENEN Kanal verweisen („mehr dazu auf ${channel.name}" ist verboten — der Leser IST schon dort).
 - Cross-Promo auf dauerhafte ANGEBOTE/Features der Geschwister (z.B. Sammelalbum-Tracker, Tauschbörse) ist ok — die existieren unabhängig von einzelnen Beiträgen. Dosiert einsetzen, nicht in jedem Post.`;
-      return { block, siblingTitles };
-    } catch { return { block: '', siblingTitles: [] }; }
+      return { block, siblingStories };
+    } catch { return { block: '', siblingStories: [] }; }
   }
 
   private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
     return `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
-${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS VERÖFFENTLICHT (nicht wiederholen):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
+${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS BEHANDELT — dieser STOFF ist gesperrt (auch umformuliert/mit anderem Titel VERBOTEN; wähle ANDERE Ereignisse/Geschichten):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
 - FAKTEN-TREUE (zwingend): Turnier-/Event-Namen, Jahreszahlen, Ergebnisse und Personalien NUR aus dem Dossier oben übernehmen — NIEMALS aus dem Trainingswissen raten. Steht im Dossier „WM", schreibe WM (nicht EM/EURO); auch in Hashtags. Ist ein Fakt nicht im Dossier belegt, lass ihn weg.
 ${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
@@ -397,7 +406,7 @@ Antworte NUR mit einem JSON-Array:
 
   private buildYoutubePrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
     return `Du planst Videos für den YouTube-Kanal "${channel.name}".
-${channel.persona ? `Persona/Stil: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS PRODUZIERT (nicht wiederholen):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
+${channel.persona ? `Persona/Stil: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS BEHANDELT — dieser STOFF ist gesperrt (auch umformuliert/mit anderem Titel VERBOTEN; wähle ANDERE Ereignisse/Geschichten):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge ${count} komplette Video-Konzepte. Das body-Feld MUSS enthalten:
 HOOK (erste 15 Sekunden), dann SCRIPT mit Kapitel-Überschriften und Sprechtext,
 dann eine Zeile "---" und darunter BESCHREIBUNG (YouTube-Description mit Kapitelmarken).
@@ -447,10 +456,11 @@ Antworte NUR mit einem JSON-Array:
     return `- KORREKTUREN AUS DER VERGANGENHEIT (zwingend beachten):\n${lessons.slice(-20).map(l => `  • ${l}`).join('\n')}\n`;
   }
 
-  private async topicDossier(channel: SocialChannel): Promise<string> {
+  private async topicDossier(channel: SocialChannel, blocked?: BlockedStory[]): Promise<string> {
     if (!this.interestsRepo) return '';
     const topicIds = ContentStudio.linkedTopicIds(channel);
     if (topicIds.length === 0) return '';
+    const blockedTitles = blocked?.map(b => b.title) ?? [];
     const sections: string[] = [];
     for (const topicId of topicIds) {
       try {
@@ -459,7 +469,13 @@ Antworte NUR mit einem JSON-Array:
           this.interestsRepo.getDigest(topicId),
           this.interestsRepo.listItems(topicId, { limit: 8 }),
         ]);
-        const itemLines = items.map(i => `- ${i.title}`).join('\n');
+        // v973 — Rohstoff-Hygiene: Dossier-Beiträge, die dieser Kanal (oder die
+        // Familie) schon behandelt hat, werden markiert — das LLM greift zu
+        // anderem Stoff statt dieselbe Story neu zu erzählen.
+        const itemLines = items.map(i => {
+          const covered = blockedTitles.length > 0 && isNearDuplicateTitle(i.title, blockedTitles);
+          return `- ${i.title}${covered ? ' [BEREITS BEHANDELT — nicht erneut verwenden]' : ''}`;
+        }).join('\n');
         const body = `${digest?.summary ?? ''}${itemLines ? `\nNeueste Beiträge:\n${itemLines}` : ''}`.trim();
         if (body) sections.push(topicIds.length > 1 ? `### Thema „${topic?.name ?? topicId.slice(0, 8)}"\n${body}` : body);
       } catch { /* einzelnes Topic überspringen */ }
@@ -482,13 +498,6 @@ Antworte NUR mit einem JSON-Array:
       }
       return lines.join('\n');
     } catch { return ''; }
-  }
-
-  private async recentPublishedTitles(channel: SocialChannel): Promise<string[]> {
-    const published = await this.socialRepo.listItems(this.ownerUserId, {
-      channelId: channel.id, status: 'published', limit: 15,
-    });
-    return published.map(i => (i.title ?? i.body).slice(0, 80));
   }
 
   // ── Bild-Erstellung (Budget-gezählt) ─────────────────────────────────

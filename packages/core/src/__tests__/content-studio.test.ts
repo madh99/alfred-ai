@@ -180,7 +180,8 @@ function makeStack(opts: {
   const socialRepo = {
     listChannels: vi.fn(async () => [opts.channel]),
     listItems: vi.fn(async (_u: string, q: any) => {
-      if (q?.status === 'published') return [];
+      // v973 — published/rejected-Sperrlisten-Abfragen liefern hier leer
+      if (q?.status === 'published' || q?.status === 'rejected') return [];
       return opts.planned ?? [];
     }),
     getItem: vi.fn(async () => null),

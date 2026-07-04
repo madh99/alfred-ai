@@ -170,6 +170,30 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(r.display).toContain('gelöscht');
   });
 
+  it('v973: Doppel-Publish-Gate — sehr ähnlicher Beitrag der letzten 7 Tage blockt, force übergeht', async () => {
+    const channel = makeChannel();
+    const item = makeItem({ title: 'WM-Aus für Österreich: Spanien zu stark im Sechzehntelfinale' });
+    const alreadyPublished = makeItem({
+      id: 'pub-1', status: 'published',
+      title: 'WM-Aus für Österreich: Spanien zu stark im Sechzehntelfinale', // Realfall: wortgleich 2× live
+      externalUrl: 'https://cc.example/news/wm-aus',
+    });
+    const { repo, state, spies } = makeRepo(channel, item);
+    (spies.listItems as any) = vi.fn(async (_u: string, q: any) =>
+      q?.status === 'published' ? [alreadyPublished] : [state.item]);
+    (repo as any).listItems = spies.listItems;
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+
+    const blocked = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(blocked.success).toBe(false);
+    expect(blocked.error).toContain('bereits veröffentlicht');
+    expect(blocked.error).toContain('force');
+
+    const forced = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa', force: true }, CTX);
+    expect(forced.success).toBe(true);
+  });
+
   it('pause_all = Social-Stopp', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'pause_all' }, CTX);
