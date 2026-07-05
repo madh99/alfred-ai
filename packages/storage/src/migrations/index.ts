@@ -2727,4 +2727,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_media_assets_scope ON social_media_assets(user_id, family, channel_id)`);
     },
   },
+  {
+    version: 117,
+    description: 'v1014 — Bild-Bibliothek: blocked-Flag (Asset von der Wiederverwendung ausschließen) (SQLite-Spiegel zu PG v121).',
+    up(db) {
+      db.exec(`ALTER TABLE social_media_assets ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`);
+    },
+  },
 ];

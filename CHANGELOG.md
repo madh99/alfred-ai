@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1014] - 2026-07-05
+
+### Added — Bild-Bibliothek-UI: Basis-Bilder sichtbar und steuerbar (v1014)
+
+Die Bibliothek aus v1005 war unsichtbar — jetzt gibt es Kontrolle darüber,
+welche Basis-Bilder rotieren.
+
+- **Galerie im Kanäle-Tab** (aufklappbar): Vorschau, Motiv, Kanal/Format,
+  Nutzungszähler, letzte Nutzung.
+- **Sperren** (`blocked`, Migration SQLite **v117**/PG **v121**): ein
+  gesperrtes Basis-Bild wird nie wiederverwendet, bleibt aber sichtbar;
+  jederzeit wieder freigebbar. **Löschen** entfernt Datei + Eintrag.
+- API: `GET /api/social/assets`, `POST /api/social/assets/:id/(block|unblock|delete)`.
+- 1 neuer Test (gesperrtes Asset wird trotz Motiv-Match nicht wiederverwendet).
+
 ## [0.19.0-multi-ha.1013] - 2026-07-05
 
 ### Added — Bluesky-Provider (v1013)

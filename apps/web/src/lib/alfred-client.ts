@@ -512,6 +512,19 @@ export class AlfredClient {
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
 
+  // v1014 — Bild-Bibliothek: Assets listen + sperren/löschen
+  async fetchSocialAssets(): Promise<SocialAssetItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/social/assets`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Social assets: HTTP ${res.status}`);
+    return (await res.json()).assets ?? [];
+  }
+  async socialAssetAction(id: string, action: 'block' | 'unblock' | 'delete'): Promise<{ success: boolean; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/assets/${id}/${action}`, {
+      method: 'POST', headers: this.jsonHeaders, body: '{}',
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+
   // v966 — Composer: Beitrag anlegen (optional terminieren/sofort posten)
   async socialCreateItem(payload: { channel: string; title?: string; body: string; hashtags?: string[]; media_url?: string; scheduled_at?: string; publish_now?: boolean }): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/items`, {
@@ -2767,6 +2780,23 @@ export interface SocialContentItem {
   storyId?: string;
   storyTitle?: string;
   storyKind?: string;
+}
+
+/** v1014 — Basis-Bild in der Bild-Bibliothek (Wiederverwendung). */
+export interface SocialAssetItem {
+  id: string;
+  channelId?: string;
+  channelName?: string;
+  family?: string;
+  path: string;
+  basename: string;
+  motif: string;
+  style?: string;
+  format?: string;
+  lastUsedAt: string;
+  useCount: number;
+  blocked: boolean;
+  createdAt: string;
 }
 
 // v639 — Goals

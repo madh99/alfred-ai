@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
-import type { InterestTopicItem, SocialChannelItem, SocialContentItem } from '@/lib/alfred-client';
+import type { InterestTopicItem, SocialAssetItem, SocialChannelItem, SocialContentItem } from '@/lib/alfred-client';
 
 const PLATFORM_ICON: Record<string, string> = {
   youtube: '▶️', instagram: '📸', facebook: '👥', threads: '🧵',
@@ -123,6 +123,10 @@ export function SocialPage() {
   const [failedItems, setFailedItems] = useState<SocialContentItem[]>([]);
   // v1001 — Detail-Sheet (großes Bild, voller Text, Story-Geschwister, alle Aktionen)
   const [detailId, setDetailId] = useState<string | null>(null);
+  // v1014 — Bild-Bibliothek (Basis-Bilder zur Wiederverwendung)
+  const [assets, setAssets] = useState<SocialAssetItem[]>([]);
+  const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
+  const [assetsOpen, setAssetsOpen] = useState(false);
   // v964 — Umterminieren (Inline-Datepicker je Item)
   const [reschedulingId, setReschedulingId] = useState<string | null>(null);
   const [rescheduleAt, setRescheduleAt] = useState<string>('');
@@ -234,6 +238,35 @@ export function SocialPage() {
   }, [client, channelFilter, commentStatusFilter]);
 
   useEffect(() => { if (page === 'comments') loadComments(); }, [page, loadComments]);
+
+  // v1014 — Bild-Bibliothek laden (beim Aufklappen im Kanäle-Tab)
+  const loadAssets = useCallback(async () => {
+    if (!client) return;
+    try {
+      const list = await client.fetchSocialAssets();
+      setAssets(list);
+      for (const a of list.slice(0, 40)) {
+        if (assetUrls[a.id] !== undefined || !a.basename) continue;
+        setAssetUrls(prev => ({ ...prev, [a.id]: '' }));
+        client.fetchSocialMediaObjectUrl(a.basename).then(url => {
+          if (url) setAssetUrls(prev => ({ ...prev, [a.id]: url }));
+        });
+      }
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    // assetUrls bewusst nicht in deps (eigene Updates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client]);
+
+  useEffect(() => { if (page === 'channels' && assetsOpen) loadAssets(); }, [page, assetsOpen, loadAssets]);
+
+  async function assetAction(a: SocialAssetItem, action: 'block' | 'unblock' | 'delete') {
+    if (action === 'delete' && !confirm('Basis-Bild endgültig aus der Bibliothek löschen (Datei + Eintrag)?')) return;
+    await withBusy(a.id, async () => {
+      const r = await client!.socialAssetAction(a.id, action);
+      if (!r.success) throw new Error(r.error ?? 'Aktion fehlgeschlagen');
+      await loadAssets();
+    });
+  }
 
   async function commentAction(c: SocialCommentItem, action: 'reply' | 'ignore' | 'suggest') {
     await withBusy(c.id, async () => {
@@ -1387,6 +1420,45 @@ export function SocialPage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* v1014 — Bild-Bibliothek: Basis-Bilder zur Wiederverwendung (sperren/löschen) */}
+      {page === 'channels' && channels.length > 0 && (
+        <div className="border border-[#1f1f1f] rounded-lg p-4">
+          <button onClick={() => setAssetsOpen(o => !o)} className="w-full text-left flex items-center gap-2">
+            <span className="text-sm font-semibold text-gray-200">🖼 Bild-Bibliothek</span>
+            <span className="text-[11px] text-gray-500">— Basis-Bilder, die das Studio nach Cooldown wiederverwendet{assets.length > 0 ? ` (${assets.length})` : ''}</span>
+            <div className="flex-1" />
+            <span className="text-gray-500 text-xs">{assetsOpen ? '▲' : '▼'}</span>
+          </button>
+          {assetsOpen && (
+            <div className="mt-3">
+              {assets.length === 0 && <div className="text-xs text-gray-600">Noch keine Basis-Bilder — sie entstehen automatisch mit jedem generierten Bild.</div>}
+              <div className="grid gap-2 grid-cols-2 md:grid-cols-4">
+                {assets.map(a => (
+                  <div key={a.id} className={clsx('border rounded-lg p-2 space-y-1', a.blocked ? 'border-red-500/30 opacity-70' : 'border-[#2a2a2a]')}>
+                    {assetUrls[a.id]
+                      ? <img src={assetUrls[a.id]} alt="" className="w-full h-24 object-cover rounded" />
+                      : <div className="w-full h-24 bg-[#141414] rounded" />}
+                    <div className="text-[10px] text-gray-400 line-clamp-2" title={a.motif}>{a.motif}</div>
+                    <div className="text-[9px] text-gray-600">
+                      {a.channelName ?? 'Familie'} · {a.format ?? 'square'} · {a.useCount}× · zuletzt {new Date(a.lastUsedAt).toLocaleDateString('de-AT')}
+                      {a.blocked && <span className="text-red-400"> · GESPERRT</span>}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => assetAction(a, a.blocked ? 'unblock' : 'block')} disabled={busy === a.id}
+                        className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 rounded">
+                        {a.blocked ? '▶ freigeben' : '⏸ sperren'}
+                      </button>
+                      <button onClick={() => assetAction(a, 'delete')} disabled={busy === a.id}
+                        className="px-1.5 py-0.5 text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded">🗑</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

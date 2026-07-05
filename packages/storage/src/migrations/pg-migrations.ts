@@ -2035,4 +2035,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_media_assets_scope ON social_media_assets(user_id, family, channel_id)`, []);
     },
   },
+  {
+    version: 121,
+    description: 'v1014 — Bild-Bibliothek: blocked-Flag (Asset von der Wiederverwendung ausschließen) (PG-Spiegel zu SQLite v117).',
+    async up(db) {
+      await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS blocked INTEGER NOT NULL DEFAULT 0`, []);
+    },
+  },
 ];

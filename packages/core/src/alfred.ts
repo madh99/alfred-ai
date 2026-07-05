@@ -8227,6 +8227,36 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { success: r.success, error: r.error };
           },
           pauseAll: async () => socialRepo.pauseAll(socialOwner),
+          // v1014 — Bild-Bibliothek (Basename fürs bestehende media-Endpoint mitliefern)
+          listAssets: async () => {
+            const assets = await socialRepo.listMediaAssets(socialOwner, { limit: 200 });
+            const channels = await socialRepo.listChannels(socialOwner);
+            const nameOf = new Map(channels.map(c => [c.id, c.name]));
+            return assets
+              .sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt))
+              .map(a => ({
+                ...a,
+                basename: a.path.split(/[\\/]/).pop() ?? '',
+                channelName: a.channelId ? nameOf.get(a.channelId) : undefined,
+              }));
+          },
+          assetAction: async (id: string, action: 'block' | 'unblock' | 'delete') => {
+            try {
+              if (action === 'delete') {
+                const asset = (await socialRepo.listMediaAssets(socialOwner, { limit: 500 })).find(a => a.id === id);
+                if (asset) {
+                  const { unlink } = await import('node:fs/promises');
+                  await unlink(asset.path).catch(() => { /* Datei ggf. schon weg */ });
+                }
+                await socialRepo.deleteMediaAsset(socialOwner, id);
+              } else {
+                await socialRepo.setMediaAssetBlocked(socialOwner, id, action === 'block');
+              }
+              return { success: true };
+            } catch (err) {
+              return { success: false, error: (err as Error).message };
+            }
+          },
           listItems: async (filter: { channelId?: string; status?: string; limit?: number }) =>
             socialRepo.listItems(socialOwner, {
               channelId: filter.channelId,

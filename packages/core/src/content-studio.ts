@@ -1781,6 +1781,7 @@ Antworte NUR mit einem JSON-Array:
     if (wanted.size === 0) return undefined;
     let best: { asset: (typeof assets)[number]; score: number } | undefined;
     for (const asset of assets) {
+      if (asset.blocked) continue; // v1014 — vom User gesperrt
       if (asset.lastUsedAt >= cutoff) continue;
       if ((asset.style ?? '') !== (style ?? '')) continue;
       if ((asset.format ?? 'square') !== (format.size ?? 'square')) continue;

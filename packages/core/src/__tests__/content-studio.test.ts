@@ -1063,6 +1063,23 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     expect(media[0].pathOrUrl).toContain('studio-'); // eigenes Item-Bild (mit frischem Overlay)
   });
 
+  it('v1014: gesperrtes Asset (blocked) wird NIE wiederverwendet → normale Generierung', async () => {
+    const old = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, llm, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const assetPath = join(dir, 'asset-gesperrt.png');
+    await writeFile(assetPath, Buffer.from('base'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-blk', userId: OWNER, channelId: 'ch-1', path: assetPath,
+      motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+      style: undefined, format: '1536x1024', lastUsedAt: old, useCount: 1, blocked: true, createdAt: old,
+    }]);
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{ title: 'Flutlicht-Stimmung', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x', bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen' }]) })
+      .mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok"}' });
+    await studio.fillChannel(channel);
+    expect(execute).toHaveBeenCalled(); // trotz Motiv-Match generiert
+  });
+
   it('kein passendes Asset (Cooldown nicht um) → normale Generierung + Registrierung in der Bibliothek', async () => {
     const fresh = new Date(Date.now() - 1 * 24 * 3_600_000).toISOString(); // erst gestern genutzt
     const { studio, channel, socialRepo, llm, execute, join, dir, writeFile } = await makeMediaStudio([]);
