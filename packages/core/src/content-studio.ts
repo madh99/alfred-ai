@@ -497,8 +497,9 @@ export class ContentStudio {
    * Vision-Gate, Monats-Budget). Liefert [] wenn generate_images aus ist,
    * das Budget erschöpft ist oder das Bild die Prüfung nicht besteht.
    */
-  async generateImageForItem(channel: SocialChannel, item: { title?: string; body: string }): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }>> {
-    return this.maybeGenerateImage(channel, { title: item.title ?? '', body: item.body, hashtags: [], warum: '' });
+  async generateImageForItem(channel: SocialChannel, item: { title?: string; body: string; bildidee?: string }): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }>> {
+    // v991 — optionaler User-Hinweis („beide Flaggen zeigen") wird zur Bildidee
+    return this.maybeGenerateImage(channel, { title: item.title ?? '', body: item.body, hashtags: [], warum: '', bildidee: item.bildidee });
   }
 
   // ── Wissens-Kontext + Ideen ───────────────────────────────────────────

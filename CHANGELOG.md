@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.991] - 2026-07-05
+
+### Added — Entwurf-Verbesserung: Bild neu generieren + Text überarbeiten lassen (v991)
+
+Unpassende Vorschläge mussten bisher abgelehnt oder von Hand editiert
+werden; für ein falsches Bild gab es gar keinen Weg (Realfall: Item mit
+kaputtem Bild musste per Hand aus der DB gelöscht und komplett neu
+erzeugt werden — samt gutem Text).
+
+- **`regenerate_image`** (+ UI): Bild eines Entwurfs neu erzeugen —
+  optional mit Hinweis („beide Flaggen zeigen, ohne Menschen"), der als
+  Bildidee einfließt. Läuft durch alle Leitplanken (Text-Schrubber,
+  Bildnisrecht, Vision-Gate, Budget) und ERSETZT nur die generierten
+  Medien; eigene/externe bleiben. Status und Termin bleiben erhalten.
+- **`revise_content`** (+ UI): Entwurf per Anweisung überarbeiten lassen
+  („halb so lang, mehr Community-Frage") — das Kanal-LLM (model_tier,
+  Persona, Lektionen, Thinking aus) schreibt Titel/Text/Hashtags um;
+  robustes JSON-Parsing inkl. Reparatur deutscher Zitate; optional
+  Lektion in einem Schritt. Bewusst ohne Story-Dedup-Gates.
+- UI: „✨ Verbessern"-Panel am Item (eine Anweisung, zwei Knöpfe: Text
+  überarbeiten / Bild neu); Routen `POST /api/social/items/:id/revise`
+  und `/regenerate-image`. Per Chat: „Überarbeite Beitrag X: …",
+  „Generier das Bild von X neu, diesmal …".
+- 2 neue Tests.
+
 ## [0.19.0-multi-ha.990] - 2026-07-05
 
 ### Fixed — Housekeeping: ehrliches Bild-Budget, mediaDir-Bereinigung, Quellen-Exclude-Filter (v990)

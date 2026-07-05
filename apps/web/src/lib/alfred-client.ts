@@ -490,7 +490,7 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Social items: HTTP ${res.status}`);
     return (await res.json()).items ?? [];
   }
-  async socialItemAction(id: string, action: 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete' | 'remove', extra?: { scheduled_at?: string; title?: string; body?: string; hashtags?: string[]; lesson?: string }): Promise<{ success: boolean; display?: string; error?: string }> {
+  async socialItemAction(id: string, action: 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete' | 'remove' | 'revise' | 'regenerate-image', extra?: { scheduled_at?: string; title?: string; body?: string; hashtags?: string[]; lesson?: string; instruction?: string; hint?: string }): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/items/${id}/${action}`, {
       method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(extra ?? {}),
     });

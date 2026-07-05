@@ -423,6 +423,56 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(again.success).toBe(false);
   });
 
+  it('v991: regenerate_image ersetzt generierte Medien (User-Medien bleiben), Hinweis fließt als Bildidee ein', async () => {
+    const item = makeItem({
+      status: 'scheduled',
+      media: [
+        { type: 'image', source: 'generated', pathOrUrl: '/tmp/alt.png' },
+        { type: 'image', source: 'user', pathOrUrl: 'https://ex.at/eigenes.jpg' },
+      ],
+    });
+    const { skill, spies } = makeSkill(makeChannel(), item);
+    const imageFn = vi.fn(async (_c: unknown, _i: unknown) => [{ type: 'image' as const, source: 'generated' as const, pathOrUrl: '/tmp/neu.png' }]);
+    skill.setImageGenerator(imageFn);
+
+    const r = await skill.execute({ action: 'regenerate_image', item_id: 'item-0001-aaaa', hint: 'beide Flaggen zeigen' }, CTX);
+    expect(r.success).toBe(true);
+    expect(imageFn.mock.calls[0][1]).toMatchObject({ bildidee: 'beide Flaggen zeigen' });
+    const newMedia = (spies.updateItemContent as any).mock.calls[0][2].media;
+    expect(newMedia.map((m: any) => m.pathOrUrl)).toEqual(['/tmp/neu.png', 'https://ex.at/eigenes.jpg']);
+
+    // kein Bild erzeugt (Budget/Gate) → Fehler, Medien unangetastet
+    imageFn.mockResolvedValueOnce([]);
+    const fail = await skill.execute({ action: 'regenerate_image', item_id: 'item-0001-aaaa' }, CTX);
+    expect(fail.success).toBe(false);
+    expect((spies.updateItemContent as any).mock.calls.length).toBe(1);
+  });
+
+  it('v991: revise_content — LLM überarbeitet nach Anweisung, kaputte deutsche Zitate werden repariert', async () => {
+    const { skill, spies } = makeSkill(makeChannel({ config: { model_tier: 'medium' } }), makeItem({ status: 'draft', title: 'Alt', body: 'Alter langer Text über das Spiel mit vielen Details.' }));
+    const llm = {
+      complete: vi.fn(async () => ({
+        content: '{"title": "Neu und knapp", "body": "Der Trainer sagt „wir sind bereit" und die Fans feiern kurz und knackig mit.", "hashtags": ["wm2026"]}',
+      })),
+    };
+    skill.setLlm(llm as any);
+
+    const r = await skill.execute({ action: 'revise_content', item_id: 'item-0001-aaaa', instruction: 'halb so lang' }, CTX);
+    expect(r.success).toBe(true);
+    // Kanal-Tier wird genutzt, Thinking aus
+    expect((llm.complete as any).mock.calls[0][0]).toMatchObject({ tier: 'medium', reasoningEffort: 'low' });
+    const patch = (spies.updateItemContent as any).mock.calls[0][2];
+    expect(patch.title).toBe('Neu und knapp');
+    expect(patch.body).toContain('„wir sind bereit“'); // ASCII-Schlusszeichen repariert
+    expect(patch.hashtags).toEqual(['wm2026']);
+
+    // published → verweigert
+    const { skill: s2 } = makeSkill(makeChannel(), makeItem({ status: 'published' }));
+    s2.setLlm(llm as any);
+    const blocked = await s2.execute({ action: 'revise_content', item_id: 'item-0001-aaaa', instruction: 'x' }, CTX);
+    expect(blocked.success).toBe(false);
+  });
+
   it('pause_all = Social-Stopp', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'pause_all' }, CTX);

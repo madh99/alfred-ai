@@ -12,7 +12,7 @@ type SocialAction =
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
-  | 'list_comments' | 'reply_comment' | 'ignore_comment'
+  | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'regenerate_image' | 'revise_content'
   | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
@@ -85,7 +85,7 @@ export class SocialSkill extends Skill {
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
-            'list_comments', 'reply_comment', 'ignore_comment',
+            'list_comments', 'reply_comment', 'ignore_comment', 'regenerate_image', 'revise_content',
             'get_content', 'edit_content', 'add_lesson', 'replan_channel'],
           description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um").',
         },
@@ -116,6 +116,8 @@ export class SocialSkill extends Skill {
         lesson: { type: 'string', description: 'edit_content/add_lesson: Lektion für künftige Studio-Läufe des Kanals, z.B. "Es ist die WM 2026, nicht die EM — auch in Hashtags" — wird zwingend in künftige Prompts aufgenommen' },
         comment_id: { type: 'string', description: 'reply_comment/ignore_comment: ID des Kommentars (aus list_comments)' },
         reply: { type: 'string', description: 'reply_comment: die Antwort — geht LIVE auf die Plattform (FB/IG)' },
+        hint: { type: 'string', description: 'regenerate_image: optionaler Bild-Hinweis, z.B. "beide Flaggen zeigen, ohne Menschen"' },
+        instruction: { type: 'string', description: 'revise_content: Überarbeitungs-Anweisung, z.B. "halb so lang, ohne Superlative" — das Kanal-LLM schreibt Titel/Text/Hashtags um (Status/Termin bleiben)' },
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
         external_url: { type: 'string', description: 'mark_published: URL des manuell geposteten Beitrags' },
@@ -172,10 +174,10 @@ export class SocialSkill extends Skill {
     this.replanFn = fn;
   }
 
-  /** v962 — Bild-Generierung für Ad-hoc-Items (Studio-Leitplanken, vom Kern injiziert). */
-  private imageFn?: (channel: SocialChannel, item: { title?: string; body: string }) => Promise<ContentMedia[]>;
+  /** v962 — Bild-Generierung für Ad-hoc-Items (Studio-Leitplanken, vom Kern injiziert; v991: optionaler bildidee-Hinweis). */
+  private imageFn?: (channel: SocialChannel, item: { title?: string; body: string; bildidee?: string }) => Promise<ContentMedia[]>;
 
-  setImageGenerator(fn: (channel: SocialChannel, item: { title?: string; body: string }) => Promise<ContentMedia[]>): void {
+  setImageGenerator(fn: (channel: SocialChannel, item: { title?: string; body: string; bildidee?: string }) => Promise<ContentMedia[]>): void {
     this.imageFn = fn;
   }
 
@@ -286,6 +288,8 @@ export class SocialSkill extends Skill {
         case 'mark_published': return await this.markPublished(userId, input);
         case 'delete_remote': return await this.deleteRemote(userId, input);
         case 'delete_item': return await this.deleteItemLocal(userId, input);
+        case 'regenerate_image': return await this.regenerateImage(userId, input);
+        case 'revise_content': return await this.reviseContent(userId, input);
         case 'attach_media': return await this.attachMedia(userId, input);
         case 'generate_content': return await this.generateContent(userId, input);
         case 'render_video': return await this.renderVideo(userId, input);
@@ -657,6 +661,92 @@ export class SocialSkill extends Skill {
       externalUrl: typeof input.external_url === 'string' ? input.external_url : undefined,
     });
     return { success: true, data: { item: updated }, display: `✅ [${item.id.slice(0, 8)}] als manuell veröffentlicht getrackt${updated.externalUrl ? ` (${updated.externalUrl})` : ''}.` };
+  }
+
+  /**
+   * v991 — Bild eines Entwurfs NEU generieren (optional mit User-Hinweis als
+   * Bildidee). Läuft durch alle Studio-Leitplanken (v982-Text-Schrubber,
+   * Bildnisrecht, Vision-Gate, Monats-Budget) und ERSETZT die generierten
+   * Medien des Items; vom User angehängte/externe Medien bleiben.
+   */
+  private async regenerateImage(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const item = await this.resolveItem(userId, input);
+    if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
+    if (item.status === 'published') return { success: false, error: 'Bereits veröffentlicht — das Bild lässt sich nur vor dem Publish tauschen.' };
+    const channel = await this.repo.getChannel(userId, item.channelId);
+    if (!channel) return { success: false, error: 'Kanal nicht gefunden' };
+    if (!this.imageFn) return { success: false, error: 'Bild-Generierung nicht verfügbar.' };
+    const hint = typeof input.hint === 'string' && input.hint.trim().length > 0 ? input.hint.trim() : undefined;
+    const media = await this.imageFn(channel, { title: item.title, body: item.body, bildidee: hint });
+    if (media.length === 0) {
+      return { success: false, error: 'Kein Bild erzeugt — Budget erschöpft, generate_images aus oder Bild-Prüfung nicht bestanden. Ggf. mit anderem Hinweis erneut versuchen.' };
+    }
+    const kept = item.media.filter(m => m.source !== 'generated');
+    await this.repo.updateItemContent(userId, item.id, { media: [...media, ...kept] });
+    return { success: true, display: `🎨 [${item.id.slice(0, 8)}] Bild neu generiert${hint ? ` (Hinweis: „${hint.slice(0, 80)}")` : ''} — Status und Termin bleiben erhalten.` };
+  }
+
+  /**
+   * v991 — Entwurf per Anweisung ÜBERARBEITEN LASSEN („kürzer", „Fokus auf X"):
+   * das Kanal-LLM (model_tier/Persona/Lektionen) schreibt Titel/Body/Hashtags
+   * um. Bewusst OHNE Story-Dedup-Gates (gleiche Story, gewollte Überarbeitung);
+   * optional lernt der Kanal per lesson gleich mit.
+   */
+  private async reviseContent(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const item = await this.resolveItem(userId, input);
+    if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
+    if (item.status === 'published') return { success: false, error: 'Bereits veröffentlicht — nicht mehr überarbeitbar.' };
+    const instruction = typeof input.instruction === 'string' ? input.instruction.trim() : '';
+    if (!instruction) return { success: false, error: 'instruction erforderlich (was soll geändert werden?)' };
+    if (!this.llm) return { success: false, error: 'LLM nicht verfügbar.' };
+    const channel = await this.repo.getChannel(userId, item.channelId);
+    if (!channel) return { success: false, error: 'Kanal nicht gefunden' };
+    const lessons = Array.isArray(channel.config.lessons)
+      ? (channel.config.lessons as unknown[]).filter((l): l is string => typeof l === 'string').slice(-10)
+      : [];
+    const tierRaw = channel.config.model_tier;
+    const tier = tierRaw === 'medium' || tierRaw === 'default' || tierRaw === 'strong' ? tierRaw : 'fast';
+    const prompt = `Du überarbeitest einen Social-Media-Entwurf für den Kanal "${channel.name}" (${channel.platform}).
+${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${lessons.length ? `KORREKTUREN AUS DER VERGANGENHEIT (zwingend): ${lessons.join(' | ')}\n` : ''}
+AKTUELLER ENTWURF:
+Titel: ${item.title ?? '(ohne)'}
+Text: ${item.body}
+Hashtags: ${item.hashtags.join(', ') || '(keine)'}
+
+ANWEISUNG DES REDAKTEURS: ${instruction}
+
+Regeln: Fakten beibehalten (nichts dazu erfinden), KEINE Meta-Zeilen, Hashtags AUSSCHLIESSLICH ins Feld.
+Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder escaped):
+{"title": "…", "body": "…", "hashtags": ["…"]}`;
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 4000, tier, reasoningEffort: 'low' });
+    const content = response.content ?? '';
+    // robust parsen: direkte Form, sonst deutsches Zitat mit ASCII-Schlusszeichen reparieren (v978-Muster)
+    let parsed: { title?: unknown; body?: unknown; hashtags?: unknown } | null = null;
+    const match = content.match(/\{[\s\S]*\}/);
+    if (match) {
+      for (const candidate of [match[0], match[0].replace(/„([^„"“]*)"/g, '„$1“')]) {
+        try { parsed = JSON.parse(candidate); break; } catch { /* nächster Versuch */ }
+      }
+    }
+    if (!parsed || typeof parsed.body !== 'string' || parsed.body.trim().length < 10) {
+      return { success: false, error: 'Überarbeitung fehlgeschlagen (LLM-Antwort unbrauchbar) — bitte erneut versuchen.' };
+    }
+    const cleanBody = parsed.body
+      .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#0?39;/g, "'")
+      .split('\n').filter(l => !/^\s*(bildidee|hinweis)\s*:/i.test(l)).join('\n').trim();
+    const { body, tags: bodyTags } = extractTrailingHashtags(cleanBody);
+    const fieldTags = Array.isArray(parsed.hashtags) ? (parsed.hashtags as unknown[]).map(String) : item.hashtags;
+    await this.repo.updateItemContent(userId, item.id, {
+      title: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.slice(0, 200) : item.title,
+      body,
+      hashtags: mergeHashtags(fieldTags, bodyTags),
+    });
+    let lessonNote = '';
+    if (typeof input.lesson === 'string' && input.lesson.trim().length > 0) {
+      const r = await this.addLesson(userId, { channel: item.channelId, lesson: input.lesson });
+      if (r.success) lessonNote = '\n📚 Lektion gespeichert.';
+    }
+    return { success: true, display: `✨ [${item.id.slice(0, 8)}] überarbeitet („${instruction.slice(0, 80)}") — Status und Termin bleiben erhalten.${lessonNote}` };
   }
 
   /**

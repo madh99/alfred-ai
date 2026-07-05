@@ -8189,7 +8189,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               : action === 'edit' ? 'edit_content'
               : action === 'delete' ? 'delete_remote'
               // v987 — lokal löschen ohne Story-Sperre (ungepublishte Items)
-              : action === 'remove' ? 'delete_item' : '';
+              : action === 'remove' ? 'delete_item'
+              // v991 — Entwurf-Verbesserung
+              : action === 'revise' ? 'revise_content'
+              : action === 'regenerate-image' ? 'regenerate_image' : '';
             if (!skillAction) return { success: false, error: `unknown action ${action}` };
             const r = await socialSkillForApi.execute({
               action: skillAction, item_id: id,
@@ -8197,6 +8200,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               ...(action === 'edit' ? {
                 title: extra?.title, body: extra?.body, hashtags: extra?.hashtags, lesson: extra?.lesson,
               } : {}),
+              // v991 — Überarbeitungs-Anweisung bzw. Bild-Hinweis durchreichen
+              ...(action === 'revise' ? { instruction: extra?.instruction, lesson: extra?.lesson } : {}),
+              ...(action === 'regenerate-image' ? { hint: extra?.hint } : {}),
             }, socialCtx);
             return { success: r.success, display: r.display, error: r.error };
           },

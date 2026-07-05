@@ -700,7 +700,7 @@ export class HttpAdapter extends MessagingAdapter {
     updateChannel?: (id: string, patch: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
     pauseAll?: () => Promise<number>;
     listItems?: (filter: { channelId?: string; status?: string; limit?: number }) => Promise<any[]>;
-    itemAction?: (id: string, action: 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete' | 'remove', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
+    itemAction?: (id: string, action: 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete' | 'remove' | 'revise' | 'regenerate-image', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v965 — Kanal-Aktionen (Studio-Lauf, Umplanung, Auth-Check, Themen verknüpfen). */
     channelAction?: (id: string, action: 'generate' | 'replan' | 'validate-auth' | 'link-topic' | 'unlink-topic', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v966 — Beitrag aus der UI anlegen (Composer; optional terminieren/sofort posten). */
@@ -1335,12 +1335,13 @@ export class HttpAdapter extends MessagingAdapter {
           limit: Number(url.searchParams.get('limit') ?? 100),
         }) ?? [],
       })).catch(err => this.safeError(res, err));
-    } else if (url.pathname.match(/^\/api\/social\/items\/[^/]+\/(approve|reject|publish|schedule|edit|delete|remove)$/) && req.method === 'POST') {
+    } else if (url.pathname.match(/^\/api\/social\/items\/[^/]+\/(approve|reject|publish|schedule|edit|delete|remove|revise|regenerate-image)$/) && req.method === 'POST') {
       // v987 — 'remove' = lokal löschen (ohne Story-Sperre), 'delete' = auf der Plattform löschen
+      // v991 — 'revise' = LLM-Überarbeitung per Anweisung, 'regenerate-image' = Bild neu (optional hint)
       this.handleSocialBody(req, res, async (body) => {
         const parts = url.pathname.split('/');
         if (!this.socialCallbacks?.itemAction) return { error: 'not supported' };
-        return this.socialCallbacks.itemAction(parts[4], parts[5] as 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete' | 'remove', body);
+        return this.socialCallbacks.itemAction(parts[4], parts[5] as 'approve' | 'reject' | 'publish' | 'schedule' | 'edit' | 'delete' | 'remove' | 'revise' | 'regenerate-image', body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/social/items' && req.method === 'POST') {
       this.handleSocialBody(req, res, async (body) => {

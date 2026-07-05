@@ -86,6 +86,9 @@ export function SocialPage() {
   // v955 — Inline-Editor (Korrektur + optionale Lektion, aus der der Kanal lernt)
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; body: string; hashtags: string; lesson: string }>({ title: '', body: '', hashtags: '', lesson: '' });
+  // v991 — „Verbessern"-Panel: Anweisung → Text-Überarbeitung ODER Bild-Neuerzeugung
+  const [improvingId, setImprovingId] = useState<string | null>(null);
+  const [improveText, setImproveText] = useState('');
   // v965 — Kanal-Einstellungen (Panel je Kanal) + Themen-Verknüpfung
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<{
@@ -533,6 +536,8 @@ export function SocialPage() {
                 className="px-2 py-1 text-xs border border-blue-500/40 text-blue-400 hover:bg-blue-500/15 rounded">📅 Umterminieren</button>
               <button onClick={() => startEdit(item)} disabled={busy === item.id}
                 className="px-2 py-1 text-xs border border-amber-500/40 text-amber-400 hover:bg-amber-500/15 rounded">✏️ Bearbeiten</button>
+              <button onClick={() => { setImprovingId(improvingId === item.id ? null : item.id); setImproveText(''); }} disabled={busy === item.id}
+                className="px-2 py-1 text-xs border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/15 rounded">✨ Verbessern</button>
               <button onClick={() => itemAction(item, 'reject')} disabled={busy === item.id}
                 className="px-2 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded">✕ Ablehnen</button>
             </>
@@ -553,6 +558,31 @@ export function SocialPage() {
               className="px-2 py-1 text-xs border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 rounded">🗑 Löschen (ohne Sperre)</button>
           )}
         </div>
+        {/* v991 — Verbessern: Anweisung → Text-Überarbeitung ODER Bild neu */}
+        {improvingId === item.id && (
+          <div className="mt-2 space-y-1">
+            <textarea value={improveText} onChange={e => setImproveText(e.target.value)} rows={2}
+              placeholder='Anweisung, z.B. "halb so lang, mehr Community-Frage" — fürs Bild z.B. "beide Flaggen, ohne Menschen"'
+              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200" />
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={() => withBusy(item.id, async () => {
+                const r = await client!.socialItemAction(item.id, 'revise', { instruction: improveText });
+                if (!r.success) throw new Error(r.error ?? 'Überarbeitung fehlgeschlagen');
+                if (r.display) setNotice(r.display);
+                setImprovingId(null); await load();
+              })} disabled={busy === item.id || improveText.trim().length === 0}
+                className="px-2 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">✨ Text überarbeiten</button>
+              <button onClick={() => withBusy(item.id, async () => {
+                const r = await client!.socialItemAction(item.id, 'regenerate-image', improveText.trim() ? { hint: improveText } : undefined);
+                if (!r.success) throw new Error(r.error ?? 'Bild-Neuerzeugung fehlgeschlagen');
+                if (r.display) setNotice(r.display);
+                setImprovingId(null); await load();
+              })} disabled={busy === item.id}
+                className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded">🎨 Bild neu generieren</button>
+              <span className="text-gray-600 text-[10px]">Status und Termin bleiben erhalten; Bild läuft durch alle Prüfungen und zählt aufs Budget.</span>
+            </div>
+          </div>
+        )}
         {crosspostId === item.id && (
           <div className="flex items-center gap-2 mt-2 flex-wrap text-xs">
             <span className="text-gray-500">Ziel-Kanäle:</span>
