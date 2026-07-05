@@ -153,12 +153,12 @@ export function SocialPage() {
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
     // v1006 — Sprache + Übersetzungen (translate_to nur bei rest-Kanälen wirksam)
     language: string; translateTo: string[];
-    // v1007 — IG-Auto-Story beim Lead-Publish
-    autoStory: boolean;
+    // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells
+    autoStory: boolean; imageCarousel: boolean;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
-    language: 'de', translateTo: [], autoStory: false });
+    language: 'de', translateTo: [], autoStory: false, imageCarousel: false });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
@@ -427,6 +427,7 @@ export function SocialPage() {
       language: typeof c.config.language === 'string' && c.config.language ? c.config.language : 'de',
       translateTo: Array.isArray(c.config.translate_to) ? (c.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string') : [],
       autoStory: c.config.auto_story === true,
+      imageCarousel: c.config.image_carousel === true,
     });
     if (interestTopics.length === 0) {
       client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
@@ -461,8 +462,9 @@ export function SocialPage() {
           // v1006 — Sprache (Default de → Schlüssel löschen) + Übersetzungs-Ziele
           language: d.language === 'de' ? null : d.language,
           translate_to: d.translateTo.length > 0 ? d.translateTo : null,
-          // v1007 — Auto-Story (nur Instagram wirksam)
+          // v1007 — Auto-Story (nur Instagram wirksam) · v1008 — Karussells
           auto_story: d.autoStory ? true : null,
+          image_carousel: d.imageCarousel ? true : null,
         },
       });
       setSettingsId(null);
@@ -1176,6 +1178,14 @@ export function SocialPage() {
                       title="Sobald der Lead-Artikel der Familie live geht, postet dieser Kanal automatisch eine Story (9:16-Bild des Feed-Posts mit Titel + Link-im-Profil-CTA). Zählt aufs Tages-Limit.">
                       <input type="checkbox" checked={settingsDraft.autoStory} onChange={e => setSettingsDraft(d => ({ ...d, autoStory: e.target.checked }))} />
                       📱 Auto-Story bei neuem Lead-Artikel (geht OHNE Einzelfreigabe live)
+                    </label>
+                  )}
+                  {/* v1008 — IG-Karussells */}
+                  {c.platform === 'instagram' && settingsDraft.generateImages && (
+                    <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                      title="Bei Aufzählungen/Analysen erzeugt das Studio 2-4 Slides mit Titel-Overlays statt eines Einzelbilds. Jeder Slide zählt aufs Bild-Budget; die Bild-Bibliothek dämpft die Kosten.">
+                      <input type="checkbox" checked={settingsDraft.imageCarousel} onChange={e => setSettingsDraft(d => ({ ...d, imageCarousel: e.target.checked }))} />
+                      🎠 Karussells (2-4 Slides bei Analysen/Aufzählungen)
                     </label>
                   )}
                   {/* v1004 — Bild-Look: Stil-Preset, Qualität, Wasserzeichen, Titel-Overlay */}

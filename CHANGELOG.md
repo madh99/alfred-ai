@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1008] - 2026-07-05
+
+### Added — Instagram-Karussells aus dem Studio (v1008)
+
+Der Provider konnte Karussells seit v988 — jetzt erzeugt das Studio sie
+auch: Analysen und Aufzählungen werden auf Instagram zu 2–4 Slides statt
+eines Einzelbilds.
+
+- **Opt-in je IG-Kanal** (`config.image_carousel`, Checkbox in
+  „🎨 Bild-Look"). Das Idea-JSON liefert dann optional `slides`
+  (Motiv + kurzer Titel je Slide) — die Prompts verlangen Karussells
+  ausdrücklich NUR bei aufzählbaren Inhalten.
+- **Slide-Titel deterministisch als Overlay** (nie vom Bildmodell),
+  Wasserzeichen auf jedem Slide.
+- **Budget ehrlich**: jeder Slide-Versuch zählt; ist das Budget mitten
+  im Karussell erschöpft, endet es dort (Einzelbild statt nichts).
+  Die Bild-Bibliothek (v1005) greift je Slide und dämpft die Kosten.
+- Intern: `maybeGenerateImage` → Dispatcher + `produceImage`
+  (Einzelbild-Pipeline mit Motiv-/Titel-Override) — Studio und
+  „Bild neu generieren" unverändert abgedeckt.
+- 1 neuer Test (3 Slides Ende-zu-Ende inkl. Budget-Zählung + Opt-in-Gate).
+
 ## [0.19.0-multi-ha.1007] - 2026-07-05
 
 ### Added — Instagram Auto-Stories beim Lead-Artikel (v1007)

@@ -944,6 +944,44 @@ describe('ContentStudio — Bild-Look (v1004)', () => {
     expect(String(input.prompt)).toContain('cinematisch, 35mm'); // Stil-Preset statt Persona
   });
 
+  it('v1008: image_carousel + slides → mehrere Bilder, Budget je Slide-Versuch; ohne Opt-in Einzelbild', async () => {
+    const channel = makeChannel({
+      platform: 'instagram', postingSlots: ['Mo 18:00'], planningHorizonDays: 7,
+      config: { topic_id: 't-1', generate_images: true, image_carousel: true, image_policy: 'people_ok' },
+    });
+    const ideaJson = JSON.stringify([{
+      title: 'Die 3 Viertelfinal-Favoriten', body: 'Ein ausreichend langer Analyse-Text mit mehreren Punkten hier.',
+      hashtags: [], warum: 'x', bildidee: 'Pokal auf Rasen',
+      slides: [
+        { motiv: 'Pokal auf Rasen unter Flutlicht', titel: 'Die Favoriten' },
+        { motiv: 'Taktiktafel mit Magneten', titel: 'Spanien' },
+        { motiv: 'Stadion-Kurve mit Fahnen', titel: 'Frankreich' },
+      ],
+    }]);
+    const os = await import('node:os');
+    const { socialRepo, interestsRepo, insightsRepo, llm } = makeStack({ channel, llmResponse: ideaJson });
+    const studio = new ContentStudio(socialRepo, interestsRepo, insightsRepo, llm, undefined, undefined, undefined, makeLogger(), OWNER, os.tmpdir());
+    const execute = vi.fn(async () => ({ success: true, attachments: [{ data: Buffer.from('png') }] }));
+    (studio as any).skillRegistry = { get: () => ({ metadata: { name: 'image_generate' } }) };
+    (studio as any).skillSandbox = { execute };
+    await studio.fillChannel(channel);
+    expect(execute.mock.calls.length).toBe(3); // ein Call je Slide (people_ok: kein Vision-Gate)
+    const created = (socialRepo.createItem as any).mock.calls[0][2];
+    expect(created.media.length).toBe(3); // Karussell-Medien am Item
+    const genImage = (socialRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
+    expect(genImage.length).toBe(3); // Budget je Slide gezählt
+
+    // ohne image_carousel: slides werden ignoriert → 1 Bild
+    const solo = makeChannel({ platform: 'instagram', postingSlots: ['Mo 18:00'], planningHorizonDays: 7, config: { topic_id: 't-1', generate_images: true, image_policy: 'people_ok' } });
+    const stack2 = makeStack({ channel: solo, llmResponse: ideaJson });
+    const s2 = new ContentStudio(stack2.socialRepo, stack2.interestsRepo, stack2.insightsRepo, stack2.llm, undefined, undefined, undefined, makeLogger(), OWNER, os.tmpdir());
+    const execute2 = vi.fn(async () => ({ success: true, attachments: [{ data: Buffer.from('png') }] }));
+    (s2 as any).skillRegistry = { get: () => ({ metadata: { name: 'image_generate' } }) };
+    (s2 as any).skillSandbox = { execute: execute2 };
+    await s2.fillChannel(solo);
+    expect(execute2.mock.calls.length).toBe(1);
+  });
+
   it('platformImageSpec: IG Hochformat mit 4:5-Crop, rest Querformat, config.image_size übersteuert', () => {
     expect(ContentStudio.platformImageSpec({ platform: 'instagram', config: {} })).toEqual({ size: '1024x1536', crop: [4, 5] });
     expect(ContentStudio.platformImageSpec({ platform: 'rest', config: {} })).toEqual({ size: '1536x1024' });

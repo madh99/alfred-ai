@@ -76,6 +76,8 @@ interface GeneratedIdea {
   ort?: string;
   /** v1003 — Einlass-Zeit, NUR wenn in der Quelle belegt. */
   einlass?: string;
+  /** v1008 — Instagram-Karussell: 2–4 Slides (Motiv ohne Text + kurzer Titel fürs Overlay). */
+  slides?: Array<{ motiv: string; titel?: string }>;
 }
 
 /** v977 — Kommender Termin aus einer Event-Quelle (at = ISO, Ort in summary). */
@@ -241,6 +243,13 @@ export function parseIdeas(text: string): GeneratedIdea[] {
           // v1003 — strukturierte Termin-Felder für die Bild-Karte
           ort: typeof i.ort === 'string' && i.ort.trim() ? i.ort.trim().slice(0, 120) : undefined,
           einlass: typeof i.einlass === 'string' && i.einlass.trim() ? i.einlass.trim().slice(0, 40) : undefined,
+          // v1008 — Karussell-Slides (Motiv + kurzer Overlay-Titel)
+          slides: Array.isArray(i.slides)
+            ? (i.slides as Array<{ motiv?: unknown; titel?: unknown }>)
+              .filter(s => s && typeof s.motiv === 'string' && s.motiv.trim().length > 3)
+              .map(s => ({ motiv: String(s.motiv).slice(0, 400), titel: typeof s.titel === 'string' && s.titel.trim() ? s.titel.trim().slice(0, 120) : undefined }))
+              .slice(0, 4)
+            : undefined,
         };
       })
       .filter((i: GeneratedIdea) => i.body.length > 10)
@@ -801,14 +810,14 @@ Art: ${story.kind}${story.terminBis ? `\nTermin: ${formatLocalDateTime(story.ter
 
 Regeln:
 ${roleRule}
-${story.terminBis ? `${TERMIN_PERSPEKTIVE}\n` : ''}
+${story.terminBis ? `${TERMIN_PERSPEKTIVE}\n` : ''}${channel.platform === 'instagram' && channel.config.image_carousel === true ? '- KARUSSELL (optional, nur bei Aufzählung/Analyse mit MEHREREN Punkten): 2-4 "slides" mit je einem Bild-Motiv (NUR Motive, kein Text) und "titel" (max. 8 Wörter, kommt deterministisch aufs Bild).\n' : ''}
 ${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)}. Konkret, kein Clickbait; eigener TITEL (nicht der Arbeitstitel wortgleich).
 - 3-6 Hashtags NUR ins Feld "hashtags"; KEINE Meta-Zeilen im body.
 - BILDIDEE ohne Text/Datum/Zahlen — nur Motive.
 - NIE relative Zeitwörter („heute"/„morgen") — Datum/Uhrzeit nennen.
 
 Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typografisch „…“ oder escaped):
-[{"title": "…", "body": "…", "hashtags": ["…"], "warum": "1 Satz", "bildidee": "optional", "terminBis": ${story.terminBis ? `"${story.terminBis}", "ort": "Ort exakt aus dem Stoff", "einlass": "NUR wenn im Stoff belegt, z.B. 19:30"` : 'null'}}]`;
+[{"title": "…", "body": "…", "hashtags": ["…"], "warum": "1 Satz", "bildidee": "optional", "terminBis": ${story.terminBis ? `"${story.terminBis}", "ort": "Ort exakt aus dem Stoff", "einlass": "NUR wenn im Stoff belegt, z.B. 19:30"` : 'null'}${channel.platform === 'instagram' && channel.config.image_carousel === true ? ', "slides": [{"motiv": "…", "titel": "…"}]' : ''}}]`;
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 6_000, tier: this.modelTier(channel), reasoningEffort: 'low' });
     const ideas = parseIdeas(response.content ?? '');
     if (ideas.length === 0) {
@@ -1241,6 +1250,10 @@ REGELN für die Abstimmung:
     const terminRule = dossier.includes('KOMMENDE TERMINE')
       ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Setze zusätzlich "ort" (exakt aus der Termin-Zeile) und "einlass" (NUR wenn eine Einlass-Zeit in der Quelle steht, sonst weglassen). Ort/Datum/Uhrzeit gehören in den BODY-TEXT — niemals in die "bildidee".\n${TERMIN_PERSPEKTIVE}\n`
       : '';
+    // v1008 — Karussell-Regel nur für Instagram-Kanäle mit Opt-in
+    const carouselRule = channel.platform === 'instagram' && channel.config.image_carousel === true
+      ? '- KARUSSELL (optional, nur wenn der Inhalt eine Aufzählung/Analyse mit MEHREREN klaren Punkten ist): gib 2-4 "slides" an — je Slide ein Bild-Motiv (Regeln wie bildidee: NUR Motive, kein Text) und ein "titel" (max. 8 Wörter; wird deterministisch aufs Bild gelegt). Einfache Meldungen bekommen KEIN Karussell.\n'
+      : '';
     // v977 — das LLM kennt sonst das Erscheinungsdatum nicht und schreibt
     // „heute Nacht" für ein Spiel, dessen Post zwei Tage später erscheint
     const windowLine = window
@@ -1258,9 +1271,9 @@ ${terminRule}${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLang
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
 - BILDIDEE ohne Text: "bildidee" beschreibt NUR Motive (Szenen, Objekte, Stimmung) — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Bildmodelle schreiben Text FALSCH; Fakten gehören in den body).
 - "art" (zwingend): news = tagesaktuelle Meldung (verdirbt in ~2 Tagen) | recap = Nachbericht zu einem Ereignis (verdirbt in ~3 Tagen) | vorschau = Blick auf ein kommendes Ereignis | termin = Termin-Ankündigung | evergreen = zeitlos (Hintergrund, Community-Frage, Geschichte). Sei ehrlich — verderbliche Posts werden früh eingeplant oder verworfen.
-${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
+${carouselRule}${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem VALIDEN JSON-Array (Zitate in Texten typografisch „…“ oder mit \\" escapen — nie nackte " im String):
-[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "art": "news|vorschau|recap|termin|evergreen", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses", "ort": "NUR bei Terminen: Ort exakt aus der Termin-Zeile", "einlass": "NUR bei Terminen und NUR wenn belegt, z.B. 19:30"}]`;
+[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "art": "news|vorschau|recap|termin|evergreen", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses", "ort": "NUR bei Terminen: Ort exakt aus der Termin-Zeile", "einlass": "NUR bei Terminen und NUR wenn belegt, z.B. 19:30"${carouselRule ? ', "slides": [{"motiv": "Bild-Motiv ohne Text", "titel": "kurzer Slide-Titel"}]' : ''}}]`;
   }
 
   private buildYoutubePrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
@@ -1470,6 +1483,39 @@ Antworte NUR mit einem JSON-Array:
   // ── Bild-Erstellung (Budget-gezählt) ─────────────────────────────────
 
   private async maybeGenerateImage(channel: SocialChannel, idea: GeneratedIdea): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }>> {
+    // v1008 — Instagram-Karussell (Opt-in config.image_carousel): 2–4 Slides
+    // aus dem Idea-JSON, je Slide eigenes Motiv + deterministischer Titel-
+    // Overlay. Budget zählt je Slide-Versuch; ist es erschöpft, endet das
+    // Karussell dort (Einzelbild ist besser als nichts).
+    const slides = channel.platform === 'instagram' && channel.config.image_carousel === true && Array.isArray(idea.slides)
+      ? idea.slides.filter(s => s && typeof s.motiv === 'string' && s.motiv.trim().length > 3).slice(0, 4)
+      : [];
+    if (slides.length >= 2) {
+      const out: Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }> = [];
+      for (const slide of slides) {
+        const media = await this.produceImage(channel, idea, slide.motiv, slide.titel?.trim() ? slide.titel.trim() : null);
+        if (media.length === 0) break;
+        out.push(...media);
+      }
+      if (out.length > 0) {
+        this.logger.info({ channel: channel.name, slides: out.length }, 'v1008 carousel images produced');
+        return out;
+      }
+      return [];
+    }
+    return this.produceImage(channel, idea);
+  }
+
+  /**
+   * EIN Bild erzeugen (oder aus der Bibliothek wiederverwenden): Budget,
+   * Bildnisrecht-Scrubbing, Vision-Gate, Plattform-Crop, Overlays, Ablage.
+   * @param motifOverride v1008 — eigenes Motiv (Karussell-Slide) statt idea.bildidee
+   * @param forcedTitle v1008 — Overlay-Titel erzwingen (string), nur Branding (null) oder Automatik (undefined)
+   */
+  private async produceImage(
+    channel: SocialChannel, idea: GeneratedIdea,
+    motifOverride?: string, forcedTitle?: string | null,
+  ): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }>> {
     if (channel.config.generate_images !== true) return [];
     if (!this.skillRegistry || !this.skillSandbox) return [];
     const skill = this.skillRegistry.get('image_generate') as Skill | undefined;
@@ -1493,7 +1539,7 @@ Antworte NUR mit einem JSON-Array:
       const policy = resolveImagePolicy(channel.config);
 
       // v941 — die Bildidee des Studios ist der beste Prompt (Fallback: Titel/Body)
-      let motif = idea.bildidee ?? `Social-Media-Bild für: ${idea.title || idea.body.slice(0, 150)}`;
+      let motif = motifOverride ?? idea.bildidee ?? `Social-Media-Bild für: ${idea.title || idea.body.slice(0, 150)}`;
       // v950 Schicht 2 — deterministisch: Personen-Namen aus dem Motiv schrubben
       if (policy === 'symbolic') {
         const names = extractNameCandidates(idea.title, idea.body, idea.bildidee);
@@ -1524,7 +1570,7 @@ Antworte NUR mit einem JSON-Array:
       // gleicher Stil/Format, Cooldown abgelaufen)? → wiederverwenden, nur das
       // Overlay ist neu. Kostet KEIN Bild-Budget.
       if (channel.config.image_reuse !== false && this.mediaDir) {
-        const reused = await this.tryReuseAsset(channel, motif, idea, style, format).catch(() => undefined);
+        const reused = await this.tryReuseAsset(channel, motif, idea, style, format, forcedTitle).catch(() => undefined);
         if (reused) return reused;
       }
 
@@ -1574,7 +1620,7 @@ Antworte NUR mit einem JSON-Array:
           const framed = format.crop ? await cropToRatio(buffer, format.crop[0], format.crop[1]).catch(() => buffer) : buffer;
           // v1002 — deterministische Text-Overlays (Wasserzeichen, Titel, Termin-
           // Karte) NACH allen Gates: Text kommt nie vom Bildmodell (v982-Lektion).
-          const finalBuffer = await this.applyOverlays(framed, channel, idea).catch(() => framed);
+          const finalBuffer = await this.applyOverlays(framed, channel, idea, forcedTitle).catch(() => framed);
           const { writeFile, mkdir } = await import('node:fs/promises');
           const { join } = await import('node:path');
           await mkdir(this.mediaDir, { recursive: true });
@@ -1637,6 +1683,7 @@ Antworte NUR mit einem JSON-Array:
   private async tryReuseAsset(
     channel: SocialChannel, motif: string, idea: GeneratedIdea,
     style: string | undefined, format: { size?: string; crop?: [number, number] },
+    forcedTitle?: string | null,
   ): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }> | undefined> {
     const cooldownDays = typeof channel.config.image_reuse_cooldown_days === 'number' && channel.config.image_reuse_cooldown_days >= 0
       ? channel.config.image_reuse_cooldown_days : 30;
@@ -1666,7 +1713,7 @@ Antworte NUR mit einem JSON-Array:
       await this.socialRepo.deleteMediaAsset(this.ownerUserId, best.asset.id).catch(() => { /* weg ist weg */ });
       return undefined;
     }
-    const finalBuffer = await this.applyOverlays(base, channel, idea).catch(() => base);
+    const finalBuffer = await this.applyOverlays(base, channel, idea, forcedTitle).catch(() => base);
     const file = join(this.mediaDir!, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
     await writeFile(file, finalBuffer);
     await this.socialRepo.touchMediaAsset(this.ownerUserId, best.asset.id).catch(() => { /* non-critical */ });
@@ -1701,13 +1748,15 @@ Antworte NUR mit einem JSON-Array:
    * resolveImageBranding: config.image_branding → Lead-Domain → Kanalname)
    * + optionaler Titelbalken (config.image_overlay.title, Default AUS).
    */
-  private async applyOverlays(buffer: Buffer, channel: SocialChannel, idea: GeneratedIdea): Promise<Buffer> {
+  private async applyOverlays(buffer: Buffer, channel: SocialChannel, idea: GeneratedIdea, forcedTitle?: string | null): Promise<Buffer> {
     const ov = (channel.config.image_overlay && typeof channel.config.image_overlay === 'object'
       ? channel.config.image_overlay : {}) as Record<string, unknown>;
     const siblings = await this.socialRepo.listChannels(this.ownerUserId, 'active').catch(() => [] as SocialChannel[]);
     // v1003 — Termin-Karte (Default AN): Matchup + Anpfiff (+ Einlass/Ort) aus
     // den Datenfeldern — NIE vom Bildmodell (v982-Lektion).
-    const termin = idea.terminBis && ov.termin_card !== false ? {
+    // v1008 — forcedTitle: Karussell-Slides erzwingen ihren Slide-Titel
+    // (string) bzw. nur Branding (null); undefined = Automatik.
+    const termin = forcedTitle === undefined && idea.terminBis && ov.termin_card !== false ? {
       headline: (idea.title || idea.body.slice(0, 60)).slice(0, 90),
       anpfiff: `${formatLocalDateTime(idea.terminBis)} Uhr`,
       ...(idea.einlass ? { einlass: idea.einlass } : {}),
@@ -1715,7 +1764,9 @@ Antworte NUR mit einem JSON-Array:
     } : undefined;
     const spec: OverlaySpec = {
       branding: ov.watermark === false ? undefined : resolveImageBranding(channel, siblings),
-      title: !termin && ov.title === true && idea.title ? idea.title : undefined,
+      title: forcedTitle !== undefined
+        ? (forcedTitle ?? undefined)
+        : (!termin && ov.title === true && idea.title ? idea.title : undefined),
       termin,
       font: typeof ov.font === 'string' ? ov.font : undefined,
     };
