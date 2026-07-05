@@ -496,6 +496,22 @@ export class AlfredClient {
     });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
+  // v992 — Kommentare: Liste + Aktionen (reply geht LIVE auf die Plattform)
+  async fetchSocialComments(opts?: { channel?: string; status?: string }): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (opts?.channel) params.set('channel', opts.channel);
+    if (opts?.status) params.set('status', opts.status);
+    const res = await fetch(`${this.baseUrl}/api/social/comments${params.toString() ? '?' + params : ''}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Social comments: HTTP ${res.status}`);
+    return (await res.json()).comments ?? [];
+  }
+  async socialCommentAction(id: string, action: 'reply' | 'ignore' | 'suggest', extra?: { reply?: string }): Promise<{ success: boolean; display?: string; error?: string; data?: { draft?: string } }> {
+    const res = await fetch(`${this.baseUrl}/api/social/comments/${id}/${action}`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(extra ?? {}),
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+
   // v966 — Composer: Beitrag anlegen (optional terminieren/sofort posten)
   async socialCreateItem(payload: { channel: string; title?: string; body: string; hashtags?: string[]; media_url?: string; scheduled_at?: string; publish_now?: boolean }): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/items`, {

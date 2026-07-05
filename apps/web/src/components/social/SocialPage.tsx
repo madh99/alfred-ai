@@ -47,7 +47,14 @@ function toLocalInput(iso?: string): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-type QueueTab = 'pending' | 'history';
+type QueueTab = 'pending' | 'history' | 'comments';
+
+/** v992 — Kommentar aus social_comments (Antwort-Workflow new → replied|ignored). */
+interface SocialCommentItem {
+  id: string; channelId: string; itemId?: string;
+  author?: string; text: string; status: 'new' | 'replied' | 'ignored';
+  replyText?: string; remoteCreatedAt?: string; createdAt: string;
+}
 
 /** v967 — Mini-Verlaufslinie (SVG) für Kanal-Metriken. */
 function Sparkline({ points }: { points: number[] }) {
@@ -89,6 +96,10 @@ export function SocialPage() {
   // v991 — „Verbessern"-Panel: Anweisung → Text-Überarbeitung ODER Bild-Neuerzeugung
   const [improvingId, setImprovingId] = useState<string | null>(null);
   const [improveText, setImproveText] = useState('');
+  // v992 — Kommentare (Antwort-Workflow; reply geht LIVE)
+  const [comments, setComments] = useState<SocialCommentItem[]>([]);
+  const [commentStatusFilter, setCommentStatusFilter] = useState<'new' | 'replied' | 'ignored'>('new');
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   // v965 — Kanal-Einstellungen (Panel je Kanal) + Themen-Verknüpfung
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<{
@@ -153,6 +164,36 @@ export function SocialPage() {
   }, [client]);
 
   useEffect(() => { if (tab === 'history') loadHistory(); }, [tab, loadHistory]);
+
+  // v992 — Kommentare laden (bei Tab-Wechsel und Filter-Änderung)
+  const loadComments = useCallback(async () => {
+    if (!client) return;
+    try {
+      setComments(await client.fetchSocialComments({
+        channel: channelFilter || undefined, status: commentStatusFilter,
+      }) as SocialCommentItem[]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [client, channelFilter, commentStatusFilter]);
+
+  useEffect(() => { if (tab === 'comments') loadComments(); }, [tab, loadComments]);
+
+  async function commentAction(c: SocialCommentItem, action: 'reply' | 'ignore' | 'suggest') {
+    await withBusy(c.id, async () => {
+      const extra = action === 'reply' ? { reply: (replyDrafts[c.id] ?? '').trim() } : undefined;
+      if (action === 'reply' && !extra?.reply) throw new Error('Antwort-Text fehlt.');
+      const r = await client!.socialCommentAction(c.id, action, extra);
+      if (!r.success) throw new Error(r.error ?? 'Aktion fehlgeschlagen');
+      if (action === 'suggest') {
+        const draft = (r.data as { draft?: string } | undefined)?.draft ?? '';
+        setReplyDrafts(d => ({ ...d, [c.id]: draft }));
+        return; // nur Entwurf ins Feld — gesendet wird erst per „Antworten"
+      }
+      if (r.display) setNotice(r.display);
+      await loadComments();
+    });
+  }
 
   // v948 — Bild-Vorschauen nachladen (erstes image je Item)
   useEffect(() => {
@@ -878,6 +919,10 @@ export function SocialPage() {
             className={clsx('px-2.5 py-1 text-xs rounded border', tab === 'history' ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a]')}>
             🗂 Verlauf
           </button>
+          <button onClick={() => setTab('comments')}
+            className={clsx('px-2.5 py-1 text-xs rounded border', tab === 'comments' ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a]')}>
+            💬 Kommentare
+          </button>
           <div className="flex-1" />
           {channels.length > 1 && (
             <select value={channelFilter} onChange={e => setChannelFilter(e.target.value)}
@@ -897,6 +942,51 @@ export function SocialPage() {
           <div className="space-y-2">
             {visibleHistory.length === 0 && <div className="text-xs text-gray-600">Noch kein Verlauf.</div>}
             {visibleHistory.map(i => renderItemCard(i, i.status === 'failed'))}
+          </div>
+        )}
+        {/* v992 — Kommentare: neu/beantwortet/ignoriert, Antwort geht LIVE */}
+        {tab === 'comments' && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs">
+              {(['new', 'replied', 'ignored'] as const).map(s => (
+                <button key={s} onClick={() => setCommentStatusFilter(s)}
+                  className={clsx('px-2 py-0.5 rounded border', commentStatusFilter === s ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-500 hover:bg-[#1a1a1a]')}>
+                  {s === 'new' ? '🆕 Neu' : s === 'replied' ? '✅ Beantwortet' : '🙈 Ignoriert'}
+                </button>
+              ))}
+            </div>
+            {comments.length === 0 && <div className="text-xs text-gray-600">Keine Kommentare in dieser Ansicht — der Collector läuft stündlich.</div>}
+            {comments.map(c => {
+              const channel = channels.find(ch => ch.id === c.channelId);
+              return (
+                <div key={c.id} className="border border-[#2a2a2a] rounded-lg p-3 space-y-1.5">
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <span className="text-gray-300 font-medium">{c.author ?? 'anonym'}</span>
+                    <span>auf {channel?.name ?? c.channelId.slice(0, 8)}</span>
+                    {c.remoteCreatedAt && <span>· {new Date(c.remoteCreatedAt).toLocaleString('de-AT')}</span>}
+                  </div>
+                  <div className="text-sm text-gray-200">{c.text}</div>
+                  {c.status === 'replied' && c.replyText && (
+                    <div className="text-xs text-emerald-400">↪︎ Unsere Antwort: {c.replyText}</div>
+                  )}
+                  {c.status === 'new' && (
+                    <div className="space-y-1">
+                      <textarea value={replyDrafts[c.id] ?? ''} onChange={e => setReplyDrafts(d => ({ ...d, [c.id]: e.target.value }))}
+                        rows={2} placeholder="Antwort schreiben — oder erst einen KI-Vorschlag holen…"
+                        className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200" />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button onClick={() => commentAction(c, 'suggest')} disabled={busy === c.id}
+                          className="px-2 py-1 text-xs border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 disabled:opacity-50 rounded">💡 KI-Vorschlag</button>
+                        <button onClick={() => commentAction(c, 'reply')} disabled={busy === c.id || !(replyDrafts[c.id] ?? '').trim()}
+                          className="px-2 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">💬 Antworten (geht live)</button>
+                        <button onClick={() => commentAction(c, 'ignore')} disabled={busy === c.id}
+                          className="px-2 py-1 text-xs border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 disabled:opacity-50 rounded">Ignorieren</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

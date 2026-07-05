@@ -8249,6 +8249,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { success: r.success, display: r.display, error: r.error };
           },
           channelMetrics: async (channelId: string) => socialRepo.listMetrics(channelId, { limit: 120 }),
+          // v992 — Kommentare für die UI (Liste direkt aus dem Repo; Aktionen durch den Skill)
+          listComments: async (opts: { channelId?: string; status?: string }) => {
+            const status = opts.status === 'new' || opts.status === 'replied' || opts.status === 'ignored' ? opts.status : undefined;
+            return socialRepo.listComments(socialOwner, { channelId: opts.channelId, status, limit: 100 });
+          },
+          commentAction: async (id: string, action: 'reply' | 'ignore' | 'suggest', extra?: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const skillAction = action === 'reply' ? 'reply_comment' : action === 'ignore' ? 'ignore_comment' : 'suggest_reply';
+            const r = await socialSkillForApi.execute({
+              action: skillAction, comment_id: id,
+              ...(action === 'reply' && typeof extra?.reply === 'string' ? { reply: extra.reply } : {}),
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error, data: r.data };
+          },
           // v948 — generierte Bilder für die UI-Vorschau (nur Basename, kein Traversal)
           mediaFile: async (basename: string) => {
             const safe = path.basename(basename);

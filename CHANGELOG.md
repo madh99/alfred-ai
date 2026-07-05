@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.992] - 2026-07-05
+
+### Added — Kommentar-UI im Web (v992)
+
+Der Antwort-Workflow aus v989 bekommt seine Oberfläche.
+
+- **Neuer Tab „💬 Kommentare"** in der Social-Seite: Filter nach Status
+  (Neu/Beantwortet/Ignoriert) und Kanal; je Kommentar Autor, Text,
+  Zeitpunkt und — bei beantworteten — die eigene Antwort.
+- **Antworten direkt aus der UI:** Antwortfeld je Kommentar mit
+  „💬 Antworten (geht live)" und „Ignorieren"; der Button
+  „💡 KI-Vorschlag" legt einen LLM-Entwurf in Kanal-Persona ins Feld
+  (neue Skill-Action `suggest_reply` — reiner Entwurf, gesendet wird
+  erst nach deiner Bestätigung, Text frei editierbar).
+- Neue Routen: `GET /api/social/comments`,
+  `POST /api/social/comments/:id/(reply|ignore|suggest)`.
+- 1 neuer Test (Vorschlag in Persona, ohne Side-Effect).
+
 ## [0.19.0-multi-ha.991] - 2026-07-05
 
 ### Added — Entwurf-Verbesserung: Bild neu generieren + Text überarbeiten lassen (v991)

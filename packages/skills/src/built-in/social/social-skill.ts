@@ -12,7 +12,7 @@ type SocialAction =
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
-  | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'regenerate_image' | 'revise_content'
+  | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'suggest_reply' | 'regenerate_image' | 'revise_content'
   | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
@@ -85,7 +85,7 @@ export class SocialSkill extends Skill {
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
-            'list_comments', 'reply_comment', 'ignore_comment', 'regenerate_image', 'revise_content',
+            'list_comments', 'reply_comment', 'ignore_comment', 'suggest_reply', 'regenerate_image', 'revise_content',
             'get_content', 'edit_content', 'add_lesson', 'replan_channel'],
           description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um").',
         },
@@ -296,6 +296,7 @@ export class SocialSkill extends Skill {
         case 'crosspost': return await this.crosspost(userId, input);
         case 'list_comments': return await this.listCommentsAction(userId, input);
         case 'reply_comment': return await this.replyComment(userId, input);
+        case 'suggest_reply': return await this.suggestReply(userId, input);
         case 'ignore_comment': {
           const comment = await this.repo.getComment(userId, typeof input.comment_id === 'string' ? input.comment_id : '');
           if (!comment) return { success: false, error: `Kommentar nicht gefunden: ${String(input.comment_id ?? '')}` };
@@ -867,6 +868,33 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
       success: true, data: { comments },
       display: `💬 ${comments.length} Kommentar(e)${channel ? ` auf **${channel.name}**` : ''}:\n${lines.join('\n')}\n\nAntworten: reply_comment mit comment_id + reply. Ignorieren: ignore_comment.`,
     };
+  }
+
+  /**
+   * v992 — Antwort-VORSCHLAG zu einem Kommentar (kein Side-Effect): das
+   * Kanal-LLM entwirft in Persona/Tonalität; gesendet wird erst über
+   * reply_comment (User editiert/bestätigt).
+   */
+  private async suggestReply(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const comment = await this.repo.getComment(userId, typeof input.comment_id === 'string' ? input.comment_id : '');
+    if (!comment) return { success: false, error: `Kommentar nicht gefunden: ${String(input.comment_id ?? '')}` };
+    if (!this.llm) return { success: false, error: 'LLM nicht verfügbar.' };
+    const channel = await this.repo.getChannel(userId, comment.channelId);
+    if (!channel) return { success: false, error: 'Kanal nicht gefunden' };
+    const item = comment.itemId ? await this.repo.getItem(userId, comment.itemId) : null;
+    const tierRaw = channel.config.model_tier;
+    const tier = tierRaw === 'medium' || tierRaw === 'default' || tierRaw === 'strong' ? tierRaw : 'fast';
+    const prompt = `Du bist Community-Manager des Kanals "${channel.name}" (${channel.platform}).
+${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${item ? `UNSER BEITRAG: ${item.title ?? ''} — ${item.body.slice(0, 300)}\n` : ''}
+KOMMENTAR von ${comment.author ?? 'einem Fan'}: "${comment.text}"
+
+Formuliere EINE freundliche, konkrete Antwort (Deutsch, max. 300 Zeichen, keine Hashtags, keine Emojis-Flut).
+Erfinde KEINE Fakten — wenn die Frage Informationen braucht, die du nicht hast, formuliere einen freundlichen Verweis auf fussball.cc bzw. eine Rückfrage.
+Antworte NUR mit dem Antwort-Text, ohne Anführungszeichen drumherum.`;
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 500, tier, reasoningEffort: 'low' });
+    const draft = (response.content ?? '').trim().replace(/^["„]|["“]$/g, '').slice(0, 500);
+    if (draft.length < 2) return { success: false, error: 'Kein Vorschlag erzeugt — bitte erneut versuchen.' };
+    return { success: true, data: { draft }, display: `💡 Vorschlag: "${draft}"\n\nSenden: reply_comment mit comment_id ${comment.id.slice(0, 8)} (Text anpassbar).` };
   }
 
   /** v989 — auf einen Kommentar antworten (Antwort geht LIVE auf die Plattform). */

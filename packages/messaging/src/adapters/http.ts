@@ -710,6 +710,9 @@ export class HttpAdapter extends MessagingAdapter {
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string) => Promise<{ data: Buffer; mimeType: string } | null>;
+    /** v992 — Kommentare listen + Aktionen (reply geht LIVE auf die Plattform). */
+    listComments?: (opts: { channelId?: string; status?: string }) => Promise<any[]>;
+    commentAction?: (id: string, action: 'reply' | 'ignore' | 'suggest', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
   };
 
   setSocialCallbacks(cb: NonNullable<HttpAdapter['socialCallbacks']>): void {
@@ -1353,6 +1356,20 @@ export class HttpAdapter extends MessagingAdapter {
         if (!this.socialCallbacks?.crosspost) return { error: 'not supported' };
         const channels = Array.isArray((body as { channels?: unknown }).channels) ? (body as { channels: unknown[] }).channels.map(String) : [];
         return this.socialCallbacks.crosspost(url.pathname.split('/')[4], channels);
+      }).catch(err => this.safeError(res, err));
+    // v992 — Kommentare: Liste + Aktionen (reply geht LIVE, suggest = LLM-Entwurf)
+    } else if (url.pathname === '/api/social/comments' && req.method === 'GET') {
+      this.handleSocial(req, res, async () => ({
+        comments: await this.socialCallbacks!.listComments?.({
+          channelId: url.searchParams.get('channel') ?? undefined,
+          status: url.searchParams.get('status') ?? undefined,
+        }) ?? [],
+      })).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/comments\/[^/]+\/(reply|ignore|suggest)$/) && req.method === 'POST') {
+      this.handleSocialBody(req, res, async (body) => {
+        const parts = url.pathname.split('/');
+        if (!this.socialCallbacks?.commentAction) return { error: 'not supported' };
+        return this.socialCallbacks.commentAction(parts[4], parts[5] as 'reply' | 'ignore' | 'suggest', body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/social\/channels\/[^/]+\/(generate|replan|validate-auth|link-topic|unlink-topic)$/) && req.method === 'POST') {
       this.handleSocialBody(req, res, async (body) => {

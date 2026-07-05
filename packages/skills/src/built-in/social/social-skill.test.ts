@@ -423,6 +423,30 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(again.success).toBe(false);
   });
 
+  it('v992: suggest_reply liefert LLM-Entwurf in Kanal-Persona OHNE Side-Effect', async () => {
+    const channel = makeChannel({ persona: 'locker, per Du' });
+    const { repo } = makeRepo(channel, makeItem({ status: 'published' }));
+    (repo as any).getComment = vi.fn(async () => ({
+      id: 'db-1', userId: 'u1', channelId: 'ch-1', itemId: 'item-0001-aaaa',
+      externalCommentId: 'c-1', author: 'Max', text: 'Wann geht es heute los?',
+      status: 'new', createdAt: 'x', updatedAt: 'x',
+    }));
+    (repo as any).setCommentStatus = vi.fn(async () => {});
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+    const llm = { complete: vi.fn(async () => ({ content: '„Heute um 19:00 im Dublin Irish Pub — komm vorbei!"' })) };
+    skill.setLlm(llm as any);
+
+    const r = await skill.execute({ action: 'suggest_reply', comment_id: 'db-1' }, CTX);
+    expect(r.success).toBe(true);
+    expect((r.data as any).draft).toContain('19:00 im Dublin Irish Pub');
+    // Persona + Kommentar im Prompt; NICHTS wurde gesendet oder markiert
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('locker, per Du');
+    expect(prompt).toContain('Wann geht es heute los?');
+    expect((repo as any).setCommentStatus).not.toHaveBeenCalled();
+  });
+
   it('v991: regenerate_image ersetzt generierte Medien (User-Medien bleiben), Hinweis fließt als Bildidee ein', async () => {
     const item = makeItem({
       status: 'scheduled',
