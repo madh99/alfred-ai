@@ -141,8 +141,12 @@ export function SocialPage() {
     familyRole: 'auto' | 'lead' | 'follow'; familyOffset: string;
     quietFrom: number; quietTo: number; newsdeskThreshold: number; newsdeskMaxPerDay: number;
     trafficMode: 'voll' | 'teaser' | 'auto';
+    // v1004 — Bild-Look je Kanal
+    imageStyle: string; imageQuality: 'default' | 'low' | 'medium' | 'high';
+    imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
-    familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll' });
+    familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
+    imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
@@ -401,6 +405,12 @@ export function SocialPage() {
       newsdeskThreshold: typeof c.config.newsdesk_threshold === 'number' ? c.config.newsdesk_threshold : 0.85,
       newsdeskMaxPerDay: typeof c.config.newsdesk_max_per_day === 'number' ? c.config.newsdesk_max_per_day : 3,
       trafficMode: c.config.traffic_mode === 'teaser' ? 'teaser' : c.config.traffic_mode === 'auto' ? 'auto' : 'voll',
+      // v1004 — Bild-Look
+      imageStyle: typeof c.config.image_style === 'string' ? c.config.image_style : '',
+      imageQuality: c.config.image_quality === 'low' || c.config.image_quality === 'medium' || c.config.image_quality === 'high' ? c.config.image_quality : 'default',
+      imageBranding: typeof c.config.image_branding === 'string' ? c.config.image_branding : '',
+      watermarkOn: (c.config.image_overlay as { watermark?: boolean } | undefined)?.watermark !== false && c.config.image_branding !== false,
+      titleOverlayOn: (c.config.image_overlay as { title?: boolean } | undefined)?.title === true,
     });
     if (interestTopics.length === 0) {
       client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
@@ -427,6 +437,11 @@ export function SocialPage() {
           newsdesk_quiet: [d.quietFrom, d.quietTo],
           newsdesk_threshold: d.newsdeskThreshold,
           newsdesk_max_per_day: d.newsdeskMaxPerDay,
+          // v1004 — Bild-Look (config wird feldweise gemergt)
+          image_style: d.imageStyle.trim() || null,
+          image_quality: d.imageQuality === 'default' ? null : d.imageQuality,
+          image_branding: d.imageBranding.trim() || null,
+          image_overlay: { watermark: d.watermarkOn, title: d.titleOverlayOn },
         },
       });
       setSettingsId(null);
@@ -1101,6 +1116,45 @@ export function SocialPage() {
                       <option value="strong">strong — Topmodell (höchste Qualität, teuer)</option>
                     </select>
                   </div>
+                  {/* v1004 — Bild-Look: Stil-Preset, Qualität, Wasserzeichen, Titel-Overlay */}
+                  {settingsDraft.generateImages && (
+                    <div className="border border-blue-500/20 rounded p-2.5 space-y-2 bg-blue-500/5">
+                      <div className="text-[11px] font-medium text-blue-300">🎨 Bild-Look <span className="text-gray-500 font-normal">— gilt für alle generierten Bilder dieses Kanals</span></div>
+                      <div>
+                        <label className="text-[11px] text-gray-500">Stil-Preset (wird an jeden Bild-Prompt angehängt — gleicher Look, verschiedene Motive; leer = Persona)</label>
+                        <input value={settingsDraft.imageStyle} onChange={e => setSettingsDraft(d => ({ ...d, imageStyle: e.target.value }))}
+                          placeholder='z.B. "cinematisch, natürliches Licht, satte Grüntöne, 35mm-Fotografie"'
+                          className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+                        <div>
+                          <label className="text-[11px] text-gray-500">Qualität</label>
+                          <select value={settingsDraft.imageQuality} onChange={e => setSettingsDraft(d => ({ ...d, imageQuality: e.target.value as 'default' | 'low' | 'medium' | 'high' }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value="default">Standard</option>
+                            <option value="low">low — günstig</option>
+                            <option value="medium">medium</option>
+                            <option value="high">high — beste Qualität, teuer</option>
+                          </select>
+                        </div>
+                        <div className="col-span-2 md:col-span-1">
+                          <label className="text-[11px] text-gray-500">Wasserzeichen-Text</label>
+                          <input value={settingsDraft.imageBranding} onChange={e => setSettingsDraft(d => ({ ...d, imageBranding: e.target.value }))}
+                            placeholder="automatisch: Lead-Domain"
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                        <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer pb-1">
+                          <input type="checkbox" checked={settingsDraft.watermarkOn} onChange={e => setSettingsDraft(d => ({ ...d, watermarkOn: e.target.checked }))} />
+                          Wasserzeichen
+                        </label>
+                        <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer pb-1" title="Post-Titel als Balken auf dem Bild (Termine bekommen immer ihre Termin-Karte)">
+                          <input type="checkbox" checked={settingsDraft.titleOverlayOn} onChange={e => setSettingsDraft(d => ({ ...d, titleOverlayOn: e.target.checked }))} />
+                          Titel aufs Bild
+                        </label>
+                      </div>
+                      <div className="text-[10px] text-gray-600">Format automatisch: Instagram Hochformat (4:5), Website/FB/Telegram Querformat. Termin-Posts bekommen eine Termin-Karte (Anpfiff, Einlass, Ort) — Text immer aus den Daten, nie vom Bildmodell.</div>
+                    </div>
+                  )}
                   {/* v996 — Familien-Playbook: Rolle, Staging-Versatz, Eilmeldungs-Regeln */}
                   {familyKeyOf(c) && (
                     <div className="border border-purple-500/20 rounded p-2.5 space-y-2 bg-purple-500/5">

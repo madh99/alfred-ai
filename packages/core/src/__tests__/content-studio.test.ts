@@ -902,6 +902,38 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
   });
 });
 
+describe('ContentStudio — Bild-Look (v1004)', () => {
+  it('image_style/image_quality/Plattform-Format fließen in den Generierungs-Aufruf', async () => {
+    const channel = makeChannel({
+      platform: 'instagram', postingSlots: ['Mo 18:00'], planningHorizonDays: 7,
+      config: { topic_id: 't-1', generate_images: true, image_style: 'cinematisch, 35mm', image_quality: 'high' },
+    });
+    const { studio } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([{ title: 'Story', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x' }]),
+    });
+    const execute = vi.fn(async (_s: unknown, input: Record<string, unknown>) => ({ success: true, attachments: [{ data: Buffer.from('png') }] }));
+    (studio as any).skillRegistry = { get: () => ({ metadata: { name: 'image_generate' } }) };
+    (studio as any).skillSandbox = { execute };
+    const llm = (studio as any).llm;
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{ title: 'Story', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x' }]) })
+      .mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok"}' });
+    await studio.fillChannel(channel);
+    const input = execute.mock.calls[0]![1];
+    expect(input.quality).toBe('high');
+    expect(input.size).toBe('1024x1536'); // Instagram → Hochformat
+    expect(String(input.prompt)).toContain('cinematisch, 35mm'); // Stil-Preset statt Persona
+  });
+
+  it('platformImageSpec: IG Hochformat mit 4:5-Crop, rest Querformat, config.image_size übersteuert', () => {
+    expect(ContentStudio.platformImageSpec({ platform: 'instagram', config: {} })).toEqual({ size: '1024x1536', crop: [4, 5] });
+    expect(ContentStudio.platformImageSpec({ platform: 'rest', config: {} })).toEqual({ size: '1536x1024' });
+    expect(ContentStudio.platformImageSpec({ platform: 'sonstwas', config: {} })).toEqual({});
+    expect(ContentStudio.platformImageSpec({ platform: 'rest', config: { image_size: '1024x1024' } })).toEqual({ size: '1024x1024', crop: undefined });
+  });
+});
+
 describe('ContentStudio — Housekeeping (v990)', () => {
   it('Bild-Budget zählt JEDEN Generierungs-Versuch (auch vom Vision-Gate verworfene)', async () => {
     // genau 1 freier Slot → genau 1 Idee → die 2 Zählungen kommen von Versuch+Retry

@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1004] - 2026-07-05
+
+### Added — Bild-Look je Kanal: Stil-Preset, Qualität, Plattform-Formate (v1004)
+
+Einheitlicher Look pro Kanal ohne Einheitsbrei — und endlich die
+richtigen Formate je Plattform.
+
+- **Stil-Preset** (`config.image_style`): wird an JEDEN Bild-Prompt des
+  Kanals angehängt und übersteuert die Persona im Bild-Prompt — gleicher
+  Look, verschiedene Motive (z. B. Website „cinematisch, 35mm",
+  Instagram „hell, clean, kräftige Akzentfarbe").
+- **Qualität** (`config.image_quality`: low/medium/high) — high kostet
+  mehr, lohnt für den Lead-Kanal.
+- **Plattform-Formate automatisch**: Instagram generiert Hochformat
+  (1024×1536) und wird auf 4:5 zugeschnitten (mehr Hochformat erlaubt
+  IG nicht); Website/Facebook/Telegram/X/YouTube Querformat (1536×1024);
+  `config.image_size` übersteuert.
+- **UI**: neue Sektion „🎨 Bild-Look" in den Kanal-Einstellungen
+  (sichtbar wenn Bilder generiert werden): Stil, Qualität,
+  Wasserzeichen-Text/-Schalter, Titel-aufs-Bild-Schalter.
+- 2 neue Tests.
+
 ## [0.19.0-multi-ha.1003] - 2026-07-05
 
 ### Added — Termin-Karten auf Ankündigungs-Bildern (v1003)

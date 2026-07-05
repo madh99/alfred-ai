@@ -5,7 +5,7 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
-import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, applyImageOverlays, resolveImageBranding, type OverlaySpec } from '@alfred/skills';
+import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, applyImageOverlays, cropToRatio, resolveImageBranding, type OverlaySpec } from '@alfred/skills';
 export { extractTrailingHashtags, isNearDuplicateTitle };
 import type { SourceProvisioner } from './source-provisioner.js';
 import type { StoryDeduper, BlockedStory } from './story-dedup.js';
@@ -1499,13 +1499,24 @@ Antworte NUR mit einem JSON-Array:
       }
       motif = textScrub.motif;
 
+      // v1004 — Kanal-Stil (einheitlicher Look je Kanal, übersteuert die Persona
+      // im Bild-Prompt), Qualität und Plattform-Format
+      const style = typeof channel.config.image_style === 'string' && channel.config.image_style.trim()
+        ? channel.config.image_style.trim() : undefined;
+      const quality = channel.config.image_quality === 'low' || channel.config.image_quality === 'medium' || channel.config.image_quality === 'high'
+        ? channel.config.image_quality : undefined;
+      const format = ContentStudio.platformImageSpec(channel);
+
       // v950 Schicht 1+3 — bis zu 2 Versuche: normal → Vision-Verstoß → strenges Symbolmotiv
       for (let attempt = 0; attempt < 2; attempt++) {
         const prompt = attempt === 0
-          ? buildSafeImagePrompt(motif, channel.persona, policy)
-          : strictRetryPrompt(channel.persona);
-        const result = await this.skillSandbox.execute(skill, { prompt },
-          { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
+          ? buildSafeImagePrompt(motif, style ?? channel.persona, policy)
+          : strictRetryPrompt(style ?? channel.persona);
+        const result = await this.skillSandbox.execute(skill, {
+          prompt,
+          ...(quality ? { quality } : {}),
+          ...(format.size ? { size: format.size } : {}),
+        }, { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
         if (!result.success) return [];
         // v990 — JEDER Generierungs-Versuch zählt aufs Budget (auch wenn das
         // Vision-Gate das Bild gleich verwirft): der OpenAI-Betrag ist dann
@@ -1538,9 +1549,11 @@ Antworte NUR mit einem JSON-Array:
 
         let url: string | undefined;
         if (buffer && this.mediaDir) {
+          // v1004 — Plattform-Zuschnitt (z.B. Instagram Hochformat max. 4:5)
+          const framed = format.crop ? await cropToRatio(buffer, format.crop[0], format.crop[1]).catch(() => buffer) : buffer;
           // v1002 — deterministische Text-Overlays (Wasserzeichen, Titel, Termin-
           // Karte) NACH allen Gates: Text kommt nie vom Bildmodell (v982-Lektion).
-          const finalBuffer = await this.applyOverlays(buffer, channel, idea).catch(() => buffer);
+          const finalBuffer = await this.applyOverlays(framed, channel, idea).catch(() => framed);
           const { writeFile, mkdir } = await import('node:fs/promises');
           const { join } = await import('node:path');
           await mkdir(this.mediaDir, { recursive: true });
@@ -1561,6 +1574,27 @@ Antworte NUR mit einem JSON-Array:
     } catch (err) {
       this.logger.warn({ err: (err as Error).message, channel: channel.name }, 'v935 image generation failed');
       return [];
+    }
+  }
+
+  /**
+   * v1004 — Bild-Format je Plattform: Instagram Hochformat (generiert 1024x1536,
+   * zugeschnitten auf 4:5 — mehr Hochformat erlaubt IG nicht), Text-/Web-Kanäle
+   * Querformat, sonst Quadrat. config.image_size übersteuert.
+   */
+  static platformImageSpec(channel: Pick<SocialChannel, 'platform' | 'config'>): { size?: '1024x1024' | '1536x1024' | '1024x1536'; crop?: [number, number] } {
+    const cfg = channel.config.image_size;
+    const size = cfg === '1024x1024' || cfg === '1536x1024' || cfg === '1024x1536' ? cfg : undefined;
+    if (size) return { size, crop: channel.platform === 'instagram' && size === '1024x1536' ? [4, 5] : undefined };
+    switch (channel.platform) {
+      case 'instagram': return { size: '1024x1536', crop: [4, 5] };
+      case 'facebook':
+      case 'rest':
+      case 'telegram_channel':
+      case 'x':
+      case 'threads':
+      case 'youtube': return { size: '1536x1024' };
+      default: return {};
     }
   }
 
