@@ -114,8 +114,20 @@ export class TopicCollector {
         this.logger.warn({ err: (err as Error).message, topic: topic.name, kind: source.kind }, 'v929 source fetch failed');
         continue;
       }
+      // v990 — Quellen-Exclude-Filter: config.exclude_keywords hält Fremdthemen
+      // aus den Topic-Items (Realfall: ORF-Sport-Feed spülte Formel 1/Radsport
+      // in die Fußball-Kanäle). Substring-Match auf Titel+Summary, kleingeschrieben.
+      const excludes = Array.isArray(source.config.exclude_keywords)
+        ? (source.config.exclude_keywords as unknown[])
+          .filter((k): k is string => typeof k === 'string' && k.trim().length > 0)
+          .map(k => k.toLowerCase())
+        : [];
       for (const item of items) {
         if (!item.title || item.title.trim().length === 0) continue;
+        if (excludes.length > 0) {
+          const hay = `${item.title} ${item.summary ?? ''}`.toLowerCase();
+          if (excludes.some(k => hay.includes(k))) continue;
+        }
         const r = await this.repo.insertItem(topic.id, {
           title: item.title,
           url: item.url,

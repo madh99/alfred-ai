@@ -268,6 +268,15 @@ export class SocialRepository {
     };
   }
 
+  /** v990 — zählt Items, deren media-JSON den Datei-Namen referenziert (mediaDir-Cleanup). */
+  async countItemsReferencingMedia(fileName: string): Promise<number> {
+    const row = await this.db.queryOne(
+      `SELECT COUNT(*) AS c FROM content_items WHERE media LIKE ?`,
+      [`%${fileName}%`],
+    ) as { c: number | string } | undefined;
+    return row ? Number(row.c) : 0;
+  }
+
   /**
    * v987 — Item LOKAL löschen (ohne Story-Sperre, anders als reject).
    * Published-Items sind bewusst ausgenommen: die gehen über delete_remote

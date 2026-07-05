@@ -6796,6 +6796,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           }
           if (now.getHours() !== 7 || now.getMinutes() < 30 || lastStudioDay === today) return;
           lastStudioDay = today;
+          // v990 — mediaDir-Bereinigung (je Node lokal, kein HA-Slot)
+          await studio.cleanupMediaDir().catch(() => { /* non-critical */ });
           if (await this.claimDailySlot(`content-studio:${today}`)) {
             try { await this.contentStudio?.runDaily(); }
             catch (err) { this.logger.warn({ err }, 'v935 content studio failed'); }

@@ -118,6 +118,22 @@ describe('TopicCollector', () => {
     expect(spies.insertItem).not.toHaveBeenCalled();
   });
 
+  it('v990: exclude_keywords hält Fremdthemen aus den Topic-Items (ORF-Leak-Fall)', async () => {
+    const filtered: TopicSource = {
+      ...WEB_SOURCE, id: 's-f',
+      config: { query: 'sport news', exclude_keywords: ['Formel 1', 'radsport'] },
+    };
+    const { repo, spies } = makeFakeRepo([filtered]);
+    const { registry, sandbox } = makeSearchStack([
+      { title: 'Klopp spricht mit DFB', url: 'https://ex.at/klopp' },
+      { title: 'Volle Kurve in Silverstone', url: 'https://ex.at/f1', snippet: 'Formel 1 in England' },
+      { title: 'Pogacar dominiert', url: 'https://ex.at/rad', snippet: 'Radsport-Klassiker' },
+    ]);
+    const collector = new TopicCollector(repo, registry, sandbox, makeLogger());
+    expect(await collector.collectTopic(TOPIC)).toBe(1);
+    expect((spies.insertItem as any).mock.calls[0][1].title).toBe('Klopp spricht mit DFB');
+  });
+
   it('v975: Quelle mit config.events=true stempelt Items als sourceKind events', async () => {
     const eventsSource: TopicSource = {
       ...WEB_SOURCE, id: 's-ev',

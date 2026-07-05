@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.990] - 2026-07-05
+
+### Fixed — Housekeeping: ehrliches Bild-Budget, mediaDir-Bereinigung, Quellen-Exclude-Filter (v990)
+
+- **Bild-Budget zählt jeden Versuch:** Vom Vision-Gate verworfene Bilder
+  und Retries kosteten OpenAI-Geld am Monats-Budget vorbei (Zählung
+  passierte erst nach Erfolg). Jetzt zählt jeder Generierungs-Aufruf.
+- **mediaDir-Bereinigung:** Täglicher Aufräum-Schritt löscht generierte
+  Bilder älter als 30 Tage, sofern kein Beitrag sie mehr referenziert —
+  vorher wuchs das Verzeichnis unbegrenzt (~1,5 MB je Bild).
+- **Quellen-Exclude-Filter:** `topic_sources.config.exclude_keywords`
+  hält Fremdthemen schon beim Einsammeln aus den Topic-Items (Realfall:
+  ORF-Sport-Feed spülte Formel 1/Radsport in die Fußball-Kanäle) —
+  wirkt damit auf Dossiers, Digest und alle Kanäle zugleich.
+- 3 neue Tests.
+
 ## [0.19.0-multi-ha.989] - 2026-07-05
 
 ### Added — Kommentar-Modul: Alfred hört jetzt zu (v989)

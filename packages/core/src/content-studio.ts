@@ -541,6 +541,38 @@ export class ContentStudio {
     return ideas;
   }
 
+  /**
+   * v990 — mediaDir-Bereinigung (täglich vom Kern): generierte Bilder älter
+   * als 30 Tage löschen, sofern KEIN content_item sie mehr referenziert
+   * (published-Bilder liegen zu dem Zeitpunkt längst auf den Plattformen bzw.
+   * in der Medienbibliothek). Läuft je Node lokal — kein HA-Slot nötig.
+   */
+  async cleanupMediaDir(maxAgeDays = 30): Promise<number> {
+    if (!this.mediaDir) return 0;
+    let removed = 0;
+    try {
+      const { readdir, stat, unlink } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const cutoff = Date.now() - maxAgeDays * 24 * 3_600_000;
+      const files = await readdir(this.mediaDir).catch(() => [] as string[]);
+      for (const name of files) {
+        if (!name.startsWith('studio-')) continue; // nur eigene Artefakte anfassen
+        const full = join(this.mediaDir, name);
+        try {
+          const s = await stat(full);
+          if (s.mtimeMs > cutoff) continue;
+          if (await this.socialRepo.countItemsReferencingMedia(name) > 0) continue;
+          await unlink(full);
+          removed++;
+        } catch { /* Einzelfehler überspringen */ }
+      }
+      if (removed > 0) this.logger.info({ removed, maxAgeDays }, 'v990 mediaDir cleaned');
+    } catch (err) {
+      this.logger.warn({ err: (err as Error).message }, 'v990 mediaDir cleanup failed');
+    }
+    return removed;
+  }
+
   /** v977 — konfigurierbarer Ankündigungs-Vorlauf (config.termin_lead_hours, Default 3h, Cap 48h). */
   private terminLeadHours(channel: SocialChannel): number {
     const raw = Number(channel.config.termin_lead_hours);
@@ -816,6 +848,15 @@ Antworte NUR mit einem JSON-Array:
         const result = await this.skillSandbox.execute(skill, { prompt },
           { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
         if (!result.success) return [];
+        // v990 — JEDER Generierungs-Versuch zählt aufs Budget (auch wenn das
+        // Vision-Gate das Bild gleich verwirft): der OpenAI-Betrag ist dann
+        // trotzdem angefallen. Vorher liefen Gate-Retries am Budget vorbei.
+        {
+          const today = new Date().toISOString().slice(0, 10);
+          const todayUsed = (await this.socialRepo.listMetrics(channel.id, { kind: 'gen_image', sinceDate: today }))
+            .find(m => m.date === today && !m.itemId)?.value ?? 0;
+          await this.socialRepo.upsertMetric(channel.id, { date: today, kind: 'gen_image', value: todayUsed + 1 });
+        }
 
         // v942 — image_generate liefert das Bild als Buffer-Attachment
         const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string }> }).attachments?.[0];
@@ -851,10 +892,7 @@ Antworte NUR mit einem JSON-Array:
             : typeof data?.filePath === 'string' ? data.filePath : undefined;
         }
         if (!url) return [];
-        const today = new Date().toISOString().slice(0, 10);
-        const todayUsed = (await this.socialRepo.listMetrics(channel.id, { kind: 'gen_image', sinceDate: today }))
-          .find(m => m.date === today && !m.itemId)?.value ?? 0;
-        await this.socialRepo.upsertMetric(channel.id, { date: today, kind: 'gen_image', value: todayUsed + 1 });
+        // v990 — Zählung erfolgt oben je Versuch (direkt nach der Generierung)
         return [{ type: 'image', source: 'generated', pathOrUrl: url }];
       }
       return [];

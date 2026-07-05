@@ -444,7 +444,9 @@ describe('ContentStudio (v935)', () => {
     expect(sandboxCalls[1]).toContain('Symbolbild Fußball');
     // Beide Versuche verletzten die Policy → Post OHNE Bild
     expect(createdMedia[0]).toEqual([]);
-    expect(miniRepo.upsertMetric).not.toHaveBeenCalled(); // kein Budget verbraucht ohne Bild
+    // v990 — beide VERSUCHE zählen trotzdem aufs Budget: die OpenAI-Kosten
+    // fielen an, auch wenn das Vision-Gate die Bilder verwarf
+    expect((miniRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image').length).toBe(2);
   });
 
   it('v950: people_ok-Policy überspringt Scrubbing und Vision-Gate', async () => {
@@ -599,6 +601,54 @@ describe('ContentStudio — Modell-Tier je Kanal (v979)', () => {
     const { studio: s2, llm: llm2 } = makeStack({ channel: invalid });
     await s2.fillChannel(invalid);
     expect((llm2.complete as any).mock.calls[0][0].tier).toBe('fast');
+  });
+});
+
+describe('ContentStudio — Housekeeping (v990)', () => {
+  it('Bild-Budget zählt JEDEN Generierungs-Versuch (auch vom Vision-Gate verworfene)', async () => {
+    // genau 1 freier Slot → genau 1 Idee → die 2 Zählungen kommen von Versuch+Retry
+    const channel = makeChannel({ postingSlots: ['Mo 18:00'], planningHorizonDays: 7, config: { topic_id: 't-1', generate_images: true } });
+    const { studio, socialRepo } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([{ title: 'Story', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x' }]),
+    });
+    const skill = { metadata: { name: 'image_generate' } };
+    (studio as any).skillRegistry = { get: () => skill };
+    (studio as any).skillSandbox = { execute: vi.fn(async () => ({ success: true, attachments: [{ data: Buffer.from('png') }] })) };
+    // Vision-LLM: erst Verstoß (person), dann sauber — Ideen-Call kommt zuerst
+    const llm = (studio as any).llm;
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{ title: 'Story', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x' }]) })
+      .mockResolvedValueOnce({ content: '{"person": true, "logo": false, "text": false, "begruendung": "Testverstoß"}' })
+      .mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok"}' });
+    await studio.fillChannel(channel);
+    // 2 Versuche (Verstoß + Retry) → 2 Budget-Zählungen, obwohl nur 1 Bild überlebt
+    const genImageUpserts = (socialRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
+    expect(genImageUpserts.length).toBe(2);
+  });
+
+  it('cleanupMediaDir löscht nur ALTE, UNREFERENZIERTE studio-Dateien', async () => {
+    const { mkdtemp, writeFile, utimes, readdir } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = await mkdtemp(join(tmpdir(), 'alfred-media-'));
+    const old = new Date(Date.now() - 40 * 24 * 3_600_000);
+    await writeFile(join(dir, 'studio-alt.png'), 'x');
+    await utimes(join(dir, 'studio-alt.png'), old, old);
+    await writeFile(join(dir, 'studio-referenziert.png'), 'x');
+    await utimes(join(dir, 'studio-referenziert.png'), old, old);
+    await writeFile(join(dir, 'studio-frisch.png'), 'x');
+    await writeFile(join(dir, 'fremd.png'), 'x');
+    await utimes(join(dir, 'fremd.png'), old, old);
+
+    const { socialRepo, interestsRepo, insightsRepo, llm } = makeStack({ channel: makeChannel({}) });
+    (socialRepo as any).countItemsReferencingMedia = vi.fn(async (name: string) => (name.includes('referenziert') ? 1 : 0));
+    const studio = new ContentStudio(socialRepo, interestsRepo, insightsRepo, llm, undefined, undefined, undefined, makeLogger(), OWNER, dir);
+
+    const removed = await studio.cleanupMediaDir(30);
+    expect(removed).toBe(1);
+    const left = (await readdir(dir)).sort();
+    expect(left).toEqual(['fremd.png', 'studio-frisch.png', 'studio-referenziert.png']);
   });
 });
 
