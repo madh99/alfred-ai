@@ -1173,7 +1173,7 @@ export function SocialPage() {
                   {/* v1007 — IG-Auto-Story */}
                   {c.platform === 'instagram' && (
                     <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
-                      title="Sobald der Lead-Artikel der Familie live geht, postet dieser Kanal automatisch eine Story (9:16-Bild des Feed-Posts mit Titel + „Link im Profil"-CTA). Zählt aufs Tages-Limit.">
+                      title="Sobald der Lead-Artikel der Familie live geht, postet dieser Kanal automatisch eine Story (9:16-Bild des Feed-Posts mit Titel + Link-im-Profil-CTA). Zählt aufs Tages-Limit.">
                       <input type="checkbox" checked={settingsDraft.autoStory} onChange={e => setSettingsDraft(d => ({ ...d, autoStory: e.target.checked }))} />
                       📱 Auto-Story bei neuem Lead-Artikel (geht OHNE Einzelfreigabe live)
                     </label>
