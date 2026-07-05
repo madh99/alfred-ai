@@ -6744,6 +6744,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const hourKey = `${today}T${String(now.getHours()).padStart(2, '0')}`;
           if (now.getMinutes() < 10 && lastCommentsHour !== hourKey) {
             lastCommentsHour = hourKey;
+            // v994 — News-Desk: neue Topic-Items auf Eilmeldungs-Relevanz prüfen
+            if (await this.claimDailySlot(`social-newsdesk:${hourKey}`)) {
+              try {
+                const n = await studio.newsDesk();
+                if (n > 0) this.logger.info({ items: n }, 'v994 news desk created breaking content');
+              } catch (err) { this.logger.warn({ err }, 'v994 news desk failed'); }
+            }
             if (await this.claimDailySlot(`social-comments:${hourKey}`)) {
               try {
                 const r = await socialSkill.collectComments(ownerUid);

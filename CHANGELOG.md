@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.994] - 2026-07-05
+
+### Added — Redaktionsleitung Etappe 2: News-Desk für Eilmeldungen (v994)
+
+Passiert etwas Wichtiges, wartet Alfred nicht mehr auf den 07:30-Lauf.
+
+- **Stündlicher News-Desk:** bewertet die neuen Topic-Items der letzten
+  zwei Stunden je Familie per LLM-Eilmeldungs-Score (0..1). Über der
+  Schwelle (config.newsdesk_threshold am Lead-Kanal, Default 0.85)
+  entsteht sofort eine Story (source 'event') mit Beiträgen auf ALLEN
+  Familien-Kanälen und Ad-hoc-Slots: Lead +30 min, Follower +90 min —
+  approve-Kanäle bekommen die Freigabe-Anfrage zum Slot, autonome
+  posten direkt.
+- **Leitplanken:** Nachtruhe (config.newsdesk_quiet [von,bis], Default
+  22–6 Uhr — der Morgen-Lauf greift den Stoff ohnehin auf), maximal
+  N Eilmeldungen pro Tag (config.newsdesk_max_per_day, Default 3),
+  Dedup gegen aktive Stories (Token + Embeddings).
+- **Transparenz:** je Eilmeldung ein ⚡-Insight mit Score, Stoff und
+  Slot-Hinweis.
+- 2 neue Tests (Breaking-Erkennung mit Ad-hoc-Slots + Insight;
+  Schwelle/Tages-Limit).
+
 ## [0.19.0-multi-ha.993] - 2026-07-05
 
 ### Added — Redaktionsleitung Etappe 1: Story-zentrierte Familien-Planung (v993)

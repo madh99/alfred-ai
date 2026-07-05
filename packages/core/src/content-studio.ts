@@ -303,6 +303,127 @@ export class ContentStudio {
     return created;
   }
 
+  /**
+   * v994 — News-Desk (Etappe 2): ereignisgetriebene Eilmeldungen.
+   *
+   * Stündlich vom Kern aufgerufen: bewertet die NEUEN Topic-Items der letzten
+   * zwei Stunden je Familie (LLM-Score 0..1, Schwelle konfigurierbar über den
+   * Lead-Kanal: config.newsdesk_threshold, Default 0.85). Über der Schwelle →
+   * sofortige Story (source 'event') mit Beiträgen auf ALLEN Familien-Kanälen
+   * und Ad-hoc-Slots (Lead +30 min, Follower +90 min) — approve-Kanäle
+   * bekommen die Freigabe-Anfrage zum Slot, autonome posten direkt.
+   * Leitplanken: Nachtruhe (config.newsdesk_quiet [von,bis], Default 22–6 —
+   * der Morgen-Lauf greift den Stoff ohnehin auf), max. Eilmeldungen/Tag
+   * (config.newsdesk_max_per_day, Default 3), Dedup gegen aktive Stories.
+   */
+  async newsDesk(): Promise<number> {
+    const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+    const families = new Map<string, SocialChannel[]>();
+    for (const c of channels) {
+      const key = ContentStudio.familyKey(c);
+      if (key) families.set(key, [...(families.get(key) ?? []), c]);
+    }
+    let created = 0;
+    for (const [family, members] of families) {
+      if (members.length < 2) continue;
+      try {
+        created += await this.newsDeskFamily(family, members);
+      } catch (err) {
+        this.logger.warn({ err: (err as Error).message, family }, 'v994 news desk failed');
+      }
+    }
+    return created;
+  }
+
+  private async newsDeskFamily(family: string, members: SocialChannel[]): Promise<number> {
+    const lead = members.find(c => c.platform === 'rest') ?? members[0];
+    // Nachtruhe (Server-Lokalzeit)
+    const quiet = Array.isArray(lead.config.newsdesk_quiet) && (lead.config.newsdesk_quiet as unknown[]).length === 2
+      ? (lead.config.newsdesk_quiet as number[]).map(Number) : [22, 6];
+    const hour = new Date().getHours();
+    const inQuiet = quiet[0] > quiet[1] ? (hour >= quiet[0] || hour < quiet[1]) : (hour >= quiet[0] && hour < quiet[1]);
+    if (inQuiet) return 0;
+    // Tages-Limit
+    const maxPerDay = typeof lead.config.newsdesk_max_per_day === 'number' ? lead.config.newsdesk_max_per_day : 3;
+    const todayEvents = (await this.socialRepo.listStories(this.ownerUserId, { family, sinceDays: 1 }))
+      .filter(s => s.source === 'event').length;
+    if (todayEvents >= maxPerDay) return 0;
+    // Neue Items der letzten 2 Stunden (ohne Termin-Feeds)
+    if (!this.interestsRepo) return 0;
+    const sinceIso = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const unionTopics = [...new Set(members.flatMap(c => ContentStudio.linkedTopicIds(c)))];
+    const fresh: Array<{ title: string; summary?: string }> = [];
+    for (const topicId of unionTopics) {
+      const items = await this.interestsRepo.listItems(topicId, { sinceIso, limit: 30 });
+      fresh.push(...items.filter(i => i.sourceKind !== 'events').map(i => ({ title: i.title, summary: i.summary })));
+    }
+    if (fresh.length === 0) return 0;
+    // Dedup gegen aktive Stories (Token reicht als Vorfilter)
+    const activeStories = await this.socialRepo.listStories(this.ownerUserId, { family, status: 'active', sinceDays: 7 });
+    const blockedTitles = activeStories.map(s => s.title);
+    const candidates = fresh.filter(f => !isNearDuplicateTitle(f.title, blockedTitles)).slice(0, 15);
+    if (candidates.length === 0) return 0;
+    // LLM-Eilmeldungs-Score (fast reicht fürs Sortieren)
+    const threshold = typeof lead.config.newsdesk_threshold === 'number' ? lead.config.newsdesk_threshold : 0.85;
+    const scorePrompt = `Bewerte für einen Fußball-Publisher, wie sehr jede Meldung eine EILMELDUNG ist (0..1):
+0.9+ = muss SOFORT raus (Titelentscheidung, Rücktritt eines Stars, Skandal, dramatisches Ergebnis eines Top-Spiels),
+0.5 = normale Tagesmeldung, 0.2 = Routine. Nur die Fakten der Meldung zählen.
+
+${candidates.map((c, i) => `${i}: ${c.title}${c.summary ? ` — ${c.summary.replace(/<[^>]+>/g, ' ').slice(0, 150)}` : ''}`).join('\n')}
+
+Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: scorePrompt }], maxTokens: 1_000, tier: 'fast', reasoningEffort: 'low' });
+    const scores = (extractJsonArray(response.content ?? '') ?? []) as Array<{ index?: unknown; score?: unknown }>;
+    const breaking = scores
+      .filter(s => typeof s.index === 'number' && typeof s.score === 'number' && s.score >= threshold)
+      .map(s => ({ ...candidates[s.index as number], score: s.score as number }))
+      .filter(c => c?.title)
+      .slice(0, maxPerDay - todayEvents);
+    if (breaking.length === 0) return 0;
+
+    let created = 0;
+    for (const b of breaking) {
+      // Semantik-Dedup wie in der Konferenz
+      if (this.storyDeduper) {
+        const r = await this.storyDeduper.filterCandidates(
+          [{ title: b.title, body: b.summary ?? '' }],
+          activeStories.map(s => ({ id: s.id, title: s.title, body: s.summary })),
+        );
+        if (r.accepted.length === 0) continue;
+      }
+      const story = await this.socialRepo.createStory(this.ownerUserId, {
+        family, kind: 'news', title: b.title, summary: b.summary?.replace(/<[^>]+>/g, ' ').slice(0, 800),
+        importance: b.score, source: 'event',
+      });
+      await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
+      let leadName: string | undefined;
+      let itemsCreated = 0;
+      for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
+        const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined);
+        if (!item) continue;
+        // Ad-hoc-Slots: Lead +30 min, Follower +90 min — Freigabe kommt zum Slot
+        const slot = new Date(Date.now() + (channel.id === lead.id ? 30 : 90) * 60_000).toISOString();
+        if (channel.mode === 'approve' || channel.mode === 'autonomous') {
+          await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+        }
+        await this.socialRepo.createAssignment({ storyId: story.id, channelId: channel.id, role: channel.id === lead.id ? 'lead' : 'follow', offsetHours: channel.id === lead.id ? 0 : 1, itemId: item.id });
+        if (channel.id === lead.id) leadName = channel.name;
+        itemsCreated++;
+      }
+      created += itemsCreated;
+      await this.insightsRepo?.upsertCandidate(this.ownerUserId, {
+        category: 'social',
+        title: `⚡ Eilmeldung: ${story.title.slice(0, 70)}`,
+        body: `Der News-Desk hat ein wichtiges Ereignis erkannt (Score ${b.score.toFixed(2)}) und ${itemsCreated} Entwürfe vorbereitet — Veröffentlichung in 30–90 Minuten, Freigaben kommen zum Slot.\n\nStoff: ${story.summary ?? story.title}`,
+        confidence: 0.9,
+        sourceData: { router: true, urgency: 'high', storyId: story.id },
+        dedupeKey: `social-newsdesk:${story.id}`,
+      }).catch(() => { /* non-critical */ });
+      this.logger.info({ family, story: story.title, score: b.score, items: itemsCreated }, 'v994 breaking story created');
+    }
+    return created;
+  }
+
   /** v993 — Einstieg für „Studio jetzt" auf einem Familien-Kanal: plant die GANZE Familie. */
   async planFamilyFor(channel: SocialChannel): Promise<number> {
     const family = ContentStudio.familyKey(channel);

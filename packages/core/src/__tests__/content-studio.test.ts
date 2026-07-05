@@ -606,7 +606,8 @@ describe('ContentStudio — Modell-Tier je Kanal (v979)', () => {
 
 describe('ContentStudio — Redaktionsleitung (v993)', () => {
   function makeFamilyStack() {
-    const website = makeChannel({ id: 'ch-web', name: 'fussball.cc', platform: 'rest', projectId: 'proj-1', postingSlots: ['Mo 08:00', 'Di 08:00', 'Mi 08:00', 'Do 08:00', 'Fr 08:00', 'Sa 08:00', 'So 08:00'], persona: 'redaktionell' });
+    // newsdesk_quiet [24,24] = nie Nachtruhe — Tests laufen sonst nachts leer
+    const website = makeChannel({ id: 'ch-web', name: 'fussball.cc', platform: 'rest', projectId: 'proj-1', postingSlots: ['Mo 08:00', 'Di 08:00', 'Mi 08:00', 'Do 08:00', 'Fr 08:00', 'Sa 08:00', 'So 08:00'], persona: 'redaktionell', config: { topic_id: 't-1', newsdesk_quiet: [24, 24] } });
     const telegram = makeChannel({ id: 'ch-tg', name: 'FussballCC News', platform: 'telegram_channel', projectId: 'proj-1', postingSlots: ['Mo 12:00', 'Di 12:00', 'Mi 12:00', 'Do 12:00', 'Fr 12:00', 'Sa 12:00', 'So 12:00'], persona: 'knapp' });
     const stories: any[] = [];
     const assignments: any[] = [];
@@ -681,6 +682,50 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     const created = await studio.planFamily('project:proj-1', [website, telegram]);
     expect(created).toBe(0);
     expect(stories.length).toBe(1); // keine neue Story
+  });
+
+  it('v994: News-Desk — Score über Schwelle → Eilmeldungs-Story mit Ad-hoc-Slots auf allen Kanälen', async () => {
+    const { studio, llm, transitions, stories, socialRepo } = makeFamilyStack();
+    const insights = (studio as any).insightsRepo;
+    const { interestsRepo } = { interestsRepo: (studio as any).interestsRepo };
+    (interestsRepo.listItems as any) = vi.fn(async () => [
+      { id: 'n1', topicId: 't-1', title: 'Messi tritt zurück — Karriereende nach der WM', summary: 'Offiziell bestätigt.', sourceKind: 'rss', createdAt: 'x' },
+      { id: 'n2', topicId: 't-1', title: 'Rasen im Stadion gemäht', sourceKind: 'rss', createdAt: 'x' },
+    ]);
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: '[{"index": 0, "score": 0.95}, {"index": 1, "score": 0.1}]' })
+      .mockResolvedValueOnce({ content: RENDER('Messi hört auf — was das bedeutet') })
+      .mockResolvedValueOnce({ content: RENDER('Messi-Rücktritt!') });
+    const created = await studio.newsDesk();
+    expect(created).toBe(2);
+    expect(stories.length).toBe(1);
+    expect(stories[0].source).toBe('event');
+    // Ad-hoc-Slots innerhalb der nächsten 2 Stunden
+    for (const t of transitions.filter(t => t.to === 'scheduled')) {
+      const dt = Date.parse(t.at!) - Date.now();
+      expect(dt).toBeGreaterThan(0);
+      expect(dt).toBeLessThanOrEqual(2 * 3_600_000);
+    }
+    // ⚡-Insight erzeugt
+    expect((insights.upsertCandidate as any).mock.calls.some((c: any[]) => String(c[1].title).includes('Eilmeldung'))).toBe(true);
+    void socialRepo;
+  });
+
+  it('v994: Tages-Limit und langweilige Items → keine Eilmeldung', async () => {
+    const { studio, llm, stories } = makeFamilyStack();
+    const interestsRepo = (studio as any).interestsRepo;
+    (interestsRepo.listItems as any) = vi.fn(async () => [
+      { id: 'n2', topicId: 't-1', title: 'Rasen gemäht', sourceKind: 'rss', createdAt: 'x' },
+    ]);
+    (llm.complete as any).mockResolvedValueOnce({ content: '[{"index": 0, "score": 0.2}]' });
+    expect(await studio.newsDesk()).toBe(0);
+    expect(stories.length).toBe(0);
+
+    // Limit erreicht: 3 Event-Stories heute → gar kein Score-Call mehr
+    stories.push({ source: 'event' }, { source: 'event' }, { source: 'event' });
+    (llm.complete as any).mockClear();
+    expect(await studio.newsDesk()).toBe(0);
+    expect((llm.complete as any).mock.calls.length).toBe(0);
   });
 
   it('runDaily: Familien laufen über planFamily, Solo-Kanäle über fillChannel', async () => {
