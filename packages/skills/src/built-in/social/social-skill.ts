@@ -175,9 +175,9 @@ export class SocialSkill extends Skill {
   }
 
   /** v962 — Bild-Generierung für Ad-hoc-Items (Studio-Leitplanken, vom Kern injiziert; v991: optionaler bildidee-Hinweis). */
-  private imageFn?: (channel: SocialChannel, item: { title?: string; body: string; bildidee?: string }) => Promise<ContentMedia[]>;
+  private imageFn?: (channel: SocialChannel, item: { title?: string; body: string; bildidee?: string; performance?: Record<string, unknown> }) => Promise<ContentMedia[]>;
 
-  setImageGenerator(fn: (channel: SocialChannel, item: { title?: string; body: string; bildidee?: string }) => Promise<ContentMedia[]>): void {
+  setImageGenerator(fn: (channel: SocialChannel, item: { title?: string; body: string; bildidee?: string; performance?: Record<string, unknown> }) => Promise<ContentMedia[]>): void {
     this.imageFn = fn;
   }
 
@@ -726,7 +726,8 @@ export class SocialSkill extends Skill {
     if (!channel) return { success: false, error: 'Kanal nicht gefunden' };
     if (!this.imageFn) return { success: false, error: 'Bild-Generierung nicht verfügbar.' };
     const hint = typeof input.hint === 'string' && input.hint.trim().length > 0 ? input.hint.trim() : undefined;
-    const media = await this.imageFn(channel, { title: item.title, body: item.body, bildidee: hint });
+    // v1003 — performance mitgeben: Termin-Felder (terminBis/ort/einlass) für die Bild-Karte
+    const media = await this.imageFn(channel, { title: item.title, body: item.body, bildidee: hint, performance: item.performance });
     if (media.length === 0) {
       return { success: false, error: 'Kein Bild erzeugt — Budget erschöpft, generate_images aus oder Bild-Prüfung nicht bestanden. Ggf. mit anderem Hinweis erneut versuchen.' };
     }

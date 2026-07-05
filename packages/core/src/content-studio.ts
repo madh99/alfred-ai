@@ -72,6 +72,10 @@ interface GeneratedIdea {
   terminBis?: string;
   /** v997 — Story-Art: bestimmt die Haltbarkeit (news/recap sind verderblich, evergreen nicht). */
   art?: 'news' | 'vorschau' | 'recap' | 'termin' | 'evergreen';
+  /** v1003 — Termin-Ort (exakt aus der Termin-Zeile) für die Termin-Karte auf dem Bild. */
+  ort?: string;
+  /** v1003 — Einlass-Zeit, NUR wenn in der Quelle belegt. */
+  einlass?: string;
 }
 
 /** v977 — Kommender Termin aus einer Event-Quelle (at = ISO, Ort in summary). */
@@ -234,6 +238,9 @@ export function parseIdeas(text: string): GeneratedIdea[] {
             ? new Date(i.terminBis).toISOString() : undefined,
           // v997 — Story-Art für die Haltbarkeits-Logik
           art: (['news', 'vorschau', 'recap', 'termin', 'evergreen'] as const).find(k => k === i.art),
+          // v1003 — strukturierte Termin-Felder für die Bild-Karte
+          ort: typeof i.ort === 'string' && i.ort.trim() ? i.ort.trim().slice(0, 120) : undefined,
+          einlass: typeof i.einlass === 'string' && i.einlass.trim() ? i.einlass.trim().slice(0, 40) : undefined,
         };
       })
       .filter((i: GeneratedIdea) => i.body.length > 10)
@@ -801,7 +808,7 @@ ${this.lessonsBlock(channel)}- Deutsch, konkret, kein Clickbait; eigener TITEL (
 - NIE relative Zeitwörter („heute"/„morgen") — Datum/Uhrzeit nennen.
 
 Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typografisch „…“ oder escaped):
-[{"title": "…", "body": "…", "hashtags": ["…"], "warum": "1 Satz", "bildidee": "optional", "terminBis": ${story.terminBis ? `"${story.terminBis}"` : 'null'}}]`;
+[{"title": "…", "body": "…", "hashtags": ["…"], "warum": "1 Satz", "bildidee": "optional", "terminBis": ${story.terminBis ? `"${story.terminBis}", "ort": "Ort exakt aus dem Stoff", "einlass": "NUR wenn im Stoff belegt, z.B. 19:30"` : 'null'}}]`;
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 6_000, tier: this.modelTier(channel), reasoningEffort: 'low' });
     const ideas = parseIdeas(response.content ?? '');
     if (ideas.length === 0) {
@@ -824,6 +831,9 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
       ...(story.terminBis ? { terminBis: story.terminBis } : {}),
       // v997 — Story-Art fürs Plan-Review und die Evergreen-Verdrängung
       art: story.kind,
+      // v1003 — Termin-Felder (für die Bild-Karte)
+      ...(idea.ort ? { ort: idea.ort } : {}),
+      ...(idea.einlass ? { einlass: idea.einlass } : {}),
     });
     if (!story.terminBis) await this.storyDeduper?.embedStory(item.id, { title: idea.title, body: idea.body });
     return item;
@@ -1009,6 +1019,9 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
           ...(idea.terminBis ? { terminBis: idea.terminBis } : {}),
           // v997 — Story-Art fürs Plan-Review und die Evergreen-Verdrängung
           ...(idea.art ? { art: idea.art } : {}),
+          // v1003 — Termin-Felder (für die Bild-Karte, auch bei regenerate_image)
+          ...(idea.ort ? { ort: idea.ort } : {}),
+          ...(idea.einlass ? { einlass: idea.einlass } : {}),
         });
         // v973 — Embedding des neuen Items persistieren (künftige Läufe lesen
         // es); Termin-Posts nicht — sie nehmen an den Gates nicht teil.
@@ -1064,9 +1077,16 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
    * Vision-Gate, Monats-Budget). Liefert [] wenn generate_images aus ist,
    * das Budget erschöpft ist oder das Bild die Prüfung nicht besteht.
    */
-  async generateImageForItem(channel: SocialChannel, item: { title?: string; body: string; bildidee?: string }): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }>> {
+  async generateImageForItem(channel: SocialChannel, item: { title?: string; body: string; bildidee?: string; performance?: Record<string, unknown> }): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }>> {
     // v991 — optionaler User-Hinweis („beide Flaggen zeigen") wird zur Bildidee
-    return this.maybeGenerateImage(channel, { title: item.title ?? '', body: item.body, hashtags: [], warum: '', bildidee: item.bildidee });
+    // v1003 — Termin-Felder aus der Performance, damit die Bild-Karte auch bei regenerate_image entsteht
+    const p = item.performance ?? {};
+    return this.maybeGenerateImage(channel, {
+      title: item.title ?? '', body: item.body, hashtags: [], warum: '', bildidee: item.bildidee,
+      terminBis: typeof p.terminBis === 'string' ? p.terminBis : undefined,
+      ort: typeof p.ort === 'string' ? p.ort : undefined,
+      einlass: typeof p.einlass === 'string' ? p.einlass : undefined,
+    });
   }
 
   // ── Wissens-Kontext + Ideen ───────────────────────────────────────────
@@ -1206,7 +1226,7 @@ REGELN für die Abstimmung:
   private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[], window?: { from: string; to: string }): string {
     // v975 — Termin-Ankündigungen: nur anweisen, wenn das Dossier Termine führt
     const terminRule = dossier.includes('KOMMENDE TERMINE')
-      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Ort/Datum/Uhrzeit gehören in den BODY-TEXT — niemals in die "bildidee".\n${TERMIN_PERSPEKTIVE}\n`
+      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Setze zusätzlich "ort" (exakt aus der Termin-Zeile) und "einlass" (NUR wenn eine Einlass-Zeit in der Quelle steht, sonst weglassen). Ort/Datum/Uhrzeit gehören in den BODY-TEXT — niemals in die "bildidee".\n${TERMIN_PERSPEKTIVE}\n`
       : '';
     // v977 — das LLM kennt sonst das Erscheinungsdatum nicht und schreibt
     // „heute Nacht" für ein Spiel, dessen Post zwei Tage später erscheint
@@ -1227,7 +1247,7 @@ ${terminRule}${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkre
 - "art" (zwingend): news = tagesaktuelle Meldung (verdirbt in ~2 Tagen) | recap = Nachbericht zu einem Ereignis (verdirbt in ~3 Tagen) | vorschau = Blick auf ein kommendes Ereignis | termin = Termin-Ankündigung | evergreen = zeitlos (Hintergrund, Community-Frage, Geschichte). Sei ehrlich — verderbliche Posts werden früh eingeplant oder verworfen.
 ${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem VALIDEN JSON-Array (Zitate in Texten typografisch „…“ oder mit \\" escapen — nie nackte " im String):
-[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "art": "news|vorschau|recap|termin|evergreen", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses"}]`;
+[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "art": "news|vorschau|recap|termin|evergreen", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses", "ort": "NUR bei Terminen: Ort exakt aus der Termin-Zeile", "einlass": "NUR bei Terminen und NUR wenn belegt, z.B. 19:30"}]`;
   }
 
   private buildYoutubePrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
@@ -1554,9 +1574,18 @@ Antworte NUR mit einem JSON-Array:
     const ov = (channel.config.image_overlay && typeof channel.config.image_overlay === 'object'
       ? channel.config.image_overlay : {}) as Record<string, unknown>;
     const siblings = await this.socialRepo.listChannels(this.ownerUserId, 'active').catch(() => [] as SocialChannel[]);
+    // v1003 — Termin-Karte (Default AN): Matchup + Anpfiff (+ Einlass/Ort) aus
+    // den Datenfeldern — NIE vom Bildmodell (v982-Lektion).
+    const termin = idea.terminBis && ov.termin_card !== false ? {
+      headline: (idea.title || idea.body.slice(0, 60)).slice(0, 90),
+      anpfiff: `${formatLocalDateTime(idea.terminBis)} Uhr`,
+      ...(idea.einlass ? { einlass: idea.einlass } : {}),
+      ...(idea.ort ? { ort: idea.ort } : {}),
+    } : undefined;
     const spec: OverlaySpec = {
       branding: ov.watermark === false ? undefined : resolveImageBranding(channel, siblings),
-      title: ov.title === true && idea.title ? idea.title : undefined,
+      title: !termin && ov.title === true && idea.title ? idea.title : undefined,
+      termin,
       font: typeof ov.font === 'string' ? ov.font : undefined,
     };
     if (!spec.branding && !spec.title && !spec.termin) return buffer;

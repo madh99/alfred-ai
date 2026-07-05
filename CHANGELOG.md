@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1003] - 2026-07-05
+
+### Added — Termin-Karten auf Ankündigungs-Bildern (v1003)
+
+Termin-Ankündigungen (Public Viewings, Spiele) bekommen eine
+Veranstaltungs-Grafik: dunkler Verlauf über dem unteren Bilddrittel mit
+Matchup groß, darunter Anpfiff, Einlass (falls belegt) und Ort — alles
+aus den Datenfeldern, pixelgenau, nie vom Bildmodell halluziniert.
+
+- Termin-Ideen liefern strukturierte Felder `ort` (exakt aus der
+  Termin-Zeile) und `einlass` (NUR wenn in der Quelle belegt) — in
+  beiden Erzeugungswegen (Kanal-Prompt und Story-Rendering), abgelegt in
+  `performance` und damit auch bei „Bild neu generieren" verfügbar.
+- Karte Default AN für Termin-Posts (`image_overlay.termin_card: false`
+  schaltet ab); der Anpfiff kommt deterministisch aus `terminBis`.
+- Ersetzt bei Terminen den Titelbalken; Wasserzeichen bleibt zusätzlich.
+
 ## [0.19.0-multi-ha.1002] - 2026-07-05
 
 ### Added — Bild-Overlays: Wasserzeichen + Titel, deterministisch statt halluziniert (v1002)

@@ -76,6 +76,14 @@ describe('parseIdeas (v935)', () => {
     expect(parseIdeas('[{"title":"x","body":"kurz"}]')).toEqual([]);
   });
 
+  it('v1003: ort/einlass werden geparst (Termin-Felder für die Bild-Karte)', () => {
+    const out = parseIdeas('[{"title":"PV","body":"Ein ausreichend langer Ankündigungstext für den Filter.","terminBis":"2026-07-06T19:00:00.000Z","ort":"Dublin Irish Pub, Wien","einlass":"19:30"}]');
+    expect(out[0].ort).toBe('Dublin Irish Pub, Wien');
+    expect(out[0].einlass).toBe('19:30');
+    const plain = parseIdeas('[{"title":"T","body":"Ein ausreichend langer Beitragstext ohne Termin hier."}]');
+    expect(plain[0].ort).toBeUndefined();
+  });
+
   it('v997: art wird geparst (nur gültige Werte)', () => {
     const out = parseIdeas('[{"title":"T","body":"Ein ordentlich langer Post-Text hier.","art":"recap"},{"title":"U","body":"Noch ein ordentlich langer Post-Text.","art":"quatsch"}]');
     expect(out[0].art).toBe('recap');
