@@ -6633,7 +6633,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         this.socialRepo,
         async (itemId: string) => {
           const r = await socialSkill.execute({ action: 'publish_now', item_id: itemId }, ownerCtx);
-          return { success: r.success, error: r.error, display: r.display };
+          // v983 — dauerhafte Leitplanken-Blocks (Duplikat/Blacklist/Termin
+          // vorbei) an die Engine durchreichen: failed statt Endlos-Retry
+          return {
+            success: r.success, error: r.error, display: r.display,
+            permanent: (r.data as { permanent?: boolean } | undefined)?.permanent === true,
+          };
         },
         this.insightsRepo, this.notificationRouter, this.adapters,
         this.logger.child({ component: 'publishing-engine' }),

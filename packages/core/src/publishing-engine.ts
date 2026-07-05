@@ -5,7 +5,13 @@ import type { SocialRepository, SocialChannel, ContentItem, InsightsRepository }
 import type { AsyncDbAdapter } from '@alfred/storage';
 import type { NotificationRouter } from './notification-router.js';
 
-export interface PublishFnResult { success: boolean; error?: string; display?: string }
+export interface PublishFnResult {
+  success: boolean;
+  error?: string;
+  display?: string;
+  /** v983 — dauerhafter Leitplanken-Block (Duplikat/Blacklist/Termin vorbei): Retry ändert nichts. */
+  permanent?: boolean;
+}
 
 /**
  * v934 — Publishing-Engine (Stufe 2 des Social-Plans).
@@ -166,6 +172,32 @@ export class PublishingEngine {
         dedupeKey: `social-published:${item.id}`,
       });
       return true;
+    }
+    // v983 — dauerhafte Leitplanken-Blocks (Duplikat/Blacklist/Termin vorbei)
+    // NICHT alle 5 Minuten neu versuchen (Realfall 04.07.: zwei Items hingen
+    // 11 Stunden „überfällig" im Retry-Loop): Item auf failed stellen,
+    // retried-Marker setzen (kein 15-min-Auto-Retry) und den User EINMAL
+    // benachrichtigen. Reaktivieren geht über Bearbeiten/erneutes Freigeben
+    // oder publish_now mit force.
+    if (r.permanent === true) {
+      const owner = this.opts.ownerUserId;
+      try {
+        await this.repo.transition(owner, item.id, 'publishing');
+        await this.repo.transition(owner, item.id, 'failed');
+        await this.repo.mergePerformance(owner, item.id, { retried: true, blockReason: (r.error ?? '').slice(0, 300) });
+      } catch (err) {
+        this.logger.warn({ itemId: item.id, err: (err as Error).message }, 'v983 failed-transition nach permanentem Block fehlgeschlagen');
+      }
+      await this.insightsRepo?.upsertCandidate(owner, {
+        category: 'social',
+        title: `Publish blockiert: ${(item.title ?? item.body).slice(0, 60)}`,
+        body: `Kanal **${channel.name}**, Item ${item.id.slice(0, 8)} — Leitplanke greift dauerhaft:\n${r.error ?? 'unbekannt'}\n\nItem steht auf failed. Bewusst posten: publish_now mit force, sonst bearbeiten oder ablehnen.`,
+        confidence: 0.9,
+        sourceData: { router: true, urgency: 'high', itemId: item.id },
+        dedupeKey: `social-blocked:${item.id}`,
+      }).catch(() => { /* non-critical */ });
+      this.logger.warn({ itemId: item.id, error: r.error }, 'v983 publish permanently blocked — Item auf failed');
+      return false;
     }
     this.logger.warn({ itemId: item.id, error: r.error }, 'v934 scheduled publish failed');
     return false;

@@ -481,29 +481,48 @@ export class SocialSkill extends Skill {
         return { success: false, error: `Monats-Limit erreicht (${publishedMonth}/${monthlyCap} auf ${channel.name}) — API-Kontingent geschont.` };
       }
     }
-    // Leitplanke 3 — Blacklist-Scan
+    // Leitplanke 3 — Blacklist-Scan (v983: permanent — der Text ändert sich
+    // nicht von allein; die Engine soll das nicht alle 5 min neu versuchen)
     const haystack = `${item.title ?? ''} ${item.body}`.toLowerCase();
     const hit = channel.blacklist.find(w => w.trim().length > 0 && haystack.includes(w.toLowerCase()));
     if (hit) {
-      return { success: false, error: `Blacklist-Treffer „${hit}" — Post nicht veröffentlicht. Text anpassen oder Blacklist ändern.` };
+      return { success: false, data: { permanent: true }, error: `Blacklist-Treffer „${hit}" — Post nicht veröffentlicht. Text anpassen oder Blacklist ändern.` };
     }
     // v973 — Doppel-Publish-Gate für ALLE Pfade (Studio/add_content/crosspost/
     // Buttons): dieselbe Story wurde auf dem Kanal in den letzten 7 Tagen schon
-    // veröffentlicht → Fehler statt Doppel-Post (DB-bewiesen: „WM-Aus für
-    // Österreich…" ging wortgleich 2× auf fussball.cc live). Bewusster
-    // Re-Post: force: true.
+    // veröffentlicht → Fehler statt Doppel-Post. Bewusster Re-Post: force: true.
+    // v983 — Termin-Posts (performance.terminBis) haben TERMIN-Identität:
+    // Ankündigung und Spielvorschau derselben Partie dürfen koexistieren
+    // (Realfall 04.07.: die Vorschau „Kanada – Marokko: Der Kampf um den
+    // nächsten Schritt" blockierte die Public-Viewing-Ankündigung 11 Stunden
+    // lang im 5-Minuten-Takt). Nur derselbe TERMIN doppelt ist ein Duplikat —
+    // und ein abgelaufener Termin wird gar nicht mehr veröffentlicht.
+    // Gate-Fehler sind PERMANENT (data.permanent): die Engine stellt das Item
+    // auf failed statt endlos zu retryen.
     if (input.force !== true) {
+      const nowIso = new Date().toISOString();
+      const itemTermin = typeof item.performance?.terminBis === 'string' ? item.performance.terminBis : undefined;
+      if (itemTermin && itemTermin <= nowIso) {
+        return {
+          success: false, data: { permanent: true },
+          error: `Termin ist bereits vorbei (${itemTermin}) — die Ankündigung ist nicht mehr sinnvoll. Bewusst trotzdem posten: force: true.`,
+        };
+      }
       const weekAgo = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
       const recentPublished = await this.repo.listItems(userId, {
         channelId: channel.id, status: 'published', updatedSince: weekAgo, limit: 200,
       });
+      const terminOf = (p: ContentItem): string | undefined =>
+        typeof p.performance?.terminBis === 'string' ? p.performance.terminBis : undefined;
       const candidateTitle = item.title ?? item.body.slice(0, 60);
-      const dupOf = recentPublished.find(p => p.id !== item.id
-        && isNearDuplicateTitle(candidateTitle, [p.title ?? p.body.slice(0, 60)]));
+      const dupOf = itemTermin
+        ? recentPublished.find(p => p.id !== item.id && terminOf(p) === itemTermin)
+        : recentPublished.find(p => p.id !== item.id && terminOf(p) === undefined
+          && isNearDuplicateTitle(candidateTitle, [p.title ?? p.body.slice(0, 60)]));
       if (dupOf) {
         return {
-          success: false,
-          error: `Sehr ähnlicher Beitrag wurde auf ${channel.name} bereits veröffentlicht: „${(dupOf.title ?? dupOf.body.slice(0, 60))}" [${dupOf.id.slice(0, 8)}]${dupOf.externalUrl ? ` (${dupOf.externalUrl})` : ''}. Bewusster Re-Post: force: true.`,
+          success: false, data: { permanent: true },
+          error: `${itemTermin ? 'Dieser Termin wurde' : 'Sehr ähnlicher Beitrag wurde'} auf ${channel.name} bereits veröffentlicht: „${(dupOf.title ?? dupOf.body.slice(0, 60))}" [${dupOf.id.slice(0, 8)}]${dupOf.externalUrl ? ` (${dupOf.externalUrl})` : ''}. Bewusster Re-Post: force: true.`,
         };
       }
     }

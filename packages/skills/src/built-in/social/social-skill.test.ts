@@ -189,9 +189,91 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(blocked.success).toBe(false);
     expect(blocked.error).toContain('bereits veröffentlicht');
     expect(blocked.error).toContain('force');
+    // v983 — Gate-Fehler sind dauerhaft: Engine soll failed statt Retry-Loop
+    expect((blocked.data as any)?.permanent).toBe(true);
 
     const forced = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa', force: true }, CTX);
     expect(forced.success).toBe(true);
+  });
+
+  it('v983: Termin-Ankündigung publisht trotz titel-ähnlicher VORSCHAU desselben Spiels', async () => {
+    // Realfall 04.07.: „Kanada – Marokko: Der Kampf um den nächsten Schritt" (Vorschau,
+    // published) blockierte „Kanada – Marokko: Wer zieht ins Viertelfinale ein?"
+    // (PV-Ankündigung) 11 Stunden lang im 5-Minuten-Takt.
+    const future = new Date(Date.now() + 3 * 3_600_000).toISOString();
+    const channel = makeChannel();
+    const announcement = makeItem({
+      title: 'Kanada – Marokko: Wer zieht ins Viertelfinale ein?',
+      performance: { terminBis: future },
+    });
+    const preview = makeItem({
+      id: 'pub-1', status: 'published',
+      title: 'Kanada – Marokko: Der Kampf um den nächsten Schritt',
+    });
+    const { repo, state, spies } = makeRepo(channel, announcement);
+    (spies.listItems as any) = vi.fn(async (_u: string, q: any) =>
+      q?.status === 'published' ? [preview] : [state.item]);
+    (repo as any).listItems = spies.listItems;
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+  });
+
+  it('v983: GLEICHER Termin bereits angekündigt → permanenter Block', async () => {
+    const future = new Date(Date.now() + 3 * 3_600_000).toISOString();
+    const channel = makeChannel();
+    const announcement = makeItem({ title: 'Public Viewing heute im Pub', performance: { terminBis: future } });
+    const alreadyAnnounced = makeItem({
+      id: 'pub-1', status: 'published',
+      title: 'Ganz anderer Titel — selber Termin', performance: { terminBis: future },
+    });
+    const { repo, state, spies } = makeRepo(channel, announcement);
+    (spies.listItems as any) = vi.fn(async (_u: string, q: any) =>
+      q?.status === 'published' ? [alreadyAnnounced] : [state.item]);
+    (repo as any).listItems = spies.listItems;
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Termin wurde');
+    expect((r.data as any)?.permanent).toBe(true);
+  });
+
+  it('v983: abgelaufener Termin wird nicht mehr veröffentlicht (permanent); force übergeht', async () => {
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    const channel = makeChannel();
+    const stale = makeItem({ title: 'Public Viewing gestern', performance: { terminBis: past } });
+    const { skill } = makeSkill(channel, stale);
+
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('vorbei');
+    expect((r.data as any)?.permanent).toBe(true);
+
+    const forced = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa', force: true }, CTX);
+    expect(forced.success).toBe(true);
+  });
+
+  it('v983: normaler Beitrag wird NICHT von published Termin-Ankündigung geblockt', async () => {
+    const channel = makeChannel();
+    const normal = makeItem({ title: 'Kanada gegen Marokko: Der Spielbericht' });
+    const announcement = makeItem({
+      id: 'pub-1', status: 'published',
+      title: 'Kanada gegen Marokko: Public Viewing im Pub',
+      performance: { terminBis: new Date(Date.now() + 3_600_000).toISOString() },
+    });
+    const { repo, state, spies } = makeRepo(channel, normal);
+    (spies.listItems as any) = vi.fn(async (_u: string, q: any) =>
+      q?.status === 'published' ? [announcement] : [state.item]);
+    (repo as any).listItems = spies.listItems;
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
   });
 
   it('pause_all = Social-Stopp', async () => {

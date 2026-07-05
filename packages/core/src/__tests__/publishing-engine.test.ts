@@ -32,6 +32,8 @@ function makeEngine(opts: {
   channel: SocialChannel;
   approved?: ContentItem[]; scheduled?: ContentItem[]; failed?: ContentItem[];
   publishOk?: boolean; publishError?: string;
+  /** v983 — Leitplanken-Block ist dauerhaft (Duplikat/Blacklist/Termin vorbei) */
+  publishPermanent?: boolean;
   insightInserted?: boolean;
 }) {
   const repo = {
@@ -44,10 +46,11 @@ function makeEngine(opts: {
       return [];
     }),
     mergePerformance: vi.fn(async () => {}),
+    transition: vi.fn(async () => ({})),
   } as unknown as SocialRepository;
 
   const publishItem = vi.fn(async () => opts.publishOk === false
-    ? { success: false, error: opts.publishError ?? 'kaputt' }
+    ? { success: false, error: opts.publishError ?? 'kaputt', permanent: opts.publishPermanent === true }
     : { success: true, display: 'ok' });
 
   const insightsRepo = {
@@ -75,6 +78,31 @@ describe('PublishingEngine (v934)', () => {
     expect(publishItem).toHaveBeenCalledWith('item-1');
     expect(router.store).toHaveBeenCalledTimes(1);
     expect((router.store as any).mock.calls[0][0].source).toBe('social');
+  });
+
+  it('v983: permanenter Leitplanken-Block → Item auf failed, retried-Marker, EIN Insight — kein Endlos-Retry', async () => {
+    // Realfall 04./05.07.: Doppel-Publish-Gate blockierte zwei approved-Items
+    // 11 Stunden lang im 5-Minuten-Takt („Überfällig" ohne Erklärung).
+    const { engine, repo, insightsRepo } = makeEngine({
+      channel: makeChannel(), approved: [makeItem({ status: 'approved' })],
+      publishOk: false, publishError: 'Sehr ähnlicher Beitrag … Bewusster Re-Post: force: true.', publishPermanent: true,
+    });
+    const r = await engine.tick();
+    expect(r.published).toBe(0);
+    expect((repo.transition as any).mock.calls.map((c: any[]) => c[2])).toEqual(['publishing', 'failed']);
+    expect((repo.mergePerformance as any).mock.calls[0][2]).toMatchObject({ retried: true });
+    const insight = (insightsRepo.upsertCandidate as any).mock.calls[0][1];
+    expect(insight.dedupeKey).toBe('social-blocked:item-1');
+    expect(insight.title).toContain('Publish blockiert');
+  });
+
+  it('v983: transienter Fehler lässt das Item approved (Retry beim nächsten Tick, kein failed)', async () => {
+    const { engine, repo } = makeEngine({
+      channel: makeChannel(), approved: [makeItem({ status: 'approved' })],
+      publishOk: false, publishError: 'HTTP 503 — Plattform down',
+    });
+    await engine.tick();
+    expect((repo.transition as any)).not.toHaveBeenCalled();
   });
 
   it('approve-Modus: fälliges scheduled-Item → EINE Freigabe (Insight + Buttons), kein Publish', async () => {

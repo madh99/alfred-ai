@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.983] - 2026-07-05
+
+### Fixed — Freigegebene Beiträge hingen stundenlang „überfällig": Publish-Gate termin-bewusst, Engine ohne Endlos-Retry (v983)
+
+Realfall 04./05.07.: Zwei freigegebene Termin-Ankündigungen wurden 7–11
+Stunden lang alle 5 Minuten erneut versucht und immer wieder vom
+Doppel-Publish-Gate (v973) abgewiesen — eine früher veröffentlichte
+SPIELVORSCHAU derselben Partie galt per Titel-Ähnlichkeit als Duplikat.
+Bei der Erzeugung waren Termin-Posts längst von den Duplikat-Gates
+ausgenommen (v975), beim Veröffentlichen nicht. Zusätzlich prüfte niemand,
+ob der angekündigte Termin überhaupt noch bevorsteht.
+
+- Publish-Gate termin-bewusst: Items mit `terminBis` gelten nur dann als
+  Duplikat, wenn derselbe TERMIN auf dem Kanal schon angekündigt wurde
+  (exakter Zeitpunkt) — Ankündigung und Vorschau derselben Partie dürfen
+  koexistieren, in beide Richtungen (normale Beiträge werden umgekehrt
+  nicht mehr von veröffentlichten Ankündigungen geblockt).
+- Termin-Ablauf-Wächter: Ist `terminBis` beim Veröffentlichen vorbei, wird
+  der Beitrag nicht mehr gepostet (bewusstes Override: `force: true`).
+- Dauerhafte Leitplanken-Blocks (Duplikat, Blacklist, Termin vorbei)
+  melden sich als `permanent`; die Publishing-Engine stellt das Item dann
+  auf `failed` (mit Grund in `performance.blockReason`), setzt den
+  retried-Marker gegen den 15-min-Auto-Retry und benachrichtigt EINMAL —
+  statt stundenlangem 5-Minuten-Loop mit Log-Spam.
+- 7 neue Tests (Termin- vs. Token-Identität in beide Richtungen,
+  Ablauf-Wächter inkl. force, Engine failed-Pfad, transienter Fehler
+  bleibt Retry-fähig).
+
 ## [0.19.0-multi-ha.982] - 2026-07-04
 
 ### Fixed — Halluzinierte Daten in generierten Bildern; Länder-Flaggen überlebten den Namens-Schrubber nicht (v982)
