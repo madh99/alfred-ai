@@ -679,6 +679,10 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     for (const t of transitions.filter(t => t.to === 'scheduled')) {
       expect(t.at! < kickoff).toBe(true);
     }
+    // v998 — Termin-Render-Prompts tragen die Perspektiven-Regel (Medium, nicht Veranstalter)
+    const renderPrompt = (llm.complete as any).mock.calls[1][0].messages[0].content as string;
+    expect(renderPrompt).toContain('PERSPEKTIVE bei Terminen');
+    expect(renderPrompt).toContain('NICHT der Veranstalter');
   });
 
   it('planFamily: Konferenz-Story, die eine aktive Story dupliziert, wird verworfen', async () => {

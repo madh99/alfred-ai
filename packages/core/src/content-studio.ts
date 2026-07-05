@@ -81,6 +81,14 @@ interface UpcomingEvent {
   at: string;
 }
 
+/**
+ * v998 — Perspektiven-Regel für Termin-Ankündigungen: Der Kanal ist ein
+ * berichtendes Medium, der Ort aus der Termin-Zeile der Veranstalter
+ * (Realfall 05.07.: „…und wir zeigen es euch in der Dublin Irish Pub" —
+ * fussball.cc hat mit der Location nichts zu tun).
+ */
+const TERMIN_PERSPEKTIVE = '- PERSPEKTIVE bei Terminen (zwingend): Der Kanal ist ein berichtendes MEDIUM, NICHT der Veranstalter. Der in der Termin-Zeile genannte Ort (die Location) zeigt das Spiel bzw. richtet den Termin aus — NIEMALS „wir zeigen", „bei uns", „unser Lokal", „kommt zu uns". Richtig: „Der <Ort> zeigt das Spiel", „im <Ort> läuft…", „Fans können im <Ort> mitfiebern". Einladen ja — aber als Hinweis auf die Location, nie im eigenen Namen.';
+
 /** v977 — ISO in Server-Lokalzeit lesbar machen („04.07.2026 19:00") für Prompts. */
 export function formatLocalDateTime(iso: string): string {
   const d = new Date(iso);
@@ -630,7 +638,7 @@ ${pbRules.length ? `PLAYBOOK (verbindliche Redaktionsregeln dieser Familie):\n${
 Erzeuge bis zu ${storyCount} STORIES. Regeln:
 - Eine STORY ist ein Stoff, den mehrere Kanäle in IHRER Rolle erzählen — nicht jeder Kanal braucht jede Story.
 - Je Story: genau EIN lead-Kanal (der ausführlichste, i.d.R. die Website), follow-Kanäle mit Zeitversatz in Stunden (typisch: Telegram +2, Instagram +6, Facebook +8; Termine/Eilmeldungen: alle 0).
-- art: news | vorschau | recap | termin | evergreen. Termine aus „KOMMENDE TERMINE" IMMER als art=termin mit terminBis (ISO aus der Zeile) und Zuweisung an ALLE Kanäle mit versatz_h 0.
+- art: news | vorschau | recap | termin | evergreen. Termine aus „KOMMENDE TERMINE" IMMER als art=termin mit terminBis (ISO aus der Zeile) und Zuweisung an ALLE Kanäle mit versatz_h 0. In der zusammenfassung: Der Ort aus der Termin-Zeile ist der VERANSTALTER (zeigt das Spiel) — die Kanäle berichten nur darüber, nie „wir zeigen".
 - wichtigkeit 0..1 (Eilmeldungs-Niveau 0.9+). FAKTEN nur aus dem Dossier.
 - Weise nur Kanälen mit Bedarf zu (Ausnahme: art=termin darf immer).
 
@@ -781,6 +789,7 @@ Art: ${story.kind}${story.terminBis ? `\nTermin: ${formatLocalDateTime(story.ter
 
 Regeln:
 ${roleRule}
+${story.terminBis ? `${TERMIN_PERSPEKTIVE}\n` : ''}
 ${this.lessonsBlock(channel)}- Deutsch, konkret, kein Clickbait; eigener TITEL (nicht der Arbeitstitel wortgleich).
 - 3-6 Hashtags NUR ins Feld "hashtags"; KEINE Meta-Zeilen im body.
 - BILDIDEE ohne Text/Datum/Zahlen — nur Motive.
@@ -1192,7 +1201,7 @@ REGELN für die Abstimmung:
   private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[], window?: { from: string; to: string }): string {
     // v975 — Termin-Ankündigungen: nur anweisen, wenn das Dossier Termine führt
     const terminRule = dossier.includes('KOMMENDE TERMINE')
-      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Ort/Datum/Uhrzeit gehören in den BODY-TEXT — niemals in die "bildidee".\n`
+      ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Ort/Datum/Uhrzeit gehören in den BODY-TEXT — niemals in die "bildidee".\n${TERMIN_PERSPEKTIVE}\n`
       : '';
     // v977 — das LLM kennt sonst das Erscheinungsdatum nicht und schreibt
     // „heute Nacht" für ein Spiel, dessen Post zwei Tage später erscheint

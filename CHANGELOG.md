@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.998] - 2026-07-05
+
+### Fixed — Termin-Ankündigungen: Medium, nicht Veranstalter (v998)
+
+Termin-Posts luden im eigenen Namen ein („…und wir zeigen es euch in der
+Dublin Irish Pub") — der Kanal berichtet aber nur, die Location ist der
+Veranstalter.
+
+- Neue verbindliche PERSPEKTIVE-Regel in allen drei Erzeugungswegen
+  (Kanal-Prompt/fillChannel, Story-Rendering/renderAssignment,
+  Redaktionskonferenz): Der Ort aus der Termin-Zeile zeigt das Spiel —
+  nie „wir zeigen", „bei uns", „kommt zu uns"; richtig ist „der <Ort>
+  zeigt…", „im <Ort> läuft…".
+
 ## [0.19.0-multi-ha.997] - 2026-07-05
 
 ### Fixed — Haltbarkeits-bewusste Planung + Instagram-Container-Poll (v997)
