@@ -796,6 +796,22 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(webAssign.offsetHours).toBe(5);
   });
 
+  it('v999: traffic_mode teaser — FOLLOW-Prompt trägt Teaser-Regel + Keine-URL-Regel', async () => {
+    const { studio, website, telegram, llm } = makeFamilyStack();
+    (telegram.config as any).traffic_mode = 'teaser';
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: CONF })
+      .mockResolvedValueOnce({ content: RENDER('Lead-Artikel') })
+      .mockResolvedValueOnce({ content: RENDER('Teaser') });
+    await studio.planFamily('project:proj-1', [website, telegram]);
+    const followPrompt = (llm.complete as any).mock.calls[2][0].messages[0].content as string;
+    expect(followPrompt).toContain('TEASER-MODUS');
+    expect(followPrompt).toContain('KEINE URLs');
+    // Lead-Prompt bleibt ohne Teaser-Regel
+    const leadPrompt = (llm.complete as any).mock.calls[1][0].messages[0].content as string;
+    expect(leadPrompt).not.toContain('TEASER-MODUS');
+  });
+
   it('v996: resolveLead und playbookOffset — Helfer-Semantik', () => {
     const rest = makeChannel({ id: 'a', platform: 'rest' });
     const tg = makeChannel({ id: 'b', platform: 'telegram_channel', config: { family_role: 'lead' } });

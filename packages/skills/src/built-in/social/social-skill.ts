@@ -3,7 +3,7 @@ import { Skill } from '../../skill.js';
 import type { SocialRepository, SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
-import { composePostText, effectiveSlots, extractTrailingHashtags, mergeHashtags } from './social-provider.js';
+import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, mergeHashtags } from './social-provider.js';
 import { isNearDuplicateTitle } from './dedup.js';
 
 type SocialAction =
@@ -631,7 +631,10 @@ export class SocialSkill extends Skill {
     if (!provider) return { success: false, error: `Kein Provider für ${channel.platform}` };
     const publishing = await this.repo.transition(userId, current.id, 'publishing');
     try {
-      const result = await provider.publish(publishing, channel, await this.secrets(channel));
+      // v999 — Traffic: Follower-Posts verlinken den Lead-Artikel (nur der
+      // gesendete Text wird ergänzt, das gespeicherte Item bleibt unverändert)
+      const outgoing = await this.applyTrafficCta(userId, publishing, channel);
+      const result = await provider.publish(outgoing, channel, await this.secrets(channel));
       const published = await this.repo.transition(userId, publishing.id, 'published', {
         publishedAt: new Date().toISOString(),
         externalId: result.externalId,
@@ -646,6 +649,40 @@ export class SocialSkill extends Skill {
     } catch (err) {
       await this.repo.transition(userId, publishing.id, 'failed', { error: (err as Error).message.slice(0, 500) });
       return { success: false, error: `Publish fehlgeschlagen: ${(err as Error).message}` };
+    }
+  }
+
+  /**
+   * v999 — Traffic-CTA: Ist das Item ein FOLLOWER einer Story, deren Lead
+   * bereits mit externalUrl veröffentlicht ist, wird der Artikel-Link (mit
+   * UTM-Parametern) an den ausgehenden Text gehängt. Instagram (Captions
+   * nicht klickbar) bekommt stattdessen einen „Link im Profil"-Hinweis.
+   * config.traffic_cta=false schaltet ab, config.traffic_cta_text ersetzt
+   * den Standardtext, config.utm=false lässt die URL nackt. Das gespeicherte
+   * Item wird NIE verändert — nur die ausgehende Kopie.
+   */
+  private async applyTrafficCta(userId: string, item: ContentItem, channel: SocialChannel): Promise<ContentItem> {
+    try {
+      if (channel.config.traffic_cta === false) return item;
+      if (channel.platform === 'rest') return item; // die eigene Plattform IST das Ziel
+      if (!item.storyId) return item;
+      const assigns = await this.repo.listAssignments(item.storyId);
+      const mine = assigns.find(a => a.itemId === item.id);
+      const lead = assigns.find(a => a.role === 'lead');
+      if (!mine || mine.role === 'lead' || !lead?.itemId || lead.itemId === item.id) return item;
+      const leadItem = await this.repo.getItem(userId, lead.itemId);
+      if (!leadItem || leadItem.status !== 'published' || !leadItem.externalUrl) return item;
+      const url = channel.config.utm === false
+        ? leadItem.externalUrl
+        : appendUtm(leadItem.externalUrl, channel.platform, leadItem.title ?? item.title ?? 'social');
+      const custom = typeof channel.config.traffic_cta_text === 'string' && channel.config.traffic_cta_text.trim().length > 0
+        ? channel.config.traffic_cta_text.trim() : undefined;
+      const cta = channel.platform === 'instagram'
+        ? (custom ?? '🔗 Ganzer Artikel über den Link im Profil.')
+        : `${custom ?? '👉 Ganzer Artikel:'} ${url}`;
+      return { ...item, body: `${item.body}\n\n${cta}` };
+    } catch {
+      return item; // Traffic-CTA darf einen Publish NIE verhindern
     }
   }
 

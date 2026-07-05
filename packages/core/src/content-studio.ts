@@ -777,9 +777,14 @@ Antworte NUR mit einem VALIDEN JSON-Array:
     story: Story, channel: SocialChannel, role: 'lead' | 'follow',
     leadChannelName?: string, leadSlot?: string,
   ): Promise<ContentItem | null> {
+    // v999 — Traffic-Modus: teaser (immer) oder auto (nur verderbliche Arten,
+    // wo der Lead-Artikel echte Mehrtiefe hat); Default 'voll' = heutiges Verhalten.
+    const tm = channel.config.traffic_mode;
+    const teaser = role === 'follow'
+      && (tm === 'teaser' || (tm === 'auto' && (story.kind === 'news' || story.kind === 'recap')));
     const roleRule = role === 'lead'
       ? '- DEINE ROLLE: LEAD — der ausführlichste Beitrag der Familie zu dieser Story (vollwertig, 4-8 Sätze bzw. Persona-gemäß mehr).'
-      : `- DEINE ROLLE: FOLLOW — kürzer, eigener Blickwinkel deiner Persona.${leadChannelName ? ` Der ausführliche Beitrag auf ${leadChannelName} ist zum Zeitpunkt deiner Veröffentlichung bereits live${leadSlot ? ` (seit ${formatLocalDateTime(leadSlot)})` : ''} — du DARFST darauf verweisen.` : ''} NIE auf den eigenen Kanal verweisen.`;
+      : `- DEINE ROLLE: FOLLOW — kürzer, eigener Blickwinkel deiner Persona.${leadChannelName ? ` Der ausführliche Beitrag auf ${leadChannelName} ist zum Zeitpunkt deiner Veröffentlichung bereits live${leadSlot ? ` (seit ${formatLocalDateTime(leadSlot)})` : ''} — du DARFST darauf verweisen.` : ''} NIE auf den eigenen Kanal verweisen. Schreibe KEINE URLs in den Text — der Link zum Lead-Artikel wird beim Veröffentlichen automatisch angehängt.${teaser ? '\n- TEASER-MODUS (zwingend): Wecke Neugier, aber verrate NICHT alles — das stärkste Detail, die Pointe oder die Zahlen bleiben im Lead-Artikel. Ende mit einem konkreten Grund weiterzulesen.' : ''}`;
     const prompt = `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}
 STORY (Redaktionskonferenz-Beschluss — NUR dieser Stoff, Fakten NUR hieraus):

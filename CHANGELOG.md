@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.999] - 2026-07-05
+
+### Added — Traffic-Fundament: Follower verlinken den Lead-Artikel (v999)
+
+Social-Posts erwähnten die Plattform bisher nur textuell („mehr auf
+fussball.cc") — ohne klickbaren Link zum konkreten Artikel. Jetzt bringt
+jeder Familien-Follower Traffic auf die Plattform:
+
+- **Link-Injection beim Veröffentlichen**: Ist das Item ein Follower einer
+  Story, deren Lead bereits live ist, hängt der Publish den Artikel-Link
+  an den ausgehenden Text („👉 Ganzer Artikel: <URL>"). Instagram
+  (Captions nicht klickbar) bekommt stattdessen „🔗 Ganzer Artikel über
+  den Link im Profil." Das gespeicherte Item bleibt unverändert; ein
+  CTA-Fehler verhindert nie den Publish. Vollständig generisch über die
+  Story-Mechanik — funktioniert mit jedem Projekt.
+- **UTM-Tracking automatisch**: `utm_source=<Plattform>`,
+  `utm_medium=social`, `utm_campaign=<Story-Slug>` — jede Web-Analytics
+  zeigt ab sofort, welcher Kanal Besucher bringt.
+- **Konfigurierbar je Kanal**: `traffic_cta: false` (aus),
+  `traffic_cta_text` (eigener Text), `utm: false` (nackte URL).
+- **Traffic-Modus je Kanal** (Playbook-UI): `voll` (Default — heutiges
+  Verhalten: vollwertiger Beitrag + Link), `teaser` (Neugier-Lücke, die
+  Pointe bleibt im Artikel), `auto` (News/Recaps als Teaser, Rest voll).
+  Der FOLLOW-Prompt verbietet zudem selbst geschriebene URLs — der Link
+  kommt deterministisch vom Publish, nicht vom LLM.
+- 5 neue Tests (UTM-Slug, Link-Injection Ende-zu-Ende, IG-Variante,
+  Abschalt-/Grenzfälle, Teaser-Prompt).
+
 ## [0.19.0-multi-ha.998] - 2026-07-05
 
 ### Fixed — Termin-Ankündigungen: Medium, nicht Veranstalter (v998)

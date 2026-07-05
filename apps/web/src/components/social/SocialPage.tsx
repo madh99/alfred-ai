@@ -126,11 +126,12 @@ export function SocialPage() {
     persona: string; slots: string; blacklist: string; maxPostsPerDay: number;
     planningHorizonDays: number; generateImages: boolean; imageBudgetTotal: number;
     lessons: string[]; newLesson: string; modelTier: string;
-    // v996 — Familien-Playbook
+    // v996 — Familien-Playbook (+v999 Traffic-Modus)
     familyRole: 'auto' | 'lead' | 'follow'; familyOffset: string;
     quietFrom: number; quietTo: number; newsdeskThreshold: number; newsdeskMaxPerDay: number;
+    trafficMode: 'voll' | 'teaser' | 'auto';
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
-    familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3 });
+    familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll' });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
@@ -386,6 +387,7 @@ export function SocialPage() {
       quietTo: Array.isArray(c.config.newsdesk_quiet) ? Number((c.config.newsdesk_quiet as unknown[])[1] ?? 6) : 6,
       newsdeskThreshold: typeof c.config.newsdesk_threshold === 'number' ? c.config.newsdesk_threshold : 0.85,
       newsdeskMaxPerDay: typeof c.config.newsdesk_max_per_day === 'number' ? c.config.newsdesk_max_per_day : 3,
+      trafficMode: c.config.traffic_mode === 'teaser' ? 'teaser' : c.config.traffic_mode === 'auto' ? 'auto' : 'voll',
     });
     if (interestTopics.length === 0) {
       client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
@@ -408,6 +410,7 @@ export function SocialPage() {
           // v996 — Familien-Playbook (null löscht den Schlüssel, config wird feldweise gemergt)
           family_role: d.familyRole === 'auto' ? null : d.familyRole,
           family_offset_hours: d.familyOffset.trim() === '' ? null : Number(d.familyOffset),
+          traffic_mode: d.trafficMode === 'voll' ? null : d.trafficMode,
           newsdesk_quiet: [d.quietFrom, d.quietTo],
           newsdesk_threshold: d.newsdeskThreshold,
           newsdesk_max_per_day: d.newsdeskMaxPerDay,
@@ -921,6 +924,15 @@ export function SocialPage() {
                           <input type="number" min={0} max={72} value={settingsDraft.familyOffset} placeholder="Konferenz entscheidet"
                             onChange={e => setSettingsDraft(d => ({ ...d, familyOffset: e.target.value }))}
                             className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500" title="Follower-Posts verlinken den Lead-Artikel automatisch (mit UTM). Teaser: Post verrät nicht alles — die Pointe bleibt im Artikel.">Traffic-Modus (Follower)</label>
+                          <select value={settingsDraft.trafficMode} onChange={e => setSettingsDraft(d => ({ ...d, trafficMode: e.target.value as 'voll' | 'teaser' | 'auto' }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value="voll">voll — vollwertiger Beitrag + Link</option>
+                            <option value="teaser">teaser — Neugier-Lücke, Pointe im Artikel</option>
+                            <option value="auto">auto — News/Recaps als Teaser, Rest voll</option>
+                          </select>
                         </div>
                       </div>
                       <div className="text-[10px] text-gray-500">Eilmeldungs-Regeln (News-Desk liest sie vom Lead-Kanal):</div>

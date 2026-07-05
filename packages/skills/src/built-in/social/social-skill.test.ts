@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SocialSkill } from './social-skill.js';
-import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult } from './social-provider.js';
+import { SocialProvider, appendUtm, composePostText, type ProviderCapabilities, type PublishResult } from './social-provider.js';
 import type { SocialRepository, SocialChannel, ContentItem } from '@alfred/storage';
 import type { SkillContext } from '@alfred/types';
 
@@ -108,6 +108,66 @@ describe('composePostText', () => {
     expect(composePostText(plain, undefined, makeChannel())).not.toContain('KI-generiert');
     const generated = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/x.png' }] });
     expect(composePostText(generated)).not.toContain('KI-generiert');
+  });
+});
+
+describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
+  it('appendUtm: Slug aus Titel (Umlaute), ?/& korrekt', () => {
+    expect(appendUtm('https://fussball.cc/news/x', 'telegram_channel', 'Kolumbien überrascht Österreich!'))
+      .toBe('https://fussball.cc/news/x?utm_source=telegram_channel&utm_medium=social&utm_campaign=kolumbien-ueberrascht-oesterreich');
+    expect(appendUtm('https://x.at/p?id=1', 'facebook', '')).toContain('?id=1&utm_source=facebook');
+  });
+
+  function trafficSetup(channelOverrides: Partial<SocialChannel> = {}, leadStatus = 'published') {
+    const channel = makeChannel({ platform: 'test', ...channelOverrides });
+    const item = makeItem({ storyId: 'story-1', body: 'Kurzer Teaser zum Spiel.' });
+    const { skill, provider, state, spies } = makeSkill(channel, item);
+    const leadItem = makeItem({ id: 'lead-1', channelId: 'ch-web', status: leadStatus as any, title: 'Kolumbien komplettiert das Achtelfinale', externalUrl: 'https://fussball.cc/news/kolumbien' });
+    (spies as any).listAssignments = vi.fn(async () => [
+      { id: 'a1', storyId: 'story-1', channelId: 'ch-web', role: 'lead', offsetHours: 0, itemId: 'lead-1', createdAt: 'x' },
+      { id: 'a2', storyId: 'story-1', channelId: 'ch-1', role: 'follow', offsetHours: 2, itemId: 'item-0001-aaaa', createdAt: 'x' },
+    ]);
+    (spies.getItem as any) = vi.fn(async (_u: string, id: string) =>
+      id === 'lead-1' ? leadItem : id === state.item.id ? state.item : null);
+    return { skill, provider, state, channel };
+  }
+
+  it('publish_now: ausgehender Text bekommt Lead-Link + UTM, gespeichertes Item bleibt unverändert', async () => {
+    const { skill, provider, state } = trafficSetup();
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    expect(provider.published[0].body).toContain('👉 Ganzer Artikel: https://fussball.cc/news/kolumbien?utm_source=test&utm_medium=social&utm_campaign=kolumbien-komplettiert-das-achtelfinale');
+    expect(state.item.body).toBe('Kurzer Teaser zum Spiel.'); // DB-Item ohne Link
+  });
+
+  it('instagram: CTA „Link im Profil" statt URL; traffic_cta=false schaltet ab; utm=false lässt URL nackt', async () => {
+    const { skill: s1, channel: c1 } = trafficSetup();
+    const ig = await (s1 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), { ...c1, platform: 'instagram' });
+    expect(ig.body).toContain('Link im Profil');
+    expect(ig.body).not.toContain('http');
+
+    const { skill: s2, channel: c2 } = trafficSetup({ config: { traffic_cta: false } });
+    const off = await (s2 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), c2);
+    expect(off.body).toBe('B.');
+
+    const { skill: s3, channel: c3 } = trafficSetup({ config: { utm: false } });
+    const bare = await (s3 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), c3);
+    expect(bare.body).toContain('https://fussball.cc/news/kolumbien');
+    expect(bare.body).not.toContain('utm_source');
+  });
+
+  it('kein Link: Lead selbst, rest-Plattform, Lead nicht published, Item ohne Story', async () => {
+    const { skill } = trafficSetup();
+    const asLead = await (skill as any).applyTrafficCta('u1', makeItem({ id: 'lead-1', storyId: 'story-1', body: 'B.' }), makeChannel({ platform: 'test' }));
+    expect(asLead.body).toBe('B.');
+    const rest = await (skill as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), makeChannel({ platform: 'rest' }));
+    expect(rest.body).toBe('B.');
+    const noStory = await (skill as any).applyTrafficCta('u1', makeItem({ body: 'B.' }), makeChannel({ platform: 'test' }));
+    expect(noStory.body).toBe('B.');
+
+    const { skill: s4, channel: c4 } = trafficSetup({}, 'scheduled'); // Lead noch nicht live
+    const early = await (s4 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), c4);
+    expect(early.body).toBe('B.');
   });
 });
 

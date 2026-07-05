@@ -158,6 +158,19 @@ export function aiDisclosure(
   return typeof custom === 'string' && custom.trim().length > 0 ? custom.trim() : 'Bild: KI-generiert';
 }
 
+/**
+ * v999 — UTM-Parameter für Traffic-Links (Follower-Post → Lead-Artikel):
+ * utm_source = Plattform, utm_medium = social, utm_campaign = Story-Slug.
+ * config.utm === false am Kanal lässt die URL unangetastet.
+ */
+export function appendUtm(url: string, platform: string, campaign: string): string {
+  const slug = campaign.toLowerCase()
+    .replace(/[äöüß]/g, ch => (({ ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' } as Record<string, string>)[ch] ?? ch))
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'social';
+  const params = `utm_source=${encodeURIComponent(platform)}&utm_medium=social&utm_campaign=${encodeURIComponent(slug)}`;
+  return url.includes('?') ? `${url}&${params}` : `${url}?${params}`;
+}
+
 /** Baut den fertigen Post-Text (Body + Hashtags + ggf. KI-Kennzeichnung) mit optionalem Längen-Limit. */
 export function composePostText(item: ContentItem, maxLength?: number, channel?: Pick<SocialChannel, 'config'>): string {
   const tags = item.hashtags.length > 0 ? '\n\n' + item.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ') : '';
