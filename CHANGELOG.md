@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1000] - 2026-07-05
+
+### Changed — Social-UI: vom Scroll-Monolith zum Arbeitsplatz (v1000)
+
+Die /social-Seite war eine einzige lange Scroll-Seite, auf der
+Durchgewinktes und echte Entscheidungen ununterscheidbar gemischt waren.
+
+- **Tab-Navigation**: 📥 Entscheidungen · 🗓 Plan · 🗂 Verlauf ·
+  📡 Kanäle · 💬 Kommentare · 📊 Analytics — mit Zähler-Badge auf
+  „Entscheidungen".
+- **Triage-Board**: ⚠️ Probleme (fehlgeschlagene Posts, vorher im
+  Verlauf versteckt) → 🔴 Verfällt bald (Slot < 24h, ohne Freigabe
+  passiert nichts) → 🟡 Wartet auf Freigabe → ✅ Freigegeben & geplant
+  (läuft von selbst, klar getrennt).
+- **Bulk-Freigabe**: Checkboxen an allen entscheidbaren Karten,
+  „alle auswählen" je Gruppe, Sammel-Aktion „N freigeben/ablehnen" —
+  läuft item-weise durch den Skill, alle Leitplanken bleiben aktiv.
+- **Status-Kopfzeile**: je Kanal Tages-Limit-Ampel (3/5) + nächster
+  Post-Termin; Klick auf einen Kanal-Chip filtert alle Ansichten.
+- **Detail-Sheet** (🔍 Details an jeder Karte, Klick im Kalender):
+  großes Bild, voller Text, Hashtags, KI-Kennzeichnungs-Hinweis,
+  Story-Kontext mit klickbaren Geschwister-Beiträgen (Lead/Follower
+  über alle Kanäle) und allen Aktionen an einem Ort.
+- Plan-Tab bündelt Familien-Kalender, Wochenraster und Tagesliste;
+  Kanal-Einstellungen (inkl. Playbook) leben im Kanäle-Tab.
+
 ## [0.19.0-multi-ha.999] - 2026-07-05
 
 ### Added — Traffic-Fundament: Follower verlinken den Lead-Artikel (v999)

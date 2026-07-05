@@ -47,7 +47,13 @@ function toLocalInput(iso?: string): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-type QueueTab = 'pending' | 'history' | 'comments';
+/** v1000 — Seiten der Social-UI (vorher eine einzige Scroll-Seite). */
+type QueueTab = 'decisions' | 'plan' | 'history' | 'channels' | 'comments' | 'analytics';
+
+const PAGE_LABEL: Record<QueueTab, string> = {
+  decisions: '📥 Entscheidungen', plan: '🗓 Plan', history: '🗂 Verlauf',
+  channels: '📡 Kanäle', comments: '💬 Kommentare', analytics: '📊 Analytics',
+};
 
 /** v996 — Familien-Schlüssel wie im Kern (content-studio.familyKey): config.family vor Projekt-Bindung. */
 function familyKeyOf(c: SocialChannelItem): string | null {
@@ -102,9 +108,14 @@ export function SocialPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
-  // v964 — Queue-Tabs + Kanal-Filter
-  const [tab, setTab] = useState<QueueTab>('pending');
+  // v1000 — Seiten-Navigation (Tabs statt einer Scroll-Seite) + Kanal-Filter
+  const [page, setPage] = useState<QueueTab>('decisions');
   const [channelFilter, setChannelFilter] = useState<string>('');
+  // v1000 — Bulk-Auswahl (Mehrfach-Freigabe) + fehlgeschlagene Items für die Triage
+  const [sel, setSel] = useState<Record<string, boolean>>({});
+  const [failedItems, setFailedItems] = useState<SocialContentItem[]>([]);
+  // v1001 — Detail-Sheet (großes Bild, voller Text, Story-Geschwister, alle Aktionen)
+  const [detailId, setDetailId] = useState<string | null>(null);
   // v964 — Umterminieren (Inline-Datepicker je Item)
   const [reschedulingId, setReschedulingId] = useState<string | null>(null);
   const [rescheduleAt, setRescheduleAt] = useState<string>('');
@@ -145,13 +156,14 @@ export function SocialPage() {
     if (!client) return;
     setLoading(true); setError(null);
     try {
-      const [ch, sched, drafts, approved, published, cal] = await Promise.all([
+      const [ch, sched, drafts, approved, published, cal, failed] = await Promise.all([
         client.fetchSocialChannels(),
         client.fetchSocialItems({ status: 'scheduled', limit: 50 }),
         client.fetchSocialItems({ status: 'draft', limit: 50 }),
         client.fetchSocialItems({ status: 'approved', limit: 50 }),
         client.fetchSocialItems({ status: 'published', limit: 100 }),
         client.fetchSocialCalendar(new Date().toISOString(), new Date(Date.now() + 14 * 24 * 3_600_000).toISOString()),
+        client.fetchSocialItems({ status: 'failed', limit: 25 }),
       ]);
       setChannels(ch);
       // v964 — auch approved gehört in die Queue (vorher unsichtbar, bis es im Kalender auftauchte)
@@ -159,6 +171,7 @@ export function SocialPage() {
       setPending([...approved, ...sched, ...drafts].sort(byTime));
       setPublishedRecent(published);
       setCalendar(cal);
+      setFailedItems(failed); // v1000 — Probleme gehören in die Triage, nicht in den Verlauf versteckt
       // Metriken der aktiven Kanäle (best-effort)
       const m: typeof metrics = {};
       await Promise.all(ch.filter(c => c.status === 'active').map(async c => {
@@ -188,7 +201,7 @@ export function SocialPage() {
     }
   }, [client]);
 
-  useEffect(() => { if (tab === 'history') loadHistory(); }, [tab, loadHistory]);
+  useEffect(() => { if (page === 'history') loadHistory(); }, [page, loadHistory]);
 
   // v992 — Kommentare laden (bei Tab-Wechsel und Filter-Änderung)
   const loadComments = useCallback(async () => {
@@ -202,7 +215,7 @@ export function SocialPage() {
     }
   }, [client, channelFilter, commentStatusFilter]);
 
-  useEffect(() => { if (tab === 'comments') loadComments(); }, [tab, loadComments]);
+  useEffect(() => { if (page === 'comments') loadComments(); }, [page, loadComments]);
 
   async function commentAction(c: SocialCommentItem, action: 'reply' | 'ignore' | 'suggest') {
     await withBusy(c.id, async () => {
@@ -223,7 +236,7 @@ export function SocialPage() {
   // v948 — Bild-Vorschauen nachladen (erstes image je Item)
   useEffect(() => {
     if (!client) return;
-    const items = [...pending, ...calendar, ...history];
+    const items = [...pending, ...calendar, ...history, ...failedItems];
     for (const item of items) {
       if (mediaUrls[item.id] !== undefined) continue;
       const image = item.media?.find(m => m.type === 'image');
@@ -298,7 +311,7 @@ export function SocialPage() {
       if (!r.success) throw new Error(r.error ?? 'Aktion fehlgeschlagen');
       if (r.display) setNotice(r.display);
       await load();
-      if (tab === 'history') await loadHistory();
+      if (page === 'history') await loadHistory();
     });
   }
 
@@ -461,7 +474,6 @@ export function SocialPage() {
     (items: SocialContentItem[]) => (channelFilter ? items.filter(i => i.channelId === channelFilter) : items),
     [channelFilter],
   );
-  const visiblePending = useMemo(() => filterByChannel(pending), [pending, filterByChannel]);
   const visibleHistory = useMemo(() => filterByChannel(history), [history, filterByChannel]);
 
   /** Kalender nach Tag gruppiert (kommende 14 Tage) — v964: lokale Tage. */
@@ -504,6 +516,81 @@ export function SocialPage() {
     const p = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
+
+  // v1000 — Triage: Was braucht DEINE Entscheidung (Entwürfe + geplante vor Freigabe),
+  // was läuft von selbst (approved), was ist ein Problem (failed)?
+  const decisions = useMemo(() => {
+    const actionable = filterByChannel(pending).filter(i => i.status === 'draft' || i.status === 'scheduled');
+    const cutoff = Date.now() + 24 * 3_600_000;
+    const urgent = actionable.filter(i => i.scheduledAt && Date.parse(i.scheduledAt) < cutoff);
+    const urgentIds = new Set(urgent.map(i => i.id));
+    return {
+      urgent,
+      later: actionable.filter(i => !urgentIds.has(i.id)),
+      approved: filterByChannel(pending).filter(i => i.status === 'approved'),
+      failed: filterByChannel(failedItems),
+    };
+  }, [pending, failedItems, filterByChannel]);
+
+  const selCount = useMemo(() => Object.values(sel).filter(Boolean).length, [sel]);
+
+  // v1000 — Bulk-Freigabe/-Ablehnung: läuft item-weise durch den Skill (alle Leitplanken bleiben)
+  async function bulkAction(action: 'approve' | 'reject') {
+    const ids = Object.entries(sel).filter(([, v]) => v).map(([k]) => k);
+    if (ids.length === 0) return;
+    if (action === 'reject' && !confirm(`${ids.length} Beiträge ablehnen? (Der Stoff wird für das Studio gesperrt.)`)) return;
+    setBusy('bulk'); setError(null);
+    let ok = 0;
+    const errors: string[] = [];
+    for (const id of ids) {
+      try {
+        const r = await client!.socialItemAction(id, action);
+        if (r.success) ok++; else errors.push(`${id.slice(0, 8)}: ${r.error ?? '?'}`);
+      } catch (e) { errors.push(e instanceof Error ? e.message : String(e)); }
+    }
+    setSel({});
+    setBusy(null);
+    setNotice(`${ok}/${ids.length} ${action === 'approve' ? 'freigegeben' : 'abgelehnt'}.${errors.length ? `\nFehler: ${errors.slice(0, 3).join(' · ')}` : ''}`);
+    await load();
+  }
+
+  function selectGroup(items: SocialContentItem[], on: boolean) {
+    setSel(s => {
+      const next = { ...s };
+      for (const i of items) if (i.status === 'draft' || i.status === 'scheduled') next[i.id] = on;
+      return next;
+    });
+  }
+
+  // v1000 — Status-Kopfzeile: nächster anstehender Termin je Kanal
+  const nextSlotByChannel = useMemo(() => {
+    const next: Record<string, string> = {};
+    const now = Date.now();
+    for (const i of [...pending, ...calendar]) {
+      if (!i.scheduledAt || i.status === 'published' || Date.parse(i.scheduledAt) < now) continue;
+      if (!next[i.channelId] || i.scheduledAt < next[i.channelId]) next[i.channelId] = i.scheduledAt;
+    }
+    return next;
+  }, [pending, calendar]);
+
+  // v1001 — Detail-Sheet: Item + Story-Geschwister über alle geladenen Listen
+  const allItems = useMemo(() => {
+    const map = new Map<string, SocialContentItem>();
+    for (const i of [...publishedRecent, ...history, ...failedItems, ...calendar, ...pending]) map.set(i.id, i);
+    return map;
+  }, [pending, calendar, history, publishedRecent, failedItems]);
+  const detailItem = detailId ? allItems.get(detailId) ?? null : null;
+  const detailSiblings = useMemo(() => {
+    if (!detailItem?.storyId) return [];
+    return [...allItems.values()]
+      .filter(i => i.storyId === detailItem.storyId && i.id !== detailItem.id)
+      .sort((a, b) => (a.scheduledAt ?? a.publishedAt ?? '9999').localeCompare(b.scheduledAt ?? b.publishedAt ?? '9999'));
+  }, [allItems, detailItem]);
+  const detailStoryTitle = useMemo(() => {
+    if (!detailItem?.storyId) return undefined;
+    return detailItem.storyTitle
+      ?? [...allItems.values()].find(i => i.storyId === detailItem.storyId && i.storyTitle)?.storyTitle;
+  }, [allItems, detailItem]);
 
   // v967 — Analytics: Zeitreihen je Metrik-Art + Top-Beiträge je Kanal
   const analytics = useMemo(() => {
@@ -549,14 +636,20 @@ export function SocialPage() {
     return [...latestByKind.entries()].slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' · ');
   }
 
-  function renderItemCard(item: SocialContentItem, showActions: boolean) {
+  function renderItemCard(item: SocialContentItem, showActions: boolean, selectable = false) {
     const isOpen = expandedItem === item.id;
     const previewUrl = mediaUrls[item.id];
     const hasVideo = item.media?.some(m => m.type === 'video');
     const hint = blockedHint(item);
     return (
-      <div key={item.id} className="border border-[#1f1f1f] rounded-lg p-3">
+      <div key={item.id} className={clsx('border rounded-lg p-3', sel[item.id] ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-[#1f1f1f]')}>
         <div className="flex items-center gap-2 flex-wrap text-xs">
+          {/* v1000 — Bulk-Auswahl (nur für Items, die eine Freigabe-Entscheidung brauchen) */}
+          {selectable && (item.status === 'draft' || item.status === 'scheduled') && (
+            <input type="checkbox" checked={sel[item.id] === true}
+              onChange={e => setSel(s => ({ ...s, [item.id]: e.target.checked }))}
+              className="accent-emerald-500 cursor-pointer" />
+          )}
           <span className={clsx('px-1.5 py-0.5 rounded uppercase text-[10px]', STATUS_BADGE[item.status] ?? '')}>{item.status}</span>
           <span className="text-gray-400">{channelName(item.channelId)}</span>
           {item.scheduledAt && item.status !== 'published' && (
@@ -631,6 +724,9 @@ export function SocialPage() {
           </div>
         )}
         <div className="flex items-center gap-2 mt-2 flex-wrap">
+          {/* v1001 — Detail-Sheet: großes Bild, voller Text, Story-Geschwister */}
+          <button onClick={() => setDetailId(item.id)}
+            className="px-2 py-1 text-xs border border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a] rounded">🔍 Details</button>
           {item.externalUrl && (
             <a href={item.externalUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:text-blue-300">🔗 Post öffnen</a>
           )}
@@ -783,8 +879,108 @@ export function SocialPage() {
         </div>
       )}
 
-      {/* Kanäle */}
+      {/* v1000 — Status-Kopfzeile: je Kanal Tages-Limit-Ampel + nächster Termin */}
       {channels.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap text-[11px]">
+          {channels.filter(c => c.status === 'active').map(c => {
+            const today = c.publishedToday ?? publishedTodayByChannel[c.id] ?? 0;
+            const atLimit = today >= c.maxPostsPerDay;
+            const next = nextSlotByChannel[c.id];
+            return (
+              <button key={c.id} onClick={() => setChannelFilter(f => (f === c.id ? '' : c.id))}
+                title={`${c.name}: heute ${today}/${c.maxPostsPerDay}${next ? ` · nächster Post ${fmtDateTime(next)}` : ''} — Klick filtert alle Ansichten`}
+                className={clsx('px-2 py-1 rounded border flex items-center gap-1.5',
+                  channelFilter === c.id ? 'border-blue-500/60 bg-blue-500/10 text-blue-200' : 'border-[#1f1f1f] text-gray-400 hover:bg-[#151515]')}>
+                <span>{PLATFORM_ICON[c.platform] ?? '📣'}</span>
+                <span className="max-w-[110px] truncate">{c.name}</span>
+                <span className={clsx('px-1 rounded', atLimit ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/15 text-emerald-300')}>{today}/{c.maxPostsPerDay}</span>
+                {next && <span className="text-gray-500">→ {new Date(next).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })}{itemDayKey({ scheduledAt: next } as SocialContentItem) !== itemDayKey({ scheduledAt: new Date().toISOString() } as SocialContentItem) ? ` (${new Date(next).toLocaleDateString('de-AT', { weekday: 'short' })})` : ''}</span>}
+              </button>
+            );
+          })}
+          <div className="flex-1" />
+          {(decisions.urgent.length + decisions.later.length) > 0 && (
+            <span className="text-amber-300">✋ {decisions.urgent.length + decisions.later.length} warten auf dich</span>
+          )}
+          {decisions.failed.length > 0 && <span className="text-red-400">⚠ {decisions.failed.length} fehlgeschlagen</span>}
+        </div>
+      )}
+
+      {/* v1000 — Seiten-Navigation */}
+      {channels.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap border-b border-[#1f1f1f] pb-2">
+          {(Object.keys(PAGE_LABEL) as QueueTab[]).map(p => (
+            <button key={p} onClick={() => setPage(p)}
+              className={clsx('px-3 py-1.5 text-sm rounded-t border-b-2', page === p ? 'border-blue-500 text-blue-300 bg-blue-500/5' : 'border-transparent text-gray-500 hover:text-gray-300')}>
+              {PAGE_LABEL[p]}
+              {p === 'decisions' && (decisions.urgent.length + decisions.later.length + decisions.failed.length) > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/20 text-amber-300">{decisions.urgent.length + decisions.later.length + decisions.failed.length}</span>
+              )}
+            </button>
+          ))}
+          <div className="flex-1" />
+          {channels.length > 1 && (
+            <select value={channelFilter} onChange={e => setChannelFilter(e.target.value)}
+              className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200">
+              <option value="">Alle Kanäle</option>
+              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          )}
+        </div>
+      )}
+
+      {/* v1000 — Entscheidungen: Triage-Board mit Bulk-Freigabe */}
+      {page === 'decisions' && channels.length > 0 && (
+        <div className="space-y-5">
+          {selCount > 0 && (
+            <div className="sticky top-2 z-40 flex items-center gap-2 bg-[#101418] border border-emerald-500/40 rounded-lg px-3 py-2 text-sm shadow-lg">
+              <span className="text-emerald-300 font-medium">{selCount} ausgewählt</span>
+              <button onClick={() => bulkAction('approve')} disabled={busy === 'bulk'}
+                className="px-2.5 py-1 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">
+                {busy === 'bulk' ? '⏳ läuft …' : `✅ ${selCount} freigeben`}
+              </button>
+              <button onClick={() => bulkAction('reject')} disabled={busy === 'bulk'}
+                className="px-2.5 py-1 text-xs border border-red-500/40 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded">✕ ablehnen</button>
+              <button onClick={() => setSel({})} className="px-2 py-1 text-xs text-gray-500 hover:text-gray-300">Auswahl aufheben</button>
+            </div>
+          )}
+          {decisions.failed.length > 0 && (
+            <div>
+              <div className="text-sm font-semibold text-red-300 mb-2">⚠️ Probleme ({decisions.failed.length}) <span className="text-gray-500 font-normal">— fehlgeschlagen, warten auf dich</span></div>
+              <div className="space-y-2">{decisions.failed.map(i => renderItemCard(i, true))}</div>
+            </div>
+          )}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-semibold text-amber-300">🔴 Verfällt bald ({decisions.urgent.length})</span>
+              <span className="text-[11px] text-gray-500">— Slot in weniger als 24h, ohne Freigabe passiert nichts</span>
+              {decisions.urgent.length > 1 && (
+                <button onClick={() => selectGroup(decisions.urgent, true)} className="text-[11px] text-blue-400 hover:text-blue-300">alle auswählen</button>
+              )}
+            </div>
+            {decisions.urgent.length === 0 && <div className="text-xs text-gray-600">Nichts Dringendes — die nächsten 24 Stunden sind entschieden.</div>}
+            <div className="space-y-2">{decisions.urgent.map(i => renderItemCard(i, true, true))}</div>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-semibold text-gray-200">🟡 Wartet auf Freigabe ({decisions.later.length})</span>
+              {decisions.later.length > 1 && (
+                <button onClick={() => selectGroup(decisions.later, true)} className="text-[11px] text-blue-400 hover:text-blue-300">alle auswählen</button>
+              )}
+            </div>
+            {decisions.later.length === 0 && <div className="text-xs text-gray-600">Keine offenen Entwürfe.</div>}
+            <div className="space-y-2">{decisions.later.map(i => renderItemCard(i, true, true))}</div>
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-emerald-300/90 mb-2">✅ Freigegeben & geplant ({decisions.approved.length}) <span className="text-gray-500 font-normal">— läuft von selbst, keine Aktion nötig</span></div>
+            {decisions.approved.length === 0 && <div className="text-xs text-gray-600">Nichts freigegeben in der Warteschlange.</div>}
+            <div className="space-y-2">{decisions.approved.map(i => renderItemCard(i, true))}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Kanäle */}
+      {page === 'channels' && channels.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2">
           {channels.map(c => (
             <div key={c.id} className={clsx('border rounded-lg p-4', c.status === 'active' ? 'border-[#1f1f1f]' : 'border-gray-500/30 opacity-70')}>
@@ -1032,44 +1228,16 @@ export function SocialPage() {
         </div>
       )}
 
-      {/* v964 — Queue mit Tabs (Wartend/Verlauf) + Kanal-Filter */}
-      <div>
-        <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <button onClick={() => setTab('pending')}
-            className={clsx('px-2.5 py-1 text-xs rounded border', tab === 'pending' ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a]')}>
-            📤 Wartet auf dich ({visiblePending.length})
-          </button>
-          <button onClick={() => setTab('history')}
-            className={clsx('px-2.5 py-1 text-xs rounded border', tab === 'history' ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a]')}>
-            🗂 Verlauf
-          </button>
-          <button onClick={() => setTab('comments')}
-            className={clsx('px-2.5 py-1 text-xs rounded border', tab === 'comments' ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-400 hover:bg-[#1a1a1a]')}>
-            💬 Kommentare
-          </button>
-          <div className="flex-1" />
-          {channels.length > 1 && (
-            <select value={channelFilter} onChange={e => setChannelFilter(e.target.value)}
-              className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200">
-              <option value="">Alle Kanäle</option>
-              {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          )}
+      {/* v1000 — Verlauf (published/failed/rejected) */}
+      {page === 'history' && (
+        <div className="space-y-2">
+          {visibleHistory.length === 0 && <div className="text-xs text-gray-600">Noch kein Verlauf.</div>}
+          {visibleHistory.map(i => renderItemCard(i, i.status === 'failed'))}
         </div>
-        {tab === 'pending' && (
-          <div className="space-y-2">
-            {visiblePending.length === 0 && <div className="text-xs text-gray-600">Nichts offen — alles freigegeben oder noch nichts erzeugt.</div>}
-            {visiblePending.map(i => renderItemCard(i, true))}
-          </div>
-        )}
-        {tab === 'history' && (
-          <div className="space-y-2">
-            {visibleHistory.length === 0 && <div className="text-xs text-gray-600">Noch kein Verlauf.</div>}
-            {visibleHistory.map(i => renderItemCard(i, i.status === 'failed'))}
-          </div>
-        )}
-        {/* v992 — Kommentare: neu/beantwortet/ignoriert, Antwort geht LIVE */}
-        {tab === 'comments' && (
+      )}
+
+      {/* v992 — Kommentare: neu/beantwortet/ignoriert, Antwort geht LIVE */}
+      {page === 'comments' && (
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-xs">
               {(['new', 'replied', 'ignored'] as const).map(s => (
@@ -1113,8 +1281,9 @@ export function SocialPage() {
             })}
           </div>
         )}
-      </div>
 
+      {/* v1000 — Plan: Familien-Kalender + Wochenraster + Tagesliste */}
+      {page === 'plan' && (<>
       {/* v996 — Familien-Kalender: alle Kanäle einer Familie in EINEM Raster, Story-Zugehörigkeit farbcodiert */}
       {familyCalendars.families.map(([famKey, members]) => {
         const memberIds = new Set(members.map(m => m.id));
@@ -1149,7 +1318,7 @@ export function SocialPage() {
                     ...members.map(m => (
                       <div key={`${key}-${m.id}`} className={clsx('border rounded p-0.5 min-h-[26px] space-y-0.5', isWeekend ? 'border-purple-500/20 bg-purple-500/5' : 'border-[#1f1f1f]', d === 0 && 'border-blue-500/30')}>
                         {dayItems.filter(i => i.channelId === m.id).map(i => (
-                          <button key={i.id} onClick={() => setExpandedItem(expandedItem === i.id ? null : i.id)}
+                          <button key={i.id} onClick={() => setDetailId(i.id)}
                             title={`${i.title ?? i.body.slice(0, 60)}${i.storyTitle ? `\nStory: ${i.storyTitle}` : ''} (${i.status})`}
                             className={clsx('block w-full text-left text-[9px] px-1 py-0.5 rounded border truncate',
                               i.storyId ? familyCalendars.storyColor.get(i.storyId) : 'border-transparent ' + (STATUS_BADGE[i.status] ?? 'bg-gray-500/20 text-gray-300'))}>
@@ -1195,7 +1364,7 @@ export function SocialPage() {
                   </div>
                   <div className="space-y-0.5">
                     {items.map(i => (
-                      <button key={i.id} onClick={() => setExpandedItem(expandedItem === i.id ? null : i.id)}
+                      <button key={i.id} onClick={() => setDetailId(i.id)}
                         title={`${i.title ?? i.body.slice(0, 60)} (${channelName(i.channelId)}, ${i.status})`}
                         className={clsx('block w-full text-left text-[9px] px-1 py-0.5 rounded truncate', STATUS_BADGE[i.status] ?? 'bg-gray-500/20 text-gray-300')}>
                         {(i.scheduledAt ?? i.publishedAt) ? new Date((i.scheduledAt ?? i.publishedAt)!).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' }) : ''} {PLATFORM_ICON[channels.find(c => c.id === i.channelId)?.platform ?? ''] ?? ''} {(i.title ?? i.body).slice(0, 14)}
@@ -1221,11 +1390,13 @@ export function SocialPage() {
           ))}
         </div>
       </div>
+      </>)}
 
       {/* v967 — Analytics: Verlauf je Metrik + Top-Beiträge (aus channel_metrics) */}
-      {analytics.length > 0 && (
+      {page === 'analytics' && (
         <div>
           <h2 className="text-sm font-semibold text-gray-200 mb-2">📊 Analytics</h2>
+          {analytics.length === 0 && <div className="text-xs text-gray-600">Noch keine Metriken — der Analytics-Loop sammelt nach den ersten Veröffentlichungen.</div>}
           <div className="grid gap-3 md:grid-cols-2">
             {analytics.map(({ channel: c, series, topPosts }) => (
               <div key={c.id} className="border border-[#1f1f1f] rounded-lg p-4">
@@ -1261,6 +1432,51 @@ export function SocialPage() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* v1001 — Detail-Sheet: großes Bild, voller Text, Story-Geschwister, alle Aktionen */}
+      {detailItem && (
+        <>
+          <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setDetailId(null)} />
+          <div className="fixed inset-y-0 right-0 w-full md:w-[600px] bg-[#0d0d0d] border-l border-[#2a2a2a] z-50 overflow-y-auto p-4 space-y-3 shadow-2xl">
+            <div className="flex items-center gap-2">
+              <span className={clsx('px-1.5 py-0.5 rounded uppercase text-[10px]', STATUS_BADGE[detailItem.status] ?? '')}>{detailItem.status}</span>
+              <span className="text-sm text-gray-400">{PLATFORM_ICON[channels.find(c => c.id === detailItem.channelId)?.platform ?? ''] ?? '📣'} {channelName(detailItem.channelId)}</span>
+              <div className="flex-1" />
+              <button onClick={() => setDetailId(null)} className="px-2 py-1 text-sm text-gray-400 hover:text-gray-200 border border-[#2a2a2a] rounded">✕ Schließen</button>
+            </div>
+            {mediaUrls[detailItem.id] && (
+              <img src={mediaUrls[detailItem.id]} alt="" className="w-full rounded-lg border border-[#2a2a2a] object-cover max-h-[340px]" />
+            )}
+            <div className="text-base font-semibold text-gray-100">{detailItem.title ?? '(ohne Titel)'}</div>
+            {/* voller Text, wie er gepostet wird (Hashtags + ggf. KI-Kennzeichnung kommen beim Publish dazu) */}
+            <div className="text-sm text-gray-300 whitespace-pre-wrap break-words">{detailItem.body}</div>
+            {detailItem.hashtags.length > 0 && (
+              <div className="text-xs text-blue-400">{detailItem.hashtags.map(h => `#${h.replace(/^#/, '')}`).join(' ')}</div>
+            )}
+            {detailItem.media?.some(m => m.source === 'generated') && (
+              <div className="text-[11px] text-gray-500">🎨 Bild KI-generiert — Kennzeichnung wird beim Posten automatisch angehängt.</div>
+            )}
+            {/* v1001 — Story-Kontext: Geschwister-Beiträge derselben Story */}
+            {detailItem.storyId && (
+              <div className="border border-purple-500/20 bg-purple-500/5 rounded-lg p-2.5 space-y-1.5">
+                <div className="text-[11px] font-medium text-purple-300">📖 Story{detailStoryTitle ? `: ${detailStoryTitle}` : ''}</div>
+                {detailSiblings.length === 0 && <div className="text-[11px] text-gray-500">Keine Geschwister-Beiträge geladen.</div>}
+                {detailSiblings.map(s => (
+                  <button key={s.id} onClick={() => setDetailId(s.id)}
+                    className="w-full text-left text-[11px] text-gray-300 hover:bg-[#1a1a1a] rounded px-1.5 py-1 flex items-center gap-2">
+                    <span className={clsx('px-1 py-0.5 rounded uppercase text-[9px]', STATUS_BADGE[s.status] ?? '')}>{s.status}</span>
+                    <span className="text-gray-500">{channelName(s.channelId)}</span>
+                    <span className="flex-1 truncate">{s.title ?? s.body.slice(0, 50)}</span>
+                    {(s.scheduledAt ?? s.publishedAt) && <span className="text-gray-600">{fmtDateTime((s.scheduledAt ?? s.publishedAt)!)}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* alle Aktionen über die bekannte Karte (Bearbeiten, Verbessern, Umterminieren, Crosspost …) */}
+            {renderItemCard(detailItem, true)}
+          </div>
+        </>
       )}
     </div>
   );
