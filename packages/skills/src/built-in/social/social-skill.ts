@@ -661,22 +661,33 @@ export class SocialSkill extends Skill {
    * den Standardtext, config.utm=false lässt die URL nackt. Das gespeicherte
    * Item wird NIE verändert — nur die ausgehende Kopie.
    */
+  /** v1001 — Lead-Artikel einer Story finden (published, mit externalUrl); null wenn nicht auflösbar. */
+  private async storyLeadUrl(userId: string, item: ContentItem): Promise<{ url: string; title?: string } | null> {
+    if (!item.storyId) return null;
+    const assigns = await this.repo.listAssignments(item.storyId);
+    const mine = assigns.find(a => a.itemId === item.id);
+    const lead = assigns.find(a => a.role === 'lead');
+    if (!mine || mine.role === 'lead' || !lead?.itemId || lead.itemId === item.id) return null;
+    const leadItem = await this.repo.getItem(userId, lead.itemId);
+    if (!leadItem || leadItem.status !== 'published' || !leadItem.externalUrl) return null;
+    return { url: leadItem.externalUrl, title: leadItem.title };
+  }
+
   private async applyTrafficCta(userId: string, item: ContentItem, channel: SocialChannel): Promise<ContentItem> {
     try {
       if (channel.config.traffic_cta === false) return item;
       if (channel.platform === 'rest') return item; // die eigene Plattform IST das Ziel
-      if (!item.storyId) return item;
-      const assigns = await this.repo.listAssignments(item.storyId);
-      const mine = assigns.find(a => a.itemId === item.id);
-      const lead = assigns.find(a => a.role === 'lead');
-      if (!mine || mine.role === 'lead' || !lead?.itemId || lead.itemId === item.id) return item;
-      const leadItem = await this.repo.getItem(userId, lead.itemId);
-      if (!leadItem || leadItem.status !== 'published' || !leadItem.externalUrl) return item;
+      const lead = await this.storyLeadUrl(userId, item);
+      if (!lead) return item;
       const url = channel.config.utm === false
-        ? leadItem.externalUrl
-        : appendUtm(leadItem.externalUrl, channel.platform, leadItem.title ?? item.title ?? 'social');
+        ? lead.url
+        : appendUtm(lead.url, channel.platform, lead.title ?? item.title ?? 'social');
       const custom = typeof channel.config.traffic_cta_text === 'string' && channel.config.traffic_cta_text.trim().length > 0
         ? channel.config.traffic_cta_text.trim() : undefined;
+      // v1001 — Telegram: Inline-Button statt Text-Link (URL via performance.trafficUrl an den Provider)
+      if (channel.platform === 'telegram_channel') {
+        return { ...item, performance: { ...item.performance, trafficUrl: url, ...(custom ? { trafficLabel: custom } : {}) } };
+      }
       const cta = channel.platform === 'instagram'
         ? (custom ?? '🔗 Ganzer Artikel über den Link im Profil.')
         : `${custom ?? '👉 Ganzer Artikel:'} ${url}`;
@@ -853,6 +864,74 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
   }
 
   /**
+   * v1001 — Klick-Rückkanal: liest Artikel-Statistiken der eigenen Plattform
+   * (rest-Kanäle, GET config.stats_path ?? /api/integrations/stats, Bearer
+   * API_TOKEN) und legt sie als channel_metrics ab: kind 'views' auf dem
+   * rest-Kanal (je Lead-Item via externalUrl-Match), kind 'clicks' je
+   * utm_source auf dem passenden Familien-Kanal (je Follower-Item derselben
+   * Story, falls auflösbar). Fehlender Endpoint (404) bleibt still — die
+   * Plattform-Seite ist optional (Spec: docs/specs/fussball-cc-stats-api-spec.md).
+   */
+  async collectTrafficStats(userId: string): Promise<number> {
+    const channels = await this.repo.listChannels(userId, 'active');
+    const familyOf = (c: SocialChannel): string | null => {
+      if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
+      return c.projectId ? `project:${c.projectId}` : null;
+    };
+    let collected = 0;
+    for (const channel of channels.filter(c => c.platform === 'rest')) {
+      const base = typeof channel.config.base_url === 'string' ? channel.config.base_url.replace(/\/+$/, '') : '';
+      if (!base || channel.config.traffic_stats === false) continue;
+      const path = typeof channel.config.stats_path === 'string' && channel.config.stats_path.trim()
+        ? channel.config.stats_path.trim() : '/api/integrations/stats';
+      try {
+        const secrets = await this.secrets(channel);
+        const headers: Record<string, string> = {};
+        if (secrets.API_TOKEN) headers.Authorization = `Bearer ${secrets.API_TOKEN}`;
+        const since = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
+        const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        if (channel.config.insecure_tls === true) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+        let res: Response;
+        try {
+          res = await fetch(`${base}${path.startsWith('/') ? path : `/${path}`}?since=${encodeURIComponent(since)}`, { headers });
+        } finally {
+          if (channel.config.insecure_tls === true) {
+            if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+            else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
+          }
+        }
+        if (!res.ok) continue; // Endpoint (noch) nicht vorhanden — kein Fehler
+        const data = await res.json().catch(() => null) as { data?: Array<{ date?: string; path?: string; views?: number; sources?: Record<string, number> }> } | null;
+        const rows = Array.isArray(data?.data) ? data.data : [];
+        if (rows.length === 0) continue;
+        const published = await this.repo.listItems(userId, { channelId: channel.id, status: 'published', limit: 100 });
+        const siblings = channels.filter(c => c.id !== channel.id && familyOf(c) !== null && familyOf(c) === familyOf(channel));
+        for (const row of rows) {
+          if (!row.path || !row.date) continue;
+          const leadItem = published.find(i => i.externalUrl && i.externalUrl.includes(row.path!));
+          if (typeof row.views === 'number' && row.views > 0 && leadItem) {
+            await this.repo.upsertMetric(channel.id, { itemId: leadItem.id, date: row.date, kind: 'views', value: row.views });
+            collected++;
+          }
+          for (const [source, clicks] of Object.entries(row.sources ?? {})) {
+            if (typeof clicks !== 'number' || clicks <= 0) continue;
+            const target = siblings.find(c => c.platform === source);
+            if (!target) continue; // direct/organic/unbekannte Quellen ignorieren
+            let followerId: string | undefined;
+            if (leadItem?.storyId) {
+              const assigns = await this.repo.listAssignments(leadItem.storyId).catch(() => []);
+              followerId = assigns.find(a => a.channelId === target.id)?.itemId;
+            }
+            await this.repo.upsertMetric(target.id, { itemId: followerId, date: row.date, kind: 'clicks', value: clicks });
+            collected++;
+          }
+        }
+      } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
+    }
+    return collected;
+  }
+
+  /**
    * v989 — Kommentare einsammeln (stündlich vom Kern aufgerufen): published
    * Items mit externalId je Kanal mit supportsComments → fetchComments →
    * dedupliziert ablegen. @returns neue Kommentare gesamt + je Kanal.
@@ -919,14 +998,21 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
     const channel = await this.repo.getChannel(userId, comment.channelId);
     if (!channel) return { success: false, error: 'Kanal nicht gefunden' };
     const item = comment.itemId ? await this.repo.getItem(userId, comment.itemId) : null;
+    // v1001 — Traffic: Wenn der Beitrag zu einer Story mit veröffentlichtem
+    // Lead-Artikel gehört, darf die Antwort den Artikel-Link enthalten (mit UTM).
+    const lead = item ? await this.storyLeadUrl(userId, item).catch(() => null) : null;
+    const articleUrl = lead
+      ? (channel.config.utm === false ? lead.url : appendUtm(lead.url, channel.platform, lead.title ?? 'kommentar'))
+      : undefined;
     const tierRaw = channel.config.model_tier;
     const tier = tierRaw === 'medium' || tierRaw === 'default' || tierRaw === 'strong' ? tierRaw : 'fast';
     const prompt = `Du bist Community-Manager des Kanals "${channel.name}" (${channel.platform}).
-${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${item ? `UNSER BEITRAG: ${item.title ?? ''} — ${item.body.slice(0, 300)}\n` : ''}
+${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${item ? `UNSER BEITRAG: ${item.title ?? ''} — ${item.body.slice(0, 300)}\n` : ''}${articleUrl ? `AUSFÜHRLICHER ARTIKEL ZUM BEITRAG: ${articleUrl}\n` : ''}
 KOMMENTAR von ${comment.author ?? 'einem Fan'}: "${comment.text}"
 
 Formuliere EINE freundliche, konkrete Antwort (Deutsch, max. 300 Zeichen, keine Hashtags, keine Emojis-Flut).
-Erfinde KEINE Fakten — wenn die Frage Informationen braucht, die du nicht hast, formuliere einen freundlichen Verweis auf fussball.cc bzw. eine Rückfrage.
+Erfinde KEINE Fakten — wenn die Frage Informationen braucht, die du nicht hast, formuliere einen freundlichen Verweis auf den Artikel bzw. eine Rückfrage.
+${articleUrl ? `Wird die Frage im ausführlichen Artikel beantwortet, DARFST du die Artikel-URL oben wörtlich in die Antwort aufnehmen. ` : ''}NIEMALS andere URLs erfinden.
 Antworte NUR mit dem Antwort-Text, ohne Anführungszeichen drumherum.`;
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 500, tier, reasoningEffort: 'low' });
     const draft = (response.content ?? '').trim().replace(/^["„]|["“]$/g, '').slice(0, 500);

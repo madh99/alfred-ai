@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1001] - 2026-07-05
+
+### Added — Traffic-Feinschliff + Klick-Rückkanal (v1001)
+
+- **Telegram: Inline-Button statt Text-Link** — Follower-Posts auf
+  Telegram bekommen einen „📖 Ganzer Artikel"-Button unter dem Post
+  (URL inkl. UTM); der Post-Text bleibt sauber.
+  `config.traffic_cta_text` beschriftet den Button.
+- **Kommentar-Antworten mit Artikel-Link**: Der KI-Antwort-Vorschlag
+  (suggest_reply) kennt jetzt den Lead-Artikel der Story und darf ihn
+  wörtlich verlinken, wenn die Frage dort beantwortet wird — andere
+  URLs zu erfinden bleibt verboten.
+- **Klick-Rückkanal**: `collectTrafficStats` pollt täglich (07:00, mit
+  der Analytics-Sammlung) je rest-Kanal
+  `GET <base_url>/api/integrations/stats?since=…` (Pfad per
+  `config.stats_path`, abschaltbar per `config.traffic_stats: false`):
+  Artikel-Views → Metrik `views` auf dem Website-Kanal (je Artikel-Item),
+  Klicks je `utm_source` → Metrik `clicks` auf dem Familien-Kanal der
+  Plattform (dem Follower-Beitrag derselben Story zugeordnet). Damit
+  zeigt Analytics, welcher Kanal wirklich Besucher bringt. Fehlt der
+  Endpoint auf der Plattform (404), bleibt Alfred still.
+- **Spec für die Plattform-Seite**: docs/specs/fussball-cc-stats-api-spec.md
+  (Endpoint, Response-Format, Datenquelle) — generisch für jedes Projekt.
+- 4 neue Tests (TG-Button, trafficUrl-Übergabe, suggest_reply-Prompt,
+  Stats-Collector Ende-zu-Ende).
+
 ## [0.19.0-multi-ha.1000] - 2026-07-05
 
 ### Changed — Social-UI: vom Scroll-Monolith zum Arbeitsplatz (v1000)

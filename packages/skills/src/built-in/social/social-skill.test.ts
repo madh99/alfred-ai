@@ -156,6 +156,57 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
     expect(bare.body).not.toContain('utm_source');
   });
 
+  it('v1001: telegram_channel → Body bleibt, URL wandert als trafficUrl in die Performance (Inline-Button)', async () => {
+    const { skill, channel } = trafficSetup({ platform: 'telegram_channel' });
+    const out = await (skill as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), channel);
+    expect(out.body).toBe('B.');
+    expect(out.performance.trafficUrl).toContain('https://fussball.cc/news/kolumbien?utm_source=telegram_channel');
+  });
+
+  it('v1001: suggest_reply bekommt den Lead-Artikel-Link in den Prompt', async () => {
+    const { skill, state, channel } = trafficSetup();
+    const spies = (skill as any).repo;
+    spies.getComment = vi.fn(async () => ({ id: 'c-1', channelId: channel.id, itemId: state.item.id, author: 'Fan', text: 'Wo finde ich Details?', status: 'new' }));
+    const complete = vi.fn(async (_req: { messages: Array<{ content: string }> }) => ({ content: 'Alle Details stehen im Artikel!' }));
+    (skill as any).llm = { complete };
+    const r = await skill.execute({ action: 'suggest_reply', comment_id: 'c-1' }, CTX);
+    expect(r.success).toBe(true);
+    const prompt = complete.mock.calls[0]![0].messages[0].content;
+    expect(prompt).toContain('AUSFÜHRLICHER ARTIKEL ZUM BEITRAG: https://fussball.cc/news/kolumbien');
+    expect(prompt).toContain('DARFST du die Artikel-URL');
+  });
+
+  it('v1001: collectTrafficStats — views auf den rest-Kanal, clicks je utm_source auf den Familien-Kanal', async () => {
+    const rest = makeChannel({ id: 'ch-web', name: 'fussball.cc', platform: 'rest', projectId: 'p1', config: { base_url: 'https://fussball.cc' } });
+    const tg = makeChannel({ id: 'ch-tg', name: 'News', platform: 'telegram_channel', projectId: 'p1' });
+    const leadItem = makeItem({ id: 'lead-1', channelId: 'ch-web', status: 'published', storyId: 'story-1', externalUrl: 'https://fussball.cc/news/kolumbien' });
+    const { skill } = makeSkill(rest, leadItem);
+    const spies = (skill as any).repo;
+    spies.listChannels = vi.fn(async () => [rest, tg]);
+    spies.listItems = vi.fn(async () => [leadItem]);
+    spies.listAssignments = vi.fn(async () => [
+      { id: 'a1', storyId: 'story-1', channelId: 'ch-web', role: 'lead', offsetHours: 0, itemId: 'lead-1', createdAt: 'x' },
+      { id: 'a2', storyId: 'story-1', channelId: 'ch-tg', role: 'follow', offsetHours: 2, itemId: 'item-tg', createdAt: 'x' },
+    ]);
+    const metrics: any[] = [];
+    spies.upsertMetric = vi.fn(async (chId: string, m: any) => { metrics.push({ chId, ...m }); });
+    const fetchMock = vi.fn(async (_url: unknown, _init?: unknown) => ({
+      ok: true,
+      json: async () => ({ ok: true, data: [{ date: '2026-07-05', path: '/news/kolumbien', views: 143, sources: { telegram_channel: 12, direct: 80 } }] }),
+    }));
+    const orig = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const n = await skill.collectTrafficStats('u1');
+      expect(n).toBe(2);
+    } finally { globalThis.fetch = orig; }
+    expect(String(fetchMock.mock.calls[0][0])).toContain('https://fussball.cc/api/integrations/stats?since=');
+    expect(metrics).toContainEqual({ chId: 'ch-web', itemId: 'lead-1', date: '2026-07-05', kind: 'views', value: 143 });
+    expect(metrics).toContainEqual({ chId: 'ch-tg', itemId: 'item-tg', date: '2026-07-05', kind: 'clicks', value: 12 });
+    // direct hat keinen Familien-Kanal → ignoriert
+    expect(metrics.length).toBe(2);
+  });
+
   it('kein Link: Lead selbst, rest-Plattform, Lead nicht published, Item ohne Story', async () => {
     const { skill } = trafficSetup();
     const asLead = await (skill as any).applyTrafficCta('u1', makeItem({ id: 'lead-1', storyId: 'story-1', body: 'B.' }), makeChannel({ platform: 'test' }));

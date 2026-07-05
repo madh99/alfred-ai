@@ -6805,6 +6805,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               try {
                 const n = await socialSkill.collectMetrics(ownerUid);
                 if (n > 0) this.logger.info({ metrics: n }, 'v936 social analytics collected');
+                // v1001 — Klick-Rückkanal: Artikel-Views + Klicks je utm_source von der eigenen Plattform
+                const t = await socialSkill.collectTrafficStats(ownerUid).catch(() => 0);
+                if (t > 0) this.logger.info({ stats: t }, 'v1001 traffic stats collected');
                 if (now.getDay() === 0) await studio.weeklyNicheReport();
               } catch (err) { this.logger.warn({ err }, 'v936 social analytics failed'); }
             }

@@ -88,6 +88,21 @@ describe('TelegramChannelProvider (v933)', () => {
     expect(payload.text).toContain('#fussball');
   });
 
+  it('v1001: performance.trafficUrl → Inline-Button „Ganzer Artikel" (sendMessage + sendPhoto)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, result: { message_id: 90 } }));
+    const provider = new TelegramChannelProvider('T');
+    await provider.publish(
+      makeItem({ performance: { trafficUrl: 'https://fussball.cc/news/x?utm_source=telegram_channel' } }),
+      channel, {},
+    );
+    const payload = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(payload.reply_markup.inline_keyboard[0][0]).toEqual({ text: '📖 Ganzer Artikel', url: 'https://fussball.cc/news/x?utm_source=telegram_channel' });
+    // ohne trafficUrl: kein reply_markup
+    await provider.publish(makeItem(), channel, {});
+    const plain = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(plain.reply_markup).toBeUndefined();
+  });
+
   it('Bild-Item → sendPhoto mit Caption; Secret-Token gewinnt über Fallback', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true, result: { message_id: 78 } }));
     const provider = new TelegramChannelProvider('FALLBACK');
