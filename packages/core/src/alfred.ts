@@ -5525,7 +5525,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     } else if (this.database) {
       const { SocialRepository } = await import('@alfred/storage');
       this.socialRepo = new SocialRepository(this.database.getAdapter());
-      const { SocialSkill, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider } = await import('@alfred/skills');
+      const { SocialSkill, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider, BlueskyProvider } = await import('@alfred/skills');
       const socialSkill = new SocialSkill(this.socialRepo);
       socialSkill.registerProvider(new TelegramChannelProvider(
         this.config.telegram?.enabled ? this.config.telegram.token : undefined,
@@ -5538,6 +5538,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       socialSkill.registerProvider(new MetaProvider('facebook'));
       socialSkill.registerProvider(new MetaProvider('threads'));
       socialSkill.registerProvider(new XProvider());
+      // v1013 — Bluesky (AT Protocol: handle + App-Passwort, Bilder direkt via uploadBlob)
+      socialSkill.registerProvider(new BlueskyProvider());
       // v946 — LLM für formatgerechtes Crossposting
       if (this.llmProvider) socialSkill.setLlm(this.llmProvider);
       // v951 — Themen-Verknüpfung (ein Kanal kann mehrere Interessen-Themen speisen).

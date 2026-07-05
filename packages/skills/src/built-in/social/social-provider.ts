@@ -95,6 +95,7 @@ export const BEST_PRACTICE_SLOTS: Record<string, string[]> = {
   threads:          ['Di 12:00', 'Do 18:00', 'So 20:00'],
   youtube:          ['Fr 15:00', 'So 11:00'],
   x:                ['Mo 08:30', 'Mi 12:00', 'Fr 17:30', 'Sa 20:00'],
+  bluesky:          ['Mo 09:00', 'Mi 12:30', 'Fr 18:00', 'So 20:00'],
 };
 
 const FALLBACK_SLOTS = ['Mo 18:00', 'Mi 18:00', 'Fr 18:00', 'So 10:00'];

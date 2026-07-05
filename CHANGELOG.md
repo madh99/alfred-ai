@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1013] - 2026-07-05
+
+### Added — Bluesky-Provider (v1013)
+
+Neue Plattform mit offener API und klickbaren Links (Traffic!) — ein
+Bluesky-Kanal in der Familie bekommt Konferenz, Traffic-Links, Overlays
+und Serien-Formate automatisch.
+
+- Plattform `bluesky` (AT Protocol): `config.handle` + Secret
+  `BLUESKY_APP_PASSWORD` (App-Passwort, nie das Konto-Passwort);
+  optional `config.service` für eigene PDS-Instanzen.
+- Bilder werden **direkt hochgeladen** (uploadBlob, bis 4 je Post) —
+  kein public_media nötig. Links im Text sind über Facets klickbar
+  (korrekte UTF-8-Byte-Offsets).
+- 300-Zeichen-Limit, Löschen (deleteRecord), validateAuth für den
+  Auth-Watchdog, Best-Practice-Slots.
+- 3 neue Tests (Facets, Publish Ende-zu-Ende mit Bild, Auth/Delete).
+
 ## [0.19.0-multi-ha.1012] - 2026-07-05
 
 ### Added — Serien-Formate: wiederkehrende Wochen-Formate (v1012)

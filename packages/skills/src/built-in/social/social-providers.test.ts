@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TelegramChannelProvider } from './telegram-channel-provider.js';
 import { RestProvider } from './rest-provider.js';
+import { BlueskyProvider } from './bluesky-provider.js';
 import { BEST_PRACTICE_SLOTS, effectiveSlots, extractTrailingHashtags, mergeHashtags } from './social-provider.js';
 import type { SocialChannel, ContentItem } from '@alfred/storage';
 
@@ -276,5 +277,62 @@ describe('RestProvider (v933)', () => {
     const ch = makeChannel({ base_url: 'https://ex.at', url_template: 'https://ex.at/news/{data.slug}' }, 'rest');
     const r = await provider.publish(makeItem(), ch, {});
     expect(r.url).toBeUndefined();
+  });
+});
+
+describe('BlueskyProvider (v1013)', () => {
+  const channel = makeChannel({ handle: 'fussballcc.bsky.social' }, 'bluesky');
+
+  it('linkFacets: Byte-Offsets (UTF-8!) + Satzzeichen am URL-Ende abgeschnitten', () => {
+    const text = 'Müller trifft! 👉 Ganzer Artikel: https://fussball.cc/news/x.';
+    const facets = BlueskyProvider.linkFacets(text);
+    expect(facets.length).toBe(1);
+    expect(facets[0].features[0].uri).toBe('https://fussball.cc/news/x');
+    const { byteStart, byteEnd } = facets[0].index;
+    expect(Buffer.from(text, 'utf8').slice(byteStart, byteEnd).toString('utf8')).toBe('https://fussball.cc/news/x');
+  });
+
+  it('publish: createSession → uploadBlob (lokales Bild) → createRecord mit Facets + Embed', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const img = join(tmpdir(), `alfred-bsky-${Date.now()}.png`);
+    writeFileSync(img, Buffer.from([0x89, 0x50]));
+    try {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ accessJwt: 'JWT', did: 'did:plc:abc', handle: 'fussballcc.bsky.social' }))
+        .mockResolvedValueOnce(jsonResponse({ blob: { ref: 'blob-1' } }))
+        .mockResolvedValueOnce(jsonResponse({ uri: 'at://did:plc:abc/app.bsky.feed.post/3k2xyz' }));
+      const provider = new BlueskyProvider();
+      const r = await provider.publish(
+        makeItem({ body: 'Kolumbien weiter! https://fussball.cc/news/kolumbien', media: [{ type: 'image', source: 'generated', pathOrUrl: img }] }),
+        channel, { BLUESKY_APP_PASSWORD: 'app-pass' },
+      );
+      expect(r.externalId).toBe('3k2xyz');
+      expect(r.url).toBe('https://bsky.app/profile/fussballcc.bsky.social/post/3k2xyz');
+      expect(String(fetchMock.mock.calls[0][0])).toContain('createSession');
+      expect(String(fetchMock.mock.calls[1][0])).toContain('uploadBlob');
+      const record = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string).record;
+      expect(record.facets[0].features[0].uri).toBe('https://fussball.cc/news/kolumbien');
+      expect(record.embed.images[0].image).toEqual({ ref: 'blob-1' });
+    } finally { unlinkSync(img); }
+  });
+
+  it('validateAuth ok/fehlgeschlagen; deletePost nutzt rkey', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ accessJwt: 'J', did: 'd', handle: 'h.bsky.social' }));
+    expect(await new BlueskyProvider().validateAuth(channel, { BLUESKY_APP_PASSWORD: 'p' })).toEqual({ ok: true, detail: 'h.bsky.social' });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ message: 'Invalid identifier or password' }, 401));
+    const bad = await new BlueskyProvider().validateAuth(channel, { BLUESKY_APP_PASSWORD: 'x' });
+    expect(bad.ok).toBe(false);
+    expect(bad.detail).toContain('Invalid identifier');
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ accessJwt: 'J', did: 'did:plc:abc', handle: 'h' }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    expect(await new BlueskyProvider().deletePost('3k2xyz', channel, { BLUESKY_APP_PASSWORD: 'p' })).toBe(true);
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];
+    expect(String(lastCall[0])).toContain('deleteRecord');
+    const del = JSON.parse((lastCall[1] as RequestInit).body as string);
+    expect(del.rkey).toBe('3k2xyz');
   });
 });
