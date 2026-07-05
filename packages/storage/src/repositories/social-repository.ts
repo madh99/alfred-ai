@@ -337,6 +337,12 @@ export class SocialRepository {
       [blocked ? 1 : 0, id, userId]);
   }
 
+  /** v1017 — Motiv-Beschreibung ändern (der Matching-Schlüssel für die Wiederverwendung). */
+  async updateMediaAssetMotif(userId: string, id: string, motif: string): Promise<void> {
+    await this.db.execute(`UPDATE social_media_assets SET motif = ? WHERE id = ? AND user_id = ?`,
+      [motif.slice(0, 500), id, userId]);
+  }
+
   async touchMediaAsset(userId: string, id: string): Promise<void> {
     await this.db.execute(`UPDATE social_media_assets SET last_used_at = ?, use_count = use_count + 1 WHERE id = ? AND user_id = ?`,
       [new Date().toISOString(), id, userId]);

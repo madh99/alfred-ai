@@ -8263,7 +8263,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 channelName: a.channelId ? nameOf.get(a.channelId) : undefined,
               }));
           },
-          assetAction: async (id: string, action: 'block' | 'unblock' | 'delete') => {
+          assetAction: async (id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe', extra?: Record<string, unknown>) => {
             try {
               if (action === 'delete') {
                 const asset = (await socialRepo.listMediaAssets(socialOwner, { limit: 500 })).find(a => a.id === id);
@@ -8272,6 +8272,34 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   await unlink(asset.path).catch(() => { /* Datei ggf. schon weg */ });
                 }
                 await socialRepo.deleteMediaAsset(socialOwner, id);
+              } else if (action === 'motif') {
+                // v1017 — Motiv selbst ändern (Matching-Schlüssel der Wiederverwendung)
+                const motif = typeof extra?.motif === 'string' ? extra.motif.trim() : '';
+                if (motif.length < 5) return { success: false, error: 'Motiv-Beschreibung zu kurz (min. 5 Zeichen).' };
+                await socialRepo.updateMediaAssetMotif(socialOwner, id, motif);
+                return { success: true, motif };
+              } else if (action === 'describe') {
+                // v1017 — Motiv per Vision-LLM neu beschreiben lassen
+                if (!this.llmProvider) return { success: false, error: 'LLM nicht verfügbar.' };
+                const asset = (await socialRepo.listMediaAssets(socialOwner, { limit: 500 })).find(a => a.id === id);
+                if (!asset) return { success: false, error: 'Asset nicht gefunden.' };
+                const { readFile } = await import('node:fs/promises');
+                const data = await readFile(asset.path);
+                const response = await this.llmProvider.complete({
+                  messages: [{
+                    role: 'user',
+                    content: [
+                      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: data.toString('base64') } },
+                      { type: 'text', text: 'Beschreibe das MOTIV dieses Bildes in 1-2 Sätzen auf Deutsch — nur Szene, Objekte, Stimmung, Farben (als Bild-Motiv-Beschreibung für die Wiederverwendung, KEINE Meta-Kommentare, KEIN „Das Bild zeigt"). Antworte NUR mit der Beschreibung.' },
+                    ],
+                  }] as never,
+                  maxTokens: 300,
+                  tier: 'fast',
+                });
+                const motif = (response.content ?? '').trim().replace(/^["„]|["“]$/g, '').slice(0, 500);
+                if (motif.length < 5) return { success: false, error: 'Keine brauchbare Beschreibung erhalten.' };
+                await socialRepo.updateMediaAssetMotif(socialOwner, id, motif);
+                return { success: true, motif };
               } else {
                 await socialRepo.setMediaAssetBlocked(socialOwner, id, action === 'block');
               }

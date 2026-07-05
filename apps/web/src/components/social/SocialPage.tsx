@@ -139,6 +139,10 @@ export function SocialPage() {
   const [assets, setAssets] = useState<SocialAssetItem[]>([]);
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
   const [assetsOpen, setAssetsOpen] = useState(false);
+  // v1017 — Lightbox + Motiv-Editor der Bild-Bibliothek
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [motifEditId, setMotifEditId] = useState<string | null>(null);
+  const [motifDraft, setMotifDraft] = useState('');
   // v1015 — Kanal-Wizard
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizard, setWizard] = useState<{ platform: string; name: string; project: string; mode: string; publishMode: string; persona: string; fields: Record<string, string> }>(
@@ -302,11 +306,12 @@ export function SocialPage() {
     });
   }
 
-  async function assetAction(a: SocialAssetItem, action: 'block' | 'unblock' | 'delete') {
+  async function assetAction(a: SocialAssetItem, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe', extra?: { motif?: string }) {
     if (action === 'delete' && !confirm('Basis-Bild endgültig aus der Bibliothek löschen (Datei + Eintrag)?')) return;
     await withBusy(a.id, async () => {
-      const r = await client!.socialAssetAction(a.id, action);
+      const r = await client!.socialAssetAction(a.id, action, extra);
       if (!r.success) throw new Error(r.error ?? 'Aktion fehlgeschlagen');
+      setMotifEditId(null);
       await loadAssets();
     });
   }
@@ -1572,9 +1577,26 @@ export function SocialPage() {
                 {assets.map(a => (
                   <div key={a.id} className={clsx('border rounded-lg p-2 space-y-1', a.blocked ? 'border-red-500/30 opacity-70' : 'border-[#2a2a2a]')}>
                     {assetUrls[a.id]
-                      ? <img src={assetUrls[a.id]} alt="" className="w-full h-24 object-cover rounded" />
+                      ? <img src={assetUrls[a.id]} alt="" title="Klick = vergrößern"
+                          onClick={() => setLightboxUrl(assetUrls[a.id])}
+                          className="w-full h-24 object-cover rounded cursor-zoom-in" />
                       : <div className="w-full h-24 bg-[#141414] rounded" />}
-                    <div className="text-[10px] text-gray-400 line-clamp-2" title={a.motif}>{a.motif}</div>
+                    {/* v1017 — Motiv anzeigen/bearbeiten (Matching-Schlüssel der Wiederverwendung) */}
+                    {motifEditId === a.id ? (
+                      <div className="space-y-1">
+                        <textarea value={motifDraft} onChange={e => setMotifDraft(e.target.value)} rows={3}
+                          className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1.5 py-1 text-[10px] text-gray-200" />
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => assetAction(a, 'motif', { motif: motifDraft })} disabled={busy === a.id}
+                            className="px-1.5 py-0.5 text-[10px] bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">✓</button>
+                          <button onClick={() => setMotifEditId(null)}
+                            className="px-1.5 py-0.5 text-[10px] border border-gray-500/40 text-gray-400 rounded">✕</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-gray-400 line-clamp-2 cursor-text" title={`${a.motif}\n(Klick = bearbeiten)`}
+                        onClick={() => { setMotifEditId(a.id); setMotifDraft(a.motif); }}>{a.motif}</div>
+                    )}
                     <div className="text-[9px] text-gray-600">
                       {a.channelName ?? 'Familie'} · {a.format ?? 'square'} · {a.useCount}× · zuletzt {new Date(a.lastUsedAt).toLocaleDateString('de-AT')}
                       {a.blocked && <span className="text-red-400"> · GESPERRT</span>}
@@ -1583,6 +1605,11 @@ export function SocialPage() {
                       <button onClick={() => assetAction(a, a.blocked ? 'unblock' : 'block')} disabled={busy === a.id}
                         className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 rounded">
                         {a.blocked ? '▶ freigeben' : '⏸ sperren'}
+                      </button>
+                      <button onClick={() => assetAction(a, 'describe')} disabled={busy === a.id}
+                        title="Motiv-Beschreibung vom Bild neu generieren lassen (Vision-KI)"
+                        className="px-1.5 py-0.5 text-[10px] border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 disabled:opacity-50 rounded">
+                        {busy === a.id ? '⏳' : '✨ Motiv'}
                       </button>
                       <button onClick={() => assetAction(a, 'delete')} disabled={busy === a.id}
                         className="px-1.5 py-0.5 text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded">🗑</button>
@@ -1798,6 +1825,13 @@ export function SocialPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* v1017 — Lightbox: Bild in groß (Klick schließt) */}
+      {lightboxUrl && (
+        <div className="fixed inset-0 bg-black/85 z-[60] flex items-center justify-center p-6 cursor-zoom-out" onClick={() => setLightboxUrl(null)}>
+          <img src={lightboxUrl} alt="" className="max-w-full max-h-full rounded-lg shadow-2xl" />
         </div>
       )}
 

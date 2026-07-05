@@ -713,9 +713,9 @@ export class HttpAdapter extends MessagingAdapter {
     /** v992 — Kommentare listen + Aktionen (reply geht LIVE auf die Plattform). */
     listComments?: (opts: { channelId?: string; status?: string }) => Promise<any[]>;
     commentAction?: (id: string, action: 'reply' | 'ignore' | 'suggest', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
-    /** v1014 — Bild-Bibliothek: Assets listen + sperren/löschen. */
+    /** v1014 — Bild-Bibliothek: Assets listen + sperren/löschen; v1017: Motiv ändern/neu beschreiben. */
     listAssets?: () => Promise<any[]>;
-    assetAction?: (id: string, action: 'block' | 'unblock' | 'delete') => Promise<{ success: boolean; error?: string }>;
+    assetAction?: (id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe', extra?: Record<string, unknown>) => Promise<{ success: boolean; error?: string; motif?: string }>;
     /** v1015 — Kanal-Wizard: neuen Kanal anlegen (läuft durch den Skill). */
     createChannel?: (payload: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
   };
@@ -1379,11 +1379,11 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname === '/api/social/assets' && req.method === 'GET') {
       // v1014 — Bild-Bibliothek
       this.handleSocial(req, res, async () => ({ assets: await this.socialCallbacks!.listAssets?.() ?? [] })).catch(err => this.safeError(res, err));
-    } else if (url.pathname.match(/^\/api\/social\/assets\/[^/]+\/(block|unblock|delete)$/) && req.method === 'POST') {
-      this.handleSocial(req, res, async () => {
+    } else if (url.pathname.match(/^\/api\/social\/assets\/[^/]+\/(block|unblock|delete|motif|describe)$/) && req.method === 'POST') {
+      this.handleSocialBody(req, res, async (body) => {
         if (!this.socialCallbacks?.assetAction) return { error: 'not supported' };
         const parts = url.pathname.split('/');
-        return this.socialCallbacks.assetAction(parts[4], parts[5] as 'block' | 'unblock' | 'delete');
+        return this.socialCallbacks.assetAction(parts[4], parts[5] as 'block' | 'unblock' | 'delete' | 'motif' | 'describe', body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/social\/comments\/[^/]+\/(reply|ignore|suggest)$/) && req.method === 'POST') {
       this.handleSocialBody(req, res, async (body) => {

@@ -526,9 +526,9 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Social assets: HTTP ${res.status}`);
     return (await res.json()).assets ?? [];
   }
-  async socialAssetAction(id: string, action: 'block' | 'unblock' | 'delete'): Promise<{ success: boolean; error?: string }> {
+  async socialAssetAction(id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe', extra?: { motif?: string }): Promise<{ success: boolean; error?: string; motif?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/assets/${id}/${action}`, {
-      method: 'POST', headers: this.jsonHeaders, body: '{}',
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(extra ?? {}),
     });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }

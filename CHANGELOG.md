@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1017] - 2026-07-06
+
+### Added — Bild-Bibliothek: Lightbox + Motiv kuratierbar (v1017)
+
+- **Bild vergrößern**: Klick auf ein Bibliotheks-Bild öffnet es in groß
+  (Klick schließt).
+- **Motiv-Beschreibung bearbeiten**: Klick auf den Text macht ihn
+  editierbar — das Motiv ist der Matching-Schlüssel für die
+  Wiederverwendung, jetzt kuratierbar.
+- **„✨ Motiv"**: Vision-KI beschreibt das Bild neu (präzise
+  Szene/Objekte/Stimmung) und ersetzt die Beschreibung — nützlich, wenn
+  die ursprüngliche Bildidee vom tatsächlichen Ergebnis abweicht.
+
 ## [0.19.0-multi-ha.1016] - 2026-07-06
 
 ### Added — Auto-Reels: Kurzvideos aus Lead-Artikeln (v1016)
