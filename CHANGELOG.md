@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.995] - 2026-07-05
+
+### Added — Redaktionsleitung Etappe 3: Plan-Review bis zur Veröffentlichung (v995)
+
+Der Plan ist kein Tagesergebnis mehr — geplante UND freigegebene Beiträge
+werden bis zur Veröffentlichung neu bewertet (alle 4 Stunden, sofort nach
+jeder Eilmeldung).
+
+- **Abgelaufene Termine** (deterministisch): `terminBis` vorbei →
+  zurückgezogen, bevor die Engine am Publish-Gate scheitert.
+- **Eilmeldungs-Kollision** (deterministisch): nach einem News-Desk-
+  Treffer weichen reguläre Beiträge der nächsten Stunde um +2h — reine
+  Terminverschiebung, die Freigabe bleibt erhalten.
+- **Überholt/Veraltet** (LLM, NUR Vorschläge): Beiträge der nächsten 48h
+  werden konservativ gegen die frische Nachrichtenlage geprüft —
+  Empfehlungen („ablehnen" / „Verbessern mit ‚aktuelle Entwicklung
+  einarbeiten'") kommen als Sammel-Insight; freigegebene Inhalte werden
+  NIE stillschweigend geändert.
+- 1 neuer Test (alle drei Pfade in einem Realszenario).
+
 ## [0.19.0-multi-ha.994] - 2026-07-05
 
 ### Added — Redaktionsleitung Etappe 2: News-Desk für Eilmeldungen (v994)

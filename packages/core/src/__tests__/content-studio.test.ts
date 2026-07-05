@@ -728,6 +728,42 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect((llm.complete as any).mock.calls.length).toBe(0);
   });
 
+  it('v995: Plan-Review — abgelaufene Termine raus, reguläre weichen der Eilmeldung, LLM-Empfehlungen als Insight', async () => {
+    const { studio, llm, stories, socialRepo } = makeFamilyStack();
+    const insights = (studio as any).insightsRepo;
+    stories.push({ id: 'story-brk', source: 'event', createdAt: new Date().toISOString(), status: 'active', title: 'Eil' });
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    const in30 = new Date(Date.now() + 30 * 60_000).toISOString();
+    const in24h = new Date(Date.now() + 24 * 3_600_000).toISOString();
+    const baseItem = (id: string, status: string, title: string): ContentItem => ({
+      id, channelId: 'ch-web', userId: OWNER, status: status as any, title,
+      body: 'Text', media: [], hashtags: [], source: 'studio', createdAt: 'x', updatedAt: 'x',
+    });
+    const expired = { ...baseItem('i-exp', 'approved', 'PV gestern'), scheduledAt: in30, performance: { terminBis: past } };
+    const soonItem = { ...baseItem('i-soon', 'scheduled', 'Evergreen'), scheduledAt: in30 };
+    const staleItem = { ...baseItem('i-stale', 'approved', 'Vorschau: Spiel X'), scheduledAt: in24h };
+    (socialRepo.listItems as any) = vi.fn(async () => [expired, soonItem, staleItem]);
+    const rescheduled: any[] = [];
+    (socialRepo.reschedule as any) = vi.fn(async (_u: string, id: string, at: string) => { rescheduled.push({ id, at }); return true; });
+    const interestsRepo = (studio as any).interestsRepo;
+    (interestsRepo.listItems as any) = vi.fn(async () => [{ id: 'h1', topicId: 't-1', title: 'Spiel X wurde abgesagt', sourceKind: 'rss', createdAt: 'x' }]);
+    (llm.complete as any).mockResolvedValueOnce({ content: '[{"index": 1, "verdict": "ueberholt", "grund": "Spiel abgesagt"}]' });
+
+    const r = await studio.planReview();
+    expect(r.expired).toBe(1);
+    // abgelaufenes Item wurde rejected
+    expect((socialRepo.transition as any).mock.calls.some((c: any[]) => c[1] === 'i-exp' && c[2] === 'rejected')).toBe(true);
+    // Evergreen +2h verschoben
+    expect(r.deferred).toBe(1);
+    expect(rescheduled[0].id).toBe('i-soon');
+    expect(Date.parse(rescheduled[0].at)).toBeGreaterThan(Date.parse(in30));
+    // LLM-Empfehlung als Insight (kein Auto-Reject!)
+    expect(r.flagged).toBe(1);
+    const insight = (insights.upsertCandidate as any).mock.calls.find((c: any[]) => String(c[1].title).includes('Plan-Review'));
+    expect(insight[1].body).toContain('Überholt');
+    expect((socialRepo.transition as any).mock.calls.filter((c: any[]) => c[2] === 'rejected').length).toBe(1);
+  });
+
   it('runDaily: Familien laufen über planFamily, Solo-Kanäle über fillChannel', async () => {
     const { studio, website, telegram, llm, socialRepo } = makeFamilyStack();
     const solo = makeChannel({ id: 'ch-solo', name: 'Solo', config: { topic_id: 't-1' } });

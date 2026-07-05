@@ -424,6 +424,110 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     return created;
   }
 
+  /**
+   * v995 — Plan-Review (Etappe 3): der Plan lebt bis zur Veröffentlichung.
+   *
+   * Alle 4 Stunden (und nach News-Desk-Treffern) werden alle geplanten und
+   * freigegebenen Beiträge neu bewertet:
+   * 1. ABGELAUFEN (deterministisch): terminBis vorbei → rejected, bevor die
+   *    Engine am Publish-Gate scheitert.
+   * 2. EILMELDUNGS-KOLLISION (deterministisch): entstand in den letzten 4h
+   *    eine Event-Story, weichen reguläre Beiträge der nächsten Stunde um
+   *    +2h — reine Terminverschiebung, die Freigabe bleibt erhalten.
+   * 3. ÜBERHOLT/VERALTET (LLM-Vorschlag): Beiträge der nächsten 48h werden
+   *    gegen die frische Nachrichtenlage geprüft — Ergebnis sind NUR
+   *    Vorschläge (Sammel-Insight mit reject-/Überarbeitungs-Empfehlung);
+   *    freigegebene Inhalte werden NIE stillschweigend geändert.
+   */
+  async planReview(): Promise<{ expired: number; deferred: number; flagged: number }> {
+    const nowIso = new Date().toISOString();
+    const result = { expired: 0, deferred: 0, flagged: 0 };
+    const items = await this.socialRepo.listItems(this.ownerUserId, { status: ['scheduled', 'approved'], limit: 200 });
+    const notes: string[] = [];
+
+    // 1) Abgelaufene Termin-Posts
+    for (const item of items) {
+      const termin = typeof item.performance?.terminBis === 'string' ? item.performance.terminBis : undefined;
+      if (termin && termin <= nowIso) {
+        try {
+          await this.socialRepo.transition(this.ownerUserId, item.id, 'rejected');
+          result.expired++;
+          notes.push(`⏰ Zurückgezogen (Termin vorbei): „${(item.title ?? item.body).slice(0, 60)}"`);
+        } catch { /* Einzelfehler überspringen */ }
+      }
+    }
+
+    // 2) Eilmeldungs-Kollision: reguläre Beiträge der nächsten Stunde weichen
+    const recentBreaking = (await this.socialRepo.listStories(this.ownerUserId, { sinceDays: 1 }))
+      .filter(s => s.source === 'event' && Date.parse(s.createdAt) > Date.now() - 4 * 3_600_000);
+    if (recentBreaking.length > 0) {
+      const hourAhead = new Date(Date.now() + 3_600_000).toISOString();
+      for (const item of items) {
+        if (!item.scheduledAt || item.scheduledAt > hourAhead || item.scheduledAt <= nowIso) continue;
+        if (typeof item.performance?.terminBis === 'string') continue; // Termine weichen nicht
+        if (item.storyId && recentBreaking.some(s => s.id === item.storyId)) continue; // die Eilmeldung selbst
+        const newAt = new Date(Date.parse(item.scheduledAt) + 2 * 3_600_000).toISOString();
+        if (await this.socialRepo.reschedule(this.ownerUserId, item.id, newAt, ['scheduled', 'approved'])) {
+          result.deferred++;
+          notes.push(`↩️ +2h verschoben (macht der Eilmeldung Platz): „${(item.title ?? item.body).slice(0, 60)}"`);
+        }
+      }
+    }
+
+    // 3) LLM-Check: überholt/veraltet? (nur Vorschläge, max 12 Items der nächsten 48h)
+    const soon = new Date(Date.now() + 48 * 3_600_000).toISOString();
+    const upcoming = items.filter(i => i.scheduledAt && i.scheduledAt > nowIso && i.scheduledAt <= soon
+      && typeof i.performance?.terminBis !== 'string' && i.status !== 'rejected').slice(0, 12);
+    if (upcoming.length > 0 && this.interestsRepo) {
+      const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+      const topicIds = [...new Set(channels.flatMap(c => ContentStudio.linkedTopicIds(c)))];
+      const headlines: string[] = [];
+      const sinceIso = new Date(Date.now() - 12 * 3_600_000).toISOString();
+      for (const topicId of topicIds) {
+        const fresh = await this.interestsRepo.listItems(topicId, { sinceIso, limit: 10 });
+        headlines.push(...fresh.filter(i => i.sourceKind !== 'events').map(i => i.title));
+      }
+      if (headlines.length > 0) {
+        const prompt = `Prüfe geplante Social-Beiträge gegen die AKTUELLE Nachrichtenlage.
+
+NACHRICHTENLAGE (letzte 12h):
+${[...new Set(headlines)].slice(0, 15).map(h => `- ${h}`).join('\n')}
+
+GEPLANTE BEITRÄGE:
+${upcoming.map((i, idx) => `${idx}: [${i.status}] ${(i.title ?? i.body.slice(0, 60))}`).join('\n')}
+
+Je Beitrag: ok | ueberholt (Ereignis ist vorbei/entschieden, Beitrag ergibt keinen Sinn mehr) | aktualisieren (Kern stimmt, Fakten müssten nachgezogen werden). Sei KONSERVATIV — nur klare Fälle melden.
+Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund": "…"}]`;
+        const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 1_500, tier: 'fast', reasoningEffort: 'low' });
+        const verdicts = (extractJsonArray(response.content ?? '') ?? []) as Array<{ index?: unknown; verdict?: unknown; grund?: unknown }>;
+        for (const v of verdicts) {
+          if (typeof v.index !== 'number' || !upcoming[v.index]) continue;
+          const item = upcoming[v.index];
+          if (v.verdict === 'ueberholt') {
+            result.flagged++;
+            notes.push(`🗑 Überholt (${String(v.grund ?? '')}): „${(item.title ?? item.body).slice(0, 60)}" [${item.id.slice(0, 8)}] — Empfehlung: ablehnen.`);
+          } else if (v.verdict === 'aktualisieren') {
+            result.flagged++;
+            notes.push(`✏️ Veraltet (${String(v.grund ?? '')}): „${(item.title ?? item.body).slice(0, 60)}" [${item.id.slice(0, 8)}] — Empfehlung: „Verbessern" mit Anweisung „aktuelle Entwicklung einarbeiten"${item.status === 'approved' ? ' (Freigabe wird dabei zurückgesetzt)' : ''}.`);
+          }
+        }
+      }
+    }
+
+    if (notes.length > 0) {
+      await this.insightsRepo?.upsertCandidate(this.ownerUserId, {
+        category: 'social',
+        title: `Plan-Review: ${result.expired} zurückgezogen, ${result.deferred} verschoben, ${result.flagged} Empfehlungen`,
+        body: notes.join('\n'),
+        confidence: 0.8,
+        sourceData: { router: true, urgency: result.flagged > 0 ? 'normal' : 'low' },
+        dedupeKey: `social-planreview:${nowIso.slice(0, 13)}`,
+      }).catch(() => { /* non-critical */ });
+      this.logger.info({ ...result }, 'v995 plan review');
+    }
+    return result;
+  }
+
   /** v993 — Einstieg für „Studio jetzt" auf einem Familien-Kanal: plant die GANZE Familie. */
   async planFamilyFor(channel: SocialChannel): Promise<number> {
     const family = ContentStudio.familyKey(channel);

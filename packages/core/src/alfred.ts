@@ -6745,11 +6745,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           if (now.getMinutes() < 10 && lastCommentsHour !== hourKey) {
             lastCommentsHour = hourKey;
             // v994 — News-Desk: neue Topic-Items auf Eilmeldungs-Relevanz prüfen
+            let breakingCreated = 0;
             if (await this.claimDailySlot(`social-newsdesk:${hourKey}`)) {
               try {
-                const n = await studio.newsDesk();
-                if (n > 0) this.logger.info({ items: n }, 'v994 news desk created breaking content');
+                breakingCreated = await studio.newsDesk();
+                if (breakingCreated > 0) this.logger.info({ items: breakingCreated }, 'v994 news desk created breaking content');
               } catch (err) { this.logger.warn({ err }, 'v994 news desk failed'); }
+            }
+            // v995 — Plan-Review: alle 4h regulär, sofort nach Eilmeldungen
+            if ((now.getHours() % 4 === 0 || breakingCreated > 0)
+              && await this.claimDailySlot(`social-planreview:${hourKey}`)) {
+              try { await studio.planReview(); }
+              catch (err) { this.logger.warn({ err }, 'v995 plan review failed'); }
             }
             if (await this.claimDailySlot(`social-comments:${hourKey}`)) {
               try {
