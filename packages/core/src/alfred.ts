@@ -8162,7 +8162,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               : action === 'publish' ? 'publish_now'
               : action === 'schedule' ? 'schedule_content'
               : action === 'edit' ? 'edit_content'
-              : action === 'delete' ? 'delete_remote' : '';
+              : action === 'delete' ? 'delete_remote'
+              // v987 — lokal löschen ohne Story-Sperre (ungepublishte Items)
+              : action === 'remove' ? 'delete_item' : '';
             if (!skillAction) return { success: false, error: `unknown action ${action}` };
             const r = await socialSkillForApi.execute({
               action: skillAction, item_id: id,

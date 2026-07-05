@@ -30,7 +30,7 @@ function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
 
 function makeEngine(opts: {
   channel: SocialChannel;
-  approved?: ContentItem[]; scheduled?: ContentItem[]; failed?: ContentItem[];
+  approved?: ContentItem[]; scheduled?: ContentItem[]; failed?: ContentItem[]; publishing?: ContentItem[];
   publishOk?: boolean; publishError?: string;
   /** v983 — Leitplanken-Block ist dauerhaft (Duplikat/Blacklist/Termin vorbei) */
   publishPermanent?: boolean;
@@ -43,6 +43,7 @@ function makeEngine(opts: {
       if (q?.status === 'approved') return opts.approved ?? [];
       if (q?.status === 'scheduled') return opts.scheduled ?? [];
       if (q?.status === 'failed') return opts.failed ?? [];
+      if (q?.status === 'publishing') return opts.publishing ?? [];
       return [];
     }),
     mergePerformance: vi.fn(async () => {}),
@@ -78,6 +79,19 @@ describe('PublishingEngine (v934)', () => {
     expect(publishItem).toHaveBeenCalledWith('item-1');
     expect(router.store).toHaveBeenCalledTimes(1);
     expect((router.store as any).mock.calls[0][0].source).toBe('social');
+  });
+
+  it('v987: stuck-in-publishing wird nach 15 min auf failed gerettet; frische bleiben unangetastet', async () => {
+    const old = makeItem({ id: 'zombie', status: 'publishing', updatedAt: new Date(Date.now() - 20 * 60_000).toISOString() });
+    const fresh = makeItem({ id: 'frisch', status: 'publishing', updatedAt: new Date().toISOString() });
+    const { engine, repo } = makeEngine({ channel: makeChannel(), publishing: [old, fresh] });
+    const r = await engine.tick();
+    expect(r.rescued).toBe(1);
+    const calls = (repo.transition as any).mock.calls;
+    expect(calls.length).toBe(1);
+    expect(calls[0][1]).toBe('zombie');
+    expect(calls[0][2]).toBe('failed');
+    expect(calls[0][3].error).toContain('Watchdog');
   });
 
   it('v983: permanenter Leitplanken-Block → Item auf failed, retried-Marker, EIN Insight — kein Endlos-Retry', async () => {

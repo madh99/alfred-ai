@@ -56,6 +56,8 @@ export class PublishingEngine {
       nodeId?: string;
       intervalMs?: number;
       retryAfterMs?: number;
+      /** v987 — Zombie-Watchdog: Items laenger als N ms in 'publishing' -> failed. */
+      stuckAfterMs?: number;
     },
   ) {}
 
@@ -70,14 +72,33 @@ export class PublishingEngine {
   }
 
   /** Ein Durchlauf (auch direkt aufrufbar/testbar). */
-  async tick(): Promise<{ published: number; asked: number; retried: number }> {
-    if (this.running) return { published: 0, asked: 0, retried: 0 };
+  async tick(): Promise<{ published: number; asked: number; retried: number; rescued: number }> {
+    if (this.running) return { published: 0, asked: 0, retried: 0, rescued: 0 };
     this.running = true;
-    const result = { published: 0, asked: 0, retried: 0 };
+    const result = { published: 0, asked: 0, retried: 0, rescued: 0 };
     try {
       const now = new Date().toISOString();
       const owner = this.opts.ownerUserId;
       const channels = new Map((await this.repo.listChannels(owner)).map(c => [c.id, c]));
+
+      // 0) v987 — Zombie-Rettung: stirbt der Prozess MITTEN im Publish
+      // (zwischen transition('publishing') und dem Provider-Ergebnis), hängt
+      // das Item für immer in 'publishing' — die Engine fragt sonst nur
+      // approved/scheduled/failed ab. Nach 15 min → failed (der reguläre
+      // Einmal-Retry unten übernimmt), Slot freigeben.
+      const stuckAfter = this.opts.stuckAfterMs ?? 15 * 60_000;
+      const stuck = await this.repo.listItems(owner, { status: 'publishing' });
+      for (const item of stuck) {
+        if (Date.now() - Date.parse(item.updatedAt) < stuckAfter) continue;
+        try {
+          await this.repo.transition(owner, item.id, 'failed', { error: 'Publish-Prozess abgebrochen (hing in publishing) — vom Watchdog eingesammelt.' });
+          await this.releaseItemSlot(`social-item:${item.id}`);
+          result.rescued++;
+          this.logger.warn({ itemId: item.id, updatedAt: item.updatedAt }, 'v987 stuck-in-publishing rescued → failed');
+        } catch (err) {
+          this.logger.warn({ itemId: item.id, err: (err as Error).message }, 'v987 stuck rescue failed');
+        }
+      }
 
       // 1) Fällige FREIGEGEBENE Items veröffentlichen (jeder Modus)
       const dueApproved = await this.repo.listItems(owner, { status: 'approved', scheduledBefore: now });
@@ -150,7 +171,7 @@ export class PublishingEngine {
         }
       }
 
-      if (result.published + result.asked + result.retried > 0) {
+      if (result.published + result.asked + result.retried + result.rescued > 0) {
         this.logger.info(result, 'v934 publishing tick');
       }
     } catch (err) {

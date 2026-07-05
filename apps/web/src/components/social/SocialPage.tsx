@@ -220,8 +220,10 @@ export function SocialPage() {
     });
   }
 
-  async function itemAction(item: SocialContentItem, action: 'approve' | 'reject' | 'publish' | 'delete') {
+  async function itemAction(item: SocialContentItem, action: 'approve' | 'reject' | 'publish' | 'delete' | 'remove') {
     if (action === 'delete' && !confirm('Beitrag auf der Plattform UND in Alfred löschen?')) return;
+    // v987 — lokal löschen (ohne Story-Sperre): Studio darf den Stoff neu aufgreifen
+    if (action === 'remove' && !confirm('Beitrag lokal löschen? (Ohne Story-Sperre — das Studio darf das Thema neu aufgreifen. Zum Sperren stattdessen „Ablehnen".)')) return;
     await withBusy(item.id, async () => {
       const r = await client!.socialItemAction(item.id, action);
       if (!r.success) throw new Error(r.error ?? 'Aktion fehlgeschlagen');
@@ -544,6 +546,11 @@ export function SocialPage() {
           {item.status === 'published' && (
             <button onClick={() => itemAction(item, 'delete')} disabled={busy === item.id}
               className="px-2 py-1 text-xs border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded">🗑 Löschen</button>
+          )}
+          {/* v987 — ungepublisht: lokal löschen OHNE Story-Sperre (Studio darf neu aufgreifen) */}
+          {item.status !== 'published' && (
+            <button onClick={() => itemAction(item, 'remove')} disabled={busy === item.id}
+              className="px-2 py-1 text-xs border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 rounded">🗑 Löschen (ohne Sperre)</button>
           )}
         </div>
         {crosspostId === item.id && (

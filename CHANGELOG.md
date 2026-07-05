@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.987] - 2026-07-05
+
+### Fixed/Added — Zombie-Watchdog für hängende Publishes + lokales Löschen ohne Story-Sperre (v987)
+
+- **Stuck-in-publishing-Watchdog:** Stirbt der Prozess mitten im Publish
+  (zwischen Status `publishing` und dem Provider-Ergebnis), hing das Item
+  bisher für immer — die Engine fragt nur approved/scheduled/failed ab.
+  Jetzt sammelt jeder Tick Items ein, die länger als 15 min in
+  `publishing` stehen: Status `failed` (mit Watchdog-Hinweis), HA-Slot
+  wird freigegeben, der reguläre Einmal-Retry übernimmt.
+- **`delete_item`:** Ungepublishte Beiträge lassen sich jetzt lokal
+  löschen — anders als „Ablehnen" OHNE 21-Tage-Story-Sperre (das Studio
+  darf den Stoff neu aufgreifen; Realfall: Item mit kaputtem Bild löschen
+  und sauber neu erzeugen ging bisher nur per Hand in der DB).
+  Published-Items sind bewusst ausgenommen (delete_remote bzw.
+  Dedup-Sperrliste). Neue Route `POST /api/social/items/:id/remove`,
+  UI-Button „Löschen (ohne Sperre)" an allen ungepublishten Items.
+- 2 neue Tests (Watchdog rettet nur alte Zombies; delete_item lokal +
+  published-Verweigerung).
+
 ## [0.19.0-multi-ha.986] - 2026-07-05
 
 ### Fixed — Dossier lieferte nur Schlagzeilen: Feed-Summaries gegen Halluzination (v986)

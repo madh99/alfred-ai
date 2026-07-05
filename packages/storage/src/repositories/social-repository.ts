@@ -182,6 +182,19 @@ export class SocialRepository {
     return row ? this.mapItem(row) : null;
   }
 
+  /**
+   * v987 — Item LOKAL löschen (ohne Story-Sperre, anders als reject).
+   * Published-Items sind bewusst ausgenommen: die gehen über delete_remote
+   * bzw. bleiben als Dedup-Sperrliste erhalten.
+   */
+  async deleteItem(userId: string, id: string): Promise<boolean> {
+    const r = await this.db.execute(
+      `DELETE FROM content_items WHERE id = ? AND user_id = ? AND status != 'published'`,
+      [id, userId],
+    );
+    return r.changes > 0;
+  }
+
   async listItems(userId: string, opts?: {
     channelId?: string; status?: ContentStatus | ContentStatus[]; limit?: number;
     scheduledBefore?: string;

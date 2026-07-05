@@ -10,7 +10,7 @@ type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
   | 'validate_auth' | 'auth_check' | 'pause_all' | 'resume_channel'
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
-  | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media'
+  | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
   | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel';
 
@@ -82,7 +82,7 @@ export class SocialSkill extends Skill {
           enum: ['create_channel', 'list_channels', 'update_channel', 'set_channel_status',
             'validate_auth', 'auth_check', 'pause_all', 'resume_channel',
             'add_content', 'list_content', 'schedule_content', 'approve_content',
-            'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media',
+            'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
             'get_content', 'edit_content', 'add_lesson', 'replan_channel'],
           description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um").',
@@ -281,6 +281,7 @@ export class SocialSkill extends Skill {
         case 'publish_now': return await this.publishNow(userId, input);
         case 'mark_published': return await this.markPublished(userId, input);
         case 'delete_remote': return await this.deleteRemote(userId, input);
+        case 'delete_item': return await this.deleteItemLocal(userId, input);
         case 'attach_media': return await this.attachMedia(userId, input);
         case 'generate_content': return await this.generateContent(userId, input);
         case 'render_video': return await this.renderVideo(userId, input);
@@ -644,6 +645,25 @@ export class SocialSkill extends Skill {
       externalUrl: typeof input.external_url === 'string' ? input.external_url : undefined,
     });
     return { success: true, data: { item: updated }, display: `✅ [${item.id.slice(0, 8)}] als manuell veröffentlicht getrackt${updated.externalUrl ? ` (${updated.externalUrl})` : ''}.` };
+  }
+
+  /**
+   * v987 — Item LOKAL löschen (Entwürfe/geplante/abgelehnte): anders als
+   * reject OHNE Story-Sperre — das Studio darf den Stoff neu aufgreifen
+   * (Realfall 04.07.: Item mit kaputtem Bild löschen + neu erzeugen ging
+   * bisher nur per Hand in der DB). Published-Items sind ausgenommen: die
+   * gehen über delete_remote bzw. bleiben als Dedup-Sperrliste erhalten.
+   */
+  private async deleteItemLocal(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const item = await this.resolveItem(userId, input);
+    if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
+    if (item.status === 'published') {
+      return { success: false, error: 'Veröffentlichte Beiträge nicht lokal löschen — delete_remote entfernt sie auf der Plattform; der Eintrag bleibt als Duplikat-Sperre.' };
+    }
+    const ok = await this.repo.deleteItem(userId, item.id);
+    return ok
+      ? { success: true, display: `🗑 [${item.id.slice(0, 8)}] gelöscht (ohne Story-Sperre — das Studio darf den Stoff neu aufgreifen).` }
+      : { success: false, error: 'Löschen fehlgeschlagen.' };
   }
 
   private async deleteRemote(userId: string, input: Record<string, unknown>): Promise<SkillResult> {

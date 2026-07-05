@@ -47,6 +47,7 @@ function makeRepo(channel: SocialChannel, item: ContentItem) {
     listChannels: vi.fn(async () => [state.channel]),
     listAllActiveChannels: vi.fn(async () => [state.channel]),
     updateChannel: vi.fn(async (_u: string, _id: string, patch: any) => { Object.assign(state.channel, patch); }),
+    deleteItem: vi.fn(async () => true),
     pauseAll: vi.fn(async () => 1),
     createItem: vi.fn(async (_u: string, chId: string, o: any) => ({ ...makeItem(), ...o, channelId: chId, id: 'item-new' })),
     getItem: vi.fn(async (_u: string, id: string) => (id === state.item.id ? state.item : null)),
@@ -356,6 +357,20 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
       expect(r.refreshed).toEqual([]);
       expect(r.checked).toBe(2);
     } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('v987: delete_item löscht ungepublishte Items lokal (ohne Story-Sperre); published wird verweigert', async () => {
+    const { skill, spies } = makeSkill(makeChannel(), makeItem({ status: 'draft' }));
+    const r = await skill.execute({ action: 'delete_item', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('ohne Story-Sperre');
+    expect((spies as any).deleteItem).toHaveBeenCalledWith('u1', 'item-0001-aaaa');
+
+    const { skill: skill2, spies: spies2 } = makeSkill(makeChannel(), makeItem({ status: 'published' }));
+    const blocked = await skill2.execute({ action: 'delete_item', item_id: 'item-0001-aaaa' }, CTX);
+    expect(blocked.success).toBe(false);
+    expect(blocked.error).toContain('delete_remote');
+    expect((spies2 as any).deleteItem).not.toHaveBeenCalled();
   });
 
   it('pause_all = Social-Stopp', async () => {
