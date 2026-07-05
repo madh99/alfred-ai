@@ -327,8 +327,95 @@ export class ContentStudio {
         this.logger.warn({ err: (err as Error).message, channel: channel.name }, 'v935 studio channel failed');
       }
     }
+    // v1012 — Serien-Formate: wiederkehrende Wochen-Formate zuverlässig je
+    // Kanal (unabhängig davon, ob Familie oder Solo — Formate sind kanal-lokal)
+    for (const channel of channels) {
+      try {
+        created += await this.ensureFormats(channel);
+      } catch (err) {
+        this.logger.warn({ err: (err as Error).message, channel: channel.name }, 'v1012 formats failed');
+      }
+    }
     if (created > 0) this.logger.info({ created, channels: channels.length }, 'v935 studio pass done');
     return created;
+  }
+
+  /**
+   * v1012 — Serien-Formate (Playbook): config.formate = [{slot: "Mo 09:00",
+   * name: "Wochenrückblick", anweisung: "…"}] — wiederkehrende Wochen-Formate,
+   * die zuverlässig jede Woche zum Slot erscheinen (statt dem Zufall des
+   * Dossiers überlassen zu sein). Dedup je Vorkommen (±3,5 Tage über
+   * performance.format), Freigabe-Modus wie üblich (approve → wartet zum Slot).
+   */
+  async ensureFormats(channel: SocialChannel): Promise<number> {
+    const raw = Array.isArray(channel.config.formate) ? channel.config.formate : [];
+    const formats = (raw as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
+      .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string' && String(f.name).trim())
+      .slice(0, 7);
+    if (formats.length === 0) return 0;
+    await this.ensureTopic(channel);
+    const nowIso = new Date().toISOString();
+    const existing = await this.socialRepo.listItems(this.ownerUserId, {
+      channelId: channel.id, status: ['idea', 'draft', 'scheduled', 'approved', 'published'], limit: 200,
+    });
+    let created = 0;
+    for (const f of formats) {
+      const name = String(f.name).trim().slice(0, 80);
+      const at = ContentStudio.nextSlotOccurrence(String(f.slot), nowIso);
+      if (!at) continue;
+      const window = 3.5 * 24 * 3_600_000;
+      const dupe = existing.some(i => i.performance?.format === name
+        && Math.abs(Date.parse(i.scheduledAt ?? i.publishedAt ?? '1970-01-01') - Date.parse(at)) < window);
+      if (dupe) continue;
+      const dossier = await this.topicDossier(channel).catch(() => '');
+      const prompt = `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
+${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}
+SERIEN-FORMAT „${name}" — erscheint jede Woche (${String(f.slot)}). Redaktions-Anweisung:
+${typeof f.anweisung === 'string' && f.anweisung.trim() ? f.anweisung.trim() : 'Setze das Format sinnvoll um.'}
+${dossier ? `\nAKTUELLES THEMEN-DOSSIER (Fakten NUR hieraus):\n${dossier}\n` : ''}
+Regeln:
+${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)}. Konkret, kein Clickbait, KEINE URLs.
+- Der Post erscheint am ${formatLocalDateTime(at)} — formuliere zeitlich passend, NIE relative Zeitwörter.
+- 3-6 Hashtags NUR ins Feld "hashtags"; Bildvorschlag NUR ins Feld "bildidee" (nur Motive, kein Text).
+
+Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typografisch „…“ oder escaped):
+[{"title": "…", "body": "…", "hashtags": ["…"], "warum": "1 Satz", "bildidee": "optional"}]`;
+      const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 6_000, tier: this.modelTier(channel), reasoningEffort: 'low' });
+      const idea = parseIdeas(response.content ?? '')[0];
+      if (!idea) {
+        this.logger.warn({ channel: channel.name, format: name }, 'v1012 format render unparseable');
+        continue;
+      }
+      const media = await this.maybeGenerateImage(channel, idea);
+      const item = await this.socialRepo.createItem(this.ownerUserId, channel.id, {
+        status: 'draft', title: idea.title || name, body: idea.body,
+        hashtags: idea.hashtags, media, source: 'studio',
+      });
+      await this.socialRepo.mergePerformance(this.ownerUserId, item.id, {
+        warum: idea.warum, format: name, art: 'evergreen',
+      });
+      if (channel.mode === 'approve' || channel.mode === 'autonomous') {
+        await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: at });
+      }
+      existing.push({ ...item, scheduledAt: at, performance: { format: name } } as ContentItem);
+      created++;
+      this.logger.info({ channel: channel.name, format: name, at }, 'v1012 format item created');
+    }
+    return created;
+  }
+
+  /** v1012 — nächstes Vorkommen eines Wochen-Slots („Mo 09:00", Server-Ortszeit) nach fromIso. */
+  static nextSlotOccurrence(slot: string, fromIso: string): string | undefined {
+    const m = slot.trim().match(/^([A-Za-zäö]{2})\s+(\d{1,2}):(\d{2})$/);
+    if (!m) return undefined;
+    const wd = WEEKDAYS[m[1].toLowerCase()];
+    if (wd === undefined) return undefined;
+    const from = new Date(fromIso);
+    for (let d = 0; d < 8; d++) {
+      const date = new Date(from.getFullYear(), from.getMonth(), from.getDate() + d, Number(m[2]), Number(m[3]));
+      if (date.getDay() === wd && date.getTime() > from.getTime()) return date.toISOString();
+    }
+    return undefined;
   }
 
   /**

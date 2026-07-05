@@ -155,10 +155,12 @@ export function SocialPage() {
     language: string; translateTo: string[];
     // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells
     autoStory: boolean; imageCarousel: boolean;
+    // v1012 — Serien-Formate (wöchentlich wiederkehrend)
+    formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
-    language: 'de', translateTo: [], autoStory: false, imageCarousel: false });
+    language: 'de', translateTo: [], autoStory: false, imageCarousel: false, formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
@@ -428,6 +430,11 @@ export function SocialPage() {
       translateTo: Array.isArray(c.config.translate_to) ? (c.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string') : [],
       autoStory: c.config.auto_story === true,
       imageCarousel: c.config.image_carousel === true,
+      formate: Array.isArray(c.config.formate)
+        ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
+          .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
+          .map(f => ({ slot: String(f.slot), name: String(f.name), anweisung: typeof f.anweisung === 'string' ? f.anweisung : '' }))
+        : [],
     });
     if (interestTopics.length === 0) {
       client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
@@ -465,6 +472,10 @@ export function SocialPage() {
           // v1007 — Auto-Story (nur Instagram wirksam) · v1008 — Karussells
           auto_story: d.autoStory ? true : null,
           image_carousel: d.imageCarousel ? true : null,
+          // v1012 — Serien-Formate
+          formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
+            ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
+            : null,
         },
       });
       setSettingsId(null);
@@ -1138,6 +1149,31 @@ export function SocialPage() {
                       <option value="default">default — Alltagsmodell des Assistenten</option>
                       <option value="strong">strong — Topmodell (höchste Qualität, teuer)</option>
                     </select>
+                  </div>
+                  {/* v1012 — Serien-Formate: wiederkehrende Wochen-Formate */}
+                  <div className="border border-amber-500/20 rounded p-2.5 space-y-2 bg-amber-500/5">
+                    <div className="text-[11px] font-medium text-amber-300">📆 Serien-Formate <span className="text-gray-500 font-normal">— erscheinen zuverlässig jede Woche zum Slot (z. B. Wochenrückblick Mo 09:00)</span></div>
+                    {settingsDraft.formate.map((f, idx) => (
+                      <div key={idx} className="grid grid-cols-[90px_1fr_auto] gap-1.5 items-start">
+                        <input value={f.slot} placeholder="Mo 09:00"
+                          onChange={e => setSettingsDraft(d => ({ ...d, formate: d.formate.map((x, i) => (i === idx ? { ...x, slot: e.target.value } : x)) }))}
+                          className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200" />
+                        <div className="space-y-1">
+                          <input value={f.name} placeholder="Format-Name, z. B. Wochenrückblick"
+                            onChange={e => setSettingsDraft(d => ({ ...d, formate: d.formate.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)) }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200" />
+                          <input value={f.anweisung} placeholder="Redaktions-Anweisung, z. B.: Fasse die Fußball-Woche in 5 Punkten zusammen"
+                            onChange={e => setSettingsDraft(d => ({ ...d, formate: d.formate.map((x, i) => (i === idx ? { ...x, anweisung: e.target.value } : x)) }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200" />
+                        </div>
+                        <button onClick={() => setSettingsDraft(d => ({ ...d, formate: d.formate.filter((_, i) => i !== idx) }))}
+                          className="text-red-400 hover:text-red-300 text-xs px-1 py-1" title="Format entfernen">✕</button>
+                      </div>
+                    ))}
+                    {settingsDraft.formate.length < 7 && (
+                      <button onClick={() => setSettingsDraft(d => ({ ...d, formate: [...d.formate, { slot: '', name: '', anweisung: '' }] }))}
+                        className="px-2 py-1 text-[11px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 rounded">+ Format hinzufügen</button>
+                    )}
                   </div>
                   {/* v1006 — Sprache des Kanals + Übersetzungen (Website-Kanäle) */}
                   <div className="border border-emerald-500/20 rounded p-2.5 space-y-2 bg-emerald-500/5">

@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1012] - 2026-07-05
+
+### Added — Serien-Formate: wiederkehrende Wochen-Formate (v1012)
+
+Formate, die Publikum binden — „Wochenrückblick" montags,
+„Spieltags-Vorschau" freitags — erscheinen jetzt zuverlässig jede Woche,
+statt dem Zufall des Tages-Dossiers überlassen zu sein.
+
+- `config.formate` je Kanal: `[{slot: "Mo 09:00", name, anweisung}]`
+  (max. 7). Das Studio erzeugt jedes Format einmal pro Woche zum Slot —
+  mit Persona, Redaktions-Anweisung, aktuellem Themen-Dossier als
+  Faktenquelle, Kanal-Sprache und Bild (inkl. Overlays).
+- Dedup je Vorkommen (±3,5 Tage über `performance.format`) — auch nach
+  Umplanungen kein Doppel; Freigabe-Modus wie üblich.
+- UI-Sektion „📆 Serien-Formate" in den Kanal-Einstellungen
+  (Slot/Name/Anweisung, hinzufügen/entfernen).
+- 2 neue Tests (Slot-Berechnung, Erzeugung + Dedup).
+
 ## [0.19.0-multi-ha.1011] - 2026-07-05
 
 ### Added — Deploy-Health-Check: „Ist nach dem Deploy alles ok?" (v1011)

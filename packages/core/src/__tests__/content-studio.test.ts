@@ -920,6 +920,41 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
   });
 });
 
+describe('ContentStudio — Serien-Formate (v1012)', () => {
+  it('nextSlotOccurrence: nächstes Wochen-Vorkommen in Ortszeit, kaputte Slots → undefined', () => {
+    // Mi 01.07.2026 12:00 lokal → nächster „Mo 09:00" ist Mo 06.07. 09:00
+    const from = new Date(2026, 6, 1, 12, 0).toISOString();
+    expect(ContentStudio.nextSlotOccurrence('Mo 09:00', from)).toBe(new Date(2026, 6, 6, 9, 0).toISOString());
+    // gleicher Tag, Zeit noch nicht vorbei → heute
+    expect(ContentStudio.nextSlotOccurrence('Mi 18:00', from)).toBe(new Date(2026, 6, 1, 18, 0).toISOString());
+    expect(ContentStudio.nextSlotOccurrence('Blub', from)).toBeUndefined();
+  });
+
+  it('ensureFormats: erzeugt das Wochen-Format am Slot, Dedup verhindert Doppel', async () => {
+    const channel = makeChannel({ config: { topic_id: 't-1', formate: [{ slot: 'Mo 09:00', name: 'Wochenrückblick', anweisung: 'Fasse die Woche in 5 Punkten zusammen.' }] } });
+    const { studio, socialRepo, llm, transitions } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([{ title: 'Die Woche im Rückblick', body: 'Ein ausreichend langer Wochenrückblick mit fünf Punkten und Einordnung.', hashtags: ['wm2026'], warum: 'Serienformat' }]),
+    });
+    const created = await studio.ensureFormats(channel);
+    expect(created).toBe(1);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('SERIEN-FORMAT „Wochenrückblick"');
+    expect(prompt).toContain('Fasse die Woche in 5 Punkten zusammen.');
+    const perf = (socialRepo.mergePerformance as any).mock.calls[0][2];
+    expect(perf.format).toBe('Wochenrückblick');
+    const at = transitions.find(t => t.to === 'scheduled')!.at!;
+    expect(new Date(at).getDay()).toBe(1); // Montag
+
+    // Dedup: existiert bereits ein Item dieses Formats in der Woche → nichts Neues
+    (socialRepo.listItems as any) = vi.fn(async () => [{
+      id: 'i-fmt', channelId: 'ch-1', userId: OWNER, status: 'scheduled', body: 'x', media: [], hashtags: [],
+      source: 'studio', createdAt: 'x', updatedAt: 'x', scheduledAt: at, performance: { format: 'Wochenrückblick' },
+    }]);
+    expect(await studio.ensureFormats(channel)).toBe(0);
+  });
+});
+
 describe('ContentStudio — Bild-Look (v1004)', () => {
   it('image_style/image_quality/Plattform-Format fließen in den Generierungs-Aufruf', async () => {
     const channel = makeChannel({
