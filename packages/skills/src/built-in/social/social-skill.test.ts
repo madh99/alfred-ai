@@ -348,6 +348,57 @@ describe('v1009 — Kommentar-Copilot (Triage + Antwort-Vorschläge)', () => {
   });
 });
 
+describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
+  function reelSetup(igConfig: Record<string, unknown> = { auto_reel: true }) {
+    const lead = makeChannel({ id: 'ch-web', platform: 'rest', name: 'fussball.cc', projectId: 'p1', config: { base_url: 'https://cc.example' } });
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'FussballCC IG', projectId: 'p1', config: igConfig });
+    const leadItem = makeItem({ channelId: 'ch-web', storyId: 's-1', title: 'Kolumbien weiter', body: 'Ein ausreichend langer Artikeltext über das Achtelfinale mit vielen Details.', hashtags: ['wm2026'] });
+    const { skill, spies, state } = makeSkill(lead, leadItem);
+    skill.registerProvider(new FakeProvider('rest'));
+    skill.registerProvider(new FakeProvider('instagram'));
+    (spies as any).listChannels = vi.fn(async () => [lead, ig]);
+    (spies as any).listAssignments = vi.fn(async () => [
+      { id: 'a1', storyId: 's-1', channelId: 'ch-web', role: 'lead', offsetHours: 0, itemId: 'item-0001-aaaa', createdAt: 'x' },
+      { id: 'a2', storyId: 's-1', channelId: 'ch-ig', role: 'follow', offsetHours: 6, itemId: 'item-ig', createdAt: 'x' },
+    ]);
+    const follower = makeItem({ id: 'item-ig', channelId: 'ch-ig', media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/bild.png' }] });
+    const origGetItem = (spies as any).getItem;
+    (spies as any).getItem = vi.fn(async (u: string, id: string) => (id === 'item-ig' ? follower : origGetItem(u, id)));
+    const created: any[] = [];
+    (spies as any).createItem = vi.fn(async (_u: string, chId: string, o: any) => { created.push({ chId, ...o }); return { ...makeItem(), ...o, channelId: chId, id: 'reel-doc' }; });
+    const render = vi.fn(async () => ({ videoPath: '/tmp/reel.mp4', durationSec: 25 }));
+    skill.setVideoTools({ render, probe: vi.fn(async () => ({ ok: true })) } as any);
+    const complete = vi.fn(async () => ({ content: '{"script": "Kolumbien steht im Viertelfinale und keiner hat es kommen sehen — die ganze Geschichte in dreißig Sekunden.", "caption": "Kolumbien weiter! Wer stoppt sie noch?"}' }));
+    (skill as any).llm = { complete };
+    return { skill, spies, state, created, render, complete };
+  }
+
+  it('Lead published → Reel-ENTWURF mit Video, Script und Wochen-Limit-Zählung', async () => {
+    const { skill, created, render } = reelSetup();
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    await new Promise(res => setTimeout(res, 10)); // fire-and-forget abwarten
+    expect(render).toHaveBeenCalled();
+    const reel = created.find(c => String(c.title).startsWith('Reel:'));
+    expect(reel).toBeDefined();
+    expect(reel.chId).toBe('ch-ig');
+    expect(reel.status).toBe('draft'); // bewusst MIT Freigabe
+    expect(reel.media[0]).toEqual({ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' });
+  });
+
+  it('Wochen-Limit erreicht bzw. auto_reel aus → kein Render', async () => {
+    const capped = reelSetup({ auto_reel: true, reel_max_per_week: 0 });
+    await capped.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 10));
+    expect(capped.render).not.toHaveBeenCalled();
+
+    const off = reelSetup({});
+    await off.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 10));
+    expect(off.render).not.toHaveBeenCalled();
+  });
+});
+
 describe('v1007 — Auto-Story (IG-Story beim Lead-Publish)', () => {
   it('Lead published → 9:16-Story mit Overlay über public_media, dokumentiert als eigenes Item', async () => {
     const { loadSharp } = await import('./image-overlay.js');

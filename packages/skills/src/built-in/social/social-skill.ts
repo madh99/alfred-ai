@@ -108,7 +108,7 @@ export class SocialSkill extends Skill {
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN; bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
         name: { type: 'string', description: 'create_channel: Anzeigename des Kanals' },
         project: { type: 'string', description: 'create_channel: optional Projekt-Name/-ID (Kanal hängt am Projekt, Secrets aus dessen ENVs)' },
-        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — NUR rest-Kanäle: beim Publish werden Titel+Body übersetzt und als translations ins Payload gelegt (Website-Sprachversionen)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id, auto_story: true — postet beim Publish des Familien-Lead-Artikels automatisch eine IG-Story (9:16, Titel+Link-im-Profil-CTA als Overlay), OHNE Einzelfreigabe, zählt aufs Tages-Limit; story_cta_text ersetzt den CTA}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
+        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — NUR rest-Kanäle: beim Publish werden Titel+Body übersetzt und als translations ins Payload gelegt (Website-Sprachversionen)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id, auto_story: true — postet beim Publish des Familien-Lead-Artikels automatisch eine IG-Story (9:16, Titel+Link-im-Profil-CTA als Overlay), OHNE Einzelfreigabe, zählt aufs Tages-Limit; story_cta_text ersetzt den CTA; auto_reel: true — erstellt beim Lead-Publish ein 20-30s-Reel (Sprecher+Untertitel+Story-Bilder) als ENTWURF mit Freigabe, max reel_max_per_week (Default 2), braucht ffmpeg}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },
@@ -663,6 +663,9 @@ export class SocialSkill extends Skill {
       });
       // v1007 — Auto-Story: Lead ist live → IG-Familien-Kanal mit auto_story postet eine Story (best-effort)
       const storyNote = await this.maybeAutoStory(userId, published, channel).catch(() => undefined);
+      // v1016 — Auto-Reel: Rendering dauert Minuten → fire-and-forget, der
+      // Entwurf taucht in der Triage auf (bewusst MIT Freigabe, anders als Stories)
+      void this.maybeAutoReel(userId, published, channel).catch(() => { /* best-effort */ });
       return {
         success: true,
         data: { item: published },
@@ -814,6 +817,88 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
       await this.repo.mergePerformance(userId, doc.id, { format: 'story', autoStory: true }).catch(() => { /* optional */ });
     } catch { /* Doku ist best-effort — die Story ist bereits live */ }
     return `📱 IG-Story auf **${ig.name}** ausgelöst${result.url ? ` (${result.url})` : ''}.`;
+  }
+
+  /**
+   * v1016 — Auto-Reel: Wurde der LEAD einer Story veröffentlicht und hat die
+   * Familie einen Instagram-Kanal mit config.auto_reel=true, entsteht ein
+   * 20–30s-Reel als ENTWURF (bewusst mit Freigabe — anders als die Story):
+   * LLM-Sprecherskript + Caption, Bilder der Story (lokal), Slideshow-Render
+   * (ffmpeg + TTS + Untertitel, videoTools aus dem Kern), Wochen-Limit
+   * config.reel_max_per_week (Default 2). Läuft fire-and-forget nach dem
+   * Lead-Publish — Fehler bleiben still, der Publish ist längst durch.
+   */
+  private async maybeAutoReel(userId: string, leadItem: ContentItem, leadChannel: SocialChannel): Promise<void> {
+    if (!leadItem.storyId || !this.videoTools || !this.llm) return;
+    const assigns = await this.repo.listAssignments(leadItem.storyId);
+    const mine = assigns.find(a => a.itemId === leadItem.id);
+    if (!mine || mine.role !== 'lead') return;
+    const familyOf = (c: SocialChannel): string | null => {
+      if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
+      return c.projectId ? `project:${c.projectId}` : null;
+    };
+    const channels = await this.repo.listChannels(userId, 'active');
+    const ig = channels.find(c => c.id !== leadChannel.id && c.platform === 'instagram'
+      && c.config.auto_reel === true && familyOf(c) !== null && familyOf(c) === familyOf(leadChannel));
+    if (!ig) return;
+    // Wochen-Limit: Rendering + TTS kosten — Reels bleiben besondere Momente
+    const cap = typeof ig.config.reel_max_per_week === 'number' && ig.config.reel_max_per_week >= 0 ? ig.config.reel_max_per_week : 2;
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
+    const recent = await this.repo.listItems(userId, { channelId: ig.id, limit: 100 });
+    const reelsThisWeek = recent.filter(i => i.performance?.format === 'reel' && i.createdAt >= weekAgo).length;
+    if (reelsThisWeek >= cap) return;
+    // Bilder der Story (nur lokale Pfade — der Renderer liest kein http)
+    const images: string[] = [];
+    const followerId = assigns.find(a => a.channelId === ig.id)?.itemId;
+    const follower = followerId ? await this.repo.getItem(userId, followerId) : null;
+    for (const src of [follower, leadItem]) {
+      for (const m of src?.media ?? []) {
+        if (m.type === 'image' && !m.pathOrUrl.startsWith('http') && !images.includes(m.pathOrUrl)) images.push(m.pathOrUrl);
+      }
+    }
+    if (images.length === 0) return;
+    // Skript + Caption in EINEM LLM-Call
+    const lang = languageName(typeof ig.config.language === 'string' ? ig.config.language : 'de');
+    const prompt = `Erstelle aus diesem Artikel ein Instagram-Reel-Paket (${lang}):
+1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL).
+2. "caption": Reel-Caption (2-3 Sätze + Frage an die Community, keine Hashtags).
+FAKTEN nur aus dem Artikel, nichts erfinden.
+
+ARTIKEL: ${leadItem.title ?? ''}
+${leadItem.body.slice(0, 1500)}
+
+Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`;
+    const tierRaw = ig.config.model_tier;
+    const tier = tierRaw === 'medium' || tierRaw === 'default' || tierRaw === 'strong' ? tierRaw : 'fast';
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 2_000, tier, reasoningEffort: 'low' });
+    const raw = response.content ?? '';
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start < 0 || end <= start) return;
+    let pack: { script?: unknown; caption?: unknown };
+    try { pack = JSON.parse(raw.slice(start, end + 1)); } catch { return; }
+    if (typeof pack.script !== 'string' || pack.script.trim().length < 20) return;
+    const script = pack.script.trim().slice(0, 1_000);
+    const caption = typeof pack.caption === 'string' && pack.caption.trim() ? pack.caption.trim().slice(0, 1_500) : script.slice(0, 300);
+    // Rendern (ffmpeg + TTS + Untertitel) — der teure Teil
+    const pseudo: ContentItem = {
+      ...leadItem, id: `reel-${leadItem.id.slice(0, 8)}`, body: script,
+      media: images.map(p => ({ type: 'image' as const, source: 'generated' as const, pathOrUrl: p })),
+    };
+    const rendered = await this.videoTools.render(pseudo, ig, '9:16');
+    // Als ENTWURF anlegen — Reels gehen bewusst durch die Freigabe
+    const item = await this.repo.createItem(userId, ig.id, {
+      status: 'draft',
+      title: `Reel: ${leadItem.title ?? leadItem.body.slice(0, 60)}`,
+      body: caption,
+      hashtags: leadItem.hashtags.slice(0, 5),
+      media: [{ type: 'video', source: 'generated', pathOrUrl: rendered.videoPath }],
+      source: 'studio',
+      storyId: leadItem.storyId,
+    });
+    await this.repo.mergePerformance(userId, item.id, {
+      format: 'reel', autoReel: true, durationSec: rendered.durationSec, script,
+    }).catch(() => { /* optional */ });
   }
 
   /** v1001 — Lead-Artikel einer Story finden (published, mit externalUrl); null wenn nicht auflösbar. */

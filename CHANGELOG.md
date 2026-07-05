@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1016] - 2026-07-06
+
+### Added — Auto-Reels: Kurzvideos aus Lead-Artikeln (v1016)
+
+Video ist der letzte unbespielte Content-Typ — jetzt entsteht beim
+Lead-Artikel automatisch ein 20–30-Sekunden-Reel als Entwurf.
+
+- **Opt-in je IG-Kanal** (`config.auto_reel`, Checkbox): Beim Publish des
+  Familien-Lead-Artikels erzeugt Alfred ein LLM-Sprecherskript (Hook,
+  60–90 Wörter, gesprochene Sprache) + Reel-Caption, sammelt die lokalen
+  Bilder der Story (IG-Follower + Lead) und rendert per
+  Slideshow-Pipeline (v938: ffmpeg + TTS-Voiceover + eingebrannte
+  Untertitel, 9:16/1080×1920).
+- **Bewusst MIT Freigabe**: Das Reel landet als Entwurf in der Triage —
+  anders als die Auto-Story geht Video erst nach deinem Blick live
+  (Publish dann über den bestehenden REELS-Container).
+- **Leitplanken**: `reel_max_per_week` (Default 2 — Rendering + TTS
+  kosten), fire-and-forget nach dem Publish (blockiert die Engine nie),
+  ohne ffmpeg/Bilder passiert still nichts.
+- 2 neue Tests (Ende-zu-Ende mit Render-Mock, Limit/Opt-in-Gates).
+
 ## [0.19.0-multi-ha.1015] - 2026-07-06
 
 ### Added — Kanal-Wizard: Kanäle geführt in der UI anlegen (v1015)

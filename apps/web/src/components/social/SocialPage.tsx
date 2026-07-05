@@ -173,14 +173,14 @@ export function SocialPage() {
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
     // v1006 — Sprache + Übersetzungen (translate_to nur bei rest-Kanälen wirksam)
     language: string; translateTo: string[];
-    // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells
-    autoStory: boolean; imageCarousel: boolean;
+    // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells · v1016 — Auto-Reels
+    autoStory: boolean; imageCarousel: boolean; autoReel: boolean;
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
-    language: 'de', translateTo: [], autoStory: false, imageCarousel: false, formate: [] });
+    language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false, formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
@@ -506,6 +506,7 @@ export function SocialPage() {
       translateTo: Array.isArray(c.config.translate_to) ? (c.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string') : [],
       autoStory: c.config.auto_story === true,
       imageCarousel: c.config.image_carousel === true,
+      autoReel: c.config.auto_reel === true,
       formate: Array.isArray(c.config.formate)
         ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
           .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
@@ -545,9 +546,10 @@ export function SocialPage() {
           // v1006 — Sprache (Default de → Schlüssel löschen) + Übersetzungs-Ziele
           language: d.language === 'de' ? null : d.language,
           translate_to: d.translateTo.length > 0 ? d.translateTo : null,
-          // v1007 — Auto-Story (nur Instagram wirksam) · v1008 — Karussells
+          // v1007 — Auto-Story (nur Instagram wirksam) · v1008 — Karussells · v1016 — Auto-Reels
           auto_story: d.autoStory ? true : null,
           image_carousel: d.imageCarousel ? true : null,
+          auto_reel: d.autoReel ? true : null,
           // v1012 — Serien-Formate
           formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
             ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
@@ -1298,6 +1300,14 @@ export function SocialPage() {
                       title="Bei Aufzählungen/Analysen erzeugt das Studio 2-4 Slides mit Titel-Overlays statt eines Einzelbilds. Jeder Slide zählt aufs Bild-Budget; die Bild-Bibliothek dämpft die Kosten.">
                       <input type="checkbox" checked={settingsDraft.imageCarousel} onChange={e => setSettingsDraft(d => ({ ...d, imageCarousel: e.target.checked }))} />
                       🎠 Karussells (2-4 Slides bei Analysen/Aufzählungen)
+                    </label>
+                  )}
+                  {/* v1016 — Auto-Reels */}
+                  {c.platform === 'instagram' && (
+                    <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                      title="Beim Lead-Artikel entsteht ein 20-30s-Reel (Sprecher, Untertitel, Bilder der Story) als ENTWURF — geht erst nach deiner Freigabe live. Max. 2/Woche (config.reel_max_per_week). Braucht ffmpeg auf dem Host.">
+                      <input type="checkbox" checked={settingsDraft.autoReel} onChange={e => setSettingsDraft(d => ({ ...d, autoReel: e.target.checked }))} />
+                      🎬 Auto-Reel bei neuem Lead-Artikel (als Entwurf, mit Freigabe)
                     </label>
                   )}
                   {/* v1004 — Bild-Look: Stil-Preset, Qualität, Wasserzeichen, Titel-Overlay */}
