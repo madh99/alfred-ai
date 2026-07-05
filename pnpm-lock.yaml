@@ -189,6 +189,9 @@ importers:
       rss-parser:
         specifier: ^3.13.0
         version: 3.13.0
+      sharp:
+        specifier: ^0.34.0
+        version: 0.34.5
       sonos:
         specifier: ^1.14.0
         version: 1.14.3
@@ -446,6 +449,9 @@ importers:
       '@types/nodemailer':
         specifier: ^7.0.11
         version: 7.0.11
+      sharp:
+        specifier: ^0.34.0
+        version: 0.34.5
 
   packages/storage:
     dependencies:

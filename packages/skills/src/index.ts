@@ -94,7 +94,7 @@ export { TravelSkill } from './built-in/travel/index.js';
 export { BriefingSkill } from './built-in/briefing.js';
 export { FeedReaderSkill } from './built-in/feed-reader.js';
 export { InterestsSkill } from './built-in/interests.js';
-export { SocialSkill, SocialProvider, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider, BEST_PRACTICE_SLOTS, effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, storyIdentity, cosineSimilarity } from './built-in/social/index.js';
+export { SocialSkill, SocialProvider, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider, BEST_PRACTICE_SLOTS, effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, storyIdentity, cosineSimilarity, applyImageOverlays, cropToRatio, resolveImageBranding, type OverlaySpec } from './built-in/social/index.js';
 export { HelpSkill } from './built-in/help.js';
 export { YouTubeSkill } from './built-in/youtube.js';
 export { DatabaseSkill } from './built-in/database/index.js';

@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1002] - 2026-07-05
+
+### Added — Bild-Overlays: Wasserzeichen + Titel, deterministisch statt halluziniert (v1002)
+
+Text auf generierten Bildern kommt ab jetzt NIE vom Bildmodell (das
+rendert Text falsch — v982-Realfall), sondern wird nach der Generierung
+pixelgenau als Ebene daraufgelegt (sharp + SVG-Compositing).
+
+- **Wasserzeichen/Branding** auf jedem generierten Bild (unten rechts,
+  mit Kontur für Lesbarkeit): Text aus `config.image_branding`, sonst
+  generisch die Domain des Familien-Lead-Kanals (z. B. „fussball.cc"),
+  sonst der Kanalname. `image_branding: false` bzw.
+  `image_overlay.watermark: false` schaltet ab.
+- **Titelbalken** (opt-in: `image_overlay.title: true`): halbtransparenter
+  Verlauf unten, Post-Titel mit Wort-Umbruch auf max. 2 Zeilen.
+- Overlays laufen NACH allen Bild-Gates (Bildnisrecht, Vision-Check) und
+  können die Pipeline nie brechen — bei jedem Fehler kommt das
+  Original-Bild durch. Ein Integrationspunkt deckt Studio UND
+  „Bild neu generieren" ab.
+- Neue Dependency `sharp` (lazy geladen, Bundle-kompatibel via
+  createRequire-Fallback).
+- 7 neue Tests (Umbruch, XML-Escaping, Branding-Auflösung, SVG-Aufbau,
+  echtes Compositing, Crop-Helfer, Fehler-Fallback).
+
 ## [0.19.0-multi-ha.1001] - 2026-07-05
 
 ### Added — Traffic-Feinschliff + Klick-Rückkanal (v1001)

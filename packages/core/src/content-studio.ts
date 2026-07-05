@@ -5,7 +5,7 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
-import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle } from '@alfred/skills';
+import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, applyImageOverlays, resolveImageBranding, type OverlaySpec } from '@alfred/skills';
 export { extractTrailingHashtags, isNearDuplicateTitle };
 import type { SourceProvisioner } from './source-provisioner.js';
 import type { StoryDeduper, BlockedStory } from './story-dedup.js';
@@ -1518,11 +1518,14 @@ Antworte NUR mit einem JSON-Array:
 
         let url: string | undefined;
         if (buffer && this.mediaDir) {
+          // v1002 — deterministische Text-Overlays (Wasserzeichen, Titel, Termin-
+          // Karte) NACH allen Gates: Text kommt nie vom Bildmodell (v982-Lektion).
+          const finalBuffer = await this.applyOverlays(buffer, channel, idea).catch(() => buffer);
           const { writeFile, mkdir } = await import('node:fs/promises');
           const { join } = await import('node:path');
           await mkdir(this.mediaDir, { recursive: true });
           const file = join(this.mediaDir, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
-          await writeFile(file, buffer);
+          await writeFile(file, finalBuffer);
           url = file;
         } else {
           const data = result.data as Record<string, unknown> | undefined;
@@ -1539,6 +1542,27 @@ Antworte NUR mit einem JSON-Array:
       this.logger.warn({ err: (err as Error).message, channel: channel.name }, 'v935 image generation failed');
       return [];
     }
+  }
+
+  /**
+   * v1002 — Overlay-Spec für ein generiertes Bild bauen und anwenden:
+   * Wasserzeichen (config.image_overlay.watermark, Default AN; Text via
+   * resolveImageBranding: config.image_branding → Lead-Domain → Kanalname)
+   * + optionaler Titelbalken (config.image_overlay.title, Default AUS).
+   */
+  private async applyOverlays(buffer: Buffer, channel: SocialChannel, idea: GeneratedIdea): Promise<Buffer> {
+    const ov = (channel.config.image_overlay && typeof channel.config.image_overlay === 'object'
+      ? channel.config.image_overlay : {}) as Record<string, unknown>;
+    const siblings = await this.socialRepo.listChannels(this.ownerUserId, 'active').catch(() => [] as SocialChannel[]);
+    const spec: OverlaySpec = {
+      branding: ov.watermark === false ? undefined : resolveImageBranding(channel, siblings),
+      title: ov.title === true && idea.title ? idea.title : undefined,
+      font: typeof ov.font === 'string' ? ov.font : undefined,
+    };
+    if (!spec.branding && !spec.title && !spec.termin) return buffer;
+    const out = await applyImageOverlays(buffer, spec);
+    if (out !== buffer) this.logger.info({ channel: channel.name, branding: spec.branding, title: !!spec.title, termin: !!spec.termin }, 'v1002 image overlays applied');
+    return out;
   }
 
   /**

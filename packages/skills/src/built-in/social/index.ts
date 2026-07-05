@@ -7,3 +7,4 @@ export { MetaProvider } from './meta-provider.js';
 export { XProvider } from './x-provider.js';
 export { parsePublicMediaConfig, publishPublicMedia, type PublicMediaConfig } from './public-media.js';
 export { isNearDuplicateTitle, storyIdentity, cosineSimilarity } from './dedup.js';
+export { applyImageOverlays, cropToRatio, resolveImageBranding, buildOverlaySvg, wrapText, escapeXml, type OverlaySpec, type TerminOverlay } from './image-overlay.js';
