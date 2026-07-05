@@ -231,6 +231,30 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
   });
 });
 
+describe('v1010 — Lessons-Hygiene (Konsolidierungs-Vorschlag)', () => {
+  it('>5 Lektionen → Vorschlag mit Vorher/Nachher; ≤5 → nichts (kein LLM-Call)', async () => {
+    const many = ['WM nicht EM', 'Es ist die WM 2026, nicht die EM', 'Ort immer nennen', 'Der Kanal ist Medium, nicht Veranstalter', 'Keine relativen Zeitwörter', 'Runde exakt aus dem Dossier', 'Hashtags nie in den Body'];
+    const channel = makeChannel({ config: { lessons: many } });
+    const { skill } = makeSkill(channel, makeItem());
+    const complete = vi.fn(async (_r: { messages: Array<{ content: string }> }) => ({
+      content: '["Es ist die WM 2026, nicht die EM — auch in Hashtags", "Ort immer nennen, Runde exakt aus dem Dossier", "Der Kanal ist Medium, nicht Veranstalter", "Keine relativen Zeitwörter", "Hashtags nie in den Body"]',
+    }));
+    (skill as any).llm = { complete };
+    const props = await skill.consolidateLessons('u1');
+    expect(props.length).toBe(1);
+    expect(props[0].before.length).toBe(7);
+    expect(props[0].after.length).toBe(5);
+    expect(props[0].after[0]).toContain('WM 2026');
+
+    const few = makeChannel({ config: { lessons: ['nur eine'] } });
+    const { skill: s2 } = makeSkill(few, makeItem());
+    const spy = vi.fn(async () => ({ content: '[]' }));
+    (s2 as any).llm = { complete: spy };
+    expect(await s2.consolidateLessons('u1')).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
 describe('v1009 — Kommentar-Copilot (Triage + Antwort-Vorschläge)', () => {
   it('Spam/Hass werden ignoriert, Fragen bekommen einen Vorschlag im Batch-Ergebnis', async () => {
     const channel = makeChannel({});

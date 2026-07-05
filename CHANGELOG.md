@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1010] - 2026-07-05
+
+### Added — Lessons-Hygiene: monatliche Konsolidierungs-Vorschläge (v1010)
+
+Die Lektionen-Listen wachsen mit jeder Korrektur — irgendwann blähen sie
+jeden Prompt auf und widersprechen sich.
+
+- Am Monatsersten (07:00, HA-Slot) prüft Alfred alle aktiven Kanäle mit
+  mehr als 5 Lektionen und erstellt je Kanal einen
+  **Konsolidierungs-VORSCHLAG** (LLM fasst Duplikate zusammen, erfindet
+  nichts, verliert keine Regel, max. 5 Ergebnis-Regeln).
+- Der Vorschlag kommt als Insight mit komplettem Vorher/Nachher —
+  angewendet wird ausschließlich von dir (UI oder Chat). **Es wird nie
+  automatisch geändert.**
+- 1 neuer Test.
+
 ## [0.19.0-multi-ha.1009] - 2026-07-05
 
 ### Added — Kommentar-Copilot: Triage + fertige Antwort-Vorschläge (v1009)

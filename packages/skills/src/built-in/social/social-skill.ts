@@ -1085,6 +1085,48 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
   }
 
   /**
+   * v1010 — Lessons-Hygiene (monatlich vom Kern aufgerufen): Kanäle mit mehr
+   * als 5 Lektionen bekommen einen Konsolidierungs-VORSCHLAG (LLM fasst
+   * Duplikate/Verwandtes zusammen, erfindet nichts, verliert keine Regel).
+   * Es wird NIE automatisch angewendet — der Kern legt den Vorschlag als
+   * Insight vor, angewendet wird per update_channel/UI.
+   */
+  async consolidateLessons(userId: string): Promise<Array<{ channel: string; channelId: string; before: string[]; after: string[] }>> {
+    if (!this.llm) return [];
+    const channels = await this.repo.listChannels(userId, 'active');
+    const proposals: Array<{ channel: string; channelId: string; before: string[]; after: string[] }> = [];
+    for (const channel of channels) {
+      const lessons = Array.isArray(channel.config.lessons)
+        ? (channel.config.lessons as unknown[]).map(String).map(s => s.trim()).filter(Boolean)
+        : [];
+      if (lessons.length <= 5) continue;
+      try {
+        const prompt = `Diese Redaktions-Lektionen fließen in JEDEN Content-Prompt des Kanals "${channel.name}" ein. Konsolidiere sie auf höchstens 5:
+- Duplikate und Verwandtes zu EINER präzisen Regel zusammenfassen.
+- KEINE Regel inhaltlich verlieren, NICHTS erfinden, Widersprüche zugunsten der spezifischeren Regel auflösen.
+- Jede Regel ein kurzer, direkt befolgbarer Satz.
+
+LEKTIONEN:
+${lessons.map((l, i) => `${i + 1}. ${l}`).join('\n')}
+
+Antworte NUR mit einem VALIDEN JSON-Array aus Strings: ["Regel 1", "Regel 2"]`;
+        const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 2_000, tier: 'fast', reasoningEffort: 'low' });
+        const raw = response.content ?? '';
+        const start = raw.indexOf('[');
+        const end = raw.lastIndexOf(']');
+        if (start < 0 || end <= start) continue;
+        let after: unknown;
+        try { after = JSON.parse(raw.slice(start, end + 1)); } catch { continue; }
+        if (!Array.isArray(after)) continue;
+        const cleaned = after.map(String).map(s => s.trim()).filter(s => s.length > 5).slice(0, 5);
+        if (cleaned.length === 0 || cleaned.length >= lessons.length) continue; // kein Gewinn → kein Vorschlag
+        proposals.push({ channel: channel.name, channelId: channel.id, before: lessons, after: cleaned });
+      } catch { /* Kanal-Fehler überspringen */ }
+    }
+    return proposals;
+  }
+
+  /**
    * v989 — Kommentare einsammeln (stündlich vom Kern aufgerufen): published
    * Items mit externalId je Kanal mit supportsComments → fetchComments →
    * dedupliziert ablegen. @returns neue Kommentare gesamt + je Kanal.

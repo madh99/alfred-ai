@@ -6816,6 +6816,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 const t = await socialSkill.collectTrafficStats(ownerUid).catch(() => 0);
                 if (t > 0) this.logger.info({ stats: t }, 'v1001 traffic stats collected');
                 if (now.getDay() === 0) await studio.weeklyNicheReport();
+                // v1010 — Lessons-Hygiene: am Monatsersten Konsolidierungs-Vorschläge (NIE automatisch anwenden)
+                if (now.getDate() === 1 && await this.claimDailySlot(`social-lessons:${today.slice(0, 7)}`)) {
+                  try {
+                    for (const p of await socialSkill.consolidateLessons(ownerUid)) {
+                      await this.insightsRepo?.upsertCandidate(ownerUid, {
+                        category: 'social',
+                        title: `Lektionen aufräumen: ${p.channel} (${p.before.length} → ${p.after.length})`,
+                        body: `Die Lektionen von ${p.channel} sind auf ${p.before.length} angewachsen — sie blähen jeden Prompt auf und können sich widersprechen. Konsolidierungs-Vorschlag:\n\nVORHER:\n${p.before.map(l => `• ${l}`).join('\n')}\n\nNACHHER (${p.after.length}):\n${p.after.map(l => `• ${l}`).join('\n')}\n\nAnwenden: in der UI (Kanal-Einstellungen → Lektionen) oder per Chat „Aktualisiere Kanal ${p.channel}: ersetze die Lektionen durch …". Es wird NICHTS automatisch geändert.`,
+                        confidence: 0.7,
+                        sourceData: { router: true, urgency: 'low', channelId: p.channelId },
+                        dedupeKey: `social-lessons:${p.channelId}:${today.slice(0, 7)}`,
+                      }).catch(() => { /* non-critical */ });
+                    }
+                  } catch (err) { this.logger.warn({ err }, 'v1010 lessons consolidation failed'); }
+                }
               } catch (err) { this.logger.warn({ err }, 'v936 social analytics failed'); }
             }
           }
