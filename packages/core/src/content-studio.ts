@@ -1154,6 +1154,19 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
           removed++;
         } catch { /* Einzelfehler überspringen */ }
       }
+      // v1005 — Bibliotheks-Bilder (asset-*) leben nach eigener Uhr: raus erst,
+      // wenn sie 3× so lange wie der Aufbewahrungs-Horizont UNGENUTZT sind.
+      const assetCutoff = new Date(Date.now() - maxAgeDays * 3 * 24 * 3_600_000).toISOString();
+      const assets = await this.socialRepo.listMediaAssets(this.ownerUserId, {}).catch(() => []);
+      for (const asset of assets) {
+        if (asset.lastUsedAt >= assetCutoff) continue;
+        try {
+          const { unlink } = await import('node:fs/promises');
+          await unlink(asset.path).catch(() => { /* Datei ggf. schon weg */ });
+          await this.socialRepo.deleteMediaAsset(this.ownerUserId, asset.id);
+          removed++;
+        } catch { /* Einzelfehler überspringen */ }
+      }
       if (removed > 0) this.logger.info({ removed, maxAgeDays }, 'v990 mediaDir cleaned');
     } catch (err) {
       this.logger.warn({ err: (err as Error).message }, 'v990 mediaDir cleanup failed');
@@ -1507,6 +1520,14 @@ Antworte NUR mit einem JSON-Array:
         ? channel.config.image_quality : undefined;
       const format = ContentStudio.platformImageSpec(channel);
 
+      // v1005 — Bild-Bibliothek: passt ein vorhandenes Basis-Bild (Motiv ähnlich,
+      // gleicher Stil/Format, Cooldown abgelaufen)? → wiederverwenden, nur das
+      // Overlay ist neu. Kostet KEIN Bild-Budget.
+      if (channel.config.image_reuse !== false && this.mediaDir) {
+        const reused = await this.tryReuseAsset(channel, motif, idea, style, format).catch(() => undefined);
+        if (reused) return reused;
+      }
+
       // v950 Schicht 1+3 — bis zu 2 Versuche: normal → Vision-Verstoß → strenges Symbolmotiv
       for (let attempt = 0; attempt < 2; attempt++) {
         const prompt = attempt === 0
@@ -1557,8 +1578,21 @@ Antworte NUR mit einem JSON-Array:
           const { writeFile, mkdir } = await import('node:fs/promises');
           const { join } = await import('node:path');
           await mkdir(this.mediaDir, { recursive: true });
-          const file = join(this.mediaDir, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+          const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const file = join(this.mediaDir, `studio-${stamp}.png`);
           await writeFile(file, finalBuffer);
+          // v1005 — sauberes Basis-Bild (vor Overlay) in die Bibliothek legen;
+          // die Bibliothek ist best-effort und darf das Bild NIE kosten
+          try {
+            if (channel.config.image_reuse !== false) {
+              const assetFile = join(this.mediaDir, `asset-${stamp}.png`);
+              await writeFile(assetFile, framed);
+              await this.socialRepo.createMediaAsset(this.ownerUserId, {
+                channelId: channel.id, family: ContentStudio.familyKey(channel) ?? undefined,
+                path: assetFile, motif, style, format: format.size ?? 'square',
+              });
+            }
+          } catch { /* Bibliothek ist best-effort */ }
           url = file;
         } else {
           const data = result.data as Record<string, unknown> | undefined;
@@ -1575,6 +1609,61 @@ Antworte NUR mit einem JSON-Array:
       this.logger.warn({ err: (err as Error).message, channel: channel.name }, 'v935 image generation failed');
       return [];
     }
+  }
+
+  /**
+   * v1005 — Motiv-Tokens fürs Ähnlichkeits-Matching (v923-Lektion: auf
+   * Nicht-Wortzeichen splitten, kurze Füllwörter raus).
+   */
+  static motifTokens(text: string): Set<string> {
+    return new Set(text.toLowerCase().split(/[^a-zäöüß0-9]+/).filter(t => t.length > 3));
+  }
+
+  /**
+   * v1005 — Bild-Bibliothek: ähnliches Basis-Bild (Jaccard ≥ 0.5 über
+   * Motiv-Tokens), gleicher Stil + gleiches Format, letzte Nutzung länger her
+   * als der Cooldown (config.image_reuse_cooldown_days, Default 30). Trifft
+   * eines: Basis-Bild lesen, aktuelles Overlay drauf, als neues Item-Bild
+   * speichern — ohne Budget-Verbrauch.
+   */
+  private async tryReuseAsset(
+    channel: SocialChannel, motif: string, idea: GeneratedIdea,
+    style: string | undefined, format: { size?: string; crop?: [number, number] },
+  ): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }> | undefined> {
+    const cooldownDays = typeof channel.config.image_reuse_cooldown_days === 'number' && channel.config.image_reuse_cooldown_days >= 0
+      ? channel.config.image_reuse_cooldown_days : 30;
+    const cutoff = new Date(Date.now() - cooldownDays * 24 * 3_600_000).toISOString();
+    const family = ContentStudio.familyKey(channel);
+    const assets = await this.socialRepo.listMediaAssets(this.ownerUserId, family ? { family } : { channelId: channel.id });
+    const wanted = ContentStudio.motifTokens(motif);
+    if (wanted.size === 0) return undefined;
+    let best: { asset: (typeof assets)[number]; score: number } | undefined;
+    for (const asset of assets) {
+      if (asset.lastUsedAt >= cutoff) continue;
+      if ((asset.style ?? '') !== (style ?? '')) continue;
+      if ((asset.format ?? 'square') !== (format.size ?? 'square')) continue;
+      const have = ContentStudio.motifTokens(asset.motif);
+      const inter = [...wanted].filter(t => have.has(t)).length;
+      const union = new Set([...wanted, ...have]).size;
+      const score = union === 0 ? 0 : inter / union;
+      if (score >= 0.5 && (!best || score > best.score)) best = { asset, score };
+    }
+    if (!best) return undefined;
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    let base: Buffer;
+    try {
+      base = await readFile(best.asset.path);
+    } catch {
+      await this.socialRepo.deleteMediaAsset(this.ownerUserId, best.asset.id).catch(() => { /* weg ist weg */ });
+      return undefined;
+    }
+    const finalBuffer = await this.applyOverlays(base, channel, idea).catch(() => base);
+    const file = join(this.mediaDir!, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+    await writeFile(file, finalBuffer);
+    await this.socialRepo.touchMediaAsset(this.ownerUserId, best.asset.id).catch(() => { /* non-critical */ });
+    this.logger.info({ channel: channel.name, asset: best.asset.id, score: Number(best.score.toFixed(2)), motif: motif.slice(0, 80) }, 'v1005 image reused from library (kein Budget verbraucht)');
+    return [{ type: 'image', source: 'generated', pathOrUrl: file }];
   }
 
   /**

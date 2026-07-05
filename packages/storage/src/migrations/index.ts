@@ -2707,4 +2707,24 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE content_items ADD COLUMN story_id TEXT`);
     },
   },
+  {
+    version: 116,
+    description: 'v1005 — Bild-Bibliothek: social_media_assets (generierte Basis-Bilder mit Motiv/Stil/Format zur Wiederverwendung nach Cooldown, spart Bild-Budget) (SQLite-Spiegel zu PG v120).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS social_media_assets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        channel_id TEXT,
+        family TEXT,
+        path TEXT NOT NULL,
+        motif TEXT NOT NULL,
+        style TEXT,
+        format TEXT,
+        last_used_at TEXT NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_media_assets_scope ON social_media_assets(user_id, family, channel_id)`);
+    },
+  },
 ];

@@ -213,6 +213,11 @@ function makeStack(opts: {
     listMetrics: vi.fn(async () => []),
     upsertMetric: vi.fn(async () => {}),
     reschedule: vi.fn(async () => true),
+    // v1005 — Bild-Bibliothek
+    listMediaAssets: vi.fn(async () => []),
+    createMediaAsset: vi.fn(async (_u: string, input: any) => ({ id: 'asset-1', userId: OWNER, lastUsedAt: 'x', useCount: 1, createdAt: 'x', ...input })),
+    touchMediaAsset: vi.fn(async () => {}),
+    deleteMediaAsset: vi.fn(async () => {}),
   } as unknown as SocialRepository;
 
   const interestsRepo = {
@@ -931,6 +936,67 @@ describe('ContentStudio — Bild-Look (v1004)', () => {
     expect(ContentStudio.platformImageSpec({ platform: 'rest', config: {} })).toEqual({ size: '1536x1024' });
     expect(ContentStudio.platformImageSpec({ platform: 'sonstwas', config: {} })).toEqual({});
     expect(ContentStudio.platformImageSpec({ platform: 'rest', config: { image_size: '1024x1024' } })).toEqual({ size: '1024x1024', crop: undefined });
+  });
+});
+
+describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
+  async function makeMediaStudio(assets: any[]) {
+    const { mkdtemp, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = await mkdtemp(join(tmpdir(), 'alfred-assets-'));
+    const channel = makeChannel({ postingSlots: ['Mo 18:00'], planningHorizonDays: 7, config: { topic_id: 't-1', generate_images: true } });
+    const { socialRepo, interestsRepo, insightsRepo, llm } = makeStack({
+      channel,
+      llmResponse: JSON.stringify([{ title: 'Flutlicht-Stimmung', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x', bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen' }]),
+    });
+    (socialRepo as any).listMediaAssets = vi.fn(async () => assets);
+    const studio = new ContentStudio(socialRepo, interestsRepo, insightsRepo, llm, undefined, undefined, undefined, makeLogger(), OWNER, dir);
+    const execute = vi.fn(async () => ({ success: true, attachments: [{ data: Buffer.from('fresh-png') }] }));
+    (studio as any).skillRegistry = { get: () => ({ metadata: { name: 'image_generate' } }) };
+    (studio as any).skillSandbox = { execute };
+    return { studio, channel, socialRepo, llm, execute, dir, writeFile, join };
+  }
+
+  it('ähnliches Basis-Bild nach Cooldown → Wiederverwendung OHNE Generierung und OHNE Budget', async () => {
+    const old = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const assetPath = join(dir, 'asset-alt.png');
+    await writeFile(assetPath, Buffer.from('base-png'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-1', userId: OWNER, channelId: 'ch-1', path: assetPath,
+      motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen, atmosphärisch',
+      style: undefined, format: '1536x1024', lastUsedAt: old, useCount: 1, createdAt: old,
+    }]);
+    await studio.fillChannel(channel);
+    expect(execute).not.toHaveBeenCalled(); // kein Generierungs-Call
+    const genImage = (socialRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
+    expect(genImage.length).toBe(0); // kein Budget verbraucht
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-1');
+    const media = (socialRepo.createItem as any).mock.calls[0][2].media;
+    expect(media[0].pathOrUrl).toContain('studio-'); // eigenes Item-Bild (mit frischem Overlay)
+  });
+
+  it('kein passendes Asset (Cooldown nicht um) → normale Generierung + Registrierung in der Bibliothek', async () => {
+    const fresh = new Date(Date.now() - 1 * 24 * 3_600_000).toISOString(); // erst gestern genutzt
+    const { studio, channel, socialRepo, llm, execute, join, dir, writeFile } = await makeMediaStudio([]);
+    const assetPath = join(dir, 'asset-frisch.png');
+    await writeFile(assetPath, Buffer.from('base'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-2', userId: OWNER, channelId: 'ch-1', path: assetPath,
+      motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+      style: undefined, format: '1536x1024', lastUsedAt: fresh, useCount: 1, createdAt: fresh,
+    }]);
+    // Vision-Gate: sauber
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{ title: 'Flutlicht-Stimmung', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x', bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen' }]) })
+      .mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok"}' });
+    await studio.fillChannel(channel);
+    expect(execute).toHaveBeenCalled();
+    const created = (socialRepo as any).createMediaAsset.mock.calls[0];
+    expect(created[1].motif).toContain('Stadion unter Flutlicht');
+    expect(created[1].format).toBe('1536x1024');
+    expect(created[1].path).toContain('asset-');
   });
 });
 

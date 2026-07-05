@@ -102,6 +102,21 @@ export interface StoryAssignment {
   createdAt: string;
 }
 
+/** v1005 — Basis-Bild in der Bild-Bibliothek (Wiederverwendung nach Cooldown). */
+export interface MediaAsset {
+  id: string;
+  userId: string;
+  channelId?: string;
+  family?: string;
+  path: string;
+  motif: string;
+  style?: string;
+  format?: string;
+  lastUsedAt: string;
+  useCount: number;
+  createdAt: string;
+}
+
 /** Erlaubte Pipeline-Übergänge — alles andere ist ein Programmierfehler. */
 const TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   idea: ['draft', 'rejected'],
@@ -277,6 +292,49 @@ export class SocialRepository {
       `INSERT INTO story_assignments (id, story_id, channel_id, role, offset_hours, item_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [randomUUID(), input.storyId, input.channelId, input.role, input.offsetHours ?? 0, input.itemId ?? null, new Date().toISOString()],
     );
+  }
+
+  // ── v1005 — Bild-Bibliothek (Basis-Bilder zur Wiederverwendung) ──
+
+  async createMediaAsset(userId: string, input: {
+    channelId?: string; family?: string; path: string; motif: string; style?: string; format?: string;
+  }): Promise<MediaAsset> {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    await this.db.execute(
+      `INSERT INTO social_media_assets (id, user_id, channel_id, family, path, motif, style, format, last_used_at, use_count, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      [id, userId, input.channelId ?? null, input.family ?? null, input.path, input.motif.slice(0, 500),
+        input.style?.slice(0, 300) ?? null, input.format ?? null, now, now],
+    );
+    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, lastUsedAt: now, useCount: 1, createdAt: now };
+  }
+
+  async listMediaAssets(userId: string, opts?: { family?: string; channelId?: string; limit?: number }): Promise<MediaAsset[]> {
+    const where = ['user_id = ?'];
+    const params: unknown[] = [userId];
+    if (opts?.family) { where.push('family = ?'); params.push(opts.family); }
+    if (opts?.channelId) { where.push('channel_id = ?'); params.push(opts.channelId); }
+    params.push(opts?.limit ?? 200);
+    const rows = await this.db.query(`SELECT * FROM social_media_assets WHERE ${where.join(' AND ')} ORDER BY last_used_at ASC LIMIT ?`, params) as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: String(r.id), userId: String(r.user_id),
+      channelId: r.channel_id ? String(r.channel_id) : undefined,
+      family: r.family ? String(r.family) : undefined,
+      path: String(r.path), motif: String(r.motif),
+      style: r.style ? String(r.style) : undefined,
+      format: r.format ? String(r.format) : undefined,
+      lastUsedAt: String(r.last_used_at), useCount: Number(r.use_count ?? 1), createdAt: String(r.created_at),
+    }));
+  }
+
+  async touchMediaAsset(userId: string, id: string): Promise<void> {
+    await this.db.execute(`UPDATE social_media_assets SET last_used_at = ?, use_count = use_count + 1 WHERE id = ? AND user_id = ?`,
+      [new Date().toISOString(), id, userId]);
+  }
+
+  async deleteMediaAsset(userId: string, id: string): Promise<void> {
+    await this.db.execute(`DELETE FROM social_media_assets WHERE id = ? AND user_id = ?`, [id, userId]);
   }
 
   async listAssignments(storyId: string): Promise<StoryAssignment[]> {

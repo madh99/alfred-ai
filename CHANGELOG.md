@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1005] - 2026-07-05
+
+### Added — Bild-Bibliothek: Basis-Bilder wiederverwenden statt neu generieren (v1005)
+
+Jedes generierte Bild landet als sauberes Basis-Bild (vor dem Overlay) in
+einer Bibliothek. Braucht das Studio später ein ähnliches Motiv, wird das
+Basis-Bild wiederverwendet — nur das Overlay (Titel, Termin-Karte,
+Wasserzeichen) ist neu. Das spart Bild-Budget und macht den Look
+konsistenter.
+
+- Neue Tabelle `social_media_assets` (Migration SQLite **v116** /
+  PG **v120**, läuft beim Start automatisch): Pfad, Motiv, Stil, Format,
+  letzte Nutzung, Nutzungszähler; Familie teilt sich die Bibliothek.
+- **Wiederverwendung** nur wenn: Motiv ähnlich (Token-Jaccard ≥ 0.5),
+  GLEICHER Stil und GLEICHES Format, und die letzte Nutzung länger her
+  als der Cooldown (`config.image_reuse_cooldown_days`, Default 30 —
+  `config.image_reuse: false` schaltet die Bibliothek ab). Kostet KEIN
+  Bild-Budget; verwaiste Einträge (Datei weg) räumen sich selbst auf.
+- **Aufräumen**: Bibliotheks-Bilder fliegen erst raus, wenn sie 3× so
+  lange wie der mediaDir-Horizont ungenutzt sind (Datei + Eintrag).
+- Die Bibliothek ist best-effort — sie kann die Bild-Pipeline nie brechen.
+- 2 neue Tests (Wiederverwendung ohne Budget, Registrierung nach
+  Generierung).
+
 ## [0.19.0-multi-ha.1004] - 2026-07-05
 
 ### Added — Bild-Look je Kanal: Stil-Preset, Qualität, Plattform-Formate (v1004)
