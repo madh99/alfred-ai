@@ -101,26 +101,58 @@ export class MetaProvider extends SocialProvider {
     const target = this.targetId(channel);
     const caps = this.capabilities();
     const text = composePostText(item, caps.maxTextLength, channel);
-    const image = await this.ensurePublicUrl(item.media.find(m => m.type === 'image'), item, channel, secrets);
+    // v988 — ALLE Bilder veröffentlichen (Instagram-Karussell), nicht nur das erste
+    const images: ContentMedia[] = [];
+    for (const m of item.media.filter(m => m.type === 'image')) {
+      const pub = await this.ensurePublicUrl(m, item, channel, secrets);
+      if (pub) images.push(pub);
+    }
+    const image = images[0];
     const video = await this.ensurePublicUrl(item.media.find(m => m.type === 'video'), item, channel, secrets);
 
     if (this.platform === 'instagram') {
       // Container-Flow: media → (Status-Poll bei Video) → media_publish
       if (!image && !video) throw new Error('Instagram braucht ein Bild oder Video (öffentliche URL).');
       const base = this.graphBase(secrets);
-      const containerParams: Record<string, string> = { access_token: token, caption: text };
-      if (video) { containerParams.media_type = 'REELS'; containerParams.video_url = video.pathOrUrl; }
-      else if (image) { containerParams.image_url = image.pathOrUrl; }
-      const container = await this.graphPost(`${base}/${target}/media`, containerParams);
-      const creationId = String(container.id ?? '');
+      let creationId: string;
+      if (!video && images.length >= 2) {
+        // v988 — Karussell: je Bild ein Child-Container, dann CAROUSEL-Container
+        const children: string[] = [];
+        for (const img of images.slice(0, 10)) {
+          const child = await this.graphPost(`${base}/${target}/media`, {
+            access_token: token, image_url: img.pathOrUrl, is_carousel_item: 'true',
+          });
+          const childId = String(child.id ?? '');
+          if (!childId) throw new Error('Instagram: Karussell-Child-Container fehlgeschlagen');
+          children.push(childId);
+        }
+        const container = await this.graphPost(`${base}/${target}/media`, {
+          access_token: token, media_type: 'CAROUSEL', children: children.join(','), caption: text,
+        });
+        creationId = String(container.id ?? '');
+      } else {
+        const containerParams: Record<string, string> = { access_token: token, caption: text };
+        if (video) { containerParams.media_type = 'REELS'; containerParams.video_url = video.pathOrUrl; }
+        else if (image) { containerParams.image_url = image.pathOrUrl; }
+        const container = await this.graphPost(`${base}/${target}/media`, containerParams);
+        creationId = String(container.id ?? '');
+        if (creationId && video) await this.waitForContainer(creationId, token, base);
+      }
       if (!creationId) throw new Error('Instagram: kein Container erstellt');
-      if (video) await this.waitForContainer(creationId, token, base);
       const published = await this.graphPost(`${base}/${target}/media_publish`, { access_token: token, creation_id: creationId });
       const mediaId = String(published.id ?? '');
       return { externalId: mediaId, url: await this.igPermalink(mediaId, token, base) };
     }
 
     if (this.platform === 'facebook') {
+      // v988 — Video-Posts: Graph zieht das Video per file_url (öffentliche
+      // URL via public_media — wie Bilder); vorher endete ein Video-Item
+      // als reiner Text-Post.
+      if (video) {
+        const r = await this.graphPost(`${GRAPH}/${target}/videos`, { access_token: token, file_url: video.pathOrUrl, description: text });
+        const id = String(r.id ?? '');
+        return { externalId: id, url: `https://www.facebook.com/${id}` };
+      }
       if (image) {
         const r = await this.graphPost(`${GRAPH}/${target}/photos`, { access_token: token, url: image.pathOrUrl, caption: text });
         const id = String(r.post_id ?? r.id ?? '');

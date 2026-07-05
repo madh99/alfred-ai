@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.988] - 2026-07-05
+
+### Added — Facebook-Video und Instagram-Karussell (v988)
+
+- **Facebook-Video:** Video-Items werden jetzt als echte Videos gepostet
+  (`/videos` mit `file_url` über den Public-Media-Host) — vorher endete
+  ein Video-Item als reiner Text-Post. Die Video-Pipeline (ffmpeg + TTS)
+  erreicht damit auch Facebook.
+- **Instagram-Karussell:** Items mit mehreren Bildern werden als
+  Karussell veröffentlicht (je Bild ein Child-Container mit
+  `is_carousel_item`, dann CAROUSEL-Container, max. 10 Bilder) — ideal
+  für Panini-/Vergleichs-Content. Alle Bilder laufen über den
+  Public-Media-Host, nicht mehr nur das erste.
+- 2 neue Tests (Karussell-Container-Kette; FB-Video-Endpoint).
+
 ## [0.19.0-multi-ha.987] - 2026-07-05
 
 ### Fixed/Added — Zombie-Watchdog für hängende Publishes + lokales Löschen ohne Story-Sperre (v987)

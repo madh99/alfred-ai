@@ -120,6 +120,42 @@ describe('MetaProvider (v936)', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('graph.threads.net');
   });
 
+  it('v988: Instagram-Karussell — je Bild ein Child-Container, dann CAROUSEL + publish', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'child-1' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'child-2' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'carousel-1' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'media-7' }))
+      .mockResolvedValueOnce(jsonResponse({ permalink: 'https://instagr.am/p/c' }));
+    const provider = new MetaProvider('instagram');
+    const r = await provider.publish(
+      makeItem({ media: [
+        { type: 'image', source: 'generated', pathOrUrl: 'https://ex.at/1.png' },
+        { type: 'image', source: 'generated', pathOrUrl: 'https://ex.at/2.png' },
+      ] }),
+      makeChannel('instagram', { ig_user_id: '178' }), { META_ACCESS_TOKEN: 'MT' },
+    );
+    expect(r.externalId).toBe('media-7');
+    const bodies = fetchMock.mock.calls.map((c: any[]) => String(c[1]?.body ?? ''));
+    expect(bodies[0]).toContain('is_carousel_item=true');
+    expect(bodies[1]).toContain('2.png');
+    expect(bodies[2]).toContain('media_type=CAROUSEL');
+    expect(bodies[2]).toContain(encodeURIComponent('child-1,child-2'));
+    expect(String(fetchMock.mock.calls[3][0])).toContain('media_publish');
+  });
+
+  it('v988: Facebook-Video → /videos mit file_url + description', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'vid-1' }));
+    const provider = new MetaProvider('facebook');
+    const r = await provider.publish(
+      makeItem({ media: [{ type: 'video', source: 'generated', pathOrUrl: 'https://ex.at/clip.mp4' }] }),
+      makeChannel('facebook', { page_id: 'p1' }), { META_ACCESS_TOKEN: 'T' },
+    );
+    expect(r.externalId).toBe('vid-1');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/p1/videos');
+    expect(String(fetchMock.mock.calls[0][1]?.body)).toContain('file_url=');
+  });
+
   it('deletePost: nur Facebook kann löschen', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ success: true }));
     expect(await new MetaProvider('facebook').deletePost('1', makeChannel('facebook', { page_id: 'p' }), { META_ACCESS_TOKEN: 'T' })).toBe(true);
