@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.986] - 2026-07-05
+
+### Fixed — Dossier lieferte nur Schlagzeilen: Feed-Summaries gegen Halluzination (v986)
+
+Das Studio-Dossier gab dem LLM je News-Item nur den TITEL — zu einer
+nackten Schlagzeile muss das Modell Details erfinden (Halluzinations-
+Quelle Nr. 1 trotz Fakten-Treue-Regel, die auf „das Dossier" verweist).
+
+- News-Zeilen tragen jetzt die Feed-Summary mit (HTML-bereinigt,
+  Whitespace-normalisiert, auf 220 Zeichen gekürzt) — die Fakten-Treue-
+  Regel hat damit echtes Material statt Überschriften-Raterei.
+- Event-/Termin-Zeilen bleiben unverändert (Ort stand dort schon drin).
+- 1 neuer Test (Summary im Prompt, HTML-Strip, Kürzung, Items ohne
+  Summary unverändert).
+
 ## [0.19.0-multi-ha.985] - 2026-07-05
 
 ### Added — KI-Kennzeichnung generierter Bilder (v985)

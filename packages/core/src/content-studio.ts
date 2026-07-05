@@ -721,9 +721,15 @@ Antworte NUR mit einem JSON-Array:
         // v973 — Rohstoff-Hygiene: Dossier-Beiträge, die dieser Kanal (oder die
         // Familie) schon behandelt hat, werden markiert — das LLM greift zu
         // anderem Stoff statt dieselbe Story neu zu erzählen.
+        // v986 — die SUMMARY kommt mit ins Dossier: eine nackte Schlagzeile
+        // zwang das LLM, Details zu ERFINDEN (Halluzinations-Quelle Nr. 1);
+        // mit dem Feed-Auszug hat die Fakten-Treue-Regel echtes Material.
         const itemLines = items.filter(i => i.sourceKind !== 'events').slice(0, 8).map(i => {
           const covered = blockedTitles.length > 0 && isNearDuplicateTitle(i.title, blockedTitles);
-          return `- ${i.title}${covered ? ' [BEREITS BEHANDELT — nicht erneut verwenden]' : ''}`;
+          const summary = typeof i.summary === 'string' && i.summary.trim().length > 0
+            ? ` — ${i.summary.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)}`
+            : '';
+          return `- ${i.title}${summary}${covered ? ' [BEREITS BEHANDELT — nicht erneut verwenden]' : ''}`;
         }).join('\n');
         const body = `${digest?.summary ?? ''}${itemLines ? `\nNeueste Beiträge:\n${itemLines}` : ''}`.trim();
         if (body) sections.push(topicIds.length > 1 ? `### Thema „${topic?.name ?? topicId.slice(0, 8)}"\n${body}` : body);

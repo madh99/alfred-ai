@@ -764,6 +764,23 @@ describe('ContentStudio — Termin-Ankündigungen (v975)', () => {
     expect((llm.complete as any).mock.calls.length).toBe(2);
   });
 
+  it('v986: Dossier-Zeilen tragen die Feed-Summary (HTML-bereinigt, gekürzt) — keine nackten Schlagzeilen mehr', async () => {
+    const channel = makeChannel({});
+    const { studio, llm, interestsRepo } = makeStack({ channel });
+    (interestsRepo.listItems as any) = vi.fn(async () => [
+      { id: 'n1', topicId: 't-1', title: 'Klopp spricht mit DFB', summary: '<p>Der Ex-Liverpool-Coach   bestätigt <b>Gespräche</b> über den Teamchefposten.</p>', sourceKind: 'rss', createdAt: 'x' },
+      { id: 'n2', topicId: 't-1', title: 'Lange Story', summary: 'z'.repeat(400), sourceKind: 'rss', createdAt: 'x' },
+      { id: 'n3', topicId: 't-1', title: 'Ohne Zusammenfassung', sourceKind: 'rss', createdAt: 'x' },
+    ]);
+    await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('Klopp spricht mit DFB — Der Ex-Liverpool-Coach bestätigt Gespräche über den Teamchefposten.');
+    expect(prompt).not.toContain('<p>');
+    expect(prompt).toContain(`Lange Story — ${'z'.repeat(220)}`);
+    expect(prompt).not.toContain('z'.repeat(221));
+    expect(prompt).toContain('- Ohne Zusammenfassung');
+  });
+
   it('v977: Prompt trägt Veröffentlichungsfenster und ZEITBEZUG-Regel', async () => {
     const channel = makeChannel({ mode: 'approve' });
     const { studio, llm } = makeStack({ channel });
