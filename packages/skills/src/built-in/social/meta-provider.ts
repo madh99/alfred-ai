@@ -1,5 +1,5 @@
 import type { SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
-import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult } from './social-provider.js';
+import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult, type FetchedComment } from './social-provider.js';
 import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
@@ -31,6 +31,8 @@ export class MetaProvider extends SocialProvider {
       maxTextLength: this.platform === 'threads' ? 500 : 2200,
       supportsDelete: this.platform === 'facebook',
       supportsMetrics: true,
+      // v989 — Kommentare lesen/beantworten (FB-Pages + IG; Threads-API kann es nicht)
+      supportsComments: this.platform !== 'threads',
     };
   }
 
@@ -214,6 +216,68 @@ export class MetaProvider extends SocialProvider {
       const res = await fetch(`${GRAPH}/${externalId}?access_token=${encodeURIComponent(this.token(secrets))}`, { method: 'DELETE' });
       return res.ok;
     } catch { return false; }
+  }
+
+  /**
+   * v989 — Kommentare je Post einsammeln (FB: /post/comments mit from;
+   * IG: /media/comments mit username). Eigene Antworten der Seite/des
+   * Accounts werden übersprungen (FB: from.id == page_id; IG: username ==
+   * config.ig_username, falls gesetzt).
+   */
+  override async fetchComments(
+    items: Array<{ id: string; externalId: string }>,
+    channel: SocialChannel,
+    secrets: Record<string, string>,
+  ): Promise<FetchedComment[]> {
+    if (this.platform === 'threads') return [];
+    const token = this.token(secrets);
+    const base = this.graphBase(secrets);
+    const target = this.targetId(channel);
+    const ownIgName = typeof channel.config.ig_username === 'string' ? channel.config.ig_username.toLowerCase() : '';
+    const fields = this.platform === 'facebook'
+      ? 'id,message,from{id,name},created_time'
+      : 'id,text,username,timestamp';
+    const out: FetchedComment[] = [];
+    for (const item of items.slice(0, 25)) {
+      try {
+        const res = await fetch(`${base}/${item.externalId}/comments?fields=${fields}&limit=50&access_token=${encodeURIComponent(token)}`);
+        if (!res.ok) continue;
+        const data = await res.json() as { data?: Array<Record<string, any>> };
+        for (const c of data.data ?? []) {
+          const text = String(c.message ?? c.text ?? '').trim();
+          if (!text || !c.id) continue;
+          if (this.platform === 'facebook' && String(c.from?.id ?? '') === target) continue; // eigene Seiten-Antwort
+          const author = String(c.from?.name ?? c.username ?? '');
+          if (this.platform === 'instagram' && ownIgName && author.toLowerCase() === ownIgName) continue;
+          out.push({
+            itemId: item.id,
+            externalCommentId: String(c.id),
+            externalPostId: item.externalId,
+            author: author || undefined,
+            text,
+            createdAt: c.created_time ?? c.timestamp ?? undefined,
+          });
+        }
+      } catch { /* Einzelfehler überspringen */ }
+    }
+    return out;
+  }
+
+  /** v989 — Antwort auf einen Kommentar (FB: /comment/comments; IG: /comment/replies). */
+  override async replyToComment(
+    externalCommentId: string, text: string,
+    channel: SocialChannel, secrets: Record<string, string>,
+  ): Promise<boolean> {
+    if (this.platform === 'threads') return false;
+    const token = this.token(secrets);
+    const base = this.graphBase(secrets);
+    try {
+      const path = this.platform === 'facebook' ? 'comments' : 'replies';
+      await this.graphPost(`${base}/${externalCommentId}/${path}`, { access_token: token, message: text });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   override async fetchMetrics(

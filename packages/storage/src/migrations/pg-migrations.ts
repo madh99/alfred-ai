@@ -1959,4 +1959,28 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_metrics_dedupe ON channel_metrics(channel_id, COALESCE(item_id, ''), date, kind)`, []);
     },
   },
+  {
+    version: 118,
+    description: 'v989 — Kommentar-Modul: social_comments (PG-Spiegel zu SQLite v114).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS social_comments (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        item_id TEXT,
+        external_comment_id TEXT NOT NULL,
+        external_post_id TEXT,
+        author TEXT,
+        text TEXT NOT NULL,
+        remote_created_at TEXT,
+        status TEXT NOT NULL DEFAULT 'new',
+        reply_text TEXT,
+        replied_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`, []);
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_social_comments_dedupe ON social_comments(channel_id, external_comment_id)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_social_comments_status ON social_comments(user_id, status)`, []);
+    },
+  },
 ];

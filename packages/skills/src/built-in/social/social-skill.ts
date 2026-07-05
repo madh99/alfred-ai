@@ -12,6 +12,7 @@ type SocialAction =
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
+  | 'list_comments' | 'reply_comment' | 'ignore_comment'
   | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
@@ -66,7 +67,7 @@ export class SocialSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'social',
     category: 'automation',
-    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle). "Verknüpfe Thema X mit Kanal Y" = action=link_topic — ein Kanal kann MEHRERE Interessen-Themen speisen. "Korrigiere Beitrag X" = erst get_content (voller Text), dann edit_content mit korrigiertem title/body/hashtags UND einer lesson (was künftig zu beachten ist — der Kanal lernt daraus). "Merke dir für Kanal X: …" = add_lesson.',
+    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle). "Verknüpfe Thema X mit Kanal Y" = action=link_topic — ein Kanal kann MEHRERE Interessen-Themen speisen. "Korrigiere Beitrag X" = erst get_content (voller Text), dann edit_content mit korrigiertem title/body/hashtags UND einer lesson (was künftig zu beachten ist — der Kanal lernt daraus). "Merke dir für Kanal X: …" = add_lesson. "Zeig die Kommentare (auf Kanal X)" = list_comments; "Antworte auf Kommentar Y: …" = reply_comment (Antwort geht LIVE auf die Plattform); ignore_comment verwirft.',
     riskLevel: 'write',
     version: '1.0.0',
     // v949 — 10 min: generate_content erzeugt bis zu ~10 Posts inkl. je ~20s
@@ -84,6 +85,7 @@ export class SocialSkill extends Skill {
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
+            'list_comments', 'reply_comment', 'ignore_comment',
             'get_content', 'edit_content', 'add_lesson', 'replan_channel'],
           description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um").',
         },
@@ -112,6 +114,8 @@ export class SocialSkill extends Skill {
         adapt: { type: 'boolean', description: 'crosspost: Text formatgerecht je Ziel-Kanal umschreiben (Default true; false = wörtliche Kopie)' },
         topic: { type: 'string', description: 'link_topic/unlink_topic: Interessen-Thema (Name, fuzzy) — ein Kanal kann MEHRERE Themen speisen (z.B. „WM 2026" + „Panini-Sammelalbum")' },
         lesson: { type: 'string', description: 'edit_content/add_lesson: Lektion für künftige Studio-Läufe des Kanals, z.B. "Es ist die WM 2026, nicht die EM — auch in Hashtags" — wird zwingend in künftige Prompts aufgenommen' },
+        comment_id: { type: 'string', description: 'reply_comment/ignore_comment: ID des Kommentars (aus list_comments)' },
+        reply: { type: 'string', description: 'reply_comment: die Antwort — geht LIVE auf die Plattform (FB/IG)' },
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
         external_url: { type: 'string', description: 'mark_published: URL des manuell geposteten Beitrags' },
@@ -286,6 +290,14 @@ export class SocialSkill extends Skill {
         case 'generate_content': return await this.generateContent(userId, input);
         case 'render_video': return await this.renderVideo(userId, input);
         case 'crosspost': return await this.crosspost(userId, input);
+        case 'list_comments': return await this.listCommentsAction(userId, input);
+        case 'reply_comment': return await this.replyComment(userId, input);
+        case 'ignore_comment': {
+          const comment = await this.repo.getComment(userId, typeof input.comment_id === 'string' ? input.comment_id : '');
+          if (!comment) return { success: false, error: `Kommentar nicht gefunden: ${String(input.comment_id ?? '')}` };
+          await this.repo.setCommentStatus(userId, comment.id, 'ignored');
+          return { success: true, display: `Kommentar [${comment.id.slice(0, 8)}] ignoriert.` };
+        }
         case 'link_topic': return await this.linkTopic(userId, input, true);
         case 'unlink_topic': return await this.linkTopic(userId, input, false);
         case 'get_content': return await this.getContent(userId, input);
@@ -710,6 +722,81 @@ export class SocialSkill extends Skill {
       } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
     }
     return collected;
+  }
+
+  /**
+   * v989 — Kommentare einsammeln (stündlich vom Kern aufgerufen): published
+   * Items mit externalId je Kanal mit supportsComments → fetchComments →
+   * dedupliziert ablegen. @returns neue Kommentare gesamt + je Kanal.
+   */
+  async collectComments(userId: string): Promise<{ collected: number; byChannel: Array<{ channel: string; channelId: string; count: number }> }> {
+    const channels = await this.repo.listChannels(userId, 'active');
+    let collected = 0;
+    const byChannel: Array<{ channel: string; channelId: string; count: number }> = [];
+    for (const channel of channels) {
+      const provider = this.providers.get(channel.platform);
+      if (!provider || provider.capabilities().supportsComments !== true) continue;
+      const published = (await this.repo.listItems(userId, { channelId: channel.id, status: 'published', limit: 20 }))
+        .filter(i => i.externalId)
+        .map(i => ({ id: i.id, externalId: i.externalId! }));
+      if (published.length === 0) continue;
+      try {
+        const comments = await provider.fetchComments(published, channel, await this.secrets(channel));
+        let fresh = 0;
+        for (const c of comments) {
+          const isNew = await this.repo.upsertComment({
+            userId, channelId: channel.id, itemId: c.itemId,
+            externalCommentId: c.externalCommentId, externalPostId: c.externalPostId,
+            author: c.author, text: c.text, remoteCreatedAt: c.createdAt,
+          });
+          if (isNew) fresh++;
+        }
+        if (fresh > 0) {
+          collected += fresh;
+          byChannel.push({ channel: channel.name, channelId: channel.id, count: fresh });
+        }
+      } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
+    }
+    return { collected, byChannel };
+  }
+
+  /** v989 — offene/beantwortete Kommentare anzeigen. */
+  private async listCommentsAction(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const channel = typeof input.channel === 'string' && input.channel ? await this.resolveChannel(userId, input) : null;
+    const status = input.status === 'replied' || input.status === 'ignored' || input.status === 'new'
+      ? input.status : (typeof input.status === 'string' && input.status ? undefined : 'new');
+    const comments = await this.repo.listComments(userId, {
+      channelId: channel?.id, status: status as 'new' | undefined, limit: 30,
+    });
+    if (comments.length === 0) {
+      return { success: true, data: { comments: [] }, display: `Keine ${status ?? ''} Kommentare${channel ? ` auf ${channel.name}` : ''}.` };
+    }
+    const lines = comments.map(c =>
+      `• [${c.id.slice(0, 8)}] ${c.author ?? 'anonym'}${c.status !== 'new' ? ` (${c.status})` : ''}: "${c.text.slice(0, 140)}"`);
+    return {
+      success: true, data: { comments },
+      display: `💬 ${comments.length} Kommentar(e)${channel ? ` auf **${channel.name}**` : ''}:\n${lines.join('\n')}\n\nAntworten: reply_comment mit comment_id + reply. Ignorieren: ignore_comment.`,
+    };
+  }
+
+  /** v989 — auf einen Kommentar antworten (Antwort geht LIVE auf die Plattform). */
+  private async replyComment(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const commentId = typeof input.comment_id === 'string' ? input.comment_id.trim() : '';
+    const reply = typeof input.reply === 'string' ? input.reply.trim() : '';
+    if (!commentId || !reply) return { success: false, error: 'comment_id und reply erforderlich' };
+    const comment = await this.repo.getComment(userId, commentId);
+    if (!comment) return { success: false, error: `Kommentar nicht gefunden: ${commentId}` };
+    if (comment.status === 'replied') return { success: false, error: 'Bereits beantwortet.' };
+    const channel = await this.repo.getChannel(userId, comment.channelId);
+    if (!channel) return { success: false, error: 'Kanal nicht gefunden' };
+    const provider = this.providers.get(channel.platform);
+    if (!provider || provider.capabilities().supportsComments !== true) {
+      return { success: false, error: `${channel.platform} unterstützt keine Kommentar-Antworten.` };
+    }
+    const ok = await provider.replyToComment(comment.externalCommentId, reply, channel, await this.secrets(channel));
+    if (!ok) return { success: false, error: 'Antwort auf der Plattform fehlgeschlagen.' };
+    await this.repo.setCommentStatus(userId, comment.id, 'replied', reply);
+    return { success: true, display: `💬 Antwort auf ${comment.author ?? 'Kommentar'} veröffentlicht (**${channel.name}**): "${reply.slice(0, 120)}"` };
   }
 
   /**

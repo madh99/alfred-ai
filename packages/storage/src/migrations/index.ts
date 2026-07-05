@@ -2651,4 +2651,28 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_metrics_dedupe ON channel_metrics(channel_id, COALESCE(item_id, ''), date, kind)`);
     },
   },
+  {
+    version: 114,
+    description: 'v989 — Kommentar-Modul: social_comments (eingesammelte Kommentare je Kanal/Post, Antwort-Workflow new→replied|ignored) (SQLite-Spiegel zu PG v118).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS social_comments (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        item_id TEXT,
+        external_comment_id TEXT NOT NULL,
+        external_post_id TEXT,
+        author TEXT,
+        text TEXT NOT NULL,
+        remote_created_at TEXT,
+        status TEXT NOT NULL DEFAULT 'new',
+        reply_text TEXT,
+        replied_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_social_comments_dedupe ON social_comments(channel_id, external_comment_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_social_comments_status ON social_comments(user_id, status)`);
+    },
+  },
 ];

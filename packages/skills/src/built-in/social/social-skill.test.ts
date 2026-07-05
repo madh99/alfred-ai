@@ -373,6 +373,56 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect((spies2 as any).deleteItem).not.toHaveBeenCalled();
   });
 
+  it('v989: collectComments sammelt dedupliziert, reply_comment antwortet live und setzt replied', async () => {
+    const channel = makeChannel({});
+    const published = makeItem({ id: 'pub-1', status: 'published' });
+    (published as any).externalId = 'ext-77';
+    const storedComments: any[] = [];
+    const { repo } = makeRepo(channel, published);
+    (repo as any).listItems = vi.fn(async (_u: string, q: any) => (q?.status === 'published' ? [published] : []));
+    (repo as any).upsertComment = vi.fn(async (input: any) => {
+      if (storedComments.some(c => c.externalCommentId === input.externalCommentId)) return false;
+      storedComments.push({ ...input, id: `db-${storedComments.length + 1}`, status: 'new' });
+      return true;
+    });
+    (repo as any).getComment = vi.fn(async (_u: string, id: string) =>
+      storedComments.find(c => c.id === id || c.externalCommentId === id) ?? null);
+    (repo as any).setCommentStatus = vi.fn(async (_u: string, id: string, status: string, reply?: string) => {
+      const c = storedComments.find(x => x.id === id);
+      if (c) { c.status = status; c.replyText = reply; }
+    });
+    (repo as any).listComments = vi.fn(async () => storedComments.filter(c => c.status === 'new'));
+
+    const skill = new SocialSkill(repo);
+    const provider = new FakeProvider();
+    (provider as any).capabilities = () => ({ text: true, image: true, video: false, supportsDelete: false, supportsMetrics: false, supportsComments: true });
+    (provider as any).fetchComments = vi.fn(async () => [
+      { itemId: 'pub-1', externalCommentId: 'c-1', externalPostId: 'ext-77', author: 'Max', text: 'Wann geht es los?' },
+      { itemId: 'pub-1', externalCommentId: 'c-1', externalPostId: 'ext-77', author: 'Max', text: 'Wann geht es los?' }, // Duplikat
+    ]);
+    (provider as any).replyToComment = vi.fn(async () => true);
+    skill.registerProvider(provider);
+    skill.setSecretsResolver(async () => ({}));
+
+    const collected = await skill.collectComments('u1');
+    expect(collected.collected).toBe(1);
+    expect(collected.byChannel[0].count).toBe(1);
+
+    const list = await skill.execute({ action: 'list_comments' }, CTX);
+    expect(list.success).toBe(true);
+    expect(list.display).toContain('Wann geht es los?');
+
+    const reply = await skill.execute({ action: 'reply_comment', comment_id: 'db-1', reply: 'Heute 19:00 im Pub!' }, CTX);
+    expect(reply.success).toBe(true);
+    expect((provider as any).replyToComment).toHaveBeenCalledWith('c-1', 'Heute 19:00 im Pub!', expect.anything(), expect.anything());
+    expect(storedComments[0].status).toBe('replied');
+    expect(storedComments[0].replyText).toBe('Heute 19:00 im Pub!');
+
+    // bereits beantwortet → Fehler statt Doppel-Antwort
+    const again = await skill.execute({ action: 'reply_comment', comment_id: 'db-1', reply: 'nochmal' }, CTX);
+    expect(again.success).toBe(false);
+  });
+
   it('pause_all = Social-Stopp', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'pause_all' }, CTX);

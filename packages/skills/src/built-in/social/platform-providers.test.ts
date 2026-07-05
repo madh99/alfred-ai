@@ -156,6 +156,37 @@ describe('MetaProvider (v936)', () => {
     expect(String(fetchMock.mock.calls[0][1]?.body)).toContain('file_url=');
   });
 
+  it('v989: fetchComments (FB) sammelt fremde Kommentare, eigene Seiten-Antworten werden übersprungen', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: [
+      { id: 'c-1', message: 'Super Aktion, sind dabei!', from: { id: 'user-9', name: 'Max' }, created_time: '2026-07-05T10:00:00+0000' },
+      { id: 'c-2', message: 'Danke euch!', from: { id: 'p1', name: 'Fussball.cc' } }, // eigene Antwort der Seite
+      { id: 'c-3', message: '' }, // leer → raus
+    ] }));
+    const provider = new MetaProvider('facebook');
+    const out = await provider.fetchComments(
+      [{ id: 'i1', externalId: 'post-77' }],
+      makeChannel('facebook', { page_id: 'p1' }), { META_ACCESS_TOKEN: 'T' },
+    );
+    expect(out).toEqual([{
+      itemId: 'i1', externalCommentId: 'c-1', externalPostId: 'post-77',
+      author: 'Max', text: 'Super Aktion, sind dabei!', createdAt: '2026-07-05T10:00:00+0000',
+    }]);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/post-77/comments');
+  });
+
+  it('v989: replyToComment — FB /comments, IG /replies (IG-Token → graph.instagram.com)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'reply-1' }));
+    const fb = new MetaProvider('facebook');
+    expect(await fb.replyToComment('c-1', 'Danke!', makeChannel('facebook', { page_id: 'p1' }), { META_ACCESS_TOKEN: 'T' })).toBe(true);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/c-1/comments');
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'reply-2' }));
+    const ig = new MetaProvider('instagram');
+    expect(await ig.replyToComment('c-9', 'Merci!', makeChannel('instagram', { ig_user_id: '178' }), { META_ACCESS_TOKEN: 'IGAAx' })).toBe(true);
+    expect(String(fetchMock.mock.calls[1][0])).toContain('graph.instagram.com');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/c-9/replies');
+  });
+
   it('deletePost: nur Facebook kann löschen', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ success: true }));
     expect(await new MetaProvider('facebook').deletePost('1', makeChannel('facebook', { page_id: 'p' }), { META_ACCESS_TOKEN: 'T' })).toBe(true);

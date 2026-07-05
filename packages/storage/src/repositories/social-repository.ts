@@ -55,6 +55,24 @@ export interface ContentItem {
   updatedAt: string;
 }
 
+/** v989 — eingesammelter Kommentar zu einem veröffentlichten Post. */
+export interface SocialComment {
+  id: string;
+  userId: string;
+  channelId: string;
+  itemId?: string;
+  externalCommentId: string;
+  externalPostId?: string;
+  author?: string;
+  text: string;
+  remoteCreatedAt?: string;
+  status: 'new' | 'replied' | 'ignored';
+  replyText?: string;
+  repliedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Erlaubte Pipeline-Übergänge — alles andere ist ein Programmierfehler. */
 const TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
   idea: ['draft', 'rejected'],
@@ -180,6 +198,74 @@ export class SocialRepository {
   async getItem(userId: string, id: string): Promise<ContentItem | null> {
     const row = await this.db.queryOne(`SELECT * FROM content_items WHERE id = ? AND user_id = ?`, [id, userId]) as Record<string, unknown> | undefined;
     return row ? this.mapItem(row) : null;
+  }
+
+  // ── v989 — Kommentare ─────────────────────────────────────────────────
+
+  /** Kommentar einsammeln; dedupliziert über (channel_id, external_comment_id). @returns true wenn NEU. */
+  async upsertComment(input: {
+    userId: string; channelId: string; itemId?: string;
+    externalCommentId: string; externalPostId?: string;
+    author?: string; text: string; remoteCreatedAt?: string;
+  }): Promise<boolean> {
+    const existing = await this.db.queryOne(
+      `SELECT id FROM social_comments WHERE channel_id = ? AND external_comment_id = ?`,
+      [input.channelId, input.externalCommentId],
+    ) as { id?: string } | undefined;
+    if (existing?.id) return false;
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `INSERT INTO social_comments (id, user_id, channel_id, item_id, external_comment_id, external_post_id, author, text, remote_created_at, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`,
+      [randomUUID(), input.userId, input.channelId, input.itemId ?? null, input.externalCommentId,
+        input.externalPostId ?? null, input.author ?? null, input.text.slice(0, 2000), input.remoteCreatedAt ?? null, now, now],
+    );
+    return true;
+  }
+
+  async listComments(userId: string, opts?: { channelId?: string; status?: SocialComment['status']; limit?: number }): Promise<SocialComment[]> {
+    const where = ['user_id = ?'];
+    const params: unknown[] = [userId];
+    if (opts?.channelId) { where.push('channel_id = ?'); params.push(opts.channelId); }
+    if (opts?.status) { where.push('status = ?'); params.push(opts.status); }
+    params.push(opts?.limit ?? 50);
+    const rows = await this.db.query(
+      `SELECT * FROM social_comments WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ?`,
+      params,
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapComment(r));
+  }
+
+  async getComment(userId: string, id: string): Promise<SocialComment | null> {
+    const row = await this.db.queryOne(
+      `SELECT * FROM social_comments WHERE user_id = ? AND (id = ? OR external_comment_id = ?)`,
+      [userId, id, id],
+    ) as Record<string, unknown> | undefined;
+    return row ? this.mapComment(row) : null;
+  }
+
+  async setCommentStatus(userId: string, id: string, status: SocialComment['status'], replyText?: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `UPDATE social_comments SET status = ?, reply_text = COALESCE(?, reply_text), replied_at = CASE WHEN ? = 'replied' THEN ? ELSE replied_at END, updated_at = ? WHERE user_id = ? AND id = ?`,
+      [status, replyText ?? null, status, now, now, userId, id],
+    );
+  }
+
+  private mapComment(r: Record<string, unknown>): SocialComment {
+    return {
+      id: String(r.id), userId: String(r.user_id), channelId: String(r.channel_id),
+      itemId: r.item_id ? String(r.item_id) : undefined,
+      externalCommentId: String(r.external_comment_id),
+      externalPostId: r.external_post_id ? String(r.external_post_id) : undefined,
+      author: r.author ? String(r.author) : undefined,
+      text: String(r.text),
+      remoteCreatedAt: r.remote_created_at ? String(r.remote_created_at) : undefined,
+      status: String(r.status) as SocialComment['status'],
+      replyText: r.reply_text ? String(r.reply_text) : undefined,
+      repliedAt: r.replied_at ? String(r.replied_at) : undefined,
+      createdAt: String(r.created_at), updatedAt: String(r.updated_at),
+    };
   }
 
   /**

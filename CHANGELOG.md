@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.989] - 2026-07-05
+
+### Added — Kommentar-Modul: Alfred hört jetzt zu (v989)
+
+Bisher konnte der Social-Stack nur senden — Kommentare unter den eigenen
+Posts blieben unsichtbar. Jetzt werden sie eingesammelt und lassen sich
+direkt aus Alfred beantworten.
+
+- **Neue Tabelle `social_comments`** (SQLite v114 / PG v118): Kommentare
+  je Kanal/Post, dedupliziert über die externe Kommentar-ID, Workflow
+  `new → replied | ignored` inkl. Antwort-Text und Zeitpunkt.
+- **Provider-Fähigkeit `supportsComments`** mit `fetchComments`/
+  `replyToComment` — implementiert für Facebook-Pages und Instagram
+  (Graph-API; eigene Seiten-/Account-Antworten werden beim Einsammeln
+  übersprungen, IG optional via `config.ig_username`).
+- **Stündlicher Collector** (HA-Slot je Stunde): published Posts der
+  aktiven Kanäle werden abgefragt; neue Kommentare erzeugen EINEN
+  Insight je Kanal und Tag („Neue Kommentare auf …").
+- **Neue Skill-Actions:** `list_comments` (offene Kommentare, gefiltert
+  nach Kanal/Status), `reply_comment` (Antwort geht LIVE auf die
+  Plattform, Kommentar wird als beantwortet markiert, keine
+  Doppel-Antworten), `ignore_comment`. Per Chat: „Zeig die Kommentare",
+  „Antworte auf … " — Antwort-Vorschläge liefert das Chat-LLM natürlich.
+- Skill-Filter kennt „Kommentar/comments" (v945-Lektion).
+- 3 neue Tests (FB-Einsammeln mit Eigen-Antwort-Filter, FB/IG-Reply-
+  Endpoints, Skill-Ende-zu-Ende collect→list→reply inkl. Dedup und
+  Doppel-Antwort-Schutz).
+
 ## [0.19.0-multi-ha.988] - 2026-07-05
 
 ### Added — Facebook-Video und Instagram-Karussell (v988)

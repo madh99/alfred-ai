@@ -89,7 +89,7 @@ export type { Insight, InsightCandidate, InsightCategory, InsightStatus } from '
 export { InterestsRepository, topicItemDedupeHash } from './repositories/interests-repository.js';
 export type { InterestTopic, TopicSource, TopicItem, TopicDigest, TopicStatus, TopicOrigin, TopicSourceKind } from './repositories/interests-repository.js';
 export { SocialRepository, isValidTransition } from './repositories/social-repository.js';
-export type { SocialChannel, ContentItem, ContentMedia, ContentStatus, ChannelMode, ChannelPublishMode, ChannelStatus } from './repositories/social-repository.js';
+export type { SocialChannel, ContentItem, ContentMedia, ContentStatus, ChannelMode, ChannelPublishMode, ChannelStatus, SocialComment } from './repositories/social-repository.js';
 export { SandboxRepository } from './repositories/sandbox-repository.js';
 export type { Sandbox, SandboxInsert, SandboxStatus, SandboxResult, SandboxProjectType } from './repositories/sandbox-repository.js';
 export { SandboxChatRepository } from './repositories/sandbox-chat-repository.js';

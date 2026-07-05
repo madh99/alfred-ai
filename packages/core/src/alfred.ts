@@ -6734,9 +6734,32 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         let lastStudioDay = '';
         let lastAnalyticsDay = '';
         let lastAuthDay = '';
+        let lastCommentsHour = '';
         this.contentStudioTimer = setInterval(async () => {
           const now = new Date();
           const today = now.toISOString().slice(0, 10);
+          // v989 — stündlich Kommentare einsammeln (HA-Slot je Stunde);
+          // neue Kommentare → EIN Insight je Kanal und Tag (upsert zählt hoch)
+          const hourKey = `${today}T${String(now.getHours()).padStart(2, '0')}`;
+          if (now.getMinutes() < 10 && lastCommentsHour !== hourKey) {
+            lastCommentsHour = hourKey;
+            if (await this.claimDailySlot(`social-comments:${hourKey}`)) {
+              try {
+                const r = await socialSkill.collectComments(ownerUid);
+                if (r.collected > 0) this.logger.info({ collected: r.collected }, 'v989 social comments collected');
+                for (const ch of r.byChannel) {
+                  await this.insightsRepo?.upsertCandidate(ownerUid, {
+                    category: 'social',
+                    title: `Neue Kommentare auf ${ch.channel}`,
+                    body: `${ch.count} neue Kommentare eingesammelt.\n\nAnsehen: „Zeig die Kommentare auf ${ch.channel}" (list_comments) — antworten per reply_comment (geht live auf die Plattform), ignorieren per ignore_comment.`,
+                    confidence: 0.7,
+                    sourceData: { router: true, urgency: 'normal', channelId: ch.channelId },
+                    dedupeKey: `social-comments:${ch.channelId}:${today}`,
+                  }).catch(() => { /* non-critical */ });
+                }
+              } catch (err) { this.logger.warn({ err }, 'v989 comment collection failed'); }
+            }
+          }
           // v984 — 06:00 Auth-Health-Check: IG-Long-lived-Tokens erneuern
           // (laufen sonst nach 60 Tagen stumm ab) + validateAuth je Kanal;
           // Fehler landen als high-Insight beim User.

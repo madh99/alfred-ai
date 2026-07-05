@@ -7,6 +7,18 @@ export interface ProviderCapabilities {
   maxTextLength?: number;
   supportsDelete: boolean;
   supportsMetrics: boolean;
+  /** v989 — Kommentare lesen/beantworten (fetchComments/replyToComment implementiert). */
+  supportsComments?: boolean;
+}
+
+/** v989 — vom Provider eingesammelter Roh-Kommentar. */
+export interface FetchedComment {
+  itemId: string;
+  externalCommentId: string;
+  externalPostId?: string;
+  author?: string;
+  text: string;
+  createdAt?: string;
 }
 
 export interface PublishResult {
@@ -40,6 +52,23 @@ export abstract class SocialProvider {
     _secrets: Record<string, string>,
   ): Promise<Array<{ itemId: string; kind: string; value: number }>> {
     return [];
+  }
+
+  /** v989 — Optional: Kommentare zu veröffentlichten Posts einsammeln. */
+  async fetchComments(
+    _items: Array<{ id: string; externalId: string }>,
+    _channel: SocialChannel,
+    _secrets: Record<string, string>,
+  ): Promise<FetchedComment[]> {
+    return [];
+  }
+
+  /** v989 — Optional: auf einen Kommentar antworten. */
+  async replyToComment(
+    _externalCommentId: string, _text: string,
+    _channel: SocialChannel, _secrets: Record<string, string>,
+  ): Promise<boolean> {
+    return false;
   }
 }
 
