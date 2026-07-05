@@ -6763,12 +6763,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 const r = await socialSkill.collectComments(ownerUid);
                 if (r.collected > 0) this.logger.info({ collected: r.collected }, 'v989 social comments collected');
                 for (const ch of r.byChannel) {
+                  // v1009 — Copilot-Zeilen: Moderation + fertige Antwort-Vorschläge
+                  const copilot: string[] = [];
+                  if (ch.spamIgnored) copilot.push(`🧹 ${ch.spamIgnored} Spam-Kommentar(e) automatisch ausgeblendet.`);
+                  if (ch.hassFlagged) copilot.push(`⚠️ ${ch.hassFlagged} Kommentar(e) mit Beleidigung/Hetze ausgeblendet — auf der Plattform prüfen/löschen!`);
+                  for (const s of ch.suggestions ?? []) {
+                    copilot.push(`💬 Frage von ${s.author ?? 'anonym'}: „${s.text}"\n→ Vorschlag: „${s.draft}" — senden: reply_comment ${s.id.slice(0, 8)} (Text anpassbar) oder in der UI.`);
+                  }
                   await this.insightsRepo?.upsertCandidate(ownerUid, {
                     category: 'social',
                     title: `Neue Kommentare auf ${ch.channel}`,
-                    body: `${ch.count} neue Kommentare eingesammelt.\n\nAnsehen: „Zeig die Kommentare auf ${ch.channel}" (list_comments) — antworten per reply_comment (geht live auf die Plattform), ignorieren per ignore_comment.`,
+                    body: `${ch.count} neue Kommentare eingesammelt.${copilot.length ? `\n\n${copilot.join('\n\n')}` : ''}\n\nAnsehen: „Zeig die Kommentare auf ${ch.channel}" (list_comments) — antworten per reply_comment (geht live auf die Plattform), ignorieren per ignore_comment.`,
                     confidence: 0.7,
-                    sourceData: { router: true, urgency: 'normal', channelId: ch.channelId },
+                    sourceData: { router: true, urgency: ch.hassFlagged ? 'high' : 'normal', channelId: ch.channelId },
                     dedupeKey: `social-comments:${ch.channelId}:${today}`,
                   }).catch(() => { /* non-critical */ });
                 }

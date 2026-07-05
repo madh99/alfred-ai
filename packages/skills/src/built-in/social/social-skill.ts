@@ -8,6 +8,19 @@ import { isNearDuplicateTitle } from './dedup.js';
 import { applyImageOverlays, cropToRatio, resolveImageBranding } from './image-overlay.js';
 import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
+/** v1009 — Ergebnis eines Kommentar-Einsammel-Laufs je Kanal (inkl. Copilot-Triage). */
+export interface CommentBatchInfo {
+  channel: string;
+  channelId: string;
+  count: number;
+  /** v1009 — automatisch ignorierter Spam */
+  spamIgnored?: number;
+  /** v1009 — automatisch ignorierte Hass-Kommentare (auf der Plattform prüfen/löschen!) */
+  hassFlagged?: number;
+  /** v1009 — Antwort-Vorschläge für echte Fragen (max. 3) */
+  suggestions?: Array<{ id: string; author?: string; text: string; draft: string }>;
+}
+
 type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
   | 'validate_auth' | 'auth_check' | 'pause_all' | 'resume_channel'
@@ -1076,10 +1089,10 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
    * Items mit externalId je Kanal mit supportsComments → fetchComments →
    * dedupliziert ablegen. @returns neue Kommentare gesamt + je Kanal.
    */
-  async collectComments(userId: string): Promise<{ collected: number; byChannel: Array<{ channel: string; channelId: string; count: number }> }> {
+  async collectComments(userId: string): Promise<{ collected: number; byChannel: Array<CommentBatchInfo> }> {
     const channels = await this.repo.listChannels(userId, 'active');
     let collected = 0;
-    const byChannel: Array<{ channel: string; channelId: string; count: number }> = [];
+    const byChannel: CommentBatchInfo[] = [];
     for (const channel of channels) {
       const provider = this.providers.get(channel.platform);
       if (!provider || provider.capabilities().supportsComments !== true) continue;
@@ -1100,11 +1113,63 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
         }
         if (fresh > 0) {
           collected += fresh;
-          byChannel.push({ channel: channel.name, channelId: channel.id, count: fresh });
+          // v1009 — Kommentar-Copilot: Spam/Hass aussortieren, Fragen mit Antwort-Vorschlag
+          const triage = await this.triageNewComments(userId, channel).catch(() => undefined);
+          byChannel.push({ channel: channel.name, channelId: channel.id, count: fresh, ...(triage ?? {}) });
         }
       } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
     }
     return { collected, byChannel };
+  }
+
+  /**
+   * v1009 — Kommentar-Copilot: klassifiziert die offenen Kommentare eines
+   * Kanals (LLM-Batch: spam/hass/frage). Spam und Hass werden automatisch auf
+   * 'ignored' gestellt (nur AUSBLENDEN in Alfred — auf der Plattform bleibt
+   * der Kommentar; Hass wird zum Handeln gemeldet). Für bis zu 3 echte Fragen
+   * entsteht direkt ein Antwort-Vorschlag. config.comment_triage=false
+   * schaltet ab; best-effort — Fehler stören das Einsammeln nie.
+   */
+  private async triageNewComments(userId: string, channel: SocialChannel): Promise<Omit<CommentBatchInfo, 'channel' | 'channelId' | 'count'> | undefined> {
+    if (!this.llm || channel.config.comment_triage === false) return undefined;
+    const fresh = await this.repo.listComments(userId, { channelId: channel.id, status: 'new', limit: 15 });
+    if (fresh.length === 0) return undefined;
+    const prompt = `Du moderierst die Kommentare des Social-Kanals "${channel.name}". Klassifiziere JEDEN Kommentar:
+- spam: Werbung, Link-Schleudern, Bot-Müll, themenfremde Massenware
+- hass: Beleidigung, Hetze, Drohung (im Zweifel false — lieber ein Spam/Hass-Fall zu wenig als eine echte Stimme weg)
+- frage: eine echte Frage, die eine Antwort verdient
+
+${fresh.map((c, i) => `${i}: [${c.author ?? 'anonym'}] ${c.text.slice(0, 200)}`).join('\n')}
+
+Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "spam": false, "hass": false, "frage": true}]`;
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 1_500, tier: 'fast', reasoningEffort: 'low' });
+    const raw = response.content ?? '';
+    const start = raw.indexOf('[');
+    const end = raw.lastIndexOf(']');
+    if (start < 0 || end <= start) return undefined;
+    let verdicts: Array<{ index?: unknown; spam?: unknown; hass?: unknown; frage?: unknown }>;
+    try { verdicts = JSON.parse(raw.slice(start, end + 1)); } catch { return undefined; }
+    let spamIgnored = 0;
+    let hassFlagged = 0;
+    const suggestions: NonNullable<CommentBatchInfo['suggestions']> = [];
+    for (const v of verdicts) {
+      if (typeof v.index !== 'number' || !fresh[v.index]) continue;
+      const comment = fresh[v.index];
+      if (v.spam === true || v.hass === true) {
+        await this.repo.setCommentStatus(userId, comment.id, 'ignored').catch(() => { /* Einzelfehler */ });
+        if (v.hass === true) hassFlagged++; else spamIgnored++;
+        continue;
+      }
+      if (v.frage === true && suggestions.length < 3) {
+        const r = await this.suggestReply(userId, { comment_id: comment.id }).catch(() => null);
+        const draft = (r?.data as { draft?: string } | undefined)?.draft;
+        if (r?.success && draft) {
+          suggestions.push({ id: comment.id, author: comment.author, text: comment.text.slice(0, 160), draft });
+        }
+      }
+    }
+    if (spamIgnored === 0 && hassFlagged === 0 && suggestions.length === 0) return undefined;
+    return { spamIgnored, hassFlagged, suggestions };
   }
 
   /** v989 — offene/beantwortete Kommentare anzeigen. */

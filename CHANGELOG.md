@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1009] - 2026-07-05
+
+### Added — Kommentar-Copilot: Triage + fertige Antwort-Vorschläge (v1009)
+
+Der stündliche Kommentar-Collector arbeitet jetzt vor, statt nur zu
+zählen:
+
+- **Klassifikation** jedes neuen Kommentars (LLM-Batch, fast-Tier):
+  Spam und Hass werden automatisch in Alfred ausgeblendet
+  (Status `ignored` — auf der Plattform bleibt der Kommentar; Hass wird
+  im Insight ausdrücklich zum Prüfen/Löschen gemeldet, Dringlichkeit
+  high). Im Zweifel wird NICHT ausgeblendet.
+- **Antwort-Vorschläge**: Für bis zu 3 echte Fragen je Lauf steht der
+  fertige Vorschlag (inkl. Artikel-Link-Wissen aus v1001) direkt im
+  Insight — senden per `reply_comment <id>` oder 1 Klick in der UI.
+- Abschaltbar je Kanal: `config.comment_triage: false`.
+- 2 neue Tests (Spam/Hass/Frage Ende-zu-Ende, Abschalt-Gate).
+
 ## [0.19.0-multi-ha.1008] - 2026-07-05
 
 ### Added — Instagram-Karussells aus dem Studio (v1008)

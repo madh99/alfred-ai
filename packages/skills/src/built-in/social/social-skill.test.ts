@@ -29,11 +29,13 @@ class FakeProvider extends SocialProvider {
   stories: string[] = [];
   failNext = false;
   constructor(platform = 'test') { super(); this.platform = platform; }
-  capabilities(): ProviderCapabilities { return { text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false, supportsStories: this.platform === 'instagram' }; }
+  comments: Array<{ itemId: string; externalCommentId: string; author?: string; text: string }> = [];
+  capabilities(): ProviderCapabilities { return { text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false, supportsStories: this.platform === 'instagram', supportsComments: true }; }
   override async publishStory(imageUrl: string): Promise<PublishResult> {
     this.stories.push(imageUrl);
     return { externalId: 'story-1', url: 'https://instagram.com/stories/1' };
   }
+  override async fetchComments(): Promise<any[]> { return this.comments; }
   async publish(item: ContentItem): Promise<PublishResult> {
     if (this.failNext) { this.failNext = false; throw new Error('API down'); }
     this.published.push(item);
@@ -226,6 +228,59 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
     const { skill: s4, channel: c4 } = trafficSetup({}, 'scheduled'); // Lead noch nicht live
     const early = await (s4 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), c4);
     expect(early.body).toBe('B.');
+  });
+});
+
+describe('v1009 — Kommentar-Copilot (Triage + Antwort-Vorschläge)', () => {
+  it('Spam/Hass werden ignoriert, Fragen bekommen einen Vorschlag im Batch-Ergebnis', async () => {
+    const channel = makeChannel({});
+    const item = makeItem({ status: 'published', externalId: 'ext-9' });
+    const { skill, spies } = makeSkill(channel, item);
+    const provider = (skill as any).providers.get('test') as FakeProvider;
+    provider.comments = [
+      { itemId: item.id, externalCommentId: 'x1', author: 'Bot4711', text: 'CHEAP FOLLOWERS click here www.spam.tld' },
+      { itemId: item.id, externalCommentId: 'x2', author: 'Wutbürger', text: 'Ihr seid alle Vollidioten!!!' },
+      { itemId: item.id, externalCommentId: 'x3', author: 'Fan', text: 'Wann ist eigentlich Anpfiff beim nächsten Spiel?' },
+    ];
+    (spies as any).upsertComment = vi.fn(async () => true);
+    const newComments = [
+      { id: 'c-1', channelId: 'ch-1', author: 'Bot4711', text: 'CHEAP FOLLOWERS click here www.spam.tld', status: 'new' },
+      { id: 'c-2', channelId: 'ch-1', author: 'Wutbürger', text: 'Ihr seid alle Vollidioten!!!', status: 'new' },
+      { id: 'c-3', channelId: 'ch-1', author: 'Fan', text: 'Wann ist eigentlich Anpfiff beim nächsten Spiel?', status: 'new' },
+    ];
+    (spies as any).listComments = vi.fn(async () => newComments);
+    const statusCalls: any[] = [];
+    (spies as any).setCommentStatus = vi.fn(async (_u: string, id: string, status: string) => { statusCalls.push({ id, status }); });
+    (spies as any).getComment = vi.fn(async (_u: string, id: string) => newComments.find(c => c.id === id) ?? null);
+    const complete = vi.fn(async (_r: { messages: Array<{ content: string }> }) => ({ content: '' }));
+    complete
+      .mockResolvedValueOnce({ content: '[{"index":0,"spam":true,"hass":false,"frage":false},{"index":1,"spam":false,"hass":true,"frage":false},{"index":2,"spam":false,"hass":false,"frage":true}]' })
+      .mockResolvedValueOnce({ content: 'Anpfiff ist am 6. Juli um 21:00 — alle Details im Artikel!' });
+    (skill as any).llm = { complete };
+
+    const r = await skill.collectComments('u1');
+    expect(r.collected).toBe(3);
+    const info = r.byChannel[0];
+    expect(info.spamIgnored).toBe(1);
+    expect(info.hassFlagged).toBe(1);
+    expect(statusCalls).toEqual([{ id: 'c-1', status: 'ignored' }, { id: 'c-2', status: 'ignored' }]);
+    expect(info.suggestions![0].id).toBe('c-3');
+    expect(info.suggestions![0].draft).toContain('Anpfiff ist am 6. Juli');
+  });
+
+  it('comment_triage=false → nur Zählung, keine LLM-Calls', async () => {
+    const channel = makeChannel({ config: { comment_triage: false } });
+    const item = makeItem({ status: 'published', externalId: 'ext-9' });
+    const { skill, spies } = makeSkill(channel, item);
+    const provider = (skill as any).providers.get('test') as FakeProvider;
+    provider.comments = [{ itemId: item.id, externalCommentId: 'x1', text: 'Frage?' }];
+    (spies as any).upsertComment = vi.fn(async () => true);
+    const complete = vi.fn(async () => ({ content: '[]' }));
+    (skill as any).llm = { complete };
+    const r = await skill.collectComments('u1');
+    expect(r.byChannel[0].count).toBe(1);
+    expect(r.byChannel[0].spamIgnored).toBeUndefined();
+    expect(complete).not.toHaveBeenCalled();
   });
 });
 
