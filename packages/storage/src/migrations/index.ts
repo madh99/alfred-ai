@@ -2675,4 +2675,36 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_social_comments_status ON social_comments(user_id, status)`);
     },
   },
+  {
+    version: 115,
+    description: 'v993 — Redaktionsleitung: stories (Planungs-Einheit STORY statt Kanal-Beitrag) + story_assignments (Story→Kanal mit Rolle/Versatz) + content_items.story_id (SQLite-Spiegel zu PG v119).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS stories (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        family TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'news',
+        title TEXT NOT NULL,
+        summary TEXT,
+        importance REAL NOT NULL DEFAULT 0.5,
+        termin_bis TEXT,
+        source TEXT NOT NULL DEFAULT 'studio',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_stories_family ON stories(user_id, family, status)`);
+      db.exec(`CREATE TABLE IF NOT EXISTS story_assignments (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'follow',
+        offset_hours REAL NOT NULL DEFAULT 0,
+        item_id TEXT,
+        created_at TEXT NOT NULL
+      )`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_story_assignments_dedupe ON story_assignments(story_id, channel_id)`);
+      db.exec(`ALTER TABLE content_items ADD COLUMN story_id TEXT`);
+    },
+  },
 ];

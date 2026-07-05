@@ -6697,7 +6697,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           storyDeduper, // v973
         );
         const studio = this.contentStudio;
-        socialSkill.setStudio(channel => studio.fillChannel(channel));
+        // v993 — Familien-Kanäle planen die GANZE Familie (Redaktionskonferenz), Solo wie bisher
+        socialSkill.setStudio(channel => studio.planFamilyFor(channel));
         // v959 — Umplanung bestehender geplanter Beiträge in die aktuellen Slots
         socialSkill.setReplanner(channel => studio.replanChannel(channel));
         // v962 — auch Ad-hoc-Posts (add_content/crosspost) bekommen ein Bild,

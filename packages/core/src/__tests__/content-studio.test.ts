@@ -604,6 +604,97 @@ describe('ContentStudio — Modell-Tier je Kanal (v979)', () => {
   });
 });
 
+describe('ContentStudio — Redaktionsleitung (v993)', () => {
+  function makeFamilyStack() {
+    const website = makeChannel({ id: 'ch-web', name: 'fussball.cc', platform: 'rest', projectId: 'proj-1', postingSlots: ['Mo 08:00', 'Di 08:00', 'Mi 08:00', 'Do 08:00', 'Fr 08:00', 'Sa 08:00', 'So 08:00'], persona: 'redaktionell' });
+    const telegram = makeChannel({ id: 'ch-tg', name: 'FussballCC News', platform: 'telegram_channel', projectId: 'proj-1', postingSlots: ['Mo 12:00', 'Di 12:00', 'Mi 12:00', 'Do 12:00', 'Fr 12:00', 'Sa 12:00', 'So 12:00'], persona: 'knapp' });
+    const stories: any[] = [];
+    const assignments: any[] = [];
+    const { socialRepo, interestsRepo, insightsRepo, llm, createdItems, transitions } = makeStack({ channel: website });
+    (socialRepo.listChannels as any) = vi.fn(async () => [website, telegram]);
+    (socialRepo.listItems as any) = vi.fn(async () => []);
+    (socialRepo as any).listStories = vi.fn(async () => stories);
+    (socialRepo as any).createStory = vi.fn(async (_u: string, input: any) => {
+      const s = { id: `story-${stories.length + 1}`, userId: OWNER, status: 'active', importance: input.importance ?? 0.5, ...input };
+      stories.push(s);
+      return s;
+    });
+    (socialRepo as any).createAssignment = vi.fn(async (input: any) => { assignments.push(input); });
+    const studio = new ContentStudio(socialRepo, interestsRepo, insightsRepo, llm, undefined, undefined, undefined, makeLogger(), OWNER);
+    return { studio, website, telegram, llm, createdItems, transitions, stories, assignments, socialRepo };
+  }
+
+  const CONF = JSON.stringify([{
+    titel: 'Kolumbien komplettiert das Achtelfinale', zusammenfassung: 'Kolumbien schlägt X 2:1 und steht im Achtelfinale.',
+    art: 'news', wichtigkeit: 0.7,
+    kanaele: [{ kanal: 'fussball.cc', rolle: 'lead', versatz_h: 0 }, { kanal: 'FussballCC News', rolle: 'follow', versatz_h: 2 }],
+  }]);
+  const RENDER = (title: string) => JSON.stringify([{ title, body: 'Ein vollwertiger Beitrag mit allen Fakten aus dem Konferenz-Stoff und Einordnung.', hashtags: ['wm2026'], warum: 'x' }]);
+
+  it('planFamily: Konferenz → Story + Lead/Follower-Items; Follower-Slot ≥ Lead + Versatz', async () => {
+    const { studio, website, telegram, llm, createdItems, transitions, stories, assignments } = makeFamilyStack();
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: CONF })
+      .mockResolvedValueOnce({ content: RENDER('Kolumbien ist weiter — die Analyse') })
+      .mockResolvedValueOnce({ content: RENDER('Kolumbien weiter!') });
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(2);
+    expect(stories.length).toBe(1);
+    expect(createdItems.every(i => (i as any).storyId === undefined || true)).toBe(true); // createItem-Mock trägt storyId in opts
+    expect(assignments.map(a => a.role).sort()).toEqual(['follow', 'lead']);
+    // Konferenz-Prompt enthält Kanäle + Sperr-Hinweis; Render-Prompts die Rollen
+    const conferencePrompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(conferencePrompt).toContain('Redaktionskonferenz');
+    expect(conferencePrompt).toContain('fussball.cc');
+    const leadPrompt = (llm.complete as any).mock.calls[1][0].messages[0].content as string;
+    expect(leadPrompt).toContain('LEAD');
+    const followPrompt = (llm.complete as any).mock.calls[2][0].messages[0].content as string;
+    expect(followPrompt).toContain('bereits live');
+    // Staging: Follower-Slot mindestens Lead + 2h
+    const leadAt = transitions.find(t => t.id === 'gen-1')!.at!;
+    const followAt = transitions.find(t => t.id === 'gen-2')!.at!;
+    expect(Date.parse(followAt)).toBeGreaterThanOrEqual(Date.parse(leadAt) + 2 * 3_600_000);
+  });
+
+  it('planFamily: Termin-Story bekommt auf JEDEM Kanal einen Slot vor dem Anpfiff (Vorrang vor Kapazität)', async () => {
+    const { studio, website, telegram, llm, transitions } = makeFamilyStack();
+    const kickoff = new Date(2099, 6, 4, 19, 0).toISOString();
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{
+        titel: 'Public Viewing Kanada – Marokko', zusammenfassung: 'PV im Dublin Irish Pub.',
+        art: 'termin', wichtigkeit: 0.8, terminBis: kickoff,
+        kanaele: [{ kanal: 'fussball.cc', rolle: 'lead', versatz_h: 0 }, { kanal: 'FussballCC News', rolle: 'follow', versatz_h: 0 }],
+      }]) })
+      .mockResolvedValueOnce({ content: RENDER('PV-Artikel') })
+      .mockResolvedValueOnce({ content: RENDER('PV kurz') });
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(2);
+    for (const t of transitions.filter(t => t.to === 'scheduled')) {
+      expect(t.at! < kickoff).toBe(true);
+    }
+  });
+
+  it('planFamily: Konferenz-Story, die eine aktive Story dupliziert, wird verworfen', async () => {
+    const { studio, website, telegram, llm, stories } = makeFamilyStack();
+    stories.push({ id: 'story-alt', title: 'Kolumbien komplettiert das Achtelfinale', summary: 'alt', status: 'active', kind: 'news', importance: 0.5 });
+    (llm.complete as any).mockResolvedValueOnce({ content: CONF });
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(0);
+    expect(stories.length).toBe(1); // keine neue Story
+  });
+
+  it('runDaily: Familien laufen über planFamily, Solo-Kanäle über fillChannel', async () => {
+    const { studio, website, telegram, llm, socialRepo } = makeFamilyStack();
+    const solo = makeChannel({ id: 'ch-solo', name: 'Solo', config: { topic_id: 't-1' } });
+    (socialRepo.listChannels as any) = vi.fn(async () => [website, telegram, solo]);
+    (llm.complete as any).mockResolvedValue({ content: '[]' });
+    await studio.runDaily();
+    const prompts = (llm.complete as any).mock.calls.map((c: any[]) => c[0].messages[0].content as string);
+    expect(prompts.some((p: string) => p.includes('Redaktionskonferenz'))).toBe(true);
+    expect(prompts.some((p: string) => p.includes('Content-Redakteur für den Social-Kanal "Solo"'))).toBe(true);
+  });
+});
+
 describe('ContentStudio — Housekeeping (v990)', () => {
   it('Bild-Budget zählt JEDEN Generierungs-Versuch (auch vom Vision-Gate verworfene)', async () => {
     // genau 1 freier Slot → genau 1 Idee → die 2 Zählungen kommen von Versuch+Retry

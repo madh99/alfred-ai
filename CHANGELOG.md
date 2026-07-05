@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.993] - 2026-07-05
+
+### Added — Redaktionsleitung Etappe 1: Story-zentrierte Familien-Planung (v993)
+
+Die Planungs-Einheit ist jetzt die STORY, nicht der Kanal-Beitrag. Kanäle
+einer Familie planen gemeinsam statt unabhängig nebeneinander.
+
+- **Neues Datenmodell** (SQLite v115 / PG v119): `stories` (Familie, Art
+  news|vorschau|recap|termin|evergreen, Wichtigkeit, Termin, Status) +
+  `story_assignments` (Story → Kanal mit Rolle lead|follow und
+  Zeitversatz); `content_items.story_id` verknüpft Beiträge exakt.
+- **Redaktionskonferenz:** EIN LLM-Pass je Familie (höchstes Modell-Tier
+  der Familie) entscheidet die Story-Liste samt Kanal-Zuweisungen; danach
+  rendert je Zuweisung der Kanal-Prompt (Persona, model_tier) den
+  konkreten Beitrag in seiner ROLLE.
+- **Plattform-Staging:** Der Lead-Kanal (i.d.R. die Website) geht
+  garantiert VOR den Followern live — Follower-Slots liegen mindestens
+  Lead-Slot + Versatz später, und Follower dürfen erst dadurch sicher
+  auf den Lead-Artikel verweisen. Termin-Stories bekommen auf JEDEM
+  Kanal einen Slot vor dem Anpfiff (inkl. Ad-hoc-Fallback, Vorrang vor
+  Kapazität).
+- **Exakte Dedup:** Stories laufen durch den StoryDeduper gegen aktive
+  Stories (30 Tage) und published-Titel; gleiche story_id = gleiche
+  Story. Die Titel-Heuristiken bleiben als Fallback.
+- Tages-Lauf gruppiert nach Familie; „Studio jetzt" auf einem
+  Familien-Kanal plant die ganze Familie; Solo-Kanäle unverändert.
+- 4 neue Tests (Konferenz→Items mit Rollen-Prompts und Staging,
+  Termin-Story vor Anpfiff auf allen Kanälen, Story-Dedup, runDaily-
+  Gruppierung).
+
 ## [0.19.0-multi-ha.992] - 2026-07-05
 
 ### Added — Kommentar-UI im Web (v992)

@@ -51,6 +51,8 @@ export interface ContentItem {
   error?: string;
   performance?: Record<string, unknown>;
   source: 'manual' | 'studio' | 'detector';
+  /** v993 — Verknüpfung zur Story (Redaktionsleitung). */
+  storyId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -71,6 +73,33 @@ export interface SocialComment {
   repliedAt?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** v993 — Redaktionsleitung: die STORY ist die Planungs-Einheit, Kanäle bekommen Zuweisungen. */
+export interface Story {
+  id: string;
+  userId: string;
+  /** Familien-Schlüssel (project:<id> oder family:<name>). */
+  family: string;
+  kind: 'news' | 'vorschau' | 'recap' | 'termin' | 'evergreen';
+  title: string;
+  summary?: string;
+  importance: number;
+  terminBis?: string;
+  source: 'studio' | 'event' | 'manual';
+  status: 'active' | 'done' | 'dropped';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoryAssignment {
+  id: string;
+  storyId: string;
+  channelId: string;
+  role: 'lead' | 'follow';
+  offsetHours: number;
+  itemId?: string;
+  createdAt: string;
 }
 
 /** Erlaubte Pipeline-Übergänge — alles andere ist ein Programmierfehler. */
@@ -181,16 +210,18 @@ export class SocialRepository {
     status?: Extract<ContentStatus, 'idea' | 'draft'>;
     title?: string; body?: string; media?: ContentMedia[]; hashtags?: string[];
     scheduledAt?: string; source?: 'manual' | 'studio' | 'detector';
+    /** v993 — Verknüpfung zur Story (Redaktionsleitung). */
+    storyId?: string;
   }): Promise<ContentItem> {
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.db.execute(
       `INSERT INTO content_items (id, channel_id, user_id, status, title, body, media, hashtags,
-        scheduled_at, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        scheduled_at, source, story_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, channelId, userId, opts.status ?? 'draft', opts.title ?? null, opts.body ?? '',
        JSON.stringify(opts.media ?? []), JSON.stringify(opts.hashtags ?? []),
-       opts.scheduledAt ?? null, opts.source ?? 'manual', now, now],
+       opts.scheduledAt ?? null, opts.source ?? 'manual', opts.storyId ?? null, now, now],
     );
     return (await this.getItem(userId, id))!;
   }
@@ -198,6 +229,63 @@ export class SocialRepository {
   async getItem(userId: string, id: string): Promise<ContentItem | null> {
     const row = await this.db.queryOne(`SELECT * FROM content_items WHERE id = ? AND user_id = ?`, [id, userId]) as Record<string, unknown> | undefined;
     return row ? this.mapItem(row) : null;
+  }
+
+  // ── v993 — Stories (Redaktionsleitung) ────────────────────────────────
+
+  async createStory(userId: string, input: {
+    family: string; kind: Story['kind']; title: string; summary?: string;
+    importance?: number; terminBis?: string; source?: Story['source'];
+  }): Promise<Story> {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    await this.db.execute(
+      `INSERT INTO stories (id, user_id, family, kind, title, summary, importance, termin_bis, source, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      [id, userId, input.family, input.kind, input.title.slice(0, 300), input.summary?.slice(0, 1000) ?? null,
+        input.importance ?? 0.5, input.terminBis ?? null, input.source ?? 'studio', now, now],
+    );
+    return { id, userId, family: input.family, kind: input.kind, title: input.title.slice(0, 300), summary: input.summary, importance: input.importance ?? 0.5, terminBis: input.terminBis, source: input.source ?? 'studio', status: 'active', createdAt: now, updatedAt: now };
+  }
+
+  async listStories(userId: string, opts?: { family?: string; status?: Story['status']; sinceDays?: number; limit?: number }): Promise<Story[]> {
+    const where = ['user_id = ?'];
+    const params: unknown[] = [userId];
+    if (opts?.family) { where.push('family = ?'); params.push(opts.family); }
+    if (opts?.status) { where.push('status = ?'); params.push(opts.status); }
+    if (opts?.sinceDays) { where.push('created_at >= ?'); params.push(new Date(Date.now() - opts.sinceDays * 24 * 3_600_000).toISOString()); }
+    params.push(opts?.limit ?? 100);
+    const rows = await this.db.query(`SELECT * FROM stories WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ?`, params) as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: String(r.id), userId: String(r.user_id), family: String(r.family),
+      kind: String(r.kind) as Story['kind'], title: String(r.title),
+      summary: r.summary ? String(r.summary) : undefined,
+      importance: Number(r.importance ?? 0.5),
+      terminBis: r.termin_bis ? String(r.termin_bis) : undefined,
+      source: String(r.source) as Story['source'], status: String(r.status) as Story['status'],
+      createdAt: String(r.created_at), updatedAt: String(r.updated_at),
+    }));
+  }
+
+  async setStoryStatus(userId: string, id: string, status: Story['status']): Promise<void> {
+    await this.db.execute(`UPDATE stories SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+      [status, new Date().toISOString(), id, userId]);
+  }
+
+  async createAssignment(input: { storyId: string; channelId: string; role: StoryAssignment['role']; offsetHours?: number; itemId?: string }): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO story_assignments (id, story_id, channel_id, role, offset_hours, item_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [randomUUID(), input.storyId, input.channelId, input.role, input.offsetHours ?? 0, input.itemId ?? null, new Date().toISOString()],
+    );
+  }
+
+  async listAssignments(storyId: string): Promise<StoryAssignment[]> {
+    const rows = await this.db.query(`SELECT * FROM story_assignments WHERE story_id = ? ORDER BY offset_hours`, [storyId]) as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: String(r.id), storyId: String(r.story_id), channelId: String(r.channel_id),
+      role: String(r.role) as StoryAssignment['role'], offsetHours: Number(r.offset_hours ?? 0),
+      itemId: r.item_id ? String(r.item_id) : undefined, createdAt: String(r.created_at),
+    }));
   }
 
   // ── v989 — Kommentare ─────────────────────────────────────────────────
@@ -475,6 +563,7 @@ export class SocialRepository {
       error: r.error ? String(r.error) : undefined,
       performance: r.performance ? safeJson(String(r.performance)) as Record<string, unknown> : undefined,
       source: (r.source === 'studio' || r.source === 'detector' ? r.source : 'manual'),
+      storyId: r.story_id ? String(r.story_id) : undefined,
       createdAt: String(r.created_at), updatedAt: String(r.updated_at),
     };
   }

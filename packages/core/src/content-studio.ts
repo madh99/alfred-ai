@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type {
-  SocialRepository, SocialChannel, ContentItem,
+  SocialRepository, SocialChannel, ContentItem, Story,
   InterestsRepository, InsightsRepository,
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
@@ -272,7 +272,27 @@ export class ContentStudio {
   async runDaily(): Promise<number> {
     const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
     let created = 0;
+    // v993 — Redaktionsleitung: Familien planen GEMEINSAM (Story-zentriert,
+    // eine Redaktionskonferenz je Familie); Solo-Kanäle wie bisher einzeln.
+    const families = new Map<string, SocialChannel[]>();
+    const solo: SocialChannel[] = [];
     for (const channel of channels) {
+      const key = ContentStudio.familyKey(channel);
+      if (key) {
+        families.set(key, [...(families.get(key) ?? []), channel]);
+      } else {
+        solo.push(channel);
+      }
+    }
+    for (const [family, members] of families) {
+      try {
+        if (members.length >= 2) created += await this.planFamily(family, members);
+        else created += await this.fillChannel(members[0]);
+      } catch (err) {
+        this.logger.warn({ err: (err as Error).message, family }, 'v993 family planning failed');
+      }
+    }
+    for (const channel of solo) {
       try {
         created += await this.fillChannel(channel);
       } catch (err) {
@@ -281,6 +301,223 @@ export class ContentStudio {
     }
     if (created > 0) this.logger.info({ created, channels: channels.length }, 'v935 studio pass done');
     return created;
+  }
+
+  /** v993 — Einstieg für „Studio jetzt" auf einem Familien-Kanal: plant die GANZE Familie. */
+  async planFamilyFor(channel: SocialChannel): Promise<number> {
+    const family = ContentStudio.familyKey(channel);
+    if (!family) return this.fillChannel(channel);
+    const members = (await this.socialRepo.listChannels(this.ownerUserId, 'active'))
+      .filter(c => ContentStudio.familyKey(c) === family);
+    if (members.length < 2) return this.fillChannel(channel);
+    return this.planFamily(family, members);
+  }
+
+  /**
+   * v993 — Redaktionsleitung (Etappe 1): Story-zentrierte Familien-Planung.
+   *
+   * Phase 1 „Redaktionskonferenz": EIN LLM-Pass über das Familien-Dossier
+   * entscheidet die Story-Liste (Art, Wichtigkeit, Kanal-Zuweisungen mit
+   * Rolle lead/follow und Zeitversatz). Phase 2: je Zuweisung rendert der
+   * Kanal-Prompt (Persona/model_tier) den konkreten Beitrag; der Lead geht
+   * garantiert VOR den Followern live (Follower-Slot ≥ Lead-Slot + Versatz),
+   * Termin-Stories bekommen auf JEDEM Kanal einen Slot vor dem Anpfiff.
+   * Dedup ist exakt über die Story-Identität (StoryDeduper gegen aktive
+   * Stories der letzten 30 Tage) — die Titel-Heuristiken bleiben Fallback.
+   */
+  async planFamily(family: string, channels: SocialChannel[]): Promise<number> {
+    const now = new Date().toISOString();
+    // Kapazität je Kanal (Slots minus Backlog, wie fillChannel)
+    const capacity = new Map<string, { channel: SocialChannel; slotPool: string[]; needed: number; created: number }>();
+    for (const channel of channels) {
+      await this.ensureTopic(channel);
+      const planned = await this.socialRepo.listItems(this.ownerUserId, {
+        channelId: channel.id, status: ['scheduled', 'approved', 'draft', 'idea'], limit: 100,
+      });
+      if (planned.length >= 30) { capacity.set(channel.name, { channel, slotPool: [], needed: 0, created: 0 }); continue; }
+      const slots = nextFreeSlots(channel, planned, Math.max(0, 30 - planned.length), now);
+      const backlog = planned.filter(i => (i.status === 'draft' || i.status === 'idea') && !i.scheduledAt).length;
+      capacity.set(channel.name, { channel, slotPool: [...slots], needed: Math.max(0, slots.length - backlog), created: 0 });
+    }
+    const totalNeeded = [...capacity.values()].reduce((s, c) => s + c.needed, 0);
+
+    // Sperrlisten: aktive Stories (30d) + published Titel der Familie (14d)
+    const activeStories = await this.socialRepo.listStories(this.ownerUserId, { family, status: 'active', sinceDays: 30 });
+    const publishedWindow = new Date(Date.now() - 14 * 24 * 3_600_000).toISOString();
+    const blocked: BlockedStory[] = [
+      ...activeStories.map(s => ({ id: s.id, title: s.title, body: s.summary, terminAt: s.terminBis })),
+    ];
+    for (const { channel } of capacity.values()) {
+      const pub = await this.socialRepo.listItems(this.ownerUserId, { channelId: channel.id, status: 'published', updatedSince: publishedWindow, limit: 100 });
+      blocked.push(...pub.map(i => ({ id: i.id, title: i.title ?? i.body.slice(0, 60), body: i.body, terminAt: typeof i.performance?.terminBis === 'string' ? i.performance.terminBis : undefined })));
+    }
+
+    // Familien-Dossier über die Vereinigung aller Themen + Termine
+    const unionTopicIds = [...new Set(channels.flatMap(c => ContentStudio.linkedTopicIds(c)))];
+    const pseudo = { ...channels[0], config: { ...channels[0].config, topic_ids: unionTopicIds } } as SocialChannel;
+    const events = await this.upcomingEvents(pseudo);
+    const dossier = await this.topicDossier(pseudo, blocked, events);
+    const announcedAt = new Set(blocked.map(b => b.terminAt).filter(Boolean));
+    const openTermine = events.filter(e => !announcedAt.has(e.at));
+    if (totalNeeded === 0 && openTermine.length === 0) return 0;
+
+    // Konferenz-Pass: höchstes Modell-Tier der Familie entscheidet
+    const tierRank: Record<string, number> = { fast: 0, default: 1, medium: 2, strong: 3 };
+    const tier = channels.map(c => this.modelTier(c)).sort((a, b) => (tierRank[b] ?? 0) - (tierRank[a] ?? 0))[0];
+    const channelLines = [...capacity.values()].map(c =>
+      `- "${c.channel.name}" (${c.channel.platform}, Bedarf: ${c.needed} Beiträge)${c.channel.persona ? ` — Rolle/Persona: ${c.channel.persona.slice(0, 120)}` : ''}`).join('\n');
+    const storyCount = Math.min(Math.max(totalNeeded, openTermine.length), 10);
+    const conferencePrompt = `Du leitest die Redaktionskonferenz einer Kanal-Familie. Entscheide die Story-Liste für die nächsten Tage.
+
+KANÄLE DER FAMILIE:
+${channelLines}
+
+${dossier ? `THEMEN-DOSSIER:\n${dossier}\n` : ''}${blocked.length ? `BEREITS GEPLANT/VERÖFFENTLICHT — dieser Stoff ist GESPERRT (auch umformuliert):\n${[...new Set(blocked.map(b => b.title))].slice(0, 50).map(t => `- ${t}`).join('\n')}\n` : ''}
+Erzeuge bis zu ${storyCount} STORIES. Regeln:
+- Eine STORY ist ein Stoff, den mehrere Kanäle in IHRER Rolle erzählen — nicht jeder Kanal braucht jede Story.
+- Je Story: genau EIN lead-Kanal (der ausführlichste, i.d.R. die Website), follow-Kanäle mit Zeitversatz in Stunden (typisch: Telegram +2, Instagram +6, Facebook +8; Termine/Eilmeldungen: alle 0).
+- art: news | vorschau | recap | termin | evergreen. Termine aus „KOMMENDE TERMINE" IMMER als art=termin mit terminBis (ISO aus der Zeile) und Zuweisung an ALLE Kanäle mit versatz_h 0.
+- wichtigkeit 0..1 (Eilmeldungs-Niveau 0.9+). FAKTEN nur aus dem Dossier.
+- Weise nur Kanälen mit Bedarf zu (Ausnahme: art=termin darf immer).
+
+Antworte NUR mit einem VALIDEN JSON-Array:
+[{"titel": "Arbeitstitel", "zusammenfassung": "2-3 Sätze Stoff mit den Fakten", "art": "news", "wichtigkeit": 0.6, "terminBis": "optional ISO", "kanaele": [{"kanal": "exakter Kanal-Name", "rolle": "lead", "versatz_h": 0}]}]`;
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: conferencePrompt }], maxTokens: 8_000, tier, reasoningEffort: 'low' });
+    const rawStories = extractJsonArray(response.content ?? '') ?? [];
+    if (rawStories.length === 0) {
+      this.logger.warn({ family, head: (response.content ?? '').slice(0, 200) }, 'v993 Konferenz-Antwort unparseable');
+      return 0;
+    }
+    type RawStory = { titel?: unknown; zusammenfassung?: unknown; art?: unknown; wichtigkeit?: unknown; terminBis?: unknown; kanaele?: unknown };
+    const candidates = (rawStories as RawStory[])
+      .filter(s => typeof s?.titel === 'string' && (s.titel as string).trim().length > 3)
+      .map(s => ({
+        title: String(s.titel).slice(0, 300),
+        body: typeof s.zusammenfassung === 'string' ? s.zusammenfassung.slice(0, 1000) : '',
+        kind: (['news', 'vorschau', 'recap', 'termin', 'evergreen'] as const).find(k => k === s.art) ?? 'news',
+        importance: typeof s.wichtigkeit === 'number' ? Math.max(0, Math.min(1, s.wichtigkeit)) : 0.5,
+        terminBis: typeof s.terminBis === 'string' && Number.isFinite(Date.parse(s.terminBis)) ? new Date(s.terminBis).toISOString() : undefined,
+        kanaele: Array.isArray(s.kanaele) ? s.kanaele as Array<{ kanal?: unknown; rolle?: unknown; versatz_h?: unknown }> : [],
+      }));
+
+    // Story-Dedup: Termin-Stories über Termin-Identität, Rest über Deduper
+    const normal = candidates.filter(c => !c.terminBis);
+    const termine = candidates.filter(c => c.terminBis && !announcedAt.has(c.terminBis));
+    let accepted: typeof candidates = termine;
+    if (this.storyDeduper && normal.length > 0) {
+      const r = await this.storyDeduper.filterCandidates(normal, blocked.filter(b => !b.terminAt));
+      accepted = [...termine, ...r.accepted];
+    } else {
+      accepted = [...termine, ...normal.filter(c => !isNearDuplicateTitle(c.title, blocked.filter(b => !b.terminAt).map(b => b.title)))];
+    }
+
+    let created = 0;
+    const createdTitles: string[] = [];
+    for (const cand of accepted.sort((a, b) => b.importance - a.importance)) {
+      const story = await this.socialRepo.createStory(this.ownerUserId, {
+        family, kind: cand.kind, title: cand.title, summary: cand.body,
+        importance: cand.importance, terminBis: cand.terminBis, source: 'studio',
+      });
+      await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
+      // Lead zuerst rendern — Follower brauchen dessen Slot als Untergrenze
+      const assigns = cand.kanaele
+        .map(k => ({ cap: capacity.get(String(k.kanal ?? '')), role: k.rolle === 'lead' ? 'lead' as const : 'follow' as const, offset: typeof k.versatz_h === 'number' ? Math.max(0, Math.min(72, k.versatz_h)) : 0 }))
+        .filter(a => a.cap !== undefined)
+        .sort((a, b) => (a.role === 'lead' ? -1 : 1) - (b.role === 'lead' ? -1 : 1));
+      let leadSlot: string | undefined;
+      let leadChannelName: string | undefined;
+      for (const a of assigns) {
+        const cap = a.cap!;
+        if (cand.kind !== 'termin' && cap.created >= cap.needed) continue; // Kapazität erschöpft (Termine haben Vorrang)
+        const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot);
+        if (!item) continue;
+        // Slot: Termin → vor Anpfiff; Lead → nächster freier; Follower → ≥ Lead + Versatz
+        let slot: string | undefined;
+        if (cap.channel.mode === 'approve' || cap.channel.mode === 'autonomous') {
+          if (story.terminBis) {
+            slot = this.pickTerminSlot(cap.slotPool, story.terminBis, cap.channel);
+          } else if (a.role === 'lead' || !leadSlot) {
+            slot = cap.slotPool.shift();
+          } else {
+            const target = new Date(Date.parse(leadSlot) + a.offset * 3_600_000).toISOString();
+            const idx = cap.slotPool.findIndex(s => s >= target);
+            if (idx >= 0) slot = cap.slotPool.splice(idx, 1)[0];
+          }
+          if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+        }
+        if (a.role === 'lead') { leadSlot = slot; leadChannelName = cap.channel.name; }
+        await this.socialRepo.createAssignment({ storyId: story.id, channelId: cap.channel.id, role: a.role, offsetHours: a.offset, itemId: item.id });
+        cap.created++;
+        created++;
+        createdTitles.push(`${cap.channel.name}: ${item.title ?? story.title}`);
+      }
+    }
+    if (created > 0) {
+      this.logger.info({ family, stories: accepted.length, created }, 'v993 family planned');
+    }
+    return created;
+  }
+
+  /** v993 — Slot vor dem Anpfiff (Raster, sonst Ad-hoc Anpfiff−Vorlauf) — Termin-Logik wie v975/v977. */
+  private pickTerminSlot(slotPool: string[], terminBis: string, channel: SocialChannel): string | undefined {
+    const before = slotPool.filter(s => s < terminBis);
+    if (before.length > 0) {
+      const slot = before[before.length - 1];
+      slotPool.splice(slotPool.indexOf(slot), 1);
+      return slot;
+    }
+    const leadMs = this.terminLeadHours(channel) * 3_600_000;
+    const adhoc = new Date(Math.max(Date.now() + 30 * 60_000, Date.parse(terminBis) - leadMs)).toISOString();
+    return adhoc < terminBis ? adhoc : undefined;
+  }
+
+  /** v993 — einen Beitrag für eine Story-Zuweisung rendern (Kanal-Prompt, Persona, Rolle). */
+  private async renderAssignment(
+    story: Story, channel: SocialChannel, role: 'lead' | 'follow',
+    leadChannelName?: string, leadSlot?: string,
+  ): Promise<ContentItem | null> {
+    const roleRule = role === 'lead'
+      ? '- DEINE ROLLE: LEAD — der ausführlichste Beitrag der Familie zu dieser Story (vollwertig, 4-8 Sätze bzw. Persona-gemäß mehr).'
+      : `- DEINE ROLLE: FOLLOW — kürzer, eigener Blickwinkel deiner Persona.${leadChannelName ? ` Der ausführliche Beitrag auf ${leadChannelName} ist zum Zeitpunkt deiner Veröffentlichung bereits live${leadSlot ? ` (seit ${formatLocalDateTime(leadSlot)})` : ''} — du DARFST darauf verweisen.` : ''} NIE auf den eigenen Kanal verweisen.`;
+    const prompt = `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
+${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}
+STORY (Redaktionskonferenz-Beschluss — NUR dieser Stoff, Fakten NUR hieraus):
+Arbeitstitel: ${story.title}
+Stoff: ${story.summary ?? story.title}
+Art: ${story.kind}${story.terminBis ? `\nTermin: ${formatLocalDateTime(story.terminBis)} — Ort/Datum/Uhrzeit gehören in den TEXT, terminBis-Feld = ${story.terminBis}` : ''}
+
+Regeln:
+${roleRule}
+${this.lessonsBlock(channel)}- Deutsch, konkret, kein Clickbait; eigener TITEL (nicht der Arbeitstitel wortgleich).
+- 3-6 Hashtags NUR ins Feld "hashtags"; KEINE Meta-Zeilen im body.
+- BILDIDEE ohne Text/Datum/Zahlen — nur Motive.
+- NIE relative Zeitwörter („heute"/„morgen") — Datum/Uhrzeit nennen.
+
+Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typografisch „…“ oder escaped):
+[{"title": "…", "body": "…", "hashtags": ["…"], "warum": "1 Satz", "bildidee": "optional", "terminBis": ${story.terminBis ? `"${story.terminBis}"` : 'null'}}]`;
+    const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 6_000, tier: this.modelTier(channel), reasoningEffort: 'low' });
+    const ideas = parseIdeas(response.content ?? '');
+    if (ideas.length === 0) {
+      this.logger.warn({ channel: channel.name, story: story.title, head: (response.content ?? '').slice(0, 160) }, 'v993 assignment render unparseable');
+      return null;
+    }
+    const idea = ideas[0];
+    const media = await this.maybeGenerateImage(channel, idea);
+    const item = await this.socialRepo.createItem(this.ownerUserId, channel.id, {
+      status: 'draft',
+      title: idea.title || undefined,
+      body: idea.body,
+      hashtags: idea.hashtags,
+      media,
+      source: 'studio',
+      storyId: story.id,
+    });
+    await this.socialRepo.mergePerformance(this.ownerUserId, item.id, {
+      warum: idea.warum, storyRole: role,
+      ...(story.terminBis ? { terminBis: story.terminBis } : {}),
+    });
+    if (!story.terminBis) await this.storyDeduper?.embedStory(item.id, { title: idea.title, body: idea.body });
+    return item;
   }
 
   /** Füllt einen Kanal bis zum Planungshorizont. */
