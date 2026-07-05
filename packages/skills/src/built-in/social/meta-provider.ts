@@ -33,6 +33,8 @@ export class MetaProvider extends SocialProvider {
       supportsMetrics: true,
       // v989 — Kommentare lesen/beantworten (FB-Pages + IG; Threads-API kann es nicht)
       supportsComments: this.platform !== 'threads',
+      // v1007 — Stories (media_type STORIES) gibt es nur auf Instagram
+      supportsStories: this.platform === 'instagram',
     };
   }
 
@@ -178,6 +180,27 @@ export class MetaProvider extends SocialProvider {
     const creationId = String(container.id ?? '');
     const published = await this.graphPost(`${THREADS}/${target}/threads_publish`, { access_token: token, creation_id: creationId });
     return { externalId: String(published.id ?? creationId) };
+  }
+
+  /**
+   * v1007 — Instagram-Story veröffentlichen (media_type STORIES): Container
+   * mit öffentlicher Bild-URL → Status-Poll → media_publish. Stories haben
+   * per API keine Caption — der CTA steht als Overlay im Bild.
+   */
+  async publishStory(imageUrl: string, channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
+    if (this.platform !== 'instagram') throw new Error(`${this.platform}: Stories werden nur auf Instagram unterstützt`);
+    const token = this.token(secrets);
+    const target = this.targetId(channel);
+    const base = this.graphBase(secrets);
+    const container = await this.graphPost(`${base}/${target}/media`, {
+      access_token: token, media_type: 'STORIES', image_url: imageUrl,
+    });
+    const creationId = String(container.id ?? '');
+    if (!creationId) throw new Error('Instagram: kein Story-Container erstellt');
+    await this.waitForContainer(creationId, token, base, { tries: 10, delayMs: 3_000 });
+    const published = await this.publishContainer(base, target, token, creationId);
+    const mediaId = String(published.id ?? '');
+    return { externalId: mediaId, url: await this.igPermalink(mediaId, token, base) };
   }
 
   private async waitForContainer(

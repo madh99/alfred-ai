@@ -29,6 +29,8 @@ export interface OverlaySpec {
   title?: string;
   /** v1003 — Termin-Karte (ersetzt den Titelbalken) */
   termin?: TerminOverlay;
+  /** v1007 — CTA-Zeile oben zentriert (z.B. „🔗 Link im Profil" für Stories) */
+  cta?: string;
   /** Schriftfamilie (muss auf dem Host installiert sein), Default DejaVu Sans */
   font?: string;
 }
@@ -155,6 +157,18 @@ export function buildOverlaySvg(width: number, height: number, spec: OverlaySpec
     }
   }
 
+  if (spec.cta) {
+    // v1007 — CTA oben zentriert (Story-Format): dunkle Pille + Text
+    const ctaSize = Math.max(16, Math.round(width / 26));
+    const ctaText = spec.cta;
+    const pillW = Math.min(width - pad * 2, Math.round(ctaText.length * ctaSize * 0.62 + pad * 2));
+    const pillH = Math.round(ctaSize * 1.9);
+    const pillX = Math.round((width - pillW) / 2);
+    const pillY = pad;
+    parts.push(`<rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="${Math.round(pillH / 2)}" fill="#000000" fill-opacity="0.55"/>`);
+    parts.push(`<text x="${Math.round(width / 2)}" y="${pillY + Math.round(pillH * 0.68)}" text-anchor="middle" font-family="${font}" font-size="${ctaSize}" font-weight="bold" fill="#ffffff">${escapeXml(ctaText)}</text>`);
+  }
+
   if (spec.branding) {
     // Wasserzeichen unten rechts — dezent, mit Schatten für Lesbarkeit auf hellen Bildern
     const brandSize = Math.max(14, Math.round(width / 42));
@@ -171,7 +185,7 @@ export function buildOverlaySvg(width: number, height: number, spec: OverlaySpec
  * Original zurück — nie die Pipeline brechen.
  */
 export async function applyImageOverlays(png: Buffer, spec: OverlaySpec): Promise<Buffer> {
-  if (!spec.branding && !spec.title && !spec.termin) return png;
+  if (!spec.branding && !spec.title && !spec.termin && !spec.cta) return png;
   try {
     const sharp = await loadSharp();
     if (!sharp) return png;

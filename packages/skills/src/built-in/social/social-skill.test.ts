@@ -26,9 +26,14 @@ function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
 class FakeProvider extends SocialProvider {
   readonly platform: string;
   published: ContentItem[] = [];
+  stories: string[] = [];
   failNext = false;
   constructor(platform = 'test') { super(); this.platform = platform; }
-  capabilities(): ProviderCapabilities { return { text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false }; }
+  capabilities(): ProviderCapabilities { return { text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false, supportsStories: this.platform === 'instagram' }; }
+  override async publishStory(imageUrl: string): Promise<PublishResult> {
+    this.stories.push(imageUrl);
+    return { externalId: 'story-1', url: 'https://instagram.com/stories/1' };
+  }
   async publish(item: ContentItem): Promise<PublishResult> {
     if (this.failNext) { this.failNext = false; throw new Error('API down'); }
     this.published.push(item);
@@ -221,6 +226,67 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
     const { skill: s4, channel: c4 } = trafficSetup({}, 'scheduled'); // Lead noch nicht live
     const early = await (s4 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), c4);
     expect(early.body).toBe('B.');
+  });
+});
+
+describe('v1007 — Auto-Story (IG-Story beim Lead-Publish)', () => {
+  it('Lead published → 9:16-Story mit Overlay über public_media, dokumentiert als eigenes Item', async () => {
+    const { loadSharp } = await import('./image-overlay.js');
+    const sharp = await loadSharp();
+    const png: Buffer = await (sharp as any)({ create: { width: 400, height: 500, channels: 3, background: { r: 20, g: 80, b: 40 } } }).png().toBuffer();
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const imgFile = join(tmpdir(), `alfred-test-story-src-${Date.now()}.png`);
+    writeFileSync(imgFile, png);
+    try {
+      const lead = makeChannel({ id: 'ch-web', platform: 'rest', name: 'fussball.cc', projectId: 'p1', config: { base_url: 'https://cc.example' } });
+      const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'FussballCC IG', projectId: 'p1', config: { auto_story: true, public_media: { provider: 'rest', base_url: 'https://cc.example' } } });
+      const leadItem = makeItem({ id: 'item-0001-aaaa', channelId: 'ch-web', storyId: 's-1', title: 'Kolumbien weiter', body: 'Ein ausreichend langer Artikeltext.' });
+      const followerItem = makeItem({ id: 'item-ig', channelId: 'ch-ig', status: 'scheduled', media: [{ type: 'image', source: 'generated', pathOrUrl: imgFile }] });
+      const { skill, spies } = makeSkill(lead, leadItem);
+      const restProv = new FakeProvider('rest');
+      const igProv = new FakeProvider('instagram');
+      skill.registerProvider(restProv);
+      skill.registerProvider(igProv);
+      (spies as any).listChannels = vi.fn(async () => [lead, ig]);
+      (spies as any).listAssignments = vi.fn(async () => [
+        { id: 'a1', storyId: 's-1', channelId: 'ch-web', role: 'lead', offsetHours: 0, itemId: 'item-0001-aaaa', createdAt: 'x' },
+        { id: 'a2', storyId: 's-1', channelId: 'ch-ig', role: 'follow', offsetHours: 6, itemId: 'item-ig', createdAt: 'x' },
+      ]);
+      const origGetItem = (spies as any).getItem;
+      (spies as any).getItem = vi.fn(async (u: string, id: string) => (id === 'item-ig' ? followerItem : origGetItem(u, id)));
+      const created: any[] = [];
+      (spies as any).createItem = vi.fn(async (_u: string, chId: string, o: any) => { created.push({ chId, ...o }); return { ...makeItem(), ...o, channelId: chId, id: 'doc-1' }; });
+      // fetch: public_media-Upload der Story
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, data: { url: '/uploads/story.png' } }), text: async () => '' }));
+      const orig = globalThis.fetch;
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      let r;
+      try {
+        r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+      } finally { globalThis.fetch = orig; }
+      expect(r.success).toBe(true);
+      expect(igProv.stories).toEqual(['https://cc.example/uploads/story.png']);
+      expect(r.display).toContain('IG-Story auf **FussballCC IG**');
+      // Doku-Item auf dem IG-Kanal
+      expect(created.some(c => c.chId === 'ch-ig' && String(c.title).startsWith('Story:'))).toBe(true);
+    } finally { unlinkSync(imgFile); }
+  });
+
+  it('ohne auto_story bzw. für Nicht-Leads passiert nichts', async () => {
+    const lead = makeChannel({ id: 'ch-web', platform: 'rest', projectId: 'p1' });
+    const leadItem = makeItem({ channelId: 'ch-web', storyId: 's-1' });
+    const { skill, spies } = makeSkill(lead, leadItem);
+    const restProv = new FakeProvider('rest');
+    const igProv = new FakeProvider('instagram');
+    skill.registerProvider(restProv);
+    skill.registerProvider(igProv);
+    (spies as any).listChannels = vi.fn(async () => [lead, makeChannel({ id: 'ch-ig', platform: 'instagram', projectId: 'p1' })]); // kein auto_story
+    (spies as any).listAssignments = vi.fn(async () => [{ id: 'a1', storyId: 's-1', channelId: 'ch-web', role: 'lead', offsetHours: 0, itemId: 'item-0001-aaaa', createdAt: 'x' }]);
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    expect(igProv.stories.length).toBe(0);
   });
 });
 

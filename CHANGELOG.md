@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1007] - 2026-07-05
+
+### Added — Instagram Auto-Stories beim Lead-Artikel (v1007)
+
+Der größte ungenutzte Instagram-Hebel: Sobald der Lead-Artikel einer
+Familie live geht, postet der Instagram-Kanal automatisch eine Story —
+Reichweite + Bio-Link-Traffic, ohne manuelle Arbeit.
+
+- **Opt-in je IG-Kanal** (`config.auto_story: true`, Checkbox in den
+  Kanal-Einstellungen — die Story geht bewusst OHNE Einzelfreigabe live).
+- **Bild ohne neues Budget**: Die Story nutzt das bereits generierte Bild
+  des IG-Feed-Beitrags derselben Story — Crop auf 9:16, Overlay mit
+  Titel, CTA-Pille „🔗 Link im Profil" (anpassbar via
+  `config.story_cta_text`) und Wasserzeichen.
+- **Provider**: `publishStory` (media_type STORIES, Status-Poll wie
+  Feed-Bilder); Capability `supportsStories` (nur Instagram).
+- Leitplanken: zählt aufs Tages-Limit, dokumentiert sich als eigenes
+  Item (Verlauf/Löschen), komplett best-effort — ein Story-Fehler
+  blockiert den Artikel-Publish nie.
+- 2 neue Tests (Ende-zu-Ende inkl. echtem Compositing, Opt-in-Gate).
+
 ## [0.19.0-multi-ha.1006] - 2026-07-05
 
 ### Added — Mehrsprachigkeit: Kanal-Sprache + Website-Übersetzungen (v1006)

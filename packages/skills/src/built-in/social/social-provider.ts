@@ -9,6 +9,8 @@ export interface ProviderCapabilities {
   supportsMetrics: boolean;
   /** v989 — Kommentare lesen/beantworten (fetchComments/replyToComment implementiert). */
   supportsComments?: boolean;
+  /** v1007 — Stories veröffentlichen (publishStory implementiert, aktuell Instagram). */
+  supportsStories?: boolean;
 }
 
 /** v989 — vom Provider eingesammelter Roh-Kommentar. */
@@ -69,6 +71,13 @@ export abstract class SocialProvider {
     _channel: SocialChannel, _secrets: Record<string, string>,
   ): Promise<boolean> {
     return false;
+  }
+
+  /** v1007 — Optional: eine Story veröffentlichen (capabilities().supportsStories). */
+  async publishStory(
+    _imageUrl: string, _channel: SocialChannel, _secrets: Record<string, string>,
+  ): Promise<PublishResult> {
+    throw new Error(`${this.platform}: Stories werden nicht unterstützt`);
   }
 }
 

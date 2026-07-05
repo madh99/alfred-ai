@@ -5,6 +5,8 @@ import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
 import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, languageName, mergeHashtags } from './social-provider.js';
 import { isNearDuplicateTitle } from './dedup.js';
+import { applyImageOverlays, cropToRatio, resolveImageBranding } from './image-overlay.js';
+import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
 type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
@@ -93,7 +95,7 @@ export class SocialSkill extends Skill {
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN. Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
         name: { type: 'string', description: 'create_channel: Anzeigename des Kanals' },
         project: { type: 'string', description: 'create_channel: optional Projekt-Name/-ID (Kanal hängt am Projekt, Secrets aus dessen ENVs)' },
-        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — NUR rest-Kanäle: beim Publish werden Titel+Body übersetzt und als translations ins Payload gelegt (Website-Sprachversionen)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
+        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — NUR rest-Kanäle: beim Publish werden Titel+Body übersetzt und als translations ins Payload gelegt (Website-Sprachversionen)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id, auto_story: true — postet beim Publish des Familien-Lead-Artikels automatisch eine IG-Story (9:16, Titel+Link-im-Profil-CTA als Overlay), OHNE Einzelfreigabe, zählt aufs Tages-Limit; story_cta_text ersetzt den CTA}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },
@@ -643,10 +645,12 @@ export class SocialSkill extends Skill {
         externalUrl: result.url,
         error: null,
       });
+      // v1007 — Auto-Story: Lead ist live → IG-Familien-Kanal mit auto_story postet eine Story (best-effort)
+      const storyNote = await this.maybeAutoStory(userId, published, channel).catch(() => undefined);
       return {
         success: true,
         data: { item: published },
-        display: `🚀 Veröffentlicht auf **${channel.name}**${result.url ? `: ${result.url}` : ` (ID ${result.externalId})`}`,
+        display: `🚀 Veröffentlicht auf **${channel.name}**${result.url ? `: ${result.url}` : ` (ID ${result.externalId})`}${storyNote ? `\n${storyNote}` : ''}`,
       };
     } catch (err) {
       await this.repo.transition(userId, publishing.id, 'failed', { error: (err as Error).message.slice(0, 500) });
@@ -714,6 +718,86 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     } catch {
       return item; // Übersetzung darf einen Publish NIE verhindern
     }
+  }
+
+  /**
+   * v1007 — Auto-Story: Wurde der LEAD einer Story veröffentlicht und hat die
+   * Familie einen Instagram-Kanal mit config.auto_story=true, postet Alfred
+   * dort eine IG-Story: Bild des IG-Follower-Items → Crop 9:16 → Overlay
+   * (Titel, CTA „Link im Profil", Branding) → public_media-Upload →
+   * publishStory. Opt-in (auto_story), zählt aufs Tages-Limit, dokumentiert
+   * als eigenes content_item — und komplett best-effort: Fehler blockieren
+   * den Lead-Publish nie. @returns Hinweis-Zeile fürs Display oder undefined.
+   */
+  private async maybeAutoStory(userId: string, leadItem: ContentItem, leadChannel: SocialChannel): Promise<string | undefined> {
+    if (!leadItem.storyId) return undefined;
+    const assigns = await this.repo.listAssignments(leadItem.storyId);
+    const mine = assigns.find(a => a.itemId === leadItem.id);
+    if (!mine || mine.role !== 'lead') return undefined;
+    const familyOf = (c: SocialChannel): string | null => {
+      if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
+      return c.projectId ? `project:${c.projectId}` : null;
+    };
+    const channels = await this.repo.listChannels(userId, 'active');
+    const ig = channels.find(c => c.id !== leadChannel.id && c.platform === 'instagram'
+      && c.config.auto_story === true && familyOf(c) !== null && familyOf(c) === familyOf(leadChannel));
+    if (!ig) return undefined;
+    const provider = this.providers.get('instagram');
+    if (!provider || provider.capabilities().supportsStories !== true) return undefined;
+    // Tages-Limit gilt auch für Stories
+    if (await this.repo.countPublishedToday(ig.id) >= ig.maxPostsPerDay) return undefined;
+    // Bild: das IG-Follower-Item derselben Story hat bereits ein passendes Motiv
+    const followerId = assigns.find(a => a.channelId === ig.id)?.itemId;
+    const follower = followerId ? await this.repo.getItem(userId, followerId) : null;
+    const image = follower?.media.find(m => m.type === 'image');
+    if (!image) return undefined;
+    let base: Buffer;
+    if (image.pathOrUrl.startsWith('http')) {
+      const res = await fetch(image.pathOrUrl);
+      if (!res.ok) return undefined;
+      base = Buffer.from(await res.arrayBuffer());
+    } else {
+      const { readFile } = await import('node:fs/promises');
+      base = await readFile(image.pathOrUrl);
+    }
+    const framed = await cropToRatio(base, 9, 16);
+    const withOverlay = await applyImageOverlays(framed, {
+      title: leadItem.title ?? undefined,
+      cta: typeof ig.config.story_cta_text === 'string' && ig.config.story_cta_text.trim() ? ig.config.story_cta_text.trim() : '🔗 Link im Profil',
+      branding: resolveImageBranding(ig, channels),
+    });
+    // Upload über den Medien-Ablageort des IG-Kanals (Meta holt per URL ab)
+    const pmCfg = parsePublicMediaConfig(ig.config.public_media);
+    if (!pmCfg) return undefined;
+    const { writeFile, unlink } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const tmpFile = join(tmpdir(), `alfred-story-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+    await writeFile(tmpFile, withOverlay);
+    let url: string;
+    try {
+      url = await publishPublicMedia(pmCfg, tmpFile, await this.secrets(ig), leadItem.title ?? undefined);
+    } finally {
+      await unlink(tmpFile).catch(() => { /* tmp */ });
+    }
+    const result = await provider.publishStory(url, ig, await this.secrets(ig));
+    // Als eigenes Item dokumentieren (Verlauf, Metriken, delete_remote)
+    try {
+      const doc = await this.repo.createItem(userId, ig.id, {
+        status: 'draft',
+        title: `Story: ${leadItem.title ?? leadItem.body.slice(0, 60)}`,
+        body: `Automatische IG-Story zum Lead-Artikel${leadItem.externalUrl ? ` (${leadItem.externalUrl})` : ''}.`,
+        media: [{ type: 'image', source: 'generated', pathOrUrl: url }],
+        source: 'studio',
+        storyId: leadItem.storyId,
+      });
+      await this.repo.transition(userId, doc.id, 'approved');
+      await this.repo.transition(userId, doc.id, 'published', {
+        publishedAt: new Date().toISOString(), externalId: result.externalId, externalUrl: result.url, error: null,
+      });
+      await this.repo.mergePerformance(userId, doc.id, { format: 'story', autoStory: true }).catch(() => { /* optional */ });
+    } catch { /* Doku ist best-effort — die Story ist bereits live */ }
+    return `📱 IG-Story auf **${ig.name}** ausgelöst${result.url ? ` (${result.url})` : ''}.`;
   }
 
   /** v1001 — Lead-Artikel einer Story finden (published, mit externalUrl); null wenn nicht auflösbar. */
