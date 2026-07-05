@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1011] - 2026-07-05
+
+### Added — Deploy-Health-Check: „Ist nach dem Deploy alles ok?" (v1011)
+
+Neue Aktion `health_check` (Chat: „Prüf die Social-Gesundheit") — ein
+reiner Lese-Bericht über die komplette Social-Kette:
+
+- sharp ladbar (Overlays/Wasserzeichen/Crops), Medien-Ablage
+  beschreibbar (echter Schreibtest), LLM und Bild-Generierung verdrahtet.
+- Je Kanal: Auth (validateAuth), Medien-Ablageort (public_media)
+  erreichbar, Stats-Endpoint-Status — 404 heißt nur „Plattform-Seite
+  noch offen" (informativ), 401/403 warnt konkret vor fehlendem
+  API-Key-Scope.
+- Ergebnis mit Problem-Zähler; besonders nach Deploys mit neuen
+  nativen Dependencies (sharp ab .1002) das Sicherheitsnetz.
+- 2 neue Tests.
+
 ## [0.19.0-multi-ha.1010] - 2026-07-05
 
 ### Added — Lessons-Hygiene: monatliche Konsolidierungs-Vorschläge (v1010)

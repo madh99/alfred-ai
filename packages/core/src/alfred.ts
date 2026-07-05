@@ -6697,6 +6697,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           storyDeduper, // v973
         );
         const studio = this.contentStudio;
+        // v1011 — Health-Check kennt die Medien-Ablage (Schreibtest)
+        socialSkill.setMediaDir(path.resolve(path.dirname(this.config.storage.path), 'social-media'));
         // v993 — Familien-Kanäle planen die GANZE Familie (Redaktionskonferenz), Solo wie bisher
         socialSkill.setStudio(channel => studio.planFamilyFor(channel));
         // v959 — Umplanung bestehender geplanter Beiträge in die aktuellen Slots

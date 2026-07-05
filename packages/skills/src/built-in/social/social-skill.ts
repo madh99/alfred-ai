@@ -23,7 +23,7 @@ export interface CommentBatchInfo {
 
 type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
-  | 'validate_auth' | 'auth_check' | 'pause_all' | 'resume_channel'
+  | 'validate_auth' | 'auth_check' | 'health_check' | 'pause_all' | 'resume_channel'
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
@@ -82,7 +82,7 @@ export class SocialSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'social',
     category: 'automation',
-    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle). "Verknüpfe Thema X mit Kanal Y" = action=link_topic — ein Kanal kann MEHRERE Interessen-Themen speisen. "Korrigiere Beitrag X" = erst get_content (voller Text), dann edit_content mit korrigiertem title/body/hashtags UND einer lesson (was künftig zu beachten ist — der Kanal lernt daraus). "Merke dir für Kanal X: …" = add_lesson. "Zeig die Kommentare (auf Kanal X)" = list_comments; "Antworte auf Kommentar Y: …" = reply_comment (Antwort geht LIVE auf die Plattform); ignore_comment verwirft.',
+    description: 'Social-Media-Kanäle betreiben: Kanäle verwalten (Telegram-Kanal, YouTube, Instagram/Facebook/Threads, X, eigene Plattform via REST), Content-Pipeline (Entwurf → geplant → freigegeben → veröffentlicht), sofort posten (publish_now) oder fertig aufbereiten (prepare-Modus). WICHTIG: JEDE Kanal-Einstellung (Modus, Posting-Slots, Persona, Blacklist, Limits, generate_images, config-Werte wie chat_id/base_url) wird AUSSCHLIESSLICH über action=update_channel geändert — NIEMALS über Datenbank, Shell, delegate oder Sub-Agents. "Erzeuge/generiere Content für <Kanal>" = action=generate_content (Content-Studio). "Social-Stopp" = pause_all. "Poste auf <Kanal>" = add_content + publish_now. "Übernimm/poste das auch auf <Kanal>" = action=crosspost (kopiert ein Item formatgerecht auf andere Kanäle). "Verknüpfe Thema X mit Kanal Y" = action=link_topic — ein Kanal kann MEHRERE Interessen-Themen speisen. "Korrigiere Beitrag X" = erst get_content (voller Text), dann edit_content mit korrigiertem title/body/hashtags UND einer lesson (was künftig zu beachten ist — der Kanal lernt daraus). "Merke dir für Kanal X: …" = add_lesson. "Zeig die Kommentare (auf Kanal X)" = list_comments; "Antworte auf Kommentar Y: …" = reply_comment (Antwort geht LIVE auf die Plattform); ignore_comment verwirft. "Prüf die Social-Gesundheit / Health-Check / alles ok nach dem Deploy?" = action=health_check (sharp/Overlays, Medien-Ablage, LLM, Auth je Kanal, public_media, Stats-Endpoint — nur lesen).',
     riskLevel: 'write',
     version: '1.0.0',
     // v949 — 10 min: generate_content erzeugt bis zu ~10 Posts inkl. je ~20s
@@ -96,7 +96,7 @@ export class SocialSkill extends Skill {
         action: {
           type: 'string',
           enum: ['create_channel', 'list_channels', 'update_channel', 'set_channel_status',
-            'validate_auth', 'auth_check', 'pause_all', 'resume_channel',
+            'validate_auth', 'auth_check', 'health_check', 'pause_all', 'resume_channel',
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
@@ -191,6 +191,8 @@ export class SocialSkill extends Skill {
 
   /** v962 — Bild-Generierung für Ad-hoc-Items (Studio-Leitplanken, vom Kern injiziert; v991: optionaler bildidee-Hinweis). */
   private imageFn?: (channel: SocialChannel, item: { title?: string; body: string; bildidee?: string; performance?: Record<string, unknown> }) => Promise<ContentMedia[]>;
+  /** v1011 — Ablage generierter Bilder (nur für den Health-Check-Schreibtest). */
+  private mediaDir?: string;
 
   setImageGenerator(fn: (channel: SocialChannel, item: { title?: string; body: string; bildidee?: string; performance?: Record<string, unknown> }) => Promise<ContentMedia[]>): void {
     this.imageFn = fn;
@@ -292,6 +294,7 @@ export class SocialSkill extends Skill {
           ];
           return { success: r.failures.length === 0, data: r, display: lines.join('\n'), ...(r.failures.length ? { error: lines.join('\n') } : {}) };
         }
+        case 'health_check': return await this.healthCheck(userId);
         case 'pause_all': return await this.pauseAll(userId);
         case 'resume_channel': return await this.setChannelStatus(userId, { ...input, status: 'active' });
         case 'add_content': return await this.addContent(userId, input);
@@ -1082,6 +1085,90 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
       } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
     }
     return collected;
+  }
+
+  /** v1011 — Ablage generierter Bilder (für den Health-Check-Schreibtest). */
+  setMediaDir(dir: string): void {
+    this.mediaDir = dir;
+  }
+
+  /**
+   * v1011 — Deploy-Health-Check: prüft nach Deploy/Restart die komplette
+   * Social-Kette — sharp (Overlays), mediaDir beschreibbar, LLM/Bild-Pipeline
+   * verdrahtet, je Kanal Auth + public_media + Stats-Endpoint. Nur lesen und
+   * ein Bericht — verändert nichts.
+   */
+  private async healthCheck(userId: string): Promise<SkillResult> {
+    const lines: string[] = [];
+    let problems = 0;
+    // 1. sharp (Bild-Overlays/Crops)
+    try {
+      const { loadSharp } = await import('./image-overlay.js');
+      const sharp = await loadSharp();
+      if (sharp) lines.push('✅ sharp geladen — Wasserzeichen/Termin-Karten/Crops aktiv');
+      else { lines.push('⚠️ sharp NICHT ladbar — Bilder laufen OHNE Overlays (npm install / Plattform-Binary prüfen)'); problems++; }
+    } catch { lines.push('⚠️ sharp-Check fehlgeschlagen'); problems++; }
+    // 2. mediaDir beschreibbar
+    if (this.mediaDir) {
+      try {
+        const { mkdir, writeFile, unlink } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        await mkdir(this.mediaDir, { recursive: true });
+        const probe = join(this.mediaDir, `.health-${Date.now()}`);
+        await writeFile(probe, 'ok');
+        await unlink(probe);
+        lines.push(`✅ Medien-Ablage beschreibbar (${this.mediaDir})`);
+      } catch (err) { lines.push(`❌ Medien-Ablage NICHT beschreibbar: ${(err as Error).message}`); problems++; }
+    } else { lines.push('⚠️ Medien-Ablage nicht verdrahtet (setMediaDir fehlt)'); problems++; }
+    // 3. LLM + Bild-Generierung
+    lines.push(this.llm ? '✅ LLM verfügbar' : '❌ LLM fehlt — Studio/Übersetzungen/Triage laufen nicht');
+    if (!this.llm) problems++;
+    lines.push(this.imageFn ? '✅ Bild-Generierung verdrahtet' : '⚠️ Bild-Generierung nicht verdrahtet');
+    // 4. je Kanal: Provider, Auth, public_media, Stats-Endpoint
+    const channels = await this.repo.listChannels(userId, 'active');
+    for (const channel of channels) {
+      const provider = this.providers.get(channel.platform);
+      if (!provider) { lines.push(`❌ ${channel.name}: kein Provider für ${channel.platform}`); problems++; continue; }
+      try {
+        const auth = await provider.validateAuth(channel, await this.secrets(channel));
+        if (auth.ok) lines.push(`✅ ${channel.name}: Auth ok${auth.detail ? ` (${auth.detail})` : ''}`);
+        else { lines.push(`❌ ${channel.name}: Auth fehlgeschlagen — ${auth.detail ?? '?'}`); problems++; }
+      } catch (err) { lines.push(`❌ ${channel.name}: Auth-Check-Fehler — ${(err as Error).message}`); problems++; }
+      const pm = parsePublicMediaConfig(channel.config.public_media);
+      if (pm && pm.provider === 'rest') {
+        try {
+          const res = await fetch(pm.base_url);
+          if (res.status < 500) lines.push(`✅ ${channel.name}: Medien-Ablageort erreichbar (${pm.base_url})`);
+          else { lines.push(`⚠️ ${channel.name}: Medien-Ablageort antwortet mit HTTP ${res.status}`); problems++; }
+        } catch { lines.push(`❌ ${channel.name}: Medien-Ablageort NICHT erreichbar (${pm.base_url}) — IG/FB-Bild-Posts scheitern`); problems++; }
+      }
+      if (channel.platform === 'rest' && typeof channel.config.base_url === 'string' && channel.config.traffic_stats !== false) {
+        const base = channel.config.base_url.replace(/\/+$/, '');
+        const statsPath = typeof channel.config.stats_path === 'string' && channel.config.stats_path.trim() ? channel.config.stats_path.trim() : '/api/integrations/stats';
+        try {
+          const secrets = await this.secrets(channel);
+          const headers: Record<string, string> = {};
+          if (secrets.API_TOKEN) headers.Authorization = `Bearer ${secrets.API_TOKEN}`;
+          const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+          if (channel.config.insecure_tls === true) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+          let res: Response;
+          try {
+            res = await fetch(`${base}${statsPath.startsWith('/') ? statsPath : `/${statsPath}`}?since=${encodeURIComponent(new Date(Date.now() - 24 * 3_600_000).toISOString())}`, { headers });
+          } finally {
+            if (channel.config.insecure_tls === true) {
+              if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+              else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
+            }
+          }
+          if (res.ok) lines.push(`✅ ${channel.name}: Klick-Rückkanal aktiv (Stats-Endpoint antwortet)`);
+          else if (res.status === 404) lines.push(`ℹ️ ${channel.name}: Stats-Endpoint noch nicht vorhanden (Plattform-Seite offen) — Klick-Rückkanal wartet`);
+          else if (res.status === 401 || res.status === 403) { lines.push(`⚠️ ${channel.name}: Stats-Endpoint verweigert (HTTP ${res.status}) — API-Key-Scope prüfen (z. B. stats:read)`); problems++; }
+          else { lines.push(`⚠️ ${channel.name}: Stats-Endpoint HTTP ${res.status}`); problems++; }
+        } catch { lines.push(`⚠️ ${channel.name}: Stats-Endpoint nicht erreichbar`); problems++; }
+      }
+    }
+    const header = problems === 0 ? '🩺 Social-Health-Check: alles in Ordnung.' : `🩺 Social-Health-Check: ${problems} Problem(e) gefunden.`;
+    return { success: true, data: { problems }, display: `${header}\n${lines.join('\n')}` };
   }
 
   /**

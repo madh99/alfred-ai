@@ -231,6 +231,46 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
   });
 });
 
+describe('v1011 — health_check (Deploy-Sicherheitsnetz)', () => {
+  it('prüft sharp, Medien-Ablage, LLM, Auth und Stats-Endpoint (404 = informativ, kein Problem)', async () => {
+    const { tmpdir } = await import('node:os');
+    const channel = makeChannel({ platform: 'rest', config: { base_url: 'https://cc.example' } });
+    const { skill } = makeSkill(channel, makeItem({ channelId: 'ch-1' }));
+    const rest = new FakeProvider('rest');
+    skill.registerProvider(rest);
+    skill.setMediaDir(tmpdir());
+    (skill as any).llm = { complete: vi.fn() };
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }));
+    const orig = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    let r;
+    try {
+      r = await skill.execute({ action: 'health_check' }, CTX);
+    } finally { globalThis.fetch = orig; }
+    expect(r.success).toBe(true);
+    expect(r.display).toContain('✅ sharp geladen');
+    expect(r.display).toContain('✅ Medien-Ablage beschreibbar');
+    expect(r.display).toContain('✅ LLM verfügbar');
+    expect(r.display).toContain('Auth ok');
+    expect(r.display).toContain('Stats-Endpoint noch nicht vorhanden');
+    expect((r.data as any).problems).toBe(0);
+  });
+
+  it('401 am Stats-Endpoint → Scope-Warnung als Problem gezählt', async () => {
+    const channel = makeChannel({ platform: 'rest', config: { base_url: 'https://cc.example' } });
+    const { skill } = makeSkill(channel, makeItem({ channelId: 'ch-1' }));
+    skill.registerProvider(new FakeProvider('rest'));
+    (skill as any).llm = { complete: vi.fn() };
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) }));
+    const orig = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    let r;
+    try { r = await skill.execute({ action: 'health_check' }, CTX); } finally { globalThis.fetch = orig; }
+    expect(r.display).toContain('API-Key-Scope prüfen');
+    expect((r.data as any).problems).toBeGreaterThan(0);
+  });
+});
+
 describe('v1010 — Lessons-Hygiene (Konsolidierungs-Vorschlag)', () => {
   it('>5 Lektionen → Vorschlag mit Vorher/Nachher; ≤5 → nichts (kein LLM-Call)', async () => {
     const many = ['WM nicht EM', 'Es ist die WM 2026, nicht die EM', 'Ort immer nennen', 'Der Kanal ist Medium, nicht Veranstalter', 'Keine relativen Zeitwörter', 'Runde exakt aus dem Dossier', 'Hashtags nie in den Body'];
