@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1015] - 2026-07-06
+
+### Added — Kanal-Wizard: Kanäle geführt in der UI anlegen (v1015)
+
+Kanäle entstanden bisher nur per Chat — jetzt gibt es ein geführtes
+Formular im Kanäle-Tab:
+
+- Plattform-Auswahl (inkl. Bluesky) mit **Pflichtfeldern je Plattform**
+  (chat_id, base_url, ig_user_id, page_id, handle, …) und dem passenden
+  **Secrets-Hinweis** (welcher Token in welche ENV-Stage gehört).
+- Modus, Publish-Modus, optionale Projekt-Bindung (Familie!) und Persona
+  in einem Schritt; Anlage läuft durch den Skill — alle Leitplanken,
+  Best-Practice-Slots und Warnhinweise (z. B. public_media bei Meta)
+  bleiben erhalten. Erstpost-Sperre gilt wie immer.
+- API: `POST /api/social/channels`.
+
 ## [0.19.0-multi-ha.1014] - 2026-07-05
 
 ### Added — Bild-Bibliothek-UI: Basis-Bilder sichtbar und steuerbar (v1014)

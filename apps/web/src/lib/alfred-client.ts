@@ -512,6 +512,14 @@ export class AlfredClient {
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
 
+  // v1015 — Kanal-Wizard: neuen Kanal anlegen (läuft durch den Skill inkl. Leitplanken)
+  async socialCreateChannel(payload: { platform: string; name: string; project?: string; mode?: string; publish_mode?: string; persona?: string; config?: Record<string, unknown> }): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/channels`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(payload),
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+
   // v1014 — Bild-Bibliothek: Assets listen + sperren/löschen
   async fetchSocialAssets(): Promise<SocialAssetItem[]> {
     const res = await fetch(`${this.baseUrl}/api/social/assets`, { headers: this.authHeaders });

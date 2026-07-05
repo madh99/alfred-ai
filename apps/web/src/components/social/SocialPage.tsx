@@ -55,6 +55,18 @@ const PAGE_LABEL: Record<QueueTab, string> = {
   channels: '📡 Kanäle', comments: '💬 Kommentare', analytics: '📊 Analytics',
 };
 
+/** v1015 — Kanal-Wizard: Pflichtfelder + Secrets-Hinweise je Plattform. */
+const PLATFORM_WIZARD: Record<string, { label: string; fields: Array<{ key: string; label: string; placeholder: string }>; hint: string }> = {
+  telegram_channel: { label: '✈️ Telegram-Kanal', fields: [{ key: 'chat_id', label: 'Chat-ID / @handle', placeholder: '@meinkanal' }], hint: 'Der Bot muss Kanal-Admin sein (globaler Bot-Token oder Secret TELEGRAM_BOT_TOKEN in der ENV-Stage).' },
+  rest: { label: '🌐 Eigene Plattform (REST)', fields: [{ key: 'base_url', label: 'Basis-URL', placeholder: 'https://meine-site.tld' }, { key: 'publish_path', label: 'Publish-Pfad (optional)', placeholder: '/api/posts' }], hint: 'Secret API_TOKEN in der ENV-Stage des Kanals; body_template/url_template per Chat feinjustierbar.' },
+  instagram: { label: '📸 Instagram', fields: [{ key: 'ig_user_id', label: 'IG-User-ID', placeholder: '17841…' }], hint: 'Secret META_ACCESS_TOKEN (ENV-Stage social). Für generierte Bilder zusätzlich public_media konfigurieren (per Chat) — sonst scheitern Bild-Posts.' },
+  facebook: { label: '👥 Facebook-Page', fields: [{ key: 'page_id', label: 'Page-ID', placeholder: '1176…' }], hint: 'Secret META_ACCESS_TOKEN (ENV-Stage social); Meta-App muss live sein.' },
+  threads: { label: '🧵 Threads', fields: [{ key: 'threads_user_id', label: 'Threads-User-ID', placeholder: '…' }], hint: 'Secret THREADS_ACCESS_TOKEN oder META_ACCESS_TOKEN (ENV-Stage social).' },
+  x: { label: '𝕏 X', fields: [], hint: 'Secret X_ACCESS_TOKEN (ENV-Stage social); Free-Tier ggf. config.max_posts_per_month setzen.' },
+  bluesky: { label: '🦋 Bluesky', fields: [{ key: 'handle', label: 'Handle', placeholder: 'meinname.bsky.social' }], hint: 'Secret BLUESKY_APP_PASSWORD (App-Passwort aus den Bluesky-Einstellungen — NIE das Konto-Passwort). Bilder werden direkt hochgeladen, Links sind klickbar.' },
+  youtube: { label: '▶️ YouTube', fields: [], hint: 'OAuth-Secrets YT_CLIENT_ID / YT_CLIENT_SECRET / YT_REFRESH_TOKEN (ENV-Stage social).' },
+};
+
 /** v1006 — Sprachen für die Kanal-Einstellungen (Code → Anzeigename). */
 const LANGS: Array<[string, string]> = [
   ['de', 'Deutsch'], ['en', 'Englisch'], ['fr', 'Französisch'], ['it', 'Italienisch'],
@@ -127,6 +139,10 @@ export function SocialPage() {
   const [assets, setAssets] = useState<SocialAssetItem[]>([]);
   const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
   const [assetsOpen, setAssetsOpen] = useState(false);
+  // v1015 — Kanal-Wizard
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizard, setWizard] = useState<{ platform: string; name: string; project: string; mode: string; publishMode: string; persona: string; fields: Record<string, string> }>(
+    { platform: 'telegram_channel', name: '', project: '', mode: 'approve', publishMode: 'api', persona: '', fields: {} });
   // v964 — Umterminieren (Inline-Datepicker je Item)
   const [reschedulingId, setReschedulingId] = useState<string | null>(null);
   const [rescheduleAt, setRescheduleAt] = useState<string>('');
@@ -258,6 +274,33 @@ export function SocialPage() {
   }, [client]);
 
   useEffect(() => { if (page === 'channels' && assetsOpen) loadAssets(); }, [page, assetsOpen, loadAssets]);
+
+  // v1015 — Kanal anlegen (durch den Skill, alle Leitplanken + Hinweise inklusive)
+  async function submitWizard() {
+    if (!wizard.name.trim()) { setError('Kanal-Name erforderlich.'); return; }
+    const meta = PLATFORM_WIZARD[wizard.platform];
+    for (const f of meta?.fields ?? []) {
+      if (!f.label.includes('optional') && !(wizard.fields[f.key] ?? '').trim()) {
+        setError(`${f.label} erforderlich.`); return;
+      }
+    }
+    await withBusy('wizard', async () => {
+      const config: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(wizard.fields)) if (v.trim()) config[k] = v.trim();
+      const r = await client!.socialCreateChannel({
+        platform: wizard.platform, name: wizard.name.trim(),
+        project: wizard.project.trim() || undefined,
+        mode: wizard.mode, publish_mode: wizard.publishMode,
+        persona: wizard.persona.trim() || undefined,
+        config: Object.keys(config).length > 0 ? config : undefined,
+      });
+      if (!r.success) throw new Error(r.error ?? 'Anlegen fehlgeschlagen');
+      if (r.display) setNotice(r.display);
+      setWizardOpen(false);
+      setWizard(w => ({ ...w, name: '', persona: '', fields: {} }));
+      await load();
+    });
+  }
 
   async function assetAction(a: SocialAssetItem, action: 'block' | 'unblock' | 'delete') {
     if (action === 'delete' && !confirm('Basis-Bild endgültig aus der Bibliothek löschen (Datei + Eintrag)?')) return;
@@ -1420,6 +1463,86 @@ export function SocialPage() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* v1015 — Kanal-Wizard */}
+      {page === 'channels' && (
+        <div className="border border-emerald-500/20 rounded-lg p-4">
+          <button onClick={() => setWizardOpen(o => !o)} className="w-full text-left flex items-center gap-2">
+            <span className="text-sm font-semibold text-emerald-300">➕ Neuer Kanal</span>
+            <span className="text-[11px] text-gray-500">— geführt anlegen (Plattform, Pflichtfelder, Secrets-Hinweise)</span>
+            <div className="flex-1" />
+            <span className="text-gray-500 text-xs">{wizardOpen ? '▲' : '▼'}</span>
+          </button>
+          {wizardOpen && (
+            <div className="mt-3 space-y-2">
+              <div className="grid md:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] text-gray-500">Plattform</label>
+                  <select value={wizard.platform} onChange={e => setWizard(w => ({ ...w, platform: e.target.value, fields: {} }))}
+                    className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1">
+                    {Object.entries(PLATFORM_WIZARD).map(([p, m]) => <option key={p} value={p}>{m.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] text-gray-500">Kanal-Name</label>
+                  <input value={wizard.name} onChange={e => setWizard(w => ({ ...w, name: e.target.value }))} placeholder="z. B. FussballCC Bluesky"
+                    className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                </div>
+              </div>
+              {(PLATFORM_WIZARD[wizard.platform]?.fields ?? []).length > 0 && (
+                <div className="grid md:grid-cols-2 gap-2">
+                  {PLATFORM_WIZARD[wizard.platform].fields.map(f => (
+                    <div key={f.key}>
+                      <label className="text-[11px] text-gray-500">{f.label}</label>
+                      <input value={wizard.fields[f.key] ?? ''} onChange={e => setWizard(w => ({ ...w, fields: { ...w.fields, [f.key]: e.target.value } }))}
+                        placeholder={f.placeholder}
+                        className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="text-[10px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded px-2 py-1">
+                🔑 {PLATFORM_WIZARD[wizard.platform]?.hint}
+              </div>
+              <div className="grid md:grid-cols-3 gap-2">
+                <div>
+                  <label className="text-[11px] text-gray-500">Modus</label>
+                  <select value={wizard.mode} onChange={e => setWizard(w => ({ ...w, mode: e.target.value }))}
+                    className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1">
+                    {Object.entries(MODE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] text-gray-500">Publish</label>
+                  <select value={wizard.publishMode} onChange={e => setWizard(w => ({ ...w, publishMode: e.target.value }))}
+                    className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1">
+                    <option value="api">api — Alfred postet selbst</option>
+                    <option value="prepare">prepare — Alfred bereitet nur auf</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] text-gray-500">Projekt (optional — Familien-Bindung)</label>
+                  <input value={wizard.project} onChange={e => setWizard(w => ({ ...w, project: e.target.value }))} placeholder="Projekt-Name"
+                    className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] text-gray-500">Persona / Rolle (optional)</label>
+                <textarea value={wizard.persona} onChange={e => setWizard(w => ({ ...w, persona: e.target.value }))} rows={2}
+                  placeholder="Ton, Länge, Blickwinkel dieses Kanals"
+                  className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={submitWizard} disabled={busy === 'wizard'}
+                  className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded">
+                  {busy === 'wizard' ? '⏳ lege an …' : '📣 Kanal anlegen'}
+                </button>
+                <span className="text-[10px] text-gray-600">Erstpost-Sperre: die ersten 5 Posts brauchen immer deine Freigabe. Slots kommen als Plattform-Best-Practice, anpassbar in den Einstellungen.</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

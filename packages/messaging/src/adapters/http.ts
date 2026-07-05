@@ -716,6 +716,8 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1014 — Bild-Bibliothek: Assets listen + sperren/löschen. */
     listAssets?: () => Promise<any[]>;
     assetAction?: (id: string, action: 'block' | 'unblock' | 'delete') => Promise<{ success: boolean; error?: string }>;
+    /** v1015 — Kanal-Wizard: neuen Kanal anlegen (läuft durch den Skill). */
+    createChannel?: (payload: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
   };
 
   setSocialCallbacks(cb: NonNullable<HttpAdapter['socialCallbacks']>): void {
@@ -1368,6 +1370,12 @@ export class HttpAdapter extends MessagingAdapter {
           status: url.searchParams.get('status') ?? undefined,
         }) ?? [],
       })).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/channels' && req.method === 'POST') {
+      // v1015 — Kanal-Wizard
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.createChannel) return { error: 'not supported' };
+        return this.socialCallbacks.createChannel(body);
+      }).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/social/assets' && req.method === 'GET') {
       // v1014 — Bild-Bibliothek
       this.handleSocial(req, res, async () => ({ assets: await this.socialCallbacks!.listAssets?.() ?? [] })).catch(err => this.safeError(res, err));

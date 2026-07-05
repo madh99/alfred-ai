@@ -8227,6 +8227,29 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { success: r.success, error: r.error };
           },
           pauseAll: async () => socialRepo.pauseAll(socialOwner),
+          // v1015 — Kanal-Wizard: Anlage läuft durch den Skill (Leitplanken + Hinweise)
+          createChannel: async (payload: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'create_channel',
+              platform: payload.platform, name: payload.name,
+              ...(typeof payload.project === 'string' && payload.project ? { project: payload.project } : {}),
+              publish_mode: payload.publish_mode === 'api' ? 'api' : 'prepare',
+              ...(payload.config && typeof payload.config === 'object' ? { config: payload.config } : {}),
+            }, socialCtx);
+            // Persona/Modus gleich mitsetzen, wenn angegeben
+            if (r.success && (typeof payload.persona === 'string' && payload.persona.trim() || typeof payload.mode === 'string')) {
+              const created = (r.data as { channel?: { id?: string } } | undefined)?.channel;
+              if (created?.id) {
+                await socialSkillForApi.execute({
+                  action: 'update_channel', channel: created.id,
+                  ...(typeof payload.persona === 'string' && payload.persona.trim() ? { persona: payload.persona.trim() } : {}),
+                  ...(payload.mode === 'suggest' || payload.mode === 'approve' || payload.mode === 'autonomous' ? { mode: payload.mode } : {}),
+                }, socialCtx).catch(() => { /* Kanal existiert — Feinschliff optional */ });
+              }
+            }
+            return { success: r.success, display: r.display, error: r.error };
+          },
           // v1014 — Bild-Bibliothek (Basename fürs bestehende media-Endpoint mitliefern)
           listAssets: async () => {
             const assets = await socialRepo.listMediaAssets(socialOwner, { limit: 200 });
