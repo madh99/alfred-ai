@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.984] - 2026-07-05
+
+### Added — Auth-Watchdog: IG-Token-Refresh + täglicher Kanal-Auth-Check (v984)
+
+Instagram-Long-lived-Tokens der „Instagram-Anmeldung"-Apps (IG…-Präfix)
+laufen nach 60 Tagen ab und müssen aktiv per `refresh_access_token`
+verlängert werden — bisher hätte der IG-Kanal Anfang September stumm
+aufgehört zu posten.
+
+- Täglicher Auth-Health-Check (06:00, HA-Slot): erneuert IG-Tokens über
+  die Graph-API und schreibt sie verschlüsselt in die ENV-Stage des
+  Kanals zurück (neuer `setSecretsWriter`-Hook); Metas „token too new"
+  (Refresh erst ab 24h Token-Alter) gilt nicht als Fehler.
+- Danach `validateAuth` je aktivem Kanal — Fehlschläge erzeugen einen
+  high-Insight („Kanal-Auth-Problem") statt eines stummen Publish-Ausfalls
+  irgendwann später.
+- Neue Skill-Action `auth_check` für den manuellen Lauf („prüfe die
+  Social-Auth"), Ergebnis mit erneuerten Tokens und Problemen je Kanal.
+- 2 neue Tests (Refresh + Rückschreiben; too-new/EAA-Ausnahmen +
+  failure-Sammlung).
+
 ## [0.19.0-multi-ha.983] - 2026-07-05
 
 ### Fixed — Freigegebene Beiträge hingen stundenlang „überfällig": Publish-Gate termin-bewusst, Engine ohne Endlos-Retry (v983)

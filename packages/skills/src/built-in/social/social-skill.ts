@@ -8,7 +8,7 @@ import { isNearDuplicateTitle } from './dedup.js';
 
 type SocialAction =
   | 'create_channel' | 'list_channels' | 'update_channel' | 'set_channel_status'
-  | 'validate_auth' | 'pause_all' | 'resume_channel'
+  | 'validate_auth' | 'auth_check' | 'pause_all' | 'resume_channel'
   | 'add_content' | 'list_content' | 'schedule_content' | 'approve_content'
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
@@ -79,7 +79,7 @@ export class SocialSkill extends Skill {
         action: {
           type: 'string',
           enum: ['create_channel', 'list_channels', 'update_channel', 'set_channel_status',
-            'validate_auth', 'pause_all', 'resume_channel',
+            'validate_auth', 'auth_check', 'pause_all', 'resume_channel',
             'add_content', 'list_content', 'schedule_content', 'approve_content',
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
@@ -192,6 +192,60 @@ export class SocialSkill extends Skill {
     this.resolveSecretsFn = fn;
   }
 
+  /** v984 — Secrets ZURÜCKschreiben (Token-Refresh): patch wird in die ENV-Stage des Kanals gemergt. */
+  private secretsWriterFn?: (channel: SocialChannel, patch: Record<string, string>) => Promise<void>;
+
+  setSecretsWriter(fn: (channel: SocialChannel, patch: Record<string, string>) => Promise<void>): void {
+    this.secretsWriterFn = fn;
+  }
+
+  /**
+   * v984 — Auth-Health-Check über alle aktiven Kanäle (täglich vom Kern
+   * aufgerufen, manuell via action auth_check).
+   *
+   * Kern-Anlass: Instagram-Long-lived-Tokens der „Instagram-Anmeldung"-Apps
+   * (IG…-Präfix) laufen nach 60 Tagen ab und MÜSSEN per refresh_access_token
+   * verlängert werden — ohne Refresh fällt der Kanal eines Tages stumm aus.
+   * Der Check erneuert solche Tokens (Meta erlaubt Refresh erst ab 24h
+   * Token-Alter — „too new" ist deshalb KEIN Fehler) und validiert danach
+   * jeden Kanal über provider.validateAuth.
+   */
+  async authHealthCheck(userId: string): Promise<{ checked: number; refreshed: string[]; failures: Array<{ channel: string; detail: string }> }> {
+    const channels = await this.repo.listChannels(userId, 'active');
+    const refreshed: string[] = [];
+    const failures: Array<{ channel: string; detail: string }> = [];
+    let checked = 0;
+    for (const channel of channels) {
+      const provider = this.providers.get(channel.platform);
+      if (!provider) continue;
+      const secrets = await this.secrets(channel);
+      if (channel.platform === 'instagram' && secrets.META_ACCESS_TOKEN?.startsWith('IG') && this.secretsWriterFn) {
+        try {
+          const res = await fetch(`https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(secrets.META_ACCESS_TOKEN)}`);
+          const data = await res.json().catch(() => ({})) as { access_token?: string; expires_in?: number; error?: { message?: string } };
+          if (res.ok && typeof data.access_token === 'string' && data.access_token) {
+            await this.secretsWriterFn(channel, { META_ACCESS_TOKEN: data.access_token });
+            secrets.META_ACCESS_TOKEN = data.access_token;
+            refreshed.push(channel.name);
+          } else {
+            const msg = data.error?.message ?? `HTTP ${res.status}`;
+            if (!/too new|24 hours/i.test(msg)) failures.push({ channel: channel.name, detail: `IG-Token-Refresh fehlgeschlagen: ${msg}` });
+          }
+        } catch (err) {
+          failures.push({ channel: channel.name, detail: `IG-Token-Refresh: ${(err as Error).message}` });
+        }
+      }
+      try {
+        checked++;
+        const v = await provider.validateAuth(channel, secrets);
+        if (!v.ok) failures.push({ channel: channel.name, detail: v.detail ?? 'Auth ungültig' });
+      } catch (err) {
+        failures.push({ channel: channel.name, detail: (err as Error).message });
+      }
+    }
+    return { checked, refreshed, failures };
+  }
+
   setProjectResolver(fn: (nameOrId: string) => Promise<string | null>): void {
     this.resolveProjectFn = fn;
   }
@@ -206,6 +260,16 @@ export class SocialSkill extends Skill {
         case 'update_channel': return await this.updateChannel(userId, input);
         case 'set_channel_status': return await this.setChannelStatus(userId, input);
         case 'validate_auth': return await this.validateAuth(userId, input);
+        case 'auth_check': {
+          // v984 — alle Kanäle prüfen + IG-Tokens erneuern (manueller Trigger)
+          const r = await this.authHealthCheck(userId);
+          const lines = [
+            `🔑 Auth-Check: ${r.checked} Kanäle geprüft.`,
+            ...(r.refreshed.length ? [`♻️ Token erneuert: ${r.refreshed.join(', ')}`] : []),
+            ...(r.failures.length ? r.failures.map(f => `❌ ${f.channel}: ${f.detail}`) : ['✅ Alle Kanäle in Ordnung.']),
+          ];
+          return { success: r.failures.length === 0, data: r, display: lines.join('\n'), ...(r.failures.length ? { error: lines.join('\n') } : {}) };
+        }
         case 'pause_all': return await this.pauseAll(userId);
         case 'resume_channel': return await this.setChannelStatus(userId, { ...input, status: 'active' });
         case 'add_content': return await this.addContent(userId, input);

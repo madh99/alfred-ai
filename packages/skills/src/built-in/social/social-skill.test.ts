@@ -276,6 +276,66 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(r.success).toBe(true);
   });
 
+  it('v984: authHealthCheck erneuert IG-Long-lived-Token und schreibt ihn zurück', async () => {
+    const channel = makeChannel({ platform: 'test', name: 'IG-Testkanal' });
+    // Der Refresh-Zweig hängt an platform 'instagram' — Kanal entsprechend
+    (channel as any).platform = 'instagram';
+    const { repo } = makeRepo(channel, makeItem());
+    const skill = new SocialSkill(repo);
+    const provider = new FakeProvider();
+    (provider as any).platform = 'instagram';
+    skill.registerProvider(provider);
+    skill.setSecretsResolver(async () => ({ META_ACCESS_TOKEN: 'IGAAalterToken' }));
+    const written: Array<Record<string, string>> = [];
+    skill.setSecretsWriter(async (_c, patch) => { written.push(patch); });
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ access_token: 'IGAAneuerToken', token_type: 'bearer', expires_in: 5183944 }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const r = await skill.authHealthCheck('u1');
+      expect(r.refreshed).toEqual(['IG-Testkanal']);
+      expect(written).toEqual([{ META_ACCESS_TOKEN: 'IGAAneuerToken' }]);
+      expect(String((fetchMock.mock.calls[0] as any)[0])).toContain('refresh_access_token');
+      expect(r.failures).toEqual([]);
+      expect(r.checked).toBe(1);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('v984: „token too new" ist KEIN Fehler; EAA-Token wird nicht refresht; Auth-Fehler landet in failures', async () => {
+    const ig = makeChannel({ id: 'ch-ig', name: 'IG' });
+    (ig as any).platform = 'instagram';
+    const fb = makeChannel({ id: 'ch-fb', name: 'FB' });
+    (fb as any).platform = 'facebook';
+    const { repo } = makeRepo(ig, makeItem());
+    (repo as any).listChannels = vi.fn(async () => [ig, fb]);
+    const skill = new SocialSkill(repo);
+    const igProvider = new FakeProvider();
+    (igProvider as any).platform = 'instagram';
+    const fbProvider = new FakeProvider();
+    (fbProvider as any).platform = 'facebook';
+    (fbProvider as any).validateAuth = vi.fn(async () => ({ ok: false, detail: 'Invalid OAuth access token' }));
+    skill.registerProvider(igProvider);
+    skill.registerProvider(fbProvider);
+    skill.setSecretsResolver(async (c) => ({ META_ACCESS_TOKEN: c.id === 'ch-ig' ? 'IGAAtok' : 'EAAtok' }));
+    skill.setSecretsWriter(async () => {});
+    const fetchMock = vi.fn(async () => ({
+      ok: false, status: 400,
+      json: async () => ({ error: { message: 'Access token is too new to be refreshed (min age 24 hours)' } }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const r = await skill.authHealthCheck('u1');
+      // Refresh nur für den IG-Kanal versucht (EAA = Facebook-Login-Token, kein Refresh-Endpoint)
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // too-new ist kein failure; der FB-Auth-Fehler schon
+      expect(r.failures).toEqual([{ channel: 'FB', detail: 'Invalid OAuth access token' }]);
+      expect(r.refreshed).toEqual([]);
+      expect(r.checked).toBe(2);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('pause_all = Social-Stopp', async () => {
     const { skill } = makeSkill(makeChannel(), makeItem());
     const r = await skill.execute({ action: 'pause_all' }, CTX);

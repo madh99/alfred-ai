@@ -5567,6 +5567,22 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           return {};
         }
       });
+      // v984 — Token-Refresh schreibt erneuerte Secrets zurück in die ENV-Stage
+      // des Kanals (gemergt, verschlüsselt — gleiche Ablage wie beim Lesen).
+      socialSkill.setSecretsWriter(async (channel, patch) => {
+        if (!channel.projectId || !this.envRepoRef || !this.envCryptoRef) {
+          throw new Error('ENV-Stage nicht verfügbar (Kanal ohne Projekt oder Env-Crypto fehlt)');
+        }
+        const stage = typeof channel.config.env_stage === 'string' ? channel.config.env_stage : 'social';
+        const entry = await this.envRepoRef.get(channel.projectId, stage);
+        const current = entry ? this.envCryptoRef.decrypt(entry.varsEncrypted, entry.iv, entry.authTag) : {};
+        const enc = this.envCryptoRef.encrypt({ ...current, ...patch });
+        await this.envRepoRef.upsert({
+          projectId: channel.projectId, stage,
+          varsEncrypted: enc.ciphertext, iv: enc.iv, authTag: enc.authTag,
+        });
+        this.logger.info({ channel: channel.name, stage, keys: Object.keys(patch) }, 'v984 channel secrets refreshed');
+      });
       socialSkill.setProjectResolver(async (nameOrId) => {
         if (!this.projectRepo) return null;
         const ownerUid = this.tryOwner();
@@ -6717,9 +6733,32 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         }
         let lastStudioDay = '';
         let lastAnalyticsDay = '';
+        let lastAuthDay = '';
         this.contentStudioTimer = setInterval(async () => {
           const now = new Date();
           const today = now.toISOString().slice(0, 10);
+          // v984 — 06:00 Auth-Health-Check: IG-Long-lived-Tokens erneuern
+          // (laufen sonst nach 60 Tagen stumm ab) + validateAuth je Kanal;
+          // Fehler landen als high-Insight beim User.
+          if (now.getHours() === 6 && now.getMinutes() < 30 && lastAuthDay !== today) {
+            lastAuthDay = today;
+            if (await this.claimDailySlot(`social-auth:${today}`)) {
+              try {
+                const r = await socialSkill.authHealthCheck(ownerUid);
+                if (r.refreshed.length > 0) this.logger.info({ refreshed: r.refreshed }, 'v984 social tokens refreshed');
+                for (const f of r.failures) {
+                  await this.insightsRepo?.upsertCandidate(ownerUid, {
+                    category: 'social',
+                    title: `Kanal-Auth-Problem: ${f.channel}`,
+                    body: `Der tägliche Auth-Check meldet:\n${f.detail}\n\nKanal prüfen (validate_auth) bzw. Token in der ENV-Stage erneuern — sonst schlagen Publishes fehl.`,
+                    confidence: 0.9,
+                    sourceData: { router: true, urgency: 'high' },
+                    dedupeKey: `social-auth:${f.channel}`,
+                  }).catch(() => { /* non-critical */ });
+                }
+              } catch (err) { this.logger.warn({ err }, 'v984 auth health check failed'); }
+            }
+          }
           // v936 — 07:00 Analytics einsammeln (vor dem Studio, damit
           // Bestperformer frisch sind); sonntags zusätzlich Nischen-Report
           if (now.getHours() === 7 && now.getMinutes() < 30 && lastAnalyticsDay !== today) {
