@@ -20,7 +20,8 @@ export function formatPreparedPost(item: ContentItem, channel: SocialChannel): s
     `📤 **Fertig aufbereitet für ${channel.name}** (${channel.platform}, manuell posten):`,
     '',
     '```',
-    composePostText(item),
+    // v985 — auch der prepare-Text trägt die KI-Kennzeichnung
+    composePostText(item, undefined, channel),
     '```',
   ];
   if (item.media.length > 0) {

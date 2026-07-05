@@ -86,6 +86,28 @@ describe('composePostText', () => {
     expect(text.length).toBeLessThanOrEqual(120);
     expect(text).toContain('#tag');
   });
+
+  it('v985: generiertes Medium → KI-Kennzeichnung im Text (Default an, überlebt Kürzung)', () => {
+    const item = makeItem({
+      body: 'y'.repeat(500), hashtags: ['tag'],
+      media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/x.png' }],
+    });
+    const text = composePostText(item, 160, makeChannel());
+    expect(text).toContain('Bild: KI-generiert');
+    expect(text.length).toBeLessThanOrEqual(160);
+    // eigener Text + Abschalten per Kanal-Config
+    const custom = composePostText(item, undefined, makeChannel({ config: { ai_disclosure_text: 'Symbolbild (KI)' } }));
+    expect(custom).toContain('Symbolbild (KI)');
+    const off = composePostText(item, undefined, makeChannel({ config: { ai_disclosure: false } }));
+    expect(off).not.toContain('KI-generiert');
+  });
+
+  it('v985: ohne generiertes Medium bzw. ohne Kanal keine Kennzeichnung', () => {
+    const plain = makeItem({ media: [{ type: 'image', source: 'external', pathOrUrl: 'https://x/y.png' }] as any });
+    expect(composePostText(plain, undefined, makeChannel())).not.toContain('KI-generiert');
+    const generated = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/x.png' }] });
+    expect(composePostText(generated)).not.toContain('KI-generiert');
+  });
 });
 
 describe('SocialSkill — Veröffentlichung + Leitplanken', () => {

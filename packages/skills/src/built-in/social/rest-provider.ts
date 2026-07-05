@@ -1,5 +1,5 @@
 import type { SocialChannel, ContentItem } from '@alfred/storage';
-import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult } from './social-provider.js';
+import { SocialProvider, composePostText, aiDisclosure, type ProviderCapabilities, type PublishResult } from './social-provider.js';
 
 /**
  * v933 — Generic-REST-Provider: published an eine eigene Plattform-API
@@ -60,6 +60,10 @@ export class RestProvider extends SocialProvider {
   }
 
   private buildBody(item: ContentItem, channel: SocialChannel): Record<string, unknown> {
+    // v985 — KI-Kennzeichnung auch für Website-Artikel: der Hinweis hängt am
+    // Body-Ende (Default „Bild: KI-generiert", per Kanal abschalt-/anpassbar).
+    const disclosure = aiDisclosure(item, channel);
+    const bodyText = disclosure ? `${item.body}\n\n${disclosure}` : item.body;
     const template = channel.config.body_template;
     if (template && typeof template === 'object') {
       const substitute = (v: unknown): unknown => {
@@ -68,8 +72,8 @@ export class RestProvider extends SocialProvider {
           if (v === '{{hashtags}}') return item.hashtags;
           return v
             .replace(/\{\{title\}\}/g, item.title ?? '')
-            .replace(/\{\{body\}\}/g, item.body)
-            .replace(/\{\{text\}\}/g, composePostText(item));
+            .replace(/\{\{body\}\}/g, bodyText)
+            .replace(/\{\{text\}\}/g, composePostText(item, undefined, channel));
         }
         if (Array.isArray(v)) return v.map(substitute);
         if (v && typeof v === 'object') {
@@ -83,7 +87,7 @@ export class RestProvider extends SocialProvider {
     }
     return {
       title: item.title ?? null,
-      body: item.body,
+      body: bodyText,
       hashtags: item.hashtags,
       media: item.media.map(m => ({ type: m.type, url: m.pathOrUrl, caption: m.caption ?? null })),
     };

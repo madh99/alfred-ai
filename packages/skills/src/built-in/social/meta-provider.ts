@@ -100,7 +100,7 @@ export class MetaProvider extends SocialProvider {
     const token = this.token(secrets);
     const target = this.targetId(channel);
     const caps = this.capabilities();
-    const text = composePostText(item, caps.maxTextLength);
+    const text = composePostText(item, caps.maxTextLength, channel);
     const image = await this.ensurePublicUrl(item.media.find(m => m.type === 'image'), item, channel, secrets);
     const video = await this.ensurePublicUrl(item.media.find(m => m.type === 'video'), item, channel, secrets);
 

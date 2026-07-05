@@ -33,7 +33,7 @@ export class TelegramChannelProvider extends SocialProvider {
   async publish(item: ContentItem, channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
     const token = this.token(secrets);
     const chatId = this.chatId(channel);
-    const text = composePostText(item, 4096);
+    const text = composePostText(item, 4096, channel);
     const image = item.media.find(m => m.type === 'image');
 
     let res: Response;

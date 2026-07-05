@@ -113,14 +113,33 @@ export function mergeHashtags(fieldTags: string[], bodyTags: string[], max = 10)
   return merged.slice(0, max);
 }
 
-/** Baut den fertigen Post-Text (Body + Hashtags) mit optionalem Längen-Limit. */
-export function composePostText(item: ContentItem, maxLength?: number): string {
+/**
+ * v985 — KI-Kennzeichnung (EU AI Act Art. 50, Transparenzpflicht ab
+ * 02.08.2026): Posts mit GENERIERTEN Medien werden beim Veröffentlichen
+ * gekennzeichnet. Default AN — config.ai_disclosure=false schaltet je Kanal
+ * ab, config.ai_disclosure_text ersetzt den Standardtext.
+ */
+export function aiDisclosure(
+  item: Pick<ContentItem, 'media'>,
+  channel: Pick<SocialChannel, 'config'>,
+): string | null {
+  if (channel.config.ai_disclosure === false) return null;
+  if (!item.media?.some(m => m.source === 'generated')) return null;
+  const custom = channel.config.ai_disclosure_text;
+  return typeof custom === 'string' && custom.trim().length > 0 ? custom.trim() : 'Bild: KI-generiert';
+}
+
+/** Baut den fertigen Post-Text (Body + Hashtags + ggf. KI-Kennzeichnung) mit optionalem Längen-Limit. */
+export function composePostText(item: ContentItem, maxLength?: number, channel?: Pick<SocialChannel, 'config'>): string {
   const tags = item.hashtags.length > 0 ? '\n\n' + item.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ') : '';
-  let text = `${item.title ? `${item.title}\n\n` : ''}${item.body}${tags}`;
+  // v985 — Kennzeichnung hängt hinter den Hashtags und überlebt die Kürzung
+  const disclosure = channel ? aiDisclosure(item, channel) : null;
+  const suffix = disclosure ? `\n\n${disclosure}` : '';
+  let text = `${item.title ? `${item.title}\n\n` : ''}${item.body}${tags}${suffix}`;
   if (maxLength && text.length > maxLength) {
-    // Hashtags haben Vorrang vor den letzten Body-Zeichen
-    const room = maxLength - tags.length - 2;
-    text = `${(item.title ? `${item.title}\n\n` : '') + item.body}`.slice(0, Math.max(0, room)) + '…' + tags;
+    // Hashtags + Kennzeichnung haben Vorrang vor den letzten Body-Zeichen
+    const room = maxLength - tags.length - suffix.length - 2;
+    text = `${(item.title ? `${item.title}\n\n` : '') + item.body}`.slice(0, Math.max(0, room)) + '…' + tags + suffix;
   }
   return text;
 }

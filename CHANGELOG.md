@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.985] - 2026-07-05
+
+### Added — KI-Kennzeichnung generierter Bilder (v985)
+
+Vorgriff auf die EU-AI-Act-Transparenzpflichten (Art. 50, gilt ab
+02.08.2026): Beiträge mit KI-generierten Medien werden beim
+Veröffentlichen gekennzeichnet.
+
+- Neue Funktion `aiDisclosure`: Items mit `media.source === 'generated'`
+  bekommen den Hinweis „Bild: KI-generiert" — Default AN für alle Kanäle,
+  per `config.ai_disclosure: false` abschaltbar, Text per
+  `config.ai_disclosure_text` anpassbar (z.B. „Symbolbild (KI)").
+- Greift überall: `composePostText` (Telegram, Instagram/Facebook/Threads,
+  X — Kennzeichnung überlebt die Längen-Kürzung), rest-Provider
+  (`{{body}}`/`{{text}}`/Default-Payload — Website-Artikel enden mit dem
+  Hinweis) und der prepare-Modus-Vorschau.
+- 2 neue Tests (Kennzeichnung + Kürzung + Abschalten/Custom-Text;
+  keine Kennzeichnung für externe Medien).
+
 ## [0.19.0-multi-ha.984] - 2026-07-05
 
 ### Added — Auth-Watchdog: IG-Token-Refresh + täglicher Kanal-Auth-Check (v984)

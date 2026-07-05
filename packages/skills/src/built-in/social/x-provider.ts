@@ -35,12 +35,12 @@ export class XProvider extends SocialProvider {
     return secrets.X_ACCESS_TOKEN;
   }
 
-  async publish(item: ContentItem, _channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
+  async publish(item: ContentItem, channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
     const token = await this.token(secrets);
     const res = await fetch('https://api.x.com/2/tweets', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: composePostText(item, 280) }),
+      body: JSON.stringify({ text: composePostText(item, 280, channel) }),
     });
     const data = await res.json().catch(() => ({})) as { data?: { id: string }; detail?: string; title?: string };
     if (!res.ok || !data.data?.id) throw new Error(`X: ${data.detail ?? data.title ?? `HTTP ${res.status}`}`);
