@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.996] - 2026-07-05
+
+### Added — Redaktionsleitung Etappe 4: Familien-Playbook + Familien-Kalender (v996)
+
+Die Redaktionsregeln einer Kanal-Familie sind jetzt konfigurierbar und der
+Familien-Plan auf einen Blick sichtbar.
+
+- **Familien-Playbook** (Kanal-Config, greift in Konferenz UND News-Desk):
+  - `family_role: lead|follow` — fester Lead-Kanal; übersteuert die
+    Rollen-Entscheidung der Redaktionskonferenz und die
+    rest-Plattform-Heuristik des News-Desks.
+  - `family_offset_hours` — Staging-Versatz eines Follower-Kanals, als
+    Zahl oder je Story-Art (`{vorschau: 8, default: 2}`); übersteuert den
+    Konferenz-Versatz.
+  - Die verbindlichen Regeln stehen als PLAYBOOK-Block im Konferenz-Prompt
+    UND werden nach der LLM-Antwort hart durchgesetzt.
+- **Playbook-UI** (Kanal-Einstellungen, nur für Familien-Kanäle):
+  Familienrolle, Staging-Versatz, Eilmeldungs-Regeln (Nachtruhe von/bis,
+  Schwelle, Eilmeldungen/Tag — der News-Desk liest sie vom Lead-Kanal).
+- **Familien-Kalender** (Web): alle Kanäle einer Familie in EINEM Raster
+  (Spalten = Kanäle, Zeilen = Tage), Beiträge derselben Story farbcodiert
+  mit Legende; Lead-Kanal markiert. Die Kalender-API reichert Items dafür
+  um storyTitle/storyKind an.
+- 2 neue Tests (Playbook-Enforcement in planFamily, Helfer-Semantik).
+
 ## [0.19.0-multi-ha.995] - 2026-07-05
 
 ### Added — Redaktionsleitung Etappe 3: Plan-Review bis zur Veröffentlichung (v995)

@@ -336,7 +336,7 @@ export class ContentStudio {
   }
 
   private async newsDeskFamily(family: string, members: SocialChannel[]): Promise<number> {
-    const lead = members.find(c => c.platform === 'rest') ?? members[0];
+    const lead = ContentStudio.resolveLead(members); // v996 — Playbook-Lead vor Plattform-Heuristik
     // Nachtruhe (Server-Lokalzeit)
     const quiet = Array.isArray(lead.config.newsdesk_quiet) && (lead.config.newsdesk_quiet as unknown[]).length === 2
       ? (lead.config.newsdesk_quiet as number[]).map(Number) : [22, 6];
@@ -591,13 +591,21 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
     const tier = channels.map(c => this.modelTier(c)).sort((a, b) => (tierRank[b] ?? 0) - (tierRank[a] ?? 0))[0];
     const channelLines = [...capacity.values()].map(c =>
       `- "${c.channel.name}" (${c.channel.platform}, Bedarf: ${c.needed} Beiträge)${c.channel.persona ? ` — Rolle/Persona: ${c.channel.persona.slice(0, 120)}` : ''}`).join('\n');
+    // v996 — Playbook: feste Redaktionsregeln der Familie (übersteuern die Konferenz)
+    const pbLead = channels.find(c => c.config.family_role === 'lead');
+    const pbRules: string[] = [];
+    if (pbLead) pbRules.push(`- Lead-Kanal ist IMMER "${pbLead.name}" — weise die lead-Rolle NUR ihm zu.`);
+    for (const c of channels) {
+      const off = ContentStudio.playbookOffset(c, 'news');
+      if (off !== undefined && c.id !== pbLead?.id) pbRules.push(`- "${c.name}" folgt standardmäßig mit versatz_h ${off}.`);
+    }
     const storyCount = Math.min(Math.max(totalNeeded, openTermine.length), 10);
     const conferencePrompt = `Du leitest die Redaktionskonferenz einer Kanal-Familie. Entscheide die Story-Liste für die nächsten Tage.
 
 KANÄLE DER FAMILIE:
 ${channelLines}
 
-${dossier ? `THEMEN-DOSSIER:\n${dossier}\n` : ''}${blocked.length ? `BEREITS GEPLANT/VERÖFFENTLICHT — dieser Stoff ist GESPERRT (auch umformuliert):\n${[...new Set(blocked.map(b => b.title))].slice(0, 50).map(t => `- ${t}`).join('\n')}\n` : ''}
+${pbRules.length ? `PLAYBOOK (verbindliche Redaktionsregeln dieser Familie):\n${pbRules.join('\n')}\n\n` : ''}${dossier ? `THEMEN-DOSSIER:\n${dossier}\n` : ''}${blocked.length ? `BEREITS GEPLANT/VERÖFFENTLICHT — dieser Stoff ist GESPERRT (auch umformuliert):\n${[...new Set(blocked.map(b => b.title))].slice(0, 50).map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge bis zu ${storyCount} STORIES. Regeln:
 - Eine STORY ist ein Stoff, den mehrere Kanäle in IHRER Rolle erzählen — nicht jeder Kanal braucht jede Story.
 - Je Story: genau EIN lead-Kanal (der ausführlichste, i.d.R. die Website), follow-Kanäle mit Zeitversatz in Stunden (typisch: Telegram +2, Instagram +6, Facebook +8; Termine/Eilmeldungen: alle 0).
@@ -647,8 +655,17 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       // Lead zuerst rendern — Follower brauchen dessen Slot als Untergrenze
       const assigns = cand.kanaele
         .map(k => ({ cap: capacity.get(String(k.kanal ?? '')), role: k.rolle === 'lead' ? 'lead' as const : 'follow' as const, offset: typeof k.versatz_h === 'number' ? Math.max(0, Math.min(72, k.versatz_h)) : 0 }))
-        .filter(a => a.cap !== undefined)
-        .sort((a, b) => (a.role === 'lead' ? -1 : 1) - (b.role === 'lead' ? -1 : 1));
+        .filter(a => a.cap !== undefined);
+      // v996 — Playbook übersteuert die Konferenz: fester Lead + konfigurierte Versätze
+      if (pbLead && assigns.some(a => a.cap!.channel.id === pbLead.id)) {
+        for (const a of assigns) a.role = a.cap!.channel.id === pbLead.id ? 'lead' : 'follow';
+      }
+      for (const a of assigns) {
+        if (a.role !== 'follow') continue;
+        const off = ContentStudio.playbookOffset(a.cap!.channel, cand.kind);
+        if (off !== undefined) a.offset = off;
+      }
+      assigns.sort((a, b) => (a.role === 'lead' ? -1 : 1) - (b.role === 'lead' ? -1 : 1));
       let leadSlot: string | undefined;
       let leadChannelName: string | undefined;
       for (const a of assigns) {
@@ -1146,6 +1163,33 @@ Antworte NUR mit einem JSON-Array:
     if (typeof channel.config.family === 'string' && channel.config.family.trim()) return `family:${channel.config.family.trim().toLowerCase()}`;
     if (channel.projectId) return `project:${channel.projectId}`;
     return null;
+  }
+
+  /**
+   * v996 — Playbook: fester Lead-Kanal der Familie (config.family_role='lead');
+   * Fallback wie bisher: die eigene Plattform (rest), sonst der erste Kanal.
+   */
+  static resolveLead(members: SocialChannel[]): SocialChannel {
+    return members.find(c => c.config.family_role === 'lead')
+      ?? members.find(c => c.platform === 'rest')
+      ?? members[0];
+  }
+
+  /**
+   * v996 — Playbook: konfigurierter Staging-Versatz eines Follower-Kanals.
+   * config.family_offset_hours: Zahl (für alle Story-Arten) ODER Objekt je
+   * Story-Art mit optionalem default, z.B. {news: 2, vorschau: 4, default: 6}.
+   */
+  static playbookOffset(channel: Pick<SocialChannel, 'config'>, kind: string): number | undefined {
+    const raw = channel.config.family_offset_hours;
+    const clamp = (v: number) => Math.max(0, Math.min(72, v));
+    if (typeof raw === 'number' && Number.isFinite(raw)) return clamp(raw);
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const rec = raw as Record<string, unknown>;
+      const v = rec[kind] ?? rec.default;
+      if (typeof v === 'number' && Number.isFinite(v)) return clamp(v);
+    }
+    return undefined;
   }
 
   /** v951 — alle verknüpften Topic-IDs eines Kanals (topic_ids[] + Legacy topic_id). */

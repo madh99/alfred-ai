@@ -8160,13 +8160,22 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             }));
           },
           calendar: async (fromIso: string, toIso: string) => {
-            const items = await socialRepo.listItems(socialOwner, {
+            const items = (await socialRepo.listItems(socialOwner, {
               status: ['scheduled', 'approved', 'published'], limit: 300,
-            });
-            return items.filter(i => {
+            })).filter(i => {
               const t = i.scheduledAt ?? i.publishedAt;
               return t !== undefined && t >= fromIso && t <= toIso;
             });
+            // v996 — Story-Zugehörigkeit für den Familien-Kalender anreichern
+            if (items.some(i => i.storyId)) {
+              const stories = await socialRepo.listStories(socialOwner, { limit: 500 }).catch(() => []);
+              const byId = new Map(stories.map(s => [s.id, s]));
+              return items.map(i => {
+                const s = i.storyId ? byId.get(i.storyId) : undefined;
+                return s ? { ...i, storyTitle: s.title, storyKind: s.kind } : i;
+              });
+            }
+            return items;
           },
           // v937 — Aktionen laufen über den Skill (Streak + Leitplanken an EINER Stelle)
           updateChannel: async (id: string, patch: Record<string, unknown>) => {

@@ -764,6 +764,42 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect((socialRepo.transition as any).mock.calls.filter((c: any[]) => c[2] === 'rejected').length).toBe(1);
   });
 
+  it('v996: Playbook — family_role lead übersteuert die Konferenz-Rolle, family_offset_hours den Versatz', async () => {
+    const { studio, website, telegram, llm, assignments } = makeFamilyStack();
+    // Playbook: Telegram ist fester Lead, die Website folgt mit 5h Versatz
+    (telegram.config as any).family_role = 'lead';
+    (website.config as any).family_offset_hours = 5;
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: CONF }) // Konferenz will website als Lead (versatz_h 2 für TG)
+      .mockResolvedValueOnce({ content: RENDER('TG zuerst') })
+      .mockResolvedValueOnce({ content: RENDER('Website folgt') });
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(2);
+    // Konferenz-Prompt nennt die verbindlichen Regeln
+    const conferencePrompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(conferencePrompt).toContain('PLAYBOOK');
+    expect(conferencePrompt).toContain('Lead-Kanal ist IMMER "FussballCC News"');
+    // Enforcement: Rollen gedreht, Versatz aus der Config statt aus der Konferenz
+    expect(assignments.find(a => a.channelId === 'ch-tg')!.role).toBe('lead');
+    const webAssign = assignments.find(a => a.channelId === 'ch-web')!;
+    expect(webAssign.role).toBe('follow');
+    expect(webAssign.offsetHours).toBe(5);
+  });
+
+  it('v996: resolveLead und playbookOffset — Helfer-Semantik', () => {
+    const rest = makeChannel({ id: 'a', platform: 'rest' });
+    const tg = makeChannel({ id: 'b', platform: 'telegram_channel', config: { family_role: 'lead' } });
+    // family_role lead schlägt die rest-Plattform-Heuristik
+    expect(ContentStudio.resolveLead([rest, tg]).id).toBe('b');
+    expect(ContentStudio.resolveLead([rest, makeChannel({ id: 'c', platform: 'telegram_channel' })]).id).toBe('a');
+    // Versatz: Zahl, je Story-Art mit default, Clamp, undefined
+    expect(ContentStudio.playbookOffset({ config: { family_offset_hours: 3 } }, 'news')).toBe(3);
+    expect(ContentStudio.playbookOffset({ config: { family_offset_hours: { vorschau: 8, default: 2 } } }, 'vorschau')).toBe(8);
+    expect(ContentStudio.playbookOffset({ config: { family_offset_hours: { vorschau: 8, default: 2 } } }, 'news')).toBe(2);
+    expect(ContentStudio.playbookOffset({ config: { family_offset_hours: 999 } }, 'news')).toBe(72);
+    expect(ContentStudio.playbookOffset({ config: {} }, 'news')).toBeUndefined();
+  });
+
   it('runDaily: Familien laufen über planFamily, Solo-Kanäle über fillChannel', async () => {
     const { studio, website, telegram, llm, socialRepo } = makeFamilyStack();
     const solo = makeChannel({ id: 'ch-solo', name: 'Solo', config: { topic_id: 't-1' } });

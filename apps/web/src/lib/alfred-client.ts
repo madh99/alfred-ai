@@ -2763,6 +2763,10 @@ export interface SocialContentItem {
   performance?: Record<string, unknown>;
   source: string;
   createdAt: string;
+  // v996 — Story-Zugehörigkeit (Familien-Kalender)
+  storyId?: string;
+  storyTitle?: string;
+  storyKind?: string;
 }
 
 // v639 — Goals

@@ -49,6 +49,26 @@ function toLocalInput(iso?: string): string {
 
 type QueueTab = 'pending' | 'history' | 'comments';
 
+/** v996 — Familien-Schlüssel wie im Kern (content-studio.familyKey): config.family vor Projekt-Bindung. */
+function familyKeyOf(c: SocialChannelItem): string | null {
+  const fam = c.config.family;
+  if (typeof fam === 'string' && fam.trim()) return `family:${fam.trim().toLowerCase()}`;
+  if (c.projectId) return `project:${c.projectId}`;
+  return null;
+}
+
+/** v996 — stabile Story-Farbe (gleiche Story = gleiche Farbe im Familien-Raster). */
+const STORY_PALETTE = [
+  'bg-sky-500/25 text-sky-200 border-sky-500/40',
+  'bg-amber-500/25 text-amber-200 border-amber-500/40',
+  'bg-emerald-500/25 text-emerald-200 border-emerald-500/40',
+  'bg-fuchsia-500/25 text-fuchsia-200 border-fuchsia-500/40',
+  'bg-rose-500/25 text-rose-200 border-rose-500/40',
+  'bg-indigo-500/25 text-indigo-200 border-indigo-500/40',
+  'bg-teal-500/25 text-teal-200 border-teal-500/40',
+  'bg-orange-500/25 text-orange-200 border-orange-500/40',
+];
+
 /** v992 — Kommentar aus social_comments (Antwort-Workflow new → replied|ignored). */
 interface SocialCommentItem {
   id: string; channelId: string; itemId?: string;
@@ -106,7 +126,11 @@ export function SocialPage() {
     persona: string; slots: string; blacklist: string; maxPostsPerDay: number;
     planningHorizonDays: number; generateImages: boolean; imageBudgetTotal: number;
     lessons: string[]; newLesson: string; modelTier: string;
-  }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast' });
+    // v996 — Familien-Playbook
+    familyRole: 'auto' | 'lead' | 'follow'; familyOffset: string;
+    quietFrom: number; quietTo: number; newsdeskThreshold: number; newsdeskMaxPerDay: number;
+  }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
+    familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3 });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
@@ -355,6 +379,13 @@ export function SocialPage() {
       lessons: Array.isArray(c.config.lessons) ? c.config.lessons.map(String) : [],
       newLesson: '',
       modelTier: typeof c.config.model_tier === 'string' ? c.config.model_tier : 'fast',
+      // v996 — Familien-Playbook aus der Kanal-Config
+      familyRole: c.config.family_role === 'lead' ? 'lead' : c.config.family_role === 'follow' ? 'follow' : 'auto',
+      familyOffset: typeof c.config.family_offset_hours === 'number' ? String(c.config.family_offset_hours) : '',
+      quietFrom: Array.isArray(c.config.newsdesk_quiet) ? Number((c.config.newsdesk_quiet as unknown[])[0] ?? 22) : 22,
+      quietTo: Array.isArray(c.config.newsdesk_quiet) ? Number((c.config.newsdesk_quiet as unknown[])[1] ?? 6) : 6,
+      newsdeskThreshold: typeof c.config.newsdesk_threshold === 'number' ? c.config.newsdesk_threshold : 0.85,
+      newsdeskMaxPerDay: typeof c.config.newsdesk_max_per_day === 'number' ? c.config.newsdesk_max_per_day : 3,
     });
     if (interestTopics.length === 0) {
       client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
@@ -372,7 +403,15 @@ export function SocialPage() {
         blacklist: csv(d.blacklist),
         maxPostsPerDay: d.maxPostsPerDay,
         planningHorizonDays: d.planningHorizonDays,
-        config: { generate_images: d.generateImages, image_budget_per_month: d.imageBudgetTotal, lessons, model_tier: d.modelTier },
+        config: {
+          generate_images: d.generateImages, image_budget_per_month: d.imageBudgetTotal, lessons, model_tier: d.modelTier,
+          // v996 — Familien-Playbook (null löscht den Schlüssel, config wird feldweise gemergt)
+          family_role: d.familyRole === 'auto' ? null : d.familyRole,
+          family_offset_hours: d.familyOffset.trim() === '' ? null : Number(d.familyOffset),
+          newsdesk_quiet: [d.quietFrom, d.quietTo],
+          newsdesk_threshold: d.newsdeskThreshold,
+          newsdesk_max_per_day: d.newsdeskMaxPerDay,
+        },
       });
       setSettingsId(null);
       await load();
@@ -435,6 +474,33 @@ export function SocialPage() {
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [calendar, filterByChannel]);
+
+  // v996 — Familien-Kalender: Kanäle einer Familie als Spalten, Stories farbcodiert
+  const familyCalendars = useMemo(() => {
+    const groups = new Map<string, SocialChannelItem[]>();
+    for (const c of channels.filter(ch => ch.status !== 'archived')) {
+      const key = familyKeyOf(c);
+      if (key) groups.set(key, [...(groups.get(key) ?? []), c]);
+    }
+    const storyColor = new Map<string, string>();
+    for (const i of calendar) {
+      if (i.storyId && !storyColor.has(i.storyId)) storyColor.set(i.storyId, STORY_PALETTE[storyColor.size % STORY_PALETTE.length]);
+    }
+    const storyTitle = new Map<string, string>();
+    for (const i of calendar) {
+      if (i.storyId && i.storyTitle && !storyTitle.has(i.storyId)) storyTitle.set(i.storyId, i.storyTitle);
+    }
+    return { families: [...groups.entries()].filter(([, m]) => m.length >= 2), storyColor, storyTitle };
+  }, [channels, calendar]);
+
+  /** v996 — lokaler Tages-Schlüssel eines Items (scheduledAt/publishedAt). */
+  function itemDayKey(i: SocialContentItem): string | null {
+    const iso = i.scheduledAt ?? i.publishedAt;
+    if (!iso) return null;
+    const d = new Date(iso);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
 
   // v967 — Analytics: Zeitreihen je Metrik-Art + Top-Beiträge je Kanal
   const analytics = useMemo(() => {
@@ -836,6 +902,52 @@ export function SocialPage() {
                       <option value="strong">strong — Topmodell (höchste Qualität, teuer)</option>
                     </select>
                   </div>
+                  {/* v996 — Familien-Playbook: Rolle, Staging-Versatz, Eilmeldungs-Regeln */}
+                  {familyKeyOf(c) && (
+                    <div className="border border-purple-500/20 rounded p-2.5 space-y-2 bg-purple-500/5">
+                      <div className="text-[11px] font-medium text-purple-300">📖 Familien-Playbook <span className="text-gray-500 font-normal">— gilt für die Redaktionskonferenz und den News-Desk dieser Kanal-Familie</span></div>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[11px] text-gray-500">Familienrolle</label>
+                          <select value={settingsDraft.familyRole} onChange={e => setSettingsDraft(d => ({ ...d, familyRole: e.target.value as 'auto' | 'lead' | 'follow' }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value="auto">auto — Konferenz entscheidet</option>
+                            <option value="lead">lead — immer der ausführlichste Erstbeitrag</option>
+                            <option value="follow">follow — folgt dem Lead</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500">Staging-Versatz (h nach Lead)</label>
+                          <input type="number" min={0} max={72} value={settingsDraft.familyOffset} placeholder="Konferenz entscheidet"
+                            onChange={e => setSettingsDraft(d => ({ ...d, familyOffset: e.target.value }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-gray-500">Eilmeldungs-Regeln (News-Desk liest sie vom Lead-Kanal):</div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        <div>
+                          <label className="text-[11px] text-gray-500">Ruhe von (Uhr)</label>
+                          <input type="number" min={0} max={24} value={settingsDraft.quietFrom} onChange={e => setSettingsDraft(d => ({ ...d, quietFrom: Number(e.target.value) }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500">Ruhe bis (Uhr)</label>
+                          <input type="number" min={0} max={24} value={settingsDraft.quietTo} onChange={e => setSettingsDraft(d => ({ ...d, quietTo: Number(e.target.value) }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500">Schwelle (0..1)</label>
+                          <input type="number" min={0} max={1} step={0.05} value={settingsDraft.newsdeskThreshold} onChange={e => setSettingsDraft(d => ({ ...d, newsdeskThreshold: Number(e.target.value) }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500">Eilmeldungen/Tag</label>
+                          <input type="number" min={0} max={10} value={settingsDraft.newsdeskMaxPerDay} onChange={e => setSettingsDraft(d => ({ ...d, newsdeskMaxPerDay: Number(e.target.value) }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="text-[11px] text-gray-500">Blacklist / Tabu-Themen (kommagetrennt)</label>
                     <input value={settingsDraft.blacklist} onChange={e => setSettingsDraft(d => ({ ...d, blacklist: e.target.value }))}
@@ -990,6 +1102,67 @@ export function SocialPage() {
           </div>
         )}
       </div>
+
+      {/* v996 — Familien-Kalender: alle Kanäle einer Familie in EINEM Raster, Story-Zugehörigkeit farbcodiert */}
+      {familyCalendars.families.map(([famKey, members]) => {
+        const memberIds = new Set(members.map(m => m.id));
+        const famItems = calendar.filter(i => memberIds.has(i.channelId));
+        if (famItems.length === 0) return null;
+        const storiesInView = [...new Set(famItems.map(i => i.storyId).filter((s): s is string => !!s))];
+        return (
+          <div key={famKey}>
+            <h2 className="text-sm font-semibold text-gray-200 mb-2">
+              👪 Familien-Kalender <span className="text-gray-500 font-normal">({members.map(m => m.name).join(' · ')})</span>
+            </h2>
+            <div className="overflow-x-auto">
+              <div className="grid gap-1 min-w-[560px]" style={{ gridTemplateColumns: `72px repeat(${members.length}, minmax(0, 1fr))` }}>
+                <div />
+                {members.map(m => (
+                  <div key={m.id} className="text-[10px] text-gray-400 font-medium px-1 py-0.5 truncate">
+                    {PLATFORM_ICON[m.platform] ?? '📣'} {m.name}
+                    {m.config.family_role === 'lead' && <span className="ml-1 text-[9px] px-1 rounded bg-purple-500/20 text-purple-300 uppercase">Lead</span>}
+                  </div>
+                ))}
+                {Array.from({ length: 14 }, (_, d) => {
+                  const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() + d);
+                  const p = (n: number) => String(n).padStart(2, '0');
+                  const key = `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+                  const dayItems = famItems.filter(i => itemDayKey(i) === key);
+                  if (dayItems.length === 0 && d > 6) return null; // hintere leere Tage sparen Platz
+                  const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+                  return [
+                    <div key={`${key}-label`} className={clsx('text-[9px] px-1 py-1', isWeekend ? 'text-purple-300/80' : 'text-gray-500')}>
+                      {date.toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                    </div>,
+                    ...members.map(m => (
+                      <div key={`${key}-${m.id}`} className={clsx('border rounded p-0.5 min-h-[26px] space-y-0.5', isWeekend ? 'border-purple-500/20 bg-purple-500/5' : 'border-[#1f1f1f]', d === 0 && 'border-blue-500/30')}>
+                        {dayItems.filter(i => i.channelId === m.id).map(i => (
+                          <button key={i.id} onClick={() => setExpandedItem(expandedItem === i.id ? null : i.id)}
+                            title={`${i.title ?? i.body.slice(0, 60)}${i.storyTitle ? `\nStory: ${i.storyTitle}` : ''} (${i.status})`}
+                            className={clsx('block w-full text-left text-[9px] px-1 py-0.5 rounded border truncate',
+                              i.storyId ? familyCalendars.storyColor.get(i.storyId) : 'border-transparent ' + (STATUS_BADGE[i.status] ?? 'bg-gray-500/20 text-gray-300'))}>
+                            {(i.scheduledAt ?? i.publishedAt) ? new Date((i.scheduledAt ?? i.publishedAt)!).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' }) : ''} {(i.title ?? i.body).slice(0, 18)}
+                          </button>
+                        ))}
+                      </div>
+                    )),
+                  ];
+                })}
+              </div>
+            </div>
+            {storiesInView.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                <span className="text-[10px] text-gray-600">Stories:</span>
+                {storiesInView.map(sid => (
+                  <span key={sid} className={clsx('text-[9px] px-1.5 py-0.5 rounded border', familyCalendars.storyColor.get(sid))}>
+                    {(familyCalendars.storyTitle.get(sid) ?? sid.slice(0, 8)).slice(0, 40)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       {/* Content-Kalender */}
       <div>
