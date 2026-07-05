@@ -5,7 +5,7 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
-import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, applyImageOverlays, cropToRatio, resolveImageBranding, type OverlaySpec } from '@alfred/skills';
+import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, languageName, applyImageOverlays, cropToRatio, resolveImageBranding, type OverlaySpec } from '@alfred/skills';
 export { extractTrailingHashtags, isNearDuplicateTitle };
 import type { SourceProvisioner } from './source-provisioner.js';
 import type { StoryDeduper, BlockedStory } from './story-dedup.js';
@@ -802,7 +802,7 @@ Art: ${story.kind}${story.terminBis ? `\nTermin: ${formatLocalDateTime(story.ter
 Regeln:
 ${roleRule}
 ${story.terminBis ? `${TERMIN_PERSPEKTIVE}\n` : ''}
-${this.lessonsBlock(channel)}- Deutsch, konkret, kein Clickbait; eigener TITEL (nicht der Arbeitstitel wortgleich).
+${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)}. Konkret, kein Clickbait; eigener TITEL (nicht der Arbeitstitel wortgleich).
 - 3-6 Hashtags NUR ins Feld "hashtags"; KEINE Meta-Zeilen im body.
 - BILDIDEE ohne Text/Datum/Zahlen — nur Motive.
 - NIE relative Zeitwörter („heute"/„morgen") — Datum/Uhrzeit nennen.
@@ -1251,7 +1251,7 @@ ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? 
 Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
 - FAKTEN-TREUE (zwingend): Turnier-/Event-Namen, Jahreszahlen, Ergebnisse und Personalien NUR aus dem Dossier oben übernehmen — NIEMALS aus dem Trainingswissen raten. Steht im Dossier „WM", schreibe WM (nicht EM/EURO); auch in Hashtags. Ist ein Fakt nicht im Dossier belegt, lass ihn weg.
 - ZEITBEZUG (zwingend): Ist der Post eine VORSCHAU/Ankündigung auf ein datiertes Ereignis (Spiel, Termin, Deadline), setze "terminBis" auf den ISO-Zeitpunkt des Ereignisses — der Post wird dann garantiert VOR dem Ereignis veröffentlicht. NIE relative Zeitwörter („heute", „morgen", „heute Nacht") — nenne stattdessen Datum/Uhrzeit. Rückblicke auf Vergangenes brauchen KEIN "terminBis".
-${terminRule}${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkret statt generisch, kein Clickbait.
+${terminRule}${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)}. Zur Persona passend, konkret statt generisch, kein Clickbait.
 - body = VOLLWERTIGER Beitrag mit 4-8 Sätzen und eigenem Mehrwert (Einordnung, Details, Frage an die Community) — NIEMALS nur Schlagzeile plus ein Satz. Dossier-Beiträge sind Rohstoff, kein Abschreibmaterial.
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
 - 3-6 Hashtags je Post — AUSSCHLIESSLICH ins Feld "hashtags", NIEMALS in den body (weder am Ende noch als eigene Zeile; sie werden beim Posten automatisch angehängt).
@@ -1609,6 +1609,14 @@ Antworte NUR mit einem JSON-Array:
       this.logger.warn({ err: (err as Error).message, channel: channel.name }, 'v935 image generation failed');
       return [];
     }
+  }
+
+  /**
+   * v1006 — Inhaltssprache eines Kanals (config.language, Default Deutsch) als
+   * Anzeigename für Prompts — vorher war „Deutsch" hartkodiert.
+   */
+  static contentLanguage(channel: Pick<SocialChannel, 'config'>): string {
+    return languageName(typeof channel.config.language === 'string' && channel.config.language.trim() ? channel.config.language.trim() : 'de');
   }
 
   /**

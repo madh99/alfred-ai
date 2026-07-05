@@ -158,6 +158,16 @@ export function aiDisclosure(
   return typeof custom === 'string' && custom.trim().length > 0 ? custom.trim() : 'Bild: KI-generiert';
 }
 
+/** v1006 — Anzeigename einer Sprache (deutsch benannt, für Prompts); unbekannte Codes bleiben Codes. */
+export function languageName(code: string): string {
+  const names: Record<string, string> = {
+    de: 'Deutsch', en: 'Englisch', fr: 'Französisch', it: 'Italienisch', es: 'Spanisch',
+    pt: 'Portugiesisch', nl: 'Niederländisch', pl: 'Polnisch', tr: 'Türkisch', hr: 'Kroatisch',
+    cs: 'Tschechisch', hu: 'Ungarisch', sv: 'Schwedisch', da: 'Dänisch', ro: 'Rumänisch',
+  };
+  return names[code.toLowerCase()] ?? code;
+}
+
 /**
  * v999 — UTM-Parameter für Traffic-Links (Follower-Post → Lead-Artikel):
  * utm_source = Plattform, utm_medium = social, utm_campaign = Story-Slug.

@@ -610,6 +610,19 @@ describe('ContentStudio — Modell-Tier je Kanal (v979)', () => {
     expect((llm.complete as any).mock.calls[0][0].tier).toBe('medium');
   });
 
+  it('v1006: config.language steuert die Inhaltssprache im Prompt (Default Deutsch)', async () => {
+    const en = makeChannel({ config: { topic_id: 't-1', language: 'en' } });
+    const { studio, llm } = makeStack({ channel: en });
+    await studio.fillChannel(en);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('Sprache: Englisch');
+
+    const plain = makeChannel({});
+    const { studio: s2, llm: llm2 } = makeStack({ channel: plain });
+    await s2.fillChannel(plain);
+    expect((llm2.complete as any).mock.calls[0][0].messages[0].content).toContain('Sprache: Deutsch');
+  });
+
   it('ohne bzw. mit ungültigem model_tier bleibt fast (Default unverändert)', async () => {
     const plain = makeChannel({});
     const { studio, llm } = makeStack({ channel: plain });

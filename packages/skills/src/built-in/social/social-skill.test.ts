@@ -24,9 +24,10 @@ function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
 }
 
 class FakeProvider extends SocialProvider {
-  readonly platform = 'test';
+  readonly platform: string;
   published: ContentItem[] = [];
   failNext = false;
+  constructor(platform = 'test') { super(); this.platform = platform; }
   capabilities(): ProviderCapabilities { return { text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false }; }
   async publish(item: ContentItem): Promise<PublishResult> {
     if (this.failNext) { this.failNext = false; throw new Error('API down'); }
@@ -57,6 +58,7 @@ function makeRepo(channel: SocialChannel, item: ContentItem) {
       return state.item;
     }),
     updateItemContent: vi.fn(async () => {}),
+    mergePerformance: vi.fn(async (_u: string, _id: string, perf: Record<string, unknown>) => { state.item = { ...state.item, performance: { ...state.item.performance, ...perf } }; }),
     reschedule: vi.fn(async (_u: string, _id: string, at: string) => { state.item = { ...state.item, scheduledAt: at }; return true; }),
     countPublishedToday: vi.fn(async () => 0),
     upsertMetric: vi.fn(async () => {}),
@@ -219,6 +221,48 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
     const { skill: s4, channel: c4 } = trafficSetup({}, 'scheduled'); // Lead noch nicht live
     const early = await (s4 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), c4);
     expect(early.body).toBe('B.');
+  });
+});
+
+describe('v1006 — Mehrsprachigkeit (translate_to auf rest-Kanälen)', () => {
+  it('publish_now übersetzt vorher, persistiert den Cache und der Provider bekommt die Übersetzungen', async () => {
+    const channel = makeChannel({ platform: 'rest', config: { base_url: 'https://cc.example', translate_to: ['en', 'fr'] } });
+    const item = makeItem({ title: 'Kolumbien weiter', body: 'Ein ausreichend langer Artikeltext über das Achtelfinale.' });
+    const { skill, spies } = makeSkill(channel, item);
+    const rest = new FakeProvider('rest');
+    skill.registerProvider(rest);
+    const complete = vi.fn(async (_r: { messages: Array<{ content: string }> }) => ({
+      content: '{"en": {"title": "Colombia advance", "body": "A sufficiently long article text about the round of 16."}, "fr": {"title": "La Colombie avance", "body": "Un texte suffisamment long sur les huitièmes de finale."}}',
+    }));
+    (skill as any).llm = { complete };
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    const prompt = complete.mock.calls[0]![0].messages[0].content;
+    expect(prompt).toContain('Deutsch');
+    expect(prompt).toContain('"en" (Englisch)');
+    // ausgehendes Item trägt die Übersetzungen, Cache wurde persistiert
+    const sent = rest.published[0] as ContentItem;
+    expect((sent.performance as any).translations.en.title).toBe('Colombia advance');
+    expect((spies as any).mergePerformance.mock.calls.some((c: any[]) => c[2]?.translations?.fr?.title === 'La Colombie avance')).toBe(true);
+  });
+
+  it('kaputte LLM-Antwort oder Nicht-rest-Kanal → Publish läuft unverändert weiter', async () => {
+    const channel = makeChannel({ platform: 'rest', config: { translate_to: ['en'] } });
+    const { skill } = makeSkill(channel, makeItem());
+    const rest = new FakeProvider('rest');
+    skill.registerProvider(rest);
+    (skill as any).llm = { complete: vi.fn(async () => ({ content: 'KEIN JSON' })) };
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    expect((rest.published[0].performance as any)?.translations).toBeUndefined();
+
+    const tg = makeChannel({ platform: 'test', config: { translate_to: ['en'] } });
+    const { skill: s2, provider: p2 } = makeSkill(tg, makeItem());
+    const llmSpy = vi.fn(async () => ({ content: '{}' }));
+    (s2 as any).llm = { complete: llmSpy };
+    await s2.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(p2.published.length).toBe(1);
+    expect(llmSpy).not.toHaveBeenCalled(); // translate_to wirkt nur auf rest
   });
 });
 

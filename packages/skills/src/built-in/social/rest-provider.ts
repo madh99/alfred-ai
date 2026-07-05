@@ -83,14 +83,28 @@ export class RestProvider extends SocialProvider {
         }
         return v;
       };
-      return substitute(template) as Record<string, unknown>;
+      return this.withTranslations(substitute(template) as Record<string, unknown>, item);
     }
-    return {
+    return this.withTranslations({
       title: item.title ?? null,
       body: bodyText,
       hashtags: item.hashtags,
       media: item.media.map(m => ({ type: m.type, url: m.pathOrUrl, caption: m.caption ?? null })),
-    };
+    }, item);
+  }
+
+  /**
+   * v1006 — Mehrsprachigkeit: beim Publish erzeugte Übersetzungen
+   * (performance.translations = { en: {title, body}, … }) wandern als
+   * "translations" ins Payload — die Plattform legt sie als Locale-Versionen
+   * ab. Ein explizit im body_template gesetzter translations-Schlüssel gewinnt.
+   */
+  private withTranslations(payload: Record<string, unknown>, item: ContentItem): Record<string, unknown> {
+    const translations = item.performance?.translations;
+    if (translations && typeof translations === 'object' && !Array.isArray(translations) && payload.translations === undefined) {
+      payload.translations = translations;
+    }
+    return payload;
   }
 
   private async doFetch(url: string, init: RequestInit, channel: SocialChannel): Promise<Response> {

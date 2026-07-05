@@ -55,6 +55,13 @@ const PAGE_LABEL: Record<QueueTab, string> = {
   channels: '📡 Kanäle', comments: '💬 Kommentare', analytics: '📊 Analytics',
 };
 
+/** v1006 — Sprachen für die Kanal-Einstellungen (Code → Anzeigename). */
+const LANGS: Array<[string, string]> = [
+  ['de', 'Deutsch'], ['en', 'Englisch'], ['fr', 'Französisch'], ['it', 'Italienisch'],
+  ['es', 'Spanisch'], ['pt', 'Portugiesisch'], ['nl', 'Niederländisch'], ['pl', 'Polnisch'],
+  ['tr', 'Türkisch'], ['hr', 'Kroatisch'],
+];
+
 /** v996 — Familien-Schlüssel wie im Kern (content-studio.familyKey): config.family vor Projekt-Bindung. */
 function familyKeyOf(c: SocialChannelItem): string | null {
   const fam = c.config.family;
@@ -144,9 +151,12 @@ export function SocialPage() {
     // v1004 — Bild-Look je Kanal
     imageStyle: string; imageQuality: 'default' | 'low' | 'medium' | 'high';
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
+    // v1006 — Sprache + Übersetzungen (translate_to nur bei rest-Kanälen wirksam)
+    language: string; translateTo: string[];
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
-    imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false });
+    imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
+    language: 'de', translateTo: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
@@ -411,6 +421,9 @@ export function SocialPage() {
       imageBranding: typeof c.config.image_branding === 'string' ? c.config.image_branding : '',
       watermarkOn: (c.config.image_overlay as { watermark?: boolean } | undefined)?.watermark !== false && c.config.image_branding !== false,
       titleOverlayOn: (c.config.image_overlay as { title?: boolean } | undefined)?.title === true,
+      // v1006 — Sprache + Übersetzungen
+      language: typeof c.config.language === 'string' && c.config.language ? c.config.language : 'de',
+      translateTo: Array.isArray(c.config.translate_to) ? (c.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string') : [],
     });
     if (interestTopics.length === 0) {
       client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
@@ -442,6 +455,9 @@ export function SocialPage() {
           image_quality: d.imageQuality === 'default' ? null : d.imageQuality,
           image_branding: d.imageBranding.trim() || null,
           image_overlay: { watermark: d.watermarkOn, title: d.titleOverlayOn },
+          // v1006 — Sprache (Default de → Schlüssel löschen) + Übersetzungs-Ziele
+          language: d.language === 'de' ? null : d.language,
+          translate_to: d.translateTo.length > 0 ? d.translateTo : null,
         },
       });
       setSettingsId(null);
@@ -1115,6 +1131,39 @@ export function SocialPage() {
                       <option value="default">default — Alltagsmodell des Assistenten</option>
                       <option value="strong">strong — Topmodell (höchste Qualität, teuer)</option>
                     </select>
+                  </div>
+                  {/* v1006 — Sprache des Kanals + Übersetzungen (Website-Kanäle) */}
+                  <div className="border border-emerald-500/20 rounded p-2.5 space-y-2 bg-emerald-500/5">
+                    <div className="text-[11px] font-medium text-emerald-300">🌍 Sprache</div>
+                    <div className="grid grid-cols-2 gap-2 items-start">
+                      <div>
+                        <label className="text-[11px] text-gray-500">Inhaltssprache (alle Beiträge dieses Kanals)</label>
+                        <select value={settingsDraft.language} onChange={e => setSettingsDraft(d => ({ ...d, language: e.target.value }))}
+                          className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                          {LANGS.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
+                        </select>
+                      </div>
+                      {c.platform === 'rest' && (
+                        <div>
+                          <label className="text-[11px] text-gray-500" title="Beim Veröffentlichen übersetzt Alfred Titel+Text und legt sie als translations ins Payload — die Plattform zeigt sie als Sprachversionen.">Übersetzen nach (Website-Sprachversionen)</label>
+                          <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                            {LANGS.filter(([code]) => code !== settingsDraft.language).map(([code, name]) => (
+                              <label key={code} className="text-[11px] text-gray-300 flex items-center gap-1 cursor-pointer">
+                                <input type="checkbox" checked={settingsDraft.translateTo.includes(code)}
+                                  onChange={e => setSettingsDraft(d => ({
+                                    ...d,
+                                    translateTo: e.target.checked ? [...d.translateTo, code] : d.translateTo.filter(l => l !== code),
+                                  }))} />
+                                {name}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {c.platform === 'rest' && settingsDraft.translateTo.length > 0 && (
+                      <div className="text-[10px] text-gray-600">Übersetzungen entstehen beim Veröffentlichen (LLM, best-effort — schlägt sie fehl, erscheint der Artikel vorerst einsprachig). Die Plattform muss Sprachversionen unterstützen.</div>
+                    )}
                   </div>
                   {/* v1004 — Bild-Look: Stil-Preset, Qualität, Wasserzeichen, Titel-Overlay */}
                   {settingsDraft.generateImages && (

@@ -3,7 +3,7 @@ import { Skill } from '../../skill.js';
 import type { SocialRepository, SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
-import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, mergeHashtags } from './social-provider.js';
+import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, languageName, mergeHashtags } from './social-provider.js';
 import { isNearDuplicateTitle } from './dedup.js';
 
 type SocialAction =
@@ -93,7 +93,7 @@ export class SocialSkill extends Skill {
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN. Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
         name: { type: 'string', description: 'create_channel: Anzeigename des Kanals' },
         project: { type: 'string', description: 'create_channel: optional Projekt-Name/-ID (Kanal hängt am Projekt, Secrets aus dessen ENVs)' },
-        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
+        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — NUR rest-Kanäle: beim Publish werden Titel+Body übersetzt und als translations ins Payload gelegt (Website-Sprachversionen)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },
@@ -631,9 +631,11 @@ export class SocialSkill extends Skill {
     if (!provider) return { success: false, error: `Kein Provider für ${channel.platform}` };
     const publishing = await this.repo.transition(userId, current.id, 'publishing');
     try {
+      // v1006 — Mehrsprachigkeit: Übersetzungen VOR dem Publish erzeugen (rest + translate_to)
+      const translated = await this.applyTranslations(userId, publishing, channel);
       // v999 — Traffic: Follower-Posts verlinken den Lead-Artikel (nur der
       // gesendete Text wird ergänzt, das gespeicherte Item bleibt unverändert)
-      const outgoing = await this.applyTrafficCta(userId, publishing, channel);
+      const outgoing = await this.applyTrafficCta(userId, translated, channel);
       const result = await provider.publish(outgoing, channel, await this.secrets(channel));
       const published = await this.repo.transition(userId, publishing.id, 'published', {
         publishedAt: new Date().toISOString(),
@@ -661,6 +663,59 @@ export class SocialSkill extends Skill {
    * den Standardtext, config.utm=false lässt die URL nackt. Das gespeicherte
    * Item wird NIE verändert — nur die ausgehende Kopie.
    */
+  /**
+   * v1006 — Mehrsprachigkeit (Option A, Alfred-Seite): Vor dem Publish eines
+   * rest-Kanals mit config.translate_to (z.B. ["en","fr","it"]) werden Titel
+   * und Body per LLM übersetzt und als performance.translations persistiert —
+   * der rest-Provider legt sie ins Payload, die Plattform macht daraus
+   * Locale-Versionen. Cache über translationsOf (Länge+Ziele), damit Retries
+   * nicht erneut zahlen. Best-effort: Fehler blockieren den Publish NIE
+   * (der Artikel erscheint dann vorerst einsprachig).
+   */
+  private async applyTranslations(userId: string, item: ContentItem, channel: SocialChannel): Promise<ContentItem> {
+    try {
+      if (channel.platform !== 'rest' || !this.llm) return item;
+      const targets = Array.isArray(channel.config.translate_to)
+        ? (channel.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string' && /^[a-z]{2}(-[a-z]{2})?$/i.test(l)).map(l => l.toLowerCase())
+        : [];
+      if (targets.length === 0) return item;
+      const marker = `${(item.title ?? '').length}:${item.body.length}:${targets.join(',')}`;
+      const cached = item.performance?.translations;
+      if (cached && typeof cached === 'object' && item.performance?.translationsOf === marker) return item;
+      const source = typeof channel.config.language === 'string' ? channel.config.language : 'de';
+      const prompt = `Übersetze den folgenden Artikel aus ${languageName(source)} in die Zielsprachen: ${targets.map(t => `"${t}" (${languageName(t)})`).join(', ')}.
+Regeln: sinn- und tongetreu, KEINE Fakten ändern oder ergänzen, Eigennamen/Vereins-/Ortsnamen unverändert, Zahlen/Daten/Uhrzeiten exakt übernehmen. Zitate im Text mit \\" escapen.
+
+TITEL: ${item.title ?? ''}
+TEXT:
+${item.body}
+
+Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
+{"${targets[0]}": {"title": "…", "body": "…"}${targets.length > 1 ? ', …' : ''}}`;
+      const tierRaw = channel.config.model_tier;
+      const tier = tierRaw === 'medium' || tierRaw === 'default' || tierRaw === 'strong' ? tierRaw : 'fast';
+      const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 12_000, tier, reasoningEffort: 'low' });
+      const raw = response.content ?? '';
+      const start = raw.indexOf('{');
+      const end = raw.lastIndexOf('}');
+      if (start < 0 || end <= start) return item;
+      let parsed: Record<string, { title?: unknown; body?: unknown }>;
+      try { parsed = JSON.parse(raw.slice(start, end + 1)); } catch { return item; }
+      const translations: Record<string, { title: string; body: string }> = {};
+      for (const t of targets) {
+        const e = parsed[t];
+        if (e && typeof e.title === 'string' && typeof e.body === 'string' && e.body.trim().length > 10) {
+          translations[t] = { title: e.title.slice(0, 300), body: e.body.slice(0, 20_000) };
+        }
+      }
+      if (Object.keys(translations).length === 0) return item;
+      await this.repo.mergePerformance(userId, item.id, { translations, translationsOf: marker }).catch(() => { /* Cache ist optional */ });
+      return { ...item, performance: { ...item.performance, translations, translationsOf: marker } };
+    } catch {
+      return item; // Übersetzung darf einen Publish NIE verhindern
+    }
+  }
+
   /** v1001 — Lead-Artikel einer Story finden (published, mit externalUrl); null wenn nicht auflösbar. */
   private async storyLeadUrl(userId: string, item: ContentItem): Promise<{ url: string; title?: string } | null> {
     if (!item.storyId) return null;
@@ -1011,7 +1066,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${item ? `UNSER BEITRAG: ${item.title ?? ''} — ${item.body.slice(0, 300)}\n` : ''}${articleUrl ? `AUSFÜHRLICHER ARTIKEL ZUM BEITRAG: ${articleUrl}\n` : ''}
 KOMMENTAR von ${comment.author ?? 'einem Fan'}: "${comment.text}"
 
-Formuliere EINE freundliche, konkrete Antwort (Deutsch, max. 300 Zeichen, keine Hashtags, keine Emojis-Flut).
+Formuliere EINE freundliche, konkrete Antwort (${languageName(typeof channel.config.language === 'string' ? channel.config.language : 'de')}, max. 300 Zeichen, keine Hashtags, keine Emojis-Flut).
 Erfinde KEINE Fakten — wenn die Frage Informationen braucht, die du nicht hast, formuliere einen freundlichen Verweis auf den Artikel bzw. eine Rückfrage.
 ${articleUrl ? `Wird die Frage im ausführlichen Artikel beantwortet, DARFST du die Artikel-URL oben wörtlich in die Antwort aufnehmen. ` : ''}NIEMALS andere URLs erfinden.
 Antworte NUR mit dem Antwort-Text, ohne Anführungszeichen drumherum.`;

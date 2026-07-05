@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1006] - 2026-07-05
+
+### Added — Mehrsprachigkeit: Kanal-Sprache + Website-Übersetzungen (v1006)
+
+Jeder Kanal hat jetzt eine Sprach-Einstellung, und Website-Kanäle können
+Artikel automatisch in mehrere Sprachen mitliefern (z. B. Deutsch →
+Englisch/Französisch/Italienisch — vollständig generisch).
+
+- **Inhaltssprache je Kanal** (`config.language`, Default Deutsch): steuert
+  die Sprache aller erzeugten Beiträge — vorher war „Deutsch" in den
+  Studio-Prompts hartkodiert. Gilt für Kanal-Prompt, Story-Rendering und
+  Kommentar-Antwort-Vorschläge.
+- **Übersetzungen für Website-Kanäle** (`config.translate_to: ["en","fr"]`,
+  nur `rest`-Plattform): Beim Veröffentlichen übersetzt Alfred Titel + Text
+  (LLM, Kanal-Tier) und legt sie als `translations` ins REST-Payload — die
+  Plattform speichert sie als Sprachversionen. Cache in
+  `performance.translations` (Retries übersetzen nicht doppelt);
+  vollständig best-effort: ein Übersetzungsfehler blockiert nie den
+  Publish, der Artikel erscheint dann vorerst einsprachig.
+- **UI-Sektion „🌍 Sprache"** in den Kanal-Einstellungen: Sprach-Select für
+  alle Kanäle, Zielsprachen-Checkboxen für Website-Kanäle.
+- Spec für die Plattform-Seite (NewsPostTranslation, Locale-Rendering,
+  hreflang): docs/specs/fussball-cc-translations-api-spec.md — liegt auch
+  im fussball-cc-Repo für den nächsten Projekt-Agent-Lauf.
+- 5 neue Tests.
+
 ## [0.19.0-multi-ha.1005] - 2026-07-05
 
 ### Added — Bild-Bibliothek: Basis-Bilder wiederverwenden statt neu generieren (v1005)

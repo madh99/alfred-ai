@@ -155,6 +155,19 @@ describe('TelegramChannelProvider (v933)', () => {
 describe('RestProvider (v933)', () => {
   const channel = makeChannel({ base_url: 'https://cc.example/', publish_path: '/api/posts' }, 'rest');
 
+  it('v1006: performance.translations wandern als "translations" ins Payload', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'p-10' }));
+    const provider = new RestProvider();
+    const translations = { en: { title: 'T', body: 'A long enough body text.' } };
+    await provider.publish(makeItem({ performance: { translations } }), channel, { API_TOKEN: 'tok' });
+    const payload = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(payload.translations).toEqual(translations);
+    // ohne Übersetzungen: kein Schlüssel im Payload
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'p-11' }));
+    await provider.publish(makeItem(), channel, { API_TOKEN: 'tok' });
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).translations).toBeUndefined();
+  });
+
   it('POST an base_url+publish_path mit Bearer-Token, liest id/url aus Antwort', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ id: 'p-9', url: 'https://cc.example/posts/p-9' }));
     const provider = new RestProvider();
