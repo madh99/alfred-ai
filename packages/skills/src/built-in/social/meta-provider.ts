@@ -141,7 +141,12 @@ export class MetaProvider extends SocialProvider {
         if (creationId && video) await this.waitForContainer(creationId, token, base);
       }
       if (!creationId) throw new Error('Instagram: kein Container erstellt');
-      const published = await this.graphPost(`${base}/${target}/media_publish`, { access_token: token, creation_id: creationId });
+      // v997 — auch Bild-/Karussell-Container erst FINISHED abwarten: Meta lädt
+      // das Bild asynchron von der public_media-URL; media_publish direkt nach
+      // dem Create scheiterte bei größeren Bildern mit „Media ID is not
+      // available" (Realfall 05.07.: 3 Posts, 1,4-MB-PNGs).
+      if (!video) await this.waitForContainer(creationId, token, base, { tries: 10, delayMs: 3_000 });
+      const published = await this.publishContainer(base, target, token, creationId);
       const mediaId = String(published.id ?? '');
       return { externalId: mediaId, url: await this.igPermalink(mediaId, token, base) };
     }
@@ -175,15 +180,36 @@ export class MetaProvider extends SocialProvider {
     return { externalId: String(published.id ?? creationId) };
   }
 
-  private async waitForContainer(creationId: string, token: string, base: string = GRAPH): Promise<void> {
-    for (let i = 0; i < 12; i++) {
-      await new Promise(r => setTimeout(r, 5_000));
+  private async waitForContainer(
+    creationId: string, token: string, base: string = GRAPH,
+    opts?: { tries?: number; delayMs?: number },
+  ): Promise<void> {
+    const tries = opts?.tries ?? 12;
+    const delayMs = opts?.delayMs ?? 5_000;
+    for (let i = 0; i < tries; i++) {
+      // v997 — erst prüfen, dann schlafen: Bild-Container sind oft sofort fertig
       const res = await fetch(`${base}/${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`);
       const data = await res.json().catch(() => ({})) as { status_code?: string };
       if (data.status_code === 'FINISHED') return;
-      if (data.status_code === 'ERROR') throw new Error('Instagram: Video-Verarbeitung fehlgeschlagen');
+      if (data.status_code === 'ERROR') throw new Error('Instagram: Medien-Verarbeitung fehlgeschlagen (Container ERROR)');
+      await new Promise(r => setTimeout(r, delayMs));
     }
-    throw new Error('Instagram: Video-Verarbeitung Timeout (60s)');
+    throw new Error(`Instagram: Medien-Verarbeitung Timeout (${Math.round(tries * delayMs / 1000)}s)`);
+  }
+
+  /** v997 — media_publish mit Retry: „Media ID is not available" heißt nur „noch nicht fertig geladen". */
+  private async publishContainer(base: string, target: string, token: string, creationId: string): Promise<Record<string, unknown>> {
+    let lastErr: Error | undefined;
+    for (let i = 0; i < 3; i++) {
+      try {
+        return await this.graphPost(`${base}/${target}/media_publish`, { access_token: token, creation_id: creationId });
+      } catch (err) {
+        lastErr = err as Error;
+        if (!/media id is not available/i.test(lastErr.message)) throw lastErr;
+        await new Promise(r => setTimeout(r, 5_000));
+      }
+    }
+    throw lastErr ?? new Error('Instagram: media_publish fehlgeschlagen');
   }
 
   private async igPermalink(mediaId: string, token: string, base: string = GRAPH): Promise<string | undefined> {

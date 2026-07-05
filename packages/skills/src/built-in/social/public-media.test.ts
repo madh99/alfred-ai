@@ -120,6 +120,7 @@ describe('MetaProvider + public_media (v969)', () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ ok: true, data: { url: '/uploads/x.webp' } })) // public_media-Upload
       .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))                          // /media
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' }))                    // v997 Status-Poll
       .mockResolvedValueOnce(jsonResponse({ id: 'post-1' }))                               // /media_publish
       .mockResolvedValueOnce(jsonResponse({ permalink: 'https://instagram.com/p/1' }));    // permalink
     const provider = new MetaProvider('instagram');
@@ -155,6 +156,7 @@ describe('MetaProvider + public_media (v969)', () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ ok: true, data: { url: '/uploads/x.webp' } })) // public_media
       .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' }))                    // v997 Status-Poll
       .mockResolvedValueOnce(jsonResponse({ id: 'post-1' }))
       .mockResolvedValueOnce(jsonResponse({ permalink: 'https://instagram.com/p/1' }));
     const provider = new MetaProvider('instagram');
@@ -164,6 +166,6 @@ describe('MetaProvider + public_media (v969)', () => {
     }), { META_ACCESS_TOKEN: 'IGAAxyz', API_TOKEN: 'fcc_1' });
     expect(r.externalId).toBe('post-1');
     expect(String(fetchMock.mock.calls[1][0])).toBe('https://graph.instagram.com/v21.0/17841417218854772/media');
-    expect(String(fetchMock.mock.calls[2][0])).toBe('https://graph.instagram.com/v21.0/17841417218854772/media_publish');
+    expect(String(fetchMock.mock.calls[3][0])).toBe('https://graph.instagram.com/v21.0/17841417218854772/media_publish');
   });
 });

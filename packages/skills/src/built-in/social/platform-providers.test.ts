@@ -78,9 +78,10 @@ describe('YouTubeProvider (v936)', () => {
 });
 
 describe('MetaProvider (v936)', () => {
-  it('Instagram: Container-Flow (media → media_publish) mit Permalink', async () => {
+  it('Instagram: Container-Flow (media → Status-Poll → media_publish) mit Permalink', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))          // /media
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' }))    // v997 Status-Poll
       .mockResolvedValueOnce(jsonResponse({ id: 'media-9' }))              // /media_publish
       .mockResolvedValueOnce(jsonResponse({ permalink: 'https://instagr.am/p/x' })); // permalink
     const provider = new MetaProvider('instagram');
@@ -90,7 +91,29 @@ describe('MetaProvider (v936)', () => {
     );
     expect(r).toEqual({ externalId: 'media-9', url: 'https://instagr.am/p/x' });
     expect(String(fetchMock.mock.calls[0][0])).toContain('/178/media');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('/178/media_publish');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('status_code');
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/178/media_publish');
+  });
+
+  it('v997: Bild-Container erst IN_PROGRESS → Poll wartet auf FINISHED; media_publish-Retry bei „Media ID is not available"', async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-2' }))                       // /media
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'IN_PROGRESS' }))              // Poll 1
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' }))                 // Poll 2
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Media ID is not available' } }, 400)) // publish 1 → Retry
+      .mockResolvedValueOnce(jsonResponse({ id: 'media-10' }))                          // publish 2
+      .mockResolvedValueOnce(jsonResponse({ permalink: 'https://instagr.am/p/y' }));
+    const provider = new MetaProvider('instagram');
+    const p = provider.publish(
+      makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: 'https://ex.at/b.png' }] }),
+      makeChannel('instagram', { ig_user_id: '178' }), { META_ACCESS_TOKEN: 'MT' },
+    );
+    await vi.runAllTimersAsync();
+    const r = await p;
+    vi.useRealTimers();
+    expect(r.externalId).toBe('media-10');
+    expect(fetchMock.mock.calls.filter((c: any[]) => String(c[0]).includes('media_publish')).length).toBe(2);
   });
 
   it('Instagram ohne Medium → klarer Fehler', async () => {
@@ -125,6 +148,7 @@ describe('MetaProvider (v936)', () => {
       .mockResolvedValueOnce(jsonResponse({ id: 'child-1' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'child-2' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'carousel-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' })) // v997 Status-Poll
       .mockResolvedValueOnce(jsonResponse({ id: 'media-7' }))
       .mockResolvedValueOnce(jsonResponse({ permalink: 'https://instagr.am/p/c' }));
     const provider = new MetaProvider('instagram');
@@ -141,7 +165,7 @@ describe('MetaProvider (v936)', () => {
     expect(bodies[1]).toContain('2.png');
     expect(bodies[2]).toContain('media_type=CAROUSEL');
     expect(bodies[2]).toContain(encodeURIComponent('child-1,child-2'));
-    expect(String(fetchMock.mock.calls[3][0])).toContain('media_publish');
+    expect(String(fetchMock.mock.calls[4][0])).toContain('media_publish');
   });
 
   it('v988: Facebook-Video → /videos mit file_url + description', async () => {

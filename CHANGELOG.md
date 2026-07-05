@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.997] - 2026-07-05
+
+### Fixed — Haltbarkeits-bewusste Planung + Instagram-Container-Poll (v997)
+
+**Verderbliche Inhalte landeten am Ende der Queue** (Realfall: Achtelfinal-
+Nachberichte vom 04.07. wurden auf den 17./18.07. geplant — zwei Wochen nach
+dem Spiel), und **Instagram-Posts mit größeren Bildern scheiterten** an
+„Media ID is not available".
+
+- **Haltbarkeit je Story-Art**: Ideen und Konferenz-Stories tragen jetzt
+  eine Art (`news|vorschau|recap|termin|evergreen`, Feld `art` bzw.
+  Story-Kind). news verdirbt nach 48h, recap nach 72h
+  (`config.shelf_life_hours` übersteuert); termin/vorschau laufen wie
+  bisher über `terminBis`, evergreen bleibt unbegrenzt.
+- **Slot-Vergabe respektiert die Haltbarkeit**: Verderbliches bekommt nur
+  Slots innerhalb der Shelf-Life. Ist keiner frei, weicht ein
+  Evergreen-Beitrag auf den spätesten freien Slot (reine
+  Terminverschiebung, Freigabe bleibt) — und ist auch das nicht möglich,
+  wird der Inhalt GAR NICHT produziert (kein LLM-/Bild-Budget für
+  totgeborene Beiträge).
+- **Plan-Review deterministisch erweitert**: news/recap, deren Slot weiter
+  als die Haltbarkeit nach der Erzeugung liegt, werden sofort als
+  überaltert gemeldet (Empfehlung vorziehen/ablehnen) — nicht erst im
+  48h-Fenster vor dem Slot.
+- **Instagram: Status-Poll auch für Bild-/Karussell-Container** vor
+  `media_publish` plus Retry bei „Media ID is not available" — Meta lädt
+  das Bild asynchron von der öffentlichen URL; der sofortige Publish war
+  ein Wettlauf, der bei größeren Bildern (1,4-MB-PNGs) verlor.
+- 6 neue Tests (Shelf-Life-Helfer, Evergreen-Verdrängung, Story-Drop,
+  Plan-Review-Überalterung, art-Parsing, IG-Poll+Retry).
+
 ## [0.19.0-multi-ha.996] - 2026-07-05
 
 ### Added — Redaktionsleitung Etappe 4: Familien-Playbook + Familien-Kalender (v996)

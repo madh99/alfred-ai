@@ -76,6 +76,12 @@ describe('parseIdeas (v935)', () => {
     expect(parseIdeas('[{"title":"x","body":"kurz"}]')).toEqual([]);
   });
 
+  it('v997: art wird geparst (nur gültige Werte)', () => {
+    const out = parseIdeas('[{"title":"T","body":"Ein ordentlich langer Post-Text hier.","art":"recap"},{"title":"U","body":"Noch ein ordentlich langer Post-Text.","art":"quatsch"}]');
+    expect(out[0].art).toBe('recap');
+    expect(out[1].art).toBeUndefined();
+  });
+
   it('v941: bildidee wird als eigenes Feld geparst (auch image_idea-Alias)', () => {
     const out = parseIdeas('[{"title":"T","body":"Ein ordentlich langer Post-Text hier.","bildidee":"Sechs Team-Wappen im Kreis"}]');
     expect(out[0].bildidee).toBe('Sechs Team-Wappen im Kreis');
@@ -798,6 +804,62 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(ContentStudio.playbookOffset({ config: { family_offset_hours: { vorschau: 8, default: 2 } } }, 'news')).toBe(2);
     expect(ContentStudio.playbookOffset({ config: { family_offset_hours: 999 } }, 'news')).toBe(72);
     expect(ContentStudio.playbookOffset({ config: {} }, 'news')).toBeUndefined();
+  });
+
+  it('v997: verderbliche Konferenz-Story ohne Lead-Slot in der Haltbarkeit wird GAR NICHT produziert', async () => {
+    const { studio, website, telegram, llm, stories, socialRepo } = makeFamilyStack();
+    // Haltbarkeit praktisch 0 → kein Raster-Slot kann sie einhalten, kein Evergreen zum Verdrängen
+    (website.config as any).shelf_life_hours = { news: 0.01 };
+    (llm.complete as any).mockResolvedValueOnce({ content: CONF }); // art news, Lead fussball.cc
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(0);
+    expect(stories.length).toBe(0); // Story wurde nie angelegt — kein Budget verbrannt
+    expect((socialRepo.createItem as any).mock.calls.length).toBe(0);
+  });
+
+  it('v997: shelfLifeHours — Defaults, config-Override, nur news/recap', () => {
+    expect(ContentStudio.shelfLifeHours('news', { config: {} })).toBe(48);
+    expect(ContentStudio.shelfLifeHours('recap', { config: {} })).toBe(72);
+    expect(ContentStudio.shelfLifeHours('news', { config: { shelf_life_hours: { news: 24 } } })).toBe(24);
+    expect(ContentStudio.shelfLifeHours('evergreen', { config: {} })).toBeUndefined();
+    expect(ContentStudio.shelfLifeHours('termin', { config: {} })).toBeUndefined();
+    expect(ContentStudio.shelfLifeHours(undefined, { config: {} })).toBeUndefined();
+  });
+
+  it('v997: swapWithEvergreen — Evergreen weicht auf den späten Slot, sein früher Slot wird frei', async () => {
+    const { studio, website, socialRepo } = makeFamilyStack();
+    const in45 = new Date(Date.now() + 45 * 60_000).toISOString();
+    const in2h = new Date(Date.now() + 2 * 3_600_000).toISOString();
+    const late = new Date(Date.now() + 10 * 24 * 3_600_000).toISOString();
+    const evergreen = { id: 'i-eg', channelId: 'ch-web', userId: OWNER, status: 'approved', title: 'Panini-Historie', body: 'x', media: [], hashtags: [], source: 'studio', createdAt: 'x', updatedAt: 'x', scheduledAt: in45, performance: { art: 'evergreen' } };
+    (socialRepo.listItems as any) = vi.fn(async () => [evergreen]);
+    const rescheduled: any[] = [];
+    (socialRepo.reschedule as any) = vi.fn(async (_u: string, id: string, at: string) => { rescheduled.push({ id, at }); return true; });
+    const slotPool = [late];
+    const freed = await (studio as any).swapWithEvergreen(website, in2h, slotPool);
+    expect(freed).toBe(in45);
+    expect(rescheduled).toEqual([{ id: 'i-eg', at: late }]);
+    expect(slotPool).toEqual([]); // später Slot verbraucht
+
+    // ohne Evergreen-Opfer: kein Swap
+    (socialRepo.listItems as any) = vi.fn(async () => []);
+    expect(await (studio as any).swapWithEvergreen(website, in2h, [late])).toBeUndefined();
+  });
+
+  it('v997: Plan-Review meldet überalterte news/recap deterministisch (Slot jenseits der Haltbarkeit)', async () => {
+    const { studio, llm, socialRepo } = makeFamilyStack();
+    const insights = (studio as any).insightsRepo;
+    const created100hAgo = new Date(Date.now() - 100 * 3_600_000).toISOString();
+    const in10h = new Date(Date.now() + 10 * 3_600_000).toISOString();
+    const stale = { id: 'i-old', channelId: 'ch-web', userId: OWNER, status: 'approved', title: 'Achtelfinal-Recap', body: 'x', media: [], hashtags: [], source: 'studio', createdAt: created100hAgo, updatedAt: 'x', scheduledAt: in10h, performance: { art: 'news' } };
+    (socialRepo.listItems as any) = vi.fn(async () => [stale]);
+    (llm.complete as any).mockResolvedValueOnce({ content: '[]' });
+    const r = await studio.planReview();
+    expect(r.flagged).toBe(1);
+    const insight = (insights.upsertCandidate as any).mock.calls.find((c: any[]) => String(c[1].title).includes('Plan-Review'));
+    expect(insight[1].body).toContain('Überaltert');
+    // NUR Empfehlung — kein Auto-Reject
+    expect((socialRepo.transition as any).mock.calls.filter((c: any[]) => c[2] === 'rejected').length).toBe(0);
   });
 
   it('runDaily: Familien laufen über planFamily, Solo-Kanäle über fillChannel', async () => {

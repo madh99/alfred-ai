@@ -70,6 +70,8 @@ interface GeneratedIdea {
   bildidee?: string;
   /** v975 — Termin-Ankündigung: ISO-Zeit des Termins; der Post muss VOR diesem Zeitpunkt erscheinen. */
   terminBis?: string;
+  /** v997 — Story-Art: bestimmt die Haltbarkeit (news/recap sind verderblich, evergreen nicht). */
+  art?: 'news' | 'vorschau' | 'recap' | 'termin' | 'evergreen';
 }
 
 /** v977 — Kommender Termin aus einer Event-Quelle (at = ISO, Ort in summary). */
@@ -222,6 +224,8 @@ export function parseIdeas(text: string): GeneratedIdea[] {
           // v975 — auf kanonisches ISO normalisieren (Vergleich mit Slot-ISO-Strings)
           terminBis: typeof i.terminBis === 'string' && Number.isFinite(Date.parse(i.terminBis))
             ? new Date(i.terminBis).toISOString() : undefined,
+          // v997 — Story-Art für die Haltbarkeits-Logik
+          art: (['news', 'vorschau', 'recap', 'termin', 'evergreen'] as const).find(k => k === i.art),
         };
       })
       .filter((i: GeneratedIdea) => i.body.length > 10)
@@ -474,13 +478,30 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       }
     }
 
+    // 2b) v997 — Haltbarkeit (deterministisch, NUR Empfehlung): news/recap,
+    // deren Slot weiter als die Shelf-Life nach der Erzeugung liegt, sind beim
+    // Erscheinen überaltert — sofort melden, nicht erst im 48h-Fenster.
+    const reviewChannels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+    const channelById = new Map(reviewChannels.map(c => [c.id, c]));
+    for (const item of items) {
+      if (!item.scheduledAt || item.scheduledAt <= nowIso) continue;
+      const art = typeof item.performance?.art === 'string' ? item.performance.art : undefined;
+      const ch = channelById.get(item.channelId);
+      const shelf = ch ? ContentStudio.shelfLifeHours(art, ch) : undefined;
+      if (shelf === undefined) continue;
+      const deadline = new Date(Date.parse(item.createdAt) + shelf * 3_600_000).toISOString();
+      if (item.scheduledAt > deadline) {
+        result.flagged++;
+        notes.push(`⏳ Überaltert (${art}, Haltbarkeit ${shelf}h): „${(item.title ?? item.body).slice(0, 60)}" [${item.id.slice(0, 8)}] — Slot ${formatLocalDateTime(item.scheduledAt)}, erzeugt ${formatLocalDateTime(item.createdAt)}. Empfehlung: vorziehen oder ablehnen.`);
+      }
+    }
+
     // 3) LLM-Check: überholt/veraltet? (nur Vorschläge, max 12 Items der nächsten 48h)
     const soon = new Date(Date.now() + 48 * 3_600_000).toISOString();
     const upcoming = items.filter(i => i.scheduledAt && i.scheduledAt > nowIso && i.scheduledAt <= soon
       && typeof i.performance?.terminBis !== 'string' && i.status !== 'rejected').slice(0, 12);
     if (upcoming.length > 0 && this.interestsRepo) {
-      const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
-      const topicIds = [...new Set(channels.flatMap(c => ContentStudio.linkedTopicIds(c)))];
+      const topicIds = [...new Set(reviewChannels.flatMap(c => ContentStudio.linkedTopicIds(c)))];
       const headlines: string[] = [];
       const sinceIso = new Date(Date.now() - 12 * 3_600_000).toISOString();
       for (const topicId of topicIds) {
@@ -647,11 +668,6 @@ Antworte NUR mit einem VALIDEN JSON-Array:
     let created = 0;
     const createdTitles: string[] = [];
     for (const cand of accepted.sort((a, b) => b.importance - a.importance)) {
-      const story = await this.socialRepo.createStory(this.ownerUserId, {
-        family, kind: cand.kind, title: cand.title, summary: cand.body,
-        importance: cand.importance, terminBis: cand.terminBis, source: 'studio',
-      });
-      await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
       // Lead zuerst rendern — Follower brauchen dessen Slot als Untergrenze
       const assigns = cand.kanaele
         .map(k => ({ cap: capacity.get(String(k.kanal ?? '')), role: k.rolle === 'lead' ? 'lead' as const : 'follow' as const, offset: typeof k.versatz_h === 'number' ? Math.max(0, Math.min(72, k.versatz_h)) : 0 }))
@@ -666,14 +682,36 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         if (off !== undefined) a.offset = off;
       }
       assigns.sort((a, b) => (a.role === 'lead' ? -1 : 1) - (b.role === 'lead' ? -1 : 1));
+
+      // v997 — Haltbarkeit: verderbliche Story (news/recap) nur, wenn der LEAD
+      // innerhalb der Shelf-Life landen kann — sonst Evergreen-Swap; auch das
+      // nicht → Story GAR NICHT produzieren (kein LLM-/Bild-Budget verbrennen).
+      const leadCap = assigns[0]?.cap;
+      const leadShelf = leadCap ? ContentStudio.shelfLifeHours(cand.kind, leadCap.channel) : undefined;
+      const deadline = leadShelf !== undefined ? new Date(Date.now() + leadShelf * 3_600_000).toISOString() : undefined;
+      if (deadline && leadCap && (leadCap.channel.mode === 'approve' || leadCap.channel.mode === 'autonomous')
+        && (leadCap.slotPool.length === 0 || leadCap.slotPool[0] > deadline)) {
+        const freed = await this.swapWithEvergreen(leadCap.channel, deadline, leadCap.slotPool);
+        if (freed) leadCap.slotPool.unshift(freed); // vorne einreihen — der Lead nimmt ihn per shift()
+        else {
+          this.logger.info({ family, title: cand.title, kind: cand.kind }, 'v997 perishable story dropped (kein Lead-Slot innerhalb der Haltbarkeit)');
+          continue;
+        }
+      }
+
+      const story = await this.socialRepo.createStory(this.ownerUserId, {
+        family, kind: cand.kind, title: cand.title, summary: cand.body,
+        importance: cand.importance, terminBis: cand.terminBis, source: 'studio',
+      });
+      await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
       let leadSlot: string | undefined;
       let leadChannelName: string | undefined;
       for (const a of assigns) {
         const cap = a.cap!;
         if (cand.kind !== 'termin' && cap.created >= cap.needed) continue; // Kapazität erschöpft (Termine haben Vorrang)
-        const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot);
-        if (!item) continue;
         // Slot: Termin → vor Anpfiff; Lead → nächster freier; Follower → ≥ Lead + Versatz
+        // v997 — Slot-Wahl VOR dem Rendern: verderbliche Follower ohne Slot in
+        // der Haltbarkeit werden ausgelassen statt als alternder Entwurf angelegt.
         let slot: string | undefined;
         if (cap.channel.mode === 'approve' || cap.channel.mode === 'autonomous') {
           if (story.terminBis) {
@@ -682,11 +720,24 @@ Antworte NUR mit einem VALIDEN JSON-Array:
             slot = cap.slotPool.shift();
           } else {
             const target = new Date(Date.parse(leadSlot) + a.offset * 3_600_000).toISOString();
-            const idx = cap.slotPool.findIndex(s => s >= target);
+            const idx = cap.slotPool.findIndex(s => s >= target && (!deadline || s <= deadline));
             if (idx >= 0) slot = cap.slotPool.splice(idx, 1)[0];
+            else if (deadline) slot = await this.swapWithEvergreen(cap.channel, deadline, cap.slotPool, target);
           }
-          if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+          if (deadline && slot && slot > deadline) {
+            // Lead-Slot doch außerhalb (Pool war leer nach Swap-Versuch) → zurücklegen und auslassen
+            cap.slotPool.unshift(slot);
+            cap.slotPool.sort();
+            continue;
+          }
+          if (deadline && !slot) continue; // verderblich ohne Slot → nicht produzieren
         }
+        const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot);
+        if (!item) {
+          if (slot) { cap.slotPool.unshift(slot); cap.slotPool.sort(); } // Slot zurücklegen
+          continue;
+        }
+        if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
         if (a.role === 'lead') { leadSlot = slot; leadChannelName = cap.channel.name; }
         await this.socialRepo.createAssignment({ storyId: story.id, channelId: cap.channel.id, role: a.role, offsetHours: a.offset, itemId: item.id });
         cap.created++;
@@ -757,6 +808,8 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     await this.socialRepo.mergePerformance(this.ownerUserId, item.id, {
       warum: idea.warum, storyRole: role,
       ...(story.terminBis ? { terminBis: story.terminBis } : {}),
+      // v997 — Story-Art fürs Plan-Review und die Evergreen-Verdrängung
+      art: story.kind,
     });
     if (!story.terminBis) await this.storyDeduper?.embedStory(item.id, { title: idea.title, body: idea.body });
     return item;
@@ -906,7 +959,26 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
               }
             }
           } else {
-            slot = slotPool.shift();
+            // v997 — Haltbarkeit: news/recap brauchen einen Slot innerhalb der
+            // Shelf-Life (Realfall 05.07.: Achtelfinal-Recaps landeten am Ende
+            // der vollen Queue — Slot 17./18.07., zwei Wochen nach dem Spiel).
+            // Kein früher Slot frei → Evergreen-Swap; auch das nicht → Idee
+            // verwerfen BEVOR Bild-Budget verbrannt wird.
+            const shelf = ContentStudio.shelfLifeHours(idea.art, channel);
+            if (shelf !== undefined) {
+              const deadline = new Date(Date.now() + shelf * 3_600_000).toISOString();
+              if (slotPool.length > 0 && slotPool[0] <= deadline) {
+                slot = slotPool.shift();
+              } else {
+                slot = await this.swapWithEvergreen(channel, deadline, slotPool);
+                if (!slot) {
+                  this.logger.info({ channel: channel.name, title: idea.title, art: idea.art, shelf }, 'v997 perishable idea dropped (kein Slot innerhalb der Haltbarkeit)');
+                  continue;
+                }
+              }
+            } else {
+              slot = slotPool.shift();
+            }
           }
         }
         const media = await this.maybeGenerateImage(channel, idea);
@@ -921,6 +993,8 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
         await this.socialRepo.mergePerformance(this.ownerUserId, item.id, {
           warum: idea.warum,
           ...(idea.terminBis ? { terminBis: idea.terminBis } : {}),
+          // v997 — Story-Art fürs Plan-Review und die Evergreen-Verdrängung
+          ...(idea.art ? { art: idea.art } : {}),
         });
         // v973 — Embedding des neuen Items persistieren (künftige Läufe lesen
         // es); Termin-Posts nicht — sie nehmen an den Gates nicht teil.
@@ -1136,9 +1210,10 @@ ${terminRule}${this.lessonsBlock(channel)}- Deutsch, zur Persona passend, konkre
 - 3-6 Hashtags je Post — AUSSCHLIESSLICH ins Feld "hashtags", NIEMALS in den body (weder am Ende noch als eigene Zeile; sie werden beim Posten automatisch angehängt).
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
 - BILDIDEE ohne Text: "bildidee" beschreibt NUR Motive (Szenen, Objekte, Stimmung) — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Bildmodelle schreiben Text FALSCH; Fakten gehören in den body).
+- "art" (zwingend): news = tagesaktuelle Meldung (verdirbt in ~2 Tagen) | recap = Nachbericht zu einem Ereignis (verdirbt in ~3 Tagen) | vorschau = Blick auf ein kommendes Ereignis | termin = Termin-Ankündigung | evergreen = zeitlos (Hintergrund, Community-Frage, Geschichte). Sei ehrlich — verderbliche Posts werden früh eingeplant oder verworfen.
 ${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem VALIDEN JSON-Array (Zitate in Texten typografisch „…“ oder mit \\" escapen — nie nackte " im String):
-[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses"}]`;
+[{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "art": "news|vorschau|recap|termin|evergreen", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses"}]`;
   }
 
   private buildYoutubePrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[]): string {
@@ -1173,6 +1248,49 @@ Antworte NUR mit einem JSON-Array:
     return members.find(c => c.config.family_role === 'lead')
       ?? members.find(c => c.platform === 'rest')
       ?? members[0];
+  }
+
+  /**
+   * v997 — Haltbarkeit je Story-Art: news 48h, recap 72h (config.shelf_life_hours
+   * übersteuert je Art). termin/vorschau laufen über terminBis, evergreen ist
+   * unbegrenzt — beides liefert undefined (= keine Deadline).
+   */
+  static shelfLifeHours(art: string | undefined, channel: Pick<SocialChannel, 'config'>): number | undefined {
+    if (art !== 'news' && art !== 'recap') return undefined;
+    const cfg = channel.config.shelf_life_hours;
+    if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
+      const v = (cfg as Record<string, unknown>)[art];
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+    }
+    return art === 'news' ? 48 : 72;
+  }
+
+  /**
+   * v997 — Verdrängung: ein Evergreen-Item, das einen Slot innerhalb der
+   * Deadline belegt, weicht auf den spätesten freien Slot des Pools — sein
+   * früher Slot wird für den verderblichen Inhalt frei (Status bleibt,
+   * reine Terminverschiebung). Gibt den freigewordenen Slot zurück.
+   */
+  private async swapWithEvergreen(
+    channel: SocialChannel, deadline: string, slotPool: string[], notBefore?: string,
+  ): Promise<string | undefined> {
+    if (slotPool.length === 0) return undefined; // kein Tausch-Slot frei
+    const earliest = new Date(Date.now() + 30 * 60_000).toISOString();
+    const floor = notBefore && notBefore > earliest ? notBefore : earliest;
+    const planned = await this.socialRepo.listItems(this.ownerUserId, {
+      channelId: channel.id, status: ['scheduled', 'approved'], limit: 100,
+    });
+    const victim = planned
+      .filter(i => i.scheduledAt && i.scheduledAt > floor && i.scheduledAt <= deadline)
+      .filter(i => i.performance?.art === 'evergreen' && typeof i.performance?.terminBis !== 'string')
+      .sort((a, b) => a.scheduledAt!.localeCompare(b.scheduledAt!))[0];
+    if (!victim) return undefined;
+    const lateSlot = slotPool[slotPool.length - 1];
+    const freed = victim.scheduledAt!;
+    if (!(await this.socialRepo.reschedule(this.ownerUserId, victim.id, lateSlot, ['scheduled', 'approved']))) return undefined;
+    slotPool.pop();
+    this.logger.info({ channel: channel.name, victim: victim.id, from: freed, to: lateSlot }, 'v997 evergreen swap (verderblicher Inhalt braucht den frühen Slot)');
+    return freed;
   }
 
   /**
