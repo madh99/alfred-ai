@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1025] - 2026-07-06
+
+### Fixed — Media-Upload über insecure_tls-Kanäle (v1025, KRITISCH)
+
+- Regression aus v1022: Der request-lokale TLS-Pfad (undici) serialisierte
+  die Standard-FormData als String statt als multipart — Bild-Uploads an
+  interne Ziele (fussball.cc Medienbibliothek) scheiterten mit HTTP 400
+  „Erwartet wird multipart/form-data", Bild-Publishes standen.
+- FormData wird für undici jetzt bytefest umgebaut (eigene FormData-Klasse
+  plus Datei-Einträge); End-zu-End-Test gegen einen lokalen Server deckt
+  beide Pfade (insecure/secure) ab.
+
 ## [0.19.0-multi-ha.1024] - 2026-07-06
 
 ### Added — Ad-hoc-Story auf Zuruf (v1024)

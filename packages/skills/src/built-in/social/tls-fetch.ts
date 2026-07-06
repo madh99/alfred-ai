@@ -17,6 +17,28 @@ interface UndiciModule {
   // eigenen Dispatcher — wir reichen den undici-Agent opak durch
   fetch(url: string, init?: object): Promise<Response>;
   Agent: new (opts: { connect: { rejectUnauthorized: boolean } }) => unknown;
+  FormData: new () => { append(name: string, value: unknown, fileName?: string): void };
+}
+
+/**
+ * v1025 — Node-globale FormData in undicis eigene umbauen: undici v7
+ * brand-checkt den Request-Body und serialisiert fremde FormData-Instanzen
+ * sonst als String "[object FormData]" mit text/plain (Realfall 06.07.:
+ * fussball.cc Media-Upload HTTP 400 „Erwartet wird multipart/form-data"
+ * direkt nach dem .1024-Deploy — Bild-Publishes standen).
+ */
+export async function toUndiciBody(u: UndiciModule, body: unknown): Promise<unknown> {
+  if (typeof FormData === 'undefined' || !(body instanceof FormData) || body instanceof u.FormData) return body;
+  const rebuilt = new u.FormData();
+  for (const [key, value] of body as unknown as Iterable<[string, unknown]>) {
+    if (typeof value === 'string') { rebuilt.append(key, value); continue; }
+    // Blob/File-Inhalt bytefest umkopieren — das GLOBALE File akzeptiert
+    // undicis FormData (duck-typed); undici v7 exportiert kein eigenes File mehr
+    const blob = value as Blob & { name?: string };
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    rebuilt.append(key, new File([bytes], blob.name ?? 'file', { type: blob.type || 'application/octet-stream' }));
+  }
+  return rebuilt;
 }
 
 let undiciPromise: Promise<UndiciModule | null> | undefined;
@@ -48,5 +70,6 @@ export async function tlsFetch(url: string, init: RequestInit, insecure: boolean
   const undici = await loadUndici();
   if (!undici) throw new Error('insecure_tls: undici nicht verfügbar — Zertifikatsprüfung kann nicht request-lokal deaktiviert werden');
   insecureDispatcher ??= new undici.Agent({ connect: { rejectUnauthorized: false } });
-  return undici.fetch(url, { ...init, dispatcher: insecureDispatcher });
+  const body = await toUndiciBody(undici, init.body);
+  return undici.fetch(url, { ...init, body, dispatcher: insecureDispatcher });
 }
