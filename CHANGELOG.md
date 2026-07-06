@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1028] - 2026-07-06
+
+### Fixed — X-Kanäle dauerbetriebsfähig: Token-Rotation (v1028)
+
+- X rotiert OAuth2-Refresh-Tokens (jeder Refresh entwertet das alte und
+  liefert ein neues) — bisher wurde das neue verworfen: nach dem ersten
+  Ablauf des Access-Tokens (~2 h) wäre der Kanal stumm ausgefallen.
+  Der Provider persistiert das rotierte Refresh-Token jetzt sofort in der
+  ENV-Stage des Kanals (gleiche Mechanik wie der IG-Token-Refresh).
+- Access-Tokens werden für ihre Laufzeit gecacht (mit Sicherheitsabstand)
+  statt pro API-Aufruf neu refresht — schont das knappe
+  Free-Tier-Rate-Limit.
+
 ## [0.19.0-multi-ha.1027] - 2026-07-06
 
 ### Added — Titellose Bilder für die Plattform gekennzeichnet (v1027)

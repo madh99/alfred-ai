@@ -5537,7 +5537,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       socialSkill.registerProvider(new MetaProvider('instagram'));
       socialSkill.registerProvider(new MetaProvider('facebook'));
       socialSkill.registerProvider(new MetaProvider('threads'));
-      socialSkill.registerProvider(new XProvider());
+      const xProvider = new XProvider();
+      socialSkill.registerProvider(xProvider);
       // v1013 — Bluesky (AT Protocol: handle + App-Passwort, Bilder direkt via uploadBlob)
       socialSkill.registerProvider(new BlueskyProvider());
       // v946 — LLM für formatgerechtes Crossposting
@@ -5584,6 +5585,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           varsEncrypted: enc.ciphertext, iv: enc.iv, authTag: enc.authTag,
         });
         this.logger.info({ channel: channel.name, stage, keys: Object.keys(patch) }, 'v984 channel secrets refreshed');
+      });
+      // v1028 — X rotiert Refresh-Tokens: der Provider persistiert das neue
+      // sofort über denselben Writer (sonst fällt der Kanal nach dem ersten
+      // Access-Token-Ablauf stumm aus)
+      xProvider.setSecretsWriter(async (channel, patch) => {
+        if (!channel.projectId || !this.envRepoRef || !this.envCryptoRef) return;
+        const stage = typeof channel.config.env_stage === 'string' ? channel.config.env_stage : 'social';
+        const entry = await this.envRepoRef.get(channel.projectId, stage);
+        const current = entry ? this.envCryptoRef.decrypt(entry.varsEncrypted, entry.iv, entry.authTag) : {};
+        const enc = this.envCryptoRef.encrypt({ ...current, ...patch });
+        await this.envRepoRef.upsert({
+          projectId: channel.projectId, stage,
+          varsEncrypted: enc.ciphertext, iv: enc.iv, authTag: enc.authTag,
+        });
+        this.logger.info({ channel: channel.name, stage }, 'v1028 x refresh token rotated + persisted');
       });
       socialSkill.setProjectResolver(async (nameOrId) => {
         if (!this.projectRepo) return null;

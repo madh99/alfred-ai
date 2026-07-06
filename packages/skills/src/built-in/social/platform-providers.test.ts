@@ -236,6 +236,28 @@ describe('XProvider (v936)', () => {
       { itemId: 'i1', kind: 'likes', value: 12 },
     ]);
   });
+
+  it('v1028: Refresh-Rotation — neues Refresh-Token wird persistiert, Access-Token gecacht', async () => {
+    const provider = new XProvider();
+    const writer = vi.fn(async () => { /* persistiert */ });
+    provider.setSecretsWriter(writer);
+    const channel = makeChannel('x');
+    const secrets: Record<string, string> = { X_REFRESH_TOKEN: 'R1', X_CLIENT_ID: 'CID' };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'AT1', refresh_token: 'R2', expires_in: 7200 })) // oauth2/token
+      .mockResolvedValueOnce(jsonResponse({ data: { id: '111' } }, 201))  // tweets #1
+      .mockResolvedValueOnce(jsonResponse({ data: { id: '222' } }, 201)); // tweets #2 (KEIN zweiter Refresh)
+    await provider.publish(makeItem(), channel, secrets);
+    // rotiertes Refresh-Token: im Secrets-Objekt aktualisiert UND weggeschrieben
+    expect(secrets.X_REFRESH_TOKEN).toBe('R2');
+    expect(writer).toHaveBeenCalledWith(channel, { X_REFRESH_TOKEN: 'R2' });
+    // zweiter Publish: Access-Token aus dem Cache — kein weiterer oauth2/token-Call
+    await provider.publish(makeItem(), channel, secrets);
+    const oauthCalls = fetchMock.mock.calls.filter(c => String(c[0]).includes('oauth2/token'));
+    expect(oauthCalls.length).toBe(1);
+    const tweet2 = fetchMock.mock.calls[2];
+    expect((tweet2[1] as RequestInit).headers).toMatchObject({ Authorization: 'Bearer AT1' });
+  });
 });
 
 // ── v936 — Skill: Monats-Limit + Analytics-Collector ──────────────────
