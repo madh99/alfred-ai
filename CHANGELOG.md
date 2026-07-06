@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1027] - 2026-07-06
+
+### Added — Titellose Bilder für die Plattform gekennzeichnet (v1027)
+
+- Featured-Bilder, in die weder Titel noch Termin-Karte eingebrannt wurde,
+  tragen jetzt den Marker `-no-title` im Dateinamen (Frisch- und
+  Bibliotheks-Pfad). Die Projekt-Plattform erkennt daran zuverlässig, dass
+  sie ihren eigenen, locale-aufgelösten Titel über das Bild rendern darf —
+  der reine Datums-Cutoff konnte saubere Bilder nicht von
+  Termin-Karten-Bildern unterscheiden.
+
 ## [0.19.0-multi-ha.1026] - 2026-07-06
 
 ### Added — Bild-Overlays im Nachrichten-Look + Logo + Neu-Anwenden (v1026)

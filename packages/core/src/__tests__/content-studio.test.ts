@@ -1006,6 +1006,25 @@ describe('ContentStudio — Serien-Formate (v1012)', () => {
   });
 });
 
+describe('ContentStudio — „-no-title"-Marker (v1027)', () => {
+  it('overlayBakesTitle: Titel-/Termin-Bedingungen spiegeln applyOverlays', () => {
+    const ch = (overlay: Record<string, unknown>) => ({ config: { image_overlay: overlay } });
+    // Titel-Overlay an + Titel vorhanden → gebrannt
+    expect(ContentStudio.overlayBakesTitle(ch({ title: true }), { title: 'X' })).toBe(true);
+    // Titel-Overlay aus → nicht gebrannt
+    expect(ContentStudio.overlayBakesTitle(ch({ title: false }), { title: 'X' })).toBe(false);
+    // Default (kein image_overlay-title) → nicht gebrannt
+    expect(ContentStudio.overlayBakesTitle({ config: {} }, { title: 'X' })).toBe(false);
+    // Termin-Karte (Default an) → gebrannt, auch bei title:false
+    expect(ContentStudio.overlayBakesTitle(ch({ title: false }), { title: 'X', terminBis: '2026-07-08T19:00:00Z' })).toBe(true);
+    // Termin-Karte abgeschaltet (fussball.cc) → nicht gebrannt
+    expect(ContentStudio.overlayBakesTitle(ch({ title: false, termin_card: false }), { title: 'X', terminBis: '2026-07-08T19:00:00Z' })).toBe(false);
+    // Karussell: forcedTitle string → gebrannt; forcedTitle null (nur Branding) → nicht
+    expect(ContentStudio.overlayBakesTitle(ch({}), { title: 'X' }, 'Slide-Titel')).toBe(true);
+    expect(ContentStudio.overlayBakesTitle(ch({}), { title: 'X', terminBis: '2026-07-08T19:00:00Z' }, null)).toBe(false);
+  });
+});
+
 describe('ContentStudio — Overlays neu anwenden (v1026)', () => {
   it('refreshOverlays: baut studio-Bild aus dem asset-Zwilling neu, überspringt Bilder ohne Asset', async () => {
     const { mkdtemp, writeFile, readFile } = await import('node:fs/promises');
@@ -1142,6 +1161,8 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-1');
     const media = (socialRepo.createItem as any).mock.calls[0][2].media;
     expect(media[0].pathOrUrl).toContain('studio-'); // eigenes Item-Bild (mit frischem Overlay)
+    // v1027 — ohne Titel-Overlay/Termin-Karte trägt der Dateiname den Plattform-Marker
+    expect(media[0].pathOrUrl).toContain('-no-title.png');
   });
 
   it('v1014: gesperrtes Asset (blocked) wird NIE wiederverwendet → normale Generierung', async () => {

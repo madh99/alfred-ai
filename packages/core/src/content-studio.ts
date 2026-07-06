@@ -1802,7 +1802,10 @@ Antworte NUR mit einem JSON-Array:
           const { writeFile, mkdir } = await import('node:fs/promises');
           const { join } = await import('node:path');
           await mkdir(this.mediaDir, { recursive: true });
-          const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          // v1027 — „-no-title"-Marker im Dateinamen, wenn KEIN Titel und keine
+          // Termin-Karte eingebrannt wurde: die Plattform (fussball.cc) rendert
+          // Titel dann selbst und erkennt titellose Bilder am Upload-Dateinamen
+          const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ContentStudio.overlayBakesTitle(channel, idea, forcedTitle) ? '' : '-no-title'}`;
           const file = join(this.mediaDir, `studio-${stamp}.png`);
           await writeFile(file, finalBuffer);
           // v1005 — sauberes Basis-Bild (vor Overlay) in die Bibliothek legen;
@@ -1893,7 +1896,8 @@ Antworte NUR mit einem JSON-Array:
       return undefined;
     }
     const finalBuffer = await this.applyOverlays(base, channel, idea, forcedTitle).catch(() => base);
-    const file = join(this.mediaDir!, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+    // v1027 — gleicher „-no-title"-Marker wie im Frisch-Pfad (Plattform-Signal)
+    const file = join(this.mediaDir!, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ContentStudio.overlayBakesTitle(channel, idea, forcedTitle) ? '' : '-no-title'}.png`);
     await writeFile(file, finalBuffer);
     await this.socialRepo.touchMediaAsset(this.ownerUserId, best.asset.id).catch(() => { /* non-critical */ });
     this.logger.info({ channel: channel.name, asset: best.asset.id, score: Number(best.score.toFixed(2)), motif: motif.slice(0, 80) }, 'v1005 image reused from library (kein Budget verbraucht)');
@@ -1919,6 +1923,29 @@ Antworte NUR mit einem JSON-Array:
       case 'youtube': return { size: '1536x1024' };
       default: return {};
     }
+  }
+
+  /**
+   * v1027 — Brennt der Overlay-Schritt einen TITEL bzw. eine Termin-Karte ins
+   * Bild? Spiegelbild der Spec-Logik in applyOverlays. Entscheidet den
+   * Dateinamen-Marker „-no-title": Die fussball.cc-Plattform rendert Titel
+   * selbst (locale-aware, HTML/OG) und braucht ein verlässliches Signal,
+   * welche gelieferten Bilder KEINEN eingebrannten Titel tragen — der reine
+   * Datums-Cutoff kann saubere Bilder nicht von Termin-Karten-Bildern
+   * unterscheiden (Plattform-Marker: „no-title" im Dateinamen, Token-Grenzen).
+   */
+  static overlayBakesTitle(
+    channel: Pick<SocialChannel, 'config'>,
+    idea: Pick<GeneratedIdea, 'title' | 'terminBis'>,
+    forcedTitle?: string | null,
+  ): boolean {
+    const ov = (channel.config.image_overlay && typeof channel.config.image_overlay === 'object'
+      ? channel.config.image_overlay : {}) as Record<string, unknown>;
+    const termin = forcedTitle === undefined && !!idea.terminBis && ov.termin_card !== false;
+    const title = forcedTitle !== undefined
+      ? typeof forcedTitle === 'string' && forcedTitle.length > 0
+      : (!termin && ov.title === true && !!idea.title);
+    return termin || title;
   }
 
   /**
