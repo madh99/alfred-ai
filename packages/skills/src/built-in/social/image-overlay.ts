@@ -107,7 +107,10 @@ export function resolveImageBranding(channel: SocialChannel, siblings: SocialCha
     const base = lead && typeof lead.config.base_url === 'string' ? lead.config.base_url : undefined;
     if (base) {
       const domain = base.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/:].*$/, '');
-      if (domain) return domain;
+      // v1018 — IP-Adressen/localhost sind interne Deploy-URLs, kein Branding
+      // (Realfall: Wasserzeichen zeigte „192.168.1.96")
+      const isInternal = /^(\d{1,3}\.){3}\d{1,3}$/.test(domain) || domain === 'localhost' || !domain.includes('.');
+      if (domain && !isInternal) return domain;
     }
   }
   return channel.name;

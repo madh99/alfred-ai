@@ -1,5 +1,30 @@
 import type { SocialChannel, ContentItem } from '@alfred/storage';
 import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult } from './social-provider.js';
+import { loadSharp } from './image-overlay.js';
+
+/** v1018 — Bluesky-Blob-Limit für Bilder (Server lehnt >2.000.000 Bytes ab); mit Puffer. */
+const MAX_IMAGE_BYTES = 1_900_000;
+
+/**
+ * v1018 — Bild fürs Bluesky-Limit vorbereiten: über 1,9 MB wird per sharp
+ * verkleinert (max. 1600px Kante) und als JPEG (q82) neu kodiert — die
+ * high-quality-PNGs des Studios liegen sonst über dem 2-MB-Limit
+ * (Realfall: 2,3 MB → „blob too big"). Ohne sharp und zu groß → null
+ * (dann lieber Post ohne Bild als gar kein Post).
+ */
+export async function prepareBlueskyImage(bytes: Buffer): Promise<{ bytes: Buffer; mime: string } | null> {
+  if (bytes.length <= MAX_IMAGE_BYTES) return { bytes, mime: 'image/png' };
+  try {
+    const sharp = await loadSharp();
+    if (!sharp) return null;
+    const out: Buffer = await (sharp as unknown as (i: Buffer) => {
+      resize(o: Record<string, unknown>): { jpeg(o: Record<string, unknown>): { toBuffer(): Promise<Buffer> } };
+    })(bytes).resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+    return out.length <= MAX_IMAGE_BYTES ? { bytes: out, mime: 'image/jpeg' } : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * v1013 — Bluesky-Provider (AT Protocol): postet über die XRPC-API.
@@ -72,10 +97,13 @@ export class BlueskyProvider extends SocialProvider {
         const { readFile } = await import('node:fs/promises');
         bytes = await readFile(media.pathOrUrl);
       }
+      // v1018 — Bluesky-Limit: >1,9 MB verkleinern (sonst „blob too big")
+      const prepared = await prepareBlueskyImage(bytes);
+      if (!prepared) continue; // Bild nicht limitierbar → Post ohne dieses Bild
       const up = await fetch(`${service}/xrpc/com.atproto.repo.uploadBlob`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session.accessJwt}`, 'Content-Type': 'image/png' },
-        body: new Uint8Array(bytes),
+        headers: { Authorization: `Bearer ${session.accessJwt}`, 'Content-Type': prepared.mime },
+        body: new Uint8Array(prepared.bytes),
       });
       const upData = await up.json().catch(() => ({})) as { blob?: unknown; message?: string };
       if (!up.ok || !upData.blob) throw new Error(`Bluesky: Bild-Upload fehlgeschlagen (${upData.message ?? `HTTP ${up.status}`})`);

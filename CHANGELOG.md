@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1018] - 2026-07-06
+
+### Fixed — Bluesky-Bildlimit + internes Wasserzeichen (v1018)
+
+Zwei Realfälle vom ersten Bluesky-Post:
+
+- **„blob too big"**: Bluesky lehnt Bilder über 2 MB ab — die
+  high-quality-PNGs des Studios (2,3 MB) scheiterten. Bilder über
+  1,9 MB werden jetzt vor dem Upload per sharp verkleinert (max.
+  1600 px Kante) und als JPEG (q82) hochgeladen; ist das nicht möglich,
+  geht der Post ohne Bild raus statt gar nicht.
+- **Wasserzeichen zeigte „192.168.1.96"**: Die Branding-Auflösung nahm
+  die Lead-`base_url` — bei internen Deploys eine IP.
+  IP-Adressen/localhost werden nie mehr als Branding verwendet
+  (Fallback Kanalname); zusätzlich ist `image_branding: "fussball.cc"`
+  jetzt explizit auf allen Kanälen gesetzt (wirkt sofort, ohne Deploy).
+- 2 neue Tests (echte Kompression unter das Limit, IP-Fallback).
+
 ## [0.19.0-multi-ha.1017] - 2026-07-06
 
 ### Added — Bild-Bibliothek: Lightbox + Motiv kuratierbar (v1017)

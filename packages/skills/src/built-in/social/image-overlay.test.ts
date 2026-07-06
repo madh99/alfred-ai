@@ -40,6 +40,36 @@ describe('image-overlay (v1002)', () => {
     expect(resolveImageBranding(makeChannel({}), [])).toBe('FussballCC News');
   });
 
+  it('v1018: interne Lead-URLs (IP/localhost) sind KEIN Branding → Fallback Kanalname', () => {
+    const internal = makeChannel({ id: 'w', platform: 'rest', name: 'fussball.cc Website', projectId: 'p1', config: { base_url: 'https://192.168.1.96:3003' } });
+    const tg = makeChannel({ id: 't', name: 'FussballCC News', projectId: 'p1' });
+    expect(resolveImageBranding(tg, [internal, tg])).toBe('FussballCC News');
+    const local = makeChannel({ id: 'w2', platform: 'rest', projectId: 'p2', config: { base_url: 'http://localhost:3001' } });
+    expect(resolveImageBranding(makeChannel({ id: 'x', name: 'X', projectId: 'p2' }), [local])).toBe('X');
+  });
+
+  it('v1018: prepareBlueskyImage — klein bleibt PNG, groß wird JPEG unter 1,9 MB', async () => {
+    const { prepareBlueskyImage } = await import('./bluesky-provider.js');
+    const small = Buffer.alloc(100_000, 1);
+    expect(await prepareBlueskyImage(small)).toEqual({ bytes: small, mime: 'image/png' });
+    // echtes großes Bild: 2500x2500 Rauschen → PNG > 1,9 MB → verkleinert als JPEG
+    const sharp = await loadSharp();
+    const noise = Buffer.alloc(2500 * 2500 * 3);
+    let seed = 42;
+    for (let i = 0; i < noise.length; i++) {
+      seed = (seed * 1664525 + 1013904223) >>> 0; // LCG — echtes Pseudo-Rauschen, PNG kann das nicht komprimieren
+      noise[i] = seed >>> 24;
+    }
+    const bigPng: Buffer = await (sharp as any)(noise, { raw: { width: 2500, height: 2500, channels: 3 } }).png().toBuffer();
+    expect(bigPng.length).toBeGreaterThan(1_900_000);
+    const prepared = await prepareBlueskyImage(bigPng);
+    expect(prepared).not.toBeNull();
+    expect(prepared!.mime).toBe('image/jpeg');
+    expect(prepared!.bytes.length).toBeLessThanOrEqual(1_900_000);
+    const meta = await (sharp as any)(prepared!.bytes).metadata();
+    expect(Math.max(meta.width, meta.height)).toBeLessThanOrEqual(1600);
+  });
+
   it('buildOverlaySvg: Branding + Titel + Termin-Karte landen als Text im SVG', () => {
     const svg = buildOverlaySvg(1024, 1024, {
       branding: 'fussball.cc', title: 'Marokko marschiert weiter',
