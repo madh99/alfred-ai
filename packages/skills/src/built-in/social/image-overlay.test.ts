@@ -41,6 +41,23 @@ describe('image-overlay (v1002)', () => {
     expect(br).toContain('text-anchor="end"'); // Default unten rechts
   });
 
+  it('v1032: recolorSvg färbt fill-Werte um, none/transparent bleiben, Default-Schwarz bekommt Root-fill', async () => {
+    const { recolorSvg } = await import('./image-overlay.js');
+    // Attribut-Notation (Realfall: User-Logo mit fill="#000000")
+    expect(recolorSvg('<svg><path fill="#000000" d="M0 0"/></svg>', '#ffffff')).toContain('fill="#ffffff"');
+    // Löcher/Aussparungen bleiben
+    const holes = recolorSvg('<svg><path fill="none" d="M0 0"/><path fill="#123456" d="M1 1"/></svg>', '#00ff00');
+    expect(holes).toContain('fill="none"');
+    expect(holes).toContain('fill="#00ff00"');
+    // style-Notation
+    expect(recolorSvg('<svg><path style="fill:#333;stroke:none" d="M0 0"/></svg>', '#abcdef')).toContain('fill:#abcdef');
+    // gar kein fill → Root-Element bekommt eins
+    expect(recolorSvg('<svg viewBox="0 0 10 10"><path d="M0 0"/></svg>', '#ff0000')).toContain('<svg fill="#ff0000"');
+    // ungültige Farbe → unverändert
+    const orig = '<svg><path fill="#000" d="M0 0"/></svg>';
+    expect(recolorSvg(orig, 'rot')).toBe(orig);
+  });
+
   it('v1026: Logo-SVG wird komposittiert — Bildmaße bleiben, Bild ändert sich', async () => {
     const sharp = await loadSharp();
     if (!sharp) return; // ohne sharp (seltene Dev-Umgebung) nichts zu prüfen

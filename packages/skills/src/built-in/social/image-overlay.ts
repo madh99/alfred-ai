@@ -34,6 +34,24 @@ export interface LogoOverlay {
   svg: string;
   /** Ecke, Default bottom-right */
   corner?: OverlayCorner;
+  /** v1032 — Logo umfärben (Hex, z.B. "#ffffff"); leer/fehlend = Originalfarben des SVG */
+  color?: string;
+}
+
+/**
+ * v1032 — SVG umfärben: ersetzt alle fill-Werte (Attribut UND style-Notation)
+ * durch die Zielfarbe — außer "none"/"transparent" (Löcher/Konturen bleiben).
+ * Hat das SVG gar kein fill (Default-Schwarz), bekommt das Root-Element eins.
+ * EIN hochgeladenes Logo reicht damit für alle Kanäle und Untergründe.
+ */
+export function recolorSvg(svg: string, color: string): string {
+  if (!/^#[0-9a-fA-F]{3,8}$/.test(color)) return svg;
+  let out = svg
+    .replace(/fill="(?!none|transparent)[^"]*"/gi, `fill="${color}"`)
+    .replace(/fill='(?!none|transparent)[^']*'/gi, `fill='${color}'`)
+    .replace(/fill:\s*(?!none|transparent)[^;"'}]+/gi, `fill:${color}`);
+  if (!/fill[=:]/i.test(out)) out = out.replace(/<svg\b/i, `<svg fill="${color}"`);
+  return out;
 }
 
 export interface OverlaySpec {
@@ -254,7 +272,9 @@ export async function applyImageOverlays(png: Buffer, spec: OverlaySpec): Promis
     if (spec.logo?.svg && spec.logo.svg.length < 300_000) {
       try {
         const pad = Math.round(width * 0.035);
-        const logoBuf = await sharp(Buffer.from(spec.logo.svg)).resize({ width: Math.round(width * 0.13), fit: 'inside' }).png().toBuffer();
+        // v1032 — optionale Umfärbung (ein SVG für alle Kanäle/Untergründe)
+        const markup = spec.logo.color ? recolorSvg(spec.logo.svg, spec.logo.color) : spec.logo.svg;
+        const logoBuf = await sharp(Buffer.from(markup)).resize({ width: Math.round(width * 0.13), fit: 'inside' }).png().toBuffer();
         const lm = await sharp(logoBuf).metadata();
         const lw = lm.width ?? 0;
         const lh = lm.height ?? 0;

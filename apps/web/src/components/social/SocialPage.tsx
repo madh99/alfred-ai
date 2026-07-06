@@ -175,8 +175,8 @@ export function SocialPage() {
     // v1004 — Bild-Look je Kanal
     imageStyle: string; imageQuality: 'default' | 'low' | 'medium' | 'high';
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
-    // v1026 — Ecken + Logo-Wasserzeichen (SVG inline in der Config)
-    watermarkCorner: string; logoSvg: string; logoCorner: string;
+    // v1026 — Ecken + Logo-Wasserzeichen (SVG inline in der Config) · v1032 — Logo-Farbe ('' = Original)
+    watermarkCorner: string; logoSvg: string; logoCorner: string; logoColor: string;
     // v1006 — Sprache + Übersetzungen (translate_to nur bei rest-Kanälen wirksam)
     language: string; translateTo: string[];
     // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells · v1016 — Auto-Reels
@@ -186,7 +186,7 @@ export function SocialPage() {
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
-    watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right',
+    watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false, formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
@@ -540,6 +540,8 @@ export function SocialPage() {
         ? String((c.config.image_overlay as { logo?: { svg?: string } }).logo!.svg) : '',
       logoCorner: typeof (c.config.image_overlay as { logo?: { corner?: string } } | undefined)?.logo?.corner === 'string'
         ? String((c.config.image_overlay as { logo?: { corner?: string } }).logo!.corner) : 'bottom-right',
+      logoColor: typeof (c.config.image_overlay as { logo?: { color?: string } } | undefined)?.logo?.color === 'string'
+        ? String((c.config.image_overlay as { logo?: { color?: string } }).logo!.color) : '',
       // v1006 — Sprache + Übersetzungen
       language: typeof c.config.language === 'string' && c.config.language ? c.config.language : 'de',
       translateTo: Array.isArray(c.config.translate_to) ? (c.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string') : [],
@@ -585,7 +587,9 @@ export function SocialPage() {
             watermark: d.watermarkOn, title: d.titleOverlayOn,
             // v1026 — Ecken + Logo (config wird feldweise gemergt, null löscht)
             watermark_corner: d.watermarkCorner === 'bottom-right' ? null : d.watermarkCorner,
-            logo: d.logoSvg.trim().startsWith('<svg') ? { svg: d.logoSvg, corner: d.logoCorner } : null,
+            logo: d.logoSvg.trim().startsWith('<svg')
+              ? { svg: d.logoSvg, corner: d.logoCorner, color: /^#[0-9a-fA-F]{3,8}$/.test(d.logoColor.trim()) ? d.logoColor.trim() : null }
+              : null,
           },
           // v1006 — Sprache (Default de → Schlüssel löschen) + Übersetzungs-Ziele
           language: d.language === 'de' ? null : d.language,
@@ -1507,6 +1511,21 @@ export function SocialPage() {
                               <option value="top-right">oben rechts</option>
                               <option value="top-left">oben links</option>
                             </select>
+                          </div>
+                          {/* v1032 — Logo-Farbe: umfärbt das SVG beim Compositing; „↺" = Originalfarben */}
+                          <div>
+                            <label className="text-[11px] text-gray-500">Farbe{settingsDraft.logoColor ? '' : ' (Original)'}</label>
+                            <div className="flex items-center gap-1 mt-1">
+                              <input type="color" value={settingsDraft.logoColor || '#ffffff'}
+                                onChange={e => setSettingsDraft(d => ({ ...d, logoColor: e.target.value }))}
+                                disabled={!settingsDraft.logoSvg}
+                                className="h-6 w-9 bg-[#0a0a0a] border border-[#2a2a2a] rounded cursor-pointer disabled:opacity-40"
+                                title="Logo umfärben (gilt je Kanal — ein SVG reicht für alle Farben)" />
+                              {settingsDraft.logoColor && (
+                                <button onClick={() => setSettingsDraft(d => ({ ...d, logoColor: '' }))}
+                                  className="px-1.5 py-0.5 text-[10px] border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 rounded" title="Originalfarben des SVG verwenden">↺</button>
+                              )}
+                            </div>
                           </div>
                           {settingsDraft.logoSvg && (
                             <button onClick={() => setSettingsDraft(d => ({ ...d, logoSvg: '' }))}

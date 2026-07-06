@@ -1971,7 +1971,12 @@ Antworte NUR mit einem JSON-Array:
     // v1026 — Logo (SVG inline in der Config) + wählbare Ecken für Logo und Text
     const logoRaw = (ov.logo && typeof ov.logo === 'object' ? ov.logo : undefined) as Record<string, unknown> | undefined;
     const logo = logoRaw && typeof logoRaw.svg === 'string' && logoRaw.svg.trim().startsWith('<svg')
-      ? { svg: logoRaw.svg, corner: parseOverlayCorner(logoRaw.corner, 'bottom-right') }
+      ? {
+        svg: logoRaw.svg,
+        corner: parseOverlayCorner(logoRaw.corner, 'bottom-right'),
+        // v1032 — optionale Umfärbung (Hex; leer = Originalfarben)
+        ...(typeof logoRaw.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(logoRaw.color.trim()) ? { color: logoRaw.color.trim() } : {}),
+      }
       : undefined;
     const spec: OverlaySpec = {
       branding: ov.watermark === false ? undefined : resolveImageBranding(channel, siblings),

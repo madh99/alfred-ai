@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1032] - 2026-07-06
+
+### Added — Logo-Farbe je Kanal (v1032)
+
+- Das Logo-SVG lässt sich pro Kanal umfärben (Farbfeld neben der
+  Ecken-Auswahl in den Kanal-Einstellungen): Alfred ersetzt beim
+  Compositing alle fill-Werte des SVG durch die gewählte Farbe —
+  Aussparungen (`fill="none"`) bleiben erhalten, SVGs ohne fill-Angabe
+  (Default-Schwarz) bekommen die Farbe am Root-Element. Ein hochgeladenes
+  Logo genügt damit für alle Kanäle und Untergründe; „↺" stellt die
+  Originalfarben wieder her.
+
 ## [0.19.0-multi-ha.1031] - 2026-07-06
 
 ### Fixed — X: 401-Härtung für den Token-Cache (v1031)
