@@ -78,7 +78,7 @@ export class XProvider extends SocialProvider {
    * media.write). Best-effort je Bild: Fehler kosten NIE den Post — er geht
    * dann ohne (fehlende) Bilder raus.
    */
-  private async uploadImages(item: ContentItem, token: string, secrets: Record<string, string>): Promise<string[]> {
+  private async uploadImages(item: ContentItem, secrets: Record<string, string>, channel?: SocialChannel): Promise<string[]> {
     const ids: string[] = [];
     const useV11 = this.hasOauth1(secrets);
     for (const m of item.media.filter(x => x.type === 'image').slice(0, 4)) {
@@ -106,9 +106,9 @@ export class XProvider extends SocialProvider {
           ok = up.ok;
         } else {
           form.append('media_category', 'tweet_image');
-          const up = await fetch('https://api.x.com/2/media/upload', {
-            method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
-          });
+          const up = await this.withAuthRetry(secrets, channel, t => fetch('https://api.x.com/2/media/upload', {
+            method: 'POST', headers: { Authorization: `Bearer ${t}` }, body: form,
+          }));
           const data = await up.json().catch(() => ({})) as { data?: { id?: string | number }; id?: string | number; media_id_string?: string };
           id = data.data?.id ?? data.id ?? data.media_id_string;
           ok = up.ok;
@@ -122,18 +122,37 @@ export class XProvider extends SocialProvider {
   /** v1019 — Kanalwachstum: Follower via users/me (best-effort — Free-Tier ist knapp rate-limitiert). */
   override async fetchAudience(channel: SocialChannel, secrets: Record<string, string>): Promise<{ followers: number } | null> {
     try {
-      const token = await this.token(secrets, channel);
-      const res = await fetch('https://api.x.com/2/users/me?user.fields=public_metrics', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await this.withAuthRetry(secrets, channel, t => fetch('https://api.x.com/2/users/me?user.fields=public_metrics', {
+        headers: { Authorization: `Bearer ${t}` },
+      }));
       const data = await res.json().catch(() => ({})) as { data?: { public_metrics?: { followers_count?: number } } };
       const count = data.data?.public_metrics?.followers_count;
       return res.ok && typeof count === 'number' ? { followers: count } : null;
     } catch { return null; }
   }
 
+  private cacheKeyFor(secrets: Record<string, string>): string {
+    return secrets.X_CLIENT_ID ?? secrets.X_ACCESS_TOKEN ?? 'default';
+  }
+
+  /**
+   * v1031 — 401-Härtung: Antwortet X mit 401, ist das gecachte Access-Token
+   * serverseitig entwertet (Realfall 06.07.: Neu-Autorisierung ersetzt das
+   * Token-Paar, der Cache lebte weiter) → Cache verwerfen, mit dem AKTUELL
+   * hinterlegten Refresh-Token neu holen und den Call EINMAL wiederholen.
+   */
+  private async withAuthRetry(secrets: Record<string, string>, channel: SocialChannel | undefined, fn: (token: string) => Promise<Response>): Promise<Response> {
+    const token = await this.token(secrets, channel);
+    const res = await fn(token);
+    if (res.status !== 401 || !secrets.X_REFRESH_TOKEN || !secrets.X_CLIENT_ID) return res;
+    this.tokenCache.delete(this.cacheKeyFor(secrets));
+    const fresh = await this.token(secrets, channel);
+    if (fresh === token) return res; // kein neues Token bekommen → Original-Antwort
+    return fn(fresh);
+  }
+
   private async token(secrets: Record<string, string>, channel?: SocialChannel): Promise<string> {
-    const cacheKey = secrets.X_CLIENT_ID ?? secrets.X_ACCESS_TOKEN ?? 'default';
+    const cacheKey = this.cacheKeyFor(secrets);
     const cached = this.tokenCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
     if (secrets.X_REFRESH_TOKEN && secrets.X_CLIENT_ID) {
@@ -164,19 +183,18 @@ export class XProvider extends SocialProvider {
   }
 
   async publish(item: ContentItem, channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
-    const token = await this.token(secrets, channel);
     // v1029 — Bilder zuerst hochladen; die KI-Kennzeichnung (composePostText/
     // aiDisclosure) gilt nur, wenn wirklich ein Bild MITGEHT — sonst würde
     // „Bild: KI-generiert" ohne Bild im Tweet stehen (Realfall 06.07.)
-    const mediaIds = await this.uploadImages(item, token, secrets);
+    const mediaIds = await this.uploadImages(item, secrets, channel);
     const textItem = mediaIds.length > 0 ? item : { ...item, media: [] };
     const payload: Record<string, unknown> = { text: composePostText(textItem, 280, channel) };
     if (mediaIds.length > 0) payload.media = { media_ids: mediaIds };
-    const res = await fetch('https://api.x.com/2/tweets', {
+    const res = await this.withAuthRetry(secrets, channel, t => fetch('https://api.x.com/2/tweets', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
+    }));
     const data = await res.json().catch(() => ({})) as { data?: { id: string }; detail?: string; title?: string };
     if (!res.ok || !data.data?.id) throw new Error(`X: ${data.detail ?? data.title ?? `HTTP ${res.status}`}`);
     return { externalId: data.data.id, url: `https://x.com/i/status/${data.data.id}` };
@@ -184,8 +202,7 @@ export class XProvider extends SocialProvider {
 
   async validateAuth(channel: SocialChannel, secrets: Record<string, string>): Promise<{ ok: boolean; detail?: string }> {
     try {
-      const token = await this.token(secrets, channel);
-      const res = await fetch('https://api.x.com/2/users/me', { headers: { Authorization: `Bearer ${token}` } });
+      const res = await this.withAuthRetry(secrets, channel, t => fetch('https://api.x.com/2/users/me', { headers: { Authorization: `Bearer ${t}` } }));
       const data = await res.json().catch(() => ({})) as { data?: { username?: string } };
       return res.ok ? { ok: true, detail: data.data?.username } : { ok: false, detail: `HTTP ${res.status}` };
     } catch (err) {
@@ -195,10 +212,9 @@ export class XProvider extends SocialProvider {
 
   override async deletePost(externalId: string, channel: SocialChannel, secrets: Record<string, string>): Promise<boolean> {
     try {
-      const token = await this.token(secrets, channel);
-      const res = await fetch(`https://api.x.com/2/tweets/${encodeURIComponent(externalId)}`, {
-        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await this.withAuthRetry(secrets, channel, t => fetch(`https://api.x.com/2/tweets/${encodeURIComponent(externalId)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${t}` },
+      }));
       const data = await res.json().catch(() => ({})) as { data?: { deleted?: boolean } };
       return data.data?.deleted === true;
     } catch { return false; }
@@ -210,11 +226,10 @@ export class XProvider extends SocialProvider {
     secrets: Record<string, string>,
   ): Promise<Array<{ itemId: string; kind: string; value: number }>> {
     if (items.length === 0) return [];
-    const token = await this.token(secrets, channel);
     const ids = items.slice(0, 100).map(i => i.externalId).join(',');
-    const res = await fetch(`https://api.x.com/2/tweets?ids=${encodeURIComponent(ids)}&tweet.fields=public_metrics`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await this.withAuthRetry(secrets, channel, t => fetch(`https://api.x.com/2/tweets?ids=${encodeURIComponent(ids)}&tweet.fields=public_metrics`, {
+      headers: { Authorization: `Bearer ${t}` },
+    }));
     if (!res.ok) return [];
     const data = await res.json() as { data?: Array<{ id: string; public_metrics?: Record<string, number> }> };
     const byExternal = new Map(items.map(i => [i.externalId, i.id]));

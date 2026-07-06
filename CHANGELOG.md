@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1031] - 2026-07-06
+
+### Fixed — X: 401-Härtung für den Token-Cache (v1031)
+
+- Wird das gecachte Access-Token serverseitig entwertet (z. B. durch eine
+  Neu-Autorisierung, die das Token-Paar ersetzt), lief jeder X-Aufruf bis
+  zum Cache-Ablauf in „Unauthorized". Jetzt: Bei 401 wird der Cache
+  verworfen, mit dem aktuell hinterlegten Refresh-Token einmal frisch
+  refresht (inkl. Rotations-Persistierung) und der Aufruf wiederholt —
+  gilt für Posten, Löschen, Metriken, Follower und den v2-Media-Upload.
+
 ## [0.19.0-multi-ha.1030] - 2026-07-06
 
 ### Fixed — X-Bild-Upload über v1.1-Fallback (v1030)

@@ -313,6 +313,21 @@ describe('XProvider (v936)', () => {
     }
   });
 
+  it('v1031: 401 mit gecachtem Token → Cache verworfen, frisch refresht, Call wiederholt', async () => {
+    const provider = new XProvider();
+    const secrets: Record<string, string> = { X_REFRESH_TOKEN: 'R1', X_CLIENT_ID: 'CID' };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'ALT', refresh_token: 'R2', expires_in: 7200 })) // Refresh #1 (füllt Cache)
+      .mockResolvedValueOnce(jsonResponse({ title: 'Unauthorized' }, 401))                                  // tweets mit entwertetem Token
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'NEU', refresh_token: 'R3', expires_in: 7200 })) // Refresh #2 (erzwungen)
+      .mockResolvedValueOnce(jsonResponse({ data: { id: '880' } }, 201));                                   // Retry ok
+    const r = await provider.publish(makeItem(), makeChannel('x'), secrets);
+    expect(r.externalId).toBe('880');
+    const retry = fetchMock.mock.calls[3];
+    expect((retry[1] as RequestInit).headers).toMatchObject({ Authorization: 'Bearer NEU' });
+    expect(secrets.X_REFRESH_TOKEN).toBe('R3'); // Rotation auch beim erzwungenen Refresh
+  });
+
   it('v1028: Refresh-Rotation — neues Refresh-Token wird persistiert, Access-Token gecacht', async () => {
     const provider = new XProvider();
     const writer = vi.fn(async () => { /* persistiert */ });
