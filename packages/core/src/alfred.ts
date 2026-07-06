@@ -8385,7 +8385,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             }, socialCtx);
             return { success: r.success, display: r.display, error: r.error };
           },
-          channelMetrics: async (channelId: string) => socialRepo.listMetrics(channelId, { limit: 120 }),
+          // v1020 — 400 Zeilen, damit die followers-Historie (30d+) neben den Engagement-Kinds Platz hat
+          channelMetrics: async (channelId: string) => socialRepo.listMetrics(channelId, { limit: 400 }),
           // v992 — Kommentare für die UI (Liste direkt aus dem Repo; Aktionen durch den Skill)
           listComments: async (opts: { channelId?: string; status?: string }) => {
             const status = opts.status === 'new' || opts.status === 'replied' || opts.status === 'ignored' ? opts.status : undefined;

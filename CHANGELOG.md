@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1020] - 2026-07-06
+
+### Added — Wachstums-UI: Kanal-Trends + Familien-Analyse (v1020)
+
+- **Kanal-Karten** (Kanäle-Tab): aktueller Follower-Stand mit
+  Wochentrend („👥 1.284 +37/7d ▲") und Mini-Sparkline.
+- **Analytics-Tab, neue Sektion „📈 Wachstum"**: je Kanal die
+  Level-Zeitreihe, Δ7 Tage (absolut + %), Δ30 Tage und Beginn der
+  Historie. Followers sind bewusst aus den generischen
+  Engagement-Serien ausgenommen (Level-Wert, keine Summe).
+- **Familien-Analyse**: Gesamt-Reichweite der Familie (Summe aller
+  Follower), Wochen-Delta, Anteil je Kanal in % und der stärkste
+  Wachstums-Treiber (relativ).
+- Metrics-API liefert 400 Zeilen je Kanal, damit 30+ Tage
+  followers-Historie neben den Engagement-Kinds Platz haben.
+
 ## [0.19.0-multi-ha.1019] - 2026-07-06
 
 ### Added — Kanalwachstum: täglicher Follower-Stand je Kanal (v1019)

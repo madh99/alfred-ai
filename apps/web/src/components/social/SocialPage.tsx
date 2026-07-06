@@ -724,6 +724,48 @@ export function SocialPage() {
       ?? [...allItems.values()].find(i => i.storyId === detailItem.storyId && i.storyTitle)?.storyTitle;
   }, [allItems, detailItem]);
 
+  // v1020 — Kanalwachstum: followers-Zeitreihe je Kanal (Level-Werte, 1/Tag) + Deltas
+  const growth = useMemo(() => {
+    const byChannel: Record<string, { series: Array<{ date: string; value: number }>; latest: number; delta7: number; delta30: number }> = {};
+    for (const c of channels) {
+      const byDate = new Map<string, number>();
+      for (const m of metrics[c.id] ?? []) {
+        if (m.kind !== 'followers' || m.itemId) continue;
+        byDate.set(m.date, m.value);
+      }
+      const series = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, value]) => ({ date, value }));
+      if (series.length === 0) continue;
+      const latest = series[series.length - 1].value;
+      const at = (days: number) => {
+        const cut = new Date(Date.now() - days * 24 * 3_600_000).toISOString().slice(0, 10);
+        const older = series.filter(s => s.date <= cut);
+        return older.length > 0 ? older[older.length - 1].value : series[0].value;
+      };
+      byChannel[c.id] = { series, latest, delta7: latest - at(7), delta30: latest - at(30) };
+    }
+    return byChannel;
+  }, [channels, metrics]);
+
+  /** v1020 — Familien-Wachstum: Summe je Datum über alle Familien-Kanäle mit Daten. */
+  const familyGrowth = useMemo(() => {
+    const out: Array<{ famKey: string; members: SocialChannelItem[]; total: number; delta7: number; driver?: { name: string; delta7: number; pct: number } }> = [];
+    for (const [famKey, members] of familyCalendars.families) {
+      const withData = members.filter(m => growth[m.id]);
+      if (withData.length === 0) continue;
+      const total = withData.reduce((s, m) => s + growth[m.id].latest, 0);
+      const delta7 = withData.reduce((s, m) => s + growth[m.id].delta7, 0);
+      let driver: { name: string; delta7: number; pct: number } | undefined;
+      for (const m of withData) {
+        const g = growth[m.id];
+        const base = Math.max(1, g.latest - g.delta7);
+        const pct = (g.delta7 / base) * 100;
+        if (g.delta7 > 0 && (!driver || pct > driver.pct)) driver = { name: m.name, delta7: g.delta7, pct };
+      }
+      out.push({ famKey, members: withData, total, delta7, driver });
+    }
+    return out;
+  }, [familyCalendars, growth]);
+
   // v967 — Analytics: Zeitreihen je Metrik-Art + Top-Beiträge je Kanal
   const analytics = useMemo(() => {
     const titleById = new Map<string, string>();
@@ -736,7 +778,8 @@ export function SocialPage() {
       const byKind = new Map<string, Map<string, number>>();
       const byItem = new Map<string, number>();
       for (const e of entries) {
-        if (e.kind === 'gen_image') continue;
+        // gen_image ist Budget, followers ein Level-Wert — beide haben eigene Ansichten
+        if (e.kind === 'gen_image' || e.kind === 'followers') continue;
         const days = byKind.get(e.kind) ?? new Map<string, number>();
         days.set(e.date, (days.get(e.date) ?? 0) + e.value);
         byKind.set(e.kind, days);
@@ -1146,6 +1189,16 @@ export function SocialPage() {
                     <span className={clsx('block h-full rounded', c.imageBudget.used >= c.imageBudget.total ? 'bg-red-500' : 'bg-emerald-500')}
                       style={{ width: `${Math.min(100, Math.round((c.imageBudget.used / Math.max(1, c.imageBudget.total)) * 100))}%` }} />
                   </span>
+                </div>
+              )}
+              {/* v1020 — Kanalwachstum: Stand + Wochentrend */}
+              {growth[c.id] && (
+                <div className="text-[11px] text-gray-400 mt-1 flex items-center gap-2">
+                  👥 {growth[c.id].latest.toLocaleString('de-AT')}
+                  <span className={clsx(growth[c.id].delta7 > 0 ? 'text-emerald-400' : growth[c.id].delta7 < 0 ? 'text-red-400' : 'text-gray-500')}>
+                    {growth[c.id].delta7 > 0 ? '+' : ''}{growth[c.id].delta7}/7d {growth[c.id].delta7 > 0 ? '▲' : growth[c.id].delta7 < 0 ? '▼' : ''}
+                  </span>
+                  {growth[c.id].series.length >= 2 && <Sparkline points={growth[c.id].series.map(s => s.value)} />}
                 </div>
               )}
               {(c.topics?.length ?? 0) > 0 && (
@@ -1785,6 +1838,58 @@ export function SocialPage() {
         </div>
       </div>
       </>)}
+
+      {/* v1020 — Kanalwachstum: Zeitreihen + Familien-Analyse */}
+      {page === 'analytics' && Object.keys(growth).length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold text-gray-200 mb-2">📈 Wachstum</h2>
+          {familyGrowth.map(f => (
+            <div key={f.famKey} className="border border-purple-500/20 bg-purple-500/5 rounded-lg p-3 mb-3">
+              <div className="text-sm text-gray-200 font-medium">
+                👪 Familien-Reichweite: {f.total.toLocaleString('de-AT')}
+                <span className={clsx('ml-2 text-xs', f.delta7 > 0 ? 'text-emerald-400' : f.delta7 < 0 ? 'text-red-400' : 'text-gray-500')}>
+                  {f.delta7 > 0 ? '+' : ''}{f.delta7} in 7 Tagen
+                </span>
+              </div>
+              {f.driver && (
+                <div className="text-[11px] text-gray-400 mt-1">🚀 Stärkster Treiber: {f.driver.name} (+{f.driver.delta7} · +{f.driver.pct.toFixed(1)} %)</div>
+              )}
+              <div className="text-[11px] text-gray-500 mt-1">
+                {f.members.map(m => {
+                  const share = f.total > 0 ? ((growth[m.id].latest / f.total) * 100).toFixed(0) : '0';
+                  return `${m.name}: ${growth[m.id].latest.toLocaleString('de-AT')} (${share} %)`;
+                }).join(' · ')}
+              </div>
+            </div>
+          ))}
+          <div className="grid gap-3 md:grid-cols-2">
+            {channels.filter(c => growth[c.id]).map(c => {
+              const g = growth[c.id];
+              const base7 = Math.max(1, g.latest - g.delta7);
+              return (
+                <div key={c.id} className="border border-[#1f1f1f] rounded-lg p-3">
+                  <div className="flex items-center gap-2">
+                    <span>{PLATFORM_ICON[c.platform] ?? '📣'}</span>
+                    <span className="text-sm text-gray-200 font-medium">{c.name}</span>
+                    <div className="flex-1" />
+                    <span className="text-lg text-gray-100 font-semibold">{g.latest.toLocaleString('de-AT')}</span>
+                  </div>
+                  <div className="text-[11px] text-gray-500 mt-1 flex items-center gap-3">
+                    <span className={clsx(g.delta7 > 0 ? 'text-emerald-400' : g.delta7 < 0 ? 'text-red-400' : '')}>
+                      7 Tage: {g.delta7 > 0 ? '+' : ''}{g.delta7} ({((g.delta7 / base7) * 100).toFixed(1)} %)
+                    </span>
+                    <span className={clsx(g.delta30 > 0 ? 'text-emerald-400' : g.delta30 < 0 ? 'text-red-400' : '')}>
+                      30 Tage: {g.delta30 > 0 ? '+' : ''}{g.delta30}
+                    </span>
+                    <span className="text-gray-600">seit {g.series[0].date}</span>
+                  </div>
+                  {g.series.length >= 2 && <div className="mt-1"><Sparkline points={g.series.map(s => s.value)} /></div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* v967 — Analytics: Verlauf je Metrik + Top-Beiträge (aus channel_metrics) */}
       {page === 'analytics' && (
