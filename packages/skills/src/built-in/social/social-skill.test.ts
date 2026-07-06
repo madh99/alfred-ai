@@ -467,6 +467,31 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
   });
 });
 
+describe('v1024 — plan_story (Ad-hoc-Story auf User-Zuruf)', () => {
+  it('unverdrahtet → Fehler; ohne Stoff → Hinweis; mit Stoff → Planner korrekt aufgerufen', async () => {
+    const channel = makeChannel();
+    const item = makeItem();
+    const { skill } = makeSkill(channel, item);
+
+    const unwired = await skill.execute({ action: 'plan_story', stoff: 'Ein US-Spieler darf trotz Roter Karte spielen — die Politik hat interveniert.' }, CTX);
+    expect(unwired.success).toBe(false);
+    expect(unwired.error).toContain('nicht verfügbar');
+
+    const fn = vi.fn(async () => ({ created: 2, channels: ['fussball.cc', 'FussballCC News'], family: 'project:p1', storyTitle: 'USA-Politikum' }));
+    skill.setStoryPlanner(fn);
+
+    const missing = await skill.execute({ action: 'plan_story', stoff: 'zu kurz' }, CTX);
+    expect(missing.success).toBe(false);
+    expect(missing.error).toContain('stoff');
+
+    const r = await skill.execute({ action: 'plan_story', titel: 'USA-Politikum', stoff: 'Ein US-Spieler darf trotz Roter Karte spielen — die Politik hat interveniert. FIFA prüft.' }, CTX);
+    expect(r.success).toBe(true);
+    expect(fn).toHaveBeenCalledWith('USA-Politikum', expect.stringContaining('Roter Karte'), undefined);
+    expect(r.display).toContain('2 Beiträge');
+    expect(r.display).toContain('fussball.cc');
+  });
+});
+
 describe('v1007 — Auto-Story (IG-Story beim Lead-Publish)', () => {
   it('Lead published → 9:16-Story mit Overlay über public_media, dokumentiert als eigenes Item', async () => {
     const { loadSharp } = await import('./image-overlay.js');

@@ -30,7 +30,7 @@ type SocialAction =
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
   | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'suggest_reply' | 'regenerate_image' | 'revise_content'
-  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel';
+  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
@@ -103,8 +103,8 @@ export class SocialSkill extends Skill {
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
             'list_comments', 'reply_comment', 'ignore_comment', 'suggest_reply', 'regenerate_image', 'revise_content',
-            'get_content', 'edit_content', 'add_lesson', 'replan_channel'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um").',
+            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus.',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN; bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
@@ -135,6 +135,9 @@ export class SocialSkill extends Skill {
         reply: { type: 'string', description: 'reply_comment: die Antwort — geht LIVE auf die Plattform (FB/IG)' },
         hint: { type: 'string', description: 'regenerate_image: optionaler Bild-Hinweis, z.B. "beide Flaggen zeigen, ohne Menschen"' },
         instruction: { type: 'string', description: 'revise_content: Überarbeitungs-Anweisung, z.B. "halb so lang, ohne Superlative" — das Kanal-LLM schreibt Titel/Text/Hashtags um (Status/Termin bleiben)' },
+        stoff: { type: 'string', description: 'plan_story: der Stoff der Story in 1-6 Sätzen MIT allen Fakten (Wer/Was/Wann/Kontext) — NUR daraus wird je Kanal getextet, nichts wird dazuerfunden' },
+        titel: { type: 'string', description: 'plan_story: optionaler Arbeitstitel der Story (sonst aus dem Stoff abgeleitet)' },
+        family: { type: 'string', description: 'plan_story: optional Familien-Schlüssel (project:<id>/family:<name>) — nur nötig, wenn mehrere Familien existieren' },
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
         external_url: { type: 'string', description: 'mark_published: URL des manuell geposteten Beitrags' },
@@ -192,6 +195,13 @@ export class SocialSkill extends Skill {
 
   setReplanner(fn: (channel: SocialChannel) => Promise<number>): void {
     this.replanFn = fn;
+  }
+
+  /** v1024 — Ad-hoc-Story auf User-Zuruf (ContentStudio.planAdhocStory, vom Kern injiziert). */
+  private storyPlannerFn?: (titel: string | undefined, stoff: string, family?: string) => Promise<{ created: number; channels: string[]; family: string; storyTitle: string }>;
+
+  setStoryPlanner(fn: (titel: string | undefined, stoff: string, family?: string) => Promise<{ created: number; channels: string[]; family: string; storyTitle: string }>): void {
+    this.storyPlannerFn = fn;
   }
 
   /** v962 — Bild-Generierung für Ad-hoc-Items (Studio-Leitplanken, vom Kern injiziert; v991: optionaler bildidee-Hinweis). */
@@ -335,6 +345,7 @@ export class SocialSkill extends Skill {
         case 'edit_content': return await this.editContent(userId, input);
         case 'add_lesson': return await this.addLesson(userId, input);
         case 'replan_channel': return await this.replanChannel(userId, input);
+        case 'plan_story': return await this.planStory(input);
         default: return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
     } catch (err) {
@@ -1661,6 +1672,30 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
   }
 
   /** v959 — bestehende geplante Beiträge in die aktuellen Slots umplanen. */
+  /**
+   * v1024 — Ad-hoc-Story auf User-Zuruf: „Mach eine Story zu X für alle
+   * Kanäle" — der Stoff wird als echte Redaktions-Story über den
+   * News-Desk-Familienpfad ausgespielt (Lead +30 min, Follower +90 min,
+   * Freigaben nach Kanal-Modus). Bewusst ohne Score-Schwelle/Nachtruhe.
+   */
+  private async planStory(input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.storyPlannerFn) return { success: false, error: 'Story-Planung nicht verfügbar (Content-Studio nicht verdrahtet).' };
+    const stoff = typeof input.stoff === 'string' && input.stoff.trim().length >= 20 ? input.stoff.trim() : undefined;
+    if (!stoff) return { success: false, error: 'stoff fehlt — beschreibe die Story in 1-6 Sätzen MIT den Fakten (min. 20 Zeichen); nur daraus wird getextet.' };
+    const titel = typeof input.titel === 'string' && input.titel.trim() ? input.titel.trim() : undefined;
+    const family = typeof input.family === 'string' && input.family.trim() ? input.family.trim() : undefined;
+    try {
+      const r = await this.storyPlannerFn(titel, stoff, family);
+      if (r.created === 0) return { success: false, error: 'Kein Beitrag entstanden (Render je Kanal fehlgeschlagen) — Stoff präzisieren und erneut versuchen.' };
+      return {
+        success: true, data: r,
+        display: `⚡ Story „${r.storyTitle}" angestoßen: ${r.created} Beiträge (${r.channels.join(', ')}) — Lead in ~30 min, Follower in ~90 min; Freigaben kommen je nach Kanal-Modus.`,
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
   private async replanChannel(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
     if (!this.replanFn) return { success: false, error: 'Umplanung nicht verfügbar.' };
     const channel = await this.resolveChannel(userId, input);

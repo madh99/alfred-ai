@@ -555,6 +555,60 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
   }
 
   /**
+   * v1024 — Ad-hoc-Story auf User-Zuruf: derselbe Familienpfad wie der
+   * News-Desk (Lead +30 min, Follower +90 min, je Kanal eigener Text mit
+   * Persona/Sprache, Bilder, Freigaben nach Kanal-Modus), aber der Stoff
+   * kommt vom USER statt aus den Feeds — bewusst OHNE Score-Schwelle,
+   * Nachtruhe und News-Desk-Tageslimit: der User hat bereits entschieden.
+   */
+  async planAdhocStory(titel: string | undefined, stoff: string, familyKey?: string): Promise<{ created: number; channels: string[]; family: string; storyTitle: string }> {
+    const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+    const families = new Map<string, SocialChannel[]>();
+    for (const c of channels) {
+      const key = ContentStudio.familyKey(c);
+      if (key) families.set(key, [...(families.get(key) ?? []), c]);
+    }
+    if (families.size === 0) throw new Error('Keine Kanal-Familie vorhanden — Kanälen config.family oder ein Projekt geben.');
+    const family = familyKey && families.has(familyKey) ? familyKey
+      : families.size === 1 ? [...families.keys()][0] : undefined;
+    if (!family) throw new Error(`Mehrere Familien vorhanden (${[...families.keys()].join(', ')}) — family angeben.`);
+    const members = families.get(family)!;
+    const lead = ContentStudio.resolveLead(members);
+    const title = (titel ?? stoff.split('\n')[0]).replace(/<[^>]+>/g, ' ').trim().slice(0, 140);
+    const story = await this.socialRepo.createStory(this.ownerUserId, {
+      family, kind: 'news', title, summary: stoff.replace(/<[^>]+>/g, ' ').slice(0, 800),
+      importance: 1, source: 'manual',
+    });
+    await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
+    let leadName: string | undefined;
+    const done: string[] = [];
+    for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
+      const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined);
+      if (!item) continue;
+      // Ad-hoc-Slots wie im News-Desk: Lead +30 min, Follower +90 min;
+      // v1022-Regel gilt auch hier: suggest-Lead → Follower bleiben Entwurf
+      const slot = new Date(Date.now() + (channel.id === lead.id ? 30 : 90) * 60_000).toISOString();
+      if ((channel.mode === 'approve' || channel.mode === 'autonomous')
+        && (channel.id === lead.id || lead.mode !== 'suggest')) {
+        await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+      }
+      await this.socialRepo.createAssignment({ storyId: story.id, channelId: channel.id, role: channel.id === lead.id ? 'lead' : 'follow', offsetHours: channel.id === lead.id ? 0 : 1, itemId: item.id });
+      if (channel.id === lead.id) leadName = channel.name;
+      done.push(channel.name);
+    }
+    await this.insightsRepo?.upsertCandidate(this.ownerUserId, {
+      category: 'social',
+      title: `⚡ Story angestoßen: ${story.title.slice(0, 70)}`,
+      body: `Auf deinen Zuruf wurden ${done.length} Beiträge vorbereitet (${done.join(', ')}) — Lead in ~30, Follower in ~90 Minuten; Freigaben kommen je nach Kanal-Modus zum Slot.\n\nStoff: ${story.summary ?? story.title}`,
+      confidence: 0.9,
+      sourceData: { router: true, urgency: 'high', storyId: story.id },
+      dedupeKey: `social-planstory:${story.id}`,
+    }).catch(() => { /* non-critical */ });
+    this.logger.info({ family, story: story.title, items: done.length }, 'v1024 adhoc story planned');
+    return { created: done.length, channels: done, family, storyTitle: story.title };
+  }
+
+  /**
    * v995 — Plan-Review (Etappe 3): der Plan lebt bis zur Veröffentlichung.
    *
    * Alle 4 Stunden (und nach News-Desk-Treffern) werden alle geplanten und

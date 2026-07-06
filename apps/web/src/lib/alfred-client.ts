@@ -551,6 +551,15 @@ export class AlfredClient {
     return res.json();
   }
 
+  // v1024 — Ad-hoc-Story: Stoff → Beiträge auf allen Familien-Kanälen
+  async socialPlanStory(payload: { stoff: string; titel?: string; family?: string }): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/plan-story`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`Social plan-story: HTTP ${res.status}`);
+    return res.json();
+  }
+
   // v965 — Kanal-Aktionen (Studio-Lauf, Umplanung, Auth-Check, Themen)
   async socialChannelAction(id: string, action: 'generate' | 'replan' | 'validate-auth' | 'link-topic' | 'unlink-topic', extra?: { topic?: string }): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/channels/${id}/${action}`, {

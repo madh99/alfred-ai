@@ -187,6 +187,9 @@ export function SocialPage() {
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false, formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
+  // v1024 — Ad-hoc-Story („Story anstoßen"): Stoff → Beiträge auf allen Familien-Kanälen
+  const [storyOpen, setStoryOpen] = useState(false);
+  const [story, setStory] = useState<{ titel: string; stoff: string }>({ titel: '', stoff: '' });
   // v966 — Composer („Neuer Beitrag") + Crosspost-Ziele je Item
   const [composerOpen, setComposerOpen] = useState(false);
   const [composer, setComposer] = useState<{ channel: string; title: string; body: string; hashtags: string; mediaUrl: string; scheduledAt: string }>(
@@ -455,6 +458,25 @@ export function SocialPage() {
       if (r.display) setNotice(r.display);
       setComposerOpen(false);
       setComposer(c => ({ channel: c.channel, title: '', body: '', hashtags: '', mediaUrl: '', scheduledAt: '' }));
+      await load();
+    });
+  }
+
+  // v1024 — Ad-hoc-Story: Stoff → echte Redaktions-Story auf allen Familien-Kanälen
+  async function submitStory() {
+    if (story.stoff.trim().length < 20) {
+      setError('Bitte den Stoff in 1-6 Sätzen beschreiben (mit den Fakten) — mindestens 20 Zeichen.');
+      return;
+    }
+    await withBusy('plan-story', async () => {
+      const r = await client!.socialPlanStory({
+        stoff: story.stoff.trim(),
+        titel: story.titel.trim() || undefined,
+      });
+      if (!r.success) throw new Error(r.error ?? 'Story-Planung fehlgeschlagen');
+      if (r.display) setNotice(r.display);
+      setStoryOpen(false);
+      setStory({ titel: '', stoff: '' });
       await load();
     });
   }
@@ -997,11 +1019,38 @@ export function SocialPage() {
               ➕ Neuer Beitrag
             </button>
           )}
+          {channels.length > 1 && (
+            <button onClick={() => setStoryOpen(o => !o)}
+              className={clsx('px-3 py-1.5 text-sm rounded border', storyOpen ? 'border-amber-500/50 text-amber-300 bg-amber-500/10' : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/15')}
+              title="Ad-hoc-Story: dein Stoff wird als Redaktions-Story auf allen Familien-Kanälen ausgespielt">
+              ⚡ Story anstoßen
+            </button>
+          )}
           <button onClick={pauseAll} disabled={busy === 'pause-all'}
             className="px-3 py-1.5 text-sm border border-red-500/40 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded"
             title="Not-Aus: pausiert sofort alle Kanäle">🛑 Social-Stopp</button>
         </div>
       </div>
+
+      {/* v1024 — Ad-hoc-Story: Stoff → je Kanal eigener Text (Persona/Sprache) + Bild, Lead +30 min, Follower +90 min */}
+      {storyOpen && (
+        <div className="border border-amber-500/30 rounded-lg p-4 space-y-2">
+          <div className="text-xs text-gray-400">
+            Dein Stoff wird als echte Redaktions-Story auf <b>allen Familien-Kanälen</b> ausgespielt — je Kanal eigener Text (Persona, Sprache) + Bild,
+            Lead-Kanal in ~30 min, Follower in ~90 min. Freigaben kommen je nach Kanal-Modus. Fakten gehören in den Stoff — es wird nichts dazuerfunden.
+          </div>
+          <input value={story.titel} onChange={e => setStory(s => ({ ...s, titel: e.target.value }))} placeholder="Arbeitstitel (optional)"
+            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200" />
+          <textarea value={story.stoff} onChange={e => setStory(s => ({ ...s, stoff: e.target.value }))} rows={4}
+            placeholder="Stoff in 1-6 Sätzen mit allen Fakten (Wer/Was/Wann/Kontext) …"
+            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200" />
+          <div className="flex items-center gap-2">
+            <button onClick={submitStory} disabled={busy === 'plan-story'}
+              className="px-2.5 py-1 text-xs bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded">⚡ Auf allen Kanälen ausspielen</button>
+            {busy === 'plan-story' && <span className="text-xs text-gray-500">⏳ Redaktion schreibt je Kanal … (mit Bildern bis zu 2 Minuten)</span>}
+          </div>
+        </div>
+      )}
 
       {/* v966 — Composer: eigener Beitrag (Bild kommt automatisch, wenn der Kanal generate_images hat) */}
       {composerOpen && (

@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1024] - 2026-07-06
+
+### Added — Ad-hoc-Story auf Zuruf (v1024)
+
+- **Neue Aktion `plan_story`**: „Mach eine Story zu X für alle Kanäle" —
+  der vom User gelieferte Stoff wird als echte Redaktions-Story über den
+  News-Desk-Familienpfad ausgespielt: je Kanal eigener Text (Persona,
+  Sprache) plus Bild, Lead-Kanal in ~30 Minuten, Follower in ~90 Minuten,
+  Freigaben nach Kanal-Modus, Traffic-Links und Familien-Kalender
+  inklusive. Bewusst ohne Eilmeldungs-Schwelle, Nachtruhe und
+  News-Desk-Tageslimit — der User hat bereits entschieden.
+- **UI**: Button „⚡ Story anstoßen" auf der Social-Seite (Arbeitstitel
+  optional + Stoff-Feld); per Chat genügt ein Satz mit den Fakten.
+- Stories aus Zuruf tragen source `manual` und zählen nicht aufs
+  News-Desk-Tageslimit; der Story-Dedup kennt sie ab Anlage (keine
+  Doppel-Story, wenn die Feeds das Thema später doch aufgreifen).
+
 ## [0.19.0-multi-ha.1023] - 2026-07-06
 
 ### Fixed — Doppel-Publish-Gate kennt Story-Geschwister (v1023)

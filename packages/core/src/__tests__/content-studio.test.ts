@@ -922,6 +922,40 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(prompts.some((p: string) => p.includes('Redaktionskonferenz'))).toBe(true);
     expect(prompts.some((p: string) => p.includes('Content-Redakteur für den Social-Kanal "Solo"'))).toBe(true);
   });
+
+  it('v1024: planAdhocStory — User-Stoff → Story (source manual), Lead +30/Follower +90, Insight', async () => {
+    const { studio, llm, stories, assignments, transitions, socialRepo } = makeFamilyStack();
+    const insightsRepo = (studio as any).insightsRepo;
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: RENDER('USA-Politikum: Rote Karte aufgehoben') })
+      .mockResolvedValueOnce({ content: RENDER('Rote Karte weg — Politik mischt mit') });
+    const before = Date.now();
+    const r = await studio.planAdhocStory(undefined, 'Ein USA-Spieler darf trotz Roter Karte weiterspielen, weil die Politik interveniert hat. Die FIFA prüft den Vorgang.');
+    expect(r.created).toBe(2);
+    expect(r.family).toBe('project:proj-1');
+    expect(stories.length).toBe(1);
+    expect(stories[0].source).toBe('manual');
+    expect(stories[0].kind).toBe('news');
+    expect(assignments.map((a: any) => a.role).sort()).toEqual(['follow', 'lead']);
+    // Ad-hoc-Slots: Lead ~+30 min, Follower ~+90 min
+    const times = transitions.filter(t => t.to === 'scheduled').map(t => Date.parse(t.at!) - before);
+    expect(times.length).toBe(2);
+    expect(times[0]).toBeGreaterThan(25 * 60_000);
+    expect(times[0]).toBeLessThan(35 * 60_000);
+    expect(times[1]).toBeGreaterThan(85 * 60_000);
+    // Insight „Story angestoßen"
+    const ins = (insightsRepo.upsertCandidate as any).mock.calls.find((c: any[]) => String(c[1].title).includes('Story angestoßen'));
+    expect(ins).toBeTruthy();
+    // kein Konferenz-/Score-LLM-Call — nur die zwei Render-Calls
+    expect((llm.complete as any).mock.calls.length).toBe(2);
+    void socialRepo;
+  });
+
+  it('v1024: planAdhocStory ohne Familie → verständlicher Fehler', async () => {
+    const { studio, socialRepo } = makeFamilyStack();
+    (socialRepo.listChannels as any) = vi.fn(async () => [makeChannel({ id: 'solo', projectId: undefined })]);
+    await expect(studio.planAdhocStory(undefined, 'Stoff mit ausreichend Länge für den Test hier.')).rejects.toThrow('Familie');
+  });
 });
 
 describe('ContentStudio — Serien-Formate (v1012)', () => {

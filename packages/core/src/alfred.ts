@@ -6705,6 +6705,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         socialSkill.setStudio(channel => studio.planFamilyFor(channel));
         // v959 — Umplanung bestehender geplanter Beiträge in die aktuellen Slots
         socialSkill.setReplanner(channel => studio.replanChannel(channel));
+        // v1024 — Ad-hoc-Story auf User-Zuruf (News-Desk-Familienpfad)
+        socialSkill.setStoryPlanner((titel, stoff, family) => studio.planAdhocStory(titel, stoff, family));
         // v962 — auch Ad-hoc-Posts (add_content/crosspost) bekommen ein Bild,
         // wenn der Kanal generate_images hat (Studio-Leitplanken inkl. Budget)
         socialSkill.setImageGenerator((channel, item) => studio.generateImageForItem(channel, item));
@@ -8388,6 +8390,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
             const r = await socialSkillForApi.execute({ action: 'crosspost', item_id: id, channels: channelNames }, socialCtx);
             return { success: r.success, display: r.display, error: r.error };
+          },
+          // v1024 — Ad-hoc-Story auf User-Zuruf (läuft über den Skill = Leitplanken)
+          planStory: async (body: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'plan_story',
+              stoff: typeof body.stoff === 'string' ? body.stoff : undefined,
+              titel: typeof body.titel === 'string' ? body.titel : undefined,
+              family: typeof body.family === 'string' ? body.family : undefined,
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error, data: r.data };
           },
           // v965 — Kanal-Aktionen aus der UI (laufen über den Skill = Leitplanken)
           channelAction: async (id: string, action: string, extra?: Record<string, unknown>) => {

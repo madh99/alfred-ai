@@ -707,6 +707,8 @@ export class HttpAdapter extends MessagingAdapter {
     createItem?: (payload: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v966 — Beitrag auf andere Kanäle übernehmen (formatgerecht umgeschrieben). */
     crosspost?: (id: string, channels: string[]) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1024 — Ad-hoc-Story auf User-Zuruf: Stoff → Beiträge auf allen Familien-Kanälen. */
+    planStory?: (body: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1370,6 +1372,12 @@ export class HttpAdapter extends MessagingAdapter {
           status: url.searchParams.get('status') ?? undefined,
         }) ?? [],
       })).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/plan-story' && req.method === 'POST') {
+      // v1024 — Ad-hoc-Story auf User-Zuruf
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.planStory) return { error: 'not supported' };
+        return this.socialCallbacks.planStory(body);
+      }).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/social/channels' && req.method === 'POST') {
       // v1015 — Kanal-Wizard
       this.handleSocialBody(req, res, async (body) => {
