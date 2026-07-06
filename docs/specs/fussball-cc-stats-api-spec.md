@@ -21,6 +21,7 @@ Authorization: Bearer <API_TOKEN>          ← derselbe Token wie /api/integrati
 ```json
 {
   "ok": true,
+  "audience": { "followers": 1234 },
   "data": [
     {
       "date": "2026-07-05",
@@ -36,6 +37,12 @@ Authorization: Bearer <API_TOKEN>          ← derselbe Token wie /api/integrati
 }
 ```
 
+- **`audience` (NEU, v1019 — Kanalwachstum)**: aktueller Bestand der
+  Plattform-Zielgruppe als `{ "followers": n }`. Für fussball.cc konkret:
+  **Anzahl der registrierten User** (`COUNT(*) FROM users` ohne
+  anonymisierte Konten). Generisch: jede Plattform meldet hier die Zahl,
+  die für sie „Abonnenten" bedeutet. Optional — fehlt das Feld, trackt
+  Alfred für diesen Kanal einfach kein Wachstum.
 - **Eine Zeile je Artikel je Tag** im Zeitfenster (nur Tage mit `views > 0`).
 - `date`: lokaler Kalendertag `YYYY-MM-DD`.
 - `path`: URL-Pfad des Artikels (Alfred matcht ihn per `externalUrl.includes(path)`

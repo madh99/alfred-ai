@@ -37,7 +37,16 @@ export class BlueskyProvider extends SocialProvider {
   readonly platform = 'bluesky';
 
   capabilities(): ProviderCapabilities {
-    return { text: true, image: true, video: false, maxTextLength: 300, supportsDelete: true, supportsMetrics: false };
+    return { text: true, image: true, video: false, maxTextLength: 300, supportsDelete: true, supportsMetrics: false, supportsAudience: true };
+  }
+
+  /** v1019 — Kanalwachstum: Follower via öffentlichem AppView (kein Login nötig). */
+  override async fetchAudience(channel: SocialChannel, _secrets: Record<string, string>): Promise<{ followers: number } | null> {
+    try {
+      const res = await fetch(`https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(this.handle(channel))}`);
+      const data = await res.json().catch(() => ({})) as { followersCount?: number };
+      return res.ok && typeof data.followersCount === 'number' ? { followers: data.followersCount } : null;
+    } catch { return null; }
   }
 
   private service(channel: SocialChannel): string {

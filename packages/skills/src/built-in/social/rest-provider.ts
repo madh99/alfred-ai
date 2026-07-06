@@ -38,7 +38,33 @@ export class RestProvider extends SocialProvider {
   readonly platform = 'rest';
 
   capabilities(): ProviderCapabilities {
-    return { text: true, image: true, video: true, supportsDelete: true, supportsMetrics: false };
+    return { text: true, image: true, video: true, supportsDelete: true, supportsMetrics: false, supportsAudience: true };
+  }
+
+  /**
+   * v1019 — Kanalwachstum generisch: Die Plattform meldet ihre Audience-Zahl
+   * selbst über den Stats-Endpoint (Feld "audience": {"followers": n} —
+   * fussball.cc definiert das als REGISTRIERTE USER; andere Plattformen
+   * können Newsletter-Abos o.ä. melden). Fehlt Endpoint oder Feld → null.
+   */
+  override async fetchAudience(channel: SocialChannel, secrets: Record<string, string>): Promise<{ followers: number } | null> {
+    try {
+      const base = typeof channel.config.base_url === 'string' ? channel.config.base_url.replace(/\/+$/, '') : '';
+      if (!base) return null;
+      const statsPath = typeof channel.config.stats_path === 'string' && channel.config.stats_path.trim()
+        ? channel.config.stats_path.trim() : '/api/integrations/stats';
+      const headers: Record<string, string> = {};
+      if (secrets.API_TOKEN) {
+        const name = typeof channel.config.auth_header === 'string' ? channel.config.auth_header : 'Authorization';
+        const prefix = typeof channel.config.auth_prefix === 'string' ? channel.config.auth_prefix : 'Bearer ';
+        headers[name] = `${prefix}${secrets.API_TOKEN}`;
+      }
+      const since = new Date(Date.now() - 3_600_000).toISOString(); // Mini-Fenster — es geht nur ums audience-Feld
+      const res = await this.doFetch(`${base}${statsPath.startsWith('/') ? statsPath : `/${statsPath}`}?since=${encodeURIComponent(since)}`, { headers }, channel);
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null) as { audience?: { followers?: number } } | null;
+      return typeof data?.audience?.followers === 'number' ? { followers: data.audience.followers } : null;
+    } catch { return null; }
   }
 
   private endpoint(channel: SocialChannel, path?: string): string {

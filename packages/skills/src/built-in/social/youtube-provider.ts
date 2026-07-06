@@ -23,7 +23,20 @@ export class YouTubeProvider extends SocialProvider {
   readonly platform = 'youtube';
 
   capabilities(): ProviderCapabilities {
-    return { text: false, image: true, video: true, maxTextLength: 5000, supportsDelete: true, supportsMetrics: true };
+    return { text: false, image: true, video: true, maxTextLength: 5000, supportsDelete: true, supportsMetrics: true, supportsAudience: true };
+  }
+
+  /** v1019 — Kanalwachstum: Abonnenten via channels.list (mine=true). */
+  override async fetchAudience(_channel: import('@alfred/storage').SocialChannel, secrets: Record<string, string>): Promise<{ followers: number } | null> {
+    try {
+      const token = await this.accessToken(secrets);
+      const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=statistics&mine=true', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({})) as { items?: Array<{ statistics?: { subscriberCount?: string } }> };
+      const count = Number(data.items?.[0]?.statistics?.subscriberCount);
+      return res.ok && Number.isFinite(count) ? { followers: count } : null;
+    } catch { return null; }
   }
 
   private async accessToken(secrets: Record<string, string>): Promise<string> {

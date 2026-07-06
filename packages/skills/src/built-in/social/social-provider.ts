@@ -11,6 +11,8 @@ export interface ProviderCapabilities {
   supportsComments?: boolean;
   /** v1007 — Stories veröffentlichen (publishStory implementiert, aktuell Instagram). */
   supportsStories?: boolean;
+  /** v1019 — Kanalwachstum: fetchAudience liefert den aktuellen Follower-/Abonnenten-Stand. */
+  supportsAudience?: boolean;
 }
 
 /** v989 — vom Provider eingesammelter Roh-Kommentar. */
@@ -78,6 +80,13 @@ export abstract class SocialProvider {
     _imageUrl: string, _channel: SocialChannel, _secrets: Record<string, string>,
   ): Promise<PublishResult> {
     throw new Error(`${this.platform}: Stories werden nicht unterstützt`);
+  }
+
+  /** v1019 — Optional: aktueller Follower-/Abonnenten-Stand (capabilities().supportsAudience). */
+  async fetchAudience(
+    _channel: SocialChannel, _secrets: Record<string, string>,
+  ): Promise<{ followers: number } | null> {
+    return null;
   }
 }
 

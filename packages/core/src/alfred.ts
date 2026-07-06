@@ -6819,6 +6819,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 // v1001 — Klick-Rückkanal: Artikel-Views + Klicks je utm_source von der eigenen Plattform
                 const t = await socialSkill.collectTrafficStats(ownerUid).catch(() => 0);
                 if (t > 0) this.logger.info({ stats: t }, 'v1001 traffic stats collected');
+                // v1019 — Kanalwachstum: täglicher Follower-Stand je Kanal
+                const a = await socialSkill.collectAudience(ownerUid).catch(() => 0);
+                if (a > 0) this.logger.info({ audience: a }, 'v1019 audience collected');
                 if (now.getDay() === 0) await studio.weeklyNicheReport();
                 // v1010 — Lessons-Hygiene: am Monatsersten Konsolidierungs-Vorschläge (NIE automatisch anwenden)
                 if (now.getDate() === 1 && await this.claimDailySlot(`social-lessons:${today.slice(0, 7)}`)) {

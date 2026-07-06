@@ -16,7 +16,20 @@ export class XProvider extends SocialProvider {
   readonly platform = 'x';
 
   capabilities(): ProviderCapabilities {
-    return { text: true, image: false, video: false, maxTextLength: 280, supportsDelete: true, supportsMetrics: true };
+    return { text: true, image: false, video: false, maxTextLength: 280, supportsDelete: true, supportsMetrics: true, supportsAudience: true };
+  }
+
+  /** v1019 — Kanalwachstum: Follower via users/me (best-effort — Free-Tier ist knapp rate-limitiert). */
+  override async fetchAudience(_channel: import('@alfred/storage').SocialChannel, secrets: Record<string, string>): Promise<{ followers: number } | null> {
+    try {
+      const token = await this.token(secrets);
+      const res = await fetch('https://api.x.com/2/users/me?user.fields=public_metrics', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({})) as { data?: { public_metrics?: { followers_count?: number } } };
+      const count = data.data?.public_metrics?.followers_count;
+      return res.ok && typeof count === 'number' ? { followers: count } : null;
+    } catch { return null; }
   }
 
   private async token(secrets: Record<string, string>): Promise<string> {

@@ -15,7 +15,19 @@ export class TelegramChannelProvider extends SocialProvider {
   }
 
   capabilities(): ProviderCapabilities {
-    return { text: true, image: true, video: true, maxTextLength: 4096, supportsDelete: true, supportsMetrics: false };
+    return { text: true, image: true, video: true, maxTextLength: 4096, supportsDelete: true, supportsMetrics: false, supportsAudience: true };
+  }
+
+  /** v1019 — Kanalwachstum: Abonnenten-Stand via getChatMemberCount. */
+  override async fetchAudience(channel: SocialChannel, secrets: Record<string, string>): Promise<{ followers: number } | null> {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${this.token(secrets)}/getChatMemberCount`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: this.chatId(channel) }),
+      });
+      const data = await res.json() as { ok: boolean; result?: number };
+      return data.ok && typeof data.result === 'number' ? { followers: data.result } : null;
+    } catch { return null; }
   }
 
   private token(secrets: Record<string, string>): string {

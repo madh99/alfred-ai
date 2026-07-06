@@ -1257,6 +1257,29 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
   }
 
   /**
+   * v1019 — Kanalwachstum: täglicher Follower-/Abonnenten-Stand je Kanal als
+   * channel_metrics kind 'followers' (Level-Wert, ein Datenpunkt pro Tag).
+   * Historie entsteht ab Aktivierung — die Plattform-APIs liefern keine
+   * Vergangenheit. Best-effort je Kanal.
+   */
+  async collectAudience(userId: string): Promise<number> {
+    const channels = await this.repo.listChannels(userId, 'active');
+    const today = new Date().toISOString().slice(0, 10);
+    let collected = 0;
+    for (const channel of channels) {
+      const provider = this.providers.get(channel.platform);
+      if (!provider || provider.capabilities().supportsAudience !== true) continue;
+      try {
+        const audience = await provider.fetchAudience(channel, await this.secrets(channel));
+        if (!audience || !Number.isFinite(audience.followers) || audience.followers < 0) continue;
+        await this.repo.upsertMetric(channel.id, { date: today, kind: 'followers', value: audience.followers });
+        collected++;
+      } catch { /* Kanal überspringen — nächster */ }
+    }
+    return collected;
+  }
+
+  /**
    * v1010 — Lessons-Hygiene (monatlich vom Kern aufgerufen): Kanäle mit mehr
    * als 5 Lektionen bekommen einen Konsolidierungs-VORSCHLAG (LLM fasst
    * Duplikate/Verwandtes zusammen, erfindet nichts, verliert keine Regel).

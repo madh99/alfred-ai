@@ -231,6 +231,28 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
   });
 });
 
+describe('v1019 — Kanalwachstum (collectAudience)', () => {
+  it('schreibt den Tagesstand als kind followers; Provider ohne supportsAudience wird übersprungen', async () => {
+    const channel = makeChannel({});
+    const { skill, spies } = makeSkill(channel, makeItem());
+    const provider = (skill as any).providers.get('test') as FakeProvider;
+    (provider as any).capabilities = () => ({ text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false, supportsAudience: true });
+    (provider as any).fetchAudience = vi.fn(async () => ({ followers: 1284 }));
+    const metrics: any[] = [];
+    (spies as any).upsertMetric = vi.fn(async (chId: string, m: any) => { metrics.push({ chId, ...m }); });
+    expect(await skill.collectAudience('u1')).toBe(1);
+    expect(metrics[0].kind).toBe('followers');
+    expect(metrics[0].value).toBe(1284);
+    expect(metrics[0].itemId).toBeUndefined();
+
+    // Provider ohne Audience-Support → nichts
+    (provider as any).capabilities = () => ({ text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false });
+    metrics.length = 0;
+    expect(await skill.collectAudience('u1')).toBe(0);
+    expect(metrics.length).toBe(0);
+  });
+});
+
 describe('v1011 — health_check (Deploy-Sicherheitsnetz)', () => {
   it('prüft sharp, Medien-Ablage, LLM, Auth und Stats-Endpoint (404 = informativ, kein Problem)', async () => {
     const { tmpdir } = await import('node:os');

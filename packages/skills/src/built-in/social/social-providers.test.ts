@@ -336,3 +336,28 @@ describe('BlueskyProvider (v1013)', () => {
     expect(del.rkey).toBe('3k2xyz');
   });
 });
+
+describe('v1019 — fetchAudience', () => {
+  it('Bluesky: Follower via öffentlichem AppView', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ followersCount: 421 }));
+    const r = await new BlueskyProvider().fetchAudience(makeChannel({ handle: 'fussballcc.bsky.social' }, 'bluesky'), {});
+    expect(r).toEqual({ followers: 421 });
+    expect(String(fetchMock.mock.calls[0][0])).toContain('public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=fussballcc.bsky.social');
+  });
+
+  it('Telegram: getChatMemberCount; Fehler → null', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, result: 987 }));
+    const provider = new TelegramChannelProvider('T');
+    expect(await provider.fetchAudience(makeChannel({ chat_id: '@fussballcc' }, 'telegram_channel'), {})).toEqual({ followers: 987 });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: false }, 400));
+    expect(await provider.fetchAudience(makeChannel({ chat_id: '@fussballcc' }, 'telegram_channel'), {})).toBeNull();
+  });
+
+  it('Rest: audience.followers aus dem Stats-Endpoint (fussball.cc = registrierte User); ohne Feld → null', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, audience: { followers: 1234 }, data: [] }));
+    const ch = makeChannel({ base_url: 'https://cc.example' }, 'rest');
+    expect(await new RestProvider().fetchAudience(ch, { API_TOKEN: 't' })).toEqual({ followers: 1234 });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: [] }));
+    expect(await new RestProvider().fetchAudience(ch, { API_TOKEN: 't' })).toBeNull();
+  });
+});

@@ -35,7 +35,22 @@ export class MetaProvider extends SocialProvider {
       supportsComments: this.platform !== 'threads',
       // v1007 — Stories (media_type STORIES) gibt es nur auf Instagram
       supportsStories: this.platform === 'instagram',
+      // v1019 — Follower-Stand (IG followers_count, FB followers_count; Threads-API kann es nicht verlässlich)
+      supportsAudience: this.platform !== 'threads',
     };
+  }
+
+  /** v1019 — Kanalwachstum: followers_count der IG-/FB-Identität. */
+  override async fetchAudience(channel: SocialChannel, secrets: Record<string, string>): Promise<{ followers: number } | null> {
+    try {
+      if (this.platform === 'threads') return null;
+      const token = this.token(secrets);
+      const target = this.targetId(channel);
+      const base = this.graphBase(secrets);
+      const res = await fetch(`${base}/${target}?fields=followers_count&access_token=${encodeURIComponent(token)}`);
+      const data = await res.json().catch(() => ({})) as { followers_count?: number };
+      return res.ok && typeof data.followers_count === 'number' ? { followers: data.followers_count } : null;
+    } catch { return null; }
   }
 
   private token(secrets: Record<string, string>): string {

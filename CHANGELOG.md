@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1019] - 2026-07-06
+
+### Added — Kanalwachstum: täglicher Follower-Stand je Kanal (v1019)
+
+Fundament fürs Wachstums-Tracking — die Historie beginnt mit dem Deploy
+(die Plattform-APIs liefern keine Vergangenheit, jeder Tag zählt).
+
+- Neue Provider-Fähigkeit `fetchAudience`: Telegram
+  (getChatMemberCount), Bluesky (öffentliches Profil), Instagram/
+  Facebook (followers_count), YouTube (subscriberCount), X
+  (public_metrics, best-effort) — und **generisch für eigene
+  Plattformen**: der Stats-Endpoint liefert optional
+  `"audience": {"followers": n}`; fussball.cc definiert das als
+  **registrierte User** (Spec aktualisiert, liegt im Projekt-Repo für
+  den nächsten Agent-Lauf).
+- `collectAudience` läuft täglich im 07:00-Analytics-Slot und schreibt
+  den Tagesstand als Metrik `followers` je Kanal — keine Migration,
+  best-effort, Ausfälle einzelner Kanäle stören nichts.
+- 4 neue Tests (Collector, Telegram, Bluesky, Rest-audience).
+
 ## [0.19.0-multi-ha.1018] - 2026-07-06
 
 ### Fixed — Bluesky-Bildlimit + internes Wasserzeichen (v1018)
