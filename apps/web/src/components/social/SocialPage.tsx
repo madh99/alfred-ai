@@ -175,6 +175,8 @@ export function SocialPage() {
     // v1004 — Bild-Look je Kanal
     imageStyle: string; imageQuality: 'default' | 'low' | 'medium' | 'high';
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
+    // v1026 — Ecken + Logo-Wasserzeichen (SVG inline in der Config)
+    watermarkCorner: string; logoSvg: string; logoCorner: string;
     // v1006 — Sprache + Übersetzungen (translate_to nur bei rest-Kanälen wirksam)
     language: string; translateTo: string[];
     // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells · v1016 — Auto-Reels
@@ -184,6 +186,7 @@ export function SocialPage() {
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
+    watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false, formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
@@ -268,10 +271,12 @@ export function SocialPage() {
     try {
       const list = await client.fetchSocialAssets();
       setAssets(list);
-      for (const a of list.slice(0, 40)) {
+      // v1026 — ALLE Thumbnails laden (serverseitig auf 320px verkleinert):
+      // der alte 40er-Deckel gegen Voll-PNGs ließ den Rest der Galerie leer
+      for (const a of list) {
         if (assetUrls[a.id] !== undefined || !a.basename) continue;
         setAssetUrls(prev => ({ ...prev, [a.id]: '' }));
-        client.fetchSocialMediaObjectUrl(a.basename).then(url => {
+        client.fetchSocialMediaObjectUrl(a.basename, 320).then(url => {
           if (url) setAssetUrls(prev => ({ ...prev, [a.id]: url }));
         });
       }
@@ -528,6 +533,13 @@ export function SocialPage() {
       imageBranding: typeof c.config.image_branding === 'string' ? c.config.image_branding : '',
       watermarkOn: (c.config.image_overlay as { watermark?: boolean } | undefined)?.watermark !== false && c.config.image_branding !== false,
       titleOverlayOn: (c.config.image_overlay as { title?: boolean } | undefined)?.title === true,
+      // v1026 — Ecken + Logo
+      watermarkCorner: typeof (c.config.image_overlay as { watermark_corner?: string } | undefined)?.watermark_corner === 'string'
+        ? String((c.config.image_overlay as { watermark_corner?: string }).watermark_corner) : 'bottom-right',
+      logoSvg: typeof (c.config.image_overlay as { logo?: { svg?: string } } | undefined)?.logo?.svg === 'string'
+        ? String((c.config.image_overlay as { logo?: { svg?: string } }).logo!.svg) : '',
+      logoCorner: typeof (c.config.image_overlay as { logo?: { corner?: string } } | undefined)?.logo?.corner === 'string'
+        ? String((c.config.image_overlay as { logo?: { corner?: string } }).logo!.corner) : 'bottom-right',
       // v1006 — Sprache + Übersetzungen
       language: typeof c.config.language === 'string' && c.config.language ? c.config.language : 'de',
       translateTo: Array.isArray(c.config.translate_to) ? (c.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string') : [],
@@ -569,7 +581,12 @@ export function SocialPage() {
           image_style: d.imageStyle.trim() || null,
           image_quality: d.imageQuality === 'default' ? null : d.imageQuality,
           image_branding: d.imageBranding.trim() || null,
-          image_overlay: { watermark: d.watermarkOn, title: d.titleOverlayOn },
+          image_overlay: {
+            watermark: d.watermarkOn, title: d.titleOverlayOn,
+            // v1026 — Ecken + Logo (config wird feldweise gemergt, null löscht)
+            watermark_corner: d.watermarkCorner === 'bottom-right' ? null : d.watermarkCorner,
+            logo: d.logoSvg.trim().startsWith('<svg') ? { svg: d.logoSvg, corner: d.logoCorner } : null,
+          },
           // v1006 — Sprache (Default de → Schlüssel löschen) + Übersetzungs-Ziele
           language: d.language === 'de' ? null : d.language,
           translate_to: d.translateTo.length > 0 ? d.translateTo : null,
@@ -1448,12 +1465,56 @@ export function SocialPage() {
                           <input type="checkbox" checked={settingsDraft.watermarkOn} onChange={e => setSettingsDraft(d => ({ ...d, watermarkOn: e.target.checked }))} />
                           Wasserzeichen
                         </label>
-                        <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer pb-1" title="Post-Titel als Balken auf dem Bild (Termine bekommen immer ihre Termin-Karte)">
+                        <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer pb-1" title="Post-Titel als Nachrichten-Boxen unten links auf dem Bild (Termine bekommen immer ihre Termin-Karte)">
                           <input type="checkbox" checked={settingsDraft.titleOverlayOn} onChange={e => setSettingsDraft(d => ({ ...d, titleOverlayOn: e.target.checked }))} />
                           Titel aufs Bild
                         </label>
                       </div>
-                      <div className="text-[10px] text-gray-600">Format automatisch: Instagram Hochformat (4:5), Website/FB/Telegram Querformat. Termin-Posts bekommen eine Termin-Karte (Anpfiff, Einlass, Ort) — Text immer aus den Daten, nie vom Bildmodell.</div>
+                      {/* v1026 — Ecken + Logo-Wasserzeichen (SVG) */}
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 items-end">
+                        <div>
+                          <label className="text-[11px] text-gray-500">Text-Ecke</label>
+                          <select value={settingsDraft.watermarkCorner} onChange={e => setSettingsDraft(d => ({ ...d, watermarkCorner: e.target.value }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value="bottom-right">unten rechts</option>
+                            <option value="bottom-left">unten links</option>
+                            <option value="top-right">oben rechts</option>
+                            <option value="top-left">oben links</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500">Logo (SVG){settingsDraft.logoSvg ? ' — ✅ gesetzt' : ''}</label>
+                          <input type="file" accept=".svg,image/svg+xml"
+                            onChange={e => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              if (f.size > 200_000) { setError('Logo-SVG ist zu groß (max. 200 KB).'); return; }
+                              f.text().then(txt => {
+                                if (!txt.trim().startsWith('<svg') && !txt.includes('<svg')) { setError('Datei ist kein SVG.'); return; }
+                                setSettingsDraft(d => ({ ...d, logoSvg: txt }));
+                              });
+                            }}
+                            className="w-full text-[10px] text-gray-400 mt-1" />
+                        </div>
+                        <div className="flex items-end gap-2">
+                          <div className="flex-1">
+                            <label className="text-[11px] text-gray-500">Logo-Ecke</label>
+                            <select value={settingsDraft.logoCorner} onChange={e => setSettingsDraft(d => ({ ...d, logoCorner: e.target.value }))}
+                              disabled={!settingsDraft.logoSvg}
+                              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1 disabled:opacity-40">
+                              <option value="bottom-right">unten rechts</option>
+                              <option value="bottom-left">unten links</option>
+                              <option value="top-right">oben rechts</option>
+                              <option value="top-left">oben links</option>
+                            </select>
+                          </div>
+                          {settingsDraft.logoSvg && (
+                            <button onClick={() => setSettingsDraft(d => ({ ...d, logoSvg: '' }))}
+                              className="px-2 py-1 text-[10px] border border-red-500/40 text-red-400 hover:bg-red-500/15 rounded" title="Logo entfernen">✕</button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-gray-600">Format automatisch: Instagram Hochformat (4:5), Website/FB/Telegram Querformat. Termin-Posts bekommen eine Termin-Karte (Anpfiff, Einlass, Ort) — Text immer aus den Daten, nie vom Bildmodell. Logo und Text-Wasserzeichen sind kombinierbar (je eigene Ecke); liegt das Logo unten rechts, wandert der Text automatisch nach unten links. Nach Look-Änderungen: „🖌️ Overlays neu" in der Bild-Bibliothek wendet den neuen Stil auf alle wartenden Beiträge an.</div>
                     </div>
                   )}
                   {/* v996 — Familien-Playbook: Rolle, Staging-Versatz, Eilmeldungs-Regeln */}
@@ -1666,12 +1727,24 @@ export function SocialPage() {
       {/* v1014 — Bild-Bibliothek: Basis-Bilder zur Wiederverwendung (sperren/löschen) */}
       {page === 'channels' && channels.length > 0 && (
         <div className="border border-[#1f1f1f] rounded-lg p-4">
-          <button onClick={() => setAssetsOpen(o => !o)} className="w-full text-left flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-200">🖼 Bild-Bibliothek</span>
-            <span className="text-[11px] text-gray-500">— Basis-Bilder, die das Studio nach Cooldown wiederverwendet{assets.length > 0 ? ` (${assets.length})` : ''}</span>
-            <div className="flex-1" />
-            <span className="text-gray-500 text-xs">{assetsOpen ? '▲' : '▼'}</span>
-          </button>
+          <div className="w-full flex items-center gap-2">
+            <button onClick={() => setAssetsOpen(o => !o)} className="flex-1 text-left flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-200">🖼 Bild-Bibliothek</span>
+              <span className="text-[11px] text-gray-500">— Basis-Bilder, die das Studio nach Cooldown wiederverwendet{assets.length > 0 ? ` (${assets.length})` : ''}</span>
+            </button>
+            {/* v1026 — Overlays neu anwenden: wartende Beiträge aus Basis-Assets mit aktueller Config neu zusammensetzen */}
+            <button onClick={async () => { await withBusy('refresh-overlays', async () => {
+                const r = await client!.socialRefreshOverlays();
+                if (!r.success) throw new Error(r.error ?? 'Refresh fehlgeschlagen');
+                if (r.display) setNotice(r.display);
+              }); }}
+              disabled={busy === 'refresh-overlays'}
+              title="Bilder aller unveröffentlichten Beiträge mit der aktuellen Overlay-Config (Titel-Stil, Logo, Ecken) neu zusammensetzen — ohne Bild-Budget"
+              className="px-2 py-1 text-[11px] border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 disabled:opacity-50 rounded">
+              {busy === 'refresh-overlays' ? '⏳' : '🖌️ Overlays neu'}
+            </button>
+            <button onClick={() => setAssetsOpen(o => !o)} className="text-gray-500 text-xs">{assetsOpen ? '▲' : '▼'}</button>
+          </div>
           {assetsOpen && (
             <div className="mt-3">
               {assets.length === 0 && <div className="text-xs text-gray-600">Noch keine Basis-Bilder — sie entstehen automatisch mit jedem generierten Bild.</div>}
@@ -1680,7 +1753,11 @@ export function SocialPage() {
                   <div key={a.id} className={clsx('border rounded-lg p-2 space-y-1', a.blocked ? 'border-red-500/30 opacity-70' : 'border-[#2a2a2a]')}>
                     {assetUrls[a.id]
                       ? <img src={assetUrls[a.id]} alt="" title="Klick = vergrößern"
-                          onClick={() => setLightboxUrl(assetUrls[a.id])}
+                          onClick={() => {
+                            // v1026 — Lightbox in voller Auflösung (Galerie zeigt nur 320px-Thumbnails)
+                            setLightboxUrl(assetUrls[a.id]);
+                            if (a.basename) client?.fetchSocialMediaObjectUrl(a.basename).then(full => { if (full) setLightboxUrl(full); });
+                          }}
                           className="w-full h-24 object-cover rounded cursor-zoom-in" />
                       : <div className="w-full h-24 bg-[#141414] rounded" />}
                     {/* v1017 — Motiv anzeigen/bearbeiten (Matching-Schlüssel der Wiederverwendung) */}

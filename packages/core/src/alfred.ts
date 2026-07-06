@@ -6707,6 +6707,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         socialSkill.setReplanner(channel => studio.replanChannel(channel));
         // v1024 — Ad-hoc-Story auf User-Zuruf (News-Desk-Familienpfad)
         socialSkill.setStoryPlanner((titel, stoff, family) => studio.planAdhocStory(titel, stoff, family));
+        // v1026 — Overlays unveröffentlichter Beiträge aus Basis-Assets neu anwenden
+        socialSkill.setOverlayRefresher(channel => studio.refreshOverlays(channel));
         // v962 — auch Ad-hoc-Posts (add_content/crosspost) bekommen ein Bild,
         // wenn der Kanal generate_images hat (Studio-Leitplanken inkl. Budget)
         socialSkill.setImageGenerator((channel, item) => studio.generateImageForItem(channel, item));
@@ -8391,6 +8393,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const r = await socialSkillForApi.execute({ action: 'crosspost', item_id: id, channels: channelNames }, socialCtx);
             return { success: r.success, display: r.display, error: r.error };
           },
+          // v1026 — Overlays neu anwenden (läuft über den Skill)
+          refreshOverlays: async (body: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'refresh_overlays',
+              channel: typeof body.channel === 'string' ? body.channel : undefined,
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error, data: r.data };
+          },
           // v1024 — Ad-hoc-Story auf User-Zuruf (läuft über den Skill = Leitplanken)
           planStory: async (body: Record<string, unknown>) => {
             if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
@@ -8434,16 +8445,30 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return { success: r.success, display: r.display, error: r.error, data: r.data };
           },
           // v948 — generierte Bilder für die UI-Vorschau (nur Basename, kein Traversal)
-          mediaFile: async (basename: string) => {
+          mediaFile: async (basename: string, width?: number) => {
             const safe = path.basename(basename);
             if (safe !== basename || !/^[\w.-]+$/.test(safe)) return null;
             const mediaDir = path.resolve(path.dirname(this.config.storage.path), 'social-media');
             try {
               const { readFile } = await import('node:fs/promises');
-              const data = await readFile(path.join(mediaDir, safe));
+              let data: Buffer = await readFile(path.join(mediaDir, safe));
               const mimeType = safe.endsWith('.png') ? 'image/png'
                 : safe.endsWith('.jpg') || safe.endsWith('.jpeg') ? 'image/jpeg'
                 : safe.endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream';
+              // v1026 — Thumbnails (?w=): die Bibliothek lädt sonst hunderte
+              // Voll-PNGs (je ~3 MB); sharp verkleinert on-the-fly, best-effort
+              if (width && mimeType.startsWith('image/')) {
+                const w = Math.max(64, Math.min(1024, Math.round(width)));
+                try {
+                  const { loadSharp } = await import('@alfred/skills');
+                  const sharp = await loadSharp();
+                  if (sharp) {
+                    data = await (sharp as unknown as (i: Buffer) => { resize(o: object): { jpeg(o: object): { toBuffer(): Promise<Buffer> } } })(data)
+                      .resize({ width: w, withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer();
+                    return { data, mimeType: 'image/jpeg' };
+                  }
+                } catch { /* Thumbnail best-effort — dann eben das Original */ }
+              }
               return { data, mimeType };
             } catch { return null; }
           },

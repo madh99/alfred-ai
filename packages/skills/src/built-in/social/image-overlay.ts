@@ -22,15 +22,33 @@ export interface TerminOverlay {
   ort?: string;
 }
 
+/** v1026 — Ecke für Wasserzeichen/Logo. */
+export type OverlayCorner = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
+
+export function parseOverlayCorner(raw: unknown, fallback: OverlayCorner): OverlayCorner {
+  return raw === 'bottom-right' || raw === 'bottom-left' || raw === 'top-right' || raw === 'top-left' ? raw : fallback;
+}
+
+/** v1026 — Logo-Overlay: SVG-Markup inline (HA-sicher in der Kanal-Config, kein Datei-Sync nötig). */
+export interface LogoOverlay {
+  svg: string;
+  /** Ecke, Default bottom-right */
+  corner?: OverlayCorner;
+}
+
 export interface OverlaySpec {
-  /** Wasserzeichen unten rechts (z.B. „fussball.cc") */
+  /** Text-Wasserzeichen (z.B. „fussball.cc") */
   branding?: string;
-  /** Titelbalken unten (max. 2 Zeilen, automatische Schriftgröße) */
+  /** v1026 — Ecke des Text-Wasserzeichens (Default bottom-right) */
+  brandingCorner?: OverlayCorner;
+  /** Titel-Overlay (v1026: gestapelte Text-Boxen unten links, optionale Vorzeile vor „:") */
   title?: string;
   /** v1003 — Termin-Karte (ersetzt den Titelbalken) */
   termin?: TerminOverlay;
   /** v1007 — CTA-Zeile oben zentriert (z.B. „🔗 Link im Profil" für Stories) */
   cta?: string;
+  /** v1026 — Logo (SVG) in wählbarer Ecke, kombinierbar mit dem Text-Wasserzeichen */
+  logo?: LogoOverlay;
   /** Schriftfamilie (muss auf dem Host installiert sein), Default DejaVu Sans */
   font?: string;
 }
@@ -39,6 +57,7 @@ type SharpModule = (input?: Buffer) => {
   metadata(): Promise<{ width?: number; height?: number }>;
   composite(layers: Array<{ input: Buffer; top?: number; left?: number }>): { png(): { toBuffer(): Promise<Buffer> } };
   extract(region: { left: number; top: number; width: number; height: number }): { png(): { toBuffer(): Promise<Buffer> } };
+  resize(opts: { width?: number; height?: number; fit?: string }): { png(): { toBuffer(): Promise<Buffer> } };
 };
 
 let sharpCache: SharpModule | null | undefined;
@@ -156,17 +175,35 @@ export function buildOverlaySvg(width: number, height: number, spec: OverlaySpec
       y += Math.round(lineSize * 1.45);
     }
   } else if (spec.title) {
-    // Titelbalken: Verlauf unten + max. 2 Zeilen
-    const titleSize = Math.round(width / 18);
-    const lines = wrapText(spec.title, Math.floor(width / (titleSize * 0.58)), 2);
-    const bandH = Math.round(titleSize * 1.3 * lines.length + pad * 2.2);
-    const top = height - bandH;
-    parts.push(`<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.82"/></linearGradient>`);
-    parts.push(`<rect x="0" y="${top}" width="${width}" height="${bandH}" fill="url(#bg)"/>`);
-    let y = top + pad + titleSize;
-    for (const line of lines) {
-      parts.push(`<text x="${pad}" y="${y}" font-family="${font}" font-size="${titleSize}" font-weight="bold" fill="#ffffff">${escapeXml(line)}</text>`);
-      y += Math.round(titleSize * 1.3);
+    // v1026 — Nachrichten-Stil (ZIB-Muster): gestapelte Text-Boxen unten links,
+    // jede Zeile mit eigenem dunklem Kasten; enthält der Titel „Vorzeile: Rest",
+    // wird die Vorzeile als kleinere Kicker-Box darüber gesetzt. Ersetzt den
+    // alten Vollbreiten-Verlaufsbalken (Titel liefen dort mitten im Wort in „…").
+    const raw = spec.title.trim();
+    const colonIdx = raw.indexOf(': ');
+    const kicker = colonIdx > 8 && colonIdx < raw.length - 4 ? raw.slice(0, colonIdx + 1) : undefined;
+    const main = kicker ? raw.slice(colonIdx + 2) : raw;
+    const mainSize = Math.round(width / 17);
+    const kickerSize = Math.round(width / 27);
+    const boxPadX = Math.round(mainSize * 0.45);
+    const boxPadY = Math.round(mainSize * 0.26);
+    const gap = Math.max(4, Math.round(mainSize * 0.16));
+    const maxChars = Math.floor((width - pad * 2 - boxPadX * 2) / (mainSize * 0.56));
+    const mainLines = wrapText(main, maxChars, 3);
+    const lineBoxH = mainSize + boxPadY * 2;
+    const estW = (text: string, size: number) => Math.min(width - pad * 2, Math.round(text.length * size * 0.56) + boxPadX * 2);
+    let y = height - pad - mainLines.length * (lineBoxH + gap) + gap;
+    if (kicker) {
+      const kickerBoxH = kickerSize + boxPadY * 2;
+      const ky = y - kickerBoxH - gap;
+      const kLine = wrapText(kicker, Math.floor((width - pad * 2 - boxPadX * 2) / (kickerSize * 0.56)), 1)[0] ?? kicker;
+      parts.push(`<rect x="${pad}" y="${ky}" width="${estW(kLine, kickerSize)}" height="${kickerBoxH}" fill="#101826" fill-opacity="0.93"/>`);
+      parts.push(`<text x="${pad + boxPadX}" y="${ky + boxPadY + Math.round(kickerSize * 0.85)}" font-family="${font}" font-size="${kickerSize}" font-weight="bold" fill="#ffffff">${escapeXml(kLine)}</text>`);
+    }
+    for (const line of mainLines) {
+      parts.push(`<rect x="${pad}" y="${y}" width="${estW(line, mainSize)}" height="${lineBoxH}" fill="#101826" fill-opacity="0.93"/>`);
+      parts.push(`<text x="${pad + boxPadX}" y="${y + boxPadY + Math.round(mainSize * 0.85)}" font-family="${font}" font-size="${mainSize}" font-weight="bold" fill="#ffffff">${escapeXml(line)}</text>`);
+      y += lineBoxH + gap;
     }
   }
 
@@ -183,11 +220,14 @@ export function buildOverlaySvg(width: number, height: number, spec: OverlaySpec
   }
 
   if (spec.branding) {
-    // Wasserzeichen unten rechts — dezent, mit Schatten für Lesbarkeit auf hellen Bildern
+    // Wasserzeichen — dezent, mit Schatten für Lesbarkeit auf hellen Bildern;
+    // v1026: Ecke wählbar (Default unten rechts)
+    const corner = spec.brandingCorner ?? 'bottom-right';
     const brandSize = Math.max(14, Math.round(width / 42));
-    const bx = width - pad;
-    const by = height - Math.round(pad * 0.7);
-    parts.push(`<text x="${bx}" y="${by}" text-anchor="end" font-family="${font}" font-size="${brandSize}" font-weight="bold" fill="#ffffff" fill-opacity="0.85" stroke="#000000" stroke-opacity="0.45" stroke-width="${Math.max(1, Math.round(brandSize / 12))}" paint-order="stroke">${escapeXml(spec.branding)}</text>`);
+    const right = corner.endsWith('right');
+    const bx = right ? width - pad : pad;
+    const by = corner.startsWith('top') ? pad + brandSize : height - Math.round(pad * 0.7);
+    parts.push(`<text x="${bx}" y="${by}" text-anchor="${right ? 'end' : 'start'}" font-family="${font}" font-size="${brandSize}" font-weight="bold" fill="#ffffff" fill-opacity="0.85" stroke="#000000" stroke-opacity="0.45" stroke-width="${Math.max(1, Math.round(brandSize / 12))}" paint-order="stroke">${escapeXml(spec.branding)}</text>`);
   }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${parts.join('')}</svg>`;
@@ -198,7 +238,7 @@ export function buildOverlaySvg(width: number, height: number, spec: OverlaySpec
  * Original zurück — nie die Pipeline brechen.
  */
 export async function applyImageOverlays(png: Buffer, spec: OverlaySpec): Promise<Buffer> {
-  if (!spec.branding && !spec.title && !spec.termin && !spec.cta) return png;
+  if (!spec.branding && !spec.title && !spec.termin && !spec.cta && !spec.logo) return png;
   try {
     const sharp = await loadSharp();
     if (!sharp) return png;
@@ -206,8 +246,27 @@ export async function applyImageOverlays(png: Buffer, spec: OverlaySpec): Promis
     const width = meta.width ?? 0;
     const height = meta.height ?? 0;
     if (width < 100 || height < 100) return png;
-    const svg = buildOverlaySvg(width, height, spec);
-    return await sharp(png).composite([{ input: Buffer.from(svg), top: 0, left: 0 }]).png().toBuffer();
+    const layers: Array<{ input: Buffer; top?: number; left?: number }> = [
+      { input: Buffer.from(buildOverlaySvg(width, height, spec)), top: 0, left: 0 },
+    ];
+    // v1026 — Logo (SVG) in wählbarer Ecke: separat rasterisiert (~13 % der
+    // Bildbreite); Fehler im Logo (kaputtes SVG) kosten NIE das Bild
+    if (spec.logo?.svg && spec.logo.svg.length < 300_000) {
+      try {
+        const pad = Math.round(width * 0.035);
+        const logoBuf = await sharp(Buffer.from(spec.logo.svg)).resize({ width: Math.round(width * 0.13), fit: 'inside' }).png().toBuffer();
+        const lm = await sharp(logoBuf).metadata();
+        const lw = lm.width ?? 0;
+        const lh = lm.height ?? 0;
+        if (lw > 0 && lh > 0 && lw < width && lh < height) {
+          const corner = spec.logo.corner ?? 'bottom-right';
+          const left = corner.endsWith('right') ? width - lw - pad : pad;
+          const top = corner.startsWith('top') ? pad : height - lh - pad;
+          layers.push({ input: logoBuf, top, left });
+        }
+      } catch { /* Logo best-effort */ }
+    }
+    return await sharp(png).composite(layers).png().toBuffer();
   } catch {
     return png;
   }

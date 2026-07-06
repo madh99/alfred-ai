@@ -709,9 +709,11 @@ export class HttpAdapter extends MessagingAdapter {
     crosspost?: (id: string, channels: string[]) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1024 — Ad-hoc-Story auf User-Zuruf: Stoff → Beiträge auf allen Familien-Kanälen. */
     planStory?: (body: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
+    /** v1026 — Overlays unveröffentlichter Beiträge aus Basis-Assets neu anwenden. */
+    refreshOverlays?: (body: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
-    mediaFile?: (basename: string) => Promise<{ data: Buffer; mimeType: string } | null>;
+    mediaFile?: (basename: string, width?: number) => Promise<{ data: Buffer; mimeType: string } | null>;
     /** v992 — Kommentare listen + Aktionen (reply geht LIVE auf die Plattform). */
     listComments?: (opts: { channelId?: string; status?: string }) => Promise<any[]>;
     commentAction?: (id: string, action: 'reply' | 'ignore' | 'suggest', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
@@ -1377,6 +1379,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSocialBody(req, res, async (body) => {
         if (!this.socialCallbacks?.planStory) return { error: 'not supported' };
         return this.socialCallbacks.planStory(body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/refresh-overlays' && req.method === 'POST') {
+      // v1026 — Overlays neu anwenden (nach Look-/Logo-Änderungen)
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.refreshOverlays) return { error: 'not supported' };
+        return this.socialCallbacks.refreshOverlays(body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/social/channels' && req.method === 'POST') {
       // v1015 — Kanal-Wizard
@@ -3163,7 +3171,9 @@ export class HttpAdapter extends MessagingAdapter {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.socialCallbacks?.mediaFile) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const basename = decodeURIComponent(url.pathname.split('/')[4] ?? '');
-    const file = await this.socialCallbacks.mediaFile(basename);
+    // v1026 — ?w=320 liefert ein verkleinertes Thumbnail (Bibliothek-Galerie)
+    const w = Number(url.searchParams.get('w'));
+    const file = await this.socialCallbacks.mediaFile(basename, Number.isFinite(w) && w > 0 ? w : undefined);
     if (!file) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
     res.writeHead(200, { 'Content-Type': file.mimeType, 'Content-Length': String(file.data.byteLength), 'Cache-Control': 'private, max-age=3600' });
     res.end(file.data);

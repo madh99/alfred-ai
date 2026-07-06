@@ -578,15 +578,25 @@ export class AlfredClient {
     return (await res.json()).items ?? [];
   }
   // v948 — generiertes Bild/Video als Blob-URL (Auth via Bearer, daher kein direktes <img src>)
-  async fetchSocialMediaObjectUrl(pathOrUrl: string): Promise<string | null> {
+  async fetchSocialMediaObjectUrl(pathOrUrl: string, width?: number): Promise<string | null> {
     if (pathOrUrl.startsWith('http')) return pathOrUrl;
     const basename = pathOrUrl.split(/[\\/]/).pop();
     if (!basename) return null;
     try {
-      const res = await fetch(`${this.baseUrl}/api/social/media/${encodeURIComponent(basename)}`, { headers: this.authHeaders });
+      // v1026 — width lädt ein serverseitig verkleinertes Thumbnail (Galerie)
+      const res = await fetch(`${this.baseUrl}/api/social/media/${encodeURIComponent(basename)}${width ? `?w=${width}` : ''}`, { headers: this.authHeaders });
       if (!res.ok) return null;
       return URL.createObjectURL(await res.blob());
     } catch { return null; }
+  }
+
+  // v1026 — Overlays unveröffentlichter Beiträge neu anwenden (nach Look-/Logo-Änderungen)
+  async socialRefreshOverlays(channel?: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/refresh-overlays`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(channel ? { channel } : {}),
+    });
+    if (!res.ok) throw new Error(`Social refresh-overlays: HTTP ${res.status}`);
+    return res.json();
   }
 
   async fetchSocialMetrics(channelId: string): Promise<Array<{ itemId?: string; date: string; kind: string; value: number }>> {

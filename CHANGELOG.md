@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1026] - 2026-07-06
+
+### Added — Bild-Overlays im Nachrichten-Look + Logo + Neu-Anwenden (v1026)
+
+- **Titel-Overlay im Nachrichten-Stil**: gestapelte Text-Boxen unten links
+  (je Zeile ein dunkler Kasten, große weiße Schrift, bis zu 3 Zeilen mit
+  Wort-Umbruch) statt des Vollbreiten-Verlaufsbalkens. Enthält der Titel
+  eine Vorzeile („Kicker: Rest"), wird sie als kleinere Box darübergesetzt.
+- **Logo-Wasserzeichen (SVG)**: In den Kanal-Einstellungen lässt sich ein
+  SVG hochladen (liegt HA-sicher in der Kanal-Config) und die Ecke wählen.
+  Logo und Text-Wasserzeichen sind kombinierbar — jedes mit eigener Ecke;
+  liegt das Logo unten rechts, weicht der Text automatisch nach unten links.
+- **„Overlays neu anwenden"** (Aktion `refresh_overlays`, Button in der
+  Bild-Bibliothek): setzt die Bilder aller unveröffentlichten Beiträge aus
+  dem sauberen Basis-Asset mit der aktuellen Overlay-Config neu zusammen —
+  ohne LLM, ohne Bild-Budget. Karussells und Bilder ohne Basis-Asset
+  werden gezählt übersprungen.
+
+### Fixed
+
+- **Bild-Bibliothek**: Thumbnails laden jetzt für ALLE Einträge
+  (serverseitig auf 320 px verkleinert, `?w=`-Parameter) — vorher blieben
+  Einträge ab Nummer 41 leer; die Lightbox lädt weiterhin volle Auflösung.
+- **IG-Auto-Story**: kein doppeltes Wasserzeichen mehr — die Story nutzt
+  jetzt das saubere Basis-Asset des Follower-Bilds; ist nur das fertige
+  (bereits gestempelte) Bild verfügbar, wird nicht erneut gestempelt.
+
 ## [0.19.0-multi-ha.1025] - 2026-07-06
 
 ### Fixed — Media-Upload über insecure_tls-Kanäle (v1025, KRITISCH)

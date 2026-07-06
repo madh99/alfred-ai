@@ -30,7 +30,7 @@ type SocialAction =
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
   | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'suggest_reply' | 'regenerate_image' | 'revise_content'
-  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story';
+  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays';
 
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
@@ -103,8 +103,8 @@ export class SocialSkill extends Skill {
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
             'list_comments', 'reply_comment', 'ignore_comment', 'suggest_reply', 'regenerate_image', 'revise_content',
-            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus.',
+            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel).',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN; bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
@@ -202,6 +202,13 @@ export class SocialSkill extends Skill {
 
   setStoryPlanner(fn: (titel: string | undefined, stoff: string, family?: string) => Promise<{ created: number; channels: string[]; family: string; storyTitle: string }>): void {
     this.storyPlannerFn = fn;
+  }
+
+  /** v1026 — Overlays unveröffentlichter Beiträge neu anwenden (ContentStudio.refreshOverlays, vom Kern injiziert). */
+  private overlayRefresherFn?: (channel?: string) => Promise<{ refreshed: number; skipped: number; channels: string[] }>;
+
+  setOverlayRefresher(fn: (channel?: string) => Promise<{ refreshed: number; skipped: number; channels: string[] }>): void {
+    this.overlayRefresherFn = fn;
   }
 
   /** v962 — Bild-Generierung für Ad-hoc-Items (Studio-Leitplanken, vom Kern injiziert; v991: optionaler bildidee-Hinweis). */
@@ -346,6 +353,14 @@ export class SocialSkill extends Skill {
         case 'add_lesson': return await this.addLesson(userId, input);
         case 'replan_channel': return await this.replanChannel(userId, input);
         case 'plan_story': return await this.planStory(input);
+        case 'refresh_overlays': {
+          if (!this.overlayRefresherFn) return { success: false, error: 'Overlay-Refresh nicht verfügbar (Content-Studio nicht verdrahtet).' };
+          const r = await this.overlayRefresherFn(typeof input.channel === 'string' ? input.channel : undefined);
+          return {
+            success: true, data: r,
+            display: `🖌️ Overlays neu angewandt: ${r.refreshed} Bild(er)${r.channels.length ? ` (${r.channels.join(', ')})` : ''}${r.skipped ? ` — ${r.skipped} übersprungen (Karussell, ohne Basis-Asset oder anderer Node)` : ''}.`,
+          };
+        }
         default: return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
     } catch (err) {
@@ -811,21 +826,32 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     const image = follower?.media.find(m => m.type === 'image');
     if (!image) return undefined;
     let base: Buffer;
+    let alreadyBranded = false; // v1026 — Follower-Bild trägt schon Wasserzeichen → nicht doppelt stempeln
     if (image.pathOrUrl.startsWith('http')) {
       // v1022 — Timeout: eine hängende Medien-URL darf den (längst verbuchten)
       // publishNow-Aufruf nicht bis zum Skill-Timeout blockieren
       const res = await fetch(image.pathOrUrl, { signal: AbortSignal.timeout(20_000) });
       if (!res.ok) return undefined;
       base = Buffer.from(await res.arrayBuffer());
+      alreadyBranded = true;
     } else {
       const { readFile } = await import('node:fs/promises');
-      base = await readFile(image.pathOrUrl);
+      // v1026 — sauberes Basis-Asset bevorzugen (asset-Zwilling der studio-Datei):
+      // vorher wurde das bereits gestempelte Follower-Bild erneut gestempelt —
+      // Realfall 06.07.: doppeltes, am Rand abgeschnittenes Wasserzeichen in der Story
+      const assetTwin = image.pathOrUrl.replace(/([\\/])studio-/, '$1asset-');
+      try {
+        base = await readFile(assetTwin);
+      } catch {
+        base = await readFile(image.pathOrUrl);
+        alreadyBranded = true;
+      }
     }
     const framed = await cropToRatio(base, 9, 16);
     const withOverlay = await applyImageOverlays(framed, {
       title: leadItem.title ?? undefined,
       cta: typeof ig.config.story_cta_text === 'string' && ig.config.story_cta_text.trim() ? ig.config.story_cta_text.trim() : '🔗 Link im Profil',
-      branding: resolveImageBranding(ig, channels),
+      branding: alreadyBranded ? undefined : resolveImageBranding(ig, channels),
     });
     // Upload über den Medien-Ablageort des IG-Kanals (Meta holt per URL ab)
     const pmCfg = parsePublicMediaConfig(ig.config.public_media);

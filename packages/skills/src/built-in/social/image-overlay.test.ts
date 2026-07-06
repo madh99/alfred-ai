@@ -23,6 +23,39 @@ describe('image-overlay (v1002)', () => {
     expect(wrapText('Kurz', 20, 2)).toEqual(['Kurz']);
   });
 
+  it('v1026: Titel als gestapelte Boxen unten links, Vorzeile vor „:" wird Kicker', () => {
+    const svg = buildOverlaySvg(1000, 1000, { title: 'Berichte über Anruf: US-Stürmer darf wieder spielen' });
+    expect(svg).toContain('Berichte über Anruf:');
+    expect(svg).toContain('US-Stürmer darf wieder');
+    expect((svg.match(/<rect/g) ?? []).length).toBeGreaterThanOrEqual(2); // Kicker-Box + Titel-Box(en)
+    expect(svg).not.toContain('linearGradient id="bg"'); // alter Vollbreiten-Verlaufsbalken ist Geschichte
+    // ohne Doppelpunkt: kein Kicker, nur Titel-Boxen
+    const plain = buildOverlaySvg(1000, 1000, { title: 'England zittert sich ins Viertelfinale' });
+    expect(plain).toContain('England zittert sich ins');
+  });
+
+  it('v1026: Wasserzeichen-Ecke wählbar', () => {
+    const tl = buildOverlaySvg(1000, 800, { branding: 'fussball.cc', brandingCorner: 'top-left' });
+    expect(tl).toContain('text-anchor="start"');
+    const br = buildOverlaySvg(1000, 800, { branding: 'fussball.cc' });
+    expect(br).toContain('text-anchor="end"'); // Default unten rechts
+  });
+
+  it('v1026: Logo-SVG wird komposittiert — Bildmaße bleiben, Bild ändert sich', async () => {
+    const sharp = await loadSharp();
+    if (!sharp) return; // ohne sharp (seltene Dev-Umgebung) nichts zu prüfen
+    const png: Buffer = await (sharp as any)({ create: { width: 600, height: 400, channels: 3, background: { r: 10, g: 60, b: 30 } } }).png().toBuffer();
+    const logo = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><rect width="100" height="40" fill="#ff0000"/></svg>';
+    const out = await applyImageOverlays(png, { logo: { svg: logo, corner: 'top-left' } });
+    expect(Buffer.compare(out, png)).not.toBe(0);
+    const meta = await (sharp as any)(out).metadata();
+    expect(meta.width).toBe(600);
+    expect(meta.height).toBe(400);
+    // kaputtes Logo kostet NIE das Bild
+    const broken = await applyImageOverlays(png, { logo: { svg: '<svg><kaputt', corner: 'top-left' } });
+    expect(broken.length).toBeGreaterThan(0);
+  });
+
   it('v1022: Einzelwort über Zeilenbreite wird hart getrennt statt überzulaufen', () => {
     const lines = wrapText('Donaudampfschifffahrtsgesellschaft', 10, 5);
     expect(lines.length).toBeGreaterThan(1);

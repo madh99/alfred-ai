@@ -328,6 +328,9 @@ importers:
       '@types/js-yaml':
         specifier: ^4.0.9
         version: 4.0.9
+      sharp:
+        specifier: ^0.34.0
+        version: 0.34.5
 
   packages/llm:
     dependencies:

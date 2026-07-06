@@ -5,7 +5,7 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
-import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, languageName, applyImageOverlays, cropToRatio, resolveImageBranding, type OverlaySpec } from '@alfred/skills';
+import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, languageName, applyImageOverlays, cropToRatio, resolveImageBranding, parseOverlayCorner, type OverlaySpec } from '@alfred/skills';
 export { extractTrailingHashtags, isNearDuplicateTitle };
 import type { SourceProvisioner } from './source-provisioner.js';
 import type { StoryDeduper, BlockedStory } from './story-dedup.js';
@@ -1941,18 +1941,78 @@ Antworte NUR mit einem JSON-Array:
       ...(idea.einlass ? { einlass: idea.einlass } : {}),
       ...(idea.ort ? { ort: idea.ort } : {}),
     } : undefined;
+    // v1026 — Logo (SVG inline in der Config) + wählbare Ecken für Logo und Text
+    const logoRaw = (ov.logo && typeof ov.logo === 'object' ? ov.logo : undefined) as Record<string, unknown> | undefined;
+    const logo = logoRaw && typeof logoRaw.svg === 'string' && logoRaw.svg.trim().startsWith('<svg')
+      ? { svg: logoRaw.svg, corner: parseOverlayCorner(logoRaw.corner, 'bottom-right') }
+      : undefined;
     const spec: OverlaySpec = {
       branding: ov.watermark === false ? undefined : resolveImageBranding(channel, siblings),
+      brandingCorner: parseOverlayCorner(ov.watermark_corner, logo && parseOverlayCorner(logoRaw?.corner, 'bottom-right') === 'bottom-right' ? 'bottom-left' : 'bottom-right'),
       title: forcedTitle !== undefined
         ? (forcedTitle ?? undefined)
         : (!termin && ov.title === true && idea.title ? idea.title : undefined),
       termin,
+      logo,
       font: typeof ov.font === 'string' ? ov.font : undefined,
     };
-    if (!spec.branding && !spec.title && !spec.termin) return buffer;
+    if (!spec.branding && !spec.title && !spec.termin && !spec.logo) return buffer;
     const out = await applyImageOverlays(buffer, spec);
-    if (out !== buffer) this.logger.info({ channel: channel.name, branding: spec.branding, title: !!spec.title, termin: !!spec.termin }, 'v1002 image overlays applied');
+    if (out !== buffer) this.logger.info({ channel: channel.name, branding: spec.branding, title: !!spec.title, termin: !!spec.termin, logo: !!spec.logo }, 'v1002 image overlays applied');
     return out;
+  }
+
+  /**
+   * v1026 — Overlays neu anwenden: baut die Bilder aller UNVERÖFFENTLICHTEN
+   * Beiträge aus dem sauberen Basis-Asset der Bild-Bibliothek neu zusammen
+   * (Basis + aktuelle Overlay-Config) — ohne LLM, ohne Bild-Budget. Für
+   * Look-Umbauten und Config-Wechsel (Titel-Stil, Logo, Ecken). Die
+   * studio-Datei wird IN PLACE überschrieben (Item-Media bleibt unverändert).
+   * Karussells und Bilder ohne Asset-Zwilling werden übersprungen.
+   */
+  async refreshOverlays(channelNameOrId?: string): Promise<{ refreshed: number; skipped: number; channels: string[] }> {
+    const all = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+    const needle = channelNameOrId?.trim().toLowerCase();
+    const targets = needle
+      ? all.filter(c => c.id === channelNameOrId || c.name.toLowerCase().includes(needle) || c.platform === needle)
+      : all;
+    let refreshed = 0;
+    let skipped = 0;
+    const touched = new Set<string>();
+    const { readFile, writeFile } = await import('node:fs/promises');
+    for (const channel of targets) {
+      const items = await this.socialRepo.listItems(this.ownerUserId, {
+        channelId: channel.id, status: ['draft', 'scheduled', 'approved'], limit: 200,
+      });
+      for (const item of items) {
+        const images = item.media.filter(m => m.type === 'image');
+        if (images.length !== 1 || images[0].source !== 'generated' || images[0].pathOrUrl.startsWith('http')) {
+          if (images.length > 0) skipped++;
+          continue;
+        }
+        const studioPath = images[0].pathOrUrl;
+        const assetTwin = studioPath.replace(/([\\/])studio-/, '$1asset-');
+        if (assetTwin === studioPath) { skipped++; continue; }
+        try {
+          const base = await readFile(assetTwin);
+          const perf = item.performance ?? {};
+          const idea = {
+            title: item.title ?? '', body: item.body, hashtags: [], warum: '',
+            ...(typeof perf.terminBis === 'string' ? { terminBis: perf.terminBis } : {}),
+            ...(typeof perf.ort === 'string' ? { ort: perf.ort } : {}),
+            ...(typeof perf.einlass === 'string' ? { einlass: perf.einlass } : {}),
+          } as GeneratedIdea;
+          const rebuilt = await this.applyOverlays(base, channel, idea, undefined);
+          await writeFile(studioPath, rebuilt);
+          refreshed++;
+          touched.add(channel.name);
+        } catch {
+          skipped++; // Asset fehlt (anderer Node/alt) oder Datei nicht schreibbar
+        }
+      }
+    }
+    this.logger.info({ refreshed, skipped, channels: [...touched] }, 'v1026 overlays refreshed');
+    return { refreshed, skipped, channels: [...touched] };
   }
 
   /**

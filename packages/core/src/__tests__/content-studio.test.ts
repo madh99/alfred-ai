@@ -1006,6 +1006,36 @@ describe('ContentStudio — Serien-Formate (v1012)', () => {
   });
 });
 
+describe('ContentStudio — Overlays neu anwenden (v1026)', () => {
+  it('refreshOverlays: baut studio-Bild aus dem asset-Zwilling neu, überspringt Bilder ohne Asset', async () => {
+    const { mkdtemp, writeFile, readFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const { loadSharp } = await import('@alfred/skills');
+    const sharp = await loadSharp();
+    const dir = await mkdtemp(join(tmpdir(), 'alfred-ovl-'));
+    const base: Buffer = sharp
+      ? await (sharp as any)({ create: { width: 400, height: 300, channels: 3, background: { r: 20, g: 20, b: 80 } } }).png().toBuffer()
+      : Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    await writeFile(join(dir, 'asset-t1-x.png'), base);
+    await writeFile(join(dir, 'studio-t1-x.png'), base);
+    await writeFile(join(dir, 'studio-t2-y.png'), base); // ohne asset-Zwilling → skip
+    const channel = makeChannel({ config: { topic_id: 't-1', image_branding: 'fussball.cc', image_overlay: { watermark: true, title: true } } });
+    const { studio, socialRepo } = makeStack({ channel });
+    (socialRepo.listItems as any) = vi.fn(async () => [
+      { id: 'i1', channelId: 'ch-1', userId: OWNER, status: 'scheduled', title: 'Testtitel: Neu gestempelt', body: 'x', hashtags: [], source: 'studio', createdAt: 'x', updatedAt: 'x', media: [{ type: 'image', source: 'generated', pathOrUrl: join(dir, 'studio-t1-x.png') }] },
+      { id: 'i2', channelId: 'ch-1', userId: OWNER, status: 'draft', title: 'Ohne Asset', body: 'x', hashtags: [], source: 'studio', createdAt: 'x', updatedAt: 'x', media: [{ type: 'image', source: 'generated', pathOrUrl: join(dir, 'studio-t2-y.png') }] },
+    ]);
+    const r = await studio.refreshOverlays();
+    expect(r.refreshed).toBe(1);
+    expect(r.skipped).toBe(1);
+    if (sharp) {
+      const rebuilt = await readFile(join(dir, 'studio-t1-x.png'));
+      expect(Buffer.compare(rebuilt, base)).not.toBe(0); // Overlay ist drauf
+    }
+  });
+});
+
 describe('ContentStudio — Bild-Look (v1004)', () => {
   it('image_style/image_quality/Plattform-Format fließen in den Generierungs-Aufruf', async () => {
     const channel = makeChannel({
@@ -1351,13 +1381,27 @@ describe('ContentStudio — Termin-Ankündigungen (v975)', () => {
 
   it('v977: unplatzierbarer Termin wird für die restlichen Runden gesperrt (keine Wiederholungs-Generierung)', async () => {
     const soon = new Date(Date.now() + 10 * 60_000).toISOString(); // Anpfiff in 10 min — auch ad-hoc (jetzt+30min) zu spät
-    const channel = makeChannel({ mode: 'approve' });
-    const { studio, llm, createdItems } = makeStack({
+    // Slot-Raster bewusst leer ('Zz 99:99'): mit echten Wochen-Slots ist der
+    // Test zeitabhängig — fällt ein Raster-Slot zufällig in die nächsten
+    // 10 Minuten, wird der Termin LEGITIM platziert (Realfall 06.07. 17:54,
+    // Slot Mo 18:00). Hier soll ausschließlich der Ad-hoc-Pfad scheitern.
+    const channel = makeChannel({ mode: 'approve', postingSlots: ['Zz 99:99'] });
+    const { studio, llm, createdItems, interestsRepo } = makeStack({
       channel,
       llmResponse: JSON.stringify([
         { title: 'Public Viewing gleich', body: 'Ganz kurzfristige Ankündigung für das Match in wenigen Minuten im Pub!', hashtags: [], warum: 'Termin', terminBis: soon },
       ]),
     });
+    // Kommendes Event, damit der Termin-Durchlauf (voller/leerer Kanal) anspringt
+    const soonLocal = new Date(Date.now() + 10 * 60_000);
+    const dd = String(soonLocal.getDate()).padStart(2, '0');
+    const mm = String(soonLocal.getMonth() + 1).padStart(2, '0');
+    const hh = String(soonLocal.getHours()).padStart(2, '0');
+    const min = String(soonLocal.getMinutes()).padStart(2, '0');
+    (interestsRepo.listItems as any) = vi.fn(async () => [{
+      id: 'ev-soon', topicId: 't-1', title: `Match gleich – Kickoff – ${dd}.${mm}.${soonLocal.getFullYear()}, ${hh}:${min}`,
+      summary: 'Pub, Wien', sourceKind: 'events', createdAt: '2026-01-01',
+    }]);
     expect(await studio.fillChannel(channel)).toBe(0);
     expect(createdItems.length).toBe(0);
     // Runde 1 generiert + verwirft; Runde 2 filtert den gesperrten Termin → accepted leer → Abbruch
