@@ -1262,21 +1262,30 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
    * Historie entsteht ab Aktivierung — die Plattform-APIs liefern keine
    * Vergangenheit. Best-effort je Kanal.
    */
-  async collectAudience(userId: string): Promise<number> {
+  async collectAudience(userId: string): Promise<{ collected: number; milestones: Array<{ channel: string; channelId: string; milestone: number; followers: number }> }> {
     const channels = await this.repo.listChannels(userId, 'active');
     const today = new Date().toISOString().slice(0, 10);
+    const MILESTONES = [100, 250, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
     let collected = 0;
+    const milestones: Array<{ channel: string; channelId: string; milestone: number; followers: number }> = [];
     for (const channel of channels) {
       const provider = this.providers.get(channel.platform);
       if (!provider || provider.capabilities().supportsAudience !== true) continue;
       try {
         const audience = await provider.fetchAudience(channel, await this.secrets(channel));
         if (!audience || !Number.isFinite(audience.followers) || audience.followers < 0) continue;
+        // v1021 — Meilenstein: letzter bekannter Stand VOR heute (Vergleichsbasis)
+        const history = await this.repo.listMetrics(channel.id, { kind: 'followers', limit: 10 });
+        const prev = history.filter(m => !m.itemId && m.date < today).sort((a, b) => b.date.localeCompare(a.date))[0]?.value;
         await this.repo.upsertMetric(channel.id, { date: today, kind: 'followers', value: audience.followers });
         collected++;
+        if (typeof prev === 'number') {
+          const crossed = MILESTONES.filter(m => prev < m && audience.followers >= m).pop();
+          if (crossed) milestones.push({ channel: channel.name, channelId: channel.id, milestone: crossed, followers: audience.followers });
+        }
       } catch { /* Kanal überspringen — nächster */ }
     }
-    return collected;
+    return { collected, milestones };
   }
 
   /**

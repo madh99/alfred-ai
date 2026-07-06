@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1021] - 2026-07-06
+
+### Added — Wachstums-Auswertung: Wochen-Report + Meilensteine (v1021)
+
+- **Sonntags-Report** beginnt jetzt mit der Wachstums-Sektion: Summe der
+  Woche, Stand + Delta je Kanal, stärkster relativer Treiber.
+- **Meilenstein-Insights**: Kreuzt ein Kanal eine runde Marke
+  (100/250/500/1k/2,5k/5k/10k/…), kommt ein 🎉-Insight — dedupliziert je
+  Marke, feuert nie beim allerersten Messwert.
+
 ## [0.19.0-multi-ha.1020] - 2026-07-06
 
 ### Added — Wachstums-UI: Kanal-Trends + Familien-Analyse (v1020)

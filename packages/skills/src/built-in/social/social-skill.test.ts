@@ -240,7 +240,8 @@ describe('v1019 — Kanalwachstum (collectAudience)', () => {
     (provider as any).fetchAudience = vi.fn(async () => ({ followers: 1284 }));
     const metrics: any[] = [];
     (spies as any).upsertMetric = vi.fn(async (chId: string, m: any) => { metrics.push({ chId, ...m }); });
-    expect(await skill.collectAudience('u1')).toBe(1);
+    const r = await skill.collectAudience('u1');
+    expect(r.collected).toBe(1);
     expect(metrics[0].kind).toBe('followers');
     expect(metrics[0].value).toBe(1284);
     expect(metrics[0].itemId).toBeUndefined();
@@ -248,8 +249,25 @@ describe('v1019 — Kanalwachstum (collectAudience)', () => {
     // Provider ohne Audience-Support → nichts
     (provider as any).capabilities = () => ({ text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false });
     metrics.length = 0;
-    expect(await skill.collectAudience('u1')).toBe(0);
+    expect((await skill.collectAudience('u1')).collected).toBe(0);
     expect(metrics.length).toBe(0);
+  });
+
+  it('v1021: Meilenstein wird erkannt (gestern 480 → heute 520 kreuzt 500), Dedup über prev', async () => {
+    const channel = makeChannel({});
+    const { skill, spies } = makeSkill(channel, makeItem());
+    const provider = (skill as any).providers.get('test') as FakeProvider;
+    (provider as any).capabilities = () => ({ text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false, supportsAudience: true });
+    (provider as any).fetchAudience = vi.fn(async () => ({ followers: 520 }));
+    const yesterday = new Date(Date.now() - 24 * 3_600_000).toISOString().slice(0, 10);
+    (spies as any).listMetrics = vi.fn(async () => [{ date: yesterday, kind: 'followers', value: 480 }]);
+    (spies as any).upsertMetric = vi.fn(async () => {});
+    const r = await skill.collectAudience('u1');
+    expect(r.milestones).toEqual([{ channel: 'Testkanal', channelId: 'ch-1', milestone: 500, followers: 520 }]);
+
+    // kein prev-Wert (erster Lauf) → kein Meilenstein-Feuerwerk
+    (spies as any).listMetrics = vi.fn(async () => []);
+    expect((await skill.collectAudience('u1')).milestones).toEqual([]);
   });
 });
 

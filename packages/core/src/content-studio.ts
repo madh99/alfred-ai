@@ -1874,6 +1874,27 @@ Antworte NUR mit einem JSON-Array:
     const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
     if (channels.length === 0) return false;
     const sections: string[] = [];
+    // v1021 — Wachstums-Sektion: Follower-Deltas der Woche je Kanal + Treiber
+    const growthLines: string[] = [];
+    let totalDelta = 0;
+    let driver: { name: string; delta: number; pct: number } | undefined;
+    for (const channel of channels) {
+      try {
+        const weekAgoDate = new Date(Date.now() - 8 * 24 * 3_600_000).toISOString().slice(0, 10);
+        const rows = (await this.socialRepo.listMetrics(channel.id, { kind: 'followers', sinceDate: weekAgoDate }))
+          .filter(m => !m.itemId)
+          .sort((a, b) => a.date.localeCompare(b.date));
+        if (rows.length < 2) continue;
+        const delta = rows[rows.length - 1].value - rows[0].value;
+        totalDelta += delta;
+        const pct = (delta / Math.max(1, rows[0].value)) * 100;
+        growthLines.push(`${channel.name}: ${rows[rows.length - 1].value.toLocaleString('de-AT')} (${delta >= 0 ? '+' : ''}${delta})`);
+        if (delta > 0 && (!driver || pct > driver.pct)) driver = { name: channel.name, delta, pct };
+      } catch { /* Kanal ohne Wachstumsdaten */ }
+    }
+    if (growthLines.length > 0) {
+      sections.push(`**👥 Wachstum diese Woche: ${totalDelta >= 0 ? '+' : ''}${totalDelta}**\n${growthLines.join(' · ')}${driver ? `\n🚀 Stärkster Treiber relativ: ${driver.name} (+${driver.delta} · +${driver.pct.toFixed(1)} %)` : ''}`);
+    }
     for (const channel of channels) {
       const [best, dossier] = await Promise.all([this.bestPerformers(channel), this.topicDossier(channel)]);
       const weekStart = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();

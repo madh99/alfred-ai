@@ -6820,8 +6820,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 const t = await socialSkill.collectTrafficStats(ownerUid).catch(() => 0);
                 if (t > 0) this.logger.info({ stats: t }, 'v1001 traffic stats collected');
                 // v1019 — Kanalwachstum: täglicher Follower-Stand je Kanal
-                const a = await socialSkill.collectAudience(ownerUid).catch(() => 0);
-                if (a > 0) this.logger.info({ audience: a }, 'v1019 audience collected');
+                const a = await socialSkill.collectAudience(ownerUid).catch(() => ({ collected: 0, milestones: [] as Array<{ channel: string; channelId: string; milestone: number; followers: number }> }));
+                if (a.collected > 0) this.logger.info({ audience: a.collected }, 'v1019 audience collected');
+                // v1021 — Meilenstein-Insights (100/250/500/1k/…)
+                for (const m of a.milestones) {
+                  await this.insightsRepo?.upsertCandidate(ownerUid, {
+                    category: 'social',
+                    title: `🎉 ${m.channel} hat die ${m.milestone.toLocaleString('de-AT')}er-Marke geknackt`,
+                    body: `${m.channel} steht jetzt bei ${m.followers.toLocaleString('de-AT')} Followern/Abonnenten. Details im Wachstums-Tab unter /social → Analytics.`,
+                    confidence: 0.9,
+                    sourceData: { router: true, urgency: 'low', channelId: m.channelId },
+                    dedupeKey: `social-milestone:${m.channelId}:${m.milestone}`,
+                  }).catch(() => { /* non-critical */ });
+                }
                 if (now.getDay() === 0) await studio.weeklyNicheReport();
                 // v1010 — Lessons-Hygiene: am Monatsersten Konsolidierungs-Vorschläge (NIE automatisch anwenden)
                 if (now.getDate() === 1 && await this.claimDailySlot(`social-lessons:${today.slice(0, 7)}`)) {
