@@ -34,6 +34,20 @@ describe('image-overlay (v1002)', () => {
     expect(plain).toContain('England zittert sich ins');
   });
 
+  it('v1033: Termin-Karte im Box-Stil — Boxen, textLength gegen Überlauf, kein Verlaufsbalken, bottom-verankert', () => {
+    const svg = buildOverlaySvg(1536, 1024, {
+      termin: { headline: 'Viertelfinale live erleben: Schweiz gegen Kolumbien im Pub', anpfiff: 'Di., 07.07. · 22:00 Uhr', ort: 'Dublin Irish Pub, Wien' },
+    });
+    expect(svg).toContain('Anpfiff Di., 07.07.');
+    expect(svg).toContain('Dublin Irish Pub, Wien');
+    expect((svg.match(/<rect/g) ?? []).length).toBeGreaterThanOrEqual(4); // 2 Headline- + 2 Info-Boxen
+    expect(svg).toContain('lengthAdjust="spacingAndGlyphs"'); // Text wird in die Box gezwungen
+    expect(svg).not.toContain('linearGradient'); // alter Verlauf ist weg
+    // bottom-verankert: keine Box ragt unter die Bildkante
+    const ys = [...svg.matchAll(/<rect x="\d+" y="(\d+)" width="\d+" height="(\d+)"/g)].map(m => Number(m[1]) + Number(m[2]));
+    expect(Math.max(...ys)).toBeLessThanOrEqual(1024);
+  });
+
   it('v1026: Wasserzeichen-Ecke wählbar', () => {
     const tl = buildOverlaySvg(1000, 800, { branding: 'fussball.cc', brandingCorner: 'top-left' });
     expect(tl).toContain('text-anchor="start"');

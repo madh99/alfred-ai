@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1033] - 2026-07-06
+
+### Fixed — Termin-Karte im Box-Stil + kein Text-Überlauf mehr (v1033)
+
+- Die Termin-Karte rendert jetzt im selben Nachrichten-Box-Stil wie der
+  Titel: Headline groß, Anpfiff/Einlass/Ort als kleinere Box-Zeilen
+  darunter, alles von unten links verankert. Vorher (alter
+  Verlaufsbalken) lief die Headline über den rechten Bildrand und eine
+  zweizeilige Headline schob die Info-Zeilen unten aus dem Bild.
+- Jede Text-Zeile wird per SVG-`textLength` exakt in ihre Box gezwungen —
+  horizontaler Überlauf ist damit unabhängig von der Font-Metrik
+  ausgeschlossen; die Kürzungs-Ellipse bleibt sichtbar in der Box.
+- Nach dem Deploy einmal „🖌️ Overlays neu" ausführen, dann tragen auch
+  wartende Termin-Beiträge den neuen Look.
+
 ## [0.19.0-multi-ha.1032] - 2026-07-06
 
 ### Added — Logo-Farbe je Kanal (v1032)

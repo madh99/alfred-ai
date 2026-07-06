@@ -163,6 +163,34 @@ export function resolveImageBranding(channel: SocialChannel, siblings: SocialCha
   return channel.name;
 }
 
+/**
+ * v1033 — Zeilen-Stapel im Nachrichten-Box-Stil, von UNTEN LINKS verankert:
+ * jede Zeile bekommt ihren eigenen dunklen Kasten; textLength zwingt den Text
+ * exakt in die Box (kein horizontaler Überlauf mehr, egal wie die Font misst —
+ * Realfall 06.07.: Termin-Headline lief rechts aus dem Bild, Info-Zeilen
+ * fielen unten raus). Bottom-Anker macht Unten-Überlauf unmöglich.
+ */
+function renderBoxStack(
+  parts: string[], lines: Array<{ text: string; size: number; bold?: boolean }>,
+  width: number, height: number, pad: number, font: string,
+): void {
+  if (lines.length === 0) return;
+  const boxes = lines.map(l => {
+    const padX = Math.round(l.size * 0.45);
+    const padY = Math.round(l.size * 0.26);
+    const boxW = Math.min(width - pad * 2, Math.round(l.text.length * l.size * 0.58) + padX * 2);
+    return { ...l, padX, padY, boxW, boxH: l.size + padY * 2 };
+  });
+  const gap = Math.max(4, Math.round(Math.max(...boxes.map(b => b.size)) * 0.16));
+  const totalH = boxes.reduce((s, b) => s + b.boxH, 0) + gap * (boxes.length - 1);
+  let y = Math.max(pad, height - pad - totalH);
+  for (const b of boxes) {
+    parts.push(`<rect x="${pad}" y="${y}" width="${b.boxW}" height="${b.boxH}" fill="#101826" fill-opacity="0.93"/>`);
+    parts.push(`<text x="${pad + b.padX}" y="${y + b.padY + Math.round(b.size * 0.85)}" font-family="${font}" font-size="${b.size}"${b.bold === false ? '' : ' font-weight="bold"'} fill="#ffffff" textLength="${b.boxW - b.padX * 2}" lengthAdjust="spacingAndGlyphs">${escapeXml(b.text)}</text>`);
+    y += b.boxH + gap;
+  }
+}
+
 /** SVG der Overlay-Ebenen bauen (getrennt exportiert für Tests). */
 export function buildOverlaySvg(width: number, height: number, spec: OverlaySpec): string {
   const font = escapeXml(spec.font ?? 'DejaVu Sans, sans-serif');
@@ -170,59 +198,37 @@ export function buildOverlaySvg(width: number, height: number, spec: OverlaySpec
   const pad = Math.round(width * 0.035);
 
   if (spec.termin) {
-    // Termin-Karte: dunkler Verlauf über dem unteren Drittel + strukturierte Zeilen
+    // v1033 — Termin-Karte im selben Box-Stil wie Titel: Headline groß,
+    // darunter Anpfiff/Einlass/Ort als kleinere Box-Zeilen; alles von unten
+    // verankert (vorher: alter Verlaufsbalken, Headline lief rechts raus,
+    // Info-Zeilen fielen bei 2-zeiliger Headline unten aus dem Bild).
     const t = spec.termin;
-    const cardH = Math.round(height * 0.34);
-    const top = height - cardH;
-    const headSize = Math.round(width / 16);
-    const lineSize = Math.round(width / 30);
-    const headLines = wrapText(t.headline, Math.floor(width / (headSize * 0.58)), 2);
-    parts.push(`<linearGradient id="tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.35" stop-color="#000" stop-opacity="0.72"/><stop offset="1" stop-color="#000" stop-opacity="0.88"/></linearGradient>`);
-    parts.push(`<rect x="0" y="${top}" width="${width}" height="${cardH}" fill="url(#tg)"/>`);
-    let y = top + Math.round(cardH * 0.30);
-    for (const line of headLines) {
-      parts.push(`<text x="${pad}" y="${y}" font-family="${font}" font-size="${headSize}" font-weight="bold" fill="#ffffff">${escapeXml(line)}</text>`);
-      y += Math.round(headSize * 1.15);
-    }
-    y += Math.round(lineSize * 0.4);
-    const info: string[] = [`Anpfiff ${t.anpfiff}`];
-    if (t.einlass) info.push(`Einlass ${t.einlass}`);
-    if (t.ort) info.push(t.ort);
-    for (const line of info) {
-      parts.push(`<text x="${pad}" y="${y}" font-family="${font}" font-size="${lineSize}" fill="#f2f2f2">${escapeXml(line)}</text>`);
-      y += Math.round(lineSize * 1.45);
-    }
+    const headSize = Math.round(width / 17);
+    const infoSize = Math.round(width / 30);
+    const headLines = wrapText(t.headline, Math.floor((width - pad * 2) / (headSize * 0.58)), 2);
+    const lines: Array<{ text: string; size: number; bold?: boolean }> = headLines.map(text => ({ text, size: headSize }));
+    lines.push({ text: `Anpfiff ${t.anpfiff}`, size: infoSize });
+    if (t.einlass) lines.push({ text: `Einlass ${t.einlass}`, size: infoSize });
+    if (t.ort) lines.push({ text: t.ort, size: infoSize, bold: false });
+    renderBoxStack(parts, lines, width, height, pad, font);
   } else if (spec.title) {
-    // v1026 — Nachrichten-Stil (ZIB-Muster): gestapelte Text-Boxen unten links,
-    // jede Zeile mit eigenem dunklem Kasten; enthält der Titel „Vorzeile: Rest",
-    // wird die Vorzeile als kleinere Kicker-Box darüber gesetzt. Ersetzt den
-    // alten Vollbreiten-Verlaufsbalken (Titel liefen dort mitten im Wort in „…").
+    // v1026 — Nachrichten-Stil (ZIB-Muster): gestapelte Text-Boxen unten links;
+    // enthält der Titel „Vorzeile: Rest", wird die Vorzeile als kleinere
+    // Kicker-Box darüber gesetzt.
     const raw = spec.title.trim();
     const colonIdx = raw.indexOf(': ');
     const kicker = colonIdx > 8 && colonIdx < raw.length - 4 ? raw.slice(0, colonIdx + 1) : undefined;
     const main = kicker ? raw.slice(colonIdx + 2) : raw;
     const mainSize = Math.round(width / 17);
     const kickerSize = Math.round(width / 27);
-    const boxPadX = Math.round(mainSize * 0.45);
-    const boxPadY = Math.round(mainSize * 0.26);
-    const gap = Math.max(4, Math.round(mainSize * 0.16));
-    const maxChars = Math.floor((width - pad * 2 - boxPadX * 2) / (mainSize * 0.56));
-    const mainLines = wrapText(main, maxChars, 3);
-    const lineBoxH = mainSize + boxPadY * 2;
-    const estW = (text: string, size: number) => Math.min(width - pad * 2, Math.round(text.length * size * 0.56) + boxPadX * 2);
-    let y = height - pad - mainLines.length * (lineBoxH + gap) + gap;
+    const lines: Array<{ text: string; size: number }> = [];
     if (kicker) {
-      const kickerBoxH = kickerSize + boxPadY * 2;
-      const ky = y - kickerBoxH - gap;
-      const kLine = wrapText(kicker, Math.floor((width - pad * 2 - boxPadX * 2) / (kickerSize * 0.56)), 1)[0] ?? kicker;
-      parts.push(`<rect x="${pad}" y="${ky}" width="${estW(kLine, kickerSize)}" height="${kickerBoxH}" fill="#101826" fill-opacity="0.93"/>`);
-      parts.push(`<text x="${pad + boxPadX}" y="${ky + boxPadY + Math.round(kickerSize * 0.85)}" font-family="${font}" font-size="${kickerSize}" font-weight="bold" fill="#ffffff">${escapeXml(kLine)}</text>`);
+      lines.push({ text: wrapText(kicker, Math.floor((width - pad * 2) / (kickerSize * 0.58)), 1)[0] ?? kicker, size: kickerSize });
     }
-    for (const line of mainLines) {
-      parts.push(`<rect x="${pad}" y="${y}" width="${estW(line, mainSize)}" height="${lineBoxH}" fill="#101826" fill-opacity="0.93"/>`);
-      parts.push(`<text x="${pad + boxPadX}" y="${y + boxPadY + Math.round(mainSize * 0.85)}" font-family="${font}" font-size="${mainSize}" font-weight="bold" fill="#ffffff">${escapeXml(line)}</text>`);
-      y += lineBoxH + gap;
+    for (const text of wrapText(main, Math.floor((width - pad * 2) / (mainSize * 0.58)), 3)) {
+      lines.push({ text, size: mainSize });
     }
+    renderBoxStack(parts, lines, width, height, pad, font);
   }
 
   if (spec.cta) {
