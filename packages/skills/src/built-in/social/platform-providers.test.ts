@@ -260,6 +260,37 @@ describe('XProvider (v936)', () => {
     }
   });
 
+  it('v1030: mit OAuth-1.0a-Secrets läuft der Upload über die v1.1-API (signierter OAuth-Header)', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const img = join(tmpdir(), `alfred-x-${Date.now()}c.png`);
+    writeFileSync(img, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    try {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ media_id_string: '424242' }))   // v1.1 media/upload
+        .mockResolvedValueOnce(jsonResponse({ data: { id: '779' } }, 201));   // tweets
+      const provider = new XProvider();
+      const item = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: img }] });
+      const r = await provider.publish(item, makeChannel('x'), {
+        X_ACCESS_TOKEN: 'XT',
+        X_CONSUMER_KEY: 'CK', X_CONSUMER_SECRET: 'CS',
+        X_OAUTH1_ACCESS_TOKEN: 'AT', X_OAUTH1_ACCESS_SECRET: 'AS',
+      });
+      expect(r.externalId).toBe('779');
+      expect(String(fetchMock.mock.calls[0][0])).toContain('upload.twitter.com/1.1/media/upload.json');
+      const auth = ((fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>).Authorization;
+      expect(auth).toMatch(/^OAuth /);
+      expect(auth).toContain('oauth_consumer_key="CK"');
+      expect(auth).toContain('oauth_signature_method="HMAC-SHA1"');
+      expect(auth).toContain('oauth_signature="');
+      const payload = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+      expect(payload.media).toEqual({ media_ids: ['424242'] });
+    } finally {
+      unlinkSync(img);
+    }
+  });
+
   it('v1029: scheitert der Bild-Upload, geht der Post OHNE Bild und OHNE KI-Kennzeichnung raus', async () => {
     const { writeFileSync, unlinkSync } = await import('node:fs');
     const { join } = await import('node:path');

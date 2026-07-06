@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1030] - 2026-07-06
+
+### Fixed — X-Bild-Upload über v1.1-Fallback (v1030)
+
+- Der OAuth2-Scope `media.write` wird von X für viele Accounts nicht
+  gewährt (er verschwindet stillschweigend aus dem Token-Grant) — der
+  v2-Media-Upload aus v1029 läuft dann ins Leere. Neu: Sind die
+  OAuth-1.0a-Secrets hinterlegt (X_CONSUMER_KEY, X_CONSUMER_SECRET,
+  X_OAUTH1_ACCESS_TOKEN, X_OAUTH1_ACCESS_SECRET), lädt der Provider
+  Bilder über die klassische v1.1-Media-API hoch (HMAC-SHA1-signiert) —
+  die media_ids funktionieren unverändert am v2-Tweet. Ohne diese
+  Secrets bleibt der v2-Pfad als Versuch bestehen.
+
 ## [0.19.0-multi-ha.1029] - 2026-07-06
 
 ### Added — Bild-Posts auf X (v1029)

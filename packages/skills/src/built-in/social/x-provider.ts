@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from 'node:crypto';
 import type { SocialChannel, ContentItem } from '@alfred/storage';
 import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult } from './social-provider.js';
 
@@ -40,12 +41,46 @@ export class XProvider extends SocialProvider {
   }
 
   /**
-   * v1029 — Bilder (max. 4, je ≤5 MB) über POST /2/media/upload hochladen.
-   * Best-effort je Bild: Fehler kosten NIE den Post — er geht dann ohne
-   * (fehlende) Bilder raus. Braucht OAuth2-Scope media.write.
+   * v1030 — OAuth-1.0a-Signatur (HMAC-SHA1) für die v1.1-Media-API: der
+   * OAuth2-Scope media.write wird von X für viele Accounts (noch) nicht
+   * gewährt (Realfall 06.07.: Scope stillschweigend aus dem Grant entfernt) —
+   * der klassische v1.1-Upload mit App-Keys funktioniert dagegen überall,
+   * solange die App-Permission „Read and write" gesetzt ist. Bei multipart
+   * gehen NUR die oauth_*-Parameter in die Signatur-Basis (kein Body).
    */
-  private async uploadImages(item: ContentItem, token: string): Promise<string[]> {
+  private oauth1Header(method: string, url: string, secrets: Record<string, string>): string {
+    const enc = (s: string) => encodeURIComponent(s).replace(/[!*'()]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+    const oauth: Record<string, string> = {
+      oauth_consumer_key: secrets.X_CONSUMER_KEY,
+      oauth_nonce: randomBytes(16).toString('hex'),
+      oauth_signature_method: 'HMAC-SHA1',
+      oauth_timestamp: String(Math.floor(Date.now() / 1000)),
+      oauth_token: secrets.X_OAUTH1_ACCESS_TOKEN,
+      oauth_version: '1.0',
+    };
+    const paramString = Object.keys(oauth).sort().map(k => `${enc(k)}=${enc(oauth[k])}`).join('&');
+    const base = [method.toUpperCase(), enc(url), enc(paramString)].join('&');
+    const signingKey = `${enc(secrets.X_CONSUMER_SECRET)}&${enc(secrets.X_OAUTH1_ACCESS_SECRET)}`;
+    const signature = createHmac('sha1', signingKey).update(base).digest('base64');
+    return 'OAuth ' + Object.entries({ ...oauth, oauth_signature: signature })
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${enc(k)}="${enc(v)}"`).join(', ');
+  }
+
+  private hasOauth1(secrets: Record<string, string>): boolean {
+    return !!(secrets.X_CONSUMER_KEY && secrets.X_CONSUMER_SECRET && secrets.X_OAUTH1_ACCESS_TOKEN && secrets.X_OAUTH1_ACCESS_SECRET);
+  }
+
+  /**
+   * v1029/v1030 — Bilder (max. 4, je ≤5 MB) hochladen und media_ids liefern.
+   * Bevorzugt v1.1 (OAuth 1.0a, Secrets X_CONSUMER_KEY/X_CONSUMER_SECRET/
+   * X_OAUTH1_ACCESS_TOKEN/X_OAUTH1_ACCESS_SECRET), sonst v2 (OAuth2-Scope
+   * media.write). Best-effort je Bild: Fehler kosten NIE den Post — er geht
+   * dann ohne (fehlende) Bilder raus.
+   */
+  private async uploadImages(item: ContentItem, token: string, secrets: Record<string, string>): Promise<string[]> {
     const ids: string[] = [];
+    const useV11 = this.hasOauth1(secrets);
     for (const m of item.media.filter(x => x.type === 'image').slice(0, 4)) {
       try {
         let bytes: Buffer;
@@ -61,13 +96,24 @@ export class XProvider extends SocialProvider {
         const mime = /\.jpe?g$/i.test(m.pathOrUrl) ? 'image/jpeg' : 'image/png';
         const form = new FormData();
         form.append('media', new Blob([new Uint8Array(bytes)], { type: mime }), mime === 'image/jpeg' ? 'bild.jpg' : 'bild.png');
-        form.append('media_category', 'tweet_image');
-        const up = await fetch('https://api.x.com/2/media/upload', {
-          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
-        });
-        const data = await up.json().catch(() => ({})) as { data?: { id?: string | number }; id?: string | number; media_id_string?: string };
-        const id = data.data?.id ?? data.id ?? data.media_id_string;
-        if (up.ok && id !== undefined && id !== null) ids.push(String(id));
+        let id: string | number | undefined;
+        let ok = false;
+        if (useV11) {
+          const url = 'https://upload.twitter.com/1.1/media/upload.json';
+          const up = await fetch(url, { method: 'POST', headers: { Authorization: this.oauth1Header('POST', url, secrets) }, body: form });
+          const data = await up.json().catch(() => ({})) as { media_id_string?: string; media_id?: number };
+          id = data.media_id_string ?? data.media_id;
+          ok = up.ok;
+        } else {
+          form.append('media_category', 'tweet_image');
+          const up = await fetch('https://api.x.com/2/media/upload', {
+            method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
+          });
+          const data = await up.json().catch(() => ({})) as { data?: { id?: string | number }; id?: string | number; media_id_string?: string };
+          id = data.data?.id ?? data.id ?? data.media_id_string;
+          ok = up.ok;
+        }
+        if (ok && id !== undefined && id !== null) ids.push(String(id));
       } catch { /* Bild best-effort */ }
     }
     return ids;
@@ -122,7 +168,7 @@ export class XProvider extends SocialProvider {
     // v1029 — Bilder zuerst hochladen; die KI-Kennzeichnung (composePostText/
     // aiDisclosure) gilt nur, wenn wirklich ein Bild MITGEHT — sonst würde
     // „Bild: KI-generiert" ohne Bild im Tweet stehen (Realfall 06.07.)
-    const mediaIds = await this.uploadImages(item, token);
+    const mediaIds = await this.uploadImages(item, token, secrets);
     const textItem = mediaIds.length > 0 ? item : { ...item, media: [] };
     const payload: Record<string, unknown> = { text: composePostText(textItem, 280, channel) };
     if (mediaIds.length > 0) payload.media = { media_ids: mediaIds };
