@@ -3,7 +3,9 @@ import { Skill } from '../../skill.js';
 import type { SocialRepository, SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
-import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, languageName, mergeHashtags } from './social-provider.js';
+import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, isInternalUrl, languageName, mergeHashtags } from './social-provider.js';
+import { tlsFetch } from './tls-fetch.js';
+import { createHash } from 'node:crypto';
 import { isNearDuplicateTitle } from './dedup.js';
 import { applyImageOverlays, cropToRatio, resolveImageBranding } from './image-overlay.js';
 import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
@@ -178,6 +180,9 @@ export class SocialSkill extends Skill {
     super();
   }
 
+  /** v1022 — laufende Auto-Reel-Renders je IG-Kanal (TOCTOU-Guard fürs Wochen-Limit). */
+  private readonly reelsRendering = new Map<string, number>();
+
   setStudio(fn: (channel: SocialChannel) => Promise<number>): void {
     this.studioFn = fn;
   }
@@ -256,7 +261,10 @@ export class SocialSkill extends Skill {
             if (!/too new|24 hours/i.test(msg)) failures.push({ channel: channel.name, detail: `IG-Token-Refresh fehlgeschlagen: ${msg}` });
           }
         } catch (err) {
-          failures.push({ channel: channel.name, detail: `IG-Token-Refresh: ${(err as Error).message}` });
+          // v1022 — der Token steht in der Refresh-URL (Meta-API-Vorgabe):
+          // aus Fehlermeldungen tilgen, bevor sie in Insights/Logs landen
+          const msg = (err as Error).message.replace(/access_token=[^&\s]+/g, 'access_token=***');
+          failures.push({ channel: channel.name, detail: `IG-Token-Refresh: ${msg}` });
         }
       }
       try {
@@ -691,8 +699,10 @@ export class SocialSkill extends Skill {
    * rest-Kanals mit config.translate_to (z.B. ["en","fr","it"]) werden Titel
    * und Body per LLM übersetzt und als performance.translations persistiert —
    * der rest-Provider legt sie ins Payload, die Plattform macht daraus
-   * Locale-Versionen. Cache über translationsOf (Länge+Ziele), damit Retries
-   * nicht erneut zahlen. Best-effort: Fehler blockieren den Publish NIE
+   * Locale-Versionen. Cache über translationsOf (v1022: Content-HASH+Ziele —
+   * vorher nur Längen: eine längengleiche Korrektur wie „EM"→„WM" traf den
+   * Cache und die VERALTETE Übersetzung ging live), damit Retries nicht
+   * erneut zahlen. Best-effort: Fehler blockieren den Publish NIE
    * (der Artikel erscheint dann vorerst einsprachig).
    */
   private async applyTranslations(userId: string, item: ContentItem, channel: SocialChannel): Promise<ContentItem> {
@@ -702,7 +712,7 @@ export class SocialSkill extends Skill {
         ? (channel.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string' && /^[a-z]{2}(-[a-z]{2})?$/i.test(l)).map(l => l.toLowerCase())
         : [];
       if (targets.length === 0) return item;
-      const marker = `${(item.title ?? '').length}:${item.body.length}:${targets.join(',')}`;
+      const marker = `${createHash('sha256').update(`${item.title ?? ''}\u0000${item.body}`).digest('hex').slice(0, 16)}:${targets.join(',')}`;
       const cached = item.performance?.translations;
       if (cached && typeof cached === 'object' && item.performance?.translationsOf === marker) return item;
       const source = typeof channel.config.language === 'string' ? channel.config.language : 'de';
@@ -765,6 +775,15 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     if (!provider || provider.capabilities().supportsStories !== true) return undefined;
     // Tages-Limit gilt auch für Stories
     if (await this.repo.countPublishedToday(ig.id) >= ig.maxPostsPerDay) return undefined;
+    // v1022 — gleiche Leitplanken wie publishNow: die Story geht LIVE raus,
+    // Monats-Limit und Blacklist des IG-Kanals dürfen nicht umgangen werden
+    const igMonthlyCap = typeof ig.config.max_posts_per_month === 'number' ? ig.config.max_posts_per_month : undefined;
+    if (igMonthlyCap !== undefined) {
+      const monthStart = `${new Date().toISOString().slice(0, 7)}-01T00:00:00Z`;
+      if (await this.repo.countPublishedSince(ig.id, monthStart) >= igMonthlyCap) return undefined;
+    }
+    const storyHaystack = `${leadItem.title ?? ''} ${leadItem.body}`.toLowerCase();
+    if (ig.blacklist.some(w => w.trim().length > 0 && storyHaystack.includes(w.toLowerCase()))) return undefined;
     // Bild: das IG-Follower-Item derselben Story hat bereits ein passendes Motiv
     const followerId = assigns.find(a => a.channelId === ig.id)?.itemId;
     const follower = followerId ? await this.repo.getItem(userId, followerId) : null;
@@ -772,7 +791,9 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     if (!image) return undefined;
     let base: Buffer;
     if (image.pathOrUrl.startsWith('http')) {
-      const res = await fetch(image.pathOrUrl);
+      // v1022 — Timeout: eine hängende Medien-URL darf den (längst verbuchten)
+      // publishNow-Aufruf nicht bis zum Skill-Timeout blockieren
+      const res = await fetch(image.pathOrUrl, { signal: AbortSignal.timeout(20_000) });
       if (!res.ok) return undefined;
       base = Buffer.from(await res.arrayBuffer());
     } else {
@@ -846,7 +867,28 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     const weekAgo = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
     const recent = await this.repo.listItems(userId, { channelId: ig.id, limit: 100 });
     const reelsThisWeek = recent.filter(i => i.performance?.format === 'reel' && i.createdAt >= weekAgo).length;
-    if (reelsThisWeek >= cap) return;
+    // v1022 — TOCTOU-Guard: das Item entsteht erst NACH dem minutenlangen
+    // Render — zwei Lead-Publishes im Render-Fenster lasen beide den alten
+    // Zählerstand und überschritten das Wochen-Limit. In-flight-Renders
+    // zählen jetzt mit (fire-and-forget läuft im selben Prozess).
+    const inFlight = this.reelsRendering.get(ig.id) ?? 0;
+    if (reelsThisWeek + inFlight >= cap) return;
+    this.reelsRendering.set(ig.id, inFlight + 1);
+    try {
+      await this.renderAutoReel(userId, leadItem, ig, assigns);
+    } finally {
+      const n = (this.reelsRendering.get(ig.id) ?? 1) - 1;
+      if (n <= 0) this.reelsRendering.delete(ig.id);
+      else this.reelsRendering.set(ig.id, n);
+    }
+  }
+
+  /** v1022 — eigentliches Reel-Rendern (aus maybeAutoReel ausgelagert, läuft unter dem In-flight-Guard). */
+  private async renderAutoReel(
+    userId: string, leadItem: ContentItem, ig: SocialChannel,
+    assigns: Awaited<ReturnType<SocialRepository['listAssignments']>>,
+  ): Promise<void> {
+    if (!this.videoTools || !this.llm) return;
     // Bilder der Story (nur lokale Pfade — der Renderer liest kein http)
     const images: string[] = [];
     const followerId = assigns.find(a => a.channelId === ig.id)?.itemId;
@@ -886,10 +928,13 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`
       media: images.map(p => ({ type: 'image' as const, source: 'generated' as const, pathOrUrl: p })),
     };
     const rendered = await this.videoTools.render(pseudo, ig, '9:16');
-    // Als ENTWURF anlegen — Reels gehen bewusst durch die Freigabe
+    // Als ENTWURF anlegen — Reels gehen bewusst durch die Freigabe.
+    // v1022 — Titel OHNE „Reel: "-Präfix: der Titel läuft beim Publish über
+    // composePostText in die ÖFFENTLICHE Caption (Kennzeichnung in der UI
+    // übernimmt performance.format='reel' + Video-Badge).
     const item = await this.repo.createItem(userId, ig.id, {
       status: 'draft',
-      title: `Reel: ${leadItem.title ?? leadItem.body.slice(0, 60)}`,
+      title: leadItem.title ?? leadItem.body.slice(0, 60),
       body: caption,
       hashtags: leadItem.hashtags.slice(0, 5),
       media: [{ type: 'video', source: 'generated', pathOrUrl: rendered.videoPath }],
@@ -919,6 +964,11 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`
       if (channel.platform === 'rest') return item; // die eigene Plattform IST das Ziel
       const lead = await this.storyLeadUrl(userId, item);
       if (!lead) return item;
+      // v1022 — interne Lead-URLs (IP/localhost) NIE veröffentlichen: für
+      // Follower tot + leakt das LAN (Realfall 06.07.: Bluesky-Post mit
+      // „192.168.1.96:3003/news…"). Tritt auf, wenn url_template/url_field
+      // des Lead-Kanals auf die interne base_url zeigt statt auf die Domain.
+      if (isInternalUrl(lead.url)) return item;
       const url = channel.config.utm === false
         ? lead.url
         : appendUtm(lead.url, channel.platform, lead.title ?? item.title ?? 'social');
@@ -1130,17 +1180,8 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
         const headers: Record<string, string> = {};
         if (secrets.API_TOKEN) headers.Authorization = `Bearer ${secrets.API_TOKEN}`;
         const since = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
-        const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        if (channel.config.insecure_tls === true) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-        let res: Response;
-        try {
-          res = await fetch(`${base}${path.startsWith('/') ? path : `/${path}`}?since=${encodeURIComponent(since)}`, { headers });
-        } finally {
-          if (channel.config.insecure_tls === true) {
-            if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-            else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-          }
-        }
+        // v1022 — request-lokales insecure_tls (tlsFetch) statt prozessweitem ENV-Flag
+        const res = await tlsFetch(`${base}${path.startsWith('/') ? path : `/${path}`}?since=${encodeURIComponent(since)}`, { headers }, channel.config.insecure_tls === true);
         if (!res.ok) continue; // Endpoint (noch) nicht vorhanden — kein Fehler
         const data = await res.json().catch(() => null) as { data?: Array<{ date?: string; path?: string; views?: number; sources?: Record<string, number> }> } | null;
         const rows = Array.isArray(data?.data) ? data.data : [];
@@ -1234,17 +1275,8 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
           const secrets = await this.secrets(channel);
           const headers: Record<string, string> = {};
           if (secrets.API_TOKEN) headers.Authorization = `Bearer ${secrets.API_TOKEN}`;
-          const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-          if (channel.config.insecure_tls === true) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-          let res: Response;
-          try {
-            res = await fetch(`${base}${statsPath.startsWith('/') ? statsPath : `/${statsPath}`}?since=${encodeURIComponent(new Date(Date.now() - 24 * 3_600_000).toISOString())}`, { headers });
-          } finally {
-            if (channel.config.insecure_tls === true) {
-              if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-              else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-            }
-          }
+          // v1022 — request-lokales insecure_tls (tlsFetch) statt prozessweitem ENV-Flag
+          const res = await tlsFetch(`${base}${statsPath.startsWith('/') ? statsPath : `/${statsPath}`}?since=${encodeURIComponent(new Date(Date.now() - 24 * 3_600_000).toISOString())}`, { headers }, channel.config.insecure_tls === true);
           if (res.ok) lines.push(`✅ ${channel.name}: Klick-Rückkanal aktiv (Stats-Endpoint antwortet)`);
           else if (res.status === 404) lines.push(`ℹ️ ${channel.name}: Stats-Endpoint noch nicht vorhanden (Plattform-Seite offen) — Klick-Rückkanal wartet`);
           else if (res.status === 401 || res.status === 403) { lines.push(`⚠️ ${channel.name}: Stats-Endpoint verweigert (HTTP ${res.status}) — API-Key-Scope prüfen (z. B. stats:read)`); problems++; }

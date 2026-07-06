@@ -112,6 +112,27 @@ describe('composePostText', () => {
     expect(off).not.toContain('KI-generiert');
   });
 
+  it('v1022: Traffic-Link am Body-Ende überlebt die Kürzung (Bluesky 300)', () => {
+    const url = 'https://fussball.cc/news/azteca?utm_source=bluesky&utm_medium=social&utm_campaign=azteca';
+    const item = makeItem({ title: 'Aztekenstadion', body: `${'Mexiko verliert erstmals. '.repeat(20)}\n\n👉 Ganzer Artikel: ${url}`, hashtags: ['WorldCup', 'Mexico'] });
+    const text = composePostText(item, 300);
+    expect(text.length).toBeLessThanOrEqual(300);
+    expect(text).toContain(url);
+    expect(text).toContain('#WorldCup');
+  });
+
+  it('v1022: wird es eng, fliegen die Hashtags — nie der Link', () => {
+    const url = 'https://fussball.cc/news/azteca';
+    const item = makeItem({
+      body: `${'w'.repeat(300)}\n\n👉 Ganzer Artikel: ${url}`,
+      hashtags: ['aaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccc', 'dddddddddddddddddddd', 'eeeeeeeeeeeeeeeeeeee', 'ffffffffffffffffffff'],
+    });
+    const text = composePostText(item, 200);
+    expect(text.length).toBeLessThanOrEqual(200);
+    expect(text).toContain(url);
+    expect(text).not.toContain('#');
+  });
+
   it('v985: ohne generiertes Medium bzw. ohne Kanal keine Kennzeichnung', () => {
     const plain = makeItem({ media: [{ type: 'image', source: 'external', pathOrUrl: 'https://x/y.png' }] as any });
     expect(composePostText(plain, undefined, makeChannel())).not.toContain('KI-generiert');
@@ -125,6 +146,11 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
     expect(appendUtm('https://fussball.cc/news/x', 'telegram_channel', 'Kolumbien überrascht Österreich!'))
       .toBe('https://fussball.cc/news/x?utm_source=telegram_channel&utm_medium=social&utm_campaign=kolumbien-ueberrascht-oesterreich');
     expect(appendUtm('https://x.at/p?id=1', 'facebook', '')).toContain('?id=1&utm_source=facebook');
+  });
+
+  it('v1022: appendUtm setzt die Parameter VOR ein #Fragment', () => {
+    expect(appendUtm('https://x.at/artikel#kommentare', 'bluesky', 'Titel'))
+      .toBe('https://x.at/artikel?utm_source=bluesky&utm_medium=social&utm_campaign=titel#kommentare');
   });
 
   function trafficSetup(channelOverrides: Partial<SocialChannel> = {}, leadStatus = 'published') {
@@ -419,8 +445,10 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(r.success).toBe(true);
     await new Promise(res => setTimeout(res, 10)); // fire-and-forget abwarten
     expect(render).toHaveBeenCalled();
-    const reel = created.find(c => String(c.title).startsWith('Reel:'));
+    // v1022 — Titel OHNE „Reel: "-Präfix (er liefe beim Publish in die öffentliche Caption)
+    const reel = created.find(c => c.media?.[0]?.type === 'video');
     expect(reel).toBeDefined();
+    expect(reel.title).toBe('Kolumbien weiter');
     expect(reel.chId).toBe('ch-ig');
     expect(reel.status).toBe('draft'); // bewusst MIT Freigabe
     expect(reel.media[0]).toEqual({ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' });

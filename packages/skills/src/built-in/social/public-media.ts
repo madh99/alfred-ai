@@ -1,6 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolvePath } from './rest-provider.js';
+import { tlsFetch } from './tls-fetch.js';
 
 /**
  * v969 — Public-Media-Host je Kanal: Plattformen wie Instagram laden Medien
@@ -78,18 +79,8 @@ async function uploadRest(cfg: PublicMediaRestConfig, localPath: string, secrets
   const headers: Record<string, string> = {};
   if (secrets.API_TOKEN) headers[cfg.auth_header ?? 'Authorization'] = `${cfg.auth_prefix ?? 'Bearer '}${secrets.API_TOKEN}`;
 
-  // self-signed Certs (interne Deploys) — gleiche Mechanik wie rest-provider
-  const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-  if (cfg.insecure_tls === true) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-  let res: Response;
-  try {
-    res = await fetch(url, { method: 'POST', headers, body: form });
-  } finally {
-    if (cfg.insecure_tls === true) {
-      if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-      else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-    }
-  }
+  // v1022 — self-signed Certs request-lokal (tlsFetch) statt prozessweitem ENV-Flag
+  const res = await tlsFetch(url, { method: 'POST', headers, body: form }, cfg.insecure_tls === true);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`public_media-Upload HTTP ${res.status}: ${text.slice(0, 200)}`);

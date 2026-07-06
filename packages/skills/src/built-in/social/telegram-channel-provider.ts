@@ -47,6 +47,10 @@ export class TelegramChannelProvider extends SocialProvider {
     const chatId = this.chatId(channel);
     const text = composePostText(item, 4096, channel);
     const image = item.media.find(m => m.type === 'image');
+    // v1022 — sendPhoto-Captions sind auf 1024 Zeichen begrenzt: sauber über
+    // composePostText kürzen (KI-Kennzeichnung + Hashtags überleben) statt
+    // hart zu slicen (vorher fiel bei langen Bodies genau die Kennzeichnung weg)
+    const caption = image ? composePostText(item, 1024, channel) : undefined;
     // v1001 — Traffic: Inline-Button „Ganzer Artikel" (URL kommt vom Skill via performance.trafficUrl)
     const trafficUrl = typeof item.performance?.trafficUrl === 'string' ? item.performance.trafficUrl : undefined;
     const trafficLabel = typeof item.performance?.trafficLabel === 'string' ? item.performance.trafficLabel : '📖 Ganzer Artikel';
@@ -57,7 +61,7 @@ export class TelegramChannelProvider extends SocialProvider {
       res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, photo: image.pathOrUrl, caption: text.slice(0, 1024), ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
+        body: JSON.stringify({ chat_id: chatId, photo: image.pathOrUrl, caption, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
       });
     } else if (image) {
       // v942 — lokale Datei (z.B. Studio-generiert): Multipart-Upload
@@ -65,7 +69,7 @@ export class TelegramChannelProvider extends SocialProvider {
       const bytes = await readFile(image.pathOrUrl);
       const form = new FormData();
       form.append('chat_id', chatId);
-      form.append('caption', text.slice(0, 1024));
+      form.append('caption', caption ?? '');
       if (replyMarkup) form.append('reply_markup', JSON.stringify(replyMarkup));
       form.append('photo', new Blob([new Uint8Array(bytes)], { type: 'image/png' }), 'photo.png');
       res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });

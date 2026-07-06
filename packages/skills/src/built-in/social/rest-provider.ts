@@ -1,5 +1,6 @@
 import type { SocialChannel, ContentItem } from '@alfred/storage';
 import { SocialProvider, composePostText, aiDisclosure, type ProviderCapabilities, type PublishResult } from './social-provider.js';
+import { tlsFetch } from './tls-fetch.js';
 
 /**
  * v933 — Generic-REST-Provider: published an eine eigene Plattform-API
@@ -134,20 +135,10 @@ export class RestProvider extends SocialProvider {
   }
 
   private async doFetch(url: string, init: RequestInit, channel: SocialChannel): Promise<Response> {
-    // self-signed Certs (interne Deploys): Node erlaubt das nur prozessweit —
-    // gezielt per Request via dispatcher wäre undici-Import; pragmatisch: Flag
-    // pro Aufruf setzen und zurücksetzen.
-    const insecure = channel.config.insecure_tls === true;
-    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    if (insecure) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    try {
-      return await fetch(url, init);
-    } finally {
-      if (insecure) {
-        if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-      }
-    }
+    // v1022 — self-signed Certs request-lokal (tlsFetch/undici-Dispatcher)
+    // statt prozessweitem NODE_TLS_REJECT_UNAUTHORIZED (MITM-Fenster für
+    // parallele Requests + Restore-Race, das die '0' dauerhaft hinterließ).
+    return tlsFetch(url, init, channel.config.insecure_tls === true);
   }
 
   /**

@@ -5,6 +5,70 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1022] - 2026-07-06
+
+### Fixed — Audit-Fix-Runde Social-Stack (v1022)
+
+Ergebnis eines vollständigen Bug-Audits über Provider, Skill/Engine und
+Content-Studio — 18 bestätigte Funde, alle behoben:
+
+**Sicherheit & Traffic**
+
+- **TLS request-lokal statt prozessweit**: `insecure_tls` setzte
+  `NODE_TLS_REJECT_UNAUTHORIZED` global — parallele Requests (Telegram,
+  IG-Token-Refresh) liefen im selben Zeitfenster ohne Zertifikatsprüfung,
+  und zwei überlappende Aufrufe konnten die Prüfung dauerhaft deaktiviert
+  hinterlassen. Jetzt eigener undici-Dispatcher nur für den einen Request
+  (neues Modul `tls-fetch.ts`, alle vier Aufrufstellen umgestellt).
+- **Traffic-Link überlebt die Kürzung**: Bei Längen-Limits (Bluesky 300,
+  X 280, TG-Caption 1024) wurde das Body-Ende gekappt — genau dort hängt
+  der Lead-Artikel-Link. Neuer Kürzungs-Vorrang: KI-Kennzeichnung >
+  Traffic-Link > Body-Text > Hashtags.
+- **Bluesky-Facets**: Die Kürzungs-Ellipse „…" wurde als Teil der URL
+  verlinkt (toter Klick-Link). Ellipse ist jetzt URL-Grenzzeichen.
+- **Interne Lead-URLs gesperrt**: Zeigt die Lead-URL auf eine IP/localhost
+  (Fehlkonfiguration von url_template), wird der Traffic-CTA ausgelassen
+  statt die LAN-Adresse öffentlich zu posten.
+- **Telegram-Foto-Captions** werden sauber über die Kürzungslogik auf 1024
+  Zeichen gebracht — vorher fiel per hartem Schnitt genau die
+  KI-Kennzeichnung weg.
+- **UTM bei #Fragment-URLs**: Parameter landen jetzt vor dem Fragment.
+- **IG-Token-Refresh**: Access-Token wird aus Fehlermeldungen getilgt.
+
+**Inhalte & Planung**
+
+- **Übersetzungs-Cache über Content-Hash**: Der Längen-Marker ließ nach
+  einer längengleichen Korrektur („EM"→„WM") die veraltete Übersetzung
+  live gehen. Jetzt invalidiert jede Textänderung den Cache.
+- **Serien-Formate auf suggest-Kanälen**: Terminlose Entwürfe blocken das
+  Format jetzt — vorher erzeugte jeder Tageslauf ein neues Duplikat
+  (LLM-Call + Bild-Budget).
+- **News-Desk dedupliziert im Batch**: Dieselbe Schlagzeile aus zwei Feeds
+  wurde zur Doppel-Eilmeldung auf allen Familien-Kanälen.
+- **Mixed-Mode-Familien**: Ist der Lead-Kanal suggest, werden Follower
+  nicht mehr vorgezogen terminiert (sie verwiesen auf einen noch nicht
+  freigegebenen Artikel) — gilt in der Konferenz UND im News-Desk.
+- **Termin-Ad-hoc-Slots** prüfen jetzt auf Kollisionen (vorher zwei Posts
+  zur selben Minute möglich) und weichen in 10-Minuten-Schritten aus.
+- **Timer-Robustheit**: Verspätete Ticks überspringen keine Läufe mehr —
+  Stundenläufe (News-Desk/Kommentare) und Tagesläufe (Auth/Analytics/
+  Studio) holen nach statt auszufallen.
+
+**Leitplanken & Medien**
+
+- **Auto-Story** respektiert jetzt Monats-Limit und Blacklist des
+  IG-Kanals (postet live, lief vorher an beiden vorbei); Bild-Download
+  mit 20s-Timeout.
+- **Auto-Reel**: Wochen-Limit zählt laufende Renders mit (Race bei zwei
+  Lead-Publishes im Render-Fenster); Reel-Titel ohne „Reel: "-Präfix —
+  der lief beim Publish in die öffentliche Caption.
+- **Facebook-Alben**: Mehrere Bilder gehen als EIN Feed-Post mit
+  attached_media raus statt nur des ersten Bilds.
+- **Titelbalken-Umbruch**: Überlange Einzelwörter werden hart getrennt
+  statt aus dem Balken zu laufen.
+- **Dedup-Tokenizer**: „ß" ist kein Trennzeichen mehr („Fußball" zerfiel
+  zu „fu"+„ball"), à–ã werden erkannt.
+
 ## [0.19.0-multi-ha.1021] - 2026-07-06
 
 ### Added — Wachstums-Auswertung: Wochen-Report + Meilensteine (v1021)

@@ -177,6 +177,23 @@ export class MetaProvider extends SocialProvider {
         const id = String(r.id ?? '');
         return { externalId: id, url: `https://www.facebook.com/${id}` };
       }
+      // v1022 — mehrere Bilder als Album: erst unveröffentlichte Fotos anlegen,
+      // dann EIN Feed-Post mit attached_media (vorher ging nur images[0] raus)
+      if (images.length >= 2) {
+        const mediaIds: string[] = [];
+        for (const img of images.slice(0, 10)) {
+          const r = await this.graphPost(`${GRAPH}/${target}/photos`, { access_token: token, url: img.pathOrUrl, published: 'false' });
+          const id = String(r.id ?? '');
+          if (id) mediaIds.push(id);
+        }
+        if (mediaIds.length >= 2) {
+          const params: Record<string, string> = { access_token: token, message: text };
+          mediaIds.forEach((id, i) => { params[`attached_media[${i}]`] = JSON.stringify({ media_fbid: id }); });
+          const r = await this.graphPost(`${GRAPH}/${target}/feed`, params);
+          const id = String(r.id ?? '');
+          return { externalId: id, url: `https://www.facebook.com/${id}` };
+        }
+      }
       if (image) {
         const r = await this.graphPost(`${GRAPH}/${target}/photos`, { access_token: token, url: image.pathOrUrl, caption: text });
         const id = String(r.post_id ?? r.id ?? '');

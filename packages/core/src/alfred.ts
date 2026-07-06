@@ -6746,7 +6746,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // v989 — stündlich Kommentare einsammeln (HA-Slot je Stunde);
           // neue Kommentare → EIN Insight je Kanal und Tag (upsert zählt hoch)
           const hourKey = `${today}T${String(now.getHours()).padStart(2, '0')}`;
-          if (now.getMinutes() < 10 && lastCommentsHour !== hourKey) {
+          // v1022 — kein Minuten-Fenster mehr: ein unter Last verspäteter Tick
+          // (z.B. :11 statt :00) übersprang vorher die GANZE Stunde — News-Desk
+          // war dann 1h blind. hourKey + HA-Slots verhindern Doppel-Läufe.
+          if (lastCommentsHour !== hourKey) {
             lastCommentsHour = hourKey;
             // v994 — News-Desk: neue Topic-Items auf Eilmeldungs-Relevanz prüfen
             let breakingCreated = 0;
@@ -6789,7 +6792,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // v984 — 06:00 Auth-Health-Check: IG-Long-lived-Tokens erneuern
           // (laufen sonst nach 60 Tagen stumm ab) + validateAuth je Kanal;
           // Fehler landen als high-Insight beim User.
-          if (now.getHours() === 6 && now.getMinutes() < 30 && lastAuthDay !== today) {
+          // v1022 — „ab 06:00" statt enges Fenster: ein verspäteter Tick ließ den
+          // Tageslauf sonst komplett ausfallen (Catch-up; claimDailySlot dedupt)
+          if (now.getHours() >= 6 && lastAuthDay !== today) {
             lastAuthDay = today;
             if (await this.claimDailySlot(`social-auth:${today}`)) {
               try {
@@ -6810,7 +6815,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           }
           // v936 — 07:00 Analytics einsammeln (vor dem Studio, damit
           // Bestperformer frisch sind); sonntags zusätzlich Nischen-Report
-          if (now.getHours() === 7 && now.getMinutes() < 30 && lastAnalyticsDay !== today) {
+          // v1022 — „ab 07:00" statt enges Fenster (Catch-up wie beim Auth-Check)
+          if (now.getHours() >= 7 && lastAnalyticsDay !== today) {
             lastAnalyticsDay = today;
             if (await this.claimDailySlot(`social-analytics:${today}`)) {
               try {
@@ -6852,7 +6858,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               } catch (err) { this.logger.warn({ err }, 'v936 social analytics failed'); }
             }
           }
-          if (now.getHours() !== 7 || now.getMinutes() < 30 || lastStudioDay === today) return;
+          // v1022 — „ab 07:30" statt exakt 07:30-08:00: ein verspäteter Tick ließ
+          // den Studio-Tageslauf sonst ausfallen (claimDailySlot dedupt Nodes)
+          if (now.getHours() < 7 || (now.getHours() === 7 && now.getMinutes() < 30) || lastStudioDay === today) return;
           lastStudioDay = today;
           // v990 — mediaDir-Bereinigung (je Node lokal, kein HA-Slot)
           await studio.cleanupMediaDir().catch(() => { /* non-critical */ });

@@ -28,7 +28,8 @@
     "rss-parser": "^3.13.0",
     "mqtt": "^5.0.0",
     "sonos": "^1.14.0",
-    "tsdav": "^2.1.1"
+    "tsdav": "^2.1.1",
+    "undici": "^7.10.0"
   },
   "devDependencies": {
     "@types/nodemailer": "^7.0.11",

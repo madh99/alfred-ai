@@ -197,7 +197,27 @@ export function appendUtm(url: string, platform: string, campaign: string): stri
     .replace(/[äöüß]/g, ch => (({ ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss' } as Record<string, string>)[ch] ?? ch))
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'social';
   const params = `utm_source=${encodeURIComponent(platform)}&utm_medium=social&utm_campaign=${encodeURIComponent(slug)}`;
-  return url.includes('?') ? `${url}&${params}` : `${url}?${params}`;
+  // v1022 — #Fragment abtrennen: Query-Parameter hinter dem Fragment erreichen
+  // den Server nie (vorher wurde bei url#abschnitt einfach angehängt)
+  const hashIdx = url.indexOf('#');
+  const base = hashIdx >= 0 ? url.slice(0, hashIdx) : url;
+  const fragment = hashIdx >= 0 ? url.slice(hashIdx) : '';
+  return `${base}${base.includes('?') ? '&' : '?'}${params}${fragment}`;
+}
+
+/**
+ * v1022 — Interne URLs (IP, localhost, Hostname ohne Punkt) dürfen NIE als
+ * öffentlicher Traffic-Link rausgehen: sie sind für Follower tot UND leaken
+ * die LAN-Topologie (Realfall 06.07.: Bluesky-Post mit „192.168.1.96:3003/…").
+ * Gleiche Logik wie resolveImageBranding (v1018) — hier für ganze URLs.
+ */
+export function isInternalUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host === 'localhost' || !host.includes('.');
+  } catch {
+    return true; // unparsebar → sicherheitshalber nicht veröffentlichen
+  }
 }
 
 /** Baut den fertigen Post-Text (Body + Hashtags + ggf. KI-Kennzeichnung) mit optionalem Längen-Limit. */
@@ -206,11 +226,25 @@ export function composePostText(item: ContentItem, maxLength?: number, channel?:
   // v985 — Kennzeichnung hängt hinter den Hashtags und überlebt die Kürzung
   const disclosure = channel ? aiDisclosure(item, channel) : null;
   const suffix = disclosure ? `\n\n${disclosure}` : '';
-  let text = `${item.title ? `${item.title}\n\n` : ''}${item.body}${tags}${suffix}`;
+  const head = item.title ? `${item.title}\n\n` : '';
+  let text = `${head}${item.body}${tags}${suffix}`;
   if (maxLength && text.length > maxLength) {
-    // Hashtags + Kennzeichnung haben Vorrang vor den letzten Body-Zeichen
-    const room = maxLength - tags.length - suffix.length - 2;
-    text = `${(item.title ? `${item.title}\n\n` : '') + item.body}`.slice(0, Math.max(0, room)) + '…' + tags + suffix;
+    // v1022 — Kürzungs-Vorrang: KI-Kennzeichnung > Traffic-Link > Body > Hashtags.
+    // Vorher wurde das Body-ENDE gekappt — dort hängt aber der Traffic-Link von
+    // applyTrafficCta, der so auf Bluesky/X mitten in der URL starb (Realfall
+    // 06.07.: „192.168.1.96:3003/news…" als toter Link im Post).
+    let bodyMain = item.body;
+    let ctaBlock = '';
+    const ctaMatch = /\n\s*([^\n]*https?:\/\/\S+[^\n]*)\s*$/.exec(item.body);
+    if (ctaMatch) {
+      bodyMain = item.body.slice(0, ctaMatch.index).trimEnd();
+      ctaBlock = `\n\n${ctaMatch[1].trim()}`;
+    }
+    let keptTags = tags;
+    let room = maxLength - ctaBlock.length - keptTags.length - suffix.length - 2;
+    // Wird es eng (Bluesky 300), fliegen die Hashtags — nicht der Link
+    if (room < 40 && keptTags) { keptTags = ''; room = maxLength - ctaBlock.length - suffix.length - 2; }
+    text = `${head}${bodyMain}`.slice(0, Math.max(0, room)) + '…' + ctaBlock + keptTags + suffix;
   }
   return text;
 }

@@ -78,10 +78,12 @@ export class BlueskyProvider extends SocialProvider {
   /** Link-Facets (klickbare URLs) — Byte-Offsets in UTF-8, wie das AT Protocol sie verlangt. */
   static linkFacets(text: string): Array<{ index: { byteStart: number; byteEnd: number }; features: Array<{ $type: string; uri: string }> }> {
     const facets: Array<{ index: { byteStart: number; byteEnd: number }; features: Array<{ $type: string; uri: string }> }> = [];
-    const re = /https?:\/\/[^\s)\]}>"']+/g;
+    // v1022 — '…' (U+2026, Kürzungs-Ellipse) gehört NIE zur URL: vorher wurde
+    // eine abgeschnittene URL inkl. Ellipse als Facet verlinkt (404-Klick-Link)
+    const re = /https?:\/\/[^\s)\]}>"'…]+/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
-      const url = m[0].replace(/[.,;:!?]+$/, ''); // Satzzeichen am Ende gehören nicht zur URL
+      const url = m[0].replace(/[.,;:!?…]+$/, ''); // Satzzeichen am Ende gehören nicht zur URL
       const byteStart = Buffer.byteLength(text.slice(0, m.index), 'utf8');
       const byteEnd = byteStart + Buffer.byteLength(url, 'utf8');
       facets.push({ index: { byteStart, byteEnd }, features: [{ $type: 'app.bsky.richtext.facet#link', uri: url }] });

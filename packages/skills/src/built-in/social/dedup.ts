@@ -10,7 +10,9 @@
  * semantische Schicht (StoryDeduper, core/story-dedup.ts).
  */
 export function isNearDuplicateTitle(candidate: string, existingTitles: string[]): boolean {
-  const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(t => t.length >= 4));
+  // v1022 — Buchstabenklasse ß-ö/ø-ÿ statt ä-ü: „ß" war Trennzeichen
+  // („Fußball" zerfiel zu „fu"+„ball") und à-ã fehlten ganz
+  const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zß-öø-ÿ0-9]+/).filter(t => t.length >= 4));
   const cand = tokens(candidate);
   if (cand.size === 0) return false;
   for (const existing of existingTitles) {

@@ -66,7 +66,17 @@ export function escapeXml(s: string): string {
 
 /** Text auf Zeilen umbrechen (Wort-Grenzen), harte Kappung auf maxLines. */
 export function wrapText(text: string, maxCharsPerLine: number, maxLines: number): string[] {
-  const words = text.trim().split(/\s+/);
+  // v1022 — Einzelwörter über Zeilenbreite hart trennen (vorher lief z.B. ein
+  // langer Vereinsname ungebrochen aus dem Titelbalken)
+  const words = text.trim().split(/\s+/).flatMap(w => {
+    if (w.length <= maxCharsPerLine) return [w];
+    const parts: string[] = [];
+    for (let i = 0; i < w.length; i += maxCharsPerLine - 1) {
+      const chunk = w.slice(i, i + maxCharsPerLine - 1);
+      parts.push(i + maxCharsPerLine - 1 < w.length ? `${chunk}-` : chunk);
+    }
+    return parts;
+  });
   const lines: string[] = [];
   let line = '';
   for (const word of words) {

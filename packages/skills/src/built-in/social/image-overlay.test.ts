@@ -23,6 +23,13 @@ describe('image-overlay (v1002)', () => {
     expect(wrapText('Kurz', 20, 2)).toEqual(['Kurz']);
   });
 
+  it('v1022: Einzelwort über Zeilenbreite wird hart getrennt statt überzulaufen', () => {
+    const lines = wrapText('Donaudampfschifffahrtsgesellschaft', 10, 5);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const l of lines) expect(l.length).toBeLessThanOrEqual(10);
+    expect(lines.join('').replace(/-/g, '')).toBe('Donaudampfschifffahrtsgesellschaft');
+  });
+
   it('escapeXml: SVG-gefährliche Zeichen', () => {
     expect(escapeXml('Bayern & Co: <3 "quotes"')).toBe('Bayern &amp; Co: &lt;3 &quot;quotes&quot;');
   });

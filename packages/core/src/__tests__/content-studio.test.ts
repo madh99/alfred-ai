@@ -342,6 +342,10 @@ describe('ContentStudio (v935)', () => {
     expect(isNearDuplicateTitle('Spaniens Presse feiert den Sieg', existing)).toBe(false);
   });
 
+  it('v1022: „ß" ist kein Token-Trennzeichen mehr (Großer/Fußball zerfielen vorher)', () => {
+    expect(isNearDuplicateTitle('Großer Fußball Abend', ['Großer Fußball Auftakt'])).toBe(true);
+  });
+
   it('v957: Ideen mit Geschwister-Doppelung werden deterministisch verworfen', async () => {
     const telegram = makeChannel({ id: 'ch-tg', name: 'FussballCC News', projectId: 'proj-1' });
     const platform = makeChannel({ id: 'ch-cc', name: 'fussball.cc', platform: 'rest', projectId: 'proj-1' });
@@ -952,6 +956,19 @@ describe('ContentStudio — Serien-Formate (v1012)', () => {
       source: 'studio', createdAt: 'x', updatedAt: 'x', scheduledAt: at, performance: { format: 'Wochenrückblick' },
     }]);
     expect(await studio.ensureFormats(channel)).toBe(0);
+  });
+
+  it('v1022: terminloser suggest-Entwurf desselben Formats blockt (kein tägliches Duplikat)', async () => {
+    const channel = makeChannel({ mode: 'suggest', config: { topic_id: 't-1', formate: [{ slot: 'Mo 09:00', name: 'Wochenrückblick', anweisung: 'x' }] } });
+    const { studio, socialRepo, llm } = makeStack({ channel });
+    // suggest: der Entwurf hat weder scheduledAt noch publishedAt — vorher
+    // fiel der Dedup-Check auf 1970 zurück und erzeugte täglich ein Duplikat
+    (socialRepo.listItems as any) = vi.fn(async () => [{
+      id: 'i-fmt', channelId: 'ch-1', userId: OWNER, status: 'draft', body: 'x', media: [], hashtags: [],
+      source: 'studio', createdAt: 'x', updatedAt: 'x', performance: { format: 'Wochenrückblick' },
+    }]);
+    expect(await studio.ensureFormats(channel)).toBe(0);
+    expect((llm.complete as any).mock.calls.length).toBe(0);
   });
 });
 

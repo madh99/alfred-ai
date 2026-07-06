@@ -364,8 +364,13 @@ export class ContentStudio {
       const at = ContentStudio.nextSlotOccurrence(String(f.slot), nowIso);
       if (!at) continue;
       const window = 3.5 * 24 * 3_600_000;
+      // v1022 — terminlose Entwürfe desselben Formats blocken IMMER: auf
+      // suggest-Kanälen bleibt das Item draft OHNE scheduledAt — der alte
+      // 1970-Fallback ließ so JEDEN Lauf ein neues Duplikat erzeugen
+      // (LLM-Call + Bild-Budget, nach einer Woche 7 identische Entwürfe).
       const dupe = existing.some(i => i.performance?.format === name
-        && Math.abs(Date.parse(i.scheduledAt ?? i.publishedAt ?? '1970-01-01') - Date.parse(at)) < window);
+        && ((!i.scheduledAt && !i.publishedAt)
+          || Math.abs(Date.parse(i.scheduledAt ?? i.publishedAt ?? '') - Date.parse(at)) < window));
       if (dupe) continue;
       const dossier = await this.topicDossier(channel).catch(() => '');
       const prompt = `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
@@ -496,16 +501,22 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       .slice(0, maxPerDay - todayEvents);
     if (breaking.length === 0) return 0;
 
+    // v1022 — Semantik-Dedup als BATCH (wie in der Konferenz): der alte
+    // Einzel-Check pro Kandidat verglich nur gegen das eingefrorene Story-Set —
+    // dieselbe Schlagzeile aus zwei Feeds wurde so zur Doppel-Eilmeldung auf
+    // allen Familien-Kanälen. Der Batch dedupliziert auch untereinander.
+    let acceptedBreaking = breaking;
+    if (this.storyDeduper) {
+      const r = await this.storyDeduper.filterCandidates(
+        breaking.map(b => ({ ...b, body: b.summary ?? '' })),
+        activeStories.map(s => ({ id: s.id, title: s.title, body: s.summary })),
+      );
+      acceptedBreaking = r.accepted;
+    }
+    if (acceptedBreaking.length === 0) return 0;
+
     let created = 0;
-    for (const b of breaking) {
-      // Semantik-Dedup wie in der Konferenz
-      if (this.storyDeduper) {
-        const r = await this.storyDeduper.filterCandidates(
-          [{ title: b.title, body: b.summary ?? '' }],
-          activeStories.map(s => ({ id: s.id, title: s.title, body: s.summary })),
-        );
-        if (r.accepted.length === 0) continue;
-      }
+    for (const b of acceptedBreaking) {
       const story = await this.socialRepo.createStory(this.ownerUserId, {
         family, kind: 'news', title: b.title, summary: b.summary?.replace(/<[^>]+>/g, ' ').slice(0, 800),
         importance: b.score, source: 'event',
@@ -516,9 +527,13 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
         const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined);
         if (!item) continue;
-        // Ad-hoc-Slots: Lead +30 min, Follower +90 min — Freigabe kommt zum Slot
+        // Ad-hoc-Slots: Lead +30 min, Follower +90 min — Freigabe kommt zum Slot.
+        // v1022 — ist der Lead suggest (kein automatischer Publish), bleiben
+        // Follower Entwurf: sie verweisen auf einen Artikel, der erst nach
+        // der Lead-Freigabe live geht (gleiche Regel wie in planFamily).
         const slot = new Date(Date.now() + (channel.id === lead.id ? 30 : 90) * 60_000).toISOString();
-        if (channel.mode === 'approve' || channel.mode === 'autonomous') {
+        if ((channel.mode === 'approve' || channel.mode === 'autonomous')
+          && (channel.id === lead.id || lead.mode !== 'suggest')) {
           await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
         }
         await this.socialRepo.createAssignment({ storyId: story.id, channelId: channel.id, role: channel.id === lead.id ? 'lead' : 'follow', offsetHours: channel.id === lead.id ? 0 : 1, itemId: item.id });
@@ -817,6 +832,12 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
       let leadSlot: string | undefined;
       let leadChannelName: string | undefined;
+      // v1022 — Mixed-Mode-Familie: ist der Lead-Kanal suggest, gibt es keinen
+      // Lead-Slot — Follower dürfen dann NICHT auf den nächstbesten Slot
+      // vorziehen (sie verweisen auf einen Lead-Artikel, der noch nicht live
+      // ist). Sie bleiben Entwurf ohne Slot und werden nach der Lead-Freigabe
+      // terminiert (replan/Umterminieren).
+      const leadIsSuggest = assigns[0]?.role === 'lead' && assigns[0].cap!.channel.mode === 'suggest';
       for (const a of assigns) {
         const cap = a.cap!;
         if (cand.kind !== 'termin' && cap.created >= cap.needed) continue; // Kapazität erschöpft (Termine haben Vorrang)
@@ -826,7 +847,9 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         let slot: string | undefined;
         if (cap.channel.mode === 'approve' || cap.channel.mode === 'autonomous') {
           if (story.terminBis) {
-            slot = this.pickTerminSlot(cap.slotPool, story.terminBis, cap.channel);
+            slot = this.pickTerminSlot(cap.slotPool, story.terminBis, cap.channel, this.adhocTaken(cap.channel.id));
+          } else if (a.role !== 'lead' && !leadSlot && leadIsSuggest) {
+            slot = undefined; // Entwurf ohne Slot — Lead (suggest) ist noch nicht live
           } else if (a.role === 'lead' || !leadSlot) {
             slot = cap.slotPool.shift();
           } else {
@@ -862,17 +885,36 @@ Antworte NUR mit einem VALIDEN JSON-Array:
     return created;
   }
 
+  /** v1022 — je Kanal vergebene Ad-hoc-Slot-Minuten (Kollisionsschutz für Termin-Slots). */
+  private readonly adhocSlotMinutes = new Map<string, Set<string>>();
+
+  private adhocTaken(channelId: string): Set<string> {
+    let set = this.adhocSlotMinutes.get(channelId);
+    if (!set) { set = new Set(); this.adhocSlotMinutes.set(channelId, set); }
+    return set;
+  }
+
   /** v993 — Slot vor dem Anpfiff (Raster, sonst Ad-hoc Anpfiff−Vorlauf) — Termin-Logik wie v975/v977. */
-  private pickTerminSlot(slotPool: string[], terminBis: string, channel: SocialChannel): string | undefined {
+  private pickTerminSlot(slotPool: string[], terminBis: string, channel: SocialChannel, taken?: Set<string>): string | undefined {
+    const minute = (iso: string) => iso.slice(0, 16);
     const before = slotPool.filter(s => s < terminBis);
     if (before.length > 0) {
       const slot = before[before.length - 1];
       slotPool.splice(slotPool.indexOf(slot), 1);
+      taken?.add(minute(slot));
       return slot;
     }
     const leadMs = this.terminLeadHours(channel) * 3_600_000;
-    const adhoc = new Date(Math.max(Date.now() + 30 * 60_000, Date.parse(terminBis) - leadMs)).toISOString();
-    return adhoc < terminBis ? adhoc : undefined;
+    let adhoc = new Date(Math.max(Date.now() + 30 * 60_000, Date.parse(terminBis) - leadMs)).toISOString();
+    // v1022 — Kollisionsprüfung: nicht auf einem Raster-Slot oder bereits
+    // vergebenen Ad-hoc-Slot landen (vorher waren zwei Posts zur selben
+    // Minute möglich) — in 10-Minuten-Schritten ausweichen, vor dem Termin bleiben
+    while (adhoc < terminBis && (slotPool.some(s => minute(s) === minute(adhoc)) || taken?.has(minute(adhoc)))) {
+      adhoc = new Date(Date.parse(adhoc) + 10 * 60_000).toISOString();
+    }
+    if (adhoc >= terminBis) return undefined;
+    taken?.add(minute(adhoc));
+    return adhoc;
   }
 
   /** v993 — einen Beitrag für eine Story-Zuweisung rendern (Kanal-Prompt, Persona, Rolle). */
@@ -1062,21 +1104,16 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
         let slot: string | undefined;
         if (channel.mode === 'approve' || channel.mode === 'autonomous') {
           if (idea.terminBis) {
-            const before = slotPool.filter(s => s < idea.terminBis!);
-            if (before.length > 0) {
-              slot = before[before.length - 1];
-              slotPool.splice(slotPool.indexOf(slot), 1);
-            } else {
-              const leadMs = this.terminLeadHours(channel) * 3_600_000;
-              const adhoc = new Date(Math.max(Date.now() + 30 * 60_000, Date.parse(idea.terminBis) - leadMs)).toISOString();
-              if (adhoc < idea.terminBis) {
-                slot = adhoc;
-                this.logger.info({ channel: channel.name, termin: idea.terminBis, slot }, 'v977 termin ad-hoc slot (Raster hatte keinen Platz vor dem Anpfiff)');
-              } else {
-                this.logger.info({ channel: channel.name, termin: idea.terminBis, title: idea.title }, 'v975 termin idea dropped (kein Slot vor dem Termin möglich)');
-                blocked.push({ title: idea.title || idea.body.slice(0, 60), terminAt: idea.terminBis });
-                continue;
-              }
+            // v1022 — Slot-Wahl inkl. Kollisionsprüfung zentral über pickTerminSlot
+            const hadGridSlot = slotPool.some(s => s < idea.terminBis!);
+            slot = this.pickTerminSlot(slotPool, idea.terminBis, channel, this.adhocTaken(channel.id));
+            if (slot && !hadGridSlot) {
+              this.logger.info({ channel: channel.name, termin: idea.terminBis, slot }, 'v977 termin ad-hoc slot (Raster hatte keinen Platz vor dem Anpfiff)');
+            }
+            if (!slot) {
+              this.logger.info({ channel: channel.name, termin: idea.terminBis, title: idea.title }, 'v975 termin idea dropped (kein Slot vor dem Termin möglich)');
+              blocked.push({ title: idea.title || idea.body.slice(0, 60), terminAt: idea.terminBis });
+              continue;
             }
           } else {
             // v997 — Haltbarkeit: news/recap brauchen einen Slot innerhalb der

@@ -116,6 +116,19 @@ describe('TelegramChannelProvider (v933)', () => {
     expect(JSON.parse((init as RequestInit).body as string).photo).toBe('https://ex.at/bild.png');
   });
 
+  it('v1022: lange Foto-Caption wird sauber auf 1024 gekürzt — KI-Kennzeichnung bleibt', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, result: { message_id: 91 } }));
+    const provider = new TelegramChannelProvider('T');
+    await provider.publish(
+      makeItem({ body: 'x'.repeat(2000), media: [{ type: 'image', source: 'generated', pathOrUrl: 'https://ex.at/bild.png' }] }),
+      channel, {},
+    );
+    const payload = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(payload.caption.length).toBeLessThanOrEqual(1024);
+    expect(payload.caption).toContain('Bild: KI-generiert');
+    expect(payload.caption).toContain('#fussball');
+  });
+
   it('v942: lokale Bilddatei → Multipart-Upload (sendPhoto mit FormData)', async () => {
     const { writeFileSync, unlinkSync } = await import('node:fs');
     const { join } = await import('node:path');
@@ -290,6 +303,12 @@ describe('BlueskyProvider (v1013)', () => {
     expect(facets[0].features[0].uri).toBe('https://fussball.cc/news/x');
     const { byteStart, byteEnd } = facets[0].index;
     expect(Buffer.from(text, 'utf8').slice(byteStart, byteEnd).toString('utf8')).toBe('https://fussball.cc/news/x');
+  });
+
+  it('v1022: Kürzungs-Ellipse „…" gehört nicht zur Facet-URL (Realfall 06.07.)', () => {
+    const facets = BlueskyProvider.linkFacets('👉 Ganzer Artikel: https://fussball.cc/news/azteca…');
+    expect(facets.length).toBe(1);
+    expect(facets[0].features[0].uri).toBe('https://fussball.cc/news/azteca');
   });
 
   it('publish: createSession → uploadBlob (lokales Bild) → createRecord mit Facets + Embed', async () => {
