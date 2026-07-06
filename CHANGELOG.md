@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1034] - 2026-07-06
+
+### Fixed — Vorschau-Beiträge landen nicht mehr NACH dem Ereignis (v1034)
+
+- Die Redaktionskonferenz setzt jetzt auch bei Vorschau-Stories den
+  Ereignis-Zeitpunkt (`terminBis`) — damit greifen Termin-Slot-Wahl
+  (Veröffentlichung VOR dem Ereignis) und das automatische Zurückziehen
+  nach Ablauf. Vorher bekam eine Vorschau ohne Zeitpunkt den nächsten
+  freien Slot, notfalls Tage nach dem Spiel.
+- Sicherheitsnetz: `vorschau` zählt jetzt zu den verderblichen Arten
+  (Haltbarkeit 72 h, per `shelf_life_hours.vorschau` übersteuerbar) —
+  Slot-Wahl innerhalb der Haltbarkeit, Plan-Review meldet Überalterung.
+
 ## [0.19.0-multi-ha.1033] - 2026-07-06
 
 ### Fixed — Termin-Karte im Box-Stil + kein Text-Überlauf mehr (v1033)

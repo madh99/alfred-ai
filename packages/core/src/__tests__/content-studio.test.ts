@@ -867,9 +867,13 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect((socialRepo.createItem as any).mock.calls.length).toBe(0);
   });
 
-  it('v997: shelfLifeHours — Defaults, config-Override, nur news/recap', () => {
+  it('v997/v1034: shelfLifeHours — Defaults, config-Override; news/recap/vorschau verderben', () => {
     expect(ContentStudio.shelfLifeHours('news', { config: {} })).toBe(48);
     expect(ContentStudio.shelfLifeHours('recap', { config: {} })).toBe(72);
+    // v1034 — Vorschau ohne terminBis (Konferenz-Lücke) verdirbt nach 72h,
+    // statt irgendeinen späten Slot NACH dem Ereignis zu bekommen (Realfall 06.07.)
+    expect(ContentStudio.shelfLifeHours('vorschau', { config: {} })).toBe(72);
+    expect(ContentStudio.shelfLifeHours('vorschau', { config: { shelf_life_hours: { vorschau: 24 } } })).toBe(24);
     expect(ContentStudio.shelfLifeHours('news', { config: { shelf_life_hours: { news: 24 } } })).toBe(24);
     expect(ContentStudio.shelfLifeHours('evergreen', { config: {} })).toBeUndefined();
     expect(ContentStudio.shelfLifeHours('termin', { config: {} })).toBeUndefined();

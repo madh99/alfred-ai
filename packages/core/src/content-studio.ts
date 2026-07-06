@@ -811,11 +811,12 @@ Erzeuge bis zu ${storyCount} STORIES. Regeln:
 - Eine STORY ist ein Stoff, den mehrere Kanäle in IHRER Rolle erzählen — nicht jeder Kanal braucht jede Story.
 - Je Story: genau EIN lead-Kanal (der ausführlichste, i.d.R. die Website), follow-Kanäle mit Zeitversatz in Stunden (typisch: Telegram +2, Instagram +6, Facebook +8; Termine/Eilmeldungen: alle 0).
 - art: news | vorschau | recap | termin | evergreen. Termine aus „KOMMENDE TERMINE" IMMER als art=termin mit terminBis (ISO aus der Zeile) und Zuweisung an ALLE Kanäle mit versatz_h 0. In der zusammenfassung: Der Ort aus der Termin-Zeile ist der VERANSTALTER (zeigt das Spiel) — die Kanäle berichten nur darüber, nie „wir zeigen".
+- Auch bei art=vorschau auf ein Ereignis mit bekanntem Zeitpunkt (Spiel, Ziehung, Finale): terminBis = ISO-Zeitpunkt des EREIGNISSES setzen — die Vorschau MUSS davor erscheinen; ohne terminBis landet sie auf irgendeinem späten Slot NACH dem Ereignis.
 - wichtigkeit 0..1 (Eilmeldungs-Niveau 0.9+). FAKTEN nur aus dem Dossier.
 - Weise nur Kanälen mit Bedarf zu (Ausnahme: art=termin darf immer).
 
 Antworte NUR mit einem VALIDEN JSON-Array:
-[{"titel": "Arbeitstitel", "zusammenfassung": "2-3 Sätze Stoff mit den Fakten", "art": "news", "wichtigkeit": 0.6, "terminBis": "optional ISO", "kanaele": [{"kanal": "exakter Kanal-Name", "rolle": "lead", "versatz_h": 0}]}]`;
+[{"titel": "Arbeitstitel", "zusammenfassung": "2-3 Sätze Stoff mit den Fakten", "art": "news", "wichtigkeit": 0.6, "terminBis": "ISO-Zeitpunkt des Ereignisses bei art=termin UND art=vorschau, sonst null", "kanaele": [{"kanal": "exakter Kanal-Name", "rolle": "lead", "versatz_h": 0}]}]`;
     const response = await this.llm.complete({ messages: [{ role: 'user', content: conferencePrompt }], maxTokens: 8_000, tier, reasoningEffort: 'low' });
     const rawStories = extractJsonArray(response.content ?? '') ?? [];
     if (rawStories.length === 0) {
@@ -1494,7 +1495,10 @@ Antworte NUR mit einem JSON-Array:
    * unbegrenzt — beides liefert undefined (= keine Deadline).
    */
   static shelfLifeHours(art: string | undefined, channel: Pick<SocialChannel, 'config'>): number | undefined {
-    if (art !== 'news' && art !== 'recap') return undefined;
+    // v1034 — auch 'vorschau' ist verderblich: eine Vorschau OHNE terminBis
+    // (Konferenz-Lücke) bekam sonst irgendeinen späten Slot — Realfall 06.07.:
+    // Viertelfinal-Doppelpack für den 7.7. wurde auf den 13.7. terminiert.
+    if (art !== 'news' && art !== 'recap' && art !== 'vorschau') return undefined;
     const cfg = channel.config.shelf_life_hours;
     if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
       const v = (cfg as Record<string, unknown>)[art];
