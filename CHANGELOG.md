@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1023] - 2026-07-06
+
+### Fixed — Doppel-Publish-Gate kennt Story-Geschwister (v1023)
+
+- Das Publish-Gate blockte Beiträge zu VERSCHIEDENEN, bewusst geplanten
+  Stories derselben Redaktionskonferenz, wenn sich die Titel Team-Namen
+  teilten (Realfall: Spielbericht + Aztekenstadion-Analyse zum selben
+  Match — der Facebook-Post der zweiten Story scheiterte mit
+  „Sehr ähnlicher Beitrag wurde bereits veröffentlicht").
+- Neu: Haben beide Items eine Story-Zuordnung, entscheidet die
+  Story-Identität — gleiche Story blockt (zuverlässiger als der
+  Titel-Vergleich, auch bei komplett anderem Wortlaut), verschiedene
+  Stories publizieren. Manuelle Beiträge ohne Story behalten den
+  Titel-Vergleich, Termin-Posts ihre Termin-Identität (v983).
+
 ## [0.19.0-multi-ha.1022] - 2026-07-06
 
 ### Fixed — Audit-Fix-Runde Social-Stack (v1022)

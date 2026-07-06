@@ -678,6 +678,35 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(forced.success).toBe(true);
   });
 
+  it('v1023: Story-Geschwister — verschiedene Story-IDs publizieren trotz Titel-Overlap, gleiche Story blockt', async () => {
+    // Realfall 06.07.: Spielbericht + Aztekenstadion-Angle (zwei geplante
+    // Stories) teilen „gegen/Mexiko/England" → FB-Post fälschlich geblockt.
+    const channel = makeChannel();
+    const item = makeItem({ title: 'Historische Aztekenstadion-Serie reißt: Mexiko weint gegen England', storyId: 'story-azteka' });
+    const sibling = makeItem({
+      id: 'pub-1', status: 'published', storyId: 'story-spielbericht',
+      title: '3:2 gegen Mexiko: England zittert sich ins Viertelfinale',
+    });
+    const { repo, state, spies } = makeRepo(channel, item);
+    (spies.listItems as any) = vi.fn(async (_u: string, q: any) =>
+      q?.status === 'published' ? [sibling] : [state.item]);
+    (repo as any).listItems = spies.listItems;
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+
+    const ok = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(ok.success).toBe(true); // andere Story = kein Duplikat
+
+    // dieselbe Story bereits auf dem Kanal → blockt, auch bei anderem Titel
+    const rerun = makeItem({ id: 'item-0002-bbbb', title: 'Völlig anderer Titel ohne Overlap', storyId: 'story-spielbericht' });
+    state.item = rerun;
+    (spies.getItem as any) = vi.fn(async () => rerun);
+    (repo as any).getItem = spies.getItem;
+    const blocked = await skill.execute({ action: 'publish_now', item_id: 'item-0002-bbbb' }, CTX);
+    expect(blocked.success).toBe(false);
+    expect(blocked.error).toContain('bereits veröffentlicht');
+  });
+
   it('v983: Termin-Ankündigung publisht trotz titel-ähnlicher VORSCHAU desselben Spiels', async () => {
     // Realfall 04.07.: „Kanada – Marokko: Der Kampf um den nächsten Schritt" (Vorschau,
     // published) blockierte „Kanada – Marokko: Wer zieht ins Viertelfinale ein?"

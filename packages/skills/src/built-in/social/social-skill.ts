@@ -626,8 +626,18 @@ export class SocialSkill extends Skill {
       const candidateTitle = item.title ?? item.body.slice(0, 60);
       const dupOf = itemTermin
         ? recentPublished.find(p => p.id !== item.id && terminOf(p) === itemTermin)
-        : recentPublished.find(p => p.id !== item.id && terminOf(p) === undefined
-          && isNearDuplicateTitle(candidateTitle, [p.title ?? p.body.slice(0, 60)]));
+        : recentPublished.find(p => {
+          if (p.id === item.id || terminOf(p) !== undefined) return false;
+          // v1023 — Story-Geschwister: haben BEIDE Items eine Story-Zuordnung,
+          // entscheidet die Story-IDENTITÄT statt der Titel-Tokens. Realfall
+          // 06.07.: Spielbericht + Aztekenstadion-Angle (zwei bewusst geplante
+          // Stories derselben Konferenz, semantischer Dedup hatte sie getrennt
+          // akzeptiert) teilen „gegen/Mexiko/England" → FB-Post fälschlich
+          // geblockt. Gleiche Story = Duplikat (zuverlässiger als Titel);
+          // manuelle Items ohne Story behalten den Titel-Vergleich.
+          if (item.storyId && p.storyId) return p.storyId === item.storyId;
+          return isNearDuplicateTitle(candidateTitle, [p.title ?? p.body.slice(0, 60)]);
+        });
       if (dupOf) {
         return {
           success: false, data: { permanent: true },
