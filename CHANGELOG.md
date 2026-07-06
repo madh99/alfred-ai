@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1029] - 2026-07-06
+
+### Added — Bild-Posts auf X (v1029)
+
+- Der X-Provider lädt Bilder jetzt über die v2-Media-Endpoints hoch
+  (`POST /2/media/upload`, bis zu 4 Bilder à max. 5 MB) und hängt sie als
+  `media_ids` an den Tweet. Voraussetzung: OAuth2-Scope `media.write` am
+  User-Token (einmalig neu autorisieren).
+- Upload ist best-effort: scheitert er, geht der Post ohne Bild raus —
+  dann auch ohne KI-Kennzeichnung. Vorher stand „Bild: KI-generiert" im
+  Tweet, obwohl der Text-only-Provider das Bild nie mitgeschickt hat.
+
 ## [0.19.0-multi-ha.1028] - 2026-07-06
 
 ### Fixed — X-Kanäle dauerbetriebsfähig: Token-Rotation (v1028)

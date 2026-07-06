@@ -62,7 +62,7 @@ const PLATFORM_WIZARD: Record<string, { label: string; fields: Array<{ key: stri
   instagram: { label: '📸 Instagram', fields: [{ key: 'ig_user_id', label: 'IG-User-ID', placeholder: '17841…' }], hint: 'Secret META_ACCESS_TOKEN (ENV-Stage social). Für generierte Bilder zusätzlich public_media konfigurieren (per Chat) — sonst scheitern Bild-Posts.' },
   facebook: { label: '👥 Facebook-Page', fields: [{ key: 'page_id', label: 'Page-ID', placeholder: '1176…' }], hint: 'Secret META_ACCESS_TOKEN (ENV-Stage social); Meta-App muss live sein.' },
   threads: { label: '🧵 Threads', fields: [{ key: 'threads_user_id', label: 'Threads-User-ID', placeholder: '…' }], hint: 'Secret THREADS_ACCESS_TOKEN oder META_ACCESS_TOKEN (ENV-Stage social).' },
-  x: { label: '𝕏 X', fields: [], hint: 'Secret X_ACCESS_TOKEN (ENV-Stage social); Free-Tier ggf. config.max_posts_per_month setzen.' },
+  x: { label: '𝕏 X', fields: [], hint: 'Secrets X_ACCESS_TOKEN + X_REFRESH_TOKEN + X_CLIENT_ID (ENV-Stage social, OAuth2 inkl. media.write für Bild-Posts); config.max_posts_per_month passend zum Credit-Kontingent setzen.' },
   bluesky: { label: '🦋 Bluesky', fields: [{ key: 'handle', label: 'Handle', placeholder: 'meinname.bsky.social' }], hint: 'Secret BLUESKY_APP_PASSWORD (App-Passwort aus den Bluesky-Einstellungen — NIE das Konto-Passwort). Bilder werden direkt hochgeladen, Links sind klickbar.' },
   youtube: { label: '▶️ YouTube', fields: [], hint: 'OAuth-Secrets YT_CLIENT_ID / YT_CLIENT_SECRET / YT_REFRESH_TOKEN (ENV-Stage social).' },
 };

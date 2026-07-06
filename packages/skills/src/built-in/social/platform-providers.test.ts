@@ -237,6 +237,51 @@ describe('XProvider (v936)', () => {
     ]);
   });
 
+  it('v1029: Bild wird über /2/media/upload hochgeladen und als media_ids am Tweet mitgeschickt', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const img = join(tmpdir(), `alfred-x-${Date.now()}.png`);
+    writeFileSync(img, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    try {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ data: { id: 'media-1' } }))       // media/upload
+        .mockResolvedValueOnce(jsonResponse({ data: { id: '777' } }, 201));     // tweets
+      const provider = new XProvider();
+      const item = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: img }] });
+      const r = await provider.publish(item, makeChannel('x'), { X_ACCESS_TOKEN: 'XT' });
+      expect(r.externalId).toBe('777');
+      expect(String(fetchMock.mock.calls[0][0])).toContain('/2/media/upload');
+      const payload = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+      expect(payload.media).toEqual({ media_ids: ['media-1'] });
+      expect(payload.text).toContain('Bild: KI-generiert'); // Bild geht mit → Kennzeichnung korrekt
+    } finally {
+      unlinkSync(img);
+    }
+  });
+
+  it('v1029: scheitert der Bild-Upload, geht der Post OHNE Bild und OHNE KI-Kennzeichnung raus', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const img = join(tmpdir(), `alfred-x-${Date.now()}b.png`);
+    writeFileSync(img, Buffer.from([0x89, 0x50]));
+    try {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ errors: [{ message: 'nope' }] }, 403)) // media/upload scheitert
+        .mockResolvedValueOnce(jsonResponse({ data: { id: '778' } }, 201));           // tweets
+      const provider = new XProvider();
+      const item = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: img }] });
+      const r = await provider.publish(item, makeChannel('x'), { X_ACCESS_TOKEN: 'XT' });
+      expect(r.externalId).toBe('778');
+      const payload = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+      expect(payload.media).toBeUndefined();
+      expect(payload.text).not.toContain('KI-generiert'); // Realfall 06.07.: Kennzeichnung ohne Bild
+    } finally {
+      unlinkSync(img);
+    }
+  });
+
   it('v1028: Refresh-Rotation — neues Refresh-Token wird persistiert, Access-Token gecacht', async () => {
     const provider = new XProvider();
     const writer = vi.fn(async () => { /* persistiert */ });
