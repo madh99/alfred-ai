@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1035] - 2026-07-07
+
+### Fixed — Auto-Story blockt nicht mehr den Feed-Post derselben Story (v1035)
+
+- Das Doppel-Publish-Gate nimmt Begleitformate jetzt beidseitig aus:
+  Auto-Story-Dokumentations-Items und Reels zählen weder als
+  Duplikat-Referenz noch werden sie selbst geblockt. Vorher schlug jeder
+  reguläre Instagram-Feed-Beitrag fehl, sobald die Auto-Story derselben
+  Redaktions-Story bereits gepostet war — Story (24 h) und Feed-Post
+  sind aber bewusst beide gewollt.
+- Regressions-Test stellt sicher: Zwei reguläre Feed-Posts derselben
+  Story werden weiterhin geblockt (v973/v1023-Verhalten unverändert).
+
 ## [0.19.0-multi-ha.1034] - 2026-07-06
 
 ### Fixed — Vorschau-Beiträge landen nicht mehr NACH dem Ereignis (v1034)

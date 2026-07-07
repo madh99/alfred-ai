@@ -732,6 +732,48 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(blocked.error).toContain('bereits veröffentlicht');
   });
 
+  it('v1035: Auto-Story-Doku blockt den Feed-Post derselben Story NICHT (Realfall 07.07.)', async () => {
+    const channel = makeChannel();
+    const item = makeItem({ title: 'Pochettino übernimmt Verantwortung für US-Aus', storyId: 'story-us' });
+    const storyDoc = makeItem({
+      id: 'pub-story', status: 'published', storyId: 'story-us',
+      title: 'Story: Pochettino übernimmt Verantwortung nach US-Achtelfinal-Aus',
+      performance: { format: 'story', autoStory: true },
+    });
+    const { repo, state, spies } = makeRepo(channel, item);
+    (spies.listItems as any) = vi.fn(async (_u: string, q: any) =>
+      q?.status === 'published' ? [storyDoc] : [state.item]);
+    (repo as any).listItems = spies.listItems;
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true); // Begleitformat zählt nicht als Duplikat
+  });
+
+  it('v1035: Reel publiziert trotz Feed-Post derselben Story — aber zwei FEED-Posts blocken weiterhin', async () => {
+    const channel = makeChannel();
+    // Reel-Kandidat gegen publizierten Feed-Post derselben Story → erlaubt
+    const reel = makeItem({ title: 'Kolumbien weiter', storyId: 'story-k', performance: { format: 'reel', autoReel: true } });
+    const feedPost = makeItem({ id: 'pub-feed', status: 'published', storyId: 'story-k', title: 'Kolumbien steht im Viertelfinale' });
+    const { repo, state, spies } = makeRepo(channel, reel);
+    (spies.listItems as any) = vi.fn(async (_u: string, q: any) =>
+      q?.status === 'published' ? [feedPost] : [state.item]);
+    (repo as any).listItems = spies.listItems;
+    const skill = new SocialSkill(repo);
+    skill.registerProvider(new FakeProvider());
+    const ok = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(ok.success).toBe(true);
+
+    // REGRESSION: regulärer Feed-Post derselben Story bleibt geblockt (v973/v1023)
+    const secondFeed = makeItem({ id: 'item-0002-bbbb', title: 'Nochmal Kolumbien', storyId: 'story-k' });
+    state.item = secondFeed;
+    (spies.getItem as any) = vi.fn(async () => secondFeed);
+    (repo as any).getItem = spies.getItem;
+    const blocked = await skill.execute({ action: 'publish_now', item_id: 'item-0002-bbbb' }, CTX);
+    expect(blocked.success).toBe(false);
+    expect(blocked.error).toContain('bereits veröffentlicht');
+  });
+
   it('v983: Termin-Ankündigung publisht trotz titel-ähnlicher VORSCHAU desselben Spiels', async () => {
     // Realfall 04.07.: „Kanada – Marokko: Der Kampf um den nächsten Schritt" (Vorschau,
     // published) blockierte „Kanada – Marokko: Wer zieht ins Viertelfinale ein?"

@@ -650,10 +650,17 @@ export class SocialSkill extends Skill {
       const terminOf = (p: ContentItem): string | undefined =>
         typeof p.performance?.terminBis === 'string' ? p.performance.terminBis : undefined;
       const candidateTitle = item.title ?? item.body.slice(0, 60);
-      const dupOf = itemTermin
+      // v1035 — Begleitformate (Auto-Story-Doku, Reels) sind KEINE regulären
+      // Posts derselben Story: sie blocken weder den Feed-Post noch werden
+      // sie selbst geblockt (Realfall 07.07.: die Auto-Story blockte den
+      // regulären IG-Feed-Post derselben Story — beide sind gewollt).
+      const isCompanion = (x: ContentItem): boolean =>
+        x.performance?.autoStory === true || x.performance?.autoReel === true
+        || x.performance?.format === 'story' || x.performance?.format === 'reel';
+      const dupOf = isCompanion(item) ? undefined : itemTermin
         ? recentPublished.find(p => p.id !== item.id && terminOf(p) === itemTermin)
         : recentPublished.find(p => {
-          if (p.id === item.id || terminOf(p) !== undefined) return false;
+          if (p.id === item.id || terminOf(p) !== undefined || isCompanion(p)) return false;
           // v1023 — Story-Geschwister: haben BEIDE Items eine Story-Zuordnung,
           // entscheidet die Story-IDENTITÄT statt der Titel-Tokens. Realfall
           // 06.07.: Spielbericht + Aztekenstadion-Angle (zwei bewusst geplante
