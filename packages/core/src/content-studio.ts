@@ -1140,8 +1140,11 @@ Antworte NUR mit einem VALIDEN JSON-Array:
     const tm = channel.config.traffic_mode;
     const teaser = role === 'follow'
       && (tm === 'teaser' || (tm === 'auto' && (story.kind === 'news' || story.kind === 'recap')));
+    // v1046 — Website-/Lead-Artikel als EINE Textwand waren unlesbar (Realfall
+    // Public-Viewing-Artikel): Absatz-Struktur ist jetzt Pflicht.
     const roleRule = role === 'lead'
-      ? '- DEINE ROLLE: LEAD — der ausführlichste Beitrag der Familie zu dieser Story (vollwertig, 4-8 Sätze bzw. Persona-gemäß mehr).'
+      ? `- DEINE ROLLE: LEAD — der ausführlichste Beitrag der Familie zu dieser Story (vollwertig, 4-8 Sätze bzw. Persona-gemäß mehr).
+- GLIEDERUNG: 2-4 Absätze, getrennt durch LEERZEILEN (\\n\\n im body) — nie eine einzige Textwand.${story.terminBis ? ' Bei Terminen: ein EIGENER kurzer Absatz mit den Fakten (Was, Wann, Wo).' : ''}`
       : `- DEINE ROLLE: FOLLOW — kürzer, eigener Blickwinkel deiner Persona.${leadChannelName ? ` Der ausführliche Beitrag auf ${leadChannelName} ist zum Zeitpunkt deiner Veröffentlichung bereits live${leadSlot ? ` (seit ${formatLocalDateTime(leadSlot)})` : ''} — du DARFST darauf verweisen.` : ''} NIE auf den eigenen Kanal verweisen. Schreibe KEINE URLs in den Text — der Link zum Lead-Artikel wird beim Veröffentlichen automatisch angehängt.${teaser ? '\n- TEASER-MODUS (zwingend): Wecke Neugier, aber verrate NICHT alles — das stärkste Detail, die Pointe oder die Zahlen bleiben im Lead-Artikel. Ende mit einem konkreten Grund weiterzulesen.' : ''}`;
     const prompt = `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}

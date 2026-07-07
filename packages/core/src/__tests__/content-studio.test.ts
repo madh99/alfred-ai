@@ -811,6 +811,24 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(stories.length).toBe(1);
   });
 
+  it('v1046: LEAD-Render-Prompt verlangt Absätze — bei Terminen einen eigenen Fakten-Absatz', async () => {
+    const { studio, website, telegram, llm } = makeFamilyStack();
+    const kickoff = new Date(2099, 6, 4, 19, 0).toISOString();
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{
+        titel: 'Public Viewing', zusammenfassung: 'PV im Pub.', art: 'termin', wichtigkeit: 0.8, terminBis: kickoff,
+        kanaele: [{ kanal: 'fussball.cc', rolle: 'lead', versatz_h: 0 }, { kanal: 'FussballCC News', rolle: 'follow', versatz_h: 0 }],
+      }]) })
+      .mockResolvedValueOnce({ content: RENDER('PV-Artikel') })
+      .mockResolvedValueOnce({ content: RENDER('PV kurz') });
+    await studio.planFamily('project:proj-1', [website, telegram]);
+    const leadPrompt = (llm.complete as any).mock.calls[1][0].messages[0].content as string;
+    expect(leadPrompt).toContain('LEERZEILEN');
+    expect(leadPrompt).toContain('Was, Wann, Wo');
+    const followPrompt = (llm.complete as any).mock.calls[2][0].messages[0].content as string;
+    expect(followPrompt).not.toContain('LEERZEILEN'); // Follower bleiben Kurzform
+  });
+
   it('v1043: story.terminBis ist autoritativ fürs Bild — LLM-Echo darf fehlen', async () => {
     const { studio, website, telegram, llm } = makeFamilyStack();
     const kickoff = new Date(2099, 6, 4, 19, 0).toISOString();

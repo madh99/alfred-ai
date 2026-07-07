@@ -110,14 +110,33 @@ export class RestProvider extends SocialProvider {
         }
         return v;
       };
-      return this.withTranslations(substitute(template) as Record<string, unknown>, item);
+      return this.withEvent(this.withTranslations(substitute(template) as Record<string, unknown>, item), item);
     }
-    return this.withTranslations({
+    return this.withEvent(this.withTranslations({
       title: item.title ?? null,
       body: bodyText,
       hashtags: item.hashtags,
       media: item.media.map(m => ({ type: m.type, url: m.pathOrUrl, caption: m.caption ?? null })),
-    }, item);
+    }, item), item);
+  }
+
+  /**
+   * v1046 — Termin-Daten strukturiert mitliefern: die Plattform (fussball.cc)
+   * rendert daraus locale-aware eine Termin-Infobox (Artikelseite + Bild-/
+   * OG-Overlay) — vorher bekam sie Beginn/Ort/Einlass gar nicht und konnte
+   * nichts anzeigen. Ein explizit im body_template gesetztes event gewinnt.
+   */
+  private withEvent(payload: Record<string, unknown>, item: ContentItem): Record<string, unknown> {
+    const beginn = typeof item.performance?.terminBis === 'string' ? item.performance.terminBis : undefined;
+    if (beginn && payload.event === undefined) {
+      payload.event = {
+        beginn,
+        ort: typeof item.performance?.ort === 'string' ? item.performance.ort : null,
+        einlass: typeof item.performance?.einlass === 'string' ? item.performance.einlass : null,
+        art: typeof item.performance?.art === 'string' ? item.performance.art : 'termin',
+      };
+    }
+    return payload;
   }
 
   /**

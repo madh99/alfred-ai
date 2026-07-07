@@ -182,6 +182,24 @@ describe('RestProvider (v933)', () => {
     expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).translations).toBeUndefined();
   });
 
+  it('v1046: Termin-Items liefern event{beginn,ort,einlass,art} — Default UND Template-Modus', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'p-20' }));
+    const provider = new RestProvider();
+    const performance = { terminBis: '2026-07-07T16:00:00.000Z', ort: 'Dublin Irish Pub, Wien', einlass: '17:30', art: 'termin' };
+    await provider.publish(makeItem({ performance }), channel, { API_TOKEN: 'tok' });
+    let payload = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(payload.event).toEqual({ beginn: '2026-07-07T16:00:00.000Z', ort: 'Dublin Irish Pub, Wien', einlass: '17:30', art: 'termin' });
+    // Template-Modus: event wird ergänzt, Template-Felder bleiben unangetastet
+    const templChannel = makeChannel({ base_url: 'https://cc.example', body_template: { headline: '{{title}}' } }, 'rest');
+    await provider.publish(makeItem({ performance }), templChannel, {});
+    payload = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(payload.headline).toBe('Derby-Sieg');
+    expect(payload.event.ort).toBe('Dublin Irish Pub, Wien');
+    // ohne Termin: KEIN event-Schlüssel
+    await provider.publish(makeItem(), channel, {});
+    expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string).event).toBeUndefined();
+  });
+
   it('POST an base_url+publish_path mit Bearer-Token, liest id/url aus Antwort', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ id: 'p-9', url: 'https://cc.example/posts/p-9' }));
     const provider = new RestProvider();

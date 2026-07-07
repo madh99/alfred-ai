@@ -779,7 +779,7 @@ export class SocialSkill extends Skill {
       const cached = item.performance?.translations;
       if (cached && typeof cached === 'object' && item.performance?.translationsOf === marker) return item;
       const prompt = `Übersetze den folgenden Artikel aus ${languageName(source)} in die Zielsprachen: ${targets.map(t => `"${t}" (${languageName(t)})`).join(', ')}.
-Regeln: sinn- und tongetreu, KEINE Fakten ändern oder ergänzen, Eigennamen/Vereins-/Ortsnamen unverändert, Zahlen/Daten/Uhrzeiten exakt übernehmen. Zitate im Text mit \\" escapen.
+Regeln: sinn- und tongetreu, KEINE Fakten ändern oder ergänzen, Eigennamen/Vereins-/Ortsnamen unverändert, Zahlen/Daten/Uhrzeiten exakt übernehmen. Die ABSATZ-Struktur (Leerzeilen) exakt beibehalten. Zitate im Text mit \\" escapen.
 
 TITEL: ${item.title ?? ''}
 TEXT:

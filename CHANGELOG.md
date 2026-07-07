@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1046] - 2026-07-07
+
+### Added — Termin-Daten für die Plattform + Artikel-Absätze (v1046)
+
+- **Termin-Items liefern strukturierte Event-Daten** an rest-Kanäle:
+  Das Publish-Payload enthält jetzt `event { beginn, ort, einlass, art }`
+  (aus den Item-Daten, nie vom Bildmodell) — die Plattform kann daraus
+  eine sprachrichtige Termin-Infobox auf der Artikelseite und im
+  Bild-/OG-Overlay rendern. Ein im `body_template` gesetztes `event`
+  gewinnt; ohne Termin fehlt der Schlüssel.
+- **Lead-Artikel mit Absätzen**: Der Render-Prompt verlangt 2–4 durch
+  Leerzeilen getrennte Absätze statt einer Textwand; bei Terminen einen
+  eigenen Fakten-Absatz (Was, Wann, Wo). Übersetzungen erhalten die
+  Absatzstruktur.
+
 ## [0.19.0-multi-ha.1045] - 2026-07-07
 
 ### Fixed — Audit-Runde Teil 4: Feinschliff (v1045)
