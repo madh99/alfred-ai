@@ -143,6 +143,23 @@ export function stripMetaLines(body: string): string {
     .trim();
 }
 
+/**
+ * v1036 — Quellen-Boilerplate aus Feed-Texten entfernen, BEVOR sie Stoff
+ * werden (Dossier, News-Desk, Konferenz). Realfall 07.07.: Transfermarkt-
+ * Beschreibungen beginnen mit „Dieser Artikel erschien auf Transfermarkt in
+ * seiner ersten Fassung um 13:28 Uhr und wird fortlaufend aktualisiert." —
+ * die nackte Uhrzeit provozierte ein ERFUNDENES Datum im Artikel, der
+ * Meta-Satz wurde als Fakt nacherzählt. Bewusst ENG gefasst (Satz muss mit
+ * „Dieser Artikel erschien" beginnen und auf „aktualisiert." enden):
+ * schlimmster Fall bei neuen Varianten ist „nicht gestrippt" = Status quo.
+ */
+export function stripSourceBoilerplate(text: string): string {
+  return text
+    .replace(/(^|\n)\s*Dieser Artikel erschien[^.\n]*aktualisiert\.?\s*/gi, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 /** Tolerantes Parsen der LLM-Ideen (JSON-Array). */
 /**
  * v978 — LLMs liefern gelegentlich fast-valides JSON (Realfall 04.07., DB/Live
@@ -475,7 +492,8 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     const fresh: Array<{ title: string; summary?: string }> = [];
     for (const topicId of unionTopics) {
       const items = await this.interestsRepo.listItems(topicId, { sinceIso, limit: 30 });
-      fresh.push(...items.filter(i => i.sourceKind !== 'events').map(i => ({ title: i.title, summary: i.summary })));
+      // v1036 — Quellen-Boilerplate strippen, BEVOR sie Story-Stoff wird
+      fresh.push(...items.filter(i => i.sourceKind !== 'events').map(i => ({ title: i.title, summary: i.summary ? stripSourceBoilerplate(i.summary) : undefined })));
     }
     if (fresh.length === 0) return 0;
     // Dedup gegen aktive Stories (Token reicht als Vorfilter)
@@ -998,7 +1016,7 @@ ${story.terminBis ? `${TERMIN_PERSPEKTIVE}\n` : ''}${channel.platform === 'insta
 ${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)}. Konkret, kein Clickbait; eigener TITEL (nicht der Arbeitstitel wortgleich).
 - 3-6 Hashtags NUR ins Feld "hashtags"; KEINE Meta-Zeilen im body.
 - BILDIDEE ohne Text/Datum/Zahlen — nur Motive.
-- NIE relative Zeitwörter („heute"/„morgen") — Datum/Uhrzeit nennen.
+- NIE relative Zeitwörter („heute"/„morgen"). Datum/Uhrzeit NUR nennen, wenn sie im Stoff eindeutig als EREIGNIS-Zeit belegt sind — Publikations-/Update-Zeiten der Quelle sind KEINE Ereigniszeiten. Fehlt das Datum: ohne Datum formulieren, NIE eines erfinden oder ergänzen.
 
 Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typografisch „…“ oder escaped):
 [{"title": "…", "body": "…", "hashtags": ["…"], "warum": "1 Satz", "bildidee": "optional", "terminBis": ${story.terminBis ? `"${story.terminBis}", "ort": "Ort exakt aus dem Stoff", "einlass": "NUR wenn im Stoff belegt, z.B. 19:30"` : 'null'}${channel.platform === 'instagram' && channel.config.image_carousel === true ? ', "slides": [{"motiv": "…", "titel": "…"}]' : ''}}]`;
@@ -1442,7 +1460,7 @@ REGELN für die Abstimmung:
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}${dossier ? `\nAktuelles Themen-Dossier:\n${dossier}\n` : ''}${windowLine}${best ? `\nWas zuletzt gut funktioniert hat:\n${best}\n` : ''}${recent.length ? `\nBEREITS BEHANDELT — dieser STOFF ist gesperrt (auch umformuliert/mit anderem Titel VERBOTEN; wähle ANDERE Ereignisse/Geschichten):\n${recent.map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge ${count} veröffentlichungsfertige Posts. Regeln:
 - FAKTEN-TREUE (zwingend): Turnier-/Event-Namen, Jahreszahlen, Ergebnisse und Personalien NUR aus dem Dossier oben übernehmen — NIEMALS aus dem Trainingswissen raten. Steht im Dossier „WM", schreibe WM (nicht EM/EURO); auch in Hashtags. Ist ein Fakt nicht im Dossier belegt, lass ihn weg.
-- ZEITBEZUG (zwingend): Ist der Post eine VORSCHAU/Ankündigung auf ein datiertes Ereignis (Spiel, Termin, Deadline), setze "terminBis" auf den ISO-Zeitpunkt des Ereignisses — der Post wird dann garantiert VOR dem Ereignis veröffentlicht. NIE relative Zeitwörter („heute", „morgen", „heute Nacht") — nenne stattdessen Datum/Uhrzeit. Rückblicke auf Vergangenes brauchen KEIN "terminBis".
+- ZEITBEZUG (zwingend): Ist der Post eine VORSCHAU/Ankündigung auf ein datiertes Ereignis (Spiel, Termin, Deadline), setze "terminBis" auf den ISO-Zeitpunkt des Ereignisses — der Post wird dann garantiert VOR dem Ereignis veröffentlicht. NIE relative Zeitwörter („heute", „morgen", „heute Nacht"). Datum/Uhrzeit im Text NUR, wenn sie im Stoff eindeutig als EREIGNIS-Zeit belegt sind — Publikations-/Update-Zeiten der Quelle sind KEINE Ereigniszeiten; fehlt das Datum, ohne Datum formulieren und NIE eines erfinden. Rückblicke auf Vergangenes brauchen KEIN "terminBis".
 ${terminRule}${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)}. Zur Persona passend, konkret statt generisch, kein Clickbait.
 - body = VOLLWERTIGER Beitrag mit 4-8 Sätzen und eigenem Mehrwert (Einordnung, Details, Frage an die Community) — NIEMALS nur Schlagzeile plus ein Satz. Dossier-Beiträge sind Rohstoff, kein Abschreibmaterial.
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
@@ -1625,8 +1643,10 @@ Antworte NUR mit einem JSON-Array:
         // mit dem Feed-Auszug hat die Fakten-Treue-Regel echtes Material.
         const itemLines = items.filter(i => i.sourceKind !== 'events').slice(0, 8).map(i => {
           const covered = blockedTitles.length > 0 && isNearDuplicateTitle(i.title, blockedTitles);
-          const summary = typeof i.summary === 'string' && i.summary.trim().length > 0
-            ? ` — ${i.summary.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)}`
+          // v1036 — Quellen-Boilerplate strippen, bevor sie ins Dossier gelangt
+          const cleanSummary = typeof i.summary === 'string' ? stripSourceBoilerplate(i.summary) : '';
+          const summary = cleanSummary.trim().length > 0
+            ? ` — ${cleanSummary.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)}`
             : '';
           return `- ${i.title}${summary}${covered ? ' [BEREITS BEHANDELT — nicht erneut verwenden]' : ''}`;
         }).join('\n');

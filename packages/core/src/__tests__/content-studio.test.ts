@@ -1010,6 +1010,24 @@ describe('ContentStudio — Serien-Formate (v1012)', () => {
   });
 });
 
+describe('stripSourceBoilerplate (v1036)', () => {
+  it('entfernt die Transfermarkt-Boilerplate (Realfall), lässt Inhalt unangetastet', async () => {
+    const { stripSourceBoilerplate } = await import('../content-studio.js');
+    const real = 'Dieser Artikel erschien auf Transfermarkt in seiner ersten Fassung um 13:28 Uhr und wird fortlaufend aktualisiert.\nDer Fußball-Weltverband FIFA hat sich erstmals geäußert.';
+    expect(stripSourceBoilerplate(real)).toBe('Der Fußball-Weltverband FIFA hat sich erstmals geäußert.');
+    // mitten im Fließtext wird BEWUSST nicht gestrippt (Zeilen-Anker = Sicherheitsnetz
+    // gegen Fehltreffer) — der Text bleibt dann komplett unverändert
+    const mid = 'Intro. Dieser Artikel erschien zuerst woanders und wird laufend aktualisiert. Rest bleibt.';
+    expect(stripSourceBoilerplate(mid)).toBe(mid);
+    // NEGATIV: inhaltliche Sätze mit „Dieser Artikel" bleiben stehen
+    const content = 'Dieser Artikel behandelt die FIFA-Entscheidung im Detail.';
+    expect(stripSourceBoilerplate(content)).toBe(content);
+    // NEGATIV: „aktualisiert" mitten im echten Satz bleibt
+    const legit = 'Die FIFA hat ihre Regeln aktualisiert. Das sorgt für Diskussionen.';
+    expect(stripSourceBoilerplate(legit)).toBe(legit);
+  });
+});
+
 describe('ContentStudio — „-no-title"-Marker (v1027)', () => {
   it('overlayBakesTitle: Titel-/Termin-Bedingungen spiegeln applyOverlays', () => {
     const ch = (overlay: Record<string, unknown>) => ({ config: { image_overlay: overlay } });

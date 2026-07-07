@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1036] - 2026-07-07
+
+### Fixed — Quellen-Boilerplate + erfundene Datumsangaben (v1036)
+
+- Feed-Boilerplate wie „Dieser Artikel erschien … in seiner ersten
+  Fassung um 13:28 Uhr und wird fortlaufend aktualisiert."
+  (Transfermarkt-Muster) wird deterministisch entfernt, bevor sie in
+  Dossier, News-Desk oder Konferenz-Stoff gelangt. Sie hatte eine nackte
+  Publikations-Uhrzeit in den Stoff getragen — und der Beitrag erzählte
+  den Meta-Satz als Fakt nach. Bewusst eng gefasst: Nur Zeilen, die mit
+  „Dieser Artikel erschien" beginnen und auf „aktualisiert." enden.
+- Datums-Regel in den Redaktions-Prompts präzisiert: Datum/Uhrzeit nur,
+  wenn im Stoff eindeutig als Ereignis-Zeit belegt; Publikations-/
+  Update-Zeiten der Quelle sind keine Ereigniszeiten; fehlt das Datum,
+  wird ohne Datum formuliert — nie eines erfunden (Realfall: Artikel
+  nannte ein frei erfundenes „4. Juni 2024" zu einer Quellen-Uhrzeit).
+
 ## [0.19.0-multi-ha.1035] - 2026-07-07
 
 ### Fixed — Auto-Story blockt nicht mehr den Feed-Post derselben Story (v1035)
