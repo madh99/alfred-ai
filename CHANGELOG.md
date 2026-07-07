@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1050] - 2026-07-08
+
+### Fixed — YouTube-Transcripts funktionieren wieder (v1050)
+
+- Der Transcript-Abruf war **überall still tot** (YouTube-Skill wie
+  Themen-Quelle): youtube-transcript 1.3.x exportiert den intern
+  verwendeten Deep-Pfad nicht mehr (`ERR_PACKAGE_PATH_NOT_EXPORTED`),
+  jeder Versuch scheiterte lautlos — live bewiesen. Jetzt Plain-Import
+  plus Sprach-Kaskade: Wunschsprache → Englisch → irgendeine verfügbare
+  Caption-Spur (Realfall: ServusTV-Highlights tragen teils nur spanische
+  Auto-Captions; die Fakten-Verdichtung übersetzt ohnehin nach Deutsch).
+  Die Video-Beschreibung bleibt Fallback, wenn gar keine Captions
+  existieren.
+
 ## [0.19.0-multi-ha.1049] - 2026-07-08
 
 ### Fixed — YouTube-Kanal-Videos über die Uploads-Playlist (v1049)

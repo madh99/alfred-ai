@@ -145,37 +145,37 @@ export async function fetchYoutubeChannelVideos(
 }
 
 /**
- * Transcript-Segmente via youtube-transcript (self-hosted Caption-Endpoints);
- * bei Fehlschlag Englisch-Fallback, sonst null — identisch zum Skill.
+ * Transcript-Segmente via youtube-transcript (self-hosted Caption-Endpoints).
+ *
+ * v1050 — PLAIN-Import statt Deep-Path: youtube-transcript 1.3.x exportiert
+ * `dist/youtube-transcript.esm.js` nicht mehr (ERR_PACKAGE_PATH_NOT_EXPORTED)
+ * — der Transcript-Pfad war dadurch ÜBERALL still tot (Skill wie Collector,
+ * live bewiesen 08.07.). Sprach-Kaskade: Wunschsprache → en → IRGENDEINE
+ * verfügbare Sprache (Transcripts sind Fakten-Quelle; die Verdichtung bzw.
+ * der Leser übersetzt ohnehin — besser Spanisch als gar nichts).
  */
 export async function fetchYoutubeTranscriptSegments(
   videoId: string, lang: string,
 ): Promise<Array<{ text: string; offset: number; duration: number }> | null> {
+  type Segment = { text: string; offset: number; duration: number };
+  let fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Segment[]>;
   try {
-    const mod = await (Function('return import("youtube-transcript/dist/youtube-transcript.esm.js")')() as Promise<{ fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Array<{ text: string; offset: number; duration: number }>> }>);
-    const segments = await mod.fetchTranscript(videoId, { lang });
-    if (segments && segments.length > 0) {
-      return segments.map((s: { text: string; offset: number; duration: number }) => ({
-        text: s.text,
-        offset: s.offset,
-        duration: s.duration,
-      }));
-    }
+    const mod = await (Function('return import("youtube-transcript")')() as Promise<Record<string, unknown>>);
+    const api = (mod.YoutubeTranscript ?? (mod.default as Record<string, unknown> | undefined)?.YoutubeTranscript ?? mod) as { fetchTranscript?: (id: string, opts?: { lang?: string }) => Promise<Segment[]> };
+    if (typeof api.fetchTranscript !== 'function') return null;
+    fetchTranscript = api.fetchTranscript.bind(api);
   } catch {
-    // Try English fallback
-    if (lang !== 'en') {
-      try {
-        const mod = await (Function('return import("youtube-transcript/dist/youtube-transcript.esm.js")')() as Promise<{ fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Array<{ text: string; offset: number; duration: number }>> }>);
-        const segments = await mod.fetchTranscript(videoId, { lang: 'en' });
-        if (segments && segments.length > 0) {
-          return segments.map((s: { text: string; offset: number; duration: number }) => ({
-            text: s.text,
-            offset: s.offset,
-            duration: s.duration,
-          }));
-        }
-      } catch { /* no fallback */ }
-    }
+    return null; // Lib nicht ladbar (Bundle-Kontext ohne Dependency)
+  }
+  const candidates: Array<string | undefined> = [...new Set([lang, 'en'])];
+  candidates.push(undefined); // ohne lang = erste verfügbare Caption-Spur
+  for (const tryLang of candidates) {
+    try {
+      const segments = await fetchTranscript(videoId, tryLang ? { lang: tryLang } : undefined);
+      if (segments && segments.length > 0) {
+        return segments.map(s => ({ text: s.text, offset: s.offset, duration: s.duration }));
+      }
+    } catch { /* nächste Sprache probieren */ }
   }
   return null;
 }
