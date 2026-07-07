@@ -70,6 +70,15 @@ describe('buildSafeImagePrompt (v950 Schicht 1)', () => {
     expect(p).toContain('Nationalflaggen');
   });
 
+  it('v1037: Flaggen-Regel lädt nicht mehr zu fremden Flaggen ein', () => {
+    // Realfall 07.07.: das Beispiel „(rot-weiß-rot etc.)" im Prompt ließ das
+    // Bildmodell eine Österreich-Flagge in einen US-Artikel malen
+    const p = buildSafeImagePrompt('Trainerbank am Spielfeldrand', 'stil', 'symbolic');
+    expect(p).not.toContain('rot-weiß-rot');
+    expect(p).toContain('NUR verwenden, wenn das Motiv sie AUSDRÜCKLICH nennt');
+    expect(p).toContain('Bevorzugt Symbolik: Stadion, Ball, Rasen, Taktiktafel, abstrakte Grafik');
+  });
+
   it('people_ok: nur Basis-Prompt, keine Regeln', () => {
     const p = buildSafeImagePrompt('Spieler-Porträt', undefined, 'people_ok');
     expect(p).not.toContain('KEINE realen');

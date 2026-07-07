@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1037] - 2026-07-07
+
+### Fixed — Bild-Prompts: keine fremden Flaggen, keine Text-Persona (v1037)
+
+- Die Bildnisrecht-Regel im Bild-Prompt nannte als Beispiel wörtlich
+  „(rot-weiß-rot etc.)" — das Bildmodell las das als Motiv-Anregung und
+  malte eine Österreich-Flagge in einen US-Artikel. Neu: Flaggen und
+  Länderfarben nur, wenn das Motiv sie ausdrücklich nennt, und nur die
+  Länder aus dem Motiv; „Flaggen" ist auch aus der Symbolik-Vorschlags-
+  liste entfernt.
+- Ohne konfigurierten `image_style` wandert nicht mehr die Text-Persona
+  des Kanals in den Bild-Prompt (dort standen Wortzahlen und
+  Verweis-Anweisungen), sondern ein neutraler visueller Default.
+  `image_style` je Kanal übersteuert weiterhin (v1004).
+
 ## [0.19.0-multi-ha.1036] - 2026-07-07
 
 ### Fixed — Quellen-Boilerplate + erfundene Datumsangaben (v1036)

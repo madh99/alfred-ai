@@ -133,8 +133,8 @@ WICHTIGE REGELN (Bildnisrecht, zwingend):
 - KEINE realen oder identifizierbaren Personen, KEINE Lookalikes von Personen des öffentlichen Lebens (Sportler, Trainer, Prominente).
 - Wenn Menschen nötig wirken: nur anonym (von hinten, Silhouette, unkenntlich, Menge aus der Ferne) — besser ganz ohne Menschen.
 - KEINE Vereins-, Verbands- oder Marken-Logos, keine erkennbaren Trikot-Embleme.
-- ERLAUBT sind Nationalflaggen und Länderfarben (rot-weiß-rot etc.) — das sind keine geschützten Logos.
-- Bevorzugt Symbolik: Stadion, Ball, Rasen, Taktiktafel, Flaggen, abstrakte Grafik.`;
+- Nationalflaggen und Länderfarben sind rechtlich unbedenklich — aber NUR verwenden, wenn das Motiv sie AUSDRÜCKLICH nennt, und dann nur die Länder aus dem Motiv. NIE Flaggen oder Länderfarben ergänzen, die nicht im Motiv stehen.
+- Bevorzugt Symbolik: Stadion, Ball, Rasen, Taktiktafel, abstrakte Grafik.`;
 }
 
 /** Strenges Retry-Motiv nach einem Vision-Verstoß. */

@@ -13,6 +13,14 @@ import type { StoryDeduper, BlockedStory } from './story-dedup.js';
 const WEEKDAYS: Record<string, number> = { so: 0, mo: 1, di: 2, mi: 3, do: 4, fr: 5, sa: 6 };
 
 /**
+ * v1037 — visueller Default-Stil für Bild-Prompts, wenn der Kanal kein
+ * image_style gesetzt hat: die TEXT-Persona gehört nicht in den Bild-Prompt
+ * (sie enthält Wortzahlen, Verweis-Anweisungen etc. — fürs Bildmodell
+ * sinnlos bis irreführend). config.image_style je Kanal übersteuert (v1004).
+ */
+const DEFAULT_IMAGE_STYLE = 'hochwertige redaktionelle Sportfoto-Optik, realistisch, klare Komposition, natürliches Licht';
+
+/**
  * v935 — Nächste freie Posting-Slots eines Kanals (pure, testbar).
  * Slots wie ["Mo 18:00", "Do 19:30"] in SERVER-ORTSZEIT (v959); ohne eigene
  * Slots gelten Plattform-Best-Practices inkl. Wochenende (effectiveSlots) —
@@ -1777,10 +1785,15 @@ Antworte NUR mit einem JSON-Array:
       }
 
       // v950 Schicht 1+3 — bis zu 2 Versuche: normal → Vision-Verstoß → strenges Symbolmotiv
+      // v1037 — OHNE image_style kommt ein neutraler VISUELLER Default in den
+      // Bild-Prompt, nicht mehr die TEXT-Persona des Kanals (Realfall 07.07.:
+      // „200–400 Wörter mit Einordnung; auf Sammelalbum-Tracker verweisen"
+      // stand als „Stil" im Bild-Prompt). image_style je Kanal übersteuert (v1004).
+      const visualStyle = style ?? DEFAULT_IMAGE_STYLE;
       for (let attempt = 0; attempt < 2; attempt++) {
         const prompt = attempt === 0
-          ? buildSafeImagePrompt(motif, style ?? channel.persona, policy)
-          : strictRetryPrompt(style ?? channel.persona);
+          ? buildSafeImagePrompt(motif, visualStyle, policy)
+          : strictRetryPrompt(visualStyle);
         const result = await this.skillSandbox.execute(skill, {
           prompt,
           ...(quality ? { quality } : {}),
