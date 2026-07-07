@@ -1844,8 +1844,10 @@ Antworte NUR mit einem JSON-Array:
           const covered = blockedTitles.length > 0 && isNearDuplicateTitle(i.title, blockedTitles);
           // v1036 — Quellen-Boilerplate strippen, bevor sie ins Dossier gelangt
           const cleanSummary = typeof i.summary === 'string' ? stripSourceBoilerplate(i.summary) : '';
+          // v1048 — YouTube-Quellen (verdichtete Transcripts) dürfen mehr
+          // Material zeigen: für Spielanalysen reichen 220 Zeichen nicht
           const summary = cleanSummary.trim().length > 0
-            ? ` — ${cleanSummary.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220)}`
+            ? ` — ${cleanSummary.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, i.sourceKind === 'youtube' ? 400 : 220)}`
             : '';
           return `- ${i.title}${summary}${covered ? ' [BEREITS BEHANDELT — nicht erneut verwenden]' : ''}`;
         }).join('\n');

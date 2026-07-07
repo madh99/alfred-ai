@@ -6561,7 +6561,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.topicCollector = new TopicCollector(
         this.interestsRepo, this.skillRegistry, this.skillSandbox,
         this.logger.child({ component: 'topic-collector' }),
-        { dbAdapter: this.database?.getAdapter(), nodeId: this.config.cluster?.nodeId },
+        {
+          dbAdapter: this.database?.getAdapter(), nodeId: this.config.cluster?.nodeId,
+          // v1048 — YouTube-Kanäle als Themen-Quelle (Data-API-Key + LLM für Transcript-Verdichtung)
+          youtubeApiKey: this.config.youtube?.apiKey,
+          llm: this.llmProvider ?? undefined,
+        },
       );
       this.topicCollector.start();
       const collector = this.topicCollector;

@@ -3,7 +3,8 @@ import { randomUUID, createHash } from 'node:crypto';
 
 export type TopicStatus = 'active' | 'paused' | 'archived';
 export type TopicOrigin = 'auto' | 'manual';
-export type TopicSourceKind = 'rss' | 'web_search';
+/** v1048 — 'youtube': neueste Kanal-Videos als Stoff (Transcript → Fakten-Summary). */
+export type TopicSourceKind = 'rss' | 'web_search' | 'youtube';
 
 export interface InterestTopic {
   id: string;
@@ -50,6 +51,7 @@ export interface TopicDigest {
 }
 
 /** Stabiler Dedup-Hash: URL wenn vorhanden, sonst normalisierter Titel. */
+/** v1048 — Existenz-Precheck über den Dedupe-Hash: der Collector prüft VOR teuren Schritten (Transcript-Fetch, LLM-Verdichtung), ob ein Video schon eingesammelt wurde. */
 export function topicItemDedupeHash(item: { url?: string; title: string }): string {
   const basis = item.url && item.url.trim().length > 0
     ? item.url.trim().toLowerCase().replace(/[?#].*$/, '').replace(/\/+$/, '')
@@ -211,6 +213,15 @@ export class InterestsRepository {
        item.sourceKind, item.publishedAt ?? null, item.importance ?? null, hash, new Date().toISOString()],
     );
     return { inserted: true, id };
+  }
+
+  /** v1048 — Existenz-Precheck (Dedupe-Hash): teure Schritte (Transcript, LLM) nur für NEUE Items. */
+  async itemExists(topicId: string, dedupeHash: string): Promise<boolean> {
+    const row = await this.db.queryOne(
+      `SELECT id FROM topic_items WHERE topic_id = ? AND dedupe_hash = ?`,
+      [topicId, dedupeHash],
+    );
+    return row !== undefined;
   }
 
   async listItems(topicId: string, opts?: { limit?: number; sinceIso?: string }): Promise<TopicItem[]> {

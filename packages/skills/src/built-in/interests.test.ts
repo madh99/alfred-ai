@@ -98,6 +98,22 @@ describe('InterestsSkill', () => {
     expect((repo.addSource as any).mock.calls[0][1]).toEqual({ kind: 'rss', config: { url: 'https://ex.at/feed' }, addedBy: 'manual' });
   });
 
+  it('v1048: add_source kind=youtube braucht channel (auch url akzeptiert)', async () => {
+    const repo = makeRepo();
+    const skill = new InterestsSkill(repo);
+    const bad = await skill.execute({ action: 'add_source', topic: 'fable', kind: 'youtube' }, CTX);
+    expect(bad.success).toBe(false);
+    expect(bad.error).toContain('channel');
+    const ok = await skill.execute({ action: 'add_source', topic: 'fable', kind: 'youtube', channel: '@ServusTVSport' }, CTX);
+    expect(ok.success).toBe(true);
+    expect((repo.addSource as any).mock.calls[0][1]).toEqual({ kind: 'youtube', config: { channel: '@ServusTVSport' }, addedBy: 'manual' });
+    expect(ok.display).toContain('YouTube-Kanal @ServusTVSport');
+    // Kanal-URL im url-Feld wird ebenfalls akzeptiert
+    const viaUrl = await skill.execute({ action: 'add_source', topic: 'fable', kind: 'youtube', url: 'https://www.youtube.com/@ServusTVSport' }, CTX);
+    expect(viaUrl.success).toBe(true);
+    expect((repo.addSource as any).mock.calls[1][1].config).toEqual({ channel: 'https://www.youtube.com/@ServusTVSport' });
+  });
+
   it('topic_briefing liefert Dossier + Items (ohne LLM kein Refresh)', async () => {
     const repo = makeRepo();
     const skill = new InterestsSkill(repo);

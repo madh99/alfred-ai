@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1048] - 2026-07-08
+
+### Added — YouTube-Kanäle als Themen-Quelle (v1048)
+
+- **Neue Quellart `youtube`** im Interessen-Radar: „Füge dem Thema WM 2026
+  den YouTube-Kanal @ServusTVSport als Quelle hinzu" — der stündliche
+  Sammellauf holt die neuesten Videos des Kanals (offizielle Data-API,
+  gleicher Codepfad wie der YouTube-Skill inkl. Handle-Auflösung und
+  Quota-Cache; die aufgelöste Kanal-ID wird in der Quelle persistiert).
+- **Transcript → Fakten-Summary**: Für jedes NEUE Video wird das
+  Transcript gezogen und per fast-LLM zu einer reinen Fakten-Zusammen-
+  fassung verdichtet (Ergebnisse, Namen, Zahlen) — als Stoff z. B. für
+  Spielanalysen. Transcripts sind Fakten-, nie Textquelle; die Video-URL
+  bleibt als Beleg am Item. Bekannte Videos kosten nichts (Precheck über
+  den Dedupe-Hash). Config je Quelle: `max_videos` (Default 5),
+  `language`, `transcript`/`summarize` abschaltbar, `exclude_keywords`.
+- Im Themen-Dossier zeigen youtube-Items bis 400 Zeichen Material
+  (statt 220) — genug für Analyse-Texte.
+- Ohne YouTube-API-Key greift ein RSS-Fallback über den offiziellen
+  Kanal-Feed (braucht die UC-Kanal-ID).
+- **Der YouTube-Chat-Skill ist unverändert**: Kanal-Auflösung, Kanal-
+  Videos und Transcript wurden verhaltensidentisch in geteilte Helfer
+  extrahiert (`youtube-fetch.ts`), die Skill und Collector gemeinsam
+  nutzen.
+
 ## [0.19.0-multi-ha.1047] - 2026-07-07
 
 ### Fixed — Project-Agent: Prozessbaum-CPU-Heartbeat (v1047)

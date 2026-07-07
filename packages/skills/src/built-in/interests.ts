@@ -52,14 +52,15 @@ export class InterestsSkill extends Skill {
         action: {
           type: 'string',
           enum: ['create_topic', 'list_topics', 'add_source', 'remove_source', 'topic_briefing', 'collect_now', 'set_status'],
-          description: 'create_topic: neues Thema anlegen; list_topics: alle Themen; add_source/remove_source: Quelle (rss|web_search) verwalten; topic_briefing: Dossier + neueste Beiträge zu einem Thema; collect_now: sofort sammeln; set_status: active|paused|archived',
+          description: 'create_topic: neues Thema anlegen; list_topics: alle Themen; add_source/remove_source: Quelle (rss|web_search|youtube) verwalten; topic_briefing: Dossier + neueste Beiträge zu einem Thema; collect_now: sofort sammeln; set_status: active|paused|archived',
         },
         topic: { type: 'string', description: 'Themenname (fuzzy match) — für alle Aktionen außer create_topic/list_topics' },
         name: { type: 'string', description: 'create_topic: Name des Themas' },
         keywords: { type: 'array', items: { type: 'string' }, description: 'create_topic: Stichwörter für Relevanz-Matching' },
-        kind: { type: 'string', enum: ['rss', 'web_search'], description: 'add_source: Quellentyp' },
+        kind: { type: 'string', enum: ['rss', 'web_search', 'youtube'], description: 'add_source: Quellentyp. youtube = neueste Videos eines Kanals als Stoff (Transcript wird zu Fakten-Summary verdichtet)' },
         url: { type: 'string', description: 'add_source kind=rss: Feed-URL' },
         query: { type: 'string', description: 'add_source kind=web_search: stehende Suchanfrage' },
+        channel: { type: 'string', description: 'add_source kind=youtube: Kanal als @handle, Kanal-URL, UC-Channel-ID oder Name (z.B. "@ServusTVSport")' },
         source_id: { type: 'string', description: 'remove_source: ID der Quelle (aus list_topics)' },
         status: { type: 'string', enum: ['active', 'paused', 'archived'], description: 'set_status: neuer Status' },
       },
@@ -168,16 +169,24 @@ export class InterestsSkill extends Skill {
   private async addSource(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
     const topic = await this.resolveTopic(userId, input);
     if (!topic) return { success: false, error: `Thema nicht gefunden: ${String(input.topic ?? '')}` };
-    const kind = input.kind === 'rss' || input.kind === 'web_search' ? input.kind : undefined;
-    if (!kind) return { success: false, error: 'kind erforderlich (rss | web_search)' };
+    const kind = input.kind === 'rss' || input.kind === 'web_search' || input.kind === 'youtube' ? input.kind : undefined;
+    if (!kind) return { success: false, error: 'kind erforderlich (rss | web_search | youtube)' };
     if (kind === 'rss' && typeof input.url !== 'string') return { success: false, error: 'url erforderlich für kind=rss' };
     if (kind === 'web_search' && typeof input.query !== 'string') return { success: false, error: 'query erforderlich für kind=web_search' };
-    const config = kind === 'rss' ? { url: String(input.url) } : { query: String(input.query) };
+    // v1048 — YouTube-Kanal als Quelle: channel (auch als url akzeptiert)
+    const ytChannel = typeof input.channel === 'string' ? input.channel : (typeof input.url === 'string' ? input.url : undefined);
+    if (kind === 'youtube' && !ytChannel) return { success: false, error: 'channel erforderlich für kind=youtube (@handle, Kanal-URL, UC-ID oder Name)' };
+    const config = kind === 'rss' ? { url: String(input.url) }
+      : kind === 'youtube' ? { channel: String(ytChannel) }
+      : { query: String(input.query) };
     const source = await this.repo.addSource(topic.id, { kind, config, addedBy: 'manual' });
+    const label = kind === 'rss' ? (config as { url: string }).url
+      : kind === 'youtube' ? `YouTube-Kanal ${(config as { channel: string }).channel} (Videos → Transcript → Fakten-Summary)`
+      : `Suche „${(config as { query: string }).query}"`;
     return {
       success: true,
       data: { source },
-      display: `Quelle zu **${topic.name}** hinzugefügt: ${kind === 'rss' ? config.url : `Suche „${config.query}"`}\nNächster stündlicher Sammellauf nimmt sie mit (oder collect_now).`,
+      display: `Quelle zu **${topic.name}** hinzugefügt: ${label}\nNächster stündlicher Sammellauf nimmt sie mit (oder collect_now).`,
     };
   }
 

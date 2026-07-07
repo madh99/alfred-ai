@@ -28,6 +28,9 @@ function makeFakeRepo(sources: TopicSource[]) {
     }),
     markSourceChecked: vi.fn(async () => {}),
     touchActivity: vi.fn(async () => {}),
+    // v1048 — Precheck + Channel-ID-Persistierung der youtube-Quelle
+    itemExists: vi.fn(async (_topicId: string, hash: string) => items.has(hash)),
+    updateSourceConfig: vi.fn(async () => {}),
   };
   return { repo: repo as unknown as InterestsRepository, items, spies: repo };
 }
@@ -146,5 +149,80 @@ describe('TopicCollector', () => {
     const collector = new TopicCollector(repo, registry, sandbox, makeLogger());
     expect(await collector.collectTopic(TOPIC)).toBe(1);
     expect((spies.insertItem as any).mock.calls[0][1]).toMatchObject({ sourceKind: 'events' });
+  });
+
+  // ── v1048 — YouTube-Kanäle als Themen-Quelle ──
+  const YT_SOURCE: TopicSource = {
+    id: 's-yt', topicId: 't1', kind: 'youtube',
+    config: { channel: '@ServusTVSport' }, addedBy: 'manual', enabled: true,
+    createdAt: '2026-07-01T00:00:00Z',
+  };
+
+  function makeYoutubeStack(videos: Array<{ videoId: string; title: string; url: string; publishedAt?: string; description?: string }>) {
+    const fetchers = {
+      resolveChannel: vi.fn(async () => 'UCabcdefghijklmnopqrstuv'),
+      fetchChannelVideos: vi.fn(async () => ({ channelTitle: 'ServusTV Sport', videos })),
+      fetchTranscript: vi.fn(async () => [
+        { text: 'Argentinien gewinnt das Viertelfinale gegen Ägypten mit zwei zu null.', offset: 0, duration: 5 },
+        { text: 'Die Tore erzielten Alvarez und Fernandez in der zweiten Halbzeit vor achtzigtausend Zuschauern im ausverkauften Stadion von Dallas.', offset: 5, duration: 6 },
+      ]),
+    };
+    const llm = { complete: vi.fn(async () => ({ content: 'Argentinien schlägt Ägypten 2:0 im WM-Viertelfinale. Alvarez und Fernandez treffen in Halbzeit zwei vor 80.000 Zuschauern in Dallas.' })) };
+    return { fetchers, llm };
+  }
+
+  it('v1048: youtube-Quelle — Kanal aufgelöst + persistiert, Transcript per LLM verdichtet, sourceKind youtube', async () => {
+    const { repo, spies } = makeFakeRepo([YT_SOURCE]);
+    const { fetchers, llm } = makeYoutubeStack([
+      { videoId: 'abc12345678', title: 'WM-Viertelfinale: Argentinien - Ägypten Highlights', url: 'https://youtube.com/watch?v=abc12345678', publishedAt: '2026-07-07' },
+    ]);
+    const collector = new TopicCollector(repo, undefined, undefined, makeLogger(),
+      { youtubeApiKey: 'key-x', llm: llm as any, youtubeFetchers: fetchers as any });
+    expect(await collector.collectTopic(TOPIC)).toBe(1);
+    expect(fetchers.resolveChannel).toHaveBeenCalled();
+    // aufgelöste Channel-ID wird in der Quell-Config persistiert (Quota-Schonung)
+    expect((spies as any).updateSourceConfig).toHaveBeenCalledWith('s-yt', expect.objectContaining({ channel_id_cached: 'UCabcdefghijklmnopqrstuv' }));
+    const call = (spies.insertItem as any).mock.calls[0][1];
+    expect(call.sourceKind).toBe('youtube');
+    expect(call.summary).toContain('Argentinien schlägt Ägypten 2:0'); // LLM-Verdichtung, nicht Roh-Transcript
+    expect(call.url).toBe('https://youtube.com/watch?v=abc12345678');
+  });
+
+  it('v1048: bekanntes Video → KEIN Transcript-Fetch, KEIN LLM-Call (Precheck über Dedupe-Hash)', async () => {
+    const { repo, spies } = makeFakeRepo([{ ...YT_SOURCE, config: { channel: '@ServusTVSport', channel_id_cached: 'UCabcdefghijklmnopqrstuv' } }]);
+    const { fetchers, llm } = makeYoutubeStack([
+      { videoId: 'abc12345678', title: 'WM-Viertelfinale Highlights', url: 'https://youtube.com/watch?v=abc12345678' },
+    ]);
+    const collector = new TopicCollector(repo, undefined, undefined, makeLogger(),
+      { youtubeApiKey: 'key-x', llm: llm as any, youtubeFetchers: fetchers as any });
+    expect(await collector.collectTopic(TOPIC)).toBe(1); // Lauf 1: eingesammelt
+    expect(await collector.collectTopic(TOPIC)).toBe(0); // Lauf 2: bekannt
+    expect(fetchers.fetchTranscript).toHaveBeenCalledTimes(1); // nur beim ersten Lauf
+    expect(llm.complete).toHaveBeenCalledTimes(1);
+    expect(fetchers.resolveChannel).not.toHaveBeenCalled(); // ID kam aus der Config
+    void spies;
+  });
+
+  it('v1048: ohne API-Key + UC-ID → RSS-Fallback über den Kanal-Feed', async () => {
+    const { repo, spies } = makeFakeRepo([{ ...YT_SOURCE, config: { channel: 'UCabcdefghijklmnopqrstuv', transcript: false } }]);
+    const { fetchers } = makeYoutubeStack([]);
+    const collector = new TopicCollector(repo, undefined, undefined, makeLogger(), { youtubeFetchers: fetchers as any });
+    (collector as any).fetchRss = vi.fn(async (src: TopicSource) => {
+      expect(src.config.url).toBe('https://www.youtube.com/feeds/videos.xml?channel_id=UCabcdefghijklmnopqrstuv');
+      return [{ title: 'Highlight-Video', url: 'https://www.youtube.com/watch?v=xyz98765432', summary: 'Beschreibung aus dem Feed' }];
+    });
+    expect(await collector.collectTopic(TOPIC)).toBe(1);
+    expect(fetchers.fetchChannelVideos).not.toHaveBeenCalled(); // kein API-Pfad
+    expect((spies.insertItem as any).mock.calls[0][1].summary).toBe('Beschreibung aus dem Feed');
+  });
+
+  it('v1048: ohne API-Key und ohne UC-ID → Quelle schlägt sauber fehl (warn), andere Quellen laufen weiter', async () => {
+    const { repo, spies } = makeFakeRepo([{ ...YT_SOURCE, config: { channel: '@NurEinName' } }, WEB_SOURCE]);
+    const { registry, sandbox } = makeSearchStack([{ title: 'Claude Fable News', url: 'https://ex.at/n' }]);
+    const logger = makeLogger();
+    const collector = new TopicCollector(repo, registry, sandbox, logger);
+    expect(await collector.collectTopic(TOPIC)).toBe(1); // web_search-Item kam trotzdem
+    expect(logger.warn).toHaveBeenCalled();
+    void spies;
   });
 });

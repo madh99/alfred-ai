@@ -2,8 +2,11 @@ import { createRequire } from 'node:module';
 import { realpathSync } from 'node:fs';
 import type { Logger } from 'pino';
 import type { InterestsRepository, InterestTopic, TopicSource } from '@alfred/storage';
+import { topicItemDedupeHash } from '@alfred/storage';
 import type { AsyncDbAdapter } from '@alfred/storage';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
+import { resolveYoutubeChannel, fetchYoutubeChannelVideos, fetchYoutubeTranscriptSegments, extractYoutubeVideoId } from '@alfred/skills';
+import type { LLMProvider } from '@alfred/llm';
 
 export interface CollectedRawItem {
   title: string;
@@ -47,8 +50,21 @@ export class TopicCollector {
       dbAdapter?: AsyncDbAdapter;
       nodeId?: string;
       intervalMs?: number;
+      /** v1048 — YouTube-Quellen: offizieller Data-API-Key (ohne Key nur RSS-Fallback mit UC-ID). */
+      youtubeApiKey?: string;
+      /** v1048 — fast-Tier-LLM für die Transcript-Verdichtung (optional). */
+      llm?: Pick<LLMProvider, 'complete'>;
+      /** v1048 — nur für Tests: YouTube-Zugriffe injizierbar. */
+      youtubeFetchers?: {
+        resolveChannel: typeof resolveYoutubeChannel;
+        fetchChannelVideos: typeof fetchYoutubeChannelVideos;
+        fetchTranscript: typeof fetchYoutubeTranscriptSegments;
+      };
     } = {},
   ) {}
+
+  /** v1048 — Kanalname→ID-Cache über Läufe hinweg (Quota-Schonung wie im Skill). */
+  private readonly youtubeChannelCache = new Map<string, string>();
 
   start(): void {
     if (this.timer) return;
@@ -109,7 +125,9 @@ export class TopicCollector {
       try {
         items = source.kind === 'rss'
           ? await this.fetchRss(source)
-          : await this.fetchWebSearch(topic, source);
+          : source.kind === 'youtube'
+            ? await this.fetchYoutube(topic, source)
+            : await this.fetchWebSearch(topic, source);
       } catch (err) {
         this.logger.warn({ err: (err as Error).message, topic: topic.name, kind: source.kind }, 'v929 source fetch failed');
         continue;
@@ -171,6 +189,98 @@ export class TopicCollector {
         publishedAt: i.isoDate ?? i.pubDate ?? undefined,
       };
     });
+  }
+
+  /**
+   * v1048 — Quellart `youtube`: neueste Videos eines Kanals als Themen-Stoff.
+   * Discovery über die offizielle Data-API (derselbe Codepfad wie der
+   * YouTube-Skill: Handle-/Namens-Auflösung mit Quota-Cache, aufgelöste ID
+   * wird in der Quell-Config persistiert); für NEUE Videos wird das Transcript
+   * gezogen und per fast-LLM zu einer Fakten-Summary verdichtet — Transcripts
+   * sind FAKTEN-Quelle, die Video-URL bleibt als Beleg am Item. Ohne API-Key
+   * greift ein RSS-Fallback (braucht eine UC-Channel-ID).
+   *
+   * Config: { channel: "@handle" | Kanal-URL | UC-ID | Name, max_videos?: 1-10,
+   *           language?: "de", transcript?: true, summarize?: true,
+   *           exclude_keywords?: [...] (generischer Filter greift) }
+   */
+  private async fetchYoutube(topic: InterestTopic, source: TopicSource): Promise<CollectedRawItem[]> {
+    const cfg = source.config;
+    const channel = typeof cfg.channel === 'string' ? cfg.channel.trim() : '';
+    if (!channel) return [];
+    const max = typeof cfg.max_videos === 'number' && cfg.max_videos >= 1 ? Math.min(cfg.max_videos, 10) : 5;
+    const lang = typeof cfg.language === 'string' && cfg.language.trim() ? cfg.language.trim() : 'de';
+    const f = this.opts.youtubeFetchers ?? {
+      resolveChannel: resolveYoutubeChannel,
+      fetchChannelVideos: fetchYoutubeChannelVideos,
+      fetchTranscript: fetchYoutubeTranscriptSegments,
+    };
+    const apiKey = this.opts.youtubeApiKey;
+
+    let videos: Array<{ videoId: string; title: string; url: string; publishedAt?: string; description?: string }>;
+    if (apiKey) {
+      let channelId = typeof cfg.channel_id_cached === 'string' && cfg.channel_id_cached ? cfg.channel_id_cached : undefined;
+      if (!channelId) {
+        channelId = /^UC[\w-]{22}$/.test(channel)
+          ? channel
+          : await f.resolveChannel(apiKey, { channelName: channel }, this.youtubeChannelCache);
+        if (channelId) {
+          // aufgelöste ID persistieren — spart die Auflösung (bis zu 100 Quota-Units) je Lauf
+          await this.repo.updateSourceConfig(source.id, { ...cfg, channel_id_cached: channelId }).catch(() => { /* non-critical */ });
+        }
+      }
+      if (!channelId) throw new Error(`YouTube-Kanal nicht auflösbar: ${channel}`);
+      const r = await f.fetchChannelVideos(apiKey, channelId, max);
+      if ('error' in r) throw new Error(r.error);
+      videos = r.videos;
+    } else {
+      // RSS-Fallback ohne API-Key: offizieller Kanal-Feed, braucht die UC-ID
+      const uc = /(UC[\w-]{22})/.exec(channel)?.[1]
+        ?? (typeof cfg.channel_id_cached === 'string' ? /(UC[\w-]{22})/.exec(cfg.channel_id_cached)?.[1] : undefined);
+      if (!uc) throw new Error('YouTube-Quelle ohne API-Key braucht eine Channel-ID (UC…) — config.youtube.apiKey setzen oder UC-ID angeben');
+      const feedItems = await this.fetchRss({ ...source, config: { url: `https://www.youtube.com/feeds/videos.xml?channel_id=${uc}` } } as TopicSource);
+      videos = feedItems.slice(0, max).flatMap(i => {
+        const vid = extractYoutubeVideoId(i.url);
+        return vid ? [{ videoId: vid, title: i.title, url: i.url!, publishedAt: i.publishedAt, description: i.summary }] : [];
+      });
+    }
+
+    const out: CollectedRawItem[] = [];
+    for (const v of videos) {
+      if (!v.title || !v.videoId) continue;
+      // Precheck über den Dedupe-Hash: Transcript-Fetch + LLM-Verdichtung
+      // NUR für Videos, die noch nicht in topic_items liegen
+      if (await this.repo.itemExists(topic.id, topicItemDedupeHash({ url: v.url, title: v.title }))) continue;
+      let summary = (v.description ?? '').trim() || undefined;
+      if (cfg.transcript !== false) {
+        const segments = await f.fetchTranscript(v.videoId, lang).catch(() => null);
+        const text = segments?.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim();
+        if (text && text.length > 100) {
+          summary = cfg.summarize !== false && this.opts.llm
+            ? await this.condenseTranscript(v.title, text).catch(() => text.slice(0, 1500))
+            : text.slice(0, 1500);
+        }
+      }
+      out.push({ title: v.title, url: v.url, summary, publishedAt: v.publishedAt });
+    }
+    if (out.length > 0) this.logger.info({ topic: topic.name, channel, videos: out.length }, 'v1048 youtube source collected');
+    return out;
+  }
+
+  /** v1048 — Transcript zu einer reinen Fakten-Summary verdichten (fast-Tier, 1 Call je NEUEM Video). */
+  private async condenseTranscript(title: string, text: string): Promise<string> {
+    const response = await this.opts.llm!.complete({
+      messages: [{
+        role: 'user',
+        content: `Fasse das Transcript des Videos "${title}" als reine FAKTEN-Zusammenfassung zusammen (5-8 Sätze, max. 900 Zeichen): Ergebnisse, Namen, Zahlen, Kernaussagen sinngemäß. KEINE Bewertung, KEINE Meta-Kommentare, KEIN „Das Video zeigt". Antworte NUR mit der Zusammenfassung auf Deutsch.\n\nTRANSCRIPT:\n${text.slice(0, 12_000)}`,
+      }],
+      maxTokens: 600,
+      tier: 'fast',
+      reasoningEffort: 'low',
+    });
+    const s = (response.content ?? '').trim();
+    if (s.length < 30) throw new Error('Verdichtung leer');
+    return s.slice(0, 1000);
   }
 
   private async fetchWebSearch(topic: InterestTopic, source: TopicSource): Promise<CollectedRawItem[]> {

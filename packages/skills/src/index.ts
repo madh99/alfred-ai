@@ -97,6 +97,8 @@ export { InterestsSkill } from './built-in/interests.js';
 export { SocialSkill, SocialProvider, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider, BlueskyProvider, BEST_PRACTICE_SLOTS, effectiveSlots, extractTrailingHashtags, mergeHashtags, languageName, isNearDuplicateTitle, storyIdentity, cosineSimilarity, applyImageOverlays, cropToRatio, resolveImageBranding, parseOverlayCorner, recolorSvg, loadSharp, type OverlaySpec } from './built-in/social/index.js';
 export { HelpSkill } from './built-in/help.js';
 export { YouTubeSkill } from './built-in/youtube.js';
+// v1048 - geteilte YouTube-Bausteine (Skill + Topic-Collector nutzen denselben Codepfad)
+export { extractYoutubeVideoId, resolveYoutubeChannel, fetchYoutubeChannelVideos, fetchYoutubeTranscriptSegments, type YoutubeChannelVideo } from './built-in/youtube-fetch.js';
 export { DatabaseSkill } from './built-in/database/index.js';
 export { SystemBackupSkill } from './built-in/system-backup.js';
 export { CommvaultSkill } from './built-in/commvault.js';

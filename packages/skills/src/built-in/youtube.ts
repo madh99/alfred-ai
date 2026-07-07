@@ -1,20 +1,12 @@
 import type { SkillMetadata, SkillContext, SkillResult, YouTubeConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
+// v1048 — Kanal-Auflösung/Kanal-Videos/Transcript leben jetzt in youtube-fetch.ts
+// (1:1 extrahiert, verhaltensidentisch), damit der Topic-Collector denselben
+// Codepfad nutzt. Der Skill selbst funktioniert unverändert.
+import { ytErrorDetail, resolveYoutubeChannel, fetchYoutubeChannelVideos, fetchYoutubeTranscriptSegments } from './youtube-fetch.js';
 
 const YT_API_BASE = 'https://www.googleapis.com/youtube/v3';
 const MAX_TRANSCRIPT_CHARS = 15_000;
-
-/** Parse Google API error body for detailed reason */
-async function ytErrorDetail(res: Response): Promise<string> {
-  try {
-    const body = await res.json() as { error?: { message?: string; errors?: Array<{ reason?: string }> } };
-    const reason = body.error?.errors?.[0]?.reason;
-    const msg = body.error?.message;
-    if (reason) return `YouTube API: ${res.status} (${reason}: ${msg})`;
-    if (msg) return `YouTube API: ${res.status} (${msg})`;
-  } catch { /* ignore parse error */ }
-  return `YouTube API: ${res.status} ${res.statusText}`;
-}
 
 export class YouTubeSkill extends Skill {
   /** Cache: channelName → channelId (avoids repeated Search API calls, saves 100 quota units per hit) */
@@ -185,7 +177,7 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
 
     // Try self-hosted transcript extraction first
     try {
-      const transcript = await this.fetchTranscriptSelfHosted(videoId, lang);
+      const transcript = await fetchYoutubeTranscriptSegments(videoId, lang);
       if (transcript) {
         const text = transcript.map(t => t.text).join(' ');
         const truncated = text.length > MAX_TRANSCRIPT_CHARS ? text.slice(0, MAX_TRANSCRIPT_CHARS) + '...' : text;
@@ -215,36 +207,6 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
     return { success: false, error: `No transcript available for video ${videoId} (lang: ${lang})` };
   }
 
-  private async fetchTranscriptSelfHosted(videoId: string, lang: string): Promise<Array<{ text: string; offset: number; duration: number }> | null> {
-    try {
-      const mod = await (Function('return import("youtube-transcript/dist/youtube-transcript.esm.js")')() as Promise<{ fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Array<{ text: string; offset: number; duration: number }>> }>);
-      const segments = await mod.fetchTranscript(videoId, { lang });
-      if (segments && segments.length > 0) {
-        return segments.map((s: { text: string; offset: number; duration: number }) => ({
-          text: s.text,
-          offset: s.offset,
-          duration: s.duration,
-        }));
-      }
-    } catch {
-      // Try English fallback
-      if (lang !== 'en') {
-        try {
-          const mod = await (Function('return import("youtube-transcript/dist/youtube-transcript.esm.js")')() as Promise<{ fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Array<{ text: string; offset: number; duration: number }>> }>);
-          const segments = await mod.fetchTranscript(videoId, { lang: 'en' });
-          if (segments && segments.length > 0) {
-            return segments.map((s: { text: string; offset: number; duration: number }) => ({
-              text: s.text,
-              offset: s.offset,
-              duration: s.duration,
-            }));
-          }
-        } catch { /* no fallback */ }
-      }
-    }
-    return null;
-  }
-
   private async fetchTranscriptSupadata(videoId: string, lang: string): Promise<string | null> {
     const res = await fetch(`https://api.supadata.ai/v1/youtube/transcript?videoId=${videoId}&lang=${lang}`, {
       headers: { 'x-api-key': this.config.supadata!.apiKey! },
@@ -259,60 +221,17 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
   // ── Channel ─────────────────────────────────────────────────
 
   private async channelVideos(input: Record<string, unknown>): Promise<SkillResult> {
-    let channelId = input.channelId as string | undefined;
+    const inputChannelId = input.channelId as string | undefined;
     const channelName = input.channelName as string | undefined;
     const maxResults = Math.min((input.maxResults as number) ?? 5, 20);
 
-    // Extract handle or channel ID from URL
-    const urlInput = channelName ?? channelId ?? '';
-    const handleMatch = /@([\w.-]+)/.exec(urlInput);
-    const channelIdMatch = /(?:channel\/)(UC[\w-]{22})/.exec(urlInput);
+    // v1048 — Auflösung (URL/Handle/Name → Channel-ID, mit Quota-Cache) lebt
+    // im geteilten Helfer; Semantik unverändert.
+    const channelId = await resolveYoutubeChannel(
+      this.config.apiKey, { channelId: inputChannelId, channelName }, this.channelIdCache,
+    );
 
-    if (channelIdMatch) {
-      channelId = channelIdMatch[1];
-    }
-
-    // Check cache before any API calls (saves quota, prevents inconsistent Search results)
-    const cacheKey = (channelName ?? '').toLowerCase().trim();
-    if (!channelId && cacheKey && this.channelIdCache.has(cacheKey)) {
-      channelId = this.channelIdCache.get(cacheKey);
-    }
-
-    // Resolve handle (@...) via Channels API (1 unit)
-    if (!channelId && handleMatch) {
-      const handleParams = new URLSearchParams({
-        part: 'snippet',
-        forHandle: handleMatch[1],
-        key: this.config.apiKey,
-      });
-      const handleRes = await fetch(`${YT_API_BASE}/channels?${handleParams}`);
-      if (handleRes.ok) {
-        const handleData = await handleRes.json() as { items?: Array<{ id: string; snippet: Record<string, unknown> }> };
-        channelId = handleData.items?.[0]?.id;
-      }
-    }
-
-    // Resolve channel name via Search API (100 units — last resort)
-    if (!channelId && channelName) {
-      const cleanName = channelName.replace(/^@/, '').replace(/https?:\/\/.*youtube\.com\//, '');
-      const searchParams = new URLSearchParams({
-        part: 'snippet',
-        q: cleanName,
-        type: 'channel',
-        maxResults: '1',
-        key: this.config.apiKey,
-      });
-      const searchRes = await fetch(`${YT_API_BASE}/search?${searchParams}`);
-      if (searchRes.ok) {
-        const searchData = await searchRes.json() as { items?: Array<{ id: { channelId: string }; snippet: Record<string, unknown> }> };
-        channelId = searchData.items?.[0]?.id?.channelId;
-      }
-    }
-
-    if (!channelId) return { success: false, error: `Could not resolve channel "${channelName ?? channelId}". Try a channel ID (starts with UC) or handle (@name).` };
-
-    // Cache resolved channelId for future calls (Watch polls every 30-60 min)
-    if (cacheKey) this.channelIdCache.set(cacheKey, channelId);
+    if (!channelId) return { success: false, error: `Could not resolve channel "${channelName ?? inputChannelId}". Try a channel ID (starts with UC) or handle (@name).` };
 
     // Normalize input: replace channelName with channelId for future Watch polls
     // This avoids repeated Search API calls (100 units each) on every poll
@@ -321,27 +240,10 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
       delete input.channelName;
     }
 
-    const params = new URLSearchParams({
-      part: 'snippet',
-      channelId,
-      type: 'video',
-      order: 'date',
-      maxResults: String(maxResults),
-      key: this.config.apiKey,
-    });
-
-    const res = await fetch(`${YT_API_BASE}/search?${params}`);
-    if (!res.ok) return { success: false, error: await ytErrorDetail(res) };
-    const data = await res.json() as { items?: Array<{ id: { videoId: string }; snippet: Record<string, unknown> }> };
-
-    const videos = (data.items ?? []).map(item => ({
-      videoId: item.id.videoId,
-      title: item.snippet.title,
-      publishedAt: (item.snippet.publishedAt as string)?.slice(0, 10),
-      url: `https://youtube.com/watch?v=${item.id.videoId}`,
-    }));
-
-    const channelTitle = data.items?.[0]?.snippet?.channelTitle ?? channelName ?? channelId;
+    const result = await fetchYoutubeChannelVideos(this.config.apiKey, channelId, maxResults);
+    if ('error' in result) return { success: false, error: result.error };
+    const videos = result.videos;
+    const channelTitle = result.channelTitle ?? channelName ?? channelId;
 
     const display = videos.map((v, i) =>
       `${i + 1}. **${v.title}** (${v.publishedAt})\n   ${v.url}`

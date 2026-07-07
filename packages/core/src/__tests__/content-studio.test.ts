@@ -553,6 +553,21 @@ describe('ContentStudio (v935)', () => {
     expect(prompt).not.toContain('Rasenpflege'); // importance 0.1 verliert gegen 0.7er
   });
 
+  it('v1048: youtube-Items zeigen im Dossier bis 400 Zeichen (Analyse-Material), andere bleiben bei 220', async () => {
+    const channel = makeChannel({ config: { topic_id: 't-1' } });
+    const { studio, llm, interestsRepo } = makeStack({ channel });
+    (interestsRepo.getDigest as any) = vi.fn(async () => null);
+    const longTail = 'x'.repeat(250) + ' YTMARKER_TIEF_IM_TEXT';
+    (interestsRepo.listItems as any) = vi.fn(async () => [
+      { id: 'y1', topicId: 't-1', title: 'Spielanalyse Argentinien', sourceKind: 'youtube', createdAt: 'x', summary: longTail },
+      { id: 'r1', topicId: 't-1', title: 'Kurzmeldung', sourceKind: 'rss', createdAt: 'x', summary: 'r'.repeat(250) + ' RSSMARKER_TIEF_IM_TEXT' },
+    ]);
+    await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('YTMARKER_TIEF_IM_TEXT'); // youtube: 400-Zeichen-Fenster
+    expect(prompt).not.toContain('RSSMARKER_TIEF_IM_TEXT'); // rss: weiter 220
+  });
+
   it('v954: Geschwister-Kanäle derselben Familie → Rollen + Titel + Anti-Doppelungs-Regeln im Prompt', async () => {
     const telegram = makeChannel({ id: 'ch-tg', name: 'FussballCC News', projectId: 'proj-1', persona: 'Community-Kanal: kurz, Termine, Interaktion' });
     const platform = makeChannel({ id: 'ch-cc', name: 'fussball.cc', platform: 'rest', projectId: 'proj-1', persona: 'redaktionelle News' });
