@@ -1373,6 +1373,8 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
       const assetCutoff = new Date(Date.now() - maxAgeDays * 3 * 24 * 3_600_000).toISOString();
       const assets = await this.socialRepo.listMediaAssets(this.ownerUserId, {}).catch(() => []);
       for (const asset of assets) {
+        // v1041 — gepinnte Assets (Stamm-Bilder, Termin-Vorlagen) altern nie raus
+        if (asset.pinned) continue;
         if (asset.lastUsedAt >= assetCutoff) continue;
         try {
           const { unlink } = await import('node:fs/promises');
@@ -1744,7 +1746,7 @@ Antworte NUR mit einem JSON-Array:
     try {
       const {
         resolveImagePolicy, extractNameCandidates, scrubMotif, scrubTextDirectives,
-        buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy,
+        buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy, SYMBOLIC_FALLBACK_MOTIF,
       } = await import('./image-policy.js');
       const policy = resolveImagePolicy(channel.config);
 
@@ -1776,6 +1778,15 @@ Antworte NUR mit einem JSON-Array:
         ? channel.config.image_quality : undefined;
       const format = ContentStudio.platformImageSpec(channel);
 
+      // v1041 — Termin-Vorlage: für Termin-Posts nimmt der Kanal ein festes
+      // Basis-Bild (config.image_overlay.termin_image = Asset-ID), die Daten
+      // (Teams, Anpfiff, Ort) kommen wie immer deterministisch aus der
+      // Termin-Karte. Kein Budget, kein Vision-Gate, immer gleicher Look.
+      if (forcedTitle === undefined && idea.terminBis && this.mediaDir) {
+        const fromTemplate = await this.tryTerminTemplate(channel, idea, format).catch(() => undefined);
+        if (fromTemplate) return fromTemplate;
+      }
+
       // v1005 — Bild-Bibliothek: passt ein vorhandenes Basis-Bild (Motiv ähnlich,
       // gleicher Stil/Format, Cooldown abgelaufen)? → wiederverwenden, nur das
       // Overlay ist neu. Kostet KEIN Bild-Budget.
@@ -1796,7 +1807,6 @@ Antworte NUR mit einem JSON-Array:
         // Bibliothek liegt (kurze Karenz statt Cooldown) — vorher entstand
         // bei jedem Verstoß ein frisches, fast identisches Stadion-Bild.
         if (attempt === 1 && channel.config.image_reuse !== false && this.mediaDir) {
-          const { SYMBOLIC_FALLBACK_MOTIF } = await import('./image-policy.js');
           const fallbackReuse = await this.tryReuseAsset(channel, SYMBOLIC_FALLBACK_MOTIF, idea, style, format, forcedTitle).catch(() => undefined);
           if (fallbackReuse) return fallbackReuse;
         }
@@ -1823,6 +1833,12 @@ Antworte NUR mit einem JSON-Array:
         const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string }> }).attachments?.[0];
         const buffer = attachment?.data && Buffer.isBuffer(attachment.data) ? attachment.data : undefined;
 
+        // v1040(1a) — der Retry generiert das GENERISCHE Symbolmotiv: genau das
+        // gehört in die Bibliothek, nicht das Artikel-Motiv (Realfall 07.07.:
+        // neutrale Stadionbilder trugen spezifische Trainer-Beschreibungen und
+        // vergifteten das Reuse-Matching).
+        let libraryMotif = attempt === 1 ? SYMBOLIC_FALLBACK_MOTIF : motif;
+
         // v950 Schicht 3 — Vision-Output-Gate (nur symbolic; fail-closed bei Ausfall)
         if (policy === 'symbolic' && buffer) {
           const verdict = await verifyImagePolicy(this.llm, buffer);
@@ -1835,6 +1851,15 @@ Antworte NUR mit einem JSON-Array:
             this.logger.info({ channel: channel.name, attempt, verdict }, 'v950 image policy violation — Bild verworfen');
             if (attempt === 0) continue; // ein Retry mit strengem Symbolmotiv
             return []; // zweiter Verstoß → Post ohne Bild
+          }
+          // v1040(1b) — das Gate hat das Bild ohnehin angesehen: seine
+          // Beschreibung dessen, was WIRKLICH zu sehen ist, wird die
+          // Bibliotheks-Beschreibung (das Bildmodell weicht vom Prompt ab).
+          // Der „Symbolbild"-Marker (kurze Karenz, v1038) bleibt erhalten.
+          if (verdict.motiv) {
+            const generic = attempt === 1 || ContentStudio.isGenericMotif(motif);
+            libraryMotif = generic && !ContentStudio.isGenericMotif(verdict.motiv)
+              ? `Symbolbild Fußball: ${verdict.motiv}` : verdict.motiv;
           }
         }
 
@@ -1860,9 +1885,11 @@ Antworte NUR mit einem JSON-Array:
             if (channel.config.image_reuse !== false) {
               const assetFile = join(this.mediaDir, `asset-${stamp}.png`);
               await writeFile(assetFile, framed);
+              // v1040 — gespeichert wird, was das Bild WIRKLICH zeigt (Vision-
+              // Beschreibung des Gates), nicht der Prompt
               await this.socialRepo.createMediaAsset(this.ownerUserId, {
                 channelId: channel.id, family: ContentStudio.familyKey(channel) ?? undefined,
-                path: assetFile, motif, style, format: format.size ?? 'square',
+                path: assetFile, motif: libraryMotif, style, format: format.size ?? 'square',
               });
             }
           } catch { /* Bibliothek ist best-effort */ }
@@ -2004,6 +2031,41 @@ Antworte NUR mit einem JSON-Array:
     await writeFile(file, finalBuffer);
     await this.socialRepo.touchMediaAsset(this.ownerUserId, best.asset.id, channel.id).catch(() => { /* non-critical */ });
     this.logger.info({ channel: channel.name, asset: best.asset.id, score: Number(best.score.toFixed(2)), motif: motif.slice(0, 80) }, 'v1005 image reused from library (kein Budget verbraucht)');
+    return [{ type: 'image', source: 'generated', pathOrUrl: file }];
+  }
+
+  /**
+   * v1041 — Termin-Vorlage: Kanal-Config image_overlay.termin_image (Asset-ID
+   * aus der Bibliothek, per UI wählbar/hochladbar) liefert das feste Basis-Bild
+   * für ALLE Termin-Posts des Kanals; Teams/Anpfiff/Ort kommen deterministisch
+   * aus der Termin-Karte. Kein Budget, kein Vision-Gate, konsistenter Look.
+   * Vorlage nicht gesetzt oder Datei weg → undefined (normaler Pfad).
+   */
+  private async tryTerminTemplate(
+    channel: SocialChannel, idea: GeneratedIdea,
+    format: { size?: string; crop?: [number, number] },
+  ): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }> | undefined> {
+    const ov = (channel.config.image_overlay && typeof channel.config.image_overlay === 'object'
+      ? channel.config.image_overlay : {}) as Record<string, unknown>;
+    const templateId = typeof ov.termin_image === 'string' && ov.termin_image.trim() ? ov.termin_image.trim() : undefined;
+    if (!templateId) return undefined;
+    const asset = (await this.socialRepo.listMediaAssets(this.ownerUserId, { limit: 1000 })).find(a => a.id === templateId);
+    if (!asset) return undefined;
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    let base: Buffer;
+    try {
+      base = await readFile(asset.path);
+    } catch {
+      return undefined; // Datei auf anderem Node/gelöscht → normaler Pfad
+    }
+    const framed = format.crop ? await cropToRatio(base, format.crop[0], format.crop[1]).catch(() => base) : base;
+    const finalBuffer = await this.applyOverlays(framed, channel, idea, undefined).catch(() => framed);
+    const file = join(this.mediaDir!, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ContentStudio.overlayBakesTitle(channel, idea, undefined) ? '' : '-no-title'}.png`);
+    await writeFile(file, finalBuffer);
+    // Nutzung festhalten: schützt die Vorlage vor dem Alters-Cleanup
+    await this.socialRepo.touchMediaAsset(this.ownerUserId, asset.id, channel.id).catch(() => { /* non-critical */ });
+    this.logger.info({ channel: channel.name, asset: asset.id }, 'v1041 termin template image used (kein Budget verbraucht)');
     return [{ type: 'image', source: 'generated', pathOrUrl: file }];
   }
 

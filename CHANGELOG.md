@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1041] - 2026-07-07
+
+### Added — Termin-Vorlagenbild je Kanal (v1041)
+
+- **Festes Bild für Termin-Ankündigungen**: In den Kanal-Einstellungen
+  (Bild-Look → „📅 Termin-Vorlage") lässt sich ein Bild aus der
+  Bibliothek wählen oder eigenes PNG/JPEG hochladen — alle Termin-Posts
+  des Kanals nutzen dann dieses Basis-Bild; Teams, Anpfiff, Einlass und
+  Ort kommen wie bisher deterministisch aus der Termin-Karte. Kein
+  Bild-Budget, kein Vision-Gate, immer konsistenter Look.
+- „Für ALLE Kanäle" übernimmt die Vorlage auf einen Klick überall
+  (pro Kanal weiter individuell änderbar); in der Bibliothek setzt der
+  📅-Button ein Bild direkt als Vorlage für alle Kanäle.
+- Vorlagen werden automatisch gepinnt — geschützt vor Duplikat-Aufräumen
+  und Alters-Cleanup (gepinnte Bilder altern generell nicht mehr raus).
+- Upload-Endpoint `POST /api/social/assets/upload` (Base64, max. 8 MB).
+
+### Fixed — Bibliotheks-Beschreibungen stimmen jetzt (v1040)
+
+- **Retry-Bug**: Scheiterte ein Bild am Vision-Gate, erzeugte der zweite
+  Versuch ein generisches Symbolbild — gespeichert wurde aber das
+  spezifische Artikel-Motiv. Die Bibliothek enthielt dadurch neutrale
+  Stadionbilder mit falschen Beschreibungen, die das
+  Wiederverwendungs-Matching vergifteten. Jetzt wird das tatsächliche
+  Fallback-Motiv gespeichert.
+- **Auto-Beschreibung**: Das Vision-Gate prüft jedes generierte Bild
+  ohnehin — es beschreibt jetzt im selben Aufruf, was WIRKLICH zu sehen
+  ist, und diese Beschreibung landet in der Bibliothek (das Bildmodell
+  weicht vom Prompt ab). Null zusätzliche API-Kosten; der
+  „Symbolbild"-Marker (kurze Karenz) bleibt erhalten.
+- **„🔍 Beschreibungen erneuern"** in der Bild-Bibliothek: stellt alle
+  Bestands-Beschreibungen per Vision-KI richtig (ein günstiger Aufruf je
+  Bild). Empfohlen vor dem Duplikate-Aufräumen. Auch per API:
+  `POST /api/social/describe-assets`.
+
 ## [0.19.0-multi-ha.1039] - 2026-07-07
 
 ### Added — Bild-Bibliothek: Cooldown je Kanal + Duplikate aufräumen (v1039)

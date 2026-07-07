@@ -8202,6 +8202,26 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const socialSkillForApi = this.socialSkillRef;
         const socialCtx = { userId: socialOwner, masterUserId: socialOwner } as never;
         const interestsRepoForApi = this.interestsRepo;
+        // v1040 — Motiv eines Bibliotheks-Bilds per Vision-LLM beschreiben
+        // (genutzt vom Einzel-„describe" und der Bulk-Erneuerung)
+        const describeAssetMotif = async (assetPath: string): Promise<string | undefined> => {
+          if (!this.llmProvider) return undefined;
+          const { readFile } = await import('node:fs/promises');
+          const data = await readFile(assetPath);
+          const response = await this.llmProvider.complete({
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'image', source: { type: 'base64', media_type: 'image/png', data: data.toString('base64') } },
+                { type: 'text', text: 'Beschreibe das MOTIV dieses Bildes in 1-2 Sätzen auf Deutsch — nur Szene, Objekte, Stimmung, Farben (als Bild-Motiv-Beschreibung für die Wiederverwendung, KEINE Meta-Kommentare, KEIN „Das Bild zeigt"). Antworte NUR mit der Beschreibung.' },
+              ],
+            }] as never,
+            maxTokens: 300,
+            tier: 'fast',
+          });
+          const motif = (response.content ?? '').trim().replace(/^["„]|["“]$/g, '').slice(0, 500);
+          return motif.length >= 5 ? motif : undefined;
+        };
         (apiAdapter as any).setSocialCallbacks({
           // v965 — Kanäle angereichert: effektive Slots (Best-Practice-Fallback),
           // heutige Posts, Bild-Budget-Verbrauch, verknüpfte Themen mit Namen
@@ -8323,25 +8343,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 await socialRepo.updateMediaAssetMotif(socialOwner, id, motif);
                 return { success: true, motif };
               } else if (action === 'describe') {
-                // v1017 — Motiv per Vision-LLM neu beschreiben lassen
+                // v1017 — Motiv per Vision-LLM neu beschreiben lassen (v1040: Helfer)
                 if (!this.llmProvider) return { success: false, error: 'LLM nicht verfügbar.' };
                 const asset = (await socialRepo.listMediaAssets(socialOwner, { limit: 500 })).find(a => a.id === id);
                 if (!asset) return { success: false, error: 'Asset nicht gefunden.' };
-                const { readFile } = await import('node:fs/promises');
-                const data = await readFile(asset.path);
-                const response = await this.llmProvider.complete({
-                  messages: [{
-                    role: 'user',
-                    content: [
-                      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: data.toString('base64') } },
-                      { type: 'text', text: 'Beschreibe das MOTIV dieses Bildes in 1-2 Sätzen auf Deutsch — nur Szene, Objekte, Stimmung, Farben (als Bild-Motiv-Beschreibung für die Wiederverwendung, KEINE Meta-Kommentare, KEIN „Das Bild zeigt"). Antworte NUR mit der Beschreibung.' },
-                    ],
-                  }] as never,
-                  maxTokens: 300,
-                  tier: 'fast',
-                });
-                const motif = (response.content ?? '').trim().replace(/^["„]|["“]$/g, '').slice(0, 500);
-                if (motif.length < 5) return { success: false, error: 'Keine brauchbare Beschreibung erhalten.' };
+                const motif = await describeAssetMotif(asset.path);
+                if (!motif) return { success: false, error: 'Keine brauchbare Beschreibung erhalten.' };
                 await socialRepo.updateMediaAssetMotif(socialOwner, id, motif);
                 return { success: true, motif };
               } else if (action === 'pin' || action === 'unpin') {
@@ -8351,6 +8358,62 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 await socialRepo.setMediaAssetBlocked(socialOwner, id, action === 'block');
               }
               return { success: true };
+            } catch (err) {
+              return { success: false, error: (err as Error).message };
+            }
+          },
+          // v1040 — Bulk: alle Bibliotheks-Beschreibungen per Vision-LLM
+          // richtigstellen (Beschreibung = Prompt, nicht Bild — das Bildmodell
+          // weicht ab, und der Vision-Retry speicherte das falsche Motiv).
+          // Der „Symbolbild"-Marker (kurze Karenz, v1038) bleibt erhalten.
+          describeAssets: async () => {
+            try {
+              if (!this.llmProvider) return { success: false, error: 'LLM nicht verfügbar.' };
+              const assets = await socialRepo.listMediaAssets(socialOwner, { limit: 1000 });
+              let updated = 0;
+              let failed = 0;
+              for (const asset of assets) {
+                try {
+                  const motif = await describeAssetMotif(asset.path);
+                  if (!motif) { failed++; continue; }
+                  const generic = /^symbolbild/i.test(asset.motif.trim()) && !/^symbolbild/i.test(motif);
+                  await socialRepo.updateMediaAssetMotif(socialOwner, asset.id, generic ? `Symbolbild Fußball: ${motif}` : motif);
+                  updated++;
+                } catch {
+                  failed++; // Datei auf anderem Node/gelöscht — überspringen
+                }
+              }
+              return {
+                success: true, data: { scanned: assets.length, updated, failed },
+                display: `🔍 Beschreibungen erneuert: ${updated} von ${assets.length} Bild(ern)${failed ? ` — ${failed} übersprungen (Datei fehlt oder keine brauchbare Beschreibung)` : ''}.`,
+              };
+            } catch (err) {
+              return { success: false, error: (err as Error).message };
+            }
+          },
+          // v1041 — Termin-Vorlage hochladen: Bild landet als gepinntes Asset
+          // in der Bibliothek (geschützt vor Dedup und Alters-Cleanup) und wird
+          // per image_overlay.termin_image referenziert.
+          uploadAsset: async (body: Record<string, unknown>) => {
+            try {
+              const b64 = typeof body.data === 'string' ? body.data : '';
+              if (!b64) return { success: false, error: 'data (Base64) erforderlich.' };
+              const buf = Buffer.from(b64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+              if (buf.length < 100 || buf.length > 8_000_000) return { success: false, error: 'Bild muss zwischen 100 B und 8 MB groß sein.' };
+              const isPng = buf[0] === 0x89 && buf[1] === 0x50;
+              const isJpeg = buf[0] === 0xff && buf[1] === 0xd8;
+              if (!isPng && !isJpeg) return { success: false, error: 'Nur PNG oder JPEG.' };
+              const path = await import('node:path');
+              const { writeFile, mkdir } = await import('node:fs/promises');
+              const mediaDir = path.resolve(path.dirname(this.config.storage.path), 'social-media');
+              await mkdir(mediaDir, { recursive: true });
+              const file = path.join(mediaDir, `asset-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${isPng ? 'png' : 'jpg'}`);
+              await writeFile(file, buf);
+              const motif = typeof body.motif === 'string' && body.motif.trim().length >= 5
+                ? body.motif.trim() : 'Termin-Vorlage (hochgeladen)';
+              const asset = await socialRepo.createMediaAsset(socialOwner, { path: file, motif });
+              await socialRepo.setMediaAssetPinned(socialOwner, asset.id, true);
+              return { success: true, data: { id: asset.id, basename: path.basename(file) } };
             } catch (err) {
               return { success: false, error: (err as Error).message };
             }

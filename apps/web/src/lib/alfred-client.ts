@@ -608,6 +608,25 @@ export class AlfredClient {
     return res.json();
   }
 
+  // v1040 — alle Bibliotheks-Beschreibungen per Vision-LLM richtigstellen
+  async socialDescribeAssets(): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/describe-assets`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    if (!res.ok) throw new Error(`Social describe-assets: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // v1041 — Bild (Base64) als gepinnte Termin-Vorlage in die Bibliothek laden
+  async socialUploadAsset(dataBase64: string, motif?: string): Promise<{ success: boolean; error?: string; data?: { id: string; basename: string } }> {
+    const res = await fetch(`${this.baseUrl}/api/social/assets/upload`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: dataBase64, ...(motif ? { motif } : {}) }),
+    });
+    if (!res.ok && res.status !== 400) throw new Error(`Social asset-upload: HTTP ${res.status}`);
+    return res.json();
+  }
+
   async fetchSocialMetrics(channelId: string): Promise<Array<{ itemId?: string; date: string; kind: string; value: number }>> {
     const res = await fetch(`${this.baseUrl}/api/social/channels/${channelId}/metrics`, { headers: this.authHeaders });
     if (!res.ok) return [];

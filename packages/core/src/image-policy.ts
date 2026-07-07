@@ -151,6 +151,8 @@ export interface VisionVerdict {
   /** v982 — gerenderter Text/Zahlen im Bild (Bildmodelle halluzinieren Daten/Uhrzeiten). */
   text: boolean;
   begruendung?: string;
+  /** v1040 — was das Bild WIRKLICH zeigt (1-2 Sätze): wird als Bibliotheks-Beschreibung gespeichert, weil das Bildmodell vom Prompt abweicht. */
+  motiv?: string;
 }
 
 /**
@@ -174,11 +176,12 @@ export async function verifyImagePolicy(
               + '1. person: Zeigt es eine identifizierbare (auch nur ähnlich aussehende) reale Person, insbesondere Personen des öffentlichen Lebens (Sportler, Trainer, Promis)? Anonyme Silhouetten/Rückenansichten/unkenntliche Menschenmengen zählen NICHT.\n'
               + '2. logo: Zeigt es erkennbare Vereins-, Verbands- oder MARKEN-Logos (z.B. Puma/Adidas, Klub-Wappen)? WICHTIG: Nationalflaggen, Länderfarben und generische Wappen-Silhouetten zählen NICHT als Logo — nur bei eindeutig zuordenbaren Marken/Vereinen logo=true.\n'
               + '3. text: Enthält es klar LESBAREN gerenderten Text oder Zahlen (Wörter, Datum, Uhrzeit, Anzeigetafel-Ziffern)? KI-Bilder halluzinieren falsche Daten — deshalb prüfen. Unleserliche Pseudo-Schrift/Textur zählt NICHT.\n'
-              + 'Antworte NUR mit JSON: {"person": true|false, "logo": true|false, "text": true|false, "begruendung": "1 Satz"}',
+              + '4. motiv: Beschreibe das MOTIV in 1-2 Sätzen auf Deutsch — nur Szene, Objekte, Stimmung, Farben (als Bild-Motiv-Beschreibung für die Wiederverwendung, KEINE Meta-Kommentare, KEIN „Das Bild zeigt").\n'
+              + 'Antworte NUR mit JSON: {"person": true|false, "logo": true|false, "text": true|false, "begruendung": "1 Satz", "motiv": "1-2 Sätze"}',
           },
         ],
       }],
-      maxTokens: 200,
+      maxTokens: 400,
       tier: 'fast',
     });
     const match = response.content?.match(/\{[\s\S]*\}/);
@@ -190,6 +193,7 @@ export async function verifyImagePolicy(
       logo: parsed.logo === true,
       text: parsed.text === true,
       begruendung: typeof parsed.begruendung === 'string' ? parsed.begruendung.slice(0, 200) : undefined,
+      motiv: typeof parsed.motiv === 'string' && parsed.motiv.trim().length >= 5 ? parsed.motiv.trim().slice(0, 500) : undefined,
     };
   } catch {
     return null;

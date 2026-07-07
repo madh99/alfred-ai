@@ -1328,6 +1328,63 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     expect(execute).toHaveBeenCalled(); // kein Reuse — dieser Kanal hatte es gerade erst
   });
 
+  it('v1040(1b): Vision-Beschreibung des Gates wird als Bibliotheks-Motiv gespeichert (nicht der Prompt)', async () => {
+    const { studio, channel, socialRepo, llm, execute } = await makeMediaStudio([]);
+    (socialRepo as any).listMediaAssets = vi.fn(async () => []);
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{ title: 'Flutlicht-Stimmung', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x', bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen' }]) })
+      .mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok", "motiv": "Leeres Stadion in der Dämmerung, Ball im Anstoßkreis, violettes Licht"}' });
+    await studio.fillChannel(channel);
+    expect(execute).toHaveBeenCalled();
+    const created = (socialRepo as any).createMediaAsset.mock.calls[0];
+    expect(created[1].motif).toBe('Leeres Stadion in der Dämmerung, Ball im Anstoßkreis, violettes Licht');
+  });
+
+  it('v1040(1a): Retry nach Vision-Verstoß speichert das Symbolmotiv, nicht das Artikel-Motiv', async () => {
+    const { studio, channel, socialRepo, llm, execute } = await makeMediaStudio([]);
+    (socialRepo as any).listMediaAssets = vi.fn(async () => []);
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{ title: 'Flutlicht-Stimmung', body: 'Ein ausreichend langer Beitragstext für den Bild-Test hier.', hashtags: [], warum: 'x', bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen' }]) })
+      .mockResolvedValueOnce({ content: '{"person": true, "logo": false, "text": false, "begruendung": "zeigt erkennbaren Spieler"}' }) // Versuch 0: Verstoß
+      .mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok"}' }); // Versuch 1: sauber, ohne motiv
+    await studio.fillChannel(channel);
+    expect(execute).toHaveBeenCalledTimes(2);
+    const created = (socialRepo as any).createMediaAsset.mock.calls[0];
+    expect(created[1].motif).toMatch(/^Symbolbild/); // Fallback-Motiv, nicht die Artikel-Bildidee
+  });
+
+  it('v1041: Termin-Vorlage — Termin-Post nimmt das feste Basis-Bild, keine Generierung', async () => {
+    const { studio, channel, socialRepo, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const tplPath = join(dir, 'asset-vorlage.png');
+    await writeFile(tplPath, Buffer.from('vorlage-png'));
+    (channel.config as Record<string, unknown>).image_overlay = { termin_image: 'a-tpl' };
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-tpl', userId: OWNER, channelId: 'ch-1', path: tplPath,
+      motif: 'Termin-Vorlage: Stadion-Grafik', style: undefined, format: '1536x1024',
+      lastUsedAt: new Date().toISOString(), useCount: 1, blocked: false, pinned: true, createdAt: 'x',
+    }]);
+    const media = await (studio as any).produceImage(channel, {
+      title: 'Public Viewing: Schweiz – Kolumbien', body: 'Achtelfinale im Pub.', hashtags: [], warum: '',
+      terminBis: new Date(Date.now() + 48 * 3_600_000).toISOString(), ort: 'Wien',
+    });
+    expect(execute).not.toHaveBeenCalled(); // kein Budget, kein Bildmodell
+    expect(media[0].pathOrUrl).toContain('studio-');
+    expect(media[0].pathOrUrl).not.toContain('-no-title'); // Termin-Karte eingebrannt
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-tpl', 'ch-1');
+  });
+
+  it('v1041: Vorlage gesetzt aber Asset weg → normale Generierung (Fallback)', async () => {
+    const { studio, channel, socialRepo, llm, execute } = await makeMediaStudio([]);
+    (channel.config as Record<string, unknown>).image_overlay = { termin_image: 'gibt-es-nicht' };
+    (socialRepo as any).listMediaAssets = vi.fn(async () => []);
+    (llm.complete as any).mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok"}' });
+    await (studio as any).produceImage(channel, {
+      title: 'Public Viewing', body: 'Achtelfinale im Pub.', hashtags: [], warum: '',
+      terminBis: new Date(Date.now() + 48 * 3_600_000).toISOString(),
+    });
+    expect(execute).toHaveBeenCalled();
+  });
+
   it('v1039(E): dedupMediaLibrary — Fast-Duplikate weg, Stamm-Bild bleibt, Fremdmotiv unberührt', async () => {
     const old = new Date(Date.now() - 10 * 24 * 3_600_000).toISOString();
     const { studio, socialRepo, dir, writeFile, join } = await makeMediaStudio([]);

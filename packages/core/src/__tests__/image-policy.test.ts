@@ -119,6 +119,17 @@ describe('verifyImagePolicy (v950 Schicht 3)', () => {
     const q = (llm.complete as any).mock.calls[0][0].messages[0].content[1].text as string;
     expect(q).toContain('text:');
   });
+
+  it('v1040: motiv wird geparst — die Beschreibung dessen, was das Bild WIRKLICH zeigt', async () => {
+    const llm = { complete: vi.fn(async () => ({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok", "motiv": "Stadion bei Nacht, Ball im Vordergrund auf dem Rasen"}' })) };
+    const v = await verifyImagePolicy(llm as any, IMG);
+    expect(v?.motiv).toBe('Stadion bei Nacht, Ball im Vordergrund auf dem Rasen');
+    const q = (llm.complete as any).mock.calls[0][0].messages[0].content[1].text as string;
+    expect(q).toContain('motiv:');
+    // Leeres/zu kurzes motiv → undefined (Aufrufer behält das Prompt-Motiv)
+    const v2 = await verifyImagePolicy({ complete: vi.fn(async () => ({ content: '{"person": false, "logo": false, "text": false, "motiv": "x"}' })) } as any, IMG);
+    expect(v2?.motiv).toBeUndefined();
+  });
 });
 
 describe('scrubTextDirectives (v982)', () => {

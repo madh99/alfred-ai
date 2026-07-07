@@ -713,6 +713,10 @@ export class HttpAdapter extends MessagingAdapter {
     refreshOverlays?: (body: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     /** v1039 — Fast-Duplikate der Bild-Bibliothek aufräumen. */
     dedupLibrary?: () => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
+    /** v1040 — alle Bibliotheks-Beschreibungen per Vision-LLM richtigstellen. */
+    describeAssets?: () => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
+    /** v1041 — Bild (Base64) als gepinntes Bibliotheks-Asset hochladen (Termin-Vorlage). */
+    uploadAsset?: (body: Record<string, unknown>) => Promise<{ success: boolean; error?: string; data?: unknown }>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string, width?: number) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1393,6 +1397,18 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSocialBody(req, res, async () => {
         if (!this.socialCallbacks?.dedupLibrary) return { error: 'not supported' };
         return this.socialCallbacks.dedupLibrary();
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/describe-assets' && req.method === 'POST') {
+      // v1040 — alle Bibliotheks-Beschreibungen richtigstellen (Vision-LLM)
+      this.handleSocialBody(req, res, async () => {
+        if (!this.socialCallbacks?.describeAssets) return { error: 'not supported' };
+        return this.socialCallbacks.describeAssets();
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/assets/upload' && req.method === 'POST') {
+      // v1041 — Termin-Vorlage hochladen (gepinntes Bibliotheks-Asset)
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.uploadAsset) return { error: 'not supported' };
+        return this.socialCallbacks.uploadAsset(body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/social/channels' && req.method === 'POST') {
       // v1015 — Kanal-Wizard

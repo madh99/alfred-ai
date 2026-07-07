@@ -177,6 +177,8 @@ export function SocialPage() {
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
     // v1026 — Ecken + Logo-Wasserzeichen (SVG inline in der Config) · v1032 — Logo-Farbe ('' = Original)
     watermarkCorner: string; logoSvg: string; logoCorner: string; logoColor: string;
+    // v1041 — Termin-Vorlage (Asset-ID aus der Bibliothek; '' = generieren wie bisher)
+    terminImage: string;
     // v1006 — Sprache + Übersetzungen (translate_to nur bei rest-Kanälen wirksam)
     language: string; translateTo: string[];
     // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells · v1016 — Auto-Reels
@@ -186,7 +188,7 @@ export function SocialPage() {
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
-    watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '',
+    watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false, formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
@@ -542,6 +544,9 @@ export function SocialPage() {
         ? String((c.config.image_overlay as { logo?: { corner?: string } }).logo!.corner) : 'bottom-right',
       logoColor: typeof (c.config.image_overlay as { logo?: { color?: string } } | undefined)?.logo?.color === 'string'
         ? String((c.config.image_overlay as { logo?: { color?: string } }).logo!.color) : '',
+      // v1041 — Termin-Vorlage (Asset-ID)
+      terminImage: typeof (c.config.image_overlay as { termin_image?: string } | undefined)?.termin_image === 'string'
+        ? String((c.config.image_overlay as { termin_image?: string }).termin_image) : '',
       // v1006 — Sprache + Übersetzungen
       language: typeof c.config.language === 'string' && c.config.language ? c.config.language : 'de',
       translateTo: Array.isArray(c.config.translate_to) ? (c.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string') : [],
@@ -557,6 +562,8 @@ export function SocialPage() {
     if (interestTopics.length === 0) {
       client?.fetchInterestTopics().then(setInterestTopics).catch(() => {});
     }
+    // v1041 — Bibliothek für den Termin-Vorlagen-Selektor nachladen
+    if (assets.length === 0) loadAssets().catch(() => {});
   }
 
   async function saveSettings(c: SocialChannelItem) {
@@ -590,6 +597,8 @@ export function SocialPage() {
             logo: d.logoSvg.trim().startsWith('<svg')
               ? { svg: d.logoSvg, corner: d.logoCorner, color: /^#[0-9a-fA-F]{3,8}$/.test(d.logoColor.trim()) ? d.logoColor.trim() : null }
               : null,
+            // v1041 — Termin-Vorlage (Asset-ID; null löscht = wieder generieren)
+            termin_image: d.terminImage.trim() || null,
           },
           // v1006 — Sprache (Default de → Schlüssel löschen) + Übersetzungs-Ziele
           language: d.language === 'de' ? null : d.language,
@@ -1533,6 +1542,55 @@ export function SocialPage() {
                           )}
                         </div>
                       </div>
+                      {/* v1041 — Termin-Vorlage: festes Basis-Bild für alle Termin-Posts, Daten kommen aus der Termin-Karte */}
+                      <div className="border-t border-[#2a2a2a] pt-2 space-y-1.5">
+                        <div className="text-[11px] font-medium text-gray-300">📅 Termin-Vorlage <span className="text-gray-500 font-normal">— festes Bild für Termin-Ankündigungen (kein Budget); leer = generieren wie bisher</span></div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <select value={settingsDraft.terminImage} onChange={e => setSettingsDraft(d => ({ ...d, terminImage: e.target.value }))}
+                            className="flex-1 min-w-[200px] bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200">
+                            <option value="">— kein Vorlagenbild (generieren) —</option>
+                            {assets.filter(a => !a.blocked).map(a => (
+                              <option key={a.id} value={a.id}>{a.pinned ? '📌 ' : ''}{a.motif.slice(0, 70)}</option>
+                            ))}
+                          </select>
+                          <input type="file" accept="image/png,image/jpeg"
+                            onChange={e => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              if (f.size > 8_000_000) { setError('Bild ist zu groß (max. 8 MB).'); return; }
+                              const reader = new FileReader();
+                              reader.onload = async () => {
+                                try {
+                                  const r = await client!.socialUploadAsset(String(reader.result), `Termin-Vorlage: ${f.name}`);
+                                  if (!r.success || !r.data) throw new Error(r.error ?? 'Upload fehlgeschlagen');
+                                  setSettingsDraft(d => ({ ...d, terminImage: r.data!.id }));
+                                  setNotice('Termin-Vorlage hochgeladen (gepinnt in der Bibliothek) — Speichern nicht vergessen.');
+                                  await loadAssets();
+                                } catch (err) { setError((err as Error).message); }
+                              };
+                              reader.readAsDataURL(f);
+                            }}
+                            className="text-[10px] text-gray-400 max-w-[190px]" title="Eigenes Vorlagenbild hochladen (PNG/JPEG, landet gepinnt in der Bibliothek)" />
+                          {settingsDraft.terminImage && (
+                            <button onClick={async () => {
+                                if (!confirm('Diese Termin-Vorlage für ALLE Kanäle übernehmen?')) return;
+                                await withBusy('termin-template-all', async () => {
+                                  for (const ch of channels) {
+                                    await client!.updateSocialChannel(ch.id, { config: { image_overlay: { termin_image: settingsDraft.terminImage } } });
+                                  }
+                                  await client!.socialAssetAction(settingsDraft.terminImage, 'pin').catch(() => {});
+                                  setNotice(`📅 Termin-Vorlage auf ${channels.length} Kanäle übernommen.`);
+                                  await load();
+                                });
+                              }}
+                              disabled={busy === 'termin-template-all'}
+                              className="px-2 py-1 text-[10px] border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 disabled:opacity-50 rounded"
+                              title="Setzt image_overlay.termin_image auf allen Kanälen und pinnt das Bild">
+                              {busy === 'termin-template-all' ? '⏳' : 'Für ALLE Kanäle'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
                       <div className="text-[10px] text-gray-600">Format automatisch: Instagram Hochformat (4:5), Website/FB/Telegram Querformat. Termin-Posts bekommen eine Termin-Karte (Anpfiff, Einlass, Ort) — Text immer aus den Daten, nie vom Bildmodell. Logo und Text-Wasserzeichen sind kombinierbar (je eigene Ecke); liegt das Logo unten rechts, wandert der Text automatisch nach unten links. Nach Look-Änderungen: „🖌️ Overlays neu" in der Bild-Bibliothek wendet den neuen Stil auf alle wartenden Beiträge an.</div>
                     </div>
                   )}
@@ -1777,6 +1835,21 @@ export function SocialPage() {
               className="px-2 py-1 text-[11px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 rounded">
               {busy === 'dedup-library' ? '⏳' : '🧹 Duplikate aufräumen'}
             </button>
+            {/* v1040 — Beschreibungen richtigstellen: Vision-LLM beschreibt, was die Bilder WIRKLICH zeigen */}
+            <button onClick={async () => {
+                if (!confirm(`Alle ${assets.length || ''} Bild-Beschreibungen per Vision-KI neu erstellen? Kostet je Bild einen günstigen Vision-Aufruf. Empfohlen VOR dem Duplikate-Aufräumen.`)) return;
+                await withBusy('describe-assets', async () => {
+                  const r = await client!.socialDescribeAssets();
+                  if (!r.success) throw new Error(r.error ?? 'Erneuern fehlgeschlagen');
+                  if (r.display) setNotice(r.display);
+                  await loadAssets();
+                });
+              }}
+              disabled={busy === 'describe-assets'}
+              title="Beschreibungen stimmen oft nicht (Beschreibung = Prompt, nicht Bild): die Vision-KI schaut jedes Bild an und schreibt, was wirklich zu sehen ist — das verbessert Wiederverwendung und Duplikat-Erkennung"
+              className="px-2 py-1 text-[11px] border border-sky-500/40 text-sky-300 hover:bg-sky-500/15 disabled:opacity-50 rounded">
+              {busy === 'describe-assets' ? '⏳' : '🔍 Beschreibungen erneuern'}
+            </button>
             <button onClick={() => setAssetsOpen(o => !o)} className="text-gray-500 text-xs">{assetsOpen ? '▲' : '▼'}</button>
           </div>
           {assetsOpen && (
@@ -1822,6 +1895,23 @@ export function SocialPage() {
                         className={clsx('px-1.5 py-0.5 text-[10px] border disabled:opacity-50 rounded',
                           a.pinned ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/15' : 'border-emerald-500/30 text-emerald-400/70 hover:bg-emerald-500/15')}>
                         📌
+                      </button>
+                      {/* v1041 — als Termin-Vorlage für ALLE Kanäle setzen (pro Kanal: Kanal-Einstellungen → Termin-Vorlage) */}
+                      <button onClick={async () => {
+                          if (!confirm('Dieses Bild als Termin-Vorlage für ALLE Kanäle setzen? Termin-Posts nutzen dann immer dieses Basis-Bild (Daten kommen aus der Termin-Karte, kein Bild-Budget).')) return;
+                          await withBusy(a.id, async () => {
+                            for (const ch of channels) {
+                              await client!.updateSocialChannel(ch.id, { config: { image_overlay: { termin_image: a.id } } });
+                            }
+                            if (!a.pinned) await client!.socialAssetAction(a.id, 'pin').catch(() => {});
+                            setNotice(`📅 Termin-Vorlage auf ${channels.length} Kanäle gesetzt.`);
+                            await loadAssets();
+                            await load();
+                          });
+                        }} disabled={busy === a.id}
+                        title="Als Termin-Vorlage für ALLE Kanäle: Termin-Ankündigungen nutzen immer dieses Bild (wird gepinnt); pro Kanal änderbar in den Kanal-Einstellungen"
+                        className="px-1.5 py-0.5 text-[10px] border border-purple-500/30 text-purple-400/80 hover:bg-purple-500/15 disabled:opacity-50 rounded">
+                        📅
                       </button>
                       <button onClick={() => assetAction(a, a.blocked ? 'unblock' : 'block')} disabled={busy === a.id}
                         className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 rounded">
