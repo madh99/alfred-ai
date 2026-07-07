@@ -1762,6 +1762,21 @@ export function SocialPage() {
               className="px-2 py-1 text-[11px] border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 disabled:opacity-50 rounded">
               {busy === 'refresh-overlays' ? '⏳' : '🖌️ Overlays neu'}
             </button>
+            {/* v1039 — Fast-Duplikate aufräumen: pro Ähnlichkeits-Gruppe bleibt ein Bild (gepinnt > meistgenutzt > neuestes) */}
+            <button onClick={async () => {
+                if (!confirm('Fast-Duplikate aus der Bibliothek löschen? Pro Gruppe ähnlicher Bilder bleibt eines erhalten (gepinnte immer). Datei + Eintrag der übrigen werden entfernt.')) return;
+                await withBusy('dedup-library', async () => {
+                  const r = await client!.socialDedupLibrary();
+                  if (!r.success) throw new Error(r.error ?? 'Aufräumen fehlgeschlagen');
+                  if (r.display) setNotice(r.display);
+                  await loadAssets();
+                });
+              }}
+              disabled={busy === 'dedup-library'}
+              title="Fast-identische Basis-Bilder (gleicher Pool, Stil, Format, ähnliches Motiv) zusammenfassen — pro Gruppe bleibt eines, gepinnte werden nie gelöscht"
+              className="px-2 py-1 text-[11px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 rounded">
+              {busy === 'dedup-library' ? '⏳' : '🧹 Duplikate aufräumen'}
+            </button>
             <button onClick={() => setAssetsOpen(o => !o)} className="text-gray-500 text-xs">{assetsOpen ? '▲' : '▼'}</button>
           </div>
           {assetsOpen && (

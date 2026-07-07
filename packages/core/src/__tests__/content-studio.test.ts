@@ -1180,7 +1180,7 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     expect(execute).not.toHaveBeenCalled(); // kein Generierungs-Call
     const genImage = (socialRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
     expect(genImage.length).toBe(0); // kein Budget verbraucht
-    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-1');
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-1', 'ch-1');
     const media = (socialRepo.createItem as any).mock.calls[0][2].media;
     expect(media[0].pathOrUrl).toContain('studio-'); // eigenes Item-Bild (mit frischem Overlay)
     // v1027 — ohne Titel-Overlay/Termin-Karte trägt der Dateiname den Plattform-Marker
@@ -1223,7 +1223,7 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
       bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
     });
     expect(execute).not.toHaveBeenCalled();
-    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-pin'); // Stamm-Bild gewinnt
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-pin', 'ch-1'); // Stamm-Bild gewinnt
     void media;
   });
 
@@ -1244,7 +1244,7 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
       bildidee: 'Fußball liegt im Rampenlicht des Stadions', // kaum Token-Überlappung
     });
     expect(execute).not.toHaveBeenCalled(); // Embedding-Treffer statt Neuanfertigung
-    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-sem');
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-sem', 'ch-1');
     void media;
   });
 
@@ -1285,6 +1285,64 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     expect(created[1].motif).toContain('Stadion unter Flutlicht');
     expect(created[1].format).toBe('1536x1024');
     expect(created[1].path).toContain('asset-');
+  });
+
+  it('v1039(C): gestern auf ANDEREM Kanal genutzt → für diesen Kanal sofort frei', async () => {
+    const fresh = new Date(Date.now() - 1 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const assetPath = join(dir, 'asset-anderer-kanal.png');
+    await writeFile(assetPath, Buffer.from('base'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-x', userId: OWNER, channelId: 'ch-1', path: assetPath,
+      motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+      style: undefined, format: '1536x1024', lastUsedAt: fresh, useCount: 2,
+      channelUses: { 'ch-instagram': fresh }, // dieser Kanal (ch-1) hat es NIE genutzt
+      blocked: false, pinned: false, createdAt: fresh,
+    }]);
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '',
+      bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+    });
+    expect(execute).not.toHaveBeenCalled(); // Reuse trotz frischer Fremd-Nutzung
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-x', 'ch-1');
+    void media;
+  });
+
+  it('v1039(C): gestern auf DIESEM Kanal genutzt → Cooldown greift, normale Generierung', async () => {
+    const fresh = new Date(Date.now() - 1 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, llm, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const assetPath = join(dir, 'asset-eigener-kanal.png');
+    await writeFile(assetPath, Buffer.from('base'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-y', userId: OWNER, channelId: 'ch-1', path: assetPath,
+      motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+      style: undefined, format: '1536x1024', lastUsedAt: fresh, useCount: 2,
+      channelUses: { 'ch-1': fresh },
+      blocked: false, pinned: false, createdAt: fresh,
+    }]);
+    (llm.complete as any).mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok"}' });
+    await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '',
+      bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+    });
+    expect(execute).toHaveBeenCalled(); // kein Reuse — dieser Kanal hatte es gerade erst
+  });
+
+  it('v1039(E): dedupMediaLibrary — Fast-Duplikate weg, Stamm-Bild bleibt, Fremdmotiv unberührt', async () => {
+    const old = new Date(Date.now() - 10 * 24 * 3_600_000).toISOString();
+    const { studio, socialRepo, dir, writeFile, join } = await makeMediaStudio([]);
+    const mk = async (name: string) => { const p = join(dir, name); await writeFile(p, Buffer.from(name)); return p; };
+    const base = { userId: OWNER, channelId: 'ch-1', style: undefined, format: '1536x1024', lastUsedAt: old, blocked: false, createdAt: old };
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [
+      { ...base, id: 'a-pin', path: await mk('asset-pin.png'), motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen', useCount: 1, pinned: true },
+      { ...base, id: 'a-big', path: await mk('asset-big.png'), motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen, atmosphärisch', useCount: 9, pinned: false },
+      { ...base, id: 'a-small', path: await mk('asset-small.png'), motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen bei Nacht', useCount: 1, pinned: false },
+      { ...base, id: 'a-other', path: await mk('asset-other.png'), motif: 'Taktiktafel mit Kreide in der Kabine', useCount: 1, pinned: false },
+    ]);
+    const r = await studio.dedupMediaLibrary();
+    expect(r).toEqual({ scanned: 4, groups: 1, removed: 2 });
+    const deleted = (socialRepo as any).deleteMediaAsset.mock.calls.map((c: any[]) => c[1]);
+    expect(deleted.sort()).toEqual(['a-big', 'a-small']); // gepinnt gewinnt, Fremdmotiv bleibt
   });
 });
 

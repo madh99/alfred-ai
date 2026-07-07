@@ -711,6 +711,8 @@ export class HttpAdapter extends MessagingAdapter {
     planStory?: (body: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     /** v1026 — Overlays unveröffentlichter Beiträge aus Basis-Assets neu anwenden. */
     refreshOverlays?: (body: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
+    /** v1039 — Fast-Duplikate der Bild-Bibliothek aufräumen. */
+    dedupLibrary?: () => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string, width?: number) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1385,6 +1387,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSocialBody(req, res, async (body) => {
         if (!this.socialCallbacks?.refreshOverlays) return { error: 'not supported' };
         return this.socialCallbacks.refreshOverlays(body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/dedup-library' && req.method === 'POST') {
+      // v1039 — Fast-Duplikate der Bild-Bibliothek aufräumen
+      this.handleSocialBody(req, res, async () => {
+        if (!this.socialCallbacks?.dedupLibrary) return { error: 'not supported' };
+        return this.socialCallbacks.dedupLibrary();
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/social/channels' && req.method === 'POST') {
       // v1015 — Kanal-Wizard

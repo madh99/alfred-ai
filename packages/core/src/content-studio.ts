@@ -1938,6 +1938,11 @@ Antworte NUR mit einem JSON-Array:
    *     „Fußball auf Rasen, Stadion unscharf"). Ohne Embedding-Provider bleibt
    *     das Token-Matching allein (bisheriges Verhalten).
    * (D) Stamm-Bilder gewinnen bei mehreren Treffern immer.
+   *
+   * v1039 (C) — der Cooldown gilt JE KANAL (asset.channelUses), nicht global:
+   * ein gestern auf Instagram genutztes Basis-Bild ist für Facebook sofort
+   * frei (anderes Publikum, anderes Overlay). Altbestand ohne Kanal-Daten
+   * fällt konservativ auf den globalen Zeitstempel zurück.
    */
   private async tryReuseAsset(
     channel: SocialChannel, motif: string, idea: GeneratedIdea,
@@ -1960,7 +1965,9 @@ Antworte NUR mit einem JSON-Array:
       if (asset.blocked) continue; // v1014 — vom User gesperrt
       const effectiveDays = asset.pinned || (genericWanted && ContentStudio.isGenericMotif(asset.motif))
         ? Math.min(shortDays, cooldownDays) : cooldownDays;
-      if (asset.lastUsedAt >= new Date(now - effectiveDays * 24 * 3_600_000).toISOString()) continue;
+      // v1039(C) — Nutzung DIESES Kanals zählt; nie von diesem Kanal genutzt = frei
+      const lastUsedHere = asset.channelUses ? asset.channelUses[channel.id] : asset.lastUsedAt;
+      if (lastUsedHere !== undefined && lastUsedHere >= new Date(now - effectiveDays * 24 * 3_600_000).toISOString()) continue;
       if ((asset.style ?? '') !== (style ?? '')) continue;
       if ((asset.format ?? 'square') !== (format.size ?? 'square')) continue;
       const have = ContentStudio.motifTokens(asset.motif);
@@ -1995,7 +2002,7 @@ Antworte NUR mit einem JSON-Array:
     // v1027 — gleicher „-no-title"-Marker wie im Frisch-Pfad (Plattform-Signal)
     const file = join(this.mediaDir!, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ContentStudio.overlayBakesTitle(channel, idea, forcedTitle) ? '' : '-no-title'}.png`);
     await writeFile(file, finalBuffer);
-    await this.socialRepo.touchMediaAsset(this.ownerUserId, best.asset.id).catch(() => { /* non-critical */ });
+    await this.socialRepo.touchMediaAsset(this.ownerUserId, best.asset.id, channel.id).catch(() => { /* non-critical */ });
     this.logger.info({ channel: channel.name, asset: best.asset.id, score: Number(best.score.toFixed(2)), motif: motif.slice(0, 80) }, 'v1005 image reused from library (kein Budget verbraucht)');
     return [{ type: 'image', source: 'generated', pathOrUrl: file }];
   }
@@ -2141,6 +2148,75 @@ Antworte NUR mit einem JSON-Array:
     }
     this.logger.info({ refreshed, skipped, channels: [...touched] }, 'v1026 overlays refreshed');
     return { refreshed, skipped, channels: [...touched] };
+  }
+
+  /**
+   * v1039 (E) — Dedup-Aufräumen der Bild-Bibliothek: Fast-Duplikate (gleicher
+   * Pool = Familie/Kanal + Stil + Format, Motiv ähnlich nach denselben Regeln
+   * wie die Wiederverwendung: Jaccard ≥ 0.5 ODER Embedding-Cosine ≥ 0.82)
+   * werden zu Gruppen zusammengefasst; pro Gruppe bleibt EIN Bild (gepinnt >
+   * meistgenutzt > neuestes), der Rest wird gelöscht (Datei + Eintrag).
+   * Gepinnte und gesperrte Assets werden NIE gelöscht. Bereits verwendete
+   * studio-Dateien der Items bleiben unberührt — gelöscht wird nur die
+   * Basis-Bild-Kopie der Bibliothek.
+   */
+  async dedupMediaLibrary(): Promise<{ scanned: number; groups: number; removed: number }> {
+    const assets = (await this.socialRepo.listMediaAssets(this.ownerUserId, { limit: 1000 }))
+      .filter(a => !a.blocked);
+    // Pools: nur innerhalb desselben Wiederverwendungs-Kontexts vergleichen
+    const pools = new Map<string, typeof assets>();
+    for (const a of assets) {
+      const key = `${a.family ?? a.channelId ?? ''}|${a.style ?? ''}|${a.format ?? 'square'}`;
+      const list = pools.get(key) ?? [];
+      list.push(a);
+      pools.set(key, list);
+    }
+    let groups = 0;
+    let removed = 0;
+    const { unlink } = await import('node:fs/promises');
+    for (const pool of pools.values()) {
+      if (pool.length < 2) continue;
+      // Union-Find über paarweise Motiv-Ähnlichkeit
+      const parent = pool.map((_, i) => i);
+      const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+      const tokens = pool.map(a => ContentStudio.motifTokens(a.motif));
+      for (let i = 0; i < pool.length; i++) {
+        for (let j = i + 1; j < pool.length; j++) {
+          const inter = [...tokens[i]].filter(t => tokens[j].has(t)).length;
+          const union = new Set([...tokens[i], ...tokens[j]]).size;
+          let similar = union > 0 && inter / union >= 0.5;
+          if (!similar) {
+            const vi = await this.embedMotifCached(pool[i].id, pool[i].motif);
+            const vj = await this.embedMotifCached(pool[j].id, pool[j].motif);
+            if (vi && vj) similar = cosineSimilarity(vi, vj) >= 0.82;
+          }
+          if (similar) parent[find(i)] = find(j);
+        }
+      }
+      const clusters = new Map<number, typeof pool>();
+      for (let i = 0; i < pool.length; i++) {
+        const root = find(i);
+        const list = clusters.get(root) ?? [];
+        list.push(pool[i]);
+        clusters.set(root, list);
+      }
+      for (const cluster of clusters.values()) {
+        if (cluster.length < 2) continue;
+        groups++;
+        const keeper = [...cluster].sort((a, b) =>
+          Number(b.pinned) - Number(a.pinned) || b.useCount - a.useCount || b.createdAt.localeCompare(a.createdAt))[0];
+        for (const asset of cluster) {
+          if (asset.id === keeper.id || asset.pinned) continue;
+          try {
+            await unlink(asset.path).catch(() => { /* Datei ggf. schon weg (anderer Node) */ });
+            await this.socialRepo.deleteMediaAsset(this.ownerUserId, asset.id);
+            removed++;
+          } catch { /* Einzelfehler überspringen */ }
+        }
+      }
+    }
+    this.logger.info({ scanned: assets.length, groups, removed }, 'v1039 media library deduped');
+    return { scanned: assets.length, groups, removed };
   }
 
   /**

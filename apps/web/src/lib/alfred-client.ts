@@ -599,6 +599,15 @@ export class AlfredClient {
     return res.json();
   }
 
+  // v1039 — Fast-Duplikate der Bild-Bibliothek aufräumen
+  async socialDedupLibrary(): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/dedup-library`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    if (!res.ok) throw new Error(`Social dedup-library: HTTP ${res.status}`);
+    return res.json();
+  }
+
   async fetchSocialMetrics(channelId: string): Promise<Array<{ itemId?: string; date: string; kind: string; value: number }>> {
     const res = await fetch(`${this.baseUrl}/api/social/channels/${channelId}/metrics`, { headers: this.authHeaders });
     if (!res.ok) return [];

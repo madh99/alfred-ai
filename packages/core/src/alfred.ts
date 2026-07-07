@@ -6725,6 +6725,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         socialSkill.setStoryPlanner((titel, stoff, family) => studio.planAdhocStory(titel, stoff, family));
         // v1026 — Overlays unveröffentlichter Beiträge aus Basis-Assets neu anwenden
         socialSkill.setOverlayRefresher(channel => studio.refreshOverlays(channel));
+        // v1039 — Fast-Duplikate der Bild-Bibliothek aufräumen
+        socialSkill.setLibraryDeduper(() => studio.dedupMediaLibrary());
         // v962 — auch Ad-hoc-Posts (add_content/crosspost) bekommen ein Bild,
         // wenn der Kanal generate_images hat (Studio-Leitplanken inkl. Budget)
         socialSkill.setImageGenerator((channel, item) => studio.generateImageForItem(channel, item));
@@ -8419,6 +8421,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               action: 'refresh_overlays',
               channel: typeof body.channel === 'string' ? body.channel : undefined,
             }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error, data: r.data };
+          },
+          // v1039 — Fast-Duplikate der Bild-Bibliothek aufräumen (läuft über den Skill)
+          dedupLibrary: async () => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({ action: 'dedup_library' }, socialCtx);
             return { success: r.success, display: r.display, error: r.error, data: r.data };
           },
           // v1024 — Ad-hoc-Story auf User-Zuruf (läuft über den Skill = Leitplanken)

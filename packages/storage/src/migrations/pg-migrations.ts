@@ -2049,4 +2049,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS pinned INTEGER NOT NULL DEFAULT 0`, []);
     },
   },
+  {
+    version: 123,
+    description: 'v1039 — Bild-Bibliothek: Nutzungs-Zeitstempel je Kanal (Cooldown je Kanal statt global) (PG-Spiegel zu SQLite v119).',
+    async up(db) {
+      await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS channel_uses TEXT`, []);
+    },
+  },
 ];

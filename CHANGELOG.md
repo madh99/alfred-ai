@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1039] - 2026-07-07
+
+### Added — Bild-Bibliothek: Cooldown je Kanal + Duplikate aufräumen (v1039)
+
+- **Cooldown gilt je Kanal, nicht mehr global**: Ein gestern auf Instagram
+  genutztes Basis-Bild ist für Facebook sofort frei — anderes Publikum,
+  anderes Overlay. Die Nutzung wird pro Kanal festgehalten (Migration
+  SQLite v119 / PG v123, `channel_uses`); Altbestand ohne Kanal-Daten
+  fällt konservativ auf den globalen Zeitstempel zurück.
+- **„🧹 Duplikate aufräumen"** in der Bild-Bibliothek: Fast-identische
+  Basis-Bilder (gleicher Pool, Stil und Format; Motiv ähnlich nach den
+  Wiederverwendungs-Regeln) werden zu Gruppen zusammengefasst — pro
+  Gruppe bleibt ein Bild (gepinnt vor meistgenutzt vor neuestem), der
+  Rest wird gelöscht. Gepinnte und gesperrte Bilder werden nie entfernt.
+  Auch per Chat: „Räum die Bild-Bibliothek auf" (`dedup_library`).
+
 ## [0.19.0-multi-ha.1038] - 2026-07-07
 
 ### Added — Bild-Bibliothek: Wiederverwendung, die wirklich greift (v1038)

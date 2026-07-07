@@ -2741,4 +2741,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE social_media_assets ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
     },
   },
+  {
+    version: 119,
+    description: 'v1039 — Bild-Bibliothek: Nutzungs-Zeitstempel je Kanal (Cooldown je Kanal statt global) (SQLite-Spiegel zu PG v123).',
+    up(db) {
+      db.exec(`ALTER TABLE social_media_assets ADD COLUMN channel_uses TEXT`);
+    },
+  },
 ];

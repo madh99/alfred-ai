@@ -114,6 +114,8 @@ export interface MediaAsset {
   format?: string;
   lastUsedAt: string;
   useCount: number;
+  /** v1039 — letzte Nutzung JE KANAL (channelId → ISO): der Reuse-Cooldown gilt pro Kanal, nicht global. */
+  channelUses?: Record<string, string>;
   /** v1014 — von der Wiederverwendung ausgeschlossen (UI: „Sperren"). */
   blocked: boolean;
   /** v1038 — Stamm-Bild: bevorzugter Wiederverwendungs-Pool mit kurzer Karenz (UI: „Pinnen"). */
@@ -135,6 +137,20 @@ const TRANSITIONS: Record<ContentStatus, ContentStatus[]> = {
 
 export function isValidTransition(from: ContentStatus, to: ContentStatus): boolean {
   return TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+/** v1039 — channel_uses-Spalte (JSON: channelId → ISO-Zeitstempel) defensiv parsen. */
+function parseChannelUses(raw: unknown): Record<string, string> | undefined {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) if (typeof v === 'string') out[k] = v;
+      return Object.keys(out).length > 0 ? out : undefined;
+    }
+  } catch { /* kaputtes JSON = wie keine Kanal-Daten */ }
+  return undefined;
 }
 
 /** v933 — Social-Media-Betrieb: Kanäle, Content-Pipeline, Performance-Metriken. */
@@ -305,13 +321,14 @@ export class SocialRepository {
   }): Promise<MediaAsset> {
     const now = new Date().toISOString();
     const id = randomUUID();
+    const channelUses = input.channelId ? { [input.channelId]: now } : undefined;
     await this.db.execute(
-      `INSERT INTO social_media_assets (id, user_id, channel_id, family, path, motif, style, format, last_used_at, use_count, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      `INSERT INTO social_media_assets (id, user_id, channel_id, family, path, motif, style, format, last_used_at, use_count, channel_uses, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
       [id, userId, input.channelId ?? null, input.family ?? null, input.path, input.motif.slice(0, 500),
-        input.style?.slice(0, 300) ?? null, input.format ?? null, now, now],
+        input.style?.slice(0, 300) ?? null, input.format ?? null, now, channelUses ? JSON.stringify(channelUses) : null, now],
     );
-    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, lastUsedAt: now, useCount: 1, blocked: false, pinned: false, createdAt: now };
+    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, lastUsedAt: now, useCount: 1, channelUses, blocked: false, pinned: false, createdAt: now };
   }
 
   async listMediaAssets(userId: string, opts?: { family?: string; channelId?: string; limit?: number }): Promise<MediaAsset[]> {
@@ -329,6 +346,7 @@ export class SocialRepository {
       style: r.style ? String(r.style) : undefined,
       format: r.format ? String(r.format) : undefined,
       lastUsedAt: String(r.last_used_at), useCount: Number(r.use_count ?? 1),
+      channelUses: parseChannelUses(r.channel_uses),
       blocked: Number(r.blocked ?? 0) === 1, pinned: Number(r.pinned ?? 0) === 1, createdAt: String(r.created_at),
     }));
   }
@@ -351,9 +369,20 @@ export class SocialRepository {
       [motif.slice(0, 500), id, userId]);
   }
 
-  async touchMediaAsset(userId: string, id: string): Promise<void> {
+  async touchMediaAsset(userId: string, id: string, channelId?: string): Promise<void> {
+    const now = new Date().toISOString();
+    // v1039 — Nutzung auch je Kanal festhalten (Read-Modify-Write reicht: ein
+    // verlorenes Update bedeutet höchstens eine etwas frühere Wiederverwendung).
+    if (channelId) {
+      const rows = await this.db.query(`SELECT channel_uses FROM social_media_assets WHERE id = ? AND user_id = ?`, [id, userId]) as Record<string, unknown>[];
+      const uses = parseChannelUses(rows[0]?.channel_uses) ?? {};
+      uses[channelId] = now;
+      await this.db.execute(`UPDATE social_media_assets SET last_used_at = ?, use_count = use_count + 1, channel_uses = ? WHERE id = ? AND user_id = ?`,
+        [now, JSON.stringify(uses), id, userId]);
+      return;
+    }
     await this.db.execute(`UPDATE social_media_assets SET last_used_at = ?, use_count = use_count + 1 WHERE id = ? AND user_id = ?`,
-      [new Date().toISOString(), id, userId]);
+      [now, id, userId]);
   }
 
   async deleteMediaAsset(userId: string, id: string): Promise<void> {
