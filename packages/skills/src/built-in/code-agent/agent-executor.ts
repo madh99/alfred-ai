@@ -415,6 +415,58 @@ export function isTransientApiFailure(result: Pick<AgentExecutionResult, 'stdout
 }
 
 /**
+ * v1047 — Kumulierte CPU-Ticks (utime+stime) des Prozesses `rootPid` und ALLER
+ * Nachfahren, gelesen aus /proc (Linux). Grundlage des Prozessbaum-CPU-
+ * Heartbeats: still laufende Builds/Tests produzieren keinen stdout, aber CPU.
+ * `procDir` ist nur für Tests injizierbar.
+ * @returns Ticks-Summe oder undefined, wenn /proc bzw. der Prozess nicht lesbar
+ *          ist (z.B. Windows, Prozess bereits beendet).
+ */
+export function sumProcessTreeCpuTicks(rootPid: number, procDir = '/proc'): number | undefined {
+  try {
+    const entries = fs.readdirSync(procDir).filter(n => /^\d+$/.test(n));
+    const byPpid = new Map<number, number[]>();
+    const cpu = new Map<number, number>();
+    for (const name of entries) {
+      let stat: string;
+      try {
+        stat = fs.readFileSync(path.join(procDir, name, 'stat'), 'utf8');
+      } catch {
+        continue; // Prozess zwischen readdir und read verschwunden
+      }
+      // Format: `pid (comm) state ppid …` — comm kann Leerzeichen/Klammern
+      // enthalten, deshalb hinter der LETZTEN schließenden Klammer parsen.
+      const close = stat.lastIndexOf(')');
+      if (close < 0) continue;
+      const rest = stat.slice(close + 2).split(' ');
+      const ppid = Number(rest[1]);
+      const utime = Number(rest[11]);
+      const stime = Number(rest[12]);
+      if (!Number.isFinite(ppid)) continue;
+      const pid = Number(name);
+      const list = byPpid.get(ppid) ?? [];
+      list.push(pid);
+      byPpid.set(ppid, list);
+      cpu.set(pid, (Number.isFinite(utime) ? utime : 0) + (Number.isFinite(stime) ? stime : 0));
+    }
+    if (!cpu.has(rootPid)) return undefined;
+    let sum = 0;
+    const queue = [rootPid];
+    const seen = new Set<number>();
+    while (queue.length > 0) {
+      const pid = queue.pop()!;
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      sum += cpu.get(pid) ?? 0;
+      for (const c of byPpid.get(pid) ?? []) queue.push(c);
+    }
+    return sum;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Resolve `${VAR_NAME}` placeholders in env values against process.env.
  */
 function resolveEnv(env: Record<string, string>): Record<string, string> {
@@ -682,7 +734,7 @@ export async function executeAgent(
     // gespamt wird. Pro inactivity-window genau eine Warning.
     let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
     let halfwayTimer: ReturnType<typeof setTimeout> | undefined;
-    let resetSource: 'stdout' | 'stderr' | 'fs-heartbeat' | 'initial' = 'initial';
+    let resetSource: 'stdout' | 'stderr' | 'fs-heartbeat' | 'proc-heartbeat' | 'initial' = 'initial';
     const resetInactivity = (source: typeof resetSource = 'initial') => {
       resetSource = source;
       if (inactivityTimer) clearTimeout(inactivityTimer);
@@ -723,6 +775,30 @@ export async function executeAgent(
       } catch { /* fs scan errors are non-fatal */ }
     }, 30_000);
     (heartbeatInterval as { unref?: () => void }).unref?.();
+
+    // v1047 — Prozessbaum-CPU-Heartbeat (der STRUKTURELLE Fix für die
+    // v844/v1046-Fehlerklasse): still laufende Builds/Tests (npm, next build,
+    // vitest) schreiben weder stdout noch src-Dateien — aber sie verbrennen
+    // CPU. Steigt die kumulierte utime+stime des gesamten Prozessbaums
+    // zwischen zwei Heartbeats messbar, gilt der Agent als aktiv — die
+    // Phase-Keyword-Wortliste (project-agent-runner) ist damit nur noch
+    // Feintuning, kein Single Point of Failure mehr. Ein wirklich hängender
+    // Agent (wartet auf Netz/Auth/stdin) verbraucht ~0 CPU und wird weiterhin
+    // vom Inactivity-Timeout eingesammelt. Linux-only (/proc); auf anderen
+    // Plattformen still inaktiv.
+    let lastTreeCpuTicks = child.pid !== undefined ? sumProcessTreeCpuTicks(child.pid) : undefined;
+    const procHeartbeatInterval = setInterval(() => {
+      if (child.pid === undefined) return;
+      const ticks = sumProcessTreeCpuTicks(child.pid);
+      if (ticks === undefined) return; // Prozess weg oder kein /proc
+      // ≥25 Ticks (~0,25s CPU bei 100Hz) in 30s = echte Arbeit; exitende
+      // Kinder lassen die Summe sinken — dann nur die Basis nachziehen.
+      if (lastTreeCpuTicks !== undefined && ticks > lastTreeCpuTicks + 25) {
+        resetInactivity('proc-heartbeat');
+      }
+      if (lastTreeCpuTicks === undefined || ticks !== lastTreeCpuTicks) lastTreeCpuTicks = ticks;
+    }, 30_000);
+    (procHeartbeatInterval as { unref?: () => void }).unref?.();
 
     const absoluteTimer = setTimeout(() => {
       killed = true;
@@ -825,6 +901,7 @@ export async function executeAgent(
       if (halfwayTimer) clearTimeout(halfwayTimer);
       clearTimeout(absoluteTimer);
       clearInterval(heartbeatInterval);
+      clearInterval(procHeartbeatInterval);
       // v844 — flush trailing partial line through parser
       if (stdoutBuffer.length > 0) {
         const trimmed = stdoutBuffer.replace(/\r$/, '');
@@ -901,6 +978,7 @@ export async function executeAgent(
       if (halfwayTimer) clearTimeout(halfwayTimer);
       clearTimeout(absoluteTimer);
       clearInterval(heartbeatInterval);
+      clearInterval(procHeartbeatInterval);
       const durationMs = Date.now() - startTime;
       resolve({
         stdout: truncateOutput(stdout),

@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1047] - 2026-07-07
+
+### Fixed — Project-Agent: Prozessbaum-CPU-Heartbeat (v1047)
+
+- **Still laufende Builds/Tests werden nicht mehr gekillt**: Der
+  Inactivity-Watchdog wertet jetzt die CPU-Zeit des gesamten
+  Agent-Prozessbaums (alle 30 s aus /proc): Läuft ein Subprozess
+  (npm, next build, vitest) und verbraucht CPU, gilt der Agent als
+  aktiv — unabhängig von der Phase-Keyword-Wortliste, die bisher der
+  einzige Schutz war (Realfall 07.07.: Phase „…Locale-Verifikation" ohne
+  Keyword-Treffer → nach 10 min stdout-Stille per SIGTERM abgebrochen,
+  obwohl Build/Tests liefen; gleiche Klasse wie die 30 Fails der
+  v844-Analyse). Ein wirklich hängender Agent (wartet auf Netz/Auth)
+  verbraucht ~0 CPU und wird weiterhin eingesammelt; die absolute
+  60-min-Grenze bleibt.
+
 ## [0.19.0-multi-ha.1046] - 2026-07-07
 
 ### Added — Termin-Daten für die Plattform + Artikel-Absätze (v1046)
