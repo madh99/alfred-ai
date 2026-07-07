@@ -49,7 +49,10 @@ export function nextFreeSlots(
   const out: string[] = [];
 
   for (let day = 0; day <= channel.planningHorizonDays && out.length < count; day++) {
-    const date = new Date(from.getTime() + day * 24 * 3_600_000);
+    // v1045 — KALENDARISCH iterieren statt +24h-Millisekunden: an DST-Grenzen
+    // (Europe/Vienna) verschob die Millisekunden-Rechnung die Ortszeit ±1h
+    // und konnte Wochentage überspringen/doppeln
+    const date = new Date(from.getFullYear(), from.getMonth(), from.getDate() + day, from.getHours(), from.getMinutes());
     for (const slot of slotDefs) {
       // v959 — LOKALE Server-Zeit (vorher UTC: „Mo 18:00" wurde auf einem
       // Europe/Vienna-Host um 20:00 Ortszeit veröffentlicht)
@@ -132,9 +135,18 @@ export function decodeHtmlEntities(text: string): string {
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
-    .replace(/&#0?39;/g, "'")
     .replace(/&apos;/gi, "'")
-    .replace(/&nbsp;/gi, ' ');
+    .replace(/&nbsp;/gi, ' ')
+    // v1045 — auch NUMERISCHE Entities (&#8217; = ’, &#xFC; = ü): Feeds und
+    // LLMs liefern sie gelegentlich; sie landeten bisher wörtlich im Post
+    .replace(/&#(\d+);/g, (m, d) => {
+      const cp = Number(d);
+      return Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (m, h) => {
+      const cp = parseInt(h, 16);
+      return Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    });
 }
 
 /**
@@ -726,12 +738,29 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       .filter(s => s.source === 'event' && Date.parse(s.createdAt) > Date.now() - 4 * 3_600_000);
     if (recentBreaking.length > 0) {
       const hourAhead = new Date(Date.now() + 3_600_000).toISOString();
+      // v1045 — Kollisionsprüfung: belegte Slot-Minuten JE KANAL, damit die
+      // +2h-Verschiebung nicht zwei Posts auf dieselbe Minute legt
+      const takenMinutes = new Map<string, Set<string>>();
+      for (const it of items) {
+        if (!it.scheduledAt) continue;
+        const set = takenMinutes.get(it.channelId) ?? new Set<string>();
+        set.add(it.scheduledAt.slice(0, 16));
+        takenMinutes.set(it.channelId, set);
+      }
       for (const item of items) {
         if (!item.scheduledAt || item.scheduledAt > hourAhead || item.scheduledAt <= nowIso) continue;
         if (typeof item.performance?.terminBis === 'string') continue; // Termine weichen nicht
         if (item.storyId && recentBreaking.some(s => s.id === item.storyId)) continue; // die Eilmeldung selbst
-        const newAt = new Date(Date.parse(item.scheduledAt) + 2 * 3_600_000).toISOString();
+        const taken = takenMinutes.get(item.channelId) ?? new Set<string>();
+        let newAtMs = Date.parse(item.scheduledAt) + 2 * 3_600_000;
+        for (let tries = 0; tries < 8 && taken.has(new Date(newAtMs).toISOString().slice(0, 16)); tries++) {
+          newAtMs += 15 * 60_000; // v1045 — belegte Minute → 15 min weiter
+        }
+        const newAt = new Date(newAtMs).toISOString();
         if (await this.socialRepo.reschedule(this.ownerUserId, item.id, newAt, ['scheduled', 'approved'])) {
+          taken.delete(item.scheduledAt.slice(0, 16));
+          taken.add(newAt.slice(0, 16));
+          takenMinutes.set(item.channelId, taken);
           result.deferred++;
           notes.push(`↩️ +2h verschoben (macht der Eilmeldung Platz): „${(item.title ?? item.body).slice(0, 60)}"`);
         }
@@ -996,6 +1025,10 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       for (const a of assigns) {
         const cap = a.cap!;
         if (cand.kind !== 'termin' && cap.created >= cap.needed) continue; // Kapazität erschöpft (Termine haben Vorrang)
+        // v1045 — Haltbarkeit je KANAL (config shelf_life_hours des jeweiligen
+        // Kanals): vorher galt die Lead-Deadline auch für alle Follower
+        const myShelf = ContentStudio.shelfLifeHours(cand.kind, cap.channel);
+        const myDeadline = myShelf !== undefined ? new Date(Date.now() + myShelf * 3_600_000).toISOString() : undefined;
         // Slot: Termin → vor Anpfiff; Lead → nächster freier; Follower → ≥ Lead + Versatz
         // v997 — Slot-Wahl VOR dem Rendern: verderbliche Follower ohne Slot in
         // der Haltbarkeit werden ausgelassen statt als alternder Entwurf angelegt.
@@ -1011,11 +1044,11 @@ Antworte NUR mit einem VALIDEN JSON-Array:
             slot = cap.slotPool.shift();
           } else {
             const target = new Date(Date.parse(leadSlot) + a.offset * 3_600_000).toISOString();
-            const idx = cap.slotPool.findIndex(s => s >= target && (!deadline || s <= deadline));
+            const idx = cap.slotPool.findIndex(s => s >= target && (!myDeadline || s <= myDeadline));
             if (idx >= 0) slot = cap.slotPool.splice(idx, 1)[0];
-            else if (deadline) slot = await this.swapWithEvergreen(cap.channel, deadline, cap.slotPool, target);
+            else if (myDeadline) slot = await this.swapWithEvergreen(cap.channel, myDeadline, cap.slotPool, target);
           }
-          if (deadline && slot && slot > deadline) {
+          if (myDeadline && slot && slot > myDeadline) {
             // Lead-Slot doch außerhalb (Pool war leer nach Swap-Versuch) → zurücklegen und auslassen
             cap.slotPool.unshift(slot);
             cap.slotPool.sort();
@@ -1024,7 +1057,7 @@ Antworte NUR mit einem VALIDEN JSON-Array:
           // v1044 — wartet der Follower nur auf die Lead-Freigabe (suggest),
           // wird er als slotloser Entwurf ANGELEGT statt still verworfen:
           // vorher fielen verderbliche Follower in Mixed-Mode-Familien komplett aus.
-          if (deadline && !slot && !awaitingLead) continue; // verderblich ohne Slot → nicht produzieren
+          if (myDeadline && !slot && !awaitingLead) continue; // verderblich ohne Slot → nicht produzieren
         }
         const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot);
         if (!item) {
@@ -1067,6 +1100,10 @@ Antworte NUR mit einem VALIDEN JSON-Array:
   private adhocTaken(channelId: string): Set<string> {
     let set = this.adhocSlotMinutes.get(channelId);
     if (!set) { set = new Set(); this.adhocSlotMinutes.set(channelId, set); }
+    // v1045 — vergangene Minuten austragen: die Map wuchs im langlebigen
+    // Prozess sonst unbegrenzt (schleichender Speicher-Verbrauch)
+    const nowMinute = new Date().toISOString().slice(0, 16);
+    for (const m of set) if (m < nowMinute) set.delete(m);
     return set;
   }
 
@@ -1223,11 +1260,13 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     // v977 — Veröffentlichungsfenster für den Prompt: das LLM kennt sonst das
     // Erscheinungsdatum nicht und schreibt „heute Nacht" für ein Spiel, dessen
     // Post zwei Tage später erscheint (Realfall Argentinien 04./05.07.).
-    const window = slotPool.length > 0 ? { from: slotPool[0], to: slotPool[slotPool.length - 1] } : undefined;
     // v971 — in BATCHES generieren (LLM liefert je Aufruf max. ~10 brauchbare
     // Ideen): weitere Runden bis der Bedarf gedeckt ist oder keine neuen,
     // dedup-überlebenden Ideen mehr kommen.
     for (let round = 0; round < 4 && created < target; round++) {
+      // v1045 — Fenster JE RUNDE neu aus dem (schrumpfenden) Slot-Pool: das
+      // eingefrorene Fenster nannte in Runde 2-4 Zeiträume, die längst weg waren
+      const window = slotPool.length > 0 ? { from: slotPool[0], to: slotPool[slotPool.length - 1] } : undefined;
       const batchSize = Math.min(8, target - created);
       const ideas = await this.generateIdeas(channel, batchSize, family.block, blocked, upcoming, window);
       // v978 — ein leerer/unparsebarer Batch beendet den Lauf NICHT mehr
@@ -1769,6 +1808,9 @@ Antworte NUR mit einem JSON-Array:
     if (topicIds.length === 0) return '';
     const blockedTitles = blocked?.map(b => b.title) ?? [];
     const sections: string[] = [];
+    // v1045 — Cross-Topic-Dedup: derselbe Quell-Artikel hängt oft an mehreren
+    // Themen (WM + Transfers) und wurde doppelt gelistet = doppelt gewichtet
+    const seenAcrossTopics = new Set<string>();
     for (const topicId of topicIds) {
       try {
         const [topic, digest, items] = await Promise.all([
@@ -1782,7 +1824,20 @@ Antworte NUR mit einem JSON-Array:
         // v986 — die SUMMARY kommt mit ins Dossier: eine nackte Schlagzeile
         // zwang das LLM, Details zu ERFINDEN (Halluzinations-Quelle Nr. 1);
         // mit dem Feed-Auszug hat die Fakten-Treue-Regel echtes Material.
-        const itemLines = items.filter(i => i.sourceKind !== 'events').slice(0, 8).map(i => {
+        // v1045 — Wichtigkeit vor reiner Frische: Top-8 nach Radar-importance
+        // (Gleichstand: neuere zuerst = stabile listItems-Reihenfolge)
+        const itemLines = items
+          .filter(i => i.sourceKind !== 'events')
+          .map((i, idx) => ({ i, idx }))
+          .sort((a, b) => (b.i.importance ?? 0.5) - (a.i.importance ?? 0.5) || a.idx - b.idx)
+          .map(x => x.i)
+          .filter(i => {
+            const key = (i.url && i.url.trim()) || i.title.toLowerCase().trim();
+            if (seenAcrossTopics.has(key)) return false;
+            seenAcrossTopics.add(key);
+            return true;
+          })
+          .slice(0, 8).map(i => {
           const covered = blockedTitles.length > 0 && isNearDuplicateTitle(i.title, blockedTitles);
           // v1036 — Quellen-Boilerplate strippen, bevor sie ins Dossier gelangt
           const cleanSummary = typeof i.summary === 'string' ? stripSourceBoilerplate(i.summary) : '';
@@ -1958,12 +2013,9 @@ Antworte NUR mit einem JSON-Array:
         // v990 — JEDER Generierungs-Versuch zählt aufs Budget (auch wenn das
         // Vision-Gate das Bild gleich verwirft): der OpenAI-Betrag ist dann
         // trotzdem angefallen. Vorher liefen Gate-Retries am Budget vorbei.
-        {
-          const today = new Date().toISOString().slice(0, 10);
-          const todayUsed = (await this.socialRepo.listMetrics(channel.id, { kind: 'gen_image', sinceDate: today }))
-            .find(m => m.date === today && !m.itemId)?.value ?? 0;
-          await this.socialRepo.upsertMetric(channel.id, { date: today, kind: 'gen_image', value: todayUsed + 1 });
-        }
+        // v1045 — atomar (value = value + 1): das Read-Modify-Write zählte
+        // bei nebenläufigen Generierungen zu niedrig.
+        await this.socialRepo.incrementMetric(channel.id, { date: new Date().toISOString().slice(0, 10), kind: 'gen_image' });
 
         // v942 — image_generate liefert das Bild als Buffer-Attachment
         const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string }> }).attachments?.[0];

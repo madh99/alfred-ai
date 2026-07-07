@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1045] - 2026-07-07
+
+### Fixed — Audit-Runde Teil 4: Feinschliff (v1045)
+
+- **Numerische HTML-Entities** (`&#8217;` `&#xFC;`) werden jetzt dekodiert
+  — sie konnten wörtlich im veröffentlichten Text landen.
+- **Übersetzungs-Cache** berücksichtigt die Quellsprache: ein
+  `language`-Wechsel bei gleichem Text traf sonst die veraltete Übersetzung.
+- **Themen-Dossier**: derselbe Quell-Artikel unter mehreren Themen wird
+  nur noch einmal gelistet (vorher doppelt gewichtet); die Top-8 je Thema
+  wählen nach Radar-Wichtigkeit statt reiner Frische.
+- **Eilmeldungs-Verschiebung (+2h)** prüft belegte Slot-Minuten und
+  weicht in 15-Minuten-Schritten aus — keine zwei Posts zur selben Minute.
+- **Veröffentlichungsfenster im Prompt** wird je Batch-Runde neu aus dem
+  schrumpfenden Slot-Pool berechnet (stand sonst auf vergebenen Zeiten).
+- **„Beschreibungen erneuern"** ist gedeckelt (300 je Lauf) und läuft mit
+  3-fach-Parallelität statt Asset für Asset — der Aufruf blockiert nicht
+  mehr minutenlang; Rest folgt beim nächsten Klick.
+- **Bild-Budget-Zähler atomar** (`value = value + 1` in SQL) statt
+  Read-Modify-Write — nebenläufige Generierungen zählten zu niedrig.
+- **Termin-Slot-Merker** räumt vergangene Minuten aus (wuchs sonst
+  unbegrenzt im langlebigen Prozess).
+- **Haltbarkeits-Deadline je Kanal**: Follower nutzen ihre eigene
+  `shelf_life_hours`-Config statt der des Lead-Kanals.
+- **Vorlagen-Upload validiert per sharp**: Dekodierbarkeit, Mindestgröße
+  400×300, kein extremes Seitenverhältnis.
+- **Slot-Berechnung kalendarisch** statt in 24h-Millisekunden — an
+  DST-Grenzen (Europe/Vienna) konnten Wochentage kippen.
+- Zeichenzählung bleibt bewusst bei UTF-16 (Analyse: X gewichtet Emojis
+  mit 2 = exakt UTF-16; Bluesky-Grapheme werden überschätzt = sicher).
+
 ## [0.19.0-multi-ha.1044] - 2026-07-07
 
 ### Fixed — Audit-Runde Teil 3: Auswahl & Planung (v1044)

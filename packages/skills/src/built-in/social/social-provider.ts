@@ -224,6 +224,11 @@ export function isInternalUrl(url: string): boolean {
  * v1042 — Plattform-gewichtete Textlänge: X ersetzt jede URL per t.co durch
  * exakt 23 Zeichen — die ECHTE Länge einer UTM-URL (100-150 Zeichen) in der
  * Rechnung zu reservieren kürzte X-Posts grundlos um ~100 Zeichen.
+ *
+ * v1045 — BEWUSST UTF-16-Einheiten (.length) statt Graphemen/Codepoints:
+ * X gewichtet Emojis mit 2 (= ihre UTF-16-Länge, passt exakt), Bluesky zählt
+ * Grapheme (≤ UTF-16 → wir überschätzen = sicher). Codepoint-Zählung würde
+ * Emojis auf X UNTERSCHÄTZEN und Posts über 280 schicken.
  */
 function weightedLength(text: string, urlWeight?: number): number {
   if (!urlWeight) return text.length;

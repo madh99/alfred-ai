@@ -597,6 +597,22 @@ export class SocialRepository {
 
   // ── Metrics ───────────────────────────────────────────────────────────
 
+  /** v1045 — atomares Hochzählen (z.B. gen_image-Budget): value = value + 1 statt Read-Modify-Write. */
+  async incrementMetric(channelId: string, opts: { date: string; kind: string; itemId?: string }): Promise<void> {
+    const r = await this.db.execute(
+      `UPDATE channel_metrics SET value = value + 1 WHERE channel_id = ? AND COALESCE(item_id, '') = ? AND date = ? AND kind = ?`,
+      [channelId, opts.itemId ?? '', opts.date, opts.kind],
+    );
+    if (r.changes > 0) return;
+    // Zeile fehlt noch — anlegen; ein Doppel-INSERT im Rennen zweier Nodes ist
+    // unkritisch: die Budget-Leser SUMMIEREN über alle Zeilen des Schlüssels.
+    await this.db.execute(
+      `INSERT INTO channel_metrics (id, channel_id, item_id, date, kind, value, meta, created_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      [randomUUID(), channelId, opts.itemId ?? null, opts.date, opts.kind, null, new Date().toISOString()],
+    );
+  }
+
   async upsertMetric(channelId: string, opts: {
     itemId?: string; date: string; kind: string; value: number; meta?: Record<string, unknown>;
   }): Promise<void> {

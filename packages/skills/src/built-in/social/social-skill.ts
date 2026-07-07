@@ -772,10 +772,12 @@ export class SocialSkill extends Skill {
         ? (channel.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string' && /^[a-z]{2}(-[a-z]{2})?$/i.test(l)).map(l => l.toLowerCase())
         : [];
       if (targets.length === 0) return item;
-      const marker = `${createHash('sha256').update(`${item.title ?? ''}\u0000${item.body}`).digest('hex').slice(0, 16)}:${targets.join(',')}`;
+      // v1045 — QUELLSPRACHE gehört in den Marker: ein language-Wechsel bei
+      // gleichem Text/Zielen traf sonst den Cache aus der alten Quellsprache
+      const source = typeof channel.config.language === 'string' ? channel.config.language : 'de';
+      const marker = `${createHash('sha256').update(`${item.title ?? ''}\u0000${item.body}`).digest('hex').slice(0, 16)}:${source}:${targets.join(',')}`;
       const cached = item.performance?.translations;
       if (cached && typeof cached === 'object' && item.performance?.translationsOf === marker) return item;
-      const source = typeof channel.config.language === 'string' ? channel.config.language : 'de';
       const prompt = `Übersetze den folgenden Artikel aus ${languageName(source)} in die Zielsprachen: ${targets.map(t => `"${t}" (${languageName(t)})`).join(', ')}.
 Regeln: sinn- und tongetreu, KEINE Fakten ändern oder ergänzen, Eigennamen/Vereins-/Ortsnamen unverändert, Zahlen/Daten/Uhrzeiten exakt übernehmen. Zitate im Text mit \\" escapen.
 

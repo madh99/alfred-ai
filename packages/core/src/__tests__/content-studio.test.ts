@@ -116,6 +116,12 @@ describe('decodeHtmlEntities (v942)', () => {
     expect(decodeHtmlEntities('&lt;b&gt;fett&lt;/b&gt; &quot;zitiert&quot; &#39;x&#39;&nbsp;!')).toBe(`<b>fett</b> "zitiert" 'x' !`);
   });
 
+  it('v1045: auch numerische und hex-Entities werden dekodiert', () => {
+    expect(decodeHtmlEntities('Messi&#8217;s Abschied &#252;ber Nacht &#x2013; &#x201E;Danke&#x201C;')).toBe('Messi’s Abschied über Nacht – „Danke“');
+    // kaputte/absurde Codepoints bleiben unangetastet
+    expect(decodeHtmlEntities('&#0; &#1114112; &#xZZ;')).toBe('&#0; &#1114112; &#xZZ;');
+  });
+
   it('parseIdeas wendet die Dekodierung auf title UND body an', () => {
     const out = parseIdeas('[{"title":"ÖFB-Rückblick &amp; Rangnick-Ära","body":"Kopf hoch &amp; weiter — ein langer Text hier."}]');
     expect(out[0].title).toBe('ÖFB-Rückblick & Rangnick-Ära');
@@ -211,7 +217,7 @@ function makeStack(opts: {
     mergePerformance: vi.fn(async () => {}),
     updateChannel: vi.fn(async () => {}),
     listMetrics: vi.fn(async () => []),
-    upsertMetric: vi.fn(async () => {}),
+    upsertMetric: vi.fn(async () => {}), incrementMetric: vi.fn(async () => {}),
     reschedule: vi.fn(async () => true),
     // v1005 — Bild-Bibliothek
     listMediaAssets: vi.fn(async () => []),
@@ -449,7 +455,7 @@ describe('ContentStudio (v935)', () => {
       mergePerformance: vi.fn(async () => {}),
       updateChannel: vi.fn(async () => {}),
       listMetrics: vi.fn(async () => []),
-      upsertMetric: vi.fn(async () => {}),
+      upsertMetric: vi.fn(async () => {}), incrementMetric: vi.fn(async () => {}),
       listChannels: vi.fn(async () => [channel]),
     } as any;
     const interests = {
@@ -469,7 +475,7 @@ describe('ContentStudio (v935)', () => {
     expect(createdMedia[0]).toEqual([]);
     // v990 — beide VERSUCHE zählen trotzdem aufs Budget: die OpenAI-Kosten
     // fielen an, auch wenn das Vision-Gate die Bilder verwarf
-    expect((miniRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image').length).toBe(2);
+    expect((miniRepo.incrementMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image').length).toBe(2);
   });
 
   it('v950: people_ok-Policy überspringt Scrubbing und Vision-Gate', async () => {
@@ -486,7 +492,7 @@ describe('ContentStudio (v935)', () => {
       createItem: vi.fn(async (_u: string, chId: string, o: any) => { createdMedia.push(o.media); return { id: 'g1', channelId: chId, ...o, createdAt: 'x', updatedAt: 'x' }; }),
       transition: vi.fn(async () => ({})), mergePerformance: vi.fn(async () => {}),
       updateChannel: vi.fn(async () => {}), listMetrics: vi.fn(async () => []),
-      upsertMetric: vi.fn(async () => {}), listChannels: vi.fn(async () => [channel]),
+      upsertMetric: vi.fn(async () => {}), incrementMetric: vi.fn(async () => {}), listChannels: vi.fn(async () => [channel]),
     } as any;
     const interests = { getDigest: vi.fn(async () => null), listItems: vi.fn(async () => []), findTopicByName: vi.fn(async () => null), createTopic: vi.fn(async () => ({ id: 't-1' })) } as any;
     const { ContentStudio } = await import('../content-studio.js');
@@ -523,6 +529,28 @@ describe('ContentStudio (v935)', () => {
     expect(prompt).toContain('Verteile die Posts sinnvoll über ALLE obigen Themen');
     // kein Auto-Topic angelegt — Themen sind ja verknüpft
     expect(interestsRepo.createTopic).not.toHaveBeenCalled();
+  });
+
+  it('v1045: Dossier — Cross-Topic-Dedup (gleicher Artikel nur einmal) + Wichtigkeit vor Frische', async () => {
+    const channel = makeChannel({ config: { topic_ids: ['t-1', 't-2'] } });
+    const { studio, llm, interestsRepo } = makeStack({ channel });
+    (interestsRepo.getTopicById as any) = vi.fn(async (_u: string, id: string) =>
+      id === 't-1' ? { id: 't-1', name: 'WM 2026' } : { id: 't-2', name: 'Transfers' });
+    (interestsRepo.getDigest as any) = vi.fn(async () => null);
+    const shared = { id: 'n-shared', title: 'Mbappé-Transfer perfekt — Rekordsumme bestätigt', url: 'https://quelle.example/mbappe', sourceKind: 'rss', createdAt: 'x', importance: 0.9 };
+    (interestsRepo.listItems as any) = vi.fn(async (topicId: string) => topicId === 't-1'
+      ? [
+        // NEUESTES zuerst (listItems-Reihenfolge): bei reiner Frische wäre
+        // „Rasenpflege" in den Top-8 — nach Wichtigkeit fliegt es raus
+        { id: 'boring', topicId: 't-1', title: 'Rasenpflege im Trainingszentrum dokumentiert', sourceKind: 'rss', createdAt: 'x', importance: 0.1 },
+        shared,
+        ...Array.from({ length: 8 }, (_, i) => ({ id: `f${i}`, topicId: 't-1', title: `Wichtige Meldung Nummer ${i} zur Weltmeisterschaft`, sourceKind: 'rss', createdAt: 'x', importance: 0.7 })),
+      ]
+      : [shared]);
+    await studio.fillChannel(channel);
+    const prompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt.split('Mbappé-Transfer perfekt').length - 1).toBe(1); // nur EINMAL (Dedup über Topics)
+    expect(prompt).not.toContain('Rasenpflege'); // importance 0.1 verliert gegen 0.7er
   });
 
   it('v954: Geschwister-Kanäle derselben Familie → Rollen + Titel + Anti-Doppelungs-Regeln im Prompt', async () => {
@@ -954,6 +982,34 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     }
   });
 
+  it('v1045: Eilmeldungs-Verschiebung (+2h) weicht belegten Minuten aus (15-min-Schritte)', async () => {
+    const { studio, socialRepo, stories } = makeFamilyStack();
+    stories.push({ id: 'story-brk', source: 'event', createdAt: new Date().toISOString(), status: 'active', title: 'Eil' });
+    const in30 = new Date(Date.now() + 30 * 60_000).toISOString();
+    const target = new Date(Date.parse(in30) + 2 * 3_600_000).toISOString(); // +2h wäre belegt
+    (socialRepo.listItems as any) = vi.fn(async () => [
+      { id: 'i-weiche', channelId: 'ch-web', userId: OWNER, status: 'scheduled', title: 'Regulär', body: 'T', media: [], hashtags: [], source: 'studio', createdAt: 'x', updatedAt: 'x', scheduledAt: in30 },
+      { id: 'i-belegt', channelId: 'ch-web', userId: OWNER, status: 'scheduled', title: 'Später', body: 'T', media: [], hashtags: [], source: 'studio', createdAt: 'x', updatedAt: 'x', scheduledAt: target },
+    ]);
+    const rescheduled: any[] = [];
+    (socialRepo.reschedule as any) = vi.fn(async (_u: string, id: string, at: string) => { rescheduled.push({ id, at }); return true; });
+    await studio.planReview();
+    const move = rescheduled.find(r => r.id === 'i-weiche');
+    expect(move).toBeDefined();
+    expect(move.at.slice(0, 16)).not.toBe(target.slice(0, 16)); // NICHT auf die belegte Minute
+    expect(Date.parse(move.at)).toBe(Date.parse(target) + 15 * 60_000);
+  });
+
+  it('v1045: adhocTaken räumt vergangene Slot-Minuten aus (kein unbegrenztes Wachstum)', async () => {
+    const { studio } = makeFamilyStack();
+    const past = '2020-01-01T10:00';
+    const future = new Date(Date.now() + 3_600_000).toISOString().slice(0, 16);
+    (studio as any).adhocSlotMinutes.set('ch-x', new Set([past, future]));
+    const set = (studio as any).adhocTaken('ch-x');
+    expect(set.has(past)).toBe(false);
+    expect(set.has(future)).toBe(true);
+  });
+
   it('v996: Playbook — family_role lead übersteuert die Konferenz-Rolle, family_offset_hours den Versatz', async () => {
     const { studio, website, telegram, llm, assignments } = makeFamilyStack();
     // Playbook: Telegram ist fester Lead, die Website folgt mit 5h Versatz
@@ -1275,7 +1331,7 @@ describe('ContentStudio — Bild-Look (v1004)', () => {
     expect(execute.mock.calls.length).toBe(3); // ein Call je Slide (people_ok: kein Vision-Gate)
     const created = (socialRepo.createItem as any).mock.calls[0][2];
     expect(created.media.length).toBe(3); // Karussell-Medien am Item
-    const genImage = (socialRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
+    const genImage = (socialRepo.incrementMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
     expect(genImage.length).toBe(3); // Budget je Slide gezählt
 
     // ohne image_carousel: slides werden ignoriert → 1 Bild
@@ -1328,7 +1384,7 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     }]);
     await studio.fillChannel(channel);
     expect(execute).not.toHaveBeenCalled(); // kein Generierungs-Call
-    const genImage = (socialRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
+    const genImage = (socialRepo.incrementMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
     expect(genImage.length).toBe(0); // kein Budget verbraucht
     expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-1', 'ch-1');
     const media = (socialRepo.createItem as any).mock.calls[0][2].media;
@@ -1685,7 +1741,7 @@ describe('ContentStudio — Housekeeping (v990)', () => {
       .mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "begruendung": "ok"}' });
     await studio.fillChannel(channel);
     // 2 Versuche (Verstoß + Retry) → 2 Budget-Zählungen, obwohl nur 1 Bild überlebt
-    const genImageUpserts = (socialRepo.upsertMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
+    const genImageUpserts = (socialRepo.incrementMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image');
     expect(genImageUpserts.length).toBe(2);
   });
 

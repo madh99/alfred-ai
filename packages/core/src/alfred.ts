@@ -8369,23 +8369,33 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           describeAssets: async () => {
             try {
               if (!this.llmProvider) return { success: false, error: 'LLM nicht verfügbar.' };
-              const assets = await socialRepo.listMediaAssets(socialOwner, { limit: 1000 });
+              // v1045 — Cap + begrenzte Parallelität: 1000 sequentielle
+              // Vision-Calls blockierten den Request sonst minutenlang
+              const all = await socialRepo.listMediaAssets(socialOwner, { limit: 1000 });
+              const assets = all.slice(0, 300);
+              const capped = all.length - assets.length;
               let updated = 0;
               let failed = 0;
-              for (const asset of assets) {
-                try {
-                  const motif = await describeAssetMotif(asset.path);
-                  if (!motif) { failed++; continue; }
-                  const generic = /^symbolbild/i.test(asset.motif.trim()) && !/^symbolbild/i.test(motif);
-                  await socialRepo.updateMediaAssetMotif(socialOwner, asset.id, generic ? `Symbolbild Fußball: ${motif}` : motif);
-                  updated++;
-                } catch {
-                  failed++; // Datei auf anderem Node/gelöscht — überspringen
+              let next = 0;
+              const worker = async () => {
+                for (;;) {
+                  const asset = assets[next++];
+                  if (!asset) return;
+                  try {
+                    const motif = await describeAssetMotif(asset.path);
+                    if (!motif) { failed++; continue; }
+                    const generic = /^symbolbild/i.test(asset.motif.trim()) && !/^symbolbild/i.test(motif);
+                    await socialRepo.updateMediaAssetMotif(socialOwner, asset.id, generic ? `Symbolbild Fußball: ${motif}` : motif);
+                    updated++;
+                  } catch {
+                    failed++; // Datei auf anderem Node/gelöscht — überspringen
+                  }
                 }
-              }
+              };
+              await Promise.all(Array.from({ length: 3 }, worker));
               return {
-                success: true, data: { scanned: assets.length, updated, failed },
-                display: `🔍 Beschreibungen erneuert: ${updated} von ${assets.length} Bild(ern)${failed ? ` — ${failed} übersprungen (Datei fehlt oder keine brauchbare Beschreibung)` : ''}.`,
+                success: true, data: { scanned: assets.length, updated, failed, capped },
+                display: `🔍 Beschreibungen erneuert: ${updated} von ${assets.length} Bild(ern)${failed ? ` — ${failed} übersprungen (Datei fehlt oder keine brauchbare Beschreibung)` : ''}${capped > 0 ? ` — ${capped} weitere beim nächsten Lauf` : ''}.`,
               };
             } catch (err) {
               return { success: false, error: (err as Error).message };
@@ -8403,6 +8413,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const isPng = buf[0] === 0x89 && buf[1] === 0x50;
               const isJpeg = buf[0] === 0xff && buf[1] === 0xd8;
               if (!isPng && !isJpeg) return { success: false, error: 'Nur PNG oder JPEG.' };
+              // v1045 — Dekodierbarkeit + Maße prüfen: eine defekte Datei oder
+              // ein 10000×10-„Bild" ergäbe später kaputte Overlays/Crops
+              try {
+                const { loadSharp } = await import('@alfred/skills');
+                const sharp = await loadSharp();
+                if (sharp) {
+                  const meta = await (sharp as unknown as (i: Buffer) => { metadata(): Promise<{ width?: number; height?: number }> })(buf).metadata();
+                  if (!meta?.width || !meta?.height) return { success: false, error: 'Bild nicht dekodierbar.' };
+                  if (meta.width < 400 || meta.height < 300) return { success: false, error: `Bild zu klein (${meta.width}×${meta.height}) — mindestens 400×300.` };
+                  const ratio = meta.width / meta.height;
+                  if (ratio > 5 || ratio < 0.2) return { success: false, error: 'Extremes Seitenverhältnis — als Vorlage ungeeignet.' };
+                }
+              } catch {
+                return { success: false, error: 'Bild nicht dekodierbar.' };
+              }
               const path = await import('node:path');
               const { writeFile, mkdir } = await import('node:fs/promises');
               const mediaDir = path.resolve(path.dirname(this.config.storage.path), 'social-media');
