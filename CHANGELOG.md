@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1038] - 2026-07-07
+
+### Added — Bild-Bibliothek: Wiederverwendung, die wirklich greift (v1038)
+
+- **Symbolbilder werden nicht mehr neu produziert**: Das generische
+  Sicherheits-Motiv („Symbolbild Fußball: Stadion …") nutzt vorhandene
+  Bibliotheks-Bilder mit kurzer Karenz (2 Tage, konfigurierbar über
+  `image_reuse_short_cooldown_days`) statt des 30-Tage-Cooldowns — auch
+  beim Vision-Retry, der bisher bei jedem Verstoß ein frisches, fast
+  identisches Stadion-Bild erzeugte.
+- **Semantisches Motiv-Matching**: Paraphrasen wie „Stadion unter
+  Flutlicht mit Ball" ≈ „Fußball auf Rasen, Arena unscharf" matchen
+  jetzt über Embeddings (Cosine ≥ 0.82) zusätzlich zum Wort-Vergleich —
+  die Wiederverwendung trifft öfter UND bleibt motivgenau. Ohne
+  Embedding-Provider gilt das bisherige Verhalten.
+- **Stamm-Bilder (📌)**: In der Bild-Bibliothek lassen sich Assets
+  pinnen — sie bilden den bevorzugten Pool (gewinnen bei mehreren
+  Treffern, kurze Karenz statt Cooldown). Migration SQLite v118 /
+  PG v122 (pinned-Flag).
+
 ## [0.19.0-multi-ha.1037] - 2026-07-07
 
 ### Fixed — Bild-Prompts: keine fremden Flaggen, keine Text-Persona (v1037)

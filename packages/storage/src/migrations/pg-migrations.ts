@@ -2042,4 +2042,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS blocked INTEGER NOT NULL DEFAULT 0`, []);
     },
   },
+  {
+    version: 122,
+    description: 'v1038 — Bild-Bibliothek: pinned-Flag (Stamm-Bild — bevorzugter Wiederverwendungs-Pool) (PG-Spiegel zu SQLite v118).',
+    async up(db) {
+      await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS pinned INTEGER NOT NULL DEFAULT 0`, []);
+    },
+  },
 ];

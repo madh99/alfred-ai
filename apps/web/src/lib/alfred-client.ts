@@ -526,7 +526,7 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Social assets: HTTP ${res.status}`);
     return (await res.json()).assets ?? [];
   }
-  async socialAssetAction(id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe', extra?: { motif?: string }): Promise<{ success: boolean; error?: string; motif?: string }> {
+  async socialAssetAction(id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe' | 'pin' | 'unpin', extra?: { motif?: string }): Promise<{ success: boolean; error?: string; motif?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/assets/${id}/${action}`, {
       method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(extra ?? {}),
     });
@@ -2823,6 +2823,8 @@ export interface SocialAssetItem {
   lastUsedAt: string;
   useCount: number;
   blocked: boolean;
+  /** v1038 — Stamm-Bild: bevorzugter Wiederverwendungs-Pool */
+  pinned?: boolean;
   createdAt: string;
 }
 

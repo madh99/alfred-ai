@@ -116,6 +116,8 @@ export interface MediaAsset {
   useCount: number;
   /** v1014 — von der Wiederverwendung ausgeschlossen (UI: „Sperren"). */
   blocked: boolean;
+  /** v1038 — Stamm-Bild: bevorzugter Wiederverwendungs-Pool mit kurzer Karenz (UI: „Pinnen"). */
+  pinned: boolean;
   createdAt: string;
 }
 
@@ -309,7 +311,7 @@ export class SocialRepository {
       [id, userId, input.channelId ?? null, input.family ?? null, input.path, input.motif.slice(0, 500),
         input.style?.slice(0, 300) ?? null, input.format ?? null, now, now],
     );
-    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, lastUsedAt: now, useCount: 1, blocked: false, createdAt: now };
+    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, lastUsedAt: now, useCount: 1, blocked: false, pinned: false, createdAt: now };
   }
 
   async listMediaAssets(userId: string, opts?: { family?: string; channelId?: string; limit?: number }): Promise<MediaAsset[]> {
@@ -327,7 +329,7 @@ export class SocialRepository {
       style: r.style ? String(r.style) : undefined,
       format: r.format ? String(r.format) : undefined,
       lastUsedAt: String(r.last_used_at), useCount: Number(r.use_count ?? 1),
-      blocked: Number(r.blocked ?? 0) === 1, createdAt: String(r.created_at),
+      blocked: Number(r.blocked ?? 0) === 1, pinned: Number(r.pinned ?? 0) === 1, createdAt: String(r.created_at),
     }));
   }
 
@@ -335,6 +337,12 @@ export class SocialRepository {
   async setMediaAssetBlocked(userId: string, id: string, blocked: boolean): Promise<void> {
     await this.db.execute(`UPDATE social_media_assets SET blocked = ? WHERE id = ? AND user_id = ?`,
       [blocked ? 1 : 0, id, userId]);
+  }
+
+  /** v1038 — Stamm-Bild markieren: bevorzugter Pool der Wiederverwendung (kurze Karenz statt Cooldown). */
+  async setMediaAssetPinned(userId: string, id: string, pinned: boolean): Promise<void> {
+    await this.db.execute('UPDATE social_media_assets SET pinned = ? WHERE id = ? AND user_id = ?',
+      [pinned ? 1 : 0, id, userId]);
   }
 
   /** v1017 — Motiv-Beschreibung ändern (der Matching-Schlüssel für die Wiederverwendung). */

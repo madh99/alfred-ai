@@ -70,7 +70,7 @@ export function extractNameCandidates(...texts: Array<string | undefined>): stri
   return [...out];
 }
 
-const SYMBOLIC_FALLBACK_MOTIF =
+export const SYMBOLIC_FALLBACK_MOTIF =
   'Symbolbild Fußball: Stadion unter Flutlicht mit Ball auf dem Rasen, atmosphärisch, ohne Menschen';
 
 /**

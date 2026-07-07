@@ -8305,7 +8305,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 channelName: a.channelId ? nameOf.get(a.channelId) : undefined,
               }));
           },
-          assetAction: async (id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe', extra?: Record<string, unknown>) => {
+          assetAction: async (id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe' | 'pin' | 'unpin', extra?: Record<string, unknown>) => {
             try {
               if (action === 'delete') {
                 const asset = (await socialRepo.listMediaAssets(socialOwner, { limit: 500 })).find(a => a.id === id);
@@ -8342,6 +8342,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 if (motif.length < 5) return { success: false, error: 'Keine brauchbare Beschreibung erhalten.' };
                 await socialRepo.updateMediaAssetMotif(socialOwner, id, motif);
                 return { success: true, motif };
+              } else if (action === 'pin' || action === 'unpin') {
+                // v1038 — Stamm-Bild: bevorzugter Wiederverwendungs-Pool (kurze Karenz)
+                await socialRepo.setMediaAssetPinned(socialOwner, id, action === 'pin');
               } else {
                 await socialRepo.setMediaAssetBlocked(socialOwner, id, action === 'block');
               }

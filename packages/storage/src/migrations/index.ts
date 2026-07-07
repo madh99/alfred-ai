@@ -2734,4 +2734,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE social_media_assets ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0`);
     },
   },
+  {
+    version: 118,
+    description: 'v1038 — Bild-Bibliothek: pinned-Flag (Stamm-Bild — bevorzugter Wiederverwendungs-Pool) (SQLite-Spiegel zu PG v122).',
+    up(db) {
+      db.exec(`ALTER TABLE social_media_assets ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+    },
+  },
 ];

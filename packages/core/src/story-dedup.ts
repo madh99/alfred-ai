@@ -63,6 +63,17 @@ export class StoryDeduper {
   }
 
   /**
+   * v1038 — beliebigen Text einbetten (mit Memory-Cache): die Bild-Bibliothek
+   * matcht Motive semantisch (Paraphrasen wie „Stadion unter Flutlicht mit
+   * Ball" ≈ „Fußball auf Rasen, Stadion unscharf"), statt nur über
+   * Wort-Überlappung. undefined ohne Embedding-Provider — der Aufrufer fällt
+   * dann aufs Token-Matching zurück.
+   */
+  async embedText(text: string): Promise<number[] | undefined> {
+    return this.embedIdentity(text);
+  }
+
+  /**
    * Filtert Kandidaten gegen die Sperrliste: erst Token-Gate (billig), dann
    * semantisches Gate. @returns überlebende Kandidaten in Original-Reihenfolge.
    */

@@ -1187,6 +1187,67 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     expect(media[0].pathOrUrl).toContain('-no-title.png');
   });
 
+  it('v1038: generisches Symbolbild wird trotz frischer Nutzung wiederverwendet (kurze Karenz)', async () => {
+    const recent = new Date(Date.now() - 3 * 24 * 3_600_000).toISOString(); // vor 3 Tagen genutzt — < 30d-Cooldown, > 2d-Karenz
+    const { studio, channel, socialRepo, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const assetPath = join(dir, 'asset-symbol.png');
+    await writeFile(assetPath, Buffer.from('symbol-png'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-sym', userId: OWNER, channelId: 'ch-1', path: assetPath,
+      motif: 'Symbolbild Fußball: Stadion unter Flutlicht mit Ball auf dem Rasen, atmosphärisch',
+      style: undefined, format: '1536x1024', lastUsedAt: recent, useCount: 3, blocked: false, pinned: false, createdAt: recent,
+    }]);
+    // Idee mit generischem Symbolmotiv (wie der Vision-Fallback es erzeugt)
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '',
+      bildidee: 'Symbolbild Fußball: Stadion unter Flutlicht mit Ball, ohne Menschen',
+    });
+    expect(execute).not.toHaveBeenCalled(); // KEINE Neuanfertigung
+    expect(media[0].pathOrUrl).toContain('studio-');
+  });
+
+  it('v1038: gepinntes Stamm-Bild schlägt besseren Score und ignoriert den Cooldown', async () => {
+    const yesterday = new Date(Date.now() - 3 * 24 * 3_600_000).toISOString();
+    const old = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const p1 = join(dir, 'asset-pin.png');
+    const p2 = join(dir, 'asset-frei.png');
+    await writeFile(p1, Buffer.from('pin'));
+    await writeFile(p2, Buffer.from('frei'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [
+      { id: 'a-pin', userId: OWNER, channelId: 'ch-1', path: p1, motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen', style: undefined, format: '1536x1024', lastUsedAt: yesterday, useCount: 2, blocked: false, pinned: true, createdAt: old },
+      { id: 'a-frei', userId: OWNER, channelId: 'ch-1', path: p2, motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen, atmosphärisch', style: undefined, format: '1536x1024', lastUsedAt: old, useCount: 1, blocked: false, pinned: false, createdAt: old },
+    ]);
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '',
+      bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-pin'); // Stamm-Bild gewinnt
+    void media;
+  });
+
+  it('v1038: semantisches Matching — Paraphrase ohne Wort-Überlappung trifft via Embedding', async () => {
+    const old = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const assetPath = join(dir, 'asset-sem.png');
+    await writeFile(assetPath, Buffer.from('sem'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-sem', userId: OWNER, channelId: 'ch-1', path: assetPath,
+      motif: 'Nahaufnahme eines Balls vor unscharfer Arena',
+      style: undefined, format: '1536x1024', lastUsedAt: old, useCount: 1, blocked: false, pinned: false, createdAt: old,
+    }]);
+    // Stub-Deduper: alle Texte bekommen denselben Vektor → Cosine 1.0
+    (studio as any).storyDeduper = { embedText: vi.fn(async () => [0.6, 0.8]) };
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '',
+      bildidee: 'Fußball liegt im Rampenlicht des Stadions', // kaum Token-Überlappung
+    });
+    expect(execute).not.toHaveBeenCalled(); // Embedding-Treffer statt Neuanfertigung
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-sem');
+    void media;
+  });
+
   it('v1014: gesperrtes Asset (blocked) wird NIE wiederverwendet → normale Generierung', async () => {
     const old = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString();
     const { studio, channel, socialRepo, llm, execute, dir, writeFile, join } = await makeMediaStudio([]);

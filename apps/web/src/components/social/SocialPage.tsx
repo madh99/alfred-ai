@@ -314,7 +314,7 @@ export function SocialPage() {
     });
   }
 
-  async function assetAction(a: SocialAssetItem, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe', extra?: { motif?: string }) {
+  async function assetAction(a: SocialAssetItem, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe' | 'pin' | 'unpin', extra?: { motif?: string }) {
     if (action === 'delete' && !confirm('Basis-Bild endgültig aus der Bibliothek löschen (Datei + Eintrag)?')) return;
     await withBusy(a.id, async () => {
       const r = await client!.socialAssetAction(a.id, action, extra);
@@ -1798,8 +1798,16 @@ export function SocialPage() {
                     <div className="text-[9px] text-gray-600">
                       {a.channelName ?? 'Familie'} · {a.format ?? 'square'} · {a.useCount}× · zuletzt {new Date(a.lastUsedAt).toLocaleDateString('de-AT')}
                       {a.blocked && <span className="text-red-400"> · GESPERRT</span>}
+                      {a.pinned && <span className="text-emerald-400"> · 📌 STAMM</span>}
                     </div>
                     <div className="flex items-center gap-1">
+                      {/* v1038 — Stamm-Bild: bevorzugter Pool, kurze Karenz statt 30-Tage-Cooldown */}
+                      <button onClick={() => assetAction(a, a.pinned ? 'unpin' : 'pin')} disabled={busy === a.id}
+                        title={a.pinned ? 'Stamm-Markierung entfernen' : 'Als Stamm-Bild pinnen: bevorzugt wiederverwendet (kurze Karenz statt 30-Tage-Cooldown)'}
+                        className={clsx('px-1.5 py-0.5 text-[10px] border disabled:opacity-50 rounded',
+                          a.pinned ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/15' : 'border-emerald-500/30 text-emerald-400/70 hover:bg-emerald-500/15')}>
+                        📌
+                      </button>
                       <button onClick={() => assetAction(a, a.blocked ? 'unblock' : 'block')} disabled={busy === a.id}
                         className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 rounded">
                         {a.blocked ? '▶ freigeben' : '⏸ sperren'}

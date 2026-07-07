@@ -5,7 +5,7 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
-import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, languageName, applyImageOverlays, cropToRatio, resolveImageBranding, parseOverlayCorner, type OverlaySpec } from '@alfred/skills';
+import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, cosineSimilarity, languageName, applyImageOverlays, cropToRatio, resolveImageBranding, parseOverlayCorner, type OverlaySpec } from '@alfred/skills';
 export { extractTrailingHashtags, isNearDuplicateTitle };
 import type { SourceProvisioner } from './source-provisioner.js';
 import type { StoryDeduper, BlockedStory } from './story-dedup.js';
@@ -1791,6 +1791,15 @@ Antworte NUR mit einem JSON-Array:
       // stand als „Stil" im Bild-Prompt). image_style je Kanal übersteuert (v1004).
       const visualStyle = style ?? DEFAULT_IMAGE_STYLE;
       for (let attempt = 0; attempt < 2; attempt++) {
+        // v1038(A) — Retry nach Vision-Verstoß erzeugt das GENERISCHE
+        // Symbolmotiv: dafür NIE neu generieren, wenn ein Symbolbild in der
+        // Bibliothek liegt (kurze Karenz statt Cooldown) — vorher entstand
+        // bei jedem Verstoß ein frisches, fast identisches Stadion-Bild.
+        if (attempt === 1 && channel.config.image_reuse !== false && this.mediaDir) {
+          const { SYMBOLIC_FALLBACK_MOTIF } = await import('./image-policy.js');
+          const fallbackReuse = await this.tryReuseAsset(channel, SYMBOLIC_FALLBACK_MOTIF, idea, style, format, forcedTitle).catch(() => undefined);
+          if (fallbackReuse) return fallbackReuse;
+        }
         const prompt = attempt === 0
           ? buildSafeImagePrompt(motif, visualStyle, policy)
           : strictRetryPrompt(visualStyle);
@@ -1891,12 +1900,44 @@ Antworte NUR mit einem JSON-Array:
     return new Set(text.toLowerCase().split(/[^a-zäöüß0-9]+/).filter(t => t.length > 3));
   }
 
+  /** v1038 — generisches Symbolmotiv (Fallback-Bilder u. ä.): darf mit kurzer Karenz wiederverwendet werden. */
+  static isGenericMotif(motif: string): boolean {
+    return /^symbolbild/i.test(motif.trim());
+  }
+
+  /** v1038 — Embedding-Cache je Asset (Motive ändern sich selten; ein Studio-Lauf fragt viele Kandidaten). */
+  private readonly motifVecCache = new Map<string, number[] | null>();
+
+  private async embedMotifCached(assetId: string, motif: string): Promise<number[] | undefined> {
+    const key = `${assetId}:${motif.length}`;
+    if (this.motifVecCache.has(key)) return this.motifVecCache.get(key) ?? undefined;
+    const vec = await this.storyDeduper?.embedText(motif).catch(() => undefined);
+    this.motifVecCache.set(key, vec ?? null);
+    if (this.motifVecCache.size > 1_000) {
+      const first = this.motifVecCache.keys().next().value;
+      if (first !== undefined) this.motifVecCache.delete(first);
+    }
+    return vec;
+  }
+
   /**
-   * v1005 — Bild-Bibliothek: ähnliches Basis-Bild (Jaccard ≥ 0.5 über
-   * Motiv-Tokens), gleicher Stil + gleiches Format, letzte Nutzung länger her
-   * als der Cooldown (config.image_reuse_cooldown_days, Default 30). Trifft
-   * eines: Basis-Bild lesen, aktuelles Overlay drauf, als neues Item-Bild
-   * speichern — ohne Budget-Verbrauch.
+   * v1005 — Bild-Bibliothek: ähnliches Basis-Bild, gleicher Stil + gleiches
+   * Format, letzte Nutzung länger her als der Cooldown
+   * (config.image_reuse_cooldown_days, Default 30). Trifft eines: Basis-Bild
+   * lesen, aktuelles Overlay drauf, als neues Item-Bild speichern — ohne
+   * Budget-Verbrauch.
+   *
+   * v1038 — drei Ausbauten (Realfall: Bibliothek voller Fast-Duplikate, weil
+   * Reuse praktisch nie zuschlug):
+   * (A) Generische Symbolbilder + (D) Stamm-Bilder (pinned) haben nur eine
+   *     KURZE Karenz (config.image_reuse_short_cooldown_days, Default 2) statt
+   *     des vollen Cooldowns — das Fallback-Stadionbild wird nie mehr neu
+   *     produziert, solange eines in der Bibliothek liegt.
+   * (B) Semantisches Matching per Embedding (Cosine ≥ 0.82) fängt Paraphrasen,
+   *     die das Token-Jaccard verfehlt („Stadion unter Flutlicht mit Ball" ≈
+   *     „Fußball auf Rasen, Stadion unscharf"). Ohne Embedding-Provider bleibt
+   *     das Token-Matching allein (bisheriges Verhalten).
+   * (D) Stamm-Bilder gewinnen bei mehreren Treffern immer.
    */
   private async tryReuseAsset(
     channel: SocialChannel, motif: string, idea: GeneratedIdea,
@@ -1905,22 +1946,40 @@ Antworte NUR mit einem JSON-Array:
   ): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }> | undefined> {
     const cooldownDays = typeof channel.config.image_reuse_cooldown_days === 'number' && channel.config.image_reuse_cooldown_days >= 0
       ? channel.config.image_reuse_cooldown_days : 30;
-    const cutoff = new Date(Date.now() - cooldownDays * 24 * 3_600_000).toISOString();
+    const shortDays = typeof channel.config.image_reuse_short_cooldown_days === 'number' && channel.config.image_reuse_short_cooldown_days >= 0
+      ? channel.config.image_reuse_short_cooldown_days : 2;
+    const now = Date.now();
     const family = ContentStudio.familyKey(channel);
     const assets = await this.socialRepo.listMediaAssets(this.ownerUserId, family ? { family } : { channelId: channel.id });
     const wanted = ContentStudio.motifTokens(motif);
     if (wanted.size === 0) return undefined;
-    let best: { asset: (typeof assets)[number]; score: number } | undefined;
+    const genericWanted = ContentStudio.isGenericMotif(motif);
+    const wantedVec = await this.storyDeduper?.embedText(motif).catch(() => undefined);
+    let best: { asset: (typeof assets)[number]; score: number; pinned: boolean } | undefined;
     for (const asset of assets) {
       if (asset.blocked) continue; // v1014 — vom User gesperrt
-      if (asset.lastUsedAt >= cutoff) continue;
+      const effectiveDays = asset.pinned || (genericWanted && ContentStudio.isGenericMotif(asset.motif))
+        ? Math.min(shortDays, cooldownDays) : cooldownDays;
+      if (asset.lastUsedAt >= new Date(now - effectiveDays * 24 * 3_600_000).toISOString()) continue;
       if ((asset.style ?? '') !== (style ?? '')) continue;
       if ((asset.format ?? 'square') !== (format.size ?? 'square')) continue;
       const have = ContentStudio.motifTokens(asset.motif);
       const inter = [...wanted].filter(t => have.has(t)).length;
       const union = new Set([...wanted, ...have]).size;
-      const score = union === 0 ? 0 : inter / union;
-      if (score >= 0.5 && (!best || score > best.score)) best = { asset, score };
+      const jaccard = union === 0 ? 0 : inter / union;
+      let score = jaccard >= 0.5 ? jaccard : 0;
+      if (score === 0 && wantedVec) {
+        const assetVec = await this.embedMotifCached(asset.id, asset.motif);
+        if (assetVec) {
+          const cos = cosineSimilarity(wantedVec, assetVec);
+          if (cos >= 0.82) score = cos;
+        }
+      }
+      if (score === 0) continue;
+      // Stamm-Bilder gewinnen immer; sonst der beste Score
+      if (!best || (asset.pinned && !best.pinned) || (asset.pinned === best.pinned && score > best.score)) {
+        best = { asset, score, pinned: asset.pinned };
+      }
     }
     if (!best) return undefined;
     const { readFile, writeFile } = await import('node:fs/promises');
