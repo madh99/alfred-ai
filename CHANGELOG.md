@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1049] - 2026-07-08
+
+### Fixed — YouTube-Kanal-Videos über die Uploads-Playlist (v1049)
+
+- Kanal-Videos kommen jetzt primär aus der Uploads-Playlist
+  (`playlistItems`, 1 Quota-Unit) statt aus `search?channelId=`
+  (100 Units) — die Suche scheiterte bei manchen Kanälen mit 403
+  `accountDelegationForbidden` (Realfall „ServusTV On Sport", live).
+  Das Suchverfahren bleibt als Fallback; Ergebnis-Form und Verhalten
+  von YouTube-Skill (channel-Action) und Themen-Quelle sind unverändert.
+
 ## [0.19.0-multi-ha.1048] - 2026-07-08
 
 ### Added — YouTube-Kanäle als Themen-Quelle (v1048)

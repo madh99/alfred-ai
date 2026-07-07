@@ -88,10 +88,40 @@ export interface YoutubeChannelVideo {
   description?: string;
 }
 
-/** Neueste Videos eines Kanals (Data-API search, order=date) — wie die channel-Action des Skills. */
+/**
+ * Neueste Videos eines Kanals. v1049 — primär über die UPLOADS-PLAYLIST
+ * (`UU` + Kanal-ID-Suffix, playlistItems = 1 Quota-Unit): `search?channelId=`
+ * kostete 100 Units und scheiterte bei manchen Kanälen mit 403
+ * accountDelegationForbidden (Realfall „ServusTV On Sport", live 08.07.).
+ * Das search-Verfahren bleibt als Fallback; Ergebnis-Form ist identisch.
+ */
 export async function fetchYoutubeChannelVideos(
   apiKey: string, channelId: string, maxResults: number,
 ): Promise<{ channelTitle?: string; videos: YoutubeChannelVideo[] } | { error: string }> {
+  if (/^UC[\w-]{22}$/.test(channelId)) {
+    const uploads = `UU${channelId.slice(2)}`;
+    const plParams = new URLSearchParams({ part: 'snippet', playlistId: uploads, maxResults: String(maxResults), key: apiKey });
+    const plRes = await fetch(`${YT_API_BASE}/playlistItems?${plParams}`);
+    if (plRes.ok) {
+      const data = await plRes.json() as { items?: Array<{ snippet: Record<string, unknown> }> };
+      const videos: YoutubeChannelVideo[] = (data.items ?? []).flatMap(item => {
+        const vid = (item.snippet.resourceId as { videoId?: string } | undefined)?.videoId;
+        if (!vid) return [];
+        return [{
+          videoId: vid,
+          title: String(item.snippet.title ?? ''),
+          publishedAt: (item.snippet.publishedAt as string)?.slice(0, 10),
+          url: `https://youtube.com/watch?v=${vid}`,
+          ...(typeof item.snippet.description === 'string' && item.snippet.description.trim()
+            ? { description: item.snippet.description.trim() } : {}),
+        }];
+      });
+      if (videos.length > 0) {
+        return { channelTitle: data.items?.[0]?.snippet?.channelTitle as string | undefined, videos };
+      }
+    }
+    // Playlist nicht lesbar/leer → search-Fallback unten
+  }
   const params = new URLSearchParams({
     part: 'snippet',
     channelId,
