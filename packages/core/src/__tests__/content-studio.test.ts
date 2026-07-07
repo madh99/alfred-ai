@@ -751,6 +751,56 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     void socialRepo;
   });
 
+  it('v1042: scheitert der LEAD-Text, wird die ganze Story ausgelassen (keine Follower ohne Lead)', async () => {
+    const { studio, website, telegram, llm, createdItems, transitions, stories } = makeFamilyStack();
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: CONF })
+      .mockResolvedValueOnce({ content: 'kein brauchbares json' }); // Lead-Render scheitert
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(0);
+    expect(createdItems.length).toBe(0); // insbesondere KEIN Follower-Item
+    expect(transitions.filter(t => t.to === 'scheduled').length).toBe(0);
+    void stories;
+  });
+
+  it('v1042: zwei Konferenz-Stories mit identischem terminBis → nur die erste wird geplant', async () => {
+    const { studio, website, telegram, llm, stories } = makeFamilyStack();
+    const kickoff = new Date(2099, 6, 4, 19, 0).toISOString();
+    const terminStory = (titel: string) => ({
+      titel, zusammenfassung: 'PV im Pub.', art: 'termin', wichtigkeit: 0.8, terminBis: kickoff,
+      kanaele: [{ kanal: 'fussball.cc', rolle: 'lead', versatz_h: 0 }, { kanal: 'FussballCC News', rolle: 'follow', versatz_h: 0 }],
+    });
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([terminStory('Public Viewing Kanada – Marokko'), terminStory('PV: Kanada gegen Marokko im Pub')]) })
+      .mockResolvedValueOnce({ content: RENDER('PV-Artikel') })
+      .mockResolvedValueOnce({ content: RENDER('PV kurz') });
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(2); // 2 Items (Lead+Follow) — aber nur EINE Story
+    expect(stories.length).toBe(1);
+  });
+
+  it('v1042: News-Desk wählt bei Überangebot die WICHTIGSTE Eilmeldung, nicht die Array-Reihenfolge', async () => {
+    const { studio, llm, stories } = makeFamilyStack();
+    stories.push(
+      { id: 'evt-1', title: 'Alte Eilmeldung eins', summary: 'x', source: 'event', kind: 'news', createdAt: new Date().toISOString(), status: 'active' },
+      { id: 'evt-2', title: 'Alte Eilmeldung zwei', summary: 'x', source: 'event', kind: 'news', createdAt: new Date().toISOString(), status: 'active' },
+    ); // 2 von 3 Tages-Slots verbraucht → Budget 1
+    const interestsRepo = (studio as any).interestsRepo;
+    (interestsRepo.listItems as any) = vi.fn(async () => [
+      { id: 'n1', topicId: 't-1', title: 'Wichtige Meldung mit Score 0.86 über den Trainerwechsel', sourceKind: 'rss', createdAt: 'x' },
+      { id: 'n2', topicId: 't-1', title: 'Sensation: Messi tritt zurück — Karriereende offiziell', sourceKind: 'rss', createdAt: 'x' },
+    ]);
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: '[{"index": 0, "score": 0.86}, {"index": 1, "score": 0.99}]' })
+      .mockResolvedValueOnce({ content: RENDER('Messi hört auf') })
+      .mockResolvedValueOnce({ content: RENDER('Messi-Rücktritt!') });
+    const created = await studio.newsDesk();
+    expect(created).toBe(2);
+    const neu = stories.filter(s => !String(s.id).startsWith('evt-'));
+    expect(neu.length).toBe(1);
+    expect(neu[0].title).toContain('Messi'); // 0.99 schlägt 0.86
+  });
+
   it('v994: Tages-Limit und langweilige Items → keine Eilmeldung', async () => {
     const { studio, llm, stories } = makeFamilyStack();
     const interestsRepo = (studio as any).interestsRepo;
@@ -1383,6 +1433,44 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
       terminBis: new Date(Date.now() + 48 * 3_600_000).toISOString(),
     });
     expect(execute).toHaveBeenCalled();
+  });
+
+  it('v1042: erschöpftes Budget blockiert NICHT die Gratis-Pfade (Reuse liefert, Generierung nicht)', async () => {
+    const old = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    (channel.config as Record<string, unknown>).image_budget_per_month = 0; // Budget aufgebraucht
+    const assetPath = join(dir, 'asset-budget.png');
+    await writeFile(assetPath, Buffer.from('base'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [{
+      id: 'a-b', userId: OWNER, channelId: 'ch-1', path: assetPath,
+      motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+      style: undefined, format: '1536x1024', lastUsedAt: old, useCount: 1, blocked: false, pinned: false, createdAt: old,
+    }]);
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '',
+      bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+    });
+    expect(media[0].pathOrUrl).toContain('studio-'); // Reuse trotz Budget 0
+    expect(execute).not.toHaveBeenCalled();
+
+    // ohne passendes Asset: Budget-Gate verhindert die Generierung
+    (socialRepo as any).listMediaAssets = vi.fn(async () => []);
+    const none = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '', bildidee: 'Taktiktafel mit Kreide in der Kabine',
+    });
+    expect(none).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('v1042: Embedding-Cache-Key trägt den Motiv-INHALT — geändertes Motiv gleicher Länge wird neu embedded', async () => {
+    const { studio } = await makeMediaStudio([]);
+    const embedText = vi.fn(async () => [0.6, 0.8]);
+    (studio as any).storyDeduper = { embedText };
+    await (studio as any).embedMotifCached('a-1', 'Motiv AAAA');
+    await (studio as any).embedMotifCached('a-1', 'Motiv BBBB'); // gleiche Länge, anderer Inhalt
+    expect(embedText).toHaveBeenCalledTimes(2);
+    await (studio as any).embedMotifCached('a-1', 'Motiv BBBB'); // identisch → Cache
+    expect(embedText).toHaveBeenCalledTimes(2);
   });
 
   it('v1039(E): dedupMediaLibrary — Fast-Duplikate weg, Stamm-Bild bleibt, Fremdmotiv unberührt', async () => {

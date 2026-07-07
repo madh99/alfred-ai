@@ -220,15 +220,26 @@ export function isInternalUrl(url: string): boolean {
   }
 }
 
+/**
+ * v1042 — Plattform-gewichtete Textlänge: X ersetzt jede URL per t.co durch
+ * exakt 23 Zeichen — die ECHTE Länge einer UTM-URL (100-150 Zeichen) in der
+ * Rechnung zu reservieren kürzte X-Posts grundlos um ~100 Zeichen.
+ */
+function weightedLength(text: string, urlWeight?: number): number {
+  if (!urlWeight) return text.length;
+  return text.replace(/https?:\/\/\S+/g, 'x'.repeat(urlWeight)).length;
+}
+
 /** Baut den fertigen Post-Text (Body + Hashtags + ggf. KI-Kennzeichnung) mit optionalem Längen-Limit. */
-export function composePostText(item: ContentItem, maxLength?: number, channel?: Pick<SocialChannel, 'config'>): string {
+export function composePostText(item: ContentItem, maxLength?: number, channel?: Pick<SocialChannel, 'config'>, opts?: { urlWeight?: number }): string {
   const tags = item.hashtags.length > 0 ? '\n\n' + item.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ') : '';
   // v985 — Kennzeichnung hängt hinter den Hashtags und überlebt die Kürzung
   const disclosure = channel ? aiDisclosure(item, channel) : null;
   const suffix = disclosure ? `\n\n${disclosure}` : '';
   const head = item.title ? `${item.title}\n\n` : '';
   let text = `${head}${item.body}${tags}${suffix}`;
-  if (maxLength && text.length > maxLength) {
+  const uw = opts?.urlWeight;
+  if (maxLength && weightedLength(text, uw) > maxLength) {
     // v1022 — Kürzungs-Vorrang: KI-Kennzeichnung > Traffic-Link > Body > Hashtags.
     // Vorher wurde das Body-ENDE gekappt — dort hängt aber der Traffic-Link von
     // applyTrafficCta, der so auf Bluesky/X mitten in der URL starb (Realfall
@@ -241,9 +252,9 @@ export function composePostText(item: ContentItem, maxLength?: number, channel?:
       ctaBlock = `\n\n${ctaMatch[1].trim()}`;
     }
     let keptTags = tags;
-    let room = maxLength - ctaBlock.length - keptTags.length - suffix.length - 2;
+    let room = maxLength - weightedLength(ctaBlock, uw) - keptTags.length - suffix.length - 2;
     // Wird es eng (Bluesky 300), fliegen die Hashtags — nicht der Link
-    if (room < 40 && keptTags) { keptTags = ''; room = maxLength - ctaBlock.length - suffix.length - 2; }
+    if (room < 40 && keptTags) { keptTags = ''; room = maxLength - weightedLength(ctaBlock, uw) - suffix.length - 2; }
     text = `${head}${bodyMain}`.slice(0, Math.max(0, room)) + '…' + ctaBlock + keptTags + suffix;
   }
   return text;

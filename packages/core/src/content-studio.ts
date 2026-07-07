@@ -524,6 +524,9 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       .filter(s => typeof s.index === 'number' && typeof s.score === 'number' && s.score >= threshold)
       .map(s => ({ ...candidates[s.index as number], score: s.score as number }))
       .filter(c => c?.title)
+      // v1042 — bei mehr Eilmeldungen als Tagesbudget gewinnt die WICHTIGSTE,
+      // nicht die zufällige Array-Reihenfolge des LLM
+      .sort((a, b) => b.score - a.score)
       .slice(0, maxPerDay - todayEvents);
     if (breaking.length === 0) return 0;
 
@@ -861,9 +864,16 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         kanaele: Array.isArray(s.kanaele) ? s.kanaele as Array<{ kanal?: unknown; rolle?: unknown; versatz_h?: unknown }> : [],
       }));
 
-    // Story-Dedup: Termin-Stories über Termin-Identität, Rest über Deduper
+    // Story-Dedup: Termin-Stories über Termin-Identität, Rest über Deduper.
+    // v1042 — auch INNERHALB der Konferenz: zwei Stories mit identischem
+    // terminBis (dasselbe Spiel doppelt vorgeschlagen) → nur die erste zählt
+    // (fillChannel macht das seit je her; hier fehlte die In-Loop-Sperre).
     const normal = candidates.filter(c => !c.terminBis);
-    const termine = candidates.filter(c => c.terminBis && !announcedAt.has(c.terminBis));
+    const termine = candidates.filter(c => {
+      if (!c.terminBis || announcedAt.has(c.terminBis)) return false;
+      announcedAt.add(c.terminBis);
+      return true;
+    });
     let accepted: typeof candidates = termine;
     if (this.storyDeduper && normal.length > 0) {
       const r = await this.storyDeduper.filterCandidates(normal, blocked.filter(b => !b.terminAt));
@@ -950,6 +960,14 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot);
         if (!item) {
           if (slot) { cap.slotPool.unshift(slot); cap.slotPool.sort(); } // Slot zurücklegen
+          // v1042 — scheitert der LEAD-Text, wird die ganze Story ausgelassen:
+          // vorher liefen die Follower ohne leadSlot in den Sofort-Slot-Zweig
+          // und gingen live, obwohl der Artikel, auf den sie verweisen, nie
+          // entstand (und der Traffic-CTA keine Lead-URL fand).
+          if (a.role === 'lead') {
+            this.logger.warn({ story: story.title, channel: cap.channel.name }, 'v1042 lead render failed — story ausgelassen');
+            break;
+          }
           continue;
         }
         if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
@@ -1733,15 +1751,14 @@ Antworte NUR mit einem JSON-Array:
     const skill = this.skillRegistry.get('image_generate') as Skill | undefined;
     if (!skill) return [];
 
-    // Monats-Budget (Leitplanke 5): channel_metrics kind 'gen_image' je Tag
+    // Monats-Budget (Leitplanke 5): channel_metrics kind 'gen_image' je Tag.
+    // v1042 — die Prüfung greift erst VOR der Generierung (weiter unten):
+    // Termin-Vorlage und Bibliotheks-Reuse kosten nichts und dürfen auch bei
+    // erschöpftem Budget liefern (vorher: gar kein Bild trotz Gratis-Pfaden).
     const budget = typeof channel.config.image_budget_per_month === 'number' ? channel.config.image_budget_per_month : 30;
     const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
     const used = (await this.socialRepo.listMetrics(channel.id, { kind: 'gen_image', sinceDate: monthStart }))
       .reduce((sum, m) => sum + m.value, 0);
-    if (used >= budget) {
-      this.logger.info({ channel: channel.name, used, budget }, 'v935 image budget reached — post ohne Bild');
-      return [];
-    }
 
     try {
       const {
@@ -1793,6 +1810,12 @@ Antworte NUR mit einem JSON-Array:
       if (channel.config.image_reuse !== false && this.mediaDir) {
         const reused = await this.tryReuseAsset(channel, motif, idea, style, format, forcedTitle).catch(() => undefined);
         if (reused) return reused;
+      }
+
+      // v1042 — erst ab hier kostet es Geld: Budget-Gate für die Generierung
+      if (used >= budget) {
+        this.logger.info({ channel: channel.name, used, budget }, 'v935 image budget reached — post ohne Bild');
+        return [];
       }
 
       // v950 Schicht 1+3 — bis zu 2 Versuche: normal → Vision-Verstoß → strenges Symbolmotiv
@@ -1936,7 +1959,9 @@ Antworte NUR mit einem JSON-Array:
   private readonly motifVecCache = new Map<string, number[] | null>();
 
   private async embedMotifCached(assetId: string, motif: string): Promise<number[] | undefined> {
-    const key = `${assetId}:${motif.length}`;
+    // v1042 — Key trägt den INHALT (vorher nur die Länge: ein per „Beschreibungen
+    // erneuern" geändertes Motiv gleicher Länge traf den veralteten Vektor)
+    const key = `${assetId}:${motif}`;
     if (this.motifVecCache.has(key)) return this.motifVecCache.get(key) ?? undefined;
     const vec = await this.storyDeduper?.embedText(motif).catch(() => undefined);
     this.motifVecCache.set(key, vec ?? null);

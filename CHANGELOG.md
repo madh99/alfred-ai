@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1042] - 2026-07-07
+
+### Fixed — Audit-Runde Teil 1: sechs Live-Bugs (v1042)
+
+- **Bild-Budget blockiert die Gratis-Pfade nicht mehr**: Termin-Vorlage
+  und Bibliotheks-Wiederverwendung liefern jetzt auch bei erschöpftem
+  Monats-Budget — nur die (kostenpflichtige) Generierung bleibt gesperrt.
+- **News-Desk wählt die wichtigste Eilmeldung**: Bei mehr Kandidaten als
+  Tagesbudget entschied bisher die Array-Reihenfolge des Modells; jetzt
+  wird vor dem Abschneiden nach Score sortiert.
+- **Kein Follower ohne Lead**: Scheitert der Lead-Text einer
+  Familien-Story am Parser, wird die ganze Story ausgelassen — vorher
+  gingen die Follower ohne Versatz und ohne Lead-Artikel live.
+- **X-Posts nicht mehr über-gekürzt**: X ersetzt jede URL durch 23
+  Zeichen (t.co); die Kürzung reservierte aber die echte Länge der
+  UTM-URL (~140 Zeichen). URLs zählen auf X jetzt korrekt mit 23.
+- **Doppelte Termin-Ankündigungen**: Schlug die Konferenz dasselbe Spiel
+  zweimal vor (identischer Anpfiff), entstanden zwei Termin-Stories —
+  jetzt zählt nur die erste.
+- **Bild-Reuse: Embedding-Cache** invalidiert jetzt bei geändertem
+  Motiv-Text (vorher nur bei geänderter Länge — nach „Beschreibungen
+  erneuern" konnte das semantische Matching veraltete Vektoren treffen).
+
 ## [0.19.0-multi-ha.1041] - 2026-07-07
 
 ### Added — Termin-Vorlagenbild je Kanal (v1041)

@@ -133,6 +133,20 @@ describe('composePostText', () => {
     expect(text).not.toContain('#');
   });
 
+  it('v1042: X zählt URLs als 23 Zeichen (t.co) — Body wird nicht mehr über-gekürzt', () => {
+    const url = 'https://fussball.cc/news/viertelfinale-argentinien-aegypten?utm_source=x&utm_medium=social&utm_campaign=viertelfinale-argentinien-aegypten';
+    const body = `${'Argentinien trifft im Viertelfinale auf Aegypten. '.repeat(4).trim()}\n\n👉 ${url}`;
+    const item = makeItem({ body, hashtags: [] });
+    // echte Länge > 280, t.co-gewichtet (URL=23) aber <= 280 → NICHT kürzen
+    expect(body.length).toBeGreaterThan(280);
+    const weighted = composePostText(item, 280, undefined, { urlWeight: 23 });
+    expect(weighted).toContain(url); // URL komplett
+    expect(weighted).not.toContain('…'); // keine Kürzung
+    // ohne Gewichtung (Default) wird weiterhin gekürzt
+    const plain = composePostText(item, 280);
+    expect(plain).toContain('…');
+  });
+
   it('v985: ohne generiertes Medium bzw. ohne Kanal keine Kennzeichnung', () => {
     const plain = makeItem({ media: [{ type: 'image', source: 'external', pathOrUrl: 'https://x/y.png' }] as any });
     expect(composePostText(plain, undefined, makeChannel())).not.toContain('KI-generiert');

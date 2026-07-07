@@ -188,7 +188,8 @@ export class XProvider extends SocialProvider {
     // „Bild: KI-generiert" ohne Bild im Tweet stehen (Realfall 06.07.)
     const mediaIds = await this.uploadImages(item, secrets, channel);
     const textItem = mediaIds.length > 0 ? item : { ...item, media: [] };
-    const payload: Record<string, unknown> = { text: composePostText(textItem, 280, channel) };
+    // v1042 — X zählt jede URL als 23 Zeichen (t.co), nicht in echter Länge
+    const payload: Record<string, unknown> = { text: composePostText(textItem, 280, channel, { urlWeight: 23 }) };
     if (mediaIds.length > 0) payload.media = { media_ids: mediaIds };
     const res = await this.withAuthRetry(secrets, channel, t => fetch('https://api.x.com/2/tweets', {
       method: 'POST',
