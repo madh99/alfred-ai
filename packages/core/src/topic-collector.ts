@@ -278,7 +278,12 @@ export class TopicCollector {
       tier: 'fast',
       reasoningEffort: 'low',
     });
-    const s = (response.content ?? '').trim();
+    // v1051 — Meta-Kopfzeilen strippen (Realfall: „# Zusammenfassung: …"-
+    // Überschrift trotz „NUR mit der Zusammenfassung"-Regel)
+    const s = (response.content ?? '').trim()
+      .replace(/^#{1,6}\s*[^\n]*\n+/, '')
+      .replace(/^zusammenfassung:?\s*/i, '')
+      .trim();
     if (s.length < 30) throw new Error('Verdichtung leer');
     return s.slice(0, 1000);
   }

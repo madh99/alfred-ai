@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1051] - 2026-07-08
+
+### Fixed — Transcript-Verdichtung ohne Meta-Kopf (v1051)
+
+- Die Fakten-Zusammenfassung von YouTube-Transcripts strippt jetzt
+  Meta-Kopfzeilen („# Zusammenfassung: …"), die das Modell trotz
+  Prompt-Regel voranstellte — im Themen-Dossier zählt jedes Zeichen.
+
 ## [0.19.0-multi-ha.1050] - 2026-07-08
 
 ### Fixed — YouTube-Transcripts funktionieren wieder (v1050)

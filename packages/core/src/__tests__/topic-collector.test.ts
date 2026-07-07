@@ -167,7 +167,8 @@ describe('TopicCollector', () => {
         { text: 'Die Tore erzielten Alvarez und Fernandez in der zweiten Halbzeit vor achtzigtausend Zuschauern im ausverkauften Stadion von Dallas.', offset: 5, duration: 6 },
       ]),
     };
-    const llm = { complete: vi.fn(async () => ({ content: 'Argentinien schlägt Ägypten 2:0 im WM-Viertelfinale. Alvarez und Fernandez treffen in Halbzeit zwei vor 80.000 Zuschauern in Dallas.' })) };
+    // Meta-Überschrift absichtlich dabei — muss gestrippt werden (v1051)
+    const llm = { complete: vi.fn(async () => ({ content: '# Zusammenfassung: Argentinien - Ägypten\n\nArgentinien schlägt Ägypten 2:0 im WM-Viertelfinale. Alvarez und Fernandez treffen in Halbzeit zwei vor 80.000 Zuschauern in Dallas.' })) };
     return { fetchers, llm };
   }
 
@@ -184,7 +185,8 @@ describe('TopicCollector', () => {
     expect((spies as any).updateSourceConfig).toHaveBeenCalledWith('s-yt', expect.objectContaining({ channel_id_cached: 'UCabcdefghijklmnopqrstuv' }));
     const call = (spies.insertItem as any).mock.calls[0][1];
     expect(call.sourceKind).toBe('youtube');
-    expect(call.summary).toContain('Argentinien schlägt Ägypten 2:0'); // LLM-Verdichtung, nicht Roh-Transcript
+    expect(call.summary.startsWith('Argentinien schlägt Ägypten 2:0')).toBe(true); // LLM-Verdichtung, Meta-Kopf gestrippt
+    expect(call.summary).not.toContain('#');
     expect(call.url).toBe('https://youtube.com/watch?v=abc12345678');
   });
 
