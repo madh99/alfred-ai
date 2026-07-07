@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1044] - 2026-07-07
+
+### Fixed — Audit-Runde Teil 3: Auswahl & Planung (v1044)
+
+- **Verpasste Freigaben verstopfen die Pipeline nicht mehr**: Ein
+  Freigabe-Item mit verpasstem Slot wird jetzt bis zu 3× auf +4h neu
+  terminiert (die Freigabe-Anfrage kommt dann erneut — der Dedupe hängt
+  am Slot statt am Item); Überaltertes wird zurückgezogen. Vorher wurde
+  exakt einmal gefragt und das Item hing für immer im Backlog.
+- **Shelf-Life-Gate beim Publish**: Ein freigegebenes news/recap/
+  vorschau-Item, dessen Haltbarkeit beim (verspäteten) Fälligwerden
+  abgelaufen ist, geht nicht mehr live (Engine-Catch-up publizierte
+  sonst tagealte Meldungen).
+- **Nachtruhe-Lücke im News-Desk**: Der erste Lauf nach der Ruhe sieht
+  jetzt bis 2h vor den Ruhebeginn zurück — nächtliche Eilmeldungen
+  verloren vorher ihre Eilmeldungs-Behandlung.
+- **Konferenz-Kanalnamen normalisiert** (Groß-/Kleinschreibung,
+  Leerzeichen); verworfene Zuweisungen an unbekannte Kanäle landen im
+  Log statt spurlos zu verschwinden.
+- **Leere Stories sperren keine Themen mehr**: Eine Story ohne ein
+  einziges erzeugtes Item (Kapazität, Kanalname, Lead-Fehler) wird
+  gedroppt — vorher blockierte sie den Stoff 30 Tage (Titel + Embedding),
+  ohne dass je etwas erschien. Gilt auch für Eilmeldungs-Stories.
+- **Familien-Gedächtnis 60 Tage** (wie der Solo-Pfad): mit 14 Tagen
+  konnte die Konferenz denselben Stoff nach zwei Wochen erneut planen.
+- **Konferenz-Deckel wächst mit dem Bedarf** (bis 20 Stories statt fix
+  10) — hochvolumige Kanäle blieben an ruhigen Tagen unterfüllt.
+- **Mixed-Mode-Familien**: Verderbliche Follower eines suggest-Leads
+  werden als slotlose Entwürfe angelegt (Terminierung nach der
+  Lead-Freigabe) statt komplett verworfen.
+
 ## [0.19.0-multi-ha.1043] - 2026-07-07
 
 ### Fixed — Audit-Runde Teil 2: Bild-Bibliothek HA-sicher (v1043)

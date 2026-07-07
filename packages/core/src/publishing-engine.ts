@@ -4,6 +4,7 @@ import type { MessagingAdapter } from '@alfred/messaging';
 import type { SocialRepository, SocialChannel, ContentItem, InsightsRepository } from '@alfred/storage';
 import type { AsyncDbAdapter } from '@alfred/storage';
 import type { NotificationRouter } from './notification-router.js';
+import { ContentStudio } from './content-studio.js';
 
 export interface PublishFnResult {
   success: boolean;
@@ -105,6 +106,18 @@ export class PublishingEngine {
       for (const item of dueApproved) {
         const channel = channels.get(item.channelId);
         if (!channel || channel.status !== 'active') continue;
+        // v1044 — Shelf-Life-Gate: ein approved-Item, dessen Haltbarkeit beim
+        // (verspäteten) Fälligwerden längst abgelaufen ist, geht NICHT mehr
+        // live (Engine-Ausfall/Catch-up publishte sonst tagealte News).
+        const art = typeof item.performance?.art === 'string' ? item.performance.art : undefined;
+        const shelf = ContentStudio.shelfLifeHours(art, channel);
+        if (shelf !== undefined && Date.parse(item.createdAt) + shelf * 3_600_000 < Date.now()) {
+          try {
+            await this.repo.transition(owner, item.id, 'rejected');
+            this.logger.warn({ itemId: item.id, art, shelf }, 'v1044 approved-Item überaltert beim Fälligwerden → zurückgezogen statt publiziert');
+          } catch { /* Einzelfehler überspringen */ }
+          continue;
+        }
         if (await this.claimItemSlot(`social-item:${item.id}`)) {
           if (await this.doPublish(item, channel)) {
             result.published++;
@@ -243,7 +256,10 @@ export class PublishingEngine {
       },
       actionSkill: 'social',
       actionParams: { action: 'publish_now', item_id: item.id },
-      dedupeKey: `social-approval:${item.id}`,
+      // v1044 — Dedupe je SLOT statt je Item: wird ein verpasstes Item vom
+      // Plan-Review neu terminiert, kommt die Freigabe-Anfrage erneut
+      // (vorher wurde exakt einmal gefragt und das Item hing für immer fest).
+      dedupeKey: `social-approval:${item.id}:${item.scheduledAt ?? 'x'}`,
     });
     if (!r.inserted) return false; // schon gefragt — nicht erneut senden
 

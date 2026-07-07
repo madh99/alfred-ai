@@ -81,6 +81,25 @@ describe('PublishingEngine (v934)', () => {
     expect((router.store as any).mock.calls[0][0].source).toBe('social');
   });
 
+  it('v1044: überaltertes approved-Item wird beim Fälligwerden zurückgezogen statt publiziert', async () => {
+    const stale = makeItem({
+      status: 'approved',
+      createdAt: new Date(Date.now() - 60 * 3_600_000).toISOString(), // 60h alt, news = 48h Haltbarkeit
+      performance: { art: 'news' },
+    });
+    const { engine, publishItem, repo } = makeEngine({ channel: makeChannel(), approved: [stale] });
+    const r = await engine.tick();
+    expect(r.published).toBe(0);
+    expect(publishItem).not.toHaveBeenCalled();
+    expect((repo.transition as any).mock.calls.some((c: any[]) => c[1] === 'item-1' && c[2] === 'rejected')).toBe(true);
+
+    // frisches news-Item läuft normal durch
+    const fresh = makeItem({ status: 'approved', performance: { art: 'news' } });
+    const { engine: e2, publishItem: p2 } = makeEngine({ channel: makeChannel(), approved: [fresh] });
+    expect((await e2.tick()).published).toBe(1);
+    expect(p2).toHaveBeenCalled();
+  });
+
   it('v987: stuck-in-publishing wird nach 15 min auf failed gerettet; frische bleiben unangetastet', async () => {
     const old = makeItem({ id: 'zombie', status: 'publishing', updatedAt: new Date(Date.now() - 20 * 60_000).toISOString() });
     const fresh = makeItem({ id: 'frisch', status: 'publishing', updatedAt: new Date().toISOString() });
@@ -129,7 +148,8 @@ describe('PublishingEngine (v934)', () => {
     const candidate = (insightsRepo.upsertCandidate as any).mock.calls[0][1];
     expect(candidate.category).toBe('social-approval');
     expect(candidate.actionParams).toEqual({ action: 'publish_now', item_id: 'item-1' });
-    expect(candidate.dedupeKey).toBe('social-approval:item-1');
+    // v1044 — Dedupe je SLOT: nach Plan-Review-Umterminierung kommt die Anfrage erneut
+    expect(candidate.dedupeKey).toBe(`social-approval:item-1:${PAST}`);
     const buttons = (adapter.sendMessage as any).mock.calls[0][2].replyMarkup.inlineKeyboard[0];
     expect(buttons.map((b: any) => b.callbackData)).toEqual([
       'content:item-1:approve', 'content:item-1:publish', 'content:item-1:reject',

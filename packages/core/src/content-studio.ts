@@ -485,17 +485,28 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     // Nachtruhe (Server-Lokalzeit)
     const quiet = Array.isArray(lead.config.newsdesk_quiet) && (lead.config.newsdesk_quiet as unknown[]).length === 2
       ? (lead.config.newsdesk_quiet as number[]).map(Number) : [22, 6];
+    const inQuietAt = (h: number) => quiet[0] > quiet[1] ? (h >= quiet[0] || h < quiet[1]) : (h >= quiet[0] && h < quiet[1]);
     const hour = new Date().getHours();
-    const inQuiet = quiet[0] > quiet[1] ? (hour >= quiet[0] || hour < quiet[1]) : (hour >= quiet[0] && hour < quiet[1]);
-    if (inQuiet) return 0;
+    if (inQuietAt(hour)) return 0;
     // Tages-Limit
     const maxPerDay = typeof lead.config.newsdesk_max_per_day === 'number' ? lead.config.newsdesk_max_per_day : 3;
     const todayEvents = (await this.socialRepo.listStories(this.ownerUserId, { family, sinceDays: 1 }))
       .filter(s => s.source === 'event').length;
     if (todayEvents >= maxPerDay) return 0;
-    // Neue Items der letzten 2 Stunden (ohne Termin-Feeds)
+    // Neue Items der letzten 2 Stunden (ohne Termin-Feeds).
+    // v1044 — nach der Nachtruhe fielen Meldungen aus deren Fenster durch
+    // BEIDE Raster (weder Eilmeldung noch Breaking-Priorität im Tageslauf):
+    // liegt (jetzt−2h) noch in der Ruhe, reicht das Fenster bis 2h VOR den
+    // Ruhebeginn zurück — Dubletten fängt der Story-Dedup.
     if (!this.interestsRepo) return 0;
-    const sinceIso = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    let sinceMs = Date.now() - 2 * 3_600_000;
+    if (inQuietAt(new Date(sinceMs).getHours())) {
+      const quietStart = new Date();
+      quietStart.setHours(quiet[0], 0, 0, 0);
+      if (quietStart.getTime() > Date.now()) quietStart.setDate(quietStart.getDate() - 1);
+      sinceMs = Math.min(sinceMs, quietStart.getTime() - 2 * 3_600_000);
+    }
+    const sinceIso = new Date(sinceMs).toISOString();
     const unionTopics = [...new Set(members.flatMap(c => ContentStudio.linkedTopicIds(c)))];
     const fresh: Array<{ title: string; summary?: string }> = [];
     for (const topicId of unionTopics) {
@@ -570,6 +581,13 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
         itemsCreated++;
       }
       created += itemsCreated;
+      // v1044 — Eilmeldungs-Story ohne ein einziges Item: droppen statt den
+      // Stoff 30 Tage zu sperren (gleiche Regel wie in planFamily)
+      if (itemsCreated === 0) {
+        await this.socialRepo.setStoryStatus(this.ownerUserId, story.id, 'dropped').catch(() => { /* best-effort */ });
+        this.logger.warn({ family, story: story.title }, 'v1044 leere Eilmeldungs-Story gedroppt (kein Item entstanden)');
+        continue;
+      }
       await this.insightsRepo?.upsertCandidate(this.ownerUserId, {
         category: 'social',
         title: `⚡ Eilmeldung: ${story.title.slice(0, 70)}`,
@@ -670,6 +688,39 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       }
     }
 
+    // 1b) v1044 — Verpasste Freigaben: der Publish-Engine-Dedupe fragt je Slot
+    //     genau EINMAL. Blieb die Antwort aus, hing das Item für immer als
+    //     „scheduled mit vergangenem Slot" im Backlog und drosselte die
+    //     Produktion. Jetzt: überaltert → zurückziehen; sonst bis zu 3× auf
+    //     +4h umterminieren (der Freigabe-Dedupe hängt am Slot → neue Anfrage).
+    const reviewChannels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+    const channelById = new Map(reviewChannels.map(c => [c.id, c]));
+    const overdueCut = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    for (const item of items) {
+      if (item.status !== 'scheduled' || !item.scheduledAt || item.scheduledAt > overdueCut) continue;
+      if (typeof item.performance?.terminBis === 'string') continue; // Termine regelt Schritt 1
+      const ch = channelById.get(item.channelId);
+      if (!ch || ch.mode === 'suggest') continue; // suggest: der User terminiert selbst
+      const art = typeof item.performance?.art === 'string' ? item.performance.art : undefined;
+      const shelf = ContentStudio.shelfLifeHours(art, ch);
+      if (shelf !== undefined && Date.parse(item.createdAt) + shelf * 3_600_000 < Date.now()) {
+        try {
+          await this.socialRepo.transition(this.ownerUserId, item.id, 'rejected');
+          result.expired++;
+          notes.push(`⌛ Freigabe verpasst + überaltert (${art}, ${shelf}h) → zurückgezogen: „${(item.title ?? item.body).slice(0, 60)}"`);
+        } catch { /* Einzelfehler überspringen */ }
+        continue;
+      }
+      const nudges = Number(item.performance?.approvalNudges ?? 0);
+      if (nudges >= 3) continue; // genug erinnert — bleibt liegen (LLM-Check empfiehlt ggf. reject)
+      const newAt = new Date(Date.now() + 4 * 3_600_000).toISOString();
+      if (await this.socialRepo.reschedule(this.ownerUserId, item.id, newAt, ['scheduled'])) {
+        await this.socialRepo.mergePerformance(this.ownerUserId, item.id, { approvalNudges: nudges + 1 }).catch(() => { /* non-critical */ });
+        result.deferred++;
+        notes.push(`🔁 Freigabe verpasst → +4h neu terminiert (Anlauf ${nudges + 1}/3): „${(item.title ?? item.body).slice(0, 60)}"`);
+      }
+    }
+
     // 2) Eilmeldungs-Kollision: reguläre Beiträge der nächsten Stunde weichen
     const recentBreaking = (await this.socialRepo.listStories(this.ownerUserId, { sinceDays: 1 }))
       .filter(s => s.source === 'event' && Date.parse(s.createdAt) > Date.now() - 4 * 3_600_000);
@@ -690,8 +741,6 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     // 2b) v997 — Haltbarkeit (deterministisch, NUR Empfehlung): news/recap,
     // deren Slot weiter als die Shelf-Life nach der Erzeugung liegt, sind beim
     // Erscheinen überaltert — sofort melden, nicht erst im 48h-Fenster.
-    const reviewChannels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
-    const channelById = new Map(reviewChannels.map(c => [c.id, c]));
     for (const item of items) {
       if (!item.scheduledAt || item.scheduledAt <= nowIso) continue;
       const art = typeof item.performance?.art === 'string' ? item.performance.art : undefined;
@@ -782,23 +831,29 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
    */
   async planFamily(family: string, channels: SocialChannel[]): Promise<number> {
     const now = new Date().toISOString();
-    // Kapazität je Kanal (Slots minus Backlog, wie fillChannel)
+    // Kapazität je Kanal (Slots minus Backlog, wie fillChannel).
+    // v1044 — Schlüssel NORMALISIERT (trim+lowercase): die Konferenz referenziert
+    // Kanäle über den LLM-Namen; exakter String-Vergleich verlor Zuweisungen
+    // bei minimalen Abweichungen still.
+    const capKey = (s: string) => s.trim().toLowerCase();
     const capacity = new Map<string, { channel: SocialChannel; slotPool: string[]; needed: number; created: number }>();
     for (const channel of channels) {
       await this.ensureTopic(channel);
       const planned = await this.socialRepo.listItems(this.ownerUserId, {
         channelId: channel.id, status: ['scheduled', 'approved', 'draft', 'idea'], limit: 100,
       });
-      if (planned.length >= 30) { capacity.set(channel.name, { channel, slotPool: [], needed: 0, created: 0 }); continue; }
+      if (planned.length >= 30) { capacity.set(capKey(channel.name), { channel, slotPool: [], needed: 0, created: 0 }); continue; }
       const slots = nextFreeSlots(channel, planned, Math.max(0, 30 - planned.length), now);
       const backlog = planned.filter(i => (i.status === 'draft' || i.status === 'idea') && !i.scheduledAt).length;
-      capacity.set(channel.name, { channel, slotPool: [...slots], needed: Math.max(0, slots.length - backlog), created: 0 });
+      capacity.set(capKey(channel.name), { channel, slotPool: [...slots], needed: Math.max(0, slots.length - backlog), created: 0 });
     }
     const totalNeeded = [...capacity.values()].reduce((s, c) => s + c.needed, 0);
 
-    // Sperrlisten: aktive Stories (30d) + published Titel der Familie (14d)
+    // Sperrlisten: aktive Stories (30d) + published Titel der Familie.
+    // v1044 — 60 Tage wie im Solo-Pfad (fillChannel): mit 14 Tagen konnte die
+    // Konferenz denselben Stoff nach gut zwei Wochen erneut planen.
     const activeStories = await this.socialRepo.listStories(this.ownerUserId, { family, status: 'active', sinceDays: 30 });
-    const publishedWindow = new Date(Date.now() - 14 * 24 * 3_600_000).toISOString();
+    const publishedWindow = new Date(Date.now() - 60 * 24 * 3_600_000).toISOString();
     const blocked: BlockedStory[] = [
       ...activeStories.map(s => ({ id: s.id, title: s.title, body: s.summary, terminAt: s.terminBis })),
     ];
@@ -829,7 +884,9 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
       const off = ContentStudio.playbookOffset(c, 'news');
       if (off !== undefined && c.id !== pbLead?.id) pbRules.push(`- "${c.name}" folgt standardmäßig mit versatz_h ${off}.`);
     }
-    const storyCount = Math.min(Math.max(totalNeeded, openTermine.length), 10);
+    // v1044 — Deckel wächst mit dem Familien-Bedarf (Cap 20 als Prompt-Schutz):
+    // der starre 10er-Deckel unterfüllte hochvolumige Kanäle (TG-Limit 20/Tag)
+    const storyCount = Math.min(Math.max(totalNeeded, openTermine.length), Math.max(10, Math.min(totalNeeded, 20)));
     const conferencePrompt = `Du leitest die Redaktionskonferenz einer Kanal-Familie. Entscheide die Story-Liste für die nächsten Tage.
 
 KANÄLE DER FAMILIE:
@@ -887,8 +944,14 @@ Antworte NUR mit einem VALIDEN JSON-Array:
     for (const cand of accepted.sort((a, b) => b.importance - a.importance)) {
       // Lead zuerst rendern — Follower brauchen dessen Slot als Untergrenze
       const assigns = cand.kanaele
-        .map(k => ({ cap: capacity.get(String(k.kanal ?? '')), role: k.rolle === 'lead' ? 'lead' as const : 'follow' as const, offset: typeof k.versatz_h === 'number' ? Math.max(0, Math.min(72, k.versatz_h)) : 0 }))
+        .map(k => ({ cap: capacity.get(capKey(String(k.kanal ?? ''))), role: k.rolle === 'lead' ? 'lead' as const : 'follow' as const, offset: typeof k.versatz_h === 'number' ? Math.max(0, Math.min(72, k.versatz_h)) : 0 }))
         .filter(a => a.cap !== undefined);
+      // v1044 — verworfene Zuweisungen (LLM-Kanalname passt zu keinem Kanal)
+      // sichtbar machen: vorher verschwanden sie ohne jede Spur
+      if (assigns.length < cand.kanaele.length) {
+        const unknown = cand.kanaele.map(k => String(k.kanal ?? '')).filter(n => !capacity.has(capKey(n)));
+        this.logger.warn({ family, story: cand.title, unknown }, 'v1044 Konferenz-Zuweisung an unbekannten Kanal verworfen');
+      }
       // v996 — Playbook übersteuert die Konferenz: fester Lead + konfigurierte Versätze
       if (pbLead && assigns.some(a => a.cap!.channel.id === pbLead.id)) {
         for (const a of assigns) a.role = a.cap!.channel.id === pbLead.id ? 'lead' : 'follow';
@@ -929,6 +992,7 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       // ist). Sie bleiben Entwurf ohne Slot und werden nach der Lead-Freigabe
       // terminiert (replan/Umterminieren).
       const leadIsSuggest = assigns[0]?.role === 'lead' && assigns[0].cap!.channel.mode === 'suggest';
+      const createdBeforeStory = created; // v1044 — leere Stories erkennen (s. unten)
       for (const a of assigns) {
         const cap = a.cap!;
         if (cand.kind !== 'termin' && cap.created >= cap.needed) continue; // Kapazität erschöpft (Termine haben Vorrang)
@@ -936,11 +1000,13 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         // v997 — Slot-Wahl VOR dem Rendern: verderbliche Follower ohne Slot in
         // der Haltbarkeit werden ausgelassen statt als alternder Entwurf angelegt.
         let slot: string | undefined;
+        let awaitingLead = false; // v1044 — slotlos WEIL der suggest-Lead noch nicht live ist
         if (cap.channel.mode === 'approve' || cap.channel.mode === 'autonomous') {
           if (story.terminBis) {
             slot = this.pickTerminSlot(cap.slotPool, story.terminBis, cap.channel, this.adhocTaken(cap.channel.id));
           } else if (a.role !== 'lead' && !leadSlot && leadIsSuggest) {
             slot = undefined; // Entwurf ohne Slot — Lead (suggest) ist noch nicht live
+            awaitingLead = true;
           } else if (a.role === 'lead' || !leadSlot) {
             slot = cap.slotPool.shift();
           } else {
@@ -955,7 +1021,10 @@ Antworte NUR mit einem VALIDEN JSON-Array:
             cap.slotPool.sort();
             continue;
           }
-          if (deadline && !slot) continue; // verderblich ohne Slot → nicht produzieren
+          // v1044 — wartet der Follower nur auf die Lead-Freigabe (suggest),
+          // wird er als slotloser Entwurf ANGELEGT statt still verworfen:
+          // vorher fielen verderbliche Follower in Mixed-Mode-Familien komplett aus.
+          if (deadline && !slot && !awaitingLead) continue; // verderblich ohne Slot → nicht produzieren
         }
         const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot);
         if (!item) {
@@ -976,6 +1045,14 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         cap.created++;
         created++;
         createdTitles.push(`${cap.channel.name}: ${item.title ?? story.title}`);
+      }
+      // v1044 — Story ohne ein einziges Item (Kapazität erschöpft, Kanalnamen
+      // unbekannt, Lead-Render gescheitert): droppen statt aktiv lassen —
+      // vorher sperrte die leere Story den Stoff 30 Tage (Titel + Embedding),
+      // ohne dass je etwas erschienen wäre.
+      if (created === createdBeforeStory) {
+        await this.socialRepo.setStoryStatus(this.ownerUserId, story.id, 'dropped').catch(() => { /* best-effort */ });
+        this.logger.info({ family, story: story.title }, 'v1044 leere Story gedroppt (kein Item entstanden)');
       }
     }
     if (created > 0) {

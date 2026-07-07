@@ -657,6 +657,10 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
       return s;
     });
     (socialRepo as any).createAssignment = vi.fn(async (input: any) => { assignments.push(input); });
+    (socialRepo as any).setStoryStatus = vi.fn(async (_u: string, id: string, status: string) => {
+      const s = stories.find(x => x.id === id);
+      if (s) s.status = status;
+    });
     const studio = new ContentStudio(socialRepo, interestsRepo, insightsRepo, llm, undefined, undefined, undefined, makeLogger(), OWNER);
     return { studio, website, telegram, llm, createdItems, transitions, stories, assignments, socialRepo };
   }
@@ -868,6 +872,86 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     const insight = (insights.upsertCandidate as any).mock.calls.find((c: any[]) => String(c[1].title).includes('Plan-Review'));
     expect(insight[1].body).toContain('Überholt');
     expect((socialRepo.transition as any).mock.calls.filter((c: any[]) => c[2] === 'rejected').length).toBe(1);
+  });
+
+  it('v1044: verpasste Freigabe — frisch → +4h neu terminiert (Nudge), überaltert → zurückgezogen, 3 Nudges → Ruhe', async () => {
+    const { studio, socialRepo } = makeFamilyStack();
+    const overdue = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    const mk = (id: string, createdAgoH: number, extra?: Record<string, unknown>): any => ({
+      id, channelId: 'ch-web', userId: OWNER, status: 'scheduled', title: id,
+      body: 'Text', media: [], hashtags: [], source: 'studio',
+      createdAt: new Date(Date.now() - createdAgoH * 3_600_000).toISOString(), updatedAt: 'x',
+      scheduledAt: overdue, performance: { art: 'news', ...extra },
+    });
+    (socialRepo.listItems as any) = vi.fn(async () => [
+      mk('i-frisch', 1),                          // news, 1h alt → Nudge
+      mk('i-alt', 60),                            // news, 60h alt (> 48h) → reject
+      mk('i-genug', 1, { approvalNudges: 3 }),    // 3 Anläufe → liegen lassen
+    ]);
+    const rescheduled: any[] = [];
+    (socialRepo.reschedule as any) = vi.fn(async (_u: string, id: string, at: string) => { rescheduled.push({ id, at }); return true; });
+    const r = await studio.planReview();
+    expect(rescheduled.map(x => x.id)).toEqual(['i-frisch']);
+    expect(Date.parse(rescheduled[0].at)).toBeGreaterThan(Date.now() + 3 * 3_600_000);
+    expect((socialRepo.mergePerformance as any).mock.calls.some((c: any[]) => c[1] === 'i-frisch' && c[2].approvalNudges === 1)).toBe(true);
+    expect((socialRepo.transition as any).mock.calls.some((c: any[]) => c[1] === 'i-alt' && c[2] === 'rejected')).toBe(true);
+    expect((socialRepo.transition as any).mock.calls.some((c: any[]) => c[1] === 'i-genug')).toBe(false);
+    expect(r.expired).toBe(1);
+    expect(r.deferred).toBe(1);
+  });
+
+  it('v1044: Konferenz-Kanalnamen werden normalisiert; unbekannter Kanal → Story wird gedroppt statt gesperrt', async () => {
+    const { studio, website, telegram, llm, stories, socialRepo } = makeFamilyStack();
+    (socialRepo as any).setStoryStatus = vi.fn(async () => {});
+    // Groß-/Kleinschreibung + Leerzeichen matchen trotzdem
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{
+        titel: 'Normalisierte Namen', zusammenfassung: 'Stoff hier.', art: 'news', wichtigkeit: 0.6,
+        kanaele: [{ kanal: '  FUSSBALL.CC ', rolle: 'lead', versatz_h: 0 }, { kanal: 'fussballcc news', rolle: 'follow', versatz_h: 2 }],
+      }]) })
+      .mockResolvedValueOnce({ content: RENDER('Lead') })
+      .mockResolvedValueOnce({ content: RENDER('Follow') });
+    expect(await studio.planFamily('project:proj-1', [website, telegram])).toBe(2);
+    expect((socialRepo as any).setStoryStatus).not.toHaveBeenCalled();
+
+    // Nur unbekannte Kanäle → Story entsteht, wird aber sofort gedroppt
+    (llm.complete as any).mockResolvedValueOnce({ content: JSON.stringify([{
+      titel: 'Nirwana-Story', zusammenfassung: 'Stoff.', art: 'news', wichtigkeit: 0.6,
+      kanaele: [{ kanal: 'Nirwana-Kanal', rolle: 'lead', versatz_h: 0 }],
+    }]) });
+    expect(await studio.planFamily('project:proj-1', [website, telegram])).toBe(0);
+    const dropCall = (socialRepo as any).setStoryStatus.mock.calls.find((c: any[]) => c[2] === 'dropped');
+    expect(dropCall).toBeDefined();
+    void stories;
+  });
+
+  it('v1044: verderblicher Follower bei suggest-Lead wird als slotloser Entwurf angelegt statt verworfen', async () => {
+    const { studio, website, telegram, llm, createdItems, transitions } = makeFamilyStack();
+    (website as any).mode = 'suggest'; // Lead-Kanal ohne Auto-Publish
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: CONF }) // art news = verderblich
+      .mockResolvedValueOnce({ content: RENDER('Lead-Entwurf') })
+      .mockResolvedValueOnce({ content: RENDER('Follower-Entwurf') });
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(2); // vorher: Follower fiel komplett aus
+    expect(createdItems.length).toBe(2);
+    expect(transitions.filter(t => t.to === 'scheduled').length).toBe(0); // beide slotlos (Entwurf)
+  });
+
+  it('v1044: erster News-Desk-Lauf nach der Nachtruhe sieht bis 2h VOR den Ruhebeginn zurück', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 6, 8, 6, 30)); // 06:30 lokal, Nachtruhe 22-6 gerade vorbei
+      const { studio, website } = makeFamilyStack();
+      (website.config as any).newsdesk_quiet = [22, 6];
+      const interestsRepo = (studio as any).interestsRepo;
+      (interestsRepo.listItems as any) = vi.fn(async () => []);
+      await studio.newsDesk();
+      const sinceIso = (interestsRepo.listItems as any).mock.calls[0][1].sinceIso;
+      expect(sinceIso).toBe(new Date(2026, 6, 7, 20, 0).toISOString()); // 22:00 Ruhebeginn − 2h
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('v996: Playbook — family_role lead übersteuert die Konferenz-Rolle, family_offset_hours den Versatz', async () => {
