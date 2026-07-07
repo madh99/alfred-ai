@@ -1053,6 +1053,10 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
       return null;
     }
     const idea = ideas[0];
+    // v1043 — der STORY-Termin ist autoritativ, nicht das LLM-Echo: echot das
+    // Modell terminBis nicht mit, bekäme das Bild sonst weder Termin-Vorlage
+    // noch Termin-Karte, obwohl das Item (mergePerformance unten) ein Termin ist.
+    if (story.terminBis) idea.terminBis = story.terminBis;
     const media = await this.maybeGenerateImage(channel, idea);
     const item = await this.socialRepo.createItem(this.ownerUserId, channel.id, {
       status: 'draft',
@@ -1374,28 +1378,49 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
       const { readdir, stat, unlink } = await import('node:fs/promises');
       const { join } = await import('node:path');
       const cutoff = Date.now() - maxAgeDays * 24 * 3_600_000;
-      const files = await readdir(this.mediaDir).catch(() => [] as string[]);
-      for (const name of files) {
-        if (!name.startsWith('studio-')) continue; // nur eigene Artefakte anfassen
-        const full = join(this.mediaDir, name);
-        try {
-          const s = await stat(full);
-          if (s.mtimeMs > cutoff) continue;
-          if (await this.socialRepo.countItemsReferencingMedia(name) > 0) continue;
-          await unlink(full);
-          removed++;
-        } catch { /* Einzelfehler überspringen */ }
-      }
       // v1005 — Bibliotheks-Bilder (asset-*) leben nach eigener Uhr: raus erst,
       // wenn sie 3× so lange wie der Aufbewahrungs-Horizont UNGENUTZT sind.
-      const assetCutoff = new Date(Date.now() - maxAgeDays * 3 * 24 * 3_600_000).toISOString();
-      const assets = await this.socialRepo.listMediaAssets(this.ownerUserId, {}).catch(() => []);
+      const assetCutoffMs = Date.now() - maxAgeDays * 3 * 24 * 3_600_000;
+      const assetCutoff = new Date(assetCutoffMs).toISOString();
+      const assets = await this.socialRepo.listMediaAssets(this.ownerUserId, { limit: 1000 }).catch(() => []);
+      const dbAssetPaths = new Set(assets.map(a => a.path));
+      const templateIds = await this.terminTemplateIds();
+      const files = await readdir(this.mediaDir).catch(() => [] as string[]);
+      for (const name of files) {
+        const full = join(this.mediaDir, name);
+        if (name.startsWith('studio-')) {
+          try {
+            const s = await stat(full);
+            if (s.mtimeMs > cutoff) continue;
+            if (await this.socialRepo.countItemsReferencingMedia(name) > 0) continue;
+            await unlink(full);
+            removed++;
+          } catch { /* Einzelfehler überspringen */ }
+        } else if (name.startsWith('asset-')) {
+          // v1043 — VERWAISTE Bibliotheks-Dateien (DB-Zeile weg — z. B. Dedup
+          // oder Löschung vom anderen Node) wurden nie bereinigt und ließen
+          // die Disk schleichend volllaufen.
+          if (dbAssetPaths.has(full)) continue;
+          try {
+            const s = await stat(full);
+            if (s.mtimeMs > assetCutoffMs) continue;
+            await unlink(full);
+            removed++;
+          } catch { /* Einzelfehler überspringen */ }
+        }
+      }
       for (const asset of assets) {
         // v1041 — gepinnte Assets (Stamm-Bilder, Termin-Vorlagen) altern nie raus
         if (asset.pinned) continue;
+        // v1043 — als Termin-Vorlage referenzierte Assets sind löschgeschützt
+        if (templateIds.has(asset.id)) continue;
         if (asset.lastUsedAt >= assetCutoff) continue;
         try {
-          const { unlink } = await import('node:fs/promises');
+          // v1043 — HA: die Datei kann auf dem ANDEREN Node liegen (geteilte
+          // PG-DB, getrennte Dateisysteme). Nur löschen, was LOKAL existiert —
+          // vorher entfernte node-b die DB-Zeile, während node-a's Datei blieb.
+          const s = await stat(asset.path).catch(() => undefined);
+          if (!s) continue;
           await unlink(asset.path).catch(() => { /* Datei ggf. schon weg */ });
           await this.socialRepo.deleteMediaAsset(this.ownerUserId, asset.id);
           removed++;
@@ -1406,6 +1431,17 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
       this.logger.warn({ err: (err as Error).message }, 'v990 mediaDir cleanup failed');
     }
     return removed;
+  }
+
+  /** v1043 — Asset-IDs, die irgendein Kanal als Termin-Vorlage referenziert (löschgeschützt wie gepinnt). */
+  private async terminTemplateIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    const channels = await this.socialRepo.listChannels(this.ownerUserId).catch(() => [] as SocialChannel[]);
+    for (const c of channels) {
+      const ov = (c.config.image_overlay && typeof c.config.image_overlay === 'object' ? c.config.image_overlay : {}) as Record<string, unknown>;
+      if (typeof ov.termin_image === 'string' && ov.termin_image.trim()) ids.add(ov.termin_image.trim());
+    }
+    return ids;
   }
 
   /** v977 — konfigurierbarer Ankündigungs-Vorlauf (config.termin_lead_hours, Default 3h, Cap 48h). */
@@ -1856,6 +1892,14 @@ Antworte NUR mit einem JSON-Array:
         const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string }> }).attachments?.[0];
         const buffer = attachment?.data && Buffer.isBuffer(attachment.data) ? attachment.data : undefined;
 
+        // v1043 — fail-closed OHNE Buffer: liefert der Skill nur eine URL,
+        // können weder Vision-Gate (Bildnisrecht!) noch Crop/Overlays laufen —
+        // bei symbolic darf so ein Bild NIE raus (Umgehung des v950-Prinzips).
+        if (policy === 'symbolic' && !buffer) {
+          this.logger.warn({ channel: channel.name }, 'v1043 image ohne Buffer (nur URL) — bei symbolic verworfen (fail-closed)');
+          return [];
+        }
+
         // v1040(1a) — der Retry generiert das GENERISCHE Symbolmotiv: genau das
         // gehört in die Bibliothek, nicht das Artikel-Motiv (Realfall 07.07.:
         // neutrale Stadionbilder trugen spezifische Trainer-Beschreibungen und
@@ -2012,7 +2056,7 @@ Antworte NUR mit einem JSON-Array:
     if (wanted.size === 0) return undefined;
     const genericWanted = ContentStudio.isGenericMotif(motif);
     const wantedVec = await this.storyDeduper?.embedText(motif).catch(() => undefined);
-    let best: { asset: (typeof assets)[number]; score: number; pinned: boolean } | undefined;
+    const matches: Array<{ asset: (typeof assets)[number]; score: number }> = [];
     for (const asset of assets) {
       if (asset.blocked) continue; // v1014 — vom User gesperrt
       const effectiveDays = asset.pinned || (genericWanted && ContentStudio.isGenericMotif(asset.motif))
@@ -2035,21 +2079,29 @@ Antworte NUR mit einem JSON-Array:
         }
       }
       if (score === 0) continue;
-      // Stamm-Bilder gewinnen immer; sonst der beste Score
-      if (!best || (asset.pinned && !best.pinned) || (asset.pinned === best.pinned && score > best.score)) {
-        best = { asset, score, pinned: asset.pinned };
-      }
+      matches.push({ asset, score });
     }
-    if (!best) return undefined;
+    if (matches.length === 0) return undefined;
+    // Stamm-Bilder gewinnen immer; sonst der beste Score
+    matches.sort((a, b) => Number(b.asset.pinned) - Number(a.asset.pinned) || b.score - a.score);
     const { readFile, writeFile } = await import('node:fs/promises');
     const { join } = await import('node:path');
-    let base: Buffer;
-    try {
-      base = await readFile(best.asset.path);
-    } catch {
-      await this.socialRepo.deleteMediaAsset(this.ownerUserId, best.asset.id).catch(() => { /* weg ist weg */ });
-      return undefined;
+    // v1043 — HA: Lesefehler heißt „Datei liegt auf dem anderen Node", NICHT
+    // „Asset kaputt". Vorher wurde hier die geteilte DB-Zeile GELÖSCHT und
+    // damit fremde Bibliotheks-Bilder zerstört. Jetzt: nächsten Treffer
+    // versuchen, nie löschen.
+    let best: (typeof matches)[number] | undefined;
+    let base: Buffer | undefined;
+    for (const m of matches) {
+      try {
+        base = await readFile(m.asset.path);
+        best = m;
+        break;
+      } catch {
+        this.logger.warn({ asset: m.asset.id, channel: channel.name }, 'v1043 asset file not readable on this node — übersprungen (nicht gelöscht)');
+      }
     }
+    if (!best || !base) return undefined;
     const finalBuffer = await this.applyOverlays(base, channel, idea, forcedTitle).catch(() => base);
     // v1027 — gleicher „-no-title"-Marker wie im Frisch-Pfad (Plattform-Signal)
     const file = join(this.mediaDir!, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ContentStudio.overlayBakesTitle(channel, idea, forcedTitle) ? '' : '-no-title'}.png`);
@@ -2082,7 +2134,10 @@ Antworte NUR mit einem JSON-Array:
     try {
       base = await readFile(asset.path);
     } catch {
-      return undefined; // Datei auf anderem Node/gelöscht → normaler Pfad
+      // v1043 — sichtbar machen statt still zurückfallen: die Vorlage ist
+      // konfiguriert, aber auf DIESEM Node nicht lesbar (anderer Node/gelöscht)
+      this.logger.warn({ channel: channel.name, asset: asset.id, path: asset.path }, 'v1043 termin template file not readable — fallback auf Generierung');
+      return undefined;
     }
     const framed = format.crop ? await cropToRatio(base, format.crop[0], format.crop[1]).catch(() => base) : base;
     const finalBuffer = await this.applyOverlays(framed, channel, idea, undefined).catch(() => framed);
@@ -2248,6 +2303,7 @@ Antworte NUR mit einem JSON-Array:
    * Basis-Bild-Kopie der Bibliothek.
    */
   async dedupMediaLibrary(): Promise<{ scanned: number; groups: number; removed: number }> {
+    const templateIds = await this.terminTemplateIds();
     const assets = (await this.socialRepo.listMediaAssets(this.ownerUserId, { limit: 1000 }))
       .filter(a => !a.blocked);
     // Pools: nur innerhalb desselben Wiederverwendungs-Kontexts vergleichen
@@ -2293,7 +2349,8 @@ Antworte NUR mit einem JSON-Array:
         const keeper = [...cluster].sort((a, b) =>
           Number(b.pinned) - Number(a.pinned) || b.useCount - a.useCount || b.createdAt.localeCompare(a.createdAt))[0];
         for (const asset of cluster) {
-          if (asset.id === keeper.id || asset.pinned) continue;
+          // v1043 — auch als Termin-Vorlage referenzierte (nicht gepinnte) Assets nie löschen
+          if (asset.id === keeper.id || asset.pinned || templateIds.has(asset.id)) continue;
           try {
             await unlink(asset.path).catch(() => { /* Datei ggf. schon weg (anderer Node) */ });
             await this.socialRepo.deleteMediaAsset(this.ownerUserId, asset.id);

@@ -779,6 +779,22 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(stories.length).toBe(1);
   });
 
+  it('v1043: story.terminBis ist autoritativ fürs Bild — LLM-Echo darf fehlen', async () => {
+    const { studio, website, telegram, llm } = makeFamilyStack();
+    const kickoff = new Date(2099, 6, 4, 19, 0).toISOString();
+    const imageSpy = vi.fn(async () => []);
+    (studio as any).maybeGenerateImage = imageSpy;
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: JSON.stringify([{
+        titel: 'Public Viewing', zusammenfassung: 'PV im Pub.', art: 'termin', wichtigkeit: 0.8, terminBis: kickoff,
+        kanaele: [{ kanal: 'fussball.cc', rolle: 'lead', versatz_h: 0 }],
+      }]) })
+      .mockResolvedValueOnce({ content: RENDER('PV-Artikel') }); // RENDER echot KEIN terminBis
+    await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(imageSpy).toHaveBeenCalled();
+    expect((imageSpy.mock.calls[0] as any[])[1].terminBis).toBe(kickoff); // injiziert
+  });
+
   it('v1042: News-Desk wählt bei Überangebot die WICHTIGSTE Eilmeldung, nicht die Array-Reihenfolge', async () => {
     const { studio, llm, stories } = makeFamilyStack();
     stories.push(
@@ -1471,6 +1487,81 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     expect(embedText).toHaveBeenCalledTimes(2);
     await (studio as any).embedMotifCached('a-1', 'Motiv BBBB'); // identisch → Cache
     expect(embedText).toHaveBeenCalledTimes(2);
+  });
+
+  it('v1043: Lesefehler beim Reuse löscht NIE die DB-Zeile — nächster Treffer wird genommen', async () => {
+    const old = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, execute, dir, writeFile, join } = await makeMediaStudio([]);
+    const okPath = join(dir, 'asset-lesbar.png');
+    await writeFile(okPath, Buffer.from('ok'));
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [
+      // gepinnt = würde gewinnen, aber Datei liegt auf dem „anderen Node"
+      { id: 'a-fremd', userId: OWNER, channelId: 'ch-1', path: join(dir, 'asset-gibt-es-nicht.png'), motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen', style: undefined, format: '1536x1024', lastUsedAt: old, useCount: 1, blocked: false, pinned: true, createdAt: old },
+      { id: 'a-ok', userId: OWNER, channelId: 'ch-1', path: okPath, motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen, atmosphärisch', style: undefined, format: '1536x1024', lastUsedAt: old, useCount: 1, blocked: false, pinned: false, createdAt: old },
+    ]);
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '', bildidee: 'Stadion unter Flutlicht mit Ball auf dem Rasen',
+    });
+    expect((socialRepo as any).deleteMediaAsset).not.toHaveBeenCalled(); // NIE löschen
+    expect((socialRepo as any).touchMediaAsset).toHaveBeenCalledWith(OWNER, 'a-ok', 'ch-1'); // Fallback-Treffer
+    expect(execute).not.toHaveBeenCalled();
+    void media;
+  });
+
+  it('v1043: liefert der Bild-Skill nur eine URL (kein Buffer) → bei symbolic fail-closed verworfen', async () => {
+    const { studio, channel, socialRepo, execute } = await makeMediaStudio([]);
+    (socialRepo as any).listMediaAssets = vi.fn(async () => []);
+    (execute as any).mockResolvedValue({ success: true, data: { url: 'https://cdn.example/bild.png' } }); // kein attachments-Buffer
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '', bildidee: 'Stadion unter Flutlicht mit Ball',
+    });
+    expect(media).toEqual([]); // Vision-Gate/Overlays unmöglich → kein Bild
+  });
+
+  it('v1043: cleanupMediaDir — HA-sicher: nur lokal existierende Dateien, Vorlagen/Waisen korrekt', async () => {
+    const oldIso = new Date(Date.now() - 200 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, dir, writeFile, join } = await makeMediaStudio([]);
+    (channel.config as Record<string, unknown>).image_overlay = { termin_image: 'a-tpl' };
+    const mk = async (name: string) => { const p = join(dir, name); await writeFile(p, Buffer.from(name)); return p; };
+    const base = { userId: OWNER, channelId: 'ch-1', motif: 'm', lastUsedAt: oldIso, useCount: 1, blocked: false, createdAt: oldIso };
+    const localPath = await mk('asset-lokal.png');
+    const tplPath = await mk('asset-tpl.png');
+    await mk('asset-waise.png'); // Datei OHNE DB-Zeile
+    { // mtime eindeutig VOR den Cutoff legen (Sub-ms-Timing ist sonst flaky)
+      const { utimes } = await import('node:fs/promises');
+      const past = new Date(Date.now() - 300 * 24 * 3_600_000);
+      await utimes(join(dir, 'asset-waise.png'), past, past);
+    }
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [
+      { ...base, id: 'a-pin', path: await mk('asset-pin.png'), pinned: true },
+      { ...base, id: 'a-tpl', path: tplPath, pinned: false }, // referenziert als Termin-Vorlage
+      { ...base, id: 'a-lokal', path: localPath, pinned: false },
+      { ...base, id: 'a-fremd', path: join(dir, 'asset-fremder-node.png'), pinned: false }, // Datei existiert NICHT
+    ]);
+    (socialRepo as any).countItemsReferencingMedia = vi.fn(async () => 0);
+    await studio.cleanupMediaDir(0); // Cutoff = jetzt → alles Alte fällig
+    const deleted = (socialRepo as any).deleteMediaAsset.mock.calls.map((c: any[]) => c[1]);
+    expect(deleted).toEqual(['a-lokal']); // Vorlage + gepinnt + fremder Node bleiben
+    const { access } = await import('node:fs/promises');
+    await expect(access(join(dir, 'asset-waise.png'))).rejects.toThrow(); // Waise entfernt
+    await expect(access(tplPath)).resolves.toBeUndefined(); // Vorlage-Datei bleibt
+  });
+
+  it('v1043: dedupMediaLibrary löscht als Termin-Vorlage referenzierte Assets nicht', async () => {
+    const old = new Date(Date.now() - 10 * 24 * 3_600_000).toISOString();
+    const { studio, channel, socialRepo, dir, writeFile, join } = await makeMediaStudio([]);
+    (channel.config as Record<string, unknown>).image_overlay = { termin_image: 'a-tpl' };
+    const mk = async (name: string) => { const p = join(dir, name); await writeFile(p, Buffer.from(name)); return p; };
+    const base = { userId: OWNER, channelId: 'ch-1', style: undefined, format: '1536x1024', lastUsedAt: old, blocked: false, pinned: false, createdAt: old };
+    (socialRepo as any).listMediaAssets = vi.fn(async () => [
+      { ...base, id: 'a-keep', path: await mk('asset-k.png'), motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen', useCount: 9 },
+      { ...base, id: 'a-tpl', path: await mk('asset-t.png'), motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen bei Nacht', useCount: 1 },
+      { ...base, id: 'a-weg', path: await mk('asset-w.png'), motif: 'Stadion unter Flutlicht mit Ball auf dem Rasen, atmosphärisch', useCount: 1 },
+    ]);
+    const r = await studio.dedupMediaLibrary();
+    expect(r.removed).toBe(1);
+    const deleted = (socialRepo as any).deleteMediaAsset.mock.calls.map((c: any[]) => c[1]);
+    expect(deleted).toEqual(['a-weg']); // a-tpl geschützt, a-keep Keeper
   });
 
   it('v1039(E): dedupMediaLibrary — Fast-Duplikate weg, Stamm-Bild bleibt, Fremdmotiv unberührt', async () => {

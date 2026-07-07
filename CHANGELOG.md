@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1043] - 2026-07-07
+
+### Fixed — Audit-Runde Teil 2: Bild-Bibliothek HA-sicher (v1043)
+
+- **Lesefehler löschen nie mehr Bibliotheks-Einträge**: Die Nodes teilen
+  die Datenbank, aber nicht das Dateisystem — ein auf node-b nicht
+  lesbares Bild liegt meist auf node-a. Bisher löschte die
+  Wiederverwendung in dem Fall den geteilten Datensatz (und der
+  Alters-Cleanup entfernte knotenfremde Zeilen). Jetzt wird nur
+  übersprungen bzw. nur gelöscht, was lokal existiert; die
+  Wiederverwendung nimmt automatisch den nächstbesten Treffer.
+- **Verwaiste Bibliotheks-Dateien** (Datei ohne Datenbank-Eintrag)
+  werden jetzt vom Alters-Cleanup mit entfernt — vorher liefen sie
+  für immer auf und ließen die Disk schleichend volllaufen.
+- **Termin-Vorlagen sind löschgeschützt**: Auch ein aus der Bibliothek
+  GEWÄHLTES (nicht hochgeladenes) Vorlagen-Bild überlebt jetzt
+  Duplikate-Aufräumen und Alters-Cleanup; eine konfigurierte, aber
+  lokal fehlende Vorlage wird im Log sichtbar statt still ignoriert.
+- **Termin-Karte hängt am Story-Termin, nicht am Modell-Echo**: Echote
+  das LLM `terminBis` nicht mit, bekam das Bild weder Vorlage noch
+  Termin-Karte, obwohl der Beitrag ein Termin war.
+- **Vision-Gate ohne Schlupfloch**: Liefert der Bild-Skill eine URL
+  statt Bilddaten, wird das Bild bei `symbolic`-Policy verworfen
+  (fail-closed) — vorher wären Prüfung, Zuschnitt und Overlays
+  übersprungen worden.
+
 ## [0.19.0-multi-ha.1042] - 2026-07-07
 
 ### Fixed — Audit-Runde Teil 1: sechs Live-Bugs (v1042)
