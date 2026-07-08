@@ -6750,17 +6750,32 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           );
           socialSkill.setVideoTools({
             // v1058 — opts reicht Hook-/End-Card-Bilder an den Renderer durch
-            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string }) => {
+            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false }) => {
               const images = item.media
                 .filter((m: { type: string; pathOrUrl: string }) => m.type === 'image' && !m.pathOrUrl.startsWith('http'))
                 .map((m: { pathOrUrl: string }) => m.pathOrUrl);
               if (images.length === 0) throw new Error('Keine lokalen Bilder am Item (http-URLs kann der Renderer nicht einlesen).');
               const voiceover = item.body.split(/\n-{3,}\n/)[0]?.trim();
+              // v1059 — Musik-Bett: zufälliger Track aus <dataDir>/reel-music
+              // (User-Bestand, lizenzgeklärt); Ordner fehlt/leer → ohne Musik
+              // rendern, kein Fehler.
+              let musicPath: string | undefined;
+              if (opts?.music && typeof opts.music === 'object') {
+                try {
+                  const { readdir } = await import('node:fs/promises');
+                  const musicDir = path.resolve(path.dirname(this.config.storage.path), 'reel-music');
+                  const tracks = (await readdir(musicDir)).filter(f => /\.(mp3|m4a|aac|ogg|opus|wav|flac)$/i.test(f)).sort();
+                  if (tracks.length > 0) musicPath = path.join(musicDir, tracks[Math.floor(Math.random() * tracks.length)]);
+                } catch { /* kein Musik-Ordner → Reel ohne Bett */ }
+              }
+              const musicVolume = opts?.music && typeof opts.music === 'object' && typeof opts.music.volume === 'number' ? opts.music.volume : undefined;
               return renderer.render({
                 images, voiceoverText: voiceover, format,
                 outBaseName: `${item.id.slice(0, 8)}-${format.replace(':', 'x')}`,
                 ...(opts?.introImage ? { introImage: opts.introImage } : {}),
                 ...(opts?.outroImage ? { outroImage: opts.outroImage } : {}),
+                ...(musicPath ? { musicPath } : {}),
+                ...(musicPath && musicVolume !== undefined ? { musicVolume } : {}),
               });
             },
             probe: (p: string) => renderer.probeVideo(p),

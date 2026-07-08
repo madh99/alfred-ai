@@ -492,7 +492,8 @@ describe('SocialSkill v938 — Video-Pipeline', () => {
 
     const r = await skill.execute({ action: 'render_video', item_id: 'i1', format: '9:16' }, CTX);
     expect(r.success).toBe(true);
-    expect(render).toHaveBeenCalledWith(item, channel, '9:16');
+    // v1059 — 4. Argument: Musik-Bett-Optionen (Default an, Volume aus Config)
+    expect(render).toHaveBeenCalledWith(item, channel, '9:16', { music: {} });
     const media = (repo.updateItemContent as any).mock.calls[0][2].media;
     expect(media.some((m: any) => m.type === 'video' && m.source === 'generated')).toBe(true);
     expect((repo.upsertMetric as any).mock.calls[0][1]).toMatchObject({ kind: 'gen_video', value: 1 });

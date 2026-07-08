@@ -26,6 +26,10 @@ export interface VideoSpec {
   outroImage?: string;
   /** v1058 — Dauer der End-Card (Default 2s). */
   outroSec?: number;
+  /** v1059 — Musik-Bett: lokale Audiodatei, wird geloopt und unters Voiceover gemischt. */
+  musicPath?: string;
+  /** v1059 — Lautstärke des Musik-Betts 0–1 (Default 0,15). */
+  musicVolume?: number;
 }
 
 export interface RenderResult {
@@ -171,6 +175,44 @@ export function buildReelFilterGraph(opts: {
 }
 
 /**
+ * v1059 — Audio-Graph fürs Musik-Bett (pure, testbar): Musik leise unters
+ * Voiceover legen, per Sidechain-Ducking automatisch absenken solange
+ * gesprochen wird, und am Video-Ende sanft ausblenden. Ohne Voiceover läuft
+ * die Musik allein. Die Musik-Quelle wird per -stream_loop -1 geloopt; das
+ * -t des Aufrufers schneidet den (unendlichen) Mix auf die Videolänge.
+ */
+export function buildReelAudioGraph(opts: {
+  /** Input-Index des Voiceovers (ohne → Musik solo). */
+  voiceIndex?: number;
+  /** Input-Index der Musik. */
+  musicIndex: number;
+  /** 0–1, Default 0,15 (leises Bett). */
+  musicVolume?: number;
+  totalSec: number;
+  /** Ausblende-Dauer am Ende (Default 1,5s). */
+  fadeSec?: number;
+}): { filterComplex: string; outLabel: string } {
+  const vol = Math.min(1, Math.max(0.01, opts.musicVolume ?? 0.15));
+  const fade = opts.fadeSec ?? 1.5;
+  const fadeStart = Math.max(0, opts.totalSec - fade);
+  const fadeOut = `afade=t=out:st=${fadeStart.toFixed(3)}:d=${fade}`;
+  if (opts.voiceIndex === undefined) {
+    return {
+      filterComplex: `[${opts.musicIndex}:a]volume=${vol},${fadeOut}[aout]`,
+      outLabel: '[aout]',
+    };
+  }
+  const parts = [
+    `[${opts.voiceIndex}:a]apad,asplit=2[vo1][vo2]`,
+    `[${opts.musicIndex}:a]volume=${vol}[bed]`,
+    // Ducking: Musik weicht der Stimme (Sidechain), kommt in Sprechpausen zurück
+    `[bed][vo1]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=400[duck]`,
+    `[vo2][duck]amix=inputs=2:duration=first:normalize=0,${fadeOut}[aout]`,
+  ];
+  return { filterComplex: parts.join(';'), outLabel: '[aout]' };
+}
+
+/**
  * v938 — Externer Video-Generator (Runway/Kling/Veo): Schnittstelle ist
  * vorbereitet und per Config aktivierbar — die konkrete Anbindung folgt,
  * sobald ein Anbieter gewählt/bezahlt ist. Bis dahin liefert generate()
@@ -291,18 +333,32 @@ export class SlideshowVideoRenderer {
       srtPathEscaped: srtPath ? srtPath.replace(/\\/g, '/').replace(/'/g, "'\\''").replace(/:/g, '\\:') : undefined,
     });
     const outPath = `${base}.mp4`;
+    // v1059 — Musik-Bett: geloopte Musik unters Voiceover (Sidechain-Ducking),
+    // ohne Voiceover läuft die Musik allein; -t schneidet auf die Videolänge.
+    const music = spec.musicPath?.trim() || undefined;
+    const audioGraph = music
+      ? buildReelAudioGraph({
+        ...(audioPath ? { voiceIndex: slideFiles.length } : {}),
+        musicIndex: slideFiles.length + (audioPath ? 1 : 0),
+        ...(spec.musicVolume !== undefined ? { musicVolume: spec.musicVolume } : {}),
+        totalSec: graph.totalSec,
+      })
+      : undefined;
     const args = [
       '-y',
       ...slideFiles.flatMap(f => ['-i', f]),
       ...(audioPath ? ['-i', audioPath] : []),
-      '-filter_complex', graph.filterComplex,
+      ...(music ? ['-stream_loop', '-1', '-i', music] : []),
+      '-filter_complex', audioGraph ? `${graph.filterComplex};${audioGraph.filterComplex}` : graph.filterComplex,
       '-map', graph.outLabel,
-      ...(audioPath ? ['-map', `${slideFiles.length}:a`, '-c:a', 'aac', '-af', 'apad'] : ['-an']),
+      ...(audioGraph
+        ? ['-map', audioGraph.outLabel, '-c:a', 'aac']
+        : audioPath ? ['-map', `${slideFiles.length}:a`, '-c:a', 'aac', '-af', 'apad'] : ['-an']),
       '-t', String(graph.totalSec),
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30',
       outPath,
     ];
-    this.logger.info({ images: spec.images.length, intro: introSec, outro: outroSec, durationSec: graph.totalSec, format: spec.format }, 'v1058 rendering reel video (cover-crop + ken-burns + crossfades)');
+    this.logger.info({ images: spec.images.length, intro: introSec, outro: outroSec, music: Boolean(music), durationSec: graph.totalSec, format: spec.format }, 'v1058 rendering reel video (cover-crop + ken-burns + crossfades)');
     await execFileAsync(this.ffmpeg, args, { timeout: 10 * 60_000, maxBuffer: 10 * 1024 * 1024 });
     return { videoPath: outPath, durationSec: graph.totalSec };
   }

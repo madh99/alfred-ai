@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSrt, buildPhraseSrt, buildReelFilterGraph, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
+import { buildSrt, buildPhraseSrt, buildReelFilterGraph, buildReelAudioGraph, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
 
 describe('buildSrt (v938)', () => {
   it('verteilt Sätze gewichtet über die Laufzeit, SRT-Format korrekt', () => {
@@ -68,6 +68,31 @@ describe('buildReelFilterGraph (v1058)', () => {
     expect(g.filterComplex).not.toContain('xfade');
     expect(g.filterComplex).not.toContain('subtitles');
     expect(g.totalSec).toBe(10);
+  });
+});
+
+describe('buildReelAudioGraph (v1059)', () => {
+  it('Voiceover + Musik: leises Bett mit Sidechain-Ducking, Fade-out am Ende', () => {
+    const g = buildReelAudioGraph({ voiceIndex: 4, musicIndex: 5, totalSec: 30 });
+    expect(g.outLabel).toBe('[aout]');
+    expect(g.filterComplex).toContain('[4:a]apad,asplit=2');
+    expect(g.filterComplex).toContain('[5:a]volume=0.15[bed]'); // Default leise
+    expect(g.filterComplex).toContain('sidechaincompress'); // Musik weicht der Stimme
+    expect(g.filterComplex).toContain('amix=inputs=2:duration=first:normalize=0');
+    expect(g.filterComplex).toContain('afade=t=out:st=28.500:d=1.5');
+  });
+
+  it('nur Musik (kein Voiceover): kein Mix, Lautstärke geclampt', () => {
+    const g = buildReelAudioGraph({ musicIndex: 3, musicVolume: 5, totalSec: 10 });
+    expect(g.filterComplex).not.toContain('amix');
+    expect(g.filterComplex).not.toContain('sidechaincompress');
+    expect(g.filterComplex).toContain('[3:a]volume=1,'); // 5 → clamp auf 1
+    expect(g.filterComplex).toContain('afade=t=out:st=8.500:d=1.5');
+  });
+
+  it('eigene Lautstärke wird übernommen', () => {
+    const g = buildReelAudioGraph({ voiceIndex: 2, musicIndex: 3, musicVolume: 0.3, totalSec: 20 });
+    expect(g.filterComplex).toContain('volume=0.3[bed]');
   });
 });
 

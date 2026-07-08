@@ -168,7 +168,7 @@ export class SocialSkill extends Skill {
   /** v938 — Video-Pipeline (Slideshow-Renderer + ffprobe-Check, vom Kern injiziert). */
   private videoTools?: {
     // v1058 — opts: Hook-Karte (intro) und End-Card (outro) fürs Reel
-    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string }) => Promise<{ videoPath: string; durationSec: number }>;
+    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false }) => Promise<{ videoPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
   };
 
@@ -977,6 +977,17 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
   }
 
   /** v1022 — eigentliches Reel-Rendern (aus maybeAutoReel ausgelagert, läuft unter dem In-flight-Guard). */
+  /**
+   * v1059 — Musik-Bett-Optionen aus der Kanal-Config: reel_music:false
+   * schaltet es ab, reel_music_volume (0–1) regelt die Lautstärke. Die
+   * Track-Auswahl (Ordner reel-music im Datenverzeichnis) macht der Kern.
+   */
+  private reelMusicOpts(channel: SocialChannel): { volume?: number } | false {
+    if (channel.config.reel_music === false) return false;
+    const vol = channel.config.reel_music_volume;
+    return typeof vol === 'number' && vol > 0 && vol <= 1 ? { volume: vol } : {};
+  }
+
   private async renderAutoReel(
     userId: string, leadItem: ContentItem, ig: SocialChannel,
     assigns: Awaited<ReturnType<SocialRepository['listAssignments']>>,
@@ -1059,7 +1070,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`
     }
     let rendered: { videoPath: string; durationSec: number };
     try {
-      rendered = await this.videoTools.render(pseudo, ig, '9:16', { introImage, outroImage });
+      rendered = await this.videoTools.render(pseudo, ig, '9:16', { introImage, outroImage, music: this.reelMusicOpts(ig) });
     } finally {
       const { unlink } = await import('node:fs/promises');
       for (const f of tmpFiles) await unlink(f).catch(() => { /* tmp best-effort */ });
@@ -1961,7 +1972,8 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     }
 
     const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
-    const result = await this.videoTools.render(item, channel, format);
+    // v1059 — auch manuell gerenderte Videos bekommen das Musik-Bett
+    const result = await this.videoTools.render(item, channel, format, { music: this.reelMusicOpts(channel) });
     const media: ContentMedia[] = [...item.media, { type: 'video', source: 'generated', pathOrUrl: result.videoPath }];
     await this.repo.updateItemContent(userId, item.id, { media });
     const today = new Date().toISOString().slice(0, 10);

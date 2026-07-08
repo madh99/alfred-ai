@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1059] - 2026-07-08
+
+### Added — Reel-Qualität Stufe 2: Musik-Bett unterm Voiceover (v1059)
+
+- Reels und gerenderte Videos bekommen ein leises Musik-Bett: Ein
+  zufälliger Track aus dem Ordner `reel-music` im Datenverzeichnis
+  (z. B. `/root/alfred/data/reel-music/*.mp3`) wird geloopt, unters
+  Voiceover gemischt und am Ende sanft ausgeblendet. Per
+  Sidechain-Ducking weicht die Musik automatisch der Stimme und kommt
+  in Sprechpausen zurück.
+- Konfiguration je Kanal: `reel_music: false` schaltet das Bett ab,
+  `reel_music_volume` (0–1, Standard 0,15) regelt die Lautstärke.
+  Ist der Musik-Ordner leer oder fehlt, rendert das Reel wie bisher
+  ohne Musik — kein Fehler. Unterstützte Formate: mp3, m4a, aac, ogg,
+  opus, wav, flac (lizenzfreie Tracks bereitstellen).
+
 ## [0.19.0-multi-ha.1058] - 2026-07-08
 
 ### Changed — Reel-Qualität Stufe 1: Vollbild, Bewegung, echte Reel-Untertitel (v1058)
