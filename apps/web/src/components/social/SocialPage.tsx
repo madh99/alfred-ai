@@ -183,13 +183,18 @@ export function SocialPage() {
     language: string; translateTo: string[];
     // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells · v1016 — Auto-Reels
     autoStory: boolean; imageCarousel: boolean; autoReel: boolean;
+    // v1060 — Reels & Video: Wochen-Cap, CTA, Musik-Bett (v1059), KI-Clips (Stufe 3)
+    reelMaxPerWeek: number; reelCtaText: string; reelMusicOn: boolean; reelMusicVolume: string;
+    reelAiClips: 0 | 1 | 2; reelAiProvider: 'sora' | 'runway' | 'veo'; reelAiModel: string; aiClipBudget: number;
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
-    language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false, formate: [] });
+    language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
+    reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
+    reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8, formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v1024 — Ad-hoc-Story („Story anstoßen"): Stoff → Beiträge auf allen Familien-Kanälen
@@ -553,6 +558,15 @@ export function SocialPage() {
       autoStory: c.config.auto_story === true,
       imageCarousel: c.config.image_carousel === true,
       autoReel: c.config.auto_reel === true,
+      // v1060 — Reels & Video
+      reelMaxPerWeek: typeof c.config.reel_max_per_week === 'number' ? c.config.reel_max_per_week : 2,
+      reelCtaText: typeof c.config.reel_cta_text === 'string' ? c.config.reel_cta_text : '',
+      reelMusicOn: c.config.reel_music !== false,
+      reelMusicVolume: typeof c.config.reel_music_volume === 'number' ? String(c.config.reel_music_volume) : '',
+      reelAiClips: c.config.reel_ai_clips === 1 || c.config.reel_ai_clips === 2 ? c.config.reel_ai_clips : 0,
+      reelAiProvider: c.config.reel_ai_provider === 'runway' || c.config.reel_ai_provider === 'veo' ? c.config.reel_ai_provider : 'sora',
+      reelAiModel: typeof c.config.reel_ai_model === 'string' ? c.config.reel_ai_model : '',
+      aiClipBudget: typeof c.config.ai_clip_budget_per_month === 'number' ? c.config.ai_clip_budget_per_month : 8,
       formate: Array.isArray(c.config.formate)
         ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
           .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
@@ -607,6 +621,15 @@ export function SocialPage() {
           auto_story: d.autoStory ? true : null,
           image_carousel: d.imageCarousel ? true : null,
           auto_reel: d.autoReel ? true : null,
+          // v1060 — Reels & Video (Defaults → Schlüssel löschen)
+          reel_max_per_week: d.reelMaxPerWeek === 2 ? null : d.reelMaxPerWeek,
+          reel_cta_text: d.reelCtaText.trim() || null,
+          reel_music: d.reelMusicOn ? null : false,
+          reel_music_volume: d.reelMusicVolume.trim() !== '' && Number(d.reelMusicVolume) > 0 && Number(d.reelMusicVolume) <= 1 ? Number(d.reelMusicVolume) : null,
+          reel_ai_clips: d.reelAiClips > 0 ? d.reelAiClips : null,
+          reel_ai_provider: d.reelAiClips > 0 && d.reelAiProvider !== 'sora' ? d.reelAiProvider : null,
+          reel_ai_model: d.reelAiClips > 0 && d.reelAiModel.trim() ? d.reelAiModel.trim() : null,
+          ai_clip_budget_per_month: d.reelAiClips > 0 && d.aiClipBudget !== 8 ? d.aiClipBudget : null,
           // v1012 — Serien-Formate
           formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
             ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
@@ -1439,12 +1462,88 @@ export function SocialPage() {
                       🎠 Karussells (2-4 Slides bei Analysen/Aufzählungen)
                     </label>
                   )}
-                  {/* v1016 — Auto-Reels */}
+                  {/* v1016/v1060 — Reels & Video: Auto-Reel + Musik-Bett + KI-Clips (Stufe 3) */}
                   {c.platform === 'instagram' && (
+                    <div className="border border-purple-500/20 rounded p-2.5 space-y-2 bg-purple-500/5">
+                      <div className="text-[11px] font-medium text-purple-300">🎬 Reels &amp; Video <span className="text-gray-500 font-normal">— Sprecher, Untertitel, Hook + End-Card kommen automatisch</span></div>
+                      <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                        title="Beim Lead-Artikel entsteht ein 20-30s-Reel (Sprecher, Untertitel, Bilder der Story) als ENTWURF — geht erst nach deiner Freigabe live. Braucht ffmpeg auf dem Host.">
+                        <input type="checkbox" checked={settingsDraft.autoReel} onChange={e => setSettingsDraft(d => ({ ...d, autoReel: e.target.checked }))} />
+                        Auto-Reel bei neuem Lead-Artikel (als Entwurf, mit Freigabe)
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] text-gray-500">Max. Reels pro Woche</label>
+                          <input type="number" min={0} max={14} value={settingsDraft.reelMaxPerWeek}
+                            onChange={e => setSettingsDraft(d => ({ ...d, reelMaxPerWeek: Math.max(0, Number(e.target.value) || 0) }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500">End-Card-Text (CTA)</label>
+                          <input value={settingsDraft.reelCtaText} onChange={e => setSettingsDraft(d => ({ ...d, reelCtaText: e.target.value }))}
+                            placeholder="automatisch: „Ganzer Artikel auf <Marke>“"
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 items-end">
+                        <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer pb-1"
+                          title="Leises lizenzfreies Musik-Bett unterm Sprecher (weicht der Stimme automatisch aus). Tracks liegen serverseitig im Ordner reel-music des Datenverzeichnisses.">
+                          <input type="checkbox" checked={settingsDraft.reelMusicOn} onChange={e => setSettingsDraft(d => ({ ...d, reelMusicOn: e.target.checked }))} />
+                          🎵 Musik-Bett
+                        </label>
+                        {settingsDraft.reelMusicOn && (
+                          <div>
+                            <label className="text-[11px] text-gray-500">Musik-Lautstärke (0–1, leer = 0,15)</label>
+                            <input value={settingsDraft.reelMusicVolume} onChange={e => setSettingsDraft(d => ({ ...d, reelMusicVolume: e.target.value }))}
+                              placeholder="0.15"
+                              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="border-t border-purple-500/10 pt-2 space-y-2">
+                        <div>
+                          <label className="text-[11px] text-gray-500" title="Die ersten 1-2 Bilder des Reels werden per Image-to-Video in echte bewegte Clips verwandelt (5-8s). KOSTET je Clip ca. 0,25-3 € beim gewählten Anbieter; Fehlschläge fallen automatisch auf die Ken-Burns-Standbilder zurück.">✨ KI-Video-Clips (Stufe 3 — kostenpflichtig je Clip)</label>
+                          <select value={settingsDraft.reelAiClips} onChange={e => setSettingsDraft(d => ({ ...d, reelAiClips: Number(e.target.value) as 0 | 1 | 2 }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value={0}>aus — Ken-Burns-Standbilder (wie bisher, kostenlos)</option>
+                            <option value={1}>1 Clip je Reel (Hook-Szene bewegt)</option>
+                            <option value={2}>2 Clips je Reel</option>
+                          </select>
+                        </div>
+                        {settingsDraft.reelAiClips > 0 && (
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                            <div>
+                              <label className="text-[11px] text-gray-500">Anbieter</label>
+                              <select value={settingsDraft.reelAiProvider} onChange={e => setSettingsDraft(d => ({ ...d, reelAiProvider: e.target.value as 'sora' | 'runway' | 'veo' }))}
+                                className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                                <option value="sora">Sora (OpenAI-Key, ~0,80 €/Clip)</option>
+                                <option value="runway">Runway (Secret RUNWAY_API_SECRET, ~0,25 €)</option>
+                                <option value="veo">Veo (Secret GOOGLE_API_KEY, ~1-3 €)</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[11px] text-gray-500">Clip-Budget/Monat</label>
+                              <input type="number" min={0} value={settingsDraft.aiClipBudget}
+                                onChange={e => setSettingsDraft(d => ({ ...d, aiClipBudget: Math.max(0, Number(e.target.value) || 0) }))}
+                                className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                            </div>
+                            <div>
+                              <label className="text-[11px] text-gray-500">Modell (leer = Standard)</label>
+                              <input value={settingsDraft.reelAiModel} onChange={e => setSettingsDraft(d => ({ ...d, reelAiModel: e.target.value }))}
+                                placeholder={settingsDraft.reelAiProvider === 'sora' ? 'sora-2' : settingsDraft.reelAiProvider === 'runway' ? 'gen4_turbo' : 'veo-3.0-fast-generate-001'}
+                                className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {/* v1056/v1060 — FB-Reel-Zweitverwertung */}
+                  {c.platform === 'facebook' && (
                     <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
-                      title="Beim Lead-Artikel entsteht ein 20-30s-Reel (Sprecher, Untertitel, Bilder der Story) als ENTWURF — geht erst nach deiner Freigabe live. Max. 2/Woche (config.reel_max_per_week). Braucht ffmpeg auf dem Host.">
+                      title="Das auf Instagram gerenderte Auto-Reel derselben Familie wird als zweiter Entwurf für diese Facebook-Page angelegt (gleiche Videodatei, kein doppeltes Rendering, gleiche Freigabe-Pflicht).">
                       <input type="checkbox" checked={settingsDraft.autoReel} onChange={e => setSettingsDraft(d => ({ ...d, autoReel: e.target.checked }))} />
-                      🎬 Auto-Reel bei neuem Lead-Artikel (als Entwurf, mit Freigabe)
+                      🎬 IG-Auto-Reel auch als Facebook-Reel übernehmen (Entwurf mit Freigabe)
                     </label>
                   )}
                   {/* v1004 — Bild-Look: Stil-Preset, Qualität, Wasserzeichen, Titel-Overlay */}

@@ -168,7 +168,9 @@ export class SocialSkill extends Skill {
   /** v938 — Video-Pipeline (Slideshow-Renderer + ffprobe-Check, vom Kern injiziert). */
   private videoTools?: {
     // v1058 — opts: Hook-Karte (intro) und End-Card (outro) fürs Reel
-    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false }) => Promise<{ videoPath: string; durationSec: number }>;
+    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }> }) => Promise<{ videoPath: string; durationSec: number }>;
+    /** v1060 — Stufe 3: Image-to-Video-Clip (Sora/Runway/Veo, kostenpflichtig). */
+    generateClip?: (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => Promise<{ clipPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
   };
 
@@ -1016,12 +1018,13 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     const prompt = `Erstelle aus diesem Artikel ein Instagram-Reel-Paket (${lang}):
 1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL).
 2. "caption": Reel-Caption (2-3 Sätze + Frage an die Community, keine Hashtags).
+3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken (z.B. "slow cinematic camera push-in, crowd waving flags, natural stadium light" — KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos).
 FAKTEN nur aus dem Artikel, nichts erfinden.
 
 ARTIKEL: ${leadItem.title ?? ''}
 ${leadItem.body.slice(0, 1500)}
 
-Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`;
+Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", "motion": "…"}`;
     const tierRaw = ig.config.model_tier;
     const tier = tierRaw === 'medium' || tierRaw === 'default' || tierRaw === 'strong' ? tierRaw : 'fast';
     const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 2_000, tier, reasoningEffort: 'low' });
@@ -1029,11 +1032,14 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`
     const start = raw.indexOf('{');
     const end = raw.lastIndexOf('}');
     if (start < 0 || end <= start) return;
-    let pack: { script?: unknown; caption?: unknown };
+    let pack: { script?: unknown; caption?: unknown; motion?: unknown };
     try { pack = JSON.parse(raw.slice(start, end + 1)); } catch { return; }
     if (typeof pack.script !== 'string' || pack.script.trim().length < 20) return;
     const script = pack.script.trim().slice(0, 1_000);
     const caption = typeof pack.caption === 'string' && pack.caption.trim() ? pack.caption.trim().slice(0, 1_500) : script.slice(0, 300);
+    const motion = typeof pack.motion === 'string' && pack.motion.trim()
+      ? pack.motion.trim().slice(0, 400)
+      : 'slow cinematic camera push-in, subtle natural motion, no text overlays, no recognizable people';
     // Rendern (ffmpeg + TTS + Untertitel) — der teure Teil
     const pseudo: ContentItem = {
       ...leadItem, id: `reel-${leadItem.id.slice(0, 8)}`, body: script,
@@ -1068,9 +1074,50 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`
       introImage = undefined;
       outroImage = undefined;
     }
+    // v1060 — Stufe 3 (Opt-in!): KI-Clips für die ersten 1-2 Bilder. Nur wenn
+    // der Kanal reel_ai_clips gesetzt hat, Monats-Budget noch Luft hat und der
+    // Kern den Generator anbietet. JEDER Fehlschlag fällt still auf die
+    // Ken-Burns-Standbild-Slide zurück — das Reel kommt immer raus.
+    const clips: Array<{ index: number; path: string; durationSec: number }> = [];
+    const clipNotes: string[] = [];
+    const aiClipsWanted = typeof ig.config.reel_ai_clips === 'number' ? Math.min(Math.max(Math.floor(ig.config.reel_ai_clips), 0), 2) : 0;
+    if (aiClipsWanted > 0 && this.videoTools.generateClip) {
+      const provRaw = ig.config.reel_ai_provider;
+      const provider = provRaw === 'runway' || provRaw === 'veo' ? provRaw : 'sora';
+      const model = typeof ig.config.reel_ai_model === 'string' && ig.config.reel_ai_model.trim() ? ig.config.reel_ai_model.trim() : undefined;
+      const clipBudget = typeof ig.config.ai_clip_budget_per_month === 'number' ? ig.config.ai_clip_budget_per_month : 8;
+      const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+      let clipsUsed = (await this.repo.listMetrics(ig.id, { kind: 'gen_ai_clip', sinceDate: monthStart }))
+        .reduce((sum, m) => sum + m.value, 0);
+      const secrets = await this.secrets(ig);
+      const today = new Date().toISOString().slice(0, 10);
+      for (let i = 0; i < Math.min(aiClipsWanted, images.length); i++) {
+        if (clipsUsed >= clipBudget) {
+          clipNotes.push(`KI-Clip-Monatsbudget erreicht (${clipsUsed}/${clipBudget}) — Standbild-Slides.`);
+          break;
+        }
+        try {
+          const clip = await this.videoTools.generateClip({
+            imagePath: images[i], prompt: motion, provider, ...(model ? { model } : {}), secrets, format: '9:16',
+          });
+          clips.push({ index: i, path: clip.clipPath, durationSec: clip.durationSec });
+          clipsUsed += 1;
+          // Budget-Ehrlichkeit (v1055-Lektion): JEDER gestartete, gelieferte
+          // Clip zählt sofort — auch wenn das Reel danach scheitern sollte.
+          const dayUsed = (await this.repo.listMetrics(ig.id, { kind: 'gen_ai_clip', sinceDate: today }))
+            .find(m => m.date === today && !m.itemId)?.value ?? 0;
+          await this.repo.upsertMetric(ig.id, { date: today, kind: 'gen_ai_clip', value: dayUsed + 1 });
+        } catch (err) {
+          clipNotes.push(`KI-Clip ${i + 1} (${provider}) fehlgeschlagen: ${(err as Error).message.slice(0, 150)} — Standbild-Slide.`);
+        }
+      }
+    }
     let rendered: { videoPath: string; durationSec: number };
     try {
-      rendered = await this.videoTools.render(pseudo, ig, '9:16', { introImage, outroImage, music: this.reelMusicOpts(ig) });
+      rendered = await this.videoTools.render(pseudo, ig, '9:16', {
+        introImage, outroImage, music: this.reelMusicOpts(ig),
+        ...(clips.length > 0 ? { clips } : {}),
+      });
     } finally {
       const { unlink } = await import('node:fs/promises');
       for (const f of tmpFiles) await unlink(f).catch(() => { /* tmp best-effort */ });
@@ -1090,6 +1137,10 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`
     });
     await this.repo.mergePerformance(userId, item.id, {
       format: 'reel', autoReel: true, durationSec: rendered.durationSec, script,
+      // v1060 — KI-Clip-Protokoll: was gekostet hat und was auf Standbild
+      // zurückfiel, sichtbar am Entwurf (Freigabe-Entscheidung).
+      ...(clips.length > 0 ? { aiClips: clips.length } : {}),
+      ...(clipNotes.length > 0 ? { aiClipNotes: clipNotes } : {}),
     }).catch(() => { /* optional */ });
 
     // v1056 — Zweitverwertung Facebook: DASSELBE gerenderte Video als

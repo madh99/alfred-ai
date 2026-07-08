@@ -30,6 +30,8 @@ export interface VideoSpec {
   musicPath?: string;
   /** v1059 — Lautstärke des Musik-Betts 0–1 (Default 0,15). */
   musicVolume?: number;
+  /** v1060 — KI-Clips: ersetzen das Bild an images[index] als bewegte Slide. */
+  clips?: Array<{ index: number; path: string; durationSec: number }>;
 }
 
 export interface RenderResult {
@@ -124,7 +126,7 @@ export const REEL_SUBTITLE_STYLE = 'FontName=DejaVu Sans,Bold=1,FontSize=11,Outl
  * Gesamtlänge trotz Überblendungen exakt stimmt.
  */
 export function buildReelFilterGraph(opts: {
-  slides: Array<{ motion: 'in' | 'out' | 'none'; durationSec: number }>;
+  slides: Array<{ motion: 'in' | 'out' | 'none'; durationSec: number; kind?: 'image' | 'video' }>;
   width: number;
   height: number;
   fadeSec?: number;
@@ -143,6 +145,17 @@ export function buildReelFilterGraph(opts: {
     const visible = slide.durationSec;
     const inputSec = i < opts.slides.length - 1 ? visible + fade : visible;
     inputDurations.push(Number(inputSec.toFixed(3)));
+    if (slide.kind === 'video') {
+      // v1060 — KI-Clip: hat eigene Bewegung, kein Ken-Burns. Cover-Crop +
+      // fps-Angleich; tpad klont das letzte Frame für die Crossfade-Überlappung
+      // (falls der Clip exakt auf der sichtbaren Dauer endet).
+      parts.push(
+        `[${i}:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=${fps},`
+        + `trim=duration=${visible.toFixed(3)},setpts=PTS-STARTPTS,`
+        + `tpad=stop_mode=clone:stop_duration=${fade},setsar=1,format=yuv420p[v${i}]`,
+      );
+      return;
+    }
     const frames = Math.max(1, Math.round(inputSec * fps));
     const zoom = slide.motion === 'in'
       ? `min(1+0.10*on/${frames},1.10)`
@@ -151,7 +164,7 @@ export function buildReelFilterGraph(opts: {
         : '1';
     parts.push(
       `[${i}:v]scale=${zw}:${zh}:force_original_aspect_ratio=increase,crop=${zw}:${zh},`
-      + `zoompan=z='${zoom}':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${w}x${h}:fps=${fps},setsar=1[v${i}]`,
+      + `zoompan=z='${zoom}':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${w}x${h}:fps=${fps},setsar=1,format=yuv420p[v${i}]`,
     );
   });
   let current = '[v0]';
@@ -300,30 +313,46 @@ export class SlideshowVideoRenderer {
 
     // 2) v1058 — Slide-Plan: optionale Hook-Karte + Bilder + optionale End-Card.
     // Das Voiceover deckt Hook + Bilder ab; die End-Card läuft danach (Stille).
+    // v1060 — KI-Clips ersetzen ihr Bild als bewegte Slide mit EIGENER Dauer
+    // (nativ, 2–8s gekappt); die Standbilder teilen sich die restliche
+    // Voiceover-Zeit.
     const introSec = spec.introImage ? Math.max(1, spec.introSec ?? 1.5) : 0;
     const outroSec = spec.outroImage ? Math.max(1, spec.outroSec ?? 2) : 0;
-    const imagesBudget = Math.max(spec.images.length * 2, durationSec - introSec);
-    const perImage = imagesBudget / spec.images.length;
+    const clipByIndex = new Map((spec.clips ?? []).map(c => [c.index, c]));
+    const clipSec = (c: { durationSec: number }) => Math.min(Math.max(c.durationSec, 2), 8);
+    const clipTotal = [...clipByIndex.values()].reduce((s, c) => s + clipSec(c), 0);
+    const stillCount = spec.images.length - clipByIndex.size;
+    const perStill = stillCount > 0
+      ? Math.max(stillCount * 2, durationSec - introSec - clipTotal) / stillCount
+      : 0;
+    const middle = spec.images.map((img, i) => {
+      const clip = clipByIndex.get(i);
+      return clip
+        ? { file: clip.path, kind: 'video' as const, durationSec: clipSec(clip) }
+        : { file: img, kind: 'image' as const, durationSec: perStill };
+    });
     const slideFiles: string[] = [
       ...(spec.introImage ? [spec.introImage] : []),
-      ...spec.images,
+      ...middle.map(m => m.file),
       ...(spec.outroImage ? [spec.outroImage] : []),
     ];
-    const slides = slideFiles.map((_, i) => {
-      const isIntro = spec.introImage && i === 0;
-      const isOutro = spec.outroImage && i === slideFiles.length - 1;
-      return {
-        motion: isOutro ? 'none' as const : (i % 2 === 0 ? 'in' as const : 'out' as const),
-        durationSec: isIntro ? introSec : isOutro ? outroSec : perImage,
-      };
-    });
+    const slides = [
+      ...(spec.introImage ? [{ motion: 'in' as const, durationSec: introSec, kind: 'image' as const }] : []),
+      ...middle.map((m, i) => ({
+        motion: m.kind === 'video' ? 'none' as const : ((i + (spec.introImage ? 1 : 0)) % 2 === 0 ? 'in' as const : 'out' as const),
+        durationSec: m.durationSec,
+        kind: m.kind,
+      })),
+      ...(spec.outroImage ? [{ motion: 'none' as const, durationSec: outroSec, kind: 'image' as const }] : []),
+    ];
+    const speechWindow = introSec + middle.reduce((s, m) => s + m.durationSec, 0);
 
     // 3) Untertitel — Phrasen-Chunks über die Voiceover-Zeit (nicht über die End-Card)
     const subText = (spec.subtitleText ?? voText ?? '').trim();
     let srtPath: string | undefined;
     if (subText) {
       srtPath = `${base}.srt`;
-      await writeFile(srtPath, buildPhraseSrt(subText, introSec + imagesBudget), 'utf8');
+      await writeFile(srtPath, buildPhraseSrt(subText, speechWindow), 'utf8');
     }
 
     // 4) v1058 — ffmpeg: Cover-Crop + Ken-Burns + Crossfades statt Letterbox-Standbilder
@@ -358,7 +387,7 @@ export class SlideshowVideoRenderer {
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30',
       outPath,
     ];
-    this.logger.info({ images: spec.images.length, intro: introSec, outro: outroSec, music: Boolean(music), durationSec: graph.totalSec, format: spec.format }, 'v1058 rendering reel video (cover-crop + ken-burns + crossfades)');
+    this.logger.info({ images: spec.images.length, clips: clipByIndex.size, intro: introSec, outro: outroSec, music: Boolean(music), durationSec: graph.totalSec, format: spec.format }, 'v1058 rendering reel video (cover-crop + ken-burns + crossfades)');
     await execFileAsync(this.ffmpeg, args, { timeout: 10 * 60_000, maxBuffer: 10 * 1024 * 1024 });
     return { videoPath: outPath, durationSec: graph.totalSec };
   }

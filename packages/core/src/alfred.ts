@@ -6748,9 +6748,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               synthesize: synth ? (text: string) => synth.synthesize(text, ownerUid) : undefined,
             },
           );
+          // v1060 — Stufe 3: KI-Clip-Generator (Sora/Runway/Veo). Keys: OpenAI/
+          // Google aus der LLM-Config (Secrets können überschreiben), Runway
+          // NUR aus dem Kanal-Secret RUNWAY_API_SECRET.
+          const llmKeyFor = (prov: 'openai' | 'google'): string | undefined => {
+            for (const tier of ['default', 'strong', 'fast', 'embeddings', 'local'] as const) {
+              const tc = this.config.llm[tier];
+              if (tc?.provider === prov && tc.apiKey) return tc.apiKey;
+            }
+            return undefined;
+          };
+          const videoWorkDir = path.resolve(path.dirname(this.config.storage.path), 'social-videos');
           socialSkill.setVideoTools({
             // v1058 — opts reicht Hook-/End-Card-Bilder an den Renderer durch
-            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false }) => {
+            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }> }) => {
               const images = item.media
                 .filter((m: { type: string; pathOrUrl: string }) => m.type === 'image' && !m.pathOrUrl.startsWith('http'))
                 .map((m: { pathOrUrl: string }) => m.pathOrUrl);
@@ -6776,9 +6787,31 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 ...(opts?.outroImage ? { outroImage: opts.outroImage } : {}),
                 ...(musicPath ? { musicPath } : {}),
                 ...(musicPath && musicVolume !== undefined ? { musicVolume } : {}),
+                ...(opts?.clips && opts.clips.length > 0 ? { clips: opts.clips } : {}),
               });
             },
             probe: (p: string) => renderer.probeVideo(p),
+            // v1060 — Stufe 3: Image-to-Video-Clip (kostenpflichtig; Budget/
+            // Opt-in prüft der Skill). Fehler wirft — der Skill fällt dann auf
+            // die Standbild-Slide zurück.
+            generateClip: async (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => {
+              const { AiClipGenerator } = await import('./video-gen.js');
+              const gen = new AiClipGenerator(
+                this.logger.child({ component: 'video-gen' }),
+                {
+                  openai: req.secrets.OPENAI_API_KEY || llmKeyFor('openai'),
+                  runway: req.secrets.RUNWAY_API_SECRET,
+                  google: req.secrets.GOOGLE_API_KEY || llmKeyFor('google'),
+                },
+              );
+              const r = await gen.generate(req.provider, {
+                imagePath: req.imagePath, prompt: req.prompt, format: req.format,
+                ...(req.model ? { model: req.model } : {}),
+                workDir: videoWorkDir,
+                outBaseName: `clip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+              });
+              return { clipPath: r.clipPath, durationSec: r.durationSec };
+            },
           });
         }
         let lastStudioDay = '';

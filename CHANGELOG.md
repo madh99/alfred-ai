@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1060] - 2026-07-09
+
+### Added — Reel-Qualität Stufe 3: echte KI-Video-Clips + Reel-Optionen in der UI (v1060)
+
+- **KI-Clips (Opt-in, pro Kanal)**: Die ersten 1–2 Bilder eines Auto-Reels
+  können per Image-to-Video in echte bewegte Clips verwandelt werden
+  (`reel_ai_clips: 1|2`, Standard 0 = aus — ohne Aktivierung ändert sich
+  nichts). Drei Anbieter hinter einem Interface: **Sora** (OpenAI, nutzt
+  den vorhandenen LLM-Key), **Runway** (Kanal-Secret `RUNWAY_API_SECRET`)
+  und **Veo** (Google, Kanal-Secret `GOOGLE_API_KEY`); Auswahl über
+  `reel_ai_provider`, Modell-Override über `reel_ai_model`.
+- **Kosten-Leitplanken**: Monats-Budget `ai_clip_budget_per_month`
+  (Standard 8 Clips) mit ehrlicher Zählung — jeder gelieferte Clip zählt
+  sofort. Jeder Fehlschlag (Moderation, Timeout, API) fällt still auf die
+  Ken-Burns-Standbild-Slide zurück: das Reel erscheint immer. Transiente
+  Status-Poll-Fehler brechen bezahlte Jobs nicht mehr ab.
+- **Bewegungs-Prompt**: Das Reel-Skript-LLM liefert eine passende
+  Kamera-/Bewegungsbeschreibung je Artikel mit (ohne Texteinblendungen,
+  ohne reale Personen/Logos).
+- **UI — Reels & Video endlich einstellbar**: Kanal-Einstellungen haben
+  jetzt eine eigene Sektion mit Auto-Reel, max. Reels/Woche,
+  End-Card-CTA, Musik-Bett an/aus + Lautstärke sowie den
+  KI-Clip-Optionen (Anzahl, Anbieter, Budget, Modell). Facebook-Kanäle
+  bekommen den Schalter für die IG-Reel-Zweitverwertung.
+
 ## [0.19.0-multi-ha.1059] - 2026-07-08
 
 ### Added — Reel-Qualität Stufe 2: Musik-Bett unterm Voiceover (v1059)

@@ -69,6 +69,24 @@ describe('buildReelFilterGraph (v1058)', () => {
     expect(g.filterComplex).not.toContain('subtitles');
     expect(g.totalSec).toBe(10);
   });
+
+  it('v1060: KI-Clip-Slide — kein Ken-Burns, Trim + tpad für die Blende, xfade-Kette bleibt', () => {
+    const g = buildReelFilterGraph({
+      slides: [
+        { motion: 'in', durationSec: 1.5 },                    // Hook (Bild)
+        { motion: 'none', durationSec: 6, kind: 'video' },     // KI-Clip
+        { motion: 'in', durationSec: 8 },                      // Standbild
+      ],
+      width: 1080, height: 1920,
+    });
+    expect((g.filterComplex.match(/zoompan/g) ?? []).length).toBe(2); // nur die Bilder
+    expect(g.filterComplex).toContain('[1:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,trim=duration=6.000');
+    expect(g.filterComplex).toContain('setpts=PTS-STARTPTS');
+    expect(g.filterComplex).toContain('tpad=stop_mode=clone:stop_duration=0.5'); // deckt die Crossfade-Überlappung
+    expect((g.filterComplex.match(/xfade/g) ?? []).length).toBe(2);
+    expect((g.filterComplex.match(/format=yuv420p/g) ?? []).length).toBeGreaterThanOrEqual(3); // je Slide (Mix Bild/Video braucht gleiches Pixelformat)
+    expect(g.totalSec).toBeCloseTo(15.5, 1);
+  });
 });
 
 describe('buildReelAudioGraph (v1059)', () => {
