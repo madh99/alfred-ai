@@ -108,6 +108,20 @@ export function escapeXml(s: string): string {
  * mit „23F3 1F1E8 1F1ED"). Gilt NUR für eingebrannte Overlays — Captions/
  * Plattform-Texte behalten ihre Emojis.
  */
+/**
+ * v1058 — Reel-End-Card: letztes Slide-Bild abdunkeln + CTA-Pille (+ Branding)
+ * einbrennen — die letzten ~2s des Reels, nach dem Voiceover. Nutzt dieselbe
+ * Overlay-Engine wie die Bilder (kein neuer Text-Renderer).
+ */
+export async function bakeReelEndCard(buffer: Buffer, cta: string, branding?: string): Promise<Buffer> {
+  const sharp = await loadSharp();
+  if (!sharp) return buffer;
+  const darkened = await (sharp as unknown as (i: Buffer) => {
+    modulate(o: { brightness: number; saturation?: number }): { toBuffer(): Promise<Buffer> };
+  })(buffer).modulate({ brightness: 0.45, saturation: 0.8 }).toBuffer();
+  return applyImageOverlays(darkened, { cta, ...(branding ? { branding } : {}) });
+}
+
 export function stripPictographs(s: string): string {
   return s
     .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '') // Regionalindikatoren (Flaggen wie 🇨🇭)

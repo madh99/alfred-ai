@@ -8,4 +8,4 @@ export { XProvider } from './x-provider.js';
 export { BlueskyProvider } from './bluesky-provider.js';
 export { parsePublicMediaConfig, publishPublicMedia, type PublicMediaConfig } from './public-media.js';
 export { isNearDuplicateTitle, storyIdentity, cosineSimilarity } from './dedup.js';
-export { applyImageOverlays, cropToRatio, resolveImageBranding, buildOverlaySvg, wrapText, escapeXml, parseOverlayCorner, recolorSvg, loadSharp, type OverlaySpec, type TerminOverlay, type LogoOverlay, type OverlayCorner } from './image-overlay.js';
+export { applyImageOverlays, bakeReelEndCard, cropToRatio, resolveImageBranding, buildOverlaySvg, wrapText, escapeXml, parseOverlayCorner, recolorSvg, loadSharp, type OverlaySpec, type TerminOverlay, type LogoOverlay, type OverlayCorner } from './image-overlay.js';

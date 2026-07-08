@@ -468,6 +468,32 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(reel.media[0]).toEqual({ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' });
   });
 
+  it('v1058: Reel-Slides bevorzugen den SAUBEREN asset-Zwilling (ohne eingebrannte Titel)', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const studio = join(tmpdir(), `studio-reeltest-${Date.now()}.png`);
+    const asset = studio.replace('studio-', 'asset-');
+    writeFileSync(studio, Buffer.from('mit-overlay'));
+    writeFileSync(asset, Buffer.from('sauber'));
+    try {
+      const setup = reelSetup();
+      // Follower-Bild zeigt auf die STUDIO-Datei (mit eingebrannten Boxen)
+      const follower = makeItem({ id: 'item-ig', channelId: 'ch-ig', media: [{ type: 'image', source: 'generated', pathOrUrl: studio }] });
+      (setup.spies as any).getItem = vi.fn(async (_u: string, id: string) => (id === 'item-ig' ? follower : null));
+      await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+      await new Promise(res => setTimeout(res, 25));
+      expect(setup.render).toHaveBeenCalled();
+      const pseudo = (setup.render as any).mock.calls[0][0];
+      expect(pseudo.media[0].pathOrUrl).toBe(asset); // Zwilling statt Studio-Bild
+      // v1058 — opts-Parameter (Hook/End-Card) wird durchgereicht
+      expect((setup.render as any).mock.calls[0][3]).toBeDefined();
+    } finally {
+      unlinkSync(studio);
+      unlinkSync(asset);
+    }
+  });
+
   it('v1056: FB-Familien-Kanal mit auto_reel → ZWEITER Reel-Entwurf mit derselben Videodatei (kein Doppel-Render)', async () => {
     const setup = reelSetup();
     const fb = makeChannel({ id: 'ch-fb', platform: 'facebook', name: 'FussballCC FB', projectId: 'p1', config: { auto_reel: true } });

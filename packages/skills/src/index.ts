@@ -94,7 +94,7 @@ export { TravelSkill } from './built-in/travel/index.js';
 export { BriefingSkill } from './built-in/briefing.js';
 export { FeedReaderSkill } from './built-in/feed-reader.js';
 export { InterestsSkill } from './built-in/interests.js';
-export { SocialSkill, SocialProvider, isCompanionFormat, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider, BlueskyProvider, BEST_PRACTICE_SLOTS, effectiveSlots, extractTrailingHashtags, mergeHashtags, languageName, isNearDuplicateTitle, storyIdentity, cosineSimilarity, applyImageOverlays, cropToRatio, resolveImageBranding, parseOverlayCorner, recolorSvg, loadSharp, type OverlaySpec } from './built-in/social/index.js';
+export { SocialSkill, SocialProvider, isCompanionFormat, TelegramChannelProvider, RestProvider, YouTubeProvider, MetaProvider, XProvider, BlueskyProvider, BEST_PRACTICE_SLOTS, effectiveSlots, extractTrailingHashtags, mergeHashtags, languageName, isNearDuplicateTitle, storyIdentity, cosineSimilarity, applyImageOverlays, bakeReelEndCard, cropToRatio, resolveImageBranding, parseOverlayCorner, recolorSvg, loadSharp, type OverlaySpec } from './built-in/social/index.js';
 export { HelpSkill } from './built-in/help.js';
 export { YouTubeSkill } from './built-in/youtube.js';
 // v1048 - geteilte YouTube-Bausteine (Skill + Topic-Collector nutzen denselben Codepfad)

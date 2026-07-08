@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyImageOverlays, buildOverlaySvg, cropToRatio, escapeXml, resolveImageBranding, wrapText, loadSharp } from './image-overlay.js';
+import { applyImageOverlays, bakeReelEndCard, buildOverlaySvg, cropToRatio, escapeXml, resolveImageBranding, wrapText, loadSharp } from './image-overlay.js';
 import type { SocialChannel } from '@alfred/storage';
 
 function makeChannel(overrides: Partial<SocialChannel> = {}): SocialChannel {
@@ -32,6 +32,17 @@ describe('image-overlay (v1002)', () => {
     // ohne Doppelpunkt: kein Kicker, nur Titel-Boxen
     const plain = buildOverlaySvg(1000, 1000, { title: 'England zittert sich ins Viertelfinale' });
     expect(plain).toContain('England zittert sich ins');
+  });
+
+  it('v1058: bakeReelEndCard — abgedunkeltes Bild + CTA-Pille, gleiche Maße', async () => {
+    const png = await makeTestPng(400, 700);
+    const out = await bakeReelEndCard(png, 'Ganzer Artikel auf fussball.cc', 'fussball.cc');
+    expect(out).toBeInstanceOf(Buffer);
+    expect(out.equals(png)).toBe(false); // wirklich verändert (dunkler + Overlays)
+    const sharp = await loadSharp();
+    const meta = await (sharp as any)(out).metadata();
+    expect(meta.width).toBe(400);
+    expect(meta.height).toBe(700);
   });
 
   it('v1054: Emojis/Flaggen werden aus eingebrannten Texten gestrippt (kein Unicode-Hex-Tofu)', () => {

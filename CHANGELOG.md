@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1058] - 2026-07-08
+
+### Changed — Reel-Qualität Stufe 1: Vollbild, Bewegung, echte Reel-Untertitel (v1058)
+
+- **Cover-Crop statt Letterbox**: Querformat-Bilder füllen das
+  9:16-Reel jetzt vollflächig (mittiger Beschnitt) — die schwarzen
+  Balken oben/unten sind weg.
+- **Ken-Burns + Crossfades**: Jede Slide bewegt sich (abwechselnd
+  sanfter Zoom rein/raus), Slide-Wechsel überblenden weich statt hart
+  zu schneiden — das Reel wirkt wie Video, nicht wie eine Diashow.
+- **Phrasen-Untertitel im Reel-Stil**: Statt satzweiser Textwände
+  erscheinen kurze Phrasen (max. 5 Wörter) in fetter, konturierter
+  Schrift mit Sicherheitsabstand zur Instagram-UI-Leiste.
+- **Saubere Slides**: Als Slides dient der unbeschriftete
+  Asset-Zwilling der Studio-Bilder — eingebrannte Titel-Boxen
+  kollidieren nicht mehr mit den Untertiteln.
+- **Intro-Hook + Outro-End-Card**: Das Reel startet mit einer
+  Hook-Slide (Titel als Nachrichten-Boxen) und endet mit einer
+  abgedunkelten End-Card samt Call-to-Action (`reel_cta_text` in der
+  Kanal-Config, Standard „Ganzer Artikel auf <Branding>“).
+
 ## [0.19.0-multi-ha.1057] - 2026-07-08
 
 ### Fixed — Instagram-Video: 300 s Transcoding-Geduld (v1057)

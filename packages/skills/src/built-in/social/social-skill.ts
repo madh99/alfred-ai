@@ -7,7 +7,7 @@ import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, is
 import { tlsFetch } from './tls-fetch.js';
 import { createHash } from 'node:crypto';
 import { isNearDuplicateTitle } from './dedup.js';
-import { applyImageOverlays, cropToRatio, resolveImageBranding } from './image-overlay.js';
+import { applyImageOverlays, bakeReelEndCard, cropToRatio, resolveImageBranding } from './image-overlay.js';
 import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
 /** v1009 — Ergebnis eines Kommentar-Einsammel-Laufs je Kanal (inkl. Copilot-Triage). */
@@ -167,7 +167,8 @@ export class SocialSkill extends Skill {
   private studioFn?: (channel: SocialChannel) => Promise<number>;
   /** v938 — Video-Pipeline (Slideshow-Renderer + ffprobe-Check, vom Kern injiziert). */
   private videoTools?: {
-    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9') => Promise<{ videoPath: string; durationSec: number }>;
+    // v1058 — opts: Hook-Karte (intro) und End-Card (outro) fürs Reel
+    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string }) => Promise<{ videoPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
   };
 
@@ -981,13 +982,21 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     assigns: Awaited<ReturnType<SocialRepository['listAssignments']>>,
   ): Promise<void> {
     if (!this.videoTools || !this.llm) return;
-    // Bilder der Story (nur lokale Pfade — der Renderer liest kein http)
+    // Bilder der Story (nur lokale Pfade — der Renderer liest kein http).
+    // v1058 — SAUBERE Slides: der asset-Zwilling (ohne eingebrannte Titel-
+    // Boxen/Wasserzeichen) wird bevorzugt — vorher trugen die Slides die
+    // Studio-Overlays und kollidierten mit den Video-Untertiteln (Realfall
+    // 08.07.: Titel-Balken UND Untertitel übereinander im Live-Reel).
+    const { access } = await import('node:fs/promises');
     const images: string[] = [];
     const followerId = assigns.find(a => a.channelId === ig.id)?.itemId;
     const follower = followerId ? await this.repo.getItem(userId, followerId) : null;
     for (const src of [follower, leadItem]) {
       for (const m of src?.media ?? []) {
-        if (m.type === 'image' && !m.pathOrUrl.startsWith('http') && !images.includes(m.pathOrUrl)) images.push(m.pathOrUrl);
+        if (m.type !== 'image' || m.pathOrUrl.startsWith('http')) continue;
+        const twin = m.pathOrUrl.replace(/([\\/])studio-/, '$1asset-');
+        const path = twin !== m.pathOrUrl && await access(twin).then(() => true).catch(() => false) ? twin : m.pathOrUrl;
+        if (!images.includes(path)) images.push(path);
       }
     }
     if (images.length === 0) return;
@@ -1019,7 +1028,42 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`
       ...leadItem, id: `reel-${leadItem.id.slice(0, 8)}`, body: script,
       media: images.map(p => ({ type: 'image' as const, source: 'generated' as const, pathOrUrl: p })),
     };
-    const rendered = await this.videoTools.render(pseudo, ig, '9:16');
+    // v1058 — Hook-Karte (Titel eingebrannt) + End-Card (CTA) best-effort:
+    // scheitert die Backerei, rendert das Reel schlicht ohne die Karten.
+    let introImage: string | undefined;
+    let outroImage: string | undefined;
+    const tmpFiles: string[] = [];
+    try {
+      const { readFile, writeFile } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const { tmpdir } = await import('node:os');
+      const channelsForBranding = await this.repo.listChannels(userId, 'active');
+      const branding = resolveImageBranding(ig, channelsForBranding);
+      const hookTitle = leadItem.title ?? leadItem.body.slice(0, 70);
+      const first = await readFile(images[0]);
+      const hook = await applyImageOverlays(first, { title: hookTitle, ...(branding ? { branding } : {}) });
+      introImage = join(tmpdir(), `alfred-reel-hook-${leadItem.id.slice(0, 8)}.png`);
+      await writeFile(introImage, hook);
+      tmpFiles.push(introImage);
+      const ctaText = typeof ig.config.reel_cta_text === 'string' && ig.config.reel_cta_text.trim()
+        ? ig.config.reel_cta_text.trim()
+        : `Ganzer Artikel auf ${branding ?? 'unserer Seite'}`;
+      const last = await readFile(images[images.length - 1]);
+      const endCard = await bakeReelEndCard(last, ctaText, branding);
+      outroImage = join(tmpdir(), `alfred-reel-end-${leadItem.id.slice(0, 8)}.png`);
+      await writeFile(outroImage, endCard);
+      tmpFiles.push(outroImage);
+    } catch {
+      introImage = undefined;
+      outroImage = undefined;
+    }
+    let rendered: { videoPath: string; durationSec: number };
+    try {
+      rendered = await this.videoTools.render(pseudo, ig, '9:16', { introImage, outroImage });
+    } finally {
+      const { unlink } = await import('node:fs/promises');
+      for (const f of tmpFiles) await unlink(f).catch(() => { /* tmp best-effort */ });
+    }
     // Als ENTWURF anlegen — Reels gehen bewusst durch die Freigabe.
     // v1022 — Titel OHNE „Reel: "-Präfix: der Titel läuft beim Publish über
     // composePostText in die ÖFFENTLICHE Caption (Kennzeichnung in der UI

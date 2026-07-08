@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSrt, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
+import { buildSrt, buildPhraseSrt, buildReelFilterGraph, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
 
 describe('buildSrt (v938)', () => {
   it('verteilt Sätze gewichtet über die Laufzeit, SRT-Format korrekt', () => {
@@ -15,6 +15,59 @@ describe('buildSrt (v938)', () => {
   it('leerer Text → leeres SRT', () => {
     expect(buildSrt('', 10)).toBe('');
     expect(buildSrt('   ', 10)).toBe('');
+  });
+});
+
+describe('buildPhraseSrt (v1058)', () => {
+  it('zerteilt in Phrasen ≤5 Wörter (Satzzeichen bevorzugt), Timing monoton, kein Mini-Rest', () => {
+    const text = 'Drama im Aztekenstadion! England zittert sich mit drei zu zwei ins Viertelfinale, doch Mexiko kämpft bis zum Schluss zurück.';
+    const srt = buildPhraseSrt(text, 20);
+    const blocks = srt.trim().split('\n\n');
+    expect(blocks.length).toBeGreaterThanOrEqual(4); // Phrasen, keine Satz-Wände
+    for (const b of blocks) {
+      const line = b.split('\n')[2];
+      expect(line.split(' ').length).toBeLessThanOrEqual(7); // 5 + max. Mini-Rest 2
+    }
+    expect(blocks[0]).toContain('00:00:00,000 -->');
+    const starts = blocks.map(b => b.split('\n')[1].split(' --> ')[0]);
+    expect([...starts].sort()).toEqual(starts);
+  });
+
+  it('leerer Text → leeres SRT', () => {
+    expect(buildPhraseSrt('', 10)).toBe('');
+  });
+});
+
+describe('buildReelFilterGraph (v1058)', () => {
+  it('Cover-Crop + Ken-Burns + Crossfades — KEIN Letterbox-Pad, End-Card statisch', () => {
+    const g = buildReelFilterGraph({
+      slides: [
+        { motion: 'in', durationSec: 1.5 },   // Hook
+        { motion: 'out', durationSec: 8 },
+        { motion: 'in', durationSec: 8 },
+        { motion: 'none', durationSec: 2 },   // End-Card
+      ],
+      width: 1080, height: 1920, srtPathEscaped: '/tmp/subs.srt',
+    });
+    expect(g.filterComplex).not.toContain('pad='); // Realfall: schwarze Balken
+    expect(g.filterComplex).toContain('force_original_aspect_ratio=increase');
+    expect(g.filterComplex).toContain('s=1080x1920');
+    expect((g.filterComplex.match(/zoompan/g) ?? []).length).toBe(4);
+    expect((g.filterComplex.match(/xfade/g) ?? []).length).toBe(3); // N-1 Übergänge
+    expect(g.filterComplex).toContain("z='1'"); // End-Card ohne Zoom
+    expect(g.filterComplex).toContain('force_style'); // Reel-Untertitel-Look
+    expect(g.filterComplex).toContain('MarginV=48'); // Safe-Zone über der IG-UI
+    expect(g.totalSec).toBeCloseTo(19.5, 1);
+    const offsets = [...g.filterComplex.matchAll(/offset=([\d.]+)/g)].map(m => Number(m[1]));
+    expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
+    expect(offsets[0]).toBeCloseTo(1.5, 2);
+  });
+
+  it('eine einzige Slide: kein xfade, Untertitel optional', () => {
+    const g = buildReelFilterGraph({ slides: [{ motion: 'in', durationSec: 10 }], width: 1080, height: 1920 });
+    expect(g.filterComplex).not.toContain('xfade');
+    expect(g.filterComplex).not.toContain('subtitles');
+    expect(g.totalSec).toBe(10);
   });
 });
 

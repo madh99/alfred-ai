@@ -18,6 +18,14 @@ export interface VideoSpec {
   format: VideoFormat;
   /** Basisname der Ausgabedatei (ohne Endung). */
   outBaseName: string;
+  /** v1058 — Hook-Karte (z.B. Titel eingebrannt) als erste Slide. */
+  introImage?: string;
+  /** v1058 — Dauer der Hook-Karte (Default 1,5s). */
+  introSec?: number;
+  /** v1058 — End-Card (CTA) als letzte Slide, ohne Zoom, nach dem Voiceover. */
+  outroImage?: string;
+  /** v1058 — Dauer der End-Card (Default 2s). */
+  outroSec?: number;
 }
 
 export interface RenderResult {
@@ -57,6 +65,109 @@ export function buildSrt(text: string, totalDurationSec: number): string {
 export function estimateSpeechSeconds(text: string): number {
   const words = text.split(/\s+/).filter(w => w.length > 0).length;
   return Math.max(5, Math.round(words / 2.4));
+}
+
+/**
+ * v1058 — Reel-Untertitel: PHRASEN-Chunks (max. 5 Wörter) statt ganzer Sätze —
+ * die satzweise Verteilung baute 6-7-zeilige Textwände (Realfall 08.07.,
+ * beide Live-Reels). Bevorzugt an Satzzeichen getrennt, proportional zur
+ * Sprechzeit getimed. SRT; der Look kommt per force_style beim Einbrennen.
+ */
+export function buildPhraseSrt(text: string, totalDurationSec: number, maxWords = 5): string {
+  const words = text.replace(/\s+/g, ' ').trim().split(' ').filter(w => w.length > 0);
+  if (words.length === 0) return '';
+  const phrases: string[] = [];
+  let current: string[] = [];
+  for (const word of words) {
+    current.push(word);
+    const endsClause = /[.!?…:;,]$/.test(word);
+    if (current.length >= maxWords || (endsClause && current.length >= 3)) {
+      phrases.push(current.join(' '));
+      current = [];
+    }
+  }
+  if (current.length > 0) {
+    // Mini-Rest (1-2 Wörter) an die letzte Phrase hängen statt eigener Blitz-Einblendung
+    if (current.length <= 2 && phrases.length > 0) phrases[phrases.length - 1] += ` ${current.join(' ')}`;
+    else phrases.push(current.join(' '));
+  }
+  const weights = phrases.map(p => p.split(' ').length);
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  const fmt = (sec: number) => {
+    const ms = Math.round(sec * 1000);
+    const h = Math.floor(ms / 3_600_000), m = Math.floor((ms % 3_600_000) / 60_000);
+    const s = Math.floor((ms % 60_000) / 1000), rest = ms % 1000;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(rest).padStart(3, '0')}`;
+  };
+  let cursor = 0;
+  const blocks: string[] = [];
+  phrases.forEach((phrase, i) => {
+    const dur = (weights[i] / totalWeight) * totalDurationSec;
+    blocks.push(`${i + 1}\n${fmt(cursor)} --> ${fmt(cursor + dur)}\n${phrase}\n`);
+    cursor += dur;
+  });
+  return blocks.join('\n');
+}
+
+/** v1058 — Reel-Untertitel-Look (libass force_style, PlayResY 288): fett, kräftiges Outline, unteres Drittel mit Safe-Zone über der IG-UI. */
+export const REEL_SUBTITLE_STYLE = 'FontName=DejaVu Sans,Bold=1,FontSize=11,Outline=2,Shadow=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,MarginV=48,MarginL=18,MarginR=18,Alignment=2';
+
+/**
+ * v1058 — ffmpeg-Filtergraph fürs Reel (pure, testbar): je Slide Cover-Crop
+ * (KEIN Letterbox-Pad mehr — Realfall: riesige schwarze Balken) + Ken-Burns-
+ * Zoom (abwechselnd rein/raus, End-Card statisch), 0,5s-Crossfades, dann
+ * Untertitel + yuv420p. Sichtbare Slide-Dauern werden so aufgeteilt, dass die
+ * Gesamtlänge trotz Überblendungen exakt stimmt.
+ */
+export function buildReelFilterGraph(opts: {
+  slides: Array<{ motion: 'in' | 'out' | 'none'; durationSec: number }>;
+  width: number;
+  height: number;
+  fadeSec?: number;
+  srtPathEscaped?: string;
+  fps?: number;
+}): { filterComplex: string; outLabel: string; inputDurations: number[]; totalSec: number } {
+  const fps = opts.fps ?? 30;
+  const fade = opts.slides.length > 1 ? (opts.fadeSec ?? 0.5) : 0;
+  const { width: w, height: h } = opts;
+  // Zoompan skaliert intern — Quelle 1,25x größer anliefern, damit der Zoom Luft hat
+  const zw = Math.round(w * 1.25 / 2) * 2;
+  const zh = Math.round(h * 1.25 / 2) * 2;
+  const parts: string[] = [];
+  const inputDurations: number[] = [];
+  opts.slides.forEach((slide, i) => {
+    const visible = slide.durationSec;
+    const inputSec = i < opts.slides.length - 1 ? visible + fade : visible;
+    inputDurations.push(Number(inputSec.toFixed(3)));
+    const frames = Math.max(1, Math.round(inputSec * fps));
+    const zoom = slide.motion === 'in'
+      ? `min(1+0.10*on/${frames},1.10)`
+      : slide.motion === 'out'
+        ? `max(1.10-0.10*on/${frames},1.0)`
+        : '1';
+    parts.push(
+      `[${i}:v]scale=${zw}:${zh}:force_original_aspect_ratio=increase,crop=${zw}:${zh},`
+      + `zoompan=z='${zoom}':d=${frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=${w}x${h}:fps=${fps},setsar=1[v${i}]`,
+    );
+  });
+  let current = '[v0]';
+  let offset = 0;
+  opts.slides.forEach((slide, i) => {
+    if (i === 0) { offset = slide.durationSec; return; }
+    const label = i === opts.slides.length - 1 ? '[vx]' : `[x${i}]`;
+    parts.push(`${current}[v${i}]xfade=transition=fade:duration=${fade}:offset=${offset.toFixed(3)}${label}`);
+    current = label;
+    offset += slide.durationSec;
+  });
+  // xfade-Kette: Gesamtlänge = Summe der sichtbaren Dauern (die Blende liegt IN den Dauern)
+  const totalSec = opts.slides.reduce((s, x) => s + x.durationSec, 0);
+  const tail = opts.slides.length > 1 ? current : '[v0]';
+  const finalFilters = [
+    ...(opts.srtPathEscaped ? [`subtitles='${opts.srtPathEscaped}':force_style='${REEL_SUBTITLE_STYLE}'`] : []),
+    'format=yuv420p',
+  ].join(',');
+  parts.push(`${tail}${finalFilters}[vout]`);
+  return { filterComplex: parts.join(';'), outLabel: '[vout]', inputDurations, totalSec: Number(totalSec.toFixed(3)) };
 }
 
 /**
@@ -145,40 +256,54 @@ export class SlideshowVideoRenderer {
       durationSec = Math.max(10, spec.images.length * 4);
     }
 
-    // 2) Concat-Liste: Bilder gleichmäßig über die Laufzeit
-    const perImage = durationSec / spec.images.length;
-    const listPath = `${base}.list.txt`;
-    const listBody = spec.images
-      .map(img => `file '${img.replace(/'/g, "'\\''")}'\nduration ${perImage.toFixed(2)}`)
-      .join('\n') + `\nfile '${spec.images[spec.images.length - 1].replace(/'/g, "'\\''")}'\n`;
-    await writeFile(listPath, listBody, 'utf8');
+    // 2) v1058 — Slide-Plan: optionale Hook-Karte + Bilder + optionale End-Card.
+    // Das Voiceover deckt Hook + Bilder ab; die End-Card läuft danach (Stille).
+    const introSec = spec.introImage ? Math.max(1, spec.introSec ?? 1.5) : 0;
+    const outroSec = spec.outroImage ? Math.max(1, spec.outroSec ?? 2) : 0;
+    const imagesBudget = Math.max(spec.images.length * 2, durationSec - introSec);
+    const perImage = imagesBudget / spec.images.length;
+    const slideFiles: string[] = [
+      ...(spec.introImage ? [spec.introImage] : []),
+      ...spec.images,
+      ...(spec.outroImage ? [spec.outroImage] : []),
+    ];
+    const slides = slideFiles.map((_, i) => {
+      const isIntro = spec.introImage && i === 0;
+      const isOutro = spec.outroImage && i === slideFiles.length - 1;
+      return {
+        motion: isOutro ? 'none' as const : (i % 2 === 0 ? 'in' as const : 'out' as const),
+        durationSec: isIntro ? introSec : isOutro ? outroSec : perImage,
+      };
+    });
 
-    // 3) Untertitel
+    // 3) Untertitel — Phrasen-Chunks über die Voiceover-Zeit (nicht über die End-Card)
     const subText = (spec.subtitleText ?? voText ?? '').trim();
     let srtPath: string | undefined;
     if (subText) {
       srtPath = `${base}.srt`;
-      await writeFile(srtPath, buildSrt(subText, durationSec), 'utf8');
+      await writeFile(srtPath, buildPhraseSrt(subText, introSec + imagesBudget), 'utf8');
     }
 
-    // 4) ffmpeg: skalieren/padden aufs Format, Untertitel einbrennen, Ton mischen
+    // 4) v1058 — ffmpeg: Cover-Crop + Ken-Burns + Crossfades statt Letterbox-Standbilder
     const [w, h] = spec.format === '9:16' ? [1080, 1920] : [1920, 1080];
-    const filters = [
-      `scale=${w}:${h}:force_original_aspect_ratio=decrease`,
-      `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`,
-      ...(srtPath ? [`subtitles='${srtPath.replace(/\\/g, '/').replace(/'/g, "'\\''").replace(/:/g, '\\:')}'`] : []),
-    ].join(',');
+    const graph = buildReelFilterGraph({
+      slides, width: w, height: h,
+      srtPathEscaped: srtPath ? srtPath.replace(/\\/g, '/').replace(/'/g, "'\\''").replace(/:/g, '\\:') : undefined,
+    });
     const outPath = `${base}.mp4`;
     const args = [
-      '-y', '-f', 'concat', '-safe', '0', '-i', listPath,
+      '-y',
+      ...slideFiles.flatMap(f => ['-i', f]),
       ...(audioPath ? ['-i', audioPath] : []),
-      '-vf', filters,
+      '-filter_complex', graph.filterComplex,
+      '-map', graph.outLabel,
+      ...(audioPath ? ['-map', `${slideFiles.length}:a`, '-c:a', 'aac', '-af', 'apad'] : ['-an']),
+      '-t', String(graph.totalSec),
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30',
-      ...(audioPath ? ['-c:a', 'aac', '-shortest'] : ['-an']),
       outPath,
     ];
-    this.logger.info({ images: spec.images.length, durationSec, format: spec.format }, 'v938 rendering slideshow video');
+    this.logger.info({ images: spec.images.length, intro: introSec, outro: outroSec, durationSec: graph.totalSec, format: spec.format }, 'v1058 rendering reel video (cover-crop + ken-burns + crossfades)');
     await execFileAsync(this.ffmpeg, args, { timeout: 10 * 60_000, maxBuffer: 10 * 1024 * 1024 });
-    return { videoPath: outPath, durationSec };
+    return { videoPath: outPath, durationSec: graph.totalSec };
   }
 }

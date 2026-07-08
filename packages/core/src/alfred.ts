@@ -6749,7 +6749,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
           );
           socialSkill.setVideoTools({
-            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9') => {
+            // v1058 — opts reicht Hook-/End-Card-Bilder an den Renderer durch
+            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string }) => {
               const images = item.media
                 .filter((m: { type: string; pathOrUrl: string }) => m.type === 'image' && !m.pathOrUrl.startsWith('http'))
                 .map((m: { pathOrUrl: string }) => m.pathOrUrl);
@@ -6758,6 +6759,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return renderer.render({
                 images, voiceoverText: voiceover, format,
                 outBaseName: `${item.id.slice(0, 8)}-${format.replace(':', 'x')}`,
+                ...(opts?.introImage ? { introImage: opts.introImage } : {}),
+                ...(opts?.outroImage ? { outroImage: opts.outroImage } : {}),
               });
             },
             probe: (p: string) => renderer.probeVideo(p),
