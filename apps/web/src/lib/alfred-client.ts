@@ -432,7 +432,7 @@ export class AlfredClient {
     });
     if (!res.ok) throw new Error(`Update topic: HTTP ${res.status}`);
   }
-  async addInterestSource(topicId: string, data: { kind: 'rss' | 'web_search'; url?: string; query?: string }): Promise<void> {
+  async addInterestSource(topicId: string, data: { kind: 'rss' | 'web_search' | 'youtube'; url?: string; query?: string; channel?: string }): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/interests/topics/${topicId}/sources`, {
       method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data),
     });
@@ -2748,8 +2748,8 @@ export interface InsightItem {
 export interface InterestSourceEntry {
   id: string;
   topicId: string;
-  kind: 'rss' | 'web_search';
-  config: { url?: string; query?: string };
+  kind: 'rss' | 'web_search' | 'youtube';
+  config: { url?: string; query?: string; channel?: string; channel_id_cached?: string };
   addedBy: 'auto' | 'manual';
   enabled: boolean;
   lastCheckedAt?: string;

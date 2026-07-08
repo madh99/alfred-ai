@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1053] - 2026-07-08
+
+### Fixed — Interessen-UI kennt YouTube-Quellen (v1053)
+
+- Die Themen-Seite zeigt YouTube-Quellen jetzt als „Kanal: …" (vorher
+  „Suche: undefined") und das Quellen-Formular bietet „YouTube-Kanal"
+  als eigenen Typ an (@handle, Kanal-URL oder Kanalname) — durchgängig
+  über Web-UI, API-Route und Kern.
+
 ## [0.19.0-multi-ha.1052] - 2026-07-08
 
 ### Fixed — YouTube-Items: alle Videos statt nur das erste (v1052)

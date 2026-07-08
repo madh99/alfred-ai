@@ -27,7 +27,7 @@ export function InterestsPage() {
   const [newName, setNewName] = useState('');
   const [newKeywords, setNewKeywords] = useState('');
   // Quelle-hinzufügen-Formular je Topic
-  const [srcKind, setSrcKind] = useState<'rss' | 'web_search'>('rss');
+  const [srcKind, setSrcKind] = useState<'rss' | 'web_search' | 'youtube'>('rss');
   const [srcValue, setSrcValue] = useState('');
 
   const load = useCallback(async () => {
@@ -92,7 +92,9 @@ export function InterestsPage() {
     await withBusy(`src-${topic.id}`, async () => {
       await client.addInterestSource(topic.id, srcKind === 'rss'
         ? { kind: 'rss', url: srcValue.trim() }
-        : { kind: 'web_search', query: srcValue.trim() });
+        : srcKind === 'youtube'
+          ? { kind: 'youtube', channel: srcValue.trim() }
+          : { kind: 'web_search', query: srcValue.trim() });
       setSrcValue('');
       await load();
     });
@@ -247,7 +249,7 @@ export function InterestsPage() {
                       {t.sources.map(s => (
                         <div key={s.id} className="flex items-center gap-2 text-sm">
                           <span className="text-[10px] px-1.5 py-0.5 bg-[#1a1a1a] text-gray-400 rounded uppercase shrink-0">{s.kind}</span>
-                          <span className="text-gray-300 truncate flex-1">{s.kind === 'rss' ? s.config.url : `Suche: ${s.config.query}`}</span>
+                          <span className="text-gray-300 truncate flex-1">{s.kind === 'rss' ? s.config.url : s.kind === 'youtube' ? `Kanal: ${s.config.channel ?? s.config.channel_id_cached ?? '?'}` : `Suche: ${s.config.query}`}</span>
                           {s.addedBy === 'auto' && <span className="text-[10px] text-purple-400 shrink-0">auto</span>}
                           <button onClick={() => removeSource(t, s.id)} disabled={busy === `src-${t.id}`}
                             className="text-xs text-red-400 hover:text-red-300 shrink-0">✕</button>
@@ -255,13 +257,14 @@ export function InterestsPage() {
                       ))}
                     </div>
                     <div className="flex gap-2 mt-2 items-center">
-                      <select value={srcKind} onChange={e => setSrcKind(e.target.value as 'rss' | 'web_search')}
+                      <select value={srcKind} onChange={e => setSrcKind(e.target.value as 'rss' | 'web_search' | 'youtube')}
                         className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200">
                         <option value="rss">RSS</option>
                         <option value="web_search">Web-Suche</option>
+                        <option value="youtube">YouTube-Kanal</option>
                       </select>
                       <input value={srcValue} onChange={e => setSrcValue(e.target.value)}
-                        placeholder={srcKind === 'rss' ? 'https://…/feed.xml' : 'Suchanfrage'}
+                        placeholder={srcKind === 'rss' ? 'https://…/feed.xml' : srcKind === 'youtube' ? '@handle, Kanal-URL oder Kanalname' : 'Suchanfrage'}
                         className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200" />
                       <button onClick={() => addSource(t)} disabled={busy === `src-${t.id}` || !srcValue.trim()}
                         className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded">+ Quelle</button>

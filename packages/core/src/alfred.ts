@@ -8151,14 +8151,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             await interestsRepo.updateTopic(ownerUid, id, { status, notifyThreshold: patch.notifyThreshold, keywords: patch.keywords });
             return { ok: true };
           },
-          addSource: async (topicId: string, data: { kind: string; url?: string; query?: string }) => {
+          addSource: async (topicId: string, data: { kind: string; url?: string; query?: string; channel?: string }) => {
             const topic = await interestsRepo.getTopicById(ownerUid, topicId);
             if (!topic) return { ok: false, reason: 'not-found' };
             if (data.kind === 'rss' && !data.url) return { ok: false, reason: 'url required' };
             if (data.kind === 'web_search' && !data.query) return { ok: false, reason: 'query required' };
+            // v1053 — YouTube-Kanal als Quelle (channel: @handle/URL/UC-ID/Name)
+            const ytChannel = data.channel ?? data.url;
+            if (data.kind === 'youtube' && !ytChannel) return { ok: false, reason: 'channel required' };
             const source = await interestsRepo.addSource(topicId, {
-              kind: data.kind as 'rss' | 'web_search',
-              config: data.kind === 'rss' ? { url: data.url } : { query: data.query },
+              kind: data.kind as 'rss' | 'web_search' | 'youtube',
+              config: data.kind === 'rss' ? { url: data.url }
+                : data.kind === 'youtube' ? { channel: ytChannel }
+                : { query: data.query },
               addedBy: 'manual',
             });
             return { ok: true, source };

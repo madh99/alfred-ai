@@ -680,7 +680,7 @@ export class HttpAdapter extends MessagingAdapter {
     listTopics: () => Promise<any[]>;
     createTopic: (data: { name: string; keywords?: string[] }) => Promise<any>;
     updateTopic: (id: string, patch: { status?: string; notifyThreshold?: string; keywords?: string[] }) => Promise<{ ok: boolean; reason?: string }>;
-    addSource: (topicId: string, data: { kind: string; url?: string; query?: string }) => Promise<{ ok: boolean; source?: any; reason?: string }>;
+    addSource: (topicId: string, data: { kind: string; url?: string; query?: string; channel?: string }) => Promise<{ ok: boolean; source?: any; reason?: string }>;
     removeSource: (topicId: string, sourceId: string) => Promise<boolean>;
     listItems: (topicId: string, limit?: number) => Promise<any[]>;
     collectNow: (topicId?: string) => Promise<number>;
@@ -3248,10 +3248,11 @@ export class HttpAdapter extends MessagingAdapter {
     if (!this.interestsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const topicId = url.pathname.split('/')[4];
     const body = await this.readBody(req);
-    let data: { kind?: string; url?: string; query?: string } = {};
+    let data: { kind?: string; url?: string; query?: string; channel?: string } = {};
     try { data = JSON.parse(body); } catch { /* invalid */ }
-    if (data.kind !== 'rss' && data.kind !== 'web_search') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'kind must be rss|web_search' })); return; }
-    const r = await this.interestsCallbacks.addSource(topicId, { kind: data.kind, url: data.url, query: data.query });
+    // v1053 — youtube: neueste Kanal-Videos als Themen-Quelle
+    if (data.kind !== 'rss' && data.kind !== 'web_search' && data.kind !== 'youtube') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'kind must be rss|web_search|youtube' })); return; }
+    const r = await this.interestsCallbacks.addSource(topicId, { kind: data.kind, url: data.url, query: data.query, channel: data.channel });
     res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(r));
   }
