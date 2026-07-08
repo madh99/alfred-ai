@@ -17,7 +17,10 @@ export class ImageGenerateSkill extends Skill {
     description: 'Generate an image from a text description. Use this tool when the user asks you to create, generate, draw, or design an image or picture. Returns the generated image that will be sent to the user.',
     riskLevel: 'read',
     version: '1.0.0',
-    timeoutMs: 120_000,
+    // v1055 — 300s statt 120s: gpt-image-1 braucht bei quality high + 1536px
+    // gelegentlich >2 min (Realfall 08.07.: Timeout bei 120,0s, das fertige —
+    // bezahlte — Bild kam 1s später an und wurde verworfen; Post ohne Bild).
+    timeoutMs: 300_000,
     inputSchema: {
       type: 'object',
       properties: {

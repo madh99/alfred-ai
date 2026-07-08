@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1055] - 2026-07-08
+
+### Fixed — Bildgenerierung: Timeout 300 s + ehrliches Budget (v1055)
+
+- Der `image_generate`-Skill kappte nach 120 s — gpt-image-1 braucht bei
+  hoher Qualität gelegentlich länger (Realfall: das fertige, bezahlte
+  Bild kam eine Sekunde nach dem Timeout an und wurde verworfen; der
+  Post ging ohne Bild in den Plan). Timeout jetzt 300 s.
+- Timeout-Fehlschläge zählen aufs Monats-Bildbudget (die OpenAI-Kosten
+  sind angefallen); andere Fehler (Auth etc.) bleiben unge­zählt.
+
 ## [0.19.0-multi-ha.1054] - 2026-07-08
 
 ### Fixed — Kein Unicode-Tofu mehr in Bild-Overlays (v1054)

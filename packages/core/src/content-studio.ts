@@ -2014,7 +2014,17 @@ Antworte NUR mit einem JSON-Array:
           ...(quality ? { quality } : {}),
           ...(format.size ? { size: format.size } : {}),
         }, { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
-        if (!result.success) return [];
+        if (!result.success) {
+          // v1055 — TIMEOUT-Fehlschläge zählen aufs Budget: die OpenAI-Kosten
+          // sind angefallen (das Bild wurde fertig generiert, kam nur zu spät) —
+          // v990-Prinzip „jeder Versuch zählt". Andere Fehler (Auth, invalid)
+          // kosten nichts und bleiben ungezählt.
+          if (/timed out/i.test(result.error ?? '')) {
+            await this.socialRepo.incrementMetric(channel.id, { date: new Date().toISOString().slice(0, 10), kind: 'gen_image' }).catch(() => { /* non-critical */ });
+            this.logger.warn({ channel: channel.name, error: result.error }, 'v1055 image generation timeout — zählt aufs Budget (Kosten angefallen)');
+          }
+          return [];
+        }
         // v990 — JEDER Generierungs-Versuch zählt aufs Budget (auch wenn das
         // Vision-Gate das Bild gleich verwirft): der OpenAI-Betrag ist dann
         // trotzdem angefallen. Vorher liefen Gate-Retries am Budget vorbei.

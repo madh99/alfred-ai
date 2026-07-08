@@ -1681,6 +1681,23 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     void media;
   });
 
+  it('v1055: Timeout-Fehlschlag zählt aufs Budget (Kosten angefallen), andere Fehler nicht', async () => {
+    const { studio, channel, socialRepo, execute } = await makeMediaStudio([]);
+    (socialRepo as any).listMediaAssets = vi.fn(async () => []);
+    (execute as any).mockResolvedValue({ success: false, error: 'Skill "image_generate" timed out after 300000ms' });
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '', bildidee: 'Stadion unter Flutlicht mit Ball',
+    });
+    expect(media).toEqual([]);
+    expect((socialRepo as any).incrementMetric.mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image').length).toBe(1);
+
+    // anderer Fehler (z.B. Auth) → KEINE Budget-Zählung
+    (socialRepo as any).incrementMetric.mockClear();
+    (execute as any).mockResolvedValue({ success: false, error: 'OpenAI: 401 Unauthorized' });
+    await (studio as any).produceImage(channel, { title: 'x', body: 'y', hashtags: [], warum: '', bildidee: 'Taktiktafel mit Kreide' });
+    expect((socialRepo as any).incrementMetric).not.toHaveBeenCalled();
+  });
+
   it('v1043: liefert der Bild-Skill nur eine URL (kein Buffer) → bei symbolic fail-closed verworfen', async () => {
     const { studio, channel, socialRepo, execute } = await makeMediaStudio([]);
     (socialRepo as any).listMediaAssets = vi.fn(async () => []);
