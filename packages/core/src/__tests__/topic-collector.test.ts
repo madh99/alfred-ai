@@ -176,10 +176,13 @@ describe('TopicCollector', () => {
     const { repo, spies } = makeFakeRepo([YT_SOURCE]);
     const { fetchers, llm } = makeYoutubeStack([
       { videoId: 'abc12345678', title: 'WM-Viertelfinale: Argentinien - Ägypten Highlights', url: 'https://youtube.com/watch?v=abc12345678', publishedAt: '2026-07-07' },
+      // v1052-Regression: ZWEITES Video muss ebenfalls durchkommen — der
+      // Query-strippende Dedupe-Hash kollabierte vorher alle watch?v=-URLs
+      { videoId: 'def12345678', title: 'Pressekonferenz nach dem Spiel', url: 'https://youtube.com/watch?v=def12345678', publishedAt: '2026-07-07' },
     ]);
     const collector = new TopicCollector(repo, undefined, undefined, makeLogger(),
       { youtubeApiKey: 'key-x', llm: llm as any, youtubeFetchers: fetchers as any });
-    expect(await collector.collectTopic(TOPIC)).toBe(1);
+    expect(await collector.collectTopic(TOPIC)).toBe(2);
     expect(fetchers.resolveChannel).toHaveBeenCalled();
     // aufgelöste Channel-ID wird in der Quell-Config persistiert (Quota-Schonung)
     expect((spies as any).updateSourceConfig).toHaveBeenCalledWith('s-yt', expect.objectContaining({ channel_id_cached: 'UCabcdefghijklmnopqrstuv' }));
@@ -187,7 +190,9 @@ describe('TopicCollector', () => {
     expect(call.sourceKind).toBe('youtube');
     expect(call.summary.startsWith('Argentinien schlägt Ägypten 2:0')).toBe(true); // LLM-Verdichtung, Meta-Kopf gestrippt
     expect(call.summary).not.toContain('#');
-    expect(call.url).toBe('https://youtube.com/watch?v=abc12345678');
+    // v1052 — kanonische youtu.be-URL (Identität im Pfad, dedupe-sicher)
+    expect(call.url).toBe('https://youtu.be/abc12345678');
+    expect((spies.insertItem as any).mock.calls[1][1].url).toBe('https://youtu.be/def12345678');
   });
 
   it('v1048: bekanntes Video → KEIN Transcript-Fetch, KEIN LLM-Call (Precheck über Dedupe-Hash)', async () => {

@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1052] - 2026-07-08
+
+### Fixed — YouTube-Items: alle Videos statt nur das erste (v1052)
+
+- Der Dedupe-Hash der Topic-Items strippt Query-Parameter (gewollt,
+  gegen `?ref=`-Tracking) — bei YouTube steckt die Video-Identität aber
+  genau dort: alle `watch?v=…`-URLs kollabierten auf einen Hash, pro
+  Thema überlebte nur das erste Video (Realfall: ServusTV und kicker
+  je 5 gesammelt → 1 gespeichert, FIFA/Sky 0). Items tragen jetzt die
+  kanonische `youtu.be/<id>`-URL (Identität im Pfad, dedupe-sicher).
+
 ## [0.19.0-multi-ha.1051] - 2026-07-08
 
 ### Fixed — Transcript-Verdichtung ohne Meta-Kopf (v1051)

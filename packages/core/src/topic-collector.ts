@@ -248,9 +248,15 @@ export class TopicCollector {
     const out: CollectedRawItem[] = [];
     for (const v of videos) {
       if (!v.title || !v.videoId) continue;
+      // v1052 — KANONISCHE youtu.be-URL: der Dedupe-Hash strippt Query-Parameter
+      // (gewollt gegen ?ref=-Tracking) — bei watch?v=… steckt die Video-Identität
+      // aber GENAU dort, alle Videos kollabierten auf einen Hash und nur das
+      // erste je Topic wurde eingesammelt (Realfall 08.07.: ServusTV/kicker 5→1,
+      // FIFA/Sky 0). youtu.be/<id> trägt die Identität im Pfad.
+      const url = `https://youtu.be/${v.videoId}`;
       // Precheck über den Dedupe-Hash: Transcript-Fetch + LLM-Verdichtung
       // NUR für Videos, die noch nicht in topic_items liegen
-      if (await this.repo.itemExists(topic.id, topicItemDedupeHash({ url: v.url, title: v.title }))) continue;
+      if (await this.repo.itemExists(topic.id, topicItemDedupeHash({ url, title: v.title }))) continue;
       let summary = (v.description ?? '').trim() || undefined;
       if (cfg.transcript !== false) {
         const segments = await f.fetchTranscript(v.videoId, lang).catch(() => null);
@@ -261,7 +267,7 @@ export class TopicCollector {
             : text.slice(0, 1500);
         }
       }
-      out.push({ title: v.title, url: v.url, summary, publishedAt: v.publishedAt });
+      out.push({ title: v.title, url, summary, publishedAt: v.publishedAt });
     }
     if (out.length > 0) this.logger.info({ topic: topic.name, channel, videos: out.length }, 'v1048 youtube source collected');
     return out;
