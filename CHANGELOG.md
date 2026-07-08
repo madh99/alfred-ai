@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1057] - 2026-07-08
+
+### Fixed — Instagram-Video: 300 s Transcoding-Geduld (v1057)
+
+- Der Status-Poll für Video-Container wartete nur 60 s — Instagrams
+  Transcoding braucht bei längeren Reels 1–5 Minuten (Realfall: das
+  41-s-Reel scheiterte inkl. Retry, das 30-s-Reel derselben Charge ging
+  durch). Videos bekommen jetzt 300 s; Bild-Container behalten ihre
+  kurzen Polls.
+
 ## [0.19.0-multi-ha.1056] - 2026-07-08
 
 ### Added — Video-Ausbau: Reels überall, kein stilles Festhängen (v1056)

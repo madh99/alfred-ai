@@ -155,7 +155,11 @@ export class MetaProvider extends SocialProvider {
         else if (image) { containerParams.image_url = image.pathOrUrl; }
         const container = await this.graphPost(`${base}/${target}/media`, containerParams);
         creationId = String(container.id ?? '');
-        if (creationId && video) await this.waitForContainer(creationId, token, base);
+        // v1057 — Video-Transcoding braucht bei IG oft 1-5 min: 300s statt der
+        // 60s-Defaults (Realfall 08.07.: 41s-Reel scheiterte inkl. Retry am
+        // Poll, das 30s-Reel derselben Charge ging durch). Bild-Container
+        // behalten ihre kurzen Polls.
+        if (creationId && video) await this.waitForContainer(creationId, token, base, { tries: 60, delayMs: 5_000 });
       }
       if (!creationId) throw new Error('Instagram: kein Container erstellt');
       // v997 — auch Bild-/Karussell-Container erst FINISHED abwarten: Meta lädt

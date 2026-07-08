@@ -95,6 +95,22 @@ describe('MetaProvider (v936)', () => {
     expect(String(fetchMock.mock.calls[2][0])).toContain('/178/media_publish');
   });
 
+  it('v1057: IG-Video (Reel) — REELS-Container mit 300s-Transcoding-Poll (60×5s statt 60s-Default)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: 'c-reel' }))               // /media (REELS-Container)
+      .mockResolvedValueOnce(jsonResponse({ id: 'media-77' }))             // /media_publish
+      .mockResolvedValueOnce(jsonResponse({ permalink: 'https://instagr.am/reel/x' }));
+    const provider = new MetaProvider('instagram');
+    const wait = vi.spyOn(provider as any, 'waitForContainer').mockResolvedValue(undefined);
+    const r = await provider.publish(
+      makeItem({ media: [{ type: 'video', source: 'generated', pathOrUrl: 'https://cdn.example/reel.mp4' }] }),
+      makeChannel('instagram', { ig_user_id: '178' }), { META_ACCESS_TOKEN: 'MT' },
+    );
+    expect(r.externalId).toBe('media-77');
+    // Realfall 08.07.: 41s-Reel scheiterte am 60s-Poll — Videos bekommen 300s
+    expect(wait).toHaveBeenCalledWith('c-reel', 'MT', expect.any(String), { tries: 60, delayMs: 5_000 });
+  });
+
   it('v997: Bild-Container erst IN_PROGRESS → Poll wartet auf FINISHED; media_publish-Retry bei „Media ID is not available"', async () => {
     vi.useFakeTimers();
     fetchMock
