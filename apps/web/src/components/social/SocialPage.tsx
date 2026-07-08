@@ -1530,7 +1530,7 @@ export function SocialPage() {
                             <div>
                               <label className="text-[11px] text-gray-500">Modell (leer = Standard)</label>
                               <input value={settingsDraft.reelAiModel} onChange={e => setSettingsDraft(d => ({ ...d, reelAiModel: e.target.value }))}
-                                placeholder={settingsDraft.reelAiProvider === 'sora' ? 'sora-2' : settingsDraft.reelAiProvider === 'runway' ? 'gen4_turbo' : 'veo-3.0-fast-generate-001'}
+                                placeholder={settingsDraft.reelAiProvider === 'sora' ? 'sora-2' : settingsDraft.reelAiProvider === 'runway' ? 'gen4_turbo' : 'veo-3.1-fast-generate-preview'}
                                 className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
                             </div>
                           </div>

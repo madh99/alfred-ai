@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1061] - 2026-07-09
+
+### Fixed — Veo: korrektes Standard-Modell (v1061)
+
+- Der Veo-Standard zeigte auf ein Modell, das die Gemini-API für
+  AI-Studio-Keys nicht anbietet — der Key listet ausschließlich
+  `veo-3.1-*-preview`-Modelle. Standard ist jetzt
+  `veo-3.1-fast-generate-preview` (live verifiziert: 8-s-Clip in 66 s,
+  h264 720×1280, Referenzbild wird originalgetreu animiert).
+
 ## [0.19.0-multi-ha.1060] - 2026-07-09
 
 ### Added — Reel-Qualität Stufe 3: echte KI-Video-Clips + Reel-Optionen in der UI (v1060)

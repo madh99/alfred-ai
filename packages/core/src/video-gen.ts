@@ -175,7 +175,9 @@ export class AiClipGenerator {
   private async generateVeo(req: AiClipRequest): Promise<AiClipResult> {
     const key = this.keys.google;
     if (!key) throw new Error('Veo braucht einen Google-Key (Secret GOOGLE_API_KEY oder LLM-Config google).');
-    const model = req.model ?? 'veo-3.0-fast-generate-001';
+    // Default: fast-Variante (~halber Preis, 8s). Live-geprüft 09.07.2026 —
+    // der AI-Studio-Key listet NUR veo-3.1-*-preview (kein 2.0/3.0).
+    const model = req.model ?? 'veo-3.1-fast-generate-preview';
     // @ts-ignore — @google/genai ist ein optionaler Peer-Dep (zur Laufzeit installiert)
     const { GoogleGenAI } = await import('@google/genai');
     const genai = new GoogleGenAI({ apiKey: key });
