@@ -104,6 +104,45 @@ describe('TelegramChannelProvider (v933)', () => {
     expect(plain.reply_markup).toBeUndefined();
   });
 
+  it('v1056: Video-Item → sendVideo (URL-Variante, supports_streaming, Caption)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true, result: { message_id: 91 } }));
+    const provider = new TelegramChannelProvider('FALLBACK');
+    const r = await provider.publish(
+      makeItem({ media: [{ type: 'video', source: 'generated', pathOrUrl: 'https://cdn.example/reel.mp4' }] }),
+      channel, {},
+    );
+    expect(r.externalId).toBe('91');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/sendVideo');
+    const payload = JSON.parse((init as RequestInit).body as string);
+    expect(payload.video).toBe('https://cdn.example/reel.mp4');
+    expect(payload.supports_streaming).toBe(true);
+    expect(payload.caption).toContain('Derby-Sieg');
+  });
+
+  it('v1056: lokales Video → sendVideo als Multipart-Upload', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const vid = join(tmpdir(), `alfred-tg-${Date.now()}.mp4`);
+    writeFileSync(vid, Buffer.from('mp4-bytes'));
+    try {
+      fetchMock.mockResolvedValue(jsonResponse({ ok: true, result: { message_id: 92 } }));
+      const provider = new TelegramChannelProvider('FALLBACK');
+      await provider.publish(
+        makeItem({ media: [{ type: 'video', source: 'generated', pathOrUrl: vid }] }),
+        channel, {},
+      );
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toContain('/sendVideo');
+      const form = (init as RequestInit).body as FormData;
+      expect(form.get('supports_streaming')).toBe('true');
+      expect(form.get('video')).toBeInstanceOf(Blob);
+    } finally {
+      unlinkSync(vid);
+    }
+  });
+
   it('Bild-Item → sendPhoto mit Caption; Secret-Token gewinnt über Fallback', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ ok: true, result: { message_id: 78 } }));
     const provider = new TelegramChannelProvider('FALLBACK');

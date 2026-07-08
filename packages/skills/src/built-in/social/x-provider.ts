@@ -37,7 +37,8 @@ export class XProvider extends SocialProvider {
   private readonly tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
   capabilities(): ProviderCapabilities {
-    return { text: true, image: true, video: false, maxTextLength: 280, supportsDelete: true, supportsMetrics: true, supportsAudience: true };
+    // v1056 — video: v1.1 chunked upload (nur mit OAuth-1.0a-Secrets)
+    return { text: true, image: true, video: true, maxTextLength: 280, supportsDelete: true, supportsMetrics: true, supportsAudience: true };
   }
 
   /**
@@ -48,7 +49,7 @@ export class XProvider extends SocialProvider {
    * solange die App-Permission „Read and write" gesetzt ist. Bei multipart
    * gehen NUR die oauth_*-Parameter in die Signatur-Basis (kein Body).
    */
-  private oauth1Header(method: string, url: string, secrets: Record<string, string>): string {
+  private oauth1Header(method: string, url: string, secrets: Record<string, string>, extraParams?: Record<string, string>): string {
     const enc = (s: string) => encodeURIComponent(s).replace(/[!*'()]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
     const oauth: Record<string, string> = {
       oauth_consumer_key: secrets.X_CONSUMER_KEY,
@@ -58,7 +59,10 @@ export class XProvider extends SocialProvider {
       oauth_token: secrets.X_OAUTH1_ACCESS_TOKEN,
       oauth_version: '1.0',
     };
-    const paramString = Object.keys(oauth).sort().map(k => `${enc(k)}=${enc(oauth[k])}`).join('&');
+    // v1056 — Query-Parameter (z.B. STATUS-Poll: command/media_id) gehören mit
+    // in die Signatur-Basis; bei multipart-Bodies bleibt es bei den oauth_*.
+    const signed: Record<string, string> = { ...oauth, ...(extraParams ?? {}) };
+    const paramString = Object.keys(signed).sort().map(k => `${enc(k)}=${enc(signed[k])}`).join('&');
     const base = [method.toUpperCase(), enc(url), enc(paramString)].join('&');
     const signingKey = `${enc(secrets.X_CONSUMER_SECRET)}&${enc(secrets.X_OAUTH1_ACCESS_SECRET)}`;
     const signature = createHmac('sha1', signingKey).update(base).digest('base64');
@@ -117,6 +121,75 @@ export class XProvider extends SocialProvider {
       } catch { /* Bild best-effort */ }
     }
     return ids;
+  }
+
+  /**
+   * v1056 — Video (mp4) via v1.1 chunked upload: INIT → APPEND (4-MB-Segmente)
+   * → FINALIZE → STATUS-Poll bis „succeeded". NUR über OAuth 1.0a (der
+   * OAuth2-Scope media.write wird oft nicht gewährt — v1030-Lektion).
+   * Best-effort: jeder Fehler → null, der Tweet geht dann ohne Video raus.
+   */
+  private async uploadVideo(item: ContentItem, secrets: Record<string, string>): Promise<string | null> {
+    const m = item.media.find(x => x.type === 'video');
+    if (!m || !this.hasOauth1(secrets)) return null;
+    try {
+      let bytes: Buffer;
+      if (m.pathOrUrl.startsWith('http')) {
+        const r = await fetch(m.pathOrUrl, { signal: AbortSignal.timeout(60_000) });
+        if (!r.ok) return null;
+        bytes = Buffer.from(await r.arrayBuffer());
+      } else {
+        const { readFile } = await import('node:fs/promises');
+        bytes = await readFile(m.pathOrUrl);
+      }
+      if (bytes.length > 512_000_000) return null; // X-Limit 512 MB
+      const url = 'https://upload.twitter.com/1.1/media/upload.json';
+      // INIT
+      const initForm = new FormData();
+      initForm.append('command', 'INIT');
+      initForm.append('total_bytes', String(bytes.length));
+      initForm.append('media_type', 'video/mp4');
+      initForm.append('media_category', 'tweet_video');
+      const init = await fetch(url, { method: 'POST', headers: { Authorization: this.oauth1Header('POST', url, secrets) }, body: initForm });
+      const initData = await init.json().catch(() => ({})) as { media_id_string?: string };
+      const mediaId = initData.media_id_string;
+      if (!init.ok || !mediaId) return null;
+      // APPEND in 4-MB-Segmenten
+      const CHUNK = 4_000_000;
+      for (let offset = 0, segment = 0; offset < bytes.length; offset += CHUNK, segment++) {
+        const form = new FormData();
+        form.append('command', 'APPEND');
+        form.append('media_id', mediaId);
+        form.append('segment_index', String(segment));
+        form.append('media', new Blob([new Uint8Array(bytes.subarray(offset, offset + CHUNK))], { type: 'application/octet-stream' }), 'chunk');
+        const r = await fetch(url, { method: 'POST', headers: { Authorization: this.oauth1Header('POST', url, secrets) }, body: form });
+        if (!r.ok) return null;
+      }
+      // FINALIZE
+      const finForm = new FormData();
+      finForm.append('command', 'FINALIZE');
+      finForm.append('media_id', mediaId);
+      const fin = await fetch(url, { method: 'POST', headers: { Authorization: this.oauth1Header('POST', url, secrets) }, body: finForm });
+      const finData = await fin.json().catch(() => ({})) as { processing_info?: { state?: string; check_after_secs?: number } };
+      if (!fin.ok) return null;
+      // STATUS-Poll (Transcoding) — Query-Parameter werden mitsigniert
+      let state = finData.processing_info?.state ?? 'succeeded';
+      let waitSecs = finData.processing_info?.check_after_secs ?? 2;
+      for (let tries = 0; (state === 'pending' || state === 'in_progress') && tries < 30; tries++) {
+        await new Promise(r => setTimeout(r, Math.min(waitSecs, 10) * 1000));
+        const q = { command: 'STATUS', media_id: mediaId };
+        const st = await fetch(`${url}?command=STATUS&media_id=${mediaId}`, {
+          headers: { Authorization: this.oauth1Header('GET', url, secrets, q) },
+        });
+        const stData = await st.json().catch(() => ({})) as { processing_info?: { state?: string; check_after_secs?: number } };
+        if (!st.ok) return null;
+        state = stData.processing_info?.state ?? 'succeeded';
+        waitSecs = stData.processing_info?.check_after_secs ?? 3;
+      }
+      return state === 'succeeded' ? mediaId : null;
+    } catch {
+      return null; // Video best-effort — der Post selbst darf nie daran scheitern
+    }
   }
 
   /** v1019 — Kanalwachstum: Follower via users/me (best-effort — Free-Tier ist knapp rate-limitiert). */
@@ -186,7 +259,9 @@ export class XProvider extends SocialProvider {
     // v1029 — Bilder zuerst hochladen; die KI-Kennzeichnung (composePostText/
     // aiDisclosure) gilt nur, wenn wirklich ein Bild MITGEHT — sonst würde
     // „Bild: KI-generiert" ohne Bild im Tweet stehen (Realfall 06.07.)
-    const mediaIds = await this.uploadImages(item, secrets, channel);
+    // v1056 — Video hat Vorrang (X erlaubt kein Mischen von Video + Bildern)
+    const videoId = await this.uploadVideo(item, secrets);
+    const mediaIds = videoId ? [videoId] : await this.uploadImages(item, secrets, channel);
     const textItem = mediaIds.length > 0 ? item : { ...item, media: [] };
     // v1042 — X zählt jede URL als 23 Zeichen (t.co), nicht in echter Länge
     const payload: Record<string, unknown> = { text: composePostText(textItem, 280, channel, { urlWeight: 23 }) };

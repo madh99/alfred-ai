@@ -935,6 +935,21 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect((socialRepo.transition as any).mock.calls.filter((c: any[]) => c[2] === 'rejected').length).toBe(1);
   });
 
+  it('v1056: approved OHNE Termin — Begleitformat wird ad-hoc terminiert, Artikel nur gemeldet', async () => {
+    const { studio, socialRepo } = makeFamilyStack();
+    const base = { channelId: 'ch-web', userId: OWNER, body: 'Text', media: [], hashtags: [], source: 'studio' as const, createdAt: new Date().toISOString(), updatedAt: 'x' };
+    (socialRepo.listItems as any) = vi.fn(async () => [
+      { ...base, id: 'i-reel', status: 'approved', title: 'Reel hängt', performance: { format: 'reel', autoReel: true } },
+      { ...base, id: 'i-art', status: 'approved', title: 'Artikel ohne Slot', performance: { art: 'news' } },
+    ]);
+    const rescheduled: any[] = [];
+    (socialRepo.reschedule as any) = vi.fn(async (_u: string, id: string, at: string) => { rescheduled.push({ id, at }); return true; });
+    const r = await studio.planReview();
+    expect(rescheduled.map(x => x.id)).toEqual(['i-reel']); // Begleitformat automatisch
+    expect(Date.parse(rescheduled[0].at)).toBeGreaterThan(Date.now());
+    expect(r.flagged).toBeGreaterThanOrEqual(1); // Artikel nur als Empfehlung gemeldet
+  });
+
   it('v1044: verpasste Freigabe — frisch → +4h neu terminiert (Nudge), überaltert → zurückgezogen, 3 Nudges → Ruhe', async () => {
     const { studio, socialRepo } = makeFamilyStack();
     const overdue = new Date(Date.now() - 3 * 3_600_000).toISOString();

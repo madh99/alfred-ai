@@ -32,6 +32,16 @@ type SocialAction =
   | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'suggest_reply' | 'regenerate_image' | 'revise_content'
   | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library';
 
+/**
+ * v1035/v1056 — Begleitformate (Auto-Story, Reels): keine regulären Posts —
+ * vom Duplikat-Gate ausgenommen und bei Freigabe ad-hoc terminiert (sie
+ * hängen nicht am Artikel-Slot-Raster).
+ */
+export function isCompanionFormat(x: Pick<ContentItem, 'performance'>): boolean {
+  return x.performance?.autoStory === true || x.performance?.autoReel === true
+    || x.performance?.format === 'story' || x.performance?.format === 'reel';
+}
+
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
   const lines: string[] = [
@@ -578,7 +588,18 @@ export class SocialSkill extends Skill {
   private async approveContent(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
     const item = await this.resolveItem(userId, input);
     if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
-    const updated = await this.repo.transition(userId, item.id, 'approved');
+    let updated = await this.repo.transition(userId, item.id, 'approved');
+    // v1056 — slotlose BEGLEITFORMATE (Auto-Reel/-Story) bekommen bei der
+    // Freigabe einen Ad-hoc-Termin (+15 min): sie hängen bewusst NICHT am
+    // Artikel-Slot-Raster, aber ein approved-Item OHNE Termin ist für die
+    // Publish-Engine unsichtbar (Realfall 08.07.: zwei fertige Reels vom
+    // 06.07. hingen still fest). Tages-Limit/Leitplanken greifen beim Publish.
+    if (!updated.scheduledAt && isCompanionFormat(item)) {
+      const adhoc = new Date(Date.now() + 15 * 60_000).toISOString();
+      if (await this.repo.reschedule(userId, item.id, adhoc, ['approved'])) {
+        updated = { ...updated, scheduledAt: adhoc };
+      }
+    }
     // Erstpost-Sperre: Freigabe ohne Korrektur zählt für den Streak
     const channel = await this.repo.getChannel(userId, item.channelId);
     if (channel && channel.approvedStreak < 5) {
@@ -671,9 +692,7 @@ export class SocialSkill extends Skill {
       // Posts derselben Story: sie blocken weder den Feed-Post noch werden
       // sie selbst geblockt (Realfall 07.07.: die Auto-Story blockte den
       // regulären IG-Feed-Post derselben Story — beide sind gewollt).
-      const isCompanion = (x: ContentItem): boolean =>
-        x.performance?.autoStory === true || x.performance?.autoReel === true
-        || x.performance?.format === 'story' || x.performance?.format === 'reel';
+      const isCompanion = isCompanionFormat;
       const dupOf = isCompanion(item) ? undefined : itemTermin
         ? recentPublished.find(p => p.id !== item.id && terminOf(p) === itemTermin)
         : recentPublished.find(p => {
@@ -1017,6 +1036,34 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…"}`
     await this.repo.mergePerformance(userId, item.id, {
       format: 'reel', autoReel: true, durationSec: rendered.durationSec, script,
     }).catch(() => { /* optional */ });
+
+    // v1056 — Zweitverwertung Facebook: DASSELBE gerenderte Video als
+    // FB-Reel-ENTWURF (kein zweites Rendering, keine Zusatzkosten) — wenn ein
+    // Facebook-Kanal derselben Familie auto_reel aktiviert hat. Gleiche
+    // Freigabe-Pflicht; der FB-Publish nutzt den vorhandenen /videos-Pfad.
+    try {
+      const familyOf = (c: SocialChannel): string | null => {
+        if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
+        return c.projectId ? `project:${c.projectId}` : null;
+      };
+      const channels = await this.repo.listChannels(userId, 'active');
+      const fb = channels.find(c => c.platform === 'facebook' && c.config.auto_reel === true
+        && familyOf(c) !== null && familyOf(c) === familyOf(ig));
+      if (fb) {
+        const fbItem = await this.repo.createItem(userId, fb.id, {
+          status: 'draft',
+          title: leadItem.title ?? leadItem.body.slice(0, 60),
+          body: caption,
+          hashtags: leadItem.hashtags.slice(0, 5),
+          media: [{ type: 'video', source: 'generated', pathOrUrl: rendered.videoPath }],
+          source: 'studio',
+          storyId: leadItem.storyId,
+        });
+        await this.repo.mergePerformance(userId, fbItem.id, {
+          format: 'reel', autoReel: true, durationSec: rendered.durationSec, script,
+        }).catch(() => { /* optional */ });
+      }
+    } catch { /* Zweitverwertung ist best-effort — das IG-Reel steht bereits */ }
   }
 
   /** v1001 — Lead-Artikel einer Story finden (published, mit externalUrl); null wenn nicht auflösbar. */

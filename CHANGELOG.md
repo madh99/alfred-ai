@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1056] - 2026-07-08
+
+### Added — Video-Ausbau: Reels überall, kein stilles Festhängen (v1056)
+
+- **Slotlose Begleitformate hängen nie mehr fest**: Bei der Freigabe
+  eines Auto-Reels/-Story-Entwurfs ohne Termin wird automatisch ein
+  Ad-hoc-Termin (+15 min) vergeben — unabhängig vom Artikel-Slot-Raster
+  (Realfall: zwei fertige Reels lagen zwei Tage unsichtbar im Backlog).
+  Der Plan-Review terminiert liegengebliebene Begleitformate nach und
+  meldet reguläre freigegebene Beiträge ohne Termin als Empfehlung.
+- **Facebook-Reel-Zweitverwertung**: Hat der FB-Familien-Kanal
+  `auto_reel: true`, entsteht beim Lead-Publish ein zweiter
+  Reel-Entwurf mit derselben gerenderten Videodatei (kein doppeltes
+  Rendering) — gleiche Freigabe-Pflicht, Publish über den vorhandenen
+  Video-Pfad der Page.
+- **Telegram-Video**: Video-Items gehen nativ als `sendVideo` raus
+  (URL oder Multipart-Upload, Streaming-fähig, Caption + Artikel-Button
+  wie bei Fotos).
+- **X-Video**: mp4-Upload über die v1.1-Chunked-API (INIT/APPEND/
+  FINALIZE + Transcoding-Poll, nur mit OAuth-1.0a-Secrets) — Video hat
+  Vorrang vor Bildern; ohne Secrets geht der Tweet wie bisher ohne
+  Medium raus.
+
 ## [0.19.0-multi-ha.1055] - 2026-07-08
 
 ### Fixed — Bildgenerierung: Timeout 300 s + ehrliches Budget (v1055)

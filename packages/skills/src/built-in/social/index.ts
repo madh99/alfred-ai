@@ -1,4 +1,4 @@
-export { SocialSkill, formatPreparedPost } from './social-skill.js';
+export { SocialSkill, formatPreparedPost, isCompanionFormat } from './social-skill.js';
 export { SocialProvider, composePostText, aiDisclosure, languageName, BEST_PRACTICE_SLOTS, effectiveSlots, extractTrailingHashtags, mergeHashtags, type ProviderCapabilities, type PublishResult } from './social-provider.js';
 export { TelegramChannelProvider } from './telegram-channel-provider.js';
 export { RestProvider } from './rest-provider.js';

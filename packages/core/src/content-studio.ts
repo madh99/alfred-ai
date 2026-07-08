@@ -733,6 +733,26 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       }
     }
 
+    // 1c) v1056 — approved OHNE Termin ist für die Publish-Engine unsichtbar
+    //     (dueApproved filtert scheduledBefore) und hing für immer fest
+    //     (Realfall 08.07.: zwei fertige Auto-Reels vom 06.07.).
+    //     Begleitformate → automatisch Ad-hoc-Termin (+15 min); reguläre
+    //     Beiträge → nur Empfehlung (freigegebene Inhalte nie still ändern).
+    for (const item of items) {
+      if (item.status !== 'approved' || item.scheduledAt) continue;
+      const { isCompanionFormat } = await import('@alfred/skills');
+      if (isCompanionFormat(item)) {
+        const adhoc = new Date(Date.now() + 15 * 60_000).toISOString();
+        if (await this.socialRepo.reschedule(this.ownerUserId, item.id, adhoc, ['approved'])) {
+          result.deferred++;
+          notes.push(`🎬 Begleitformat ohne Termin → ad-hoc terminiert (+15 min): „${(item.title ?? item.body).slice(0, 60)}"`);
+        }
+      } else {
+        result.flagged++;
+        notes.push(`🕳 Freigegeben, aber OHNE Termin (wird nie veröffentlicht): „${(item.title ?? item.body).slice(0, 60)}" [${item.id.slice(0, 8)}] — Empfehlung: umterminieren oder sofort posten.`);
+      }
+    }
+
     // 2) Eilmeldungs-Kollision: reguläre Beiträge der nächsten Stunde weichen
     const recentBreaking = (await this.socialRepo.listStories(this.ownerUserId, { sinceDays: 1 }))
       .filter(s => s.source === 'event' && Date.parse(s.createdAt) > Date.now() - 4 * 3_600_000);

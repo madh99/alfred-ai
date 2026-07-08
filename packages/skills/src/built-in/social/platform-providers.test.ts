@@ -260,6 +260,51 @@ describe('XProvider (v936)', () => {
     }
   });
 
+  it('v1056: Video via v1.1 chunked upload (INIT/APPEND/FINALIZE) → media_ids am Tweet', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const vid = join(tmpdir(), `alfred-x-${Date.now()}v.mp4`);
+    writeFileSync(vid, Buffer.from('kleines-mp4'));
+    try {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ media_id_string: 'vid42' })) // INIT
+        .mockResolvedValueOnce(jsonResponse({}))                            // APPEND (1 Segment)
+        .mockResolvedValueOnce(jsonResponse({}))                            // FINALIZE (ohne processing_info = fertig)
+        .mockResolvedValueOnce(jsonResponse({ data: { id: '888' } }, 201)); // tweets
+      const provider = new XProvider();
+      const item = makeItem({ media: [{ type: 'video', source: 'generated', pathOrUrl: vid }] });
+      const r = await provider.publish(item, makeChannel('x'), {
+        X_ACCESS_TOKEN: 'XT',
+        X_CONSUMER_KEY: 'CK', X_CONSUMER_SECRET: 'CS',
+        X_OAUTH1_ACCESS_TOKEN: 'AT', X_OAUTH1_ACCESS_SECRET: 'AS',
+      });
+      expect(r.externalId).toBe('888');
+      const initForm = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
+      expect(initForm.get('command')).toBe('INIT');
+      expect(initForm.get('media_category')).toBe('tweet_video');
+      const appendForm = (fetchMock.mock.calls[1][1] as RequestInit).body as FormData;
+      expect(appendForm.get('command')).toBe('APPEND');
+      expect(appendForm.get('segment_index')).toBe('0');
+      const finForm = (fetchMock.mock.calls[2][1] as RequestInit).body as FormData;
+      expect(finForm.get('command')).toBe('FINALIZE');
+      const payload = JSON.parse((fetchMock.mock.calls[3][1] as RequestInit).body as string);
+      expect(payload.media).toEqual({ media_ids: ['vid42'] });
+    } finally {
+      unlinkSync(vid);
+    }
+  });
+
+  it('v1056: ohne OAuth-1.0a-Secrets wird KEIN Video hochgeladen (Tweet ohne Medium)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { id: '889' } }, 201)); // nur tweets
+    const provider = new XProvider();
+    const item = makeItem({ media: [{ type: 'video', source: 'generated', pathOrUrl: '/tmp/gibt-es-nicht.mp4' }] });
+    const r = await provider.publish(item, makeChannel('x'), { X_ACCESS_TOKEN: 'XT' });
+    expect(r.externalId).toBe('889');
+    const payload = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(payload.media).toBeUndefined();
+  });
+
   it('v1030: mit OAuth-1.0a-Secrets läuft der Upload über die v1.1-API (signierter OAuth-Header)', async () => {
     const { writeFileSync, unlinkSync } = await import('node:fs');
     const { join } = await import('node:path');

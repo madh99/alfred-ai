@@ -468,6 +468,39 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(reel.media[0]).toEqual({ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' });
   });
 
+  it('v1056: FB-Familien-Kanal mit auto_reel → ZWEITER Reel-Entwurf mit derselben Videodatei (kein Doppel-Render)', async () => {
+    const setup = reelSetup();
+    const fb = makeChannel({ id: 'ch-fb', platform: 'facebook', name: 'FussballCC FB', projectId: 'p1', config: { auto_reel: true } });
+    const lead = makeChannel({ id: 'ch-web', platform: 'rest', name: 'fussball.cc', projectId: 'p1', config: { base_url: 'https://cc.example' } });
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'FussballCC IG', projectId: 'p1', config: { auto_reel: true } });
+    (setup.spies as any).listChannels = vi.fn(async () => [lead, ig, fb]);
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 10));
+    expect(setup.render).toHaveBeenCalledTimes(1); // EIN Render für beide
+    const reels = setup.created.filter(c => c.media?.[0]?.type === 'video');
+    expect(reels.map(r => r.chId).sort()).toEqual(['ch-fb', 'ch-ig']);
+    expect(reels[0].media[0].pathOrUrl).toBe(reels[1].media[0].pathOrUrl); // gleiche Datei
+  });
+
+  it('v1056: Freigabe eines slotlosen Begleitformats → Ad-hoc-Termin (+15 min)', async () => {
+    const channel = makeChannel();
+    const reel = makeItem({ status: 'draft', performance: { format: 'reel', autoReel: true } });
+    const { skill, spies } = makeSkill(channel, reel);
+    const r = await skill.execute({ action: 'approve_content', item_id: reel.id }, CTX);
+    expect(r.success).toBe(true);
+    const call = (spies.reschedule as any).mock.calls.find((c: any[]) => c[1] === reel.id);
+    expect(call).toBeDefined();
+    expect(call[3]).toEqual(['approved']);
+    const at = Date.parse(call[2]);
+    expect(at).toBeGreaterThan(Date.now() + 10 * 60_000);
+    expect(at).toBeLessThan(Date.now() + 20 * 60_000);
+    // regulärer Artikel ohne Slot: KEINE Auto-Terminierung (bewusste Entscheidung)
+    const article = makeItem({ id: 'item-0002-bbbb', status: 'draft' });
+    const s2 = makeSkill(channel, article);
+    await s2.skill.execute({ action: 'approve_content', item_id: article.id }, CTX);
+    expect((s2.spies.reschedule as any)).not.toHaveBeenCalled();
+  });
+
   it('Wochen-Limit erreicht bzw. auto_reel aus → kein Render', async () => {
     const capped = reelSetup({ auto_reel: true, reel_max_per_week: 0 });
     await capped.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);

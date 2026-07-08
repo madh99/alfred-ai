@@ -47,17 +47,36 @@ export class TelegramChannelProvider extends SocialProvider {
     const chatId = this.chatId(channel);
     const text = composePostText(item, 4096, channel);
     const image = item.media.find(m => m.type === 'image');
-    // v1022 — sendPhoto-Captions sind auf 1024 Zeichen begrenzt: sauber über
-    // composePostText kürzen (KI-Kennzeichnung + Hashtags überleben) statt
+    // v1056 — Videos (Reels/render_video) gehen nativ als sendVideo raus
+    const video = item.media.find(m => m.type === 'video');
+    // v1022 — sendPhoto-/sendVideo-Captions sind auf 1024 Zeichen begrenzt: sauber
+    // über composePostText kürzen (KI-Kennzeichnung + Hashtags überleben) statt
     // hart zu slicen (vorher fiel bei langen Bodies genau die Kennzeichnung weg)
-    const caption = image ? composePostText(item, 1024, channel) : undefined;
+    const caption = (image || video) ? composePostText(item, 1024, channel) : undefined;
     // v1001 — Traffic: Inline-Button „Ganzer Artikel" (URL kommt vom Skill via performance.trafficUrl)
     const trafficUrl = typeof item.performance?.trafficUrl === 'string' ? item.performance.trafficUrl : undefined;
     const trafficLabel = typeof item.performance?.trafficLabel === 'string' ? item.performance.trafficLabel : '📖 Ganzer Artikel';
     const replyMarkup = trafficUrl ? { inline_keyboard: [[{ text: trafficLabel, url: trafficUrl }]] } : undefined;
 
     let res: Response;
-    if (image && image.pathOrUrl.startsWith('http')) {
+    if (video && video.pathOrUrl.startsWith('http')) {
+      res = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, video: video.pathOrUrl, caption, supports_streaming: true, ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
+      });
+    } else if (video) {
+      // lokale Datei (Reel-Render): Multipart-Upload (Bot-API-Limit 50 MB)
+      const { readFile } = await import('node:fs/promises');
+      const bytes = await readFile(video.pathOrUrl);
+      const form = new FormData();
+      form.append('chat_id', chatId);
+      form.append('caption', caption ?? '');
+      form.append('supports_streaming', 'true');
+      if (replyMarkup) form.append('reply_markup', JSON.stringify(replyMarkup));
+      form.append('video', new Blob([new Uint8Array(bytes)], { type: 'video/mp4' }), 'video.mp4');
+      res = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, { method: 'POST', body: form });
+    } else if (image && image.pathOrUrl.startsWith('http')) {
       res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
