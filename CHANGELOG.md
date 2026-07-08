@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1054] - 2026-07-08
+
+### Fixed — Kein Unicode-Tofu mehr in Bild-Overlays (v1054)
+
+- Emojis und Flaggen in Titeln wurden als Unicode-Hex-Kästchen ins Bild
+  gebrannt (Realfall Instagram: „70 Jahre Wartezeit vorbei ⏳ 🇨🇭" → Box
+  mit „23F3 1F1E8 1F1ED" — die SVG-Schrift hat keine Emoji-Glyphen).
+  Alle eingebrannten Overlay-Texte (Titel, Kicker, Termin-Karte,
+  Wasserzeichen, CTA) werden jetzt von Piktogrammen befreit; leer
+  gewordene Zeilen entfallen samt Box. Captions/Plattform-Texte
+  behalten ihre Emojis.
+
 ## [0.19.0-multi-ha.1053] - 2026-07-08
 
 ### Fixed — Interessen-UI kennt YouTube-Quellen (v1053)

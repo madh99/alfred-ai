@@ -34,6 +34,21 @@ describe('image-overlay (v1002)', () => {
     expect(plain).toContain('England zittert sich ins');
   });
 
+  it('v1054: Emojis/Flaggen werden aus eingebrannten Texten gestrippt (kein Unicode-Hex-Tofu)', () => {
+    // Realfall 08.07. (IG): Titel „70 Jahre Wartezeit vorbei ⏳ 🇨🇭" → die
+    // SVG-Schrift kennt keine Emojis, der Renderer brannte „23F3 1F1E8 1F1ED"
+    const svg = buildOverlaySvg(1000, 1000, { title: '70 Jahre Wartezeit vorbei ⏳ 🇨🇭', branding: 'fussball.cc ⚽' });
+    expect(svg).toContain('70 Jahre Wartezeit vorbei');
+    expect(svg).not.toContain('⏳');
+    expect(svg).not.toContain('🇨🇭');
+    expect(svg).not.toContain('⚽');
+    // KEINE Leer-Box für die weggefallene Emoji-Zeile: nur die eine Titel-Zeile
+    expect((svg.match(/<text/g) ?? []).length).toBe(2); // Titel + Branding
+    // reiner Emoji-Titel → gar keine Titel-Box
+    const empty = buildOverlaySvg(1000, 1000, { title: '⏳🇨🇭' });
+    expect(empty).not.toContain('<text');
+  });
+
   it('v1033: Termin-Karte im Box-Stil — Boxen, textLength gegen Überlauf, kein Verlaufsbalken, bottom-verankert', () => {
     const svg = buildOverlaySvg(1536, 1024, {
       termin: { headline: 'Viertelfinale live erleben: Schweiz gegen Kolumbien im Pub', anpfiff: 'Di., 07.07. · 22:00 Uhr', ort: 'Dublin Irish Pub, Wien' },

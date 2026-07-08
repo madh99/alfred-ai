@@ -101,6 +101,23 @@ export function escapeXml(s: string): string {
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+/**
+ * v1054 — Piktogramme aus Overlay-Text strippen: die SVG-Schrift (DejaVu) hat
+ * keine Emoji-Glyphen — der Renderer brennt fehlende Zeichen als Unicode-
+ * Hex-Tofu ins Bild (Realfall 08.07., IG-Post: Titel „… ⏳ 🇨🇭" → eigene Box
+ * mit „23F3 1F1E8 1F1ED"). Gilt NUR für eingebrannte Overlays — Captions/
+ * Plattform-Texte behalten ihre Emojis.
+ */
+export function stripPictographs(s: string): string {
+  return s
+    .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '') // Regionalindikatoren (Flaggen wie 🇨🇭)
+    .replace(/\p{Extended_Pictographic}/gu, '') // Emojis/Symbole inkl. ⏳
+    .replace(/[\u{FE0E}\u{FE0F}\u{200D}\u{20E3}]/gu, '') // Variation-Selektoren, ZWJ, Keycap
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.!?:;])/g, '$1')
+    .trim();
+}
+
 /** Text auf Zeilen umbrechen (Wort-Grenzen), harte Kappung auf maxLines. */
 export function wrapText(text: string, maxCharsPerLine: number, maxLines: number): string[] {
   // v1022 — Einzelwörter über Zeilenbreite hart trennen (vorher lief z.B. ein
@@ -192,7 +209,20 @@ function renderBoxStack(
 }
 
 /** SVG der Overlay-Ebenen bauen (getrennt exportiert für Tests). */
-export function buildOverlaySvg(width: number, height: number, spec: OverlaySpec): string {
+export function buildOverlaySvg(width: number, height: number, rawSpec: OverlaySpec): string {
+  // v1054 — alle Text-Eingänge der eingebrannten Ebenen von Piktogrammen
+  // befreien; leer gewordene Texte fallen komplett weg (keine Leer-Boxen)
+  const spec: OverlaySpec = {
+    ...rawSpec,
+    title: rawSpec.title ? (stripPictographs(rawSpec.title) || undefined) : rawSpec.title,
+    cta: rawSpec.cta ? (stripPictographs(rawSpec.cta) || undefined) : rawSpec.cta,
+    branding: rawSpec.branding ? (stripPictographs(rawSpec.branding) || undefined) : rawSpec.branding,
+    termin: rawSpec.termin ? {
+      ...rawSpec.termin,
+      headline: stripPictographs(rawSpec.termin.headline),
+      ...(rawSpec.termin.ort ? { ort: stripPictographs(rawSpec.termin.ort) || undefined } : {}),
+    } : rawSpec.termin,
+  };
   const font = escapeXml(spec.font ?? 'DejaVu Sans, sans-serif');
   const parts: string[] = [];
   const pad = Math.round(width * 0.035);
