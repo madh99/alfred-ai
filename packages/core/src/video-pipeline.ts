@@ -79,7 +79,7 @@ export function estimateSpeechSeconds(text: string): number {
  * beide Live-Reels). Bevorzugt an Satzzeichen getrennt, proportional zur
  * Sprechzeit getimed. SRT; der Look kommt per force_style beim Einbrennen.
  */
-export function buildPhraseSrt(text: string, totalDurationSec: number, maxWords = 5): string {
+export function buildPhraseSrt(text: string, totalDurationSec: number, maxWords = 5, offsetSec = 0): string {
   const words = text.replace(/\s+/g, ' ').trim().split(' ').filter(w => w.length > 0);
   if (words.length === 0) return '';
   const phrases: string[] = [];
@@ -105,7 +105,7 @@ export function buildPhraseSrt(text: string, totalDurationSec: number, maxWords 
     const s = Math.floor((ms % 60_000) / 1000), rest = ms % 1000;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(rest).padStart(3, '0')}`;
   };
-  let cursor = 0;
+  let cursor = offsetSec;
   const blocks: string[] = [];
   phrases.forEach((phrase, i) => {
     const dur = (weights[i] / totalWeight) * totalDurationSec;
@@ -347,12 +347,14 @@ export class SlideshowVideoRenderer {
     ];
     const speechWindow = introSec + middle.reduce((s, m) => s + m.durationSec, 0);
 
-    // 3) Untertitel — Phrasen-Chunks über die Voiceover-Zeit (nicht über die End-Card)
+    // 3) Untertitel — Phrasen-Chunks über die Voiceover-Zeit (nicht über die
+    // End-Card). v1062 — erst NACH der Hook-Slide: dort stehen die Titel-Boxen
+    // groß im Bild, Untertitel kollidierten damit (Realfall 09.07.).
     const subText = (spec.subtitleText ?? voText ?? '').trim();
     let srtPath: string | undefined;
     if (subText) {
       srtPath = `${base}.srt`;
-      await writeFile(srtPath, buildPhraseSrt(subText, speechWindow), 'utf8');
+      await writeFile(srtPath, buildPhraseSrt(subText, speechWindow - introSec, 5, introSec), 'utf8');
     }
 
     // 4) v1058 — ffmpeg: Cover-Crop + Ken-Burns + Crossfades statt Letterbox-Standbilder

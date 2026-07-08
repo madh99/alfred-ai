@@ -36,6 +36,12 @@ describe('buildPhraseSrt (v1058)', () => {
   it('leerer Text → leeres SRT', () => {
     expect(buildPhraseSrt('', 10)).toBe('');
   });
+
+  it('v1062: offsetSec verschiebt den Start (Untertitel erst nach der Hook-Slide)', () => {
+    const srt = buildPhraseSrt('Ein kurzer Text für die Phrasen im Reel hier.', 10, 5, 1.5);
+    expect(srt).toContain('00:00:01,500 -->'); // erster Block startet am Offset
+    expect(srt).not.toContain('00:00:00,000');
+  });
 });
 
 describe('buildReelFilterGraph (v1058)', () => {

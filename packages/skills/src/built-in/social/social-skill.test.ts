@@ -468,6 +468,24 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(reel.media[0]).toEqual({ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' });
   });
 
+  it('v1062: render_reel stößt das Auto-Reel für einen VERÖFFENTLICHTEN Lead erneut an', async () => {
+    const setup = reelSetup();
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 10));
+    expect(setup.render).toHaveBeenCalledTimes(1);
+    const r = await setup.skill.execute({ action: 'render_reel', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    await new Promise(res => setTimeout(res, 10));
+    expect(setup.render).toHaveBeenCalledTimes(2); // zweiter Durchlauf, gleicher Pfad
+  });
+
+  it('v1062: render_reel verweigert unveröffentlichte Items', async () => {
+    const setup = reelSetup();
+    const r = await setup.skill.execute({ action: 'render_reel', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('VERÖFFENTLICHTEN');
+  });
+
   it('v1058: Reel-Slides bevorzugen den SAUBEREN asset-Zwilling (ohne eingebrannte Titel)', async () => {
     const { writeFileSync, unlinkSync } = await import('node:fs');
     const { join } = await import('node:path');

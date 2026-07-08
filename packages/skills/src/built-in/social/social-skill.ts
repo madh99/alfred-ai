@@ -30,7 +30,7 @@ type SocialAction =
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
   | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'suggest_reply' | 'regenerate_image' | 'revise_content'
-  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library';
+  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library' | 'render_reel';
 
 /**
  * v1035/v1056 — Begleitformate (Auto-Story, Reels): keine regulären Posts —
@@ -113,8 +113,8 @@ export class SocialSkill extends Skill {
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
             'list_comments', 'reply_comment', 'ignore_comment', 'suggest_reply', 'regenerate_image', 'revise_content',
-            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht.',
+            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library', 'render_reel'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Auto-Reel für einen bereits VERÖFFENTLICHTEN Lead-Artikel (item_id) erneut anstoßen (z.B. nach Reject des alten Entwurfs oder Look-Fix) — gleicher Pfad wie beim Lead-Publish inkl. Wochen-Cap, KI-Clips und Freigabe-Pflicht.',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN/X_REFRESH_TOKEN+X_CLIENT_ID (OAuth2; Bild-Posts via v1.1: zusätzlich X_CONSUMER_KEY/X_CONSUMER_SECRET/X_OAUTH1_ACCESS_TOKEN/X_OAUTH1_ACCESS_SECRET — der OAuth2-Scope media.write wird oft nicht gewährt); bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
@@ -356,6 +356,18 @@ export class SocialSkill extends Skill {
         case 'attach_media': return await this.attachMedia(userId, input);
         case 'generate_content': return await this.generateContent(userId, input);
         case 'render_video': return await this.renderVideo(userId, input);
+        case 'render_reel': {
+          // v1062 — Auto-Reel manuell neu anstoßen (gleicher Pfad wie beim
+          // Lead-Publish: Familien-IG-Kanal, Wochen-Cap, KI-Clips, Entwurf
+          // mit Freigabe). Nur für bereits veröffentlichte Leads.
+          const item = await this.resolveItem(userId, input);
+          if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
+          if (item.status !== 'published') return { success: false, error: `render_reel braucht einen VERÖFFENTLICHTEN Lead-Artikel (Status ist ${item.status}).` };
+          const leadChannel = await this.repo.getChannel(userId, item.channelId);
+          if (!leadChannel) return { success: false, error: 'Kanal des Items nicht gefunden.' };
+          void this.maybeAutoReel(userId, item, leadChannel).catch(() => { /* best-effort wie beim Publish */ });
+          return { success: true, display: `🎬 Reel-Rendering für [${item.id.slice(0, 8)}] angestoßen — der Entwurf erscheint in einigen Minuten in der Queue (Freigabe nötig). Kommt keiner, hat vermutlich das Wochen-Limit gegriffen (reel_max_per_week).` };
+        }
         case 'crosspost': return await this.crosspost(userId, input);
         case 'list_comments': return await this.listCommentsAction(userId, input);
         case 'reply_comment': return await this.replyComment(userId, input);
@@ -1057,7 +1069,10 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       const channelsForBranding = await this.repo.listChannels(userId, 'active');
       const branding = resolveImageBranding(ig, channelsForBranding);
       const hookTitle = leadItem.title ?? leadItem.body.slice(0, 70);
-      const first = await readFile(images[0]);
+      // v1062 — ERST auf 9:16 zuschneiden, DANN Overlays: vorher wurden die
+      // Boxen aufs Querformat gebacken und vom Cover-Crop seitlich
+      // abgeschnitten (Realfall: End-Card „…er Artikel auf fussb…").
+      const first = await cropToRatio(await readFile(images[0]), 9, 16);
       const hook = await applyImageOverlays(first, { title: hookTitle, ...(branding ? { branding } : {}) });
       introImage = join(tmpdir(), `alfred-reel-hook-${leadItem.id.slice(0, 8)}.png`);
       await writeFile(introImage, hook);
@@ -1065,7 +1080,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       const ctaText = typeof ig.config.reel_cta_text === 'string' && ig.config.reel_cta_text.trim()
         ? ig.config.reel_cta_text.trim()
         : `Ganzer Artikel auf ${branding ?? 'unserer Seite'}`;
-      const last = await readFile(images[images.length - 1]);
+      const last = await cropToRatio(await readFile(images[images.length - 1]), 9, 16);
       const endCard = await bakeReelEndCard(last, ctaText, branding);
       outroImage = join(tmpdir(), `alfred-reel-end-${leadItem.id.slice(0, 8)}.png`);
       await writeFile(outroImage, endCard);

@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1062] - 2026-07-09
+
+### Fixed — Reel-Feinschliff nach dem ersten Live-Reel mit KI-Clip (v1062)
+
+- **Hook & End-Card nicht mehr abgeschnitten**: Die Titel-Boxen bzw. der
+  CTA wurden aufs Querformat-Bild gebacken und anschließend vom
+  9:16-Cover-Crop seitlich beschnitten (Realfall: „…er Artikel auf
+  fussb…"). Jetzt wird erst auf 9:16 zugeschnitten, dann beschriftet.
+- **Untertitel starten nach der Hook-Slide**: Auf der Hook-Karte steht
+  der Titel groß im Bild — die Untertitel kollidierten damit. Sie
+  beginnen jetzt nach der Hook (Voiceover läuft durch).
+
+### Added — render_reel: Auto-Reel manuell neu anstoßen (v1062)
+
+- Neue Aktion `render_reel` (Chat/API): erzeugt das Auto-Reel für einen
+  bereits veröffentlichten Lead-Artikel erneut — gleicher Pfad wie beim
+  Lead-Publish inklusive Wochen-Limit, KI-Clips und Freigabe-Pflicht.
+  Praktisch nach einem abgelehnten Entwurf oder Look-Änderungen.
+
 ## [0.19.0-multi-ha.1061] - 2026-07-09
 
 ### Fixed — Veo: korrektes Standard-Modell (v1061)
