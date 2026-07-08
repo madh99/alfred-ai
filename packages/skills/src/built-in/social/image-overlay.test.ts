@@ -34,6 +34,23 @@ describe('image-overlay (v1002)', () => {
     expect(plain).toContain('England zittert sich ins');
   });
 
+  it('v1063: Box-Zeilen sprengen nie die Bildbreite — Fontgröße wird geklammert (9:16-Hook-Realfall)', () => {
+    const width = 1080;
+    const svg = buildOverlaySvg(width, 1920, { title: 'Deschamps warnt vor Marokko: „Sehr starke Mannschaft" im WM-Viertelfinale' });
+    const pad = Math.round(width * 0.035);
+    // jede Text-Zeile: natürliche Glyphenbreite (konservativ 0,62×size) passt in die Bildbreite
+    for (const m of svg.matchAll(/<text[^>]*font-size="(\d+)"[^>]*textLength[^>]*>([^<]+)</g)) {
+      const size = Number(m[1]);
+      // XML-Entities (&quot; &amp; …) sind EIN Glyph — als Rohzeichen zählen
+      const chars = m[2].replace(/&[a-z]+;/g, 'x').length;
+      expect(chars * size * 0.62).toBeLessThanOrEqual(width - pad * 2 + 1);
+    }
+    // und die Boxen bleiben innerhalb des Bildes
+    for (const m of svg.matchAll(/<rect x="(\d+)"[^>]*width="(\d+)"/g)) {
+      expect(Number(m[1]) + Number(m[2])).toBeLessThanOrEqual(width);
+    }
+  });
+
   it('v1058: bakeReelEndCard — abgedunkeltes Bild + CTA-Pille, gleiche Maße', async () => {
     const png = await makeTestPng(400, 700);
     const out = await bakeReelEndCard(png, 'Ganzer Artikel auf fussball.cc', 'fussball.cc');

@@ -500,7 +500,7 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
       const follower = makeItem({ id: 'item-ig', channelId: 'ch-ig', media: [{ type: 'image', source: 'generated', pathOrUrl: studio }] });
       (setup.spies as any).getItem = vi.fn(async (_u: string, id: string) => (id === 'item-ig' ? follower : null));
       await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
-      await new Promise(res => setTimeout(res, 25));
+      for (let i = 0; i < 80 && (setup.render as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
       expect(setup.render).toHaveBeenCalled();
       const pseudo = (setup.render as any).mock.calls[0][0];
       expect(pseudo.media[0].pathOrUrl).toBe(asset); // Zwilling statt Studio-Bild

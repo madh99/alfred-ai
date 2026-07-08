@@ -207,10 +207,17 @@ function renderBoxStack(
 ): void {
   if (lines.length === 0) return;
   const boxes = lines.map(l => {
-    const padX = Math.round(l.size * 0.45);
-    const padY = Math.round(l.size * 0.26);
-    const boxW = Math.min(width - pad * 2, Math.round(l.text.length * l.size * 0.58) + padX * 2);
-    return { ...l, padX, padY, boxW, boxH: l.size + padY * 2 };
+    // v1063 — Sicherheits-Klammer: sprengt die natürliche Glyphenbreite die
+    // Box, wird die Zeile minimal kleiner gesetzt. textLength staucht in
+    // librsvg nur die Abstände, nicht die Glyphen — auf schmalen 9:16-Hooks
+    // lief die Zeile rechts aus dem Bild (Realfall 09.07., „…Mannschaft" im").
+    const maxInner = width - pad * 2 - Math.round(l.size * 0.45) * 2;
+    const fitSize = Math.floor(maxInner / (l.text.length * 0.62));
+    const size = fitSize > 0 ? Math.min(l.size, fitSize) : l.size;
+    const padX = Math.round(size * 0.45);
+    const padY = Math.round(size * 0.26);
+    const boxW = Math.min(width - pad * 2, Math.round(l.text.length * size * 0.58) + padX * 2);
+    return { ...l, size, padX, padY, boxW, boxH: size + padY * 2 };
   });
   const gap = Math.max(4, Math.round(Math.max(...boxes.map(b => b.size)) * 0.16));
   const totalH = boxes.reduce((s, b) => s + b.boxH, 0) + gap * (boxes.length - 1);

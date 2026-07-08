@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1063] - 2026-07-09
+
+### Fixed — Overlay-Boxen: Zeilen sprengen nie mehr die Bildbreite (v1063)
+
+- Auf schmalen 9:16-Flächen (Reel-Hook) konnte eine Titel-Box-Zeile
+  rechts aus dem Bild laufen: `textLength` staucht in librsvg nur die
+  Buchstaben-Abstände, nicht die Glyphen. Zeilen, deren natürliche
+  Breite die Box sprengen würde, werden jetzt automatisch minimal
+  kleiner gesetzt — wirkt als Sicherheitsnetz für alle eingebrannten
+  Overlays, der Look bleibt sonst unverändert.
+
 ## [0.19.0-multi-ha.1062] - 2026-07-09
 
 ### Fixed — Reel-Feinschliff nach dem ersten Live-Reel mit KI-Clip (v1062)
