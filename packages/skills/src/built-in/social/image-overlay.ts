@@ -61,6 +61,12 @@ export interface OverlaySpec {
   brandingCorner?: OverlayCorner;
   /** Titel-Overlay (v1026: gestapelte Text-Boxen unten links, optionale Vorzeile vor „:") */
   title?: string;
+  /** v1065 — Titel-Zeilen früher umbrechen (0,3–1, Anteil der Bildbreite; Default 1).
+   * Für Video-Hooks: kürzere, gestaffelte Boxen statt einer bildbreiten Balken-Zeile. */
+  titleMaxWidthRatio?: number;
+  /** v1065 — intern: gemessene Ink-Breiten der Titel-Zeilen (Index-gleich zu
+   * computeTitleLines) — applyImageOverlays füllt das per sharp-Messung. */
+  titleMeasuredWidths?: number[];
   /** v1003 — Termin-Karte (ersetzt den Titelbalken) */
   termin?: TerminOverlay;
   /** v1007 — CTA-Zeile oben zentriert (z.B. „🔗 Link im Profil" für Stories) */
@@ -202,31 +208,75 @@ export function resolveImageBranding(channel: SocialChannel, siblings: SocialCha
  * fielen unten raus). Bottom-Anker macht Unten-Überlauf unmöglich.
  */
 function renderBoxStack(
-  parts: string[], lines: Array<{ text: string; size: number; bold?: boolean }>,
+  parts: string[], lines: Array<{ text: string; size: number; bold?: boolean; measuredW?: number }>,
   width: number, height: number, pad: number, font: string,
 ): void {
   if (lines.length === 0) return;
   const boxes = lines.map(l => {
-    // v1063 — Sicherheits-Klammer: sprengt die natürliche Glyphenbreite die
-    // Box, wird die Zeile minimal kleiner gesetzt. textLength staucht in
-    // librsvg nur die Abstände, nicht die Glyphen — auf schmalen 9:16-Hooks
-    // lief die Zeile rechts aus dem Bild (Realfall 09.07., „…Mannschaft" im").
-    const maxInner = width - pad * 2 - Math.round(l.size * 0.45) * 2;
-    const fitSize = Math.floor(maxInner / (l.text.length * 0.62));
-    const size = fitSize > 0 ? Math.min(l.size, fitSize) : l.size;
-    const padX = Math.round(size * 0.45);
+    // v1065 — GEMESSENE Textbreite (sharp/trim) hat Vorrang: die librsvg auf
+    // dem Host ignoriert textLength komplett, der Text lief rechts aus der
+    // geschätzten Box (Realfall 09.07.: „…Mannschaft" im"/„Marokko:" ragten
+    // über die Box hinaus). Ohne Messung bleibt die Schätzung + Klammer.
+    let size = l.size;
+    let measured = typeof l.measuredW === 'number' && l.measuredW > 0 ? l.measuredW : undefined;
+    const padXOf = (s: number) => Math.round(s * 0.45);
+    if (measured !== undefined) {
+      const maxInner = width - pad * 2 - padXOf(size) * 2;
+      if (measured > maxInner) {
+        // Fontmetriken skalieren linear → exakt passend verkleinern
+        size = Math.max(10, Math.floor(size * (maxInner / measured)));
+        measured = maxInner;
+      }
+    } else {
+      // v1063 — Sicherheits-Klammer für den Schätz-Pfad
+      const maxInner = width - pad * 2 - padXOf(size) * 2;
+      const fitSize = Math.floor(maxInner / (l.text.length * 0.62));
+      if (fitSize > 0) size = Math.min(size, fitSize);
+    }
+    const padX = padXOf(size);
     const padY = Math.round(size * 0.26);
-    const boxW = Math.min(width - pad * 2, Math.round(l.text.length * size * 0.58) + padX * 2);
-    return { ...l, size, padX, padY, boxW, boxH: size + padY * 2 };
+    const innerW = measured ?? Math.round(l.text.length * size * 0.58);
+    const boxW = Math.min(width - pad * 2, innerW + padX * 2);
+    return { ...l, size, padX, padY, boxW, boxH: size + padY * 2, measured };
   });
   const gap = Math.max(4, Math.round(Math.max(...boxes.map(b => b.size)) * 0.16));
   const totalH = boxes.reduce((s, b) => s + b.boxH, 0) + gap * (boxes.length - 1);
   let y = Math.max(pad, height - pad - totalH);
   for (const b of boxes) {
     parts.push(`<rect x="${pad}" y="${y}" width="${b.boxW}" height="${b.boxH}" fill="#101826" fill-opacity="0.93"/>`);
-    parts.push(`<text x="${pad + b.padX}" y="${y + b.padY + Math.round(b.size * 0.85)}" font-family="${font}" font-size="${b.size}"${b.bold === false ? '' : ' font-weight="bold"'} fill="#ffffff" textLength="${b.boxW - b.padX * 2}" lengthAdjust="spacingAndGlyphs">${escapeXml(b.text)}</text>`);
+    // Bei gemessener Breite rendert der Text natürlich (passt garantiert);
+    // textLength nur im Schätz-Pfad (falls die SVG-Engine es doch kann).
+    const fit = b.measured !== undefined ? '' : ` textLength="${b.boxW - b.padX * 2}" lengthAdjust="spacingAndGlyphs"`;
+    parts.push(`<text x="${pad + b.padX}" y="${y + b.padY + Math.round(b.size * 0.85)}" font-family="${font}" font-size="${b.size}"${b.bold === false ? '' : ' font-weight="bold"'} fill="#ffffff"${fit}>${escapeXml(b.text)}</text>`);
     y += b.boxH + gap;
   }
+}
+
+/**
+ * v1065 — Titel-Zeilen deterministisch berechnen (Kicker-Split + Umbruch) —
+ * exportiert, damit applyImageOverlays die IDENTISCHEN Zeilen vermessen kann.
+ */
+export function computeTitleLines(width: number, title: string, maxWidthRatio?: number): Array<{ text: string; size: number }> {
+  const pad = Math.round(width * 0.035);
+  const raw = stripPictographs(title).trim();
+  if (!raw) return [];
+  const colonIdx = raw.indexOf(': ');
+  const kicker = colonIdx > 8 && colonIdx < raw.length - 4 ? raw.slice(0, colonIdx + 1) : undefined;
+  const main = kicker ? raw.slice(colonIdx + 2) : raw;
+  const mainSize = Math.round(width / 17);
+  const kickerSize = Math.round(width / 27);
+  // v1065 — optional engerer Umbruch (Video-Hook): Zeilen brechen früher,
+  // die Boxen werden kürzer und gestaffelt statt einer bildbreiten Zeile
+  const ratio = typeof maxWidthRatio === 'number' && maxWidthRatio >= 0.3 && maxWidthRatio <= 1 ? maxWidthRatio : 1;
+  const usable = Math.round(width * ratio) - pad * 2;
+  const lines: Array<{ text: string; size: number }> = [];
+  if (kicker) {
+    lines.push({ text: wrapText(kicker, Math.floor(usable / (kickerSize * 0.58)), 1)[0] ?? kicker, size: kickerSize });
+  }
+  for (const text of wrapText(main, Math.floor(usable / (mainSize * 0.58)), 3)) {
+    lines.push({ text, size: mainSize });
+  }
+  return lines;
 }
 
 /** SVG der Overlay-Ebenen bauen (getrennt exportiert für Tests). */
@@ -266,18 +316,10 @@ export function buildOverlaySvg(width: number, height: number, rawSpec: OverlayS
     // v1026 — Nachrichten-Stil (ZIB-Muster): gestapelte Text-Boxen unten links;
     // enthält der Titel „Vorzeile: Rest", wird die Vorzeile als kleinere
     // Kicker-Box darüber gesetzt.
-    const raw = spec.title.trim();
-    const colonIdx = raw.indexOf(': ');
-    const kicker = colonIdx > 8 && colonIdx < raw.length - 4 ? raw.slice(0, colonIdx + 1) : undefined;
-    const main = kicker ? raw.slice(colonIdx + 2) : raw;
-    const mainSize = Math.round(width / 17);
-    const kickerSize = Math.round(width / 27);
-    const lines: Array<{ text: string; size: number }> = [];
-    if (kicker) {
-      lines.push({ text: wrapText(kicker, Math.floor((width - pad * 2) / (kickerSize * 0.58)), 1)[0] ?? kicker, size: kickerSize });
-    }
-    for (const text of wrapText(main, Math.floor((width - pad * 2) / (mainSize * 0.58)), 3)) {
-      lines.push({ text, size: mainSize });
+    const lines: Array<{ text: string; size: number; measuredW?: number }> = computeTitleLines(width, spec.title, spec.titleMaxWidthRatio);
+    // v1065 — gemessene Ink-Breiten (aus applyImageOverlays) den Zeilen zuordnen
+    if (Array.isArray(spec.titleMeasuredWidths)) {
+      spec.titleMeasuredWidths.forEach((w, i) => { if (lines[i] && typeof w === 'number' && w > 0) lines[i].measuredW = w; });
     }
     renderBoxStack(parts, lines, width, height, pad, font);
   }
@@ -321,8 +363,26 @@ export async function applyImageOverlays(png: Buffer, spec: OverlaySpec): Promis
     const width = meta.width ?? 0;
     const height = meta.height ?? 0;
     if (width < 100 || height < 100) return png;
+    // v1065 — Titel-Zeilen VOR dem SVG-Bau echt vermessen (Ink-Breite via
+    // sharp/trim): die librsvg ignoriert textLength, die 0,58er-Schätzung war
+    // für fette Schrift zu knapp — Text ragte über die Box hinaus.
+    let effSpec = spec;
+    if (spec.title && !spec.termin) {
+      const font = spec.font ?? 'DejaVu Sans';
+      const widths: number[] = [];
+      for (const l of computeTitleLines(width, spec.title, spec.titleMaxWidthRatio)) {
+        try {
+          const cw = Math.max(64, Math.round(l.text.length * l.size * 1.4));
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${cw}" height="${l.size * 3}"><text x="${l.size}" y="${l.size * 2}" font-family="${font}" font-size="${l.size}" font-weight="bold" fill="#ffffff">${escapeXml(l.text)}</text></svg>`;
+          const { info } = await (sharp as unknown as (i: Buffer) => { trim(): { toBuffer(o: { resolveWithObject: true }): Promise<{ info: { width: number } }> } })(Buffer.from(svg))
+            .trim().toBuffer({ resolveWithObject: true });
+          widths.push(info.width > 0 ? info.width : 0);
+        } catch { widths.push(0); }
+      }
+      if (widths.some(w => w > 0)) effSpec = { ...spec, titleMeasuredWidths: widths };
+    }
     const layers: Array<{ input: Buffer; top?: number; left?: number }> = [
-      { input: Buffer.from(buildOverlaySvg(width, height, spec)), top: 0, left: 0 },
+      { input: Buffer.from(buildOverlaySvg(width, height, effSpec)), top: 0, left: 0 },
     ];
     // v1026 — Logo (SVG) in wählbarer Ecke: separat rasterisiert (~13 % der
     // Bildbreite); Fehler im Logo (kaputtes SVG) kosten NIE das Bild

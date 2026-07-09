@@ -1111,7 +1111,10 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       // Boxen aufs Querformat gebacken und vom Cover-Crop seitlich
       // abgeschnitten (Realfall: End-Card „…er Artikel auf fussb…").
       const first = await cropToRatio(await readFile(images[0]), 9, 16);
-      const hook = await applyImageOverlays(first, { title: hookTitle, ...(branding ? { branding } : {}) });
+      // v1065 — engerer Umbruch: gestaffelte kurze Boxen statt bildbreiter
+      // Balken-Zeile (Realfall: 27-Zeichen-Zeile = 88% Bildbreite wirkte
+      // wie ein durchgehender Balken).
+      const hook = await applyImageOverlays(first, { title: hookTitle, titleMaxWidthRatio: 0.75, ...(branding ? { branding } : {}) });
       introImage = join(tmpdir(), `alfred-reel-hook-${leadItem.id.slice(0, 8)}.png`);
       await writeFile(introImage, hook);
       tmpFiles.push(introImage);

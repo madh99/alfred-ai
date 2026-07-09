@@ -51,6 +51,34 @@ describe('image-overlay (v1002)', () => {
     }
   });
 
+  it('v1065: titleMaxWidthRatio bricht Titel-Zeilen früher um (gestaffelte Boxen statt Balken)', () => {
+    const title = 'Deschamps warnt vor Marokko: „Sehr starke Mannschaft" im WM-Viertelfinale';
+    const wide = buildOverlaySvg(1080, 1920, { title });
+    const narrow = buildOverlaySvg(1080, 1920, { title, titleMaxWidthRatio: 0.75 });
+    const count = (svg: string) => (svg.match(/<rect/g) ?? []).length;
+    expect(count(narrow)).toBeGreaterThan(count(wide)); // mehr, kürzere Zeilen
+    // keine Zeile länger als ~75% nutzbare Breite (0,58er-Schätzung)
+    for (const m of narrow.matchAll(/<text[^>]*font-size="(\d+)"[^>]*textLength="(\d+)"/g)) {
+      expect(Number(m[2])).toBeLessThanOrEqual(Math.round(1080 * 0.75));
+    }
+    // ungültige Ratio → wie Default
+    expect(buildOverlaySvg(1080, 1920, { title, titleMaxWidthRatio: 0.1 })).toBe(wide);
+  });
+
+  it('v1065: gemessene Zeilenbreiten — Box umfasst den Text exakt, kein textLength-Blindflug', () => {
+    const title = 'England zittert sich ins Viertelfinale';
+    const svg = buildOverlaySvg(1000, 1000, { title, titleMeasuredWidths: [420, 380] });
+    expect(svg).not.toContain('textLength'); // gemessen = natürlich rendern
+    // Box = Messbreite + 2×padX (mainSize 59 → padX 27): 420+54 / 380+54
+    expect(svg).toContain('width="474"');
+    expect(svg).toContain('width="434"');
+    // Überbreite Messung → Fontgröße exakt herunterskaliert, Box bleibt im Bild
+    const over = buildOverlaySvg(1000, 1000, { title: 'Einzeiler ohne Umbruch hier', titleMeasuredWidths: [2000] });
+    const rects = [...over.matchAll(/<rect x="(\d+)"[^>]*width="(\d+)"/g)];
+    for (const m of rects) expect(Number(m[1]) + Number(m[2])).toBeLessThanOrEqual(1000);
+    expect(over).toMatch(/font-size="2[0-9]"/); // von 59 deutlich verkleinert
+  });
+
   it('v1058: bakeReelEndCard — abgedunkeltes Bild + CTA-Pille, gleiche Maße', async () => {
     const png = await makeTestPng(400, 700);
     const out = await bakeReelEndCard(png, 'Ganzer Artikel auf fussball.cc', 'fussball.cc');

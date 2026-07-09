@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1065] - 2026-07-09
+
+### Fixed — Titel-Boxen umfassen den Text jetzt exakt (v1065)
+
+- Der Text ragte rechts über die dunklen Titel-Boxen hinaus („…im" /
+  „Marokko:" standen auf dem Foto statt in der Box): Die Box-Breite
+  war eine Zeichen-Schätzung, und das SVG-Attribut `textLength`, das
+  den Text in die Box zwingen sollte, wird von der Server-SVG-Engine
+  ignoriert. Die Zeilenbreiten werden jetzt VOR dem Einbrennen echt
+  vermessen (sharp/trim) — die Box endet exakt hinter dem Text, bei
+  Überbreite wird die Zeile passgenau verkleinert. Gilt für alle
+  eingebrannten Titel (Studio-Bilder, Reel-Hooks).
+- Reel-Hooks brechen den Titel enger um (75 % Bildbreite): kurze,
+  gestaffelte Nachrichten-Boxen statt einer fast bildbreiten Zeile.
+
 ## [0.19.0-multi-ha.1064] - 2026-07-09
 
 ### Fixed — Reel-Reject nimmt den Facebook-Zwilling mit (v1064)
