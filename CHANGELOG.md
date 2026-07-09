@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1066] - 2026-07-09
+
+### Added — Dauer-Branding im Reel (v1066, Opt-in)
+
+- Neuer Kanal-Schalter „Dauer-Branding im Video": Wasserzeichen-Text
+  und/oder Kanal-Logo bleiben über die GESAMTE Reel-Laufzeit
+  eingeblendet (TV-Sender-Stil) statt nur auf Hook und End-Card —
+  Position wählbar wie beim Bild (vier Ecken). Standard bleibt aus
+  (Verhalten wie bisher). Bei aktivem Dauer-Branding wird das Branding
+  nicht zusätzlich in Hook/End-Card eingebrannt (keine Doppelung);
+  Config: `reel_watermark: text|logo|both` + `reel_watermark_corner`.
+
 ## [0.19.0-multi-ha.1065] - 2026-07-09
 
 ### Fixed — Titel-Boxen umfassen den Text jetzt exakt (v1065)
@@ -19,18 +31,6 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   eingebrannten Titel (Studio-Bilder, Reel-Hooks).
 - Reel-Hooks brechen den Titel enger um (75 % Bildbreite): kurze,
   gestaffelte Nachrichten-Boxen statt einer fast bildbreiten Zeile.
-
-## [0.19.0-multi-ha.1066] - 2026-07-09
-
-### Added — Dauer-Branding im Reel (v1066, Opt-in)
-
-- Neuer Kanal-Schalter „Dauer-Branding im Video": Wasserzeichen-Text
-  und/oder Kanal-Logo bleiben über die GESAMTE Reel-Laufzeit
-  eingeblendet (TV-Sender-Stil) statt nur auf Hook und End-Card —
-  Position wählbar wie beim Bild (vier Ecken). Standard bleibt aus
-  (Verhalten wie bisher). Bei aktivem Dauer-Branding wird das Branding
-  nicht zusätzlich in Hook/End-Card eingebrannt (keine Doppelung);
-  Config: `reel_watermark: text|logo|both` + `reel_watermark_corner`.
 
 ## [0.19.0-multi-ha.1064] - 2026-07-09
 
