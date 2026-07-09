@@ -8528,6 +8528,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const r = await socialSkillForApi.execute({
               action: skillAction, item_id: id,
               ...(extra?.scheduled_at ? { scheduled_at: extra.scheduled_at } : {}),
+              // v1068 — bewusster Re-Post aus der UI: force NUR beim Publish
+              // (Duplikat-Gate-Override nach explizitem Bestätigungsdialog)
+              ...(action === 'publish' && extra?.force === true ? { force: true } : {}),
               ...(action === 'edit' ? {
                 title: extra?.title, body: extra?.body, hashtags: extra?.hashtags, lesson: extra?.lesson,
               } : {}),

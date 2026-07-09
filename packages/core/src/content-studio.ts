@@ -620,7 +620,7 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
    * kommt vom USER statt aus den Feeds — bewusst OHNE Score-Schwelle,
    * Nachtruhe und News-Desk-Tageslimit: der User hat bereits entschieden.
    */
-  async planAdhocStory(titel: string | undefined, stoff: string, familyKey?: string): Promise<{ created: number; channels: string[]; family: string; storyTitle: string }> {
+  async planAdhocStory(titel: string | undefined, stoff: string, familyKey?: string): Promise<{ created: number; channels: string[]; family: string; storyTitle: string; warnings: string[] }> {
     const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
     const families = new Map<string, SocialChannel[]>();
     for (const c of channels) {
@@ -641,15 +641,35 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
     let leadName: string | undefined;
     const done: string[] = [];
+    const warnings: string[] = [];
     for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
       const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined);
       if (!item) continue;
-      // Ad-hoc-Slots wie im News-Desk: Lead +30 min, Follower +90 min;
-      // v1022-Regel gilt auch hier: suggest-Lead → Follower bleiben Entwurf
-      const slot = new Date(Date.now() + (channel.id === lead.id ? 30 : 90) * 60_000).toISOString();
-      if ((channel.mode === 'approve' || channel.mode === 'autonomous')
-        && (channel.id === lead.id || lead.mode !== 'suggest')) {
-        await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+      // v1068 — Vorab-Check (beratend): hatte der Kanal in den letzten 7 Tagen
+      // schon einen sehr ähnlichen Beitrag, bleibt das Item ENTWURF statt
+      // terminiert — nichts geht verloren, nichts postet still doppelt, die
+      // Freigabe ist die bewusste Entscheidung. Enforcement bleibt IMMER das
+      // Publish-Gate (gleiche Kriterien, gemeinsamer Helfer — Realfall 09.07.:
+      // TG hatte „Marokko im Viertelfinale" organisch schon, der Story-
+      // Follower lief erst beim Publish ins Gate).
+      let dup: import('@alfred/storage').ContentItem | undefined;
+      try {
+        const { findRecentChannelDuplicate } = await import('@alfred/skills');
+        dup = await findRecentChannelDuplicate(this.socialRepo, this.ownerUserId, channel.id, item);
+      } catch { /* Vorab-Check best-effort — das Publish-Gate greift ohnehin */ }
+      if (dup) {
+        warnings.push(`⚠️ ${channel.name}: sehr ähnlicher Beitrag bereits veröffentlicht („${(dup.title ?? dup.body.slice(0, 60)).slice(0, 70)}"${dup.publishedAt ? `, ${dup.publishedAt.slice(0, 10)}` : ''}) — bleibt ENTWURF; Freigabe = bewusster Doppel-Post (force).`);
+        await this.socialRepo.mergePerformance(this.ownerUserId, item.id, {
+          dupWarning: `Sehr ähnlich zu [${dup.id.slice(0, 8)}] „${(dup.title ?? '').slice(0, 70)}" (${dup.publishedAt?.slice(0, 10) ?? 'kürzlich'} auf ${channel.name})`,
+        }).catch(() => { /* non-critical */ });
+      } else {
+        // Ad-hoc-Slots wie im News-Desk: Lead +30 min, Follower +90 min;
+        // v1022-Regel gilt auch hier: suggest-Lead → Follower bleiben Entwurf
+        const slot = new Date(Date.now() + (channel.id === lead.id ? 30 : 90) * 60_000).toISOString();
+        if ((channel.mode === 'approve' || channel.mode === 'autonomous')
+          && (channel.id === lead.id || lead.mode !== 'suggest')) {
+          await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
+        }
       }
       await this.socialRepo.createAssignment({ storyId: story.id, channelId: channel.id, role: channel.id === lead.id ? 'lead' : 'follow', offsetHours: channel.id === lead.id ? 0 : 1, itemId: item.id });
       if (channel.id === lead.id) leadName = channel.name;
@@ -658,13 +678,13 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     await this.insightsRepo?.upsertCandidate(this.ownerUserId, {
       category: 'social',
       title: `⚡ Story angestoßen: ${story.title.slice(0, 70)}`,
-      body: `Auf deinen Zuruf wurden ${done.length} Beiträge vorbereitet (${done.join(', ')}) — Lead in ~30, Follower in ~90 Minuten; Freigaben kommen je nach Kanal-Modus zum Slot.\n\nStoff: ${story.summary ?? story.title}`,
+      body: `Auf deinen Zuruf wurden ${done.length} Beiträge vorbereitet (${done.join(', ')}) — Lead in ~30, Follower in ~90 Minuten; Freigaben kommen je nach Kanal-Modus zum Slot.${warnings.length > 0 ? `\n\n${warnings.join('\n')}` : ''}\n\nStoff: ${story.summary ?? story.title}`,
       confidence: 0.9,
       sourceData: { router: true, urgency: 'high', storyId: story.id },
       dedupeKey: `social-planstory:${story.id}`,
     }).catch(() => { /* non-critical */ });
-    this.logger.info({ family, story: story.title, items: done.length }, 'v1024 adhoc story planned');
-    return { created: done.length, channels: done, family, storyTitle: story.title };
+    this.logger.info({ family, story: story.title, items: done.length, dupWarnings: warnings.length }, 'v1024 adhoc story planned');
+    return { created: done.length, channels: done, family, storyTitle: story.title, warnings };
   }
 
   /**

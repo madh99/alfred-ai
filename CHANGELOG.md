@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1068] - 2026-07-09
+
+### Fixed — Duplikat-Gate: bewusster Re-Post aus der UI (v1068)
+
+- Blockte das Doppel-Publish-Gate einen Beitrag, lief „Sofort posten"
+  immer wieder in denselben Fehler — der force-Weg existierte nur im
+  Chat. Jetzt fragt der Button bei einem geblockten Beitrag explizit
+  nach („BEWUSST trotzdem posten?") und reicht den Re-Post als force
+  durch. Force bleibt an die Bestätigung gebunden; die Engine selbst
+  überstimmt das Gate nie.
+
+### Added — plan_story warnt VOR der Kollision (v1068)
+
+- „Story anstoßen" prüft jetzt beim Anlegen je Kanal, ob dort in den
+  letzten 7 Tagen ein sehr ähnlicher Beitrag veröffentlicht wurde
+  (identische Kriterien wie das Publish-Gate — gemeinsamer Helfer,
+  kann nicht auseinanderlaufen). Bei Treffer bleibt der Beitrag als
+  Entwurf liegen (statt terminiert) und die Antwort nennt den
+  Bestands-Beitrag — nichts geht verloren, nichts postet still
+  doppelt, die Freigabe ist die bewusste Entscheidung. Das
+  Publish-Gate bleibt unverändert der Enforcement-Punkt auf allen
+  Pfaden.
+
 ## [0.19.0-multi-ha.1067] - 2026-07-09
 
 ### Added — Dauer-Branding: Anordnung wählbar (v1067)

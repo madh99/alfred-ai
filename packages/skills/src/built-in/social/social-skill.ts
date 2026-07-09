@@ -42,6 +42,38 @@ export function isCompanionFormat(x: Pick<ContentItem, 'performance'>): boolean 
     || x.performance?.format === 'story' || x.performance?.format === 'reel';
 }
 
+/**
+ * v1068 — GEMEINSAME Duplikat-Suche (eine Quelle der Wahrheit): findet einen
+ * in den letzten 7 Tagen auf dem Kanal veröffentlichten, sehr ähnlichen
+ * Beitrag. Genutzt vom Publish-Gate (Enforcement, v973) UND vom
+ * plan_story-Vorab-Check (beratend) — beide können nie auseinanderlaufen.
+ * Termin-Posts haben Termin-Identität (v983), Story-Geschwister
+ * Story-Identität (v1023), Begleitformate sind ausgenommen (v1035).
+ */
+export async function findRecentChannelDuplicate(
+  repo: Pick<SocialRepository, 'listItems'>,
+  userId: string,
+  channelId: string,
+  cand: Pick<ContentItem, 'body'> & { id?: string; title?: string | null; storyId?: string | null; performance?: ContentItem['performance'] },
+): Promise<ContentItem | undefined> {
+  if (isCompanionFormat(cand as Pick<ContentItem, 'performance'>)) return undefined;
+  const weekAgo = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
+  const recentPublished = await repo.listItems(userId, {
+    channelId, status: 'published', updatedSince: weekAgo, limit: 200,
+  });
+  const terminOf = (p: ContentItem): string | undefined =>
+    typeof p.performance?.terminBis === 'string' ? p.performance.terminBis : undefined;
+  const candTermin = typeof cand.performance?.terminBis === 'string' ? cand.performance.terminBis : undefined;
+  const candidateTitle = cand.title ?? cand.body.slice(0, 60);
+  return candTermin
+    ? recentPublished.find(p => p.id !== cand.id && terminOf(p) === candTermin)
+    : recentPublished.find(p => {
+      if (p.id === cand.id || terminOf(p) !== undefined || isCompanionFormat(p)) return false;
+      if (cand.storyId && p.storyId) return p.storyId === cand.storyId;
+      return isNearDuplicateTitle(candidateTitle, [p.title ?? p.body.slice(0, 60)]);
+    });
+}
+
 /** Formatiert die prepare-Aufbereitung: alles, was der User zum 2-Tap-Posten braucht. */
 export function formatPreparedPost(item: ContentItem, channel: SocialChannel): string {
   const lines: string[] = [
@@ -211,9 +243,9 @@ export class SocialSkill extends Skill {
   }
 
   /** v1024 — Ad-hoc-Story auf User-Zuruf (ContentStudio.planAdhocStory, vom Kern injiziert). */
-  private storyPlannerFn?: (titel: string | undefined, stoff: string, family?: string) => Promise<{ created: number; channels: string[]; family: string; storyTitle: string }>;
+  private storyPlannerFn?: (titel: string | undefined, stoff: string, family?: string) => Promise<{ created: number; channels: string[]; family: string; storyTitle: string; warnings?: string[] }>;
 
-  setStoryPlanner(fn: (titel: string | undefined, stoff: string, family?: string) => Promise<{ created: number; channels: string[]; family: string; storyTitle: string }>): void {
+  setStoryPlanner(fn: (titel: string | undefined, stoff: string, family?: string) => Promise<{ created: number; channels: string[]; family: string; storyTitle: string; warnings?: string[] }>): void {
     this.storyPlannerFn = fn;
   }
 
@@ -707,32 +739,10 @@ export class SocialSkill extends Skill {
           error: `Termin ist bereits vorbei (${itemTermin}) — die Ankündigung ist nicht mehr sinnvoll. Bewusst trotzdem posten: force: true.`,
         };
       }
-      const weekAgo = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
-      const recentPublished = await this.repo.listItems(userId, {
-        channelId: channel.id, status: 'published', updatedSince: weekAgo, limit: 200,
-      });
-      const terminOf = (p: ContentItem): string | undefined =>
-        typeof p.performance?.terminBis === 'string' ? p.performance.terminBis : undefined;
-      const candidateTitle = item.title ?? item.body.slice(0, 60);
-      // v1035 — Begleitformate (Auto-Story-Doku, Reels) sind KEINE regulären
-      // Posts derselben Story: sie blocken weder den Feed-Post noch werden
-      // sie selbst geblockt (Realfall 07.07.: die Auto-Story blockte den
-      // regulären IG-Feed-Post derselben Story — beide sind gewollt).
-      const isCompanion = isCompanionFormat;
-      const dupOf = isCompanion(item) ? undefined : itemTermin
-        ? recentPublished.find(p => p.id !== item.id && terminOf(p) === itemTermin)
-        : recentPublished.find(p => {
-          if (p.id === item.id || terminOf(p) !== undefined || isCompanion(p)) return false;
-          // v1023 — Story-Geschwister: haben BEIDE Items eine Story-Zuordnung,
-          // entscheidet die Story-IDENTITÄT statt der Titel-Tokens. Realfall
-          // 06.07.: Spielbericht + Aztekenstadion-Angle (zwei bewusst geplante
-          // Stories derselben Konferenz, semantischer Dedup hatte sie getrennt
-          // akzeptiert) teilen „gegen/Mexiko/England" → FB-Post fälschlich
-          // geblockt. Gleiche Story = Duplikat (zuverlässiger als Titel);
-          // manuelle Items ohne Story behalten den Titel-Vergleich.
-          if (item.storyId && p.storyId) return p.storyId === item.storyId;
-          return isNearDuplicateTitle(candidateTitle, [p.title ?? p.body.slice(0, 60)]);
-        });
+      // v1068 — Suche in den gemeinsamen Helfer extrahiert (gleiche Kriterien
+      // für Publish-Gate UND plan_story-Vorab-Check; Historie: v983-Termin-
+      // Identität, v1023-Story-Identität, v1035-Begleitformate ausgenommen).
+      const dupOf = await findRecentChannelDuplicate(this.repo, userId, channel.id, item);
       if (dupOf) {
         return {
           success: false, data: { permanent: true },
@@ -1978,7 +1988,7 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
       if (r.created === 0) return { success: false, error: 'Kein Beitrag entstanden (Render je Kanal fehlgeschlagen) — Stoff präzisieren und erneut versuchen.' };
       return {
         success: true, data: r,
-        display: `⚡ Story „${r.storyTitle}" angestoßen: ${r.created} Beiträge (${r.channels.join(', ')}) — Lead in ~30 min, Follower in ~90 min; Freigaben kommen je nach Kanal-Modus.`,
+        display: `⚡ Story „${r.storyTitle}" angestoßen: ${r.created} Beiträge (${r.channels.join(', ')}) — Lead in ~30 min, Follower in ~90 min; Freigaben kommen je nach Kanal-Modus.${Array.isArray(r.warnings) && r.warnings.length > 0 ? `\n${r.warnings.join('\n')}` : ''}`,
       };
     } catch (err) {
       return { success: false, error: (err as Error).message };

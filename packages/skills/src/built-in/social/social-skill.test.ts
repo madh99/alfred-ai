@@ -468,6 +468,27 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(reel.media[0]).toEqual({ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' });
   });
 
+  it('v1068: findRecentChannelDuplicate — gleiche Kriterien für Gate und Vorab-Check', async () => {
+    const { findRecentChannelDuplicate } = await import('./social-skill.js');
+    const published = [
+      makeItem({ id: 'item-pub1-aaaa', status: 'published', title: 'Marokko im Viertelfinale – der nächste Coup?' }),
+      makeItem({ id: 'item-pub2-bbbb', status: 'published', title: 'Transferupdate: Neuer Stürmer für Salzburg', storyId: 's-9' }),
+    ];
+    const repo = { listItems: vi.fn(async () => published) } as any;
+    // Titel-Ähnlichkeit (Kandidat ohne id — Vorab-Check-Fall)
+    const dup = await findRecentChannelDuplicate(repo, 'u1', 'ch-1', { title: 'Marokko im Viertelfinale: der Coup geht weiter', body: 'x' });
+    expect(dup?.id).toBe('item-pub1-aaaa');
+    // Story-Identität schlägt Titel
+    const storyDup = await findRecentChannelDuplicate(repo, 'u1', 'ch-1', { title: 'Völlig anderer Titel', body: 'x', storyId: 's-9' });
+    expect(storyDup?.id).toBe('item-pub2-bbbb');
+    // Begleitformate sind ausgenommen
+    const reel = await findRecentChannelDuplicate(repo, 'u1', 'ch-1', { title: 'Marokko im Viertelfinale: der Coup geht weiter', body: 'x', performance: { format: 'reel' } });
+    expect(reel).toBeUndefined();
+    // kein Treffer bei unähnlichem Titel ohne Story
+    const none = await findRecentChannelDuplicate(repo, 'u1', 'ch-1', { title: 'Panini-Album: Sticker-Tausch am Samstag', body: 'x' });
+    expect(none).toBeUndefined();
+  });
+
   it('v1064: reject_content nimmt den FB-Zwilling mit derselben Videodatei mit', async () => {
     const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'FussballCC IG' });
     const fb = makeChannel({ id: 'ch-fb', platform: 'facebook', name: 'FussballCC FB' });

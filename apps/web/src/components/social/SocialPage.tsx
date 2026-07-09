@@ -426,8 +426,17 @@ export function SocialPage() {
     if (action === 'delete' && !confirm('Beitrag auf der Plattform UND in Alfred löschen?')) return;
     // v987 — lokal löschen (ohne Story-Sperre): Studio darf den Stoff neu aufgreifen
     if (action === 'remove' && !confirm('Beitrag lokal löschen? (Ohne Story-Sperre — das Studio darf das Thema neu aufgreifen. Zum Sperren stattdessen „Ablehnen".)')) return;
+    // v1068 — Duplikat-Gate-Sackgasse auflösen: hat das Gate den Beitrag
+    // geblockt (failed + „force: true"-Hinweis), fragt „Sofort posten" nach
+    // und reicht den bewussten Re-Post als force durch (Realfall 09.07.:
+    // der Button lief sonst immer wieder in denselben Fehler).
+    let force = false;
+    if (action === 'publish' && item.status === 'failed' && /force: true/.test(item.error ?? '')) {
+      if (!confirm(`Ein sehr ähnlicher Beitrag ist auf diesem Kanal bereits veröffentlicht:\n\n${item.error}\n\nBEWUSST trotzdem posten (Re-Post)?`)) return;
+      force = true;
+    }
     await withBusy(item.id, async () => {
-      const r = await client!.socialItemAction(item.id, action);
+      const r = await client!.socialItemAction(item.id, action, force ? { force: true } : undefined);
       if (!r.success) throw new Error(r.error ?? 'Aktion fehlgeschlagen');
       if (r.display) setNotice(r.display);
       await load();
