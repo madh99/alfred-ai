@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1082] - 2026-07-09
+
+### Fixed
+- **Reel-Audio: Loudness-Normalisierung im Renderer**: Custom-Voice-Klone kommen je nach Sample deutlich leiser aus der TTS-API als eingebaute Stimmen (gemessen: 12 dB) — die Musik übertönte dann den Sprecher und das Sidechain-Ducking griff nicht mehr, weil die leise Stimme kaum über die Schwelle kam. Der Audio-Graph normalisiert jetzt dreifach: Sprecher-Stem auf -16 LUFS (jede Stimme gleich laut, Ducking greift zuverlässig), Musik-Track auf den Referenzpegel -9 LUFS (unterschiedlich gemasterte Tracks verhalten sich identisch, der Lautstärke-Regler wirkt wie gewohnt) und den fertigen Mix auf das Plattform-Ziel -14 LUFS vor dem Fade-out (Instagram zieht leise Mixe sonst selbst hoch und hebt Musik und Rauschen mit an). Gilt auch für Reels ohne Musik-Bett. E2E mit realem Material verifiziert: Mix -26,7 → -16,7 LUFS bei korrektem Stimme-über-Musik-Verhältnis.
+
 ## [0.19.0-multi-ha.1081] - 2026-07-09
 
 ### Fixed

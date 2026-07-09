@@ -109,22 +109,31 @@ describe('buildReelFilterGraph (v1058)', () => {
   });
 });
 
-describe('buildReelAudioGraph (v1059)', () => {
+describe('buildReelAudioGraph (v1059/v1082)', () => {
   it('Voiceover + Musik: leises Bett mit Sidechain-Ducking, Fade-out am Ende', () => {
     const g = buildReelAudioGraph({ voiceIndex: 4, musicIndex: 5, totalSec: 30 });
     expect(g.outLabel).toBe('[aout]');
-    expect(g.filterComplex).toContain('[4:a]apad,asplit=2');
-    expect(g.filterComplex).toContain('[5:a]volume=0.15[bed]'); // Default leise
+    expect(g.filterComplex).toContain('[4:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,apad,asplit=2');
+    expect(g.filterComplex).toContain('volume=0.15[bed]'); // Default leise
     expect(g.filterComplex).toContain('sidechaincompress'); // Musik weicht der Stimme
     expect(g.filterComplex).toContain('amix=inputs=2:duration=first:normalize=0');
     expect(g.filterComplex).toContain('afade=t=out:st=28.500:d=1.5');
   });
 
-  it('nur Musik (kein Voiceover): kein Mix, Lautstärke geclampt', () => {
+  it('v1082: Stimme, Musik-Track und Master werden normalisiert (Klon-Stimme kam 12 dB zu leise)', () => {
+    const g = buildReelAudioGraph({ voiceIndex: 4, musicIndex: 5, totalSec: 30 });
+    // Musik-Track auf Referenzpegel VOR dem volume-Regler
+    expect(g.filterComplex).toContain('[5:a]loudnorm=I=-9:TP=-1:LRA=9,aresample=48000,volume=0.15[bed]');
+    // Master aufs Plattform-Ziel, VOR dem Fade-out (sonst pumpt loudnorm den Ausklang wieder hoch)
+    expect(g.filterComplex).toMatch(/normalize=0,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000,afade=/);
+  });
+
+  it('nur Musik (kein Voiceover): kein Mix, Track normalisiert, Lautstärke geclampt, kein Master', () => {
     const g = buildReelAudioGraph({ musicIndex: 3, musicVolume: 5, totalSec: 10 });
     expect(g.filterComplex).not.toContain('amix');
     expect(g.filterComplex).not.toContain('sidechaincompress');
-    expect(g.filterComplex).toContain('[3:a]volume=1,'); // 5 → clamp auf 1
+    expect(g.filterComplex).toContain('[3:a]loudnorm=I=-9:TP=-1:LRA=9,aresample=48000,volume=1,'); // 5 → clamp auf 1
+    expect(g.filterComplex).not.toContain('I=-14'); // Musik solo: das leise Bett ist der Inhalt
     expect(g.filterComplex).toContain('afade=t=out:st=8.500:d=1.5');
   });
 

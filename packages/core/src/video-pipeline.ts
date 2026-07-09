@@ -224,18 +224,34 @@ export function buildReelAudioGraph(opts: {
   const fade = opts.fadeSec ?? 1.5;
   const fadeStart = Math.max(0, opts.totalSec - fade);
   const fadeOut = `afade=t=out:st=${fadeStart.toFixed(3)}:d=${fade}`;
+  // v1082 — Loudness-Normalisierung (Realfall 09.07.: Custom-Voice-Klon kam
+  // 12 dB leiser aus der Mistral-API als die Builtin-Stimme → Musik übertönte
+  // den Sprecher UND das Ducking griff nicht, weil die leise Stimme kaum über
+  // die Sidechain-Schwelle kam):
+  // - Stimme auf -16 LUFS → jede Stimme (Klon/Builtin) gleich laut.
+  // - Musik-Track auf -9 LUFS → Pegel des bewährten Referenz-Mixes; anders
+  //   gemasterte Tracks verhalten sich identisch, der volume-Regler behält
+  //   seine gewohnte Wirkung.
+  // - Master auf -14 LUFS (IG/YouTube-Ziel) VOR dem Fade-out, damit die
+  //   Plattform den Mix nicht selbst hochzieht (und Rauschen mit anhebt).
+  // aresample=48000 jeweils direkt danach (loudnorm arbeitet intern mit 192 kHz).
+  const VOICE_NORM = 'loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000';
+  const MUSIC_NORM = 'loudnorm=I=-9:TP=-1:LRA=9,aresample=48000';
+  const MASTER_NORM = 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000';
   if (opts.voiceIndex === undefined) {
+    // Musik solo: Track-Normalisierung + Regler wie bisher, kein Master —
+    // hier IST das leise Bett der gewollte Inhalt.
     return {
-      filterComplex: `[${opts.musicIndex}:a]volume=${vol},${fadeOut}[aout]`,
+      filterComplex: `[${opts.musicIndex}:a]${MUSIC_NORM},volume=${vol},${fadeOut}[aout]`,
       outLabel: '[aout]',
     };
   }
   const parts = [
-    `[${opts.voiceIndex}:a]apad,asplit=2[vo1][vo2]`,
-    `[${opts.musicIndex}:a]volume=${vol}[bed]`,
+    `[${opts.voiceIndex}:a]${VOICE_NORM},apad,asplit=2[vo1][vo2]`,
+    `[${opts.musicIndex}:a]${MUSIC_NORM},volume=${vol}[bed]`,
     // Ducking: Musik weicht der Stimme (Sidechain), kommt in Sprechpausen zurück
     `[bed][vo1]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=400[duck]`,
-    `[vo2][duck]amix=inputs=2:duration=first:normalize=0,${fadeOut}[aout]`,
+    `[vo2][duck]amix=inputs=2:duration=first:normalize=0,${MASTER_NORM},${fadeOut}[aout]`,
   ];
   return { filterComplex: parts.join(';'), outLabel: '[aout]' };
 }
@@ -439,7 +455,9 @@ export class SlideshowVideoRenderer {
       '-map', graph.outLabel,
       ...(audioGraph
         ? ['-map', audioGraph.outLabel, '-c:a', 'aac']
-        : audioPath ? ['-map', `${slideFiles.length}:a`, '-c:a', 'aac', '-af', 'apad'] : ['-an']),
+        // v1082 — auch ohne Musik-Bett die Stimme aufs Plattform-Ziel
+        // normalisieren (Klon-Stimmen kommen sonst je nach Sample zu leise an)
+        : audioPath ? ['-map', `${slideFiles.length}:a`, '-c:a', 'aac', '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,apad'] : ['-an']),
       '-t', String(graph.totalSec),
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30',
       outPath,
