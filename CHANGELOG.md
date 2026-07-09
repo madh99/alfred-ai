@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.1069] - 2026-07-09
+## [0.19.0-multi-ha.1070] - 2026-07-09
 
 ### Fixed — Gemini-Bilder passieren das Vision-Gate (v1070)
 
@@ -14,6 +14,8 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   fail-closed (bezahlt, aber nie verwendet). Gemini-Bilder werden
   jetzt direkt nach der Generierung auf PNG normalisiert, und das
   Gate bekommt zusätzlich den echten MIME-Type durchgereicht.
+
+## [0.19.0-multi-ha.1069] - 2026-07-09
 
 ### Added — Gemini als optionaler Bild-Provider (v1069)
 
