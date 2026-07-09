@@ -20,6 +20,8 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - Reel-Hooks brechen den Titel enger um (75 % Bildbreite): kurze,
   gestaffelte Nachrichten-Boxen statt einer fast bildbreiten Zeile.
 
+## [0.19.0-multi-ha.1066] - 2026-07-09
+
 ### Added — Dauer-Branding im Reel (v1066, Opt-in)
 
 - Neuer Kanal-Schalter „Dauer-Branding im Video": Wasserzeichen-Text
