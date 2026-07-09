@@ -15,6 +15,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   freigegeben werden können (Realfall: zwei verwaiste FB-Entwürfe der
   Test-Reels). Gilt nur für unveröffentlichte Stadien, best-effort.
 
+### Fixed — Hook-Karte ohne Ken-Burns-Zoom (v1064)
+
+- Die Hook-Slide zoomte wie eine Bild-Slide — dabei wuchsen die
+  eingebrannten Titel-Boxen über den Bildrand hinaus (der „Balken" bis
+  zur Kante im Live-Reel, obwohl das Standbild korrekt war). Slides
+  mit eingebranntem Text (Hook, End-Card) sind jetzt statisch; die
+  Bewegung bleibt den Bild- und KI-Clip-Slides vorbehalten.
+
 ## [0.19.0-multi-ha.1063] - 2026-07-09
 
 ### Fixed — Overlay-Boxen: Zeilen sprengen nie mehr die Bildbreite (v1063)

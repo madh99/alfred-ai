@@ -336,8 +336,11 @@ export class SlideshowVideoRenderer {
       ...middle.map(m => m.file),
       ...(spec.outroImage ? [spec.outroImage] : []),
     ];
+    // v1064 — Hook-Karte STATISCH (wie die End-Card): der Ken-Burns-Zoom
+    // vergrößerte die eingebrannten Titel-Boxen über den Bildrand hinaus
+    // (Realfall 09.07.: „Balken" bis zur Kante im Live-Reel).
     const slides = [
-      ...(spec.introImage ? [{ motion: 'in' as const, durationSec: introSec, kind: 'image' as const }] : []),
+      ...(spec.introImage ? [{ motion: 'none' as const, durationSec: introSec, kind: 'image' as const }] : []),
       ...middle.map((m, i) => ({
         motion: m.kind === 'video' ? 'none' as const : ((i + (spec.introImage ? 1 : 0)) % 2 === 0 ? 'in' as const : 'out' as const),
         durationSec: m.durationSec,
