@@ -1077,7 +1077,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     const lang = languageName(typeof ig.config.language === 'string' ? ig.config.language : 'de');
     const prompt = `Erstelle aus diesem Artikel ein Instagram-Reel-Paket (${lang}):
 1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL).
-2. "caption": Reel-Caption (2-3 Sätze + Frage an die Community, keine Hashtags).
+2. "caption": Reel-Caption (2-3 Sätze, keine Hashtags; nur GELEGENTLICH mit Frage an die Community — nicht standardmäßig).
 3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken (z.B. "slow cinematic camera push-in, crowd waving flags, natural stadium light" — KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos).
 FAKTEN nur aus dem Artikel, nichts erfinden.
 

@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1075] - 2026-07-09
+
+### Added — Menschlicher Publish-Takt (v1075)
+
+- Reaktion auf eine Instagram-Kontoeinschränkung: Das bisherige
+  Veröffentlichungsmuster (exakte Engine-Tick-Zeiten, drei Stories in
+  derselben Minute, Publishes um Mitternacht, steile Volumen-Rampe)
+  sah für Metas Systeme wie Bot-Verhalten aus. Neu, für alle Kanäle:
+  - **Publish-Jitter**: jede Veröffentlichung verschiebt sich
+    deterministisch um 0–10 Minuten (kein :01/:04-Raster mehr);
+    abschaltbar per `publish_jitter: false`.
+  - **Publish-Fenster**: veröffentlicht wird nur 07–22 Uhr (Default;
+    `publish_window: [von, bis]` bzw. `false`; die eigene Website/rest
+    bleibt rund um die Uhr frei). Außerhalb wird nur aufgeschoben.
+  - **Mindestabstand**: max. eine Veröffentlichung je Kanal pro
+    20 Minuten (`min_publish_gap_minutes`) — keine Minuten-Bursts mehr.
+  - **Caption-Vielfalt**: höchstens jeder dritte Post endet mit einer
+    Community-Frage (Prompt-Regel; galt bisher praktisch für jeden).
+  - Nichts geht verloren: alle Regeln schieben nur auf, der nächste
+    Engine-Tick liefert nach.
+
 ## [0.19.0-multi-ha.1074] - 2026-07-09
 
 ### Added — Bild-Regie, Stil-Vorlagen und Stil-Referenz (v1074)

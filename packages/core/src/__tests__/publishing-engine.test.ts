@@ -65,6 +65,9 @@ function makeEngine(opts: {
   const engine = new PublishingEngine(repo, publishItem, insightsRepo, router, adapters, makeLogger(), {
     ownerUserId: OWNER, chatId: 'chat-1', platform: 'telegram' as Platform,
     retryAfterMs: 0,
+    // v1075 — Bestands-Tests takten uhrzeitunabhängig; der menschliche Takt
+    // (Jitter/Fenster/Abstand) wird über die pure-Funktionen separat getestet
+    disableHumanPacing: true,
   });
   return { engine, repo, publishItem, insightsRepo, router, adapter };
 }
@@ -245,5 +248,36 @@ describe('PublishingEngine (v934)', () => {
     const candidate = (insightsRepo.upsertCandidate as any).mock.calls[0][1];
     expect(candidate.title).toContain('endgültig fehlgeschlagen');
     expect(candidate.sourceData.urgency).toBe('high');
+  });
+});
+
+describe('v1075 — menschlicher Takt (Jitter, Fenster)', () => {
+  it('itemPublishJitterMs: deterministisch, begrenzt, streut', async () => {
+    const { itemPublishJitterMs } = await import('../publishing-engine.js');
+    const a = itemPublishJitterMs('item-aaaa-1111');
+    expect(itemPublishJitterMs('item-aaaa-1111')).toBe(a); // deterministisch
+    expect(a).toBeGreaterThanOrEqual(0);
+    expect(a).toBeLessThan(10 * 60_000);
+    const values = new Set(Array.from({ length: 30 }, (_, i) => itemPublishJitterMs(`item-${i}`)));
+    expect(values.size).toBeGreaterThan(20); // echte Streuung, kein konstanter Versatz
+  });
+
+  it('publishWindowFor: Default 7-22, rest frei, Config-Override + false', async () => {
+    const { publishWindowFor } = await import('../publishing-engine.js');
+    expect(publishWindowFor({ platform: 'instagram', config: {} })).toEqual({ from: 7, to: 22 });
+    expect(publishWindowFor({ platform: 'rest', config: {} })).toBeNull();
+    expect(publishWindowFor({ platform: 'rest', config: { publish_window: [9, 18] } })).toEqual({ from: 9, to: 18 });
+    expect(publishWindowFor({ platform: 'instagram', config: { publish_window: false } })).toBeNull();
+  });
+
+  it('isWithinWindow: Tagesfenster + Über-Mitternacht-Fenster', async () => {
+    const { isWithinWindow } = await import('../publishing-engine.js');
+    const at = (h: number) => new Date(2026, 6, 9, h, 30);
+    expect(isWithinWindow({ from: 7, to: 22 }, at(12))).toBe(true);
+    expect(isWithinWindow({ from: 7, to: 22 }, at(23))).toBe(false);
+    expect(isWithinWindow({ from: 7, to: 22 }, at(0))).toBe(false); // das 00:06-Reel wäre aufgeschoben worden
+    expect(isWithinWindow({ from: 22, to: 6 }, at(23))).toBe(true);
+    expect(isWithinWindow({ from: 22, to: 6 }, at(12))).toBe(false);
+    expect(isWithinWindow(null, at(3))).toBe(true);
   });
 });

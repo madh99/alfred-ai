@@ -15,6 +15,44 @@ export interface PublishFnResult {
 }
 
 /**
+ * v1075 — menschlicher Takt: deterministischer Publish-Jitter je Item
+ * (FNV-1a-Hash → 0 bis maxMs). Kein Math.random: derselbe Wert bei jedem
+ * Tick, das Item wird also GENAU EINMAL um diesen Versatz verschoben —
+ * die exakten :01/:04-Engine-Zeiten waren ein Bot-Erkennungsmuster
+ * (Realfall 09.07.: Instagram-Kontoeinschränkung).
+ */
+export function itemPublishJitterMs(itemId: string, maxMs = 10 * 60_000): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < itemId.length; i++) {
+    h ^= itemId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h % maxMs;
+}
+
+/**
+ * v1075 — Publish-Fenster je Kanal: config.publish_window = [von, bis)
+ * (lokale Stunden), false = kein Fenster. Default 7–22 Uhr; die eigene
+ * Website (rest) darf rund um die Uhr veröffentlichen.
+ */
+export function publishWindowFor(channel: Pick<SocialChannel, 'platform' | 'config'>): { from: number; to: number } | null {
+  const raw = channel.config.publish_window;
+  if (raw === false) return null;
+  if (Array.isArray(raw) && raw.length === 2 && raw.every(n => typeof n === 'number')) {
+    return { from: Number(raw[0]), to: Number(raw[1]) };
+  }
+  if (channel.platform === 'rest') return null;
+  return { from: 7, to: 22 };
+}
+
+/** v1075 — liegt „jetzt" im Fenster? (auch Über-Mitternacht-Fenster wie [22, 6)) */
+export function isWithinWindow(win: { from: number; to: number } | null, now = new Date()): boolean {
+  if (!win) return true;
+  const h = now.getHours();
+  return win.from <= win.to ? h >= win.from && h < win.to : (h >= win.from || h < win.to);
+}
+
+/**
  * v934 — Publishing-Engine (Stufe 2 des Social-Plans).
  *
  * Läuft im 5-Minuten-Raster und setzt die drei Kanal-Modi um:
@@ -57,6 +95,8 @@ export class PublishingEngine {
       nodeId?: string;
       intervalMs?: number;
       retryAfterMs?: number;
+      /** v1075 — menschlicher Takt (Jitter/Fenster/Mindestabstand) abschaltbar (Tests). */
+      disableHumanPacing?: boolean;
       /** v987 — Zombie-Watchdog: Items laenger als N ms in 'publishing' -> failed. */
       stuckAfterMs?: number;
     },
@@ -70,6 +110,32 @@ export class PublishingEngine {
 
   stop(): void {
     if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
+  }
+
+  /**
+   * v1075 — menschlicher Takt vor jedem Publish: Jitter (Item wird erst
+   * scheduledAt + 0–10 min fällig), Publish-Fenster (Default 7–22 Uhr,
+   * rest frei) und Mindestabstand je Kanal (Default 20 min; Realfall:
+   * drei Stories in derselben Minute + Publishes um Mitternacht →
+   * Instagram-Kontoeinschränkung). Alles nur AUFSCHUB — kein Item geht
+   * verloren, der nächste Tick versucht es erneut.
+   */
+  private async humanPacingGate(item: ContentItem, channel: SocialChannel): Promise<boolean> {
+    if (this.opts.disableHumanPacing === true) return true;
+    if (channel.config.publish_jitter !== false && item.scheduledAt) {
+      if (Date.now() < Date.parse(item.scheduledAt) + itemPublishJitterMs(item.id)) return false;
+    }
+    if (!isWithinWindow(publishWindowFor(channel))) return false;
+    const gapMin = typeof channel.config.min_publish_gap_minutes === 'number' ? channel.config.min_publish_gap_minutes : 20;
+    if (gapMin > 0) {
+      const since = new Date(Date.now() - (gapMin + 15) * 60_000).toISOString();
+      const recent = await this.repo.listItems(this.opts.ownerUserId, {
+        channelId: channel.id, status: 'published', updatedSince: since, limit: 10,
+      }).catch(() => [] as ContentItem[]);
+      const cutoff = Date.now() - gapMin * 60_000;
+      if (recent.some(p => p.publishedAt && Date.parse(p.publishedAt) > cutoff)) return false;
+    }
+    return true;
   }
 
   /** Ein Durchlauf (auch direkt aufrufbar/testbar). */
@@ -118,6 +184,8 @@ export class PublishingEngine {
           } catch { /* Einzelfehler überspringen */ }
           continue;
         }
+        // v1075 — menschlicher Takt (Jitter/Fenster/Mindestabstand): nur Aufschub
+        if (!(await this.humanPacingGate(item, channel))) continue;
         if (await this.claimItemSlot(`social-item:${item.id}`)) {
           if (await this.doPublish(item, channel)) {
             result.published++;
@@ -136,6 +204,8 @@ export class PublishingEngine {
         if (!channel || channel.status !== 'active') continue;
         const autonomousUnlocked = channel.mode === 'autonomous' && channel.approvedStreak >= 5;
         if (autonomousUnlocked) {
+          // v1075 — menschlicher Takt auch für autonome Publishes
+          if (!(await this.humanPacingGate(item, channel))) continue;
           if (await this.claimItemSlot(`social-item:${item.id}`)) {
             const r = await this.publishItem(item.id);
             if (r.success) {
@@ -168,6 +238,8 @@ export class PublishingEngine {
         if (!channel || channel.status !== 'active') continue;
         if (item.performance?.retried === true) continue;
         if (Date.now() - Date.parse(item.updatedAt) < retryAfter) continue;
+        // v1075 — auch Retries respektieren Fenster + Mindestabstand
+        if (!(await this.humanPacingGate(item, channel))) continue;
         if (!(await this.claimItemSlot(`social-retry:${item.id}`))) continue;
         await this.repo.mergePerformance(owner, item.id, { retried: true, retriedAt: now });
         const r = await this.publishItem(item.id);
