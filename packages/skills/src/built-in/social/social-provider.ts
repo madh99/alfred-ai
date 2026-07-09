@@ -88,6 +88,18 @@ export abstract class SocialProvider {
   ): Promise<{ followers: number } | null> {
     return null;
   }
+
+  /**
+   * v1081 — Optional: ein Video an einen BESTEHENDEN Beitrag anhängen
+   * (fussball.cc: Reel nachträglich an den längst veröffentlichten
+   * Lead-Artikel — der entsteht Minuten vor dem fertigen Reel).
+   */
+  async attachVideo(
+    _externalId: string, _videoUrl: string,
+    _channel: SocialChannel, _secrets: Record<string, string>,
+  ): Promise<boolean> {
+    return false;
+  }
 }
 
 /**

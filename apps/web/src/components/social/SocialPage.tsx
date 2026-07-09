@@ -195,6 +195,8 @@ export function SocialPage() {
     reelWatermarkLayout: 'stack' | 'stack_fit' | 'split'; reelWatermarkLogoCorner: string;
     // v1078 — Reel-Sprecherstimme (Mistral-Voice-ID; leer = Standard)
     reelVoiceId: string;
+    // v1081 — rest: Reel-Video nachträglich an den Lead-Artikel hängen
+    attachReelVideo: boolean;
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
@@ -205,7 +207,7 @@ export function SocialPage() {
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
     reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8,
     reelWatermark: 'aus', reelWatermarkCorner: 'bottom-right',
-    reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', reelVoiceId: '', formate: [] });
+    reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', reelVoiceId: '', attachReelVideo: false, formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   // v1078 — Sprecherstimmen (Mistral-Custom-Voices) + Verwaltungs-Panel
   const [voices, setVoices] = useState<Array<{ id: string; name: string; gender?: string }>>([]);
@@ -600,6 +602,7 @@ export function SocialPage() {
       reelWatermarkLayout: c.config.reel_watermark_layout === 'stack_fit' || c.config.reel_watermark_layout === 'split' ? c.config.reel_watermark_layout : 'stack',
       reelWatermarkLogoCorner: typeof c.config.reel_watermark_logo_corner === 'string' ? c.config.reel_watermark_logo_corner : 'top-left',
       reelVoiceId: typeof c.config.reel_voice_id === 'string' ? c.config.reel_voice_id : '',
+      attachReelVideo: c.config.attach_reel_video === true,
       formate: Array.isArray(c.config.formate)
         ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
           .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
@@ -676,6 +679,7 @@ export function SocialPage() {
           reel_watermark_logo_corner: d.reelWatermark === 'both' && d.reelWatermarkLayout === 'split' && d.reelWatermarkLogoCorner !== 'top-left' ? d.reelWatermarkLogoCorner : null,
           // v1078 — Sprecherstimme (leer = Standard-Kaskade)
           reel_voice_id: d.reelVoiceId || null,
+          attach_reel_video: d.attachReelVideo ? true : null,
           // v1012 — Serien-Formate
           formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
             ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
@@ -1695,6 +1699,14 @@ export function SocialPage() {
                         )}
                       </div>
                     </div>
+                  )}
+                  {/* v1081 — rest: Reel-Video nachträglich an den Lead-Artikel hängen */}
+                  {c.platform === 'rest' && (
+                    <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                      title="Sobald das Auto-Reel der Story live ist, wird das Video per Update an den bereits veröffentlichten Lead-Artikel dieses Kanals angehängt (die Plattform rendert daraus einen Player). Kein separater Beitrag, keine Freigabe nötig — das Reel selbst wurde ja freigegeben.">
+                      <input type="checkbox" checked={settingsDraft.attachReelVideo} onChange={e => setSettingsDraft(d => ({ ...d, attachReelVideo: e.target.checked }))} />
+                      🎬 Reel-Video am Lead-Artikel ergänzen (sobald das Reel live ist)
+                    </label>
                   )}
                   {/* v1056/v1076/v1079 — Reel-Zweitverwertung auf allen video-fähigen Kanälen */}
                   {['facebook', 'x', 'telegram_channel', 'bluesky'].includes(c.platform) && (

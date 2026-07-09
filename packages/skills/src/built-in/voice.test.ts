@@ -49,6 +49,16 @@ describe('VoiceSkill create_voice — Sample-Erkennung', () => {
     expect(body.sample_filename).toBe('probe.mp3');
   });
 
+  it('list_voices liest das items-Feld der Mistral-Antwort (Live-Format 09.07.)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [{ id: 'v-1', name: 'SprecherEins', languages: ['de'] }, { id: 'v-2', name: 'Stefan', gender: 'male' }] }),
+    });
+    const r = await makeSkill().execute({ action: 'list_voices' }, ctx);
+    expect(r.success).toBe(true);
+    expect((r.data as Array<{ id: string }>).map(v => v.id)).toEqual(['v-1', 'v-2']);
+  });
+
   it('verwirft LLM-Platzhalter weiterhin (kurz bzw. kein base64-Zeichensatz)', async () => {
     const short = await makeSkill().execute({ action: 'create_voice', name: 'X', sample_audio: 'from_attachment' }, ctx);
     expect(short.success).toBe(false);

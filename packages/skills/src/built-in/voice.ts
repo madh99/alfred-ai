@@ -179,8 +179,10 @@ export class VoiceSkill extends Skill {
       throw new Error(`Mistral Voices API: ${resp.status} ${errText}`);
     }
 
-    const data = await resp.json() as { data?: MistralVoice[] } | MistralVoice[];
-    const voices: MistralVoice[] = Array.isArray(data) ? data : (data.data ?? []);
+    // Mistral liefert die Liste unter "items" (Live-Beweis 09.07.); ältere
+    // Antwortformen ("data" bzw. nacktes Array) bleiben als Fallback lesbar.
+    const data = await resp.json() as { items?: MistralVoice[]; data?: MistralVoice[] } | MistralVoice[];
+    const voices: MistralVoice[] = Array.isArray(data) ? data : (data.items ?? data.data ?? []);
 
     if (voices.length === 0) {
       return { success: true, data: [], display: 'Keine Custom Voices vorhanden.' };

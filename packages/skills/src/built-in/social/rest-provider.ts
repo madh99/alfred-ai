@@ -297,4 +297,30 @@ export class RestProvider extends SocialProvider {
       return false;
     }
   }
+
+  /**
+   * v1081 — Reel-Video nachträglich an einen veröffentlichten Artikel hängen:
+   * PATCH auf den Artikel-Endpoint (gleiche URL-Konvention wie deletePost)
+   * mit dem strukturierten video-Feld, das die Plattform auch beim Anlegen
+   * versteht. Lokale mp4 werden vorher über public_media veröffentlicht.
+   */
+  override async attachVideo(externalId: string, videoUrl: string, channel: SocialChannel, secrets: Record<string, string>): Promise<boolean> {
+    try {
+      let url = videoUrl;
+      if (!url.startsWith('http')) {
+        const pmCfg = parsePublicMediaConfig(channel.config.public_media);
+        if (!pmCfg) return false;
+        url = await publishPublicMedia(pmCfg, videoUrl, secrets);
+      }
+      if (!url.startsWith('http')) return false;
+      const res = await this.doFetch(`${this.endpoint(channel)}/${encodeURIComponent(externalId)}`, {
+        method: 'PATCH',
+        headers: this.headers(channel, secrets),
+        body: JSON.stringify({ video: { url } }),
+      }, channel);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
 }

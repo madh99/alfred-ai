@@ -628,6 +628,59 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
   });
 });
 
+describe('v1081 — Reel-Video an den Lead-Artikel (attach_reel_video)', () => {
+  function attachSetup(webConfig: Record<string, unknown>, leadOverrides: Partial<ContentItem> = {}) {
+    const web = makeChannel({ id: 'ch-web', platform: 'rest', name: 'fussball.cc', projectId: 'p1', config: webConfig });
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'IG', projectId: 'p1' });
+    const reel = makeItem({
+      id: 'item-reel-aaaa', channelId: 'ch-ig', storyId: 's-1', status: 'approved',
+      performance: { format: 'reel', autoReel: true },
+      media: [{ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' }],
+    });
+    const { skill, spies } = makeSkill(ig, reel);
+    const rest = new FakeProvider('rest');
+    const attach = vi.fn(async () => true);
+    (rest as any).attachVideo = attach;
+    skill.registerProvider(rest);
+    skill.registerProvider(new FakeProvider('instagram'));
+    (spies as any).listChannels = vi.fn(async () => [web, ig]);
+    (spies as any).listAssignments = vi.fn(async () => [
+      { id: 'a1', storyId: 's-1', channelId: 'ch-web', role: 'lead', offsetHours: 0, itemId: 'item-lead-aaaa', createdAt: 'x' },
+    ]);
+    const lead = makeItem({ id: 'item-lead-aaaa', channelId: 'ch-web', status: 'published', externalId: 'art-77', ...leadOverrides });
+    const origGetItem = (spies as any).getItem;
+    (spies as any).getItem = vi.fn(async (u: string, id: string) => (id === 'item-lead-aaaa' ? lead : origGetItem(u, id)));
+    return { skill, spies, attach };
+  }
+
+  it('Reel published → PATCH mit Videodatei auf den bestehenden Lead-Artikel + Einmal-Marker', async () => {
+    const { skill, spies, attach } = attachSetup({ attach_reel_video: true });
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-reel-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    await new Promise(res => setTimeout(res, 10)); // fire-and-forget abwarten
+    expect(attach).toHaveBeenCalledTimes(1);
+    const call = attach.mock.calls[0] as unknown[];
+    expect(call[0]).toBe('art-77');
+    expect(call[1]).toBe('/tmp/reel.mp4');
+    // Einmaligkeit: articleVideo am Lead-Item vermerkt
+    expect((spies.mergePerformance as any).mock.calls.some(
+      (c: any[]) => c[1] === 'item-lead-aaaa' && c[2].articleVideo === '/tmp/reel.mp4',
+    )).toBe(true);
+  });
+
+  it('ohne Opt-in bzw. bereits angehängt → kein PATCH', async () => {
+    const off = attachSetup({});
+    await off.skill.execute({ action: 'publish_now', item_id: 'item-reel-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 10));
+    expect(off.attach).not.toHaveBeenCalled();
+
+    const done = attachSetup({ attach_reel_video: true }, { performance: { articleVideo: '/tmp/alt.mp4' } });
+    await done.skill.execute({ action: 'publish_now', item_id: 'item-reel-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 10));
+    expect(done.attach).not.toHaveBeenCalled();
+  });
+});
+
 describe('v1024 — plan_story (Ad-hoc-Story auf User-Zuruf)', () => {
   it('unverdrahtet → Fehler; ohne Stoff → Hinweis; mit Stoff → Planner korrekt aufgerufen', async () => {
     const channel = makeChannel();

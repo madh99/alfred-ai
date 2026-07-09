@@ -798,6 +798,9 @@ export class SocialSkill extends Skill {
       // v1016 — Auto-Reel: Rendering dauert Minuten → fire-and-forget, der
       // Entwurf taucht in der Triage auf (bewusst MIT Freigabe, anders als Stories)
       void this.maybeAutoReel(userId, published, channel).catch(() => { /* best-effort */ });
+      // v1081 — Reel ist live → Video best-effort an den BESTEHENDEN
+      // Lead-Artikel der Story hängen (rest-Kanäle mit attach_reel_video)
+      void this.maybeAttachArticleVideo(userId, published, channel).catch(() => { /* best-effort */ });
       // v1076 — Transparenz: hat das Item ein Video, der Kanal-Provider aber
       // keine Video-Fähigkeit, ging der Beitrag OHNE Video raus — sagen statt
       // still weglassen.
@@ -991,6 +994,43 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
    * config.reel_max_per_week (Default 2). Läuft fire-and-forget nach dem
    * Lead-Publish — Fehler bleiben still, der Publish ist längst durch.
    */
+  /**
+   * v1081 — Reel-Video an den bestehenden Lead-Artikel hängen: Der Artikel
+   * geht Minuten VOR dem fertig gerenderten Reel live — sobald ein Video-
+   * Beitrag der Story veröffentlicht ist, bekommen rest-Kanäle der Familie
+   * mit attach_reel_video:true das Video per PATCH nachgereicht (die
+   * Plattform rendert daraus einen Player). Einmalig je Artikel
+   * (performance.articleVideo), best-effort — scheitert der PATCH (z. B.
+   * Plattform kann noch kein video-Feld), bleibt der Artikel unverändert.
+   */
+  private async maybeAttachArticleVideo(userId: string, published: ContentItem, channel: SocialChannel): Promise<void> {
+    if (!published.storyId) return;
+    const video = published.media.find(m => m.type === 'video')?.pathOrUrl;
+    if (!video) return;
+    const familyOf = (c: SocialChannel): string | null => {
+      if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
+      return c.projectId ? `project:${c.projectId}` : null;
+    };
+    const channels = await this.repo.listChannels(userId, 'active');
+    const targets = channels.filter(c => c.config.attach_reel_video === true
+      && familyOf(c) !== null && familyOf(c) === familyOf(channel));
+    if (targets.length === 0) return;
+    const assigns = await this.repo.listAssignments(published.storyId);
+    for (const target of targets) {
+      const leadAssign = assigns.find(a => a.channelId === target.id && a.role === 'lead');
+      if (!leadAssign?.itemId || leadAssign.itemId === published.id) continue;
+      const lead = await this.repo.getItem(userId, leadAssign.itemId);
+      if (!lead || lead.status !== 'published' || !lead.externalId) continue;
+      if (typeof lead.performance?.articleVideo === 'string') continue; // schon angehängt
+      const provider = this.providers.get(target.platform);
+      if (!provider) continue;
+      const ok = await provider.attachVideo(lead.externalId, video, target, await this.secrets(target)).catch(() => false);
+      if (ok) {
+        await this.repo.mergePerformance(userId, lead.id, { articleVideo: video }).catch(() => { /* optional */ });
+      }
+    }
+  }
+
   private async maybeAutoReel(userId: string, leadItem: ContentItem, leadChannel: SocialChannel, opts?: { manual?: boolean }): Promise<void> {
     if (!this.videoTools || !this.llm) return;
     // v1076 — storyId ist keine Pflicht mehr: manuell angestoßene Reels
@@ -1102,7 +1142,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     // Skript + Caption in EINEM LLM-Call
     const lang = languageName(typeof ig.config.language === 'string' ? ig.config.language : 'de');
     const prompt = `Erstelle aus diesem Artikel ein Instagram-Reel-Paket (${lang}):
-1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL).
+1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL). Der Text wird von einer TTS-Stimme gesprochen, die ihre Betonung aus der ZEICHENSETZUNG ableitet — schreibe wie ein Sportmoderator: kurze, punchige Sätze statt Schachtelsätze, eine rhetorische Frage oder ein Ausruf wo es passt, bewusste Pausen mit Gedankenstrichen — Zahlen und Namen an betonter Stelle. KEINE Regieanweisungen, keine Klammern, nur sprechbarer Text.
 2. "caption": Reel-Caption (2-3 Sätze, keine Hashtags; nur GELEGENTLICH mit Frage an die Community — nicht standardmäßig).
 3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken (z.B. "slow cinematic camera push-in, crowd waving flags, natural stadium light" — KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos).
 FAKTEN nur aus dem Artikel, nichts erfinden.

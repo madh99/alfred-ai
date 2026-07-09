@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1081] - 2026-07-09
+
+### Fixed
+- **Stimmen-Liste war immer leer**: Die Mistral-API liefert die Voice-Liste unter `items` — der Skill las `data` und zeigte deshalb weder im UI-Dropdown noch per `list_voices` je eine Stimme an, obwohl das Anlegen funktionierte. Vorhandene Stimmen (inkl. eingebauter Varianten wie „Paul - Happy") erscheinen jetzt.
+
+### Added
+- **Reel-Video am Lead-Artikel (rest)**: Neuer Schalter „🎬 Reel-Video am Lead-Artikel ergänzen" auf rest-Kanälen (`attach_reel_video`). Sobald ein Reel der Story live geht, wird das Video per PATCH an den bereits veröffentlichten Lead-Artikel angehängt (Feld `video:{url}`, lokale mp4 vorher über `public_media` veröffentlicht) — kein separater Beitrag, einmalig je Artikel, best-effort solange die Plattform das Feld noch nicht versteht.
+
+### Changed
+- **Lebendigere Reel-Sprecher**: Der Skript-Prompt verlangt jetzt moderatorenhaften Sprechtext — kurze, punchige Sätze, rhetorische Fragen/Ausrufe, bewusste Pausen über Zeichensetzung — da die TTS-Stimme ihre Betonung daraus ableitet.
+
 ## [0.19.0-multi-ha.1080] - 2026-07-09
 
 ### Fixed
