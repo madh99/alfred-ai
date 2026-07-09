@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1079] - 2026-07-09
+
+### Fixed
+- **Reel-Zweitverwertung in der UI aktivierbar**: Der Schalter „🎬 IG-Auto-Reel auch auf diesem Kanal übernehmen" erscheint jetzt auf allen video-fähigen Kanälen (Facebook, X, Telegram, Bluesky) — bisher nur auf Facebook, obwohl das Backend die generische Zweitverwertung bereits konnte.
+
 ## [0.19.0-multi-ha.1078] - 2026-07-09
 
 ### Added — Reel-Sprecherstimmen (v1078)

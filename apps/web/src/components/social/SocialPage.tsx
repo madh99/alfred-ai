@@ -1696,12 +1696,12 @@ export function SocialPage() {
                       </div>
                     </div>
                   )}
-                  {/* v1056/v1060 — FB-Reel-Zweitverwertung */}
-                  {c.platform === 'facebook' && (
+                  {/* v1056/v1076/v1079 — Reel-Zweitverwertung auf allen video-fähigen Kanälen */}
+                  {['facebook', 'x', 'telegram_channel', 'bluesky'].includes(c.platform) && (
                     <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
-                      title="Das auf Instagram gerenderte Auto-Reel derselben Familie wird als zweiter Entwurf für diese Facebook-Page angelegt (gleiche Videodatei, kein doppeltes Rendering, gleiche Freigabe-Pflicht).">
+                      title="Das auf Instagram gerenderte Auto-Reel derselben Familie wird als zweiter Entwurf für diesen Kanal angelegt (gleiche Videodatei, kein doppeltes Rendering, gleiche Freigabe-Pflicht).">
                       <input type="checkbox" checked={settingsDraft.autoReel} onChange={e => setSettingsDraft(d => ({ ...d, autoReel: e.target.checked }))} />
-                      🎬 IG-Auto-Reel auch als Facebook-Reel übernehmen (Entwurf mit Freigabe)
+                      🎬 IG-Auto-Reel auch auf diesem Kanal übernehmen (Entwurf mit Freigabe)
                     </label>
                   )}
                   {/* v1004 — Bild-Look: Stil-Preset, Qualität, Wasserzeichen, Titel-Overlay */}
