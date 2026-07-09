@@ -7,6 +7,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [0.19.0-multi-ha.1073] - 2026-07-09
 
+### Added — Bild-Regie, Stil-Vorlagen und Stil-Referenz (v1074)
+
+- **Bild-Regie** (je Kanal, Standard AN): Die Bildidee wird wie von
+  einem Art-Director formuliert (Hauptmotiv, Perspektive, Licht,
+  Farbwelt), und die zuletzt genutzten Bibliotheks-Motive gehen als
+  Nicht-schon-wieder-Liste in den Prompt — deutlich mehr Motiv-
+  Vielfalt statt immer Stadion/Ball. Kostet nichts extra.
+- **Stil-Vorlagen**: Das Stil-Preset im Bild-Look hat jetzt ein
+  Vorlagen-Dropdown (Editorial Sport, Cinematisch dunkel, Hell &
+  clean, Retro-Print, Grafisch) — füllt das Freitext-Feld, bleibt
+  editierbar.
+- **Stil-Referenz** (Opt-in, nur Gemini-Modelle): Bis zu 2 gepinnte
+  Stamm-Bilder (📌) aus der Bild-Bibliothek gehen als Look-Vorlage in
+  die Generierung — Farbwelt/Licht/Bildsprache bleiben konsistent,
+  das Motiv ist neu. Live verifiziert.
+
 ### Fixed — Termin-Karte nur noch auf echten Termin-Ankündigungen (v1073)
 
 - Spiel-Vorschauen tragen den Ereignis-Zeitpunkt (terminBis) nur für

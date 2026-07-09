@@ -7,6 +7,8 @@ export interface ImageGeneratorInterface {
     model?: string;
     size?: '1024x1024' | '1536x1024' | '1024x1536';
     quality?: 'low' | 'medium' | 'high';
+    /** v1074 — Stil-Referenzbilder (lokale Pfade; nur Gemini-Modelle werten sie aus). */
+    referenceImages?: string[];
   }): Promise<{ data: Buffer; mimeType: string }>;
 }
 
@@ -42,6 +44,11 @@ export class ImageGenerateSkill extends Skill {
           enum: ['low', 'medium', 'high'],
           description: 'Image quality level. Higher quality takes longer and costs more.',
         },
+        reference_images: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'v1074 — Optional: lokale Pfade von Stil-Referenzbildern (Look/Farbwelt-Vorlage; nur von Gemini-Modellen ausgewertet).',
+        },
       },
       required: ['prompt'],
     },
@@ -65,6 +72,10 @@ export class ImageGenerateSkill extends Skill {
         model: input.model as string | undefined,
         size: input.size as '1024x1024' | '1536x1024' | '1024x1536' | undefined,
         quality: input.quality as 'low' | 'medium' | 'high' | undefined,
+        // v1074 — Stil-Referenzen durchreichen (nur Strings, max. 3)
+        ...(Array.isArray(input.reference_images)
+          ? { referenceImages: (input.reference_images as unknown[]).filter((p): p is string => typeof p === 'string').slice(0, 3) }
+          : {}),
       });
 
       return {

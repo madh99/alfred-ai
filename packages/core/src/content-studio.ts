@@ -1212,7 +1212,7 @@ ${roleRule}
 ${story.terminBis ? `${TERMIN_PERSPEKTIVE}\n` : ''}${channel.platform === 'instagram' && channel.config.image_carousel === true ? '- KARUSSELL (optional, nur bei Aufzählung/Analyse mit MEHREREN Punkten): 2-4 "slides" mit je einem Bild-Motiv (NUR Motive, kein Text) und "titel" (max. 8 Wörter, kommt deterministisch aufs Bild).\n' : ''}
 ${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)}. Konkret, kein Clickbait; eigener TITEL (nicht der Arbeitstitel wortgleich).
 - 3-6 Hashtags NUR ins Feld "hashtags"; KEINE Meta-Zeilen im body.
-- BILDIDEE ohne Text/Datum/Zahlen — nur Motive.
+${await this.bildRegie(channel)}
 - NIE relative Zeitwörter („heute"/„morgen"). Datum/Uhrzeit NUR nennen, wenn sie im Stoff eindeutig als EREIGNIS-Zeit belegt sind — Publikations-/Update-Zeiten der Quelle sind KEINE Ereigniszeiten. Fehlt das Datum: ohne Datum formulieren, NIE eines erfinden oder ergänzen.
 
 Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typografisch „…“ oder escaped):
@@ -1516,9 +1516,11 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     const blockedTitles = [...new Set(blocked.map(b => b.title))].slice(0, 60);
 
     const isYoutube = channel.platform === 'youtube';
+    // v1074 — Bild-Regie (Art-Director-Anweisung + Anti-Wiederholungs-Liste)
+    const bildRegie = isYoutube ? undefined : await this.bildRegie(channel);
     const prompt = (isYoutube
       ? this.buildYoutubePrompt(channel, count, dossier, bestPerformers, blockedTitles)
-      : this.buildPostPrompt(channel, count, dossier, bestPerformers, blockedTitles, window))
+      : this.buildPostPrompt(channel, count, dossier, bestPerformers, blockedTitles, window, bildRegie))
       + familyBlock;
 
     // v980 — 12000 statt 3000 maxTokens: Gen-5-Modelle (Sonnet) denken adaptiv
@@ -1681,7 +1683,7 @@ REGELN für die Abstimmung:
     } catch { return { block: '', siblingStories: [] }; }
   }
 
-  private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[], window?: { from: string; to: string }): string {
+  private buildPostPrompt(channel: SocialChannel, count: number, dossier: string, best: string, recent: string[], window?: { from: string; to: string }, bildRegie?: string): string {
     // v975 — Termin-Ankündigungen: nur anweisen, wenn das Dossier Termine führt
     const terminRule = dossier.includes('KOMMENDE TERMINE')
       ? `- TERMIN-ANKÜNDIGUNGEN (Vorrang): Erzeuge für die Einträge unter „KOMMENDE TERMINE" Ankündigungs-Posts — MIT Ort, Datum und Uhrzeit exakt aus der Termin-Zeile (nichts erfinden, den Ort IMMER nennen). Übernimm die ISO-Zeit aus [terminBis: …] UNVERÄNDERT ins Feld "terminBis". Setze zusätzlich "ort" (exakt aus der Termin-Zeile) und "einlass" (NUR wenn eine Einlass-Zeit in der Quelle steht, sonst weglassen). Ort/Datum/Uhrzeit gehören in den BODY-TEXT — niemals in die "bildidee".\n${TERMIN_PERSPEKTIVE}\n`
@@ -1705,8 +1707,7 @@ ${terminRule}${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLang
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
 - 3-6 Hashtags je Post — AUSSCHLIESSLICH ins Feld "hashtags", NIEMALS in den body (weder am Ende noch als eigene Zeile; sie werden beim Posten automatisch angehängt).
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
-- BILDIDEE ohne Text: "bildidee" beschreibt NUR Motive (Szenen, Objekte, Stimmung) — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Bildmodelle schreiben Text FALSCH; Fakten gehören in den body).
-- "art" (zwingend): news = tagesaktuelle Meldung (verdirbt in ~2 Tagen) | recap = Nachbericht zu einem Ereignis (verdirbt in ~3 Tagen) | vorschau = Blick auf ein kommendes Ereignis | termin = Termin-Ankündigung | evergreen = zeitlos (Hintergrund, Community-Frage, Geschichte). Sei ehrlich — verderbliche Posts werden früh eingeplant oder verworfen.
+${bildRegie ?? '- BILDIDEE ohne Text: "bildidee" beschreibt NUR Motive (Szenen, Objekte, Stimmung) — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Bildmodelle schreiben Text FALSCH; Fakten gehören in den body).\n'}- "art" (zwingend): news = tagesaktuelle Meldung (verdirbt in ~2 Tagen) | recap = Nachbericht zu einem Ereignis (verdirbt in ~3 Tagen) | vorschau = Blick auf ein kommendes Ereignis | termin = Termin-Ankündigung | evergreen = zeitlos (Hintergrund, Community-Frage, Geschichte). Sei ehrlich — verderbliche Posts werden früh eingeplant oder verworfen.
 ${carouselRule}${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem VALIDEN JSON-Array (Zitate in Texten typografisch „…“ oder mit \\" escapen — nie nackte " im String):
 [{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "art": "news|vorschau|recap|termin|evergreen", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses", "ort": "NUR bei Terminen: Ort exakt aus der Termin-Zeile", "einlass": "NUR bei Terminen und NUR wenn belegt, z.B. 19:30"${carouselRule ? ', "slides": [{"motiv": "Bild-Motiv ohne Text", "titel": "kurzer Slide-Titel"}]' : ''}}]`;
@@ -1724,6 +1725,30 @@ ${this.lessonsBlock(channel)}Ein Thumbnail-Vorschlag gehört NICHT in den body, 
 ${channel.blacklist.length ? `TABU: ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
 [{"title": "Video-Titel (max 100 Zeichen)", "body": "HOOK…\\nSCRIPT…\\n---\\nBESCHREIBUNG…", "hashtags": ["tag1", "tag2"], "warum": "1 Satz warum dieses Video jetzt", "bildidee": "optional: Thumbnail-Vorschlag"}]`;
+  }
+
+  /**
+   * v1074 — Bild-Regie: Art-Director-Anweisung für die Bildidee (Hauptmotiv,
+   * Perspektive, Licht, Farbwelt) + Anti-Wiederholungs-Liste aus den zuletzt
+   * genutzten Bibliotheks-Motiven. Abschaltbar je Kanal
+   * (config.image_art_director: false → alte Ein-Satz-Anweisung).
+   */
+  private async bildRegie(channel: SocialChannel): Promise<string> {
+    const base = '- BILDIDEE ohne Text: "bildidee" beschreibt NUR Motive (Szenen, Objekte, Stimmung) — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Bildmodelle schreiben Text FALSCH; Fakten gehören in den body).\n';
+    if (channel.config.generate_images !== true || channel.config.image_art_director === false) return base;
+    let avoid = '';
+    try {
+      const family = ContentStudio.familyKey(channel);
+      const assets = await this.socialRepo.listMediaAssets(this.ownerUserId, { ...(family ? { family } : { channelId: channel.id }), limit: 200 });
+      const recent = assets
+        .sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt))
+        .slice(0, 8)
+        .map(a => a.motif.replace(/\s+/g, ' ').slice(0, 90));
+      if (recent.length >= 3) {
+        avoid = `- NICHT SCHON WIEDER — diese Bildmotive liefen zuletzt (wähle sichtbar ANDERE Schauplätze/Objekte/Perspektiven):\n${recent.map(m => `  · ${m}`).join('\n')}\n`;
+      }
+    } catch { /* best-effort — Regie funktioniert auch ohne Liste */ }
+    return '- BILDIDEE (Bild-Regie, wie ein Art-Director): 2-4 Sätze KONKRET — Hauptmotiv, Bildaufbau/Perspektive (Nahaufnahme/Weitwinkel/Boden- oder Vogelperspektive), Licht & Stimmung (Flutlicht, Dämmerung, Regen …) und Farbwelt. NUR Szenen/Objekte/Stimmung — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Fakten gehören in den body). Der Schauplatz soll zur GESCHICHTE des Posts passen — nicht reflexhaft Stadion/Ball.\n' + avoid;
   }
 
   /**
@@ -2042,6 +2067,26 @@ Antworte NUR mit einem JSON-Array:
         ? channel.config.image_model.trim() : undefined;
       const format = ContentStudio.platformImageSpec(channel);
 
+      // v1074 — Stil-Referenz (Opt-in, nur Gemini-Modelle): gepinnte
+      // Stamm-Bilder aus der Bibliothek geben Look/Farbwelt vor — das Motiv
+      // bleibt neu. Best-effort: ohne gepinnte Assets läuft alles wie bisher.
+      let referenceImages: string[] | undefined;
+      if (imageModel && /^gemini-/.test(imageModel) && channel.config.image_style_reference === true) {
+        try {
+          const family = ContentStudio.familyKey(channel);
+          const pinned = (await this.socialRepo.listMediaAssets(this.ownerUserId, { ...(family ? { family } : { channelId: channel.id }), limit: 200 }))
+            .filter(a => a.pinned && !a.blocked)
+            .sort((a, b) => ((b.format === format.size ? 1 : 0) - (a.format === format.size ? 1 : 0)) || b.lastUsedAt.localeCompare(a.lastUsedAt));
+          const { access } = await import('node:fs/promises');
+          const picks: string[] = [];
+          for (const a of pinned) {
+            if (picks.length >= 2) break;
+            if (await access(a.path).then(() => true).catch(() => false)) picks.push(a.path);
+          }
+          if (picks.length > 0) referenceImages = picks;
+        } catch { /* best-effort */ }
+      }
+
       // v1041 — Termin-Vorlage: für Termin-Posts nimmt der Kanal ein festes
       // Basis-Bild (config.image_overlay.termin_image = Asset-ID), die Daten
       // (Teams, Anpfiff, Ort) kommen wie immer deterministisch aus der
@@ -2088,6 +2133,7 @@ Antworte NUR mit einem JSON-Array:
           ...(imageModel ? { model: imageModel } : {}),
           ...(quality ? { quality } : {}),
           ...(format.size ? { size: format.size } : {}),
+          ...(referenceImages ? { reference_images: referenceImages } : {}),
         }, { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);
         if (!result.success) {
           // v1055 — TIMEOUT-Fehlschläge zählen aufs Budget: die OpenAI-Kosten

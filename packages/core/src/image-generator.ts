@@ -13,6 +13,8 @@ interface GenerateOptions {
   model?: string;
   size?: '1024x1024' | '1536x1024' | '1024x1536';
   quality?: 'low' | 'medium' | 'high';
+  /** v1074 — Stil-Referenzbilder (lokale Pfade); nur der Gemini-Pfad wertet sie aus. */
+  referenceImages?: string[];
 }
 
 /**
@@ -58,9 +60,26 @@ export class ImageGenerator implements ImageGeneratorInterface {
     const { GoogleGenAI } = await import('@google/genai');
     const genai = new GoogleGenAI({ apiKey });
     const imageConfig = geminiImageOptions(model, options.size, options.quality);
+    // v1074 — Stil-Referenzen: gepinnte Stamm-Bilder geben Look/Farbwelt vor;
+    // best-effort (unlesbare Datei wird übersprungen, Motiv bleibt neu)
+    const reqParts: Array<Record<string, unknown>> = [];
+    if (options.referenceImages && options.referenceImages.length > 0) {
+      const { readFile } = await import('node:fs/promises');
+      for (const p of options.referenceImages.slice(0, 3)) {
+        try {
+          const data = await readFile(p);
+          const mime = /\.jpe?g$/i.test(p) ? 'image/jpeg' : 'image/png';
+          reqParts.push({ inlineData: { mimeType: mime, data: data.toString('base64') } });
+        } catch { /* Referenz best-effort */ }
+      }
+    }
+    const styleRefPrefix = reqParts.length > 0
+      ? 'Übernimm Look, Farbwelt, Lichtstimmung und Bildsprache der Referenzbilder — erzeuge aber ein NEUES Motiv (kein Nachbau der Referenzen). Aufgabe: '
+      : '';
+    reqParts.push({ text: `${styleRefPrefix}${prompt}` });
     const response = await genai.models.generateContent({
       model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts: reqParts }],
       config: {
         responseModalities: ['IMAGE', 'TEXT'],
         imageConfig,

@@ -175,6 +175,8 @@ export function SocialPage() {
     // v1004 — Bild-Look je Kanal · v1069 — optionales Gemini-Bildmodell
     imageStyle: string; imageQuality: 'default' | 'low' | 'medium' | 'high';
     imageModel: '' | 'gemini-3.1-flash-image' | 'gemini-3-pro-image';
+    // v1074 — Bild-Regie (Art-Director + Motiv-Vielfalt) + Stil-Referenz (gepinnte Assets, nur Gemini)
+    imageArtDirector: boolean; imageStyleReference: boolean;
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
     // v1026 — Ecken + Logo-Wasserzeichen (SVG inline in der Config) · v1032 — Logo-Farbe ('' = Original)
     watermarkCorner: string; logoSvg: string; logoCorner: string; logoColor: string;
@@ -195,7 +197,7 @@ export function SocialPage() {
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
-    imageStyle: '', imageQuality: 'default', imageModel: '', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
+    imageStyle: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
@@ -554,6 +556,8 @@ export function SocialPage() {
       imageStyle: typeof c.config.image_style === 'string' ? c.config.image_style : '',
       imageQuality: c.config.image_quality === 'low' || c.config.image_quality === 'medium' || c.config.image_quality === 'high' ? c.config.image_quality : 'default',
       imageModel: c.config.image_model === 'gemini-3.1-flash-image' || c.config.image_model === 'gemini-3-pro-image' ? c.config.image_model : '',
+      imageArtDirector: c.config.image_art_director !== false,
+      imageStyleReference: c.config.image_style_reference === true,
       imageBranding: typeof c.config.image_branding === 'string' ? c.config.image_branding : '',
       watermarkOn: (c.config.image_overlay as { watermark?: boolean } | undefined)?.watermark !== false && c.config.image_branding !== false,
       titleOverlayOn: (c.config.image_overlay as { title?: boolean } | undefined)?.title === true,
@@ -626,6 +630,8 @@ export function SocialPage() {
           image_style: d.imageStyle.trim() || null,
           image_quality: d.imageQuality === 'default' ? null : d.imageQuality,
           image_model: d.imageModel || null,
+          image_art_director: d.imageArtDirector ? null : false,
+          image_style_reference: d.imageStyleReference ? true : null,
           image_branding: d.imageBranding.trim() || null,
           image_overlay: {
             watermark: d.watermarkOn, title: d.titleOverlayOn,
@@ -1628,10 +1634,36 @@ export function SocialPage() {
                     <div className="border border-blue-500/20 rounded p-2.5 space-y-2 bg-blue-500/5">
                       <div className="text-[11px] font-medium text-blue-300">🎨 Bild-Look <span className="text-gray-500 font-normal">— gilt für alle generierten Bilder dieses Kanals</span></div>
                       <div>
-                        <label className="text-[11px] text-gray-500">Stil-Preset (wird an jeden Bild-Prompt angehängt — gleicher Look, verschiedene Motive; leer = Persona)</label>
-                        <input value={settingsDraft.imageStyle} onChange={e => setSettingsDraft(d => ({ ...d, imageStyle: e.target.value }))}
-                          placeholder='z.B. "cinematisch, natürliches Licht, satte Grüntöne, 35mm-Fotografie"'
-                          className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                        <label className="text-[11px] text-gray-500">Stil-Preset (wird an jeden Bild-Prompt angehängt — gleicher Look, verschiedene Motive; leer = Standard)</label>
+                        <div className="flex gap-2 mt-1">
+                          <input value={settingsDraft.imageStyle} onChange={e => setSettingsDraft(d => ({ ...d, imageStyle: e.target.value }))}
+                            placeholder='z.B. "cinematisch, natürliches Licht, satte Grüntöne, 35mm-Fotografie"'
+                            className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200" />
+                          {/* v1074 — kuratierte Vorlagen füllen das Freitext-Feld (bleibt editierbar) */}
+                          <select value="" onChange={e => { if (e.target.value) setSettingsDraft(d => ({ ...d, imageStyle: e.target.value })); }}
+                            className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-400 w-40">
+                            <option value="">Vorlage…</option>
+                            <option value="hochwertige redaktionelle Sportfotografie, 35mm, dramatisches Flutlicht, geringe Tiefenschärfe, Teal-Orange-Grading">Editorial Sport (35mm)</option>
+                            <option value="cinematisch, düstere Stimmung, starke Kontraste, Regen und Reflexionen, anamorphe Optik">Cinematisch dunkel</option>
+                            <option value="helle, freundliche Bildsprache, natürliches Tageslicht, klare Komposition, luftig">Hell &amp; clean</option>
+                            <option value="analoger Retro-Look, Filmkorn, gedeckte Farben, 70er-Sportmagazin-Ästhetik">Retro-Print</option>
+                            <option value="flache grafische Illustration, kräftige Markenfarben, geometrische Formen, viel Negativraum">Grafisch/abstrakt</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-4">
+                        <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                          title="Die Bildidee wird wie von einem Art-Director formuliert (Hauptmotiv, Perspektive, Licht, Farbwelt), und die zuletzt genutzten Bibliotheks-Motive gehen als Nicht-schon-wieder-Liste mit — mehr Vielfalt, passendere Motive. Kostet nichts extra.">
+                          <input type="checkbox" checked={settingsDraft.imageArtDirector} onChange={e => setSettingsDraft(d => ({ ...d, imageArtDirector: e.target.checked }))} />
+                          🎬 Bild-Regie (Art-Director-Bildideen + Motiv-Vielfalt)
+                        </label>
+                        {(settingsDraft.imageModel === 'gemini-3.1-flash-image' || settingsDraft.imageModel === 'gemini-3-pro-image') && (
+                          <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                            title="Bis zu 2 GEPINNTE Stamm-Bilder (📌 in der Bild-Bibliothek) gehen als Look-Vorlage mit — Farbwelt/Licht/Bildsprache bleiben konsistent, das Motiv ist neu. Nur mit Gemini-Modellen; ohne gepinnte Bilder ändert sich nichts.">
+                            <input type="checkbox" checked={settingsDraft.imageStyleReference} onChange={e => setSettingsDraft(d => ({ ...d, imageStyleReference: e.target.checked }))} />
+                            🖼️ Stil-Referenz aus gepinnten Stamm-Bildern
+                          </label>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
                         <div>
