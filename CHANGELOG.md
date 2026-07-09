@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1076] - 2026-07-09
+
+### Fixed — Reel trägt IMMER das komplette Voiceover (v1076)
+
+- Realfall Klopp-Reel: EIN Bild, durch den KI-Clip ersetzt → das Video
+  war 11,5 s lang bei 34 s Sprechertext (hart abgeschnitten, 17
+  Untertitel in 9,5 s). Drei Absicherungen: (1) fehlt nach den Clips
+  Standbild-Zeit, trägt das Basis-Bild als zusätzliche
+  Ken-Burns-Slide den Rest; (2) die Sprachdauer wird durch echtes
+  Dekodieren gemessen (Ogg-Metadaten weichen bis ±2 s ab) plus 1,5 s
+  Reserve vor der End-Card; (3) die Fallback-Schätzung rechnet mit
+  1,9 statt 2,4 Wörtern/Sekunde. Bewiesen mit der echten
+  Klopp-Tonspur: 35,9 s Video für 34,4 s Sprache.
+
+### Added — Videos überall: X/Bluesky-Zweitverwertung + eigenständige Video-Beiträge (v1076)
+
+- **Reel-Zweitverwertung generisch**: auto_reel:true auf JEDEM
+  video-fähigen Familien-Kanal (Facebook, X, Telegram, Bluesky)
+  erzeugt einen Entwurf mit derselben gerenderten Videodatei.
+- **Bluesky kann jetzt Video**: Upload über den Bluesky-Video-Service
+  (Service-Auth + Verarbeitungs-Poll) und app.bsky.embed.video.
+- **„🎬 Reel erzeugen"-Button** an jedem Beitrag mit Bild — auch
+  User-erstellt, auch ohne Story, published oder geplant (die
+  Story-Pflicht des Reel-Pfads ist für manuelle Anstöße gelockert).
+- **Composer versteht Video**: mp4/mov/webm-URLs werden automatisch
+  als Video-Beitrag angelegt.
+- **fussball.cc**: Artikel-Payload bekommt ein strukturiertes
+  video-Feld (lokale mp4 wird über public_media veröffentlicht) —
+  das Player-Rendern auf der Website ist ein Folgeauftrag an den
+  Plattform-Agenten.
+- **Transparenz**: Kann ein Kanal kein Video, meldet der Publish das
+  ausdrücklich statt es still wegzulassen.
+
 ## [0.19.0-multi-ha.1075] - 2026-07-09
 
 ### Added — Menschlicher Publish-Takt (v1075)

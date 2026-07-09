@@ -30,7 +30,7 @@ class FakeProvider extends SocialProvider {
   failNext = false;
   constructor(platform = 'test') { super(); this.platform = platform; }
   comments: Array<{ itemId: string; externalCommentId: string; author?: string; text: string }> = [];
-  capabilities(): ProviderCapabilities { return { text: true, image: true, video: false, supportsDelete: true, supportsMetrics: false, supportsStories: this.platform === 'instagram', supportsComments: true }; }
+  capabilities(): ProviderCapabilities { return { text: true, image: true, video: ['facebook', 'x', 'telegram_channel', 'bluesky'].includes(this.platform), supportsDelete: true, supportsMetrics: false, supportsStories: this.platform === 'instagram', supportsComments: true }; }
   override async publishStory(imageUrl: string): Promise<PublishResult> {
     this.stories.push(imageUrl);
     return { externalId: 'story-1', url: 'https://instagram.com/stories/1' };
@@ -531,11 +531,26 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(setup.render).toHaveBeenCalledTimes(2); // zweiter Durchlauf, gleicher Pfad
   });
 
-  it('v1062: render_reel verweigert unveröffentlichte Items', async () => {
+  it('v1076: render_reel läuft auch für UNVERÖFFENTLICHTE Beiträge (User-Artikel)', async () => {
     const setup = reelSetup();
     const r = await setup.skill.execute({ action: 'render_reel', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true); // Story vorhanden → Bilder kommen vom Follower
+    await new Promise(res => setTimeout(res, 10));
+    expect(setup.render).toHaveBeenCalled();
+  });
+
+  it('v1076: render_reel verweigert rejected und Story-lose Beiträge ohne lokales Bild', async () => {
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'IG', projectId: 'p1' });
+    const noImage = makeItem({ id: 'item-0001-aaaa', channelId: 'ch-ig', status: 'draft', media: [], storyId: undefined });
+    const { skill } = makeSkill(ig, noImage);
+    const r = await skill.execute({ action: 'render_reel', item_id: 'item-0001-aaaa' }, CTX);
     expect(r.success).toBe(false);
-    expect(r.error).toContain('VERÖFFENTLICHTEN');
+    expect(r.error).toContain('lokales Bild');
+    const rejected = makeItem({ id: 'item-0001-aaaa', channelId: 'ch-ig', status: 'rejected' });
+    const { skill: skill2 } = makeSkill(ig, rejected);
+    const r2 = await skill2.execute({ action: 'render_reel', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r2.success).toBe(false);
+    expect(r2.error).toContain('abgelehnt');
   });
 
   it('v1058: Reel-Slides bevorzugen den SAUBEREN asset-Zwilling (ohne eingebrannte Titel)', async () => {
@@ -566,6 +581,9 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
 
   it('v1056: FB-Familien-Kanal mit auto_reel → ZWEITER Reel-Entwurf mit derselben Videodatei (kein Doppel-Render)', async () => {
     const setup = reelSetup();
+    // v1076 — Zweitverwertung ist fähigkeitsgesteuert: der Provider muss
+    // registriert sein und Video können (wie in Produktion)
+    setup.skill.registerProvider(new FakeProvider('facebook'));
     const fb = makeChannel({ id: 'ch-fb', platform: 'facebook', name: 'FussballCC FB', projectId: 'p1', config: { auto_reel: true } });
     const lead = makeChannel({ id: 'ch-web', platform: 'rest', name: 'fussball.cc', projectId: 'p1', config: { base_url: 'https://cc.example' } });
     const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'FussballCC IG', projectId: 'p1', config: { auto_reel: true } });

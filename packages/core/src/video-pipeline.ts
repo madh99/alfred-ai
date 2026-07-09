@@ -69,10 +69,10 @@ export function buildSrt(text: string, totalDurationSec: number): string {
   return blocks.join('\n');
 }
 
-/** Grobe Sprechdauer-Schätzung (Fallback ohne ffprobe): ~2,4 Wörter/Sekunde. */
+/** Grobe Sprechdauer-Schätzung (Fallback ohne ffprobe): ~1,9 Wörter/Sekunde (deutsches TTS; v1076 — 2,4 war zu schnell und schnitt Sprecher ab). */
 export function estimateSpeechSeconds(text: string): number {
   const words = text.split(/\s+/).filter(w => w.length > 0).length;
-  return Math.max(5, Math.round(words / 2.4));
+  return Math.max(5, Math.round(words / 1.9));
 }
 
 /**
@@ -288,6 +288,23 @@ export class SlideshowVideoRenderer {
     } catch { return false; }
   }
 
+  /**
+   * v1076 — ECHTE Audiodauer durch Dekodieren (letzter time=-Fortschritt):
+   * Ogg/Opus-Container-Metadaten weichen bis ±2 s von der realen Dauer ab
+   * (gemessen 09.07.: Meta 32,5 s vs. real 34,4 s — der Sprecher wurde vom
+   * -t-Schnitt gekappt). null bei Fehler (Aufrufer fällt auf Metadatum zurück).
+   */
+  async measureAudioSeconds(path: string): Promise<number | null> {
+    try {
+      const { stderr } = await execFileAsync(this.ffmpeg, ['-i', path, '-f', 'null', '-'], { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 });
+      const times = String(stderr).match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g);
+      if (!times || times.length === 0) return null;
+      const m = /time=(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(times[times.length - 1])!;
+      const sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+      return Number.isFinite(sec) && sec > 0 ? Number(sec.toFixed(2)) : null;
+    } catch { return null; }
+  }
+
   /** v938 — Transcode-Check für User-Videos (ffprobe, best-effort). */
   async probeVideo(path: string): Promise<{ ok: boolean; durationSec?: number; detail?: string }> {
     try {
@@ -319,7 +336,10 @@ export class SlideshowVideoRenderer {
       const audio = await this.opts.synthesize(voText);
       audioPath = `${base}.voice.ogg`;
       await writeFile(audioPath, audio);
-      durationSec = (await this.probeVideo(audioPath)).durationSec ?? estimateSpeechSeconds(voText);
+      // v1076 — ECHT dekodierte Dauer (Container-Metadaten lügen bis ±2 s)
+      // + 1,5 s Reserve: der Sprecher endet garantiert VOR der End-Card.
+      const real = await this.measureAudioSeconds(audioPath);
+      durationSec = (real ?? (await this.probeVideo(audioPath)).durationSec ?? estimateSpeechSeconds(voText)) + 1.5;
     } else {
       durationSec = Math.max(10, spec.images.length * 4);
     }
@@ -344,6 +364,16 @@ export class SlideshowVideoRenderer {
         ? { file: clip.path, kind: 'video' as const, durationSec: clipSec(clip) }
         : { file: img, kind: 'image' as const, durationSec: perStill };
     });
+    // v1076 — GARANTIE: das Video trägt das komplette Voiceover. Realfall
+    // Klopp-Reel 09.07.: EIN Bild, durch den KI-Clip ersetzt → null
+    // Standbilder → Video 11,5 s bei 34 s Sprache (Sprecher hart gekappt,
+    // 17 Untertitel in 9,5 s). Fehlt Zeit, trägt das Basis-Bild als
+    // zusätzliche Ken-Burns-Slide den Rest.
+    const middleTotal = middle.reduce((s, m) => s + m.durationSec, 0);
+    const shortfall = durationSec - introSec - middleTotal;
+    if (shortfall > 0.05 && spec.images.length > 0) {
+      middle.push({ file: spec.images[spec.images.length - 1], kind: 'image' as const, durationSec: Math.max(2, shortfall) });
+    }
     const slideFiles: string[] = [
       ...(spec.introImage ? [spec.introImage] : []),
       ...middle.map(m => m.file),

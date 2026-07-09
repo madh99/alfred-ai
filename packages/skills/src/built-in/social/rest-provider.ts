@@ -1,6 +1,7 @@
 import type { SocialChannel, ContentItem } from '@alfred/storage';
 import { SocialProvider, composePostText, aiDisclosure, type ProviderCapabilities, type PublishResult } from './social-provider.js';
 import { tlsFetch } from './tls-fetch.js';
+import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
 /**
  * v933 — Generic-REST-Provider: published an eine eigene Plattform-API
@@ -225,6 +226,21 @@ export class RestProvider extends SocialProvider {
         const attachField = typeof (mu as Record<string, unknown>).attach_field === 'string'
           ? (mu as Record<string, unknown>).attach_field as string : 'featuredMediaId';
         body[attachField] = mediaId;
+      }
+      // v1076 — Video mitliefern: lokale mp4 über public_media veröffentlichen
+      // (die Plattform nimmt mp4 seit dem Agent-Fix) und als strukturiertes
+      // video-Feld anhängen — die Plattform kann daraus einen Player rendern.
+      // Best-effort: ohne public_media-Config bleibt der Artikel ohne Video.
+      const video = item.media.find(m => m.type === 'video');
+      if (video && body.video === undefined) {
+        try {
+          let videoUrl = video.pathOrUrl;
+          if (!videoUrl.startsWith('http')) {
+            const pmCfg = parsePublicMediaConfig(channel.config.public_media);
+            if (pmCfg) videoUrl = await publishPublicMedia(pmCfg, video.pathOrUrl, secrets, item.title ?? undefined);
+          }
+          if (videoUrl.startsWith('http')) body.video = { url: videoUrl };
+        } catch { /* Video best-effort — der Artikel geht ohne Video raus */ }
       }
     }
 

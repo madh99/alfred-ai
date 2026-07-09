@@ -8550,7 +8550,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               : action === 'remove' ? 'delete_item'
               // v991 — Entwurf-Verbesserung
               : action === 'revise' ? 'revise_content'
-              : action === 'regenerate-image' ? 'regenerate_image' : '';
+              : action === 'regenerate-image' ? 'regenerate_image'
+              // v1076 — Reel für diesen Beitrag anstoßen (UI-Button)
+              : action === 'reel' ? 'render_reel' : '';
             if (!skillAction) return { success: false, error: `unknown action ${action}` };
             const r = await socialSkillForApi.execute({
               action: skillAction, item_id: id,

@@ -37,7 +37,49 @@ export class BlueskyProvider extends SocialProvider {
   readonly platform = 'bluesky';
 
   capabilities(): ProviderCapabilities {
-    return { text: true, image: true, video: false, maxTextLength: 300, supportsDelete: true, supportsMetrics: false, supportsAudience: true };
+    // v1076 — Video über den Bluesky-Video-Service (uploadVideo + embed.video)
+    return { text: true, image: true, video: true, maxTextLength: 300, supportsDelete: true, supportsMetrics: false, supportsAudience: true };
+  }
+
+  /**
+   * v1076 — Video hochladen: Service-Auth vom PDS (aud video.bsky.app) →
+   * Upload beim Video-Service → Job-Poll bis das Blob verarbeitet ist.
+   * null bei jedem Fehler — der Post geht dann ohne Video raus (best-effort,
+   * wie Bilder).
+   */
+  private async uploadVideo(
+    service: string, session: { accessJwt: string; did: string }, bytes: Buffer,
+  ): Promise<unknown | null> {
+    try {
+      if (bytes.length > 100_000_000) return null; // Service-Limit ~100 MB
+      const auth = await fetch(`${service}/xrpc/com.atproto.server.getServiceAuth?aud=${encodeURIComponent('did:web:video.bsky.app')}&lxm=app.bsky.video.uploadVideo&exp=${Math.floor(Date.now() / 1000) + 600}`, {
+        headers: { Authorization: `Bearer ${session.accessJwt}` },
+      });
+      const authData = await auth.json().catch(() => ({})) as { token?: string };
+      if (!auth.ok || !authData.token) return null;
+      const name = `reel-${Date.now().toString(36)}.mp4`;
+      const up = await fetch(`https://video.bsky.app/xrpc/app.bsky.video.uploadVideo?did=${encodeURIComponent(session.did)}&name=${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authData.token}`, 'Content-Type': 'video/mp4' },
+        body: new Uint8Array(bytes),
+      });
+      let job = await up.json().catch(() => ({})) as { jobId?: string; state?: string; blob?: unknown; error?: string };
+      // 409 already_exists liefert den fertigen Job direkt mit
+      if (!up.ok && !job.jobId && !job.blob) return null;
+      const deadline = Date.now() + 4 * 60_000;
+      while (!job.blob && job.jobId) {
+        if (job.state === 'JOB_STATE_FAILED') return null;
+        if (Date.now() > deadline) return null;
+        await new Promise(res => setTimeout(res, 3_000));
+        const st = await fetch(`https://video.bsky.app/xrpc/app.bsky.video.getJobStatus?jobId=${encodeURIComponent(job.jobId)}`, {
+          headers: { Authorization: `Bearer ${authData.token}` },
+        });
+        const stData = await st.json().catch(() => ({})) as { jobStatus?: { jobId?: string; state?: string; blob?: unknown } };
+        if (stData.jobStatus) job = stData.jobStatus;
+        else if (!st.ok) return null;
+      }
+      return job.blob ?? null;
+    } catch { return null; }
   }
 
   /** v1019 — Kanalwachstum: Follower via öffentlichem AppView (kein Login nötig). */
@@ -96,9 +138,10 @@ export class BlueskyProvider extends SocialProvider {
     const service = this.service(channel);
     const text = composePostText(item, 300, channel);
 
-    // Bilder direkt hochladen (max. 4 laut Protokoll)
+    // Bilder direkt hochladen (max. 4 laut Protokoll); bei Video-Items
+    // (v1076) übersprungen — das Video-Embed ersetzt die Bilder ohnehin
     const images: Array<{ image: unknown; alt: string }> = [];
-    for (const media of item.media.filter(m => m.type === 'image').slice(0, 4)) {
+    for (const media of (item.media.some(m => m.type === 'video') ? [] : item.media).filter(m => m.type === 'image').slice(0, 4)) {
       let bytes: Buffer;
       if (media.pathOrUrl.startsWith('http')) {
         const res = await fetch(media.pathOrUrl);
@@ -128,7 +171,27 @@ export class BlueskyProvider extends SocialProvider {
     };
     const facets = BlueskyProvider.linkFacets(text);
     if (facets.length > 0) record.facets = facets;
-    if (images.length > 0) record.embed = { $type: 'app.bsky.embed.images', images };
+    // v1076 — Video hat Vorrang (Reel-Zweitverwertung): embed.video statt Bilder
+    const videoMedia = item.media.find(m => m.type === 'video');
+    let videoBlob: unknown | null = null;
+    if (videoMedia) {
+      try {
+        let vbytes: Buffer;
+        if (videoMedia.pathOrUrl.startsWith('http')) {
+          const vres = await fetch(videoMedia.pathOrUrl);
+          vbytes = vres.ok ? Buffer.from(await vres.arrayBuffer()) : Buffer.alloc(0);
+        } else {
+          const { readFile } = await import('node:fs/promises');
+          vbytes = await readFile(videoMedia.pathOrUrl);
+        }
+        if (vbytes.length > 0) videoBlob = await this.uploadVideo(service, session, vbytes);
+      } catch { /* Video best-effort — Post geht sonst mit Bildern/Text raus */ }
+    }
+    if (videoBlob) {
+      record.embed = { $type: 'app.bsky.embed.video', video: videoBlob, aspectRatio: { width: 9, height: 16 } };
+    } else if (images.length > 0) {
+      record.embed = { $type: 'app.bsky.embed.images', images };
+    }
 
     const res = await fetch(`${service}/xrpc/com.atproto.repo.createRecord`, {
       method: 'POST',

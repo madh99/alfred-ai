@@ -425,7 +425,7 @@ export function SocialPage() {
     });
   }
 
-  async function itemAction(item: SocialContentItem, action: 'approve' | 'reject' | 'publish' | 'delete' | 'remove') {
+  async function itemAction(item: SocialContentItem, action: 'approve' | 'reject' | 'publish' | 'delete' | 'remove' | 'reel') {
     if (action === 'delete' && !confirm('Beitrag auf der Plattform UND in Alfred löschen?')) return;
     // v987 — lokal löschen (ohne Story-Sperre): Studio darf den Stoff neu aufgreifen
     if (action === 'remove' && !confirm('Beitrag lokal löschen? (Ohne Story-Sperre — das Studio darf das Thema neu aufgreifen. Zum Sperren stattdessen „Ablehnen".)')) return;
@@ -1037,6 +1037,12 @@ export function SocialPage() {
           {channels.length > 1 && item.status !== 'rejected' && (
             <button onClick={() => (crosspostId === item.id ? setCrosspostId(null) : startCrosspost(item))} disabled={busy === item.id}
               className="px-2 py-1 text-xs border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 rounded">🔁 Crosspost</button>
+          )}
+          {/* v1076 — Reel für diesen Beitrag (jeder Beitrag mit Bild, auch ohne Story/Studio) */}
+          {item.status !== 'rejected' && item.media?.some(m => m.type === 'image') && item.performance?.format !== 'reel' && item.performance?.format !== 'story' && (
+            <button onClick={() => itemAction(item, 'reel')} disabled={busy === item.id}
+              title="Erzeugt aus diesem Beitrag ein Reel (Sprecher, Untertitel, Musik, ggf. KI-Clip) als Entwurf für den Instagram-Kanal der Familie — mit Freigabe, zählt aufs Wochen-Limit."
+              className="px-2 py-1 text-xs border border-pink-500/40 text-pink-300 hover:bg-pink-500/15 rounded">🎬 Reel erzeugen</button>
           )}
           {/* v964 — published: auf der Plattform löschen (delete_remote-Leitplanke) */}
           {item.status === 'published' && (

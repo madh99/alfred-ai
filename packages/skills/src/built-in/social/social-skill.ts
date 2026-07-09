@@ -146,7 +146,7 @@ export class SocialSkill extends Skill {
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
             'list_comments', 'reply_comment', 'ignore_comment', 'suggest_reply', 'regenerate_image', 'revise_content',
             'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library', 'render_reel'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Auto-Reel für einen bereits VERÖFFENTLICHTEN Lead-Artikel (item_id) erneut anstoßen (z.B. nach Reject des alten Entwurfs oder Look-Fix) — gleicher Pfad wie beim Lead-Publish inkl. Wochen-Cap, KI-Clips und Freigabe-Pflicht.',
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Reel für einen Beitrag (item_id) anstoßen — funktioniert für JEDEN Beitrag mit lokalen Bildern (Studio- oder User-erstellt, mit oder ohne Story, published oder geplant); Ziel ist der Instagram-Kanal der Familie, gleiche Leitplanken wie beim Auto-Reel (Wochen-Cap, KI-Clips, Entwurf mit Freigabe, Zweitverwertung).',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN/X_REFRESH_TOKEN+X_CLIENT_ID (OAuth2; Bild-Posts via v1.1: zusätzlich X_CONSUMER_KEY/X_CONSUMER_SECRET/X_OAUTH1_ACCESS_TOKEN/X_OAUTH1_ACCESS_SECRET — der OAuth2-Scope media.write wird oft nicht gewährt); bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
@@ -400,16 +400,22 @@ export class SocialSkill extends Skill {
         case 'generate_content': return await this.generateContent(userId, input);
         case 'render_video': return await this.renderVideo(userId, input);
         case 'render_reel': {
-          // v1062 — Auto-Reel manuell neu anstoßen (gleicher Pfad wie beim
+          // v1062/v1076 — Reel manuell anstoßen (gleicher Pfad wie beim
           // Lead-Publish: Familien-IG-Kanal, Wochen-Cap, KI-Clips, Entwurf
-          // mit Freigabe). Nur für bereits veröffentlichte Leads.
+          // mit Freigabe). Funktioniert für JEDEN Beitrag mit Bildern —
+          // auch User-erstellt, auch ohne Story, published oder geplant.
           const item = await this.resolveItem(userId, input);
           if (!item) return { success: false, error: `Item nicht gefunden: ${String(input.item_id ?? '')}` };
-          if (item.status !== 'published') return { success: false, error: `render_reel braucht einen VERÖFFENTLICHTEN Lead-Artikel (Status ist ${item.status}).` };
+          if (item.status === 'rejected') return { success: false, error: 'Item ist abgelehnt — erst reaktivieren (Bearbeiten) oder anderes Item wählen.' };
+          // Ohne Story liefern NUR die eigenen Bilder die Slides — mit Story
+          // kommen sie auch vom Familien-Follower (wie beim Auto-Reel).
+          if (!item.storyId && !item.media.some(m => m.type === 'image' && !m.pathOrUrl.startsWith('http'))) {
+            return { success: false, error: 'render_reel braucht mindestens ein lokales Bild am Beitrag (generiert oder angehängt) — daraus entstehen die Slides.' };
+          }
           const leadChannel = await this.repo.getChannel(userId, item.channelId);
           if (!leadChannel) return { success: false, error: 'Kanal des Items nicht gefunden.' };
-          void this.maybeAutoReel(userId, item, leadChannel).catch(() => { /* best-effort wie beim Publish */ });
-          return { success: true, display: `🎬 Reel-Rendering für [${item.id.slice(0, 8)}] angestoßen — der Entwurf erscheint in einigen Minuten in der Queue (Freigabe nötig). Kommt keiner, hat vermutlich das Wochen-Limit gegriffen (reel_max_per_week).` };
+          void this.maybeAutoReel(userId, item, leadChannel, { manual: true }).catch(() => { /* best-effort wie beim Publish */ });
+          return { success: true, display: `🎬 Reel-Rendering für [${item.id.slice(0, 8)}] angestoßen — der Entwurf erscheint in einigen Minuten in der Queue (Freigabe nötig). Kommt keiner: Wochen-Limit (reel_max_per_week) prüfen oder kein Instagram-Kanal in der Familie.` };
         }
         case 'crosspost': return await this.crosspost(userId, input);
         case 'list_comments': return await this.listCommentsAction(userId, input);
@@ -576,8 +582,11 @@ export class SocialSkill extends Skill {
     const body = typeof input.body === 'string' ? input.body : '';
     if (!body.trim()) return { success: false, error: 'body erforderlich' };
     const title = typeof input.title === 'string' ? input.title : undefined;
+    // v1076 — Video-Erkennung an der Endung: der Composer schickt nur eine
+    // URL/einen Pfad — mp4/mov/webm werden automatisch als Video angelegt
+    const inferredType = typeof input.media_url === 'string' && /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(input.media_url.trim()) ? 'video' as const : 'image' as const;
     let media: ContentMedia[] = typeof input.media_url === 'string' && input.media_url.trim()
-      ? [{ type: (input.media_type === 'video' || input.media_type === 'audio' ? input.media_type : 'image'), source: 'user', pathOrUrl: input.media_url.trim() }]
+      ? [{ type: (input.media_type === 'video' || input.media_type === 'audio' ? input.media_type : inferredType), source: 'user', pathOrUrl: input.media_url.trim() }]
       : [];
     // v962 — Kanal mit generate_images: auch Ad-hoc-Posts bekommen ein Bild
     // (Studio-Leitplanken: Bildnisrecht-Policy, Vision-Gate, Monats-Budget)
@@ -789,10 +798,15 @@ export class SocialSkill extends Skill {
       // v1016 — Auto-Reel: Rendering dauert Minuten → fire-and-forget, der
       // Entwurf taucht in der Triage auf (bewusst MIT Freigabe, anders als Stories)
       void this.maybeAutoReel(userId, published, channel).catch(() => { /* best-effort */ });
+      // v1076 — Transparenz: hat das Item ein Video, der Kanal-Provider aber
+      // keine Video-Fähigkeit, ging der Beitrag OHNE Video raus — sagen statt
+      // still weglassen.
+      const videoDropped = item.media.some(m => m.type === 'video') && provider.capabilities().video !== true
+        ? `\n⚠️ ${channel.name} unterstützt keine Videos — der Beitrag ging ohne Video raus.` : '';
       return {
         success: true,
         data: { item: published },
-        display: `🚀 Veröffentlicht auf **${channel.name}**${result.url ? `: ${result.url}` : ` (ID ${result.externalId})`}${storyNote ? `\n${storyNote}` : ''}`,
+        display: `🚀 Veröffentlicht auf **${channel.name}**${result.url ? `: ${result.url}` : ` (ID ${result.externalId})`}${storyNote ? `\n${storyNote}` : ''}${videoDropped}`,
       };
     } catch (err) {
       await this.repo.transition(userId, publishing.id, 'failed', { error: (err as Error).message.slice(0, 500) });
@@ -977,18 +991,30 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
    * config.reel_max_per_week (Default 2). Läuft fire-and-forget nach dem
    * Lead-Publish — Fehler bleiben still, der Publish ist längst durch.
    */
-  private async maybeAutoReel(userId: string, leadItem: ContentItem, leadChannel: SocialChannel): Promise<void> {
-    if (!leadItem.storyId || !this.videoTools || !this.llm) return;
-    const assigns = await this.repo.listAssignments(leadItem.storyId);
-    const mine = assigns.find(a => a.itemId === leadItem.id);
-    if (!mine || mine.role !== 'lead') return;
+  private async maybeAutoReel(userId: string, leadItem: ContentItem, leadChannel: SocialChannel, opts?: { manual?: boolean }): Promise<void> {
+    if (!this.videoTools || !this.llm) return;
+    // v1076 — storyId ist keine Pflicht mehr: manuell angestoßene Reels
+    // (render_reel) funktionieren auch für User-Beiträge ohne Story — dann
+    // liefern die Bilder des Items selbst die Slides. Der AUTOMATISCHE Pfad
+    // (Lead-Publish) verlangt weiterhin die Lead-Rolle einer Story.
+    let assigns: Awaited<ReturnType<SocialRepository['listAssignments']>> = [];
+    if (leadItem.storyId) {
+      assigns = await this.repo.listAssignments(leadItem.storyId);
+      const mine = assigns.find(a => a.itemId === leadItem.id);
+      if (!opts?.manual && (!mine || mine.role !== 'lead')) return;
+    } else if (!opts?.manual) {
+      return;
+    }
     const familyOf = (c: SocialChannel): string | null => {
       if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
       return c.projectId ? `project:${c.projectId}` : null;
     };
     const channels = await this.repo.listChannels(userId, 'active');
-    const ig = channels.find(c => c.id !== leadChannel.id && c.platform === 'instagram'
-      && c.config.auto_reel === true && familyOf(c) !== null && familyOf(c) === familyOf(leadChannel));
+    // v1076 — manueller Anstoß darf auch vom IG-Kanal selbst kommen; der
+    // automatische Pfad schließt den Quell-Kanal weiter aus (sonst würde
+    // jeder IG-Feed-Post ein Reel von sich selbst erzeugen).
+    const ig = channels.find(c => (opts?.manual || c.id !== leadChannel.id) && c.platform === 'instagram'
+      && (c.config.auto_reel === true || opts?.manual === true) && familyOf(c) !== null && familyOf(c) === familyOf(leadChannel));
     if (!ig) return;
     // Wochen-Limit: Rendering + TTS kosten — Reels bleiben besondere Momente
     const cap = typeof ig.config.reel_max_per_week === 'number' && ig.config.reel_max_per_week >= 0 ? ig.config.reel_max_per_week : 2;
@@ -1237,20 +1263,22 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       ...(clipNotes.length > 0 ? { aiClipNotes: clipNotes } : {}),
     }).catch(() => { /* optional */ });
 
-    // v1056 — Zweitverwertung Facebook: DASSELBE gerenderte Video als
-    // FB-Reel-ENTWURF (kein zweites Rendering, keine Zusatzkosten) — wenn ein
-    // Facebook-Kanal derselben Familie auto_reel aktiviert hat. Gleiche
-    // Freigabe-Pflicht; der FB-Publish nutzt den vorhandenen /videos-Pfad.
+    // v1056/v1076 — Zweitverwertung: DASSELBE gerenderte Video als
+    // Reel-ENTWURF auf ALLEN video-fähigen Familien-Kanälen mit
+    // auto_reel:true (Facebook /videos, X chunked-Upload, Telegram
+    // sendVideo, Bluesky Video-Embed). Kein zweites Rendering, gleiche
+    // Freigabe-Pflicht — ohne Opt-in am Kanal ändert sich nichts.
     try {
       const familyOf = (c: SocialChannel): string | null => {
         if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
         return c.projectId ? `project:${c.projectId}` : null;
       };
       const channels = await this.repo.listChannels(userId, 'active');
-      const fb = channels.find(c => c.platform === 'facebook' && c.config.auto_reel === true
-        && familyOf(c) !== null && familyOf(c) === familyOf(ig));
-      if (fb) {
-        const fbItem = await this.repo.createItem(userId, fb.id, {
+      const twins = channels.filter(c => c.id !== ig.id && c.config.auto_reel === true
+        && familyOf(c) !== null && familyOf(c) === familyOf(ig)
+        && this.providers.get(c.platform)?.capabilities().video === true);
+      for (const twin of twins) {
+        const twinItem = await this.repo.createItem(userId, twin.id, {
           status: 'draft',
           title: leadItem.title ?? leadItem.body.slice(0, 60),
           body: caption,
@@ -1259,7 +1287,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
           source: 'studio',
           storyId: leadItem.storyId,
         });
-        await this.repo.mergePerformance(userId, fbItem.id, {
+        await this.repo.mergePerformance(userId, twinItem.id, {
           format: 'reel', autoReel: true, durationSec: rendered.durationSec, script,
         }).catch(() => { /* optional */ });
       }

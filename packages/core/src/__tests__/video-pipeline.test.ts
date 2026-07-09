@@ -134,11 +134,11 @@ describe('buildReelAudioGraph (v1059)', () => {
   });
 });
 
-describe('estimateSpeechSeconds (v938)', () => {
-  it('~2,4 Wörter/Sekunde, min. 5s', () => {
+describe('estimateSpeechSeconds (v938/v1076)', () => {
+  it('~1,9 Wörter/Sekunde (deutsches TTS), min. 5s', () => {
     expect(estimateSpeechSeconds('kurz')).toBe(5);
     const text = Array.from({ length: 120 }, (_, i) => `wort${i}`).join(' ');
-    expect(estimateSpeechSeconds(text)).toBe(50);
+    expect(estimateSpeechSeconds(text)).toBe(63);
   });
 });
 
