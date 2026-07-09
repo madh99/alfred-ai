@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1069] - 2026-07-09
+
+### Added — Gemini als optionaler Bild-Provider (v1069)
+
+- Neues Dropdown „Bild-Modell" im Bild-Look je Kanal: Standard
+  (gpt-image-1, unverändert), **Gemini Nano Banana 2**
+  (gemini-3.1-flash-image, ≈ 0,04 €/Bild, sehr stark bei lesbarem
+  Text im Bild) oder **Gemini Nano Banana Pro** (gemini-3-pro-image,
+  ≈ 0,13–0,25 €/Bild, high = 2K-Auflösung). Der Generator routet am
+  Modellnamen; der Google-Key kommt automatisch aus der Kanal-ENV-Stage
+  (GOOGLE_API_KEY, gleiche Quelle wie Veo) oder der LLM-Config.
+- Unverändert: Bild-Budget (jeder Versuch zählt), Vision-Gate,
+  Bild-Bibliothek, Overlays, Termin-Vorlagen — die Pipeline ist
+  providerneutral. Der generische Fallback-Bildprompt sagt nicht mehr
+  „Social-Media-Bild" (Nano Banana malte sonst einen Instagram-Rahmen
+  ums Motiv).
+
 ## [0.19.0-multi-ha.1068] - 2026-07-09
 
 ### Fixed — Duplikat-Gate: bewusster Re-Post aus der UI (v1068)

@@ -5953,7 +5953,34 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // 5c. Initialize image generation (auto-detect from LLM config)
     const imageGenProvider = this.detectImageGenProvider();
     if (imageGenProvider) {
-      const generator = new ImageGenerator(imageGenProvider, this.logger.child({ component: 'image-gen' }));
+      // v1069 — Google-Key lazy für gemini-*-Bildmodelle (Nano Banana):
+      // LLM-Config google, sonst Kanal-Secret GOOGLE_API_KEY aus der ENV-Stage
+      // (gleiche Quelle wie Veo). 10-min-Cache gegen Decrypt je Bild.
+      let googleKeyCache: { key: string | undefined; at: number } | undefined;
+      const googleKeyProvider = async (): Promise<string | undefined> => {
+        if (googleKeyCache && Date.now() - googleKeyCache.at < 10 * 60_000) return googleKeyCache.key;
+        let key: string | undefined;
+        for (const tier of ['default', 'strong', 'fast', 'embeddings', 'local'] as const) {
+          const tc = this.config.llm[tier];
+          if (tc?.provider === 'google' && tc.apiKey) { key = tc.apiKey; break; }
+        }
+        if (!key && this.socialRepo && this.envRepoRef && this.envCryptoRef && this.ownerMasterUserId) {
+          try {
+            const channels = await this.socialRepo.listChannels(this.ownerMasterUserId, 'active');
+            for (const ch of channels) {
+              if (!ch.projectId) continue;
+              const stage = typeof ch.config.env_stage === 'string' ? ch.config.env_stage : 'social';
+              const entry = await this.envRepoRef.get(ch.projectId, stage);
+              if (!entry) continue;
+              const vars = this.envCryptoRef.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+              if (vars.GOOGLE_API_KEY) { key = vars.GOOGLE_API_KEY; break; }
+            }
+          } catch { /* best-effort — ohne Key wirft der Generator eine klare Meldung */ }
+        }
+        googleKeyCache = { key, at: Date.now() };
+        return key;
+      };
+      const generator = new ImageGenerator({ ...imageGenProvider, googleKeyProvider }, this.logger.child({ component: 'image-gen' }));
       skillRegistry.register(new ImageGenerateSkill(generator));
       this.logger.info({ provider: imageGenProvider.provider }, 'Image generation skill registered');
     }

@@ -5,12 +5,25 @@ interface ImageGeneratorConfig {
   provider: 'openai' | 'google';
   apiKey: string;
   baseUrl?: string;
+  /** v1069 — lazy Google-Key für gemini-*-Bildmodelle (Nano Banana), unabhängig vom Haupt-Provider. */
+  googleKeyProvider?: () => Promise<string | undefined>;
 }
 
 interface GenerateOptions {
   model?: string;
   size?: '1024x1024' | '1536x1024' | '1024x1536';
   quality?: 'low' | 'medium' | 'high';
+}
+
+/**
+ * v1069 — Format-/Qualitäts-Mapping für Gemini-Bildmodelle (pure, testbar):
+ * gpt-image-Größen → aspectRatio; image_quality → Auflösung (nur Pro-Modelle
+ * unterstützen imageSize).
+ */
+export function geminiImageOptions(model: string, size?: string, quality?: string): { aspectRatio: string; imageSize?: string } {
+  const aspectRatio = size === '1536x1024' ? '3:2' : size === '1024x1536' ? '2:3' : '1:1';
+  const imageSize = /-pro-/.test(model) ? (quality === 'high' ? '2K' : '1K') : undefined;
+  return { aspectRatio, ...(imageSize ? { imageSize } : {}) };
 }
 
 export class ImageGenerator implements ImageGeneratorInterface {
@@ -22,10 +35,47 @@ export class ImageGenerator implements ImageGeneratorInterface {
   async generate(prompt: string, options: GenerateOptions = {}): Promise<{ data: Buffer; mimeType: string }> {
     this.logger.info({ provider: this.config.provider, model: options.model, size: options.size }, 'Generating image');
 
+    // v1069 — Routing am Modellnamen: gemini-* (Nano Banana) läuft über die
+    // Gemini-API, egal welcher Haupt-Provider konfiguriert ist. Der Key kommt
+    // lazy (LLM-Config google oder Kanal-Secret GOOGLE_API_KEY).
+    if (options.model && /^gemini-/.test(options.model)) {
+      const key = (await this.config.googleKeyProvider?.().catch(() => undefined))
+        ?? (this.config.provider === 'google' ? this.config.apiKey : undefined);
+      if (!key) {
+        throw new Error(`Gemini-Bildmodell „${options.model}" angefordert, aber kein Google-API-Key gefunden (LLM-Config google oder Secret GOOGLE_API_KEY in der Kanal-ENV-Stage).`);
+      }
+      return this.generateGemini(prompt, options.model, key, options);
+    }
     if (this.config.provider === 'openai') {
       return this.generateOpenAI(prompt, options);
     }
     return this.generateGoogle(prompt, options);
+  }
+
+  /** v1069 — Nano Banana (gemini-*-image): generateContent mit Bild-Output + imageConfig. */
+  private async generateGemini(prompt: string, model: string, apiKey: string, options: GenerateOptions): Promise<{ data: Buffer; mimeType: string }> {
+    // @ts-ignore — @google/genai is an optional peer dep (installed at runtime)
+    const { GoogleGenAI } = await import('@google/genai');
+    const genai = new GoogleGenAI({ apiKey });
+    const imageConfig = geminiImageOptions(model, options.size, options.quality);
+    const response = await genai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseModalities: ['IMAGE', 'TEXT'],
+        imageConfig,
+      },
+    });
+    const parts = response.candidates?.[0]?.content?.parts;
+    const imagePart = parts?.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+    if (!imagePart?.inlineData) {
+      const text = parts?.find((p: any) => typeof p.text === 'string')?.text;
+      throw new Error(`Gemini image generation returned no image data${text ? ` (${String(text).slice(0, 150)})` : ''}`);
+    }
+    const buffer = Buffer.from(imagePart.inlineData.data!, 'base64');
+    const mimeType = imagePart.inlineData.mimeType ?? 'image/png';
+    this.logger.info({ model, bytes: buffer.length, mimeType, ...imageConfig }, 'v1069 image generated via Gemini');
+    return { data: buffer, mimeType };
   }
 
   private async generateOpenAI(prompt: string, options: GenerateOptions): Promise<{ data: Buffer; mimeType: string }> {

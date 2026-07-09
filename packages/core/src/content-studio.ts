@@ -1981,7 +1981,9 @@ Antworte NUR mit einem JSON-Array:
       const policy = resolveImagePolicy(channel.config);
 
       // v941 — die Bildidee des Studios ist der beste Prompt (Fallback: Titel/Body)
-      let motif = motifOverride ?? idea.bildidee ?? `Social-Media-Bild für: ${idea.title || idea.body.slice(0, 150)}`;
+      // v1069 — Fallback OHNE „Social-Media-Bild": Nano Banana nahm das
+      // wörtlich und malte einen Instagram-UI-Rahmen ums Bild (Testfall 09.07.)
+      let motif = motifOverride ?? idea.bildidee ?? `Fotorealistisches Bildmotiv zum Thema: ${idea.title || idea.body.slice(0, 150)}`;
       // v950 Schicht 2 — deterministisch: Personen-Namen aus dem Motiv schrubben
       if (policy === 'symbolic') {
         const names = extractNameCandidates(idea.title, idea.body, idea.bildidee);
@@ -2006,6 +2008,11 @@ Antworte NUR mit einem JSON-Array:
         ? channel.config.image_style.trim() : undefined;
       const quality = channel.config.image_quality === 'low' || channel.config.image_quality === 'medium' || channel.config.image_quality === 'high'
         ? channel.config.image_quality : undefined;
+      // v1069 — optionales Bild-Modell je Kanal (z.B. gemini-3.1-flash-image =
+      // Nano Banana 2, gemini-3-pro-image = Nano Banana Pro); leer = Provider-
+      // Default (gpt-image-1). Der Generator routet am Modellnamen.
+      const imageModel = typeof channel.config.image_model === 'string' && channel.config.image_model.trim()
+        ? channel.config.image_model.trim() : undefined;
       const format = ContentStudio.platformImageSpec(channel);
 
       // v1041 — Termin-Vorlage: für Termin-Posts nimmt der Kanal ein festes
@@ -2051,6 +2058,7 @@ Antworte NUR mit einem JSON-Array:
           : strictRetryPrompt(visualStyle);
         const result = await this.skillSandbox.execute(skill, {
           prompt,
+          ...(imageModel ? { model: imageModel } : {}),
           ...(quality ? { quality } : {}),
           ...(format.size ? { size: format.size } : {}),
         }, { userId: this.ownerUserId, masterUserId: this.ownerUserId, platform: 'api', chatId: 'content-studio' } as never);

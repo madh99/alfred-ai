@@ -172,8 +172,9 @@ export function SocialPage() {
     familyRole: 'auto' | 'lead' | 'follow'; familyOffset: string;
     quietFrom: number; quietTo: number; newsdeskThreshold: number; newsdeskMaxPerDay: number;
     trafficMode: 'voll' | 'teaser' | 'auto';
-    // v1004 — Bild-Look je Kanal
+    // v1004 — Bild-Look je Kanal · v1069 — optionales Gemini-Bildmodell
     imageStyle: string; imageQuality: 'default' | 'low' | 'medium' | 'high';
+    imageModel: '' | 'gemini-3.1-flash-image' | 'gemini-3-pro-image';
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
     // v1026 — Ecken + Logo-Wasserzeichen (SVG inline in der Config) · v1032 — Logo-Farbe ('' = Original)
     watermarkCorner: string; logoSvg: string; logoCorner: string; logoColor: string;
@@ -194,7 +195,7 @@ export function SocialPage() {
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
-    imageStyle: '', imageQuality: 'default', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
+    imageStyle: '', imageQuality: 'default', imageModel: '', imageBranding: '', watermarkOn: true, titleOverlayOn: false,
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
@@ -552,6 +553,7 @@ export function SocialPage() {
       // v1004 — Bild-Look
       imageStyle: typeof c.config.image_style === 'string' ? c.config.image_style : '',
       imageQuality: c.config.image_quality === 'low' || c.config.image_quality === 'medium' || c.config.image_quality === 'high' ? c.config.image_quality : 'default',
+      imageModel: c.config.image_model === 'gemini-3.1-flash-image' || c.config.image_model === 'gemini-3-pro-image' ? c.config.image_model : '',
       imageBranding: typeof c.config.image_branding === 'string' ? c.config.image_branding : '',
       watermarkOn: (c.config.image_overlay as { watermark?: boolean } | undefined)?.watermark !== false && c.config.image_branding !== false,
       titleOverlayOn: (c.config.image_overlay as { title?: boolean } | undefined)?.title === true,
@@ -623,6 +625,7 @@ export function SocialPage() {
           // v1004 — Bild-Look (config wird feldweise gemergt)
           image_style: d.imageStyle.trim() || null,
           image_quality: d.imageQuality === 'default' ? null : d.imageQuality,
+          image_model: d.imageModel || null,
           image_branding: d.imageBranding.trim() || null,
           image_overlay: {
             watermark: d.watermarkOn, title: d.titleOverlayOn,
@@ -1631,6 +1634,15 @@ export function SocialPage() {
                           className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+                        <div>
+                          <label className="text-[11px] text-gray-500" title="Standard = gpt-image-1 (OpenAI). Die Gemini-Modelle nutzen den GOOGLE_API_KEY aus der Kanal-ENV-Stage: Nano Banana 2 ≈ 0,04 €/Bild (stark bei Text im Bild), Nano Banana Pro ≈ 0,13–0,25 €/Bild (Top-Qualität, high = 2K).">Bild-Modell</label>
+                          <select value={settingsDraft.imageModel} onChange={e => setSettingsDraft(d => ({ ...d, imageModel: e.target.value as '' | 'gemini-3.1-flash-image' | 'gemini-3-pro-image' }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value="">Standard (gpt-image-1)</option>
+                            <option value="gemini-3.1-flash-image">Gemini Nano Banana 2</option>
+                            <option value="gemini-3-pro-image">Gemini Nano Banana Pro</option>
+                          </select>
+                        </div>
                         <div>
                           <label className="text-[11px] text-gray-500">Qualität</label>
                           <select value={settingsDraft.imageQuality} onChange={e => setSettingsDraft(d => ({ ...d, imageQuality: e.target.value as 'default' | 'low' | 'medium' | 'high' }))}
