@@ -128,7 +128,12 @@ export class RestProvider extends SocialProvider {
    */
   private withEvent(payload: Record<string, unknown>, item: ContentItem): Record<string, unknown> {
     const beginn = typeof item.performance?.terminBis === 'string' ? item.performance.terminBis : undefined;
-    if (beginn && payload.event === undefined) {
+    // v1073 — Event-Payload nur für echte Termin-ANKÜNDIGUNGEN (art='termin'
+    // oder ohne art-Feld, Story-/Event-Pfad): Vorschauen tragen terminBis nur
+    // fürs Scheduling — sie bekamen sonst die Termin-Infobox der Plattform
+    // (Realfall 09.07.: Spiel-Vorschau als Event markiert).
+    const art = typeof item.performance?.art === 'string' ? item.performance.art : undefined;
+    if (beginn && (art === undefined || art === 'termin') && payload.event === undefined) {
       payload.event = {
         beginn,
         ort: typeof item.performance?.ort === 'string' ? item.performance.ort : null,

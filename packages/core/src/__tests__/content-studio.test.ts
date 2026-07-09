@@ -2058,3 +2058,24 @@ describe('ContentStudio — Termin-Ankündigungen (v975)', () => {
     expect(createdItems[0].title).toContain('Kanada gegen Marokko');
   });
 });
+
+describe('v1073 — Termin-Karte nur für echte Termin-Ankündigungen', () => {
+  it('isTerminAnnouncement: termin/ohne-art ja, vorschau/news nein', async () => {
+    const { isTerminAnnouncement } = await import('../content-studio.js');
+    expect(isTerminAnnouncement({ terminBis: '2026-07-09T19:00:00Z', art: 'termin' })).toBe(true);
+    expect(isTerminAnnouncement({ terminBis: '2026-07-09T19:00:00Z' })).toBe(true); // Story-/Event-Pfad ohne art
+    expect(isTerminAnnouncement({ terminBis: '2026-07-09T19:00:00Z', art: 'vorschau' })).toBe(false); // Realfall Regragui
+    expect(isTerminAnnouncement({ terminBis: '2026-07-09T19:00:00Z', art: 'news' })).toBe(false);
+    expect(isTerminAnnouncement({ art: 'termin' })).toBe(false); // ohne Zeitpunkt keine Karte
+  });
+
+  it('cleanTerminField: Platzhalter („—", n/a, tbd) werden verworfen', () => {
+    expect(ContentStudio.cleanTerminField('—', 120)).toBeUndefined();
+    expect(ContentStudio.cleanTerminField('-', 40)).toBeUndefined();
+    expect(ContentStudio.cleanTerminField(' n/a ', 40)).toBeUndefined();
+    expect(ContentStudio.cleanTerminField('TBD', 40)).toBeUndefined();
+    expect(ContentStudio.cleanTerminField('Dublin Irish Pub, Wien', 120)).toBe('Dublin Irish Pub, Wien');
+    expect(ContentStudio.cleanTerminField('19:30', 40)).toBe('19:30');
+    expect(ContentStudio.cleanTerminField(undefined, 40)).toBeUndefined();
+  });
+});

@@ -91,6 +91,18 @@ interface GeneratedIdea {
   slides?: Array<{ motiv: string; titel?: string }>;
 }
 
+/**
+ * v1073 — Ein Termin-ANKÜNDIGUNGS-Post ist nur art='termin' (oder ohne
+ * art-Feld: der Story-/Event-Pfad liefert keins). Vorschauen/News tragen
+ * terminBis NUR fürs Scheduling (Slot vor dem Ereignis, Verfall danach) —
+ * sie bekommen KEINE Termin-Karte/-Vorlage und keinen Event-Payload
+ * (Realfall 09.07.: Spiel-Vorschau mit eingebrannter „Anpfiff"-Karte
+ * samt „—"-Platzhaltern).
+ */
+export function isTerminAnnouncement(x: { terminBis?: string; art?: string }): boolean {
+  return Boolean(x.terminBis) && (x.art === undefined || x.art === 'termin');
+}
+
 /** v977 — Kommender Termin aus einer Event-Quelle (at = ISO, Ort in summary). */
 interface UpcomingEvent {
   title: string;
@@ -278,8 +290,10 @@ export function parseIdeas(text: string): GeneratedIdea[] {
           // v997 — Story-Art für die Haltbarkeits-Logik
           art: (['news', 'vorschau', 'recap', 'termin', 'evergreen'] as const).find(k => k === i.art),
           // v1003 — strukturierte Termin-Felder für die Bild-Karte
-          ort: typeof i.ort === 'string' && i.ort.trim() ? i.ort.trim().slice(0, 120) : undefined,
-          einlass: typeof i.einlass === 'string' && i.einlass.trim() ? i.einlass.trim().slice(0, 40) : undefined,
+          // v1073 — LLM-Platzhalter („—", „-", „n/a") verwerfen: sie wurden
+          // sonst als Einlass/Ort in die Termin-Karte eingebrannt (Realfall)
+          ort: ContentStudio.cleanTerminField(i.ort, 120),
+          einlass: ContentStudio.cleanTerminField(i.einlass, 40),
           // v1008 — Karussell-Slides (Motiv + kurzer Overlay-Titel)
           slides: Array.isArray(i.slides)
             ? (i.slides as Array<{ motiv?: unknown; titel?: unknown }>)
@@ -1479,8 +1493,10 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     return this.maybeGenerateImage(channel, {
       title: item.title ?? '', body: item.body, hashtags: [], warum: '', bildidee: item.bildidee,
       terminBis: typeof p.terminBis === 'string' ? p.terminBis : undefined,
-      ort: typeof p.ort === 'string' ? p.ort : undefined,
-      einlass: typeof p.einlass === 'string' ? p.einlass : undefined,
+      // v1073 — art mitgeben: nur echte Termin-Posts bekommen Karte/Vorlage
+      art: (['news', 'vorschau', 'recap', 'termin', 'evergreen'] as const).find(k => k === p.art),
+      ort: ContentStudio.cleanTerminField(p.ort, 120),
+      einlass: ContentStudio.cleanTerminField(p.einlass, 40),
     });
   }
 
@@ -1708,6 +1724,17 @@ ${this.lessonsBlock(channel)}Ein Thumbnail-Vorschlag gehört NICHT in den body, 
 ${channel.blacklist.length ? `TABU: ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem JSON-Array:
 [{"title": "Video-Titel (max 100 Zeichen)", "body": "HOOK…\\nSCRIPT…\\n---\\nBESCHREIBUNG…", "hashtags": ["tag1", "tag2"], "warum": "1 Satz warum dieses Video jetzt", "bildidee": "optional: Thumbnail-Vorschlag"}]`;
+  }
+
+  /**
+   * v1073 — Termin-Feld (ort/einlass) säubern: LLM-Platzhalter wie „—", „-",
+   * „n/a", „unbekannt" verwerfen statt sie in die Termin-Karte einzubrennen.
+   */
+  static cleanTerminField(raw: unknown, maxLen: number): string | undefined {
+    if (typeof raw !== 'string') return undefined;
+    const v = raw.trim();
+    if (!v || /^[—–\-.\s]+$/.test(v) || /^(n\/?a|tbd|unbekannt|unknown|keine? angabe)$/i.test(v)) return undefined;
+    return v.slice(0, maxLen);
   }
 
   /**
@@ -2019,7 +2046,7 @@ Antworte NUR mit einem JSON-Array:
       // Basis-Bild (config.image_overlay.termin_image = Asset-ID), die Daten
       // (Teams, Anpfiff, Ort) kommen wie immer deterministisch aus der
       // Termin-Karte. Kein Budget, kein Vision-Gate, immer gleicher Look.
-      if (forcedTitle === undefined && idea.terminBis && this.mediaDir) {
+      if (forcedTitle === undefined && isTerminAnnouncement(idea) && this.mediaDir) {
         const fromTemplate = await this.tryTerminTemplate(channel, idea, format).catch(() => undefined);
         if (fromTemplate) return fromTemplate;
       }
@@ -2405,7 +2432,9 @@ Antworte NUR mit einem JSON-Array:
     // den Datenfeldern — NIE vom Bildmodell (v982-Lektion).
     // v1008 — forcedTitle: Karussell-Slides erzwingen ihren Slide-Titel
     // (string) bzw. nur Branding (null); undefined = Automatik.
-    const termin = forcedTitle === undefined && idea.terminBis && ov.termin_card !== false ? {
+    // v1073 — Karte nur für echte Termin-Ankündigungen (nicht für Vorschauen,
+    // die terminBis nur fürs Scheduling tragen)
+    const termin = forcedTitle === undefined && idea.terminBis && isTerminAnnouncement(idea) && ov.termin_card !== false ? {
       headline: (idea.title || idea.body.slice(0, 60)).slice(0, 90),
       anpfiff: `${formatLocalDateTime(idea.terminBis)} Uhr`,
       ...(idea.einlass ? { einlass: idea.einlass } : {}),

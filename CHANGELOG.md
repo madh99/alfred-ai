@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1073] - 2026-07-09
+
+### Fixed — Termin-Karte nur noch auf echten Termin-Ankündigungen (v1073)
+
+- Spiel-Vorschauen tragen den Ereignis-Zeitpunkt (terminBis) nur für
+  die Terminierung (Post muss VOR dem Anpfiff erscheinen, verfällt
+  danach) — trotzdem bekamen sie die Termin-Karte, das
+  Termin-Vorlagenbild und auf fussball.cc die Termin-Infobox
+  (Realfall: „Regragui denkt nur an den Pokal" mit eingebrannter
+  „Anpfiff"-Karte samt „—"-Platzhaltern). Alle drei Konsumenten
+  prüfen jetzt die Beitrags-Art: Karte/Vorlage/Event-Payload gibt es
+  nur noch bei art=termin (bzw. beim Story-/Event-Pfad ohne
+  art-Feld). Zusätzlich werden LLM-Platzhalter („—", n/a, tbd) in
+  Ort/Einlass verworfen statt eingebrannt.
+
 ## [0.19.0-multi-ha.1072] - 2026-07-09
 
 ### Added — Plattform-Limits: Bilder werden automatisch passend verkleinert (v1072)
