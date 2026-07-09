@@ -114,6 +114,8 @@ export interface MediaAsset {
   format?: string;
   lastUsedAt: string;
   useCount: number;
+  /** v1072 — womit das Bild erzeugt wurde (z.B. gpt-image-1, gemini-3.1-flash-image). */
+  model?: string;
   /** v1039 — letzte Nutzung JE KANAL (channelId → ISO): der Reuse-Cooldown gilt pro Kanal, nicht global. */
   channelUses?: Record<string, string>;
   /** v1014 — von der Wiederverwendung ausgeschlossen (UI: „Sperren"). */
@@ -317,18 +319,18 @@ export class SocialRepository {
   // ── v1005 — Bild-Bibliothek (Basis-Bilder zur Wiederverwendung) ──
 
   async createMediaAsset(userId: string, input: {
-    channelId?: string; family?: string; path: string; motif: string; style?: string; format?: string;
+    channelId?: string; family?: string; path: string; motif: string; style?: string; format?: string; model?: string;
   }): Promise<MediaAsset> {
     const now = new Date().toISOString();
     const id = randomUUID();
     const channelUses = input.channelId ? { [input.channelId]: now } : undefined;
     await this.db.execute(
-      `INSERT INTO social_media_assets (id, user_id, channel_id, family, path, motif, style, format, last_used_at, use_count, channel_uses, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO social_media_assets (id, user_id, channel_id, family, path, motif, style, format, model, last_used_at, use_count, channel_uses, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
       [id, userId, input.channelId ?? null, input.family ?? null, input.path, input.motif.slice(0, 500),
-        input.style?.slice(0, 300) ?? null, input.format ?? null, now, channelUses ? JSON.stringify(channelUses) : null, now],
+        input.style?.slice(0, 300) ?? null, input.format ?? null, input.model ?? null, now, channelUses ? JSON.stringify(channelUses) : null, now],
     );
-    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, lastUsedAt: now, useCount: 1, channelUses, blocked: false, pinned: false, createdAt: now };
+    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, model: input.model, lastUsedAt: now, useCount: 1, channelUses, blocked: false, pinned: false, createdAt: now };
   }
 
   async listMediaAssets(userId: string, opts?: { family?: string; channelId?: string; limit?: number }): Promise<MediaAsset[]> {
@@ -345,6 +347,7 @@ export class SocialRepository {
       path: String(r.path), motif: String(r.motif),
       style: r.style ? String(r.style) : undefined,
       format: r.format ? String(r.format) : undefined,
+      model: r.model ? String(r.model) : undefined,
       lastUsedAt: String(r.last_used_at), useCount: Number(r.use_count ?? 1),
       channelUses: parseChannelUses(r.channel_uses),
       blocked: Number(r.blocked ?? 0) === 1, pinned: Number(r.pinned ?? 0) === 1, createdAt: String(r.created_at),

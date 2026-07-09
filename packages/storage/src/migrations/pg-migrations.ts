@@ -2056,4 +2056,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS channel_uses TEXT`, []);
     },
   },
+  {
+    version: 124,
+    description: 'v1072 — Bild-Bibliothek: model-Spalte (womit das Bild erzeugt wurde) (PG-Spiegel zu SQLite v120).',
+    async up(db) {
+      await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS model TEXT`, []);
+    },
+  },
 ];

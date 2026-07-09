@@ -1,6 +1,7 @@
 import type { SocialChannel, ContentItem, ContentMedia } from '@alfred/storage';
 import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult, type FetchedComment } from './social-provider.js';
 import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
+import { shrinkImageToLimit } from './image-overlay.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 const IG_GRAPH = 'https://graph.instagram.com/v21.0';
@@ -111,7 +112,30 @@ export class MetaProvider extends SocialProvider {
       throw new Error(`${this.platform}: Medium ist eine lokale Datei — die Plattform braucht eine öffentliche URL. `
         + `channel.config.public_media konfigurieren (Medien-Ablageort: Projekt-Medienbibliothek oder S3-Bucket) oder publish_mode 'prepare' nutzen.`);
     }
-    const url = await publishPublicMedia(cfg, media.pathOrUrl, secrets, item.title ?? undefined);
+    // v1072 — Meta akzeptiert Bilder nur bis 8 MB: übergroße (z.B. Nano
+    // Banana Pro 2K ~9 MB) vor dem Upload verkleinern; scheitert das,
+    // Original riskieren (Meta liefert dann eine klare Fehlermeldung).
+    let uploadPath = media.pathOrUrl;
+    if (media.type === 'image') {
+      try {
+        const { readFile, writeFile } = await import('node:fs/promises');
+        const bytes = await readFile(media.pathOrUrl);
+        if (bytes.length > 7_500_000) {
+          const small = await shrinkImageToLimit(bytes, 7_500_000);
+          if (small && small.mime === 'image/jpeg') {
+            const { join } = await import('node:path');
+            const { tmpdir } = await import('node:os');
+            uploadPath = join(tmpdir(), `alfred-meta-shrink-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`);
+            await writeFile(uploadPath, small.bytes);
+          }
+        }
+      } catch { /* best-effort — Original hochladen */ }
+    }
+    const url = await publishPublicMedia(cfg, uploadPath, secrets, item.title ?? undefined);
+    if (uploadPath !== media.pathOrUrl) {
+      const { unlink } = await import('node:fs/promises');
+      await unlink(uploadPath).catch(() => { /* tmp best-effort */ });
+    }
     return { ...media, pathOrUrl: url };
   }
 

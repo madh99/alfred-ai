@@ -1,5 +1,6 @@
 import type { SocialChannel, ContentItem } from '@alfred/storage';
 import { SocialProvider, composePostText, type ProviderCapabilities, type PublishResult } from './social-provider.js';
+import { shrinkImageToLimit } from './image-overlay.js';
 
 /**
  * v933 — Telegram-Kanal-Provider: postet über die Bot-API an einen Kanal.
@@ -85,12 +86,19 @@ export class TelegramChannelProvider extends SocialProvider {
     } else if (image) {
       // v942 — lokale Datei (z.B. Studio-generiert): Multipart-Upload
       const { readFile } = await import('node:fs/promises');
-      const bytes = await readFile(image.pathOrUrl);
+      let bytes: Buffer = await readFile(image.pathOrUrl);
+      let mime = 'image/png';
+      // v1072 — Telegram-Foto-Limit 10 MB: übergroße Bilder (Nano Banana
+      // Pro 2K ~9 MB) mit Reserve verkleinern; scheitert das, Original senden
+      if (bytes.length > 9_000_000) {
+        const small = await shrinkImageToLimit(bytes, 9_000_000);
+        if (small) { bytes = small.bytes; mime = small.mime; }
+      }
       const form = new FormData();
       form.append('chat_id', chatId);
       form.append('caption', caption ?? '');
       if (replyMarkup) form.append('reply_markup', JSON.stringify(replyMarkup));
-      form.append('photo', new Blob([new Uint8Array(bytes)], { type: 'image/png' }), 'photo.png');
+      form.append('photo', new Blob([new Uint8Array(bytes)], { type: mime }), mime === 'image/jpeg' ? 'photo.jpg' : 'photo.png');
       res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
     } else {
       res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {

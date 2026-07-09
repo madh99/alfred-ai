@@ -96,8 +96,16 @@ export class XProvider extends SocialProvider {
           const { readFile } = await import('node:fs/promises');
           bytes = await readFile(m.pathOrUrl);
         }
-        if (bytes.length > 5_000_000) continue; // X-Bild-Limit
-        const mime = /\.jpe?g$/i.test(m.pathOrUrl) ? 'image/jpeg' : 'image/png';
+        // v1072 — X-Bild-Limit 5 MB: übergroße Bilder (Nano Banana Pro 2K)
+        // verkleinern statt still zu überspringen; klappt das nicht → skip
+        let mime = /\.jpe?g$/i.test(m.pathOrUrl) ? 'image/jpeg' : 'image/png';
+        if (bytes.length > 4_800_000) {
+          const { shrinkImageToLimit } = await import('./image-overlay.js');
+          const small = await shrinkImageToLimit(bytes, 4_800_000);
+          if (!small) continue;
+          bytes = small.bytes;
+          mime = small.mime;
+        }
         const form = new FormData();
         form.append('media', new Blob([new Uint8Array(bytes)], { type: mime }), mime === 'image/jpeg' ? 'bild.jpg' : 'bild.png');
         let id: string | number | undefined;

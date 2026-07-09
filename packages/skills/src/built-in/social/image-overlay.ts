@@ -481,6 +481,30 @@ export async function buildVideoWatermark(
   } catch { return null; }
 }
 
+/**
+ * v1072 — Bild unter ein Plattform-Byte-Limit bringen (IG 8 MB, TG 10 MB,
+ * X 5 MB): erst JPEG-Rekodierung, dann schrittweise kleinere Kanten.
+ * Unter dem Limit → unverändert zurück. null wenn nicht erreichbar/ohne sharp
+ * (Aufrufer entscheidet: Original riskieren oder ohne Bild posten).
+ */
+export async function shrinkImageToLimit(bytes: Buffer, maxBytes: number): Promise<{ bytes: Buffer; mime: string } | null> {
+  if (bytes.length <= maxBytes) return { bytes, mime: 'image/png' };
+  try {
+    const sharp = await loadSharp();
+    if (!sharp) return null;
+    const s = sharp as unknown as (i: Buffer) => {
+      resize(o: Record<string, unknown>): { jpeg(o: Record<string, unknown>): { toBuffer(): Promise<Buffer> } };
+    };
+    for (const edge of [2048, 1600, 1280, 1080]) {
+      const out: Buffer = await s(bytes).resize({ width: edge, height: edge, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+      if (out.length <= maxBytes) return { bytes: Buffer.from(out), mime: 'image/jpeg' };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** v1004 — Bild auf ein Ziel-Seitenverhältnis zuschneiden (zentriert), z.B. Instagram 4:5. */
 export async function cropToRatio(png: Buffer, ratioW: number, ratioH: number): Promise<Buffer> {
   try {

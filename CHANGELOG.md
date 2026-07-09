@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1072] - 2026-07-09
+
+### Added — Plattform-Limits: Bilder werden automatisch passend verkleinert (v1072)
+
+- Übergroße Bilder (z.B. Nano Banana Pro in 2K, ~9 MB) werden beim
+  Veröffentlichen automatisch unter das Limit der Plattform gebracht:
+  Instagram/Facebook 8 MB, Telegram 10 MB, X 5 MB (dort wurden zu
+  große Bilder bisher still weggelassen). Das gespeicherte Original
+  bleibt in voller Auflösung; verkleinert wird nur die hochgeladene
+  Kopie (JPEG, schrittweise kleinere Kanten). Bluesky hatte sein
+  1-MB-Handling schon.
+
+### Added — Bild-Bibliothek zeigt das Erzeugungs-Modell (v1072)
+
+- Jede Bibliothekskarte zeigt jetzt, womit das Basis-Bild erzeugt
+  wurde (gpt-image-1, Nano Banana 2, Nano Banana Pro). Neue Spalte
+  in der Bild-Bibliothek (Migration SQLite v120 / PG v124);
+  Altbestand ohne Angabe bleibt einfach ohne Label.
+
 ## [0.19.0-multi-ha.1071] - 2026-07-09
 
 ### Fixed — Vision-Gate akzeptiert große Bilder (Nano Banana Pro 2K) (v1071)

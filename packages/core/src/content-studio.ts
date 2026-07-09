@@ -2153,6 +2153,8 @@ Antworte NUR mit einem JSON-Array:
               await this.socialRepo.createMediaAsset(this.ownerUserId, {
                 channelId: channel.id, family: ContentStudio.familyKey(channel) ?? undefined,
                 path: assetFile, motif: libraryMotif, style, format: format.size ?? 'square',
+                // v1072 — womit das Bild erzeugt wurde (Bibliothek-Anzeige)
+                model: imageModel ?? 'gpt-image-1',
               });
             }
           } catch { /* Bibliothek ist best-effort */ }

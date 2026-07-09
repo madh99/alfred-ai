@@ -2748,4 +2748,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE social_media_assets ADD COLUMN channel_uses TEXT`);
     },
   },
+  {
+    version: 120,
+    description: 'v1072 — Bild-Bibliothek: model-Spalte (womit das Bild erzeugt wurde, z.B. gpt-image-1/Nano Banana) (SQLite-Spiegel zu PG v124).',
+    up(db) {
+      db.exec(`ALTER TABLE social_media_assets ADD COLUMN model TEXT`);
+    },
+  },
 ];

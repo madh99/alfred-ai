@@ -2070,6 +2070,8 @@ export function SocialPage() {
                     )}
                     <div className="text-[9px] text-gray-600">
                       {a.channelName ?? 'Familie'} · {a.format ?? 'square'} · {a.useCount}× · zuletzt {new Date(a.lastUsedAt).toLocaleDateString('de-AT')}
+                      {/* v1072 — womit das Bild erzeugt wurde (Altbestand ohne Angabe bleibt leer) */}
+                      {a.model && <span className="text-sky-500"> · {a.model === 'gemini-3.1-flash-image' ? 'Nano Banana 2' : a.model === 'gemini-3-pro-image' ? 'Nano Banana Pro' : a.model}</span>}
                       {a.blocked && <span className="text-red-400"> · GESPERRT</span>}
                       {a.pinned && <span className="text-emerald-400"> · 📌 STAMM</span>}
                     </div>

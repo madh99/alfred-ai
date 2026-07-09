@@ -2851,6 +2851,8 @@ export interface SocialAssetItem {
   lastUsedAt: string;
   useCount: number;
   blocked: boolean;
+  /** v1072 — womit das Bild erzeugt wurde */
+  model?: string;
   /** v1038 — Stamm-Bild: bevorzugter Wiederverwendungs-Pool */
   pinned?: boolean;
   createdAt: string;

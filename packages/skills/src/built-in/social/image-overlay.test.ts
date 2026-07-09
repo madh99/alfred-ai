@@ -107,6 +107,27 @@ describe('image-overlay (v1002)', () => {
     expect(stack!.equals(split!)).toBe(false);
   });
 
+  it('v1072: shrinkImageToLimit — klein bleibt unverändert, groß wird JPEG unter dem Limit', async () => {
+    const { shrinkImageToLimit } = await import('./image-overlay.js');
+    const small = await makeTestPng(200, 200);
+    const keep = await shrinkImageToLimit(small, 1_000_000);
+    expect(keep?.bytes.equals(small)).toBe(true); // unter dem Limit: Original
+    // großes, schwer komprimierbares Bild (Rauschen) über ein kleines Limit drücken
+    const sharp = await loadSharp();
+    const noise = Buffer.alloc(1200 * 1200 * 3);
+    let seed = 42; // LCG-Rauschen (obere Bits), weichgezeichnet = fotoähnlich:
+    // PNG bleibt groß, JPEG komprimiert stark — wie echte Studio-Bilder
+    for (let i = 0; i < noise.length; i++) { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; noise[i] = (seed >>> 16) & 0xff; }
+    const big: Buffer = await (sharp as any)(noise, { raw: { width: 1200, height: 1200, channels: 3 } }).blur(6).png().toBuffer();
+    expect(big.length).toBeGreaterThan(300_000);
+    const shrunk = await shrinkImageToLimit(big, 300_000);
+    expect(shrunk).not.toBeNull();
+    expect(shrunk!.mime).toBe('image/jpeg');
+    expect(shrunk!.bytes.length).toBeLessThanOrEqual(300_000);
+    // unerreichbares Limit → null (Aufrufer entscheidet)
+    expect(await shrinkImageToLimit(big, 5_000)).toBeNull();
+  });
+
   it('v1058: bakeReelEndCard — abgedunkeltes Bild + CTA-Pille, gleiche Maße', async () => {
     const png = await makeTestPng(400, 700);
     const out = await bakeReelEndCard(png, 'Ganzer Artikel auf fussball.cc', 'fussball.cc');
