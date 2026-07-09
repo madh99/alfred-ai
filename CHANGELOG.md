@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1067] - 2026-07-09
+
+### Added — Dauer-Branding: Anordnung wählbar (v1067)
+
+- Bei „Text + Logo" ist die Anordnung jetzt einstellbar: **Block**
+  (Logo mit zentriertem Text darunter, eine Ecke — Standard), **Block
+  mit Breiten-Angleich** (Text wird exakt auf die Logo-Breite
+  skaliert) oder **getrennt positionieren** (Text und Logo bekommen
+  je eine eigene Ecke, wie bei den Bildern). Neue Config-Schlüssel
+  `reel_watermark_layout` und `reel_watermark_logo_corner`; die UI
+  zeigt die Auswahl nur bei „Text + Logo".
+
 ## [0.19.0-multi-ha.1066] - 2026-07-09
 
 ### Added — Dauer-Branding im Reel (v1066, Opt-in)

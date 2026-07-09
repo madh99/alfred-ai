@@ -410,26 +410,74 @@ export async function applyImageOverlays(png: Buffer, spec: OverlaySpec): Promis
 }
 
 /**
- * v1066 — Dauer-Branding-Ebene fürs Video (TV-Bug-Stil): transparentes PNG in
- * Zielgröße mit Text-Wasserzeichen und/oder Logo in der gewählten Ecke —
- * dieselben Helfer/Größen wie bei den Bildern. null bei Fehler/ohne sharp.
+ * v1066/v1067 — Dauer-Branding-Ebene fürs Video (TV-Bug-Stil): transparentes
+ * PNG in Zielgröße. Bei Text+Logo drei Anordnungen: 'stack' (Block: Logo über
+ * Text, eine Ecke), 'stack_fit' (wie stack, Text auf Logo-Breite skaliert),
+ * 'split' (Text und Logo unabhängig positioniert wie bei den Bildern).
+ * null bei Fehler/ohne sharp.
  */
 export async function buildVideoWatermark(
   width: number, height: number,
-  spec: { branding?: string; logo?: LogoOverlay; corner?: OverlayCorner },
+  spec: {
+    branding?: string; logo?: LogoOverlay; corner?: OverlayCorner;
+    layout?: 'stack' | 'stack_fit' | 'split';
+    /** split: eigene Ecke fürs Logo (Text nutzt corner). */
+    logoCorner?: OverlayCorner;
+  },
 ): Promise<Buffer | null> {
   if (!spec.branding && !spec.logo?.svg) return null;
   try {
     const sharp = await loadSharp();
     if (!sharp) return null;
-    const blank = await (sharp as unknown as (o: object) => { png(): { toBuffer(): Promise<Buffer> } })(
-      { create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } },
-    ).png().toBuffer();
-    const out = await applyImageOverlays(blank, {
-      ...(spec.branding ? { branding: spec.branding, brandingCorner: spec.corner ?? 'bottom-right' } : {}),
-      ...(spec.logo?.svg ? { logo: { ...spec.logo, corner: spec.corner ?? spec.logo.corner ?? 'bottom-right' } } : {}),
+    const s = sharp as unknown as ((i?: Buffer | object) => {
+      png(): { toBuffer(): Promise<Buffer> };
+      trim(): { toBuffer(o: { resolveWithObject: true }): Promise<{ data: Buffer; info: { width: number; height: number } }> };
+      resize(o: object): { png(): { toBuffer(): Promise<Buffer> } };
+      metadata(): Promise<{ width?: number; height?: number }>;
+      composite(l: Array<{ input: Buffer; top: number; left: number }>): { png(): { toBuffer(): Promise<Buffer> } };
     });
-    return out === blank ? null : out;
+    const blank = await s({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer();
+    const both = Boolean(spec.branding && spec.logo?.svg);
+    const layout = both ? (spec.layout ?? 'stack') : 'split';
+    if (layout === 'split') {
+      // Einzel-Modi + getrennte Positionierung: unabhängige Ebenen wie v1066
+      const out = await applyImageOverlays(blank, {
+        ...(spec.branding ? { branding: spec.branding, brandingCorner: spec.corner ?? 'bottom-right' } : {}),
+        ...(spec.logo?.svg ? { logo: { ...spec.logo, corner: spec.logoCorner ?? spec.corner ?? spec.logo.corner ?? 'bottom-right' } } : {}),
+      });
+      return out === blank ? null : out;
+    }
+    // v1067 — Block-Anordnung: Logo + Text als EINE Einheit in der Ecke
+    const pad = Math.round(width * 0.035);
+    const corner = spec.corner ?? 'bottom-right';
+    const markup = spec.logo!.color ? recolorSvg(spec.logo!.svg, spec.logo!.color) : spec.logo!.svg;
+    const logoBuf = await s(Buffer.from(markup)).resize({ width: Math.round(width * 0.13), fit: 'inside' }).png().toBuffer();
+    const lm = await s(logoBuf).metadata();
+    const logoW = lm.width ?? 0;
+    const logoH = lm.height ?? 0;
+    if (logoW <= 0 || logoH <= 0) return null;
+    // Text als getrimmtes PNG (echte Ink-Breite, Stil wie das Bild-Wasserzeichen)
+    let textSize = Math.max(14, Math.round(width / 42));
+    const renderText = async (size: number) => {
+      const cw = Math.max(64, Math.round(spec.branding!.length * size * 1.4));
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${cw}" height="${size * 3}"><text x="${size}" y="${size * 2}" font-family="DejaVu Sans" font-size="${size}" font-weight="bold" fill="#ffffff" fill-opacity="0.85" stroke="#000000" stroke-opacity="0.45" stroke-width="${Math.max(1, Math.round(size / 12))}" paint-order="stroke">${escapeXml(stripPictographs(spec.branding!))}</text></svg>`;
+      return s(Buffer.from(svg)).trim().toBuffer({ resolveWithObject: true });
+    };
+    let text = await renderText(textSize);
+    if (layout === 'stack_fit' && text.info.width > 0) {
+      // Text auf Logo-Breite angleichen (Fontmetriken skalieren linear)
+      textSize = Math.max(10, Math.round(textSize * (logoW / text.info.width)));
+      text = await renderText(textSize);
+    }
+    const gap = Math.round(textSize / 3);
+    const blockW = Math.max(logoW, text.info.width);
+    const blockH = logoH + gap + text.info.height;
+    const left = corner.endsWith('right') ? width - blockW - pad : pad;
+    const top = corner.startsWith('top') ? pad : height - blockH - pad;
+    return await s(blank).composite([
+      { input: logoBuf, top, left: left + Math.round((blockW - logoW) / 2) },
+      { input: text.data, top: top + logoH + gap, left: left + Math.round((blockW - text.info.width) / 2) },
+    ]).png().toBuffer();
   } catch { return null; }
 }
 

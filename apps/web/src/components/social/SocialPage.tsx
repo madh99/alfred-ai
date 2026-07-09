@@ -187,7 +187,9 @@ export function SocialPage() {
     reelMaxPerWeek: number; reelCtaText: string; reelMusicOn: boolean; reelMusicVolume: string;
     reelAiClips: 0 | 1 | 2; reelAiProvider: 'sora' | 'runway' | 'veo'; reelAiModel: string; aiClipBudget: number;
     // v1066 — Dauer-Branding im Video (TV-Bug): aus|text|logo|both + Ecke
+    // v1067 — Anordnung bei Text+Logo (Block/Block+Angleich/getrennt) + Logo-Ecke
     reelWatermark: 'aus' | 'text' | 'logo' | 'both'; reelWatermarkCorner: string;
+    reelWatermarkLayout: 'stack' | 'stack_fit' | 'split'; reelWatermarkLogoCorner: string;
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
@@ -197,7 +199,8 @@ export function SocialPage() {
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
     reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8,
-    reelWatermark: 'aus', reelWatermarkCorner: 'bottom-right', formate: [] });
+    reelWatermark: 'aus', reelWatermarkCorner: 'bottom-right',
+    reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v1024 — Ad-hoc-Story („Story anstoßen"): Stoff → Beiträge auf allen Familien-Kanälen
@@ -570,9 +573,11 @@ export function SocialPage() {
       reelAiProvider: c.config.reel_ai_provider === 'runway' || c.config.reel_ai_provider === 'veo' ? c.config.reel_ai_provider : 'sora',
       reelAiModel: typeof c.config.reel_ai_model === 'string' ? c.config.reel_ai_model : '',
       aiClipBudget: typeof c.config.ai_clip_budget_per_month === 'number' ? c.config.ai_clip_budget_per_month : 8,
-      // v1066 — Dauer-Branding
+      // v1066 — Dauer-Branding · v1067 — Anordnung + Logo-Ecke
       reelWatermark: c.config.reel_watermark === 'text' || c.config.reel_watermark === 'logo' || c.config.reel_watermark === 'both' ? c.config.reel_watermark : 'aus',
       reelWatermarkCorner: typeof c.config.reel_watermark_corner === 'string' ? c.config.reel_watermark_corner : 'bottom-right',
+      reelWatermarkLayout: c.config.reel_watermark_layout === 'stack_fit' || c.config.reel_watermark_layout === 'split' ? c.config.reel_watermark_layout : 'stack',
+      reelWatermarkLogoCorner: typeof c.config.reel_watermark_logo_corner === 'string' ? c.config.reel_watermark_logo_corner : 'top-left',
       formate: Array.isArray(c.config.formate)
         ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
           .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
@@ -639,6 +644,9 @@ export function SocialPage() {
           // v1066 — Dauer-Branding (aus = Schlüssel löschen = Standard wie bisher)
           reel_watermark: d.reelWatermark === 'aus' ? null : d.reelWatermark,
           reel_watermark_corner: d.reelWatermark !== 'aus' && d.reelWatermarkCorner !== 'bottom-right' ? d.reelWatermarkCorner : null,
+          // v1067 — Anordnung bei Text+Logo + eigene Logo-Ecke bei „getrennt"
+          reel_watermark_layout: d.reelWatermark === 'both' && d.reelWatermarkLayout !== 'stack' ? d.reelWatermarkLayout : null,
+          reel_watermark_logo_corner: d.reelWatermark === 'both' && d.reelWatermarkLayout === 'split' && d.reelWatermarkLogoCorner !== 'top-left' ? d.reelWatermarkLogoCorner : null,
           // v1012 — Serien-Formate
           formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
             ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
@@ -1521,15 +1529,38 @@ export function SocialPage() {
                             <option value="both">Text + Logo dauerhaft</option>
                           </select>
                         </div>
+                        {settingsDraft.reelWatermark === 'both' && (
+                          <div>
+                            <label className="text-[11px] text-gray-500" title="Block: Logo mit Text darunter als eine Einheit. Angeglichen: zusätzlich wird der Text exakt auf die Logo-Breite skaliert. Getrennt: Text und Logo bekommen je eine eigene Ecke (wie bei den Bildern).">Anordnung</label>
+                            <select value={settingsDraft.reelWatermarkLayout} onChange={e => setSettingsDraft(d => ({ ...d, reelWatermarkLayout: e.target.value as 'stack' | 'stack_fit' | 'split' }))}
+                              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                              <option value="stack">Block — Logo über Text</option>
+                              <option value="stack_fit">Block — Text auf Logo-Breite angeglichen</option>
+                              <option value="split">getrennt positionieren</option>
+                            </select>
+                          </div>
+                        )}
                         {settingsDraft.reelWatermark !== 'aus' && (
                           <div>
-                            <label className="text-[11px] text-gray-500">Position</label>
+                            <label className="text-[11px] text-gray-500">{settingsDraft.reelWatermark === 'both' && settingsDraft.reelWatermarkLayout === 'split' ? 'Position Text' : 'Position'}</label>
                             <select value={settingsDraft.reelWatermarkCorner} onChange={e => setSettingsDraft(d => ({ ...d, reelWatermarkCorner: e.target.value }))}
                               className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
                               <option value="bottom-right">unten rechts</option>
                               <option value="bottom-left">unten links</option>
                               <option value="top-right">oben rechts</option>
                               <option value="top-left">oben links</option>
+                            </select>
+                          </div>
+                        )}
+                        {settingsDraft.reelWatermark === 'both' && settingsDraft.reelWatermarkLayout === 'split' && (
+                          <div>
+                            <label className="text-[11px] text-gray-500">Position Logo</label>
+                            <select value={settingsDraft.reelWatermarkLogoCorner} onChange={e => setSettingsDraft(d => ({ ...d, reelWatermarkLogoCorner: e.target.value }))}
+                              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                              <option value="top-left">oben links</option>
+                              <option value="top-right">oben rechts</option>
+                              <option value="bottom-left">unten links</option>
+                              <option value="bottom-right">unten rechts</option>
                             </select>
                           </div>
                         )}

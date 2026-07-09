@@ -1135,10 +1135,16 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       if (wmMode) {
         const overlayCfg = (ig.config.image_overlay ?? {}) as { logo?: { svg?: string; corner?: string; color?: string } };
         const corner = parseOverlayCorner(ig.config.reel_watermark_corner, 'bottom-right');
+        // v1067 — Anordnung bei Text+Logo: stack (Block) | stack_fit (Text auf
+        // Logo-Breite) | split (getrennte Ecken wie bei den Bildern)
+        const layoutRaw = ig.config.reel_watermark_layout;
+        const layout = layoutRaw === 'stack_fit' || layoutRaw === 'split' ? layoutRaw : 'stack';
         const wm = await buildVideoWatermark(1080, 1920, {
           ...(wmMode !== 'logo' && branding ? { branding } : {}),
           ...(wmMode !== 'text' && overlayCfg.logo?.svg ? { logo: { svg: overlayCfg.logo.svg, ...(overlayCfg.logo.color ? { color: overlayCfg.logo.color } : {}) } } : {}),
           corner,
+          layout,
+          ...(layout === 'split' ? { logoCorner: parseOverlayCorner(ig.config.reel_watermark_logo_corner, 'top-left') } : {}),
         });
         if (wm) {
           overlayImage = join(tmpdir(), `alfred-reel-wm-${leadItem.id.slice(0, 8)}.png`);

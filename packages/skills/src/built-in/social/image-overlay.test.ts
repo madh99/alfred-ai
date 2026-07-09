@@ -90,6 +90,23 @@ describe('image-overlay (v1002)', () => {
     expect(await buildVideoWatermark(540, 960, {})).toBeNull(); // nichts zu zeigen
   });
 
+  it('v1067: Text+Logo — Block, Block mit Breiten-Angleich und getrennte Ecken', async () => {
+    const logo = { svg: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="60"><rect width="100" height="60" fill="#00aa00"/></svg>' };
+    const stack = await buildVideoWatermark(540, 960, { branding: 'fussball.cc', logo, corner: 'bottom-right', layout: 'stack' });
+    const fit = await buildVideoWatermark(540, 960, { branding: 'fussball.cc', logo, corner: 'bottom-right', layout: 'stack_fit' });
+    const split = await buildVideoWatermark(540, 960, { branding: 'fussball.cc', logo, corner: 'bottom-right', layout: 'split', logoCorner: 'top-left' });
+    for (const b of [stack, fit, split]) {
+      expect(b).toBeInstanceOf(Buffer);
+      const sharp = await loadSharp();
+      const meta = await (sharp as any)(b).metadata();
+      expect(meta.width).toBe(540);
+      expect(meta.height).toBe(960);
+    }
+    // drei Anordnungen = drei unterschiedliche Ergebnisse
+    expect(stack!.equals(fit!)).toBe(false);
+    expect(stack!.equals(split!)).toBe(false);
+  });
+
   it('v1058: bakeReelEndCard — abgedunkeltes Bild + CTA-Pille, gleiche Maße', async () => {
     const png = await makeTestPng(400, 700);
     const out = await bakeReelEndCard(png, 'Ganzer Artikel auf fussball.cc', 'fussball.cc');
