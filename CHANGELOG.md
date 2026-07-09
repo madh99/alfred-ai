@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.1073] - 2026-07-09
+## [0.19.0-multi-ha.1074] - 2026-07-09
 
 ### Added — Bild-Regie, Stil-Vorlagen und Stil-Referenz (v1074)
 
@@ -22,6 +22,8 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   Stamm-Bilder (📌) aus der Bild-Bibliothek gehen als Look-Vorlage in
   die Generierung — Farbwelt/Licht/Bildsprache bleiben konsistent,
   das Motiv ist neu. Live verifiziert.
+
+## [0.19.0-multi-ha.1073] - 2026-07-09
 
 ### Fixed — Termin-Karte nur noch auf echten Termin-Ankündigungen (v1073)
 
