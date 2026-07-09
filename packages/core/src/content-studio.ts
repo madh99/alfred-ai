@@ -2081,8 +2081,12 @@ Antworte NUR mit einem JSON-Array:
         await this.socialRepo.incrementMetric(channel.id, { date: new Date().toISOString().slice(0, 10), kind: 'gen_image' });
 
         // v942 — image_generate liefert das Bild als Buffer-Attachment
-        const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string }> }).attachments?.[0];
+        const attachment = (result as { attachments?: Array<{ data?: unknown; fileName?: string; mimeType?: string }> }).attachments?.[0];
         const buffer = attachment?.data && Buffer.isBuffer(attachment.data) ? attachment.data : undefined;
+        // v1070 — echten MIME-Type ans Vision-Gate durchreichen: der feste
+        // PNG-Default ließ das Gate bei Gemini-JPEGs fail-closed verwerfen
+        const attachMime = typeof attachment?.mimeType === 'string' && attachment.mimeType.startsWith('image/')
+          ? attachment.mimeType : 'image/png';
 
         // v1043 — fail-closed OHNE Buffer: liefert der Skill nur eine URL,
         // können weder Vision-Gate (Bildnisrecht!) noch Crop/Overlays laufen —
@@ -2100,7 +2104,7 @@ Antworte NUR mit einem JSON-Array:
 
         // v950 Schicht 3 — Vision-Output-Gate (nur symbolic; fail-closed bei Ausfall)
         if (policy === 'symbolic' && buffer) {
-          const verdict = await verifyImagePolicy(this.llm, buffer);
+          const verdict = await verifyImagePolicy(this.llm, buffer, attachMime);
           if (verdict === null) {
             this.logger.warn({ channel: channel.name }, 'v950 vision check unavailable — Bild verworfen (fail-closed)');
             return [];

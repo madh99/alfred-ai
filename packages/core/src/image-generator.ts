@@ -72,8 +72,23 @@ export class ImageGenerator implements ImageGeneratorInterface {
       const text = parts?.find((p: any) => typeof p.text === 'string')?.text;
       throw new Error(`Gemini image generation returned no image data${text ? ` (${String(text).slice(0, 150)})` : ''}`);
     }
-    const buffer = Buffer.from(imagePart.inlineData.data!, 'base64');
-    const mimeType = imagePart.inlineData.mimeType ?? 'image/png';
+    let buffer = Buffer.from(imagePart.inlineData.data!, 'base64');
+    let mimeType = imagePart.inlineData.mimeType ?? 'image/png';
+    // v1070 — auf PNG normalisieren: Gemini liefert JPEG, die nachgelagerte
+    // Pipeline (Vision-Gate, studio-*.png-Dateien, Overlays) nimmt PNG an —
+    // das Vision-Gate verwarf JPEG-Bytes mit PNG-Etikett fail-closed
+    // (Realfall 09.07.). Ohne sharp bleibt JPEG mit EHRLICHEM mimeType.
+    if (mimeType !== 'image/png') {
+      try {
+        const { loadSharp } = await import('@alfred/skills');
+        const sharp = await loadSharp();
+        if (sharp) {
+          const png = await (sharp as unknown as (i: Buffer) => { png(): { toBuffer(): Promise<Buffer> } })(buffer).png().toBuffer();
+          buffer = Buffer.from(png);
+          mimeType = 'image/png';
+        }
+      } catch { /* best-effort — ehrlicher mimeType reicht dem Gate (v1070) */ }
+    }
     this.logger.info({ model, bytes: buffer.length, mimeType, ...imageConfig }, 'v1069 image generated via Gemini');
     return { data: buffer, mimeType };
   }
