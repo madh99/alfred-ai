@@ -409,6 +409,30 @@ export async function applyImageOverlays(png: Buffer, spec: OverlaySpec): Promis
   }
 }
 
+/**
+ * v1066 — Dauer-Branding-Ebene fürs Video (TV-Bug-Stil): transparentes PNG in
+ * Zielgröße mit Text-Wasserzeichen und/oder Logo in der gewählten Ecke —
+ * dieselben Helfer/Größen wie bei den Bildern. null bei Fehler/ohne sharp.
+ */
+export async function buildVideoWatermark(
+  width: number, height: number,
+  spec: { branding?: string; logo?: LogoOverlay; corner?: OverlayCorner },
+): Promise<Buffer | null> {
+  if (!spec.branding && !spec.logo?.svg) return null;
+  try {
+    const sharp = await loadSharp();
+    if (!sharp) return null;
+    const blank = await (sharp as unknown as (o: object) => { png(): { toBuffer(): Promise<Buffer> } })(
+      { create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } },
+    ).png().toBuffer();
+    const out = await applyImageOverlays(blank, {
+      ...(spec.branding ? { branding: spec.branding, brandingCorner: spec.corner ?? 'bottom-right' } : {}),
+      ...(spec.logo?.svg ? { logo: { ...spec.logo, corner: spec.corner ?? spec.logo.corner ?? 'bottom-right' } } : {}),
+    });
+    return out === blank ? null : out;
+  } catch { return null; }
+}
+
 /** v1004 — Bild auf ein Ziel-Seitenverhältnis zuschneiden (zentriert), z.B. Instagram 4:5. */
 export async function cropToRatio(png: Buffer, ratioW: number, ratioH: number): Promise<Buffer> {
   try {

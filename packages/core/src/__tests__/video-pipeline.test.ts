@@ -76,6 +76,20 @@ describe('buildReelFilterGraph (v1058)', () => {
     expect(g.totalSec).toBe(10);
   });
 
+  it('v1066: Dauer-Branding-Ebene liegt über allem (overlay als letzter Schritt)', () => {
+    const g = buildReelFilterGraph({
+      slides: [{ motion: 'in', durationSec: 8 }, { motion: 'out', durationSec: 8 }],
+      width: 1080, height: 1920, srtPathEscaped: '/tmp/s.srt', overlayInputIndex: 5,
+    });
+    expect(g.filterComplex).toContain('[5:v]scale=1080:1920[wm]');
+    expect(g.filterComplex).toContain('[vpre][wm]overlay=0:0[vout]');
+    expect(g.filterComplex.indexOf('subtitles')).toBeLessThan(g.filterComplex.indexOf('overlay=')); // Branding ÜBER den Untertiteln
+    expect(g.outLabel).toBe('[vout]');
+    // ohne Overlay-Index: unverändert direkt auf [vout]
+    const g2 = buildReelFilterGraph({ slides: [{ motion: 'in', durationSec: 8 }], width: 1080, height: 1920 });
+    expect(g2.filterComplex).not.toContain('overlay=');
+  });
+
   it('v1060: KI-Clip-Slide — kein Ken-Burns, Trim + tpad für die Blende, xfade-Kette bleibt', () => {
     const g = buildReelFilterGraph({
       slides: [

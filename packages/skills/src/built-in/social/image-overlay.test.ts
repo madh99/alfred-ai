@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyImageOverlays, bakeReelEndCard, buildOverlaySvg, cropToRatio, escapeXml, resolveImageBranding, wrapText, loadSharp } from './image-overlay.js';
+import { applyImageOverlays, bakeReelEndCard, buildOverlaySvg, buildVideoWatermark, cropToRatio, escapeXml, resolveImageBranding, wrapText, loadSharp } from './image-overlay.js';
 import type { SocialChannel } from '@alfred/storage';
 
 function makeChannel(overrides: Partial<SocialChannel> = {}): SocialChannel {
@@ -77,6 +77,17 @@ describe('image-overlay (v1002)', () => {
     const rects = [...over.matchAll(/<rect x="(\d+)"[^>]*width="(\d+)"/g)];
     for (const m of rects) expect(Number(m[1]) + Number(m[2])).toBeLessThanOrEqual(1000);
     expect(over).toMatch(/font-size="2[0-9]"/); // von 59 deutlich verkleinert
+  });
+
+  it('v1066: buildVideoWatermark — transparente Ebene mit Branding, null ohne Inhalt', async () => {
+    const wm = await buildVideoWatermark(540, 960, { branding: 'fussball.cc', corner: 'top-left' });
+    expect(wm).toBeInstanceOf(Buffer);
+    const sharp = await loadSharp();
+    const meta = await (sharp as any)(wm).metadata();
+    expect(meta.width).toBe(540);
+    expect(meta.height).toBe(960);
+    expect(meta.channels).toBe(4); // Alpha bleibt erhalten (transparente Ebene)
+    expect(await buildVideoWatermark(540, 960, {})).toBeNull(); // nichts zu zeigen
   });
 
   it('v1058: bakeReelEndCard — abgedunkeltes Bild + CTA-Pille, gleiche Maße', async () => {

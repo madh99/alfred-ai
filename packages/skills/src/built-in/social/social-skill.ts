@@ -7,7 +7,7 @@ import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, is
 import { tlsFetch } from './tls-fetch.js';
 import { createHash } from 'node:crypto';
 import { isNearDuplicateTitle } from './dedup.js';
-import { applyImageOverlays, bakeReelEndCard, cropToRatio, resolveImageBranding } from './image-overlay.js';
+import { applyImageOverlays, bakeReelEndCard, buildVideoWatermark, cropToRatio, parseOverlayCorner, resolveImageBranding } from './image-overlay.js';
 import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
 /** v1009 — Ergebnis eines Kommentar-Einsammel-Laufs je Kanal (inkl. Copilot-Triage). */
@@ -168,7 +168,7 @@ export class SocialSkill extends Skill {
   /** v938 — Video-Pipeline (Slideshow-Renderer + ffprobe-Check, vom Kern injiziert). */
   private videoTools?: {
     // v1058 — opts: Hook-Karte (intro) und End-Card (outro) fürs Reel
-    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }> }) => Promise<{ videoPath: string; durationSec: number }>;
+    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }>; overlayImage?: string }) => Promise<{ videoPath: string; durationSec: number }>;
     /** v1060 — Stufe 3: Image-to-Video-Clip (Sora/Runway/Veo, kostenpflichtig). */
     generateClip?: (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => Promise<{ clipPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
@@ -1099,7 +1099,13 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
     // scheitert die Backerei, rendert das Reel schlicht ohne die Karten.
     let introImage: string | undefined;
     let outroImage: string | undefined;
+    let overlayImage: string | undefined;
     const tmpFiles: string[] = [];
+    // v1066 — Dauer-Branding (Opt-in): reel_watermark 'text'|'logo'|'both',
+    // Ecke wie beim Bild. Aktiv → Branding NICHT zusätzlich in Hook/End-Card
+    // einbrennen (stünde sonst doppelt im Bild).
+    const wmRaw = ig.config.reel_watermark;
+    const wmMode = wmRaw === 'text' || wmRaw === 'logo' || wmRaw === 'both' ? wmRaw : undefined;
     try {
       const { readFile, writeFile } = await import('node:fs/promises');
       const { join } = await import('node:path');
@@ -1114,7 +1120,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       // v1065 — engerer Umbruch: gestaffelte kurze Boxen statt bildbreiter
       // Balken-Zeile (Realfall: 27-Zeichen-Zeile = 88% Bildbreite wirkte
       // wie ein durchgehender Balken).
-      const hook = await applyImageOverlays(first, { title: hookTitle, titleMaxWidthRatio: 0.75, ...(branding ? { branding } : {}) });
+      const hook = await applyImageOverlays(first, { title: hookTitle, titleMaxWidthRatio: 0.75, ...(branding && !wmMode ? { branding } : {}) });
       introImage = join(tmpdir(), `alfred-reel-hook-${leadItem.id.slice(0, 8)}.png`);
       await writeFile(introImage, hook);
       tmpFiles.push(introImage);
@@ -1122,13 +1128,28 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
         ? ig.config.reel_cta_text.trim()
         : `Ganzer Artikel auf ${branding ?? 'unserer Seite'}`;
       const last = await cropToRatio(await readFile(images[images.length - 1]), 9, 16);
-      const endCard = await bakeReelEndCard(last, ctaText, branding);
+      const endCard = await bakeReelEndCard(last, ctaText, wmMode ? undefined : branding);
       outroImage = join(tmpdir(), `alfred-reel-end-${leadItem.id.slice(0, 8)}.png`);
       await writeFile(outroImage, endCard);
       tmpFiles.push(outroImage);
+      if (wmMode) {
+        const overlayCfg = (ig.config.image_overlay ?? {}) as { logo?: { svg?: string; corner?: string; color?: string } };
+        const corner = parseOverlayCorner(ig.config.reel_watermark_corner, 'bottom-right');
+        const wm = await buildVideoWatermark(1080, 1920, {
+          ...(wmMode !== 'logo' && branding ? { branding } : {}),
+          ...(wmMode !== 'text' && overlayCfg.logo?.svg ? { logo: { svg: overlayCfg.logo.svg, ...(overlayCfg.logo.color ? { color: overlayCfg.logo.color } : {}) } } : {}),
+          corner,
+        });
+        if (wm) {
+          overlayImage = join(tmpdir(), `alfred-reel-wm-${leadItem.id.slice(0, 8)}.png`);
+          await writeFile(overlayImage, wm);
+          tmpFiles.push(overlayImage);
+        }
+      }
     } catch {
       introImage = undefined;
       outroImage = undefined;
+      overlayImage = undefined;
     }
     // v1060 — Stufe 3 (Opt-in!): KI-Clips für die ersten 1-2 Bilder. Nur wenn
     // der Kanal reel_ai_clips gesetzt hat, Monats-Budget noch Luft hat und der
@@ -1173,6 +1194,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       rendered = await this.videoTools.render(pseudo, ig, '9:16', {
         introImage, outroImage, music: this.reelMusicOpts(ig),
         ...(clips.length > 0 ? { clips } : {}),
+        ...(overlayImage ? { overlayImage } : {}),
       });
     } finally {
       const { unlink } = await import('node:fs/promises');

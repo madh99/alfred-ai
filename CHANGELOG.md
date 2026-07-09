@@ -20,6 +20,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - Reel-Hooks brechen den Titel enger um (75 % Bildbreite): kurze,
   gestaffelte Nachrichten-Boxen statt einer fast bildbreiten Zeile.
 
+### Added — Dauer-Branding im Reel (v1066, Opt-in)
+
+- Neuer Kanal-Schalter „Dauer-Branding im Video": Wasserzeichen-Text
+  und/oder Kanal-Logo bleiben über die GESAMTE Reel-Laufzeit
+  eingeblendet (TV-Sender-Stil) statt nur auf Hook und End-Card —
+  Position wählbar wie beim Bild (vier Ecken). Standard bleibt aus
+  (Verhalten wie bisher). Bei aktivem Dauer-Branding wird das Branding
+  nicht zusätzlich in Hook/End-Card eingebrannt (keine Doppelung);
+  Config: `reel_watermark: text|logo|both` + `reel_watermark_corner`.
+
 ## [0.19.0-multi-ha.1064] - 2026-07-09
 
 ### Fixed — Reel-Reject nimmt den Facebook-Zwilling mit (v1064)

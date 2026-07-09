@@ -6761,7 +6761,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const videoWorkDir = path.resolve(path.dirname(this.config.storage.path), 'social-videos');
           socialSkill.setVideoTools({
             // v1058 — opts reicht Hook-/End-Card-Bilder an den Renderer durch
-            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }> }) => {
+            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }>; overlayImage?: string }) => {
               const images = item.media
                 .filter((m: { type: string; pathOrUrl: string }) => m.type === 'image' && !m.pathOrUrl.startsWith('http'))
                 .map((m: { pathOrUrl: string }) => m.pathOrUrl);
@@ -6788,6 +6788,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 ...(musicPath ? { musicPath } : {}),
                 ...(musicPath && musicVolume !== undefined ? { musicVolume } : {}),
                 ...(opts?.clips && opts.clips.length > 0 ? { clips: opts.clips } : {}),
+                ...(opts?.overlayImage ? { overlayImage: opts.overlayImage } : {}),
               });
             },
             probe: (p: string) => renderer.probeVideo(p),

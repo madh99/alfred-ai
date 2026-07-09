@@ -186,6 +186,8 @@ export function SocialPage() {
     // v1060 — Reels & Video: Wochen-Cap, CTA, Musik-Bett (v1059), KI-Clips (Stufe 3)
     reelMaxPerWeek: number; reelCtaText: string; reelMusicOn: boolean; reelMusicVolume: string;
     reelAiClips: 0 | 1 | 2; reelAiProvider: 'sora' | 'runway' | 'veo'; reelAiModel: string; aiClipBudget: number;
+    // v1066 — Dauer-Branding im Video (TV-Bug): aus|text|logo|both + Ecke
+    reelWatermark: 'aus' | 'text' | 'logo' | 'both'; reelWatermarkCorner: string;
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
@@ -194,7 +196,8 @@ export function SocialPage() {
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
-    reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8, formate: [] });
+    reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8,
+    reelWatermark: 'aus', reelWatermarkCorner: 'bottom-right', formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v1024 — Ad-hoc-Story („Story anstoßen"): Stoff → Beiträge auf allen Familien-Kanälen
@@ -567,6 +570,9 @@ export function SocialPage() {
       reelAiProvider: c.config.reel_ai_provider === 'runway' || c.config.reel_ai_provider === 'veo' ? c.config.reel_ai_provider : 'sora',
       reelAiModel: typeof c.config.reel_ai_model === 'string' ? c.config.reel_ai_model : '',
       aiClipBudget: typeof c.config.ai_clip_budget_per_month === 'number' ? c.config.ai_clip_budget_per_month : 8,
+      // v1066 — Dauer-Branding
+      reelWatermark: c.config.reel_watermark === 'text' || c.config.reel_watermark === 'logo' || c.config.reel_watermark === 'both' ? c.config.reel_watermark : 'aus',
+      reelWatermarkCorner: typeof c.config.reel_watermark_corner === 'string' ? c.config.reel_watermark_corner : 'bottom-right',
       formate: Array.isArray(c.config.formate)
         ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
           .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
@@ -630,6 +636,9 @@ export function SocialPage() {
           reel_ai_provider: d.reelAiClips > 0 && d.reelAiProvider !== 'sora' ? d.reelAiProvider : null,
           reel_ai_model: d.reelAiClips > 0 && d.reelAiModel.trim() ? d.reelAiModel.trim() : null,
           ai_clip_budget_per_month: d.reelAiClips > 0 && d.aiClipBudget !== 8 ? d.aiClipBudget : null,
+          // v1066 — Dauer-Branding (aus = Schlüssel löschen = Standard wie bisher)
+          reel_watermark: d.reelWatermark === 'aus' ? null : d.reelWatermark,
+          reel_watermark_corner: d.reelWatermark !== 'aus' && d.reelWatermarkCorner !== 'bottom-right' ? d.reelWatermarkCorner : null,
           // v1012 — Serien-Formate
           formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
             ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
@@ -1497,6 +1506,31 @@ export function SocialPage() {
                             <input value={settingsDraft.reelMusicVolume} onChange={e => setSettingsDraft(d => ({ ...d, reelMusicVolume: e.target.value }))}
                               placeholder="0.15"
                               className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                          </div>
+                        )}
+                      </div>
+                      {/* v1066 — Dauer-Branding im Video (TV-Bug-Stil) */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] text-gray-500" title="Standard: Branding erscheint nur auf Hook-Karte und End-Card (blendet mit über). Aktiviert: Wasserzeichen-Text und/oder Kanal-Logo bleiben über das GESAMTE Video eingeblendet (wie ein TV-Sender-Logo).">📍 Dauer-Branding im Video</label>
+                          <select value={settingsDraft.reelWatermark} onChange={e => setSettingsDraft(d => ({ ...d, reelWatermark: e.target.value as 'aus' | 'text' | 'logo' | 'both' }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value="aus">aus — nur auf Hook + End-Card (Standard)</option>
+                            <option value="text">Wasserzeichen-Text dauerhaft</option>
+                            <option value="logo">Logo dauerhaft</option>
+                            <option value="both">Text + Logo dauerhaft</option>
+                          </select>
+                        </div>
+                        {settingsDraft.reelWatermark !== 'aus' && (
+                          <div>
+                            <label className="text-[11px] text-gray-500">Position</label>
+                            <select value={settingsDraft.reelWatermarkCorner} onChange={e => setSettingsDraft(d => ({ ...d, reelWatermarkCorner: e.target.value }))}
+                              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                              <option value="bottom-right">unten rechts</option>
+                              <option value="bottom-left">unten links</option>
+                              <option value="top-right">oben rechts</option>
+                              <option value="top-left">oben links</option>
+                            </select>
                           </div>
                         )}
                       </div>

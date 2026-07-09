@@ -32,6 +32,8 @@ export interface VideoSpec {
   musicVolume?: number;
   /** v1060 — KI-Clips: ersetzen das Bild an images[index] als bewegte Slide. */
   clips?: Array<{ index: number; path: string; durationSec: number }>;
+  /** v1066 — Dauer-Branding: transparente Voll-Ebene (PNG), liegt über der GESAMTEN Laufzeit (TV-Bug-Stil). */
+  overlayImage?: string;
 }
 
 export interface RenderResult {
@@ -132,6 +134,8 @@ export function buildReelFilterGraph(opts: {
   fadeSec?: number;
   srtPathEscaped?: string;
   fps?: number;
+  /** v1066 — Input-Index der Dauer-Branding-Ebene (transparentes PNG, liegt über allem inkl. Untertiteln). */
+  overlayInputIndex?: number;
 }): { filterComplex: string; outLabel: string; inputDurations: number[]; totalSec: number } {
   const fps = opts.fps ?? 30;
   const fade = opts.slides.length > 1 ? (opts.fadeSec ?? 0.5) : 0;
@@ -183,7 +187,16 @@ export function buildReelFilterGraph(opts: {
     ...(opts.srtPathEscaped ? [`subtitles='${opts.srtPathEscaped}':force_style='${REEL_SUBTITLE_STYLE}'`] : []),
     'format=yuv420p',
   ].join(',');
-  parts.push(`${tail}${finalFilters}[vout]`);
+  if (opts.overlayInputIndex !== undefined) {
+    // v1066 — Dauer-Branding: die transparente Ebene liegt über ALLEM (auch
+    // den Untertiteln — Ecke vs. Safe-Zone unten Mitte, kollisionsfrei);
+    // overlay wiederholt das Einzelframe automatisch (eof_action=repeat).
+    parts.push(`${tail}${finalFilters}[vpre]`);
+    parts.push(`[${opts.overlayInputIndex}:v]scale=${w}:${h}[wm]`);
+    parts.push(`[vpre][wm]overlay=0:0[vout]`);
+  } else {
+    parts.push(`${tail}${finalFilters}[vout]`);
+  }
   return { filterComplex: parts.join(';'), outLabel: '[vout]', inputDurations, totalSec: Number(totalSec.toFixed(3)) };
 }
 
@@ -362,9 +375,15 @@ export class SlideshowVideoRenderer {
 
     // 4) v1058 — ffmpeg: Cover-Crop + Ken-Burns + Crossfades statt Letterbox-Standbilder
     const [w, h] = spec.format === '9:16' ? [1080, 1920] : [1920, 1080];
+    // v1066 — Dauer-Branding-Ebene als letzter Input (nach Voice + Musik)
+    const wmPath = spec.overlayImage?.trim() || undefined;
+    const wmIndex = wmPath
+      ? slideFiles.length + (audioPath ? 1 : 0) + (spec.musicPath?.trim() ? 1 : 0)
+      : undefined;
     const graph = buildReelFilterGraph({
       slides, width: w, height: h,
       srtPathEscaped: srtPath ? srtPath.replace(/\\/g, '/').replace(/'/g, "'\\''").replace(/:/g, '\\:') : undefined,
+      ...(wmIndex !== undefined ? { overlayInputIndex: wmIndex } : {}),
     });
     const outPath = `${base}.mp4`;
     // v1059 — Musik-Bett: geloopte Musik unters Voiceover (Sidechain-Ducking),
@@ -383,6 +402,7 @@ export class SlideshowVideoRenderer {
       ...slideFiles.flatMap(f => ['-i', f]),
       ...(audioPath ? ['-i', audioPath] : []),
       ...(music ? ['-stream_loop', '-1', '-i', music] : []),
+      ...(wmPath ? ['-i', wmPath] : []),
       '-filter_complex', audioGraph ? `${graph.filterComplex};${audioGraph.filterComplex}` : graph.filterComplex,
       '-map', graph.outLabel,
       ...(audioGraph
