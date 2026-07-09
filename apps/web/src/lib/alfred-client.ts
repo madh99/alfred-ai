@@ -521,6 +521,25 @@ export class AlfredClient {
   }
 
   // v1014 — Bild-Bibliothek: Assets listen + sperren/löschen
+  /** v1078 — Sprecherstimmen (Mistral-Custom-Voices) fürs Reel-Voiceover */
+  async fetchSocialVoices(): Promise<Array<{ id: string; name: string; gender?: string; languages?: string[] }>> {
+    const res = await fetch(`${this.baseUrl}/api/social/voices`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Social voices: HTTP ${res.status}`);
+    return (await res.json()).voices ?? [];
+  }
+  async createSocialVoice(name: string, sampleAudioBase64: string, gender?: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/voices`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ name, sample_audio: sampleAudioBase64, ...(gender ? { gender } : {}) }),
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+  async deleteSocialVoice(id: string): Promise<{ success: boolean; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/voices/${encodeURIComponent(id)}/delete`, {
+      method: 'POST', headers: this.jsonHeaders, body: '{}',
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   async fetchSocialAssets(): Promise<SocialAssetItem[]> {
     const res = await fetch(`${this.baseUrl}/api/social/assets`, { headers: this.authHeaders });
     if (!res.ok) throw new Error(`Social assets: HTTP ${res.status}`);

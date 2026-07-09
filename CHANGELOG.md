@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1078] - 2026-07-09
+
+### Added — Reel-Sprecherstimmen (v1078)
+
+- **Sprecherstimme je Kanal**: Die Stimme des Reel-Sprechers ist jetzt in der Kanal-Konfiguration wählbar (Kanal-Config `reel_voice_id`). Sie greift für automatische Reels, manuelle `render_reel`-Aufträge und die Reel-Zweitverwertung; ohne Auswahl bleibt alles bei der bisherigen Standard-Stimme.
+- **Stimmen-Verwaltung in der UI**: Neues Dropdown „🎙️ Sprecherstimme" in der Sektion „Reels & Video" plus aufklappbares Verwaltungs-Panel — eigene Stimmen (Mistral Custom Voices) direkt anlegen (Name + Audio-Sample-Upload, 10–30 Sekunden genügen) und löschen.
+- **Neue API-Routen**: `GET /api/social/voices` (verfügbare Stimmen), `POST /api/social/voices` (Stimme aus Audio-Sample anlegen), `POST /api/social/voices/:id/delete` — intern über den vorhandenen Voice-Skill abgewickelt.
+
+### Changed
+
+- `SpeechSynthesizer.synthesize` akzeptiert eine optionale Voice-ID, die die bisherige Kaskade (Konfiguration → Nutzer-Standard → eingebaute Stimme) übersteuert; die Video-Pipeline reicht die Kanal-Stimme bis zur Tonspur durch.
+
 ## [0.19.0-multi-ha.1077] - 2026-07-09
 
 ### Added — Menschlicher Takt, Stufe 2: Wichtiges geht immer (v1077)

@@ -193,6 +193,8 @@ export function SocialPage() {
     // v1067 — Anordnung bei Text+Logo (Block/Block+Angleich/getrennt) + Logo-Ecke
     reelWatermark: 'aus' | 'text' | 'logo' | 'both'; reelWatermarkCorner: string;
     reelWatermarkLayout: 'stack' | 'stack_fit' | 'split'; reelWatermarkLogoCorner: string;
+    // v1078 — Reel-Sprecherstimme (Mistral-Voice-ID; leer = Standard)
+    reelVoiceId: string;
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
@@ -203,8 +205,12 @@ export function SocialPage() {
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
     reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8,
     reelWatermark: 'aus', reelWatermarkCorner: 'bottom-right',
-    reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', formate: [] });
+    reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', reelVoiceId: '', formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
+  // v1078 — Sprecherstimmen (Mistral-Custom-Voices) + Verwaltungs-Panel
+  const [voices, setVoices] = useState<Array<{ id: string; name: string; gender?: string }>>([]);
+  const [voiceMgmtOpen, setVoiceMgmtOpen] = useState(false);
+  const [newVoiceName, setNewVoiceName] = useState('');
   const [linkTopicSel, setLinkTopicSel] = useState<string>('');
   // v1024 — Ad-hoc-Story („Story anstoßen"): Stoff → Beiträge auf allen Familien-Kanälen
   const [storyOpen, setStoryOpen] = useState(false);
@@ -593,6 +599,7 @@ export function SocialPage() {
       reelWatermarkCorner: typeof c.config.reel_watermark_corner === 'string' ? c.config.reel_watermark_corner : 'bottom-right',
       reelWatermarkLayout: c.config.reel_watermark_layout === 'stack_fit' || c.config.reel_watermark_layout === 'split' ? c.config.reel_watermark_layout : 'stack',
       reelWatermarkLogoCorner: typeof c.config.reel_watermark_logo_corner === 'string' ? c.config.reel_watermark_logo_corner : 'top-left',
+      reelVoiceId: typeof c.config.reel_voice_id === 'string' ? c.config.reel_voice_id : '',
       formate: Array.isArray(c.config.formate)
         ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
           .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
@@ -604,6 +611,8 @@ export function SocialPage() {
     }
     // v1041 — Bibliothek für den Termin-Vorlagen-Selektor nachladen
     if (assets.length === 0) loadAssets().catch(() => {});
+    // v1078 — Sprecherstimmen fürs Reel-Dropdown nachladen (best-effort)
+    if (voices.length === 0) client?.fetchSocialVoices().then(setVoices).catch(() => {});
   }
 
   async function saveSettings(c: SocialChannelItem) {
@@ -665,6 +674,8 @@ export function SocialPage() {
           // v1067 — Anordnung bei Text+Logo + eigene Logo-Ecke bei „getrennt"
           reel_watermark_layout: d.reelWatermark === 'both' && d.reelWatermarkLayout !== 'stack' ? d.reelWatermarkLayout : null,
           reel_watermark_logo_corner: d.reelWatermark === 'both' && d.reelWatermarkLayout === 'split' && d.reelWatermarkLogoCorner !== 'top-left' ? d.reelWatermarkLogoCorner : null,
+          // v1078 — Sprecherstimme (leer = Standard-Kaskade)
+          reel_voice_id: d.reelVoiceId || null,
           // v1012 — Serien-Formate
           formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
             ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
@@ -1538,6 +1549,64 @@ export function SocialPage() {
                             <input value={settingsDraft.reelMusicVolume} onChange={e => setSettingsDraft(d => ({ ...d, reelMusicVolume: e.target.value }))}
                               placeholder="0.15"
                               className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                          </div>
+                        )}
+                      </div>
+                      {/* v1078 — Sprecherstimme (Mistral-Custom-Voice) + Verwaltung */}
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2 items-end">
+                          <div>
+                            <label className="text-[11px] text-gray-500" title="Die Stimme des Reel-Sprechers. Eigene Stimmen entstehen aus einem kurzen Audio-Sample (10–30 s) — unten verwalten oder per Chat: Erstelle aus dieser Sprachnachricht eine Stimme namens X.">🎙️ Sprecherstimme</label>
+                            <select value={settingsDraft.reelVoiceId} onChange={e => setSettingsDraft(d => ({ ...d, reelVoiceId: e.target.value }))}
+                              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                              <option value="">Standard-Stimme</option>
+                              {voices.map(v => <option key={v.id} value={v.id}>{v.name}{v.gender ? ` (${v.gender})` : ''}</option>)}
+                            </select>
+                          </div>
+                          <button onClick={() => setVoiceMgmtOpen(o => !o)}
+                            className="px-2 py-1 text-xs border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 rounded h-fit mb-0.5">
+                            {voiceMgmtOpen ? 'Verwaltung schließen' : '🎙️ Stimmen verwalten'}
+                          </button>
+                        </div>
+                        {voiceMgmtOpen && (
+                          <div className="border border-gray-500/20 rounded p-2 space-y-2 bg-black/20">
+                            {voices.length === 0 && <div className="text-[11px] text-gray-500">Noch keine eigenen Stimmen.</div>}
+                            {voices.map(v => (
+                              <div key={v.id} className="flex items-center justify-between text-[11px] text-gray-300">
+                                <span>{v.name}{v.gender ? ` · ${v.gender}` : ''} <span className="text-gray-600">({v.id.slice(0, 8)}…)</span></span>
+                                <button onClick={async () => {
+                                  if (!confirm(`Stimme „${v.name}" löschen?`)) return;
+                                  const r = await client!.deleteSocialVoice(v.id);
+                                  if (r.success) setVoices(vs => vs.filter(x => x.id !== v.id));
+                                  else alert(r.error ?? 'Löschen fehlgeschlagen');
+                                }} className="px-1.5 py-0.5 text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded">löschen</button>
+                              </div>
+                            ))}
+                            <div className="flex gap-2 items-center pt-1 border-t border-gray-500/10">
+                              <input value={newVoiceName} onChange={e => setNewVoiceName(e.target.value)} placeholder="Name der neuen Stimme"
+                                className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200" />
+                              <label className="px-2 py-1 text-xs border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/15 rounded cursor-pointer">
+                                🎤 Audio-Sample wählen…
+                                <input type="file" accept="audio/*" className="hidden" onChange={async e => {
+                                  const f = e.target.files?.[0];
+                                  e.target.value = '';
+                                  if (!f) return;
+                                  if (!newVoiceName.trim()) { alert('Bitte zuerst einen Namen eingeben.'); return; }
+                                  if (f.size > 15_000_000) { alert('Sample zu groß (max. ~15 MB) — 10–30 Sekunden reichen.'); return; }
+                                  const buf = await f.arrayBuffer();
+                                  let bin = '';
+                                  const bytes = new Uint8Array(buf);
+                                  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+                                  const r = await client!.createSocialVoice(newVoiceName.trim(), btoa(bin));
+                                  if (r.success) {
+                                    setNewVoiceName('');
+                                    client!.fetchSocialVoices().then(setVoices).catch(() => {});
+                                    setNotice(r.display ?? 'Stimme erstellt.');
+                                  } else alert(r.error ?? 'Erstellen fehlgeschlagen');
+                                }} />
+                              </label>
+                            </div>
+                            <div className="text-[10px] text-gray-600">10–30 Sekunden klare Sprache genügen. Rechte an der Stimme beachten — nur eigene oder freigegebene Stimmen klonen.</div>
                           </div>
                         )}
                       </div>

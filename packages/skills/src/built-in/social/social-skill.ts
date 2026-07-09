@@ -200,7 +200,7 @@ export class SocialSkill extends Skill {
   /** v938 — Video-Pipeline (Slideshow-Renderer + ffprobe-Check, vom Kern injiziert). */
   private videoTools?: {
     // v1058 — opts: Hook-Karte (intro) und End-Card (outro) fürs Reel
-    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }>; overlayImage?: string }) => Promise<{ videoPath: string; durationSec: number }>;
+    render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }>; overlayImage?: string; voiceId?: string }) => Promise<{ videoPath: string; durationSec: number }>;
     /** v1060 — Stufe 3: Image-to-Video-Clip (Sora/Runway/Veo, kostenpflichtig). */
     generateClip?: (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => Promise<{ clipPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
@@ -1233,8 +1233,11 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
     }
     let rendered: { videoPath: string; durationSec: number };
     try {
+      // v1078 — Sprecherstimme je Kanal (Mistral-Custom-Voice-ID)
+      const voiceId = typeof ig.config.reel_voice_id === 'string' && ig.config.reel_voice_id.trim() ? ig.config.reel_voice_id.trim() : undefined;
       rendered = await this.videoTools.render(pseudo, ig, '9:16', {
         introImage, outroImage, music: this.reelMusicOpts(ig),
+        ...(voiceId ? { voiceId } : {}),
         ...(clips.length > 0 ? { clips } : {}),
         ...(overlayImage ? { overlayImage } : {}),
       });
@@ -2146,7 +2149,8 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
 
     const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
     // v1059 — auch manuell gerenderte Videos bekommen das Musik-Bett
-    const result = await this.videoTools.render(item, channel, format, { music: this.reelMusicOpts(channel) });
+    const manualVoice = typeof channel.config.reel_voice_id === 'string' && channel.config.reel_voice_id.trim() ? channel.config.reel_voice_id.trim() : undefined;
+    const result = await this.videoTools.render(item, channel, format, { music: this.reelMusicOpts(channel), ...(manualVoice ? { voiceId: manualVoice } : {}) });
     const media: ContentMedia[] = [...item.media, { type: 'video', source: 'generated', pathOrUrl: result.videoPath }];
     await this.repo.updateItemContent(userId, item.id, { media });
     const today = new Date().toISOString().slice(0, 10);

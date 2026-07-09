@@ -6772,7 +6772,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             this.logger.child({ component: 'video-pipeline' }),
             {
               workDir: path.resolve(path.dirname(this.config.storage.path), 'social-videos'),
-              synthesize: synth ? (text: string) => synth.synthesize(text, ownerUid) : undefined,
+              // v1078 — Reel-Sprecherstimme je Kanal wird bis zur TTS durchgereicht
+              synthesize: synth ? (text: string, voiceId?: string) => synth.synthesize(text, ownerUid, voiceId) : undefined,
             },
           );
           // v1060 — Stufe 3: KI-Clip-Generator (Sora/Runway/Veo). Keys: OpenAI/
@@ -6788,7 +6789,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           const videoWorkDir = path.resolve(path.dirname(this.config.storage.path), 'social-videos');
           socialSkill.setVideoTools({
             // v1058 — opts reicht Hook-/End-Card-Bilder an den Renderer durch
-            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }>; overlayImage?: string }) => {
+            render: async (item: import('@alfred/storage').ContentItem, _channel: import('@alfred/storage').SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }>; overlayImage?: string; voiceId?: string }) => {
               const images = item.media
                 .filter((m: { type: string; pathOrUrl: string }) => m.type === 'image' && !m.pathOrUrl.startsWith('http'))
                 .map((m: { pathOrUrl: string }) => m.pathOrUrl);
@@ -6816,6 +6817,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 ...(musicPath && musicVolume !== undefined ? { musicVolume } : {}),
                 ...(opts?.clips && opts.clips.length > 0 ? { clips: opts.clips } : {}),
                 ...(opts?.overlayImage ? { overlayImage: opts.overlayImage } : {}),
+                ...(opts?.voiceId ? { voiceId: opts.voiceId } : {}),
               });
             },
             probe: (p: string) => renderer.probeVideo(p),
@@ -8402,6 +8404,32 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               }
             }
             return { success: r.success, display: r.display, error: r.error };
+          },
+          // v1078 — Sprecherstimmen (Mistral-Custom-Voices) über den Voice-Skill:
+          // Liste fürs Reel-Dropdown, create/delete für die UI-Verwaltung.
+          listVoices: async () => {
+            const voiceSkill = this.skillRegistry?.get('voice');
+            if (!voiceSkill) return [];
+            const r = await voiceSkill.execute({ action: 'list_voices' }, socialCtx);
+            return r.success && Array.isArray(r.data) ? r.data as unknown[] : [];
+          },
+          voiceAction: async (action: string, body: Record<string, unknown>) => {
+            const voiceSkill = this.skillRegistry?.get('voice');
+            if (!voiceSkill) return { success: false, error: 'Voice-Skill nicht verfügbar (Mistral-Key/Voice-Konfiguration fehlt).' };
+            if (action === 'create') {
+              const r = await voiceSkill.execute({
+                action: 'create_voice',
+                name: body.name,
+                sample_audio: body.sample_audio,
+                ...(body.gender ? { gender: body.gender } : {}),
+              }, socialCtx);
+              return { success: r.success, display: r.display, error: r.error, data: r.data };
+            }
+            if (action === 'delete') {
+              const r = await voiceSkill.execute({ action: 'delete_voice', voice_id: body.voice_id }, socialCtx);
+              return { success: r.success, display: r.display, error: r.error };
+            }
+            return { success: false, error: `unbekannte Voice-Aktion ${action}` };
           },
           // v1014 — Bild-Bibliothek (Basename fürs bestehende media-Endpoint mitliefern)
           listAssets: async () => {

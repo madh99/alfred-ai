@@ -725,6 +725,9 @@ export class HttpAdapter extends MessagingAdapter {
     commentAction?: (id: string, action: 'reply' | 'ignore' | 'suggest', extra?: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     /** v1014 — Bild-Bibliothek: Assets listen + sperren/löschen; v1017: Motiv ändern/neu beschreiben. */
     listAssets?: () => Promise<any[]>;
+    // v1078 — Sprecherstimmen (Mistral-Custom-Voices) fürs Reel-Voiceover
+    listVoices?: () => Promise<any[]>;
+    voiceAction?: (action: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
     assetAction?: (id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe' | 'pin' | 'unpin', extra?: Record<string, unknown>) => Promise<{ success: boolean; error?: string; motif?: string }>;
     /** v1015 — Kanal-Wizard: neuen Kanal anlegen (läuft durch den Skill). */
     createChannel?: (payload: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
@@ -1415,6 +1418,19 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSocialBody(req, res, async (body) => {
         if (!this.socialCallbacks?.createChannel) return { error: 'not supported' };
         return this.socialCallbacks.createChannel(body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/voices' && req.method === 'GET') {
+      // v1078 — Sprecherstimmen fuer die Reel-Konfiguration
+      this.handleSocial(req, res, async () => ({ voices: await this.socialCallbacks!.listVoices?.() ?? [] })).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/social/voices' && req.method === 'POST') {
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.voiceAction) return { error: 'not supported' };
+        return this.socialCallbacks.voiceAction('create', body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/voices\/[^/]+\/delete$/) && req.method === 'POST') {
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.voiceAction) return { error: 'not supported' };
+        return this.socialCallbacks.voiceAction('delete', { ...body, voice_id: url.pathname.split('/')[4] });
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/social/assets' && req.method === 'GET') {
       // v1014 — Bild-Bibliothek

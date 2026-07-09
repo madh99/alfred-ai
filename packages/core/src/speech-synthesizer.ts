@@ -42,9 +42,11 @@ export class SpeechSynthesizer {
     }
   }
 
-  async synthesize(text: string, userId?: string): Promise<Buffer> {
-    // Resolve voice: 1) config defaultVoiceId, 2) DB voice_default memory, 3) built-in fallback
-    let effectiveVoice = this.defaultVoiceId;
+  async synthesize(text: string, userId?: string, voiceId?: string): Promise<Buffer> {
+    // v1078 — explizite Stimme (z.B. Reel-Sprecher je Kanal) übersteuert die
+    // Default-Kaskade: 1) voiceId-Parameter, 2) config defaultVoiceId,
+    // 3) DB voice_default, 4) eingebauter Fallback
+    let effectiveVoice = voiceId?.trim() || this.defaultVoiceId;
 
     if (!effectiveVoice && this.ttsProvider === 'mistral' && userId) {
       // Read user's default voice from DB (cached for performance)

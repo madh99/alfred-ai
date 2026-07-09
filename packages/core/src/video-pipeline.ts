@@ -32,6 +32,8 @@ export interface VideoSpec {
   musicVolume?: number;
   /** v1060 — KI-Clips: ersetzen das Bild an images[index] als bewegte Slide. */
   clips?: Array<{ index: number; path: string; durationSec: number }>;
+  /** v1078 — Sprecherstimme (Voice-ID, z.B. Mistral-Custom-Voice); leer = Default-Kaskade. */
+  voiceId?: string;
   /** v1066 — Dauer-Branding: transparente Voll-Ebene (PNG), liegt über der GESAMTEN Laufzeit (TV-Bug-Stil). */
   overlayImage?: string;
 }
@@ -272,8 +274,8 @@ export class SlideshowVideoRenderer {
       workDir: string;
       ffmpegPath?: string;
       ffprobePath?: string;
-      /** TTS (SpeechSynthesizer.synthesize) — ohne: stummes Video. */
-      synthesize?: (text: string) => Promise<Buffer>;
+      /** TTS (SpeechSynthesizer.synthesize) — ohne: stummes Video. v1078: optionale Voice-ID. */
+      synthesize?: (text: string, voiceId?: string) => Promise<Buffer>;
     },
   ) {}
 
@@ -333,7 +335,7 @@ export class SlideshowVideoRenderer {
     let durationSec: number;
     const voText = spec.voiceoverText?.trim();
     if (voText && this.opts.synthesize) {
-      const audio = await this.opts.synthesize(voText);
+      const audio = await this.opts.synthesize(voText, spec.voiceId);
       audioPath = `${base}.voice.ogg`;
       await writeFile(audioPath, audio);
       // v1076 — ECHT dekodierte Dauer (Container-Metadaten lügen bis ±2 s)
