@@ -114,8 +114,11 @@ export class VoiceSkill extends Skill {
     if (!name) return { success: false, error: 'Missing required parameter: name' };
 
     // Try to get audio from: 1) message attachments (voice message), 2) explicit base64 parameter
-    // LLMs often send placeholder strings like "from_attachment" — ignore those
-    const isRealBase64 = sampleAudio && sampleAudio.length > 100 && !/^[a-zA-Z_]/.test(sampleAudio);
+    // LLMs often send placeholder strings like "from_attachment" — ignore those.
+    // Echte Audio-base64 beginnt fast immer mit einem Buchstaben (WAV "UklGR",
+    // MP3 "SUQz", M4A "AAAA") — daher NICHT am ersten Zeichen festmachen,
+    // sondern am base64-Zeichensatz: Platzhalter-Sätze enthalten Leerzeichen/Punkte.
+    const isRealBase64 = !!sampleAudio && sampleAudio.length > 100 && /^[A-Za-z0-9+/=\r\n]+$/.test(sampleAudio);
     let audioBase64 = isRealBase64 ? sampleAudio : undefined;
     if (!audioBase64 && context.messageAttachments) {
       const audioAttachment = context.messageAttachments.find(a => a.type === 'audio' || a.mimeType.startsWith('audio/'));
@@ -128,7 +131,10 @@ export class VoiceSkill extends Skill {
     const body: Record<string, unknown> = {
       name,
       sample_audio: audioBase64,
-      sample_filename: 'sample.wav',
+      // Dateiname bestimmt bei Mistral die Container-Erkennung — Original
+      // durchreichen, wenn der Aufrufer (z. B. UI-Upload) einen mitliefert.
+      sample_filename: typeof input.sample_filename === 'string' && input.sample_filename.trim()
+        ? input.sample_filename.trim() : 'sample.wav',
       languages,
     };
     if (gender) body.gender = gender;

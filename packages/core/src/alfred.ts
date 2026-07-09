@@ -8421,6 +8421,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 action: 'create_voice',
                 name: body.name,
                 sample_audio: body.sample_audio,
+                ...(typeof body.sample_filename === 'string' && body.sample_filename ? { sample_filename: body.sample_filename } : {}),
                 ...(body.gender ? { gender: body.gender } : {}),
               }, socialCtx);
               return { success: r.success, display: r.display, error: r.error, data: r.data };

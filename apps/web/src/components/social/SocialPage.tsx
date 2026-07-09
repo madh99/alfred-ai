@@ -1597,7 +1597,7 @@ export function SocialPage() {
                                   let bin = '';
                                   const bytes = new Uint8Array(buf);
                                   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-                                  const r = await client!.createSocialVoice(newVoiceName.trim(), btoa(bin));
+                                  const r = await client!.createSocialVoice(newVoiceName.trim(), btoa(bin), undefined, f.name);
                                   if (r.success) {
                                     setNewVoiceName('');
                                     client!.fetchSocialVoices().then(setVoices).catch(() => {});

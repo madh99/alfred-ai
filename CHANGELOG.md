@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1080] - 2026-07-09
+
+### Fixed
+- **Stimme anlegen per Audio-Upload funktioniert jetzt**: Die Platzhalter-Erkennung beim Anlegen einer Custom Voice verwarf echte Audio-Samples, weil deren Base64-Daten mit einem Buchstaben beginnen (WAV `UklGR…`, MP3 `SUQz…`, M4A `AAAA…`) — der UI-Upload lief damit immer in „Bitte sende eine Sprachnachricht…". Die Erkennung prüft jetzt den Base64-Zeichensatz statt des ersten Zeichens; LLM-Platzhalter werden weiterhin abgefangen.
+- Der Original-Dateiname des Audio-Samples wird als `sample_filename` an die Mistral-API durchgereicht (Container-Erkennung, bisher fest `sample.wav`).
+
 ## [0.19.0-multi-ha.1079] - 2026-07-09
 
 ### Fixed

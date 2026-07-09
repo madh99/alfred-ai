@@ -527,10 +527,10 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Social voices: HTTP ${res.status}`);
     return (await res.json()).voices ?? [];
   }
-  async createSocialVoice(name: string, sampleAudioBase64: string, gender?: string): Promise<{ success: boolean; display?: string; error?: string }> {
+  async createSocialVoice(name: string, sampleAudioBase64: string, gender?: string, fileName?: string): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/voices`, {
       method: 'POST', headers: this.jsonHeaders,
-      body: JSON.stringify({ name, sample_audio: sampleAudioBase64, ...(gender ? { gender } : {}) }),
+      body: JSON.stringify({ name, sample_audio: sampleAudioBase64, ...(fileName ? { sample_filename: fileName } : {}), ...(gender ? { gender } : {}) }),
     });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
