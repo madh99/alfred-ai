@@ -191,13 +191,26 @@ describe('PublishingEngine (v934)', () => {
   it('autonomous: greift eine Leitplanke, geht das Item in die Freigabe-Queue', async () => {
     const { engine, insightsRepo } = makeEngine({
       channel: makeChannel({ mode: 'autonomous', approvedStreak: 5 }), scheduled: [makeItem()],
-      publishOk: false, publishError: 'Tages-Limit erreicht (3/3)',
+      publishOk: false, publishError: 'Kanal pausiert — erst reaktivieren.',
     });
     const r = await engine.tick();
     expect(r.published).toBe(0);
     expect(r.asked).toBe(1);
     const candidate = (insightsRepo.upsertCandidate as any).mock.calls[0][1];
-    expect(candidate.body).toContain('Tages-Limit');
+    expect(candidate.body).toContain('pausiert');
+  });
+
+  it('v1077 autonomous: Tages-Limit → still auf morgen umterminiert statt Freigabe-Lärm', async () => {
+    const { engine, insightsRepo, repo } = makeEngine({
+      channel: makeChannel({ mode: 'autonomous', approvedStreak: 5 }), scheduled: [makeItem()],
+      publishOk: false, publishError: 'Tages-Limit erreicht (3/3)',
+    });
+    (repo as any).reschedule = vi.fn(async () => true);
+    const r = await engine.tick();
+    expect(r.published).toBe(0);
+    expect(r.asked).toBe(0); // keine Freigabe-Anfrage
+    expect((repo as any).reschedule).toHaveBeenCalled();
+    expect((insightsRepo.upsertCandidate as any)).not.toHaveBeenCalled();
   });
 
   it('suggest-Modus: kein aktives Nachfragen für scheduled-Items', async () => {
@@ -279,5 +292,62 @@ describe('v1075 — menschlicher Takt (Jitter, Fenster)', () => {
     expect(isWithinWindow({ from: 22, to: 6 }, at(23))).toBe(true);
     expect(isWithinWindow({ from: 22, to: 6 }, at(12))).toBe(false);
     expect(isWithinWindow(null, at(3))).toBe(true);
+  });
+});
+
+describe('v1077 — Wichtiges geht immer (Vorrang-Regeln)', () => {
+  function pacingEngine(opts: { channel: SocialChannel; approved?: ContentItem[]; published?: ContentItem[] }) {
+    // Engine MIT aktivem menschlichem Takt (anders als makeEngine)
+    const items = [...(opts.approved ?? []), ...(opts.published ?? [])];
+    const repo = {
+      listChannels: vi.fn(async () => [opts.channel]),
+      listItems: vi.fn(async (_u: string, q: any) => items.filter(i =>
+        (q?.status === undefined || (Array.isArray(q.status) ? q.status.includes(i.status) : i.status === q.status))
+        && (q?.channelId === undefined || i.channelId === q.channelId)
+        && (q?.scheduledBefore === undefined || (i.scheduledAt ?? '') <= q.scheduledBefore))),
+      transition: vi.fn(async (_u: string, id: string, to: any) => ({ ...items.find(i => i.id === id)!, status: to })),
+      mergePerformance: vi.fn(async () => {}),
+      reschedule: vi.fn(async () => true),
+    } as unknown as SocialRepository;
+    const publishItem = vi.fn(async () => ({ success: true }));
+    const router = { store: vi.fn(async () => 'stored') } as any;
+    const engine = new PublishingEngine(repo, publishItem, undefined, router, new Map(), makeLogger(), {
+      ownerUserId: OWNER, chatId: 'c', platform: 'telegram' as Platform, retryAfterMs: 0,
+    });
+    return { engine, publishItem, repo, router };
+  }
+
+  it('Termin-Nähe-Schutz: knapper Termin überstimmt Fenster/Jitter (kein Verlust)', async () => {
+    const channel = makeChannel({ config: { publish_window: [23, 23] } }); // Fenster praktisch zu
+    const item = makeItem({ status: 'approved', scheduledAt: PAST, performance: { terminBis: new Date(Date.now() + 20 * 60_000).toISOString() } });
+    const { engine, publishItem } = pacingEngine({ channel, approved: [item] });
+    await engine.tick();
+    expect(publishItem).toHaveBeenCalledWith(item.id);
+  });
+
+  it('Breaking überstimmt Fenster — aber max. 2 Nacht-Ausnahmen pro Tag', async () => {
+    const channel = makeChannel({ config: { publish_window: [23, 23], publish_jitter: false } });
+    const fresh = makeItem({ id: 'item-brk1-aaaa', status: 'approved', scheduledAt: PAST, performance: { breaking: true } });
+    const { engine, publishItem } = pacingEngine({ channel, approved: [fresh] });
+    await engine.tick();
+    expect(publishItem).toHaveBeenCalledWith(fresh.id); // 0 Ausnahmen verbraucht → darf
+    // Deckel: schon 2 außerhalb des Fensters publiziert → Breaking wartet
+    const published = [1, 2].map(n => makeItem({ id: `item-out${n}-aaaa`, status: 'published', publishedAt: new Date().toISOString() }));
+    const blocked = makeItem({ id: 'item-brk2-aaaa', status: 'approved', scheduledAt: PAST, performance: { breaking: true } });
+    const second = pacingEngine({ channel, approved: [blocked], published });
+    await second.engine.tick();
+    expect(second.publishItem).not.toHaveBeenCalled();
+  });
+
+  it('Tages-Limit → automatisch auf morgen früh umterminiert statt failed', async () => {
+    const channel = makeChannel({ config: { publish_jitter: false, min_publish_gap_minutes: 0, publish_window: false } });
+    const item = makeItem({ status: 'approved', scheduledAt: PAST });
+    const { engine, publishItem, repo, router } = pacingEngine({ channel, approved: [item] });
+    (publishItem as any).mockResolvedValue({ success: false, error: 'Tages-Limit erreicht (5/5 auf Testkanal) — max_posts_per_day anpassen oder morgen posten.' });
+    await engine.tick();
+    expect((repo.reschedule as any)).toHaveBeenCalled();
+    const at = (repo.reschedule as any).mock.calls[0][2] as string;
+    expect(Date.parse(at)).toBeGreaterThan(Date.now()); // morgen im Fenster
+    expect((router.store as any)).toHaveBeenCalled(); // stille Notiz statt Freigabe-Lärm
   });
 });

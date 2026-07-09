@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1077] - 2026-07-09
+
+### Added — Menschlicher Takt, Stufe 2: Wichtiges geht immer (v1077)
+
+- **Breaking-Vorrang**: Eilmeldungen (News-Desk) und frische Recaps
+  (< 90 min) überstimmen Publish-Fenster und Mindestabstand — mit
+  kurzem Eigen-Jitter (1–4 min) und Deckel (max. 2 Veröffentlichungen
+  außerhalb des Fensters je Kanal und Tag). Ein Mensch postet das
+  Spielergebnis auch um 23:05.
+- **Termin-Nähe-Schutz**: Steht der Termin eines Beitrags in weniger
+  als 45 Minuten bevor, wird er sofort veröffentlicht statt
+  aufgeschoben — vorher konnte Jitter+Abstand einen knappen
+  Termin-Post über die Termin-Grenze schieben (dauerhafter Verlust).
+- **Tages-Limit sanft**: Limit-geblockte freigegebene Beiträge rutschen
+  automatisch auf morgen früh (Fensterbeginn + Jitter) statt auf
+  failed liegen zu bleiben — stille Notiz statt Freigabe-Lärm.
+
 ## [0.19.0-multi-ha.1076] - 2026-07-09
 
 ### Fixed — Reel trägt IMMER das komplette Voiceover (v1076)

@@ -122,6 +122,23 @@ export class PublishingEngine {
    */
   private async humanPacingGate(item: ContentItem, channel: SocialChannel): Promise<boolean> {
     if (this.opts.disableHumanPacing === true) return true;
+    // v1077 — Termin-Nähe-Schutz: würde weiterer Aufschub den Termin reißen
+    // (terminBis in < 45 min), sofort durchlassen — lieber exakt am Tick als
+    // verloren (das Publish-Gate verwirft abgelaufene Termine dauerhaft).
+    const terminBis = typeof item.performance?.terminBis === 'string' ? Date.parse(item.performance.terminBis) : NaN;
+    if (Number.isFinite(terminBis) && terminBis - Date.now() < 45 * 60_000 && terminBis > Date.now()) return true;
+    // v1077 — „Wichtiges geht immer": Eilmeldungen (News-Desk-Marker) und
+    // frische Recaps (< 90 min alt) überstimmen Fenster + Mindestabstand —
+    // mit kurzem Eigen-Jitter (1–4 min) und Nacht-Deckel (max. 2 pro
+    // Kanal/Tag außerhalb des Fensters), damit kein neues Bot-Muster entsteht.
+    const isBreaking = item.performance?.breaking === true
+      || (item.performance?.art === 'recap' && Date.now() - Date.parse(item.createdAt) < 90 * 60_000);
+    if (isBreaking) {
+      if (channel.config.publish_jitter !== false && item.scheduledAt
+        && Date.now() < Date.parse(item.scheduledAt) + 60_000 + itemPublishJitterMs(item.id, 3 * 60_000)) return false;
+      if (!isWithinWindow(publishWindowFor(channel)) && !(await this.nightExceptionAvailable(channel))) return false;
+      return true;
+    }
     if (channel.config.publish_jitter !== false && item.scheduledAt) {
       if (Date.now() < Date.parse(item.scheduledAt) + itemPublishJitterMs(item.id)) return false;
     }
@@ -136,6 +153,42 @@ export class PublishingEngine {
       if (recent.some(p => p.publishedAt && Date.parse(p.publishedAt) > cutoff)) return false;
     }
     return true;
+  }
+
+  /** v1077 — Nacht-Ausnahmen-Deckel: max. 2 Publishes außerhalb des Fensters je Kanal und Tag. */
+  private async nightExceptionAvailable(channel: SocialChannel): Promise<boolean> {
+    try {
+      const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+      const recent = await this.repo.listItems(this.opts.ownerUserId, {
+        channelId: channel.id, status: 'published', updatedSince: midnight.toISOString(), limit: 50,
+      });
+      const win = publishWindowFor(channel);
+      const outside = recent.filter(p => p.publishedAt && !isWithinWindow(win, new Date(p.publishedAt))).length;
+      return outside < 2;
+    } catch { return false; }
+  }
+
+  /**
+   * v1077 — Tages-Limit sanft: statt failed-Reibung rutscht das freigegebene
+   * Item automatisch auf morgen früh (Fensterbeginn + Item-Jitter) — der
+   * Mensch würde es morgen posten, nicht wegwerfen.
+   */
+  private async deferToNextWindow(item: ContentItem, channel: SocialChannel): Promise<boolean> {
+    const win = publishWindowFor(channel) ?? { from: 7, to: 22 };
+    const next = new Date();
+    next.setDate(next.getDate() + 1);
+    next.setHours(win.from, Math.floor(itemPublishJitterMs(item.id, 45 * 60_000) / 60_000), 0, 0);
+    const ok = await this.repo.reschedule(this.opts.ownerUserId, item.id, next.toISOString(), [item.status]).catch(() => false);
+    if (ok) {
+      await this.router?.store({
+        source: 'social', urgency: 'low',
+        title: `Tages-Limit erreicht — auf morgen verschoben: ${(item.title ?? item.body).slice(0, 70)}`,
+        body: `Kanal **${channel.name}**: max_posts_per_day ist ausgeschöpft. Der Beitrag ist automatisch auf ${next.toLocaleString('de-AT')} umterminiert (Freigabe bleibt erhalten).`,
+        chatId: this.opts.chatId, platform: this.opts.platform,
+        dedupeKey: `social-deferred:${item.id}`,
+      });
+    }
+    return ok === true;
   }
 
   /** Ein Durchlauf (auch direkt aufrufbar/testbar). */
@@ -187,12 +240,16 @@ export class PublishingEngine {
         // v1075 — menschlicher Takt (Jitter/Fenster/Mindestabstand): nur Aufschub
         if (!(await this.humanPacingGate(item, channel))) continue;
         if (await this.claimItemSlot(`social-item:${item.id}`)) {
-          if (await this.doPublish(item, channel)) {
+          const pub = await this.doPublish(item, channel);
+          if (pub.ok) {
             result.published++;
           } else {
             // Slot freigeben — sonst blockiert der konsumierte Slot jeden
             // späteren Publish-Versuch dieses Items (nach Fix + Re-Approve)
             await this.releaseItemSlot(`social-item:${item.id}`);
+            // v1077 — Tages-Limit: automatisch auf morgen früh umterminieren
+            // statt failed-Reibung (Freigabe bleibt erhalten)
+            if (/Tages-Limit/.test(pub.error ?? '')) await this.deferToNextWindow(item, channel);
           }
         }
       }
@@ -221,7 +278,10 @@ export class PublishingEngine {
               // Leitplanke hat gegriffen (Limit/Blacklist/…) → Freigabe-Queue;
               // Slot freigeben, damit der spätere manuelle/Engine-Publish nicht blockiert
               await this.releaseItemSlot(`social-item:${item.id}`);
-              if (await this.askApproval(item, channel, `Autonom-Publish blockiert: ${r.error ?? 'Leitplanke'}`)) result.asked++;
+              // v1077 — Tages-Limit: still auf morgen früh statt Freigabe-Lärm
+              if (/Tages-Limit/.test(r.error ?? '')) {
+                await this.deferToNextWindow(item, channel);
+              } else if (await this.askApproval(item, channel, `Autonom-Publish blockiert: ${r.error ?? 'Leitplanke'}`)) result.asked++;
             }
           }
         } else if (channel.mode === 'approve' || channel.mode === 'autonomous') {
@@ -267,7 +327,7 @@ export class PublishingEngine {
     return result;
   }
 
-  private async doPublish(item: ContentItem, channel: SocialChannel): Promise<boolean> {
+  private async doPublish(item: ContentItem, channel: SocialChannel): Promise<{ ok: boolean; error?: string }> {
     const r = await this.publishItem(item.id);
     if (r.success) {
       await this.router?.store({
@@ -277,7 +337,7 @@ export class PublishingEngine {
         chatId: this.opts.chatId, platform: this.opts.platform,
         dedupeKey: `social-published:${item.id}`,
       });
-      return true;
+      return { ok: true };
     }
     // v983 — dauerhafte Leitplanken-Blocks (Duplikat/Blacklist/Termin vorbei)
     // NICHT alle 5 Minuten neu versuchen (Realfall 04.07.: zwei Items hingen
@@ -303,10 +363,10 @@ export class PublishingEngine {
         dedupeKey: `social-blocked:${item.id}`,
       }).catch(() => { /* non-critical */ });
       this.logger.warn({ itemId: item.id, error: r.error }, 'v983 publish permanently blocked — Item auf failed');
-      return false;
+      return { ok: false, error: r.error };
     }
     this.logger.warn({ itemId: item.id, error: r.error }, 'v934 scheduled publish failed');
-    return false;
+    return { ok: false, error: r.error };
   }
 
   /**

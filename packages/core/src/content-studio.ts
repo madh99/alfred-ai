@@ -593,6 +593,10 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
         const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined);
         if (!item) continue;
+        // v1077 — Eilmeldungs-Marker: „Wichtiges geht immer" — die Engine
+        // lässt Breaking-Posts am Nacht-Fenster/Mindestabstand vorbei
+        // (gedeckelt, mit Eigen-Jitter)
+        await this.socialRepo.mergePerformance(this.ownerUserId, item.id, { breaking: true }).catch(() => { /* non-critical */ });
         // Ad-hoc-Slots: Lead +30 min, Follower +90 min — Freigabe kommt zum Slot.
         // v1022 — ist der Lead suggest (kein automatischer Publish), bleiben
         // Follower Entwurf: sie verweisen auf einen Artikel, der erst nach
