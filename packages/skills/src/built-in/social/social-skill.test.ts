@@ -468,6 +468,37 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(reel.media[0]).toEqual({ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' });
   });
 
+  it('v1064: reject_content nimmt den FB-Zwilling mit derselben Videodatei mit', async () => {
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'FussballCC IG' });
+    const fb = makeChannel({ id: 'ch-fb', platform: 'facebook', name: 'FussballCC FB' });
+    const reel = makeItem({
+      id: 'item-0001-aaaa', channelId: 'ch-ig', status: 'draft',
+      media: [{ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' }],
+      performance: { format: 'reel', autoReel: true },
+    });
+    const twin = makeItem({
+      id: 'item-0002-bbbb', channelId: 'ch-fb', status: 'draft',
+      media: [{ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' }],
+      performance: { format: 'reel', autoReel: true },
+    });
+    const { skill, spies } = makeSkill(ig, reel);
+    (spies as any).listChannels = vi.fn(async () => [ig, fb]);
+    (spies as any).listItems = vi.fn(async (_u: string, q: any) => (q?.channelId === 'ch-fb' ? [twin] : [reel]));
+    const r = await skill.execute({ action: 'reject_content', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    expect((spies as any).transition).toHaveBeenCalledWith('u1', 'item-0002-bbbb', 'rejected');
+    expect(r.display).toContain('mit-abgelehnt');
+  });
+
+  it('v1064: reject_content OHNE Video-Zwilling lässt fremde Items in Ruhe', async () => {
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'IG' });
+    const post = makeItem({ id: 'item-0001-aaaa', channelId: 'ch-ig', status: 'draft' }); // regulärer Post, kein Reel
+    const { skill, spies } = makeSkill(ig, post);
+    const r = await skill.execute({ action: 'reject_content', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    expect((spies as any).transition).toHaveBeenCalledTimes(1); // nur das Item selbst
+  });
+
   it('v1062: render_reel stößt das Auto-Reel für einen VERÖFFENTLICHTEN Lead erneut an', async () => {
     const setup = reelSetup();
     await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);

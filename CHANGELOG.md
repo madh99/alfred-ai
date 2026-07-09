@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1064] - 2026-07-09
+
+### Fixed — Reel-Reject nimmt den Facebook-Zwilling mit (v1064)
+
+- Wird ein Reel-Entwurf abgelehnt, wird der Facebook-Zwilling mit
+  derselben Videodatei (Zweitverwertung) automatisch mit-abgelehnt —
+  vorher blieb er als Waise liegen und hätte mit dem verworfenen Video
+  freigegeben werden können (Realfall: zwei verwaiste FB-Entwürfe der
+  Test-Reels). Gilt nur für unveröffentlichte Stadien, best-effort.
+
 ## [0.19.0-multi-ha.1063] - 2026-07-09
 
 ### Fixed — Overlay-Boxen: Zeilen sprengen nie mehr die Bildbreite (v1063)

@@ -346,7 +346,18 @@ export class SocialSkill extends Skill {
         case 'list_content': return await this.listContent(userId, input);
         case 'schedule_content': return await this.scheduleContent(userId, input);
         case 'approve_content': return await this.approveContent(userId, input);
-        case 'reject_content': return await this.transitionSimple(userId, input, 'rejected', 'Abgelehnt — Item bleibt als rejected erhalten (kann als Entwurf reaktiviert werden).');
+        case 'reject_content': {
+          const res = await this.transitionSimple(userId, input, 'rejected', 'Abgelehnt — Item bleibt als rejected erhalten (kann als Entwurf reaktiviert werden).');
+          // v1064 — Video-Zwillinge (FB-Zweitverwertung nutzt DIESELBE Datei)
+          // mit-ablehnen: sonst bleibt der Zwilling als Waise liegen und
+          // könnte mit dem verworfenen Video freigegeben werden (Realfall
+          // 09.07.: zwei verwaiste FB-Entwürfe der Test-Reels).
+          if (res.success) {
+            const twinNote = await this.rejectVideoTwins(userId, input).catch(() => undefined);
+            if (twinNote) res.display = `${res.display ?? ''}\n${twinNote}`;
+          }
+          return res;
+        }
         case 'publish_now': return await this.publishNow(userId, input);
         case 'mark_published': return await this.markPublished(userId, input);
         case 'delete_remote': return await this.deleteRemote(userId, input);
@@ -991,6 +1002,33 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
   }
 
   /** v1022 — eigentliches Reel-Rendern (aus maybeAutoReel ausgelagert, läuft unter dem In-flight-Guard). */
+  /**
+   * v1064 — Begleitformat-Zwillinge mit derselben Videodatei (FB-Reel-
+   * Zweitverwertung, v1056) auf anderen Kanälen mit-ablehnen. Nur
+   * unveröffentlichte Stadien; best-effort.
+   */
+  private async rejectVideoTwins(userId: string, input: Record<string, unknown>): Promise<string | undefined> {
+    const item = await this.resolveItem(userId, input);
+    if (!item || !isCompanionFormat(item)) return undefined;
+    const video = item.media.find(m => m.type === 'video')?.pathOrUrl;
+    if (!video) return undefined;
+    const channels = await this.repo.listChannels(userId, 'active');
+    const notes: string[] = [];
+    for (const ch of channels) {
+      if (ch.id === item.channelId) continue;
+      const siblings = await this.repo.listItems(userId, { channelId: ch.id, limit: 50 });
+      for (const s of siblings) {
+        if (s.id === item.id || !['draft', 'scheduled', 'approved'].includes(s.status)) continue;
+        if (!s.media.some(m => m.type === 'video' && m.pathOrUrl === video)) continue;
+        try {
+          await this.repo.transition(userId, s.id, 'rejected');
+          notes.push(`↳ Zwilling [${s.id.slice(0, 8)}] auf ${ch.name} mit-abgelehnt (gleiche Videodatei).`);
+        } catch { /* Einzelfehler überspringen */ }
+      }
+    }
+    return notes.length > 0 ? notes.join('\n') : undefined;
+  }
+
   /**
    * v1059 — Musik-Bett-Optionen aus der Kanal-Config: reel_music:false
    * schaltet es ab, reel_music_volume (0–1) regelt die Lautstärke. Die
