@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1071] - 2026-07-09
+
+### Fixed — Vision-Gate akzeptiert große Bilder (Nano Banana Pro 2K) (v1071)
+
+- Nano-Banana-Pro-Bilder in 2K (~9 MB PNG) sprengten das 5-MB-Limit
+  der Vision-Prüf-API — der Check fiel aus und das Gate verwarf jedes
+  Pro-Bild fail-closed (bezahlt, nie verwendet). Die Prüfung läuft
+  jetzt auf einer verkleinerten Arbeitskopie (1280 px JPEG), das
+  Original bleibt unverändert in voller Auflösung erhalten.
+
 ## [0.19.0-multi-ha.1070] - 2026-07-09
 
 ### Fixed — Gemini-Bilder passieren das Vision-Gate (v1070)

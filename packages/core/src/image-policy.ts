@@ -165,6 +165,23 @@ export async function verifyImagePolicy(
   mimeType = 'image/png',
 ): Promise<VisionVerdict | null> {
   try {
+    // v1071 — große Bilder für die PRÜFUNG verkleinern (Original unverändert):
+    // Nano-Banana-Pro-2K-PNGs (~9 MB) sprengten das 5-MB-Bildlimit der
+    // Vision-API → Check fiel aus → fail-closed verwarf jedes Pro-Bild
+    // (Realfall 09.07.). 1280px-JPEG reicht der Prüfung völlig; scheitert
+    // das Verkleinern, bleibt das Original (und ggf. fail-closed — sicher).
+    if (imageData.length > 3_500_000) {
+      try {
+        const { loadSharp } = await import('@alfred/skills');
+        const sharp = await loadSharp();
+        if (sharp) {
+          const small = await (sharp as unknown as (i: Buffer) => { resize(o: object): { jpeg(o: object): { toBuffer(): Promise<Buffer> } } })(imageData)
+            .resize({ width: 1280, withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+          imageData = Buffer.from(small);
+          mimeType = 'image/jpeg';
+        }
+      } catch { /* best-effort — Original probieren */ }
+    }
     const response = await llm.complete({
       messages: [{
         role: 'user',
