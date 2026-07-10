@@ -48,11 +48,26 @@ export class BlueskyProvider extends SocialProvider {
    * wie Bilder).
    */
   private async uploadVideo(
-    service: string, session: { accessJwt: string; did: string }, bytes: Buffer,
+    service: string, session: { accessJwt: string; did: string; pdsHost?: string }, bytes: Buffer,
   ): Promise<unknown | null> {
     try {
       if (bytes.length > 100_000_000) return null; // Service-Limit ~100 MB
-      const auth = await fetch(`${service}/xrpc/com.atproto.server.getServiceAuth?aud=${encodeURIComponent('did:web:video.bsky.app')}&lxm=app.bsky.video.uploadVideo&exp=${Math.floor(Date.now() / 1000) + 600}`, {
+      // v1083 — der Video-Service prüft das Token GEGEN DIE PDS DES ACCOUNTS:
+      // aud muss die PDS-DID sein (nicht did:web:video.bsky.app) und lxm
+      // com.atproto.repo.uploadBlob (der Service lädt das Blob stellvertretend
+      // auf die PDS hoch). Live-Beweis 09.07.: 401 "invalid token audience …
+      // should be the user's PDS DID" bzw. "… should be com.atproto.repo.uploadBlob".
+      let pdsHost = session.pdsHost;
+      if (!pdsHost) {
+        // Fallback: plc.directory auflösen (Session ohne didDoc)
+        try {
+          const plc = await fetch(`https://plc.directory/${encodeURIComponent(session.did)}`);
+          const doc = await plc.json().catch(() => null);
+          pdsHost = BlueskyProvider.pdsHostFromDidDoc(doc);
+        } catch { /* unten Fallback auf Service-Host */ }
+      }
+      if (!pdsHost) pdsHost = new URL(service).host;
+      const auth = await fetch(`${service}/xrpc/com.atproto.server.getServiceAuth?aud=${encodeURIComponent(`did:web:${pdsHost}`)}&lxm=com.atproto.repo.uploadBlob&exp=${Math.floor(Date.now() / 1000) + 600}`, {
         headers: { Authorization: `Bearer ${session.accessJwt}` },
       });
       const authData = await auth.json().catch(() => ({})) as { token?: string };
@@ -102,7 +117,7 @@ export class BlueskyProvider extends SocialProvider {
     return h.trim().replace(/^@/, '');
   }
 
-  private async createSession(channel: SocialChannel, secrets: Record<string, string>): Promise<{ accessJwt: string; did: string; handle: string }> {
+  private async createSession(channel: SocialChannel, secrets: Record<string, string>): Promise<{ accessJwt: string; did: string; handle: string; pdsHost?: string }> {
     const password = secrets.BLUESKY_APP_PASSWORD;
     if (!password) throw new Error('BLUESKY_APP_PASSWORD fehlt (App-Passwort, ENV-Stage des Kanals)');
     const res = await fetch(`${this.service(channel)}/xrpc/com.atproto.server.createSession`, {
@@ -110,11 +125,27 @@ export class BlueskyProvider extends SocialProvider {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ identifier: this.handle(channel), password }),
     });
-    const data = await res.json().catch(() => ({})) as { accessJwt?: string; did?: string; handle?: string; message?: string };
+    const data = await res.json().catch(() => ({})) as { accessJwt?: string; did?: string; handle?: string; message?: string; didDoc?: unknown };
     if (!res.ok || !data.accessJwt || !data.did) {
       throw new Error(`Bluesky-Login fehlgeschlagen: ${data.message ?? `HTTP ${res.status}`}`);
     }
-    return { accessJwt: data.accessJwt, did: data.did, handle: data.handle ?? this.handle(channel) };
+    const pdsHost = BlueskyProvider.pdsHostFromDidDoc(data.didDoc);
+    return { accessJwt: data.accessJwt, did: data.did, handle: data.handle ?? this.handle(channel), ...(pdsHost ? { pdsHost } : {}) };
+  }
+
+  /**
+   * v1083 — PDS-Host aus dem didDoc der Session (hinter dem bsky.social-
+   * Entryway liegt der Account auf einem eigenen PDS wie
+   * xyz.us-west.host.bsky.network; der Video-Service verlangt GENAU dessen
+   * DID als Token-Audience).
+   */
+  static pdsHostFromDidDoc(didDoc: unknown): string | undefined {
+    if (!didDoc || typeof didDoc !== 'object') return undefined;
+    const services = (didDoc as { service?: Array<{ id?: string; type?: string; serviceEndpoint?: string }> }).service;
+    if (!Array.isArray(services)) return undefined;
+    const pds = services.find(s => s?.id?.endsWith('#atproto_pds') || s?.type === 'AtprotoPersonalDataServer');
+    if (!pds?.serviceEndpoint || typeof pds.serviceEndpoint !== 'string') return undefined;
+    try { return new URL(pds.serviceEndpoint).host; } catch { return undefined; }
   }
 
   /** Link-Facets (klickbare URLs) — Byte-Offsets in UTF-8, wie das AT Protocol sie verlangt. */

@@ -368,6 +368,19 @@ describe('BlueskyProvider (v1013)', () => {
     expect(facets[0].features[0].uri).toBe('https://fussball.cc/news/azteca');
   });
 
+  it('v1083: pdsHostFromDidDoc liest den PDS-Host fürs Video-Service-Token (aud = PDS-DID, Realfall 09.07.)', () => {
+    const didDoc = {
+      service: [
+        { id: '#other', type: 'SomethingElse', serviceEndpoint: 'https://example.com' },
+        { id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: 'https://poisonpie.us-west.host.bsky.network' },
+      ],
+    };
+    expect(BlueskyProvider.pdsHostFromDidDoc(didDoc)).toBe('poisonpie.us-west.host.bsky.network');
+    expect(BlueskyProvider.pdsHostFromDidDoc(undefined)).toBeUndefined();
+    expect(BlueskyProvider.pdsHostFromDidDoc({ service: [] })).toBeUndefined();
+    expect(BlueskyProvider.pdsHostFromDidDoc({ service: [{ id: '#atproto_pds', serviceEndpoint: 'kein-url' }] })).toBeUndefined();
+  });
+
   it('publish: createSession → uploadBlob (lokales Bild) → createRecord mit Facets + Embed', async () => {
     const { writeFileSync, unlinkSync } = await import('node:fs');
     const { join } = await import('node:path');

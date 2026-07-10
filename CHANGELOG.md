@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1083] - 2026-07-10
+
+### Fixed
+- **Bluesky-Video-Upload repariert**: Der Video-Service von Bluesky verlangt als Token-Audience die PDS-DID des Accounts (z. B. `did:web:….host.bsky.network`) und als Lexicon-Methode `com.atproto.repo.uploadBlob` — bisher wurde `did:web:video.bsky.app` mit `app.bsky.video.uploadVideo` angefragt, der Upload scheiterte still mit 401 und Reels gingen als reine Text-Posts raus. Die PDS wird jetzt aus dem `didDoc` der Session gelesen (Fallback: plc.directory). Hinweis: Der Video-Service setzt zusätzlich eine **bestätigte E-Mail-Adresse** am Bluesky-Konto voraus.
+
 ## [0.19.0-multi-ha.1082] - 2026-07-09
 
 ### Fixed
