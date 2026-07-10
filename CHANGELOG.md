@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1084] - 2026-07-10
+
+### Added
+- **YouTube in der Reel-Zweitverwertung**: Der Schalter „🎬 IG-Auto-Reel auch auf diesem Kanal übernehmen" erscheint jetzt auch auf YouTube-Kanälen — freigegebene Reels (9:16, unter 60 s) werden dort automatisch als Shorts hochgeladen. Der YouTube-Provider (Upload, Thumbnail, Metriken, Abonnenten) war bereits vorhanden; zur Einrichtung gehören ein OAuth-Client (YouTube Data API v3) und die Secrets `YT_CLIENT_ID`/`YT_CLIENT_SECRET`/`YT_REFRESH_TOKEN` in der ENV-Stage des Projekts.
+
 ## [0.19.0-multi-ha.1083] - 2026-07-10
 
 ### Fixed

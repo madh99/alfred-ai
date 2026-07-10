@@ -1708,8 +1708,8 @@ export function SocialPage() {
                       🎬 Reel-Video am Lead-Artikel ergänzen (sobald das Reel live ist)
                     </label>
                   )}
-                  {/* v1056/v1076/v1079 — Reel-Zweitverwertung auf allen video-fähigen Kanälen */}
-                  {['facebook', 'x', 'telegram_channel', 'bluesky'].includes(c.platform) && (
+                  {/* v1056/v1076/v1079/v1084 — Reel-Zweitverwertung auf allen video-fähigen Kanälen (YouTube = Shorts) */}
+                  {['facebook', 'x', 'telegram_channel', 'bluesky', 'youtube'].includes(c.platform) && (
                     <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
                       title="Das auf Instagram gerenderte Auto-Reel derselben Familie wird als zweiter Entwurf für diesen Kanal angelegt (gleiche Videodatei, kein doppeltes Rendering, gleiche Freigabe-Pflicht).">
                       <input type="checkbox" checked={settingsDraft.autoReel} onChange={e => setSettingsDraft(d => ({ ...d, autoReel: e.target.checked }))} />
