@@ -322,6 +322,10 @@ export function SocialPage() {
   const [postVideoId, setPostVideoId] = useState<string | null>(null);
   const [postChannels, setPostChannels] = useState<string[]>([]);
   const [postStoff, setPostStoff] = useState('');
+  // v1088 — Basis-Schnitt: Clip-Liste (Reihenfolge) mit von/bis + Titel + Format
+  const [cutClips, setCutClips] = useState<Array<{ assetId: string; motif: string; von: string; bis: string }>>([]);
+  const [cutTitel, setCutTitel] = useState('');
+  const [cutFormat, setCutFormat] = useState<'9:16' | '16:9'>('9:16');
   useEffect(() => {
     if (!client || page !== 'channels' || !assetsOpen || assetKind !== 'video') return;
     for (const a of assets) {
@@ -2240,6 +2244,49 @@ export function SocialPage() {
                   }} />
                 </label>
               </div>
+              {/* v1088 — Schnitt-Leiste: Clips per ➕ einsammeln, trimmen, verketten */}
+              {assetKind === 'video' && cutClips.length > 0 && (
+                <div className="border border-amber-500/20 rounded p-2 mb-2 space-y-1.5 bg-amber-500/5">
+                  <div className="text-[11px] font-medium text-amber-300">✂️ Schnitt <span className="text-gray-500 font-normal">— Reihenfolge wie hinzugefügt, von/bis in Sekunden (leer = ganzer Clip)</span></div>
+                  {cutClips.map((c, i) => (
+                    <div key={`${c.assetId}-${i}`} className="flex items-center gap-1.5 text-[10px] text-gray-300">
+                      <span className="text-gray-600">{i + 1}.</span>
+                      <span className="flex-1 truncate" title={c.motif}>{c.motif.slice(0, 50)}</span>
+                      <input value={c.von} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, von: e.target.value } : x))}
+                        placeholder="von" className="w-12 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-200" />
+                      <input value={c.bis} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, bis: e.target.value } : x))}
+                        placeholder="bis" className="w-12 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-200" />
+                      <button onClick={() => setCutClips(prev => prev.filter((_, j) => j !== i))} className="text-red-400 px-1">✕</button>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-1.5">
+                    <input value={cutTitel} onChange={e => setCutTitel(e.target.value)} placeholder="Optional: Titel-Overlay"
+                      className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1.5 py-1 text-[10px] text-gray-200" />
+                    <select value={cutFormat} onChange={e => setCutFormat(e.target.value === '16:9' ? '16:9' : '9:16')}
+                      className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-1 text-[10px] text-gray-300">
+                      <option value="9:16">9:16</option>
+                      <option value="16:9">16:9</option>
+                    </select>
+                    <button onClick={async () => {
+                        await withBusy('cut-video', async () => {
+                          const clips = cutClips.map(c => ({
+                            asset_id: c.assetId,
+                            ...(c.von.trim() !== '' && Number.isFinite(Number(c.von)) ? { von: Number(c.von) } : {}),
+                            ...(c.bis.trim() !== '' && Number.isFinite(Number(c.bis)) ? { bis: Number(c.bis) } : {}),
+                          }));
+                          const r = await client!.socialEditVideo(clips, cutTitel, cutFormat);
+                          if (!r.success) throw new Error(r.error ?? 'Schnitt fehlgeschlagen');
+                          setNotice(r.display ?? 'Schnitt fertig — neues Video in der Bibliothek.');
+                          setCutClips([]); setCutTitel('');
+                          await loadAssets();
+                        });
+                      }} disabled={busy === 'cut-video'}
+                      className="px-2 py-1 text-[10px] bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded">
+                      {busy === 'cut-video' ? '⏳ schneidet…' : '✂️ Schneiden'}
+                    </button>
+                  </div>
+                </div>
+              )}
               {assets.filter(a => assetKind === 'video' ? a.kind === 'video' : a.kind !== 'video').length === 0 && (
                 <div className="text-xs text-gray-600">{assetKind === 'video'
                   ? 'Noch keine Videos — sie entstehen mit jedem gerenderten Reel/Video, per KI-Clip oder Upload.'
@@ -2325,6 +2372,12 @@ export function SocialPage() {
                         <button onClick={() => { setPostVideoId(postVideoId === a.id ? null : a.id); setPostChannels([]); setPostStoff(''); }}
                           title="Beitrag aus diesem Video: Ziel-Kanäle wählen, Alfred schreibt Titel und Caption passend zur Kanal-Persona — Entwürfe mit Freigabe"
                           className="px-1.5 py-0.5 text-[10px] border border-blue-500/40 text-blue-300 hover:bg-blue-500/15 rounded">📤 Beitrag</button>
+                      )}
+                      {/* v1088 — in die Schnitt-Leiste aufnehmen (mehrfach möglich) */}
+                      {a.kind === 'video' && (
+                        <button onClick={() => setCutClips(prev => [...prev, { assetId: a.id, motif: a.motif, von: '', bis: '' }])}
+                          title="Zum Schnitt hinzufügen: Clips oben trimmen und mit Übergängen zu einem neuen Video verketten"
+                          className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 rounded">✂️➕</button>
                       )}
                     </div>
                     {postVideoId === a.id && (

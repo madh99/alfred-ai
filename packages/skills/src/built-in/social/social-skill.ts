@@ -7,7 +7,7 @@ import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, is
 import { tlsFetch } from './tls-fetch.js';
 import { createHash } from 'node:crypto';
 import { isNearDuplicateTitle } from './dedup.js';
-import { applyImageOverlays, bakeReelEndCard, buildVideoWatermark, cropToRatio, parseOverlayCorner, resolveImageBranding } from './image-overlay.js';
+import { applyImageOverlays, bakeReelEndCard, buildVideoWatermark, cropToRatio, loadSharp, parseOverlayCorner, resolveImageBranding } from './image-overlay.js';
 import { parsePublicMediaConfig, publishPublicMedia } from './public-media.js';
 
 /** v1009 — Ergebnis eines Kommentar-Einsammel-Laufs je Kanal (inkl. Copilot-Triage). */
@@ -30,7 +30,7 @@ type SocialAction =
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
   | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'suggest_reply' | 'regenerate_image' | 'revise_content'
-  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library' | 'render_reel' | 'post_from_video';
+  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library' | 'render_reel' | 'post_from_video' | 'edit_video';
 
 /**
  * v1035/v1056 — Begleitformate (Auto-Story, Reels): keine regulären Posts —
@@ -145,8 +145,8 @@ export class SocialSkill extends Skill {
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
             'list_comments', 'reply_comment', 'ignore_comment', 'suggest_reply', 'regenerate_image', 'revise_content',
-            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library', 'render_reel', 'post_from_video'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Reel für einen Beitrag (item_id) anstoßen — funktioniert für JEDEN Beitrag mit lokalen Bildern (Studio- oder User-erstellt, mit oder ohne Story, published oder geplant); Ziel ist der Instagram-Kanal der Familie, gleiche Leitplanken wie beim Auto-Reel (Wochen-Cap, KI-Clips, Entwurf mit Freigabe, Zweitverwertung). post_from_video = Beitrag aus einem Video der Bibliothek (asset_id) für einen oder mehrere Kanäle (channels): Alfred schreibt Titel/Caption je Kanal-Persona (optionaler stoff-Hinweis fließt ein), Entwürfe mit Freigabe.',
+            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library', 'render_reel', 'post_from_video', 'edit_video'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Reel für einen Beitrag (item_id) anstoßen — funktioniert für JEDEN Beitrag mit lokalen Bildern (Studio- oder User-erstellt, mit oder ohne Story, published oder geplant); Ziel ist der Instagram-Kanal der Familie, gleiche Leitplanken wie beim Auto-Reel (Wochen-Cap, KI-Clips, Entwurf mit Freigabe, Zweitverwertung). post_from_video = Beitrag aus einem Video der Bibliothek (asset_id) für einen oder mehrere Kanäle (channels): Alfred schreibt Titel/Caption je Kanal-Persona (optionaler stoff-Hinweis fließt ein), Entwürfe mit Freigabe. edit_video = Basis-Schnitt: 1-8 Bibliotheks-Videos (clips mit asset_id + optional von/bis in Sekunden) trimmen und mit Übergängen verketten, optionaler titel als Overlay — das Ergebnis landet als neues Video in der Bibliothek (ffmpeg, kostenlos).',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN/X_REFRESH_TOKEN+X_CLIENT_ID (OAuth2; Bild-Posts via v1.1: zusätzlich X_CONSUMER_KEY/X_CONSUMER_SECRET/X_OAUTH1_ACCESS_TOKEN/X_OAUTH1_ACCESS_SECRET — der OAuth2-Scope media.write wird oft nicht gewährt); bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
@@ -171,6 +171,7 @@ export class SocialSkill extends Skill {
         format: { type: 'string', enum: ['9:16', '16:9'], description: 'render_video: Hochformat (Shorts/Reels, Default) oder Querformat' },
         channels: { type: 'array', items: { type: 'string' }, description: 'crosspost/post_from_video: Ziel-Kanäle (Namen/IDs)' },
         asset_id: { type: 'string', description: 'post_from_video: ID des Videos aus der Medien-Bibliothek' },
+        clips: { type: 'array', items: { type: 'object', properties: { asset_id: { type: 'string' }, von: { type: 'number' }, bis: { type: 'number' } } }, description: 'edit_video: Schnitt-Liste in Reihenfolge — je Clip asset_id (Bibliotheks-Video) + optional von/bis (Sekunden)' },
         adapt: { type: 'boolean', description: 'crosspost: Text formatgerecht je Ziel-Kanal umschreiben (Default true; false = wörtliche Kopie)' },
         topic: { type: 'string', description: 'link_topic/unlink_topic: Interessen-Thema (Name, fuzzy) — ein Kanal kann MEHRERE Themen speisen (z.B. „WM 2026" + „Panini-Sammelalbum")' },
         lesson: { type: 'string', description: 'edit_content/add_lesson: Lektion für künftige Studio-Läufe des Kanals, z.B. "Es ist die WM 2026, nicht die EM — auch in Hashtags" — wird zwingend in künftige Prompts aufgenommen' },
@@ -179,7 +180,7 @@ export class SocialSkill extends Skill {
         hint: { type: 'string', description: 'regenerate_image: optionaler Bild-Hinweis, z.B. "beide Flaggen zeigen, ohne Menschen"' },
         instruction: { type: 'string', description: 'revise_content: Überarbeitungs-Anweisung, z.B. "halb so lang, ohne Superlative" — das Kanal-LLM schreibt Titel/Text/Hashtags um (Status/Termin bleiben)' },
         stoff: { type: 'string', description: 'plan_story: der Stoff der Story in 1-6 Sätzen MIT allen Fakten (Wer/Was/Wann/Kontext) — NUR daraus wird je Kanal getextet, nichts wird dazuerfunden' },
-        titel: { type: 'string', description: 'plan_story: optionaler Arbeitstitel der Story (sonst aus dem Stoff abgeleitet)' },
+        titel: { type: 'string', description: 'plan_story: optionaler Arbeitstitel der Story (sonst aus dem Stoff abgeleitet). edit_video: optionaler Titel als Overlay über den ersten Sekunden' },
         family: { type: 'string', description: 'plan_story: optional Familien-Schlüssel (project:<id>/family:<name>) — nur nötig, wenn mehrere Familien existieren' },
         scheduled_at: { type: 'string', description: 'schedule_content: ISO-Zeitpunkt der Veröffentlichung' },
         content_status: { type: 'string', description: 'list_content: Filter (draft|scheduled|approved|published|failed|…)' },
@@ -205,6 +206,8 @@ export class SocialSkill extends Skill {
     /** v1060 — Stufe 3: Image-to-Video-Clip (Sora/Runway/Veo, kostenpflichtig). */
     generateClip?: (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => Promise<{ clipPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
+    /** v1088 — Basis-Schnitt: Clips trimmen + verketten (Crossfade), optionales Titel-Overlay. */
+    edit?: (opts: { clips: Array<{ path: string; startSec?: number; endSec?: number }>; format: '9:16' | '16:9'; overlayImage?: string; outBaseName?: string }) => Promise<{ videoPath: string; durationSec: number }>;
   };
 
   setVideoTools(tools: NonNullable<SocialSkill['videoTools']>): void {
@@ -420,6 +423,7 @@ export class SocialSkill extends Skill {
         }
         case 'crosspost': return await this.crosspost(userId, input);
         case 'post_from_video': return await this.postFromVideo(userId, input);
+        case 'edit_video': return await this.editVideoFromLibrary(userId, input);
         case 'list_comments': return await this.listCommentsAction(userId, input);
         case 'reply_comment': return await this.replyComment(userId, input);
         case 'suggest_reply': return await this.suggestReply(userId, input);
@@ -2049,6 +2053,72 @@ Antworte NUR mit VALIDEM JSON: {"titel": "…", "text": "…", "hashtags": ["…
       data: { created: created.length },
       display: `🎬 Beitrag aus Video angelegt:\n${created.map(c => `• ${c}`).join('\n')}${skipped.length ? `\nÜbersprungen: ${skipped.join(', ')}` : ''}\nJeder Entwurf durchläuft die normale Freigabe des Ziel-Kanals.`,
     };
+  }
+
+  /**
+   * v1088 — Basis-Schnitt der Video-Werkstatt: 1–8 Bibliotheks-Videos
+   * trimmen (von/bis) und mit Crossfades verketten, optionaler Titel als
+   * Overlay über den ersten Sekunden. Das Ergebnis landet als neues Video
+   * (model 'schnitt') zurück in der Bibliothek — kostenlos (ffmpeg).
+   */
+  private async editVideoFromLibrary(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.videoTools?.edit) return { success: false, error: 'Video-Schnitt nicht verfügbar (ffmpeg/Video-Pipeline fehlt).' };
+    const rawClips = Array.isArray(input.clips) ? input.clips : [];
+    if (rawClips.length === 0 || rawClips.length > 8) return { success: false, error: 'clips erforderlich: 1–8 Einträge mit asset_id (+ optional von/bis in Sekunden).' };
+    const library = await this.repo.listMediaAssets(userId, { limit: 500, kind: 'video' });
+    const clips: Array<{ path: string; startSec?: number; endSec?: number }> = [];
+    const used: Array<{ id: string; motif: string }> = [];
+    for (const raw of rawClips) {
+      const c = raw as { asset_id?: unknown; von?: unknown; bis?: unknown };
+      const asset = library.find(a => a.id === String(c.asset_id ?? ''));
+      if (!asset) return { success: false, error: `Video-Asset nicht gefunden: ${String(c.asset_id ?? '?')}` };
+      clips.push({
+        path: asset.path,
+        ...(typeof c.von === 'number' && c.von >= 0 ? { startSec: c.von } : {}),
+        ...(typeof c.bis === 'number' && c.bis > 0 ? { endSec: c.bis } : {}),
+      });
+      used.push({ id: asset.id, motif: asset.motif });
+    }
+    const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
+    const titel = typeof input.titel === 'string' && input.titel.trim() ? input.titel.trim().slice(0, 90) : undefined;
+
+    // Titel-Overlay auf transparenter Leinwand backen (gleicher Boxen-Look wie
+    // die Reel-Hook-Karte) — best-effort: ohne sharp läuft der Schnitt ohne Titel.
+    let overlayImage: string | undefined;
+    if (titel) {
+      try {
+        const sharp = await loadSharp();
+        if (sharp) {
+          const [w, h] = format === '9:16' ? [1080, 1920] : [1920, 1080];
+          const blank = await (sharp as unknown as (o: object) => { png(): { toBuffer(): Promise<Buffer> } })({
+            create: { width: w, height: h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+          }).png().toBuffer();
+          const withTitle = await applyImageOverlays(blank, { title: titel, titleMaxWidthRatio: 0.75 });
+          const { writeFile } = await import('node:fs/promises');
+          const { join } = await import('node:path');
+          const { tmpdir } = await import('node:os');
+          overlayImage = join(tmpdir(), `alfred-edit-title-${Date.now().toString(36)}.png`);
+          await writeFile(overlayImage, withTitle);
+        }
+      } catch { /* Titel best-effort */ }
+    }
+    try {
+      const result = await this.videoTools.edit({ clips, format, ...(overlayImage ? { overlayImage } : {}), outBaseName: `edit-${Date.now().toString(36)}` });
+      const motif = titel ?? `Schnitt aus ${used.length} Clip${used.length > 1 ? 's' : ''}: ${used.map(u => u.motif.slice(0, 60)).join(' + ')}`.slice(0, 300);
+      const asset = await this.repo.createMediaAsset(userId, {
+        path: result.videoPath, motif, kind: 'video', model: 'schnitt', format, durationSec: result.durationSec,
+      });
+      return {
+        success: true,
+        data: { asset_id: asset.id, videoPath: result.videoPath, durationSec: result.durationSec },
+        display: `✂️ Schnitt fertig: ${Math.round(result.durationSec)}s (${format}${titel ? `, Titel „${titel}"` : ''}) — liegt als neues Video in der Bibliothek [${asset.id.slice(0, 8)}]. Von dort per 📤 „Beitrag aus Video" ausspielen.`,
+      };
+    } finally {
+      if (overlayImage) {
+        const { unlink } = await import('node:fs/promises');
+        await unlink(overlayImage).catch(() => { /* tmp best-effort */ });
+      }
+    }
   }
 
   private async adaptForChannel(

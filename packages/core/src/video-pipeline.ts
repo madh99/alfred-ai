@@ -257,6 +257,65 @@ export function buildReelAudioGraph(opts: {
 }
 
 /**
+ * v1088 — Basis-Schnitt (pure, testbar): Clips trimmen, auf eine gemeinsame
+ * Leinwand bringen (Cover-Crop) und mit Crossfades verketten; Ton wird —
+ * wo vorhanden — mitgetrimmt und weich übergeblendet, stumme Clips bekommen
+ * Stille (anullsrc-Input des Aufrufers). Optional ein Titel-Overlay (PNG mit
+ * Alpha, vom Aufrufer gebacken) für die ersten Sekunden.
+ */
+export function buildEditGraph(opts: {
+  /** Je Clip: Input-Index des Videos, Input-Index der Tonquelle (Video selbst oder anullsrc), getrimmte Dauer. */
+  clips: Array<{ index: number; audioIndex: number; audioFromVideo: boolean; startSec: number; durationSec: number }>;
+  width: number; height: number;
+  /** Crossfade-Dauer zwischen Clips (Default 0,5 s; 0 = harte Schnitte). */
+  fadeSec?: number;
+  /** Input-Index des Titel-PNGs (volle Leinwand, Alpha). */
+  overlayInputIndex?: number;
+  /** Wie lange der Titel steht (Default 3,5 s). */
+  overlaySec?: number;
+}): { filterComplex: string; outLabelV: string; outLabelA: string; totalSec: number } {
+  if (opts.clips.length === 0) throw new Error('buildEditGraph: mindestens ein Clip');
+  const fade = Math.max(0, opts.fadeSec ?? 0.5);
+  const parts: string[] = [];
+  for (let k = 0; k < opts.clips.length; k++) {
+    const c = opts.clips[k];
+    const end = c.startSec + c.durationSec;
+    parts.push(
+      `[${c.index}:v]trim=start=${c.startSec}:end=${end},setpts=PTS-STARTPTS,` +
+      `scale=${opts.width}:${opts.height}:force_original_aspect_ratio=increase,crop=${opts.width}:${opts.height},fps=30,format=yuv420p[v${k}]`,
+    );
+    // Ton: aus dem Clip selbst (gleiches Trimm-Fenster) oder Stille passender Länge
+    parts.push(c.audioFromVideo
+      ? `[${c.audioIndex}:a]atrim=start=${c.startSec}:end=${end},asetpts=PTS-STARTPTS,aresample=48000[a${k}]`
+      : `[${c.audioIndex}:a]atrim=0:${c.durationSec},asetpts=PTS-STARTPTS,aresample=48000[a${k}]`);
+  }
+  let v = '[v0]';
+  let a = '[a0]';
+  let total = opts.clips[0].durationSec;
+  for (let k = 1; k < opts.clips.length; k++) {
+    const d = opts.clips[k].durationSec;
+    if (fade > 0) {
+      const offset = Math.max(0, total - fade);
+      parts.push(`${v}[v${k}]xfade=transition=fade:duration=${fade}:offset=${offset.toFixed(3)}[vx${k}]`);
+      parts.push(`${a}[a${k}]acrossfade=d=${fade}[ax${k}]`);
+      total = offset + d;
+    } else {
+      parts.push(`${v}[v${k}]concat=n=2:v=1:a=0[vx${k}]`);
+      parts.push(`${a}[a${k}]concat=n=2:v=0:a=1[ax${k}]`);
+      total += d;
+    }
+    v = `[vx${k}]`;
+    a = `[ax${k}]`;
+  }
+  if (opts.overlayInputIndex !== undefined) {
+    const showFor = opts.overlaySec ?? 3.5;
+    parts.push(`${v}[${opts.overlayInputIndex}:v]overlay=0:0:enable='lte(t,${showFor})'[vtitle]`);
+    v = '[vtitle]';
+  }
+  return { filterComplex: parts.join(';'), outLabelV: v, outLabelA: a, totalSec: Number(total.toFixed(3)) };
+}
+
+/**
  * v938 — Externer Video-Generator (Runway/Kling/Veo): Schnittstelle ist
  * vorbereitet und per Config aktivierbar — die konkrete Anbindung folgt,
  * sobald ein Anbieter gewählt/bezahlt ist. Bis dahin liefert generate()
@@ -321,6 +380,71 @@ export class SlideshowVideoRenderer {
       const sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
       return Number.isFinite(sec) && sec > 0 ? Number(sec.toFixed(2)) : null;
     } catch { return null; }
+  }
+
+  /**
+   * v1088 — Basis-Schnitt: Clips trimmen (von–bis), auf eine gemeinsame
+   * Leinwand croppen und mit Crossfades verketten; optionales Titel-Overlay
+   * (PNG mit Alpha, vom Aufrufer gebacken). Ton wird mitgeschnitten, stumme
+   * Clips bekommen Stille. Ergebnis liegt im workDir.
+   */
+  async editVideo(opts: {
+    clips: Array<{ path: string; startSec?: number; endSec?: number }>;
+    format: '9:16' | '16:9';
+    /** Titel-Overlay-PNG in Leinwandgröße (Alpha), z.B. aus applyImageOverlays. */
+    overlayImage?: string;
+    fadeSec?: number;
+    outBaseName?: string;
+  }): Promise<{ videoPath: string; durationSec: number }> {
+    if (opts.clips.length === 0 || opts.clips.length > 8) throw new Error('Schnitt braucht 1–8 Clips.');
+    const [w, h] = opts.format === '9:16' ? [1080, 1920] : [1920, 1080];
+    // Je Clip: Dauer + Tonspur ermitteln, Trimm-Fenster festklopfen
+    const probed: Array<{ path: string; startSec: number; durationSec: number; hasAudio: boolean }> = [];
+    for (const c of opts.clips) {
+      const p = await this.probeVideo(c.path);
+      if (!p.ok || !p.durationSec) throw new Error(`Clip nicht lesbar: ${c.path.split(/[\\/]/).pop()} (${p.detail ?? 'keine Dauer'})`);
+      const start = Math.max(0, Math.min(c.startSec ?? 0, p.durationSec - 0.2));
+      const end = Math.min(c.endSec !== undefined && c.endSec > start ? c.endSec : p.durationSec, p.durationSec);
+      const dur = end - start;
+      if (dur < 0.4) throw new Error(`Trimm-Fenster zu kurz (${dur.toFixed(1)}s) bei ${c.path.split(/[\\/]/).pop()} — mindestens 0,4 s.`);
+      let hasAudio = false;
+      try {
+        const { stdout } = await execFileAsync(this.ffprobe,
+          ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', c.path], { timeout: 20_000 });
+        hasAudio = stdout.trim().length > 0;
+      } catch { /* stumm behandeln */ }
+      probed.push({ path: c.path, startSec: start, durationSec: Number(dur.toFixed(3)), hasAudio });
+    }
+    // Crossfade darf keinen Clip überziehen (acrossfade verlangt Länge ≥ fade)
+    const minDur = Math.min(...probed.map(p => p.durationSec));
+    const fade = probed.length > 1 ? Math.min(opts.fadeSec ?? 0.5, Math.max(0, minDur / 2 - 0.05)) : 0;
+
+    // Inputs: erst die Videos, dann je stummem Clip ein anullsrc, dann das Overlay
+    const args: string[] = ['-y'];
+    for (const p of probed) args.push('-i', p.path);
+    let nextIndex = probed.length;
+    const clips = probed.map((p, k) => {
+      if (p.hasAudio) return { index: k, audioIndex: k, audioFromVideo: true, startSec: p.startSec, durationSec: p.durationSec };
+      args.push('-f', 'lavfi', '-t', String(p.durationSec + 1), '-i', 'anullsrc=r=48000:cl=stereo');
+      return { index: k, audioIndex: nextIndex++, audioFromVideo: false, startSec: p.startSec, durationSec: p.durationSec };
+    });
+    let overlayInputIndex: number | undefined;
+    if (opts.overlayImage) {
+      args.push('-i', opts.overlayImage);
+      overlayInputIndex = nextIndex++;
+    }
+    const graph = buildEditGraph({ clips, width: w, height: h, fadeSec: fade, ...(overlayInputIndex !== undefined ? { overlayInputIndex } : {}) });
+    const outPath = join(this.opts.workDir, `${opts.outBaseName ?? `edit-${Date.now().toString(36)}`}-${opts.format.replace(':', 'x')}.mp4`);
+    args.push(
+      '-filter_complex', graph.filterComplex,
+      '-map', graph.outLabelV, '-map', graph.outLabelA,
+      '-t', String(graph.totalSec),
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac',
+      outPath,
+    );
+    this.logger.info({ clips: probed.length, fade, format: opts.format, durationSec: graph.totalSec, title: Boolean(opts.overlayImage) }, 'v1088 editing video (trim + crossfade + overlay)');
+    await execFileAsync(this.ffmpeg, args, { timeout: 10 * 60_000, maxBuffer: 10 * 1024 * 1024 });
+    return { videoPath: outPath, durationSec: graph.totalSec };
   }
 
   /** v938 — Transcode-Check für User-Videos (ffprobe, best-effort). */

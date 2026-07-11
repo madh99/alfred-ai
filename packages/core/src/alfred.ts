@@ -6828,6 +6828,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               });
             },
             probe: (p: string) => renderer.probeVideo(p),
+            // v1088 — Basis-Schnitt der Video-Werkstatt (Trim + Crossfade + Titel)
+            edit: (o: { clips: Array<{ path: string; startSec?: number; endSec?: number }>; format: '9:16' | '16:9'; overlayImage?: string; outBaseName?: string }) => renderer.editVideo(o),
             // v1060 — Stufe 3: Image-to-Video-Clip (kostenpflichtig; Budget/
             // Opt-in prüft der Skill). Fehler wirft — der Skill fällt dann auf
             // die Standbild-Slide zurück.
@@ -8530,6 +8532,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // v1041 — Termin-Vorlage hochladen: Bild landet als gepinntes Asset
           // in der Bibliothek (geschützt vor Dedup und Alters-Cleanup) und wird
           // per image_overlay.termin_image referenziert.
+          // v1088 — Basis-Schnitt der Video-Werkstatt (Skill: edit_video)
+          assetEdit: async (body: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'edit_video',
+              clips: Array.isArray(body.clips) ? body.clips : [],
+              ...(typeof body.titel === 'string' && body.titel.trim() ? { titel: body.titel } : {}),
+              ...(body.format === '16:9' ? { format: '16:9' } : {}),
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error, data: r.data };
+          },
           // v1087 — Beitrag aus einem Bibliotheks-Video: Skill textet je Kanal
           assetPost: async (assetId: string, body: Record<string, unknown>) => {
             if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };

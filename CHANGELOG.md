@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1088] - 2026-07-10
+
+### Added — Basis-Schnitt, Werkstatt Teil 3 (v1088)
+- **✂️ Schnitt in der Video-Bibliothek**: Clips per „✂️➕" einsammeln, je Clip von/bis in Sekunden trimmen (leer = ganzer Clip), optionaler Titel als Overlay (gleicher Boxen-Look wie die Reel-Hook-Karte), Format 9:16 oder 16:9 — Alfred verkettet die Clips mit weichen Übergängen (Bild-Crossfade + Ton-Überblendung; stumme KI-Clips bekommen Stille) und legt das Ergebnis als neues Video zurück in die Bibliothek. Von dort direkt per „📤 Beitrag aus Video" ausspielbar. Komplett ffmpeg, kostenlos.
+- Auch per Chat: `edit_video` mit Clip-Liste (asset_id + von/bis), Titel und Format.
+
 ## [0.19.0-multi-ha.1087] - 2026-07-10
 
 ### Added — „Beitrag aus Video", Werkstatt Teil 2 (v1087)

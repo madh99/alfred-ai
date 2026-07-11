@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSrt, buildPhraseSrt, buildReelFilterGraph, buildReelAudioGraph, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
+import { buildSrt, buildPhraseSrt, buildReelFilterGraph, buildReelAudioGraph, buildEditGraph, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
 
 describe('buildSrt (v938)', () => {
   it('verteilt Sätze gewichtet über die Laufzeit, SRT-Format korrekt', () => {
@@ -106,6 +106,37 @@ describe('buildReelFilterGraph (v1058)', () => {
     expect((g.filterComplex.match(/xfade/g) ?? []).length).toBe(2);
     expect((g.filterComplex.match(/format=yuv420p/g) ?? []).length).toBeGreaterThanOrEqual(3); // je Slide (Mix Bild/Video braucht gleiches Pixelformat)
     expect(g.totalSec).toBeCloseTo(15.5, 1);
+  });
+});
+
+describe('buildEditGraph (v1088)', () => {
+  it('trimmt, croppt auf Leinwand, verkettet mit Crossfade (Video + Ton) und rechnet die Gesamtdauer', () => {
+    const g = buildEditGraph({
+      clips: [
+        { index: 0, audioIndex: 0, audioFromVideo: true, startSec: 2, durationSec: 10 },
+        { index: 1, audioIndex: 2, audioFromVideo: false, startSec: 0, durationSec: 6 },
+      ],
+      width: 1080, height: 1920, fadeSec: 0.5,
+    });
+    expect(g.filterComplex).toContain('[0:v]trim=start=2:end=12,setpts=PTS-STARTPTS,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920');
+    expect(g.filterComplex).toContain('[0:a]atrim=start=2:end=12'); // Ton aus dem Clip
+    expect(g.filterComplex).toContain('[2:a]atrim=0:6'); // stummer Clip → anullsrc-Input
+    expect(g.filterComplex).toContain('xfade=transition=fade:duration=0.5:offset=9.500');
+    expect(g.filterComplex).toContain('acrossfade=d=0.5');
+    expect(g.totalSec).toBeCloseTo(15.5, 2); // 10 + 6 − 0,5 Überblendung
+    expect(g.outLabelV).toBe('[vx1]');
+    expect(g.outLabelA).toBe('[ax1]');
+  });
+
+  it('Einzel-Clip mit Titel-Overlay: kein xfade, Overlay nur die ersten Sekunden', () => {
+    const g = buildEditGraph({
+      clips: [{ index: 0, audioIndex: 0, audioFromVideo: true, startSec: 0, durationSec: 8 }],
+      width: 1920, height: 1080, overlayInputIndex: 1, overlaySec: 3.5,
+    });
+    expect(g.filterComplex).not.toContain('xfade');
+    expect(g.filterComplex).toContain("[v0][1:v]overlay=0:0:enable='lte(t,3.5)'[vtitle]");
+    expect(g.outLabelV).toBe('[vtitle]');
+    expect(g.totalSec).toBe(8);
   });
 });
 

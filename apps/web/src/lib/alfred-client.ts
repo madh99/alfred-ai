@@ -545,6 +545,14 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Social assets: HTTP ${res.status}`);
     return (await res.json()).assets ?? [];
   }
+  // v1088 — Basis-Schnitt: Clips trimmen + verketten, Ergebnis in die Bibliothek
+  async socialEditVideo(clips: Array<{ asset_id: string; von?: number; bis?: number }>, titel?: string, format?: '9:16' | '16:9'): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/assets/edit`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clips, ...(titel?.trim() ? { titel: titel.trim() } : {}), ...(format ? { format } : {}) }),
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   // v1087 — Beitrag aus einem Bibliotheks-Video (Alfred textet je Ziel-Kanal)
   async socialPostFromVideo(assetId: string, channels: string[], stoff?: string): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/assets/${encodeURIComponent(assetId)}/post`, {

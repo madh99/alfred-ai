@@ -715,6 +715,28 @@ describe('v1087 — post_from_video (Beitrag aus Bibliotheks-Video)', () => {
     expect((spies as any).touchMediaAsset).toHaveBeenCalledWith('u1', 'vid-1', 'ch-fb');
   });
 
+  it('v1088 edit_video: trimmt/verkettet Bibliotheks-Clips und legt das Ergebnis als neues Video-Asset an', async () => {
+    const { skill, spies } = makeSkill(makeChannel(), makeItem());
+    (spies as any).listMediaAssets = vi.fn(async () => [
+      { id: 'v1', userId: 'u1', path: '/tmp/a.mp4', motif: 'Torjubel', kind: 'video', lastUsedAt: 'x', useCount: 1, blocked: false, pinned: false, createdAt: 'x' },
+      { id: 'v2', userId: 'u1', path: '/tmp/b.mp4', motif: 'Fanmarsch', kind: 'video', lastUsedAt: 'x', useCount: 1, blocked: false, pinned: false, createdAt: 'x' },
+    ]);
+    const edit = vi.fn(async () => ({ videoPath: '/tmp/edit-1.mp4', durationSec: 14.5 }));
+    skill.setVideoTools({ render: vi.fn(), edit } as any);
+    const r = await skill.execute({ action: 'edit_video', clips: [{ asset_id: 'v1', von: 2, bis: 10 }, { asset_id: 'v2' }], titel: 'BEST OF', format: '9:16' }, CTX);
+    expect(r.success).toBe(true);
+    const call = (edit.mock.calls[0] as unknown[])[0] as { clips: Array<{ path: string; startSec?: number; endSec?: number }>; format: string };
+    expect(call.format).toBe('9:16');
+    expect(call.clips[0]).toMatchObject({ path: '/tmp/a.mp4', startSec: 2, endSec: 10 });
+    expect(call.clips[1]).toMatchObject({ path: '/tmp/b.mp4' });
+    const assetCall = ((spies as any).createMediaAsset as any).mock.calls[0];
+    expect(assetCall[1]).toMatchObject({ kind: 'video', model: 'schnitt', path: '/tmp/edit-1.mp4', durationSec: 14.5, motif: 'BEST OF' });
+    // unbekannter Clip → klarer Fehler
+    const bad = await skill.execute({ action: 'edit_video', clips: [{ asset_id: 'nix' }] }, CTX);
+    expect(bad.success).toBe(false);
+    expect(bad.error).toContain('nicht gefunden');
+  });
+
   it('ohne asset_id bzw. unbekanntes Video → klare Fehler', async () => {
     const { skill, spies } = makeSkill(makeChannel(), makeItem());
     (spies as any).listMediaAssets = vi.fn(async () => []);
