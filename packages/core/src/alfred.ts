@@ -8532,6 +8532,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // v1041 — Termin-Vorlage hochladen: Bild landet als gepinntes Asset
           // in der Bibliothek (geschützt vor Dedup und Alters-Cleanup) und wird
           // per image_overlay.termin_image referenziert.
+          // v1089 — „Bild beleben": Image-to-Video über den Skill (Budget dort)
+          assetAnimate: async (assetId: string, body: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'animate_image', asset_id: assetId,
+              ...(typeof body.regie === 'string' && body.regie.trim() ? { regie: body.regie } : {}),
+              ...(body.format === '16:9' ? { format: '16:9' } : {}),
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error, data: r.data };
+          },
           // v1088 — Basis-Schnitt der Video-Werkstatt (Skill: edit_video)
           assetEdit: async (body: Record<string, unknown>) => {
             if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };

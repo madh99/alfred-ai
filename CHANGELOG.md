@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1089] - 2026-07-11
+
+### Added — „Bild beleben", Werkstatt B2 Teil 1 (v1089)
+- **🎞️ Bild beleben**: Neuer Button auf jeder Bild-Karte der Bibliothek — die KI macht aus dem Standbild einen bewegten Clip (Image-to-Video, gleicher Mechanismus wie die Reel-KI-Clips). Die Bewegungs-Regie beschreibst du selbst oder Alfred schlägt sie aus der Bildbeschreibung vor; der fertige Clip landet im Videos-Tab und ist dort per ✂️ Schnitt und 📤 Beitrag weiterverwendbar. Auch per Chat (`animate_image`).
+- Kosten-Leitplanke: zählt auf **dasselbe KI-Clip-Monatsbudget** wie die Reels (`ai_clip_budget_per_month`, Default 8) — ein Topf für alle bezahlten Clips, mit klarem Fehler statt stiller Überschreitung.
+
 ## [0.19.0-multi-ha.1088] - 2026-07-10
 
 ### Added — Basis-Schnitt, Werkstatt Teil 3 (v1088)

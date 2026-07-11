@@ -545,6 +545,14 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Social assets: HTTP ${res.status}`);
     return (await res.json()).assets ?? [];
   }
+  // v1089 — „Bild beleben": Image-to-Video-Clip aus einem Bibliotheks-Bild (kostenpflichtig, KI-Clip-Budget)
+  async socialAnimateImage(assetId: string, regie?: string, format?: '9:16' | '16:9'): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/assets/${encodeURIComponent(assetId)}/animate`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...(regie?.trim() ? { regie: regie.trim() } : {}), ...(format ? { format } : {}) }),
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   // v1088 — Basis-Schnitt: Clips trimmen + verketten, Ergebnis in die Bibliothek
   async socialEditVideo(clips: Array<{ asset_id: string; von?: number; bis?: number }>, titel?: string, format?: '9:16' | '16:9'): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/assets/edit`, {

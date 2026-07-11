@@ -326,6 +326,9 @@ export function SocialPage() {
   const [cutClips, setCutClips] = useState<Array<{ assetId: string; motif: string; von: string; bis: string }>>([]);
   const [cutTitel, setCutTitel] = useState('');
   const [cutFormat, setCutFormat] = useState<'9:16' | '16:9'>('9:16');
+  // v1089 — „Bild beleben": Regie-Panel je Bild
+  const [animateId, setAnimateId] = useState<string | null>(null);
+  const [animateRegie, setAnimateRegie] = useState('');
   useEffect(() => {
     if (!client || page !== 'channels' || !assetsOpen || assetKind !== 'video') return;
     for (const a of assets) {
@@ -2365,6 +2368,10 @@ export function SocialPage() {
                         className="px-1.5 py-0.5 text-[10px] border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 disabled:opacity-50 rounded">
                         {busy === a.id ? '⏳' : '✨ Motiv'}
                       </button>}
+                      {/* v1089 — Bild beleben: Image-to-Video-Clip (kostenpflichtig, KI-Clip-Budget) */}
+                      {a.kind !== 'video' && <button onClick={() => { setAnimateId(animateId === a.id ? null : a.id); setAnimateRegie(''); }}
+                        title="Bild beleben: die KI macht aus dem Standbild einen bewegten Clip (kostenpflichtig — zählt aufs KI-Clip-Monatsbudget). Bewegung optional selbst beschreiben, sonst schlägt Alfred sie vor."
+                        className="px-1.5 py-0.5 text-[10px] border border-pink-500/40 text-pink-300 hover:bg-pink-500/15 rounded">🎞️ Beleben</button>}
                       <button onClick={() => assetAction(a, 'delete')} disabled={busy === a.id}
                         className="px-1.5 py-0.5 text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded">🗑</button>
                       {/* v1087 — Beitrag aus Video: Alfred textet je Ziel-Kanal, Entwurf mit Freigabe */}
@@ -2380,6 +2387,26 @@ export function SocialPage() {
                           className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 rounded">✂️➕</button>
                       )}
                     </div>
+                    {animateId === a.id && (
+                      <div className="border border-pink-500/20 rounded p-2 space-y-1.5 bg-pink-500/5">
+                        <textarea value={animateRegie} onChange={e => setAnimateRegie(e.target.value)} rows={2}
+                          placeholder="Optional: Bewegungs-Regie, z.B. langsamer Kamera-Schwenk mit wehenden Fahnen — leer = Alfred schlägt vor"
+                          className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1.5 py-1 text-[10px] text-gray-200" />
+                        <button onClick={async () => {
+                            if (!confirm('Bild beleben? Das erzeugt einen kostenpflichtigen KI-Clip (zählt aufs KI-Clip-Monatsbudget) und dauert 1–2 Minuten.')) return;
+                            await withBusy(`animate-${a.id}`, async () => {
+                              const r = await client!.socialAnimateImage(a.id, animateRegie);
+                              if (!r.success) throw new Error(r.error ?? 'Beleben fehlgeschlagen');
+                              setNotice(r.display ?? 'Clip erzeugt — liegt im Videos-Tab.');
+                              setAnimateId(null);
+                              await loadAssets();
+                            });
+                          }} disabled={busy === `animate-${a.id}`}
+                          className="px-2 py-1 text-[10px] bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white rounded">
+                          {busy === `animate-${a.id}` ? '⏳ KI arbeitet…' : '🎞️ Beleben (kostenpflichtig)'}
+                        </button>
+                      </div>
+                    )}
                     {postVideoId === a.id && (
                       <div className="border border-blue-500/20 rounded p-2 space-y-1.5 bg-blue-500/5">
                         <div className="text-[10px] text-gray-400">Ziel-Kanäle:</div>

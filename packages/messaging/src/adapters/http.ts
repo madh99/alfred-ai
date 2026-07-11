@@ -721,6 +721,8 @@ export class HttpAdapter extends MessagingAdapter {
     assetPost?: (assetId: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
     /** v1088 — Basis-Schnitt (Trim + Crossfade + Titel), Ergebnis in die Bibliothek. */
     assetEdit?: (body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    /** v1089 — „Bild beleben": Image-to-Video-Clip aus einem Bibliotheks-Bild. */
+    assetAnimate?: (assetId: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string, width?: number) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1450,6 +1452,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSocialBody(req, res, async (body) => {
         if (!this.socialCallbacks?.assetEdit) return { error: 'not supported' };
         return this.socialCallbacks.assetEdit(body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/assets\/[^/]+\/animate$/) && req.method === 'POST') {
+      // v1089 — „Bild beleben": Image-to-Video-Clip aus einem Bibliotheks-Bild
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.assetAnimate) return { error: 'not supported' };
+        return this.socialCallbacks.assetAnimate(url.pathname.split('/')[4], body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/social\/assets\/[^/]+\/(block|unblock|delete|motif|describe|pin|unpin)$/) && req.method === 'POST') {
       this.handleSocialBody(req, res, async (body) => {

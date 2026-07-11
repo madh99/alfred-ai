@@ -30,7 +30,7 @@ type SocialAction =
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
   | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'suggest_reply' | 'regenerate_image' | 'revise_content'
-  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library' | 'render_reel' | 'post_from_video' | 'edit_video';
+  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library' | 'render_reel' | 'post_from_video' | 'edit_video' | 'animate_image';
 
 /**
  * v1035/v1056 — Begleitformate (Auto-Story, Reels): keine regulären Posts —
@@ -145,8 +145,8 @@ export class SocialSkill extends Skill {
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
             'list_comments', 'reply_comment', 'ignore_comment', 'suggest_reply', 'regenerate_image', 'revise_content',
-            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library', 'render_reel', 'post_from_video', 'edit_video'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Reel für einen Beitrag (item_id) anstoßen — funktioniert für JEDEN Beitrag mit lokalen Bildern (Studio- oder User-erstellt, mit oder ohne Story, published oder geplant); Ziel ist der Instagram-Kanal der Familie, gleiche Leitplanken wie beim Auto-Reel (Wochen-Cap, KI-Clips, Entwurf mit Freigabe, Zweitverwertung). post_from_video = Beitrag aus einem Video der Bibliothek (asset_id) für einen oder mehrere Kanäle (channels): Alfred schreibt Titel/Caption je Kanal-Persona (optionaler stoff-Hinweis fließt ein), Entwürfe mit Freigabe. edit_video = Basis-Schnitt: 1-8 Bibliotheks-Videos (clips mit asset_id + optional von/bis in Sekunden) trimmen und mit Übergängen verketten, optionaler titel als Overlay — das Ergebnis landet als neues Video in der Bibliothek (ffmpeg, kostenlos).',
+            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library', 'render_reel', 'post_from_video', 'edit_video', 'animate_image'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Reel für einen Beitrag (item_id) anstoßen — funktioniert für JEDEN Beitrag mit lokalen Bildern (Studio- oder User-erstellt, mit oder ohne Story, published oder geplant); Ziel ist der Instagram-Kanal der Familie, gleiche Leitplanken wie beim Auto-Reel (Wochen-Cap, KI-Clips, Entwurf mit Freigabe, Zweitverwertung). post_from_video = Beitrag aus einem Video der Bibliothek (asset_id) für einen oder mehrere Kanäle (channels): Alfred schreibt Titel/Caption je Kanal-Persona (optionaler stoff-Hinweis fließt ein), Entwürfe mit Freigabe. edit_video = Basis-Schnitt: 1-8 Bibliotheks-Videos (clips mit asset_id + optional von/bis in Sekunden) trimmen und mit Übergängen verketten, optionaler titel als Overlay — das Ergebnis landet als neues Video in der Bibliothek (ffmpeg, kostenlos). animate_image = Bild beleben: aus einem Bibliotheks-BILD (asset_id) einen bewegten KI-Clip machen (Image-to-Video, KOSTENPFLICHTIG je Clip, gleiches Monatsbudget wie die Reel-KI-Clips); optionale regie beschreibt die Bewegung (sonst schlaegt Alfred sie aus der Bildbeschreibung vor) — der Clip landet in der Video-Bibliothek.',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN/X_REFRESH_TOKEN+X_CLIENT_ID (OAuth2; Bild-Posts via v1.1: zusätzlich X_CONSUMER_KEY/X_CONSUMER_SECRET/X_OAUTH1_ACCESS_TOKEN/X_OAUTH1_ACCESS_SECRET — der OAuth2-Scope media.write wird oft nicht gewährt); bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
@@ -170,7 +170,8 @@ export class SocialSkill extends Skill {
         media_type: { type: 'string', enum: ['image', 'video', 'audio'], description: 'attach_media: Medientyp (Default image)' },
         format: { type: 'string', enum: ['9:16', '16:9'], description: 'render_video: Hochformat (Shorts/Reels, Default) oder Querformat' },
         channels: { type: 'array', items: { type: 'string' }, description: 'crosspost/post_from_video: Ziel-Kanäle (Namen/IDs)' },
-        asset_id: { type: 'string', description: 'post_from_video: ID des Videos aus der Medien-Bibliothek' },
+        asset_id: { type: 'string', description: 'post_from_video: Video-ID aus der Bibliothek. animate_image: Bild-ID aus der Bibliothek' },
+        regie: { type: 'string', description: 'animate_image: Bewegungs-Regie fuer den Clip (englisch oder deutsch; ohne: Alfred schlaegt sie aus der Bildbeschreibung vor)' },
         clips: { type: 'array', items: { type: 'object', properties: { asset_id: { type: 'string' }, von: { type: 'number' }, bis: { type: 'number' } } }, description: 'edit_video: Schnitt-Liste in Reihenfolge — je Clip asset_id (Bibliotheks-Video) + optional von/bis (Sekunden)' },
         adapt: { type: 'boolean', description: 'crosspost: Text formatgerecht je Ziel-Kanal umschreiben (Default true; false = wörtliche Kopie)' },
         topic: { type: 'string', description: 'link_topic/unlink_topic: Interessen-Thema (Name, fuzzy) — ein Kanal kann MEHRERE Themen speisen (z.B. „WM 2026" + „Panini-Sammelalbum")' },
@@ -424,6 +425,7 @@ export class SocialSkill extends Skill {
         case 'crosspost': return await this.crosspost(userId, input);
         case 'post_from_video': return await this.postFromVideo(userId, input);
         case 'edit_video': return await this.editVideoFromLibrary(userId, input);
+        case 'animate_image': return await this.animateImage(userId, input);
         case 'list_comments': return await this.listCommentsAction(userId, input);
         case 'reply_comment': return await this.replyComment(userId, input);
         case 'suggest_reply': return await this.suggestReply(userId, input);
@@ -2119,6 +2121,74 @@ Antworte NUR mit VALIDEM JSON: {"titel": "…", "text": "…", "hashtags": ["…
         await unlink(overlayImage).catch(() => { /* tmp best-effort */ });
       }
     }
+  }
+
+  /**
+   * v1089 — „Bild beleben": aus einem Bibliotheks-Bild einen bewegten
+   * KI-Clip machen (Image-to-Video wie bei den Reel-KI-Clips). Provider,
+   * Secrets und das gemeinsame Monatsbudget (gen_ai_clip /
+   * ai_clip_budget_per_month) kommen vom Familien-Instagram-Kanal — EIN
+   * Budget-Topf für alle bezahlten Clips. Die Bewegungs-Regie kommt vom
+   * User oder Alfred schlägt sie aus der Bildbeschreibung vor.
+   */
+  private async animateImage(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.videoTools?.generateClip) return { success: false, error: 'KI-Clips nicht verfügbar (Video-Pipeline fehlt).' };
+    const assetId = typeof input.asset_id === 'string' ? input.asset_id.trim() : '';
+    if (!assetId) return { success: false, error: 'asset_id erforderlich (Bild aus der Bibliothek).' };
+    const asset = (await this.repo.listMediaAssets(userId, { limit: 500, kind: 'image' })).find(a => a.id === assetId);
+    if (!asset) return { success: false, error: 'Bild-Asset nicht gefunden — Bibliothek → Tab Bilder.' };
+    if (asset.path.startsWith('http')) return { success: false, error: 'Nur lokale Bibliotheks-Bilder können belebt werden.' };
+
+    // Clip-Kanal: liefert Provider, Secrets und den Budget-Topf
+    const channels = await this.repo.listChannels(userId, 'active');
+    const clipChannel = channels.find(c => c.platform === 'instagram' && typeof c.config.reel_ai_provider === 'string')
+      ?? channels.find(c => c.platform === 'instagram')
+      ?? channels.find(c => c.projectId);
+    if (!clipChannel) return { success: false, error: 'Kein Kanal mit KI-Clip-Konfiguration gefunden (Instagram-Kanal mit reel_ai_provider).' };
+    const provRaw = clipChannel.config.reel_ai_provider;
+    const provider = provRaw === 'runway' || provRaw === 'veo' ? provRaw : 'sora';
+    const model = typeof clipChannel.config.reel_ai_model === 'string' && clipChannel.config.reel_ai_model.trim() ? clipChannel.config.reel_ai_model.trim() : undefined;
+
+    // Gemeinsames Monatsbudget mit den Reel-KI-Clips (Budget-Ehrlichkeit v1055)
+    const clipBudget = typeof clipChannel.config.ai_clip_budget_per_month === 'number' ? clipChannel.config.ai_clip_budget_per_month : 8;
+    const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+    const clipsUsed = (await this.repo.listMetrics(clipChannel.id, { kind: 'gen_ai_clip', sinceDate: monthStart }))
+      .reduce((sum, m) => sum + m.value, 0);
+    if (clipsUsed >= clipBudget) {
+      return { success: false, error: `KI-Clip-Monatsbudget erreicht (${clipsUsed}/${clipBudget} auf ${clipChannel.name}) — ai_clip_budget_per_month anpassen.` };
+    }
+
+    // Bewegungs-Regie: User-Vorgabe oder Alfred-Vorschlag aus der Bildbeschreibung
+    let motion = typeof input.regie === 'string' && input.regie.trim() ? input.regie.trim().slice(0, 400) : '';
+    if (!motion && this.llm) {
+      try {
+        const r = await this.llm.complete({
+          messages: [{ role: 'user', content: `Beschreibe in EINEM englischen Satz eine subtile, filmische Kamera-/Szenen-Bewegung, um dieses Standbild zum Leben zu erwecken (z.B. "slow cinematic camera push-in, flags waving, natural light shifting"). KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos.\nBILD: ${asset.motif}\nAntworte NUR mit dem Satz.` }],
+          maxTokens: 120, tier: 'fast',
+        });
+        motion = (r.content ?? '').trim().replace(/^["']|["']$/g, '').slice(0, 400);
+      } catch { /* Fallback unten */ }
+    }
+    if (!motion) motion = 'slow cinematic camera push-in, subtle natural motion, no text overlays, no recognizable people';
+
+    const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
+    const secrets = await this.secrets(clipChannel);
+    const clip = await this.videoTools.generateClip({ imagePath: asset.path, prompt: motion, provider, ...(model ? { model } : {}), secrets, format });
+    // Budget sofort zählen (jeder gelieferte Clip hat gekostet)
+    const today = new Date().toISOString().slice(0, 10);
+    const dayUsed = (await this.repo.listMetrics(clipChannel.id, { kind: 'gen_ai_clip', sinceDate: today }))
+      .find(m => m.date === today && !m.itemId)?.value ?? 0;
+    await this.repo.upsertMetric(clipChannel.id, { date: today, kind: 'gen_ai_clip', value: dayUsed + 1 });
+
+    const newAsset = await this.repo.createMediaAsset(userId, {
+      path: clip.clipPath, motif: `Belebt: ${asset.motif}`.slice(0, 300), kind: 'video', model: provider, format, durationSec: clip.durationSec,
+    });
+    await this.repo.touchMediaAsset(userId, asset.id).catch(() => { /* optional */ });
+    return {
+      success: true,
+      data: { asset_id: newAsset.id, durationSec: clip.durationSec, motion },
+      display: `✨🎬 Bild belebt (${provider}, ${Math.round(clip.durationSec)}s, Budget ${clipsUsed + 1}/${clipBudget}): „${motion.slice(0, 120)}" — liegt als Video in der Bibliothek [${newAsset.id.slice(0, 8)}]. Von dort per ✂️ Schnitt oder 📤 Beitrag weiterverwenden.`,
+    };
   }
 
   private async adaptForChannel(

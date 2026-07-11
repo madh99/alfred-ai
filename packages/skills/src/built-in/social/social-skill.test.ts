@@ -737,6 +737,37 @@ describe('v1087 — post_from_video (Beitrag aus Bibliotheks-Video)', () => {
     expect(bad.error).toContain('nicht gefunden');
   });
 
+  it('v1089 animate_image: Bild → KI-Clip mit Budget-Zählung und Bibliotheks-Eintrag; Budget erschöpft → Fehler', async () => {
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'IG', projectId: 'p1', config: { reel_ai_provider: 'veo', ai_clip_budget_per_month: 2 } });
+    const { skill, spies } = makeSkill(ig, makeItem());
+    (spies as any).listChannels = vi.fn(async () => [ig]);
+    (spies as any).listMediaAssets = vi.fn(async () => [{
+      id: 'img-1', userId: 'u1', path: '/tmp/bild.png', motif: 'Stadion bei Flutlicht', kind: 'image',
+      lastUsedAt: 'x', useCount: 1, blocked: false, pinned: false, createdAt: 'x',
+    }]);
+    (spies as any).touchMediaAsset = vi.fn(async () => {});
+    const generateClip = vi.fn(async () => ({ clipPath: '/tmp/clip-1.mp4', durationSec: 6 }));
+    skill.setVideoTools({ render: vi.fn(), generateClip } as any);
+    (skill as any).llm = { complete: vi.fn(async () => ({ content: 'slow cinematic push-in, flags waving' })) };
+
+    const r = await skill.execute({ action: 'animate_image', asset_id: 'img-1' }, CTX);
+    expect(r.success).toBe(true);
+    const req = (generateClip.mock.calls[0] as unknown[])[0] as { provider: string; prompt: string; imagePath: string };
+    expect(req.provider).toBe('veo');
+    expect(req.imagePath).toBe('/tmp/bild.png');
+    expect(req.prompt).toContain('cinematic');
+    expect((spies.upsertMetric as any).mock.calls.some((c: any[]) => c[1]?.kind === 'gen_ai_clip')).toBe(true);
+    const assetCall = ((spies as any).createMediaAsset as any).mock.calls[0];
+    expect(assetCall[1]).toMatchObject({ kind: 'video', model: 'veo', path: '/tmp/clip-1.mp4', durationSec: 6 });
+
+    // Budget erschöpft → klarer Fehler, KEIN Clip-Aufruf
+    (spies.listMetrics as any).mockResolvedValue([{ date: '2026-07-01', kind: 'gen_ai_clip', value: 2 }]);
+    const blocked = await skill.execute({ action: 'animate_image', asset_id: 'img-1' }, CTX);
+    expect(blocked.success).toBe(false);
+    expect(blocked.error).toContain('Monatsbudget');
+    expect(generateClip).toHaveBeenCalledTimes(1);
+  });
+
   it('ohne asset_id bzw. unbekanntes Video → klare Fehler', async () => {
     const { skill, spies } = makeSkill(makeChannel(), makeItem());
     (spies as any).listMediaAssets = vi.fn(async () => []);
