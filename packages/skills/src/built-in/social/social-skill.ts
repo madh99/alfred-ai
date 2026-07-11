@@ -720,8 +720,13 @@ export class SocialSkill extends Skill {
     if (channel.status !== 'active') return { success: false, error: `Kanal ${channel.name} ist ${channel.status} — erst reaktivieren.` };
 
     // Leitplanke 2 — Tages-Limit gilt auch für manuelles publish_now
+    // v1100 — limit_override (nur Engine, für Eilmeldungen/Termin-Posts):
+    // erlaubt maxPostsPerDay+2 als HARTEN Deckel — wichtige Meldungen sterben
+    // nicht am Tages-Limit, aber ein Amoklauf bleibt unmöglich. Das
+    // Monats-Limit (API-Kontingent) wird NIE überstimmt.
     const publishedToday = await this.repo.countPublishedToday(channel.id);
-    if (publishedToday >= channel.maxPostsPerDay) {
+    const overrideCap = input.limit_override === true ? channel.maxPostsPerDay + 2 : channel.maxPostsPerDay;
+    if (publishedToday >= overrideCap) {
       return { success: false, error: `Tages-Limit erreicht (${publishedToday}/${channel.maxPostsPerDay} auf ${channel.name}) — max_posts_per_day anpassen oder morgen posten.` };
     }
     // v936 — optionales Monats-Limit (z.B. X-Free-Tier: config.max_posts_per_month=450)

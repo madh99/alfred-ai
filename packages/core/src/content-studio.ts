@@ -9,6 +9,9 @@ import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicate
 export { extractTrailingHashtags, isNearDuplicateTitle };
 import type { SourceProvisioner } from './source-provisioner.js';
 import type { StoryDeduper, BlockedStory } from './story-dedup.js';
+// v1100 — Fenster-Helfer der Engine (Zyklus unkritisch: Nutzung nur zur Laufzeit)
+import { publishWindowFor, isWithinWindow } from './publishing-engine.js';
+import { fetchArticleText } from './article-fetch.js';
 
 const WEEKDAYS: Record<string, number> = { so: 0, mo: 1, di: 2, mi: 3, do: 4, fr: 5, sa: 6 };
 
@@ -555,11 +558,11 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     }
     const sinceIso = new Date(sinceMs).toISOString();
     const unionTopics = [...new Set(members.flatMap(c => ContentStudio.linkedTopicIds(c)))];
-    const fresh: Array<{ title: string; summary?: string }> = [];
+    const fresh: Array<{ title: string; summary?: string; url?: string }> = [];
     for (const topicId of unionTopics) {
       const items = await this.interestsRepo.listItems(topicId, { sinceIso, limit: 30 });
       // v1036 — Quellen-Boilerplate strippen, BEVOR sie Story-Stoff wird
-      fresh.push(...items.filter(i => i.sourceKind !== 'events').map(i => ({ title: i.title, summary: i.summary ? stripSourceBoilerplate(i.summary) : undefined })));
+      fresh.push(...items.filter(i => i.sourceKind !== 'events').map(i => ({ title: i.title, url: i.url, summary: i.summary ? stripSourceBoilerplate(i.summary) : undefined })));
     }
     if (fresh.length === 0) return 0;
     // Dedup gegen aktive Stories (Token reicht als Vorfilter)
@@ -602,10 +605,29 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     }
     if (acceptedBreaking.length === 0) return 0;
 
+    // v1100 — Headline-only-Stoff anreichern: GoogleNews-Feeds liefern als
+    // Summary nur die Schlagzeile (Realfall Adams) — für die akzeptierten
+    // Eilmeldungen den Artikeltext der Quelle ziehen (max. 3 Fetches/Lauf,
+    // still bei Fehler/Paywall — dann bleibt es bei der Schlagzeile und das
+    // Substanz-Gate im Schreib-Prompt greift).
+    let articleFetches = 0;
+    for (const b of acceptedBreaking as Array<{ title: string; summary?: string; url?: string }>) {
+      const plain = (b.summary ?? '').replace(/<[^>]+>/g, ' ').trim();
+      const headlineOnly = plain.length < Math.max(80, b.title.length + 40);
+      if (b.url && headlineOnly && articleFetches < 3) {
+        articleFetches++;
+        const text = await fetchArticleText(b.url);
+        if (text) {
+          b.summary = text;
+          this.logger.info({ family, title: b.title.slice(0, 60), chars: text.length }, 'v1100 Eilmeldungs-Stoff per Artikel-Volltext angereichert');
+        }
+      }
+    }
+
     let created = 0;
     for (const b of acceptedBreaking) {
       const story = await this.socialRepo.createStory(this.ownerUserId, {
-        family, kind: 'news', title: b.title, summary: b.summary?.replace(/<[^>]+>/g, ' ').slice(0, 800),
+        family, kind: 'news', title: b.title, summary: b.summary?.replace(/<[^>]+>/g, ' ').slice(0, 1500),
         importance: b.score, source: 'event',
       });
       await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
@@ -951,7 +973,7 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
         channelId: channel.id, status: ['scheduled', 'approved', 'draft', 'idea'], limit: 100,
       });
       if (planned.length >= 30) { capacity.set(capKey(channel.name), { channel, slotPool: [], needed: 0, created: 0 }); continue; }
-      const slots = nextFreeSlots(channel, planned, Math.max(0, 30 - planned.length), now);
+      const slots = await this.trimSlotsToDailyBudget(channel, nextFreeSlots(channel, planned, Math.max(0, 30 - planned.length), now), planned);
       const backlog = planned.filter(i => (i.status === 'draft' || i.status === 'idea') && !i.scheduledAt).length;
       capacity.set(capKey(channel.name), { channel, slotPool: [...slots], needed: Math.max(0, slots.length - backlog), created: 0 });
     }
@@ -1198,6 +1220,18 @@ Antworte NUR mit einem VALIDEN JSON-Array:
     }
     const leadMs = this.terminLeadHours(channel) * 3_600_000;
     let adhoc = new Date(Math.max(Date.now() + 30 * 60_000, Date.parse(terminBis) - leadMs)).toISOString();
+    // v1100 — fensterbewusst: fällt der Ad-hoc-Slot in die Nachtruhe des
+    // Kanals UND beginnt das nächste Fenster noch VOR dem Termin, wandert
+    // der Slot auf den Fensterbeginn (Realfall 11.07.: 23:53-Slots hingen
+    // bis 07:00 als „überfällig"). Nacht-Termine behalten den Nacht-Slot —
+    // die Engine bringt sie über die Eilmeldungs-/Termin-Ausnahme raus.
+    const win = publishWindowFor(channel);
+    if (win && !isWithinWindow(win, new Date(adhoc))) {
+      const ws = new Date(adhoc);
+      ws.setHours(win.from, 0, 0, 0);
+      if (ws.toISOString() <= adhoc) ws.setDate(ws.getDate() + 1);
+      if (ws.toISOString() < terminBis) adhoc = ws.toISOString();
+    }
     // v1022 — Kollisionsprüfung: nicht auf einem Raster-Slot oder bereits
     // vergebenen Ad-hoc-Slot landen (vorher waren zwei Posts zur selben
     // Minute möglich) — in 10-Minuten-Schritten ausweichen, vor dem Termin bleiben
@@ -1221,9 +1255,17 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       && (tm === 'teaser' || (tm === 'auto' && (story.kind === 'news' || story.kind === 'recap')));
     // v1046 — Website-/Lead-Artikel als EINE Textwand waren unlesbar (Realfall
     // Public-Viewing-Artikel): Absatz-Struktur ist jetzt Pflicht.
+    // v1100 — Substanz-Gate: aus einer nackten Schlagzeile wird KEIN
+    // „ausführlicher" Artikel mehr aufgeblasen (Realfall Adams: 3 Absätze
+    // Spekulation aus einem Satz Stoff) — dünner Stoff → ehrliche Kurzmeldung.
+    // Termin-Ankündigungen sind ausgenommen: ihr Stoff IST der Termin
+    // (Was/Wann/Wo-Absatz bleibt Pflicht).
+    const thinStoff = !story.terminBis && (story.summary ?? story.title).trim().length < 300;
     const roleRule = role === 'lead'
-      ? `- DEINE ROLLE: LEAD — der ausführlichste Beitrag der Familie zu dieser Story (vollwertig, 4-8 Sätze bzw. Persona-gemäß mehr).
-- GLIEDERUNG: 2-4 Absätze, getrennt durch LEERZEILEN (\\n\\n im body) — nie eine einzige Textwand.${story.terminBis ? ' Bei Terminen: ein EIGENER kurzer Absatz mit den Fakten (Was, Wann, Wo).' : ''}`
+      ? (thinStoff
+        ? `- DEINE ROLLE: LEAD, aber der Stoff ist DÜNN (kaum mehr als die Schlagzeile): Schreibe eine ehrliche KURZMELDUNG — 2-3 Sätze, maximal 2 kurze Absätze. NUR was im Stoff steht. KEINE Füllsätze, KEINE Einordnungs-Floskeln, KEINE Spekulation über Hintergründe, Pläne, Auswirkungen oder Reaktionen.`
+        : `- DEINE ROLLE: LEAD — der ausführlichste Beitrag der Familie zu dieser Story (vollwertig, 4-8 Sätze bzw. Persona-gemäß mehr).
+- GLIEDERUNG: 2-4 Absätze, getrennt durch LEERZEILEN (\\n\\n im body) — nie eine einzige Textwand.${story.terminBis ? ' Bei Terminen: ein EIGENER kurzer Absatz mit den Fakten (Was, Wann, Wo).' : ''}`)
       : `- DEINE ROLLE: FOLLOW — kürzer, eigener Blickwinkel deiner Persona.${leadChannelName ? ` Der ausführliche Beitrag auf ${leadChannelName} ist zum Zeitpunkt deiner Veröffentlichung bereits live${leadSlot ? ` (seit ${formatLocalDateTime(leadSlot)})` : ''} — du DARFST darauf verweisen.` : ''} NIE auf den eigenen Kanal verweisen. Schreibe KEINE URLs in den Text — der Link zum Lead-Artikel wird beim Veröffentlichen automatisch angehängt.${teaser ? '\n- TEASER-MODUS (zwingend): Wecke Neugier, aber verrate NICHT alles — das stärkste Detail, die Pointe oder die Zahlen bleiben im Lead-Artikel. Ende mit einem konkreten Grund weiterzulesen.' : ''}`;
     const prompt = `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}
@@ -1239,6 +1281,8 @@ ${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)
 - 3-6 Hashtags NUR ins Feld "hashtags"; KEINE Meta-Zeilen im body.
 ${await this.bildRegie(channel)}
 - NIE relative Zeitwörter („heute"/„morgen"). Datum/Uhrzeit NUR nennen, wenn sie im Stoff eindeutig als EREIGNIS-Zeit belegt sind — Publikations-/Update-Zeiten der Quelle sind KEINE Ereigniszeiten. Fehlt das Datum: ohne Datum formulieren, NIE eines erfinden oder ergänzen.
+- ZEITLICHE EINORDNUNG (v1100): HEUTE ist ${formatLocalDateTime(new Date().toISOString())}.${await this.terminKontext(channel)} Nutze das NUR, um falsche Phasen-Bezüge zu vermeiden (z. B. „kurz vor dem Start" / „in der Vorbereitung", wenn das Ereignis längst läuft oder vorbei ist) — Fakten für den Text stammen weiterhin AUSSCHLIESSLICH aus dem Stoff.
+- KEINE Spekulation über Folgen, Pläne, Kaderplanungen oder Reaktionen, die nicht wörtlich im Stoff stehen — im Zweifel weglassen.
 
 Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typografisch „…“ oder escaped):
 [{"title": "…", "body": "…", "hashtags": ["…"], "warum": "1 Satz", "bildidee": "optional", "terminBis": ${story.terminBis ? `"${story.terminBis}", "ort": "Ort exakt aus dem Stoff", "einlass": "NUR wenn im Stoff belegt, z.B. 19:30"` : 'null'}${channel.platform === 'instagram' && channel.config.image_carousel === true ? ', "slides": [{"motiv": "…", "titel": "…"}]' : ''}}]`;
@@ -1301,7 +1345,7 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     // konfiguriert waren (Realfall: 11 Slots/Woche → „1 neuer Entwurf").
     // MAX_IN_FLIGHT bleibt als Schutz für LLM-/Bild-Budget.
     const MAX_IN_FLIGHT = 30;
-    const slots = nextFreeSlots(channel, planned, Math.max(0, MAX_IN_FLIGHT - planned.length), now);
+    const slots = await this.trimSlotsToDailyBudget(channel, nextFreeSlots(channel, planned, Math.max(0, MAX_IN_FLIGHT - planned.length), now), planned);
     // Entwürfe/Ideen ohne Termin zählen als Vorrat — nicht doppelt erzeugen
     const backlog = planned.filter(i => (i.status === 'draft' || i.status === 'idea') && !i.scheduledAt).length;
     const needed = Math.max(0, slots.length - backlog);
@@ -1874,6 +1918,64 @@ Antworte NUR mit einem JSON-Array:
     slotPool.pop();
     this.logger.info({ channel: channel.name, victim: victim.id, from: freed, to: lateSlot }, 'v997 evergreen swap (verderblicher Inhalt braucht den frühen Slot)');
     return freed;
+  }
+
+  /**
+   * v1100 — Budget-bewusste Slot-Vergabe: HEUTIGE Slots werden aufs
+   * Rest-Tagesbudget gekappt (max_posts_per_day − heute veröffentlicht −
+   * heute bereits geplant/freigegeben). Vorher plante das Studio munter
+   * 22:31-/23:53-Slots, obwohl der Kanal längst am Limit war — die Engine
+   * musste dann jedes Item einzeln auf morgen schieben (Realfall 11.07.).
+   * Slots ab morgen bleiben unangetastet; Termin-Ad-hoc-Slots laufen nicht
+   * über den Pool und behalten ihren Vorrang (Engine-Override).
+   */
+  private async trimSlotsToDailyBudget(channel: SocialChannel, slots: string[], planned: ContentItem[]): Promise<string[]> {
+    if (slots.length === 0) return slots;
+    const dayEnd = new Date(); dayEnd.setHours(24, 0, 0, 0);
+    const dayEndIso = dayEnd.toISOString();
+    if (!slots.some(s => s < dayEndIso)) return slots; // heute gar nicht betroffen
+    let publishedToday = 0;
+    try { publishedToday = await this.socialRepo.countPublishedToday(channel.id); } catch { /* Mini-Repos (Tests) ohne Zähler → 0 */ }
+    const plannedToday = planned.filter(i => i.scheduledAt && i.scheduledAt < dayEndIso
+      && (i.status === 'scheduled' || i.status === 'approved')).length;
+    let remaining = Math.max(0, channel.maxPostsPerDay - publishedToday - plannedToday);
+    const kept = slots.filter(s => {
+      if (s >= dayEndIso) return true;
+      if (remaining > 0) { remaining--; return true; }
+      return false;
+    });
+    if (kept.length < slots.length) {
+      this.logger.info({ channel: channel.name, dropped: slots.length - kept.length, publishedToday, plannedToday },
+        'v1100 heutige Slots aufs Rest-Tagesbudget gekappt');
+    }
+    return kept;
+  }
+
+  /** v1100 — Zeit-Einordnung für den Schreib-Prompt (10 min gecacht je Familie). */
+  private readonly terminCtxCache = new Map<string, { at: number; text: string }>();
+
+  /**
+   * v1100 — anstehende Termin-Storys der Familie als Einordnungs-Zeile
+   * (Realfall Adams: „kurz vor dem Start der WM 2026" mitten im Halbfinale —
+   * das Modell kannte weder Datum noch Turnierphase).
+   */
+  private async terminKontext(channel: SocialChannel): Promise<string> {
+    const family = ContentStudio.familyKey(channel) ?? channel.id;
+    const cached = this.terminCtxCache.get(family);
+    if (cached && Date.now() - cached.at < 10 * 60_000) return cached.text;
+    let text = '';
+    try {
+      const nowIso = new Date().toISOString();
+      const stories = await this.socialRepo.listStories(this.ownerUserId, { family, status: 'active', sinceDays: 14 });
+      const termine = stories
+        .filter(s => s.kind === 'termin' && typeof s.terminBis === 'string' && s.terminBis > nowIso)
+        .sort((a, b) => a.terminBis!.localeCompare(b.terminBis!))
+        .slice(0, 4)
+        .map(s => `${s.title} (${formatLocalDateTime(s.terminBis!)})`);
+      if (termine.length > 0) text = ` Bekannte anstehende Termine: ${termine.join(' · ')}.`;
+    } catch { /* Einordnung ist optional */ }
+    this.terminCtxCache.set(family, { at: Date.now(), text });
+    return text;
   }
 
   /**

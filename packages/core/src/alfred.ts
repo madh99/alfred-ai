@@ -6697,8 +6697,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const ownerCtx = { userId: ownerUid, masterUserId: ownerUid } as never;
       this.publishingEngine = new PublishingEngine(
         this.socialRepo,
-        async (itemId: string) => {
-          const r = await socialSkill.execute({ action: 'publish_now', item_id: itemId }, ownerCtx);
+        async (itemId: string, opts?: { limitOverride?: boolean }) => {
+          const r = await socialSkill.execute(
+            { action: 'publish_now', item_id: itemId, ...(opts?.limitOverride ? { limit_override: true } : {}) }, ownerCtx);
           // v983 — dauerhafte Leitplanken-Blocks (Duplikat/Blacklist/Termin
           // vorbei) an die Engine durchreichen: failed statt Endlos-Retry
           return {

@@ -1041,6 +1041,21 @@ describe('SocialSkill — Veröffentlichung + Leitplanken', () => {
     expect(r.error).toContain('Tages-Limit');
   });
 
+  it('v1100 limit_override: Wichtiges darf +2 übers Tages-Limit — der harte Deckel bleibt', async () => {
+    // Am Limit (2/2) + Override → geht raus
+    const first = makeSkill(makeChannel({ maxPostsPerDay: 2 }), makeItem());
+    (first.spies.countPublishedToday as any).mockResolvedValue(2);
+    const r = await first.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa', limit_override: true }, CTX);
+    expect(r.success).toBe(true);
+    expect(first.provider.published.length).toBe(1);
+    // Harter Deckel (max+2 = 4) → auch mit Override Schluss
+    const second = makeSkill(makeChannel({ maxPostsPerDay: 2 }), makeItem());
+    (second.spies.countPublishedToday as any).mockResolvedValue(4);
+    const r2 = await second.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa', limit_override: true }, CTX);
+    expect(r2.success).toBe(false);
+    expect(r2.error).toContain('Tages-Limit');
+  });
+
   it('Leitplanke Blacklist: Treffer blockiert die Veröffentlichung', async () => {
     const { skill, provider } = makeSkill(
       makeChannel({ blacklist: ['schiedsrichter'] }),

@@ -82,7 +82,7 @@ export class PublishingEngine {
   constructor(
     private readonly repo: SocialRepository,
     /** Führt die Veröffentlichung über den social-Skill aus (inkl. Leitplanken). */
-    private readonly publishItem: (itemId: string) => Promise<PublishFnResult>,
+    private readonly publishItem: (itemId: string, opts?: { limitOverride?: boolean }) => Promise<PublishFnResult>,
     private readonly insightsRepo: InsightsRepository | undefined,
     private readonly router: NotificationRouter | undefined,
     private readonly adapters: Map<Platform, MessagingAdapter>,
@@ -131,8 +131,7 @@ export class PublishingEngine {
     // frische Recaps (< 90 min alt) überstimmen Fenster + Mindestabstand —
     // mit kurzem Eigen-Jitter (1–4 min) und Nacht-Deckel (max. 2 pro
     // Kanal/Tag außerhalb des Fensters), damit kein neues Bot-Muster entsteht.
-    const isBreaking = item.performance?.breaking === true
-      || (item.performance?.art === 'recap' && Date.now() - Date.parse(item.createdAt) < 90 * 60_000);
+    const isBreaking = PublishingEngine.isBreakingItem(item);
     if (isBreaking) {
       if (channel.config.publish_jitter !== false && item.scheduledAt
         && Date.now() < Date.parse(item.scheduledAt) + 60_000 + itemPublishJitterMs(item.id, 3 * 60_000)) return false;
@@ -168,16 +167,80 @@ export class PublishingEngine {
     } catch { return false; }
   }
 
-  /**
-   * v1077 — Tages-Limit sanft: statt failed-Reibung rutscht das freigegebene
-   * Item automatisch auf morgen früh (Fensterbeginn + Item-Jitter) — der
-   * Mensch würde es morgen posten, nicht wegwerfen.
-   */
-  private async deferToNextWindow(item: ContentItem, channel: SocialChannel): Promise<boolean> {
+  /** v1100 — Eilmeldungs-Prädikat (geteilt: Nacht-Ausnahme + Limit-Override). */
+  static isBreakingItem(item: ContentItem): boolean {
+    return item.performance?.breaking === true
+      || (item.performance?.art === 'recap' && Date.now() - Date.parse(item.createdAt) < 90 * 60_000);
+  }
+
+  /** v1100 — Ziel des Tages-Limit-Aufschubs: morgen Fensterbeginn + Item-Jitter. */
+  private deferTarget(item: ContentItem, channel: SocialChannel): Date {
     const win = publishWindowFor(channel) ?? { from: 7, to: 22 };
     const next = new Date();
     next.setDate(next.getDate() + 1);
     next.setHours(win.from, Math.floor(itemPublishJitterMs(item.id, 45 * 60_000) / 60_000), 0, 0);
+    return next;
+  }
+
+  /**
+   * v1100 — „Wichtiges stirbt nicht am Limit": Eilmeldungen, frische Recaps
+   * und Termin-Posts, deren Termin VOR dem Aufschub-Ziel läge, dürfen das
+   * Tages-Limit einmalig überstimmen (der Skill deckelt hart auf +2/Tag).
+   */
+  private qualifiesForLimitOverride(item: ContentItem, channel: SocialChannel): boolean {
+    if (PublishingEngine.isBreakingItem(item)) return true;
+    const terminBis = typeof item.performance?.terminBis === 'string' ? Date.parse(item.performance.terminBis) : NaN;
+    return Number.isFinite(terminBis) && terminBis > Date.now()
+      && terminBis <= this.deferTarget(item, channel).getTime();
+  }
+
+  /** v1100 — Tages-Limit-Behandlung an beiden Publish-Pfaden: erst Override
+   *  für Wichtiges versuchen, dann termin-bewusst verschieben. */
+  private async handleDailyLimit(item: ContentItem, channel: SocialChannel): Promise<'published' | 'deferred' | 'rejected'> {
+    if (this.qualifiesForLimitOverride(item, channel)) {
+      const retry = await this.publishItem(item.id, { limitOverride: true });
+      if (retry.success) {
+        await this.router?.store({
+          source: 'social', urgency: 'low',
+          title: `Limit-Override: Wichtiges ging trotz Tages-Limit raus — ${(item.title ?? item.body).slice(0, 60)}`,
+          body: `Kanal **${channel.name}**: Eilmeldung/Termin-Post wurde trotz erreichtem max_posts_per_day veröffentlicht (harter Deckel: +2/Tag).\n${retry.display ?? ''}`,
+          chatId: this.opts.chatId, platform: this.opts.platform,
+          dedupeKey: `social-limit-override:${item.id}`,
+        });
+        return 'published';
+      }
+    }
+    return await this.deferToNextWindow(item, channel) ? 'deferred' : 'rejected';
+  }
+
+  /**
+   * v1077 — Tages-Limit sanft: statt failed-Reibung rutscht das freigegebene
+   * Item automatisch auf morgen früh (Fensterbeginn + Item-Jitter) — der
+   * Mensch würde es morgen posten, nicht wegwerfen.
+   * v1100 — termin-bewusst: liegt der Termin des Items VOR dem Aufschub-Ziel,
+   * wäre der Post nach dem Event sinnlos → zurückziehen + laute Meldung
+   * (der Override-Versuch ist an diesem Punkt bereits gescheitert).
+   */
+  private async deferToNextWindow(item: ContentItem, channel: SocialChannel): Promise<boolean> {
+    const next = this.deferTarget(item, channel);
+    const terminBis = typeof item.performance?.terminBis === 'string' ? Date.parse(item.performance.terminBis) : NaN;
+    if (Number.isFinite(terminBis) && terminBis <= next.getTime()) {
+      await this.repo.transition(this.opts.ownerUserId, item.id, 'rejected').catch(() => { /* best-effort */ });
+      await this.router?.store({
+        source: 'social', urgency: 'high',
+        title: `Termin-Post am Tages-Limit gescheitert: ${(item.title ?? item.body).slice(0, 60)}`,
+        body: `Kanal **${channel.name}**: Der Termin (${new Date(terminBis).toLocaleString('de-AT')}) liegt vor dem nächsten freien Fenster — Verschieben wäre nach dem Event. Das Item wurde zurückgezogen. max_posts_per_day prüfen oder manuell mit force posten.`,
+        chatId: this.opts.chatId, platform: this.opts.platform,
+        dedupeKey: `social-deferred:${item.id}`,
+      });
+      return false;
+    }
+    // v1100 — Füller-Verdrängung: ist morgen bereits voll verplant, weicht das
+    // späteste Evergreen-Item (+1 Tag) — sonst liefe die wichtige Meldung
+    // morgen wieder ins selbe Limit, nur weil der Tag mit Füllern belegt ist.
+    if (PublishingEngine.isBreakingItem(item) || Number.isFinite(terminBis)) {
+      await this.displaceEvergreenIfFull(channel, next).catch(() => { /* best-effort */ });
+    }
     const ok = await this.repo.reschedule(this.opts.ownerUserId, item.id, next.toISOString(), [item.status]).catch(() => false);
     if (ok) {
       await this.router?.store({
@@ -189,6 +252,28 @@ export class PublishingEngine {
       });
     }
     return ok === true;
+  }
+
+  /** v1100 — späteste Evergreen-Planung des Zieltags um einen Tag schieben,
+   *  wenn der Zieltag das Tages-Limit bereits voll ausschöpft. */
+  private async displaceEvergreenIfFull(channel: SocialChannel, target: Date): Promise<void> {
+    const dayStart = new Date(target); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
+    const planned = await this.repo.listItems(this.opts.ownerUserId, {
+      channelId: channel.id, status: ['scheduled', 'approved'], limit: 100,
+    });
+    const thatDay = planned.filter(i => i.scheduledAt
+      && i.scheduledAt >= dayStart.toISOString() && i.scheduledAt < dayEnd.toISOString());
+    if (thatDay.length < channel.maxPostsPerDay) return;
+    const victim = thatDay
+      .filter(i => i.performance?.art === 'evergreen' && typeof i.performance?.terminBis !== 'string')
+      .sort((a, b) => b.scheduledAt!.localeCompare(a.scheduledAt!))[0];
+    if (!victim) return;
+    const to = new Date(Date.parse(victim.scheduledAt!) + 24 * 3_600_000).toISOString();
+    if (await this.repo.reschedule(this.opts.ownerUserId, victim.id, to, [victim.status])) {
+      this.logger.info({ channel: channel.name, victim: victim.id, to },
+        'v1100 evergreen verdrängt (wichtige Meldung braucht das Tagesbudget)');
+    }
   }
 
   /** Ein Durchlauf (auch direkt aufrufbar/testbar). */
@@ -249,7 +334,10 @@ export class PublishingEngine {
             await this.releaseItemSlot(`social-item:${item.id}`);
             // v1077 — Tages-Limit: automatisch auf morgen früh umterminieren
             // statt failed-Reibung (Freigabe bleibt erhalten)
-            if (/Tages-Limit/.test(pub.error ?? '')) await this.deferToNextWindow(item, channel);
+            // v1100 — Wichtiges (Eilmeldung/Termin) versucht vorher den Limit-Override
+            if (/Tages-Limit/.test(pub.error ?? '')) {
+              if (await this.handleDailyLimit(item, channel) === 'published') result.published++;
+            }
           }
         }
       }
@@ -281,8 +369,9 @@ export class PublishingEngine {
               // v1077 — Tages-Limit: still auf morgen früh statt Freigabe-Lärm
               // v1096 — „Video wird gerendert": der Skill hat bereits +15 min
               // umterminiert — kein Nachfragen, die Engine kommt einfach wieder
+              // v1100 — Wichtiges (Eilmeldung/Termin) versucht vorher den Limit-Override
               if (/Tages-Limit/.test(r.error ?? '')) {
-                await this.deferToNextWindow(item, channel);
+                if (await this.handleDailyLimit(item, channel) === 'published') result.published++;
               } else if (/Video wird gerendert/.test(r.error ?? '')) {
                 /* bereits umterminiert */
               } else if (await this.askApproval(item, channel, `Autonom-Publish blockiert: ${r.error ?? 'Leitplanke'}`)) result.asked++;

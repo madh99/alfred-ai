@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1100] - 2026-07-12
+
+### Fixed — Wichtige Meldungen sterben nicht mehr am Tages-Limit (v1100)
+- **Limit-Override für Eilmeldungen und Termin-Posts**: Läuft ein Breaking-Post, ein frischer Spielbericht oder ein Termin-Post (Anpfiff vor dem nächsten freien Fenster) ins Tages-Limit, wird er jetzt trotzdem veröffentlicht — mit hartem Deckel von +2 über `max_posts_per_day` (das Monats-Limit/API-Kontingent wird nie überstimmt). Realfall 11.07.: Der Vorbericht auf Norwegen–England (Anpfiff 23:00) wurde um 20:39 wegen 15/15 stumpf auf den nächsten Morgen verschoben — nach dem Match.
+- **Termin-bewusstes Verschieben**: Liegt der Termin eines Items vor dem Aufschub-Ziel (morgen früh) und ist auch der Override ausgeschöpft, wird das Item zurückgezogen und laut gemeldet — statt es sinnlos nach dem Event zu posten.
+- **Füller weichen, News bleiben**: Ist der Folgetag bereits voll verplant, verdrängt eine verschobene wichtige Meldung das späteste Evergreen-Item des Tages (+1 Tag) — Meldungen zum Turnier verlieren nie gegen Evergreen-Füller.
+
+### Fixed — Studio plant budget- und fensterbewusst (v1100)
+- **Slot-Vergabe kennt das Rest-Tagesbudget**: Heutige Slots werden auf `max_posts_per_day − heute veröffentlicht − heute geplant` gekappt — vorher legte das Studio 22:31-/23:53-Wellen auf längst volle Kanäle, die die Engine dann einzeln verschieben musste.
+- **Termin-Ad-hoc-Slots meiden die Nachtruhe**: Fällt ein Termin-Slot in die Nachtruhe des Kanals und beginnt das nächste Fenster noch vor dem Termin, wandert der Slot auf den Fensterbeginn. Nacht-Termine (Spiel läuft nachts) behalten ihren Slot — die Engine bringt sie über die Eilmeldungs-/Termin-Ausnahme raus.
+
+### Fixed — Artikel-Qualität: keine Turnierphasen-Halluzination mehr (v1100)
+- **Zeitliche Einordnung im Schreib-Prompt**: Jeder Beitrag kennt jetzt das heutige Datum und die anstehenden Termine der Familie — „kurz vor dem Start der WM 2026" mitten im Halbfinale (Realfall Adams) ist damit strukturell unterbunden; Fakten kommen weiterhin ausschließlich aus dem Stoff.
+- **Substanz-Gate**: Ist der Story-Stoff kaum mehr als die Schlagzeile (< 300 Zeichen), entsteht eine ehrliche Kurzmeldung (2–3 Sätze) statt eines aufgeblasenen „ausführlichen" Artikels; Spekulation über Folgen/Pläne/Kaderplanungen ist explizit verboten. Termin-Ankündigungen sind ausgenommen (Was/Wann/Wo bleibt Pflicht).
+- **Volltext-Anreicherung**: GoogleNews-Feeds liefern als Zusammenfassung nur die Schlagzeile — für akzeptierte Eilmeldungen wird jetzt die Publisher-URL aus der GoogleNews-Kennung dekodiert (offline, base64url) und der Artikeltext der Quelle gezogen (max. 3 Abrufe je Lauf, still bei Paywall/Fehler). Der Lead-Artikel entsteht damit aus echtem Stoff statt aus einem Satz.
+
 ## [0.19.0-multi-ha.1099] - 2026-07-11
 
 ### Added — OpenAI Responses-API (v1099)
