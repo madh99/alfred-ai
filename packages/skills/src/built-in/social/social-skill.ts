@@ -674,7 +674,10 @@ export class SocialSkill extends Skill {
     // Publish-Engine unsichtbar (Realfall 08.07.: zwei fertige Reels vom
     // 06.07. hingen still fest). Tages-Limit/Leitplanken greifen beim Publish.
     if (!updated.scheduledAt && isCompanionFormat(item)) {
-      const adhoc = new Date(Date.now() + 15 * 60_000).toISOString();
+      // v1101 — Zweitverwertungs-Abstand: performance.notBefore (Reel auf
+      // Text-Kanälen mit bestehendem Story-Post) hebt das Minimum über +15 min
+      const nb = typeof item.performance?.notBefore === 'string' ? Date.parse(item.performance.notBefore) : NaN;
+      const adhoc = new Date(Math.max(Date.now() + 15 * 60_000, Number.isFinite(nb) ? nb : 0)).toISOString();
       if (await this.repo.reschedule(userId, item.id, adhoc, ['approved'])) {
         updated = { ...updated, scheduledAt: adhoc };
       }
@@ -1160,6 +1163,12 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     return typeof vol === 'number' && vol > 0 && vol <= 1 ? { volume: vol } : {};
   }
 
+  /** v1101 — heutiges Datum fürs Reel-Script (ohne Intl — ICU-Kaltstart kostete >10 ms). */
+  static heuteZeile(now = new Date()): string {
+    const wd = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'][now.getDay()];
+    return `${wd}, ${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()}`;
+  }
+
   private async renderAutoReel(
     userId: string, leadItem: ContentItem, ig: SocialChannel,
     assigns: Awaited<ReturnType<SocialRepository['listAssignments']>>,
@@ -1190,6 +1199,8 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
 2. "caption": Reel-Caption (2-3 Sätze, keine Hashtags; nur GELEGENTLICH mit Frage an die Community — nicht standardmäßig).
 3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken (z.B. "slow cinematic camera push-in, crowd waving flags, natural stadium light" — KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos).
 FAKTEN nur aus dem Artikel, nichts erfinden.
+HEUTE ist ${SocialSkill.heuteZeile()} — vermeide falsche Phasen-Bezüge (z. B. „vor dem Start" oder „in der Vorbereitung", wenn das Ereignis laut Artikel längst läuft oder vorbei ist).
+KEINE Spekulation über Folgen, Pläne oder offene Fragen, die nicht wörtlich im Artikel stehen — keine rhetorischen „Was bedeutet das für …?"-Fragen zu Dingen, die der Artikel nicht beantwortet. Ist der Artikel dünn, bleibt das Skript kurz und faktisch statt aufgefüllt.
 
 ARTIKEL: ${leadItem.title ?? ''}
 ${leadItem.body.slice(0, 1500)}
@@ -1374,9 +1385,31 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
         && familyOf(c) !== null && familyOf(c) === familyOf(ig)
         && this.providers.get(c.platform)?.capabilities().video === true);
       for (const twin of twins) {
+        // v1101 — Zweitverwertung auf TEXT-Kanälen (alles außer Instagram/
+        // YouTube, wo Reels/Shorts eine eigene Oberfläche haben): läuft die
+        // Story dort schon als regulärer Post, wirkt ein Reel mit identischem
+        // Titel wie ein Doppel-Post (Realfall 11.07.: Adams-Meldung 2× binnen
+        // 40 min auf Telegram). Deshalb: eigene Video-Caption statt
+        // 1:1-Artikeltitel + frühestens 6 h Abstand (performance.notBefore —
+        // approve_content und Plan-Review respektieren das beim Ad-hoc-Termin).
+        let twinTitle = leadItem.title ?? leadItem.body.slice(0, 60);
+        let notBefore: string | undefined;
+        const nativeReelSurface = twin.platform === 'instagram' || twin.platform === 'youtube';
+        if (!nativeReelSurface && leadItem.storyId) {
+          const sibs = await this.repo.listItems(userId, {
+            channelId: twin.id, status: ['scheduled', 'approved', 'published'], limit: 50,
+          }).catch(() => [] as ContentItem[]);
+          const sib = sibs.find(s => s.storyId === leadItem.storyId && !isCompanionFormat(s));
+          if (sib) {
+            const base = sib.publishedAt ?? sib.scheduledAt;
+            if (base) notBefore = new Date(Date.parse(base) + 6 * 3_600_000).toISOString();
+            const en = (typeof twin.config.language === 'string' ? twin.config.language : 'de').toLowerCase().startsWith('en');
+            twinTitle = `${en ? '🎬 The video for this story' : '🎬 Das Video zur Meldung'}: ${twinTitle}`.slice(0, 140);
+          }
+        }
         const twinItem = await this.repo.createItem(userId, twin.id, {
           status: 'draft',
-          title: leadItem.title ?? leadItem.body.slice(0, 60),
+          title: twinTitle,
           body: caption,
           hashtags: leadItem.hashtags.slice(0, 5),
           media: [{ type: 'video', source: 'generated', pathOrUrl: rendered.videoPath }],
@@ -1385,6 +1418,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
         });
         await this.repo.mergePerformance(userId, twinItem.id, {
           format: 'reel', autoReel: true, durationSec: rendered.durationSec, script,
+          ...(notBefore ? { notBefore } : {}),
         }).catch(() => { /* optional */ });
       }
     } catch { /* Zweitverwertung ist best-effort — das IG-Reel steht bereits */ }

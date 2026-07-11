@@ -631,6 +631,43 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(reels[0].media[0].pathOrUrl).toBe(reels[1].media[0].pathOrUrl); // gleiche Datei
   });
 
+  it('v1101: Reel-Zwilling auf TEXT-Kanal mit Story-Post → eigene Video-Caption + 6h-Abstand; IG bleibt 1:1', async () => {
+    const setup = reelSetup();
+    setup.skill.registerProvider(new FakeProvider('telegram_channel'));
+    const tg = makeChannel({ id: 'ch-tg', platform: 'telegram_channel', name: 'News TG', projectId: 'p1', config: { auto_reel: true } });
+    const lead = makeChannel({ id: 'ch-web', platform: 'rest', name: 'fussball.cc', projectId: 'p1', config: { base_url: 'https://cc.example' } });
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'IG', projectId: 'p1', config: { auto_reel: true } });
+    (setup.spies as any).listChannels = vi.fn(async () => [lead, ig, tg]);
+    // Auf TG läuft die Story bereits als regulärer Post (Realfall Adams 11.07.)
+    const publishedAt = new Date(Date.now() - 40 * 60_000).toISOString();
+    const sibling = makeItem({ id: 'item-tg-text', channelId: 'ch-tg', storyId: 's-1', status: 'published', publishedAt });
+    const origList = (setup.spies as any).listItems;
+    (setup.spies as any).listItems = vi.fn(async (u: string, q: any) =>
+      q?.channelId === 'ch-tg' ? [sibling] : origList(u, q));
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 10));
+    const tgReel = setup.created.find(c => c.chId === 'ch-tg');
+    const igReel = setup.created.find(c => c.chId === 'ch-ig' && c.media?.[0]?.type === 'video');
+    expect(tgReel.title).toBe('🎬 Das Video zur Meldung: Kolumbien weiter');
+    expect(igReel.title).toBe('Kolumbien weiter'); // native Reel-Oberfläche: unverändert
+    const merges = ((setup.skill as any).repo.mergePerformance as any).mock.calls.map((c: any[]) => c[2]);
+    const withDistance = merges.find((m: any) => typeof m?.notBefore === 'string');
+    expect(withDistance).toBeDefined();
+    expect(Date.parse(withDistance.notBefore)).toBe(Date.parse(publishedAt) + 6 * 3_600_000);
+  });
+
+  it('v1101: Ad-hoc-Termin respektiert performance.notBefore (Zweitverwertungs-Abstand)', async () => {
+    const channel = makeChannel();
+    const notBefore = new Date(Date.now() + 6 * 3_600_000).toISOString();
+    const reel = makeItem({ status: 'draft', performance: { format: 'reel', autoReel: true, notBefore } });
+    const { skill, spies } = makeSkill(channel, reel);
+    const r = await skill.execute({ action: 'approve_content', item_id: reel.id }, CTX);
+    expect(r.success).toBe(true);
+    const call = (spies.reschedule as any).mock.calls.find((c: any[]) => c[1] === reel.id);
+    expect(call).toBeDefined();
+    expect(Date.parse(call[2])).toBeGreaterThanOrEqual(Date.parse(notBefore));
+  });
+
   it('v1056: Freigabe eines slotlosen Begleitformats → Ad-hoc-Termin (+15 min)', async () => {
     const channel = makeChannel();
     const reel = makeItem({ status: 'draft', performance: { format: 'reel', autoReel: true } });

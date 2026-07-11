@@ -823,7 +823,9 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       if (item.status !== 'approved' || item.scheduledAt) continue;
       const { isCompanionFormat } = await import('@alfred/skills');
       if (isCompanionFormat(item)) {
-        const adhoc = new Date(Date.now() + 15 * 60_000).toISOString();
+        // v1101 — Zweitverwertungs-Abstand (performance.notBefore) respektieren
+        const nb = typeof item.performance?.notBefore === 'string' ? Date.parse(item.performance.notBefore) : NaN;
+        const adhoc = new Date(Math.max(Date.now() + 15 * 60_000, Number.isFinite(nb) ? nb : 0)).toISOString();
         if (await this.socialRepo.reschedule(this.ownerUserId, item.id, adhoc, ['approved'])) {
           result.deferred++;
           notes.push(`🎬 Begleitformat ohne Termin → ad-hoc terminiert (+15 min): „${(item.title ?? item.body).slice(0, 60)}"`);

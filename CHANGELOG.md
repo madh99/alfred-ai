@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1101] - 2026-07-12
+
+### Fixed — Reel-Zweitverwertung wirkt nicht mehr wie ein Doppel-Post (v1101)
+- **Eigene Video-Caption + Abstand auf Text-Kanälen**: Läuft eine Story auf Telegram, X, Bluesky oder Facebook bereits als regulärer Beitrag, bekommt der Reel-Crosspost dort jetzt einen eigenen Titel („🎬 Das Video zur Meldung: …" statt des identischen Artikeltitels) und frühestens **6 Stunden Abstand** zum bestehenden Post (Realfall 11.07.: dieselbe Meldung stand zweimal binnen 40 Minuten mit gleichem Titel im Telegram-Kanal). Auf Instagram und YouTube — wo Reels/Shorts eine eigene Oberfläche haben — ändert sich nichts.
+- Der Abstand wird als `performance.notBefore` am Entwurf hinterlegt; sowohl die Freigabe (`approve_content`) als auch der Plan-Review respektieren ihn bei der Ad-hoc-Terminierung.
+- **Leitplanken im Reel-Sprecherskript**: Der Script-Prompt kennt jetzt das heutige Datum (verhindert falsche Phasen-Bezüge wie „vor dem Start", wenn das Turnier läuft) und verbietet Spekulation samt rhetorischer Fragen zu Dingen, die der Artikel nicht beantwortet — bei dünnem Artikel bleibt das Skript kurz und faktisch.
+
 ## [0.19.0-multi-ha.1100] - 2026-07-12
 
 ### Fixed — Wichtige Meldungen sterben nicht mehr am Tages-Limit (v1100)
