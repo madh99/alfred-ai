@@ -545,6 +545,14 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Social assets: HTTP ${res.status}`);
     return (await res.json()).assets ?? [];
   }
+  // v1094 — Auto-Highlights: beste Momente eines Bibliotheks-Videos automatisch schneiden (kostenlos)
+  async socialFindHighlights(assetId: string, anzahl?: number, format?: '9:16' | '16:9'): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/social/assets/${encodeURIComponent(assetId)}/highlights`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...(anzahl ? { anzahl } : {}), ...(format ? { format } : {}) }),
+    });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   // v1089 — „Bild beleben": Image-to-Video-Clip aus einem Bibliotheks-Bild (kostenpflichtig, KI-Clip-Budget)
   async socialAnimateImage(assetId: string, regie?: string, format?: '9:16' | '16:9'): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/social/assets/${encodeURIComponent(assetId)}/animate`, {

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1094] - 2026-07-11
+
+### Added — Auto-Highlights (v1094)
+- **⭐ Highlights**: Neuer Button auf Video-Karten der Medien-Bibliothek — Alfred analysiert das Material (Lautheits-Spitzen wie Jubel/Kommentator-Ausbrüche als Anker, Szenenwechsel als saubere Einstiege, Qualitäts-Schwelle gegen Rausch-Fenster bei flachem Material) und schneidet die besten Momente als einzelne Highlight-Clips (Default 3, max. 8). Die Clips landen in der Bibliothek und sind per ✂️ Schnitt kombinierbar oder per 📤 direkt ausspielbar. Komplett ffmpeg, kostenlos — gedacht für lange Aufnahmen (Spiel-Mitschnitte, Events) per Video-Upload.
+- Auch per Chat: `find_highlights` mit `asset_id`, `anzahl` und `format`.
+
 ## [0.19.0-multi-ha.1093] - 2026-07-11
 
 ### Added — Video-Serienformate (v1093)

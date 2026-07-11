@@ -2433,6 +2433,22 @@ export function SocialPage() {
                           title="Zum Schnitt hinzufügen: Clips oben trimmen und mit Übergängen zu einem neuen Video verketten"
                           className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 rounded">✂️➕</button>
                       )}
+                      {/* v1094 — Auto-Highlights: beste Momente finden + schneiden (kostenlos) */}
+                      {a.kind === 'video' && (
+                        <button onClick={async () => {
+                            if (!confirm('Die besten Momente automatisch finden (Lautheits-Spitzen + Szenenwechsel) und als bis zu 3 Highlight-Clips schneiden? Dauert je nach Länge 1–3 Minuten, kostenlos.')) return;
+                            await withBusy(`hl-${a.id}`, async () => {
+                              const r = await client!.socialFindHighlights(a.id, 3);
+                              if (!r.success) throw new Error(r.error ?? 'Highlight-Suche fehlgeschlagen');
+                              setNotice(r.display ?? 'Highlights geschnitten.');
+                              await loadAssets();
+                            });
+                          }} disabled={busy === `hl-${a.id}`}
+                          title="Auto-Highlights: Alfred findet die lautesten Momente (Jubel, Kommentator) mit sauberen Szenen-Einstiegen und schneidet sie als eigene Clips"
+                          className="px-1.5 py-0.5 text-[10px] border border-yellow-500/40 text-yellow-300 hover:bg-yellow-500/15 disabled:opacity-50 rounded">
+                          {busy === `hl-${a.id}` ? '⏳' : '⭐ Highlights'}
+                        </button>
+                      )}
                     </div>
                     {animateId === a.id && (
                       <div className="border border-pink-500/20 rounded p-2 space-y-1.5 bg-pink-500/5">

@@ -723,6 +723,8 @@ export class HttpAdapter extends MessagingAdapter {
     assetEdit?: (body: Record<string, unknown>) => Promise<Record<string, unknown>>;
     /** v1089 — „Bild beleben": Image-to-Video-Clip aus einem Bibliotheks-Bild. */
     assetAnimate?: (assetId: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    /** v1094 — Auto-Highlights: beste Momente eines Bibliotheks-Videos schneiden. */
+    assetHighlights?: (assetId: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string, width?: number) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1452,6 +1454,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSocialBody(req, res, async (body) => {
         if (!this.socialCallbacks?.assetEdit) return { error: 'not supported' };
         return this.socialCallbacks.assetEdit(body);
+      }).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/assets\/[^/]+\/highlights$/) && req.method === 'POST') {
+      // v1094 — Auto-Highlights: beste Momente eines Bibliotheks-Videos schneiden
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.assetHighlights) return { error: 'not supported' };
+        return this.socialCallbacks.assetHighlights(url.pathname.split('/')[4], body);
       }).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/social\/assets\/[^/]+\/animate$/) && req.method === 'POST') {
       // v1089 — „Bild beleben": Image-to-Video-Clip aus einem Bibliotheks-Bild

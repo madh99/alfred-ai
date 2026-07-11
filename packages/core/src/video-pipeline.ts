@@ -359,6 +359,51 @@ export function buildEditGraph(opts: {
 }
 
 /**
+ * v1094 — Auto-Highlights (pure, testbar): aus Lautheits-Verlauf (RMS je
+ * Sekunde — Jubel, Kommentator-Ausbruch) und Szenenwechseln die besten
+ * Fenster wählen. Heuristik: lauteste Sekunden als Anker, Fenster davor/
+ * danach aufziehen, Start auf den nächstliegenden früheren Szenenwechsel
+ * einrasten (sauberer Einstieg), Überlappungen zusammenlegen, Top-N nach
+ * Lautheit mit Mindestabstand.
+ */
+export function pickHighlightWindows(
+  rms: Array<{ t: number; level: number }>,
+  scenes: number[],
+  opts?: { count?: number; preSec?: number; postSec?: number; minGapSec?: number; maxLenSec?: number; totalSec?: number },
+): Array<{ start: number; end: number; score: number }> {
+  if (rms.length === 0) return [];
+  const count = Math.max(1, Math.min(opts?.count ?? 3, 8));
+  const pre = opts?.preSec ?? 3;
+  const post = opts?.postSec ?? 5;
+  const minGap = opts?.minGapSec ?? 8;
+  const maxLen = opts?.maxLenSec ?? 20;
+  const total = opts?.totalSec ?? Math.max(...rms.map(r => r.t)) + 1;
+  const sorted = [...rms].sort((a, b) => b.level - a.level);
+  // Qualitäts-Schwelle: ein „Highlight" muss deutlich über dem Normalpegel
+  // liegen (Median + 3 dB) — sonst füllt der Top-N-Wähler flaches Material
+  // mit Rausch-Fenstern auf. Bei gleichförmigem Pegel (z. B. stummes
+  // Material mit Szenen-Ankern, Spread < 3 dB) entfällt die Schwelle.
+  const levels = [...rms.map(r => r.level)].sort((a, b) => a - b);
+  const median = levels[Math.floor(levels.length / 2)];
+  const threshold = levels[levels.length - 1] - levels[0] >= 3 ? median + 3 : -Infinity;
+  const picked: Array<{ start: number; end: number; score: number }> = [];
+  for (const peak of sorted) {
+    if (picked.length >= count) break;
+    if (peak.level < threshold) break; // absteigend sortiert — Rest ist leiser
+    // Mindestabstand zu bereits gewählten Highlights (Anker-zu-Fenster)
+    if (picked.some(w => peak.t >= w.start - minGap && peak.t <= w.end + minGap)) continue;
+    let start = Math.max(0, peak.t - pre);
+    // Start auf den nächstliegenden früheren Szenenwechsel einrasten (≤ 2,5 s davor)
+    const snap = scenes.filter(s => s <= start && s >= start - 2.5).sort((a, b) => b - a)[0];
+    if (snap !== undefined) start = snap;
+    const end = Math.min(total, Math.min(peak.t + post, start + maxLen));
+    if (end - start < 2) continue;
+    picked.push({ start: Number(start.toFixed(2)), end: Number(end.toFixed(2)), score: peak.level });
+  }
+  return picked.sort((a, b) => a.start - b.start);
+}
+
+/**
  * v938 — Externer Video-Generator (Runway/Kling/Veo): Schnittstelle ist
  * vorbereitet und per Config aktivierbar — die konkrete Anbindung folgt,
  * sobald ein Anbieter gewählt/bezahlt ist. Bis dahin liefert generate()
@@ -507,6 +552,53 @@ export class SlideshowVideoRenderer {
     this.logger.info({ clips: probed.length, fade, format: opts.format, durationSec: graph.totalSec, title: Boolean(opts.overlayImage) }, 'v1088 editing video (trim + crossfade + overlay)');
     await execFileAsync(this.ffmpeg, args, { timeout: 10 * 60_000, maxBuffer: 10 * 1024 * 1024 });
     return { videoPath: outPath, durationSec: graph.totalSec };
+  }
+
+  /**
+   * v1094 — Auto-Highlights: Lautheits-Verlauf (RMS je ~1 s) und Szenen-
+   * wechsel messen, beste Fenster wählen (pickHighlightWindows). Videos
+   * ohne Tonspur fallen auf reine Szenenwechsel-Anker zurück.
+   */
+  async analyzeHighlights(path: string, opts?: { count?: number; maxLenSec?: number }): Promise<Array<{ start: number; end: number; score: number }>> {
+    const probe = await this.probeVideo(path);
+    if (!probe.ok || !probe.durationSec) throw new Error(`Video nicht lesbar: ${probe.detail ?? 'keine Dauer'}`);
+    // 1) RMS je Sekunde (astats über 1s-Fenster, Werte im stderr-Metadatenlog)
+    const rms: Array<{ t: number; level: number }> = [];
+    try {
+      // asetnsamples=48000 macht 1s-Frames (astats' reset zählt FRAMES, nicht
+      // Sekunden — ohne das kämen ~0,05s-Proben, E2E-Befund 11.07.)
+      const { stderr } = await execFileAsync(this.ffmpeg,
+        ['-i', path, '-af', 'aresample=48000,asetnsamples=n=48000,astats=metadata=1:reset=1,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level', '-f', 'null', '-'],
+        { timeout: 5 * 60_000, maxBuffer: 32 * 1024 * 1024 });
+      const text = String(stderr);
+      // Blöcke: "pts_time:12.3 ... lavfi.astats.Overall.RMS_level=-23.4"
+      const re = /pts_time:(\d+(?:\.\d+)?)[\s\S]{0,200}?RMS_level=(-?\d+(?:\.\d+)?)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        const level = Number(m[2]);
+        if (Number.isFinite(level)) rms.push({ t: Number(m[1]), level });
+      }
+    } catch { /* stumm → Szenen-Fallback unten */ }
+    // 2) Szenenwechsel (Schwelle 0,3)
+    const scenes: number[] = [];
+    try {
+      const { stderr } = await execFileAsync(this.ffmpeg,
+        ['-i', path, '-vf', "select='gt(scene,0.3)',metadata=mode=print:key=lavfi.scene_score", '-an', '-f', 'null', '-'],
+        { timeout: 5 * 60_000, maxBuffer: 32 * 1024 * 1024 });
+      const re = /pts_time:(\d+(?:\.\d+)?)/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(String(stderr))) !== null) scenes.push(Number(m[1]));
+    } catch { /* ohne Szenen geht es auch */ }
+    if (rms.length === 0 && scenes.length === 0) throw new Error('Keine Analyse möglich (weder Tonspur noch Szenenwechsel erkannt).');
+    // stummes Material: Szenenwechsel als gleichwertige Anker behandeln
+    const effective = rms.length > 0 ? rms : scenes.map(t => ({ t, level: 0 }));
+    const windows = pickHighlightWindows(effective, scenes, {
+      ...(opts?.count ? { count: opts.count } : {}),
+      ...(opts?.maxLenSec ? { maxLenSec: opts.maxLenSec } : {}),
+      totalSec: probe.durationSec,
+    });
+    this.logger.info({ path: path.split(/[\\/]/).pop(), rmsSamples: rms.length, scenes: scenes.length, windows: windows.length }, 'v1094 highlight analysis');
+    return windows;
   }
 
   /** v938 — Transcode-Check für User-Videos (ffprobe, best-effort). */

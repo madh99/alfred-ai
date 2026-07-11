@@ -30,7 +30,7 @@ type SocialAction =
   | 'reject_content' | 'publish_now' | 'mark_published' | 'delete_remote' | 'delete_item' | 'attach_media'
   | 'generate_content' | 'render_video' | 'crosspost' | 'link_topic' | 'unlink_topic'
   | 'list_comments' | 'reply_comment' | 'ignore_comment' | 'suggest_reply' | 'regenerate_image' | 'revise_content'
-  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library' | 'render_reel' | 'post_from_video' | 'edit_video' | 'animate_image';
+  | 'get_content' | 'edit_content' | 'add_lesson' | 'replan_channel' | 'plan_story' | 'refresh_overlays' | 'dedup_library' | 'render_reel' | 'post_from_video' | 'edit_video' | 'animate_image' | 'find_highlights';
 
 /**
  * v1035/v1056 — Begleitformate (Auto-Story, Reels): keine regulären Posts —
@@ -145,8 +145,8 @@ export class SocialSkill extends Skill {
             'reject_content', 'publish_now', 'mark_published', 'delete_remote', 'delete_item', 'attach_media',
             'generate_content', 'render_video', 'crosspost', 'link_topic', 'unlink_topic',
             'list_comments', 'reply_comment', 'ignore_comment', 'suggest_reply', 'regenerate_image', 'revise_content',
-            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library', 'render_reel', 'post_from_video', 'edit_video', 'animate_image'],
-          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Reel für einen Beitrag (item_id) anstoßen — funktioniert für JEDEN Beitrag mit lokalen Bildern (Studio- oder User-erstellt, mit oder ohne Story, published oder geplant); Ziel ist der Instagram-Kanal der Familie, gleiche Leitplanken wie beim Auto-Reel (Wochen-Cap, KI-Clips, Entwurf mit Freigabe, Zweitverwertung). post_from_video = Beitrag aus einem Video der Bibliothek (asset_id) für einen oder mehrere Kanäle (channels): Alfred schreibt Titel/Caption je Kanal-Persona (optionaler stoff-Hinweis fließt ein), Entwürfe mit Freigabe. edit_video = Basis-Schnitt: 1-8 Bibliotheks-Videos (clips mit asset_id + optional von/bis in Sekunden) trimmen und mit Übergängen verketten, optionaler titel als Overlay — das Ergebnis landet als neues Video in der Bibliothek (ffmpeg, kostenlos). animate_image = Bild beleben: aus einem Bibliotheks-BILD (asset_id) einen bewegten KI-Clip machen (Image-to-Video, KOSTENPFLICHTIG je Clip, gleiches Monatsbudget wie die Reel-KI-Clips); optionale regie beschreibt die Bewegung (sonst schlaegt Alfred sie aus der Bildbeschreibung vor) — der Clip landet in der Video-Bibliothek.',
+            'get_content', 'edit_content', 'add_lesson', 'replan_channel', 'plan_story', 'refresh_overlays', 'dedup_library', 'render_reel', 'post_from_video', 'edit_video', 'animate_image', 'find_highlights'],
+          description: 'Kanal-Verwaltung, Content-Pipeline oder Veröffentlichung. pause_all = Not-Aus für alle Kanäle ("Social-Stopp"). generate_content = Content-Studio sofort laufen lassen. render_video = Slideshow-Video (Bilder+Voiceover+Untertitel) aus einem Item rendern (ffmpeg, kostenlos). replan_channel = bereits geplante Beiträge in die aktuellen Posting-Slots umverteilen ("Plane die Beiträge um"). plan_story = Ad-hoc-Story auf User-Zuruf ("Mach eine Story zu X für alle Kanäle"): der Stoff (Feld stoff, Fakten inklusive!) wird als echte Redaktions-Story auf ALLEN Familien-Kanälen ausgespielt — je Kanal eigener Text/Persona/Sprache + Bild, Lead-Slot +30 min, Follower +90 min, Freigaben nach Kanal-Modus. refresh_overlays = Bilder aller UNVERÖFFENTLICHTEN Beiträge aus dem Basis-Asset mit der AKTUELLEN Overlay-Config neu zusammensetzen (nach Look-/Logo-Änderungen; ohne Bild-Budget; optional channel). dedup_library = Fast-Duplikate in der Bild-Bibliothek aufräumen: ähnliche Basis-Bilder (gleicher Pool/Stil/Format) werden zusammengefasst, pro Gruppe bleibt eines (gepinnt > meistgenutzt > neuestes), der Rest wird gelöscht. render_reel = Reel für einen Beitrag (item_id) anstoßen — funktioniert für JEDEN Beitrag mit lokalen Bildern (Studio- oder User-erstellt, mit oder ohne Story, published oder geplant); Ziel ist der Instagram-Kanal der Familie, gleiche Leitplanken wie beim Auto-Reel (Wochen-Cap, KI-Clips, Entwurf mit Freigabe, Zweitverwertung). post_from_video = Beitrag aus einem Video der Bibliothek (asset_id) für einen oder mehrere Kanäle (channels): Alfred schreibt Titel/Caption je Kanal-Persona (optionaler stoff-Hinweis fließt ein), Entwürfe mit Freigabe. edit_video = Basis-Schnitt: 1-8 Bibliotheks-Videos (clips mit asset_id + optional von/bis in Sekunden) trimmen und mit Übergängen verketten, optionaler titel als Overlay — das Ergebnis landet als neues Video in der Bibliothek (ffmpeg, kostenlos). animate_image = Bild beleben: aus einem Bibliotheks-BILD (asset_id) einen bewegten KI-Clip machen (Image-to-Video, KOSTENPFLICHTIG je Clip, gleiches Monatsbudget wie die Reel-KI-Clips); optionale regie beschreibt die Bewegung (sonst schlaegt Alfred sie aus der Bildbeschreibung vor) — der Clip landet in der Video-Bibliothek. find_highlights = Auto-Highlights: die besten Momente eines Bibliotheks-Videos (asset_id) automatisch finden (Lautheits-Spitzen + Szenenwechsel) und als einzelne Highlight-Clips schneiden (anzahl, Default 3) — kostenlos (ffmpeg), Clips landen in der Bibliothek.',
         },
         channel: { type: 'string', description: 'Kanal-Name/-Handle/-Plattform (fuzzy) oder Kanal-ID' },
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN/X_REFRESH_TOKEN+X_CLIENT_ID (OAuth2; Bild-Posts via v1.1: zusätzlich X_CONSUMER_KEY/X_CONSUMER_SECRET/X_OAUTH1_ACCESS_TOKEN/X_OAUTH1_ACCESS_SECRET — der OAuth2-Scope media.write wird oft nicht gewährt); bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
@@ -172,6 +172,7 @@ export class SocialSkill extends Skill {
         channels: { type: 'array', items: { type: 'string' }, description: 'crosspost/post_from_video: Ziel-Kanäle (Namen/IDs)' },
         asset_id: { type: 'string', description: 'post_from_video: Video-ID aus der Bibliothek. animate_image: Bild-ID aus der Bibliothek' },
         regie: { type: 'string', description: 'animate_image: Bewegungs-Regie fuer den Clip (englisch oder deutsch; ohne: Alfred schlaegt sie aus der Bildbeschreibung vor)' },
+        anzahl: { type: 'number', description: 'find_highlights: wie viele Highlight-Clips (1-8, Default 3)' },
         clips: { type: 'array', items: { type: 'object', properties: { asset_id: { type: 'string' }, von: { type: 'number' }, bis: { type: 'number' }, tempo: { type: 'number' }, look: { type: 'string', enum: ['kino', 'warm', 'kalt', 'sw', 'lebendig'] }, text: { type: 'string' } } }, description: 'edit_video: Schnitt-Liste in Reihenfolge — je Clip asset_id (Bibliotheks-Video) + optional von/bis (Sekunden), tempo (0,25-4: <1 Zeitlupe, >1 Zeitraffer), look (Farb-Preset) und text (Einblendung waehrend des Clips)' },
         adapt: { type: 'boolean', description: 'crosspost: Text formatgerecht je Ziel-Kanal umschreiben (Default true; false = wörtliche Kopie)' },
         topic: { type: 'string', description: 'link_topic/unlink_topic: Interessen-Thema (Name, fuzzy) — ein Kanal kann MEHRERE Themen speisen (z.B. „WM 2026" + „Panini-Sammelalbum")' },
@@ -207,6 +208,8 @@ export class SocialSkill extends Skill {
     /** v1060 — Stufe 3: Image-to-Video-Clip (Sora/Runway/Veo, kostenpflichtig). */
     generateClip?: (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => Promise<{ clipPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
+    /** v1094 — Auto-Highlights: beste Fenster (Lautheit + Szenenwechsel) aus langem Material. */
+    analyze?: (path: string, opts?: { count?: number; maxLenSec?: number }) => Promise<Array<{ start: number; end: number; score: number }>>;
     /** v1088/v1092 — Basis-Schnitt: Clips trimmen + verketten (Crossfade), Titel-Overlay, Tempo/Look/Text je Clip. */
     edit?: (opts: { clips: Array<{ path: string; startSec?: number; endSec?: number; speed?: number; look?: string; overlayImage?: string }>; format: '9:16' | '16:9'; overlayImage?: string; outBaseName?: string }) => Promise<{ videoPath: string; durationSec: number }>;
   };
@@ -426,6 +429,7 @@ export class SocialSkill extends Skill {
         case 'post_from_video': return await this.postFromVideo(userId, input);
         case 'edit_video': return await this.editVideoFromLibrary(userId, input);
         case 'animate_image': return await this.animateImage(userId, input);
+        case 'find_highlights': return await this.findHighlights(userId, input);
         case 'list_comments': return await this.listCommentsAction(userId, input);
         case 'reply_comment': return await this.replyComment(userId, input);
         case 'suggest_reply': return await this.suggestReply(userId, input);
@@ -2130,6 +2134,49 @@ Antworte NUR mit VALIDEM JSON: {"titel": "…", "text": "…", "hashtags": ["…
       const { unlink } = await import('node:fs/promises');
       for (const f of tmpFiles) await unlink(f).catch(() => { /* tmp best-effort */ });
     }
+  }
+
+  /**
+   * v1094 — Auto-Highlights: die besten Momente eines Bibliotheks-Videos
+   * finden (Lautheits-Spitzen = Jubel/Kommentator + Szenenwechsel als
+   * saubere Einstiege) und als einzelne Clips schneiden — jeder landet als
+   * eigenes Video (model 'highlight') in der Bibliothek, von dort per
+   * Schnitt kombinierbar oder per Beitrag direkt ausspielbar. Kostenlos.
+   */
+  private async findHighlights(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.videoTools?.analyze || !this.videoTools.edit) return { success: false, error: 'Highlight-Analyse nicht verfügbar (Video-Pipeline fehlt).' };
+    const assetId = typeof input.asset_id === 'string' ? input.asset_id.trim() : '';
+    if (!assetId) return { success: false, error: 'asset_id erforderlich (Video aus der Bibliothek).' };
+    const asset = (await this.repo.listMediaAssets(userId, { limit: 500, kind: 'video' })).find(a => a.id === assetId);
+    if (!asset) return { success: false, error: 'Video-Asset nicht gefunden — Bibliothek → Tab Videos.' };
+    const count = typeof input.anzahl === 'number' && input.anzahl >= 1 && input.anzahl <= 8 ? Math.round(input.anzahl) : 3;
+    const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
+
+    const windows = await this.videoTools.analyze(asset.path, { count });
+    if (windows.length === 0) return { success: false, error: 'Keine Highlight-Momente gefunden (zu gleichförmiges Material?).' };
+    const created: string[] = [];
+    for (let i = 0; i < windows.length; i++) {
+      const w = windows[i];
+      try {
+        const result = await this.videoTools.edit({
+          clips: [{ path: asset.path, startSec: w.start, endSec: w.end }],
+          format, outBaseName: `highlight-${asset.id.slice(0, 6)}-${i + 1}`,
+        });
+        const clip = await this.repo.createMediaAsset(userId, {
+          path: result.videoPath, kind: 'video', model: 'highlight', format, durationSec: result.durationSec,
+          motif: `Highlight ${i + 1}/${windows.length} (${Math.round(w.start)}–${Math.round(w.end)}s) aus: ${asset.motif.slice(0, 150)}`,
+        });
+        created.push(`• [${clip.id.slice(0, 8)}] ${Math.round(w.start)}–${Math.round(w.end)}s (${Math.round(result.durationSec)}s)`);
+      } catch (err) {
+        created.push(`• Fenster ${Math.round(w.start)}–${Math.round(w.end)}s fehlgeschlagen: ${(err as Error).message.slice(0, 100)}`);
+      }
+    }
+    await this.repo.touchMediaAsset(userId, asset.id).catch(() => { /* optional */ });
+    return {
+      success: true,
+      data: { count: windows.length },
+      display: `⭐ ${windows.length} Highlight${windows.length > 1 ? 's' : ''} geschnitten (${format}):\n${created.join('\n')}\nAlle liegen in der Bibliothek — per ✂️ kombinieren oder 📤 ausspielen.`,
+    };
   }
 
   /**

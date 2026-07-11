@@ -6828,6 +6828,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               });
             },
             probe: (p: string) => renderer.probeVideo(p),
+            // v1094 — Auto-Highlights: beste Momente aus langem Material finden
+            analyze: (p: string, o?: { count?: number; maxLenSec?: number }) => renderer.analyzeHighlights(p, o),
             // v1088/v1092 — Basis-Schnitt der Video-Werkstatt (Trim + Crossfade + Titel + Effekte)
             edit: (o: { clips: Array<{ path: string; startSec?: number; endSec?: number; speed?: number; look?: string; overlayImage?: string }>; format: '9:16' | '16:9'; overlayImage?: string; outBaseName?: string }) => renderer.editVideo(o),
             // v1060 — Stufe 3: Image-to-Video-Clip (kostenpflichtig; Budget/
@@ -8532,6 +8534,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // v1041 — Termin-Vorlage hochladen: Bild landet als gepinntes Asset
           // in der Bibliothek (geschützt vor Dedup und Alters-Cleanup) und wird
           // per image_overlay.termin_image referenziert.
+          // v1094 — Auto-Highlights über den Skill (Analyse + Schnitt, kostenlos)
+          assetHighlights: async (assetId: string, body: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'find_highlights', asset_id: assetId,
+              ...(typeof body.anzahl === 'number' ? { anzahl: body.anzahl } : {}),
+              ...(body.format === '16:9' ? { format: '16:9' } : {}),
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error, data: r.data };
+          },
           // v1089 — „Bild beleben": Image-to-Video über den Skill (Budget dort)
           assetAnimate: async (assetId: string, body: Record<string, unknown>) => {
             if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };

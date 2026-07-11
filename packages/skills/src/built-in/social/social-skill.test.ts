@@ -770,6 +770,27 @@ describe('v1087 — post_from_video (Beitrag aus Bibliotheks-Video)', () => {
     expect(generateClip).toHaveBeenCalledTimes(1);
   });
 
+  it('v1094 find_highlights: analysiert, schneidet je Fenster einen Clip und legt Bibliotheks-Assets an', async () => {
+    const { skill, spies } = makeSkill(makeChannel(), makeItem());
+    (spies as any).listMediaAssets = vi.fn(async () => [{
+      id: 'long-1', userId: 'u1', path: '/tmp/match.mp4', motif: 'Ganzes Spiel', kind: 'video', durationSec: 600,
+      lastUsedAt: 'x', useCount: 1, blocked: false, pinned: false, createdAt: 'x',
+    }]);
+    (spies as any).touchMediaAsset = vi.fn(async () => {});
+    const analyze = vi.fn(async () => [{ start: 120, end: 132, score: -8 }, { start: 300, end: 310, score: -10 }]);
+    const edit = vi.fn(async (o: any) => ({ videoPath: `/tmp/hl-${o.clips[0].startSec}.mp4`, durationSec: o.clips[0].endSec - o.clips[0].startSec }));
+    skill.setVideoTools({ render: vi.fn(), analyze, edit } as any);
+    const r = await skill.execute({ action: 'find_highlights', asset_id: 'long-1', anzahl: 2 }, CTX);
+    expect(r.success).toBe(true);
+    expect(analyze).toHaveBeenCalledWith('/tmp/match.mp4', { count: 2 });
+    expect(edit).toHaveBeenCalledTimes(2);
+    expect(((edit.mock.calls[0] as unknown[])[0] as any).clips[0]).toMatchObject({ path: '/tmp/match.mp4', startSec: 120, endSec: 132 });
+    const assetCalls = ((spies as any).createMediaAsset as any).mock.calls;
+    expect(assetCalls.length).toBe(2);
+    expect(assetCalls[0][1]).toMatchObject({ kind: 'video', model: 'highlight', durationSec: 12 });
+    expect(assetCalls[0][1].motif).toContain('Highlight 1/2');
+  });
+
   it('ohne asset_id bzw. unbekanntes Video → klare Fehler', async () => {
     const { skill, spies } = makeSkill(makeChannel(), makeItem());
     (spies as any).listMediaAssets = vi.fn(async () => []);

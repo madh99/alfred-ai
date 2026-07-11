@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSrt, buildPhraseSrt, buildReelFilterGraph, buildReelAudioGraph, buildEditGraph, atempoChain, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
+import { buildSrt, buildPhraseSrt, buildReelFilterGraph, buildReelAudioGraph, buildEditGraph, atempoChain, pickHighlightWindows, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
 
 describe('buildSrt (v938)', () => {
   it('verteilt Sätze gewichtet über die Laufzeit, SRT-Format korrekt', () => {
@@ -157,6 +157,21 @@ describe('buildEditGraph (v1088)', () => {
     expect(g.filterComplex).toContain("overlay=0:0:enable='between(t,3.500,9.500)'");
     // stummer Zeitlupen-Clip: Stille in EFFEKTIVER Länge (6s), kein atempo
     expect(g.filterComplex).toContain('[2:a]atrim=0:6.000');
+  });
+
+  it('v1094: pickHighlightWindows — lauteste Anker, Szenen-Einrasten, Mindestabstand, Top-N', () => {
+    // Peaks bei t=30 (laut) und t=60 (lauter); Szenenwechsel bei 26,5 (einrastbar) und 40
+    const rms = Array.from({ length: 90 }, (_, t) => ({ t, level: t === 30 ? -8 : t === 60 ? -5 : t === 31 ? -9 : -30 }));
+    const w = pickHighlightWindows(rms, [26.5, 40], { count: 2, totalSec: 90 });
+    expect(w.length).toBe(2);
+    // t=60: Fenster 57–65 (kein Szenenwechsel in Reichweite)
+    expect(w[1]).toMatchObject({ start: 57, end: 65 });
+    // t=30: Start 27 → rastet auf Szenenwechsel 26,5 ein
+    expect(w[0].start).toBe(26.5);
+    expect(w[0].end).toBe(35);
+    // Nachbar-Peak t=31 wurde vom Mindestabstand geschluckt (kein drittes Fenster)
+    const w3 = pickHighlightWindows(rms, [], { count: 3, totalSec: 90 });
+    expect(w3.length).toBe(2);
   });
 
   it('v1092: atempoChain kettet außerhalb 0,5–2', () => {
