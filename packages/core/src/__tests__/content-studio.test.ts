@@ -352,6 +352,13 @@ describe('ContentStudio (v935)', () => {
     expect(isNearDuplicateTitle('Großer Fußball Abend', ['Großer Fußball Auftakt'])).toBe(true);
   });
 
+  it('v1090: Floskel-Tokens sind kein Duplikat-Signal (Spanien/Argentinien-Realfall 11.07.)', () => {
+    // „zittert sich" allein machte 2 gemeinsame Tokens bei 50% Überlappung → Fehlalarm
+    expect(isNearDuplicateTitle('Spanien zittert sich ins Halbfinale', ['Argentinien zittert sich weiter'])).toBe(false);
+    // echte Doppelungen (Inhaltswörter gemeinsam) werden weiter erkannt
+    expect(isNearDuplicateTitle('Spanien zittert sich ins Halbfinale', ['Spanien erst spät im Halbfinale'])).toBe(true);
+  });
+
   it('v957: Ideen mit Geschwister-Doppelung werden deterministisch verworfen', async () => {
     const telegram = makeChannel({ id: 'ch-tg', name: 'FussballCC News', projectId: 'proj-1' });
     const platform = makeChannel({ id: 'ch-cc', name: 'fussball.cc', platform: 'rest', projectId: 'proj-1' });

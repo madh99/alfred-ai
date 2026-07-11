@@ -66,7 +66,8 @@ describe('StoryDeduper (v973)', () => {
     const deduper = new StoryDeduper(makeEmbedFn(), makeEmbeddingRepo(), undefined, makeLogger(), OWNER);
     const r = await deduper.filterCandidates(
       [
-        { title: 'Alaba lässt Zukunft offen – Comeback möglich?', body: 'Der Real-Star Alaba deutet an…' }, // Paraphrase von b1
+        // v1090: Titel so gewählt, dass die Token-Schicht ihn NICHT fängt (nur 'alaba' gemeinsam) und wirklich die semantische Schicht entscheidet
+        { title: 'Comeback im Nationalteam? Alaba deutet Rückkehr an', body: 'Der Real-Star Alaba deutet an…' }, // Paraphrase von b1
         { title: 'Glasner übernimmt in Nottingham', body: 'Der Trainer Glasner wechselt.' },                  // neue Story
       ],
       BLOCKED,

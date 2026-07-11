@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1090] - 2026-07-11
+
+### Fixed
+- **Duplikat-Erkennung: Floskeln sind kein Signal mehr**: „Spanien zittert sich ins Halbfinale" wurde als Duplikat von „Argentinien zittert sich weiter" permanent geblockt — die gemeinsamen Wörter waren nur „zittert" und „sich". Die 50-%-Überlappungsregel zählt jetzt ausschließlich Inhaltswörter (deutsche Funktionswörter/Adverbien wie „sich", „wird", „weiter", „heute" werden gefiltert). Wörtlich identische Titel bleiben immer Duplikate (auch Zwei-Wort-Titel), und die Starkregel „ab 3 gemeinsame Wörter" bleibt unverändert — echte Doppelungen wie der Alaba-Paraphrase-Fall werden weiter erkannt.
+
 ## [0.19.0-multi-ha.1089] - 2026-07-11
 
 ### Added — „Bild beleben", Werkstatt B2 Teil 1 (v1089)
