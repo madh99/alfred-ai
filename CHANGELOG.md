@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1092] - 2026-07-11
+
+### Added — Effekt-Palette im Schnitt, Werkstatt B2 Teil 2 (v1092)
+- **Effekte je Clip** in der Schnitt-Leiste: **Tempo** (0,5×/0,25× Zeitlupe, 2× Zeitraffer — Bild und Ton laufen synchron, die Tonhöhe bleibt), **Farb-Look** (Kino, Warm, Kühl, Schwarzweiß, Lebendig) und **Text-Einblendung**, die exakt während des jeweiligen Clips steht (gleicher Boxen-Look wie die Titel). Übergänge und Gesamtdauer rechnen mit den effektiven (tempo-korrigierten) Clip-Längen.
+- Auch per Chat: `edit_video` mit `tempo`, `look` und `text` je Clip — z. B. „nimm die zwei Torszenen, die zweite in Zeitlupe mit Kino-Look und Text WAHNSINN".
+
 ## [0.19.0-multi-ha.1091] - 2026-07-11
 
 ### Fixed

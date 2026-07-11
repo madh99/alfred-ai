@@ -257,62 +257,105 @@ export function buildReelAudioGraph(opts: {
 }
 
 /**
+ * v1092 — Farb-Look-Presets für den Schnitt (Effekt-Palette der Werkstatt).
+ * Bewusst dezente, plattformtaugliche Looks — kein LUT-File nötig.
+ */
+export const EDIT_LOOKS: Record<string, string> = {
+  kino: 'eq=contrast=1.12:saturation=1.22:brightness=-0.015,vignette=PI/5',
+  warm: 'colorbalance=rm=0.07:gm=0.02:bm=-0.06,eq=saturation=1.1',
+  kalt: 'colorbalance=bm=0.08:rm=-0.05,eq=saturation=1.05',
+  sw: 'hue=s=0,eq=contrast=1.1',
+  lebendig: 'eq=saturation=1.45:contrast=1.06',
+};
+
+/** v1092 — atempo akzeptiert nur 0,5–2,0 je Instanz: Kette für weitere Tempi. */
+export function atempoChain(speed: number): string {
+  const parts: string[] = [];
+  let s = speed;
+  while (s < 0.5) { parts.push('atempo=0.5'); s /= 0.5; }
+  while (s > 2) { parts.push('atempo=2'); s /= 2; }
+  parts.push(`atempo=${Number(s.toFixed(4))}`);
+  return parts.join(',');
+}
+
+/**
  * v1088 — Basis-Schnitt (pure, testbar): Clips trimmen, auf eine gemeinsame
  * Leinwand bringen (Cover-Crop) und mit Crossfades verketten; Ton wird —
  * wo vorhanden — mitgetrimmt und weich übergeblendet, stumme Clips bekommen
- * Stille (anullsrc-Input des Aufrufers). Optional ein Titel-Overlay (PNG mit
- * Alpha, vom Aufrufer gebacken) für die ersten Sekunden.
+ * Stille (anullsrc-Input des Aufrufers).
+ * v1092 — Effekt-Palette je Clip: Tempo (Zeitlupe/Zeitraffer, Bild UND Ton),
+ * Farb-Look (EDIT_LOOKS) und beliebige Overlay-Fenster (Titel global,
+ * Text-PNGs je Clip — Zeitfenster rechnet der Graph aus den effektiven
+ * Clip-Dauern selbst aus).
  */
 export function buildEditGraph(opts: {
-  /** Je Clip: Input-Index des Videos, Input-Index der Tonquelle (Video selbst oder anullsrc), getrimmte Dauer. */
-  clips: Array<{ index: number; audioIndex: number; audioFromVideo: boolean; startSec: number; durationSec: number }>;
+  /** Je Clip: Input-Index des Videos, Input-Index der Tonquelle (Video selbst oder anullsrc), getrimmte Dauer (roh, VOR Tempo). */
+  clips: Array<{ index: number; audioIndex: number; audioFromVideo: boolean; startSec: number; durationSec: number;
+    /** v1092 — Tempo 0,25–4 (1 = Original; <1 Zeitlupe, >1 Zeitraffer). */
+    speed?: number;
+    /** v1092 — Filterkette aus EDIT_LOOKS (oder eigene). */
+    lookFilter?: string;
+  }>;
   width: number; height: number;
   /** Crossfade-Dauer zwischen Clips (Default 0,5 s; 0 = harte Schnitte). */
   fadeSec?: number;
-  /** Input-Index des Titel-PNGs (volle Leinwand, Alpha). */
-  overlayInputIndex?: number;
-  /** Wie lange der Titel steht (Default 3,5 s). */
-  overlaySec?: number;
-}): { filterComplex: string; outLabelV: string; outLabelA: string; totalSec: number } {
+  /** v1092 — Overlay-PNGs (volle Leinwand, Alpha): entweder festes Zeitfenster (fromSec/toSec) oder clip-gebunden (clip = Index in clips). */
+  overlays?: Array<{ inputIndex: number; fromSec?: number; toSec?: number; clip?: number }>;
+}): { filterComplex: string; outLabelV: string; outLabelA: string; totalSec: number; clipWindows: Array<{ start: number; end: number }> } {
   if (opts.clips.length === 0) throw new Error('buildEditGraph: mindestens ein Clip');
   const fade = Math.max(0, opts.fadeSec ?? 0.5);
   const parts: string[] = [];
+  const effDur = (c: typeof opts.clips[number]) => c.durationSec / (c.speed && c.speed > 0 ? c.speed : 1);
   for (let k = 0; k < opts.clips.length; k++) {
     const c = opts.clips[k];
     const end = c.startSec + c.durationSec;
+    const speed = c.speed && c.speed > 0 && c.speed !== 1 ? c.speed : undefined;
     parts.push(
-      `[${c.index}:v]trim=start=${c.startSec}:end=${end},setpts=PTS-STARTPTS,` +
+      `[${c.index}:v]trim=start=${c.startSec}:end=${end},setpts=${speed ? `(PTS-STARTPTS)/${speed}` : 'PTS-STARTPTS'},` +
+      `${c.lookFilter ? `${c.lookFilter},` : ''}` +
       `scale=${opts.width}:${opts.height}:force_original_aspect_ratio=increase,crop=${opts.width}:${opts.height},fps=30,format=yuv420p[v${k}]`,
     );
-    // Ton: aus dem Clip selbst (gleiches Trimm-Fenster) oder Stille passender Länge
+    // Ton: aus dem Clip selbst (gleiches Trimm-Fenster) oder Stille passender Länge;
+    // Tempo verändert Bild UND Ton gemeinsam (atempo hält die Tonhöhe)
+    const tempo = speed ? `,${atempoChain(speed)}` : '';
     parts.push(c.audioFromVideo
-      ? `[${c.audioIndex}:a]atrim=start=${c.startSec}:end=${end},asetpts=PTS-STARTPTS,aresample=48000[a${k}]`
-      : `[${c.audioIndex}:a]atrim=0:${c.durationSec},asetpts=PTS-STARTPTS,aresample=48000[a${k}]`);
+      ? `[${c.audioIndex}:a]atrim=start=${c.startSec}:end=${end},asetpts=PTS-STARTPTS${tempo},aresample=48000[a${k}]`
+      : `[${c.audioIndex}:a]atrim=0:${effDur(c).toFixed(3)},asetpts=PTS-STARTPTS,aresample=48000[a${k}]`);
   }
   let v = '[v0]';
   let a = '[a0]';
-  let total = opts.clips[0].durationSec;
+  const clipWindows: Array<{ start: number; end: number }> = [{ start: 0, end: effDur(opts.clips[0]) }];
+  let total = effDur(opts.clips[0]);
   for (let k = 1; k < opts.clips.length; k++) {
-    const d = opts.clips[k].durationSec;
+    const d = effDur(opts.clips[k]);
     if (fade > 0) {
       const offset = Math.max(0, total - fade);
       parts.push(`${v}[v${k}]xfade=transition=fade:duration=${fade}:offset=${offset.toFixed(3)}[vx${k}]`);
       parts.push(`${a}[a${k}]acrossfade=d=${fade}[ax${k}]`);
+      clipWindows.push({ start: offset, end: offset + d });
       total = offset + d;
     } else {
       parts.push(`${v}[v${k}]concat=n=2:v=1:a=0[vx${k}]`);
       parts.push(`${a}[a${k}]concat=n=2:v=0:a=1[ax${k}]`);
+      clipWindows.push({ start: total, end: total + d });
       total += d;
     }
     v = `[vx${k}]`;
     a = `[ax${k}]`;
   }
-  if (opts.overlayInputIndex !== undefined) {
-    const showFor = opts.overlaySec ?? 3.5;
-    parts.push(`${v}[${opts.overlayInputIndex}:v]overlay=0:0:enable='lte(t,${showFor})'[vtitle]`);
-    v = '[vtitle]';
+  for (let o = 0; o < (opts.overlays?.length ?? 0); o++) {
+    const ov = opts.overlays![o];
+    const win = ov.clip !== undefined && clipWindows[ov.clip]
+      ? { from: clipWindows[ov.clip].start, to: clipWindows[ov.clip].end }
+      : { from: ov.fromSec ?? 0, to: ov.toSec ?? total };
+    parts.push(`${v}[${ov.inputIndex}:v]overlay=0:0:enable='between(t,${win.from.toFixed(3)},${win.to.toFixed(3)})'[vo${o}]`);
+    v = `[vo${o}]`;
   }
-  return { filterComplex: parts.join(';'), outLabelV: v, outLabelA: a, totalSec: Number(total.toFixed(3)) };
+  return {
+    filterComplex: parts.join(';'), outLabelV: v, outLabelA: a,
+    totalSec: Number(total.toFixed(3)),
+    clipWindows: clipWindows.map(w => ({ start: Number(w.start.toFixed(3)), end: Number(w.end.toFixed(3)) })),
+  };
 }
 
 /**
@@ -389,7 +432,14 @@ export class SlideshowVideoRenderer {
    * Clips bekommen Stille. Ergebnis liegt im workDir.
    */
   async editVideo(opts: {
-    clips: Array<{ path: string; startSec?: number; endSec?: number }>;
+    clips: Array<{ path: string; startSec?: number; endSec?: number;
+      /** v1092 — Tempo 0,25–4 (Zeitlupe/Zeitraffer, Bild+Ton). */
+      speed?: number;
+      /** v1092 — Farb-Look aus EDIT_LOOKS. */
+      look?: string;
+      /** v1092 — Text-PNG (Leinwandgröße, Alpha) nur während dieses Clips. */
+      overlayImage?: string;
+    }>;
     format: '9:16' | '16:9';
     /** Titel-Overlay-PNG in Leinwandgröße (Alpha), z.B. aus applyImageOverlays. */
     overlayImage?: string;
@@ -399,7 +449,7 @@ export class SlideshowVideoRenderer {
     if (opts.clips.length === 0 || opts.clips.length > 8) throw new Error('Schnitt braucht 1–8 Clips.');
     const [w, h] = opts.format === '9:16' ? [1080, 1920] : [1920, 1080];
     // Je Clip: Dauer + Tonspur ermitteln, Trimm-Fenster festklopfen
-    const probed: Array<{ path: string; startSec: number; durationSec: number; hasAudio: boolean }> = [];
+    const probed: Array<{ path: string; startSec: number; durationSec: number; hasAudio: boolean; speed?: number; look?: string; overlayImage?: string }> = [];
     for (const c of opts.clips) {
       const p = await this.probeVideo(c.path);
       if (!p.ok || !p.durationSec) throw new Error(`Clip nicht lesbar: ${c.path.split(/[\\/]/).pop()} (${p.detail ?? 'keine Dauer'})`);
@@ -407,33 +457,45 @@ export class SlideshowVideoRenderer {
       const end = Math.min(c.endSec !== undefined && c.endSec > start ? c.endSec : p.durationSec, p.durationSec);
       const dur = end - start;
       if (dur < 0.4) throw new Error(`Trimm-Fenster zu kurz (${dur.toFixed(1)}s) bei ${c.path.split(/[\\/]/).pop()} — mindestens 0,4 s.`);
+      const speed = typeof c.speed === 'number' && c.speed >= 0.25 && c.speed <= 4 && c.speed !== 1 ? c.speed : undefined;
       let hasAudio = false;
       try {
         const { stdout } = await execFileAsync(this.ffprobe,
           ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', c.path], { timeout: 20_000 });
         hasAudio = stdout.trim().length > 0;
       } catch { /* stumm behandeln */ }
-      probed.push({ path: c.path, startSec: start, durationSec: Number(dur.toFixed(3)), hasAudio });
+      probed.push({
+        path: c.path, startSec: start, durationSec: Number(dur.toFixed(3)), hasAudio,
+        ...(speed ? { speed } : {}),
+        ...(c.look && EDIT_LOOKS[c.look] ? { look: c.look } : {}),
+        ...(c.overlayImage ? { overlayImage: c.overlayImage } : {}),
+      });
     }
-    // Crossfade darf keinen Clip überziehen (acrossfade verlangt Länge ≥ fade)
-    const minDur = Math.min(...probed.map(p => p.durationSec));
+    // Crossfade darf keinen Clip überziehen (acrossfade verlangt EFFEKTIVE Länge ≥ fade)
+    const minDur = Math.min(...probed.map(p => p.durationSec / (p.speed ?? 1)));
     const fade = probed.length > 1 ? Math.min(opts.fadeSec ?? 0.5, Math.max(0, minDur / 2 - 0.05)) : 0;
 
-    // Inputs: erst die Videos, dann je stummem Clip ein anullsrc, dann das Overlay
+    // Inputs: erst die Videos, dann je stummem Clip ein anullsrc, dann die Overlays
     const args: string[] = ['-y'];
     for (const p of probed) args.push('-i', p.path);
     let nextIndex = probed.length;
     const clips = probed.map((p, k) => {
-      if (p.hasAudio) return { index: k, audioIndex: k, audioFromVideo: true, startSec: p.startSec, durationSec: p.durationSec };
-      args.push('-f', 'lavfi', '-t', String(p.durationSec + 1), '-i', 'anullsrc=r=48000:cl=stereo');
-      return { index: k, audioIndex: nextIndex++, audioFromVideo: false, startSec: p.startSec, durationSec: p.durationSec };
+      const base = { index: k, startSec: p.startSec, durationSec: p.durationSec, ...(p.speed ? { speed: p.speed } : {}), ...(p.look ? { lookFilter: EDIT_LOOKS[p.look] } : {}) };
+      if (p.hasAudio) return { ...base, audioIndex: k, audioFromVideo: true };
+      args.push('-f', 'lavfi', '-t', String(p.durationSec / (p.speed ?? 1) + 1), '-i', 'anullsrc=r=48000:cl=stereo');
+      return { ...base, audioIndex: nextIndex++, audioFromVideo: false };
     });
-    let overlayInputIndex: number | undefined;
+    const overlays: Array<{ inputIndex: number; fromSec?: number; toSec?: number; clip?: number }> = [];
     if (opts.overlayImage) {
       args.push('-i', opts.overlayImage);
-      overlayInputIndex = nextIndex++;
+      overlays.push({ inputIndex: nextIndex++, fromSec: 0, toSec: 3.5 });
     }
-    const graph = buildEditGraph({ clips, width: w, height: h, fadeSec: fade, ...(overlayInputIndex !== undefined ? { overlayInputIndex } : {}) });
+    for (let k = 0; k < probed.length; k++) {
+      if (!probed[k].overlayImage) continue;
+      args.push('-i', probed[k].overlayImage!);
+      overlays.push({ inputIndex: nextIndex++, clip: k });
+    }
+    const graph = buildEditGraph({ clips, width: w, height: h, fadeSec: fade, ...(overlays.length > 0 ? { overlays } : {}) });
     const outPath = join(this.opts.workDir, `${opts.outBaseName ?? `edit-${Date.now().toString(36)}`}-${opts.format.replace(':', 'x')}.mp4`);
     args.push(
       '-filter_complex', graph.filterComplex,

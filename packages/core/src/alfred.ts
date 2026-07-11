@@ -6828,8 +6828,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               });
             },
             probe: (p: string) => renderer.probeVideo(p),
-            // v1088 — Basis-Schnitt der Video-Werkstatt (Trim + Crossfade + Titel)
-            edit: (o: { clips: Array<{ path: string; startSec?: number; endSec?: number }>; format: '9:16' | '16:9'; overlayImage?: string; outBaseName?: string }) => renderer.editVideo(o),
+            // v1088/v1092 — Basis-Schnitt der Video-Werkstatt (Trim + Crossfade + Titel + Effekte)
+            edit: (o: { clips: Array<{ path: string; startSec?: number; endSec?: number; speed?: number; look?: string; overlayImage?: string }>; format: '9:16' | '16:9'; overlayImage?: string; outBaseName?: string }) => renderer.editVideo(o),
             // v1060 — Stufe 3: Image-to-Video-Clip (kostenpflichtig; Budget/
             // Opt-in prüft der Skill). Fehler wirft — der Skill fällt dann auf
             // die Standbild-Slide zurück.

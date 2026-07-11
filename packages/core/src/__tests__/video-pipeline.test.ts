@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSrt, buildPhraseSrt, buildReelFilterGraph, buildReelAudioGraph, buildEditGraph, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
+import { buildSrt, buildPhraseSrt, buildReelFilterGraph, buildReelAudioGraph, buildEditGraph, atempoChain, estimateSpeechSeconds, ExternalVideoProviderPlaceholder } from '../video-pipeline.js';
 
 describe('buildSrt (v938)', () => {
   it('verteilt Sätze gewichtet über die Laufzeit, SRT-Format korrekt', () => {
@@ -131,12 +131,40 @@ describe('buildEditGraph (v1088)', () => {
   it('Einzel-Clip mit Titel-Overlay: kein xfade, Overlay nur die ersten Sekunden', () => {
     const g = buildEditGraph({
       clips: [{ index: 0, audioIndex: 0, audioFromVideo: true, startSec: 0, durationSec: 8 }],
-      width: 1920, height: 1080, overlayInputIndex: 1, overlaySec: 3.5,
+      width: 1920, height: 1080, overlays: [{ inputIndex: 1, fromSec: 0, toSec: 3.5 }],
     });
     expect(g.filterComplex).not.toContain('xfade');
-    expect(g.filterComplex).toContain("[v0][1:v]overlay=0:0:enable='lte(t,3.5)'[vtitle]");
-    expect(g.outLabelV).toBe('[vtitle]');
+    expect(g.filterComplex).toContain("[v0][1:v]overlay=0:0:enable='between(t,0.000,3.500)'[vo0]");
+    expect(g.outLabelV).toBe('[vo0]');
     expect(g.totalSec).toBe(8);
+  });
+
+  it('v1092: Tempo skaliert Bild+Ton und die Dauern; Look-Filter und Clip-Text-Fenster sitzen richtig', () => {
+    const g = buildEditGraph({
+      clips: [
+        { index: 0, audioIndex: 0, audioFromVideo: true, startSec: 0, durationSec: 8, speed: 2, lookFilter: 'eq=saturation=1.45:contrast=1.06' }, // → 4s effektiv
+        { index: 1, audioIndex: 2, audioFromVideo: false, startSec: 0, durationSec: 3, speed: 0.5 }, // Zeitlupe → 6s effektiv
+      ],
+      width: 1080, height: 1920, fadeSec: 0.5,
+      overlays: [{ inputIndex: 3, clip: 1 }], // Text nur während Clip 2
+    });
+    expect(g.filterComplex).toContain('setpts=(PTS-STARTPTS)/2');
+    expect(g.filterComplex).toContain('eq=saturation=1.45:contrast=1.06,scale=1080:1920');
+    expect(g.filterComplex).toContain('atempo=2'); // Ton läuft mit (Tonhöhe bleibt)
+    // Effektiv: 4 + 6 − 0,5 = 9,5s; Clip 2 startet bei 3,5
+    expect(g.totalSec).toBeCloseTo(9.5, 2);
+    expect(g.clipWindows[1]).toEqual({ start: 3.5, end: 9.5 });
+    expect(g.filterComplex).toContain("overlay=0:0:enable='between(t,3.500,9.500)'");
+    // stummer Zeitlupen-Clip: Stille in EFFEKTIVER Länge (6s), kein atempo
+    expect(g.filterComplex).toContain('[2:a]atrim=0:6.000');
+  });
+
+  it('v1092: atempoChain kettet außerhalb 0,5–2', () => {
+    expect(atempoChain(2)).toBe('atempo=2');
+    expect(atempoChain(0.5)).toBe('atempo=0.5');
+    expect(atempoChain(4)).toBe('atempo=2,atempo=2');
+    expect(atempoChain(0.25)).toBe('atempo=0.5,atempo=0.5');
+    expect(atempoChain(3)).toBe('atempo=2,atempo=1.5');
   });
 });
 

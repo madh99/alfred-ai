@@ -172,7 +172,7 @@ export class SocialSkill extends Skill {
         channels: { type: 'array', items: { type: 'string' }, description: 'crosspost/post_from_video: Ziel-Kanäle (Namen/IDs)' },
         asset_id: { type: 'string', description: 'post_from_video: Video-ID aus der Bibliothek. animate_image: Bild-ID aus der Bibliothek' },
         regie: { type: 'string', description: 'animate_image: Bewegungs-Regie fuer den Clip (englisch oder deutsch; ohne: Alfred schlaegt sie aus der Bildbeschreibung vor)' },
-        clips: { type: 'array', items: { type: 'object', properties: { asset_id: { type: 'string' }, von: { type: 'number' }, bis: { type: 'number' } } }, description: 'edit_video: Schnitt-Liste in Reihenfolge — je Clip asset_id (Bibliotheks-Video) + optional von/bis (Sekunden)' },
+        clips: { type: 'array', items: { type: 'object', properties: { asset_id: { type: 'string' }, von: { type: 'number' }, bis: { type: 'number' }, tempo: { type: 'number' }, look: { type: 'string', enum: ['kino', 'warm', 'kalt', 'sw', 'lebendig'] }, text: { type: 'string' } } }, description: 'edit_video: Schnitt-Liste in Reihenfolge — je Clip asset_id (Bibliotheks-Video) + optional von/bis (Sekunden), tempo (0,25-4: <1 Zeitlupe, >1 Zeitraffer), look (Farb-Preset) und text (Einblendung waehrend des Clips)' },
         adapt: { type: 'boolean', description: 'crosspost: Text formatgerecht je Ziel-Kanal umschreiben (Default true; false = wörtliche Kopie)' },
         topic: { type: 'string', description: 'link_topic/unlink_topic: Interessen-Thema (Name, fuzzy) — ein Kanal kann MEHRERE Themen speisen (z.B. „WM 2026" + „Panini-Sammelalbum")' },
         lesson: { type: 'string', description: 'edit_content/add_lesson: Lektion für künftige Studio-Läufe des Kanals, z.B. "Es ist die WM 2026, nicht die EM — auch in Hashtags" — wird zwingend in künftige Prompts aufgenommen' },
@@ -207,8 +207,8 @@ export class SocialSkill extends Skill {
     /** v1060 — Stufe 3: Image-to-Video-Clip (Sora/Runway/Veo, kostenpflichtig). */
     generateClip?: (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => Promise<{ clipPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
-    /** v1088 — Basis-Schnitt: Clips trimmen + verketten (Crossfade), optionales Titel-Overlay. */
-    edit?: (opts: { clips: Array<{ path: string; startSec?: number; endSec?: number }>; format: '9:16' | '16:9'; overlayImage?: string; outBaseName?: string }) => Promise<{ videoPath: string; durationSec: number }>;
+    /** v1088/v1092 — Basis-Schnitt: Clips trimmen + verketten (Crossfade), Titel-Overlay, Tempo/Look/Text je Clip. */
+    edit?: (opts: { clips: Array<{ path: string; startSec?: number; endSec?: number; speed?: number; look?: string; overlayImage?: string }>; format: '9:16' | '16:9'; overlayImage?: string; outBaseName?: string }) => Promise<{ videoPath: string; durationSec: number }>;
   };
 
   setVideoTools(tools: NonNullable<SocialSkill['videoTools']>): void {
@@ -2067,43 +2067,54 @@ Antworte NUR mit VALIDEM JSON: {"titel": "…", "text": "…", "hashtags": ["…
     if (!this.videoTools?.edit) return { success: false, error: 'Video-Schnitt nicht verfügbar (ffmpeg/Video-Pipeline fehlt).' };
     const rawClips = Array.isArray(input.clips) ? input.clips : [];
     if (rawClips.length === 0 || rawClips.length > 8) return { success: false, error: 'clips erforderlich: 1–8 Einträge mit asset_id (+ optional von/bis in Sekunden).' };
+    const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
+    const titel = typeof input.titel === 'string' && input.titel.trim() ? input.titel.trim().slice(0, 90) : undefined;
+    const [w, h] = format === '9:16' ? [1080, 1920] : [1920, 1080];
+
+    // Overlays (Titel + Clip-Texte) auf transparenter Leinwand backen (gleicher
+    // Boxen-Look wie die Reel-Hook-Karte) — best-effort: ohne sharp ohne Texte.
+    const tmpFiles: string[] = [];
+    const bakeOverlay = async (text: string): Promise<string | undefined> => {
+      try {
+        const sharp = await loadSharp();
+        if (!sharp) return undefined;
+        const blank = await (sharp as unknown as (o: object) => { png(): { toBuffer(): Promise<Buffer> } })({
+          create: { width: w, height: h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+        }).png().toBuffer();
+        const withText = await applyImageOverlays(blank, { title: text, titleMaxWidthRatio: 0.75 });
+        const { writeFile } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        const { tmpdir } = await import('node:os');
+        const file = join(tmpdir(), `alfred-edit-ov-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}.png`);
+        await writeFile(file, withText);
+        tmpFiles.push(file);
+        return file;
+      } catch { return undefined; }
+    };
+
     const library = await this.repo.listMediaAssets(userId, { limit: 500, kind: 'video' });
-    const clips: Array<{ path: string; startSec?: number; endSec?: number }> = [];
+    const clips: Array<{ path: string; startSec?: number; endSec?: number; speed?: number; look?: string; overlayImage?: string }> = [];
     const used: Array<{ id: string; motif: string }> = [];
     for (const raw of rawClips) {
-      const c = raw as { asset_id?: unknown; von?: unknown; bis?: unknown };
+      const c = raw as { asset_id?: unknown; von?: unknown; bis?: unknown; tempo?: unknown; look?: unknown; text?: unknown };
       const asset = library.find(a => a.id === String(c.asset_id ?? ''));
       if (!asset) return { success: false, error: `Video-Asset nicht gefunden: ${String(c.asset_id ?? '?')}` };
+      // v1092 — Effekte je Clip: Tempo (Zeitlupe/Zeitraffer), Farb-Look, Text-Einblendung
       clips.push({
         path: asset.path,
         ...(typeof c.von === 'number' && c.von >= 0 ? { startSec: c.von } : {}),
         ...(typeof c.bis === 'number' && c.bis > 0 ? { endSec: c.bis } : {}),
+        ...(typeof c.tempo === 'number' && c.tempo >= 0.25 && c.tempo <= 4 && c.tempo !== 1 ? { speed: c.tempo } : {}),
+        ...(typeof c.look === 'string' && c.look.trim() ? { look: c.look.trim() } : {}),
       });
+      if (typeof c.text === 'string' && c.text.trim()) {
+        const ov = await bakeOverlay(c.text.trim().slice(0, 90));
+        if (ov) clips[clips.length - 1].overlayImage = ov;
+      }
       used.push({ id: asset.id, motif: asset.motif });
     }
-    const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
-    const titel = typeof input.titel === 'string' && input.titel.trim() ? input.titel.trim().slice(0, 90) : undefined;
 
-    // Titel-Overlay auf transparenter Leinwand backen (gleicher Boxen-Look wie
-    // die Reel-Hook-Karte) — best-effort: ohne sharp läuft der Schnitt ohne Titel.
-    let overlayImage: string | undefined;
-    if (titel) {
-      try {
-        const sharp = await loadSharp();
-        if (sharp) {
-          const [w, h] = format === '9:16' ? [1080, 1920] : [1920, 1080];
-          const blank = await (sharp as unknown as (o: object) => { png(): { toBuffer(): Promise<Buffer> } })({
-            create: { width: w, height: h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
-          }).png().toBuffer();
-          const withTitle = await applyImageOverlays(blank, { title: titel, titleMaxWidthRatio: 0.75 });
-          const { writeFile } = await import('node:fs/promises');
-          const { join } = await import('node:path');
-          const { tmpdir } = await import('node:os');
-          overlayImage = join(tmpdir(), `alfred-edit-title-${Date.now().toString(36)}.png`);
-          await writeFile(overlayImage, withTitle);
-        }
-      } catch { /* Titel best-effort */ }
-    }
+    const overlayImage = titel ? await bakeOverlay(titel) : undefined;
     try {
       const result = await this.videoTools.edit({ clips, format, ...(overlayImage ? { overlayImage } : {}), outBaseName: `edit-${Date.now().toString(36)}` });
       const motif = titel ?? `Schnitt aus ${used.length} Clip${used.length > 1 ? 's' : ''}: ${used.map(u => u.motif.slice(0, 60)).join(' + ')}`.slice(0, 300);
@@ -2116,10 +2127,8 @@ Antworte NUR mit VALIDEM JSON: {"titel": "…", "text": "…", "hashtags": ["…
         display: `✂️ Schnitt fertig: ${Math.round(result.durationSec)}s (${format}${titel ? `, Titel „${titel}"` : ''}) — liegt als neues Video in der Bibliothek [${asset.id.slice(0, 8)}]. Von dort per 📤 „Beitrag aus Video" ausspielen.`,
       };
     } finally {
-      if (overlayImage) {
-        const { unlink } = await import('node:fs/promises');
-        await unlink(overlayImage).catch(() => { /* tmp best-effort */ });
-      }
+      const { unlink } = await import('node:fs/promises');
+      for (const f of tmpFiles) await unlink(f).catch(() => { /* tmp best-effort */ });
     }
   }
 

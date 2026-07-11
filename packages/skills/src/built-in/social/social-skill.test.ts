@@ -723,12 +723,14 @@ describe('v1087 — post_from_video (Beitrag aus Bibliotheks-Video)', () => {
     ]);
     const edit = vi.fn(async () => ({ videoPath: '/tmp/edit-1.mp4', durationSec: 14.5 }));
     skill.setVideoTools({ render: vi.fn(), edit } as any);
-    const r = await skill.execute({ action: 'edit_video', clips: [{ asset_id: 'v1', von: 2, bis: 10 }, { asset_id: 'v2' }], titel: 'BEST OF', format: '9:16' }, CTX);
+    // v1092 — Effekte je Clip: tempo (Zeitlupe) + look (Farb-Preset) laufen durch
+    const r = await skill.execute({ action: 'edit_video', clips: [{ asset_id: 'v1', von: 2, bis: 10, tempo: 0.5, look: 'kino' }, { asset_id: 'v2' }], titel: 'BEST OF', format: '9:16' }, CTX);
     expect(r.success).toBe(true);
-    const call = (edit.mock.calls[0] as unknown[])[0] as { clips: Array<{ path: string; startSec?: number; endSec?: number }>; format: string };
+    const call = (edit.mock.calls[0] as unknown[])[0] as { clips: Array<{ path: string; startSec?: number; endSec?: number; speed?: number; look?: string }>; format: string };
     expect(call.format).toBe('9:16');
-    expect(call.clips[0]).toMatchObject({ path: '/tmp/a.mp4', startSec: 2, endSec: 10 });
+    expect(call.clips[0]).toMatchObject({ path: '/tmp/a.mp4', startSec: 2, endSec: 10, speed: 0.5, look: 'kino' });
     expect(call.clips[1]).toMatchObject({ path: '/tmp/b.mp4' });
+    expect(call.clips[1].speed).toBeUndefined();
     const assetCall = ((spies as any).createMediaAsset as any).mock.calls[0];
     expect(assetCall[1]).toMatchObject({ kind: 'video', model: 'schnitt', path: '/tmp/edit-1.mp4', durationSec: 14.5, motif: 'BEST OF' });
     // unbekannter Clip → klarer Fehler

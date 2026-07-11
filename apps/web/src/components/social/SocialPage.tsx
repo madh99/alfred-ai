@@ -322,8 +322,8 @@ export function SocialPage() {
   const [postVideoId, setPostVideoId] = useState<string | null>(null);
   const [postChannels, setPostChannels] = useState<string[]>([]);
   const [postStoff, setPostStoff] = useState('');
-  // v1088 — Basis-Schnitt: Clip-Liste (Reihenfolge) mit von/bis + Titel + Format
-  const [cutClips, setCutClips] = useState<Array<{ assetId: string; motif: string; von: string; bis: string }>>([]);
+  // v1088/v1092 — Basis-Schnitt: Clip-Liste (Reihenfolge) mit von/bis + Effekten (Tempo/Look/Text) + Titel + Format
+  const [cutClips, setCutClips] = useState<Array<{ assetId: string; motif: string; von: string; bis: string; tempo: string; look: string; text: string }>>([]);
   const [cutTitel, setCutTitel] = useState('');
   const [cutFormat, setCutFormat] = useState<'9:16' | '16:9'>('9:16');
   // v1089 — „Bild beleben": Regie-Panel je Bild
@@ -2261,14 +2261,40 @@ export function SocialPage() {
                 <div className="border border-amber-500/20 rounded p-2 mb-2 space-y-1.5 bg-amber-500/5">
                   <div className="text-[11px] font-medium text-amber-300">✂️ Schnitt <span className="text-gray-500 font-normal">— Reihenfolge wie hinzugefügt, von/bis in Sekunden (leer = ganzer Clip)</span></div>
                   {cutClips.map((c, i) => (
-                    <div key={`${c.assetId}-${i}`} className="flex items-center gap-1.5 text-[10px] text-gray-300">
-                      <span className="text-gray-600">{i + 1}.</span>
-                      <span className="flex-1 truncate" title={c.motif}>{c.motif.slice(0, 50)}</span>
-                      <input value={c.von} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, von: e.target.value } : x))}
-                        placeholder="von" className="w-12 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-200" />
-                      <input value={c.bis} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, bis: e.target.value } : x))}
-                        placeholder="bis" className="w-12 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-200" />
-                      <button onClick={() => setCutClips(prev => prev.filter((_, j) => j !== i))} className="text-red-400 px-1">✕</button>
+                    <div key={`${c.assetId}-${i}`} className="space-y-0.5">
+                      <div className="flex items-center gap-1.5 text-[10px] text-gray-300">
+                        <span className="text-gray-600">{i + 1}.</span>
+                        <span className="flex-1 truncate" title={c.motif}>{c.motif.slice(0, 50)}</span>
+                        <input value={c.von} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, von: e.target.value } : x))}
+                          placeholder="von" className="w-12 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-200" />
+                        <input value={c.bis} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, bis: e.target.value } : x))}
+                          placeholder="bis" className="w-12 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-200" />
+                        <button onClick={() => setCutClips(prev => prev.filter((_, j) => j !== i))} className="text-red-400 px-1">✕</button>
+                      </div>
+                      {/* v1092 — Effekte je Clip: Tempo, Farb-Look, Text-Einblendung */}
+                      <div className="flex items-center gap-1.5 pl-4">
+                        <select value={c.tempo} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, tempo: e.target.value } : x))}
+                          title="Tempo: Zeitlupe verlangsamt Bild und Ton (Tonhöhe bleibt), Zeitraffer beschleunigt"
+                          className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-300">
+                          <option value="">⏱ 1×</option>
+                          <option value="0.5">🐌 0,5× Zeitlupe</option>
+                          <option value="0.25">🐌 0,25× extrem</option>
+                          <option value="2">⚡ 2× Zeitraffer</option>
+                        </select>
+                        <select value={c.look} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, look: e.target.value } : x))}
+                          title="Farb-Look für diesen Clip"
+                          className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-300">
+                          <option value="">🎨 Original</option>
+                          <option value="kino">🎬 Kino</option>
+                          <option value="warm">🌇 Warm</option>
+                          <option value="kalt">❄️ Kühl</option>
+                          <option value="sw">⬛ Schwarzweiß</option>
+                          <option value="lebendig">🌈 Lebendig</option>
+                        </select>
+                        <input value={c.text} onChange={e => setCutClips(prev => prev.map((x, j) => j === i ? { ...x, text: e.target.value } : x))}
+                          placeholder="Text während des Clips (optional)"
+                          className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1 py-0.5 text-[10px] text-gray-200" />
+                      </div>
                     </div>
                   ))}
                   <div className="flex items-center gap-1.5">
@@ -2285,6 +2311,9 @@ export function SocialPage() {
                             asset_id: c.assetId,
                             ...(c.von.trim() !== '' && Number.isFinite(Number(c.von)) ? { von: Number(c.von) } : {}),
                             ...(c.bis.trim() !== '' && Number.isFinite(Number(c.bis)) ? { bis: Number(c.bis) } : {}),
+                            ...(c.tempo !== '' ? { tempo: Number(c.tempo) } : {}),
+                            ...(c.look !== '' ? { look: c.look } : {}),
+                            ...(c.text.trim() !== '' ? { text: c.text.trim() } : {}),
                           }));
                           const r = await client!.socialEditVideo(clips, cutTitel, cutFormat);
                           if (!r.success) throw new Error(r.error ?? 'Schnitt fehlgeschlagen');
@@ -2391,7 +2420,7 @@ export function SocialPage() {
                       )}
                       {/* v1088 — in die Schnitt-Leiste aufnehmen (mehrfach möglich) */}
                       {a.kind === 'video' && (
-                        <button onClick={() => setCutClips(prev => [...prev, { assetId: a.id, motif: a.motif, von: '', bis: '' }])}
+                        <button onClick={() => setCutClips(prev => [...prev, { assetId: a.id, motif: a.motif, von: '', bis: '', tempo: '', look: '', text: '' }])}
                           title="Zum Schnitt hinzufügen: Clips oben trimmen und mit Übergängen zu einem neuen Video verketten"
                           className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 rounded">✂️➕</button>
                       )}
