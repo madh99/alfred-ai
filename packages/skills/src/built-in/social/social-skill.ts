@@ -2465,22 +2465,72 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     }
 
     const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
+    const famOf = (c: SocialChannel): string | null => {
+      if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
+      return c.projectId ? `project:${c.projectId}` : null;
+    };
+    const familyIg = (await this.repo.listChannels(userId, 'active')).find(c =>
+      c.platform === 'instagram' && famOf(c) !== null && famOf(c) === famOf(channel));
     // v1059 — auch manuell gerenderte Videos bekommen das Musik-Bett
     // v1091 — Stimmen-Kaskade: eigener Kanal → Familien-Instagram (eine
     // Marke, eine Stimme; Realfall 11.07.: YouTube-Videos sprachen mit der
     // Standard-Stimme, weil nur der IG-Kanal reel_voice_id hatte) → Standard.
     let manualVoice = typeof channel.config.reel_voice_id === 'string' && channel.config.reel_voice_id.trim() ? channel.config.reel_voice_id.trim() : undefined;
-    if (!manualVoice) {
-      const famOf = (c: SocialChannel): string | null => {
-        if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
-        return c.projectId ? `project:${c.projectId}` : null;
-      };
-      const familyIg = (await this.repo.listChannels(userId, 'active')).find(c =>
-        c.platform === 'instagram' && famOf(c) !== null && famOf(c) === famOf(channel)
-        && typeof c.config.reel_voice_id === 'string' && c.config.reel_voice_id.trim());
-      if (familyIg) manualVoice = (familyIg.config.reel_voice_id as string).trim();
+    if (!manualVoice && typeof familyIg?.config.reel_voice_id === 'string' && familyIg.config.reel_voice_id.trim()) {
+      manualVoice = familyIg.config.reel_voice_id.trim();
     }
-    const result = await this.videoTools.render(item, channel, format, { music: this.reelMusicOpts(channel), ...(manualVoice ? { voiceId: manualVoice } : {}) });
+    // v1095 — KI-Clips auch in der Eigenproduktion/render_video: Anzahl kommt
+    // BEWUSST nur vom eigenen Kanal (Kosten sind explizit, kein stilles
+    // Erben); Provider/Modell fallen auf Familien-Instagram zurück, Budget-
+    // Topf ist der GEMEINSAME gen_ai_clip-Zähler (auf dem Familien-IG, wie
+    // bei Reels und „Beleben" — eine Zahl deckelt alles Bezahlte).
+    const clips: Array<{ index: number; path: string; durationSec: number }> = [];
+    const clipNotes: string[] = [];
+    const clipsWanted = typeof channel.config.reel_ai_clips === 'number' ? Math.min(Math.max(0, channel.config.reel_ai_clips), 2) : 0;
+    if (clipsWanted > 0 && this.videoTools.generateClip && this.llm) {
+      const provRaw = channel.config.reel_ai_provider ?? familyIg?.config.reel_ai_provider;
+      const provider = provRaw === 'runway' || provRaw === 'veo' ? provRaw : 'sora';
+      const modelRaw = channel.config.reel_ai_model ?? familyIg?.config.reel_ai_model;
+      const model = typeof modelRaw === 'string' && modelRaw.trim() ? modelRaw.trim() : undefined;
+      const budgetChannel = familyIg ?? channel;
+      const clipBudget = typeof budgetChannel.config.ai_clip_budget_per_month === 'number' ? budgetChannel.config.ai_clip_budget_per_month : 8;
+      const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+      let clipsUsed = (await this.repo.listMetrics(budgetChannel.id, { kind: 'gen_ai_clip', sinceDate: monthStart }))
+        .reduce((sum, m) => sum + m.value, 0);
+      const images = item.media.filter(m => m.type === 'image' && !m.pathOrUrl.startsWith('http')).map(m => m.pathOrUrl);
+      let motion = 'slow cinematic camera push-in, subtle natural motion, no text overlays, no recognizable people';
+      try {
+        const r = await this.llm.complete({
+          messages: [{ role: 'user', content: `Beschreibe in EINEM englischen Satz eine subtile, filmische Kamera-/Szenen-Bewegung passend zu diesem Beitrag (z.B. "slow cinematic camera push-in, flags waving"). KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos.\nBEITRAG: ${item.title ?? ''} — ${item.body.slice(0, 300)}\nAntworte NUR mit dem Satz.` }],
+          maxTokens: 120, tier: 'fast',
+        });
+        const m = (r.content ?? '').trim().replace(/^["']|["']$/g, '');
+        if (m) motion = m.slice(0, 400);
+      } catch { /* Default-Motion */ }
+      const secrets = await this.secrets(budgetChannel);
+      const today = new Date().toISOString().slice(0, 10);
+      for (let i = 0; i < Math.min(clipsWanted, images.length); i++) {
+        if (clipsUsed >= clipBudget) {
+          clipNotes.push(`KI-Clip-Monatsbudget erreicht (${clipsUsed}/${clipBudget}) — Standbild-Slides.`);
+          break;
+        }
+        try {
+          const clip = await this.videoTools.generateClip({ imagePath: images[i], prompt: motion, provider, ...(model ? { model } : {}), secrets, format });
+          clips.push({ index: i, path: clip.clipPath, durationSec: clip.durationSec });
+          clipsUsed += 1;
+          const dayUsed = (await this.repo.listMetrics(budgetChannel.id, { kind: 'gen_ai_clip', sinceDate: today }))
+            .find(m => m.date === today && !m.itemId)?.value ?? 0;
+          await this.repo.upsertMetric(budgetChannel.id, { date: today, kind: 'gen_ai_clip', value: dayUsed + 1 });
+        } catch (err) {
+          clipNotes.push(`KI-Clip ${i + 1} (${provider}) fehlgeschlagen: ${(err as Error).message.slice(0, 120)} — Standbild-Slide.`);
+        }
+      }
+    }
+    const result = await this.videoTools.render(item, channel, format, {
+      music: this.reelMusicOpts(channel),
+      ...(manualVoice ? { voiceId: manualVoice } : {}),
+      ...(clips.length > 0 ? { clips } : {}),
+    });
     const media: ContentMedia[] = [...item.media, { type: 'video', source: 'generated', pathOrUrl: result.videoPath }];
     await this.repo.updateItemContent(userId, item.id, { media });
     // v1086 — auch manuell gerenderte Videos landen in der Video-Bibliothek
@@ -2497,8 +2547,8 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     await this.repo.upsertMetric(channel.id, { date: today, kind: 'gen_video', value: todayUsed + 1 });
     return {
       success: true,
-      data: { videoPath: result.videoPath, durationSec: result.durationSec },
-      display: `🎬 Video gerendert (${format}, ${Math.round(result.durationSec)}s) und an [${item.id.slice(0, 8)}] angehängt:\n${result.videoPath}\nVeröffentlichen mit publish_now.`,
+      data: { videoPath: result.videoPath, durationSec: result.durationSec, ...(clips.length > 0 ? { aiClips: clips.length } : {}) },
+      display: `🎬 Video gerendert (${format}, ${Math.round(result.durationSec)}s${clips.length > 0 ? `, ${clips.length} KI-Clip${clips.length > 1 ? 's' : ''}` : ''}) und an [${item.id.slice(0, 8)}] angehängt:\n${result.videoPath}${clipNotes.length > 0 ? `\n${clipNotes.join('\n')}` : ''}\nVeröffentlichen mit publish_now.`,
     };
   }
 }

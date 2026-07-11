@@ -1763,6 +1763,37 @@ export function SocialPage() {
                           </select>
                         </div>
                       )}
+                      {/* v1095 — KI-Clips auch in der Eigenproduktion (gleicher Budget-Topf wie Reels/Beleben) */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[11px] text-gray-500" title="Bewegte KI-Clips statt der ersten Standbild-Slides (kostenpflichtig je Clip; zählt aufs gemeinsame KI-Clip-Monatsbudget der Familie)">✨ KI-Clips je Video</label>
+                          <select value={settingsDraft.reelAiClips} onChange={e => setSettingsDraft(d => ({ ...d, reelAiClips: (Number(e.target.value) || 0) as 0 | 1 | 2 }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value={0}>0 — nur Standbilder</option>
+                            <option value={1}>1 Clip (Hook-Szene bewegt)</option>
+                            <option value={2}>2 Clips</option>
+                          </select>
+                        </div>
+                        {settingsDraft.reelAiClips > 0 && (
+                          <div>
+                            <label className="text-[11px] text-gray-500">Anbieter</label>
+                            <select value={settingsDraft.reelAiProvider} onChange={e => setSettingsDraft(d => ({ ...d, reelAiProvider: (e.target.value === 'runway' ? 'runway' : e.target.value === 'veo' ? 'veo' : 'sora') }))}
+                              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                              <option value="sora">Sora (OpenAI)</option>
+                              <option value="runway">Runway</option>
+                              <option value="veo">Veo (Google)</option>
+                            </select>
+                          </div>
+                        )}
+                        {settingsDraft.reelAiClips > 0 && (
+                          <div>
+                            <label className="text-[11px] text-gray-500">Modell (leer = Standard)</label>
+                            <input value={settingsDraft.reelAiModel} onChange={e => setSettingsDraft(d => ({ ...d, reelAiModel: e.target.value }))}
+                              placeholder={settingsDraft.reelAiProvider === 'sora' ? 'sora-2' : settingsDraft.reelAiProvider === 'runway' ? 'gen4_turbo' : 'veo-3.1-fast-generate-preview'}
+                              className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                          </div>
+                        )}
+                      </div>
                       {/* v1091 — Sprecherstimme auch für YouTube-Kanäle (Verwaltung der Stimmen: IG-Kanal → Reels & Video) */}
                       <div>
                         <label className="text-[11px] text-gray-500" title="Stimme des Video-Sprechers. Ohne Auswahl gilt automatisch die Stimme des Familien-Instagram-Kanals — eine Marke, eine Stimme. Stimmen anlegen und löschen: im Instagram-Kanal unter Reels und Video.">🎙️ Sprecherstimme</label>

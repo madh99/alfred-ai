@@ -517,6 +517,31 @@ describe('SocialSkill v938 — Video-Pipeline', () => {
     expect(render).toHaveBeenCalledWith(item, yt, '16:9', { music: {}, voiceId: 'voice-eins' });
   });
 
+  it('v1095: render_video mit reel_ai_clips → KI-Clip erzeugt, Budget auf dem Familien-IG gezählt, Clips an den Renderer', async () => {
+    const yt = makeChannel('youtube', { reel_ai_clips: 1 });
+    (yt as any).projectId = 'p1';
+    const ig = makeChannel('instagram', { reel_ai_provider: 'veo', ai_clip_budget_per_month: 20 });
+    (ig as any).id = 'ch-ig'; (ig as any).projectId = 'p1';
+    const item = makeItem({ title: 'Analyse', body: 'Ein Beitragstext.', media: [{ type: 'image', source: 'generated', pathOrUrl: '/data/img1.png' }] });
+    const repo = makeVideoRepo(yt, item);
+    (repo.listChannels as any) = vi.fn(async () => [yt, ig]);
+    const skill = new SocialSkill(repo);
+    const render = vi.fn(async () => ({ videoPath: '/data/social-videos/v.mp4', durationSec: 40 }));
+    const generateClip = vi.fn(async () => ({ clipPath: '/data/clip1.mp4', durationSec: 8 }));
+    skill.setVideoTools({ render, generateClip });
+    (skill as any).llm = { complete: vi.fn(async () => ({ content: 'slow cinematic push-in' })) };
+
+    const r = await skill.execute({ action: 'render_video', item_id: 'i1', format: '16:9' }, CTX);
+    expect(r.success).toBe(true);
+    const clipReq = (generateClip.mock.calls[0] as unknown[])[0] as { provider: string; imagePath: string; format: string };
+    expect(clipReq.provider).toBe('veo'); // Provider vom Familien-IG geerbt
+    expect(clipReq.format).toBe('16:9');
+    const renderOpts = (render.mock.calls[0] as unknown[])[3] as { clips?: unknown[] };
+    expect(renderOpts.clips).toEqual([{ index: 0, path: '/data/clip1.mp4', durationSec: 8 }]);
+    // Budget-Zählung auf dem Familien-IG (gemeinsamer Topf)
+    expect((repo.upsertMetric as any).mock.calls.some((c: any[]) => c[0] === 'ch-ig' && c[1]?.kind === 'gen_ai_clip')).toBe(true);
+  });
+
   it('render_video: Monats-Budget erreicht → verweigert', async () => {
     const channel = makeChannel('youtube', { video_budget_per_month: 10 });
     const item = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: '/data/img1.png' }] });

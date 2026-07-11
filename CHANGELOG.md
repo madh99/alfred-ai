@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1095] - 2026-07-11
+
+### Added — KI-Clips in der Eigenproduktion (v1095)
+- **`render_video` kann jetzt KI-Clips**: Kanäle mit `reel_ai_clips` ersetzen die ersten Standbild-Slides durch bewegte Clips (Sora/Runway/Veo) — damit bekommen YouTube-Eigenproduktionen, Video-Serienformate und manuelle `render_video`-Aufrufe dieselbe Lebendigkeit wie die Reels. Die Bewegungs-Regie entsteht per LLM aus dem Beitrag; Anbieter/Modell fallen auf den Familien-Instagram-Kanal zurück, die **Anzahl** ist bewusst je Kanal explizit (Kosten erben sich nicht still).
+- **Ein Budget-Topf für alles Bezahlte**: zählt auf dasselbe `ai_clip_budget_per_month` wie Reels und „Beleben" (auf dem Familien-Instagram-Kanal geführt). Neue UI-Felder in der „🎥 Eigenproduktion"-Sektion (Clips je Video, Anbieter, Modell).
+
 ## [0.19.0-multi-ha.1094] - 2026-07-11
 
 ### Added — Auto-Highlights (v1094)
