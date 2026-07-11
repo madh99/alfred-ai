@@ -197,6 +197,8 @@ export function SocialPage() {
     reelVoiceId: string;
     // v1081 — rest: Reel-Video nachträglich an den Lead-Artikel hängen
     attachReelVideo: boolean;
+    // v1085 — YouTube: Studio-Video-Konzepte automatisch rendern
+    autoVideo: boolean; autoVideoFormat: '16:9' | '9:16';
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
@@ -207,7 +209,8 @@ export function SocialPage() {
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
     reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8,
     reelWatermark: 'aus', reelWatermarkCorner: 'bottom-right',
-    reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', reelVoiceId: '', attachReelVideo: false, formate: [] });
+    reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', reelVoiceId: '', attachReelVideo: false,
+    autoVideo: false, autoVideoFormat: '16:9', formate: [] });
   const [interestTopics, setInterestTopics] = useState<InterestTopicItem[]>([]);
   // v1078 — Sprecherstimmen (Mistral-Custom-Voices) + Verwaltungs-Panel
   const [voices, setVoices] = useState<Array<{ id: string; name: string; gender?: string }>>([]);
@@ -603,6 +606,8 @@ export function SocialPage() {
       reelWatermarkLogoCorner: typeof c.config.reel_watermark_logo_corner === 'string' ? c.config.reel_watermark_logo_corner : 'top-left',
       reelVoiceId: typeof c.config.reel_voice_id === 'string' ? c.config.reel_voice_id : '',
       attachReelVideo: c.config.attach_reel_video === true,
+      autoVideo: c.config.auto_video === true,
+      autoVideoFormat: c.config.auto_video_format === '9:16' ? '9:16' : '16:9',
       formate: Array.isArray(c.config.formate)
         ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
           .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
@@ -680,6 +685,8 @@ export function SocialPage() {
           // v1078 — Sprecherstimme (leer = Standard-Kaskade)
           reel_voice_id: d.reelVoiceId || null,
           attach_reel_video: d.attachReelVideo ? true : null,
+          auto_video: d.autoVideo ? true : null,
+          auto_video_format: d.autoVideo && d.autoVideoFormat === '9:16' ? '9:16' : null,
           // v1012 — Serien-Formate
           formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
             ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
@@ -1698,6 +1705,27 @@ export function SocialPage() {
                           </div>
                         )}
                       </div>
+                    </div>
+                  )}
+                  {/* v1085 — YouTube-Eigenproduktion: Studio-Konzepte automatisch als Video rendern */}
+                  {c.platform === 'youtube' && (
+                    <div className="border border-red-500/20 rounded p-2.5 space-y-2 bg-red-500/5">
+                      <div className="text-[11px] font-medium text-red-300">🎥 Eigenproduktion <span className="text-gray-500 font-normal">— das Studio plant Video-Konzepte, Alfred rendert sie fertig</span></div>
+                      <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                        title="Das Content-Studio erzeugt für YouTube komplette Video-Konzepte (Hook, Skript, Beschreibung). Mit diesem Schalter rendert Alfred sie sofort zum fertigen Video: Bild-Slides + Ken-Burns, Skript als Voiceover (Kanal-Stimme), Untertitel, Musik-Bett. Entwurf mit Freigabe; braucht Bild-Generierung am Kanal. Budget: video_budget_per_month (Default 10).">
+                        <input type="checkbox" checked={settingsDraft.autoVideo} onChange={e => setSettingsDraft(d => ({ ...d, autoVideo: e.target.checked }))} />
+                        Video-Konzepte automatisch rendern (Entwurf mit Freigabe)
+                      </label>
+                      {settingsDraft.autoVideo && (
+                        <div>
+                          <label className="text-[11px] text-gray-500">Format</label>
+                          <select value={settingsDraft.autoVideoFormat} onChange={e => setSettingsDraft(d => ({ ...d, autoVideoFormat: e.target.value === '9:16' ? '9:16' : '16:9' }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                            <option value="16:9">16:9 — klassisches YouTube-Video</option>
+                            <option value="9:16">9:16 — Short</option>
+                          </select>
+                        </div>
+                      )}
                     </div>
                   )}
                   {/* v1081 — rest: Reel-Video nachträglich an den Lead-Artikel hängen */}

@@ -512,6 +512,42 @@ describe('ContentStudio (v935)', () => {
     expect((createdMedia[0] as unknown[]).length).toBe(1);
   });
 
+  it('v1085: YouTube mit auto_video → Konzept mit Bild wird automatisch gerendert (Format aus Config)', async () => {
+    const os = await import('node:os');
+    const sandbox = { execute: vi.fn(async () => ({ success: true, attachments: [{ fileName: 'image.png', data: Buffer.from('png'), mimeType: 'image/png' }] })) };
+    const registry = { get: vi.fn(() => ({ metadata: { name: 'image_generate' } })) };
+    const llm = {
+      complete: vi.fn(async () => ({ content: JSON.stringify([{ title: 'WM-Analyse: Der Weg ins Finale', body: 'HOOK…\nSCRIPT mit Kapiteln und ausreichend langem Sprechtext für ein Video.\n---\nBESCHREIBUNG mit Kapitelmarken.', hashtags: ['wm2026'], bildidee: 'Stadion bei Flutlicht' }]) })),
+    } as any;
+    const interests = { getDigest: vi.fn(async () => null), listItems: vi.fn(async () => []), findTopicByName: vi.fn(async () => null), createTopic: vi.fn(async () => ({ id: 't-1' })) } as any;
+    const makeMiniRepo = (ch: SocialChannel) => ({
+      listItems: vi.fn(async () => []),
+      createItem: vi.fn(async (_u: string, chId: string, o: any) => ({ id: 'g1', channelId: chId, ...o, createdAt: 'x', updatedAt: 'x' })),
+      transition: vi.fn(async () => ({})), mergePerformance: vi.fn(async () => {}),
+      updateChannel: vi.fn(async () => {}), listMetrics: vi.fn(async () => []),
+      upsertMetric: vi.fn(async () => {}), incrementMetric: vi.fn(async () => {}), listChannels: vi.fn(async () => [ch]),
+    }) as any;
+    const { ContentStudio } = await import('../content-studio.js');
+
+    // auto_video an, Format 9:16 aus der Config
+    const yt = makeChannel({ platform: 'youtube', config: { topic_id: 't-1', generate_images: true, image_policy: 'people_ok', auto_video: true, auto_video_format: '9:16' } });
+    const studio = new ContentStudio(makeMiniRepo(yt), interests, undefined, llm, registry as any, sandbox as any, undefined, makeLogger(), OWNER, os.tmpdir());
+    const render = vi.fn(async () => {});
+    studio.setVideoRenderer(render);
+    expect(await studio.fillChannel(yt)).toBe(1);
+    await new Promise(res => setTimeout(res, 5)); // fire-and-forget abwarten
+    expect(render).toHaveBeenCalledWith('g1', '9:16');
+
+    // ohne auto_video → kein Render (Konzept bleibt Konzept)
+    const ohne = makeChannel({ platform: 'youtube', config: { topic_id: 't-1', generate_images: true, image_policy: 'people_ok' } });
+    const studio2 = new ContentStudio(makeMiniRepo(ohne), interests, undefined, llm, registry as any, sandbox as any, undefined, makeLogger(), OWNER, os.tmpdir());
+    const render2 = vi.fn(async () => {});
+    studio2.setVideoRenderer(render2);
+    await studio2.fillChannel(ohne);
+    await new Promise(res => setTimeout(res, 5));
+    expect(render2).not.toHaveBeenCalled();
+  });
+
   it('v951: mehrere verknüpfte Themen → je Topic eine Dossier-Sektion + Verteilungs-Hinweis', async () => {
     const channel = makeChannel({ config: { topic_ids: ['t-1', 't-2'] } });
     const { studio, llm, interestsRepo } = makeStack({ channel });

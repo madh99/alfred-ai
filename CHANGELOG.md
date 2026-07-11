@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1085] - 2026-07-10
+
+### Added — YouTube-Eigenproduktion, Stufe A (v1085)
+- **Video-Konzepte automatisch rendern** (`auto_video`, Opt-in je YouTube-Kanal): Das Content-Studio plant für YouTube-Kanäle komplette Video-Konzepte (Hook, Skript mit Kapiteln, Beschreibung, Thumbnail-Idee) — mit dem neuen Schalter rendert Alfred sie sofort zum fertigen Video: Bild-Slides mit Ken-Burns, Skript als Voiceover (Kanal-Stimme), Untertitel, Musik-Bett mit Loudness-Normalisierung. Der Entwurf liegt fertig in der Freigabe-Queue; das Monats-Budget (`video_budget_per_month`, Default 10) wird respektiert.
+- **Format wählbar** (`auto_video_format`): 16:9 für klassische YouTube-Videos (Default) oder 9:16 für Shorts. Neue UI-Sektion „🎥 Eigenproduktion" auf YouTube-Kanälen.
+
 ## [0.19.0-multi-ha.1084] - 2026-07-10
 
 ### Added

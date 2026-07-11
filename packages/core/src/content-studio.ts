@@ -347,6 +347,17 @@ export class ContentStudio {
     private readonly storyDeduper?: StoryDeduper,
   ) {}
 
+  /**
+   * v1085 — YouTube-Eigenproduktion: rendert ein Studio-Video-Konzept
+   * automatisch zum fertigen Video (render_video im Social-Skill: Slideshow +
+   * Voiceover + Untertitel + Musik-Bett; Monats-Budget wacht dort). Der
+   * Aufruf ist fire-and-forget — das Rendern dauert Minuten.
+   */
+  private videoRenderer?: (itemId: string, format: '9:16' | '16:9') => Promise<void>;
+  setVideoRenderer(fn: (itemId: string, format: '9:16' | '16:9') => Promise<void>): void {
+    this.videoRenderer = fn;
+  }
+
   /** Täglicher Lauf über alle aktiven Kanäle. @returns Anzahl erzeugter Items. */
   async runDaily(): Promise<number> {
     const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
@@ -1439,6 +1450,16 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
         // v973 — Embedding des neuen Items persistieren (künftige Läufe lesen
         // es); Termin-Posts nicht — sie nehmen an den Gates nicht teil.
         if (!idea.terminBis) await this.storyDeduper?.embedStory(item.id, { title: idea.title, body: idea.body });
+        // v1085 — YouTube-Eigenproduktion (Opt-in auto_video): Konzept mit
+        // Bild → Video sofort rendern, damit der Entwurf FERTIG in der
+        // Freigabe-Queue liegt (Skript = Voiceover, Kanal-Stimme, Musik-Bett;
+        // render_video wacht über video_budget_per_month). Fire-and-forget —
+        // ohne Video bleibt es ein Konzept, das render_video manuell nachholt.
+        if (isYoutube && channel.config.auto_video === true && this.videoRenderer && media.some(m => m.type === 'image')) {
+          const fmt = channel.config.auto_video_format === '9:16' ? '9:16' as const : '16:9' as const;
+          void this.videoRenderer(item.id, fmt).catch(err =>
+            this.logger.warn({ item: item.id, err: (err as Error).message }, 'v1085 auto_video render failed (Konzept bleibt ohne Video)'));
+        }
         if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
         blocked.push({ id: item.id, title: idea.title || idea.body.slice(0, 60), body: idea.body, terminAt: idea.terminBis });
         createdTitles.push(idea.title || idea.body.slice(0, 60));

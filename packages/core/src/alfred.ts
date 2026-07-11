@@ -6762,6 +6762,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // v962 — auch Ad-hoc-Posts (add_content/crosspost) bekommen ein Bild,
         // wenn der Kanal generate_images hat (Studio-Leitplanken inkl. Budget)
         socialSkill.setImageGenerator((channel, item) => studio.generateImageForItem(channel, item));
+        // v1085 — YouTube-Eigenproduktion: Studio-Video-Konzepte automatisch
+        // rendern (render_video: Slideshow + Voiceover + Untertitel + Musik,
+        // Kanal-Stimme; Monats-Budget video_budget_per_month wacht im Skill)
+        studio.setVideoRenderer(async (itemId, format) => {
+          const r = await socialSkill.execute({ action: 'render_video', item_id: itemId, format }, ownerCtx);
+          if (!r.success) throw new Error(r.error ?? 'render_video fehlgeschlagen');
+        });
 
         // v938 — Video-Pipeline: Slideshow-Renderer (ffmpeg + TTS-Voiceover +
         // Untertitel) für render_video + ffprobe-Check für User-Videos.
