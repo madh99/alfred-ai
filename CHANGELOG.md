@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1093] - 2026-07-11
+
+### Added — Video-Serienformate (v1093)
+- **Serien-Formate können jetzt Video-Serien sein**: Jedes Wochen-Format (Kanal-Einstellungen → 📆 Serien-Formate) hat eine neue Auswahl „🎬 Video-Serie 9:16/16:9" — Alfred rendert dann jede Wochen-Folge automatisch fertig (Bild-Slides + Voiceover mit Kanal-/Familien-Stimme + Untertitel + Musik-Bett) statt nur Text+Bild. Entwurf mit Freigabe wie gewohnt; zählt aufs Video-Monatsbudget. Beispiel: „Transfer-Ticker, jeden Freitag 16:00, als 9:16-Reel".
+
+### Changed
+- Die Bibliothek heißt jetzt **„🖼🎬 Medien-Bibliothek"** (statt Bild-Bibliothek) — dort leben Bilder- und Videos-Tab samt Werkstatt (Upload, Beleben, Schnitt, Beitrag aus Video).
+
 ## [0.19.0-multi-ha.1092] - 2026-07-11
 
 ### Added — Effekt-Palette im Schnitt, Werkstatt B2 Teil 2 (v1092)

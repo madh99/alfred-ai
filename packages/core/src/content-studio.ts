@@ -461,6 +461,16 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
       await this.socialRepo.mergePerformance(this.ownerUserId, item.id, {
         warum: idea.warum, format: name, art: 'evergreen',
       });
+      // v1093 — Video-Serienformat: die Wochen-Folge wird sofort fertig
+      // gerendert (Bild-Slides + Voiceover mit Kanal-/Familien-Stimme +
+      // Untertitel + Musik) — Entwurf bleibt in der Freigabe, render_video
+      // wacht über video_budget_per_month. Fire-and-forget wie auto_video.
+      const wantVideo = (f as { video?: unknown }).video === '9:16' || (f as { video?: unknown }).video === '16:9'
+        ? (f as { video?: unknown }).video as '9:16' | '16:9' : undefined;
+      if (wantVideo && this.videoRenderer && media.some(m => m.type === 'image')) {
+        void this.videoRenderer(item.id, wantVideo).catch(err =>
+          this.logger.warn({ item: item.id, format: name, err: (err as Error).message }, 'v1093 format video render failed (Folge bleibt Text/Bild)'));
+      }
       if (channel.mode === 'approve' || channel.mode === 'autonomous') {
         await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: at });
       }

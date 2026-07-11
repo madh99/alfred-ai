@@ -200,7 +200,7 @@ export function SocialPage() {
     // v1085 — YouTube: Studio-Video-Konzepte automatisch rendern
     autoVideo: boolean; autoVideoFormat: '16:9' | '9:16';
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
-    formate: Array<{ slot: string; name: string; anweisung: string }>;
+    formate: Array<{ slot: string; name: string; anweisung: string; video: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
@@ -639,7 +639,7 @@ export function SocialPage() {
       formate: Array.isArray(c.config.formate)
         ? (c.config.formate as Array<{ slot?: unknown; name?: unknown; anweisung?: unknown }>)
           .filter(f => f && typeof f.slot === 'string' && typeof f.name === 'string')
-          .map(f => ({ slot: String(f.slot), name: String(f.name), anweisung: typeof f.anweisung === 'string' ? f.anweisung : '' }))
+          .map(f => ({ slot: String(f.slot), name: String(f.name), anweisung: typeof f.anweisung === 'string' ? f.anweisung : '', video: (f as { video?: unknown }).video === '9:16' || (f as { video?: unknown }).video === '16:9' ? String((f as { video?: unknown }).video) : '' }))
         : [],
     });
     if (interestTopics.length === 0) {
@@ -717,7 +717,7 @@ export function SocialPage() {
           auto_video_format: d.autoVideo && d.autoVideoFormat === '9:16' ? '9:16' : null,
           // v1012 — Serien-Formate
           formate: d.formate.filter(f => f.slot.trim() && f.name.trim()).length > 0
-            ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim() }))
+            ? d.formate.filter(f => f.slot.trim() && f.name.trim()).map(f => ({ slot: f.slot.trim(), name: f.name.trim(), anweisung: f.anweisung.trim(), ...(f.video === '9:16' || f.video === '16:9' ? { video: f.video } : {}) }))
             : null,
         },
       });
@@ -1494,13 +1494,22 @@ export function SocialPage() {
                           <input value={f.anweisung} placeholder="Redaktions-Anweisung, z. B.: Fasse die Fußball-Woche in 5 Punkten zusammen"
                             onChange={e => setSettingsDraft(d => ({ ...d, formate: d.formate.map((x, i) => (i === idx ? { ...x, anweisung: e.target.value } : x)) }))}
                             className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200" />
+
+                          {/* v1093 — Video-Serienformat: Alfred rendert die Wochen-Folge automatisch als Video */}
+                          <select value={f.video} onChange={e => setSettingsDraft(d => ({ ...d, formate: d.formate.map((x, i) => (i === idx ? { ...x, video: e.target.value } : x)) }))}
+                            title="Als Video-Serie: Alfred rendert jede Wochen-Folge automatisch als Video (Bild-Slides + Voiceover mit Kanal-Stimme + Untertitel + Musik) — Entwurf mit Freigabe, zaehlt aufs Video-Monatsbudget"
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-[11px] text-gray-300">
+                            <option value="">📝 Text/Bild-Beitrag (wie bisher)</option>
+                            <option value="9:16">🎬 Video-Serie 9:16 (Reel/Short)</option>
+                            <option value="16:9">🎬 Video-Serie 16:9 (YouTube-Video)</option>
+                          </select>
                         </div>
                         <button onClick={() => setSettingsDraft(d => ({ ...d, formate: d.formate.filter((_, i) => i !== idx) }))}
                           className="text-red-400 hover:text-red-300 text-xs px-1 py-1" title="Format entfernen">✕</button>
                       </div>
                     ))}
                     {settingsDraft.formate.length < 7 && (
-                      <button onClick={() => setSettingsDraft(d => ({ ...d, formate: [...d.formate, { slot: '', name: '', anweisung: '' }] }))}
+                      <button onClick={() => setSettingsDraft(d => ({ ...d, formate: [...d.formate, { slot: '', name: '', anweisung: '', video: '' }] }))}
                         className="px-2 py-1 text-[11px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 rounded">+ Format hinzufügen</button>
                     )}
                   </div>
@@ -2175,7 +2184,7 @@ export function SocialPage() {
         <div className="border border-[#1f1f1f] rounded-lg p-4">
           <div className="w-full flex items-center gap-2">
             <button onClick={() => setAssetsOpen(o => !o)} className="flex-1 text-left flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-200">🖼 Bild-Bibliothek</span>
+              <span className="text-sm font-semibold text-gray-200">🖼🎬 Medien-Bibliothek</span>
               <span className="text-[11px] text-gray-500">— Basis-Bilder, die das Studio nach Cooldown wiederverwendet{assets.length > 0 ? ` (${assets.length})` : ''}</span>
             </button>
             {/* v1026 — Overlays neu anwenden: wartende Beiträge aus Basis-Assets mit aktueller Config neu zusammensetzen */}

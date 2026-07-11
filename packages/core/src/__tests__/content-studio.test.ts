@@ -1305,6 +1305,31 @@ describe('ContentStudio — Serien-Formate (v1012)', () => {
     expect(await studio.ensureFormats(channel)).toBe(0);
     expect((llm.complete as any).mock.calls.length).toBe(0);
   });
+
+  it('v1093: Video-Serienformat mit Bild wird automatisch gerendert (Format aus dem Eintrag)', async () => {
+    const os = await import('node:os');
+    const sandbox = { execute: vi.fn(async () => ({ success: true, attachments: [{ fileName: 'image.png', data: Buffer.from('png'), mimeType: 'image/png' }] })) };
+    const registry = { get: vi.fn(() => ({ metadata: { name: 'image_generate' } })) };
+    const llm = {
+      complete: vi.fn(async () => ({ content: JSON.stringify([{ title: 'Transfer-Ticker KW28', body: 'Ein ausreichend langer Serientext über die Transfer-Woche mit Einordnung.', hashtags: ['wm2026'], warum: 'Serie', bildidee: 'Transfer-Collage' }]) })),
+    } as any;
+    const interests = { getDigest: vi.fn(async () => null), listItems: vi.fn(async () => []), findTopicByName: vi.fn(async () => null), createTopic: vi.fn(async () => ({ id: 't-1' })) } as any;
+    const channel = makeChannel({ config: { topic_id: 't-1', generate_images: true, image_policy: 'people_ok', formate: [{ slot: 'Fr 16:00', name: 'Transfer-Ticker', anweisung: 'Die Transfer-Woche kompakt.', video: '9:16' }] } });
+    const miniRepo = {
+      listItems: vi.fn(async () => []),
+      createItem: vi.fn(async (_u: string, chId: string, o: any) => ({ id: 'fmt-1', channelId: chId, ...o, createdAt: 'x', updatedAt: 'x' })),
+      transition: vi.fn(async () => ({})), mergePerformance: vi.fn(async () => {}),
+      updateChannel: vi.fn(async () => {}), listMetrics: vi.fn(async () => []),
+      upsertMetric: vi.fn(async () => {}), incrementMetric: vi.fn(async () => {}), listChannels: vi.fn(async () => [channel]),
+    } as any;
+    const { ContentStudio } = await import('../content-studio.js');
+    const studio = new ContentStudio(miniRepo, interests, undefined, llm, registry as any, sandbox as any, undefined, makeLogger(), OWNER, os.tmpdir());
+    const render = vi.fn(async () => {});
+    studio.setVideoRenderer(render);
+    expect(await studio.ensureFormats(channel)).toBe(1);
+    await new Promise(res => setTimeout(res, 5)); // fire-and-forget abwarten
+    expect(render).toHaveBeenCalledWith('fmt-1', '9:16');
+  });
 });
 
 describe('stripSourceBoilerplate (v1036)', () => {
