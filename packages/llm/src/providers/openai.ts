@@ -33,6 +33,19 @@ export class OpenAIProvider extends LLMProvider {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    // v1099 — Reasoning-Modelle sprechen die Responses-API: reasoning_effort
+    // funktioniert dort ZUSAMMEN mit Function-Tools (chat/completions verbietet
+    // die Kombination — der Haupt-Loop lief bisher ohne Reasoning), Effort
+    // „max" (GPT-5.6) wird möglich und Reasoning lebt per previousResponseId
+    // über Tool-Runden weiter. Fällt bei Endpoint-Problemen auf chat zurück.
+    if (this.useResponsesApi()) {
+      try {
+        return await withPrematureCloseRetry(() => this.completeViaResponses(request));
+      } catch (err) {
+        if (!this.shouldFallbackToChat(err)) throw err;
+        console.warn(`[OpenAIProvider] Responses-API-Fallback auf chat/completions: ${(err as Error).message?.slice(0, 160)}`);
+      }
+    }
     const messages = this.mapMessages(request.messages, request.system);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
     // gpt-5.5 limitation: chat/completions does NOT accept reasoning_effort + tools
@@ -68,6 +81,18 @@ export class OpenAIProvider extends LLMProvider {
   }
 
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
+    // v1099 — Reasoning-Modelle streamen über die Responses-API (siehe complete()).
+    if (this.useResponsesApi()) {
+      let fellBack = false;
+      try {
+        yield* this.streamViaResponses(request);
+      } catch (err) {
+        if (!this.shouldFallbackToChat(err)) throw err;
+        console.warn(`[OpenAIProvider] Responses-Stream-Fallback auf chat/completions: ${(err as Error).message?.slice(0, 160)}`);
+        fellBack = true;
+      }
+      if (!fellBack) return;
+    }
     const messages = this.mapMessages(request.messages, request.system);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
     // Same gpt-5.5 chat/completions tool+effort incompatibility — see complete().
@@ -216,6 +241,145 @@ export class OpenAIProvider extends LLMProvider {
     return true;
   }
 
+  // ── v1099 — Responses-API-Pfad (Reasoning + Tools zusammen) ─────────────
+
+  /** Reasoning-Modelle nehmen die Responses-API; responsesApi:false in der Provider-Config schaltet zurück. */
+  private useResponsesApi(): boolean {
+    return this.isReasoningModel() && (this.config as { responsesApi?: boolean }).responsesApi !== false;
+  }
+
+  /** Nur bei Endpoint-/Parameter-Problemen zurückfallen — echte Fehler (Rate-Limit, Auth) gehören dem Aufrufer. */
+  private shouldFallbackToChat(err: unknown): boolean {
+    const status = (err as { status?: number }).status;
+    const msg = err instanceof Error ? err.message : String(err);
+    return status === 404 || (status === 400 && /not supported|unknown parameter|unsupported|invalid model/i.test(msg));
+  }
+
+  /** LLMMessages (Anthropic-Blockstil) → Responses-input-Items. */
+  private mapResponsesInput(messages: LLMMessage[]): Array<Record<string, unknown>> {
+    const items: Array<Record<string, unknown>> = [];
+    for (const msg of messages) {
+      if (typeof msg.content === 'string') {
+        items.push({ role: msg.role, content: msg.content });
+        continue;
+      }
+      if (msg.role === 'assistant') {
+        const text = msg.content.filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text').map(b => b.text).join('\n');
+        if (text.trim()) items.push({ role: 'assistant', content: text });
+        for (const b of msg.content) {
+          if (b.type === 'tool_use') {
+            items.push({ type: 'function_call', call_id: b.id, name: b.name, arguments: JSON.stringify(b.input ?? {}) });
+          }
+        }
+        continue;
+      }
+      const content: Array<Record<string, unknown>> = [];
+      for (const b of msg.content) {
+        if (b.type === 'text') content.push({ type: 'input_text', text: b.text });
+        else if (b.type === 'image') content.push({ type: 'input_image', image_url: `data:${b.source.media_type};base64,${b.source.data}` });
+        else if (b.type === 'tool_result') {
+          // Tool-Ergebnisse sind Top-Level-Items (nicht Message-Content)
+          items.push({ type: 'function_call_output', call_id: b.tool_use_id, output: b.is_error ? `FEHLER: ${b.content}` : b.content });
+        }
+      }
+      if (content.length > 0) items.push({ role: 'user', content });
+    }
+    return items;
+  }
+
+  /** ToolDefinitions → Responses-Tools (FLACHES Format, nicht unter "function" verschachtelt wie bei chat). */
+  private mapResponsesTools(tools: NonNullable<LLMRequest['tools']>): Array<Record<string, unknown>> {
+    return tools.map(t => ({ type: 'function', name: t.name, description: t.description, parameters: t.inputSchema, strict: false }));
+  }
+
+  private buildResponsesParams(request: LLMRequest): Record<string, unknown> {
+    // Etappe 2 — Kontinuität: kennt der Server die Vorrunde (previousResponseId),
+    // schicken wir NUR die neuen Tool-Ergebnisse der letzten Message; Reasoning-
+    // Items und Historie leben serverseitig weiter (store ist API-Default true).
+    let input: Array<Record<string, unknown>>;
+    if (request.previousResponseId) {
+      const last = request.messages[request.messages.length - 1];
+      input = last ? this.mapResponsesInput([last]).filter(i => i.type === 'function_call_output') : [];
+      if (input.length === 0) input = this.mapResponsesInput(request.messages); // Kontrakt verletzt → voll senden
+    } else {
+      input = this.mapResponsesInput(request.messages);
+    }
+    const effort = request.reasoningEffort; // Responses akzeptiert none…xhigh und (5.6) max
+    return {
+      model: this.config.model,
+      input,
+      ...(request.system ? { instructions: request.system } : {}),
+      max_output_tokens: request.maxTokens ?? this.config.maxTokens ?? 4096,
+      ...(request.tools && request.tools.length > 0 ? { tools: this.mapResponsesTools(request.tools) } : {}),
+      ...(effort ? { reasoning: { effort } } : {}),
+      ...(request.previousResponseId && input.some(i => i.type === 'function_call_output')
+        ? { previous_response_id: request.previousResponseId } : {}),
+      // temperature bewusst weggelassen — Reasoning-Modelle lehnen sie ab
+    };
+  }
+
+  private mapResponsesResponse(r: {
+    id?: string; status?: string;
+    incomplete_details?: { reason?: string } | null;
+    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; call_id?: string; name?: string; arguments?: string }>;
+    usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } };
+  }): LLMResponse {
+    let content = '';
+    const toolCalls: ToolCall[] = [];
+    for (const item of r.output ?? []) {
+      if (item.type === 'message') {
+        for (const c of item.content ?? []) if (c.type === 'output_text' && c.text) content += c.text;
+      } else if (item.type === 'function_call' && item.call_id && item.name) {
+        let input: Record<string, unknown> = {};
+        try { input = JSON.parse(item.arguments || '{}'); } catch { /* leere Args */ }
+        toolCalls.push({ id: item.call_id, name: item.name, input });
+      }
+    }
+    return {
+      content,
+      model: this.config.model,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      usage: {
+        inputTokens: r.usage?.input_tokens ?? 0,
+        outputTokens: r.usage?.output_tokens ?? 0,
+        cacheReadTokens: r.usage?.input_tokens_details?.cached_tokens ?? 0,
+      },
+      stopReason: toolCalls.length > 0 ? 'tool_use'
+        : (r.status === 'incomplete' && r.incomplete_details?.reason === 'max_output_tokens' ? 'max_tokens' : 'end_turn'),
+      ...(r.id ? { responseId: r.id } : {}),
+    };
+  }
+
+  private async completeViaResponses(request: LLMRequest): Promise<LLMResponse> {
+    const params = this.buildResponsesParams(request);
+    const response = await (this.client.responses.create(params as never) as Promise<unknown>);
+    return this.mapResponsesResponse(response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]);
+  }
+
+  private async *streamViaResponses(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
+    const params = { ...this.buildResponsesParams(request), stream: true };
+    const stream = await (this.client.responses.create(params as never) as unknown as Promise<AsyncIterable<Record<string, unknown>>>);
+    for await (const ev of stream) {
+      const type = ev.type as string;
+      if (type === 'response.output_text.delta' && typeof ev.delta === 'string') {
+        yield { type: 'text_delta', text: ev.delta };
+      } else if (type === 'response.output_item.added') {
+        const item = ev.item as { type?: string; call_id?: string; name?: string } | undefined;
+        if (item?.type === 'function_call' && item.call_id && item.name) {
+          yield { type: 'tool_use_start', toolCall: { id: item.call_id, name: item.name } };
+        }
+      } else if (type === 'response.function_call_arguments.delta' && typeof ev.delta === 'string') {
+        yield { type: 'tool_use_delta', toolCall: { input: ev.delta as unknown as Record<string, unknown> } };
+      } else if (type === 'response.completed') {
+        yield { type: 'message_complete', response: this.mapResponsesResponse(ev.response as Parameters<OpenAIProvider['mapResponsesResponse']>[0]) };
+      } else if (type === 'response.failed' || type === 'error') {
+        const msg = (ev.response as { error?: { message?: string } } | undefined)?.error?.message
+          ?? (ev as { message?: string }).message ?? 'Responses-Stream fehlgeschlagen';
+        throw new Error(msg);
+      }
+    }
+  }
+
   /**
    * Detect OpenAI reasoning models that use different API parameters.
    * Matches o1*, o3*, o4*, gpt-5, gpt-5.0, gpt-5.1, gpt-5.5, gpt-5.6 — but NOT gpt-5.2/5.3/5.4
@@ -234,10 +398,12 @@ export class OpenAIProvider extends LLMProvider {
    * Only reasoning models (gpt-5.5, o-series) accept this parameter — for chat models
    * we omit it entirely, otherwise the API rejects the call.
    */
-  protected reasoningEffortParam(requested?: 'none' | 'low' | 'medium' | 'high' | 'xhigh'): string | undefined {
+  protected reasoningEffortParam(requested?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'): string | undefined {
     if (!requested) return undefined;
     if (!this.isReasoningModel()) return undefined;
-    return requested;
+    // v1099 — 'max' existiert nur in der Responses-API; chat/completions lehnt
+    // es ab (live verprobt 11.07.) → beste verfügbare Stufe senden
+    return requested === 'max' ? 'xhigh' : requested;
   }
 
   /**

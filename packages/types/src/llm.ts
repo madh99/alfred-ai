@@ -69,15 +69,24 @@ export interface LLMRequest {
   temperature?: number;
   tier?: ModelTier;
   /**
-   * Reasoning depth for reasoning-capable models (gpt-5.5, o-series).
+   * Reasoning depth for reasoning-capable models (gpt-5.5/5.6, o-series).
    * Ignored by chat models and non-OpenAI providers.
    * - `none`: no internal reasoning (fastest, cheapest)
    * - `low`: minimal reasoning
    * - `medium`: default
    * - `high`: deep reasoning
    * - `xhigh`: maximum reasoning (slowest, most expensive)
+   * - `max` (v1099): tiefste Stufe der GPT-5.6-Familie — existiert NUR in der
+   *   Responses-API; auf dem chat/completions-Pfad wird sie zu `xhigh`.
    */
-  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  /**
+   * v1099 — Responses-API-Kontinuität (Etappe 2): ID der vorherigen Antwort
+   * DERSELBEN Tool-Schleife. Der OpenAI-Provider sendet dann nur die neuen
+   * Tool-Ergebnisse (der Server kennt den Rest inkl. Reasoning-Items);
+   * andere Provider ignorieren das Feld — die messages bleiben vollständig.
+   */
+  previousResponseId?: string;
 }
 
 export interface LLMResponse {
@@ -86,6 +95,8 @@ export interface LLMResponse {
   toolCalls?: ToolCall[];
   usage: LLMUsage;
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
+  /** v1099 — Responses-API: ID dieser Antwort (für previousResponseId der nächsten Tool-Runde). */
+  responseId?: string;
 }
 
 export interface ToolDefinition {

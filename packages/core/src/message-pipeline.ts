@@ -1262,6 +1262,8 @@ export class MessagePipeline {
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
       let lastModel: string | undefined;
+      // v1099 (Etappe 2) — Responses-API-Kontinuität innerhalb der Tool-Schleife
+      let previousResponseId: string | undefined;
       const pendingAttachments: SkillResultAttachment[] = [];
       const usedSkillNames = new Set<string>();
       const accumulatedToolCalls: ToolCall[] = [];
@@ -1336,7 +1338,13 @@ export class MessagePipeline {
             system,
             tools: tools && tools.length > 0 ? tools : undefined,
             tier: message.metadata?.tier,
+            // v1099 (Etappe 2) — Responses-API-Kontinuität: innerhalb DIESER
+            // Tool-Schleife lebt das Reasoning serverseitig weiter (der
+            // OpenAI-Provider sendet dann nur die neuen Tool-Ergebnisse);
+            // andere Provider ignorieren das Feld, messages bleiben komplett.
+            ...(previousResponseId ? { previousResponseId } : {}),
           });
+          previousResponseId = response.toolCalls?.length ? response.responseId : undefined;
           totalInputTokens += response.usage?.inputTokens ?? 0;
           totalOutputTokens += response.usage?.outputTokens ?? 0;
         } catch (err: unknown) {

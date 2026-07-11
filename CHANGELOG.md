@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1099] - 2026-07-11
+
+### Added — OpenAI Responses-API (v1099)
+- **Reasoning bei Tool-Aufrufen**: OpenAI-Reasoning-Modelle (gpt-5, 5.1, 5.5, 5.6, o-Serie) sprechen jetzt die Responses-API — dort funktioniert `reasoning_effort` **zusammen mit** Function-Tools. Bisher lief Alfreds Haupt-Loop (Skills) auf gpt-5.5 ohne Reasoning, weil chat/completions die Kombination verbietet. Auch das GPT-5.6-Effort **„max"** ist damit nutzbar (auf dem Chat-Pfad wird es zu `xhigh`).
+- **Reasoning-Kontinuität in der Tool-Schleife** (Etappe 2): Innerhalb einer Tool-Schleife wird die Antwort-ID weitergereicht (`previous_response_id`) — die Folgerunde sendet nur noch die neuen Tool-Ergebnisse, das serverseitige Reasoning lebt weiter (live gemessen: 103 statt tausender Input-Tokens in Runde 2). Andere Provider ignorieren das Feld; die Nachrichtenliste bleibt vollständig, ein Provider-Wechsel mitten in der Schleife bleibt korrekt.
+- **Rückwärtskompatibel**: Chat-Modelle (gpt-5.2/5.4, gpt-4o …) bleiben auf chat/completions; bei Endpoint-Problemen fällt der Provider automatisch dorthin zurück (echte Fehler wie Rate-Limits werden nicht verschluckt); `responsesApi: false` in der Provider-Config schaltet den Pfad ab. gpt-5.5 bleibt unverändert nutzbar — und profitiert selbst.
+
 ## [0.19.0-multi-ha.1098] - 2026-07-11
 
 ### Fixed — Bluesky-Posts ohne Inhalt („A Worl…") (v1098)
