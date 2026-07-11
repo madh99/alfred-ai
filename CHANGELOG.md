@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1098] - 2026-07-11
+
+### Fixed — Bluesky-Posts ohne Inhalt („A Worl…") (v1098)
+- **Kürzungs-Kaskade statt Body-Kastration**: Auf Bluesky (300 Zeichen, keine URL-Verkürzung) fraßen UTM-Traffic-Link (~160 Zeichen), drei Hashtags und die KI-Kennzeichnung den Beitragstext bis auf wenige Zeichen auf. Die Kürzung arbeitet jetzt gestaffelt: **1)** UTM-Parameter des Traffic-Links entfernen (Link bleibt voll funktional — nur die Kampagnen-Attribution entfällt im Kürzungsfall; auf X mit t.co-Gewichtung bleiben sie erhalten, dort sparen sie nichts), **2)** Hashtags streichen, sobald sie dem Text weniger als ~80 Zeichen ließen, **3)** erst dann den Text kürzen — und wenn er passt, bleibt er ganz. KI-Kennzeichnung und Link überleben weiterhin immer.
+
 ## [0.19.0-multi-ha.1097] - 2026-07-11
 
 ### Added — GPT-5.6-Familie (Luna/Terra/Sol) unterstützt (v1097)

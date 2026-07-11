@@ -268,11 +268,28 @@ export function composePostText(item: ContentItem, maxLength?: number, channel?:
       bodyMain = item.body.slice(0, ctaMatch.index).trimEnd();
       ctaBlock = `\n\n${ctaMatch[1].trim()}`;
     }
+    // v1098 — Kürzungs-KASKADE (Realfall 11.07.: Bluesky-Post „A Worl…" — der
+    // UTM-Link kostete ~160 ECHTE Zeichen, weil Bluesky ohne URL-Verkürzer
+    // zählt; mit 3 Hashtags + Kennzeichnung blieben dem Body 7 Zeichen):
+    // Stufe 1 — UTM-Parameter opfern (der Link bleibt voll funktional, nur die
+    // Attribution entfällt im Kürzungsfall). Nur wo URLs echt zählen — auf X
+    // (urlWeight 23) brächte das nichts und kostete grundlos die Attribution.
+    if (!uw && /\?utm_/.test(ctaBlock)) {
+      ctaBlock = ctaBlock.replace(/\?utm_[^\s#]*/, '');
+      const rebuilt = `${head}${bodyMain}${ctaBlock}${tags}${suffix}`;
+      if (weightedLength(rebuilt, uw) <= maxLength) return rebuilt;
+    }
+    // Stufe 2 — Hashtags fliegen, sobald sie dem BODY (nach dem Titel) weniger
+    // als ~80 Zeichen ließen (vorher erst bei Restraum <40 — Titel+Linkrest
+    // fraßen den Body trotzdem auf).
     let keptTags = tags;
     let room = maxLength - weightedLength(ctaBlock, uw) - keptTags.length - suffix.length - 2;
-    // Wird es eng (Bluesky 300), fliegen die Hashtags — nicht der Link
-    if (room < 40 && keptTags) { keptTags = ''; room = maxLength - weightedLength(ctaBlock, uw) - suffix.length - 2; }
-    text = `${head}${bodyMain}`.slice(0, Math.max(0, room)) + '…' + ctaBlock + keptTags + suffix;
+    if (room - head.length < 80 && keptTags) { keptTags = ''; room = maxLength - weightedLength(ctaBlock, uw) - suffix.length - 2; }
+    // Stufe 3 — erst jetzt den Body kürzen; passt er, bleibt er ganz (kein „…")
+    const headBody = `${head}${bodyMain}`;
+    text = headBody.length <= room
+      ? headBody + ctaBlock + keptTags + suffix
+      : headBody.slice(0, Math.max(0, room)) + '…' + ctaBlock + keptTags + suffix;
   }
   return text;
 }

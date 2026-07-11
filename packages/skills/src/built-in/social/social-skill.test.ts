@@ -99,6 +99,31 @@ describe('composePostText', () => {
     expect(text).toContain('#tag');
   });
 
+  it('v1098: Bluesky-Realfall — UTM fliegt vor dem Body, Hashtags vor dem Inhalt („A Worl…"-Bug)', () => {
+    const body = 'A World Cup squad has been announced without its most famous name, and the reaction back home tells a bigger story about the team. '
+      + '\n\n👉 Ganzer Artikel: https://fussball.cc/news/sudafrikas-wm-kader-ohne-star?utm_source=bluesky&utm_medium=social&utm_campaign=sudafrikas-wm-kader-ohne-star';
+    const item = makeItem({
+      title: 'A Squad Left Without One of Its Own', body,
+      hashtags: ['SouthAfricaFootball', 'WorldCup2026', 'JaydenAdams'],
+      media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/x.png' }],
+    });
+    const text = composePostText(item, 300, makeChannel());
+    expect(text.length).toBeLessThanOrEqual(300);
+    // Stufe 1: Link bleibt, aber ohne UTM-Ballast
+    expect(text).toContain('https://fussball.cc/news/sudafrikas-wm-kader-ohne-star');
+    expect(text).not.toContain('utm_');
+    // der Body ist wieder Inhalt statt „A Worl…"
+    expect(text).toContain('A World Cup squad has been announced');
+    // Kennzeichnung überlebt
+    expect(text).toContain('Bild: KI-generiert');
+  });
+
+  it('v1098: mit urlWeight (X, t.co zählt 23) bleiben die UTM-Parameter erhalten', () => {
+    const body = 'z'.repeat(400) + '\n\n👉 Ganzer Artikel: https://fussball.cc/news/x?utm_source=x&utm_medium=social&utm_campaign=x';
+    const text = composePostText(makeItem({ body, hashtags: [] }), 280, undefined, { urlWeight: 23 });
+    expect(text).toContain('utm_source=x'); // Attribution bleibt — Kürzung spart hier nichts
+  });
+
   it('v985: generiertes Medium → KI-Kennzeichnung im Text (Default an, überlebt Kürzung)', () => {
     const item = makeItem({
       body: 'y'.repeat(500), hashtags: ['tag'],
@@ -119,7 +144,9 @@ describe('composePostText', () => {
     const item = makeItem({ title: 'Aztekenstadion', body: `${'Mexiko verliert erstmals. '.repeat(20)}\n\n👉 Ganzer Artikel: ${url}`, hashtags: ['WorldCup', 'Mexico'] });
     const text = composePostText(item, 300);
     expect(text.length).toBeLessThanOrEqual(300);
-    expect(text).toContain(url);
+    // v1098 — im Kürzungsfall fliegen zuerst die UTM-Parameter (Link bleibt funktional)
+    expect(text).toContain('https://fussball.cc/news/azteca');
+    expect(text).not.toContain('utm_');
     expect(text).toContain('#WorldCup');
   });
 
@@ -144,9 +171,12 @@ describe('composePostText', () => {
     const weighted = composePostText(item, 280, undefined, { urlWeight: 23 });
     expect(weighted).toContain(url); // URL komplett
     expect(weighted).not.toContain('…'); // keine Kürzung
-    // ohne Gewichtung (Default) wird weiterhin gekürzt
+    // ohne Gewichtung (Default): v1098 rettet zuerst die UTM-Parameter weg —
+    // damit passt der volle Body wieder ins Limit (kein „…", Link funktional)
     const plain = composePostText(item, 280);
-    expect(plain).toContain('…');
+    expect(plain).not.toContain('utm_');
+    expect(plain).toContain('https://fussball.cc/news/viertelfinale-argentinien-aegypten');
+    expect(plain.length).toBeLessThanOrEqual(280);
   });
 
   it('v985: ohne generiertes Medium bzw. ohne Kanal keine Kennzeichnung', () => {
