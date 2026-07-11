@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1087] - 2026-07-10
+
+### Added — „Beitrag aus Video", Werkstatt Teil 2 (v1087)
+- **📤 Beitrag aus Video**: Neuer Button auf jeder Video-Karte der Bibliothek — Ziel-Kanäle ankreuzen, optional Stoff/Fakten mitgeben, und Alfred schreibt für jeden Kanal einen eigenen Titel samt Caption passend zu Persona, Sprache und Zeichenlimit (Skill-Aktion `post_from_video`, auch per Chat nutzbar). Die Entwürfe durchlaufen die normale Freigabe; Kanäle ohne Video-Fähigkeit werden benannt und übersprungen. Die Video-Nutzung wird je Kanal in der Bibliothek vermerkt.
+
 ## [0.19.0-multi-ha.1086] - 2026-07-10
 
 ### Added — Video-Bibliothek, Werkstatt Teil 1 (v1086)

@@ -717,6 +717,8 @@ export class HttpAdapter extends MessagingAdapter {
     describeAssets?: () => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
     /** v1041 — Bild (Base64) als gepinntes Bibliotheks-Asset hochladen (Termin-Vorlage). */
     uploadAsset?: (body: Record<string, unknown>) => Promise<{ success: boolean; error?: string; data?: unknown }>;
+    /** v1087 — Beitrag aus einem Bibliotheks-Video (Alfred textet je Ziel-Kanal). */
+    assetPost?: (assetId: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
     channelMetrics?: (channelId: string) => Promise<any[]>;
     /** v948 — liefert eine generierte Mediendatei (nur Basename, kein Pfad-Traversal). */
     mediaFile?: (basename: string, width?: number) => Promise<{ data: Buffer; mimeType: string } | null>;
@@ -1435,6 +1437,12 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname === '/api/social/assets' && req.method === 'GET') {
       // v1014 — Bild-Bibliothek
       this.handleSocial(req, res, async () => ({ assets: await this.socialCallbacks!.listAssets?.() ?? [] })).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/social\/assets\/[^/]+\/post$/) && req.method === 'POST') {
+      // v1087 — Beitrag aus einem Bibliotheks-Video (Alfred textet je Kanal)
+      this.handleSocialBody(req, res, async (body) => {
+        if (!this.socialCallbacks?.assetPost) return { error: 'not supported' };
+        return this.socialCallbacks.assetPost(url.pathname.split('/')[4], body);
+      }).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/social\/assets\/[^/]+\/(block|unblock|delete|motif|describe|pin|unpin)$/) && req.method === 'POST') {
       this.handleSocialBody(req, res, async (body) => {
         if (!this.socialCallbacks?.assetAction) return { error: 'not supported' };

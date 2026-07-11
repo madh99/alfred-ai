@@ -318,6 +318,10 @@ export function SocialPage() {
 
   // v1086 — Video-Bibliothek: Tab-Auswahl + mp4-Blobs erst laden, wenn der Videos-Tab offen ist
   const [assetKind, setAssetKind] = useState<'image' | 'video'>('image');
+  // v1087 — „Beitrag aus Video": Ziel-Kanäle + optionaler Stoff-Hinweis
+  const [postVideoId, setPostVideoId] = useState<string | null>(null);
+  const [postChannels, setPostChannels] = useState<string[]>([]);
+  const [postStoff, setPostStoff] = useState('');
   useEffect(() => {
     if (!client || page !== 'channels' || !assetsOpen || assetKind !== 'video') return;
     for (const a of assets) {
@@ -2316,7 +2320,43 @@ export function SocialPage() {
                       </button>}
                       <button onClick={() => assetAction(a, 'delete')} disabled={busy === a.id}
                         className="px-1.5 py-0.5 text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded">🗑</button>
+                      {/* v1087 — Beitrag aus Video: Alfred textet je Ziel-Kanal, Entwurf mit Freigabe */}
+                      {a.kind === 'video' && (
+                        <button onClick={() => { setPostVideoId(postVideoId === a.id ? null : a.id); setPostChannels([]); setPostStoff(''); }}
+                          title="Beitrag aus diesem Video: Ziel-Kanäle wählen, Alfred schreibt Titel und Caption passend zur Kanal-Persona — Entwürfe mit Freigabe"
+                          className="px-1.5 py-0.5 text-[10px] border border-blue-500/40 text-blue-300 hover:bg-blue-500/15 rounded">📤 Beitrag</button>
+                      )}
                     </div>
+                    {postVideoId === a.id && (
+                      <div className="border border-blue-500/20 rounded p-2 space-y-1.5 bg-blue-500/5">
+                        <div className="text-[10px] text-gray-400">Ziel-Kanäle:</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {channels.filter(ch => ch.status === 'active').map(ch => (
+                            <label key={ch.id} className="text-[10px] text-gray-300 flex items-center gap-1 cursor-pointer border border-[#2a2a2a] rounded px-1.5 py-0.5">
+                              <input type="checkbox" checked={postChannels.includes(ch.id)}
+                                onChange={e => setPostChannels(prev => e.target.checked ? [...prev, ch.id] : prev.filter(x => x !== ch.id))} />
+                              {ch.name}
+                            </label>
+                          ))}
+                        </div>
+                        <textarea value={postStoff} onChange={e => setPostStoff(e.target.value)} rows={2}
+                          placeholder="Optional: Stoff/Fakten für den Text (sonst textet Alfred aus der Video-Beschreibung)"
+                          className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1.5 py-1 text-[10px] text-gray-200" />
+                        <button onClick={async () => {
+                            if (postChannels.length === 0) { setError('Mindestens einen Ziel-Kanal wählen.'); return; }
+                            await withBusy(`post-${a.id}`, async () => {
+                              const r = await client!.socialPostFromVideo(a.id, postChannels, postStoff);
+                              if (!r.success) throw new Error(r.error ?? 'Anlegen fehlgeschlagen');
+                              setNotice(r.display ?? 'Entwürfe angelegt.');
+                              setPostVideoId(null);
+                              await load();
+                            });
+                          }} disabled={busy === `post-${a.id}`}
+                          className="px-2 py-1 text-[10px] bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded">
+                          {busy === `post-${a.id}` ? '⏳ Alfred textet…' : '✍️ Entwürfe anlegen'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

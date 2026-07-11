@@ -686,6 +686,47 @@ describe('v1081 — Reel-Video an den Lead-Artikel (attach_reel_video)', () => {
   });
 });
 
+describe('v1087 — post_from_video (Beitrag aus Bibliotheks-Video)', () => {
+  it('textet je video-fähigem Kanal, überspringt unfähige, vermerkt fromAsset + Nutzung', async () => {
+    const fb = makeChannel({ id: 'ch-fb', platform: 'facebook', name: 'FussballCC FB', persona: 'locker' });
+    const insta = makeChannel({ id: 'ch-ig2', platform: 'instagram', name: 'IG ohne Video' }); // FakeProvider: instagram kann KEIN Video
+    const item = makeItem();
+    const { skill, spies } = makeSkill(fb, item);
+    skill.registerProvider(new FakeProvider('facebook'));
+    skill.registerProvider(new FakeProvider('instagram'));
+    (spies as any).getChannel = vi.fn(async (_u: string, id: string) => (id === 'ch-fb' ? fb : id === 'ch-ig2' ? insta : null));
+    (spies as any).listMediaAssets = vi.fn(async () => [{
+      id: 'vid-1', userId: 'u1', path: '/tmp/lib-video.mp4', motif: 'Torjubel nach dem Siegtreffer', kind: 'video', durationSec: 30,
+      lastUsedAt: 'x', useCount: 1, blocked: false, pinned: false, createdAt: 'x', model: 'upload',
+    }]);
+    (spies as any).touchMediaAsset = vi.fn(async () => {});
+    const created: any[] = [];
+    (spies as any).createItem = vi.fn(async (_u: string, chId: string, o: any) => { created.push({ chId, ...o }); return { ...makeItem(), ...o, channelId: chId, id: 'new-1' }; });
+    (skill as any).llm = { complete: vi.fn(async () => ({ content: '{"titel": "Was für ein Tor!", "text": "Der Moment, über den heute alle reden.", "hashtags": ["wm2026"]}' })) };
+
+    const r = await skill.execute({ action: 'post_from_video', asset_id: 'vid-1', channels: ['ch-fb', 'ch-ig2'], stoff: 'Siegtreffer in der 89. Minute' }, CTX);
+    expect(r.success).toBe(true);
+    expect(created.length).toBe(1); // nur FB — IG-FakeProvider kann kein Video
+    expect(created[0].chId).toBe('ch-fb');
+    expect(created[0].title).toBe('Was für ein Tor!');
+    expect(created[0].media[0]).toMatchObject({ type: 'video', source: 'user', pathOrUrl: '/tmp/lib-video.mp4' });
+    expect(r.display).toContain('Übersprungen');
+    expect((spies.mergePerformance as any).mock.calls.some((c: any[]) => c[2]?.fromAsset === 'vid-1')).toBe(true);
+    expect((spies as any).touchMediaAsset).toHaveBeenCalledWith('u1', 'vid-1', 'ch-fb');
+  });
+
+  it('ohne asset_id bzw. unbekanntes Video → klare Fehler', async () => {
+    const { skill, spies } = makeSkill(makeChannel(), makeItem());
+    (spies as any).listMediaAssets = vi.fn(async () => []);
+    const r1 = await skill.execute({ action: 'post_from_video', channels: ['x'] }, CTX);
+    expect(r1.success).toBe(false);
+    expect(r1.error).toContain('asset_id');
+    const r2 = await skill.execute({ action: 'post_from_video', asset_id: 'gibtsnicht', channels: ['x'] }, CTX);
+    expect(r2.success).toBe(false);
+    expect(r2.error).toContain('nicht gefunden');
+  });
+});
+
 describe('v1024 — plan_story (Ad-hoc-Story auf User-Zuruf)', () => {
   it('unverdrahtet → Fehler; ohne Stoff → Hinweis; mit Stoff → Planner korrekt aufgerufen', async () => {
     const channel = makeChannel();

@@ -8530,6 +8530,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // v1041 — Termin-Vorlage hochladen: Bild landet als gepinntes Asset
           // in der Bibliothek (geschützt vor Dedup und Alters-Cleanup) und wird
           // per image_overlay.termin_image referenziert.
+          // v1087 — Beitrag aus einem Bibliotheks-Video: Skill textet je Kanal
+          assetPost: async (assetId: string, body: Record<string, unknown>) => {
+            if (!socialSkillForApi) return { success: false, error: 'skill unavailable' };
+            const r = await socialSkillForApi.execute({
+              action: 'post_from_video', asset_id: assetId,
+              channels: Array.isArray(body.channels) ? body.channels : [],
+              ...(typeof body.stoff === 'string' && body.stoff.trim() ? { stoff: body.stoff } : {}),
+            }, socialCtx);
+            return { success: r.success, display: r.display, error: r.error, data: r.data };
+          },
           uploadAsset: async (body: Record<string, unknown>) => {
             try {
               const b64 = typeof body.data === 'string' ? body.data : '';
