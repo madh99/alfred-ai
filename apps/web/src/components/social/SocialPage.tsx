@@ -300,8 +300,10 @@ export function SocialPage() {
       setAssets(list);
       // v1026 — ALLE Thumbnails laden (serverseitig auf 320px verkleinert):
       // der alte 40er-Deckel gegen Voll-PNGs ließ den Rest der Galerie leer
+      // v1086 — Videos NICHT hier: die vollen mp4 lädt ein eigener Effekt erst,
+      // wenn der Videos-Tab aktiv ist (sonst zöge die Galerie hunderte MB)
       for (const a of list) {
-        if (assetUrls[a.id] !== undefined || !a.basename) continue;
+        if (a.kind === 'video' || assetUrls[a.id] !== undefined || !a.basename) continue;
         setAssetUrls(prev => ({ ...prev, [a.id]: '' }));
         client.fetchSocialMediaObjectUrl(a.basename, 320).then(url => {
           if (url) setAssetUrls(prev => ({ ...prev, [a.id]: url }));
@@ -313,6 +315,21 @@ export function SocialPage() {
   }, [client]);
 
   useEffect(() => { if (page === 'channels' && assetsOpen) loadAssets(); }, [page, assetsOpen, loadAssets]);
+
+  // v1086 — Video-Bibliothek: Tab-Auswahl + mp4-Blobs erst laden, wenn der Videos-Tab offen ist
+  const [assetKind, setAssetKind] = useState<'image' | 'video'>('image');
+  useEffect(() => {
+    if (!client || page !== 'channels' || !assetsOpen || assetKind !== 'video') return;
+    for (const a of assets) {
+      if (a.kind !== 'video' || assetUrls[a.id] !== undefined || !a.basename) continue;
+      setAssetUrls(prev => ({ ...prev, [a.id]: '' }));
+      client.fetchSocialMediaObjectUrl(a.basename).then(url => {
+        if (url) setAssetUrls(prev => ({ ...prev, [a.id]: url }));
+      });
+    }
+    // assetUrls bewusst nicht in deps (eigene Updates)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, page, assetsOpen, assetKind, assets]);
 
   // v1015 — Kanal anlegen (durch den Skill, alle Leitplanken + Hinweise inklusive)
   async function submitWizard() {
@@ -2186,11 +2203,52 @@ export function SocialPage() {
           </div>
           {assetsOpen && (
             <div className="mt-3">
-              {assets.length === 0 && <div className="text-xs text-gray-600">Noch keine Basis-Bilder — sie entstehen automatisch mit jedem generierten Bild.</div>}
+              {/* v1086 — Bilder | Videos + Uploads in die Bibliothek */}
+              <div className="flex items-center gap-2 mb-2 text-xs">
+                {(['image', 'video'] as const).map(k => (
+                  <button key={k} onClick={() => setAssetKind(k)}
+                    className={clsx('px-2 py-0.5 rounded border', assetKind === k ? 'border-blue-500/50 text-blue-300 bg-blue-500/10' : 'border-[#2a2a2a] text-gray-500 hover:bg-[#1a1a1a]')}>
+                    {k === 'image' ? `🖼️ Bilder (${assets.filter(a => a.kind !== 'video').length})` : `🎬 Videos (${assets.filter(a => a.kind === 'video').length})`}
+                  </button>
+                ))}
+                <label className="px-2 py-0.5 text-[11px] border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/15 rounded cursor-pointer"
+                  title={assetKind === 'video' ? 'Eigenes Video (mp4, max. 200 MB) in die Video-Bibliothek laden — Baustein für Beiträge und die Video-Werkstatt' : 'Eigenes Bild in die Bibliothek laden — Alfred beschreibt das Motiv automatisch (Vision), danach nutzbar für Wiederverwendung, Stil-Referenz und Videos'}>
+                  {busy === 'asset-upload' ? '⏳' : assetKind === 'video' ? '⬆️ Video hochladen' : '⬆️ Bild hochladen'}
+                  <input type="file" accept={assetKind === 'video' ? 'video/mp4,video/quicktime' : 'image/png,image/jpeg'} className="hidden" onChange={async e => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!f || !client) return;
+                    if (assetKind === 'video' && f.size > 200_000_000) { setError('Video zu groß (max. 200 MB).'); return; }
+                    await withBusy('asset-upload', async () => {
+                      const b64 = await new Promise<string>((res, rej) => {
+                        const r = new FileReader();
+                        r.onload = () => res(String(r.result));
+                        r.onerror = () => rej(new Error('Datei nicht lesbar'));
+                        r.readAsDataURL(f);
+                      });
+                      const r = assetKind === 'video'
+                        ? await client.socialUploadAsset(b64, undefined, { kind: 'video', fileName: f.name })
+                        : await client.socialUploadAsset(b64, undefined, { purpose: 'library', fileName: f.name });
+                      if (!r.success) throw new Error(r.error ?? 'Upload fehlgeschlagen');
+                      setNotice(assetKind === 'video' ? '🎬 Video in der Bibliothek.' : `🖼️ Bild in der Bibliothek${r.data?.motif ? ` — „${r.data.motif.slice(0, 80)}…"` : ''}.`);
+                      await loadAssets();
+                    });
+                  }} />
+                </label>
+              </div>
+              {assets.filter(a => assetKind === 'video' ? a.kind === 'video' : a.kind !== 'video').length === 0 && (
+                <div className="text-xs text-gray-600">{assetKind === 'video'
+                  ? 'Noch keine Videos — sie entstehen mit jedem gerenderten Reel/Video, per KI-Clip oder Upload.'
+                  : 'Noch keine Basis-Bilder — sie entstehen automatisch mit jedem generierten Bild.'}</div>
+              )}
               <div className="grid gap-2 grid-cols-2 md:grid-cols-4">
-                {assets.map(a => (
+                {assets.filter(a => assetKind === 'video' ? a.kind === 'video' : a.kind !== 'video').map(a => (
                   <div key={a.id} className={clsx('border rounded-lg p-2 space-y-1', a.blocked ? 'border-red-500/30 opacity-70' : 'border-[#2a2a2a]')}>
-                    {assetUrls[a.id]
+                    {a.kind === 'video'
+                      ? (assetUrls[a.id]
+                          ? <video src={assetUrls[a.id]} controls muted playsInline preload="metadata" className="w-full h-40 object-contain rounded bg-black" />
+                          : <div className="w-full h-40 bg-[#141414] rounded flex items-center justify-center text-gray-600 text-xs">🎬 lädt…</div>)
+                      : assetUrls[a.id]
                       ? <img src={assetUrls[a.id]} alt="" title="Klick = vergrößern"
                           onClick={() => {
                             // v1026 — Lightbox in voller Auflösung (Galerie zeigt nur 320px-Thumbnails)
@@ -2216,9 +2274,9 @@ export function SocialPage() {
                         onClick={() => { setMotifEditId(a.id); setMotifDraft(a.motif); }}>{a.motif}</div>
                     )}
                     <div className="text-[9px] text-gray-600">
-                      {a.channelName ?? 'Familie'} · {a.format ?? 'square'} · {a.useCount}× · zuletzt {new Date(a.lastUsedAt).toLocaleDateString('de-AT')}
+                      {a.channelName ?? 'Familie'} · {a.kind === 'video' ? (a.durationSec ? `${Math.round(a.durationSec)}s` : 'Video') : (a.format ?? 'square')} · {a.useCount}× · zuletzt {new Date(a.lastUsedAt).toLocaleDateString('de-AT')}
                       {/* v1072 — womit das Bild erzeugt wurde (Altbestand ohne Angabe bleibt leer) */}
-                      {a.model && <span className="text-sky-500"> · {a.model === 'gemini-3.1-flash-image' ? 'Nano Banana 2' : a.model === 'gemini-3-pro-image' ? 'Nano Banana Pro' : a.model}</span>}
+                      {a.model && <span className="text-sky-500"> · {a.model === 'gemini-3.1-flash-image' ? 'Nano Banana 2' : a.model === 'gemini-3-pro-image' ? 'Nano Banana Pro' : a.model === 'reel' ? 'Reel' : a.model === 'slideshow' ? 'Slideshow' : a.model === 'upload' ? 'Upload' : a.model}</span>}
                       {a.blocked && <span className="text-red-400"> · GESPERRT</span>}
                       {a.pinned && <span className="text-emerald-400"> · 📌 STAMM</span>}
                     </div>
@@ -2231,7 +2289,7 @@ export function SocialPage() {
                         📌
                       </button>
                       {/* v1041 — als Termin-Vorlage für ALLE Kanäle setzen (pro Kanal: Kanal-Einstellungen → Termin-Vorlage) */}
-                      <button onClick={async () => {
+                      {a.kind !== 'video' && <button onClick={async () => {
                           if (!confirm('Dieses Bild als Termin-Vorlage für ALLE Kanäle setzen? Termin-Posts nutzen dann immer dieses Basis-Bild (Daten kommen aus der Termin-Karte, kein Bild-Budget).')) return;
                           await withBusy(a.id, async () => {
                             for (const ch of channels) {
@@ -2246,16 +2304,16 @@ export function SocialPage() {
                         title="Als Termin-Vorlage für ALLE Kanäle: Termin-Ankündigungen nutzen immer dieses Bild (wird gepinnt); pro Kanal änderbar in den Kanal-Einstellungen"
                         className="px-1.5 py-0.5 text-[10px] border border-purple-500/30 text-purple-400/80 hover:bg-purple-500/15 disabled:opacity-50 rounded">
                         📅
-                      </button>
+                      </button>}
                       <button onClick={() => assetAction(a, a.blocked ? 'unblock' : 'block')} disabled={busy === a.id}
                         className="px-1.5 py-0.5 text-[10px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 disabled:opacity-50 rounded">
                         {a.blocked ? '▶ freigeben' : '⏸ sperren'}
                       </button>
-                      <button onClick={() => assetAction(a, 'describe')} disabled={busy === a.id}
+                      {a.kind !== 'video' && <button onClick={() => assetAction(a, 'describe')} disabled={busy === a.id}
                         title="Motiv-Beschreibung vom Bild neu generieren lassen (Vision-KI)"
                         className="px-1.5 py-0.5 text-[10px] border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 disabled:opacity-50 rounded">
                         {busy === a.id ? '⏳' : '✨ Motiv'}
-                      </button>
+                      </button>}
                       <button onClick={() => assetAction(a, 'delete')} disabled={busy === a.id}
                         className="px-1.5 py-0.5 text-[10px] border border-red-500/30 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded">🗑</button>
                     </div>

@@ -70,6 +70,8 @@ function makeRepo(channel: SocialChannel, item: ContentItem) {
     countPublishedToday: vi.fn(async () => 0),
     upsertMetric: vi.fn(async () => {}),
     listMetrics: vi.fn(async () => []),
+    createMediaAsset: vi.fn(async () => ({ id: 'asset-1' })),
+    listMediaAssets: vi.fn(async () => []),
   };
   return { repo: repo as unknown as SocialRepository, state, spies: repo };
 }
@@ -466,6 +468,9 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(reel.chId).toBe('ch-ig');
     expect(reel.status).toBe('draft'); // bewusst MIT Freigabe
     expect(reel.media[0]).toEqual({ type: 'video', source: 'generated', pathOrUrl: '/tmp/reel.mp4' });
+    // v1086 — das gerenderte Reel landet in der Video-Bibliothek
+    const assetCall = ((skill as any).repo.createMediaAsset as any).mock.calls[0];
+    expect(assetCall[1]).toMatchObject({ kind: 'video', path: '/tmp/reel.mp4', model: 'reel', durationSec: 25 });
   });
 
   it('v1068: findRecentChannelDuplicate — gleiche Kriterien für Gate und Vorab-Check', async () => {

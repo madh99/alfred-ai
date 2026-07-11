@@ -479,6 +479,7 @@ describe('SocialSkill v938 — Video-Pipeline', () => {
       listMetrics: vi.fn(async (_c: string, q: any) => q?.kind === 'gen_video' && videosUsed > 0
         ? [{ date: '2026-07-01', kind: 'gen_video', value: videosUsed }] : []),
       upsertMetric: vi.fn(async () => {}),
+      createMediaAsset: vi.fn(async () => ({ id: 'asset-1' })), // v1086 — Video-Bibliothek
     } as unknown as SocialRepository;
   }
 

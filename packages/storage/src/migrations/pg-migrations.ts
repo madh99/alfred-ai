@@ -2063,4 +2063,12 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS model TEXT`, []);
     },
   },
+  {
+    version: 125,
+    description: 'v1086 — Video-Bibliothek: kind (image|video) + duration_sec auf social_media_assets (PG-Spiegel zu SQLite v121).',
+    async up(db) {
+      await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'image'`, []);
+      await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS duration_sec REAL`, []);
+    },
+  },
 ];

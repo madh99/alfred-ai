@@ -8441,7 +8441,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           },
           // v1014 — Bild-Bibliothek (Basename fürs bestehende media-Endpoint mitliefern)
           listAssets: async () => {
-            const assets = await socialRepo.listMediaAssets(socialOwner, { limit: 200 });
+            // v1086 — Bibliothek zeigt Bilder UND Videos (kind unterscheidet in der UI)
+            const assets = await socialRepo.listMediaAssets(socialOwner, { limit: 300, kind: 'all' });
             const channels = await socialRepo.listChannels(socialOwner);
             const nameOf = new Map(channels.map(c => [c.id, c.name]));
             return assets
@@ -8455,7 +8456,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           assetAction: async (id: string, action: 'block' | 'unblock' | 'delete' | 'motif' | 'describe' | 'pin' | 'unpin', extra?: Record<string, unknown>) => {
             try {
               if (action === 'delete') {
-                const asset = (await socialRepo.listMediaAssets(socialOwner, { limit: 500 })).find(a => a.id === id);
+                const asset = (await socialRepo.listMediaAssets(socialOwner, { limit: 500, kind: 'all' })).find(a => a.id === id);
                 if (asset) {
                   const { unlink } = await import('node:fs/promises');
                   await unlink(asset.path).catch(() => { /* Datei ggf. schon weg */ });
@@ -8533,6 +8534,32 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             try {
               const b64 = typeof body.data === 'string' ? body.data : '';
               if (!b64) return { success: false, error: 'data (Base64) erforderlich.' };
+              // v1086 — Video-Upload in die Bibliothek (mp4; Werkstatt-Baustein)
+              if (body.kind === 'video') {
+                const vbuf = Buffer.from(b64.replace(/^data:video\/\w+;base64,/, ''), 'base64');
+                if (vbuf.length < 10_000 || vbuf.length > 200_000_000) return { success: false, error: 'Video muss zwischen 10 KB und 200 MB groß sein.' };
+                // mp4/mov: ftyp-Box in den ersten Bytes (Offset 4)
+                if (vbuf.subarray(4, 8).toString('latin1') !== 'ftyp') return { success: false, error: 'Nur MP4/MOV (ftyp-Container).' };
+                const path = await import('node:path');
+                const { writeFile, mkdir } = await import('node:fs/promises');
+                const videoDir = path.resolve(path.dirname(this.config.storage.path), 'social-videos');
+                await mkdir(videoDir, { recursive: true });
+                const file = path.join(videoDir, `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
+                await writeFile(file, vbuf);
+                // Dauer best-effort per ffprobe (fehlt es, bleibt sie leer)
+                let durationSec: number | undefined;
+                try {
+                  const { execFile } = await import('node:child_process');
+                  const { promisify } = await import('node:util');
+                  const out = await promisify(execFile)('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeout: 15_000 });
+                  const d = Number(out.stdout.trim());
+                  if (Number.isFinite(d) && d > 0) durationSec = Math.round(d * 10) / 10;
+                } catch { /* optional */ }
+                const motif = typeof body.motif === 'string' && body.motif.trim().length >= 5
+                  ? body.motif.trim() : `Video (hochgeladen${typeof body.file_name === 'string' && body.file_name ? `: ${String(body.file_name).slice(0, 80)}` : ''})`;
+                const asset = await socialRepo.createMediaAsset(socialOwner, { path: file, motif, kind: 'video', model: 'upload', ...(durationSec !== undefined ? { durationSec } : {}) });
+                return { success: true, data: { id: asset.id, basename: path.basename(file), durationSec } };
+              }
               const buf = Buffer.from(b64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
               if (buf.length < 100 || buf.length > 8_000_000) return { success: false, error: 'Bild muss zwischen 100 B und 8 MB groß sein.' };
               const isPng = buf[0] === 0x89 && buf[1] === 0x50;
@@ -8559,11 +8586,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               await mkdir(mediaDir, { recursive: true });
               const file = path.join(mediaDir, `asset-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${isPng ? 'png' : 'jpg'}`);
               await writeFile(file, buf);
-              const motif = typeof body.motif === 'string' && body.motif.trim().length >= 5
-                ? body.motif.trim() : 'Termin-Vorlage (hochgeladen)';
-              const asset = await socialRepo.createMediaAsset(socialOwner, { path: file, motif });
-              await socialRepo.setMediaAssetPinned(socialOwner, asset.id, true);
-              return { success: true, data: { id: asset.id, basename: path.basename(file) } };
+              // v1086 — purpose 'library': normales Bibliotheks-Bild (ohne Pin),
+              // Motiv kommt per Vision-Beschreibung, wenn keines mitgegeben wurde.
+              // Default bleibt die v1041-Termin-Vorlage (gepinnt).
+              const isLibrary = body.purpose === 'library';
+              let motif = typeof body.motif === 'string' && body.motif.trim().length >= 5
+                ? body.motif.trim() : (isLibrary ? '' : 'Termin-Vorlage (hochgeladen)');
+              const asset = await socialRepo.createMediaAsset(socialOwner, { path: file, motif: motif || 'Bild (hochgeladen)', model: 'upload' });
+              if (!isLibrary) await socialRepo.setMediaAssetPinned(socialOwner, asset.id, true);
+              if (isLibrary && !motif) {
+                try {
+                  const described = await describeAssetMotif(file);
+                  if (described) { await socialRepo.updateMediaAssetMotif(socialOwner, asset.id, described); motif = described; }
+                } catch { /* Beschreibung best-effort — 🔍 holt sie nach */ }
+              }
+              return { success: true, data: { id: asset.id, basename: path.basename(file), ...(motif ? { motif } : {}) } };
             } catch (err) {
               return { success: false, error: (err as Error).message };
             }
@@ -8696,7 +8733,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const mediaDir = path.resolve(path.dirname(this.config.storage.path), 'social-media');
             try {
               const { readFile } = await import('node:fs/promises');
-              let data: Buffer = await readFile(path.join(mediaDir, safe));
+              // v1086 — Videos (Reels/Clips/Uploads) liegen in social-videos;
+              // Bilder wie bisher in social-media. Gleiche Route, beide Orte.
+              const videoDir = path.resolve(path.dirname(this.config.storage.path), 'social-videos');
+              let data: Buffer = await readFile(path.join(mediaDir, safe))
+                .catch(() => readFile(path.join(videoDir, safe)));
               const mimeType = safe.endsWith('.png') ? 'image/png'
                 : safe.endsWith('.jpg') || safe.endsWith('.jpeg') ? 'image/jpeg'
                 : safe.endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream';

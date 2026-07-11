@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1086] - 2026-07-10
+
+### Added — Video-Bibliothek, Werkstatt Teil 1 (v1086)
+- **Die Bibliothek kennt jetzt Videos**: Neuer Tab „🎬 Videos" neben den Bildern — jedes gerenderte Reel und jedes Studio-Video landet automatisch dort (mit Dauer, Herkunft und Motiv), inklusive Vorschau-Player, Pinnen/Sperren/Löschen und editierbarer Beschreibung. Grundlage für „Beitrag aus Video" und den Alfred-Schnitt (folgt).
+- **Eigene Videos hochladen** (mp4/mov bis 200 MB): Button „⬆️ Video hochladen" im Videos-Tab; die Dauer wird automatisch ermittelt.
+- **Eigene Bilder in die Bibliothek laden**: Button „⬆️ Bild hochladen" im Bilder-Tab — Alfred beschreibt das Motiv automatisch per Vision-KI; das Bild steht danach für Wiederverwendung, Stil-Referenz und Videos zur Verfügung (anders als die Termin-Vorlage aus v1041 ohne Pin).
+- Migration: `social_media_assets` bekommt `kind` (image/video) und `duration_sec` (SQLite v121 / PG v125). Bestehende Bild-Mechanik (Wiederverwendungs-Pool, Duplikat-Aufräumen, Stil-Referenz) bleibt unverändert bild-only.
+
 ## [0.19.0-multi-ha.1085] - 2026-07-10
 
 ### Added — YouTube-Eigenproduktion, Stufe A (v1085)

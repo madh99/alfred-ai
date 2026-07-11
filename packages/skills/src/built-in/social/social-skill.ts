@@ -1305,6 +1305,15 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       ...(clips.length > 0 ? { aiClips: clips.length } : {}),
       ...(clipNotes.length > 0 ? { aiClipNotes: clipNotes } : {}),
     }).catch(() => { /* optional */ });
+    // v1086 — jedes gerenderte Reel landet in der Video-Bibliothek
+    // (Werkstatt-Baustein: wiederverwendbar für Beiträge/Schnitt)
+    const igFamily = typeof ig.config.family === 'string' && ig.config.family.trim()
+      ? `family:${ig.config.family.trim().toLowerCase()}` : (ig.projectId ? `project:${ig.projectId}` : undefined);
+    await this.repo.createMediaAsset(userId, {
+      channelId: ig.id, ...(igFamily ? { family: igFamily } : {}),
+      path: rendered.videoPath, motif: (leadItem.title ?? script).slice(0, 200),
+      kind: 'video', model: 'reel', format: '9:16', durationSec: rendered.durationSec,
+    }).catch(() => { /* Bibliothek best-effort */ });
 
     // v1056/v1076 — Zweitverwertung: DASSELBE gerenderte Video als
     // Reel-ENTWURF auf ALLEN video-fähigen Familien-Kanälen mit
@@ -2193,6 +2202,14 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     const result = await this.videoTools.render(item, channel, format, { music: this.reelMusicOpts(channel), ...(manualVoice ? { voiceId: manualVoice } : {}) });
     const media: ContentMedia[] = [...item.media, { type: 'video', source: 'generated', pathOrUrl: result.videoPath }];
     await this.repo.updateItemContent(userId, item.id, { media });
+    // v1086 — auch manuell gerenderte Videos landen in der Video-Bibliothek
+    const vidFamily = typeof channel.config.family === 'string' && channel.config.family.trim()
+      ? `family:${channel.config.family.trim().toLowerCase()}` : (channel.projectId ? `project:${channel.projectId}` : undefined);
+    await this.repo.createMediaAsset(userId, {
+      channelId: channel.id, ...(vidFamily ? { family: vidFamily } : {}),
+      path: result.videoPath, motif: (item.title ?? item.body).slice(0, 200),
+      kind: 'video', model: 'slideshow', format, durationSec: result.durationSec,
+    }).catch(() => { /* Bibliothek best-effort */ });
     const today = new Date().toISOString().slice(0, 10);
     const todayUsed = (await this.repo.listMetrics(channel.id, { kind: 'gen_video', sinceDate: today }))
       .find(m => m.date === today && !m.itemId)?.value ?? 0;

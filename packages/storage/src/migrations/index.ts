@@ -2755,4 +2755,12 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE social_media_assets ADD COLUMN model TEXT`);
     },
   },
+  {
+    version: 121,
+    description: 'v1086 — Video-Bibliothek: kind (image|video) + duration_sec auf social_media_assets (SQLite-Spiegel zu PG v125).',
+    up(db) {
+      db.exec(`ALTER TABLE social_media_assets ADD COLUMN kind TEXT NOT NULL DEFAULT 'image'`);
+      db.exec(`ALTER TABLE social_media_assets ADD COLUMN duration_sec REAL`);
+    },
+  },
 ];

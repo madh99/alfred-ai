@@ -116,6 +116,10 @@ export interface MediaAsset {
   useCount: number;
   /** v1072 — womit das Bild erzeugt wurde (z.B. gpt-image-1, gemini-3.1-flash-image). */
   model?: string;
+  /** v1086 — Video-Bibliothek: 'image' (Default) oder 'video' (Reels, KI-Clips, Uploads). */
+  kind: 'image' | 'video';
+  /** v1086 — Videolänge in Sekunden (nur kind=video, best-effort). */
+  durationSec?: number;
   /** v1039 — letzte Nutzung JE KANAL (channelId → ISO): der Reuse-Cooldown gilt pro Kanal, nicht global. */
   channelUses?: Record<string, string>;
   /** v1014 — von der Wiederverwendung ausgeschlossen (UI: „Sperren"). */
@@ -320,24 +324,34 @@ export class SocialRepository {
 
   async createMediaAsset(userId: string, input: {
     channelId?: string; family?: string; path: string; motif: string; style?: string; format?: string; model?: string;
+    /** v1086 — Video-Bibliothek: 'video' für Reels/KI-Clips/Uploads (Default 'image'). */
+    kind?: 'image' | 'video'; durationSec?: number;
   }): Promise<MediaAsset> {
     const now = new Date().toISOString();
     const id = randomUUID();
     const channelUses = input.channelId ? { [input.channelId]: now } : undefined;
+    const kind = input.kind === 'video' ? 'video' : 'image';
     await this.db.execute(
-      `INSERT INTO social_media_assets (id, user_id, channel_id, family, path, motif, style, format, model, last_used_at, use_count, channel_uses, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO social_media_assets (id, user_id, channel_id, family, path, motif, style, format, model, kind, duration_sec, last_used_at, use_count, channel_uses, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
       [id, userId, input.channelId ?? null, input.family ?? null, input.path, input.motif.slice(0, 500),
-        input.style?.slice(0, 300) ?? null, input.format ?? null, input.model ?? null, now, channelUses ? JSON.stringify(channelUses) : null, now],
+        input.style?.slice(0, 300) ?? null, input.format ?? null, input.model ?? null, kind,
+        typeof input.durationSec === 'number' && Number.isFinite(input.durationSec) ? input.durationSec : null,
+        now, channelUses ? JSON.stringify(channelUses) : null, now],
     );
-    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, model: input.model, lastUsedAt: now, useCount: 1, channelUses, blocked: false, pinned: false, createdAt: now };
+    return { id, userId, channelId: input.channelId, family: input.family, path: input.path, motif: input.motif.slice(0, 500), style: input.style, format: input.format, model: input.model, kind, ...(typeof input.durationSec === 'number' ? { durationSec: input.durationSec } : {}), lastUsedAt: now, useCount: 1, channelUses, blocked: false, pinned: false, createdAt: now };
   }
 
-  async listMediaAssets(userId: string, opts?: { family?: string; channelId?: string; limit?: number }): Promise<MediaAsset[]> {
+  async listMediaAssets(userId: string, opts?: { family?: string; channelId?: string; limit?: number;
+    /** v1086 — Default 'image': ALLE Bestands-Aufrufer (Wiederverwendungs-Pool, Dedup, Stil-Referenz) erwarten Bilder; 'video'/'all' explizit. */
+    kind?: 'image' | 'video' | 'all';
+  }): Promise<MediaAsset[]> {
     const where = ['user_id = ?'];
     const params: unknown[] = [userId];
     if (opts?.family) { where.push('family = ?'); params.push(opts.family); }
     if (opts?.channelId) { where.push('channel_id = ?'); params.push(opts.channelId); }
+    const kind = opts?.kind ?? 'image';
+    if (kind !== 'all') { where.push('kind = ?'); params.push(kind); }
     params.push(opts?.limit ?? 200);
     const rows = await this.db.query(`SELECT * FROM social_media_assets WHERE ${where.join(' AND ')} ORDER BY last_used_at ASC LIMIT ?`, params) as Record<string, unknown>[];
     return rows.map(r => ({
@@ -348,6 +362,8 @@ export class SocialRepository {
       style: r.style ? String(r.style) : undefined,
       format: r.format ? String(r.format) : undefined,
       model: r.model ? String(r.model) : undefined,
+      kind: (r.kind === 'video' ? 'video' : 'image') as 'image' | 'video',
+      ...(r.duration_sec !== null && r.duration_sec !== undefined ? { durationSec: Number(r.duration_sec) } : {}),
       lastUsedAt: String(r.last_used_at), useCount: Number(r.use_count ?? 1),
       channelUses: parseChannelUses(r.channel_uses),
       blocked: Number(r.blocked ?? 0) === 1, pinned: Number(r.pinned ?? 0) === 1, createdAt: String(r.created_at),

@@ -637,10 +637,17 @@ export class AlfredClient {
   }
 
   // v1041 — Bild (Base64) als gepinnte Termin-Vorlage in die Bibliothek laden
-  async socialUploadAsset(dataBase64: string, motif?: string): Promise<{ success: boolean; error?: string; data?: { id: string; basename: string } }> {
+  // v1086 — opts: kind 'video' (mp4 in die Video-Bibliothek) bzw. purpose
+  // 'library' (Bild OHNE Pin, Motiv per Vision-Beschreibung)
+  async socialUploadAsset(dataBase64: string, motif?: string, opts?: { kind?: 'video'; fileName?: string; purpose?: 'library' }): Promise<{ success: boolean; error?: string; data?: { id: string; basename: string; motif?: string; durationSec?: number } }> {
     const res = await fetch(`${this.baseUrl}/api/social/assets/upload`, {
       method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: dataBase64, ...(motif ? { motif } : {}) }),
+      body: JSON.stringify({
+        data: dataBase64, ...(motif ? { motif } : {}),
+        ...(opts?.kind ? { kind: opts.kind } : {}),
+        ...(opts?.fileName ? { file_name: opts.fileName } : {}),
+        ...(opts?.purpose ? { purpose: opts.purpose } : {}),
+      }),
     });
     if (!res.ok && res.status !== 400) throw new Error(`Social asset-upload: HTTP ${res.status}`);
     return res.json();
@@ -2874,6 +2881,10 @@ export interface SocialAssetItem {
   model?: string;
   /** v1038 — Stamm-Bild: bevorzugter Wiederverwendungs-Pool */
   pinned?: boolean;
+  /** v1086 — Video-Bibliothek: 'image' (Default) oder 'video' */
+  kind?: 'image' | 'video';
+  /** v1086 — Videolänge in Sekunden (nur kind=video) */
+  durationSec?: number;
   createdAt: string;
 }
 
