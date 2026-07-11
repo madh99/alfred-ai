@@ -2410,7 +2410,20 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
 
     const format = input.format === '16:9' ? '16:9' as const : '9:16' as const;
     // v1059 — auch manuell gerenderte Videos bekommen das Musik-Bett
-    const manualVoice = typeof channel.config.reel_voice_id === 'string' && channel.config.reel_voice_id.trim() ? channel.config.reel_voice_id.trim() : undefined;
+    // v1091 — Stimmen-Kaskade: eigener Kanal → Familien-Instagram (eine
+    // Marke, eine Stimme; Realfall 11.07.: YouTube-Videos sprachen mit der
+    // Standard-Stimme, weil nur der IG-Kanal reel_voice_id hatte) → Standard.
+    let manualVoice = typeof channel.config.reel_voice_id === 'string' && channel.config.reel_voice_id.trim() ? channel.config.reel_voice_id.trim() : undefined;
+    if (!manualVoice) {
+      const famOf = (c: SocialChannel): string | null => {
+        if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
+        return c.projectId ? `project:${c.projectId}` : null;
+      };
+      const familyIg = (await this.repo.listChannels(userId, 'active')).find(c =>
+        c.platform === 'instagram' && famOf(c) !== null && famOf(c) === famOf(channel)
+        && typeof c.config.reel_voice_id === 'string' && c.config.reel_voice_id.trim());
+      if (familyIg) manualVoice = (familyIg.config.reel_voice_id as string).trim();
+    }
     const result = await this.videoTools.render(item, channel, format, { music: this.reelMusicOpts(channel), ...(manualVoice ? { voiceId: manualVoice } : {}) });
     const media: ContentMedia[] = [...item.media, { type: 'video', source: 'generated', pathOrUrl: result.videoPath }];
     await this.repo.updateItemContent(userId, item.id, { media });

@@ -480,6 +480,7 @@ describe('SocialSkill v938 — Video-Pipeline', () => {
         ? [{ date: '2026-07-01', kind: 'gen_video', value: videosUsed }] : []),
       upsertMetric: vi.fn(async () => {}),
       createMediaAsset: vi.fn(async () => ({ id: 'asset-1' })), // v1086 — Video-Bibliothek
+      listChannels: vi.fn(async () => [channel]), // v1091 — Familien-Stimmen-Fallback
     } as unknown as SocialRepository;
   }
 
@@ -498,6 +499,22 @@ describe('SocialSkill v938 — Video-Pipeline', () => {
     const media = (repo.updateItemContent as any).mock.calls[0][2].media;
     expect(media.some((m: any) => m.type === 'video' && m.source === 'generated')).toBe(true);
     expect((repo.upsertMetric as any).mock.calls[0][1]).toMatchObject({ kind: 'gen_video', value: 1 });
+  });
+
+  it('v1091: render_video ohne eigene Stimme → Familien-Instagram-Stimme (eine Marke, eine Stimme)', async () => {
+    const yt = makeChannel('youtube');
+    (yt as any).projectId = 'p1';
+    const ig = makeChannel('instagram', { reel_voice_id: 'voice-eins' });
+    (ig as any).id = 'ch-ig'; (ig as any).projectId = 'p1';
+    const item = makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: '/data/img1.png' }] });
+    const repo = makeVideoRepo(yt, item);
+    (repo.listChannels as any) = vi.fn(async () => [yt, ig]);
+    const skill = new SocialSkill(repo);
+    const render = vi.fn(async () => ({ videoPath: '/data/social-videos/v.mp4', durationSec: 30 }));
+    skill.setVideoTools({ render });
+    const r = await skill.execute({ action: 'render_video', item_id: 'i1', format: '16:9' }, CTX);
+    expect(r.success).toBe(true);
+    expect(render).toHaveBeenCalledWith(item, yt, '16:9', { music: {}, voiceId: 'voice-eins' });
   });
 
   it('render_video: Monats-Budget erreicht → verweigert', async () => {

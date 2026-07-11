@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1091] - 2026-07-11
+
+### Fixed
+- **Sprecherstimme gilt jetzt familienweit**: YouTube-Videos sprachen mit der Standard-Stimme, weil `reel_voice_id` nur am Instagram-Kanal gesetzt war. Neue Stimmen-Kaskade beim Video-Rendern: eigene Kanal-Stimme → Stimme des Familien-Instagram-Kanals (eine Marke, eine Stimme) → Standard. Zusätzlich zeigt die Kanal-Konfiguration von YouTube-Kanälen jetzt das 🎙️-Sprecherstimmen-Dropdown (Sektion „Eigenproduktion"); die Stimmen-Verwaltung bleibt im Instagram-Kanal.
+
 ## [0.19.0-multi-ha.1090] - 2026-07-11
 
 ### Fixed

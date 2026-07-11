@@ -1754,6 +1754,15 @@ export function SocialPage() {
                           </select>
                         </div>
                       )}
+                      {/* v1091 — Sprecherstimme auch für YouTube-Kanäle (Verwaltung der Stimmen: IG-Kanal → Reels & Video) */}
+                      <div>
+                        <label className="text-[11px] text-gray-500" title="Stimme des Video-Sprechers. Ohne Auswahl gilt automatisch die Stimme des Familien-Instagram-Kanals — eine Marke, eine Stimme. Stimmen anlegen und löschen: im Instagram-Kanal unter Reels und Video.">🎙️ Sprecherstimme</label>
+                        <select value={settingsDraft.reelVoiceId} onChange={e => setSettingsDraft(d => ({ ...d, reelVoiceId: e.target.value }))}
+                          className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1">
+                          <option value="">Wie Familien-Instagram (Fallback)</option>
+                          {voices.map(v => <option key={v.id} value={v.id}>{v.name}{v.gender ? ` (${v.gender})` : ''}</option>)}
+                        </select>
+                      </div>
                     </div>
                   )}
                   {/* v1081 — rest: Reel-Video nachträglich an den Lead-Artikel hängen */}
