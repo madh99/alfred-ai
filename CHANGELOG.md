@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1097] - 2026-07-11
+
+### Added — GPT-5.6-Familie (Luna/Terra/Sol) unterstützt (v1097)
+- **OpenAIs neue Modellfamilie ist einsatzbereit** (live gegen die API verprobt): GPT-5.6 ist eine Reasoning-Familie — `temperature` wird von der API abgelehnt und daher weggelassen, `reasoning_effort` (none…xhigh) wird durchgereicht, `max_completion_tokens` verwendet, und die bekannte Unverträglichkeit von Function-Tools mit reasoning_effort in chat/completions bleibt abgefangen. (Das neue Effort „max" und der Ultra-Modus existieren nur in der Responses-API und sind bewusst außen vor.)
+- Stammdaten hinterlegt: Kontext 1.050.000/128.000 je Stufe; Preise Sol $5/$30, Terra $2.50/$15, Luna $1/$6 pro MTok (Kosten-Dashboard zeigt keine $0 mehr). Nutzung wie gewohnt per `model: gpt-5.6-sol|terra|luna` in der Provider-Config.
+
 ## [0.19.0-multi-ha.1096] - 2026-07-11
 
 ### Fixed — „Kein Video am Item" auf YouTube strukturell beseitigt (v1096)

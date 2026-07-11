@@ -218,12 +218,15 @@ export class OpenAIProvider extends LLMProvider {
 
   /**
    * Detect OpenAI reasoning models that use different API parameters.
-   * Matches o1*, o3*, o4*, gpt-5, gpt-5.0, gpt-5.1, gpt-5.5 — but NOT gpt-5.2/5.3/5.4
+   * Matches o1*, o3*, o4*, gpt-5, gpt-5.0, gpt-5.1, gpt-5.5, gpt-5.6 — but NOT gpt-5.2/5.3/5.4
+   * v1097: gpt-5.6 (Luna/Terra/Sol) live verprobt 11.07. — temperature wird abgelehnt,
+   * reasoning_effort none…xhigh ok (das neue Effort 'max' gibt es NUR in der Responses-API),
+   * Tools+reasoning_effort in chat/completions weiterhin unvereinbar (wie gpt-5.5).
    * (gpt-5.2 restored support for temperature and is a "chat" model;
    *  gpt-5.5 is a frontier reasoning model with reasoning_effort).
    */
   private isReasoningModel(): boolean {
-    return /^(o[1-9]|gpt-5($|[.-][015]))/.test(this.config.model);
+    return /^(o[1-9]|gpt-5($|[.-][0156]))/.test(this.config.model);
   }
 
   /**
