@@ -803,6 +803,56 @@ describe('v1087 — post_from_video (Beitrag aus Bibliotheks-Video)', () => {
   });
 });
 
+describe('v1096 — Publish-Sicherheitsnetz für Nur-Video-Kanäle', () => {
+  class VideoOnlyProvider extends FakeProvider {
+    override capabilities() { return { ...super.capabilities(), text: false, video: true }; }
+  }
+
+  function netSetup(item: ReturnType<typeof makeItem>) {
+    const yt = makeChannel({ id: 'ch-yt', platform: 'youtube', name: 'YT', config: { auto_video_format: '16:9' } });
+    const { skill, spies } = makeSkill(yt, item);
+    skill.registerProvider(new VideoOnlyProvider('youtube'));
+    (spies as any).reschedule = vi.fn(async () => true);
+    const render = vi.fn(async () => ({ videoPath: '/tmp/v.mp4', durationSec: 30 }));
+    skill.setVideoTools({ render } as any);
+    return { skill, spies, render };
+  }
+
+  it('kein Video + Bild vorhanden → Render angestoßen, +15 min umterminiert, Versuch gezählt', async () => {
+    const item = makeItem({ id: 'item-yt-1', channelId: 'ch-yt', status: 'approved', media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/b.png' }] });
+    const { skill, spies } = netSetup(item);
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-yt-1' }, CTX);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('Video wird gerendert');
+    expect((r.data as any)?.permanent).toBeUndefined(); // kein Dauer-Fehler
+    expect((spies.mergePerformance as any).mock.calls.some((c: any[]) => c[2]?.autoVideoAttempts === 1)).toBe(true);
+    expect((spies as any).reschedule).toHaveBeenCalled();
+  });
+
+  it('2 Versuche verbraucht → klarer Dauer-Fehler; ohne Bild → sofort Dauer-Fehler', async () => {
+    const worn = makeItem({ id: 'item-yt-1', channelId: 'ch-yt', status: 'approved', performance: { autoVideoAttempts: 2 }, media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/b.png' }] });
+    const a = netSetup(worn);
+    const r1 = await a.skill.execute({ action: 'publish_now', item_id: 'item-yt-1' }, CTX);
+    expect(r1.success).toBe(false);
+    expect((r1.data as any)?.permanent).toBe(true);
+    expect(r1.error).toContain('2×');
+
+    const noImage = makeItem({ id: 'item-yt-1', channelId: 'ch-yt', status: 'approved', media: [] });
+    const b = netSetup(noImage);
+    const r2 = await b.skill.execute({ action: 'publish_now', item_id: 'item-yt-1' }, CTX);
+    expect(r2.success).toBe(false);
+    expect((r2.data as any)?.permanent).toBe(true);
+    expect(r2.error).toContain('weder Video noch lokales Bild');
+  });
+
+  it('mit Video → Netz greift nicht, Publish läuft normal durch', async () => {
+    const withVideo = makeItem({ id: 'item-yt-1', channelId: 'ch-yt', status: 'approved', media: [{ type: 'video', source: 'generated', pathOrUrl: '/tmp/v.mp4' }] });
+    const { skill } = netSetup(withVideo);
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-yt-1' }, CTX);
+    expect(r.success).toBe(true);
+  });
+});
+
 describe('v1024 — plan_story (Ad-hoc-Story auf User-Zuruf)', () => {
   it('unverdrahtet → Fehler; ohne Stoff → Hinweis; mit Stoff → Planner korrekt aufgerufen', async () => {
     const channel = makeChannel();

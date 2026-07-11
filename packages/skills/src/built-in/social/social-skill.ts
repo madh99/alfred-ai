@@ -772,6 +772,33 @@ export class SocialSkill extends Skill {
       }
     }
 
+    // v1096 — Sicherheitsnetz für NUR-Video-Kanäle (YouTube): fehlt das Video,
+    // wird es hier — dem einzigen Nadelöhr aller Publish-Pfade (Formate,
+    // crosspost, add_content, künftige) — nachgerendert statt zu scheitern:
+    // Render asynchron anstoßen, Beitrag +15 min umterminieren; max. 2
+    // Versuche (performance.autoVideoAttempts), danach klarer Dauer-Fehler.
+    {
+      const caps = this.providers.get(channel.platform)?.capabilities();
+      if (caps && caps.text === false && caps.video === true && !item.media.some(m => m.type === 'video')) {
+        const attempts = typeof item.performance?.autoVideoAttempts === 'number' ? item.performance.autoVideoAttempts : 0;
+        if (!item.media.some(m => m.type === 'image' && !m.pathOrUrl.startsWith('http'))) {
+          return { success: false, data: { permanent: true }, error: `${channel.name} kann nur Video — der Beitrag hat weder Video noch lokales Bild zum Rendern. Bild anhängen (attach_media) oder Beitrag ablehnen.` };
+        }
+        if (attempts >= 2) {
+          return { success: false, data: { permanent: true }, error: `${channel.name}: Video-Rendern ist ${attempts}× fehlgeschlagen — render_video manuell prüfen (ffmpeg/Logs).` };
+        }
+        if (!this.videoTools) {
+          return { success: false, data: { permanent: true }, error: `${channel.name} kann nur Video, die Video-Pipeline ist aber nicht verfügbar (ffmpeg fehlt).` };
+        }
+        await this.repo.mergePerformance(userId, item.id, { autoVideoAttempts: attempts + 1 }).catch(() => { /* optional */ });
+        const fmt = channel.config.auto_video_format === '9:16' ? '9:16' : '16:9';
+        void this.renderVideo(userId, { item_id: item.id, format: fmt }).catch(() => { /* Zähler begrenzt die Versuche */ });
+        const at = new Date(Date.now() + 15 * 60_000).toISOString();
+        await this.repo.reschedule(userId, item.id, at, ['approved', 'scheduled', 'draft']).catch(() => { /* Status bleibt — Engine kommt wieder */ });
+        return { success: false, error: `Video wird gerendert (${fmt}) — Beitrag auf ${channel.name} ist auf +15 Minuten umterminiert (Versuch ${attempts + 1}/2).` };
+      }
+    }
+
     // In den approved-Zustand bringen (falls noch draft/scheduled)
     let current = item;
     if (current.status === 'draft' || current.status === 'scheduled' || current.status === 'failed') {

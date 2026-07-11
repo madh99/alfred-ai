@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1096] - 2026-07-11
+
+### Fixed — „Kein Video am Item" auf YouTube strukturell beseitigt (v1096)
+- **Story-Beiträge auf YouTube rendern jetzt automatisch**: Redaktionskonferenz, News-Desk und Ad-hoc-Stories weisen YouTube-Kanälen Beiträge zu — mit `auto_video` werden sie sofort fertig gerendert (wie die Studio-Konzepte), der Entwurf liegt **mit Video** in der Freigabe.
+- **Publish-Sicherheitsnetz** für Nur-Video-Kanäle: Erreicht ein Beitrag ohne Video den Publish (egal aus welchem Pfad — Formate, Crosspost, manuell angelegt, künftige), wird das Video asynchron nachgerendert und der Beitrag um 15 Minuten verschoben statt zu scheitern; maximal 2 Versuche, danach ein klarer Dauer-Fehler. Ohne renderbares Bild gibt es sofort eine verständliche Meldung. Der Autonomie-Modus erzeugt dabei keinen Freigabe-Lärm.
+
 ## [0.19.0-multi-ha.1095] - 2026-07-11
 
 ### Added — KI-Clips in der Eigenproduktion (v1095)

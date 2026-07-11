@@ -279,8 +279,12 @@ export class PublishingEngine {
               // Slot freigeben, damit der spätere manuelle/Engine-Publish nicht blockiert
               await this.releaseItemSlot(`social-item:${item.id}`);
               // v1077 — Tages-Limit: still auf morgen früh statt Freigabe-Lärm
+              // v1096 — „Video wird gerendert": der Skill hat bereits +15 min
+              // umterminiert — kein Nachfragen, die Engine kommt einfach wieder
               if (/Tages-Limit/.test(r.error ?? '')) {
                 await this.deferToNextWindow(item, channel);
+              } else if (/Video wird gerendert/.test(r.error ?? '')) {
+                /* bereits umterminiert */
               } else if (await this.askApproval(item, channel, `Autonom-Publish blockiert: ${r.error ?? 'Leitplanke'}`)) result.asked++;
             }
           }

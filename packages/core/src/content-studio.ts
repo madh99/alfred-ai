@@ -1273,6 +1273,18 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
       ...(idea.einlass ? { einlass: idea.einlass } : {}),
     });
     if (!story.terminBis) await this.storyDeduper?.embedStory(item.id, { title: idea.title, body: idea.body });
+    // v1096 — Nur-Video-Kanäle (YouTube) mit auto_video: Konferenz-/News-Desk-
+    // und Ad-hoc-Story-Beiträge sofort fertig rendern, damit der Entwurf MIT
+    // Video in der Freigabe liegt (Realfall 11.07.: Story-Zuweisungen an
+    // YouTube scheiterten am Slot mit „Kein Video am Item" — der v1085-Hook
+    // deckte nur Studio-Konzepte). Das Publish-Sicherheitsnetz (Skill) fängt
+    // zusätzlich alle übrigen Pfade.
+    const itemMedia = item.media ?? [];
+    if (channel.platform === 'youtube' && channel.config.auto_video === true && this.videoRenderer && itemMedia.some(m => m.type === 'image')) {
+      const fmt = channel.config.auto_video_format === '9:16' ? '9:16' as const : '16:9' as const;
+      void this.videoRenderer(item.id, fmt).catch(err =>
+        this.logger.warn({ item: item.id, err: (err as Error).message }, 'v1096 assignment video render failed (Publish-Netz greift)'));
+    }
     return item;
   }
 
