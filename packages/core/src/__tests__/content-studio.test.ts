@@ -1174,7 +1174,9 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(ContentStudio.shelfLifeHours('news', { config: { shelf_life_hours: { news: 24 } } })).toBe(24);
     expect(ContentStudio.shelfLifeHours('evergreen', { config: {} })).toBeUndefined();
     expect(ContentStudio.shelfLifeHours('termin', { config: {} })).toBeUndefined();
-    expect(ContentStudio.shelfLifeHours(undefined, { config: {} })).toBeUndefined();
+    // v1102 — Items ohne art-Marker haben jetzt einen 7-Tage-Default statt
+    // GAR KEINER Haltbarkeit (Realfall Glasner: 03.07. erstellt, 12.07. geplant)
+    expect(ContentStudio.shelfLifeHours(undefined, { config: {} })).toBe(168);
   });
 
   it('v997: swapWithEvergreen — Evergreen weicht auf den späten Slot, sein früher Slot wird frei', async () => {

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1102] - 2026-07-12
+
+### Added — Redaktionslinie & Frische-Review (v1102)
+- **Redaktionslinie je Kanal-Familie**: Ein kurzes Wochenfokus-Memo (`config.redaktionslinie`, auf einem beliebigen Familien-Kanal, per Zuruf über `update_channel` änderbar) fließt jetzt **verbindlich** in die Redaktionskonferenz und alle Schreib-Prompts der Familie ein und steht prominent im Wochen-Report — damit haben alle Kanäle eine gemeinsame Linie statt täglicher Ad-hoc-Entscheidungen.
+- **Frische-Review handelt**: Der Plan-Review prüfte geplante Beiträge schon bisher per LLM gegen die aktuelle Nachrichtenlage, sprach aber nur Empfehlungen aus. Jetzt werden **überholte, noch nicht freigegebene** Beiträge automatisch zurückgezogen — der Slot wird vom nächsten Studio-Lauf mit aktuellem Stoff neu besetzt. Freigegebene Inhalte bleiben unantastbar (weiterhin nur Empfehlung).
+
+### Fixed — Veraltete Planung strukturell unterbunden (v1102)
+- **Shelf-Life-Lücke geschlossen**: Beiträge ohne Art-Marker hatten bisher **gar keine** Haltbarkeit — ein Beitrag vom 03.07. stand am 12.07. noch im Plan (Realfall Glasner). Jetzt gilt für sie ein 7-Tage-Default (übersteuerbar via `shelf_life_hours.default`); beim Fälligwerden Überaltertes wird zurückgezogen statt gepostet.
+- **Evergreen-Tagesdeckel**: Zeitlose Füll-Posts sind auf `evergreen_max_per_day` (Default 2) pro Kanal und Tag gedeckelt — die Slot-Vergabe weicht auf Folgetage aus oder produziert den Füller gar nicht. Der Vorrat kann die Aktualität nicht mehr dominieren; explizite Wochen-Formate sind nicht betroffen.
+
 ## [0.19.0-multi-ha.1101] - 2026-07-12
 
 ### Fixed — Reel-Zweitverwertung wirkt nicht mehr wie ein Doppel-Post (v1101)

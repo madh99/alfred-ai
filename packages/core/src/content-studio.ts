@@ -879,7 +879,9 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       const ch = channelById.get(item.channelId);
       const shelf = ch ? ContentStudio.shelfLifeHours(art, ch) : undefined;
       if (shelf === undefined) continue;
-      const deadline = new Date(Date.parse(item.createdAt) + shelf * 3_600_000).toISOString();
+      const createdMs = Date.parse(item.createdAt);
+      if (!Number.isFinite(createdMs)) continue; // defensiv (v1102: auch artlose Items haben jetzt Haltbarkeit)
+      const deadline = new Date(createdMs + shelf * 3_600_000).toISOString();
       if (item.scheduledAt > deadline) {
         result.flagged++;
         notes.push(`⏳ Überaltert (${art}, Haltbarkeit ${shelf}h): „${(item.title ?? item.body).slice(0, 60)}" [${item.id.slice(0, 8)}] — Slot ${formatLocalDateTime(item.scheduledAt)}, erzeugt ${formatLocalDateTime(item.createdAt)}. Empfehlung: vorziehen oder ablehnen.`);
@@ -915,6 +917,18 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
           if (typeof v.index !== 'number' || !upcoming[v.index]) continue;
           const item = upcoming[v.index];
           if (v.verdict === 'ueberholt') {
+            // v1102 — Frische-Review HANDELT bei nicht freigegebenen Beiträgen:
+            // überholte scheduled-Items werden zurückgezogen, der Slot wird vom
+            // nächsten Studio-Lauf neu besetzt. Freigegebene Inhalte bleiben
+            // unantastbar (nur Empfehlung) — bewusste v995-Regel.
+            if (item.status === 'scheduled') {
+              try {
+                await this.socialRepo.transition(this.ownerUserId, item.id, 'rejected');
+                result.expired++;
+                notes.push(`🗑 Überholt (${String(v.grund ?? '')}) → zurückgezogen, Slot wird neu besetzt: „${(item.title ?? item.body).slice(0, 60)}" [${item.id.slice(0, 8)}]`);
+                continue;
+              } catch { /* Einzelfehler → fällt auf die Empfehlung zurück */ }
+            }
             result.flagged++;
             notes.push(`🗑 Überholt (${String(v.grund ?? '')}): „${(item.title ?? item.body).slice(0, 60)}" [${item.id.slice(0, 8)}] — Empfehlung: ablehnen.`);
           } else if (v.verdict === 'aktualisieren') {
@@ -968,16 +982,16 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
     // Kanäle über den LLM-Namen; exakter String-Vergleich verlor Zuweisungen
     // bei minimalen Abweichungen still.
     const capKey = (s: string) => s.trim().toLowerCase();
-    const capacity = new Map<string, { channel: SocialChannel; slotPool: string[]; needed: number; created: number }>();
+    const capacity = new Map<string, { channel: SocialChannel; slotPool: string[]; needed: number; created: number; planned: ContentItem[]; egDays: Map<string, number> }>();
     for (const channel of channels) {
       await this.ensureTopic(channel);
       const planned = await this.socialRepo.listItems(this.ownerUserId, {
         channelId: channel.id, status: ['scheduled', 'approved', 'draft', 'idea'], limit: 100,
       });
-      if (planned.length >= 30) { capacity.set(capKey(channel.name), { channel, slotPool: [], needed: 0, created: 0 }); continue; }
+      if (planned.length >= 30) { capacity.set(capKey(channel.name), { channel, slotPool: [], needed: 0, created: 0, planned, egDays: new Map() }); continue; }
       const slots = await this.trimSlotsToDailyBudget(channel, nextFreeSlots(channel, planned, Math.max(0, 30 - planned.length), now), planned);
       const backlog = planned.filter(i => (i.status === 'draft' || i.status === 'idea') && !i.scheduledAt).length;
-      capacity.set(capKey(channel.name), { channel, slotPool: [...slots], needed: Math.max(0, slots.length - backlog), created: 0 });
+      capacity.set(capKey(channel.name), { channel, slotPool: [...slots], needed: Math.max(0, slots.length - backlog), created: 0, planned, egDays: new Map() });
     }
     const totalNeeded = [...capacity.values()].reduce((s, c) => s + c.needed, 0);
 
@@ -1024,7 +1038,7 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
 KANÄLE DER FAMILIE:
 ${channelLines}
 
-${pbRules.length ? `PLAYBOOK (verbindliche Redaktionsregeln dieser Familie):\n${pbRules.join('\n')}\n\n` : ''}${dossier ? `THEMEN-DOSSIER:\n${dossier}\n` : ''}${blocked.length ? `BEREITS GEPLANT/VERÖFFENTLICHT — dieser Stoff ist GESPERRT (auch umformuliert):\n${[...new Set(blocked.map(b => b.title))].slice(0, 50).map(t => `- ${t}`).join('\n')}\n` : ''}
+${ContentStudio.linieOf(channels) ? `REDAKTIONSLINIE (verbindlich, vom Herausgeber — Stories und Gewichtung daran ausrichten):\n${ContentStudio.linieOf(channels)}\n\n` : ''}${pbRules.length ? `PLAYBOOK (verbindliche Redaktionsregeln dieser Familie):\n${pbRules.join('\n')}\n\n` : ''}${dossier ? `THEMEN-DOSSIER:\n${dossier}\n` : ''}${blocked.length ? `BEREITS GEPLANT/VERÖFFENTLICHT — dieser Stoff ist GESPERRT (auch umformuliert):\n${[...new Set(blocked.map(b => b.title))].slice(0, 50).map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge bis zu ${storyCount} STORIES. Regeln:
 - Eine STORY ist ein Stoff, den mehrere Kanäle in IHRER Rolle erzählen — nicht jeder Kanal braucht jede Story.
 - Je Story: genau EIN lead-Kanal (der ausführlichste, i.d.R. die Website), follow-Kanäle mit Zeitversatz in Stunden (typisch: Telegram +2, Instagram +6, Facebook +8; Termine/Eilmeldungen: alle 0).
@@ -1144,12 +1158,20 @@ Antworte NUR mit einem VALIDEN JSON-Array:
             slot = undefined; // Entwurf ohne Slot — Lead (suggest) ist noch nicht live
             awaitingLead = true;
           } else if (a.role === 'lead' || !leadSlot) {
-            slot = cap.slotPool.shift();
+            // v1102 — Evergreen-Tagesdeckel: Füller nehmen nur Slots an Tagen
+            // mit freier Evergreen-Kapazität (kein Tag frei → nicht produziert)
+            slot = cand.kind === 'evergreen'
+              ? this.pickEvergreenSlot(cap.channel, cap.slotPool, cap.planned, cap.egDays)
+              : cap.slotPool.shift();
           } else {
             const target = new Date(Date.parse(leadSlot) + a.offset * 3_600_000).toISOString();
-            const idx = cap.slotPool.findIndex(s => s >= target && (!myDeadline || s <= myDeadline));
-            if (idx >= 0) slot = cap.slotPool.splice(idx, 1)[0];
-            else if (myDeadline) slot = await this.swapWithEvergreen(cap.channel, myDeadline, cap.slotPool, target);
+            if (cand.kind === 'evergreen') {
+              slot = this.pickEvergreenSlot(cap.channel, cap.slotPool, cap.planned, cap.egDays, target);
+            } else {
+              const idx = cap.slotPool.findIndex(s => s >= target && (!myDeadline || s <= myDeadline));
+              if (idx >= 0) slot = cap.slotPool.splice(idx, 1)[0];
+              else if (myDeadline) slot = await this.swapWithEvergreen(cap.channel, myDeadline, cap.slotPool, target);
+            }
           }
           if (myDeadline && slot && slot > myDeadline) {
             // Lead-Slot doch außerhalb (Pool war leer nach Swap-Versuch) → zurücklegen und auslassen
@@ -1284,6 +1306,7 @@ ${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)
 ${await this.bildRegie(channel)}
 - NIE relative Zeitwörter („heute"/„morgen"). Datum/Uhrzeit NUR nennen, wenn sie im Stoff eindeutig als EREIGNIS-Zeit belegt sind — Publikations-/Update-Zeiten der Quelle sind KEINE Ereigniszeiten. Fehlt das Datum: ohne Datum formulieren, NIE eines erfinden oder ergänzen.
 - ZEITLICHE EINORDNUNG (v1100): HEUTE ist ${formatLocalDateTime(new Date().toISOString())}.${await this.terminKontext(channel)} Nutze das NUR, um falsche Phasen-Bezüge zu vermeiden (z. B. „kurz vor dem Start" / „in der Vorbereitung", wenn das Ereignis längst läuft oder vorbei ist) — Fakten für den Text stammen weiterhin AUSSCHLIESSLICH aus dem Stoff.
+${await this.familienLinie(channel).then(l => l ? `- REDAKTIONSLINIE (verbindlich, vom Herausgeber): ${l}\n` : '')}
 - KEINE Spekulation über Folgen, Pläne, Kaderplanungen oder Reaktionen, die nicht wörtlich im Stoff stehen — im Zweifel weglassen.
 
 Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typografisch „…“ oder escaped):
@@ -1347,6 +1370,7 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     // konfiguriert waren (Realfall: 11 Slots/Woche → „1 neuer Entwurf").
     // MAX_IN_FLIGHT bleibt als Schutz für LLM-/Bild-Budget.
     const MAX_IN_FLIGHT = 30;
+    const egDays = new Map<string, number>(); // v1102 — Evergreen-Slots dieses Laufs (Tagesdeckel)
     const slots = await this.trimSlotsToDailyBudget(channel, nextFreeSlots(channel, planned, Math.max(0, MAX_IN_FLIGHT - planned.length), now), planned);
     // Entwürfe/Ideen ohne Termin zählen als Vorrat — nicht doppelt erzeugen
     const backlog = planned.filter(i => (i.status === 'draft' || i.status === 'idea') && !i.scheduledAt).length;
@@ -1493,7 +1517,15 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
                 }
               }
             } else {
-              slot = slotPool.shift();
+              // v1102 — hier landen nur noch Evergreens (artlose Ideen haben
+              // seit dem 7-Tage-Default eine Shelf-Life): Tagesdeckel anwenden
+              slot = idea.art === 'evergreen'
+                ? this.pickEvergreenSlot(channel, slotPool, planned, egDays)
+                : slotPool.shift();
+              if (idea.art === 'evergreen' && !slot) {
+                this.logger.info({ channel: channel.name, title: idea.title }, 'v1102 evergreen idea dropped (Tagesdeckel — kein Tag mit freier Evergreen-Kapazität)');
+                continue;
+              }
             }
           }
         }
@@ -1611,10 +1643,13 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     const isYoutube = channel.platform === 'youtube';
     // v1074 — Bild-Regie (Art-Director-Anweisung + Anti-Wiederholungs-Liste)
     const bildRegie = isYoutube ? undefined : await this.bildRegie(channel);
+    // v1102 — Redaktionslinie (Wochenfokus-Memo der Familie) fließt verbindlich ein
+    const linie = await this.familienLinie(channel);
+    const linieBlock = linie ? `\nREDAKTIONSLINIE (verbindlich, vom Herausgeber — Inhalte und Gewichtung daran ausrichten): ${linie}\n` : '';
     const prompt = (isYoutube
       ? this.buildYoutubePrompt(channel, count, dossier, bestPerformers, blockedTitles)
       : this.buildPostPrompt(channel, count, dossier, bestPerformers, blockedTitles, window, bildRegie))
-      + familyBlock;
+      + linieBlock + familyBlock;
 
     // v980 — 12000 statt 3000 maxTokens: Gen-5-Modelle (Sonnet) denken adaptiv
     // MIT ins Output-Budget und schreiben längere Artikel — bei 3000 war die
@@ -1885,13 +1920,22 @@ Antworte NUR mit einem JSON-Array:
     // v1034 — auch 'vorschau' ist verderblich: eine Vorschau OHNE terminBis
     // (Konferenz-Lücke) bekam sonst irgendeinen späten Slot — Realfall 06.07.:
     // Viertelfinal-Doppelpack für den 7.7. wurde auf den 13.7. terminiert.
-    if (art !== 'news' && art !== 'recap' && art !== 'vorschau') return undefined;
+    if (art === 'evergreen' || art === 'termin') return undefined; // bewusst unbegrenzt (Termin-Ablauf regelt Schritt 1)
     const cfg = channel.config.shelf_life_hours;
-    if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
-      const v = (cfg as Record<string, unknown>)[art];
-      if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+    const cfgVal = (key: string): number | undefined => {
+      if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
+        const v = (cfg as Record<string, unknown>)[key];
+        if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+      }
+      return undefined;
+    };
+    if (art !== 'news' && art !== 'recap' && art !== 'vorschau') {
+      // v1102 — Items OHNE Art-Marker hatten GAR KEINE Haltbarkeit: ein
+      // Beitrag vom 03.07. stand am 12.07. noch eingeplant (Realfall Glasner).
+      // Default 7 Tage, per shelf_life_hours.default übersteuerbar.
+      return cfgVal('default') ?? 168;
     }
-    return art === 'news' ? 48 : 72;
+    return cfgVal(art) ?? (art === 'news' ? 48 : 72);
   }
 
   /**
@@ -1978,6 +2022,75 @@ Antworte NUR mit einem JSON-Array:
     } catch { /* Einordnung ist optional */ }
     this.terminCtxCache.set(family, { at: Date.now(), text });
     return text;
+  }
+
+  /**
+   * v1102 — Redaktionslinie: kurzes Wochenfokus-Memo der Familie
+   * (config.redaktionslinie auf irgendeinem Familien-Kanal, per
+   * update_channel änderbar). Fließt verbindlich in Konferenz- und
+   * Schreib-Prompts und steht im Wochen-Report. 10 min gecacht.
+   */
+  private readonly linieCache = new Map<string, { at: number; text: string }>();
+
+  static linieOf(channels: Array<Pick<SocialChannel, 'config'>>): string {
+    for (const c of channels) {
+      const v = c.config.redaktionslinie;
+      if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 500);
+    }
+    return '';
+  }
+
+  private async familienLinie(channel: SocialChannel): Promise<string> {
+    const own = ContentStudio.linieOf([channel]);
+    if (own) return own;
+    const family = ContentStudio.familyKey(channel);
+    if (!family) return '';
+    const cached = this.linieCache.get(family);
+    if (cached && Date.now() - cached.at < 10 * 60_000) return cached.text;
+    let text = '';
+    try {
+      const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+      text = ContentStudio.linieOf(channels.filter(c => ContentStudio.familyKey(c) === family));
+    } catch { /* Linie ist optional */ }
+    this.linieCache.set(family, { at: Date.now(), text });
+    return text;
+  }
+
+  /** v1102 — Evergreen-Tagesdeckel (config.evergreen_max_per_day, Default 2). */
+  private evergreenDayCap(channel: SocialChannel): number {
+    const raw = Number(channel.config.evergreen_max_per_day);
+    return Number.isFinite(raw) && raw >= 0 ? raw : 2;
+  }
+
+  /**
+   * v1102 — Slot für ein Evergreen wählen, ohne den Tagesdeckel zu reißen:
+   * erster Pool-Slot (optional ≥ notBefore), an dessen LOKALEM Tag noch
+   * Evergreen-Kapazität frei ist (bestehende Planung + in diesem Lauf
+   * vergebene Slots via takenDays). Kein Tag frei → undefined (Evergreen
+   * wird nicht produziert — der Vorrat darf die Aktualität nie dominieren).
+   */
+  private pickEvergreenSlot(
+    channel: SocialChannel, slotPool: string[], planned: ContentItem[],
+    takenDays: Map<string, number>, notBefore?: string,
+  ): string | undefined {
+    const cap = this.evergreenDayCap(channel);
+    if (cap === 0) return undefined;
+    const dayKey = (iso: string) => {
+      const d = new Date(iso);
+      return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    };
+    const counts = new Map<string, number>(takenDays);
+    for (const i of planned) {
+      if (!i.scheduledAt || i.performance?.art !== 'evergreen') continue;
+      if (i.status !== 'scheduled' && i.status !== 'approved') continue;
+      const k = dayKey(i.scheduledAt);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const idx = slotPool.findIndex(s => (!notBefore || s >= notBefore) && (counts.get(dayKey(s)) ?? 0) < cap);
+    if (idx < 0) return undefined;
+    const slot = slotPool.splice(idx, 1)[0];
+    takenDays.set(dayKey(slot), (takenDays.get(dayKey(slot)) ?? 0) + 1);
+    return slot;
   }
 
   /**
@@ -2798,6 +2911,9 @@ Antworte NUR mit einem JSON-Array:
     const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
     if (channels.length === 0) return false;
     const sections: string[] = [];
+    // v1102 — Redaktionslinie prominent im Wochen-Report (Erinnerung + Anlass zum Fortschreiben)
+    const wochenLinie = ContentStudio.linieOf(channels);
+    if (wochenLinie) sections.push(`**🧭 Redaktionslinie:** ${wochenLinie}\n_Fortschreiben per Zuruf: „Setze die Redaktionslinie auf …"_`);
     // v1021 — Wachstums-Sektion: Follower-Deltas der Woche je Kanal + Treiber
     const growthLines: string[] = [];
     let totalDelta = 0;
