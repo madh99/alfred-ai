@@ -209,6 +209,33 @@ export function buildReelFilterGraph(opts: {
  * die Musik allein. Die Musik-Quelle wird per -stream_loop -1 geloopt; das
  * -t des Aufrufers schneidet den (unendlichen) Mix auf die Videolänge.
  */
+/** v1106 — Erste-Pass-Messwerte für loudnorm im Linear-Modus (konstantes Gain). */
+export interface LoudnessMeasurement {
+  inputI: number;
+  inputTp: number;
+  inputLra: number;
+  inputThresh: number;
+}
+
+/**
+ * v1106 — loudnorm-JSON aus dem ffmpeg-stderr eines Mess-Laufs parsen
+ * (`-af loudnorm=…:print_format=json -f null -`). Fehlt/kaputt → undefined,
+ * der Graph fällt dann auf den dynamischen Ein-Pass-Modus zurück.
+ */
+export function parseLoudnormMeasurement(stderr: string): LoudnessMeasurement | undefined {
+  const start = stderr.lastIndexOf('{');
+  const end = stderr.lastIndexOf('}');
+  if (start < 0 || end <= start) return undefined;
+  try {
+    const j = JSON.parse(stderr.slice(start, end + 1)) as Record<string, string>;
+    const num = (k: string) => Number.parseFloat(j[k]);
+    const m = { inputI: num('input_i'), inputTp: num('input_tp'), inputLra: num('input_lra'), inputThresh: num('input_thresh') };
+    return Object.values(m).every(Number.isFinite) ? m : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function buildReelAudioGraph(opts: {
   /** Input-Index des Voiceovers (ohne → Musik solo). */
   voiceIndex?: number;
@@ -219,6 +246,9 @@ export function buildReelAudioGraph(opts: {
   totalSec: number;
   /** Ausblende-Dauer am Ende (Default 1,5s). */
   fadeSec?: number;
+  /** v1106 — Erste-Pass-Messwerte → loudnorm läuft LINEAR (konstantes Gain). */
+  voiceMeasured?: LoudnessMeasurement;
+  musicMeasured?: LoudnessMeasurement;
 }): { filterComplex: string; outLabel: string } {
   const vol = Math.min(1, Math.max(0.01, opts.musicVolume ?? 0.15));
   const fade = opts.fadeSec ?? 1.5;
@@ -227,17 +257,26 @@ export function buildReelAudioGraph(opts: {
   // v1082 — Loudness-Normalisierung (Realfall 09.07.: Custom-Voice-Klon kam
   // 12 dB leiser aus der Mistral-API als die Builtin-Stimme → Musik übertönte
   // den Sprecher UND das Ducking griff nicht, weil die leise Stimme kaum über
-  // die Sidechain-Schwelle kam):
-  // - Stimme auf -16 LUFS → jede Stimme (Klon/Builtin) gleich laut.
-  // - Musik-Track auf -9 LUFS → Pegel des bewährten Referenz-Mixes; anders
-  //   gemasterte Tracks verhalten sich identisch, der volume-Regler behält
-  //   seine gewohnte Wirkung.
-  // - Master auf -14 LUFS (IG/YouTube-Ziel) VOR dem Fade-out, damit die
-  //   Plattform den Mix nicht selbst hochzieht (und Rauschen mit anhebt).
+  // die Sidechain-Schwelle kam): Stimme -16 LUFS, Musik-Track -9 LUFS.
+  // v1106 — mit Messwerten laufen die Normalisierungen LINEAR (Zwei-Pass,
+  // konstantes Gain): der Ein-Pass-Modus regelte zeitvariabel und bügelte
+  // bewusste Dynamik (Emotions-Einstieg der Sprecherin) weg. Ohne Messwerte
+  // (Fallback/Tests) bleibt der Ein-Pass-Modus.
   // aresample=48000 jeweils direkt danach (loudnorm arbeitet intern mit 192 kHz).
-  const VOICE_NORM = 'loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000';
-  const MUSIC_NORM = 'loudnorm=I=-9:TP=-1:LRA=9,aresample=48000';
-  const MASTER_NORM = 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000';
+  const linear = (target: string, m?: LoudnessMeasurement) => m
+    ? `${target}:measured_I=${m.inputI}:measured_TP=${m.inputTp}:measured_LRA=${m.inputLra}:measured_thresh=${m.inputThresh}:linear=true`
+    : target;
+  const VOICE_NORM = `${linear('loudnorm=I=-16:TP=-1.5:LRA=11', opts.voiceMeasured)},aresample=48000`;
+  const MUSIC_NORM = `${linear('loudnorm=I=-9:TP=-1:LRA=9', opts.musicMeasured)},aresample=48000`;
+  // v1106 — Master: STATISCHER Limiter statt dynamischem loudnorm. Der
+  // Ein-Pass-Master pumpte (Realfall Bellingham 12.07.): das Musik-only-Intro
+  // wurde ~14 dB Richtung Ziel hochgezogen, in Sprechpausen kletterte das
+  // Gain und hob das GEDUCKTE Bett unter der Stimme wieder an (Anti-Ducking),
+  // der Emotions-Einstieg wurde plattgedrückt (leiseste Sekunden des Videos).
+  // Stimme und Bett sind bereits einzeln normalisiert — der Mix landet von
+  // selbst bei ~-15 LUFS; der Limiter fängt nur echte Spitzen (0.84 ≈ -1,5 dB),
+  // ohne Auto-Gain (level=false).
+  const MASTER_LIMIT = 'alimiter=limit=0.84:level=false';
   if (opts.voiceIndex === undefined) {
     // Musik solo: Track-Normalisierung + Regler wie bisher, kein Master —
     // hier IST das leise Bett der gewollte Inhalt.
@@ -251,7 +290,7 @@ export function buildReelAudioGraph(opts: {
     `[${opts.musicIndex}:a]${MUSIC_NORM},volume=${vol}[bed]`,
     // Ducking: Musik weicht der Stimme (Sidechain), kommt in Sprechpausen zurück
     `[bed][vo1]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=400[duck]`,
-    `[vo2][duck]amix=inputs=2:duration=first:normalize=0,${MASTER_NORM},${fadeOut}[aout]`,
+    `[vo2][duck]amix=inputs=2:duration=first:normalize=0,${MASTER_LIMIT},${fadeOut}[aout]`,
   ];
   return { filterComplex: parts.join(';'), outLabel: '[aout]' };
 }
@@ -715,12 +754,23 @@ export class SlideshowVideoRenderer {
     // v1059 — Musik-Bett: geloopte Musik unters Voiceover (Sidechain-Ducking),
     // ohne Voiceover läuft die Musik allein; -t schneidet auf die Videolänge.
     const music = spec.musicPath?.trim() || undefined;
+    // v1106 — Zwei-Pass-Loudness: Stimme und Musik einmal vermessen, damit
+    // loudnorm im Graph LINEAR läuft (konstantes Gain — kein Pumpen, Emotionen
+    // der Sprecherin bleiben erhalten). Messfehler → dynamischer Fallback.
+    const [voiceMeasured, musicMeasured] = music
+      ? await Promise.all([
+        audioPath ? this.measureLoudness(audioPath, '-16', '-1.5', '11') : Promise.resolve(undefined),
+        this.measureLoudness(music, '-9', '-1', '9'),
+      ])
+      : [undefined, undefined];
     const audioGraph = music
       ? buildReelAudioGraph({
         ...(audioPath ? { voiceIndex: slideFiles.length } : {}),
         musicIndex: slideFiles.length + (audioPath ? 1 : 0),
         ...(spec.musicVolume !== undefined ? { musicVolume: spec.musicVolume } : {}),
         totalSec: graph.totalSec,
+        ...(voiceMeasured ? { voiceMeasured } : {}),
+        ...(musicMeasured ? { musicMeasured } : {}),
       })
       : undefined;
     const args = [
@@ -740,8 +790,26 @@ export class SlideshowVideoRenderer {
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', '30',
       outPath,
     ];
-    this.logger.info({ images: spec.images.length, clips: clipByIndex.size, intro: introSec, outro: outroSec, music: Boolean(music), durationSec: graph.totalSec, format: spec.format }, 'v1058 rendering reel video (cover-crop + ken-burns + crossfades)');
+    this.logger.info({ images: spec.images.length, clips: clipByIndex.size, intro: introSec, outro: outroSec, music: Boolean(music), twoPass: Boolean(voiceMeasured || musicMeasured), durationSec: graph.totalSec, format: spec.format }, 'v1058 rendering reel video (cover-crop + ken-burns + crossfades)');
     await execFileAsync(this.ffmpeg, args, { timeout: 10 * 60_000, maxBuffer: 10 * 1024 * 1024 });
     return { videoPath: outPath, durationSec: graph.totalSec };
+  }
+
+  /**
+   * v1106 — Loudness-Messlauf (erster Pass): liefert die measured_*-Werte für
+   * loudnorm im Linear-Modus. Jeder Fehler ist still (undefined) — der Graph
+   * fällt dann auf den dynamischen Ein-Pass-Modus zurück.
+   */
+  private async measureLoudness(filePath: string, i: string, tp: string, lra: string): Promise<LoudnessMeasurement | undefined> {
+    try {
+      const { stderr } = await execFileAsync(this.ffmpeg, [
+        '-hide_banner', '-nostats', '-i', filePath,
+        '-af', `loudnorm=I=${i}:TP=${tp}:LRA=${lra}:print_format=json`,
+        '-f', 'null', '-',
+      ], { timeout: 2 * 60_000, maxBuffer: 10 * 1024 * 1024 });
+      return parseLoudnormMeasurement(String(stderr ?? ''));
+    } catch {
+      return undefined;
+    }
   }
 }

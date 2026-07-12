@@ -194,12 +194,32 @@ describe('buildReelAudioGraph (v1059/v1082)', () => {
     expect(g.filterComplex).toContain('afade=t=out:st=28.500:d=1.5');
   });
 
-  it('v1082: Stimme, Musik-Track und Master werden normalisiert (Klon-Stimme kam 12 dB zu leise)', () => {
+  it('v1082/v1106: Stimme und Musik-Track normalisiert, Master ist ein STATISCHER Limiter (kein Pumpen)', () => {
     const g = buildReelAudioGraph({ voiceIndex: 4, musicIndex: 5, totalSec: 30 });
     // Musik-Track auf Referenzpegel VOR dem volume-Regler
     expect(g.filterComplex).toContain('[5:a]loudnorm=I=-9:TP=-1:LRA=9,aresample=48000,volume=0.15[bed]');
-    // Master aufs Plattform-Ziel, VOR dem Fade-out (sonst pumpt loudnorm den Ausklang wieder hoch)
-    expect(g.filterComplex).toMatch(/normalize=0,loudnorm=I=-14:TP=-1\.5:LRA=11,aresample=48000,afade=/);
+    // v1106 — Master: Limiter ohne Auto-Gain statt dynamischem loudnorm
+    // (der zog das Musik-Bett in Sprechpausen wieder hoch — Anti-Ducking)
+    expect(g.filterComplex).toMatch(/normalize=0,alimiter=limit=0\.84:level=false,afade=/);
+    expect(g.filterComplex).not.toContain('I=-14');
+  });
+
+  it('v1106: mit Erste-Pass-Messwerten laufen Stimme und Musik LINEAR (konstantes Gain, Emotion bleibt)', () => {
+    const g = buildReelAudioGraph({
+      voiceIndex: 4, musicIndex: 5, totalSec: 30,
+      voiceMeasured: { inputI: -28.3, inputTp: -6.1, inputLra: 8.2, inputThresh: -38.9 },
+      musicMeasured: { inputI: -11.2, inputTp: -0.4, inputLra: 4.1, inputThresh: -21.6 },
+    });
+    expect(g.filterComplex).toContain('[4:a]loudnorm=I=-16:TP=-1.5:LRA=11:measured_I=-28.3:measured_TP=-6.1:measured_LRA=8.2:measured_thresh=-38.9:linear=true,aresample=48000');
+    expect(g.filterComplex).toContain('[5:a]loudnorm=I=-9:TP=-1:LRA=9:measured_I=-11.2:measured_TP=-0.4:measured_LRA=4.1:measured_thresh=-21.6:linear=true,aresample=48000');
+  });
+
+  it('v1106: parseLoudnormMeasurement liest das ffmpeg-JSON, kaputte Ausgaben → undefined', async () => {
+    const { parseLoudnormMeasurement } = await import('../video-pipeline.js');
+    const stderr = `[Parsed_loudnorm_0 @ 0x1] \n{\n\t"input_i" : "-28.31",\n\t"input_tp" : "-6.10",\n\t"input_lra" : "8.20",\n\t"input_thresh" : "-38.92",\n\t"output_i" : "-16.02",\n\t"normalization_type" : "dynamic"\n}\n`;
+    expect(parseLoudnormMeasurement(stderr)).toEqual({ inputI: -28.31, inputTp: -6.1, inputLra: 8.2, inputThresh: -38.92 });
+    expect(parseLoudnormMeasurement('kein json')).toBeUndefined();
+    expect(parseLoudnormMeasurement('{"input_i": "kaputt"}')).toBeUndefined();
   });
 
   it('nur Musik (kein Voiceover): kein Mix, Track normalisiert, Lautstärke geclampt, kein Master', () => {

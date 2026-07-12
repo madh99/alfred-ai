@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1106] - 2026-07-12
+
+### Fixed — Reel-Audio: Musik übertönt den Sprecher nicht mehr (v1106)
+- **Master-Stufe pumpte** (Realfall „Bellingham-Doppelpack"): Die dynamische Loudness-Normalisierung auf dem fertigen Mix zog das bewusst leise Musik-Intro um ~14 dB hoch, hob in Sprechpausen das geduckte Musikbett unter der Stimme wieder an (Anti-Ducking) und drückte den emotionalen Einstieg der Sprecherin platt. Der Master ist jetzt ein **statischer Limiter** (nur True-Peak-Schutz, kein Auto-Gain) — die Musik bleibt, wo das Ducking sie hinschickt, und laute Emotionen bleiben laut.
+- **Zwei-Pass-Normalisierung**: Stimme und Musik werden vor dem Render einmal vermessen und dann mit **konstantem Gain** (loudnorm linear) auf ihre Zielpegel gebracht — die Lautheits-Angleichung zwischen Stimmen (v1082) bleibt vollständig erhalten, aber die Dynamik innerhalb der Spur (Schrei → ruhige Erzählung) wird nicht mehr verbogen. Schlägt die Messung fehl, greift automatisch der bisherige Modus.
+- Live gegen ffmpeg verprobt (Messlauf + kompletter Filter-Graph). Bereits gerenderte Reels tragen den alten Mix — Neu-Rendern behebt sie einzeln.
+
 ## [0.19.0-multi-ha.1105] - 2026-07-12
 
 ### Added — Redaktionslinie wirkt auch in Reels (v1105)
