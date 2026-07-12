@@ -24,6 +24,17 @@ const WEEKDAYS: Record<string, number> = { so: 0, mo: 1, di: 2, mi: 3, do: 4, fr
 const DEFAULT_IMAGE_STYLE = 'hochwertige redaktionelle Sportfoto-Optik, realistisch, klare Komposition, natürliches Licht';
 
 /**
+ * v1103 — Sender-/Promo-Boilerplate erkennen (pure, testbar): YouTube-Shorts
+ * ohne Transkript liefern als „Summary" die Kanal-Beschreibung („Viertelfinale:
+ * Argentinien vs. Schweiz | LIVE bei ServusTV On … #Shorts"). Daraus entstand
+ * am 12.07. eine VORSCHAU auf ein längst entschiedenes Nachtspiel.
+ */
+export function hatPromoBoilerplate(text: string | undefined): boolean {
+  if (!text) return false;
+  return /#shorts\b|\blive bei\b|\bjetzt abonnieren\b|\bsubscribe\b|\bjetzt streamen\b|\balle spiele live\b/i.test(text);
+}
+
+/**
  * v935 — Nächste freie Posting-Slots eines Kanals (pure, testbar).
  * Slots wie ["Mo 18:00", "Do 19:30"] in SERVER-ORTSZEIT (v959); ohne eigene
  * Slots gelten Plattform-Best-Practices inkl. Wochenende (effectiveSlots) —
@@ -562,7 +573,14 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     for (const topicId of unionTopics) {
       const items = await this.interestsRepo.listItems(topicId, { sinceIso, limit: 30 });
       // v1036 — Quellen-Boilerplate strippen, BEVOR sie Story-Stoff wird
-      fresh.push(...items.filter(i => i.sourceKind !== 'events').map(i => ({ title: i.title, url: i.url, summary: i.summary ? stripSourceBoilerplate(i.summary) : undefined })));
+      // v1103 — YouTube-Items ohne echte Fakten-Summary (Shorts: kein Transkript
+      // → „Summary" = Sender-Promo „LIVE bei … #Shorts") sind KEIN Eilmeldungs-
+      // Stoff: der Tor-Clip „ÁLVAREEEEEZ!" wurde am 12.07. zur Vorschau auf ein
+      // entschiedenes Nachtspiel. Die echten Artikel kommen einen Lauf später.
+      fresh.push(...items
+        .filter(i => i.sourceKind !== 'events')
+        .filter(i => i.sourceKind !== 'youtube' || (typeof i.summary === 'string' && i.summary.trim().length >= 80 && !hatPromoBoilerplate(i.summary)))
+        .map(i => ({ title: i.title, url: i.url, summary: i.summary ? stripSourceBoilerplate(i.summary) : undefined })));
     }
     if (fresh.length === 0) return 0;
     // Dedup gegen aktive Stories (Token reicht als Vorfilter)
@@ -613,7 +631,8 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     let articleFetches = 0;
     for (const b of acceptedBreaking as Array<{ title: string; summary?: string; url?: string }>) {
       const plain = (b.summary ?? '').replace(/<[^>]+>/g, ' ').trim();
-      const headlineOnly = plain.length < Math.max(80, b.title.length + 40);
+      // v1103 — Sender-Promo („LIVE bei …") zählt als headline-only
+      const headlineOnly = plain.length < Math.max(80, b.title.length + 40) || hatPromoBoilerplate(plain);
       if (b.url && headlineOnly && articleFetches < 3) {
         articleFetches++;
         const text = await fetchArticleText(b.url);
@@ -975,7 +994,7 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
    * Dedup ist exakt über die Story-Identität (StoryDeduper gegen aktive
    * Stories der letzten 30 Tage) — die Titel-Heuristiken bleiben Fallback.
    */
-  async planFamily(family: string, channels: SocialChannel[]): Promise<number> {
+  async planFamily(family: string, channels: SocialChannel[], opts?: { nurTermine?: boolean }): Promise<number> {
     const now = new Date().toISOString();
     // Kapazität je Kanal (Slots minus Backlog, wie fillChannel).
     // v1044 — Schlüssel NORMALISIERT (trim+lowercase): die Konferenz referenziert
@@ -1015,7 +1034,13 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
     const dossier = await this.topicDossier(pseudo, blocked, events);
     const announcedAt = new Set(blocked.map(b => b.terminAt).filter(Boolean));
     const openTermine = events.filter(e => !announcedAt.has(e.at));
-    if (totalNeeded === 0 && openTermine.length === 0) return 0;
+    // v1103 — Spielplan aus dem Dossier (Anstoßzeiten ohne Public-Viewing-Event):
+    // bereits angekündigte/geplante Zeitpunkte fallen raus (Termin-Identität)
+    const spiele = (await this.extractSpielplan(dossier))
+      .filter(s => !announcedAt.has(s.at) && !openTermine.some(e => e.at === s.at));
+    if (totalNeeded === 0 && openTermine.length === 0 && spiele.length === 0) return 0;
+    // v1103 — Nachmittags-Lauf: ohne offene Termine/Spiele KEIN Konferenz-Call
+    if (opts?.nurTermine === true && openTermine.length === 0 && spiele.length === 0) return 0;
 
     // Konferenz-Pass: höchstes Modell-Tier der Familie entscheidet
     const tierRank: Record<string, number> = { fast: 0, default: 1, medium: 2, strong: 3 };
@@ -1032,15 +1057,21 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
     }
     // v1044 — Deckel wächst mit dem Familien-Bedarf (Cap 20 als Prompt-Schutz):
     // der starre 10er-Deckel unterfüllte hochvolumige Kanäle (TG-Limit 20/Tag)
-    const storyCount = Math.min(Math.max(totalNeeded, openTermine.length), Math.max(10, Math.min(totalNeeded, 20)));
+    const storyCount = Math.min(Math.max(totalNeeded, openTermine.length + spiele.length), Math.max(10, Math.min(totalNeeded + spiele.length, 20)));
+    const spielplanBlock = spiele.length
+      ? `KOMMENDE SPIELE (Anstoßzeiten aus den Quellen belegt — plane für relevante Spiele eine VORSCHAU mit art=vorschau und terminBis EXAKT aus der Zeile; KEINE Ort-Pflicht, es gibt keinen Veranstaltungsort):\n${spiele.map(s => `- ${s.spiel} | terminBis: ${s.at}`).join('\n')}\n\n`
+      : '';
+    const nurTermineRule = opts?.nurTermine === true
+      ? '- NUR-TERMINE-LAUF: Erzeuge AUSSCHLIESSLICH Stories mit terminBis (Termine und Spiel-Vorschauen) — keine sonstigen News/Evergreens.\n'
+      : '';
     const conferencePrompt = `Du leitest die Redaktionskonferenz einer Kanal-Familie. Entscheide die Story-Liste für die nächsten Tage.
 
 KANÄLE DER FAMILIE:
 ${channelLines}
 
-${ContentStudio.linieOf(channels) ? `REDAKTIONSLINIE (verbindlich, vom Herausgeber — Stories und Gewichtung daran ausrichten):\n${ContentStudio.linieOf(channels)}\n\n` : ''}${pbRules.length ? `PLAYBOOK (verbindliche Redaktionsregeln dieser Familie):\n${pbRules.join('\n')}\n\n` : ''}${dossier ? `THEMEN-DOSSIER:\n${dossier}\n` : ''}${blocked.length ? `BEREITS GEPLANT/VERÖFFENTLICHT — dieser Stoff ist GESPERRT (auch umformuliert):\n${[...new Set(blocked.map(b => b.title))].slice(0, 50).map(t => `- ${t}`).join('\n')}\n` : ''}
+${ContentStudio.linieOf(channels) ? `REDAKTIONSLINIE (verbindlich, vom Herausgeber — Stories und Gewichtung daran ausrichten):\n${ContentStudio.linieOf(channels)}\n\n` : ''}${pbRules.length ? `PLAYBOOK (verbindliche Redaktionsregeln dieser Familie):\n${pbRules.join('\n')}\n\n` : ''}${spielplanBlock}${dossier ? `THEMEN-DOSSIER:\n${dossier}\n` : ''}${blocked.length ? `BEREITS GEPLANT/VERÖFFENTLICHT — dieser Stoff ist GESPERRT (auch umformuliert):\n${[...new Set(blocked.map(b => b.title))].slice(0, 50).map(t => `- ${t}`).join('\n')}\n` : ''}
 Erzeuge bis zu ${storyCount} STORIES. Regeln:
-- Eine STORY ist ein Stoff, den mehrere Kanäle in IHRER Rolle erzählen — nicht jeder Kanal braucht jede Story.
+${nurTermineRule}- Eine STORY ist ein Stoff, den mehrere Kanäle in IHRER Rolle erzählen — nicht jeder Kanal braucht jede Story.
 - Je Story: genau EIN lead-Kanal (der ausführlichste, i.d.R. die Website), follow-Kanäle mit Zeitversatz in Stunden (typisch: Telegram +2, Instagram +6, Facebook +8; Termine/Eilmeldungen: alle 0).
 - art: news | vorschau | recap | termin | evergreen. Termine aus „KOMMENDE TERMINE" IMMER als art=termin mit terminBis (ISO aus der Zeile) und Zuweisung an ALLE Kanäle mit versatz_h 0. In der zusammenfassung: Der Ort aus der Termin-Zeile ist der VERANSTALTER (zeigt das Spiel) — die Kanäle berichten nur darüber, nie „wir zeigen".
 - Auch bei art=vorschau auf ein Ereignis mit bekanntem Zeitpunkt (Spiel, Ziehung, Finale): terminBis = ISO-Zeitpunkt des EREIGNISSES setzen — die Vorschau MUSS davor erscheinen; ohne terminBis landet sie auf irgendeinem späten Slot NACH dem Ereignis.
@@ -1065,7 +1096,9 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         importance: typeof s.wichtigkeit === 'number' ? Math.max(0, Math.min(1, s.wichtigkeit)) : 0.5,
         terminBis: typeof s.terminBis === 'string' && Number.isFinite(Date.parse(s.terminBis)) ? new Date(s.terminBis).toISOString() : undefined,
         kanaele: Array.isArray(s.kanaele) ? s.kanaele as Array<{ kanal?: unknown; rolle?: unknown; versatz_h?: unknown }> : [],
-      }));
+      }))
+      // v1103 — Nur-Termine-Lauf: alles ohne terminBis fällt hart raus
+      .filter(c => opts?.nurTermine !== true || c.terminBis !== undefined);
 
     // Story-Dedup: Termin-Stories über Termin-Identität, Rest über Deduper.
     // v1042 — auch INNERHALB der Konferenz: zwei Stories mit identischem
@@ -1284,7 +1317,9 @@ Antworte NUR mit einem VALIDEN JSON-Array:
     // Spekulation aus einem Satz Stoff) — dünner Stoff → ehrliche Kurzmeldung.
     // Termin-Ankündigungen sind ausgenommen: ihr Stoff IST der Termin
     // (Was/Wann/Wo-Absatz bleibt Pflicht).
-    const thinStoff = !story.terminBis && (story.summary ?? story.title).trim().length < 300;
+    // v1103 — auch Promo-Boilerplate als Stoff („LIVE bei …") ist dünn
+    const thinStoff = !story.terminBis
+      && ((story.summary ?? story.title).trim().length < 300 || hatPromoBoilerplate(story.summary));
     const roleRule = role === 'lead'
       ? (thinStoff
         ? `- DEINE ROLLE: LEAD, aber der Stoff ist DÜNN (kaum mehr als die Schlagzeile): Schreibe eine ehrliche KURZMELDUNG — 2-3 Sätze, maximal 2 kurze Absätze. NUR was im Stoff steht. KEINE Füllsätze, KEINE Einordnungs-Floskeln, KEINE Spekulation über Hintergründe, Pläne, Auswirkungen oder Reaktionen.`
@@ -2013,8 +2048,10 @@ Antworte NUR mit einem JSON-Array:
     try {
       const nowIso = new Date().toISOString();
       const stories = await this.socialRepo.listStories(this.ownerUserId, { family, status: 'active', sinceDays: 14 });
+      // v1103 — auch Spiel-VORSCHAUEN mit terminBis zählen zur Zeit-Einordnung
+      // (Spiele ohne Public-Viewing-Event haben keine termin-Story)
       const termine = stories
-        .filter(s => s.kind === 'termin' && typeof s.terminBis === 'string' && s.terminBis > nowIso)
+        .filter(s => (s.kind === 'termin' || s.kind === 'vorschau') && typeof s.terminBis === 'string' && s.terminBis > nowIso)
         .sort((a, b) => a.terminBis!.localeCompare(b.terminBis!))
         .slice(0, 4)
         .map(s => `${s.title} (${formatLocalDateTime(s.terminBis!)})`);
@@ -2091,6 +2128,74 @@ Antworte NUR mit einem JSON-Array:
     const slot = slotPool.splice(idx, 1)[0];
     takenDays.set(dayKey(slot), (takenDays.get(dayKey(slot)) ?? 0) + 1);
     return slot;
+  }
+
+  /**
+   * v1103 — Spielplan aus dem Dossier: Das System kannte Anstoßzeiten nur über
+   * den Public-Viewing-Events-Feed — Spiele ohne Event (Realfall Argentinien–
+   * Schweiz, Nachtspiel in US-Zeit) hatten weder Vorbericht noch Phasen-
+   * Orientierung. Ein fast-LLM-Pass extrahiert EXPLIZIT belegte Anstoßzeiten;
+   * die Konferenz plant daraus Vorschauen MIT terminBis (erscheinen garantiert
+   * vor dem Anstoß), und der Termin-Kontext der Schreib-Prompts kennt sie.
+   */
+  private async extractSpielplan(dossier: string): Promise<Array<{ spiel: string; at: string }>> {
+    if (!dossier.trim()) return [];
+    // Vorab-Filter: ohne Uhrzeit-Muster (Anstoßzeiten wie „21:00", „21.00 Uhr",
+    // ISO) steht im Material nichts Extrahierbares — spart den LLM-Call.
+    if (!/\b\d{1,2}[:.]\d{2}\b/.test(dossier)) return [];
+    try {
+      const prompt = `Extrahiere aus dem Material KOMMENDE Fußball-Spiele mit EXPLIZIT genannter Anstoßzeit (Datum UND Uhrzeit müssen im Material stehen — NIEMALS raten oder ergänzen; Spiele ohne belegte Zeit weglassen). Ergebnisse bereits gespielter Partien sind KEINE kommenden Spiele.
+
+MATERIAL:
+${dossier.slice(0, 6000)}
+
+Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
+[{"spiel": "England – Argentinien (WM-Halbfinale)", "at": "2026-07-15T19:00:00Z"}]`;
+      const response = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 800, tier: 'fast', reasoningEffort: 'low' });
+      const raw = (extractJsonArray(response.content ?? '') ?? []) as Array<{ spiel?: unknown; at?: unknown }>;
+      const nowMs = Date.now();
+      const seen = new Set<string>();
+      const out: Array<{ spiel: string; at: string }> = [];
+      for (const r of raw) {
+        if (typeof r.spiel !== 'string' || typeof r.at !== 'string') continue;
+        const ms = Date.parse(r.at);
+        if (!Number.isFinite(ms) || ms <= nowMs || ms > nowMs + 21 * 24 * 3_600_000) continue;
+        const at = new Date(ms).toISOString();
+        if (seen.has(at + r.spiel.toLowerCase())) continue;
+        seen.add(at + r.spiel.toLowerCase());
+        out.push({ spiel: r.spiel.slice(0, 120), at });
+        if (out.length >= 8) break;
+      }
+      return out;
+    } catch {
+      return []; // Spielplan ist Zusatz-Kontext — nie blockierend
+    }
+  }
+
+  /**
+   * v1103 — Nachmittags-Lauf „Termin-Lücken": Paarungen, die erst tagsüber
+   * entstehen (Viertelfinal-Sieger etc.), verpassten die Morgen-Konferenz —
+   * der nächste Lauf kam erst NACH einem Nachtspiel. Plant NUR Stories mit
+   * terminBis (Termine + Spiel-Vorschauen); gibt es keine offenen, kostet
+   * der Lauf keinen Konferenz-LLM-Call.
+   */
+  async runTerminGaps(): Promise<number> {
+    const channels = await this.socialRepo.listChannels(this.ownerUserId, 'active');
+    const families = new Map<string, SocialChannel[]>();
+    for (const c of channels) {
+      const key = ContentStudio.familyKey(c);
+      if (key) families.set(key, [...(families.get(key) ?? []), c]);
+    }
+    let created = 0;
+    for (const [family, members] of families) {
+      if (members.length < 2) continue;
+      try {
+        created += await this.planFamily(family, members, { nurTermine: true });
+      } catch (err) {
+        this.logger.warn({ err: (err as Error).message, family }, 'v1103 termin-gap run failed');
+      }
+    }
+    return created;
   }
 
   /**

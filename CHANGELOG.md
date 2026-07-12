@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1103] - 2026-07-12
+
+### Fixed — Nachtspiele: keine „Vorschau" mehr auf entschiedene Partien (v1103)
+- **Spielplan aus den Quellen**: Anstoßzeiten kannte das System bisher nur über Public-Viewing-Events — Spiele ohne Event (Realfall Argentinien–Schweiz, Nachtspiel in US-Zeit) hatten weder Vorbericht noch Zeit-Orientierung. Die Redaktionskonferenz extrahiert jetzt explizit belegte Anstoßzeiten aus dem Themen-Dossier und plant daraus **Vorschauen mit Termin-Bindung** — sie erscheinen garantiert vor dem Anstoß, und die Schreib-Prompts kennen die Spiele zur zeitlichen Einordnung (auch Spiel-Vorschauen zählen jetzt zum Termin-Kontext).
+- **Nachmittags-Lauf „Termin-Lücken" (ab 16:30)**: Paarungen, die erst tagsüber feststehen (z. B. Viertelfinal-Sieger), verpassten die Morgen-Konferenz — die nächste kam erst nach dem Nachtspiel. Der neue Lauf plant ausschließlich Termin-/Vorschau-Stories; gibt es keine offenen, kostet er keinen LLM-Aufruf.
+- **YouTube-Shorts sind kein Eilmeldungs-Stoff mehr**: Shorts ohne Transkript liefern als „Zusammenfassung" nur Sender-Promo („… LIVE bei ServusTV On … #Shorts") — daraus entstand die Vorschau auf ein längst entschiedenes Spiel. Solche Items sind jetzt vom News-Desk ausgeschlossen; die echten Artikel kommen einen Collector-Lauf später.
+- **Promo-Boilerplate gilt als dünner Stoff**: „LIVE bei …"/„#Shorts"/„Jetzt abonnieren" wird erkannt — die Volltext-Anreicherung und das Kurzmeldungs-Gate greifen dann automatisch.
+
 ## [0.19.0-multi-ha.1102] - 2026-07-12
 
 ### Added — Redaktionslinie & Frische-Review (v1102)

@@ -6857,6 +6857,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           });
         }
         let lastStudioDay = '';
+        let lastTerminGapDay = ''; // v1103 — Nachmittags-Lauf „Termin-Lücken"
         let lastAnalyticsDay = '';
         let lastAuthDay = '';
         let lastCommentsHour = '';
@@ -6976,6 +6977,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   } catch (err) { this.logger.warn({ err }, 'v1010 lessons consolidation failed'); }
                 }
               } catch (err) { this.logger.warn({ err }, 'v936 social analytics failed'); }
+            }
+          }
+          // v1103 — Nachmittags-Lauf „Termin-Lücken" (ab 16:30): Paarungen, die
+          // erst tagsüber entstehen (z. B. Viertelfinal-Sieger), bekommen ihre
+          // Vorschau VOR dem Nachtspiel statt am Morgen danach. Ohne offene
+          // Termine/Spiele kostet der Lauf keinen Konferenz-LLM-Call.
+          if ((now.getHours() > 16 || (now.getHours() === 16 && now.getMinutes() >= 30)) && lastTerminGapDay !== today) {
+            lastTerminGapDay = today;
+            if (await this.claimDailySlot(`content-studio-termine:${today}`)) {
+              try { await studio.runTerminGaps(); }
+              catch (err) { this.logger.warn({ err }, 'v1103 termin-gap run failed'); }
             }
           }
           // v1022 — „ab 07:30" statt exakt 07:30-08:00: ein verspäteter Tick ließ
