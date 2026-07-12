@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1109] - 2026-07-12
+
+### Added — YouTube-Beschreibung als CTA-Fläche (v1109)
+- Die Video-Beschreibung — der einzige Ort mit klickbaren Links auf YouTube — wird jetzt aktiv genutzt: **Zeile 1 = Artikel-Link mit UTM-Attribution** (above the fold; Label über `traffic_cta_text` anpassbar), danach der Beitragstext, dann ein **konfigurierbarer Standard-Footer** (`yt_description_footer` — z. B. Website, WM-Tippspiel, Panini-Tauschbörse), zum Schluss bis zu 5 Hashtags (die ersten drei erscheinen über dem Video-Titel). Vorher stand der Artikel-Link vergraben am Text-Ende, Footer und Hashtag-Platzierung gab es nicht.
+
 ## [0.19.0-multi-ha.1108] - 2026-07-12
 
 ### Added — Szenen-Video-Budget in der Kanal-UI (v1108)

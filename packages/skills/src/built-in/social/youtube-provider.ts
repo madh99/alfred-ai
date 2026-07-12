@@ -57,11 +57,27 @@ export class YouTubeProvider extends SocialProvider {
     return data.access_token;
   }
 
-  /** Beschreibung = Teil nach '---' (Studio-Konvention) oder Body-Anfang. */
-  static description(item: ContentItem): string {
+  /**
+   * v1109 — Beschreibung als CTA-Fläche (der einzige klickbare Ort auf
+   * YouTube): Zeile 1 = Artikel-Link mit UTM (above the fold, kommt als
+   * performance.trafficUrl aus dem Traffic-CTA), dann der Text (Teil nach
+   * '---' — Studio-Konvention — oder Body), dann der konfigurierbare
+   * Standard-Footer (config.yt_description_footer: Website/Tippspiel/
+   * Tauschbörse, Links klickbar), zum Schluss bis zu 5 Hashtags (die ersten
+   * 3 erscheinen über dem Video-Titel).
+   */
+  static description(item: ContentItem, channel?: Pick<SocialChannel, 'config'>): string {
     const parts = item.body.split(/\n-{3,}\n/);
-    const desc = parts.length > 1 ? parts.slice(1).join('\n') : item.body;
-    return desc.slice(0, 4900);
+    const text = (parts.length > 1 ? parts.slice(1).join('\n') : item.body).trim();
+    const url = typeof item.performance?.trafficUrl === 'string' ? item.performance.trafficUrl : undefined;
+    const label = typeof item.performance?.trafficLabel === 'string' && item.performance.trafficLabel.trim()
+      ? item.performance.trafficLabel.trim() : '👉 Ganzer Artikel:';
+    const head = url ? `${label} ${url}` : '';
+    const footerRaw = channel?.config.yt_description_footer;
+    const footer = typeof footerRaw === 'string' && footerRaw.trim() ? footerRaw.trim() : '';
+    const tags = (item.hashtags ?? []).slice(0, 5)
+      .map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ');
+    return [head, text, footer, tags].filter(Boolean).join('\n\n').slice(0, 4900);
   }
 
   async publish(item: ContentItem, channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
@@ -76,7 +92,7 @@ export class YouTubeProvider extends SocialProvider {
     const metadata = {
       snippet: {
         title: (item.title ?? 'Video').slice(0, 100),
-        description: YouTubeProvider.description(item),
+        description: YouTubeProvider.description(item, channel),
         tags: item.hashtags.map(h => h.replace(/^#/, '')).slice(0, 30),
         categoryId: typeof channel.config.category_id === 'string' ? channel.config.category_id : '17',
       },

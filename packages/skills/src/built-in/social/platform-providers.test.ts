@@ -40,9 +40,30 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
 describe('YouTubeProvider (v936)', () => {
   const SECRETS = { YT_CLIENT_ID: 'cid', YT_CLIENT_SECRET: 'cs', YT_REFRESH_TOKEN: 'rt' };
 
-  it('description: Teil nach --- wird YouTube-Beschreibung', () => {
-    expect(YouTubeProvider.description(makeItem())).toBe('Beschreibung mit Kapiteln');
-    expect(YouTubeProvider.description(makeItem({ body: 'nur script' }))).toBe('nur script');
+  it('description: Teil nach --- wird YouTube-Beschreibung (v1109: + Hashtags am Ende)', () => {
+    expect(YouTubeProvider.description(makeItem())).toBe('Beschreibung mit Kapiteln\n\n#fussball');
+    expect(YouTubeProvider.description(makeItem({ body: 'nur script', hashtags: [] } as never))).toBe('nur script');
+  });
+
+  it('v1109: Beschreibung = Artikel-Link ZUERST, dann Text, Footer, Hashtags', () => {
+    const item = makeItem({
+      body: 'nur script',
+      hashtags: ['WM2026', '#Fussball'],
+      performance: { trafficUrl: 'https://fussball.cc/news/xyz?utm_source=youtube' },
+    } as never);
+    const channel = { config: { yt_description_footer: '⚽ Alle News: https://fussball.cc\n🎯 Tippspiel: https://fussball.cc/tippspiel' } };
+    const desc = YouTubeProvider.description(item, channel);
+    expect(desc).toBe([
+      '👉 Ganzer Artikel: https://fussball.cc/news/xyz?utm_source=youtube',
+      'nur script',
+      '⚽ Alle News: https://fussball.cc\n🎯 Tippspiel: https://fussball.cc/tippspiel',
+      '#WM2026 #Fussball',
+    ].join('\n\n'));
+    // Eigenes CTA-Label (traffic_cta_text) wird übernommen
+    const custom = makeItem({ body: 'x'.repeat(30), performance: { trafficUrl: 'https://f.cc/a', trafficLabel: '🔥 Mehr dazu:' } } as never);
+    expect(YouTubeProvider.description(custom).startsWith('🔥 Mehr dazu: https://f.cc/a')).toBe(true);
+    // Ohne trafficUrl/Footer/Hashtags: unverändert schlicht
+    expect(YouTubeProvider.description(makeItem({ body: 'nur script', hashtags: [] } as never))).toBe('nur script');
   });
 
   it('publish ohne Video-Datei → klarer Fehler (attach_media-Hinweis)', async () => {
