@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1104] - 2026-07-12
+
+### Added — Redaktionslinie in der Kanal-UI (v1104)
+- Die Redaktionslinie (v1102) lässt sich jetzt auch in den **Kanal-Einstellungen der Web-UI** pflegen: neues Textfeld „🧭 Redaktionslinie der Familie" (unter der Persona, max. 500 Zeichen, leer = Linie entfernt). Ein Kanal der Familie genügt — die Linie wirkt binnen ~10 Minuten verbindlich auf Redaktionskonferenz, Termin-Lauf und alle Schreib-Prompts und steht im Sonntags-Wochen-Report. Der Chat-Weg („Setze die Redaktionslinie auf …") funktioniert unverändert.
+
 ## [0.19.0-multi-ha.1103] - 2026-07-12
 
 ### Fixed — Nachtspiele: keine „Vorschau" mehr auf entschiedene Partien (v1103)

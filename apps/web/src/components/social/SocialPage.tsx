@@ -168,6 +168,7 @@ export function SocialPage() {
     persona: string; slots: string; blacklist: string; maxPostsPerDay: number;
     planningHorizonDays: number; generateImages: boolean; imageBudgetTotal: number;
     lessons: string[]; newLesson: string; modelTier: string;
+    redaktionslinie: string; // v1104 — Wochenfokus-Memo der Familie
     // v996 — Familien-Playbook (+v999 Traffic-Modus)
     familyRole: 'auto' | 'lead' | 'follow'; familyOffset: string;
     quietFrom: number; quietTo: number; newsdeskThreshold: number; newsdeskMaxPerDay: number;
@@ -201,7 +202,7 @@ export function SocialPage() {
     autoVideo: boolean; autoVideoFormat: '16:9' | '9:16';
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string; video: string }>;
-  }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast',
+  }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast', redaktionslinie: '',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
     imageStyle: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
@@ -583,6 +584,8 @@ export function SocialPage() {
       lessons: Array.isArray(c.config.lessons) ? c.config.lessons.map(String) : [],
       newLesson: '',
       modelTier: typeof c.config.model_tier === 'string' ? c.config.model_tier : 'fast',
+      // v1104 — Redaktionslinie (Wochenfokus der Familie)
+      redaktionslinie: typeof c.config.redaktionslinie === 'string' ? c.config.redaktionslinie : '',
       // v996 — Familien-Playbook aus der Kanal-Config
       familyRole: c.config.family_role === 'lead' ? 'lead' : c.config.family_role === 'follow' ? 'follow' : 'auto',
       familyOffset: typeof c.config.family_offset_hours === 'number' ? String(c.config.family_offset_hours) : '',
@@ -664,6 +667,8 @@ export function SocialPage() {
         planningHorizonDays: d.planningHorizonDays,
         config: {
           generate_images: d.generateImages, image_budget_per_month: d.imageBudgetTotal, lessons, model_tier: d.modelTier,
+          // v1104 — Redaktionslinie (Wochenfokus der Familie; leer = Schlüssel löschen)
+          redaktionslinie: d.redaktionslinie.trim() || null,
           // v996 — Familien-Playbook (null löscht den Schlüssel, config wird feldweise gemergt)
           family_role: d.familyRole === 'auto' ? null : d.familyRole,
           family_offset_hours: d.familyOffset.trim() === '' ? null : Number(d.familyOffset),
@@ -1438,6 +1443,13 @@ export function SocialPage() {
                     <label className="text-[11px] text-gray-500">Persona / Rolle (Ton, Länge, Blickwinkel — die Geschwister-Kanäle sehen sie als Rollenbeschreibung)</label>
                     <textarea value={settingsDraft.persona} onChange={e => setSettingsDraft(d => ({ ...d, persona: e.target.value }))} rows={3}
                       className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-500">🧭 Redaktionslinie der Familie (Wochenfokus-Memo — auf EINEM Familien-Kanal setzen genügt, wirkt verbindlich auf Konferenz und alle Texte; leer = keine Linie)</label>
+                    <textarea value={settingsDraft.redaktionslinie} onChange={e => setSettingsDraft(d => ({ ...d, redaktionslinie: e.target.value.slice(0, 500) }))} rows={3}
+                      placeholder="z. B. Countdown aufs WM-Finale: jedes K.-o.-Spiel vor- und nachbereiten und in den Weg zum Finale einordnen. Zweitstrang: Panini-Album, Sticker-Tauschbörse und Tippspiel bei passenden Anlässen sichtbar machen."
+                      className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 mt-1" />
+                    <div className="text-[10px] text-gray-600 mt-0.5">Wirkt binnen ~10 Minuten auf alle Planungs- und Schreib-Läufe; steht auch im Sonntags-Wochen-Report. Alternativ per Chat: Setze die Redaktionslinie auf …</div>
                   </div>
                   <div>
                     <label className="text-[11px] text-gray-500">Posting-Slots (kommagetrennt, Ortszeit, z. B. „Mo 18:00, Sa 10:00" — leer = Plattform-Best-Practice inkl. Wochenende)</label>
