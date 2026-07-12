@@ -69,6 +69,10 @@ export class YouTubeProvider extends SocialProvider {
   static description(item: ContentItem, channel?: Pick<SocialChannel, 'config'>): string {
     const parts = item.body.split(/\n-{3,}\n/);
     const text = (parts.length > 1 ? parts.slice(1).join('\n') : item.body).trim();
+    // v1110 — SEO-Hook: suchstarke erste Zeile (LLM, performance.seoHook) —
+    // die ersten ~150 Zeichen sind das Snippet in Suche/Empfehlungen
+    const hookRaw = item.performance?.seoHook;
+    const hook = typeof hookRaw === 'string' && hookRaw.trim() ? hookRaw.trim().slice(0, 160) : '';
     const url = typeof item.performance?.trafficUrl === 'string' ? item.performance.trafficUrl : undefined;
     const label = typeof item.performance?.trafficLabel === 'string' && item.performance.trafficLabel.trim()
       ? item.performance.trafficLabel.trim() : '👉 Ganzer Artikel:';
@@ -77,7 +81,28 @@ export class YouTubeProvider extends SocialProvider {
     const footer = typeof footerRaw === 'string' && footerRaw.trim() ? footerRaw.trim() : '';
     const tags = (item.hashtags ?? []).slice(0, 5)
       .map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ');
-    return [head, text, footer, tags].filter(Boolean).join('\n\n').slice(0, 4900);
+    return [hook, head, text, footer, tags].filter(Boolean).join('\n\n').slice(0, 4900);
+  }
+
+  /**
+   * v1110 — Localizations aus performance.translations (v1006-Pipeline):
+   * Titel + komplette Beschreibungs-Komposition je Zielsprache. Der deutsche
+   * SEO-Hook bleibt draußen (falsche Sprache); Link/Footer/Hashtags gelten
+   * sprachübergreifend.
+   */
+  static localizationsBody(item: ContentItem, channel?: Pick<SocialChannel, 'config'>): Record<string, { title: string; description: string }> | undefined {
+    const translations = item.performance?.translations;
+    if (!translations || typeof translations !== 'object' || Array.isArray(translations)) return undefined;
+    const out: Record<string, { title: string; description: string }> = {};
+    for (const [lang, e] of Object.entries(translations as Record<string, { title?: unknown; body?: unknown }>)) {
+      if (typeof e?.title !== 'string' || typeof e?.body !== 'string' || !e.body.trim()) continue;
+      const localized: ContentItem = {
+        ...item, title: e.title, body: e.body,
+        performance: { ...item.performance, seoHook: undefined },
+      };
+      out[lang] = { title: e.title.slice(0, 100), description: YouTubeProvider.description(localized, channel) };
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
   }
 
   async publish(item: ContentItem, channel: SocialChannel, secrets: Record<string, string>): Promise<PublishResult> {
@@ -95,6 +120,8 @@ export class YouTubeProvider extends SocialProvider {
         description: YouTubeProvider.description(item, channel),
         tags: item.hashtags.map(h => h.replace(/^#/, '')).slice(0, 30),
         categoryId: typeof channel.config.category_id === 'string' ? channel.config.category_id : '17',
+        // v1110 — Voraussetzung für localizations
+        defaultLanguage: typeof channel.config.language === 'string' && channel.config.language ? channel.config.language : 'de',
       },
       status: {
         privacyStatus: typeof channel.config.privacy_status === 'string' ? channel.config.privacy_status : 'unlisted',
@@ -123,6 +150,19 @@ export class YouTubeProvider extends SocialProvider {
     if (!upload.ok) throw new Error(`YouTube-Upload HTTP ${upload.status}: ${(await upload.text()).slice(0, 200)}`);
     const uploaded = await upload.json() as { id?: string };
     if (!uploaded.id) throw new Error('YouTube-Upload: keine Video-ID in der Antwort');
+
+    // v1110 — Localizations best-effort: Titel + Beschreibung je Zielsprache
+    // (Übersetzungen kommen aus der v1006-Pipeline via performance.translations)
+    const localizations = YouTubeProvider.localizationsBody(item, channel);
+    if (localizations) {
+      try {
+        await fetch('https://www.googleapis.com/youtube/v3/videos?part=localizations', {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: uploaded.id, localizations }),
+        });
+      } catch { /* Localizations optional — das Video ist bereits live */ }
+    }
 
     // Thumbnail best-effort (generiertes Bild oder User-Bild am Item)
     const thumb = item.media.find(m => m.type === 'image');

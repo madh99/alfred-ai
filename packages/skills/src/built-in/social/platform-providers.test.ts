@@ -66,6 +66,27 @@ describe('YouTubeProvider (v936)', () => {
     expect(YouTubeProvider.description(makeItem({ body: 'nur script', hashtags: [] } as never))).toBe('nur script');
   });
 
+  it('v1110: SEO-Hook steht VOR dem Artikel-Link; Localizations ohne deutschen Hook', () => {
+    const item = makeItem({
+      body: 'nur script', hashtags: ['WM2026'],
+      performance: {
+        seoHook: 'England im WM-Halbfinale 2026: Bellingham-Doppelpack gegen Norwegen',
+        trafficUrl: 'https://f.cc/a',
+        translations: { en: { title: 'England reach the semi-final', body: 'script only' } },
+      },
+    } as never);
+    const channel = { config: { yt_description_footer: '⚽ https://fussball.cc' } };
+    const desc = YouTubeProvider.description(item, channel);
+    expect(desc.startsWith('England im WM-Halbfinale 2026: Bellingham-Doppelpack gegen Norwegen\n\n👉 Ganzer Artikel: https://f.cc/a')).toBe(true);
+    const loc = YouTubeProvider.localizationsBody(item, channel)!;
+    expect(loc.en.title).toBe('England reach the semi-final');
+    expect(loc.en.description.startsWith('👉 Ganzer Artikel: https://f.cc/a')).toBe(true); // Hook (deutsch) fehlt bewusst
+    expect(loc.en.description).toContain('script only');
+    expect(loc.en.description).toContain('⚽ https://fussball.cc');
+    // ohne translations → undefined
+    expect(YouTubeProvider.localizationsBody(makeItem(), channel)).toBeUndefined();
+  });
+
   it('publish ohne Video-Datei → klarer Fehler (attach_media-Hinweis)', async () => {
     const provider = new YouTubeProvider();
     await expect(provider.publish(makeItem(), makeChannel('youtube'), SECRETS)).rejects.toThrow(/attach_media/);

@@ -152,7 +152,7 @@ export class SocialSkill extends Skill {
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN/X_REFRESH_TOKEN+X_CLIENT_ID (OAuth2; Bild-Posts via v1.1: zusätzlich X_CONSUMER_KEY/X_CONSUMER_SECRET/X_OAUTH1_ACCESS_TOKEN/X_OAUTH1_ACCESS_SECRET — der OAuth2-Scope media.write wird oft nicht gewährt); bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
         name: { type: 'string', description: 'create_channel: Anzeigename des Kanals' },
         project: { type: 'string', description: 'create_channel: optional Projekt-Name/-ID (Kanal hängt am Projekt, Secrets aus dessen ENVs)' },
-        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {redaktionslinie: "Wochenfokus-Memo der Kanal-Familie, z.B. Countdown aufs Halbfinale 14.07., Panini als Zweitstrang — fließt VERBINDLICH in Redaktionskonferenz und alle Schreib-Prompts der Familie ein und steht im Wochen-Report; auf EINEM Familien-Kanal setzen reicht}, {evergreen_max_per_day: 2 — Tagesdeckel für zeitlose Füll-Posts je Kanal, Default 2}, {scene_video_budget_per_month: 120 — schaltet SZENEN-VIDEOS ein (Text-zu-Video statt belebter Standbilder): Reels zählen auf den Topf des Familien-Instagram, YouTube-Eigenproduktion auf den des YT-Kanals; 0/fehlend = aus, dann gilt der alte Bild-zu-Video-Pfad (reel_ai_clips)}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — NUR rest-Kanäle: beim Publish werden Titel+Body übersetzt und als translations ins Payload gelegt (Website-Sprachversionen)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?, yt_description_footer: "mehrzeiliger Standard-Block, der ans Ende JEDER Video-Beschreibung kommt (Links dort sind klickbar — Website/Tippspiel/Tauschbörse); der Artikel-Link mit UTM steht automatisch in Zeile 1"}, instagram: {ig_user_id, auto_story: true — postet beim Publish des Familien-Lead-Artikels automatisch eine IG-Story (9:16, Titel+Link-im-Profil-CTA als Overlay), OHNE Einzelfreigabe, zählt aufs Tages-Limit; story_cta_text ersetzt den CTA; auto_reel: true — erstellt beim Lead-Publish ein 20-30s-Reel (Sprecher+Untertitel+Story-Bilder) als ENTWURF mit Freigabe, max reel_max_per_week (Default 2), braucht ffmpeg}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
+        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {redaktionslinie: "Wochenfokus-Memo der Kanal-Familie, z.B. Countdown aufs Halbfinale 14.07., Panini als Zweitstrang — fließt VERBINDLICH in Redaktionskonferenz und alle Schreib-Prompts der Familie ein und steht im Wochen-Report; auf EINEM Familien-Kanal setzen reicht}, {evergreen_max_per_day: 2 — Tagesdeckel für zeitlose Füll-Posts je Kanal, Default 2}, {scene_video_budget_per_month: 120 — schaltet SZENEN-VIDEOS ein (Text-zu-Video statt belebter Standbilder): Reels zählen auf den Topf des Familien-Instagram, YouTube-Eigenproduktion auf den des YT-Kanals; 0/fehlend = aus, dann gilt der alte Bild-zu-Video-Pfad (reel_ai_clips)}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — rest-Kanäle: Titel+Body werden beim Publish übersetzt und als translations ins Payload gelegt (Website-Sprachversionen); youtube-Kanäle: daraus werden Video-localizations (Titel+Beschreibung je Sprache — Zuschauer sehen ihre Sprache)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?, yt_description_footer: "mehrzeiliger Standard-Block ans Ende JEDER Video-Beschreibung (Links klickbar — Website/Tippspiel/Tauschbörse)", yt_seo_hook: "false schaltet die automatische suchstarke erste Beschreibungszeile ab (Default an; Artikel-Link steht direkt darunter)"}, instagram: {ig_user_id, auto_story: true — postet beim Publish des Familien-Lead-Artikels automatisch eine IG-Story (9:16, Titel+Link-im-Profil-CTA als Overlay), OHNE Einzelfreigabe, zählt aufs Tages-Limit; story_cta_text ersetzt den CTA; auto_reel: true — erstellt beim Lead-Publish ein 20-30s-Reel (Sprecher+Untertitel+Story-Bilder) als ENTWURF mit Freigabe, max reel_max_per_week (Default 2), braucht ffmpeg}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },
@@ -828,11 +828,13 @@ export class SocialSkill extends Skill {
     if (!provider) return { success: false, error: `Kein Provider für ${channel.platform}` };
     const publishing = await this.repo.transition(userId, current.id, 'publishing');
     try {
-      // v1006 — Mehrsprachigkeit: Übersetzungen VOR dem Publish erzeugen (rest + translate_to)
+      // v1006 — Mehrsprachigkeit: Übersetzungen VOR dem Publish erzeugen (rest/youtube + translate_to)
       const translated = await this.applyTranslations(userId, publishing, channel);
+      // v1110 — YouTube: suchstarke erste Beschreibungszeile (SEO-Snippet)
+      const seeded = channel.platform === 'youtube' ? await this.applySeoHook(userId, translated, channel) : translated;
       // v999 — Traffic: Follower-Posts verlinken den Lead-Artikel (nur der
       // gesendete Text wird ergänzt, das gespeicherte Item bleibt unverändert)
-      const outgoing = await this.applyTrafficCta(userId, translated, channel);
+      const outgoing = await this.applyTrafficCta(userId, seeded, channel);
       const result = await provider.publish(outgoing, channel, await this.secrets(channel));
       const published = await this.repo.transition(userId, publishing.id, 'published', {
         publishedAt: new Date().toISOString(),
@@ -886,7 +888,9 @@ export class SocialSkill extends Skill {
    */
   private async applyTranslations(userId: string, item: ContentItem, channel: SocialChannel): Promise<ContentItem> {
     try {
-      if (channel.platform !== 'rest' || !this.llm) return item;
+      // v1110 — auch YouTube: Übersetzungen werden dort zu localizations
+      // (Titel+Beschreibung je Sprache, Zuschauer sehen ihre Sprache)
+      if ((channel.platform !== 'rest' && channel.platform !== 'youtube') || !this.llm) return item;
       const targets = Array.isArray(channel.config.translate_to)
         ? (channel.config.translate_to as unknown[]).filter((l): l is string => typeof l === 'string' && /^[a-z]{2}(-[a-z]{2})?$/i.test(l)).map(l => l.toLowerCase())
         : [];
@@ -927,6 +931,33 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
       return { ...item, performance: { ...item.performance, translations, translationsOf: marker } };
     } catch {
       return item; // Übersetzung darf einen Publish NIE verhindern
+    }
+  }
+
+  /**
+   * v1110 — SEO-Hook für die YouTube-Beschreibung: EINE suchstarke erste
+   * Zeile (max ~150 Zeichen = das Snippet in Suche/Empfehlungen), per LLM aus
+   * Titel/Text, gecacht in performance.seoHook (Marker = Content-Hash, wie
+   * beim Übersetzungs-Cache — Retries zahlen nicht doppelt). Best-effort:
+   * ohne Hook baut der Provider die Beschreibung wie bisher (Link zuerst).
+   */
+  private async applySeoHook(userId: string, item: ContentItem, channel: SocialChannel): Promise<ContentItem> {
+    try {
+      if (!this.llm || channel.config.yt_seo_hook === false) return item;
+      const marker = createHash('sha256').update(`${item.title ?? ''} ${item.body.slice(0, 400)}`).digest('hex').slice(0, 16);
+      const cached = item.performance?.seoHook;
+      if (typeof cached === 'string' && cached.trim() && item.performance?.seoHookOf === marker) return item;
+      const lang = languageName(typeof channel.config.language === 'string' && channel.config.language ? channel.config.language : 'de');
+      const r = await this.llm.complete({
+        messages: [{ role: 'user', content: `Schreibe EINE suchstarke erste Zeile für eine YouTube-Video-Beschreibung (${lang}, max. 140 Zeichen): die wichtigsten Suchbegriffe des Videos natürlich in einem Satz (Turnier/Wettbewerb, Teams, Ereignis, Jahr — nur was im Material steht). KEINE Hashtags, KEINE URL, KEIN Clickbait, keine Anführungszeichen.\nVIDEO: ${item.title ?? ''} — ${item.body.slice(0, 300)}\nAntworte NUR mit der Zeile.` }],
+        maxTokens: 100, tier: 'fast', reasoningEffort: 'low',
+      });
+      const hook = (r.content ?? '').trim().replace(/^["'„“]|["'„“]$/g, '').slice(0, 160);
+      if (hook.length < 20) return item;
+      await this.repo.mergePerformance(userId, item.id, { seoHook: hook, seoHookOf: marker }).catch(() => { /* Cache optional */ });
+      return { ...item, performance: { ...item.performance, seoHook: hook, seoHookOf: marker } };
+    } catch {
+      return item; // SEO-Hook darf einen Publish NIE verhindern
     }
   }
 

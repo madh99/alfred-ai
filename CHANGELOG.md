@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1110] - 2026-07-12
+
+### Added — YouTube: SEO-Zeile + mehrsprachige Titel/Beschreibungen (v1110)
+- **SEO-Hook**: Jede Video-Beschreibung beginnt jetzt mit einer suchstarken ersten Zeile (LLM-generiert aus Titel/Text, max. ~140 Zeichen — das Snippet in Suche und Empfehlungen), darunter der Artikel-Link. Gecacht pro Inhalt (Retries zahlen nicht doppelt), abschaltbar per `yt_seo_hook: false`.
+- **Localizations**: Kanäle mit `translate_to` (jetzt auch YouTube, nicht mehr nur die Website) bekommen Titel und komplette Beschreibung je Zielsprache als Video-Localizations — Zuschauer sehen Titel/Beschreibung in ihrer Sprache (en/fr/it, gleiche Übersetzungs-Pipeline samt Cache wie die Website-Artikel). Der deutsche SEO-Hook bleibt in den Übersetzungen bewusst draußen; `defaultLanguage` wird beim Upload gesetzt.
+
 ## [0.19.0-multi-ha.1109] - 2026-07-12
 
 ### Added — YouTube-Beschreibung als CTA-Fläche (v1109)

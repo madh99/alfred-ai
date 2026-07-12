@@ -716,6 +716,27 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect((ohne.complete as any).mock.calls[0][0].messages[0].content as string).not.toContain('REDAKTIONSLINIE');
   });
 
+  it('v1110: applyTranslations läuft jetzt auch für YouTube; applySeoHook cached per Content-Hash', async () => {
+    const yt = makeChannel({ platform: 'youtube', config: { translate_to: ['en'] } });
+    const item = makeItem({ title: 'Titel', body: 'Ein ausreichend langer Beitragstext über das Halbfinale.' });
+    const { skill } = makeSkill(yt, item);
+    const complete = vi.fn(async () => ({ content: '{"en": {"title": "Title", "body": "A sufficiently long text about the semi-final."}}' }));
+    (skill as any).llm = { complete };
+    const translated = await (skill as any).applyTranslations('u1', item, yt);
+    expect(translated.performance.translations.en.title).toBe('Title');
+    // SEO-Hook: LLM-Zeile landet in performance, zweiter Aufruf trifft den Cache
+    const hookLlm = vi.fn(async () => ({ content: 'England im WM-Halbfinale 2026: Bellingham-Doppelpack gegen Norwegen' }));
+    (skill as any).llm = { complete: hookLlm };
+    const hooked = await (skill as any).applySeoHook('u1', item, yt);
+    expect(hooked.performance.seoHook).toContain('WM-Halbfinale 2026');
+    await (skill as any).applySeoHook('u1', hooked, yt);
+    expect(hookLlm).toHaveBeenCalledTimes(1); // Cache über seoHookOf-Marker
+    // Abschaltbar
+    const aus = makeChannel({ platform: 'youtube', config: { yt_seo_hook: false } });
+    const unhooked = await (skill as any).applySeoHook('u1', item, aus);
+    expect(unhooked.performance?.seoHook).toBeUndefined();
+  });
+
   it('v1101: Ad-hoc-Termin respektiert performance.notBefore (Zweitverwertungs-Abstand)', async () => {
     const channel = makeChannel();
     const notBefore = new Date(Date.now() + 6 * 3_600_000).toISOString();
