@@ -190,6 +190,7 @@ export function SocialPage() {
     // v1060 — Reels & Video: Wochen-Cap, CTA, Musik-Bett (v1059), KI-Clips (Stufe 3)
     reelMaxPerWeek: number; reelCtaText: string; reelMusicOn: boolean; reelMusicVolume: string;
     reelAiClips: 0 | 1 | 2; reelAiProvider: 'sora' | 'runway' | 'veo'; reelAiModel: string; aiClipBudget: number;
+    sceneVideoBudget: number; // v1108 — Text-zu-Video-Szenen (0 = aus)
     // v1066 — Dauer-Branding im Video (TV-Bug): aus|text|logo|both + Ecke
     // v1067 — Anordnung bei Text+Logo (Block/Block+Angleich/getrennt) + Logo-Ecke
     reelWatermark: 'aus' | 'text' | 'logo' | 'both'; reelWatermarkCorner: string;
@@ -208,7 +209,7 @@ export function SocialPage() {
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
-    reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8,
+    reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8, sceneVideoBudget: 0,
     reelWatermark: 'aus', reelWatermarkCorner: 'bottom-right',
     reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', reelVoiceId: '', attachReelVideo: false,
     autoVideo: false, autoVideoFormat: '16:9', formate: [] });
@@ -630,6 +631,8 @@ export function SocialPage() {
       reelAiProvider: c.config.reel_ai_provider === 'runway' || c.config.reel_ai_provider === 'veo' ? c.config.reel_ai_provider : 'sora',
       reelAiModel: typeof c.config.reel_ai_model === 'string' ? c.config.reel_ai_model : '',
       aiClipBudget: typeof c.config.ai_clip_budget_per_month === 'number' ? c.config.ai_clip_budget_per_month : 8,
+      // v1108 — Szenen-Videos (Topf des Kanals: Reels am Familien-IG, YT am YT-Kanal)
+      sceneVideoBudget: typeof c.config.scene_video_budget_per_month === 'number' ? c.config.scene_video_budget_per_month : 0,
       // v1066 — Dauer-Branding · v1067 — Anordnung + Logo-Ecke
       reelWatermark: c.config.reel_watermark === 'text' || c.config.reel_watermark === 'logo' || c.config.reel_watermark === 'both' ? c.config.reel_watermark : 'aus',
       reelWatermarkCorner: typeof c.config.reel_watermark_corner === 'string' ? c.config.reel_watermark_corner : 'bottom-right',
@@ -709,6 +712,8 @@ export function SocialPage() {
           reel_ai_provider: d.reelAiClips > 0 && d.reelAiProvider !== 'sora' ? d.reelAiProvider : null,
           reel_ai_model: d.reelAiClips > 0 && d.reelAiModel.trim() ? d.reelAiModel.trim() : null,
           ai_clip_budget_per_month: d.reelAiClips > 0 && d.aiClipBudget !== 8 ? d.aiClipBudget : null,
+          // v1108 — Szenen-Videos: 0/leer löscht den Schlüssel (= Feature aus)
+          scene_video_budget_per_month: d.sceneVideoBudget > 0 ? d.sceneVideoBudget : null,
           // v1066 — Dauer-Branding (aus = Schlüssel löschen = Standard wie bisher)
           reel_watermark: d.reelWatermark === 'aus' ? null : d.reelWatermark,
           reel_watermark_corner: d.reelWatermark !== 'aus' && d.reelWatermarkCorner !== 'bottom-right' ? d.reelWatermarkCorner : null,
@@ -1753,6 +1758,13 @@ export function SocialPage() {
                             </div>
                           </div>
                         )}
+                        <div>
+                          <label className="text-[11px] text-gray-500" title="Text-zu-Video-Szenen: Ein Szenen-Board erzeugt echte KI-Videoszenen zum Beitrag statt belebter Standbilder (Sora/Veo ohne Startbild). 0 = aus, dann gilt der Bild-zu-Video-Pfad oben. Reels zaehlen auf diesen Topf des Familien-Instagram-Kanals.">🎬 Szenen-Videos — Budget/Monat (0 = aus)</label>
+                          <input type="number" min={0} value={settingsDraft.sceneVideoBudget}
+                            onChange={e => setSettingsDraft(d => ({ ...d, sceneVideoBudget: Math.max(0, Number(e.target.value) || 0) }))}
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                          <div className="text-[10px] text-gray-600 mt-0.5">Wichtige Beiträge (Eilmeldung/Termin) bekommen das volle Szenen-Board (3 Szenen), Routine eine Hook-Szene.</div>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1805,6 +1817,14 @@ export function SocialPage() {
                               className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
                           </div>
                         )}
+                      </div>
+                      {/* v1108 — Szenen-Videos: eigener YT-Topf (getrennt vom Reel-Topf des Familien-IG) */}
+                      <div>
+                        <label className="text-[11px] text-gray-500" title="Text-zu-Video-Szenen: Ein Szenen-Board erzeugt echte KI-Videoszenen zum Beitrag statt belebter Standbilder (Sora/Veo ohne Startbild). 0 = aus. Die YouTube-Eigenproduktion zaehlt auf DIESEN Topf des YouTube-Kanals — getrennt vom Reel-Topf des Familien-Instagram.">🎬 Szenen-Videos — Budget/Monat (0 = aus)</label>
+                        <input type="number" min={0} value={settingsDraft.sceneVideoBudget}
+                          onChange={e => setSettingsDraft(d => ({ ...d, sceneVideoBudget: Math.max(0, Number(e.target.value) || 0) }))}
+                          className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        <div className="text-[10px] text-gray-600 mt-0.5">Eigenproduktionen bekommen das volle Szenen-Board (6 Szenen je Video).</div>
                       </div>
                       {/* v1091 — Sprecherstimme auch für YouTube-Kanäle (Verwaltung der Stimmen: IG-Kanal → Reels & Video) */}
                       <div>

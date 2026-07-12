@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1108] - 2026-07-12
+
+### Added — Szenen-Video-Budget in der Kanal-UI (v1108)
+- Das Szenen-Video-Budget (v1107, `scene_video_budget_per_month`) lässt sich jetzt in den Kanal-Einstellungen pflegen: Feld „🎬 Szenen-Videos — Budget/Monat" in der Sektion **Reels & Video** (Instagram — Topf für alle Reels der Familie) und in der **🎥 Eigenproduktion** (YouTube — eigener Topf). 0 oder leer schaltet das Feature ab, dann gilt der bisherige Bild-zu-Video-Pfad.
+
 ## [0.19.0-multi-ha.1107] - 2026-07-12
 
 ### Added — Szenen-Videos: echte KI-Szenen statt belebter Standbilder (v1107)
