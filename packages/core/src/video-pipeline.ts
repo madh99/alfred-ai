@@ -709,6 +709,23 @@ export class SlideshowVideoRenderer {
     if (shortfall > 0.05 && spec.images.length > 0) {
       middle.push({ file: spec.images[spec.images.length - 1], kind: 'image' as const, durationSec: Math.max(2, shortfall) });
     }
+    // v1107 — Endframe-Kontinuität: folgt auf einen Clip ein Standbild
+    // DERSELBEN Quelle (typisch: Szene ersetzt das Bild, der Rest der
+    // Sprechzeit läuft als Ken-Burns desselben Bilds weiter), springt das
+    // Video sichtbar auf den Ausgangszustand zurück. Stattdessen trägt der
+    // LETZTE Frame des Clips die Folge-Slide — nahtloser Übergang.
+    // Fehler beim Frame-Zug → Original-Standbild (best-effort).
+    for (let i = 0; i < middle.length - 1; i++) {
+      const cur = middle[i];
+      const next = middle[i + 1];
+      if (cur.kind !== 'video' || next.kind !== 'image') continue;
+      if (i >= spec.images.length || next.file !== spec.images[i]) continue;
+      const framePath = `${base}-endframe-${i}.png`;
+      try {
+        await execFileAsync(this.ffmpeg, ['-y', '-sseof', '-0.2', '-i', cur.file, '-frames:v', '1', '-update', '1', framePath], { timeout: 30_000 });
+        next.file = framePath;
+      } catch { /* Original-Standbild bleibt */ }
+    }
     const slideFiles: string[] = [
       ...(spec.introImage ? [spec.introImage] : []),
       ...middle.map(m => m.file),

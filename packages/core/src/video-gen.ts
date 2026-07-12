@@ -18,9 +18,14 @@ const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
 export type AiClipProviderName = 'sora' | 'runway' | 'veo';
 
 export interface AiClipRequest {
-  /** Ausgangsbild (lokal) — wird auf die Zielgröße des Providers gebracht. */
-  imagePath: string;
-  /** Bewegungs-Beschreibung (englisch, ohne Text-/Personen-Wünsche). */
+  /**
+   * Ausgangsbild (lokal) — wird auf die Zielgröße des Providers gebracht.
+   * v1107 — OHNE Bild läuft der Provider im TEXT-ZU-VIDEO-Modus (echte
+   * generierte Szene statt belebtem Standbild); sora/veo können das,
+   * Runway nicht (klarer Fehler).
+   */
+  imagePath?: string;
+  /** Szenen-/Bewegungs-Beschreibung (englisch, ohne Text-/Personen-Wünsche). */
   prompt: string;
   format: VideoFormat;
   /** Modell-Override (Default je Provider). */
@@ -62,6 +67,7 @@ export class AiClipGenerator {
 
   /** Ausgangsbild auf exakte Zielgröße bringen (Cover-Crop via ffmpeg — kein sharp im Core). */
   private async prepareImage(req: AiClipRequest, w: number, h: number, ext: 'png' | 'jpg'): Promise<string> {
+    if (!req.imagePath) throw new Error('prepareImage ohne imagePath (Text-zu-Video-Pfad ruft das nicht auf).');
     const out = join(req.workDir, `${req.outBaseName}-ref.${ext}`);
     await execFileAsync(this.ffmpegPath, [
       '-y', '-i', req.imagePath,
@@ -89,14 +95,17 @@ export class AiClipGenerator {
     if (!key) throw new Error('Sora braucht einen OpenAI-Key (LLM-Config oder Secret OPENAI_API_KEY).');
     const model = req.model ?? 'sora-2';
     const [w, h] = req.format === '9:16' ? [720, 1280] : [1280, 720];
-    const ref = await this.prepareImage(req, w, h, 'jpg');
     const form = new FormData();
     form.append('model', model);
     form.append('prompt', req.prompt);
     form.append('size', `${w}x${h}`);
     const soraSec = [4, 8, 12].reduce((best, s) => Math.abs(s - (req.targetSec ?? 8)) < Math.abs(best - (req.targetSec ?? 8)) ? s : best, 8);
     form.append('seconds', String(soraSec));
-    form.append('input_reference', new Blob([new Uint8Array(await readFile(ref))], { type: 'image/jpeg' }), 'reference.jpg');
+    // v1107 — ohne Ausgangsbild: reines Text-zu-Video (Szenen-Modus)
+    if (req.imagePath) {
+      const ref = await this.prepareImage(req, w, h, 'jpg');
+      form.append('input_reference', new Blob([new Uint8Array(await readFile(ref))], { type: 'image/jpeg' }), 'reference.jpg');
+    }
     const create = await fetch('https://api.openai.com/v1/videos', {
       method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form,
     });
@@ -132,6 +141,7 @@ export class AiClipGenerator {
   private async generateRunway(req: AiClipRequest): Promise<AiClipResult> {
     const key = this.keys.runway;
     if (!key) throw new Error('Runway braucht das Secret RUNWAY_API_SECRET (ENV-Stage des Kanals).');
+    if (!req.imagePath) throw new Error('Runway kann hier nur Bild-zu-Video — für Text-zu-Video-Szenen sora oder veo verwenden.');
     const model = req.model ?? 'gen4_turbo';
     const [w, h] = req.format === '9:16' ? [720, 1280] : [1280, 720];
     const ref = await this.prepareImage(req, w, h, 'jpg');
@@ -182,11 +192,14 @@ export class AiClipGenerator {
     const { GoogleGenAI } = await import('@google/genai');
     const genai = new GoogleGenAI({ apiKey: key });
     const [w, h] = req.format === '9:16' ? [720, 1280] : [1280, 720];
-    const ref = await this.prepareImage(req, w, h, 'png');
+    // v1107 — ohne Ausgangsbild: reines Text-zu-Video (Szenen-Modus)
+    const image = req.imagePath
+      ? { image: { imageBytes: (await readFile(await this.prepareImage(req, w, h, 'png'))).toString('base64'), mimeType: 'image/png' } }
+      : {};
     let op = await genai.models.generateVideos({
       model,
       prompt: req.prompt,
-      image: { imageBytes: (await readFile(ref)).toString('base64'), mimeType: 'image/png' },
+      ...image,
       config: { aspectRatio: req.format, numberOfVideos: 1 },
     });
     const deadline = Date.now() + 8 * 60_000;

@@ -656,6 +656,48 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(Date.parse(withDistance.notBefore)).toBe(Date.parse(publishedAt) + 6 * 3_600_000);
   });
 
+  it('v1107: Szenen-Modus (scene_video_budget) — Text-zu-Video OHNE Bild, eigener Topf gen_scene_clip', async () => {
+    const setup = reelSetup({ auto_reel: true, scene_video_budget_per_month: 120 });
+    const generateClip = vi.fn(async () => ({ clipPath: '/tmp/scene1.mp4', durationSec: 8 }));
+    const render = vi.fn(async () => ({ videoPath: '/tmp/reel.mp4', durationSec: 25 }));
+    setup.skill.setVideoTools({ render, probe: vi.fn(async () => ({ ok: true })), generateClip } as any);
+    (setup.complete as any).mockReset()
+      .mockResolvedValueOnce({ content: '{"script": "Kolumbien steht im Viertelfinale und keiner hat es kommen sehen — die ganze Geschichte in dreißig Sekunden.", "caption": "Kolumbien weiter!"}' })
+      .mockResolvedValueOnce({ content: '["sweeping cinematic dolly across a rain-soaked floodlit stadium, flags waving, dramatic light"]' });
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    for (let i = 0; i < 80 && (render as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
+    // Text-zu-Video: KEIN imagePath, Prompt = Szene aus dem Board
+    expect(generateClip).toHaveBeenCalledTimes(1); // Routine-Beitrag → 1 Hook-Szene
+    const req = (generateClip as any).mock.calls[0][0];
+    expect(req.imagePath).toBeUndefined();
+    expect(req.prompt).toContain('rain-soaked floodlit stadium');
+    // Eigener Topf: Metric gen_scene_clip (nicht gen_ai_clip)
+    const metricCall = ((setup.skill as any).repo.upsertMetric as any).mock.calls.find((c: any[]) => c[1]?.kind === 'gen_scene_clip');
+    expect(metricCall).toBeDefined();
+    // Render bekommt die Szene als Clip an Slide 0
+    const opts = (render as any).mock.calls[0][3];
+    expect(opts.clips).toEqual([{ index: 0, path: '/tmp/scene1.mp4', durationSec: 8 }]);
+  });
+
+  it('v1107: ohne scene_video_budget bleibt der alte Bild-zu-Video-Pfad (imagePath gesetzt)', async () => {
+    const setup = reelSetup({ auto_reel: true, reel_ai_clips: 1, ai_clip_budget_per_month: 8 });
+    const generateClip = vi.fn(async () => ({ clipPath: '/tmp/clip1.mp4', durationSec: 6 }));
+    const render = vi.fn(async () => ({ videoPath: '/tmp/reel.mp4', durationSec: 25 }));
+    setup.skill.setVideoTools({ render, probe: vi.fn(async () => ({ ok: true })), generateClip } as any);
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    for (let i = 0; i < 80 && (render as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
+    expect(generateClip).toHaveBeenCalledTimes(1);
+    expect((generateClip as any).mock.calls[0][0].imagePath).toBeDefined(); // Bild-zu-Video wie bisher
+  });
+
+  it('v1107: sceneCountFor — Staffelung nach Format und Wichtigkeit', async () => {
+    const { SocialSkill } = await import('./social-skill.js');
+    expect(SocialSkill.sceneCountFor('9:16', false)).toBe(1);
+    expect(SocialSkill.sceneCountFor('9:16', true)).toBe(3);
+    expect(SocialSkill.sceneCountFor('16:9', false)).toBe(2);
+    expect(SocialSkill.sceneCountFor('16:9', true)).toBe(6);
+  });
+
   it('v1105: Redaktionslinie der Familie fließt in den Reel-Script-Prompt (ohne Linie: nicht)', async () => {
     const setup = reelSetup();
     // Linie hängt am LEAD-Kanal der Familie (ein Kanal genügt — wie im Studio)

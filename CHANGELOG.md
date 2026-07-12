@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1107] - 2026-07-12
+
+### Added — Szenen-Videos: echte KI-Szenen statt belebter Standbilder (v1107)
+- **Text-zu-Video-Szenen-Board**: Statt das Artikelbild zu „beleben" (animiertes Foto mit Mini-Bewegung), erzählt ein LLM-Szenen-Board den Beitrag jetzt in **echten generierten Videoszenen** (Sora/Veo ohne Startbild; Runway fällt aufs Bild mit Szenen-Prompt zurück). Szene 1 ist der Hook, die weiteren folgen dem Sprechertext; Leitplanken bleiben (keine erkennbaren realen Personen, keine Logos, keine Texteinblendungen), die Redaktionslinie fließt in die Szenen-Regie ein.
+- **Staffelung nach Wichtigkeit**: Eilmeldungen/Termin-Beiträge und die YouTube-Eigenproduktion bekommen das volle Board (Reel 3, YouTube 6 Szenen), Routine-Beiträge eine Hook-Szene (Reel 1, YouTube 2) — Kosten skalieren mit der Relevanz.
+- **Getrennte Budget-Töpfe** (`scene_video_budget_per_month`, Metric `gen_scene_clip`): Reels zählen auf den Topf des Familien-Instagram, die YouTube-Eigenproduktion auf den des YouTube-Kanals — ein aufwendiges YouTube-Video frisst nicht mehr das Reel-Budget. Topf 0/fehlend = Feature aus, dann gilt der bisherige Bild-zu-Video-Pfad unverändert.
+- **Nahtlose Übergänge**: Folgt auf eine Szene ein Standbild derselben Quelle, trägt jetzt der letzte Frame des Clips die Folge-Slide — kein sichtbarer Rücksprung aufs Ausgangsbild mehr. Die Bild-zu-Video-Bewegungs-Prompts sind zudem deutlich dynamischer (Kamerafahrten statt „subtle motion").
+- Live verprobt: Veo generierte ohne Startbild eine echte 8-s-Stadionszene (Text-zu-Video über die bestehende SDK-Anbindung).
+
 ## [0.19.0-multi-ha.1106] - 2026-07-12
 
 ### Fixed — Reel-Audio: Musik übertönt den Sprecher nicht mehr (v1106)

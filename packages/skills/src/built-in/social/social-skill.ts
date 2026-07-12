@@ -152,7 +152,7 @@ export class SocialSkill extends Skill {
         platform: { type: 'string', enum: ['telegram_channel', 'rest', 'youtube', 'instagram', 'facebook', 'threads', 'x', 'bluesky'], description: 'create_channel: Plattform. instagram/facebook/threads brauchen META_ACCESS_TOKEN (ENV-Stage social) + config ig_user_id/page_id/threads_user_id; youtube OAuth2-Secrets; x X_ACCESS_TOKEN/X_REFRESH_TOKEN+X_CLIENT_ID (OAuth2; Bild-Posts via v1.1: zusätzlich X_CONSUMER_KEY/X_CONSUMER_SECRET/X_OAUTH1_ACCESS_TOKEN/X_OAUTH1_ACCESS_SECRET — der OAuth2-Scope media.write wird oft nicht gewährt); bluesky config.handle + Secret BLUESKY_APP_PASSWORD (App-Passwort, Bilder werden direkt hochgeladen — kein public_media nötig, Links klickbar). Instagram: Posts brauchen IMMER ein Medium mit ÖFFENTLICHER http-URL (kein reiner Text).' },
         name: { type: 'string', description: 'create_channel: Anzeigename des Kanals' },
         project: { type: 'string', description: 'create_channel: optional Projekt-Name/-ID (Kanal hängt am Projekt, Secrets aus dessen ENVs)' },
-        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {redaktionslinie: "Wochenfokus-Memo der Kanal-Familie, z.B. Countdown aufs Halbfinale 14.07., Panini als Zweitstrang — fließt VERBINDLICH in Redaktionskonferenz und alle Schreib-Prompts der Familie ein und steht im Wochen-Report; auf EINEM Familien-Kanal setzen reicht}, {evergreen_max_per_day: 2 — Tagesdeckel für zeitlose Füll-Posts je Kanal, Default 2}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — NUR rest-Kanäle: beim Publish werden Titel+Body übersetzt und als translations ins Payload gelegt (Website-Sprachversionen)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id, auto_story: true — postet beim Publish des Familien-Lead-Artikels automatisch eine IG-Story (9:16, Titel+Link-im-Profil-CTA als Overlay), OHNE Einzelfreigabe, zählt aufs Tages-Limit; story_cta_text ersetzt den CTA; auto_reel: true — erstellt beim Lead-Publish ein 20-30s-Reel (Sprecher+Untertitel+Story-Bilder) als ENTWURF mit Freigabe, max reel_max_per_week (Default 2), braucht ffmpeg}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
+        config: { type: 'object', description: 'create_channel/update_channel: Provider-/Kanal-Config, wird FELDWEISE gemergt (auch verschachtelt: {body_template: {status: "PUBLISHED"}} ändert NUR status, übrige Template-Felder bleiben; null löscht einen Schlüssel) — z.B. {generate_images: true}, {redaktionslinie: "Wochenfokus-Memo der Kanal-Familie, z.B. Countdown aufs Halbfinale 14.07., Panini als Zweitstrang — fließt VERBINDLICH in Redaktionskonferenz und alle Schreib-Prompts der Familie ein und steht im Wochen-Report; auf EINEM Familien-Kanal setzen reicht}, {evergreen_max_per_day: 2 — Tagesdeckel für zeitlose Füll-Posts je Kanal, Default 2}, {scene_video_budget_per_month: 120 — schaltet SZENEN-VIDEOS ein (Text-zu-Video statt belebter Standbilder): Reels zählen auf den Topf des Familien-Instagram, YouTube-Eigenproduktion auf den des YT-Kanals; 0/fehlend = aus, dann gilt der alte Bild-zu-Video-Pfad (reel_ai_clips)}, {image_policy: "symbolic"|"people_ok" — symbolic=Default: keine realen Personen/Logos in generierten Bildern (Bildnisrecht), people_ok=explizites Opt-in}, {image_budget_per_month: 30}, {language: "de" — Inhaltssprache des Kanals (ISO-Code, Default de)}, {translate_to: ["en","fr"] — NUR rest-Kanäle: beim Publish werden Titel+Body übersetzt und als translations ins Payload gelegt (Website-Sprachversionen)}, telegram_channel: {chat_id}, rest: {base_url, publish_path?, body_template?, id_field?, url_template?, insecure_tls?, env_stage?}, youtube: {privacy_status?}, instagram: {ig_user_id, auto_story: true — postet beim Publish des Familien-Lead-Artikels automatisch eine IG-Story (9:16, Titel+Link-im-Profil-CTA als Overlay), OHNE Einzelfreigabe, zählt aufs Tages-Limit; story_cta_text ersetzt den CTA; auto_reel: true — erstellt beim Lead-Publish ein 20-30s-Reel (Sprecher+Untertitel+Story-Bilder) als ENTWURF mit Freigabe, max reel_max_per_week (Default 2), braucht ffmpeg}, facebook: {page_id}, threads: {threads_user_id}, x: {max_posts_per_month}. instagram/facebook/threads mit generierten Bildern brauchen zusätzlich public_media (Medien-Ablageort des Kanals): {provider: "rest", base_url, path?, url_field?} = Medienbibliothek der Projekt-Website (fussball.cc: base_url https://fussball.cc, path /api/integrations/media) ODER {provider: "s3", endpoint, bucket, region?, public_base_url?} = S3-kompatibler Cloud-Bucket (Secrets S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)' },
         mode: { type: 'string', enum: ['suggest', 'approve', 'autonomous'], description: 'update_channel: Arbeitsmodus (Automatik ab v934)' },
         publish_mode: { type: 'string', enum: ['api', 'prepare'], description: 'api = Alfred veröffentlicht selbst; prepare = Alfred bereitet auf, User postet' },
         persona: { type: 'string', description: 'update_channel: Tonalität/Persona für Content-Erstellung' },
@@ -206,7 +206,7 @@ export class SocialSkill extends Skill {
     // v1058 — opts: Hook-Karte (intro) und End-Card (outro) fürs Reel
     render: (item: ContentItem, channel: SocialChannel, format: '9:16' | '16:9', opts?: { introImage?: string; outroImage?: string; music?: { volume?: number } | false; clips?: Array<{ index: number; path: string; durationSec: number }>; overlayImage?: string; voiceId?: string }) => Promise<{ videoPath: string; durationSec: number }>;
     /** v1060 — Stufe 3: Image-to-Video-Clip (Sora/Runway/Veo, kostenpflichtig). */
-    generateClip?: (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => Promise<{ clipPath: string; durationSec: number }>;
+    generateClip?: (req: { imagePath?: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => Promise<{ clipPath: string; durationSec: number }>;
     probe?: (path: string) => Promise<{ ok: boolean; durationSec?: number; detail?: string }>;
     /** v1094 — Auto-Highlights: beste Fenster (Lautheit + Szenenwechsel) aus langem Material. */
     analyze?: (path: string, opts?: { count?: number; maxLenSec?: number }) => Promise<Array<{ start: number; end: number; score: number }>>;
@@ -1192,6 +1192,101 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     return '';
   }
 
+  /** v1107 — Staffelung: wie viele Text-zu-Video-Szenen ein Beitrag bekommt. */
+  static sceneCountFor(format: '9:16' | '16:9', wichtig: boolean): number {
+    if (format === '16:9') return wichtig ? 6 : 2; // YouTube: längere Laufzeit
+    return wichtig ? 3 : 1; // Reel: Hook-Szene, Wichtiges voll
+  }
+
+  /**
+   * v1107 — Szenen-Videos (Stufe A+B): Statt das Artikel-Standbild zu
+   * „beleben" (Bild-zu-Video → animiertes Foto), erzählt ein LLM-Szenen-Board
+   * den Beitrag in echten Text-zu-Video-Szenen (sora/veo; Runway fällt aufs
+   * Bild mit Szenen-Prompt zurück). Eigener Budget-Topf je Format
+   * (scene_video_budget_per_month, Metric gen_scene_clip auf budgetChannel):
+   * Reels zählen am Familien-Instagram, YouTube-Eigenproduktion am YT-Kanal.
+   * Topf 0/fehlend = Feature aus → Aufrufer nutzt den alten Bild-Pfad.
+   * Jeder Szenen-Fehlschlag fällt still aufs Standbild zurück.
+   */
+  private async generateSceneClips(opts: {
+    userId: string;
+    title: string;
+    body: string;
+    script?: string;
+    format: '9:16' | '16:9';
+    wichtig: boolean;
+    /** Topf-Inhaber (Familien-IG für Reels, YT-Kanal für Eigenproduktion). */
+    budgetChannel: SocialChannel;
+    /** Provider-/Modell-Quelle (reel_ai_provider/reel_ai_model). */
+    providerChannel: SocialChannel;
+    /** Fallback-Bild (Runway bzw. Szenen-Fehlschlag → Standbild bleibt). */
+    fallbackImage?: string;
+    linie?: string;
+  }): Promise<{ clips: Array<{ index: number; path: string; durationSec: number }>; notes: string[]; active: boolean }> {
+    const notes: string[] = [];
+    const budgetRaw = opts.budgetChannel.config.scene_video_budget_per_month;
+    const sceneBudget = typeof budgetRaw === 'number' && budgetRaw > 0 ? budgetRaw : 0;
+    if (sceneBudget === 0 || !this.videoTools?.generateClip || !this.llm) return { clips: [], notes, active: false };
+    const provRaw = opts.providerChannel.config.reel_ai_provider;
+    const provider = provRaw === 'runway' || provRaw === 'veo' ? provRaw : 'sora';
+    const modelRaw = opts.providerChannel.config.reel_ai_model;
+    const model = typeof modelRaw === 'string' && modelRaw.trim() ? modelRaw.trim() : undefined;
+    const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+    let used = (await this.repo.listMetrics(opts.budgetChannel.id, { kind: 'gen_scene_clip', sinceDate: monthStart }))
+      .reduce((sum, m) => sum + m.value, 0);
+    const wanted = SocialSkill.sceneCountFor(opts.format, opts.wichtig);
+    if (used >= sceneBudget) {
+      notes.push(`Szenen-Monatsbudget erreicht (${used}/${sceneBudget}) — Standbild-Slides.`);
+      return { clips: [], notes, active: true };
+    }
+    // Szenen-Board: konkrete, bewegungsreiche Video-Prompts entlang des Beitrags
+    let scenes: string[] = [];
+    try {
+      const prompt = `Erstelle ein SZENEN-BOARD für ein ${opts.format === '16:9' ? 'YouTube' : 'Hochkant-Reel'}-Video zu diesem Beitrag: GENAU ${wanted} filmische Szenen, die die Geschichte des Beitrags erzählen (Szene 1 = packender Hook, danach dem Verlauf des Sprechertexts folgend).
+Je Szene EIN englischer Text-zu-Video-Prompt (1-2 Sätze): konkrete HANDLUNG plus KAMERABEWEGUNG, dynamisch und lebendig (Kamerafahrten, Wetter, Flutlicht, wehende Fahnen, Menschenmengen aus der Distanz) — KEINE erkennbaren realen Personen oder Spieler, KEINE Logos/Vereinsembleme/Trikots mit Erkennungswert, KEINE Texteinblendungen, KEINE statischen Standbild-Momente.
+${opts.linie ? `REDAKTIONSLINIE (Einordnung): ${opts.linie}\n` : ''}BEITRAG: ${opts.title} — ${opts.body.slice(0, 600)}${opts.script ? `\nSPRECHERTEXT: ${opts.script.slice(0, 600)}` : ''}
+
+Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
+      const r = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 1_200, tier: 'fast', reasoningEffort: 'low' });
+      const raw = r.content ?? '';
+      const start = raw.indexOf('[');
+      const end = raw.lastIndexOf(']');
+      if (start >= 0 && end > start) {
+        const arr = JSON.parse(raw.slice(start, end + 1)) as unknown[];
+        scenes = arr.filter((s): s is string => typeof s === 'string' && s.trim().length > 20).map(s => s.trim().slice(0, 500));
+      }
+    } catch { /* kein Board → kein Szenen-Video */ }
+    if (scenes.length === 0) {
+      notes.push('Szenen-Board fehlgeschlagen — Standbild-Slides.');
+      return { clips: [], notes, active: true };
+    }
+    const secrets = await this.secrets(opts.budgetChannel);
+    const today = new Date().toISOString().slice(0, 10);
+    const clips: Array<{ index: number; path: string; durationSec: number }> = [];
+    for (let i = 0; i < Math.min(scenes.length, wanted); i++) {
+      if (used >= sceneBudget) {
+        notes.push(`Szenen-Monatsbudget erreicht (${used}/${sceneBudget}) — Rest als Standbild.`);
+        break;
+      }
+      try {
+        // Runway kann kein Text-zu-Video → Szenen-Prompt aufs Fallback-Bild
+        const clip = await this.videoTools.generateClip({
+          ...(provider === 'runway' && opts.fallbackImage ? { imagePath: opts.fallbackImage } : {}),
+          prompt: scenes[i], provider, ...(model ? { model } : {}), secrets, format: opts.format,
+        });
+        clips.push({ index: i, path: clip.clipPath, durationSec: clip.durationSec });
+        used += 1;
+        // Budget-Ehrlichkeit (v1055): jede gelieferte Szene zählt sofort
+        const dayUsed = (await this.repo.listMetrics(opts.budgetChannel.id, { kind: 'gen_scene_clip', sinceDate: today }))
+          .find(m => m.date === today && !m.itemId)?.value ?? 0;
+        await this.repo.upsertMetric(opts.budgetChannel.id, { date: today, kind: 'gen_scene_clip', value: dayUsed + 1 });
+      } catch (err) {
+        notes.push(`Szene ${i + 1} (${provider}) fehlgeschlagen: ${(err as Error).message.slice(0, 120)} — Standbild.`);
+      }
+    }
+    return { clips, notes, active: true };
+  }
+
   /** v1101 — heutiges Datum fürs Reel-Script (ohne Intl — ICU-Kaltstart kostete >10 ms). */
   static heuteZeile(now = new Date()): string {
     const wd = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'][now.getDay()];
@@ -1226,7 +1321,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     const prompt = `Erstelle aus diesem Artikel ein Instagram-Reel-Paket (${lang}):
 1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL). Der Text wird von einer TTS-Stimme gesprochen, die ihre Betonung aus der ZEICHENSETZUNG ableitet — schreibe wie ein Sportmoderator: kurze, punchige Sätze statt Schachtelsätze, eine rhetorische Frage oder ein Ausruf wo es passt, bewusste Pausen mit Gedankenstrichen — Zahlen und Namen an betonter Stelle. KEINE Regieanweisungen, keine Klammern, nur sprechbarer Text.
 2. "caption": Reel-Caption (2-3 Sätze, keine Hashtags; nur GELEGENTLICH mit Frage an die Community — nicht standardmäßig).
-3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken (z.B. "slow cinematic camera push-in, crowd waving flags, natural stadium light" — KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos).
+3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken — DYNAMISCH und deutlich sichtbar (z.B. "sweeping cinematic camera dolly through the stadium, flags waving in the wind, dramatic floodlight flares" — keine subtile Mini-Bewegung; KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos).
 FAKTEN nur aus dem Artikel, nichts erfinden.
 ${await this.redaktionslinieFor(userId, ig).then(l => l ? `REDAKTIONSLINIE (verbindlich, vom Herausgeber — Script UND Caption daran ausrichten, ohne Fakten zu erfinden): ${l}\n` : '')}HEUTE ist ${SocialSkill.heuteZeile()} — vermeide falsche Phasen-Bezüge (z. B. „vor dem Start" oder „in der Vorbereitung", wenn das Ereignis laut Artikel längst läuft oder vorbei ist).
 KEINE Spekulation über Folgen, Pläne oder offene Fragen, die nicht wörtlich im Artikel stehen — keine rhetorischen „Was bedeutet das für …?"-Fragen zu Dingen, die der Artikel nicht beantwortet. Ist der Artikel dünn, bleibt das Skript kurz und faktisch statt aufgefüllt.
@@ -1249,7 +1344,8 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
     const caption = typeof pack.caption === 'string' && pack.caption.trim() ? pack.caption.trim().slice(0, 1_500) : script.slice(0, 300);
     const motion = typeof pack.motion === 'string' && pack.motion.trim()
       ? pack.motion.trim().slice(0, 400)
-      : 'slow cinematic camera push-in, subtle natural motion, no text overlays, no recognizable people';
+      // v1107 — kräftige Default-Bewegung statt „subtle" (zitterndes Standbild)
+      : 'dynamic cinematic camera dolly through a floodlit stadium, flags waving, drifting haze, dramatic light shifts, no text overlays, no recognizable people';
     // Rendern (ffmpeg + TTS + Untertitel) — der teure Teil
     const pseudo: ContentItem = {
       ...leadItem, id: `reel-${leadItem.id.slice(0, 8)}`, body: script,
@@ -1317,14 +1413,35 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       outroImage = undefined;
       overlayImage = undefined;
     }
+    // v1107 — Stufe A+B: Szenen-Videos (Text-zu-Video) statt belebter
+    // Standbilder. Eigener Reel-Topf (scene_video_budget_per_month am
+    // Familien-IG); Wichtiges (Eilmeldung/Termin) bekommt das volle
+    // Szenen-Board, Routine die Hook-Szene. Bild-Slots werden bei Bedarf
+    // durch Wiederholung des Basis-Bilds aufgefüllt — die Endframe-
+    // Kontinuität des Renderers übernimmt die Übergänge.
+    let clips: Array<{ index: number; path: string; durationSec: number }> = [];
+    let clipNotes: string[] = [];
+    let sceneMode = false;
+    {
+      const wichtig = leadItem.performance?.breaking === true || typeof leadItem.performance?.terminBis === 'string';
+      const scene = await this.generateSceneClips({
+        userId, title: leadItem.title ?? '', body: leadItem.body, script,
+        format: '9:16', wichtig, budgetChannel: ig, providerChannel: ig,
+        fallbackImage: images[0], linie: await this.redaktionslinieFor(userId, ig),
+      });
+      if (scene.active) {
+        sceneMode = true;
+        clips = scene.clips;
+        clipNotes = scene.notes;
+        while (images.length < clips.length) images.push(images[images.length - 1]); // Szenen-Slots
+      }
+    }
     // v1060 — Stufe 3 (Opt-in!): KI-Clips für die ersten 1-2 Bilder. Nur wenn
     // der Kanal reel_ai_clips gesetzt hat, Monats-Budget noch Luft hat und der
     // Kern den Generator anbietet. JEDER Fehlschlag fällt still auf die
     // Ken-Burns-Standbild-Slide zurück — das Reel kommt immer raus.
-    const clips: Array<{ index: number; path: string; durationSec: number }> = [];
-    const clipNotes: string[] = [];
     const aiClipsWanted = typeof ig.config.reel_ai_clips === 'number' ? Math.min(Math.max(Math.floor(ig.config.reel_ai_clips), 0), 2) : 0;
-    if (aiClipsWanted > 0 && this.videoTools.generateClip) {
+    if (!sceneMode && aiClipsWanted > 0 && this.videoTools.generateClip) {
       const provRaw = ig.config.reel_ai_provider;
       const provider = provRaw === 'runway' || provRaw === 'veo' ? provRaw : 'sora';
       const model = typeof ig.config.reel_ai_model === 'string' && ig.config.reel_ai_model.trim() ? ig.config.reel_ai_model.trim() : undefined;
@@ -2579,10 +2696,43 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     // Erben); Provider/Modell fallen auf Familien-Instagram zurück, Budget-
     // Topf ist der GEMEINSAME gen_ai_clip-Zähler (auf dem Familien-IG, wie
     // bei Reels und „Beleben" — eine Zahl deckelt alles Bezahlte).
-    const clips: Array<{ index: number; path: string; durationSec: number }> = [];
-    const clipNotes: string[] = [];
+    let clips: Array<{ index: number; path: string; durationSec: number }> = [];
+    let clipNotes: string[] = [];
+    let sceneMode = false;
+    let renderItem = item;
+    // v1107 — Szenen-Videos auch in der Eigenproduktion: YouTube zählt auf den
+    // EIGENEN Topf (scene_video_budget_per_month am YT-Kanal), andere Kanäle
+    // auf den Reel-Topf des Familien-IG. YT-Eigenproduktion gilt als wichtig
+    // (Voll-Board) — dort ist das Video das Produkt, nicht die Beigabe.
+    {
+      const sceneImages = item.media.filter(m => m.type === 'image' && !m.pathOrUrl.startsWith('http')).map(m => m.pathOrUrl);
+      const budgetChannel = channel.platform === 'youtube' ? channel : (familyIg ?? channel);
+      const wichtig = channel.platform === 'youtube'
+        || item.performance?.breaking === true || typeof item.performance?.terminBis === 'string';
+      const scriptRaw = item.performance?.script;
+      const scene = await this.generateSceneClips({
+        userId, title: item.title ?? '', body: item.body,
+        ...(typeof scriptRaw === 'string' && scriptRaw.trim() ? { script: scriptRaw } : {}),
+        format, wichtig, budgetChannel, providerChannel: channel.config.reel_ai_provider ? channel : (familyIg ?? channel),
+        ...(sceneImages[0] ? { fallbackImage: sceneImages[0] } : {}),
+        linie: await this.redaktionslinieFor(userId, channel),
+      });
+      if (scene.active) {
+        sceneMode = true;
+        clips = scene.clips;
+        clipNotes = scene.notes;
+        if (sceneImages.length > 0 && clips.length > sceneImages.length) {
+          // Szenen-Slots: Basis-Bild wiederholen, damit jede Szene eine Slide hat
+          const extra: ContentMedia[] = [];
+          for (let i = sceneImages.length; i < clips.length; i++) {
+            extra.push({ type: 'image', source: 'generated', pathOrUrl: sceneImages[sceneImages.length - 1] });
+          }
+          renderItem = { ...item, media: [...item.media, ...extra] };
+        }
+      }
+    }
     const clipsWanted = typeof channel.config.reel_ai_clips === 'number' ? Math.min(Math.max(0, channel.config.reel_ai_clips), 2) : 0;
-    if (clipsWanted > 0 && this.videoTools.generateClip && this.llm) {
+    if (!sceneMode && clipsWanted > 0 && this.videoTools.generateClip && this.llm) {
       const provRaw = channel.config.reel_ai_provider ?? familyIg?.config.reel_ai_provider;
       const provider = provRaw === 'runway' || provRaw === 'veo' ? provRaw : 'sora';
       const modelRaw = channel.config.reel_ai_model ?? familyIg?.config.reel_ai_model;
@@ -2593,10 +2743,12 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
       let clipsUsed = (await this.repo.listMetrics(budgetChannel.id, { kind: 'gen_ai_clip', sinceDate: monthStart }))
         .reduce((sum, m) => sum + m.value, 0);
       const images = item.media.filter(m => m.type === 'image' && !m.pathOrUrl.startsWith('http')).map(m => m.pathOrUrl);
-      let motion = 'slow cinematic camera push-in, subtle natural motion, no text overlays, no recognizable people';
+      // v1107 — kräftige, sichtbare Bewegung statt „subtle" (die zahmen
+      // Prompts erzeugten zitternde Standbilder)
+      let motion = 'dynamic cinematic camera dolly through a floodlit stadium, flags waving, drifting stadium haze, dramatic light shifts, no text overlays, no recognizable people';
       try {
         const r = await this.llm.complete({
-          messages: [{ role: 'user', content: `Beschreibe in EINEM englischen Satz eine subtile, filmische Kamera-/Szenen-Bewegung passend zu diesem Beitrag (z.B. "slow cinematic camera push-in, flags waving"). KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos.\nBEITRAG: ${item.title ?? ''} — ${item.body.slice(0, 300)}\nAntworte NUR mit dem Satz.` }],
+          messages: [{ role: 'user', content: `Beschreibe in EINEM englischen Satz eine DYNAMISCHE, deutlich sichtbare filmische Kamera-/Szenen-Bewegung passend zu diesem Beitrag (Kamerafahrt, Wetter, Flutlicht, wehende Fahnen — keine subtile Mini-Bewegung, kein statisches Bild). KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos.\nBEITRAG: ${item.title ?? ''} — ${item.body.slice(0, 300)}\nAntworte NUR mit dem Satz.` }],
           maxTokens: 120, tier: 'fast',
         });
         const m = (r.content ?? '').trim().replace(/^["']|["']$/g, '');
@@ -2621,7 +2773,7 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
         }
       }
     }
-    const result = await this.videoTools.render(item, channel, format, {
+    const result = await this.videoTools.render(renderItem, channel, format, {
       music: this.reelMusicOpts(channel),
       ...(manualVoice ? { voiceId: manualVoice } : {}),
       ...(clips.length > 0 ? { clips } : {}),

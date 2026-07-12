@@ -6836,7 +6836,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             // v1060 — Stufe 3: Image-to-Video-Clip (kostenpflichtig; Budget/
             // Opt-in prüft der Skill). Fehler wirft — der Skill fällt dann auf
             // die Standbild-Slide zurück.
-            generateClip: async (req: { imagePath: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => {
+            // v1107 — imagePath optional: ohne Bild Text-zu-Video (Szenen-Modus)
+            generateClip: async (req: { imagePath?: string; prompt: string; provider: 'sora' | 'runway' | 'veo'; model?: string; secrets: Record<string, string>; format: '9:16' | '16:9' }) => {
               const { AiClipGenerator } = await import('./video-gen.js');
               const gen = new AiClipGenerator(
                 this.logger.child({ component: 'video-gen' }),
@@ -6847,7 +6848,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 },
               );
               const r = await gen.generate(req.provider, {
-                imagePath: req.imagePath, prompt: req.prompt, format: req.format,
+                ...(req.imagePath ? { imagePath: req.imagePath } : {}), prompt: req.prompt, format: req.format,
                 ...(req.model ? { model: req.model } : {}),
                 workDir: videoWorkDir,
                 outBaseName: `clip-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
