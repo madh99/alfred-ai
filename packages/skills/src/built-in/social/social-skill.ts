@@ -1163,6 +1163,35 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     return typeof vol === 'number' && vol > 0 && vol <= 1 ? { volume: vol } : {};
   }
 
+  /**
+   * v1105 — Redaktionslinie der Familie fürs Reel-Script (config.redaktionslinie
+   * auf irgendeinem Familien-Kanal; gleiche Semantik wie im Studio — der Skill
+   * kann @alfred/core nicht importieren, daher lokal aufgelöst).
+   */
+  private async redaktionslinieFor(userId: string, channel: SocialChannel): Promise<string> {
+    const linieVon = (c: SocialChannel): string => {
+      const v = c.config.redaktionslinie;
+      return typeof v === 'string' && v.trim() ? v.trim().slice(0, 500) : '';
+    };
+    const own = linieVon(channel);
+    if (own) return own;
+    const familyOf = (c: SocialChannel): string | null => {
+      if (typeof c.config.family === 'string' && c.config.family.trim()) return `family:${c.config.family.trim().toLowerCase()}`;
+      return c.projectId ? `project:${c.projectId}` : null;
+    };
+    const fam = familyOf(channel);
+    if (!fam) return '';
+    try {
+      const channels = await this.repo.listChannels(userId, 'active');
+      for (const c of channels) {
+        if (familyOf(c) !== fam) continue;
+        const linie = linieVon(c);
+        if (linie) return linie;
+      }
+    } catch { /* Linie ist optional */ }
+    return '';
+  }
+
   /** v1101 — heutiges Datum fürs Reel-Script (ohne Intl — ICU-Kaltstart kostete >10 ms). */
   static heuteZeile(now = new Date()): string {
     const wd = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'][now.getDay()];
@@ -1199,7 +1228,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
 2. "caption": Reel-Caption (2-3 Sätze, keine Hashtags; nur GELEGENTLICH mit Frage an die Community — nicht standardmäßig).
 3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken (z.B. "slow cinematic camera push-in, crowd waving flags, natural stadium light" — KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos).
 FAKTEN nur aus dem Artikel, nichts erfinden.
-HEUTE ist ${SocialSkill.heuteZeile()} — vermeide falsche Phasen-Bezüge (z. B. „vor dem Start" oder „in der Vorbereitung", wenn das Ereignis laut Artikel längst läuft oder vorbei ist).
+${await this.redaktionslinieFor(userId, ig).then(l => l ? `REDAKTIONSLINIE (verbindlich, vom Herausgeber — Script UND Caption daran ausrichten, ohne Fakten zu erfinden): ${l}\n` : '')}HEUTE ist ${SocialSkill.heuteZeile()} — vermeide falsche Phasen-Bezüge (z. B. „vor dem Start" oder „in der Vorbereitung", wenn das Ereignis laut Artikel längst läuft oder vorbei ist).
 KEINE Spekulation über Folgen, Pläne oder offene Fragen, die nicht wörtlich im Artikel stehen — keine rhetorischen „Was bedeutet das für …?"-Fragen zu Dingen, die der Artikel nicht beantwortet. Ist der Artikel dünn, bleibt das Skript kurz und faktisch statt aufgefüllt.
 
 ARTIKEL: ${leadItem.title ?? ''}

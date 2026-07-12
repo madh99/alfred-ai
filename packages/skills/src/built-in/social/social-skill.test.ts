@@ -656,6 +656,24 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(Date.parse(withDistance.notBefore)).toBe(Date.parse(publishedAt) + 6 * 3_600_000);
   });
 
+  it('v1105: Redaktionslinie der Familie fließt in den Reel-Script-Prompt (ohne Linie: nicht)', async () => {
+    const setup = reelSetup();
+    // Linie hängt am LEAD-Kanal der Familie (ein Kanal genügt — wie im Studio)
+    const lead = makeChannel({ id: 'ch-web', platform: 'rest', name: 'fussball.cc', projectId: 'p1', config: { base_url: 'https://cc.example', redaktionslinie: 'Countdown aufs WM-Finale, Tippspiel bewerben' } });
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'IG', projectId: 'p1', config: { auto_reel: true } });
+    (setup.spies as any).listChannels = vi.fn(async () => [lead, ig]);
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    for (let i = 0; i < 80 && (setup.complete as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
+    const prompt = (setup.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(prompt).toContain('REDAKTIONSLINIE');
+    expect(prompt).toContain('Countdown aufs WM-Finale, Tippspiel bewerben');
+    // Ohne Linie: kein Block
+    const ohne = reelSetup();
+    await ohne.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    for (let i = 0; i < 80 && (ohne.complete as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
+    expect((ohne.complete as any).mock.calls[0][0].messages[0].content as string).not.toContain('REDAKTIONSLINIE');
+  });
+
   it('v1101: Ad-hoc-Termin respektiert performance.notBefore (Zweitverwertungs-Abstand)', async () => {
     const channel = makeChannel();
     const notBefore = new Date(Date.now() + 6 * 3_600_000).toISOString();

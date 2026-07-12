@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1105] - 2026-07-12
+
+### Added — Redaktionslinie wirkt auch in Reels (v1105)
+- Der Reel-Generator (Sprecherskript + Caption) kennt jetzt die **Redaktionslinie der Familie** und richtet Script und Caption verbindlich daran aus — z. B. ordnet ein Spiel-Reel die Partie in den Countdown zum Finale ein oder erwähnt das Tippspiel, wo es passt. Fakten bleiben weiterhin ausschließlich quellenpflichtig; ohne gesetzte Linie ändert sich nichts.
+
 ## [0.19.0-multi-ha.1104] - 2026-07-12
 
 ### Added — Redaktionslinie in der Kanal-UI (v1104)
