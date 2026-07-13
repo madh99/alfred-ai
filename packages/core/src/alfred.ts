@@ -12152,7 +12152,13 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                         const { execFile: ef } = await import('node:child_process');
                         const { promisify: pf } = await import('node:util');
                         await pf(ef)('chown', ['-R', `${owner}:${owner}`, projectCwd], { timeout: 20_000 });
-                        this.logger.info({ projectCwd, owner }, 'v1111 Projekt-CWD dem Agent-User übergeben');
+                        // v1112 — Kehrseite des chown: Alfreds eigene git-Reads
+                        // (Repo-Status/Health-Check) laufen als root und lehnen
+                        // Fremd-Repos ab („dubious ownership"). safe.directory
+                        // je Projekt ist das etablierte Muster in /root/.gitconfig.
+                        await pf(ef)('git', ['config', '--global', '--add', 'safe.directory', projectCwd], { timeout: 10_000 })
+                          .catch(err => this.logger.warn({ err, projectCwd }, 'v1112 safe.directory-Eintrag fehlgeschlagen — Repo-Status/Health-Check melden dubious ownership'));
+                        this.logger.info({ projectCwd, owner }, 'v1111 Projekt-CWD dem Agent-User übergeben (+ safe.directory)');
                       }
                     }
                   } catch (err) {

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1112] - 2026-07-13
+
+### Fixed — Repo-Status nach Projekt-chown (v1112)
+- Folge-Fix zu v1111: Nachdem neue Projektverzeichnisse dem Agent-Benutzer übergeben werden, verweigerte git Alfreds eigene Status-/Health-Check-Lesezugriffe („detected dubious ownership" — Alfred läuft als root, das Repo gehört dem Agent-User). Das Scaffolding trägt das Projekt jetzt zusätzlich als `safe.directory` in die globale git-Konfiguration ein — das etablierte Muster aller bestehenden Projekte.
+
 ## [0.19.0-multi-ha.1111] - 2026-07-13
 
 ### Fixed — Vier Betriebs-Bugs vom 13.07. (v1111)
