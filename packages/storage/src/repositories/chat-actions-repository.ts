@@ -102,6 +102,28 @@ export class ChatActionsRepository {
   }
 
   /**
+   * v1111 — Boot-Reaper: nach einem Neustart hängen abgebrochene Chat-Läufe
+   * sonst für immer als „running" in der UI (Realfall 12./13.07.: ~16 h).
+   * Alle running-Actions terminal auf 'error' setzen; Anzahl zurückgeben.
+   */
+  async failOrphanedRunning(note = '[Durch Neustart abgebrochen]'): Promise<number> {
+    const endedAt = new Date().toISOString();
+    const orphaned = await this.db.query(
+      `SELECT id FROM project_chat_actions WHERE status = 'running'`, [],
+    ) as Array<{ id: string }>;
+    for (const row of orphaned) {
+      await this.db.execute(
+        `UPDATE project_chat_actions
+           SET status = 'error', ended_at = ?,
+               response_text = COALESCE(response_text, '') || ?
+         WHERE id = ? AND status = 'running'`,
+        [endedAt, `\n${note}`, row.id],
+      );
+    }
+    return orphaned.length;
+  }
+
+  /**
    * Append a single skill-call to an existing action. Re-reads current
    * array, appends, writes back — atomicity at app-level (single session
    * writes its own record).

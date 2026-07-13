@@ -35,6 +35,16 @@ export function hatPromoBoilerplate(text: string | undefined): boolean {
 }
 
 /**
+ * v1111 — K.-o.-Ereignis-Erkennung: Inhalte mit Bezug auf konkrete
+ * Turnier-Runden sind NIE evergreen (Realfall 13.07.: „Halbfinal-Fieber:
+ * Wer holt den Pott?" als evergreen klassifiziert → Slot am 19.07., NACH
+ * den Halbfinals am 14./15.). Als vorschau greift die 72h-Haltbarkeit.
+ */
+export function istKoEreignisBezug(text: string): boolean {
+  return /halbfinal|viertelfinal|achtelfinal|endspiel|\bfinale\b|\bfinal[es]?\b|k\.?\s?-?o\.?-(runde|phase|spiel)/i.test(text);
+}
+
+/**
  * v935 — Nächste freie Posting-Slots eines Kanals (pure, testbar).
  * Slots wie ["Mo 18:00", "Do 19:30"] in SERVER-ORTSZEIT (v959); ohne eigene
  * Slots gelten Plattform-Best-Practices inkl. Wochenende (effectiveSlots) —
@@ -907,10 +917,15 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       }
     }
 
-    // 3) LLM-Check: überholt/veraltet? (nur Vorschläge, max 12 Items der nächsten 48h)
-    const soon = new Date(Date.now() + 48 * 3_600_000).toISOString();
+    // 3) LLM-Check gegen die Nachrichtenlage — v1111: über den GANZEN
+    //    Planungshorizont (14 Tage) statt 48h: die als „evergreen" getarnten
+    //    Halbfinal-Posts am 18./19.07. lagen außerhalb des alten Fensters
+    //    und wären erst am Vortag aufgefallen. Nächste Slots zuerst.
+    const soon = new Date(Date.now() + 14 * 24 * 3_600_000).toISOString();
     const upcoming = items.filter(i => i.scheduledAt && i.scheduledAt > nowIso && i.scheduledAt <= soon
-      && typeof i.performance?.terminBis !== 'string' && i.status !== 'rejected').slice(0, 12);
+      && typeof i.performance?.terminBis !== 'string' && i.status !== 'rejected')
+      .sort((a, b) => a.scheduledAt!.localeCompare(b.scheduledAt!))
+      .slice(0, 20);
     if (upcoming.length > 0 && this.interestsRepo) {
       const topicIds = [...new Set(reviewChannels.flatMap(c => ContentStudio.linkedTopicIds(c)))];
       const headlines: string[] = [];
@@ -1073,7 +1088,7 @@ ${ContentStudio.linieOf(channels) ? `REDAKTIONSLINIE (verbindlich, vom Herausgeb
 Erzeuge bis zu ${storyCount} STORIES. Regeln:
 ${nurTermineRule}- Eine STORY ist ein Stoff, den mehrere Kanäle in IHRER Rolle erzählen — nicht jeder Kanal braucht jede Story.
 - Je Story: genau EIN lead-Kanal (der ausführlichste, i.d.R. die Website), follow-Kanäle mit Zeitversatz in Stunden (typisch: Telegram +2, Instagram +6, Facebook +8; Termine/Eilmeldungen: alle 0).
-- art: news | vorschau | recap | termin | evergreen. Termine aus „KOMMENDE TERMINE" IMMER als art=termin mit terminBis (ISO aus der Zeile) und Zuweisung an ALLE Kanäle mit versatz_h 0. In der zusammenfassung: Der Ort aus der Termin-Zeile ist der VERANSTALTER (zeigt das Spiel) — die Kanäle berichten nur darüber, nie „wir zeigen".
+- art: news | vorschau | recap | termin | evergreen. evergreen NIEMALS für Inhalte mit Bezug auf konkrete Turnier-Runden oder Spiele (Halbfinale, Finale, bestimmte Partien) — solche sind vorschau (mit terminBis, wenn der Anstoß bekannt ist) oder news. Termine aus „KOMMENDE TERMINE" IMMER als art=termin mit terminBis (ISO aus der Zeile) und Zuweisung an ALLE Kanäle mit versatz_h 0. In der zusammenfassung: Der Ort aus der Termin-Zeile ist der VERANSTALTER (zeigt das Spiel) — die Kanäle berichten nur darüber, nie „wir zeigen".
 - Auch bei art=vorschau auf ein Ereignis mit bekanntem Zeitpunkt (Spiel, Ziehung, Finale): terminBis = ISO-Zeitpunkt des EREIGNISSES setzen — die Vorschau MUSS davor erscheinen; ohne terminBis landet sie auf irgendeinem späten Slot NACH dem Ereignis.
 - wichtigkeit 0..1 (Eilmeldungs-Niveau 0.9+). FAKTEN nur aus dem Dossier.
 - Weise nur Kanälen mit Bedarf zu (Ausnahme: art=termin darf immer).
@@ -1098,7 +1113,16 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         kanaele: Array.isArray(s.kanaele) ? s.kanaele as Array<{ kanal?: unknown; rolle?: unknown; versatz_h?: unknown }> : [],
       }))
       // v1103 — Nur-Termine-Lauf: alles ohne terminBis fällt hart raus
-      .filter(c => opts?.nurTermine !== true || c.terminBis !== undefined);
+      .filter(c => opts?.nurTermine !== true || c.terminBis !== undefined)
+      // v1111 — Evergreen-Gate: K.-o.-Runden-Bezug ist NIE zeitlos — als
+      // vorschau greift die 72h-Haltbarkeit (kein Slot hinter dem Ereignis)
+      .map(c => {
+        if (c.kind === 'evergreen' && istKoEreignisBezug(`${c.title} ${c.body}`)) {
+          this.logger.info({ family, title: c.title }, 'v1111 evergreen mit K.-o.-Bezug → vorschau umgestuft');
+          return { ...c, kind: 'vorschau' as const };
+        }
+        return c;
+      });
 
     // Story-Dedup: Termin-Stories über Termin-Identität, Rest über Deduper.
     // v1042 — auch INNERHALB der Konferenz: zwei Stories mit identischem
@@ -1512,6 +1536,11 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
 
       for (const idea of accepted) {
         if (created >= target) break;
+        // v1111 — Evergreen-Gate (wie Konferenz): K.-o.-Bezug ist nie zeitlos
+        if (idea.art === 'evergreen' && istKoEreignisBezug(`${idea.title ?? ''} ${idea.body}`)) {
+          this.logger.info({ channel: channel.name, title: idea.title }, 'v1111 evergreen mit K.-o.-Bezug → vorschau umgestuft');
+          idea.art = 'vorschau';
+        }
         // v975 — Slot-Wahl VOR dem Anlegen: eine Termin-Ankündigung braucht
         // einen Slot VOR dem Anpfiff (den spätesten davor — nah am Termin).
         // v977 — gibt das Raster keinen her, schlägt der Termin das Raster:
@@ -1871,7 +1900,7 @@ ${terminRule}${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLang
 - Jeder Post eigenständig; Bezug zu aktuellen Dossier-Themen wo sinnvoll.
 - 3-6 Hashtags je Post — AUSSCHLIESSLICH ins Feld "hashtags", NIEMALS in den body (weder am Ende noch als eigene Zeile; sie werden beim Posten automatisch angehängt).
 - body = NUR der fertige Post-Text. KEINE Meta-Zeilen wie "Bildidee:", Regieanweisungen oder Platzhalter — ein Bildvorschlag gehört ausschließlich ins separate Feld "bildidee".
-${bildRegie ?? '- BILDIDEE ohne Text: "bildidee" beschreibt NUR Motive (Szenen, Objekte, Stimmung) — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Bildmodelle schreiben Text FALSCH; Fakten gehören in den body).\n'}- "art" (zwingend): news = tagesaktuelle Meldung (verdirbt in ~2 Tagen) | recap = Nachbericht zu einem Ereignis (verdirbt in ~3 Tagen) | vorschau = Blick auf ein kommendes Ereignis | termin = Termin-Ankündigung | evergreen = zeitlos (Hintergrund, Community-Frage, Geschichte). Sei ehrlich — verderbliche Posts werden früh eingeplant oder verworfen.
+${bildRegie ?? '- BILDIDEE ohne Text: "bildidee" beschreibt NUR Motive (Szenen, Objekte, Stimmung) — NIEMALS Datum, Uhrzeit, Zahlen, Schriftzüge oder Text-Overlays (Bildmodelle schreiben Text FALSCH; Fakten gehören in den body).\n'}- "art" (zwingend): news = tagesaktuelle Meldung (verdirbt in ~2 Tagen) | recap = Nachbericht zu einem Ereignis (verdirbt in ~3 Tagen) | vorschau = Blick auf ein kommendes Ereignis | termin = Termin-Ankündigung | evergreen = zeitlos (Hintergrund, Community-Frage, Geschichte) — NIEMALS bei Bezug auf konkrete Turnier-Runden/Spiele (Halbfinale, Finale etc.): das ist vorschau oder news. Sei ehrlich — verderbliche Posts werden früh eingeplant oder verworfen.
 ${carouselRule}${channel.blacklist.length ? `- TABU (niemals erwähnen): ${channel.blacklist.join(', ')}\n` : ''}
 Antworte NUR mit einem VALIDEN JSON-Array (Zitate in Texten typografisch „…“ oder mit \\" escapen — nie nackte " im String):
 [{"title": "kurzer Titel", "body": "der Post-Text", "hashtags": ["…"], "warum": "1 Satz warum jetzt", "art": "news|vorschau|recap|termin|evergreen", "bildidee": "optional: Bildvorschlag für dieses Posting", "terminBis": "NUR bei Termin-Ankündigung/Vorschau: ISO-Zeitpunkt des Ereignisses", "ort": "NUR bei Terminen: Ort exakt aus der Termin-Zeile", "einlass": "NUR bei Terminen und NUR wenn belegt, z.B. 19:30"${carouselRule ? ', "slides": [{"motiv": "Bild-Motiv ohne Text", "titel": "kurzer Slide-Titel"}]' : ''}}]`;

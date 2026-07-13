@@ -7022,7 +7022,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const { ProjectAgentSessionRepository, ChatActionsRepository } = await import('@alfred/storage');
         this.pipeline.setProjectAgentSessionRepo(new ProjectAgentSessionRepository(adapter));
         // v847 — Chat-Actions-Tracking aktivieren wenn projects enabled sind
-        this.pipeline.setChatActionsRepo(new ChatActionsRepository(adapter));
+        const chatActionsRepo = new ChatActionsRepository(adapter);
+        this.pipeline.setChatActionsRepo(chatActionsRepo);
+        // v1111 — Boot-Reaper: beim Neustart abgebrochene Chat-Läufe hingen
+        // sonst für immer als „running" in der UI (Realfall 12./13.07.: ~16 h)
+        const orphaned = await chatActionsRepo.failOrphanedRunning('[Durch Alfred-Neustart abgebrochen]').catch(() => 0);
+        if (orphaned > 0) this.logger.info({ orphaned }, 'v1111 verwaiste running-Chat-Actions auf error gesetzt');
       } catch (err) {
         this.logger.debug({ err }, 'Could not wire project-agent-session repo into pipeline (non-critical)');
       }
@@ -8369,12 +8374,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             }));
           },
           calendar: async (fromIso: string, toIso: string) => {
-            const items = (await socialRepo.listItems(socialOwner, {
-              status: ['scheduled', 'approved', 'published'], limit: 300,
+            // v1111 — Zeitfenster in die QUERY: das alte „300 laden, dann
+            // filtern" lief leer, sobald es insgesamt >300 Items gab (die
+            // ältesten füllten das Limit, alle künftig geplanten fielen raus —
+            // Realfall 13.07.: Plan-Tab zeigte „Nichts geplant" bei 11 Wartenden).
+            const planned = await socialRepo.listItems(socialOwner, {
+              status: ['scheduled', 'approved'], scheduledAfter: fromIso, scheduledBefore: toIso, limit: 300,
+            });
+            const published = (await socialRepo.listItems(socialOwner, {
+              status: 'published', updatedSince: fromIso, limit: 300,
             })).filter(i => {
-              const t = i.scheduledAt ?? i.publishedAt;
+              const t = i.publishedAt ?? i.scheduledAt;
               return t !== undefined && t >= fromIso && t <= toIso;
             });
+            const items = [...planned, ...published]
+              .sort((a, b) => (a.scheduledAt ?? a.publishedAt ?? '').localeCompare(b.scheduledAt ?? b.publishedAt ?? ''));
             // v996 — Story-Zugehörigkeit für den Familien-Kalender anreichern
             if (items.some(i => i.storyId)) {
               const stories = await socialRepo.listStories(socialOwner, { limit: 500 }).catch(() => []);
@@ -12124,6 +12138,25 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                     }
                   } catch (err) {
                     this.logger.warn({ err }, 'v766 scaffold failed');
+                  }
+                  // v1111 — Realfall 13.07.: Alfred (root) legte das Projekt als
+                  // root:root an, der Project-Agent läuft als `sudo -u <user>`
+                  // und scheiterte am Pre-Flight („cannot write"). Das CWD gehört
+                  // dem Agent-User — abgeleitet aus der Agent-Definition.
+                  try {
+                    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+                      const agentDefs = this.config.codeAgents?.agents ?? [];
+                      const sudoAgent = agentDefs.find(a => a.command === 'sudo' && a.argsTemplate?.[0] === '-u' && typeof a.argsTemplate?.[1] === 'string');
+                      const owner = sudoAgent?.argsTemplate?.[1];
+                      if (owner) {
+                        const { execFile: ef } = await import('node:child_process');
+                        const { promisify: pf } = await import('node:util');
+                        await pf(ef)('chown', ['-R', `${owner}:${owner}`, projectCwd], { timeout: 20_000 });
+                        this.logger.info({ projectCwd, owner }, 'v1111 Projekt-CWD dem Agent-User übergeben');
+                      }
+                    }
+                  } catch (err) {
+                    this.logger.warn({ err, projectCwd }, 'v1111 chown auf Agent-User fehlgeschlagen — Agent-Läufe könnten an Schreibrechten scheitern');
                   }
                 }
 

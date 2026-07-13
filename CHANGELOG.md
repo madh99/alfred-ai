@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1111] - 2026-07-13
+
+### Fixed — Vier Betriebs-Bugs vom 13.07. (v1111)
+- **Project-Agent scheiterte an Schreibrechten**: Der Projekt-Wizard (läuft als root) legte neue Projektverzeichnisse als root:root an — der Project-Agent (läuft als eigener Benutzer) scheiterte sofort am Pre-Flight („cannot write", 0 Phasen). Das Scaffolding übergibt das Verzeichnis jetzt per chown an den Agent-Benutzer (abgeleitet aus der Agent-Definition).
+- **Hängende Chat-Läufe nach Neustart**: Beim Boot werden verwaiste „running"-Chat-Actions jetzt auf error gesetzt — vorher zeigte die Projekt-UI einen beim Neustart abgebrochenen Coding-Agent-Chat für immer als laufend (Realfall: ~16 Stunden).
+- **Content-Kalender zeigte „Nichts geplant"**: Der Kalender-Endpoint lud maximal 300 Items (aufsteigend sortiert) und filterte erst danach aufs 14-Tage-Fenster — ab 300+ Items insgesamt verdrängten die ältesten alle künftig geplanten. Das Zeitfenster steht jetzt direkt in der Datenbank-Abfrage.
+- **„Evergreen"-Posts zu K.-o.-Spielen**: Die Konferenz klassifizierte Halbfinal-Inhalte als zeitlos („Wer holt den Pott?" mit Slot NACH den Halbfinals). Neues Gate in Konferenz und Solo-Studio: Inhalte mit Bezug auf konkrete Turnier-Runden (Halbfinale/Finale/…) werden nie evergreen, sondern vorschau — damit greift die 72-h-Haltbarkeit. Zusätzlich prüft der LLM-Frische-Review jetzt den ganzen 14-Tage-Horizont (nächste Slots zuerst, bis 20 Items) statt nur 48 Stunden.
+
 ## [0.19.0-multi-ha.1110] - 2026-07-12
 
 ### Added — YouTube: SEO-Zeile + mehrsprachige Titel/Beschreibungen (v1110)

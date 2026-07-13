@@ -87,6 +87,18 @@ describe('v1102 — Frische-Review handelt statt nur zu empfehlen', () => {
   });
 });
 
+describe('v1111 — Evergreen-Gate: K.-o.-Bezug ist nie zeitlos', () => {
+  it('istKoEreignisBezug erkennt Turnier-Runden, lässt echte Evergreens durch', async () => {
+    const { istKoEreignisBezug } = await import('../content-studio.js');
+    expect(istKoEreignisBezug('Halbfinal-Fieber: Wer holt den Pott?')).toBe(true);
+    expect(istKoEreignisBezug('Wenn die Weltelite unter sich bleibt: Halbfinal-Quartett der WM 2026')).toBe(true);
+    expect(istKoEreignisBezug('Das Finale rückt näher')).toBe(true);
+    expect(istKoEreignisBezug('Viertelfinale im Rückblick')).toBe(true);
+    expect(istKoEreignisBezug('Erinnert ihr euch an euer erstes Panini-Album?')).toBe(false);
+    expect(istKoEreignisBezug('Sticker-Lücken schließen: Tausch-Strategien im Überblick')).toBe(false);
+  });
+});
+
 describe('v1102 — Redaktionslinie + Evergreen-Tagesdeckel', () => {
   it('linieOf: erster Familien-Kanal mit config.redaktionslinie gewinnt', () => {
     expect(ContentStudio.linieOf([makeChannel(), makeChannel({ config: { redaktionslinie: '  Countdown aufs Halbfinale  ' } })]))
