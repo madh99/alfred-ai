@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1114] - 2026-07-13
+
+### Fixed — Instagram-Posts bekamen ungewollte Auto-Videos (v1114)
+- Das Video-Sicherheitsnetz (v1096) behandelte „Kanal kann keinen reinen Text" als „Kanal braucht ein Video" — Instagram meldet aber text:false, weil es ein **Medium** braucht, nicht ein Video. Folge seit dem 12.07.: Jeder normale IG-Bild-Post bekam still ein 16:9-Video gerendert und angehängt (vier gingen so live, einer scheiterte am Upload). Neues explizites Capability-Flag `requiresVideo` (nur YouTube) — das Netz rendert nur noch dort nach; IG-Bild-Posts laufen wieder unverändert.
+- Bekannter offener Punkt Plattform-Seite: Der Medien-Upload von fussball.cc nimmt Videos laut Doku bis 100 MB an, bricht real aber zwischen 10 und 15 MB beim Multipart-Parsen ab (per Messreihe eingegrenzt, auch direkt am Origin) — größere Szenen-Videos/Reels brauchen dort einen Fix.
+
 ## [0.19.0-multi-ha.1113] - 2026-07-13
 
 ### Fixed — Roadmap-Items blieben trotz erfolgreicher Session „in Arbeit" (v1113)

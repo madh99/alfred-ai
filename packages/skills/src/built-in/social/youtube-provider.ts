@@ -23,7 +23,7 @@ export class YouTubeProvider extends SocialProvider {
   readonly platform = 'youtube';
 
   capabilities(): ProviderCapabilities {
-    return { text: false, image: true, video: true, maxTextLength: 5000, supportsDelete: true, supportsMetrics: true, supportsAudience: true };
+    return { text: false, image: true, video: true, requiresVideo: true, maxTextLength: 5000, supportsDelete: true, supportsMetrics: true, supportsAudience: true };
   }
 
   /** v1019 — Kanalwachstum: Abonnenten via channels.list (mine=true). */

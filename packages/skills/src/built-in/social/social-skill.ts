@@ -787,7 +787,11 @@ export class SocialSkill extends Skill {
     // Versuche (performance.autoVideoAttempts), danach klarer Dauer-Fehler.
     {
       const caps = this.providers.get(channel.platform)?.capabilities();
-      if (caps && caps.text === false && caps.video === true && !item.media.some(m => m.type === 'video')) {
+      // v1114 — Kriterium ist requiresVideo (NUR YouTube), nicht text:false:
+      // Instagram meldet text:false (Medium-Pflicht) und bekam so seit .1099
+      // für jeden Bild-Post ein ungewolltes 16:9-Video gerendert (Realfall
+      // 13.07.: 25-MB-Video scheiterte dann am Upload-Limit der Plattform).
+      if (caps && caps.requiresVideo === true && !item.media.some(m => m.type === 'video')) {
         const attempts = typeof item.performance?.autoVideoAttempts === 'number' ? item.performance.autoVideoAttempts : 0;
         if (!item.media.some(m => m.type === 'image' && !m.pathOrUrl.startsWith('http'))) {
           return { success: false, data: { permanent: true }, error: `${channel.name} kann nur Video — der Beitrag hat weder Video noch lokales Bild zum Rendern. Bild anhängen (attach_media) oder Beitrag ablehnen.` };

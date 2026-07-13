@@ -953,6 +953,11 @@ describe('v1087 — post_from_video (Beitrag aus Bibliotheks-Video)', () => {
 
 describe('v1096 — Publish-Sicherheitsnetz für Nur-Video-Kanäle', () => {
   class VideoOnlyProvider extends FakeProvider {
+    override capabilities() { return { ...super.capabilities(), text: false, video: true, requiresVideo: true }; }
+  }
+  // v1114 — Medium-Pflicht ≠ Video-Pflicht: IG meldet text:false, darf aber
+  // KEIN Auto-Video bekommen (Realfall 13.07.: jeder IG-Bild-Post bekam eins)
+  class MediumPflichtProvider extends FakeProvider {
     override capabilities() { return { ...super.capabilities(), text: false, video: true }; }
   }
 
@@ -965,6 +970,19 @@ describe('v1096 — Publish-Sicherheitsnetz für Nur-Video-Kanäle', () => {
     skill.setVideoTools({ render } as any);
     return { skill, spies, render };
   }
+
+  it('v1114: Medium-Pflicht-Kanal (IG, text:false OHNE requiresVideo) → KEIN Auto-Video, Bild-Post geht normal raus', async () => {
+    const ig = makeChannel({ id: 'ch-ig2', platform: 'instagram', name: 'IG' });
+    const item = makeItem({ id: 'item-ig-9', channelId: 'ch-ig2', status: 'approved', media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/b.png' }] });
+    const { skill, spies, provider } = makeSkill(ig, item);
+    skill.registerProvider(new MediumPflichtProvider('instagram'));
+    const render = vi.fn();
+    skill.setVideoTools({ render } as any);
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-ig-9' }, CTX);
+    expect(r.success).toBe(true);
+    expect(render).not.toHaveBeenCalled();
+    expect((spies.mergePerformance as any).mock.calls.some((c: any[]) => typeof c[2]?.autoVideoAttempts === 'number')).toBe(false);
+  });
 
   it('kein Video + Bild vorhanden → Render angestoßen, +15 min umterminiert, Versuch gezählt', async () => {
     const item = makeItem({ id: 'item-yt-1', channelId: 'ch-yt', status: 'approved', media: [{ type: 'image', source: 'generated', pathOrUrl: '/tmp/b.png' }] });

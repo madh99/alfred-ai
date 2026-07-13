@@ -13,6 +13,13 @@ export interface ProviderCapabilities {
   supportsStories?: boolean;
   /** v1019 — Kanalwachstum: fetchAudience liefert den aktuellen Follower-/Abonnenten-Stand. */
   supportsAudience?: boolean;
+  /**
+   * v1114 — Kanal kann AUSSCHLIESSLICH Video posten (YouTube): nur dann rendert
+   * das Publish-Sicherheitsnetz fehlende Videos nach. NICHT setzen für
+   * Medium-Pflicht-Kanäle wie Instagram (text:false heißt dort nur „braucht
+   * ein Medium" — das Netz verpasste deshalb jedem IG-Bild-Post ein Video).
+   */
+  requiresVideo?: boolean;
 }
 
 /** v989 — vom Provider eingesammelter Roh-Kommentar. */
