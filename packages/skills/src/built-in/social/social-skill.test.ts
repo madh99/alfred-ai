@@ -779,6 +779,71 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     await new Promise(res => setTimeout(res, 10));
     expect(off.render).not.toHaveBeenCalled();
   });
+
+  it('v1115: Render persistiert autoReelPending VOR dem teuren Teil und löscht ihn nach Erfolg', async () => {
+    const setup = reelSetup();
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    for (let i = 0; i < 80 && (setup.render as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
+    expect(setup.render).toHaveBeenCalled();
+    await new Promise(res => setTimeout(res, 25)); // Marker-Löschung nach dem Render abwarten
+    const merges = ((setup.spies as any).mergePerformance as any).mock.calls
+      .filter((c: any[]) => c[1] === 'item-0001-aaaa' && 'autoReelPending' in c[2]);
+    expect(merges.length).toBeGreaterThanOrEqual(2);
+    expect(merges[0][2]).toMatchObject({ autoReelPending: true, autoReelAttempts: 1 });
+    expect(merges[merges.length - 1][2]).toMatchObject({ autoReelPending: false });
+  });
+
+  it('v1115: Versuchs-Deckel — 2 Anläufe verbraucht → kein automatischer Render mehr, Marker wird gelöscht', async () => {
+    const setup = reelSetup();
+    setup.state.item = { ...setup.state.item, performance: { autoReelPending: true, autoReelAttempts: 2 } };
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 25));
+    expect(setup.render).not.toHaveBeenCalled();
+    expect((setup.state.item.performance as any).autoReelPending).toBe(false);
+  });
+
+  it('v1115: resumeOrphanedReels nimmt einen vom Neustart gekillten Render wieder auf', async () => {
+    const setup = reelSetup();
+    setup.state.item = {
+      ...setup.state.item, status: 'published', publishedAt: new Date().toISOString(),
+      performance: { autoReelPending: true, autoReelAttempts: 1 },
+    };
+    const n = await (setup.skill as any).resumeOrphanedReels('u1');
+    expect(n).toBe(1);
+    expect(setup.render).toHaveBeenCalledTimes(1);
+    expect((setup.state.item.performance as any).autoReelPending).toBe(false); // Erfolg → Marker weg
+    expect((setup.state.item.performance as any).autoReelAttempts).toBe(2);
+  });
+
+  it('v1115: resumeOrphanedReels lässt Items ohne Marker bzw. ältere als 48 h in Ruhe', async () => {
+    const setup = reelSetup();
+    setup.state.item = { ...setup.state.item, status: 'published', publishedAt: new Date().toISOString() };
+    expect(await (setup.skill as any).resumeOrphanedReels('u1')).toBe(0);
+    const alt = reelSetup();
+    alt.state.item = {
+      ...alt.state.item, status: 'published',
+      publishedAt: new Date(Date.now() - 72 * 3_600_000).toISOString(),
+      createdAt: new Date(Date.now() - 72 * 3_600_000).toISOString(),
+      performance: { autoReelPending: true, autoReelAttempts: 1 },
+    };
+    expect(await (alt.skill as any).resumeOrphanedReels('u1')).toBe(0);
+    expect(setup.render).not.toHaveBeenCalled();
+    expect(alt.render).not.toHaveBeenCalled();
+  });
+
+  it('v1115: Dup-Guard — existiert schon ein Reel zur Story, rendert der automatische Pfad kein zweites', async () => {
+    const setup = reelSetup();
+    const vorhandenesReel = makeItem({
+      id: 'item-reel-alt1', channelId: 'ch-ig', storyId: 's-1',
+      createdAt: new Date().toISOString(), performance: { format: 'reel', autoReel: true },
+    });
+    const leadRef = setup.state;
+    (setup.spies as any).listItems = vi.fn(async (_u: string, q: any) =>
+      (q?.channelId === 'ch-ig' ? [vorhandenesReel] : [leadRef.item]));
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 25));
+    expect(setup.render).not.toHaveBeenCalled();
+  });
 });
 
 describe('v1081 — Reel-Video an den Lead-Artikel (attach_reel_video)', () => {

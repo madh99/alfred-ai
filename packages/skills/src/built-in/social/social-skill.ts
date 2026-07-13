@@ -1142,6 +1142,14 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     const cap = typeof ig.config.reel_max_per_week === 'number' && ig.config.reel_max_per_week >= 0 ? ig.config.reel_max_per_week : 2;
     const weekAgo = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
     const recent = await this.repo.listItems(userId, { channelId: ig.id, limit: 100 });
+    // v1115 — Dup-Guard: existiert zur Story schon ein Reel (z. B. weil der
+    // Render VOR einem Neustart doch noch fertig wurde), rendert der
+    // automatische Pfad kein zweites — nur der manuelle Zuruf darf das.
+    if (!opts?.manual && leadItem.storyId
+      && recent.some(i => i.performance?.format === 'reel' && i.storyId === leadItem.storyId)) {
+      await this.repo.mergePerformance(userId, leadItem.id, { autoReelPending: false }).catch(() => { /* optional */ });
+      return;
+    }
     const reelsThisWeek = recent.filter(i => i.performance?.format === 'reel' && i.createdAt >= weekAgo).length;
     // v1022 — TOCTOU-Guard: das Item entsteht erst NACH dem minutenlangen
     // Render — zwei Lead-Publishes im Render-Fenster lasen beide den alten
@@ -1149,14 +1157,58 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     // zählen jetzt mit (fire-and-forget läuft im selben Prozess).
     const inFlight = this.reelsRendering.get(ig.id) ?? 0;
     if (reelsThisWeek + inFlight >= cap) return;
+    // v1115 — Restart-Festigkeit: der fire-and-forget-Render stirbt sonst
+    // spurlos mit dem Prozess (Realfall 13.07.: der einzige Reel-Anlass des
+    // Tages fiel in einen Deploy-Restart — kein Reel, kein Shorts-Zwilling).
+    // Marker + Versuchszähler VOR dem teuren Teil persistieren; nach ERFOLG
+    // wird der Marker gelöscht. Stirbt der Prozess, bleibt er stehen und
+    // resumeOrphanedReels nimmt den Render nach dem Neustart wieder auf
+    // (Deckel 2 Versuche — auch echte Fehler bekommen so genau einen Retry).
+    const attempts = Number(leadItem.performance?.autoReelAttempts ?? 0);
+    if (!opts?.manual && attempts >= 2) {
+      // Deckel erreicht → Marker weg, sonst scannt ihn jeder Boot erneut
+      await this.repo.mergePerformance(userId, leadItem.id, { autoReelPending: false }).catch(() => { /* optional */ });
+      return;
+    }
+    await this.repo.mergePerformance(userId, leadItem.id, { autoReelPending: true, autoReelAttempts: attempts + 1 }).catch(() => { /* optional */ });
     this.reelsRendering.set(ig.id, inFlight + 1);
     try {
       await this.renderAutoReel(userId, leadItem, ig, assigns);
+      await this.repo.mergePerformance(userId, leadItem.id, { autoReelPending: false }).catch(() => { /* optional */ });
     } finally {
       const n = (this.reelsRendering.get(ig.id) ?? 1) - 1;
       if (n <= 0) this.reelsRendering.delete(ig.id);
       else this.reelsRendering.set(ig.id, n);
     }
+  }
+
+  /**
+   * v1115 — Boot-Reaper für Auto-Reels: published Lead-Items der letzten 48 h
+   * mit stehen gebliebenem autoReelPending-Marker (Prozess starb mitten im
+   * Render) werden wieder angestoßen. maybeAutoReel prüft dabei erneut alle
+   * Leitplanken (Wochen-Limit, Dup-Guard, Versuchs-Deckel) — schlimmster Fall
+   * ist ein zusätzlicher ENTWURF, der ohnehin durch die Freigabe muss.
+   */
+  async resumeOrphanedReels(userId: string): Promise<number> {
+    if (!this.videoTools || !this.llm) return 0;
+    const cutoff = new Date(Date.now() - 48 * 3_600_000).toISOString();
+    const items = await this.repo.listItems(userId, { status: ['published'], limit: 100 });
+    const orphaned = items.filter(i => i.performance?.autoReelPending === true
+      && (i.publishedAt ?? i.createdAt) >= cutoff);
+    if (orphaned.length === 0) return 0;
+    const channels = await this.repo.listChannels(userId, 'active');
+    let resumed = 0;
+    for (const item of orphaned) {
+      const channel = channels.find(c => c.id === item.channelId);
+      if (!channel) {
+        await this.repo.mergePerformance(userId, item.id, { autoReelPending: false }).catch(() => { /* optional */ });
+        continue;
+      }
+      // sequenziell — Renders sind teuer, und maybeAutoReel zählt in-flight mit
+      await this.maybeAutoReel(userId, item, channel).catch(() => { /* best-effort wie beim Publish */ });
+      resumed++;
+    }
+    return resumed;
   }
 
   /** v1022 — eigentliches Reel-Rendern (aus maybeAutoReel ausgelagert, läuft unter dem In-flight-Guard). */

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1115] - 2026-07-14
+
+### Fixed — News-Desk-Eilmeldungen für alte Ereignisse + Auto-Reels überleben Neustarts (v1115)
+- **Event-Alter-Gate im News-Desk**: Der Eilmeldungs-Score wusste weder, welcher Tag ist, noch was schon behandelt wurde — ein am Morgen hochgeladenes Highlight-Video zu einem 36 h alten Spiel wurde als „dramatisches Ergebnis" (0.85) eingestuft und der News-Desk produzierte 7 Beiträge samt Bild, Sprecher und Video, die der Frische-Review vier Sekunden später komplett verwarf (Realfall 13.07., Bellingham-Doppelpack vom Vortag). Der Score-Prompt kennt jetzt Datum/Uhrzeit, die Regel „Spielberichte/Highlights zu Spielen von gestern oder früher sind keine Eilmeldung" und die Story-Titel der letzten drei Tage (auch abgeschlossene — genau die ließ die Dedup bisher durch).
+- **Auto-Reel-Render restart-fest**: Der Reel-Render nach einem Lead-Publish lief als Fire-and-forget und starb spurlos mit dem Prozess (Realfall 13.07.: der einzige Reel-Anlass des Tages fiel in einen Deploy-Restart — kein Reel, kein Shorts-Zwilling, kein Log). Der Render persistiert jetzt vor dem teuren Teil einen Marker am Lead-Beitrag; nach einem Neustart nimmt ein Boot-Reaper stehen gebliebene Renders wieder auf (max. 2 Anläufe, 48-h-Fenster). Dazu ein Dup-Guard: Existiert zur Story bereits ein Reel, rendert der automatische Pfad kein zweites.
+
 ## [0.19.0-multi-ha.1114] - 2026-07-13
 
 ### Fixed — Instagram-Posts bekamen ungewollte Auto-Videos (v1114)

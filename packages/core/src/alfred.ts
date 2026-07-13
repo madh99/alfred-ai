@@ -6861,6 +6861,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             },
           });
         }
+        // v1115 — Boot-Reaper für Auto-Reels: der fire-and-forget-Render stirbt
+        // sonst spurlos mit dem Prozess (Realfall 13.07.: der einzige Reel-Anlass
+        // des Tages fiel in einen Deploy-Restart — kein Reel, kein Shorts-
+        // Zwilling). Verzögert, damit der Start nicht unter Render-Last steht;
+        // Leitplanken (Wochen-Limit, Dup-Guard, 2-Versuche-Deckel) prüft der Skill.
+        setTimeout(() => {
+          socialSkill.resumeOrphanedReels(ownerUid)
+            .then(n => { if (n > 0) this.logger.info({ resumed: n }, 'v1115 verwaiste Auto-Reel-Renders nach Neustart wieder aufgenommen'); })
+            .catch(err => this.logger.warn({ err: (err as Error).message }, 'v1115 Auto-Reel-Wiederaufnahme fehlgeschlagen'));
+        }, 90_000).unref();
         let lastStudioDay = '';
         let lastTerminGapDay = ''; // v1103 — Nachmittags-Lauf „Termin-Lücken"
         let lastAnalyticsDay = '';

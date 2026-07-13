@@ -942,6 +942,30 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect((llm.complete as any).mock.calls.length).toBe(0);
   });
 
+  it('v1115: Event-Alter-Gate — Score-Prompt kennt Datum, Alt-Ereignis-Regel und bereits behandelte Storys', async () => {
+    const { studio, llm, stories } = makeFamilyStack();
+    // Realfall 13.07.: die Match-Abdeckung lief unter einem Titel OHNE
+    // Token-Überlappung zur neuen Quelle — nur der Score-Kontext kann das fangen
+    stories.push({ id: 'story-alt', title: 'July 11 Matchday Recap | #FIFAWorldCup', summary: 'x', status: 'done', kind: 'news', source: 'studio', createdAt: new Date().toISOString() });
+    const interestsRepo = (studio as any).interestsRepo;
+    (interestsRepo.listItems as any) = vi.fn(async () => [
+      { id: 'n1', topicId: 't-1', title: 'Bellingham mit dem Doppelpack (93.) - Norwegen gegen England', summary: 'Highlight-Video zum Spiel.', sourceKind: 'rss', createdAt: 'x' },
+    ]);
+    (llm.complete as any).mockResolvedValueOnce({ content: '[{"index": 0, "score": 0.2}]' });
+    expect(await studio.newsDesk()).toBe(0);
+    const scorePrompt = (llm.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(scorePrompt).toContain('HEUTE ist');
+    expect(scorePrompt).toContain('KEINE Eilmeldung');
+    expect(scorePrompt).toContain('gestern oder früher');
+    expect(scorePrompt).toContain('BEREITS BEHANDELT');
+    expect(scorePrompt).toContain('July 11 Matchday Recap');
+  });
+
+  it('v1115: heuteZeile — Wochentag + Datum + Uhrzeit ohne Intl (ICU-Kaltstart-sicher)', () => {
+    expect(ContentStudio.heuteZeile(new Date(2026, 6, 13, 8, 5))).toBe('Montag, 13.07.2026, 08:05 Uhr');
+    expect(ContentStudio.heuteZeile(new Date(2026, 0, 4, 23, 59))).toBe('Sonntag, 04.01.2026, 23:59 Uhr');
+  });
+
   it('v995: Plan-Review — abgelaufene Termine raus, reguläre weichen der Eilmeldung, LLM-Empfehlungen als Insight', async () => {
     const { studio, llm, stories, socialRepo } = makeFamilyStack();
     const insights = (studio as any).insightsRepo;

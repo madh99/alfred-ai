@@ -598,12 +598,25 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     const blockedTitles = activeStories.map(s => s.title);
     const candidates = fresh.filter(f => !isNearDuplicateTitle(f.title, blockedTitles)).slice(0, 15);
     if (candidates.length === 0) return 0;
+    // v1115 — Event-Alter-Gate: der Score kennt Datum und jüngst behandelte
+    // Storys. Realfall 13.07.: ORF lud morgens das Match-Video vom VORTAG hoch —
+    // der Collector sah „frisch", der Score „dramatisches Ergebnis" (0.85), und
+    // der News-Desk baute 7 Items für ein 36 h altes, längst behandeltes Spiel;
+    // der Frische-Review warf sie 4 Sekunden später weg (Bild/TTS/Video umsonst).
+    // Titel-Token und Embeddings griffen nicht („July 11 Matchday Recap" vs.
+    // „Bellingham mit dem Doppelpack") — das Ereignis-Alter muss der Score
+    // selbst beurteilen. Behandelt = ALLE Storys der letzten 3 Tage (auch
+    // done/dropped — der Active-Filter der Dedup ließ genau die durch).
+    const coveredTitles = (await this.socialRepo.listStories(this.ownerUserId, { family, sinceDays: 3 }))
+      .map(s => s.title).slice(0, 20);
     // LLM-Eilmeldungs-Score (fast reicht fürs Sortieren)
     const threshold = typeof lead.config.newsdesk_threshold === 'number' ? lead.config.newsdesk_threshold : 0.85;
     const scorePrompt = `Bewerte für einen Fußball-Publisher, wie sehr jede Meldung eine EILMELDUNG ist (0..1):
 0.9+ = muss SOFORT raus (Titelentscheidung, Rücktritt eines Stars, Skandal, dramatisches Ergebnis eines Top-Spiels),
 0.5 = normale Tagesmeldung, 0.2 = Routine. Nur die Fakten der Meldung zählen.
-
+HEUTE ist ${ContentStudio.heuteZeile()}. Eine EILMELDUNG ist ein Ereignis, das JETZT bzw. vor wenigen Stunden passiert ist.
+KEINE Eilmeldung (max. 0.3): Spielberichte, Highlight-Videos oder Zusammenfassungen zu Spielen von gestern oder früher — auch wenn Video/Artikel gerade erst erschienen sind; ebenso Neuaufbereitungen bereits behandelter Storys ohne echte neue Entwicklung.
+${coveredTitles.length > 0 ? `BEREITS BEHANDELT (letzte 3 Tage):\n${coveredTitles.map(t => `- ${t}`).join('\n')}\n` : ''}
 ${candidates.map((c, i) => `${i}: ${c.title}${c.summary ? ` — ${c.summary.replace(/<[^>]+>/g, ' ').slice(0, 150)}` : ''}`).join('\n')}
 
 Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
@@ -1973,6 +1986,17 @@ Antworte NUR mit einem JSON-Array:
     return members.find(c => c.config.family_role === 'lead')
       ?? members.find(c => c.platform === 'rest')
       ?? members[0];
+  }
+
+  /**
+   * v1115 — Heute-Zeile für Prompts (Wochentag + Datum + Uhrzeit, Server-Lokalzeit).
+   * Bewusst OHNE Intl/toLocaleDateString — ICU ist auf small-icu-Builds beim
+   * Kaltstart nicht verlässlich (v1101-Lektion im Skill, gleiches Muster).
+   */
+  static heuteZeile(now = new Date()): string {
+    const tage = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${tage[now.getDay()]}, ${p(now.getDate())}.${p(now.getMonth() + 1)}.${now.getFullYear()}, ${p(now.getHours())}:${p(now.getMinutes())} Uhr`;
   }
 
   /**
