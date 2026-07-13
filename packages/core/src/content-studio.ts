@@ -1187,9 +1187,20 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       const deadline = leadShelf !== undefined ? new Date(Date.now() + leadShelf * 3_600_000).toISOString() : undefined;
       if (deadline && leadCap && (leadCap.channel.mode === 'approve' || leadCap.channel.mode === 'autonomous')
         && (leadCap.slotPool.length === 0 || leadCap.slotPool[0] > deadline)) {
+        // v1116 — Rettungskette statt Sofort-Drop: erst Verdrängung (auch
+        // nicht-verderbliche Vorausplanung weicht), dann Ad-hoc-Extra-Slot
+        // im Tagesbudget. Nur wenn beides scheitert, fällt die Story weg.
         const freed = await this.swapWithEvergreen(leadCap.channel, deadline, leadCap.slotPool);
-        if (freed) leadCap.slotPool.unshift(freed); // vorne einreihen — der Lead nimmt ihn per shift()
-        else {
+        const rescue = freed ?? await this.adhocSlotForPerishable(leadCap.channel, deadline);
+        if (rescue) {
+          if (!freed) this.logger.info({ family, title: cand.title, kind: cand.kind, slot: rescue }, 'v1116 ad-hoc lead slot (Raster voll, keine Verdrängung möglich)');
+          leadCap.slotPool.unshift(rescue); // vorne einreihen — der Lead nimmt ihn per shift()
+          // v1116 — der Rettungs-Slot IST Kapazität: bei vollem Raster steht
+          // needed auf 0 und die Zuweisungsschleife hätte den Lead sonst als
+          // „Kapazität erschöpft" übersprungen (der Follower lief dann allein
+          // in den Sofort-Slot-Zweig).
+          leadCap.needed = Math.max(leadCap.needed, leadCap.created + 1);
+        } else {
           this.logger.info({ family, title: cand.title, kind: cand.kind }, 'v997 perishable story dropped (kein Lead-Slot innerhalb der Haltbarkeit)');
           continue;
         }
@@ -1587,7 +1598,12 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
               if (slotPool.length > 0 && slotPool[0] <= deadline) {
                 slot = slotPool.shift();
               } else {
+                // v1116 — Rettungskette wie in der Konferenz: Verdrängung → Ad-hoc-Slot → Drop
                 slot = await this.swapWithEvergreen(channel, deadline, slotPool);
+                if (!slot) {
+                  slot = await this.adhocSlotForPerishable(channel, deadline);
+                  if (slot) this.logger.info({ channel: channel.name, title: idea.title, art: idea.art, slot }, 'v1116 ad-hoc slot (Raster voll, keine Verdrängung möglich)');
+                }
                 if (!slot) {
                   this.logger.info({ channel: channel.name, title: idea.title, art: idea.art, shelf }, 'v997 perishable idea dropped (kein Slot innerhalb der Haltbarkeit)');
                   continue;
@@ -2027,10 +2043,16 @@ Antworte NUR mit einem JSON-Array:
   }
 
   /**
-   * v997 — Verdrängung: ein Evergreen-Item, das einen Slot innerhalb der
-   * Deadline belegt, weicht auf den spätesten freien Slot des Pools — sein
-   * früher Slot wird für den verderblichen Inhalt frei (Status bleibt,
-   * reine Terminverschiebung). Gibt den freigewordenen Slot zurück.
+   * v997 — Verdrängung: ein Item, das einen Slot innerhalb der Deadline
+   * belegt, weicht auf den spätesten freien Slot des Pools — sein früher
+   * Slot wird für den verderblichen Inhalt frei (Status bleibt, reine
+   * Terminverschiebung). Gibt den freigewordenen Slot zurück.
+   * v1116 — nicht mehr nur Evergreens: auch andere Beiträge weichen, wenn
+   * ihre eigene Haltbarkeit den späten Slot noch deckt (artlose Features,
+   * frische Recaps). Am 13.07. fielen 10 News-Stories komplett aus der
+   * Planung, weil die nahen Lead-Slots von Vorausplanung belegt waren und
+   * nur ein einziges Evergreen als Opfer in Frage kam. Evergreens weichen
+   * weiterhin zuerst; Termine und Eilmeldungen weichen NIE.
    */
   private async swapWithEvergreen(
     channel: SocialChannel, deadline: string, slotPool: string[], notBefore?: string,
@@ -2041,17 +2063,75 @@ Antworte NUR mit einem JSON-Array:
     const planned = await this.socialRepo.listItems(this.ownerUserId, {
       channelId: channel.id, status: ['scheduled', 'approved'], limit: 100,
     });
+    const lateSlot = slotPool[slotPool.length - 1];
     const victim = planned
       .filter(i => i.scheduledAt && i.scheduledAt > floor && i.scheduledAt <= deadline)
-      .filter(i => i.performance?.art === 'evergreen' && typeof i.performance?.terminBis !== 'string')
-      .sort((a, b) => a.scheduledAt!.localeCompare(b.scheduledAt!))[0];
+      .filter(i => typeof i.performance?.terminBis !== 'string' && i.performance?.breaking !== true)
+      .filter(i => {
+        const art = typeof i.performance?.art === 'string' ? i.performance.art : undefined;
+        if (art === 'evergreen') return true;
+        // v1116 — beweglich, wenn die eigene Haltbarkeit den späten Slot noch deckt
+        const shelf = ContentStudio.shelfLifeHours(art, channel);
+        if (shelf === undefined) return false; // termin o. Ä. ohne Marker — nicht anfassen
+        const createdMs = Date.parse(i.createdAt);
+        return Number.isFinite(createdMs) && createdMs + shelf * 3_600_000 >= Date.parse(lateSlot);
+      })
+      .sort((a, b) => {
+        const ea = a.performance?.art === 'evergreen' ? 0 : 1;
+        const eb = b.performance?.art === 'evergreen' ? 0 : 1;
+        return (ea - eb) || a.scheduledAt!.localeCompare(b.scheduledAt!);
+      })[0];
     if (!victim) return undefined;
-    const lateSlot = slotPool[slotPool.length - 1];
     const freed = victim.scheduledAt!;
     if (!(await this.socialRepo.reschedule(this.ownerUserId, victim.id, lateSlot, ['scheduled', 'approved']))) return undefined;
     slotPool.pop();
-    this.logger.info({ channel: channel.name, victim: victim.id, from: freed, to: lateSlot }, 'v997 evergreen swap (verderblicher Inhalt braucht den frühen Slot)');
+    this.logger.info({ channel: channel.name, victim: victim.id, art: victim.performance?.art ?? 'ohne', from: freed, to: lateSlot },
+      'v997 slot swap (verderblicher Inhalt braucht den frühen Slot)');
     return freed;
+  }
+
+  /**
+   * v1116 — Ad-hoc-Slot für verderbliche Stories: ist das Raster innerhalb
+   * der Haltbarkeit voll UND keine Verdrängung möglich, wird eine Extra-Zeit
+   * eingeschoben statt die Story zu verwerfen (Realfall 13.07.: 10 News-
+   * Stories gedroppt → der Tagesplan bestand nur noch aus Evergreen, YouTube
+   * und X gingen leer aus). Leitplanken: Tagesbudget (max_posts_per_day,
+   * heute inkl. bereits veröffentlichter), 90 min Mindestabstand zu allen
+   * geplanten Posts des Kanals, Nachtruhe (newsdesk_quiet, Default 22–6).
+   */
+  private async adhocSlotForPerishable(channel: SocialChannel, deadline: string, notBefore?: string): Promise<string | undefined> {
+    const planned = await this.socialRepo.listItems(this.ownerUserId, {
+      channelId: channel.id, status: ['scheduled', 'approved'], limit: 100,
+    });
+    const taken = planned.map(i => i.scheduledAt ? Date.parse(i.scheduledAt) : NaN).filter(Number.isFinite) as number[];
+    const quiet = Array.isArray(channel.config.newsdesk_quiet) && (channel.config.newsdesk_quiet as unknown[]).length === 2
+      ? (channel.config.newsdesk_quiet as number[]).map(Number) : [22, 6];
+    const inQuiet = (d: Date) => quiet[0] > quiet[1]
+      ? (d.getHours() >= quiet[0] || d.getHours() < quiet[1])
+      : (d.getHours() >= quiet[0] && d.getHours() < quiet[1]);
+    let publishedToday = 0;
+    try { publishedToday = await this.socialRepo.countPublishedToday(channel.id); } catch { /* Mini-Repos (Tests) ohne Zähler → 0 */ }
+    const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const perDay = new Map<string, number>();
+    for (const i of planned) {
+      if (!i.scheduledAt) continue;
+      const day = localDay(new Date(i.scheduledAt));
+      perDay.set(day, (perDay.get(day) ?? 0) + 1);
+    }
+    const today = localDay(new Date());
+    const MIN_GAP = 90 * 60_000;
+    const start = Math.max(Date.now() + 30 * 60_000, notBefore ? Date.parse(notBefore) : 0);
+    const end = Date.parse(deadline);
+    for (let t = start; t <= end; t += 30 * 60_000) {
+      const d = new Date(t);
+      if (inQuiet(d)) continue;
+      if (taken.some(x => Math.abs(x - t) < MIN_GAP)) continue;
+      const day = localDay(d);
+      const used = (perDay.get(day) ?? 0) + (day === today ? publishedToday : 0);
+      if (used >= channel.maxPostsPerDay) continue;
+      return d.toISOString();
+    }
+    return undefined;
   }
 
   /**

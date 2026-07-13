@@ -1177,6 +1177,94 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(ContentStudio.playbookOffset({ config: {} }, 'news')).toBeUndefined();
   });
 
+  it('v1116: Lead-Raster voll → verderbliche Story bekommt Ad-hoc-Slot statt Drop', async () => {
+    const { studio, website, telegram, llm, transitions, stories } = makeFamilyStack();
+    website.postingSlots = ['Zz 99:99']; // leeres Lead-Raster (v977-Muster)
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: CONF })
+      .mockResolvedValueOnce({ content: RENDER('Kolumbien ist weiter — die Analyse') })
+      .mockResolvedValueOnce({ content: RENDER('Kolumbien weiter!') });
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(2);
+    expect(stories.length).toBe(1);
+    const leadAt = transitions.find(t => t.id === 'gen-1')!.at!;
+    expect(Date.parse(leadAt)).toBeGreaterThan(Date.now());
+    expect(Date.parse(leadAt)).toBeLessThanOrEqual(Date.now() + 48 * 3_600_000); // innerhalb der News-Haltbarkeit
+    // Follower kommt NACH dem Lead (Versatz +2h)
+    const followAt = transitions.find(t => t.id === 'gen-2')!.at!;
+    expect(Date.parse(followAt)).toBeGreaterThanOrEqual(Date.parse(leadAt));
+  });
+
+  it('v1116: keine Rettung möglich (Deadline vor dem frühesten Ad-hoc-Zeitpunkt) → Drop wie bisher', async () => {
+    const { studio, website, telegram, llm, stories } = makeFamilyStack();
+    website.postingSlots = ['Zz 99:99'];
+    website.config = { ...website.config, shelf_life_hours: { news: 0.3 } }; // Deadline in 18 min — Ad-hoc beginnt bei +30 min
+    (llm.complete as any).mockResolvedValueOnce({ content: CONF });
+    const created = await studio.planFamily('project:proj-1', [website, telegram]);
+    expect(created).toBe(0);
+    expect(stories.length).toBe(0);
+  });
+
+  it('v1116: Verdrängung — artloses Feature weicht (Haltbarkeit deckt den späten Slot), Breaking/alte News nie; Evergreen zuerst', async () => {
+    const { studio, website, socialRepo } = makeFamilyStack();
+    const t0 = Date.now();
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const in2h = iso(t0 + 2 * 3_600_000);
+    const in3h = iso(t0 + 3 * 3_600_000);
+    const in5d = iso(t0 + 5 * 24 * 3_600_000);
+    const deadline = iso(t0 + 4 * 3_600_000);
+    const base = { channelId: 'ch-web', status: 'scheduled', body: 'x', media: [], hashtags: [] };
+    const feature = { ...base, id: 'it-feat', scheduledAt: in2h, createdAt: iso(t0), performance: {} }; // artlos, Default 168h ≥ später Slot
+    const alteNews = { ...base, id: 'it-news', scheduledAt: in3h, createdAt: iso(t0 - 40 * 3_600_000), performance: { art: 'news' } }; // 48h-Haltbarkeit deckt +5d NICHT
+    const breaking = { ...base, id: 'it-brk', scheduledAt: in2h, createdAt: iso(t0), performance: { art: 'news', breaking: true } };
+    (socialRepo.listItems as any) = vi.fn(async () => [breaking, alteNews, feature]);
+    const pool = [in5d];
+    const freed = await (studio as any).swapWithEvergreen(website, deadline, pool);
+    expect(freed).toBe(in2h);
+    expect((socialRepo.reschedule as any).mock.calls[0][1]).toBe('it-feat'); // NICHT breaking, NICHT die alte News
+    expect((socialRepo.reschedule as any).mock.calls[0][2]).toBe(in5d);
+    expect(pool.length).toBe(0);
+
+    // Evergreen weicht ZUERST, auch wenn sein Slot später liegt als der des Features
+    (socialRepo.reschedule as any).mockClear();
+    const evergreen = { ...base, id: 'it-eg', scheduledAt: in3h, createdAt: iso(t0), performance: { art: 'evergreen' } };
+    (socialRepo.listItems as any) = vi.fn(async () => [feature, evergreen]);
+    const pool2 = [in5d];
+    const freed2 = await (studio as any).swapWithEvergreen(website, deadline, pool2);
+    expect(freed2).toBe(in3h);
+    expect((socialRepo.reschedule as any).mock.calls[0][1]).toBe('it-eg');
+  });
+
+  it('v1116: Ad-hoc-Slot respektiert Mindestabstand, Tagesbudget und Nachtruhe', async () => {
+    const { studio, website, socialRepo } = makeFamilyStack();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 6, 20, 10, 0)); // Mo 20.07. 10:00 Lokalzeit — deterministisch (v977-Lektion)
+      const t0 = Date.now();
+      const iso = (ms: number) => new Date(ms).toISOString();
+      const base = { channelId: 'ch-web', status: 'scheduled', body: 'x', media: [], hashtags: [], createdAt: iso(t0), performance: {} };
+      const deadline = iso(t0 + 48 * 3_600_000);
+      // Mindestabstand: geplanter Post um 10:45 → Slot frühestens 90 min davon entfernt (12:30)
+      (socialRepo.listItems as any) = vi.fn(async () => [{ ...base, id: 'p1', scheduledAt: iso(t0 + 45 * 60_000) }]);
+      const slot = await (studio as any).adhocSlotForPerishable(website, deadline);
+      expect(slot).toBeDefined();
+      expect(Date.parse(slot)).toBeGreaterThanOrEqual(t0 + 30 * 60_000);
+      expect(Math.abs(Date.parse(slot) - (t0 + 45 * 60_000))).toBeGreaterThanOrEqual(90 * 60_000);
+      expect(Date.parse(slot)).toBeLessThanOrEqual(Date.parse(deadline));
+      // Tagesbudget: 3 Posts heute geplant (maxPostsPerDay 3) → Slot erst am Folgetag
+      (socialRepo.listItems as any) = vi.fn(async () => [1, 2, 3].map(h => ({ ...base, id: `p${h}`, scheduledAt: iso(t0 + h * 3_600_000) })));
+      const slot2 = await (studio as any).adhocSlotForPerishable(website, deadline);
+      expect(slot2).toBeDefined();
+      expect(new Date(slot2).getDate()).toBe(21); // Folgetag
+      // Nachtruhe rund um die Uhr → kein Slot möglich
+      (socialRepo.listItems as any) = vi.fn(async () => []);
+      const nachtkanal = { ...website, config: { ...website.config, newsdesk_quiet: [0, 24] } };
+      expect(await (studio as any).adhocSlotForPerishable(nachtkanal, deadline)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('v997: verderbliche Konferenz-Story ohne Lead-Slot in der Haltbarkeit wird GAR NICHT produziert', async () => {
     const { studio, website, telegram, llm, stories, socialRepo } = makeFamilyStack();
     // Haltbarkeit praktisch 0 → kein Raster-Slot kann sie einhalten, kein Evergreen zum Verdrängen

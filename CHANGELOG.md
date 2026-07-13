@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1116] - 2026-07-14
+
+### Fixed — Verderbliche News fallen nicht mehr aus der Planung, wenn das Lead-Raster voll ist (v1116)
+- Am 13.07. wurden 10 News-Stories in der Redaktionskonferenz komplett verworfen („kein Lead-Slot innerhalb der Haltbarkeit"): Die Vorausplanung belegte alle nahen Website-Slots, und als Verdrängungs-Opfer kamen nur Evergreens in Frage (genau eines war verfügbar). Der Tagesplan bestand danach nur noch aus Evergreen-Features — YouTube und X gingen leer aus. Zwei neue Rettungsstufen vor dem Drop:
+- **Breitere Verdrängung**: Nicht mehr nur Evergreens weichen auf den späten Slot — auch andere vorausgeplante Beiträge, sofern ihre eigene Haltbarkeit den späten Slot noch deckt (z. B. artlose Features mit 7-Tage-Haltbarkeit). Evergreens weichen weiterhin zuerst; Termine und Eilmeldungen weichen nie.
+- **Ad-hoc-Slots**: Ist keine Verdrängung möglich, wird eine Extra-Zeit innerhalb der Haltbarkeit eingeschoben, statt die Story zu verwerfen — mit Leitplanken: Tagesbudget des Kanals (inkl. heute bereits veröffentlichter Beiträge), 90 Minuten Mindestabstand zu allen geplanten Posts, Nachtruhe (`newsdesk_quiet`, Standard 22–6 Uhr). Gilt in der Konferenz (Lead-Slot) und im Solo-Studio; erst wenn auch das scheitert, fällt die Story wie bisher weg.
+
 ## [0.19.0-multi-ha.1115] - 2026-07-14
 
 ### Fixed — News-Desk-Eilmeldungen für alte Ereignisse + Auto-Reels überleben Neustarts (v1115)
