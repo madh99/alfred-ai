@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1113] - 2026-07-13
+
+### Fixed — Roadmap-Items blieben trotz erfolgreicher Session „in Arbeit" (v1113)
+- Nach einem erfolgreichen Milestone-Lauf lief der heuristische Open-Item-Matcher **vor** der expliziten Item-Auflösung und überschrieb deren Arbeits-Marker — die Auflösung fand anschließend keine Items mehr, der Milestone blieb in der UI auf „in_progress" (Realfall: Milestone 2 mit 358 geänderten Dateien). Zwei Absicherungen: Die explizite Auflösung läuft jetzt **zuerst**, und der Matcher fasst explizit zugewiesene Items grundsätzlich nicht mehr an.
+
 ## [0.19.0-multi-ha.1112] - 2026-07-13
 
 ### Fixed — Repo-Status nach Projekt-chown (v1112)

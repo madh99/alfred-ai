@@ -174,9 +174,16 @@ export class OpenItemMatcher {
     }
 
     const knownIds = new Set(openItems.map(i => i.id));
+    // v1113 — Explizit zugewiesene Items (implementMilestone/workOnOpenItems,
+    // Marker `implementing:<taskId>`) NIE anfassen: der Matcher überschrieb
+    // den Marker mit `project_agent_session:<id>`, wodurch die anschließende
+    // explizite Auflösung ins Leere lief (Realfall 13.07.: Milestone-2-Items
+    // blieben trotz erfolgreicher Session auf in_progress).
+    const explicitlyAssigned = new Set(openItems.filter(i => i.autoResolvedBy?.startsWith('implementing:')).map(i => i.id));
     let resolved = 0;
     for (const r of results) {
       if (!knownIds.has(r.item_id)) continue;
+      if (explicitlyAssigned.has(r.item_id)) continue;
       if (!r.resolved && (r.confidence ?? 0) < 0.4) continue;
       const ok = await this.projects.autoResolveOpenItem(
         r.item_id,

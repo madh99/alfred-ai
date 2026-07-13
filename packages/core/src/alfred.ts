@@ -2418,6 +2418,24 @@ export class Alfred {
           }
         }
 
+        // v1113 — Explizite Zuweisungen (implementMilestone/workOnOpenItems)
+        // ZUERST auflösen — VOR dem heuristischen OpenItemMatcher: der stampfte
+        // sonst den `implementing:<taskId>`-Marker mit `project_agent_session:`
+        // über und die Auflösung fand 0 Items (Realfall 13.07.: Milestone 2
+        // blieb trotz erfolgreicher Session auf in_progress). Der Matcher hat
+        // zusätzlich einen eigenen Schutz für implementing:-Items.
+        if (this.projectRepo) {
+          try {
+            if (success) {
+              const resolved = await this.projectRepo.resolveItemsForSession(sessionId, 0.8);
+              if (resolved > 0) this.logger.info({ sessionId, resolved }, 'v705 implementMilestone-Items als done markiert');
+            } else {
+              const reverted = await this.projectRepo.revertItemsForSession(sessionId);
+              if (reverted > 0) this.logger.info({ sessionId, reverted }, 'v705 implementMilestone-Items auf open zurückgesetzt (Session fehlgeschlagen)');
+            }
+          } catch (err) { this.logger.debug({ err, sessionId }, 'v705 resolve/revert items failed (non-fatal)'); }
+        }
+
         // v641 — OpenItemMatcher: nach erfolgreichem Lauf prüfen welche der bestehenden
         // open Items des Projekts durch die Milestones+Files erledigt wurden. LLM-Pass
         // mit konservativer Confidence (≥0.6 → auto-done, sonst nur markieren).
@@ -2471,22 +2489,8 @@ export class Alfred {
           } catch (err) { this.logger.debug({ err, sessionId }, 'OpenItemMatcher failed (non-fatal)'); }
         }
 
-        // v705 — Explizit zugewiesene Open-Items (via implementMilestone / workOnOpenItems)
-        // auflösen oder zurücksetzen, unabhängig vom LLM-Matcher.
-        // Marker: auto_resolved_by = `implementing:${taskId}` (während Lauf)
-        //   → success: auto_resolved_by = `implemented:${taskId}` + status='done' + confidence=0.8
-        //   → failure: status='open', auto_resolved_by=NULL
-        if (this.projectRepo) {
-          try {
-            if (success) {
-              const resolved = await this.projectRepo.resolveItemsForSession(sessionId, 0.8);
-              if (resolved > 0) this.logger.info({ sessionId, resolved }, 'v705 implementMilestone-Items als done markiert');
-            } else {
-              const reverted = await this.projectRepo.revertItemsForSession(sessionId);
-              if (reverted > 0) this.logger.info({ sessionId, reverted }, 'v705 implementMilestone-Items auf open zurückgesetzt (Session fehlgeschlagen)');
-            }
-          } catch (err) { this.logger.debug({ err, sessionId }, 'v705 resolve/revert items failed (non-fatal)'); }
-        }
+        // v705-Block läuft seit v1113 VOR dem OpenItemMatcher (s. o.) —
+        // hier stand er zu spät: der Matcher hatte die Marker schon überschrieben.
 
         // v610 G5 — On failure, neither runbook nor deploy proposal makes sense.
         // We keep the runbook gated additionally by milestone-count, but the
