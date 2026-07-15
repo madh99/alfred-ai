@@ -59,7 +59,10 @@ export class AiClipGenerator {
         ? await this.generateRunway(req)
         : await this.generateVeo(req);
     this.logger.info(
-      { provider, model: result.model, durationSec: result.durationSec, tookMs: Date.now() - started },
+      // v1118 — Prompt-Kopf mitloggen: bei Fehl-Motiven (Realfall 15.07.:
+      // American-Football-Spieler statt Fußballer) war im Log nicht
+      // rekonstruierbar, was dem Modell tatsächlich geschickt wurde.
+      { provider, model: result.model, durationSec: result.durationSec, tookMs: Date.now() - started, prompt: req.prompt.slice(0, 200) },
       'v1060 ai clip generated',
     );
     return result;

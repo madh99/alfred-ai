@@ -1286,6 +1286,19 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
   }
 
   /**
+   * v1118 — US-Videomodelle (Veo/Sora) lesen "football" als American Football:
+   * Realfall 15.07., ein Szenen-Clip zeigte Football-Spieler im Stadion statt
+   * Fußballern. Deterministisch nach "soccer" umschreiben — zusätzlich zur
+   * Prompt-Regel, weil LLM-Output nie garantiert ist. Explizites
+   * "american football" bleibt unangetastet (falls je gewollt).
+   */
+  static sanitizeVideoPrompt(p: string): string {
+    return p
+      .replace(/\b(?<!american[ -])footballer(s?)\b/gi, (m: string, s: string) => `${m[0] === 'F' ? 'S' : 's'}occer player${s ? 's' : ''}`)
+      .replace(/\b(?<!american[ -])football\b/gi, m => (m[0] === 'F' ? 'Soccer' : 'soccer'));
+  }
+
+  /**
    * v1107 — Szenen-Videos (Stufe A+B): Statt das Artikel-Standbild zu
    * „beleben" (Bild-zu-Video → animiertes Foto), erzählt ein LLM-Szenen-Board
    * den Beitrag in echten Text-zu-Video-Szenen (sora/veo; Runway fällt aufs
@@ -1331,6 +1344,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     try {
       const prompt = `Erstelle ein SZENEN-BOARD für ein ${opts.format === '16:9' ? 'YouTube' : 'Hochkant-Reel'}-Video zu diesem Beitrag: GENAU ${wanted} filmische Szenen, die die Geschichte des Beitrags erzählen (Szene 1 = packender Hook, danach dem Verlauf des Sprechertexts folgend).
 Je Szene EIN englischer Text-zu-Video-Prompt (1-2 Sätze): konkrete HANDLUNG plus KAMERABEWEGUNG, dynamisch und lebendig (Kamerafahrten, Wetter, Flutlicht, wehende Fahnen, Menschenmengen aus der Distanz) — KEINE erkennbaren realen Personen oder Spieler, KEINE Logos/Vereinsembleme/Trikots mit Erkennungswert, KEINE Texteinblendungen, KEINE statischen Standbild-Momente.
+SPORT-BEGRIFFE: Fußball heißt im Prompt IMMER "soccer" ("soccer players", "soccer stadium", "soccer ball") — das Wort "football" ist VERBOTEN, US-Videomodelle zeigen sonst American-Football-Spieler mit Helmen.
 ${opts.linie ? `REDAKTIONSLINIE (Einordnung): ${opts.linie}\n` : ''}BEITRAG: ${opts.title} — ${opts.body.slice(0, 600)}${opts.script ? `\nSPRECHERTEXT: ${opts.script.slice(0, 600)}` : ''}
 
 Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
@@ -1340,7 +1354,9 @@ Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
       const end = raw.lastIndexOf(']');
       if (start >= 0 && end > start) {
         const arr = JSON.parse(raw.slice(start, end + 1)) as unknown[];
-        scenes = arr.filter((s): s is string => typeof s === 'string' && s.trim().length > 20).map(s => s.trim().slice(0, 500));
+        // v1118 — deterministisches Sicherheitsnetz zusätzlich zur Prompt-Regel
+        scenes = arr.filter((s): s is string => typeof s === 'string' && s.trim().length > 20)
+          .map(s => SocialSkill.sanitizeVideoPrompt(s.trim().slice(0, 500)));
       }
     } catch { /* kein Board → kein Szenen-Video */ }
     if (scenes.length === 0) {
@@ -1408,7 +1424,7 @@ Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
     const prompt = `Erstelle aus diesem Artikel ein Instagram-Reel-Paket (${lang}):
 1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL). Der Text wird von einer TTS-Stimme gesprochen, die ihre Betonung aus der ZEICHENSETZUNG ableitet — schreibe wie ein Sportmoderator: kurze, punchige Sätze statt Schachtelsätze, eine rhetorische Frage oder ein Ausruf wo es passt, bewusste Pausen mit Gedankenstrichen — Zahlen und Namen an betonter Stelle. KEINE Regieanweisungen, keine Klammern, nur sprechbarer Text.
 2. "caption": Reel-Caption (2-3 Sätze, keine Hashtags; nur GELEGENTLICH mit Frage an die Community — nicht standardmäßig).
-3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken — DYNAMISCH und deutlich sichtbar (z.B. "sweeping cinematic camera dolly through the stadium, flags waving in the wind, dramatic floodlight flares" — keine subtile Mini-Bewegung; KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos).
+3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken — DYNAMISCH und deutlich sichtbar (z.B. "sweeping cinematic camera dolly through the stadium, flags waving in the wind, dramatic floodlight flares" — keine subtile Mini-Bewegung; KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos). Fußball heißt darin IMMER "soccer", NIE "football" (US-Videomodelle zeigen sonst American Football).
 FAKTEN nur aus dem Artikel, nichts erfinden.
 ${await this.redaktionslinieFor(userId, ig).then(l => l ? `REDAKTIONSLINIE (verbindlich, vom Herausgeber — Script UND Caption daran ausrichten, ohne Fakten zu erfinden): ${l}\n` : '')}HEUTE ist ${SocialSkill.heuteZeile()} — vermeide falsche Phasen-Bezüge (z. B. „vor dem Start" oder „in der Vorbereitung", wenn das Ereignis laut Artikel längst läuft oder vorbei ist).
 KEINE Spekulation über Folgen, Pläne oder offene Fragen, die nicht wörtlich im Artikel stehen — keine rhetorischen „Was bedeutet das für …?"-Fragen zu Dingen, die der Artikel nicht beantwortet. Ist der Artikel dünn, bleibt das Skript kurz und faktisch statt aufgefüllt.
@@ -1430,7 +1446,8 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
     const script = pack.script.trim().slice(0, 1_000);
     const caption = typeof pack.caption === 'string' && pack.caption.trim() ? pack.caption.trim().slice(0, 1_500) : script.slice(0, 300);
     const motion = typeof pack.motion === 'string' && pack.motion.trim()
-      ? pack.motion.trim().slice(0, 400)
+      // v1118 — "football"→"soccer" (US-Videomodelle zeigen sonst American Football)
+      ? SocialSkill.sanitizeVideoPrompt(pack.motion.trim().slice(0, 400))
       // v1107 — kräftige Default-Bewegung statt „subtle" (zitterndes Standbild)
       : 'dynamic cinematic camera dolly through a floodlit stadium, flags waving, drifting haze, dramatic light shifts, no text overlays, no recognizable people';
     // Rendern (ffmpeg + TTS + Untertitel) — der teure Teil

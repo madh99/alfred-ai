@@ -716,6 +716,36 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(SocialSkill.sceneCountFor('16:9', true)).toBe(6);
   });
 
+  it('v1118: sanitizeVideoPrompt — "football" wird "soccer" (US-Modelle zeigen sonst American Football)', async () => {
+    const { SocialSkill } = await import('./social-skill.js');
+    expect(SocialSkill.sanitizeVideoPrompt('football players celebrating a goal in a packed football stadium'))
+      .toBe('soccer players celebrating a goal in a packed soccer stadium');
+    expect(SocialSkill.sanitizeVideoPrompt('Football fans waving flags, a footballer runs, two footballers embrace'))
+      .toBe('Soccer fans waving flags, a soccer player runs, two soccer players embrace');
+    // explizit gewolltes American Football bleibt unangetastet
+    expect(SocialSkill.sanitizeVideoPrompt('american football players in helmets'))
+      .toBe('american football players in helmets');
+    expect(SocialSkill.sanitizeVideoPrompt('no sport words here')).toBe('no sport words here');
+  });
+
+  it('v1118: Szenen-Board — Prompt trägt die soccer-Regel, LLM-Ausrutscher wird deterministisch bereinigt', async () => {
+    const setup = reelSetup({ auto_reel: true, scene_video_budget_per_month: 120 });
+    const generateClip = vi.fn(async () => ({ clipPath: '/tmp/scene1.mp4', durationSec: 8 }));
+    const render = vi.fn(async () => ({ videoPath: '/tmp/reel.mp4', durationSec: 25 }));
+    setup.skill.setVideoTools({ render, probe: vi.fn(async () => ({ ok: true })), generateClip } as any);
+    (setup.complete as any).mockReset()
+      .mockResolvedValueOnce({ content: '{"script": "Kolumbien steht im Viertelfinale und keiner hat es kommen sehen — die ganze Geschichte in dreißig Sekunden.", "caption": "Kolumbien weiter!"}' })
+      .mockResolvedValueOnce({ content: '["football players sprinting across the pitch under floodlights, sweeping camera dolly"]' });
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    for (let i = 0; i < 80 && (render as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
+    const boardPrompt = (setup.complete as any).mock.calls[1][0].messages[0].content as string;
+    expect(boardPrompt).toContain('IMMER "soccer"');
+    expect(boardPrompt).toContain('"football" ist VERBOTEN');
+    const req = (generateClip as any).mock.calls[0][0];
+    expect(req.prompt).toContain('soccer players sprinting');
+    expect(req.prompt).not.toMatch(/\bfootball\b/i);
+  });
+
   it('v1105: Redaktionslinie der Familie fließt in den Reel-Script-Prompt (ohne Linie: nicht)', async () => {
     const setup = reelSetup();
     // Linie hängt am LEAD-Kanal der Familie (ein Kanal genügt — wie im Studio)

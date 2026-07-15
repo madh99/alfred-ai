@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1118] - 2026-07-15
+
+### Fixed — KI-Videos zeigten American Football statt Fußball (v1118)
+- Die Szenen- und Motion-Prompts an die Video-Modelle sind englisch — und für US-trainierte Modelle (Veo/Sora) heißt „football" American Football (Realfall 15.07.: Football-Spieler im Stadion statt Fußballern). Dreifach abgesichert: Die LLM-Anweisungen für Szenen-Board und Reel-Motion schreiben jetzt „soccer" vor und verbieten „football"; ein deterministischer Sanitizer schreibt LLM-Ausrutscher trotzdem um (footballer→soccer player, football→soccer; explizites „american football" bleibt erhalten); und jeder generierte Clip loggt den tatsächlich gesendeten Prompt-Kopf — Fehl-Motive sind künftig in Sekunden bis zum Prompt zurückverfolgbar.
+
 ## [0.19.0-multi-ha.1117] - 2026-07-15
 
 ### Fixed — Reel-Zweitverwertung gedeckelt, ehrliche Warte-Hinweise, Audit-Spur (v1117)
