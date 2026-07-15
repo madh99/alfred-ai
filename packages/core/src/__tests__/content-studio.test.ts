@@ -1301,6 +1301,70 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     }
   });
 
+  it('v1122: image_share_story — Follower übernimmt das Lead-Basis-Bild, kein Budget-Verbrauch', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const os = await import('node:os');
+    const p = await import('node:path');
+    const dir = mkdtempSync(p.join(os.tmpdir(), 'alfred-share-'));
+    try {
+      const leadImg = p.join(dir, 'studio-123-abc.png');
+      writeFileSync(leadImg, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+      const channel = makeChannel({ id: 'ch-tg2', platform: 'telegram_channel', config: { topic_id: 't-1', generate_images: true, image_share_story: true } });
+      const { studio, socialRepo } = makeStack({ channel });
+      (studio as any).mediaDir = dir;
+      const media = await (studio as any).maybeGenerateImage(channel, { title: 'T', body: 'B', hashtags: [], warum: 'x', leadImagePath: leadImg });
+      expect(media.length).toBe(1);
+      expect(media[0].pathOrUrl).toContain('studio-'); // neues Kanal-Bild im mediaDir
+      expect(media[0].pathOrUrl).not.toBe(leadImg);
+      expect((socialRepo.incrementMetric as any).mock.calls.filter((c: any[]) => c[1]?.kind === 'gen_image').length).toBe(0);
+      // ohne Flag: Share-Pfad bleibt aus (kein Registry im Test → leeres Ergebnis wie bisher)
+      const ohne = makeChannel({ id: 'ch-tg3', platform: 'telegram_channel', config: { topic_id: 't-1', generate_images: true } });
+      const { studio: s2 } = makeStack({ channel: ohne });
+      (s2 as any).mediaDir = dir;
+      expect(await (s2 as any).maybeGenerateImage(ohne, { title: 'T', body: 'B', hashtags: [], warum: 'x', leadImagePath: leadImg })).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('v1122: image_budget_fallback — Budget leer → lockerer Bibliotheks-Reuse statt ohne Bild', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+    const os = await import('node:os');
+    const p = await import('node:path');
+    const dir = mkdtempSync(p.join(os.tmpdir(), 'alfred-fallback-'));
+    try {
+      const assetFile = p.join(dir, 'asset-alt.png');
+      writeFileSync(assetFile, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+      const mkCh = (extra: Record<string, unknown>) => makeChannel({ id: 'ch-tg4', platform: 'telegram_channel', config: { topic_id: 't-1', generate_images: true, image_budget_per_month: 1, ...extra } });
+      const asset = {
+        id: 'as1', userId: OWNER, path: assetFile, motif: 'voellig anderes generisches stadionmotiv bei nacht', kind: 'image',
+        format: '1536x1024', style: 'irgendein-anderer-stil', pinned: false, blocked: false,
+        lastUsedAt: new Date().toISOString(), useCount: 3, createdAt: 'x',
+      };
+      const wire = (studio: any, socialRepo: any) => {
+        studio.mediaDir = dir;
+        studio.skillRegistry = { get: () => ({}) };
+        studio.skillSandbox = { execute: vi.fn(async () => ({ success: false, error: 'sollte nie gerufen werden' })) };
+        socialRepo.listMetrics = vi.fn(async () => [{ date: '2026-07-01', kind: 'gen_image', value: 5, channelId: 'ch-tg4' }]);
+        socialRepo.listMediaAssets = vi.fn(async () => [asset]);
+      };
+      // Flag AN: Budget leer (5/1) → Bibliotheksbild trotz Motiv-Fremdheit + frischem Cooldown
+      const mit = mkCh({ image_budget_fallback: true });
+      const a = makeStack({ channel: mit });
+      wire(a.studio as any, a.socialRepo as any);
+      const media = await (a.studio as any).maybeGenerateImage(mit, { title: 'Halbfinale heute', body: 'B', hashtags: [], warum: 'x' });
+      expect(media.length).toBe(1);
+      expect(((a.studio as any).skillSandbox.execute as any)).not.toHaveBeenCalled();
+      // Flag AUS: aktuelles Verhalten — ohne Bild
+      const ohne = mkCh({});
+      const b = makeStack({ channel: ohne });
+      wire(b.studio as any, b.socialRepo as any);
+      expect(await (b.studio as any).maybeGenerateImage(ohne, { title: 'Halbfinale heute', body: 'B', hashtags: [], warum: 'x' })).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('v997: verderbliche Konferenz-Story ohne Lead-Slot in der Haltbarkeit wird GAR NICHT produziert', async () => {
     const { studio, website, telegram, llm, stories, socialRepo } = makeFamilyStack();
     // Haltbarkeit praktisch 0 → kein Raster-Slot kann sie einhalten, kein Evergreen zum Verdrängen

@@ -178,6 +178,7 @@ export function SocialPage() {
     imageModel: '' | 'gemini-3.1-flash-image' | 'gemini-3-pro-image';
     // v1074 — Bild-Regie (Art-Director + Motiv-Vielfalt) + Stil-Referenz (gepinnte Assets, nur Gemini)
     imageArtDirector: boolean; imageStyleReference: boolean;
+    imageShareStory: boolean; imageBudgetFallback: boolean;
     imageBranding: string; watermarkOn: boolean; titleOverlayOn: boolean;
     // v1026 — Ecken + Logo-Wasserzeichen (SVG inline in der Config) · v1032 — Logo-Farbe ('' = Original)
     watermarkCorner: string; logoSvg: string; logoCorner: string; logoColor: string;
@@ -205,7 +206,7 @@ export function SocialPage() {
     formate: Array<{ slot: string; name: string; anweisung: string; video: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast', redaktionslinie: '',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
-    imageStyle: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
+    imageStyle: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageShareStory: false, imageBudgetFallback: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
     reelMaxPerWeek: 2, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
@@ -623,6 +624,9 @@ export function SocialPage() {
       imageModel: c.config.image_model === 'gemini-3.1-flash-image' || c.config.image_model === 'gemini-3-pro-image' ? c.config.image_model : '',
       imageArtDirector: c.config.image_art_director !== false,
       imageStyleReference: c.config.image_style_reference === true,
+      // v1122 — Story-Bild teilen + Bibliotheks-Fallback (beide Opt-in)
+      imageShareStory: c.config.image_share_story === true,
+      imageBudgetFallback: c.config.image_budget_fallback === true,
       imageBranding: typeof c.config.image_branding === 'string' ? c.config.image_branding : '',
       watermarkOn: (c.config.image_overlay as { watermark?: boolean } | undefined)?.watermark !== false && c.config.image_branding !== false,
       titleOverlayOn: (c.config.image_overlay as { title?: boolean } | undefined)?.title === true,
@@ -707,6 +711,9 @@ export function SocialPage() {
           image_model: d.imageModel || null,
           image_art_director: d.imageArtDirector ? null : false,
           image_style_reference: d.imageStyleReference ? true : null,
+          // v1122 — Story-Bild teilen + Bibliotheks-Fallback (Opt-in, aus = Schlüssel löschen)
+          image_share_story: d.imageShareStory ? true : null,
+          image_budget_fallback: d.imageBudgetFallback ? true : null,
           image_branding: d.imageBranding.trim() || null,
           image_overlay: {
             watermark: d.watermarkOn, title: d.titleOverlayOn,
@@ -1910,6 +1917,16 @@ export function SocialPage() {
                             🖼️ Stil-Referenz aus gepinnten Stamm-Bildern
                           </label>
                         )}
+                        <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                          title="v1122 — Dieser Kanal generiert für Story-FOLLOWER kein eigenes Bild mehr, sondern übernimmt das Basis-Bild des Lead-Artikels (asset-Zwilling ohne Titel, aufs Kanal-Format gecroppt, eigene Overlays). Spart massiv Bild-Budget; aus = wie bisher eigenes Bild je Kanal.">
+                          <input type="checkbox" checked={settingsDraft.imageShareStory} onChange={e => setSettingsDraft(d => ({ ...d, imageShareStory: e.target.checked }))} />
+                          🖇️ Story-Bild vom Lead übernehmen (spart Budget)
+                        </label>
+                        <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                          title="v1122 — Ist das Monats-Budget aufgebraucht, wird statt „ohne Bild“ das passendste Bild aus der Bibliothek wiederverwendet (lockere Suche: Cooldown/Stil ignoriert, notfalls das am längsten nicht genutzte Format-passende Bild). Aus = wie bisher ohne Bild posten.">
+                          <input type="checkbox" checked={settingsDraft.imageBudgetFallback} onChange={e => setSettingsDraft(d => ({ ...d, imageBudgetFallback: e.target.checked }))} />
+                          🛟 Bibliotheks-Fallback bei leerem Budget
+                        </label>
                       </div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
                         <div>

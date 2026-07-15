@@ -111,6 +111,8 @@ interface GeneratedIdea {
   ort?: string;
   /** v1003 — Einlass-Zeit, NUR wenn in der Quelle belegt. */
   einlass?: string;
+  /** v1122 — Basis-Bild des Story-Leads: Follower mit image_share_story übernehmen es (eigene Overlays, kein Budget). */
+  leadImagePath?: string;
   /** v1008 — Instagram-Karussell: 2–4 Slides (Motiv ohne Text + kurzer Titel fürs Overlay). */
   slides?: Array<{ motiv: string; titel?: string }>;
 }
@@ -675,11 +677,15 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
       let leadName: string | undefined;
       let leadDepth: boolean | undefined; // v1121 — Follower versprechen nur Tiefe, die der Lead hat
+      let leadImg: string | undefined; // v1122 — Basis-Bild des Leads für image_share_story
       let itemsCreated = 0;
       for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
-        const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined, leadDepth);
+        const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined, leadDepth, leadImg);
         if (!item) continue;
-        if (channel.id === lead.id) leadDepth = leadHatTiefe(item.body);
+        if (channel.id === lead.id) {
+          leadDepth = leadHatTiefe(item.body);
+          leadImg = item.media.find(m => m.type === 'image' && !m.pathOrUrl.startsWith('http'))?.pathOrUrl;
+        }
         // v1077 — Eilmeldungs-Marker: „Wichtiges geht immer" — die Engine
         // lässt Breaking-Posts am Nacht-Fenster/Mindestabstand vorbei
         // (gedeckelt, mit Eigen-Jitter)
@@ -746,12 +752,16 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
     let leadName: string | undefined;
     let leadDepth: boolean | undefined; // v1121 — Follower versprechen nur Tiefe, die der Lead hat
+    let leadImg: string | undefined; // v1122 — Basis-Bild des Leads für image_share_story
     const done: string[] = [];
     const warnings: string[] = [];
     for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
-      const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined, leadDepth);
+      const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined, leadDepth, leadImg);
       if (!item) continue;
-      if (channel.id === lead.id) leadDepth = leadHatTiefe(item.body);
+      if (channel.id === lead.id) {
+        leadDepth = leadHatTiefe(item.body);
+        leadImg = item.media.find(m => m.type === 'image' && !m.pathOrUrl.startsWith('http'))?.pathOrUrl;
+      }
       // v1068 — Vorab-Check (beratend): hatte der Kanal in den letzten 7 Tagen
       // schon einen sehr ähnlichen Beitrag, bleibt das Item ENTWURF statt
       // terminiert — nichts geht verloren, nichts postet still doppelt, die
@@ -1218,6 +1228,7 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       let leadSlot: string | undefined;
       let leadChannelName: string | undefined;
       let leadHasDepth: boolean | undefined; // v1121 — Follower versprechen nur Tiefe, die der Lead hat
+      let leadImagePathShared: string | undefined; // v1122 — Basis-Bild des Leads für image_share_story
       // v1022 — Mixed-Mode-Familie: ist der Lead-Kanal suggest, gibt es keinen
       // Lead-Slot — Follower dürfen dann NICHT auf den nächstbesten Slot
       // vorziehen (sie verweisen auf einen Lead-Artikel, der noch nicht live
@@ -1270,7 +1281,7 @@ Antworte NUR mit einem VALIDEN JSON-Array:
           // vorher fielen verderbliche Follower in Mixed-Mode-Familien komplett aus.
           if (myDeadline && !slot && !awaitingLead) continue; // verderblich ohne Slot → nicht produzieren
         }
-        const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot, leadHasDepth);
+        const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot, leadHasDepth, leadImagePathShared);
         if (!item) {
           if (slot) { cap.slotPool.unshift(slot); cap.slotPool.sort(); } // Slot zurücklegen
           // v1042 — scheitert der LEAD-Text, wird die ganze Story ausgelassen:
@@ -1284,7 +1295,10 @@ Antworte NUR mit einem VALIDEN JSON-Array:
           continue;
         }
         if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
-        if (a.role === 'lead') { leadSlot = slot; leadChannelName = cap.channel.name; leadHasDepth = leadHatTiefe(item.body); }
+        if (a.role === 'lead') {
+          leadSlot = slot; leadChannelName = cap.channel.name; leadHasDepth = leadHatTiefe(item.body);
+          leadImagePathShared = item.media.find(m => m.type === 'image' && !m.pathOrUrl.startsWith('http'))?.pathOrUrl;
+        }
         await this.socialRepo.createAssignment({ storyId: story.id, channelId: cap.channel.id, role: a.role, offsetHours: a.offset, itemId: item.id });
         cap.created++;
         created++;
@@ -1357,6 +1371,7 @@ Antworte NUR mit einem VALIDEN JSON-Array:
   private async renderAssignment(
     story: Story, channel: SocialChannel, role: 'lead' | 'follow',
     leadChannelName?: string, leadSlot?: string, leadHasDepth?: boolean,
+    leadImagePath?: string,
   ): Promise<ContentItem | null> {
     // v999 — Traffic-Modus: teaser (immer) oder auto (nur verderbliche Arten,
     // wo der Lead-Artikel echte Mehrtiefe hat); Default 'voll' = heutiges Verhalten.
@@ -1418,6 +1433,8 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
     // Modell terminBis nicht mit, bekäme das Bild sonst weder Termin-Vorlage
     // noch Termin-Karte, obwohl das Item (mergePerformance unten) ein Termin ist.
     if (story.terminBis) idea.terminBis = story.terminBis;
+    // v1122 — Story-Bild-Teilen: Follower kennen das Basis-Bild des Leads
+    if (role === 'follow' && leadImagePath) idea.leadImagePath = leadImagePath;
     const media = await this.maybeGenerateImage(channel, idea);
     const item = await this.socialRepo.createItem(this.ownerUserId, channel.id, {
       status: 'draft',
@@ -2528,6 +2545,13 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
     motifOverride?: string, forcedTitle?: string | null,
   ): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }>> {
     if (channel.config.generate_images !== true) return [];
+    // v1122 — Story-Bild teilen (Opt-in image_share_story): Follower übernehmen
+    // das Basis-Bild des Leads statt selbst zu generieren (eigene Overlays,
+    // kein Budget). Braucht keinen Generator — deshalb VOR dem Registry-Check.
+    if (channel.config.image_share_story === true && typeof idea.leadImagePath === 'string' && idea.leadImagePath && this.mediaDir) {
+      const shared = await this.tryShareLeadImage(channel, idea, forcedTitle).catch(() => undefined);
+      if (shared) return shared;
+    }
     if (!this.skillRegistry || !this.skillSandbox) return [];
     const skill = this.skillRegistry.get('image_generate') as Skill | undefined;
     if (!skill) return [];
@@ -2622,6 +2646,18 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
 
       // v1042 — erst ab hier kostet es Geld: Budget-Gate für die Generierung
       if (used >= budget) {
+        // v1122 — Opt-in Bibliotheks-Fallback (image_budget_fallback): lieber
+        // ein passables Bibliotheksbild als gar keines (Realfall 15.07.: ab
+        // Monatsmitte erschienen fussball.cc-Artikel nackt). Lax-Suche:
+        // Cooldown/Stil ignoriert, niedrigere Ähnlichkeits-Schwelle, notfalls
+        // das am längsten nicht genutzte Format-passende Asset.
+        if (channel.config.image_budget_fallback === true && this.mediaDir) {
+          const rescue = await this.tryReuseAsset(channel, motif, idea, style, format, forcedTitle, { lax: true }).catch(() => undefined);
+          if (rescue) {
+            this.logger.info({ channel: channel.name, used, budget }, 'v1122 Budget erschöpft — Bibliotheks-Fallback statt ohne Bild');
+            return rescue;
+          }
+        }
         this.logger.info({ channel: channel.name, used, budget }, 'v935 image budget reached — post ohne Bild');
         return [];
       }
@@ -2827,10 +2863,45 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
    * frei (anderes Publikum, anderes Overlay). Altbestand ohne Kanal-Daten
    * fällt konservativ auf den globalen Zeitstempel zurück.
    */
+  /**
+   * v1122 — Story-Bild teilen (Opt-in image_share_story): Follower übernehmen
+   * das Basis-Bild des Story-Leads — bevorzugt den sauberen asset-Zwilling
+   * (ohne eingebrannte Titel-Boxen), aufs Kanal-Format gecroppt, mit den
+   * EIGENEN Overlays. Kostet kein Bild-Budget: ein Basis-Bild je Story statt
+   * eines je Kanal (Realfall Juli: ~490 generierte Bilder für weitgehend
+   * dieselben Stories — das fussball.cc-Budget war Mitte des Monats leer).
+   */
+  private async tryShareLeadImage(
+    channel: SocialChannel, idea: GeneratedIdea, forcedTitle?: string | null,
+  ): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }> | undefined> {
+    const src = idea.leadImagePath!;
+    const twin = src.replace(/([\\/])studio-/, '$1asset-');
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    let base: Buffer | undefined;
+    for (const p of twin !== src ? [twin, src] : [src]) {
+      try { base = await readFile(p); break; } catch { /* nächster Kandidat (HA: Datei ggf. auf anderem Node) */ }
+    }
+    if (!base) return undefined;
+    const format = ContentStudio.platformImageSpec(channel);
+    // aufs Kanal-Format bringen (Lead ist meist 3:2-Website, IG braucht 4:5 usw.)
+    const ratio: [number, number] | undefined = format.crop
+      ?? (format.size === '1024x1536' ? [2, 3] : format.size === '1536x1024' ? [3, 2] : format.size === '1024x1024' ? [1, 1] : undefined);
+    if (ratio) base = await cropToRatio(base, ratio[0], ratio[1]).catch(() => base!);
+    const finalBuffer = await this.applyOverlays(base, channel, idea, forcedTitle).catch(() => base!);
+    const file = join(this.mediaDir!, `studio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ContentStudio.overlayBakesTitle(channel, idea, forcedTitle) ? '' : '-no-title'}.png`);
+    await writeFile(file, finalBuffer);
+    this.logger.info({ channel: channel.name, source: src.slice(-48) }, 'v1122 story image shared from lead (kein Budget verbraucht)');
+    return [{ type: 'image', source: 'generated', pathOrUrl: file }];
+  }
+
   private async tryReuseAsset(
     channel: SocialChannel, motif: string, idea: GeneratedIdea,
     style: string | undefined, format: { size?: string; crop?: [number, number] },
     forcedTitle?: string | null,
+    // v1122 — lax: Budget-Fallback-Modus (Cooldown/Stil ignoriert, niedrigere
+    // Schwellen, notfalls das am längsten nicht genutzte Format-passende Asset)
+    opts?: { lax?: boolean },
   ): Promise<Array<{ type: 'image'; source: 'generated'; pathOrUrl: string }> | undefined> {
     const cooldownDays = typeof channel.config.image_reuse_cooldown_days === 'number' && channel.config.image_reuse_cooldown_days >= 0
       ? channel.config.image_reuse_cooldown_days : 30;
@@ -2850,23 +2921,31 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
         ? Math.min(shortDays, cooldownDays) : cooldownDays;
       // v1039(C) — Nutzung DIESES Kanals zählt; nie von diesem Kanal genutzt = frei
       const lastUsedHere = asset.channelUses ? asset.channelUses[channel.id] : asset.lastUsedAt;
-      if (lastUsedHere !== undefined && lastUsedHere >= new Date(now - effectiveDays * 24 * 3_600_000).toISOString()) continue;
-      if ((asset.style ?? '') !== (style ?? '')) continue;
+      if (!opts?.lax && lastUsedHere !== undefined && lastUsedHere >= new Date(now - effectiveDays * 24 * 3_600_000).toISOString()) continue;
+      if (!opts?.lax && (asset.style ?? '') !== (style ?? '')) continue;
       if ((asset.format ?? 'square') !== (format.size ?? 'square')) continue;
       const have = ContentStudio.motifTokens(asset.motif);
       const inter = [...wanted].filter(t => have.has(t)).length;
       const union = new Set([...wanted, ...have]).size;
       const jaccard = union === 0 ? 0 : inter / union;
-      let score = jaccard >= 0.5 ? jaccard : 0;
+      let score = jaccard >= (opts?.lax ? 0.15 : 0.5) ? jaccard : 0;
       if (score === 0 && wantedVec) {
         const assetVec = await this.embedMotifCached(asset.id, asset.motif);
         if (assetVec) {
           const cos = cosineSimilarity(wantedVec, assetVec);
-          if (cos >= 0.82) score = cos;
+          if (cos >= (opts?.lax ? 0.7 : 0.82)) score = cos;
         }
       }
       if (score === 0) continue;
       matches.push({ asset, score });
+    }
+    // v1122 — lax ohne Motiv-Treffer: das am längsten nicht genutzte,
+    // format-passende Asset (besser irgendein Stadion-Bild als gar keines)
+    if (matches.length === 0 && opts?.lax) {
+      const eligible = assets.filter(a => !a.blocked && (a.format ?? 'square') === (format.size ?? 'square'));
+      eligible.sort((a, b) => String((a.channelUses ? a.channelUses[channel.id] : undefined) ?? a.lastUsedAt ?? '')
+        .localeCompare(String((b.channelUses ? b.channelUses[channel.id] : undefined) ?? b.lastUsedAt ?? '')));
+      matches.push(...eligible.map(asset => ({ asset, score: 0 })));
     }
     if (matches.length === 0) return undefined;
     // Stamm-Bilder gewinnen immer; sonst der beste Score

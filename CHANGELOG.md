@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1122] - 2026-07-15
+
+### Added — Bild-Budget-Schoner: Story-Bild teilen + Bibliotheks-Fallback (v1122)
+- Hintergrund (Realfall 15.07.): Das fussball.cc-Bild-Budget war Mitte des Monats aufgebraucht (100/100) — Artikel erschienen ohne Bild. Ursache des hohen Verbrauchs: Jeder Kanal generiert sein eigenes Bild zur selben Story (~490 Bilder im Juli für weitgehend denselben Stoff). Budgets wurden sofort auf 200 erhöht (Config); dazu zwei neue Opt-in-Schalter je Kanal in der UI (aus = exakt bisheriges Verhalten):
+- **🖇️ Story-Bild vom Lead übernehmen** (`image_share_story`): Follower-Kanäle generieren kein eigenes Bild mehr, sondern übernehmen das Basis-Bild des Lead-Artikels — bevorzugt den sauberen asset-Zwilling ohne eingebrannte Titel, aufs Kanal-Format gecroppt, mit den eigenen Overlays. Kostet kein Budget; ein Basis-Bild je Story statt eines je Kanal.
+- **🛟 Bibliotheks-Fallback bei leerem Budget** (`image_budget_fallback`): Ist das Monats-Budget erschöpft, wird statt „ohne Bild" das passendste Bild aus der Bild-Bibliothek wiederverwendet — lockere Suche (Cooldown und Stil-Bindung ignoriert, niedrigere Ähnlichkeits-Schwelle), notfalls das am längsten nicht genutzte format-passende Bild.
+
 ## [0.19.0-multi-ha.1121] - 2026-07-15
 
 ### Fixed — Ehrliche Verweis-Kette: „Ganzer Artikel" nur bei Leads mit Tiefe (v1121)
