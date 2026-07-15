@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1121] - 2026-07-15
+
+### Fixed — Ehrliche Verweis-Kette: „Ganzer Artikel" nur bei Leads mit Tiefe (v1121)
+- Reels, Videos und Follower-Posts verwiesen bedingungslos auf den „ausführlichen/ganzen Artikel" — auch wenn der Lead eine bewusst kurze News-Desk-Meldung war (das Substanz-Gate hält dünnen Stoff seit v1100 korrekt knapp; seit 14.07. waren 7 von 9 Leads unter 800 Zeichen). Neues gemeinsames Tiefen-Kriterium (`leadHatTiefe`, Lead-Body ≥ 800 Zeichen) an allen fünf Verweis-Stellen:
+- **Sprechertext** (Reel/Video): bei kurzem Lead neutraler Verweis („Mehr auf …") statt „ganzer Artikel"; **End-Card**: „Mehr auf fussball.cc" statt „Ganzer Artikel auf …" (eigene `reel_cta_text`-Konfiguration übersteuert weiterhin); **Follower-Posts**: „👉 Mehr dazu:" bzw. „Mehr dazu über den Link im Profil" statt „Ganzer Artikel"; **Telegram-Button/YouTube-Beschreibung**: Label „Mehr dazu" statt „Ganzer Artikel"; **Follower-Schreib-Prompt** der Konferenz: bei kurzem Lead sind „ausführlicher Artikel", „alle Details" u. Ä. explizit tabu, und der Teaser-Modus („die Pointe steht im Artikel") entfällt — er wäre ein leeres Versprechen.
+- Bei Leads mit echter Tiefe bleibt alles wie bisher; ist die Tiefe nicht feststellbar (z. B. Video rendert vor dem Lead-Publish), gilt der Status quo.
+
 ## [0.19.0-multi-ha.1120] - 2026-07-15
 
 ### Fixed — YouTube-Eigenproduktion bekommt das Reel-Branding (v1120)

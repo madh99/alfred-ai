@@ -783,6 +783,30 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(Date.parse(followAt)).toBeGreaterThanOrEqual(Date.parse(leadAt) + 2 * 3_600_000);
   });
 
+  it('v1121: Follower-Prompt ehrlich — kurzer Lead verbietet „ausführlich", tiefer Lead erlaubt es', async () => {
+    const { studio, website, telegram, llm } = makeFamilyStack();
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: CONF })
+      .mockResolvedValueOnce({ content: RENDER('Kurz-Lead') }) // RENDER-Body ~80 Zeichen → dünn
+      .mockResolvedValueOnce({ content: RENDER('Follow') });
+    await studio.planFamily('project:proj-1', [website, telegram]);
+    const followPrompt = (llm.complete as any).mock.calls[2][0].messages[0].content as string;
+    expect(followPrompt).toContain('KEINE Ausführlichkeit');
+    expect(followPrompt).toContain('bereits live'); // v1023-Zusicherung bleibt
+    expect(followPrompt).not.toContain('Der ausführliche Beitrag');
+
+    const { studio: s2, website: w2, telegram: t2, llm: llm2 } = makeFamilyStack();
+    const langBody = 'Ein sehr ausführlicher Absatz mit vielen Details, Zitaten und Einordnung für die Leser. '.repeat(12);
+    (llm2.complete as any)
+      .mockResolvedValueOnce({ content: CONF })
+      .mockResolvedValueOnce({ content: JSON.stringify([{ title: 'Tiefer Lead', body: langBody, hashtags: ['wm2026'], warum: 'x' }]) })
+      .mockResolvedValueOnce({ content: RENDER('Follow kurz') });
+    await s2.planFamily('project:proj-1', [w2, t2]);
+    const tiefPrompt = (llm2.complete as any).mock.calls[2][0].messages[0].content as string;
+    expect(tiefPrompt).toContain('Der ausführliche Beitrag');
+    expect(tiefPrompt).not.toContain('KEINE Ausführlichkeit');
+  });
+
   it('planFamily: Termin-Story bekommt auf JEDEM Kanal einen Slot vor dem Anpfiff (Vorrang vor Kapazität)', async () => {
     const { studio, website, telegram, llm, transitions } = makeFamilyStack();
     const kickoff = new Date(2099, 6, 4, 19, 0).toISOString();
@@ -1150,9 +1174,11 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
   it('v999: traffic_mode teaser — FOLLOW-Prompt trägt Teaser-Regel + Keine-URL-Regel', async () => {
     const { studio, website, telegram, llm } = makeFamilyStack();
     (telegram.config as any).traffic_mode = 'teaser';
+    // v1121 — Teaser setzt einen Lead mit TIEFE voraus (kurzer Lead → kein Teaser-Versprechen)
+    const langBody = 'Ein sehr ausführlicher Absatz mit vielen Details, Zitaten und Einordnung für die Leser. '.repeat(12);
     (llm.complete as any)
       .mockResolvedValueOnce({ content: CONF })
-      .mockResolvedValueOnce({ content: RENDER('Lead-Artikel') })
+      .mockResolvedValueOnce({ content: JSON.stringify([{ title: 'Lead-Artikel', body: langBody, hashtags: ['wm2026'], warum: 'x' }]) })
       .mockResolvedValueOnce({ content: RENDER('Teaser') });
     await studio.planFamily('project:proj-1', [website, telegram]);
     const followPrompt = (llm.complete as any).mock.calls[2][0].messages[0].content as string;
@@ -1161,6 +1187,16 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     // Lead-Prompt bleibt ohne Teaser-Regel
     const leadPrompt = (llm.complete as any).mock.calls[1][0].messages[0].content as string;
     expect(leadPrompt).not.toContain('TEASER-MODUS');
+    // v1121 — kurzer Lead: Teaser-Regel entfällt trotz traffic_mode=teaser
+    const { studio: s2, website: w2, telegram: t2, llm: llm2 } = makeFamilyStack();
+    (t2.config as any).traffic_mode = 'teaser';
+    (llm2.complete as any)
+      .mockResolvedValueOnce({ content: CONF })
+      .mockResolvedValueOnce({ content: RENDER('Kurz-Lead') })
+      .mockResolvedValueOnce({ content: RENDER('Teaser') });
+    await s2.planFamily('project:proj-1', [w2, t2]);
+    const kurzFollow = (llm2.complete as any).mock.calls[2][0].messages[0].content as string;
+    expect(kurzFollow).not.toContain('TEASER-MODUS');
   });
 
   it('v996: resolveLead und playbookOffset — Helfer-Semantik', () => {

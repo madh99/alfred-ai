@@ -43,6 +43,17 @@ export function isCompanionFormat(x: Pick<ContentItem, 'performance'>): boolean 
 }
 
 /**
+ * v1121 — Tiefen-Kriterium für die ehrliche Verweis-Kette: „Ganzer Artikel"
+ * versprechen nur Verweise auf Leads mit echter Ausführlichkeit; Kurzmeldungen
+ * (Substanz-Gate v1100 hält dünnen Stoff bewusst knapp) bekommen „Mehr auf …".
+ * EINE Schwelle für Reel-Script, End-Card, Traffic-CTA, YT-Link-Zeile und die
+ * Follower-Prompts der Redaktionskonferenz (content-studio importiert das).
+ */
+export function leadHatTiefe(body: string | undefined): boolean {
+  return (body ?? '').trim().length >= 800;
+}
+
+/**
  * v1068 — GEMEINSAME Duplikat-Suche (eine Quelle der Wahrheit): findet einen
  * in den letzten 7 Tagen auf dem Kanal veröffentlichten, sehr ähnlichen
  * Beitrag. Genutzt vom Publish-Gate (Enforcement, v973) UND vom
@@ -1421,8 +1432,15 @@ Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
     if (images.length === 0) return;
     // Skript + Caption in EINEM LLM-Call
     const lang = languageName(typeof ig.config.language === 'string' ? ig.config.language : 'de');
+    // v1121 — ehrlicher Sprecher-CTA: „ganzer/ausführlicher Artikel" nur, wenn
+    // der Lead wirklich Tiefe hat (Realfall 15.07.: Video verwies auf den
+    // „ausführlichen Bericht", der Lead war eine 3-Satz-Kurzmeldung).
+    const leadTief = leadHatTiefe(leadItem.body);
+    const ctaRegel = leadTief
+      ? 'am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL'
+      : 'am Ende ein kurzer, neutraler Verweis auf die Seite (z. B. „Mehr auf …") — der Beitrag dort ist bewusst KURZ, versprich also KEINEN ausführlichen Artikel/Bericht — OHNE URL';
     const prompt = `Erstelle aus diesem Artikel ein Instagram-Reel-Paket (${lang}):
-1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, am Ende ein kurzer Verweis auf den ganzen Artikel — OHNE URL). Der Text wird von einer TTS-Stimme gesprochen, die ihre Betonung aus der ZEICHENSETZUNG ableitet — schreibe wie ein Sportmoderator: kurze, punchige Sätze statt Schachtelsätze, eine rhetorische Frage oder ein Ausruf wo es passt, bewusste Pausen mit Gedankenstrichen — Zahlen und Namen an betonter Stelle. KEINE Regieanweisungen, keine Klammern, nur sprechbarer Text.
+1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, ${ctaRegel}). Der Text wird von einer TTS-Stimme gesprochen, die ihre Betonung aus der ZEICHENSETZUNG ableitet — schreibe wie ein Sportmoderator: kurze, punchige Sätze statt Schachtelsätze, eine rhetorische Frage oder ein Ausruf wo es passt, bewusste Pausen mit Gedankenstrichen — Zahlen und Namen an betonter Stelle. KEINE Regieanweisungen, keine Klammern, nur sprechbarer Text.
 2. "caption": Reel-Caption (2-3 Sätze, keine Hashtags; nur GELEGENTLICH mit Frage an die Community — nicht standardmäßig).
 3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken — DYNAMISCH und deutlich sichtbar (z.B. "sweeping cinematic camera dolly through the stadium, flags waving in the wind, dramatic floodlight flares" — keine subtile Mini-Bewegung; KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos). Fußball heißt darin IMMER "soccer", NIE "football" (US-Videomodelle zeigen sonst American Football).
 FAKTEN nur aus dem Artikel, nichts erfinden.
@@ -1484,9 +1502,10 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       introImage = join(tmpdir(), `alfred-reel-hook-${leadItem.id.slice(0, 8)}.png`);
       await writeFile(introImage, hook);
       tmpFiles.push(introImage);
+      // v1121 — End-Card verspricht nur Tiefe, die der Lead hat
       const ctaText = typeof ig.config.reel_cta_text === 'string' && ig.config.reel_cta_text.trim()
         ? ig.config.reel_cta_text.trim()
-        : `Ganzer Artikel auf ${branding ?? 'unserer Seite'}`;
+        : `${leadTief ? 'Ganzer Artikel' : 'Mehr'} auf ${branding ?? 'unserer Seite'}`;
       const last = await cropToRatio(await readFile(images[images.length - 1]), 9, 16);
       const endCard = await bakeReelEndCard(last, ctaText, wmMode ? undefined : branding);
       outroImage = join(tmpdir(), `alfred-reel-end-${leadItem.id.slice(0, 8)}.png`);
@@ -1687,7 +1706,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
   }
 
   /** v1001 — Lead-Artikel einer Story finden (published, mit externalUrl); null wenn nicht auflösbar. */
-  private async storyLeadUrl(userId: string, item: ContentItem): Promise<{ url: string; title?: string } | null> {
+  private async storyLeadUrl(userId: string, item: ContentItem): Promise<{ url: string; title?: string; tief: boolean } | null> {
     if (!item.storyId) return null;
     const assigns = await this.repo.listAssignments(item.storyId);
     const mine = assigns.find(a => a.itemId === item.id);
@@ -1695,7 +1714,8 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
     if (!mine || mine.role === 'lead' || !lead?.itemId || lead.itemId === item.id) return null;
     const leadItem = await this.repo.getItem(userId, lead.itemId);
     if (!leadItem || leadItem.status !== 'published' || !leadItem.externalUrl) return null;
-    return { url: leadItem.externalUrl, title: leadItem.title };
+    // v1121 — Tiefe des Leads mitliefern: die CTA-Texte versprechen nur, was da ist
+    return { url: leadItem.externalUrl, title: leadItem.title, tief: leadHatTiefe(leadItem.body) };
   }
 
   private async applyTrafficCta(userId: string, item: ContentItem, channel: SocialChannel): Promise<ContentItem> {
@@ -1717,12 +1737,16 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       // v1001 — Telegram: Inline-Button statt Text-Link (URL via performance.trafficUrl an den Provider)
       // v1109 — YouTube: Link gehört an den ANFANG der Beschreibung (above the
       // fold), nicht ans Body-Ende — der Provider baut die Beschreibung daraus
+      // v1121 — ehrliche Labels: „Ganzer Artikel" nur bei Leads mit Tiefe,
+      // Kurzmeldungen bekommen „Mehr dazu" (Realfall 15.07.: alles verwies
+      // auf „ausführliche" Artikel, die 3-Satz-Meldungen waren).
       if (channel.platform === 'telegram_channel' || channel.platform === 'youtube') {
-        return { ...item, performance: { ...item.performance, trafficUrl: url, ...(custom ? { trafficLabel: custom } : {}) } };
+        const label = custom ?? (lead.tief ? undefined : (channel.platform === 'youtube' ? '👉 Mehr dazu:' : '📖 Mehr dazu'));
+        return { ...item, performance: { ...item.performance, trafficUrl: url, ...(label ? { trafficLabel: label } : {}) } };
       }
       const cta = channel.platform === 'instagram'
-        ? (custom ?? '🔗 Ganzer Artikel über den Link im Profil.')
-        : `${custom ?? '👉 Ganzer Artikel:'} ${url}`;
+        ? (custom ?? `🔗 ${lead.tief ? 'Ganzer Artikel' : 'Mehr dazu'} über den Link im Profil.`)
+        : `${custom ?? (lead.tief ? '👉 Ganzer Artikel:' : '👉 Mehr dazu:')} ${url}`;
       return { ...item, body: `${item.body}\n\n${cta}` };
     } catch {
       return item; // Traffic-CTA darf einen Publish NIE verhindern
@@ -2917,12 +2941,23 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
         introImage = join(tmpdir(), `alfred-video-hook-${item.id.slice(0, 8)}.png`);
         await writeFile(introImage, hook);
         tmpFiles.push(introImage);
+        // v1121 — Tiefe des Story-Leads (unabhängig vom Publish-Status, der
+        // Lead geht meist erst NACH dem Render live; unbekannt → Status quo)
+        let videoLeadTief = true;
+        if (item.storyId) {
+          try {
+            const assigns = await this.repo.listAssignments(item.storyId);
+            const leadA = assigns.find(a => a.role === 'lead' && a.itemId && a.itemId !== item.id);
+            const leadIt = leadA?.itemId ? await this.repo.getItem(userId, leadA.itemId) : null;
+            if (leadIt) videoLeadTief = leadHatTiefe(leadIt.body);
+          } catch { /* Status quo — Karten kommen trotzdem */ }
+        }
         // YouTube: der Link steht in der Beschreibung — die End-Card sagt das dazu
         const ctaText = typeof channel.config.reel_cta_text === 'string' && channel.config.reel_cta_text.trim()
           ? channel.config.reel_cta_text.trim()
           : channel.platform === 'youtube'
-            ? `Ganzer Artikel auf ${branding ?? 'unserer Seite'} — Link in der Beschreibung`
-            : `Ganzer Artikel auf ${branding ?? 'unserer Seite'}`;
+            ? `${videoLeadTief ? 'Ganzer Artikel' : 'Mehr'} auf ${branding ?? 'unserer Seite'} — Link in der Beschreibung`
+            : `${videoLeadTief ? 'Ganzer Artikel' : 'Mehr'} auf ${branding ?? 'unserer Seite'}`;
         const last = await cropToRatio(await readFile(baseImages[baseImages.length - 1]), ratioW, ratioH);
         const endCard = await bakeReelEndCard(last, ctaText, wmMode ? undefined : branding);
         outroImage = join(tmpdir(), `alfred-video-end-${item.id.slice(0, 8)}.png`);

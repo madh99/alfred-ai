@@ -5,7 +5,7 @@ import type {
 } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { Skill, SkillRegistry, SkillSandbox } from '@alfred/skills';
-import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, cosineSimilarity, languageName, applyImageOverlays, cropToRatio, resolveImageBranding, parseOverlayCorner, type OverlaySpec } from '@alfred/skills';
+import { effectiveSlots, extractTrailingHashtags, mergeHashtags, isNearDuplicateTitle, cosineSimilarity, languageName, applyImageOverlays, cropToRatio, resolveImageBranding, parseOverlayCorner, leadHatTiefe, type OverlaySpec } from '@alfred/skills';
 export { extractTrailingHashtags, isNearDuplicateTitle };
 import type { SourceProvisioner } from './source-provisioner.js';
 import type { StoryDeduper, BlockedStory } from './story-dedup.js';
@@ -674,10 +674,12 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
       });
       await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
       let leadName: string | undefined;
+      let leadDepth: boolean | undefined; // v1121 — Follower versprechen nur Tiefe, die der Lead hat
       let itemsCreated = 0;
       for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
-        const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined);
+        const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined, leadDepth);
         if (!item) continue;
+        if (channel.id === lead.id) leadDepth = leadHatTiefe(item.body);
         // v1077 — Eilmeldungs-Marker: „Wichtiges geht immer" — die Engine
         // lässt Breaking-Posts am Nacht-Fenster/Mindestabstand vorbei
         // (gedeckelt, mit Eigen-Jitter)
@@ -743,11 +745,13 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     });
     await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
     let leadName: string | undefined;
+    let leadDepth: boolean | undefined; // v1121 — Follower versprechen nur Tiefe, die der Lead hat
     const done: string[] = [];
     const warnings: string[] = [];
     for (const channel of [lead, ...members.filter(m => m.id !== lead.id)]) {
-      const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined);
+      const item = await this.renderAssignment(story, channel, channel.id === lead.id ? 'lead' : 'follow', leadName, undefined, leadDepth);
       if (!item) continue;
+      if (channel.id === lead.id) leadDepth = leadHatTiefe(item.body);
       // v1068 — Vorab-Check (beratend): hatte der Kanal in den letzten 7 Tagen
       // schon einen sehr ähnlichen Beitrag, bleibt das Item ENTWURF statt
       // terminiert — nichts geht verloren, nichts postet still doppelt, die
@@ -1213,6 +1217,7 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       await this.storyDeduper?.embedStory(story.id, { title: story.title, body: story.summary });
       let leadSlot: string | undefined;
       let leadChannelName: string | undefined;
+      let leadHasDepth: boolean | undefined; // v1121 — Follower versprechen nur Tiefe, die der Lead hat
       // v1022 — Mixed-Mode-Familie: ist der Lead-Kanal suggest, gibt es keinen
       // Lead-Slot — Follower dürfen dann NICHT auf den nächstbesten Slot
       // vorziehen (sie verweisen auf einen Lead-Artikel, der noch nicht live
@@ -1265,7 +1270,7 @@ Antworte NUR mit einem VALIDEN JSON-Array:
           // vorher fielen verderbliche Follower in Mixed-Mode-Familien komplett aus.
           if (myDeadline && !slot && !awaitingLead) continue; // verderblich ohne Slot → nicht produzieren
         }
-        const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot);
+        const item = await this.renderAssignment(story, cap.channel, a.role, leadChannelName, leadSlot, leadHasDepth);
         if (!item) {
           if (slot) { cap.slotPool.unshift(slot); cap.slotPool.sort(); } // Slot zurücklegen
           // v1042 — scheitert der LEAD-Text, wird die ganze Story ausgelassen:
@@ -1279,7 +1284,7 @@ Antworte NUR mit einem VALIDEN JSON-Array:
           continue;
         }
         if (slot) await this.socialRepo.transition(this.ownerUserId, item.id, 'scheduled', { scheduledAt: slot });
-        if (a.role === 'lead') { leadSlot = slot; leadChannelName = cap.channel.name; }
+        if (a.role === 'lead') { leadSlot = slot; leadChannelName = cap.channel.name; leadHasDepth = leadHatTiefe(item.body); }
         await this.socialRepo.createAssignment({ storyId: story.id, channelId: cap.channel.id, role: a.role, offsetHours: a.offset, itemId: item.id });
         cap.created++;
         created++;
@@ -1351,12 +1356,14 @@ Antworte NUR mit einem VALIDEN JSON-Array:
   /** v993 — einen Beitrag für eine Story-Zuweisung rendern (Kanal-Prompt, Persona, Rolle). */
   private async renderAssignment(
     story: Story, channel: SocialChannel, role: 'lead' | 'follow',
-    leadChannelName?: string, leadSlot?: string,
+    leadChannelName?: string, leadSlot?: string, leadHasDepth?: boolean,
   ): Promise<ContentItem | null> {
     // v999 — Traffic-Modus: teaser (immer) oder auto (nur verderbliche Arten,
     // wo der Lead-Artikel echte Mehrtiefe hat); Default 'voll' = heutiges Verhalten.
+    // v1121 — bei bewusst KURZEM Lead (Substanz-Gate) kein Teaser: das
+    // Versprechen „die Pointe steht im Lead-Artikel" wäre gelogen.
     const tm = channel.config.traffic_mode;
-    const teaser = role === 'follow'
+    const teaser = role === 'follow' && leadHasDepth !== false
       && (tm === 'teaser' || (tm === 'auto' && (story.kind === 'news' || story.kind === 'recap')));
     // v1046 — Website-/Lead-Artikel als EINE Textwand waren unlesbar (Realfall
     // Public-Viewing-Artikel): Absatz-Struktur ist jetzt Pflicht.
@@ -1373,7 +1380,13 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         ? `- DEINE ROLLE: LEAD, aber der Stoff ist DÜNN (kaum mehr als die Schlagzeile): Schreibe eine ehrliche KURZMELDUNG — 2-3 Sätze, maximal 2 kurze Absätze. NUR was im Stoff steht. KEINE Füllsätze, KEINE Einordnungs-Floskeln, KEINE Spekulation über Hintergründe, Pläne, Auswirkungen oder Reaktionen.`
         : `- DEINE ROLLE: LEAD — der ausführlichste Beitrag der Familie zu dieser Story (vollwertig, 4-8 Sätze bzw. Persona-gemäß mehr).
 - GLIEDERUNG: 2-4 Absätze, getrennt durch LEERZEILEN (\\n\\n im body) — nie eine einzige Textwand.${story.terminBis ? ' Bei Terminen: ein EIGENER kurzer Absatz mit den Fakten (Was, Wann, Wo).' : ''}`)
-      : `- DEINE ROLLE: FOLLOW — kürzer, eigener Blickwinkel deiner Persona.${leadChannelName ? ` Der ausführliche Beitrag auf ${leadChannelName} ist zum Zeitpunkt deiner Veröffentlichung bereits live${leadSlot ? ` (seit ${formatLocalDateTime(leadSlot)})` : ''} — du DARFST darauf verweisen.` : ''} NIE auf den eigenen Kanal verweisen. Schreibe KEINE URLs in den Text — der Link zum Lead-Artikel wird beim Veröffentlichen automatisch angehängt.${teaser ? '\n- TEASER-MODUS (zwingend): Wecke Neugier, aber verrate NICHT alles — das stärkste Detail, die Pointe oder die Zahlen bleiben im Lead-Artikel. Ende mit einem konkreten Grund weiterzulesen.' : ''}`;
+      // v1121 — ehrlicher Verweis: bei bewusst kurzem Lead (Substanz-Gate)
+      // versprechen Follower keinen „ausführlichen" Artikel mehr (Realfall
+      // 15.07.: Reels/Posts verwiesen auf den „ausführlichen Bericht", der
+      // Lead war eine 3-Satz-Kurzmeldung).
+      : `- DEINE ROLLE: FOLLOW — kürzer, eigener Blickwinkel deiner Persona.${leadChannelName ? (leadHasDepth === false
+        ? ` Auf ${leadChannelName} ist zu dieser Story bereits live: eine bewusst KURZE Meldung${leadSlot ? ` (seit ${formatLocalDateTime(leadSlot)})` : ''} — du darfst darauf verweisen, aber versprich KEINE Ausführlichkeit: Formulierungen wie „ausführlicher Artikel/Bericht", „alle Details" oder „die ganze Geschichte" sind TABU.`
+        : ` Der ausführliche Beitrag auf ${leadChannelName} ist zum Zeitpunkt deiner Veröffentlichung bereits live${leadSlot ? ` (seit ${formatLocalDateTime(leadSlot)})` : ''} — du DARFST darauf verweisen.`) : ''} NIE auf den eigenen Kanal verweisen. Schreibe KEINE URLs in den Text — der Link zum Lead-Artikel wird beim Veröffentlichen automatisch angehängt.${teaser ? '\n- TEASER-MODUS (zwingend): Wecke Neugier, aber verrate NICHT alles — das stärkste Detail, die Pointe oder die Zahlen bleiben im Lead-Artikel. Ende mit einem konkreten Grund weiterzulesen.' : ''}`;
     const prompt = `Du bist Content-Redakteur für den Social-Kanal "${channel.name}" (${channel.platform}).
 ${channel.persona ? `Persona/Tonalität: ${channel.persona}\n` : ''}
 STORY (Redaktionskonferenz-Beschluss — NUR dieser Stoff, Fakten NUR hieraus):

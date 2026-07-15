@@ -199,11 +199,16 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
       .toBe('https://x.at/artikel?utm_source=bluesky&utm_medium=social&utm_campaign=titel#kommentare');
   });
 
-  function trafficSetup(channelOverrides: Partial<SocialChannel> = {}, leadStatus = 'published') {
+  function trafficSetup(channelOverrides: Partial<SocialChannel> = {}, leadStatus = 'published', leadBody?: string) {
     const channel = makeChannel({ platform: 'test', ...channelOverrides });
     const item = makeItem({ storyId: 'story-1', body: 'Kurzer Teaser zum Spiel.' });
     const { skill, provider, state, spies } = makeSkill(channel, item);
-    const leadItem = makeItem({ id: 'lead-1', channelId: 'ch-web', status: leadStatus as any, title: 'Kolumbien komplettiert das Achtelfinale', externalUrl: 'https://fussball.cc/news/kolumbien' });
+    // v1121 — Default-Lead hat TIEFE (≥800 Zeichen) → „Ganzer Artikel"-Erwartungen bleiben
+    const leadItem = makeItem({
+      id: 'lead-1', channelId: 'ch-web', status: leadStatus as any,
+      title: 'Kolumbien komplettiert das Achtelfinale', externalUrl: 'https://fussball.cc/news/kolumbien',
+      body: leadBody ?? 'Ein wirklich ausführlicher Artikel mit Einordnung und allen Details. '.repeat(15),
+    });
     (spies as any).listAssignments = vi.fn(async () => [
       { id: 'a1', storyId: 'story-1', channelId: 'ch-web', role: 'lead', offsetHours: 0, itemId: 'lead-1', createdAt: 'x' },
       { id: 'a2', storyId: 'story-1', channelId: 'ch-1', role: 'follow', offsetHours: 2, itemId: 'item-0001-aaaa', createdAt: 'x' },
@@ -219,6 +224,25 @@ describe('v999 — Traffic-CTA (Follower verlinkt Lead-Artikel)', () => {
     expect(r.success).toBe(true);
     expect(provider.published[0].body).toContain('👉 Ganzer Artikel: https://fussball.cc/news/kolumbien?utm_source=test&utm_medium=social&utm_campaign=kolumbien-komplettiert-das-achtelfinale');
     expect(state.item.body).toBe('Kurzer Teaser zum Spiel.'); // DB-Item ohne Link
+  });
+
+  it('v1121: kurzer Lead (<800 Zeichen) → ehrliches „Mehr dazu" statt „Ganzer Artikel" (Text, IG, YT-Label)', async () => {
+    const kurz = 'Eine bewusst kurze Meldung mit zwei Sätzen zum Spiel.';
+    const { skill, provider } = trafficSetup({}, 'published', kurz);
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    expect(provider.published[0].body).toContain('👉 Mehr dazu:');
+    expect(provider.published[0].body).not.toContain('Ganzer Artikel');
+    const { skill: s2, channel: c2 } = trafficSetup({}, 'published', kurz);
+    const ig = await (s2 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), { ...c2, platform: 'instagram' });
+    expect(ig.body).toContain('Mehr dazu über den Link im Profil');
+    const { skill: s3, channel: c3 } = trafficSetup({}, 'published', kurz);
+    const yt = await (s3 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), { ...c3, platform: 'youtube' });
+    expect(yt.performance?.trafficLabel).toBe('👉 Mehr dazu:');
+    // tiefer Lead (Default-Fixture): kein Label-Override — Provider-Default „Ganzer Artikel" bleibt
+    const { skill: s4, channel: c4 } = trafficSetup();
+    const ytTief = await (s4 as any).applyTrafficCta('u1', makeItem({ storyId: 'story-1', body: 'B.' }), { ...c4, platform: 'youtube' });
+    expect(ytTief.performance?.trafficLabel).toBeUndefined();
   });
 
   it('instagram: CTA „Link im Profil" statt URL; traffic_cta=false schaltet ab; utm=false lässt URL nackt', async () => {
@@ -629,6 +653,21 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     const reels = setup.created.filter(c => c.media?.[0]?.type === 'video');
     expect(reels.map(r => r.chId).sort()).toEqual(['ch-fb', 'ch-ig']);
     expect(reels[0].media[0].pathOrUrl).toBe(reels[1].media[0].pathOrUrl); // gleiche Datei
+  });
+
+  it('v1121: Reel-Script-CTA ehrlich — kurzer Lead verbietet den „ganzen Artikel", tiefer Lead erlaubt ihn', async () => {
+    const kurzSetup = reelSetup(); // Lead-Body im Fixture ist kurz (<800 Zeichen)
+    await kurzSetup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    for (let i = 0; i < 80 && (kurzSetup.complete as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
+    const kurzPrompt = (kurzSetup.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(kurzPrompt).toContain('versprich also KEINEN ausführlichen Artikel');
+
+    const tiefSetup = reelSetup();
+    tiefSetup.state.item = { ...tiefSetup.state.item, body: 'Ein wirklich ausführlicher Artikel mit Einordnung und allen Details. '.repeat(15) };
+    await tiefSetup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    for (let i = 0; i < 80 && (tiefSetup.complete as any).mock.calls.length === 0; i++) await new Promise(res => setTimeout(res, 25));
+    const tiefPrompt = (tiefSetup.complete as any).mock.calls[0][0].messages[0].content as string;
+    expect(tiefPrompt).toContain('Verweis auf den ganzen Artikel');
   });
 
   it('v1117: Zweitverwertungs-Deckel je Kanal — FB am Wochenlimit → kein FB-Zwilling, IG-Reel entsteht trotzdem', async () => {
