@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1117] - 2026-07-15
+
+### Fixed — Reel-Zweitverwertung gedeckelt, ehrliche Warte-Hinweise, Audit-Spur (v1117)
+- **Zweitverwertungs-Deckel je Kanal**: Das Reel-Wochenlimit deckelte nur das Rendern (Instagram-Zähler) — die Zweitverwertungs-Zwillinge auf den anderen Kanälen waren unbegrenzt. Realfall 14.07.: 10 Renders wurden zu 48 Reel-Beiträgen über 6 Kanäle, 30 davon stauten sich über Nacht. Jetzt gilt je Zwillings-Kanal ein eigenes Wochenlimit (Default 2, per `reel_max_per_week` am jeweiligen Kanal übersteuerbar — z. B. höher für YouTube-Shorts).
+- **Ehrlicher „Überfällig"-Hinweis**: Der Banner behauptete nachts „die Engine postet beim nächsten Tick (≤ 5 min), sonst Logs prüfen" — die Engine pausierte aber planmäßig (Publish-Fenster 7–22 Uhr, Mindestabstand). Die UI kennt jetzt Publish-Fenster und Zweitverwertungs-Abstand und sagt „wartet aufs Fenster, kein Handlungsbedarf" statt Fehlalarm.
+- **Audit-Spur für UI-Aktionen**: Freigaben/Abweisungen/Publishes aus der Web-UI liefen komplett logfrei — die Ursachenanalyse am 14.07. musste die Freigabe-Quelle von 30 Reels raten. Jede UI-Item-Aktion schreibt jetzt eine Logzeile (wie die Telegram-Quick-Actions).
+- **Quell-Hygiene**: Ein echtes NUL-Byte im Übersetzungs-Cache-Marker (statt der `\u0000`-Escape-Schreibweise, seit v1110) machte die Datei für Text-Tools „binär" — auf die Escape-Form zurückgestellt, laufzeitidentisch.
+
 ## [0.19.0-multi-ha.1116] - 2026-07-14
 
 ### Fixed — Verderbliche News fallen nicht mehr aus der Planung, wenn das Lead-Raster voll ist (v1116)

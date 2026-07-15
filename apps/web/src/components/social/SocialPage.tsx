@@ -439,7 +439,29 @@ export function SocialPage() {
     if (channel && today >= channel.maxPostsPerDay) {
       return `Tages-Limit erreicht (${today}/${channel.maxPostsPerDay}) — postet nach Mitternacht, oder Limit im Kanal erhöhen.`;
     }
-    return 'Überfällig — die Engine postet beim nächsten Tick (≤ 5 min). Bleibt das so, Logs prüfen.';
+    // v1117 — Publish-Fenster (Spiegel von publishWindowFor/isWithinWindow im
+    // Kern): nachts wartende Beiträge sind KEIN Fehlerfall — der alte Text
+    // („postet beim nächsten Tick, sonst Logs prüfen") stand am 14.07. auf
+    // 20 Bannern, obwohl die Engine planmäßig pausierte.
+    if (channel) {
+      const raw = (channel.config as Record<string, unknown> | undefined)?.publish_window;
+      const win = raw === false ? null
+        : Array.isArray(raw) && raw.length === 2 && raw.every(n => typeof n === 'number')
+          ? { from: Number(raw[0]), to: Number(raw[1]) }
+          : channel.platform === 'rest' ? null : { from: 7, to: 22 };
+      const h = new Date().getHours();
+      const withinWindow = !win || (win.from <= win.to ? h >= win.from && h < win.to : (h >= win.from || h < win.to));
+      if (!withinWindow && win) {
+        return `Wartet aufs Publish-Fenster (${win.from}–${win.to} Uhr) — postet ab ${win.from}:00, gestaffelt im Mindestabstand. Kein Handlungsbedarf.`;
+      }
+    }
+    // v1117 — Zweitverwertungs-Abstand (performance.notBefore) sichtbar machen
+    const nb = typeof (item.performance as Record<string, unknown> | undefined)?.notBefore === 'string'
+      ? Date.parse((item.performance as Record<string, string>).notBefore) : NaN;
+    if (Number.isFinite(nb) && nb > Date.now()) {
+      return `Zweitverwertungs-Abstand — frühestens ${new Date(nb).toLocaleString()}.`;
+    }
+    return 'Fällig — die Engine postet beim nächsten Tick (Jitter/Mindestabstand können Minuten kosten). Hängt es länger als ~30 min, Logs prüfen.';
   }
 
   async function withBusy(key: string, fn: () => Promise<void>) {

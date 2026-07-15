@@ -8727,6 +8727,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               ...(action === 'revise' ? { instruction: extra?.instruction, lesson: extra?.lesson } : {}),
               ...(action === 'regenerate-image' ? { hint: extra?.hint } : {}),
             }, socialCtx);
+            // v1117 — Audit-Spur: UI-Item-Aktionen liefen bisher komplett
+            // logfrei (Realfall 14.07.: 30+ freigegebene Reels ohne einen
+            // einzigen Log-Eintrag — Ursachenanalyse musste die Freigabe-
+            // Quelle raten). Eine Zeile je Aktion, wie die Telegram-Quick-Actions.
+            this.logger.info({ component: 'social-api', itemId: id, action: skillAction, ok: r.success, ...(r.error ? { error: r.error.slice(0, 120) } : {}) }, 'v1117 ui item action');
             return { success: r.success, display: r.display, error: r.error };
           },
           // v966 — Composer: Beitrag anlegen, optional terminieren oder sofort posten

@@ -948,7 +948,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
   private async applySeoHook(userId: string, item: ContentItem, channel: SocialChannel): Promise<ContentItem> {
     try {
       if (!this.llm || channel.config.yt_seo_hook === false) return item;
-      const marker = createHash('sha256').update(`${item.title ?? ''} ${item.body.slice(0, 400)}`).digest('hex').slice(0, 16);
+      const marker = createHash('sha256').update(`${item.title ?? ''}\u0000${item.body.slice(0, 400)}`).digest('hex').slice(0, 16);
       const cached = item.performance?.seoHook;
       if (typeof cached === 'string' && cached.trim() && item.performance?.seoHookOf === marker) return item;
       const lang = languageName(typeof channel.config.language === 'string' && channel.config.language ? channel.config.language : 'de');
@@ -1617,7 +1617,19 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
       const twins = channels.filter(c => c.id !== ig.id && c.config.auto_reel === true
         && familyOf(c) !== null && familyOf(c) === familyOf(ig)
         && this.providers.get(c.platform)?.capabilities().video === true);
+      const twinWeekAgo = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
       for (const twin of twins) {
+        // v1117 — Zweitverwertungs-Deckel JE KANAL: das Wochenlimit deckelte
+        // nur das Rendern (IG-Zähler) — die Twins auf den anderen Kanälen
+        // waren unbegrenzt (Realfall 14.07.: 48 Reel-Items an einem Tag über
+        // 6 Kanäle, 30 davon stauten sich über Nacht). Default 2/Woche je
+        // Twin-Kanal, per reel_max_per_week am jeweiligen Kanal übersteuerbar
+        // (Zähler inkl. rejected — gleiche Semantik wie beim Render-Limit).
+        const twinCap = typeof twin.config.reel_max_per_week === 'number' && twin.config.reel_max_per_week >= 0
+          ? twin.config.reel_max_per_week : 2;
+        const twinRecent = await this.repo.listItems(userId, { channelId: twin.id, limit: 100 }).catch(() => [] as ContentItem[]);
+        const twinReels = twinRecent.filter(i => i.performance?.format === 'reel' && i.createdAt >= twinWeekAgo).length;
+        if (twinReels >= twinCap) continue;
         // v1101 — Zweitverwertung auf TEXT-Kanälen (alles außer Instagram/
         // YouTube, wo Reels/Shorts eine eigene Oberfläche haben): läuft die
         // Story dort schon als regulärer Post, wirkt ein Reel mit identischem

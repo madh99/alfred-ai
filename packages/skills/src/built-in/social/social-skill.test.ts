@@ -631,6 +631,24 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(reels[0].media[0].pathOrUrl).toBe(reels[1].media[0].pathOrUrl); // gleiche Datei
   });
 
+  it('v1117: Zweitverwertungs-Deckel je Kanal — FB am Wochenlimit → kein FB-Zwilling, IG-Reel entsteht trotzdem', async () => {
+    const setup = reelSetup();
+    setup.skill.registerProvider(new FakeProvider('facebook'));
+    const fb = makeChannel({ id: 'ch-fb', platform: 'facebook', name: 'FussballCC FB', projectId: 'p1', config: { auto_reel: true } }); // Default-Deckel 2/Woche
+    const lead = makeChannel({ id: 'ch-web', platform: 'rest', name: 'fussball.cc', projectId: 'p1', config: { base_url: 'https://cc.example' } });
+    const ig = makeChannel({ id: 'ch-ig', platform: 'instagram', name: 'FussballCC IG', projectId: 'p1', config: { auto_reel: true } });
+    (setup.spies as any).listChannels = vi.fn(async () => [lead, ig, fb]);
+    const fbReel = (n: number) => makeItem({ id: `item-fbreel${n}-aa`, channelId: 'ch-fb', createdAt: new Date().toISOString(), performance: { format: 'reel' } });
+    const origList = (setup.spies as any).listItems;
+    (setup.spies as any).listItems = vi.fn(async (u: string, q: any) =>
+      q?.channelId === 'ch-fb' ? [fbReel(1), fbReel(2)] : origList(u, q));
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 25));
+    const reels = setup.created.filter(c => c.media?.[0]?.type === 'video');
+    expect(reels.map(r => r.chId)).toEqual(['ch-ig']); // FB-Zwilling gedeckelt, Render lief trotzdem
+    expect(setup.render).toHaveBeenCalledTimes(1);
+  });
+
   it('v1101: Reel-Zwilling auf TEXT-Kanal mit Story-Post → eigene Video-Caption + 6h-Abstand; IG bleibt 1:1', async () => {
     const setup = reelSetup();
     setup.skill.registerProvider(new FakeProvider('telegram_channel'));
