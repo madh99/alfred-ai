@@ -86,7 +86,12 @@ export function RepoStatusCard({ client, projectId, project, onProjectUpdated }:
     }
   }
 
-  const branchMismatch = status?.onDefaultBranch === false;
+  // v1119 — gemergter Feature-Branch ist KEIN Warnfall (nur der Checkout
+  // zurück fehlt); die Dauer-Warnung „nicht auf main" stand sonst auch dann,
+  // wenn alle Refs längst auf demselben Commit waren.
+  const merged = status?.mergedIntoDefault === true;
+  const branchMismatch = status?.onDefaultBranch === false && !merged;
+  const branchMerged = status?.onDefaultBranch === false && merged;
   const dirty = (status?.dirtyCount ?? 0) > 0;
   const ahead = (status?.ahead ?? 0) > 0;
   const behind = (status?.behind ?? 0) > 0;
@@ -131,6 +136,11 @@ export function RepoStatusCard({ client, projectId, project, onProjectUpdated }:
             {branchMismatch && (
               <span className="text-amber-400" title={`Konfigurierter Default-/Deploy-Branch: ${status.defaultBranch}`}>
                 ⚠ nicht auf {status.defaultBranch}
+              </span>
+            )}
+            {branchMerged && (
+              <span className="text-emerald-400/80" title={`HEAD ist vollständig in ${status.defaultBranch} enthalten — der Feature-Branch ist gemergt, es fehlt nur der Wechsel zurück.`}>
+                ✓ gemergt in {status.defaultBranch} — Wechsel auf {status.defaultBranch} empfohlen
               </span>
             )}
             <span className="font-mono text-gray-500">{status.sha}</span>

@@ -358,7 +358,14 @@ export function ProjectChat({ projectId, projectName, projectCwd }: Props) {
               <span className="text-gray-400">• &quot;was ist der aktuelle Build-Stand?&quot;</span>
             </div>
           )}
-          {messages.map(m => (
+          {messages.filter((m, i) =>
+            // v1119 — Tool-Transkript-Paare (assistant/user mit leerem content,
+            // Tool-Calls in den Metadaten — Pipeline Schritt 8) nicht als leere
+            // Sprechblasen rendern; der Streaming-Platzhalter (letzte Nachricht,
+            // Punkte-Animation) bleibt sichtbar.
+            (m.content && m.content.trim().length > 0)
+            || (streaming && m.role === 'assistant' && i === messages.length - 1),
+          ).map(m => (
             <div key={m.id} className={`mb-2 ${m.role === 'user' ? 'text-blue-200' : 'text-gray-200'}`}>
               <span className="text-[10px] uppercase tracking-wider text-gray-600 mr-1">
                 {m.role === 'user' ? 'du' : m.role === 'assistant' ? 'alfred' : m.role}

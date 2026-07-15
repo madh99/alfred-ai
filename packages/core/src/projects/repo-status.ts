@@ -35,6 +35,13 @@ export interface RepoStatus {
   defaultBranch?: string;
   /** true wenn der aktuelle Branch dem defaultBranch entspricht (undefined wenn unbekannt). */
   onDefaultBranch?: boolean;
+  /**
+   * v1119 — true wenn HEAD vollständig im Default-Branch enthalten ist (lokal
+   * oder origin). Dann ist „nicht auf main" kein Warnfall: der Feature-Branch
+   * ist gemergt, es fehlt nur der Checkout zurück (Realfall 15.07.: Warnung
+   * stand dauerhaft, obwohl alle Refs auf demselben Commit standen).
+   */
+  mergedIntoDefault?: boolean;
 }
 
 export interface CollectRepoStatusOptions {
@@ -85,6 +92,18 @@ export async function collectRepoStatus(cwd: string, opts?: CollectRepoStatusOpt
   }
 
   const defaultBranch = opts?.defaultBranch;
+  // v1119 — ist HEAD im Default-Branch enthalten? (lokal, sonst origin/…)
+  let mergedIntoDefault: boolean | undefined;
+  if (defaultBranch && branch !== defaultBranch) {
+    mergedIntoDefault = false;
+    for (const ref of [defaultBranch, `origin/${defaultBranch}`]) {
+      try {
+        await git(['merge-base', '--is-ancestor', 'HEAD', ref]);
+        mergedIntoDefault = true;
+        break;
+      } catch { /* exit 1 = kein Ancestor bzw. Ref fehlt — nächsten Kandidaten prüfen */ }
+    }
+  }
   return {
     branch,
     sha: sha.slice(0, 8),
@@ -97,5 +116,6 @@ export async function collectRepoStatus(cwd: string, opts?: CollectRepoStatusOpt
     behind,
     defaultBranch,
     onDefaultBranch: defaultBranch ? branch === defaultBranch : undefined,
+    ...(mergedIntoDefault !== undefined ? { mergedIntoDefault } : {}),
   };
 }

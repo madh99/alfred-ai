@@ -1069,6 +1069,10 @@ export class MessagePipeline {
             lines.push(`- "baue X ein" / "fix Y" / "implementiere Z" → project_agent.start mit dem Projekt-cwd. Direkter Code-Eingriff geht via code_agent + shell.`);
             lines.push(`- UI-/Code-Bugs werden ebenfalls über project_agent oder code_agent gefixt — kein Tool fehlt.`);
             lines.push(`- "deploy auf …" → deploy-Skill mit projekt-cwd vorbelegt.`);
+            // v1119 — Realfall 15.07.: Push lief authentifiziert (Token aus der
+            // Projekt-ENV), die anschließende ls-remote-Verifikation aber nackt
+            // → verwirrende „Verifikation scheiterte"-Meldung an den User.
+            lines.push(`- git-REMOTE-Operationen (push/fetch/ls-remote): Der Server verlangt Auth, es ist KEIN Credential-Helper konfiguriert (bewusst — kein Token auf Platte). Nutze für JEDEN Remote-Zugriff dieselbe authentifizierte URL (Token aus der Projekt-ENV), auch für Verifikationen. Nach erfolgreichem Push genügen die lokalen origin/*-Refs als Beleg — keine nackten ls-remote-Aufrufe, die nur scheitern.`);
             lines.push(`- "füge … zur Liste" → project.add_open_item.`);
             lines.push(`- Brainstorming-Anfragen ("lass uns über X nachdenken") → brainstorming.start.`);
             lines.push(`- Bei Brainstorming-Erkenntnissen: schlage vor sie als Open-Items zu übernehmen.`);

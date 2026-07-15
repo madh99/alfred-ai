@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1119] - 2026-07-15
+
+### Fixed — Projekt-Chat/Repo-Status: leere Sprechblasen, Dauer-Warnung, Remote-Verifikation (v1119)
+- **Leere Chat-Blasen**: Der Projekt-Chat zeigte je Antwort mit Tool-Aufrufen zwei leere ALFRED-/DU-Blasen — das intern gespeicherte Tool-Transkript-Paar (leerer Text, Tool-Daten in Metadaten, fürs LLM-Replay nötig) wurde mitgerendert. Die UI blendet inhaltslose Nachrichten jetzt aus; der Tipp-Indikator während des Streamings bleibt.
+- **Repo-Status kennt „gemergt"**: Die Warnung „⚠ nicht auf main" stand dauerhaft, auch wenn der Feature-Branch längst vollständig in main enthalten war und nur der Checkout zurück fehlte. Der Status prüft das jetzt (merge-base gegen Default-Branch, lokal und origin) und zeigt stattdessen „✓ gemergt in main — Wechsel empfohlen".
+- **Remote-Verifikation ohne Fehlalarm**: Nach einem authentifizierten Push (Token aus der Projekt-ENV, bewusst kein Credential-Helper auf der Platte) verifizierte der Chat mit nacktem `git ls-remote` — das scheiterte zwangsläufig und verunsicherte („Verifikation scheiterte"). Die Projekt-Chat-Anweisungen erklären jetzt die Credential-Lage: authentifizierte URL auch für Verifikationen bzw. lokale origin-Refs als Beleg nutzen.
+
 ## [0.19.0-multi-ha.1118] - 2026-07-15
 
 ### Fixed — KI-Videos zeigten American Football statt Fußball (v1118)

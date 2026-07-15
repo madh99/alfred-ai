@@ -3442,6 +3442,8 @@ export interface ProjectRepoStatus {
   behind: number | null;
   defaultBranch?: string;
   onDefaultBranch?: boolean;
+  /** v1119 — HEAD ist vollständig im Default-Branch enthalten (gemergt, nur Checkout fehlt). */
+  mergedIntoDefault?: boolean;
 }
 
 /** v872 — CI-Pipeline-Status (Forge-API) für das Badge in der Repo-Status-Karte. */

@@ -100,6 +100,27 @@ describe('collectRepoStatus', () => {
     const rs2 = await collectRepoStatus(clone, { defaultBranch: rs.branch });
     expect(rs2.onDefaultBranch).toBe(true);
   });
+
+  it('v1119: mergedIntoDefault — gemergter Feature-Branch erkannt, eigener Commit nicht, auf Default undefined', async () => {
+    const base = (await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: clone })).stdout.trim();
+    await execFileAsync('git', ['checkout', '-q', '-b', 'feature/merged'], { cwd: clone });
+    try {
+      // gleicher Commit wie der Default-Branch → vollständig enthalten
+      const rs = await collectRepoStatus(clone, { defaultBranch: base });
+      expect(rs.onDefaultBranch).toBe(false);
+      expect(rs.mergedIntoDefault).toBe(true);
+      // eigener Commit auf dem Feature-Branch → nicht mehr enthalten
+      await execFileAsync('git', ['commit', '--allow-empty', '-m', 'nur-im-feature'], { cwd: clone });
+      const rs2 = await collectRepoStatus(clone, { defaultBranch: base });
+      expect(rs2.mergedIntoDefault).toBe(false);
+    } finally {
+      await execFileAsync('git', ['checkout', '-q', base], { cwd: clone });
+      await execFileAsync('git', ['branch', '-q', '-D', 'feature/merged'], { cwd: clone });
+    }
+    // auf dem Default-Branch selbst bleibt das Feld leer (kein Vergleichsfall)
+    const rs3 = await collectRepoStatus(clone, { defaultBranch: base });
+    expect(rs3.mergedIntoDefault).toBeUndefined();
+  });
 });
 
 describe('gitProbe v872 (dirty/ahead → warning)', () => {
