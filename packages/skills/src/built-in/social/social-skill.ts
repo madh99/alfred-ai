@@ -2891,11 +2891,82 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
         }
       }
     }
-    const result = await this.videoTools.render(renderItem, channel, format, {
-      music: this.reelMusicOpts(channel),
-      ...(manualVoice ? { voiceId: manualVoice } : {}),
-      ...(clips.length > 0 ? { clips } : {}),
-    });
+    // v1120 — Branding wie im Reel-Pfad: Hook-Karte (Titel + Branding als
+    // erste Slide), End-Card (CTA + Branding als letzte Slide), optionales
+    // Dauer-Wasserzeichen (reel_watermark am Kanal). Eigenproduktion (v1085)
+    // und Szenen-Videos (v1107) liefen bisher ohne jedes visuelle Branding
+    // (Realfall 15.07.: anonymes YT-Szenen-Video, nur gesprochener CTA).
+    let introImage: string | undefined;
+    let outroImage: string | undefined;
+    let overlayImage: string | undefined;
+    const tmpFiles: string[] = [];
+    const [ratioW, ratioH] = format === '16:9' ? [16, 9] : [9, 16];
+    const wmRaw = channel.config.reel_watermark;
+    const wmMode = wmRaw === 'text' || wmRaw === 'logo' || wmRaw === 'both' ? wmRaw : undefined;
+    try {
+      const { readFile, writeFile } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const { tmpdir } = await import('node:os');
+      const baseImages = item.media.filter(m => m.type === 'image' && !m.pathOrUrl.startsWith('http')).map(m => m.pathOrUrl);
+      if (baseImages.length > 0) {
+        const channelsForBranding = await this.repo.listChannels(userId, 'active');
+        const branding = resolveImageBranding(channel, channelsForBranding);
+        const hookTitle = item.title ?? item.body.slice(0, 70);
+        const first = await cropToRatio(await readFile(baseImages[0]), ratioW, ratioH);
+        const hook = await applyImageOverlays(first, { title: hookTitle, titleMaxWidthRatio: 0.75, ...(branding && !wmMode ? { branding } : {}) });
+        introImage = join(tmpdir(), `alfred-video-hook-${item.id.slice(0, 8)}.png`);
+        await writeFile(introImage, hook);
+        tmpFiles.push(introImage);
+        // YouTube: der Link steht in der Beschreibung — die End-Card sagt das dazu
+        const ctaText = typeof channel.config.reel_cta_text === 'string' && channel.config.reel_cta_text.trim()
+          ? channel.config.reel_cta_text.trim()
+          : channel.platform === 'youtube'
+            ? `Ganzer Artikel auf ${branding ?? 'unserer Seite'} — Link in der Beschreibung`
+            : `Ganzer Artikel auf ${branding ?? 'unserer Seite'}`;
+        const last = await cropToRatio(await readFile(baseImages[baseImages.length - 1]), ratioW, ratioH);
+        const endCard = await bakeReelEndCard(last, ctaText, wmMode ? undefined : branding);
+        outroImage = join(tmpdir(), `alfred-video-end-${item.id.slice(0, 8)}.png`);
+        await writeFile(outroImage, endCard);
+        tmpFiles.push(outroImage);
+        if (wmMode) {
+          const overlayCfg = (channel.config.image_overlay ?? {}) as { logo?: { svg?: string; corner?: string; color?: string } };
+          const corner = parseOverlayCorner(channel.config.reel_watermark_corner, 'bottom-right');
+          const layoutRaw = channel.config.reel_watermark_layout;
+          const layout = layoutRaw === 'stack_fit' || layoutRaw === 'split' ? layoutRaw : 'stack';
+          const wm = await buildVideoWatermark(format === '16:9' ? 1920 : 1080, format === '16:9' ? 1080 : 1920, {
+            ...(wmMode !== 'logo' && branding ? { branding } : {}),
+            ...(wmMode !== 'text' && overlayCfg.logo?.svg ? { logo: { svg: overlayCfg.logo.svg, ...(overlayCfg.logo.color ? { color: overlayCfg.logo.color } : {}) } } : {}),
+            corner,
+            layout,
+            ...(layout === 'split' ? { logoCorner: parseOverlayCorner(channel.config.reel_watermark_logo_corner, 'top-left') } : {}),
+          });
+          if (wm) {
+            overlayImage = join(tmpdir(), `alfred-video-wm-${item.id.slice(0, 8)}.png`);
+            await writeFile(overlayImage, wm);
+            tmpFiles.push(overlayImage);
+          }
+        }
+      }
+    } catch {
+      // Branding ist best-effort — das Video kommt notfalls ohne Karten raus
+      introImage = undefined;
+      outroImage = undefined;
+      overlayImage = undefined;
+    }
+    let result: { videoPath: string; durationSec: number };
+    try {
+      result = await this.videoTools.render(renderItem, channel, format, {
+        music: this.reelMusicOpts(channel),
+        ...(manualVoice ? { voiceId: manualVoice } : {}),
+        ...(clips.length > 0 ? { clips } : {}),
+        ...(introImage ? { introImage } : {}),
+        ...(outroImage ? { outroImage } : {}),
+        ...(overlayImage ? { overlayImage } : {}),
+      });
+    } finally {
+      const { unlink } = await import('node:fs/promises');
+      for (const f of tmpFiles) await unlink(f).catch(() => { /* tmp best-effort */ });
+    }
     const media: ContentMedia[] = [...item.media, { type: 'video', source: 'generated', pathOrUrl: result.videoPath }];
     await this.repo.updateItemContent(userId, item.id, { media });
     // v1086 — auch manuell gerenderte Videos landen in der Video-Bibliothek

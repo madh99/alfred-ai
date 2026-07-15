@@ -1132,6 +1132,34 @@ describe('v1096 — Publish-Sicherheitsnetz für Nur-Video-Kanäle', () => {
   });
 });
 
+describe('v1120 — Branding in der Video-Eigenproduktion', () => {
+  it('render_video backt Hook- und End-Card und reicht sie an den Renderer durch', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const img = join(tmpdir(), `alfred-video-brand-test-${Date.now()}.png`);
+    // echtes 1×1-PNG — mit installiertem sharp muss die Karten-Bäckerei durchlaufen
+    writeFileSync(img, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+    try {
+      const yt = makeChannel({ id: 'ch-yt', platform: 'youtube', name: 'FussballCC YouTube' });
+      const item = makeItem({
+        id: 'item-yt01-aaaa', channelId: 'ch-yt', status: 'draft', title: 'Deschamps-Rekordspiel endet',
+        media: [{ type: 'image', source: 'generated', pathOrUrl: img }],
+      });
+      const { skill } = makeSkill(yt, item);
+      const render = vi.fn(async () => ({ videoPath: '/tmp/video.mp4', durationSec: 40 }));
+      skill.setVideoTools({ render, probe: vi.fn(async () => ({ ok: true })) } as any);
+      const r = await skill.execute({ action: 'render_video', item_id: 'item-yt01-aaaa', format: '16:9' }, CTX);
+      expect(r.success).toBe(true);
+      const opts = (render as any).mock.calls[0][3];
+      expect(opts.introImage).toBeDefined(); // Hook-Karte (Titel + Branding)
+      expect(opts.outroImage).toBeDefined(); // End-Card (CTA + Branding)
+    } finally {
+      unlinkSync(img);
+    }
+  });
+});
+
 describe('v1024 — plan_story (Ad-hoc-Story auf User-Zuruf)', () => {
   it('unverdrahtet → Fehler; ohne Stoff → Hinweis; mit Stoff → Planner korrekt aufgerufen', async () => {
     const channel = makeChannel();

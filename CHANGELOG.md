@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1120] - 2026-07-15
+
+### Fixed — YouTube-Eigenproduktion bekommt das Reel-Branding (v1120)
+- Die Video-Eigenproduktion (`render_video`, YouTube-Konzepte, v1096-Sicherheitsnetz) lieferte Videos ohne jedes visuelle Branding — keine Titel-Karte, keine End-Card, kein Wasserzeichen (Realfall 15.07.: anonymes Szenen-Video, nur der gesprochene Verweis auf fussball.cc). Die Reel-Bausteine gab es seit v1058/v1066, sie wurden im Eigenproduktions-Pfad nur nie verdrahtet. Jetzt formatbewusst (16:9/9:16) identisch zu den Reels: Hook-Karte mit Titel und Branding als erste Slide, End-Card mit CTA als letzte (YouTube-Default: „Ganzer Artikel auf … — Link in der Beschreibung", per `reel_cta_text` übersteuerbar), optionales Dauer-Wasserzeichen über `reel_watermark` am Kanal.
+
 ## [0.19.0-multi-ha.1119] - 2026-07-15
 
 ### Fixed — Projekt-Chat/Repo-Status: leere Sprechblasen, Dauer-Warnung, Remote-Verifikation (v1119)
