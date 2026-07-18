@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1126] - 2026-07-18
+
+### Added — LokalKraft-Anbindung: konfigurierbares Alt-Text-Feld im REST-Provider (v1126)
+- Der Medien-Upload des REST-Providers sendete den Alt-Text fest als Feld `altText` — die neue LokalKraft-Schreib-API verlangt `alt` (WCAG-Pflichtfeld mit Validierung). Der Feldname ist jetzt per `media_upload.alt_field` konfigurierbar; Default bleibt `altText` (fussball.cc unverändert).
+- Konfigurationsseitig (keine Code-Änderung) wurde die LokalKraft-Dachverbands-Familie eingerichtet: Website-Kanal (Lead, publiziert über die neue Schreib-API auf lokalkraft.at) plus Telegram/Instagram/Facebook/X/Bluesky im Prepare-Modus und YouTube (pausiert bis Kanal/Zugänge existieren); Thema „Energiegemeinschaften Österreich" mit 5 verifizierten Quellen.
+
 ## [0.19.0-multi-ha.1125] - 2026-07-18
 
 ### Added — Nächtlicher Langschwanz-Lauf für Kommentare auf älteren Posts (v1125)

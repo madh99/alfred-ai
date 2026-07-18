@@ -194,7 +194,10 @@ export class RestProvider extends SocialProvider {
     const form = new FormData();
     form.append(typeof mu.file_field === 'string' ? mu.file_field : 'file',
       new Blob([new Uint8Array(bytes)], { type: mime }), fileName);
-    if (altText) form.append('altText', altText.slice(0, 300));
+    // v1126 — Feldname konfigurierbar: lokalkraft.at verlangt "alt" (WCAG-Pflichtfeld),
+    // fussball.cc nutzt weiter den bisherigen Default "altText"
+    const altField = typeof mu.alt_field === 'string' && mu.alt_field.trim() ? mu.alt_field.trim() : 'altText';
+    if (altText) form.append(altField, altText.slice(0, 300));
     const headers = this.headers(channel, secrets);
     delete headers['Content-Type']; // multipart-Boundary setzt fetch selbst
     const res = await this.doFetch(this.endpoint(channel, uploadPath), {

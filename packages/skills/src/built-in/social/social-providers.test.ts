@@ -323,6 +323,35 @@ describe('RestProvider (v933)', () => {
     }
   });
 
+  it('v1126: media_upload.alt_field — Alt-Text-Feldname konfigurierbar (lokalkraft.at verlangt „alt")', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const tmpFile = join(tmpdir(), `alfred-test-altfield-${Date.now()}.png`);
+    writeFileSync(tmpFile, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    try {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ data: { id: 'm-1' } }, 201))
+        .mockResolvedValueOnce(jsonResponse({ data: { id: 'n-1', url: 'https://lokalkraft.at/news/x' } }, 201));
+      const ch = makeChannel({
+        base_url: 'https://lokalkraft.at', publish_path: '/api/integrations/v1/lokalkraft/news',
+        media_upload: { path: '/api/integrations/v1/lokalkraft/media', alt_field: 'alt', attach_field: 'coverMediaId', id_field: 'data.id' },
+      }, 'rest');
+      const provider = new RestProvider();
+      await provider.publish(
+        makeItem({ media: [{ type: 'image', source: 'generated', pathOrUrl: tmpFile }] }),
+        ch, { API_TOKEN: 'tok' },
+      );
+      const form = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
+      expect(form.get('alt')).toBe('Derby-Sieg'); // Item-Titel als Alt-Text im konfigurierten Feld
+      expect(form.get('altText')).toBeNull();     // Default-Feld bleibt leer
+      const postBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+      expect(postBody.coverMediaId).toBe('m-1');
+    } finally {
+      unlinkSync(tmpFile);
+    }
+  });
+
   it('v953: Media-Upload-Fehlschlag → Publish wirft (kein stiller Post ohne Bild)', async () => {
     const { writeFileSync, unlinkSync } = await import('node:fs');
     const { join } = await import('node:path');
