@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1127] - 2026-07-19
+
+### Added — YouTube-Kommentare im Sammler + Analytics nach Familien (v1127)
+- **YouTube-Kommentare**: Die Analytics zählten YouTube-Kommentare längst, aber der Kommentar-Sammler (Triage, Antwort-Vorschläge) übersprang YouTube — ein echter Kommentar blieb unsichtbar. Der YouTube-Provider liest jetzt Kommentare je Video (`commentThreads.list`, 1 Quota-Einheit pro Abruf, eigene Kanal-Antworten via `yt_channel_id` gefiltert) und kann direkt antworten (`comments.insert`; braucht den OAuth-Scope `youtube.force-ssl` — fehlt er, kommt ein sprechender Fehler statt stillem Scheitern). Frische-Fenster, 2-h-Takt und Langschwanz-Lauf gelten automatisch mit.
+- **Analytics nach Familien**: Die Analytics-Ansicht mischte alle Kanäle in eine flache Liste — mit der zweiten Marken-Familie (LokalKraft) unbrauchbar. Jetzt: Gesamt-Kopf über alle Familien (Summen je Metrik), darunter je Familie ein Block mit Familien-Summen und den Kanal-Karten; der Kanal-Filter wirkt auch hier. Gilt automatisch für jede künftige Mandanten-Familie.
+
 ## [0.19.0-multi-ha.1126] - 2026-07-18
 
 ### Added — LokalKraft-Anbindung: konfigurierbares Alt-Text-Feld im REST-Provider (v1126)

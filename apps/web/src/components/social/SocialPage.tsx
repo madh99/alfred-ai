@@ -1001,6 +1001,37 @@ export function SocialPage() {
     }).filter(a => a.series.length > 0 || a.topPosts.length > 0);
   }, [channels, metrics, publishedRecent, pending, calendar, history]);
 
+  // v1127 — Analytics nach FAMILIEN gruppiert + Gesamt-Kopf: die Daten waren
+  // längst familienfähig (channel_metrics je Kanal), die Ansicht mischte aber
+  // alle Marken in eine flache Liste — mit der zweiten Familie (LokalKraft)
+  // unbrauchbar. Kanal-Filter wirkt jetzt auch hier.
+  const analyticsGrouped = useMemo(() => {
+    const visible = channelFilter ? analytics.filter(a => a.channel.id === channelFilter) : analytics;
+    const groups = new Map<string, typeof analytics>();
+    for (const a of visible) {
+      const key = familyKeyOf(a.channel) ?? `solo:${a.channel.id}`;
+      groups.set(key, [...(groups.get(key) ?? []), a]);
+    }
+    const famLabel = (members: typeof analytics) => {
+      const fam = (members[0]?.channel.config as Record<string, unknown> | undefined)?.family;
+      if (typeof fam === 'string' && fam.trim()) return fam.trim();
+      const names = members.map(m => m.channel.name);
+      let prefix = names[0] ?? '';
+      for (const n of names.slice(1)) { while (prefix && !n.startsWith(prefix)) prefix = prefix.slice(0, -1); }
+      return prefix.trim().length >= 3 ? prefix.trim() : (names[0] ?? 'Familie');
+    };
+    const aggregate = (members: typeof analytics) => {
+      const kinds = new Map<string, number>();
+      for (const m of members) for (const s of m.series) kinds.set(s.kind, (kinds.get(s.kind) ?? 0) + s.total);
+      const top = members.flatMap(m => m.topPosts).sort((a, b) => b.total - a.total).slice(0, 3);
+      return { kinds: [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5), top };
+    };
+    const families = [...groups.entries()]
+      .map(([key, members]) => ({ key, label: famLabel(members), members, agg: aggregate(members) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return { families, overall: aggregate(visible) };
+  }, [analytics, channelFilter]);
+
   function channelMetricSummary(channelId: string): string {
     const m = metrics[channelId] ?? [];
     if (m.length === 0) return '';
@@ -2834,13 +2865,38 @@ export function SocialPage() {
         </div>
       )}
 
-      {/* v967 — Analytics: Verlauf je Metrik + Top-Beiträge (aus channel_metrics) */}
+      {/* v967 — Analytics: Verlauf je Metrik + Top-Beiträge (aus channel_metrics)
+          v1127 — nach Familien gruppiert + Gesamt-Kopf; Kanal-Filter wirkt mit */}
       {page === 'analytics' && (
-        <div>
+        <div className="space-y-5">
           <h2 className="text-sm font-semibold text-gray-200 mb-2">📊 Analytics</h2>
           {analytics.length === 0 && <div className="text-xs text-gray-600">Noch keine Metriken — der Analytics-Loop sammelt nach den ersten Veröffentlichungen.</div>}
+          {analyticsGrouped.families.length > 1 && (
+            <div className="border border-[#1f1f1f] rounded-lg p-4 bg-[#101010]">
+              <div className="text-sm font-semibold text-gray-100 mb-2">Σ Gesamt (alle Familien)</div>
+              <div className="flex flex-wrap gap-3">
+                {analyticsGrouped.overall.kinds.map(([kind, total]) => (
+                  <span key={kind} className="text-[11px] text-gray-300 px-2 py-0.5 rounded border border-[#2a2a2a] bg-[#161616]">
+                    {kind}: <span className="text-emerald-400">{total}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {analyticsGrouped.families.map(f => (
+          <div key={f.key}>
+            <h3 className="text-sm font-semibold text-gray-200 mb-2 flex flex-wrap items-center gap-2">
+              👪 {f.label}
+              <span className="font-normal flex flex-wrap gap-2">
+                {f.agg.kinds.map(([kind, total]) => (
+                  <span key={kind} className="text-[11px] text-gray-400 px-1.5 py-0.5 rounded border border-[#2a2a2a]">
+                    {kind}: <span className="text-emerald-400">{total}</span>
+                  </span>
+                ))}
+              </span>
+            </h3>
           <div className="grid gap-3 md:grid-cols-2">
-            {analytics.map(({ channel: c, series, topPosts }) => (
+            {f.members.map(({ channel: c, series, topPosts }) => (
               <div key={c.id} className="border border-[#1f1f1f] rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <span>{PLATFORM_ICON[c.platform] ?? '📣'}</span>
@@ -2873,6 +2929,8 @@ export function SocialPage() {
               </div>
             ))}
           </div>
+          </div>
+          ))}
         </div>
       )}
 

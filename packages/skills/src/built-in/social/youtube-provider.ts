@@ -23,7 +23,77 @@ export class YouTubeProvider extends SocialProvider {
   readonly platform = 'youtube';
 
   capabilities(): ProviderCapabilities {
-    return { text: false, image: true, video: true, requiresVideo: true, maxTextLength: 5000, supportsDelete: true, supportsMetrics: true, supportsAudience: true };
+    return { text: false, image: true, video: true, requiresVideo: true, maxTextLength: 5000, supportsDelete: true, supportsMetrics: true, supportsAudience: true, supportsComments: true };
+  }
+
+  /**
+   * v1127 — Kommentare je Video (commentThreads.list, 1 Quota-Einheit pro
+   * Abruf): die Analytics ZÄHLTEN Kommentare längst, aber der Sammler
+   * (Triage, Antwort-Vorschläge) übersprang YouTube — ein echter Kommentar
+   * blieb so unsichtbar (Realfall 18.07.). Eigene Kanal-Antworten werden
+   * über config.yt_channel_id bzw. den Autor-Kanal ausgefiltert.
+   */
+  override async fetchComments(
+    items: Array<{ id: string; externalId: string }>,
+    channel: SocialChannel,
+    secrets: Record<string, string>,
+  ): Promise<import('./social-provider.js').FetchedComment[]> {
+    const token = await this.accessToken(secrets);
+    const ownChannelId = typeof channel.config.yt_channel_id === 'string' ? channel.config.yt_channel_id : '';
+    const out: import('./social-provider.js').FetchedComment[] = [];
+    for (const item of items.slice(0, 25)) {
+      try {
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${encodeURIComponent(item.externalId)}&maxResults=50&textFormat=plainText`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!res.ok) continue; // 403 commentsDisabled u. Ä. — Video überspringen
+        const data = await res.json().catch(() => ({})) as {
+          items?: Array<{ snippet?: { topLevelComment?: { id?: string; snippet?: {
+            textDisplay?: string; textOriginal?: string; authorDisplayName?: string;
+            authorChannelId?: { value?: string }; publishedAt?: string;
+          } } } }>;
+        };
+        for (const t of data.items ?? []) {
+          const c = t.snippet?.topLevelComment;
+          const s = c?.snippet;
+          const text = String(s?.textOriginal ?? s?.textDisplay ?? '').trim();
+          if (!text || !c?.id) continue;
+          if (ownChannelId && s?.authorChannelId?.value === ownChannelId) continue; // eigene Antwort
+          out.push({
+            itemId: item.id,
+            externalCommentId: String(c.id),
+            externalPostId: item.externalId,
+            author: s?.authorDisplayName || undefined,
+            text,
+            createdAt: s?.publishedAt ?? undefined,
+          });
+        }
+      } catch { /* Einzelfehler überspringen — nächstes Video */ }
+    }
+    return out;
+  }
+
+  /**
+   * v1127 — Antwort auf einen Kommentar (comments.insert mit parentId).
+   * Braucht den OAuth-Scope youtube.force-ssl — fehlt er am Refresh-Token,
+   * kommt ein sprechender Fehler statt eines stillen false.
+   */
+  override async replyToComment(
+    externalCommentId: string, text: string,
+    _channel: SocialChannel, secrets: Record<string, string>,
+  ): Promise<boolean> {
+    const token = await this.accessToken(secrets);
+    const res = await fetch('https://www.googleapis.com/youtube/v3/comments?part=snippet', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ snippet: { parentId: externalCommentId, textOriginal: text.slice(0, 5000) } }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`YouTube-Antwort fehlgeschlagen (HTTP ${res.status}${/insufficient/i.test(detail) ? ' — OAuth-Scope youtube.force-ssl fehlt am Refresh-Token' : ''})`);
+    }
+    return true;
   }
 
   /** v1019 — Kanalwachstum: Abonnenten via channels.list (mine=true). */

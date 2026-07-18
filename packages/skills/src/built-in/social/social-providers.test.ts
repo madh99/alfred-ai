@@ -323,6 +323,47 @@ describe('RestProvider (v933)', () => {
     }
   });
 
+  it('v1127: YouTube fetchComments — commentThreads gemappt, eigene Kanal-Antworten gefiltert', async () => {
+    const { YouTubeProvider } = await import('./youtube-provider.js');
+    const provider = new YouTubeProvider();
+    expect(provider.capabilities().supportsComments).toBe(true);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'at-1' }))
+      .mockResolvedValueOnce(jsonResponse({ items: [
+        { snippet: { topLevelComment: { id: 'c-1', snippet: { textOriginal: 'Super Video!', authorDisplayName: 'Fan99', authorChannelId: { value: 'UC-fremd' }, publishedAt: '2026-07-18T20:00:00Z' } } } },
+        { snippet: { topLevelComment: { id: 'c-2', snippet: { textOriginal: 'Danke!', authorDisplayName: 'FussballCC', authorChannelId: { value: 'UC-eigen' } } } } },
+      ] }));
+    const ch = makeChannel({ yt_channel_id: 'UC-eigen' }, 'youtube');
+    const comments = await provider.fetchComments(
+      [{ id: 'item-1', externalId: 'vid-1' }], ch,
+      { YT_CLIENT_ID: 'ci', YT_CLIENT_SECRET: 'cs', YT_REFRESH_TOKEN: 'rt' },
+    );
+    expect(comments).toHaveLength(1); // eigene Antwort (UC-eigen) gefiltert
+    expect(comments[0]).toMatchObject({ itemId: 'item-1', externalCommentId: 'c-1', externalPostId: 'vid-1', author: 'Fan99', text: 'Super Video!' });
+    const threadUrl = String(fetchMock.mock.calls[1][0]);
+    expect(threadUrl).toContain('commentThreads');
+    expect(threadUrl).toContain('videoId=vid-1');
+  });
+
+  it('v1127: YouTube replyToComment — comments.insert mit parentId; Scope-Fehler ist sprechend', async () => {
+    const { YouTubeProvider } = await import('./youtube-provider.js');
+    const provider = new YouTubeProvider();
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'at-1' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'reply-1' }));
+    const ok = await provider.replyToComment('c-1', 'Danke fürs Feedback!', makeChannel({}, 'youtube'), { YT_CLIENT_ID: 'ci', YT_CLIENT_SECRET: 'cs', YT_REFRESH_TOKEN: 'rt' });
+    expect(ok).toBe(true);
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(body.snippet.parentId).toBe('c-1');
+    expect(body.snippet.textOriginal).toBe('Danke fürs Feedback!');
+    // Scope fehlt → sprechender Fehler
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'at-2' }))
+      .mockResolvedValueOnce(new Response('insufficientPermissions', { status: 403 }));
+    await expect(provider.replyToComment('c-1', 'x', makeChannel({}, 'youtube'), { YT_CLIENT_ID: 'ci', YT_CLIENT_SECRET: 'cs', YT_REFRESH_TOKEN: 'rt' }))
+      .rejects.toThrow(/force-ssl/);
+  });
+
   it('v1126: media_upload.alt_field — Alt-Text-Feldname konfigurierbar (lokalkraft.at verlangt „alt")', async () => {
     const { writeFileSync, unlinkSync } = await import('node:fs');
     const { join } = await import('node:path');
