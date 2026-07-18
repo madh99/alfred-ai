@@ -2192,7 +2192,7 @@ Antworte NUR mit einem VALIDEN JSON-Array aus Strings: ["Regel 1", "Regel 2"]`;
    * Items mit externalId je Kanal mit supportsComments → fetchComments →
    * dedupliziert ablegen. @returns neue Kommentare gesamt + je Kanal.
    */
-  async collectComments(userId: string): Promise<{ collected: number; byChannel: Array<CommentBatchInfo> }> {
+  async collectComments(userId: string, opts?: { longTail?: boolean }): Promise<{ collected: number; byChannel: Array<CommentBatchInfo> }> {
     const channels = await this.repo.listChannels(userId, 'active');
     let collected = 0;
     const byChannel: CommentBatchInfo[] = [];
@@ -2200,7 +2200,10 @@ Antworte NUR mit einem VALIDEN JSON-Array aus Strings: ["Regel 1", "Regel 2"]`;
     // Posts je Kanal einzeln ab — auch wochenalte (~40 Meta-Calls/h Dauerlast,
     // Mit-Verursacher der „Application request limit"-Ausfälle am 17./18.07.).
     // Kommentare kommen fast nur auf frische Posts; ältere sammelt niemand mehr.
+    // v1125 — Langschwanz (opts.longTail, 1× nächtlich): Posts von 48 h bis
+    // 14 Tagen, damit späte Kommentare auf Evergreens nicht unsichtbar bleiben.
     const frischeAb = new Date(Date.now() - 48 * 3_600_000).toISOString();
+    const langAb = new Date(Date.now() - 14 * 24 * 3_600_000).toISOString();
     for (const channel of channels) {
       const provider = this.providers.get(channel.platform);
       if (!provider || provider.capabilities().supportsComments !== true) continue;
@@ -2208,8 +2211,13 @@ Antworte NUR mit einem VALIDEN JSON-Array aus Strings: ["Regel 1", "Regel 2"]`;
       // Kontingent für 2 h den Publishes/Retries, nicht dem Kommentar-Polling
       if ((channel.platform === 'instagram' || channel.platform === 'facebook' || channel.platform === 'threads')
         && Date.now() < this.metaLimitPauseUntil) continue;
-      const published = (await this.repo.listItems(userId, { channelId: channel.id, status: 'published', limit: 20 }))
-        .filter(i => i.externalId && (i.publishedAt ?? i.updatedAt) >= frischeAb)
+      const published = (await this.repo.listItems(userId, { channelId: channel.id, status: 'published', limit: opts?.longTail ? 100 : 20 }))
+        .filter(i => {
+          if (!i.externalId) return false;
+          const at = i.publishedAt ?? i.updatedAt;
+          return opts?.longTail ? (at < frischeAb && at >= langAb) : at >= frischeAb;
+        })
+        .slice(0, opts?.longTail ? 40 : 20)
         .map(i => ({ id: i.id, externalId: i.externalId! }));
       if (published.length === 0) continue;
       try {

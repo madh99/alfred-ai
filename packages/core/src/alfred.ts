@@ -6904,28 +6904,42 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             // v1124 — alle 2 h statt stündlich: das Post-für-Post-Polling war
             // Dauerlast auf dem Meta-Call-Kontingent (Mit-Verursacher der
             // „Application request limit"-Ausfälle 17./18.07.)
+            // v1125 — gemeinsame Auswertung für Frische- UND Langschwanz-Lauf
+            const meldeKommentarLauf = async (r: Awaited<ReturnType<typeof socialSkill.collectComments>>) => {
+              for (const ch of r.byChannel) {
+                // v1009 — Copilot-Zeilen: Moderation + fertige Antwort-Vorschläge
+                const copilot: string[] = [];
+                if (ch.spamIgnored) copilot.push(`🧹 ${ch.spamIgnored} Spam-Kommentar(e) automatisch ausgeblendet.`);
+                if (ch.hassFlagged) copilot.push(`⚠️ ${ch.hassFlagged} Kommentar(e) mit Beleidigung/Hetze ausgeblendet — auf der Plattform prüfen/löschen!`);
+                for (const s of ch.suggestions ?? []) {
+                  copilot.push(`💬 Frage von ${s.author ?? 'anonym'}: „${s.text}"\n→ Vorschlag: „${s.draft}" — senden: reply_comment ${s.id.slice(0, 8)} (Text anpassbar) oder in der UI.`);
+                }
+                await this.insightsRepo?.upsertCandidate(ownerUid, {
+                  category: 'social',
+                  title: `Neue Kommentare auf ${ch.channel}`,
+                  body: `${ch.count} neue Kommentare eingesammelt.${copilot.length ? `\n\n${copilot.join('\n\n')}` : ''}\n\nAnsehen: „Zeig die Kommentare auf ${ch.channel}" (list_comments) — antworten per reply_comment (geht live auf die Plattform), ignorieren per ignore_comment.`,
+                  confidence: 0.7,
+                  sourceData: { router: true, urgency: ch.hassFlagged ? 'high' : 'normal', channelId: ch.channelId },
+                  dedupeKey: `social-comments:${ch.channelId}:${today}`,
+                }).catch(() => { /* non-critical */ });
+              }
+            };
             if (now.getHours() % 2 === 0 && await this.claimDailySlot(`social-comments:${hourKey}`)) {
               try {
                 const r = await socialSkill.collectComments(ownerUid);
                 if (r.collected > 0) this.logger.info({ collected: r.collected }, 'v989 social comments collected');
-                for (const ch of r.byChannel) {
-                  // v1009 — Copilot-Zeilen: Moderation + fertige Antwort-Vorschläge
-                  const copilot: string[] = [];
-                  if (ch.spamIgnored) copilot.push(`🧹 ${ch.spamIgnored} Spam-Kommentar(e) automatisch ausgeblendet.`);
-                  if (ch.hassFlagged) copilot.push(`⚠️ ${ch.hassFlagged} Kommentar(e) mit Beleidigung/Hetze ausgeblendet — auf der Plattform prüfen/löschen!`);
-                  for (const s of ch.suggestions ?? []) {
-                    copilot.push(`💬 Frage von ${s.author ?? 'anonym'}: „${s.text}"\n→ Vorschlag: „${s.draft}" — senden: reply_comment ${s.id.slice(0, 8)} (Text anpassbar) oder in der UI.`);
-                  }
-                  await this.insightsRepo?.upsertCandidate(ownerUid, {
-                    category: 'social',
-                    title: `Neue Kommentare auf ${ch.channel}`,
-                    body: `${ch.count} neue Kommentare eingesammelt.${copilot.length ? `\n\n${copilot.join('\n\n')}` : ''}\n\nAnsehen: „Zeig die Kommentare auf ${ch.channel}" (list_comments) — antworten per reply_comment (geht live auf die Plattform), ignorieren per ignore_comment.`,
-                    confidence: 0.7,
-                    sourceData: { router: true, urgency: ch.hassFlagged ? 'high' : 'normal', channelId: ch.channelId },
-                    dedupeKey: `social-comments:${ch.channelId}:${today}`,
-                  }).catch(() => { /* non-critical */ });
-                }
+                await meldeKommentarLauf(r);
               } catch (err) { this.logger.warn({ err }, 'v989 comment collection failed'); }
+            }
+            // v1125 — Langschwanz: 1× nächtlich (03:00, Kontingent-arme Zeit)
+            // die Posts von 48 h bis 14 Tagen — späte Kommentare auf Evergreens
+            // bleiben sichtbar, ohne die Tages-Publishes zu gefährden.
+            if (now.getHours() === 3 && await this.claimDailySlot(`social-comments-longtail:${today}`)) {
+              try {
+                const r = await socialSkill.collectComments(ownerUid, { longTail: true });
+                if (r.collected > 0) this.logger.info({ collected: r.collected }, 'v1125 long-tail comments collected');
+                await meldeKommentarLauf(r);
+              } catch (err) { this.logger.warn({ err }, 'v1125 long-tail comment collection failed'); }
             }
           }
           // v984 — 06:00 Auth-Health-Check: IG-Long-lived-Tokens erneuern

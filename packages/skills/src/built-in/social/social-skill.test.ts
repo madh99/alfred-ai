@@ -482,6 +482,21 @@ describe('v1009 — Kommentar-Copilot (Triage + Antwort-Vorschläge)', () => {
     expect(polled).toEqual(['ext-frisch']); // der 5 Tage alte Post wird nicht mehr stündlich abgefragt
   });
 
+  it('v1125: Langschwanz-Lauf fragt NUR ältere Posts (48h–14d) — frische und uralte bleiben draußen', async () => {
+    const channel = makeChannel();
+    const frisch = makeItem({ id: 'item-0001-aaaa', status: 'published', externalId: 'ext-frisch', publishedAt: new Date(Date.now() - 3 * 3_600_000).toISOString() });
+    const alt = makeItem({ id: 'item-0002-bbbb', status: 'published', externalId: 'ext-alt', publishedAt: new Date(Date.now() - 5 * 24 * 3_600_000).toISOString() });
+    const uralt = makeItem({ id: 'item-0003-cccc', status: 'published', externalId: 'ext-uralt', publishedAt: new Date(Date.now() - 20 * 24 * 3_600_000).toISOString() });
+    const { skill, spies } = makeSkill(channel, frisch);
+    (spies as any).listItems = vi.fn(async () => [frisch, alt, uralt]);
+    const provider = (skill as any).providers.get('test') as FakeProvider;
+    const fetchSpy = vi.spyOn(provider, 'fetchComments');
+    await skill.collectComments('u1', { longTail: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const polled = (fetchSpy.mock.calls as unknown as Array<[Array<{ externalId: string }>]>)[0][0].map(p => p.externalId);
+    expect(polled).toEqual(['ext-alt']); // nur das 48h–14d-Fenster
+  });
+
   it('v1124: nach Meta-„request limit" pausiert das Kommentar-Polling für IG/FB', async () => {
     const ig = makeChannel({ id: 'ch-ig9', platform: 'instagram', name: 'IG' });
     const item = makeItem({ id: 'item-0001-aaaa', channelId: 'ch-ig9', status: 'published', externalId: 'ext-1', publishedAt: new Date().toISOString() });

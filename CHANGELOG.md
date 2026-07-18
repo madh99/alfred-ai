@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1125] - 2026-07-18
+
+### Added — Nächtlicher Langschwanz-Lauf für Kommentare auf älteren Posts (v1125)
+- Ergänzung zum 48-h-Frische-Fenster (v1124): Einmal pro Nacht (03:00, kontingent-arme Zeit) fragt der Kommentar-Sammler zusätzlich die Posts von 48 Stunden bis 14 Tagen ab (max. 40 je Kanal) — späte Kommentare auf Evergreens (Panini, Tippspiel) bleiben damit sichtbar und bekommen dieselbe Triage samt Antwort-Vorschlägen, ohne das Meta-Call-Kontingent tagsüber zu belasten. Der Rate-Limit-Schoner gilt auch für diesen Lauf.
+
 ## [0.19.0-multi-ha.1124] - 2026-07-18
 
 ### Fixed — Meta-Call-Kontingent geschont, Erstellung an Tageskapazität gekoppelt (v1124)
