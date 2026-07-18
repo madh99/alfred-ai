@@ -269,15 +269,23 @@ export class MetaProvider extends SocialProvider {
   ): Promise<void> {
     const tries = opts?.tries ?? 12;
     const delayMs = opts?.delayMs ?? 5_000;
-    for (let i = 0; i < tries; i++) {
+    // v1124 — gleicher Zeitrahmen, WENIGER Calls: der Takt wächst ×1.5 bis 30 s
+    // (vorher Video: 60 Status-Calls à 5 s ≈ 65 Calls je Reel — Mit-Verursacher
+    // der „Application request limit"-Ausfälle 17./18.07.; jetzt ~13).
+    const budgetMs = tries * delayMs;
+    const started = Date.now();
+    let delay = delayMs;
+    while (true) {
       // v997 — erst prüfen, dann schlafen: Bild-Container sind oft sofort fertig
       const res = await fetch(`${base}/${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`);
       const data = await res.json().catch(() => ({})) as { status_code?: string };
       if (data.status_code === 'FINISHED') return;
       if (data.status_code === 'ERROR') throw new Error('Instagram: Medien-Verarbeitung fehlgeschlagen (Container ERROR)');
-      await new Promise(r => setTimeout(r, delayMs));
+      if (Date.now() - started + delay > budgetMs) break;
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(Math.round(delay * 1.5), 30_000);
     }
-    throw new Error(`Instagram: Medien-Verarbeitung Timeout (${Math.round(tries * delayMs / 1000)}s)`);
+    throw new Error(`Instagram: Medien-Verarbeitung Timeout (${Math.round(budgetMs / 1000)}s)`);
   }
 
   /** v997 — media_publish mit Retry: „Media ID is not available" heißt nur „noch nicht fertig geladen". */

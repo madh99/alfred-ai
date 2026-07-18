@@ -468,6 +468,42 @@ describe('v1009 — Kommentar-Copilot (Triage + Antwort-Vorschläge)', () => {
     expect(info.suggestions![0].draft).toContain('Anpfiff ist am 6. Juli');
   });
 
+  it('v1124: Kommentar-Sammler fragt nur FRISCHE Posts ab (48h) — alte fliegen aus der Poll-Liste', async () => {
+    const channel = makeChannel();
+    const frisch = makeItem({ id: 'item-0001-aaaa', status: 'published', externalId: 'ext-frisch', publishedAt: new Date(Date.now() - 3 * 3_600_000).toISOString() });
+    const alt = makeItem({ id: 'item-0002-bbbb', status: 'published', externalId: 'ext-alt', publishedAt: new Date(Date.now() - 5 * 24 * 3_600_000).toISOString(), updatedAt: new Date(Date.now() - 5 * 24 * 3_600_000).toISOString() });
+    const { skill, spies } = makeSkill(channel, frisch);
+    (spies as any).listItems = vi.fn(async () => [frisch, alt]);
+    const provider = (skill as any).providers.get('test') as FakeProvider;
+    const fetchSpy = vi.spyOn(provider, 'fetchComments');
+    await skill.collectComments('u1');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const polled = (fetchSpy.mock.calls as unknown as Array<[Array<{ externalId: string }>]>)[0][0].map(p => p.externalId);
+    expect(polled).toEqual(['ext-frisch']); // der 5 Tage alte Post wird nicht mehr stündlich abgefragt
+  });
+
+  it('v1124: nach Meta-„request limit" pausiert das Kommentar-Polling für IG/FB', async () => {
+    const ig = makeChannel({ id: 'ch-ig9', platform: 'instagram', name: 'IG' });
+    const item = makeItem({ id: 'item-0001-aaaa', channelId: 'ch-ig9', status: 'published', externalId: 'ext-1', publishedAt: new Date().toISOString() });
+    const { skill } = makeSkill(ig, item);
+    class LimitProvider extends FakeProvider {
+      override capabilities() { return { ...super.capabilities(), supportsComments: true }; }
+      override async publish(): Promise<never> { throw new Error('Application request limit reached'); }
+    }
+    const prov = new LimitProvider('instagram');
+    skill.registerProvider(prov);
+    const fetchSpy = vi.spyOn(prov, 'fetchComments');
+    // Publish läuft ins Limit → Pause wird gesetzt
+    const draft = makeItem({ id: 'item-0001-aaaa', channelId: 'ch-ig9', status: 'approved' });
+    (skill as any).repo.getItem = vi.fn(async () => draft);
+    await skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    expect((skill as any).metaLimitPauseUntil).toBeGreaterThan(Date.now());
+    // Kommentar-Sammler überspringt den Meta-Kanal während der Pause
+    (skill as any).repo.getItem = vi.fn(async () => item);
+    await skill.collectComments('u1');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('comment_triage=false → nur Zählung, keine LLM-Calls', async () => {
     const channel = makeChannel({ config: { comment_triage: false } });
     const item = makeItem({ status: 'published', externalId: 'ext-9' });
@@ -954,6 +990,21 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
     await new Promise(res => setTimeout(res, 25));
     expect(setup.render).not.toHaveBeenCalled();
+  });
+
+  it('v1124: approve_content bei vollem Tag → Companion landet morgen früh statt im vollen Tag', async () => {
+    const channel = makeChannel({ maxPostsPerDay: 1 });
+    const reel = makeItem({ id: 'item-0001-aaaa', status: 'draft', performance: { format: 'reel', autoReel: true } });
+    const { skill, spies } = makeSkill(channel, reel);
+    (spies as any).listItems = vi.fn(async () => []);
+    ((skill as any).repo as any).countPublishedToday = vi.fn(async () => 1); // Tagesbudget voll
+    const r = await skill.execute({ action: 'approve_content', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    const call = (spies.reschedule as any).mock.calls.find((c: any[]) => c[1] === reel.id);
+    expect(call).toBeDefined();
+    const at = new Date(call[2]);
+    const morgen = new Date(); morgen.setHours(32, 0, 0, 0);
+    expect(at.getTime()).toBeGreaterThanOrEqual(morgen.getTime()); // frühestens morgen 08:00 lokal
   });
 
   it('v1115: Dup-Guard — existiert schon ein Reel zur Story, rendert der automatische Pfad kein zweites', async () => {

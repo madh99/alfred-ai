@@ -6901,7 +6901,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               try { await studio.planReview(); }
               catch (err) { this.logger.warn({ err }, 'v995 plan review failed'); }
             }
-            if (await this.claimDailySlot(`social-comments:${hourKey}`)) {
+            // v1124 — alle 2 h statt stündlich: das Post-für-Post-Polling war
+            // Dauerlast auf dem Meta-Call-Kontingent (Mit-Verursacher der
+            // „Application request limit"-Ausfälle 17./18.07.)
+            if (now.getHours() % 2 === 0 && await this.claimDailySlot(`social-comments:${hourKey}`)) {
               try {
                 const r = await socialSkill.collectComments(ownerUid);
                 if (r.collected > 0) this.logger.info({ collected: r.collected }, 'v989 social comments collected');

@@ -879,6 +879,8 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     // Begleitformate eines Review-Laufs denselben „jetzt+15"-Termin (Realfall
     // 14.07.: 14 Reels gleichzeitig auf 23:52)
     const adhocTakenByChannel = new Map<string, Array<string | undefined>>();
+    // v1124 — Kapazitäts-Ehrlichkeit: voller Tag → Companion auf morgen früh
+    const budgetFloorByChannel = new Map<string, string | undefined>();
     for (const item of items) {
       if (item.status !== 'approved' || item.scheduledAt) continue;
       const { isCompanionFormat, staggeredAdhocSlot } = await import('@alfred/skills');
@@ -887,7 +889,27 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
         const nb = typeof item.performance?.notBefore === 'string' ? item.performance.notBefore : undefined;
         const taken = adhocTakenByChannel.get(item.channelId)
           ?? items.filter(i => i.channelId === item.channelId && i.id !== item.id).map(i => i.scheduledAt);
-        const adhoc = staggeredAdhocSlot(taken, nb ? { notBefore: nb } : {});
+        if (!budgetFloorByChannel.has(item.channelId)) {
+          let floor: string | undefined;
+          try {
+            const kanal = channelById.get(item.channelId);
+            if (kanal) {
+              let publishedToday = 0;
+              try { publishedToday = await this.socialRepo.countPublishedToday(kanal.id); } catch { /* Mini-Repos ohne Zähler */ }
+              const tagesende = new Date(); tagesende.setHours(24, 0, 0, 0);
+              const heuteGeplant = items.filter(i => i.channelId === item.channelId && i.scheduledAt
+                && i.scheduledAt < tagesende.toISOString() && Date.parse(i.scheduledAt) > Date.now() - 12 * 3_600_000).length;
+              if (publishedToday + heuteGeplant >= kanal.maxPostsPerDay) {
+                const morgen = new Date(); morgen.setHours(32, 0, 0, 0); // morgen 08:00 lokal
+                floor = morgen.toISOString();
+              }
+            }
+          } catch { /* best-effort */ }
+          budgetFloorByChannel.set(item.channelId, floor);
+        }
+        const floor = budgetFloorByChannel.get(item.channelId);
+        const effNb = floor && (!nb || Date.parse(nb) < Date.parse(floor)) ? floor : nb;
+        const adhoc = staggeredAdhocSlot(taken, effNb ? { notBefore: effNb } : {});
         if (await this.socialRepo.reschedule(this.ownerUserId, item.id, adhoc, ['approved'])) {
           taken.push(adhoc);
           adhocTakenByChannel.set(item.channelId, taken);

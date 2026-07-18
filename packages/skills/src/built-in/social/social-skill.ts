@@ -270,6 +270,8 @@ export class SocialSkill extends Skill {
 
   /** v1022 — laufende Auto-Reel-Renders je IG-Kanal (TOCTOU-Guard fürs Wochen-Limit). */
   private readonly reelsRendering = new Map<string, number>();
+  /** v1124 — nach Meta-„request limit": Kommentar-Polling pausiert bis zu diesem Zeitpunkt. */
+  private metaLimitPauseUntil = 0;
 
   setStudio(fn: (channel: SocialChannel) => Promise<number>): void {
     this.studioFn = fn;
@@ -711,9 +713,27 @@ export class SocialSkill extends Skill {
       // v1123 — GESTAFFELT statt alle auf „jetzt+15": eine Sammel-Freigabe
       // erzeugte sonst eine Gleichzeitig-Welle (Realfall 18.07., 4 Reels 08:26)
       const nb = typeof item.performance?.notBefore === 'string' ? item.performance.notBefore : undefined;
-      const taken = (await this.repo.listItems(userId, { channelId: item.channelId, status: ['scheduled', 'approved'], limit: 100 }).catch(() => [] as ContentItem[]))
-        .filter(i => i.id !== item.id).map(i => i.scheduledAt);
-      const adhoc = staggeredAdhocSlot(taken, nb ? { notBefore: nb } : {});
+      const planned = (await this.repo.listItems(userId, { channelId: item.channelId, status: ['scheduled', 'approved'], limit: 100 }).catch(() => [] as ContentItem[]))
+        .filter(i => i.id !== item.id);
+      // v1124 — Kapazitäts-Ehrlichkeit: Companion-Ad-hoc-Termine liefen am
+      // Tagesbudget vorbei — bei vollem Tag (veröffentlicht + heute geplant ≥
+      // max_posts_per_day) landet die Freigabe auf MORGEN FRÜH statt im vollen
+      // Tag (Realfall 18.07.: 18 IG-Items erstellt, Überschuss endete failed).
+      let floor = nb;
+      try {
+        const kanal = await this.repo.getChannel(userId, item.channelId);
+        if (kanal) {
+          let publishedToday = 0;
+          try { publishedToday = await this.repo.countPublishedToday(kanal.id); } catch { /* Mini-Repos (Tests) ohne Zähler */ }
+          const tagesende = new Date(); tagesende.setHours(24, 0, 0, 0);
+          const heuteGeplant = planned.filter(i => i.scheduledAt && i.scheduledAt < tagesende.toISOString() && Date.parse(i.scheduledAt) > Date.now() - 12 * 3_600_000).length;
+          if (publishedToday + heuteGeplant >= kanal.maxPostsPerDay) {
+            const morgen = new Date(); morgen.setHours(32, 0, 0, 0); // morgen 08:00 lokal
+            if (!floor || Date.parse(floor) < morgen.getTime()) floor = morgen.toISOString();
+          }
+        }
+      } catch { /* Budget-Check best-effort — notfalls heutiger Slot wie bisher */ }
+      const adhoc = staggeredAdhocSlot(planned.map(i => i.scheduledAt), floor ? { notBefore: floor } : {});
       if (await this.repo.reschedule(userId, item.id, adhoc, ['approved'])) {
         updated = { ...updated, scheduledAt: adhoc };
       }
@@ -901,6 +921,12 @@ export class SocialSkill extends Skill {
         display: `🚀 Veröffentlicht auf **${channel.name}**${result.url ? `: ${result.url}` : ` (ID ${result.externalId})`}${storyNote ? `\n${storyNote}` : ''}${videoDropped}`,
       };
     } catch (err) {
+      // v1124 — Meta-Rate-Limit gesehen → Kommentar-Polling für 2 h aussetzen
+      // (das Kontingent gehört den Publishes/Retries, nicht der Dauerlast)
+      if ((channel.platform === 'instagram' || channel.platform === 'facebook' || channel.platform === 'threads')
+        && /request limit|rate limit|too many requests/i.test((err as Error).message)) {
+        this.metaLimitPauseUntil = Date.now() + 2 * 3_600_000;
+      }
       await this.repo.transition(userId, publishing.id, 'failed', { error: (err as Error).message.slice(0, 500) });
       return { success: false, error: `Publish fehlgeschlagen: ${(err as Error).message}` };
     }
@@ -2170,11 +2196,20 @@ Antworte NUR mit einem VALIDEN JSON-Array aus Strings: ["Regel 1", "Regel 2"]`;
     const channels = await this.repo.listChannels(userId, 'active');
     let collected = 0;
     const byChannel: CommentBatchInfo[] = [];
+    // v1124 — 48h-Frische-Fenster: der Sammler fragte stündlich die letzten 20
+    // Posts je Kanal einzeln ab — auch wochenalte (~40 Meta-Calls/h Dauerlast,
+    // Mit-Verursacher der „Application request limit"-Ausfälle am 17./18.07.).
+    // Kommentare kommen fast nur auf frische Posts; ältere sammelt niemand mehr.
+    const frischeAb = new Date(Date.now() - 48 * 3_600_000).toISOString();
     for (const channel of channels) {
       const provider = this.providers.get(channel.platform);
       if (!provider || provider.capabilities().supportsComments !== true) continue;
+      // v1124 — Rate-Limit-Schoner: nach einem Meta-„request limit" gehört das
+      // Kontingent für 2 h den Publishes/Retries, nicht dem Kommentar-Polling
+      if ((channel.platform === 'instagram' || channel.platform === 'facebook' || channel.platform === 'threads')
+        && Date.now() < this.metaLimitPauseUntil) continue;
       const published = (await this.repo.listItems(userId, { channelId: channel.id, status: 'published', limit: 20 }))
-        .filter(i => i.externalId)
+        .filter(i => i.externalId && (i.publishedAt ?? i.updatedAt) >= frischeAb)
         .map(i => ({ id: i.id, externalId: i.externalId! }));
       if (published.length === 0) continue;
       try {

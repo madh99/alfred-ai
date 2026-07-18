@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1124] - 2026-07-18
+
+### Fixed — Meta-Call-Kontingent geschont, Erstellung an Tageskapazität gekoppelt (v1124)
+- Hintergrund: Das Meta-App-Kontingent war am 17./18.07. über Stunden erschöpft („Application request limit") — die v1123-Retries liefen korrekt, aber jeder Anlauf traf wieder ins Limit. Die Verbraucher: stündliches Kommentar-Polling der jeweils letzten 20 Posts je Kanal (~960 Calls/Tag Dauerlast, auch für wochenalte Posts) und bis zu ~65 Status-Calls pro Reel-Publish.
+- **Kommentar-Sammler**: fragt nur noch Posts der letzten 48 Stunden ab (Kommentare kommen fast nur auf frische Posts) und läuft alle 2 Stunden statt stündlich — Antwort-Vorschläge und Spam-/Hass-Triage bleiben unverändert.
+- **Reel-Status-Polling**: gleicher Zeitrahmen, wachsender Takt (5 s → ×1,5 bis max. 30 s) — ~13 statt ~65 Calls je Reel.
+- **Rate-Limit-Schoner**: Meldet Meta ein „request limit", pausiert das Kommentar-Polling für Meta-Kanäle automatisch 2 Stunden — das Kontingent gehört dann den Publishes und Retries.
+- **Kapazitäts-Ehrlichkeit**: Freigabe-Ad-hoc-Termine (Reels/Stories) zählen jetzt gegen das Tagesbudget — ist der Tag voll (veröffentlicht + geplant ≥ `max_posts_per_day`), landet die Freigabe auf morgen 08:00 statt im vollen Tag (gilt in Freigabe UND Plan-Review). Config-seitig wurde Instagram auf 8 Posts/Tag gesetzt.
+
 ## [0.19.0-multi-ha.1123] - 2026-07-18
 
 ### Fixed — Keine Gleichzeitig-Wellen mehr, Reel-Tagesdeckel, Rate-Limit-Backoff (v1123)
