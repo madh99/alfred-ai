@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1128] - 2026-07-19
+
+### Fixed — Kanal-Filter wirkt auch auf die Wachstums-Sektion (v1128)
+- Bei gewähltem Kanal zeigte die Wachstums-Sektion (Familien-Reichweite + Kanal-Karten) weiterhin alle Familien und Kanäle. Jetzt: Nur die Familie des gewählten Kanals (mit vollem Familien-Kontext) und nur seine Wachstums-Karte.
+
 ## [0.19.0-multi-ha.1127] - 2026-07-19
 
 ### Added — YouTube-Kommentare im Sammler + Analytics nach Familien (v1127)

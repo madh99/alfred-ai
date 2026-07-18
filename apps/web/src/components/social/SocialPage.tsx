@@ -2813,11 +2813,13 @@ export function SocialPage() {
       </div>
       </>)}
 
-      {/* v1020 — Kanalwachstum: Zeitreihen + Familien-Analyse */}
+      {/* v1020 — Kanalwachstum: Zeitreihen + Familien-Analyse
+          v1128 — Kanal-Filter wirkt auch hier: bei gewähltem Kanal nur SEINE
+          Familie + Karte (vorher zeigte die Sektion trotz Filter alles) */}
       {page === 'analytics' && Object.keys(growth).length > 0 && (
         <div>
           <h2 className="text-sm font-semibold text-gray-200 mb-2">📈 Wachstum</h2>
-          {familyGrowth.map(f => (
+          {familyGrowth.filter(f => !channelFilter || f.members.some(m => m.id === channelFilter)).map(f => (
             <div key={f.famKey} className="border border-purple-500/20 bg-purple-500/5 rounded-lg p-3 mb-3">
               <div className="text-sm text-gray-200 font-medium">
                 👪 Familien-Reichweite: {f.total.toLocaleString('de-AT')}
@@ -2837,7 +2839,7 @@ export function SocialPage() {
             </div>
           ))}
           <div className="grid gap-3 md:grid-cols-2">
-            {channels.filter(c => growth[c.id]).map(c => {
+            {channels.filter(c => growth[c.id] && (!channelFilter || c.id === channelFilter)).map(c => {
               const g = growth[c.id];
               const base7 = Math.max(1, g.latest - g.delta7);
               return (
