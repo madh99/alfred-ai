@@ -252,6 +252,27 @@ describe('PublishingEngine (v934)', () => {
     expect(publishItem).not.toHaveBeenCalled();
   });
 
+  it('v1123: Rate-Limit-Fehler bekommt weitere Anläufe mit Backoff, gedeckelt bei 3', async () => {
+    const rlError = 'instagram: Application request limit reached';
+    // limitRetries 1, letzter Versuch vor 61 min → nächster Anlauf läuft
+    const reif = makeItem({ status: 'failed', error: rlError, performance: { retried: true, limitRetries: 1 }, updatedAt: new Date(Date.now() - 61 * 60_000).toISOString() });
+    const a = makeEngine({ channel: makeChannel(), failed: [reif] });
+    expect((await a.engine.tick()).retried).toBe(1);
+    expect(a.repo.mergePerformance).toHaveBeenCalledWith(OWNER, 'item-1', expect.objectContaining({ limitRetries: 2 }));
+    // erst 30 min her → Backoff (60 min) noch nicht erreicht
+    const zufrueh = makeItem({ status: 'failed', error: rlError, performance: { retried: true, limitRetries: 1 }, updatedAt: new Date(Date.now() - 30 * 60_000).toISOString() });
+    const b = makeEngine({ channel: makeChannel(), failed: [zufrueh] });
+    expect((await b.engine.tick()).retried).toBe(0);
+    // 3 Anläufe verbraucht → Schluss
+    const erschoepft = makeItem({ status: 'failed', error: rlError, performance: { retried: true, limitRetries: 3 }, updatedAt: PAST });
+    const c = makeEngine({ channel: makeChannel(), failed: [erschoepft] });
+    expect((await c.engine.tick()).retried).toBe(0);
+    // NICHT-Rate-Limit-Fehler mit retried=true bleibt wie bisher liegen
+    const normal = makeItem({ status: 'failed', error: 'irgendein anderer Fehler', performance: { retried: true }, updatedAt: PAST });
+    const d = makeEngine({ channel: makeChannel(), failed: [normal] });
+    expect((await d.engine.tick()).retried).toBe(0);
+  });
+
   it('Retry schlägt erneut fehl → high-Insight „endgültig fehlgeschlagen"', async () => {
     const failedItem = makeItem({ status: 'failed', updatedAt: new Date(Date.now() - 20 * 60_000).toISOString() });
     const { engine, insightsRepo } = makeEngine({

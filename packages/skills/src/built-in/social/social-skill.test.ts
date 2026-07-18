@@ -918,6 +918,44 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(alt.render).not.toHaveBeenCalled();
   });
 
+  it('v1123: staggeredAdhocSlot — Sammel-Freigaben landen gestaffelt statt gleichzeitig', async () => {
+    const { staggeredAdhocSlot } = await import('./social-skill.js');
+    const now = Date.parse('2026-07-18T06:00:00.000Z');
+    const s1 = staggeredAdhocSlot([], { now });
+    expect(s1).toBe(new Date(now + 15 * 60_000).toISOString());
+    const s2 = staggeredAdhocSlot([s1], { now });
+    expect(Date.parse(s2) - Date.parse(s1)).toBeGreaterThanOrEqual(20 * 60_000);
+    const s3 = staggeredAdhocSlot([s1, s2], { now });
+    expect(Date.parse(s3)).toBeGreaterThan(Date.parse(s2));
+    const nb = new Date(now + 6 * 3_600_000).toISOString();
+    expect(Date.parse(staggeredAdhocSlot([], { now, notBefore: nb }))).toBeGreaterThanOrEqual(Date.parse(nb));
+  });
+
+  it('v1123: approve_content staffelt — Begleitformat weicht belegten Slots des Kanals aus', async () => {
+    const channel = makeChannel();
+    const reel = makeItem({ id: 'item-0001-aaaa', status: 'draft', performance: { format: 'reel', autoReel: true } });
+    const { skill, spies } = makeSkill(channel, reel);
+    const belegt = new Date(Date.now() + 15 * 60_000).toISOString();
+    const other = makeItem({ id: 'item-0002-bbbb', status: 'approved', scheduledAt: belegt });
+    (spies as any).listItems = vi.fn(async () => [other]);
+    const r = await skill.execute({ action: 'approve_content', item_id: 'item-0001-aaaa' }, CTX);
+    expect(r.success).toBe(true);
+    const call = (spies.reschedule as any).mock.calls.find((c: any[]) => c[1] === reel.id);
+    expect(call).toBeDefined();
+    expect(Math.abs(Date.parse(call[2]) - Date.parse(belegt))).toBeGreaterThanOrEqual(20 * 60_000);
+  });
+
+  it('v1123: Reel-Tagesdeckel — 3 Reels heute → kein weiterer Render trotz freiem Wochenlimit', async () => {
+    const setup = reelSetup({ auto_reel: true, reel_max_per_week: 21 });
+    const todayReel = (n: number) => makeItem({ id: `item-dayr${n}-aa`, channelId: 'ch-ig', createdAt: new Date().toISOString(), performance: { format: 'reel' } });
+    const leadRef = setup.state;
+    (setup.spies as any).listItems = vi.fn(async (_u: string, q: any) =>
+      (q?.channelId === 'ch-ig' ? [todayReel(1), todayReel(2), todayReel(3)] : [leadRef.item]));
+    await setup.skill.execute({ action: 'publish_now', item_id: 'item-0001-aaaa' }, CTX);
+    await new Promise(res => setTimeout(res, 25));
+    expect(setup.render).not.toHaveBeenCalled();
+  });
+
   it('v1115: Dup-Guard — existiert schon ein Reel zur Story, rendert der automatische Pfad kein zweites', async () => {
     const setup = reelSetup();
     const vorhandenesReel = makeItem({

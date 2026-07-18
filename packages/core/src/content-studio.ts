@@ -875,16 +875,24 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "score": 0.4}]`;
     //     (Realfall 08.07.: zwei fertige Auto-Reels vom 06.07.).
     //     Begleitformate → automatisch Ad-hoc-Termin (+15 min); reguläre
     //     Beiträge → nur Empfehlung (freigegebene Inhalte nie still ändern).
+    // v1123 — gestaffelte Ad-hoc-Slots je Kanal: vorher bekamen ALLE slotlosen
+    // Begleitformate eines Review-Laufs denselben „jetzt+15"-Termin (Realfall
+    // 14.07.: 14 Reels gleichzeitig auf 23:52)
+    const adhocTakenByChannel = new Map<string, Array<string | undefined>>();
     for (const item of items) {
       if (item.status !== 'approved' || item.scheduledAt) continue;
-      const { isCompanionFormat } = await import('@alfred/skills');
+      const { isCompanionFormat, staggeredAdhocSlot } = await import('@alfred/skills');
       if (isCompanionFormat(item)) {
         // v1101 — Zweitverwertungs-Abstand (performance.notBefore) respektieren
-        const nb = typeof item.performance?.notBefore === 'string' ? Date.parse(item.performance.notBefore) : NaN;
-        const adhoc = new Date(Math.max(Date.now() + 15 * 60_000, Number.isFinite(nb) ? nb : 0)).toISOString();
+        const nb = typeof item.performance?.notBefore === 'string' ? item.performance.notBefore : undefined;
+        const taken = adhocTakenByChannel.get(item.channelId)
+          ?? items.filter(i => i.channelId === item.channelId && i.id !== item.id).map(i => i.scheduledAt);
+        const adhoc = staggeredAdhocSlot(taken, nb ? { notBefore: nb } : {});
         if (await this.socialRepo.reschedule(this.ownerUserId, item.id, adhoc, ['approved'])) {
+          taken.push(adhoc);
+          adhocTakenByChannel.set(item.channelId, taken);
           result.deferred++;
-          notes.push(`🎬 Begleitformat ohne Termin → ad-hoc terminiert (+15 min): „${(item.title ?? item.body).slice(0, 60)}"`);
+          notes.push(`🎬 Begleitformat ohne Termin → ad-hoc terminiert (${formatLocalDateTime(adhoc)}): „${(item.title ?? item.body).slice(0, 60)}"`);
         }
       } else {
         result.flagged++;

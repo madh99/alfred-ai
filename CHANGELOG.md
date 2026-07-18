@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1123] - 2026-07-18
+
+### Fixed — Keine Gleichzeitig-Wellen mehr, Reel-Tagesdeckel, Rate-Limit-Backoff (v1123)
+- **Gestaffelte Ad-hoc-Termine**: Die Freigabe eines Begleitformats (Reel/Story) ohne Termin vergab bisher stur „jetzt + 15 Minuten" — eine Sammel-Freigabe erzeugte damit eine Gleichzeitig-Welle (Realfall 18.07.: 8 Freigaben in 7 Sekunden → 4 Instagram-Reels auf denselben Slot; am 14.07. dieselbe Welle über den Plan-Review). Freigabe und Plan-Review staffeln jetzt je Kanal: frühestens +15 Minuten, dann in 30-Minuten-Schritten auf den nächsten Platz mit ≥20 Minuten Abstand zu allen belegten Slots.
+- **Reel-Tagesdeckel**: Zusätzlich zum Wochenlimit gilt beim Auto-Reel-Rendern jetzt ein Tagesdeckel (Default 3, per `reel_max_per_day` und im UI einstellbar) — am 17.07. entstanden 9 Reels im Stundentakt, weil das rollierende Wochenfenster wieder frei war; das Upload-Status-Polling je Reel frisst zudem das Meta-API-Kontingent.
+- **Rate-Limit-Fehler sind transient**: Publish-Fehler wie „Application request limit reached" führten nach dem einen 15-Minuten-Retry dauerhaft zu „failed" — obwohl das Limit-Fenster kurz darauf wieder frei war (Realfall 17.07.: drei Instagram-Posts blieben bis zum manuellen Eingriff liegen). Rate-Limit-Fehler bekommen jetzt bis zu drei weitere Anläufe mit wachsendem Abstand (60/120 Minuten); erst danach kommt die „endgültig fehlgeschlagen"-Meldung.
+
 ## [0.19.0-multi-ha.1122] - 2026-07-15
 
 ### Added — Bild-Budget-Schoner: Story-Bild teilen + Bibliotheks-Fallback (v1122)

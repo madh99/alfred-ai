@@ -54,6 +54,27 @@ export function leadHatTiefe(body: string | undefined): boolean {
 }
 
 /**
+ * v1123 — gestaffelter Ad-hoc-Slot: frühestens jetzt+15 min (bzw. notBefore),
+ * dann in 30-Minuten-Schritten auf den nächsten Platz mit ≥20 min Abstand zu
+ * allen belegten Slots des Kanals. Vorher bekamen alle Begleitformate einer
+ * Sammel-Freigabe DENSELBEN „jetzt+15"-Slot (Realfall 18.07.: 8 Freigaben in
+ * 7 Sekunden → 4 IG-Reels gleichzeitig um 08:26; am 14.07. dieselbe Welle um
+ * 23:52 über den Plan-Review).
+ */
+export function staggeredAdhocSlot(takenIso: Array<string | undefined>, opts?: { notBefore?: string; now?: number }): string {
+  const now = opts?.now ?? Date.now();
+  const nb = opts?.notBefore ? Date.parse(opts.notBefore) : NaN;
+  let t = Math.max(now + 15 * 60_000, Number.isFinite(nb) ? nb : 0);
+  const taken = takenIso.map(s => (s ? Date.parse(s) : NaN)).filter(Number.isFinite) as number[];
+  const GAP = 20 * 60_000;
+  for (let i = 0; i < 96; i++) {
+    if (!taken.some(x => Math.abs(x - t) < GAP)) break;
+    t += 30 * 60_000;
+  }
+  return new Date(t).toISOString();
+}
+
+/**
  * v1068 — GEMEINSAME Duplikat-Suche (eine Quelle der Wahrheit): findet einen
  * in den letzten 7 Tagen auf dem Kanal veröffentlichten, sehr ähnlichen
  * Beitrag. Genutzt vom Publish-Gate (Enforcement, v973) UND vom
@@ -687,8 +708,12 @@ export class SocialSkill extends Skill {
     if (!updated.scheduledAt && isCompanionFormat(item)) {
       // v1101 — Zweitverwertungs-Abstand: performance.notBefore (Reel auf
       // Text-Kanälen mit bestehendem Story-Post) hebt das Minimum über +15 min
-      const nb = typeof item.performance?.notBefore === 'string' ? Date.parse(item.performance.notBefore) : NaN;
-      const adhoc = new Date(Math.max(Date.now() + 15 * 60_000, Number.isFinite(nb) ? nb : 0)).toISOString();
+      // v1123 — GESTAFFELT statt alle auf „jetzt+15": eine Sammel-Freigabe
+      // erzeugte sonst eine Gleichzeitig-Welle (Realfall 18.07., 4 Reels 08:26)
+      const nb = typeof item.performance?.notBefore === 'string' ? item.performance.notBefore : undefined;
+      const taken = (await this.repo.listItems(userId, { channelId: item.channelId, status: ['scheduled', 'approved'], limit: 100 }).catch(() => [] as ContentItem[]))
+        .filter(i => i.id !== item.id).map(i => i.scheduledAt);
+      const adhoc = staggeredAdhocSlot(taken, nb ? { notBefore: nb } : {});
       if (await this.repo.reschedule(userId, item.id, adhoc, ['approved'])) {
         updated = { ...updated, scheduledAt: adhoc };
       }
@@ -1168,6 +1193,14 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     // zählen jetzt mit (fire-and-forget läuft im selben Prozess).
     const inFlight = this.reelsRendering.get(ig.id) ?? 0;
     if (reelsThisWeek + inFlight >= cap) return;
+    // v1123 — Tagesdeckel ZUSÄTZLICH zum Wochenlimit (Realfall 17.07.: 9 Reels
+    // im Stundentakt — das rollierende Wochenfenster war nach der Ausdünnung
+    // wieder frei; frisst auch das Meta-API-Kontingent durchs Upload-Polling).
+    // Default 3/Tag, per reel_max_per_day übersteuerbar; Zähler inkl. rejected.
+    const dayCap = typeof ig.config.reel_max_per_day === 'number' && ig.config.reel_max_per_day >= 0 ? ig.config.reel_max_per_day : 3;
+    const localMidnight = new Date(); localMidnight.setHours(0, 0, 0, 0);
+    const reelsToday = recent.filter(i => i.performance?.format === 'reel' && Date.parse(i.createdAt) >= localMidnight.getTime()).length;
+    if (reelsToday + inFlight >= dayCap) return;
     // v1115 — Restart-Festigkeit: der fire-and-forget-Render stirbt sonst
     // spurlos mit dem Prozess (Realfall 13.07.: der einzige Reel-Anlass des
     // Tages fiel in einen Deploy-Restart — kein Reel, kein Shorts-Zwilling).

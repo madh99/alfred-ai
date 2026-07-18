@@ -383,29 +383,48 @@ export class PublishingEngine {
         // suggest: kein aktives Nachfragen — Freigabe kommt vom User/Studio
       }
 
-      // 3) Retry: fehlgeschlagene Publishes genau einmal nach 15 min
+      // 3) Retry: fehlgeschlagene Publishes einmal nach 15 min — Rate-Limit-
+      //    Fehler sind TRANSIENT und bekommen bis zu 3 weitere Anläufe mit
+      //    wachsendem Abstand (v1123; Realfall 17.07.: Meta „Application
+      //    request limit" — der Einmal-Retry fiel ins selbe Limit-Fenster,
+      //    drei Posts blieben bis zum User-Eingriff liegen).
       const failed = await this.repo.listItems(owner, { status: 'failed' });
       const retryAfter = this.opts.retryAfterMs ?? 15 * 60_000;
       for (const item of failed) {
         const channel = channels.get(item.channelId);
         if (!channel || channel.status !== 'active') continue;
-        if (item.performance?.retried === true) continue;
-        if (Date.now() - Date.parse(item.updatedAt) < retryAfter) continue;
+        const isRateLimit = /request limit|rate limit|too many requests/i.test(item.error ?? '');
+        const limitRetries = typeof item.performance?.limitRetries === 'number' ? item.performance.limitRetries : 0;
+        if (item.performance?.retried === true) {
+          if (!isRateLimit || limitRetries >= 3) continue;
+          // Backoff: nach dem 15-min-Erstretry 60 min, danach 120 min
+          const delayMs = (limitRetries <= 1 ? 60 : 120) * 60_000;
+          if (Date.now() - Date.parse(item.updatedAt) < delayMs) continue;
+        } else if (Date.now() - Date.parse(item.updatedAt) < retryAfter) continue;
         // v1075 — auch Retries respektieren Fenster + Mindestabstand
         if (!(await this.humanPacingGate(item, channel))) continue;
-        if (!(await this.claimItemSlot(`social-retry:${item.id}`))) continue;
-        await this.repo.mergePerformance(owner, item.id, { retried: true, retriedAt: now });
+        const attemptKey = item.performance?.retried === true ? `social-retry:${item.id}:r${limitRetries + 1}` : `social-retry:${item.id}`;
+        if (!(await this.claimItemSlot(attemptKey))) continue;
+        await this.repo.mergePerformance(owner, item.id, {
+          retried: true, retriedAt: now,
+          ...(isRateLimit ? { limitRetries: limitRetries + 1 } : {}),
+        });
         const r = await this.publishItem(item.id);
         result.retried++;
         if (!r.success) {
-          await this.insightsRepo?.upsertCandidate(owner, {
-            category: 'social',
-            title: `Publish endgültig fehlgeschlagen: ${(item.title ?? item.body).slice(0, 60)}`,
-            body: `Kanal **${channel.name}**, Item ${item.id.slice(0, 8)} — auch der Retry schlug fehl:\n${r.error ?? 'unbekannt'}\n\nItem bleibt auf failed; publish_now versucht es erneut.`,
-            confidence: 0.9,
-            sourceData: { router: true, urgency: 'high', itemId: item.id },
-            dedupeKey: `social-failed:${item.id}`,
-          }).catch(() => { /* non-critical */ });
+          const nochOffen = /request limit|rate limit|too many requests/i.test(r.error ?? '') && limitRetries + 1 < 3;
+          if (nochOffen) {
+            this.logger.info({ itemId: item.id, attempt: limitRetries + 1 }, 'v1123 rate-limit retry fehlgeschlagen — nächster Anlauf mit Backoff');
+          } else {
+            await this.insightsRepo?.upsertCandidate(owner, {
+              category: 'social',
+              title: `Publish endgültig fehlgeschlagen: ${(item.title ?? item.body).slice(0, 60)}`,
+              body: `Kanal **${channel.name}**, Item ${item.id.slice(0, 8)} — auch der Retry schlug fehl:\n${r.error ?? 'unbekannt'}\n\nItem bleibt auf failed; publish_now versucht es erneut.`,
+              confidence: 0.9,
+              sourceData: { router: true, urgency: 'high', itemId: item.id },
+              dedupeKey: `social-failed:${item.id}`,
+            }).catch(() => { /* non-critical */ });
+          }
         }
       }
 
