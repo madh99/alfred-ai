@@ -477,7 +477,9 @@ describe('ContentStudio (v935)', () => {
     expect(sandboxCalls.length).toBe(2);
     expect(sandboxCalls[0]).not.toContain('Arnautovic');
     expect(sandboxCalls[0]).toContain('KEINE realen oder identifizierbaren Personen');
-    expect(sandboxCalls[1]).toContain('Symbolbild Fußball');
+    // v1129 — ohne image_symbol_motif kommt das markenneutrale Symbolmotiv (kein Fußball mehr)
+    expect(sandboxCalls[1]).toContain('Symbolbild');
+    expect(sandboxCalls[1]).not.toContain('Fußball');
     // Beide Versuche verletzten die Policy → Post OHNE Bild
     expect(createdMedia[0]).toEqual([]);
     // v990 — beide VERSUCHE zählen trotzdem aufs Budget: die OpenAI-Kosten

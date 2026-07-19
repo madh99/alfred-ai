@@ -21,7 +21,9 @@ const WEEKDAYS: Record<string, number> = { so: 0, mo: 1, di: 2, mi: 3, do: 4, fr
  * (sie enthält Wortzahlen, Verweis-Anweisungen etc. — fürs Bildmodell
  * sinnlos bis irreführend). config.image_style je Kanal übersteuert (v1004).
  */
-const DEFAULT_IMAGE_STYLE = 'hochwertige redaktionelle Sportfoto-Optik, realistisch, klare Komposition, natürliches Licht';
+// v1129 — markenneutral: „Sportfoto-Optik" stand aus der FussballCC-Ära in
+// jedem Prompt von Kanälen ohne eigenes image_style (auch Energie-Marken).
+const DEFAULT_IMAGE_STYLE = 'hochwertige redaktionelle Foto-Optik, realistisch, klare Komposition, natürliches Licht';
 
 /**
  * v1103 — Sender-/Promo-Boilerplate erkennen (pure, testbar): YouTube-Shorts
@@ -2598,9 +2600,13 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
     try {
       const {
         resolveImagePolicy, extractNameCandidates, scrubMotif, scrubTextDirectives,
-        buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy, SYMBOLIC_FALLBACK_MOTIF,
+        buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy, resolveSymbolMotif,
       } = await import('./image-policy.js');
       const policy = resolveImagePolicy(channel.config);
+      // v1129 — Marken-Symbolmotiv des Kanals (config.image_symbol_motif, sonst
+      // neutral): ersetzt die frühere globale Fußball-Konstante in Fallbacks,
+      // Vision-Retry und der Symbolik-Zeile des Prompts.
+      const symbolMotif = resolveSymbolMotif(channel.config);
 
       // v941 — die Bildidee des Studios ist der beste Prompt (Fallback: Titel/Body)
       // v1069 — Fallback OHNE „Social-Media-Bild": Nano Banana nahm das
@@ -2609,7 +2615,7 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
       // v950 Schicht 2 — deterministisch: Personen-Namen aus dem Motiv schrubben
       if (policy === 'symbolic') {
         const names = extractNameCandidates(idea.title, idea.body, idea.bildidee);
-        const scrubbedResult = scrubMotif(motif, names);
+        const scrubbedResult = scrubMotif(motif, names, symbolMotif);
         if (scrubbedResult.scrubbed) {
           this.logger.info({ channel: channel.name, names }, 'v950 motif scrubbed (image policy symbolic)');
         }
@@ -2618,7 +2624,7 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
       // v982 — Text-/Datums-Direktiven schrubben (BEIDE Policies): Bildmodelle
       // rendern Text falsch — „Datum & Uhrzeit als Overlay" wurde zu „23.04.
       // 21:00" für einen Termin am 04.07. 19:00 (Realfall).
-      const textScrub = scrubTextDirectives(motif);
+      const textScrub = scrubTextDirectives(motif, symbolMotif);
       if (textScrub.scrubbed) {
         this.logger.info({ channel: channel.name, motif: textScrub.motif }, 'v982 text directives scrubbed');
       }
@@ -2704,12 +2710,12 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
         // Bibliothek liegt (kurze Karenz statt Cooldown) — vorher entstand
         // bei jedem Verstoß ein frisches, fast identisches Stadion-Bild.
         if (attempt === 1 && channel.config.image_reuse !== false && this.mediaDir) {
-          const fallbackReuse = await this.tryReuseAsset(channel, SYMBOLIC_FALLBACK_MOTIF, idea, style, format, forcedTitle).catch(() => undefined);
+          const fallbackReuse = await this.tryReuseAsset(channel, symbolMotif, idea, style, format, forcedTitle).catch(() => undefined);
           if (fallbackReuse) return fallbackReuse;
         }
         const prompt = attempt === 0
-          ? buildSafeImagePrompt(motif, visualStyle, policy)
-          : strictRetryPrompt(visualStyle);
+          ? buildSafeImagePrompt(motif, visualStyle, policy, symbolMotif)
+          : strictRetryPrompt(visualStyle, symbolMotif);
         const result = await this.skillSandbox.execute(skill, {
           prompt,
           ...(imageModel ? { model: imageModel } : {}),
@@ -2755,7 +2761,7 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
         // gehört in die Bibliothek, nicht das Artikel-Motiv (Realfall 07.07.:
         // neutrale Stadionbilder trugen spezifische Trainer-Beschreibungen und
         // vergifteten das Reuse-Matching).
-        let libraryMotif = attempt === 1 ? SYMBOLIC_FALLBACK_MOTIF : motif;
+        let libraryMotif = attempt === 1 ? symbolMotif : motif;
 
         // v950 Schicht 3 — Vision-Output-Gate (nur symbolic; fail-closed bei Ausfall)
         if (policy === 'symbolic' && buffer) {
@@ -2776,8 +2782,9 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
           // Der „Symbolbild"-Marker (kurze Karenz, v1038) bleibt erhalten.
           if (verdict.motiv) {
             const generic = attempt === 1 || ContentStudio.isGenericMotif(motif);
+            // v1129 — markenneutraler Marker (vorher „Symbolbild Fußball:")
             libraryMotif = generic && !ContentStudio.isGenericMotif(verdict.motiv)
-              ? `Symbolbild Fußball: ${verdict.motiv}` : verdict.motiv;
+              ? `Symbolbild: ${verdict.motiv}` : verdict.motiv;
           }
         }
 

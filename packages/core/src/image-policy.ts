@@ -46,6 +46,19 @@ const NAME_STOPWORDS = new Set([
   'schritt', 'richtung', 'split', 'screen', 'sticker', 'album', 'wappen', 'trikot',
   'trikots', 'ball', 'rasen', 'tor', 'tore', 'jubel', 'szene', 'grafik', 'collage',
   'symbolbild', 'stimmung', 'atmosphäre',
+  // v1129 — kapitalisierte Adjektive/Licht-Begriffe aus Bildideen: „Helles
+  // Vormittagslicht" / „Mehrere Batteriespeicher" sind keine Personennamen
+  // (Realfall 19.07.: der Schrubber leerte Energie-Motive, bis das generische
+  // Fallback-Motiv griff). Adjektiv-Flexionen decken alle Genera ab.
+  'mehrere', 'einzelne', 'helles', 'helle', 'heller', 'dunkles', 'dunkle', 'dunkler',
+  'seitliches', 'seitliche', 'natürliches', 'natürliche', 'warmes', 'warme', 'warmer',
+  'weiches', 'weiche', 'sanftes', 'sanfte', 'goldenes', 'goldene', 'diffuses', 'diffuse',
+  'klares', 'klare', 'kühles', 'kühle', 'modernes', 'moderne', 'moderner',
+  'minimalistisches', 'minimalistische', 'stimmungsvolles', 'stimmungsvolle',
+  'sonnenlicht', 'tageslicht', 'vormittagslicht', 'mittagslicht', 'abendlicht',
+  'morgenlicht', 'fensterlicht', 'gegenlicht', 'kunstlicht', 'flutlicht', 'dämmerung',
+  'nahaufnahme', 'weitwinkel', 'vogelperspektive', 'bodenperspektive',
+  'vordergrund', 'hintergrund', 'wiener',
 ]);
 
 /**
@@ -70,14 +83,34 @@ export function extractNameCandidates(...texts: Array<string | undefined>): stri
   return [...out];
 }
 
+/**
+ * v1129 — MARKENNEUTRALES Default-Symbolmotiv. Vorher stand hier hartkodiert
+ * „Symbolbild Fußball: Stadion unter Flutlicht …" aus der FussballCC-Ära —
+ * die Schutzschicht drückte damit JEDER Marke Fußball-Bilder auf (Realfall
+ * 19.07.: Energie-Kanäle bekamen Ball-und-Stadion-Motive). Marken-Symbolik
+ * kommt jetzt aus config.image_symbol_motif je Kanal (resolveSymbolMotif).
+ */
 export const SYMBOLIC_FALLBACK_MOTIF =
-  'Symbolbild Fußball: Stadion unter Flutlicht mit Ball auf dem Rasen, atmosphärisch, ohne Menschen';
+  'Symbolbild: abstrakte, zum Thema des Beitrags passende Symbolgrafik — Objekte, Materialien, Licht und Farbwelt, ruhige Komposition, ohne Menschen';
+
+/**
+ * v1129 — Marken-Symbolmotiv des Kanals: config.image_symbol_motif
+ * (Freitext), sonst das neutrale Default. Der „Symbolbild"-Marker wird
+ * ergänzt, falls er fehlt — daran hängen kurze Reuse-Karenz (v1038) und
+ * Generik-Erkennung (isGenericMotif).
+ */
+export function resolveSymbolMotif(config: Record<string, unknown>): string {
+  const raw = typeof config.image_symbol_motif === 'string' ? config.image_symbol_motif.trim() : '';
+  if (!raw) return SYMBOLIC_FALLBACK_MOTIF;
+  return /^symbolbild/i.test(raw) ? raw : `Symbolbild: ${raw}`;
+}
 
 /**
  * Schicht 2b — Motiv schrubben: alle Namens-Kandidaten entfernen. Bleibt kein
- * tragfähiges Motiv übrig, greift das generische Symbolmotiv.
+ * tragfähiges Motiv übrig, greift das Symbolmotiv des Kanals (v1129: Parameter
+ * statt der früheren Fußball-Konstante).
  */
-export function scrubMotif(motif: string, nameCandidates: string[]): { motif: string; scrubbed: boolean } {
+export function scrubMotif(motif: string, nameCandidates: string[], fallbackMotif: string = SYMBOLIC_FALLBACK_MOTIF): { motif: string; scrubbed: boolean } {
   let result = motif;
   let scrubbed = false;
   for (const name of nameCandidates) {
@@ -89,7 +122,7 @@ export function scrubMotif(motif: string, nameCandidates: string[]): { motif: st
   result = result.replace(/\s{2,}/g, ' ').replace(/\s+([,.!?])/g, '$1').trim();
   const meaningful = result.replace(/[^a-zA-ZäöüÄÖÜß]/g, '');
   if (meaningful.length < 15) {
-    return { motif: SYMBOLIC_FALLBACK_MOTIF, scrubbed: true };
+    return { motif: fallbackMotif, scrubbed: true };
   }
   return { motif: result, scrubbed };
 }
@@ -104,7 +137,7 @@ export function scrubMotif(motif: string, nameCandidates: string[]): { motif: st
 const DATE_TIME_PATTERN = /\b\d{1,2}\.\s?\d{1,2}\.(?:\d{2,4})?\b|\b\d{1,2}[:.]\d{2}(?:\s?uhr)?\b|\b\d{1,2}\s?uhr\b/gi;
 const TEXT_DIRECTIVE_PATTERN = /\b(datum|uhrzeit|zeitangabe|anstoßzeit|countdown|text-?overlay|overlay|schriftzug|beschriftung|typografi\w*|lettering|headline|slogan)\b[^,.;]*/gi;
 
-export function scrubTextDirectives(motif: string): { motif: string; scrubbed: boolean } {
+export function scrubTextDirectives(motif: string, fallbackMotif: string = SYMBOLIC_FALLBACK_MOTIF): { motif: string; scrubbed: boolean } {
   let result = motif.replace(DATE_TIME_PATTERN, '').replace(TEXT_DIRECTIVE_PATTERN, '');
   const scrubbed = result !== motif;
   result = result
@@ -117,13 +150,18 @@ export function scrubTextDirectives(motif: string): { motif: string; scrubbed: b
     .replace(/[,;\s]+$/, '');
   const meaningful = result.replace(/[^a-zA-ZäöüÄÖÜß]/g, '');
   if (meaningful.length < 15) {
-    return { motif: SYMBOLIC_FALLBACK_MOTIF, scrubbed: true };
+    return { motif: fallbackMotif, scrubbed: true };
   }
   return { motif: result, scrubbed };
 }
 
-/** Schicht 1 — Prompt mit harten Policy-Regeln bauen. */
-export function buildSafeImagePrompt(motif: string, persona: string | undefined, policy: ImagePolicy): string {
+/**
+ * Schicht 1 — Prompt mit harten Policy-Regeln bauen.
+ * v1129 — symbolMotif: die „Bevorzugt Symbolik"-Zeile nennt die MARKEN-Symbolik
+ * des Kanals (vorher hartkodiert „Stadion, Ball, Rasen, Taktiktafel" — die
+ * Fußball-Empfehlung stand so in jedem Prompt jeder Marke).
+ */
+export function buildSafeImagePrompt(motif: string, persona: string | undefined, policy: ImagePolicy, symbolMotif: string = SYMBOLIC_FALLBACK_MOTIF): string {
   // v982 — verschärft: der weiche Appell „Kein Text" verlor gegen Motive, die
   // explizit Overlays bestellten; Zahlen/Daten macht das Modell ohnehin falsch.
   const base = `${motif}. Stil: ${persona ?? 'modern, freundlich'}. Absolut KEIN Text im Bild — keine Wörter, Zahlen, Daten, Uhrzeiten oder Schrift-Overlays.`;
@@ -134,14 +172,14 @@ WICHTIGE REGELN (Bildnisrecht, zwingend):
 - Wenn Menschen nötig wirken: nur anonym (von hinten, Silhouette, unkenntlich, Menge aus der Ferne) — besser ganz ohne Menschen.
 - KEINE Vereins-, Verbands- oder Marken-Logos, keine erkennbaren Trikot-Embleme.
 - Nationalflaggen und Länderfarben sind rechtlich unbedenklich — aber NUR verwenden, wenn das Motiv sie AUSDRÜCKLICH nennt, und dann nur die Länder aus dem Motiv. NIE Flaggen oder Länderfarben ergänzen, die nicht im Motiv stehen.
-- Bevorzugt Symbolik: Stadion, Ball, Rasen, Taktiktafel, abstrakte Grafik.`;
+- Wenn Symbolik nötig ist, im Sinne von: ${symbolMotif.replace(/^symbolbild[^:]{0,30}:\s*/i, '').replace(/^symbolbild\s*/i, '')}`;
 }
 
-/** Strenges Retry-Motiv nach einem Vision-Verstoß. */
-export function strictRetryPrompt(persona: string | undefined): string {
+/** Strenges Retry-Motiv nach einem Vision-Verstoß (v1129: Marken-Symbolmotiv des Kanals). */
+export function strictRetryPrompt(persona: string | undefined, symbolMotif: string = SYMBOLIC_FALLBACK_MOTIF): string {
   return buildSafeImagePrompt(
-    `${SYMBOLIC_FALLBACK_MOTIF}. Absolut keine Menschen, keine Gesichter, keine Logos, keinerlei Text oder Zahlen`,
-    persona, 'symbolic',
+    `${symbolMotif}. Absolut keine Menschen, keine Gesichter, keine Logos, keinerlei Text oder Zahlen`,
+    persona, 'symbolic', symbolMotif,
   );
 }
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   resolveImagePolicy, extractNameCandidates, scrubMotif, scrubTextDirectives,
-  buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy,
+  buildSafeImagePrompt, strictRetryPrompt, verifyImagePolicy, resolveSymbolMotif,
+  SYMBOLIC_FALLBACK_MOTIF,
 } from '../image-policy.js';
 
 describe('resolveImagePolicy (v950)', () => {
@@ -45,11 +46,18 @@ describe('scrubMotif (v950 Schicht 2b)', () => {
     expect(r.motif).toContain('Stadion');
   });
 
-  it('bleibt kein tragfähiges Motiv → generisches Symbolmotiv', () => {
+  it('bleibt kein tragfähiges Motiv → generisches Symbolmotiv (v1129: markenneutral)', () => {
     const r = scrubMotif('David Alaba Porträt', ['David Alaba']);
     expect(r.scrubbed).toBe(true);
-    expect(r.motif).toContain('Symbolbild Fußball');
+    expect(r.motif).toContain('Symbolbild');
+    expect(r.motif).not.toContain('Fußball');
     expect(r.motif).toContain('ohne Menschen');
+  });
+
+  it('v1129: das Kanal-Symbolmotiv übersteuert das neutrale Fallback', () => {
+    const energie = 'Symbolbild: PV-Module und Strommasten in österreichischer Landschaft, ohne Menschen';
+    const r = scrubMotif('David Alaba Porträt', ['David Alaba'], energie);
+    expect(r.motif).toBe(energie);
   });
 
   it('ohne Treffer unverändert', () => {
@@ -76,7 +84,16 @@ describe('buildSafeImagePrompt (v950 Schicht 1)', () => {
     const p = buildSafeImagePrompt('Trainerbank am Spielfeldrand', 'stil', 'symbolic');
     expect(p).not.toContain('rot-weiß-rot');
     expect(p).toContain('NUR verwenden, wenn das Motiv sie AUSDRÜCKLICH nennt');
-    expect(p).toContain('Bevorzugt Symbolik: Stadion, Ball, Rasen, Taktiktafel, abstrakte Grafik');
+    // v1129 — die Symbolik-Zeile ist markenneutral (vorher hartkodiert „Stadion, Ball, Rasen …")
+    expect(p).not.toContain('Stadion, Ball, Rasen');
+    expect(p).toContain('Wenn Symbolik nötig ist');
+  });
+
+  it('v1129: symbolMotif des Kanals landet als Symbolik-Empfehlung im Prompt (ohne Marker-Präfix)', () => {
+    const p = buildSafeImagePrompt('Stromzähler-Nahaufnahme', 'stil', 'symbolic',
+      'Symbolbild: PV-Module und Strommasten in österreichischer Landschaft');
+    expect(p).toContain('PV-Module und Strommasten');
+    expect(p).not.toContain('Wenn Symbolik nötig ist, im Sinne von: Symbolbild');
   });
 
   it('people_ok: nur Basis-Prompt, keine Regeln', () => {
@@ -89,6 +106,28 @@ describe('buildSafeImagePrompt (v950 Schicht 1)', () => {
     const p = strictRetryPrompt('modern');
     expect(p).toContain('keine Menschen');
     expect(p).toContain('KEINE realen oder identifizierbaren Personen');
+  });
+
+  it('v1129: strictRetryPrompt nutzt das Kanal-Symbolmotiv statt der Konstante', () => {
+    const p = strictRetryPrompt('modern', 'Symbolbild: Batteriespeicher und Smart Meter, ohne Menschen');
+    expect(p).toContain('Batteriespeicher und Smart Meter');
+    expect(p).not.toContain('Fußball');
+  });
+});
+
+describe('resolveSymbolMotif (v1129 — Marken-Symbolmotiv je Kanal)', () => {
+  it('leer/fehlend → markenneutrales Default (kein Fußball)', () => {
+    expect(resolveSymbolMotif({})).toBe(SYMBOLIC_FALLBACK_MOTIF);
+    expect(resolveSymbolMotif({ image_symbol_motif: '   ' })).toBe(SYMBOLIC_FALLBACK_MOTIF);
+    expect(SYMBOLIC_FALLBACK_MOTIF).not.toContain('Fußball');
+    expect(SYMBOLIC_FALLBACK_MOTIF).toMatch(/^Symbolbild/);
+  });
+
+  it('config-Motiv wird übernommen, „Symbolbild"-Marker wird ergänzt (Reuse-Karenz v1038)', () => {
+    expect(resolveSymbolMotif({ image_symbol_motif: 'PV-Module in Landschaft, ohne Menschen' }))
+      .toBe('Symbolbild: PV-Module in Landschaft, ohne Menschen');
+    expect(resolveSymbolMotif({ image_symbol_motif: 'Symbolbild Fußball: Stadion unter Flutlicht' }))
+      .toBe('Symbolbild Fußball: Stadion unter Flutlicht');
   });
 });
 
@@ -146,9 +185,12 @@ describe('scrubTextDirectives (v982)', () => {
     expect(r.motif).toContain('Flutlicht');
   });
 
-  it('bleibt nach dem Schrubben nichts Tragfähiges → Symbolmotiv', () => {
+  it('bleibt nach dem Schrubben nichts Tragfähiges → Symbolmotiv (v1129: Kanal-Motiv möglich)', () => {
     const r = scrubTextDirectives('Countdown 12:00 Uhr Overlay');
-    expect(r.motif).toContain('Symbolbild Fußball');
+    expect(r.motif).toContain('Symbolbild');
+    expect(r.motif).not.toContain('Fußball');
+    const r2 = scrubTextDirectives('Countdown 12:00 Uhr Overlay', 'Symbolbild: Windräder im Morgenlicht');
+    expect(r2.motif).toBe('Symbolbild: Windräder im Morgenlicht');
   });
 
   it('Motiv ohne Text-Direktiven bleibt unverändert', () => {
@@ -165,5 +207,20 @@ describe('extractNameCandidates — Motiv-Substantive (v982)', () => {
 
   it('echte Personennamen werden weiter erkannt', () => {
     expect(extractNameCandidates('David Alaba jubelt vor Flaggen Kanadas')).toContain('David Alaba');
+  });
+});
+
+describe('extractNameCandidates — Adjektive/Licht-Begriffe (v1129)', () => {
+  it('Realfälle 19.07.: Bildideen-Phrasen sind keine Personennamen', () => {
+    const names = extractNameCandidates(
+      'Mehrere Batteriespeicher im Technikraum, Helles Vormittagslicht fällt seitlich ein.',
+      'Natürliches Fensterlicht auf dem Tisch, Seitliches Sonnenlicht am Abend, die Wiener Stadthalle im Hintergrund',
+    );
+    expect(names).toEqual([]);
+  });
+
+  it('Personennamen neben Licht-Phrasen bleiben erkannt', () => {
+    const names = extractNameCandidates('Leonore Gewessler eröffnet, Helles Vormittagslicht im Saal');
+    expect(names).toContain('Leonore Gewessler');
   });
 });

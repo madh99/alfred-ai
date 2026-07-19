@@ -175,6 +175,8 @@ export function SocialPage() {
     trafficMode: 'voll' | 'teaser' | 'auto';
     // v1004 — Bild-Look je Kanal · v1069 — optionales Gemini-Bildmodell
     imageStyle: string; imageQuality: 'default' | 'low' | 'medium' | 'high';
+    // v1129 — Marken-Symbolmotiv (Fallback-/Retry-Bilder; leer = neutraler Default)
+    imageSymbolMotif: string;
     imageModel: '' | 'gemini-3.1-flash-image' | 'gemini-3-pro-image';
     // v1074 — Bild-Regie (Art-Director + Motiv-Vielfalt) + Stil-Referenz (gepinnte Assets, nur Gemini)
     imageArtDirector: boolean; imageStyleReference: boolean;
@@ -206,7 +208,7 @@ export function SocialPage() {
     formate: Array<{ slot: string; name: string; anweisung: string; video: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast', redaktionslinie: '',
     familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
-    imageStyle: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageShareStory: false, imageBudgetFallback: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
+    imageStyle: '', imageSymbolMotif: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageShareStory: false, imageBudgetFallback: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
     reelMaxPerWeek: 2, reelMaxPerDay: 3, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
@@ -620,6 +622,8 @@ export function SocialPage() {
       trafficMode: c.config.traffic_mode === 'teaser' ? 'teaser' : c.config.traffic_mode === 'auto' ? 'auto' : 'voll',
       // v1004 — Bild-Look
       imageStyle: typeof c.config.image_style === 'string' ? c.config.image_style : '',
+      // v1129 — Marken-Symbolmotiv (Fallback-/Retry-Bilder + Symbolik-Zeile im Prompt)
+      imageSymbolMotif: typeof c.config.image_symbol_motif === 'string' ? c.config.image_symbol_motif : '',
       imageQuality: c.config.image_quality === 'low' || c.config.image_quality === 'medium' || c.config.image_quality === 'high' ? c.config.image_quality : 'default',
       imageModel: c.config.image_model === 'gemini-3.1-flash-image' || c.config.image_model === 'gemini-3-pro-image' ? c.config.image_model : '',
       imageArtDirector: c.config.image_art_director !== false,
@@ -708,6 +712,8 @@ export function SocialPage() {
           newsdesk_max_per_day: d.newsdeskMaxPerDay,
           // v1004 — Bild-Look (config wird feldweise gemergt)
           image_style: d.imageStyle.trim() || null,
+          // v1129 — Marken-Symbolmotiv (leer = neutraler Default)
+          image_symbol_motif: d.imageSymbolMotif.trim() || null,
           image_quality: d.imageQuality === 'default' ? null : d.imageQuality,
           image_model: d.imageModel || null,
           image_art_director: d.imageArtDirector ? null : false,
@@ -1942,6 +1948,16 @@ export function SocialPage() {
                             <option value="flache grafische Illustration, kräftige Markenfarben, geometrische Formen, viel Negativraum">Grafisch/abstrakt</option>
                           </select>
                         </div>
+                      </div>
+                      {/* v1129 — Marken-Symbolmotiv: Fallback-/Retry-Bilder + Symbolik-Empfehlung im Prompt */}
+                      <div>
+                        <label className="text-[11px] text-gray-500"
+                          title="v1129 — Greift, wenn kein konkretes Motiv möglich ist (Bildnisrecht-Schrubber, Vision-Retry) und als Symbolik-Empfehlung in jedem Bild-Prompt. Leer = neutrale, themenpassende Symbolgrafik. Beispiel fussball.cc: „Stadion unter Flutlicht mit Ball auf dem Rasen, ohne Menschen“ — Beispiel Energie: „Photovoltaik-Module und Strommasten in österreichischer Landschaft, ohne Menschen“.">
+                          Marken-Symbolmotiv (Fallback-Bilder; leer = neutral)
+                        </label>
+                        <input value={settingsDraft.imageSymbolMotif} onChange={e => setSettingsDraft(d => ({ ...d, imageSymbolMotif: e.target.value }))}
+                          placeholder='z.B. "Photovoltaik-Module und Strommasten in österreichischer Landschaft, atmosphärisches Licht, ohne Menschen"'
+                          className="w-full mt-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200" />
                       </div>
                       <div className="flex flex-wrap gap-4">
                         <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"

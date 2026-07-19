@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1129] - 2026-07-19
+
+### Fixed — Markenneutrale Bild-Schutzschicht: Symbolmotiv je Kanal (v1129)
+- Die Bildnisrecht-Schutzschicht (v950) trug noch Annahmen aus der Fußball-Ära in globalen Konstanten: das Fallback-Symbolmotiv („Stadion unter Flutlicht mit Ball"), die Symbolik-Empfehlung im Bild-Prompt („Stadion, Ball, Rasen, Taktiktafel") und der Standard-Bildstil („Sportfoto-Optik") galten für ALLE Kanäle. Ergebnis: Energie-Kanäle bekamen Fußball-Bilder (Bälle auf dem Rasen, Solarmodule auf Stadiondächern). Alle drei Stellen sind jetzt markenneutral; die Marken-Symbolik kommt aus der neuen Kanal-Einstellung `image_symbol_motif` (Bild-Look-Sektion, leer = neutrale themenpassende Symbolgrafik). Der Bibliotheks-Marker heißt künftig neutral „Symbolbild:"; bestehende Einträge bleiben kompatibel. Bild-Wiederverwendung, Stil-Referenzen und Story-Bild-Teilen waren bereits je Familie isoliert — Marken können sich dort nicht gegenseitig kontaminieren, in keiner Richtung.
+- Der Personen-Namens-Detektor hielt kapitalisierte Bildideen-Phrasen („Mehrere Batteriespeicher", „Helles Vormittagslicht", „Natürliches Fensterlicht") für Personennamen, schrubbte sie aus dem Motiv und kippte damit öfter ins generische Fallback. Gängige Adjektive, Licht- und Perspektiv-Begriffe stehen jetzt auf der Stopwort-Liste; echte Personennamen werden weiter erkannt, Restrisiken fängt wie bisher das Vision-Gate.
+
 ## [0.19.0-multi-ha.1128] - 2026-07-19
 
 ### Fixed — Kanal-Filter wirkt auch auf die Wachstums-Sektion (v1128)

@@ -8574,7 +8574,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                     const motif = await describeAssetMotif(asset.path);
                     if (!motif) { failed++; continue; }
                     const generic = /^symbolbild/i.test(asset.motif.trim()) && !/^symbolbild/i.test(motif);
-                    await socialRepo.updateMediaAssetMotif(socialOwner, asset.id, generic ? `Symbolbild Fußball: ${motif}` : motif);
+                    // v1129 — markenneutraler Marker (vorher „Symbolbild Fußball:")
+                    await socialRepo.updateMediaAssetMotif(socialOwner, asset.id, generic ? `Symbolbild: ${motif}` : motif);
                     updated++;
                   } catch {
                     failed++; // Datei auf anderem Node/gelöscht — überspringen
