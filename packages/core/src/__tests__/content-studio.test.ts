@@ -2080,6 +2080,27 @@ describe('ContentStudio — Bild-Bibliothek (v1005)', () => {
     expect(media).toEqual([]); // Vision-Gate/Overlays unmöglich → kein Bild
   });
 
+  it('v1134: transienter Vision-Ausfall → EIN Prüf-Retry rettet das Bild; doppelter Ausfall bleibt fail-closed', async () => {
+    const { studio, channel, socialRepo, llm } = await makeMediaStudio([]);
+    (socialRepo as any).listMediaAssets = vi.fn(async () => []);
+    (studio as any).visionRetryDelayMs = 1;
+    (llm.complete as any).mockReset()
+      .mockResolvedValueOnce({ content: 'kaputt — kein JSON' }) // 1. Vision-Versuch fällt aus
+      .mockResolvedValueOnce({ content: '{"person": false, "logo": false, "text": false, "motiv": "Stadion bei Nacht mit Ball auf dem Rasen"}' });
+    const media = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '', bildidee: 'Stadion unter Flutlicht mit Ball',
+    });
+    expect(media.length).toBe(1); // Retry hat das bezahlte Bild gerettet
+    expect((llm.complete as any).mock.calls.length).toBe(2);
+
+    // beide Versuche ausgefallen → weiterhin fail-closed (kein Bild)
+    (llm.complete as any).mockReset().mockResolvedValue({ content: 'immer kaputt' });
+    const keins = await (studio as any).produceImage(channel, {
+      title: 'x', body: 'y', hashtags: [], warum: '', bildidee: 'Taktiktafel mit Kreide-Optik',
+    });
+    expect(keins).toEqual([]);
+  });
+
   it('v1043: cleanupMediaDir — HA-sicher: nur lokal existierende Dateien, Vorlagen/Waisen korrekt', async () => {
     const oldIso = new Date(Date.now() - 200 * 24 * 3_600_000).toISOString();
     const { studio, channel, socialRepo, dir, writeFile, join } = await makeMediaStudio([]);

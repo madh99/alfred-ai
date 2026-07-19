@@ -2850,9 +2850,18 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
 
         // v950 Schicht 3 — Vision-Output-Gate (nur symbolic; fail-closed bei Ausfall)
         if (policy === 'symbolic' && buffer) {
-          const verdict = await verifyImagePolicy(this.llm, buffer, attachMime);
+          let verdict = await verifyImagePolicy(this.llm, buffer, attachMime);
           if (verdict === null) {
-            this.logger.warn({ channel: channel.name }, 'v950 vision check unavailable — Bild verworfen (fail-closed)');
+            // v1134 — EIN zweiter PRÜF-Versuch vor fail-closed: transiente
+            // Vision-Ausfälle kosteten sonst das fertige (bezahlte) Bild
+            // (Realfall 19.07.: Bluesky-Post ging ohne Bild raus). Die
+            // Schutzlogik bleibt: fällt auch der Retry aus → kein Bild.
+            await new Promise(r => setTimeout(r, this.visionRetryDelayMs));
+            verdict = await verifyImagePolicy(this.llm, buffer, attachMime);
+            if (verdict !== null) this.logger.info({ channel: channel.name }, 'v1134 vision check im 2. Versuch erfolgreich');
+          }
+          if (verdict === null) {
+            this.logger.warn({ channel: channel.name }, 'v950 vision check unavailable (auch Retry) — Bild verworfen (fail-closed)');
             return [];
           }
           // v982 — auch gerenderter Text/Zahlen ist ein Verstoß (halluzinierte Daten)
@@ -3000,6 +3009,9 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
 
   /** v1130 — Volltext-Fetcher injizierbar (Tests mocken den Netz-Zugriff). */
   articleFetch: typeof fetchArticleText = fetchArticleText;
+
+  /** v1134 — Wartezeit vor dem zweiten Vision-Prüf-Versuch (Tests: 1 ms). */
+  visionRetryDelayMs = 5_000;
 
   /** v1038 — Embedding-Cache je Asset (Motive ändern sich selten; ein Studio-Lauf fragt viele Kandidaten). */
   private readonly motifVecCache = new Map<string, number[] | null>();

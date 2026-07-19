@@ -111,14 +111,14 @@ export class RestProvider extends SocialProvider {
         }
         return v;
       };
-      return this.withEvent(this.withTranslations(substitute(template) as Record<string, unknown>, item), item);
+      return this.withEvent(this.withTranslations(substitute(template) as Record<string, unknown>, item, channel), item);
     }
     return this.withEvent(this.withTranslations({
       title: item.title ?? null,
       body: bodyText,
       hashtags: item.hashtags,
       media: item.media.map(m => ({ type: m.type, url: m.pathOrUrl, caption: m.caption ?? null })),
-    }, item), item);
+    }, item, channel), item);
   }
 
   /**
@@ -150,13 +150,48 @@ export class RestProvider extends SocialProvider {
    * (performance.translations = { en: {title, body}, … }) wandern als
    * "translations" ins Payload — die Plattform legt sie als Locale-Versionen
    * ab. Ein explizit im body_template gesetzter translations-Schlüssel gewinnt.
+   * v1134 — translation_mode 'separate_post' (lokalkraft.at): Übersetzungen
+   * werden NICHT inline mitgesendet, sondern nach dem Publish als EIGENE
+   * Beiträge mit translationOf nachgeschoben (publishTranslationPosts).
    */
-  private withTranslations(payload: Record<string, unknown>, item: ContentItem): Record<string, unknown> {
+  private withTranslations(payload: Record<string, unknown>, item: ContentItem, channel: SocialChannel): Record<string, unknown> {
+    if (channel.config.translation_mode === 'separate_post') return payload;
     const translations = item.performance?.translations;
     if (translations && typeof translations === 'object' && !Array.isArray(translations) && payload.translations === undefined) {
       payload.translations = translations;
     }
     return payload;
+  }
+
+  /**
+   * v1134 — Zweisprachige Beiträge nach lokalkraft.at-Vertrag: je Zielsprache
+   * ein EIGENER Beitrag mit translationOf=<id des Hauptartikels>, gleicher
+   * Cover-Media-ID und locale. Best-effort: eine gescheiterte Übersetzung
+   * kippt NIE den bereits erfolgten Haupt-Publish (Artikel bleibt dann
+   * vorerst einsprachig — wie im v1006-Prinzip).
+   */
+  private async publishTranslationPosts(
+    item: ContentItem, channel: SocialChannel, secrets: Record<string, string>,
+    mainId: string, mediaId: string | undefined, attachField: string | undefined,
+  ): Promise<void> {
+    const translations = item.performance?.translations;
+    if (!translations || typeof translations !== 'object' || Array.isArray(translations)) return;
+    for (const [locale, t] of Object.entries(translations as Record<string, { title?: unknown; body?: unknown }>)) {
+      if (typeof t?.title !== 'string' || typeof t?.body !== 'string' || !t.body.trim()) continue;
+      try {
+        const tItem = { ...item, title: t.title, body: t.body } as ContentItem;
+        const tBody = this.buildBody(tItem, channel);
+        delete tBody.translations;
+        tBody.locale = locale;
+        tBody.translationOf = mainId;
+        if (mediaId && attachField) tBody[attachField] = mediaId;
+        await this.doFetch(this.endpoint(channel), {
+          method: 'POST',
+          headers: this.headers(channel, secrets),
+          body: JSON.stringify(tBody),
+        }, channel);
+      } catch { /* best-effort — Hauptartikel ist bereits live */ }
+    }
   }
 
   private async doFetch(url: string, init: RequestInit, channel: SocialChannel): Promise<Response> {
@@ -221,6 +256,10 @@ export class RestProvider extends SocialProvider {
 
     // v953 — Zwei-Schritt: Bild erst in die Medienbibliothek, dann als
     // featuredMediaId (o.ä.) am Beitrag referenzieren
+    // v1134 — mediaId/attachField werden für Übersetzungs-Beiträge (gleiches
+    // Cover, translationOf) wiederverwendet
+    let coverMediaId: string | undefined;
+    let coverAttachField: string | undefined;
     const mu = channel.config.media_upload;
     if (mu && typeof mu === 'object') {
       const image = item.media.find(m => m.type === 'image');
@@ -229,6 +268,8 @@ export class RestProvider extends SocialProvider {
         const attachField = typeof (mu as Record<string, unknown>).attach_field === 'string'
           ? (mu as Record<string, unknown>).attach_field as string : 'featuredMediaId';
         body[attachField] = mediaId;
+        coverMediaId = mediaId;
+        coverAttachField = attachField;
       }
       // v1076 — Video mitliefern: lokale mp4 über public_media veröffentlichen
       // (die Plattform nimmt mp4 seit dem Agent-Fix) und als strukturiertes
@@ -274,6 +315,11 @@ export class RestProvider extends SocialProvider {
     } else {
       const rawUrl = resolvePath(data, urlField) ?? resolvePath(data, `data.${urlField}`);
       url = typeof rawUrl === 'string' ? rawUrl : undefined;
+    }
+    // v1134 — Übersetzungen als eigene Beiträge (lokalkraft.at-Vertrag):
+    // NACH dem erfolgreichen Haupt-Publish, damit translationOf die echte ID trägt
+    if (channel.config.translation_mode === 'separate_post' && externalId) {
+      await this.publishTranslationPosts(item, channel, secrets, externalId, coverMediaId, coverAttachField);
     }
     return { externalId, url };
   }

@@ -221,6 +221,55 @@ describe('RestProvider (v933)', () => {
     expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string).translations).toBeUndefined();
   });
 
+  it('v1134: translation_mode separate_post — EN-Fassung als eigener Beitrag mit translationOf + gleichem Cover', async () => {
+    const { writeFileSync, unlinkSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const tmpFile = join(tmpdir(), `alfred-test-tr-${Date.now()}.png`);
+    writeFileSync(tmpFile, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    try {
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse({ data: { id: 'media-9' } }, 201))                       // Cover-Upload
+        .mockResolvedValueOnce(jsonResponse({ data: { id: 'news-de', url: 'https://lk.example/news/x' } }, 201)) // DE-Post
+        .mockResolvedValueOnce(jsonResponse({ data: { id: 'news-en' } }, 201));                      // EN-Post
+      const ch = makeChannel({
+        base_url: 'https://lk.example', publish_path: '/api/integrations/v1/lokalkraft/news',
+        id_field: 'data.id', url_field: 'data.url', translation_mode: 'separate_post',
+        media_upload: { path: '/api/integrations/v1/lokalkraft/media', attach_field: 'coverMediaId', id_field: 'data.id', alt_field: 'alt' },
+      }, 'rest');
+      const provider = new RestProvider();
+      const r = await provider.publish(makeItem({
+        media: [{ type: 'image', source: 'generated', pathOrUrl: tmpFile }],
+        performance: { translations: { en: { title: 'Derby win', body: 'What a match with plenty of drama.' } } },
+      }), ch, { API_TOKEN: 'tok' });
+      expect(r.externalId).toBe('news-de');
+      expect(fetchMock.mock.calls.length).toBe(3);
+      // Haupt-Post: KEIN inline-translations-Feld (separate_post), Cover dran
+      const haupt = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+      expect(haupt.translations).toBeUndefined();
+      expect(haupt.coverMediaId).toBe('media-9');
+      // Übersetzungs-Post: locale + translationOf + GLEICHES Cover, EN-Inhalte, gleicher Endpunkt
+      expect(fetchMock.mock.calls[2][0]).toBe('https://lk.example/api/integrations/v1/lokalkraft/news');
+      const en = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+      expect(en).toMatchObject({ locale: 'en', translationOf: 'news-de', coverMediaId: 'media-9', title: 'Derby win' });
+      expect(en.body).toContain('What a match');
+    } finally {
+      unlinkSync(tmpFile);
+    }
+  });
+
+  it('v1134: gescheiterter Übersetzungs-Post kippt den Haupt-Publish NICHT (best-effort)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ data: { id: 'news-de' } }, 201))
+      .mockRejectedValueOnce(new Error('EN-Post down'));
+    const ch = makeChannel({ base_url: 'https://lk.example', id_field: 'data.id', translation_mode: 'separate_post' }, 'rest');
+    const r = await new RestProvider().publish(makeItem({
+      performance: { translations: { en: { title: 'T', body: 'Long enough english body.' } } },
+    }), ch, { API_TOKEN: 'tok' });
+    expect(r.externalId).toBe('news-de');
+    expect(fetchMock.mock.calls.length).toBe(2);
+  });
+
   it('v1046: Termin-Items liefern event{beginn,ort,einlass,art} — Default UND Template-Modus', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ id: 'p-20' }));
     const provider = new RestProvider();

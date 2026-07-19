@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1134] - 2026-07-19
+
+### Added — Zweisprachige Beiträge als eigene Posts (translationOf) + Vision-Retry (v1134)
+- **REST-Provider, `translation_mode: 'separate_post'`** (Opt-in je Kanal): Übersetzungen (config.translate_to, seit v1006) werden nach dem lokalkraft.at-Vertrag als EIGENE Beiträge nachgeschoben — je Zielsprache ein POST mit `translationOf` auf den Hauptartikel, gleicher Cover-Media-ID und `locale`; die Plattform koppelt Slug und Sprachwechsel. Best-effort: eine gescheiterte Übersetzung kippt nie den bereits erfolgten Haupt-Publish. Ohne den Schalter bleibt das bisherige Inline-Verhalten (fussball.cc unverändert).
+- **Vision-Prüf-Retry**: Fiel die Bildnisrecht-Nachkontrolle (Vision-LLM) transient aus, wurde das fertige (bezahlte) Bild sofort fail-closed verworfen — ein Bluesky-Post ging so ohne Bild live. Jetzt gibt es EINEN zweiten Prüf-Versuch nach kurzer Wartezeit; fällt auch der aus, bleibt es beim sicheren Verwerfen.
+
 ## [0.19.0-multi-ha.1133] - 2026-07-19
 
 ### Added — Netzbetreiber-Recherche für das lokalkraft.at-Verzeichnis (v1133)
