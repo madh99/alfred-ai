@@ -42,6 +42,34 @@ export function hatPromoBoilerplate(text: string | undefined): boolean {
  * Wer holt den Pott?" als evergreen klassifiziert → Slot am 19.07., NACH
  * den Halbfinals am 14./15.). Als vorschau greift die 72h-Haltbarkeit.
  */
+/**
+ * v1131 — Absatz-Fallback für Website-Leads: Die GLIEDERUNG-Pflicht (v1046)
+ * ist nur eine Prompt-Regel, und das LLM ignorierte sie (Realfall 19.07.:
+ * DEA-Artikel mit ~1000 Zeichen ohne einen einzigen Umbruch). Lange Texte
+ * ohne jede Struktur werden deterministisch an Satzgrenzen in 2-4 möglichst
+ * gleich lange Absätze gegliedert; Texte mit vorhandenen Umbrüchen bleiben
+ * unangetastet.
+ */
+export function ensureAbsaetze(body: string): string {
+  const text = body.trim();
+  if (text.includes('\n') || text.length < 600) return body;
+  const saetze = text.match(/[^.!?…]+[.!?…]+["“”»)]*(?:\s+|$)/g);
+  if (!saetze || saetze.length < 3) return body;
+  const ziel = text.length > 1200 ? 4 : text.length > 850 ? 3 : 2;
+  const proAbsatz = Math.ceil(text.length / ziel);
+  const absaetze: string[] = [];
+  let aktuell = '';
+  for (const s of saetze) {
+    aktuell += s;
+    if (aktuell.length >= proAbsatz && absaetze.length < ziel - 1) {
+      absaetze.push(aktuell.trim());
+      aktuell = '';
+    }
+  }
+  if (aktuell.trim()) absaetze.push(aktuell.trim());
+  return absaetze.length >= 2 ? absaetze.join('\n\n') : body;
+}
+
 export function istKoEreignisBezug(text: string): boolean {
   return /halbfinal|viertelfinal|achtelfinal|endspiel|\bfinale\b|\bfinal[es]?\b|k\.?\s?-?o\.?-(runde|phase|spiel)/i.test(text);
 }
@@ -1281,13 +1309,20 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       const enrichLead = assigns.find(a => a.role === 'lead')?.cap?.channel;
       if (enrichLead?.config.stoff_enrich === true && !cand.terminBis && enrichFetches < 4
         && (cand.body.trim().length < 300 || hatPromoBoilerplate(cand.body))) {
-        const quelle = ContentStudio.bestStoffMatch(`${cand.title} ${cand.body}`, await getEnrichPool());
-        if (quelle) {
+        // v1131 — Embedding-Rückfall + Observability: der reine Token-Match
+        // verfehlte umformulierte Konferenz-Titel („Urbane PV-Potenziale" vs.
+        // Quell-Schlagzeile), und Fehlschläge waren im Log unsichtbar.
+        const quelle = await this.findStoffQuelle(`${cand.title} ${cand.body}`, await getEnrichPool());
+        if (!quelle) {
+          this.logger.info({ family, story: cand.title.slice(0, 60) }, 'v1131 stoff-anreicherung: keine passende Quelle im Themen-Pool — Kurzmeldung bleibt');
+        } else {
           enrichFetches++;
           const text = await this.articleFetch(quelle.url);
           if (text) {
             cand.body = `${cand.body.trim()}\n\nQUELLTEXT (${quelle.title}):\n${text}`.slice(0, 2300);
             this.logger.info({ family, story: cand.title.slice(0, 60), quelle: quelle.title.slice(0, 60), chars: text.length }, 'v1130 Konferenz-Stoff per Artikel-Volltext angereichert');
+          } else {
+            this.logger.info({ family, story: cand.title.slice(0, 60), quelle: quelle.url.slice(0, 90) }, 'v1131 stoff-anreicherung: Volltext-Abruf leer (Paywall/WAF/Timeout) — Kurzmeldung bleibt');
           }
         }
       }
@@ -1501,6 +1536,9 @@ Antworte NUR mit einem VALIDEN JSON-Array mit GENAU EINEM Objekt (Zitate typogra
       return null;
     }
     const idea = ideas[0];
+    // v1131 — Website-Leads: 1000-Zeichen-Textwände ohne Umbruch deterministisch
+    // gliedern (die Prompt-Pflicht aus v1046 allein reichte nicht)
+    if (role === 'lead' && channel.platform === 'rest') idea.body = ensureAbsaetze(idea.body);
     // v1043 — der STORY-Termin ist autoritativ, nicht das LLM-Echo: echot das
     // Modell terminBis nicht mit, bekäme das Bild sonst weder Termin-Vorlage
     // noch Termin-Karte, obwohl das Item (mergePerformance unten) ein Termin ist.
@@ -2920,6 +2958,37 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
       if (score > bestScore) { bestScore = score; best = p; }
     }
     return bestScore >= 0.5 ? best : undefined;
+  }
+
+  /**
+   * v1131 — Stoff-Quelle finden: erst der strenge Token-Match (bestStoffMatch),
+   * dann Embedding-Rückfall — die Konferenz formuliert Titel stark um
+   * („Wiener Stadthalle: Urbane PV-Potenziale" vs. Quell-Schlagzeile), dabei
+   * verfehlt der Token-Match. Token-Vorfilter (≥1 gemeinsames Token, Top 8)
+   * hält die Embedding-Kosten klein; Cosine ≥ 0.72 gegen den Quell-Titel.
+   */
+  private async findStoffQuelle(text: string, pool: Array<{ title: string; url: string }>): Promise<{ title: string; url: string } | undefined> {
+    const strict = ContentStudio.bestStoffMatch(text, pool);
+    if (strict) return strict;
+    if (!this.storyDeduper) return undefined;
+    const want = ContentStudio.motifTokens(text);
+    const kandidaten = pool
+      .map(p => ({ p, inter: [...ContentStudio.motifTokens(p.title)].filter(t => want.has(t)).length }))
+      .filter(x => x.inter >= 1)
+      .sort((a, b) => b.inter - a.inter)
+      .slice(0, 8);
+    if (kandidaten.length === 0) return undefined;
+    const wantVec = await this.storyDeduper.embedText(text).catch(() => undefined);
+    if (!wantVec) return undefined;
+    let best: { title: string; url: string } | undefined;
+    let bestCos = 0;
+    for (const k of kandidaten) {
+      const v = await this.storyDeduper.embedText(k.p.title).catch(() => undefined);
+      if (!v) continue;
+      const cos = cosineSimilarity(wantVec, v);
+      if (cos > bestCos) { bestCos = cos; best = k.p; }
+    }
+    return bestCos >= 0.72 ? best : undefined;
   }
 
   /** v1130 — Volltext-Fetcher injizierbar (Tests mocken den Netz-Zugriff). */

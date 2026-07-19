@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1131] - 2026-07-19
+
+### Fixed — Stoff-Anreicherung trifft umformulierte Titel + Absatz-Fallback (v1131)
+- Der Erstlauf von v1130 zeigte zwei Lücken: (1) Der Quell-Match arbeitete rein über Titel-Tokens und verfehlte, sobald die Redaktionskonferenz den Arbeitstitel stark umformuliert („Urbane PV-Potenziale im Großformat" vs. Quell-Schlagzeile) — jetzt greift ein Embedding-Rückfall (Token-Vorfilter, Cosine ≥ 0,72), und jeder Ausgang steht im Log (Quelle gefunden / kein Match / Abruf leer). (2) Website-Lead-Artikel kamen teils als Textwand ohne einen einzigen Umbruch aus dem Modell, obwohl der Prompt Absätze verlangt — lange Texte ohne Struktur werden jetzt deterministisch an Satzgrenzen in 2-4 Absätze gegliedert; Texte mit vorhandener Struktur bleiben unangetastet.
+
 ## [0.19.0-multi-ha.1130] - 2026-07-19
 
 ### Added — Stoff-Anreicherung für Lead-Artikel: Volltext statt Schlagzeile (v1130)

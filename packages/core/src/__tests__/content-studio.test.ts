@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ContentStudio, nextFreeSlots, parseIdeas, parseEventTime, extractJsonArray, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle, extractTrailingHashtags } from '../content-studio.js';
+import { ContentStudio, nextFreeSlots, parseIdeas, parseEventTime, extractJsonArray, stripMetaLines, decodeHtmlEntities, isNearDuplicateTitle, extractTrailingHashtags, ensureAbsaetze } from '../content-studio.js';
 import type { SocialRepository, SocialChannel, ContentItem, InterestsRepository, InsightsRepository } from '@alfred/storage';
 
 const OWNER = 'owner-1';
@@ -842,6 +842,30 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(leadPrompt).toContain('QUELLTEXT');
     expect(leadPrompt).toContain('paraphrasieren');
     expect(leadPrompt).not.toContain('KURZMELDUNG');
+  });
+
+  it('v1131: ensureAbsaetze — Textwand wird an Satzgrenzen gegliedert, strukturierte/kurze Texte bleiben', () => {
+    const satz = 'Die Energiegemeinschaft prüft derzeit alle eingereichten Anträge sehr genau und gründlich. ';
+    const wand = satz.repeat(11).trim(); // ~1000 Zeichen, keine Umbrüche
+    const res = ensureAbsaetze(wand);
+    expect(res.split('\n\n').length).toBe(3);
+    expect(res.replace(/\n\n/g, ' ')).toBe(wand); // nur Umbrüche eingefügt, kein Text verändert
+    const strukturiert = `${satz}\n\n${satz}`;
+    expect(ensureAbsaetze(strukturiert)).toBe(strukturiert);
+    expect(ensureAbsaetze('Kurzer Text ohne Bedarf.')).toBe('Kurzer Text ohne Bedarf.');
+  });
+
+  it('v1131: Embedding-Rückfall findet die Quelle trotz umformuliertem Konferenz-Titel', async () => {
+    const { studio } = makeFamilyStack();
+    (studio as any).storyDeduper = { embedText: vi.fn(async () => [0.6, 0.8]) }; // gleicher Vektor → Cosine 1.0
+    const pool = [{ title: 'Wiener Stadthalle bekommt Österreichs größte innerstädtische Photovoltaik-Anlage', url: 'https://q/1' }];
+    // Token-Match allein scheitert (nur 2 gemeinsame Tokens bei großem Set)
+    expect(ContentStudio.bestStoffMatch('Wiener Stadthalle: Urbane PV-Potenziale im Großformat — was das Projekt für die Stadt bedeutet', pool)).toBeUndefined();
+    const via = await (studio as any).findStoffQuelle('Wiener Stadthalle: Urbane PV-Potenziale im Großformat — was das Projekt für die Stadt bedeutet', pool);
+    expect(via?.url).toBe('https://q/1');
+    // ohne jedes gemeinsame Token bleibt es bei „keine Quelle" (kein blindes Embedding über den ganzen Pool)
+    const nix = await (studio as any).findStoffQuelle('Völlig anderes Thema ohne Bezug', [{ title: 'Fremder Artikel über Fische', url: 'https://q/2' }]);
+    expect(nix).toBeUndefined();
   });
 
   it('v1130: ohne stoff_enrich kein Fetch — dünner Stoff bleibt ehrliche Kurzmeldung (fussball.cc unverändert)', async () => {
