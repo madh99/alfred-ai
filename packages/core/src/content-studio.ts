@@ -1203,6 +1203,28 @@ Antworte NUR mit einem VALIDEN JSON-Array:
 
     let created = 0;
     const createdTitles: string[] = [];
+    // v1130 — Stoff-Anreicherung für Konferenz-Stories (Opt-in je Lead-Kanal,
+    // config.stoff_enrich): GoogleNews-Themen liefern nur Schlagzeilen (Ø 82
+    // Zeichen — Realfall LokalKraft 19.07.), das Substanz-Gate machte damit
+    // aus JEDEM Website-Artikel eine Kurzmeldung. Gleiche Mechanik wie im
+    // Eilmeldungs-Pfad (v1100), nur dass die Quelle rückwärts über
+    // Titel-Ähnlichkeit gefunden wird (die Konferenz kennt keine URLs).
+    let enrichFetches = 0;
+    let enrichPool: Array<{ title: string; url: string }> | null = null;
+    const getEnrichPool = async (): Promise<Array<{ title: string; url: string }>> => {
+      if (enrichPool) return enrichPool;
+      enrichPool = [];
+      if (this.interestsRepo) {
+        for (const tid of unionTopicIds) {
+          try {
+            for (const it of await this.interestsRepo.listItems(tid, { limit: 30 })) {
+              if (typeof it.url === 'string' && it.url.trim()) enrichPool.push({ title: it.title, url: it.url });
+            }
+          } catch { /* einzelnes Topic überspringen */ }
+        }
+      }
+      return enrichPool;
+    };
     for (const cand of accepted.sort((a, b) => b.importance - a.importance)) {
       // Lead zuerst rendern — Follower brauchen dessen Slot als Untergrenze
       const assigns = cand.kanaele
@@ -1252,6 +1274,23 @@ Antworte NUR mit einem VALIDEN JSON-Array:
         }
       }
 
+      // v1130 — dünnen Konferenz-Stoff mit dem Artikel-Volltext der passendsten
+      // Quelle anreichern (nur wenn der Lead-Kanal es per stoff_enrich will;
+      // max. 4 Fetches je Lauf; scheitert der Fetch, bleibt die ehrliche
+      // Kurzmeldung des Substanz-Gates — nie schlechter als bisher).
+      const enrichLead = assigns.find(a => a.role === 'lead')?.cap?.channel;
+      if (enrichLead?.config.stoff_enrich === true && !cand.terminBis && enrichFetches < 4
+        && (cand.body.trim().length < 300 || hatPromoBoilerplate(cand.body))) {
+        const quelle = ContentStudio.bestStoffMatch(`${cand.title} ${cand.body}`, await getEnrichPool());
+        if (quelle) {
+          enrichFetches++;
+          const text = await this.articleFetch(quelle.url);
+          if (text) {
+            cand.body = `${cand.body.trim()}\n\nQUELLTEXT (${quelle.title}):\n${text}`.slice(0, 2300);
+            this.logger.info({ family, story: cand.title.slice(0, 60), quelle: quelle.title.slice(0, 60), chars: text.length }, 'v1130 Konferenz-Stoff per Artikel-Volltext angereichert');
+          }
+        }
+      }
       const story = await this.socialRepo.createStory(this.ownerUserId, {
         family, kind: cand.kind, title: cand.title, summary: cand.body,
         importance: cand.importance, terminBis: cand.terminBis, source: 'studio',
@@ -1446,6 +1485,7 @@ ${roleRule}
 ${story.terminBis ? `${TERMIN_PERSPEKTIVE}\n` : ''}${channel.platform === 'instagram' && channel.config.image_carousel === true ? '- KARUSSELL (optional, nur bei Aufzählung/Analyse mit MEHREREN Punkten): 2-4 "slides" mit je einem Bild-Motiv (NUR Motive, kein Text) und "titel" (max. 8 Wörter, kommt deterministisch aufs Bild).\n' : ''}
 ${this.lessonsBlock(channel)}- Sprache: ${ContentStudio.contentLanguage(channel)}. Konkret, kein Clickbait; eigener TITEL (nicht der Arbeitstitel wortgleich).
 - 3-6 Hashtags NUR ins Feld "hashtags"; KEINE Meta-Zeilen im body.
+${(story.summary ?? '').includes('QUELLTEXT') ? '- Der QUELLTEXT-Block im Stoff ist Roh-Material der Original-Quelle: Fakten daraus nutzen, in EIGENEN Worten paraphrasieren und einordnen — NIE Sätze wörtlich übernehmen, KEINE Zitate erfinden; das Wort „QUELLTEXT" nie im Beitrag erwähnen.\n' : ''}
 ${await this.bildRegie(channel)}
 - NIE relative Zeitwörter („heute"/„morgen"). Datum/Uhrzeit NUR nennen, wenn sie im Stoff eindeutig als EREIGNIS-Zeit belegt sind — Publikations-/Update-Zeiten der Quelle sind KEINE Ereigniszeiten. Fehlt das Datum: ohne Datum formulieren, NIE eines erfinden oder ergänzen.
 - ZEITLICHE EINORDNUNG (v1100): HEUTE ist ${formatLocalDateTime(new Date().toISOString())}.${await this.terminKontext(channel)} Nutze das NUR, um falsche Phasen-Bezüge zu vermeiden (z. B. „kurz vor dem Start" / „in der Vorbereitung", wenn das Ereignis längst läuft oder vorbei ist) — Fakten für den Text stammen weiterhin AUSSCHLIESSLICH aus dem Stoff.
@@ -2858,6 +2898,32 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
   static isGenericMotif(motif: string): boolean {
     return /^symbolbild/i.test(motif.trim());
   }
+
+  /**
+   * v1130 — Story→Quellitem-Match über Titel-Token-Überlappung: die Konferenz
+   * schreibt eigene Arbeitstitel, behält aber die Entitäten der Quelle
+   * (Batteriespeicher, Netzentgelte …). Mindestens 2 gemeinsame Tokens und
+   * ≥50 % des kleineren Token-Sets — sonst kein Match (lieber Kurzmeldung
+   * als der Volltext eines FALSCHEN Artikels).
+   */
+  static bestStoffMatch(text: string, pool: Array<{ title: string; url: string }>): { title: string; url: string } | undefined {
+    const want = ContentStudio.motifTokens(text);
+    if (want.size === 0) return undefined;
+    let best: { title: string; url: string } | undefined;
+    let bestScore = 0;
+    for (const p of pool) {
+      const have = ContentStudio.motifTokens(p.title);
+      if (have.size === 0) continue;
+      const inter = [...have].filter(t => want.has(t)).length;
+      if (inter < 2) continue;
+      const score = inter / Math.min(want.size, have.size);
+      if (score > bestScore) { bestScore = score; best = p; }
+    }
+    return bestScore >= 0.5 ? best : undefined;
+  }
+
+  /** v1130 — Volltext-Fetcher injizierbar (Tests mocken den Netz-Zugriff). */
+  articleFetch: typeof fetchArticleText = fetchArticleText;
 
   /** v1038 — Embedding-Cache je Asset (Motive ändern sich selten; ein Studio-Lauf fragt viele Kandidaten). */
   private readonly motifVecCache = new Map<string, number[] | null>();

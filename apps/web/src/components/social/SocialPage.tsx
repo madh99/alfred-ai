@@ -173,6 +173,7 @@ export function SocialPage() {
     familyRole: 'auto' | 'lead' | 'follow'; familyOffset: string;
     quietFrom: number; quietTo: number; newsdeskThreshold: number; newsdeskMaxPerDay: number;
     trafficMode: 'voll' | 'teaser' | 'auto';
+    stoffEnrich: boolean; // v1130 — Volltext-Anreicherung für Lead-Artikel (Opt-in)
     // v1004 — Bild-Look je Kanal · v1069 — optionales Gemini-Bildmodell
     imageStyle: string; imageQuality: 'default' | 'low' | 'medium' | 'high';
     // v1129 — Marken-Symbolmotiv (Fallback-/Retry-Bilder; leer = neutraler Default)
@@ -207,7 +208,7 @@ export function SocialPage() {
     // v1012 — Serien-Formate (wöchentlich wiederkehrend)
     formate: Array<{ slot: string; name: string; anweisung: string; video: string }>;
   }>({ persona: '', slots: '', blacklist: '', maxPostsPerDay: 3, planningHorizonDays: 14, generateImages: false, imageBudgetTotal: 30, lessons: [], newLesson: '', modelTier: 'fast', redaktionslinie: '',
-    familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll',
+    familyRole: 'auto', familyOffset: '', quietFrom: 22, quietTo: 6, newsdeskThreshold: 0.85, newsdeskMaxPerDay: 3, trafficMode: 'voll', stoffEnrich: false,
     imageStyle: '', imageSymbolMotif: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageShareStory: false, imageBudgetFallback: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
@@ -620,6 +621,7 @@ export function SocialPage() {
       newsdeskThreshold: typeof c.config.newsdesk_threshold === 'number' ? c.config.newsdesk_threshold : 0.85,
       newsdeskMaxPerDay: typeof c.config.newsdesk_max_per_day === 'number' ? c.config.newsdesk_max_per_day : 3,
       trafficMode: c.config.traffic_mode === 'teaser' ? 'teaser' : c.config.traffic_mode === 'auto' ? 'auto' : 'voll',
+      stoffEnrich: c.config.stoff_enrich === true,
       // v1004 — Bild-Look
       imageStyle: typeof c.config.image_style === 'string' ? c.config.image_style : '',
       // v1129 — Marken-Symbolmotiv (Fallback-/Retry-Bilder + Symbolik-Zeile im Prompt)
@@ -707,6 +709,8 @@ export function SocialPage() {
           family_role: d.familyRole === 'auto' ? null : d.familyRole,
           family_offset_hours: d.familyOffset.trim() === '' ? null : Number(d.familyOffset),
           traffic_mode: d.trafficMode === 'voll' ? null : d.trafficMode,
+          // v1130 — Stoff-Anreicherung (Opt-in, aus = Schlüssel löschen)
+          stoff_enrich: d.stoffEnrich ? true : null,
           newsdesk_quiet: [d.quietFrom, d.quietTo],
           newsdesk_threshold: d.newsdeskThreshold,
           newsdesk_max_per_day: d.newsdeskMaxPerDay,
@@ -2159,6 +2163,12 @@ export function SocialPage() {
                           </select>
                         </div>
                       </div>
+                      {/* v1130 — Stoff-Anreicherung: Original-Artikel als Fakten-Rohstoff für Lead-Artikel */}
+                      <label className="text-[11px] text-gray-400 flex items-center gap-1.5 cursor-pointer"
+                        title="v1130 — Liefert die Quelle nur eine Schlagzeile (z. B. GoogleNews), holt das Studio für Lead-Artikel dieses Kanals den Volltext des Original-Artikels als Fakten-Rohstoff (paraphrasiert, nie kopiert) — statt einer 2-3-Satz-Kurzmeldung entsteht ein vollwertiger Artikel. Scheitert der Abruf (Paywall), bleibt die ehrliche Kurzmeldung. Aus = heutiges Verhalten.">
+                        <input type="checkbox" checked={settingsDraft.stoffEnrich} onChange={e => setSettingsDraft(d => ({ ...d, stoffEnrich: e.target.checked }))} />
+                        📰 Stoff-Anreicherung: Original-Artikel laden, wenn die Quelle nur Schlagzeilen liefert (Lead)
+                      </label>
                       <div className="text-[10px] text-gray-500">Eilmeldungs-Regeln (News-Desk liest sie vom Lead-Kanal):</div>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                         <div>

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1130] - 2026-07-19
+
+### Added — Stoff-Anreicherung für Lead-Artikel: Volltext statt Schlagzeile (v1130)
+- Website-Artikel der LokalKraft-Familien waren durchgehend 2-3-Satz-Kurzmeldungen: ihre Themen speisen sich aus GoogleNews-Feeds, die nur Schlagzeilen liefern (Ø 82 Zeichen), und das Substanz-Gate (v1100) verhindert zu Recht, dass aus einer Schlagzeile ein „ausführlicher" Artikel gesponnen wird. Die Lösung beschafft echten Stoff, statt das Gate aufzuweichen: Die Redaktionskonferenz reichert dünne Stories jetzt mit dem Volltext des Original-Artikels an (Quelle rückwärts über Titel-Ähnlichkeit gefunden, GoogleNews-Weiterleitung offline dekodiert, max. 4 Abrufe je Lauf, strikte Paraphrase-Regel im Schreib-Prompt). Gleiche Mechanik wie im Eilmeldungs-Pfad seit v1100 — neu ist die Anbindung an den Konferenz-Pfad.
+- **Opt-in je Lead-Kanal** (`stoff_enrich`, neuer Schalter in den Kanal-Einstellungen): Bestehende Familien (fussball.cc) verhalten sich unverändert, solange der Schalter aus ist. Scheitert ein Abruf (Paywall, WAF), bleibt die ehrliche Kurzmeldung — nie schlechter als bisher.
+
 ## [0.19.0-multi-ha.1129] - 2026-07-19
 
 ### Fixed — Markenneutrale Bild-Schutzschicht: Symbolmotiv je Kanal (v1129)

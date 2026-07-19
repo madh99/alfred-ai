@@ -809,6 +809,55 @@ describe('ContentStudio — Redaktionsleitung (v993)', () => {
     expect(tiefPrompt).not.toContain('KEINE Ausführlichkeit');
   });
 
+  it('v1130: bestStoffMatch — Titel-Token-Match mit Schwelle (kein Match = lieber Kurzmeldung)', () => {
+    const pool = [
+      { title: 'Batteriespeicher sollen Strompreisspitzen abfedern', url: 'https://p/1' },
+      { title: 'PV-Förderung überzeichnet: Tausende warten', url: 'https://p/2' },
+    ];
+    expect(ContentStudio.bestStoffMatch('Batteriespeicher gegen Preisspitzen — Strompreisspitzen abfedern', pool)?.url).toBe('https://p/1');
+    expect(ContentStudio.bestStoffMatch('Netzentgelte auf der Stromrechnung verstehen', pool)).toBeUndefined();
+  });
+
+  it('v1130: stoff_enrich am Lead — dünner Konferenz-Stoff wird per Artikel-Volltext angereichert', async () => {
+    const { studio, website, telegram, llm, stories } = makeFamilyStack();
+    (website.config as any).stoff_enrich = true;
+    const THIN = JSON.stringify([{
+      titel: 'Batteriespeicher gegen Preisspitzen', zusammenfassung: 'Batteriespeicher sollen Strompreisspitzen abfedern.',
+      art: 'news', wichtigkeit: 0.7,
+      kanaele: [{ kanal: 'fussball.cc', rolle: 'lead', versatz_h: 0 }, { kanal: 'FussballCC News', rolle: 'follow', versatz_h: 2 }],
+    }]);
+    (studio as any).interestsRepo.listItems = vi.fn(async () => [
+      { id: 'i-1', title: 'Batteriespeicher sollen Strompreisspitzen abfedern', url: 'https://news.google.com/rss/articles/xyz', summary: '' },
+    ]);
+    (studio as any).articleFetch = vi.fn(async () => 'Der Netzbetreiber erklärt die Details zur Speicherförderung und den Abendspitzen im Verteilnetz. '.repeat(8).trim());
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: THIN })
+      .mockResolvedValueOnce({ content: RENDER('Voller Artikel') })
+      .mockResolvedValueOnce({ content: RENDER('Follow') });
+    await studio.planFamily('project:proj-1', [website, telegram]);
+    expect((studio as any).articleFetch).toHaveBeenCalledWith('https://news.google.com/rss/articles/xyz');
+    expect(stories[0].summary).toContain('QUELLTEXT');
+    const leadPrompt = (llm.complete as any).mock.calls[1][0].messages[0].content as string;
+    // Angereichert: Volltext + Paraphrase-Regel im Prompt, KEINE Kurzmeldungs-Anweisung mehr
+    expect(leadPrompt).toContain('QUELLTEXT');
+    expect(leadPrompt).toContain('paraphrasieren');
+    expect(leadPrompt).not.toContain('KURZMELDUNG');
+  });
+
+  it('v1130: ohne stoff_enrich kein Fetch — dünner Stoff bleibt ehrliche Kurzmeldung (fussball.cc unverändert)', async () => {
+    const { studio, website, telegram, llm } = makeFamilyStack();
+    (studio as any).articleFetch = vi.fn(async () => 'Text der nie geholt werden dürfte '.repeat(20));
+    (llm.complete as any)
+      .mockResolvedValueOnce({ content: CONF })
+      .mockResolvedValueOnce({ content: RENDER('Kurz-Lead') })
+      .mockResolvedValueOnce({ content: RENDER('Follow') });
+    await studio.planFamily('project:proj-1', [website, telegram]);
+    expect((studio as any).articleFetch).not.toHaveBeenCalled();
+    const leadPrompt = (llm.complete as any).mock.calls[1][0].messages[0].content as string;
+    expect(leadPrompt).toContain('KURZMELDUNG');
+    expect(leadPrompt).not.toContain('QUELLTEXT');
+  });
+
   it('planFamily: Termin-Story bekommt auf JEDEM Kanal einen Slot vor dem Anpfiff (Vorrang vor Kapazität)', async () => {
     const { studio, website, telegram, llm, transitions } = makeFamilyStack();
     const kickoff = new Date(2099, 6, 4, 19, 0).toISOString();
