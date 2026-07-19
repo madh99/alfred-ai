@@ -69,6 +69,7 @@ export { GoalsSkill } from './built-in/goals.js';
 export { SandboxSkill } from './built-in/sandbox.js';
 export type { SandboxSkillCallbacks } from './built-in/sandbox.js';
 export { InfraDocsSkill } from './built-in/infra-docs.js';
+export { NetzbetreiberSkill } from './built-in/netzbetreiber.js';
 export { GoeChargerSkill } from './built-in/goe-charger.js';
 export { RoutingSkill } from './built-in/routing.js';
 export { EnergyPriceSkill } from './built-in/energy-price.js';

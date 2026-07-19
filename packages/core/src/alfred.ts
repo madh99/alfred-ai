@@ -2949,6 +2949,21 @@ export class Alfred {
         this.logger.info('MikroTik skill registered');
       }
 
+      // 4o5b. v1133 — Netzbetreiber-Recherche (lokalkraft.at-Verzeichnis):
+      // aktiv nur mit ALFRED_GRID_KEY in der Umgebung (Vorschlags-API-Schlüssel).
+      if (process.env.ALFRED_GRID_KEY) {
+        const { NetzbetreiberSkill } = await import('@alfred/skills');
+        const nbSkill = new NetzbetreiberSkill();
+        nbSkill.logger = this.logger;
+        nbSkill.setLlmCallback(async (prompt: string, tier?: string) => {
+          if (!this.llmProvider) throw new Error('LLM nicht verfügbar');
+          const res = await this.llmProvider.complete({ messages: [{ role: 'user', content: prompt }], tier: (tier as any) ?? 'fast', maxTokens: 2000 });
+          return res.content;
+        });
+        skillRegistry.register(nbSkill);
+        this.logger.info('v1133 Netzbetreiber-Recherche-Skill registriert (Grid-Key vorhanden)');
+      }
+
       // 4o6. CMDB + ITSM + InfraDocs (auto-enabled when any infra skill is configured)
       if (this.config.cmdb?.enabled !== false && (this.config.proxmox || this.config.unifi || this.config.docker || this.config.cloudflare || this.config.nginxProxyManager || this.config.pfsense || this.config.homeassistant || this.config.mikrotik)) {
         const cmdbRepo = new CmdbRepository(adapter);
@@ -6685,6 +6700,22 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (await this.claimDailySlot(`topic-digest:${today}`)) {
               try { await this.topicDigestBuilder?.run(); }
               catch (err) { this.logger.warn({ err }, 'v930 topic digest failed'); }
+            }
+          }
+          // v1133 — quartalsweise Netzbetreiber-Recherche (2. Tag des Quartals,
+          // 04:xx — kontingent-arme Zeit; HA-sicher über den Quartals-Slot).
+          if (process.env.ALFRED_GRID_KEY && now.getHours() === 4 && now.getDate() === 2 && [0, 3, 6, 9].includes(now.getMonth())) {
+            const quartal = `${now.getFullYear()}-Q${Math.floor(now.getMonth() / 3) + 1}`;
+            if (await this.claimDailySlot(`grid-recherche:${quartal}`)) {
+              const nb = this.skillRegistry?.get('netzbetreiber');
+              if (nb) {
+                try {
+                  const r = await nb.execute({ action: 'check_operators', limit: 500 }, { userId: this.ownerMasterUserId ?? '', masterUserId: this.ownerMasterUserId ?? '', platform: 'api', chatId: 'grid-recherche', conversationId: 'grid-recherche' } as never);
+                  this.logger.info({ ok: r.success, display: r.display?.slice(0, 200) }, 'v1133 quartals-recherche netzbetreiber');
+                } catch (err) {
+                  this.logger.warn({ err }, 'v1133 quartals-recherche failed');
+                }
+              }
             }
           }
         }, 10 * 60_000); // 10-Min-Raster, handelt nur in den Zielfenstern

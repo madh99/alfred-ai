@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1133] - 2026-07-19
+
+### Added — Netzbetreiber-Recherche für das lokalkraft.at-Verzeichnis (v1133)
+- Neuer Skill `netzbetreiber`: recherchiert für österreichische Strom-Netzbetreiber die „weichen" Verzeichnis-Daten (Smart-Meter-Portal, EEG-/Nahbereichs-Check, Kundenservice-Kontakt, Datenfreigabe-Hinweis) auf den offiziellen Betreiber-Websites und reicht Abweichungen als Vorschläge über die Grid-API ein — freigegeben wird von Menschen im Lokalkraft-Admin, nichts geht direkt live.
+- Harte Garantien liegen im Code, nicht im Prompt: Jeder Vorschlag braucht als Beleg eine Seite, die der Lauf tatsächlich gelesen hat; URL-Felder müssen `https://` sein und zur Domain des Betreibers (oder zu E-Control/ebutilities) gehören; unveränderte Werte und unsichere Funde entfallen — „nichts gefunden" ist ein gültiges Ergebnis.
+- Aktionen `check_operators` (gezielt per Slug, mit `dry_run`-Vorschau) und `status`; quartalsweiser Lauf über den Gesamtbestand (2. Tag des Quartals, HA-gesichert). Aktiv nur, wenn der API-Schlüssel (`ALFRED_GRID_KEY`) in der Umgebung liegt.
+
 ## [0.19.0-multi-ha.1132] - 2026-07-19
 
 ### Fixed — Stoff-Anreicherung: Abruf-Deckel 4→8 + lauter Übersprung (v1132)
