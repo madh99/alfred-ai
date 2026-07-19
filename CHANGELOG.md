@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1132] - 2026-07-19
+
+### Fixed — Stoff-Anreicherung: Abruf-Deckel 4→8 + lauter Übersprung (v1132)
+- Die Redaktionskonferenz erzeugt regelmäßig mehr als 4 dünne Stories je Lauf — ab der fünften wurde die Volltext-Anreicherung STUMM übersprungen und der Artikel fiel unbemerkt auf die Kurzmeldung zurück. Der Abruf-Deckel liegt jetzt bei 8 je Lauf, und ein erreichter Deckel steht als eigene Zeile im Log.
+
 ## [0.19.0-multi-ha.1131] - 2026-07-19
 
 ### Fixed — Stoff-Anreicherung trifft umformulierte Titel + Absatz-Fallback (v1131)

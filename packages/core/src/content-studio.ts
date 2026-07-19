@@ -1307,8 +1307,15 @@ Antworte NUR mit einem VALIDEN JSON-Array:
       // max. 4 Fetches je Lauf; scheitert der Fetch, bleibt die ehrliche
       // Kurzmeldung des Substanz-Gates — nie schlechter als bisher).
       const enrichLead = assigns.find(a => a.role === 'lead')?.cap?.channel;
-      if (enrichLead?.config.stoff_enrich === true && !cand.terminBis && enrichFetches < 4
-        && (cand.body.trim().length < 300 || hatPromoBoilerplate(cand.body))) {
+      // v1132 — Deckel 4→8 + lauter Übersprung: die Konferenz erzeugt gern
+      // 6+ Stories, die fünfte fiel STUMM auf die Kurzmeldung zurück
+      // (Realfall 19.07.: „Solarparks fledermausfreundlich" 223 Zeichen).
+      const enrichWanted = enrichLead?.config.stoff_enrich === true && !cand.terminBis
+        && (cand.body.trim().length < 300 || hatPromoBoilerplate(cand.body));
+      if (enrichWanted && enrichFetches >= 8) {
+        this.logger.info({ family, story: cand.title.slice(0, 60), enrichFetches }, 'v1132 stoff-anreicherung: Abruf-Deckel erreicht — Kurzmeldung bleibt');
+      }
+      if (enrichWanted && enrichFetches < 8) {
         // v1131 — Embedding-Rückfall + Observability: der reine Token-Match
         // verfehlte umformulierte Konferenz-Titel („Urbane PV-Potenziale" vs.
         // Quell-Schlagzeile), und Fehlschläge waren im Log unsichtbar.
