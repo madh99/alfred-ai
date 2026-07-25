@@ -2907,6 +2907,10 @@ export function SocialPage() {
         <div className="space-y-5">
           <h2 className="text-sm font-semibold text-gray-200 mb-2">📊 Analytics</h2>
           {analytics.length === 0 && <div className="text-xs text-gray-600">Noch keine Metriken — der Analytics-Loop sammelt nach den ersten Veröffentlichungen.</div>}
+          {/* v1136 — ehrlicher Leer-Hinweis, wenn nur die AUSWAHL keine Daten hat (vorher: stumm leer) */}
+          {analytics.length > 0 && analyticsGrouped.families.length === 0 && (
+            <div className="text-xs text-gray-600">Für diese Auswahl gibt es noch keine Engagement-Daten — der Analytics-Loop sammelt täglich, sobald der Kanal veröffentlicht und seine Plattform Metriken liefert.</div>
+          )}
           {analyticsGrouped.families.length > 1 && (
             <div className="border border-[#1f1f1f] rounded-lg p-4 bg-[#101010]">
               <div className="text-sm font-semibold text-gray-100 mb-2">Σ Gesamt (alle Familien)</div>

@@ -481,6 +481,34 @@ describe('BlueskyProvider (v1013)', () => {
     expect(Buffer.from(text, 'utf8').slice(byteStart, byteEnd).toString('utf8')).toBe('https://fussball.cc/news/x');
   });
 
+  it('v1136: fetchMetrics — Engagement via öffentlicher AppView-API (DID→at-URI, likes/comments/shares)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ did: 'did:plc:abc123' })) // getProfile
+      .mockResolvedValueOnce(jsonResponse({ posts: [
+        { uri: 'at://did:plc:abc123/app.bsky.feed.post/rkey1', likeCount: 7, replyCount: 2, repostCount: 3, quoteCount: 1 },
+        { uri: 'at://did:plc:abc123/app.bsky.feed.post/rkey2', likeCount: 0, replyCount: 0, repostCount: 0, quoteCount: 0 },
+      ] }));
+    const provider = new BlueskyProvider();
+    expect(provider.capabilities().supportsMetrics).toBe(true);
+    const metrics = await provider.fetchMetrics(
+      [{ id: 'item-1', externalId: 'rkey1' }, { id: 'item-2', externalId: 'rkey2' }], channel, {},
+    );
+    expect(metrics).toContainEqual({ itemId: 'item-1', kind: 'likes', value: 7 });
+    expect(metrics).toContainEqual({ itemId: 'item-1', kind: 'comments', value: 2 });
+    expect(metrics).toContainEqual({ itemId: 'item-1', kind: 'shares', value: 4 }); // reposts + quotes
+    expect(metrics).toContainEqual({ itemId: 'item-2', kind: 'likes', value: 0 });
+    // getPosts-URL trägt die at-URIs; KEIN Auth-Header nötig (öffentliche API)
+    const url = String(fetchMock.mock.calls[1][0]);
+    expect(url).toContain('app.bsky.feed.getPosts');
+    expect(url).toContain(encodeURIComponent('at://did:plc:abc123/app.bsky.feed.post/rkey1'));
+  });
+
+  it('v1136: fetchMetrics still bei API-Fehlern (Profil 404 → keine Metriken, kein Wurf)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'nope' }, 404));
+    const metrics = await new BlueskyProvider().fetchMetrics([{ id: 'i', externalId: 'r' }], channel, {});
+    expect(metrics).toEqual([]);
+  });
+
   it('v1022: Kürzungs-Ellipse „…" gehört nicht zur Facet-URL (Realfall 06.07.)', () => {
     const facets = BlueskyProvider.linkFacets('👉 Ganzer Artikel: https://fussball.cc/news/azteca…');
     expect(facets.length).toBe(1);

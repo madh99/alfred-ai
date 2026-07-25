@@ -38,7 +38,8 @@ export class BlueskyProvider extends SocialProvider {
 
   capabilities(): ProviderCapabilities {
     // v1076 — Video über den Bluesky-Video-Service (uploadVideo + embed.video)
-    return { text: true, image: true, video: true, maxTextLength: 300, supportsDelete: true, supportsMetrics: false, supportsAudience: true };
+    // v1136 — supportsMetrics: Engagement kommt gratis aus der öffentlichen AppView-API
+    return { text: true, image: true, video: true, maxTextLength: 300, supportsDelete: true, supportsMetrics: true, supportsAudience: true };
   }
 
   /**
@@ -95,6 +96,45 @@ export class BlueskyProvider extends SocialProvider {
       }
       return job.blob ?? null;
     } catch { return null; }
+  }
+
+  /**
+   * v1136 — Engagement über die ÖFFENTLICHE Bluesky-API (gratis, kein Login):
+   * likeCount/replyCount/repostCount+quoteCount je Post. externalId ist der
+   * rkey (siehe publish) — die at-URI wird aus der DID des Kanal-Handles
+   * gebaut. Best-effort: Fehler liefern einfach keine Metriken.
+   */
+  override async fetchMetrics(
+    items: Array<{ id: string; externalId: string }>,
+    channel: SocialChannel,
+    _secrets: Record<string, string>,
+  ): Promise<Array<{ itemId: string; kind: string; value: number }>> {
+    const out: Array<{ itemId: string; kind: string; value: number }> = [];
+    if (items.length === 0) return out;
+    try {
+      const prof = await fetch(`https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(this.handle(channel))}`);
+      if (!prof.ok) return out;
+      const did = (await prof.json().catch(() => ({})) as { did?: string }).did;
+      if (!did) return out;
+      const byUri = new Map(items.map(i => [`at://${did}/app.bsky.feed.post/${i.externalId}`, i.id]));
+      const uris = [...byUri.keys()];
+      for (let i = 0; i < uris.length; i += 25) { // getPosts nimmt max. 25 URIs
+        const batch = uris.slice(i, i + 25);
+        const res = await fetch(`https://public.api.bsky.app/xrpc/app.bsky.feed.getPosts?${batch.map(u => `uris=${encodeURIComponent(u)}`).join('&')}`);
+        if (!res.ok) continue;
+        const data = await res.json().catch(() => ({})) as { posts?: Array<{ uri?: string; likeCount?: number; replyCount?: number; repostCount?: number; quoteCount?: number }> };
+        for (const p of data.posts ?? []) {
+          const itemId = p.uri ? byUri.get(p.uri) : undefined;
+          if (!itemId) continue;
+          if (typeof p.likeCount === 'number') out.push({ itemId, kind: 'likes', value: p.likeCount });
+          if (typeof p.replyCount === 'number') out.push({ itemId, kind: 'comments', value: p.replyCount });
+          if (p.repostCount !== undefined || p.quoteCount !== undefined) {
+            out.push({ itemId, kind: 'shares', value: (p.repostCount ?? 0) + (p.quoteCount ?? 0) });
+          }
+        }
+      }
+    } catch { /* best-effort — Analytics dürfen den Betrieb nie stören */ }
+    return out;
   }
 
   /** v1019 — Kanalwachstum: Follower via öffentlichem AppView (kein Login nötig). */

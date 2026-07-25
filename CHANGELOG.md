@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1136] - 2026-07-25
+
+### Added — Bluesky-Engagement-Metriken (v1136)
+- Der Bluesky-Provider liefert jetzt Likes, Antworten und Shares (Reposts + Zitate) je veröffentlichtem Post über die öffentliche AppView-API — gratis und ohne Login. Vorher stand `supportsMetrics: false`: die Analytics-Sektion blieb für Bluesky-lastige Familien (LokalKraft) komplett leer, und auch FussballCC-Bluesky hatte nur UTM-Klicks statt echtem Engagement. Der tägliche Analytics-Collector nimmt die Kanäle automatisch mit auf.
+- UI: Zeigt die Analytics-Auswahl keine Daten (z. B. Kanal-Filter auf einen frischen Kanal), erscheint ein ehrlicher Hinweis statt einer stumm leeren Sektion.
+
 ## [0.19.0-multi-ha.1135] - 2026-07-25
 
 ### Fixed — Video-Realismus: Wetter- und Personen-Drift der KI-Videos (v1135)
