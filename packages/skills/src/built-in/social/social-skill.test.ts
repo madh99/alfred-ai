@@ -778,7 +778,9 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(generateClip).toHaveBeenCalledTimes(1); // Routine-Beitrag → 1 Hook-Szene
     const req = (generateClip as any).mock.calls[0][0];
     expect(req.imagePath).toBeUndefined();
-    expect(req.prompt).toContain('rain-soaked floodlit stadium');
+    // v1135 — der Beitrag nennt kein Wetter: "rain-soaked" wird deterministisch neutralisiert
+    expect(req.prompt).toContain('gleaming floodlit stadium');
+    expect(req.prompt).not.toMatch(/rain/i);
     // Eigener Topf: Metric gen_scene_clip (nicht gen_ai_clip)
     const metricCall = ((setup.skill as any).repo.upsertMetric as any).mock.calls.find((c: any[]) => c[1]?.kind === 'gen_scene_clip');
     expect(metricCall).toBeDefined();
@@ -816,6 +818,25 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(SocialSkill.sanitizeVideoPrompt('american football players in helmets'))
       .toBe('american football players in helmets');
     expect(SocialSkill.sanitizeVideoPrompt('no sport words here')).toBe('no sport words here');
+  });
+
+  it('v1135: sanitizeVideoPrompt — Regen/Nässe fliegen raus, wenn der Stoff kein Wetter nennt', async () => {
+    const { SocialSkill } = await import('./social-skill.js');
+    const clean = SocialSkill.sanitizeVideoPrompt('players on a rain-soaked pitch as heavy rain falls, puddles reflecting the stormy sky, a downpour over the wet grass');
+    expect(clean).not.toMatch(/rain|downpour|puddle|stormy|wet /i);
+    // Wetter-Story darf Wetter zeigen (allowWetter)
+    const wetter = 'heavy rain falls over the pitch during the storm';
+    expect(SocialSkill.sanitizeVideoPrompt(wetter, { allowWetter: true })).toBe(wetter);
+    // Regen-freie Prompts bleiben byte-identisch
+    const trocken = 'sweeping camera dolly through a floodlit soccer stadium, flags waving';
+    expect(SocialSkill.sanitizeVideoPrompt(trocken)).toBe(trocken);
+  });
+
+  it('v1135: stoffErwaehntWetter — erkennt echte Wetter-Storys (DE/EN)', async () => {
+    const { SocialSkill } = await import('./social-skill.js');
+    expect(SocialSkill.stoffErwaehntWetter('Regenschlacht in München: Spiel zweimal unterbrochen')).toBe(true);
+    expect(SocialSkill.stoffErwaehntWetter('Heavy rain delays kickoff')).toBe(true);
+    expect(SocialSkill.stoffErwaehntWetter('Transfer perfekt: Stürmer wechselt nach Wien')).toBe(false);
   });
 
   it('v1118: Szenen-Board — Prompt trägt die soccer-Regel, LLM-Ausrutscher wird deterministisch bereinigt', async () => {

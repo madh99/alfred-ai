@@ -277,6 +277,28 @@ export class SocialSkill extends Skill {
     this.studioFn = fn;
   }
 
+  /** v1135 — Insight-Kanal für Budget-Alarme (vom Kern injiziert). */
+  private insightFn?: (c: { title: string; body: string; dedupeKey: string }) => Promise<void>;
+
+  setInsightFn(fn: (c: { title: string; body: string; dedupeKey: string }) => Promise<void>): void {
+    this.insightFn = fn;
+  }
+
+  /**
+   * v1135 — Budget-Ehrlichkeit: erschöpfte Monats-Budgets standen nur als
+   * Log-Zeile im pino-File — der Kanal verhungerte still (Realfall: YouTube
+   * produzierte ab 15.07. wochenlang keine Videos, Budget 10/10). EIN Insight
+   * je Kanal+Topf+Monat (dedupeKey), best-effort.
+   */
+  private budgetAlarm(channel: SocialChannel, topf: string, used: number, budget: number, configKey: string): void {
+    const monat = new Date().toISOString().slice(0, 7);
+    void this.insightFn?.({
+      title: `⛽ ${topf}-Budget erschöpft: ${channel.name}`,
+      body: `Das Monats-Budget für ${topf} auf **${channel.name}** ist aufgebraucht (${used}/${budget}). Bis Monatsende entsteht dort kein neuer ${topf}-Inhalt mehr — Budget anpassen (config.${configKey}) oder bewusst so lassen.`,
+      dedupeKey: `social-budget:${channel.id}:${configKey}:${monat}`,
+    }).catch?.(() => { /* non-critical */ });
+  }
+
   /** v959 — Umplanen bestehender scheduled-Items in die aktuellen Slots. */
   private replanFn?: (channel: SocialChannel) => Promise<number>;
 
@@ -1362,10 +1384,36 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
    * Prompt-Regel, weil LLM-Output nie garantiert ist. Explizites
    * "american football" bleibt unangetastet (falls je gewollt).
    */
-  static sanitizeVideoPrompt(p: string): string {
-    return p
+  static sanitizeVideoPrompt(p: string, opts?: { allowWetter?: boolean }): string {
+    let out = p
       .replace(/\b(?<!american[ -])footballer(s?)\b/gi, (m: string, s: string) => `${m[0] === 'F' ? 'S' : 's'}occer player${s ? 's' : ''}`)
       .replace(/\b(?<!american[ -])football\b/gi, m => (m[0] === 'F' ? 'Soccer' : 'soccer'));
+    // v1135 — Regen-Drift: Video-Modelle griffen bei „dramatisch" reflexhaft zu
+    // Regen/Wet-Look (Realfall 25.07.: praktisch jedes Reel mit Regen/Wasser).
+    // Wetter-Vokabeln werden neutralisiert, WENN der Beitrag selbst kein
+    // Wetter erwähnt (allowWetter=true lässt echte Wetter-Storys unangetastet).
+    if (opts?.allowWetter !== true) {
+      out = out
+        .replace(/\brain[- ]?(soaked|slicked|drenched|swept)\b/gi, 'gleaming')
+        .replace(/\b(pouring|heavy|light|driving|torrential)\s+rain\b/gi, 'clear evening air')
+        .replace(/\brain(fall|drops|storm)?\b/gi, 'clear evening air')
+        .replace(/\b(downpour|drizzle)\b/gi, 'clear evening air')
+        .replace(/\bthunderstorms?\b/gi, 'dramatic night sky')
+        .replace(/\bstormy\b/gi, 'dramatic')
+        .replace(/\bwet\s+(pitch|grass|field|ground|turf)\b/gi, 'floodlit $1')
+        .replace(/\bpuddles?\b/gi, 'long shadows')
+        .replace(/\b(rain-)?soaked\b/gi, 'focused');
+    }
+    return out;
+  }
+
+  /**
+   * v1135 — erwähnt der Beitrag selbst Wetter, dürfen die Prompts es zeigen.
+   * Wortanfangs-Stämme statt voller Wörter: deutsche Komposita/Flexionen
+   * („Regenschlacht", „verregnet", „Nässe") wären sonst unsichtbar.
+   */
+  static stoffErwaehntWetter(text: string): boolean {
+    return /\b(regen|regn|verregnet|gewitter|unwetter|sturm|schnee|hagel|nass|näss|rain|storm|snow)/i.test(text);
   }
 
   /**
@@ -1407,14 +1455,17 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
     const wanted = SocialSkill.sceneCountFor(opts.format, opts.wichtig);
     if (used >= sceneBudget) {
       notes.push(`Szenen-Monatsbudget erreicht (${used}/${sceneBudget}) — Standbild-Slides.`);
+      this.budgetAlarm(opts.budgetChannel, 'Szenen-Video', used, sceneBudget, 'scene_video_budget_per_month');
       return { clips: [], notes, active: true };
     }
     // Szenen-Board: konkrete, bewegungsreiche Video-Prompts entlang des Beitrags
     let scenes: string[] = [];
     try {
       const prompt = `Erstelle ein SZENEN-BOARD für ein ${opts.format === '16:9' ? 'YouTube' : 'Hochkant-Reel'}-Video zu diesem Beitrag: GENAU ${wanted} filmische Szenen, die die Geschichte des Beitrags erzählen (Szene 1 = packender Hook, danach dem Verlauf des Sprechertexts folgend).
-Je Szene EIN englischer Text-zu-Video-Prompt (1-2 Sätze): konkrete HANDLUNG plus KAMERABEWEGUNG, dynamisch und lebendig (Kamerafahrten, Wetter, Flutlicht, wehende Fahnen, Menschenmengen aus der Distanz) — KEINE erkennbaren realen Personen oder Spieler, KEINE Logos/Vereinsembleme/Trikots mit Erkennungswert, KEINE Texteinblendungen, KEINE statischen Standbild-Momente.
+Je Szene EIN englischer Text-zu-Video-Prompt (1-2 Sätze): konkrete HANDLUNG plus KAMERABEWEGUNG, dynamisch und lebendig (Kamerafahrten, Lichtstimmung, Flutlicht, wehende Fahnen, Menschenmengen aus der Distanz) — KEINE erkennbaren realen Personen oder Spieler, KEINE Logos/Vereinsembleme/Trikots mit Erkennungswert, KEINE Texteinblendungen, KEINE statischen Standbild-Momente.
 SPORT-BEGRIFFE: Fußball heißt im Prompt IMMER "soccer" ("soccer players", "soccer stadium", "soccer ball") — das Wort "football" ist VERBOTEN, US-Videomodelle zeigen sonst American-Football-Spieler mit Helmen.
+DARSTELLUNG PASSEND ZUM BEITRAG (v1135, zwingend — Video-Modelle besetzen Unbestimmtes beliebig): Spieler bleiben anonym, aber ihre BESCHREIBUNG folgt der Story: Geschlecht gemäß Beitrag (Herrenfußball → "male players", Frauenfußball → "female players"), Erscheinungsbild plausibel zur berichteten Mannschaft/Liga (z. B. europäische Mannschaft → "European-looking players"), generische TRIKOTFARBEN der Mannschaft ohne Embleme (z. B. "in plain red and white kit"). Geht es NICHT um Spieler, keine erfinden.
+WETTER: neutral bzw. exakt wie im Beitrag — Regen, Nässe, Sturm oder nasser Rasen sind VERBOTEN, wenn der Beitrag sie nicht ausdrücklich erwähnt (Dramatik über Licht und Kamera erzeugen, nicht über Wetter).
 ${opts.linie ? `REDAKTIONSLINIE (Einordnung): ${opts.linie}\n` : ''}BEITRAG: ${opts.title} — ${opts.body.slice(0, 600)}${opts.script ? `\nSPRECHERTEXT: ${opts.script.slice(0, 600)}` : ''}
 
 Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
@@ -1425,8 +1476,9 @@ Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
       if (start >= 0 && end > start) {
         const arr = JSON.parse(raw.slice(start, end + 1)) as unknown[];
         // v1118 — deterministisches Sicherheitsnetz zusätzlich zur Prompt-Regel
+        const allowWetter = SocialSkill.stoffErwaehntWetter(`${opts.title} ${opts.body}`);
         scenes = arr.filter((s): s is string => typeof s === 'string' && s.trim().length > 20)
-          .map(s => SocialSkill.sanitizeVideoPrompt(s.trim().slice(0, 500)));
+          .map(s => SocialSkill.sanitizeVideoPrompt(s.trim().slice(0, 500), { allowWetter }));
       }
     } catch { /* kein Board → kein Szenen-Video */ }
     if (scenes.length === 0) {
@@ -1501,7 +1553,7 @@ Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
     const prompt = `Erstelle aus diesem Artikel ein Instagram-Reel-Paket (${lang}):
 1. "script": Sprechertext für 20-30 Sekunden (60-90 Wörter, gesprochene Sprache, packender Hook im ersten Satz, ${ctaRegel}). Der Text wird von einer TTS-Stimme gesprochen, die ihre Betonung aus der ZEICHENSETZUNG ableitet — schreibe wie ein Sportmoderator: kurze, punchige Sätze statt Schachtelsätze, eine rhetorische Frage oder ein Ausruf wo es passt, bewusste Pausen mit Gedankenstrichen — Zahlen und Namen an betonter Stelle. KEINE Regieanweisungen, keine Klammern, nur sprechbarer Text.
 2. "caption": Reel-Caption (2-3 Sätze, keine Hashtags; nur GELEGENTLICH mit Frage an die Community — nicht standardmäßig).
-3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken — DYNAMISCH und deutlich sichtbar (z.B. "sweeping cinematic camera dolly through the stadium, flags waving in the wind, dramatic floodlight flares" — keine subtile Mini-Bewegung; KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos). Fußball heißt darin IMMER "soccer", NIE "football" (US-Videomodelle zeigen sonst American Football).
+3. "motion": kurze ENGLISCHE Kamera-/Bewegungsbeschreibung, um das Artikelbild zum Leben zu erwecken — DYNAMISCH und deutlich sichtbar (z.B. "sweeping cinematic camera dolly through the stadium, flags waving in the wind, dramatic floodlight flares" — keine subtile Mini-Bewegung; KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos). Fußball heißt darin IMMER "soccer", NIE "football" (US-Videomodelle zeigen sonst American Football). Erscheinen Spieler: anonym, aber passend zum Artikel (Geschlecht gemäß Story, Erscheinungsbild plausibel zur Mannschaft, generische Trikotfarben ohne Embleme). WETTER nur, wenn der Artikel es ausdrücklich nennt — sonst kein Regen/Nässe (Dramatik über Licht, nicht über Wetter).
 FAKTEN nur aus dem Artikel, nichts erfinden.
 ${await this.redaktionslinieFor(userId, ig).then(l => l ? `REDAKTIONSLINIE (verbindlich, vom Herausgeber — Script UND Caption daran ausrichten, ohne Fakten zu erfinden): ${l}\n` : '')}HEUTE ist ${SocialSkill.heuteZeile()} — vermeide falsche Phasen-Bezüge (z. B. „vor dem Start" oder „in der Vorbereitung", wenn das Ereignis laut Artikel längst läuft oder vorbei ist).
 KEINE Spekulation über Folgen, Pläne oder offene Fragen, die nicht wörtlich im Artikel stehen — keine rhetorischen „Was bedeutet das für …?"-Fragen zu Dingen, die der Artikel nicht beantwortet. Ist der Artikel dünn, bleibt das Skript kurz und faktisch statt aufgefüllt.
@@ -1523,8 +1575,8 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
     const script = pack.script.trim().slice(0, 1_000);
     const caption = typeof pack.caption === 'string' && pack.caption.trim() ? pack.caption.trim().slice(0, 1_500) : script.slice(0, 300);
     const motion = typeof pack.motion === 'string' && pack.motion.trim()
-      // v1118 — "football"→"soccer" (US-Videomodelle zeigen sonst American Football)
-      ? SocialSkill.sanitizeVideoPrompt(pack.motion.trim().slice(0, 400))
+      // v1118 — "football"→"soccer"; v1135 — Regen nur bei echtem Wetter-Stoff
+      ? SocialSkill.sanitizeVideoPrompt(pack.motion.trim().slice(0, 400), { allowWetter: SocialSkill.stoffErwaehntWetter(`${leadItem.title ?? ''} ${leadItem.body}`) })
       // v1107 — kräftige Default-Bewegung statt „subtle" (zitterndes Standbild)
       : 'dynamic cinematic camera dolly through a floodlit stadium, flags waving, drifting haze, dramatic light shifts, no text overlays, no recognizable people';
     // Rendern (ffmpeg + TTS + Untertitel) — der teure Teil
@@ -2641,6 +2693,7 @@ Antworte NUR mit VALIDEM JSON: {"titel": "…", "text": "…", "hashtags": ["…
     const clipsUsed = (await this.repo.listMetrics(clipChannel.id, { kind: 'gen_ai_clip', sinceDate: monthStart }))
       .reduce((sum, m) => sum + m.value, 0);
     if (clipsUsed >= clipBudget) {
+      this.budgetAlarm(clipChannel, 'KI-Clip', clipsUsed, clipBudget, 'ai_clip_budget_per_month');
       return { success: false, error: `KI-Clip-Monatsbudget erreicht (${clipsUsed}/${clipBudget} auf ${clipChannel.name}) — ai_clip_budget_per_month anpassen.` };
     }
 
@@ -2652,7 +2705,12 @@ Antworte NUR mit VALIDEM JSON: {"titel": "…", "text": "…", "hashtags": ["…
           messages: [{ role: 'user', content: `Beschreibe in EINEM englischen Satz eine subtile, filmische Kamera-/Szenen-Bewegung, um dieses Standbild zum Leben zu erwecken (z.B. "slow cinematic camera push-in, flags waving, natural light shifting"). KEINE Texteinblendungen, KEINE realen/erkennbaren Personen, KEINE Logos.\nBILD: ${asset.motif}\nAntworte NUR mit dem Satz.` }],
           maxTokens: 120, tier: 'fast',
         });
-        motion = (r.content ?? '').trim().replace(/^["']|["']$/g, '').slice(0, 400);
+        // v1135 — auch LLM-vorgeschlagene Bewegung durchs Netz (soccer/Wetter);
+        // eine vom USER gegebene regie bleibt bewusst unangetastet
+        motion = SocialSkill.sanitizeVideoPrompt(
+          (r.content ?? '').trim().replace(/^["']|["']$/g, '').slice(0, 400),
+          { allowWetter: SocialSkill.stoffErwaehntWetter(asset.motif) },
+        );
       } catch { /* Fallback unten */ }
     }
     if (!motion) motion = 'slow cinematic camera push-in, subtle natural motion, no text overlays, no recognizable people';
@@ -2891,6 +2949,7 @@ Antworte NUR mit JSON: {"title": "…", "body": "…", "hashtags": ["…"]}`;
     const used = (await this.repo.listMetrics(channel.id, { kind: 'gen_video', sinceDate: monthStart }))
       .reduce((sum, m) => sum + m.value, 0);
     if (used >= budget) {
+      this.budgetAlarm(channel, 'Video', used, budget, 'video_budget_per_month');
       return { success: false, error: `Video-Monats-Budget erreicht (${used}/${budget} auf ${channel.name}) — config.video_budget_per_month anpassen.` };
     }
 

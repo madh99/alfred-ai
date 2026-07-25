@@ -6789,6 +6789,14 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         socialSkill.setStudio(channel => studio.planFamilyFor(channel));
         // v959 — Umplanung bestehender geplanter Beiträge in die aktuellen Slots
         socialSkill.setReplanner(channel => studio.replanChannel(channel));
+        // v1135 — Budget-Ehrlichkeit: erschöpfte Video-/Szenen-/Clip-Budgets
+        // landen als Insight beim User statt nur im pino-Log
+        socialSkill.setInsightFn(async (c) => {
+          await this.insightsRepo?.upsertCandidate(ownerUid, {
+            category: 'social', title: c.title, body: c.body, confidence: 0.85,
+            sourceData: { router: true, urgency: 'high' }, dedupeKey: c.dedupeKey,
+          });
+        });
         // v1024 — Ad-hoc-Story auf User-Zuruf (News-Desk-Familienpfad)
         socialSkill.setStoryPlanner((titel, stoff, family) => studio.planAdhocStory(titel, stoff, family));
         // v1026 — Overlays unveröffentlichter Beiträge aus Basis-Assets neu anwenden

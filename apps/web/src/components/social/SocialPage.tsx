@@ -192,7 +192,7 @@ export function SocialPage() {
     // v1007 — IG-Auto-Story beim Lead-Publish · v1008 — IG-Karussells · v1016 — Auto-Reels
     autoStory: boolean; imageCarousel: boolean; autoReel: boolean;
     // v1060 — Reels & Video: Wochen-Cap, CTA, Musik-Bett (v1059), KI-Clips (Stufe 3)
-    reelMaxPerWeek: number; reelMaxPerDay: number; reelCtaText: string; reelMusicOn: boolean; reelMusicVolume: string;
+    reelMaxPerWeek: number; reelMaxPerDay: number; videoBudget: number; reelCtaText: string; reelMusicOn: boolean; reelMusicVolume: string;
     reelAiClips: 0 | 1 | 2; reelAiProvider: 'sora' | 'runway' | 'veo'; reelAiModel: string; aiClipBudget: number;
     sceneVideoBudget: number; // v1108 — Text-zu-Video-Szenen (0 = aus)
     // v1066 — Dauer-Branding im Video (TV-Bug): aus|text|logo|both + Ecke
@@ -212,7 +212,7 @@ export function SocialPage() {
     imageStyle: '', imageSymbolMotif: '', imageQuality: 'default', imageModel: '', imageArtDirector: true, imageStyleReference: false, imageShareStory: false, imageBudgetFallback: false, imageBranding: '', watermarkOn: true, titleOverlayOn: false,
     watermarkCorner: 'bottom-right', logoSvg: '', logoCorner: 'bottom-right', logoColor: '', terminImage: '',
     language: 'de', translateTo: [], autoStory: false, imageCarousel: false, autoReel: false,
-    reelMaxPerWeek: 2, reelMaxPerDay: 3, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
+    reelMaxPerWeek: 2, reelMaxPerDay: 3, videoBudget: 10, reelCtaText: '', reelMusicOn: true, reelMusicVolume: '',
     reelAiClips: 0, reelAiProvider: 'sora', reelAiModel: '', aiClipBudget: 8, sceneVideoBudget: 0,
     reelWatermark: 'aus', reelWatermarkCorner: 'bottom-right',
     reelWatermarkLayout: 'stack', reelWatermarkLogoCorner: 'top-left', reelVoiceId: '', attachReelVideo: false,
@@ -657,6 +657,7 @@ export function SocialPage() {
       // v1060 — Reels & Video
       reelMaxPerWeek: typeof c.config.reel_max_per_week === 'number' ? c.config.reel_max_per_week : 2,
       reelMaxPerDay: typeof c.config.reel_max_per_day === 'number' ? c.config.reel_max_per_day : 3,
+      videoBudget: typeof c.config.video_budget_per_month === 'number' ? c.config.video_budget_per_month : 10,
       reelCtaText: typeof c.config.reel_cta_text === 'string' ? c.config.reel_cta_text : '',
       reelMusicOn: c.config.reel_music !== false,
       reelMusicVolume: typeof c.config.reel_music_volume === 'number' ? String(c.config.reel_music_volume) : '',
@@ -745,6 +746,7 @@ export function SocialPage() {
           auto_reel: d.autoReel ? true : null,
           // v1060 — Reels & Video (Defaults → Schlüssel löschen)
           reel_max_per_week: d.reelMaxPerWeek === 2 ? null : d.reelMaxPerWeek,
+          video_budget_per_month: d.videoBudget === 10 ? null : d.videoBudget,
           reel_max_per_day: d.reelMaxPerDay === 3 ? null : d.reelMaxPerDay,
           reel_cta_text: d.reelCtaText.trim() || null,
           reel_music: d.reelMusicOn ? null : false,
@@ -1677,6 +1679,12 @@ export function SocialPage() {
                           <label className="text-[11px] text-gray-500">End-Card-Text (CTA)</label>
                           <input value={settingsDraft.reelCtaText} onChange={e => setSettingsDraft(d => ({ ...d, reelCtaText: e.target.value }))}
                             placeholder="automatisch: „Ganzer Artikel auf <Marke>“"
+                            className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500" title="v1135 — Monats-Budget für gerenderte Videos (render_video/Auto-Video, Slideshow+Voiceover). Realfall 15.–25.07.: Budget 10/10 war still erschöpft, YouTube produzierte wochenlang nichts. Bei Erschöpfung kommt jetzt zusätzlich ein Insight. Default 10.">Video-Budget/Monat</label>
+                          <input type="number" min={0} max={200} value={settingsDraft.videoBudget}
+                            onChange={e => setSettingsDraft(d => ({ ...d, videoBudget: Math.max(0, Number(e.target.value) || 0) }))}
                             className="w-full bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mt-1" />
                         </div>
                       </div>

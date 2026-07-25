@@ -2767,6 +2767,16 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
 
       // v1042 — erst ab hier kostet es Geld: Budget-Gate für die Generierung
       if (used >= budget) {
+        // v1135 — Budget-Ehrlichkeit: erschöpftes Bild-Budget sichtbar machen
+        // (EIN Insight je Kanal+Monat; vorher nur eine pino-Zeile)
+        void this.insightsRepo?.upsertCandidate(this.ownerUserId, {
+          category: 'social',
+          title: `⛽ Bild-Budget erschöpft: ${channel.name}`,
+          body: `Das Monats-Budget für generierte Bilder auf **${channel.name}** ist aufgebraucht (${used}/${budget}). Bis Monatsende ${channel.config.image_budget_fallback === true ? 'werden Bibliotheksbilder wiederverwendet (Fallback aktiv)' : 'erscheinen Beiträge OHNE Bild'} — Budget anpassen (image_budget_per_month) oder bewusst so lassen.`,
+          confidence: 0.85,
+          sourceData: { router: true, urgency: 'high' },
+          dedupeKey: `social-budget:${channel.id}:image_budget_per_month:${new Date().toISOString().slice(0, 7)}`,
+        }).catch(() => { /* non-critical */ });
         // v1122 — Opt-in Bibliotheks-Fallback (image_budget_fallback): lieber
         // ein passables Bibliotheksbild als gar keines (Realfall 15.07.: ab
         // Monatsmitte erschienen fussball.cc-Artikel nackt). Lax-Suche:

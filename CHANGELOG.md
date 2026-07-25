@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1135] - 2026-07-25
+
+### Fixed — Video-Realismus: Wetter- und Personen-Drift der KI-Videos (v1135)
+- Reels und Szenen-Videos zeigten fast durchgehend Regen/Wasser und Spieler, die nicht zur berichteten Mannschaft passten (falsches Erscheinungsbild, teils Frauen bei Herren-Fußball-Storys). Zwei Ursachen: Die Szenen-Board-Beispiele nannten wörtlich „Wetter" als Dramatik-Mittel, und die (korrekten) Bildnisrecht-Regeln ließen die Spieler-Beschreibung völlig offen — Video-Modelle besetzen Unbestimmtes beliebig. Jetzt: Darstellung folgt der Story (Geschlecht gemäß Beitrag, Erscheinungsbild plausibel zur Mannschaft, generische Trikotfarben ohne Embleme — weiterhin keine realen Personen), Wetter nur wenn der Beitrag es nennt, plus deterministisches Netz in `sanitizeVideoPrompt` (Regen-/Nässe-Vokabeln werden neutralisiert, echte Wetter-Storys bleiben unangetastet).
+
+### Added — Budget-Ehrlichkeit + Claude Opus 5 (v1135)
+- Erschöpfte Monats-Budgets (Bild, Video, Szenen-Video, KI-Clip) erzeugen jetzt EINEN sichtbaren Insight je Kanal und Monat statt nur einer Log-Zeile — vorher verhungerte ein Kanal still (Realfall: YouTube produzierte ab 15.07. wochenlang keine Videos, weil das Video-Budget 10/10 voll war). Das Video-Monatsbudget ist zusätzlich als Feld in den Kanal-Einstellungen sichtbar.
+- `claude-opus-5` (Juli 2026) ist in der Modell-Registry eingetragen (1M Kontext, 128k Output, Preise wie Opus 4.8) und damit als Tier-Modell nutzbar; die Gen-5-Parameter-Behandlung griff bereits.
+
 ## [0.19.0-multi-ha.1134] - 2026-07-19
 
 ### Added — Zweisprachige Beiträge als eigene Posts (translationOf) + Vision-Retry (v1134)

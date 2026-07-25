@@ -46,6 +46,13 @@ describe('v920 Claude Sonnet 5 — Context Window', () => {
   it('sonnet-4-6 keeps its 64k output (no collision)', () => {
     expect(lookupContextWindow('claude-sonnet-4-6')!.maxOutputTokens).toBe(64_000);
   });
+
+  it('v1135: claude-opus-5 — 1M Kontext, 128k Output (per Live-Models-API verifiziert)', () => {
+    const cw = lookupContextWindow('claude-opus-5');
+    expect(cw).toBeDefined();
+    expect(cw!.maxInputTokens).toBe(1_000_000);
+    expect(cw!.maxOutputTokens).toBe(128_000);
+  });
 });
 
 describe('v920 Sonnet 5 — temperature-Ablehnung (Regex-Grenze)', () => {
@@ -58,6 +65,7 @@ describe('v920 Sonnet 5 — temperature-Ablehnung (Regex-Grenze)', () => {
     expect(rejectsTemperature('claude-sonnet-5')).toBe(true);
     expect(rejectsTemperature('claude-fable-5')).toBe(true);
     expect(rejectsTemperature('claude-mythos-5')).toBe(true);
+    expect(rejectsTemperature('claude-opus-5')).toBe(true); // v1135
   });
 
   it('Claude 3.5 (3-5-sonnet/3-5-haiku) behalten temperature — KEIN Fehltreffer', () => {
