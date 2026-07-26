@@ -117,6 +117,15 @@ export class PostgresAsyncAdapter implements AsyncDbAdapter {
       max: 20,
       idleTimeoutMillis: 30000,
     } as any);
+    // v1138 — node-postgres-Falle: Fehler auf MÜSSIGEN Pool-Verbindungen
+    // (Netz-Schluckauf, DB-Neustart) emittieren auf dem Pool — ohne Handler
+    // werden sie zur Unhandled Rejection und rissen den Prozess (Realfall
+    // 26.07.: „Connection terminated unexpectedly" → 2,5 h Ausfall, weil der
+    // Fatal-Pfad mit Exit 0 endete). Loggen reicht: pg-pool verwirft den
+    // kaputten Client selbst und verbindet beim nächsten Query neu.
+    this.pool.on('error', (err: Error) => {
+      console.error(`[Database] pg-pool idle client error (weiter im Betrieb): ${err.message}`);
+    });
     // Test connection
     const client = await this.pool.connect();
     client.release();

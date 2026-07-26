@@ -26,17 +26,22 @@ export async function startCommand(): Promise<void> {
   const alfred = new Alfred(config);
 
   // Set up graceful shutdown
+  // v1138 — Exit-Code trägt die WAHRHEIT: Signale (bewusster Stop) → 0,
+  // Fatals (uncaughtException/unhandledRejection) → 1. Vorher endete auch
+  // ein Crash mit exit(0) — systemd (Restart=on-failure) hielt das für
+  // Erfolg und startete nicht neu (Realfall 26.07.: pg-Pool-Abriss → 2,5 h
+  // Ausfall, bis es jemand bemerkte).
   let isShuttingDown = false;
-  const shutdown = async (signal: string) => {
+  const shutdown = async (signal: string, exitCode = 0) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
-    logger.info({ signal }, 'Received shutdown signal');
+    logger.info({ signal, exitCode }, 'Received shutdown signal');
 
     try {
       await alfred.stop();
       logger.info('Graceful shutdown complete');
-      process.exit(0);
+      process.exit(exitCode);
     } catch (err) {
       logger.error({ error: err }, 'Error during shutdown');
       process.exit(1);
@@ -52,12 +57,12 @@ export async function startCommand(): Promise<void> {
     // Error properties are non-enumerable. Cost us a real diagnosis when the
     // pino-roll@2 midnight crash hit alfred on 2026-05-20T00:00 UTC.
     logger.fatal({ err }, 'Uncaught exception');
-    shutdown('uncaughtException');
+    shutdown('uncaughtException', 1);
   });
 
   process.on('unhandledRejection', (reason) => {
     logger.fatal({ err: reason }, 'Unhandled rejection');
-    shutdown('unhandledRejection');
+    shutdown('unhandledRejection', 1);
   });
 
   try {

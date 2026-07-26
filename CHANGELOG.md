@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1138] - 2026-07-26
+
+### Fixed — Crash-Resilienz: ehrliche Exit-Codes + pg-Pool-Fehlerbehandlung (v1138)
+- Ein abgerissener Postgres-Kontakt (Netz-Schluckauf) wurde zur Unhandled Rejection, der Fatal-Pfad beendete den Prozess aber mit Exit 0 — systemd (`Restart=on-failure`) hielt den Crash für einen Erfolg und startete nicht neu: 2,5 Stunden Ausfall, bis es jemand bemerkte. Jetzt: Fatals (`uncaughtException`/`unhandledRejection`) beenden mit Exit 1, nur bewusste Signale (SIGTERM/SIGINT) mit Exit 0.
+- Der pg-Pool bekommt einen `error`-Handler: Fehler auf müßigen Verbindungen (die node-postgres-Falle) werden geloggt statt zum Prozess-Fatal — pg-pool verwirft den kaputten Client selbst und verbindet beim nächsten Query neu.
+- Flankierend (Betrieb, ohne Release wirksam): systemd-Drop-in `Restart=always` + `RestartSec=10` für die Unit.
+
 ## [0.19.0-multi-ha.1137] - 2026-07-26
 
 ### Added — Meta-Call-Audit + Fehlertext bei Leitplanken-Blocks (v1137)
