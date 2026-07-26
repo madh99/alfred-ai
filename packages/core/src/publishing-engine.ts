@@ -461,7 +461,10 @@ export class PublishingEngine {
       const owner = this.opts.ownerUserId;
       try {
         await this.repo.transition(owner, item.id, 'publishing');
-        await this.repo.transition(owner, item.id, 'failed');
+        // v1137 — Fehlertext ANS ITEM: der Block-Grund stand nur in
+        // performance.blockReason — in DB/UI wirkte das Item grundlos failed
+        // (Realfall 26.07.: 3 YT-Items mit error NULL kosteten Diagnosezeit).
+        await this.repo.transition(owner, item.id, 'failed', { error: (r.error ?? 'Leitplanke greift dauerhaft').slice(0, 500) });
         await this.repo.mergePerformance(owner, item.id, { retried: true, blockReason: (r.error ?? '').slice(0, 300) });
       } catch (err) {
         this.logger.warn({ itemId: item.id, err: (err as Error).message }, 'v983 failed-transition nach permanentem Block fehlgeschlagen');

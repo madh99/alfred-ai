@@ -121,6 +121,8 @@ describe('YouTubeProvider (v936)', () => {
 
 describe('MetaProvider (v936)', () => {
   it('Instagram: Container-Flow (media → Status-Poll → media_publish) mit Permalink', async () => {
+    const { metaCallAudit } = await import('./meta-provider.js');
+    metaCallAudit(); // v1137 — Zähler leeren (Test-Isolation)
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))          // /media
       .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' }))    // v997 Status-Poll
@@ -135,6 +137,13 @@ describe('MetaProvider (v936)', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/178/media');
     expect(String(fetchMock.mock.calls[1][0])).toContain('status_code');
     expect(String(fetchMock.mock.calls[2][0])).toContain('/178/media_publish');
+    // v1137 — Meta-Call-Audit: der Flow zählt 2 posts + 1 container_poll + 1 permalink
+    const audit = metaCallAudit();
+    expect(audit.post).toBe(2);
+    expect(audit.container_poll).toBe(1);
+    expect(audit.permalink).toBe(1);
+    // Schnappschuss hat zurückgesetzt
+    expect(metaCallAudit()).toEqual({});
   });
 
   it('v1057: IG-Video (Reel) — REELS-Container mit 300s-Transcoding-Poll (60×5s statt 60s-Default)', async () => {

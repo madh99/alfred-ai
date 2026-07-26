@@ -5,6 +5,7 @@ import type { LLMProvider } from '@alfred/llm';
 import type { SocialProvider } from './social-provider.js';
 import { appendUtm, composePostText, effectiveSlots, extractTrailingHashtags, isInternalUrl, languageName, mergeHashtags } from './social-provider.js';
 import { tlsFetch } from './tls-fetch.js';
+import { metaCallAudit } from './meta-provider.js';
 import { createHash } from 'node:crypto';
 import { isNearDuplicateTitle } from './dedup.js';
 import { applyImageOverlays, bakeReelEndCard, buildVideoWatermark, cropToRatio, loadSharp, parseOverlayCorner, resolveImageBranding } from './image-overlay.js';
@@ -2028,6 +2029,7 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
         }
       } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
     }
+    await this.flushMetaCallAudit(channels); // v1137 — Zähler-Delta persistieren
     return collected;
   }
 
@@ -2088,6 +2090,30 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
       } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
     }
     return collected;
+  }
+
+  /**
+   * v1137 — Meta-Call-Audit persistieren: Zähler-Delta aus dem Provider auf
+   * den Instagram-Kanal der App legen (kinds meta_calls_<kategorie>, je Tag
+   * additiv). Antwort auf „Application request limit reached": endlich
+   * SEHEN, welche Kategorie (post/container_poll/comments/…) die Quote frisst.
+   * Best-effort; wird nach Kommentar- und Analytics-Läufen aufgerufen.
+   */
+  private async flushMetaCallAudit(channels: SocialChannel[]): Promise<void> {
+    try {
+      const audit = metaCallAudit();
+      const kategorien = Object.entries(audit).filter(([, n]) => n > 0);
+      if (kategorien.length === 0) return;
+      const anker = channels.find(c => c.platform === 'instagram') ?? channels.find(c => c.platform === 'facebook');
+      if (!anker) return;
+      const today = new Date().toISOString().slice(0, 10);
+      for (const [kategorie, n] of kategorien) {
+        const kind = `meta_calls_${kategorie}`;
+        const bisher = (await this.repo.listMetrics(anker.id, { kind, sinceDate: today }))
+          .find(m => m.date === today && !m.itemId)?.value ?? 0;
+        await this.repo.upsertMetric(anker.id, { date: today, kind, value: bisher + n });
+      }
+    } catch { /* Audit darf den Betrieb nie stören */ }
   }
 
   /** v1011 — Ablage generierter Bilder (für den Health-Check-Schreibtest). */
@@ -2291,6 +2317,7 @@ Antworte NUR mit einem VALIDEN JSON-Array aus Strings: ["Regel 1", "Regel 2"]`;
         }
       } catch { /* Kanal-Fehler überspringen — nächster Kanal */ }
     }
+    await this.flushMetaCallAudit(channels); // v1137 — Zähler-Delta persistieren (2h-Takt)
     return { collected, byChannel };
   }
 

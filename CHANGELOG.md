@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1137] - 2026-07-26
+
+### Added — Meta-Call-Audit + Fehlertext bei Leitplanken-Blocks (v1137)
+- **Meta-Call-Audit**: Das App-Tageskontingent war wiederholt erschöpft („Application request limit reached", 10 gefailte Instagram-Posts in einer Woche) — aber welcher Verbraucher die Quote frisst, war nur zu schätzen. Jeder Graph-API-Aufruf wird jetzt je Kategorie gezählt (post, container_poll, comments, metrics, audience, permalink, lookup, delete) und täglich als Metrik am Instagram-Kanal abgelegt (`meta_calls_*`) — die Quota-Diagnose steht damit schwarz auf weiß in den Kanal-Metriken.
+- **Leitplanken-Blocks tragen ihren Grund jetzt am Item**: Dauerhafte Publish-Blocks (Duplikat, Termin vorbei, Video fehlt) setzten das Item auf failed, schrieben den Grund aber nur in ein Nebenfeld — in der Übersicht wirkte das Item grundlos gescheitert. Der Fehlertext steht jetzt direkt am Item.
+- UI-Hygiene: Budget- und Audit-Metriken (`gen_*`, `meta_calls_*`) erscheinen nicht mehr als „Engagement" in der Analytics-Ansicht (vorher rutschten `gen_video`/`gen_scene_clip` durch).
+
 ## [0.19.0-multi-ha.1136] - 2026-07-25
 
 ### Added — Bluesky-Engagement-Metriken (v1136)

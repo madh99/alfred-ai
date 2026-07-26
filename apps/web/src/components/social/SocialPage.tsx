@@ -991,8 +991,9 @@ export function SocialPage() {
       const byKind = new Map<string, Map<string, number>>();
       const byItem = new Map<string, number>();
       for (const e of entries) {
-        // gen_image ist Budget, followers ein Level-Wert — beide haben eigene Ansichten
-        if (e.kind === 'gen_image' || e.kind === 'followers') continue;
+        // Budget-/Level-/Audit-Kinds sind kein Engagement (v1137: alle gen_* +
+        // meta_calls_* — vorher rutschten gen_video/gen_scene_clip als „Engagement" durch)
+        if (e.kind.startsWith('gen_') || e.kind.startsWith('meta_calls_') || e.kind === 'followers') continue;
         const days = byKind.get(e.kind) ?? new Map<string, number>();
         days.set(e.date, (days.get(e.date) ?? 0) + e.value);
         byKind.set(e.kind, days);

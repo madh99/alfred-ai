@@ -8,6 +8,26 @@ const IG_GRAPH = 'https://graph.instagram.com/v21.0';
 const THREADS = 'https://graph.threads.net/v1.0';
 
 /**
+ * v1137 — Meta-Call-Audit: Das App-Tageskontingent war wiederholt erschöpft
+ * („Application request limit reached", 10 gefailte IG-Posts 20.–26.07.),
+ * aber WER die Quote frisst, war nur zu schätzen. Jeder Graph-API-Call wird
+ * jetzt je Kategorie gezählt; der Skill persistiert die Zähler periodisch
+ * als channel_metrics (kind meta_calls_<kategorie>) und im Log.
+ */
+const metaCallCounts: Record<string, number> = {};
+
+export function zaehleMetaCall(category: string): void {
+  metaCallCounts[category] = (metaCallCounts[category] ?? 0) + 1;
+}
+
+/** Zähler-Schnappschuss holen (Default: zurücksetzen — Aufrufer persistiert das Delta). */
+export function metaCallAudit(reset = true): Record<string, number> {
+  const snap = { ...metaCallCounts };
+  if (reset) for (const k of Object.keys(metaCallCounts)) delete metaCallCounts[k];
+  return snap;
+}
+
+/**
  * v936 — Meta-Provider: Instagram (Container-Flow), Facebook-Pages und Threads
  * über die Graph-API. Eine Klasse, drei Registrierungen (platform-Parameter).
  *
@@ -48,6 +68,7 @@ export class MetaProvider extends SocialProvider {
       const token = this.token(secrets);
       const target = this.targetId(channel);
       const base = this.graphBase(secrets);
+      zaehleMetaCall('audience');
       const res = await fetch(`${base}/${target}?fields=followers_count&access_token=${encodeURIComponent(token)}`);
       const data = await res.json().catch(() => ({})) as { followers_count?: number };
       return res.ok && typeof data.followers_count === 'number' ? { followers: data.followers_count } : null;
@@ -83,6 +104,7 @@ export class MetaProvider extends SocialProvider {
   }
 
   private async graphPost(url: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+    zaehleMetaCall('post'); // v1137 — Container/Publish/Story/Reply laufen alle hier durch
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -277,6 +299,7 @@ export class MetaProvider extends SocialProvider {
     let delay = delayMs;
     while (true) {
       // v997 — erst prüfen, dann schlafen: Bild-Container sind oft sofort fertig
+      zaehleMetaCall('container_poll');
       const res = await fetch(`${base}/${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`);
       const data = await res.json().catch(() => ({})) as { status_code?: string };
       if (data.status_code === 'FINISHED') return;
@@ -305,6 +328,7 @@ export class MetaProvider extends SocialProvider {
 
   private async igPermalink(mediaId: string, token: string, base: string = GRAPH): Promise<string | undefined> {
     try {
+      zaehleMetaCall('permalink');
       const res = await fetch(`${base}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(token)}`);
       const data = await res.json() as { permalink?: string };
       return data.permalink;
@@ -317,6 +341,7 @@ export class MetaProvider extends SocialProvider {
       const target = this.targetId(channel);
       const base = this.graphBase(secrets);
       const field = this.platform === 'facebook' ? 'name' : 'username';
+      zaehleMetaCall('lookup');
       const res = await fetch(`${base}/${target}?fields=${field}&access_token=${encodeURIComponent(token)}`);
       const data = await res.json().catch(() => ({})) as Record<string, unknown>;
       return res.ok
@@ -330,6 +355,7 @@ export class MetaProvider extends SocialProvider {
   override async deletePost(externalId: string, _channel: SocialChannel, secrets: Record<string, string>): Promise<boolean> {
     if (this.platform !== 'facebook') return false; // IG/Threads-API können nicht löschen
     try {
+      zaehleMetaCall('delete');
       const res = await fetch(`${GRAPH}/${externalId}?access_token=${encodeURIComponent(this.token(secrets))}`, { method: 'DELETE' });
       return res.ok;
     } catch { return false; }
@@ -357,6 +383,7 @@ export class MetaProvider extends SocialProvider {
     const out: FetchedComment[] = [];
     for (const item of items.slice(0, 25)) {
       try {
+        zaehleMetaCall('comments');
         const res = await fetch(`${base}/${item.externalId}/comments?fields=${fields}&limit=50&access_token=${encodeURIComponent(token)}`);
         if (!res.ok) continue;
         const data = await res.json() as { data?: Array<Record<string, any>> };
@@ -410,6 +437,7 @@ export class MetaProvider extends SocialProvider {
     const out: Array<{ itemId: string; kind: string; value: number }> = [];
     for (const item of items.slice(0, 25)) {
       try {
+        zaehleMetaCall('metrics');
         const res = await fetch(`${base}/${item.externalId}?fields=${fields}&access_token=${encodeURIComponent(token)}`);
         if (!res.ok) continue;
         const data = await res.json() as Record<string, any>;
