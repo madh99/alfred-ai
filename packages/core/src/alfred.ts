@@ -6963,7 +6963,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 }).catch(() => { /* non-critical */ });
               }
             };
-            if (now.getHours() % 2 === 0 && await this.claimDailySlot(`social-comments:${hourKey}`)) {
+            // v1139 — Versatz auf :35: der Lauf zu :0x kollidierte im selben
+            // Meta-Stundenfenster mit den Publish-Slots (:00-lastig) — die
+            // IG-Fails 27./28.07. lagen ALLE um :02 nach geraden Stunden.
+            if (now.getHours() % 2 === 0 && now.getMinutes() >= 35 && await this.claimDailySlot(`social-comments:${hourKey}`)) {
               try {
                 const r = await socialSkill.collectComments(ownerUid);
                 if (r.collected > 0) this.logger.info({ collected: r.collected }, 'v989 social comments collected');
@@ -7017,6 +7020,28 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 // v1001 — Klick-Rückkanal: Artikel-Views + Klicks je utm_source von der eigenen Plattform
                 const t = await socialSkill.collectTrafficStats(ownerUid).catch(() => 0);
                 if (t > 0) this.logger.info({ stats: t }, 'v1001 traffic stats collected');
+                // v1139 — Frische-Wächter Redaktionslinie: das Wochen-Memo
+                // älter als 10 Tage (oder ohne Frische-Stempel) → EINE
+                // Erinnerung pro Woche (Realfall: „WM-Nachlese"-Linie framte
+                // 10 Tage nach dem Finale weiter alles auf WM).
+                try {
+                  const wochenBucket = Math.floor(Date.now() / (7 * 24 * 3_600_000));
+                  for (const c of await this.socialRepo!.listChannels(ownerUid, 'active')) {
+                    const linie = c.config.redaktionslinie;
+                    if (typeof linie !== 'string' || !linie.trim()) continue;
+                    const upd = typeof c.config.redaktionslinie_updated === 'string' ? Date.parse(c.config.redaktionslinie_updated) : NaN;
+                    const alterTage = Number.isFinite(upd) ? Math.round((Date.now() - upd) / 86_400_000) : undefined;
+                    if (alterTage !== undefined && alterTage <= 10) continue;
+                    await this.insightsRepo?.upsertCandidate(ownerUid, {
+                      category: 'social',
+                      title: `🧭 Redaktionslinie auf ${c.name} ist ${alterTage !== undefined ? `${alterTage} Tage alt` : 'ohne Frische-Datum'}`,
+                      body: `Das Wochen-Memo lautet noch:\n> ${linie.slice(0, 400)}\n\nWenn es nicht mehr passt: „Setze die Redaktionslinie auf …" — es steuert VERBINDLICH Konferenz und alle Schreib-Prompts der Familie.`,
+                      confidence: 0.8,
+                      sourceData: { router: true, urgency: 'normal', channelId: c.id },
+                      dedupeKey: `linie-frisch:${c.id}:${wochenBucket}`,
+                    });
+                  }
+                } catch (err) { this.logger.debug({ err }, 'v1139 linie-wächter failed (non-critical)'); }
                 // v1019 — Kanalwachstum: täglicher Follower-Stand je Kanal
                 const a = await socialSkill.collectAudience(ownerUid).catch(() => ({ collected: 0, milestones: [] as Array<{ channel: string; channelId: string; milestone: number; followers: number }> }));
                 if (a.collected > 0) this.logger.info({ audience: a.collected }, 'v1019 audience collected');

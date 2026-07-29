@@ -832,6 +832,28 @@ describe('v1016 — Auto-Reel (Entwurf beim Lead-Publish)', () => {
     expect(SocialSkill.sanitizeVideoPrompt(trocken)).toBe(trocken);
   });
 
+  it('v1139: Personen-Netz — unmarkierte player bekommen das Story-Geschlecht, markierte Szenen bleiben', async () => {
+    const { SocialSkill } = await import('./social-skill.js');
+    // unmarkierte Szene → male injiziert (auch bei "soccer players")
+    expect(SocialSkill.sanitizeVideoPrompt('quick pan across celebrating players rushing together, a soccer player strikes', { personen: 'male' }))
+      .toBe('quick pan across celebrating male players rushing together, a male soccer player strikes');
+    // bereits markierte Szene bleibt byte-identisch (kein "male male")
+    const markiert = 'male European-looking players in plain red and white kit sprinting';
+    expect(SocialSkill.sanitizeVideoPrompt(markiert, { personen: 'male' })).toBe(markiert);
+    // Frauenfußball-Story → female
+    expect(SocialSkill.sanitizeVideoPrompt('two players embrace after the goal', { personen: 'female' }))
+      .toBe('two female players embrace after the goal');
+    // ohne personen-Option unverändert (bestehende Aufrufer)
+    expect(SocialSkill.sanitizeVideoPrompt('players celebrate')).toBe('players celebrate');
+  });
+
+  it('v1139: storyGeschlecht — Frauenfußball erkannt, Herren ist Default', async () => {
+    const { SocialSkill } = await import('./social-skill.js');
+    expect(SocialSkill.storyGeschlecht('Frauen-Nationalmannschaft gewinnt Testspiel')).toBe('female');
+    expect(SocialSkill.storyGeschlecht("Women's Champions League draw")).toBe('female');
+    expect(SocialSkill.storyGeschlecht('Mancini übernimmt wieder die Squadra Azzurra')).toBe('male');
+  });
+
   it('v1135: stoffErwaehntWetter — erkennt echte Wetter-Storys (DE/EN)', async () => {
     const { SocialSkill } = await import('./social-skill.js');
     expect(SocialSkill.stoffErwaehntWetter('Regenschlacht in München: Spiel zweimal unterbrochen')).toBe(true);

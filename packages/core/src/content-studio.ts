@@ -3445,6 +3445,24 @@ Antworte NUR mit einem VALIDEN JSON-Array (leer wenn nichts belegt ist):
     // v1102 — Redaktionslinie prominent im Wochen-Report (Erinnerung + Anlass zum Fortschreiben)
     const wochenLinie = ContentStudio.linieOf(channels);
     if (wochenLinie) sections.push(`**🧭 Redaktionslinie:** ${wochenLinie}\n_Fortschreiben per Zuruf: „Setze die Redaktionslinie auf …"_`);
+    // v1139 — Config-Alterungs-Audit: statische Kanal-Texte (Footer, CTAs,
+    // Serien-Formate, Lektionen) altern unbemerkt — der WM-Footer „jetzt
+    // mittippen" hing 10 Tage nach dem Finale noch an jedem YouTube-Video
+    // (Realfall 29.07.). Der Report listet sie wöchentlich zum Gegenlesen.
+    const statisch: string[] = [];
+    for (const c of channels) {
+      for (const key of ['yt_description_footer', 'reel_cta_text', 'story_cta_text', 'traffic_cta_text'] as const) {
+        const v = c.config[key];
+        if (typeof v === 'string' && v.trim()) statisch.push(`- **${c.name}** \`${key}\`: „${v.replace(/\n/g, ' · ').slice(0, 110)}"`);
+      }
+      const fmts = Array.isArray(c.config.formate) ? c.config.formate as Array<{ name?: unknown }> : [];
+      for (const f of fmts) if (f && typeof f.name === 'string') statisch.push(`- **${c.name}** Serien-Format: „${f.name.slice(0, 80)}"`);
+      const lessons = Array.isArray(c.config.lessons) ? c.config.lessons as unknown[] : [];
+      for (const l of lessons) statisch.push(`- **${c.name}** Lektion: „${String(l).slice(0, 100)}"`);
+    }
+    if (statisch.length > 0) {
+      sections.push(`**🗓 Statische Kanal-Texte (bitte auf Aktualität prüfen — sie altern unbemerkt):**\n${statisch.slice(0, 25).join('\n')}${statisch.length > 25 ? `\n… +${statisch.length - 25} weitere` : ''}`);
+    }
     // v1021 — Wachstums-Sektion: Follower-Deltas der Woche je Kanal + Treiber
     const growthLines: string[] = [];
     let totalDelta = 0;

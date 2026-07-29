@@ -600,7 +600,15 @@ export class SocialSkill extends Skill {
     if (input.model_tier === 'fast' || input.model_tier === 'medium' || input.model_tier === 'default' || input.model_tier === 'strong') {
       patch.config = deepMergeConfig(channel.config, { model_tier: input.model_tier });
     }
-    if (input.config && typeof input.config === 'object') patch.config = deepMergeConfig((patch.config as Record<string, unknown>) ?? channel.config, input.config as Record<string, unknown>);
+    if (input.config && typeof input.config === 'object') {
+      patch.config = deepMergeConfig((patch.config as Record<string, unknown>) ?? channel.config, input.config as Record<string, unknown>);
+      // v1139 — Frische-Stempel: die Redaktionslinie ist ein WOCHEN-Memo; der
+      // tägliche Wächter erinnert, wenn sie >10 Tage alt ist (Realfall 29.07.:
+      // „WM-Nachlese"-Linie framte 10 Tage nach dem Finale weiter alles auf WM).
+      if ('redaktionslinie' in (input.config as Record<string, unknown>)) {
+        (patch.config as Record<string, unknown>).redaktionslinie_updated = new Date().toISOString();
+      }
+    }
     if (typeof input.name === 'string' && input.name.trim()) patch.name = input.name.trim();
     if (Object.keys(patch).length === 0) return { success: false, error: 'Nichts zu ändern übergeben.' };
     await this.repo.updateChannel(userId, channel.id, patch);
@@ -873,7 +881,22 @@ export class SocialSkill extends Skill {
       if (caps && caps.requiresVideo === true && !item.media.some(m => m.type === 'video')) {
         const attempts = typeof item.performance?.autoVideoAttempts === 'number' ? item.performance.autoVideoAttempts : 0;
         if (!item.media.some(m => m.type === 'image' && !m.pathOrUrl.startsWith('http'))) {
-          return { success: false, data: { permanent: true }, error: `${channel.name} kann nur Video — der Beitrag hat weder Video noch lokales Bild zum Rendern. Bild anhängen (attach_media) oder Beitrag ablehnen.` };
+          // v1139 — letzter Rettungsversuch statt sofortigem Dauer-Fehler:
+          // EINMAL ein Bild über die Studio-Leitplanken erzeugen (Budget,
+          // Bildnisrecht, Vision-Gate inklusive). Realfall 28.07.: News-Desk-
+          // Item ohne Bild (Generierung war ausgefallen) lief hart auf failed.
+          let bildGerettet = false;
+          if (this.imageFn && item.performance?.videoBildRettung !== true) {
+            await this.repo.mergePerformance(userId, item.id, { videoBildRettung: true }).catch(() => { /* Marker best-effort */ });
+            const media = await this.imageFn(channel, { title: item.title, body: item.body, performance: item.performance }).catch(() => []);
+            if (media.length > 0) {
+              await this.repo.updateItemContent(userId, item.id, { media: [...media, ...item.media] });
+              bildGerettet = true; // renderVideo lädt das Item frisch aus der DB
+            }
+          }
+          if (!bildGerettet) {
+            return { success: false, data: { permanent: true }, error: `${channel.name} kann nur Video — der Beitrag hat weder Video noch lokales Bild zum Rendern (auch die Bild-Rettung blieb leer: Budget/Prüfung). Bild anhängen (attach_media) oder Beitrag ablehnen.` };
+          }
         }
         if (attempts >= 2) {
           return { success: false, data: { permanent: true }, error: `${channel.name}: Video-Rendern ist ${attempts}× fehlgeschlagen — render_video manuell prüfen (ffmpeg/Logs).` };
@@ -1385,10 +1408,20 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
    * Prompt-Regel, weil LLM-Output nie garantiert ist. Explizites
    * "american football" bleibt unangetastet (falls je gewollt).
    */
-  static sanitizeVideoPrompt(p: string, opts?: { allowWetter?: boolean }): string {
+  static sanitizeVideoPrompt(p: string, opts?: { allowWetter?: boolean; personen?: 'male' | 'female' }): string {
     let out = p
       .replace(/\b(?<!american[ -])footballer(s?)\b/gi, (m: string, s: string) => `${m[0] === 'F' ? 'S' : 's'}occer player${s ? 's' : ''}`)
       .replace(/\b(?<!american[ -])football\b/gi, m => (m[0] === 'F' ? 'Soccer' : 'soccer'));
+    // v1139 — Personen-Netz (Lehre aus v1135): die Prompt-Regel „Geschlecht
+    // gemäß Story" wird vom Board-LLM nicht auf JEDE Szene angewandt —
+    // unspezifizierte „players" besetzen Video-Modelle beliebig (Realfall
+    // 28.07.: Frauen im Herren-Fußball-Video TROTZ Regel). Deterministisch:
+    // Szenen OHNE jeden Geschlechts-Marker bekommen das Story-Geschlecht an
+    // jede player-Nennung; bereits markierte Szenen bleiben unangetastet.
+    if (opts?.personen && !/\b(male|female|men|women|men's|women's)\b/i.test(out)) {
+      out = out.replace(/\b((?:soccer )?)player(s?)\b/gi,
+        (_m: string, pre: string, s: string) => `${opts.personen} ${pre}player${s}`);
+    }
     // v1135 — Regen-Drift: Video-Modelle griffen bei „dramatisch" reflexhaft zu
     // Regen/Wet-Look (Realfall 25.07.: praktisch jedes Reel mit Regen/Wasser).
     // Wetter-Vokabeln werden neutralisiert, WENN der Beitrag selbst kein
@@ -1415,6 +1448,11 @@ Antworte NUR mit einem VALIDEN JSON-Objekt, ein Schlüssel je Zielsprache:
    */
   static stoffErwaehntWetter(text: string): boolean {
     return /\b(regen|regn|verregnet|gewitter|unwetter|sturm|schnee|hagel|nass|näss|rain|storm|snow)/i.test(text);
+  }
+
+  /** v1139 — Frauenfußball-Story? Sonst gilt für die Fußball-Marken Herrenfußball. */
+  static storyGeschlecht(text: string): 'male' | 'female' {
+    return /\b(frauenfußball|frauen-?nationalmannschaft|frauen-?bundesliga|frauen-?wm|damenfußball|women'?s)\b/i.test(text) ? 'female' : 'male';
   }
 
   /**
@@ -1478,8 +1516,9 @@ Antworte NUR mit einem VALIDEN JSON-Array aus ${wanted} Strings.`;
         const arr = JSON.parse(raw.slice(start, end + 1)) as unknown[];
         // v1118 — deterministisches Sicherheitsnetz zusätzlich zur Prompt-Regel
         const allowWetter = SocialSkill.stoffErwaehntWetter(`${opts.title} ${opts.body}`);
+        const personen = SocialSkill.storyGeschlecht(`${opts.title} ${opts.body}`);
         scenes = arr.filter((s): s is string => typeof s === 'string' && s.trim().length > 20)
-          .map(s => SocialSkill.sanitizeVideoPrompt(s.trim().slice(0, 500), { allowWetter }));
+          .map(s => SocialSkill.sanitizeVideoPrompt(s.trim().slice(0, 500), { allowWetter, personen }));
       }
     } catch { /* kein Board → kein Szenen-Video */ }
     if (scenes.length === 0) {
@@ -1576,8 +1615,11 @@ Antworte NUR mit einem VALIDEN JSON-Objekt: {"script": "…", "caption": "…", 
     const script = pack.script.trim().slice(0, 1_000);
     const caption = typeof pack.caption === 'string' && pack.caption.trim() ? pack.caption.trim().slice(0, 1_500) : script.slice(0, 300);
     const motion = typeof pack.motion === 'string' && pack.motion.trim()
-      // v1118 — "football"→"soccer"; v1135 — Regen nur bei echtem Wetter-Stoff
-      ? SocialSkill.sanitizeVideoPrompt(pack.motion.trim().slice(0, 400), { allowWetter: SocialSkill.stoffErwaehntWetter(`${leadItem.title ?? ''} ${leadItem.body}`) })
+      // v1118 — "football"→"soccer"; v1135 — Regen nur bei Wetter-Stoff; v1139 — Personen-Netz
+      ? SocialSkill.sanitizeVideoPrompt(pack.motion.trim().slice(0, 400), {
+          allowWetter: SocialSkill.stoffErwaehntWetter(`${leadItem.title ?? ''} ${leadItem.body}`),
+          personen: SocialSkill.storyGeschlecht(`${leadItem.title ?? ''} ${leadItem.body}`),
+        })
       // v1107 — kräftige Default-Bewegung statt „subtle" (zitterndes Standbild)
       : 'dynamic cinematic camera dolly through a floodlit stadium, flags waving, drifting haze, dramatic light shifts, no text overlays, no recognizable people';
     // Rendern (ffmpeg + TTS + Untertitel) — der teure Teil
@@ -2012,8 +2054,15 @@ Antworte NUR mit einem VALIDEN JSON-Objekt (Zitate typografisch „…“ oder e
     for (const channel of channels) {
       const provider = this.providers.get(channel.platform);
       if (!provider || !provider.capabilities().supportsMetrics) continue;
+      // v1139 — Metrics-Diät: täglich nur Posts der letzten 7 Tage abfragen,
+      // den vollen 30er-Bestand nur sonntags. Das Audit (v1137) zeigte 50
+      // metrics-Calls/Tag — größtenteils für wochenalte Posts, deren Zahlen
+      // sich kaum noch bewegen; die Meta-Quote gehört den Publishes.
+      const wochenLauf = new Date().getDay() === 0;
+      const frischeAb = Date.now() - 7 * 24 * 3_600_000;
       const published = (await this.repo.listItems(userId, { channelId: channel.id, status: 'published', limit: 30 }))
         .filter(i => i.externalId)
+        .filter(i => wochenLauf || !i.publishedAt || Date.parse(i.publishedAt) > frischeAb)
         .map(i => ({ id: i.id, externalId: i.externalId! }));
       if (published.length === 0) continue;
       try {

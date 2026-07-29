@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1139] - 2026-07-29
+
+### Fixed — Systemische Nacharbeit: Personen-Netz, Quota-Ökonomie, Config-Frische (v1139)
+- **Personen-Netz für KI-Videos**: Die v1135-Prompt-Regel („Geschlecht gemäß Story") wurde vom Szenen-LLM nicht auf jede Szene angewandt — unspezifizierte „players" besetzten Video-Modelle weiter beliebig (Frauen im Herren-Fußball-Video). Jetzt deterministisch: Szenen ohne Geschlechts-Marker bekommen das Story-Geschlecht an jede Spieler-Nennung (Frauenfußball-Storys werden erkannt); bereits markierte Szenen bleiben unangetastet.
+- **Meta-Quota-Ökonomie** (auf Basis des v1137-Audits: ~135 Calls/Tag, davon 50 für Metriken wochenalter Posts): Engagement-Metriken laufen täglich nur noch für Posts der letzten 7 Tage (voller Bestand sonntags), und der 2-Stunden-Kommentar-Lauf startet um :35 statt :00 — die Publish-Fails lagen alle exakt im Kollisionsfenster mit den :00-Slots.
+- **YouTube ohne Bild**: Statt sofortigem Dauer-Fehler versucht das Publish-Netz EINMAL, über die Studio-Leitplanken ein Bild zu erzeugen (Budget/Bildnisrecht inklusive) und rendert dann das Video; erst wenn auch das leer bleibt, scheitert das Item mit sprechendem Grund.
+- **Config-Frische**: Die Redaktionslinie bekommt beim Ändern einen Frische-Stempel; ist das Wochen-Memo älter als 10 Tage, erinnert ein wöchentlicher Insight („WM-Nachlese"-Linie framte 10 Tage nach dem Finale weiter alles auf WM). Der Wochen-Report listet zusätzlich alle statischen Kanal-Texte (Footer, CTAs, Serien-Formate, Lektionen) zum Gegenlesen — der WM-Footer „jetzt mittippen" hing sonst unbemerkt an jedem Video.
+
 ## [0.19.0-multi-ha.1138] - 2026-07-26
 
 ### Fixed — Crash-Resilienz: ehrliche Exit-Codes + pg-Pool-Fehlerbehandlung (v1138)
