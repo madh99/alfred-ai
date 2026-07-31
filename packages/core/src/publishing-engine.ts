@@ -374,6 +374,8 @@ export class PublishingEngine {
                 if (await this.handleDailyLimit(item, channel) === 'published') result.published++;
               } else if (/Video wird gerendert/.test(r.error ?? '')) {
                 /* bereits umterminiert */
+              } else if (/Rate-Limit-Pause/.test(r.error ?? '')) {
+                /* v1140 — Meta-Pause: bereits ans Pausen-Ende umterminiert */
               } else if (await this.askApproval(item, channel, `Autonom-Publish blockiert: ${r.error ?? 'Leitplanke'}`)) result.asked++;
             }
           }
@@ -413,7 +415,11 @@ export class PublishingEngine {
         result.retried++;
         if (!r.success) {
           const nochOffen = /request limit|rate limit|too many requests/i.test(r.error ?? '') && limitRetries + 1 < 3;
-          if (nochOffen) {
+          if (/Rate-Limit-Pause/.test(r.error ?? '')) {
+            // v1140 — Meta-Pause aktiv: der Skill hat das Item ans Pausen-Ende
+            // umterminiert (approved+scheduledAt) — kein Fehler-Insight nötig
+            this.logger.info({ itemId: item.id }, 'v1140 retry in Meta-Pause — Item ans Pausen-Ende umterminiert');
+          } else if (nochOffen) {
             this.logger.info({ itemId: item.id, attempt: limitRetries + 1 }, 'v1123 rate-limit retry fehlgeschlagen — nächster Anlauf mit Backoff');
           } else {
             await this.insightsRepo?.upsertCandidate(owner, {

@@ -930,6 +930,18 @@ export class SocialSkill extends Skill {
       };
     }
 
+    // v1140 — Meta-Limit-Pause gilt auch für Publishes: während der 2-h-Pause
+    // (v1124) läuft jeder Post-Versuch zwangsläufig ins selbe „Application
+    // request limit" (Realfall 30./31.07.: IG-Fails um :10 trotz v1139-
+    // Metrics-Diät). Statt den Fehlschlag zu produzieren, wird der Beitrag
+    // ans Pausen-Ende umterminiert; bewusster manueller Publish: force: true.
+    if ((channel.platform === 'instagram' || channel.platform === 'facebook' || channel.platform === 'threads')
+      && Date.now() < this.metaLimitPauseUntil && input.force !== true) {
+      const at = new Date(this.metaLimitPauseUntil + 5 * 60_000).toISOString();
+      await this.repo.reschedule(userId, current.id, at, ['approved', 'scheduled', 'draft']).catch(() => { /* Status bleibt — Engine kommt wieder */ });
+      return { success: false, error: `Meta-Rate-Limit-Pause aktiv — Beitrag auf ${channel.name} ist ans Pausen-Ende umterminiert (${at}). Sofort trotzdem posten: force: true.` };
+    }
+
     const provider = this.providers.get(channel.platform);
     if (!provider) return { success: false, error: `Kein Provider für ${channel.platform}` };
     const publishing = await this.repo.transition(userId, current.id, 'publishing');

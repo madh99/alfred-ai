@@ -171,6 +171,7 @@ WICHTIGE REGELN (Bildnisrecht, zwingend):
 - KEINE realen oder identifizierbaren Personen, KEINE Lookalikes von Personen des öffentlichen Lebens (Sportler, Trainer, Prominente).
 - Wenn Menschen nötig wirken: nur anonym (von hinten, Silhouette, unkenntlich, Menge aus der Ferne) — besser ganz ohne Menschen.
 - KEINE Vereins-, Verbands- oder Marken-Logos, keine erkennbaren Trikot-Embleme.
+- KEINE Verbands- oder Vereinsflaggen, Wimpel, Wappen oder Banner (FIFA, UEFA, Klubs) — auch nicht angedeutet. KEINE Schilder, Namensschilder oder beschrifteten Tafeln, auch nicht mit unlesbarem Pseudo-Text.
 - Nationalflaggen und Länderfarben sind rechtlich unbedenklich — aber NUR verwenden, wenn das Motiv sie AUSDRÜCKLICH nennt, und dann nur die Länder aus dem Motiv. NIE Flaggen oder Länderfarben ergänzen, die nicht im Motiv stehen.
 - Wenn Symbolik nötig ist, im Sinne von: ${symbolMotif.replace(/^symbolbild[^:]{0,30}:\s*/i, '').replace(/^symbolbild\s*/i, '')}`;
 }
@@ -178,7 +179,7 @@ WICHTIGE REGELN (Bildnisrecht, zwingend):
 /** Strenges Retry-Motiv nach einem Vision-Verstoß (v1129: Marken-Symbolmotiv des Kanals). */
 export function strictRetryPrompt(persona: string | undefined, symbolMotif: string = SYMBOLIC_FALLBACK_MOTIF): string {
   return buildSafeImagePrompt(
-    `${symbolMotif}. Absolut keine Menschen, keine Gesichter, keine Logos, keinerlei Text oder Zahlen`,
+    `${symbolMotif}. Absolut keine Menschen, keine Gesichter, keine Logos, keine Flaggen, Wimpel, Wappen oder Schilder, keinerlei Text oder Zahlen`,
     persona, 'symbolic', symbolMotif,
   );
 }

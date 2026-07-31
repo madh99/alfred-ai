@@ -519,6 +519,27 @@ describe('v1009 — Kommentar-Copilot (Triage + Antwort-Vorschläge)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('v1140: aktive Meta-Pause → publish_now terminiert ans Pausen-Ende um statt ins Limit zu laufen; force posted trotzdem', async () => {
+    const ig = makeChannel({ id: 'ch-ig11', platform: 'instagram', name: 'IG' });
+    const approved = makeItem({ id: 'item-0003-aaaa', channelId: 'ch-ig11', status: 'approved' });
+    const { skill, spies } = makeSkill(ig, approved);
+    const prov = new FakeProvider('instagram');
+    skill.registerProvider(prov);
+    const pubSpy = vi.spyOn(prov, 'publish');
+    const pauseEnde = Date.now() + 3_600_000;
+    (skill as any).metaLimitPauseUntil = pauseEnde;
+    const r = await skill.execute({ action: 'publish_now', item_id: 'item-0003-aaaa' }, CTX);
+    expect(r.success).toBe(false);
+    expect(String(r.error)).toContain('Rate-Limit-Pause');
+    expect(pubSpy).not.toHaveBeenCalled();
+    const at = (spies.reschedule as any).mock.calls[0][2] as string;
+    expect(Date.parse(at)).toBeGreaterThanOrEqual(pauseEnde);
+    // Bewusster manueller Publish geht mit force: true trotzdem raus
+    const r2 = await skill.execute({ action: 'publish_now', item_id: 'item-0003-aaaa', force: true }, CTX);
+    expect(r2.success).toBe(true);
+    expect(pubSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('comment_triage=false → nur Zählung, keine LLM-Calls', async () => {
     const channel = makeChannel({ config: { comment_triage: false } });
     const item = makeItem({ status: 'published', externalId: 'ext-9' });

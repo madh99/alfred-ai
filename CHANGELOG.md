@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1140] - 2026-07-31
+
+### Fixed — Meta-Pause gilt für Publishes + Symbolbild ohne Verbandsflaggen/Schilder (v1140)
+- **Publish-Versuche während der Meta-Rate-Limit-Pause werden umterminiert statt zu scheitern**: Nach einem „Application request limit" pausierte bisher nur das Kommentar-Polling (2 h) — Posts liefen weiter ins selbe Limit-Fenster und landeten auf failed (30./31.07.: drei Instagram-Fails trotz drastisch reduzierter Sammel-Calls). Jetzt wird der Beitrag ans Pausen-Ende verschoben; Engine-Retries und der Autonom-Pfad erzeugen dabei weder Fehl-Insights noch Freigabe-Lärm. Bewusster manueller Publish geht mit `force: true` weiterhin sofort raus.
+- **Symbolbild-Regeln verbieten Verbandsflaggen, Wimpel, Wappen und Schilder explizit**: Das Vision-Gate verwarf zuletzt reihenweise generierte Bilder (auch die YouTube-Bild-Rettung) wegen UEFA/FIFA-Flaggen, Vereinswappen-Wimpeln und beschrifteter Länderschilder — das Bildmodell baute sie ungefragt ein, weil nur „Logos" verboten waren. Der Sicherheits-Prompt und das strenge Retry-Motiv nennen diese Requisiten jetzt ausdrücklich.
+
 ## [0.19.0-multi-ha.1139] - 2026-07-29
 
 ### Fixed — Systemische Nacharbeit: Personen-Netz, Quota-Ökonomie, Config-Frische (v1139)

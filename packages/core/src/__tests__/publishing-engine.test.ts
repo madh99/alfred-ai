@@ -283,6 +283,27 @@ describe('PublishingEngine (v934)', () => {
     expect(candidate.title).toContain('endgültig fehlgeschlagen');
     expect(candidate.sourceData.urgency).toBe('high');
   });
+
+  it('v1140: Retry läuft in aktive Meta-Pause → kein „endgültig fehlgeschlagen"-Insight (Item ist umterminiert)', async () => {
+    const failedItem = makeItem({ status: 'failed', error: 'instagram: Application request limit reached', updatedAt: new Date(Date.now() - 20 * 60_000).toISOString() });
+    const { engine, insightsRepo } = makeEngine({
+      channel: makeChannel(), failed: [failedItem],
+      publishOk: false, publishError: 'Meta-Rate-Limit-Pause aktiv — Beitrag auf IG ist ans Pausen-Ende umterminiert (2026-07-31T12:00:00.000Z).',
+    });
+    const r = await engine.tick();
+    expect(r.retried).toBe(1);
+    expect(insightsRepo.upsertCandidate).not.toHaveBeenCalled();
+  });
+
+  it('v1140: autonomer Publish in Meta-Pause → keine Freigabe-Anfrage (bereits umterminiert)', async () => {
+    const { engine, insightsRepo } = makeEngine({
+      channel: makeChannel({ mode: 'autonomous', approvedStreak: 5 }), scheduled: [makeItem()],
+      publishOk: false, publishError: 'Meta-Rate-Limit-Pause aktiv — Beitrag ist ans Pausen-Ende umterminiert.',
+    });
+    const r = await engine.tick();
+    expect(r.asked).toBe(0);
+    expect(insightsRepo.upsertCandidate).not.toHaveBeenCalled();
+  });
 });
 
 describe('v1075 — menschlicher Takt (Jitter, Fenster)', () => {

@@ -113,6 +113,16 @@ describe('buildSafeImagePrompt (v950 Schicht 1)', () => {
     expect(p).toContain('Batteriespeicher und Smart Meter');
     expect(p).not.toContain('Fußball');
   });
+
+  it('v1140: Verbandsflaggen/Wimpel/Schilder sind explizit verboten (Realfall 30./31.07.: UEFA/FIFA-Flaggen, Vereinswappen-Wimpel und Länderschilder fraßen die YT-Rettungsbilder)', () => {
+    const p = buildSafeImagePrompt('Verhandlungstisch der Verbände', 'stil', 'symbolic');
+    expect(p).toContain('KEINE Verbands- oder Vereinsflaggen, Wimpel, Wappen oder Banner');
+    expect(p).toContain('KEINE Schilder, Namensschilder oder beschrifteten Tafeln');
+    // Nationalflaggen-Regel (v958/v1037) bleibt unverändert daneben bestehen
+    expect(p).toContain('Nationalflaggen und Länderfarben sind rechtlich unbedenklich');
+    const retry = strictRetryPrompt('modern');
+    expect(retry).toContain('keine Flaggen, Wimpel, Wappen oder Schilder');
+  });
 });
 
 describe('resolveSymbolMotif (v1129 — Marken-Symbolmotiv je Kanal)', () => {
