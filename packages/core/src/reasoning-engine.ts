@@ -489,29 +489,6 @@ ${this.buildTopicInstructions()}`;
       }
 
       this.logger.info({ nodeId: this.nodeId, schedule: this.schedule }, 'Reasoning pass starting');
-
-      // v1143 — A: Degraded-Mode. Laufen strong+medium seit Stunden nur über
-      // den Not-Fallback, setzt das proaktive Denken AUS statt mit dem
-      // Notmodell Wissen und Meldungen zu produzieren (Realfall 19.–29.08.:
-      // 10 Tage mistral-Betrieb erzeugten KG-Müll und Insight-Spam). EINE
-      // Status-Meldung pro Tag; deterministische Wächter (Watches) laufen weiter.
-      if (typeof this.llm.istDegradiert === 'function' && this.llm.istDegradiert()) {
-        const seit = typeof this.llm.degradiertSeit === 'function' ? this.llm.degradiertSeit() : null;
-        const heute = new Date().toISOString().slice(0, 10);
-        const statusKey = `degraded-status:${heute}`;
-        try {
-          if (!(await this.notifRepo.wasNotified(statusKey, this.defaultChatId))) {
-            await this.notifRepo.markNotified(statusKey, this.defaultChatId, this.defaultPlatform,
-              new Date(Date.now() + 26 * 3_600_000).toISOString());
-            const adapter = this.adapters.get(this.defaultPlatform);
-            await adapter?.sendMessage(this.defaultChatId,
-              `⚠️ **Alfred läuft degradiert** (Haupt-LLM-Konten ohne Guthaben${seit ? ` seit ${new Date(seit).toLocaleString('de-AT')}` : ''}). `
-              + 'Proaktives Denken, Lernen und Digests sind pausiert, bis ein Haupt-Modell wieder antwortet — Watches und Chat laufen weiter.');
-          }
-        } catch { /* Status-Meldung best-effort */ }
-        this.logger.warn({ seit }, 'v1143 reasoning pass übersprungen — LLM degradiert');
-        return;
-      }
       const startMs = Date.now();
 
       // PHASE 1: Collect context from all available data sources

@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { spaetestesDatumImText, istInsightEcho, extrahiereAnwesenheit } from '../reasoning-context-collector.js';
-import { DegradedTracker } from '@alfred/llm';
 
 // v1143 — Regressionstests zum Gamescom-Fall (29.08.2026): veralteter Kontext
 // wurde als Gegenwart präsentiert („Rückfahrt von Köln planen" zwei Tage nach
-// der Rückkehr), Alfreds eigene Ausgaben wurden als Wissen recycelt, und der
-// Degraded-Betrieb produzierte wochenlang Notmodell-Müll.
+// der Rückkehr) und Alfreds eigene Ausgaben wurden als Wissen recycelt. Die
+// Leitplanken sind DETERMINISTISCH — sie funktionieren mit jedem Modell,
+// vom Not-Fallback bis zum Top-Tier (bewusster Grundsatz dieses Systems).
 
 describe('J1 — spaetestesDatumImText', () => {
   const jetzt = new Date(2026, 7, 29, 12); // 29.08.2026
@@ -57,43 +57,3 @@ describe('J4 — extrahiereAnwesenheit', () => {
   });
 });
 
-describe('A — DegradedTracker (Hysterese)', () => {
-  it('erst nach minDegradedMs durchgehendem Doppel-Ausfall degradiert', () => {
-    const t = new DegradedTracker(3_600_000, 1_800_000); // 1h Schwelle, 30min Stabilität
-    const start = 1_000_000_000;
-    t.beobachte(true, start);
-    expect(t.istDegradiert(start)).toBe(false);
-    t.beobachte(true, start + 3_599_000);
-    expect(t.istDegradiert(start + 3_599_000)).toBe(false);
-    t.beobachte(true, start + 3_600_000);
-    expect(t.istDegradiert(start + 3_600_000)).toBe(true);
-  });
-
-  it('kurze Lücken (< Stabilitätsfenster) unterbrechen die Degradierung NICHT', () => {
-    const t = new DegradedTracker(3_600_000, 1_800_000);
-    const start = 0;
-    t.beobachte(true, start);
-    t.beobachte(false, start + 600_000); // 10 min Lücke (Cooldown gerade abgelaufen)
-    t.beobachte(true, start + 1_200_000);
-    t.beobachte(true, start + 3_600_000);
-    expect(t.istDegradiert(start + 3_600_000)).toBe(true);
-  });
-
-  it('30 min stabiler Betrieb ohne Doppel-Ausfall → Entwarnung', () => {
-    const t = new DegradedTracker(3_600_000, 1_800_000);
-    t.beobachte(true, 0);
-    t.beobachte(true, 3_600_000);
-    expect(t.istDegradiert(3_600_000)).toBe(true);
-    t.beobachte(false, 3_600_000 + 1_900_000); // >30 min ohne Doppel-Ausfall
-    expect(t.istDegradiert(3_600_000 + 1_900_000)).toBe(false);
-  });
-
-  it('echter Erfolg auf einem Denk-Tier entwarnt sofort', () => {
-    const t = new DegradedTracker(3_600_000, 1_800_000);
-    t.beobachte(true, 0);
-    t.beobachte(true, 4_000_000);
-    expect(t.istDegradiert(4_000_000)).toBe(true);
-    t.erfolg();
-    expect(t.istDegradiert(4_000_000)).toBe(false);
-  });
-});
