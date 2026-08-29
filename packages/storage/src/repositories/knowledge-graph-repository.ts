@@ -61,10 +61,24 @@ export class KnowledgeGraphRepository {
     }
   }
 
+  /**
+   * v1146 — S1: zentral injizierter Attribut-Sanitizer (Typ-Schema). DAS eine
+   * Gate für ALLE Schreiber — die „Fix an 1 von N Konsumenten"-Falle stirbt
+   * hier strukturell. CMDB-Infra bleibt ausgenommen (eigener Sync, eigene
+   * Attribute); ohne gesetzten Sanitizer verhält sich alles wie bisher (Tests).
+   */
+  private static attributSanitizer?: (entityType: string, attrs: Record<string, unknown>) => Record<string, unknown>;
+  static setAttributSanitizer(fn: (entityType: string, attrs: Record<string, unknown>) => Record<string, unknown>): void {
+    KnowledgeGraphRepository.attributSanitizer = fn;
+  }
+
   async upsertEntity(
     userId: string, name: string, entityType: KGEntityType,
     attributes?: Record<string, unknown>, source?: string,
   ): Promise<KGEntity> {
+    if (attributes && source !== 'cmdb' && KnowledgeGraphRepository.attributSanitizer) {
+      attributes = KnowledgeGraphRepository.attributSanitizer(entityType, attributes);
+    }
     const normalized = name.trim().toLowerCase();
     const now = new Date().toISOString();
     const id = randomUUID();

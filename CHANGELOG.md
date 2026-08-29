@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1146] - 2026-08-29
+
+### Fixed — Wissens-Kern: Schema, Herkunft, Stammdaten-Sync, Identität (v1146, S-Serie Teil 1)
+
+Die Grunddiagnose des Tages: `attributes` war ein freier JSON-Sack, jeder Schreiber durfte beliebige Schlüssel erfinden — so wurde aus einem Sachverständigen-Termin des Sohnes eine Identität („wohnort: Zürich, employer: Zürich Versicherung, expertise: sachverständiger, relation_to_linus: friend"), so hießen Personen „Tochter Lena", und so blieb explizites Wissen (Geburtsdaten in Memories) außerhalb des Graphen. Jede bisherige Absicherung war eine Blacklist an einem einzelnen Konsumenten. Jetzt bekommt das Gehirn ein Schema:
+
+- **S1 — Typ-Positivlisten, an EINER Stelle durchgesetzt**: Je Entitätstyp definierte erlaubte Attribute (Person, Ort, Organisation, Fahrzeug, Gerät, Metrik, Ereignis; CMDB-Infra ausgenommen), injiziert direkt in den zentralen Repository-Upsert — kein Schreiber im System kann das Gate umgehen. Ein täglicher Wächter setzt das Schema auch im BESTAND durch und heilt den gesamten Graph selbst (Noahs Zürich-Müllhalde inklusive) — Rückfälle werden jede Nacht abgeräumt, kein Einmal-SQL mehr.
+- **S4 — Identität statt Phrase**: „Nichte Emma" ist kein Name — Rollen-Präfixe werden bei der Anlage zur Beziehung, der Rest zum Namen; ein Wartungs-Wächter heilt den Bestand („Tochter Lena" wird über ihr fullName-Memory zu „Lena Habel", der alte Name bleibt Alias).
+- **S3 — Deterministischer Stammdaten-Sync (das fehlende konstruktive Stück)**: Code — nicht das LLM — übersetzt hochkonfidente Memories in Graph-Wissen: „Nichte Emma, geboren 12.03.2020" wird zur Person Emma mit Geburtsdatum, Beziehung und Familien-Relation; Vollnamen-Memories setzen fullName. Läuft stündlich und nach der Nacht-Wartung. Damit landet ein neues Familienmitglied binnen einer Stunde korrekt im Stammdaten-Block und im Vorausschau-Radar.
+- **S2 — Herkunft an Stammdaten**: Vom Sync gesetzte Attribute tragen Quelle, Konfidenz und Zeitpunkt (`_prov`); deterministische Konfliktregel: explizite Aussage schlägt Extraktion schlägt LLM — „der letzte Schreiber gewinnt" ist vorbei.
+- **Rule 6 des Cross-Extractors ersatzlos gestrichen**: Sie verknüpfte stumpf jede Organisation mit einer „Arbeits-Stadt" des Users (Realfall: Mistral/Microsoft/Erste Bank/aWATTar „located_at Linz", täglich neu erzeugt); ein Wächter löscht den Relations-Bestand.
+- **S5 — Der Beweis**: 10 neue Tests, darunter der Ende-zu-Ende-Fall „neues Familienmitglied" — Memory rein → korrekte Person mit Name/Datum/Beziehung/Herkunft → erscheint im Familien-Block → Vorausschau meldet 7 Tage vor dem Geburtstag → zweiter Lauf legt nichts doppelt an. Plus Schema-Kur am wörtlichen Noah-Realfall.
+
 ## [0.19.0-multi-ha.1145] - 2026-08-29
 
 ### Added — Vorausschau-Radar: mit Vorlauf erinnern statt hinterher wissen (v1145)

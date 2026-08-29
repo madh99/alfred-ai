@@ -319,6 +319,8 @@ const MAX_MAP_TOKENS = 1200;
 
 // ── Service ──────────────────────────────────────────────────
 
+import { bereinigeAttributeNachSchema, planePersonenNamensHeilung, normalisierePersonenName } from './wissens-schema.js';
+
 export class KnowledgeGraphService {
   private llmLinker?: import('./llm-entity-linker.js').LLMEntityLinker;
   /** Names of CMDB-managed assets — excluded from text extraction to avoid double-creation. */
@@ -1761,7 +1763,71 @@ export class KnowledgeGraphService {
           this.logger.debug({ err }, 'KG maintenance: entity embedding failed');
         }
 
-        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared, implausibleLocationsCleaned, userHomeConsolidated, junkEntitiesCleaned, wrongIsHomeCleared, wrongHomeRelationsDeleted, entitiesEmbedded }, 'KG maintenance completed');
+        // v1146 — S1-Wächter: Attribut-Schema im BESTAND durchsetzen. Heilt den
+        // gesamten Graph selbst (Noahs „Zürich/insurance/relation_to_linus"-
+        // Müllhalde inklusive) — kein Einmal-SQL mehr nötig, und Rückfälle
+        // werden täglich abgeräumt.
+        let schemaAttrsBereinigt = 0;
+        try {
+          const { entities: allePers } = await this.kgRepo.getFullGraph(userId, 'personal');
+          for (const e of allePers) {
+            const attrs = (e.attributes ?? {}) as Record<string, unknown>;
+            const { bereinigt, entfernt } = bereinigeAttributeNachSchema(e.entityType, attrs);
+            if (entfernt.length > 0) {
+              await this.kgRepo.setEntityAttributes(e.id, bereinigt);
+              schemaAttrsBereinigt += entfernt.length;
+              this.logger.info({ entity: e.name, typ: e.entityType, entfernt: entfernt.slice(0, 12) },
+                'v1146 Schema-Wächter: schema-fremde Attribute entfernt');
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'v1146 Schema-Wächter fehlgeschlagen');
+        }
+
+        // v1146 — S4-Wächter: Rollen-Präfix-Namen heilen („Tochter Lena" →
+        // fullName „Lena Habel"; Rolle wird Beziehung, alter Name wird Alias).
+        let namenGeheilt = 0;
+        try {
+          const personen = await this.kgRepo.getEntitiesByType(userId, 'person');
+          const plan = planePersonenNamensHeilung(personen.map(p => ({ id: p.id, name: p.name, attributes: (p.attributes ?? {}) as Record<string, unknown> })));
+          for (const h of plan) {
+            const ok = await this.kgRepo.renameEntity(h.id, h.neuerName);
+            if (!ok) continue;
+            const p = personen.find(x => x.id === h.id);
+            const attrs = { ...((p?.attributes ?? {}) as Record<string, unknown>) };
+            const alias = new Set<string>([...(Array.isArray(attrs.alias) ? attrs.alias.map(String) : []), h.alterName]);
+            attrs.alias = [...alias];
+            if (h.beziehung && !attrs.relation_to_user) attrs.relation_to_user = h.beziehung;
+            await this.kgRepo.setEntityAttributes(h.id, attrs);
+            namenGeheilt++;
+            this.logger.info({ von: h.alterName, zu: h.neuerName, beziehung: h.beziehung }, 'v1146 Namens-Heilung');
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'v1146 Namens-Heilung fehlgeschlagen');
+        }
+
+        // v1146 — S1-Wächter (Relationen): Organisation→Ort-Relationen aus dem
+        // abgeschafften Cross-Extractor-Rule-6 löschen (Realfall: aWATTar/
+        // Mistral/Erste Bank/Microsoft „located_at Linz", täglich neu erzeugt).
+        let orgOrtRelationenGeloescht = 0;
+        try {
+          const { entities: alleE, relations: alleR } = await this.kgRepo.getFullGraph(userId, 'personal');
+          const byId = new Map(alleE.map(e => [e.id, e]));
+          for (const r of alleR) {
+            if (r.relationType !== 'located_at' || r.sourceSection !== 'cross') continue;
+            const src = byId.get(r.sourceEntityId);
+            const tgt = byId.get(r.targetEntityId);
+            if (src?.entityType === 'organization' && tgt?.entityType === 'location') {
+              await this.kgRepo.deleteRelation(r.id);
+              orgOrtRelationenGeloescht++;
+              this.logger.info({ org: src.name, ort: tgt.name }, 'v1146 Rule-6-Relation gelöscht (Org↛Arbeitsort)');
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'v1146 Org-Ort-Relations-Wächter fehlgeschlagen');
+        }
+
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared, implausibleLocationsCleaned, userHomeConsolidated, junkEntitiesCleaned, wrongIsHomeCleared, wrongHomeRelationsDeleted, entitiesEmbedded, schemaAttrsBereinigt, namenGeheilt, orgOrtRelationenGeloescht }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');
@@ -2239,14 +2305,12 @@ export class KnowledgeGraphService {
         }
       }
 
-      // Rule 6: Organizations → Work Location
-      const workLocation = locations.find(l => l.attributes?.isWork === true && l.attributes?.isHome !== true);
-      if (workLocation) {
-        const orgs = entities.filter(e => e.entityType === 'organization');
-        for (const org of orgs) {
-          await this.kgRepo.upsertRelation(userId, org.id, workLocation.id, 'located_at', undefined, 'cross');
-        }
-      }
+      // v1146 — S1: Rule 6 (Organisationen → „Arbeits-Stadt") ERSATZLOS
+      // gestrichen. Die Regel verknüpfte stumpf JEDE Organisation mit einem
+      // Ort des Users (Realfall 29.08.: Mistral/Microsoft/Erste Bank/aWATTar
+      // „located_at Linz") — Firmensitze sind Fakten über die Firma, nicht
+      // über den User, und gehören nur belegt in den Graph. Der Wartungs-
+      // Wächter räumt den Bestand ab.
     } catch (err) {
       this.logger.info({ err }, 'KG: cross-extractor relations partially failed');
     }
@@ -2475,8 +2539,13 @@ export class KnowledgeGraphService {
           if (m) {
             const name = m[1].trim();
             if (!isInvalidPersonName(name, this.knownLocationsLower)) {
-              const person = await this.kgRepo.upsertEntity(userId, name, 'person',
-                { relationship: mem.key }, 'memories');
+              // v1146 — S4: „Nichte Emma" ist kein Name — Rollen-Präfix wird
+              // Beziehung, der Rest der Name (die „Tochter Lena"-Fehlerform
+              // entsteht nicht mehr).
+              const norm = normalisierePersonenName(name);
+              const anlageName = norm?.name ?? name;
+              const person = await this.kgRepo.upsertEntity(userId, anlageName, 'person',
+                { memoryKey: mem.key, ...(norm ? { relation_to_user: norm.beziehung } : {}) }, 'memories');
               await this.kgRepo.upsertRelation(userId, user.id, person.id, 'knows', mem.key, 'memories');
             }
           }

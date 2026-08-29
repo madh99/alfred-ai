@@ -595,6 +595,13 @@ export class Alfred {
     this.reminderRepo = reminderRepo;
     const noteRepo = new NoteRepository(adapter);
     this.noteRepo = noteRepo;
+    // v1146 — S1: DAS zentrale Attribut-Gate für alle KG-Schreiber (Typ-Schema-
+    // Positivliste). Einmal hier gesetzt, gilt es für jeden upsertEntity-Aufruf
+    // im ganzen System — kein Konsument kann es mehr umgehen.
+    {
+      const { bereinigeAttributeNachSchema } = await import('./wissens-schema.js');
+      KnowledgeGraphRepository.setAttributSanitizer((typ, attrs) => bereinigeAttributeNachSchema(typ, attrs).bereinigt);
+    }
     const embeddingRepo = new EmbeddingRepository(adapter);
     const linkTokenRepo = new LinkTokenRepository(adapter);
     const backgroundTaskRepo = new BackgroundTaskRepository(adapter);
@@ -6726,6 +6733,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               try { await this.topicDigestBuilder?.run(); }
               catch (err) { this.logger.warn({ err }, 'v930 topic digest failed'); }
             }
+          }
+          // v1146 — S3: stündlicher Stammdaten-Sync (:10, idempotent, billig) —
+          // ein im Chat genanntes neues Familienmitglied steht binnen einer
+          // Stunde korrekt im Graph, nicht erst nach der Nacht-Wartung.
+          if (now.getMinutes() === 10) {
+            try {
+              const ownerSd = this.tryOwner();
+              if (ownerSd && this.database && this.memoryRepo) {
+                const { StammdatenSync } = await import('./stammdaten-sync.js');
+                const { KnowledgeGraphRepository: KGRepoSd } = await import('@alfred/storage');
+                await new StammdatenSync(new KGRepoSd(this.database.getAdapter()), this.memoryRepo,
+                  this.logger.child({ component: 'stammdaten-sync' })).run(ownerSd);
+              }
+            } catch (err) { this.logger.debug({ err }, 'v1146 stündlicher Stammdaten-Sync fehlgeschlagen'); }
           }
           // v1145 — K3: 07:45 Vorausschau-Radar (nach dem Ruhefenster).
           // Owner ZUR LAUFZEIT auflösen (H6-Lektion: beim Wiring ist er nie gesetzt).
@@ -13334,6 +13355,17 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const users = await userRepoRef.listAll();
             for (const user of users) {
               await kgServiceDaily.maintenance(user.id);
+            }
+            // v1146 — S3: Stammdaten-Sync direkt nach der Wartung — deine
+            // expliziten Memory-Fakten fließen deterministisch in den Graph.
+            if (this.memoryRepo) {
+              const { StammdatenSync } = await import('./stammdaten-sync.js');
+              const sync = new StammdatenSync(
+                new KnowledgeGraphRepository(this.database.getAdapter()), this.memoryRepo,
+                this.logger.child({ component: 'stammdaten-sync' }));
+              for (const user of users) {
+                await sync.run(user.id).catch(() => { /* je User best-effort */ });
+              }
             }
             this.logger.info({ users: users.length }, 'v921 daily KG maintenance completed');
           } catch (err) {
