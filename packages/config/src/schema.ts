@@ -535,6 +535,7 @@ export const ReasoningConfigSchema = z.object({
   schedule: z.enum(['morning_noon_evening', 'hourly', 'half_hourly']).optional(),
   tier: z.enum(['fast', 'default']).optional(),
   deduplicationHours: z.number().optional(),
+  quietHours: z.union([z.tuple([z.number(), z.number()]), z.literal(false)]).optional(),
   llmLinking: LLMLinkingConfigSchema.optional(),
 });
 

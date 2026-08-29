@@ -23,6 +23,13 @@ const MIN_HOUR_CLASS: Record<Urgency, HourClass> = {
 
 const CLASS_ORDER: Record<HourClass, number> = { QUIET: 0, WAKING: 1, WINDING_DOWN: 2, ACTIVE: 3 };
 
+/** v1144 — K2: Stunde im Ruhefenster [start, ende)? Über-Mitternacht (22→7) inklusive. */
+export function istImRuhefenster(stunde: number, [start, ende]: [number, number]): boolean {
+  if (start === ende) return false; // degeneriertes Fenster = aus
+  if (start < ende) return stunde >= start && stunde < ende;
+  return stunde >= start || stunde < ende;
+}
+
 export interface ActivityProfile {
   /** Response probability per hour (0-23). 0.0 = never responds, 1.0 = always responds. */
   hourly: number[];
@@ -44,6 +51,7 @@ export class DeliveryScheduler {
     private readonly adapter: AsyncDbAdapter,
     private readonly logger: Logger,
     timezone?: string,
+    private readonly quietHours: [number, number] | false = [22, 7],
   ) {
     this.timezone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   }
@@ -171,6 +179,15 @@ export class DeliveryScheduler {
           if (Date.now() - lastActive < 30 * 60_000) return true;
         }
       } catch { /* fallback to profile-based check */ }
+    }
+
+    // v1144 — K2: hartes Ruhefenster. Das gelernte Aktivitätsprofil hielt
+    // 04:02 Uhr für zustellbar (Realfall 29.08.: 10 Insights nachts) — ein
+    // paar späte Chats reichten als „aktiv". Im Fenster wird alles außer
+    // urgent aufgeschoben und kommt gebündelt nach Fenster-Ende; der
+    // Realtime-Check oben bleibt davor (wer nachts aktiv chattet, ist wach).
+    if (this.quietHours !== false && istImRuhefenster(this.getHourInUserTz(), this.quietHours)) {
+      return false;
     }
 
     // Profile-based: if profile is too young (<7 days of data), always deliver

@@ -534,6 +534,10 @@ export interface ReasoningConfig {
   tier?: 'fast' | 'default';
   /** Hours to suppress duplicate insights (default: 12) */
   deduplicationHours?: number;
+  /** v1144 — Ruhefenster [startStunde, endStunde) in lokaler Zeit: keine
+   *  nicht-dringenden Zustellungen (urgent geht immer durch; aktive Chats
+   *  ebenfalls). Default [22, 7]; false schaltet das Fenster ab. */
+  quietHours?: [number, number] | false;
   /** Optional LLM-based entity linking for semantic relationships. */
   llmLinking?: LLMLinkingConfig;
 }

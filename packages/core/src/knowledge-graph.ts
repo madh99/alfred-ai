@@ -346,6 +346,14 @@ export class KnowledgeGraphService {
     private readonly defaultPlatform?: string,
   ) {}
 
+  // v1144 — K1 Stufe 2: semantische Entity-Suche (optional verdrahtet)
+  private embeddingService?: import('./embedding-service.js').EmbeddingService;
+  private embeddingRepoForEntities?: import('@alfred/storage').EmbeddingRepository;
+  setEmbeddingService(svc: import('./embedding-service.js').EmbeddingService, repo?: import('@alfred/storage').EmbeddingRepository): void {
+    this.embeddingService = svc;
+    this.embeddingRepoForEntities = repo;
+  }
+
   /** Refresh the dynamic location set from KG entities of type 'location'. */
   /** German noun suffixes that never appear in city names. */
   private static readonly NOUN_SUFFIXES = /(?:ung|heit|keit|schaft|tion|tät|nis|ment|tag|zeit|stück)$/i;
@@ -542,6 +550,28 @@ export class KnowledgeGraphService {
           if (results.length >= 5) break;
         }
         if (results.length >= 5) break;
+      }
+
+      // v1144 — K1 Stufe 2: semantische Kandidaten. Der Stichwort-Abgleich
+      // findet nur wörtliche Treffer — „wann hat mein Sohn Geburtstag" matchte
+      // nie auf „Noah Habel". Die Nachricht wird eingebettet und gegen die
+      // (nächtlich eingebetteten) KG-Entitäten gesucht; Treffer laufen durch
+      // denselben Render-Pfad wie Keyword-Treffer.
+      if (this.embeddingService && results.length < 5) {
+        try {
+          const hits = await this.embeddingService.semanticSearchByType(userId, message, 'kg_entity', 5);
+          for (const h of hits) {
+            const name = h.content.split(' [')[0]?.trim();
+            if (!name) continue;
+            for (const hit of await this.kgRepo.searchEntitiesWithRelations(userId, name, 1)) {
+              if (seen.has(hit.entity.id)) continue;
+              seen.add(hit.entity.id);
+              results.push(hit);
+              if (results.length >= 5) break;
+            }
+            if (results.length >= 5) break;
+          }
+        } catch { /* Stichwort-Ergebnisse reichen */ }
       }
 
       if (results.length === 0) return '';
@@ -1018,7 +1048,9 @@ export class KnowledgeGraphService {
       if (!userEntity) return this.buildDeviceContext(userId); // fallback
 
       // Collect Tier 1 relations from User (memory-sourced family + work)
-      const TIER1_TYPES = new Set(['spouse', 'parent_of', 'family', 'works_at', 'owns', 'lives_at']);
+      // v1144 — K1: child_of ergänzt (die Hälfte der Kinder hing über
+      // child_of→User am Graph und fehlte im Familien-Block komplett).
+      const TIER1_TYPES = new Set(['spouse', 'parent_of', 'child_of', 'family', 'works_at', 'owns', 'lives_at']);
       const userRelations = relations.filter(r =>
         (r.sourceEntityId === userEntity.id || r.targetEntityId === userEntity.id)
         && TIER1_TYPES.has(r.relationType),
@@ -1026,9 +1058,38 @@ export class KnowledgeGraphService {
 
       // Build sections
       const family: string[] = [];
+      const familieGesehen = new Set<string>();
       const work: string[] = [];
       const locations: string[] = [];
       const devices: string[] = [];
+
+      // v1144 — K1: Kind-Zeile mit Rolle, Geburtsdatum (alle Attribut-
+      // Varianten) und vollem Namen — vorher wurde nur `birthday` gelesen
+      // (die Daten liegen unter `birthdate`) und die Richtung von parent_of
+      // ignoriert (die Mutter erschien als Kind).
+      const kindZeile = (other: (typeof entities)[number]): string => {
+        const a = other.attributes ?? {};
+        const rolle = String(a.relation_to_user ?? a.rolle ?? a.role ?? '').toLowerCase();
+        let rollenName = /step_son|stiefsohn/.test(rolle) ? 'Stiefsohn'
+          : /step_daughter|stieftochter/.test(rolle) ? 'Stieftochter'
+          : /daughter|tochter/.test(rolle) ? 'Tochter'
+          : /son|sohn/.test(rolle) ? 'Sohn' : 'Kind';
+        // Ohne Rollen-Attribut: Rolle aus dem Entitäts-Namen („Tochter Lena")
+        if (rollenName === 'Kind') {
+          if (/^tochter\b/i.test(other.name)) rollenName = 'Tochter';
+          else if (/^sohn\b/i.test(other.name)) rollenName = 'Sohn';
+        }
+        const extras: string[] = [rollenName];
+        const voll = a.fullName as string | undefined;
+        if (voll && voll !== other.name) extras.push(voll);
+        const geb = (a.birthdate ?? a.birthday ?? a.birth_date) as string | undefined;
+        if (geb) extras.push(`geb. ${geb}`);
+        for (const cr of relations.filter(r => r.sourceEntityId === other.id && r.relationType === 'plays_at')) {
+          const club = entityMap.get(cr.targetEntityId);
+          if (club) extras.push(club.name);
+        }
+        return `${other.name} (${extras.join(', ')})`;
+      };
 
       for (const rel of userRelations) {
         const otherId = rel.sourceEntityId === userEntity.id ? rel.targetEntityId : rel.sourceEntityId;
@@ -1036,20 +1097,25 @@ export class KnowledgeGraphService {
         if (!other) continue;
 
         if (rel.relationType === 'spouse') {
+          if (familieGesehen.has(other.id)) continue;
+          familieGesehen.add(other.id);
           family.push(`${other.name} (Ehepartner)`);
-        } else if (rel.relationType === 'parent_of') {
-          const bday = other.attributes?.birthday as string | undefined;
-          const extras: string[] = [];
-          // Find child-specific relations (plays_at, etc.)
-          const childRels = relations.filter(r => r.sourceEntityId === other.id && r.relationType === 'plays_at');
-          for (const cr of childRels) {
-            const club = entityMap.get(cr.targetEntityId);
-            if (club) extras.push(club.name);
+        } else if (rel.relationType === 'parent_of' || rel.relationType === 'child_of') {
+          if (other.entityType !== 'person' || familieGesehen.has(other.id)) continue;
+          familieGesehen.add(other.id);
+          // Richtung: User parent_of X / X child_of User → X ist Kind;
+          // X parent_of User / User child_of X → X ist Elternteil.
+          const istKind = (rel.relationType === 'parent_of' && rel.sourceEntityId === userEntity.id)
+            || (rel.relationType === 'child_of' && rel.targetEntityId === userEntity.id);
+          if (istKind) {
+            family.push(kindZeile(other));
+          } else {
+            family.push(`${other.name} (Elternteil)`);
           }
-          if (bday) extras.push(`Geb. ${bday}`);
-          family.push(`${other.name}${extras.length ? ` (${extras.join(', ')})` : ''}`);
         } else if (rel.relationType === 'family') {
           // Determine role from memory key or relation context
+          if (familieGesehen.has(other.id)) continue;
+          familieGesehen.add(other.id);
           const role = rel.context?.match(/mutter|mother/i) ? 'Mutter'
             : rel.context?.match(/vater|father/i) ? 'Vater'
             : rel.context?.match(/schwester|sister/i) ? 'Schwester'
@@ -1666,7 +1732,36 @@ export class KnowledgeGraphService {
           this.logger.debug({ err }, 'KG maintenance: wrong home relation cleanup failed');
         }
 
-        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared, implausibleLocationsCleaned, userHomeConsolidated, junkEntitiesCleaned, wrongIsHomeCleared, wrongHomeRelationsDeleted }, 'KG maintenance completed');
+        // v1144 — K1 Stufe 2: Personal-Entitäten einbetten (fehlende zuerst,
+        // dann Delta der letzten 25 h; max. 300/Nacht). Grundlage der
+        // semantischen Chat-Suche — ohne Embeddings fällt sie still auf den
+        // Stichwort-Abgleich zurück.
+        let entitiesEmbedded = 0;
+        try {
+          if (this.embeddingService && this.embeddingRepoForEntities) {
+            const { entities: allePersonal } = await this.kgRepo.getFullGraph(userId, 'personal');
+            const vorhandene = new Set(
+              (await this.embeddingRepoForEntities.findByUser(userId))
+                .filter(e => e.sourceType === 'kg_entity').map(e => e.sourceId));
+            const seit = Date.now() - 25 * 3_600_000;
+            const ziel = allePersonal
+              .filter(e => !vorhandene.has(e.id) || Date.parse(e.lastSeenAt ?? '') > seit)
+              .slice(0, 300);
+            for (const e of ziel) {
+              const attrs = (e.attributes ?? {}) as Record<string, unknown>;
+              const details = ['birthdate', 'fullName', 'relation_to_user', 'rolle', 'role', 'city', 'country', 'note']
+                .map(k => attrs[k]).filter(v => typeof v === 'string' && (v as string).length < 60).join(', ');
+              const content = `${e.name} [${e.entityType}]${details ? ` — ${details}` : ''}`;
+              if (vorhandene.has(e.id)) await this.embeddingRepoForEntities.delete('kg_entity', e.id, userId).catch(() => { /* re-embed */ });
+              await this.embeddingService.embedAndStore(userId, content, 'kg_entity', e.id);
+              entitiesEmbedded++;
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'KG maintenance: entity embedding failed');
+        }
+
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared, implausibleLocationsCleaned, userHomeConsolidated, junkEntitiesCleaned, wrongIsHomeCleared, wrongHomeRelationsDeleted, entitiesEmbedded }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');

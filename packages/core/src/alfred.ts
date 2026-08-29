@@ -6351,6 +6351,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           memoryRepo, skillRegistry, skillSandbox, userRepo,
           ownerUserId, defaultProactivePlatform,
         );
+        // v1144 — K1 Stufe 2: semantische Entity-Suche im Chat
+        if (this.embeddingServiceRef) kgServiceInstance.setEmbeddingService(this.embeddingServiceRef, this.embeddingRepoRef);
         // Optional LLM-based entity linker
         const llmLinkingCfg = this.config.reasoning?.llmLinking;
         if (llmLinkingCfg?.enabled) {
@@ -13305,6 +13307,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               new KnowledgeGraphRepository(this.database.getAdapter()),
               this.logger.child({ component: 'knowledge-graph' }), this.memoryRepo,
             );
+            // v1144 — K1 Stufe 2: nächtliche Entity-Einbettung im Wartungslauf
+            if (this.embeddingServiceRef) kgServiceDaily.setEmbeddingService(this.embeddingServiceRef, this.embeddingRepoRef);
             const users = await userRepoRef.listAll();
             for (const user of users) {
               await kgServiceDaily.maintenance(user.id);

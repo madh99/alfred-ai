@@ -68,6 +68,47 @@ export class EmbeddingService {
     }
   }
 
+  /**
+   * v1144 — K1 Stufe 2: semantische Suche EINGESCHRÄNKT auf einen sourceType
+   * (z. B. 'kg_entity'). „Sohn" findet so die Entität „Noah Habel", die der
+   * Stichwort-Abgleich nie traf. Liefert sourceId + content + Score.
+   */
+  async semanticSearchByType(
+    userId: string,
+    query: string,
+    sourceType: string,
+    limit = 5,
+    minScore = 0.55,
+  ): Promise<Array<{ sourceId: string; content: string; score: number }>> {
+    if (!this.llm.supportsEmbeddings()) return [];
+    try {
+      const queryResult = await this.llm.embed(query);
+      if (!queryResult) return [];
+      const pgResults = await this.embeddingRepo.vectorSearch(userId, queryResult.embedding, limit * 6);
+      let kandidaten: Array<{ sourceType: string; sourceId: string; content: string; score: number }>;
+      if (pgResults) {
+        kandidaten = pgResults.map(r => ({
+          sourceType: r.sourceType, sourceId: r.sourceId, content: r.content,
+          score: 1 - ((r as { distance?: number }).distance ?? 0),
+        }));
+      } else {
+        const embeddings = await this.embeddingRepo.findByUser(userId);
+        kandidaten = embeddings.map(e => ({
+          sourceType: e.sourceType, sourceId: e.sourceId, content: e.content,
+          score: this.cosineSimilarity(queryResult.embedding, e.embedding),
+        }));
+        kandidaten.sort((a, b) => b.score - a.score);
+      }
+      return kandidaten
+        .filter(k => k.sourceType === sourceType && k.score >= minScore)
+        .slice(0, limit)
+        .map(({ sourceId, content, score }) => ({ sourceId, content, score }));
+    } catch (err) {
+      this.logger.debug({ err, sourceType }, 'semanticSearchByType failed');
+      return [];
+    }
+  }
+
   async semanticSearch(
     userId: string,
     query: string,

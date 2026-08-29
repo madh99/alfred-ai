@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1144] - 2026-08-29
+
+### Fixed — Chat-Stammdaten, semantische Wissens-Suche, Ruhefenster (v1144)
+
+„Wann hat mein Sohn Geburtstag?" konnte Alfred strukturell nicht beantworten: Der Stammdaten-Block las Geburtstage unter dem falschen Attribut-Namen, übersah die Hälfte der Kinder (über `child_of` verknüpft) und verwechselte bei `parent_of` die Richtung (die Mutter erschien als Kind). Die themenbezogene Wissens-Suche fand nur wörtliche Stichwort-Treffer — „Sohn" matchte nie auf den Namen des Kindes. Und das Aktivitätsprofil stellte nachts um 04:02 Uhr zehn Insights zu.
+
+- **Stammdaten-Block repariert (K1 Stufe 1)**: Familie jetzt richtungs-sicher (Kind vs. Elternteil), mit Rolle (Sohn/Tochter/Stiefsohn — aus Attribut oder Name), Geburtsdatum (alle Attribut-Varianten) und vollem Namen; `child_of`-verknüpfte Kinder erscheinen. Jede Chat-Antwort hat damit die Kernfakten immer im Kontext — bei zwei Söhnen nennt Alfred beide.
+- **Semantische Wissens-Suche (K1 Stufe 2)**: Die Chat-Nachricht wird eingebettet und gegen die KG-Entitäten semantisch gesucht („Sohn" → Noah); die tägliche Wartung bettet die Personal-Entitäten ein (fehlende zuerst, dann Delta, max. 300/Nacht). Ohne Embeddings fällt die Suche still auf den Stichwort-Abgleich zurück — funktioniert also mit jeder Provider-Konstellation.
+- **Ruhefenster (K2)**: Standardmäßig 22:00–07:00 keine nicht-dringenden Zustellungen — alles wird aufgeschoben und kommt gebündelt am Morgen. `urgent` geht immer durch, und wer nachts aktiv chattet, bekommt sofort Antwort. Konfigurierbar über `reasoning.quietHours: [start, ende]` bzw. `false`.
+- 6 neue Tests (Ruhefenster inkl. 04:02-Realfall, „beide Söhne mit Geburtsdatum", Richtungs-Test Mutter/Kind, semantische Typ-Suche).
+
 ## [0.19.0-multi-ha.1143] - 2026-08-29
 
 ### Fixed — Zeitanker, Echo-Verbot, Melde-Hygiene (v1143)

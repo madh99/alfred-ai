@@ -229,7 +229,8 @@ export class ReasoningEngine {
 
     // Smart delivery timing
     if (this.adapter) {
-      this.deliveryScheduler = new DeliveryScheduler(this.adapter, this.logger.child({ component: 'delivery-scheduler' }), tz);
+      this.deliveryScheduler = new DeliveryScheduler(this.adapter, this.logger.child({ component: 'delivery-scheduler' }), tz,
+        config?.quietHours ?? [22, 7]);
     }
   }
 
