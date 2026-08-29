@@ -169,6 +169,26 @@ export class ScheduledTaskSkill extends Skill {
       }
     }
 
+    // v1147 — L4: Generationen ERSETZEN statt danebenlegen. Umbauten hinterließen
+    // Leichen (die aWATTar- und Spond-Crons existierten je doppelt als komplette
+    // deaktivierte Vierergruppen). Gleiche Identität = gleicher Name (case-
+    // insensitiv) ODER gleicher Skill mit gleichem Zeitplan → alte Generation
+    // wird deaktiviert und im Ergebnis benannt.
+    const ersetzt: string[] = [];
+    try {
+      const bestehende = await this.actionRepo.getByUser(effectiveUserId(context));
+      for (const alt of bestehende) {
+        if (!alt.enabled) continue;
+        const gleicherName = alt.name.trim().toLowerCase() === name.trim().toLowerCase();
+        const gleicherPlan = alt.skillName === (skillName ?? 'llm_prompt')
+          && alt.scheduleType === scheduleType && alt.scheduleValue === scheduleValue;
+        if (gleicherName || gleicherPlan) {
+          await this.actionRepo.setEnabled(alt.id, false);
+          ersetzt.push(alt.name);
+        }
+      }
+    } catch { /* Ersetzen best-effort */ }
+
     const entry = await this.actionRepo.create({
       userId: effectiveUserId(context),
       platform: context.platform,
@@ -191,7 +211,7 @@ export class ScheduledTaskSkill extends Skill {
     return {
       success: true,
       data: { actionId: entry.id, name, scheduleType, scheduleValue, skillName },
-      display: `Scheduled action created (${entry.id}): "${name}" — ${scheduleLabel}, running "${skillName}"${entry.nextRunAt ? `. Next run: ${entry.nextRunAt}` : ''}`,
+      display: `Scheduled action created (${entry.id}): "${name}" — ${scheduleLabel}, running "${skillName}"${entry.nextRunAt ? `. Next run: ${entry.nextRunAt}` : ''}${ersetzt.length > 0 ? `\n♻️ Alte Generation deaktiviert: ${ersetzt.join(', ')}` : ''}`,
     };
   }
 

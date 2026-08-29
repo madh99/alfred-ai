@@ -1667,28 +1667,14 @@ export class Alfred {
             }
           } catch (err) { this.logger.debug({ err }, 'code-agent completion → project-manager failed'); }
 
-          // v614 L3 — Workflow extraction for code_agent sessions (mirror of delegate path).
-          // Previously only delegate-path triggered workflow extraction; code_agent runs were
-          // ignored, which is why auto_extracted=0 in production despite many code-agent runs.
-          // The extractor's pre-filter (>=2 distinct skills OR >=4 calls) means trivial
-          // 1-skill code-agent runs still get skipped.
-          if (info.success && (info.toolCalls ?? 0) > 0) {
-            try {
-              // We don't have full per-tool-call inputs from emitCompletion — just toolCalls count.
-              // For now pass a synthetic reconstruction using agentOrTask as the only "call".
-              // This is intentionally conservative; the extractor's pre-filter will likely
-              // reject most code-agent sessions until we track full inputs (future work).
-              const reconstructed = [
-                { name: 'code_agent', input: { task: info.agentOrTask, cwd: info.cwd }, success: info.success },
-              ];
-              await proposeWorkflowFromSession({
-                userId,
-                goal: info.agentOrTask,
-                toolCalls: reconstructed,
-                sourceId: `code-agent-wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              });
-            } catch (err) { this.logger.debug({ err }, 'code-agent workflow-extraction failed'); }
-          }
+          // v1147 — P3: Der v614-Workflow-Extraktions-Aufruf für code_agent-
+          // Sessions ist ENTFERNT. Er übergab eine synthetische 1-Schritt-
+          // Rekonstruktion, die der Vorfilter (≥2 Skills oder ≥4 Calls)
+          // konstruktionsbedingt IMMER ablehnte — der eigene Kommentar räumte
+          // das ein („will likely reject most … until we track full inputs").
+          // Ergebnis: auto_extracted=0 seit Bestehen, bei laufenden Kosten
+          // (ein toter Call je Session). Der Delegate-Pfad mit echten
+          // Tool-Calls bleibt aktiv.
         });
       }
 
@@ -4191,7 +4177,9 @@ export class Alfred {
                         package_path: item.packagePath,
                       }, ctx);
                     } catch (err) {
-                      this.logger.debug({ err, projectId: item.projectId }, 'v828 self-modify failed for project (non-fatal)');
+                      // v1147 — P4: Fehlläufe sichtbar (warn statt debug) — der
+                      // Zyklus lief bisher komplett stumm.
+                      this.logger.warn({ err, projectId: item.projectId }, 'v828 self-modify failed for project (non-fatal)');
                     }
                   }
                 } catch (err) {
@@ -6200,7 +6188,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     // 7d. Initialize watch engine (condition-based alerts)
     const watchRepo = new WatchRepository(adapter);
     this.watchRepo = watchRepo;
-    skillRegistry.register(new WatchSkill(watchRepo, skillRegistry));
+    const watchSkillInst = new WatchSkill(watchRepo, skillRegistry);
+    // v1147 — M1: Sandbox für die Anlage-Probe (Feld-Existenz gegen echte Daten)
+    watchSkillInst.setSkillSandbox(skillSandbox);
+    skillRegistry.register(watchSkillInst);
 
     // 7e. Initialize confirmation queue (human-in-the-loop for watch actions)
     const confirmRepo = new ConfirmationRepository(adapter);
@@ -6707,6 +6698,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         let lastDigestDay = '';
         let lastMaintenanceDay = '';
         let lastVorausschauDay = '';
+        let lastLernTelemetrieDay = '';
         this.interestsDailyTimer = setInterval(async () => {
           const now = new Date();
           const today = now.toISOString().slice(0, 10);
@@ -6747,6 +6739,43 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   this.logger.child({ component: 'stammdaten-sync' })).run(ownerSd);
               }
             } catch (err) { this.logger.debug({ err }, 'v1146 stündlicher Stammdaten-Sync fehlgeschlagen'); }
+          }
+          // v1147 — P5: Lern-Telemetrie, sonntags 19:15 — EINE Zeile pro
+          // Lernschleife (gelernt/benutzt), damit „verbessert sich Alfred?"
+          // eine messbare Antwort hat statt eines Gefühls.
+          if (now.getDay() === 0 && now.getHours() === 19 && now.getMinutes() >= 15 && lastLernTelemetrieDay !== today) {
+            lastLernTelemetrieDay = today;
+            if (await this.claimDailySlot(`lern-telemetrie:${today}`)) {
+              try {
+                const ownerLt = this.tryOwner();
+                const ad = this.database?.getAdapter();
+                if (ownerLt && ad && this.insightsRepo) {
+                  const zaehle = async (sql: string): Promise<number> => {
+                    try { const r = await ad.queryOne(sql, []) as { n?: number | string } | undefined; return Number(r?.n ?? 0); }
+                    catch { return -1; }
+                  };
+                  const zeilen = [
+                    `Rezepte: ${await zaehle('SELECT count(*) n FROM learned_recipes')} gelernt, ${await zaehle('SELECT count(*) n FROM learned_recipes WHERE success_count > 0')} je benutzt`,
+                    `Runbooks: ${await zaehle('SELECT count(*) n FROM runbooks')}`,
+                    `Verhaltens-Muster: ${await zaehle("SELECT count(*) n FROM memories WHERE type = 'pattern'")}`,
+                    `Skill-Regeln: ${await zaehle("SELECT count(*) n FROM memories WHERE type = 'rule'")}`,
+                    `Action-Feedback-Events: ${await zaehle('SELECT count(*) n FROM feedback_events')}`,
+                    `Auto-extrahierte Workflows: ${await zaehle('SELECT count(*) n FROM workflow_chains WHERE auto_extracted = 1')}`,
+                    `Wissens-Rückfragen gestellt: ${await zaehle('SELECT count(*) n FROM kg_questions')}`,
+                    `Watches: ${await zaehle('SELECT count(*) n FROM watches WHERE enabled = 1')} aktiv, ${await zaehle('SELECT count(*) n FROM watches WHERE last_triggered_at IS NOT NULL')} haben je getriggert`,
+                  ];
+                  const wochenBucketLt = Math.floor(Date.now() / (7 * 24 * 3_600_000));
+                  await this.insightsRepo.upsertCandidate(ownerLt, {
+                    category: 'lern-telemetrie',
+                    title: '📊 Lern-Telemetrie der Woche',
+                    body: zeilen.join('\n'),
+                    confidence: 0.9,
+                    sourceData: { router: true, urgency: 'low' },
+                    dedupeKey: `lern-telemetrie:${wochenBucketLt}`,
+                  });
+                }
+              } catch (err) { this.logger.debug({ err }, 'v1147 Lern-Telemetrie fehlgeschlagen'); }
+            }
           }
           // v1145 — K3: 07:45 Vorausschau-Radar (nach dem Ruhefenster).
           // Owner ZUR LAUFZEIT auflösen (H6-Lektion: beim Wiring ist er nie gesetzt).

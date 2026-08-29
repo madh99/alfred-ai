@@ -248,6 +248,27 @@ export class WatchEngine {
     } else {
       // Single condition
       const currentValue = extractField(result.data, watch.condition.field);
+      // v1147 — M2: undefined-Extraktion ist ein KONFIGURATIONS-Fehler, kein
+      // Normalzustand. 39/40 Watches pollten erfolgreich, aber das geratene
+      // condition.field existierte nie in den Daten → last_value blieb ewig
+      // "null", keine Bedingung feuerte, und KEIN Sicherheitsnetz griff (alle
+      // prüften auf Skill-FEHLER). Jetzt läuft der bewährte v595-Pfad:
+      // 3× in Folge → Auto-Repair mit der Liste der ECHTEN Felder, 6× →
+      // deaktivieren + melden.
+      if (currentValue === undefined) {
+        const { sammleFeldPfade } = await import('@alfred/skills');
+        const felder = sammleFeldPfade(result.data).slice(0, 30).join(', ');
+        const fehler = `Bedingungs-Feld "${watch.condition.field}" existiert nicht in den ${watch.skillName}-Daten — verfügbar: ${felder || '(keine strukturierten Daten)'}`;
+        await this.watchRepo.updateActionError(watch.id, fehler);
+        await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: 'null' });
+        const failCount = await this.watchRepo.incrementFailures(watch.id);
+        if (failCount === 3) {
+          await this.attemptAutoRepair(watch, fehler);
+        } else if (failCount >= 6) {
+          await this.autoDisableWatch(watch, fehler);
+        }
+        return;
+      }
       let lastValue: unknown = null;
       if (watch.lastValue !== null) {
         try { lastValue = JSON.parse(watch.lastValue); } catch { /* treat as baseline */ }

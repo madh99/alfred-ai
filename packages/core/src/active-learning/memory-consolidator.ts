@@ -221,6 +221,27 @@ export class MemoryConsolidator {
       this.logger.error({ err }, 'Failed to delete expired rules');
     }
 
+    // 1c. v1147 — P1 (Kuration): Verhaltens-Muster, die seit 45 Tagen nicht
+    // mehr bestätigt wurden (der Pattern-Analyzer aktualisiert zutreffende
+    // Muster täglich → altes updated_at = Verhalten nicht mehr beobachtet),
+    // werden gelöscht. 636 Patterns hatten sich angesammelt, ohne dass je
+    // etwas maß, ob sie noch stimmen.
+    try {
+      const patternCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+      const patterns = await this.memoryRepo.getByType(userId, 'pattern', 500);
+      const veraltet = patterns.filter(p => p.updatedAt < patternCutoff && p.source === 'auto');
+      if (veraltet.length > 0) {
+        const ids = veraltet.map(p => p.id);
+        deleted += await this.memoryRepo.deleteByIds(ids);
+        if (this.embeddingRepo) {
+          for (const id of ids) { await this.embeddingRepo.delete('memory', id, userId).catch(() => {}); }
+        }
+        this.logger.info({ userId, geloescht: veraltet.length }, 'v1147 Kuration: nicht mehr bestätigte Muster entfernt');
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'v1147 Pattern-Kuration fehlgeschlagen');
+    }
+
     // 2. Find and merge similar memories
     try {
       const allMemories = await this.memoryRepo.listAll(userId);

@@ -34,9 +34,12 @@ export class WorkflowSkill extends Skill {
     name: 'workflow',
     category: 'automation',
     description:
-      'Create and manage multi-step workflows (skill chains). ' +
+      'Create and manage multi-step workflows (skill chains) — Alfreds n8n. ' +
       'Use "create" to define a workflow with sequential steps. ' +
       'Each step runs a skill and can pass data to the next via {{prev.field}} or {{steps.0.field}} templates. ' +
+      'IMPORTANT: workflows can run AUTOMATICALLY — set trigger_type "cron" (trigger_config {"value":"0 7 * * *"}), ' +
+      '"interval" ({"value": 30} minutes), "watch" ({"watchId": "..."} fires when that watch triggers) or "webhook". ' +
+      'Default "manual" runs only via "run". ' +
       'Use "run" to execute a workflow, "list" to see all workflows, "delete" to remove, "history" to see recent executions.',
     riskLevel: 'write',
     version: '1.0.0',
@@ -63,6 +66,15 @@ export class WorkflowSkill extends Skill {
         workflow_id: {
           type: 'string',
           description: 'Workflow ID (for run/delete/history)',
+        },
+        trigger_type: {
+          type: 'string',
+          enum: ['manual', 'cron', 'interval', 'watch', 'webhook'],
+          description: 'v1147 (for create): WHEN the workflow runs automatically. cron = Zeitplan (trigger_config.value = Cron-Ausdruck), interval = alle N Minuten (trigger_config.value), watch = wenn eine Watch feuert (trigger_config.watchId), webhook = externer Aufruf. Default: manual (nur via "run").',
+        },
+        trigger_config: {
+          type: 'object',
+          description: 'v1147 (for create): Trigger-Konfiguration. cron: {"value": "0 7 * * *"}; interval: {"value": 30}; watch: {"watchId": "<id>"}.',
         },
         workflowId: {
           type: 'string',
@@ -211,20 +223,48 @@ export class WorkflowSkill extends Skill {
       }
     }
 
+    // v1147 — L1: Trigger sind jetzt beim Anlegen ERREICHBAR. Der laufende
+    // TriggerManager konnte cron/interval/watch/webhook immer ausführen — aber
+    // create hardcodete 'manual' und das Schema kannte keinen Trigger-Parameter:
+    // JEDER je erzeugte Workflow war manuell und wurde nie getriggert
+    // (Realfall: „sync-spond-to-calendar" lag 3 Monate tot herum).
+    const triggerType = (input.trigger_type as string | undefined) ?? 'manual';
+    const GUELTIGE_TRIGGER = ['manual', 'cron', 'interval', 'watch', 'webhook'];
+    if (!GUELTIGE_TRIGGER.includes(triggerType)) {
+      return { success: false, error: `Ungültiger trigger_type "${triggerType}". Erlaubt: ${GUELTIGE_TRIGGER.join(', ')}` };
+    }
+    const triggerConfig = (input.trigger_config as Record<string, unknown> | undefined) ?? undefined;
+    if (triggerType === 'cron' && !(triggerConfig?.value ?? triggerConfig?.cron)) {
+      return { success: false, error: 'trigger_type "cron" braucht trigger_config.value mit einem Cron-Ausdruck (z. B. {"value": "0 7 * * *"}).' };
+    }
+    if (triggerType === 'interval' && !(triggerConfig?.value ?? triggerConfig?.minutes)) {
+      return { success: false, error: 'trigger_type "interval" braucht trigger_config.value (Minuten, z. B. {"value": 30}).' };
+    }
+    if (triggerType === 'watch' && !(triggerConfig?.value ?? triggerConfig?.watchId)) {
+      return { success: false, error: 'trigger_type "watch" braucht trigger_config.watchId der auslösenden Watch.' };
+    }
+
     const chain = await this.workflowRepo.create({
       name,
       userId: effectiveUserId(context),
       chatId: context.chatId,
       platform: context.platform,
       steps,
-      triggerType: 'manual',
+      triggerType: triggerType as never,
+      triggerConfig,
+      // v1147 — L2: Alle Schritte sind validiert (Skills, Actions, Sprünge) —
+      // direkt aktiv anlegen statt „bitte noch aktivieren"-Reibung. Die
+      // Ausführungs-Sicherung (auto_run-Bestätigung, v602) bleibt unberührt.
       enabled: true,
     });
 
+    const triggerText = triggerType === 'manual'
+      ? 'manuell (workflow run)'
+      : `${triggerType} ${JSON.stringify(triggerConfig ?? {})} — läuft AUTOMATISCH`;
     return {
       success: true,
-      data: { workflowId: chain.id, name, stepCount: steps.length },
-      display: `Workflow "${name}" erstellt (${chain.id}) mit ${steps.length} Schritten.`,
+      data: { workflowId: chain.id, name, stepCount: steps.length, triggerType },
+      display: `Workflow "${name}" erstellt und AKTIV (${chain.id}) — ${steps.length} Schritte, Trigger: ${triggerText}.`,
     };
   }
 

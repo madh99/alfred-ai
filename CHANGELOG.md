@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1147] - 2026-08-29
+
+### Fixed — Automationen, die wirken + geschlossene Lernschleife (v1147, M/L/P-Pakete)
+
+Befund des Tages: 39 von 40 Watches hatten NIE getriggert (das beim Anlegen geratene Bedingungs-Feld existierte in den echten Skill-Daten nicht, `last_value` blieb ewig `"null"`, kein Sicherheitsnetz griff), der n8n-Workflow-Skill konnte seine eigene Trigger-Engine nicht erreichen (2 Workflows, 0 automatische Läufe seit Bestehen), und die Selbstverbesserungs-Schleifen legten ab, ohne dass je etwas Nutzung oder Wirkung maß.
+
+**M — Watches, die wirken:**
+- **Anlage-Probe**: `watch.create` führt den Ziel-Skill einmal aus und prüft jedes Bedingungs-Feld gegen die ECHTEN Daten — bei Fehltreffer kommt die Liste der verfügbaren Felder zurück (LLM/User korrigieren sofort). Hätte alle 39 stummen Watches beim Anlegen gefangen.
+- **Laufzeit-Wächter**: Liefert die Feld-Extraktion `undefined`, gilt das als Konfigurationsfehler und läuft in den bewährten v595-Pfad (3× → Auto-Repair mit Feld-Liste, 6× → deaktivieren + melden); die Watch-Selbstheilung erkennt jetzt auch den `"null"`-Marker. Der Bestand heilt sich damit von selbst.
+- **Dedup über Bedingungs-Identität** (Skill+Feld+Operator) plus 3-Zeichen-Token-Schwelle — „BMW API Offline Alert" ×9 wird unmöglich („bmw"/„api" fielen unter die alte 4-Zeichen-Schwelle).
+
+**L — Workflows wie n8n, wirklich:**
+- `workflow.create` kennt jetzt `trigger_type` (cron/interval/watch/webhook) samt Konfiguration und dokumentiert sie im Schema — der seit jeher laufende TriggerManager bekommt damit erstmals erreichbare Kunden. Validierte Workflows werden direkt AKTIV angelegt (die auto_run-Ausführungs-Bestätigung bleibt); Scheduled-Tasks mit gleicher Identität (Name oder Skill+Zeitplan) ERSETZEN die alte Generation statt Leichen zu hinterlassen.
+
+**P — Lernschleife geschlossen:**
+- **Recipes**: zentrale Validierung im Repository für ALLE Schreiber (Trigger-Phrase ≥5 Zeichen, ausführbare Schritt-Liste; fehlende Keywords werden abgeleitet) — der eine kaputte Bestands-Eintrag (leere Trigger-Phrase, konnte nie matchen) ist gelöscht. Die vorhandene Pipeline-Vorab-Ausführung bekommt damit erstmals brauchbares Futter.
+- **Kuration**: Verhaltens-Muster, die 45 Tage nicht mehr bestätigt wurden, werden nachts entfernt (636 hatten sich ungeprüft angesammelt).
+- **Ehrlichkeit statt toter Code**: Die Workflow-Auto-Extraktion aus code_agent-Sessions ist entfernt — sie übergab eine synthetische 1-Schritt-Rekonstruktion, die der eigene Vorfilter konstruktionsbedingt immer ablehnte (auto_extracted=0 seit Bestehen). Der Delegate-Pfad mit echten Tool-Calls bleibt.
+- **Lern-Telemetrie**: sonntags 19:15 eine Meldung mit einer Zeile je Lernschleife (Rezepte gelernt/benutzt, Runbooks, Muster, Regeln, Feedback, Auto-Workflows, Wissens-Rückfragen, Watch-Wirksamkeit) — „verbessert sich Alfred?" hat ab jetzt eine messbare Antwort. Self-Modify-Fehlläufe loggen sichtbar statt stumm.
+- 13 neue Tests (Feld-Pfade, Anlage-Probe mit Feld-Liste, Bedingungs-Dedup, Cron-Trigger-Anlage, Generationen-Ersetzung, Recipe-Validierung am Realfall).
+
 ## [0.19.0-multi-ha.1146] - 2026-08-29
 
 ### Fixed — Wissens-Kern: Schema, Herkunft, Stammdaten-Sync, Identität (v1146, S-Serie Teil 1)

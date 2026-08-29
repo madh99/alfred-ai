@@ -61,6 +61,20 @@ export class LearnedRecipeRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
   async create(input: CreateRecipeInput): Promise<LearnedRecipe> {
+    // v1147 — P2: zentrale Validierung für ALLE Schreiber (memory.learn_recipe
+    // UND die Auto-Extraktion). Das v722-Feature hatte in Monaten genau EINEN
+    // Eintrag produziert — mit leerer Trigger-Phrase, den der Pipeline-Matcher
+    // nie finden konnte. Kaputte Rezepte sind schlimmer als keine.
+    if (!input.triggerPhrase || input.triggerPhrase.trim().length < 5) {
+      throw new Error('Recipe abgelehnt: trigger_phrase fehlt oder ist zu kurz (min. 5 Zeichen) — ohne sie kann das Rezept nie matchen.');
+    }
+    if (!Array.isArray(input.actionSequence) || input.actionSequence.length === 0
+      || input.actionSequence.some(s => !s || typeof (s as { skill?: unknown }).skill !== 'string')) {
+      throw new Error('Recipe abgelehnt: action_sequence muss ein nicht-leeres Array von {skill, action?, params}-Schritten sein.');
+    }
+    if (!Array.isArray(input.triggerKeywords) || input.triggerKeywords.length === 0) {
+      input = { ...input, triggerKeywords: input.triggerPhrase.toLowerCase().split(/\s+/).filter(w => w.length >= 3) };
+    }
     const id = randomUUID();
     const now = new Date().toISOString();
     const confidence = input.confidence ?? 0.5;

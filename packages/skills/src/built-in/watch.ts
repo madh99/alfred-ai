@@ -139,6 +139,9 @@ export class WatchSkill extends Skill {
   };
 
   private skillRegistry: SkillRegistry | null = null;
+  /** v1147 — M1: Sandbox für die Anlage-Probe (ein echter Poll beim Create). */
+  private skillSandbox: import('../skill-sandbox.js').SkillSandbox | null = null;
+  setSkillSandbox(sandbox: import('../skill-sandbox.js').SkillSandbox): void { this.skillSandbox = sandbox; }
 
   constructor(private readonly watchRepo: WatchRepository, skillRegistry?: SkillRegistry) {
     super();
@@ -289,16 +292,23 @@ export class WatchSkill extends Skill {
       try {
         const existing = await this.watchRepo.findByChatId(context.chatId, context.platform);
         const newEntity = (skillParams as Record<string, unknown> | undefined)?.entity_id as string | undefined;
-        const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 4));
+        // v1147 — M3: Schwelle ≥3 Zeichen — „bmw"/„api" fielen sonst raus
+        const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-zä-ü0-9]+/i).filter(w => w.length >= 3));
         const newTokens = tokens(name);
         for (const w of existing) {
           if (!w.enabled) continue;
           const wEntity = (w.skillParams as Record<string, unknown> | undefined)?.entity_id as string | undefined;
           const sameTarget = w.skillName === skillName && !!newEntity && wEntity === newEntity;
+          // v1147 — M3: gleiche BEDINGUNGS-Identität (Skill+Feld+Operator) ist ein
+          // Duplikat — „BMW API Offline Alert" existierte 9× in 5 Tagen, weil die
+          // Namens-Tokens (bmw/api = 3 Zeichen) unter der v924-Schwelle blieben.
+          const sameCondition = w.skillName === skillName
+            && (w.condition?.field ?? '') === primaryField
+            && (w.condition?.operator ?? '') === primaryOperator;
           let common = 0;
           const wTokens = tokens(w.name ?? '');
           for (const t of newTokens) if (wTokens.has(t)) common++;
-          if (sameTarget || common >= 3) {
+          if (sameTarget || sameCondition || common >= 3) {
             return {
               success: true,
               data: { watchId: w.id, name: w.name, duplicate: true },
@@ -307,6 +317,39 @@ export class WatchSkill extends Skill {
           }
         }
       } catch { /* Dedup ist best-effort — Anlage nie blockieren */ }
+    }
+
+    // v1147 — M1: Anlage-Probe. 39 von 40 Watches triggerten NIE, weil das
+    // beim Anlegen geratene condition_field in den echten Skill-Daten nicht
+    // existierte (last_value blieb ewig "null", kein Netz griff). Jetzt wird
+    // der Skill EINMAL ausgeführt und jedes Bedingungs-Feld gegen die echten
+    // Daten geprüft — bei Fehltreffer kommt die Liste der VERFÜGBAREN Felder
+    // zurück, damit LLM/User sofort korrigieren können. Schlägt die Probe
+    // selbst fehl (Skill gerade offline), blockiert das die Anlage nicht —
+    // dann übernimmt der Laufzeit-Wächter (M2).
+    if (this.skillSandbox && this.skillRegistry && input.force !== true) {
+      const zielSkill = this.skillRegistry.get(skillName);
+      if (zielSkill) {
+        try {
+          const probe = await this.skillSandbox.execute(zielSkill, { ...skillParams }, context);
+          if (probe.success) {
+            const { extrahiereFeldPfad, sammleFeldPfade } = await import('../feld-pfade.js');
+            const zuPruefen = compositeCondition
+              ? compositeCondition.conditions.map(c => c.field)
+              : [primaryField];
+            const fehlend = zuPruefen.filter(f => f && extrahiereFeldPfad(probe.data, f) === undefined);
+            if (fehlend.length > 0) {
+              const felder = sammleFeldPfade(probe.data);
+              return {
+                success: false,
+                error: `Bedingungs-Feld${fehlend.length > 1 ? 'er' : ''} ${fehlend.map(f => `"${f}"`).join(', ')} existiert nicht in den ${skillName}-Daten. `
+                  + `Verfügbare Felder: ${felder.slice(0, 40).join(', ') || '(keine strukturierten Daten — dieser Skill eignet sich nicht für Feld-Watches)'}. `
+                  + `Watch mit korrektem Feld erneut anlegen (oder force:true, wenn das Feld erst später erscheint).`,
+              };
+            }
+          }
+        } catch { /* Probe best-effort */ }
+      }
     }
 
     const watch = await this.watchRepo.create({

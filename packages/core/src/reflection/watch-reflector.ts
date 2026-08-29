@@ -85,7 +85,9 @@ export class WatchReflector {
       // (Realfall: sensor.garage_temp_batterie existierte nicht in HA). Deaktivieren
       // + melden statt still weiterlaufen lassen.
       const deadAgeDays = (now - new Date(watch.createdAt).getTime()) / 86400_000;
-      const deadValue = watch.lastValue !== null && ['unknown', 'unavailable', ''].includes(String(watch.lastValue).trim().toLowerCase());
+      // v1147 — M2: 'null' ergänzt — der wörtliche Marker der undefined-Extraktion
+      // (39/40 stumme Watches trugen ihn, die v925-Heilung übersah ihn).
+      const deadValue = watch.lastValue !== null && ['unknown', 'unavailable', '', 'null'].includes(String(watch.lastValue).trim().toLowerCase());
       if (deadValue && !watch.lastTriggeredAt && watch.lastCheckedAt && deadAgeDays >= 3) {
         results.push({
           target: { type: 'watch', id: watch.id, name: watch.name },

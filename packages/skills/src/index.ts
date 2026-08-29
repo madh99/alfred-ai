@@ -3,6 +3,7 @@ export { Skill } from './skill.js';
 export * from './agent-session/index.js';
 export { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } from './relative-date-resolver.js';
 export { validateSkillAction, healActionSynonym, ACTION_SYNONYMS } from './validate-skill-action.js';
+export { extrahiereFeldPfad, sammleFeldPfade } from './feld-pfade.js';
 export { effectiveUserId, allUserIds } from './user-utils.js';
 export { SkillRegistry } from './skill-registry.js';
 export { SkillSandbox } from './skill-sandbox.js';
