@@ -6717,7 +6717,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             }
           }
           // 06:30 — Digest-Builder
-          if (now.getHours() === 6 && now.getMinutes() >= 30 && lastDigestDay !== today) {
+          // v1143 — A: Dossier-Pflege nicht mit dem Not-Fallback fahren
+          if (now.getHours() === 6 && now.getMinutes() >= 30 && lastDigestDay !== today
+            && !this.llmProvider?.istDegradiert()) {
             lastDigestDay = today;
             if (await this.claimDailySlot(`topic-digest:${today}`)) {
               try { await this.topicDigestBuilder?.run(); }
@@ -6957,7 +6959,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               } catch (err) { this.logger.warn({ err }, 'v994 news desk failed'); }
             }
             // v995 — Plan-Review: alle 4h regulär, sofort nach Eilmeldungen
+            // v1143 — A: nicht mit dem Not-Fallback bewerten (Frische-Review ist LLM-gestützt)
             if ((now.getHours() % 4 === 0 || breakingCreated > 0)
+              && !this.llmProvider?.istDegradiert()
               && await this.claimDailySlot(`social-planreview:${hourKey}`)) {
               try { await studio.planReview(); }
               catch (err) { this.logger.warn({ err }, 'v995 plan review failed'); }
@@ -13103,6 +13107,12 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const now = new Date();
         const today = now.toISOString().slice(0, 10);
         if (now.getHours() !== 3 || lastConsolidationDay === today) return;
+        // v1143 — A: keine Konsolidierung/Merges auf dem Not-Fallback — das
+        // Notmodell hat im August Memories zu Brei gemerged (kg_connection_dach_cities).
+        if (this.llmProvider?.istDegradiert()) {
+          this.logger.warn('v1143 memory consolidation übersprungen — LLM degradiert');
+          return;
+        }
         lastConsolidationDay = today;
         try {
           const users = await userRepoRef.listAll();

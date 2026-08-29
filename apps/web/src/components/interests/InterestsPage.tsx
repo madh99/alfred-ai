@@ -5,12 +5,13 @@ import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
 import type { InterestTopicItem, InterestItemEntry, NotificationSettings, InsightItem } from '@/lib/alfred-client';
 
-const URGENCIES = ['low', 'normal', 'high', 'urgent'] as const;
+const URGENCIES = ['low', 'normal', 'high', 'urgent', 'mute'] as const;
 const URGENCY_LABEL: Record<string, string> = {
   low: 'Alles melden (low+)',
   normal: 'Ab normal',
   high: 'Nur Wichtiges (high+)',
   urgent: 'Nur Dringendes',
+  mute: '🔇 Stumm (nur Dossier)',
 };
 
 export function InterestsPage() {

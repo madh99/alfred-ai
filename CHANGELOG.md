@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1143] - 2026-08-29
+
+### Fixed — Zeitanker, Echo-Verbot, Degraded-Mode, Melde-Hygiene (v1143)
+
+Realfall am Morgen: „BMW i4: Ladeplanung für Rückfahrt von Köln prüfen" — zwei Tage nach der Rückkehr. Der Akkustand stimmte, der Rahmen nicht: Trip-Memories ohne Ablauf (samt Datum „Do 27.08." im Text), acht noch aktive Event-Watches und die Echo-Schleife (Alfred speicherte seine eigenen Insight-Texte als Wissen) hielten die Reise ewig am Leben. Dazu die genehmigten Melde-Verbesserungen:
+
+- **Zeitanker (J1)**: Kontext-Memories ohne Gültigkeits-Stempel, deren Text ein Datum >24 h in der Vergangenheit enthält, werden hart markiert („EREIGNIS VORBEI — nur Rückblick, KEINE Aktionen ableiten"). Die Vergangenheits-Erkennung hängt nicht mehr am Sprachmodell.
+- **Echo-Verbot (J2)**: Das Reasoning darf seine eigenen Insight-Texte nicht mehr als Memories speichern (Format-Erkennung), Vergangenes wird nicht als neues Wissen abgelegt, Kategorien kommen aus der festen Taxonomie statt vom LLM („urgent_action" existierte nirgends im Code) — und alles, was das Denken speichert, verfällt (Datum im Text + 24 h, sonst 48 h).
+- **Event-Watches (J3)**: Watches, deren Bezugstermin >48 h vorbei ist, werden von der täglichen Selbstheilung deaktiviert („BMW SoC gamescom-Fahrt" ×3 lief zwei Tage nach der Rückkehr weiter).
+- **Anwesenheits-Grounding (J4)**: Die Smart-Home-Sektion beginnt mit einer deterministischen Zeile „📍 Anwesenheit JETZT: … — Reise-Themen nur bei KÜNFTIGEM Ereignis relevant" aus den Home-Assistant-Personen.
+- **Degraded-Mode (A)**: Hängen strong+medium seit ≥3 h durchgehend im Billing-Cooldown (mit Hysterese gegen Flattern, sofortige Entwarnung bei echtem Erfolg), pausieren Reasoning, Memory-Konsolidierung, Themen-Dossiers und Plan-Review — statt mit dem Not-Fallback Wissen und Meldungen zu produzieren. Eine Status-Meldung pro Tag; Watches und Chat laufen weiter, nichts wird nachgeholt.
+- **Plan-Review meldet nur Neues (C)**: Dedupe über Inhalts-Hash + Wochen-Fenster statt Stunden-Schlüssel — identischer Stand wird einmal pro Woche gemeldet statt 6×/Tag (352 wortgleiche Meldungen seit Juli); jede inhaltliche Änderung meldet sofort. Der Review selbst (Aufräumen abgelaufener Posts) läuft unverändert.
+- **Themen-Digest stummschaltbar (D)**: Schwelle „🔇 Stumm (nur Dossier)" je Thema im Interessen-UI — das Dossier wird weiter gepflegt, aktive Meldungen unterbleiben.
+- Bereinigt: 4 abgelaufene/doppelte Event-Watches deaktiviert, 16 Gamescom-Echo-Memories entfernt.
+- 12 neue Tests (Datums-Anker inkl. „Do 27.08."-Realfall, Echo-Erkennung, Anwesenheits-Zeile, Degraded-Hysterese).
+
 ## [0.19.0-multi-ha.1142] - 2026-08-29
 
 ### Fixed — Denk- und Lern-Apparat: Identität statt LLM-Wortlaut (v1142)

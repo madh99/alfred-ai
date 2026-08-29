@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Logger } from 'pino';
 import type {
   SocialRepository, SocialChannel, ContentItem, Story,
@@ -1061,13 +1062,21 @@ Antworte NUR mit einem VALIDEN JSON-Array: [{"index": 0, "verdict": "ok", "grund
     }
 
     if (notes.length > 0) {
+      // v1143 — C: dedupeKey = Inhalts-Hash + Wochen-Bucket statt Stunde. Der
+      // Stunden-Key deduplizierte konstruktionsbedingt NIE — dieselbe Meldung
+      // „0 zurückgezogen, 0 verschoben, 1 Empfehlungen" ging 352× raus. Jetzt:
+      // identischer Inhalt = eine Meldung, Wiedervorlage nach 7 Tagen, und
+      // JEDE inhaltliche Änderung meldet sofort. Der Review selbst läuft
+      // unverändert weiter (das Aufräumen ist sein wertvoller Teil).
+      const wochenBucket = Math.floor(Date.now() / (7 * 24 * 3_600_000));
+      const inhaltsHash = createHash('sha256').update(notes.join('\n')).digest('hex').slice(0, 12);
       await this.insightsRepo?.upsertCandidate(this.ownerUserId, {
         category: 'social',
         title: `Plan-Review: ${result.expired} zurückgezogen, ${result.deferred} verschoben, ${result.flagged} Empfehlungen`,
         body: notes.join('\n'),
         confidence: 0.8,
         sourceData: { router: true, urgency: result.flagged > 0 ? 'normal' : 'low' },
-        dedupeKey: `social-planreview:${nowIso.slice(0, 13)}`,
+        dedupeKey: `social-planreview:${wochenBucket}:${inhaltsHash}`,
       }).catch(() => { /* non-critical */ });
       this.logger.info({ ...result }, 'v995 plan review');
     }

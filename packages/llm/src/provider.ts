@@ -179,6 +179,18 @@ export abstract class LLMProvider {
     return this.contextWindow;
   }
 
+  /**
+   * v1143 — A (Degraded-Mode): true, wenn die Denk-Tiers (strong+medium) seit
+   * Stunden nur noch über den Not-Fallback laufen. Basisklasse: nie degradiert;
+   * der ModelRouter überschreibt das mit echter Billing-Cooldown-Hysterese.
+   * Proaktive Verbraucher (Reasoning, Konsolidierung, Digests, Plan-Review)
+   * setzen dann aus, statt mit dem Notmodell Wissen zu produzieren.
+   */
+  istDegradiert(): boolean { return false; }
+
+  /** v1143 — Beginn der Degradierung (ms-Timestamp) oder null. */
+  degradiertSeit(): number | null { return null; }
+
   async embed(_text: string): Promise<EmbeddingResult | undefined> {
     return undefined;
   }

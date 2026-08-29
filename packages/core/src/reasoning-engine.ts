@@ -21,7 +21,7 @@ import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
-import { ReasoningContextCollector, type CollectedContext } from './reasoning-context-collector.js';
+import { ReasoningContextCollector, spaetestesDatumImText, istInsightEcho, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ActionFeedbackTracker } from './action-feedback-tracker.js';
 import { buildSkillContext } from './context-factory.js';
@@ -489,6 +489,29 @@ ${this.buildTopicInstructions()}`;
       }
 
       this.logger.info({ nodeId: this.nodeId, schedule: this.schedule }, 'Reasoning pass starting');
+
+      // v1143 — A: Degraded-Mode. Laufen strong+medium seit Stunden nur über
+      // den Not-Fallback, setzt das proaktive Denken AUS statt mit dem
+      // Notmodell Wissen und Meldungen zu produzieren (Realfall 19.–29.08.:
+      // 10 Tage mistral-Betrieb erzeugten KG-Müll und Insight-Spam). EINE
+      // Status-Meldung pro Tag; deterministische Wächter (Watches) laufen weiter.
+      if (typeof this.llm.istDegradiert === 'function' && this.llm.istDegradiert()) {
+        const seit = typeof this.llm.degradiertSeit === 'function' ? this.llm.degradiertSeit() : null;
+        const heute = new Date().toISOString().slice(0, 10);
+        const statusKey = `degraded-status:${heute}`;
+        try {
+          if (!(await this.notifRepo.wasNotified(statusKey, this.defaultChatId))) {
+            await this.notifRepo.markNotified(statusKey, this.defaultChatId, this.defaultPlatform,
+              new Date(Date.now() + 26 * 3_600_000).toISOString());
+            const adapter = this.adapters.get(this.defaultPlatform);
+            await adapter?.sendMessage(this.defaultChatId,
+              `⚠️ **Alfred läuft degradiert** (Haupt-LLM-Konten ohne Guthaben${seit ? ` seit ${new Date(seit).toLocaleString('de-AT')}` : ''}). `
+              + 'Proaktives Denken, Lernen und Digests sind pausiert, bis ein Haupt-Modell wieder antwortet — Watches und Chat laufen weiter.');
+          }
+        } catch { /* Status-Meldung best-effort */ }
+        this.logger.warn({ seit }, 'v1143 reasoning pass übersprungen — LLM degradiert');
+        return;
+      }
       const startMs = Date.now();
 
       // PHASE 1: Collect context from all available data sources
@@ -1733,6 +1756,33 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         }
       } catch { /* proceed without gating */ }
 
+      // v1143 — J2: Echo-Verbot für Reasoning-Memories. Das Reasoning speicherte
+      // seine EIGENEN Insight-Texte als Memories (LLM-Key + Fantasie-Kategorie
+      // „urgent_action", ohne Ablauf) — die flossen als „Wissen" zurück in den
+      // Kontext und hielten vergangene Ereignisse ewig am Leben (Gamescom-Fall).
+      if (action.skillName === 'memory') {
+        const memAction = String(action.skillParams?.action ?? '');
+        if (memAction === 'save' || memAction === 'add' || memAction === 'create') {
+          const text = String(action.skillParams?.value ?? action.skillParams?.text ?? '');
+          if (istInsightEcho(text)) {
+            this.logger.info({ key: action.skillParams?.key, text: text.slice(0, 80) },
+              'v1143 memory-Echo blockiert — Insight-Texte sind Ausgaben, kein Wissen');
+            continue;
+          }
+          const datum = spaetestesDatumImText(text);
+          if (datum && Date.now() - datum.getTime() > 24 * 3_600_000) {
+            this.logger.info({ key: action.skillParams?.key, datum: datum.toISOString().slice(0, 10) },
+              'v1143 memory-Save blockiert — Ereignis liegt in der Vergangenheit');
+            continue;
+          }
+          // Kategorien nur aus der Extraktions-Taxonomie — keine LLM-Erfindungen
+          const kat = String(action.skillParams?.category ?? '').toLowerCase();
+          if (kat && !ReasoningEngine.ERLAUBTE_MEMORY_KATEGORIEN.has(kat)) {
+            action.skillParams.category = 'general';
+          }
+        }
+      }
+
       try {
         // Pre-check: validate action exists in skill schema BEFORE any execution decision
         const preCheckSkill = this.skillRegistry.get(action.skillName);
@@ -1812,6 +1862,21 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           }
 
           await this.markActionProposed(action);
+
+          // v1143 — J2: Pflicht-Ablauf für Reasoning-Memories — was das Denken
+          // speichert, verfällt (Datum im Text + 24 h, sonst 48 h). Ohne das
+          // überlebte jeder Reisekontext sein Ereignis unbegrenzt.
+          if (result.success && action.skillName === 'memory' && typeof action.skillParams?.key === 'string') {
+            try {
+              const text = String(action.skillParams?.value ?? action.skillParams?.text ?? '');
+              const datum = spaetestesDatumImText(text);
+              const bis = datum && datum.getTime() > Date.now()
+                ? new Date(datum.getTime() + 24 * 3_600_000)
+                : new Date(Date.now() + 48 * 3_600_000);
+              await this.memoryRepo.setRelevantUntil(this.resolvedOwnerUserId || this.defaultChatId,
+                String(action.skillParams.key), bis.toISOString());
+            } catch { /* best-effort */ }
+          }
 
           if (informUser) {
             const adapter = this.adapters.get(this.defaultPlatform);
@@ -1897,6 +1962,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   }
 
   // ── Knowledge Gate ────────────────────────────────────────────
+
+  /** v1143 — J2: erlaubte Memory-Kategorien (= Extraktions-Taxonomie). */
+  private static readonly ERLAUBTE_MEMORY_KATEGORIEN = new Set([
+    'personal', 'work', 'preferences', 'relationships', 'health', 'hobbies',
+    'education', 'location', 'shopping', 'travel', 'schedule', 'general', 'other',
+  ]);
 
   /** Write-actions on skills that control physical/external systems. */
   private static readonly GATED_WRITE_ACTIONS: Record<string, Set<string>> = {

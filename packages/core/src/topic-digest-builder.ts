@@ -69,7 +69,12 @@ export class TopicDigestBuilder {
     // Melden — EINE gebündelte Nachricht je Topic, gegated durch notify_threshold + Router
     if (this.router && newItems.length > 0) {
       const urgency = digestUrgency(newItems);
-      const threshold = (topic.notifyThreshold in URGENCY_RANK ? topic.notifyThreshold : 'high');
+      // v1143 — D: notify_threshold 'mute' = Dossier wird gepflegt, aber NIE
+      // aktiv gemeldet (nur stille Ablage). Der explizite Schalter je Thema
+      // ersetzt implizite Drosseleien — der User entscheidet, welches Thema
+      // ihn anschreiben darf.
+      const threshold = topic.notifyThreshold === 'mute' ? 'mute'
+        : (topic.notifyThreshold in URGENCY_RANK ? topic.notifyThreshold : 'high');
       const top = newItems.slice(0, 5).map(i => `• ${i.title}${i.url ? `\n  ${i.url}` : ''}`).join('\n');
       const body = `📡 **${topic.name}** — ${newItems.length} neue Beiträge\n\n${summary ? `${summary}\n\n` : ''}${top}`;
       const notification = {
@@ -82,10 +87,10 @@ export class TopicDigestBuilder {
         platform: this.delivery.platform,
         dedupeKey: `topic-digest:${topic.id}:${new Date().toISOString().slice(0, 10)}`,
       };
-      if (URGENCY_RANK[urgency] >= URGENCY_RANK[threshold]) {
+      if (threshold !== 'mute' && URGENCY_RANK[urgency] >= URGENCY_RANK[threshold]) {
         await this.router.route(notification);
       } else {
-        await this.router.store(notification); // unter Topic-Schwelle → nur stille Ablage
+        await this.router.store(notification); // unter Topic-Schwelle / gemutet → nur stille Ablage
       }
     }
     return true;

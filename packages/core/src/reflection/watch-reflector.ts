@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import type { WatchRepository, ActivityRepository } from '@alfred/storage';
 import type { ReflectionResult, ReflectionConfig } from './types.js';
+import { spaetestesDatumImText } from '../reasoning-context-collector.js';
 
 type WatchConfig = {
   staleAfterDays: number;
@@ -92,6 +93,25 @@ export class WatchReflector {
           action: 'deactivate',
           risk: 'proactive',
           reasoning: `v925: skill_params zeigen vermutlich auf eine nicht existente Entity (Wert dauerhaft "${watch.lastValue}", nie getriggert, ${Math.round(deadAgeDays)}d alt). Deaktiviert — bitte Entity-Namen prüfen.`,
+        });
+        continue;
+      }
+
+      // v1143 — J3: Selbstheilung 3 — eventgebundene Watches überleben ihr
+      // Ereignis nicht mehr. Ein Datum im Namen/Template, das >48 h zurückliegt
+      // (und NACH der Watch-Erstellung lag, also wirklich der Zieltermin war),
+      // deaktiviert den Watch (Realfall: „BMW SoC gamescom-Fahrt" ×3 aktiv,
+      // zwei Tage nach der Rückkehr — jeder Trigger erneuerte den Reisekontext).
+      const bezugsDatum = spaetestesDatumImText(`${watch.name} ${watch.messageTemplate ?? ''}`);
+      if (bezugsDatum
+        && now - bezugsDatum.getTime() > 48 * 3_600_000
+        && bezugsDatum.getTime() > new Date(watch.createdAt).getTime() - 14 * 86_400_000) {
+        results.push({
+          target: { type: 'watch', id: watch.id, name: watch.name },
+          finding: `Watch "${watch.name}" bezieht sich auf ein Ereignis am ${bezugsDatum.toISOString().slice(0, 10)} — das ist vorbei`,
+          action: 'deactivate',
+          risk: 'proactive',
+          reasoning: `v1143 Event-Ablauf: der Bezugstermin liegt >48 h zurück. Deaktiviert, damit der veraltete Kontext nicht weiter ins Reasoning fließt.`,
         });
         continue;
       }

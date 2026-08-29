@@ -21,6 +21,61 @@ import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skil
 import { buildSkillContext } from './context-factory.js';
 
 /**
+ * v1143 — J1: findet das SPÄTESTE Datum in einem Text (ISO oder deutsches
+ * dd.mm.[yyyy]). Grundlage für den Vergangenheits-Anker: Kontextzeilen mit
+ * Termin in der Vergangenheit müssen als „vorbei" markiert werden — der
+ * Realfall „Rückfahrt von Köln planen" entstand aus Memories mit „Do 27.08.",
+ * die zwei Tage nach der Fahrt noch als aktuelles Wissen im Kontext lagen.
+ */
+export function spaetestesDatumImText(text: string, jetzt = new Date()): Date | null {
+  const funde: Date[] = [];
+  for (const m of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
+    const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10), 12);
+    if (!isNaN(d.getTime())) funde.push(d);
+  }
+  for (const m of text.matchAll(/\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})?(?!\d)/g)) {
+    const tag = parseInt(m[1], 10); const monat = parseInt(m[2], 10);
+    if (tag < 1 || tag > 31 || monat < 1 || monat > 12) continue;
+    let jahr = m[3] ? parseInt(m[3], 10) : jetzt.getFullYear();
+    if (jahr < 100) jahr += 2000;
+    const d = new Date(jahr, monat - 1, tag, 12);
+    if (!isNaN(d.getTime())) funde.push(d);
+  }
+  if (funde.length === 0) return null;
+  funde.sort((a, b) => a.getTime() - b.getTime());
+  return funde[funde.length - 1];
+}
+
+/**
+ * v1143 — J2: erkennt Alfreds EIGENES Insight-Format (Markdown-Fettdruck +
+ * Emoji-Header, Aktions-Zeilen, Dringlichkeits-Marker). Solche Texte sind
+ * Ausgaben, kein Wissen — als Memory gespeichert entstand daraus die
+ * Echo-Schleife (Reasoning liest die eigene Meldung als Fakt und erneuert sie).
+ */
+export function istInsightEcho(text: string): boolean {
+  if (/→\s*\*?\s*Aktion/i.test(text)) return true;
+  if (/\*\*[^*]{3,}\*\*/.test(text) && /\p{Extended_Pictographic}/u.test(text)) return true;
+  return /\bDRINGEND\b|Alfred Insights/i.test(text);
+}
+
+/**
+ * v1143 — J4: Anwesenheits-Zeile aus den Home-Assistant-person-Zeilen —
+ * deterministisches Standort-Grounding („User ist zuhause") gegen
+ * Reise-Halluzinationen aus veraltetem Kontext.
+ */
+export function extrahiereAnwesenheit(haContent: string): string | null {
+  const status: string[] = [];
+  for (const zeile of haContent.split('\n')) {
+    const name = zeile.match(/person\.([a-z0-9_]+)/i)?.[1];
+    if (!name) continue;
+    if (/\bnot_home\b|\baway\b|\babwesend\b/i.test(zeile)) status.push(`${name}: abwesend`);
+    else if (/\bhome\b|\bzuhause\b/i.test(zeile)) status.push(`${name}: zuhause`);
+  }
+  if (status.length === 0) return null;
+  return `📍 Anwesenheit JETZT: ${status.join(', ')} — Reise-/Rückfahrt-Themen sind nur relevant, wenn ein KÜNFTIGES Ereignis ansteht.`;
+}
+
+/**
  * v1142 — H5: Circuit-Breaker für Kollektor-Quellen. Eine Quelle, die
  * `schwelle`-mal IN FOLGE fehlschlägt (Fehler, Timeout, success:false), wird
  * für `pauseMs` (~20 h ≈ 1 Probe-Versuch/Tag) pausiert; nach Ablauf darf genau
@@ -85,6 +140,15 @@ function formatMemoryLine(m: {
     const validUntilDate = m.relevantUntil.slice(0, 10);
     const isPast = m.relevantUntil < new Date().toISOString();
     annotations.push(isPast ? `abgelaufen seit ${validUntilDate}` : `gültig bis ${validUntilDate}`);
+  } else {
+    // v1143 — J1: auch OHNE relevant_until zählt ein Datum im Text — liegt es
+    // >24 h zurück, wird die Zeile hart als vorbei markiert. Vorher entschied
+    // das LLM über die Vergangenheit („Rückfahrt von Köln" zwei Tage nach der
+    // Rückkehr, weil „Do 27.08." kommentarlos im Kontext stand).
+    const datum = spaetestesDatumImText(m.value);
+    if (datum && Date.now() - datum.getTime() > 24 * 3_600_000) {
+      annotations.push(`EREIGNIS VORBEI seit ${datum.toISOString().slice(0, 10)} — nur Rückblick, KEINE Aktionen ableiten`);
+    }
   }
 
   if (m.sourceEventRefs && m.sourceEventRefs.length > 0) {
@@ -1459,7 +1523,12 @@ export class ReasoningContextCollector {
       }
     } catch { /* skip */ }
 
-    return parts.length > 0 ? parts.join('\n') : '(Smart Home: keine relevanten Entities)';
+    // v1143 — J4: Anwesenheit als erste Zeile — deterministisches
+    // Standort-Grounding statt im Tabellen-Rauschen verstecktem person.*-Status.
+    const inhalt = parts.join('\n');
+    const anwesenheit = extrahiereAnwesenheit(inhalt);
+    if (anwesenheit) return `${anwesenheit}\n${inhalt}`;
+    return parts.length > 0 ? inhalt : '(Smart Home: keine relevanten Entities)';
   }
 
   private async fetchSmartHomeByEntities(entityIds: string[], parts: string[]): Promise<void> {

@@ -31,6 +31,44 @@ export interface BillingAlertInfo {
  *  stateless (SDK-Retries gelingen dort meist, ein Breaker würde Qualität kosten). */
 const BILLING_COOLDOWN_MS = 5 * 60_000;
 
+/**
+ * v1143 — A: Degraded-Erkennung mit Hysterese. „Degradiert" heißt: strong UND
+ * medium hängen seit ≥ minDegradedMs durchgehend im Billing-Cooldown (kurze
+ * Lücken zwischen Cooldown-Ablauf und nächstem Fehlversuch zählen als
+ * durchgehend, solange sie < stabilMs sind). Ein ECHTER Erfolg auf einem
+ * Denk-Tier beendet die Degradierung sofort. Verhindert Flattern: Der Realfall
+ * 19.–29.08. waren 10 Tage Dauerbetrieb auf dem Not-Fallback, in denen
+ * Reasoning/Konsolidierung/KG-Ingest fleißig Müll produzierten.
+ */
+export class DegradedTracker {
+  private ersterAusfall: number | null = null;
+  private letzterDoppelAusfall = 0;
+
+  constructor(
+    private readonly minDegradedMs = 3 * 3_600_000,
+    private readonly stabilMs = 30 * 60_000,
+  ) {}
+
+  /** Bei jeder Abfrage mit dem aktuellen Doppel-Ausfall-Zustand füttern. */
+  beobachte(beideTiersImCooldown: boolean, now = Date.now()): void {
+    if (beideTiersImCooldown) {
+      this.letzterDoppelAusfall = now;
+      if (this.ersterAusfall == null) this.ersterAusfall = now;
+    } else if (now - this.letzterDoppelAusfall > this.stabilMs) {
+      this.ersterAusfall = null;
+    }
+  }
+
+  /** Echter Erfolg auf strong/medium → sofortige Entwarnung. */
+  erfolg(): void { this.ersterAusfall = null; }
+
+  istDegradiert(now = Date.now()): boolean {
+    return this.ersterAusfall != null && now - this.ersterAusfall >= this.minDegradedMs;
+  }
+
+  seit(): number | null { return this.ersterAusfall; }
+}
+
 /** v868 — Fallback-Reihenfolge: 'fallback' (Notfall-Provider, z.B. Mistral)
  *  steht bewusst am ENDE — er springt nur ein wenn alle regulären Tiers
  *  ausgefallen sind. 'fallback' wird nie regulär geroutet (resolve() kennt
@@ -204,11 +242,26 @@ export class ModelRouter extends LLMProvider {
     return (this.billingCooldownUntil.get(tier) ?? 0) > Date.now();
   }
 
+  /** v1143 — A: Degraded-Zustand (strong+medium dauerhaft im Billing-Cooldown). */
+  private readonly degradedTracker = new DegradedTracker();
+
+  override istDegradiert(): boolean {
+    this.degradedTracker.beobachte(this.isInBillingCooldown('strong') && this.isInBillingCooldown('medium'));
+    return this.degradedTracker.istDegradiert();
+  }
+
+  override degradiertSeit(): number | null {
+    this.degradedTracker.beobachte(this.isInBillingCooldown('strong') && this.isInBillingCooldown('medium'));
+    return this.degradedTracker.seit();
+  }
+
   /** v868.3 — erfolgreicher Call auf einem Tier mit offenem Billing-Vorfall:
    *  Entwarnung senden + ALLES zurücksetzen, inkl. Alert-Dedupe-Fenster —
    *  ein erneuter Ausfall nach der Gut-Meldung alarmiert sofort wieder. */
   private maybeNotifyRecovery(tier: ModelTier): void {
     if (!this.pendingRecovery.has(tier)) return;
+    // v1143 — A: echter Erfolg auf einem Denk-Tier beendet die Degradierung sofort
+    if (tier === 'strong' || tier === 'medium') this.degradedTracker.erfolg();
     this.pendingRecovery.delete(tier);
     this.lastBillingAlertAt.delete(tier);
     this.billingCooldownUntil.delete(tier);
