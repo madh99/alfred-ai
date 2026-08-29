@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1145] - 2026-08-29
+
+### Added — Vorausschau-Radar: mit Vorlauf erinnern statt hinterher wissen (v1145)
+
+Ein persönlicher Assistent denkt nach vorn: „In einer Woche hat Noah Geburtstag — ein nettes Geschenk wäre …". Bisher passierte das nur zufällig, wenn das Reasoning darüber stolperte. Jetzt scannt ein täglicher, rein deterministischer Lauf (07:45, nach dem Ruhefenster) das vorhandene Wissen nach kommenden Ereignissen:
+
+- **Geburtstage** aus den KG-Personen (jährlich wiederkehrend, mit Rolle und Alter) und **Termine** aus Memories (Gültigkeits-Stempel oder Datum im Text, Horizont 14 Tage).
+- Je Ereignis genau **zwei Meldungen** — 7 Tage vorher und am Vortag — mit dauerhaftem Dedup je Ereignis+Jahr+Stufe (nie doppelt, jährliche Ereignisse nächstes Jahr wieder).
+- Die Erkennung ist reiner Code und funktioniert mit jedem Modell der Fallback-Kette; nur der Vorschlags-Satz („💡 Geschenkidee: …" aus den gespeicherten Interessen, „💡 Vorschlag: …" bei Terminen) kommt vom LLM und entfällt still, wenn keines antwortet.
+- Zustellung über den Insight-Router (Kategorie `vorausschau`), Owner wird zur Laufzeit aufgelöst.
+- 7 neue Tests (nächstes Vorkommen, Vorlauf-Stufen, Geburtstags-Parsing, Radar-Lauf inkl. Dedup-Schlüssel und internem-Key-Filter).
+
 ## [0.19.0-multi-ha.1144] - 2026-08-29
 
 ### Fixed — Chat-Stammdaten, semantische Wissens-Suche, Ruhefenster (v1144)

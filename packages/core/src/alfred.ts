@@ -6699,6 +6699,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         let lastInterestDay = '';
         let lastDigestDay = '';
         let lastMaintenanceDay = '';
+        let lastVorausschauDay = '';
         this.interestsDailyTimer = setInterval(async () => {
           const now = new Date();
           const today = now.toISOString().slice(0, 10);
@@ -6724,6 +6725,27 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (await this.claimDailySlot(`topic-digest:${today}`)) {
               try { await this.topicDigestBuilder?.run(); }
               catch (err) { this.logger.warn({ err }, 'v930 topic digest failed'); }
+            }
+          }
+          // v1145 — K3: 07:45 Vorausschau-Radar (nach dem Ruhefenster).
+          // Owner ZUR LAUFZEIT auflösen (H6-Lektion: beim Wiring ist er nie gesetzt).
+          if (now.getHours() === 7 && now.getMinutes() >= 45 && lastVorausschauDay !== today) {
+            lastVorausschauDay = today;
+            if (await this.claimDailySlot(`vorausschau:${today}`)) {
+              try {
+                const ownerVs = this.tryOwner();
+                if (ownerVs && this.database && this.memoryRepo && this.insightsRepo) {
+                  const { VorausschauRadar } = await import('./vorausschau-radar.js');
+                  const { KnowledgeGraphRepository: KGRepoVs } = await import('@alfred/storage');
+                  const radar = new VorausschauRadar(
+                    new KGRepoVs(this.database.getAdapter()), this.memoryRepo, this.insightsRepo,
+                    this.logger.child({ component: 'vorausschau' }), this.llmProvider,
+                  );
+                  await radar.run(ownerVs);
+                } else {
+                  this.logger.warn('v1145 Vorausschau übersprungen — Owner/Repos nicht verfügbar');
+                }
+              } catch (err) { this.logger.warn({ err }, 'v1145 Vorausschau-Radar failed'); }
             }
           }
           // v1133 — quartalsweise Netzbetreiber-Recherche (2. Tag des Quartals,
