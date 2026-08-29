@@ -41,7 +41,9 @@ export class ActiveLearningService {
       options.memoryRepo,
       this.logger,
       options.embeddingService,
-      options.minConfidence ?? 0.4,
+      // v1142 — H7: „Fakten" ab 40 % Sicherheit vom fast-Tier-Modell waren zu
+      // billig zu haben (891 Auto-Memories im August) — Default auf 0.6.
+      options.minConfidence ?? 0.6,
     );
   }
 

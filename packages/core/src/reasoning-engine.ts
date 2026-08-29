@@ -19,6 +19,7 @@ import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skil
 import { healActionSynonym } from '@alfred/skills';
 import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
+import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { ReasoningContextCollector, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
@@ -28,6 +29,46 @@ import { DeliveryScheduler, type ActivityProfile } from './delivery-scheduler.js
 
 /** Schedule run-hours for the 'morning_noon_evening' preset. */
 const MNE_HOURS = [7, 12, 18];
+
+/**
+ * v1142 — H1: Domänen-Objekte für den inhaltlichen Zustell-Dedup. Zwei Insights
+ * über DASSELBE Objekt mit moderater Wort-Überlappung sind derselbe Sachverhalt
+ * in neuer Formulierung (Realfall: die Wallbox-PV-Meldung ging 4× in 3 Tagen
+ * raus, weil Topic-Hash und insight_delivered-Key aus dem WORTLAUT abgeleitet
+ * werden und das LLM nie zweimal gleich formuliert).
+ */
+export const INSIGHT_OBJEKTE = [
+  'wallbox', 'bmw', 'i4', 'batterie', 'akku', 'speicher', 'victron', 'ess',
+  'pool', 'heizung', 'geschirrspüler', 'waschmaschine', 'trockner',
+  'pv', 'solar', 'wechselrichter', 'strompreis', 'awattar',
+  'proxmox', 'unifi', 'mikrotik', 'fritzbox', 'nas', 'backup', 'zertifikat', 'domain',
+  'kalender', 'termin', 'email', 'todo', 'erinnerung',
+  'tanken', 'laden', 'ladevorgang', 'reichweite', 'soc',
+] as const;
+
+/**
+ * v1142 — H1: inhaltlicher Duplikat-Check gegen bereits gelieferte Insights.
+ * Duplikat, wenn (a) starke Wort-Überlappung (Jaccard ≥ 0.5) ODER (b) dasselbe
+ * Domänen-Objekt UND moderate Überlappung (≥ 0.25). Zwei ECHTE verschiedene
+ * Meldungen zum selben Objekt („Wallbox Firmware-Update" vs. „Wallbox lädt
+ * nicht") teilen fast nur das Objekt-Wort und bleiben getrennt.
+ */
+export function istInhaltlichesInsightDuplikat(neu: string, gelieferte: string[]): boolean {
+  const tok = (s: string) => new Set(s.toLowerCase().replace(/[^a-zäöüß0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4));
+  const objekte = (s: string) => { const l = s.toLowerCase(); return INSIGHT_OBJEKTE.filter(o => l.includes(o)); };
+  const ta = tok(neu);
+  if (ta.size === 0) return false;
+  const objNeu = new Set(objekte(neu));
+  for (const g of gelieferte) {
+    const tb = tok(g);
+    if (tb.size === 0) continue;
+    let inter = 0; for (const t of ta) if (tb.has(t)) inter++;
+    const jaccard = inter / (ta.size + tb.size - inter);
+    if (jaccard >= 0.5) return true;
+    if (jaccard >= 0.25 && objekte(g).some(o => objNeu.has(o))) return true;
+  }
+  return false;
+}
 
 /** Maximum tokens for reasoning detail response. */
 const MAX_OUTPUT_TOKENS = 1536;
@@ -1101,6 +1142,24 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     return crypto.createHash('sha256').update(words).digest('hex').slice(0, 16);
   }
 
+  /** v1142 — H1: Cache der zuletzt gelieferten Insight-Texte (5 min) fürs inhaltliche Gate. */
+  private gelieferteInsightsCache: { texte: string[]; geladen: number } | null = null;
+
+  private async holeGelieferteInsights(): Promise<string[]> {
+    if (this.gelieferteInsightsCache && Date.now() - this.gelieferteInsightsCache.geladen < 5 * 60_000) {
+      return this.gelieferteInsightsCache.texte;
+    }
+    let texte: string[] = [];
+    try {
+      if (this.memoryRepo && this.resolvedOwnerUserId) {
+        const mems = await this.memoryRepo.search(this.resolvedOwnerUserId, 'insight_delivered');
+        texte = mems.filter(m => m.key.startsWith('insight_delivered:')).map(m => m.value);
+      }
+    } catch { /* Gate fällt auf Hash-Prüfung zurück */ }
+    this.gelieferteInsightsCache = { texte, geladen: Date.now() };
+    return texte;
+  }
+
   private async wasRecentlySent(insight: string): Promise<boolean> {
     const contentKey = `reasoning:${this.insightContentHash(insight)}`;
     const topicKey = `reasoning-topic:${this.insightTopicHash(insight)}`;
@@ -1109,7 +1168,17 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       this.notifRepo.wasNotified(contentKey, this.defaultChatId),
       this.notifRepo.wasNotified(topicKey, this.defaultChatId),
     ]);
-    return contentSent || topicSent;
+    if (contentSent || topicSent) return true;
+    // v1142 — H1: hartes INHALTLICHES Gate gegen die gelieferten Insight-Texte
+    // (48h-Fenster über die insight_delivered-Memories). Die Hash-Prüfungen oben
+    // scheitern an jeder Umformulierung; bisher stand die Nicht-Wiederholung nur
+    // als BITTE im LLM-Kontext.
+    const geliefert = await this.holeGelieferteInsights();
+    if (geliefert.length > 0 && istInhaltlichesInsightDuplikat(insight, geliefert)) {
+      this.logger.info({ insight: insight.slice(0, 80) }, 'v1142 insight inhaltlich bereits geliefert — unterdrückt');
+      return true;
+    }
+    return false;
   }
 
   private async markSent(insight: string): Promise<void> {
@@ -1278,16 +1347,29 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     return await this.notifRepo.wasNotified(`reasoning-action:${hash}`, this.defaultChatId);
   }
 
-  /** Check if the most recent confirmation for this action description expired or was rejected. */
+  /** Check if a recent confirmation for this action expired or was rejected.
+   *  v1142 — H2: Identität über computeTopicKey/Beschreibungs-Ähnlichkeit statt
+   *  wortgleichem Text — das LLM formuliert die Beschreibung jedes Mal neu
+   *  („BMW-Token erneuern" 25× seit 01.08.), der `description = ?`-Match griff nie. */
   private async hasExpiredOrRejectedConfirmation(action: ProposedAction): Promise<boolean> {
     try {
       if (!this.confirmationQueue) return false;
-      // Search in recent confirmations by description match
-      const row = await this.adapter?.queryOne(
-        `SELECT status FROM pending_confirmations WHERE chat_id = ? AND description = ? ORDER BY created_at DESC LIMIT 1`,
-        [this.defaultChatId, action.description],
-      ) as { status: string } | undefined;
-      return row?.status === 'expired' || row?.status === 'rejected';
+      const seit = new Date(Date.now() - 7 * 86_400_000).toISOString();
+      const rows = await this.adapter?.query(
+        `SELECT description, skill_name, skill_params, status FROM pending_confirmations WHERE chat_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT 100`,
+        [this.defaultChatId, seit],
+      ) as Array<{ description: string; skill_name: string; skill_params: string | null; status: string }> | undefined;
+      if (!rows) return false;
+      for (const r of rows) {
+        if (r.status !== 'expired' && r.status !== 'rejected') continue;
+        let params: Record<string, unknown> = {};
+        try { params = r.skill_params ? JSON.parse(r.skill_params) : {}; } catch { /* Text-Vergleich reicht */ }
+        const alt = { description: r.description, skillName: r.skill_name, skillParams: params };
+        if (istGleicheConfirmationsIdentitaet({ description: action.description, skillName: action.skillName, skillParams: action.skillParams }, alt)) {
+          return true;
+        }
+      }
+      return false;
     } catch { return false; }
   }
 
@@ -1490,6 +1572,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
             } catch { /* non-critical */ }
           }
         }
+        this.gelieferteInsightsCache = null; // v1142 — frisch Geliefertes sofort im Gate sichtbar
       }
     }
 

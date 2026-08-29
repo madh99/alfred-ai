@@ -55,7 +55,7 @@ export class MemoryExtractor {
     private readonly memoryRepo: MemoryRepository,
     private readonly logger: Logger,
     private readonly embeddingService?: EmbeddingService,
-    private readonly minConfidence = 0.4,
+    private readonly minConfidence = 0.6,
   ) {}
 
   async extract(

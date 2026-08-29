@@ -71,6 +71,15 @@ export class ConfirmationRepository {
     return rows.map(r => this.mapRow(r));
   }
 
+  /** v1142 — jüngste Confirmations eines Chats (JEDER Status) für den Enqueue-Dedup. */
+  async findRecent(chatId: string, sinceIso: string, limit = 100): Promise<PendingConfirmation[]> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM pending_confirmations WHERE chat_id = ? AND created_at > ? ORDER BY created_at DESC LIMIT ?`,
+      [chatId, sinceIso, limit],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   async findAllPending(chatId: string, platform: string): Promise<PendingConfirmation[]> {
     const rows = await this.adapter.query(
       `SELECT * FROM pending_confirmations WHERE chat_id = ? AND platform = ? AND status = 'pending' ORDER BY created_at DESC`,

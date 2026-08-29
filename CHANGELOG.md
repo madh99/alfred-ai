@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1142] - 2026-08-29
+
+### Fixed — Denk- und Lern-Apparat: Identität statt LLM-Wortlaut (v1142)
+
+Audit Teil 2 (29.08.): Jede Dedup- und Lern-Identität wurde bisher aus LLM-formuliertem Text abgeleitet — und ein LLM formuliert nie zweimal gleich. Deshalb wiederholte Alfred bereits gemeldete Erkenntnisse (Wallbox-Meldung 4× in 3 Tagen), stellte dieselbe Rückfrage bis zu 25× („BMW-Token erneuern"), presste beim nächtlichen Konsolidieren verschiedene Fakten zu Brei und lernte dasselbe Verhaltensmuster unter vier Namen. Zwei Lern-Features (Wissens-Rückfragen, Ziel-Extraktion) liefen wegen eines stummen Init-Reihenfolge-Fehlers seit Monaten gar nicht.
+
+- **Insight-Zustellung**: hartes inhaltliches Gate vor dem Senden — Wort-Überlappung plus Domänen-Objekt-Abgleich gegen die zuletzt gelieferten Meldungen (bisher stand die Nicht-Wiederholung nur als Bitte im LLM-Kontext, und die Hash-Prüfungen scheiterten an jeder Umformulierung).
+- **Rückfragen (Confirmations)**: Dedup beim Einreihen über die Anfrage-IDENTITÄT (semantischer Topic-Key aus Skill+Parametern — existierte bereits, wurde aber nur beim Genehmigen benutzt — plus Beschreibungs-Ähnlichkeit): dieselbe Frage wird nicht gestellt, solange sie offen ist, und nach Ablehnung/Ablauf gilt ein 7-Tage-Cooldown. Verschiedene Anliegen mit ähnlichem Text (zwei ITSM-Incidents) bleiben getrennt.
+- **Memory-Konsolidierung**: Familien-/Verbindungs-/Feedback-Wissen, Muster und Alfreds interne Schlüssel sind vom Verschmelzen ausgenommen; gemergt wird nur Gleiches mit Gleichem (Typ+Kategorie), und der Ziel-Schlüssel kommt deterministisch aus der Gruppe statt vom LLM (Realfall: vier Orts-Verknüpfungen wurden zu „kg_connection_dach_cities" zusammengepresst, 150 Merges in 5 Tagen).
+- **Verhaltens-Muster**: neue Muster werden gegen den Bestand dedupliziert und aktualisieren den bestehenden Schlüssel statt eine weitere Namens-Variante anzulegen.
+- **Kollektor-Schutzschalter**: eine Quelle, die 12× in Folge fehlschlägt, pausiert ~20 Stunden mit einem Probe-Versuch danach — der BMW-Skill lief mit kaputtem Token 636×/Tag weiter.
+- **Wissens-Rückfragen + Ziel-Extraktion reanimiert**: Beide Features prüften den Besitzer beim Verdrahten — 1.300 Zeilen bevor er in der Initialisierung gesetzt wird — und wurden dadurch seit ihrer Einführung nie geplant, ohne jede Log-Zeile. Die Auflösung passiert jetzt zur Laufzeit, Fehlläufe sind sichtbar (warn statt debug).
+- **Memory-Extraktion**: Mindest-Confidence für automatische „Fakten" von 0,4 auf 0,6.
+- 15 Regressionstests, nach den Realfällen benannt (Wallbox-Test, BMW-Test, kg_connection-Test, E-Mail-Muster-Test, Schutzschalter).
+
 ## [0.19.0-multi-ha.1141] - 2026-08-29
 
 ### Fixed — Wissensgraph-Korruption: Schreiber geschlossen statt Daten geflickt (v1141)

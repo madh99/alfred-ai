@@ -73,6 +73,39 @@ export function computeTopicKey(c: PendingConfirmation): string | null {
   return null;
 }
 
+/**
+ * v1142 — H2: Beschreibungs-Ähnlichkeit als Zweitprüfung neben computeTopicKey.
+ * Das LLM formuliert dieselbe Rückfrage jedes Mal minimal anders („BMW API-Token
+ * erneuern (OAuth-Flow starten)." in ≥4 Varianten, 25× seit 01.08.) — wortgleicher
+ * Text-Match griff daher nie. Token-Jaccard auf Wörter ≥4 Zeichen fängt die
+ * Umformulierungen, ohne echte verschiedene Anliegen zu verschmelzen.
+ */
+export function beschreibungsAehnlichkeit(a: string, b: string): number {
+  const tok = (s: string) => new Set(s.toLowerCase().replace(/[^a-zäöüß0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 4));
+  const ta = tok(a); const tb = tok(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let inter = 0; for (const t of ta) if (tb.has(t)) inter++;
+  const uni = ta.size + tb.size - inter;
+  return uni === 0 ? 0 : inter / uni;
+}
+
+/** v1142 — H2: gleiche Anfrage-Identität? Topic-Key exakt ODER Beschreibung ≥0.6 ähnlich. */
+export function istGleicheConfirmationsIdentitaet(
+  neu: Pick<PendingConfirmation, 'description' | 'skillName' | 'skillParams'>,
+  alt: Pick<PendingConfirmation, 'description' | 'skillName' | 'skillParams'>,
+): boolean {
+  const keyNeu = computeTopicKey(neu as PendingConfirmation);
+  const keyAlt = computeTopicKey(alt as PendingConfirmation);
+  if (keyNeu && keyAlt) {
+    if (keyNeu === keyAlt) return true;
+    // Beide Keys stammen aus VERLÄSSLICHEN Skill-Signalen (Titel/Name — kein
+    // ':desc:'-Fallback) und unterscheiden sich → verschiedene Anliegen,
+    // auch wenn die Beschreibungen sich ähneln („Incident anlegen" ×2).
+    if (!keyNeu.includes(':desc:') && !keyAlt.includes(':desc:')) return false;
+  }
+  return beschreibungsAehnlichkeit(neu.description, alt.description) >= 0.6;
+}
+
 export class ConfirmationQueue {
   private expireTimer: ReturnType<typeof setInterval> | null = null;
   private feedbackService?: FeedbackService;
@@ -120,6 +153,27 @@ export class ConfirmationQueue {
     /** v657 \u2014 zus\u00E4tzliche Buttons neben approve/reject (z.B. Open-Item-Eskalation: Ablehnen/Zur\u00FCckstellen) */
     extraActions?: ConfirmationExtraAction[];
   }): Promise<void> {
+    // v1142 — H2: Enqueue-Dedup über Anfrage-IDENTITÄT statt wortgleichem Text.
+    // Gleiche Frage noch pending → nicht doppelt stellen; gleiche Frage in den
+    // letzten 7 Tagen abgelaufen/abgelehnt → User hat entschieden bzw. ignoriert,
+    // Cooldown statt Dauerschleife (Realfall: „BMW-Token erneuern" 25×, MikroTik-
+    // Incident ~20×, 308 von 329 August-Confirmations liefen unbeantwortet ab).
+    // approved blockiert bewusst NICHT — eine erneute Anfrage kann legitim sein.
+    try {
+      const seit = new Date(Date.now() - 7 * 86_400_000).toISOString();
+      const juengste = await this.confirmRepo.findRecent(opts.chatId, seit, 100);
+      const doppel = juengste.find(r =>
+        r.status !== 'approved'
+        && istGleicheConfirmationsIdentitaet({ description: opts.description, skillName: opts.skillName, skillParams: opts.skillParams }, r));
+      if (doppel) {
+        this.logger.info({ description: opts.description.slice(0, 80), vorgaenger: doppel.id, vorgaengerStatus: doppel.status },
+          'v1142 confirmation dedup — gleiche Anfrage übersprungen');
+        return;
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'v1142 confirmation dedup check failed — enqueue läuft weiter');
+    }
+
     const expiresAt = new Date(Date.now() + (opts.timeoutMinutes ?? 30) * 60_000).toISOString();
 
     const confirmation = await this.confirmRepo.create({

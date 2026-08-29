@@ -20,6 +20,48 @@ import type {
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
 
+/**
+ * v1142 — H5: Circuit-Breaker für Kollektor-Quellen. Eine Quelle, die
+ * `schwelle`-mal IN FOLGE fehlschlägt (Fehler, Timeout, success:false), wird
+ * für `pauseMs` (~20 h ≈ 1 Probe-Versuch/Tag) pausiert; nach Ablauf darf genau
+ * EIN Versuch laufen (half-open) — Erfolg setzt alles zurück, Fehlschlag
+ * pausiert erneut. Bewusst in-memory: ein Neustart gibt jeder Quelle eine
+ * frische Chance.
+ */
+export class QuellenSchalter {
+  private readonly zustand = new Map<string, { fails: number; pauseBis: number }>();
+
+  constructor(
+    private readonly schwelle = 12,
+    private readonly pauseMs = 20 * 3_600_000,
+  ) {}
+
+  istPausiert(quelle: string): boolean {
+    const z = this.zustand.get(quelle);
+    if (!z) return false;
+    if (z.fails < this.schwelle) return false;
+    if (Date.now() < z.pauseBis) return true;
+    // half-open: einen Versuch zulassen — pauseBis vorschieben, damit parallele
+    // Aufrufe im selben Pass nicht alle gleichzeitig durchrutschen
+    z.pauseBis = Date.now() + this.pauseMs;
+    return false;
+  }
+
+  /** Registriert einen Fehlschlag; true genau dann, wenn die Pause JETZT beginnt. */
+  fehlschlag(quelle: string): boolean {
+    const z = this.zustand.get(quelle) ?? { fails: 0, pauseBis: 0 };
+    z.fails++;
+    const beginnt = z.fails === this.schwelle;
+    if (z.fails >= this.schwelle) z.pauseBis = Date.now() + this.pauseMs;
+    this.zustand.set(quelle, z);
+    return beginnt;
+  }
+
+  erfolg(quelle: string): void { this.zustand.delete(quelle); }
+
+  fehlversuche(quelle: string): number { return this.zustand.get(quelle)?.fails ?? 0; }
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /**
@@ -1452,9 +1494,18 @@ export class ReasoningContextCollector {
   }
 
   /** Fetch a skill with a custom timeout (for slow skills like monitor, feed_reader). */
+  /** v1142 — H5: Circuit-Breaker je Quelle (siehe QuellenSchalter). */
+  private readonly quellenSchalter = new QuellenSchalter();
+
   private async fetchWithTimeout(skillName: string, input: Record<string, unknown>, timeoutMs: number): Promise<string> {
     const skill = this.skillRegistry.get(skillName);
     if (!skill) return `(${skillName} nicht verfügbar)`;
+    // v1142 — H5: tote Quellen nicht dauerhämmern. Der BMW-Skill lief mit
+    // kaputtem Token 636×/Tag über alle Call-Stellen — nach 12 Fehlversuchen
+    // in Folge pausiert die Quelle ~20 h (danach EIN Probe-Versuch).
+    if (this.quellenSchalter.istPausiert(skillName)) {
+      return `(${skillName} pausiert — ${this.quellenSchalter.fehlversuche(skillName)} Fehlversuche in Folge, nächster Versuch später)`;
+    }
     try {
       const { context } = await buildSkillContext(this.userRepo, {
         userId: this.defaultChatId, platform: this.defaultPlatform, chatId: this.defaultChatId, chatType: 'dm',
@@ -1463,9 +1514,18 @@ export class ReasoningContextCollector {
         this.skillSandbox.execute(skill, input, context),
         new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${skillName} timeout`)), timeoutMs)),
       ]);
-      if (!result.success) return `(${skillName}: ${result.error})`;
+      if (!result.success) {
+        if (this.quellenSchalter.fehlschlag(skillName)) {
+          this.logger.warn({ skillName, fails: this.quellenSchalter.fehlversuche(skillName) }, 'v1142 Quelle pausiert (dauerhaft fehlschlagend)');
+        }
+        return `(${skillName}: ${result.error})`;
+      }
+      this.quellenSchalter.erfolg(skillName);
       return result.display ?? JSON.stringify(result.data);
     } catch (err) {
+      if (this.quellenSchalter.fehlschlag(skillName)) {
+        this.logger.warn({ skillName, fails: this.quellenSchalter.fehlversuche(skillName) }, 'v1142 Quelle pausiert (dauerhaft fehlschlagend)');
+      }
       this.logger.warn({ err, skillName }, 'ReasoningCollector: skill fetch failed');
       return `(${skillName}-Abfrage fehlgeschlagen)`;
     }

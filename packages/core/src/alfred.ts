@@ -4399,19 +4399,32 @@ export class Alfred {
                 },
               };
               const generator = new KgQuestionGenerator(facadeQg, kgQuestRepo, new ConfRepoQg(adapter), this.logger.child({ component: 'kg-question-gen' }));
-              const ownerUidQg = this.tryOwner();
               const ownerPlatformQg = (this.config.telegram?.enabled ? 'telegram'
                 : this.config.matrix?.enabled ? 'matrix'
                 : this.config.discord?.enabled ? 'discord'
                 : 'api');
-              if (ownerUidQg && this.config.security?.ownerUserId) {
+              // v1142 — H6: Owner erst ZUR LAUFZEIT auflösen. tryOwner() lieferte
+              // beim Wiring immer undefined (ownerMasterUserId wird erst ~1.300
+              // Zeilen später in init gesetzt) — der Generator wurde seit v640
+              // NIE geplant (0 Zeilen in kg_questions), ohne jedes Log.
+              if (this.config.security?.ownerUserId) {
                 const ownerChat = this.config.security.ownerUserId;
-                // v694 — linkedUserIds inkl. Legacy-Data-UIDs durchreichen
-                const linkedQgBase = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidQg)).map(u => u.id) : [ownerUidQg];
-                if (!linkedQgBase.includes(ownerUidQg)) linkedQgBase.push(ownerUidQg);
-                const linkedQg = this.withLegacyForOwner(ownerUidQg, linkedQgBase);
-                const runDailyQg = () => generator.run(ownerUidQg, { platform: ownerPlatformQg, chatId: ownerChat, maxPerRun: 3, linkedUserIds: linkedQg }).catch(err =>
-                  this.logger.debug({ err }, 'KG-question-generator failed (non-fatal)'));
+                const runDailyQg = async () => {
+                  try {
+                    const ownerUidQg = this.tryOwner();
+                    if (!ownerUidQg) {
+                      this.logger.warn('KG-question-generator: Owner noch nicht aufgelöst — Lauf übersprungen');
+                      return;
+                    }
+                    // v694 — linkedUserIds inkl. Legacy-Data-UIDs durchreichen
+                    const linkedQgBase = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidQg)).map(u => u.id) : [ownerUidQg];
+                    if (!linkedQgBase.includes(ownerUidQg)) linkedQgBase.push(ownerUidQg);
+                    const linkedQg = this.withLegacyForOwner(ownerUidQg, linkedQgBase);
+                    await generator.run(ownerUidQg, { platform: ownerPlatformQg, chatId: ownerChat, maxPerRun: 3, linkedUserIds: linkedQg });
+                  } catch (err) {
+                    this.logger.warn({ err }, 'KG-question-generator failed (non-fatal)');
+                  }
+                };
                 // Schedule next 18:00 local
                 const next18 = new Date();
                 next18.setHours(18, 0, 0, 0);
@@ -4441,14 +4454,23 @@ export class Alfred {
                 new ConfirmationRepository(adapter),
                 this.logger.child({ component: 'goal-extractor' }),
               );
-              const ownerUidForGoals = this.tryOwner();
-              if (ownerUidForGoals) {
-                const linkedForGoals = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForGoals)).map(u => u.id) : [ownerUidForGoals];
-                if (!linkedForGoals.includes(ownerUidForGoals)) linkedForGoals.push(ownerUidForGoals);
-                const linkedForGoalsWithLegacy = this.withLegacyForOwner(ownerUidForGoals, linkedForGoals);
+              // v1142 — H6: gleicher Init-Reihenfolge-Bug wie beim
+              // KG-Question-Generator — tryOwner() war beim Wiring immer
+              // undefined, der Extractor wurde nie geplant. Owner jetzt zur
+              // Laufzeit auflösen.
+              {
                 const runWeekly = async () => {
-                  try { await extractor.run(ownerUidForGoals, linkedForGoalsWithLegacy, { lookbackDays: 7 }); }
-                  catch (err) { this.logger.debug({ err }, 'Weekly goal-extraction failed (non-fatal)'); }
+                  try {
+                    const ownerUidForGoals = this.tryOwner();
+                    if (!ownerUidForGoals) {
+                      this.logger.warn('Goal-Extractor: Owner noch nicht aufgelöst — Lauf übersprungen');
+                      return;
+                    }
+                    const linkedForGoals = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForGoals)).map(u => u.id) : [ownerUidForGoals];
+                    if (!linkedForGoals.includes(ownerUidForGoals)) linkedForGoals.push(ownerUidForGoals);
+                    const linkedForGoalsWithLegacy = this.withLegacyForOwner(ownerUidForGoals, linkedForGoals);
+                    await extractor.run(ownerUidForGoals, linkedForGoalsWithLegacy, { lookbackDays: 7 });
+                  } catch (err) { this.logger.warn({ err }, 'Weekly goal-extraction failed (non-fatal)'); }
                 };
                 // Next Sunday 21:00
                 const now = new Date();

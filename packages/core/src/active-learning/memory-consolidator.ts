@@ -3,16 +3,46 @@ import type { LLMProvider } from '@alfred/llm';
 import type { MemoryRepository, MemoryEntry, EmbeddingRepository } from '@alfred/storage';
 import type { EmbeddingService } from '../embedding-service.js';
 import { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } from '@alfred/skills';
+import { INTERNAL_MEMORY_KEY_PREFIXES } from '../knowledge-graph.js';
 
 const MIGRATION_MARKER_KEY = '_alfred_internal_migration_v582_dates_done';
 
+// v1142 — H3: Das LLM erfindet KEINEN Key mehr (der Realfall
+// kg_connection_{deutschland,österreich,linz,wien} → „kg_connection_dach_cities"
+// presste vier verschiedene Orts-Verknüpfungen zu Brei und zerstörte nebenbei
+// Präfix-basierte Dedup-Marker). Der Key kommt deterministisch aus der Gruppe,
+// das LLM fasst nur den INHALT zusammen.
 const MERGE_PROMPT = `You are a memory consolidation system. Merge these similar memories into one concise entry.
 
 Memories to merge:
 {MEMORIES}
 
-Return a single JSON object with: {"key": "merged_key", "value": "merged concise value", "category": "best_category"}
+Return a single JSON object with: {"value": "merged concise value"}
 Return ONLY valid JSON, no explanation.`;
+
+/**
+ * v1142 — H3: Schutzliste für die Konsolidierung. Zusätzlich zu entity/fact/
+ * rule/manual sind jetzt geschützt: relationship (Familien-Wissen!), connection,
+ * feedback (Dedup-Marker wie insight_delivered:*), pattern (H4 dedupliziert
+ * deterministisch) und ALLE internen Alfred-Keys.
+ */
+export function istVorKonsolidierungGeschuetzt(m: Pick<MemoryEntry, 'type' | 'source' | 'key'>): boolean {
+  if (m.source === 'manual') return true;
+  if (['entity', 'fact', 'rule', 'relationship', 'connection', 'feedback', 'pattern'].includes(m.type)) return true;
+  return INTERNAL_MEMORY_KEY_PREFIXES.test(m.key);
+}
+
+/**
+ * v1142 — H3: deterministischer Merge-Key — der Eintrag mit der höchsten
+ * Confidence gewinnt (Tie-Break: jüngstes updatedAt, dann Key alphabetisch).
+ */
+export function waehleMergeKey(group: Array<Pick<MemoryEntry, 'key' | 'confidence' | 'updatedAt' | 'category'>>): { key: string; category: string } {
+  const gewinner = [...group].sort((a, b) =>
+    (b.confidence - a.confidence)
+    || String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? ''))
+    || a.key.localeCompare(b.key))[0];
+  return { key: gewinner.key, category: gewinner.category };
+}
 
 export class MemoryConsolidator {
   private embeddingRepo?: EmbeddingRepository;
@@ -239,10 +269,9 @@ export class MemoryConsolidator {
    * + optional semantic similarity on values (when EmbeddingService is available).
    */
   private findSimilarGroups(memories: MemoryEntry[]): MemoryEntry[][] {
-    // Filter out protected memories: entity/fact/rule types and manually created memories
-    const candidates = memories.filter(
-      m => !(m.type === 'entity' || m.type === 'fact' || m.type === 'rule' || m.source === 'manual'),
-    );
+    // v1142 — H3: erweiterte Schutzliste (relationship/connection/feedback/
+    // pattern + interne Keys) statt nur entity/fact/rule/manual.
+    const candidates = memories.filter(m => !istVorKonsolidierungGeschuetzt(m));
 
     const groups: MemoryEntry[][] = [];
     const used = new Set<string>();
@@ -256,6 +285,8 @@ export class MemoryConsolidator {
 
       for (let j = i + 1; j < candidates.length; j++) {
         if (used.has(candidates[j].id)) continue;
+        // v1142 — H3: nur Gleiches mit Gleichem mergen (Typ UND Kategorie)
+        if (candidates[j].type !== candidates[i].type || candidates[j].category !== candidates[i].category) continue;
 
         const tokensB = this.tokenize(candidates[j].key);
         const keySim = this.jaccardSimilarity(tokensA, tokensB);
@@ -314,13 +345,11 @@ export class MemoryConsolidator {
       if (!jsonMatch) return null;
 
       const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-      if (!parsed.key || !parsed.value) return null;
+      if (!parsed.value) return null;
 
-      return {
-        key: String(parsed.key),
-        value: String(parsed.value),
-        category: String(parsed.category || group[0].category),
-      };
+      // v1142 — H3: Key/Kategorie deterministisch aus der Gruppe, nie vom LLM
+      const { key, category } = waehleMergeKey(group);
+      return { key, category, value: String(parsed.value) };
     } catch (err) {
       this.logger.debug({ err }, 'LLM merge failed');
       return null;

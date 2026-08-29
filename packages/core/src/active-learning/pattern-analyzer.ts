@@ -4,6 +4,44 @@ import type { MemoryRepository } from '@alfred/storage';
 import type { ActivityRepository } from '@alfred/storage';
 import { createHash } from 'node:crypto';
 
+/**
+ * v1142 — H4: Findet ein bestehendes Pattern mit gleicher Aussage. Das LLM
+ * erfand für dasselbe Muster jedes Mal einen neuen Key (pattern_email_dominant,
+ * _dominance, _zentriert, _primary_comm — 4 Varianten, ~40 Saves/Tag). Match
+ * über Token-Jaccard auf Key ODER Wert (≥0.5) → unter dem BESTEHENDEN Key
+ * aktualisieren statt neu anlegen.
+ */
+const PATTERN_STOPWOERTER = new Set([
+  'ist', 'der', 'die', 'das', 'des', 'dem', 'den', 'ein', 'eine', 'mit', 'von', 'und',
+  'für', 'auf', 'aus', 'bei', 'user', 'users', 'nutzt', 'hat', 'sind', 'wird', 'alle',
+  'pattern', 'the', 'and', 'with',
+]);
+
+export function findeAehnlichenPatternKey(
+  bestehende: Array<{ key: string; value: string }>,
+  neuKey: string,
+  neuValue: string,
+): string | null {
+  const tok = (s: string) => new Set(
+    s.toLowerCase().split(/[\s_\-.:,()]+/).filter(t => t.length >= 3 && !PATTERN_STOPWOERTER.has(t)));
+  const jaccard = (a: Set<string>, b: Set<string>) => {
+    if (a.size === 0 || b.size === 0) return 0;
+    let inter = 0; for (const t of a) if (b.has(t)) inter++;
+    return inter / (a.size + b.size - inter);
+  };
+  const kNeu = tok(neuKey); const vNeu = tok(neuValue);
+  for (const b of bestehende) {
+    const kAlt = tok(b.key); const vAlt = tok(b.value);
+    // Starkes Signal: Key ODER Wert überlappen deutlich
+    if (jaccard(kNeu, kAlt) >= 0.5 || jaccard(vNeu, vAlt) >= 0.5) return b.key;
+    // Domänen-Signal: die Keys teilen ein Fachwort (z. B. „email") UND die
+    // Werte überlappen moderat — kurze Paraphrasen desselben Musters.
+    const teiltDomaene = [...kNeu].some(t => kAlt.has(t));
+    if (teiltDomaene && jaccard(vNeu, vAlt) >= 0.2) return b.key;
+  }
+  return null;
+}
+
 export class PatternAnalyzer {
   constructor(
     private readonly llm: LLMProvider,
@@ -112,17 +150,25 @@ Return NUR ein JSON-Array:`;
       try { patterns = JSON.parse(jsonMatch[0]); } catch { return 0; }
       if (!Array.isArray(patterns)) return 0;
 
+      // v1142 — H4: bestehende Patterns laden und Neues dagegen deduplizieren —
+      // gleiche Aussage aktualisiert den BESTEHENDEN Key statt eine weitere
+      // Namens-Variante anzulegen.
+      const bestehende = (await this.memoryRepo.getByType(userId, 'pattern', 50))
+        .map(m => ({ key: m.key, value: m.value }));
       let saved = 0;
       for (const p of patterns) {
         if (!p.key || !p.value || (p.confidence ?? 0) < 0.6) continue;
         try {
+          const neuKey = `pattern_${p.key}`;
+          const zielKey = findeAehnlichenPatternKey(bestehende, neuKey, p.value) ?? neuKey;
           await this.memoryRepo.saveWithMetadata(
-            userId, `pattern_${p.key}`, p.value,
+            userId, zielKey, p.value,
             p.category ?? 'behavior', 'pattern',
             p.confidence ?? 0.7, 'auto',
           );
+          if (zielKey === neuKey) bestehende.push({ key: neuKey, value: p.value });
           saved++;
-          this.logger.info({ key: p.key, confidence: p.confidence }, 'Behavioral pattern saved');
+          this.logger.info({ key: zielKey, neu: zielKey === neuKey, confidence: p.confidence }, 'Behavioral pattern saved');
         } catch { /* skip duplicates */ }
       }
 
