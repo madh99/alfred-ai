@@ -41,10 +41,74 @@ export const INSIGHT_OBJEKTE = [
   'wallbox', 'bmw', 'i4', 'batterie', 'akku', 'speicher', 'victron', 'ess',
   'pool', 'heizung', 'geschirrspüler', 'waschmaschine', 'trockner',
   'pv', 'solar', 'wechselrichter', 'strompreis', 'awattar',
-  'proxmox', 'unifi', 'mikrotik', 'fritzbox', 'nas', 'backup', 'zertifikat', 'domain',
+  'proxmox', 'unifi', 'mikrotik', 'fritzbox', 'nas', 'backup', 'zertifikat', 'domain', 'mqtt',
   'kalender', 'termin', 'email', 'todo', 'erinnerung',
   'tanken', 'laden', 'ladevorgang', 'reichweite', 'soc',
 ] as const;
+
+/**
+ * v1148 — Korrektur-Durchsetzung. Realfall: Dem User wurde „BMW MQTT offline"
+ * immer wieder gemeldet, obwohl er MEHRFACH erklärt hatte, dass der Stream nur
+ * bei aktivem Fahrzeug sendet. Seine Aussagen wurden nie als Korrektur erfasst
+ * (der insight_resolved-Pfad war strukturell tot), und Korrekturen wirkten nur
+ * als Kontext-BITTE ans LLM. Jetzt: Unterdrückungs-Aussagen werden erkannt und
+ * am Zustell-Gate HART durchgesetzt — modellunabhängig, für immer (Korrekturen
+ * verfallen nicht und sind vor der Konsolidierung geschützt).
+ */
+export const UNTERDRUECKUNGS_MUSTER = /\b(ist (doch |völlig |ganz |eh |ohnehin )?(normal|ok|in ordnung|so gewollt)|kein (fehler|problem|defekt|grund zur)|falschalarm|nicht[^.!?\n]{0,60}\b(melden|warnen|alarmieren|erinnern)|sendet nur|nur (wenn|bei|während)|expected behavior|not an? (issue|error))\b/i;
+
+export function istUnterdrueckungsAussage(text: string): boolean {
+  return UNTERDRUECKUNGS_MUSTER.test(text);
+}
+
+const KORREKTUR_STOPWOERTER = new Set([
+  'nicht', 'mehr', 'wenn', 'dann', 'aber', 'auch', 'wurde', 'wurden', 'bereits', 'mehrfach',
+  'gesagt', 'wird', 'sind', 'ist', 'eine', 'einem', 'einer', 'dass', 'das', 'der', 'die',
+  'weil', 'nur', 'sendet', 'alfred', 'immer', 'dauernd', 'ständig', 'melden', 'meldung',
+  'meldungen', 'bitte', 'sich', 'sein', 'seit', 'oder', 'beim', 'diese', 'dieser',
+]);
+
+/** Zu generisch, um allein eine Unterdrückung zu tragen (False-Positive-Schutz). */
+const GENERISCHE_WOERTER = new Set(['kritisch', 'batterie', 'fehler', 'warnung', 'status', 'daten', 'offline', 'online', 'problem', 'sensor', 'sensoren']);
+
+export function kernwoerterAusKorrektur(text: string): string[] {
+  const woerter = new Set<string>();
+  for (const w of text.toLowerCase().replace(/[^a-z0-9äöüß\s-]/g, ' ').split(/\s+/)) {
+    if (w.length >= 4 && !KORREKTUR_STOPWOERTER.has(w)) woerter.add(w);
+  }
+  return [...woerter];
+}
+
+/**
+ * v1148 — hartes Gate: Insight wird unterdrückt, wenn eine Unterdrückungs-
+ * Korrektur ≥2 Kernwort-Treffer hat, davon mindestens ein SPEZIFISCHES Wort
+ * (≥6 Zeichen, nicht generisch) — „Sensor-Batterien kritisch" wird von einer
+ * Handy-Batterie-Korrektur also NICHT verschluckt.
+ */
+/**
+ * Eindeutige technische Objekte: Nennt die Korrektur eines davon, gilt die
+ * Unterdrückung für ALLE Meldungen zu diesem Objekt (das ist die Absicht von
+ * „MQTT nicht melden"). Breite Begriffe (batterie, soc, laden) stehen bewusst
+ * NICHT hier — sie brauchen spezifische Wort-Treffer, sonst würde eine
+ * Handy-Batterie-Korrektur echte Sensor-Batterie-Warnungen verschlucken.
+ */
+const DIREKT_OBJEKTE = ['mqtt', 'wallbox', 'victron', 'proxmox', 'unifi', 'mikrotik',
+  'fritzbox', 'awattar', 'strompreis', 'wechselrichter', 'geschirrspüler', 'waschmaschine',
+  'trockner', 'pool', 'heizung', 'zertifikat', 'commvault'];
+
+export function verletztUnterdrueckungsKorrektur(insight: string, korrekturWerte: string[]): boolean {
+  const il = insight.toLowerCase();
+  for (const k of korrekturWerte) {
+    if (!istUnterdrueckungsAussage(k)) continue;
+    const kl = k.toLowerCase();
+    for (const o of DIREKT_OBJEKTE) {
+      if (kl.includes(o) && il.includes(o)) return true;
+    }
+    const treffer = kernwoerterAusKorrektur(k).filter(w => il.includes(w));
+    if (treffer.length >= 2 && treffer.some(w => w.length >= 6 && !GENERISCHE_WOERTER.has(w))) return true;
+  }
+  return false;
+}
 
 /**
  * v1142 — H1: inhaltlicher Duplikat-Check gegen bereits gelieferte Insights.
@@ -1146,6 +1210,24 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   /** v1142 — H1: Cache der zuletzt gelieferten Insight-Texte (5 min) fürs inhaltliche Gate. */
   private gelieferteInsightsCache: { texte: string[]; geladen: number } | null = null;
 
+  /** v1148 — Cache der User-Korrekturen (5 min) fürs Unterdrückungs-Gate. */
+  private korrekturenCache: { werte: string[]; geladen: number } | null = null;
+
+  private async holeUnterdrueckungsKorrekturen(): Promise<string[]> {
+    if (this.korrekturenCache && Date.now() - this.korrekturenCache.geladen < 5 * 60_000) {
+      return this.korrekturenCache.werte;
+    }
+    let werte: string[] = [];
+    try {
+      if (this.memoryRepo && this.resolvedOwnerUserId) {
+        const mems = await this.memoryRepo.getByType(this.resolvedOwnerUserId, 'correction', 50);
+        werte = mems.map(m => m.value);
+      }
+    } catch { /* Gate fällt still zurück */ }
+    this.korrekturenCache = { werte, geladen: Date.now() };
+    return werte;
+  }
+
   private async holeGelieferteInsights(): Promise<string[]> {
     if (this.gelieferteInsightsCache && Date.now() - this.gelieferteInsightsCache.geladen < 5 * 60_000) {
       return this.gelieferteInsightsCache.texte;
@@ -1170,6 +1252,13 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       this.notifRepo.wasNotified(topicKey, this.defaultChatId),
     ]);
     if (contentSent || topicSent) return true;
+    // v1148 — Korrektur-Gate: was der User als „normal/nicht melden" erklärt
+    // hat, wird HART unterdrückt — dauerhaft, nicht nur im 48-h-Fenster.
+    const korrekturen = await this.holeUnterdrueckungsKorrekturen();
+    if (korrekturen.length > 0 && verletztUnterdrueckungsKorrektur(insight, korrekturen)) {
+      this.logger.info({ insight: insight.slice(0, 80) }, 'v1148 insight durch User-Korrektur unterdrückt');
+      return true;
+    }
     // v1142 — H1: hartes INHALTLICHES Gate gegen die gelieferten Insight-Texte
     // (48h-Fenster über die insight_delivered-Memories). Die Hash-Prüfungen oben
     // scheitern an jeder Umformulierung; bisher stand die Nicht-Wiederholung nur

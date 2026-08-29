@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1148] - 2026-08-29
+
+### Fixed — User-Korrekturen werden durchgesetzt, nicht nur notiert (v1148)
+
+Realfall: „BMW MQTT-Stream offline" wurde seit Wochen immer wieder gemeldet, obwohl der User mehrfach erklärt hatte, dass der Stream nur bei aktivem Fahrzeug sendet — veraltete Daten bei stehendem Auto sind normal. Zwei strukturelle Löcher: (1) Die Aussagen wurden nie als Korrektur erfasst — der `insight_resolved`-Pfad griff nur bei kurzen Danke-Antworten auf Insight-Nachrichten, die gar nicht in der Chat-History landen (null Einträge seit Bestehen). (2) Selbst erfasste Korrekturen wirkten nur als Kontext-BITTE ans Sprachmodell, nie als Regel.
+
+- **Erfassung**: Sagt der User „das ist normal / kein Fehler / Falschalarm / nicht mehr melden / sendet nur wenn …", wird das deterministisch als **Korrektur** gespeichert (manuell, höchste Herkunfts-Klasse, ohne Verfall, vor der Konsolidierung geschützt).
+- **Durchsetzung**: Das Zustell-Gate prüft jeden Insight HART gegen alle Unterdrückungs-Korrekturen — eindeutige technische Objekte (mqtt, wallbox, proxmox …) unterdrücken alle Meldungen zu diesem Objekt; breite Begriffe (Batterie, SoC) brauchen spezifische Wort-Treffer, damit eine Handy-Batterie-Korrektur keine echten Sensor-Warnungen verschluckt. Dauerhaft — nicht nur im 48-Stunden-Fenster des Wiederholungs-Gates.
+- **Bestand**: Die MQTT-Korrektur ist angelegt; 49 verfallslose MQTT-Echo-Memories (Alt-Lasten der Echo-Ära, die das Thema ewig fütterten) sind gelöscht.
+- 8 neue Tests — die vier real gesendeten MQTT-Varianten werden alle unterdrückt, der ESS-Mindest-SoC-Realfall ebenso, Fremd-Meldungen bleiben durch.
+
 ## [0.19.0-multi-ha.1147] - 2026-08-29
 
 ### Fixed — Automationen, die wirken + geschlossene Lernschleife (v1147, M/L/P-Pakete)

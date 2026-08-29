@@ -1570,6 +1570,26 @@ export class MessagePipeline {
         this.kgService.extractFromChat(masterUserId, chatText).catch(() => {});
       }
 
+      // 9c-0. v1148 — Unterdrückungs-Korrekturen erfassen: Sagt der User „das
+      // ist normal / kein Fehler / nicht mehr melden / sendet nur wenn …",
+      // wird das eine ECHTE Korrektur (type correction, manuell, ohne Verfall),
+      // die das Zustell-Gate dauerhaft durchsetzt. Realfall: „MQTT sendet nur,
+      // wenn das Fahrzeug aktiv ist" wurde mehrfach gesagt, aber nie erfasst —
+      // der insight_resolved-Pfad unten greift nur bei kurzen Danke-Antworten
+      // auf Insight-Nachrichten, die gar nicht in der Chat-History landen.
+      if (this.memoryRepo && masterUserId && message.text.length <= 300) {
+        try {
+          const { istUnterdrueckungsAussage, kernwoerterAusKorrektur } = await import('./reasoning-engine.js');
+          if (istUnterdrueckungsAussage(message.text)) {
+            const kern = kernwoerterAusKorrektur(message.text).slice(0, 3).join('_') || 'allgemein';
+            const key = `unterdruecke_${kern}`.slice(0, 60);
+            await this.memoryRepo.saveWithMetadata(masterUserId, key,
+              message.text.slice(0, 300), 'general', 'correction', 0.95, 'manual');
+            this.logger.info({ key }, 'v1148 Unterdrückungs-Korrektur erfasst — Meldungen dieser Art werden dauerhaft unterdrückt');
+          }
+        } catch { /* Erfassung best-effort */ }
+      }
+
       // 9c. Insight-response detection: if user replies briefly with acknowledgment words,
       //     mark the most recent insight_delivered as resolved (fire-and-forget)
       if (this.memoryRepo && masterUserId && message.text.length <= 80) {
