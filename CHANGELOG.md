@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1141] - 2026-08-29
+
+### Fixed — Wissensgraph-Korruption: Schreiber geschlossen statt Daten geflickt (v1141)
+
+Analyse 29.08.: Der Graph enthielt erfundene Personen („Stiefkinder" als Mensch), verfälschte Stammdaten (erfundene Geburtsdaten trotz korrekter Memories), Dateinamen als Kontakte, Momentzustände als Geräte — und alle Sensoren „lagen in Wien", weil das Memory „Wien ist NICHT der Wohnort" Wien per Key-Heuristik zum Zuhause stempelte. Dieselbe Fehlerklasse war bereits viermal behandelt worden (v57x/v588/v859/v921) und kam jedes Mal zurück, weil die Fixes Daten bereinigten, aber die Schreiber offen ließen. Jetzt werden die Schreiber geschlossen, mit Regressionstests gegen die dokumentierten Realfälle:
+
+- **Satz-genaue Home-Erkennung**: Ein „home"-Memory-Key stempelt nicht mehr jeden im Text erwähnten Ort — nur die Stadt, deren eigener Satz positiv vom Wohnen spricht (Negations- und Fremdpersonen-Prüfung), bekommt `isHome`/`isUserHome`. Die v57x-Negationserkennung ist damit zurück im Pfad, der sie verloren hatte.
+- **Kanonisches Zuhause deterministisch**: Cross-Extractor und Wartung wählen über dieselbe Funktion (nur `isUserHome`, Tie-Break über Zeitstempel UND Name). Der Legacy-`isHome`-Fallback ist weg — er machte Büro-Orte zum Geräte-Zuhause, sobald der Anker im Kontext fehlte. Lieber keine Home-Relationen als falsche.
+- **Drei neue Wartungs-Wächter (täglich, selbstheilend)**: (1) Entitäten mit `is_typo`/`is_valid=false`-Markern und Datei-Fragment-Namen werden gelöscht statt ewig weiterzumatchen; (2) `isHome` auf Nicht-Zuhause-Orten wird abgeräumt; (3) Geräte-/Fahrzeug-Relationen ans falsche Zuhause werden gelöscht — die v588-Einmal-Bereinigung ist damit ein Dauerzustand.
+- **Interne Memories sind keine Wissensquelle**: `rule_skill_*`/`open_item_*`/`_alfred_internal_*` ergänzt und der Arbeitgeber-Extraktor gefiltert — News-Zustellprotokolle erzeugten sonst `works_at`-Beziehungen auf Schlagzeilen-Fragmente („IT BOLTWISE:", „Easyname confirmation received").
+- **LLM-Linker entmachtet**: keine Personen-Neuanlage mehr (Personen entstehen nur aus Memory/Chat/Kalender); Geburtsdaten, Alter und Rollen an Personen sowie Orts-Flags sind für LLM-Korrekturen gesperrt; Log-Sätze (>120 Zeichen) und Datei-Namen werden verworfen.
+- **Familien-Inferenz gezügelt**: automatische sibling/parent_of/grandparent-Ableitungen nur noch auf verifizierten Personen (echte Quelle + Confidence ≥ 0,9) — nicht auf LLM-Erzeugnissen.
+- **Home-Assistant-Extraktor**: Momentzustands-Namen („Geschirrspüler läuft") werden nicht mehr als Geräte-Entitäten gespeichert.
+- 20 Regressionstests, benannt nach den Realfällen (Wien-Test, BOLTWISE-Test, Altand-Test, CV-Datei-Test, Momentzustands-Test, Personen-Gate, Attribut-Schutz).
+
 ## [0.19.0-multi-ha.1140] - 2026-07-31
 
 ### Fixed — Meta-Pause gilt für Publishes + Symbolbild ohne Verbandsflaggen/Schilder (v1140)

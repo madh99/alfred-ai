@@ -41,7 +41,10 @@ const DISTANCE_TABLE: Record<string, Record<string, number>> = {
  * so creates self-referential pseudo-entities ("connection_kapfenberg_bmw_charging_plan")
  * that pollute the graph with hundreds of garbage relations.
  */
-const INTERNAL_MEMORY_KEY_PREFIXES = /^(kg_connection_|kg_|insight_|pattern_|temporal_|action_feedback_|connection_|llm_usage_|service_usage_)/i;
+// v1141 — rule_skill_/open_item_/_alfred_internal_ ergänzt: rule_skill_homeassistant_*
+// enthält „home" im Key und stempelte Orte aus dem Regel-Text als Zuhause; die
+// Employment-Suche fand „Position/Company" in Eskalations- und News-Texten.
+export const INTERNAL_MEMORY_KEY_PREFIXES = /^(kg_connection_|kg_|insight_|pattern_|temporal_|action_feedback_|connection_|llm_usage_|service_usage_|rule_skill_|open_item_|_alfred_internal_)/i;
 
 /**
  * Markers that indicate a memory describes ANOTHER PERSON's home/location, not the user's own.
@@ -75,6 +78,90 @@ const OTHER_HOME_MARKERS = [
 export function describesOtherPersonsHome(text: string): boolean {
   const lower = text.toLowerCase();
   return OTHER_HOME_MARKERS.some(m => lower.includes(m));
+}
+
+/**
+ * v1141 — Satz-genaue Home-Flags für eine Stadt aus einem Memory-Eintrag.
+ *
+ * Vorher stempelte ein „home"-Key JEDEN im Value erwähnten Ort mit
+ * isHome/isUserHome — das korrekte Memory „Altlengbach ist der Wohnort.
+ * Wien … ist die Büroadresse, NICHT der Wohnort" machte so ausgerechnet
+ * Wien zum Zuhause (Realfall: 26 Sensor-Relationen → Wien). Jetzt zählt
+ * der Satz, in dem die Stadt selbst steht: positives Wohn-Wort, keine
+ * Negation, kein Fremdpersonen-Marker. Nennt der Value gar kein Wohn-Wort
+ * (reine Adress-Memories wie „heim_adresse: 3033 Altlengbach"), gilt der
+ * Key weiterhin — aber nur, wenn genau EINE Stadt vorkommt.
+ */
+export function homeFlagsForCity(key: string, value: string, city: string, cityCount = 1): { isHome?: true; isUserHome?: true } {
+  if (describesOtherPersonsHome(key)) return {};
+  const valueHasHomeWord = /wohnort|wohnt|wohn|zuhause|home|heim|privat/i.test(value);
+  if (!valueHasHomeWord) {
+    if (cityCount > 1) return {};
+    return describesOtherPersonsHome(value) ? {} : { isHome: true, isUserHome: true };
+  }
+  const sentences = value.split(/[.!?]\s+/);
+  const satz = sentences.find(s => s.includes(city)) ?? '';
+  const lower = satz.toLowerCase();
+  const positiv = /wohnort|wohnt|wohn|zuhause|home|heim|privat/i.test(lower);
+  const negation = /nicht|kein|niemals|never|not\s/i.test(lower);
+  if (positiv && !negation && !describesOtherPersonsHome(satz)) return { isHome: true, isUserHome: true };
+  return {};
+}
+
+/**
+ * v1141 — HA-Friendly-Names, die Momentzustände beschreiben („Geschirrspüler
+ * läuft", „EMS Boden: Empfehlung übernehmen"), sind keine Dinge — sie veralten
+ * sofort und vermüllen den Graph als item-Entitäten.
+ */
+export function istMomentzustandsName(name: string): boolean {
+  if (/:\s/.test(name)) return true;
+  return /\b(läuft|aktiv|inaktiv|erkannt|ausgelöst|übernehmen|erforderlich|beendet|gestartet|fällig)\b/i.test(name);
+}
+
+/**
+ * v1141 — Datei-/Fragment-Namen sind keine Entitäten (Realfall:
+ * „Markus_Dohnal_CV_aktuelle_" als Person-Kontakt im Graph).
+ */
+export function istDateiFragmentName(name: string): boolean {
+  if ((name.match(/_/g) ?? []).length >= 3) return true;
+  if (/\.(pdf|docx?|xlsx?|csv|pptx?|png|jpe?g|txt|md)$/i.test(name)) return true;
+  return /_$/.test(name);
+}
+
+/**
+ * v1141 — Entität trägt selbst-diagnostizierte Ungültigkeits-Marker
+ * (Realfall „Altand": is_typo=true/is_valid=false gesetzt, aber nie gelöscht —
+ * die Entität matchte weiter in den Chat-Kontext).
+ */
+export function istUngueltigeEntitaet(attributes: Record<string, unknown> | undefined): boolean {
+  if (!attributes) return false;
+  return attributes.is_typo === true || attributes.is_valid === false;
+}
+
+/**
+ * v1141 — EINZIGE Quelle für das kanonische Zuhause: isUserHome (der strikte
+ * Anker aus v588). Der Legacy-isHome-Fallback wählte Büro-/Erwähnungs-Orte,
+ * sobald der Anker im Datensatz fehlte. Deterministischer Tie-Break über
+ * firstSeenAt UND Name — vorher flippte die Wahl bei sekundengleichen
+ * Zeitstempeln (Wien ↔ Altlengbach) je nach DB-Reihenfolge.
+ */
+export function waehleKanonischesZuhause<T extends { name: string; firstSeenAt?: string; attributes?: Record<string, unknown> }>(locations: T[]): T | undefined {
+  return locations
+    .filter(l => l.attributes?.isUserHome === true)
+    .sort((a, b) => ((a.firstSeenAt ?? '').localeCompare(b.firstSeenAt ?? '')) || a.name.localeCompare(b.name))[0];
+}
+
+/**
+ * v1141 — Familien-Inferenz nur auf verifizierten Personen: echte Quelle
+ * (Memory/Chat/System/Kalender) und hohe Confidence. llm_linking-Erzeugnisse
+ * („Stiefkinder" als Person, conf 0.7) bekamen sonst sofort automatische
+ * sibling-/parent_of-Relationen und multiplizierten den Fehler.
+ */
+export function istVerlaesslichePerson(e: { entityType: string; sources?: string[]; confidence?: number } | undefined): boolean {
+  if (!e || e.entityType !== 'person') return false;
+  const quellen = e.sources ?? [];
+  if (!quellen.some(s => ['memories', 'chat', 'system', 'calendar'].includes(s))) return false;
+  return (e.confidence ?? 0) >= 0.9;
 }
 
 /**
@@ -1118,6 +1205,11 @@ export class KnowledgeGraphService {
 
       for (const r of relations) {
         if (r.sourceEntityId !== user.id) continue;
+        // v1141 — G5: Inferenz nur auf verifizierten Personen (echte Quelle +
+        // hohe Confidence). llm_linking-Erzeugnisse („Stiefkinder" als Person,
+        // conf 0.7) bekamen sonst sofort sibling-/parent_of-Relationen und
+        // multiplizierten jeden Extraktions-Fehler in den Familien-Baum.
+        if (!istVerlaesslichePerson(entityById.get(r.targetEntityId))) continue;
         if (r.relationType === 'parent_of') children.push(r.targetEntityId);
         if (r.relationType === 'spouse') spouseId = r.targetEntityId;
         if (r.relationType === 'family') {
@@ -1455,16 +1547,18 @@ export class KnowledgeGraphService {
         let userHomeConsolidated = 0;
         try {
           const locs = await this.kgRepo.getEntitiesByType(userId, 'location');
-          const flagged = locs
-            .filter(l => (l.attributes as Record<string, unknown> | undefined)?.isUserHome === true)
-            .sort((a, b) => (a.firstSeenAt ?? '').localeCompare(b.firstSeenAt ?? ''));
-          // flagged[0] = earliest = kanonisches Zuhause (bleibt). Rest: Flag entfernen.
-          for (const loc of flagged.slice(1)) {
+          // v1141 — DIESELBE deterministische Wahl wie der Cross-Extractor
+          // (firstSeenAt, dann Name). Vorher flippte die Wahl bei sekunden-
+          // gleichen Zeitstempeln (Wien ↔ Altlengbach) je nach DB-Reihenfolge.
+          const kanonisch = waehleKanonischesZuhause(locs);
+          const flagged = locs.filter(l => (l.attributes as Record<string, unknown> | undefined)?.isUserHome === true);
+          for (const loc of flagged) {
+            if (kanonisch && loc.id === kanonisch.id) continue;
             const cleaned = { ...(loc.attributes as Record<string, unknown>) };
             delete cleaned.isUserHome;
             await this.kgRepo.setEntityAttributes(loc.id, cleaned);
             userHomeConsolidated++;
-            this.logger.info({ location: loc.name, canonical: flagged[0]?.name },
+            this.logger.info({ location: loc.name, canonical: kanonisch?.name },
               'KG maintenance: cleared duplicate isUserHome (canonical home wins by earliest firstSeenAt)');
           }
         } catch (err) {
@@ -1500,7 +1594,79 @@ export class KnowledgeGraphService {
           this.logger.debug({ err }, 'KG maintenance: stale isHome cleanup failed');
         }
 
-        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared, implausibleLocationsCleaned, userHomeConsolidated }, 'KG maintenance completed');
+        // v1141 — Wächter 1: selbst-diagnostizierter Müll fliegt raus. Entitäten
+        // mit is_typo/is_valid=false-Markern („Altand") und Datei-Fragment-Namen
+        // („Markus_Dohnal_CV_aktuelle_") blieben vorher ewig und matchten weiter
+        // in den Chat-Kontext.
+        let junkEntitiesCleaned = 0;
+        try {
+          const { entities: alleEntities } = await this.kgRepo.getFullGraph(userId, 'personal');
+          for (const e of alleEntities) {
+            const attrs = (e.attributes ?? {}) as Record<string, unknown>;
+            if (istUngueltigeEntitaet(attrs) || istDateiFragmentName(e.name)) {
+              await this.kgRepo.deleteEntity(e.id);
+              junkEntitiesCleaned++;
+              this.logger.info({ entity: e.name, type: e.entityType }, 'KG maintenance: deleted junk entity (typo/invalid marker or file fragment name)');
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'KG maintenance: junk entity cleanup failed');
+        }
+
+        // v1141 — Wächter 2: isHome nur noch rund ums kanonische Zuhause. Falsche
+        // isHome-Flags (Wien/Linz/Österreich) machten über den früheren Fallback
+        // Büro-Orte zum Geräte-Zuhause; der Fallback ist weg, die Flags räumen
+        // wir trotzdem ab (sie speisen auch den „Wohnsitz:"-Chat-Kontext).
+        let wrongIsHomeCleared = 0;
+        try {
+          const locs = await this.kgRepo.getEntitiesByType(userId, 'location');
+          const kanonisch = waehleKanonischesZuhause(locs);
+          if (kanonisch) {
+            for (const loc of locs) {
+              const attrs = (loc.attributes ?? {}) as Record<string, unknown>;
+              if (attrs.isHome !== true || attrs.isUserHome === true || loc.id === kanonisch.id) continue;
+              // Straßen-Adresse des Zuhauses (attributes.city == kanonischer Ort) bleibt.
+              if (String(attrs.city ?? '') === kanonisch.name) continue;
+              const cleaned = { ...attrs };
+              delete cleaned.isHome;
+              await this.kgRepo.setEntityAttributes(loc.id, cleaned);
+              wrongIsHomeCleared++;
+              this.logger.info({ location: loc.name, canonical: kanonisch.name }, 'KG maintenance: cleared isHome on non-canonical location');
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'KG maintenance: non-canonical isHome cleanup failed');
+        }
+
+        // v1141 — Wächter 3: Geräte-/Fahrzeug-Relationen ans FALSCHE Zuhause
+        // löschen (Realfall: 26× located_at → Wien, täglich neu geschrieben,
+        // aber nur einmalig per Hand bereinigt — v588).
+        let wrongHomeRelationsDeleted = 0;
+        try {
+          const { entities: alleEntities, relations: alleRelations } = await this.kgRepo.getFullGraph(userId, 'personal');
+          const byId = new Map(alleEntities.map(e => [e.id, e]));
+          const kanonisch = waehleKanonischesZuhause(alleEntities.filter(e => e.entityType === 'location'));
+          if (kanonisch) {
+            for (const r of alleRelations) {
+              if (r.relationType !== 'located_at' && r.relationType !== 'home_location') continue;
+              const src = byId.get(r.sourceEntityId);
+              const tgt = byId.get(r.targetEntityId);
+              if (!src || !tgt) continue;
+              if (src.entityType !== 'item' && src.entityType !== 'vehicle') continue;
+              if (tgt.entityType !== 'location' || tgt.id === kanonisch.id) continue;
+              // Straßen-Adresse des Zuhauses zählt als korrekt.
+              if (String((tgt.attributes as Record<string, unknown> | undefined)?.city ?? '') === kanonisch.name) continue;
+              await this.kgRepo.deleteRelation(r.id);
+              wrongHomeRelationsDeleted++;
+              this.logger.info({ source: src.name, target: tgt.name, type: r.relationType, canonical: kanonisch.name },
+                'KG maintenance: deleted device relation to non-canonical home');
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'KG maintenance: wrong home relation cleanup failed');
+        }
+
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared, implausibleLocationsCleaned, userHomeConsolidated, junkEntitiesCleaned, wrongIsHomeCleared, wrongHomeRelationsDeleted }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');
@@ -1630,24 +1796,16 @@ export class KnowledgeGraphService {
 
       // Extract addresses as locations (dynamic list + PLZ pattern)
       if (keyLower.includes('adress') || keyLower.includes('address') || keyLower.includes('heim') || keyLower.includes('home')) {
-        // Check BOTH key and value for "other person" markers — a key like "address_3032"
-        // might miss "mother", but the value "Mutter wohnt in 3032 Eichgraben" catches it.
-        const isOtherPersonHome = describesOtherPersonsHome(key) || describesOtherPersonsHome(value);
-        const isHome = !isOtherPersonHome && (keyLower.includes('heim') || keyLower.includes('home'));
-        // `isUserHome` is the STRICT flag used by the cross-extractor to find the user's
-        // canonical home location. Only set it when the source unambiguously refers to
-        // the user (no family/friend markers).
-        const homeAttr: Record<string, unknown> = {};
-        if (isHome) {
-          homeAttr.isHome = true;
-          homeAttr.isUserHome = true;
-        }
-        // Known locations (dynamic)
+        const keyHatHomeWort = keyLower.includes('heim') || keyLower.includes('home');
+        // v1141 — Städte erst einsammeln (bekannte + PLZ-Muster), dann JE STADT
+        // satz-genau über die Flags entscheiden. Vorher bekam jeder im Value
+        // erwähnte Ort die Key-Flags — „Wien … ist NICHT der Wohnort" machte
+        // Wien so zum Zuhause aller Sensoren.
+        const staedte = new Set<string>();
         for (const city of this.getKnownLocations()) {
-          if (value.includes(city)) {
-            await this.kgRepo.upsertEntity(userId, city, 'location', homeAttr, 'memories');
-          }
+          if (value.includes(city)) staedte.add(city);
         }
+        const neueStaedte = new Set<string>();
         // PLZ pattern: "3033 Altlengbach", "80331 München"
         PLZ_CITY_REGEX.lastIndex = 0;
         let plzMatch;
@@ -1658,8 +1816,17 @@ export class KnowledgeGraphService {
           // registerLocation() hatte das Gate, der upsert daneben aber nicht.
           if (!KnowledgeGraphService.isPlausibleLocation(city)) continue;
           if (!this.knownLocationsLower.has(city.toLowerCase())) {
+            staedte.add(city);
+            neueStaedte.add(city);
+          }
+        }
+        for (const city of staedte) {
+          const homeAttr = keyHatHomeWort ? homeFlagsForCity(key, value, city, staedte.size) : {};
+          if (neueStaedte.has(city)) {
             this.registerLocation(city);
             await this.kgRepo.upsertEntity(userId, city, 'location', { ...homeAttr, detectedBy: 'plz_pattern' }, 'memories');
+          } else {
+            await this.kgRepo.upsertEntity(userId, city, 'location', homeAttr, 'memories');
           }
         }
       }
@@ -1782,6 +1949,9 @@ export class KnowledgeGraphService {
       if (/^0x[0-9a-f]+$/i.test(fn)) continue; // Zigbee hex ID
       // Skip internal/technical entities
       if (SKIP_INTERNALS.test(fn) || SKIP_INTERNALS.test(eid)) continue;
+      // v1141 — Momentzustands-Namen („Geschirrspüler läuft", „EMS Boden:
+      // Empfehlung übernehmen") sind keine Geräte — nicht als item speichern.
+      if (istMomentzustandsName(fn)) continue;
       const name = fn;
 
       const attrs: Record<string, unknown> = { entity_id: eid, state: st };
@@ -1903,26 +2073,23 @@ export class KnowledgeGraphService {
       //
       // When multiple candidates remain: log a warning and pick the one with the EARLIEST
       // firstSeenAt — the original memory is the canonical source of truth.
+      // v1141 — EINZIGE Quelle ist isUserHome (waehleKanonischesZuhause, mit
+      // deterministischem Tie-Break). Der Legacy-isHome-Fallback machte bei
+      // fehlendem/verlorenem Anker Büro-/Erwähnungs-Orte zum Zuhause (Realfall:
+      // 26 Sensor-Relationen → Wien). Lieber KEINE Home-Relationen als falsche.
       const userHomeCandidates = locations.filter(l => l.attributes?.isUserHome === true);
-      const legacyHomeCandidates = locations.filter(l =>
-        l.attributes?.isHome === true
-        && l.attributes?.isUserHome !== true
-        && !describesOtherPersonsHome(String(l.attributes?.address ?? ''))
-      );
-      const homeLocations = userHomeCandidates.length > 0 ? userHomeCandidates : legacyHomeCandidates;
       // v859 — Warning nur 1x pro Prozess + Kandidaten-Set. Der Cross-Extractor läuft
       // bei jedem Reasoning-Pass (half_hourly) → die identische Warnung flutete das
       // Log mit 41-48 Einträgen/Tag ohne neuen Informationswert.
-      if (homeLocations.length > 1) {
-        const candidateKey = homeLocations.map(l => l.name).sort().join('|');
+      if (userHomeCandidates.length > 1) {
+        const candidateKey = userHomeCandidates.map(l => l.name).sort().join('|');
         if (this.lastMultiHomeWarnKey !== candidateKey) {
           this.lastMultiHomeWarnKey = candidateKey;
-          this.logger.warn({ candidates: homeLocations.map(l => l.name) },
+          this.logger.warn({ candidates: userHomeCandidates.map(l => l.name) },
             'KG cross-extractor: multiple user-home candidates — picking earliest firstSeenAt');
         }
       }
-      const homeLocation = homeLocations
-        .sort((a, b) => (a.firstSeenAt ?? '').localeCompare(b.firstSeenAt ?? ''))[0];
+      const homeLocation = waehleKanonischesZuhause(locations);
       const energyMetric = metrics.find(m => m.normalizedName === 'strompreis');
 
       // Rule 1: Vehicle ↔ Charger
@@ -2225,6 +2392,11 @@ export class KnowledgeGraphService {
       for (const query of ['employment', 'employer', 'arbeitgeber', 'firma', 'company', 'teamlead', 'position']) {
         const jobs = await this.memoryRepo.search(userId, query);
         for (const job of jobs.slice(0, 3)) {
+          // v1141 — interne Memories (insight_delivered-News, Skill-Regeln,
+          // Eskalationen) sind KEINE Arbeitgeber-Quelle: die Suche nach
+          // „Position/Company" traf News-Zustellprotokolle und erzeugte
+          // works_at-Relationen auf „IT BOLTWISE:"/„Easyname confirmation …".
+          if (INTERNAL_MEMORY_KEY_PREFIXES.test(job.key)) continue;
           const orgMatch = job.value.match(/(?:bei|at)\s+([A-ZÄÖÜ][\w\s&.-]+?)(?:\s+(?:als|as|since|seit)|[.,]|$)/i)
             ?? job.value.match(/([A-ZÄÖÜ][\w\s&.-]*(?:GmbH|AG|ICT|Inc|Corp|Ltd|SE)[^\s.,]*)/i);
           if (orgMatch) {

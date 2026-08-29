@@ -1,7 +1,29 @@
 import type { Logger } from 'pino';
 import type { KnowledgeGraphRepository, KGEntity } from '@alfred/storage';
 import type { LLMLinkingConfig } from '@alfred/types';
-import { validateRelationTypes } from './knowledge-graph.js';
+import { validateRelationTypes, istDateiFragmentName } from './knowledge-graph.js';
+
+/**
+ * v1141 — Attribute, die das LLM NIE an Personen schreiben darf: Geburtsdaten
+ * kommen ausschließlich aus bestätigten Memories (Realfall: der Linker erfand
+ * „01.01.2015" statt des korrekten 08.11.2014 und machte ein Kind zum
+ * „sachverständiger"). Orts-Flags (isHome/isUserHome/isWork) entscheidet nur
+ * der Memory-Pfad mit Negations-/Fremdpersonen-Prüfung. Lange String-Werte
+ * sind Log-Sätze, keine Attribute.
+ */
+const GESCHUETZTE_PERSON_ATTRS = /^(birthdate|birthday|geburtstag|geburtsdatum|birth_date|age|alter|age_group|rolle|role|relation_to_user)$/i;
+const GESCHUETZTE_LOCATION_ATTRS = /^(isHome|isUserHome|isWork)$/i;
+
+export function bereinigeKorrekturAttribute(entityType: string, attrs: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(attrs)) {
+    if (entityType === 'person' && GESCHUETZTE_PERSON_ATTRS.test(k)) continue;
+    if (entityType === 'location' && GESCHUETZTE_LOCATION_ATTRS.test(k)) continue;
+    if (typeof v === 'string' && v.length > 120) continue;
+    out[k] = v;
+  }
+  return out;
+}
 
 type UsageCallback = (service: string, model: string, inputTokens: number, outputTokens: number) => void;
 
@@ -110,6 +132,8 @@ export class LLMEntityLinker {
     if (/^[a-zäöüß]+$/.test(name) && name.length > 3) return true;
     // Contains control characters or is too short/long
     if (/[\n\r\t]/.test(name) || name.length < 2 || name.length > 50) return true;
+    // v1141 — Datei-/Fragment-Namen („Markus_Dohnal_CV_aktuelle_") sind keine Entitäten
+    if (istDateiFragmentName(name)) return true;
     return false;
   }
 
@@ -468,8 +492,14 @@ TRANSITIVE INFERENZ:
       if (ne.name.length > 40) continue;
       if (/\b(von|und|oder|für|mit|der|die|das|ein|eine|ist|hat|wird|alle|system)\b/i.test(ne.name) && ne.type !== 'event') continue;
       if (/[.!?;()]/.test(ne.name)) continue; // sentence punctuation
-      if (ne.type === 'person' && !/^[A-ZÄÖÜ]/.test(ne.name)) continue;
-      const entity = await this.kgRepo.upsertEntity(userId, ne.name, ne.type as any, ne.attributes ?? {}, 'llm_linking');
+      // v1141 — G2: KEINE Personen-Neuanlage durch den Linker. Personen entstehen
+      // nur aus Memory-/Chat-/Kalender-Pfaden mit echter Quelle — der Linker
+      // erfand sonst Sammelbegriffe als Menschen („Stiefkinder", conf 0.7).
+      if (ne.type === 'person') {
+        this.logger.info({ name: ne.name }, 'LLM linker: person creation blocked (persons only from memory/chat sources)');
+        continue;
+      }
+      const entity = await this.kgRepo.upsertEntity(userId, ne.name, ne.type as any, bereinigeKorrekturAttribute(ne.type, ne.attributes ?? {}), 'llm_linking');
       entityByName.set(ne.name.toLowerCase(), entity);
       stats.newEntities++;
     }
@@ -480,17 +510,20 @@ TRANSITIVE INFERENZ:
       if (!existing) continue;
 
       // Type correction — entity types are immutable, only attributes can be changed
+      // v1141 — G2: LLM-Attribute laufen durch den Schutzfilter (keine
+      // Geburtsdaten/Rollen an Personen, keine Orts-Flags, keine Log-Sätze).
+      const gefiltert = bereinigeKorrekturAttribute(existing.entityType, corr.attributes ?? {});
       if (corr.newType !== corr.currentType) {
         this.logger.debug({ name: corr.name, currentType: corr.currentType, newType: corr.newType }, 'LLM linker: entity type change rejected (immutable)');
         // Still apply attributes if provided
-        if (corr.attributes && Object.keys(corr.attributes).length > 0) {
-          const mergedAttrs = { ...existing.attributes, ...corr.attributes };
+        if (Object.keys(gefiltert).length > 0) {
+          const mergedAttrs = { ...existing.attributes, ...gefiltert };
           await this.kgRepo.upsertEntity(userId, existing.name, existing.entityType as any, mergedAttrs, existing.sources[0] ?? 'llm_linking');
           stats.corrections++;
         }
-      } else if (corr.attributes && Object.keys(corr.attributes).length > 0) {
-        // Attribute enrichment without type change (e.g., add birthday, livesIn, employer to a person)
-        const mergedAttrs = { ...existing.attributes, ...corr.attributes };
+      } else if (Object.keys(gefiltert).length > 0) {
+        // Attribute enrichment without type change (e.g., add livesIn, employer to a person)
+        const mergedAttrs = { ...existing.attributes, ...gefiltert };
         await this.kgRepo.upsertEntity(userId, existing.name, existing.entityType as any, mergedAttrs, existing.sources[0] ?? 'llm_linking');
         stats.corrections++;
       }
