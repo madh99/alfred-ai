@@ -65,3 +65,30 @@ describe('verletztUnterdrueckungsKorrektur — Präzision', () => {
     expect(kern).not.toContain('wenn');
   });
 });
+
+// v1149 — Realfall 30.08.: Die ESS-Korrektur enthielt „aktuelle" UND „aktuellen";
+// zwei Beugungen zählten als 2 Treffer + „spezifisch" → JEDER Text mit
+// „…aktuellen…" wurde geblockt (52 Unterdrückungen in einer Nacht, inkl.
+// Kopfzeilen wie „basierend auf den aktuellen Daten").
+describe('v1149 — Stamm-Dedupe gegen Beugungs-Doppelzählung', () => {
+  const ESS_REAL = 'Der Wert 15 % bei der ESS-Batterie ist der konfigurierte Mindest-SoC (Minimum SoC), nicht der aktuelle Batterie-Ladezustand. 15 % daher nicht als kritischen aktuellen SoC oder Batteriealarm melden. Für den aktuellen SoC ausschließlich den tatsächlichen SoC-Sensor verwenden.';
+
+  it('Kopfzeile mit „aktuellen Daten" wird NICHT geblockt', () => {
+    expect(verletztUnterdrueckungsKorrektur('Hier sind die priorisierten Insights basierend auf den aktuellen Daten:', [ESS_REAL])).toBe(false);
+  });
+
+  it('der echte ESS-Fall wird weiter geblockt', () => {
+    expect(verletztUnterdrueckungsKorrektur('🔋 LOW: ESS-Batterie Mindest-SoC (15%) konfiguriert – SoC kritisch?', [ESS_REAL])).toBe(true);
+  });
+
+  it('fremde Meldung mit Allerweltsworten wird nicht verschluckt', () => {
+    const AWATTAR_PAY = 'Die aWATTar-Zahlungskrise (April–Juni 2026, 136,36€) wurde am 19.08.2026 durch Sofortüberweisung vollständig beglichen. Es gibt keine offenen Forderungen mehr. Nicht mehr als Handlungsbedarf melden.';
+    expect(verletztUnterdrueckungsKorrektur('🔴 5 kritische ITSM-Incidents + 22 offene Tickets – kein direkter Handlungsbedarf', [AWATTAR_PAY])).toBe(false);
+  });
+
+  it('Geräte-Kennung (SM-S928B) wirkt objektweit — ein Treffer genügt', () => {
+    const HANDY_REAL = 'Das Handy SM-S928B wird am 16.08.2026 geladen. Nicht mehr als kritischen Batterie-Handlungsbedarf melden.';
+    expect(verletztUnterdrueckungsKorrektur('📱 SM-S928B: Akku bei 8% – laden empfohlen', [HANDY_REAL])).toBe(true);
+    expect(verletztUnterdrueckungsKorrektur('🔋 Sensor-Batterien kritisch: 3 Sensoren unter 5%', [HANDY_REAL])).toBe(false);
+  });
+});

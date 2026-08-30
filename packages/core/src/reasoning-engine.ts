@@ -69,7 +69,25 @@ const KORREKTUR_STOPWOERTER = new Set([
 ]);
 
 /** Zu generisch, um allein eine Unterdrückung zu tragen (False-Positive-Schutz). */
-const GENERISCHE_WOERTER = new Set(['kritisch', 'batterie', 'fehler', 'warnung', 'status', 'daten', 'offline', 'online', 'problem', 'sensor', 'sensoren']);
+const GENERISCHE_WOERTER = new Set(['kritisch', 'kritischen', 'batterie', 'fehler', 'warnung', 'status', 'daten',
+  'offline', 'online', 'problem', 'sensor', 'sensoren', 'aktuell', 'aktuelle', 'aktuellen', 'daher', 'verwenden',
+  'wert', 'werte', 'sollte', 'sollten', 'tatsächlich', 'tatsächlichen', 'ausschließlich', 'konfiguriert',
+  'konfigurierte', 'minimum', 'maximum', 'wieder', 'weiterhin', 'gerade', 'handlungsbedarf', 'offen', 'offene',
+  'offenen', 'gemeldet', 'gemeldeten', 'vollständig', 'insight', 'insights']);
+
+/**
+ * v1149 — deterministischer Wortstamm: Beugungen desselben Worts („aktuelle"/
+ * „aktuellen") zählen als EIN Treffer. Realfall 30.08.: die ESS-Korrektur
+ * enthielt beide Formen, zwei Beugungen zählten als 2 Treffer + „spezifisch" —
+ * damit blockte sie JEDEN Text mit „…aktuellen…" (auch reine Kopfzeilen).
+ */
+function wortstamm(w: string): string {
+  for (const endung of ['ungen', 'igen', 'chen', 'en', 'er', 'es', 'em', 'e', 'n', 's']) {
+    if (w.length - endung.length >= 4 && w.endsWith(endung)) return w.slice(0, -endung.length);
+  }
+  return w;
+}
+const GENERISCHE_STAEMME = new Set([...GENERISCHE_WOERTER].map(wortstamm));
 
 export function kernwoerterAusKorrektur(text: string): string[] {
   const woerter = new Set<string>();
@@ -105,7 +123,12 @@ export function verletztUnterdrueckungsKorrektur(insight: string, korrekturWerte
       if (kl.includes(o) && il.includes(o)) return true;
     }
     const treffer = kernwoerterAusKorrektur(k).filter(w => il.includes(w));
-    if (treffer.length >= 2 && treffer.some(w => w.length >= 6 && !GENERISCHE_WOERTER.has(w))) return true;
+    // v1149 — Geräte-Kennungen (Buchstaben+Ziffern, ≥6, z.B. „sm-s928b") wirken
+    // objektweit wie DIREKT_OBJEKTE: ein Treffer genügt.
+    if (treffer.some(w => w.length >= 6 && /\d/.test(w) && /[a-zäöüß]/.test(w))) return true;
+    // v1149 — Treffer nach Wortstamm dedupliziert; „spezifisch" ebenfalls stammbasiert.
+    const staemme = new Set(treffer.map(wortstamm));
+    if (staemme.size >= 2 && treffer.some(w => w.length >= 6 && !GENERISCHE_STAEMME.has(wortstamm(w)))) return true;
   }
   return false;
 }

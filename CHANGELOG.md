@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1149] - 2026-08-30
+
+### Fixed — Korrektur-Gate präzisiert: Beugungen zählen nur einmal (v1149)
+
+Nacht-Audit-Befund vom 30.08.: Das v1148-Gate hat 52 Unterdrückungen ausgeführt — die gewollten MQTT-Fälle, aber auch Unbeteiligtes bis hin zu reinen Kopfzeilen. Ursache: Eine Korrektur enthielt „aktuelle" UND „aktuellen"; zwei Beugungen desselben Allerweltsworts zählten als 2 Treffer, und „aktuellen" (≥6 Zeichen) galt als „spezifisch" — damit blockte die Korrektur jeden Text mit „…aktuellen…" (z.B. „basierend auf den aktuellen Daten", der Standard-Einstieg fast jeder Reasoning-Ausgabe).
+
+- **Wortstamm-Dedupe**: Kernwort-Treffer werden deterministisch auf den Wortstamm reduziert — Beugungen desselben Worts zählen als EIN Treffer; die „spezifisch"-Prüfung arbeitet ebenfalls stammbasiert.
+- **Generika-Liste erweitert**: Allerweltswörter wie aktuell, daher, verwenden, Wert, tatsächlich, ausschließlich, konfiguriert, Handlungsbedarf, offen, gemeldet tragen keine Unterdrückung mehr.
+- **Geräte-Kennungen wirken objektweit**: Ein Treffer wie „SM-S928B" (Buchstaben+Ziffern, ≥6 Zeichen) genügt allein — Geräte-Korrekturen greifen damit auch, wenn die Meldung sonst anders formuliert ist.
+- **Vorausschau-Radar loggt jeden Lauf**: auch bei 0 Funden eine Zeile — ein stiller Lauf ist jetzt beweisbar.
+- 4 neue Tests an den echten Nacht-Fällen: Kopfzeile und Fremd-Meldungen bleiben durch, der ESS- und der Geräte-Fall werden weiter unterdrückt.
+
 ## [0.19.0-multi-ha.1148] - 2026-08-29
 
 ### Fixed — User-Korrekturen werden durchgesetzt, nicht nur notiert (v1148)

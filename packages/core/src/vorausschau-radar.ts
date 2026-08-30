@@ -183,7 +183,8 @@ export class VorausschauRadar {
         this.logger.debug({ err, ereignis: e.schluessel }, 'Vorausschau: Insight fehlgeschlagen');
       }
     }
-    if (gemeldet > 0) this.logger.info({ gemeldet, gescannt: ereignisse.length }, 'v1145 Vorausschau-Radar gemeldet');
+    // v1149 — auch bei 0 Funden loggen: ein stiller Lauf muss beweisbar sein.
+    this.logger.info({ gemeldet, gescannt: ereignisse.length }, 'v1145 Vorausschau-Radar gelaufen');
     return gemeldet;
   }
 }
