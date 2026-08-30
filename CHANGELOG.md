@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1153] - 2026-08-30
+
+### Added — ITSM-Hygiene: Lebenszyklus für liegengebliebene Incidents (v1153)
+
+Befund: 31 offene Incidents, ausnahmslos 120–146 Tage alt — 25 davon `user_report` (LLM-/Chat-angelegt), für die es keinerlei Lifecycle gab (Monitor-Incidents haben Auto-Recovery, diese nicht). Sie fütterten als Dauerrauschen jeden Reasoning-Pass („5 kritische ITSM-Incidents — Priorisierung nötig!"). Zusätzlich blieben erkannte Problems (z.B. „proxmox RAM 95% wiederkehrend", seit Mai) ewig still `logged`, während die zugehörigen Incidents weiter aufliefen.
+
+Neuer täglicher Hygiene-Lauf (23:00, vor der ITSM-Tagesreflexion), deterministisch:
+
+- **Korrektur-Kopplung**: Widerlegt eine Unterdrückungs-Korrektur des Users („ist normal / nicht melden") den Incident-Inhalt (gleiche Matching-Logik wie das Insight-Gate inkl. Fach-Anker), wird der Incident auto-resolved mit Verweis auf die Korrektur.
+- **Stale-Lifecycle**: Nicht-Monitor-Incidents ohne Update seit ≥21 Tagen bekommen EINE gebündelte Rückfrage („noch relevant?"); bleibt sie 14 Tage unbeantwortet, wird auto-resolved (`stale`) — wieder öffnen jederzeit möglich.
+- **Problem-Eskalation**: Offene Problems ≥14 Tage werden sonntags gebündelt zur Entscheidung vorgelegt (Abhilfe planen oder schließen) statt still liegenzubleiben.
+- Eine Sammel-Nachricht je Lauf (kein per-Incident-Spam), Log mit Zählern. 10 neue Tests (itsm-hygiene.test.ts) an den Realfällen.
+
 ## [0.19.0-multi-ha.1152] - 2026-08-30
 
 ### Fixed — Korrektur-Gate: Fach-Anker-Pflicht für Kernwörter-Blocks (v1152)

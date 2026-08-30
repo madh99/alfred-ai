@@ -3859,6 +3859,78 @@ export class Alfred {
                 this.logger.info({ incidents: last7d.length }, 'ITSM daily-reflection sent');
               } catch (err) { this.logger.debug({ err: (err as Error).message }, 'ITSM daily-reflection failed (non-fatal)'); }
             };
+            // v1153 — ITSM-Hygiene (täglich vor der 23:00-Reflexion): B Stale-Lifecycle
+            // für Nicht-Monitor-Incidents, C Korrektur-Kopplung, D Problem-Eskalation (So).
+            const itsmHygiene = async () => {
+              try {
+                const { istDurchKorrekturWiderlegt, bewerteStaleKandidat, STALE_ANFRAGE_MARKER } = await import('./itsm-hygiene.js');
+                const heute = new Date().toISOString().slice(0, 10);
+                const alle = await itsmRepo.listIncidents(ownerUidForSweep, { limit: 200 });
+                const offene = alle.filter(i => i.status !== 'resolved' && i.status !== 'closed');
+                let korrekturen: Array<{ key: string; value: string }> = [];
+                try {
+                  const mems = await this.memoryRepo?.getByType(ownerUidForSweep, 'correction', 50);
+                  korrekturen = (mems ?? []).map(m => ({ key: m.key, value: m.value }));
+                } catch { /* ohne Korrekturen weiter */ }
+
+                const widerlegt: string[] = [];
+                const gefragt: string[] = [];
+                const staleResolved: string[] = [];
+                for (const inc of offene) {
+                  // C — durch User-Korrektur widerlegt → resolven (alle detected_by)
+                  const t = korrekturen.length > 0 ? istDurchKorrekturWiderlegt(inc, korrekturen) : null;
+                  if (t) {
+                    await itsmRepo.updateIncident(ownerUidForSweep, inc.id, {
+                      status: 'resolved',
+                      resolution: `📌 Auto-resolved: laut User-Korrektur [${t.key}] normal/erledigt (Match: ${t.grund}). Finaler Close liegt beim User.`,
+                    });
+                    widerlegt.push(inc.title.slice(0, 70));
+                    continue;
+                  }
+                  // B — Stale-Lifecycle für Nicht-Monitor-Incidents
+                  const urteil = bewerteStaleKandidat(inc, Date.now());
+                  if (urteil === 'fragen') {
+                    await itsmRepo.updateIncident(ownerUidForSweep, inc.id, {
+                      investigationNotes: `${inc.investigationNotes ? inc.investigationNotes + '\n' : ''}${STALE_ANFRAGE_MARKER}${heute}]`,
+                    });
+                    gefragt.push(`${inc.title.slice(0, 70)} (\`${inc.id.slice(0, 8)}\`)`);
+                  } else if (urteil === 'resolven') {
+                    await itsmRepo.updateIncident(ownerUidForSweep, inc.id, {
+                      status: 'resolved',
+                      resolution: '🕰 Auto-resolved (stale): ≥21 Tage ohne Update, Rückfrage blieb 14 Tage unbeantwortet. Bei Bedarf wieder öffnen.',
+                    });
+                    staleResolved.push(inc.title.slice(0, 70));
+                  }
+                }
+
+                // D — Problem-Eskalation: sonntags offene Problems ≥14d zur Entscheidung bündeln
+                const eskalationen: string[] = [];
+                if (new Date().getDay() === 0) {
+                  try {
+                    const problems = await problemRepo.listProblems(ownerUidForSweep, { limit: 50 });
+                    for (const p of problems) {
+                      if (p.status === 'resolved' || p.status === 'closed') continue;
+                      const alterTage = Math.round((Date.now() - Date.parse(p.createdAt)) / 86_400_000);
+                      if (alterTage < 14) continue;
+                      eskalationen.push(`⏳ ${p.title.slice(0, 80)} — offen seit ${alterTage}d, ${p.linkedIncidentIds.length} Incidents verlinkt. Dauerhafte Abhilfe planen oder Problem schließen.`);
+                    }
+                  } catch { /* skip */ }
+                }
+
+                if (widerlegt.length + gefragt.length + staleResolved.length + eskalationen.length > 0) {
+                  const lines: string[] = ['🧹 **ITSM-Hygiene**'];
+                  if (widerlegt.length) lines.push('', `**Durch deine Korrekturen erledigt (${widerlegt.length}):**`, ...widerlegt.slice(0, 8).map(x => `- ${x}`));
+                  if (staleResolved.length) lines.push('', `**Stale auto-resolved (${staleResolved.length}):**`, ...staleResolved.slice(0, 8).map(x => `- ${x}`));
+                  if (gefragt.length) lines.push('', `**Noch relevant? Ohne Rückmeldung wird in 14 Tagen auto-resolved (${gefragt.length}):**`, ...gefragt.slice(0, 10).map(x => `- ${x}`), '', '_Antworte z.B. „Incident 1a2b3c4d ist erledigt" oder „bleibt offen"._');
+                  if (eskalationen.length) lines.push('', `**Offene Problems brauchen eine Entscheidung (${eskalationen.length}):**`, ...eskalationen.slice(0, 5));
+                  const hygAdapter = this.adapters.get(ownerPlatformForSweep as any);
+                  if (hygAdapter) await hygAdapter.sendMessage(this.config.security?.ownerUserId ?? '', lines.join('\n'));
+                }
+                this.logger.info({ widerlegt: widerlegt.length, gefragt: gefragt.length, staleResolved: staleResolved.length, eskalationen: eskalationen.length }, 'v1153 ITSM-Hygiene gelaufen');
+              } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1153 ITSM-Hygiene fehlgeschlagen (non-fatal)'); }
+            };
+            const dailyItsm = async () => { await itsmHygiene(); await dailyReflection(); };
+
             // Schedule for ~23:00 local each day. Compute initial delay so first fire is at the next 23:00.
             const now = new Date();
             const next23 = new Date(now);
@@ -3866,8 +3938,8 @@ export class Alfred {
             if (next23.getTime() <= now.getTime()) next23.setDate(next23.getDate() + 1);
             const initialDelay = next23.getTime() - now.getTime();
             setTimeout(() => {
-              dailyReflection();
-              const dailyInterval = setInterval(dailyReflection, 24 * 3600_000);
+              dailyItsm();
+              const dailyInterval = setInterval(dailyItsm, 24 * 3600_000);
               (dailyInterval as { unref?: () => void }).unref?.();
             }, initialDelay).unref?.();
             this.logger.info({ firstRunIn: Math.round(initialDelay / 60_000) + 'min' }, 'ITSM daily-reflection scheduled (23:00 local)');
