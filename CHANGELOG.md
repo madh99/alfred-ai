@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1154] - 2026-08-30
+
+### Fixed — Toter ITSM-Block reanimiert: Pattern-Sweep, Tagesreflexion, Hygiene (v1154)
+
+Beim Deploy-Audit von v1153 fiel auf: „ITSM pattern-sweep registered" und „daily-reflection scheduled" existieren in KEINEM vorhandenen Log. Ursache ist das bekannte Wiring-Timing-Muster (wie beim Frage-Generator in v1142): Der Registrierungs-Block prüfte `tryOwner()` zur Wiring-Zeit — die Owner-Auflösung passiert in initialize aber erst deutlich später. Der gesamte Block war damit **seit Einführung tot**: der periodische Pattern-Sweep (v631), die 23:00-Tagesreflexion mit MTTR/SLA/Capacity (v633/v634) und die neue v1153-Hygiene liefen nie.
+
+- Registrierung jetzt bedingungslos; der Owner wird IN jedem Lauf (Sweep-Intervall, Tagesreflexion, Hygiene) zur Laufzeit aufgelöst — kein Lauf startet ohne Owner, aber die Timer existieren immer.
+- Damit feuern erstmals: 30-Min-Pattern-Sweep (Sammel-Benachrichtigung neuer Monitor-Incidents + Auto-Problem-Promotion), tägliche ITSM-Reflexion 23:00 und die ITSM-Hygiene (Korrektur-Kopplung, Stale-Lifecycle, Problem-Eskalation).
+
 ## [0.19.0-multi-ha.1153] - 2026-08-30
 
 ### Added — ITSM-Hygiene: Lebenszyklus für liegengebliebene Incidents (v1153)

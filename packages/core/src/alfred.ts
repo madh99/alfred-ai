@@ -3705,8 +3705,14 @@ export class Alfred {
         // Alerts → minIncidents=3 in 14d gehört dazu). Auto-Promote-Logik ist mit der
         // Monitor-Path-Logik identisch (≥5 in 7d oder ≥8 absolut → automatisch Problem).
         if (this.config.cmdb?.autoIncidentFromMonitor !== false) {
-          const ownerUidForSweep = this.tryOwner();
-          if (ownerUidForSweep) {
+          // v1154 — Owner ZUR LAUFZEIT auflösen (v1142-Muster): beim Wiring ist
+          // ownerMasterUserId noch nicht gesetzt (Auflösung passiert erst später
+          // in initialize) — dadurch war dieser GESAMTE Block seit Einführung
+          // tot: kein Log enthielt je „pattern-sweep registered" oder
+          // „daily-reflection scheduled"; Pattern-Sweep, 23:00-Tagesreflexion
+          // (MTTR/SLA/Capacity) und die v1153-Hygiene liefen nie. Registrierung
+          // jetzt bedingungslos, Owner wird in jedem Lauf neu aufgelöst.
+          {
             const ownerPlatformForSweep = (this.config.telegram?.enabled ? 'telegram'
               : this.config.discord?.enabled ? 'discord'
               : this.config.whatsapp?.enabled ? 'whatsapp'
@@ -3718,6 +3724,8 @@ export class Alfred {
             // ein Restart keine Altbestände nachmeldet).
             let lastIncidentNotifyCheck = new Date().toISOString();
             const sweepInterval = setInterval(async () => {
+              const ownerUidForSweep = this.tryOwner();
+              if (!ownerUidForSweep) return;
               try {
                 const sinceCheck = lastIncidentNotifyCheck;
                 lastIncidentNotifyCheck = new Date().toISOString();
@@ -3778,6 +3786,8 @@ export class Alfred {
             // v633 T3.7 — Daily ITSM-Reflection (täglich ~23:00 lokal): Top-Wiederkehrer,
             // neue Problems, MTTR-Trend, Capacity-Forecast → Insight an Owner-Chat.
             const dailyReflection = async () => {
+              const ownerUidForSweep = this.tryOwner();
+              if (!ownerUidForSweep) return;
               try {
                 const since = new Date(Date.now() - 7 * 86400_000).toISOString();
                 const recentIncidents = await itsmRepo.listIncidents(ownerUidForSweep, { limit: 200 });
@@ -3862,6 +3872,8 @@ export class Alfred {
             // v1153 — ITSM-Hygiene (täglich vor der 23:00-Reflexion): B Stale-Lifecycle
             // für Nicht-Monitor-Incidents, C Korrektur-Kopplung, D Problem-Eskalation (So).
             const itsmHygiene = async () => {
+              const ownerUidForSweep = this.tryOwner();
+              if (!ownerUidForSweep) return;
               try {
                 const { istDurchKorrekturWiderlegt, bewerteStaleKandidat, STALE_ANFRAGE_MARKER } = await import('./itsm-hygiene.js');
                 const heute = new Date().toISOString().slice(0, 10);
