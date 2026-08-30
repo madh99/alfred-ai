@@ -113,6 +113,37 @@ describe('v1150 — findeVerletzteUnterdrueckungsKorrektur', () => {
   });
 });
 
+// v1152 — Anker-Regel: Kernwörter-Blocks brauchen ein Fach-Objekt (Geräte-Kennung,
+// Bindestrich- oder langes Kompositum). Realfälle 30.08. nach .1151-Deploy: das
+// Gate verschluckte 4× die echte Domain-Ablauf-Frist (Match `2026+werden`), einen
+// kritischen MikroTik-Incident (`kein+bestätigt`) und eine Wallbox-Warnung
+// (`kein+fahrzeug+aktiv`) — lauter Allerwelts-Wortpaare ohne Fach-Objekt.
+describe('v1152 — Fach-Anker-Regel', () => {
+  const SOMMERCAMP = 'Es gibt aktuell KEIN Sommercamp für Linus. Wenn künftig eines geplant wird, steht es ausdrücklich im Kalender bzw. wird neu bestätigt. Nicht mehr als Termin oder Handlungsbedarf melden.';
+  const AWATTAR_PAY = 'Die aWATTar-Zahlungskrise (April–Juni 2026, 136,36€) wurde am 19.08.2026 durch Sofortüberweisung vollständig beglichen. Es gibt keine offenen Forderungen mehr. Nicht mehr als Handlungsbedarf melden.';
+
+  it('Domain-Ablauf-Frist wird NICHT von der aWATTar-Zahlungs-Korrektur verschluckt', () => {
+    expect(verletztUnterdrueckungsKorrektur(
+      '🔴 Domain pinkribbons.club läuft am Fr 04.09.2026 ab – Verlängerung muss bis 31.08.2026 durchgeführt werden',
+      [AWATTAR_PAY])).toBe(false);
+  });
+
+  it('MikroTik-Incident und Wallbox-Warnung werden NICHT von fremden Korrekturen verschluckt', () => {
+    expect(verletztUnterdrueckungsKorrektur(
+      '⚠️ MikroTik: 4 Interfaces down (kritischer Infrastruktur-Status) – kein aktiver Bond bestätigt',
+      [SOMMERCAMP])).toBe(false);
+    expect(verletztUnterdrueckungsKorrektur(
+      '🔌 Wallbox läuft im PV-Überschussmodus (16A) – aber kein Auto angeschlossen, Fahrzeug nicht aktiv',
+      [MQTT_KORREKTUR])).toBe(false);
+  });
+
+  it('echte Fach-Objekt-Treffer blocken weiter (Sommercamp-Insight vs. Sommercamp-Korrektur)', () => {
+    expect(verletztUnterdrueckungsKorrektur(
+      '📅 Sommercamp für Linus: Anmeldung prüfen – Termin im Kalender geplant?',
+      [SOMMERCAMP])).toBe(true);
+  });
+});
+
 // v1151 — Korrektur-Anwendung an der QUELLE: Die Deutung wird direkt an die
 // Datenzeile geheftet, damit der falsche Insight gar nicht erst entsteht
 // (der entfernte „ABSOLUTER VORRANG"-Block wurde nachweislich ignoriert).

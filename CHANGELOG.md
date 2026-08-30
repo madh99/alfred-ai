@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1152] - 2026-08-30
+
+### Fixed — Korrektur-Gate: Fach-Anker-Pflicht für Kernwörter-Blocks (v1152)
+
+Live-Audit nach v1151: Die Quellen-Annotation wirkt (die MQTT-Fehlmeldungen sind aus der LLM-Ausgabe verschwunden), aber 6 von 9 verbliebenen Gate-Treffern waren Fehlgriffe — darunter viermal eine echte Domain-Ablauf-Frist (Match `2026+werden` gegen die aWATTar-Zahlungs-Korrektur), ein kritischer MikroTik-Incident (`kein+bestätigt`) und eine Wallbox-Warnung (`kein+fahrzeug+aktiv`). Ursache: Alltags-Wortpaare zählten als „spezifisch".
+
+- **Fach-Anker-Pflicht**: Ein Kernwörter-Block braucht jetzt mindestens ein Wort, das ein echtes Fach-Objekt bezeichnet — eine Geräte-Kennung („sm-s928b"), ein Bindestrich-Kompositum („mqtt-stream", „ess-batterie", „google-konto") oder ein langes Kompositum ≥10 Zeichen („elternaufsicht", „trainingslager", „batteriestand"). Alltagsverben, -adjektive und Jahreszahlen tragen keinen Block mehr.
+- Häufige Bindestrich-Wörter ohne Fach-Charakter (e-mail, benachrichtigung …) sind als generisch ausgenommen.
+- Alle 6 Live-Fehlgriffe vom 30.08. gehen jetzt durch; die berechtigten Blocks (MQTT-Objekt, Geräte-Kennungen, ESS, Elternaufsicht via google-konto) bleiben. 3 neue Tests an den Realfällen — 21 Gate-Tests gesamt.
+
 ## [0.19.0-multi-ha.1151] - 2026-08-30
 
 ### Added — Korrektur-Anwendung an der Quelle statt Zensur am Ausgang (v1151)

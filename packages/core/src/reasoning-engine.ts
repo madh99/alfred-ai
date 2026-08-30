@@ -73,7 +73,9 @@ const GENERISCHE_WOERTER = new Set(['kritisch', 'kritischen', 'batterie', 'fehle
   'offline', 'online', 'problem', 'sensor', 'sensoren', 'aktuell', 'aktuelle', 'aktuellen', 'daher', 'verwenden',
   'wert', 'werte', 'sollte', 'sollten', 'tatsächlich', 'tatsächlichen', 'ausschließlich', 'konfiguriert',
   'konfigurierte', 'minimum', 'maximum', 'wieder', 'weiterhin', 'gerade', 'handlungsbedarf', 'offen', 'offene',
-  'offenen', 'gemeldet', 'gemeldeten', 'vollständig', 'insight', 'insights']);
+  'offenen', 'gemeldet', 'gemeldeten', 'vollständig', 'insight', 'insights',
+  // v1152 — häufige Bindestrich-Wörter, die sonst als Fach-Anker durchgingen
+  'e-mail', 'e-mails', 'nachricht', 'nachrichten', 'benachrichtigung', 'benachrichtigungen']);
 
 /**
  * v1149 — deterministischer Wortstamm: Beugungen desselben Worts („aktuelle"/
@@ -88,6 +90,22 @@ function wortstamm(w: string): string {
   return w;
 }
 const GENERISCHE_STAEMME = new Set([...GENERISCHE_WOERTER].map(wortstamm));
+
+/**
+ * v1152 — Fach-Anker: Ein Kernwörter-Block braucht mindestens ein Wort, das ein
+ * echtes Fach-Objekt bezeichnet. Deutsche Fach-Objekte sind Geräte-Kennungen
+ * („sm-s928b"), Bindestrich-Komposita („mqtt-stream", „ess-batterie",
+ * „google-konto") oder lange Komposita ≥10 Zeichen („elternaufsicht",
+ * „trainingslager", „batteriestand"). Alltagsverben und -adjektive („werden",
+ * „bestätigt", „geplant") und Jahreszahlen fallen durch — Realfall 30.08.:
+ * `2026+werden` verschluckte viermal eine echte Domain-Ablauf-Frist.
+ */
+function istFachAnker(w: string): boolean {
+  if (w.length < 6 || GENERISCHE_STAEMME.has(wortstamm(w))) return false;
+  if (/\d/.test(w) && /[a-zäöüß]/.test(w)) return true;
+  if (w.includes('-')) return true;
+  return w.length >= 10;
+}
 
 export function kernwoerterAusKorrektur(text: string): string[] {
   const woerter = new Set<string>();
@@ -133,9 +151,9 @@ export function findeVerletzteUnterdrueckungsKorrektur(
     // objektweit wie DIREKT_OBJEKTE: ein Treffer genügt.
     const kennung = treffer.find(w => w.length >= 6 && /\d/.test(w) && /[a-zäöüß]/.test(w));
     if (kennung) return { key: k.key, grund: `geraete-kennung:${kennung}` };
-    // v1149 — Treffer nach Wortstamm dedupliziert; „spezifisch" ebenfalls stammbasiert.
+    // v1149 — Treffer nach Wortstamm dedupliziert; v1152 — Block nur mit Fach-Anker.
     const staemme = new Set(treffer.map(wortstamm));
-    if (staemme.size >= 2 && treffer.some(w => w.length >= 6 && !GENERISCHE_STAEMME.has(wortstamm(w)))) {
+    if (staemme.size >= 2 && treffer.some(istFachAnker)) {
       return { key: k.key, grund: `kernwoerter:${treffer.join('+')}` };
     }
   }
