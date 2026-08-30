@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1151] - 2026-08-30
+
+### Added — Korrektur-Anwendung an der Quelle statt Zensur am Ausgang (v1151)
+
+User-Einwand, zu Recht: Das Unterdrückungs-Gate ist ein Pflaster — Alfred soll die Daten VERSTEHEN (MQTT sendet nur bei aktivem Fahrzeug), statt fertige Fehlmeldungen zu verschlucken. Der Beweis, dass Wissen allein nicht reichte: Die MQTT-Korrektur stand als „ABSOLUTER VORRANG"-Block im Prompt und wurde trotzdem von jedem Modell ignoriert — die Rohdaten („BMW-Daten 6h alt") standen weit entfernt davon, und Nähe schlägt Ferne.
+
+- **Quellen-Annotation**: Vor jedem Reasoning-Pass (Tick UND Event-Pfad) werden alle Kontext-Sektionen mit derselben deterministischen Matching-Logik wie das Gate geprüft. Trifft eine Unterdrückungs-Korrektur eine Datenzeile, wird die verbindliche Deutung DIREKT darunter geheftet: „↳ NORMAL laut User-Korrektur […]: … — KEIN Fehler, NICHT als Problem/Insight melden." Sind die Kernwörter über mehrere Zeilen verteilt, kommt eine Sektions-Fußnote.
+- Damit entsteht der falsche Insight gar nicht erst — modellunabhängig, weil die Deutung Teil der Daten ist. Das Zustell-Gate bleibt als letztes Netz; seine (seit v1150 zuordenbaren) Treffer sind jetzt die Messgröße: Sie müssen gegen null gehen.
+- Idempotent (bereits annotierte Zeilen werden erkannt), memories-Sektion ausgenommen, Fehler in der Annotation können den Pass nie verhindern. Log je Pass: welche Korrekturen angewendet wurden.
+- 4 neue Tests (Zeilen-Annotation, Fremd-Sektionen unangetastet, Sektions-Fußnote, Idempotenz).
+
 ## [0.19.0-multi-ha.1150] - 2026-08-30
 
 ### Changed — Korrektur-Gate loggt beweisbar (v1150)

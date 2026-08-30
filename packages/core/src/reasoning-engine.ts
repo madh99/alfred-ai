@@ -146,6 +146,68 @@ export function verletztUnterdrueckungsKorrektur(insight: string, korrekturWerte
   return findeVerletzteUnterdrueckungsKorrektur(insight, korrekturWerte.map((value, i) => ({ key: `#${i}`, value }))) !== null;
 }
 
+/** Erster Satz einer Korrektur, gedeckelt — für kompakte Inline-Annotationen. */
+function korrekturKurzfassung(wert: string): string {
+  const satz = wert.split(/(?<=[.!?])\s+/)[0] ?? wert;
+  return (satz.length > 200 ? satz.slice(0, 200) + '…' : satz).trim();
+}
+
+const ANNOTATION_MARKER = '↳ NORMAL laut User-Korrektur';
+
+/**
+ * v1151 — Korrektur-Anwendung an der QUELLE statt Zensur am Ausgang.
+ * Realfall: Die MQTT-Korrektur stand als „ABSOLUTER VORRANG"-Block im Prompt und
+ * wurde trotzdem von jedem Modell ignoriert, weil die Rohdaten („BMW-Daten 6h
+ * alt") weit entfernt davon standen — Nähe schlägt Ferne. Diese Funktion heftet
+ * die verbindliche Deutung DIREKT an die getroffene Datenzeile (bzw. als
+ * Sektions-Fußnote, wenn die Kernwörter über mehrere Zeilen verteilt sind).
+ * Das Zustell-Gate bleibt als letztes Netz; wirkt die Annotation, entsteht der
+ * falsche Insight gar nicht erst.
+ */
+export function annotiereKontextMitKorrekturen(
+  ctx: { sections: Array<{ key: string; label: string; content: string }> },
+  korrekturen: Array<{ key: string; value: string }>,
+): string[] {
+  const unterdrueckungen = korrekturen.filter(k => istUnterdrueckungsAussage(k.value));
+  if (unterdrueckungen.length === 0) return [];
+  const getroffen = new Set<string>();
+
+  for (const s of ctx.sections) {
+    if (s.key === 'memories') continue; // Korrekturen selbst nicht annotieren
+    // Idempotenz: bereits gesetzte Annotationen zählen als erledigt.
+    const annotiertInSektion = new Set<string>();
+    for (const m of s.content.matchAll(/↳ NORMAL laut User-Korrektur[^[]*\[([^\]]+)\]/g)) {
+      annotiertInSektion.add(m[1]);
+    }
+    const out: string[] = [];
+    for (const zeile of s.content.split('\n')) {
+      out.push(zeile);
+      if (zeile.trim().length < 8 || zeile.includes(ANNOTATION_MARKER)) continue;
+      const rest = unterdrueckungen.filter(k => !annotiertInSektion.has(k.key));
+      if (rest.length === 0) continue;
+      const t = findeVerletzteUnterdrueckungsKorrektur(zeile, rest);
+      if (t) {
+        annotiertInSektion.add(t.key);
+        getroffen.add(t.key);
+        const wert = unterdrueckungen.find(k => k.key === t.key)?.value ?? '';
+        out.push(`   ${ANNOTATION_MARKER} [${t.key}]: ${korrekturKurzfassung(wert)} — KEIN Fehler, NICHT als Problem/Insight melden.`);
+      }
+    }
+    // Sektions-Netz: Kernwörter über mehrere Zeilen verteilt → Fußnote ans Sektions-Ende.
+    const rest = unterdrueckungen.filter(k => !annotiertInSektion.has(k.key));
+    if (rest.length > 0) {
+      const t = findeVerletzteUnterdrueckungsKorrektur(s.content, rest);
+      if (t) {
+        getroffen.add(t.key);
+        const wert = unterdrueckungen.find(k => k.key === t.key)?.value ?? '';
+        out.push(`${ANNOTATION_MARKER} für diesen Abschnitt [${t.key}]: ${korrekturKurzfassung(wert)} — entsprechende Beobachtungen sind NORMAL, NICHT melden.`);
+      }
+    }
+    s.content = out.join('\n');
+  }
+  return [...getroffen];
+}
+
 /**
  * v1142 — H1: inhaltlicher Duplikat-Check gegen bereits gelieferte Insights.
  * Duplikat, wenn (a) starke Wort-Überlappung (Jaccard ≥ 0.5) ODER (b) dasselbe
@@ -388,6 +450,7 @@ export class ReasoningEngine {
       // Use collector for full context (holistic reasoning)
       const context = await this.collector.collect();
       await this.enrichWithKnowledgeGraph(context);
+      await this.wendeKorrekturenAufKontextAn(context);
 
       // Scan pass: quick analysis of event in context
       const scanPrompt = `Du bist Alfreds holistisches Denk-Modul. Ein Event ist eingetreten:
@@ -595,6 +658,7 @@ ${this.buildTopicInstructions()}`;
       // PHASE 1: Collect context from all available data sources
       const context = await this.collector.collect();
       await this.enrichWithKnowledgeGraph(context);
+      await this.wendeKorrekturenAufKontextAn(context);
 
       // PHASE 2: Scan-Pass — quick check for concerns/opportunities
       const scanPrompt = this.buildScanPrompt(context);
@@ -1248,6 +1312,17 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
   /** v1148 — Cache der User-Korrekturen (5 min) fürs Unterdrückungs-Gate. */
   private korrekturenCache: { paare: Array<{ key: string; value: string }>; geladen: number } | null = null;
+
+  /** v1151 — Deutung an die Quelle heften; Zusatz, darf den Pass nie verhindern. */
+  private async wendeKorrekturenAufKontextAn(context: CollectedContext): Promise<void> {
+    try {
+      const paare = await this.holeUnterdrueckungsKorrekturen();
+      const getroffen = annotiereKontextMitKorrekturen(context, paare);
+      if (getroffen.length > 0) {
+        this.logger.info({ korrekturen: getroffen }, 'v1151 Kontext-Daten mit User-Korrekturen annotiert');
+      }
+    } catch { /* Annotation ist Zusatz */ }
+  }
 
   private async holeUnterdrueckungsKorrekturen(): Promise<Array<{ key: string; value: string }>> {
     if (this.korrekturenCache && Date.now() - this.korrekturenCache.geladen < 5 * 60_000) {

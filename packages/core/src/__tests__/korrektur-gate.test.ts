@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { istUnterdrueckungsAussage, kernwoerterAusKorrektur, verletztUnterdrueckungsKorrektur, findeVerletzteUnterdrueckungsKorrektur } from '../reasoning-engine.js';
+import { istUnterdrueckungsAussage, kernwoerterAusKorrektur, verletztUnterdrueckungsKorrektur, findeVerletzteUnterdrueckungsKorrektur, annotiereKontextMitKorrekturen } from '../reasoning-engine.js';
 
 // v1148 — Korrektur-Durchsetzung. Realfall: „BMW MQTT offline" wurde immer
 // wieder gemeldet, obwohl der User MEHRFACH erklärt hatte, dass der Stream nur
@@ -110,5 +110,51 @@ describe('v1150 — findeVerletzteUnterdrueckungsKorrektur', () => {
   it('liefert null, wenn nichts greift', () => {
     expect(findeVerletzteUnterdrueckungsKorrektur('📅 Termin morgen 09:00: Zahnarzt',
       [{ key: 'x', value: 'MQTT sendet nur bei aktivem Fahrzeug — nicht melden.' }])).toBeNull();
+  });
+});
+
+// v1151 — Korrektur-Anwendung an der QUELLE: Die Deutung wird direkt an die
+// Datenzeile geheftet, damit der falsche Insight gar nicht erst entsteht
+// (der entfernte „ABSOLUTER VORRANG"-Block wurde nachweislich ignoriert).
+describe('v1151 — annotiereKontextMitKorrekturen', () => {
+  const KORREKTUREN = [
+    { key: 'unterdruecke_mqtt_stream_fahrzeug', value: MQTT_KORREKTUR },
+    { key: 'correction_sm_s928b_battery_resolved', value: 'Das Handy SM-S928B wird geladen. Nicht mehr als kritischen Batteriestand melden.' },
+  ];
+
+  it('heftet die Deutung direkt an die getroffene Datenzeile', () => {
+    const ctx = { sections: [{ key: 'vehicle', label: 'Fahrzeug', content: 'BMW i4: SoC 44%\nMQTT-Stream: seit 6h keine Daten' }] };
+    const getroffen = annotiereKontextMitKorrekturen(ctx, KORREKTUREN);
+    expect(getroffen).toContain('unterdruecke_mqtt_stream_fahrzeug');
+    const zeilen = ctx.sections[0].content.split('\n');
+    expect(zeilen[2]).toContain('↳ NORMAL laut User-Korrektur [unterdruecke_mqtt_stream_fahrzeug]');
+    expect(zeilen[2]).toContain('NICHT als Problem/Insight melden');
+  });
+
+  it('lässt fremde Sektionen und die memories-Sektion unangetastet', () => {
+    const kalender = 'Mo 09:00 Zahnarzt\nDi 14:00 Meeting';
+    const memories = '- [correction] MQTT sendet nur bei aktivem Fahrzeug';
+    const ctx = { sections: [
+      { key: 'calendar', label: 'Kalender', content: kalender },
+      { key: 'memories', label: 'Memories', content: memories },
+    ] };
+    annotiereKontextMitKorrekturen(ctx, KORREKTUREN);
+    expect(ctx.sections[0].content).toBe(kalender);
+    expect(ctx.sections[1].content).toBe(memories);
+  });
+
+  it('Sektions-Fußnote, wenn die Kernwörter über mehrere Zeilen verteilt sind', () => {
+    const ctx = { sections: [{ key: 'smarthome', label: 'Smart Home', content: 'Handy SM-S928B: 8%\nLadegerät verbunden' }] };
+    const getroffen = annotiereKontextMitKorrekturen(ctx, KORREKTUREN);
+    expect(getroffen).toContain('correction_sm_s928b_battery_resolved');
+    expect(ctx.sections[0].content).toContain('[correction_sm_s928b_battery_resolved]');
+  });
+
+  it('annotiert idempotent nur einmal je Korrektur und Sektion', () => {
+    const ctx = { sections: [{ key: 'vehicle', label: 'Fahrzeug', content: 'MQTT offline\nMQTT weiterhin offline' }] };
+    annotiereKontextMitKorrekturen(ctx, KORREKTUREN);
+    annotiereKontextMitKorrekturen(ctx, KORREKTUREN);
+    const marker = ctx.sections[0].content.split('↳ NORMAL laut User-Korrektur').length - 1;
+    expect(marker).toBe(1);
   });
 });
