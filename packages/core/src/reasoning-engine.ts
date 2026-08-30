@@ -114,23 +114,36 @@ const DIREKT_OBJEKTE = ['mqtt', 'wallbox', 'victron', 'proxmox', 'unifi', 'mikro
   'fritzbox', 'awattar', 'strompreis', 'wechselrichter', 'geschirrspüler', 'waschmaschine',
   'trockner', 'pool', 'heizung', 'zertifikat', 'commvault'];
 
-export function verletztUnterdrueckungsKorrektur(insight: string, korrekturWerte: string[]): boolean {
+/** v1150 — welche Korrektur hat gegriffen und warum (für beweisbare Logs). */
+export interface UnterdrueckungsTreffer { key: string; grund: string }
+
+export function findeVerletzteUnterdrueckungsKorrektur(
+  insight: string,
+  korrekturen: Array<{ key: string; value: string }>,
+): UnterdrueckungsTreffer | null {
   const il = insight.toLowerCase();
-  for (const k of korrekturWerte) {
-    if (!istUnterdrueckungsAussage(k)) continue;
-    const kl = k.toLowerCase();
+  for (const k of korrekturen) {
+    if (!istUnterdrueckungsAussage(k.value)) continue;
+    const kl = k.value.toLowerCase();
     for (const o of DIREKT_OBJEKTE) {
-      if (kl.includes(o) && il.includes(o)) return true;
+      if (kl.includes(o) && il.includes(o)) return { key: k.key, grund: `direkt-objekt:${o}` };
     }
-    const treffer = kernwoerterAusKorrektur(k).filter(w => il.includes(w));
+    const treffer = kernwoerterAusKorrektur(k.value).filter(w => il.includes(w));
     // v1149 — Geräte-Kennungen (Buchstaben+Ziffern, ≥6, z.B. „sm-s928b") wirken
     // objektweit wie DIREKT_OBJEKTE: ein Treffer genügt.
-    if (treffer.some(w => w.length >= 6 && /\d/.test(w) && /[a-zäöüß]/.test(w))) return true;
+    const kennung = treffer.find(w => w.length >= 6 && /\d/.test(w) && /[a-zäöüß]/.test(w));
+    if (kennung) return { key: k.key, grund: `geraete-kennung:${kennung}` };
     // v1149 — Treffer nach Wortstamm dedupliziert; „spezifisch" ebenfalls stammbasiert.
     const staemme = new Set(treffer.map(wortstamm));
-    if (staemme.size >= 2 && treffer.some(w => w.length >= 6 && !GENERISCHE_STAEMME.has(wortstamm(w)))) return true;
+    if (staemme.size >= 2 && treffer.some(w => w.length >= 6 && !GENERISCHE_STAEMME.has(wortstamm(w)))) {
+      return { key: k.key, grund: `kernwoerter:${treffer.join('+')}` };
+    }
   }
-  return false;
+  return null;
+}
+
+export function verletztUnterdrueckungsKorrektur(insight: string, korrekturWerte: string[]): boolean {
+  return findeVerletzteUnterdrueckungsKorrektur(insight, korrekturWerte.map((value, i) => ({ key: `#${i}`, value }))) !== null;
 }
 
 /**
@@ -1234,21 +1247,21 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   private gelieferteInsightsCache: { texte: string[]; geladen: number } | null = null;
 
   /** v1148 — Cache der User-Korrekturen (5 min) fürs Unterdrückungs-Gate. */
-  private korrekturenCache: { werte: string[]; geladen: number } | null = null;
+  private korrekturenCache: { paare: Array<{ key: string; value: string }>; geladen: number } | null = null;
 
-  private async holeUnterdrueckungsKorrekturen(): Promise<string[]> {
+  private async holeUnterdrueckungsKorrekturen(): Promise<Array<{ key: string; value: string }>> {
     if (this.korrekturenCache && Date.now() - this.korrekturenCache.geladen < 5 * 60_000) {
-      return this.korrekturenCache.werte;
+      return this.korrekturenCache.paare;
     }
-    let werte: string[] = [];
+    let paare: Array<{ key: string; value: string }> = [];
     try {
       if (this.memoryRepo && this.resolvedOwnerUserId) {
         const mems = await this.memoryRepo.getByType(this.resolvedOwnerUserId, 'correction', 50);
-        werte = mems.map(m => m.value);
+        paare = mems.map(m => ({ key: m.key, value: m.value }));
       }
     } catch { /* Gate fällt still zurück */ }
-    this.korrekturenCache = { werte, geladen: Date.now() };
-    return werte;
+    this.korrekturenCache = { paare, geladen: Date.now() };
+    return paare;
   }
 
   private async holeGelieferteInsights(): Promise<string[]> {
@@ -1278,9 +1291,13 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // v1148 — Korrektur-Gate: was der User als „normal/nicht melden" erklärt
     // hat, wird HART unterdrückt — dauerhaft, nicht nur im 48-h-Fenster.
     const korrekturen = await this.holeUnterdrueckungsKorrekturen();
-    if (korrekturen.length > 0 && verletztUnterdrueckungsKorrektur(insight, korrekturen)) {
-      this.logger.info({ insight: insight.slice(0, 80) }, 'v1148 insight durch User-Korrektur unterdrückt');
-      return true;
+    if (korrekturen.length > 0) {
+      // v1150 — beweisbar loggen: WELCHE Korrektur griff, WARUM, und genug Text.
+      const t = findeVerletzteUnterdrueckungsKorrektur(insight, korrekturen);
+      if (t) {
+        this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1148 insight durch User-Korrektur unterdrückt');
+        return true;
+      }
     }
     // v1142 — H1: hartes INHALTLICHES Gate gegen die gelieferten Insight-Texte
     // (48h-Fenster über die insight_delivered-Memories). Die Hash-Prüfungen oben

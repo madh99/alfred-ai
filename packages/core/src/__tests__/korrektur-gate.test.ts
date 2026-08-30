@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { istUnterdrueckungsAussage, kernwoerterAusKorrektur, verletztUnterdrueckungsKorrektur } from '../reasoning-engine.js';
+import { istUnterdrueckungsAussage, kernwoerterAusKorrektur, verletztUnterdrueckungsKorrektur, findeVerletzteUnterdrueckungsKorrektur } from '../reasoning-engine.js';
 
 // v1148 — Korrektur-Durchsetzung. Realfall: „BMW MQTT offline" wurde immer
 // wieder gemeldet, obwohl der User MEHRFACH erklärt hatte, dass der Stream nur
@@ -90,5 +90,25 @@ describe('v1149 — Stamm-Dedupe gegen Beugungs-Doppelzählung', () => {
     const HANDY_REAL = 'Das Handy SM-S928B wird am 16.08.2026 geladen. Nicht mehr als kritischen Batterie-Handlungsbedarf melden.';
     expect(verletztUnterdrueckungsKorrektur('📱 SM-S928B: Akku bei 8% – laden empfohlen', [HANDY_REAL])).toBe(true);
     expect(verletztUnterdrueckungsKorrektur('🔋 Sensor-Batterien kritisch: 3 Sensoren unter 5%', [HANDY_REAL])).toBe(false);
+  });
+});
+
+// v1150 — beweisbare Logs: der Finder nennt Korrektur-Key und Grund, damit jede
+// Unterdrückung im Log einer konkreten Korrektur zuordenbar ist (30.08.: zwei
+// Blocks waren mangels Key/Volltext nicht zuordenbar).
+describe('v1150 — findeVerletzteUnterdrueckungsKorrektur', () => {
+  it('liefert Key und Grund des Treffers', () => {
+    const t = findeVerletzteUnterdrueckungsKorrektur(
+      '🚗 BMW API/MQTT-Stream seit 6h offline',
+      [{ key: 'unterdruecke_mqtt_stream_fahrzeug', value: 'BMW MQTT: der Stream sendet nur, wenn das Fahrzeug aktiv ist — nicht melden.' }],
+    );
+    expect(t).not.toBeNull();
+    expect(t!.key).toBe('unterdruecke_mqtt_stream_fahrzeug');
+    expect(t!.grund).toBe('direkt-objekt:mqtt');
+  });
+
+  it('liefert null, wenn nichts greift', () => {
+    expect(findeVerletzteUnterdrueckungsKorrektur('📅 Termin morgen 09:00: Zahnarzt',
+      [{ key: 'x', value: 'MQTT sendet nur bei aktivem Fahrzeug — nicht melden.' }])).toBeNull();
   });
 });

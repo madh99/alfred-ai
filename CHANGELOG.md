@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1150] - 2026-08-30
+
+### Changed — Korrektur-Gate loggt beweisbar (v1150)
+
+Beim Deploy-Audit von v1149 blieben zwei Unterdrückungen unzuordenbar: Die Logzeile kappte das unterdrückte Segment bei 80 Zeichen und nannte die auslösende Korrektur nicht — ob der Block berechtigt war, ließ sich nicht beweisen.
+
+- Der Gate-Treffer wird jetzt als `findeVerletzteUnterdrueckungsKorrektur` ermittelt und liefert **Korrektur-Key und Grund** (`direkt-objekt:mqtt`, `geraete-kennung:sm-s928b` oder die getroffenen Kernwörter).
+- Die Logzeile enthält Key, Grund und 250 Zeichen des Segments — jede Unterdrückung ist damit einer konkreten Korrektur zuordenbar.
+- 2 neue Tests; die bisherige bool-Prüfung bleibt kompatibel erhalten.
+
 ## [0.19.0-multi-ha.1149] - 2026-08-30
 
 ### Fixed — Korrektur-Gate präzisiert: Beugungen zählen nur einmal (v1149)
