@@ -4446,7 +4446,7 @@ export class Alfred {
           // v640 — Daily KG-Question-Generator (18:00 lokal, max 3 Fragen/Tag)
           if (this.llmProvider && this.database) {
             try {
-              const { KgQuestionsRepository, ConfirmationRepository: ConfRepoQg, KnowledgeGraphRepository: KGRepoQg } = await import('@alfred/storage');
+              const { KgQuestionsRepository, KnowledgeGraphRepository: KGRepoQg } = await import('@alfred/storage');
               const { KgQuestionGenerator } = await import('./insights/question-generator.js');
               const kgQuestRepo = new KgQuestionsRepository(adapter);
               const kgRepoForQg = new KGRepoQg(adapter);
@@ -4477,7 +4477,8 @@ export class Alfred {
                   return Array.from(byKey.values());
                 },
               };
-              const generator = new KgQuestionGenerator(facadeQg, kgQuestRepo, new ConfRepoQg(adapter), this.logger.child({ component: 'kg-question-gen' }));
+              // v1155 — Zustellung als normale Chat-Nachricht statt Ja/Nein-Confirmation.
+              const generator = new KgQuestionGenerator(facadeQg, kgQuestRepo, this.logger.child({ component: 'kg-question-gen' }));
               const ownerPlatformQg = (this.config.telegram?.enabled ? 'telegram'
                 : this.config.matrix?.enabled ? 'matrix'
                 : this.config.discord?.enabled ? 'discord'
@@ -4499,7 +4500,12 @@ export class Alfred {
                     const linkedQgBase = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidQg)).map(u => u.id) : [ownerUidQg];
                     if (!linkedQgBase.includes(ownerUidQg)) linkedQgBase.push(ownerUidQg);
                     const linkedQg = this.withLegacyForOwner(ownerUidQg, linkedQgBase);
-                    await generator.run(ownerUidQg, { platform: ownerPlatformQg, chatId: ownerChat, maxPerRun: 3, linkedUserIds: linkedQg });
+                    const qgAdapter = this.adapters.get(ownerPlatformQg as any);
+                    if (!qgAdapter) return;
+                    await generator.run(ownerUidQg, {
+                      platform: ownerPlatformQg, chatId: ownerChat, maxPerRun: 3, linkedUserIds: linkedQg,
+                      sendeNachricht: async (text: string) => { await qgAdapter.sendMessage(ownerChat, text); },
+                    });
                   } catch (err) {
                     this.logger.warn({ err }, 'KG-question-generator failed (non-fatal)');
                   }

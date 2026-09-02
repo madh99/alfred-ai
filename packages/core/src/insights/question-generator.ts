@@ -1,5 +1,5 @@
 import type { Logger } from 'pino';
-import type { ConfirmationRepository, KgQuestionsRepository } from '@alfred/storage';
+import type { KgQuestionsRepository } from '@alfred/storage';
 
 interface KgEntity {
   id: string;
@@ -20,32 +20,44 @@ interface GapCandidate {
   targetName: string;
   attribute: string;
   question: string;
-  /** Action to run on user-answer (skill+params). Memory-add is the safe default. */
-  answerSkill: string;
-  answerParams: Record<string, unknown>;
   /** Higher score = ask sooner. Considers mentions, attribute-class-importance, ignore-history. */
   score: number;
 }
 
+/** v1155 — Rollen-Präfix im Namen („Tochter Lena") zählt als bekannte Beziehung. */
+const ROLLEN_PRAEFIX_RE = /^(tochter|sohn|schwester|bruder|mutter|vater|mama|papa|oma|opa|tante|onkel|nichte|neffe|cousine|cousin|frau|mann|freund|freundin|kollege|kollegin)\s+/i;
+
 /**
  * v640 — Question-Generator: tägliche Auswahl von max 3 KG-Lücken die hochwertige
- * Antworten versprechen. Sendet pro Lücke eine Confirmation an die Owner-Platform mit
- * gebundener `memory.add`-Action (User-Antwort wird zur KG-Persistierung gespeichert).
+ * Antworten versprechen.
  *
- * Anti-Nagging: pro (target, attribute) wird nur alle ≥7d nachgefragt, und nach 3
- * Ignores (Confirmation läuft ab) wird die Frage permanent als 'ignored' markiert.
- * Zusätzlich Back-Off pro Attribut-Klasse: wenn Birthday-Fragen oft ignoriert wurden,
- * werden NEUE Birthday-Fragen mit niedrigerem Score versehen.
+ * v1155 — Komplett-Renovierung nach dem ersten echten Praxiseinsatz (der Generator
+ * lief bis v1142 NIE): (1) Er prüfte die Alt-Keys `birthday`/`relation_to_owner`,
+ * der KG-Standard ist aber `birthdate`/`relation_to_user` — er fragte deshalb nach
+ * Geburtstagen und Beziehungen, die längst im KG standen (Realfall „Hannah Dohnal").
+ * (2) Die Zustellung als Ja/Nein-Confirmation war absurde UX und ihre Antwort-Aktion
+ * (`memory action:add`) existiert seit langem nicht mehr. Jetzt: EINE normale
+ * Chat-Nachricht mit den Fragen — die Antwort läuft durch die normale Pipeline
+ * und wird vom Stammdaten-Sync (v1146) konstruktiv in den KG übernommen.
+ *
+ * Anti-Nagging unverändert: pro (target, attribute) nur alle ≥7d, nach 3 Ignores
+ * permanent 'ignored'; Back-Off pro Attribut-Klasse bei hoher Ignore-Rate.
  */
 export class KgQuestionGenerator {
   constructor(
     private readonly kg: KgFacade,
     private readonly questions: KgQuestionsRepository,
-    private readonly confirm: ConfirmationRepository,
     private readonly logger: Logger,
   ) {}
 
-  async run(userId: string, opts: { platform: string; chatId: string; maxPerRun?: number; linkedUserIds?: string[] }): Promise<{ asked: number; skipped: number; ignored: number }> {
+  async run(userId: string, opts: {
+    platform: string;
+    chatId: string;
+    maxPerRun?: number;
+    linkedUserIds?: string[];
+    /** v1155 — Zustellung als normale Nachricht (statt Confirmation). */
+    sendeNachricht: (text: string) => Promise<void>;
+  }): Promise<{ asked: number; skipped: number; ignored: number }> {
     const maxPerRun = opts.maxPerRun ?? 3;
     const uids = opts.linkedUserIds && opts.linkedUserIds.length > 0 ? opts.linkedUserIds : [userId];
     let entities: KgEntity[] = [];
@@ -54,9 +66,10 @@ export class KgQuestionGenerator {
     const candidates = await this.buildCandidates(userId, entities);
     candidates.sort((a, b) => b.score - a.score);
 
-    let asked = 0, skipped = 0, ignored = 0;
+    const zuStellen: string[] = [];
+    let skipped = 0, ignored = 0;
     for (const c of candidates) {
-      if (asked >= maxPerRun) break;
+      if (zuStellen.length >= maxPerRun) break;
       const upsert = await this.questions.upsertAsk(userId, {
         targetKind: c.targetKind,
         targetId: c.targetId,
@@ -67,26 +80,22 @@ export class KgQuestionGenerator {
       });
       if (!upsert) { skipped++; continue; }
       if (upsert.ignoreCount >= 3) { ignored++; continue; }
+      zuStellen.push(c.question);
+    }
 
-      // Enqueue confirmation that asks the user — Approve = User wird gefragt zu antworten
+    if (zuStellen.length > 0) {
       try {
-        await this.confirm.create({
-          chatId: opts.chatId,
-          platform: opts.platform,
-          source: 'reasoning',
-          sourceId: `kg-question:${upsert.id}`,
-          description: `🤔 ${c.question}\n\n_(Antwort als kurze Memory-Notiz speichern? Approve = ja, dann Antwort als nächste Nachricht schreiben. Reject = nicht fragen.)_`,
-          skillName: 'memory',
-          skillParams: c.answerParams,
-          expiresAt: new Date(Date.now() + 2 * 86400_000).toISOString(),
-        });
-        asked++;
+        const text = zuStellen.length === 1
+          ? `🤔 ${zuStellen[0]}\n\n_(Einfach antworten — ich merke es mir.)_`
+          : `🤔 **Ein paar Wissenslücken:**\n${zuStellen.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n\n_(Einfach antworten — ich merke es mir.)_`;
+        await opts.sendeNachricht(text);
       } catch (err) {
-        this.logger.debug({ err, qid: upsert.id }, 'KG-question confirmation enqueue failed');
+        this.logger.warn({ err }, 'KG-question delivery failed');
+        return { asked: 0, skipped, ignored };
       }
     }
-    this.logger.info({ userId, asked, skipped, ignored }, 'KG-question-generator complete');
-    return { asked, skipped, ignored };
+    this.logger.info({ userId, asked: zuStellen.length, skipped, ignored }, 'KG-question-generator complete');
+    return { asked: zuStellen.length, skipped, ignored };
   }
 
   private async buildCandidates(userId: string, entities: KgEntity[]): Promise<GapCandidate[]> {
@@ -105,23 +114,22 @@ export class KgQuestionGenerator {
       if (mentions < 3) continue;
 
       if (e.entityType === 'person') {
-        if (!attrs.birthday && !attrs.birth_date) {
+        // v1155 — KG-Standard-Key ist `birthdate` (v1144); Alt-Varianten weiter toleriert.
+        if (!attrs.birthdate && !attrs.birthday && !attrs.birth_date) {
           candidates.push({
             targetKind: 'person', targetId: e.id, targetName: e.name,
             attribute: 'birthday',
             question: `Wann hat **${e.name}** Geburtstag?`,
-            answerSkill: 'memory',
-            answerParams: { action: 'add', text: `Geburtstag von ${e.name}: <user-answer>` },
             score: mentions * 2 * backoff('birthday'),
           });
         }
-        if (!attrs.relation_to_owner && !attrs.relation) {
+        // v1155 — KG-Standard-Key ist `relation_to_user`; Rollen-Präfix im Namen zählt auch.
+        const hatBeziehung = attrs.relation_to_user || attrs.relation_to_owner || attrs.relation || ROLLEN_PRAEFIX_RE.test(e.name);
+        if (!hatBeziehung) {
           candidates.push({
             targetKind: 'person', targetId: e.id, targetName: e.name,
             attribute: 'relation',
             question: `Wie steht **${e.name}** zu dir? (Familie, Freund, Kollege …)`,
-            answerSkill: 'memory',
-            answerParams: { action: 'add', text: `${e.name} ist meine/mein <user-answer>` },
             score: mentions * 1.5 * backoff('relation'),
           });
         }
@@ -136,8 +144,6 @@ export class KgQuestionGenerator {
             targetKind: 'organization', targetId: e.id, targetName: e.name,
             attribute: 'org-incomplete',
             question: `Was macht **${e.name}** eigentlich? (Branche / Website kurz)`,
-            answerSkill: 'memory',
-            answerParams: { action: 'add', text: `${e.name} (Organisation): <user-answer>` },
             score: mentions * 1.2 * backoff('org-incomplete'),
           });
         }
@@ -148,8 +154,6 @@ export class KgQuestionGenerator {
           targetKind: 'location', targetId: e.id, targetName: e.name,
           attribute: 'location-address',
           question: `Wo liegt **${e.name}** genau? (Adresse, kurz)`,
-          answerSkill: 'memory',
-          answerParams: { action: 'add', text: `${e.name} (Ort): <user-answer>` },
           score: mentions * 1.3 * backoff('location-address'),
         });
       }

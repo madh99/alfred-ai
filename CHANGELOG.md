@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1155] - 2026-09-02
+
+### Fixed — KG-Frage-Generator renoviert: richtige Keys, echte Fragen (v1155)
+
+Der Frage-Generator (v640, lief bis zur v1142-Reanimierung nie) zeigte im ersten Praxiseinsatz drei Defekte: (1) Er prüfte die Alt-Keys `birthday`/`relation_to_owner` statt der KG-Standards `birthdate`/`relation_to_user` — und fragte deshalb nach Geburtstagen und Beziehungen, die längst im KG standen (Realfall: „Wann hat Hannah Dohnal Geburtstag?" trotz `birthdate: 2019-10-22` und `relation_to_user: Tochter`). (2) Die Zustellung als Ja/Nein-Confirmation mit verschachteltem Meta-Text war absurde UX. (3) Die hinterlegte Antwort-Aktion `memory action:add` existiert seit langem nicht mehr — selbst kooperative Antworten wären in „Unknown action" gelaufen.
+
+- Lücken-Erkennung nutzt jetzt die Standard-Keys (Alt-Varianten weiter toleriert); ein Rollen-Präfix im Namen („Tochter Lena") zählt als bekannte Beziehung.
+- Zustellung als EINE normale Chat-Nachricht („🤔 … Einfach antworten — ich merke es mir."). Die Antwort läuft durch die reguläre Pipeline und wird vom Stammdaten-Sync (v1146) konstruktiv in den KG übernommen — die tote Confirmation-Mechanik ist entfernt.
+- Anti-Nagging unverändert (≥7d Abstand je Frage, 3 Ignores = dauerhaft still).
+- 4 neue Tests an den Realfällen.
+
 ## [0.19.0-multi-ha.1154] - 2026-08-30
 
 ### Fixed — Toter ITSM-Block reanimiert: Pattern-Sweep, Tagesreflexion, Hygiene (v1154)
