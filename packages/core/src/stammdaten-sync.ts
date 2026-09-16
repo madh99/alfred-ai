@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type { KnowledgeGraphRepository, MemoryRepository } from '@alfred/storage';
-import { normalisierePersonenName, provEintrag, darfUeberschreiben, type ProvEintrag } from './wissens-schema.js';
+import { normalisierePersonenName, provEintrag, darfUeberschreiben, istPlausiblerPersonenName, type ProvEintrag } from './wissens-schema.js';
 import { INTERNAL_MEMORY_KEY_PREFIXES } from './knowledge-graph.js';
 
 /**
@@ -141,6 +141,7 @@ export class StammdatenSync {
           // Konstruktiver Pfad: neue Person aus expliziter Beziehungs-Aussage —
           // mit richtigem NAMEN (kein Rollen-Präfix) und Herkunft am Attribut.
           const name = f.fullName ?? f.vorname;
+          if (!istPlausiblerPersonenName(name)) continue; // v1157 — Namens-Schema
           person = await this.kgRepo.upsertEntity(userId, name, 'person', {
             relation_to_user: f.beziehung,
             ...(f.fullName ? { fullName: f.fullName } : {}),

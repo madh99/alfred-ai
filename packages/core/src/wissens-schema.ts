@@ -84,6 +84,106 @@ export function normalisierePersonenName(roh: string): { name: string; beziehung
   return { name: rest, beziehung };
 }
 
+// ── v1157 — Namens-Schema je Typ ──────────────────────────────────────────
+//
+// Befund 16.09.: Der Memory→KG-Extraktor nahm das erste großgeschriebene Wort
+// JEDES Entity-Memories als Personenname („Mistral", „Sportverein" aus
+// organization_*-Memories) und Satzanfänge als Organisation („Erinnerung aktiv
+// seit"). Jeder Reasoning-Tick zählte diese Leichen hoch (+48 Mentions/Tag),
+// bis sie die Frage-Auswahl dominierten („Wann hat Mistral Geburtstag?").
+// Wie beim Attribut-Schema gilt: EINE Positiv-Definition, von allen Schreibern
+// UND der Nacht-Wartung benutzt — kein Konsumenten-Pflaster.
+
+/** Namen von Systemen/Diensten/Rollen, die nie eine Person sind. */
+const SYSTEM_NAMEN = new Set([
+  'mistral', 'openai', 'anthropic', 'claude', 'gemini', 'google', 'microsoft', 'alfred',
+  'chatgpt', 'gpt', 'ollama', 'admin', 'system', 'bot', 'api', 'telegram', 'discord',
+  'whatsapp', 'matrix', 'signal', 'proxmox', 'unifi', 'mikrotik', 'commvault', 'bmw',
+]);
+
+/** Gattungswörter, die als Personenname durchrutschten (Großschreibung ≠ Eigenname). */
+const GATTUNGSWOERTER = new Set([
+  'sportverein', 'verein', 'projekt', 'team', 'firma', 'kunde', 'kundin', 'familie',
+  'mannschaft', 'schule', 'kindergarten', 'trainer', 'lehrer', 'lehrerin', 'nachbar',
+  'nachbarin', 'kollege', 'kollegin', 'freund', 'freundin', 'person', 'mitarbeiter',
+  'mitarbeiterin', 'chef', 'chefin', 'arzt', 'ärztin', 'werkstatt', 'bank', 'versicherung',
+  'erinnerung', 'termin', 'nachricht', 'insight', 'hinweis', 'aufgabe', 'todo', 'notiz',
+]);
+
+/** Titel-Tokens, die vor einem Personennamen stehen dürfen („Dr. Alfred Steindl"). */
+const TITEL_TOKENS = /^(dr|prof|mag|ing|dipl|med|univ|dr\.med|bakk|msc|bsc|mba)\.?$/i;
+
+/** Satz-Wörter, die in einem Organisationsnamen nichts verloren haben. */
+const SATZ_WOERTER = /\b(seit|aktiv|wurde|wird|ist|sind|hat|haben|kann|soll|muss|für|mit|bei|nach|vom|und|oder|bis|ab|am|im|zum|zur|auf|über|unter|wegen|dass|wenn|weil)\b/i;
+
+/**
+ * Personenname: 1–3 Namens-Wörter (Titel und Rollen-Präfix erlaubt), jedes
+ * beginnt mit Großbuchstabe, keine Ziffern, kein System-/Gattungswort.
+ * „User" ist die Owner-Entität und immer gültig.
+ */
+export function istPlausiblerPersonenName(name: string): boolean {
+  const roh = name.trim();
+  if (roh === 'User') return true;
+  if (roh.length < 2 || roh.length > 60 || /[0-9_@#:/\\]/.test(roh)) return false;
+  let tokens = roh.split(/\s+/);
+  if (tokens.length > 0 && ROLLEN_PRAEFIXE[tokens[0].toLowerCase()]) tokens = tokens.slice(1);
+  tokens = tokens.filter(t => !TITEL_TOKENS.test(t));
+  if (tokens.length === 0 || tokens.length > 3) return false;
+  for (const t of tokens) {
+    if (!/^[A-ZÄÖÜ][a-zäöüßA-ZÄÖÜ'-]+$/.test(t)) return false;
+    const l = t.toLowerCase();
+    if (GATTUNGSWOERTER.has(l) || ARTIKEL_PRONOMEN.has(l)) return false;
+  }
+  // Systemnamen nur als GANZER Name ausschließen: „Mistral" ist keine Person,
+  // „Dr. Alfred Steindl" (Vorname Alfred) sehr wohl.
+  if (tokens.length === 1 && SYSTEM_NAMEN.has(tokens[0].toLowerCase())) return false;
+  return true;
+}
+
+/** Großgeschriebene Artikel/Pronomen am Satzanfang („Der", „Dieser") sind keine Namen. */
+const ARTIKEL_PRONOMEN = new Set([
+  'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einer', 'einem', 'einen',
+  'dieser', 'diese', 'dieses', 'jeder', 'jede', 'keiner', 'keine', 'seiner', 'seine', 'ihrer', 'ihre',
+  'alle', 'allen', 'beide', 'beiden', 'andere', 'anderen', 'wer', 'was', 'wie', 'wann', 'wo',
+]);
+
+/**
+ * Organisationsname: beginnt groß, max. 6 Wörter, keine Satz-Wörter
+ * („aktiv seit"), beginnt nicht mit einem Gattungswort („Erinnerung …"),
+ * keine Doppelpunkte/Klammern (= Satzfragment).
+ */
+export function istPlausiblerOrgName(name: string): boolean {
+  const roh = name.trim();
+  if (roh.length < 2 || roh.length > 60) return false;
+  if (/[:()\[\]{}"]/.test(roh)) return false;
+  const tokens = roh.split(/\s+/);
+  if (tokens.length > 6) return false;
+  // Mindestens ein Wort muss einen Großbuchstaben oder eine Ziffer enthalten
+  // („aWATTar GmbH", „KSV 1919", „go-e GmbH" bleiben erlaubt; „wurde gestern
+  // bezahlt" nicht).
+  if (!tokens.some(t => /[A-ZÄÖÜ0-9]/.test(t))) return false;
+  if (SATZ_WOERTER.test(roh)) return false;
+  if (GATTUNGSWOERTER.has(tokens[0].toLowerCase())) return false;
+  if (SYSTEM_NAMEN.has(roh.toLowerCase()) && roh.toLowerCase() === 'alfred') return false;
+  return true;
+}
+
+/** Typ-Dispatch für Schreiber und Wartung; andere Typen bleiben unangetastet. */
+export function istPlausiblerEntitaetsName(entityType: string, name: string): boolean {
+  if (entityType === 'person') return istPlausiblerPersonenName(name);
+  if (entityType === 'organization') return istPlausiblerOrgName(name);
+  return true;
+}
+
+/**
+ * Memory-Schlüssel, aus denen NIE eine Person abgeleitet werden darf
+ * (Organisationen, Erinnerungen, Skills, interne Marker).
+ */
+export const KEIN_PERSONEN_MEMORY_KEY = /^(organization|org|company|firma|club|verein|aktiv|reminder|erinnerung|project|projekt|skill|tool|insight|todo|watch|workflow)_/i;
+
+/** Memory-Schlüssel, aus denen NIE eine Organisation abgeleitet werden darf. */
+export const KEIN_ORG_MEMORY_KEY = /^(aktiv|reminder|erinnerung|insight|todo|watch|workflow|child|son|daughter|mother|father|sister|brother|friend)_/i;
+
 /** S2 — Herkunfts-Eintrag für ein Stammdaten-Attribut. */
 export interface ProvEintrag { q: string; c: number; t: string }
 

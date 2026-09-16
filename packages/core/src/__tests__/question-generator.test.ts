@@ -59,10 +59,35 @@ describe('v1155 — KgQuestionGenerator', () => {
   it('Anti-Nagging: upsertAsk=null (Cooldown) überspringt, ignoreCount≥3 unterdrückt dauerhaft', async () => {
     const { gen, questions } = makeGenerator([
       { id: 'e5', name: 'Max', entityType: 'person', mentionCount: 20, attributes: {} },
+      { id: 'e6', name: 'Moritz', entityType: 'person', mentionCount: 10, attributes: {} },
     ]);
     questions.upsertAsk.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'q2', ignoreCount: 3 });
     const r = await gen.run('u1', { platform: 'telegram', chatId: 'c1', sendeNachricht: async () => {} });
     expect(r.asked).toBe(0);
     expect(r.skipped + r.ignored).toBe(2);
+  });
+
+  // v1157 — Realfälle: KG enthielt „Mistral"/„Sportverein" als Personen und
+  // „Erinnerung aktiv seit" als Organisation; Geburtstag erst bei bekannter Beziehung.
+  it('v1157: fragt nie nach System-/Gattungs-/Fragment-Entitäten', async () => {
+    const { gen } = makeGenerator([
+      { id: 'j1', name: 'Mistral', entityType: 'person', mentionCount: 240, attributes: {} },
+      { id: 'j2', name: 'Sportverein', entityType: 'person', mentionCount: 240, attributes: {} },
+      { id: 'j3', name: 'Erinnerung aktiv seit', entityType: 'organization', mentionCount: 864, attributes: {} },
+    ]);
+    const gesendet: string[] = [];
+    const r = await gen.run('u1', { platform: 'telegram', chatId: 'c1', sendeNachricht: async t => { gesendet.push(t); } });
+    expect(r.asked).toBe(0);
+    expect(gesendet).toHaveLength(0);
+  });
+
+  it('v1157: ohne bekannte Beziehung wird nur die Beziehung gefragt, nicht der Geburtstag', async () => {
+    const { gen } = makeGenerator([
+      { id: 'p1', name: 'Sabine', entityType: 'person', mentionCount: 30, attributes: {} },
+    ]);
+    const gesendet: string[] = [];
+    await gen.run('u1', { platform: 'telegram', chatId: 'c1', sendeNachricht: async t => { gesendet.push(t); } });
+    expect(gesendet[0]).toContain('Wie steht **Sabine** zu dir?');
+    expect(gesendet[0]).not.toContain('Geburtstag');
   });
 });

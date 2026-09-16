@@ -1,5 +1,6 @@
 import type { Logger } from 'pino';
 import type { KgQuestionsRepository } from '@alfred/storage';
+import { istPlausiblerEntitaetsName } from '../wissens-schema.js';
 
 interface KgEntity {
   id: string;
@@ -112,10 +113,18 @@ export class KgQuestionGenerator {
       const attrs = e.attributes ?? {};
       const mentions = e.mentionCount ?? 0;
       if (mentions < 3) continue;
+      // v1157 — zweites Netz hinter dem Namens-Schema der Schreiber: Nach
+      // Systemen („Mistral"), Gattungswörtern („Sportverein") oder Satzfragmenten
+      // („Erinnerung aktiv seit") wird nie gefragt, egal wie oft sie erwähnt sind.
+      if (e.name === 'User' || !istPlausiblerEntitaetsName(e.entityType, e.name)) continue;
 
       if (e.entityType === 'person') {
-        // v1155 — KG-Standard-Key ist `birthdate` (v1144); Alt-Varianten weiter toleriert.
-        if (!attrs.birthdate && !attrs.birthday && !attrs.birth_date) {
+        // v1155 — KG-Standard-Key ist `relation_to_user`; Rollen-Präfix im Namen zählt auch.
+        const hatBeziehung = attrs.relation_to_user || attrs.relation_to_owner || attrs.relation || ROLLEN_PRAEFIX_RE.test(e.name);
+        // v1157 — Reihenfolge: erst die Beziehung klären; nach Geburtstagen nur
+        // bei bekannter Beziehung fragen (Bernhards Frau braucht keinen
+        // Geburtstags-Reminder, bevor klar ist, wer sie ist).
+        if (hatBeziehung && !attrs.birthdate && !attrs.birthday && !attrs.birth_date) {
           candidates.push({
             targetKind: 'person', targetId: e.id, targetName: e.name,
             attribute: 'birthday',
@@ -123,8 +132,6 @@ export class KgQuestionGenerator {
             score: mentions * 2 * backoff('birthday'),
           });
         }
-        // v1155 — KG-Standard-Key ist `relation_to_user`; Rollen-Präfix im Namen zählt auch.
-        const hatBeziehung = attrs.relation_to_user || attrs.relation_to_owner || attrs.relation || ROLLEN_PRAEFIX_RE.test(e.name);
         if (!hatBeziehung) {
           candidates.push({
             targetKind: 'person', targetId: e.id, targetName: e.name,

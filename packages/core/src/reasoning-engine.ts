@@ -135,6 +135,17 @@ const DIREKT_OBJEKTE = ['mqtt', 'wallbox', 'victron', 'proxmox', 'unifi', 'mikro
 /** v1150 — welche Korrektur hat gegriffen und warum (für beweisbare Logs). */
 export interface UnterdrueckungsTreffer { key: string; grund: string }
 
+/**
+ * v1157 — Vorgangsbezogene Korrekturen („… wurde beglichen/ausgetauscht",
+ * `_resolved`-Schlüssel) meinen EINEN Vorgang, nicht das Thema: Sie dürfen nie
+ * objektweit wirken. Realfall 14.09.: `correction_awattar_payment_resolved`
+ * schluckte über das Direkt-Objekt „awattar" jede Strompreis-Information.
+ */
+export function istVorgangsbezogeneKorrektur(k: { key: string; value: string }): boolean {
+  if (/_(resolved|erledigt|done|bezahlt|beglichen)$/i.test(k.key)) return true;
+  return /\b(beglichen|bezahlt|erledigt|abgeschlossen|behoben|ausgetauscht|getauscht|verlängert|resolved)\b/i.test(k.value);
+}
+
 export function findeVerletzteUnterdrueckungsKorrektur(
   insight: string,
   korrekturen: Array<{ key: string; value: string }>,
@@ -143,8 +154,10 @@ export function findeVerletzteUnterdrueckungsKorrektur(
   for (const k of korrekturen) {
     if (!istUnterdrueckungsAussage(k.value)) continue;
     const kl = k.value.toLowerCase();
-    for (const o of DIREKT_OBJEKTE) {
-      if (kl.includes(o) && il.includes(o)) return { key: k.key, grund: `direkt-objekt:${o}` };
+    if (!istVorgangsbezogeneKorrektur(k)) {
+      for (const o of DIREKT_OBJEKTE) {
+        if (kl.includes(o) && il.includes(o)) return { key: k.key, grund: `direkt-objekt:${o}` };
+      }
     }
     const treffer = kernwoerterAusKorrektur(k.value).filter(w => il.includes(w));
     // v1149 — Geräte-Kennungen (Buchstaben+Ziffern, ≥6, z.B. „sm-s928b") wirken
@@ -162,6 +175,45 @@ export function findeVerletzteUnterdrueckungsKorrektur(
 
 export function verletztUnterdrueckungsKorrektur(insight: string, korrekturWerte: string[]): boolean {
   return findeVerletzteUnterdrueckungsKorrektur(insight, korrekturWerte.map((value, i) => ({ key: `#${i}`, value }))) !== null;
+}
+
+const BULLET_RE = /^\s*(?:[-*•]|\d+[.)])\s+/;
+
+/**
+ * v1157 — Feinkörniges Gate: Das LLM bündelt mehrere Themen in EINE Sektion
+ * („### Handlungsbedarf" + fünf Bullets). Bisher warf ein einziger Treffer die
+ * ganze Sektion weg (Realfall 14.09.: fussball-cc-Todos fielen mit dem
+ * Elternaufsicht-Bullet). Jetzt werden nur getroffene Bullets entfernt; trifft
+ * die Kopfzeile selbst oder bleibt kein Bullet übrig, fällt die Sektion.
+ * Sektionen ohne ≥2 Bullets bleiben unverändert (Ganzsegment-Gate greift dort).
+ */
+export function filtereSegmentMitKorrekturen(
+  segment: string,
+  korrekturen: Array<{ key: string; value: string }>,
+): { text: string | null; entfernt: Array<{ zeile: string; treffer: UnterdrueckungsTreffer }> } {
+  const zeilen = segment.split('\n');
+  const bulletIdx = zeilen.map((z, i) => (BULLET_RE.test(z) ? i : -1)).filter(i => i >= 0);
+  if (bulletIdx.length < 2) return { text: segment, entfernt: [] };
+  const kopf = zeilen.slice(0, bulletIdx[0]).join('\n');
+  if (kopf.trim().length > 0 && findeVerletzteUnterdrueckungsKorrektur(kopf, korrekturen)) {
+    return { text: null, entfernt: [] };
+  }
+  const entfernt: Array<{ zeile: string; treffer: UnterdrueckungsTreffer }> = [];
+  const behalten: string[] = [];
+  let i = 0;
+  while (i < zeilen.length) {
+    if (!BULLET_RE.test(zeilen[i])) { behalten.push(zeilen[i]); i++; continue; }
+    // Bullet + eingerückte Folgezeilen bilden einen Block
+    let j = i + 1;
+    while (j < zeilen.length && !BULLET_RE.test(zeilen[j]) && /^\s+\S/.test(zeilen[j])) j++;
+    const block = zeilen.slice(i, j);
+    const treffer = findeVerletzteUnterdrueckungsKorrektur(block.join('\n'), korrekturen);
+    if (treffer) entfernt.push({ zeile: block[0].trim(), treffer });
+    else behalten.push(...block);
+    i = j;
+  }
+  if (!behalten.some(z => BULLET_RE.test(z))) return { text: null, entfernt };
+  return { text: behalten.join('\n'), entfernt };
 }
 
 /** Erster Satz einer Korrektur, gedeckelt — für kompakte Inline-Annotationen. */
@@ -525,7 +577,9 @@ ${this.buildTopicInstructions()}`;
       // Send insights (event-triggered are always at least HIGH urgency)
       const newInsights: string[] = [];
       for (const insight of parsed.insights) {
-        if (!await this.wasRecentlySent(insight)) newInsights.push(insight);
+        const fein = await this.filtereBulletsDurchKorrekturen(insight);
+        if (!fein) continue;
+        if (!await this.wasRecentlySent(fein)) newInsights.push(fein);
       }
       if (newInsights.length > 0 || parsed.actions.length > 0) {
         const urgency = this.resolveUrgency(parsed.actions);
@@ -779,13 +833,16 @@ ${this.buildTopicInstructions()}`;
       const parsed = this.parseReasoningResponse(text);
       const newInsights: string[] = [];
       for (const insight of parsed.insights) {
-        if (await this.wasRecentlySent(insight)) continue;
+        // v1157 — erst feinkörnig (nur getroffene Bullets entfernen), dann Ganzsegment-Gate
+        const fein = await this.filtereBulletsDurchKorrekturen(insight);
+        if (!fein) continue;
+        if (await this.wasRecentlySent(fein)) continue;
         // Resolved-correction backup-gate: log if an insight slips through that could be
         // construed as overlapping with a `_resolved` correction. Default = pass (we trust
         // the LLM to follow the prompt rule about new vs. old refs). Programmatic check
         // here is for visibility/audit, not blocking.
-        await this.auditResolvedCorrectionOverlap(insight).catch(() => { /* non-critical */ });
-        newInsights.push(insight);
+        await this.auditResolvedCorrectionOverlap(fein).catch(() => { /* non-critical */ });
+        newInsights.push(fein);
       }
 
       if (newInsights.length === 0 && parsed.actions.length === 0) {
@@ -1330,6 +1387,24 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
   /** v1148 — Cache der User-Korrekturen (5 min) fürs Unterdrückungs-Gate. */
   private korrekturenCache: { paare: Array<{ key: string; value: string }>; geladen: number } | null = null;
+
+  /** v1157 — Multi-Thema-Sektion: nur getroffene Bullets entfernen (siehe filtereSegmentMitKorrekturen). */
+  private async filtereBulletsDurchKorrekturen(insight: string): Promise<string | null> {
+    try {
+      const korrekturen = await this.holeUnterdrueckungsKorrekturen();
+      if (korrekturen.length === 0) return insight;
+      const { text, entfernt } = filtereSegmentMitKorrekturen(insight, korrekturen);
+      for (const e of entfernt) {
+        this.logger.info({ korrektur: e.treffer.key, grund: e.treffer.grund, bullet: e.zeile.slice(0, 160) }, 'v1157 Bullet durch User-Korrektur entfernt');
+      }
+      if (text === null && entfernt.length === 0) {
+        this.logger.info({ insight: insight.slice(0, 160) }, 'v1157 Sektion durch Kopfzeilen-Treffer entfernt');
+      }
+      return text;
+    } catch {
+      return insight; // Filter ist Zusatz — Ganzsegment-Gate bleibt
+    }
+  }
 
   /** v1151 — Deutung an die Quelle heften; Zusatz, darf den Pass nie verhindern. */
   private async wendeKorrekturenAufKontextAn(context: CollectedContext): Promise<void> {

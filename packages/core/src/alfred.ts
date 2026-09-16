@@ -4491,6 +4491,9 @@ export class Alfred {
                 const ownerChat = this.config.security.ownerUserId;
                 const runDailyQg = async () => {
                   try {
+                    // v1157 — Wochen-Bündel statt 3 Fragen täglich (26 Fragen in 2 Wochen
+                    // waren Nagging): Timer bleibt 18:00, gestellt wird nur sonntags.
+                    if (new Date().getDay() !== 0) return;
                     const ownerUidQg = this.tryOwner();
                     if (!ownerUidQg) {
                       this.logger.warn('KG-question-generator: Owner noch nicht aufgelöst — Lauf übersprungen');

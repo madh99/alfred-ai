@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1157] - 2026-09-16
+
+### Fixed — Wissens-Hygiene an den Schreibern: Namens-Schema, Korrektur-Scope, feinkörniges Gate (v1157)
+
+Review 16.09.: Der Frage-Generator fragte „Wann hat **Mistral** Geburtstag?" und „Wie steht **Sportverein** zu dir?". Ursache lag nicht im Generator, sondern in den Schreibern: Der Memory→KG-Extraktor nahm das erste großgeschriebene Wort JEDES Entity-Memories als Personenname (aus `organization_mistral` wurde die Person „Mistral") und Satzanfänge als Organisation („Erinnerung aktiv seit", 864 Erwähnungen) — jeden Reasoning-Tick aufs Neue, bis die Leichen die Frage-Auswahl dominierten. Dazu zwei Gate-Schwächen: Eine vorgangsbezogene Korrektur („aWATTar-Zahlung beglichen") wirkte objektweit auf jede Strompreis-Information, und ein Treffer in einer Multi-Thema-Sektion warf alle Bullets weg.
+
+- **Namens-Schema je Typ** (`wissens-schema.ts`, neben dem Attribut-Schema aus v1146): Personen = 1–3 Namenswörter (Titel/Rollen-Präfix erlaubt), keine Gattungs-/Artikelwörter, Systemnamen nur als ganzer Name ausgeschlossen („Dr. Alfred Steindl" bleibt); Organisationen ohne Satzwörter („aktiv seit"), nicht mit Gattungswort beginnend, keine Fragmente mit Doppelpunkt/Klammern. Angewandt an allen Memory-Schreibern (Personen-Loop, Schlüssel-Personen, Ehepartner, Beziehungs-Muster, Arbeitgeber, Smarthome, Stammdaten-Sync) — und als universeller Backstop in der Nacht-Wartung, die Verstöße samt Relationen löscht (Trockenlauf gegen den Bestand: exakt die drei Müll-Einträge, sonst nichts).
+- **Zuständigkeit nach Memory-Schlüssel**: `organization_*/club_*/aktiv_*/reminder_*/…` liefern nie Personen; `aktiv_*/reminder_*/child_*/…` nie Organisationen.
+- **Frage-Generator**: Namens-Schema als zweites Netz; Reihenfolge erst Beziehung, dann Geburtstag (nur bei bekannter Beziehung); gestellt wird nur noch sonntags (Wochen-Bündel statt 3 Fragen täglich).
+- **Gate-Scope**: Vorgangsbezogene Korrekturen (`_resolved`-Schlüssel oder „beglichen/ausgetauscht/erledigt …") wirken nie mehr objektweit — Strompreis-Infos bleiben durch, die Mahnung zum selben Vorgang bleibt geblockt. Geräte-Korrekturen (MQTT) unverändert objektweit.
+- **Feinkörniges Gate**: Sektionen mit ≥2 Bullets werden je Bullet geprüft; nur getroffene Bullets fallen (mit eigener Logzeile), die Sektion bleibt. Kopfzeilen-Treffer oder kein verbleibender Bullet → Sektion fällt wie bisher.
+- 13 neue Tests (v1157-wissens-hygiene.test.ts) + 2 Generator-Tests an den Realfällen.
+
 ## [0.19.0-multi-ha.1156] - 2026-09-16
 
 ### Added — Modell-Update September 2026: GPT-6 Astra, Claude Fable 5.1, Gemini 3.8 Flash, Mistral-Aliase (v1156)

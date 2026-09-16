@@ -319,7 +319,7 @@ const MAX_MAP_TOKENS = 1200;
 
 // ── Service ──────────────────────────────────────────────────
 
-import { bereinigeAttributeNachSchema, planePersonenNamensHeilung, normalisierePersonenName } from './wissens-schema.js';
+import { bereinigeAttributeNachSchema, planePersonenNamensHeilung, normalisierePersonenName, istPlausiblerEntitaetsName, istPlausiblerPersonenName, istPlausiblerOrgName, KEIN_PERSONEN_MEMORY_KEY, KEIN_ORG_MEMORY_KEY } from './wissens-schema.js';
 
 export class KnowledgeGraphService {
   private llmLinker?: import('./llm-entity-linker.js').LLMEntityLinker;
@@ -1675,6 +1675,15 @@ export class KnowledgeGraphService {
               await this.kgRepo.deleteEntity(e.id);
               junkEntitiesCleaned++;
               this.logger.info({ entity: e.name, type: e.entityType }, 'KG maintenance: deleted junk entity (typo/invalid marker or file fragment name)');
+              continue;
+            }
+            // v1157 — Namens-Schema als universeller Backstop für ALLE Schreiber:
+            // Personen wie „Mistral"/„Sportverein" und Organisationen wie
+            // „Erinnerung aktiv seit" (Realfälle 16.09.) fliegen samt Relationen raus.
+            if (!istPlausiblerEntitaetsName(e.entityType, e.name)) {
+              await this.kgRepo.deleteEntity(e.id);
+              junkEntitiesCleaned++;
+              this.logger.info({ entity: e.name, type: e.entityType }, 'v1157 KG maintenance: Namens-Schema verletzt — Entität gelöscht');
             }
           }
         } catch (err) {
@@ -2122,8 +2131,8 @@ export class KnowledgeGraphService {
       // (lowercase short names like "madh" are usernames, not real person names)
       let entityType: string = 'item';
       if (eid.startsWith('person.')) {
-        const isProperName = /^[A-ZÄÖÜ]/.test(name) && name.length >= 4;
-        entityType = isProperName ? 'person' : 'item';
+        // v1157 — Namens-Schema statt bloßer Großschreibung
+        entityType = istPlausiblerPersonenName(name) && name.length >= 4 ? 'person' : 'item';
       }
       await this.kgRepo.upsertEntity(userId, name, entityType as any, attrs, 'smarthome');
       count++;
@@ -2349,6 +2358,9 @@ export class KnowledgeGraphService {
       const entityMems = await this.memoryRepo.getByType(userId, 'entity', 30);
       for (const mem of entityMems) {
         if (INTERNAL_MEMORY_KEY_PREFIXES.test(mem.key)) continue;
+        // v1157 — Zuständigkeit nach Schlüssel: organization_*/aktiv_*/… sind
+        // keine Personen-Quelle (Realfall: organization_mistral → Person „Mistral").
+        if (KEIN_PERSONEN_MEMORY_KEY.test(mem.key)) continue;
         // Strip punctuation, split on comma/parens/period, take first segment
         const raw = mem.value.split(/[,(.!?]/)[0].replace(/[:\d]/g, '').trim();
         const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w));
@@ -2402,6 +2414,8 @@ export class KnowledgeGraphService {
           }
         }
 
+        // v1157 — Namens-Schema am Schreiber (Gattungs-/Systemwörter sind keine Personen)
+        if (!istPlausiblerPersonenName(effectiveName)) continue;
         const person = await this.kgRepo.upsertEntity(userId, effectiveName, 'person',
           { memoryKey: mem.key, memoryConfidence: mem.confidence }, 'memories');
 
@@ -2483,6 +2497,7 @@ export class KnowledgeGraphService {
           if (!canonical) canonicalPersons.set(namePart, personName);
 
           if (!keyPersons.has(namePart)) {
+            if (!istPlausiblerPersonenName(effectiveName)) break; // v1157 — Namens-Schema
             const person = await this.kgRepo.upsertEntity(userId, effectiveName, 'person', {}, 'memories');
             // Derive relation from prefix
             const relType = prefix.startsWith('friend') || prefix.startsWith('freund') ? 'knows'
@@ -2499,7 +2514,7 @@ export class KnowledgeGraphService {
           if (keyPerson && k.includes('spouse') && mem.type === 'entity') {
             // The value is the spouse's name — find or create
             const spouseName = mem.value.split(',')[0].split('(')[0].replace(/[:\d]/g, '').trim();
-            if (spouseName.length >= 2) {
+            if (spouseName.length >= 2 && istPlausiblerPersonenName(spouseName)) { // v1157
               const spouse = await this.kgRepo.upsertEntity(userId, spouseName, 'person', { memoryKey: mem.key }, 'memories');
               await this.kgRepo.upsertRelation(userId, keyPerson.entity.id, spouse.id, 'spouse', mem.key, 'memories');
             }
@@ -2544,6 +2559,7 @@ export class KnowledgeGraphService {
               // entsteht nicht mehr).
               const norm = normalisierePersonenName(name);
               const anlageName = norm?.name ?? name;
+              if (!istPlausiblerPersonenName(anlageName)) continue; // v1157 — Namens-Schema
               const person = await this.kgRepo.upsertEntity(userId, anlageName, 'person',
                 { memoryKey: mem.key, ...(norm ? { relation_to_user: norm.beziehung } : {}) }, 'memories');
               await this.kgRepo.upsertRelation(userId, user.id, person.id, 'knows', mem.key, 'memories');
@@ -2561,6 +2577,9 @@ export class KnowledgeGraphService {
           // „Position/Company" traf News-Zustellprotokolle und erzeugte
           // works_at-Relationen auf „IT BOLTWISE:"/„Easyname confirmation …".
           if (INTERNAL_MEMORY_KEY_PREFIXES.test(job.key)) continue;
+          // v1157 — Erinnerungs-/Personen-Memories sind keine Arbeitgeber-Quelle
+          // (Realfall: aktiv_erinnerung_… → Organisation „Erinnerung aktiv seit").
+          if (KEIN_ORG_MEMORY_KEY.test(job.key)) continue;
           const orgMatch = job.value.match(/(?:bei|at)\s+([A-ZÄÖÜ][\w\s&.-]+?)(?:\s+(?:als|as|since|seit)|[.,]|$)/i)
             ?? job.value.match(/([A-ZÄÖÜ][\w\s&.-]*(?:GmbH|AG|ICT|Inc|Corp|Ltd|SE)[^\s.,]*)/i);
           if (orgMatch) {
@@ -2574,6 +2593,8 @@ export class KnowledgeGraphService {
             if (/[()]/.test(orgName)) continue; // contains parens = sentence fragment
             if (!/^[A-ZÄÖÜ]/.test(orgName)) continue; // must start with uppercase
             if (PERSON_BLACKLIST.has(orgName.toLowerCase())) continue;
+            // v1157 — Namens-Schema für Organisationen (keine Satzfragmente)
+            if (!istPlausiblerOrgName(orgName)) continue;
 
             const shortName = orgName.split(/\s+/)[0]; // "Axians" from "Axians ICT Austria GmbH"
             const existingShort = await this.kgRepo.getEntityByName(userId, shortName, 'organization' as any);
