@@ -13,10 +13,10 @@ describe('v920 Claude Sonnet 5 — Pricing', () => {
   it('has pricing entry (prevents $0 in dashboard)', () => {
     const p = getModelPricing('claude-sonnet-5');
     expect(p).toBeDefined();
-    expect(p!.input).toBe(3.00);
-    expect(p!.output).toBe(15.00);
-    expect(p!.cacheRead).toBe(0.30);
-    expect(p!.cacheWrite).toBe(3.75);
+    expect(p!.input).toBe(2.00); // v1156: $2/$10 ist Dauerpreis
+    expect(p!.output).toBe(10.00);
+    expect(p!.cacheRead).toBe(0.20);
+    expect(p!.cacheWrite).toBe(2.50);
   });
 
   it('no prefix collision with claude-sonnet-4', () => {
@@ -30,8 +30,8 @@ describe('v920 Claude Sonnet 5 — Pricing', () => {
       inputTokens: 100_000, outputTokens: 8_000,
       cacheReadTokens: 60_000, cacheCreationTokens: 0,
     });
-    // regular input = (100k − 60k cache-read) × $3/M = $0.12; cache read: 60k × $0.30/M = $0.018; output: 8k × $15/M = $0.12
-    expect(cost).toBeCloseTo(0.258, 4);
+    // v1156: regular input = 40k × $2/M = $0.08; cache read: 60k × $0.20/M = $0.012; output: 8k × $10/M = $0.08
+    expect(cost).toBeCloseTo(0.172, 4);
   });
 });
 

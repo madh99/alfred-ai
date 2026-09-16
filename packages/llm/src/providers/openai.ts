@@ -390,7 +390,10 @@ export class OpenAIProvider extends LLMProvider {
    *  gpt-5.5 is a frontier reasoning model with reasoning_effort).
    */
   private isReasoningModel(): boolean {
-    return /^(o[1-9]|gpt-5($|[.-][0156]))/.test(this.config.model);
+    // v1156 — gpt-6-astra (Sept. 2026) ist laut Modellseite ein Reasoning-Modell
+    // (reasoning.effort low…max, Responses- und Chat-API). Live-Probe stand wegen
+    // leerem OpenAI-Guthaben aus — Verhalten analog gpt-5.6 angenommen.
+    return /^(o[1-9]|gpt-6|gpt-5($|[.-][0156]))/.test(this.config.model);
   }
 
   /**
@@ -401,6 +404,8 @@ export class OpenAIProvider extends LLMProvider {
   protected reasoningEffortParam(requested?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'): string | undefined {
     if (!requested) return undefined;
     if (!this.isReasoningModel()) return undefined;
+    // v1156 — gpt-6-astra kennt laut Modellseite kein Effort 'none' (nur low…max)
+    if (requested === 'none' && /^gpt-6/.test(this.config.model)) return 'low';
     // v1099 — 'max' existiert nur in der Responses-API; chat/completions lehnt
     // es ab (live verprobt 11.07.) → beste verfügbare Stufe senden
     return requested === 'max' ? 'xhigh' : requested;
@@ -412,7 +417,7 @@ export class OpenAIProvider extends LLMProvider {
    */
   protected tokenLimitParam(requestMax?: number): { max_tokens?: number; max_completion_tokens?: number } {
     const value = requestMax ?? this.config.maxTokens ?? 4096;
-    if (/^(gpt-5|o[1-9])/.test(this.config.model)) {
+    if (/^(gpt-5|gpt-6|o[1-9])/.test(this.config.model)) {
       return { max_completion_tokens: value };
     }
     return { max_tokens: value };

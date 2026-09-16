@@ -55,7 +55,10 @@ export async function withPrematureCloseRetry<T>(fn: () => Promise<T>, attempts 
 
 // Known context window sizes for popular models
 const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
-  // Anthropic — Fable 5 / Claude 4.8 / 4.7 / 4.6 / 4.5 / 4.x / 3.5 / 3.x
+  // Anthropic — Fable 5.1 / Fable 5 / Claude 4.8 / 4.7 / 4.6 / 4.5 / 4.x / 3.5 / 3.x
+  // v1156 — Fable 5.1 / Mythos 5.1 (Sept. 2026, Models-Overview): 1M / 128k
+  'claude-fable-5-1':             { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
+  'claude-mythos-5-1':            { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-fable-5':               { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-mythos-5':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   // v1135 — Claude Opus 5 (Juli 2026, per Live-Models-API verifiziert)
@@ -80,7 +83,10 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   // Generic Claude prefix fallback (future claude-* models default to 1M context)
   'claude-':                      { maxInputTokens: 1_000_000, maxOutputTokens: 64_000 },
 
-  // OpenAI — GPT-5.x / GPT-4.1 / GPT-4o / o-series
+  // OpenAI — GPT-6 / GPT-5.x / GPT-4.1 / GPT-4o / o-series
+  // v1156 — GPT-6 Astra (Sept. 2026, Modellseite): 1.050.000 / 128.000
+  'gpt-6-astra':                  { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
+  'gpt-6':                        { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-5.6-sol':                  { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-5.6-terra':                { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-5.6-luna':                 { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
@@ -104,6 +110,11 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'o1-mini':                      { maxInputTokens: 128_000, maxOutputTokens: 65_536 },
 
   // Google Gemini
+  // v1156 — Gemini 3.8/3.7/3.6/3.5 Flash (+3.5 Flash-Lite), 1M / 64k wie die 3.x-Generation
+  'gemini-3.8-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
+  'gemini-3.7-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
+  'gemini-3.6-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
+  'gemini-3.5-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
   'gemini-3.1-pro':               { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
   'gemini-3.1-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
   'gemini-3-pro':                 { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
@@ -119,6 +130,10 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'mistral-large':                { maxInputTokens: 256_000, maxOutputTokens: 256_000 },
   // Mistral Medium 3.5 — must come BEFORE generic 'mistral-medium' so prefix-match catches it
   'mistral-medium-3-5':           { maxInputTokens: 256_000, maxOutputTokens: 131_072 },
+  // v1156 — Aliase von Medium 3.5 in der Live-Modellliste (Punkt-Schreibweise, 2604, latest)
+  'mistral-medium-3.5':           { maxInputTokens: 256_000, maxOutputTokens: 131_072 },
+  'mistral-medium-2604':          { maxInputTokens: 256_000, maxOutputTokens: 131_072 },
+  'mistral-medium-latest':        { maxInputTokens: 256_000, maxOutputTokens: 131_072 },
   'mistral-medium':               { maxInputTokens: 131_072, maxOutputTokens: 131_072 },
   'mistral-small':                { maxInputTokens: 256_000, maxOutputTokens: 256_000 },
   'codestral':                    { maxInputTokens: 256_000, maxOutputTokens: 256_000 },

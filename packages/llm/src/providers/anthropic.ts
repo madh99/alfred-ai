@@ -74,8 +74,19 @@ export class AnthropicProvider extends LLMProvider {
   private thinkingParam(request: LLMRequest): Record<string, unknown> {
     if (this.supportsTemperature()) return {}; // ältere Modelle: kein Thinking-Param
     const effort = request.reasoningEffort;
-    if (effort === 'none' || effort === 'low') return { thinking: { type: 'disabled' } };
-    return {};
+    if (effort !== 'none' && effort !== 'low') return {};
+    // v1156 — Fable/Mythos 5.x: Thinking ist IMMER an, `thinking:{type:'disabled'}`
+    // wird mit 400 abgelehnt (Anthropic Models-Overview/Migration-Guide, 16.09.2026;
+    // Live-Probe war wegen leerem Guthaben nicht möglich). Die Tiefe wird dort
+    // ausschließlich über output_config.effort gesteuert — 'low' ist das Äquivalent
+    // zum bisherigen Abschalten für Serienproduktion.
+    if (this.thinkingImmerAn()) return { output_config: { effort: 'low' } };
+    return { thinking: { type: 'disabled' } };
+  }
+
+  /** Fable 5 / 5.1 und Mythos 5 / 5.1: adaptives Thinking lässt sich nicht abschalten. */
+  private thinkingImmerAn(): boolean {
+    return /^claude-(fable|mythos)-5/.test((this.config.model ?? '').toLowerCase());
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {

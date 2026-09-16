@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1156] - 2026-09-16
+
+### Added — Modell-Update September 2026: GPT-6 Astra, Claude Fable 5.1, Gemini 3.8 Flash, Mistral-Aliase (v1156)
+
+Abgleich der Modell-Registry (Preise, Kontextfenster, API-Parameter) gegen die offiziellen Preisseiten von OpenAI, Anthropic, Google und Mistral sowie die Live-Modelllisten der APIs (16.09.2026).
+
+**OpenAI**
+- `gpt-6-astra` (neu): $10/$50 pro MTok, Cache-Read $1, Kontext 1.050.000/128.000. Reasoning-Modell (Responses-API, `max_completion_tokens`, keine `temperature`, Effort low…max — `none` wird auf `low` abgebildet).
+- **GPT-5.6-Preise gesenkt**: Sol $4/$20, Terra $2/$12, Luna $0.20/$1.20 (vorher $5/$30, $2.50/$15, $1/$6) — das Kostentracking überzählte das Default-Modell bisher um 20–80 %.
+- Langkontext-Zuschlag (>272k Tokens: 2× Input/Cache, 1,5× Output) gilt jetzt auch für gpt-6, gpt-5.6 und gpt-5.4 (Basis); bisher nur gpt-5.5.
+- Neu bepreist: gpt-5.5-pro/5.4-pro ($30/$180), gpt-5.2-pro ($21/$168), gpt-5-pro ($15/$120), gpt-5.3-codex ($1.75/$14), die Bild-Modelle gpt-image-2.5 (flare/sunburst), -2, -1.5, -1-mini, text-embedding-ada-002.
+
+**Anthropic**
+- `claude-fable-5-1` / `claude-mythos-5-1` (neu): $10/$50, Cache-Write $12.50, **Cache-Read nur $0.25** (0,025× statt 0,1×), 1M/128k.
+- **Sonnet 5 dauerhaft $2/$10**: Die für den 01.09. angekündigte Erhöhung auf $3/$15 entfällt laut Anthropic — die medium-Stufe wurde seit Anfang September um 50 % überzählt (jetzt $2/$10, Cache $0.20/$2.50).
+- Fable/Mythos 5.x: Thinking lässt sich dort nicht abschalten (`thinking: disabled` → 400). Bei reasoningEffort none/low wird jetzt `output_config.effort: low` gesendet statt des Abschalt-Parameters; Opus 5 behält das bisherige Verhalten.
+
+**Google**
+- `gemini-3.8-flash`, `-3.7-flash`, `-3.6-flash`: Einführungspreis $0.75/$3.75 (Cache $0.075) **bis 31.12.2026**, danach $1.50/$7.50 — Preistabelle am 01.01.2027 anpassen. `gemini-3.5-flash` $1.50/$9, `gemini-3.5-flash-lite` $0.30/$2.50. (Gemini 3.5 Pro ist nicht erschienen; `gemini-2.0-flash` wurde am 01.06. abgeschaltet.)
+
+**Mistral**
+- Medium 3.5 heißt in der Live-Liste auch `mistral-medium-3.5`, `mistral-medium-2604` und `mistral-medium-latest` — alle drei fielen auf den generischen Medium-Preis ($0.40/$2) zurück (73 % Unterzählung) und bekamen keinen Prompt-Cache-Schlüssel. Jetzt $1.50/$7.50 + Caching für alle Aliase.
+- Neu bepreist: GLM 5.2/5.3 (`zai-glm-*`, `glm-5-*`, $1.40/$4.40), `codestral-embed` ($0.15, vor dem generischen Codestral-Präfix), Leanstral (kostenlos). Small 4 (`-2603`) und Large 3 (`-2512`) greifen über die bestehenden Präfixe.
+
+Hinweis: Live-Proben der neuen API-Parameter waren nicht möglich — OpenAI- und Anthropic-Guthaben waren am 16.09. aufgebraucht; die Parameter-Regeln folgen der jeweiligen Modell-Dokumentation. 13 neue Tests (modelle-2026-09.test.ts), bestehende Preis-Tests angepasst.
+
 ## [0.19.0-multi-ha.1155] - 2026-09-02
 
 ### Fixed — KG-Frage-Generator renoviert: richtige Keys, echte Fragen (v1155)

@@ -20,9 +20,9 @@ function provider(model: string): OpenAIProvider {
 
 describe('v1097 GPT-5.6 — Pricing', () => {
   it('alle drei Stufen haben Preise (verhindert $0 im Dashboard)', () => {
-    expect(getModelPricing('gpt-5.6-sol')).toMatchObject({ input: 5.00, output: 30.00 });
-    expect(getModelPricing('gpt-5.6-terra')).toMatchObject({ input: 2.50, output: 15.00 });
-    expect(getModelPricing('gpt-5.6-luna')).toMatchObject({ input: 1.00, output: 6.00 });
+    expect(getModelPricing('gpt-5.6-sol')).toMatchObject({ input: 4.00, output: 20.00 }); // v1156: gesenkt
+    expect(getModelPricing('gpt-5.6-terra')).toMatchObject({ input: 2.00, output: 12.00 });
+    expect(getModelPricing('gpt-5.6-luna')).toMatchObject({ input: 0.20, output: 1.20 });
   });
 
   it('Datums-Varianten matchen per Prefix; gpt-5.5 bleibt unberührt', () => {
@@ -32,7 +32,7 @@ describe('v1097 GPT-5.6 — Pricing', () => {
 
   it('realistischer Luna-Call (100k in, 4k out)', () => {
     const cost = calculateCost('gpt-5.6-luna', { inputTokens: 100_000, outputTokens: 4_000, cacheReadTokens: 0, cacheCreationTokens: 0 });
-    expect(cost).toBeCloseTo(0.124, 4); // 100k×$1/M + 4k×$6/M
+    expect(cost).toBeCloseTo(0.0248, 4); // v1156: 100k×$0.20/M + 4k×$1.20/M
   });
 });
 

@@ -38,7 +38,8 @@ export class MistralProvider extends OpenAIProvider {
 
   /** True iff the active model has documented prompt-caching support. */
   protected supportsPromptCaching(): boolean {
-    return /^mistral-medium-3-5/i.test(this.config.model);
+    // v1156 — Medium 3.5 heißt live auch 'mistral-medium-3.5', '-2604' und '-latest'.
+    return /^mistral-medium-(3-5|3\.5|2604|latest)/i.test(this.config.model);
   }
 
   /**

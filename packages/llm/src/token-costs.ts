@@ -18,14 +18,32 @@ export interface ModelPricing {
  */
 const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // ── OpenAI ──────────────────────────────────────────────────
-  ['gpt-5.6-sol',     { input: 5.00, output: 30.00, cacheRead: 0.50 }],
-  ['gpt-5.6-terra',   { input: 2.50, output: 15.00, cacheRead: 0.25 }],
-  ['gpt-5.6-luna',    { input: 1.00, output: 6.00,  cacheRead: 0.10 }],
+  // v1156 (16.09.2026, developers.openai.com/api/docs/pricing): GPT-6 Astra
+  // $10/$50 (Cache-Read $1), >272k Tokens 2x Input/1.5x Output (siehe
+  // longPromptMultiplier). GPT-5.6 wurde im Preis GESENKT: Sol $4/$20,
+  // Terra $2/$12, Luna $0.20/$1.20 (vorher 5/30, 2.5/15, 1/6).
+  ['gpt-6-astra',     { input: 10.00, output: 50.00, cacheRead: 1.00 }],
+  ['gpt-6',           { input: 10.00, output: 50.00, cacheRead: 1.00 }],
+  ['gpt-5.6-sol',     { input: 4.00, output: 20.00, cacheRead: 0.40 }],
+  ['gpt-5.6-terra',   { input: 2.00, output: 12.00, cacheRead: 0.20 }],
+  ['gpt-5.6-luna',    { input: 0.20, output: 1.20,  cacheRead: 0.02 }],
+  // Pro-Varianten (kein Cache-Rabatt dokumentiert) — VOR ihren Basis-Präfixen.
+  ['gpt-5.5-pro',     { input: 30.00, output: 180.00 }],
   ['gpt-5.5',         { input: 5.00, output: 30.00, cacheRead: 0.50 }],
+  ['gpt-5.4-pro',     { input: 30.00, output: 180.00 }],
   ['gpt-5.4-nano',    { input: 0.20, output: 1.25,  cacheRead: 0.02 }],
   ['gpt-5.4-mini',    { input: 0.75, output: 4.50,  cacheRead: 0.075 }],
   ['gpt-5.4',         { input: 2.50, output: 15.00, cacheRead: 0.25 }],
+  ['gpt-5.3-codex',   { input: 1.75, output: 14.00, cacheRead: 0.175 }],
+  ['gpt-5.2-pro',     { input: 21.00, output: 168.00 }],
+  ['gpt-5-pro',       { input: 15.00, output: 120.00 }],
   ['gpt-5',           { input: 0.625, output: 5.00, cacheRead: 0.125 }],
+  // Bild-Modelle (Token-Preise laut Preisseite; Output = Bild-Tokens)
+  ['gpt-image-2.5',   { input: 5.00, output: 30.00, cacheRead: 1.25 }],
+  ['gpt-image-2',     { input: 5.00, output: 30.00, cacheRead: 1.25 }],
+  ['gpt-image-1.5',   { input: 5.00, output: 10.00, cacheRead: 1.25 }],
+  ['gpt-image-1-mini', { input: 2.00, output: 8.00, cacheRead: 0.20 }],
+  ['gpt-image-1',     { input: 5.00, output: 40.00, cacheRead: 1.25 }],
   ['gpt-4.1-nano',    { input: 0.05, output: 0.20,  cacheRead: 0.025 }],
   ['gpt-4.1-mini',    { input: 0.20, output: 0.80,  cacheRead: 0.10 }],
   ['gpt-4.1',         { input: 2.00, output: 8.00,  cacheRead: 0.50 }],
@@ -36,6 +54,11 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['o3',              { input: 2.00, output: 8.00,  cacheRead: 0.50 }],
 
   // ── Anthropic ───────────────────────────────────────────────
+  // v1156 (16.09.2026, platform.claude.com Pricing): Fable 5.1 / Mythos 5.1
+  // $10/$50 wie Fable 5, aber Cache-Read nur 0.025x = $0.25 (statt $1).
+  // Müssen VOR 'claude-fable-5'/'claude-mythos-5' stehen (Präfix-Match).
+  ['claude-fable-5-1',  { input: 10.00, output: 50.00, cacheRead: 0.25, cacheWrite: 12.50 }],
+  ['claude-mythos-5-1', { input: 10.00, output: 50.00, cacheRead: 0.25, cacheWrite: 12.50 }],
   // Fable 5 / Mythos 5: $10/$50, Cache standard-Multiplikatoren (write 1.25x, read 0.1x)
   ['claude-fable-5',    { input: 10.00, output: 50.00, cacheRead: 1.00, cacheWrite: 12.50 }],
   ['claude-mythos-5',   { input: 10.00, output: 50.00, cacheRead: 1.00, cacheWrite: 12.50 }],
@@ -47,9 +70,10 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['claude-opus-4-5',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
   ['claude-opus-4-1',   { input: 15.00, output: 75.00, cacheRead: 1.50, cacheWrite: 18.75 }],
   ['claude-opus-4',     { input: 15.00, output: 75.00, cacheRead: 1.50, cacheWrite: 18.75 }],
-  // Sonnet 5: Standard $3/$15. Einführungspreis $2/$10 gilt bis 2026-08-31 —
-  // für exaktes Tracking im Aktionszeitraum input:2.00/output:10.00/cacheRead:0.20/cacheWrite:2.50 setzen.
-  ['claude-sonnet-5',   { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }],
+  // v1156 — Sonnet 5: Der Einführungspreis $2/$10 ist laut Anthropic (Pricing-
+  // Seite, 16.09.2026) jetzt der DAUERPREIS; die für 01.09. angekündigte
+  // Erhöhung auf $3/$15 entfällt. Vorher wurde die medium-Stufe um 50% überzählt.
+  ['claude-sonnet-5',   { input: 2.00, output: 10.00, cacheRead: 0.20, cacheWrite: 2.50 }],
   ['claude-sonnet-4',   { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }],
   ['claude-haiku-4',    { input: 1.00, output: 5.00,  cacheRead: 0.10, cacheWrite: 1.25 }],
   ['claude-haiku-3-5',  { input: 0.80, output: 4.00,  cacheRead: 0.08, cacheWrite: 1.00 }],
@@ -57,6 +81,15 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['claude-3-haiku',    { input: 0.25, output: 1.25,  cacheRead: 0.03, cacheWrite: 0.30 }],
 
   // ── Google Gemini ───────────────────────────────────────────
+  // v1156 (16.09.2026, ai.google.dev Pricing): Gemini 3.8/3.7/3.6 Flash
+  // Einführungspreis $0.75/$3.75 (Cache $0.075) bis 31.12.2026, danach
+  // $1.50/$7.50 — am 01.01.2027 anpassen! 3.5 Flash $1.50/$9, 3.5 Flash-Lite
+  // $0.30/$2.50. Gemini 3.5 Pro ist (Stand Sept.) nie erschienen.
+  ['gemini-3.8-flash', { input: 0.75, output: 3.75, cacheRead: 0.075 }],
+  ['gemini-3.7-flash', { input: 0.75, output: 3.75, cacheRead: 0.075 }],
+  ['gemini-3.6-flash', { input: 0.75, output: 3.75, cacheRead: 0.075 }],
+  ['gemini-3.5-flash-lite', { input: 0.30, output: 2.50, cacheRead: 0.03 }],
+  ['gemini-3.5-flash', { input: 1.50, output: 9.00, cacheRead: 0.15 }],
   ['gemini-3.1-pro',  { input: 2.00, output: 12.00, cacheRead: 0.20 }],
   ['gemini-3.1-flash-lite', { input: 0.25, output: 1.50, cacheRead: 0.025 }],
   ['gemini-3.1-flash', { input: 0.50, output: 3.00, cacheRead: 0.05 }],
@@ -69,8 +102,11 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // ── OpenAI Embeddings ───────────────────────────────────────
   ['text-embedding-3-small', { input: 0.02, output: 0 }],
   ['text-embedding-3-large', { input: 0.13, output: 0 }],
+  ['text-embedding-ada-002', { input: 0.10, output: 0 }],
 
   // ── Mistral (updated 2026-04-02 from mistral.ai/pricing) ──
+  // v1156 — codestral-embed ($0.15) VOR dem generischen codestral-Präfix
+  ['codestral-embed',         { input: 0.15, output: 0 }],
   ['codestral',               { input: 0.30, output: 0.90, cacheRead: 0.03 }],
   ['devstral-medium',         { input: 0.40, output: 2.00 }],
   ['devstral-small',          { input: 0.10, output: 0.30 }],
@@ -84,7 +120,19 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // Cached input billed at 10% of standard input (Mistral API doc: "Cached tokens are billed at 10%").
   // Must come BEFORE generic 'mistral-medium' so prefix-match catches the more specific entry first.
   ['mistral-medium-3-5',      { input: 1.50, output: 7.50, cacheRead: 0.15 }],
+  // v1156 (16.09.2026, mistral.ai/pricing/api): Medium 3.5 heißt in der Live-
+  // Modellliste auch 'mistral-medium-3.5' (Punkt) und 'mistral-medium-2604';
+  // 'mistral-medium-latest' zeigt auf 2604. Alle drei fielen bisher auf den
+  // generischen Medium-Preis ($0.40/$2) zurück — 73% Unterzählung.
+  ['mistral-medium-3.5',      { input: 1.50, output: 7.50, cacheRead: 0.15 }],
+  ['mistral-medium-2604',     { input: 1.50, output: 7.50, cacheRead: 0.15 }],
+  ['mistral-medium-latest',   { input: 1.50, output: 7.50, cacheRead: 0.15 }],
   ['mistral-medium',          { input: 0.40, output: 2.00, cacheRead: 0.04 }],
+  // v1156 — Drittanbieter-Modelle auf der Mistral-Plattform (GLM 5.2/5.3: $1.40/$4.40),
+  // Codestral Embed $0.15, Leanstral (Labs) kostenlos.
+  ['zai-glm',                 { input: 1.40, output: 4.40 }],
+  ['glm-5',                   { input: 1.40, output: 4.40 }],
+  ['labs-leanstral',          { input: 0, output: 0 }],
   ['mistral-small',           { input: 0.15, output: 0.60, cacheRead: 0.015 }],
   ['mistral-moderation',      { input: 0.10, output: 0 }],
   ['mistral-embed',           { input: 0.10, output: 0 }],
@@ -115,13 +163,15 @@ export function getModelPricing(model: string): ModelPricing | undefined {
  * threshold. Returns { input: 1, output: 1 } when no multiplier applies.
  *
  * gpt-5.5: prompts >272K tokens incur 2x input and 1.5x output pricing.
+ * v1156 — dieselbe Regel gilt laut Preisseite (16.09.2026) für gpt-6-astra,
+ * die gpt-5.6-Familie und gpt-5.4 (Basis, nicht mini/nano); auch der
+ * Cache-Read-Satz verdoppelt sich („2x input and cache rates").
  */
-function longPromptMultiplier(model: string, inputTokens: number): { input: number; output: number } {
+export function longPromptMultiplier(model: string, inputTokens: number): { input: number; output: number } {
   const lower = model.toLowerCase();
-  if (lower.startsWith('gpt-5.5') && inputTokens > 272_000) {
-    return { input: 2.0, output: 1.5 };
-  }
-  return { input: 1.0, output: 1.0 };
+  if (inputTokens <= 272_000) return { input: 1.0, output: 1.0 };
+  const langkontext = /^(gpt-6|gpt-5\.6|gpt-5\.5($|-\d)|gpt-5\.4($|-\d|-pro))/.test(lower);
+  return langkontext ? { input: 2.0, output: 1.5 } : { input: 1.0, output: 1.0 };
 }
 
 /**
