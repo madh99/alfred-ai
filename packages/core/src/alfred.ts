@@ -13260,7 +13260,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // phrases against each memory's updated_at. Idempotent (marker-protected).
       try {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        const users = await userRepoRef.listAll();
+        const users = await userRepoRef.listMasters();
         for (const user of users) {
           const result = await consolidator.migrateLegacyMemoriesV582(user.id, tz);
           if (result.resolved > 0 || result.relevantUntilSet > 0 || result.refsSet > 0 || result.resolvedExpirySet > 0) {
@@ -13276,6 +13276,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // 4 UND Minute ≥ 30" war nach Restarts um :04/:28 NIE wahr — KG-Wartung und
       // Pattern-Analyse liefen seit 12.09. nicht (letzter kg-maintenance-Slot 11.09.).
       const { istNachtjobFaellig } = await import('./nachtjob-plan.js');
+      // v1159 — Nachtjobs laufen nur für Master-User (listMasters): Plattform-
+      // Aliase desselben Menschen tragen keine eigenen Daten; über listAll()
+      // liefen 8 Läufe statt 2 und schrieben kopierte Muster in jede Identität.
       let lastConsolidationDay = '';
       this.memoryConsolidatorTimer = setInterval(async () => {
         const now = new Date();
@@ -13284,7 +13287,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         lastConsolidationDay = today;
         if (!await this.claimDailySlot(`consolidation:${today}`)) return;
         try {
-          const users = await userRepoRef.listAll();
+          const users = await userRepoRef.listMasters();
           for (const user of users) {
             const result = await consolidator.consolidate(user.id);
             if (result.deleted > 0 || result.merged > 0) {
@@ -13307,7 +13310,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           lastPatternDay = today;
           if (!await this.claimDailySlot(`pattern-analysis:${today}`)) return;
           try {
-            const users = await userRepoRef.listAll();
+            const users = await userRepoRef.listMasters();
             for (const user of users) {
               const count = await patternAnalyzer.analyze(user.id);
               if (count > 0) {
@@ -13345,7 +13348,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           }
 
           try {
-            const users = await userRepoRef.listAll();
+            const users = await userRepoRef.listMasters();
             const kgService = this.reasoningEngine
               ? new KnowledgeGraphService(new KnowledgeGraphRepository(this.database.getAdapter()), this.logger.child({ component: 'knowledge-graph' }), this.memoryRepo)
               : undefined;
@@ -13487,7 +13490,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             );
             // v1144 — K1 Stufe 2: nächtliche Entity-Einbettung im Wartungslauf
             if (this.embeddingServiceRef) kgServiceDaily.setEmbeddingService(this.embeddingServiceRef, this.embeddingRepoRef);
-            const users = await userRepoRef.listAll();
+            const users = await userRepoRef.listMasters();
             for (const user of users) {
               await kgServiceDaily.maintenance(user.id);
             }

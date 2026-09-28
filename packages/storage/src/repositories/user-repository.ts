@@ -156,6 +156,19 @@ export class UserRepository {
     return rows.map(r => this.mapRow(r));
   }
 
+  /**
+   * v1159 — Nur Wissens-Identitäten (Master): Zeilen ohne master_user_id oder
+   * mit Verweis auf sich selbst. Plattform-Aliase (Telegram/Matrix/Web/API-Logins
+   * desselben Menschen) zeigen auf ihren Master und tragen keine eigenen Daten —
+   * Nachtjobs, die über listAll() liefen, analysierten 8 Zeilen statt 2 Menschen.
+   */
+  async listMasters(): Promise<User[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM users WHERE master_user_id IS NULL OR master_user_id = id ORDER BY created_at',
+    ) as Record<string, string>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   private mapRow(row: Record<string, string>): User {
     return {
       id: row.id,

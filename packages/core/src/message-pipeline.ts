@@ -2034,7 +2034,7 @@ export class MessagePipeline {
           'Skill execution denied by security rules',
         );
         this.activityLogger?.logSkillExec({
-          userId: context.userId, platform: context.platform, chatId: context.chatId,
+          userId: context.masterUserId ?? context.userId, platform: context.platform, chatId: context.chatId, // v1159 — Activity unter der Master-UUID (Aliase sind nur Logins)
           skillName: toolCall.name, outcome: 'denied', error: evaluation.reason,
           details: redactInputSecrets(toolCall.input as Record<string, unknown>),
         });
@@ -2079,7 +2079,7 @@ export class MessagePipeline {
         // can actually find host/project/cwd. Secrets are redacted up-front.
         const safeDetails = redactInputSecrets(toolCall.input as Record<string, unknown>);
         this.activityLogger?.logSkillExec({
-          userId: context.userId, platform: context.platform, chatId: context.chatId,
+          userId: context.masterUserId ?? context.userId, platform: context.platform, chatId: context.chatId, // v1159 — Activity unter der Master-UUID (Aliase sind nur Logins)
           skillName: toolCall.name, outcome: result.success ? 'success' : 'error',
           durationMs: Date.now() - execStart, error: result.error,
           details: safeDetails,
@@ -2123,7 +2123,7 @@ export class MessagePipeline {
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         this.activityLogger?.logSkillExec({
-          userId: context.userId, platform: context.platform, chatId: context.chatId,
+          userId: context.masterUserId ?? context.userId, platform: context.platform, chatId: context.chatId, // v1159 — Activity unter der Master-UUID (Aliase sind nur Logins)
           skillName: toolCall.name, outcome: 'error',
           durationMs: Date.now() - execStart, error: errorMsg,
           details: redactInputSecrets(toolCall.input as Record<string, unknown>),

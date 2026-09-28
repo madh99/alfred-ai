@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1159] - 2026-09-28
+
+### Fixed — Identitäten sind Logins, der Master ist die Wissens-Identität (v1159)
+
+Analyse 28.09.: Die `users`-Tabelle enthält 8 Zeilen für 2 Menschen — 6 davon sind Plattform-Logins (Telegram, Matrix, Web, API) desselben Owners, die per `master_user_id` auf ihn zeigen. Fakten und Knowledge-Graph landen korrekt beim Master; die Nachtjobs behandelten die Aliase aber wie eigene Menschen. Folgen: (1) 8 statt 2 Läufe für Konsolidierung, Pattern-Analyse, Temporal-Analyse und KG-Wartung; (2) die Pattern-Analyse fragte das Activity-Log **ohne User-Filter** ab und speicherte dieselben globalen Muster und Skill-Regeln unter jeder Identität (`pattern_abendliche_nachbereitung` in allen 8 Zeilen) — auch der zweite echte User trug damit die Gewohnheiten des Owners als seine eigenen; (3) diese ~490 Kopien lagen im Retrieval-Scope des Owners; (4) `activity_log.user_id` enthielt je nach Adapter Telegram-ID, Web-UUID mit/ohne Präfix, „api-user" oder NULL — eine per-User-Analyse war prinzipiell unmöglich.
+
+- **Nachtjobs nur für Master** (`UserRepository.listMasters()`): Konsolidierung, Pattern-Analyse, Temporal-Analyse, wöchentliche und tägliche KG-Wartung.
+- **Activity unter der Master-UUID**: Die Pipeline loggt Skill-Ausführungen mit `masterUserId`; die Pattern-Analyse (Muster **und** Skill-Regeln) filtert nach User — eigene Muster aus eigener Aktivität.
+- **Migration** (SQL zur Durchsicht, nach dem Deploy auszuführen): Activity-Zeilen auf Master-UUIDs umschreiben, Memories/Embeddings der Owner-Aliase löschen (nur Kopien, interne Marker, halluzinierte Präferenzen), kopierte Muster/Regeln beim zweiten User entfernen.
+- Retriever: bereits inhaltlich per Key dedupliziert — nach der Migration ist der Alias-Scope leer, die 7-fachen Suchläufe pro Nachricht entfallen praktisch.
+- 1 neuer Test (jede Activity-Abfrage trägt die userId).
+
 ## [0.19.0-multi-ha.1158] - 2026-09-28
 
 ### Fixed — Tote Nachtjobs reanimiert, Watch-Probe geschlossen, Frage-Kandidaten bereinigt (v1158)

@@ -63,8 +63,12 @@ export class PatternAnalyzer {
 
       // 1. Load detailed activity data (not just aggregated stats)
       // Skill usage: which skills, how often
+      // v1159 — NUR die Aktivität dieses Users. Ohne Filter wurde die globale
+      // Aktivität für jede der 8 Identitäten analysiert und dieselben Muster
+      // 8-fach gespeichert (pattern_abendliche_nachbereitung in allen 8 Zeilen).
       const skillRows = await this.activityRepo.query({
         eventType: 'skill_exec',
+        userId,
         since,
         limit: 500,
       });
@@ -82,6 +86,7 @@ export class PatternAnalyzer {
       // Watch/scheduled activity
       const watchRows = await this.activityRepo.query({
         eventType: 'watch_trigger',
+        userId,
         since,
         limit: 100,
       });
@@ -202,6 +207,7 @@ Return NUR ein JSON-Array:`;
     const errorRows = await this.activityRepo.query({
       eventType: 'skill_exec',
       outcome: 'error',
+      userId, // v1159 — Skill-Regeln nur aus den eigenen Fehlern
       since,
       limit: 500,
     });
