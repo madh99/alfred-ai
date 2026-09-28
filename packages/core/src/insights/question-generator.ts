@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type { KgQuestionsRepository } from '@alfred/storage';
-import { istPlausiblerEntitaetsName } from '../wissens-schema.js';
+import { istPlausiblerEntitaetsName, istSystemName, istGrossraumOrt } from '../wissens-schema.js';
 
 interface KgEntity {
   id: string;
@@ -142,7 +142,8 @@ export class KgQuestionGenerator {
         }
       }
 
-      if (e.entityType === 'organization' && mentions >= 5) {
+      // v1158 — „Was macht Mistral eigentlich?": Systemnamen sind keine Frage-Kandidaten.
+      if (e.entityType === 'organization' && mentions >= 5 && !istSystemName(e.name)) {
         const missing: string[] = [];
         if (!attrs.url && !attrs.website) missing.push('URL');
         if (!attrs.industry && !attrs.branche) missing.push('Branche');
@@ -156,7 +157,8 @@ export class KgQuestionGenerator {
         }
       }
 
-      if (e.entityType === 'location' && mentions >= 3 && !attrs.address) {
+      // v1158 — „Wo liegt Niederösterreich genau? (Adresse)": Regionen/Städte nie fragen.
+      if (e.entityType === 'location' && mentions >= 3 && !attrs.address && !istGrossraumOrt(e.name, attrs)) {
         candidates.push({
           targetKind: 'location', targetId: e.id, targetName: e.name,
           attribute: 'location-address',

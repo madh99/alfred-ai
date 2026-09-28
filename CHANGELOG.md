@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1158] - 2026-09-28
+
+### Fixed — Tote Nachtjobs reanimiert, Watch-Probe geschlossen, Frage-Kandidaten bereinigt (v1158)
+
+Review 17.–28.09.: Die tägliche KG-Wartung (04:30) und die Pattern-Analyse (03:30) liefen seit dem 12.09. nicht mehr. Ursache: Ihr Timer prüfte **stündlich** auf „Stunde == 4 und Minute ≥ 30" — ein Stunden-Timer feuert aber immer zur Start-Minute des Prozesses (Restarts um 23:04 und 21:28 → immer :04 bzw. :28 → nie ≥ 30). Vorher lief die Wartung nur, weil Restarts zufällig auf ≥ :30 fielen. Damit waren Schema-Wächter, Namens-Heilung, nächtliche Entity-Embeddings und die v1157-Junk-Kur 16 Tage tot. Zusätzlich löste der 09:00-Insight-Sweep den Owner zur Wiring-Zeit auf (dasselbe Muster wie v1142/v1154) und lief seit Einführung nie — 0 „expired"-Insights, 3.431 pending seit Mai.
+
+- **Nachtjob-Planung restart-fest** (`nachtjob-plan.ts`): Konsolidierung 03:00, Pattern-Analyse 03:30, KG-Wartung 04:30 laufen auf 10-Minuten-Raster und werden nach einem Restart einmalig nachgeholt; Tages-Slots verhindern Doppelläufe im Cluster. Registrierungs-Logzeile beim Start (Lektion v1154).
+- **Insight-Sweep 09:00**: Owner zur Laufzeit aufgelöst, Lauf-Logzeile — damit laufen die Insight-Adapter und `expireStale` (21 Tage) erstmals automatisch.
+- **Watch-Anlage-Probe**: Schlägt der Probe-Poll selbst fehl (z.B. „Missing node parameter"), wird die Anlage abgelehnt und der Skill-Fehler zurückgegeben; `force:true` bleibt der Ausweg. Vorher wurden solche Watches angelegt und starben erst nach sechs Fehlläufen (drei Realfälle im September).
+- **Frage-Generator**: Organisationen mit Systemnamen („Was macht Mistral eigentlich?") und Regionen/Städte („Wo liegt Niederösterreich genau?") sind keine Frage-Kandidaten mehr.
+- **Deferred-Insights**: verfallene Einträge werden einmal täglich gelöscht (die Aufräum-Funktion existierte, wurde nie aufgerufen — 178 Leichen seit April).
+- 8 neue Tests (Nachtjob-Fälligkeit inkl. Realfall 04:28/04:30, Probe-Fehler, force, Frage-Ausschlüsse).
+
 ## [0.19.0-multi-ha.1157] - 2026-09-16
 
 ### Fixed — Wissens-Hygiene an den Schreibern: Namens-Schema, Korrektur-Scope, feinkörniges Gate (v1157)

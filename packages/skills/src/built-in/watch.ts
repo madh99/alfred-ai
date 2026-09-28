@@ -347,6 +347,16 @@ export class WatchSkill extends Skill {
                   + `Watch mit korrektem Feld erneut anlegen (oder force:true, wenn das Feld erst später erscheint).`,
               };
             }
+          } else {
+            // v1158 — Poll-FEHLER blockiert die Anlage ebenfalls. Realfall: drei
+            // Watches („Missing node parameter", falsches Feld bei crypto_price)
+            // wurden trotz fehlgeschlagener Probe angelegt und starben erst nach
+            // sechs Fehlläufen — der Fehler war schon bei der Anlage bekannt.
+            return {
+              success: false,
+              error: `Probe-Poll von ${skillName} fehlgeschlagen: ${probe.error ?? 'unbekannter Fehler'}. `
+                + `Skill-Parameter korrigieren (z.B. fehlendes Pflichtfeld) und erneut anlegen — oder force:true, wenn der Skill nur vorübergehend offline ist.`,
+            };
           }
         } catch { /* Probe best-effort */ }
       }

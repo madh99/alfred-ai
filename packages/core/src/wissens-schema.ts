@@ -168,6 +168,34 @@ export function istPlausiblerOrgName(name: string): boolean {
   return true;
 }
 
+/** Systemname (LLM-Anbieter, Dienste, Rollen) — für Fragen-Ausschluss bei Organisationen. */
+export function istSystemName(name: string): boolean {
+  return SYSTEM_NAMEN.has(name.trim().toLowerCase());
+}
+
+/** Länder, Bundesländer und Großstädte, nach deren „Adresse" nie gefragt werden darf. */
+const GROSSRAUM_ORTE = new Set([
+  'österreich', 'deutschland', 'schweiz', 'italien', 'europa',
+  'wien', 'niederösterreich', 'oberösterreich', 'steiermark', 'kärnten', 'salzburg', 'tirol',
+  'vorarlberg', 'burgenland', 'bayern', 'graz', 'linz', 'innsbruck', 'klagenfurt', 'bregenz',
+  'eisenstadt', 'st. pölten', 'villach', 'wels', 'steyr', 'kapfenberg', 'münchen', 'berlin',
+  'hamburg', 'köln', 'zürich', 'altlengbach',
+]);
+
+/**
+ * v1158 — Ort ist Region/Stadt statt konkreter Adresse: kein Kandidat für
+ * „Wo liegt X genau? (Adresse)". Realfall 27.09.: „Wo liegt Niederösterreich genau?".
+ */
+export function istGrossraumOrt(name: string, attrs: Record<string, unknown> = {}): boolean {
+  const l = name.trim().toLowerCase();
+  if (GROSSRAUM_ORTE.has(l)) return true;
+  const typ = String(attrs.type ?? '').toLowerCase();
+  if (/^(city|stadt|region|state|bundesland|country|land|district|bezirk)$/.test(typ)) return true;
+  if (/^(st\.|sankt)\s/i.test(name)) return true;
+  // Einzelwort ohne Ziffer = Ortsname (Venues/Adressen sind mehrwortig oder nummeriert)
+  return !/\d/.test(name) && name.trim().split(/\s+/).length === 1;
+}
+
 /** Typ-Dispatch für Schreiber und Wartung; andere Typen bleiben unangetastet. */
 export function istPlausiblerEntitaetsName(entityType: string, name: string): boolean {
   if (entityType === 'person') return istPlausiblerPersonenName(name);

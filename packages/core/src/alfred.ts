@@ -4593,14 +4593,19 @@ export class Alfred {
           // Daily sweep at 09:00 local
           // v805 — Nur ownerMasterUserId (UUID nach v804). Vorher OR-Fallback führte
           // bei missing master-uid zu raw env-var, also Telegram-ID statt UUID.
-          const ownerUidForInsights = this.ownerMasterUserId;
-          if (ownerUidForInsights) {
-            const linked = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForInsights)).map(u => u.id) : [ownerUidForInsights];
-            if (!linked.includes(ownerUidForInsights)) linked.push(ownerUidForInsights);
-            const linkedWithLegacy = this.withLegacyForOwner(ownerUidForInsights, linked);
+          // v1158 — Owner ZUR LAUFZEIT auflösen (v1154-Muster): ownerMasterUserId
+          // war beim Wiring noch nicht gesetzt → der 09:00-Sweep (Insight-Adapter +
+          // expireStale) lief seit Einführung NIE — Beweis 28.09.: 0 „expired"-
+          // Insights, 3.431 pending seit Mai, keine Sweep-Logzeile.
+          {
             const sweepNow = async () => {
+              const owner = this.tryOwner();
+              if (!owner) { this.logger.warn('Insight daily-sweep: Owner noch nicht aufgelöst — übersprungen'); return; }
               try {
-                await insightEngine.sweep({ userId: ownerUidForInsights, linkedUserIds: linkedWithLegacy, logger: this.logger });
+                const linked = this.userRepo ? (await this.userRepo.getLinkedUsers(owner)).map(u => u.id) : [owner];
+                if (!linked.includes(owner)) linked.push(owner);
+                const r = await insightEngine.sweep({ userId: owner, linkedUserIds: this.withLegacyForOwner(owner, linked), logger: this.logger });
+                this.logger.info({ inserted: r.inserted, refreshed: r.refreshed }, 'v1158 Insight daily-sweep gelaufen');
               } catch (err) { this.logger.debug({ err }, 'Insight daily-sweep failed (non-fatal)'); }
             };
             // Schedule next 09:00 local, then 24h interval
@@ -4613,6 +4618,7 @@ export class Alfred {
               const intv = setInterval(sweepNow, 24 * 3600_000);
               (intv as { unref?: () => void }).unref?.();
             }, delay).unref?.();
+            this.logger.info({ firstRunIn: Math.round(delay / 60_000) + 'min' }, 'v1158 Insight daily-sweep registriert (09:00 local)');
             this.logger.info({ firstSweepIn: Math.round(delay / 60_000) + 'min', adapters: insightEngine.listRegistered() }, 'Insight-Engine scheduled (daily 09:00)');
           }
         } catch (err) {
@@ -13265,12 +13271,18 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         this.logger.warn({ err }, 'Legacy memory migration v582 startup hook failed');
       }
 
+      // v1158 — Nachtjobs auf 10-Minuten-Raster mit Nachholen (nachtjob-plan.ts):
+      // Der Stunden-Timer feuerte immer zur Start-Minute des Prozesses, „Stunde ==
+      // 4 UND Minute ≥ 30" war nach Restarts um :04/:28 NIE wahr — KG-Wartung und
+      // Pattern-Analyse liefen seit 12.09. nicht (letzter kg-maintenance-Slot 11.09.).
+      const { istNachtjobFaellig } = await import('./nachtjob-plan.js');
       let lastConsolidationDay = '';
       this.memoryConsolidatorTimer = setInterval(async () => {
         const now = new Date();
-        const today = now.toISOString().slice(0, 10);
-        if (now.getHours() !== 3 || lastConsolidationDay === today) return;
+        const today = istNachtjobFaellig(now, 3, 0, lastConsolidationDay);
+        if (!today) return;
         lastConsolidationDay = today;
+        if (!await this.claimDailySlot(`consolidation:${today}`)) return;
         try {
           const users = await userRepoRef.listAll();
           for (const user of users) {
@@ -13282,7 +13294,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         } catch (err) {
           this.logger.warn({ err }, 'Memory consolidation failed');
         }
-      }, 60 * 60_000); // Check every hour, only acts once at 3 AM
+      }, 10 * 60_000); // v1158 — 10-min-Raster, handelt einmal täglich ab 03:00 (nachholend)
 
       // Pattern analysis: daily extraction of behavioral patterns (runs at ~3:30 AM, after consolidation)
       if (this.activityRepo) {
@@ -13290,9 +13302,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         let lastPatternDay = '';
         this.patternAnalyzerTimer = setInterval(async () => {
           const now = new Date();
-          const today = now.toISOString().slice(0, 10);
-          if (now.getHours() !== 3 || now.getMinutes() < 30 || lastPatternDay === today) return;
+          const today = istNachtjobFaellig(now, 3, 30, lastPatternDay);
+          if (!today) return;
           lastPatternDay = today;
+          if (!await this.claimDailySlot(`pattern-analysis:${today}`)) return;
           try {
             const users = await userRepoRef.listAll();
             for (const user of users) {
@@ -13304,7 +13317,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           } catch (err) {
             this.logger.warn({ err }, 'Pattern analysis failed');
           }
-        }, 60 * 60_000); // Check every hour, only acts at 3:30 AM
+        }, 10 * 60_000); // v1158 — 10-min-Raster, einmal täglich ab 03:30 (nachholend)
 
         // Temporal analysis: weekly trends + anomalies (Sunday 4:00 AM)
         const temporalAnalyzer = new TemporalAnalyzer(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'temporal-analyzer' }));
@@ -13452,8 +13465,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         let lastKgMaintenanceDay = '';
         this.kgMaintenanceTimer = setInterval(async () => {
           const now = new Date();
-          const today = now.toISOString().slice(0, 10);
-          if (now.getHours() !== 4 || now.getMinutes() < 30 || lastKgMaintenanceDay === today) return;
+          const today = istNachtjobFaellig(now, 4, 30, lastKgMaintenanceDay);
+          if (!today) return;
           lastKgMaintenanceDay = today;
 
           // HA distributed dedup: nur ein Node pro Tag
@@ -13493,7 +13506,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           } catch (err) {
             this.logger.warn({ err }, 'v921 daily KG maintenance failed');
           }
-        }, 60 * 60_000); // Check every hour, only acts at 04:30
+        }, 10 * 60_000); // v1158 — 10-min-Raster, einmal täglich ab 04:30 (nachholend)
+        // v1158 — Registrierung sichtbar machen (Lektion v1154: Timer erst dann als lebendig melden)
+        this.logger.info('v1158 Nachtjob-Timer registriert: Konsolidierung 03:00, Pattern-Analyse 03:30, KG-Wartung 04:30 (10-min-Raster, Nachholen nach Restart)');
       }
     }
 

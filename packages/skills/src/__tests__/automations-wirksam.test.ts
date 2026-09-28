@@ -71,6 +71,32 @@ describe('M1 — Watch-Anlage-Probe (Realfall: geratenes Feld)', () => {
     expect(r.success).toBe(true);
     expect(created.length).toBe(1);
   });
+
+  // v1158 — Realfall 04./24.09.: „Proxmox RAM >90%" wurde trotz Probe-Fehler
+  // („Missing node parameter") angelegt und starb erst nach 6 Fehlläufen.
+  it('Probe-Poll schlägt fehl → Anlage abgelehnt mit dem Skill-Fehler, nichts angelegt', async () => {
+    const { skill, created } = makeWatchHarness();
+    skill.setSkillSandbox({ execute: vi.fn(async () => ({ success: false, error: 'Missing "node" parameter and no defaultNode configured' })) } as never);
+    const r = await skill.execute({
+      action: 'create', name: 'Proxmox RAM >90% Alarm', skill_name: 'bmw',
+      condition_field: 'soc', condition_operator: 'gt', condition_value: 90,
+    }, CTX);
+    expect(r.success).toBe(false);
+    expect(String(r.error)).toContain('Probe-Poll');
+    expect(String(r.error)).toContain('Missing "node" parameter');
+    expect(created.length).toBe(0);
+  });
+
+  it('force:true umgeht auch den Probe-Fehler', async () => {
+    const { skill, created } = makeWatchHarness();
+    skill.setSkillSandbox({ execute: vi.fn(async () => ({ success: false, error: 'offline' })) } as never);
+    const r = await skill.execute({
+      action: 'create', name: 'BMW SoC (erzwungen)', skill_name: 'bmw',
+      condition_field: 'soc', condition_operator: 'lt', condition_value: 20, force: true,
+    }, CTX);
+    expect(r.success).toBe(true);
+    expect(created.length).toBe(1);
+  });
 });
 
 describe('M3 — Watch-Dedup über Bedingungs-Identität (Realfall: 9× „BMW API Offline Alert")', () => {

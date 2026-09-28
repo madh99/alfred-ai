@@ -382,6 +382,8 @@ interface ScanTopic {
 export class ReasoningEngine {
   private tickTimer?: ReturnType<typeof setInterval>;
   private lastRunHour = -1;
+  /** v1158 — Deferred-Insights täglich aufräumen (cleanup() existierte, wurde nie aufgerufen). */
+  private lastDeferredCleanupDay = '';
   private lastEventTriggerAt = 0;
   private readonly enabled: boolean;
   private readonly schedule: ReasoningConfig['schedule'];
@@ -642,6 +644,17 @@ ${this.buildTopicInstructions()}`;
   private async tick(): Promise<void> {
     if (!this.shouldRun()) return;
     this.markRun();
+
+    // v1158 — verfallene/zugestellte Deferred-Insights einmal täglich löschen
+    // (Realfall 28.09.: 178 verfallene Einträge seit April, nie aufgeräumt).
+    const heute = new Date().toISOString().slice(0, 10);
+    if (this.deliveryScheduler && this.lastDeferredCleanupDay !== heute) {
+      this.lastDeferredCleanupDay = heute;
+      try {
+        const n = await this.deliveryScheduler.cleanup();
+        if (n > 0) this.logger.info({ geloescht: n }, 'v1158 Deferred-Insights aufgeräumt');
+      } catch { /* non-critical */ }
+    }
 
     // Resolve owner masterUserId once (cached) for memory lookups in this tick
     if (!this.resolvedOwnerUserId) {

@@ -81,6 +81,22 @@ describe('v1155 — KgQuestionGenerator', () => {
     expect(gesendet).toHaveLength(0);
   });
 
+  // v1158 — Realfälle 27.09.: „Was macht **Mistral** eigentlich?", „Wo liegt **Niederösterreich** genau?"
+  it('v1158: System-Organisationen und Regionen/Städte werden nie gefragt, echte Venues schon', async () => {
+    const { gen } = makeGenerator([
+      { id: 'o1', name: 'Mistral', entityType: 'organization', mentionCount: 3787, attributes: {} },
+      { id: 'l1', name: 'Niederösterreich', entityType: 'location', mentionCount: 839, attributes: {} },
+      { id: 'l2', name: 'St. Pölten', entityType: 'location', mentionCount: 50, attributes: {} },
+      { id: 'l3', name: 'Praxis Dr. Steindl', entityType: 'location', mentionCount: 12, attributes: {} },
+    ]);
+    const gesendet: string[] = [];
+    const r = await gen.run('u1', { platform: 'telegram', chatId: 'c1', sendeNachricht: async t => { gesendet.push(t); } });
+    expect(r.asked).toBe(1);
+    expect(gesendet[0]).toContain('Praxis Dr. Steindl');
+    expect(gesendet[0]).not.toContain('Mistral');
+    expect(gesendet[0]).not.toContain('Niederösterreich');
+  });
+
   it('v1157: ohne bekannte Beziehung wird nur die Beziehung gefragt, nicht der Geburtstag', async () => {
     const { gen } = makeGenerator([
       { id: 'p1', name: 'Sabine', entityType: 'person', mentionCount: 30, attributes: {} },
