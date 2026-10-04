@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Alfred release script — handles the full multi-ha.N publish workflow:
-#   1. Auto-bump multi-ha.N in packages/cli/package.json
+# Alfred release script — handles the full <linie>.N publish workflow (Linie = Prerelease-Kennung, z. B. jarvis oder multi-ha):
+#   1. Auto-bump <linie>.N in packages/cli/package.json
 #   2. Sync the version badge in README.md
 #   3. Verify CHANGELOG has an entry for the new version
 #   4. Run pnpm build + bundle
 #   5. Commit (signed-off, no Claude-Code attribution per project convention)
 #   6. Push to gitlab + github in parallel
-#   7. npm publish --tag multi-ha
+#   7. npm publish --tag <linie>
 #   8. Optionally deploy to .92 + .93 via SSH
 #
 # Usage:
@@ -86,15 +86,16 @@ PKG_JSON="packages/cli/package.json"
 CURRENT_VERSION=$(grep '"version":' "$PKG_JSON" | head -1 | sed -E 's/.*"version": "([^"]+)".*/\1/')
 log "Current version: $CURRENT_VERSION"
 
-# Expected format: 0.19.0-multi-ha.N
-if [[ ! "$CURRENT_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-multi-ha\.([0-9]+)$ ]]; then
-  fail "Version '$CURRENT_VERSION' doesn't match 'X.Y.Z-multi-ha.N' format. Bump manually first."
+# Expected format: 0.19.0-<linie>.N — die Linie wird zum npm-Dist-Tag
+if [[ ! "$CURRENT_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([a-z][a-z-]*)\.([0-9]+)$ ]]; then
+  fail "Version '$CURRENT_VERSION' doesn't match 'X.Y.Z-<linie>.N' format. Bump manually first."
   exit 1
 fi
 BASE="${BASH_REMATCH[1]}"
-COUNTER="${BASH_REMATCH[2]}"
+TAG="${BASH_REMATCH[2]}"
+COUNTER="${BASH_REMATCH[3]}"
 NEW_COUNTER=$((COUNTER + 1))
-NEW_VERSION="${BASE}-multi-ha.${NEW_COUNTER}"
+NEW_VERSION="${BASE}-${TAG}.${NEW_COUNTER}"
 ok "Bumping → $NEW_VERSION"
 
 # ── Step 3: Verify CHANGELOG entry exists for new version ──
@@ -170,16 +171,16 @@ ok "Pushed to both remotes"
 
 # ── Step 8: npm publish ─────────────────────────────────
 if $DO_PUBLISH; then
-  log "Publishing to npm (tag: multi-ha)..."
+  log "Publishing to npm (tag: $TAG)..."
   if $DRY_RUN; then
-    printf '\033[35m[dry-run]\033[0m cd packages/cli && npm publish --tag multi-ha\n'
+    printf '\033[35m[dry-run]\033[0m cd packages/cli && npm publish --tag "$TAG"\n'
   else
-    if ! (cd packages/cli && npm publish --tag multi-ha); then
+    if ! (cd packages/cli && npm publish --tag "$TAG"); then
       fail "npm publish failed"
       exit 5
     fi
   fi
-  ok "Published @madh-io/alfred-ai@${NEW_VERSION} as tag 'multi-ha'"
+  ok "Published @madh-io/alfred-ai@${NEW_VERSION} as tag '${TAG}'"
 else
   warn "Skipping npm publish (--no-publish)"
 fi
@@ -194,10 +195,10 @@ if $DO_DEPLOY; then
   for HOST in 192.168.1.92 192.168.1.93; do
     log "  → $HOST: install + restart"
     if $DRY_RUN; then
-      printf '\033[35m[dry-run]\033[0m ssh madh@%s "sudo npm install -g @madh-io/alfred-ai@multi-ha && sudo systemctl restart alfred"\n' "$HOST"
+      printf '\033[35m[dry-run]\033[0m ssh madh@%s "sudo npm install -g @madh-io/alfred-ai@%s && sudo systemctl restart alfred"\n' "$HOST" "$NEW_VERSION"
     else
       if ! ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no "madh@${HOST}" \
-        "sudo npm install -g @madh-io/alfred-ai@multi-ha && sudo systemctl restart alfred"; then
+        "sudo npm install -g @madh-io/alfred-ai@${NEW_VERSION} && sudo systemctl restart alfred"; then
         fail "Deploy to $HOST failed"
         exit 6
       fi
@@ -213,11 +214,11 @@ ok "Release $NEW_VERSION complete"
 echo "  Branch:   $CURRENT_BRANCH"
 echo "  Commit:   $(git rev-parse --short HEAD)"
 if $DO_PUBLISH; then
-  echo "  Package:  @madh-io/alfred-ai@${NEW_VERSION} (tag: multi-ha)"
+  echo "  Package:  @madh-io/alfred-ai@${NEW_VERSION} (tag: ${TAG})"
 fi
 if $DO_DEPLOY; then
   echo "  Deployed: .92 + .93"
 else
   echo "  Deploy:   skipped — run with --deploy or manually:"
-  echo "            ssh madh@192.168.1.92 'sudo npm install -g @madh-io/alfred-ai@multi-ha && sudo systemctl restart alfred'"
+  echo "            ssh madh@192.168.1.92 'sudo npm install -g @madh-io/alfred-ai@${NEW_VERSION} && sudo systemctl restart alfred'"
 fi

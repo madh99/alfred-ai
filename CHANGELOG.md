@@ -5,7 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.1161] - 2026-10-04
+## [0.19.0-jarvis.1161] - 2026-10-04
+
+### Changed — Eigene Release-Linie `jarvis`
+
+Die Jarvis-Entwicklung läuft auf dem Branch `feature/jarvis` und wird unter dem npm-Dist-Tag `jarvis` veröffentlicht (`0.19.0-jarvis.N`, Zähler fortlaufend). Der Tag `multi-ha` bleibt auf .1160 stehen und ist für Produktions-Hotfixes aus `feature/multi-user` reserviert; damit können beide Linien nicht mehr kollidieren.
 
 ### Added — Jarvis Schicht 0, Teil 1: Job-Register mit Lebenszeichen (v1161)
 
