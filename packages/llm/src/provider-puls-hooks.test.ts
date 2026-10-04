@@ -74,6 +74,8 @@ describe('v1162 Provider-Puls-Hooks im ModelRouter', () => {
   it('klassifiziereFehler: billing / auth / rate / netz / modell / unbekannt', () => {
     const { router } = buildRouter({});
     expect(router.klassifiziereFehler(CREDIT_ERROR)).toBe('billing');
+    // v1164 — Realfall OpenAI (provider_puls 05.10.): lief als „rate" durch
+    expect(router.klassifiziereFehler(Object.assign(new Error('429 You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.'), { status: 429 }))).toBe('billing');
     expect(router.klassifiziereFehler(Object.assign(new Error('x'), { status: 401 }))).toBe('auth');
     expect(router.klassifiziereFehler(new Error('429 rate limit exceeded'))).toBe('rate');
     expect(router.klassifiziereFehler(new Error('fetch failed'))).toBe('netz');

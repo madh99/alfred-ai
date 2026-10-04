@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1164] - 2026-10-05
+
+### Fixed — OpenAI-Guthaben-Fehler wurde als Rate-Limit behandelt (v1164)
+
+Erster Fund des neuen Provider-Puls (05.10., 01:19–01:31): Tier `default` (OpenAI) stand mit Fehlerklasse `rate` in `provider_puls`, die drei Anthropic-Tiers korrekt mit `billing`. Der gespeicherte Fehlertext lautet „429 You have no credits remaining. Add credits to continue using the API …" — diese Formulierung kannte die Billing-Erkennung des Routers nicht. Folgen seit dem 19.08.: kein 5-Minuten-Cooldown für OpenAI, also ging **jeder** Aufruf zuerst gegen den toten Primary und erst dann in die Fallback-Kette; keine v868-Meldung für OpenAI; der Wächter hätte „nicht erreichbar (rate)" statt „ohne Guthaben" gesagt.
+
+- Billing-Erkennung erweitert um „no credits remaining" und „add credits to continue".
+- Test mit dem echten OpenAI-Fehlertext.
+
+Der Puls hat damit in der ersten halben Stunde Betrieb eine seit sieben Wochen bestehende Fehlklassifikation sichtbar gemacht.
+
 ## [0.19.0-jarvis.1163] - 2026-10-05
 
 ### Fixed — Provider-Puls lädt seine Historie erst nach den Migrationen (v1163)

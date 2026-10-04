@@ -194,6 +194,11 @@ export class ModelRouter extends LLMProvider {
       msg.includes('insufficient_quota') ||
       msg.includes('insufficient credits') ||
       msg.includes('exceeded your current quota') ||
+      // v1164 — OpenAI seit 2026: „429 You have no credits remaining. Add credits
+      // to continue using the API …" — lief als Rate-Limit durch: kein Cooldown,
+      // jeder Call erst gegen den toten Primary, Puls-Klasse „rate" statt „billing".
+      msg.includes('no credits remaining') ||
+      msg.includes('add credits to continue') ||
       msg.includes('billing') && msg.includes('error');
   }
 
