@@ -97,6 +97,8 @@ export type { SandboxChatMessage, SandboxChatRole } from './repositories/sandbox
 export { GoalsRepository } from './repositories/goals-repository.js';
 export type { Goal, GoalCheckpoint, GoalStatus, GoalCategory, GoalCadence, CheckpointStatus } from './repositories/goals-repository.js';
 export { KgQuestionsRepository } from './repositories/kg-questions-repository.js';
+export { JobRunsRepository } from './repositories/job-runs-repository.js';
+export type { JobRun } from './repositories/job-runs-repository.js';
 export type { KgQuestion, QuestionStatus } from './repositories/kg-questions-repository.js';
 export { RunbookRepository } from './repositories/runbook-repository.js';
 export type { Runbook, RunbookCreateInput, RunbookSource, RunbookStatus } from './repositories/runbook-repository.js';

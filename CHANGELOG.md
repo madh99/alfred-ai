@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1161] - 2026-10-04
+
+### Added — Jarvis Schicht 0, Teil 1: Job-Register mit Lebenszeichen (v1161)
+
+Erster Schritt der Jarvis-Architektur (`docs/specs/2026-10-04-jarvis-architektur.md`). Hintergrund: Drei der fünf Nachtjob-Ausfälle der letzten Wochen (v1154, v1158) waren keine Fachfehler, sondern tote oder nie registrierte Timer, die niemand bemerkte. Periodische Arbeit wird deshalb nicht mehr als verstreute `setInterval`-Blöcke angelegt, sondern **deklariert** und von einem Register ausgeführt, das jeden Lauf nachweisbar macht.
+
+- **Job-Register** (`packages/core/src/lebenszeichen/job-register.ts`): Ein Job besteht aus Schlüssel, Takt (`taeglich HH:MM`, `woechentlich`, `intervall`), Geltungsbereich (`master` / `alle` / `global`), optionalem HA-Tages-Slot und einer Lauf-Funktion, die ein Ergebnis mit Zählern liefert. Das Register plant alle Jobs auf dem 10-Minuten-Raster, holt tägliche und wöchentliche Jobs nach einem Restart einmalig nach, dedupliziert per `reasoning_slots`, führt je Master-User aus (Fehler eines Users brechen die anderen nicht ab) und loggt einheitlich „Job registriert" / „Job gelaufen" / „Job fehlgeschlagen" mit Dauer und Zählern.
+- **`job_runs`** (SQLite v122 / PG v126, `JobRunsRepository`): Jeder Lauf wird mit Start, Ende, Ergebnis, Zählern, Fehlertext und Node persistiert — die Datenbasis für die kommenden Proben („lief der Job innerhalb seines Takts?") und die Lebenszeichen-Kachel.
+- **Migriert ohne Verhaltensänderung**: Memory-Konsolidierung (03:00), Pattern-Analyse (03:30) und KG-Wartung inkl. Entity-Embeddings und Stammdaten-Sync (04:30). Die bisherigen Fach-Logzeilen bleiben erhalten; die drei Einzel-Timer und ihre Felder entfallen.
+- **Lint-Test** (`timer-register-lint.test.ts`): Ratchet auf die Zahl roher `setInterval`-Aufrufe in `alfred.ts` (27 → 24) — neue periodische Arbeit gehört ins Register. Zusätzlich ein Muster-Test gegen die Falle „Stunden-Timer mit Minuten-Fenster" (Realfall v1158).
+- 10 Tests (`job-register.test.ts`): Fälligkeit täglich/wöchentlich/intervall, Nachholen nach Restart, Slot von anderem Node, Fehler-Isolation je User, globale Jobs, doppelte Schlüssel.
+
+Nächste Teile von Schicht 0: Provider-Puls, synthetische Proben 06:50, Degradations-/Guthaben-Wächter (ein Morgensatz, kein Modell-Gate), Dashboard-Kachel.
+
 ## [0.19.0-multi-ha.1160] - 2026-10-04
 
 ### Fixed — Reasoning-Engine loggt Activity unter der Master-UUID (v1160)

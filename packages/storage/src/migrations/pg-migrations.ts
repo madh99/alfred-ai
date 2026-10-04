@@ -2071,4 +2071,22 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE social_media_assets ADD COLUMN IF NOT EXISTS duration_sec REAL`, []);
     },
   },
+  {
+    version: 126,
+    description: 'v1161 — Jarvis Schicht 0: job_runs (Lebenszeichen je Job-Lauf) (PG-Spiegel zu SQLite v122).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS job_runs (
+        id TEXT PRIMARY KEY,
+        job_key TEXT NOT NULL,
+        user_id TEXT,
+        node_id TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        ok INTEGER,
+        zaehler TEXT,
+        fehler TEXT
+      )`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_job_runs_key_started ON job_runs(job_key, started_at)`, []);
+    },
+  },
 ];

@@ -407,10 +407,9 @@ export class Alfred {
   private sonosSkill?: import('@alfred/skills').SonosSkill;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
-  private memoryConsolidatorTimer?: ReturnType<typeof setInterval>;
-  private patternAnalyzerTimer?: ReturnType<typeof setInterval>;
+  /** v1161 — Jarvis Schicht 0: deklaratives Job-Register (ersetzt verstreute Nachtjob-Timer). */
+  private jobRegister?: import('./lebenszeichen/job-register.js').JobRegister;
   private temporalAnalyzerTimer?: ReturnType<typeof setInterval>;
-  private kgMaintenanceTimer?: ReturnType<typeof setInterval>;
   /** v933 — Social-Media-Betrieb */
   private socialRepo?: import('@alfred/storage').SocialRepository;
   private socialSkillRef?: import('@alfred/skills').SocialSkill;
@@ -13275,52 +13274,43 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // Der Stunden-Timer feuerte immer zur Start-Minute des Prozesses, „Stunde ==
       // 4 UND Minute ≥ 30" war nach Restarts um :04/:28 NIE wahr — KG-Wartung und
       // Pattern-Analyse liefen seit 12.09. nicht (letzter kg-maintenance-Slot 11.09.).
-      const { istNachtjobFaellig } = await import('./nachtjob-plan.js');
-      // v1159 — Nachtjobs laufen nur für Master-User (listMasters): Plattform-
-      // Aliase desselben Menschen tragen keine eigenen Daten; über listAll()
-      // liefen 8 Läufe statt 2 und schrieben kopierte Muster in jede Identität.
-      let lastConsolidationDay = '';
-      this.memoryConsolidatorTimer = setInterval(async () => {
-        const now = new Date();
-        const today = istNachtjobFaellig(now, 3, 0, lastConsolidationDay);
-        if (!today) return;
-        lastConsolidationDay = today;
-        if (!await this.claimDailySlot(`consolidation:${today}`)) return;
-        try {
-          const users = await userRepoRef.listMasters();
-          for (const user of users) {
-            const result = await consolidator.consolidate(user.id);
-            if (result.deleted > 0 || result.merged > 0) {
-              this.logger.info({ userId: user.id, ...result }, 'Memory consolidation completed');
-            }
+      // v1161 — Jarvis Schicht 0: Nachtjobs werden DEKLARIERT (lebenszeichen/
+      // job-register.ts) statt als eigene Timer verstreut. Das Register plant auf
+      // dem 10-min-Raster, holt nach Restart nach, dedupliziert per Tages-Slot,
+      // läuft je Master-User (v1159) und schreibt jeden Lauf nach job_runs.
+      const { JobRegister } = await import('./lebenszeichen/job-register.js');
+      const { JobRunsRepository } = await import('@alfred/storage');
+      this.jobRegister = new JobRegister({
+        logger: this.logger.child({ component: 'lebenszeichen' }),
+        nodeId: this.config.cluster?.nodeId ?? 'single',
+        listMasters: () => userRepoRef.listMasters(),
+        listAll: () => userRepoRef.listAll(),
+        claimSlot: (key) => this.claimDailySlot(key),
+        runs: new JobRunsRepository(this.database.getAdapter()),
+      });
+      const jobRegister = this.jobRegister;
+      jobRegister.registriere({
+        key: 'consolidation', beschreibung: 'Memory-Konsolidierung', takt: { art: 'taeglich', um: '03:00' }, bereich: 'master', slot: true,
+        run: async ({ userId }) => {
+          const result = await consolidator.consolidate(userId!);
+          if (result.deleted > 0 || result.merged > 0) {
+            this.logger.info({ userId, ...result }, 'Memory consolidation completed');
           }
-        } catch (err) {
-          this.logger.warn({ err }, 'Memory consolidation failed');
-        }
-      }, 10 * 60_000); // v1158 — 10-min-Raster, handelt einmal täglich ab 03:00 (nachholend)
+          return { ok: true, zaehler: { deleted: result.deleted, merged: result.merged } };
+        },
+      });
 
       // Pattern analysis: daily extraction of behavioral patterns (runs at ~3:30 AM, after consolidation)
       if (this.activityRepo) {
         const patternAnalyzer = new PatternAnalyzer(this.llmProvider, this.memoryRepo, this.activityRepo, this.logger.child({ component: 'pattern-analyzer' }));
-        let lastPatternDay = '';
-        this.patternAnalyzerTimer = setInterval(async () => {
-          const now = new Date();
-          const today = istNachtjobFaellig(now, 3, 30, lastPatternDay);
-          if (!today) return;
-          lastPatternDay = today;
-          if (!await this.claimDailySlot(`pattern-analysis:${today}`)) return;
-          try {
-            const users = await userRepoRef.listMasters();
-            for (const user of users) {
-              const count = await patternAnalyzer.analyze(user.id);
-              if (count > 0) {
-                this.logger.info({ userId: user.id, patterns: count }, 'Pattern analysis completed');
-              }
-            }
-          } catch (err) {
-            this.logger.warn({ err }, 'Pattern analysis failed');
-          }
-        }, 10 * 60_000); // v1158 — 10-min-Raster, einmal täglich ab 03:30 (nachholend)
+        jobRegister.registriere({
+          key: 'pattern-analysis', beschreibung: 'Verhaltensmuster + Skill-Regeln', takt: { art: 'taeglich', um: '03:30' }, bereich: 'master', slot: true,
+          run: async ({ userId }) => {
+            const count = await patternAnalyzer.analyze(userId!);
+            if (count > 0) this.logger.info({ userId, patterns: count }, 'Pattern analysis completed');
+            return { ok: true, zaehler: { patterns: count } };
+          },
+        });
 
         // Temporal analysis: weekly trends + anomalies (Sunday 4:00 AM)
         const temporalAnalyzer = new TemporalAnalyzer(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'temporal-analyzer' }));
@@ -13465,54 +13455,34 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         // v921 — TÄGLICHE KG-Maintenance (04:30). Vorher lief sie nur sonntags im
         // Temporal-Block: Duplikate, Garbage-Locations und Typ-Konflikte
         // akkumulierten bis zu 7 Tage. Idempotent, HA-dedupliziert per Tages-Slot.
-        let lastKgMaintenanceDay = '';
-        this.kgMaintenanceTimer = setInterval(async () => {
-          const now = new Date();
-          const today = istNachtjobFaellig(now, 4, 30, lastKgMaintenanceDay);
-          if (!today) return;
-          lastKgMaintenanceDay = today;
-
-          // HA distributed dedup: nur ein Node pro Tag
-          if (this.database.getAdapter().type === 'postgres') {
-            try {
-              const slotResult = await this.database.getAdapter().execute(
-                'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
-                [`kg-maintenance:${today}`, this.config.cluster?.nodeId ?? 'single', now.toISOString()],
-              );
-              if (slotResult.changes === 0) return;
-            } catch { /* proceed on error (table might not exist yet) */ }
-          }
-
-          try {
+        jobRegister.registriere({
+          key: 'kg-maintenance', beschreibung: 'KG-Wartung + Entity-Embeddings + Stammdaten-Sync', takt: { art: 'taeglich', um: '04:30' }, bereich: 'master', slot: true,
+          run: async ({ userId }) => {
             const kgServiceDaily = new KnowledgeGraphService(
               new KnowledgeGraphRepository(this.database.getAdapter()),
               this.logger.child({ component: 'knowledge-graph' }), this.memoryRepo,
             );
             // v1144 — K1 Stufe 2: nächtliche Entity-Einbettung im Wartungslauf
             if (this.embeddingServiceRef) kgServiceDaily.setEmbeddingService(this.embeddingServiceRef, this.embeddingRepoRef);
-            const users = await userRepoRef.listMasters();
-            for (const user of users) {
-              await kgServiceDaily.maintenance(user.id);
-            }
-            // v1146 — S3: Stammdaten-Sync direkt nach der Wartung — deine
-            // expliziten Memory-Fakten fließen deterministisch in den Graph.
+            await kgServiceDaily.maintenance(userId!);
+            // v1146 — S3: Stammdaten-Sync direkt nach der Wartung — explizite
+            // Memory-Fakten fließen deterministisch in den Graph.
+            let gesetzt = 0;
             if (this.memoryRepo) {
               const { StammdatenSync } = await import('./stammdaten-sync.js');
               const sync = new StammdatenSync(
                 new KnowledgeGraphRepository(this.database.getAdapter()), this.memoryRepo,
                 this.logger.child({ component: 'stammdaten-sync' }));
-              for (const user of users) {
-                await sync.run(user.id).catch(() => { /* je User best-effort */ });
-              }
+              const r = await sync.run(userId!).catch(() => undefined) as { gesetzt?: number } | undefined;
+              gesetzt = r?.gesetzt ?? 0;
             }
-            this.logger.info({ users: users.length }, 'v921 daily KG maintenance completed');
-          } catch (err) {
-            this.logger.warn({ err }, 'v921 daily KG maintenance failed');
-          }
-        }, 10 * 60_000); // v1158 — 10-min-Raster, einmal täglich ab 04:30 (nachholend)
-        // v1158 — Registrierung sichtbar machen (Lektion v1154: Timer erst dann als lebendig melden)
-        this.logger.info('v1158 Nachtjob-Timer registriert: Konsolidierung 03:00, Pattern-Analyse 03:30, KG-Wartung 04:30 (10-min-Raster, Nachholen nach Restart)');
+            return { ok: true, zaehler: { stammdatenGesetzt: gesetzt } };
+          },
+        });
       }
+      // v1161 — Register starten: registriert-Logzeilen sind oben gefallen, der
+      // erste Tick holt heute noch ausstehende Läufe nach (Lektion v1154/v1158).
+      this.jobRegister.start();
     }
 
     // ── Reflection Engine (self-optimization) ────────────────
@@ -13830,21 +13800,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = undefined;
     }
-    if (this.memoryConsolidatorTimer) {
-      clearInterval(this.memoryConsolidatorTimer);
-      this.memoryConsolidatorTimer = undefined;
-    }
-    if (this.patternAnalyzerTimer) {
-      clearInterval(this.patternAnalyzerTimer);
-      this.patternAnalyzerTimer = undefined;
-    }
+    this.jobRegister?.stop();
     if (this.temporalAnalyzerTimer) {
       clearInterval(this.temporalAnalyzerTimer);
       this.temporalAnalyzerTimer = undefined;
-    }
-    if (this.kgMaintenanceTimer) {
-      clearInterval(this.kgMaintenanceTimer);
-      this.kgMaintenanceTimer = undefined;
     }
     if (this.insightExpiryTimer) {
       clearInterval(this.insightExpiryTimer);

@@ -2763,4 +2763,22 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE social_media_assets ADD COLUMN duration_sec REAL`);
     },
   },
+  {
+    version: 122,
+    description: 'v1161 — Jarvis Schicht 0: job_runs (Lebenszeichen je Job-Lauf) (SQLite-Spiegel zu PG v126).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS job_runs (
+        id TEXT PRIMARY KEY,
+        job_key TEXT NOT NULL,
+        user_id TEXT,
+        node_id TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        ok INTEGER,
+        zaehler TEXT,
+        fehler TEXT
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_job_runs_key_started ON job_runs(job_key, started_at)`);
+    },
+  },
 ];
