@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1160] - 2026-10-04
+
+### Fixed — Reasoning-Engine loggt Activity unter der Master-UUID (v1160)
+
+Nachweis nach v1159 (29.09.–04.10.): Nachtjobs, Pattern-Analyse und Insight-Sweep laufen täglich und ausschließlich für Master-User; 3.018 veraltete Insights sind abgelaufen, der KG bleibt frei von Phantom-Entitäten. Rest-Fund: 147 neue Activity-Zeilen lagen wieder unter der rohen Telegram-ID — die Reasoning-Engine protokollierte ihre `scheduled_exec`-Läufe an drei Stellen mit der Chat-ID statt der aufgelösten Owner-ID.
+
+- Die drei Logger-Aufrufe nutzen jetzt `resolvedOwnerUserId` (Fallback Chat-ID nur, solange der Owner noch nicht aufgelöst ist).
+- Bestandszeilen werden mit dem idempotenten Schritt 1 der v1159-Migration nachgezogen.
+
 ## [0.19.0-multi-ha.1159] - 2026-09-28
 
 ### Fixed — Identitäten sind Logins, der Master ist die Wissens-Identität (v1159)

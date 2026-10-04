@@ -777,7 +777,7 @@ ${this.buildTopicInstructions()}`;
         this.activityLogger?.logScheduledExec({
           actionId: 'reasoning-engine', actionName: 'Reasoning Engine',
           platform: this.defaultPlatform, chatId: this.defaultChatId,
-          userId: this.defaultChatId, outcome: 'success', durationMs: scanDurationMs,
+          userId: this.resolvedOwnerUserId ?? this.defaultChatId, outcome: 'success', durationMs: scanDurationMs,
         });
         return;
       }
@@ -883,14 +883,14 @@ ${this.buildTopicInstructions()}`;
       this.activityLogger?.logScheduledExec({
         actionId: 'reasoning-engine', actionName: 'Reasoning Engine',
         platform: this.defaultPlatform, chatId: this.defaultChatId,
-        userId: this.defaultChatId, outcome: 'success', durationMs,
+        userId: this.resolvedOwnerUserId ?? this.defaultChatId, outcome: 'success', durationMs,
       });
     } catch (err) {
       this.logger.error({ err }, 'Reasoning pass failed');
       this.activityLogger?.logScheduledExec({
         actionId: 'reasoning-engine', actionName: 'Reasoning Engine',
         platform: this.defaultPlatform, chatId: this.defaultChatId,
-        userId: this.defaultChatId, outcome: 'error',
+        userId: this.resolvedOwnerUserId ?? this.defaultChatId, outcome: 'error',
         error: err instanceof Error ? err.message : String(err),
       });
     }
