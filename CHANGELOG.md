@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1165] - 2026-10-05
+
+### Changed — Jarvis Schicht 0: fünf weitere Jobs ins Register, Register unabhängig von activeLearning (v1165)
+
+Sechs Jobs, die bisher je ein eigenes Zeitmuster hatten, werden jetzt deklariert und vom Register geführt. Alle laufen damit auf dem 10-Minuten-Raster mit Nachholen nach Restart, schreiben nach `job_runs`, sind HA-dedupliziert und tauchen in der Lebenszeichen-Kachel auf.
+
+| Job | Takt | vorher |
+|---|---|---|
+| `itsm-tagesabschluss` (Hygiene + Tagesreflexion) | täglich 23:00 | `setTimeout` bis 23:00, dann 24-h-Intervall — ein Restart nach 23:00 ließ den Tag ausfallen |
+| `kg-fragen` | So 18:00 | täglicher 24-h-Intervall mit Sonntags-Check im Lauf |
+| `ziel-extraktion` (Goal-Extractor) | So 21:00 | `setTimeout` bis Sonntag, 7-Tage-Intervall |
+| `insight-sweep` | täglich 09:00 | `setTimeout` bis 09:00, 24-h-Intervall |
+| `wochen-analyse` (Temporal-Trends, Action-Feedback, Memory-/BMW-Cleanup, Chat-Wissen; je Master) | So 04:00 | Stunden-Timer mit `getHours() === 4` — dieselbe Falle wie v1158 |
+| `service-discovery` (Services aus CMDB-Assets) | So 04:10 | im selben Stunden-Timer |
+
+- **Register-Erzeugung vorgezogen**: Das Register entsteht jetzt direkt nach dem Model-Router, sodass jeder Job an seiner Wiring-Stelle per `registriereJob()` deklariert werden kann. Fehlt das Register, wird das als Fehler geloggt statt still übersprungen (Lektion v1154).
+- **Start unabhängig von activeLearning**: Wächter, Proben und `start()` lagen bisher innerhalb des activeLearning-Blocks. Bei deaktiviertem activeLearning wäre das gesamte Register nie gestartet worden.
+- Fach-Logzeilen und Verhalten der Jobs unverändert; die „scheduled"-Zeilen mit `firstRunIn` entfallen zugunsten der einheitlichen „Job registriert"-Zeile.
+- Lint-Ratchet 24 → 19 rohe `setInterval`-Aufrufe in `alfred.ts`.
+
+Verbleibende Kandidaten für das Register: Interessen-/Digest-/Vorausschau-/Lern-Telemetrie-Timer (ein Sammel-Tick mit fünf Tages-Merkern), Content-Studio, Backup, Commvault/MikroTik-Polling, Reflector-Sweeps, CMDB-Discovery/Health-Check.
+
 ## [0.19.0-jarvis.1164] - 2026-10-05
 
 ### Fixed — OpenAI-Guthaben-Fehler wurde als Rate-Limit behandelt (v1164)

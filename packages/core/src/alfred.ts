@@ -146,14 +146,6 @@ async function findKnownErrorMatch(
   return null;
 }
 
-/** Get ISO week number for a date. */
-function getISOWeek(date: Date): number {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
-
 export class Alfred {
   private readonly logger: Logger;
   private database!: Database;
@@ -414,7 +406,6 @@ export class Alfred {
   private degradationsWaechter?: import('./lebenszeichen/degradations-waechter.js').DegradationsWaechter;
   private lebenszeichenRepo?: import('@alfred/storage').LebenszeichenRepository;
   private letzteProben: { zeit?: string; ergebnisse: import('./lebenszeichen/proben.js').ProbeErgebnis[] } = { ergebnisse: [] };
-  private temporalAnalyzerTimer?: ReturnType<typeof setInterval>;
   /** v933 — Social-Media-Betrieb */
   private socialRepo?: import('@alfred/storage').SocialRepository;
   private socialSkillRef?: import('@alfred/skills').SocialSkill;
@@ -438,6 +429,12 @@ export class Alfred {
   private interestsDailyTimer?: ReturnType<typeof setInterval>;
 
   /** v930 — HA-Tages-Slot über reasoning_slots (nur PG; Single-Node/SQLite → immer true). */
+  /** v1165 — Job deklarieren; fehlt das Register, wird das LAUT (Lektion v1154: stille Nicht-Registrierung). */
+  private registriereJob(def: import('./lebenszeichen/job-register.js').JobDefinition): void {
+    if (!this.jobRegister) { this.logger.error({ job: def.key }, 'Lebenszeichen: Job-Register fehlt — Job NICHT registriert'); return; }
+    this.jobRegister.registriere(def);
+  }
+
   /** v1162 — Ein Satz an den Owner über den primären Chat-Adapter (best-effort). */
   private async sendeAnOwner(text: string): Promise<boolean> {
     const ownerChatId = this.config.security?.ownerUserId;
@@ -709,6 +706,22 @@ export class Alfred {
       // lade() erst nach den Migrationen (beim Register-Start) — v1163
       const puls = this.providerPuls;
       llmProvider.setPulsCallback((ev) => { puls.verarbeite(ev); });
+    }
+    // v1165 — Job-Register FRÜH anlegen, damit jeder Job an seiner Wiring-Stelle
+    // deklariert werden kann; start() erfolgt am Ende von initialize() (unbedingt).
+    {
+      const { JobRegister } = await import('./lebenszeichen/job-register.js');
+      const { JobRunsRepository } = await import('@alfred/storage');
+      const userRepoFuerRegister = this.userRepo;
+      if (!userRepoFuerRegister) throw new Error('Job-Register: userRepo fehlt');
+      this.jobRegister = new JobRegister({
+        logger: this.logger.child({ component: 'lebenszeichen' }),
+        nodeId: this.config.cluster?.nodeId ?? 'single',
+        listMasters: () => userRepoFuerRegister.listMasters(),
+        listAll: () => userRepoFuerRegister.listAll(),
+        claimSlot: (key) => this.claimDailySlot(key),
+        runs: new JobRunsRepository(adapter),
+      });
     }
     llmProvider.setBillingAlertCallback((info) => {
       this.logger.warn({ ...info }, info.kind === 'recovered' ? 'v868.3 LLM billing recovered' : 'v868 LLM billing failure (Owner-Satz kommt vom Lebenszeichen-Wächter)');
@@ -3977,18 +3990,12 @@ export class Alfred {
             };
             const dailyItsm = async () => { await itsmHygiene(); await dailyReflection(); };
 
-            // Schedule for ~23:00 local each day. Compute initial delay so first fire is at the next 23:00.
-            const now = new Date();
-            const next23 = new Date(now);
-            next23.setHours(23, 0, 0, 0);
-            if (next23.getTime() <= now.getTime()) next23.setDate(next23.getDate() + 1);
-            const initialDelay = next23.getTime() - now.getTime();
-            setTimeout(() => {
-              dailyItsm();
-              const dailyInterval = setInterval(dailyItsm, 24 * 3600_000);
-              (dailyInterval as { unref?: () => void }).unref?.();
-            }, initialDelay).unref?.();
-            this.logger.info({ firstRunIn: Math.round(initialDelay / 60_000) + 'min' }, 'ITSM daily-reflection scheduled (23:00 local)');
+            // v1165 — ins Job-Register: täglich 23:00 mit Nachholen. Vorher
+            // setTimeout→24-h-Intervall: ein Restart nach 23:00 ließ den Tag ausfallen.
+            this.registriereJob({
+              key: 'itsm-tagesabschluss', beschreibung: 'ITSM-Hygiene (Korrekturen, Stale, So-Eskalation) + Tagesreflexion', takt: { art: 'taeglich', um: '23:00' }, bereich: 'global', slot: true,
+              run: async () => { await dailyItsm(); return { ok: true }; },
+            });
           }
         }
 
@@ -4547,17 +4554,11 @@ export class Alfred {
                     this.logger.warn({ err }, 'KG-question-generator failed (non-fatal)');
                   }
                 };
-                // Schedule next 18:00 local
-                const next18 = new Date();
-                next18.setHours(18, 0, 0, 0);
-                if (next18.getTime() <= Date.now()) next18.setDate(next18.getDate() + 1);
-                const delayQg = next18.getTime() - Date.now();
-                setTimeout(() => {
-                  runDailyQg();
-                  const intv = setInterval(runDailyQg, 24 * 3600_000);
-                  (intv as { unref?: () => void }).unref?.();
-                }, delayQg).unref?.();
-                this.logger.info({ firstRunIn: Math.round(delayQg / 60_000) + 'min', platform: ownerPlatformQg }, 'KG-Question-Generator scheduled (daily 18:00, max 3/run)');
+                // v1165 — ins Job-Register: wöchentlich So 18:00 (v1157: nur sonntags).
+                this.registriereJob({
+                  key: 'kg-fragen', beschreibung: `Wissenslücken-Fragen an den Owner (${ownerPlatformQg}, max 3)`, takt: { art: 'woechentlich', tag: 0, um: '18:00' }, bereich: 'global', slot: true,
+                  run: async () => { await runDailyQg(); return { ok: true }; },
+                });
               }
             } catch (err) {
               this.logger.warn({ err }, 'KG-Question-Generator wiring failed (non-fatal)');
@@ -4594,19 +4595,11 @@ export class Alfred {
                     await extractor.run(ownerUidForGoals, linkedForGoalsWithLegacy, { lookbackDays: 7 });
                   } catch (err) { this.logger.warn({ err }, 'Weekly goal-extraction failed (non-fatal)'); }
                 };
-                // Next Sunday 21:00
-                const now = new Date();
-                const next = new Date(now);
-                next.setHours(21, 0, 0, 0);
-                const daysToSun = (7 - next.getDay()) % 7;
-                next.setDate(next.getDate() + (daysToSun === 0 && next.getTime() <= now.getTime() ? 7 : daysToSun));
-                const delay = next.getTime() - now.getTime();
-                setTimeout(() => {
-                  runWeekly();
-                  const intv = setInterval(runWeekly, 7 * 86400_000);
-                  (intv as { unref?: () => void }).unref?.();
-                }, delay).unref?.();
-                this.logger.info({ firstRunIn: Math.round(delay / 60_000 / 60) + 'h' }, 'Goal-Extractor scheduled (Sun 21:00)');
+                // v1165 — ins Job-Register: wöchentlich So 21:00.
+                this.registriereJob({
+                  key: 'ziel-extraktion', beschreibung: 'Ziele aus den Gesprächen der Woche (Goal-Extractor)', takt: { art: 'woechentlich', tag: 0, um: '21:00' }, bereich: 'global', slot: true,
+                  run: async () => { await runWeekly(); return { ok: true }; },
+                });
               }
             } catch (err) {
               this.logger.warn({ err }, 'Goal-Extractor wiring failed (non-fatal)');
@@ -4642,18 +4635,12 @@ export class Alfred {
                 this.logger.info({ inserted: r.inserted, refreshed: r.refreshed }, 'v1158 Insight daily-sweep gelaufen');
               } catch (err) { this.logger.debug({ err }, 'Insight daily-sweep failed (non-fatal)'); }
             };
-            // Schedule next 09:00 local, then 24h interval
-            const next09 = new Date();
-            next09.setHours(9, 0, 0, 0);
-            if (next09.getTime() <= Date.now()) next09.setDate(next09.getDate() + 1);
-            const delay = next09.getTime() - Date.now();
-            setTimeout(() => {
-              sweepNow();
-              const intv = setInterval(sweepNow, 24 * 3600_000);
-              (intv as { unref?: () => void }).unref?.();
-            }, delay).unref?.();
-            this.logger.info({ firstRunIn: Math.round(delay / 60_000) + 'min' }, 'v1158 Insight daily-sweep registriert (09:00 local)');
-            this.logger.info({ firstSweepIn: Math.round(delay / 60_000) + 'min', adapters: insightEngine.listRegistered() }, 'Insight-Engine scheduled (daily 09:00)');
+            // v1165 — ins Job-Register: täglich 09:00 mit Nachholen.
+            this.registriereJob({
+              key: 'insight-sweep', beschreibung: 'Insight-Adapter sammeln + veraltete Insights ablaufen lassen', takt: { art: 'taeglich', um: '09:00' }, bereich: 'global', slot: true,
+              run: async () => { await sweepNow(); return { ok: true }; },
+            });
+            this.logger.info({ adapters: insightEngine.listRegistered() }, 'Insight-Engine scheduled (daily 09:00)');
           }
         } catch (err) {
           this.logger.warn({ err }, 'Insight-Engine wiring failed (non-fatal)');
@@ -13318,17 +13305,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // job-register.ts) statt als eigene Timer verstreut. Das Register plant auf
       // dem 10-min-Raster, holt nach Restart nach, dedupliziert per Tages-Slot,
       // läuft je Master-User (v1159) und schreibt jeden Lauf nach job_runs.
-      const { JobRegister } = await import('./lebenszeichen/job-register.js');
-      const { JobRunsRepository } = await import('@alfred/storage');
-      this.jobRegister = new JobRegister({
-        logger: this.logger.child({ component: 'lebenszeichen' }),
-        nodeId: this.config.cluster?.nodeId ?? 'single',
-        listMasters: () => userRepoRef.listMasters(),
-        listAll: () => userRepoRef.listAll(),
-        claimSlot: (key) => this.claimDailySlot(key),
-        runs: new JobRunsRepository(this.database.getAdapter()),
-      });
       const jobRegister = this.jobRegister;
+      if (!jobRegister) throw new Error('Job-Register fehlt (v1165: wird im Puls-Block angelegt)');
       jobRegister.registriere({
         key: 'consolidation', beschreibung: 'Memory-Konsolidierung', takt: { art: 'taeglich', um: '03:00' }, bereich: 'master', slot: true,
         run: async ({ userId }) => {
@@ -13353,47 +13331,26 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
 
         // Temporal analysis: weekly trends + anomalies (Sunday 4:00 AM)
+        // v1165 — ins Job-Register: wöchentlich So 04:00 je Master mit Nachholen.
+        // Vorher Stunden-Timer mit "getHours() === 4" (gleiche Falle wie v1158).
         const temporalAnalyzer = new TemporalAnalyzer(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'temporal-analyzer' }));
-        let lastTemporalWeek = '';
-        this.temporalAnalyzerTimer = setInterval(async () => {
-          const now = new Date();
-          const isoWeek = `${now.getFullYear()}-W${String(getISOWeek(now)).padStart(2, '0')}`;
-          // Only run on Sundays at 4:00 AM, once per week
-          if (now.getDay() !== 0 || now.getHours() !== 4 || lastTemporalWeek === isoWeek) return;
-          lastTemporalWeek = isoWeek;
-
-          // HA distributed dedup: only one node runs weekly maintenance
-          if (this.database.getAdapter().type === 'postgres') {
-            try {
-              const slotKey = `maintenance:${isoWeek}`;
-              const slotResult = await this.database.getAdapter().execute(
-                'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
-                [slotKey, this.config.cluster?.nodeId ?? 'single', now.toISOString()],
-              );
-              if (slotResult.changes === 0) {
-                this.logger.debug('Weekly maintenance slot already claimed by another node');
-                return;
-              }
-            } catch { /* proceed on error (table might not exist yet) */ }
-          }
-
-          try {
-            const users = await userRepoRef.listMasters();
+        this.registriereJob({
+          key: 'wochen-analyse', beschreibung: 'Temporal-Trends/Anomalien, Action-Feedback, Memory-/BMW-Cleanup, Chat-Wissen', takt: { art: 'woechentlich', tag: 0, um: '04:00' }, bereich: 'master', slot: true,
+          run: async ({ userId }) => {
             const kgService = this.reasoningEngine
               ? new KnowledgeGraphService(new KnowledgeGraphRepository(this.database.getAdapter()), this.logger.child({ component: 'knowledge-graph' }), this.memoryRepo)
               : undefined;
-            for (const user of users) {
-              const report = await temporalAnalyzer.analyze(user.id);
-              if (report.trends.length > 0 || report.anomalies.length > 0) {
-                this.logger.info({ userId: user.id, trends: report.trends.length, anomalies: report.anomalies.length }, 'Temporal analysis completed');
-              }
+            const report = await temporalAnalyzer.analyze(userId!);
+            if (report.trends.length > 0 || report.anomalies.length > 0) {
+              this.logger.info({ userId, trends: report.trends.length, anomalies: report.anomalies.length }, 'Temporal analysis completed');
+            }
               // v921 — KG maintenance läuft jetzt TÄGLICH im eigenen kgMaintenanceTimer
               // (04:30), nicht mehr nur sonntags hier. Wöchentlich war zu selten:
               // Duplikate/Garbage akkumulierten 7 Tage.
               // Action feedback: acceptance rates → memories
               if (this.activityRepo && this.memoryRepo) {
                 const feedbackTracker = new ActionFeedbackTracker(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'action-feedback' }));
-                await feedbackTracker.analyze(user.id);
+                await feedbackTracker.analyze(userId!);
               }
               // Cleanup expired memories (connection_*, event-bound, TTL-based)
               if (this.memoryRepo) {
@@ -13415,10 +13372,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
                     `SELECT role, content FROM messages WHERE conversation_id IN (
                       SELECT id FROM conversations WHERE user_id = ?
                     ) ORDER BY created_at DESC LIMIT 100`,
-                    [user.id],
+                    [userId!],
                   ) as Array<{ role: string; content: string }>;
                   if (recentMsgs.length > 10) {
-                    const chatStats = await kgService.getLLMLinker()!.analyzeRecentChats(user.id, recentMsgs.reverse());
+                    const chatStats = await kgService.getLLMLinker()!.analyzeRecentChats(userId!, recentMsgs.reverse());
                     if (chatStats.relations > 0 || chatStats.newEntities > 0) {
                       this.logger.info({ ...chatStats }, 'Weekly chat analysis completed');
                     }
@@ -13427,11 +13384,12 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
                   this.logger.debug({ err }, 'Weekly chat analysis failed');
                 }
               }
-            }
-          } catch (err) {
-            this.logger.warn({ err }, 'Temporal analysis failed');
-          }
-
+            return { ok: true, zaehler: { trends: report.trends.length, anomalies: report.anomalies.length } };
+          },
+        });
+        this.registriereJob({
+          key: 'service-discovery', beschreibung: 'Services aus CMDB-Assets ableiten (idempotent)', takt: { art: 'woechentlich', tag: 0, um: '04:10' }, bereich: 'global', slot: true,
+          run: async () => {
           // Patch E: weekly Service-Discovery from CMDB Assets.
           // Derives Service entries from server/vm/lxc/container/application assets so that
           // ITSM impact-analysis, SLA tracking, and health rollup have meaningful Service
@@ -13490,7 +13448,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           } catch (err) {
             this.logger.warn({ err }, 'Weekly service-discovery failed');
           }
-        }, 60 * 60_000); // Check every hour, only acts on Sunday 4 AM
+            return { ok: true };
+          },
+        });
+
 
         // v921 — TÄGLICHE KG-Maintenance (04:30). Vorher lief sie nur sonntags im
         // Temporal-Block: Duplikate, Garbage-Locations und Typ-Konflikte
@@ -13520,12 +13481,19 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
         });
       }
+    }
+
+    // v1165 — Wächter/Proben und Register-Start UNABHÄNGIG von activeLearning
+    // (vorher innerhalb des Blocks: bei deaktiviertem activeLearning wäre das
+    // ganze Register nie gestartet worden).
+    if (this.jobRegister) {
       // v1162 — Jarvis Schicht 0: Degradations-Wächter (alle 10 min über den
       // Puls; Abnahme: entfernter API-Key → binnen 70 min genau ein Owner-Satz)
       // und synthetische Proben 06:50 (Tiers direkt, Jobs im Takt, Daten-Frische).
       {
         const { DegradationsWaechter, bewertePuls, bewerteProben, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
         const { fuehreProbenAus } = await import('./lebenszeichen/proben.js');
+        const { JobRunsRepository } = await import('@alfred/storage');
         const lzRepo = this.lebenszeichenRepo;
         this.degradationsWaechter = new DegradationsWaechter({
           logger: this.logger.child({ component: 'lebenszeichen' }),
@@ -13540,6 +13508,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const puls = this.providerPuls;
         const jobRunsRepo = new JobRunsRepository(this.database.getAdapter());
         const register = this.jobRegister;
+        if (!register) throw new Error('Job-Register fehlt');
         const melde = async (meldungen: import('./lebenszeichen/degradations-waechter.js').Meldung[]) => {
           // HA: je Meldung und Tag nur ein Node
           const heute = new Date().toISOString().slice(0, 10);
@@ -13907,10 +13876,6 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     }
     this.jobRegister?.stop();
     await this.providerPuls?.schreibe().catch(() => undefined);
-    if (this.temporalAnalyzerTimer) {
-      clearInterval(this.temporalAnalyzerTimer);
-      this.temporalAnalyzerTimer = undefined;
-    }
     if (this.insightExpiryTimer) {
       clearInterval(this.insightExpiryTimer);
       this.insightExpiryTimer = undefined;

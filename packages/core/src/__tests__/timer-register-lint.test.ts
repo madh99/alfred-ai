@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
  * Arbeit gehört ins Register (lebenszeichen/job-register.ts). Die Basislinie
  * wird nur bewusst gesenkt, wenn ein weiterer Alt-Timer migriert wurde.
  */
-const BASISLINIE_SET_INTERVAL = 24; // Stand v1161: 27 vor Schicht 0, 3 Nachtjobs migriert
+const BASISLINIE_SET_INTERVAL = 19; // v1161: 27→24 (3 Nachtjobs); v1165: →19 (ITSM 23:00, KG-Fragen, Ziel-Extraktion, Insight-Sweep, Wochen-Analyse)
 
 describe('Timer-Lint (Jarvis Schicht 0)', () => {
   it('keine neuen rohen setInterval-Timer in alfred.ts — periodische Arbeit gehört ins Job-Register', () => {
