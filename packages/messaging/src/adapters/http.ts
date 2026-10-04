@@ -891,6 +891,9 @@ export class HttpAdapter extends MessagingAdapter {
   setLogCallbacks(cbs: typeof HttpAdapter.prototype.logCallbacks): void { this.logCallbacks = cbs; }
   setClusterCallbacks(cbs: typeof HttpAdapter.prototype.clusterCallbacks): void { this.clusterCallbacks = cbs; }
   setCliUsageCallback(cb: typeof HttpAdapter.prototype.cliUsageCallback): void { this.cliUsageCallback = cb; }
+  /** v1162 — Jarvis Schicht 0: Lebenszeichen-Kachel (Jobs, Provider-Puls, Proben, offene Meldungen). */
+  private lebenszeichenCallback?: () => Promise<Record<string, unknown>>;
+  setLebenszeichenCallback(cb: typeof HttpAdapter.prototype.lebenszeichenCallback): void { this.lebenszeichenCallback = cb; }
 
   async connect(): Promise<void> {
     this.status = 'connecting';
@@ -1775,6 +1778,8 @@ export class HttpAdapter extends MessagingAdapter {
     // ── Cluster / HA Operations API ──
     } else if (url.pathname === '/api/cluster/health' && req.method === 'GET') {
       this.handleClusterHealth(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/lebenszeichen' && req.method === 'GET') {
+      this.handleLebenszeichen(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/cli-usage' && req.method === 'GET') {
       // v866 — CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt von llm_usage)
       this.handleCliUsage(req, res, url).catch(err => this.safeError(res, err));
@@ -6282,6 +6287,18 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v866 — CLI-Agent-Usage-Übersicht: ?days=30 (0/fehlend = alles). */
+  private async handleLebenszeichen(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.lebenszeichenCallback) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'lebenszeichen not available' }));
+      return;
+    }
+    const data = await this.lebenszeichenCallback();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+  }
+
   private async handleCliUsage(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.cliUsageCallback) {

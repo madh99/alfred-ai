@@ -1627,6 +1627,14 @@ export class AlfredClient {
   }
 
   // v866 — Globale CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt vom Alfred-Usage-Tracking)
+  /** v1162 — Lebenszeichen-Kachel */
+  async fetchLebenszeichen(): Promise<LebenszeichenStatus | null> {
+    const res = await fetch(`${this.baseUrl}/api/lebenszeichen`, { headers: this.authHeaders });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data?.jobs) ? data as LebenszeichenStatus : null;
+  }
+
   async fetchCliUsage(days?: number): Promise<CliUsageOverview | null> {
     const qs = days && days > 0 ? `?days=${days}` : '';
     const res = await fetch(`${this.baseUrl}/api/cli-usage${qs}`, { headers: this.authHeaders });
@@ -3094,6 +3102,20 @@ export interface CliUsageGroupRow {
   tokensOut: number;
   cacheReadTokens: number;
   costUsd: number;
+}
+// v1162 — Jarvis Schicht 0: Lebenszeichen-Kachel
+export type LebenszeichenTakt = { art: 'taeglich'; um: string } | { art: 'woechentlich'; tag: number; um: string } | { art: 'intervall'; minuten: number };
+export interface LebenszeichenLauf { id: string; jobKey: string; userId?: string; nodeId?: string; startedAt: string; finishedAt?: string; ok?: boolean; zaehler?: Record<string, number>; fehler?: string }
+export interface LebenszeichenJob { key: string; beschreibung: string; takt: LebenszeichenTakt; bereich: 'master' | 'alle' | 'global'; slot?: boolean; letzterLauf: LebenszeichenLauf | null }
+export interface LebenszeichenPuls { tier: string; provider: string; model: string; letzterErfolg?: string; letzterFehler?: string; fehlerKlasse?: string; fehlerText?: string; gestoertSeit?: string; erfolge: number; fehler: number; updatedAt: string }
+export interface LebenszeichenProbe { art: 'tier' | 'job' | 'daten'; name: string; ok: boolean; detail: string; klasse?: string }
+export interface LebenszeichenStatus {
+  registerGestartetAm: string | null;
+  jobs: LebenszeichenJob[];
+  puls: LebenszeichenPuls[];
+  proben: { zeit?: string; ergebnisse: LebenszeichenProbe[] };
+  offen: Array<{ key: string; offenSeit: string; zuletztGemeldet?: string; text: string }>;
+  letzteLaeufe: LebenszeichenLauf[];
 }
 export interface CliUsageOverview {
   totals: { runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number };

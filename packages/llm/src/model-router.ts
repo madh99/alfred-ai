@@ -15,6 +15,17 @@ const TIERS: ModelTier[] = ['default', 'strong', 'medium', 'fast', 'embeddings',
 
 /** v868 — Payload des Billing-Alert-Callbacks (Owner-Benachrichtigung).
  *  v868.3 — kind: 'failure' (Guthaben/Quota-Fehler) | 'recovered' (Entwarnung). */
+/** v1162 — Jarvis Schicht 0: Puls-Ereignis je Tier (Erfolg oder klassifizierter Fehler). */
+export type PulsFehlerKlasse = 'billing' | 'auth' | 'rate' | 'netz' | 'modell' | 'unbekannt';
+export interface PulsEreignis {
+  art: 'erfolg' | 'fehler';
+  tier: ModelTier;
+  provider: string;
+  model: string;
+  klasse?: PulsFehlerKlasse;
+  fehler?: string;
+}
+
 export interface BillingAlertInfo {
   kind: 'failure' | 'recovered';
   tier: ModelTier;
@@ -154,8 +165,10 @@ export class ModelRouter extends LLMProvider {
       const response = await this.executeComplete(provider, resolvedTier, withEffort);
       // v868.3 — Re-Probe erfolgreich → Entwarnung + Reset (inkl. Alert-Dedupe)
       this.maybeNotifyRecovery(resolvedTier);
+      this.meldePuls('erfolg', resolvedTier);
       return response;
     } catch (err) {
+      this.meldePuls('fehler', resolvedTier, err);
       // v868 — Billing-Fehler (Guthaben leer, Quota erschöpft) lösen jetzt
       // ebenfalls den Tier-Fallback aus. Vorher: 400 → sofort throw, der
       // Fallback-Code eine Zeile darunter wurde nie erreicht — beim
@@ -183,6 +196,59 @@ export class ModelRouter extends LLMProvider {
       msg.includes('exceeded your current quota') ||
       msg.includes('billing') && msg.includes('error');
   }
+
+  /** v1162 — Puls-Callback: jeder Erfolg/Fehler je Tier geht an den Provider-Puls. */
+  private pulsCallback?: (ev: PulsEreignis) => void;
+  setPulsCallback(cb: (ev: PulsEreignis) => void): void { this.pulsCallback = cb; }
+
+  private meldePuls(art: 'erfolg' | 'fehler', tier: ModelTier, err?: unknown): void {
+    if (!this.pulsCallback) return;
+    const cfg = this.multiConfig[tier];
+    try {
+      this.pulsCallback({
+        art, tier, provider: cfg?.provider ?? 'unknown', model: cfg?.model ?? 'unknown',
+        ...(art === 'fehler' ? { klasse: this.klassifiziereFehler(err), fehler: ((err as Error)?.message ?? String(err)).slice(0, 300) } : {}),
+      });
+    } catch { /* Puls darf nichts brechen */ }
+  }
+
+  /** v1162 — deterministische Fehlerklasse für den Degradations-Wächter. */
+  klassifiziereFehler(err: unknown): PulsFehlerKlasse {
+    if (this.isBillingError(err)) return 'billing';
+    const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+    const status = (err as Record<string, unknown>)?.status ?? (err as Record<string, unknown>)?.statusCode;
+    if (status === 401 || status === 403 || msg.includes('401') || msg.includes('403') || msg.includes('invalid api key') || msg.includes('invalid x-api-key') || msg.includes('authentication') || msg.includes('permission')) return 'auth';
+    if (status === 429 || msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('overloaded') || msg.includes('529')) return 'rate';
+    if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('etimedout') || msg.includes('econnreset') || msg.includes('socket hang up') || msg.includes('fetch failed') || msg.includes('eai_again') || msg.includes('getaddrinfo') || msg.includes('connection error') || msg.includes('502') || msg.includes('503') || msg.includes('504')) return 'netz';
+    if (status === 404 || msg.includes('404') || msg.includes('model') && (msg.includes('not found') || msg.includes('does not exist') || msg.includes('not supported'))) return 'modell';
+    return 'unbekannt';
+  }
+
+  /**
+   * v1162 — Synthetische Probe eines Tiers OHNE Fallback-Kette: ein Minimal-
+   * Request direkt an den Tier-Provider. Misst Verfügbarkeit UND Guthaben und
+   * meldet das Ergebnis an den Puls. Der reguläre complete() würde den Ausfall
+   * durch den Fallback verdecken.
+   */
+  async probeTier(tier: ModelTier): Promise<{ tier: ModelTier; ok: boolean; provider: string; model: string; klasse?: PulsFehlerKlasse; fehler?: string; dauerMs: number }> {
+    const cfg = this.multiConfig[tier];
+    const provider = this.providers.get(tier);
+    const basis = { tier, provider: cfg?.provider ?? 'unknown', model: cfg?.model ?? 'unknown' };
+    if (!provider) return { ...basis, ok: false, klasse: 'modell', fehler: 'Tier nicht konfiguriert', dauerMs: 0 };
+    const t0 = Date.now();
+    try {
+      await provider.complete({ messages: [{ role: 'user', content: 'Antworte nur mit OK.' }], maxTokens: 5, tier });
+      this.meldePuls('erfolg', tier);
+      this.maybeNotifyRecovery(tier);
+      return { ...basis, ok: true, dauerMs: Date.now() - t0 };
+    } catch (err) {
+      if (this.isBillingError(err)) this.registerBillingFailure(tier, err);
+      this.meldePuls('fehler', tier, err);
+      return { ...basis, ok: false, klasse: this.klassifiziereFehler(err), fehler: ((err as Error)?.message ?? String(err)).slice(0, 300), dauerMs: Date.now() - t0 };
+    }
+  }
+
+  konfigurierteTiers(): ModelTier[] { return [...this.providers.keys()]; }
 
   /** v868 — Owner-Alert bei Billing-Fehlern, dedupe 6h pro Tier. */
   private billingAlertCallback?: (info: BillingAlertInfo) => void;
@@ -294,10 +360,12 @@ export class ModelRouter extends LLMProvider {
         this.logger?.info({ tier }, 'Fallback to tier');
         const response = await this.executeComplete(provider, tier, request);
         this.maybeNotifyRecovery(tier); // v868.3 — Tier hat sich bewiesen
+        this.meldePuls('erfolg', tier);
         return response;
       } catch (err) {
         // v868/v868.3 — Billing-Fehler im Fallback-Tier: Cooldown + Alert (deduped)
         if (this.isBillingError(err)) this.registerBillingFailure(tier, err);
+        this.meldePuls('fehler', tier, err);
         continue;
       }
     }
@@ -320,12 +388,14 @@ export class ModelRouter extends LLMProvider {
         yield event;
       }
       this.maybeNotifyRecovery(resolvedTier); // v868.3 — Re-Probe erfolgreich
+      this.meldePuls('erfolg', resolvedTier);
       return;
     } catch (err) {
       // If we already yielded chunks, fallback would produce a spliced/garbled stream
       // v868 — Billing-Fehler (Guthaben/Quota) lösen den Fallback ebenfalls aus
       const billing = this.isBillingError(err);
       if (billing) this.registerBillingFailure(resolvedTier, err);
+      this.meldePuls('fehler', resolvedTier, err);
       if (hasYielded || (!billing && !this.isRetryableError(err))) throw err;
       this.logger?.warn(
         { err, tier: resolvedTier, billing },
@@ -346,9 +416,11 @@ export class ModelRouter extends LLMProvider {
         this.logger?.info({ tier }, 'Stream fallback to tier');
         yield* fbProvider.stream(this.withTierEffort(request, tier));
         this.maybeNotifyRecovery(tier);
+        this.meldePuls('erfolg', tier);
         return;
       } catch (fbErr) {
         if (this.isBillingError(fbErr)) this.registerBillingFailure(tier, fbErr);
+        this.meldePuls('fehler', tier, fbErr);
         continue;
       }
     }

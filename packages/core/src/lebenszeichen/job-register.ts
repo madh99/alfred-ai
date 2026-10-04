@@ -83,11 +83,20 @@ export class JobRegister {
 
   keys(): string[] { return [...this.jobs.keys()]; }
 
+  /** Für Proben und Kachel: die Deklarationen ohne Lauf-Funktion. */
+  definitionen(): Array<Pick<JobDefinition, 'key' | 'beschreibung' | 'takt' | 'bereich' | 'slot'>> {
+    return [...this.jobs.values()].map(({ def }) => ({ key: def.key, beschreibung: def.beschreibung, takt: def.takt, bereich: def.bereich, slot: def.slot }));
+  }
+
+  /** Zeitpunkt von start() — ein Job ohne Lauf ist erst nach einem Takt ab hier auffällig. */
+  gestartetAm?: string;
+
   /** 10-Minuten-Raster starten; erster Tick sofort (Nachholen nach Restart). */
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => { void this.tick(); }, RASTER_MS);
     (this.timer as { unref?: () => void }).unref?.();
+    this.gestartetAm = (this.deps.now ?? (() => new Date()))().toISOString();
     this.deps.logger.info({ jobs: this.keys() }, 'Lebenszeichen: Job-Register gestartet (10-min-Raster)');
     void this.tick();
   }

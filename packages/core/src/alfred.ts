@@ -409,6 +409,11 @@ export class Alfred {
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   /** v1161 — Jarvis Schicht 0: deklaratives Job-Register (ersetzt verstreute Nachtjob-Timer). */
   private jobRegister?: import('./lebenszeichen/job-register.js').JobRegister;
+  /** v1162 — Jarvis Schicht 0: Provider-Puls, Degradations-Wächter, letzte Proben (für Kachel). */
+  private providerPuls?: import('./lebenszeichen/provider-puls.js').ProviderPuls;
+  private degradationsWaechter?: import('./lebenszeichen/degradations-waechter.js').DegradationsWaechter;
+  private lebenszeichenRepo?: import('@alfred/storage').LebenszeichenRepository;
+  private letzteProben: { zeit?: string; ergebnisse: import('./lebenszeichen/proben.js').ProbeErgebnis[] } = { ergebnisse: [] };
   private temporalAnalyzerTimer?: ReturnType<typeof setInterval>;
   /** v933 — Social-Media-Betrieb */
   private socialRepo?: import('@alfred/storage').SocialRepository;
@@ -433,6 +438,38 @@ export class Alfred {
   private interestsDailyTimer?: ReturnType<typeof setInterval>;
 
   /** v930 — HA-Tages-Slot über reasoning_slots (nur PG; Single-Node/SQLite → immer true). */
+  /** v1162 — Ein Satz an den Owner über den primären Chat-Adapter (best-effort). */
+  private async sendeAnOwner(text: string): Promise<boolean> {
+    const ownerChatId = this.config.security?.ownerUserId;
+    if (!ownerChatId) return false;
+    const platform = this.config.telegram?.enabled ? 'telegram'
+      : this.config.matrix?.enabled ? 'matrix'
+      : this.config.discord?.enabled ? 'discord' : undefined;
+    const adapterRef = platform ? this.adapters.get(platform as Platform) : undefined;
+    if (!adapterRef) return false;
+    try { await adapterRef.sendMessage(ownerChatId, text); return true; }
+    catch (err) { this.logger.warn({ err: (err as Error).message }, 'Lebenszeichen: Owner-Satz konnte nicht gesendet werden'); return false; }
+  }
+
+  /** v1162 — Status für die Lebenszeichen-Kachel (Jobs + letzte Läufe, Puls, Proben, offene Meldungen). */
+  private async lebenszeichenStatus(): Promise<Record<string, unknown>> {
+    const { JobRunsRepository } = await import('@alfred/storage');
+    const runs = new JobRunsRepository(this.database.getAdapter());
+    const jobs = [] as Array<Record<string, unknown>>;
+    for (const def of this.jobRegister?.definitionen() ?? []) {
+      const lauf = await runs.letzterLauf(def.key).catch(() => undefined);
+      jobs.push({ ...def, letzterLauf: lauf ?? null });
+    }
+    return {
+      registerGestartetAm: this.jobRegister?.gestartetAm ?? null,
+      jobs,
+      puls: this.providerPuls?.alle() ?? [],
+      proben: this.letzteProben,
+      offen: this.degradationsWaechter?.offeneZustaende() ?? [],
+      letzteLaeufe: await runs.listeLetzte(60).catch(() => []),
+    };
+  }
+
   private async claimDailySlot(slotKey: string): Promise<boolean> {
     if (this.database?.getAdapter().type !== 'postgres') return true;
     try {
@@ -655,28 +692,26 @@ export class Alfred {
       usageRepo.record(model, inp, out, cacheR, cacheW, cost).catch(() => {});
     });
 
-    // v868 — Billing-Alert: Guthaben-/Quota-Fehler an den Owner melden
-    // (Dedupe 6h/Tier sitzt im Router). Adapter sind beim Call-Zeitpunkt
-    // verbunden — Lookup erfolgt lazy.
+    // v1162 — Jarvis Schicht 0: Provider-Puls. Jeder Erfolg/Fehler je Tier
+    // landet im Puls (persistiert in provider_puls); der Degradations-Wächter
+    // urteilt darüber alle 10 min. Die v868-Billing-Alerts (6-h-Dedupe je Tier
+    // → 12 Owner-Nachrichten/Tag beim Guthaben-Vorfall seit 18.08.) werden nur
+    // noch geloggt — der Owner bekommt genau EINEN Satz je Zustand (Wächter).
+    {
+      const { ProviderPuls } = await import('./lebenszeichen/provider-puls.js');
+      const { LebenszeichenRepository } = await import('@alfred/storage');
+      this.lebenszeichenRepo = new LebenszeichenRepository(adapter);
+      const lzRepo = this.lebenszeichenRepo;
+      this.providerPuls = new ProviderPuls(this.logger.child({ component: 'lebenszeichen' }), {
+        speichere: (row) => lzRepo.speicherePuls(row),
+        ladeAlle: () => lzRepo.ladePuls(),
+      });
+      await this.providerPuls.lade();
+      const puls = this.providerPuls;
+      llmProvider.setPulsCallback((ev) => { puls.verarbeite(ev); });
+    }
     llmProvider.setBillingAlertCallback((info) => {
-      try {
-        const ownerChatId = this.config.security?.ownerUserId;
-        if (!ownerChatId || !this.adapters) return;
-        const platform = this.config.telegram?.enabled ? 'telegram'
-          : this.config.matrix?.enabled ? 'matrix'
-          : this.config.discord?.enabled ? 'discord' : undefined;
-        const adapterRef = platform ? this.adapters.get(platform as Platform) : undefined;
-        if (!adapterRef) return;
-        // v868.3 — Entwarnung vs. Ausfall unterscheiden
-        const text = info.kind === 'recovered'
-          ? `✅ **LLM-Provider wieder verfügbar** — "${info.provider}" (Tier ${info.tier}, ${info.model}) antwortet wieder regulär. Fallback nicht mehr aktiv.`
-          : `⚠️ **LLM-Billing-Fehler** — Provider "${info.provider}" (Tier ${info.tier}, ${info.model}):\n` +
-            `${info.message}\n\n` +
-            `Tier-Fallback auf andere Provider ist aktiv (Primary wird 5 min übersprungen, danach automatischer Re-Probe). ` +
-            `Bitte Guthaben/Quota prüfen — bis dahin laufen Calls über die verbleibenden Provider (ggf. teurer/anderes Modell).`;
-        void adapterRef.sendMessage(ownerChatId, text).catch(() => { /* Alert best-effort */ });
-        this.logger.warn({ ...info }, info.kind === 'recovered' ? 'v868.3 LLM billing recovered — owner informed' : 'v868 LLM billing failure — owner alerted');
-      } catch { /* Alert darf nichts brechen */ }
+      this.logger.warn({ ...info }, info.kind === 'recovered' ? 'v868.3 LLM billing recovered' : 'v868 LLM billing failure (Owner-Satz kommt vom Lebenszeichen-Wächter)');
     });
 
     // Service usage tracking (STT, TTS, OCR, Moderation)
@@ -13165,6 +13200,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       });
     }
 
+    // v1162 — Lebenszeichen-Kachel
+    if (logApiAdapter && 'setLebenszeichenCallback' in logApiAdapter) {
+      (logApiAdapter as any).setLebenszeichenCallback(() => this.lebenszeichenStatus());
+    }
+
     // v866 — CLI-Agent-Usage-Übersicht (eigene Subscriptions/Keys, getrennt von llm_usage)
     if (logApiAdapter && 'setCliUsageCallback' in logApiAdapter) {
       (logApiAdapter as any).setCliUsageCallback(async (days?: number) => {
@@ -13477,6 +13517,67 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               gesetzt = r?.gesetzt ?? 0;
             }
             return { ok: true, zaehler: { stammdatenGesetzt: gesetzt } };
+          },
+        });
+      }
+      // v1162 — Jarvis Schicht 0: Degradations-Wächter (alle 10 min über den
+      // Puls; Abnahme: entfernter API-Key → binnen 70 min genau ein Owner-Satz)
+      // und synthetische Proben 06:50 (Tiers direkt, Jobs im Takt, Daten-Frische).
+      {
+        const { DegradationsWaechter, bewertePuls, bewerteProben, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
+        const { fuehreProbenAus } = await import('./lebenszeichen/proben.js');
+        const lzRepo = this.lebenszeichenRepo;
+        this.degradationsWaechter = new DegradationsWaechter({
+          logger: this.logger.child({ component: 'lebenszeichen' }),
+          persistenz: lzRepo ? { ladeMeldungen: () => lzRepo.ladeMeldungen(), speichereMeldung: (m) => lzRepo.speichereMeldung(m), loescheMeldung: (k) => lzRepo.loescheMeldung(k) } : undefined,
+        });
+        await this.degradationsWaechter.lade();
+        const waechter = this.degradationsWaechter;
+        const puls = this.providerPuls;
+        const jobRunsRepo = new JobRunsRepository(this.database.getAdapter());
+        const register = this.jobRegister;
+        const melde = async (meldungen: import('./lebenszeichen/degradations-waechter.js').Meldung[]) => {
+          // HA: je Meldung und Tag nur ein Node
+          const heute = new Date().toISOString().slice(0, 10);
+          const freigegeben: typeof meldungen = [];
+          for (const m of meldungen) {
+            if (await this.claimDailySlot(`lz-${m.art}:${m.key}:${heute}`)) freigegeben.push(m);
+          }
+          const text = formatiereMeldungen(freigegeben);
+          if (!text) return 0;
+          await this.sendeAnOwner(text);
+          this.logger.info({ meldungen: freigegeben.map(m => `${m.art}:${m.key}`) }, 'Lebenszeichen: Owner-Satz gesendet');
+          return freigegeben.length;
+        };
+        register.registriere({
+          key: 'degradations-waechter', beschreibung: 'Provider-Puls bewerten (Degradation/Guthaben)', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
+          run: async () => {
+            if (!puls) return { ok: true };
+            const befunde = bewertePuls(puls.alle(), new Date());
+            const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier'] });
+            const gesendet = await melde(meldungen);
+            return { ok: true, zaehler: { befunde: befunde.length, gesendet } };
+          },
+        });
+        register.registriere({
+          key: 'lebenszeichen-proben', beschreibung: 'Synthetische Proben: Tiers, Job-Takte, Daten-Frische', takt: { art: 'taeglich', um: '06:50' }, bereich: 'global', slot: true,
+          run: async () => {
+            const ergebnisse = await fuehreProbenAus({
+              tiers: { konfigurierteTiers: () => this.llmProvider.konfigurierteTiers(), probeTier: (t) => this.llmProvider.probeTier(t as import('@alfred/types').ModelTier) },
+              embed: this.llmProvider.supportsEmbeddings() ? () => this.llmProvider.embed('OK') : undefined,
+              jobs: () => register.definitionen(),
+              registerGestartetAm: register.gestartetAm,
+              letzterLauf: async (k) => { const l = await jobRunsRepo.letzterLauf(k); return l ? { startedAt: l.startedAt, ok: l.ok } : undefined; },
+              juengsteZeit: lzRepo ? (t) => lzRepo.juengsteZeit(t) : undefined,
+              ausgenommen: ['lebenszeichen-proben', 'degradations-waechter'],
+            });
+            this.letzteProben = { zeit: new Date().toISOString(), ergebnisse };
+            const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteProben(ergebnisse)];
+            const meldungen = await waechter.abgleich(befunde, { wiederholen: true });
+            const gesendet = await melde(meldungen);
+            const fehl = ergebnisse.filter(e => !e.ok);
+            this.logger.info({ proben: ergebnisse.length, fehlgeschlagen: fehl.map(e => `${e.art}:${e.name}`), befunde: befunde.length, gesendet }, 'Lebenszeichen: Proben gelaufen');
+            return { ok: true, zaehler: { proben: ergebnisse.length, fehlgeschlagen: fehl.length, befunde: befunde.length, gesendet } };
           },
         });
       }
@@ -13801,6 +13902,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       this.healthCheckTimer = undefined;
     }
     this.jobRegister?.stop();
+    await this.providerPuls?.schreibe().catch(() => undefined);
     if (this.temporalAnalyzerTimer) {
       clearInterval(this.temporalAnalyzerTimer);
       this.temporalAnalyzerTimer = undefined;

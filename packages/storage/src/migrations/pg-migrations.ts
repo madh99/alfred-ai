@@ -2089,4 +2089,29 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_job_runs_key_started ON job_runs(job_key, started_at)`, []);
     },
   },
+  {
+    version: 127,
+    description: 'v1162 — Jarvis Schicht 0: provider_puls (Zustand je LLM-Tier) + lebenszeichen_meldungen (Wächter-Dedupe) (PG-Spiegel zu SQLite v123).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS provider_puls (
+        tier TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        letzter_erfolg TEXT,
+        letzter_fehler TEXT,
+        fehler_klasse TEXT,
+        fehler_text TEXT,
+        gestoert_seit TEXT,
+        erfolge INTEGER NOT NULL DEFAULT 0,
+        fehler INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      )`, []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS lebenszeichen_meldungen (
+        key TEXT PRIMARY KEY,
+        offen_seit TEXT NOT NULL,
+        zuletzt_gemeldet TEXT,
+        text TEXT
+      )`, []);
+    },
+  },
 ];

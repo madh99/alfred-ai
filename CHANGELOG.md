@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1162] - 2026-10-05
+
+### Added — Jarvis Schicht 0, Teil 2: Provider-Puls, Proben, Degradations-Wächter, Kachel (v1162)
+
+Schicht 0 ist damit funktional komplett: Alfred weiß, ob er lebt, und sagt es in genau einem Satz. Ausgangslage: Anthropic ist seit 18.08. und OpenAI seit 19.08. ohne Guthaben; der v868-Billing-Alert meldete das mit 6-Stunden-Dedupe je Tier — 12 Owner-Nachrichten pro Tag, wochenlang, ohne dass die eigentliche Lage (alles läuft über Mistral) irgendwo zusammengefasst stand. Gleichzeitig war die KG-Wartung 16 Tage tot, und niemand hat es gemerkt.
+
+- **Provider-Puls** (`lebenszeichen/provider-puls.ts`, Tabelle `provider_puls`): Der Model-Router meldet jeden Erfolg und jeden Fehler je Tier mit deterministischer Fehlerklasse (billing / auth / rate / netz / modell / unbekannt). Der Puls hält je Tier letzten Erfolg, letzten Fehler, Klasse und „gestört seit" fest, persistiert gebündelt und überlebt Restarts — ein Neustart heilt keinen Guthaben-Vorfall.
+- **Tier-Probe ohne Fallback** (`ModelRouter.probeTier`): Ein Minimal-Request direkt an den Tier-Provider. Der reguläre Aufruf würde den Ausfall durch die Fallback-Kette verdecken.
+- **Synthetische Proben** (`lebenszeichen/proben.ts`, Job `lebenszeichen-proben` täglich 06:50): je konfiguriertem Tier eine Probe, je registriertem Job „lief er innerhalb seines Takts?" aus `job_runs` (täglich: 26 h, wöchentlich: 8 Tage, Intervall: 2×), Frische von `activity_log` (24 h), `llm_usage` (48 h) und `alfred_insights` (3 Tage).
+- **Degradations-Wächter** (`lebenszeichen/degradations-waechter.ts`, Job `degradations-waechter` alle 10 min, Tabelle `lebenszeichen_meldungen`): Kern-Tier (default/strong) länger als 60 min gestört oder Fehlerklasse billing auf irgendeinem Tier → ein Satz mit Tier, Provider, Dauer und letztem Erfolg. Überfälliger Job oder stehende Tabelle → ein Satz mit Name und letztem Lauf. Neue Zustände werden sofort gemeldet, bestehende höchstens einmal täglich im Morgen-Lauf, Entwarnung einmalig. HA-sicher über Tages-Slots. **Kein Modell-Gate, keine Pause**: Alfred arbeitet mit dem Fallback weiter — er sagt es nur.
+- **v868-Billing-Alerts** werden nur noch geloggt; die Owner-Nachricht kommt ausschließlich vom Wächter.
+- **Kachel „Lebenszeichen"** (`/alfred/lebenszeichen/`, API `GET /api/lebenszeichen`): offene Meldungen, Provider-Puls je Tier, Jobs mit Takt und letztem Lauf (Ampel), letzte Proben, letzte 60 Läufe aus `job_runs`. Reine Anzeige, kein eigenes Datenmodell.
+- Tests: 5 Router-Puls-Tests (Fehlerklassen, Stream-Pfad, probeTier ohne Fallback), 10 Wächter-/Proben-Tests (Realfall Guthaben: genau ein Satz, Wiederholung erst am nächsten Morgen, Entwarnung einmalig, Zustand überlebt Neustart; Realfall 12.–28.09.: Job 16 Tage ohne Lauf schlägt an).
+
+Migrationen: SQLite v123 / PG v127 (`provider_puls`, `lebenszeichen_meldungen`).
+
 ## [0.19.0-jarvis.1161] - 2026-10-04
 
 ### Changed — Eigene Release-Linie `jarvis`

@@ -24,6 +24,7 @@ const TOOLS = [
   { href: `${BASE}/docs/`, label: 'Docs', icon: '📄' },
   { href: `${BASE}/logs/`, label: 'Logs', icon: '📋' },
   { href: `${BASE}/cluster/`, label: 'Cluster', icon: '🔗' },
+  { href: `${BASE}/lebenszeichen/`, label: 'Lebenszeichen', icon: '💓' },
 ];
 
 interface Counts {

@@ -99,6 +99,8 @@ export type { Goal, GoalCheckpoint, GoalStatus, GoalCategory, GoalCadence, Check
 export { KgQuestionsRepository } from './repositories/kg-questions-repository.js';
 export { JobRunsRepository } from './repositories/job-runs-repository.js';
 export type { JobRun } from './repositories/job-runs-repository.js';
+export { LebenszeichenRepository } from './repositories/lebenszeichen-repository.js';
+export type { ProviderPulsRow, MeldungRow } from './repositories/lebenszeichen-repository.js';
 export type { KgQuestion, QuestionStatus } from './repositories/kg-questions-repository.js';
 export { RunbookRepository } from './repositories/runbook-repository.js';
 export type { Runbook, RunbookCreateInput, RunbookSource, RunbookStatus } from './repositories/runbook-repository.js';
