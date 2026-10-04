@@ -706,7 +706,7 @@ export class Alfred {
         speichere: (row) => lzRepo.speicherePuls(row),
         ladeAlle: () => lzRepo.ladePuls(),
       });
-      await this.providerPuls.lade();
+      // lade() erst nach den Migrationen (beim Register-Start) — v1163
       const puls = this.providerPuls;
       llmProvider.setPulsCallback((ev) => { puls.verarbeite(ev); });
     }
@@ -13532,6 +13532,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           persistenz: lzRepo ? { ladeMeldungen: () => lzRepo.ladeMeldungen(), speichereMeldung: (m) => lzRepo.speichereMeldung(m), loescheMeldung: (k) => lzRepo.loescheMeldung(k) } : undefined,
         });
         await this.degradationsWaechter.lade();
+        // v1163 — Puls-Historie erst hier laden: die Migrationen (provider_puls)
+        // laufen nach der Router-Initialisierung; beim ersten Start nach dem
+        // v1162-Deploy fehlte die Tabelle noch ("relation provider_puls does not exist").
+        await this.providerPuls?.lade();
         const waechter = this.degradationsWaechter;
         const puls = this.providerPuls;
         const jobRunsRepo = new JobRunsRepository(this.database.getAdapter());

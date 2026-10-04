@@ -47,11 +47,26 @@ export class ProviderPuls {
 
   constructor(private readonly logger: Logger, private readonly persistenz?: PulsPersistenz, private readonly now: () => Date = () => new Date()) {}
 
-  /** Beim Start: gespeicherten Zustand übernehmen (Restart darf einen Vorfall nicht „heilen"). */
+  /**
+   * Gespeicherten Zustand übernehmen (Restart darf einen Vorfall nicht „heilen").
+   * Wird NACH den Migrationen gerufen (v1163: beim ersten Start nach einer
+   * Migration existierte die Tabelle noch nicht). Ereignisse, die bis dahin
+   * schon im Speicher liegen, werden mit dem gespeicherten Stand verschmolzen:
+   * Zähler addiert, „gestört seit" aus der Historie, wenn seither kein Erfolg kam.
+   */
   async lade(): Promise<void> {
     if (!this.persistenz) return;
     try {
-      for (const p of await this.persistenz.ladeAlle()) this.tiers.set(p.tier, p);
+      for (const alt of await this.persistenz.ladeAlle()) {
+        const neu = this.tiers.get(alt.tier);
+        if (!neu) { this.tiers.set(alt.tier, alt); continue; }
+        neu.erfolge += alt.erfolge; neu.fehler += alt.fehler;
+        if (alt.letzterErfolg && (!neu.letzterErfolg || alt.letzterErfolg > neu.letzterErfolg)) neu.letzterErfolg = alt.letzterErfolg;
+        if (alt.letzterFehler && (!neu.letzterFehler || alt.letzterFehler > neu.letzterFehler)) neu.letzterFehler = alt.letzterFehler;
+        const seitStartKeinErfolg = !neu.letzterErfolg || (alt.gestoertSeit !== undefined && neu.letzterErfolg < alt.gestoertSeit);
+        if (ProviderPuls.istGestoert(neu) && alt.gestoertSeit && seitStartKeinErfolg) neu.gestoertSeit = alt.gestoertSeit;
+        this.markiere(alt.tier);
+      }
     } catch (err) {
       this.logger.warn({ err: (err as Error).message }, 'Lebenszeichen: Provider-Puls konnte nicht geladen werden');
     }

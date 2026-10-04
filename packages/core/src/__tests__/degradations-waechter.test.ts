@@ -29,6 +29,34 @@ describe('ProviderPuls', () => {
   });
 });
 
+describe('ProviderPuls.lade (nach Migrationen, mit Ereignissen vor dem Laden)', () => {
+  it('verschmilzt Historie und Start-Ereignisse: gestoertSeit bleibt der alte Vorfall, Zähler addieren', async () => {
+    const alt: TierPuls = {
+      tier: 'fast', provider: 'anthropic', model: 'haiku', erfolge: 10, fehler: 400, updatedAt: T(0).toISOString(),
+      letzterErfolg: new Date(2026, 7, 18, 9).toISOString(), letzterFehler: T(0, 50).toISOString(),
+      fehlerKlasse: 'billing', gestoertSeit: new Date(2026, 7, 18, 9, 5).toISOString(),
+    };
+    let now = T(1, 4);
+    const puls = new ProviderPuls(log(), { ladeAlle: async () => [alt], speichere: async () => undefined }, () => now);
+    puls.verarbeite({ art: 'fehler', tier: 'fast', provider: 'anthropic', model: 'haiku', klasse: 'billing', fehler: 'credit' });
+    puls.verarbeite({ art: 'erfolg', tier: 'fallback', provider: 'mistral', model: 'large' });
+    await puls.lade();
+    const fast = puls.zustand('fast')!;
+    expect(fast.fehler).toBe(401);
+    expect(fast.erfolge).toBe(10);
+    expect(fast.gestoertSeit).toBe(alt.gestoertSeit);
+    expect(fast.letzterFehler).toBe(T(1, 4).toISOString());
+    expect(puls.zustand('fallback')!.erfolge).toBe(1);
+    // Erfolg seit Start → Historie heilt nicht rückwärts
+    now = T(1, 10);
+    const geheilt = new ProviderPuls(log(), { ladeAlle: async () => [alt], speichere: async () => undefined }, () => now);
+    geheilt.verarbeite({ art: 'erfolg', tier: 'fast', provider: 'anthropic', model: 'haiku' });
+    await geheilt.lade();
+    expect(ProviderPuls.istGestoert(geheilt.zustand('fast')!)).toBe(false);
+    expect(geheilt.zustand('fast')!.gestoertSeit).toBeUndefined();
+  });
+});
+
 describe('bewertePuls', () => {
   const gestoert = (tier: string, klasse: TierPuls['fehlerKlasse'], seitMin: number, now: Date): TierPuls => ({
     tier, provider: 'anthropic', model: 'claude', erfolge: 1, fehler: 5, updatedAt: now.toISOString(),

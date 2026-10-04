@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1163] - 2026-10-05
+
+### Fixed — Provider-Puls lädt seine Historie erst nach den Migrationen (v1163)
+
+Live-Befund nach dem v1162-Deploy (01:04): `Lebenszeichen: Provider-Puls konnte nicht geladen werden — relation "provider_puls" does not exist`. Der Puls wurde direkt nach dem Model-Router initialisiert, die PG-Migrationen laufen aber erst später im Start; beim ersten Start nach einer neuen Migration fehlte die Tabelle. Folge: harmlos für den laufenden Betrieb (der Puls füllt sich aus den aktuellen Aufrufen), aber die gespeicherte Historie wäre bei genau diesem Start verloren gegangen.
+
+- `lade()` wird jetzt beim Register-Start gerufen, nach allen Migrationen.
+- Ereignisse, die bis dahin schon im Speicher liegen, werden mit der Historie verschmolzen: Zähler addiert, jüngste Zeitpunkte übernommen, „gestört seit" bleibt der alte Vorfall, solange seit dem Start kein Erfolg kam. Ein Erfolg seit dem Start heilt nicht rückwärts.
+- Test: Historie seit 18.08. plus Billing-Fehler beim Start → gestört seit 18.08.; Erfolg beim Start → nicht gestört.
+
 ## [0.19.0-jarvis.1162] - 2026-10-05
 
 ### Added — Jarvis Schicht 0, Teil 2: Provider-Puls, Proben, Degradations-Wächter, Kachel (v1162)
