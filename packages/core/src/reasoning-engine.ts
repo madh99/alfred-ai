@@ -155,7 +155,10 @@ export function istVorgangsbezogeneKorrektur(k: { key: string; value: string }):
  * Der Vollpass läuft, wenn eine fachliche Sektion geändert ist, beim ersten Tick
  * nach dem Start oder spätestens 2 h nach dem letzten Vollpass.
  */
-export const VOLATILE_SEKTIONEN = new Set(['activity', 'skillHealth', 'insightTracking', 'feedback', 'action_feedback', 'trends', 'weather', 'energy', 'crypto', 'infra']);
+// v1185 — 'feeds' volatil: neue RSS-Artikel sind kein Zustandswechsel in der Welt des Owners
+// (Live 05.10.: feeds+cmdb lösten jeden 30-min-Tick einen Vollpass aus). Der 2-h-Vollpass
+// und der Themen-Digest 06:30 sehen sie weiterhin.
+export const VOLATILE_SEKTIONEN = new Set(['activity', 'skillHealth', 'insightTracking', 'feedback', 'action_feedback', 'trends', 'weather', 'energy', 'crypto', 'infra', 'feeds']);
 export const VOLLPASS_SPAETESTENS_MIN = 120;
 export function istRundgangOhneAenderung(changedSections: string[], letzterVollpassAt: number, now: number): { ueberspringen: boolean; fachlich: string[]; seitVollpassMin: number } {
   const fachlich = changedSections.filter(k => !VOLATILE_SEKTIONEN.has(k));
@@ -458,13 +461,13 @@ export class ReasoningEngine {
   private async legeInsightVorgaengeAn(insights: string[]): Promise<void> {
     if (!this.vorgaengeRepo || insights.length === 0) return;
     try {
-      const { istHandlungsInsight, vorgangTitelAus } = await import('./vorgaenge/autonomie.js');
+      const { istHandlungsInsight, vorgangTitelAus, istGenerischerTitel } = await import('./vorgaenge/autonomie.js');
       const userId = this.resolvedOwnerUserId || this.defaultChatId;
       let angelegt = 0;
       for (const insight of insights) {
         if (!istHandlungsInsight(insight)) continue;
         const titel = vorgangTitelAus(insight);
-        if (titel.length < 8) continue;
+        if (istGenerischerTitel(titel)) continue;
         const v = await this.vorgaengeRepo.anlegen({
           userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
@@ -490,6 +493,7 @@ export class ReasoningEngine {
         const v = await this.vorgaengeRepo.anlegen({
           userId, titel: a.description.slice(0, 200), besitzer: autonomie === 'auto' ? 'alfred' : 'user', status: 'offen',
           naechsterSchritt: autonomie === 'auto' ? 'ausführen' : autonomie === 'nie' ? 'nur manuell durch den Owner' : 'Bestätigung des Owners',
+          frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), // v1185 — ohne Frist blieben übersprungene Vorschläge ewig „offen"
           quelle: 'reasoning', autonomie, dedupeKey,
         });
         ids.set(a, v.id);

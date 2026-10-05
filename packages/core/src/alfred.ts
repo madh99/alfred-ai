@@ -13255,6 +13255,15 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     // v1162 — Lebenszeichen-Kachel
     if (logApiAdapter && 'setLebenszeichenCallback' in logApiAdapter) {
       (logApiAdapter as any).setLebenszeichenCallback(() => this.lebenszeichenStatus());
+      // v1185 — Kachel Vorgänge (Jarvis Schicht 3)
+      (logApiAdapter as any).setVorgaengeCallback?.(async () => {
+        const owner = this.tryOwner();
+        if (!owner || !this.database) return { offene: [], abgeschlossene: [], schritte: [] };
+        const { VorgaengeRepository: VRepoK } = await import('@alfred/storage');
+        const repo = new VRepoK(this.database.getAdapter());
+        const u = await repo.uebersicht(owner, 7);
+        return { ...u, schritte: await repo.schritte(owner, 14, 150) };
+      });
     }
 
     // v866 — CLI-Agent-Usage-Übersicht (eigene Subscriptions/Keys, getrennt von llm_usage)
@@ -13577,7 +13586,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         (this.reasoningEngine as unknown as { collector?: { setVorgaengeRepo?: (r: unknown) => void } } | undefined)?.collector?.setVorgaengeRepo?.(vorgaengeRepo);
         this.registriereJob({
           key: 'vorgaenge-aufraeumen', beschreibung: 'Ausführungsgedächtnis: Schritte älter als 90 Tage entfernen', takt: { art: 'taeglich', um: '04:50' }, bereich: 'global', slot: true,
-          run: async () => ({ ok: true, zaehler: { geloescht: await vorgaengeRepo.aufraeumen(90) } }),
+          run: async () => ({ ok: true, zaehler: { geloescht: await vorgaengeRepo.aufraeumen(90), verfallen: await vorgaengeRepo.verfalleAbgelaufene() } }),
         });
         // v1183 — Jarvis Schicht 4, Teil 1: Tagesabschluss der Kennzahlen. Die Engine-
         // Zähler (Vollpässe, Rundgänge, Mini-Pässe, Zustellweg, Gate, Aktionsausgänge)

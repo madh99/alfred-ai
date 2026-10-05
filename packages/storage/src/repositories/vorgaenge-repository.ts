@@ -44,6 +44,31 @@ export interface VorgangSchritt {
   quelle: string;
 }
 
+/**
+ * v1185 — Titel-Ähnlichkeit: Anteil der Wörter (≥ 4 Zeichen) des KÜRZEREN Titels, die
+ * im anderen vorkommen — gleich oder als Wortbestandteil („Dateizugriff" ~ „Zugriff",
+ * „E-Mails" ~ „E-Mail"). Mindestens zwei Treffer, sonst 0.
+ *
+ * Realfall 05.10.: „Kritische Systemfehler – E-Mail & Dateizugriff" (12:31) und
+ * „Kritische Systemfehler: E-Mail- und File-Zugriff blockiert (50%/75% Error-Rate)"
+ * (13:01) wurden zwei Vorgänge. Gegenbeispiel, das NICHT verschmelzen darf:
+ * „Batterie Terrasse tauschen" vs. „Batterie Wohnzimmer tauschen" (zwei Sensoren) —
+ * deshalb gilt als gleich nur, wenn JEDES Wort des kürzeren Titels wiederkehrt.
+ */
+export function titelAehnlichkeit(a: string, b: string): number {
+  const woerter = (t: string) => [...new Set(t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length >= 4))];
+  let wa = woerter(a); let wb = woerter(b);
+  if (wa.length === 0 || wb.length === 0) return 0;
+  if (wa.length > wb.length) [wa, wb] = [wb, wa];
+  const passt = (w: string) => wb.some(x => x === w || (x.length >= 4 && w.length >= 4 && (x.includes(w) || w.includes(x))));
+  const gemeinsam = wa.filter(passt).length;
+  if (gemeinsam < 2) return 0;
+  return gemeinsam / wa.length;
+}
+
+/** Gleiches Thema nur, wenn jedes Wort des kürzeren Titels wiederkehrt. */
+export const VORGANG_AEHNLICHKEIT_SCHWELLE = 1;
+
 export class VorgaengeRepository {
   constructor(private readonly db: AsyncDbAdapter) {}
 
@@ -60,6 +85,12 @@ export class VorgaengeRepository {
         return { ...this.map(alt), aktualisiert: jetzt };
       }
     }
+    // v1185 — gleiches Thema in anderem Wortlaut: offener Vorgang mit ähnlichem Titel wird fortgeschrieben
+    const aehnlich = await this.findeAehnlichenOffenen(v.userId, v.titel);
+    if (aehnlich) {
+      await this.db.execute('UPDATE vorgaenge SET aktualisiert = ? WHERE id = ?', [jetzt, aehnlich.id]);
+      return { ...aehnlich, aktualisiert: jetzt };
+    }
     const id = randomUUID();
     await this.db.execute(
       `INSERT INTO vorgaenge (id, user_id, titel, ziel, besitzer, status, naechster_schritt, frist, quelle, ergebnis, autonomie, dedupe_key, erstellt, aktualisiert)
@@ -71,6 +102,38 @@ export class VorgaengeRepository {
 
   async setzeStatus(userId: string, id: string, status: VorgangStatus, ergebnis?: string): Promise<void> {
     await this.db.execute('UPDATE vorgaenge SET status = ?, ergebnis = COALESCE(?, ergebnis), aktualisiert = ? WHERE user_id = ? AND id = ?', [status, ergebnis ?? null, new Date().toISOString(), userId, id]);
+  }
+
+  /** v1185 — offener Vorgang, dessen Titel dem gegebenen ähnlich ist (Jaccard ≥ Schwelle). */
+  async findeAehnlichenOffenen(userId: string, titel: string, schwelle = VORGANG_AEHNLICHKEIT_SCHWELLE): Promise<Vorgang | null> {
+    const offene = await this.offene(userId, 100);
+    let best: Vorgang | null = null; let bestWert = 0;
+    for (const v of offene) {
+      const w = titelAehnlichkeit(v.titel, titel);
+      if (w >= schwelle && w > bestWert) { best = v; bestWert = w; }
+    }
+    return best;
+  }
+
+  /** v1185 — Vorgänge, deren Frist ohne Entscheidung abgelaufen ist, werden verworfen (Kachel bleibt ehrlich). */
+  async verfalleAbgelaufene(now = new Date()): Promise<number> {
+    const r = await this.db.execute(
+      `UPDATE vorgaenge SET status = 'verworfen', ergebnis = COALESCE(ergebnis, 'Frist abgelaufen ohne Entscheidung'), aktualisiert = ?
+        WHERE status IN ('offen', 'wartet') AND frist IS NOT NULL AND frist < ?`,
+      [now.toISOString(), now.toISOString()],
+    );
+    return r.changes ?? 0;
+  }
+
+  /** v1185 — Kachel: offene Vorgänge plus die in den letzten `tage` Tagen abgeschlossenen. */
+  async uebersicht(userId: string, tage = 7): Promise<{ offene: Vorgang[]; abgeschlossene: Vorgang[] }> {
+    const seit = new Date(Date.now() - tage * 86_400_000).toISOString();
+    const offene = await this.offene(userId, 100);
+    const rows = await this.db.query(
+      `SELECT * FROM vorgaenge WHERE user_id = ? AND status IN ('erledigt', 'verworfen') AND aktualisiert >= ? ORDER BY aktualisiert DESC LIMIT 100`,
+      [userId, seit],
+    ) as Record<string, unknown>[];
+    return { offene, abgeschlossene: rows.map(r => this.map(r)) };
   }
 
   async offene(userId: string, limit = 50): Promise<Vorgang[]> {

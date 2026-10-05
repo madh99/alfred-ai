@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { klassifiziereAktion, entscheideAusfuehrung, istHandlungsInsight, vorgangTitelAus } from '../vorgaenge/autonomie.js';
+import { klassifiziereAktion, entscheideAusfuehrung, istHandlungsInsight, vorgangTitelAus, istGenerischerTitel } from '../vorgaenge/autonomie.js';
 
 describe('entscheideAusfuehrung (v1180 Durchsetzung)', () => {
   it('nie → blockieren, bestaetigen → bestaetigen, auto → ausführen außer confirm_all', () => {
@@ -17,6 +17,16 @@ describe('istHandlungsInsight / vorgangTitelAus', () => {
     expect(istHandlungsInsight('Temp Terrasse Batterie 0 % — Batterie tauschen')).toBe(true);
     expect(istHandlungsInsight('Hausbatterie 65 %, PV 0 W nachts ↳ NORMAL')).toBe(false);
     expect(istHandlungsInsight('Zur Info: Wetter morgen sonnig, 18 °C')).toBe(false);
+    // v1185 — Realfall 05.10. 12:01: Preis-Gelegenheit ist Information, kein Vorgang
+    expect(istHandlungsInsight('2. **💡 Strompreis aktuell günstig (27,97 ct/kWh brutto)**\n   - **Jetzt laden** (Wallbox oder Hausbatterie) lohnt sich – Preis liegt unter Tagesdurchschnitt')).toBe(false);
+    expect(istHandlungsInsight('5. **🔋 Smart-Home-Sensor "Temp Terrasse" Batterie 0%**\n   - **Batterie wechseln oder Incident bestätigen**')).toBe(true);
+  });
+  it('v1185 — generische Überschriften werden kein Vorgang', () => {
+    expect(istGenerischerTitel('Kontextuelle Hinweise')).toBe(true);
+    expect(istGenerischerTitel('Handlungsbedarf:')).toBe(true);
+    expect(istGenerischerTitel('Status')).toBe(true);
+    expect(istGenerischerTitel('Proxmox-Server `git-server` RAM-Auslastung 95,1%')).toBe(false);
+    expect(istGenerischerTitel('9 unbeantwortete E-Mails mit Follow-up-Bedarf')).toBe(false);
     expect(istHandlungsInsight('Der Kalender zeigt heute keine Termine.')).toBe(false);
   });
   it('Titel ohne Nummer, Markdown und Emoji-Präfix', () => {

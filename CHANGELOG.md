@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1185] - 2026-10-05
+
+### Added — Kachel Vorgänge (v1185)
+
+Schicht 3 erzeugt seit dem 05.10. Vorgänge und Schritte, sichtbar waren sie nur in der Datenbank.
+
+- Neue Seite „Vorgänge" in der Web-UI: offene Vorgänge mit Besitzer, Autonomie-Klasse, nächstem Schritt und Frist, die in den letzten 7 Tagen abgeschlossenen Vorgänge und das Ausführungsgedächtnis der letzten 14 Tage.
+- `GET /api/vorgaenge` liefert dieselben Daten.
+
+### Changed — Vorgänge werden ehrlicher, der Rundgang wirksamer (v1185)
+
+Auswertung der ersten neun Vorgänge des Tages: dasselbe Thema entstand in zwei Wortlauten zweimal, eine Abschnittsüberschrift („Kontextuelle Hinweise") und ein Preis-Hinweis („Strompreis aktuell günstig") wurden Vorgänge, und übersprungene Aktionsvorschläge blieben ohne Frist für immer offen. Außerdem lief jeder 30-Minuten-Tick als Vollpass, weil die Feed-Sektion mit jedem neuen Artikel als geändert galt.
+
+- Ein neuer Vorgang wird einem offenen Vorgang mit ähnlichem Titel zugeschlagen (Wortüberlappung mindestens 50 Prozent) statt ihn zu duplizieren.
+- Abschnittsüberschriften und Titel mit weniger als zwei Wörtern werden kein Vorgang; Preis- und Gelegenheitshinweise gelten als Information.
+- Aktionsvorschläge bekommen eine Frist von 7 Tagen; Vorgänge, deren Frist ohne Entscheidung abläuft, werden im täglichen Aufräumjob verworfen.
+- Die Feed-Sektion zählt für den Rundgang als volatil: neue Artikel allein lösen keinen Vollpass mehr aus. Der Vollpass spätestens alle 2 Stunden und der Themen-Digest um 06:30 sehen sie weiterhin.
+- 3 neue Tests, 2 angepasst.
+
 ## [0.19.0-jarvis.1184] - 2026-10-05
 
 ### Fixed — BMW-Stream: Verbindung alle 60 Sekunden geschlossen (v1184)

@@ -38,6 +38,8 @@ describe('istRundgangOhneAenderung', () => {
     expect(istRundgangOhneAenderung([], T - 119 * 60_000, T).ueberspringen).toBe(true);
   });
   it('Kalender, Mail, BMW, CMDB, Feeds sind fachlich', () => {
-    for (const k of ['calendar', 'email', 'bmw', 'cmdb', 'feeds', 'memories', 'todos', 'watches']) expect(VOLATILE_SEKTIONEN.has(k)).toBe(false);
+    for (const k of ['calendar', 'email', 'bmw', 'cmdb', 'memories', 'todos', 'watches']) expect(VOLATILE_SEKTIONEN.has(k)).toBe(false);
+    // v1185 — neue RSS-Artikel sind kein Zustandswechsel (lösten jeden Tick einen Vollpass aus)
+    expect(VOLATILE_SEKTIONEN.has('feeds')).toBe(true);
   });
 });

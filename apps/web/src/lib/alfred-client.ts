@@ -1627,6 +1627,14 @@ export class AlfredClient {
   }
 
   // v866 — Globale CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt vom Alfred-Usage-Tracking)
+  /** v1185 — Kachel Vorgänge */
+  async fetchVorgaenge(): Promise<VorgaengeStatus | null> {
+    const res = await fetch(`${this.baseUrl}/api/vorgaenge`, { headers: this.authHeaders });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data?.offene) ? data as VorgaengeStatus : null;
+  }
+
   /** v1162 — Lebenszeichen-Kachel */
   async fetchLebenszeichen(): Promise<LebenszeichenStatus | null> {
     const res = await fetch(`${this.baseUrl}/api/lebenszeichen`, { headers: this.authHeaders });
@@ -3103,6 +3111,11 @@ export interface CliUsageGroupRow {
   cacheReadTokens: number;
   costUsd: number;
 }
+// v1185 — Jarvis Schicht 3: Kachel Vorgänge
+export interface VorgangDto { id: string; titel: string; ziel?: string; besitzer: 'alfred' | 'user'; status: 'offen' | 'wartet' | 'erledigt' | 'verworfen'; naechsterSchritt?: string; frist?: string; quelle: string; ergebnis?: string; autonomie: 'auto' | 'bestaetigen' | 'nie'; erstellt: string; aktualisiert: string }
+export interface VorgangSchrittDto { id: string; vorgangId?: string; zeit: string; art: string; skill?: string; aktion?: string; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }
+export interface VorgaengeStatus { offene: VorgangDto[]; abgeschlossene: VorgangDto[]; schritte: VorgangSchrittDto[] }
+
 // v1162 — Jarvis Schicht 0: Lebenszeichen-Kachel
 export type LebenszeichenTakt = { art: 'taeglich'; um: string } | { art: 'woechentlich'; tag: number; um: string } | { art: 'intervall'; minuten: number };
 export interface LebenszeichenLauf { id: string; jobKey: string; userId?: string; nodeId?: string; startedAt: string; finishedAt?: string; ok?: boolean; zaehler?: Record<string, number>; fehler?: string }

@@ -894,6 +894,9 @@ export class HttpAdapter extends MessagingAdapter {
   /** v1162 — Jarvis Schicht 0: Lebenszeichen-Kachel (Jobs, Provider-Puls, Proben, offene Meldungen). */
   private lebenszeichenCallback?: () => Promise<Record<string, unknown>>;
   setLebenszeichenCallback(cb: typeof HttpAdapter.prototype.lebenszeichenCallback): void { this.lebenszeichenCallback = cb; }
+  /** v1185 — Kachel Vorgänge */
+  private vorgaengeCallback?: () => Promise<Record<string, unknown>>;
+  setVorgaengeCallback(cb: typeof HttpAdapter.prototype.vorgaengeCallback): void { this.vorgaengeCallback = cb; }
 
   async connect(): Promise<void> {
     this.status = 'connecting';
@@ -1780,6 +1783,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleClusterHealth(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/lebenszeichen' && req.method === 'GET') {
       this.handleLebenszeichen(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {
+      this.handleVorgaenge(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/cli-usage' && req.method === 'GET') {
       // v866 — CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt von llm_usage)
       this.handleCliUsage(req, res, url).catch(err => this.safeError(res, err));
@@ -6287,6 +6292,19 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v866 — CLI-Agent-Usage-Übersicht: ?days=30 (0/fehlend = alles). */
+  /** v1185 — Vorgänge (offen, abgeschlossen 7 d, Schritte 14 d). */
+  private async handleVorgaenge(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.vorgaengeCallback) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'vorgaenge not available' }));
+      return;
+    }
+    const data = await this.vorgaengeCallback();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+  }
+
   private async handleLebenszeichen(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.lebenszeichenCallback) {

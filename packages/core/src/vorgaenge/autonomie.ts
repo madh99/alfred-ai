@@ -76,8 +76,20 @@ export function entscheideAusfuehrung(klasse: Autonomie, autonomyLevel: 'confirm
   return autonomyLevel === 'confirm_all' ? 'bestaetigen' : 'ausfuehren';
 }
 
-const HANDLUNGS_WORTE = /\b(prüfen|prüfe|kontrollieren|tauschen|austauschen|ersetzen|kaufen|besorgen|bestellen|erneuern|verlängern|bezahlen|überweisen|anrufen|kontaktieren|melden|planen|buchen|reservieren|vereinbaren|absagen|verschieben|laden|aufladen|nachfüllen|sichern|aktualisieren|updaten|neu starten|neustarten|einstellen|aktivieren|deaktivieren|freigeben|entscheiden|beantragen|einreichen|abholen|zurückgeben)\b/i;
-const INFO_MARKER = /\b(NORMAL|kein Handlungsbedarf|zur Info|FYI|informativ|keine Aktion)\b/i;
+const HANDLUNGS_WORTE = /\b(prüfen|prüfe|kontrollieren|tauschen|austauschen|ersetzen|kaufen|besorgen|bestellen|erneuern|verlängern|bezahlen|überweisen|anrufen|kontaktieren|melden|planen|buchen|reservieren|vereinbaren|absagen|verschieben|laden|aufladen|nachfüllen|sichern|aktualisieren|updaten|neu starten|neustarten|einstellen|aktivieren|deaktivieren|freigeben|entscheiden|beantragen|einreichen|abholen|zurückgeben|wechseln|bestätigen|klären|beheben|antworten|erweitern|zurücksetzen|reparieren|nachbestellen|einplanen|erledigen|abschließen|umsetzen|kündigen|nachfragen|rückmelden)\b/i;
+// v1185 — Realfall 05.10.: „Strompreis aktuell günstig … Jetzt laden lohnt sich" wurde ein
+// Vorgang. Preis-/Gelegenheits-Hinweise sind Information, keine Handlung des Owners.
+const INFO_MARKER = /\b(NORMAL|kein Handlungsbedarf|zur Info|FYI|informativ|keine Aktion|lohnt sich|günstig|Preis liegt|Tagesdurchschnitt|Strompreis)\b/i;
+
+/**
+ * v1185 — Überschriften, die das Modell über Abschnitte setzt („Kontextuelle Hinweise",
+ * „Handlungsbedarf"), sind keine Vorgänge. Realfall 05.10. 13:31.
+ */
+const GENERISCHE_TITEL = /^(kontextuelle hinweise|hinweise|handlungsbedarf|zusammenfassung|empfehlungen?|weitere (punkte|hinweise)|sonstiges|übersicht|status|aktuelles|beobachtungen|erkenntnisse|zur info)[:.!]?$/i;
+export function istGenerischerTitel(titel: string): boolean {
+  const t = titel.trim();
+  return t.length < 8 || GENERISCHE_TITEL.test(t) || !/\p{L}{3,}.*\s.*\p{L}{3,}/u.test(t);
+}
 
 /** v1180 — Insight mit Handlungsimplikation (wird Vorgang) vs. reine Information (bleibt Insight mit Ablauf). */
 export function istHandlungsInsight(text: string): boolean {
