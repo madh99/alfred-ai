@@ -23,6 +23,33 @@ const MIN_HOUR_CLASS: Record<Urgency, HourClass> = {
 
 const CLASS_ORDER: Record<HourClass, number> = { QUIET: 0, WAKING: 1, WINDING_DOWN: 2, ACTIVE: 3 };
 
+/** v1198 — Anwesenheit aus Home Assistant (Personen-Entitäten, Innenraum-Bewegung). */
+export interface Anwesenheit { jemandZuhause?: boolean; letzteBewegungAt?: number }
+/** Bewegung im Haus innerhalb dieser Spanne gilt als „jemand ist wach und da". */
+export const BEWEGUNG_FRISCH_MIN = 10;
+
+/**
+ * v1198 — Jarvis Interaktion: „Anwesenheit aus HA und Chat-Aktivität steuert Zustellung."
+ * Reine Entscheidung mit Begründung, testbar ohne Datenbank. Reihenfolge:
+ * dringend → Chat aktiv → Ruhefenster → Bewegung im Haus (wach + da) → niemand zu Hause
+ * bei niedriger Dringlichkeit → gelerntes Aktivitätsprofil.
+ */
+export function entscheideZustellung(e: {
+  urgency: Urgency; chatAktiv: boolean; imRuhefenster: boolean; profilErlaubt: boolean; profilText: string;
+  anwesenheit?: Anwesenheit; now?: number;
+}): { liefern: boolean; grund: string } {
+  if (e.urgency === 'urgent') return { liefern: true, grund: 'dringend' };
+  if (e.chatAktiv) return { liefern: true, grund: 'Chat aktiv (letzte 30 min)' };
+  if (e.imRuhefenster) return { liefern: false, grund: 'Ruhefenster' };
+  const now = e.now ?? Date.now();
+  const bewegungMin = e.anwesenheit?.letzteBewegungAt ? (now - e.anwesenheit.letzteBewegungAt) / 60_000 : undefined;
+  if (e.anwesenheit?.jemandZuhause === true && bewegungMin !== undefined && bewegungMin <= BEWEGUNG_FRISCH_MIN && e.urgency !== 'low') {
+    return { liefern: true, grund: `Bewegung im Haus vor ${Math.round(bewegungMin)} min (zu Hause, wach)` };
+  }
+  if (e.anwesenheit?.jemandZuhause === false && e.urgency === 'low') return { liefern: false, grund: 'niemand zu Hause, niedrige Dringlichkeit' };
+  return { liefern: e.profilErlaubt, grund: e.profilText };
+}
+
 /** v1144 — K2: Stunde im Ruhefenster [start, ende)? Über-Mitternacht (22→7) inklusive. */
 export function istImRuhefenster(stunde: number, [start, ende]: [number, number]): boolean {
   if (start === ende) return false; // degeneriertes Fenster = aus
@@ -46,6 +73,10 @@ export interface ActivityProfile {
 export class DeliveryScheduler {
   private profile?: ActivityProfile;
   private readonly timezone: string;
+  /** v1198 — Anwesenheit (Home Assistant) als Zustell-Signal; Grund der letzten Entscheidung für Log und „Warum?". */
+  private anwesenheitsQuelle?: () => Anwesenheit | undefined;
+  letzterGrund = '';
+  setAnwesenheitsQuelle(fn: () => Anwesenheit | undefined): void { this.anwesenheitsQuelle = fn; }
 
   constructor(
     private readonly adapter: AsyncDbAdapter,
@@ -163,10 +194,9 @@ export class DeliveryScheduler {
 
   /** Should this insight be delivered now, or deferred? Checks realtime activity first, then profile. */
   async shouldDeliverNow(urgency: Urgency, profile: ActivityProfile, userId?: string): Promise<boolean> {
-    if (urgency === 'urgent') return true;
-
-    // Realtime activity check: if user sent a message in the last 30 minutes → always deliver
-    if (userId) {
+    // v1198 — eine Entscheidung mit Grund (Anwesenheit aus HA fließt ein)
+    let chatAktiv = false;
+    if (urgency !== 'urgent' && userId) {
       try {
         const row = await this.adapter.queryOne(
           `SELECT MAX(created_at) as latest FROM messages WHERE conversation_id IN (
@@ -174,30 +204,22 @@ export class DeliveryScheduler {
           ) AND role = 'user'`,
           [userId],
         ) as { latest: string } | undefined;
-        if (row?.latest) {
-          const lastActive = new Date(row.latest).getTime();
-          if (Date.now() - lastActive < 30 * 60_000) return true;
-        }
-      } catch { /* fallback to profile-based check */ }
+        if (row?.latest && Date.now() - new Date(row.latest).getTime() < 30 * 60_000) chatAktiv = true;
+      } catch { /* ohne Chat-Signal weiter */ }
     }
-
-    // v1144 — K2: hartes Ruhefenster. Das gelernte Aktivitätsprofil hielt
-    // 04:02 Uhr für zustellbar (Realfall 29.08.: 10 Insights nachts) — ein
-    // paar späte Chats reichten als „aktiv". Im Fenster wird alles außer
-    // urgent aufgeschoben und kommt gebündelt nach Fenster-Ende; der
-    // Realtime-Check oben bleibt davor (wer nachts aktiv chattet, ist wach).
-    if (this.quietHours !== false && istImRuhefenster(this.getHourInUserTz(), this.quietHours)) {
-      return false;
-    }
-
-    // Profile-based: if profile is too young (<7 days of data), always deliver
+    const hour = this.getHourInUserTz();
+    const imRuhefenster = this.quietHours !== false && istImRuhefenster(hour, this.quietHours);
     const profileAge = Date.now() - new Date(profile.computedAt).getTime();
     const hasActiveHours = profile.classifications.some(c => c === 'ACTIVE' || c === 'WAKING');
-    if (profileAge < 3 * 24 * 60 * 60_000 && !hasActiveHours) return true;
-    const hour = this.getHourInUserTz();
+    const profilJung = profileAge < 3 * 24 * 60 * 60_000 && !hasActiveHours;
     const currentClass = profile.classifications[hour];
-    const minClass = MIN_HOUR_CLASS[urgency];
-    return CLASS_ORDER[currentClass] >= CLASS_ORDER[minClass];
+    const profilErlaubt = profilJung || CLASS_ORDER[currentClass] >= CLASS_ORDER[MIN_HOUR_CLASS[urgency]];
+    const profilText = profilJung ? 'Aktivitätsprofil noch jung — zustellen' : `Aktivitätsprofil ${hour} Uhr: ${currentClass} (nötig ${MIN_HOUR_CLASS[urgency]})`;
+    let anwesenheit: Anwesenheit | undefined;
+    try { anwesenheit = this.anwesenheitsQuelle?.(); } catch { /* optional */ }
+    const r = entscheideZustellung({ urgency, chatAktiv, imRuhefenster, profilErlaubt, profilText, anwesenheit });
+    this.letzterGrund = r.grund;
+    return r.liefern;
   }
 
   /** Defer an insight for later delivery. */

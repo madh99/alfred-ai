@@ -410,6 +410,8 @@ export class Alfred {
   private weltmodellBeobachter?: import('./ereignisse/zustandswechsel.js').WeltmodellBeobachter;
   /** v1177 — Jarvis Schicht 2: Echtzeit-Ereignisse aus Home Assistant (WebSocket). */
   private haEreignisQuelle?: import('./ereignisse/ha-ereignisse.js').HaEreignisQuelle;
+  /** v1198 — Anwesenheit aus Home Assistant für die Zustellentscheidung. */
+  private hausAnwesenheit?: import('./delivery-scheduler.js').Anwesenheit;
   /** v933 — Social-Media-Betrieb */
   private socialRepo?: import('@alfred/storage').SocialRepository;
   private socialSkillRef?: import('@alfred/skills').SocialSkill;
@@ -13828,6 +13830,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const name = (e.entity.attributes?.friendly_name as string | undefined) ?? e.entity.entity_id;
             const zustaende = await ladeZustaende();
             const d = deuteHaus(zustaende);
+            // v1198 — Anwesenheit/Bewegung für die Zustellentscheidung (Interaktion)
+            this.hausAnwesenheit = {
+              jemandZuhause: d.personen.length > 0 ? !d.alleAbwesend : undefined,
+              letzteBewegungAt: e.typ === 'bewegung' && e.entity.state === 'on' ? Date.now() : this.hausAnwesenheit?.letzteBewegungAt,
+            };
             // Öffnung/Bewegung sind nur bei Abwesenheit ein Ereignis; Rauch, CO, Wasser, Alarm immer.
             // v1181 — Anwesenheit nur, wenn sich „zu Hause" wirklich ändert (Zonenwechsel innerhalb des Heims ist keiner).
             const anwesenheitGewechselt = e.typ === 'anwesenheit' && istZuhause(e.vorher?.state ?? 'not_home', d.heimZonen) !== istZuhause(e.entity.state, d.heimZonen);
@@ -13844,6 +13851,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
         });
         this.haEreignisQuelle.start();
+        this.reasoningEngine?.setAnwesenheitsQuelle(() => this.hausAnwesenheit); // v1198
         const quelle = this.haEreignisQuelle;
         this.registriereJob({
           key: 'ha-ereignisse-watchdog', beschreibung: 'Home-Assistant-WebSocket: Verbindung prüfen, Hänger neu verbinden', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 5,

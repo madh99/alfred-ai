@@ -720,10 +720,12 @@ ${this.buildTopicInstructions()}`;
   private beginneBegruendung(art: PassBegruendung['art'], ausloeser: string[]): void {
     this.aktuelleBegruendung = { art, ausloeser, gateAusgesetzt: [] };
   }
-  private merkeBegruendung(insights: string[], zustellung: PassBegruendung['zustellung'], dauerMs?: number): void {
+  private merkeBegruendung(insights: string[], zustellung: PassBegruendung['zustellung'], dauerMs?: number, grund?: string): void {
     const b = this.aktuelleBegruendung ?? { art: 'vollpass' as const, ausloeser: [], gateAusgesetzt: [] };
-    this.warum.merke({ zeit: new Date().toISOString(), art: b.art, ausloeser: [...b.ausloeser], gateAusgesetzt: [...b.gateAusgesetzt], insights: insights.map(insightTitel), zustellung, dauerMs });
+    this.warum.merke({ zeit: new Date().toISOString(), art: b.art, ausloeser: [...b.ausloeser], gateAusgesetzt: [...b.gateAusgesetzt], insights: insights.map(insightTitel), zustellung, grund, dauerMs });
   }
+  /** v1198 — Anwesenheit (Home Assistant) als Zustell-Signal an den Scheduler. */
+  setAnwesenheitsQuelle(fn: () => import('./delivery-scheduler.js').Anwesenheit | undefined): void { this.deliveryScheduler?.setAnwesenheitsQuelle(fn); }
   async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
     if (!this.enabled) return;
     const key = `${ereignis.quelle}:${[...ereignis.objekte].sort().join('+')}`;
@@ -2067,8 +2069,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         message, JSON.stringify(actions),
       );
       this.kennzahlen.zaehle('insightsAufgeschoben', insights.length);
-      this.merkeBegruendung(insights, 'aufgeschoben', durationMs); // v1196
-      this.logger.info({ urgency, insightCount: insights.length }, 'Insights deferred (user likely inactive)');
+      this.merkeBegruendung(insights, 'aufgeschoben', durationMs, this.deliveryScheduler.letzterGrund); // v1196/v1198
+      this.logger.info({ urgency, insightCount: insights.length, grund: this.deliveryScheduler.letzterGrund }, 'Insights deferred (user likely inactive)');
       // Mark as sent to avoid dedup re-triggering
       for (const insight of insights) await this.markSent(insight);
       return;
@@ -2081,7 +2083,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         await adapter.sendMessage(this.defaultChatId, message);
         for (const insight of insights) await this.markSent(insight);
         this.kennzahlen.zaehle('insightsGesendet', insights.length);
-        this.merkeBegruendung(insights, 'gesendet', durationMs); // v1196
+        this.merkeBegruendung(insights, 'gesendet', durationMs, this.deliveryScheduler?.letzterGrund || undefined); // v1196/v1198
         this.logger.info({ durationMs, insights: insights.length, actions: actions.length, urgency }, 'Reasoning pass: insights sent');
       }
       if (this.insightTracker) {

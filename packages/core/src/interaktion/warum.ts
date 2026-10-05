@@ -21,6 +21,8 @@ export interface PassBegruendung {
   /** Titel der zugestellten Insights (erste Zeile, ohne Markdown) */
   insights: string[];
   zustellung: Zustellung;
+  /** v1198 — Grund der Zustellentscheidung (Chat aktiv, Ruhefenster, Bewegung im Haus, Profil …) */
+  grund?: string;
   dauerMs?: number;
 }
 
@@ -72,7 +74,7 @@ export function formatiereWarum(b: PassBegruendung | undefined): string {
   zeilen.push(b.ausloeser.length ? `Auslöser: ${b.ausloeser.join(' · ')}` : 'Auslöser: keine einzelne Quelle (Vollpass nach Zeitablauf)');
   if (b.gateAusgesetzt.length) zeilen.push(`Gate ausgesetzt (Weltmodell meldete Auffälligkeit): ${b.gateAusgesetzt.join(', ')}`);
   if (b.insights.length) zeilen.push(`Gemeldet (${b.insights.length}): ${b.insights.map(t => `„${t}"`).join(', ')}`);
-  zeilen.push(`Zustellung: ${ZUSTELLUNG_TEXT[b.zustellung]}${b.dauerMs ? ` · Dauer ${(b.dauerMs / 1000).toFixed(1)} s` : ''}`);
+  zeilen.push(`Zustellung: ${ZUSTELLUNG_TEXT[b.zustellung]}${b.grund ? ` — Grund: ${b.grund}` : ''}${b.dauerMs ? ` · Dauer ${(b.dauerMs / 1000).toFixed(1)} s` : ''}`);
   zeilen.push('Die Deutung selbst stammt aus dem Weltmodell (Normalzustände je Quelle); die Formulierung vom Modell.');
   return zeilen.join('\n');
 }

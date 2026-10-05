@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1198] - 2026-10-05
+
+### Added — Jarvis Interaktion, Teil 2: Anwesenheit steuert die Zustellung, jede Entscheidung mit Grund (v1198)
+
+Die Spezifikation nennt Anwesenheit aus Home Assistant und Chat-Aktivität als Steuergrößen der Zustellung. Bisher entschied neben Dringlichkeit, Chat-Aktivität und Ruhefenster nur das gelernte Aktivitätsprofil.
+
+- Die Home-Assistant-Ereignisquelle liefert Anwesenheit (Personen zu Hause) und die letzte Innenraum-Bewegung. Bewegung in den letzten zehn Minuten bei Anwesenheit heißt „wach und da": normale und hohe Meldungen werden zugestellt, auch wenn das Profil die Stunde für ruhig hält. Ist niemand zu Hause, warten Meldungen niedriger Dringlichkeit. Dringend, Chat-Aktivität und Ruhefenster gehen wie bisher vor.
+- Jede Zustellentscheidung hat einen Grund (dringend, Chat aktiv, Ruhefenster, Bewegung im Haus, niemand zu Hause, Aktivitätsprofil). Er steht im Log und in der „Warum?"-Begründung.
+- 4 Tests.
+
 ## [0.19.0-jarvis.1197] - 2026-10-05
 
 ### Added — Kachel Lebenszeichen zeigt die „Warum?"-Begründungen (v1197)
