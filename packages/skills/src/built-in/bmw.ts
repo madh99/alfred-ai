@@ -95,6 +95,10 @@ interface BMWTokens {
   containerId: string;
   codeVerifier?: string;
   deviceCode?: string;
+  /** v1188 — Container-Prüfung je Prozessstart kostete einen Aufruf des Tageskontingents; jetzt wöchentlich. */
+  containerCheckedAt?: number;
+  /** v1188 — Stammdaten (Modell) ändern sich nie; einmal holen statt je Neustart. */
+  basicData?: Record<string, unknown>;
 }
 
 type TelematicResponse = Record<string, { value: string; unit: string; timestamp: string }>;
@@ -269,9 +273,9 @@ export class BMWSkill extends Skill {
     else console.log(`[BMW MQTT] ${msg}`, Object.keys(obj).length ? JSON.stringify(obj) : '');
   }
   /** v1176 — Zustand des Streams (Weltmodell „Datenlage", Lebenszeichen-Kachel). */
-  streamingStatus(): { enabled: boolean; aktiv: boolean; letzterConnectAt?: string; letzteDatenAt?: string; letzterFehlerAt?: string; letzterFehler?: string; reconnectFaelligAt?: string } {
+  streamingStatus(): { enabled: boolean; aktiv: boolean; letzterConnectAt?: string; letzteDatenAt?: string; letzterFehlerAt?: string; letzterFehler?: string; reconnectFaelligAt?: string; restKontingentErschoepftBis?: string } {
     const iso = (n?: number) => n ? new Date(n).toISOString() : undefined;
-    return { enabled: !!this.config?.streaming?.enabled, aktiv: this.streamingActive, letzterConnectAt: iso(this.mqttLastConnectAt), letzteDatenAt: iso(this.mqttLastDataAt), letzterFehlerAt: iso(this.mqttLastErrorAt), letzterFehler: this.mqttLastError, reconnectFaelligAt: iso(this.mqttReconnectDueAt) };
+    return { restKontingentErschoepftBis: Date.now() < this.rateLimitedUntil ? iso(this.rateLimitedUntil) : undefined, enabled: !!this.config?.streaming?.enabled, aktiv: this.streamingActive, letzterConnectAt: iso(this.mqttLastConnectAt), letzteDatenAt: iso(this.mqttLastDataAt), letzterFehlerAt: iso(this.mqttLastErrorAt), letzterFehler: this.mqttLastError, reconnectFaelligAt: iso(this.mqttReconnectDueAt) };
   }
   /**
    * v1176 — Wächter: alle 10 min aufgerufen. Realfall 04.10.: nach „Keepalive timeout"
@@ -1289,8 +1293,12 @@ export class BMWSkill extends Skill {
     }
 
     // On first REST call per process lifetime, verify container has correct descriptors
-    if (tokens.containerId && !this.containerChecked) {
+    // v1188 — höchstens einmal je Woche (Tageskontingent ~50 Aufrufe)
+    const containerFrisch = !!tokens.containerCheckedAt && Date.now() - tokens.containerCheckedAt < 7 * 86_400_000;
+    if (tokens.containerId && !this.containerChecked && !containerFrisch) {
       this.containerChecked = true;
+      tokens.containerCheckedAt = Date.now();
+      await this.saveTokens(tokens).catch(() => undefined);
       try {
         const containerId = await this.ensureContainer(tokens.accessToken);
         if (containerId !== tokens.containerId) {
@@ -1388,12 +1396,18 @@ export class BMWSkill extends Skill {
     let basicData: Record<string, unknown>;
     const basicCacheKey = `basic:${vin}`;
     const basicCached = this.cache.get(basicCacheKey);
+    const tokensBasic = (await this.loadTokens())?.basicData; // v1188 — persistiert, spart einen Aufruf je Neustart
     if (basicCached) {
       basicData = basicCached.data as Record<string, unknown>;
+    } else if (tokensBasic && Object.keys(tokensBasic).length > 0) {
+      basicData = tokensBasic;
+      this.cache.set(basicCacheKey, { data: basicData, ts: Date.now() });
     } else {
       try {
         basicData = await this.apiGet<Record<string, unknown>>(`/customers/vehicles/${vin}/basicData`);
         this.cache.set(basicCacheKey, { data: basicData, ts: Date.now() });
+        const tk = await this.loadTokens();
+        if (tk) { tk.basicData = basicData; await this.saveTokens(tk).catch(() => undefined); }
       } catch {
         basicData = { modelName: 'BMW' }; // fallback
       }

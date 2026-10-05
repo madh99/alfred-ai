@@ -7468,7 +7468,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         {
           const bmwSkillRef = this.bmwSkill as unknown as { execute(input: Record<string, unknown>, ctx: unknown): Promise<{ success: boolean; error?: string }> };
           this.registriereJob({
-            key: 'bmw-rest-poll', beschreibung: 'BMW REST-Telematik (SoC, Reichweite, km) — Datenbasis des Fahrzeug-Weltmodells', takt: { art: 'intervall', minuten: 30 }, bereich: 'global', startVerzoegerungMin: 2,
+            key: 'bmw-rest-poll', beschreibung: 'BMW REST-Telematik (SoC, Reichweite, km) — Datenbasis des Fahrzeug-Weltmodells', takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 2,
             run: async () => {
               const uid = this.tryOwner();
               if (!uid) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
@@ -7486,6 +7486,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const quelle = d?.restQuelle ?? 'unbekannt';
               const zaehler: Record<string, number> = { restFrisch: quelle === 'frisch' ? 1 : 0 };
               if (quelle === 'frisch' || quelle === 'db-aktuell') return { ok: true, zaehler };
+              // v1188 — Tageskontingent (CU-429) ist kein Fehler von Alfred: Zähler statt Fehlschlag, Weltmodell zeigt es
+              if (d?.restFehler?.includes('CU-429') || d?.restFehler?.includes('rate limit')) return { ok: true, zaehler: { ...zaehler, kontingentErschoepft: 1 } };
               return { ok: false, zaehler, fehler: `REST-Telematik: ${quelle}${d?.restFehler ? ' — ' + d.restFehler : ''}`.slice(0, 200) };
             },
           });

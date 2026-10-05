@@ -111,6 +111,17 @@ describe('deuteBmw', () => {
     expect(text).toMatch(/kein MQTT-Stream-Snapshot/);
   });
 
+  it('v1188 — REST fehlt wegen BMW-Tageskontingent (CU-429): kein Ausfall, NORMAL-Zeile', () => {
+    const rest: BmwSnapshot = { source: 'rest', createdAt: '2026-10-04T20:00:00Z', data: { 'vehicle.vehicle.travelledDistance': f(64093, '2026-10-04T16:28:04Z') } };
+    const d = deuteBmw({ rest, verlauf: VERLAUF_0410, now: NOW, stream: { enabled: true, aktiv: true, restKontingentErschoepftBis: '2026-10-06T00:00:00Z' } })!;
+    expect(d.zustand.restAusgefallen).toBe(false);
+    expect(d.zustand.restKontingentErschoepft).toBe(true);
+    expect(d.zeilen.join('\n')).toMatch(/REST-Abruf pausiert: BMW-Tageskontingent erschöpft bis .* ↳ NORMAL/);
+    // abgelaufene Kontingent-Sperre zählt nicht mehr
+    const d2 = deuteBmw({ rest, verlauf: VERLAUF_0410, now: NOW, stream: { enabled: true, aktiv: true, restKontingentErschoepftBis: '2026-10-04T00:00:00Z' } })!;
+    expect(d2.zustand.restAusgefallen).toBe(true);
+  });
+
   it('fährt gerade: Fahrtende jünger als ein REST-Takt', () => {
     const rest: BmwSnapshot = { source: 'rest', createdAt: '2026-10-05T00:20:00Z', data: { 'vehicle.vehicle.travelledDistance': f(64120, '2026-10-05T00:18:00Z') } };
     const d = deuteBmw({ rest, verlauf: VERLAUF_0410, now: NOW })!;

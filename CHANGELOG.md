@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1188] - 2026-10-05
+
+### Fixed — BMW REST: Tageskontingent erschöpft (v1188)
+
+Mit dem sichtbaren Fehler aus .1187 stand die Ursache im Log: HTTP 403 CU-429 „API rate limit reached". BMW CarData erlaubt etwa 50 REST-Aufrufe je Tag. Der 30-Minuten-Poll brauchte 48, jeder Neustart zwei weitere (Container-Prüfung, Stammdaten). An Deploy-Tagen war das Kontingent am frühen Nachmittag erschöpft, und das Weltmodell meldete korrekt einen Ausfall, dessen Ursache aber Alfred selbst war.
+
+- REST-Poll alle 60 statt 30 Minuten (24 Aufrufe je Tag). Der erwartete Takt im Weltmodell folgt; Stillstand gilt weiterhin ab 30 Minuten ohne Bewegung.
+- Container-Prüfung höchstens einmal je Woche, Stammdaten des Fahrzeugs werden mit den Tokens gespeichert: ein Neustart kostet keinen Aufruf mehr.
+- Ist das Kontingent erschöpft, zeigt die Datenlage „REST-Abruf pausiert: BMW-Tageskontingent erschöpft bis …" als NORMAL statt eines Ausfalls; der Job zählt es statt zu scheitern. Der Stream liefert unabhängig davon weiter.
+- 1 Test.
+
 ## [0.19.0-jarvis.1187] - 2026-10-05
 
 ### Fixed — BMW: Token-Refresh jede Minute nach dem stabilen Stream; REST-Abruf scheiterte still (v1187)

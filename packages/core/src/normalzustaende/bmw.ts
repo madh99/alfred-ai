@@ -34,6 +34,8 @@ export interface BmwZustand {
   /** Fahrzeug fuhr nach der letzten MQTT-Meldung → Stream lieferte nicht. */
   streamVerdacht: boolean;
   restAusgefallen: boolean;
+  /** v1188 — REST fehlt, weil das BMW-Tageskontingent erschöpft ist (kein Ausfall, keine Auffälligkeit). */
+  restKontingentErschoepft?: boolean;
   /** v1176 — Stream-Verbindung getrennt ohne geplanten Reconnect (Pfad hängt). */
   streamGetrennt?: boolean;
   soc?: number;
@@ -49,11 +51,18 @@ export interface BmwZustand {
 export interface BmwDeutung { zeilen: string[]; zustand: BmwZustand }
 
 /** v1176 — Zustand der MQTT-Verbindung (aus BMWSkill.streamingStatus()). */
-export interface BmwStreamStatus { enabled: boolean; aktiv: boolean; letzterConnectAt?: string; letzteDatenAt?: string; letzterFehlerAt?: string; letzterFehler?: string; reconnectFaelligAt?: string }
+export interface BmwStreamStatus { enabled: boolean; aktiv: boolean; letzterConnectAt?: string; letzteDatenAt?: string; letzterFehlerAt?: string; letzterFehler?: string; reconnectFaelligAt?: string; /** v1188 — BMW CU-429: REST-Tageskontingent erschöpft bis (ISO) */ restKontingentErschoepftBis?: string }
 
-/** Erwarteter REST-Takt (Kollektor pollt alle 30 min); ab 3× Takt gilt der Abruf als ausgefallen. */
-export const REST_TAKT_MIN = 30;
+/**
+ * Erwarteter REST-Takt; ab 3× Takt gilt der Abruf als ausgefallen.
+ * v1188 — 60 statt 30 min: BMW CarData erlaubt ~50 REST-Aufrufe je Tag (CU-429 „API rate
+ * limit reached", Live 05.10. ab 14:34). 48 Polls + 2 Aufrufe je Neustart sprengten das
+ * Kontingent an Deploy-Tagen. 24 Polls lassen Luft für Neustarts und Nachfragen.
+ */
+export const REST_TAKT_MIN = 60;
 export const REST_AUSFALL_MIN = 3 * REST_TAKT_MIN;
+/** Stillstand gilt ab dieser Zeit seit der letzten Bewegung (unabhängig vom REST-Takt). */
+export const STEHT_MIN = 30;
 /** Unverriegelt im Stand ab dieser Dauer auffällig. */
 export const UNVERRIEGELT_SCHWELLE_MIN = 60;
 export const SOC_NIEDRIG_PROZENT = 20;
@@ -148,6 +157,9 @@ export function deuteBmw(input: { mqtt?: BmwSnapshot; rest?: BmwSnapshot; verlau
   z.mqttAlterMin = minSeit(mqtt?.createdAt);
   z.restAlterMin = minSeit(rest?.createdAt);
   z.restAusgefallen = rest !== undefined && (z.restAlterMin ?? 0) > REST_AUSFALL_MIN;
+  // v1188 — Kontingent erschöpft: der fehlende Abruf ist erklärt, kein Ausfall
+  const kontingentBis = input.stream?.restKontingentErschoepftBis;
+  if (z.restAusgefallen && kontingentBis && Date.parse(kontingentBis) > now.getTime()) { z.restAusgefallen = false; z.restKontingentErschoepft = true; }
 
   // Bewegung
   const verlauf = [...input.verlauf];
@@ -160,7 +172,7 @@ export function deuteBmw(input: { mqtt?: BmwSnapshot; rest?: BmwSnapshot; verlau
     z.letzteFahrtEnde = bew.ende;
     z.letzteFahrtKm = { von: bew.von!, bis: bew.bis! };
     // „fährt gerade": Fahrtende jünger als ein REST-Takt
-    z.steht = (minSeit(bew.ende) ?? Infinity) > REST_TAKT_MIN;
+    z.steht = (minSeit(bew.ende) ?? Infinity) > STEHT_MIN;
   } else {
     z.stehtMindestensSeit = bew.keineBewegungSeit;
   }
@@ -203,7 +215,9 @@ export function deuteBmw(input: { mqtt?: BmwSnapshot; rest?: BmwSnapshot; verlau
   {
     const teile: string[] = [];
     if (rest) {
-      teile.push(z.restAusgefallen
+      teile.push(z.restKontingentErschoepft
+        ? `REST-Abruf pausiert: BMW-Tageskontingent erschöpft bis ${formatiereZeit(input.stream!.restKontingentErschoepftBis!)} (letzter vor ${formatiereDauerMin(z.restAlterMin!)}) ↳ NORMAL, Stream liefert weiter, nichts zu tun`
+        : z.restAusgefallen
         ? `⚠️ REST-Abruf ausgefallen: letzter vor ${formatiereDauerMin(z.restAlterMin!)} (erwartet alle ${REST_TAKT_MIN} min) → Datenquelle prüfen`
         : `REST-Abruf aktuell (vor ${formatiereDauerMin(z.restAlterMin!)}, Takt ${REST_TAKT_MIN} min)`);
     } else teile.push('kein REST-Abruf vorhanden');
