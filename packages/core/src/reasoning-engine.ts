@@ -23,6 +23,7 @@ import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
 import { WarumSpeicher, insightTitel, type PassBegruendung } from './interaktion/warum.js';
+import { ruecknahmeHinweis } from './vorgaenge/ruecknahme.js';
 import { ReasoningContextCollector, spaetestesDatumImText, istInsightEcho, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ActionFeedbackTracker } from './action-feedback-tracker.js';
@@ -2434,10 +2435,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
           this.logger.info({ action: action.description, autonomyLevel }, 'Reasoning: action executed');
           // v1179 — Ausführungsgedächtnis
-          await this.protokolliereSchritt(action, result.success ? 'ausgefuehrt' : 'fehlgeschlagen', result.success ? undefined : String(result.error ?? '').slice(0, 300), this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action));
+          // v1200 — Rücknahme-Hinweis je Auto-Aktion (Spec Risiken: Autonomie ohne Rückweg)
+          const ruecknahme = result.success ? ruecknahmeHinweis(action.skillName, typeof action.skillParams?.action === 'string' ? action.skillParams.action : undefined, action.skillParams, (result as { data?: unknown }).data) : undefined;
+          await this.protokolliereSchritt(action, result.success ? 'ausgefuehrt' : 'fehlgeschlagen', result.success ? (ruecknahme ? `Rücknahme: ${ruecknahme}` : undefined) : String(result.error ?? '').slice(0, 300), this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action));
           if (this.vorgaengeRepo && result.success) {
             const vid = this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action);
-            if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'erledigt', 'automatisch ausgeführt').catch(() => undefined);
+            if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'erledigt', `automatisch ausgeführt${ruecknahme ? ` — Rücknahme: ${ruecknahme}` : ''}`).catch(() => undefined);
           }
           continue;
         }

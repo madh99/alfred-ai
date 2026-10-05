@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1200] - 2026-10-05
+
+### Added — Rücknahme-Hinweis für automatisch ausgeführte Aktionen (v1200)
+
+Die Spezifikation verlangt im Abschnitt Risiken, dass jede Auto-Aktion im Ausführungsgedächtnis einen Rücknahme-Hinweis trägt. Alfred legt heute Erinnerungen, Todos, Watches, Notizen, Dokumente und Memories selbständig an; der Schritt im Gedächtnis sagte bisher nicht, wie man das zurücknimmt.
+
+- Je Skill und Aktion wird der Rückweg deterministisch abgeleitet und mit der Kennung aus dem Skill-Ergebnis versehen, zum Beispiel „Erinnerung löschen: reminder/cancel reminderId=…" oder „Todo wieder öffnen: todo/reopen todoId=…". Memories nennen den Schlüssel.
+- Der Hinweis steht am Schritt (Ergebnis) und am erledigten Vorgang; die Kachel Vorgänge zeigt ihn. Lese-Aktionen und Aktionen ohne dokumentierten Rückweg bekommen keinen.
+- 2 Tests.
+
 ## [0.19.0-jarvis.1199] - 2026-10-05
 
 ### Added — Kachel Lebenszeichen zeigt den Tagesabschluss von gestern (v1199)
