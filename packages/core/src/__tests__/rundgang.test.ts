@@ -9,6 +9,10 @@ describe('fachlicherFingerabdruck', () => {
     const b = '**Fahrzeug:** steht seit 04.10. 19:01 (35 h), letzte Fahrt 63.995 → 64.093 km · **Datenlage:** REST-Abruf aktuell (vor 3 min, Takt 30 min) · MQTT still seit 03.10. 16:28 (2.132 min) · anthropic/claude antwortet (801 ms)';
     expect(fachlicherFingerabdruck(a)).toBe(fachlicherFingerabdruck(b));
   });
+  it('v1189 — Projekt-Alter „vor 3d" ändert den Fingerabdruck nicht', () => {
+    expect(fachlicherFingerabdruck('- **fussball-cc** (vor 3d) — 2 offene Punkte')).toBe(fachlicherFingerabdruck('- **fussball-cc** (vor 4d) — 2 offene Punkte'));
+    expect(fachlicherFingerabdruck('- **fussball-cc** (vor 3d) — 2 offene Punkte')).not.toBe(fachlicherFingerabdruck('- **fussball-cc** (vor 3d) — 3 offene Punkte'));
+  });
   it('fachliche Änderungen bleiben sichtbar', () => {
     expect(fachlicherFingerabdruck('SoC 30 % · vor 5 min')).not.toBe(fachlicherFingerabdruck('SoC 29 % · vor 5 min'));
     expect(fachlicherFingerabdruck('Fenster Lena offen')).not.toBe(fachlicherFingerabdruck('Türen/Fenster alle geschlossen'));
@@ -41,5 +45,8 @@ describe('istRundgangOhneAenderung', () => {
     for (const k of ['calendar', 'email', 'bmw', 'cmdb', 'memories', 'todos', 'watches']) expect(VOLATILE_SEKTIONEN.has(k)).toBe(false);
     // v1185 — neue RSS-Artikel sind kein Zustandswechsel (lösten jeden Tick einen Vollpass aus)
     expect(VOLATILE_SEKTIONEN.has('feeds')).toBe(true);
+    // v1189 — eigenes Gedächtnis und Wallbox-Leistung sind keine Weltänderung
+    expect(VOLATILE_SEKTIONEN.has('vorgaenge')).toBe(true);
+    expect(VOLATILE_SEKTIONEN.has('charger')).toBe(true);
   });
 });

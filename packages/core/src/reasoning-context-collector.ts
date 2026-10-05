@@ -71,7 +71,7 @@ export function istInsightEcho(text: string): boolean {
  */
 export function fachlicherFingerabdruck(content: string): string {
   return content
-    .replace(/\bvor \d+(?:[.,]\d+)? ?(?:min|h|Tagen?|Std\.?|Sekunden?|s)\b/gi, 'vor X')
+    .replace(/\bvor \d+(?:[.,]\d+)? ?(?:min|h|d|Tagen?|Std\.?|Sekunden?|s)\b/gi, 'vor X') // v1189: „vor 3d" (Projekte)
     .replace(/\bseit \d+(?:[.,]\d+)? ?(?:min|h|Tagen?)\b/gi, 'seit X')
     .replace(/\(\d+ ?ms\)/g, '(X ms)')
     .replace(/\b\d+ ?(?:min|Min\.?|Minuten) alt\b/gi, 'X min alt')
@@ -561,9 +561,11 @@ export class ReasoningContextCollector {
             }
 
             // Top overdue / unscheduled open items across all active projects
+            // v1189 — deterministische Reihenfolge (Priorität, dann Titel): sonst galt die Sektion
+            // bei gleicher Datenlage als geändert und löste einen Vollpass aus.
             const overdueOrUnscheduled = openItems
               .filter(it => !it.dueAt || new Date(it.dueAt).getTime() < now)
-              .sort((a, b) => (a.priority === 'high' ? 0 : 2) - (b.priority === 'high' ? 0 : 2))
+              .sort((a, b) => ((a.priority === 'high' ? 0 : 2) - (b.priority === 'high' ? 0 : 2)) || a.title.localeCompare(b.title))
               .slice(0, 5);
             const itemLines: string[] = [];
             if (overdueOrUnscheduled.length > 0) {

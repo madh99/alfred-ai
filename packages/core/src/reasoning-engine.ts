@@ -158,7 +158,10 @@ export function istVorgangsbezogeneKorrektur(k: { key: string; value: string }):
 // v1185 — 'feeds' volatil: neue RSS-Artikel sind kein Zustandswechsel in der Welt des Owners
 // (Live 05.10.: feeds+cmdb lösten jeden 30-min-Tick einen Vollpass aus). Der 2-h-Vollpass
 // und der Themen-Digest 06:30 sehen sie weiterhin.
-export const VOLATILE_SEKTIONEN = new Set(['activity', 'skillHealth', 'insightTracking', 'feedback', 'action_feedback', 'trends', 'weather', 'energy', 'crypto', 'infra', 'feeds']);
+// v1189 — 'vorgaenge' ist Alfreds eigenes Gedächtnis (jeder Vollpass schreibt Schritte → nächster
+// Tick „geändert" → Vollpass, selbsterhaltend); 'charger' (Wallbox-Leistung) schwankt wie 'energy'.
+// Live 05.10. 18:00: Vollpass wegen vorgaenge+charger+projects, ohne Weltänderung.
+export const VOLATILE_SEKTIONEN = new Set(['activity', 'skillHealth', 'insightTracking', 'feedback', 'action_feedback', 'trends', 'weather', 'energy', 'crypto', 'infra', 'feeds', 'vorgaenge', 'charger']);
 export const VOLLPASS_SPAETESTENS_MIN = 120;
 export function istRundgangOhneAenderung(changedSections: string[], letzterVollpassAt: number, now: number): { ueberspringen: boolean; fachlich: string[]; seitVollpassMin: number } {
   const fachlich = changedSections.filter(k => !VOLATILE_SEKTIONEN.has(k));

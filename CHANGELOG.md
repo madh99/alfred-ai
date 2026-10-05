@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1189] - 2026-10-05
+
+### Changed — Rundgang: eigenes Gedächtnis, Wallbox und Projekt-Reihenfolge lösen keinen Vollpass mehr aus (v1189)
+
+Seit .1178 soll der 30-Minuten-Tick ohne fachliche Änderung ein Rundgang ohne LLM sein. Live am 05.10. lief trotzdem jeder Tick als Vollpass. Um 18:00 galten die Sektionen Vorgänge, Wallbox und Projekte als geändert, ohne dass sich in der Welt etwas getan hatte: Jeder Vollpass schreibt Schritte ins Ausführungsgedächtnis, das beim nächsten Tick als Änderung zählt und den nächsten Vollpass auslöst; die Wallbox-Leistung schwankt ständig; offene Projektpunkte kamen in wechselnder Reihenfolge.
+
+- Vorgänge und Wallbox zählen als volatile Sektionen. Sie bleiben im Kontext, lösen aber allein keinen Vollpass aus.
+- Offene Projektpunkte werden deterministisch sortiert, und das Projektalter „vor 3d" fällt aus dem Fingerabdruck.
+- 2 Tests.
+
 ## [0.19.0-jarvis.1188] - 2026-10-05
 
 ### Fixed — BMW REST: Tageskontingent erschöpft (v1188)
