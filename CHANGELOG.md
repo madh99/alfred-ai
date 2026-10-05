@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1202] - 2026-10-05
+
+### Added — Jarvis Interaktion, Teil 3: gesprochene Antwort auf Sprachnachrichten (v1202)
+
+Transkription (Whisper) und Sprachsynthese existieren seit langem, aber eine Sprachnachricht wurde mit Text beantwortet. Wer spricht, bekommt jetzt zusätzlich eine gesprochene Antwort: knapp, ohne Markdown, Listen und Links, an einer Satzgrenze auf etwa 700 Zeichen gekürzt mit Verweis auf den Chat. Die Textantwort bleibt. Scheitert die Synthese, steht die Textantwort unverändert und das Log nennt den Grund.
+
+Befund beim Einbau: Die Sprachsynthese ist auf OpenAI konfiguriert, dessen Konto seit August ohne Guthaben ist (HTTP 429 bei der Probe). Sprachausgabe funktioniert erst wieder mit `speech.ttsProvider: mistral` und einem Mistral-Schlüssel (`ttsApiKey`), analog `sttProvider: mistral` für die Transkription. 4 Tests.
+
 ## [0.19.0-jarvis.1201] - 2026-10-05
 
 ### Added — „Warum?" je Vorgang (v1201)

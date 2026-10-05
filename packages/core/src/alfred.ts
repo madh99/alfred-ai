@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import yaml from 'js-yaml';
 import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@alfred/types';
 import { formatiereWarum } from './interaktion/warum.js';
+import { sprachfassung, istSprachnachricht } from './interaktion/sprache.js';
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
@@ -14732,6 +14733,21 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
             this.logger.warn({ err: fmtErr, chatId: message.chatId }, 'Formatted send failed, retrying as plain text');
             const plain = this.formatter.format(result.text, 'signal'); // strips all formatting
             await adapter.sendMessage(message.chatId, plain.text);
+          }
+
+          // v1202 — Jarvis Interaktion: wer spricht, bekommt zusätzlich eine gesprochene Antwort
+          // (knapp, ohne Markdown). Die Textantwort bleibt für Links, Listen und Details.
+          if (this.speechSynthesizerRef && istSprachnachricht(message.attachments)) {
+            try {
+              const gesprochen = sprachfassung(result.text);
+              if (gesprochen.length >= 2) {
+                const audio = await this.speechSynthesizerRef.synthesize(gesprochen, this.ownerMasterUserId);
+                await adapter.sendVoice(message.chatId, audio);
+                this.logger.info({ chatId: message.chatId, zeichen: gesprochen.length }, 'v1202 Sprachantwort gesendet');
+              }
+            } catch (err) {
+              this.logger.warn({ err: (err as Error).message?.slice(0, 200), chatId: message.chatId }, 'v1202 Sprachantwort fehlgeschlagen — Textantwort steht');
+            }
           }
         }
 
