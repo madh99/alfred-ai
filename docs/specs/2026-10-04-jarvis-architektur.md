@@ -164,3 +164,39 @@ Sprache über vorhandene STT/TTS; Anwesenheit aus HA (Personen-Entitäten) und C
 - **Normalzustände als neue Rauschquelle**: zu enge Baselines erzeugen Fehlalarme. Gegenmittel: Baselines sind erst *beobachtend* (loggen, nicht melden), Freischaltung je Quelle nach einer Woche Beweis.
 - **Autonomie ohne Rückweg**: `auto` nur für Aktionen mit dokumentiertem Undo; jede Auto-Aktion im Ausführungsgedächtnis mit Rücknahme-Hinweis.
 - **Modellabhängigkeit durch die Hintertür**: Jede neue Fähigkeit wird gegen das schwächste Modell der Kette getestet (Mistral-Small-Lauf in der Suite), nicht nur gegen das stärkste.
+
+## Umsetzungsstand (05.10.2026, Release-Linie `0.19.0-jarvis.N`, Branch `feature/jarvis`)
+
+Jeder Punkt wurde live auf .92 bewiesen (Logzeilen, `job_runs`, Datenbank), nicht nur gebaut. Versionsnummern verweisen auf den CHANGELOG.
+
+### Schicht 0 — Lebenszeichen: abgeschlossen (.1161–.1168, .1190, .1191)
+- Job-Register mit 10-Minuten-Raster, `job_runs`, Nachholen, Slots, Zeitbudget je Job; 43 registrierte Jobs, Lint-Basislinie für rohe Timer in `alfred.ts` = 0 (.1190: Backup-Cron, Content-Studio-Tick, Cluster-Monitor migriert).
+- Provider-Puls je Tier, synthetische Proben 06:50 (Tiers, Job-Takte, Daten-Frische inkl. `messwerte`, Adapter), Degradations-Wächter mit einem Morgen-Satz und Entwarnung (Beweis 05.10. 02:24: ein Satz, 65 min nach dem ersten Puls-Fehler).
+- Adapter-Puls (.1191): getrennte Messaging-Adapter werden gemeldet und alle 10 min neu verbunden (Realfall Matrix-502 am 05.10.).
+- Kachel Lebenszeichen (`/alfred/lebenszeichen/`, `GET /api/lebenszeichen`).
+
+### Schicht 1 — Weltmodell: live je Quelle (.1169–.1177, .1181, .1184, .1187, .1188)
+- Normalzustände: BMW (REST+MQTT verschmolzen, Bewegung, Stream-Zustand, Kontingent), Energie/ESS, Sensorbatterien (Klassifikation am Schreiber, Monitor-Skill), Infra/MikroTik, Haus (Türen, Bewegung, Anwesenheit mit Heimzonen).
+- Messwerte-Sammler (30 min) mit 7-Tage-Backfill, Baselines Median/MAD je Tagesstunde (beobachtend).
+- Gate-Aussetzung durch Weltmodell: eine generische Korrektur unterdrückt keine Meldung, zu deren Objekt das Weltmodell eine Auffälligkeit hält (.1174).
+- Realfälle aus dem Weltmodell behoben: BMW-Stream schloss nach 60 s (keepalive, .1184), Token-Refresh-Schleife (.1187), REST-Tageskontingent ≈ 50 Aufrufe (.1188), Fehlalarm Anwesenheit durch Zonennamen (.1181).
+
+### Schicht 2 — Ereignisgetriebene Wahrnehmung: live (.1175–.1178, .1189, .1193)
+- Home-Assistant-WebSocket (`state_changed`) mit Entprellung, Backoff und Wächter; Zustandswechsel gegen den Normalzustand lösen Mini-Pässe mit Weltmodell-Ausschnitt aus (Cooldown je Ereignisart, HA-Slots).
+- Der 30-Minuten-Tick ist ein Rundgang: Vollpass nur bei fachlicher Änderung (Fingerabdruck ohne relative Zeiten, volatile Sektionen ausgenommen), spätestens alle 2 h. Offen: der erste protokollierte „Rundgang übersprungen" — bis 05.10. 20:00 hatte jeder Tick eine echte oder scheinbare Änderung; seit .1193 steht je geänderter Sektion die erste abweichende Zeile im Log (nur Infrastruktur-Sektionen mit Inhalt).
+- Kennzahlen: Anteil Mini-Pässe, Ø Mini-Pass-Dauer, Kosten je Vollpass (.1192).
+
+### Schicht 3 — Vorgänge statt Insights: live (.1179–.1182, .1185, .1186)
+- Tabellen `vorgaenge`/`vorgang_schritte`, Autonomie-Klassen (Freigabe Owner 05.10.: auto Reminder/Watch/Todo/Dokument/Notiz/Memory; bestätigen Geld/extern sichtbar/irreversibel inkl. E-Mail, Kalender, Smart-Home-Schaltungen, Social; nie Konfig-Löschungen, Zahlungen, destruktive Shell/DB/Infra), durchgesetzt in der Aktionsausführung.
+- Handlungs-Insights werden Vorgänge des Owners (Frist 7 Tage, Dedupe über Titel-Ähnlichkeit, generische Überschriften und Preis-Hinweise ausgenommen); Ausführungsgedächtnis als Kontext-Sektion „Bereits getan".
+- Kachel Vorgänge mit Entscheidung des Owners (erledigt/verworfen) als Ergebnis-Signal; Kategorie je Vorgang.
+
+### Schicht 4 — Messen & Lernen: Teil 1 live, Teil 2 beobachtend (.1183, .1186, .1192)
+- Deterministische Zähler in der Engine (Vollpässe, Rundgänge, Mini-Pässe, Insights je Zustellweg, Gate, Aktionsausgänge, Vorgänge), Tagesabschluss 23:50 als Messwerte, Lern-Telemetrie So 19:15 mit Präzision, Erledigungsquote, Kosten je Vorgang und je Vollpass, Erledigung je Kategorie mit „Kandidat Digest-Modus".
+- Erkenntnis: Die Insight-Tabelle taugt nicht als Ergebnis-Signal (gesendete Reasoning-Insights ohne Statusspur); das Signal entsteht an den Vorgängen.
+- Offen (Teil 2): Konsequenzen (Digest-Modus unter Präzisions-Schwelle, Aufstieg nach `auto`) erst nach Datenlage und Freigabe der Regel durch den Owner.
+
+### Arbeitsweise, die sich bewährt hat
+- Kleine Releases mit sofortigem Live-Audit; mehrere Fehler wurden erst durch die vorangegangene Schicht sichtbar (Stream stabil → Refresh-Schleife → stiller REST-Ausfall → Tageskontingent).
+- Fixes an der Quelle (Schreiber, Datenlage) statt am Modell; alles funktioniert mit jedem Modell der Fallback-Kette.
+
