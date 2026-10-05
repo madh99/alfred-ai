@@ -1,5 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, BMWCarDataConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
+import { entscheideStreamWatchdog, type StreamZustand, type WatchdogUrteil } from '../bmw-stream-watchdog.js';
 import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -249,6 +250,42 @@ export class BMWSkill extends Skill {
   private mqttReconnectAttempts = 0;
   private mqttLastCloseWasError = false;
   private streamingActive = false;
+  // v1176 — Stream-Zustand für Wächter und Weltmodell
+  private mqttLastEventAt?: number;
+  private mqttLastConnectAt?: number;
+  private mqttLastDataAt?: number;
+  private mqttLastErrorAt?: number;
+  private mqttLastError?: string;
+  private mqttReconnectDueAt?: number;
+  private mqttLog?: { info(o: Record<string, unknown>, m: string): void; warn(o: Record<string, unknown>, m: string): void; debug(o: Record<string, unknown>, m: string): void };
+  /** v1176 — pino statt console: die MQTT-Zeilen landen damit im Alfred-Log, nicht nur in journald. */
+  setLogger(l: BMWSkill['mqttLog']): void { this.mqttLog = l; }
+  private mlog(level: 'info' | 'warn' | 'debug', msg: string, obj: Record<string, unknown> = {}): void {
+    this.mqttLastEventAt = Date.now();
+    if (this.mqttLog) this.mqttLog[level](obj, `[BMW MQTT] ${msg}`);
+    else if (level === 'warn') console.warn(`[BMW MQTT] ${msg}`, obj);
+    else console.log(`[BMW MQTT] ${msg}`, Object.keys(obj).length ? JSON.stringify(obj) : '');
+  }
+  /** v1176 — Zustand des Streams (Weltmodell „Datenlage", Lebenszeichen-Kachel). */
+  streamingStatus(): { enabled: boolean; aktiv: boolean; letzterConnectAt?: string; letzteDatenAt?: string; letzterFehlerAt?: string; letzterFehler?: string; reconnectFaelligAt?: string } {
+    const iso = (n?: number) => n ? new Date(n).toISOString() : undefined;
+    return { enabled: !!this.config?.streaming?.enabled, aktiv: this.streamingActive, letzterConnectAt: iso(this.mqttLastConnectAt), letzteDatenAt: iso(this.mqttLastDataAt), letzterFehlerAt: iso(this.mqttLastErrorAt), letzterFehler: this.mqttLastError, reconnectFaelligAt: iso(this.mqttReconnectDueAt) };
+  }
+  /**
+   * v1176 — Wächter: alle 10 min aufgerufen. Realfall 04.10.: nach „Keepalive timeout"
+   * wurde ein Reconnect geplant, der nie lief — Stream 8 h tot, während einer Fahrt.
+   */
+  async ensureStreaming(): Promise<WatchdogUrteil> {
+    const z: StreamZustand = { enabled: !!this.config?.streaming?.enabled, aktiv: this.streamingActive, reconnectFaelligAt: this.mqttReconnectDueAt, letztesEreignisAt: this.mqttLastEventAt };
+    const urteil = entscheideStreamWatchdog(z);
+    if (urteil === 'neustart') {
+      this.mlog('warn', 'Wächter: Stream nicht aktiv und kein Reconnect gelaufen — Neustart', { reconnectFaelligAt: z.reconnectFaelligAt ? new Date(z.reconnectFaelligAt).toISOString() : null, letztesEreignisAt: z.letztesEreignisAt ? new Date(z.letztesEreignisAt).toISOString() : null });
+      this.stopStreaming();
+      this.mqttReconnectAttempts = 0;
+      await this.startStreaming();
+    }
+    return urteil;
+  }
 
   constructor(config: BMWCarDataConfig) {
     super();
@@ -329,9 +366,9 @@ export class BMWSkill extends Skill {
       try {
         await this.refreshAccessToken(tokens);
         tokens = this.tokens!;
-        console.log('[BMW MQTT] Token refreshed before connect');
+        this.mlog('info', 'Token refreshed before connect');
       } catch (err) {
-        console.warn('[BMW MQTT] Token refresh failed, trying with existing token:', err);
+        this.mlog('warn', 'Token refresh failed, trying with existing token', { err: (err as Error)?.message });
       }
     }
 
@@ -340,7 +377,7 @@ export class BMWSkill extends Skill {
       const host = this.config.streaming.host ?? 'customer.streaming-cardata.bmwgroup.com';
       const port = this.config.streaming.port ?? 9000;
       const brokerUrl = `mqtts://${host}:${port}`;
-      console.log(`[BMW MQTT] Connecting to ${brokerUrl}, token expires ${new Date(tokens.expiresAt ?? 0).toISOString()}`);
+      this.mlog('info', 'Connecting', { brokerUrl, tokenExpires: new Date(tokens.expiresAt ?? 0).toISOString() });
 
       this.mqttClient = mqtt.connect(brokerUrl, {
         username,
@@ -354,7 +391,8 @@ export class BMWSkill extends Skill {
       this.mqttClient.on('connect', () => {
         this.streamingActive = true;
         const fullTopic = `${username}/${topic}`;
-        console.log(`[BMW MQTT] Connected, subscribing to ${fullTopic}`);
+        this.mqttLastConnectAt = Date.now(); this.mqttReconnectDueAt = undefined;
+        this.mlog('info', 'Connected, subscribing', { topic: fullTopic });
         this.mqttClient.subscribe(fullTopic, { qos: 0 });
         this.mqttClient.subscribe(`${username}/+`, { qos: 0 });
       });
@@ -362,7 +400,8 @@ export class BMWSkill extends Skill {
       this.mqttClient.on('message', (_topic: string, payload: Buffer) => {
         try {
           const data = JSON.parse(payload.toString());
-          console.log(`[BMW MQTT] Data received: ${Object.keys(data.data ?? {}).join(',')}`);
+          this.mqttLastDataAt = Date.now();
+          this.mlog('debug', 'Data received', { keys: Object.keys(data.data ?? {}).length });
           this.mqttReconnectAttempts = 0; // Reset backoff on successful data
           if (data && typeof data === 'object') {
             const telematicData: TelematicResponse = {};
@@ -410,15 +449,16 @@ export class BMWSkill extends Skill {
       this.mqttClient.on('error', (err: unknown) => {
         this.streamingActive = false;
         this.mqttLastCloseWasError = true;
-        console.warn('[BMW MQTT] Error:', err);
+        this.mqttLastErrorAt = Date.now(); this.mqttLastError = String((err as Error)?.message ?? err).slice(0, 200);
+        this.mlog('warn', 'Error', { err: this.mqttLastError });
       });
 
       this.mqttClient.on('disconnect', (packet: any) => {
-        console.warn('[BMW MQTT] Disconnect packet:', JSON.stringify(packet));
+        this.mlog('warn', 'Disconnect packet', { packet: JSON.stringify(packet).slice(0, 200) });
       });
 
       this.mqttClient.on('offline', () => {
-        console.log('[BMW MQTT] Client offline');
+        this.mlog('info', 'Client offline');
       });
 
       this.mqttClient.on('close', () => {
@@ -427,11 +467,11 @@ export class BMWSkill extends Skill {
         this.mqttLastCloseWasError = false;
         if (wasError) {
           // Auth error / connection refused → exponential backoff
-          console.log('[BMW MQTT] Connection closed after error, scheduling backoff reconnect...');
+          this.mlog('info', 'Connection closed after error, scheduling backoff reconnect');
           this.scheduleReconnect(true);
         } else {
           // Normal disconnect (BMW closes idle connections) → fixed 60s reconnect, no backoff
-          console.log('[BMW MQTT] Connection closed (normal), reconnect in 60s...');
+          this.mlog('info', 'Connection closed (normal), reconnect in 60s');
           this.scheduleReconnect(false);
         }
       });
@@ -441,7 +481,7 @@ export class BMWSkill extends Skill {
         const refreshIn = Math.max(10_000, (tokens.expiresAt - Date.now()) - 120_000); // 2 min before expiry
         this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), refreshIn);
       }
-    } catch (err) { console.warn('[BMW MQTT] Streaming setup failed:', err); }
+    } catch (err) { this.mlog('warn', 'Streaming setup failed', { err: (err as Error)?.message }); }
   }
 
   private scheduleReconnect(useBackoff = true): void {
@@ -455,15 +495,22 @@ export class BMWSkill extends Skill {
       // Normal disconnect (BMW idle close) → fixed 60s, no counter increment
       delay = 60_000;
     }
-    console.log(`[BMW MQTT] Reconnect in ${Math.round(delay / 1000)}s (attempt ${this.mqttReconnectAttempts}, backoff=${useBackoff})`);
+    this.mqttReconnectDueAt = Date.now() + delay;
+    this.mlog('info', 'Reconnect geplant', { inSek: Math.round(delay / 1000), attempt: this.mqttReconnectAttempts, backoff: useBackoff });
     this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), delay);
   }
 
   private async reconnectWithFreshToken(): Promise<void> {
+    this.mqttReconnectDueAt = undefined;
+    this.mlog('debug', 'Reconnect läuft');
     try {
       // Reload tokens from disk/DB (single canonical path via tokenUserId)
       this.tokens = null; // clear RAM cache to force disk/DB reload
-      await this.loadTokens();
+      // v1176 — Zeitbudget: Realfall 04.10., der Reconnect kam nie bis zum Token-Refresh
+      await Promise.race([
+        this.loadTokens(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('loadTokens timeout (20 s)')), 20_000)),
+      ]);
 
       // Try to refresh the token
       const tokens = this.tokens;
@@ -478,8 +525,9 @@ export class BMWSkill extends Skill {
       this.streamingActive = false;
       // Reconnect with new token
       await this.startStreaming();
-    } catch {
+    } catch (err) {
       // Schedule retry — will reload tokens from disk on next attempt
+      this.mlog('warn', 'Reconnect fehlgeschlagen', { err: (err as Error)?.message });
       this.scheduleReconnect(true);
     }
   }

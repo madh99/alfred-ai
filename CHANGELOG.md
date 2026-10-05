@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1176] - 2026-10-05
+
+### Fixed — BMW-MQTT-Stream: hängender Reconnect, Wächter, Stream-Zustand im Weltmodell (v1176)
+
+Das Weltmodell meldete seit v1168 „MQTT-Stream lieferte während der Fahrt nichts". Die Ursache stand in journald, nicht im Alfred-Log, weil der MQTT-Code über `console.log` schrieb:
+
+- 04.10. 11:56:00 „Keepalive timeout" → „Reconnect in 60s (attempt 1)" → **danach keine einzige Zeile mehr bis zum Restart um 19:46.** Der geplante Reconnect lief nie; der Pfad hing vor dem Token-Refresh (dessen eigene Logzeile fehlt). Genau in dieses Fenster fiel die 98-km-Fahrt. Dasselbe Muster erklärt die Datenlücke seit 03.10.
+- Normalbetrieb zum Vergleich: BMW schließt die Leerlauf-Verbindung nach exakt 60 Sekunden, Alfred verbindet nach 60 Sekunden neu. Am 02./03.10. kamen so 28.000 Datenpunkte in Bursts innerhalb der Verbindungsfenster an. Dieses Verhalten bleibt unverändert.
+
+Änderungen:
+
+- **Zeitbudget im Reconnect**: Das Laden der Tokens hat 20 Sekunden; ein Hänger wird als Fehler protokolliert und löst den Backoff-Reconnect aus, statt den Stream stillzulegen.
+- **Stream-Wächter** (`entscheideStreamWatchdog`, Register-Job `bmw-stream-watchdog` alle 10 Minuten): Ist der Stream nicht aktiv und der geplante Reconnect über zwei Minuten überfällig, oder gab es 15 Minuten lang kein Client-Ereignis ohne Reconnect-Planung, wird der Stream neu gestartet. Mit Lauf-Protokoll (`neustart`, `aktiv`) in `job_runs`. 3 Tests.
+- **MQTT-Zeilen im Alfred-Log**: Der Skill bekommt einen pino-Logger (`component: bmw-mqtt`); Connect, Close, Fehler und Reconnect-Planung erscheinen jetzt in `alfred.*.log`. Datenempfang bleibt auf debug.
+- **Stream-Zustand im Weltmodell**: `BMWSkill.streamingStatus()` liefert aktiv, letzte Daten, letzter Fehler, geplanter Reconnect. Die Datenlage-Zeile des Fahrzeugs sagt „Stream-Verbindung aktiv", „getrennt, Reconnect 10:39 ↳ NORMAL (BMW schließt Leerlauf-Verbindungen nach 60 s)" oder „⚠️ getrennt OHNE geplanten Reconnect → Wächter startet neu"; Letzteres ist auch ein Zustandswechsel für den Mini-Pass. 1 Test.
+
+Offen bleibt die Frage, ob BMW CarData am 04.10. überhaupt Daten gepusht hat; das lässt sich erst beobachten, wenn der Stream verlässlich verbunden bleibt.
+
 ## [0.19.0-jarvis.1175] - 2026-10-05
 
 ### Added — Jarvis Schicht 2, Teil 1: Zustandswechsel des Weltmodells lösen Mini-Pässe aus (v1175)

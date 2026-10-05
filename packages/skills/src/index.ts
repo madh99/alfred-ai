@@ -5,6 +5,8 @@ export { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } fr
 export { validateSkillAction, healActionSynonym, ACTION_SYNONYMS } from './validate-skill-action.js';
 export { extrahiereFeldPfad, sammleFeldPfade } from './feld-pfade.js';
 export { klassifiziereBatterie, istMobilgeraeteEntity } from './batterie-klassen.js';
+export { entscheideStreamWatchdog } from './bmw-stream-watchdog.js';
+export type { StreamZustand, WatchdogUrteil } from './bmw-stream-watchdog.js';
 export type { BatterieKlasse } from './batterie-klassen.js';
 export { effectiveUserId, allUserIds } from './user-utils.js';
 export { SkillRegistry } from './skill-registry.js';

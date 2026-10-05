@@ -34,6 +34,8 @@ export interface BmwZustand {
   /** Fahrzeug fuhr nach der letzten MQTT-Meldung → Stream lieferte nicht. */
   streamVerdacht: boolean;
   restAusgefallen: boolean;
+  /** v1176 — Stream-Verbindung getrennt ohne geplanten Reconnect (Pfad hängt). */
+  streamGetrennt?: boolean;
   soc?: number;
   socZiel?: number;
   reichweiteKm?: number;
@@ -45,6 +47,9 @@ export interface BmwZustand {
 }
 
 export interface BmwDeutung { zeilen: string[]; zustand: BmwZustand }
+
+/** v1176 — Zustand der MQTT-Verbindung (aus BMWSkill.streamingStatus()). */
+export interface BmwStreamStatus { enabled: boolean; aktiv: boolean; letzterConnectAt?: string; letzteDatenAt?: string; letzterFehlerAt?: string; letzterFehler?: string; reconnectFaelligAt?: string }
 
 /** Erwarteter REST-Takt (Kollektor pollt alle 30 min); ab 3× Takt gilt der Abruf als ausgefallen. */
 export const REST_TAKT_MIN = 30;
@@ -109,7 +114,7 @@ export function letzteBewegung(verlauf: BmwVerlaufPunkt[]): { ende?: string; von
   return { keineBewegungSeit: punkte[0].kmZeit ?? punkte[0].createdAt };
 }
 
-export function deuteBmw(input: { mqtt?: BmwSnapshot; rest?: BmwSnapshot; verlauf: BmwVerlaufPunkt[]; now?: Date }): BmwDeutung | undefined {
+export function deuteBmw(input: { mqtt?: BmwSnapshot; rest?: BmwSnapshot; verlauf: BmwVerlaufPunkt[]; now?: Date; stream?: BmwStreamStatus }): BmwDeutung | undefined {
   const { mqtt, rest } = input;
   if (!mqtt && !rest) return undefined;
   const now = input.now ?? new Date();
@@ -209,6 +214,13 @@ export function deuteBmw(input: { mqtt?: BmwSnapshot; rest?: BmwSnapshot; verlau
         teile.push(`MQTT-Stream still seit ${formatiereZeit(mqtt.createdAt)} (${formatiereDauerMin(z.mqttAlterMin!)}) ↳ NORMAL: der Stream sendet nur bei aktivem Fahrzeug; im Stand sind alte Stream-Daten KEIN Fehler und NICHT zu melden`);
       }
     } else teile.push('kein MQTT-Stream-Snapshot vorhanden');
+    // v1176 — Verbindungszustand des Streams (Realfall 04.10.: 8 h ohne Reconnect)
+    if (input.stream?.enabled) {
+      const st = input.stream;
+      if (st.aktiv) teile.push(`Stream-Verbindung aktiv${st.letzteDatenAt ? ` (letzte Daten ${formatiereZeit(st.letzteDatenAt)})` : ''}`);
+      else if (st.reconnectFaelligAt) teile.push(`Stream-Verbindung getrennt, Reconnect ${formatiereZeit(st.reconnectFaelligAt)} ↳ NORMAL (BMW schließt Leerlauf-Verbindungen nach 60 s)`);
+      else { teile.push(`⚠️ Stream-Verbindung getrennt OHNE geplanten Reconnect${st.letzterFehler ? ` (letzter Fehler: ${st.letzterFehler.slice(0, 60)})` : ''} → Wächter startet neu`); z.streamGetrennt = true; }
+    }
     zeilen.push(`**Datenlage:** ${teile.join(' · ')}`);
   }
   return { zeilen, zustand: z };

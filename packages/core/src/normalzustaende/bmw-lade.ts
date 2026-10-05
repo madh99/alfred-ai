@@ -1,4 +1,4 @@
-import { deuteBmw, type BmwDeutung } from './bmw.js';
+import { deuteBmw, type BmwDeutung, type BmwStreamStatus } from './bmw.js';
 
 /** Minimaler Repo-Vertrag (BmwTelematicRepository) — für Collector und Jobs gleich. */
 export interface BmwTelematikQuelle {
@@ -9,7 +9,7 @@ export interface BmwTelematikQuelle {
 const KM = 'vehicle.vehicle.travelledDistance';
 
 /** v1175 — Deutung aus der Telematik-Tabelle laden (Snapshots + 7-Tage-Verlauf). Gemeinsam für Collector und bmw-rest-poll. */
-export async function ladeBmwDeutung(repo: BmwTelematikQuelle, userId: string, now = new Date()): Promise<{ deutung?: BmwDeutung; restAlterMin: number }> {
+export async function ladeBmwDeutung(repo: BmwTelematikQuelle, userId: string, now = new Date(), stream?: BmwStreamStatus): Promise<{ deutung?: BmwDeutung; restAlterMin: number }> {
   const mqtt = await repo.getLatestAnyVinBySource(userId, 'mqtt');
   const rest = await repo.getLatestAnyVinBySource(userId, 'rest');
   const restAlterMin = rest ? (now.getTime() - Date.parse(rest.createdAt)) / 60_000 : Infinity;
@@ -23,7 +23,7 @@ export async function ladeBmwDeutung(repo: BmwTelematikQuelle, userId: string, n
   const deutung = deuteBmw({
     mqtt: mqtt ? { source: 'mqtt', createdAt: mqtt.createdAt, data: mqtt.telematicData } : undefined,
     rest: rest ? { source: 'rest', createdAt: rest.createdAt, data: rest.telematicData } : undefined,
-    verlauf, now,
+    verlauf, now, stream,
   });
   return { deutung, restAlterMin };
 }
@@ -33,6 +33,7 @@ export function bmwAuffaellig(d: BmwDeutung): string[] {
   const z = d.zustand; const out: string[] = [];
   if (z.streamVerdacht) out.push('mqtt-stream-fehlt');
   if (z.restAusgefallen) out.push('bmw-rest-ausgefallen');
+  if (z.streamGetrennt) out.push('mqtt-verbindung-getrennt');
   if (z.verriegelt === false && z.steht) out.push('fahrzeug-unverriegelt');
   if (z.offen.length) out.push('fahrzeug-offen');
   if (z.reifenAbweichung.length) out.push('reifendruck');

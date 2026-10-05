@@ -2788,6 +2788,8 @@ export class Alfred {
     if (this.config.bmw) {
       const { BMWSkill } = await import('@alfred/skills');
       this.bmwSkill = new BMWSkill(this.config.bmw);
+      // v1176 — MQTT-Zeilen ins Alfred-Log (pino) statt nur journald
+      (this.bmwSkill as unknown as { setLogger?: (l: unknown) => void }).setLogger?.(this.logger.child({ component: 'bmw-mqtt' }));
       skillRegistry.register(this.bmwSkill);
       this.logger.info('BMW CarData skill enabled');
     }
@@ -7446,7 +7448,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               // v1175 — Zustandswechsel des Fahrzeug-Weltmodells erkennen
               try {
                 const { ladeBmwDeutung, bmwAuffaellig } = await import('./normalzustaende/bmw-lade.js');
-                const { deutung } = await ladeBmwDeutung(bmwTelematicRepo, uid);
+                const streamStatus = (this.bmwSkill as unknown as { streamingStatus?: () => import('./normalzustaende/bmw.js').BmwStreamStatus } | undefined)?.streamingStatus?.();
+                const { deutung } = await ladeBmwDeutung(bmwTelematicRepo, uid, new Date(), streamStatus);
                 if (deutung) await this.weltmodellBeobachter?.beobachte('bmw', { zeilen: deutung.zeilen, auffaellig: bmwAuffaellig(deutung) });
               } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1175 BMW-Beobachtung fehlgeschlagen'); }
               return r.success === false ? { ok: false, fehler: String(r.error ?? 'status fehlgeschlagen').slice(0, 200) } : { ok: true };
@@ -7802,6 +7805,19 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           .catch((err: unknown) => this.logger.warn({ err }, 'BMW MQTT streaming failed to start'));
       } else {
         this.logger.info('BMW MQTT streaming claimed by another node, skipping');
+      }
+      // v1176 — Stream-Wächter: Realfall 04.10., Reconnect nach „Keepalive timeout" lief nie,
+      // Stream 8 h tot während einer Fahrt. Alle 10 min prüfen, bei Hänger neu starten.
+      {
+        const bmwRef = this.bmwSkill as unknown as { ensureStreaming?: () => Promise<string>; streamingStatus?: () => { aktiv: boolean } };
+        this.registriereJob({
+          key: 'bmw-stream-watchdog', beschreibung: 'BMW-MQTT-Stream: Verbindung prüfen, hängenden Reconnect neu starten', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 5,
+          run: async () => {
+            if (this.adapterClaimManager && !(await this.adapterClaimManager.tryClaim('bmw-streaming'))) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+            const urteil = await bmwRef.ensureStreaming?.();
+            return { ok: true, zaehler: { neustart: urteil === 'neustart' ? 1 : 0, aktiv: bmwRef.streamingStatus?.().aktiv ? 1 : 0 } };
+          },
+        });
       }
     }
 

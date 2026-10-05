@@ -1312,7 +1312,8 @@ export class ReasoningContextCollector {
       const uid = await this.getEffectiveUserId();
       // v1175 — gemeinsamer Lader (Collector + Job bmw-rest-poll)
       const { ladeBmwDeutung } = await import('./normalzustaende/bmw-lade.js');
-      const { deutung, restAlterMin } = await ladeBmwDeutung(this.bmwTelematicRepo, uid);
+      const bmwSkillRef = this.skillRegistry.get('bmw') as unknown as { streamingStatus?: () => import('./normalzustaende/bmw.js').BmwStreamStatus } | undefined;
+      const { deutung, restAlterMin } = await ladeBmwDeutung(this.bmwTelematicRepo, uid, new Date(), bmwSkillRef?.streamingStatus?.());
       if (!deutung && restAlterMin === Infinity) return '(Keine BMW-Daten in DB)';
       // REST ist die Taktquelle (Job alle 30 min). Ist der letzte Abruf > 6 h alt, EIN
       // Refresh über den Skill — danach liest der nächste Tick die frischen Zeilen.

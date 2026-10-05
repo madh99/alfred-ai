@@ -118,6 +118,18 @@ describe('deuteBmw', () => {
     expect(d.zeilen[0]).toMatch(/fährt gerade/);
   });
 
+  it('v1176 Stream-Zustand: getrennt mit geplantem Reconnect = NORMAL; getrennt ohne Reconnect = ⚠️ (Realfall 04.10.)', () => {
+    const basis = { mqtt: MQTT_0310, rest: REST_0510, verlauf: VERLAUF_0410, now: NOW };
+    const geplant = deuteBmw({ ...basis, stream: { enabled: true, aktiv: false, reconnectFaelligAt: '2026-10-05T00:26:00Z' } })!;
+    expect(geplant.zeilen.join('\n')).toMatch(/Stream-Verbindung getrennt, Reconnect .* ↳ NORMAL/);
+    expect(geplant.zustand.streamGetrennt).toBeUndefined();
+    const haengt = deuteBmw({ ...basis, stream: { enabled: true, aktiv: false, letzterFehler: 'Keepalive timeout' } })!;
+    expect(haengt.zeilen.join('\n')).toMatch(/⚠️ Stream-Verbindung getrennt OHNE geplanten Reconnect \(letzter Fehler: Keepalive timeout\) → Wächter startet neu/);
+    expect(haengt.zustand.streamGetrennt).toBe(true);
+    const aktiv = deuteBmw({ ...basis, stream: { enabled: true, aktiv: true, letzteDatenAt: '2026-10-03T14:28:38Z' } })!;
+    expect(aktiv.zeilen.join('\n')).toMatch(/Stream-Verbindung aktiv \(letzte Daten 03\.10\./);
+  });
+
   it('ohne Snapshots: undefined', () => {
     expect(deuteBmw({ verlauf: [], now: NOW })).toBeUndefined();
   });
