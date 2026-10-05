@@ -34,6 +34,8 @@ export interface JobDefinition {
   bereich: JobBereich;
   /** HA-Dedup über reasoning_slots (`<key>:<tag>`); für intervall-Jobs ignoriert. */
   slot?: boolean;
+  /** Nur intervall: erster Lauf frühestens so viele Minuten nach der Registrierung (Boot nicht belasten). */
+  startVerzoegerungMin?: number;
   run: (ctx: { userId: string | null }) => Promise<JobErgebnis | void>;
 }
 
@@ -80,8 +82,19 @@ export class JobRegister {
 
   registriere(def: JobDefinition): void {
     if (this.jobs.has(def.key)) throw new Error(`Job doppelt registriert: ${def.key}`);
-    this.jobs.set(def.key, { def, zustand: { zuletztTag: '', laeuft: false } });
-    this.deps.logger.info({ job: def.key, takt: def.takt, bereich: def.bereich }, 'Lebenszeichen: Job registriert');
+    const zustand: JobZustand = { zuletztTag: '', laeuft: false };
+    if (def.takt.art === 'intervall') {
+      if (def.takt.minuten * 60_000 < RASTER_MS) {
+        this.deps.logger.warn({ job: def.key, minuten: def.takt.minuten }, 'Lebenszeichen: Intervall unter dem 10-min-Raster — Job läuft alle 10 min');
+      }
+      if (def.startVerzoegerungMin) {
+        // So setzen, dass der erste Lauf frühestens nach der Verzögerung fällig wird
+        const jetzt = (this.deps.now ?? (() => new Date()))().getTime();
+        zustand.zuletztMs = jetzt + def.startVerzoegerungMin * 60_000 - def.takt.minuten * 60_000;
+      }
+    }
+    this.jobs.set(def.key, { def, zustand });
+    this.deps.logger.info({ job: def.key, takt: def.takt, bereich: def.bereich, ...(def.startVerzoegerungMin ? { startVerzoegerungMin: def.startVerzoegerungMin } : {}) }, 'Lebenszeichen: Job registriert');
   }
 
   keys(): string[] { return [...this.jobs.keys()]; }

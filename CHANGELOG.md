@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1167] - 2026-10-05
+
+### Changed — Jarvis Schicht 0: fünfzehn Intervall-Timer ins Register, Start-Verzögerung (v1167)
+
+Alle verbliebenen mechanischen Intervall-Timer werden deklariert. Jeder dieser Jobs schreibt jetzt nach `job_runs`, loggt einheitlich und erscheint in der Kachel; die Proben melden, wenn einer länger als zwei Takte nicht lief.
+
+| Job | Takt | Hinweis |
+|---|---|---|
+| `project-lock-sweep` | 10 min | vorher 5 min |
+| `itsm-pattern-sweep` | 30 min | Incident-Bündel + Problem-Promotion |
+| `agent-conventions-drift` | konfiguriert (24 h) | Start-Verzögerung 5 min |
+| `agent-conventions-mining` | 7 Tage | Start-Verzögerung 10 min |
+| `agent-conventions-selfmodify` | konfiguriert (7 Tage) | Start-Verzögerung 15 min |
+| `sandbox-stuck-cleanup` | konfiguriert (5 min → 10 min Raster) | |
+| `sandbox-idle-cleanup` | 15 min | Start-Verzögerung 5 min |
+| `cmdb-discovery` | konfiguriert (24 h) | Owner je Lauf statt einmal beim Start aufgelöst |
+| `cmdb-health-check` | konfiguriert (60 min) | Start-Verzögerung 3 min |
+| `commvault-monitor` | konfiguriert (30 min) | Adapter-Claim bleibt |
+| `mikrotik-monitor` | konfiguriert (5 min → 10 min Raster) | Adapter-Claim bleibt |
+| `skill-health-reenable` | 10 min | vorher 5 min |
+| `skill-failure-reflector` | 15 min | |
+| `refusal-correction-reflector` | 30 min | |
+| `insight-expiry` | 30 min | Owner je Lauf aufgelöst (vorher nur, wenn beim Start bekannt) |
+
+- **Start-Verzögerung** (`startVerzoegerungMin`): Intervall-Jobs können ihren ersten Lauf nach hinten legen, damit der Boot nicht unter Last steht. Ersetzt die bisherigen `setTimeout`-Wrapper.
+- **Sub-Raster-Warnung**: Ein Intervall unter 10 Minuten wird bei der Registrierung als Warnung geloggt und läuft im Raster. Betroffen: Lock-Sweep, Skill-Health, Sandbox-Stuck-Cleanup und MikroTik mit Default-Konfiguration.
+- Sieben Timer-Felder und ihre Shutdown-Blöcke entfallen.
+- Lint-Ratchet 18 → 3. Verbleibende rohe Timer, bewusst: Backup-Scheduler (Cron-Minutenraster), Content-Studio-Tick (Social, eigener Release), Cluster-Monitor (60 s, unter dem Raster, nur Debug-Log).
+
 ## [0.19.0-jarvis.1166] - 2026-10-05
 
 ### Changed — Jarvis Schicht 0: Interessen-Sammeltick wird zu sieben Jobs, Intervall-Toleranz (v1166)

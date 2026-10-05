@@ -398,7 +398,6 @@ export class Alfred {
   private kgServiceRef?: import('./knowledge-graph.js').KnowledgeGraphService;
   private sonosSkill?: import('@alfred/skills').SonosSkill;
   private skillHealthTracker?: SkillHealthTracker;
-  private healthCheckTimer?: ReturnType<typeof setInterval>;
   /** v1161 — Jarvis Schicht 0: deklaratives Job-Register (ersetzt verstreute Nachtjob-Timer). */
   private jobRegister?: import('./lebenszeichen/job-register.js').JobRegister;
   /** v1162 — Jarvis Schicht 0: Provider-Puls, Degradations-Wächter, letzte Proben (für Kachel). */
@@ -478,16 +477,7 @@ export class Alfred {
       return true; // Tabelle fehlt evtl. noch → lieber laufen als still ausfallen
     }
   }
-  private insightExpiryTimer?: ReturnType<typeof setInterval>;
   private clusterMonitorTimer?: ReturnType<typeof setInterval>;
-  private cmdbDiscoveryTimer?: ReturnType<typeof setInterval>;
-  private cmdbHealthCheckTimer?: ReturnType<typeof setInterval>;
-  /** v825 — Periodischer Drift-Check für Agent-Conventions (Phase 2). */
-  private agentConventionsDriftTimer?: ReturnType<typeof setInterval>;
-  /** v827 — Wöchentliches Pattern-Mining für Cross-Project-Conventions (Phase 3.3). */
-  private agentConventionsPatternMiningTimer?: ReturnType<typeof setInterval>;
-  /** v828 — Periodischer Self-Modify-Agent für CLAUDE.md-Refactor (Phase 4.3). */
-  private agentConventionsSelfModifyTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
   /** v696 — Project-Agent Sandbox (opt-in). NUR initialisiert wenn `config.sandbox?.enabled === true` */
   private sandboxManager?: import('./sandbox-manager.js').SandboxManager;
@@ -1273,12 +1263,15 @@ export class Alfred {
           this.logger.child({ component: 'project-move' }),
         );
 
-        // Periodischer Stale-Lock-Sweep alle 5min
-        setInterval(() => {
-          projectRepo.sweepStaleLocks().then(n => {
+        // Periodischer Stale-Lock-Sweep (v1167: Job-Register, 10-min-Raster statt 5 min)
+        this.registriereJob({
+          key: 'project-lock-sweep', beschreibung: 'Verwaiste Projekt-Locks freigeben', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
+          run: async () => {
+            const n = await projectRepo.sweepStaleLocks();
             if (n > 0) this.logger.info({ released: n }, 'v665a: stale project-locks freigegeben');
-          }).catch(err => this.logger.debug({ err }, 'sweepStaleLocks failed'));
-        }, 5 * 60_000);
+            return { ok: true, zaehler: { released: n } };
+          },
+        });
       } catch (err) {
         this.logger.warn({ err }, 'ShareManager wiring failed (non-fatal)');
       }
@@ -3769,9 +3762,11 @@ export class Alfred {
             // zusammen (gebündelt, kein per-Incident-Spam; Start = Prozessstart, damit
             // ein Restart keine Altbestände nachmeldet).
             let lastIncidentNotifyCheck = new Date().toISOString();
-            const sweepInterval = setInterval(async () => {
+            this.registriereJob({
+              key: 'itsm-pattern-sweep', beschreibung: 'Neue Monitor-Incidents bündeln, wiederkehrende zu Problems promovieren', takt: { art: 'intervall', minuten: 30 }, bereich: 'global',
+              run: async () => {
               const ownerUidForSweep = this.tryOwner();
-              if (!ownerUidForSweep) return;
+              if (!ownerUidForSweep) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
               try {
                 const sinceCheck = lastIncidentNotifyCheck;
                 lastIncidentNotifyCheck = new Date().toISOString();
@@ -3825,9 +3820,9 @@ export class Alfred {
                   } catch (err) { this.logger.warn({ err: (err as Error).message }, 'Pattern-sweep auto-promote failed'); }
                 }
               } catch (err) { this.logger.debug({ err: (err as Error).message }, 'ITSM pattern-sweep failed (non-fatal)'); }
-            }, 30 * 60_000);
-            (sweepInterval as { unref?: () => void }).unref?.();
-            this.logger.info('ITSM pattern-sweep registered (30min interval)');
+              return { ok: true };
+              },
+            });
 
             // v633 T3.7 — Daily ITSM-Reflection (täglich ~23:00 lokal): Top-Wiederkehrer,
             // neue Problems, MTTR-Trend, Capacity-Forecast → Insight an Owner-Chat.
@@ -4227,7 +4222,6 @@ export class Alfred {
             const cfg = (this.config as { agentConventions?: import('@alfred/types').AgentConventionsConfig }).agentConventions;
             const driftHours = cfg?.driftCheckIntervalHours ?? 24;
             if (driftHours > 0 && cfg?.enabled !== false) {
-              const driftMs = driftHours * 3_600_000;
               const runDriftCycle = async () => {
                 if (!this.agentConventionsSkillRef || !this.agentConventionsRepo) return;
                 try {
@@ -4249,16 +4243,14 @@ export class Alfred {
                   this.logger.debug({ err }, 'v825 drift cycle failed (non-fatal)');
                 }
               };
-              setTimeout(() => {
-                runDriftCycle();
-                this.agentConventionsDriftTimer = setInterval(runDriftCycle, driftMs);
-              }, 5 * 60_000); // 5 min nach Startup
-              this.logger.info({ intervalHours: driftHours }, 'v825 agent-conventions drift-check scheduled');
+              this.registriereJob({
+                key: 'agent-conventions-drift', beschreibung: 'Drift-Check der Agent-Konventionen je Projekt', takt: { art: 'intervall', minuten: driftHours * 60 }, bereich: 'global', startVerzoegerungMin: 5,
+                run: async () => { await runDriftCycle(); return { ok: true }; },
+              });
             }
 
             // v827 Phase 3.3 — Wöchentliches Cross-Project-Pattern-Mining
             if (cfg?.crossProjectPool && cfg.crossProjectPool !== 'off') {
-              const miningMs = 7 * 24 * 3_600_000;
               const runMiningCycle = async () => {
                 if (!this.agentConventionsSkillRef) return;
                 const uid = this.tryOwner();
@@ -4275,18 +4267,16 @@ export class Alfred {
                   this.logger.debug({ err }, 'v827 pattern-mining cycle failed (non-fatal)');
                 }
               };
-              setTimeout(() => {
-                runMiningCycle();
-                this.agentConventionsPatternMiningTimer = setInterval(runMiningCycle, miningMs);
-              }, 10 * 60_000); // 10 min nach Startup, danach wöchentlich
-              this.logger.info({}, 'v827 cross-project pattern-mining scheduled (weekly)');
+              this.registriereJob({
+                key: 'agent-conventions-mining', beschreibung: 'Cross-Project-Pattern-Mining (wöchentlich)', takt: { art: 'intervall', minuten: 7 * 24 * 60 }, bereich: 'global', startVerzoegerungMin: 10,
+                run: async () => { await runMiningCycle(); return { ok: true }; },
+              });
             }
 
             // v828 Phase 4.3 — Self-Modifying-Agent: periodischer Refactor der CLAUDE.md
             // mit allen Lessons + Violations + Drift-Erkennung als Kontext.
             if (cfg?.selfModifyAgent?.enabled) {
               const selfModifyDays = cfg.selfModifyAgent.intervalDays ?? 7;
-              const selfModifyMs = selfModifyDays * 24 * 3_600_000;
               const runSelfModifyCycle = async () => {
                 if (!this.agentConventionsSkillRef || !this.agentConventionsRepo) return;
                 try {
@@ -4310,11 +4300,10 @@ export class Alfred {
                   this.logger.debug({ err }, 'v828 self-modify cycle failed (non-fatal)');
                 }
               };
-              setTimeout(() => {
-                runSelfModifyCycle();
-                this.agentConventionsSelfModifyTimer = setInterval(runSelfModifyCycle, selfModifyMs);
-              }, 15 * 60_000); // 15 min nach Startup
-              this.logger.info({ intervalDays: selfModifyDays }, 'v828 self-modify-agent scheduled');
+              this.registriereJob({
+                key: 'agent-conventions-selfmodify', beschreibung: 'Self-Modifying-Agent: CLAUDE.md-Refactor mit Lessons/Violations', takt: { art: 'intervall', minuten: selfModifyDays * 24 * 60 }, bereich: 'global', startVerzoegerungMin: 15,
+                run: async () => { await runSelfModifyCycle(); return { ok: true }; },
+              });
             }
           }
         } catch (err) {
@@ -5052,9 +5041,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               sandboxManager.cleanupStuckSandboxes(stuckThresholdMin).then(n => {
                 if (n > 0) this.logger.info({ cleaned: n, threshold: stuckThresholdMin }, 'v749 Startup-Cleanup: stuck sandboxes marked as failed');
               }).catch(() => { /* */ });
-              setInterval(() => {
-                sandboxManager.cleanupStuckSandboxes(stuckThresholdMin).catch(() => { /* */ });
-              }, stuckIntervalMs).unref?.();
+              this.registriereJob({
+                key: 'sandbox-stuck-cleanup', beschreibung: `Hängende Sandboxes (> ${stuckThresholdMin} min) als failed markieren`, takt: { art: 'intervall', minuten: Math.max(1, Math.round(stuckIntervalMs / 60_000)) }, bereich: 'global',
+                run: async () => { const n = await sandboxManager.cleanupStuckSandboxes(stuckThresholdMin); return { ok: true, zaehler: { cleaned: n } }; },
+              });
 
               // v700 — NFS-Detection (best-effort, nur logging — hilft bei HA-Cluster-Diagnose)
               try {
@@ -5084,13 +5074,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   });
                 } catch (err) { this.logger.debug({ err }, 'v700 Sandbox cleanup-worker tick failed (non-fatal)'); }
               };
-              // Erster Tick nach 5 Minuten Startup-Pause
-              setTimeout(() => {
-                runCleanup();
-                const t = setInterval(runCleanup, cleanupIntervalMs);
-                (t as { unref?: () => void }).unref?.();
-              }, 5 * 60 * 1000).unref?.();
-              this.logger.info({ intervalMin: 15 }, 'v700 Sandbox cleanup-worker scheduled');
+              this.registriereJob({
+                key: 'sandbox-idle-cleanup', beschreibung: 'Idle-Sandboxes aufräumen (nur eigene node_id)', takt: { art: 'intervall', minuten: cleanupIntervalMs / 60_000 }, bereich: 'global', startVerzoegerungMin: 5,
+                run: async () => { await runCleanup(); return { ok: true }; },
+              });
 
               // v697 — Sandbox-Skill für CLI-Trigger/Memory-Skill/Cleanup-Worker registrieren.
               try {
@@ -5602,29 +5589,29 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // Schedule periodic auto-discovery
         const discoveryIntervalH = this.config.cmdb?.autoDiscoveryIntervalHours ?? 24;
         if (discoveryIntervalH > 0) {
-          const discoveryMs = discoveryIntervalH * 3_600_000;
-          setTimeout(() => {
-            const uid = this.tryOwner() || '';
-            if (uid) cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
-            this.cmdbDiscoveryTimer = setInterval(() => {
-              if (uid) cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
-            }, discoveryMs);
-          }, 120_000);
-          this.logger.info({ intervalHours: discoveryIntervalH }, 'CMDB auto-discovery scheduled');
+          this.registriereJob({
+            key: 'cmdb-discovery', beschreibung: 'CMDB Auto-Discovery (Proxmox/UniFi/Docker …)', takt: { art: 'intervall', minuten: discoveryIntervalH * 60 }, bereich: 'global', startVerzoegerungMin: 2,
+            run: async () => {
+              const uid = this.tryOwner();
+              if (!uid) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+              await cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any);
+              return { ok: true };
+            },
+          });
         }
 
         // Schedule periodic health checks
         const healthCheckMin = this.config.cmdb?.healthCheckIntervalMinutes ?? 60;
         if (healthCheckMin > 0) {
-          const healthMs = healthCheckMin * 60_000;
-          setTimeout(() => {
-            const uid = this.tryOwner() || '';
-            const runHealthCheck = () => {
-              if (uid) itsmSkill.execute({ action: 'health_check' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
-            };
-            runHealthCheck();
-            this.cmdbHealthCheckTimer = setInterval(runHealthCheck, healthMs);
-          }, 180_000); // 3 min after startup
+          this.registriereJob({
+            key: 'cmdb-health-check', beschreibung: 'ITSM Health-Check der CMDB-Assets', takt: { art: 'intervall', minuten: healthCheckMin }, bereich: 'global', startVerzoegerungMin: 3,
+            run: async () => {
+              const uid = this.tryOwner();
+              if (!uid) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+              await itsmSkill.execute({ action: 'health_check' }, { userId: uid, masterUserId: uid } as any);
+              return { ok: true };
+            },
+          });
         }
 
         this.logger.info('CMDB + ITSM + InfraDocs skills registered');
@@ -7825,22 +7812,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       if (this.adapterClaimManager) this.adapterClaimManager.registerPlatform('commvault-monitor');
       const cvSkill = this.skillRegistry.get('commvault') as any;
       if (cvSkill?.pollAndReport) {
-        const intervalMs = (this.config.commvault.polling_interval ?? 30) * 60_000;
-        setInterval(async () => {
-          if (this.adapterClaimManager) {
-            const claimed = await this.adapterClaimManager.tryClaim('commvault-monitor');
-            if (!claimed) return;
-          }
-          try {
+        this.registriereJob({
+          key: 'commvault-monitor', beschreibung: 'Commvault: fehlgeschlagene Jobs, Storage, SLA', takt: { art: 'intervall', minuten: this.config.commvault.polling_interval ?? 30 }, bereich: 'global',
+          run: async () => {
+            if (this.adapterClaimManager && !(await this.adapterClaimManager.tryClaim('commvault-monitor'))) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
             const result = await cvSkill.pollAndReport();
             if (result.failed > 0 || result.storageWarnings.length > 0 || result.slaViolations.length > 0) {
               this.logger.info({ ...result }, 'Commvault monitoring alert');
             }
-          } catch (err) {
-            this.logger.debug({ err }, 'Commvault monitoring poll failed');
-          }
-        }, intervalMs);
-        this.logger.info({ interval: `${this.config.commvault.polling_interval ?? 30}min` }, 'Commvault monitoring started');
+            return { ok: true, zaehler: { failed: Number(result.failed ?? 0) } };
+          },
+        });
       }
     }
 
@@ -7849,22 +7831,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       if (this.adapterClaimManager) this.adapterClaimManager.registerPlatform('mikrotik-monitor');
       const mtSkill = this.skillRegistry.get('mikrotik') as any;
       if (mtSkill?.pollAndReport) {
-        const intervalMs = (this.config.mikrotik.polling_interval ?? 5) * 60_000;
-        setInterval(async () => {
-          if (this.adapterClaimManager) {
-            const claimed = await this.adapterClaimManager.tryClaim('mikrotik-monitor');
-            if (!claimed) return;
-          }
-          try {
+        this.registriereJob({
+          key: 'mikrotik-monitor', beschreibung: 'MikroTik: Interfaces down, CPU', takt: { art: 'intervall', minuten: this.config.mikrotik.polling_interval ?? 5 }, bereich: 'global',
+          run: async () => {
+            if (this.adapterClaimManager && !(await this.adapterClaimManager.tryClaim('mikrotik-monitor'))) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
             const result = await mtSkill.pollAndReport();
             if (result.downInterfaces.length > 0 || result.cpuWarnings.length > 0) {
               this.logger.info({ ...result }, 'MikroTik monitoring alert');
             }
-          } catch (err) {
-            this.logger.debug({ err }, 'MikroTik monitoring poll failed');
-          }
-        }, intervalMs);
-        this.logger.info({ interval: `${this.config.mikrotik.polling_interval ?? 5}min` }, 'MikroTik monitoring started');
+            return { ok: true, zaehler: { downInterfaces: result.downInterfaces.length } };
+          },
+        });
       }
     }
 
@@ -13251,9 +13228,13 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       this.logger.warn({ err }, 'Startup DB cleanup failed');
     }
 
-    // Skill health: periodic re-enable check (every 5 minutes)
+    // Skill health: periodic re-enable check (v1167: Job-Register, 10-min-Raster statt 5 min)
     if (this.skillHealthTracker) {
-      this.healthCheckTimer = setInterval(() => this.skillHealthTracker!.checkReEnables(), 5 * 60_000);
+      const tracker = this.skillHealthTracker;
+      this.registriereJob({
+        key: 'skill-health-reenable', beschreibung: 'Deaktivierte Skills nach Cooldown wieder freigeben', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
+        run: async () => { await tracker.checkReEnables(); return { ok: true }; },
+      });
     }
 
     // Memory consolidation: daily cleanup of stale + duplicate memories (runs at ~3:00 AM)
@@ -13631,9 +13612,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           this.logger.child({ component: 'skill-failure-reflector' }),
         );
         // Sweep every 15 minutes — patterns need a few minutes to form anyway
-        setInterval(async () => {
+        this.registriereJob({
+          key: 'skill-failure-reflector', beschreibung: 'Skill-Fehler → Workaround → Runbook-/Workflow-Vorschlag', takt: { art: 'intervall', minuten: 15 }, bereich: 'global',
+          run: async () => {
           const ownerUid = this.tryOwner();
-          if (!ownerUid || !this.confirmationQueue) return;
+          if (!ownerUid || !this.confirmationQueue) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
           try {
             const patterns = await failureReflector.detect(ownerUid);
             for (const p of patterns) {
@@ -13700,8 +13683,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               }
             }
           } catch (err) { this.logger.debug({ err }, 'SkillFailureReflector sweep failed (non-critical)'); }
-        }, 15 * 60_000);
-        this.logger.info('Skill-failure reflector started (15min sweep interval)');
+          return { ok: true };
+          },
+        });
       } catch (err) {
         this.logger.warn({ err }, 'Skill-failure reflector init failed');
       }
@@ -13719,19 +13703,18 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           this.logger.child({ component: 'refusal-correction-reflector' }),
         );
         // Sweep every 30 minutes — Pattern braucht User-Reaktion + Skill-Erfolg
-        setInterval(async () => {
-          const ownerUid = this.tryOwner();
-          if (!ownerUid) return;
-          try {
+        this.registriereJob({
+          key: 'refusal-correction-reflector', beschreibung: 'Refusal → Korrektur → Erfolg als LearnedRecipe', takt: { art: 'intervall', minuten: 30 }, bereich: 'global',
+          run: async () => {
+            const ownerUid = this.tryOwner();
+            if (!ownerUid) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
             const detected = await refusalReflector.scanForUser(ownerUid);
             if (detected.length > 0) {
               this.logger.info({ count: detected.length }, 'v722 refusal-correction patterns → recipes persisted');
             }
-          } catch (err) {
-            this.logger.debug({ err }, 'v722 refusal-correction sweep failed (non-critical)');
-          }
-        }, 30 * 60_000);
-        this.logger.info('v722 RefusalCorrectionReflector started (30min sweep interval)');
+            return { ok: true, zaehler: { detected: detected.length } };
+          },
+        });
       } catch (err) {
         this.logger.warn({ err }, 'v722 RefusalCorrectionReflector init failed');
       }
@@ -13803,13 +13786,17 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     }
 
     // Insight expiry: process expired insights every 30 minutes for preference learning
-    if (this.insightTracker && this.ownerMasterUserId) {
-      const ownerMasterUserId = this.ownerMasterUserId;
-      this.insightExpiryTimer = setInterval(() => {
-        this.insightTracker!.processExpired(ownerMasterUserId).catch(err => {
-          this.logger.warn({ err }, 'Insight expiry processing failed');
-        });
-      }, 30 * 60_000);
+    if (this.insightTracker) {
+      const tracker = this.insightTracker;
+      this.registriereJob({
+        key: 'insight-expiry', beschreibung: 'Abgelaufene Insights verarbeiten (Präferenz-Lernen)', takt: { art: 'intervall', minuten: 30 }, bereich: 'global',
+        run: async () => {
+          const owner = this.tryOwner();
+          if (!owner) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+          await tracker.processExpired(owner);
+          return { ok: true };
+        },
+      });
     }
 
     if (this.adapters.size === 0) {
@@ -13855,16 +13842,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     this.projectHealthMonitor?.stop();
     this.adapterClaimManager?.stop();
     this.clusterManager?.stopPgHeartbeat();
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer);
-      this.healthCheckTimer = undefined;
-    }
     this.jobRegister?.stop();
     await this.providerPuls?.schreibe().catch(() => undefined);
-    if (this.insightExpiryTimer) {
-      clearInterval(this.insightExpiryTimer);
-      this.insightExpiryTimer = undefined;
-    }
     if (this.topicCollector) {
       this.topicCollector.stop();
       this.topicCollector = undefined;
@@ -13880,26 +13859,6 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.clusterMonitorTimer) {
       clearInterval(this.clusterMonitorTimer);
       this.clusterMonitorTimer = undefined;
-    }
-    if (this.cmdbDiscoveryTimer) {
-      clearInterval(this.cmdbDiscoveryTimer);
-      this.cmdbDiscoveryTimer = undefined;
-    }
-    if (this.agentConventionsDriftTimer) {
-      clearInterval(this.agentConventionsDriftTimer);
-      this.agentConventionsDriftTimer = undefined;
-    }
-    if (this.agentConventionsPatternMiningTimer) {
-      clearInterval(this.agentConventionsPatternMiningTimer);
-      this.agentConventionsPatternMiningTimer = undefined;
-    }
-    if (this.agentConventionsSelfModifyTimer) {
-      clearInterval(this.agentConventionsSelfModifyTimer);
-      this.agentConventionsSelfModifyTimer = undefined;
-    }
-    if (this.cmdbHealthCheckTimer) {
-      clearInterval(this.cmdbHealthCheckTimer);
-      this.cmdbHealthCheckTimer = undefined;
     }
     this.reflectionEngine?.stop();
 

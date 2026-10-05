@@ -98,6 +98,24 @@ describe('JobRegister', () => {
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ job: 'pattern-analysis', ok: 1, fehler: ['kaputt'] }), 'Lebenszeichen: Job fehlgeschlagen');
   });
 
+  it('startVerzoegerungMin: Intervall-Job läuft beim Start-Tick NICHT, erst nach der Verzögerung', async () => {
+    let now = um(10, 0);
+    const { reg, log } = makeRegister(() => now);
+    const run = vi.fn(async (_ctx: { userId: string | null }) => ({ ok: true }));
+    reg.registriere({ key: 'cmdb-discovery', beschreibung: 'Test', takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 2, run });
+    await reg.tick(now);
+    expect(run).not.toHaveBeenCalled();
+    now = um(10, 1);
+    await reg.tick(now);
+    expect(run).not.toHaveBeenCalled();
+    now = um(10, 10);
+    await reg.tick(now);
+    expect(run).toHaveBeenCalledTimes(1);
+    // Sub-Raster-Intervall wird gewarnt
+    reg.registriere({ key: 'mikrotik', beschreibung: 'Test', takt: { art: 'intervall', minuten: 5 }, bereich: 'global', run });
+    expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ job: 'mikrotik', minuten: 5 }), expect.stringContaining('unter dem 10-min-Raster'));
+  });
+
   it('global-Jobs laufen genau einmal ohne User; doppelte Schlüssel werden abgewiesen', async () => {
     const { reg } = makeRegister(() => um(10, 0));
     const run = vi.fn(async (_ctx: { userId: string | null }) => ({ ok: true }));
