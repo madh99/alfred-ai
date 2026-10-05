@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1180] - 2026-10-05
+
+### Changed — Jarvis Schicht 3, Teil 2: Autonomie-Klassen werden durchgesetzt, Handlungs-Insights werden Vorgänge (v1180)
+
+Ab hier ändert sich, was Alfred ausführt. Grundlage ist die Freigabe des Owners vom 05.10.
+
+- **Durchsetzung** (`entscheideAusfuehrung`): Die Autonomie-Klasse schlägt die bisherigen Skill-Listen des Modells. `nie` wird weder ausgeführt noch zur Bestätigung gestellt; der Vorgang wird mit „blockiert (Autonomie: nie)" verworfen und protokolliert (Logzeile „v1180 Aktion blockiert"). `bestaetigen` geht immer in die Confirmation-Queue, auch bei Skills, die bisher als proaktiv galten, also Smart Home schalten, Kalender ändern, Sonos, Spotify. `auto` läuft direkt und wird dem Owner berichtet; nur bei `autonomy_level = confirm_all` auch mit Rückfrage. Read-only-Skills (Wetter, Rechner, Preise, Routing) bleiben still ausführbar. Abweichungen zur alten Liste werden geloggt.
+- **Handlungs-Insights werden Vorgänge** (`istHandlungsInsight`): Insights mit Handlungsverb (prüfen, tauschen, kaufen, erneuern, bezahlen, anrufen, planen, buchen …) werden nach der Zustellung als Vorgang des Owners angelegt, Status offen, Frist 7 Tage, dedupliziert über das Thema. Zeilen mit NORMAL oder „kein Handlungsbedarf" bleiben Insights mit Ablauf. Damit sammelt sich, was der Owner entscheiden muss, an einer Stelle statt im Chat-Verlauf.
+- 4 Tests.
+
 ## [0.19.0-jarvis.1179] - 2026-10-05
 
 ### Added — Jarvis Schicht 3, Teil 1: Vorgänge, Autonomie-Klassen, Ausführungsgedächtnis (v1179)

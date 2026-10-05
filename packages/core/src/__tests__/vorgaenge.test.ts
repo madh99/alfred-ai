@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { klassifiziereAktion } from '../vorgaenge/autonomie.js';
+import { klassifiziereAktion, entscheideAusfuehrung, istHandlungsInsight, vorgangTitelAus } from '../vorgaenge/autonomie.js';
+
+describe('entscheideAusfuehrung (v1180 Durchsetzung)', () => {
+  it('nie → blockieren, bestaetigen → bestaetigen, auto → ausführen außer confirm_all', () => {
+    expect(entscheideAusfuehrung('nie', 'autonomous')).toBe('blockieren');
+    expect(entscheideAusfuehrung('bestaetigen', 'autonomous')).toBe('bestaetigen');
+    expect(entscheideAusfuehrung('bestaetigen', 'proactive')).toBe('bestaetigen');
+    expect(entscheideAusfuehrung('auto', 'proactive')).toBe('ausfuehren');
+    expect(entscheideAusfuehrung('auto', 'confirm_all')).toBe('bestaetigen');
+  });
+});
+
+describe('istHandlungsInsight / vorgangTitelAus', () => {
+  it('Handlungsverben → Vorgang; NORMAL/Info → Insight', () => {
+    expect(istHandlungsInsight('4. **🚗 [HIGH] BMW MQTT-Stream seit 03.10. ohne Daten** — Streaming-Subscription im CarData-Portal prüfen.')).toBe(true);
+    expect(istHandlungsInsight('Temp Terrasse Batterie 0 % — Batterie tauschen')).toBe(true);
+    expect(istHandlungsInsight('Hausbatterie 65 %, PV 0 W nachts ↳ NORMAL')).toBe(false);
+    expect(istHandlungsInsight('Zur Info: Wetter morgen sonnig, 18 °C')).toBe(false);
+    expect(istHandlungsInsight('Der Kalender zeigt heute keine Termine.')).toBe(false);
+  });
+  it('Titel ohne Nummer, Markdown und Emoji-Präfix', () => {
+    expect(vorgangTitelAus('4. **🚗 [HIGH] BMW MQTT-Stream seit 03.10. ohne Daten**\nDetails …')).toBe('BMW MQTT-Stream seit 03.10. ohne Daten');
+  });
+});
 import { formatiereGedaechtnis } from '../vorgaenge/ausfuehrungsgedaechtnis.js';
 
 // Jarvis Schicht 3 — Autonomie-Klassen (Freigabe Owner 05.10.) und Ausführungsgedächtnis.

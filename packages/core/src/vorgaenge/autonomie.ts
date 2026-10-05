@@ -61,6 +61,35 @@ export function klassifiziereAktion(skillName: string, params: Record<string, un
   return 'bestaetigen';
 }
 
+export type AusfuehrungsEntscheid = 'ausfuehren' | 'bestaetigen' | 'blockieren';
+
+/**
+ * v1180 — Durchsetzung: Die Autonomie-Klasse schlägt die Skill-Listen des Modells.
+ * `nie` wird nie ausgeführt und nie zur Bestätigung gestellt (Owner macht es
+ * selbst). `bestaetigen` geht immer in die Confirmation-Queue — auch wenn der
+ * Skill bisher als „proaktiv" galt (Smart Home schalten, Kalender ändern).
+ * `auto` läuft direkt, außer der Owner hat `confirm_all` gesetzt.
+ */
+export function entscheideAusfuehrung(klasse: Autonomie, autonomyLevel: 'confirm_all' | 'proactive' | 'autonomous'): AusfuehrungsEntscheid {
+  if (klasse === 'nie') return 'blockieren';
+  if (klasse === 'bestaetigen') return 'bestaetigen';
+  return autonomyLevel === 'confirm_all' ? 'bestaetigen' : 'ausfuehren';
+}
+
+const HANDLUNGS_WORTE = /\b(prüfen|prüfe|kontrollieren|tauschen|austauschen|ersetzen|kaufen|besorgen|bestellen|erneuern|verlängern|bezahlen|überweisen|anrufen|kontaktieren|melden|planen|buchen|reservieren|vereinbaren|absagen|verschieben|laden|aufladen|nachfüllen|sichern|aktualisieren|updaten|neu starten|neustarten|einstellen|aktivieren|deaktivieren|freigeben|entscheiden|beantragen|einreichen|abholen|zurückgeben)\b/i;
+const INFO_MARKER = /\b(NORMAL|kein Handlungsbedarf|zur Info|FYI|informativ|keine Aktion)\b/i;
+
+/** v1180 — Insight mit Handlungsimplikation (wird Vorgang) vs. reine Information (bleibt Insight mit Ablauf). */
+export function istHandlungsInsight(text: string): boolean {
+  if (INFO_MARKER.test(text)) return false;
+  return HANDLUNGS_WORTE.test(text) || /→\s*[A-ZÄÖÜa-zäöü]/.test(text) && /⚠️|❗|🚨|HIGH|URGENT|dringend/i.test(text);
+}
+
+/** Kurzer Titel aus einem Insight-Text (erste Zeile, ohne Nummerierung/Markdown). */
+export function vorgangTitelAus(insight: string): string {
+  return insight.split('\n')[0].replace(/^\s*\d+\.\s*/, '').replace(/\*\*/g, '').replace(/\[(?:HIGH|URGENT|NORMAL|LOW|MEDIUM|KRITISCH|DRINGEND)\]\s*/gi, '').replace(/^[^\p{L}\p{N}]+/u, '').trim().slice(0, 160);
+}
+
 export function autonomieText(a: Autonomie): string {
   return a === 'auto' ? 'automatisch (reversibel, risikoarm)' : a === 'nie' ? 'nie automatisch (Löschung/Zahlung/destruktiv)' : 'nur mit Bestätigung';
 }

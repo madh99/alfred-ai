@@ -2033,6 +2033,28 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       }
     }
 
+    // v1180 — Insights mit Handlungsimplikation werden Vorgänge des Owners (Frist 7 Tage);
+    // reine Informationen bleiben Insights mit Ablauf.
+    if (this.vorgaengeRepo && insights.length > 0) {
+      try {
+        const { istHandlungsInsight, vorgangTitelAus } = await import('./vorgaenge/autonomie.js');
+        const userId = this.resolvedOwnerUserId || this.defaultChatId;
+        let angelegt = 0;
+        for (const insight of insights) {
+          if (!istHandlungsInsight(insight)) continue;
+          const titel = vorgangTitelAus(insight);
+          if (titel.length < 8) continue;
+          await this.vorgaengeRepo.anlegen({
+            userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
+            frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
+            dedupeKey: `insight:${this.insightTopicHash(insight)}`,
+          });
+          angelegt++;
+        }
+        if (angelegt) this.logger.info({ angelegt, insights: insights.length }, 'v1180 Handlungs-Insights als Vorgänge angelegt');
+      } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1180 Insight→Vorgang fehlgeschlagen'); }
+    }
+
     // Process actions
     if (actions.length > 0) {
       this.aktuelleVorgangIds = await this.legeVorgaengeAn(actions); // v1179
@@ -2267,6 +2289,27 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
             executeDirectly = isAuto;
             informUser = false;
             break;
+        }
+
+        // v1180 — Jarvis Schicht 3: die Autonomie-Klasse (Freigabe Owner 05.10.) schlägt
+        // die Skill-Listen. nie → blockiert (kein Lauf, keine Rückfrage, Vorgang verworfen);
+        // bestaetigen → immer Confirmation-Queue; auto → direkt (außer confirm_all).
+        // Read-only-Skills (AUTO_SKILLS) bleiben still ausführbar.
+        if (!isAuto) {
+          const { klassifiziereAktion, entscheideAusfuehrung } = await import('./vorgaenge/autonomie.js');
+          const klasse = klassifiziereAktion(action.skillName, action.skillParams);
+          const entscheid = entscheideAusfuehrung(klasse, autonomyLevel);
+          if (entscheid === 'blockieren') {
+            this.logger.warn({ action: action.description, skillName: action.skillName, klasse }, 'v1180 Aktion blockiert — Autonomie-Klasse nie');
+            await this.protokolliereSchritt(action, 'blockiert', 'Autonomie-Klasse nie: nur manuell durch den Owner', this.aktuelleVorgangIds?.get(action));
+            const vid = this.aktuelleVorgangIds?.get(action);
+            if (vid && this.vorgaengeRepo) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', 'blockiert (Autonomie: nie)').catch(() => undefined);
+            continue;
+          }
+          const vorher = executeDirectly;
+          executeDirectly = entscheid === 'ausfuehren';
+          if (executeDirectly) informUser = true; // auto-Schritte werden berichtet
+          if (vorher !== executeDirectly) this.logger.info({ action: action.description, skillName: action.skillName, klasse, entscheid, autonomyLevel }, 'v1180 Autonomie-Klasse entscheidet anders als Skill-Liste');
         }
 
         // Knowledge Gate: check if we know enough about the target to act autonomously
