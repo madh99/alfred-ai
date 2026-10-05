@@ -14,19 +14,15 @@ export interface SensorBatterie { entity: string; name?: string; wert?: number; 
 export interface BatterieVerlaufPunkt { entity: string; wert?: number; zeit: string }
 export interface SensorbatterienDeutung { zeilen: string[]; auffaellig: string[] }
 
-export type BatterieKlasse = 'mobilgeraet' | 'konfiguration' | 'hausbatterie' | 'sensor';
+import { klassifiziereBatterie, type BatterieKlasse } from '@alfred/skills';
+export type { BatterieKlasse };
 
 export const LEER_PROZENT = 5;
 export const NIEDRIG_PROZENT = 20;
 export const EINZELN_AB_PROZENT = 50;
 
-export function klassifiziere(entity: string, name = ''): BatterieKlasse {
-  const e = `${entity} ${name}`.toLowerCase();
-  if (/soclimit|minimumsoc|minimum_soc|soc_min|min_soc/.test(e)) return 'konfiguration';
-  if (/iphone|i_phone|ipad|watch|sm_s9|sm-s9|galaxy|pixel|handy|phone|_battery_level$/.test(e)) return 'mobilgeraet';
-  if (/(^|[._\s])soc([._\s]|$)|battery_soc|vebus/.test(e)) return 'hausbatterie';
-  return 'sensor';
-}
+/** v1172 — gemeinsame Klassifikation mit dem Monitor-Skill (Schreiber und Leser urteilen gleich). */
+export const klassifiziere = klassifiziereBatterie;
 
 const zeitKurz = (iso: string) => { const d = new Date(iso); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}. ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const tage = (ms: number) => Math.round(ms / 86_400_000);

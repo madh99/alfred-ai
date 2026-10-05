@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1172] - 2026-10-05
+
+### Fixed — Monitor urteilt wie das Weltmodell: Batterie-Klassen und „neu nicht erreichbar" am Schreiber (v1172)
+
+Zwei Monitor-Incidents stehen seit 06.04. offen: „Low battery: settings ess batterylife soclimit at 15%" (ein Konfigurationswert) und „206 unavailable entities". Beide entstehen im Monitor-Skill, der bisher jeden Batterie-Sensor unter 20 % und jede Zahl nicht erreichbarer Entitäten meldete. Lektion aus v1141/v1157: Fix am Schreiber, nicht nur am Leser.
+
+- **Gemeinsame Batterie-Klassifikation** (`@alfred/skills` `klassifiziereBatterie`): Monitor und Reasoning-Deutung (v1171) nutzen dieselbe Funktion. Der Monitor meldet nur noch echte Sensorbatterien; Konfigurationswerte (soclimit, minimumsoc), Mobilgeräte (iPhone, Watch, SM-S928B) und der Hausbatterie-SoC fallen heraus.
+- **„Neu nicht erreichbar" statt Zählerstand**: Live sind 677 Entitäten `unavailable`, davon 624 keine Mobilgeräte (UniFi-Altlasten, Victron-VEBus, Shelly …) — ein Dauerbestand ohne Bedeutung. Der Monitor bildet beim ersten Lauf eine Baseline und meldet danach nur Entitäten, die neu hinzukommen, mit Namen und Gesamtzahl. Companion-App-Entitäten von Handys zählen gar nicht.
+- Folge: Die beiden Alt-Incidents werden vom Monitor nicht mehr bestätigt; die bestehende Auto-Recovery (Bedingung tritt nicht mehr auf) setzt sie auf resolved — ohne manuelle Datenänderung.
+- 2 Tests für die geteilte Klassifikation.
+
 ## [0.19.0-jarvis.1171] - 2026-10-05
 
 ### Added — Jarvis Schicht 1, Quelle 3: Sensorbatterien getrennt von Handys und Konfiguration (v1171)

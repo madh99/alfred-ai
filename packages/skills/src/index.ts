@@ -4,6 +4,8 @@ export * from './agent-session/index.js';
 export { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } from './relative-date-resolver.js';
 export { validateSkillAction, healActionSynonym, ACTION_SYNONYMS } from './validate-skill-action.js';
 export { extrahiereFeldPfad, sammleFeldPfade } from './feld-pfade.js';
+export { klassifiziereBatterie, istMobilgeraeteEntity } from './batterie-klassen.js';
+export type { BatterieKlasse } from './batterie-klassen.js';
 export { effectiveUserId, allUserIds } from './user-utils.js';
 export { SkillRegistry } from './skill-registry.js';
 export { SkillSandbox } from './skill-sandbox.js';

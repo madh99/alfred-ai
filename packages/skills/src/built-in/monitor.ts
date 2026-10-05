@@ -1,5 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig, UniFiConfig, HomeAssistantConfig, ProxmoxBackupConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
+import { klassifiziereBatterie, istMobilgeraeteEntity } from '../batterie-klassen.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -24,6 +25,8 @@ interface Alert {
 // ---------------------------------------------------------------------------
 
 export class MonitorSkill extends Skill {
+  /** v1172 — zuletzt gesehene „unavailable"-Entitäten (ohne Mobilgeräte): gemeldet werden nur NEUE, nicht der Dauerbestand. */
+  private bekannteUnavailable?: Set<string>;
   readonly metadata: SkillMetadata = {
     name: 'monitor',
     category: 'infrastructure',
@@ -302,8 +305,7 @@ export class MonitorSkill extends Skill {
 
     const states = await this.haGet<any[]>(cfg, '/api/states');
 
-    let unavailableCount = 0;
-    const unavailableExamples: string[] = [];
+    const unavailableJetzt = new Map<string, string>();
 
     for (const entity of states) {
       const eid = entity.entity_id as string;
@@ -311,22 +313,25 @@ export class MonitorSkill extends Skill {
       // Skip update.* entities — they are commonly "unavailable" when no update is pending
       if (eid.startsWith('update.')) continue;
 
-      // Unavailable entities
+      const name = (entity.attributes?.friendly_name ?? eid) as string;
+
+      // Unavailable entities — v1172: Companion-App-Entitäten von Handys/Watches
+      // sind im Alltag „unavailable" (Live 05.10.: 693 von 2.274, fast alle
+      // Mobilgeräte) und kein Infrastruktur-Ausfall.
       if (entity.state === 'unavailable') {
-        unavailableCount++;
-        if (unavailableExamples.length < 5) {
-          const name = entity.attributes?.friendly_name ?? eid;
-          unavailableExamples.push(name);
-        }
+        if (istMobilgeraeteEntity(eid, name)) continue;
+        unavailableJetzt.set(eid, name);
       }
 
       // Low battery — only actual battery % sensors (device_class: battery, unit: %)
+      // v1172 — Schreiber urteilt wie das Weltmodell: Konfigurationswerte (ESS
+      // soclimit 15 % — Realfall, 6 Monate offener Incident), Mobilgeräte (laden
+      // sich selbst, Korrektur SM-S928B) und Hausbatterie-SoC sind keine Sensorbatterien.
       const dc = (entity.attributes?.device_class ?? '') as string;
       const unit = (entity.attributes?.unit_of_measurement ?? '') as string;
-      if (eid.startsWith('sensor.') && dc === 'battery' && unit === '%') {
+      if (eid.startsWith('sensor.') && dc === 'battery' && unit === '%' && klassifiziereBatterie(eid, name) === 'sensor') {
         const val = parseFloat(entity.state);
         if (!isNaN(val) && val >= 0 && val < 20) {
-          const name = entity.attributes?.friendly_name ?? eid;
           alerts.push({
             source: 'homeassistant',
             message: `Low battery: ${name} at ${val}%`,
@@ -335,13 +340,24 @@ export class MonitorSkill extends Skill {
       }
     }
 
-    if (unavailableCount > 0) {
-      const examples = unavailableExamples.join(', ');
-      const suffix = unavailableCount > 5 ? ` (and ${unavailableCount - 5} more)` : '';
-      alerts.push({
-        source: 'homeassistant',
-        message: `${unavailableCount} unavailable entities: ${examples}${suffix}`,
-      });
+    // v1172 — Weltmodell statt Zählerstand: Live 05.10. sind 624 Nicht-Mobil-
+    // Entitäten dauerhaft „unavailable" (UniFi-Altlasten, Victron-VEBus,
+    // Shelly …). Ein Incident „N unavailable entities" stand seit 06.04. offen,
+    // ohne je etwas zu bedeuten. Gemeldet wird nur, was NEU dazukommt; der
+    // erste Lauf nach dem Start bildet die Baseline.
+    if (!this.bekannteUnavailable) {
+      this.bekannteUnavailable = new Set(unavailableJetzt.keys());
+    } else {
+      const neu = [...unavailableJetzt.entries()].filter(([eid]) => !this.bekannteUnavailable!.has(eid));
+      if (neu.length > 0) {
+        const examples = neu.slice(0, 5).map(([, n]) => n).join(', ');
+        const suffix = neu.length > 5 ? ` (and ${neu.length - 5} more)` : '';
+        alerts.push({
+          source: 'homeassistant',
+          message: `${neu.length} newly unavailable entities: ${examples}${suffix} — ${unavailableJetzt.size} unavailable in total`,
+        });
+      }
+      this.bekannteUnavailable = new Set(unavailableJetzt.keys());
     }
 
     return alerts;
