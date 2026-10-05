@@ -453,6 +453,27 @@ export class ReasoningEngine {
       });
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1179 Schritt nicht protokolliert'); }
   }
+  private async legeInsightVorgaengeAn(insights: string[]): Promise<void> {
+    if (!this.vorgaengeRepo || insights.length === 0) return;
+    try {
+      const { istHandlungsInsight, vorgangTitelAus } = await import('./vorgaenge/autonomie.js');
+      const userId = this.resolvedOwnerUserId || this.defaultChatId;
+      let angelegt = 0;
+      for (const insight of insights) {
+        if (!istHandlungsInsight(insight)) continue;
+        const titel = vorgangTitelAus(insight);
+        if (titel.length < 8) continue;
+        await this.vorgaengeRepo.anlegen({
+          userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
+          frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
+          dedupeKey: `insight:${this.insightTopicHash(insight)}`,
+        });
+        angelegt++;
+      }
+      if (angelegt) this.logger.info({ angelegt, insights: insights.length }, 'v1180 Handlungs-Insights als Vorgänge angelegt');
+    } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1180 Insight→Vorgang fehlgeschlagen'); }
+  }
+
   /** v1179 — Aktionen mit Handlungsimplikation werden Vorgänge (dedupliziert über Skill+Beschreibung). */
   private async legeVorgaengeAn(actions: ProposedAction[]): Promise<Map<ProposedAction, string>> {
     const ids = new Map<ProposedAction, string>();
@@ -824,7 +845,11 @@ ${this.buildTopicInstructions()}`;
                 }
                 try {
                   const deferredActions = JSON.parse(d.actions) as ProposedAction[];
-                  if (deferredActions.length > 0) await this.processActions(deferredActions);
+                  if (deferredActions.length > 0) {
+                    this.aktuelleVorgangIds = await this.legeVorgaengeAn(deferredActions); // v1182 — auch aufgeschobene Aktionen sind Vorgänge
+                    await this.processActions(deferredActions);
+                    this.aktuelleVorgangIds = undefined;
+                  }
                 } catch { /* no actions */ }
               }
               await this.deliveryScheduler.markDelivered(deferred.map(d => d.id));
@@ -1940,6 +1965,11 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // which forbids the LLM from computing dates itself and requires it to copy from
     // the relevant Calendar/Memory entry verbatim.
 
+    // v1180/v1182 — Insights mit Handlungsimplikation werden Vorgänge des Owners (Frist
+    // 7 Tage), UNABHÄNGIG vom Zustellweg (sofort, aufgeschoben, still). Realfall 13:00–13:35:
+    // alle Insights wurden aufgeschoben → kein einziger Vorgang entstand.
+    await this.legeInsightVorgaengeAn(insights);
+
     // v927 — Stiller Modus: unter der Router-Schwelle wird NICHT gesendet, sondern
     // jedes Insight still in alfred_insights abgelegt (Insights-UI + silent_digest).
     // Vorgeschlagene Aktionen wandern mit in die Ablage (erste als ausführbare
@@ -2031,28 +2061,6 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         }
         this.gelieferteInsightsCache = null; // v1142 — frisch Geliefertes sofort im Gate sichtbar
       }
-    }
-
-    // v1180 — Insights mit Handlungsimplikation werden Vorgänge des Owners (Frist 7 Tage);
-    // reine Informationen bleiben Insights mit Ablauf.
-    if (this.vorgaengeRepo && insights.length > 0) {
-      try {
-        const { istHandlungsInsight, vorgangTitelAus } = await import('./vorgaenge/autonomie.js');
-        const userId = this.resolvedOwnerUserId || this.defaultChatId;
-        let angelegt = 0;
-        for (const insight of insights) {
-          if (!istHandlungsInsight(insight)) continue;
-          const titel = vorgangTitelAus(insight);
-          if (titel.length < 8) continue;
-          await this.vorgaengeRepo.anlegen({
-            userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
-            frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
-            dedupeKey: `insight:${this.insightTopicHash(insight)}`,
-          });
-          angelegt++;
-        }
-        if (angelegt) this.logger.info({ angelegt, insights: insights.length }, 'v1180 Handlungs-Insights als Vorgänge angelegt');
-      } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1180 Insight→Vorgang fehlgeschlagen'); }
     }
 
     // Process actions

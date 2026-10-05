@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1182] - 2026-10-05
+
+### Fixed — Vorgänge entstehen unabhängig vom Zustellweg (v1182)
+
+Live 13:00 bis 13:35 auf .1179: zwei Vollpässe und drei Mini-Pässe, alle Insights wurden aufgeschoben („user likely inactive"), und es entstand kein einziger Vorgang. Die Konvertierung hing hinter dem Versandpfad; aufgeschobene und still abgelegte Insights kamen nie dort an, und aufgeschobene Aktionen liefen beim Nachliefern ohne Vorgang.
+
+- Handlungs-Insights werden jetzt am Anfang der Zustellung zu Vorgängen, egal ob sofort gesendet, aufgeschoben oder still abgelegt.
+- Beim Nachliefern aufgeschobener Aktionen werden deren Vorgänge angelegt, bevor die Schritte protokolliert werden.
+
 ## [0.19.0-jarvis.1181] - 2026-10-05
 
 ### Fixed — Haus-Weltmodell: Heimzonen statt nur „home" (Fehlalarm 05.10. 12:24) (v1181)
