@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1181] - 2026-10-05
+
+### Fixed — Haus-Weltmodell: Heimzonen statt nur „home" (Fehlalarm 05.10. 12:24) (v1181)
+
+Der erste echte Haus-Mini-Pass war ein Fehlalarm. Um 12:24 wechselte `person.madh` von der Zone „core" in die Zone „DohnalHabel". Home Assistant meldet den Personen-Zustand als Zonen-Name, nicht nur als `home`/`not_home`; beide Zonen liegen innerhalb von `zone.home` (0 m und 14 m Abstand). Die Deutung kannte nur `home`, hielt das Haus für leer und schickte „Fenster Lena prüfen, Bewegung Küche prüfen", obwohl zwei Personen zu Hause waren.
+
+- `heimZonenAus`: `zone.home` plus jede Zone, deren Mittelpunkt im Radius von `zone.home` liegt, gilt als zu Hause. Ohne Zonen-Daten weiterhin nur `home`.
+- Anwesenheitswechsel ist nur dann ein Ereignis, wenn sich „zu Hause" wirklich ändert; ein Zonenwechsel innerhalb des Heims ist keiner.
+- Die Ereignisquelle lädt die Zonen mit; die Beschreibung nennt bei Abwesenheit die Zone.
+- 2 Tests mit den Live-Zonen (synthetische Koordinaten).
+
 ## [0.19.0-jarvis.1180] - 2026-10-05
 
 ### Changed — Jarvis Schicht 3, Teil 2: Autonomie-Klassen werden durchgesetzt, Handlungs-Insights werden Vorgänge (v1180)

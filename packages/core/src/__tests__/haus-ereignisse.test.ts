@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { deuteHaus, klassifiziereHausEreignis, type HaZustand } from '../normalzustaende/haus.js';
+import { deuteHaus, klassifiziereHausEreignis, heimZonenAus, istZuhause, type HaZustand } from '../normalzustaende/haus.js';
 import { verarbeiteNachricht, wsUrlAus, HaEreignisQuelle, type WebSocketArtig } from '../ereignisse/ha-ereignisse.js';
 
 // Jarvis Schicht 2 Teil 2 — Live-Entitäten Home Assistant 05.10.2026 10:58.
@@ -17,6 +17,29 @@ const LIVE: HaZustand[] = [
   S('alarm_control_panel.udmpro_alarm_manager', 'disarmed', undefined, 'UDMPRO Alarm-Manager'),
   S('sensor.victron_vebus_soc_227', 'unavailable'),
 ];
+
+// v1181 — Realfall 12:24: Personen-Zustand ist der Zonen-Name; „core" und „DohnalHabel" liegen in zone.home.
+const Z = (entity_id: string, name: string, lat: number, lon: number, radius: number): HaZustand => ({ entity_id, state: '0', attributes: { friendly_name: name, latitude: lat, longitude: lon, radius } });
+const ZONEN: HaZustand[] = [Z('zone.home', 'Home', 48.1000, 15.9000, 100), Z('zone.core', 'core', 48.1000, 15.9000, 10), Z('zone.dohnalhabel', 'DohnalHabel', 48.10012, 15.9000, 20), Z('zone.arbeit', 'Arbeit', 48.2000, 16.3700, 200)];
+
+describe('heimZonenAus / Zonen-Anwesenheit (v1181)', () => {
+  it('Zonen innerhalb von zone.home zählen als zu Hause, entfernte nicht', () => {
+    const heim = heimZonenAus(ZONEN);
+    expect(heim.has('core')).toBe(true);
+    expect(heim.has('DohnalHabel')).toBe(true);
+    expect(heim.has('Arbeit')).toBe(false);
+    expect(heimZonenAus([]).has('home')).toBe(true);
+  });
+  it('Realfall: madh in DohnalHabel, alexandra in core → beide zu Hause, Fenster offen = NORMAL, kein Ereignis', () => {
+    const d = deuteHaus([...ZONEN, S('person.madh', 'DohnalHabel'), S('person.alexandra', 'core'), S('person.lena', 'not_home'),
+      S('binary_sensor.0x00158d00047e1911_0x00158d00047e1911_contact', 'on', 'door', 'Fenster Lena Tür'), S('binary_sensor.b_kueche_occupancy', 'on', 'occupancy', 'B_KUECHE Belegung')]);
+    expect(d.alleAbwesend).toBe(false);
+    expect(d.zeilen.join('\n')).toMatch(/madh: zuhause, alexandra: zuhause, lena: abwesend/);
+    expect(d.auffaellig).toEqual([]);
+    expect(istZuhause('DohnalHabel', d.heimZonen)).toBe(true);
+    expect(istZuhause('Arbeit', d.heimZonen)).toBe(false);
+  });
+});
 
 describe('deuteHaus', () => {
   it('jemand zu Hause: offenes Fenster NORMAL, Regen-Sensor keine Wasser-Warnung, Kamera-Bewegung ignoriert', () => {

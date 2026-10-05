@@ -13709,14 +13709,14 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // Bewegung → Haus-Deutung → Mini-Pass mit ereignisspezifischem Cooldown.
       if (this.config.homeassistant?.baseUrl && this.config.homeassistant.accessToken) {
         const { HaEreignisQuelle } = await import('./ereignisse/ha-ereignisse.js');
-        const { deuteHaus } = await import('./normalzustaende/haus.js');
+        const { deuteHaus, istZuhause } = await import('./normalzustaende/haus.js');
         const haCfg = this.config.homeassistant;
         const haLog = this.logger.child({ component: 'ha-ereignisse' });
         const ladeZustaende = async (): Promise<import('./normalzustaende/haus.js').HaZustand[]> => {
           const res = await fetch(`${haCfg.baseUrl.replace(/\/+$/, '')}/api/states`, { headers: { Authorization: `Bearer ${haCfg.accessToken}` }, signal: AbortSignal.timeout(15_000) });
           if (!res.ok) throw new Error(`HA /api/states HTTP ${res.status}`);
           const alle = await res.json() as import('./normalzustaende/haus.js').HaZustand[];
-          return alle.filter(z => /^(person|binary_sensor|alarm_control_panel)\./.test(z.entity_id));
+          return alle.filter(z => /^(person|binary_sensor|alarm_control_panel|zone)\./.test(z.entity_id)); // v1181: Zonen für Heimzonen-Erkennung
         };
         this.haEreignisQuelle = new HaEreignisQuelle({
           baseUrl: haCfg.baseUrl, accessToken: haCfg.accessToken, logger: haLog,
@@ -13724,12 +13724,14 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const name = (e.entity.attributes?.friendly_name as string | undefined) ?? e.entity.entity_id;
             const zustaende = await ladeZustaende();
             const d = deuteHaus(zustaende);
-            // Öffnung/Bewegung sind nur bei Abwesenheit ein Ereignis; Anwesenheit, Rauch, CO, Wasser, Alarm immer.
-            const relevant = ['rauch', 'co', 'wasser', 'alarm', 'anwesenheit'].includes(e.typ) || (d.alleAbwesend && (e.typ === 'oeffnung' || e.typ === 'bewegung'));
+            // Öffnung/Bewegung sind nur bei Abwesenheit ein Ereignis; Rauch, CO, Wasser, Alarm immer.
+            // v1181 — Anwesenheit nur, wenn sich „zu Hause" wirklich ändert (Zonenwechsel innerhalb des Heims ist keiner).
+            const anwesenheitGewechselt = e.typ === 'anwesenheit' && istZuhause(e.vorher?.state ?? 'not_home', d.heimZonen) !== istZuhause(e.entity.state, d.heimZonen);
+            const relevant = ['rauch', 'co', 'wasser', 'alarm'].includes(e.typ) || anwesenheitGewechselt || (d.alleAbwesend && (e.typ === 'oeffnung' || e.typ === 'bewegung'));
             haLog.info({ typ: e.typ, entity: e.entity.entity_id, von: e.vorher?.state, nach: e.entity.state, relevant, auffaellig: d.auffaellig }, 'v1177 HA-Ereignis');
             if (!relevant || !this.reasoningEngine) return;
             const beschreibung = e.typ === 'anwesenheit'
-              ? `${name} ist jetzt ${e.entity.state === 'home' ? 'zu Hause' : 'abwesend'} (vorher ${e.vorher?.state === 'home' ? 'zu Hause' : 'abwesend'})`
+              ? `${name} ist jetzt ${istZuhause(e.entity.state, d.heimZonen) ? 'zu Hause' : `abwesend (${e.entity.state})`} (vorher ${istZuhause(e.vorher?.state ?? '', d.heimZonen) ? 'zu Hause' : 'abwesend'})`
               : `${name}: ${e.vorher?.state ?? '?'} → ${e.entity.state}`;
             await this.reasoningEngine.triggerMiniPass({
               quelle: 'haus', beschreibung: `${e.typ}: ${beschreibung}`, ausschnitt: d.zeilen,
