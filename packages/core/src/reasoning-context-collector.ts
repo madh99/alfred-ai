@@ -63,6 +63,24 @@ export function istInsightEcho(text: string): boolean {
  * deterministisches Standort-Grounding („User ist zuhause") gegen
  * Reise-Halluzinationen aus veraltetem Kontext.
  */
+/**
+ * v1179 — Fachlicher Fingerabdruck einer Sektion: relative Zeitangaben („vor 23 min",
+ * „seit 34 h", „(2254 ms)", Uhrzeiten) werden vor dem Vergleich entfernt. Sonst gilt
+ * jede Sektion mit Zeitbezug bei jedem Tick als „geändert" und der Rundgang (v1178)
+ * läuft nie. Live 05.10. 12:01: bmw, cmdb, projects „geändert" nur durch Zeitangaben.
+ */
+export function fachlicherFingerabdruck(content: string): string {
+  return content
+    .replace(/\bvor \d+(?:[.,]\d+)? ?(?:min|h|Tagen?|Std\.?|Sekunden?|s)\b/gi, 'vor X')
+    .replace(/\bseit \d+(?:[.,]\d+)? ?(?:min|h|Tagen?)\b/gi, 'seit X')
+    .replace(/\(\d+ ?ms\)/g, '(X ms)')
+    .replace(/\b\d+ ?(?:min|Min\.?|Minuten) alt\b/gi, 'X min alt')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, 'HH:MM')
+    .replace(/\b\d+ ?(?:min|h) ?\)/g, 'X)')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function extrahiereAnwesenheit(haContent: string): string | null {
   const status: string[] = [];
   for (const zeile of haContent.split('\n')) {
@@ -212,6 +230,16 @@ export class ReasoningContextCollector {
   setMesswerteRepo(repo: import('@alfred/storage').MesswerteRepository): void { this.messwerteRepo = repo; }
   /** v1170 — Das Telematic-Repo entsteht in initialize() NACH der Reasoning-Engine; ohne Setter blieb es im Collector für immer undefined. */
   setBmwTelematicRepo(repo: BmwTelematicRepository): void { this.bmwTelematicRepo = repo; }
+  /** v1179 — Jarvis Schicht 3: Vorgänge + Ausführungsgedächtnis als Kontext. */
+  private vorgaengeRepo?: import('@alfred/storage').VorgaengeRepository;
+  setVorgaengeRepo(repo: import('@alfred/storage').VorgaengeRepository): void { this.vorgaengeRepo = repo; }
+  private async fetchVorgaenge(): Promise<string> {
+    if (!this.vorgaengeRepo) return '(Vorgänge nicht verfügbar)';
+    const uid = await this.getEffectiveUserId();
+    const [offene, schritte] = await Promise.all([this.vorgaengeRepo.offene(uid, 20), this.vorgaengeRepo.schritte(uid, 14, 100)]);
+    const { formatiereGedaechtnis } = await import('./vorgaenge/ausfuehrungsgedaechtnis.js');
+    return formatiereGedaechtnis(schritte, offene) || '(keine offenen Vorgänge, nichts ausgeführt in 14 Tagen)';
+  }
 
   constructor(
     private readonly skillRegistry: SkillRegistry,
@@ -571,7 +599,8 @@ export class ReasoningContextCollector {
     const changedSections: string[] = [];
     for (const section of sections) {
       const prev = this.previousContent.get(section.key);
-      if (prev !== undefined && prev !== section.content) {
+      // v1179 — Vergleich über den fachlichen Fingerabdruck (ohne relative Zeitangaben)
+      if (prev !== undefined && fachlicherFingerabdruck(prev) !== fachlicherFingerabdruck(section.content)) {
         section.changed = true;
         changedSections.push(section.key);
       }
@@ -609,6 +638,8 @@ export class ReasoningContextCollector {
     // ── Priority 1: Always available (DB queries) ─────────────
     defs.push(
       { key: 'calendar', label: 'Kalender (nächste 48h)', priority: 1, maxTokens: 400, fetch: () => this.fetchCalendar(now) },
+      // v1179 — Jarvis Schicht 3: was Alfred bereits getan/vorgeschlagen hat (Ende der Wiederholungsvorschläge)
+      { key: 'vorgaenge', label: 'Vorgänge & Bereits getan', priority: 1, maxTokens: 300, fetch: () => this.fetchVorgaenge() },
       { key: 'todos', label: 'Offene Todos', priority: 1, maxTokens: 300, fetch: () => this.fetchTodos() },
       { key: 'watches', label: 'Aktive Watches', priority: 1, maxTokens: 300, fetch: () => this.fetchWatches() },
       { key: 'memories', label: 'User-Erinnerungen', priority: 1, maxTokens: 1200, fetch: () => this.fetchMemories() },

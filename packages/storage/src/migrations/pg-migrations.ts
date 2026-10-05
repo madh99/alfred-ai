@@ -2131,4 +2131,22 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_messwerte_user_entity_zeit ON messwerte(user_id, entity, gemessen_at)`, []);
     },
   },
+  {
+    version: 129,
+    description: 'v1179 — Jarvis Schicht 3: vorgaenge + vorgang_schritte (Ausführungsgedächtnis) (PG-Spiegel zu SQLite v125).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS vorgaenge (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, titel TEXT NOT NULL, ziel TEXT,
+        besitzer TEXT NOT NULL, status TEXT NOT NULL, naechster_schritt TEXT, frist TEXT,
+        quelle TEXT NOT NULL, ergebnis TEXT, autonomie TEXT NOT NULL, dedupe_key TEXT,
+        erstellt TEXT NOT NULL, aktualisiert TEXT NOT NULL
+      )`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_vorgaenge_user_status ON vorgaenge(user_id, status, aktualisiert)`, []);
+      await db.execute(`CREATE TABLE IF NOT EXISTS vorgang_schritte (
+        id TEXT PRIMARY KEY, vorgang_id TEXT, user_id TEXT NOT NULL, zeit TEXT NOT NULL, art TEXT NOT NULL,
+        skill TEXT, aktion TEXT, params TEXT, beschreibung TEXT NOT NULL, ergebnis TEXT, autonomie TEXT, quelle TEXT NOT NULL
+      )`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_vorgang_schritte_user_zeit ON vorgang_schritte(user_id, zeit)`, []);
+    },
+  },
 ];

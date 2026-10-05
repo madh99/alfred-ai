@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1179] - 2026-10-05
+
+### Added — Jarvis Schicht 3, Teil 1: Vorgänge, Autonomie-Klassen, Ausführungsgedächtnis (v1179)
+
+Freigabe des Owners vom 05.10. für die Einteilung der Autonomie-Klassen. Dieser Release ändert noch nichts daran, was Alfred ausführt; er schafft das Datenmodell und das Gedächtnis, und er klassifiziert jede vorgeschlagene Aktion.
+
+- **Datenmodell** (`vorgaenge`, `vorgang_schritte`; SQLite v125 / PG v129; `VorgaengeRepository`): Ein Vorgang hat Titel, Ziel, Besitzer (alfred oder user), Status (offen, wartet, erledigt, verworfen), nächsten Schritt, Frist, Quelle, Ergebnis, Autonomie-Klasse und einen Dedupe-Schlüssel. Jeder Schritt (vorgeschlagen, ausgeführt, zur Bestätigung, bestätigt, abgelehnt, fehlgeschlagen, blockiert, übersprungen) wird mit Skill, Aktion, Parametern und Ergebnis protokolliert.
+- **Autonomie-Klassen** (`vorgaenge/autonomie.ts`, `klassifiziereAktion`), deterministisch nach Skill und Aktionswort: `auto` für Reminder setzen, Watch anlegen, Todo anlegen, Dokument ablegen, Notiz und Memory schreiben; `nie` für Konfigurations- und Umgebungs-Löschungen, Zahlungen und Käufe (Bitpanda, Trading, Marketplace), destruktive Shell- und Datenbank-Befehle, Löschen oder Herunterfahren in Proxmox, UniFi, MikroTik, Docker, DNS und Proxy; `bestaetigen` für alles andere, insbesondere E-Mail senden, Kalender ändern, Smart Home schalten, Social veröffentlichen.
+- **Ausführungsgedächtnis**: Jede vom Reasoning vorgeschlagene Aktion wird zum Vorgang (dedupliziert über Skill und Beschreibung). Ausführung, Fehlschlag, Bestätigungsanfrage, Übersprungen wegen Akzeptanz und Knowledge-Gate schreiben Schritte; erfolgreiche Ausführungen schließen den Vorgang, Bestätigungsanfragen setzen ihn auf wartet.
+- **Kontext-Sektion „Vorgänge & Bereits getan"** (Priorität 1): offene Vorgänge mit nächstem Schritt und die deduplizierten Schritte der letzten 14 Tage mit dem Hinweis „NICHT erneut vorschlagen". Bisher bremsten nur 48-Stunden-Memories die Wiederholungsvorschläge.
+- Register-Job `vorgaenge-aufraeumen` täglich 04:50 (Schritte älter als 90 Tage).
+- 6 Tests (`vorgaenge.test.ts`): Klassifikation gegen reale Skill-Aktionen, Gedächtnis-Formatierung mit Dedupe.
+
+### Fixed — Rundgang: Sektionsvergleich über den fachlichen Fingerabdruck (v1179)
+
+Live 12:01: Der zweite Tick lief als Vollpass, weil bmw, cmdb und projects als „geändert" galten, obwohl sich nur relative Zeitangaben („vor 23 min", „(2254 ms)", Uhrzeiten) bewegt hatten. Die Änderungserkennung vergleicht jetzt einen Fingerabdruck ohne diese Angaben (`fachlicherFingerabdruck`); echte Wertänderungen bleiben sichtbar. 2 Tests.
+
+Noch nicht in diesem Release: Durchsetzung der Klassen (Blockieren von `nie`, Umlenken auf Bestätigung), Insight-zu-Vorgang-Konvertierung ohne Aktion, Kachel.
+
 ## [0.19.0-jarvis.1178] - 2026-10-05
 
 ### Changed — Jarvis Schicht 2: der 30-Minuten-Tick wird zum Rundgang (v1178)

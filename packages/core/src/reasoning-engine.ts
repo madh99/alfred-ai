@@ -438,6 +438,42 @@ export class ReasoningEngine {
   /** v930 — Score-Kriterium 4: Items zu aktiven Interessen-Themen anheben. */
   private interestsRepo?: import('@alfred/storage').InterestsRepository;
   setInterestsRepo(repo: import('@alfred/storage').InterestsRepository): void { this.interestsRepo = repo; }
+  /** v1179 — Jarvis Schicht 3: Vorgänge + Ausführungsgedächtnis. */
+  private vorgaengeRepo?: import('@alfred/storage').VorgaengeRepository;
+  setVorgaengeRepo(repo: import('@alfred/storage').VorgaengeRepository): void { this.vorgaengeRepo = repo; }
+  private async protokolliereSchritt(action: ProposedAction, art: import('@alfred/storage').SchrittArt, ergebnis?: string, vorgangId?: string): Promise<void> {
+    if (!this.vorgaengeRepo) return;
+    try {
+      const { klassifiziereAktion } = await import('./vorgaenge/autonomie.js');
+      await this.vorgaengeRepo.schritt({
+        vorgangId, userId: this.resolvedOwnerUserId || this.defaultChatId, art,
+        skill: action.skillName, aktion: typeof action.skillParams?.action === 'string' ? action.skillParams.action : undefined,
+        params: action.skillParams, beschreibung: action.description, ergebnis,
+        autonomie: klassifiziereAktion(action.skillName, action.skillParams), quelle: 'reasoning',
+      });
+    } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1179 Schritt nicht protokolliert'); }
+  }
+  /** v1179 — Aktionen mit Handlungsimplikation werden Vorgänge (dedupliziert über Skill+Beschreibung). */
+  private async legeVorgaengeAn(actions: ProposedAction[]): Promise<Map<ProposedAction, string>> {
+    const ids = new Map<ProposedAction, string>();
+    if (!this.vorgaengeRepo || actions.length === 0) return ids;
+    try {
+      const { klassifiziereAktion } = await import('./vorgaenge/autonomie.js');
+      const userId = this.resolvedOwnerUserId || this.defaultChatId;
+      for (const a of actions.slice(0, 5)) {
+        const autonomie = klassifiziereAktion(a.skillName, a.skillParams);
+        const dedupeKey = `${a.skillName}:${a.description.toLowerCase().replace(/[^a-zäöüß0-9]+/g, ' ').trim().slice(0, 80)}`;
+        const v = await this.vorgaengeRepo.anlegen({
+          userId, titel: a.description.slice(0, 200), besitzer: autonomie === 'auto' ? 'alfred' : 'user', status: 'offen',
+          naechsterSchritt: autonomie === 'auto' ? 'ausführen' : autonomie === 'nie' ? 'nur manuell durch den Owner' : 'Bestätigung des Owners',
+          quelle: 'reasoning', autonomie, dedupeKey,
+        });
+        ids.set(a, v.id);
+        await this.vorgaengeRepo.schritt({ vorgangId: v.id, userId, art: 'vorgeschlagen', skill: a.skillName, aktion: typeof a.skillParams?.action === 'string' ? a.skillParams.action : undefined, params: a.skillParams, beschreibung: a.description, autonomie, quelle: 'reasoning' });
+      }
+    } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1179 Vorgang nicht angelegt'); }
+    return ids;
+  }
   private resolvedOwnerUserId?: string;
   private activityProfile?: ActivityProfile;
   // Note: tickRunning guard is a local variable inside start() — intentionally not a class field
@@ -1999,13 +2035,16 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
     // Process actions
     if (actions.length > 0) {
+      this.aktuelleVorgangIds = await this.legeVorgaengeAn(actions); // v1179
       await this.processActions(actions);
+      this.aktuelleVorgangIds = undefined;
     }
 
     // Deferred flush is handled ONLY in tick() at the beginning — not here.
     // Having it in both places caused double-delivery (user got deferred + new + deferred again).
   }
 
+  private aktuelleVorgangIds?: Map<ProposedAction, string>;
   private async processActions(actions: ProposedAction[]): Promise<void> {
     if (actions.length === 0) return;
 
@@ -2149,6 +2188,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           const rate = ActionFeedbackTracker.extractRate(feedback.value);
           if (rate !== undefined && rate < 0.2) {
             this.logger.info({ skillName: action.skillName, rate }, 'Reasoning: action skipped (low acceptance rate)');
+            await this.protokolliereSchritt(action, 'uebersprungen', `Akzeptanzrate ${Math.round(rate * 100)} %`, this.aktuelleVorgangIds?.get(action));
             continue;
           }
         }
@@ -2234,6 +2274,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           const gate = await this.knowledgeGate(action);
           if (gate === 'reject') {
             this.logger.info({ action: action.description, gate: 'reject' }, 'Reasoning: knowledge gate rejected action');
+            await this.protokolliereSchritt(action, 'uebersprungen', 'Knowledge-Gate: Ziel unbekannt', this.aktuelleVorgangIds?.get(action));
             continue;
           }
           if (gate === 'confirm') {
@@ -2293,6 +2334,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           }
 
           this.logger.info({ action: action.description, autonomyLevel }, 'Reasoning: action executed');
+          // v1179 — Ausführungsgedächtnis
+          await this.protokolliereSchritt(action, result.success ? 'ausgefuehrt' : 'fehlgeschlagen', result.success ? undefined : String(result.error ?? '').slice(0, 300), this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action));
+          if (this.vorgaengeRepo && result.success) {
+            const vid = this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action);
+            if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'erledigt', 'automatisch ausgeführt').catch(() => undefined);
+          }
           continue;
         }
 
@@ -2353,6 +2400,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         });
         await this.markActionProposed(action);
         this.logger.info({ action: action.description, autonomyLevel }, 'Reasoning: action enqueued for confirmation');
+        await this.protokolliereSchritt(action, 'zur_bestaetigung', undefined, this.aktuelleVorgangIds?.get(action));
+        if (this.vorgaengeRepo) { const vid = this.aktuelleVorgangIds?.get(action); if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'wartet').catch(() => undefined); }
       } catch (err) {
         this.logger.error({ err, action: action.description }, 'Reasoning: failed to process action');
       }

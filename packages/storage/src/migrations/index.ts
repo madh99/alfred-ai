@@ -2823,4 +2823,22 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_messwerte_user_entity_zeit ON messwerte(user_id, entity, gemessen_at)`);
     },
   },
+  {
+    version: 125,
+    description: 'v1179 — Jarvis Schicht 3: vorgaenge + vorgang_schritte (Ausführungsgedächtnis) (SQLite-Spiegel zu PG v129).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS vorgaenge (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, titel TEXT NOT NULL, ziel TEXT,
+        besitzer TEXT NOT NULL, status TEXT NOT NULL, naechster_schritt TEXT, frist TEXT,
+        quelle TEXT NOT NULL, ergebnis TEXT, autonomie TEXT NOT NULL, dedupe_key TEXT,
+        erstellt TEXT NOT NULL, aktualisiert TEXT NOT NULL
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_vorgaenge_user_status ON vorgaenge(user_id, status, aktualisiert)`);
+      db.exec(`CREATE TABLE IF NOT EXISTS vorgang_schritte (
+        id TEXT PRIMARY KEY, vorgang_id TEXT, user_id TEXT NOT NULL, zeit TEXT NOT NULL, art TEXT NOT NULL,
+        skill TEXT, aktion TEXT, params TEXT, beschreibung TEXT NOT NULL, ergebnis TEXT, autonomie TEXT, quelle TEXT NOT NULL
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_vorgang_schritte_user_zeit ON vorgang_schritte(user_id, zeit)`);
+    },
+  },
 ];

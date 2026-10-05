@@ -13548,7 +13548,18 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           persistenz: lzRepo ? { ladeMeldungen: () => lzRepo.ladeMeldungen(), speichereMeldung: (m) => lzRepo.speichereMeldung(m), loescheMeldung: (k) => lzRepo.loescheMeldung(k) } : undefined,
         });
         await this.degradationsWaechter.lade();
-        // v1163 — Puls-Historie erst hier laden: die Migrationen (provider_puls)
+        // v1179 — Jarvis Schicht 3: Vorgänge-Repository an Engine und Collector
+      try {
+        const { VorgaengeRepository } = await import('@alfred/storage');
+        const vorgaengeRepo = new VorgaengeRepository(this.database.getAdapter());
+        this.reasoningEngine?.setVorgaengeRepo(vorgaengeRepo);
+        (this.reasoningEngine as unknown as { collector?: { setVorgaengeRepo?: (r: unknown) => void } } | undefined)?.collector?.setVorgaengeRepo?.(vorgaengeRepo);
+        this.registriereJob({
+          key: 'vorgaenge-aufraeumen', beschreibung: 'Ausführungsgedächtnis: Schritte älter als 90 Tage entfernen', takt: { art: 'taeglich', um: '04:50' }, bereich: 'global', slot: true,
+          run: async () => ({ ok: true, zaehler: { geloescht: await vorgaengeRepo.aufraeumen(90) } }),
+        });
+      } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1179 Vorgänge-Repository nicht verdrahtet'); }
+      // v1163 — Puls-Historie erst hier laden: die Migrationen (provider_puls)
         // laufen nach der Router-Initialisierung; beim ersten Start nach dem
         // v1162-Deploy fehlte die Tabelle noch ("relation provider_puls does not exist").
         await this.providerPuls?.lade();
