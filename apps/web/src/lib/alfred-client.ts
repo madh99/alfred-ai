@@ -3139,6 +3139,8 @@ export interface LebenszeichenStatus {
   letzteLaeufe: LebenszeichenLauf[];
   /** v1183 — Jarvis Schicht 4: Engine-Zähler seit Tagesabschluss/Start */
   kennzahlen?: { seit: string; werte: Record<string, number> } | null;
+  /** v1197 — „Warum?": Begründungen der letzten proaktiven Meldungen */
+  warum?: Array<{ zeit: string; art: 'vollpass' | 'minipass' | 'ereignis'; ausloeser: string[]; gateAusgesetzt: string[]; insights: string[]; zustellung: 'gesendet' | 'aufgeschoben' | 'still'; dauerMs?: number }>;
   /** v1191 — Messaging-Adapter (Soll) mit Verbindungszustand */
   adapter?: Array<{ platform: string; status: string; getrenntSeitMs?: number }>;
 }

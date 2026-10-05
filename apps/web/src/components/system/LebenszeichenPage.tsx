@@ -119,6 +119,30 @@ export function LebenszeichenPage() {
               )}
           </div>
 
+          {/* Warum? (v1197 — Interaktion) */}
+          {data.warum && data.warum.length > 0 && (
+            <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <h2 className="text-sm font-semibold text-gray-300 mb-1">Warum? — Begründungen der letzten Meldungen</h2>
+              <div className="text-xs text-gray-500 mb-3">Deterministisch aus dem Pass: Art, Auslöser (geänderte Sektion mit erster Abweichung oder Zustandswechsel), Gate-Aussetzung, Zustellung. Im Chat genügt „warum?".</div>
+              <ul className="space-y-2 text-xs">
+                {data.warum.map(b => (
+                  <li key={b.zeit} className="border-t border-[#1a1a1a] pt-2">
+                    <div className="flex flex-wrap gap-x-3 text-gray-400">
+                      <span className="text-gray-200">{alter(b.zeit)}</span>
+                      <span>{b.art === 'vollpass' ? 'Vollpass' : b.art === 'minipass' ? 'Mini-Pass' : 'Ereignis-Pass'}</span>
+                      <span className={clsx(b.zustellung === 'gesendet' ? 'text-emerald-400' : b.zustellung === 'aufgeschoben' ? 'text-amber-300' : 'text-gray-500')}>{b.zustellung}</span>
+                      {b.dauerMs ? <span>{(b.dauerMs / 1000).toFixed(1)} s</span> : null}
+                      {b.insights.length > 0 && <span>{b.insights.length} Meldung{b.insights.length === 1 ? '' : 'en'}</span>}
+                    </div>
+                    <div className="text-gray-300">Auslöser: {b.ausloeser.length ? b.ausloeser.join(' · ') : 'Vollpass nach Zeitablauf'}</div>
+                    {b.gateAusgesetzt.length > 0 && <div className="text-amber-300">Gate ausgesetzt: {b.gateAusgesetzt.join(', ')}</div>}
+                    {b.insights.length > 0 && <div className="text-gray-500">{b.insights.map(t => `„${t}"`).join(', ')}</div>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {/* Kennzahlen (v1183 — Jarvis Schicht 4) */}
           {data.kennzahlen && (
             <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">

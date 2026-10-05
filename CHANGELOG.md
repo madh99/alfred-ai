@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1197] - 2026-10-05
+
+### Added — Kachel Lebenszeichen zeigt die „Warum?"-Begründungen (v1197)
+
+Die in .1196 eingeführten Begründungen der proaktiven Meldungen erscheinen jetzt auch in der Web-UI: je Pass Art, Zustellung, Dauer, Auslöser (geänderte Sektion mit erster Abweichung oder Zustandswechsel), Gate-Aussetzungen und die gemeldeten Titel.
+
+### Changed — Themen-Insights laufen nach drei Tagen ab (v1197)
+
+In 28 Tagen entstanden 756 Themen-Insights (Kategorie `interests`), 592 davon standen noch auf „pending" und überdeckten in der Insights-Ansicht alles andere. Der Ablauf von 21 Tagen gilt weiterhin für alle Insights; Themen-Artikel laufen zusätzlich nach drei Tagen ab, weil ihr Nutzen an der Aktualität hängt und der Themen-Digest um 06:30 sie ohnehin bündelt.
+
 ## [0.19.0-jarvis.1196] - 2026-10-05
 
 ### Added — Jarvis Interaktion, Teil 1: „Warum?" (v1196)

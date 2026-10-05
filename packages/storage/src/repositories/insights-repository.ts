@@ -227,13 +227,13 @@ export class InsightsRepository {
     return result.changes ?? 0;
   }
 
-  /** Soft-expire long-pending insights after `maxAgeDays`. */
-  async expireStale(userId: string, maxAgeDays = 21): Promise<number> {
+  /** Soft-expire long-pending insights after `maxAgeDays` — v1197: optional nur eine Kategorie. */
+  async expireStale(userId: string, maxAgeDays = 21, category?: string): Promise<number> {
     const cutoff = new Date(Date.now() - maxAgeDays * 86400_000).toISOString();
     const now = new Date().toISOString();
     const result = await this.db.execute(
-      `UPDATE alfred_insights SET status = 'expired', updated_at = ? WHERE user_id = ? AND status = 'pending' AND created_at <= ?`,
-      [now, userId, cutoff],
+      `UPDATE alfred_insights SET status = 'expired', updated_at = ? WHERE user_id = ? AND status = 'pending' AND created_at <= ?${category ? ' AND category = ?' : ''}`,
+      category ? [now, userId, cutoff, category] : [now, userId, cutoff],
     );
     return result.changes ?? 0;
   }

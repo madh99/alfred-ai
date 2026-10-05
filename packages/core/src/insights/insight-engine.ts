@@ -44,6 +44,8 @@ export class InsightEngine {
     // Housekeeping first
     try { await this.repo.expireSnoozes(ctx.userId); } catch { /* non-critical */ }
     try { await this.repo.expireStale(ctx.userId, 21); } catch { /* non-critical */ }
+    // v1197 — Themen-Artikel (interests) nach 3 Tagen: 756 in 28 Tagen, 592 pending überdeckten alles; der Digest 06:30 bündelt sie ohnehin
+    try { const n = await this.repo.expireStale(ctx.userId, 3, 'interests'); if (n > 0) this.logger.info({ abgelaufen: n }, 'v1197 Themen-Insights nach 3 Tagen abgelaufen'); } catch { /* non-critical */ }
 
     const perAdapter: Record<string, number> = {};
     const errors: string[] = [];
