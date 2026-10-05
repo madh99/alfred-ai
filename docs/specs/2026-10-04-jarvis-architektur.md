@@ -196,6 +196,15 @@ Jeder Punkt wurde live auf .92 bewiesen (Logzeilen, `job_runs`, Datenbank), nich
 - Erkenntnis: Die Insight-Tabelle taugt nicht als Ergebnis-Signal (gesendete Reasoning-Insights ohne Statusspur); das Signal entsteht an den Vorgängen.
 - Offen (Teil 2): Konsequenzen (Digest-Modus unter Präzisions-Schwelle, Aufstieg nach `auto`) erst nach Datenlage und Freigabe der Regel durch den Owner.
 
+### Interaktion: umgesetzt (.1196–.1203)
+- „Warum?": deterministische Begründung je Pass (Art, Auslöser mit erster Sektions-Abweichung oder Zustandswechsel, Gate-Aussetzung, Zustellung mit Grund); Chat-Frage „warum?" wird vor dem LLM beantwortet; Begründung dauerhaft am Vorgang (.1196, .1198, .1201).
+- Anwesenheit aus Home Assistant und Chat-Aktivität steuern die Zustellung; jede Entscheidung mit Grund (.1198).
+- Sprache: Transkription und Synthese laufen über Mistral (Voxtral); Sprachnachrichten erhalten zusätzlich eine gesprochene Kurzantwort (.1202, live bewiesen 05.10. 23:47).
+- Standard knapp: proaktive Meldungen als Kurzfassung (Titel + ein Satz je Insight, höchstens fünf), Volltext im Vorgang (.1203).
+- Gesprächsfaden: Alfreds proaktive Meldungen liegen als sein Beitrag in der Unterhaltung des Owners, damit Rückfragen darauf aufsetzen (.1203, Realfall „Outlook-Problem").
+- Rücknahme-Hinweis je Auto-Aktion (.1200, Abschnitt Risiken).
+- Offen: der Zustellgrund „Bewegung im Haus" und die Chat-Frage „warum?" sind gebaut, aber live noch nicht aufgetreten.
+
 ### Arbeitsweise, die sich bewährt hat
 - Kleine Releases mit sofortigem Live-Audit; mehrere Fehler wurden erst durch die vorangegangene Schicht sichtbar (Stream stabil → Refresh-Schleife → stiller REST-Ausfall → Tageskontingent).
 - Fixes an der Quelle (Schreiber, Datenlage) statt am Modell; alles funktioniert mit jedem Modell der Fallback-Kette.
