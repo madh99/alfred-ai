@@ -153,9 +153,16 @@ export function LebenszeichenPage() {
                   <div key={key} className="rounded-lg border border-[#1a1a1a] px-3 py-2">
                     <div className="text-lg tabular-nums text-gray-200">{data.kennzahlen?.werte[key] ?? 0}</div>
                     <div className="text-[11px] text-gray-500 leading-tight">{label}</div>
+                    {data.kennzahlenGestern && <div className="text-[11px] text-gray-600 tabular-nums">gestern {data.kennzahlenGestern.werte[key] ?? 0}</div>}
                   </div>
                 ))}
               </div>
+              {/* v1199 — Tagesabschluss: DB-Zählungen, die nicht aus der Engine kommen */}
+              {data.kennzahlenGestern && (
+                <div className="mt-3 text-xs text-gray-500">
+                  Tagesabschluss {alter(data.kennzahlenGestern.zeit)}: Insights reagiert {data.kennzahlenGestern.werte.insightsReagiert ?? 0} · verworfen {data.kennzahlenGestern.werte.insightsVerworfen ?? 0} · abgelaufen {data.kennzahlenGestern.werte.insightsAbgelaufen ?? 0} · Vorgänge erledigt {data.kennzahlenGestern.werte.vorgaengeErledigt ?? 0} · LLM-Kosten ${(data.kennzahlenGestern.werte.kostenUsd ?? 0).toFixed(2)}
+                </div>
+              )}
             </section>
           )}
 

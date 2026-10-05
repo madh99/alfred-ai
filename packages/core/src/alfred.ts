@@ -473,6 +473,19 @@ export class Alfred {
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
       // v1196 — letzte Begründungen („Warum?") für die Kachel
       warum: this.reasoningEngine?.warum.letzte(10) ?? [],
+      // v1199 — Tagesabschluss von gestern (Messwerte quelle kennzahl, jüngste je Entität)
+      kennzahlenGestern: await (async () => {
+        try {
+          const owner = this.tryOwner();
+          if (!owner) return null;
+          const { MesswerteRepository: MwG } = await import('@alfred/storage');
+          const rows = await new MwG(this.database.getAdapter()).letzteProEntity(owner, 'kennzahl', 48);
+          if (rows.length === 0) return null;
+          const werte: Record<string, number> = {};
+          for (const r of rows) if (r.wert !== undefined) werte[r.entity.replace(/^kennzahl\./, '')] = r.wert;
+          return { zeit: rows[0].zeit, werte };
+        } catch { return null; }
+      })(),
     };
   }
 

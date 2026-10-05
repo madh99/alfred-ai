@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1199] - 2026-10-05
+
+### Added — Kachel Lebenszeichen zeigt den Tagesabschluss von gestern (v1199)
+
+Die Kennzahlen-Kacheln zeigen unter dem laufenden Zähler den Wert des letzten Tagesabschlusses (23:50) und darunter die Zählungen aus der Datenbank, die nicht aus der Engine kommen: Insight-Reaktionen, verworfene und abgelaufene Insights, erledigte Vorgänge, LLM-Kosten des Tages. `GET /api/lebenszeichen` liefert sie als `kennzahlenGestern`.
+
 ## [0.19.0-jarvis.1198] - 2026-10-05
 
 ### Added — Jarvis Interaktion, Teil 2: Anwesenheit steuert die Zustellung, jede Entscheidung mit Grund (v1198)
