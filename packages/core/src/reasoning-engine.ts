@@ -22,6 +22,7 @@ import type { ConfirmationQueue } from './confirmation-queue.js';
 import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
+import { WarumSpeicher, insightTitel, type PassBegruendung } from './interaktion/warum.js';
 import { ReasoningContextCollector, spaetestesDatumImText, istInsightEcho, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ActionFeedbackTracker } from './action-feedback-tracker.js';
@@ -622,6 +623,7 @@ export class ReasoningEngine {
     }
 
     try {
+      this.beginneBegruendung('ereignis', [`${eventType}: ${eventDescription}`.slice(0, 160)]); // v1196
       // Use collector for full context (holistic reasoning)
       const context = await this.collector.collect();
       await this.enrichWithKnowledgeGraph(context);
@@ -712,6 +714,16 @@ ${this.buildTopicInstructions()}`;
   private rundgaengeOhneVollpass = 0;
   /** v1183 — Jarvis Schicht 4: deterministische Zähler, Tagesjob schreibt sie als Messwerte. */
   readonly kennzahlen = new Kennzahlen();
+  /** v1196 — „Warum?": Begründung je proaktiver Meldung (Pass, Auslöser, Gate, Zustellung). */
+  readonly warum = new WarumSpeicher();
+  private aktuelleBegruendung?: Pick<PassBegruendung, 'art' | 'ausloeser' | 'gateAusgesetzt'>;
+  private beginneBegruendung(art: PassBegruendung['art'], ausloeser: string[]): void {
+    this.aktuelleBegruendung = { art, ausloeser, gateAusgesetzt: [] };
+  }
+  private merkeBegruendung(insights: string[], zustellung: PassBegruendung['zustellung'], dauerMs?: number): void {
+    const b = this.aktuelleBegruendung ?? { art: 'vollpass' as const, ausloeser: [], gateAusgesetzt: [] };
+    this.warum.merke({ zeit: new Date().toISOString(), art: b.art, ausloeser: [...b.ausloeser], gateAusgesetzt: [...b.gateAusgesetzt], insights: insights.map(insightTitel), zustellung, dauerMs });
+  }
   async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
     if (!this.enabled) return;
     const key = `${ereignis.quelle}:${[...ereignis.objekte].sort().join('+')}`;
@@ -729,6 +741,7 @@ ${this.buildTopicInstructions()}`;
     const start = Date.now();
     try {
       const korrekturen = await this.holeUnterdrueckungsKorrekturen();
+      this.beginneBegruendung('minipass', [`${ereignis.quelle}: ${ereignis.beschreibung}`]); // v1196
       const sektion = { key: ereignis.quelle, label: ereignis.quelle, content: ereignis.ausschnitt.join('\n') };
       annotiereKontextMitKorrekturen({ sections: [sektion] }, korrekturen);
       for (const o of ereignis.objekte) (this.collector as unknown as { letzteAuffaelligeObjekte?: Set<string> }).letzteAuffaelligeObjekte?.add(o);
@@ -925,6 +938,12 @@ ${this.buildTopicInstructions()}`;
       }
       this.letzterVollpassAt = Date.now();
       this.kennzahlen.zaehle('vollpaesse');
+      // v1196 — Auslöser des Vollpasses für „Warum?": geänderte fachliche Sektionen mit erster Abweichung
+      {
+        const abw = (this.collector as unknown as { letzteAbweichungen?: Map<string, { alt: string; neu: string } | undefined> }).letzteAbweichungen;
+        const ausloeser = rundgang.fachlich.map(k => { const a = abw?.get(k); return a ? `${k}: „${a.alt}" → „${a.neu}"` : k; });
+        this.beginneBegruendung('vollpass', ausloeser.length ? ausloeser : [this.letzterVollpassAt === 0 || rundgang.seitVollpassMin === Infinity ? 'erster Lauf nach Start' : `Vollpass nach ${rundgang.seitVollpassMin} min ohne fachliche Änderung (spätestens alle 2 h)`]);
+      }
       this.logger.info({ fachlichGeaendert: rundgang.fachlich, seitVollpassMin: rundgang.seitVollpassMin, rundgaengeUebersprungen: this.rundgaengeOhneVollpass }, 'v1178 Vollpass läuft');
       this.rundgaengeOhneVollpass = 0;
 
@@ -1663,6 +1682,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         const auffaellig = (this.collector as unknown as { letzteAuffaelligeObjekte?: Set<string> }).letzteAuffaelligeObjekte ?? new Set<string>();
         if (gateAusgesetztDurchWeltmodell(t, auffaellig)) {
           this.kennzahlen.zaehle('gateAusgesetzt');
+          this.aktuelleBegruendung?.gateAusgesetzt.push(t.key); // v1196
           this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1174 Gate ausgesetzt — Weltmodell meldet Auffälligkeit zum Objekt');
         } else {
           this.kennzahlen.zaehle('gateTreffer');
@@ -2014,6 +2034,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         await this.markSent(insight);
       }
       this.kennzahlen.zaehle('insightsStill', insights.length);
+      this.merkeBegruendung(insights, 'still', durationMs); // v1196
       this.logger.info({ urgency, insights: insights.length, actions: actions.length }, 'v927 Reasoning: insights stored silently (below notify threshold)');
       return;
     }
@@ -2046,6 +2067,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         message, JSON.stringify(actions),
       );
       this.kennzahlen.zaehle('insightsAufgeschoben', insights.length);
+      this.merkeBegruendung(insights, 'aufgeschoben', durationMs); // v1196
       this.logger.info({ urgency, insightCount: insights.length }, 'Insights deferred (user likely inactive)');
       // Mark as sent to avoid dedup re-triggering
       for (const insight of insights) await this.markSent(insight);
@@ -2059,6 +2081,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         await adapter.sendMessage(this.defaultChatId, message);
         for (const insight of insights) await this.markSent(insight);
         this.kennzahlen.zaehle('insightsGesendet', insights.length);
+        this.merkeBegruendung(insights, 'gesendet', durationMs); // v1196
         this.logger.info({ durationMs, insights: insights.length, actions: actions.length, urgency }, 'Reasoning pass: insights sent');
       }
       if (this.insightTracker) {

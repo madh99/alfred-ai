@@ -19,7 +19,12 @@ import type { MessagingAdapter } from '@alfred/messaging';
  *   reminder:<id>:ok    → Bestätigung (keine Aktion nötig)
  *   reminder:<id>:snooze1h → neuen Reminder in 1h anlegen
  */
+import { istWarumFrage } from './interaktion/warum.js';
+
 export class QuickActionHandler {
+  /** v1196 — „warum?" → Begründung der letzten proaktiven Meldung (deterministisch, ohne LLM). */
+  private warumHandler?: () => string;
+  setWarumHandler(fn: () => string): void { this.warumHandler = fn; }
   /** v934 — Social-Freigabe-Buttons (content:<id>:approve|publish|reject). */
   private socialHandlers?: {
     approve: (itemId: string) => Promise<{ success: boolean; display?: string; error?: string }>;
@@ -40,6 +45,11 @@ export class QuickActionHandler {
 
   /** @returns true wenn die Nachricht eine Quick-Action war (Pipeline stoppt vor dem LLM). */
   async handle(chatId: string, platform: Platform, text: string): Promise<boolean> {
+    if (this.warumHandler && istWarumFrage(text)) {
+      try { await this.adapters.get(platform)?.sendMessage(chatId, this.warumHandler()); } catch { /* non-fatal */ }
+      this.logger.info({ platform }, 'v1196 warum: Begründung der letzten Meldung geliefert');
+      return true;
+    }
     const m = (text ?? '').trim().match(/^(todo|reminder|content):([0-9a-fA-F-]{8,40}):(done|snooze|ok|snooze1h|approve|publish|reject)$/);
     if (!m) return false;
     const [, kind, id, action] = m;

@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1196] - 2026-10-05
+
+### Added — Jarvis Interaktion, Teil 1: „Warum?" (v1196)
+
+Die Spezifikation verlangt: Standard knapp, „Warum?" liefert die Kette Daten, Deutung, Entscheidung. Jede proaktive Meldung bekommt jetzt eine deterministische Begründung, die nicht vom Modell stammt.
+
+- Je Pass wird festgehalten: Art (Vollpass, Mini-Pass, Ereignis-Pass), Auslöser (geänderte fachliche Sektionen mit ihrer ersten abweichenden Zeile, Zustandswechsel des Weltmodells oder Ereignis), Gate-Aussetzungen durch das Weltmodell, zugestellte Meldungen und Zustellweg (gesendet, aufgeschoben, still) samt Dauer. Die letzten 20 Begründungen bleiben im Speicher.
+- Antwortet der Owner im Chat mit „warum?", „wieso das?" oder „warum diese Meldung?", liefert Alfred die Begründung der letzten proaktiven Meldung sofort und ohne LLM-Aufruf, vor allen anderen Verarbeitungsschritten.
+- `GET /api/lebenszeichen` liefert die letzten zehn Begründungen als `warum`.
+- 4 Tests.
+
 ## [0.19.0-jarvis.1195] - 2026-10-05
 
 ### Changed — Vorgangs-Kategorien entlang der Weltmodell-Quellen (v1195)

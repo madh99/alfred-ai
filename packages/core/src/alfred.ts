@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import yaml from 'js-yaml';
 import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@alfred/types';
+import { formatiereWarum } from './interaktion/warum.js';
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
@@ -468,6 +469,8 @@ export class Alfred {
       adapter: this.adapterZustaende(), // v1191
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
+      // v1196 — letzte Begründungen („Warum?") für die Kachel
+      warum: this.reasoningEngine?.warum.letzte(10) ?? [],
     };
   }
 
@@ -6708,6 +6711,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         this.todoRepo, this.reminderRepo, this.adapters,
         this.logger.child({ component: 'quick-actions' }),
       );
+      // v1196 — „warum?" liefert die Begründung der letzten proaktiven Meldung (Engine wird später gesetzt → lazy)
+      quickActions.setWarumHandler(() => formatiereWarum(this.reasoningEngine?.warum.letzte(1)[0]));
       // v934 — Social-Freigabe-Buttons (content:<id>:approve|publish|reject) laufen
       // über den social-Skill (Streak-Logik + Leitplanken bleiben an EINER Stelle)
       if (this.socialSkillRef && this.ownerMasterUserId) {

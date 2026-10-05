@@ -299,9 +299,12 @@ export class ReasoningContextCollector {
 
   /** v1174 — Objekte, die das Weltmodell in diesem Lauf als auffällig meldet (setzt generische Unterdrückungs-Korrekturen aus). */
   readonly letzteAuffaelligeObjekte = new Set<string>();
+  /** v1196 — geänderte Sektionen des letzten Sammelns mit erster Abweichung (nur Infrastruktur mit Inhalt) — Quelle für „Warum?". */
+  readonly letzteAbweichungen = new Map<string, { alt: string; neu: string } | undefined>();
 
   async collect(): Promise<CollectedContext> {
     this.letzteAuffaelligeObjekte.clear();
+    this.letzteAbweichungen.clear();
     // Resolve master user ID once per collect() for all memory lookups
     this.resolvedUserId = await this.getEffectiveUserId();
 
@@ -628,8 +631,10 @@ export class ReasoningContextCollector {
         // Erinnerungen usw. enthalten persönliche Daten und werden nur mit dem Sektionsnamen geführt.
         if (INFRA_SEKTIONEN_MIT_INHALT.has(section.key)) {
           const abw = ersteAbweichung(prev, section.content);
+          this.letzteAbweichungen.set(section.key, abw);
           this.logger.info({ sektion: section.key, ...(abw ?? { hinweis: 'nur Zeilenanzahl/Reihenfolge' }) }, 'v1193 Sektion geändert');
         } else {
+          this.letzteAbweichungen.set(section.key, undefined);
           this.logger.debug({ sektion: section.key }, 'v1193 Sektion geändert');
         }
       }
