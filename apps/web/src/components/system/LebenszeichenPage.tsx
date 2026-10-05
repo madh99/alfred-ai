@@ -57,6 +57,14 @@ const AMPEL: Record<'ok' | 'warn' | 'bad', string> = {
   bad: 'bg-red-500',
 };
 
+const KENNZAHL_LABELS: Array<[string, string]> = [
+  ['vollpaesse', 'Vollpässe'], ['rundgaenge', 'Rundgänge ohne LLM'], ['miniPaesse', 'Mini-Pässe'],
+  ['insightsGesendet', 'Insights gesendet'], ['insightsAufgeschoben', 'aufgeschoben'], ['insightsStill', 'still abgelegt'],
+  ['gateTreffer', 'Gate-Treffer'], ['gateAusgesetzt', 'Gate ausgesetzt'],
+  ['aktionenAusgefuehrt', 'Aktionen ausgeführt'], ['aktionenBestaetigung', 'zur Bestätigung'], ['aktionenBlockiert', 'blockiert'], ['aktionenUebersprungen', 'übersprungen'], ['aktionenFehlgeschlagen', 'fehlgeschlagen'],
+  ['vorgaengeAngelegt', 'Vorgänge angelegt'],
+];
+
 function Punkt({ zustand }: { zustand: 'ok' | 'warn' | 'bad' }) {
   return <span className={clsx('inline-block w-2.5 h-2.5 rounded-full', AMPEL[zustand])} />;
 }
@@ -110,6 +118,22 @@ export function LebenszeichenPage() {
                 </ul>
               )}
           </div>
+
+          {/* Kennzahlen (v1183 — Jarvis Schicht 4) */}
+          {data.kennzahlen && (
+            <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <h2 className="text-sm font-semibold text-gray-300 mb-1">Kennzahlen</h2>
+              <div className="text-xs text-gray-500 mb-3">gezählt seit {alter(data.kennzahlen.seit)} — Tagesabschluss 23:50 schreibt sie als Messwerte, die Lern-Telemetrie (So 19:15) rechnet die Woche</div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+                {KENNZAHL_LABELS.map(([key, label]) => (
+                  <div key={key} className="rounded-lg border border-[#1a1a1a] px-3 py-2">
+                    <div className="text-lg tabular-nums text-gray-200">{data.kennzahlen?.werte[key] ?? 0}</div>
+                    <div className="text-[11px] text-gray-500 leading-tight">{label}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* Provider-Puls */}
           <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">

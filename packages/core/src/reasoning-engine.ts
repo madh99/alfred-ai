@@ -21,6 +21,7 @@ import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
+import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
 import { ReasoningContextCollector, spaetestesDatumImText, istInsightEcho, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ActionFeedbackTracker } from './action-feedback-tracker.js';
@@ -442,6 +443,7 @@ export class ReasoningEngine {
   private vorgaengeRepo?: import('@alfred/storage').VorgaengeRepository;
   setVorgaengeRepo(repo: import('@alfred/storage').VorgaengeRepository): void { this.vorgaengeRepo = repo; }
   private async protokolliereSchritt(action: ProposedAction, art: import('@alfred/storage').SchrittArt, ergebnis?: string, vorgangId?: string): Promise<void> {
+    this.kennzahlen.zaehle(SCHRITT_ZU_KENNZAHL[art]);
     if (!this.vorgaengeRepo) return;
     try {
       const { klassifiziereAktion } = await import('./vorgaenge/autonomie.js');
@@ -463,12 +465,13 @@ export class ReasoningEngine {
         if (!istHandlungsInsight(insight)) continue;
         const titel = vorgangTitelAus(insight);
         if (titel.length < 8) continue;
-        await this.vorgaengeRepo.anlegen({
+        const v = await this.vorgaengeRepo.anlegen({
           userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
           dedupeKey: `insight:${this.insightTopicHash(insight)}`,
         });
         angelegt++;
+        if (v.erstellt === v.aktualisiert) this.kennzahlen.zaehle('vorgaengeAngelegt');
       }
       if (angelegt) this.logger.info({ angelegt, insights: insights.length }, 'v1180 Handlungs-Insights als Vorgänge angelegt');
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1180 Insight→Vorgang fehlgeschlagen'); }
@@ -698,6 +701,8 @@ ${this.buildTopicInstructions()}`;
   /** v1178 — Rundgang: Zeitpunkt des letzten Vollpasses und Zahl der seither übersprungenen Ticks. */
   private letzterVollpassAt = 0;
   private rundgaengeOhneVollpass = 0;
+  /** v1183 — Jarvis Schicht 4: deterministische Zähler, Tagesjob schreibt sie als Messwerte. */
+  readonly kennzahlen = new Kennzahlen();
   async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
     if (!this.enabled) return;
     const key = `${ereignis.quelle}:${[...ereignis.objekte].sort().join('+')}`;
@@ -726,6 +731,7 @@ ${this.buildTopicInstructions()}`;
         korrekturen: korrekturen.map(k => k.value.slice(0, 200)),
       });
       const res = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 400, tier: this.tier });
+      this.kennzahlen.zaehle('miniPaesse');
       const text = res.content.trim();
       if (isNoInsights(text)) { this.logger.info({ quelle: ereignis.quelle, objekte: ereignis.objekte, dauerMs: Date.now() - start }, 'v1175 Mini-Pass: keine Meldung'); return; }
       const parsed = this.parseReasoningResponse(text);
@@ -903,10 +909,12 @@ ${this.buildTopicInstructions()}`;
       const rundgang = istRundgangOhneAenderung(context.changedSections, this.letzterVollpassAt, Date.now());
       if (rundgang.ueberspringen) {
         this.rundgaengeOhneVollpass++;
+        this.kennzahlen.zaehle('rundgaenge');
         this.logger.info({ geaendert: context.changedSections, seitVollpassMin: rundgang.seitVollpassMin, uebersprungen: this.rundgaengeOhneVollpass }, 'v1178 Rundgang: keine fachliche Änderung — Vollpass übersprungen');
         return;
       }
       this.letzterVollpassAt = Date.now();
+      this.kennzahlen.zaehle('vollpaesse');
       this.logger.info({ fachlichGeaendert: rundgang.fachlich, seitVollpassMin: rundgang.seitVollpassMin, rundgaengeUebersprungen: this.rundgaengeOhneVollpass }, 'v1178 Vollpass läuft');
       this.rundgaengeOhneVollpass = 0;
 
@@ -1644,8 +1652,10 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         // v1174 — Weltmodell schlägt generische Korrektur: Auffälligkeit zum selben Objekt lässt die Meldung durch.
         const auffaellig = (this.collector as unknown as { letzteAuffaelligeObjekte?: Set<string> }).letzteAuffaelligeObjekte ?? new Set<string>();
         if (gateAusgesetztDurchWeltmodell(t, auffaellig)) {
+          this.kennzahlen.zaehle('gateAusgesetzt');
           this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1174 Gate ausgesetzt — Weltmodell meldet Auffälligkeit zum Objekt');
         } else {
+          this.kennzahlen.zaehle('gateTreffer');
           this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1148 insight durch User-Korrektur unterdrückt');
           return true;
         }
@@ -1993,6 +2003,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         });
         await this.markSent(insight);
       }
+      this.kennzahlen.zaehle('insightsStill', insights.length);
       this.logger.info({ urgency, insights: insights.length, actions: actions.length }, 'v927 Reasoning: insights stored silently (below notify threshold)');
       return;
     }
@@ -2024,6 +2035,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         this.defaultChatId, this.defaultPlatform, urgency,
         message, JSON.stringify(actions),
       );
+      this.kennzahlen.zaehle('insightsAufgeschoben', insights.length);
       this.logger.info({ urgency, insightCount: insights.length }, 'Insights deferred (user likely inactive)');
       // Mark as sent to avoid dedup re-triggering
       for (const insight of insights) await this.markSent(insight);
@@ -2036,6 +2048,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       if (adapter) {
         await adapter.sendMessage(this.defaultChatId, message);
         for (const insight of insights) await this.markSent(insight);
+        this.kennzahlen.zaehle('insightsGesendet', insights.length);
         this.logger.info({ durationMs, insights: insights.length, actions: actions.length, urgency }, 'Reasoning pass: insights sent');
       }
       if (this.insightTracker) {

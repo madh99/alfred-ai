@@ -3116,6 +3116,8 @@ export interface LebenszeichenStatus {
   proben: { zeit?: string; ergebnisse: LebenszeichenProbe[] };
   offen: Array<{ key: string; offenSeit: string; zuletztGemeldet?: string; text: string }>;
   letzteLaeufe: LebenszeichenLauf[];
+  /** v1183 — Jarvis Schicht 4: Engine-Zähler seit Tagesabschluss/Start */
+  kennzahlen?: { seit: string; werte: Record<string, number> } | null;
 }
 export interface CliUsageOverview {
   totals: { runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number };

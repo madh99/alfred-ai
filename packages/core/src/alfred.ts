@@ -466,6 +466,8 @@ export class Alfred {
       proben: this.letzteProben,
       offen: this.degradationsWaechter?.offeneZustaende() ?? [],
       letzteLaeufe: await runs.listeLetzte(60).catch(() => []),
+      // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
+      kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
     };
   }
 
@@ -3478,7 +3480,11 @@ export class Alfred {
                   try {
                     // Filter out generic alert words so device/entity names become the distinguishing keywords
                     const GENERIC_ALERT_WORDS = new Set(['device', 'connected', 'state', 'status', 'failed', 'error', 'warning', 'health', 'check', 'entities', 'unavailable', 'subsystem', 'battery', 'settings', 'offline', 'online']);
-                    const keywords = alert.message.split(/[\s"()]+/).filter(w => w.length >= 4 && !GENERIC_ALERT_WORDS.has(w.toLowerCase())).map(w => w.toLowerCase());
+                    // v1183 — Satzzeichen abstreifen: „battery:" umging die Generic-Liste und war
+                    // das EINE gemeinsame Wort aller Low-battery-Meldungen (Fehl-Dedupe/Re-Open).
+                    const keywords = alert.message.split(/[\s"()]+/)
+                      .map(w => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}%]+$/gu, '').toLowerCase())
+                      .filter(w => w.length >= 4 && !GENERIC_ALERT_WORDS.has(w));
                     const severity = alert.message.toLowerCase().includes('offline') || alert.message.toLowerCase().includes('critical') ? 'critical' as const : alert.message.toLowerCase().includes('high') || alert.message.toLowerCase().includes('cpu') ? 'high' as const : 'medium' as const;
 
                     // Patch B: resolve affected assets by scanning alert message for known asset names.
@@ -3517,6 +3523,7 @@ export class Alfred {
                     if (reopenCandidate) {
                       const reopened = await itsmRepo.reopenIncident(userId, reopenCandidate.id, alert.message);
                       if (reopened) {
+                        this.logger.info({ incidentId: reopened.id, title: reopened.title.slice(0, 80), recurrence: reopened.recurrenceCount, source: alert.source, alert: alert.message.slice(0, 120) }, 'ITSM re-open: resolved incident reopened');
                         if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, reopened.id);
                         // High recurrence (≥3 within 24h) → also flag as new for pattern detection
                         if ((reopened.recurrenceCount ?? 0) >= 3) newIncidentIds.push(reopened.id);
@@ -6865,6 +6872,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                     `Wissens-Rückfragen gestellt: ${await zaehle('SELECT count(*) n FROM kg_questions')}`,
                     `Watches: ${await zaehle('SELECT count(*) n FROM watches WHERE enabled = 1')} aktiv, ${await zaehle('SELECT count(*) n FROM watches WHERE last_triggered_at IS NOT NULL')} haben je getriggert`,
                   ];
+                  // v1183 — Jarvis Schicht 4: Kennzahlen der Woche aus den Tages-Messwerten
+                  try {
+                    const { summiereKennzahlMesswerte, berechneQuoten, formatiereKennzahlen, KENNZAHL_QUELLE: KQ } = await import('./kennzahlen/kennzahlen.js');
+                    const seit7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
+                    const rows = await ad.query('SELECT entity, wert FROM messwerte WHERE user_id = ? AND quelle = ? AND gemessen_at >= ?', [ownerLt, KQ, seit7]) as Array<{ entity: string; wert: number | string | null }>;
+                    const alle = rows.map(r => ({ entity: r.entity, wert: r.wert === null ? 0 : Number(r.wert) }));
+                    const summen = summiereKennzahlMesswerte(alle);
+                    const summe = (name: string) => alle.filter(r => r.entity === 'kennzahl.' + name).reduce((a, r) => a + r.wert, 0);
+                    const quoten = berechneQuoten({
+                      insightsReagiert: summe('insightsReagiert'), insightsVerworfen: summe('insightsVerworfen'), insightsAbgelaufen: summe('insightsAbgelaufen'),
+                      vorgaengeAngelegt: summen.vorgaengeAngelegt ?? 0, vorgaengeErledigt: summe('vorgaengeErledigt'), kostenUsd: summe('kostenUsd'),
+                    });
+                    if (alle.length > 0) zeilen.push('', ...formatiereKennzahlen(summen, quoten, 7));
+                  } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1183 Wochen-Kennzahlen nicht verfügbar'); }
                   const wochenBucketLt = Math.floor(Date.now() / (7 * 24 * 3_600_000));
                   await this.insightsRepo.upsertCandidate(ownerLt, {
                     category: 'lern-telemetrie',
@@ -13557,6 +13578,45 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         this.registriereJob({
           key: 'vorgaenge-aufraeumen', beschreibung: 'Ausführungsgedächtnis: Schritte älter als 90 Tage entfernen', takt: { art: 'taeglich', um: '04:50' }, bereich: 'global', slot: true,
           run: async () => ({ ok: true, zaehler: { geloescht: await vorgaengeRepo.aufraeumen(90) } }),
+        });
+        // v1183 — Jarvis Schicht 4, Teil 1: Tagesabschluss der Kennzahlen. Die Engine-
+        // Zähler (Vollpässe, Rundgänge, Mini-Pässe, Zustellweg, Gate, Aktionsausgänge)
+        // werden als Messwerte (quelle 'kennzahl') geschrieben und zurückgesetzt; die
+        // Lern-Telemetrie (So 19:15) summiert daraus die Woche. Ergänzt um DB-Zählungen
+        // des Tages (Insight-Reaktionen, Vorgänge erledigt, LLM-Kosten).
+        this.registriereJob({
+          key: 'kennzahlen-tag', beschreibung: 'Jarvis-Kennzahlen des Tages als Messwerte sichern', takt: { art: 'taeglich', um: '23:50' }, bereich: 'global', slot: true,
+          run: async () => {
+            const engine = this.reasoningEngine;
+            const owner = this.tryOwner();
+            if (!engine || !owner || !this.database) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+            const { MesswerteRepository: MwRepoK } = await import('@alfred/storage');
+            const { KENNZAHL_PREFIX, KENNZAHL_QUELLE } = await import('./kennzahlen/kennzahlen.js');
+            const mw = new MwRepoK(this.database.getAdapter());
+            const ad = this.database.getAdapter();
+            const jetzt = new Date();
+            const tagStart = new Date(jetzt); tagStart.setHours(0, 0, 0, 0);
+            const seit = tagStart.toISOString();
+            const zaehleDb = async (sql: string, params: unknown[]): Promise<number> => {
+              try { const r = await ad.queryOne(sql, params) as { n?: number | string } | undefined; return Number(r?.n ?? 0); } catch { return 0; }
+            };
+            const snap = engine.kennzahlen.snapshot();
+            const werte: Record<string, number> = { ...snap.werte };
+            werte.insightsReagiert = await zaehleDb('SELECT count(*) n FROM alfred_insights WHERE user_id = ? AND acted_at >= ?', [owner, seit]);
+            werte.insightsVerworfen = await zaehleDb('SELECT count(*) n FROM alfred_insights WHERE user_id = ? AND dismissed_at >= ?', [owner, seit]);
+            werte.insightsAbgelaufen = await zaehleDb("SELECT count(*) n FROM alfred_insights WHERE user_id = ? AND status = 'expired' AND updated_at >= ?", [owner, seit]);
+            werte.vorgaengeErledigt = await zaehleDb("SELECT count(*) n FROM vorgaenge WHERE user_id = ? AND status = 'erledigt' AND aktualisiert >= ?", [owner, seit]);
+            werte.kostenUsd = Math.round(await zaehleDb('SELECT COALESCE(SUM(cost_usd), 0) n FROM llm_usage WHERE date = ?', [seit.slice(0, 10)]) * 10000) / 10000;
+            const zeit = jetzt.toISOString();
+            let geschrieben = 0;
+            for (const [name, wert] of Object.entries(werte)) {
+              await mw.record(owner, { entity: KENNZAHL_PREFIX + name, wert, zeit, quelle: KENNZAHL_QUELLE });
+              geschrieben++;
+            }
+            engine.kennzahlen.reset(jetzt);
+            this.logger.info({ seit: snap.seit, ...werte }, 'v1183 Kennzahlen des Tages gesichert');
+            return { ok: true, zaehler: { geschrieben, ...werte } };
+          },
         });
       } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1179 Vorgänge-Repository nicht verdrahtet'); }
       // v1163 — Puls-Historie erst hier laden: die Migrationen (provider_puls)

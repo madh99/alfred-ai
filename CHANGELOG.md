@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1183] - 2026-10-05
+
+### Added — Jarvis Schicht 4, Teil 1: Kennzahlen (v1183)
+
+Schicht 3 erzeugt seit heute Vorgänge und Schritte; damit gibt es erstmals Daten, aus denen die Kennzahlen der Spezifikation (Präzision, Erledigungsquote, Kosten je Vorgang) entstehen können. Bisher existierten diese Größen nur als verstreute Logzeilen.
+
+- Neues Modul `kennzahlen/kennzahlen.ts`: deterministische Zähler in der Reasoning-Engine für Vollpässe, Rundgänge ohne LLM, Mini-Pässe, Insights nach Zustellweg (gesendet, aufgeschoben, still), Gate-Treffer und Gate-Aussetzungen, Aktionsausgänge (ausgeführt, fehlgeschlagen, zur Bestätigung, blockiert, übersprungen) sowie neu angelegte Vorgänge. Gezählt wird, was passiert, nicht was ein Modell behauptet.
+- Tagesjob `kennzahlen-tag` (23:50) schreibt die Zähler als Messwerte (Quelle `kennzahl`) und ergänzt die Zählungen des Tages aus der Datenbank: Insight-Reaktionen, verworfene und abgelaufene Insights, erledigte Vorgänge, LLM-Kosten. Danach beginnt ein neues Zählfenster.
+- Die Lern-Telemetrie (So 19:15) summiert die Messwerte der Woche und berichtet Präzision (reagiert zu reagiert plus verworfen plus abgelaufen), Erledigungsquote und Kosten je Vorgang.
+- Kachel Lebenszeichen zeigt die laufenden Zähler; `GET /api/lebenszeichen` liefert sie als `kennzahlen`.
+- 7 Tests.
+
+### Fixed — ITSM: Wiedereröffnung brauchte nur ein gemeinsames Wort (v1183)
+
+Live 05.10.: Der Incident „settings ess batterylife soclimit" vom 06.04. wurde um 11:00 und 12:31 automatisch gelöst und um 11:30 und 13:00 wieder geöffnet. Grund: Der Wiedereröffnungs-Pfad matchte einen gelösten Incident schon bei einem gemeinsamen Schlüsselwort, und „battery:" mit Doppelpunkt umging die Liste der generischen Wörter. Jede Meldung „Low battery: Temp Terrasse Batterie at 0%" landete so am falschen Incident, der eigene Terrasse-Incident blieb ohne Symptome.
+
+- Eine gemeinsame Treffer-Regel für Dedupe und Wiedereröffnung: mindestens zwei gemeinsame Schlüsselwörter bei gleicher Quelle, sonst drei.
+- Schlüsselwörter werden ohne Satzzeichen gebildet, damit die Liste generischer Wörter greift.
+- Wiedereröffnungen schreiben eine Logzeile mit Incident, Rückfall-Zähler und Meldung.
+- 4 Tests.
+
 ## [0.19.0-jarvis.1182] - 2026-10-05
 
 ### Fixed — Vorgänge entstehen unabhängig vom Zustellweg (v1182)

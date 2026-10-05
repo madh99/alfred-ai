@@ -132,6 +132,25 @@ function rowToChangeRequest(r: DbRow): CmdbChangeRequest {
 
 // ── Repository ───────────────────────────────────────────────
 
+/**
+ * v1183 — EINE Treffer-Regel für Dedupe UND Re-Open. Realfall 05.10.: der Re-Open-
+ * Pfad (findRecentResolvedDuplicate) brauchte nur EIN gemeinsames Wort — „battery:"
+ * (mit Doppelpunkt, daher nicht in der Generic-Liste) hängte „Temp Terrasse
+ * Batterie 0 %" dreimal am Tag wieder an den soeben auto-resolved Incident
+ * „settings ess batterylife soclimit" (06.04.) — Flap zwischen Auto-Recovery
+ * 11:00/12:31 und Re-Open 11:30/13:00, Terrasse-Incident blieb ohne Symptome.
+ * Treffer braucht ≥2 gemeinsame Schlüsselwörter bei Quellen-Übereinstimmung,
+ * sonst ≥3 (wie findOpenIncidentForAsset seit v1174).
+ */
+export function passtZuIncidentTitel(title: string, sourceLabel: string, titleKeywords: string[]): boolean {
+  const titleLower = title.toLowerCase();
+  const sourceMatch = sourceLabel ? titleLower.includes(sourceLabel.toLowerCase()) : false;
+  const matchCount = titleKeywords.filter(kw => titleLower.includes(kw.toLowerCase())).length;
+  if (titleKeywords.length === 0) return false;
+  if (sourceMatch && matchCount >= Math.min(2, titleKeywords.length)) return true;
+  return matchCount >= Math.min(3, titleKeywords.length);
+}
+
 export class ItsmRepository {
   /** User timezone for human-readable timestamps (e.g. 'Europe/Vienna'). */
   timezone?: string;
@@ -268,11 +287,7 @@ export class ItsmRepository {
     // konnte. Ein Treffer braucht jetzt mindestens zwei gemeinsame Schlüssel-
     // wörter (bei Quellen-Übereinstimmung) bzw. drei ohne.
     for (const inc of all) {
-      const titleLower = inc.title.toLowerCase();
-      const sourceMatch = titleLower.includes(sourceLabel.toLowerCase());
-      const matchCount = titleKeywords.filter(kw => titleLower.includes(kw.toLowerCase())).length;
-      if (sourceMatch && matchCount >= Math.min(2, titleKeywords.length)) return inc;
-      if (matchCount >= Math.min(3, titleKeywords.length)) return inc;
+      if (passtZuIncidentTitel(inc.title, sourceLabel, titleKeywords)) return inc;
     }
     return null;
   }
@@ -348,11 +363,9 @@ export class ItsmRepository {
       [userId, cutoffIso, cutoffIso, cutoffIso],
     );
     const all = (rows as any[]).map(rowToIncident);
+    // v1183 — gleiche Regel wie findOpenIncidentForAsset (vorher: EIN Wort reichte).
     for (const inc of all) {
-      const titleLower = inc.title.toLowerCase();
-      const sourceMatch = sourceLabel ? titleLower.includes(sourceLabel.toLowerCase()) : true;
-      const matchCount = titleKeywords.filter(kw => titleLower.includes(kw.toLowerCase())).length;
-      if (sourceMatch && matchCount >= 1) return inc;
+      if (passtZuIncidentTitel(inc.title, sourceLabel, titleKeywords)) return inc;
     }
     return null;
   }
