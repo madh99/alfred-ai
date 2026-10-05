@@ -61,6 +61,9 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'claude-mythos-5-1':            { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-fable-5':               { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-mythos-5':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
+  // v1204 — Opus 5.5 / Sonnet 5.5 (Models-Overview 06.10.2026: 1M / 128k; Live-Models-API: claude-opus-5-5, claude-sonnet-5-5)
+  'claude-opus-5-5':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
+  'claude-sonnet-5-5':            { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   // v1135 — Claude Opus 5 (Juli 2026, per Live-Models-API verifiziert)
   'claude-opus-5':                { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-opus-4-8':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
@@ -86,6 +89,10 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   // OpenAI — GPT-6 / GPT-5.x / GPT-4.1 / GPT-4o / o-series
   // v1156 — GPT-6 Astra (Sept. 2026, Modellseite): 1.050.000 / 128.000
   'gpt-6-astra':                  { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
+  // v1204 — GPT-6.1 Sol (29.09.2026) und GPT-6 Sol/Luna (22.09.2026): 1.050.000 / 128.000 wie Astra
+  'gpt-6.1-sol':                  { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
+  'gpt-6-sol':                    { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
+  'gpt-6-luna':                   { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-6':                        { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-5.6-sol':                  { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-5.6-terra':                { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },

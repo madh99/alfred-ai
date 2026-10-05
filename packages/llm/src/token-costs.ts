@@ -22,7 +22,12 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // $10/$50 (Cache-Read $1), >272k Tokens 2x Input/1.5x Output (siehe
   // longPromptMultiplier). GPT-5.6 wurde im Preis GESENKT: Sol $4/$20,
   // Terra $2/$12, Luna $0.20/$1.20 (vorher 5/30, 2.5/15, 1/6).
+  // v1204 — Modell-Update Oktober 2026 (Quellen 06.10.: OpenAI-Modellliste live, Preisvergleich 05.10.,
+  // GPT-6.1-Sol-Ankündigung 29.09.): Sol/Luna-Varianten VOR dem generischen gpt-6-Präfix, sonst $10/$50.
+  ['gpt-6.1-sol',     { input: 2.00, output: 10.00, cacheRead: 0.10, cacheWrite: 2.50 }],
   ['gpt-6-astra',     { input: 10.00, output: 50.00, cacheRead: 1.00 }],
+  ['gpt-6-sol',       { input: 2.00, output: 10.00, cacheRead: 0.20 }],
+  ['gpt-6-luna',      { input: 0.10, output: 0.50,  cacheRead: 0.01 }],
   ['gpt-6',           { input: 10.00, output: 50.00, cacheRead: 1.00 }],
   ['gpt-5.6-sol',     { input: 4.00, output: 20.00, cacheRead: 0.40 }],
   ['gpt-5.6-terra',   { input: 2.00, output: 12.00, cacheRead: 0.20 }],
@@ -63,6 +68,10 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['claude-fable-5',    { input: 10.00, output: 50.00, cacheRead: 1.00, cacheWrite: 12.50 }],
   ['claude-mythos-5',   { input: 10.00, output: 50.00, cacheRead: 1.00, cacheWrite: 12.50 }],
   // v1135 — Opus 5 (Juli 2026): gleiche Preise wie Opus 4.8 ($5/$25)
+  // v1204 — Opus 5.5 ($4/$20, Cache-Read 5 % = $0.20, Write $5) und Sonnet 5.5 ($2/$10) laut
+  // claude.com/pricing + Models-Overview 06.10.; Opus 5 / Sonnet 5 / Fable 5 sind „legacy".
+  ['claude-opus-5-5',   { input: 4.00, output: 20.00, cacheRead: 0.20, cacheWrite: 5.00 }],
+  ['claude-sonnet-5-5', { input: 2.00, output: 10.00, cacheRead: 0.20, cacheWrite: 2.50 }],
   ['claude-opus-5',     { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
   ['claude-opus-4-8',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
   ['claude-opus-4-7',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
@@ -112,6 +121,10 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['devstral-small',          { input: 0.10, output: 0.30 }],
   ['magistral-medium',        { input: 2.00, output: 5.00 }],
   ['magistral-small',         { input: 0.50, output: 1.50 }],
+  // v1204 — Ministral 3 (Dokumentations-IDs ministral-3-{3b,8b,14b}-25-12; Live-Liste führt ministral-{3b,8b,14b}-2512)
+  ['ministral-3-14b',         { input: 0.20, output: 0.20, cacheRead: 0.02 }],
+  ['ministral-3-8b',          { input: 0.15, output: 0.15, cacheRead: 0.015 }],
+  ['ministral-3-3b',          { input: 0.10, output: 0.10, cacheRead: 0.01 }],
   ['ministral-3b',            { input: 0.10, output: 0.10 }],
   ['ministral-8b',            { input: 0.15, output: 0.15 }],
   ['ministral-14b',           { input: 0.20, output: 0.20 }],
@@ -170,6 +183,7 @@ export function getModelPricing(model: string): ModelPricing | undefined {
 export function longPromptMultiplier(model: string, inputTokens: number): { input: number; output: number } {
   const lower = model.toLowerCase();
   if (inputTokens <= 272_000) return { input: 1.0, output: 1.0 };
+  // v1204 — gpt-6.1-sol: >272k → 2× Input/Cache, 1,5× Output (Ankündigung 29.09.2026); Präfix gpt-6 deckt es ab
   const langkontext = /^(gpt-6|gpt-5\.6|gpt-5\.5($|-\d)|gpt-5\.4($|-\d|-pro))/.test(lower);
   return langkontext ? { input: 2.0, output: 1.5 } : { input: 1.0, output: 1.0 };
 }

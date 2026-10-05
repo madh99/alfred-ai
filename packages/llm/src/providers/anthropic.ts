@@ -84,9 +84,14 @@ export class AnthropicProvider extends LLMProvider {
     return { thinking: { type: 'disabled' } };
   }
 
-  /** Fable 5 / 5.1 und Mythos 5 / 5.1: adaptives Thinking lässt sich nicht abschalten. */
+  /**
+   * Fable 5 / 5.1 und Mythos 5 / 5.1: adaptives Thinking lässt sich nicht abschalten.
+   * v1204 — Opus 5.5 ebenso („Adaptive (always on)", Models-Overview 06.10.2026); Sonnet 5.5
+   * ist „Adaptive" wie Sonnet 5 und behält thinking:disabled für Serienproduktion.
+   */
   private thinkingImmerAn(): boolean {
-    return /^claude-(fable|mythos)-5/.test((this.config.model ?? '').toLowerCase());
+    const model = (this.config.model ?? '').toLowerCase();
+    return /^claude-(fable|mythos)-5/.test(model) || /^claude-opus-5-5/.test(model);
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {

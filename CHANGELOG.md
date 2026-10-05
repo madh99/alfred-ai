@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1204] - 2026-10-06
+
+### Added — Modell-Update Oktober 2026: GPT-6.1 Sol, GPT-6 Sol/Luna, Claude Opus 5.5 und Sonnet 5.5, Ministral 3 (v1204)
+
+Abgleich der Modell-Registry (Preise, Cache-Sätze, Kontextfenster, API-Parameter) gegen die offiziellen Seiten von Anthropic, Google und Mistral, die Live-Modelllisten der APIs (Anthropic, OpenAI, Mistral am 06.10.2026) und für OpenAI, dessen Preisseite Abrufe blockt, die GPT-6.1-Sol-Ankündigung vom 29.09. sowie einen Preisvergleich vom 05.10. Letzter Stand war v1156 vom 16.09.
+
+**OpenAI**
+- `gpt-6.1-sol` (29.09.2026): $2/$10, Cache-Read $0.10, Cache-Write $2.50, 1.050.000/128.000, Reasoning-Modell (Effort low…max, kein none; Tools nur über die Responses-API, die Alfred für Reasoning-Modelle bereits nutzt). Langkontext-Zuschlag über 272k Tokens wie bei GPT-6.
+- `gpt-6-sol` ($2/$10, Cache $0.20) und `gpt-6-luna` ($0.10/$0.50, Cache $0.01) vom 22.09.2026. Alle drei fielen bisher auf den Astra-Präfix zurück und wären mit $10/$50 um das Fünf- bis Hundertfache überzählt worden.
+
+**Anthropic**
+- `claude-opus-5-5` ($4/$20, Cache-Read 5 % = $0.20, Cache-Write $5) und `claude-sonnet-5-5` ($2/$10, $0.20/$2.50), beide 1M/128k, per Live-Modellliste bestätigt. Opus 5, Sonnet 5 und Fable 5 gelten laut Anthropic als Legacy. Der Präfix `claude-opus-5` hätte Opus 5.5 mit $5/$25 falsch bepreist.
+- Opus 5.5 hat adaptives Thinking „immer an": wie bei Fable/Mythos wird bei Effort none/low `output_config.effort: low` statt des Abschalt-Parameters gesendet. Sonnet 5.5 verhält sich wie Sonnet 5. Beide lehnen `temperature` ab (bestehende Regel).
+- **Hinweis:** `claude-haiku-4-5-20251001` (Tier fast in der Live-Konfiguration) hat den Retirement-Termin „nicht vor 15.10.2026"; ein Haiku-Nachfolger ist nicht gelistet. Die Tier-Konfiguration liegt beim Owner (Kandidaten: Sonnet 5.5, GPT-6 Luna).
+
+**Google**
+- Keine Änderung nötig: Gemini 3.8 Flash $0.75/$3.75 bis 31.12.2026, danach $1.50/$7.50 (Erinnerung besteht). Gemini 3.1 Pro $2/$12 bis 200k bestätigt.
+
+**Mistral**
+- Ministral 3 (3B/8B/14B) in Dokumentations- und Live-Schreibweise bepreist ($0.10/$0.15/$0.20 je Richtung, Cache 10 %). Large 3, Medium 3.5, Small 4, GLM 5.3 und Voxtral stimmen; Voxtral TTS ($16 je Million Zeichen) deckt sich mit der Nutzungstabelle.
+
+Live-Proben der neuen API-Parameter waren nicht möglich (OpenAI- und Anthropic-Guthaben leer); die Regeln folgen der Dokumentation. 9 neue Tests (modelle-2026-10.test.ts).
+
 ## [0.19.0-jarvis.1203] - 2026-10-05
 
 ### Changed — Jarvis Interaktion, Teil 4: Standard knapp, Gesprächsfaden mit eigenen Meldungen (v1203)
