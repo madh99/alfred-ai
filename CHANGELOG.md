@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1194] - 2026-10-05
+
+### Security — Sektions-Diff im Log nur für Infrastruktur (v1194)
+
+Die in .1193 eingeführte Logzeile zur Änderungserkennung schrieb die erste abweichende Zeile des Sektionsinhalts ins Log, auch für E-Mail, Kalender, Memories und Erinnerungen. Inhalt erscheint jetzt nur noch für Infrastruktur-Sektionen (CMDB, BMW, Projekte, Infra, Energie, Wallbox, Skill-Status); alle anderen Sektionen werden nur mit ihrem Namen auf Debug-Ebene geführt. 1 Test.
+
 ## [0.19.0-jarvis.1193] - 2026-10-05
 
 ### Changed — Rundgang: geänderte Sektionen zeigen, was sich geändert hat (v1193)

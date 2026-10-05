@@ -86,6 +86,9 @@ export function fachlicherFingerabdruck(content: string): string {
  * Inhalte (Fingerabdruck je Zeile). Live 05.10.: cmdb/bmw galten jeden Tick als geändert,
  * ohne dass sichtbar war, WAS sich änderte — der Rundgang kam nie zum Zug.
  */
+/** v1194 — nur diese Sektionen dürfen Inhalt ins Log schreiben (Infrastruktur, keine persönlichen Daten). */
+export const INFRA_SEKTIONEN_MIT_INHALT = new Set(['cmdb', 'bmw', 'projects', 'infra', 'energy', 'charger', 'skillHealth']);
+
 export function ersteAbweichung(alt: string, neu: string): { alt: string; neu: string } | undefined {
   const a = alt.split('\n'); const b = neu.split('\n');
   const n = Math.max(a.length, b.length);
@@ -620,10 +623,15 @@ export class ReasoningContextCollector {
       if (prev !== undefined && fachlicherFingerabdruck(prev) !== fachlicherFingerabdruck(section.content)) {
         section.changed = true;
         changedSections.push(section.key);
-        // v1193 — WAS hat sich geändert? (Beobachtung für den Rundgang; fachliche Sektionen auf info)
-        const abw = ersteAbweichung(prev, section.content);
-        const fachlich = ['cmdb', 'bmw', 'projects', 'calendar', 'email', 'smarthome', 'reminders', 'todos', 'watches', 'memories'].includes(section.key);
-        this.logger[fachlich ? 'info' : 'debug']({ sektion: section.key, ...(abw ?? { hinweis: 'nur Zeilenanzahl/Reihenfolge' }) }, 'v1193 Sektion geändert');
+        // v1193 — WAS hat sich geändert? (Beobachtung für den Rundgang).
+        // v1194 — Inhalt NUR für Infrastruktur-Sektionen ins Log; E-Mail, Kalender, Memories,
+        // Erinnerungen usw. enthalten persönliche Daten und werden nur mit dem Sektionsnamen geführt.
+        if (INFRA_SEKTIONEN_MIT_INHALT.has(section.key)) {
+          const abw = ersteAbweichung(prev, section.content);
+          this.logger.info({ sektion: section.key, ...(abw ?? { hinweis: 'nur Zeilenanzahl/Reihenfolge' }) }, 'v1193 Sektion geändert');
+        } else {
+          this.logger.debug({ sektion: section.key }, 'v1193 Sektion geändert');
+        }
       }
       this.previousContent.set(section.key, section.content);
 

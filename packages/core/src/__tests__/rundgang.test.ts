@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { istRundgangOhneAenderung, VOLATILE_SEKTIONEN } from '../reasoning-engine.js';
-import { fachlicherFingerabdruck, ersteAbweichung } from '../reasoning-context-collector.js';
+import { fachlicherFingerabdruck, ersteAbweichung, INFRA_SEKTIONEN_MIT_INHALT } from '../reasoning-context-collector.js';
+
+// v1194 — persönliche Sektionen schreiben nie Inhalt ins Log
+describe('INFRA_SEKTIONEN_MIT_INHALT', () => {
+  it('enthält nur Infrastruktur, keine persönlichen Quellen', () => {
+    for (const k of ['email', 'calendar', 'memories', 'reminders', 'todos', 'watches', 'mstodo', 'activity', 'smarthome', 'haus']) expect(INFRA_SEKTIONEN_MIT_INHALT.has(k)).toBe(false);
+    for (const k of ['cmdb', 'bmw', 'projects']) expect(INFRA_SEKTIONEN_MIT_INHALT.has(k)).toBe(true);
+  });
+});
 
 // v1193 — zeigt die erste fachlich abweichende Zeile zweier Sektions-Inhalte
 describe('ersteAbweichung', () => {
