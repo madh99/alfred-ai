@@ -3129,7 +3129,7 @@ export type LebenszeichenTakt = { art: 'taeglich'; um: string } | { art: 'woeche
 export interface LebenszeichenLauf { id: string; jobKey: string; userId?: string; nodeId?: string; startedAt: string; finishedAt?: string; ok?: boolean; zaehler?: Record<string, number>; fehler?: string }
 export interface LebenszeichenJob { key: string; beschreibung: string; takt: LebenszeichenTakt; bereich: 'master' | 'alle' | 'global'; slot?: boolean; letzterLauf: LebenszeichenLauf | null }
 export interface LebenszeichenPuls { tier: string; provider: string; model: string; letzterErfolg?: string; letzterFehler?: string; fehlerKlasse?: string; fehlerText?: string; gestoertSeit?: string; erfolge: number; fehler: number; updatedAt: string }
-export interface LebenszeichenProbe { art: 'tier' | 'job' | 'daten'; name: string; ok: boolean; detail: string; klasse?: string }
+export interface LebenszeichenProbe { art: 'tier' | 'job' | 'daten' | 'adapter'; name: string; ok: boolean; detail: string; klasse?: string }
 export interface LebenszeichenStatus {
   registerGestartetAm: string | null;
   jobs: LebenszeichenJob[];
@@ -3139,6 +3139,8 @@ export interface LebenszeichenStatus {
   letzteLaeufe: LebenszeichenLauf[];
   /** v1183 — Jarvis Schicht 4: Engine-Zähler seit Tagesabschluss/Start */
   kennzahlen?: { seit: string; werte: Record<string, number> } | null;
+  /** v1191 — Messaging-Adapter (Soll) mit Verbindungszustand */
+  adapter?: Array<{ platform: string; status: string; getrenntSeitMs?: number }>;
 }
 export interface CliUsageOverview {
   totals: { runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number };

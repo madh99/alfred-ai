@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1191] - 2026-10-05
+
+### Added — Lebenszeichen: Messaging-Adapter haben einen Puls und verbinden sich neu (v1191)
+
+Realfall 05.10.: Der Matrix-Homeserver antwortete ab der Nacht mit 502. Der Adapter scheiterte beim Start-Connect und blieb bis zum nächsten Neustart tot, 24 Fehlerzeilen im Log, kein Satz an den Owner. Adapter-Verbindungen waren die letzte Quelle ohne Lebenszeichen.
+
+- Jeder Adapter, der verbunden sein soll, wird mit Zustand und „getrennt seit" geführt; Verbindungsereignisse der Adapter fließen ein.
+- Der Degradations-Wächter meldet einen Adapter, der länger als eine Stunde getrennt ist, mit genau einem Satz; die Morgen-Proben um 06:50 prüfen alle Adapter.
+- Neuer Job `adapter-reconnect` (10 Minuten) verbindet getrennte Adapter neu; im Cluster nur die, die dieser Knoten besitzt.
+- Kachel Lebenszeichen zeigt die Adapter mit Ampel, `GET /api/lebenszeichen` liefert sie als `adapter`.
+- 2 Tests.
+
 ## [0.19.0-jarvis.1190] - 2026-10-05
 
 ### Changed — Jarvis Schicht 0 abgeschlossen: kein Timer mehr außerhalb des Job-Registers (v1190)

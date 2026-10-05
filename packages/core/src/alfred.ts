@@ -465,6 +465,7 @@ export class Alfred {
       proben: this.letzteProben,
       offen: this.degradationsWaechter?.offeneZustaende() ?? [],
       letzteLaeufe: await runs.listeLetzte(60).catch(() => []),
+      adapter: this.adapterZustaende(), // v1191
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
     };
@@ -7778,8 +7779,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // HTTP API always connects (both nodes serve API behind load balancer)
         if (platform === 'api') {
           this.setupAdapterHandlers(platform, adapter);
-          try { await adapter.connect(); this.logger.info({ platform }, 'Adapter connected (always-on)'); }
-          catch (err) { this.logger.error({ platform, err }, 'Adapter connection failed'); }
+          await this.verbindeAdapter(platform, adapter, 'always-on');
           continue;
         }
 
@@ -7787,8 +7787,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const claimed = await this.adapterClaimManager.tryClaim(platform);
         if (claimed) {
           this.setupAdapterHandlers(platform, adapter);
-          try { await adapter.connect(); this.logger.info({ platform }, 'Adapter connected (claimed)'); }
-          catch (err) { this.logger.error({ platform, err }, 'Adapter connection failed'); }
+          await this.verbindeAdapter(platform, adapter, 'claimed');
         } else {
           this.logger.info({ platform }, 'Adapter claimed by another node, skipping');
         }
@@ -7808,8 +7807,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const adapter = this.adapters.get(platform as any);
         if (adapter && adapter.getStatus() === 'disconnected') {
           this.setupAdapterHandlers(platform as any, adapter);
-          try { await adapter.connect(); this.logger.info({ platform }, 'Adapter connected (failover)'); }
-          catch (err) { this.logger.error({ platform, err }, 'Failover adapter connection failed'); }
+          await this.verbindeAdapter(platform as Platform, adapter, 'failover');
         }
       });
 
@@ -7818,12 +7816,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       // Single instance: connect all adapters
       for (const [platform, adapter] of this.adapters) {
         this.setupAdapterHandlers(platform, adapter);
-        try {
-          await adapter.connect();
-          this.logger.info({ platform }, 'Adapter connected');
-        } catch (err) {
-          this.logger.error({ platform, err }, 'Adapter connection failed — skipping');
-        }
+        await this.verbindeAdapter(platform, adapter, 'single');
       }
     }
 
@@ -13590,7 +13583,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // Puls; Abnahme: entfernter API-Key → binnen 70 min genau ein Owner-Satz)
       // und synthetische Proben 06:50 (Tiers direkt, Jobs im Takt, Daten-Frische).
       {
-        const { DegradationsWaechter, bewertePuls, bewerteProben, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
+        const { DegradationsWaechter, bewertePuls, bewerteProben, bewerteAdapter, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
         const { fuehreProbenAus } = await import('./lebenszeichen/proben.js');
         const { JobRunsRepository } = await import('@alfred/storage');
         const lzRepo = this.lebenszeichenRepo;
@@ -13674,11 +13667,26 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         register.registriere({
           key: 'degradations-waechter', beschreibung: 'Provider-Puls bewerten (Degradation/Guthaben)', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
           run: async () => {
-            if (!puls) return { ok: true };
-            const befunde = bewertePuls(puls.alle(), new Date());
-            const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier'] });
+            const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteAdapter(this.adapterZustaende(), new Date())];
+            const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier', 'adapter'] });
             const gesendet = await melde(meldungen);
             return { ok: true, zaehler: { befunde: befunde.length, gesendet } };
+          },
+        });
+        // v1191 — getrennte Adapter alle 10 min neu verbinden (vorher: nach fehlgeschlagenem
+        // Start-Connect tot bis zum nächsten Neustart)
+        register.registriere({
+          key: 'adapter-reconnect', beschreibung: 'Getrennte Messaging-Adapter neu verbinden', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
+          run: async () => {
+            let versucht = 0; let verbunden = 0;
+            for (const p of this.adapterSoll) {
+              const a = this.adapters.get(p as Platform);
+              if (!a || a.getStatus() === 'connected') continue;
+              if (this.adapterClaimManager && p !== 'api' && !this.adapterClaimManager.owns(p)) continue;
+              versucht++;
+              if (await this.verbindeAdapter(p as Platform, a, 'reconnect')) verbunden++;
+            }
+            return { ok: true, zaehler: { versucht, verbunden } };
           },
         });
         register.registriere({
@@ -13692,6 +13700,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               letzterLauf: async (k) => { const l = await jobRunsRepo.letzterLauf(k); return l ? { startedAt: l.startedAt, ok: l.ok } : undefined; },
               juengsteZeit: lzRepo ? (t) => lzRepo.juengsteZeit(t) : undefined,
               ausgenommen: ['lebenszeichen-proben', 'degradations-waechter'],
+              adapter: () => this.adapterZustaende(), // v1191
             });
             this.letzteProben = { zeit: new Date().toISOString(), ergebnisse };
             const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteProben(ergebnisse)];
@@ -14541,7 +14550,35 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     }
   }
 
+  /** v1191 — Adapter-Zustand für das Lebenszeichen: Soll-Menge und „getrennt seit". */
+  private readonly adapterSoll = new Set<string>();
+  private readonly adapterGetrenntSeit = new Map<string, number>();
+  private async verbindeAdapter(platform: Platform, adapter: MessagingAdapter, art: string): Promise<boolean> {
+    this.adapterSoll.add(platform);
+    try {
+      await adapter.connect();
+      this.adapterGetrenntSeit.delete(platform);
+      this.logger.info({ platform, art }, 'Adapter connected');
+      return true;
+    } catch (err) {
+      if (!this.adapterGetrenntSeit.has(platform)) this.adapterGetrenntSeit.set(platform, Date.now());
+      this.logger.error({ platform, art, err }, 'Adapter connection failed');
+      return false;
+    }
+  }
+  adapterZustaende(): Array<{ platform: string; status: string; getrenntSeitMs?: number }> {
+    return [...this.adapterSoll].map(p => {
+      const a = this.adapters.get(p as Platform);
+      const status = a?.getStatus() ?? 'fehlt';
+      if (status !== 'connected' && !this.adapterGetrenntSeit.has(p)) this.adapterGetrenntSeit.set(p, Date.now());
+      return { platform: p, status, getrenntSeitMs: status === 'connected' ? undefined : this.adapterGetrenntSeit.get(p) };
+    });
+  }
+
   private setupAdapterHandlers(platform: Platform, adapter: MessagingAdapter): void {
+    // v1191 — Verbindungsereignisse für das Lebenszeichen
+    adapter.on('connected', () => { this.adapterGetrenntSeit.delete(platform); });
+    adapter.on('disconnected', () => { if (!this.adapterGetrenntSeit.has(platform)) this.adapterGetrenntSeit.set(platform, Date.now()); });
     adapter.on('message', async (message: NormalizedMessage) => {
       try {
         // Handle /stop command — cancel active request for this user

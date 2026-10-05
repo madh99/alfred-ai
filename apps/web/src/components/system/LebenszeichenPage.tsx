@@ -135,6 +135,22 @@ export function LebenszeichenPage() {
             </section>
           )}
 
+          {/* Adapter (v1191) */}
+          {data.adapter && data.adapter.length > 0 && (
+            <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <h2 className="text-sm font-semibold text-gray-300 mb-3">Messaging-Adapter</h2>
+              <div className="flex flex-wrap gap-2">
+                {data.adapter.map(a => (
+                  <div key={a.platform} className="flex items-center gap-2 rounded-lg border border-[#1a1a1a] px-3 py-1.5 text-xs">
+                    <Punkt zustand={a.status === 'connected' ? 'ok' : 'bad'} />
+                    <span className="text-gray-200">{a.platform}</span>
+                    <span className="text-gray-500">{a.status === 'connected' ? 'verbunden' : `${a.status}${a.getrenntSeitMs ? ` · seit ${alter(new Date(a.getrenntSeitMs).toISOString())}` : ''}`}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* Provider-Puls */}
           <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
             <h2 className="text-sm font-semibold text-gray-300 mb-3">Provider-Puls</h2>

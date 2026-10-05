@@ -61,8 +61,24 @@ export function bewerteProben(proben: ProbeErgebnis[]): Befund[] {
     if (p.ok || p.art === 'tier') continue;
     befunde.push({
       key: `${p.art}:${p.name}`,
-      text: p.art === 'job' ? `Job ${p.name}: ${p.detail}` : `Tabelle ${p.name}: ${p.detail}`,
+      text: p.art === 'job' ? `Job ${p.name}: ${p.detail}` : p.art === 'adapter' ? `Adapter ${p.name}: ${p.detail}` : `Tabelle ${p.name}: ${p.detail}`,
     });
+  }
+  return befunde;
+}
+
+/**
+ * v1191 — Regel 4: Messaging-Adapter, die länger als die Schwelle nicht verbunden sind.
+ * Realfall 05.10.: Matrix-Homeserver antwortete ab der Nacht mit 502, der Adapter blieb
+ * nach dem fehlgeschlagenen Start-Connect den ganzen Tag tot — 24 Fehlerzeilen, kein Satz.
+ */
+export function bewerteAdapter(zustaende: Array<{ platform: string; status: string; getrenntSeitMs?: number }>, now: Date): Befund[] {
+  const befunde: Befund[] = [];
+  for (const a of zustaende) {
+    if (a.status === 'connected' || !a.getrenntSeitMs) continue;
+    const dauer = now.getTime() - a.getrenntSeitMs;
+    if (dauer < DEGRADATION_SCHWELLE_MS) continue;
+    befunde.push({ key: `adapter:${a.platform}`, text: `Adapter ${a.platform} seit ${formatiereDauer(dauer)} nicht verbunden (${a.status}) — Alfred versucht alle 10 min neu` });
   }
   return befunde;
 }

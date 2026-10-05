@@ -12,8 +12,10 @@ import type { FehlerKlasse } from './provider-puls.js';
  * Degradations-Wächter.
  */
 
+export interface AdapterZustand { platform: string; status: string; getrenntSeitMs?: number }
+
 export interface ProbeErgebnis {
-  art: 'tier' | 'job' | 'daten';
+  art: 'tier' | 'job' | 'daten' | 'adapter';
   name: string;
   ok: boolean;
   detail: string;
@@ -33,6 +35,8 @@ export interface ProbenDeps {
   juengsteZeit?: (tabelle: 'activity_log' | 'llm_usage' | 'alfred_insights') => Promise<string | undefined>;
   /** Jobs, die nicht geprobt werden (z. B. die Probe selbst). */
   ausgenommen?: string[];
+  /** v1191 — Messaging-Adapter, die verbunden sein sollen (Realfall 05.10.: Matrix-Homeserver 502, Adapter den ganzen Tag tot, niemand gemeldet). */
+  adapter?: () => AdapterZustand[];
   now?: () => Date;
 }
 
@@ -111,6 +115,15 @@ export async function fuehreProbenAus(deps: ProbenDeps): Promise<ProbeErgebnis[]
       } catch (err) {
         ergebnisse.push({ art: 'daten', name: tabelle, ok: false, detail: `Abfrage fehlgeschlagen — ${((err as Error).message ?? '').slice(0, 120)}` });
       }
+    }
+  }
+
+  // 4) Adapter — verbunden oder nicht (v1191)
+  if (deps.adapter) {
+    for (const a of deps.adapter()) {
+      const ok = a.status === 'connected';
+      const seit = a.getrenntSeitMs ? ` seit ${formatiereDauer(now.getTime() - a.getrenntSeitMs)}` : '';
+      ergebnisse.push({ art: 'adapter', name: a.platform, ok, detail: ok ? 'verbunden' : `nicht verbunden (${a.status})${seit}` });
     }
   }
 
