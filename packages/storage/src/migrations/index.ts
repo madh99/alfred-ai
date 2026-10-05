@@ -2806,4 +2806,21 @@ export const MIGRATIONS: Migration[] = [
       )`);
     },
   },
+  {
+    version: 124,
+    description: 'v1169 — Jarvis Schicht 1: messwerte (Stichproben je Entität für Baselines) (SQLite-Spiegel zu PG v128).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS messwerte (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        entity TEXT NOT NULL,
+        wert REAL,
+        text TEXT,
+        einheit TEXT,
+        gemessen_at TEXT NOT NULL,
+        quelle TEXT
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_messwerte_user_entity_zeit ON messwerte(user_id, entity, gemessen_at)`);
+    },
+  },
 ];

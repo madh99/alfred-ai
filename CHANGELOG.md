@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1169] - 2026-10-05
+
+### Added — Jarvis Schicht 1, Quelle 2: Energie & Haus mit Baselines (v1169)
+
+Zweite Deutungsschicht des Weltmodells für die konfigurierten Home-Assistant-Entitäten (Memory `briefing_ha_entities`: Victron-Hausbatterie, PV, Verbrauch, Raumtemperatur, Ladeplan). Bisher standen sie als „Name: Rohwert" im Smart-Home-Kontext; jetzt als Zustände mit Deutung, und die manuellen Normalzustände des Owners sind Regel statt Prompt-Text.
+
+- **Messwerte als Zeitreihe** (`messwerte`, SQLite v124 / PG v128, `MesswerteRepository`): Der Register-Job `messwerte-sammler` erfasst alle 30 Minuten die konfigurierten Entitäten. Beim ersten Lauf je Entität holt er 7 Tage Historie aus Home Assistant nach (höchstens ein Punkt je 15 Minuten), damit Baselines nicht bei null beginnen. Aufbewahrung 60 Tage.
+- **Baselines** (`normalzustaende/baseline.ts`): Median und robuste Streuung (MAD) je Tagesstunde über die letzten Tage. Unter 10 Stichproben heißt es „Baseline im Aufbau", ab 3 σ Abweichung „deutlich über/unter der Baseline dieser Stunde". Beobachtend, keine Modellannahmen.
+- **Deutung Energie & Haus** (`normalzustaende/energie.ts`):
+  - Hausbatterie: SoC, Lade-/Entladeleistung, Trend in %/h, Tagesspanne, letzte Vollladung. Die Regel „Lademanagement: wurde in 30 Tagen 100 % erreicht?" (Korrektur 18.05.) ist Code: fehlt sie über 30 Tage, steht ein Hinweis im Kontext. Zusatz „nicht Teil der BMW-Fahrtplanung" (Korrektur 17.04.).
+  - Mindest-SoC: eigene Zeile „Konfiguration (ESS-Untergrenze), KEIN aktueller Ladestand" (Korrektur 16.08., Realfall 15 %).
+  - Netzladung: Freigabe-Schalter der Automation plus Ladeplan-Text. Ein Fenster in der Vergangenheit (Realfall: „Sat, 18.07.") wird als „derzeit kein geplantes Ladefenster, kein Handlungsbedarf" ausgewiesen.
+  - PV: nachts 0 W ist NORMAL; tags Vergleich mit der Stunden-Baseline. Temperaturen und sonstige Zahlen ebenso.
+- Der Smart-Home-Kontext fällt auf die bisherigen Rohzeilen zurück, wenn die Deutung nicht möglich ist. Die KG-Extraktion bleibt unberührt, sie liest nur Tabellenzeilen.
+- 9 Tests gegen die Realdaten vom 05.10. 02:55 (`normalzustaende-energie.test.ts`).
+
+Bewusst noch offen: Sensorbatterien (device_class battery) als eigene Quelle, sobald die Zigbee-Entitäten konfiguriert sind.
+
 ## [0.19.0-jarvis.1168] - 2026-10-05
 
 ### Added — Jarvis Schicht 1, Quelle 1: BMW als Weltmodell statt Rohzahlen (v1168)

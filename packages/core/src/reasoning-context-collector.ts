@@ -207,6 +207,9 @@ export class ReasoningContextCollector {
   /** Optional planning agent for active plans context. */
   private planningAgent?: import('./planning-agent.js').PlanningAgent;
   setPlanningAgent(agent: import('./planning-agent.js').PlanningAgent): void { this.planningAgent = agent; }
+  /** v1169 — Jarvis Schicht 1: Messwerte-Verlauf für die Energie-Deutung (Baselines). */
+  private messwerteRepo?: import('@alfred/storage').MesswerteRepository;
+  setMesswerteRepo(repo: import('@alfred/storage').MesswerteRepository): void { this.messwerteRepo = repo; }
 
   constructor(
     private readonly skillRegistry: SkillRegistry,
@@ -1524,19 +1527,45 @@ export class ReasoningContextCollector {
   }
 
   private async fetchSmartHomeByEntities(entityIds: string[], parts: string[]): Promise<void> {
-    parts.push('Konfigurierte Entities:');
+    // v1169 — Jarvis Schicht 1: konfigurierte Entitäten werden GEDEUTET
+    // (normalzustaende/energie.ts) statt als „Name: Rohwert" gelistet. Der
+    // Verlauf kommt aus der Tabelle messwerte (Job messwerte-sammler, 30 min).
+    const aktuell: Array<{ entity: string; name?: string; wert?: number; text?: string; einheit?: string; zeit: string }> = [];
+    const roh: string[] = [];
     for (const eid of entityIds.slice(0, 20)) {
       try {
         const result = await this.fetchSkillData('homeassistant', { action: 'state', entityId: eid });
         if (result && !result.startsWith('(')) {
           const stateMatch = result.match(/\*\*State:\*\*\s*(.+)/);
           const nameMatch = result.match(/^##\s*(.+)/m);
+          const unitMatch = result.match(/^- \*\*unit_of_measurement:\*\*\s*(.+)$/m);
           if (stateMatch) {
-            parts.push(`  ${nameMatch?.[1] ?? eid}: ${stateMatch[1].trim()}`);
+            const state = stateMatch[1].trim();
+            const name = nameMatch?.[1]?.trim();
+            roh.push(`  ${name ?? eid}: ${state}`);
+            const zahl = Number(state.replace(',', '.'));
+            aktuell.push({ entity: eid, name, zeit: new Date().toISOString(), einheit: unitMatch?.[1]?.trim(), ...(Number.isFinite(zahl) && state !== '' ? { wert: zahl } : { text: state }) });
           }
         }
       } catch { /* skip entity */ }
     }
+    if (aktuell.length === 0) return;
+    try {
+      const uid = await this.getEffectiveUserId();
+      const verlauf = this.messwerteRepo
+        ? await this.messwerteRepo.verlaufMehrere(uid, aktuell.map(a => a.entity), new Date(Date.now() - 31 * 86_400_000).toISOString())
+        : [];
+      const { deuteEnergie } = await import('./normalzustaende/energie.js');
+      const d = deuteEnergie({ aktuell, verlauf });
+      if (d) {
+        parts.push('Energie & Haus (gedeutet):');
+        for (const z of d.zeilen) parts.push(`  ${z}`);
+        if (d.auffaellig.length) this.logger.info({ auffaellig: d.auffaellig }, 'v1169 Energie-Weltmodell: auffällig');
+        return;
+      }
+    } catch (err) { this.logger.debug({ err }, 'v1169 Energie-Deutung fehlgeschlagen — Rohwerte'); }
+    parts.push('Konfigurierte Entities:');
+    parts.push(...roh);
   }
 
   private async fetchSmartHomeByDomains(domains: string[], parts: string[]): Promise<void> {

@@ -13520,6 +13520,58 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
         });
       }
+      // v1169 — Jarvis Schicht 1: Messwerte-Sammler (30 min) für die konfigurierten
+      // Home-Assistant-Entitäten (Memory briefing_ha_entities). Erstlauf je Entität
+      // holt 7 Tage Historie nach, damit Baselines nicht bei null beginnen.
+      if (this.memoryRepo && this.skillRegistry.has('homeassistant')) {
+        const { MesswerteRepository } = await import('@alfred/storage');
+        const messwerteRepo = new MesswerteRepository(this.database.getAdapter());
+        try { (this.reasoningEngine as any)?.collector?.setMesswerteRepo?.(messwerteRepo); } catch { /* Collector optional */ }
+        const memoryRepoMw = this.memoryRepo;
+        this.registriereJob({
+          key: 'messwerte-sammler', beschreibung: 'HA-Entitäten (briefing_ha_entities) als Zeitreihe erfassen — Baselines für das Weltmodell', takt: { art: 'intervall', minuten: 30 }, bereich: 'global', startVerzoegerungMin: 1,
+          run: async () => {
+            const owner = this.tryOwner();
+            const ha = this.skillRegistry.get('homeassistant');
+            if (!owner || !ha) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+            const mems = await memoryRepoMw.search(owner, 'ha_entit');
+            const entityMem = mems.find(m => /ha_entit|home.?assistant.*entit|briefing.*entit/i.test(m.key));
+            const entityIds = (entityMem?.value ?? '').split(/[,;]\s*/).map(e => e.trim()).filter(Boolean).slice(0, 30);
+            if (entityIds.length === 0) return { ok: true, zaehler: { entities: 0 } as Record<string, number> };
+            const ctx = { userId: owner, masterUserId: owner, chatId: '', platform: 'api', conversationId: '' } as never;
+            let erfasst = 0, numerisch = 0, nachgeholt = 0;
+            const jetzt = new Date().toISOString();
+            for (const eid of entityIds) {
+              try {
+                const r = await ha.execute({ action: 'state', entityId: eid }, ctx);
+                const d = r.data as { state?: string; attributes?: Record<string, unknown> } | undefined;
+                if (!r.success || !d || d.state === undefined || d.state === 'unavailable' || d.state === 'unknown') continue;
+                const zahl = Number(String(d.state).replace(',', '.'));
+                const einheit = typeof d.attributes?.unit_of_measurement === 'string' ? d.attributes.unit_of_measurement : undefined;
+                const istZahl = Number.isFinite(zahl) && String(d.state).trim() !== '';
+                await messwerteRepo.record(owner, { entity: eid, zeit: jetzt, einheit, ...(istZahl ? { wert: zahl } : { text: String(d.state) }) });
+                erfasst++; if (istZahl) numerisch++;
+                // Erstlauf: 7 Tage Historie nachholen (max. 1 Punkt je 15 min)
+                if (istZahl && await messwerteRepo.anzahl(owner, eid) <= 1) {
+                  const h = await ha.execute({ action: 'history', entityId: eid, period: '7d' }, ctx);
+                  const reihe = (Array.isArray(h.data) ? (h.data as unknown[][])[0] ?? [] : []) as Array<{ state?: string; last_changed?: string }>;
+                  let letzte = 0;
+                  for (const e of reihe) {
+                    const w = Number(String(e.state ?? '').replace(',', '.'));
+                    const t = e.last_changed ? Date.parse(e.last_changed) : NaN;
+                    if (!Number.isFinite(w) || !Number.isFinite(t) || t - letzte < 15 * 60_000) continue;
+                    letzte = t;
+                    await messwerteRepo.record(owner, { entity: eid, zeit: new Date(t).toISOString(), einheit, wert: w, quelle: 'homeassistant-history' });
+                    nachgeholt++;
+                  }
+                }
+              } catch (err) { this.logger.debug({ err: (err as Error).message, eid }, 'v1169 Messwert nicht erfasst'); }
+            }
+            if (new Date().getHours() === 4) await messwerteRepo.aufraeumen(60).catch(() => 0);
+            return { ok: true, zaehler: { entities: entityIds.length, erfasst, numerisch, nachgeholt } };
+          },
+        });
+      }
       // v1161 — Register starten: registriert-Logzeilen sind oben gefallen, der
       // erste Tick holt heute noch ausstehende Läufe nach (Lektion v1154/v1158).
       this.jobRegister.start();
