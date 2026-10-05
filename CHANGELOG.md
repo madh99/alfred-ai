@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1168] - 2026-10-05
+
+### Added — Jarvis Schicht 1, Quelle 1: BMW als Weltmodell statt Rohzahlen (v1168)
+
+Erste Deutungsschicht des Weltmodells (`packages/core/src/normalzustaende/bmw.ts`). Der Reasoning-Kontext bekommt für das Fahrzeug **Zustände mit Deutung** statt vier Rohzahlen plus „⚠️ Daten 2.100 Min alt". Das Wissen aus der MQTT-Korrektur („der Stream sendet nur bei aktivem Fahrzeug") ist jetzt deterministische Regel im Code, nicht mehr nur Prompt-Text, den jedes Modell ignoriert hat.
+
+- **Bewegung aus dem Kilometer-Verlauf**: `bmw_telematic_log` der letzten 7 Tage liefert „steht seit 04.10. 18:28 (34 h), letzte Fahrt 63.995 → 64.093 km" oder „fährt gerade". Fahrtende ist die Fahrzeugzeit des Werts, nicht die Abrufzeit.
+- **MQTT-Regel in beide Richtungen**: Steht das Fahrzeug, ist ein stiller Stream NORMAL und wird so beschriftet. Fuhr es nach der letzten Stream-Meldung, ist der stille Stream das Signal: „MQTT-Stream lieferte NICHTS, obwohl das Fahrzeug … gefahren ist → bmw-streaming prüfen".
+- **Je Feld gewinnt der jüngere Zeitstempel.** Bisher gewann MQTT bei gemeinsamen Feldern pauschal. Live-Befund 05.10.: der MQTT-Snapshot vom 03.10. (SoC 56 %, 63.995 km) überdeckte den REST-Abruf vom 05.10. (SoC 30 %, 64.093 km). Der Kontext zeigte zwei Tage lang einen falschen Ladestand.
+- **REST-Takt überwacht**: Der Abruf läuft alle 30 Minuten; ab 90 Minuten ohne Abruf steht „REST-Abruf ausgefallen → Datenquelle prüfen" im Kontext.
+- **Weitere Deutungen**: unverriegelt im Stand über 60 Minuten, offene Türen/Fenster/Klappen, Reifendruck über 12 % neben dem Soll, Ladestand unter 20 % — sonst explizit „NORMAL — kein Ladebedarf gemeldet".
+- Format bleibt kompatibel zum KG-Extraktor (`(SoC) NN %`, `Reichweite NN km`; kein „lädt" ohne Ladevorgang).
+- Auffällige Datenlage (Stream-Verdacht, REST-Ausfall) wird als Logzeile `v1168 BMW-Weltmodell: Datenquelle auffällig` festgehalten.
+- 7 Tests gegen die Realdaten vom 05.10. (`normalzustaende-bmw.test.ts`).
+
+**Live-Befund aus den Realdaten**: Das Fahrzeug fuhr am 04.10. zwischen 11:30 und 18:28 Uhr 98 km. Die letzte MQTT-Meldung stammt vom 03.10. 16:28 Uhr. Nach der Regel des Owners hätte der Stream während der Fahrt senden müssen. Ab diesem Release steht das so im Kontext, statt „Daten alt" zu melden oder zu unterdrücken.
+
 ## [0.19.0-jarvis.1167] - 2026-10-05
 
 ### Changed — Jarvis Schicht 0: fünfzehn Intervall-Timer ins Register, Start-Verzögerung (v1167)

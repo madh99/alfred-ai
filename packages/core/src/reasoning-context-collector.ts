@@ -1276,55 +1276,47 @@ export class ReasoningContextCollector {
     }
   }
 
-  /** Read BMW telematic data directly from DB — zero REST API calls. */
+  /**
+   * Read BMW telematic data directly from DB — zero REST API calls.
+   * v1168 — Jarvis Schicht 1: liefert ZUSTÄNDE MIT DEUTUNG (normalzustaende/bmw.ts)
+   * statt Rohzahlen + „Daten X Min alt". Je Feld gewinnt der jüngere Zeitstempel;
+   * ein stiller MQTT-Stream ist im Stand normal und nach einer Fahrt das Signal.
+   */
   private async fetchBmwFromDb(): Promise<string> {
     if (!this.bmwTelematicRepo) {
       return this.fetchWithTimeout('bmw', { action: 'status' }, 20_000); // fallback to skill call
     }
     try {
       const uid = await this.getEffectiveUserId();
-      // Get latest MQTT and REST snapshots
       const mqtt = await this.bmwTelematicRepo.getLatestAnyVinBySource(uid, 'mqtt');
       const rest = await this.bmwTelematicRepo.getLatestAnyVinBySource(uid, 'rest');
-
       if (!mqtt && !rest) return '(Keine BMW-Daten in DB)';
 
-      // Merge: MQTT wins for shared fields
-      const merged: Record<string, { value: string; unit?: string }> = {};
-      if (rest) for (const [k, v] of Object.entries(rest.telematicData)) merged[k] = v as any;
-      if (mqtt) for (const [k, v] of Object.entries(mqtt.telematicData)) merged[k] = v as any;
-
-      const tv = (key: string, ...alts: string[]): string => {
-        for (const k of [key, ...alts]) if (merged[k]?.value) return merged[k].value;
-        return '?';
-      };
-
-      const soc = tv('vehicle.drivetrain.batteryManagement.header', 'vehicle.powertrain.electric.battery.stateOfCharge.displayed');
-      const range = tv('vehicle.drivetrain.electricEngine.remainingElectricRange', 'vehicle.drivetrain.lastRemainingRange');
-      const km = tv('vehicle.vehicle.travelledDistance');
-      const lockedRaw = tv('vehicle.access.centralLocking.isLocked', 'vehicle.cabin.door.status');
-      const locked = lockedRaw === 'true' || lockedRaw === 'LOCKED' || lockedRaw === 'SECURED' ? 'Ja' : lockedRaw === 'UNLOCKED' || lockedRaw === 'false' ? 'Nein' : '?';
-
-      const newestAt = mqtt?.createdAt ?? rest?.createdAt;
-      const dataAge = newestAt ? Math.round((Date.now() - new Date(newestAt).getTime()) / 60_000) : 999;
-
-      // If data is very old (>6h) and no MQTT/REST update, do ONE REST refresh via skill
-      if (dataAge > 360 && Object.keys(merged).length > 0) {
-        try {
-          const fresh = await this.fetchWithTimeout('bmw', { action: 'status' }, 20_000);
-          if (fresh && !fresh.startsWith('(') && !fresh.includes('rate limit')) return fresh;
-        } catch { /* rate limited or error — use stale data */ }
+      // REST ist die Taktquelle (alle 30 min). Ist der letzte Abruf > 6 h alt, EIN
+      // Refresh über den Skill — danach liest der nächste Tick die frischen Zeilen.
+      const restAlterMin = rest ? (Date.now() - Date.parse(rest.createdAt)) / 60_000 : Infinity;
+      if (restAlterMin > 360) {
+        try { await this.fetchWithTimeout('bmw', { action: 'status' }, 20_000); } catch { /* rate limit/Fehler — mit Bestand weiterarbeiten */ }
       }
 
-      const lines = [
-        `**Ladestand (SoC):** ${soc} %`,
-        `**Reichweite:** ${range} km`,
-        `**Kilometerstand:** ${km} km`,
-        `**Verriegelt:** ${locked}`,
-      ];
-      if (dataAge > 60) lines.push(`⚠️ Daten ${dataAge} Min alt`);
-
-      return lines.filter(l => !l.includes('?')).join('\n') || '(Keine verwertbaren BMW-Daten)';
+      const vin = (mqtt ?? rest)!.vin;
+      const KM = 'vehicle.vehicle.travelledDistance';
+      const verlaufEintraege = await this.bmwTelematicRepo.getHistory(uid, vin, new Date(Date.now() - 7 * 86_400_000).toISOString(), new Date().toISOString(), 500).catch(() => []);
+      const verlauf = verlaufEintraege.map(e => {
+        const km = Number(e.telematicData[KM]?.value);
+        return { createdAt: e.createdAt, km: Number.isFinite(km) ? km : undefined, kmZeit: e.telematicData[KM]?.timestamp };
+      });
+      const { deuteBmw } = await import('./normalzustaende/bmw.js');
+      const deutung = deuteBmw({
+        mqtt: mqtt ? { source: 'mqtt', createdAt: mqtt.createdAt, data: mqtt.telematicData } : undefined,
+        rest: rest ? { source: 'rest', createdAt: rest.createdAt, data: rest.telematicData } : undefined,
+        verlauf,
+      });
+      if (!deutung) return '(Keine verwertbaren BMW-Daten)';
+      if (deutung.zustand.streamVerdacht || deutung.zustand.restAusgefallen) {
+        this.logger.info({ streamVerdacht: deutung.zustand.streamVerdacht, restAusgefallen: deutung.zustand.restAusgefallen, letzteFahrtEnde: deutung.zustand.letzteFahrtEnde, mqttAlterMin: Math.round(deutung.zustand.mqttAlterMin ?? -1) }, 'v1168 BMW-Weltmodell: Datenquelle auffällig');
+      }
+      return deutung.zeilen.join('\n');
     } catch (err) {
       this.logger.debug({ err }, 'BMW DB fetch failed');
       return '(BMW DB-Abfrage fehlgeschlagen)';
