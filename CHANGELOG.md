@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1170] - 2026-10-05
+
+### Fixed — BMW-DB-Pfad des Reasoning-Collectors war seit Einführung tot (v1170)
+
+Live-Befund nach dem v1168-Deploy: Der erste Reasoning-Tick um 03:01 rief wieder den BMW-Skill per REST auf, statt die Telematik-Tabelle zu lesen, und das neue Weltmodell lief nicht. Ursache: Die Reasoning-Engine samt Collector wird in `initialize()` rund 900 Zeilen vor dem Telematic-Repository erzeugt. Der Konstruktor bekam deshalb `undefined`, und der Collector fiel bei jedem Tick auf den Skill-Aufruf zurück. Das erklärt die 32 BMW-REST-Aufrufe pro Tag im Log vom 04.10. neben dem regulären 30-Minuten-Poller, und warum die „Daten X Min alt"-Zeile nie aus dem DB-Pfad kam. Dieselbe Fehlerklasse wie v1142/v1154/v1158: eine Abhängigkeit, die zur Wiring-Zeit noch nicht existiert.
+
+- Der Collector bekommt einen Setter für das Telematic-Repository, der direkt nach dessen Erzeugung aufgerufen wird. Fehlt der Collector dort, wird gewarnt statt still weitergemacht.
+- Erwartung nach dem Deploy: keine `Skill execution started` für `bmw` mehr aus dem Reasoning-Tick, dafür die Weltmodell-Zeilen aus der DB und bei der aktuellen Datenlage die Logzeile `v1168 BMW-Weltmodell: Datenquelle auffällig` (Stream-Verdacht).
+
 ## [0.19.0-jarvis.1169] - 2026-10-05
 
 ### Added — Jarvis Schicht 1, Quelle 2: Energie & Haus mit Baselines (v1169)

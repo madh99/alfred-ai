@@ -7416,6 +7416,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         const bmwTelematicRepo = new BmwTelematicRepository(adapter);
         (this.bmwSkill as any).setTelematicRepo(bmwTelematicRepo);
         this.bmwTelematicRepo = bmwTelematicRepo;
+        // v1170 — Die Reasoning-Engine (und ihr Collector) entstehen ~900 Zeilen
+        // weiter oben, als this.bmwTelematicRepo noch undefined war. Folge seit
+        // Einführung des DB-Pfads: der Collector rief bei JEDEM Tick den BMW-Skill
+        // (REST, 32×/Tag) statt die DB zu lesen — und das v1168-Weltmodell lief nie.
+        try { (this.reasoningEngine as any)?.collector?.setBmwTelematicRepo?.(bmwTelematicRepo); } catch { /* Collector optional */ }
+        if (!(this.reasoningEngine as any)?.collector) this.logger.warn('v1170 BMW-Telematic-Repo: Reasoning-Collector noch nicht vorhanden — DB-Pfad bleibt aus');
       }
       // BMW MQTT streaming is started in start() after AdapterClaimManager is available
     }

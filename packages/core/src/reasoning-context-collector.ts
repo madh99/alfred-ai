@@ -210,6 +210,8 @@ export class ReasoningContextCollector {
   /** v1169 — Jarvis Schicht 1: Messwerte-Verlauf für die Energie-Deutung (Baselines). */
   private messwerteRepo?: import('@alfred/storage').MesswerteRepository;
   setMesswerteRepo(repo: import('@alfred/storage').MesswerteRepository): void { this.messwerteRepo = repo; }
+  /** v1170 — Das Telematic-Repo entsteht in initialize() NACH der Reasoning-Engine; ohne Setter blieb es im Collector für immer undefined. */
+  setBmwTelematicRepo(repo: BmwTelematicRepository): void { this.bmwTelematicRepo = repo; }
 
   constructor(
     private readonly skillRegistry: SkillRegistry,
@@ -227,7 +229,7 @@ export class ReasoningContextCollector {
     private readonly defaultLocation: string | undefined,
     private readonly logger: Logger,
     private readonly workflowRepo?: WorkflowRepository,
-    private readonly bmwTelematicRepo?: BmwTelematicRepository,
+    private bmwTelematicRepo?: BmwTelematicRepository,
     private readonly noteRepo?: NoteRepository,
     private readonly reminderRepo?: ReminderRepository,
     private readonly documentRepo?: DocumentRepository,
