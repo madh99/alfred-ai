@@ -426,7 +426,6 @@ export class Alfred {
   private topicDigestBuilder?: import('./topic-digest-builder.js').TopicDigestBuilder;
   /** v940 — wöchentliche Quellen-Pflege (Feeds ausmisten + nachbestücken) */
   private sourceMaintenance?: import('./source-maintenance.js').SourceMaintenance;
-  private interestsDailyTimer?: ReturnType<typeof setInterval>;
 
   /** v930 — HA-Tages-Slot über reasoning_slots (nur PG; Single-Node/SQLite → immer true). */
   /** v1165 — Job deklarieren; fehlt das Register, wird das LAUT (Lektion v1154: stille Nicht-Registrierung). */
@@ -6814,58 +6813,38 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           this.logger.child({ component: 'source-maintenance' }), ownerUid,
         );
 
-        let lastInterestDay = '';
-        let lastDigestDay = '';
-        let lastMaintenanceDay = '';
-        let lastVorausschauDay = '';
-        let lastLernTelemetrieDay = '';
-        this.interestsDailyTimer = setInterval(async () => {
-          const now = new Date();
-          const today = now.toISOString().slice(0, 10);
-          // 05:15 — Interest-Detection
-          if (now.getHours() === 5 && now.getMinutes() >= 15 && lastInterestDay !== today) {
-            lastInterestDay = today;
-            if (await this.claimDailySlot(`interest-detect:${today}`)) {
-              try { await this.interestDetector?.runDetection(); }
-              catch (err) { this.logger.warn({ err }, 'v930 interest detection failed'); }
-            }
-          }
-          // v940 — samstags 05:45: Quellen-Pflege (nach der Detection, vor dem Digest)
-          if (now.getDay() === 6 && now.getHours() === 5 && now.getMinutes() >= 45 && lastMaintenanceDay !== today) {
-            lastMaintenanceDay = today;
-            if (await this.claimDailySlot(`source-maintenance:${today}`)) {
-              try { await this.sourceMaintenance?.runWeekly(); }
-              catch (err) { this.logger.warn({ err }, 'v940 source maintenance failed'); }
-            }
-          }
-          // 06:30 — Digest-Builder
-          if (now.getHours() === 6 && now.getMinutes() >= 30 && lastDigestDay !== today) {
-            lastDigestDay = today;
-            if (await this.claimDailySlot(`topic-digest:${today}`)) {
-              try { await this.topicDigestBuilder?.run(); }
-              catch (err) { this.logger.warn({ err }, 'v930 topic digest failed'); }
-            }
-          }
-          // v1146 — S3: stündlicher Stammdaten-Sync (:10, idempotent, billig) —
-          // ein im Chat genanntes neues Familienmitglied steht binnen einer
-          // Stunde korrekt im Graph, nicht erst nach der Nacht-Wartung.
-          if (now.getMinutes() === 10) {
-            try {
-              const ownerSd = this.tryOwner();
-              if (ownerSd && this.database && this.memoryRepo) {
-                const { StammdatenSync } = await import('./stammdaten-sync.js');
-                const { KnowledgeGraphRepository: KGRepoSd } = await import('@alfred/storage');
-                await new StammdatenSync(new KGRepoSd(this.database.getAdapter()), this.memoryRepo,
-                  this.logger.child({ component: 'stammdaten-sync' })).run(ownerSd);
-              }
-            } catch (err) { this.logger.debug({ err }, 'v1146 stündlicher Stammdaten-Sync fehlgeschlagen'); }
-          }
-          // v1147 — P5: Lern-Telemetrie, sonntags 19:15 — EINE Zeile pro
-          // Lernschleife (gelernt/benutzt), damit „verbessert sich Alfred?"
-          // eine messbare Antwort hat statt eines Gefühls.
-          if (now.getDay() === 0 && now.getHours() === 19 && now.getMinutes() >= 15 && lastLernTelemetrieDay !== today) {
-            lastLernTelemetrieDay = today;
-            if (await this.claimDailySlot(`lern-telemetrie:${today}`)) {
+        // v1166 — Jarvis Schicht 0: der Sammel-Tick (10-min-Raster mit Stunden-/
+        // Minuten-Fenstern) wird zu sechs deklarierten Jobs. Schlüssel = bisherige
+        // Slot-Präfixe, damit am Deploy-Tag kein Doppellauf entsteht. Der stündliche
+        // Stammdaten-Sync hing an "getMinutes() === 10" auf einem 10-min-Raster —
+        // je nach Startminute des Prozesses lief er IMMER oder NIE.
+        this.registriereJob({
+          key: 'interest-detect', beschreibung: 'Interessen-Erkennung (Themen-Radar)', takt: { art: 'taeglich', um: '05:15' }, bereich: 'global', slot: true,
+          run: async () => { await this.interestDetector?.runDetection(); return { ok: true }; },
+        });
+        this.registriereJob({
+          key: 'source-maintenance', beschreibung: 'Quellen-Pflege: Feeds proben, ausmisten, nachbestücken', takt: { art: 'woechentlich', tag: 6, um: '05:45' }, bereich: 'global', slot: true,
+          run: async () => { await this.sourceMaintenance?.runWeekly(); return { ok: true }; },
+        });
+        this.registriereJob({
+          key: 'topic-digest', beschreibung: 'Themen-Digest an den Owner', takt: { art: 'taeglich', um: '06:30' }, bereich: 'global', slot: true,
+          run: async () => { await this.topicDigestBuilder?.run(); return { ok: true }; },
+        });
+        this.registriereJob({
+          key: 'stammdaten-sync', beschreibung: 'Memory-Fakten → Knowledge Graph (idempotent)', takt: { art: 'intervall', minuten: 60 }, bereich: 'global',
+          run: async () => {
+            const ownerSd = this.tryOwner();
+            if (!ownerSd || !this.database || !this.memoryRepo) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+            const { StammdatenSync } = await import('./stammdaten-sync.js');
+            const { KnowledgeGraphRepository: KGRepoSd } = await import('@alfred/storage');
+            const r = await new StammdatenSync(new KGRepoSd(this.database.getAdapter()), this.memoryRepo,
+              this.logger.child({ component: 'stammdaten-sync' })).run(ownerSd);
+            return { ok: true, zaehler: { gesetzt: r.gesetzt, angelegt: r.angelegt } as Record<string, number> };
+          },
+        });
+        this.registriereJob({
+          key: 'lern-telemetrie', beschreibung: 'Lern-Telemetrie der Woche (Insight)', takt: { art: 'woechentlich', tag: 0, um: '19:15' }, bereich: 'global', slot: true,
+          run: async () => {
               try {
                 const ownerLt = this.tryOwner();
                 const ad = this.database?.getAdapter();
@@ -6895,13 +6874,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   });
                 }
               } catch (err) { this.logger.debug({ err }, 'v1147 Lern-Telemetrie fehlgeschlagen'); }
-            }
-          }
-          // v1145 — K3: 07:45 Vorausschau-Radar (nach dem Ruhefenster).
-          // Owner ZUR LAUFZEIT auflösen (H6-Lektion: beim Wiring ist er nie gesetzt).
-          if (now.getHours() === 7 && now.getMinutes() >= 45 && lastVorausschauDay !== today) {
-            lastVorausschauDay = today;
-            if (await this.claimDailySlot(`vorausschau:${today}`)) {
+            return { ok: true };
+          },
+        });
+        this.registriereJob({
+          key: 'vorausschau', beschreibung: 'Vorausschau-Radar: Geburtstage und Termine der nächsten 7 Tage', takt: { art: 'taeglich', um: '07:45' }, bereich: 'global', slot: true,
+          run: async () => {
               try {
                 const ownerVs = this.tryOwner();
                 if (ownerVs && this.database && this.memoryRepo && this.insightsRepo) {
@@ -6916,11 +6894,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   this.logger.warn('v1145 Vorausschau übersprungen — Owner/Repos nicht verfügbar');
                 }
               } catch (err) { this.logger.warn({ err }, 'v1145 Vorausschau-Radar failed'); }
-            }
-          }
+            return { ok: true };
+          },
+        });
+        this.registriereJob({
+          key: 'netzbetreiber-quartal', beschreibung: 'Netzbetreiber-Recherche am 2. Tag jedes Quartals (sonst Leerlauf)', takt: { art: 'taeglich', um: '04:00' }, bereich: 'global',
+          run: async () => {
           // v1133 — quartalsweise Netzbetreiber-Recherche (2. Tag des Quartals,
           // 04:xx — kontingent-arme Zeit; HA-sicher über den Quartals-Slot).
-          if (process.env.ALFRED_GRID_KEY && now.getHours() === 4 && now.getDate() === 2 && [0, 3, 6, 9].includes(now.getMonth())) {
+          const now = new Date();
+          if (process.env.ALFRED_GRID_KEY && now.getDate() === 2 && [0, 3, 6, 9].includes(now.getMonth())) {
             const quartal = `${now.getFullYear()}-Q${Math.floor(now.getMonth() / 3) + 1}`;
             if (await this.claimDailySlot(`grid-recherche:${quartal}`)) {
               const nb = this.skillRegistry?.get('netzbetreiber');
@@ -6934,7 +6917,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               }
             }
           }
-        }, 10 * 60_000); // 10-Min-Raster, handelt nur in den Zielfenstern
+            return { ok: true };
+          },
+        });
       }
     }
 
@@ -13883,10 +13868,6 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.topicCollector) {
       this.topicCollector.stop();
       this.topicCollector = undefined;
-    }
-    if (this.interestsDailyTimer) {
-      clearInterval(this.interestsDailyTimer);
-      this.interestsDailyTimer = undefined;
     }
     if (this.publishingEngine) {
       this.publishingEngine.stop();

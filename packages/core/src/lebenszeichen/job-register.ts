@@ -57,11 +57,14 @@ interface JobZustand {
 }
 
 export const RASTER_MS = 10 * 60_000;
+export const INTERVALL_TOLERANZ_MS = 30_000;
 
 /** Reine Fälligkeitsregel — testbar ohne Timer. Liefert den Tages-Marker oder null. */
 export function istJobFaellig(takt: JobTakt, now: Date, zustand: Pick<JobZustand, 'zuletztTag' | 'zuletztMs'>): string | null {
   if (takt.art === 'intervall') {
-    const faellig = zustand.zuletztMs === undefined || now.getTime() - zustand.zuletztMs >= takt.minuten * 60_000;
+    // v1166 — Toleranz von 30 s: ein 10-min-Job auf dem 10-min-Raster darf durch
+    // Timer-Jitter nicht jeden zweiten Tick verpassen.
+    const faellig = zustand.zuletztMs === undefined || now.getTime() - zustand.zuletztMs >= takt.minuten * 60_000 - INTERVALL_TOLERANZ_MS;
     return faellig ? lokalesDatum(now) : null;
   }
   if (takt.art === 'woechentlich' && now.getDay() !== takt.tag) return null;

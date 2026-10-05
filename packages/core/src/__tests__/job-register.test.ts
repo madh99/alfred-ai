@@ -41,6 +41,13 @@ describe('istJobFaellig', () => {
     expect(istJobFaellig(takt, um(10, 20), { zuletztTag: '', zuletztMs: t0.getTime() })).toBeNull();
     expect(istJobFaellig(takt, um(10, 30), { zuletztTag: '', zuletztMs: t0.getTime() })).not.toBeNull();
   });
+
+  it('intervall 10 min auf dem 10-min-Raster: 29 s zu früh gilt noch als fällig (Jitter), 31 s nicht', () => {
+    const takt = { art: 'intervall' as const, minuten: 10 };
+    const t0 = um(10, 0).getTime();
+    expect(istJobFaellig(takt, new Date(t0 + 10 * 60_000 - 29_000), { zuletztTag: '', zuletztMs: t0 })).not.toBeNull();
+    expect(istJobFaellig(takt, new Date(t0 + 10 * 60_000 - 31_000), { zuletztTag: '', zuletztMs: t0 })).toBeNull();
+  });
 });
 
 describe('JobRegister', () => {

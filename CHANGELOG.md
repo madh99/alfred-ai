@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1166] - 2026-10-05
+
+### Changed — Jarvis Schicht 0: Interessen-Sammeltick wird zu sieben Jobs, Intervall-Toleranz (v1166)
+
+Der 10-Minuten-Sammeltick aus v930 (Interessen, Quellen-Pflege, Digest, Stammdaten-Sync, Lern-Telemetrie, Vorausschau, Netzbetreiber-Quartal) prüfte je Aufgabe „Stunde == X und Minute ≥ Y" mit eigenem Tages-Merker. Er wird zu sieben deklarierten Jobs im Register:
+
+| Job | Takt |
+|---|---|
+| `interest-detect` | täglich 05:15 |
+| `source-maintenance` | Sa 05:45 |
+| `topic-digest` | täglich 06:30 |
+| `stammdaten-sync` | alle 60 min |
+| `lern-telemetrie` | So 19:15 |
+| `vorausschau` | täglich 07:45 |
+| `netzbetreiber-quartal` | täglich 04:00, handelt nur am 2. Tag eines Quartals |
+
+- Die Job-Schlüssel entsprechen den bisherigen Slot-Präfixen (`interest-detect:<Tag>` usw.), damit am Deploy-Tag kein Doppellauf entsteht.
+- **Fund dabei**: Der stündliche Stammdaten-Sync hing an `getMinutes() === 10` auf einem 10-Minuten-Raster. Ob eine Tick-Minute jemals auf 10 fällt, hängt von der Startminute des Prozesses ab: nach dem Restart um 11:10 lief er stündlich, nach dem Restart um 19:46 nie wieder. Jetzt ein Intervall-Job mit Lauf-Protokoll und Zählern (gesetzt/angelegt) in `job_runs`.
+- **Intervall-Toleranz**: Intervall-Jobs gelten 30 Sekunden vor Ablauf bereits als fällig, damit ein 10-Minuten-Job auf dem 10-Minuten-Raster durch Timer-Jitter nicht jeden zweiten Tick verpasst. Test ergänzt.
+- Lint-Ratchet 19 → 18. Verhalten und Fach-Logzeilen der Jobs unverändert.
+
 ## [0.19.0-jarvis.1165] - 2026-10-05
 
 ### Changed — Jarvis Schicht 0: fünf weitere Jobs ins Register, Register unabhängig von activeLearning (v1165)
