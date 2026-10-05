@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1203] - 2026-10-05
+
+### Changed — Jarvis Interaktion, Teil 4: Standard knapp, Gesprächsfaden mit eigenen Meldungen (v1203)
+
+- **Standard knapp.** Proaktive Meldungen kommen als Kurzfassung: je Insight die Titelzeile plus höchstens ein Folgesatz, höchstens fünf Insights, weitere mit Verweis auf die Kachel Vorgänge. Der Volltext bleibt im Vorgang und in der stillen Ablage; „warum?" erklärt die Herkunft. Die Kürzung ist deterministisch, nicht vom Modell.
+- **Gesprächsfaden.** Realfall 05.10. 23:45: Der Owner fragte per Sprachnachricht nach „dem Outlook-Problem", das Alfred um 23:31 gemeldet hatte. Das Modell kannte seine eigene Meldung nicht, weil proaktive Nachrichten nie in der Unterhaltung lagen, und holte stattdessen eine Rechnung aus dem Postfach. Gesendete und nachgelieferte Meldungen werden jetzt als Alfreds Beitrag in der Unterhaltung des Owners abgelegt, sodass Rückfragen darauf aufsetzen.
+- **Kennzahlen überleben Neustarts.** Der erste Tagesabschluss um 23:56 schrieb für alle Engine-Zähler Nullen, weil acht Deploys am Tag die Zähler im Speicher jedes Mal zurücksetzten. Ein Job sichert alle zehn Minuten den Zwischenstand, der Start desselben Tages lädt ihn zurück, der Tagesabschluss löscht ihn.
+- 5 Tests.
+
 ## [0.19.0-jarvis.1202] - 2026-10-05
 
 ### Added — Jarvis Interaktion, Teil 3: gesprochene Antwort auf Sprachnachrichten (v1202)

@@ -36,6 +36,16 @@ describe('Kennzahlen (Zähler)', () => {
     expect(k.wert('insightsGesendet')).toBe(0);
     expect(k.snapshot().seit).toBe('2026-10-06T21:50:00.000Z');
   });
+  it('v1203 — Zwischenstand laden: nur bekannte Namen und positive Werte, Fenster-Beginn übernommen', () => {
+    const k = new Kennzahlen();
+    k.zaehle('vollpaesse', 3);
+    k.laden({ seit: '2026-10-05T00:00:00.000Z', werte: { insightsGesendet: 4, vollpaesse: 7, unbekannt: 9, rundgaenge: 0 } as never });
+    expect(k.wert('insightsGesendet')).toBe(4);
+    expect(k.wert('vollpaesse')).toBe(7);
+    expect(k.wert('rundgaenge')).toBe(0);
+    expect(k.snapshot().seit).toBe('2026-10-05T00:00:00.000Z');
+    expect(Object.keys(k.snapshot().werte)).not.toContain('unbekannt');
+  });
   it('Schritt-Ausgänge sind den Aktions-Kennzahlen zugeordnet, Vorschläge nicht', () => {
     expect(SCHRITT_ZU_KENNZAHL.ausgefuehrt).toBe('aktionenAusgefuehrt');
     expect(SCHRITT_ZU_KENNZAHL.blockiert).toBe('aktionenBlockiert');

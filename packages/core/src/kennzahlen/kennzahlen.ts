@@ -60,6 +60,13 @@ export class Kennzahlen {
     return { seit: this.seitIso, werte };
   }
 
+  /** v1203 — Zwischenstand nach Neustart übernehmen (Realfall 05.10.: 8 Deploys → Tageszähler 0). */
+  laden(snapshot: { seit: string; werte: Partial<Record<KennzahlName, number>> }): void {
+    this.werte.clear();
+    for (const [k, v] of Object.entries(snapshot.werte)) if (KENNZAHL_NAMEN.includes(k as KennzahlName) && typeof v === 'number' && v > 0) this.werte.set(k as KennzahlName, v);
+    this.seitIso = snapshot.seit;
+  }
+
   /** Nach dem Tagesabschluss: Zähler auf 0, neues Fenster. */
   reset(now = new Date()): void {
     this.werte.clear();

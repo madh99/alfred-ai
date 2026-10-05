@@ -24,6 +24,7 @@ import { InsightTracker } from './insight-tracker.js';
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
 import { WarumSpeicher, insightTitel, kurzBegruendung, type PassBegruendung } from './interaktion/warum.js';
 import { ruecknahmeHinweis } from './vorgaenge/ruecknahme.js';
+import { knappeFassung } from './interaktion/knapp.js';
 import { ReasoningContextCollector, spaetestesDatumImText, istInsightEcho, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ActionFeedbackTracker } from './action-feedback-tracker.js';
@@ -727,6 +728,19 @@ ${this.buildTopicInstructions()}`;
     const b = this.aktuelleBegruendung ?? { art: 'vollpass' as const, ausloeser: [], gateAusgesetzt: [] };
     this.warum.merke({ zeit: new Date().toISOString(), art: b.art, ausloeser: [...b.ausloeser], gateAusgesetzt: [...b.gateAusgesetzt], insights: insights.map(insightTitel), zustellung, grund, dauerMs });
   }
+  /**
+   * v1203 — Gesprächsfaden: proaktive Meldungen werden als Assistant-Zug in der Unterhaltung
+   * des Owners abgelegt. Realfall 05.10. 23:45: Owner fragte per Sprachnachricht nach „dem
+   * Outlook-Problem" (Alfreds Meldung von 23:31) — das Modell kannte seine eigene Meldung nicht
+   * und holte stattdessen eine Rechnung aus dem Postfach.
+   */
+  private async merkeImGespraech(text: string): Promise<void> {
+    if (!this.conversationRepo || !text) return;
+    try {
+      const conv = await this.conversationRepo.findByPlatformChat(this.defaultPlatform, this.defaultChatId);
+      if (conv) await this.conversationRepo.addMessage(conv.id, 'assistant', text.slice(0, 4000));
+    } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1203 Meldung nicht in Unterhaltung abgelegt'); }
+  }
   /** v1198 — Anwesenheit (Home Assistant) als Zustell-Signal an den Scheduler. */
   setAnwesenheitsQuelle(fn: () => import('./delivery-scheduler.js').Anwesenheit | undefined): void { this.deliveryScheduler?.setAnwesenheitsQuelle(fn); }
   async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
@@ -872,6 +886,7 @@ ${this.buildTopicInstructions()}`;
                   }
                 }
                 await adapter.sendMessage(this.defaultChatId, msg);
+                await this.merkeImGespraech(msg); // v1203
                 if (this.insightTracker && d.message) {
                   const lines = d.message.split('\n').filter((l: string) => l.trim().length > 10);
                   const cats = lines.map((l: string) => InsightTracker.categorizeInsight(l));
@@ -2047,7 +2062,9 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // Build message
     let message = '';
     if (insights.length > 0) {
-      message = `\u{1F4A1} **Alfred Insights**\n\n${insights.join('\n\n')}`;
+      // v1203 — Standard knapp: Titel + ein Satz je Insight, höchstens fünf; Volltext im Vorgang, „warum?" erklärt
+      const knapp = knappeFassung(insights);
+      message = `\u{1F4A1} **Alfred Insights**\n\n${knapp.text}`;
       if (actions.length > 0) {
         const actionLines = actions.slice(0, 5).map(a => `\u26A1 ${a.description}`);
         message += `\n\n**Vorgeschlagene Aktionen:**\n${actionLines.join('\n')}`;
@@ -2084,6 +2101,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       const adapter = this.adapters.get(this.defaultPlatform);
       if (adapter) {
         await adapter.sendMessage(this.defaultChatId, message);
+        await this.merkeImGespraech(message); // v1203 — Gesprächsfaden: Alfreds Meldung ist Teil der Unterhaltung
         for (const insight of insights) await this.markSent(insight);
         this.kennzahlen.zaehle('insightsGesendet', insights.length);
         this.merkeBegruendung(insights, 'gesendet', durationMs, this.deliveryScheduler?.letzterGrund || undefined); // v1196/v1198

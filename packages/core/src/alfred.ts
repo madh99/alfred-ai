@@ -13628,6 +13628,28 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         // werden als Messwerte (quelle 'kennzahl') geschrieben und zurückgesetzt; die
         // Lern-Telemetrie (So 19:15) summiert daraus die Woche. Ergänzt um DB-Zählungen
         // des Tages (Insight-Reaktionen, Vorgänge erledigt, LLM-Kosten).
+        // v1203 — Zähler überleben Neustarts: alle 10 min Zwischenstand in skill_state, beim Start
+        // desselben Tages zurückladen (Realfall 05.10.: 8 Deploys → Tagesabschluss mit lauter Nullen).
+        {
+          const { SkillStateRepository: SkillStateK } = await import('@alfred/storage');
+          const zustand = new SkillStateK(this.database.getAdapter());
+          const ownerK = this.tryOwner();
+          const engineK = this.reasoningEngine;
+          if (ownerK && engineK) {
+            try {
+              const roh = await zustand.get(ownerK, 'kennzahlen', 'tag');
+              if (roh) {
+                const snap = JSON.parse(roh) as { seit: string; werte: Record<string, number> };
+                const heute = new Date(); heute.setHours(0, 0, 0, 0);
+                if (Date.parse(snap.seit) >= heute.getTime()) { engineK.kennzahlen.laden(snap); this.logger.info({ seit: snap.seit }, 'v1203 Kennzahlen-Zwischenstand geladen'); }
+              }
+            } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1203 Kennzahlen-Zwischenstand nicht geladen'); }
+            this.registriereJob({
+              key: 'kennzahlen-sichern', beschreibung: 'Jarvis-Kennzahlen: Zwischenstand gegen Neustart sichern', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
+              run: async () => { await zustand.set(ownerK, 'kennzahlen', 'tag', JSON.stringify(engineK.kennzahlen.snapshot())); return { ok: true }; },
+            });
+          }
+        }
         this.registriereJob({
           key: 'kennzahlen-tag', beschreibung: 'Jarvis-Kennzahlen des Tages als Messwerte sichern', takt: { art: 'taeglich', um: '23:50' }, bereich: 'global', slot: true,
           run: async () => {
@@ -13658,6 +13680,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               geschrieben++;
             }
             engine.kennzahlen.reset(jetzt);
+            try { const { SkillStateRepository: SkillStateR } = await import('@alfred/storage'); await new SkillStateR(this.database.getAdapter()).delete(owner, 'kennzahlen', 'tag'); } catch { /* optional */ }
             this.logger.info({ seit: snap.seit, ...werte }, 'v1183 Kennzahlen des Tages gesichert');
             return { ok: true, zaehler: { geschrieben, ...werte } };
           },
