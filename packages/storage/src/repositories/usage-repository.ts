@@ -139,6 +139,11 @@ export class UsageRepository {
     }));
   }
 
+  /** v1205 — Nutzung des heutigen lokalen Tages (gleicher Schlüssel wie record()). */
+  async getHeute(now = new Date()): Promise<DailyUsageSummary> {
+    return this.getDaily(localDateKey(now, this.timezone));
+  }
+
   /** Get usage for a specific date. */
   async getDaily(date: string): Promise<DailyUsageSummary> {
     const rows = await this.adapter.query(`

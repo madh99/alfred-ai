@@ -83,6 +83,8 @@ export const MultiModelConfigSchema = z.object({
   local: LLMProviderConfigSchema.optional(),
   // v868 — Notfall-Provider ans Ende der Fallback-Kette (z.B. Mistral)
   fallback: LLMProviderConfigSchema.optional(),
+  // v1205 — Kostenwächter: Tagesbudget in USD (ENV ALFRED_LLM_TAGESBUDGET_USD)
+  tagesbudgetUsd: z.number().positive().optional(),
 }).passthrough();
 
 export const LLMConfigSchema = z.union([LLMProviderConfigSchema, MultiModelConfigSchema]);

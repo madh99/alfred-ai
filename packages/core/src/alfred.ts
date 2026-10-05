@@ -470,6 +470,7 @@ export class Alfred {
       offen: this.degradationsWaechter?.offeneZustaende() ?? [],
       letzteLaeufe: await runs.listeLetzte(60).catch(() => []),
       adapter: this.adapterZustaende(), // v1191
+      kosten: await this.kostenHeute(), // v1205
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
       // v1196 — letzte Begründungen („Warum?") für die Kachel
@@ -13604,7 +13605,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // Puls; Abnahme: entfernter API-Key → binnen 70 min genau ein Owner-Satz)
       // und synthetische Proben 06:50 (Tiers direkt, Jobs im Takt, Daten-Frische).
       {
-        const { DegradationsWaechter, bewertePuls, bewerteProben, bewerteAdapter, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
+        const { DegradationsWaechter, bewertePuls, bewerteProben, bewerteAdapter, bewerteKosten, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
         const { fuehreProbenAus } = await import('./lebenszeichen/proben.js');
         const { JobRunsRepository } = await import('@alfred/storage');
         const lzRepo = this.lebenszeichenRepo;
@@ -13711,8 +13712,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         register.registriere({
           key: 'degradations-waechter', beschreibung: 'Provider-Puls bewerten (Degradation/Guthaben)', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
           run: async () => {
-            const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteAdapter(this.adapterZustaende(), new Date())];
-            const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier', 'adapter'] });
+            const kosten = await this.kostenHeute();
+            const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteAdapter(this.adapterZustaende(), new Date()), ...bewerteKosten(kosten)];
+            const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier', 'adapter', 'kosten'] });
             const gesendet = await melde(meldungen);
             return { ok: true, zaehler: { befunde: befunde.length, gesendet } };
           },
@@ -14615,6 +14617,16 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       this.logger.error({ platform, art, err }, 'Adapter connection failed');
       return false;
     }
+  }
+  /** v1205 — Kostenwächter: heutige LLM-Kosten, Budget, größter Posten (für Wächter und Kachel). */
+  private async kostenHeute(): Promise<{ datum: string; heuteUsd: number; budgetUsd?: number; groessterPosten?: { model: string; usd: number } }> {
+    const budgetUsd = (this.config.llm as { tagesbudgetUsd?: number }).tagesbudgetUsd;
+    try {
+      const u = await this.usageRepo?.getHeute();
+      if (!u) return { datum: new Date().toISOString().slice(0, 10), heuteUsd: 0, budgetUsd };
+      const top = [...u.models].sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0))[0];
+      return { datum: u.date, heuteUsd: u.totalCostUsd, budgetUsd, groessterPosten: top ? { model: top.model, usd: top.costUsd ?? 0 } : undefined };
+    } catch { return { datum: new Date().toISOString().slice(0, 10), heuteUsd: 0, budgetUsd }; }
   }
   adapterZustaende(): Array<{ platform: string; status: string; getrenntSeitMs?: number }> {
     return [...this.adapterSoll].map(p => {

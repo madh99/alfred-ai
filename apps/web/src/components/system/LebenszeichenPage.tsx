@@ -143,6 +143,13 @@ export function LebenszeichenPage() {
             </section>
           )}
 
+          {/* Kosten (v1205) */}
+          {data.kosten && (
+            <div className={clsx('rounded-lg px-4 py-2.5 text-xs border', data.kosten.budgetUsd && data.kosten.heuteUsd > data.kosten.budgetUsd ? 'bg-red-500/5 border-red-500/30 text-red-300' : 'bg-[#111111] border-[#1f1f1f] text-gray-300')}>
+              LLM-Kosten heute ${data.kosten.heuteUsd.toFixed(2)}{data.kosten.budgetUsd ? ` von $${data.kosten.budgetUsd.toFixed(2)} Tagesbudget` : ' (kein Tagesbudget gesetzt — ALFRED_LLM_TAGESBUDGET_USD)'}{data.kosten.groessterPosten ? ` · größter Posten ${data.kosten.groessterPosten.model} $${data.kosten.groessterPosten.usd.toFixed(2)}` : ''}
+            </div>
+          )}
+
           {/* Kennzahlen (v1183 — Jarvis Schicht 4) */}
           {data.kennzahlen && (
             <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">

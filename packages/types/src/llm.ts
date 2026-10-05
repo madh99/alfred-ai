@@ -20,6 +20,8 @@ export type MultiModelConfig = {
   [K in ModelTier]?: LLMProviderConfig;
 } & {
   default: LLMProviderConfig;
+  /** v1205 — Tagesbudget für LLM-Kosten in USD; der Degradations-Wächter meldet eine Überschreitung mit einem Satz. */
+  tagesbudgetUsd?: number;
 };
 
 export interface LLMMessage {

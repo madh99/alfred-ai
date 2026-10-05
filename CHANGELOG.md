@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1205] - 2026-10-06
+
+### Added — Kostenwächter: Tagesbudget für LLM-Kosten (v1205)
+
+Seit dem 06.10. laufen gpt-6.1-sol und Claude Opus 5.5 mit echtem Guthaben; ohne Grenze fiele eine Kostenexplosion erst auf der Rechnung auf.
+
+- Neue Einstellung `llm.tagesbudgetUsd` beziehungsweise `ALFRED_LLM_TAGESBUDGET_USD` (Dezimalzahl, USD je lokalem Tag).
+- Der Degradations-Wächter prüft alle zehn Minuten die heutigen Kosten aus der Nutzungstabelle. Liegt der Tag über dem Budget, kommt genau ein Satz mit Betrag, Budget und dem größten Posten je Modell; am nächsten Tag folgt die Entwarnung von selbst. Alfred läuft weiter, es wird nichts abgeschaltet.
+- Kachel Lebenszeichen zeigt die heutigen Kosten gegen das Budget und den größten Posten; `GET /api/lebenszeichen` liefert sie als `kosten`. Ohne gesetztes Budget steht der Hinweis auf die Einstellung.
+- 2 Tests.
+
 ## [0.19.0-jarvis.1204] - 2026-10-06
 
 ### Added — Modell-Update Oktober 2026: GPT-6.1 Sol, GPT-6 Sol/Luna, Claude Opus 5.5 und Sonnet 5.5, Ministral 3 (v1204)

@@ -72,6 +72,17 @@ export function bewerteProben(proben: ProbeErgebnis[]): Befund[] {
  * Realfall 05.10.: Matrix-Homeserver antwortete ab der Nacht mit 502, der Adapter blieb
  * nach dem fehlgeschlagenen Start-Connect den ganzen Tag tot — 24 Fehlerzeilen, kein Satz.
  */
+/**
+ * v1205 — Regel 5: Tagesbudget der LLM-Kosten. Guthaben ist seit 06.10. wieder echtes Geld
+ * (gpt-6.1-sol, Opus 5.5); ohne Grenze fällt eine Kostenexplosion erst auf der Rechnung auf.
+ * Ein Befund je Tag (Schlüssel enthält das Datum → am nächsten Tag automatisch Entwarnung).
+ */
+export function bewerteKosten(k: { datum: string; heuteUsd: number; budgetUsd?: number; groessterPosten?: { model: string; usd: number } }): Befund[] {
+  if (!k.budgetUsd || k.budgetUsd <= 0 || k.heuteUsd <= k.budgetUsd) return [];
+  const posten = k.groessterPosten ? `, größter Posten ${k.groessterPosten.model} $${k.groessterPosten.usd.toFixed(2)}` : '';
+  return [{ key: `kosten:${k.datum}`, text: `LLM-Kosten heute $${k.heuteUsd.toFixed(2)} über dem Tagesbudget von $${k.budgetUsd.toFixed(2)}${posten} — läuft weiter, prüfe die Kachel Lebenszeichen` }];
+}
+
 export function bewerteAdapter(zustaende: Array<{ platform: string; status: string; getrenntSeitMs?: number }>, now: Date): Befund[] {
   const befunde: Befund[] = [];
   for (const a of zustaende) {

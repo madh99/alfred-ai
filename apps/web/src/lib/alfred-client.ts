@@ -3141,6 +3141,8 @@ export interface LebenszeichenStatus {
   kennzahlen?: { seit: string; werte: Record<string, number> } | null;
   /** v1199 — Tagesabschluss von gestern (Kennzahlen als Messwerte) */
   kennzahlenGestern?: { zeit: string; werte: Record<string, number> } | null;
+  /** v1205 — Kostenwächter: heutige LLM-Kosten gegen das Tagesbudget */
+  kosten?: { datum: string; heuteUsd: number; budgetUsd?: number; groessterPosten?: { model: string; usd: number } };
   /** v1197 — „Warum?": Begründungen der letzten proaktiven Meldungen */
   warum?: Array<{ zeit: string; art: 'vollpass' | 'minipass' | 'ereignis'; ausloeser: string[]; gateAusgesetzt: string[]; insights: string[]; zustellung: 'gesendet' | 'aufgeschoben' | 'still'; dauerMs?: number }>;
   /** v1191 — Messaging-Adapter (Soll) mit Verbindungszustand */
