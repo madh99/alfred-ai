@@ -621,15 +621,17 @@ ${this.buildTopicInstructions()}`;
    * die generische Direkt-Objekt-Korrektur aus (v1174).
    */
   private readonly miniPassZuletzt = new Map<string, number>();
-  async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[] }): Promise<void> {
+  async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
     if (!this.enabled) return;
     const key = `${ereignis.quelle}:${[...ereignis.objekte].sort().join('+')}`;
     const now = Date.now();
+    // v1177 — Ereignis-spezifischer Cooldown (Rauch 10 min, Anwesenheit 30 min …), Standard 6 h
+    const cooldownMs = (ereignis.cooldownMin ?? MINI_PASS_COOLDOWN_MS / 60_000) * 60_000;
     const zuletzt = this.miniPassZuletzt.get(key) ?? 0;
-    if (now - zuletzt < MINI_PASS_COOLDOWN_MS) { this.logger.debug({ key }, 'v1175 Mini-Pass im Cooldown'); return; }
+    if (now - zuletzt < cooldownMs) { this.logger.debug({ key }, 'v1175 Mini-Pass im Cooldown'); return; }
     this.miniPassZuletzt.set(key, now);
     if (this.adapter && this.adapter.type === 'postgres') {
-      const slotKey = `mini:${key}:${Math.floor(now / MINI_PASS_COOLDOWN_MS)}`.slice(0, 180);
+      const slotKey = `mini:${key}:${Math.floor(now / cooldownMs)}`.slice(0, 180);
       const r = await this.adapter.execute('INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING', [slotKey, this.nodeId, new Date().toISOString()]).catch(() => ({ changes: 1 }));
       if (r.changes === 0) return;
     }

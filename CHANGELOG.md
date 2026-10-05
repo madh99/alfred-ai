@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1177] - 2026-10-05
+
+### Added — Jarvis Schicht 2, Teil 2: Home Assistant in Echtzeit — Haus-Weltmodell und Ereignisse (v1177)
+
+Erste echte Echtzeit-Quelle. Alfred hört den Home-Assistant-WebSocket (`state_changed`) und reagiert in Sekunden statt beim nächsten 30-Minuten-Tick. Kein Zusatzpaket: Node ab 22 bringt `WebSocket` mit.
+
+- **Haus-Weltmodell** (`normalzustaende/haus.ts`, `deuteHaus`): Anwesenheit aus den `person.*`-Entitäten, offene Türen und Fenster, Rauch, CO, Wasser, Innenraum-Bewegung, Alarmanlage. Regeln statt Rohtabelle: Eine offene Tür ist NORMAL, solange jemand zu Hause ist, und ein Signal, wenn niemand da ist. Rauch, CO und Wasser sind immer Signal. Kameras (Doorbell, PTZ) zählen nicht als Innenraum-Bewegung, der Regensensor nicht als Wasserschaden. Alarmanlage nicht scharf bei Abwesenheit wird als Hinweis genannt.
+- **Ereignisquelle** (`ereignisse/ha-ereignisse.ts`): WebSocket-Handshake (auth, subscribe), Filter auf relevante Zustandswechsel (`klassifiziereHausEreignis`), Entprellen gleicher Zustände innerhalb 60 Sekunden, Reconnect mit Backoff bis 10 Minuten. Der Register-Job `ha-ereignisse-watchdog` prüft alle 10 Minuten mit derselben Wächter-Logik wie beim BMW-Stream und verbindet bei Hängern neu.
+- **Mini-Pass je Ereignis** mit ereignisspezifischem Cooldown: Rauch und CO 10 Minuten, Alarm 10, Anwesenheit und Öffnung 30, Wasser 30, Bewegung 60. Der Ausschnitt ist die aktuelle Haus-Deutung; die Logzeile `v1177 HA-Ereignis` hält jedes Ereignis mit Relevanzentscheidung fest, auch die nicht gemeldeten.
+- Live-Stand der Entitäten (05.10.): 3 Personen, 6 Türkontakte, 8 Belegungssensoren, 2 Rauchmelder, 2 CO-Melder, Alarm-Manager. Fenster Lena steht seit heute Morgen offen, jemand ist zu Hause: NORMAL.
+- 7 Tests (`haus-ereignisse.test.ts`) mit den Live-Entitäten, inklusive Handshake über eine Fake-WebSocket.
+
 ## [0.19.0-jarvis.1176] - 2026-10-05
 
 ### Fixed — BMW-MQTT-Stream: hängender Reconnect, Wächter, Stream-Zustand im Weltmodell (v1176)

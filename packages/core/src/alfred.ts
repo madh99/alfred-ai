@@ -407,6 +407,8 @@ export class Alfred {
   private letzteProben: { zeit?: string; ergebnisse: import('./lebenszeichen/proben.js').ProbeErgebnis[] } = { ergebnisse: [] };
   /** v1175 — Jarvis Schicht 2: beobachtet Deutungen und löst Mini-Pässe bei Zustandswechseln aus. */
   private weltmodellBeobachter?: import('./ereignisse/zustandswechsel.js').WeltmodellBeobachter;
+  /** v1177 — Jarvis Schicht 2: Echtzeit-Ereignisse aus Home Assistant (WebSocket). */
+  private haEreignisQuelle?: import('./ereignisse/ha-ereignisse.js').HaEreignisQuelle;
   /** v933 — Social-Media-Betrieb */
   private socialRepo?: import('@alfred/storage').SocialRepository;
   private socialSkillRef?: import('@alfred/skills').SocialSkill;
@@ -13691,6 +13693,46 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
         });
       }
+      // v1177 — Jarvis Schicht 2 Teil 2: Home-Assistant-Ereignisse in Echtzeit.
+      // Rauch/CO/Wasser/Alarm, Anwesenheitswechsel, Öffnungen und Innenraum-
+      // Bewegung → Haus-Deutung → Mini-Pass mit ereignisspezifischem Cooldown.
+      if (this.config.homeassistant?.baseUrl && this.config.homeassistant.accessToken) {
+        const { HaEreignisQuelle } = await import('./ereignisse/ha-ereignisse.js');
+        const { deuteHaus } = await import('./normalzustaende/haus.js');
+        const haCfg = this.config.homeassistant;
+        const haLog = this.logger.child({ component: 'ha-ereignisse' });
+        const ladeZustaende = async (): Promise<import('./normalzustaende/haus.js').HaZustand[]> => {
+          const res = await fetch(`${haCfg.baseUrl.replace(/\/+$/, '')}/api/states`, { headers: { Authorization: `Bearer ${haCfg.accessToken}` }, signal: AbortSignal.timeout(15_000) });
+          if (!res.ok) throw new Error(`HA /api/states HTTP ${res.status}`);
+          const alle = await res.json() as import('./normalzustaende/haus.js').HaZustand[];
+          return alle.filter(z => /^(person|binary_sensor|alarm_control_panel)\./.test(z.entity_id));
+        };
+        this.haEreignisQuelle = new HaEreignisQuelle({
+          baseUrl: haCfg.baseUrl, accessToken: haCfg.accessToken, logger: haLog,
+          onEreignis: async (e) => {
+            const name = (e.entity.attributes?.friendly_name as string | undefined) ?? e.entity.entity_id;
+            const zustaende = await ladeZustaende();
+            const d = deuteHaus(zustaende);
+            // Öffnung/Bewegung sind nur bei Abwesenheit ein Ereignis; Anwesenheit, Rauch, CO, Wasser, Alarm immer.
+            const relevant = ['rauch', 'co', 'wasser', 'alarm', 'anwesenheit'].includes(e.typ) || (d.alleAbwesend && (e.typ === 'oeffnung' || e.typ === 'bewegung'));
+            haLog.info({ typ: e.typ, entity: e.entity.entity_id, von: e.vorher?.state, nach: e.entity.state, relevant, auffaellig: d.auffaellig }, 'v1177 HA-Ereignis');
+            if (!relevant || !this.reasoningEngine) return;
+            const beschreibung = e.typ === 'anwesenheit'
+              ? `${name} ist jetzt ${e.entity.state === 'home' ? 'zu Hause' : 'abwesend'} (vorher ${e.vorher?.state === 'home' ? 'zu Hause' : 'abwesend'})`
+              : `${name}: ${e.vorher?.state ?? '?'} → ${e.entity.state}`;
+            await this.reasoningEngine.triggerMiniPass({
+              quelle: 'haus', beschreibung: `${e.typ}: ${beschreibung}`, ausschnitt: d.zeilen,
+              objekte: [`haus:${e.typ}:${e.entity.entity_id}`, ...d.auffaellig], cooldownMin: e.cooldownMin,
+            });
+          },
+        });
+        this.haEreignisQuelle.start();
+        const quelle = this.haEreignisQuelle;
+        this.registriereJob({
+          key: 'ha-ereignisse-watchdog', beschreibung: 'Home-Assistant-WebSocket: Verbindung prüfen, Hänger neu verbinden', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 5,
+          run: async () => { const u = quelle.ensureConnected(); const st = quelle.status(); return { ok: true, zaehler: { neustart: u === 'neustart' ? 1 : 0, verbunden: st.verbunden ? 1 : 0, ereignisse: st.ereignisse } }; },
+        });
+      }
       // v1161 — Register starten: registriert-Logzeilen sind oben gefallen, der
       // erste Tick holt heute noch ausstehende Läufe nach (Lektion v1154/v1158).
       this.jobRegister.start();
@@ -14014,6 +14056,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     this.adapterClaimManager?.stop();
     this.clusterManager?.stopPgHeartbeat();
     this.jobRegister?.stop();
+    this.haEreignisQuelle?.stop();
     await this.providerPuls?.schreibe().catch(() => undefined);
     if (this.topicCollector) {
       this.topicCollector.stop();
