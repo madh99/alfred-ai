@@ -416,7 +416,6 @@ export class Alfred {
   private publishingEngine?: import('./publishing-engine.js').PublishingEngine;
   /** v935 — Content-Studio (täglicher Ideen-/Entwurfs-Generator) */
   private contentStudio?: import('./content-studio.js').ContentStudio;
-  private contentStudioTimer?: ReturnType<typeof setInterval>;
   /** v938 — Video-Pipeline (Slideshow-Renderer; TTS-Ref für Voiceover) */
   private speechSynthesizerRef?: import('./speech-synthesizer.js').SpeechSynthesizer;
   /** v929 — Interessen-Radar */
@@ -483,7 +482,6 @@ export class Alfred {
       return true; // Tabelle fehlt evtl. noch → lieber laufen als still ausfallen
     }
   }
-  private clusterMonitorTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
   /** v696 — Project-Agent Sandbox (opt-in). NUR initialisiert wenn `config.sandbox?.enabled === true` */
   private sandboxManager?: import('./sandbox-manager.js').SandboxManager;
@@ -7144,7 +7142,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         let lastAnalyticsDay = '';
         let lastAuthDay = '';
         let lastCommentsHour = '';
-        this.contentStudioTimer = setInterval(async () => {
+        // v1190 — Jarvis Schicht 0: letzter Alt-Timer des Social-Bereichs ins Register
+        // (10-min-Takt unverändert; Tages-/Stunden-Schlüssel und HA-Slots bleiben im Lauf).
+        this.registriereJob({
+          key: 'content-studio-tick', beschreibung: 'Content-Studio: News-Desk, Plan-Review, Kommentare, Analytics, Auth-Prüfung', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', timeoutMin: 30,
+          run: async () => {
           const now = new Date();
           const today = now.toISOString().slice(0, 10);
           // v989 — stündlich Kommentare einsammeln (HA-Slot je Stunde);
@@ -7325,7 +7327,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             try { await this.contentStudio?.runDaily(); }
             catch (err) { this.logger.warn({ err }, 'v935 content studio failed'); }
           }
-        }, 10 * 60_000);
+          return { ok: true };
+          },
+        });
       }
     }
 
@@ -7872,28 +7876,23 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       if (this.adapterClaimManager) this.adapterClaimManager.registerPlatform('system-backup');
       const backupSkill = this.skillRegistry.get('system_backup') as any;
       if (backupSkill) {
-        let lastBackupMinute = -1;
-        setInterval(async () => {
-          const now = new Date();
-          if (now.getMinutes() === lastBackupMinute) return;
-          const schedule = this.config.backup?.schedule ?? '0 3 * * *';
-          const [min, hour] = schedule.split(' ');
-          const minMatch = min === '*' || (min.includes('/') ? now.getMinutes() % parseInt(min.split('/')[1]) === 0 : min.split(',').some(p => parseInt(p) === now.getMinutes()));
-          const hourMatch = hour === '*' || (hour.includes('/') ? now.getHours() % parseInt(hour.split('/')[1]) === 0 : hour.split(',').some(p => parseInt(p) === now.getHours()));
-          if (!minMatch || !hourMatch) return;
-          lastBackupMinute = now.getMinutes();
-          if (this.adapterClaimManager) {
-            const claimed = await this.adapterClaimManager.tryClaim('system-backup');
-            if (!claimed) return;
-          }
-          try {
+        // v1190 — Jarvis Schicht 0: Minuten-Cron-Timer → Register (Nachholen, job_runs, Wächter).
+        const { cronZuTakt } = await import('./lebenszeichen/job-register.js');
+        const schedule = this.config.backup?.schedule ?? '0 3 * * *';
+        const { takt, exakt } = cronZuTakt(schedule);
+        if (!exakt) this.logger.warn({ schedule, takt }, 'v1190 Backup-Zeitplan nicht exakt übersetzbar — Register-Takt gilt');
+        this.registriereJob({
+          key: 'system-backup', beschreibung: `System-Backup (Zeitplan ${schedule})`, takt, bereich: 'global', slot: true, timeoutMin: 30,
+          run: async () => {
+            if (this.adapterClaimManager) {
+              const claimed = await this.adapterClaimManager.tryClaim('system-backup');
+              if (!claimed) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+            }
             await backupSkill.createBackup({}, 'scheduled');
             this.logger.info('Scheduled system backup completed');
-          } catch (err) {
-            this.logger.warn({ err }, 'Scheduled system backup failed');
-          }
-        }, 60_000);
-        this.logger.info({ schedule: this.config.backup.schedule ?? '0 3 * * *' }, 'System backup scheduler started');
+            return { ok: true };
+          },
+        });
       }
     }
 
@@ -14092,14 +14091,16 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
 
     // Dead-node monitoring (observability only — adapter failover handled by AdapterClaimManager)
     if (this.clusterManager) {
-      this.clusterMonitorTimer = setInterval(async () => {
-        try {
-          const nodes = await this.clusterManager!.getNodesAny();
-          if (nodes.length > 0) {
-            this.logger.debug({ liveNodes: nodes.map(n => n.id) }, 'Cluster node status');
-          }
-        } catch { /* ignore */ }
-      }, 60_000);
+      // v1190 — Jarvis Schicht 0: 60-s-Debug-Timer → 10-min-Job mit Zähler (letzter roher Timer)
+      const cm = this.clusterManager;
+      this.registriereJob({
+        key: 'cluster-knoten', beschreibung: 'Cluster: lebende Knoten zählen (Beobachtung)', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
+        run: async () => {
+          const nodes = await cm.getNodesAny();
+          if (nodes.length > 0) this.logger.debug({ liveNodes: nodes.map(n => n.id) }, 'Cluster node status');
+          return { ok: true, zaehler: { knoten: nodes.length } };
+        },
+      });
     }
 
     // Insight expiry: process expired insights every 30 minutes for preference learning
@@ -14169,14 +14170,6 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.publishingEngine) {
       this.publishingEngine.stop();
       this.publishingEngine = undefined;
-    }
-    if (this.contentStudioTimer) {
-      clearInterval(this.contentStudioTimer);
-      this.contentStudioTimer = undefined;
-    }
-    if (this.clusterMonitorTimer) {
-      clearInterval(this.clusterMonitorTimer);
-      this.clusterMonitorTimer = undefined;
     }
     this.reflectionEngine?.stop();
 

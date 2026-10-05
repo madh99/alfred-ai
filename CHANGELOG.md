@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1190] - 2026-10-05
+
+### Changed — Jarvis Schicht 0 abgeschlossen: kein Timer mehr außerhalb des Job-Registers (v1190)
+
+Die letzten drei rohen Timer in Alfred laufen jetzt als registrierte Jobs mit Registrierungs- und Laufprotokoll, Nachholen nach Neustart und Überwachung durch den Degradations-Wächter.
+
+- `system-backup`: Der Minuten-Cron-Timer wird aus dem Backup-Zeitplan übersetzt (täglich „M H * * *", Intervalle „*/N" in Minuten oder Stunden). Nicht übersetzbare Ausdrücke fallen sichtbar auf täglich 03:00 zurück. Die HA-Sperre über den Adapter-Claim bleibt.
+- `content-studio-tick`: Der 10-Minuten-Takt des Content-Studios läuft als Job; Tages- und Stundenschlüssel sowie HA-Slots bleiben unverändert im Lauf.
+- `cluster-knoten`: Der 60-Sekunden-Debug-Timer wird zum 10-Minuten-Job mit Knotenzähler.
+- Die Lint-Basislinie für rohe Timer steht auf 0; jeder neue Timer in Alfred lässt die Suite scheitern.
+- 3 Tests.
+
 ## [0.19.0-jarvis.1189] - 2026-10-05
 
 ### Changed — Rundgang: eigenes Gedächtnis, Wallbox und Projekt-Reihenfolge lösen keinen Vollpass mehr aus (v1189)

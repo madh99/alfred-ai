@@ -10,7 +10,8 @@ import { dirname, join } from 'node:path';
  * Arbeit gehört ins Register (lebenszeichen/job-register.ts). Die Basislinie
  * wird nur bewusst gesenkt, wenn ein weiterer Alt-Timer migriert wurde.
  */
-const BASISLINIE_SET_INTERVAL = 3; // v1161: 27→24; v1165: →19; v1166: →18; v1167: →3 — verbleibend NUR: Backup-Cron (Minutenraster), Content-Studio-Tick (Social, eigener Release), Cluster-Monitor (60 s, unter dem Raster)
+const BASISLINIE_SET_INTERVAL = 0; // v1190: Backup-Cron, Content-Studio-Tick, Cluster-Monitor migriert — ALLE periodischen Arbeiten im Register.
+// Historie: // v1161: 27→24; v1165: →19; v1166: →18; v1167: →3 — verbleibend NUR: Backup-Cron (Minutenraster), Content-Studio-Tick (Social, eigener Release), Cluster-Monitor (60 s, unter dem Raster)
 
 describe('Timer-Lint (Jarvis Schicht 0)', () => {
   it('keine neuen rohen setInterval-Timer in alfred.ts — periodische Arbeit gehört ins Job-Register', () => {

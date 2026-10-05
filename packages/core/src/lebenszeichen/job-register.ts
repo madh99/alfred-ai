@@ -199,3 +199,26 @@ export class JobRegister {
     }
   }
 }
+
+/**
+ * v1190 — Cron-Ausdruck des Backup-Zeitplans (`backup.schedule`, z. B. '0 3 * * *') in einen
+ * Register-Takt übersetzen. Unterstützt: 'M H * * *' (täglich), '*\/N * * * *' (alle N min),
+ * 'M *\/N * * *' (alle N h). Alles andere fällt auf täglich 03:00 zurück — `exakt: false`
+ * macht den Verlust sichtbar (Logzeile beim Registrieren).
+ */
+export function cronZuTakt(schedule: string | undefined): { takt: JobTakt; exakt: boolean } {
+  const teile = (schedule ?? '0 3 * * *').trim().split(/\s+/);
+  const [min, hour, dom = '*', mon = '*', dow = '*'] = teile;
+  const istZahl = (x: string) => /^\d{1,2}$/.test(x);
+  if (teile.length === 5 && dom === '*' && mon === '*' && dow === '*') {
+    if (istZahl(min) && istZahl(hour)) {
+      return { takt: { art: 'taeglich', um: `${hour.padStart(2, '0')}:${min.padStart(2, '0')}` }, exakt: true };
+    }
+    const mMin = /^\*\/(\d{1,3})$/.exec(min);
+    if (mMin && hour === '*') return { takt: { art: 'intervall', minuten: Math.max(10, Number(mMin[1])) }, exakt: Number(mMin[1]) >= 10 };
+    const mH = /^\*\/(\d{1,2})$/.exec(hour);
+    if (mH && (istZahl(min) || min === '*')) return { takt: { art: 'intervall', minuten: Number(mH[1]) * 60 }, exakt: min === '0' || min === '*' };
+    if (min === '*' && hour === '*') return { takt: { art: 'intervall', minuten: 10 }, exakt: false };
+  }
+  return { takt: { art: 'taeglich', um: '03:00' }, exakt: false };
+}
