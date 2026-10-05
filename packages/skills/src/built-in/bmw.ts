@@ -249,6 +249,8 @@ export class BMWSkill extends Skill {
   private mqttDbWriteTimer?: ReturnType<typeof setTimeout>;
   private mqttReconnectAttempts = 0;
   private mqttLastCloseWasError = false;
+  /** v1184 — Nachrichten seit dem letzten Connect (Beweis je Verbindung, geloggt beim Close). */
+  private mqttNachrichtenSeitConnect = 0;
   private streamingActive = false;
   // v1176 — Stream-Zustand für Wächter und Weltmodell
   private mqttLastEventAt?: number;
@@ -386,22 +388,35 @@ export class BMWSkill extends Skill {
         rejectUnauthorized: true,
         reconnectPeriod: 0, // Manual reconnect (we need to refresh token)
         connectTimeout: 30_000,
+        // v1184 — Live 04./05.10.: JEDE Verbindung wurde exakt 60 s nach dem Connect
+        // ohne Fehler und ohne DISCONNECT-Paket geschlossen (484 Zyklen am 04.10.,
+        // 115 am 05.10.). Der mqtt.js-Standard-Keepalive (60 s) sendet den ersten
+        // PINGREQ genau dann, wenn ein 60-s-Idle-Timeout auf Broker-/Proxy-Seite
+        // zuschlägt. Ping alle 30 s hält die Verbindung lebendig.
+        keepalive: 30,
       });
 
       this.mqttClient.on('connect', () => {
         this.streamingActive = true;
         const fullTopic = `${username}/${topic}`;
         this.mqttLastConnectAt = Date.now(); this.mqttReconnectDueAt = undefined;
+        this.mqttNachrichtenSeitConnect = 0;
         this.mlog('info', 'Connected, subscribing', { topic: fullTopic });
-        this.mqttClient.subscribe(fullTopic, { qos: 0 });
-        this.mqttClient.subscribe(`${username}/+`, { qos: 0 });
+        // v1184 — Subscribe-Ergebnis sichtbar machen (vorher ohne Callback: kein Beweis, dass das Abonnement steht)
+        const subLog = (label: string) => (err: Error | null, granted?: Array<{ topic: string; qos: number }>) => {
+          if (err) this.mlog('warn', 'Subscribe fehlgeschlagen', { label, err: err.message });
+          else this.mlog('info', 'Subscribed', { label, granted: (granted ?? []).map(g => `qos${g.qos}`).join(',') || 'leer' });
+        };
+        this.mqttClient.subscribe(fullTopic, { qos: 0 }, subLog('vin'));
+        this.mqttClient.subscribe(`${username}/+`, { qos: 0 }, subLog('wildcard'));
       });
 
       this.mqttClient.on('message', (_topic: string, payload: Buffer) => {
         try {
           const data = JSON.parse(payload.toString());
           this.mqttLastDataAt = Date.now();
-          this.mlog('debug', 'Data received', { keys: Object.keys(data.data ?? {}).length });
+          this.mqttNachrichtenSeitConnect++;
+          this.mlog(this.mqttNachrichtenSeitConnect === 1 ? 'info' : 'debug', 'Data received', { keys: Object.keys(data.data ?? {}).length, nachrichtenSeitConnect: this.mqttNachrichtenSeitConnect });
           this.mqttReconnectAttempts = 0; // Reset backoff on successful data
           if (data && typeof data === 'object') {
             const telematicData: TelematicResponse = {};
@@ -471,7 +486,7 @@ export class BMWSkill extends Skill {
           this.scheduleReconnect(true);
         } else {
           // Normal disconnect (BMW closes idle connections) → fixed 60s reconnect, no backoff
-          this.mlog('info', 'Connection closed (normal), reconnect in 60s');
+          this.mlog('info', 'Connection closed (normal), reconnect in 60s', { verbundenSek: this.mqttLastConnectAt ? Math.round((Date.now() - this.mqttLastConnectAt) / 1000) : undefined, nachrichten: this.mqttNachrichtenSeitConnect });
           this.scheduleReconnect(false);
         }
       });

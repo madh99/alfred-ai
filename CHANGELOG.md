@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1184] - 2026-10-05
+
+### Fixed — BMW-Stream: Verbindung alle 60 Sekunden geschlossen (v1184)
+
+Live 04. und 05.10.: Jede MQTT-Verbindung zum BMW-Streaming wurde exakt 60 Sekunden nach dem Verbindungsaufbau ohne Fehler und ohne Disconnect-Paket geschlossen und 60 Sekunden später neu aufgebaut, 484 Zyklen am 04.10. und 115 am 05.10. Fahrzeugdaten kamen nur an, wenn sie zufällig in das 60-Sekunden-Fenster fielen (04.10.: 0 Datensätze, 05.10.: 3). Der Standard-Keepalive der MQTT-Bibliothek sendet den ersten Ping nach 60 Sekunden, also genau dann, wenn ein Idle-Timeout von 60 Sekunden auf der Gegenseite zuschlägt.
+
+- Keepalive auf 30 Sekunden gesetzt.
+- Subscribe-Ergebnis wird geloggt; bisher gab es keinen Beweis, dass das Abonnement steht.
+- Beim Schließen der Verbindung werden Dauer und Anzahl empfangener Nachrichten geloggt; die erste Nachricht je Verbindung erscheint auf Info-Ebene.
+
+Beweis nach dem Deploy: Verbindungen leben länger als 60 Sekunden, der Watchdog meldet den Stream als aktiv.
+
 ## [0.19.0-jarvis.1183] - 2026-10-05
 
 ### Added — Jarvis Schicht 4, Teil 1: Kennzahlen (v1183)
