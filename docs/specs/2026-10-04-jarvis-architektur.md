@@ -183,7 +183,7 @@ Jeder Punkt wurde live auf .92 bewiesen (Logzeilen, `job_runs`, Datenbank), nich
 
 ### Schicht 2 — Ereignisgetriebene Wahrnehmung: live (.1175–.1178, .1189, .1193)
 - Home-Assistant-WebSocket (`state_changed`) mit Entprellung, Backoff und Wächter; Zustandswechsel gegen den Normalzustand lösen Mini-Pässe mit Weltmodell-Ausschnitt aus (Cooldown je Ereignisart, HA-Slots).
-- Der 30-Minuten-Tick ist ein Rundgang: Vollpass nur bei fachlicher Änderung (Fingerabdruck ohne relative Zeiten, volatile Sektionen ausgenommen), spätestens alle 2 h. Offen: der erste protokollierte „Rundgang übersprungen" — bis 05.10. 20:00 hatte jeder Tick eine echte oder scheinbare Änderung; seit .1193 steht je geänderter Sektion die erste abweichende Zeile im Log (nur Infrastruktur-Sektionen mit Inhalt).
+- Der 30-Minuten-Tick ist ein Rundgang: Vollpass nur bei fachlicher Änderung (Fingerabdruck ohne relative Zeiten, volatile Sektionen ausgenommen), spätestens alle 2 h. Bewiesen am 05.10. um 21:30: erster Tick ohne LLM („keine fachliche Änderung — Vollpass übersprungen", geändert nur Wetter, Crypto, Aktivität, Feeds). Bis dahin hatte jeder Tick eine echte oder scheinbare Änderung (Neustarts, ITSM-Flap, eigenes Gedächtnis, Wallbox, Projekt-Reihenfolge → .1185, .1189). Seit .1193 steht je geänderter Infrastruktur-Sektion die erste abweichende Zeile im Log.
 - Kennzahlen: Anteil Mini-Pässe, Ø Mini-Pass-Dauer, Kosten je Vollpass (.1192).
 
 ### Schicht 3 — Vorgänge statt Insights: live (.1179–.1182, .1185, .1186)
