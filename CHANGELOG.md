@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1187] - 2026-10-05
+
+### Fixed — BMW: Token-Refresh jede Minute nach dem stabilen Stream; REST-Abruf scheiterte still (v1187)
+
+Mit dem stabilen Stream aus .1184 trat ein lange verdeckter Fehler zutage. Beim planmäßigen Token-Refresh (zwei Minuten vor Ablauf) beendet Alfred den alten MQTT-Client und verbindet neu. Der Close-Handler des alten Clients feuerte erst nach dem neuen Verbindungsaufbau, hielt das Ende für einen normalen Abbruch und plante in 60 Sekunden den nächsten Refresh samt Neuverbindung. Ab 15:50 lief das jede Minute, mit einem rotierten Refresh-Token je Durchgang. Vor .1184 verdeckte der 60-Sekunden-Idle-Zyklus dasselbe Verhalten: seit Wochen ein Token-Refresh alle zwei Minuten.
+
+- MQTT-Handler wirken nur noch für den aktuellen Client; beim Refresh und beim Stoppen wird der alte Client erst abgehängt und dann beendet.
+- Der REST-Abruf der Telematik hat seinen Fehler bisher verschluckt und alte Daten aus der Datenbank verwendet; der Job meldete Erfolg, während seit 14:34 keine Zeile mehr entstand (12 statt 48 am Tag). Der Fehler wird jetzt geloggt, der Job meldet die Herkunft der Daten als Zähler und gilt ohne frischen Abruf als fehlgeschlagen, damit der Degradations-Wächter ihn sieht.
+- Das Token-Refresh-Log nennt den Refresh-Token nicht mehr teilweise, nur noch seine Länge.
+
 ## [0.19.0-jarvis.1186] - 2026-10-05
 
 ### Added — Jarvis Schicht 4, Teil 2 (beobachtend): Entscheidung des Owners, Erledigungsquote je Kategorie (v1186)

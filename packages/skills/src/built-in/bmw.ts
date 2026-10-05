@@ -395,8 +395,17 @@ export class BMWSkill extends Skill {
         // zuschlägt. Ping alle 30 s hält die Verbindung lebendig.
         keepalive: 30,
       });
+      // v1187 — Realfall 05.10. 15:50–16:32: beim Token-Refresh (expiresAt − 2 min) wurde der
+      // alte Client mit end(true) beendet; dessen 'close'-Handler feuerte NACH dem neuen
+      // „Connecting", hielt das für einen normalen Abbruch und plante in 60 s den nächsten
+      // reconnectWithFreshToken → jede Minute Token-Refresh (BMW rotiert den Refresh-Token)
+      // + Neuverbindung, endlos. Vor v1184 war das vom 60-s-Idle-Zyklus verdeckt (seit
+      // Wochen alle 2 min ein Refresh). Handler wirken nur noch für den AKTUELLEN Client.
+      const client = this.mqttClient;
+      const istAktuell = () => this.mqttClient === client;
 
-      this.mqttClient.on('connect', () => {
+      client.on('connect', () => {
+        if (!istAktuell()) return; // v1187
         this.streamingActive = true;
         const fullTopic = `${username}/${topic}`;
         this.mqttLastConnectAt = Date.now(); this.mqttReconnectDueAt = undefined;
@@ -411,7 +420,8 @@ export class BMWSkill extends Skill {
         this.mqttClient.subscribe(`${username}/+`, { qos: 0 }, subLog('wildcard'));
       });
 
-      this.mqttClient.on('message', (_topic: string, payload: Buffer) => {
+      client.on('message', (_topic: string, payload: Buffer) => {
+        if (!istAktuell()) return; // v1187
         try {
           const data = JSON.parse(payload.toString());
           this.mqttLastDataAt = Date.now();
@@ -461,22 +471,26 @@ export class BMWSkill extends Skill {
         } catch { /* ignore parse errors */ }
       });
 
-      this.mqttClient.on('error', (err: unknown) => {
+      client.on('error', (err: unknown) => {
+        if (!istAktuell()) return; // v1187
         this.streamingActive = false;
         this.mqttLastCloseWasError = true;
         this.mqttLastErrorAt = Date.now(); this.mqttLastError = String((err as Error)?.message ?? err).slice(0, 200);
         this.mlog('warn', 'Error', { err: this.mqttLastError });
       });
 
-      this.mqttClient.on('disconnect', (packet: any) => {
+      client.on('disconnect', (packet: any) => {
+        if (!istAktuell()) return; // v1187
         this.mlog('warn', 'Disconnect packet', { packet: JSON.stringify(packet).slice(0, 200) });
       });
 
-      this.mqttClient.on('offline', () => {
+      client.on('offline', () => {
+        if (!istAktuell()) return; // v1187
         this.mlog('info', 'Client offline');
       });
 
-      this.mqttClient.on('close', () => {
+      client.on('close', () => {
+        if (!istAktuell()) return; // v1187
         this.streamingActive = false;
         const wasError = this.mqttLastCloseWasError;
         this.mqttLastCloseWasError = false;
@@ -532,11 +546,11 @@ export class BMWSkill extends Skill {
       if (tokens) {
         await this.refreshAccessToken(tokens);
       }
-      // Disconnect old connection
-      if (this.mqttClient) {
-        this.mqttClient.end(true);
-        this.mqttClient = undefined;
-      }
+      // Disconnect old connection — erst abhängen, dann beenden (v1187: 'close' des alten
+      // Clients darf keinen Reconnect mehr planen)
+      const alt = this.mqttClient;
+      this.mqttClient = undefined;
+      if (alt) alt.end(true);
       this.streamingActive = false;
       // Reconnect with new token
       await this.startStreaming();
@@ -550,10 +564,9 @@ export class BMWSkill extends Skill {
   /** Stop MQTT streaming. */
   stopStreaming(): void {
     if (this.mqttReconnectTimer) clearTimeout(this.mqttReconnectTimer);
-    if (this.mqttClient) {
-      this.mqttClient.end(true);
-      this.mqttClient = undefined;
-    }
+    const alt = this.mqttClient;
+    this.mqttClient = undefined; // v1187 — vor end(true), damit der Close-Handler nichts plant
+    if (alt) alt.end(true);
     this.streamingActive = false;
   }
 
@@ -1204,7 +1217,8 @@ export class BMWSkill extends Skill {
         // Debug: log what we're sending (mask token for security)
         const hasRefresh = !!tokens.refreshToken && tokens.refreshToken.length > 10;
         const hasClientId = !!this.cfg.clientId;
-        console.log(`[BMW] Token refresh attempt ${attempt + 1}: clientId=${hasClientId}, refreshToken=${hasRefresh ? tokens.refreshToken.slice(0, 8) + '...' + tokens.refreshToken.length + 'chars' : 'MISSING'}`);
+        // v1187 — kein Token-Fragment mehr im Log
+        this.mlog('info', 'Token-Refresh', { versuch: attempt + 1, clientId: hasClientId, refreshToken: hasRefresh ? `vorhanden (${tokens.refreshToken.length} Zeichen)` : 'MISSING' });
 
         // Filter out undefined/empty values that would send "undefined" as string
         const cleanParams = Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== '' && v !== 'undefined'));
@@ -1328,11 +1342,16 @@ export class BMWSkill extends Skill {
     // 2. REST data (SoC, SoH, battery capacity — not in MQTT stream)
     const REST_TTL = 25 * 60_000;
     let restData: TelematicResponse | undefined;
+    // v1187 — Herkunft der REST-Daten sichtbar machen: Live 05.10. scheiterte der REST-Abruf
+    // seit 14:34 still (catch ohne Log, Job meldete ok) — 12 statt 48 Zeilen am Tag.
+    let restQuelle: 'frisch' | 'db-aktuell' | 'db-alt' | 'keine' = 'keine';
+    let restFehler: string | undefined;
 
     if (this.telematicRepo) {
       const restEntry = await this.telematicRepo.getLatestBySource(uid, vin, 'rest');
       if (restEntry && (Date.now() - new Date(restEntry.createdAt).getTime()) < REST_TTL) {
         restData = restEntry.telematicData as TelematicResponse;
+        restQuelle = 'db-aktuell';
       }
     }
 
@@ -1343,14 +1362,17 @@ export class BMWSkill extends Skill {
           `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
         );
         restData = apiResult.telematicData ?? {};
+        restQuelle = 'frisch';
         if (this.telematicRepo && Object.keys(restData).length > 0) {
           this.telematicRepo.insert(uid, vin, 'rest', restData).catch(() => {});
         }
-      } catch {
+      } catch (err) {
         // Rate limit or API error — use stale REST data from DB as fallback (no TTL)
+        restFehler = String((err as Error)?.message ?? err).slice(0, 200);
+        this.mlog('warn', 'REST-Telematik fehlgeschlagen', { err: restFehler });
         if (this.telematicRepo) {
           const staleEntry = await this.telematicRepo.getLatestBySource(uid, vin, 'rest');
-          if (staleEntry) restData = staleEntry.telematicData as TelematicResponse;
+          if (staleEntry) { restData = staleEntry.telematicData as TelematicResponse; restQuelle = 'db-alt'; }
         }
       }
     }
@@ -1440,7 +1462,7 @@ export class BMWSkill extends Skill {
       lines.push(`\n⚠️ *Daten ${mins} Min alt*`);
     }
 
-    return { success: true, data: { telematic: t, basic: basicData }, display: lines.join('\n') };
+    return { success: true, data: { telematic: t, basic: basicData, restQuelle, restFehler }, display: lines.join('\n') };
   }
 
   private async getCharging(inputVin?: string): Promise<SkillResult> {

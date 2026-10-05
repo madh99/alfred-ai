@@ -7480,7 +7480,13 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                 const { deutung } = await ladeBmwDeutung(bmwTelematicRepo, uid, new Date(), streamStatus);
                 if (deutung) await this.weltmodellBeobachter?.beobachte('bmw', { zeilen: deutung.zeilen, auffaellig: bmwAuffaellig(deutung) });
               } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1175 BMW-Beobachtung fehlgeschlagen'); }
-              return r.success === false ? { ok: false, fehler: String(r.error ?? 'status fehlgeschlagen').slice(0, 200) } : { ok: true };
+              if (r.success === false) return { ok: false, fehler: String(r.error ?? 'status fehlgeschlagen').slice(0, 200) };
+              // v1187 — der Job existiert für die REST-Zeile: ohne frischen Abruf ist er fehlgeschlagen
+              const d = (r as { data?: { restQuelle?: string; restFehler?: string } }).data;
+              const quelle = d?.restQuelle ?? 'unbekannt';
+              const zaehler: Record<string, number> = { restFrisch: quelle === 'frisch' ? 1 : 0 };
+              if (quelle === 'frisch' || quelle === 'db-aktuell') return { ok: true, zaehler };
+              return { ok: false, zaehler, fehler: `REST-Telematik: ${quelle}${d?.restFehler ? ' — ' + d.restFehler : ''}`.slice(0, 200) };
             },
           });
         }
