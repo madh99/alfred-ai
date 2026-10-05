@@ -36,6 +36,8 @@ export interface JobDefinition {
   slot?: boolean;
   /** Nur intervall: erster Lauf frühestens so viele Minuten nach der Registrierung (Boot nicht belasten). */
   startVerzoegerungMin?: number;
+  /** Zeitbudget je Lauf (Standard 10 min). Überschreitung wird als Fehler protokolliert; der Lauf blockiert andere Jobs nicht. */
+  timeoutMin?: number;
   run: (ctx: { userId: string | null }) => Promise<JobErgebnis | void>;
 }
 
@@ -60,6 +62,7 @@ interface JobZustand {
 
 export const RASTER_MS = 10 * 60_000;
 export const INTERVALL_TOLERANZ_MS = 30_000;
+export const STANDARD_TIMEOUT_MIN = 10;
 
 /** Reine Fälligkeitsregel — testbar ohne Timer. Liefert den Tages-Marker oder null. */
 export function istJobFaellig(takt: JobTakt, now: Date, zustand: Pick<JobZustand, 'zuletztTag' | 'zuletztMs'>): string | null {
@@ -121,8 +124,15 @@ export class JobRegister {
     if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
   }
 
-  /** Ein Raster-Tick: alle fälligen Jobs ausführen. Öffentlich für Tests. */
+  /**
+   * Ein Raster-Tick: alle fälligen Jobs ausführen. Öffentlich für Tests.
+   * v1173 — Jobs laufen PARALLEL mit Zeitbudget (Realfall 05.10.: cmdb-discovery
+   * 50 s verschob den Sammler; ein hängender Job hätte alle blockiert). Ein
+   * Job, der sein Budget überschreitet, gilt als fehlgeschlagen, bleibt aber
+   * als „läuft" markiert, bis er wirklich endet — kein Doppelstart.
+   */
   async tick(now: Date = (this.deps.now ?? (() => new Date()))()): Promise<void> {
+    const faellig: Array<{ def: JobDefinition; zustand: JobZustand }> = [];
     for (const eintrag of this.jobs.values()) {
       const { def, zustand } = eintrag;
       if (zustand.laeuft) continue;
@@ -135,7 +145,23 @@ export class JobRegister {
         if (!frei) { this.deps.logger.debug({ job: def.key, marker }, 'Lebenszeichen: Slot von anderem Node — übersprungen'); continue; }
       }
       zustand.laeuft = true;
-      try { await this.ausfuehren(def); } finally { zustand.laeuft = false; }
+      faellig.push(eintrag);
+    }
+    await Promise.all(faellig.map(({ def, zustand }) => this.mitZeitbudget(def, zustand)));
+  }
+
+  private async mitZeitbudget(def: JobDefinition, zustand: JobZustand): Promise<void> {
+    const budgetMs = (def.timeoutMin ?? STANDARD_TIMEOUT_MIN) * 60_000;
+    const lauf = this.ausfuehren(def).catch(err => {
+      this.deps.logger.warn({ job: def.key, err: (err as Error).message }, 'Lebenszeichen: Job fehlgeschlagen (unerwartet)');
+    }).finally(() => { zustand.laeuft = false; });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), budgetMs); (timer as { unref?: () => void }).unref?.(); });
+    const ergebnis = await Promise.race([lauf.then(() => 'fertig' as const), budget]);
+    if (timer) clearTimeout(timer);
+    if (ergebnis === 'timeout') {
+      this.deps.logger.warn({ job: def.key, budgetMin: def.timeoutMin ?? STANDARD_TIMEOUT_MIN }, 'Lebenszeichen: Job fehlgeschlagen (Zeitbudget überschritten — läuft im Hintergrund weiter, kein Doppelstart)');
+      void lauf.then(() => this.deps.logger.info({ job: def.key }, 'Lebenszeichen: Job nachträglich beendet'));
     }
   }
 

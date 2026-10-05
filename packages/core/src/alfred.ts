@@ -7845,6 +7845,20 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             if (result.downInterfaces.length > 0 || result.cpuWarnings.length > 0) {
               this.logger.info({ ...result }, 'MikroTik monitoring alert');
             }
+            // v1173 — Jarvis Schicht 1: Down-Historie je Interface (Quelle mikrotik-down),
+            // damit „seit Wochen down (bekannt, Korrektur 15.04.)" von „seit heute down"
+            // unterscheidbar wird.
+            const ownerMt = this.tryOwner();
+            if (ownerMt && this.database && result.downInterfaces.length > 0) {
+              try {
+                const { MesswerteRepository } = await import('@alfred/storage');
+                const repo = new MesswerteRepository(this.database.getAdapter());
+                const jetzt = new Date().toISOString();
+                for (const iface of result.downInterfaces as string[]) {
+                  await repo.record(ownerMt, { entity: iface, wert: 1, text: 'down', zeit: jetzt, quelle: 'mikrotik-down' });
+                }
+              } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1173 MikroTik-Down-Historie nicht geschrieben'); }
+            }
             return { ok: true, zaehler: { downInterfaces: result.downInterfaces.length } };
           },
         });

@@ -116,6 +116,36 @@ describe('JobRegister', () => {
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ job: 'mikrotik', minuten: 5 }), expect.stringContaining('unter dem 10-min-Raster'));
   });
 
+  it('v1173: fällige Jobs laufen parallel — ein langsamer Job verzögert die anderen nicht', async () => {
+    const { reg } = makeRegister(() => um(10, 0));
+    const reihenfolge: string[] = [];
+    reg.registriere({ key: 'langsam', beschreibung: 'Test', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', run: async () => { await new Promise(r => setTimeout(r, 80)); reihenfolge.push('langsam'); return { ok: true }; } });
+    reg.registriere({ key: 'schnell', beschreibung: 'Test', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', run: async () => { reihenfolge.push('schnell'); return { ok: true }; } });
+    const t0 = Date.now();
+    await reg.tick();
+    expect(reihenfolge).toEqual(['schnell', 'langsam']);
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+
+  it('v1173: Zeitbudget überschritten → Warnung, kein Doppelstart beim nächsten Tick, nachträgliches Ende geloggt', async () => {
+    let now = um(10, 0);
+    const { reg, log } = makeRegister(() => now);
+    let freigeben!: () => void;
+    const run = vi.fn(async (_ctx: { userId: string | null }) => { await new Promise<void>(r => { freigeben = r; }); return { ok: true }; });
+    reg.registriere({ key: 'haengt', beschreibung: 'Test', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', timeoutMin: 0.001, run });
+    await reg.tick(now);
+    expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ job: 'haengt' }), expect.stringContaining('Zeitbudget überschritten'));
+    now = um(10, 10);
+    await reg.tick(now);
+    expect(run).toHaveBeenCalledTimes(1); // läuft noch → kein Doppelstart
+    freigeben();
+    await new Promise(r => setTimeout(r, 10));
+    expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ job: 'haengt' }), 'Lebenszeichen: Job nachträglich beendet');
+    now = um(10, 20);
+    await reg.tick(now);
+    expect(run).toHaveBeenCalledTimes(2); // nach dem Ende wieder frei
+  });
+
   it('global-Jobs laufen genau einmal ohne User; doppelte Schlüssel werden abgewiesen', async () => {
     const { reg } = makeRegister(() => um(10, 0));
     const run = vi.fn(async (_ctx: { userId: string | null }) => ({ ok: true }));

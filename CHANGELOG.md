@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1173] - 2026-10-05
+
+### Added — Jarvis Schicht 1, Quelle 4: MikroTik-Interfaces mit Historie; Register läuft parallel mit Zeitbudget (v1173)
+
+**Infrastruktur (`normalzustaende/infra.ts`).** Korrektur des Owners vom 15.04.: dauerhaft downe MikroTik-Interfaces sind unkritisch für IPv4 und kein Incident. Deterministisch heißt das: Bestand ist unkritisch, Neues ist das Signal.
+
+- Der Monitor-Job `mikrotik-monitor` schreibt je Lauf und downem Interface einen Punkt in die Zeitreihe (Quelle `mikrotik-down`).
+- Die MikroTik-Sektion des Reasoning-Kontexts deutet daraus: „down seit 15 Tagen ↳ Bestand, laut Korrektur nicht kritisch — NICHT melden", „down seit 3 Tagen ↳ bekannt, beobachten", „⚠️ NEU down seit 05.10. 02:30 → prüfen" (unter 24 Stunden). Eine Lücke von über zwei Stunden in der Historie beginnt eine neue Down-Phase. Ohne Down-Interfaces: „alle up ↳ NORMAL".
+- 4 Tests (`normalzustaende-infra.test.ts`).
+
+**Job-Register.** Realfall 05.10. 03:26: `cmdb-discovery` brauchte 50 Sekunden und verschob alle anderen Jobs des Ticks, weil der Tick die fälligen Jobs nacheinander ausführte. Ein hängender Job hätte das ganze Register blockiert.
+
+- Fällige Jobs eines Ticks laufen jetzt parallel.
+- Jeder Lauf hat ein Zeitbudget (`timeoutMin`, Standard 10 Minuten). Bei Überschreitung wird „Job fehlgeschlagen (Zeitbudget überschritten)" protokolliert; der Lauf bleibt als „läuft" markiert, bis er wirklich endet, damit kein Doppelstart entsteht, und das Ende wird nachträglich geloggt.
+- 2 Tests (parallel, Zeitbudget ohne Doppelstart).
+
 ## [0.19.0-jarvis.1172] - 2026-10-05
 
 ### Fixed — Monitor urteilt wie das Weltmodell: Batterie-Klassen und „neu nicht erreichbar" am Schreiber (v1172)

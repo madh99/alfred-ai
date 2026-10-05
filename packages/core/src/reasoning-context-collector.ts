@@ -679,8 +679,21 @@ export class ReasoningContextCollector {
         key: 'mikrotik', label: 'MikroTik Router', priority: 2, maxTokens: 200,
         fetch: async () => {
           const skill = this.skillRegistry.get('mikrotik') as any;
-          if (skill?.buildReasoningContext) return skill.buildReasoningContext();
-          return '(MikroTik: keine Daten)';
+          const roh: string = skill?.buildReasoningContext ? await skill.buildReasoningContext() : '(MikroTik: keine Daten)';
+          // v1173 — Jarvis Schicht 1: Down-Interfaces gedeutet (Bestand vs. neu) aus
+          // der Historie des Monitor-Jobs; ohne Historie bleibt der Rohtext.
+          if (!this.messwerteRepo) return roh;
+          try {
+            const uid = await this.getEffectiveUserId();
+            const aktuell = await this.messwerteRepo.letzteProEntity(uid, 'mikrotik-down', 1);
+            const { deuteMikrotik } = await import('./normalzustaende/infra.js');
+            const verlauf = aktuell.length
+              ? await this.messwerteRepo.verlaufMehrere(uid, aktuell.map(a => a.entity), new Date(Date.now() - 30 * 86_400_000).toISOString())
+              : [];
+            const d = deuteMikrotik({ aktuellDown: aktuell.map(a => a.entity), verlauf: verlauf.map(v => ({ entity: v.entity, zeit: v.zeit })), routerText: roh });
+            if (d.auffaellig.length) this.logger.info({ auffaellig: d.auffaellig }, 'v1173 Infra-Weltmodell: auffällig');
+            return d.zeilen.join('\n');
+          } catch (err) { this.logger.debug({ err }, 'v1173 MikroTik-Deutung fehlgeschlagen'); return roh; }
         },
       });
     }
