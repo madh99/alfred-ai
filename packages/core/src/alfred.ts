@@ -13573,8 +13573,27 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
                 }
               } catch (err) { this.logger.debug({ err: (err as Error).message, eid }, 'v1169 Messwert nicht erfasst'); }
             }
+            // v1171 — Sensorbatterien: alle sensor.* mit device_class=battery als Zeitreihe
+            // (Quelle homeassistant-battery). Name im Textfeld, „[unavailable]" markiert offline.
+            let batterien = 0;
+            try {
+              const alle = await ha.execute({ action: 'states', domain: 'sensor' }, ctx);
+              const liste = (Array.isArray(alle.data) ? alle.data : []) as Array<{ entity_id?: string; state?: string; last_changed?: string; attributes?: Record<string, unknown> }>;
+              for (const st of liste) {
+                if (!st.entity_id || st.attributes?.device_class !== 'battery') continue;
+                const name = typeof st.attributes?.friendly_name === 'string' ? st.attributes.friendly_name : st.entity_id;
+                const zahl = Number(String(st.state ?? '').replace(',', '.'));
+                const verfuegbar = st.state !== 'unavailable' && st.state !== 'unknown' && Number.isFinite(zahl);
+                await messwerteRepo.record(owner, {
+                  entity: st.entity_id, zeit: jetzt, einheit: '%', quelle: 'homeassistant-battery',
+                  wert: verfuegbar ? zahl : undefined,
+                  text: verfuegbar ? name : `${name} [unavailable]`,
+                });
+                batterien++;
+              }
+            } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1171 Sensorbatterien nicht erfasst'); }
             if (new Date().getHours() === 4) await messwerteRepo.aufraeumen(60).catch(() => 0);
-            return { ok: true, zaehler: { entities: entityIds.length, erfasst, numerisch, nachgeholt } };
+            return { ok: true, zaehler: { entities: entityIds.length, erfasst, numerisch, nachgeholt, batterien } };
           },
         });
       }

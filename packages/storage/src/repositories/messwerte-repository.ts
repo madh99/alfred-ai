@@ -41,6 +41,21 @@ export class MesswerteRepository {
     return out;
   }
 
+  /** Jüngster Messwert je Entität einer Quelle (z. B. alle Sensorbatterien) — ohne zusätzlichen HA-Aufruf. */
+  async letzteProEntity(userId: string, quelle: string, maxAlterStunden = 48): Promise<Messwert[]> {
+    const since = new Date(Date.now() - maxAlterStunden * 3600_000).toISOString();
+    const rows = await this.db.query(
+      `SELECT m.entity, m.wert, m.text, m.einheit, m.gemessen_at, m.quelle
+         FROM messwerte m
+         JOIN (SELECT entity, MAX(gemessen_at) AS t FROM messwerte WHERE user_id = ? AND quelle = ? AND gemessen_at >= ? GROUP BY entity) j
+           ON j.entity = m.entity AND j.t = m.gemessen_at
+        WHERE m.user_id = ? AND m.quelle = ?
+        ORDER BY m.entity`,
+      [userId, quelle, since, userId, quelle],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.map(r));
+  }
+
   async anzahl(userId: string, entity: string): Promise<number> {
     const row = await this.db.queryOne('SELECT COUNT(*) AS n FROM messwerte WHERE user_id = ? AND entity = ?', [userId, entity]) as { n?: number | string } | undefined;
     return Number(row?.n ?? 0);

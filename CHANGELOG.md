@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1171] - 2026-10-05
+
+### Added — Jarvis Schicht 1, Quelle 3: Sensorbatterien getrennt von Handys und Konfiguration (v1171)
+
+Realfall Mai bis August: „KRITISCHE BATTERIE-WARNUNGEN – SOFORT HANDELN!" als Insight, Incident und Erinnerung, wochenlang. Im Topf lagen Handys (SM-S928B 0 %, iPhones), der ESS-Mindest-SoC (15 %, Konfiguration) und echte Zigbee-Sensoren. Live stehen heute 32 Entitäten mit `device_class battery` in Home Assistant. Die Deutungsschicht (`normalzustaende/sensorbatterien.ts`) trennt deterministisch:
+
+- **Mobilgeräte** (iPhone, Watch, SM-S928B): eine Zeile „laden sich selbst, NICHT bewerten" (Korrektur SM-S928B).
+- **Konfiguration** (`soclimit`, `minimumsoc`): „Einstellwert, KEIN Ladestand" (Korrektur ESS 16.08.).
+- **Hausbatterie-SoC**: ausgelassen, gehört zur Energie-Deutung.
+- **Echte Sensorbatterien**: einzeln ab 50 % abwärts. Bis 5 % „leer, tauschen"; steht der Wert seit 3 Tagen unverändert bei 0 %, heißt es „vermutlich meldet der Sensor nicht mehr" (Realfall Terrasse-Temp). Bis 20 % „niedrig" mit Trend in %/Woche und Prognose bis leer. Darüber „NORMAL" mit Trend oder „Trend im Aufbau". Nicht erreichbare Sensoren werden mit letztem Zeitpunkt genannt. Alles über 50 % als „übrige ≥ N % NORMAL".
+- Der Sammler-Job erfasst zusätzlich alle Batterie-Sensoren als Zeitreihe (Quelle `homeassistant-battery`, Name im Textfeld, `[unavailable]` markiert offline). Der Smart-Home-Kontext liest den jüngsten Stand aus der Zeitreihe, ohne weiteren HA-Aufruf.
+- 5 Tests gegen die Live-Liste vom 05.10. (`normalzustaende-sensorbatterien.test.ts`).
+
 ## [0.19.0-jarvis.1170] - 2026-10-05
 
 ### Fixed — BMW-DB-Pfad des Reasoning-Collectors war seit Einführung tot (v1170)

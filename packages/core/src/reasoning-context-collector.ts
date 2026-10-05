@@ -1520,6 +1520,32 @@ export class ReasoningContextCollector {
       }
     } catch { /* skip */ }
 
+    // v1171 — Jarvis Schicht 1: Sensorbatterien gedeutet (aus der Zeitreihe des
+    // Sammlers, kein zusätzlicher HA-Aufruf): Mobilgeräte und Konfigurations-
+    // werte getrennt, echte Sensoren mit Trend — Realfall „KRITISCHE BATTERIE-
+    // WARNUNGEN" (Handys + ESS-Limit + Sensoren in einem Topf, wochenlang).
+    if (this.messwerteRepo) {
+      try {
+        const uid = await this.getEffectiveUserId();
+        const letzte = await this.messwerteRepo.letzteProEntity(uid, 'homeassistant-battery');
+        if (letzte.length > 0) {
+          const { deuteSensorbatterien, klassifiziere } = await import('./normalzustaende/sensorbatterien.js');
+          const sensoren = letzte.map(m => ({
+            entity: m.entity, name: (m.text ?? m.entity).replace(/ \[unavailable\]$/, ''), wert: m.wert, zeit: m.zeit,
+            verfuegbar: !(m.text ?? '').endsWith('[unavailable]') && m.wert !== undefined,
+          }));
+          const niedrige = sensoren.filter(x => klassifiziere(x.entity, x.name) === 'sensor' && (x.wert ?? 0) <= 50).map(x => x.entity);
+          const verlauf = niedrige.length ? await this.messwerteRepo.verlaufMehrere(uid, niedrige, new Date(Date.now() - 14 * 86_400_000).toISOString()) : [];
+          const d = deuteSensorbatterien({ sensoren, verlauf: verlauf.map(v => ({ entity: v.entity, wert: v.wert, zeit: v.zeit })) });
+          if (d) {
+            parts.push('Batterien (gedeutet):');
+            for (const z of d.zeilen) parts.push(`  ${z}`);
+            if (d.auffaellig.length) this.logger.info({ auffaellig: d.auffaellig }, 'v1171 Sensorbatterien-Weltmodell: auffällig');
+          }
+        }
+      } catch (err) { this.logger.debug({ err }, 'v1171 Sensorbatterien-Deutung fehlgeschlagen'); }
+    }
+
     // v1143 — J4: Anwesenheit als erste Zeile — deterministisches
     // Standort-Grounding statt im Tabellen-Rauschen verstecktem person.*-Status.
     const inhalt = parts.join('\n');
