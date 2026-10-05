@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1201] - 2026-10-05
+
+### Added — „Warum?" je Vorgang (v1201)
+
+Jeder Vorgang trägt dauerhaft die Begründung des Passes, aus dem er entstand: Art (Vollpass, Mini-Pass, Ereignis-Pass), Auslöser (geänderte Sektion mit erster Abweichung oder Zustandswechsel) und Gate-Aussetzungen. Migration SQLite 127 / PostgreSQL 131. Die Kachel Vorgänge zeigt die Zeile „Warum: …" unter dem Vorgang. 1 Test.
+
 ## [0.19.0-jarvis.1200] - 2026-10-05
 
 ### Added — Rücknahme-Hinweis für automatisch ausgeführte Aktionen (v1200)

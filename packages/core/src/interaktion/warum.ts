@@ -68,6 +68,15 @@ function zeitKurz(iso: string): string {
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}. ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/** v1201 — Einzeiler für den Vorgang: „Vollpass · Auslöser: cmdb: „2 offen" → „0 offen" · Gate ausgesetzt: …" */
+export function kurzBegruendung(b: Pick<PassBegruendung, 'art' | 'ausloeser' | 'gateAusgesetzt'> | undefined): string | undefined {
+  if (!b) return undefined;
+  const art = b.art === 'vollpass' ? 'Vollpass' : b.art === 'minipass' ? 'Mini-Pass' : 'Ereignis-Pass';
+  const teile = [art, b.ausloeser.length ? `Auslöser: ${b.ausloeser.join(' · ')}` : 'Vollpass nach Zeitablauf'];
+  if (b.gateAusgesetzt.length) teile.push(`Gate ausgesetzt: ${b.gateAusgesetzt.join(', ')}`);
+  return teile.join(' · ').slice(0, 400);
+}
+
 export function formatiereWarum(b: PassBegruendung | undefined): string {
   if (!b) return 'Dazu habe ich keine Begründung gespeichert — seit dem letzten Neustart wurde noch nichts proaktiv gemeldet.';
   const zeilen = [`**Warum die Meldung von ${zeitKurz(b.zeit)}?**`, `Art: ${ART_TEXT[b.art]}`];

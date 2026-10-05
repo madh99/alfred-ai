@@ -22,7 +22,7 @@ import type { ConfirmationQueue } from './confirmation-queue.js';
 import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
-import { WarumSpeicher, insightTitel, type PassBegruendung } from './interaktion/warum.js';
+import { WarumSpeicher, insightTitel, kurzBegruendung, type PassBegruendung } from './interaktion/warum.js';
 import { ruecknahmeHinweis } from './vorgaenge/ruecknahme.js';
 import { ReasoningContextCollector, spaetestesDatumImText, istInsightEcho, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
@@ -478,6 +478,7 @@ export class ReasoningEngine {
           userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
           kategorie: kategorieAus(insight), // v1195 — Weltmodell-Quellen statt Insight-Tracker-Liste
+          begruendung: kurzBegruendung(this.aktuelleBegruendung), // v1201
           dedupeKey: `insight:${this.insightTopicHash(insight)}`,
         });
         angelegt++;
@@ -502,6 +503,7 @@ export class ReasoningEngine {
           naechsterSchritt: autonomie === 'auto' ? 'ausführen' : autonomie === 'nie' ? 'nur manuell durch den Owner' : 'Bestätigung des Owners',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), // v1185 — ohne Frist blieben übersprungene Vorschläge ewig „offen"
           quelle: 'reasoning', autonomie, dedupeKey, kategorie: a.skillName, // v1186 — bei Aktionen bleibt der Skill die Kategorie
+          begruendung: kurzBegruendung(this.aktuelleBegruendung), // v1201
         });
         ids.set(a, v.id);
         await this.vorgaengeRepo.schritt({ vorgangId: v.id, userId, art: 'vorgeschlagen', skill: a.skillName, aktion: typeof a.skillParams?.action === 'string' ? a.skillParams.action : undefined, params: a.skillParams, beschreibung: a.description, autonomie, quelle: 'reasoning' });

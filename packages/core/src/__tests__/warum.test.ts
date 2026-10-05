@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { WarumSpeicher, istWarumFrage, insightTitel, formatiereWarum, WARUM_RING_GROESSE } from '../interaktion/warum.js';
+import { WarumSpeicher, istWarumFrage, insightTitel, formatiereWarum, kurzBegruendung, WARUM_RING_GROESSE } from '../interaktion/warum.js';
+
+// v1201 — Einzeiler am Vorgang
+describe('kurzBegruendung', () => {
+  it('Art, Auslöser und Gate in einer Zeile; ohne Begründung undefined', () => {
+    expect(kurzBegruendung({ art: 'vollpass', ausloeser: ['cmdb: „2 offen" → „0 offen"'], gateAusgesetzt: ['korrektur:bmw'] })).toBe('Vollpass · Auslöser: cmdb: „2 offen" → „0 offen" · Gate ausgesetzt: korrektur:bmw');
+    expect(kurzBegruendung({ art: 'minipass', ausloeser: ['haus: Tür offen'], gateAusgesetzt: [] })).toBe('Mini-Pass · Auslöser: haus: Tür offen');
+    expect(kurzBegruendung({ art: 'vollpass', ausloeser: [], gateAusgesetzt: [] })).toBe('Vollpass · Vollpass nach Zeitablauf');
+    expect(kurzBegruendung(undefined)).toBeUndefined();
+  });
+});
 
 // Jarvis Interaktion — „Warum?" liefert die Kette Daten → Deutung → Entscheidung ohne LLM.
 describe('istWarumFrage', () => {

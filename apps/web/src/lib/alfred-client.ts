@@ -3120,7 +3120,7 @@ export interface CliUsageGroupRow {
   costUsd: number;
 }
 // v1185 — Jarvis Schicht 3: Kachel Vorgänge
-export interface VorgangDto { id: string; titel: string; ziel?: string; besitzer: 'alfred' | 'user'; status: 'offen' | 'wartet' | 'erledigt' | 'verworfen'; naechsterSchritt?: string; frist?: string; quelle: string; ergebnis?: string; autonomie: 'auto' | 'bestaetigen' | 'nie'; kategorie?: string; erstellt: string; aktualisiert: string }
+export interface VorgangDto { id: string; titel: string; ziel?: string; besitzer: 'alfred' | 'user'; status: 'offen' | 'wartet' | 'erledigt' | 'verworfen'; naechsterSchritt?: string; frist?: string; quelle: string; ergebnis?: string; autonomie: 'auto' | 'bestaetigen' | 'nie'; kategorie?: string; begruendung?: string; erstellt: string; aktualisiert: string }
 export interface VorgangSchrittDto { id: string; vorgangId?: string; zeit: string; art: string; skill?: string; aktion?: string; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }
 export interface VorgaengeStatus { offene: VorgangDto[]; abgeschlossene: VorgangDto[]; schritte: VorgangSchrittDto[] }
 

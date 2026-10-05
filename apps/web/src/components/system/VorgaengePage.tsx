@@ -54,6 +54,7 @@ function VorgangZeile({ v, onEntscheid, busy }: { v: VorgangDto; onEntscheid: (i
         <div className="text-gray-200">{v.titel}</div>
         {v.naechsterSchritt && <div className="text-[11px] text-gray-500">nächster Schritt: {v.naechsterSchritt}</div>}
         {v.ergebnis && <div className="text-[11px] text-gray-500">Ergebnis: {v.ergebnis}</div>}
+        {v.begruendung && <div className="text-[11px] text-gray-600">Warum: {v.begruendung}</div>}
       </td>
       <td className="py-1.5 pr-3 text-gray-400">{v.besitzer === 'alfred' ? 'Alfred' : 'Owner'}</td>
       <td className="py-1.5 pr-3 text-gray-400">{AUTONOMIE_LABEL[v.autonomie] ?? v.autonomie}</td>

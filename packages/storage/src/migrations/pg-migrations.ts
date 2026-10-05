@@ -2156,4 +2156,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE vorgaenge ADD COLUMN IF NOT EXISTS kategorie TEXT', []);
     },
   },
+  {
+    version: 131,
+    description: 'v1201 — Jarvis Interaktion: vorgaenge.begruendung („Warum?" je Vorgang, dauerhaft) (PG-Spiegel zu SQLite v127).',
+    async up(db) {
+      await db.execute('ALTER TABLE vorgaenge ADD COLUMN IF NOT EXISTS begruendung TEXT', []);
+    },
+  },
 ];

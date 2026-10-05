@@ -2848,4 +2848,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE vorgaenge ADD COLUMN kategorie TEXT'); } catch { /* Spalte existiert bereits */ }
     },
   },
+  {
+    version: 127,
+    description: 'v1201 — Jarvis Interaktion: vorgaenge.begruendung („Warum?" je Vorgang, dauerhaft) (SQLite-Spiegel zu PG v131).',
+    up(db) {
+      try { db.exec('ALTER TABLE vorgaenge ADD COLUMN begruendung TEXT'); } catch { /* Spalte existiert bereits */ }
+    },
+  },
 ];

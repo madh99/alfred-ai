@@ -27,6 +27,8 @@ export interface Vorgang {
   dedupeKey?: string;
   /** v1186 — Kategorie (Insight-Kategorie bzw. Skill) für die Erledigungsquote je Kategorie. */
   kategorie?: string;
+  /** v1201 — „Warum?": Begründung des Passes, aus dem der Vorgang entstand (Art, Auslöser, Gate). */
+  begruendung?: string;
   erstellt: string;
   aktualisiert: string;
 }
@@ -95,9 +97,9 @@ export class VorgaengeRepository {
     }
     const id = randomUUID();
     await this.db.execute(
-      `INSERT INTO vorgaenge (id, user_id, titel, ziel, besitzer, status, naechster_schritt, frist, quelle, ergebnis, autonomie, dedupe_key, kategorie, erstellt, aktualisiert)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, v.userId, v.titel, v.ziel ?? null, v.besitzer, v.status, v.naechsterSchritt ?? null, v.frist ?? null, v.quelle, v.ergebnis ?? null, v.autonomie, v.dedupeKey ?? null, v.kategorie ?? null, jetzt, jetzt],
+      `INSERT INTO vorgaenge (id, user_id, titel, ziel, besitzer, status, naechster_schritt, frist, quelle, ergebnis, autonomie, dedupe_key, kategorie, begruendung, erstellt, aktualisiert)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, v.userId, v.titel, v.ziel ?? null, v.besitzer, v.status, v.naechsterSchritt ?? null, v.frist ?? null, v.quelle, v.ergebnis ?? null, v.autonomie, v.dedupeKey ?? null, v.kategorie ?? null, v.begruendung?.slice(0, 400) ?? null, jetzt, jetzt],
     );
     return { ...v, id, erstellt: jetzt, aktualisiert: jetzt };
   }
@@ -221,6 +223,7 @@ export class VorgaengeRepository {
       naechsterSchritt: (r.naechster_schritt as string | null) ?? undefined, frist: (r.frist as string | null) ?? undefined,
       quelle: r.quelle as string, ergebnis: (r.ergebnis as string | null) ?? undefined, autonomie: r.autonomie as Autonomie,
       kategorie: (r.kategorie as string | null) ?? undefined,
+      begruendung: (r.begruendung as string | null) ?? undefined,
       dedupeKey: (r.dedupe_key as string | null) ?? undefined, erstellt: r.erstellt as string, aktualisiert: r.aktualisiert as string,
     };
   }
