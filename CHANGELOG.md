@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1195] - 2026-10-05
+
+### Changed — Vorgangs-Kategorien entlang der Weltmodell-Quellen (v1195)
+
+Die Erledigungsquote je Kategorie aus .1186 nutzte die Stichwortliste des Insight-Trackers. Live am 05.10. landeten „9 unbeantwortete E-Mails" und „Kritische Systemfehler (Error-Rate)" unter `general`. Vorgänge aus Insights erhalten ihre Kategorie jetzt aus einer deterministischen Regelliste entlang der Weltmodell-Quellen: alfred (eigene Fehlerraten), itsm, bmw, energie, haus, infra, email, kalender, aufgaben, projekte, finanzen, social, reise, wetter, nachrichten, sonstiges. Die erste passende Regel gewinnt; Aktionsvorschläge behalten den Skill als Kategorie. Der Insight-Tracker selbst bleibt unverändert. 2 Tests.
+
 ## [0.19.0-jarvis.1194] - 2026-10-05
 
 ### Security — Sektions-Diff im Log nur für Infrastruktur (v1194)

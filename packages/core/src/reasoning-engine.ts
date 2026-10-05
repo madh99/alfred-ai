@@ -465,6 +465,7 @@ export class ReasoningEngine {
     if (!this.vorgaengeRepo || insights.length === 0) return;
     try {
       const { istHandlungsInsight, vorgangTitelAus, istGenerischerTitel } = await import('./vorgaenge/autonomie.js');
+      const { kategorieAus } = await import('./vorgaenge/kategorie.js');
       const userId = this.resolvedOwnerUserId || this.defaultChatId;
       let angelegt = 0;
       for (const insight of insights) {
@@ -474,7 +475,7 @@ export class ReasoningEngine {
         const v = await this.vorgaengeRepo.anlegen({
           userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
-          kategorie: InsightTracker.categorizeInsight(insight), // v1186
+          kategorie: kategorieAus(insight), // v1195 — Weltmodell-Quellen statt Insight-Tracker-Liste
           dedupeKey: `insight:${this.insightTopicHash(insight)}`,
         });
         angelegt++;
@@ -498,7 +499,7 @@ export class ReasoningEngine {
           userId, titel: a.description.slice(0, 200), besitzer: autonomie === 'auto' ? 'alfred' : 'user', status: 'offen',
           naechsterSchritt: autonomie === 'auto' ? 'ausführen' : autonomie === 'nie' ? 'nur manuell durch den Owner' : 'Bestätigung des Owners',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), // v1185 — ohne Frist blieben übersprungene Vorschläge ewig „offen"
-          quelle: 'reasoning', autonomie, dedupeKey, kategorie: a.skillName, // v1186
+          quelle: 'reasoning', autonomie, dedupeKey, kategorie: a.skillName, // v1186 — bei Aktionen bleibt der Skill die Kategorie
         });
         ids.set(a, v.id);
         await this.vorgaengeRepo.schritt({ vorgangId: v.id, userId, art: 'vorgeschlagen', skill: a.skillName, aktion: typeof a.skillParams?.action === 'string' ? a.skillParams.action : undefined, params: a.skillParams, beschreibung: a.description, autonomie, quelle: 'reasoning' });
