@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1193] - 2026-10-05
+
+### Changed — Rundgang: geänderte Sektionen zeigen, was sich geändert hat (v1193)
+
+Auch nach .1189 lief jeder 30-Minuten-Tick als Vollpass, um 20:00 wegen der Sektionen BMW und CMDB. Im Log stand nur, dass sie sich geändert hatten, nicht was. Die Änderungserkennung protokolliert jetzt je geänderter Sektion die erste fachlich abweichende Zeile (alt gegen neu, ohne relative Zeitangaben), für fachliche Sektionen auf Info-Ebene. Damit lässt sich am Log entscheiden, ob eine Änderung echt ist oder der Fingerabdruck noch eine volatile Darstellung übersieht. 1 Test.
+
 ## [0.19.0-jarvis.1192] - 2026-10-05
 
 ### Added — Kennzahlen der Schicht 2 und Daten-Probe für die Messwerte (v1192)

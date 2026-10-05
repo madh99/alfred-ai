@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { istRundgangOhneAenderung, VOLATILE_SEKTIONEN } from '../reasoning-engine.js';
-import { fachlicherFingerabdruck } from '../reasoning-context-collector.js';
+import { fachlicherFingerabdruck, ersteAbweichung } from '../reasoning-context-collector.js';
+
+// v1193 — zeigt die erste fachlich abweichende Zeile zweier Sektions-Inhalte
+describe('ersteAbweichung', () => {
+  it('relative Zeiten zählen nicht, fachliche Werte schon; fehlende Zeilen werden als leer verglichen', () => {
+    expect(ersteAbweichung('a (vor 3 min)\nSoC 30 %', 'a (vor 33 min)\nSoC 30 %')).toBeUndefined();
+    expect(ersteAbweichung('a\nSoC 30 %', 'a\nSoC 29 %')).toEqual({ alt: 'SoC 30 %', neu: 'SoC 29 %' });
+    expect(ersteAbweichung('a', 'a\n- neuer Incident')).toEqual({ alt: '', neu: '- neuer Incident' });
+  });
+});
 
 // v1179 — Live 12:01: bmw/cmdb/projects galten nur wegen „vor 23 min", „(2254 ms)", Uhrzeiten als geändert.
 describe('fachlicherFingerabdruck', () => {

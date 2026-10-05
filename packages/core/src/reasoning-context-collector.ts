@@ -81,6 +81,21 @@ export function fachlicherFingerabdruck(content: string): string {
     .trim();
 }
 
+/**
+ * v1193 — Beweis statt Vermutung: erste fachlich unterschiedliche Zeile zweier Sektions-
+ * Inhalte (Fingerabdruck je Zeile). Live 05.10.: cmdb/bmw galten jeden Tick als geändert,
+ * ohne dass sichtbar war, WAS sich änderte — der Rundgang kam nie zum Zug.
+ */
+export function ersteAbweichung(alt: string, neu: string): { alt: string; neu: string } | undefined {
+  const a = alt.split('\n'); const b = neu.split('\n');
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const za = a[i] ?? ''; const zb = b[i] ?? '';
+    if (fachlicherFingerabdruck(za) !== fachlicherFingerabdruck(zb)) return { alt: za.trim().slice(0, 160), neu: zb.trim().slice(0, 160) };
+  }
+  return undefined;
+}
+
 export function extrahiereAnwesenheit(haContent: string): string | null {
   const status: string[] = [];
   for (const zeile of haContent.split('\n')) {
@@ -605,6 +620,10 @@ export class ReasoningContextCollector {
       if (prev !== undefined && fachlicherFingerabdruck(prev) !== fachlicherFingerabdruck(section.content)) {
         section.changed = true;
         changedSections.push(section.key);
+        // v1193 — WAS hat sich geändert? (Beobachtung für den Rundgang; fachliche Sektionen auf info)
+        const abw = ersteAbweichung(prev, section.content);
+        const fachlich = ['cmdb', 'bmw', 'projects', 'calendar', 'email', 'smarthome', 'reminders', 'todos', 'watches', 'memories'].includes(section.key);
+        this.logger[fachlich ? 'info' : 'debug']({ sektion: section.key, ...(abw ?? { hinweis: 'nur Zeilenanzahl/Reihenfolge' }) }, 'v1193 Sektion geändert');
       }
       this.previousContent.set(section.key, section.content);
 
