@@ -261,12 +261,18 @@ export class ItsmRepository {
     );
     const all = (rows as any[]).map(rowToIncident);
 
+    // v1174 — Realfall 05.10.: „Low battery: Temp Terrasse Batterie at 0%" wurde
+    // über das einzige gemeinsame Wort „battery:" dem offenen Incident „Low
+    // battery: settings ess batterylife soclimit at 15%" (06.04.) zugeordnet —
+    // 180 Symptomzeilen am falschen Incident, der dadurch nie auto-resolven
+    // konnte. Ein Treffer braucht jetzt mindestens zwei gemeinsame Schlüssel-
+    // wörter (bei Quellen-Übereinstimmung) bzw. drei ohne.
     for (const inc of all) {
       const titleLower = inc.title.toLowerCase();
       const sourceMatch = titleLower.includes(sourceLabel.toLowerCase());
       const matchCount = titleKeywords.filter(kw => titleLower.includes(kw.toLowerCase())).length;
-      if (sourceMatch && matchCount >= 1) return inc;
-      if (matchCount >= Math.min(2, titleKeywords.length)) return inc;
+      if (sourceMatch && matchCount >= Math.min(2, titleKeywords.length)) return inc;
+      if (matchCount >= Math.min(3, titleKeywords.length)) return inc;
     }
     return null;
   }

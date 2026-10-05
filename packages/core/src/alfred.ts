@@ -7421,6 +7421,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         // Einführung des DB-Pfads: der Collector rief bei JEDEM Tick den BMW-Skill
         // (REST, 32×/Tag) statt die DB zu lesen — und das v1168-Weltmodell lief nie.
         try { (this.reasoningEngine as any)?.collector?.setBmwTelematicRepo?.(bmwTelematicRepo); } catch { /* Collector optional */ }
+        // v1174 — REST-Poll als sichtbarer Job. Befund 05.10.: die „REST alle 30 min"
+        // kamen nur aus dem toten DB-Pfad (jeder Tick rief den Skill); seit v1170
+        // gab es 6 h keine REST-Zeile. Jetzt bewusst, mit Lauf-Protokoll.
+        {
+          const bmwSkillRef = this.bmwSkill as unknown as { execute(input: Record<string, unknown>, ctx: unknown): Promise<{ success: boolean; error?: string }> };
+          this.registriereJob({
+            key: 'bmw-rest-poll', beschreibung: 'BMW REST-Telematik (SoC, Reichweite, km) — Datenbasis des Fahrzeug-Weltmodells', takt: { art: 'intervall', minuten: 30 }, bereich: 'global', startVerzoegerungMin: 2,
+            run: async () => {
+              const uid = this.tryOwner();
+              if (!uid) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+              const r = await bmwSkillRef.execute({ action: 'status' }, { userId: uid, masterUserId: uid, chatId: '', platform: 'api', conversationId: '' });
+              return r.success === false ? { ok: false, fehler: String(r.error ?? 'status fehlgeschlagen').slice(0, 200) } : { ok: true };
+            },
+          });
+        }
         if (!(this.reasoningEngine as any)?.collector) this.logger.warn('v1170 BMW-Telematic-Repo: Reasoning-Collector noch nicht vorhanden — DB-Pfad bleibt aus');
       }
       // BMW MQTT streaming is started in start() after AdapterClaimManager is available

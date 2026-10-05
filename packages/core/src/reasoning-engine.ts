@@ -146,6 +146,21 @@ export function istVorgangsbezogeneKorrektur(k: { key: string; value: string }):
   return /\b(beglichen|bezahlt|erledigt|abgeschlossen|behoben|ausgetauscht|getauscht|verlängert|resolved)\b/i.test(k.value);
 }
 
+/**
+ * v1174 — Jarvis Schicht 1, „Widersprüche entscheidbar": Meldet das Weltmodell
+ * für ein Objekt selbst eine Auffälligkeit (z. B. MQTT-Stream lieferte während
+ * einer Fahrt nichts), dann gilt die generische Unterdrückungs-Korrektur zu
+ * diesem Objekt („MQTT-Datenalter ist normal") für diesen Lauf NICHT — sie
+ * beschreibt den Normalfall (stehendes Fahrzeug), nicht den beobachteten
+ * Ausnahmefall. Deterministisch, modellunabhängig; nur Direkt-Objekt-Treffer.
+ */
+export function gateAusgesetztDurchWeltmodell(treffer: { key: string; grund: string } | null, auffaelligeObjekte: Iterable<string>): boolean {
+  if (!treffer || !treffer.grund.startsWith('direkt-objekt:')) return false;
+  const objekt = treffer.grund.slice('direkt-objekt:'.length);
+  for (const o of auffaelligeObjekte) if (o === objekt) return true;
+  return false;
+}
+
 export function findeVerletzteUnterdrueckungsKorrektur(
   insight: string,
   korrekturen: Array<{ key: string; value: string }>,
@@ -1476,8 +1491,14 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       // v1150 — beweisbar loggen: WELCHE Korrektur griff, WARUM, und genug Text.
       const t = findeVerletzteUnterdrueckungsKorrektur(insight, korrekturen);
       if (t) {
-        this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1148 insight durch User-Korrektur unterdrückt');
-        return true;
+        // v1174 — Weltmodell schlägt generische Korrektur: Auffälligkeit zum selben Objekt lässt die Meldung durch.
+        const auffaellig = (this.collector as unknown as { letzteAuffaelligeObjekte?: Set<string> }).letzteAuffaelligeObjekte ?? new Set<string>();
+        if (gateAusgesetztDurchWeltmodell(t, auffaellig)) {
+          this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1174 Gate ausgesetzt — Weltmodell meldet Auffälligkeit zum Objekt');
+        } else {
+          this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1148 insight durch User-Korrektur unterdrückt');
+          return true;
+        }
       }
     }
     // v1142 — H1: hartes INHALTLICHES Gate gegen die gelieferten Insight-Texte

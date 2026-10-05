@@ -1,5 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { istUnterdrueckungsAussage, kernwoerterAusKorrektur, verletztUnterdrueckungsKorrektur, findeVerletzteUnterdrueckungsKorrektur, annotiereKontextMitKorrekturen } from '../reasoning-engine.js';
+import { istUnterdrueckungsAussage, kernwoerterAusKorrektur, verletztUnterdrueckungsKorrektur, findeVerletzteUnterdrueckungsKorrektur, annotiereKontextMitKorrekturen, gateAusgesetztDurchWeltmodell } from '../reasoning-engine.js';
+
+// v1174 — Realfall 05.10.: Das BMW-Weltmodell meldet „MQTT-Stream lieferte während
+// der Fahrt nichts"; die generische MQTT-Korrektur („Datenalter ist normal") hat
+// die daraus entstehende Meldung trotzdem 3× am Tag geschluckt.
+describe('gateAusgesetztDurchWeltmodell', () => {
+  it('Direkt-Objekt-Treffer wird ausgesetzt, wenn das Weltmodell dasselbe Objekt als auffällig meldet', () => {
+    const treffer = { key: 'unterdruecke_mqtt_stream_fahrzeug', grund: 'direkt-objekt:mqtt' };
+    expect(gateAusgesetztDurchWeltmodell(treffer, new Set(['mqtt']))).toBe(true);
+    expect(gateAusgesetztDurchWeltmodell(treffer, new Set(['wallbox']))).toBe(false);
+    expect(gateAusgesetztDurchWeltmodell(treffer, [])).toBe(false);
+  });
+  it('Kernwörter-Treffer und Geräte-Kennungen bleiben unberührt; kein Treffer → false', () => {
+    expect(gateAusgesetztDurchWeltmodell({ key: 'x', grund: 'kernwoerter:aktuelle+soc-sensor' }, new Set(['mqtt', 'soc']))).toBe(false);
+    expect(gateAusgesetztDurchWeltmodell({ key: 'x', grund: 'geraete-kennung:sm-s928b' }, new Set(['sm-s928b']))).toBe(false);
+    expect(gateAusgesetztDurchWeltmodell(null, new Set(['mqtt']))).toBe(false);
+  });
+});
 
 // v1148 — Korrektur-Durchsetzung. Realfall: „BMW MQTT offline" wurde immer
 // wieder gemeldet, obwohl der User MEHRFACH erklärt hatte, dass der Stream nur

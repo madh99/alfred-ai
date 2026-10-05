@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1174] - 2026-10-05
+
+### Fixed — Morgen-Audit 05.10.: Weltmodell schlägt Korrektur, BMW-REST-Poll als Job, ITSM-Dedupe (v1174)
+
+Drei Funde aus dem ersten Vormittag mit Schicht 1 live.
+
+- **Widersprüche entscheidbar (Spec Schicht 1).** Das BMW-Weltmodell meldete ab 03:31 korrekt „MQTT-Stream lieferte während der Fahrt nichts". Die daraus entstandene Meldung hat das Korrektur-Gate dreimal am Tag geschluckt, weil die generische Korrektur „MQTT-Datenalter ist normal" auf das Objekt mqtt passt. Jetzt setzt eine vom Weltmodell im selben Lauf gemeldete Auffälligkeit die Direkt-Objekt-Korrektur zu diesem Objekt aus (`gateAusgesetztDurchWeltmodell`, Logzeile „v1174 Gate ausgesetzt"). Kernwort- und Geräte-Kennungs-Treffer bleiben unberührt. 2 Tests.
+- **BMW-REST-Poll als sichtbarer Job.** Die „REST alle 30 Minuten" der letzten Monate kamen nur aus dem toten DB-Pfad: jeder Reasoning-Tick rief den Skill. Seit v1170 gab es sechs Stunden lang keine REST-Zeile mehr, das Weltmodell meldete um 08:00 korrekt „REST-Abruf ausgefallen". Neuer Register-Job `bmw-rest-poll` alle 30 Minuten mit Lauf-Protokoll; die Datenbasis des Fahrzeug-Weltmodells ist damit bewusst statt zufällig.
+- **ITSM-Dedupe zu grob.** Der echte Sensor „Temp Terrasse Batterie 0 %" wurde über das einzige gemeinsame Wort „battery:" dem seit 06.04. offenen Incident „soclimit at 15%" zugeordnet: 180 Symptomzeilen am falschen Incident, der dadurch nie auto-resolven konnte. Ein Treffer braucht jetzt mindestens zwei gemeinsame Schlüsselwörter bei gleicher Quelle, drei ohne. Für Terrasse entsteht ein eigener, korrekter Incident; der soclimit-Incident wird nicht mehr bestätigt und läuft in die Auto-Recovery.
+
+Live-Beweise aus dem Audit: „206 unavailable entities" wurde um 05:00 auto-resolved (Monitor bestätigt seit v1172 nicht mehr). Alle 27 Register-Jobs liefen in der Nacht im Takt. Sammler erfasst 32 Batterie-Sensoren je 30 Minuten. Gate-Treffer: 03.10. 8, 04.10. 9, 05.10. bis 10 Uhr 5.
+
 ## [0.19.0-jarvis.1173] - 2026-10-05
 
 ### Added — Jarvis Schicht 1, Quelle 4: MikroTik-Interfaces mit Historie; Register läuft parallel mit Zeitbudget (v1173)

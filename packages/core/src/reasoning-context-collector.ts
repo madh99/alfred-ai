@@ -251,7 +251,11 @@ export class ReasoningContextCollector {
     return this.resolvedUserId;
   }
 
+  /** v1174 — Objekte, die das Weltmodell in diesem Lauf als auffällig meldet (setzt generische Unterdrückungs-Korrekturen aus). */
+  readonly letzteAuffaelligeObjekte = new Set<string>();
+
   async collect(): Promise<CollectedContext> {
+    this.letzteAuffaelligeObjekte.clear();
     // Resolve master user ID once per collect() for all memory lookups
     this.resolvedUserId = await this.getEffectiveUserId();
 
@@ -1331,6 +1335,7 @@ export class ReasoningContextCollector {
         verlauf,
       });
       if (!deutung) return '(Keine verwertbaren BMW-Daten)';
+      if (deutung.zustand.streamVerdacht) this.letzteAuffaelligeObjekte.add('mqtt');
       if (deutung.zustand.streamVerdacht || deutung.zustand.restAusgefallen) {
         this.logger.info({ streamVerdacht: deutung.zustand.streamVerdacht, restAusgefallen: deutung.zustand.restAusgefallen, letzteFahrtEnde: deutung.zustand.letzteFahrtEnde, mqttAlterMin: Math.round(deutung.zustand.mqttAlterMin ?? -1) }, 'v1168 BMW-Weltmodell: Datenquelle auffällig');
       }
