@@ -405,6 +405,8 @@ export class Alfred {
   private degradationsWaechter?: import('./lebenszeichen/degradations-waechter.js').DegradationsWaechter;
   private lebenszeichenRepo?: import('@alfred/storage').LebenszeichenRepository;
   private letzteProben: { zeit?: string; ergebnisse: import('./lebenszeichen/proben.js').ProbeErgebnis[] } = { ergebnisse: [] };
+  /** v1175 — Jarvis Schicht 2: beobachtet Deutungen und löst Mini-Pässe bei Zustandswechseln aus. */
+  private weltmodellBeobachter?: import('./ereignisse/zustandswechsel.js').WeltmodellBeobachter;
   /** v933 — Social-Media-Betrieb */
   private socialRepo?: import('@alfred/storage').SocialRepository;
   private socialSkillRef?: import('@alfred/skills').SocialSkill;
@@ -695,6 +697,15 @@ export class Alfred {
       // lade() erst nach den Migrationen (beim Register-Start) — v1163
       const puls = this.providerPuls;
       llmProvider.setPulsCallback((ev) => { puls.verarbeite(ev); });
+    }
+    // v1175 — Jarvis Schicht 2: Weltmodell-Beobachter. Jobs melden ihre Deutung,
+    // neue Auffälligkeiten lösen einen Mini-Pass der Reasoning-Engine aus.
+    {
+      const { WeltmodellBeobachter } = await import('./ereignisse/zustandswechsel.js');
+      this.weltmodellBeobachter = new WeltmodellBeobachter(this.logger.child({ component: 'weltmodell' }), async (e) => {
+        if (!this.reasoningEngine) { this.logger.debug({ quelle: e.quelle }, 'v1175 Mini-Pass: Reasoning-Engine noch nicht bereit'); return; }
+        await this.reasoningEngine.triggerMiniPass(e);
+      });
     }
     // v1165 — Job-Register FRÜH anlegen, damit jeder Job an seiner Wiring-Stelle
     // deklariert werden kann; start() erfolgt am Ende von initialize() (unbedingt).
@@ -7432,6 +7443,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const uid = this.tryOwner();
               if (!uid) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
               const r = await bmwSkillRef.execute({ action: 'status' }, { userId: uid, masterUserId: uid, chatId: '', platform: 'api', conversationId: '' });
+              // v1175 — Zustandswechsel des Fahrzeug-Weltmodells erkennen
+              try {
+                const { ladeBmwDeutung, bmwAuffaellig } = await import('./normalzustaende/bmw-lade.js');
+                const { deutung } = await ladeBmwDeutung(bmwTelematicRepo, uid);
+                if (deutung) await this.weltmodellBeobachter?.beobachte('bmw', { zeilen: deutung.zeilen, auffaellig: bmwAuffaellig(deutung) });
+              } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1175 BMW-Beobachtung fehlgeschlagen'); }
               return r.success === false ? { ok: false, fehler: String(r.error ?? 'status fehlgeschlagen').slice(0, 200) } : { ok: true };
             },
           });
@@ -7873,6 +7890,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                   await repo.record(ownerMt, { entity: iface, wert: 1, text: 'down', zeit: jetzt, quelle: 'mikrotik-down' });
                 }
               } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1173 MikroTik-Down-Historie nicht geschrieben'); }
+            }
+            // v1175 — Zustandswechsel (neu downes Interface) → Mini-Pass
+            if (ownerMt && this.database) {
+              try {
+                const { MesswerteRepository } = await import('@alfred/storage');
+                const { deuteMikrotik } = await import('./normalzustaende/infra.js');
+                const repo = new MesswerteRepository(this.database.getAdapter());
+                const down = result.downInterfaces as string[];
+                const verlauf = down.length ? await repo.verlaufMehrere(ownerMt, down, new Date(Date.now() - 30 * 86_400_000).toISOString()) : [];
+                const d = deuteMikrotik({ aktuellDown: down, verlauf: verlauf.map(v => ({ entity: v.entity, zeit: v.zeit })) });
+                await this.weltmodellBeobachter?.beobachte('mikrotik', d);
+              } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1175 MikroTik-Beobachtung fehlgeschlagen'); }
             }
             return { ok: true, zaehler: { downInterfaces: result.downInterfaces.length } };
           },
@@ -13621,6 +13650,26 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
                 batterien++;
               }
             } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1171 Sensorbatterien nicht erfasst'); }
+            // v1175 — Deutungen direkt nach der Erfassung: Zustandswechsel → Mini-Pass
+            try {
+              const { deuteEnergie } = await import('./normalzustaende/energie.js');
+              const { deuteSensorbatterien, klassifiziere } = await import('./normalzustaende/sensorbatterien.js');
+              const seit31 = new Date(Date.now() - 31 * 86_400_000).toISOString();
+              const aktuellEnergie = await messwerteRepo.letzteProEntity(owner, 'homeassistant', 1);
+              if (aktuellEnergie.length) {
+                const verlauf = await messwerteRepo.verlaufMehrere(owner, aktuellEnergie.map(a => a.entity), seit31);
+                const dE = deuteEnergie({ aktuell: aktuellEnergie.map(a => ({ entity: a.entity, wert: a.wert, text: a.wert === undefined ? a.text : undefined, einheit: a.einheit, zeit: a.zeit })), verlauf: verlauf.map(v => ({ entity: v.entity, wert: v.wert, text: v.text, einheit: v.einheit, zeit: v.zeit })) });
+                await this.weltmodellBeobachter?.beobachte('energie', dE);
+              }
+              const bat = await messwerteRepo.letzteProEntity(owner, 'homeassistant-battery', 1);
+              if (bat.length) {
+                const sensoren = bat.map(m => ({ entity: m.entity, name: (m.text ?? m.entity).replace(/ \[unavailable\]$/, ''), wert: m.wert, zeit: m.zeit, verfuegbar: !(m.text ?? '').endsWith('[unavailable]') && m.wert !== undefined }));
+                const niedrige = sensoren.filter(x => klassifiziere(x.entity, x.name) === 'sensor' && (x.wert ?? 0) <= 50).map(x => x.entity);
+                const verlaufB = niedrige.length ? await messwerteRepo.verlaufMehrere(owner, niedrige, new Date(Date.now() - 14 * 86_400_000).toISOString()) : [];
+                const dB = deuteSensorbatterien({ sensoren, verlauf: verlaufB.map(v => ({ entity: v.entity, wert: v.wert, zeit: v.zeit })) });
+                await this.weltmodellBeobachter?.beobachte('sensorbatterien', dB);
+              }
+            } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1175 Energie-/Batterie-Beobachtung fehlgeschlagen'); }
             if (new Date().getHours() === 4) await messwerteRepo.aufraeumen(60).catch(() => 0);
             return { ok: true, zaehler: { entities: entityIds.length, erfasst, numerisch, nachgeholt, batterien } };
           },

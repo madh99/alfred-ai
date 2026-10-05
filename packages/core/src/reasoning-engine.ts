@@ -325,6 +325,8 @@ const ACTION_MARKER = '---ACTIONS---';
 
 /** Cooldown between event-triggered reasoning passes (ms). */
 const EVENT_COOLDOWN_MS = 5 * 60 * 1000;
+/** v1175 — Mini-Pass je Quelle+Objekt höchstens alle 6 h. */
+const MINI_PASS_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 /** Marker separating scan findings from structured topic requests in scan response. */
 const TOPICS_MARKER = '---TOPICS---';
@@ -610,6 +612,56 @@ ${this.buildTopicInstructions()}`;
   }
 
   // ── Scheduling ──────────────────────────────────────────────
+
+  /**
+   * v1175 — Jarvis Schicht 2, Teil 1: Mini-Pass auf einen Zustandswechsel des
+   * Weltmodells. EIN LLM-Aufruf mit dem betroffenen Ausschnitt statt Vollkontext
+   * (Vollpass: ~5.000 Token Kontext + 2 Aufrufe). Je Quelle+Objekt höchstens
+   * alle 6 h, HA-dedupliziert. Die neu auffälligen Objekte setzen für diesen Lauf
+   * die generische Direkt-Objekt-Korrektur aus (v1174).
+   */
+  private readonly miniPassZuletzt = new Map<string, number>();
+  async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[] }): Promise<void> {
+    if (!this.enabled) return;
+    const key = `${ereignis.quelle}:${[...ereignis.objekte].sort().join('+')}`;
+    const now = Date.now();
+    const zuletzt = this.miniPassZuletzt.get(key) ?? 0;
+    if (now - zuletzt < MINI_PASS_COOLDOWN_MS) { this.logger.debug({ key }, 'v1175 Mini-Pass im Cooldown'); return; }
+    this.miniPassZuletzt.set(key, now);
+    if (this.adapter && this.adapter.type === 'postgres') {
+      const slotKey = `mini:${key}:${Math.floor(now / MINI_PASS_COOLDOWN_MS)}`.slice(0, 180);
+      const r = await this.adapter.execute('INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING', [slotKey, this.nodeId, new Date().toISOString()]).catch(() => ({ changes: 1 }));
+      if (r.changes === 0) return;
+    }
+    const start = Date.now();
+    try {
+      const korrekturen = await this.holeUnterdrueckungsKorrekturen();
+      const sektion = { key: ereignis.quelle, label: ereignis.quelle, content: ereignis.ausschnitt.join('\n') };
+      annotiereKontextMitKorrekturen({ sections: [sektion] }, korrekturen);
+      for (const o of ereignis.objekte) (this.collector as unknown as { letzteAuffaelligeObjekte?: Set<string> }).letzteAuffaelligeObjekte?.add(o);
+      const { baueMiniPassPrompt } = await import('./ereignisse/zustandswechsel.js');
+      const prompt = baueMiniPassPrompt({
+        beschreibung: ereignis.beschreibung, quelle: ereignis.quelle,
+        ausschnitt: sektion.content.split('\n'),
+        datum: new Date().toLocaleString('de-AT', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        korrekturen: korrekturen.map(k => k.value.slice(0, 200)),
+      });
+      const res = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 400, tier: this.tier });
+      const text = res.content.trim();
+      if (isNoInsights(text)) { this.logger.info({ quelle: ereignis.quelle, objekte: ereignis.objekte, dauerMs: Date.now() - start }, 'v1175 Mini-Pass: keine Meldung'); return; }
+      const parsed = this.parseReasoningResponse(text);
+      const neu: string[] = [];
+      for (const insight of parsed.insights) {
+        const fein = await this.filtereBulletsDurchKorrekturen(insight);
+        if (!fein) continue;
+        if (!await this.wasRecentlySent(fein)) neu.push(fein);
+      }
+      this.logger.info({ quelle: ereignis.quelle, objekte: ereignis.objekte, insights: neu.length, verworfen: parsed.insights.length - neu.length, dauerMs: Date.now() - start }, 'v1175 Mini-Pass gelaufen');
+      if (neu.length > 0 || parsed.actions.length > 0) await this.deliverOrDefer(neu, parsed.actions, 'high', Date.now() - start);
+    } catch (err) {
+      this.logger.warn({ err: (err as Error).message, quelle: ereignis.quelle }, 'v1175 Mini-Pass fehlgeschlagen');
+    }
+  }
 
   private shouldRun(): boolean {
     const now = new Date();

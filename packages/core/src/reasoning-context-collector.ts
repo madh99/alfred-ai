@@ -1310,30 +1310,15 @@ export class ReasoningContextCollector {
     }
     try {
       const uid = await this.getEffectiveUserId();
-      const mqtt = await this.bmwTelematicRepo.getLatestAnyVinBySource(uid, 'mqtt');
-      const rest = await this.bmwTelematicRepo.getLatestAnyVinBySource(uid, 'rest');
-      if (!mqtt && !rest) return '(Keine BMW-Daten in DB)';
-
-      // REST ist die Taktquelle (alle 30 min). Ist der letzte Abruf > 6 h alt, EIN
+      // v1175 — gemeinsamer Lader (Collector + Job bmw-rest-poll)
+      const { ladeBmwDeutung } = await import('./normalzustaende/bmw-lade.js');
+      const { deutung, restAlterMin } = await ladeBmwDeutung(this.bmwTelematicRepo, uid);
+      if (!deutung && restAlterMin === Infinity) return '(Keine BMW-Daten in DB)';
+      // REST ist die Taktquelle (Job alle 30 min). Ist der letzte Abruf > 6 h alt, EIN
       // Refresh über den Skill — danach liest der nächste Tick die frischen Zeilen.
-      const restAlterMin = rest ? (Date.now() - Date.parse(rest.createdAt)) / 60_000 : Infinity;
       if (restAlterMin > 360) {
         try { await this.fetchWithTimeout('bmw', { action: 'status' }, 20_000); } catch { /* rate limit/Fehler — mit Bestand weiterarbeiten */ }
       }
-
-      const vin = (mqtt ?? rest)!.vin;
-      const KM = 'vehicle.vehicle.travelledDistance';
-      const verlaufEintraege = await this.bmwTelematicRepo.getHistory(uid, vin, new Date(Date.now() - 7 * 86_400_000).toISOString(), new Date().toISOString(), 500).catch(() => []);
-      const verlauf = verlaufEintraege.map(e => {
-        const km = Number(e.telematicData[KM]?.value);
-        return { createdAt: e.createdAt, km: Number.isFinite(km) ? km : undefined, kmZeit: e.telematicData[KM]?.timestamp };
-      });
-      const { deuteBmw } = await import('./normalzustaende/bmw.js');
-      const deutung = deuteBmw({
-        mqtt: mqtt ? { source: 'mqtt', createdAt: mqtt.createdAt, data: mqtt.telematicData } : undefined,
-        rest: rest ? { source: 'rest', createdAt: rest.createdAt, data: rest.telematicData } : undefined,
-        verlauf,
-      });
       if (!deutung) return '(Keine verwertbaren BMW-Daten)';
       if (deutung.zustand.streamVerdacht) this.letzteAuffaelligeObjekte.add('mqtt');
       if (deutung.zustand.streamVerdacht || deutung.zustand.restAusgefallen) {

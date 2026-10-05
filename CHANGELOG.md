@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1175] - 2026-10-05
+
+### Added — Jarvis Schicht 2, Teil 1: Zustandswechsel des Weltmodells lösen Mini-Pässe aus (v1175)
+
+Erster Schritt der ereignisgetriebenen Wahrnehmung. Bisher denkt Alfred alle 30 Minuten über den Vollkontext (rund 5.000 Token, zwei LLM-Aufrufe) und nur bei Watch-Alarmen dazwischen. Jetzt ist jeder Zustandswechsel im Weltmodell ein Ereignis.
+
+- **Zustandswechsel-Erkenner** (`ereignisse/zustandswechsel.ts`): Je Quelle wird die Menge der auffälligen Objekte mit dem letzten Lauf verglichen. Der erste Lauf bildet die Baseline, Bestand ist kein Ereignis. Neue Auffälligkeiten lösen einen Mini-Pass aus, verschwundene werden nur protokolliert („v1175 Zustandswechsel im Weltmodell").
+- **Mini-Pass** (`ReasoningEngine.triggerMiniPass`): ein LLM-Aufruf mit dem betroffenen Ausschnitt des Weltmodells, dem Ereignis, dem Datum und den User-Korrekturen. Höchstens zwei Stichpunkte, nur zu ⚠️-Zeilen, sonst KEINE_INSIGHTS. Je Quelle und Objekt höchstens alle 6 Stunden, HA-dedupliziert. Die Zustellung läuft durch dieselben Gates wie der Vollpass; die neu auffälligen Objekte setzen die generische Korrektur aus (v1174). Modellunabhängig, da der Ausschnitt bereits deterministisch bewertet ist.
+- **Quellen angeschlossen**: `bmw-rest-poll` (Stream-Verdacht, REST-Ausfall, unverriegelt im Stand, offene Klappen, Reifendruck, niedriger SoC), `messwerte-sammler` (Energie und Sensorbatterien), `mikrotik-monitor` (neu downes Interface). Die Deutung passiert direkt nach der Erfassung, also bis zu 25 Minuten vor dem nächsten Vollpass.
+- Gemeinsamer BMW-Lader (`normalzustaende/bmw-lade.ts`) für Collector und Job, kein doppelter Code.
+- 6 Tests (`zustandswechsel.test.ts`): Baseline, neu/weg, nur neue Auffälligkeiten melden, Gate-Objekte, Prompt-Inhalt.
+
+Noch offen für Schicht 2: echte Echtzeit-Quellen (Home-Assistant-WebSocket für Zustandsänderungen, BMW-MQTT-Ereignisse wie Fahrtende) und die Verkleinerung des 30-Minuten-Vollpasses zum Rundgang.
+
 ## [0.19.0-jarvis.1174] - 2026-10-05
 
 ### Fixed — Morgen-Audit 05.10.: Weltmodell schlägt Korrektur, BMW-REST-Poll als Job, ITSM-Dedupe (v1174)
