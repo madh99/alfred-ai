@@ -79,9 +79,9 @@ export class HaEreignisQuelle {
     this.ws = undefined; this.verbunden = false;
   }
 
-  status(): { verbunden: boolean; reconnectFaelligAt?: string; ereignisse: number; letztesEreignisAt?: string } {
+  status(): { verbunden: boolean; reconnectFaelligAt?: string; ereignisse: number; nachrichten: number; letztesEreignisAt?: string } {
     const iso = (n?: number) => n ? new Date(n).toISOString() : undefined;
-    return { verbunden: this.verbunden, reconnectFaelligAt: iso(this.reconnectFaelligAt), ereignisse: this.ereignisse, letztesEreignisAt: iso(this.letztesEreignisAt) };
+    return { verbunden: this.verbunden, reconnectFaelligAt: iso(this.reconnectFaelligAt), ereignisse: this.ereignisse, nachrichten: this.nachrichten, letztesEreignisAt: iso(this.letztesEreignisAt) };
   }
 
   /** Wächter (10 min): hängt die Verbindung ohne geplanten Reconnect → neu verbinden. */
@@ -126,8 +126,12 @@ export class HaEreignisQuelle {
     }
   }
 
+  /** Alle empfangenen state_changed-Nachrichten (auch nicht relevante) — Beweis, dass das Abonnement liefert. */
+  nachrichten = 0;
+
   private async nachricht(roh: string): Promise<void> {
     this.letztesEreignisAt = Date.now();
+    if (roh.includes('"state_changed"')) this.nachrichten++;
     const r = verarbeiteNachricht(roh, this.letzte);
     if (r.art === 'auth_required') { this.ws?.send(JSON.stringify({ type: 'auth', access_token: this.deps.accessToken })); return; }
     if (r.art === 'auth_ok') {
@@ -137,6 +141,11 @@ export class HaEreignisQuelle {
       return;
     }
     if (r.art === 'auth_invalid') { this.deps.logger.warn({}, 'v1177 HA-Ereignisse: Token abgelehnt'); this.ws?.close(); return; }
+    if (r.art === 'sonst' && roh.includes('"type":"result"')) {
+      // v1178 — Antwort auf subscribe_events sichtbar machen (Beweis, dass das Abonnement steht)
+      try { const m = JSON.parse(roh) as { id?: number; success?: boolean; error?: { code?: string; message?: string } }; this.deps.logger[m.success ? 'info' : 'warn']({ id: m.id, success: m.success, error: m.error }, 'v1178 HA-Ereignisse: Antwort auf Abonnement'); } catch { /* egal */ }
+      return;
+    }
     if (r.art !== 'ereignis' || !r.ereignis) return;
     const key = `${r.ereignis.entity.entity_id}:${r.ereignis.entity.state}`;
     const z = this.zuletztGemeldet.get(key) ?? 0;

@@ -147,6 +147,23 @@ export function istVorgangsbezogeneKorrektur(k: { key: string; value: string }):
 }
 
 /**
+ * v1178 — Rundgang-Regel (rein, testbar). Volatile Sektionen ändern sich bei jedem
+ * Tick, ohne dass es etwas zu denken gäbe: Aktivitätslog, Skill-Status, Insight-
+ * Tracking, Feedback-Zähler, Trends, Wetter, Preise, Krypto. Fachlich sind alle
+ * anderen (Kalender, Todos, Mails, Smart Home, BMW, CMDB, Feeds, Memories …).
+ * Der Vollpass läuft, wenn eine fachliche Sektion geändert ist, beim ersten Tick
+ * nach dem Start oder spätestens 2 h nach dem letzten Vollpass.
+ */
+export const VOLATILE_SEKTIONEN = new Set(['activity', 'skillHealth', 'insightTracking', 'feedback', 'action_feedback', 'trends', 'weather', 'energy', 'crypto', 'infra']);
+export const VOLLPASS_SPAETESTENS_MIN = 120;
+export function istRundgangOhneAenderung(changedSections: string[], letzterVollpassAt: number, now: number): { ueberspringen: boolean; fachlich: string[]; seitVollpassMin: number } {
+  const fachlich = changedSections.filter(k => !VOLATILE_SEKTIONEN.has(k));
+  const seitVollpassMin = letzterVollpassAt > 0 ? Math.round((now - letzterVollpassAt) / 60_000) : Infinity;
+  const ueberspringen = fachlich.length === 0 && letzterVollpassAt > 0 && seitVollpassMin < VOLLPASS_SPAETESTENS_MIN;
+  return { ueberspringen, fachlich, seitVollpassMin };
+}
+
+/**
  * v1174 — Jarvis Schicht 1, „Widersprüche entscheidbar": Meldet das Weltmodell
  * für ein Objekt selbst eine Auffälligkeit (z. B. MQTT-Stream lieferte während
  * einer Fahrt nichts), dann gilt die generische Unterdrückungs-Korrektur zu
@@ -621,6 +638,9 @@ ${this.buildTopicInstructions()}`;
    * die generische Direkt-Objekt-Korrektur aus (v1174).
    */
   private readonly miniPassZuletzt = new Map<string, number>();
+  /** v1178 — Rundgang: Zeitpunkt des letzten Vollpasses und Zahl der seither übersprungenen Ticks. */
+  private letzterVollpassAt = 0;
+  private rundgaengeOhneVollpass = 0;
   async triggerMiniPass(ereignis: { quelle: string; beschreibung: string; ausschnitt: string[]; objekte: string[]; cooldownMin?: number }): Promise<void> {
     if (!this.enabled) return;
     const key = `${ereignis.quelle}:${[...ereignis.objekte].sort().join('+')}`;
@@ -813,6 +833,21 @@ ${this.buildTopicInstructions()}`;
       const context = await this.collector.collect();
       await this.enrichWithKnowledgeGraph(context);
       await this.wendeKorrekturenAufKontextAn(context);
+
+      // v1178 — Jarvis Schicht 2: der 30-min-Tick ist ein RUNDGANG. Hat sich seit
+      // dem letzten Vollpass keine fachliche Quelle geändert (nur Aktivität, Skill-
+      // Status, Preise, Wetter …), entfällt der Vollpass (2 LLM-Aufrufe, ~5.000
+      // Token) — spätestens alle 2 h läuft er trotzdem. Zustandswechsel und
+      // Echtzeit-Ereignisse kommen ohnehin über Mini-Pässe.
+      const rundgang = istRundgangOhneAenderung(context.changedSections, this.letzterVollpassAt, Date.now());
+      if (rundgang.ueberspringen) {
+        this.rundgaengeOhneVollpass++;
+        this.logger.info({ geaendert: context.changedSections, seitVollpassMin: rundgang.seitVollpassMin, uebersprungen: this.rundgaengeOhneVollpass }, 'v1178 Rundgang: keine fachliche Änderung — Vollpass übersprungen');
+        return;
+      }
+      this.letzterVollpassAt = Date.now();
+      this.logger.info({ fachlichGeaendert: rundgang.fachlich, seitVollpassMin: rundgang.seitVollpassMin, rundgaengeUebersprungen: this.rundgaengeOhneVollpass }, 'v1178 Vollpass läuft');
+      this.rundgaengeOhneVollpass = 0;
 
       // PHASE 2: Scan-Pass — quick check for concerns/opportunities
       const scanPrompt = this.buildScanPrompt(context);

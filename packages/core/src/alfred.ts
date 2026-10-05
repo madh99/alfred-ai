@@ -13730,7 +13730,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const quelle = this.haEreignisQuelle;
         this.registriereJob({
           key: 'ha-ereignisse-watchdog', beschreibung: 'Home-Assistant-WebSocket: Verbindung prüfen, Hänger neu verbinden', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 5,
-          run: async () => { const u = quelle.ensureConnected(); const st = quelle.status(); return { ok: true, zaehler: { neustart: u === 'neustart' ? 1 : 0, verbunden: st.verbunden ? 1 : 0, ereignisse: st.ereignisse } }; },
+          run: async () => { const u = quelle.ensureConnected(); const st = quelle.status(); return { ok: true, zaehler: { neustart: u === 'neustart' ? 1 : 0, verbunden: st.verbunden ? 1 : 0, ereignisse: st.ereignisse, nachrichten: st.nachrichten } }; },
         });
       }
       // v1161 — Register starten: registriert-Logzeilen sind oben gefallen, der

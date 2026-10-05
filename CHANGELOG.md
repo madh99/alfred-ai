@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1178] - 2026-10-05
+
+### Changed — Jarvis Schicht 2: der 30-Minuten-Tick wird zum Rundgang (v1178)
+
+Live 05.10.: Jeder Tick lief als Vollpass mit zwei LLM-Aufrufen über rund 5.000 Token, 50 bis 85 Sekunden, 3 bis 10 Insights, auch wenn sich seit dem letzten Mal nur Aktivitätslog, Skill-Status, Strompreis oder Wetter geändert hatten. Mit Mini-Pässen für Zustandswechsel (v1175) und Echtzeit-Ereignissen (v1177) ist der Vollpass nur noch dann nötig, wenn eine fachliche Quelle etwas Neues hat.
+
+- **Rundgang-Regel** (`istRundgangOhneAenderung`, rein): Volatile Sektionen zählen nicht als Änderung (Aktivität, Skill-Status, Insight-Tracking, Feedback, Trends, Wetter, Energiepreise, Krypto, Infra-Monitor). Hat sich keine fachliche Sektion geändert, entfällt der Vollpass; spätestens zwei Stunden nach dem letzten Vollpass läuft er trotzdem, und beim ersten Tick nach einem Start immer.
+- Logzeilen „v1178 Vollpass läuft" (mit den fachlich geänderten Sektionen) und „v1178 Rundgang: keine fachliche Änderung — Vollpass übersprungen" (mit Zähler) machen das Verhältnis Rundgang zu Vollpass zur Kennzahl aus der Spec.
+- Deferred-Zustellung, Slot-Dedup und Aufräumen laufen im Rundgang weiter.
+- HA-Ereignisquelle: Antwort auf das Abonnement wird geloggt, die Zahl empfangener `state_changed`-Nachrichten steht im Wächter-Lauf (`nachrichten`).
+- 5 Tests (`rundgang.test.ts`).
+
 ## [0.19.0-jarvis.1177] - 2026-10-05
 
 ### Added — Jarvis Schicht 2, Teil 2: Home Assistant in Echtzeit — Haus-Weltmodell und Ereignisse (v1177)
