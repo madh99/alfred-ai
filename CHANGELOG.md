@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1186] - 2026-10-05
+
+### Added — Jarvis Schicht 4, Teil 2 (beobachtend): Entscheidung des Owners, Erledigungsquote je Kategorie (v1186)
+
+Die Spezifikation verlangt je proaktiver Nachricht ein Ergebnis-Signal (Reaktion, Erledigung, Ignorieren). Die Datenbank der Insights liefert es nicht: Dort landen fast nur Themen-Artikel und stille Ablagen, die gesendeten Reasoning-Insights hinterlassen keine Statusspur. Das Signal entsteht jetzt an den Vorgängen.
+
+- Kachel Vorgänge: jeder offene Vorgang kann vom Owner als erledigt oder verworfen entschieden werden (`POST /api/vorgaenge/:id/entscheidung`). Die Entscheidung wird als Schritt im Ausführungsgedächtnis festgehalten (Quelle Owner).
+- Jeder Vorgang trägt eine Kategorie: bei Handlungs-Insights die Insight-Kategorie (Energie, Fahrzeug, Kalender, …), bei Aktionsvorschlägen der Skill. Migration SQLite 126 / PostgreSQL 130.
+- Die Lern-Telemetrie berichtet die Erledigungsquote je Kategorie über 28 Tage und markiert Kategorien unter 25 Prozent bei mindestens vier Entscheidungen als Kandidat für den Digest-Modus. Konsequenzen werden noch nicht gezogen; das braucht die Freigabe des Owners für die Regel.
+- 1 Test.
+
+### Fixed — Vorgangstitel aus Markdown-Überschriften (v1186)
+
+Live 05.10. 12:31: „### **1. 🔴 Handlungsbedarf: Kritische Systemfehler …**" behielt Nummer, Emoji und das Präfix „Handlungsbedarf:" im Titel, weil die Nummer erst nach Markdown und Emoji folgt. Markdown wird zuerst entfernt, dann Emoji, Nummer und generische Präfixe. 2 Tests.
+
 ## [0.19.0-jarvis.1185] - 2026-10-05
 
 ### Added — Kachel Vorgänge (v1185)

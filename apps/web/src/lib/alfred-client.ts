@@ -1627,6 +1627,14 @@ export class AlfredClient {
   }
 
   // v866 — Globale CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt vom Alfred-Usage-Tracking)
+  /** v1186 — Entscheidung des Owners zu einem Vorgang */
+  async entscheideVorgang(id: string, status: 'erledigt' | 'verworfen', notiz?: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/vorgaenge/${encodeURIComponent(id)}/entscheidung`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ status, notiz }),
+    });
+    if (!res.ok) throw new Error(`Vorgang: HTTP ${res.status}`);
+  }
+
   /** v1185 — Kachel Vorgänge */
   async fetchVorgaenge(): Promise<VorgaengeStatus | null> {
     const res = await fetch(`${this.baseUrl}/api/vorgaenge`, { headers: this.authHeaders });
@@ -3112,7 +3120,7 @@ export interface CliUsageGroupRow {
   costUsd: number;
 }
 // v1185 — Jarvis Schicht 3: Kachel Vorgänge
-export interface VorgangDto { id: string; titel: string; ziel?: string; besitzer: 'alfred' | 'user'; status: 'offen' | 'wartet' | 'erledigt' | 'verworfen'; naechsterSchritt?: string; frist?: string; quelle: string; ergebnis?: string; autonomie: 'auto' | 'bestaetigen' | 'nie'; erstellt: string; aktualisiert: string }
+export interface VorgangDto { id: string; titel: string; ziel?: string; besitzer: 'alfred' | 'user'; status: 'offen' | 'wartet' | 'erledigt' | 'verworfen'; naechsterSchritt?: string; frist?: string; quelle: string; ergebnis?: string; autonomie: 'auto' | 'bestaetigen' | 'nie'; kategorie?: string; erstellt: string; aktualisiert: string }
 export interface VorgangSchrittDto { id: string; vorgangId?: string; zeit: string; art: string; skill?: string; aktion?: string; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }
 export interface VorgaengeStatus { offene: VorgangDto[]; abgeschlossene: VorgangDto[]; schritte: VorgangSchrittDto[] }
 

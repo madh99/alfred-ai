@@ -897,6 +897,9 @@ export class HttpAdapter extends MessagingAdapter {
   /** v1185 — Kachel Vorgänge */
   private vorgaengeCallback?: () => Promise<Record<string, unknown>>;
   setVorgaengeCallback(cb: typeof HttpAdapter.prototype.vorgaengeCallback): void { this.vorgaengeCallback = cb; }
+  /** v1186 — Entscheidung des Owners zu einem Vorgang */
+  private vorgangEntscheidungCallback?: (id: string, status: 'erledigt' | 'verworfen', notiz?: string) => Promise<unknown>;
+  setVorgangEntscheidungCallback(cb: typeof HttpAdapter.prototype.vorgangEntscheidungCallback): void { this.vorgangEntscheidungCallback = cb; }
 
   async connect(): Promise<void> {
     this.status = 'connecting';
@@ -1785,6 +1788,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleLebenszeichen(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {
       this.handleVorgaenge(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/vorgaenge\/[^/]+\/entscheidung$/) && req.method === 'POST') {
+      this.handleVorgangEntscheidung(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/cli-usage' && req.method === 'GET') {
       // v866 — CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt von llm_usage)
       this.handleCliUsage(req, res, url).catch(err => this.safeError(res, err));
@@ -6292,6 +6297,21 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v866 — CLI-Agent-Usage-Übersicht: ?days=30 (0/fehlend = alles). */
+  /** v1186 — POST /api/vorgaenge/:id/entscheidung { status: 'erledigt' | 'verworfen', notiz? } */
+  private async handleVorgangEntscheidung(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.vorgangEntscheidungCallback) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'vorgaenge not available' })); return; }
+    const id = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let status = ''; let notiz: string | undefined;
+    try { const j = JSON.parse(body); status = String(j.status ?? ''); notiz = typeof j.notiz === 'string' && j.notiz.trim() ? j.notiz.trim().slice(0, 500) : undefined; } catch { /* invalid */ }
+    if (status !== 'erledigt' && status !== 'verworfen') { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'status erledigt|verworfen required' })); return; }
+    const v = await this.vorgangEntscheidungCallback(id, status, notiz);
+    if (!v) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'vorgang not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, vorgang: v }));
+  }
+
   /** v1185 — Vorgänge (offen, abgeschlossen 7 d, Schritte 14 d). */
   private async handleVorgaenge(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;

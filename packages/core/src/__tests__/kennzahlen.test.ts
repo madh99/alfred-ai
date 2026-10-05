@@ -1,5 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { Kennzahlen, berechneQuoten, formatiereKennzahlen, summiereKennzahlMesswerte, SCHRITT_ZU_KENNZAHL, KENNZAHL_NAMEN } from '../kennzahlen/kennzahlen.js';
+import { Kennzahlen, berechneQuoten, formatiereKennzahlen, summiereKennzahlMesswerte, formatiereErledigungJeKategorie, SCHRITT_ZU_KENNZAHL, KENNZAHL_NAMEN } from '../kennzahlen/kennzahlen.js';
+
+// v1186 — Erledigungsquote je Kategorie, Kandidaten nur markiert (beobachtend)
+describe('formatiereErledigungJeKategorie', () => {
+  it('markiert Kategorien unter 25 % Erledigung erst ab 4 abgeschlossenen Vorgängen', () => {
+    const z = formatiereErledigungJeKategorie([
+      { kategorie: 'energy', angelegt: 6, erledigt: 0, verworfen: 5, offen: 1 },
+      { kategorie: 'vehicle', angelegt: 3, erledigt: 0, verworfen: 2, offen: 1 },
+      { kategorie: 'itsm', angelegt: 4, erledigt: 3, verworfen: 1, offen: 0 },
+      { kategorie: 'general', angelegt: 2, erledigt: 0, verworfen: 0, offen: 2 },
+    ], 28);
+    expect(z[0]).toContain('28 Tage');
+    expect(z[1]).toBe('- energy: 0/5/1 · Quote 0 % → Kandidat Digest-Modus');
+    expect(z[2]).toBe('- vehicle: 0/2/1 · Quote 0 %');
+    expect(z[3]).toBe('- itsm: 3/1/0 · Quote 75 %');
+    expect(z[4]).toBe('- general: 0/0/2');
+    expect(formatiereErledigungJeKategorie([], 28)).toEqual([]);
+  });
+});
 
 // Jarvis Schicht 4 — Messen & Lernen, Teil 1.
 describe('Kennzahlen (Zähler)', () => {

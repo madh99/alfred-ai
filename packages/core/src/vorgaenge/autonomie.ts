@@ -99,7 +99,16 @@ export function istHandlungsInsight(text: string): boolean {
 
 /** Kurzer Titel aus einem Insight-Text (erste Zeile, ohne Nummerierung/Markdown). */
 export function vorgangTitelAus(insight: string): string {
-  return insight.split('\n')[0].replace(/^\s*\d+\.\s*/, '').replace(/\*\*/g, '').replace(/\[(?:HIGH|URGENT|NORMAL|LOW|MEDIUM|KRITISCH|DRINGEND)\]\s*/gi, '').replace(/^[^\p{L}\p{N}]+/u, '').trim().slice(0, 160);
+  // v1186 — Live 05.10.: „### **1. 🔴 Handlungsbedarf: Kritische Systemfehler …**" behielt
+  // „1. 🔴 Handlungsbedarf:" im Titel, weil die Nummer erst nach Markdown/Emoji kommt.
+  return insight.split('\n')[0]
+    .replace(/\*\*|__|`/g, '')
+    .replace(/\[(?:HIGH|URGENT|NORMAL|LOW|MEDIUM|KRITISCH|DRINGEND)\]\s*/gi, '')
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .replace(/^\d+[.)]\s*/, '')
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .replace(/^(?:handlungsbedarf|hinweis|achtung|wichtig|dringend|empfehlung)\s*:\s*/i, '')
+    .trim().slice(0, 160);
 }
 
 export function autonomieText(a: Autonomie): string {

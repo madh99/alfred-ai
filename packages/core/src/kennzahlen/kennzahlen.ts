@@ -118,6 +118,30 @@ export function formatiereKennzahlen(summen: Partial<Record<KennzahlName, number
   ];
 }
 
+export interface KategorieErledigung { kategorie: string; angelegt: number; erledigt: number; verworfen: number; offen: number }
+
+/** Unter dieser Erledigungsquote gilt eine Kategorie als Kandidat für den Digest-Modus (Schicht 4, Konsequenz später). */
+export const DIGEST_KANDIDAT_QUOTE = 0.25;
+/** Erst ab so vielen abgeschlossenen Vorgängen ist die Quote aussagekräftig. */
+export const DIGEST_KANDIDAT_MIN_ABGESCHLOSSEN = 4;
+
+/**
+ * v1186 — Erledigungsquote je Kategorie. Quote = erledigt / (erledigt + verworfen);
+ * offene zählen nicht (noch keine Entscheidung). Kandidaten werden NUR markiert
+ * (beobachtend) — die Konsequenz braucht die Freigabe des Owners.
+ */
+export function formatiereErledigungJeKategorie(rows: KategorieErledigung[], tage: number): string[] {
+  if (rows.length === 0) return [];
+  const zeilen = [`Erledigung je Kategorie (${tage} Tage, erledigt/verworfen/offen):`];
+  for (const r of rows) {
+    const abgeschlossen = r.erledigt + r.verworfen;
+    const quote = abgeschlossen > 0 ? r.erledigt / abgeschlossen : undefined;
+    const kandidat = quote !== undefined && abgeschlossen >= DIGEST_KANDIDAT_MIN_ABGESCHLOSSEN && quote < DIGEST_KANDIDAT_QUOTE;
+    zeilen.push(`- ${r.kategorie}: ${r.erledigt}/${r.verworfen}/${r.offen}${quote === undefined ? '' : ` · Quote ${Math.round(quote * 100)} %`}${kandidat ? ' → Kandidat Digest-Modus' : ''}`);
+  }
+  return zeilen;
+}
+
 /** Messwert-Zeilen (entity → wert) aus Summen je Kennzahl aufbauen. */
 export function summiereKennzahlMesswerte(rows: Array<{ entity: string; wert?: number }>): Partial<Record<KennzahlName, number>> {
   const out: Partial<Record<KennzahlName, number>> = {};

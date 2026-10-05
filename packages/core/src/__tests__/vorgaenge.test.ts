@@ -31,6 +31,9 @@ describe('istHandlungsInsight / vorgangTitelAus', () => {
   });
   it('Titel ohne Nummer, Markdown und Emoji-Präfix', () => {
     expect(vorgangTitelAus('4. **🚗 [HIGH] BMW MQTT-Stream seit 03.10. ohne Daten**\nDetails …')).toBe('BMW MQTT-Stream seit 03.10. ohne Daten');
+    // v1186 — Live 05.10. 12:31: Markdown-Überschrift, Nummer nach Emoji, generisches Präfix
+    expect(vorgangTitelAus('### **1. 🔴 Handlungsbedarf: Kritische Systemfehler – E-Mail & Dateizugriff**\n**E-Mail-Error-Rate bei 50%**')).toBe('Kritische Systemfehler – E-Mail & Dateizugriff');
+    expect(vorgangTitelAus('4. **⚠️ Proxmox-Server `git-server` RAM-Auslastung 95,1%**')).toBe('Proxmox-Server git-server RAM-Auslastung 95,1%');
   });
 });
 import { formatiereGedaechtnis } from '../vorgaenge/ausfuehrungsgedaechtnis.js';

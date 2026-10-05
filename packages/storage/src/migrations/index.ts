@@ -2841,4 +2841,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_vorgang_schritte_user_zeit ON vorgang_schritte(user_id, zeit)`);
     },
   },
+  {
+    version: 126,
+    description: 'v1186 — Jarvis Schicht 4: vorgaenge.kategorie für Erledigungsquote je Kategorie (SQLite-Spiegel zu PG v130).',
+    up(db) {
+      try { db.exec('ALTER TABLE vorgaenge ADD COLUMN kategorie TEXT'); } catch { /* Spalte existiert bereits */ }
+    },
+  },
 ];

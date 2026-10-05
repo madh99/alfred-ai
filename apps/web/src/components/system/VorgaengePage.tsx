@@ -46,7 +46,7 @@ function artFarbe(art: string): string {
   return 'text-gray-400';
 }
 
-function VorgangZeile({ v }: { v: VorgangDto }) {
+function VorgangZeile({ v, onEntscheid, busy }: { v: VorgangDto; onEntscheid: (id: string, status: 'erledigt' | 'verworfen') => void; busy: boolean }) {
   const frist = fristText(v.frist);
   return (
     <tr className="border-t border-[#1a1a1a] align-top">
@@ -57,9 +57,14 @@ function VorgangZeile({ v }: { v: VorgangDto }) {
       </td>
       <td className="py-1.5 pr-3 text-gray-400">{v.besitzer === 'alfred' ? 'Alfred' : 'Owner'}</td>
       <td className="py-1.5 pr-3 text-gray-400">{AUTONOMIE_LABEL[v.autonomie] ?? v.autonomie}</td>
-      <td className="py-1.5 pr-3 text-gray-400">{v.quelle}</td>
+      <td className="py-1.5 pr-3 text-gray-400">{v.kategorie ? `${v.quelle} · ${v.kategorie}` : v.quelle}</td>
       <td className={clsx('py-1.5 pr-3', frist.knapp ? 'text-amber-300' : 'text-gray-400')}>{frist.text}</td>
-      <td className="py-1.5 text-gray-500 whitespace-nowrap">{alter(v.aktualisiert)}</td>
+      <td className="py-1.5 pr-3 text-gray-500 whitespace-nowrap">{alter(v.aktualisiert)}</td>
+      <td className="py-1.5 whitespace-nowrap">
+        {/* v1186 — Entscheidung des Owners = Ergebnis-Signal für die Erledigungsquote */}
+        <button disabled={busy} onClick={() => onEntscheid(v.id, 'erledigt')} className="px-2 py-0.5 text-[11px] rounded border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-40 mr-1">Erledigt</button>
+        <button disabled={busy} onClick={() => onEntscheid(v.id, 'verworfen')} className="px-2 py-0.5 text-[11px] rounded border border-[#2a2a2a] text-gray-400 hover:text-gray-200 disabled:opacity-40">Verwerfen</button>
+      </td>
     </tr>
   );
 }
@@ -88,6 +93,19 @@ export function VorgaengePage() {
     const t = setInterval(load, 60_000);
     return () => clearInterval(t);
   }, [load]);
+
+  const [busy, setBusy] = useState(false);
+  const entscheide = useCallback(async (id: string, status: 'erledigt' | 'verworfen') => {
+    setBusy(true);
+    try {
+      await client.entscheideVorgang(id, status);
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [client, load]);
 
   const offene = data?.offene ?? [];
   const owner = offene.filter(v => v.besitzer === 'user');
@@ -118,9 +136,9 @@ export function VorgaengePage() {
             {offene.length > 0 && (
               <table className="w-full text-xs">
                 <thead className="text-gray-500 text-left">
-                  <tr><th className="py-1 pr-3">Vorgang</th><th className="py-1 pr-3">Besitzer</th><th className="py-1 pr-3">Autonomie</th><th className="py-1 pr-3">Quelle</th><th className="py-1 pr-3">Frist</th><th className="py-1">Aktualisiert</th></tr>
+                  <tr><th className="py-1 pr-3">Vorgang</th><th className="py-1 pr-3">Besitzer</th><th className="py-1 pr-3">Autonomie</th><th className="py-1 pr-3">Quelle</th><th className="py-1 pr-3">Frist</th><th className="py-1 pr-3">Aktualisiert</th><th className="py-1">Entscheidung</th></tr>
                 </thead>
-                <tbody>{offene.map(v => <VorgangZeile key={v.id} v={v} />)}</tbody>
+                <tbody>{offene.map(v => <VorgangZeile key={v.id} v={v} onEntscheid={entscheide} busy={busy} />)}</tbody>
               </table>
             )}
           </section>

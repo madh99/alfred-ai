@@ -2149,4 +2149,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_vorgang_schritte_user_zeit ON vorgang_schritte(user_id, zeit)`, []);
     },
   },
+  {
+    version: 130,
+    description: 'v1186 — Jarvis Schicht 4: vorgaenge.kategorie für Erledigungsquote je Kategorie (PG-Spiegel zu SQLite v126).',
+    async up(db) {
+      await db.execute('ALTER TABLE vorgaenge ADD COLUMN IF NOT EXISTS kategorie TEXT', []);
+    },
+  },
 ];

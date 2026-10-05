@@ -471,6 +471,7 @@ export class ReasoningEngine {
         const v = await this.vorgaengeRepo.anlegen({
           userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
+          kategorie: InsightTracker.categorizeInsight(insight), // v1186
           dedupeKey: `insight:${this.insightTopicHash(insight)}`,
         });
         angelegt++;
@@ -494,7 +495,7 @@ export class ReasoningEngine {
           userId, titel: a.description.slice(0, 200), besitzer: autonomie === 'auto' ? 'alfred' : 'user', status: 'offen',
           naechsterSchritt: autonomie === 'auto' ? 'ausführen' : autonomie === 'nie' ? 'nur manuell durch den Owner' : 'Bestätigung des Owners',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), // v1185 — ohne Frist blieben übersprungene Vorschläge ewig „offen"
-          quelle: 'reasoning', autonomie, dedupeKey,
+          quelle: 'reasoning', autonomie, dedupeKey, kategorie: a.skillName, // v1186
         });
         ids.set(a, v.id);
         await this.vorgaengeRepo.schritt({ vorgangId: v.id, userId, art: 'vorgeschlagen', skill: a.skillName, aktion: typeof a.skillParams?.action === 'string' ? a.skillParams.action : undefined, params: a.skillParams, beschreibung: a.description, autonomie, quelle: 'reasoning' });

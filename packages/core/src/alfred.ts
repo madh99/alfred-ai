@@ -6885,6 +6885,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                       vorgaengeAngelegt: summen.vorgaengeAngelegt ?? 0, vorgaengeErledigt: summe('vorgaengeErledigt'), kostenUsd: summe('kostenUsd'),
                     });
                     if (alle.length > 0) zeilen.push('', ...formatiereKennzahlen(summen, quoten, 7));
+                    // v1186 — Erledigungsquote je Kategorie (28 Tage, beobachtend)
+                    const { formatiereErledigungJeKategorie } = await import('./kennzahlen/kennzahlen.js');
+                    const { VorgaengeRepository: VRepoT } = await import('@alfred/storage');
+                    const je = await new VRepoT(ad).erledigungJeKategorie(ownerLt, 28);
+                    if (je.length > 0) zeilen.push('', ...formatiereErledigungJeKategorie(je, 28));
                   } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1183 Wochen-Kennzahlen nicht verfügbar'); }
                   const wochenBucketLt = Math.floor(Date.now() / (7 * 24 * 3_600_000));
                   await this.insightsRepo.upsertCandidate(ownerLt, {
@@ -13263,6 +13268,15 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const repo = new VRepoK(this.database.getAdapter());
         const u = await repo.uebersicht(owner, 7);
         return { ...u, schritte: await repo.schritte(owner, 14, 150) };
+      });
+      // v1186 — Entscheidung des Owners aus der Kachel (erledigt/verworfen)
+      (logApiAdapter as any).setVorgangEntscheidungCallback?.(async (id: string, status: 'erledigt' | 'verworfen', notiz?: string) => {
+        const owner = this.tryOwner();
+        if (!owner || !this.database) return null;
+        const { VorgaengeRepository: VRepoE } = await import('@alfred/storage');
+        const v = await new VRepoE(this.database.getAdapter()).entscheideOwner(owner, id, status, notiz);
+        if (v) this.logger.info({ id, status, titel: v.titel.slice(0, 80) }, 'v1186 Vorgang vom Owner entschieden');
+        return v;
       });
     }
 

@@ -25,6 +25,8 @@ export interface Vorgang {
   ergebnis?: string;
   autonomie: Autonomie;
   dedupeKey?: string;
+  /** v1186 — Kategorie (Insight-Kategorie bzw. Skill) für die Erledigungsquote je Kategorie. */
+  kategorie?: string;
   erstellt: string;
   aktualisiert: string;
 }
@@ -93,9 +95,9 @@ export class VorgaengeRepository {
     }
     const id = randomUUID();
     await this.db.execute(
-      `INSERT INTO vorgaenge (id, user_id, titel, ziel, besitzer, status, naechster_schritt, frist, quelle, ergebnis, autonomie, dedupe_key, erstellt, aktualisiert)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, v.userId, v.titel, v.ziel ?? null, v.besitzer, v.status, v.naechsterSchritt ?? null, v.frist ?? null, v.quelle, v.ergebnis ?? null, v.autonomie, v.dedupeKey ?? null, jetzt, jetzt],
+      `INSERT INTO vorgaenge (id, user_id, titel, ziel, besitzer, status, naechster_schritt, frist, quelle, ergebnis, autonomie, dedupe_key, kategorie, erstellt, aktualisiert)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, v.userId, v.titel, v.ziel ?? null, v.besitzer, v.status, v.naechsterSchritt ?? null, v.frist ?? null, v.quelle, v.ergebnis ?? null, v.autonomie, v.dedupeKey ?? null, v.kategorie ?? null, jetzt, jetzt],
     );
     return { ...v, id, erstellt: jetzt, aktualisiert: jetzt };
   }
@@ -134,6 +136,47 @@ export class VorgaengeRepository {
       [userId, seit],
     ) as Record<string, unknown>[];
     return { offene, abgeschlossene: rows.map(r => this.map(r)) };
+  }
+
+  async hole(userId: string, id: string): Promise<Vorgang | null> {
+    const r = await this.db.queryOne('SELECT * FROM vorgaenge WHERE user_id = ? AND id = ?', [userId, id]) as Record<string, unknown> | undefined;
+    return r ? this.map(r) : null;
+  }
+
+  /**
+   * v1186 — Entscheidung des Owners (Kachel): erledigt oder verworfen, mit Schritt im
+   * Ausführungsgedächtnis (bestaetigt/abgelehnt, quelle 'owner'). Das ist das
+   * Ergebnis-Signal der Spezifikation („Erledigung: Vorgang geschlossen").
+   */
+  async entscheideOwner(userId: string, id: string, status: 'erledigt' | 'verworfen', notiz?: string): Promise<Vorgang | null> {
+    const v = await this.hole(userId, id);
+    if (!v) return null;
+    await this.setzeStatus(userId, id, status, notiz ?? (status === 'erledigt' ? 'vom Owner erledigt' : 'vom Owner verworfen'));
+    await this.schritt({
+      vorgangId: id, userId, art: status === 'erledigt' ? 'bestaetigt' : 'abgelehnt',
+      beschreibung: v.titel, ergebnis: notiz, autonomie: v.autonomie, quelle: 'owner',
+    });
+    return this.hole(userId, id);
+  }
+
+  /** v1186 — Erledigungsquote je Kategorie über die letzten `tage` Tage (Basis für Schicht-4-Konsequenzen). */
+  async erledigungJeKategorie(userId: string, tage = 28): Promise<Array<{ kategorie: string; angelegt: number; erledigt: number; verworfen: number; offen: number }>> {
+    const seit = new Date(Date.now() - tage * 86_400_000).toISOString();
+    const rows = await this.db.query(
+      'SELECT COALESCE(kategorie, ?) AS kategorie, status, COUNT(*) AS n FROM vorgaenge WHERE user_id = ? AND erstellt >= ? GROUP BY COALESCE(kategorie, ?), status',
+      ['ohne', userId, seit, 'ohne'],
+    ) as Array<{ kategorie: string; status: string; n: number | string }>;
+    const out = new Map<string, { kategorie: string; angelegt: number; erledigt: number; verworfen: number; offen: number }>();
+    for (const r of rows) {
+      const e = out.get(r.kategorie) ?? { kategorie: r.kategorie, angelegt: 0, erledigt: 0, verworfen: 0, offen: 0 };
+      const n = Number(r.n);
+      e.angelegt += n;
+      if (r.status === 'erledigt') e.erledigt += n;
+      else if (r.status === 'verworfen') e.verworfen += n;
+      else e.offen += n;
+      out.set(r.kategorie, e);
+    }
+    return [...out.values()].sort((a, b) => b.angelegt - a.angelegt);
   }
 
   async offene(userId: string, limit = 50): Promise<Vorgang[]> {
@@ -177,6 +220,7 @@ export class VorgaengeRepository {
       besitzer: r.besitzer as 'alfred' | 'user', status: r.status as VorgangStatus,
       naechsterSchritt: (r.naechster_schritt as string | null) ?? undefined, frist: (r.frist as string | null) ?? undefined,
       quelle: r.quelle as string, ergebnis: (r.ergebnis as string | null) ?? undefined, autonomie: r.autonomie as Autonomie,
+      kategorie: (r.kategorie as string | null) ?? undefined,
       dedupeKey: (r.dedupe_key as string | null) ?? undefined, erstellt: r.erstellt as string, aktualisiert: r.aktualisiert as string,
     };
   }
