@@ -740,6 +740,7 @@ ${this.buildTopicInstructions()}`;
       });
       const res = await this.llm.complete({ messages: [{ role: 'user', content: prompt }], maxTokens: 400, tier: this.tier });
       this.kennzahlen.zaehle('miniPaesse');
+      this.kennzahlen.zaehle('miniPassDauerMs', Date.now() - start); // v1192 — Latenz Ereignis → Reaktion
       const text = res.content.trim();
       if (isNoInsights(text)) { this.logger.info({ quelle: ereignis.quelle, objekte: ereignis.objekte, dauerMs: Date.now() - start }, 'v1175 Mini-Pass: keine Meldung'); return; }
       const parsed = this.parseReasoningResponse(text);

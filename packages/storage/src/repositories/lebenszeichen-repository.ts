@@ -80,8 +80,8 @@ export class LebenszeichenRepository {
   }
 
   /** Jüngste Zeile einer Tabelle nach Zeitspalte — für die Freshness-Proben. */
-  async juengsteZeit(tabelle: 'activity_log' | 'llm_usage' | 'alfred_insights'): Promise<string | undefined> {
-    const spalte = tabelle === 'activity_log' ? 'timestamp' : tabelle === 'llm_usage' ? 'date' : 'created_at';
+  async juengsteZeit(tabelle: 'activity_log' | 'llm_usage' | 'alfred_insights' | 'messwerte'): Promise<string | undefined> {
+    const spalte = tabelle === 'activity_log' ? 'timestamp' : tabelle === 'llm_usage' ? 'date' : tabelle === 'messwerte' ? 'gemessen_at' : 'created_at';
     const row = await this.db.queryOne(`SELECT MAX(${spalte}) AS t FROM ${tabelle}`, []) as { t?: string | null } | undefined;
     return row?.t ?? undefined;
   }

@@ -17,7 +17,8 @@ export type KennzahlName =
   | 'insightsGesendet' | 'insightsAufgeschoben' | 'insightsStill'
   | 'gateTreffer' | 'gateAusgesetzt'
   | 'aktionenAusgefuehrt' | 'aktionenFehlgeschlagen' | 'aktionenBestaetigung' | 'aktionenBlockiert' | 'aktionenUebersprungen'
-  | 'vorgaengeAngelegt';
+  | 'vorgaengeAngelegt'
+  | 'miniPassDauerMs';
 
 export const KENNZAHL_NAMEN: readonly KennzahlName[] = [
   'vollpaesse', 'rundgaenge', 'miniPaesse',
@@ -25,6 +26,7 @@ export const KENNZAHL_NAMEN: readonly KennzahlName[] = [
   'gateTreffer', 'gateAusgesetzt',
   'aktionenAusgefuehrt', 'aktionenFehlgeschlagen', 'aktionenBestaetigung', 'aktionenBlockiert', 'aktionenUebersprungen',
   'vorgaengeAngelegt',
+  'miniPassDauerMs', // v1192 — Summe der Mini-Pass-Dauern (Ereignis → Reaktion), Ø = Summe / miniPaesse
 ];
 
 /** Ausgang eines protokollierten Schritts → Kennzahl (vorgeschlagen/notiz/bestaetigt/abgelehnt zählen nicht als Engine-Ausgang). */
@@ -104,13 +106,16 @@ function prozent(x?: number): string { return x === undefined ? '–' : `${Math.
  * Zeilen für die Lern-Telemetrie. `summen` sind Tages-Messwerte über den
  * Zeitraum summiert (Schlüssel = Kennzahl-Name ohne Präfix).
  */
-export function formatiereKennzahlen(summen: Partial<Record<KennzahlName, number>>, quoten: Quoten, tage: number): string[] {
+export function formatiereKennzahlen(summen: Partial<Record<KennzahlName, number>>, quoten: Quoten, tage: number, kostenUsd?: number): string[] {
   const s = (n: KennzahlName) => Math.round(summen[n] ?? 0);
   const paesse = s('vollpaesse') + s('rundgaenge') + s('miniPaesse');
   const anteilMini = paesse > 0 ? s('miniPaesse') / paesse : undefined;
+  // v1192 — Spezifikation Schicht 2: Latenz Ereignis → Reaktion (Ø Mini-Pass-Dauer) und Kosten je Pass
+  const dauerMini = s('miniPaesse') > 0 && s('miniPassDauerMs') > 0 ? ` · Ø Mini-Pass ${(s('miniPassDauerMs') / s('miniPaesse') / 1000).toFixed(1)} s` : '';
+  const kostenJeVollpass = kostenUsd !== undefined && s('vollpaesse') > 0 ? ` · Kosten je Vollpass $${(kostenUsd / s('vollpaesse')).toFixed(3)}` : '';
   const aktionen = s('aktionenAusgefuehrt') + s('aktionenFehlgeschlagen') + s('aktionenBestaetigung') + s('aktionenBlockiert') + s('aktionenUebersprungen');
   return [
-    `Jarvis-Kennzahlen (${tage} Tage): ${s('vollpaesse')} Vollpässe, ${s('rundgaenge')} Rundgänge ohne LLM, ${s('miniPaesse')} Mini-Pässe (Anteil ${prozent(anteilMini)})`,
+    `Jarvis-Kennzahlen (${tage} Tage): ${s('vollpaesse')} Vollpässe, ${s('rundgaenge')} Rundgänge ohne LLM, ${s('miniPaesse')} Mini-Pässe (Anteil ${prozent(anteilMini)})${dauerMini}${kostenJeVollpass}`,
     `Insights: ${s('insightsGesendet')} gesendet, ${s('insightsAufgeschoben')} aufgeschoben, ${s('insightsStill')} still · Präzision ${prozent(quoten.praezision)}`,
     `Gate: ${s('gateTreffer')} Treffer, ${s('gateAusgesetzt')} durch Weltmodell ausgesetzt`,
     `Aktionen: ${aktionen} gesamt — ${s('aktionenAusgefuehrt')} ausgeführt, ${s('aktionenFehlgeschlagen')} fehlgeschlagen, ${s('aktionenBestaetigung')} zur Bestätigung, ${s('aktionenBlockiert')} blockiert, ${s('aktionenUebersprungen')} übersprungen`,

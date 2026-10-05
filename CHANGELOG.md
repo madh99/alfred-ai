@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1192] - 2026-10-05
+
+### Added — Kennzahlen der Schicht 2 und Daten-Probe für die Messwerte (v1192)
+
+- Die Lern-Telemetrie nennt die mittlere Dauer eines Mini-Passes (Latenz Ereignis zu Reaktion) und die LLM-Kosten je Vollpass, beides Größen aus der Spezifikation der Schicht 2. Die Mini-Pass-Dauer wird als Kennzahl summiert und mit dem Tagesabschluss gesichert.
+- Die Morgen-Proben prüfen die Messwerte-Tabelle: liegt die jüngste Zeile älter als drei Stunden zurück, steht der Sammler der Schicht 1 still, und der Wächter meldet es.
+- 2 Tests.
+
 ## [0.19.0-jarvis.1191] - 2026-10-05
 
 ### Added — Lebenszeichen: Messaging-Adapter haben einen Puls und verbinden sich neu (v1191)

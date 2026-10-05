@@ -76,5 +76,11 @@ describe('summiereKennzahlMesswerte / formatiereKennzahlen', () => {
     expect(zeilen[1]).toContain('Präzision 50 %');
     expect(zeilen[4]).toContain('Erledigungsquote –');
     expect(zeilen[4]).toContain('Kosten je Vorgang –');
+    expect(zeilen[0]).not.toContain('Ø Mini-Pass');
+  });
+  it('v1192 — Ø Mini-Pass-Dauer und Kosten je Vollpass, wenn Daten vorliegen', () => {
+    const zeilen = formatiereKennzahlen({ vollpaesse: 40, miniPaesse: 4, miniPassDauerMs: 18_000 }, {}, 7, 2.0);
+    expect(zeilen[0]).toContain('Ø Mini-Pass 4.5 s');
+    expect(zeilen[0]).toContain('Kosten je Vollpass $0.050');
   });
 });

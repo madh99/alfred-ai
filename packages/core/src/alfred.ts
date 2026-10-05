@@ -6883,7 +6883,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
                       insightsReagiert: summe('insightsReagiert'), insightsVerworfen: summe('insightsVerworfen'), insightsAbgelaufen: summe('insightsAbgelaufen'),
                       vorgaengeAngelegt: summen.vorgaengeAngelegt ?? 0, vorgaengeErledigt: summe('vorgaengeErledigt'), kostenUsd: summe('kostenUsd'),
                     });
-                    if (alle.length > 0) zeilen.push('', ...formatiereKennzahlen(summen, quoten, 7));
+                    if (alle.length > 0) zeilen.push('', ...formatiereKennzahlen(summen, quoten, 7, summe('kostenUsd')));
                     // v1186 — Erledigungsquote je Kategorie (28 Tage, beobachtend)
                     const { formatiereErledigungJeKategorie } = await import('./kennzahlen/kennzahlen.js');
                     const { VorgaengeRepository: VRepoT } = await import('@alfred/storage');

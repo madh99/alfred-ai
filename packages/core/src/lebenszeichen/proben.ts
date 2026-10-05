@@ -32,7 +32,7 @@ export interface ProbenDeps {
   jobs: () => Array<{ key: string; takt: JobTakt; beschreibung: string }>;
   registerGestartetAm?: string;
   letzterLauf: (key: string) => Promise<{ startedAt: string; ok?: boolean } | undefined>;
-  juengsteZeit?: (tabelle: 'activity_log' | 'llm_usage' | 'alfred_insights') => Promise<string | undefined>;
+  juengsteZeit?: (tabelle: 'activity_log' | 'llm_usage' | 'alfred_insights' | 'messwerte') => Promise<string | undefined>;
   /** Jobs, die nicht geprobt werden (z. B. die Probe selbst). */
   ausgenommen?: string[];
   /** v1191 — Messaging-Adapter, die verbunden sein sollen (Realfall 05.10.: Matrix-Homeserver 502, Adapter den ganzen Tag tot, niemand gemeldet). */
@@ -55,10 +55,11 @@ export function formatiereDauer(ms: number): string {
   return `${Math.round(h / 24)} Tage`;
 }
 
-const DATEN_FRISTEN: Record<'activity_log' | 'llm_usage' | 'alfred_insights', number> = {
+const DATEN_FRISTEN: Record<'activity_log' | 'llm_usage' | 'alfred_insights' | 'messwerte', number> = {
   activity_log: 24 * 3600_000,
   llm_usage: 48 * 3600_000,     // Tagesgranularität (date)
   alfred_insights: 3 * 86_400_000,
+  messwerte: 3 * 3600_000,      // v1192 — Sammler alle 30 min (Schicht-1-Datenbasis); 3 h = 6 verpasste Läufe
 };
 
 export async function fuehreProbenAus(deps: ProbenDeps): Promise<ProbeErgebnis[]> {

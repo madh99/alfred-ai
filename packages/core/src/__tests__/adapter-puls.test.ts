@@ -19,6 +19,19 @@ describe('bewerteAdapter', () => {
   });
 });
 
+describe('Daten-Probe messwerte (v1192)', () => {
+  it('Sammler-Tabelle älter als 3 h → Befund', async () => {
+    const ergebnisse = await fuehreProbenAus({
+      jobs: () => [], letzterLauf: async () => undefined, now: () => NOW,
+      juengsteZeit: async (t) => t === 'messwerte' ? new Date(NOW.getTime() - 4 * 3_600_000).toISOString() : NOW.toISOString(),
+    });
+    const mw = ergebnisse.find(e => e.art === 'daten' && e.name === 'messwerte')!;
+    expect(mw.ok).toBe(false);
+    expect(mw.detail).toBe('jüngste Zeile vor 4 h');
+    expect(ergebnisse.filter(e => e.art === 'daten' && !e.ok).map(e => e.name)).toEqual(['messwerte']);
+  });
+});
+
 describe('Adapter-Probe', () => {
   it('liefert je Soll-Adapter ein Ergebnis; getrennte werden Befund „Adapter …"', async () => {
     const ergebnisse = await fuehreProbenAus({
