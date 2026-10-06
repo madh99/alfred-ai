@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1222] - 2026-10-06
+
+### Changed — Wo ein Befund existiert, entsteht kein Prosa-Vorgang mehr (v1222)
+
+Abschluss des Befunde-Vorhabens: Passt ein Handlungs-Insight des Reasonings zu einem offenen Befund (Anker-Regel oder Wörter des Gegenstands wie git-server, AC Mesh, Temp Terrasse), wird kein Vorgang aus Prosa angelegt. Der Befund ist das Objekt, mit Dauer und Zähler; der Insight wird protokolliert und gezählt (Kennzahl `vorgaengeZuBefund`). Die Themen-Regel aus .1214 bleibt die Rückfallebene für Themen ohne Befund (Domains, Mails, Todos).
+
+- 2 Tests mit den Realfällen des Tages.
+
 ## [0.19.0-jarvis.1221] - 2026-10-06
 
 ### Fixed — Befund-Titel: positionell bei Monitor-Alerts, bestes Segment sonst (v1221)

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { befundeAusDeutung, quelleZuKategorie, bereinigeZeile, infraAlertSchluessel, infraDeutungAus } from '../ereignisse/befunde.js';
+import { befundeAusDeutung, quelleZuKategorie, bereinigeZeile, infraAlertSchluessel, infraDeutungAus, passtZuBefund } from '../ereignisse/befunde.js';
+import { themenGleich } from '@alfred/storage';
 
 // v1217 — Jarvis Schicht 3: Befunde mit Identität aus den Deutungen des Weltmodells.
 describe('infraAlertSchluessel (v1219)', () => {
@@ -21,6 +22,24 @@ describe('infraAlertSchluessel (v1219)', () => {
     const b = befundeAusDeutung('infra', d);
     expect(b[0].titel).toBe('proxmox: git-server RAM usage 95.1%');
     expect(b[1].titel).toBe('unifi: Device "AC Mesh" is not connected (state: 0)');
+  });
+});
+
+describe('passtZuBefund (v1222)', () => {
+  const gitServer = { gegenstand: 'proxmox:git-server:ram', titel: 'proxmox: git-server RAM usage 95.4%' };
+  const acMesh = { gegenstand: 'unifi:device:ac-mesh', titel: 'unifi: Device "AC Mesh" is not connected (state: 2)' };
+  const terrasse = { gegenstand: 'sensorbatterie:sensor.terrasse_temp_terrasse_batterie:offline', titel: 'Temp Terrasse Batterie: nicht erreichbar → Sensor prüfen' };
+  it('Insights zu bekannten Befunden werden erkannt — in jedem Wortlaut', () => {
+    expect(passtZuBefund('Proxmox git-server bei 95,0 % RAM: Der Alert ist seit gestern offen', gitServer, themenGleich)).toBe(true);
+    expect(passtZuBefund('Handlungsbedarf – Proxmox git-server RAM: Der Server, auf dem die fussball-cc-Entwicklung läuft', gitServer, themenGleich)).toBe(true);
+    expect(passtZuBefund('UniFi-Access-Point „AC Mesh" nicht verbunden — prüfen', acMesh, themenGleich)).toBe(true);
+    expect(passtZuBefund('Smart-Home-Sensor "Temp Terrasse" Batterie 0%', terrasse, themenGleich)).toBe(true);
+  });
+  it('fremde Themen bleiben Vorgänge', () => {
+    expect(passtZuBefund('Domains seit Juni überfällig: easyname-Verlängerung', gitServer, themenGleich)).toBe(false);
+    expect(passtZuBefund('Proxmox Backup fehlgeschlagen', gitServer, themenGleich)).toBe(false);
+    expect(passtZuBefund('Batterie Wohnzimmer tauschen', terrasse, themenGleich)).toBe(false);
+    expect(passtZuBefund('', acMesh, themenGleich)).toBe(false);
   });
 });
 

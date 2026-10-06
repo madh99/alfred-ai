@@ -451,6 +451,9 @@ export class ReasoningEngine {
   /** v1179 — Jarvis Schicht 3: Vorgänge + Ausführungsgedächtnis. */
   private vorgaengeRepo?: import('@alfred/storage').VorgaengeRepository;
   setVorgaengeRepo(repo: import('@alfred/storage').VorgaengeRepository): void { this.vorgaengeRepo = repo; }
+  /** v1222 — Befunde mit Identität: Insights zu einem offenen Befund werden kein Prosa-Vorgang. */
+  private befundeRepo?: import('@alfred/storage').BefundeRepository;
+  setBefundeRepo(repo: import('@alfred/storage').BefundeRepository): void { this.befundeRepo = repo; }
   private async protokolliereSchritt(action: ProposedAction, art: import('@alfred/storage').SchrittArt, ergebnis?: string, vorgangId?: string): Promise<void> {
     this.kennzahlen.zaehle(SCHRITT_ZU_KENNZAHL[art]);
     if (!this.vorgaengeRepo) return;
@@ -472,10 +475,20 @@ export class ReasoningEngine {
       const userId = this.resolvedOwnerUserId || this.defaultChatId;
       let angelegt = 0;
       const { widersprichtWeltmodell } = await import('./vorgaenge/faktenpruefung.js');
+      // v1222 — offene Befunde einmal laden; passt ein Insight dazu, ist der Befund das Objekt
+      const { passtZuBefund } = await import('./ereignisse/befunde.js');
+      const { themenGleich } = await import('@alfred/storage');
+      const offeneBefunde = this.befundeRepo ? await this.befundeRepo.offene(userId).catch(() => []) : [];
       for (const insight of insights) {
         if (!istHandlungsInsight(insight)) continue;
         const titel = vorgangTitelAus(insight);
         if (istGenerischerTitel(titel)) continue;
+        const befund = offeneBefunde.find(b => passtZuBefund(titel, b, themenGleich) || passtZuBefund(insight.slice(0, 300), b, themenGleich));
+        if (befund) {
+          this.kennzahlen.zaehle('vorgaengeZuBefund');
+          this.logger.info({ titel: titel.slice(0, 100), befund: `${befund.quelle}/${befund.gegenstand}`, seit: befund.entstanden, gesehen: befund.gesehenAnzahl }, 'v1222 Insight gehört zu offenem Befund — kein Prosa-Vorgang');
+          continue;
+        }
         // v1214 — Fakten-Gegenprobe: Ausfall-Behauptung gegen Datenlage NORMAL → kein Vorgang
         const widerspruch = widersprichtWeltmodell(insight, (k) => this.collector.sektionsInhalt(k));
         if (widerspruch) {

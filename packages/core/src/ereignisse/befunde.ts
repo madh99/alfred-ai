@@ -128,3 +128,25 @@ export function infraBefunde(alerts: InfraAlert[]): BefundKandidat[] {
   }
   return out;
 }
+
+/**
+ * v1222 — Gehört ein Insight-Text zu einem offenen Befund? Dann entsteht kein Prosa-Vorgang mehr:
+ * der Befund IST das Objekt. Zwei Wege, beide deterministisch: die Anker-Regel der Vorgänge
+ * (themenGleich) zwischen Insight und Befund-Titel, oder die Wörter des Gegenstands (Host, Gerät,
+ * Sensor) kommen im Insight vor. Realfall 06.10.: fünf Prosa-Vorgänge für „git-server RAM 95 %".
+ */
+export function gegenstandWoerter(gegenstand: string): string[] {
+  return gegenstand.toLowerCase().split(/[:._\-\s/]+/).filter(w => w.length >= 4 && !/^(sensor|binary|switch|light|offline|niedrig|baseline|battery|batterie|device|unifi|proxmox|homeassistant|mikrotik|fahrzeug|usage|status|subsystem)$/.test(w));
+}
+
+export function passtZuBefund(text: string, befund: { gegenstand: string; titel: string }, themenGleich: (a: string, b: string) => boolean): boolean {
+  if (!text) return false;
+  if (themenGleich(text, befund.titel)) return true;
+  const woerter = gegenstandWoerter(befund.gegenstand);
+  if (woerter.length === 0) return false;
+  const l = text.toLowerCase().replace(/[-_]/g, ' ');
+  const treffer = woerter.filter(w => l.includes(w.replace(/[-_]/g, ' '))).length;
+  // Ein Wort reicht, wenn es ein Hostname/Bezeichner mit Bindestrich oder Ziffer ist (git-server, ac-mesh); sonst zwei Wörter
+  const spezifisch = woerter.some(w => (/[-\d]/.test(w) || w.length >= 8) && l.includes(w.replace(/[-_]/g, ' ')));
+  return treffer >= 2 || spezifisch;
+}

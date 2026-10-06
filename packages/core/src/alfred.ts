@@ -13747,6 +13747,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const { VorgaengeRepository } = await import('@alfred/storage');
         const vorgaengeRepo = new VorgaengeRepository(this.database.getAdapter());
         this.reasoningEngine?.setVorgaengeRepo(vorgaengeRepo);
+        if (this.befundeRepo) this.reasoningEngine?.setBefundeRepo(this.befundeRepo); // v1222
         this.pipeline.setVorgaengeRepo(vorgaengeRepo); // v1207 — Lernbedarf bei Absagen im Chat
         (this.reasoningEngine as unknown as { collector?: { setVorgaengeRepo?: (r: unknown) => void } } | undefined)?.collector?.setVorgaengeRepo?.(vorgaengeRepo);
         this.registriereJob({
