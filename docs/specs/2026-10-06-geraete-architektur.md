@@ -179,7 +179,9 @@ Analyse 07.10.: Mistral `voxtral-mini-transcribe-realtime-2602` (WebSocket, PCM 
 
 | .1251 | Hör-Relais `/api/geraete/hoeren`: Gerätetoken, PCM-Binärrahmen → Mistral Realtime (eine Verbindung je Sitzung, Flush je Äußerung), Sekunden als Service-Nutzung, Tageslimit; `alfred sitzung --hoertest <wav>` | Synthetisierter Satz durch das Relais: erstes Wort nach 1,55 s, fertig 0,25 s nach Audioende, Text exakt |
 
-Nächste Stufe: `/hören` in der Sitzung mit Aktivierungswort, Gesprächsfenster, Stoppwort, Halbduplex. Danach Ink-Oberfläche.
+| .1252 | `/hören`: Aktivierungswort (Standard „Alfred", tolerant, Füllwort), Gesprächsfenster 20 s, Stoppwort bricht Wiedergabe ab, Halbduplex, `/hören aus`; Preis 0,006 $/min in der Preistabelle | Start/Stopp sauber; Sprechtest am Mikrofon durch den Owner ausstehend |
+
+Phase 2b ist damit in der freigegebenen Reihenfolge umgesetzt. Klein offen: Hinweis „Relais geschlossen" nach eigenem `/hören aus`; Relais-Logzeilen prüfen. Lokales Aktivierungswort ohne Cloud kommt mit der Flutter-App. Danach Ink-Oberfläche.
 
 **Phase 1 ist damit vollständig** (Protokoll, Registry, Satellit, Sitzung, Browser-Hand, Vorhaben, Dateitransfer, Sinne). Noch offen aus Phase 1 im Kleinen: Dateitransfer blockweise für mehr als 8 MB, Gerätename der Sitzung im Prompt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink. Phase 3 (Zone des Handys) kommt mit der Android-App.
 
