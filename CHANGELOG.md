@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1246] - 2026-10-06
+
+### Fixed — Strg+T zum Stoppen stürzte ohne Terminal ab (v1246)
+
+Beim Stoppen der Aufnahme per Strg+T leerte die Sitzung die Eingabezeile über einen Aufruf, der nur mit echtem Terminal erlaubt ist; mit umgeleiteter Eingabe (Skripte, Tests) brach der Prozess ab. Der Aufruf ist entfernt. Test: Strg+T startet, Strg+T stoppt, Transkription läuft.
+
 ## [0.19.0-jarvis.1245] - 2026-10-06
 
 ### Added — Strg+T zum Sprechen, Gerät der Sitzung im Prompt (v1245)

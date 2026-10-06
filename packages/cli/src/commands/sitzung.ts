@@ -276,7 +276,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   process.stdin.on('keypress', (_ch: string, key: { ctrl?: boolean; name?: string } | undefined) => {
     if (!key?.ctrl || key.name !== 't') return;
-    if (aufnahme) { const a = aufnahme; aufnahme = undefined; rl.write(null, { ctrl: true, name: 'u' }); void talkStop(a); return; }
+    if (aufnahme) { const a = aufnahme; aufnahme = undefined; void talkStop(a); return; }
     if (!antwortLaeuft) void talkStart();
   });
 
