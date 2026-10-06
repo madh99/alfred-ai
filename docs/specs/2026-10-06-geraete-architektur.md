@@ -127,6 +127,26 @@ Build in einer GitHub-Actions-Matrix (macOS-, Windows-, Ubuntu-Läufer). Die CLI
 
 Jede Phase ist eine Folge kleiner Releases mit Audit, wie bei Jarvis.
 
+## 12a. Umsetzungsstand Phase 1 (Stand 06.10.2026, v1230)
+
+Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Release mit Live-Beweis, wie bei Jarvis.
+
+| Release | Inhalt | Beweis |
+|---|---|---|
+| .1224 | Protokoll, Registry (`geraete`), Gateway `/api/geraete/ws`, Pairing per Code, Proxy-Skill `geraet_<name>`, Autonomie-Klassen, Einmal-Freigabe | PC-madh gepaart, `liste` über Chat liefert echte Dateien |
+| .1225 | Sicherheitsbefunde: Freigabe-Nonce statt `confirmed`, realpath-Pfadprüfung, DPAPI-Token, Pairing-Drosselung | Tests |
+| .1226 | Geräteaktionen umgehen die 7-Tage-Dedupe der Bestätigungs-Queue | „Downloads öffnen" per Telegram bestätigt, ausgeführt 19:42 |
+| .1227 | Shell unter Windows über PowerShell | Shell-Aktion am PC |
+| .1228 | Autostart-Dienst (Windows Startup-VBS, launchd, systemd --user) | Satellit nach Neustart verbunden |
+| .1229 | Browser-Hand (puppeteer-core, eigenes Profil, Element-Karte, Sperren für Kauf/Zahlung/Anmeldung) | amazon.de über den Server geöffnet, 120 Elemente, 15 s |
+| .1230 | Vorhaben-Freigabe: ein Ja für viele Schritte (Aktionen, Domains, Dauer), automatische Fortsetzung im Owner-Chat | Chat → Vorhaben-Frage → Owner-Ja → Suche + Lesen ohne Einzelbestätigung |
+
+Offen in Phase 1: Terminal-Sitzung (Chat, Talk, Bestätigung in einer CLI), Kachel Geräte in der Web-GUI, Sinne, Dateitransfer.
+
+### Vorhaben-Freigabe (v1230)
+
+Der Owner wollte nicht jeden Schritt bestätigen. Die Antwort ist kein „alles erlauben", sondern ein **Vorhaben mit Umfang**: Alfred beschreibt in einem Satz, was er vorhat, nennt die Aktionen, die er braucht (auch als Muster wie `browser_*`), die erlaubten Domains und die Dauer (5 bis 120 Minuten). Der Owner bekommt genau eine Frage. Nach dem Ja laufen die genannten Aktionen ohne Einzelbestätigung, jeder Schritt steht mit Vorhaben und Schrittnummer im Ausführungsgedächtnis. Ein Vorhaben ersetzt Bestätigungen, nie Sperren: Kauf, Zahlung, Anmeldung und Passwortfelder bleiben beim Owner, deterministisch im Satelliten geprüft. Mit der Freigabe setzt Alfred das Vorhaben von selbst fort, als Nachricht im Owner-Chat wie eine geplante Aufgabe, und berichtet am Ende.
+
 ## 13. Risiken
 
 - **Erreichbarkeit von außen** ist Voraussetzung für alles Mobile. Entscheidung WireGuard oder Proxy mit Gerätetoken.
