@@ -409,6 +409,8 @@ export class Alfred {
   private letzteProben: { zeit?: string; ergebnisse: import('./lebenszeichen/proben.js').ProbeErgebnis[] } = { ergebnisse: [] };
   /** v1175 — Jarvis Schicht 2: beobachtet Deutungen und löst Mini-Pässe bei Zustandswechseln aus. */
   private weltmodellBeobachter?: import('./ereignisse/zustandswechsel.js').WeltmodellBeobachter;
+  /** v1217 — Befunde mit Identität (Kachel, Lage). */
+  private befundeRepo?: import('@alfred/storage').BefundeRepository;
   /** v1177 — Jarvis Schicht 2: Echtzeit-Ereignisse aus Home Assistant (WebSocket). */
   private haEreignisQuelle?: import('./ereignisse/ha-ereignisse.js').HaEreignisQuelle;
   /** v1198 — Anwesenheit aus Home Assistant für die Zustellentscheidung. */
@@ -471,6 +473,7 @@ export class Alfred {
       letzteLaeufe: await runs.listeLetzte(60).catch(() => []),
       adapter: this.adapterZustaende(), // v1191
       kosten: await this.kostenHeute(), // v1205
+      befunde: await (async () => { const o = this.tryOwner(); if (!o || !this.befundeRepo) return null; try { return await this.befundeRepo.uebersicht(o); } catch { return null; } })(), // v1217
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
       // v1196 — letzte Begründungen („Warum?") für die Kachel
@@ -729,6 +732,36 @@ export class Alfred {
         if (!this.reasoningEngine) { this.logger.debug({ quelle: e.quelle }, 'v1175 Mini-Pass: Reasoning-Engine noch nicht bereit'); return; }
         await this.reasoningEngine.triggerMiniPass(e);
       });
+      // v1217 — Jarvis Schicht 3: Befunde mit Identität. Neue Auffälligkeit → Befund + Vorgang (Schlüssel
+      // befund:<quelle>:<gegenstand>), verschwundene Auffälligkeit → Befund und Vorgang erledigt.
+      {
+        const { BefundeRepository, VorgaengeRepository: VRepoB } = await import('@alfred/storage');
+        const { befundeAusDeutung, quelleZuKategorie } = await import('./ereignisse/befunde.js');
+        const befundeRepo = new BefundeRepository(adapter);
+        const vorgaengeRepoB = new VRepoB(adapter);
+        this.befundeRepo = befundeRepo;
+        const log = this.logger.child({ component: 'befunde' });
+        this.weltmodellBeobachter.setBefundeSync(async (quelle, deutung) => {
+          const owner = this.tryOwner();
+          if (!owner) return;
+          const r = await befundeRepo.sync(owner, quelle, befundeAusDeutung(quelle, deutung));
+          for (const b of r.neu) {
+            try {
+              const v = await vorgaengeRepoB.anlegen({
+                userId: owner, titel: b.titel.slice(0, 200), ziel: b.detail ?? `Befund ${quelle}/${b.gegenstand}`, besitzer: 'user', status: 'offen',
+                naechsterSchritt: 'Owner entscheidet', frist: new Date(Date.now() + 14 * 86_400_000).toISOString(), quelle: 'befund', autonomie: 'bestaetigen',
+                dedupeKey: `befund:${quelle}:${b.gegenstand}`, kategorie: quelleZuKategorie(quelle), begruendung: `Befund ${quelle}/${b.gegenstand} neu auffällig (Weltmodell)`,
+              });
+              await befundeRepo.setzeVorgang(b.id, v.id);
+              log.info({ quelle, gegenstand: b.gegenstand, titel: b.titel.slice(0, 100), vorgang: v.id.slice(0, 8), fortgeschrieben: v.erstellt !== v.aktualisiert }, 'v1217 Befund neu → Vorgang');
+            } catch (err) { log.warn({ err: (err as Error).message, quelle, gegenstand: b.gegenstand }, 'v1217 Vorgang zum Befund nicht angelegt'); }
+          }
+          for (const b of r.erledigt) {
+            log.info({ quelle, gegenstand: b.gegenstand, seit: b.entstanden, gesehen: b.gesehenAnzahl }, 'v1217 Befund erledigt (nicht mehr auffällig)');
+            if (b.vorgangId) await vorgaengeRepoB.setzeStatus(owner, b.vorgangId, 'erledigt', 'von selbst erledigt: im Weltmodell nicht mehr auffällig').catch(() => undefined);
+          }
+        });
+      }
     }
     // v1165 — Job-Register FRÜH anlegen, damit jeder Job an seiner Wiring-Stelle
     // deklariert werden kann; start() erfolgt am Ende von initialize() (unbedingt).

@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1217] - 2026-10-06
+
+### Added — Jarvis Schicht 3: Befunde mit Identität, Teil 1 (v1217)
+
+Bisher erzeugte das Modell jeden Pass Prosa, aus der Vorgänge, Kategorien und Dubletten-Vergleiche abgeleitet wurden. Ein Befund ist jetzt ein Objekt mit Schlüssel Quelle plus Gegenstand, nicht ein Satz.
+
+- **Tabelle `befunde`** (SQLite v128, PG v132): Quelle, Gegenstand, Titel, Detail, Zustand, entstanden, zuletzt gesehen, erledigt am, Anzahl Beobachtungen, Vorgang. Identität eindeutig je Owner, Quelle und Gegenstand.
+- **Fortschreibung bei jeder Beobachtung:** Der Weltmodell-Beobachter gleicht die auffälligen Objekte einer Quelle (BMW, Energie, Sensorbatterien, MikroTik) mit dem Bestand ab. Neu → Befund und Vorgang mit Schlüssel `befund:<quelle>:<gegenstand>`. Bekannt → zuletzt gesehen und Zähler. Verschwunden → Befund erledigt, zugehöriger Vorgang „von selbst erledigt". Tritt derselbe Gegenstand später wieder auf, öffnet derselbe Befund erneut, der Zähler läuft weiter.
+- **Titel aus der Deutung:** Die ⚠️-Zeile der Quelle, die den Gegenstand nennt, wird zum Titel; Kategorie aus der Quelle (Sensorbatterien → haus, MikroTik → infra).
+- **Kachel Lebenszeichen:** Abschnitt „Befunde" mit offenen Befunden (seit, Anzahl gesehen) und den in 24 Stunden erledigten. API-Feld `befunde`.
+- Noch nicht umgestellt: Infrastruktur-Abweichungen aus der Kollektor-Sektion (Proxmox) und die Lage als Delta. Das sind Teil 2 und 3.
+- 3 Tests (Befund-Ableitung).
+
 ## [0.19.0-jarvis.1216] - 2026-10-06
 
 ### Fixed — Auto-Vorgänge bleiben nicht hängen, Dedup-Marker raus aus dem Prompt, Erinnerungen tragen ihr Alter (v1216)

@@ -2163,4 +2163,17 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE vorgaenge ADD COLUMN IF NOT EXISTS begruendung TEXT', []);
     },
   },
+  {
+    version: 132,
+    description: 'v1217 — Jarvis Schicht 3: befunde (Auffälligkeiten des Weltmodells mit Identität Quelle+Gegenstand) (PG-Spiegel zu SQLite v128).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS befunde (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, quelle TEXT NOT NULL, gegenstand TEXT NOT NULL,
+        titel TEXT NOT NULL, detail TEXT, zustand TEXT NOT NULL, entstanden TEXT NOT NULL, zuletzt_gesehen TEXT NOT NULL,
+        erledigt_am TEXT, gesehen_anzahl INTEGER NOT NULL DEFAULT 1, vorgang_id TEXT
+      )`, []);
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_befunde_identitaet ON befunde(user_id, quelle, gegenstand)', []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_befunde_user_zustand ON befunde(user_id, zustand, entstanden)', []);
+    },
+  },
 ];

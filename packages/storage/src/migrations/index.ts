@@ -2855,4 +2855,17 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE vorgaenge ADD COLUMN begruendung TEXT'); } catch { /* Spalte existiert bereits */ }
     },
   },
+  {
+    version: 128,
+    description: 'v1217 — Jarvis Schicht 3: befunde (Auffälligkeiten des Weltmodells mit Identität Quelle+Gegenstand) (SQLite-Spiegel zu PG v132).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS befunde (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, quelle TEXT NOT NULL, gegenstand TEXT NOT NULL,
+        titel TEXT NOT NULL, detail TEXT, zustand TEXT NOT NULL, entstanden TEXT NOT NULL, zuletzt_gesehen TEXT NOT NULL,
+        erledigt_am TEXT, gesehen_anzahl INTEGER NOT NULL DEFAULT 1, vorgang_id TEXT
+      )`);
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_befunde_identitaet ON befunde(user_id, quelle, gegenstand)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_befunde_user_zustand ON befunde(user_id, zustand, entstanden)');
+    },
+  },
 ];

@@ -57,8 +57,15 @@ export class WeltmodellBeobachter {
   private readonly erkenner = new ZustandsWechselErkenner();
   constructor(private readonly logger: Logger, private readonly melde: (e: WeltmodellEreignis) => Promise<void>) {}
 
+  /** v1217 — Jarvis Schicht 3: jede Beobachtung schreibt die Befunde fort (Identität Quelle+Gegenstand). */
+  private befundeSync?: (quelle: string, deutung: { zeilen: string[]; auffaellig: string[] }) => Promise<void>;
+  setBefundeSync(fn: (quelle: string, deutung: { zeilen: string[]; auffaellig: string[] }) => Promise<void>): void { this.befundeSync = fn; }
+
   async beobachte(quelle: string, deutung: { zeilen: string[]; auffaellig: string[] } | undefined): Promise<Zustandswechsel | undefined> {
     if (!deutung) return undefined;
+    if (this.befundeSync) {
+      try { await this.befundeSync(quelle, deutung); } catch (err) { this.logger.warn({ err: (err as Error).message, quelle }, 'v1217 Befunde nicht fortgeschrieben'); }
+    }
     const w = this.erkenner.vergleiche(quelle, deutung.auffaellig);
     if (!w) return undefined;
     this.logger.info({ quelle, neu: w.neu, weg: w.weg }, 'v1175 Zustandswechsel im Weltmodell');

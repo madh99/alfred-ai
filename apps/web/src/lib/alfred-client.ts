@@ -3147,7 +3147,10 @@ export interface LebenszeichenStatus {
   warum?: Array<{ zeit: string; art: 'vollpass' | 'minipass' | 'ereignis'; ausloeser: string[]; gateAusgesetzt: string[]; insights: string[]; zustellung: 'gesendet' | 'aufgeschoben' | 'still'; dauerMs?: number }>;
   /** v1191 — Messaging-Adapter (Soll) mit Verbindungszustand */
   adapter?: Array<{ platform: string; status: string; getrenntSeitMs?: number }>;
+  /** v1217 — Befunde mit Identität: offene und seit 24 h erledigte Auffälligkeiten des Weltmodells */
+  befunde?: { offen: LebenszeichenBefund[]; erledigt24h: LebenszeichenBefund[] } | null;
 }
+export interface LebenszeichenBefund { id: string; quelle: string; gegenstand: string; titel: string; zustand: 'offen' | 'erledigt'; entstanden: string; zuletztGesehen: string; erledigtAm?: string; gesehenAnzahl: number; vorgangId?: string }
 export interface CliUsageOverview {
   totals: { runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number };
   byUser: CliUsageGroupRow[];

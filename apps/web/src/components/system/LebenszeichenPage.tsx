@@ -143,6 +143,28 @@ export function LebenszeichenPage() {
             </section>
           )}
 
+          {/* Befunde (v1217 — Jarvis Schicht 3: Auffälligkeiten mit Identität) */}
+          {data.befunde && (data.befunde.offen.length > 0 || data.befunde.erledigt24h.length > 0) && (
+            <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <h2 className="text-sm font-semibold text-gray-300 mb-1">Befunde</h2>
+              <div className="text-xs text-gray-500 mb-3">Was das Weltmodell gerade als auffällig führt — je Gegenstand genau einmal, mit Dauer und Zahl der Beobachtungen.</div>
+              {data.befunde.offen.length > 0 && (
+                <ul className="text-xs text-gray-300 space-y-1">
+                  {data.befunde.offen.map(b => (
+                    <li key={b.id}>⚠️ <span className="text-gray-500">[{b.quelle}]</span> {b.titel} <span className="text-gray-500">(seit {alter(b.entstanden)}, {b.gesehenAnzahl}× gesehen)</span></li>
+                  ))}
+                </ul>
+              )}
+              {data.befunde.erledigt24h.length > 0 && (
+                <ul className="text-xs text-gray-500 space-y-1 mt-2">
+                  {data.befunde.erledigt24h.map(b => (
+                    <li key={b.id}>✓ <span>[{b.quelle}]</span> {b.titel} <span>(erledigt {alter(b.erledigtAm)})</span></li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
           {/* Kosten (v1205) */}
           {data.kosten && (
             <div className={clsx('rounded-lg px-4 py-2.5 text-xs border', data.kosten.budgetUsd && data.kosten.heuteUsd > data.kosten.budgetUsd ? 'bg-red-500/5 border-red-500/30 text-red-300' : 'bg-[#111111] border-[#1f1f1f] text-gray-300')}>
