@@ -11,6 +11,7 @@ export interface HoerEreignis { typ: 'bereit' | 'delta' | 'fertig' | 'fehler' | 
 export class HoerClient {
   private ws?: WebSocket;
   private offen = false;
+  private selbstBeendet = false; // v1253
   constructor(private readonly k: GeraetKonfig, private readonly aufEreignis: (e: HoerEreignis) => void, private readonly aufEnde: (grund: string) => void) {}
 
   verbinde(): Promise<void> {
@@ -25,8 +26,8 @@ export class HoerClient {
         if (e.typ === 'bereit' && !bereit) { bereit = true; resolve(); }
         this.aufEreignis(e);
       });
-      ws.on('close', (code, reason) => { this.offen = false; if (!bereit) reject(new Error(`Relais abgelehnt (${code} ${String(reason)})`)); else this.aufEnde(`geschlossen (${code})`); });
-      ws.on('error', (err) => { if (!bereit) reject(err); else this.aufEnde(err.message); });
+      ws.on('close', (code, reason) => { this.offen = false; if (!bereit) reject(new Error(`Relais abgelehnt (${code} ${String(reason)})`)); else if (!this.selbstBeendet) this.aufEnde(`geschlossen (${code})`); });
+      ws.on('error', (err) => { if (!bereit) reject(err); else if (!this.selbstBeendet) this.aufEnde(err.message); });
       ws.on('unexpected-response', (_req, res) => { reject(new Error(`HTTP ${res.statusCode}`)); });
     });
   }
@@ -34,7 +35,7 @@ export class HoerClient {
   start(): void { this.sendeJson({ typ: 'start' }); }
   audio(pcm: Buffer): void { if (this.offen && this.ws?.readyState === WebSocket.OPEN) this.ws.send(pcm, { binary: true }); }
   ende(): void { this.sendeJson({ typ: 'ende' }); }
-  schluss(): void { this.sendeJson({ typ: 'schluss' }); try { this.ws?.close(); } catch { /* */ } }
+  schluss(): void { this.selbstBeendet = true; this.sendeJson({ typ: 'schluss' }); try { this.ws?.close(); } catch { /* */ } }
   private sendeJson(n: Record<string, unknown>): void { if (this.offen && this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(n)); }
 }
 

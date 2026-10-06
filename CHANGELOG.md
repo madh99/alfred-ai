@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1253] - 2026-10-07
+
+### Fixed — Feinschliff Zuhören (v1253)
+
+Owner-Test 07.10. 00:50: `/hören` funktioniert (zehn Äußerungen, 30 Sekunden Sprache gebucht). Zwei Kleinigkeiten:
+
+- Nach `/hören aus` meldete die Sitzung „Relais geschlossen", obwohl sie selbst beendet hatte. Jetzt still.
+- Das Relais protokollierte „Sitzung beendet" doppelt (Schluss-Zeichen und Verbindungsende). Jetzt einmal.
+
 ## [0.19.0-jarvis.1252] - 2026-10-07
 
 ### Added — Echtzeit-Sprache, Schritt 3: `/hören` mit Aktivierungswort (v1252)

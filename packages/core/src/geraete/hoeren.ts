@@ -141,7 +141,8 @@ export class HoerRelais {
   }
 
   private beende(s: Sitzung, grund: string): void {
-    if (this.sitzungen.get(s.geraetId) === s) this.sitzungen.delete(s.geraetId);
+    if (this.sitzungen.get(s.geraetId) !== s) return; // v1253 — schon beendet (schluss + close)
+    this.sitzungen.delete(s.geraetId);
     try { s.upstream?.send(JSON.stringify({ type: 'input_audio.end' })); } catch { /* */ }
     try { s.upstream?.close(); } catch { /* */ }
     try { s.ws.close(); } catch { /* */ }
