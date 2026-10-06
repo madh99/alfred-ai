@@ -158,7 +158,11 @@ Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Rele
 | .1241 | `/talk` (Push-to-Talk, Enter stoppt) → Transkription → Nachricht → Antwort vorgelesen; `/stimme an`; Server `POST /api/sprich`; Audio je Plattform ohne native Module (Windows MCI, macOS sox/afplay, Linux arecord/mpg123) | MCI-Aufnahme 2 s = 62.702 B WAV, Wiedergabe 2,0 s |
 | .1242 | STT/TTS-Callbacks wurden vor dem HTTP-Adapter verdrahtet (`/api/transcribe` seit v644 tot) — jetzt mit den übrigen API-Callbacks | `/api/sprich` → mp3, dasselbe Audio → `/api/transcribe` → „Sprachtest, was macht mein PC gerade?" |
 
-Nächste Stufe: Streaming-Sprache (Satz für Satz vorlesen, während die Antwort entsteht), eine Taste statt Enter, Ink-Oberfläche.
+| .1243 | Sprachantworten des Modells (text_to_speech ohne Text) werden in der Sitzung abgespielt statt als .bin abgelegt | Owner-Test /talk 22:42 erklärt; lokal „🔊 (Sprachantwort)" |
+| .1244 | Stimmen-Kaskade: Owner-Standard (DB, Name → UUID) vor Konfiguration; set_default speichert UUID | /api/sprich spricht mit alfred-jav (01a1129f…); Owner: „hat funktioniert" |
+| .1245/.1246 | Strg+T startet/stoppt die Aufnahme; Gerät der Sitzung im Prompt (`metadata.sitzungGeraet`) | „Von welchem Gerät schreibe ich?" → „vom Windows-PC PC-madh über alfred sitzung"; Strg+T-Test ohne Terminal |
+
+Nächste Stufe: Streaming-Sprache (Satz für Satz vorlesen, während die Antwort entsteht), Ink-Oberfläche.
 
 **Phase 1 ist damit vollständig** (Protokoll, Registry, Satellit, Sitzung, Browser-Hand, Vorhaben, Dateitransfer, Sinne). Noch offen aus Phase 1 im Kleinen: Dateitransfer blockweise für mehr als 8 MB, Gerätename der Sitzung im Prompt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink. Phase 3 (Zone des Handys) kommt mit der Android-App.
 
