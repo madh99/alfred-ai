@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1250] - 2026-10-07
+
+### Added — Echtzeit-Sprache, Schritt 1: Mikrofonstrom und Satzende-Erkennung (v1250)
+
+Owner-Freigabe für die Reihenfolge Mikrofonstrom → Relais → `/hören` mit Aktivierungswort. Schritt 1 kommt ohne Anbieter und ohne Server aus.
+
+- **Mikrofon als Strom** (PCM 16 Bit, 16 kHz, mono): Windows über `waveIn` aus winmm als C# im PowerShell-Kindprozess mit 80-ms-Puffern, macOS über sox, Linux über arecord. Keine nativen Node-Module.
+- **Satzende-Erkennung** im Kern (`SatzendeErkenner`): Lautstärke je 20-ms-Rahmen gegen einen mitlaufenden Grundpegel; drei laute Rahmen beginnen eine Äußerung, 700 ms Ruhe beenden sie, unter 400 ms wird verworfen, über 20 s hart beendet, fünf Rahmen Vorlauf für den Anlaut. Stille wird nie weitergegeben. Tests mit synthetischem Signal.
+- **Prüfbefehl** `alfred sitzung --mikrofontest 15`: 15 Sekunden zuhören, Äußerungen, Pegel und Schwelle zeigen.
+
 ## [0.19.0-jarvis.1249] - 2026-10-06
 
 ### Added — Dateitransfer Stufe 2: blockweise über HTTPS, bis 50 MB (v1249)

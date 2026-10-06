@@ -144,3 +144,97 @@ export class Audio {
     });
   }
 }
+
+/**
+ * v1250 — Mikrofon als Strom (PCM 16 Bit, 16 kHz, mono) für Echtzeit-Sprache.
+ * Windows: waveIn aus winmm, als C# im PowerShell-Kindprozess, 80-ms-Puffer, Rohbytes auf stdout; endet, wenn stdin schließt.
+ * macOS: sox (`rec`) nach stdout. Linux: arecord nach stdout. Keine nativen Node-Module.
+ */
+const PS_WAVEIN = [
+  'Add-Type -TypeDefinition @"',
+  'using System; using System.IO; using System.Runtime.InteropServices; using System.Threading;',
+  'public class AlfredWaveIn {',
+  '  [StructLayout(LayoutKind.Sequential)] public struct WAVEFORMATEX { public ushort wFormatTag; public ushort nChannels; public uint nSamplesPerSec; public uint nAvgBytesPerSec; public ushort nBlockAlign; public ushort wBitsPerSample; public ushort cbSize; }',
+  '  [StructLayout(LayoutKind.Sequential)] public struct WAVEHDR { public IntPtr lpData; public uint dwBufferLength; public uint dwBytesRecorded; public IntPtr dwUser; public uint dwFlags; public uint dwLoops; public IntPtr lpNext; public IntPtr reserved; }',
+  '  [DllImport("winmm.dll")] static extern int waveInOpen(out IntPtr h, uint dev, ref WAVEFORMATEX fmt, IntPtr cb, IntPtr inst, uint flags);',
+  '  [DllImport("winmm.dll")] static extern int waveInPrepareHeader(IntPtr h, IntPtr hdr, int size);',
+  '  [DllImport("winmm.dll")] static extern int waveInUnprepareHeader(IntPtr h, IntPtr hdr, int size);',
+  '  [DllImport("winmm.dll")] static extern int waveInAddBuffer(IntPtr h, IntPtr hdr, int size);',
+  '  [DllImport("winmm.dll")] static extern int waveInStart(IntPtr h);',
+  '  [DllImport("winmm.dll")] static extern int waveInStop(IntPtr h);',
+  '  [DllImport("winmm.dll")] static extern int waveInReset(IntPtr h);',
+  '  [DllImport("winmm.dll")] static extern int waveInClose(IntPtr h);',
+  '  public static int Run() {',
+  '    WAVEFORMATEX f = new WAVEFORMATEX(); f.wFormatTag = 1; f.nChannels = 1; f.nSamplesPerSec = 16000; f.wBitsPerSample = 16; f.nBlockAlign = 2; f.nAvgBytesPerSec = 32000; f.cbSize = 0;',
+  '    IntPtr h; int r = waveInOpen(out h, 0xFFFFFFFF, ref f, IntPtr.Zero, IntPtr.Zero, 0);',
+  '    if (r != 0) { Console.Error.WriteLine("waveInOpen " + r); return r; }',
+  '    int n = 8; int size = 2560; int hs = Marshal.SizeOf(typeof(WAVEHDR));',
+  '    IntPtr[] hdrs = new IntPtr[n]; IntPtr[] bufs = new IntPtr[n];',
+  '    for (int i = 0; i < n; i++) { bufs[i] = Marshal.AllocHGlobal(size); WAVEHDR w = new WAVEHDR(); w.lpData = bufs[i]; w.dwBufferLength = (uint)size; hdrs[i] = Marshal.AllocHGlobal(hs); Marshal.StructureToPtr(w, hdrs[i], false); waveInPrepareHeader(h, hdrs[i], hs); waveInAddBuffer(h, hdrs[i], hs); }',
+  '    waveInStart(h);',
+  '    Stream outp = Console.OpenStandardOutput(); byte[] tmp = new byte[size]; bool laeuft = true;',
+  '    Thread t = new Thread(delegate() { try { Console.In.ReadLine(); } catch (Exception) { } laeuft = false; }); t.IsBackground = true; t.Start();',
+  '    while (laeuft) {',
+  '      for (int i = 0; i < n; i++) {',
+  '        WAVEHDR w = (WAVEHDR)Marshal.PtrToStructure(hdrs[i], typeof(WAVEHDR));',
+  '        if ((w.dwFlags & 1) != 0) {',
+  '          int got = (int)w.dwBytesRecorded; if (got > 0) { Marshal.Copy(bufs[i], tmp, 0, got); outp.Write(tmp, 0, got); outp.Flush(); }',
+  '          waveInUnprepareHeader(h, hdrs[i], hs); w.dwFlags = 0; w.dwBytesRecorded = 0; Marshal.StructureToPtr(w, hdrs[i], false); waveInPrepareHeader(h, hdrs[i], hs); waveInAddBuffer(h, hdrs[i], hs);',
+  '        }',
+  '      }',
+  '      Thread.Sleep(10);',
+  '    }',
+  '    waveInStop(h); waveInReset(h); waveInClose(h); return 0;',
+  '  }',
+  '}',
+  '"@',
+  '[void][AlfredWaveIn]::Run()',
+];
+
+export interface MikrofonStrom { stop(): void }
+
+/** Startet den Mikrofonstrom; `aufDaten` bekommt PCM-Blöcke (16 kHz, mono, 16 Bit). */
+export async function mikrofonStrom(aufDaten: (pcm: Buffer) => void, aufEnde: (grund: string) => void): Promise<MikrofonStrom> {
+  let kind: ChildProcess;
+  if (process.platform === 'win32') {
+    const enc = Buffer.from(PS_WAVEIN.join('\n'), 'utf16le').toString('base64');
+    kind = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  } else if (process.platform === 'darwin') {
+    if (await vorhanden('rec')) kind = spawn('rec', ['-q', '-t', 'raw', '-b', '16', '-e', 'signed-integer', '-c', '1', '-r', '16000', '-'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    else if (await vorhanden('ffmpeg')) kind = spawn('ffmpeg', ['-loglevel', 'quiet', '-f', 'avfoundation', '-i', ':0', '-ar', '16000', '-ac', '1', '-f', 's16le', '-'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    else throw new Error('Kein Mikrofonwerkzeug: bitte sox (brew install sox) oder ffmpeg installieren.');
+  } else {
+    if (await vorhanden('arecord')) kind = spawn('arecord', ['-q', '-f', 'S16_LE', '-r', '16000', '-c', '1', '-t', 'raw', '-'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    else if (await vorhanden('ffmpeg')) kind = spawn('ffmpeg', ['-loglevel', 'quiet', '-f', 'pulse', '-i', 'default', '-ar', '16000', '-ac', '1', '-f', 's16le', '-'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    else throw new Error('Kein Mikrofonwerkzeug: bitte alsa-utils (arecord) oder ffmpeg installieren.');
+  }
+  let fehlerText = '';
+  kind.stderr?.on('data', (d: Buffer) => { fehlerText += d.toString('utf8'); });
+  kind.stdout?.on('data', (d: Buffer) => aufDaten(d));
+  let beendet = false;
+  kind.on('exit', (code) => { if (!beendet) { beendet = true; aufEnde(fehlerText.trim() || (code === 0 ? 'beendet' : `beendet mit Code ${code}`)); } });
+  kind.on('error', (err) => { if (!beendet) { beendet = true; aufEnde(err.message); } });
+  return {
+    stop: () => { beendet = true; try { kind.stdin?.write('\n'); kind.stdin?.end(); } catch { /* */ } setTimeout(() => { try { kind.kill(); } catch { /* */ } }, 500); },
+  };
+}
+
+/** v1250 — `alfred sitzung --mikrofontest N`: N Sekunden zuhören, Äußerungen und Pegel zeigen. Beweis ohne Anbieter. */
+export async function mikrofonTest(sekunden: number, erkenner: { schiebe(pcm: Buffer): Array<{ art: string; dauerMs?: number; audio?: Buffer }>; schliesse(): Array<{ art: string; dauerMs?: number }>; readonly schwelle: number }, rms: (b: Buffer) => number): Promise<void> {
+  let bytes = 0; let spitze = 0; const start = Date.now();
+  const strom = await mikrofonStrom((pcm) => {
+    bytes += pcm.length;
+    const p = rms(pcm); if (p > spitze) spitze = p;
+    for (const e of erkenner.schiebe(pcm)) {
+      const t = ((Date.now() - start) / 1000).toFixed(1);
+      if (e.art === 'start') process.stdout.write(`\n[${t} s] ● Sprache beginnt (Schwelle ${Math.round(erkenner.schwelle)})`);
+      else if (e.art === 'ende') process.stdout.write(`\n[${t} s] ■ Äußerung ${e.dauerMs} ms, ${e.audio?.length ?? 0} Bytes`);
+      else process.stdout.write(`\n[${t} s] · verworfen (${e.dauerMs} ms)`);
+    }
+  }, (grund) => process.stdout.write(`\nMikrofon: ${grund}\n`));
+  process.stdout.write(`Höre ${sekunden} s zu … (PCM 16 kHz mono)`);
+  await new Promise(r => setTimeout(r, sekunden * 1000));
+  strom.stop();
+  for (const e of erkenner.schliesse()) process.stdout.write(`\n■ Äußerung beim Ende: ${e.dauerMs} ms`);
+  process.stdout.write(`\n${bytes} Bytes empfangen (${(bytes / 32000).toFixed(1)} s Audio), Spitzenpegel ${Math.round(spitze)}, Schwelle am Ende ${Math.round(erkenner.schwelle)}\n`);
+}

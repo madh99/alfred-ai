@@ -138,6 +138,12 @@ async function main(): Promise<void> {
     }
 
     case 'sitzung': {
+      if (parsed.flags['mikrofontest']) { // v1250 — Mikrofonstrom + Satzende-Erkennung lokal prüfen
+        const { mikrofonTest } = await import('./commands/satellit-audio.js');
+        const { SatzendeErkenner, rms16 } = await import('@alfred/core');
+        await mikrofonTest(Number(parsed.flags['mikrofontest']) || 10, new SatzendeErkenner(), rms16);
+        process.exit(0);
+      }
       const { sitzungCommand } = await import('./commands/sitzung.js');
       await sitzungCommand({ ohneSatellit: !!parsed.flags['ohne-satellit'] });
       break;
