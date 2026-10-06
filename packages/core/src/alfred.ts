@@ -411,6 +411,21 @@ export class Alfred {
   private weltmodellBeobachter?: import('./ereignisse/zustandswechsel.js').WeltmodellBeobachter;
   /** v1217 — Befunde mit Identität (Kachel, Lage). */
   private befundeRepo?: import('@alfred/storage').BefundeRepository;
+  /** v1220 — Lage als Delta (Befunde + Vorgänge), alle 10 min und bei jedem Befund-Wechsel neu gerechnet; steht im Weltmodell-Block des Chats. */
+  private lageText?: string;
+  private lageStand?: string;
+  private async aktualisiereLage(): Promise<void> {
+    const owner = this.tryOwner();
+    if (!owner || !this.befundeRepo) return;
+    try {
+      const { VorgaengeRepository: VRepoL } = await import('@alfred/storage');
+      const { formatiereLage } = await import('./interaktion/lage.js');
+      const b = await this.befundeRepo.uebersicht(owner);
+      const v = await new VRepoL(this.database.getAdapter()).uebersicht(owner, 1);
+      this.lageText = formatiereLage({ befundeOffen: b.offen, befundeErledigt24h: b.erledigt24h, vorgaengeOffen: v.offene, vorgaengeAbgeschlossen24h: v.abgeschlossene });
+      this.lageStand = new Date().toISOString();
+    } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1220 Lage nicht aktualisiert'); }
+  }
   /** v1177 — Jarvis Schicht 2: Echtzeit-Ereignisse aus Home Assistant (WebSocket). */
   private haEreignisQuelle?: import('./ereignisse/ha-ereignisse.js').HaEreignisQuelle;
   /** v1198 — Anwesenheit aus Home Assistant für die Zustellentscheidung. */
@@ -474,6 +489,7 @@ export class Alfred {
       adapter: this.adapterZustaende(), // v1191
       kosten: await this.kostenHeute(), // v1205
       befunde: await (async () => { const o = this.tryOwner(); if (!o || !this.befundeRepo) return null; try { return await this.befundeRepo.uebersicht(o); } catch { return null; } })(), // v1217
+      lage: this.lageText ? { stand: this.lageStand, text: this.lageText } : null, // v1220
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
       // v1196 — letzte Begründungen („Warum?") für die Kachel
@@ -760,6 +776,7 @@ export class Alfred {
             log.info({ quelle, gegenstand: b.gegenstand, seit: b.entstanden, gesehen: b.gesehenAnzahl }, 'v1217 Befund erledigt (nicht mehr auffällig)');
             if (b.vorgangId) await vorgaengeRepoB.setzeStatus(owner, b.vorgangId, 'erledigt', 'von selbst erledigt: im Weltmodell nicht mehr auffällig').catch(() => undefined);
           }
+          if (r.neu.length || r.erledigt.length) void this.aktualisiereLage(); // v1220
         });
       }
     }
@@ -6851,7 +6868,12 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       }
       this.pipeline.setQuickActions(quickActions);
       // v1206 — Jarvis Schleife 1: Weltmodell im Gespräch (lazy, Engine wird später gesetzt)
-      this.pipeline.setWeltmodellQuelle(() => (this.reasoningEngine as unknown as { collector?: { weltmodellKurz?: () => string | undefined } } | undefined)?.collector?.weltmodellKurz?.());
+      this.pipeline.setWeltmodellQuelle(() => {
+        const welt = (this.reasoningEngine as unknown as { collector?: { weltmodellKurz?: () => string | undefined } } | undefined)?.collector?.weltmodellKurz?.();
+        // v1220 — Lage (Befunde + Vorgänge) hängt am Weltmodell-Block; ohne Weltmodell trägt sie den Kopf selbst
+        if (!this.lageText) return welt;
+        return welt ? `${welt}\n\n${this.lageText}` : `## Weltmodell (automatisch erhoben)\n\n${this.lageText}`;
+      });
     }
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
@@ -13730,6 +13752,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         this.registriereJob({
           key: 'vorgaenge-aufraeumen', beschreibung: 'Ausführungsgedächtnis: Schritte älter als 90 Tage entfernen', takt: { art: 'taeglich', um: '04:50' }, bereich: 'global', slot: true,
           run: async () => ({ ok: true, zaehler: { geloescht: await vorgaengeRepo.aufraeumen(90), verfallen: await vorgaengeRepo.verfalleAbgelaufene() } }),
+        });
+        // v1220 — Lage alle 10 min neu rechnen (Befunde, Vorgänge, 24-h-Delta) — Grundlage für Chat, Kachel und Sprachantwort
+        this.registriereJob({
+          key: 'lage-aktualisieren', beschreibung: 'Lage als Delta aus Befunden und Vorgängen neu rechnen', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 1,
+          run: async () => { await this.aktualisiereLage(); return { ok: true, zaehler: { zeichen: this.lageText?.length ?? 0 } }; },
         });
         // v1214 — Dubletten gleichen Themas auf den ältesten Vorgang zusammenlegen (täglich, Nachholen nach Restart)
         this.registriereJob({

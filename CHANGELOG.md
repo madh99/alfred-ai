@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1220] - 2026-10-06
+
+### Added — Befunde mit Identität, Teil 3: die Lage als Delta (v1220)
+
+Kein Schlüsselwort, keine Schablone. Die Lage ist ein Datenblock, der im Weltmodell-Abschnitt des Chat-Prompts steht; das Modell formuliert frei, hat aber nur belegte Objekte vor sich.
+
+- **Inhalt:** offene Befunde mit Kategorie, Dauer und Zahl der Beobachtungen (höchstens sechs, Rest gezählt), seit 24 Stunden von selbst erledigte Befunde, offene Vorgänge je Kategorie mit dem ältesten und seiner Frist, wie viele auf den Owner warten, und das 24-Stunden-Delta (neu, erledigt, verworfen). Schließt mit dem Hinweis, dass nur Belegtes bekannt ist.
+- **Aktualisierung:** alle 10 Minuten (Job `lage-aktualisieren`) und sofort bei jedem Befund-Wechsel. Höchstens 1.100 Zeichen.
+- **API:** `lage` im Lebenszeichen-Status (Stand und Text) für Kachel und Sprachantwort.
+- 3 Tests.
+
 ## [0.19.0-jarvis.1219] - 2026-10-06
 
 ### Added — Befunde mit Identität, Teil 2: Infrastruktur und Lebenszeichen (v1219)
