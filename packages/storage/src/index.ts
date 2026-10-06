@@ -107,6 +107,7 @@ export { VorgaengeRepository } from './repositories/vorgaenge-repository.js';
 export type { Vorgang, VorgangSchritt, VorgangStatus, Autonomie, SchrittArt } from './repositories/vorgaenge-repository.js';
 export { titelAehnlichkeit, VORGANG_AEHNLICHKEIT_SCHWELLE, themenGleich, titelAnker } from './repositories/vorgaenge-repository.js';
 export { BefundeRepository } from './repositories/befunde-repository.js'; // v1217
+export { GeraeteRepository } from './repositories/geraete-repository.js'; // v1224
 export type { Befund, BefundZustand, BefundEingang, BefundSync } from './repositories/befunde-repository.js';
 export type { KgQuestion, QuestionStatus } from './repositories/kg-questions-repository.js';
 export { RunbookRepository } from './repositories/runbook-repository.js';

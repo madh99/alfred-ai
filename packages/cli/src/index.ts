@@ -18,6 +18,8 @@ Usage:
 Commands:
   start          Start Alfred (load config, bootstrap, and run)
   chat           Interactive terminal chat (--model, --tier)
+  pair           Dieses Gerät mit Alfred koppeln (--server <url> --code <Code> [--name] [--insecure] [--verzeichnisse "a;b"])
+  satellit       Gerätedienst: Verbindung zum Gehirn halten, Aktionen lokal ausführen (--einmal)
   setup          Interactive setup wizard (configure LLM, platforms, API keys)
   config         Show current resolved configuration (API keys redacted)
   rules          List loaded security rules from the rules path
@@ -117,6 +119,24 @@ async function main(): Promise<void> {
         model: typeof parsed.flags['model'] === 'string' ? parsed.flags['model'] : undefined,
         tier: typeof parsed.flags['tier'] === 'string' ? parsed.flags['tier'] : undefined,
       });
+      break;
+    }
+
+    case 'pair': {
+      const { pairCommand } = await import('./commands/pair.js');
+      await pairCommand({
+        server: typeof parsed.flags['server'] === 'string' ? parsed.flags['server'] : undefined,
+        code: typeof parsed.flags['code'] === 'string' ? parsed.flags['code'] : (parsed.positional[0] ?? undefined),
+        name: typeof parsed.flags['name'] === 'string' ? parsed.flags['name'] : undefined,
+        insecure: !!parsed.flags['insecure'],
+        verzeichnisse: typeof parsed.flags['verzeichnisse'] === 'string' ? parsed.flags['verzeichnisse'] : undefined,
+      });
+      break;
+    }
+
+    case 'satellit': {
+      const { satellitCommand } = await import('./commands/satellit.js');
+      await satellitCommand({ einmal: !!parsed.flags['einmal'] });
       break;
     }
 

@@ -893,6 +893,15 @@ export class HttpAdapter extends MessagingAdapter {
   setCliUsageCallback(cb: typeof HttpAdapter.prototype.cliUsageCallback): void { this.cliUsageCallback = cb; }
   /** v1162 — Jarvis Schicht 0: Lebenszeichen-Kachel (Jobs, Provider-Puls, Proben, offene Meldungen). */
   private lebenszeichenCallback?: () => Promise<Record<string, unknown>>;
+  /** v1224 — Geräte (Satelliten): Pairing, Liste, Widerruf, WebSocket-Upgrade. */
+  private geraeteCallbacks?: {
+    pairingCode(): Promise<{ code: string; gueltigBis: string } | { fehler: string }> | { code: string; gueltigBis: string } | { fehler: string };
+    paare(body: Record<string, unknown>, remote: string): Promise<{ ok: true; id: string; token: string; name: string; skillName: string } | { ok: false; grund: string }>;
+    liste(): Promise<unknown[]>;
+    widerrufe(id: string): Promise<boolean>;
+    upgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
+  };
+  setGeraeteCallbacks(cb: NonNullable<HttpAdapter['geraeteCallbacks']>): void { this.geraeteCallbacks = cb; }
   setLebenszeichenCallback(cb: typeof HttpAdapter.prototype.lebenszeichenCallback): void { this.lebenszeichenCallback = cb; }
   /** v1185 — Kachel Vorgänge */
   private vorgaengeCallback?: () => Promise<Record<string, unknown>>;
@@ -950,6 +959,11 @@ export class HttpAdapter extends MessagingAdapter {
           this.handleSandboxProxyUpgrade(req, socket, head, u, refererMatch[1], u.pathname).catch(err => {
             try { socket.write(`HTTP/1.1 500 Internal Server Error\r\n\r\nUpgrade failed: ${(err as Error).message}\n`); socket.destroy(); } catch { /* */ }
           });
+          return;
+        }
+        // v1224 — Geräte-Satelliten (Token-Prüfung im Gateway nach dem hallo)
+        if (u.pathname === '/api/geraete/ws' && this.geraeteCallbacks) {
+          this.geraeteCallbacks.upgrade(req, socket, head);
           return;
         }
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
@@ -1786,6 +1800,15 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleClusterHealth(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/lebenszeichen' && req.method === 'GET') {
       this.handleLebenszeichen(req, res).catch(err => this.safeError(res, err));
+    // ── v1224 Geräte ──
+    } else if (url.pathname === '/api/geraete/pairing-code' && req.method === 'POST') {
+      this.handleGeraetePairingCode(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/geraete/pair' && req.method === 'POST') {
+      this.handleGeraetePair(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/geraete' && req.method === 'GET') {
+      this.handleGeraeteListe(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {
       this.handleVorgaenge(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/vorgaenge\/[^/]+\/entscheidung$/) && req.method === 'POST') {
@@ -6323,6 +6346,42 @@ export class HttpAdapter extends MessagingAdapter {
     const data = await this.vorgaengeCallback();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
+  }
+
+  // ── v1224 Geräte-Routen ──
+  private async handleGeraetePairingCode(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.geraeteCallbacks) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'geraete not available' })); return; }
+    const r = await this.geraeteCallbacks.pairingCode();
+    res.writeHead('fehler' in r ? 409 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(r));
+  }
+
+  /** Ohne Bearer-Auth: der kurzlebige Pairing-Code IST die Berechtigung (5 min, einmalig). */
+  private async handleGeraetePair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!this.geraeteCallbacks) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'geraete not available' })); return; }
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse(await this.readBody(req)) as Record<string, unknown>; } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, grund: 'kein JSON' })); return; }
+    const r = await this.geraeteCallbacks.paare(body, req.socket.remoteAddress ?? '?');
+    res.writeHead(r.ok ? 200 : 403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(r));
+  }
+
+  private async handleGeraeteListe(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.geraeteCallbacks) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'geraete not available' })); return; }
+    const liste = await this.geraeteCallbacks.liste();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ geraete: liste }));
+  }
+
+  private async handleGeraetWiderruf(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.geraeteCallbacks) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'geraete not available' })); return; }
+    const id = decodeURIComponent(url.pathname.split('/').pop() ?? '');
+    const ok = await this.geraeteCallbacks.widerrufe(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok }));
   }
 
   private async handleLebenszeichen(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

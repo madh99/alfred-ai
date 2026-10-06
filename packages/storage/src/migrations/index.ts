@@ -2868,4 +2868,15 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_befunde_user_zustand ON befunde(user_id, zustand, entstanden)');
     },
   },
+  {
+    version: 129,
+    description: 'v1224 — Geräte-Registry: geraete (Satelliten mit Manifest, Token-Hash, Scopes) (SQLite-Spiegel zu PG v133).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS geraete (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, plattform TEXT NOT NULL, manifest TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE, scopes TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL, zuletzt_gesehen TEXT, erstellt TEXT NOT NULL
+      )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_geraete_user ON geraete(user_id, status)');
+    },
+  },
 ];

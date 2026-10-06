@@ -28,9 +28,11 @@
     "@alfred/skills": "workspace:*",
     "js-yaml": "^4.1.0",
     "rss-parser": "^3.13.0",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/ws": "^8.5.12",
     "@types/js-yaml": "^4.0.9",
     "sharp": "^0.34.0"
   }

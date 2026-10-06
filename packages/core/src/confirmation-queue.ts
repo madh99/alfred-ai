@@ -144,7 +144,7 @@ export class ConfirmationQueue {
   async enqueue(opts: {
     chatId: string;
     platform: string;
-    source: 'watch' | 'scheduled' | 'reasoning';
+    source: 'watch' | 'scheduled' | 'reasoning' | 'geraet';
     sourceId: string;
     description: string;
     skillName: string;

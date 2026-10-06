@@ -6,6 +6,7 @@ export * from './config.js';
 export * from './planning.js';
 export * from './events.js';
 export * from './storage.js';
+export * from './geraete.js'; // v1224
 export * from './activity.js';
 export * from './cron.js';
 export * from './identity.js';

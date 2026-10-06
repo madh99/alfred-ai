@@ -111,7 +111,7 @@ export class ActivityLogger {
     confirmationId: string;
     skillName: string;
     description: string;
-    source: 'watch' | 'scheduled' | 'reasoning';
+    source: 'watch' | 'scheduled' | 'reasoning' | 'geraet';
     sourceId: string;
     outcome: 'approved' | 'rejected' | 'expired' | 'error';
     userId?: string;

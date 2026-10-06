@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1224] - 2026-10-06
+
+### Added — Geräte, Phase 1: Protokoll, Registry, Satellit (v1224)
+
+Erster Schritt der Geräte-Architektur (`docs/specs/2026-10-06-geraete-architektur.md`): Alfred bekommt einen Wirkungsraum auf den Rechnern des Owners. Der Server bleibt das Gehirn; ein Gerät ist ein Satellit mit eigener Identität.
+
+- **Protokoll** (`@alfred/types` geraete.ts): hallo/willkommen, puls, aktion/aktion_ergebnis, sinne, fehler, abgemeldet. Manifest je Gerät mit Aktionen und Autonomie-Klasse.
+- **Gehirn:** Tabelle `geraete` (SQLite v129, PG v133; Token nur als SHA-256-Hash), Geräte-Gateway mit Pairing-Code (8 Ziffern, 5 Minuten, einmalig), WebSocket unter `/api/geraete/ws`, Puls-Wächter (90 s), Routen `POST /api/geraete/pairing-code`, `POST /api/geraete/pair`, `GET /api/geraete`, `DELETE /api/geraete/:id`. Lebenszeichen-Status trägt `geraete`.
+- **Skill-Proxy:** Jedes verbundene Gerät erscheint als Skill `geraet_<name>` mit den Aktionen aus dem Manifest. `bestaetigen` geht in die Bestätigungs-Queue (Owner-Button im Messenger, Quelle `geraet`), `nie` wird abgewiesen, `auto` läuft sofort. Jede Ausführung ist ein Schritt im Ausführungsgedächtnis (Quelle `geraet`).
+- **CLI:** `alfred pair --server <url> --code <Code> [--name] [--insecure] [--verzeichnisse "a;b"]` koppelt das Gerät (Konfiguration in ~/.alfred/geraet.json, nur Owner lesbar). `alfred satellit` hält die Verbindung mit Wiederverbindung und führt Aktionen lokal aus: `oeffnen` (Datei, Ordner, URL; bestaetigen), `shell` (bestaetigen, nur in freigegebenen Verzeichnissen, 10 Minuten Zeitbudget), `liste` (auto), `hinweis` (auto). Freigegebene Verzeichnisse standardmäßig Dokumente, Downloads, Desktop; Pfade werden aufgelöst geprüft, Traversal scheitert.
+- Noch nicht: Terminal-Sitzung (Chat/Talk), Sinne, Kachel Geräte in der Web-GUI. Das sind die nächsten Releases der Phase 1.
+- Abhängigkeit `ws` in core und CLI. 9 Tests (Protokoll-Helfer).
+
 ## [0.19.0-jarvis.1223] - 2026-10-06
 
 ### Fixed — Gemeinsamer Vorgang wird erst erledigt, wenn alle Befunde erledigt sind (v1223)

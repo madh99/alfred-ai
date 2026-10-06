@@ -411,6 +411,8 @@ export class Alfred {
   private weltmodellBeobachter?: import('./ereignisse/zustandswechsel.js').WeltmodellBeobachter;
   /** v1217 — Befunde mit Identität (Kachel, Lage). */
   private befundeRepo?: import('@alfred/storage').BefundeRepository;
+  /** v1224 — Geräte-Gateway (Satelliten). */
+  private geraeteGateway?: import('./geraete/gateway.js').GeraeteGateway;
   /** v1220 — Lage als Delta (Befunde + Vorgänge), alle 10 min und bei jedem Befund-Wechsel neu gerechnet; steht im Weltmodell-Block des Chats. */
   private lageText?: string;
   private lageStand?: string;
@@ -490,6 +492,7 @@ export class Alfred {
       kosten: await this.kostenHeute(), // v1205
       befunde: await (async () => { const o = this.tryOwner(); if (!o || !this.befundeRepo) return null; try { return await this.befundeRepo.uebersicht(o); } catch { return null; } })(), // v1217
       lage: this.lageText ? { stand: this.lageStand, text: this.lageText } : null, // v1220
+      geraete: await (this.geraeteGateway?.liste().catch(() => []) ?? Promise.resolve([])), // v1224
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
       // v1196 — letzte Begründungen („Warum?") für die Kachel
@@ -13418,6 +13421,38 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     }
 
     // v1162 — Lebenszeichen-Kachel
+    // v1224 — Geräte-Gateway: Satelliten koppeln, verbinden, als Skill geraet_<name> anbieten
+    if (logApiAdapter && 'setGeraeteCallbacks' in logApiAdapter) {
+      try {
+        const { GeraeteGateway } = await import('./geraete/gateway.js');
+        const { GeraeteRepository, VorgaengeRepository: VRepoG } = await import('@alfred/storage');
+        const dbG = this.database.getAdapter();
+        const vorgaengeG = new VRepoG(dbG);
+        const gw = new GeraeteGateway({
+          logger: this.logger.child({ component: 'geraete' }),
+          repo: new GeraeteRepository(dbG),
+          skillRegistry: this.skillRegistry,
+          serverVersion: (this.config as { version?: string }).version ?? 'jarvis',
+          ownerUserId: () => this.ownerMasterUserId ?? this.tryOwner(),
+          ownerZiel: () => ({
+            platform: this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api',
+            chatId: this.config.security?.ownerUserId ?? '',
+          }),
+          enqueueBestaetigung: async (o) => { if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue'); await this.confirmationQueue.enqueue(o); },
+          schritt: async (s) => { await vorgaengeG.schritt({ userId: s.userId, art: s.art as import('@alfred/storage').SchrittArt, skill: s.skill, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie as import('@alfred/storage').Autonomie | undefined, quelle: s.quelle }); },
+        });
+        gw.start();
+        this.geraeteGateway = gw;
+        (logApiAdapter as any).setGeraeteCallbacks({
+          pairingCode: () => gw.erzeugePairingCode(),
+          paare: (b: Record<string, unknown>, r: string) => gw.paare(b, r),
+          liste: () => gw.liste(),
+          widerrufe: (id: string) => gw.widerrufe(id),
+          upgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => gw.handleUpgrade(req, s, h),
+        });
+        this.logger.info({}, 'v1224 Geräte-Gateway bereit (/api/geraete)');
+      } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1224 Geräte-Gateway nicht gestartet'); }
+    }
     if (logApiAdapter && 'setLebenszeichenCallback' in logApiAdapter) {
       (logApiAdapter as any).setLebenszeichenCallback(() => this.lebenszeichenStatus());
       // v1185 — Kachel Vorgänge (Jarvis Schicht 3)

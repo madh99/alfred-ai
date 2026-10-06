@@ -2,7 +2,7 @@ export interface ActivityEntry {
   id: string;
   timestamp: string;
   eventType: string;
-  source: 'user' | 'watch' | 'scheduled' | 'background' | 'system' | 'workflow' | 'reasoning';
+  source: 'user' | 'watch' | 'scheduled' | 'background' | 'system' | 'workflow' | 'reasoning' | 'geraet'; // v1224 geraet
   sourceId?: string;
   userId?: string;
   platform?: string;
