@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1243] - 2026-10-06
+
+### Fixed — Sprachantworten des Modells werden in der Sitzung abgespielt (v1243)
+
+Owner-Test 22:42 mit `/talk`: Transkription richtig, aber „(no response)" und ein Anhang als `.bin`. Das Modell hatte die Antwort selbst als Sprachnachricht (`text_to_speech`) erzeugt, ohne Text. Die Sitzung erkennt Audio-Anhänge jetzt an Typ und Bytes, zeigt „🔊 (Sprachantwort)" und spielt sie ab; ein zweites Vorlesen entfällt. Text und Dateianhänge werden nach dem Strom gesammelt ausgegeben.
+
 ## [0.19.0-jarvis.1242] - 2026-10-06
 
 ### Fixed — /api/transcribe und /api/sprich werden tatsächlich verdrahtet (v1242)

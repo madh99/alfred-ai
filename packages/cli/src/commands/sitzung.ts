@@ -9,6 +9,7 @@ import { starteSatellit } from './satellit.js';
 import { dienstLogPfad, satellitDienstLaeuft } from './satellit-dienst.js';
 import { getVersion } from '../version.js';
 import { Audio, type Aufnahme } from './satellit-audio.js'; // v1241
+import { audioMimeAusBytes } from '@alfred/core'; // v1243
 
 /**
  * v1232 — Die Sitzung: EIN Terminal für Chat, Bestätigungen und den Satelliten.
@@ -207,23 +208,41 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
     antwortLaeuft = true;
     let status = '';
     let antwortText = '';
+    // v1243 — Sprachantworten des Modells (text_to_speech / Voice) werden abgespielt statt als .bin abgelegt
+    let sprachAnhang: { data: Buffer; mimeType: string } | undefined;
+    const dateiAnhaenge: string[] = [];
     try {
       await anfrageStrom(k, '/api/message', { text, chatId }, (e) => {
         if (e.type === 'status') { status = e.text ?? ''; readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`… ${status.slice(0, 100)}`); }
-        else if (e.type === 'response') { antwortText = e.text ?? ''; readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`\nAlfred (${zeit()}): ${e.text ?? ''}\n\n`); }
+        else if (e.type === 'response') { antwortText = e.text ?? ''; }
         else if (e.type === 'attachment' && e.data) {
+          const data = Buffer.from(e.data, 'base64');
+          const mime = audioMimeAusBytes(data);
+          if (e.attachmentType === 'voice' || e.attachmentType === 'audio' || mime.startsWith('audio/')) { sprachAnhang = { data, mimeType: mime.startsWith('audio/') ? mime : 'audio/mpeg' }; return; }
           try {
             mkdirSync(ablage, { recursive: true });
             const name = e.fileName ?? `${new Date().toISOString().replace(/[:.]/g, '-')}.${e.attachmentType === 'image' ? 'jpg' : 'bin'}`;
             const ziel = path.join(ablage, name);
-            writeFileSync(ziel, Buffer.from(e.data, 'base64'));
-            process.stdout.write(`📎 ${e.caption ? e.caption + ' → ' : ''}${ziel}\n`);
-          } catch (err) { process.stdout.write(`📎 Anhang nicht gespeichert: ${(err as Error).message}\n`); }
+            writeFileSync(ziel, data);
+            dateiAnhaenge.push(`📎 ${e.caption ? e.caption + ' → ' : ''}${ziel}`);
+          } catch (err) { dateiAnhaenge.push(`📎 Anhang nicht gespeichert: ${(err as Error).message}`); }
         }
         else if (e.type === 'error') { process.stdout.write(`\nFehler: ${e.text ?? 'unbekannt'}\n`); }
       });
     } catch (err) { process.stdout.write(`\nFehler: ${(err as Error).message}\n`); }
-    if ((gesprochen || stimme) && antwortText && antwortText !== '(no response)') { process.stdout.write('🔊 …'); await sprich(antwortText); readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); }
+    readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+    const hatText = antwortText && antwortText !== '(no response)';
+    process.stdout.write(`\nAlfred (${zeit()}): ${hatText ? antwortText : (sprachAnhang ? '🔊 (Sprachantwort)' : antwortText)}\n`);
+    for (const z of dateiAnhaenge) process.stdout.write(z + '\n');
+    process.stdout.write('\n');
+    if (sprachAnhang) {
+      // Sprachantwort vom Modell: immer abspielen (sie IST die Antwort), kein zweites Vorlesen
+      process.stdout.write('🔊 …');
+      try { await audio.abspielen(sprachAnhang.data, sprachAnhang.mimeType); } catch (err) { process.stdout.write(`\n🔇 Wiedergabe fehlgeschlagen: ${(err as Error).message}\n`); }
+      readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+    } else if ((gesprochen || stimme) && hatText) {
+      process.stdout.write('🔊 …'); await sprich(antwortText); readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+    }
     antwortLaeuft = false;
     rl.prompt(true);
   };
