@@ -162,7 +162,9 @@ Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Rele
 | .1244 | Stimmen-Kaskade: Owner-Standard (DB, Name → UUID) vor Konfiguration; set_default speichert UUID | /api/sprich spricht mit alfred-jav (01a1129f…); Owner: „hat funktioniert" |
 | .1245/.1246 | Strg+T startet/stoppt die Aufnahme; Gerät der Sitzung im Prompt (`metadata.sitzungGeraet`) | „Von welchem Gerät schreibe ich?" → „vom Windows-PC PC-madh über alfred sitzung"; Strg+T-Test ohne Terminal |
 
-Nächste Stufe: Streaming-Sprache (Satz für Satz vorlesen, während die Antwort entsteht), Ink-Oberfläche.
+| .1247 | Streaming-Sprache Stufe 1: Satzblöcke, nächster Block wird synthetisiert, während der vorige läuft | 3 Blöcke, erster Ton nach 1,8 s |
+
+Nächste Stufe: Vorlesen, während das Modell noch schreibt (braucht einen Streaming-Pfad durch die Pipeline; die API liefert heute nur Status und Endantwort), Ink-Oberfläche.
 
 **Phase 1 ist damit vollständig** (Protokoll, Registry, Satellit, Sitzung, Browser-Hand, Vorhaben, Dateitransfer, Sinne). Noch offen aus Phase 1 im Kleinen: Dateitransfer blockweise für mehr als 8 MB, Gerätename der Sitzung im Prompt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink. Phase 3 (Zone des Handys) kommt mit der Android-App.
 
