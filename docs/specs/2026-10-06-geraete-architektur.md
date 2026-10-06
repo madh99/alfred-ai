@@ -146,8 +146,9 @@ Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Rele
 | .1234 | `delegate` reicht Anhänge der Unter-Skills durch (Owner-Beobachtung: Sprachnachricht kam nie an) | API-Probe: delegate → text_to_speech → Sprachnachricht im Strom |
 | .1235 | Dateitransfer Stufe 1: `datei_holen` / `datei_ablegen`, ≤ 8 MB über WebSocket, SHA-256, nie überschreiben | Documents → Server (FileStore-Schlüssel) → Downloads, Inhalt identisch |
 | .1236 | Bestätigungs-Queue stellt nach dem Ja auch Anhänge zu | — |
+| .1237 | Sinne: Leerlauf, Fenster, Akku jede Minute; Weltmodell-Quelle „Geräte" mit Befunden (getrennt > 3 h, Akku < 15 %); Zustellsignal „Owner am PC" | Sinne von PC-madh im Lebenszeichen, Job `geraete-beobachten` |
 
-Offen in Phase 1: Sinne. Dateitransfer blockweise mit Wiederaufnahme für mehr als 8 MB folgt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink.
+**Phase 1 ist damit vollständig** (Protokoll, Registry, Satellit, Sitzung, Browser-Hand, Vorhaben, Dateitransfer, Sinne). Noch offen aus Phase 1 im Kleinen: Dateitransfer blockweise für mehr als 8 MB, Gerätename der Sitzung im Prompt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink. Phase 3 (Zone des Handys) kommt mit der Android-App.
 
 ### Vorhaben-Freigabe (v1230)
 
