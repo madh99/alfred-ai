@@ -165,7 +165,7 @@ Sprache über vorhandene STT/TTS; Anwesenheit aus HA (Personen-Entitäten) und C
 - **Autonomie ohne Rückweg**: `auto` nur für Aktionen mit dokumentiertem Undo; jede Auto-Aktion im Ausführungsgedächtnis mit Rücknahme-Hinweis.
 - **Modellabhängigkeit durch die Hintertür**: Jede neue Fähigkeit wird gegen das schwächste Modell der Kette getestet (Mistral-Small-Lauf in der Suite), nicht nur gegen das stärkste.
 
-## Umsetzungsstand (05.10.2026, Release-Linie `0.19.0-jarvis.N`, Branch `feature/jarvis`)
+## Umsetzungsstand (06.10.2026, Release-Linie `0.19.0-jarvis.N`, Branch `feature/jarvis`)
 
 Jeder Punkt wurde live auf .92 bewiesen (Logzeilen, `job_runs`, Datenbank), nicht nur gebaut. Versionsnummern verweisen auf den CHANGELOG.
 
@@ -204,6 +204,15 @@ Jeder Punkt wurde live auf .92 bewiesen (Logzeilen, `job_runs`, Datenbank), nich
 - Gesprächsfaden: Alfreds proaktive Meldungen liegen als sein Beitrag in der Unterhaltung des Owners, damit Rückfragen darauf aufsetzen (.1203, Realfall „Outlook-Problem").
 - Rücknahme-Hinweis je Auto-Aktion (.1200, Abschnitt Risiken).
 - Offen: der Zustellgrund „Bewegung im Haus" und die Chat-Frage „warum?" sind gebaut, aber live noch nicht aufgetreten.
+
+### Lernschleifen: drei von vier Bausteinen live (.1204–.1208, freigegeben 06.10.2026)
+Owner-Vorgabe: Alfred soll auf alles dynamisch antworten, Wissen aufbauen und sich selbst verbessern; keine vorgegebenen Szenarien. Umsetzung als drei Schleifen in freigegebener Reihenfolge.
+- Vorbedingung Kostenwächter (.1205): Tagesbudget `llm.tagesbudgetUsd` / `ALFRED_LLM_TAGESBUDGET_USD`, Bewertung im Degradations-Wächter, Kosten in der Kachel Lebenszeichen. Ohne gesetztes Budget inaktiv (Hinweis in der Kachel).
+- Modell-Update Oktober (.1204): GPT-6.1 Sol, GPT-6 Sol/Luna, Claude Opus 5.5/Sonnet 5.5, Ministral 3 in Preistabelle, Kontextfenstern und Provider-Besonderheiten. Live seit 06.10.: Standard gpt-6.1-sol, strong opus-5-5, fast sonnet-5-5.
+- Schleife 1 „Wissen → Antwort" (.1206): der Chat-Prompt enthält eine kompakte Weltmodell-Zusammenfassung (Auto, Haus, Energie, Infrastruktur, offene Vorgänge) mit Stand-Uhrzeit; Fakten vor Werkzeugen. Beweis 06.10. 02:35: Frage nach dem Auto in 16,7 s mit zwei Modellaufrufen und einem Werkzeug statt 83 s und sieben Runden.
+- Schleife 3 „Lücke → Fähigkeit" (.1207): enthält eine Antwort eine Absage („kann ich nicht", „kein Zugriff", englische Entsprechungen) oder erkennt der Skill-Failure-Reflektor ein wiederholtes Scheitern, legt Alfred sich einen Vorgang „Lernbedarf" an (Frage, Absage-Satz, nächster Schritt, Kategorie, Frist 14 Tage, Quelle `lernbedarf`). Beweis 06.10. 02:53: Frage nach Garmin-Schritten → Vorgang offen in der Kachel.
+- Schleife 2 „Reaktion → Verhalten" (Schicht 4 Teil 2): bewusst zurückgestellt, bis zwei Wochen Kennzahlen vorliegen (ab etwa 20.10.); Regeln (Digest-Modus unter Quote, Aufstieg nach `auto`) nur mit Owner-Freigabe.
+- Stolperstein (.1208): Sonnet 5.5 lehnt `thinking:{type:"disabled"}` ab und verlangt `between_tools`; drei Vollpässe scheiterten in Serie. Fix deterministisch plus modellunabhängige Selbstheilung: der Provider lernt die verlangte Abschalt-Form aus der 400-Antwort, wiederholt einmal und behält sie für die Laufzeit.
 
 ### Arbeitsweise, die sich bewährt hat
 - Kleine Releases mit sofortigem Live-Audit; mehrere Fehler wurden erst durch die vorangegangene Schicht sichtbar (Stream stabil → Refresh-Schleife → stiller REST-Ausfall → Tageskontingent).
