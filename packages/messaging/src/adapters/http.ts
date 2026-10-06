@@ -906,6 +906,8 @@ export class HttpAdapter extends MessagingAdapter {
     upgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
     /** v1232 — Gerätetoken → Identität des Geräts für die Sitzung (userId = Plattform-Kennung des Alias, an den Owner gebunden). */
     authentifiziere?(token: string): Promise<{ userId: string; geraetId: string; name: string } | undefined>;
+    /** v1249 — blockweiser Dateitransfer. */
+    transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
   };
   /** v1232 — Identität des Geräts je Anfrage, wenn der Ausweis ein Gerätetoken war. */
   private readonly geraetIdentitaet = new WeakMap<http.IncomingMessage, { userId: string; geraetId: string; name: string }>();
@@ -1817,6 +1819,14 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetePair(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/geraete' && req.method === 'GET') {
       this.handleGeraeteListe(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/geraete/dateien' && req.method === 'POST') {
+      this.handleTransfer(req, res, url, 'start').catch(err => this.safeError(res, err)); // v1249
+    } else if (url.pathname.match(/^\/api\/geraete\/dateien\/[^/]+\/fertig$/) && req.method === 'POST') {
+      this.handleTransfer(req, res, url, 'fertig').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/geraete\/dateien\/[^/]+$/) && req.method === 'PUT') {
+      this.handleTransfer(req, res, url, 'block').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/geraete\/dateien\/[^/]+$/) && req.method === 'GET') {
+      this.handleTransfer(req, res, url, req.headers.range ? 'lesen' : 'status').catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {
@@ -6418,6 +6428,41 @@ export class HttpAdapter extends MessagingAdapter {
     const liste = await this.geraeteCallbacks.liste();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ geraete: liste }));
+  }
+
+  // v1249 — blockweiser Dateitransfer: Ausweis Gerätetoken (Transfers des Geräts) oder API-Token
+  private async handleTransfer(req: http.IncomingMessage, res: http.ServerResponse, url: URL, art: 'start' | 'block' | 'status' | 'fertig' | 'lesen'): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const cb = this.geraeteCallbacks?.transfer;
+    if (!cb) { res.writeHead(503, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'transfer not available' })); return; }
+    const geraetId = this.geraetIdentitaet.get(req)?.geraetId;
+    const segmente = url.pathname.split('/');
+    const id = art === 'start' ? undefined : segmente[4];
+    const json = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    try {
+      if (art === 'start') {
+        let body: unknown; try { body = JSON.parse(await this.readBody(req)); } catch { body = {}; }
+        json(200, await cb('start', { geraetId, body })); return;
+      }
+      if (art === 'block') {
+        const offset = Number(url.searchParams.get('offset') ?? '-1');
+        const teile: Buffer[] = []; let total = 0;
+        for await (const chunk of req) { const b = chunk as Buffer; total += b.length; if (total > 4 * 1024 * 1024 + 1024) { json(413, { error: 'Block zu groß' }); return; } teile.push(b); }
+        const r = await cb('block', { id, geraetId, offset, data: Buffer.concat(teile) }) as { offsetFehler?: boolean };
+        json(r?.offsetFehler ? 409 : 200, r); return;
+      }
+      if (art === 'status') { json(200, await cb('status', { id, geraetId })); return; }
+      if (art === 'fertig') { json(200, await cb('fertig', { id, geraetId })); return; }
+      // lesen: Range: bytes=a-b
+      const m = /^bytes=(\d+)-(\d+)?$/.exec(String(req.headers.range ?? ''));
+      if (!m) { json(400, { error: 'Range bytes=a-b erwartet' }); return; }
+      const a = Number(m[1]); const b = m[2] !== undefined ? Number(m[2]) : a + 4 * 1024 * 1024 - 1;
+      const data = await cb('lesen', { id, geraetId, offset: a, laenge: b - a + 1 }) as Buffer;
+      res.writeHead(206, { 'Content-Type': 'application/octet-stream', 'Content-Length': data.length, 'Content-Range': `bytes ${a}-${a + data.length - 1}/*` });
+      res.end(data);
+    } catch (err) {
+      json(400, { error: (err as Error).message });
+    }
   }
 
   private async handleGeraetWiderruf(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

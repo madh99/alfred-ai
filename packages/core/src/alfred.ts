@@ -13457,6 +13457,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           }),
           enqueueBestaetigung: async (o) => { if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue'); return this.confirmationQueue.enqueue(o); },
           vorhabenDatei: path.resolve(process.cwd(), 'data', 'geraete-vorhaben.json'), // v1240 — Vorhaben überleben Neustarts
+          transferOrdner: path.resolve(process.cwd(), 'data', 'transfers'), // v1249
           // v1235 — Dateitransfer: Quelle = FileStore-Schlüssel des Owners oder Serverpfad unter dem Alfred-Datenordner
           dateien: {
             lade: async (quelle: string) => {
@@ -13508,6 +13509,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           widerrufe: (id: string) => gw.widerrufe(id),
           // v1233 — Sitzung spricht als Owner: Alias api/geraet:<id> wird beim ersten Kontakt angelegt und an den
           // Master des Geräts gebunden (kein Auto-Link-Raten; bei mehreren Mastern wäre der Alias sonst ein Fremder).
+          transfer: (art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: Parameters<typeof gw.transferRoute>[1]) => gw.transferRoute(art, p), // v1249
           authentifiziere: async (t: string) => {
             const g = await gw.authentifiziere(t);
             if (!g) return undefined;

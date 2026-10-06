@@ -1,4 +1,6 @@
 import type { Logger } from 'pino';
+import os from 'node:os';
+import path from 'node:path';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { randomUUID } from 'node:crypto';
@@ -8,6 +10,7 @@ import type { GeraeteRepository } from '@alfred/storage';
 import type { GeraetEintrag, GeraetManifest, GeraetNachricht, GeraetAktionErgebnis } from '@alfred/types';
 import { GeraetSkill } from './geraet-skill.js';
 import { Freigaben, VorhabenFreigaben, vorhabenDateiSpeicher } from './freigaben.js';
+import { Transfers, TransferOffsetFehler } from './transfers.js'; // v1249
 import { AKTION_TIMEOUT_MS, PAIRING_CODE_GUELTIG_MS, PULS_TIMEOUT_MS, erzeugePairingCode, erzeugeToken, geraetSkillName, hashToken, pruefeManifest } from './protokoll.js';
 
 /**
@@ -26,6 +29,8 @@ export interface GeraeteGatewayDeps {
   schritt?: (s: { userId: string; art: string; skill: string; aktion?: string; params?: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }) => Promise<void>;
   /** v1240 — Datei, in der laufende Vorhaben Neustarts überleben. */
   vorhabenDatei?: string;
+  /** v1249 — Ordner für Teildateien des blockweisen Transfers. */
+  transferOrdner?: string;
   /** v1235 — Dateitransfer: Quelle laden / geholte Datei speichern (FileStore des Owners). */
   dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
@@ -57,10 +62,13 @@ export class GeraeteGateway {
   private readonly freigaben = new Freigaben();
   /** v1230 — Vorhaben-Freigaben (ein Ja für viele Schritte). */
   private readonly vorhaben: VorhabenFreigaben;
+  /** v1249 — blockweiser Dateitransfer (Upload Gerät → Server, Download Server → Gerät). */
+  readonly transfers: Transfers;
   private wachhund?: ReturnType<typeof setInterval>;
 
   constructor(private readonly deps: GeraeteGatewayDeps) {
     this.vorhaben = new VorhabenFreigaben(() => this.deps.now?.() ?? Date.now(), this.deps.vorhabenDatei ? vorhabenDateiSpeicher(this.deps.vorhabenDatei) : undefined); // v1240
+    this.transfers = new Transfers(this.deps.transferOrdner ?? path.join(os.tmpdir(), 'alfred-transfers'), () => this.deps.now?.() ?? Date.now()); // v1249
   }
 
   start(): void {
@@ -212,6 +220,7 @@ export class GeraeteGateway {
       pruefeFreigabe: (nonce, aktion, params) => this.freigaben.verbrauche(nonce, v.skillName, aktion, params),
       dateien: this.deps.dateien, // v1235
       zustand: () => this.zustaendeVerbunden().find(z => z.name === v.eintrag.name), // v1238
+      transfer: { bereitstellen: (name, data) => this.transfers.bereitstellen(v.eintrag.id, name, data) }, // v1249
       vorhaben: {
         erzeuge: (x) => this.vorhaben.erzeuge(v.skillName, x),
         aktiviere: (nonce) => { const a = this.vorhaben.aktiviere(nonce, v.skillName); if (a) this.deps.logger.info({ geraet: v.eintrag.name, beschreibung: a.beschreibung, aktionen: a.aktionen, domains: a.domains, bis: new Date(a.bis).toISOString() }, 'v1230 Vorhaben freigegeben'); return a; },
@@ -266,6 +275,29 @@ export class GeraeteGateway {
       v.offen.set(id, { resolve: (r) => resolve({ success: r.success, data: r.data, display: r.display, error: r.error, dauerMs: r.dauerMs ?? Date.now() - start }), timer });
       this.sende(v.ws, { typ: 'aktion', id, aktion, params });
     });
+  }
+
+  /** v1249 — Upload abschließen: Prüfsumme, dann in den Dateispeicher des Owners. */
+  async uploadAbschliessen(id: string, geraetId?: string): Promise<{ key: string; name: string; groesse: number; sha256: string }> {
+    const f = this.transfers.schliesseUpload(id, geraetId);
+    if (!this.deps.dateien) throw new Error('Dateispeicher nicht eingerichtet');
+    const key = await this.deps.dateien.speichere(f.name, f.data);
+    this.deps.logger.info({ id, name: f.name, groesse: f.data.length, key, geraetId }, 'v1249 Upload abgeschlossen');
+    return { key, name: f.name, groesse: f.data.length, sha256: f.sha256 };
+  }
+
+  /** v1249 — HTTP-Routen für den blockweisen Transfer (Ausweis: Gerätetoken oder API-Token). */
+  transferRoute(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown {
+    switch (art) {
+      case 'start': { const b = (p.body ?? {}) as Record<string, unknown>; return this.transfers.starteUpload(p.geraetId ?? 'api', b.name, b.groesse, b.sha256); }
+      case 'block': {
+        try { return this.transfers.schreibeBlock(String(p.id), p.offset ?? -1, p.data ?? Buffer.alloc(0), p.geraetId); }
+        catch (err) { if (err instanceof TransferOffsetFehler) return { offsetFehler: true, empfangen: err.empfangen, groesse: err.groesse }; throw err; }
+      }
+      case 'status': return this.transfers.status(String(p.id), p.geraetId);
+      case 'fertig': return this.uploadAbschliessen(String(p.id), p.geraetId);
+      case 'lesen': return this.transfers.leseBlock(String(p.id), p.offset ?? 0, p.laenge ?? 0, p.geraetId);
+    }
   }
 
   /** v1232 — Sitzung: das Gerätetoken weist ein gekoppeltes Gerät gegenüber der HTTP-API aus. */

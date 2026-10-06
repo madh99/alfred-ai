@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1249] - 2026-10-06
+
+### Added — Dateitransfer Stufe 2: blockweise über HTTPS, bis 50 MB (v1249)
+
+Spec Geräte-Architektur 5a, zweite Ausbaustufe. Bis 8 MB läuft es wie bisher über die Geräteverbindung; darüber in Blöcken von 4 MB über HTTPS mit Gerätetoken, SHA-256 und Wiederaufnahme.
+
+- **Server:** `POST /api/geraete/dateien` startet einen Upload, `PUT …/:id?offset=` nimmt einen Block (falscher Offset → 409 mit dem nächsten erwarteten Offset), `GET …/:id` liefert den Stand, `POST …/:id/fertig` prüft die Prüfsumme und legt die Datei im Dateispeicher ab. `GET …/:id` mit `Range` liefert Blöcke für Downloads. Teildateien liegen in `data/transfers`, Einträge leben 60 Minuten, nur das eigene Gerät (oder der API-Token) darf sie anfassen.
+- **Satellit:** `datei_holen` lädt über 8 MB blockweise hoch und meldet den Schlüssel; `datei_ablegen` holt sich große Dateien blockweise und prüft die Prüfsumme, bevor es schreibt. Bis zu fünf Wiederholungen je Transfer.
+- Tests: Blöcke, Offset-Wiederaufnahme, Prüfsumme, Fremdgerät, Ablauf, Routen-Freigabe.
+
 ## [0.19.0-jarvis.1248] - 2026-10-06
 
 ### Added — Streaming-Pfad: Vorlesen, während das Modell schreibt (v1248)

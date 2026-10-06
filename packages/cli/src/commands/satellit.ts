@@ -5,7 +5,8 @@ import { exec, execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import type { GeraetManifest, GeraetNachricht, GeraetPlattform } from '@alfred/types';
-import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS, TRANSFER_MAX_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from '@alfred/core';
+import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS, TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from '@alfred/core';
+import { geraetAnfrage, geraetJson } from './geraet-http.js'; // v1249
 import { getVersion } from '../version.js';
 import { ladeKonfig, type GeraetKonfig } from './pair.js';
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
@@ -110,17 +111,53 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!istPfadErlaubt(p, frei)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Freigegeben: ${frei.join(', ')}` };
       if (!existsSync(p) || !statSync(p).isFile()) return { success: false, error: `Keine Datei: ${p}` };
       const groesse = statSync(p).size;
-      if (groesse > TRANSFER_MAX_BYTES) return { success: false, error: `Datei zu groß (${groesse} B, Grenze ${TRANSFER_MAX_BYTES} B)` };
+      if (groesse > TRANSFER_GROSS_MAX_BYTES) return { success: false, error: `Datei zu groß (${groesse} B, Grenze ${TRANSFER_GROSS_MAX_BYTES} B)` };
       const data = readFileSync(p);
       const name = path.basename(p);
-      return { success: true, data: { dateiBase64: data.toString('base64'), dateiName: name, mimeType: mimeAusName(name), groesse, sha256: sha256Hex(data) }, display: `${name} (${groesse} B) von ${k.name} geholt` };
+      const sha256 = sha256Hex(data);
+      if (groesse > TRANSFER_MAX_BYTES) {
+        // v1249 — blockweise über HTTPS mit Wiederaufnahme; der Server speichert und liefert den Schlüssel
+        const start = await geraetJson<{ id: string; blockGroesse: number }>(k, 'POST', '/api/geraete/dateien', { name, groesse, sha256 });
+        let offset = 0; let fehler = 0;
+        while (offset < groesse) {
+          const block = data.subarray(offset, Math.min(offset + start.blockGroesse, groesse));
+          try {
+            const r = await geraetAnfrage(k, 'PUT', `/api/geraete/dateien/${start.id}?offset=${offset}`, block);
+            const j = JSON.parse(r.data.toString('utf8') || '{}') as { empfangen?: number; offsetFehler?: boolean; error?: string };
+            if (r.status === 409 && typeof j.empfangen === 'number') { offset = j.empfangen; continue; }
+            if (r.status !== 200) throw new Error(j.error ?? `HTTP ${r.status}`);
+            offset = j.empfangen ?? offset + block.length;
+          } catch (err) {
+            if (++fehler > 5) throw err;
+            try { const st = await geraetJson<{ empfangen: number }>(k, 'GET', `/api/geraete/dateien/${start.id}`); offset = st.empfangen; } catch { /* nächster Versuch */ }
+            await new Promise(r => setTimeout(r, 1000 * fehler));
+          }
+        }
+        const fertig = await geraetJson<{ key: string }>(k, 'POST', `/api/geraete/dateien/${start.id}/fertig`);
+        return { success: true, data: { key: fertig.key, dateiName: name, groesse, sha256, gross: true }, display: `${name} (${groesse} B) blockweise von ${k.name} hochgeladen, gespeichert als ${fertig.key}` };
+      }
+      return { success: true, data: { dateiBase64: data.toString('base64'), dateiName: name, mimeType: mimeAusName(name), groesse, sha256 }, display: `${name} (${groesse} B) von ${k.name} geholt` };
     }
     case 'datei_ablegen': {
       const ziel = String(params.path ?? '');
       if (!istPfadErlaubt(ziel, frei)) return { success: false, error: `Pfad nicht freigegeben: ${ziel}. Freigegeben: ${frei.join(', ')}` };
-      const inhalt = typeof params.inhaltBase64 === 'string' ? Buffer.from(params.inhaltBase64, 'base64') : undefined;
+      let inhalt = typeof params.inhaltBase64 === 'string' ? Buffer.from(params.inhaltBase64, 'base64') : undefined;
+      if (!inhalt && typeof params.downloadId === 'string') {
+        // v1249 — große Datei blockweise vom Server holen (Range), mit Wiederaufnahme
+        const groesse = Number(params.groesse ?? 0); const blockGroesse = Number(params.blockGroesse ?? 4 * 1024 * 1024);
+        if (!groesse || groesse > TRANSFER_GROSS_MAX_BYTES) return { success: false, error: 'Größe fehlt oder zu groß' };
+        const teile: Buffer[] = []; let offset = 0; let fehler = 0;
+        while (offset < groesse) {
+          try {
+            const r = await geraetAnfrage(k, 'GET', `/api/geraete/dateien/${params.downloadId}`, undefined, { headers: { Range: `bytes=${offset}-${Math.min(offset + blockGroesse, groesse) - 1}` } });
+            if (r.status !== 206 || r.data.length === 0) throw new Error(`HTTP ${r.status}`);
+            teile.push(r.data); offset += r.data.length;
+          } catch (err) { if (++fehler > 5) throw err; await new Promise(res => setTimeout(res, 1000 * fehler)); }
+        }
+        inhalt = Buffer.concat(teile);
+      }
       if (!inhalt) return { success: false, error: 'Kein Inhalt vom Server erhalten' };
-      if (inhalt.length > TRANSFER_MAX_BYTES) return { success: false, error: 'Datei zu groß' };
+      if (inhalt.length > TRANSFER_GROSS_MAX_BYTES) return { success: false, error: 'Datei zu groß' };
       if (typeof params.sha256 === 'string' && sha256Hex(inhalt) !== params.sha256) return { success: false, error: 'Prüfsumme stimmt nicht' };
       const istOrdner = existsSync(ziel) && statSync(ziel).isDirectory();
       const ordner = istOrdner ? ziel : path.dirname(ziel);

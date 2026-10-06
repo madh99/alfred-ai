@@ -13,6 +13,8 @@ const SITZUNG_PFADE = [
   // v1241 — Sprache in der Sitzung
   /^\/api\/transcribe$/,
   /^\/api\/sprich$/,
+  // v1249 — blockweiser Dateitransfer des Satelliten
+  /^\/api\/geraete\/dateien(\/[^/]+(\/fertig)?)?$/,
 ];
 
 export function istSitzungsPfad(url: string | undefined): boolean {

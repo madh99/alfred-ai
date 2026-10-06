@@ -109,6 +109,9 @@ export function paramsKurz(params: Record<string, unknown>): string {
 
 /** v1235 — Dateitransfer Gerät ⇄ Gehirn (Phase 1: Nutzlast über die WebSocket-Verbindung, bis 8 MB, SHA-256). */
 export const TRANSFER_MAX_BYTES = 8 * 1024 * 1024;
+/** v1249 — darüber hinaus blockweise über HTTPS (Stufe 2), bis 50 MB. */
+export const TRANSFER_GROSS_MAX_BYTES = 50 * 1024 * 1024;
+export const TRANSFER_BLOCK_BYTES = 4 * 1024 * 1024;
 
 export function sha256Hex(data: Buffer | string): string { return createHash('sha256').update(data).digest('hex'); }
 

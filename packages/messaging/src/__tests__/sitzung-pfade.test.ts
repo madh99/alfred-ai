@@ -12,6 +12,9 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete')).toBe(true);
     expect(istSitzungsPfad('/api/transcribe')).toBe(true); // v1241
     expect(istSitzungsPfad('/api/sprich')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/dateien')).toBe(true); // v1249
+    expect(istSitzungsPfad('/api/geraete/dateien/abc?offset=0')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/dateien/abc/fertig')).toBe(true);
   });
   it('sperrt alles andere', () => {
     expect(istSitzungsPfad('/api/geraete/abc')).toBe(false); // Widerruf

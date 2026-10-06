@@ -1,6 +1,6 @@
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult, GeraetManifest, GeraetAktionDef } from '@alfred/types';
-import { paramsKurz, TRANSFER_MAX_BYTES, sha256Hex, mimeAusName, sichererDateiname } from './protokoll.js';
+import { paramsKurz, TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, sha256Hex, mimeAusName, sichererDateiname } from './protokoll.js';
 import { deuteGeraete } from '../normalzustaende/geraete.js'; // v1238
 
 /**
@@ -26,6 +26,8 @@ export interface GeraetSkillDeps {
     deckt: (aktion: string, params: Record<string, unknown>) => { beschreibung: string; schritte: number } | undefined;
     nachFreigabe?: (v: { beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
   };
+  /** v1249 — große Datei für das Gerät bereitstellen (blockweiser Download über HTTPS). */
+  transfer?: { bereitstellen: (name: string, data: Buffer) => { id: string; groesse: number; sha256: string; blockGroesse: number } };
   /** v1238 — Zustand des Geräts aus den Sinnen (online, Leerlauf, Fenster, Akku), ohne Rückfrage ans Gerät. */
   zustand?: () => import('../normalzustaende/geraete.js').GeraetZustand | undefined;
   /** v1235 — Dateitransfer: Quelle am Server laden (FileStore-Schlüssel oder Serverpfad), geholte Datei ablegen. */
@@ -130,12 +132,26 @@ export class GeraetSkill extends Skill {
       if (!this.deps.dateien) return { success: false, error: 'Dateitransfer am Server nicht eingerichtet' };
       const q = await this.deps.dateien.lade(quelle).catch(() => undefined);
       if (!q) return { success: false, error: `Quelle nicht lesbar: ${quelle}` };
-      if (q.data.length > TRANSFER_MAX_BYTES) return { success: false, error: `Datei zu groß (${q.data.length} B, Grenze ${TRANSFER_MAX_BYTES} B)` };
-      geraetParams = { ...params, dateiName: sichererDateiname(q.name), inhaltBase64: q.data.toString('base64'), sha256: sha256Hex(q.data), groesse: q.data.length };
+      if (q.data.length > TRANSFER_GROSS_MAX_BYTES) return { success: false, error: `Datei zu groß (${q.data.length} B, Grenze ${TRANSFER_GROSS_MAX_BYTES} B)` };
+      if (q.data.length > TRANSFER_MAX_BYTES) {
+        // v1249 — über 8 MB: blockweise über HTTPS, das Gerät holt sich die Blöcke mit seinem Token
+        if (!this.deps.transfer) return { success: false, error: 'Blockweiser Transfer am Server nicht eingerichtet' };
+        const t = this.deps.transfer.bereitstellen(sichererDateiname(q.name), q.data);
+        geraetParams = { ...params, dateiName: sichererDateiname(q.name), downloadId: t.id, sha256: t.sha256, groesse: t.groesse, blockGroesse: t.blockGroesse };
+      } else {
+        geraetParams = { ...params, dateiName: sichererDateiname(q.name), inhaltBase64: q.data.toString('base64'), sha256: sha256Hex(q.data), groesse: q.data.length };
+      }
     }
     const r = await this.deps.sendeAktion(aktion, geraetParams, aktion === 'shell' ? 10 * 60_000 : undefined);
     await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, 300) : (r.error ?? '').slice(0, 300), autonomie: def.autonomie });
     if (!r.success) return { success: false, error: r.error ?? 'Gerät meldete Fehler' };
+    // v1249 — datei_holen über 8 MB: das Gerät hat blockweise hochgeladen, der Server hat schon gespeichert (key)
+    const dg = r.data as { key?: string; dateiName?: string; groesse?: number; sha256?: string; gross?: boolean } | undefined;
+    if (aktion === 'datei_holen' && dg && typeof dg.key === 'string') {
+      const name = sichererDateiname(dg.dateiName);
+      await this.deps.schritt?.({ art: 'ausgefuehrt', aktion: 'datei_holen:gespeichert', params: { name, groesse: dg.groesse, sha256: dg.sha256, key: dg.key, blockweise: true }, beschreibung: `Datei von ${this.deps.name} übernommen (blockweise): ${name} (${dg.groesse ?? '?'} B)`, ergebnis: dg.key, autonomie: def.autonomie });
+      return { success: true, data: { geraet: this.deps.name, name, groesse: dg.groesse, key: dg.key }, display: `Datei von ${this.deps.name} geholt (blockweise, ${dg.groesse ?? '?'} B): ${name}, gespeichert als key="${dg.key}". Zu groß für einen Chat-Anhang — über den Dateispeicher erreichbar.` };
+    }
     // v1235 — datei_holen: Prüfsumme prüfen, im Dateispeicher ablegen, als Anhang zum Owner
     const dh = r.data as { dateiBase64?: string; dateiName?: string; sha256?: string } | undefined;
     if (aktion === 'datei_holen' && dh && typeof dh.dateiBase64 === 'string') {
