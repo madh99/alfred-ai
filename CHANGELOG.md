@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1240] - 2026-10-06
+
+### Fixed — Vorhaben überleben einen Neustart (v1240)
+
+Realfall 20:52: Das freigegebene Vorhaben auf sprecherdatei.de verlangte danach wieder Einzelbestätigungen — ein Server-Neustart hatte die Vorhaben vergessen, sie lebten nur im Speicher. Jetzt liegen sie in `data/geraete-vorhaben.json` (Nonce, Umfang, Frist, Schritte) und werden beim Start wieder geladen; abgelaufene verschwinden. Test mit simuliertem Neustart.
+
 ## [0.19.0-jarvis.1239] - 2026-10-06
 
 ### Added — Systemwerte als Sinne, Weiterarbeiten nach einer Bestätigung (v1239)

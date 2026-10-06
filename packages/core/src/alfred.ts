@@ -13458,6 +13458,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             chatId: this.config.security?.ownerUserId ?? '',
           }),
           enqueueBestaetigung: async (o) => { if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue'); return this.confirmationQueue.enqueue(o); },
+          vorhabenDatei: path.resolve(process.cwd(), 'data', 'geraete-vorhaben.json'), // v1240 — Vorhaben überleben Neustarts
           // v1235 — Dateitransfer: Quelle = FileStore-Schlüssel des Owners oder Serverpfad unter dem Alfred-Datenordner
           dateien: {
             lade: async (quelle: string) => {

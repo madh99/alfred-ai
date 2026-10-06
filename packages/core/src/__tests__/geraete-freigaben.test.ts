@@ -16,6 +16,22 @@ describe('VorhabenFreigaben', () => {
     expect(f.deckt('geraet_pc', 'shell', { command: 'dir' })).toBeUndefined();
     expect(f.deckt('anderes_geraet', 'browser_klicken', {})).toBeUndefined();
   });
+  it('überlebt einen Neustart über den Speicher (v1240)', () => {
+    let ablage: unknown[] = [];
+    const speicher = { lade: () => ablage as never, speichere: (v: unknown[]) => { ablage = JSON.parse(JSON.stringify(v)); } };
+    let t = 1_000_000;
+    const f1 = new VorhabenFreigaben(() => t, speicher);
+    const v = f1.erzeuge('geraet_pc', { beschreibung: 'MP3 speichern', aktionen: ['browser_*', 'shell'], domains: ['sprecherdatei.de'], dauerMin: 30 });
+    f1.aktiviere(v.nonce, 'geraet_pc');
+    f1.deckt('geraet_pc', 'browser_klicken', {});
+    // „Neustart": neue Instanz, gleicher Speicher
+    const f2 = new VorhabenFreigaben(() => t, speicher);
+    expect(f2.aktive('geraet_pc').map(x => [x.beschreibung, x.schritte])).toEqual([['MP3 speichern', 1]]);
+    expect(f2.deckt('geraet_pc', 'shell', { command: 'dir' })?.schritte).toBe(2);
+    t += 31 * 60_000;
+    const f3 = new VorhabenFreigaben(() => t, speicher);
+    expect(f3.aktive()).toHaveLength(0);
+  });
   it('aktive() listet nur freigegebene, nicht abgelaufene Vorhaben', () => {
     let t = 1_000_000;
     const f = new VorhabenFreigaben(() => t);

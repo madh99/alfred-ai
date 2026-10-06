@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 /**
  * v1225 — Einmal-Freigaben für Geräteaktionen der Klasse `bestaetigen`.
@@ -76,9 +78,21 @@ export function domainErlaubt(host: string | undefined, domains: string[]): bool
   return domains.some(d => { const dd = d.toLowerCase().replace(/^\*\./, ''); return host === dd || host.endsWith('.' + dd); });
 }
 
+/** v1240 — Ablage der Vorhaben (Datei im Datenordner): ein Neustart darf ein freigegebenes Vorhaben nicht vergessen. */
+export interface VorhabenSpeicher { lade(): Vorhaben[]; speichere(v: Vorhaben[]): void }
+
 export class VorhabenFreigaben {
   private readonly vorhaben = new Map<string, Vorhaben>();
-  constructor(private readonly now: () => number = () => Date.now()) {}
+  constructor(private readonly now: () => number = () => Date.now(), private readonly speicher?: VorhabenSpeicher) {
+    if (speicher) {
+      try { for (const v of speicher.lade()) if (v && typeof v.nonce === 'string' && v.bis > this.now()) this.vorhaben.set(v.nonce, v); } catch { /* leer starten */ }
+    }
+  }
+
+  private sichere(): void {
+    if (!this.speicher) return;
+    try { this.speicher.speichere([...this.vorhaben.values()]); } catch { /* Ablage optional */ }
+  }
 
   erzeuge(skillName: string, v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number }): Vorhaben {
     this.raeumeAuf();
@@ -90,6 +104,7 @@ export class VorhabenFreigaben {
       bis: this.now() + dauer * 60_000, aktiv: false, schritte: 0,
     };
     this.vorhaben.set(vorhaben.nonce, vorhaben);
+    this.sichere();
     return vorhaben;
   }
 
@@ -99,6 +114,7 @@ export class VorhabenFreigaben {
     const v = this.vorhaben.get(nonce);
     if (!v || v.skillName !== skillName || v.bis < this.now()) return undefined;
     v.aktiv = true;
+    this.sichere();
     return v;
   }
 
@@ -111,6 +127,7 @@ export class VorhabenFreigaben {
       const host = hostAus(params.url ?? params.path);
       if (host !== undefined && !domainErlaubt(host, v.domains)) continue;
       v.schritte += 1;
+      this.sichere();
       return v;
     }
     return undefined;
@@ -118,7 +135,19 @@ export class VorhabenFreigaben {
 
   aktive(skillName?: string): Vorhaben[] { this.raeumeAuf(); return [...this.vorhaben.values()].filter(v => v.aktiv && (!skillName || v.skillName === skillName)); }
 
-  beende(nonce: string): void { this.vorhaben.delete(nonce); }
+  beende(nonce: string): void { this.vorhaben.delete(nonce); this.sichere(); }
 
-  private raeumeAuf(): void { const jetzt = this.now(); for (const [k, v] of this.vorhaben) if (v.bis < jetzt) this.vorhaben.delete(k); }
+  private raeumeAuf(): void {
+    const jetzt = this.now(); let geaendert = false;
+    for (const [k, v] of this.vorhaben) if (v.bis < jetzt) { this.vorhaben.delete(k); geaendert = true; }
+    if (geaendert) this.sichere();
+  }
+}
+
+/** v1240 — Datei-Ablage für Vorhaben (JSON, synchron, klein). */
+export function vorhabenDateiSpeicher(pfad: string): VorhabenSpeicher {
+  return {
+    lade: () => { try { return JSON.parse(readFileSync(pfad, 'utf8')) as Vorhaben[]; } catch { return []; } },
+    speichere: (v) => { try { mkdirSync(dirname(pfad), { recursive: true }); writeFileSync(pfad, JSON.stringify(v), { mode: 0o600 }); } catch { /* Ablage optional */ } },
+  };
 }

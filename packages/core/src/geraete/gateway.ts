@@ -7,7 +7,7 @@ import type { SkillRegistry } from '@alfred/skills';
 import type { GeraeteRepository } from '@alfred/storage';
 import type { GeraetEintrag, GeraetManifest, GeraetNachricht, GeraetAktionErgebnis } from '@alfred/types';
 import { GeraetSkill } from './geraet-skill.js';
-import { Freigaben, VorhabenFreigaben } from './freigaben.js';
+import { Freigaben, VorhabenFreigaben, vorhabenDateiSpeicher } from './freigaben.js';
 import { AKTION_TIMEOUT_MS, PAIRING_CODE_GUELTIG_MS, PULS_TIMEOUT_MS, erzeugePairingCode, erzeugeToken, geraetSkillName, hashToken, pruefeManifest } from './protokoll.js';
 
 /**
@@ -24,6 +24,8 @@ export interface GeraeteGatewayDeps {
   ownerZiel: () => { platform: string; chatId: string };
   enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number }) => Promise<boolean | void>;
   schritt?: (s: { userId: string; art: string; skill: string; aktion?: string; params?: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }) => Promise<void>;
+  /** v1240 — Datei, in der laufende Vorhaben Neustarts überleben. */
+  vorhabenDatei?: string;
   /** v1235 — Dateitransfer: Quelle laden / geholte Datei speichern (FileStore des Owners). */
   dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
@@ -54,10 +56,12 @@ export class GeraeteGateway {
   /** v1225 — Einmal-Freigaben für bestätigte Geräteaktionen. */
   private readonly freigaben = new Freigaben();
   /** v1230 — Vorhaben-Freigaben (ein Ja für viele Schritte). */
-  private readonly vorhaben = new VorhabenFreigaben();
+  private readonly vorhaben: VorhabenFreigaben;
   private wachhund?: ReturnType<typeof setInterval>;
 
-  constructor(private readonly deps: GeraeteGatewayDeps) {}
+  constructor(private readonly deps: GeraeteGatewayDeps) {
+    this.vorhaben = new VorhabenFreigaben(() => this.deps.now?.() ?? Date.now(), this.deps.vorhabenDatei ? vorhabenDateiSpeicher(this.deps.vorhabenDatei) : undefined); // v1240
+  }
 
   start(): void {
     if (this.wachhund) return;
