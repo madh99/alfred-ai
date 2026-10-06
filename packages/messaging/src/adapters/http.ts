@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { istSitzungsPfad } from '../sitzung-pfade.js'; // v1232
 import https from 'node:https';
 import net from 'node:net';
 import fs from 'node:fs';
@@ -900,7 +901,11 @@ export class HttpAdapter extends MessagingAdapter {
     liste(): Promise<unknown[]>;
     widerrufe(id: string): Promise<boolean>;
     upgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
+    /** v1232 — Gerätetoken → Identität des Geräts (Owner-User) für die Sitzung. */
+    authentifiziere?(token: string): Promise<{ userId: string; geraetId: string; name: string } | undefined>;
   };
+  /** v1232 — Identität des Geräts je Anfrage, wenn der Ausweis ein Gerätetoken war. */
+  private readonly geraetIdentitaet = new WeakMap<http.IncomingMessage, { userId: string; geraetId: string; name: string }>();
   setGeraeteCallbacks(cb: NonNullable<HttpAdapter['geraeteCallbacks']>): void { this.geraeteCallbacks = cb; }
   setLebenszeichenCallback(cb: typeof HttpAdapter.prototype.lebenszeichenCallback): void { this.lebenszeichenCallback = cb; }
   /** v1185 — Kachel Vorgänge */
@@ -2146,6 +2151,12 @@ export class HttpAdapter extends MessagingAdapter {
     if (this.authCb && token) {
       const user = await this.authCb.getUserByToken(token);
       if (user) return true;
+    }
+
+    // v1232 — Gerätetoken (Sitzung): nur für Chat, Bestätigungen, Lebenszeichen, Geräteliste
+    if (this.geraeteCallbacks?.authentifiziere && token && istSitzungsPfad(req.url)) {
+      const g = await this.geraeteCallbacks.authentifiziere(token).catch(() => undefined);
+      if (g) { this.geraetIdentitaet.set(req, g); return true; }
     }
 
     res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -6064,8 +6075,10 @@ export class HttpAdapter extends MessagingAdapter {
         // die ConversationRepo.findOrCreateForProject() trifft. Pipeline injiziert
         // den Projekt-Kontext basierend auf der projectId.
         const projectId = typeof parsed.projectId === 'string' && parsed.projectId.length > 0 ? parsed.projectId : undefined;
-        const chatId = projectId ? `project:${projectId}` : (parsed.chatId ?? `api-chat-${crypto.randomUUID()}`);
-        const userId = parsed.userId ?? 'api-user';
+        // v1232 — Sitzung eines gekoppelten Geräts: spricht als dessen Owner, eigener Chat je Gerät
+        const geraet = this.geraetIdentitaet.get(req);
+        const chatId = projectId ? `project:${projectId}` : (parsed.chatId ?? (geraet ? `sitzung:${geraet.geraetId}` : `api-chat-${crypto.randomUUID()}`));
+        const userId = geraet ? geraet.userId : (parsed.userId ?? 'api-user');
 
         // Close any existing stream for this chatId
         const existingStream = this.streams.get(chatId);
@@ -6105,8 +6118,8 @@ export class HttpAdapter extends MessagingAdapter {
           chatId,
           chatType: 'dm',
           userId,
-          userName: userId,
-          displayName: 'API User',
+          userName: geraet ? `sitzung:${geraet.name}` : userId,
+          displayName: geraet ? `Sitzung ${geraet.name}` : 'API User',
           text,
           timestamp: new Date(),
           // v657 — Reply-Kontext aus dem WebUI durchreichen

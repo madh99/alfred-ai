@@ -232,6 +232,14 @@ export class GeraeteGateway {
     });
   }
 
+  /** v1232 — Sitzung: das Gerätetoken weist ein gekoppeltes Gerät gegenüber der HTTP-API aus. */
+  async authentifiziere(token: string): Promise<{ userId: string; geraetId: string; name: string } | undefined> {
+    if (!token || token.length < 20) return undefined;
+    const e = await this.deps.repo.findeDurchTokenHash(hashToken(token)).catch(() => undefined);
+    if (!e || e.status !== 'aktiv') return undefined;
+    return { userId: e.userId, geraetId: e.id, name: e.name };
+  }
+
   /** v1231 — laufende Vorhaben für die Kachel. */
   vorhabenAktive(): Array<{ geraet: string; beschreibung: string; aktionen: string[]; domains: string[]; bis: string; schritte: number }> {
     const namen = new Map([...this.verbindungen.values()].map(v => [v.skillName, v.eintrag.name]));

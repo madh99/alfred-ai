@@ -111,6 +111,15 @@ export function entferneDienst(): string {
   return `systemd-Benutzerdienst ${SYSTEMD_UNIT} entfernt.`;
 }
 
+/** v1232 — läuft der Satellit bereits als Dienst? (Die Sitzung liest dann das Protokoll mit, statt ihn doppelt zu starten.) */
+export function satellitDienstLaeuft(): boolean {
+  try {
+    if (process.platform === 'win32') return windowsSatellitProzesse() > 0;
+    if (process.platform === 'darwin') return /"PID" = \d+/.test(execFileSync('launchctl', ['list', LAUNCHD_LABEL], { encoding: 'utf8' }));
+    return execFileSync('systemctl', ['--user', 'is-active', SYSTEMD_UNIT], { encoding: 'utf8' }).trim() === 'active';
+  } catch { return false; }
+}
+
 export function dienstStatus(): string {
   try {
     if (process.platform === 'win32') { const n = windowsSatellitProzesse(); return `Autostart: ${existsSync(windowsStartSkript()) ? 'eingerichtet' : 'nicht eingerichtet'} · laufende Satellit-Prozesse: ${n}`; }

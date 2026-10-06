@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1232] - 2026-10-06
+
+### Added — Die Sitzung: ein Terminal für Chat, Bestätigungen und Satellit (v1232)
+
+Owner-Wunsch: nicht drei CLIs für drei Arten. `alfred sitzung` öffnet ein Fenster, in dem alles zusammenläuft.
+
+- **Chat als Owner.** Die Sitzung weist sich mit dem Gerätetoken aus; der Server erkennt das gekoppelte Gerät und führt die Nachricht unter dem Owner, in einem eigenen Chat je Gerät (`sitzung:<Gerät>`). Anhänge (Screenshots, Dateien) landen in `~/.alfred/sitzung`.
+- **Bestätigungen im selben Fenster.** Offene Bestätigungen erscheinen, sobald sie entstehen, und werden mit `/ja n` und `/nein n` beantwortet; was anderswo (Telegram, Web) entschieden wurde, verschwindet mit Hinweis.
+- **Satellit läuft mit.** Läuft der Dienst, liest die Sitzung sein Protokoll mit (Aktionen, Ergebnisse, Verbindung); läuft keiner, startet sie den Satelliten im selben Prozess. `/geraete` und `/lage` zeigen Geräte und Lage.
+- **Gerätetoken ist kein Generalschlüssel.** Es öffnet nur Chat, Bestätigungen, Lebenszeichen und Geräteliste; alle anderen Routen bleiben dem API-Token vorbehalten (Test).
+- Sprache (Talk) folgt in Phase 2.
+
 ## [0.19.0-jarvis.1231] - 2026-10-06
 
 ### Changed — Vorhaben günstiger, Kachel Geräte (v1231)

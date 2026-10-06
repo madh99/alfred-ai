@@ -13471,6 +13471,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           paare: (b: Record<string, unknown>, r: string) => gw.paare(b, r),
           liste: () => gw.liste(),
           widerrufe: (id: string) => gw.widerrufe(id),
+          authentifiziere: (t: string) => gw.authentifiziere(t), // v1232
           upgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => gw.handleUpgrade(req, s, h),
         });
         this.logger.info({}, 'v1224 Geräte-Gateway bereit (/api/geraete)');

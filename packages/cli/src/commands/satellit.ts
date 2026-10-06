@@ -150,49 +150,65 @@ export async function satellitCommand(opts: { einmal?: boolean; install?: boolea
   }
   const k = ladeKonfig();
   if (!k) { console.error('Nicht gekoppelt. Zuerst: alfred pair --server https://host:3420 --code <Code>'); process.exit(1); }
+  const s = starteSatellit(k, { einmal: opts.einmal, log: m => console.log(m), fehler: m => console.error(m) });
+  process.on('SIGINT', () => { console.log('\nSatellit beendet.'); s.stop(); process.exit(0); });
+  process.on('SIGTERM', () => { s.stop(); process.exit(0); });
+  await s.fertig;
+}
+
+/**
+ * v1232 — Der Satellit als Funktion: Verbindung halten, Aktionen ausführen, Ereignisse melden.
+ * Genutzt vom Dienst (`alfred satellit`) und von der Sitzung (`alfred sitzung`), wenn kein Dienst läuft.
+ */
+export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: (zeile: string) => void; fehler?: (zeile: string) => void }): { stop: () => void; fertig: Promise<void> } {
+  const log = opts.log ?? (() => undefined);
+  const fehler = opts.fehler ?? log;
   const version = getVersion();
   const manifest = baueManifest(version);
   const wsUrl = k.server.replace(/^http/i, 'ws') + '/api/geraete/ws';
   let rueckzugMs = 1000;
   let laeuft = true;
-  const stop = () => { laeuft = false; };
-  process.on('SIGINT', () => { console.log('\nSatellit beendet.'); stop(); process.exit(0); });
-  process.on('SIGTERM', () => { stop(); process.exit(0); });
+  let aktiv: WebSocket | undefined;
+  const stop = () => { laeuft = false; try { aktiv?.close(); } catch { /* */ } };
 
-  console.log(`Satellit ${k.name} (${manifest.plattform}, v${version}) → ${k.server}`);
-  console.log(`Freigegebene Verzeichnisse: ${k.freigegebeneVerzeichnisse.join(', ')}`);
+  log(`Satellit ${k.name} (${manifest.plattform}, v${version}) → ${k.server}`);
+  log(`Freigegebene Verzeichnisse: ${k.freigegebeneVerzeichnisse.join(', ')}`);
 
-  while (laeuft) {
-    const ende = await new Promise<string>((resolve) => {
-      const ws = new WebSocket(wsUrl, { rejectUnauthorized: !k.insecure });
-      let puls: ReturnType<typeof setInterval> | undefined;
-      const sende = (n: Record<string, unknown>) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); };
-      ws.on('open', () => {
-        sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });
-        puls = setInterval(() => sende({ typ: 'puls' }), PULS_INTERVALL_MS);
+  const fertig = (async () => {
+    while (laeuft) {
+      const ende = await new Promise<string>((resolve) => {
+        const ws = new WebSocket(wsUrl, { rejectUnauthorized: !k.insecure });
+        aktiv = ws;
+        let puls: ReturnType<typeof setInterval> | undefined;
+        const sende = (n: Record<string, unknown>) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); };
+        ws.on('open', () => {
+          sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });
+          puls = setInterval(() => sende({ typ: 'puls' }), PULS_INTERVALL_MS);
+        });
+        ws.on('message', async (raw) => {
+          let n: GeraetNachricht;
+          try { n = JSON.parse(String(raw)) as GeraetNachricht; } catch { return; }
+          if (n.typ === 'willkommen') { rueckzugMs = 1000; log(`[${new Date().toLocaleTimeString('de-AT')}] Verbunden mit Alfred ${n.serverVersion} — im Gehirn als Skill ${n.skillName}`); return; }
+          if (n.typ === 'puls_ok') return;
+          if (n.typ === 'fehler') { fehler(`Fehler vom Gehirn: ${n.grund}`); return; }
+          if (n.typ === 'abgemeldet') { fehler(`Abgemeldet: ${n.grund}. Bitte neu koppeln (alfred pair).`); stop(); ws.close(); return; }
+          if (n.typ === 'aktion') {
+            const start = Date.now();
+            log(`[${new Date().toLocaleTimeString('de-AT')}] Aktion ${n.aktion} ${JSON.stringify(n.params).slice(0, 160)}`);
+            let r: Ergebnis;
+            try { r = await fuehreAus(k, n.aktion, n.params ?? {}); } catch (err) { r = { success: false, error: (err as Error).message }; }
+            sende({ typ: 'aktion_ergebnis', id: n.id, success: r.success, data: r.data, display: r.display, error: r.error, dauerMs: Date.now() - start });
+            log(`  → ${r.success ? 'ok' : 'Fehler: ' + r.error}`);
+          }
+        });
+        ws.on('close', (code, reason) => { if (puls) clearInterval(puls); resolve(`geschlossen (${code} ${String(reason)})`); });
+        ws.on('error', (err) => { resolve(`Fehler: ${err.message}`); });
       });
-      ws.on('message', async (raw) => {
-        let n: GeraetNachricht;
-        try { n = JSON.parse(String(raw)) as GeraetNachricht; } catch { return; }
-        if (n.typ === 'willkommen') { rueckzugMs = 1000; console.log(`[${new Date().toLocaleTimeString('de-AT')}] Verbunden mit Alfred ${n.serverVersion} — im Gehirn als Skill ${n.skillName}`); return; }
-        if (n.typ === 'puls_ok') return;
-        if (n.typ === 'fehler') { console.error(`Fehler vom Gehirn: ${n.grund}`); return; }
-        if (n.typ === 'abgemeldet') { console.error(`Abgemeldet: ${n.grund}. Bitte neu koppeln (alfred pair).`); stop(); ws.close(); return; }
-        if (n.typ === 'aktion') {
-          const start = Date.now();
-          console.log(`[${new Date().toLocaleTimeString('de-AT')}] Aktion ${n.aktion} ${JSON.stringify(n.params).slice(0, 160)}`);
-          let r: Ergebnis;
-          try { r = await fuehreAus(k, n.aktion, n.params ?? {}); } catch (err) { r = { success: false, error: (err as Error).message }; }
-          sende({ typ: 'aktion_ergebnis', id: n.id, success: r.success, data: r.data, display: r.display, error: r.error, dauerMs: Date.now() - start });
-          console.log(`  → ${r.success ? 'ok' : 'Fehler: ' + r.error}`);
-        }
-      });
-      ws.on('close', (code, reason) => { if (puls) clearInterval(puls); resolve(`geschlossen (${code} ${String(reason)})`); });
-      ws.on('error', (err) => { resolve(`Fehler: ${err.message}`); });
-    });
-    if (!laeuft || opts.einmal) break;
-    console.log(`[${new Date().toLocaleTimeString('de-AT')}] Verbindung ${ende} — neuer Versuch in ${Math.round(rueckzugMs / 1000)} s`);
-    await new Promise(r => setTimeout(r, rueckzugMs));
-    rueckzugMs = Math.min(rueckzugMs * 2, 120_000);
-  }
+      if (!laeuft || opts.einmal) break;
+      log(`[${new Date().toLocaleTimeString('de-AT')}] Verbindung ${ende} — neuer Versuch in ${Math.round(rueckzugMs / 1000)} s`);
+      await new Promise(r => setTimeout(r, rueckzugMs));
+      rueckzugMs = Math.min(rueckzugMs * 2, 120_000);
+    }
+  })();
+  return { stop, fertig };
 }
