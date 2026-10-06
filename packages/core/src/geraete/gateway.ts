@@ -121,6 +121,11 @@ export class GeraeteGateway {
     return l.filter(g => g.status === 'aktiv').map(g => ({ name: g.name, plattform: g.manifest.plattform, online: g.online, verbundenSeit: g.verbundenSeit, zuletztGesehen: g.zuletztGesehen, sinne: g.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: g.sinneZeit }));
   }
 
+  /** v1238 — Zustände der gerade verbundenen Geräte, synchron aus dem Speicher (Prompt-Block, Skill-Aktion zustand). */
+  zustaendeVerbunden(): import('../normalzustaende/geraete.js').GeraetZustand[] {
+    return [...this.verbindungen.values()].map(v => ({ name: v.eintrag.name, plattform: v.eintrag.manifest.plattform, online: true, verbundenSeit: v.verbundenSeit, sinne: v.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: v.sinneZeit ? new Date(v.sinneZeit).toISOString() : undefined }));
+  }
+
   /** v1237 — Gerät, an dem der Owner gerade sitzt (frische Sinne, kurzer Leerlauf) — Zustellsignal. */
   aktivesGeraet(): { name: string; leerlaufSek: number } | undefined {
     const jetzt = this.deps.now?.() ?? Date.now();
@@ -202,6 +207,7 @@ export class GeraeteGateway {
       },
       pruefeFreigabe: (nonce, aktion, params) => this.freigaben.verbrauche(nonce, v.skillName, aktion, params),
       dateien: this.deps.dateien, // v1235
+      zustand: () => this.zustaendeVerbunden().find(z => z.name === v.eintrag.name), // v1238
       vorhaben: {
         erzeuge: (x) => this.vorhaben.erzeuge(v.skillName, x),
         aktiviere: (nonce) => { const a = this.vorhaben.aktiviere(nonce, v.skillName); if (a) this.deps.logger.info({ geraet: v.eintrag.name, beschreibung: a.beschreibung, aktionen: a.aktionen, domains: a.domains, bis: new Date(a.bis).toISOString() }, 'v1230 Vorhaben freigegeben'); return a; },

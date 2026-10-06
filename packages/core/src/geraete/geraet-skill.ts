@@ -1,6 +1,7 @@
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult, GeraetManifest, GeraetAktionDef } from '@alfred/types';
 import { paramsKurz, TRANSFER_MAX_BYTES, sha256Hex, mimeAusName, sichererDateiname } from './protokoll.js';
+import { deuteGeraete } from '../normalzustaende/geraete.js'; // v1238
 
 /**
  * v1224 — Skill-Proxy: ein verbundenes Gerät erscheint im Gehirn als Skill `geraet_<name>`.
@@ -25,6 +26,8 @@ export interface GeraetSkillDeps {
     deckt: (aktion: string, params: Record<string, unknown>) => { beschreibung: string; schritte: number } | undefined;
     nachFreigabe?: (v: { beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
   };
+  /** v1238 — Zustand des Geräts aus den Sinnen (online, Leerlauf, Fenster, Akku), ohne Rückfrage ans Gerät. */
+  zustand?: () => import('../normalzustaende/geraete.js').GeraetZustand | undefined;
   /** v1235 — Dateitransfer: Quelle am Server laden (FileStore-Schlüssel oder Serverpfad), geholte Datei ablegen. */
   dateien?: {
     lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>;
@@ -40,7 +43,7 @@ export class GeraetSkill extends Skill {
     super();
     const aktionen = deps.manifest.aktionen;
     const params: Record<string, unknown> = {
-      action: { type: 'string', enum: [...aktionen.map(a => a.name), 'vorhaben'], description: 'Aktion auf dem Gerät: ' + aktionen.map(a => `${a.name} (${a.autonomie}): ${a.beschreibung}`).join(' | ') + ' | vorhaben: Freigabe für ein mehrschrittiges Vorhaben beim Owner anfordern (beschreibung, aktionen, domains, dauerMin) — nach seinem Ja laufen die genannten Aktionen ohne Einzelbestätigung' },
+      action: { type: 'string', enum: ['zustand', ...aktionen.map(a => a.name), 'vorhaben'], description: 'zustand (auto): Was das Gerät gerade macht — online, Leerlauf, aktives Fenster, Akku; für „was macht mein PC", „ist der PC an", „Akku" IMMER zustand, nie shell. Aktion auf dem Gerät: ' + aktionen.map(a => `${a.name} (${a.autonomie}): ${a.beschreibung}`).join(' | ') + ' | vorhaben: Freigabe für ein mehrschrittiges Vorhaben beim Owner anfordern (beschreibung, aktionen, domains, dauerMin) — nach seinem Ja laufen die genannten Aktionen ohne Einzelbestätigung' },
       beschreibung: { type: 'string', description: 'Nur für vorhaben: was Alfred vorhat, in einem Satz' },
       aktionen: { type: 'array', items: { type: 'string' }, description: 'Nur für vorhaben: Aktionen, die das Vorhaben braucht (z. B. browser_klicken, browser_tippen)' },
       domains: { type: 'array', items: { type: 'string' }, description: 'Nur für vorhaben: erlaubte Domains (z. B. amazon.de)' },
@@ -50,7 +53,7 @@ export class GeraetSkill extends Skill {
     this.metadata = {
       name: deps.skillName,
       category: 'core',
-      description: `Gerät „${deps.name}" (${deps.manifest.plattform}) des Owners — Alfred handelt DORT, nicht auf dem Server. Aktionen: ${aktionen.map(a => a.name).join(', ')}. Verändernde Aktionen fragen den Owner vorher (Bestätigung per Button); melde dann nur „zur Bestätigung gestellt". Nutze dieses Gerät, wenn der Owner „auf meinem PC/Mac/Rechner/Laptop" oder den Gerätenamen nennt. Dateien: datei_holen holt eine Datei vom Gerät (als Anhang + FileStore-key); datei_ablegen legt eine Datei vom Server ab — quelle = FileStore-key (aus „Saved to FileStore … key=…") oder Serverpfad. Browser: browser_oeffnen → browser_lesen (Element-Karte mit Nummern) → browser_klicken/browser_tippen mit der Nummer; nach jedem Klick erneut lesen. Kauf, Bestellung, Zahlung und Anmeldung sind gesperrt — das macht der Owner selbst. Für mehrschrittige Aufgaben (z. B. etwas suchen und in den Einkaufswagen legen) zuerst action=vorhaben mit beschreibung, aktionen und domains anfordern; läuft bereits ein freigegebenes Vorhaben, einfach die Aktionen ausführen.`,
+      description: `Gerät „${deps.name}" (${deps.manifest.plattform}) des Owners — Alfred handelt DORT, nicht auf dem Server. Aktionen: ${aktionen.map(a => a.name).join(', ')}. Verändernde Aktionen fragen den Owner vorher (Bestätigung per Button); melde dann nur „zur Bestätigung gestellt". Nutze dieses Gerät, wenn der Owner „auf meinem PC/Mac/Rechner/Laptop" oder den Gerätenamen nennt. Zustand: action=zustand sagt ohne Rückfrage, ob das Gerät online ist, wie lange der Owner nichts eingegeben hat, welches Fenster vorne ist und wie der Akku steht — dafür nie shell. Dateien: datei_holen holt eine Datei vom Gerät (als Anhang + FileStore-key); datei_ablegen legt eine Datei vom Server ab — quelle = FileStore-key (aus „Saved to FileStore … key=…") oder Serverpfad. Browser: browser_oeffnen → browser_lesen (Element-Karte mit Nummern) → browser_klicken/browser_tippen mit der Nummer; nach jedem Klick erneut lesen. Kauf, Bestellung, Zahlung und Anmeldung sind gesperrt — das macht der Owner selbst. Für mehrschrittige Aufgaben (z. B. etwas suchen und in den Einkaufswagen legen) zuerst action=vorhaben mit beschreibung, aktionen und domains anfordern; läuft bereits ein freigegebenes Vorhaben, einfach die Aktionen ausführen.`,
       riskLevel: 'write',
       version: '1.0.0',
       timeoutMs: 11 * 60_000,
@@ -79,6 +82,14 @@ export class GeraetSkill extends Skill {
       return gestellt
         ? { success: true, data: { zurFreigabe: true, bis: new Date(v.bis).toISOString() }, display: `Vorhaben zur Freigabe an den Owner gestellt: ${beschreibung}. Nach seinem Ja führe ich es ohne Einzelbestätigung aus (${v.aktionen.join(', ')}). Jetzt nichts weiter tun und dem Owner sagen, dass die Freigabe bei ihm liegt.` }
         : { success: false, error: 'Freigabe konnte nicht gestellt werden' };
+    }
+    // v1238 — Zustand aus den Sinnen: keine Shell, keine Bestätigung
+    if (aktion === 'zustand') {
+      const z = this.deps.zustand?.();
+      if (!z) return { success: true, data: { geraet: this.deps.name, online: false }, display: `${this.deps.name} ist gerade nicht verbunden.` };
+      const d = deuteGeraete({ geraete: [z] });
+      const zeile = d?.zeilen[0] ?? `${z.name}: online`;
+      return { success: true, data: { geraet: z.name, online: true, sinne: z.sinne, sinneZeit: z.sinneZeit, verbundenSeit: z.verbundenSeit }, display: `${zeile}${z.sinneZeit ? ` (Sinne von ${new Date(z.sinneZeit).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })})` : ''}` };
     }
     if (aktion === 'vorhaben_freigeben') {
       const v = this.deps.vorhaben.aktiviere(input.vorhaben);

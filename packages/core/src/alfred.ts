@@ -69,6 +69,7 @@ import { SpeechSynthesizer } from './speech-synthesizer.js';
 import { ImageGenerator } from './image-generator.js';
 import { TransitClient } from './transit-client.js';
 import { ResponseFormatter } from './response-formatter.js';
+import { deuteGeraete } from './normalzustaende/geraete.js'; // v1238
 import { EmbeddingService } from './embedding-service.js';
 import { DocumentProcessor } from './document-processor.js';
 import { BackgroundTaskRunner } from './background-task-runner.js';
@@ -6884,9 +6885,17 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       // v1206 — Jarvis Schleife 1: Weltmodell im Gespräch (lazy, Engine wird später gesetzt)
       this.pipeline.setWeltmodellQuelle(() => {
         const welt = (this.reasoningEngine as unknown as { collector?: { weltmodellKurz?: () => string | undefined } } | undefined)?.collector?.weltmodellKurz?.();
+        // v1238 — Geräte live aus den Sinnen (Stand jetzt, nicht Stand der letzten Sammlung): „Was macht mein PC?" ohne Werkzeug
+        let geraete = '';
+        try {
+          const z = this.geraeteGateway?.zustaendeVerbunden() ?? [];
+          const d = z.length ? deuteGeraete({ geraete: z }) : undefined;
+          if (d) geraete = `Geräte (jetzt ${new Date().toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })}):\n${d.zeilen.map(l => '  ' + l).join('\n')}`;
+        } catch { /* ohne Geräte weiter */ }
+        const anhang = [geraete, this.lageText ?? ''].filter(Boolean).join('\n\n');
         // v1220 — Lage (Befunde + Vorgänge) hängt am Weltmodell-Block; ohne Weltmodell trägt sie den Kopf selbst
-        if (!this.lageText) return welt;
-        return welt ? `${welt}\n\n${this.lageText}` : `## Weltmodell (automatisch erhoben)\n\n${this.lageText}`;
+        if (!anhang) return welt;
+        return welt ? `${welt}\n\n${anhang}` : `## Weltmodell (automatisch erhoben)\n\n${anhang}`;
       });
     }
     this.pipeline.setActivityLogger(activityLogger);

@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1238] - 2026-10-06
+
+### Fixed — „Was macht mein PC gerade?" ohne Shell und ohne Bestätigung (v1238)
+
+Owner-Beobachtung 21:55: Die Frage führte zu einer Shell-Abfrage mit Bestätigung, obwohl die Sinne schon da waren. Zwei Ursachen, beide deterministisch behoben:
+
+- Der Weltmodell-Block im Chat trug die Geräte nur mit dem Stand der letzten Sammlung. Jetzt hängt „Geräte (jetzt HH:MM)" live aus den Sinnen am Block — die Antwort steht im Prompt.
+- Der Geräte-Skill hat eine Aktion `zustand` (auto): online, Leerlauf, aktives Fenster, Akku aus den Sinnen, ohne Rückfrage ans Gerät. Die Beschreibung sagt dem Modell, dass dafür nie `shell` zu nehmen ist.
+
 ## [0.19.0-jarvis.1237] - 2026-10-06
 
 ### Added — Sinne der Geräte: Leerlauf, Fenster, Akku (v1237)
