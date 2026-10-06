@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1221] - 2026-10-06
+
+### Fixed — Befund-Titel: positionell bei Monitor-Alerts, bestes Segment sonst (v1221)
+
+Zwei Realfälle aus der ersten Stunde von Teil 2: Der Befund `proxmox:test-ubuntu:ram` trug die git-server-Zeile als Titel, weil beide „proxmox" enthalten; der BMW-Befund „unverriegelt" trug „Fahrzeug: steht seit …" statt der ⚠️-Zeile.
+
+- Liefert die Deutung je Schlüssel genau eine ⚠️-Zeile (Monitor-Alerts), gilt die Position.
+- Sonst gewinnt das Segment mit den meisten Schlüsselwort-Treffern, ⚠️ zählt als Bonus.
+- Titel heilen sich beim nächsten Abgleich selbst; der falsche Vorgangstitel wurde korrigiert.
+
 ## [0.19.0-jarvis.1220] - 2026-10-06
 
 ### Added — Befunde mit Identität, Teil 3: die Lage als Delta (v1220)

@@ -40,19 +40,36 @@ export function segmenteAus(zeilen: string[]): string[] {
 export function befundeAusDeutung(quelle: string, deutung: { zeilen: string[]; auffaellig: string[] } | undefined): BefundKandidat[] {
   if (!deutung) return [];
   const segmente = segmenteAus(deutung.zeilen);
-  const warnSegmente = segmente.filter(s => /⚠️|🚨|ALARM/u.test(s));
+  const istWarn = (s: string) => /⚠️|🚨|ALARM/u.test(s);
+  const warnSegmente = segmente.filter(istWarn);
+  // v1221 — Stellt die Deutung je Schlüssel GENAU eine ⚠️-Zeile (Monitor-Alerts), gilt die Position.
+  // Realfall 16:00: „proxmox:test-ubuntu:ram" bekam die git-server-Zeile, weil beide „proxmox" enthalten.
+  const positionell = deutung.zeilen.length === deutung.auffaellig.length && deutung.zeilen.every(z => istWarn(z) && !/\s·\s/.test(z));
   const out: BefundKandidat[] = [];
   const gesehen = new Set<string>();
-  for (const key of deutung.auffaellig) {
-    if (!key || gesehen.has(key)) continue;
+  deutung.auffaellig.forEach((key, i) => {
+    if (!key || gesehen.has(key)) return;
     gesehen.add(key);
-    const woerter = schluesselWoerter(key);
-    const passt = (s: string) => woerter.some(w => s.toLowerCase().includes(w));
-    let seg = warnSegmente.find(passt) ?? segmente.find(passt);
-    if (!seg && warnSegmente.length === 1) seg = warnSegmente[0];
+    let seg: string | undefined;
+    if (positionell) {
+      seg = deutung.zeilen[i];
+    } else {
+      // v1221 — bestes Segment nach Zahl der Schlüsselwort-Treffer, ⚠️ zählt als Bonus.
+      // Realfall 16:23: „fahrzeug-unverriegelt" bekam „Fahrzeug: steht seit …" statt der ⚠️-Zeile „unverriegelt".
+      const woerter = schluesselWoerter(key);
+      let best = 0;
+      for (const s of segmente) {
+        const l = s.toLowerCase();
+        const treffer = woerter.filter(w => l.includes(w)).length;
+        if (treffer === 0) continue;
+        const score = treffer * 2 + (istWarn(s) ? 1 : 0);
+        if (score > best) { best = score; seg = s; }
+      }
+      if (!seg && warnSegmente.length === 1) seg = warnSegmente[0];
+    }
     const titel = seg ? bereinigeZeile(seg).slice(0, 200) : `${quelle}: ${key}`;
     out.push({ gegenstand: key, titel, detail: deutung.zeilen.map(bereinigeZeile).filter(Boolean).join('\n').slice(0, 2000) });
-  }
+  });
   return out;
 }
 

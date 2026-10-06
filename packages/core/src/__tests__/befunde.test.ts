@@ -40,6 +40,16 @@ describe('befundeAusDeutung', () => {
     expect(b[1].titel).toBe('Wohnzimmer Fenster: 8 % (−3 %/Tag) → in ~2 Tagen tauschen');
     expect(b[0].detail).toContain('Sensorbatterien: 12 Sensoren');
   });
+  it('v1221 Realfälle: Monitor-Alerts positionell (zwei Proxmox-Hosts), BMW „unverriegelt" bekommt die ⚠️-Zeile statt „Fahrzeug: steht"', () => {
+    const d = infraDeutungAus([{ source: 'proxmox', message: 'git-server RAM usage 95.4%' }, { source: 'proxmox', message: 'test-ubuntu RAM usage 95.7%' }]);
+    const b = befundeAusDeutung('infra', d);
+    expect(b.map(x => x.titel)).toEqual(['proxmox: git-server RAM usage 95.4%', 'proxmox: test-ubuntu RAM usage 95.7%']);
+    const bmw = befundeAusDeutung('bmw', {
+      zeilen: ['**Fahrzeug:** steht seit 06.10. 15:40 (43 min), letzte Fahrt 64 134 → 64 135 km', '**Zustand:** ⚠️ unverriegelt seit 65 min (zu Hause) → verriegeln?', '**Datenlage:** MQTT-Stream still ↳ NORMAL'],
+      auffaellig: ['fahrzeug-unverriegelt'],
+    });
+    expect(bmw[0].titel).toBe('Zustand: ⚠️ unverriegelt seit 65 min (zu Hause) → verriegeln?');
+  });
   it('v1218 Realfall: mehrere Sensoren in EINER Zeile mit „ · " → Titel ist das passende ⚠️-Segment', () => {
     const zeile = '**Sensorbatterien:** 20 Sensoren · Holztüre Garage Batterie: 50 % (Trend im Aufbau) ↳ beobachten · ⚠️ Terrasse Temp Terrasse Batterie: nicht erreichbar (zuletzt 05.10. 13:20) → Sensor prüfen · niedrigster ok 61 %';
     const b = befundeAusDeutung('sensorbatterien', { zeilen: [zeile], auffaellig: ['sensorbatterie:sensor.terrasse_temp_terrasse_batterie:offline'] });
