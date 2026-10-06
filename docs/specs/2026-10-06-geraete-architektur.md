@@ -143,8 +143,11 @@ Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Rele
 | .1231 | Fortsetzung nur mit dem Geräte-Skill (`allowedSkills`); Kachel Geräte mit laufenden Vorhaben | Werkzeug-Tokens je Runde 28.876 → 1.028; Vorhaben orf.at 0,19 $ statt 1,11 $ |
 | .1232 | Terminal-Sitzung `alfred sitzung`: Chat als Owner, Bestätigungen (/ja, /nein), Satellit mitgelesen oder gestartet; Gerätetoken nur für Sitzungs-Routen | Sitzung auf PC-madh: Ausweis, Bestätigungen, Geräteliste |
 | .1233 | Sitzungs-Alias an den Master des Geräts gebunden; Wettlauf beim ersten Kontakt | „Wie heiße ich?" aus dem Owner-Gedächtnis beantwortet |
+| .1234 | `delegate` reicht Anhänge der Unter-Skills durch (Owner-Beobachtung: Sprachnachricht kam nie an) | API-Probe: delegate → text_to_speech → Sprachnachricht im Strom |
+| .1235 | Dateitransfer Stufe 1: `datei_holen` / `datei_ablegen`, ≤ 8 MB über WebSocket, SHA-256, nie überschreiben | Documents → Server (FileStore-Schlüssel) → Downloads, Inhalt identisch |
+| .1236 | Bestätigungs-Queue stellt nach dem Ja auch Anhänge zu | — |
 
-Offen in Phase 1: Sinne, Dateitransfer. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink.
+Offen in Phase 1: Sinne. Dateitransfer blockweise mit Wiederaufnahme für mehr als 8 MB folgt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink.
 
 ### Vorhaben-Freigabe (v1230)
 
