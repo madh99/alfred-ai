@@ -50,6 +50,8 @@ export interface JobRegisterDeps {
   runs?: {
     start(jobKey: string, userId: string | null, nodeId: string): Promise<string>;
     finish(id: string, ok: boolean, zaehler?: Record<string, number>, fehler?: string): Promise<void>;
+    /** v1209 — jüngster abgeschlossener Lauf; damit Intervall-Jobs einen Neustart nicht als „fällig" lesen. */
+    letzterLauf?(jobKey: string): Promise<{ startedAt: string; finishedAt?: string; ok?: boolean } | undefined>;
   };
   now?: () => Date;
 }
@@ -117,7 +119,36 @@ export class JobRegister {
     (this.timer as { unref?: () => void }).unref?.();
     this.gestartetAm = (this.deps.now ?? (() => new Date()))().toISOString();
     this.deps.logger.info({ jobs: this.keys() }, 'Lebenszeichen: Job-Register gestartet (10-min-Raster)');
-    void this.tick();
+    void this.uebernehmeIntervallStaende().then(() => this.tick());
+  }
+
+  /**
+   * v1209 — Realfall 06.10.: der wöchentliche Self-Modify-Job (startVerzoegerungMin 15) lief
+   * nach JEDEM Neustart, weil der Intervall-Stand nur im Speicher lag — drei Neustarts in einer
+   * Nacht = drei Opus-Läufe (1,13 $, ein Drittel der Tageskosten). Jetzt wird der jüngste
+   * erfolgreiche Lauf aus job_runs übernommen; fällig ist der Job erst, wenn seit diesem Lauf
+   * ein Takt vergangen ist. Die Startverzögerung bleibt als Untergrenze. Jobs ohne Lauf-Historie
+   * verhalten sich wie bisher. Öffentlich für Tests.
+   */
+  async uebernehmeIntervallStaende(): Promise<void> {
+    const letzter = this.deps.runs?.letzterLauf;
+    if (!letzter) return;
+    for (const { def, zustand } of this.jobs.values()) {
+      if (def.takt.art !== 'intervall') continue;
+      try {
+        const lauf = await letzter.call(this.deps.runs, def.key);
+        if (!lauf || lauf.ok === false) continue;
+        const gelaufenMs = new Date(lauf.finishedAt ?? lauf.startedAt).getTime();
+        if (!Number.isFinite(gelaufenMs)) continue;
+        if (zustand.zuletztMs === undefined || gelaufenMs > zustand.zuletztMs) {
+          zustand.zuletztMs = gelaufenMs;
+          const naechster = new Date(gelaufenMs + def.takt.minuten * 60_000).toISOString();
+          this.deps.logger.info({ job: def.key, letzterLauf: new Date(gelaufenMs).toISOString(), naechsterLauf: naechster }, 'Lebenszeichen: Intervall-Stand aus job_runs übernommen');
+        }
+      } catch (err) {
+        this.deps.logger.debug({ job: def.key, err: (err as Error).message }, 'Lebenszeichen: Intervall-Stand nicht lesbar');
+      }
+    }
   }
 
   stop(): void {

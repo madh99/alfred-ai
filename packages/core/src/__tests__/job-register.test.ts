@@ -116,6 +116,30 @@ describe('JobRegister', () => {
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ job: 'mikrotik', minuten: 5 }), expect.stringContaining('unter dem 10-min-Raster'));
   });
 
+  it('v1209: Intervall-Stand aus job_runs — Wochenjob mit Lauf vor 2 Tagen läuft nach Neustart NICHT, nach 7 Tagen ja', async () => {
+    let now = um(10, 0);
+    const { reg, runs, log } = makeRegister(() => now);
+    const vor2Tagen = new Date(now.getTime() - 2 * 24 * 60 * 60_000).toISOString();
+    (runs as unknown as { letzterLauf: unknown }).letzterLauf = vi.fn(async (key: string) =>
+      key === 'agent-conventions-selfmodify' ? { startedAt: vor2Tagen, finishedAt: vor2Tagen, ok: true } : undefined);
+    const run = vi.fn(async () => ({ ok: true }));
+    const runNeu = vi.fn(async () => ({ ok: true }));
+    reg.registriere({ key: 'agent-conventions-selfmodify', beschreibung: 'Test', takt: { art: 'intervall', minuten: 7 * 24 * 60 }, bereich: 'global', startVerzoegerungMin: 15, run });
+    reg.registriere({ key: 'ohne-historie', beschreibung: 'Test', takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 15, run: runNeu });
+    await reg.uebernehmeIntervallStaende();
+    expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ job: 'agent-conventions-selfmodify' }), expect.stringContaining('aus job_runs übernommen'));
+    // Start-Tick + 20 min später: Wochenjob bleibt still, Job ohne Historie läuft nach seiner Verzögerung
+    await reg.tick(now);
+    now = um(10, 20);
+    await reg.tick(now);
+    expect(run).not.toHaveBeenCalled();
+    expect(runNeu).toHaveBeenCalledTimes(1);
+    // 5 Tage später (7 Tage seit dem persistierten Lauf) ist er fällig
+    now = new Date(um(10, 0).getTime() + 5 * 24 * 60 * 60_000 + 60_000);
+    await reg.tick(now);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it('v1173: fällige Jobs laufen parallel — ein langsamer Job verzögert die anderen nicht', async () => {
     const { reg } = makeRegister(() => um(10, 0));
     const reihenfolge: string[] = [];

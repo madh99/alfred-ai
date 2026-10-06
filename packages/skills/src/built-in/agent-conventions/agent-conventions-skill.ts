@@ -148,6 +148,17 @@ function autoApplyAllowedByMode(
   return { allowed: false, reason: `unknown mode ${mode}` };
 }
 
+/**
+ * v1209 — Self-Modify nur, wenn es etwas zu integrieren gibt: Repo verändert (Scan-Hash) ODER
+ * offene Lessons ODER Health-Vorschläge. Realfall 06.10.: drei identische Opus-Läufe je Projekt
+ * in einer Nacht, Scan beide Male byte-gleich, keine neuen Lessons.
+ */
+export function selfModifyUeberspringen(a: { scanHash: string; letzterScanHash?: string | null; offeneLessons: number; healthVorschlaege: number }): string | null {
+  if (!a.letzterScanHash || a.letzterScanHash !== a.scanHash) return null;
+  if (a.offeneLessons > 0 || a.healthVorschlaege > 0) return null;
+  return 'Repo unverändert (Scan-Hash gleich), keine offenen Lessons, keine Health-Vorschläge';
+}
+
 function fileNameFor(format: ConventionsOutputFormat): string {
   switch (format) {
     case 'claude.md': return 'CLAUDE.md';
@@ -1208,6 +1219,13 @@ export class AgentConventionsSkill extends Skill {
       .filter(s => s.healthScore < 0.4 && s.violations >= 5)
       .map(s => ({ patternText: `Convention in Section "${s.section}" hat health=${s.healthScore.toFixed(2)} (${s.violations} violations, ${s.resolvedAnyway} resolved anyway). Eventuell entfernen oder umformulieren.`, section: s.section as ConventionsSection, confidence: 0.6 }));
     const lessonsAsPatterns = pendingLessons.map(l => ({ patternText: l.text, section: 'gotchas' as ConventionsSection, confidence: l.confidence }));
+
+    // v1209 — kein Modellaufruf ohne Anlass
+    const grund = selfModifyUeberspringen({ scanHash: scan.scanHash, letzterScanHash: conv.scanHash, offeneLessons: pendingLessons.length, healthVorschlaege: healthSuggestions.length });
+    if (grund) {
+      this.deps.logger.info({ projectId, packagePath, scanHash: scan.scanHash }, "v1209 self-modify übersprungen: " + grund);
+      return { success: true, data: { skipped: true, reason: grund, scanHash: scan.scanHash } };
+    }
 
     const gen = await this.deps.generator.generate({
       cwd: scanCwd,

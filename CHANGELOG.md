@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1209] - 2026-10-06
+
+### Fixed — Intervall-Jobs überleben Neustarts, Self-Modify nur mit Anlass, Prompt-Messung (v1209)
+
+Realfall 06.10.: Der wöchentliche Self-Modify-Job der Agent-Konventionen lief 15 Minuten nach jedem Neustart, weil der Intervall-Stand nur im Speicher lag. Drei Neustarts in einer Nacht ergaben drei Opus-Läufe je Projekt bei byte-gleichem Repo-Scan (1,13 $, ein Drittel der Tageskosten).
+
+- **Job-Register:** Beim Start wird für jeden Intervall-Job der jüngste erfolgreiche Lauf aus `job_runs` übernommen. Fällig ist der Job erst, wenn seit diesem Lauf ein Takt vergangen ist; die Startverzögerung bleibt als Untergrenze. Jobs ohne Lauf-Historie verhalten sich wie bisher. Logzeile „Intervall-Stand aus job_runs übernommen" mit nächstem Lauf.
+- **Self-Modify:** Kein Modellaufruf, wenn der Scan-Hash unverändert ist und weder offene Lessons noch Health-Vorschläge vorliegen. Ergebnis `skipped` mit Grund, Logzeile „self-modify übersprungen".
+- **Messung (Freigabe Owner):** Die Pipeline-Phase `llm_request_prep` schreibt zusätzlich geschätzte Tokens für System-Prompt, Werkzeug-Schemata und Verlauf sowie die Anzahl Verlaufsnachrichten. Grundlage für die Entscheidung über die Prompt-Zusammensetzung. Keine Verhaltensänderung.
+- 2 Tests (Job-Register Neustart, Self-Modify-Überspringen).
+
 ## [0.19.0-jarvis.1208] - 2026-10-06
 
 ### Fixed — Sonnet 5.5 lehnt thinking:disabled ab, Vollpässe scheiterten (v1208)

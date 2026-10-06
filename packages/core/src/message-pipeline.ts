@@ -1264,7 +1264,12 @@ export class MessagePipeline {
         }
       }
 
-      tracePhase('llm_request_prep', { systemChars: system.length, toolCount: tools?.length ?? 0 });
+      // v1209 — Messgrundlage für die Prompt-Zusammensetzung (Freigabe Owner 06.10.: erst messen, dann entscheiden)
+      tracePhase('llm_request_prep', {
+        systemChars: system.length, toolCount: tools?.length ?? 0,
+        systemTokens: estimateTokens(system), toolTokens,
+        historyMsgs: messages.length - 1, historyTokens: messages.slice(0, -1).reduce((s, m) => s + estimateMessageTokens(m), 0),
+      });
 
       // 7. Agentic tool-use loop (timeout-based + repeated-error detection)
       let response: LLMResponse;
