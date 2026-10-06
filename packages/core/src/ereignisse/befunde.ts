@@ -55,3 +55,59 @@ export function befundeAusDeutung(quelle: string, deutung: { zeilen: string[]; a
   }
   return out;
 }
+
+/**
+ * v1219 — Infrastruktur-Alerts des Monitor-Skills (Proxmox, UniFi, Home Assistant, Health-Checks)
+ * bekommen einen stabilen Schlüssel ohne Messwerte: „git-server RAM usage 95,1 %" und „… 96,0 %"
+ * sind derselbe Befund. Realfall 06.10.: fünf Vorgänge für denselben Server.
+ */
+export interface InfraAlert { source: string; message: string }
+
+function slug(t: string): string {
+  // Nur freistehende Messwerte entfernen (95.1 %, 3) — Ziffern in Namen bleiben (pve2, ws22s-b01, 30000ms)
+  return t.toLowerCase().replace(/(?<![\p{L}\p{N}])\d+([.,]\d+)?\s*%?(?![\p{L}\p{N}])/gu, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+}
+
+export function infraAlertSchluessel(a: InfraAlert): string {
+  const m = a.message;
+  let t: RegExpMatchArray | null;
+  if (a.source === 'proxmox') {
+    if ((t = m.match(/^Node "([^"]+)" is offline/))) return `proxmox:${slug(t[1])}:offline`;
+    if ((t = m.match(/^(.+?) disk usage /))) return `proxmox:${slug(t[1])}:disk`;
+    if ((t = m.match(/^(.+?) RAM usage /))) return `proxmox:${slug(t[1])}:ram`;
+  }
+  if (a.source === 'unifi') {
+    if ((t = m.match(/^Subsystem "([^"]+)"/))) return `unifi:subsystem:${slug(t[1])}`;
+    if ((t = m.match(/^Device "([^"]+)" is not connected/))) return `unifi:device:${slug(t[1])}`;
+    if (/open alert\(s\)/.test(m)) return 'unifi:alarms';
+  }
+  if (a.source === 'homeassistant') {
+    if ((t = m.match(/^Low battery: (.+?) at /))) return `homeassistant:battery:${slug(t[1])}`;
+  }
+  return `${a.source}:${slug(m) || 'alert'}`;
+}
+
+/** Monitor-Alerts als Deutung (eine ⚠️-Zeile je Alert), damit Befunde und Mini-Pass denselben Weg nehmen. */
+export function infraDeutungAus(alerts: InfraAlert[]): { zeilen: string[]; auffaellig: string[] } {
+  const zeilen: string[] = []; const auffaellig: string[] = []; const gesehen = new Set<string>();
+  for (const a of alerts) {
+    const key = infraAlertSchluessel(a);
+    if (gesehen.has(key)) continue;
+    gesehen.add(key);
+    auffaellig.push(key);
+    zeilen.push(`⚠️ ${a.source}: ${a.message}`);
+  }
+  return { zeilen, auffaellig };
+}
+
+/** v1219 — Befund-Titel für Infra: Schlüsselwörter sind Host/Gerät, nicht die Quelle. */
+export function infraBefunde(alerts: InfraAlert[]): BefundKandidat[] {
+  const out: BefundKandidat[] = []; const gesehen = new Set<string>();
+  for (const a of alerts) {
+    const key = infraAlertSchluessel(a);
+    if (gesehen.has(key)) continue;
+    gesehen.add(key);
+    out.push({ gegenstand: key, titel: `${a.source}: ${a.message}`.slice(0, 200), detail: a.message });
+  }
+  return out;
+}

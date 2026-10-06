@@ -3510,6 +3510,12 @@ export class Alfred {
               const alerts = Array.isArray(result.data)
                 ? result.data as Array<{ source: string; message: string }>
                 : [];
+              // v1219 — Jarvis Schicht 3: jeder Monitor-Lauf schreibt die Infra-Befunde fort (auch ein leerer
+              // Lauf: dann gelten offene Infra-Befunde als erledigt). Neue Schlüssel lösen den Mini-Pass aus.
+              try {
+                const { infraDeutungAus } = await import('./ereignisse/befunde.js');
+                await this.weltmodellBeobachter?.beobachte('infra', infraDeutungAus(alerts));
+              } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1219 Infra-Befunde nicht fortgeschrieben'); }
 
               // ── 1. Alert processing: create/append incidents ──
               if (alerts.length > 0) {
@@ -13828,6 +13834,14 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteAdapter(this.adapterZustaende(), new Date()), ...bewerteKosten(kosten)];
             const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier', 'adapter', 'kosten'] });
             const gesendet = await melde(meldungen);
+            // v1219 — Wächter-Zustand als Befunde (Quelle lebenszeichen, ohne Vorgang: Alfreds eigene Gesundheit, der Wächter meldet selbst)
+            try {
+              const owner = this.tryOwner();
+              if (owner && this.befundeRepo) {
+                const r = await this.befundeRepo.sync(owner, 'lebenszeichen', waechter.offeneZustaende().map(z => ({ gegenstand: z.key, titel: z.text || z.key })));
+                if (r.neu.length || r.erledigt.length) this.logger.info({ neu: r.neu.map(b => b.gegenstand), erledigt: r.erledigt.map(b => b.gegenstand) }, 'v1219 Lebenszeichen-Befunde fortgeschrieben');
+              }
+            } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1219 Lebenszeichen-Befunde nicht fortgeschrieben'); }
             return { ok: true, zaehler: { befunde: befunde.length, gesendet } };
           },
         });

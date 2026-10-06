@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1219] - 2026-10-06
+
+### Added — Befunde mit Identität, Teil 2: Infrastruktur und Lebenszeichen (v1219)
+
+- **Monitor-Alerts werden Befunde.** Jeder Lauf des Monitor-Skills (Proxmox, UniFi, Home Assistant, Health-Checks) schreibt die Quelle `infra` fort. Der Schlüssel enthält keine Messwerte: „git-server RAM usage 95,1 %" und „… 96,0 %" sind derselbe Befund `proxmox:git-server:ram`. Neue Schlüssel lösen wie bisher den Mini-Pass aus; ein Lauf ohne Alerts erledigt offene Infra-Befunde. Damit wird auch der Proxmox-Fall aus dem Audit ein Objekt mit Dauer und Zähler statt fünf Vorgängen.
+- **Wächter-Zustand als Befunde.** Die offenen Zustände des Degradations-Wächters (Tier, Adapter, Kosten, Jobs, Daten) erscheinen als Quelle `lebenszeichen` in der Kachel Befunde, ohne eigenen Vorgang: Alfreds Gesundheit meldet der Wächter selbst.
+- 2 Tests (Schlüssel, Deutung).
+
 ## [0.19.0-jarvis.1218] - 2026-10-06
 
 ### Fixed — Befund-Titel aus dem passenden Segment (v1218)

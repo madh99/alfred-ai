@@ -1,7 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { befundeAusDeutung, quelleZuKategorie, bereinigeZeile } from '../ereignisse/befunde.js';
+import { befundeAusDeutung, quelleZuKategorie, bereinigeZeile, infraAlertSchluessel, infraDeutungAus } from '../ereignisse/befunde.js';
 
 // v1217 — Jarvis Schicht 3: Befunde mit Identität aus den Deutungen des Weltmodells.
+describe('infraAlertSchluessel (v1219)', () => {
+  it('Proxmox/UniFi/HA-Alerts bekommen Schlüssel ohne Messwerte — gleicher Server, anderer Prozentwert = gleicher Befund', () => {
+    expect(infraAlertSchluessel({ source: 'proxmox', message: 'git-server RAM usage 95.1%' })).toBe('proxmox:git-server:ram');
+    expect(infraAlertSchluessel({ source: 'proxmox', message: 'git-server RAM usage 96.0%' })).toBe('proxmox:git-server:ram');
+    expect(infraAlertSchluessel({ source: 'proxmox', message: 'git-server disk usage 91.2%' })).toBe('proxmox:git-server:disk');
+    expect(infraAlertSchluessel({ source: 'proxmox', message: 'Node "pve2" is offline' })).toBe('proxmox:pve2:offline');
+    expect(infraAlertSchluessel({ source: 'unifi', message: 'Device "AC Mesh" is not connected (state: 0)' })).toBe('unifi:device:ac-mesh');
+    expect(infraAlertSchluessel({ source: 'unifi', message: 'Subsystem "wlan" status: warning' })).toBe('unifi:subsystem:wlan');
+    expect(infraAlertSchluessel({ source: 'unifi', message: '3 open alert(s): EVT_AP_Lost_Contact' })).toBe('unifi:alarms');
+    expect(infraAlertSchluessel({ source: 'homeassistant', message: 'Low battery: Temp Terrasse at 12%' })).toBe('homeassistant:battery:temp-terrasse');
+    expect(infraAlertSchluessel({ source: 'commvault', message: 'Health check failed: timeout after 30000ms' })).toBe('commvault:health-check-failed-timeout-after-30000ms');
+  });
+  it('infraDeutungAus liefert eine ⚠️-Zeile je Alert und dedupliziert gleiche Schlüssel; Titel nennt Host', () => {
+    const d = infraDeutungAus([{ source: 'proxmox', message: 'git-server RAM usage 95.1%' }, { source: 'proxmox', message: 'git-server RAM usage 95.3%' }, { source: 'unifi', message: 'Device "AC Mesh" is not connected (state: 0)' }]);
+    expect(d.auffaellig).toEqual(['proxmox:git-server:ram', 'unifi:device:ac-mesh']);
+    expect(d.zeilen).toHaveLength(2);
+    const b = befundeAusDeutung('infra', d);
+    expect(b[0].titel).toBe('proxmox: git-server RAM usage 95.1%');
+    expect(b[1].titel).toBe('unifi: Device "AC Mesh" is not connected (state: 0)');
+  });
+});
+
 describe('befundeAusDeutung', () => {
   it('ordnet jedem auffälligen Schlüssel die passende ⚠️-Zeile als Titel zu', () => {
     const d = {
