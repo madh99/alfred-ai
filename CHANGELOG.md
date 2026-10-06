@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1228] - 2026-10-06
+
+### Added — Satellit als Autostart-Dienst (v1228)
+
+- `alfred satellit --install` richtet den Satelliten als Dienst ein, der mit der Anmeldung startet und ohne Fenster läuft: Windows über den Autostart-Ordner des Benutzers (ohne Administratorrechte, im Benutzerkontext, damit er Ordner und Programme öffnen darf), macOS als launchd-Agent, Linux als systemd-Benutzerdienst. Der Dienst ruft genau das Programm auf, aus dem der Befehl lief.
+- `--uninstall` entfernt den Dienst, `--status` zeigt seinen Zustand. Im Dienstmodus schreibt der Satellit sein Protokoll nach ~/.alfred/satellit.log.
+
 ## [0.19.0-jarvis.1227] - 2026-10-06
 
 ### Fixed — Satellit: Shell-Aktion nutzt unter Windows PowerShell (v1227)

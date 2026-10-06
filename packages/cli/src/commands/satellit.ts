@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
 import { exec, execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
@@ -8,6 +8,7 @@ import type { GeraetManifest, GeraetNachricht, GeraetPlattform } from '@alfred/t
 import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS } from '@alfred/core';
 import { getVersion } from '../version.js';
 import { ladeKonfig, type GeraetKonfig } from './pair.js';
+import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
 
 /**
  * v1224 — `alfred satellit`: der Dienst auf dem Gerät. Hält die Verbindung zum Gehirn, meldet
@@ -91,7 +92,17 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
   }
 }
 
-export async function satellitCommand(opts: { einmal?: boolean }): Promise<void> {
+export async function satellitCommand(opts: { einmal?: boolean; install?: boolean; uninstall?: boolean; status?: boolean; dienst?: boolean }): Promise<void> {
+  // v1228 — Dienst-Verwaltung
+  if (opts.install) { console.log(installiereDienst()); return; }
+  if (opts.uninstall) { console.log(entferneDienst()); return; }
+  if (opts.status) { console.log(dienstStatus()); return; }
+  if (opts.dienst) {
+    // Im Dienstmodus gibt es keine Konsole: alles ins Protokoll ~/.alfred/satellit.log
+    mkdirSync(path.dirname(dienstLogPfad()), { recursive: true });
+    const schreibe = (...args: unknown[]) => { try { appendFileSync(dienstLogPfad(), `${new Date().toISOString()} ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`); } catch { /* */ } };
+    console.log = schreibe; console.error = schreibe;
+  }
   const k = ladeKonfig();
   if (!k) { console.error('Nicht gekoppelt. Zuerst: alfred pair --server https://host:3420 --code <Code>'); process.exit(1); }
   const version = getVersion();
