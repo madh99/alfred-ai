@@ -169,7 +169,15 @@ Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Rele
 
 **Sprachmodelle und Anbieter (geprüft 06.10., Live-Listen):** Mistral: `voxtral-mini-2602` (Transkription, in Betrieb), `voxtral-mini-realtime-2602` (Echtzeit-Transkription), `voxtral-mini-tts-2603` (Sprachsynthese, in Betrieb, einzige mit geklonten Stimmen), `voxtral-small` (Audio-Chat). OpenAI: `gpt-4o-mini-transcribe`, `gpt-4o-transcribe` (+diarize), `gpt-4o-mini-tts`, `gpt-audio`, `gpt-realtime`-Familie, `gpt-live-transcribe`. Entscheidung: Mistral bleibt für beides (geklonte Stimme, Latenz reicht). Modellstufen gelten per `/tier` auch in der Sitzung.
 
-Nächste Stufe: Echtzeit-Transkription (Mistral realtime oder OpenAI realtime) für Sprechen ohne Taste, Ink-Oberfläche.
+### Phase 2b — Echtzeit: Sprechen ohne Taste (freigegeben 07.10.)
+
+Analyse 07.10.: Mistral `voxtral-mini-transcribe-realtime-2602` (WebSocket, PCM 16 kHz mono, `input_audio.append`/`flush`/`end`, `transcription.text.delta`/`done`, Verzögerung 240–480 ms, 0,006 $/min, 13 Sprachen) und OpenAI `gpt-live-transcribe` liefern beide **keine** Sprecherkennung — das Satzende erkennen wir selbst. Mistral bleibt. Reihenfolge: 1 Mikrofonstrom + Satzende-Erkennung lokal, 2 Relais am Server (Schlüssel bleibt dort, Kostenwächter zählt Minuten), 3 `/hören` mit konfigurierbarem Aktivierungswort (Standard „Alfred"), Gesprächsfenster 20 s, Stoppwort, Halbduplex. Taste, `/talk`, Tippen, Telegram bleiben. Lokales Aktivierungswort (wie Alexa) kommt mit der Flutter-App.
+
+| Release | Inhalt | Beweis |
+|---|---|---|
+| .1250 | Mikrofon als PCM-Strom (Windows waveIn, macOS sox, Linux arecord); `SatzendeErkenner` im Kern mit Tests; `alfred sitzung --mikrofontest N` | 11,5 s Audio in 12 s, 16 kHz; Sprach-Erkennung mit synthetischem Signal getestet, am Mikro noch vom Owner zu bestätigen |
+
+Nächste Stufe: Relais am Server, dann `/hören`. Danach Ink-Oberfläche.
 
 **Phase 1 ist damit vollständig** (Protokoll, Registry, Satellit, Sitzung, Browser-Hand, Vorhaben, Dateitransfer, Sinne). Noch offen aus Phase 1 im Kleinen: Dateitransfer blockweise für mehr als 8 MB, Gerätename der Sitzung im Prompt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink. Phase 3 (Zone des Handys) kommt mit der Android-App.
 
