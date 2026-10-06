@@ -7,6 +7,7 @@ import type { SkillRegistry } from '@alfred/skills';
 import type { GeraeteRepository } from '@alfred/storage';
 import type { GeraetEintrag, GeraetManifest, GeraetNachricht, GeraetAktionErgebnis } from '@alfred/types';
 import { GeraetSkill } from './geraet-skill.js';
+import { Freigaben } from './freigaben.js';
 import { AKTION_TIMEOUT_MS, PAIRING_CODE_GUELTIG_MS, PULS_TIMEOUT_MS, erzeugePairingCode, erzeugeToken, geraetSkillName, hashToken, pruefeManifest } from './protokoll.js';
 
 /**
@@ -38,7 +39,13 @@ interface Verbindung {
 export class GeraeteGateway {
   private readonly wss = new WebSocketServer({ noServer: true });
   private readonly verbindungen = new Map<string, Verbindung>();
-  private readonly pairingCodes = new Map<string, { userId: string; gueltigBis: number }>();
+  private readonly pairingCodes = new Map<string, { userId: string; gueltigBis: number; fehlversuche: number }>();
+  /** v1225 — Fehlversuche je Absender: nach 10 in 10 Minuten wird das Pairing für diesen Absender abgelehnt. */
+  private readonly pairVersuche = new Map<string, { n: number; bis: number }>();
+  /** v1225 — globale Drossel: höchstens 20 Fehlversuche je Minute über alle Absender. */
+  private pairFehlerGlobal = { n: 0, bis: 0 };
+  /** v1225 — Einmal-Freigaben für bestätigte Geräteaktionen. */
+  private readonly freigaben = new Freigaben();
   private wachhund?: ReturnType<typeof setInterval>;
 
   constructor(private readonly deps: GeraeteGatewayDeps) {}
@@ -61,15 +68,24 @@ export class GeraeteGateway {
     for (const [c, p] of this.pairingCodes) if (p.gueltigBis < Date.now()) this.pairingCodes.delete(c);
     const code = erzeugePairingCode();
     const gueltigBis = Date.now() + PAIRING_CODE_GUELTIG_MS;
-    this.pairingCodes.set(code, { userId, gueltigBis });
+    this.pairingCodes.set(code, { userId, gueltigBis, fehlversuche: 0 });
     this.deps.logger.info({ gueltigBis: new Date(gueltigBis).toISOString() }, 'v1224 Pairing-Code erzeugt');
     return { code, gueltigBis: new Date(gueltigBis).toISOString() };
   }
 
   async paare(body: Record<string, unknown>, remote: string): Promise<{ ok: true; id: string; token: string; name: string; skillName: string } | { ok: false; grund: string }> {
     const code = String(body.code ?? '').trim();
+    // v1225 — Drossel gegen Durchprobieren: je Absender höchstens 10 Fehlversuche in 10 Minuten,
+    // je Code höchstens 5 Fehlversuche, dann ist der Code verbraucht.
+    const jetzt = Date.now();
+    const v = this.pairVersuche.get(remote);
+    if (v && v.bis > jetzt && v.n >= 10) { this.deps.logger.warn({ remote }, 'v1225 Pairing gedrosselt'); return { ok: false, grund: 'Zu viele Versuche — später erneut' }; }
+    if (this.pairFehlerGlobal.bis > jetzt && this.pairFehlerGlobal.n >= 20) { this.deps.logger.warn({ remote }, 'v1225 Pairing global gedrosselt'); return { ok: false, grund: 'Zu viele Versuche — später erneut' }; }
     const p = this.pairingCodes.get(code);
-    if (!p || p.gueltigBis < Date.now()) {
+    if (!p || p.gueltigBis < jetzt) {
+      this.pairVersuche.set(remote, { n: (v && v.bis > jetzt ? v.n : 0) + 1, bis: jetzt + 10 * 60_000 });
+      this.pairFehlerGlobal = this.pairFehlerGlobal.bis > jetzt ? { n: this.pairFehlerGlobal.n + 1, bis: this.pairFehlerGlobal.bis } : { n: 1, bis: jetzt + 60_000 };
+      for (const [c, pc] of this.pairingCodes) { if (pc.gueltigBis >= jetzt && ++pc.fehlversuche >= 5) { this.pairingCodes.delete(c); this.deps.logger.warn({}, 'v1225 Pairing-Code nach 5 Fehlversuchen verworfen'); } }
       this.deps.logger.warn({ remote }, 'v1224 Pairing abgelehnt (Code ungültig oder abgelaufen)');
       return { ok: false, grund: 'Code ungültig oder abgelaufen' };
     }
@@ -153,9 +169,11 @@ export class GeraeteGateway {
         if (!this.deps.enqueueBestaetigung) return false;
         const ziel = this.deps.ownerZiel();
         if (!ziel.chatId) return false;
-        await this.deps.enqueueBestaetigung({ chatId: ziel.chatId, platform: ziel.platform, source: 'geraet', sourceId: `geraet-${v.eintrag.id.slice(0, 8)}-${Date.now()}`, description: frage.description, skillName: v.skillName, skillParams: frage.skillParams, timeoutMinutes: 60 });
+        const nonce = this.freigaben.erzeuge(v.skillName, frage.aktion, frage.params); // v1225
+        await this.deps.enqueueBestaetigung({ chatId: ziel.chatId, platform: ziel.platform, source: 'geraet', sourceId: `geraet-${v.eintrag.id.slice(0, 8)}-${Date.now()}`, description: frage.description, skillName: v.skillName, skillParams: { ...frage.params, action: frage.aktion, freigabe: nonce }, timeoutMinutes: 60 });
         return true;
       },
+      pruefeFreigabe: (nonce, aktion, params) => this.freigaben.verbrauche(nonce, v.skillName, aktion, params),
       schritt: async (s) => { await this.deps.schritt?.({ userId, art: s.art, skill: v.skillName, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie, quelle: 'geraet' }); },
     });
     this.deps.skillRegistry.register(skill);

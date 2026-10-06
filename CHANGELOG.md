@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1225] - 2026-10-06
+
+### Security — Geräte Phase 1: Befunde der Commit-Prüfung behoben (v1225)
+
+- **Umgehung der Owner-Bestätigung:** Die Bestätigung lief über einen Parameter `confirmed: true`, den auch das Modell hätte setzen können. Jetzt erzeugt das Gehirn beim Einreihen eine zufällige Einmal-Freigabe, gebunden an Skill, Aktion und Parameter, 60 Minuten gültig; nur die Bestätigungs-Queue kennt sie. Ein Tool-Aufruf ohne gültige Freigabe landet immer beim Owner.
+- **Symlink-Ausbruch:** Die Pfadprüfung des Satelliten löst den tiefsten existierenden Teil des Pfads real über das Dateisystem auf; ein Link innerhalb eines freigegebenen Verzeichnisses, der nach außen zeigt, scheitert.
+- **Token im Klartext:** Unter Windows wird das Gerätetoken mit DPAPI im Benutzerkontext verschlüsselt abgelegt. Auf macOS und Linux bleibt die Datei bei 0600; der Schlüsselbund folgt mit der Desktop-App.
+- **Pairing-Drossel:** je Absender höchstens 10 Fehlversuche in 10 Minuten, global höchstens 20 je Minute, je Code höchstens 5, dann ist der Code verbraucht. Bei 8 Ziffern, 5 Minuten Gültigkeit und 5 Versuchen je Code liegt die Trefferchance eines Angreifers bei 1 zu 20 Millionen.
+- 3 Tests (Freigaben).
+
 ## [0.19.0-jarvis.1224] - 2026-10-06
 
 ### Added — Geräte, Phase 1: Protokoll, Registry, Satellit (v1224)

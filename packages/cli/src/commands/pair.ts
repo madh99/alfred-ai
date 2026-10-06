@@ -1,6 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { getVersion } from '../version.js';
 import { baueManifest, SATELLIT_STANDARD_VERZEICHNISSE } from './satellit.js';
@@ -22,16 +23,36 @@ export interface GeraetKonfig {
 
 export function konfigPfad(): string { return path.join(os.homedir(), '.alfred', 'geraet.json'); }
 
+/**
+ * v1225 — Sicherheitsbefund: das Gerätetoken lag im Klartext. Unter Windows wird es jetzt mit DPAPI
+ * (Benutzerkontext) verschlüsselt abgelegt; nur derselbe Windows-Benutzer kann es lesen. Auf macOS und
+ * Linux bleibt die Datei mit Rechten 0600; Schlüsselbund folgt mit der Desktop-App (Phase 4).
+ */
+function dpapi(richtung: 'protect' | 'unprotect', wert: string): string {
+  const skript = richtung === 'protect'
+    ? "Add-Type -AssemblyName System.Security; [Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($env:ALFRED_GERAET_WERT), $null, 'CurrentUser'))"
+    : "Add-Type -AssemblyName System.Security; [Text.Encoding]::UTF8.GetString([System.Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($env:ALFRED_GERAET_WERT), $null, 'CurrentUser'))";
+  return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', skript], { env: { ...process.env, ALFRED_GERAET_WERT: wert }, encoding: 'utf8', windowsHide: true }).trim();
+}
+
 export function ladeKonfig(): GeraetKonfig | undefined {
   const p = konfigPfad();
   if (!existsSync(p)) return undefined;
-  try { return JSON.parse(readFileSync(p, 'utf8')) as GeraetKonfig; } catch { return undefined; }
+  try {
+    const k = JSON.parse(readFileSync(p, 'utf8')) as GeraetKonfig & { tokenGeschuetzt?: string };
+    if (!k.token && k.tokenGeschuetzt?.startsWith('dpapi:')) k.token = dpapi('unprotect', k.tokenGeschuetzt.slice(6));
+    return k;
+  } catch { return undefined; }
 }
 
 export function speichereKonfig(k: GeraetKonfig): void {
   const p = konfigPfad();
   mkdirSync(path.dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(k, null, 2), { mode: 0o600 });
+  const ablage: Record<string, unknown> = { ...k };
+  if (process.platform === 'win32') {
+    try { ablage.tokenGeschuetzt = 'dpapi:' + dpapi('protect', k.token); delete ablage.token; } catch { /* DPAPI nicht verfügbar → Klartext mit 0600 */ }
+  }
+  writeFileSync(p, JSON.stringify(ablage, null, 2), { mode: 0o600 });
 }
 
 export async function pairCommand(opts: { server?: string; code?: string; name?: string; insecure?: boolean; verzeichnisse?: string }): Promise<void> {

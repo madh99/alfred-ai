@@ -14,7 +14,10 @@ export interface GeraetSkillDeps {
   manifest: GeraetManifest;
   skillName: string;
   sendeAktion: (aktion: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string; dauerMs: number }>;
-  bestaetigung: (frage: { description: string; skillParams: Record<string, unknown> }) => Promise<boolean>;
+  /** Reiht die Frage beim Owner ein; die Queue erhält Parameter mit einer Einmal-Freigabe (v1225). */
+  bestaetigung: (frage: { description: string; aktion: string; params: Record<string, unknown> }) => Promise<boolean>;
+  /** v1225 — prüft und verbraucht die Einmal-Freigabe aus den Parametern der Bestätigungs-Queue. */
+  pruefeFreigabe: (nonce: unknown, aktion: string, params: Record<string, unknown>) => boolean;
   schritt?: (s: { art: 'ausgefuehrt' | 'fehlgeschlagen' | 'zur_bestaetigung' | 'blockiert'; aktion: string; params: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie: GeraetAktionDef['autonomie'] }) => Promise<void>;
 }
 
@@ -44,8 +47,12 @@ export class GeraetSkill extends Skill {
     const def = this.deps.manifest.aktionen.find(a => a.name === aktion);
     if (!def) return { success: false, error: `Unbekannte Aktion „${aktion}" auf ${this.deps.name}. Verfügbar: ${this.deps.manifest.aktionen.map(a => a.name).join(', ')}` };
     const params: Record<string, unknown> = { ...input };
-    const bestaetigt = params.confirmed === true;
+    // v1225 — Sicherheitsbefund: `confirmed: true` konnte auch das Modell setzen. Jetzt zählt nur eine
+    // Einmal-Freigabe, die das Gehirn beim Einreihen erzeugt hat und die an Aktion + Parameter gebunden ist.
+    const freigabe = params.freigabe;
+    delete params.freigabe;
     delete params.confirmed;
+    const bestaetigt = this.deps.pruefeFreigabe(freigabe, aktion, params);
     const beschreibung = `Auf ${this.deps.name}: ${aktion} ${paramsKurz(params)}`.trim();
 
     if (def.autonomie === 'nie') {
@@ -53,7 +60,7 @@ export class GeraetSkill extends Skill {
       return { success: false, error: `„${aktion}" auf ${this.deps.name} ist für Alfred gesperrt (Autonomie: nie) — nur der Owner selbst.` };
     }
     if (def.autonomie === 'bestaetigen' && !bestaetigt) {
-      const gestellt = await this.deps.bestaetigung({ description: beschreibung, skillParams: { ...params, action: aktion, confirmed: true } });
+      const gestellt = await this.deps.bestaetigung({ description: beschreibung, aktion, params });
       await this.deps.schritt?.({ art: 'zur_bestaetigung', aktion, params, beschreibung, autonomie: 'bestaetigen' });
       return gestellt
         ? { success: true, data: { zurBestaetigung: true, geraet: this.deps.name, aktion }, display: `Zur Bestätigung an den Owner gestellt: ${beschreibung}. Nach Freigabe wird es auf dem Gerät ausgeführt.` }

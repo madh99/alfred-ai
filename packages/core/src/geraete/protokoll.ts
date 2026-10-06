@@ -4,6 +4,7 @@
  */
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import path from 'node:path';
+import { realpathSync } from 'node:fs';
 import type { GeraetManifest, GeraetPlattform } from '@alfred/types';
 
 export const PAIRING_CODE_GUELTIG_MS = 5 * 60_000;
@@ -65,9 +66,28 @@ export function pruefeManifest(m: unknown): { ok: true; manifest: GeraetManifest
  * Liegt ein Pfad innerhalb eines freigegebenen Verzeichnisses? Beide Seiten werden aufgelöst,
  * `..` und Symlink-Tricks im Text scheitern daran. Groß-/Kleinschreibung auf Windows egal.
  */
+/**
+ * v1225 — Sicherheitsbefund: ein Symlink oder eine Junction innerhalb eines freigegebenen
+ * Verzeichnisses konnte nach außen zeigen. Darum wird der tiefste existierende Teil des Pfads
+ * über das Dateisystem real aufgelöst (realpath), der nicht existierende Rest lexikalisch angehängt.
+ */
+export function realerPfad(p: string): string {
+  let aktuell = path.resolve(p);
+  const rest: string[] = [];
+  for (;;) {
+    try { return rest.length ? path.join(realpathSync.native(aktuell), ...rest.reverse()) : realpathSync.native(aktuell); }
+    catch {
+      const eltern = path.dirname(aktuell);
+      if (eltern === aktuell) return path.resolve(p);
+      rest.push(path.basename(aktuell));
+      aktuell = eltern;
+    }
+  }
+}
+
 export function istPfadErlaubt(pfad: string, freigegeben: string[], plattform: NodeJS.Platform = process.platform): boolean {
   if (!pfad || freigegeben.length === 0) return false;
-  const norm = (p: string) => { const r = path.resolve(p); return plattform === 'win32' ? r.toLowerCase() : r; };
+  const norm = (p: string) => { const r = realerPfad(p); return plattform === 'win32' ? r.toLowerCase() : r; };
   const ziel = norm(pfad);
   for (const f of freigegeben) {
     const basis = norm(f);
