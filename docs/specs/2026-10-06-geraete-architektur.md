@@ -1,0 +1,147 @@
+# Alfred Geräte-Architektur — Satelliten, Sitzungen, Sprache
+
+Stand: 06.10.2026, Entwurf zur Entscheidung (keine Freigabe erteilt). Gehört zur Jarvis-Architektur (`2026-10-04-jarvis-architektur.md`) und erweitert sie um einen Wirkungsraum: die Geräte des Owners.
+
+## 1. Ziel und Nicht-Ziele
+
+**Ziel.** Alfred ist nicht nur auf dem Server und über Web oder Messenger erreichbar, sondern hat ein eigenes Gerät in der Hand des Owners und auf dessen Schreibtisch. Drei Fähigkeiten:
+
+1. **Sprechen, egal von wo** — Sprache hinein, Sprache heraus, aus einer Sitzung, die man einmal öffnet.
+2. **Handeln auf dem Gerät** — Dateien, Programme, Shell, Bildschirm auf dem Desktop; Benachrichtigung, Standort, Kamera, Teilen auf dem Handy. Immer unter den Autonomie-Regeln von Schicht 3.
+3. **Das Gerät als Sinnesorgan** — Standort, Akku, Netz, Leerlaufzeit, aktives Fenster fließen ins Weltmodell (Schicht 1) und machen Anwesenheit und Zustellung präzise.
+
+**Nicht-Ziele.** Kein zweites Gehirn auf dem Gerät: Weltmodell, Vorgänge, Befunde, Gedächtnis und Reasoning bleiben auf dem Server. Keine neue Sprache für den Kern: Protokoll, Satellit und Sitzung sind TypeScript im Monorepo. Keine Plattform-Widgets: Apps sind installierbare, signierte Hüllen um dieselbe Oberfläche.
+
+## 2. Begriffe
+
+| Begriff | Bedeutung |
+|---|---|
+| **Gehirn** | Der Alfred-Server (`alfred start`). Einziger Ort für Zustand und Entscheidung. |
+| **Gerät** | Ein Rechner oder Handy des Owners mit eigener Identität (ID, Token, Name, Plattform). Genau eine Identität je physischem Gerät. |
+| **Satellit** | Der Dienst auf dem Gerät, der die Verbindung zum Gehirn hält, Fähigkeiten anbietet, Sinne liefert und Aktionen ausführt. Läuft ohne Fenster, startet mit dem System. |
+| **Sitzung** | Die Oberfläche, die sich an den Satelliten hängt: Terminal (`alfred`), Desktop-Fenster (Electron) oder Handy-App (Capacitor). Chat, Talk, Bestätigungen und Meldungen in einem Verlauf. |
+| **Manifest** | Was ein Gerät kann: Plattform, angebotene Aktionen mit Autonomie-Klasse, gelieferte Sinne, Version. |
+| **Fähigkeit** | Eine Aktion (etwas tun) oder ein Sinn (etwas liefern). Aktionen laufen als Skills durch die Skill-Sandbox des Satelliten. |
+| **Pairing** | Einmalige Kopplung eines Geräts mit dem Gehirn über einen kurzlebigen Code aus der Web-GUI; ergibt ein langlebiges, widerrufbares Gerätetoken. |
+
+## 3. Topologie und Verbindung
+
+- **Richtung.** Das Gerät verbindet sich nach außen zum Gehirn (`wss://<server>/api/geraete/ws`). Keine offenen Ports am Gerät, funktioniert hinter NAT und Mobilfunk. Für unterwegs: WireGuard auf der Dream Machine (empfohlen) oder eine öffentliche Adresse über den Nginx Proxy Manager, dann ausschließlich mit Gerätetoken.
+- **Eine Verbindung je Gerät.** Der Satellit hält sie. Sitzungen auf demselben Rechner hängen sich über lokales IPC (Unix-Socket, auf Windows Named Pipe) an den Satelliten, statt eigene Verbindungen zu öffnen. Ohne laufenden Satelliten startet die Sitzung ihn eingebettet.
+- **Lebenszeichen.** Herzschlag alle 30 s, Wiederverbindung mit exponentiellem Rückzug (1 s bis 2 min), Server markiert Geräte nach 3 verpassten Herzschlägen als getrennt. Getrennt-Zustand ist ein Befund (Quelle `geraete`), keine Owner-Meldung.
+- **Nachrichten.** JSON-Rahmen mit `typ`, `id`, `zeit`, `version`; Audio als Binärrahmen mit Verweis-ID. Jede Anfrage hat eine Antwort oder einen Fehler; Wiederholungen werden über `id` erkannt (Replay-Schutz).
+
+## 4. Sicherheit
+
+- **Pairing.** Owner erzeugt in der Web-GUI (Kachel Geräte) einen 8-stelligen Code oder QR, gültig 5 Minuten, einmal verwendbar. Das Gerät sendet Code, Name, Plattform, Manifest; das Gehirn antwortet mit Geräte-ID und Token (256 Bit, zufällig). Gespeichert wird nur ein Hash des Tokens; das Gerät legt das Token im Schlüsselbund des Systems ab (DPAPI, macOS Keychain, Secret Service, Android Keystore, iOS Keychain).
+- **Berechtigungen je Gerät.** Der Owner legt fest, welche Fähigkeiten ein Gerät anbieten darf (Scopes). Ein Handy bekommt nie Shell. Ein Desktop bekommt Shell nur mit ausdrücklicher Freigabe. Standard für alles Verändernde: `bestaetigen`.
+- **Autonomie-Klassen** (bestehend, Schicht 3): `auto` für Lesen und Benachrichtigen, `bestaetigen` für Öffnen, Schreiben, Ausführen, `nie` für Löschen außerhalb des Projektordners, Systemänderungen, Zahlungen. Die Klasse steht im Manifest je Aktion und kann vom Gehirn nur verschärft, nie gelockert werden.
+- **Ausführungsgedächtnis.** Jede Geräteaktion ist ein Schritt mit Gerät, Skill, Parametern, Ergebnis und Rücknahme-Hinweis (`vorgang_schritte`, `quelle = 'geraet'`).
+- **Widerruf.** Token in der Kachel widerrufbar; der Satellit erhält `abgemeldet` und löscht das Token. Verlorenes Handy: Widerruf genügt.
+- **Transport.** Ausschließlich TLS. Audio und Standort verlassen das Gerät nur verschlüsselt zum Gehirn, nie zu Dritten außer den konfigurierten Sprach-Anbietern.
+- **Grenzen des Satelliten.** Skills laufen in der bestehenden Skill-Sandbox mit Zeitbudget; Dateizugriff ist auf Owner-Verzeichnisse begrenzt, die der Owner in der Gerätekonfiguration nennt. Keine Geheimnisse des Servers auf dem Gerät; lokale Skills nutzen lokale Konfiguration.
+
+## 5. Protokoll
+
+| Typ | Richtung | Inhalt |
+|---|---|---|
+| `hallo` | Gerät → Gehirn | Geräte-ID, Token, Manifest, Satellit-Version |
+| `willkommen` | Gehirn → Gerät | Server-Version, Serverzeit, aktuelle Lage, offene Bestätigungen |
+| `puls` / `puls_ok` | beide | Herzschlag |
+| `sinne` | Gerät → Gehirn | Standort (Zone, Koordinaten optional), Akku, Netz, Leerlaufsekunden, aktives Fenster (nur Titel, Desktop), Bewegung (Handy). Bei Änderung und spätestens alle 5 min |
+| `aktion` | Gehirn → Gerät | ID, Skill, Aktion, Parameter, Autonomie, Begründung, Vorgang-ID |
+| `aktion_ergebnis` | Gerät → Gehirn | ID, success, data, display, error, Dauer |
+| `bestaetigung` / `bestaetigung_antwort` | beide | Frage an die aktive Sitzung oder den Messenger; Antwort Ja/Nein mit Zeit |
+| `chat` | Gerät → Gehirn | Text oder Audio-Verweis, Sitzungs-ID |
+| `antwort` | Gehirn → Gerät | Text (gestreamt in Abschnitten), Audio-Verweis, Warum-Kurzfassung |
+| `meldung` | Gehirn → Gerät | Proaktive Meldung mit Grund (Zustellweg „geraet") |
+| `lage` | Gehirn → Gerät | Aktualisierte Lage (aus .1220), für Statuszeile und Sperrbildschirm |
+| `abgemeldet` | Gehirn → Gerät | Token widerrufen |
+
+Versionierung: `version` im Rahmen; das Gehirn akzeptiert die letzten zwei Protokollversionen.
+
+## 6. Gehirn: was auf dem Server entsteht
+
+- **Geräte-Registry** (`geraete`: id, user_id, name, plattform, manifest, token_hash, scopes, status, zuletzt_gesehen, erstellt). API: Pairing-Code erzeugen, Geräte auflisten, Scopes setzen, widerrufen.
+- **Geräte-Adapter** in `@alfred/messaging`: Plattform `geraet`, Chat-ID = Geräte-ID. Damit sind Zustellung, Rückfragen und Bestätigungen für Geräte dasselbe wie für Telegram. Der Delivery-Scheduler bevorzugt die aktive Sitzung (Leerlauf < 2 min) und fällt auf Telegram zurück.
+- **Skill-Proxy.** Für jedes verbundene Gerät registriert das Gehirn einen Skill `geraet_<name>` mit den Aktionen aus dem Manifest. `execute` leitet an das Gerät weiter (Zeitbudget 60 s, Shell 10 min), die Autonomie-Klasse kommt aus dem Manifest und wird vom bestehenden `klassifiziereAktion` nur verschärft. Nicht verbundene Geräte melden „Gerät getrennt seit …" als Ergebnis, kein Fehler im Modell.
+- **Weltmodell-Quelle `geraete`** (`normalzustaende/geraete.ts`): je Gerät online/offline, Akku, Zone, Leerlauf. Deutung mit ⚠️ für Akku unter 15 %, getrennt über 3 h, Handy außer Haus bei Bewegung im Haus. Befunde entstehen über den Weltmodell-Beobachter wie bei BMW oder Sensorbatterien.
+- **Anwesenheit.** Zone des Handys und Leerlauf des PCs werden Signale des Delivery-Schedulers (`entscheideZustellung`), neben Home Assistant. Grund in der Warum-Begründung: „Owner am PC seit 08:10".
+- **Kachel Geräte** in der Web-GUI: Liste, Pairing, Scopes, zuletzt gesehen, letzte Aktionen, Widerruf.
+
+## 7. Satellit: die CLI im Gerätemodus
+
+- **Befehl.** `alfred satellit` (Dienst) und `alfred satellit --install` für Autostart (systemd user unit, launchd agent, Windows-Dienst oder Aufgabenplanung).
+- **Lokale Skills je Plattform.** Desktop: file, shell, process, git, screenshot, clipboard, open (Datei, URL, App), notify. Der Skill-Code ist derselbe wie auf dem Server; die Sandbox läuft lokal mit Gerätekonfiguration (erlaubte Verzeichnisse, erlaubte Programme). Handy: siehe Abschnitt 10.
+- **Sinne.** Leerlaufzeit und aktives Fenster über Systemabfragen, Akku und Netz über `systeminformation`, Standort auf dem Desktop aus der Netzkennung (Heimnetz = zu Hause), auf dem Handy aus dem Betriebssystem mit Zonen (Haus, Arbeit, unterwegs), Koordinaten nur auf Wunsch.
+- **Zustand.** Token im Schlüsselbund, Manifest aus der Konfiguration, Protokoll der letzten 200 Aktionen lokal für die Sitzung.
+
+## 8. Sitzung: eine Oberfläche für Chat, Talk und Bestätigung
+
+- **Terminal (`alfred`).** Ink-Oberfläche (React im Terminal): Statuszeile (Gerät, Verbindung, offene Bestätigungen, Lage-Kurzform), Verlauf, Eingabezeile. Tasten: Enter sendet Text; F9 oder Leertaste halten spricht; j/n bestätigt; l zeigt die Lage; q schließt die Sitzung, der Satellit läuft weiter.
+- **Ein Verlauf.** Text, Sprache, Bestätigungsfragen und proaktive Meldungen stehen in derselben Folge, weil es dasselbe Gespräch ist (Gesprächsfaden aus .1203 gilt auch hier).
+- **Anhängen statt verbinden.** Die Sitzung spricht über IPC mit dem Satelliten; mehrere Sitzungen sind möglich, die Geräteidentität bleibt eine.
+- **Desktop-Fenster (Electron).** Dieselbe Sitzung mit Fenster, Tray, globalem Tastenkürzel für Push-to-Talk, Benachrichtigungen des Systems, Autostart. Node im Prozess, Satellit eingebettet oder angehängt. Web-GUI-Komponenten werden wiederverwendet.
+
+## 9. Sprache
+
+- **Aufnahme.** Push-to-Talk zuerst; Sprachaktivitätserkennung (lokal, kleines Modell) als zweite Stufe; Wake-Word als dritte Stufe, nur auf Geräten, die der Owner dafür freigibt (Raumgerät).
+- **Verarbeitung.** Audio zum Gehirn, Transkription und Synthese über die konfigurierten Anbieter (heute Mistral/Voxtral, Pfad aus .1202). Antwort als Text gestreamt und als Audio, Wiedergabe lokal.
+- **Latenz.** Heute 3 bis 8 s (Transkription, Antwort, Synthese nacheinander). Ziel in Stufe 2: Streaming der Antwort und Synthese je Satz, unter 2 s bis zum ersten Ton.
+- **Raumgerät.** `alfred talk --wakeword` auf einem Raspberry Pi mit Mikrofon und Lautsprecher ist ein Gerät ohne Sitzung: dieselbe Identität, dasselbe Pairing, Sinne „Raum: Bewegung, Lautstärke".
+
+## 10. Handy-Apps
+
+- **Rahmen.** Capacitor um die React-Oberfläche (Empfehlung) oder Flutter, wenn Plattform-Optik gewünscht ist. Beide signiert, Store-fähig (App Store über den Apple-Account, Play oder direkte APK).
+- **Kein Dienst im Hintergrund.** Betriebssysteme erlauben keine dauerhafte Verbindung. Die App verbindet sich, solange sie offen ist; sonst weckt sie Push (Apple Push, Firebase) mit einem Verweis, worauf die App die Verbindung kurz öffnet. Das Gehirn speichert Push-Token je Gerät.
+- **Fähigkeiten.** Benachrichtigung, Standort mit Zonen, Mikrofon, Kamera und Foto senden, Teilen-Ziel (Text, Link, Datei an Alfred), Kalender und Kontakte lesen mit Erlaubnis, auf iOS Kurzbefehle und Siri, auf Android Schnelleinstellung. Keine Shell, keine Dateisystem-Vollzugriffe.
+- **Oberfläche.** Dieselbe Sitzung wie im Terminal: Verlauf, Push-to-Talk, Bestätigungen, Lage auf dem Sperrbildschirm als Benachrichtigung.
+
+## 11. Verteilung und Signatur
+
+| Plattform | Paket | Signatur | Weg |
+|---|---|---|---|
+| Windows | MSIX oder NSIS | Trusted Signing aus Azure Key Vault im Build | direkt oder Microsoft Store |
+| macOS | DMG, notarisiert | Developer ID aus dem Apple-Account | direkt oder Mac App Store |
+| Linux | AppImage, Debian-Paket | GPG | direkt |
+| iOS | IPA | App Store Zertifikat | TestFlight, App Store |
+| Android | AAB/APK | Play-Signatur oder eigener Schlüssel | Play oder direkt |
+
+Build in einer GitHub-Actions-Matrix (macOS-, Windows-, Ubuntu-Läufer). Die CLI bleibt wie heute ein npm-Paket; Satellit und Sitzung sind Bestandteile derselben CLI.
+
+## 12. Phasen mit Live-Beweis
+
+1. **Protokoll, Registry, Satellit, Sitzung im Terminal.** Reines Monorepo. Beweis: „Öffne auf meinem PC den Ordner Rechnungen" per Telegram → Bestätigung in der Terminal-Sitzung → Ausführung → Schritt im Ausführungsgedächtnis → Gerät in der Kachel.
+2. **Sprache in der Sitzung.** Push-to-Talk, Wiedergabe. Beweis: Sprachfrage im Terminal, gesprochene Antwort, Dauer unter 8 s.
+3. **Sinne und Weltmodell.** Leerlauf, Fenster, Akku, Zone. Beweis: Lage zeigt „PC aktiv seit 08:10", Warum nennt „Owner am PC" als Zustellgrund, Befund „Handy seit 3 h getrennt".
+4. **Electron-Fenster.** Tray, Tastenkürzel, Benachrichtigungen, Notarisierung und Trusted Signing. Beweis: signierte Installer auf Windows und macOS, Auto-Update.
+5. **Android-App, dann iOS.** Chat, Talk, Push, Standortzonen, Teilen-Ziel. Beweis: Meldung mit Grund als Push unterwegs, Sprachantwort von unterwegs, Zone „unterwegs" im Weltmodell.
+6. **Linux-Pakete, Raumgerät, Streaming-Sprache.**
+
+Jede Phase ist eine Folge kleiner Releases mit Audit, wie bei Jarvis.
+
+## 13. Risiken
+
+- **Erreichbarkeit von außen** ist Voraussetzung für alles Mobile. Entscheidung WireGuard oder Proxy mit Gerätetoken.
+- **Handeln auf dem Desktop ist mächtig.** Darum Standard `bestaetigen`, Scopes je Gerät, Verzeichnis-Grenzen, vollständiges Protokoll. Shell nur mit Freigabe des Owners, nie auf dem Handy.
+- **Apple-Hintergrundgrenzen.** iOS bleibt Sprech- und Sinnesorgan; keine Versprechen, die das System nicht hält.
+- **Audio auf dem Desktop** hängt von Systemwerkzeugen ab; Phase 2 prüft je Plattform, welche Aufnahme-Bibliothek ohne Native-Build auskommt.
+- **Kosten.** Jede Sprachrunde kostet Transkription, Modellaufruf und Synthese; der Kostenwächter deckt es, die Lage im Prompt hält Antworten kurz.
+
+## 14. Offene Entscheidungen des Owners
+
+1. Erreichbarkeit: WireGuard auf der Dream Machine (empfohlen) oder öffentlicher Proxy.
+2. Handy-Rahmen: Capacitor (eine Oberfläche, TypeScript) oder Flutter (Plattform-Optik, Dart).
+3. Reihenfolge: Phase 1 und 2 auf dem Windows-PC des Owners zuerst; Handy ab Phase 5.
+4. Shell-Freigabe für den Desktop-Satelliten: ja, mit Verzeichnis-Grenzen, oder zunächst ohne Shell.
+
+## 15. Einordnung in Jarvis
+
+| Schicht | Gewinn durch Geräte |
+|---|---|
+| 0 Lebenszeichen | Geräte sind Jobs mit Puls; getrennt = Befund |
+| 1 Weltmodell | Quelle `geraete`: Zone, Leerlauf, Akku, Fenster; Anwesenheit wird messbar |
+| 2 Ereignisse | Zonenwechsel, Leerlauf-Ende, Akku-Schwelle lösen Mini-Pässe aus |
+| 3 Vorgänge | Geräteaktionen sind Schritte mit Autonomie und Rücknahme; Befunde für Geräte |
+| 4 Messen | Kennzahlen je Zustellweg, Sprachrunden, Bestätigungsquote je Gerät |
+| Interaktion | Ein Gespräch über alle Wege; Lage auf dem Sperrbildschirm; Warum auch für Geräteaktionen |
