@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1234] - 2026-10-06
+
+### Fixed — Sprachnachricht aus einem delegierten Lauf kam nie an (v1234)
+
+Beobachtung des Owners 21:11: „schick mir eine Sprachnachricht" → Audio erzeugt (voice speak, danach text_to_speech, 226 KB), zweimal „gesendet" behauptet, nichts angekommen. Beide Aufrufe liefen innerhalb von `delegate`, und der delegierte Lauf gab Anhänge seiner Unter-Skills nie nach oben weiter — Bild, Datei, Sprachnachricht gingen verloren, der Text sagte trotzdem „erzeugt".
+
+- `delegate` sammelt jetzt die Anhänge aller Unter-Skills und gibt sie mit seinem Ergebnis zurück (höchstens 10); die Pipeline stellt sie wie gewohnt zu (Sprachnachricht als Voice, Bild als Foto, sonst Datei).
+- Das Werkzeug-Ergebnis im delegierten Lauf nennt die Zahl der Anhänge, damit das Modell nicht „keine Datei zurückgegeben" schließt.
+- Test: Unter-Skill mit Anhang → Anhang im delegate-Ergebnis.
+
 ## [0.19.0-jarvis.1233] - 2026-10-06
 
 ### Fixed — Sitzung spricht wirklich als Owner (v1233)

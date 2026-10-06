@@ -2,6 +2,7 @@ import type {
   SkillMetadata,
   SkillContext,
   SkillResult,
+  SkillResultAttachment,
   LLMMessage,
   LLMContentBlock,
   ToolCall,
@@ -192,6 +193,8 @@ export class DelegateSkill extends Skill {
     let totalFileWrites = 0;
     const toolNamesSeen = new Set<string>();
     let lastResponseContent = '';
+    // v1234 — Anhänge der Unter-Skills (Sprachnachricht, Bild, Datei) gehen mit nach oben; vorher verloren
+    const anhaenge: SkillResultAttachment[] = [];
 
     const emitCompletion = (success: boolean, iteration: number): void => {
       if (!this.onSessionCompletion) return;
@@ -277,8 +280,10 @@ export class DelegateSkill extends Skill {
               response: response.content,
               iterations: iteration,
               usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+              ...(anhaenge.length ? { attachments: anhaenge.length } : {}),
             },
             display: response.content,
+            ...(anhaenge.length ? { attachments: anhaenge.slice(0, 10) } : {}),
           };
         }
 
@@ -320,6 +325,7 @@ export class DelegateSkill extends Skill {
           const result = await this.executeSubAgentTool(
             { ...toolCall, input: execInput }, context,
           );
+          if (result.attachments?.length) anhaenge.push(...result.attachments);
 
           // Store large successful results with auto-ID
           let resultContent = result.content;
@@ -398,7 +404,7 @@ export class DelegateSkill extends Skill {
   private async executeSubAgentTool(
     toolCall: ToolCall,
     context: SkillContext,
-  ): Promise<{ content: string; isError?: boolean; rawData?: unknown }> {
+  ): Promise<{ content: string; isError?: boolean; rawData?: unknown; attachments?: SkillResultAttachment[] }> {
     const skill = this.skillRegistry?.get(toolCall.name);
     if (!skill) {
       return { content: `Error: Unknown tool "${toolCall.name}"`, isError: true };
@@ -427,9 +433,10 @@ export class DelegateSkill extends Skill {
     if (this.skillSandbox) {
       const result = await this.skillSandbox.execute(skill, toolCall.input, context);
       return {
-        content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
+        content: (result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error')) + (result.attachments?.length ? ` [${result.attachments.length} Anhang/Anhänge werden dem Nutzer zugestellt]` : ''),
         isError: !result.success,
         rawData: result.data,
+        attachments: result.attachments,
       };
     }
 
@@ -437,9 +444,10 @@ export class DelegateSkill extends Skill {
     try {
       const result = await skill.execute(toolCall.input, context);
       return {
-        content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
+        content: (result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error')) + (result.attachments?.length ? ` [${result.attachments.length} Anhang/Anhänge werden dem Nutzer zugestellt]` : ''),
         isError: !result.success,
         rawData: result.data,
+        attachments: result.attachments,
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
