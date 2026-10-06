@@ -774,7 +774,17 @@ export class Alfred {
           }
           for (const b of r.erledigt) {
             log.info({ quelle, gegenstand: b.gegenstand, seit: b.entstanden, gesehen: b.gesehenAnzahl }, 'v1217 Befund erledigt (nicht mehr auffällig)');
-            if (b.vorgangId) await vorgaengeRepoB.setzeStatus(owner, b.vorgangId, 'erledigt', 'von selbst erledigt: im Weltmodell nicht mehr auffällig').catch(() => undefined);
+            if (b.vorgangId) {
+              // v1223 — ein Vorgang kann mehreren Befunden gehören (Dedupe gleicher Themen). Realfall 16:30: der Befund
+              // test-ubuntu erledigte den gemeinsamen Vorgang, obwohl git-server noch offen war. Erledigt wird erst,
+              // wenn kein anderer offener Befund mehr daran hängt.
+              const andere = (await befundeRepo.offene(owner).catch(() => [])).filter(x => x.vorgangId === b.vorgangId && x.id !== b.id);
+              if (andere.length === 0) {
+                await vorgaengeRepoB.setzeStatus(owner, b.vorgangId, 'erledigt', 'von selbst erledigt: im Weltmodell nicht mehr auffällig').catch(() => undefined);
+              } else {
+                log.info({ vorgang: b.vorgangId.slice(0, 8), weitereBefunde: andere.map(x => x.gegenstand) }, 'v1223 Vorgang bleibt offen — weitere Befunde hängen daran');
+              }
+            }
           }
           if (r.neu.length || r.erledigt.length) void this.aktualisiereLage(); // v1220
         });

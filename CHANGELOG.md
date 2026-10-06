@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1223] - 2026-10-06
+
+### Fixed — Gemeinsamer Vorgang wird erst erledigt, wenn alle Befunde erledigt sind (v1223)
+
+Realfall 16:30: Zwei Befunde (git-server, test-ubuntu) hingen am selben Vorgang, weil ihre Titel durch den Fehler aus .1218 gleich waren. Als test-ubuntu nicht mehr auffällig war, setzte er den gemeinsamen Vorgang auf „erledigt", obwohl git-server weiter bei 95 Prozent stand. Ein Vorgang gilt jetzt erst als von selbst erledigt, wenn kein anderer offener Befund mehr daran hängt.
+
 ## [0.19.0-jarvis.1222] - 2026-10-06
 
 ### Changed — Wo ein Befund existiert, entsteht kein Prosa-Vorgang mehr (v1222)
