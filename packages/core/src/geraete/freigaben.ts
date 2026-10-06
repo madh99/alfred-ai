@@ -45,3 +45,80 @@ export class Freigaben {
     for (const [k, f] of this.offen) if (f.bis < jetzt) this.offen.delete(k);
   }
 }
+
+/**
+ * v1230 — Vorhaben-Freigabe (Owner-Wunsch 06.10.): Der Owner sagt EINMAL ja zu einem Vorhaben mit
+ * Umfang (Gerät, erlaubte Aktionen, Domains, Dauer); danach laufen die genannten Aktionen ohne
+ * Einzelbestätigung. Was im Manifest oder in den Browser-Regeln `nie` ist, bleibt gesperrt —
+ * ein Vorhaben kann nur Bestätigungen ersetzen, nie Sperren aufheben.
+ */
+export const VORHABEN_MAX_MIN = 120;
+
+export interface Vorhaben {
+  nonce: string;
+  skillName: string;
+  beschreibung: string;
+  aktionen: string[];
+  domains: string[];
+  bis: number;
+  aktiv: boolean;
+  schritte: number;
+}
+
+export function hostAus(url: unknown): string | undefined {
+  if (typeof url !== 'string' || !url) return undefined;
+  try { return new URL(/^https?:\/\//i.test(url) ? url : 'https://' + url).hostname.toLowerCase(); } catch { return undefined; }
+}
+
+export function domainErlaubt(host: string | undefined, domains: string[]): boolean {
+  if (domains.length === 0) return true;
+  if (!host) return false;
+  return domains.some(d => { const dd = d.toLowerCase().replace(/^\*\./, ''); return host === dd || host.endsWith('.' + dd); });
+}
+
+export class VorhabenFreigaben {
+  private readonly vorhaben = new Map<string, Vorhaben>();
+  constructor(private readonly now: () => number = () => Date.now()) {}
+
+  erzeuge(skillName: string, v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number }): Vorhaben {
+    this.raeumeAuf();
+    const dauer = Math.min(Math.max(5, Math.round(v.dauerMin ?? 30)), VORHABEN_MAX_MIN);
+    const vorhaben: Vorhaben = {
+      nonce: randomUUID(), skillName, beschreibung: v.beschreibung.slice(0, 300),
+      aktionen: [...new Set(v.aktionen.map(a => a.trim()).filter(Boolean))].slice(0, 20),
+      domains: [...new Set((v.domains ?? []).map(d => d.trim().toLowerCase()).filter(Boolean))].slice(0, 20),
+      bis: this.now() + dauer * 60_000, aktiv: false, schritte: 0,
+    };
+    this.vorhaben.set(vorhaben.nonce, vorhaben);
+    return vorhaben;
+  }
+
+  /** Vom Owner freigegeben (über die Bestätigungs-Queue, deren Parameter die Nonce tragen). */
+  aktiviere(nonce: unknown, skillName: string): Vorhaben | undefined {
+    if (typeof nonce !== 'string') return undefined;
+    const v = this.vorhaben.get(nonce);
+    if (!v || v.skillName !== skillName || v.bis < this.now()) return undefined;
+    v.aktiv = true;
+    return v;
+  }
+
+  /** Deckt ein aktives Vorhaben diese Aktion? Zählt den Schritt mit. */
+  deckt(skillName: string, aktion: string, params: Record<string, unknown>): Vorhaben | undefined {
+    this.raeumeAuf();
+    for (const v of this.vorhaben.values()) {
+      if (!v.aktiv || v.skillName !== skillName) continue;
+      if (!v.aktionen.includes(aktion) && !v.aktionen.some(a => a.endsWith('*') && aktion.startsWith(a.slice(0, -1)))) continue;
+      const host = hostAus(params.url ?? params.path);
+      if (host !== undefined && !domainErlaubt(host, v.domains)) continue;
+      v.schritte += 1;
+      return v;
+    }
+    return undefined;
+  }
+
+  aktive(skillName?: string): Vorhaben[] { this.raeumeAuf(); return [...this.vorhaben.values()].filter(v => v.aktiv && (!skillName || v.skillName === skillName)); }
+
+  beende(nonce: string): void { this.vorhaben.delete(nonce); }
+
+  private raeumeAuf(): void { const jetzt = this.now(); for (const [k, v] of this.vorhaben) if (v.bis < jetzt) this.vorhaben.delete(k); }
+}

@@ -8,7 +8,14 @@ export const BROWSER_GESPERRT_TEXT = /^(jetzt kaufen|buy now|kaufen|bestellung a
 
 export interface BrowserElement { i: number; tag: string; text: string; href?: string; typ?: string }
 
-export function istGesperrteUrl(url: string): boolean { return BROWSER_GESPERRT_URL.test(url ?? ''); }
+export function istGesperrteUrl(url: string): boolean {
+  const roh = url ?? '';
+  if (BROWSER_GESPERRT_URL.test(roh)) return true;
+  // Prozent-Kodierung und mehrfache Kodierung auflösen (Parser-Differenz Browser vs. Regex)
+  let dekodiert = roh;
+  for (let i = 0; i < 3; i++) { try { const d = decodeURIComponent(dekodiert); if (d === dekodiert) break; dekodiert = d; } catch { break; } }
+  return BROWSER_GESPERRT_URL.test(dekodiert);
+}
 export function istGesperrteBeschriftung(text: string): boolean { return BROWSER_GESPERRT_TEXT.test((text ?? '').trim().replace(/\s+/g, ' ')); }
 
 export function formatiereSeite(s: { url: string; titel: string; text: string; elemente?: BrowserElement[]; geklickt?: string }): string {

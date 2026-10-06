@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1230] - 2026-10-06
+
+### Added — Vorhaben-Freigabe: ein Ja für viele Schritte (v1230)
+
+Owner-Wunsch: Alfred soll für ein Vorhaben eine Freigabe bekommen können, ohne dass jeder einzelne Schritt bestätigt werden muss.
+
+- **Aktion `vorhaben`** am Geräte-Skill: Alfred beschreibt, was er vorhat, welche Aktionen er braucht, auf welchen Domains und wie lange (5 bis 120 Minuten). Der Owner bekommt eine einzige Frage mit genau diesem Umfang.
+- **Nach dem Ja** laufen die genannten Aktionen auf dem Gerät ohne Einzelbestätigung; jeder Schritt steht mit Vorhaben und Schrittnummer im Ausführungsgedächtnis. Was `nie` ist, bleibt gesperrt: Kauf, Zahlung, Anmeldung, Passwortfelder. Ein Vorhaben ersetzt Bestätigungen, nie Sperren.
+- **Fortsetzung von selbst:** Mit der Freigabe setzt Alfred das Vorhaben im Owner-Chat fort, wie eine geplante Aufgabe, und berichtet am Ende; Screenshots kommen als Bild.
+- 3 Tests (Deckung, Ablauf, Domains).
+
 ## [0.19.0-jarvis.1229] - 2026-10-06
 
 ### Added — Die Browser-Hand des Satelliten (v1229)

@@ -7,7 +7,7 @@ import type { SkillRegistry } from '@alfred/skills';
 import type { GeraeteRepository } from '@alfred/storage';
 import type { GeraetEintrag, GeraetManifest, GeraetNachricht, GeraetAktionErgebnis } from '@alfred/types';
 import { GeraetSkill } from './geraet-skill.js';
-import { Freigaben } from './freigaben.js';
+import { Freigaben, VorhabenFreigaben } from './freigaben.js';
 import { AKTION_TIMEOUT_MS, PAIRING_CODE_GUELTIG_MS, PULS_TIMEOUT_MS, erzeugePairingCode, erzeugeToken, geraetSkillName, hashToken, pruefeManifest } from './protokoll.js';
 
 /**
@@ -24,6 +24,8 @@ export interface GeraeteGatewayDeps {
   ownerZiel: () => { platform: string; chatId: string };
   enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number }) => Promise<boolean | void>;
   schritt?: (s: { userId: string; art: string; skill: string; aktion?: string; params?: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }) => Promise<void>;
+  /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
+  nachFreigabe?: (v: { geraet: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
   now?: () => number;
 }
 
@@ -46,6 +48,8 @@ export class GeraeteGateway {
   private pairFehlerGlobal = { n: 0, bis: 0 };
   /** v1225 — Einmal-Freigaben für bestätigte Geräteaktionen. */
   private readonly freigaben = new Freigaben();
+  /** v1230 — Vorhaben-Freigaben (ein Ja für viele Schritte). */
+  private readonly vorhaben = new VorhabenFreigaben();
   private wachhund?: ReturnType<typeof setInterval>;
 
   constructor(private readonly deps: GeraeteGatewayDeps) {}
@@ -174,6 +178,12 @@ export class GeraeteGateway {
         return ok !== false; // v1226 — Dedup-Übersprung ehrlich melden
       },
       pruefeFreigabe: (nonce, aktion, params) => this.freigaben.verbrauche(nonce, v.skillName, aktion, params),
+      vorhaben: {
+        erzeuge: (x) => this.vorhaben.erzeuge(v.skillName, x),
+        aktiviere: (nonce) => { const a = this.vorhaben.aktiviere(nonce, v.skillName); if (a) this.deps.logger.info({ geraet: v.eintrag.name, beschreibung: a.beschreibung, aktionen: a.aktionen, domains: a.domains, bis: new Date(a.bis).toISOString() }, 'v1230 Vorhaben freigegeben'); return a; },
+        deckt: (aktion, params) => this.vorhaben.deckt(v.skillName, aktion, params),
+        nachFreigabe: async (a) => { await this.deps.nachFreigabe?.({ geraet: v.eintrag.name, ...a }); },
+      },
       schritt: async (s) => { await this.deps.schritt?.({ userId, art: s.art, skill: v.skillName, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie, quelle: 'geraet' }); },
     });
     this.deps.skillRegistry.register(skill);

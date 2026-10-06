@@ -10,6 +10,8 @@ describe('Browser-Sperren', () => {
     expect(istGesperrteUrl('https://www.paypal.com/')).toBe(true);
     expect(istGesperrteUrl('https://www.amazon.de/s?k=bartschneider')).toBe(false);
     expect(istGesperrteUrl('https://www.amazon.de/dp/B0C1234/')).toBe(false);
+    expect(istGesperrteUrl('https://www.amazon.de/gp%2Fbuy/spc')).toBe(true); // kodiert
+    expect(istGesperrteUrl('https://shop.example/%2563heckout')).toBe(true); // doppelt kodiert
   });
   it('erkennt Kauf- und Anmelde-Beschriftungen, lässt „In den Einkaufswagen" zu', () => {
     expect(istGesperrteBeschriftung('Jetzt kaufen')).toBe(true);

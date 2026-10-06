@@ -18,6 +18,13 @@ export interface GeraetSkillDeps {
   bestaetigung: (frage: { description: string; aktion: string; params: Record<string, unknown> }) => Promise<boolean>;
   /** v1225 — prüft und verbraucht die Einmal-Freigabe aus den Parametern der Bestätigungs-Queue. */
   pruefeFreigabe: (nonce: unknown, aktion: string, params: Record<string, unknown>) => boolean;
+  /** v1230 — Vorhaben-Freigabe: anlegen, nach Owner-Ja aktivieren, Deckung prüfen. */
+  vorhaben: {
+    erzeuge: (v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number }) => { nonce: string; bis: number; aktionen: string[]; domains: string[] };
+    aktiviere: (nonce: unknown) => { beschreibung: string; bis: number; aktionen: string[]; domains: string[] } | undefined;
+    deckt: (aktion: string, params: Record<string, unknown>) => { beschreibung: string; schritte: number } | undefined;
+    nachFreigabe?: (v: { beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
+  };
   schritt?: (s: { art: 'ausgefuehrt' | 'fehlgeschlagen' | 'zur_bestaetigung' | 'blockiert'; aktion: string; params: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie: GeraetAktionDef['autonomie'] }) => Promise<void>;
 }
 
@@ -28,13 +35,17 @@ export class GeraetSkill extends Skill {
     super();
     const aktionen = deps.manifest.aktionen;
     const params: Record<string, unknown> = {
-      action: { type: 'string', enum: aktionen.map(a => a.name), description: 'Aktion auf dem Gerät: ' + aktionen.map(a => `${a.name} (${a.autonomie}): ${a.beschreibung}`).join(' | ') },
+      action: { type: 'string', enum: [...aktionen.map(a => a.name), 'vorhaben'], description: 'Aktion auf dem Gerät: ' + aktionen.map(a => `${a.name} (${a.autonomie}): ${a.beschreibung}`).join(' | ') + ' | vorhaben: Freigabe für ein mehrschrittiges Vorhaben beim Owner anfordern (beschreibung, aktionen, domains, dauerMin) — nach seinem Ja laufen die genannten Aktionen ohne Einzelbestätigung' },
+      beschreibung: { type: 'string', description: 'Nur für vorhaben: was Alfred vorhat, in einem Satz' },
+      aktionen: { type: 'array', items: { type: 'string' }, description: 'Nur für vorhaben: Aktionen, die das Vorhaben braucht (z. B. browser_klicken, browser_tippen)' },
+      domains: { type: 'array', items: { type: 'string' }, description: 'Nur für vorhaben: erlaubte Domains (z. B. amazon.de)' },
+      dauerMin: { type: 'number', description: 'Nur für vorhaben: Gültigkeit in Minuten (Standard 30, höchstens 120)' },
     };
     for (const a of aktionen) for (const [k, p] of Object.entries(a.parameter ?? {})) if (!params[k]) params[k] = { type: p.type, description: p.description ?? `${k} (für ${a.name})` };
     this.metadata = {
       name: deps.skillName,
       category: 'core',
-      description: `Gerät „${deps.name}" (${deps.manifest.plattform}) des Owners — Alfred handelt DORT, nicht auf dem Server. Aktionen: ${aktionen.map(a => a.name).join(', ')}. Verändernde Aktionen fragen den Owner vorher (Bestätigung per Button); melde dann nur „zur Bestätigung gestellt". Nutze dieses Gerät, wenn der Owner „auf meinem PC/Mac/Rechner/Laptop" oder den Gerätenamen nennt. Browser: browser_oeffnen → browser_lesen (Element-Karte mit Nummern) → browser_klicken/browser_tippen mit der Nummer; nach jedem Klick erneut lesen. Kauf, Bestellung, Zahlung und Anmeldung sind gesperrt — das macht der Owner selbst.`,
+      description: `Gerät „${deps.name}" (${deps.manifest.plattform}) des Owners — Alfred handelt DORT, nicht auf dem Server. Aktionen: ${aktionen.map(a => a.name).join(', ')}. Verändernde Aktionen fragen den Owner vorher (Bestätigung per Button); melde dann nur „zur Bestätigung gestellt". Nutze dieses Gerät, wenn der Owner „auf meinem PC/Mac/Rechner/Laptop" oder den Gerätenamen nennt. Browser: browser_oeffnen → browser_lesen (Element-Karte mit Nummern) → browser_klicken/browser_tippen mit der Nummer; nach jedem Klick erneut lesen. Kauf, Bestellung, Zahlung und Anmeldung sind gesperrt — das macht der Owner selbst. Für mehrschrittige Aufgaben (z. B. etwas suchen und in den Einkaufswagen legen) zuerst action=vorhaben mit beschreibung, aktionen und domains anfordern; läuft bereits ein freigegebenes Vorhaben, einfach die Aktionen ausführen.`,
       riskLevel: 'write',
       version: '1.0.0',
       timeoutMs: 11 * 60_000,
@@ -44,6 +55,33 @@ export class GeraetSkill extends Skill {
 
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const aktion = String(input.action ?? '');
+    // v1230 — Vorhaben anfordern: eine Owner-Frage für viele Schritte
+    if (aktion === 'vorhaben') {
+      const beschreibung = String(input.beschreibung ?? '').trim();
+      const aktionen = Array.isArray(input.aktionen) ? (input.aktionen as unknown[]).map(String) : [];
+      const domains = Array.isArray(input.domains) ? (input.domains as unknown[]).map(String) : [];
+      const bekannt = new Set(this.deps.manifest.aktionen.map(a => a.name));
+      const unbekannt = aktionen.filter(a => !bekannt.has(a) && !(a.endsWith('*') && [...bekannt].some(b => b.startsWith(a.slice(0, -1)))));
+      if (!beschreibung || aktionen.length === 0) return { success: false, error: 'vorhaben braucht beschreibung und aktionen' };
+      if (unbekannt.length) return { success: false, error: `Unbekannte Aktionen im Vorhaben: ${unbekannt.join(', ')}` };
+      const gesperrt = this.deps.manifest.aktionen.filter(a => a.autonomie === 'nie' && aktionen.includes(a.name)).map(a => a.name);
+      if (gesperrt.length) return { success: false, error: `Diese Aktionen bleiben gesperrt und gehören in kein Vorhaben: ${gesperrt.join(', ')}` };
+      const v = this.deps.vorhaben.erzeuge({ beschreibung, aktionen, domains, dauerMin: typeof input.dauerMin === 'number' ? input.dauerMin : undefined });
+      const bisText = new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
+      const frage = `Vorhaben auf ${this.deps.name}: ${beschreibung} — Umfang: ${v.aktionen.join(', ')}${v.domains.length ? ' auf ' + v.domains.join(', ') : ''}, bis ${bisText}. Kauf, Zahlung und Anmeldung bleiben gesperrt.`;
+      const gestellt = await this.deps.bestaetigung({ description: frage, aktion: 'vorhaben_freigeben', params: { vorhaben: v.nonce } });
+      await this.deps.schritt?.({ art: 'zur_bestaetigung', aktion: 'vorhaben', params: { beschreibung, aktionen: v.aktionen, domains: v.domains }, beschreibung: frage, autonomie: 'bestaetigen' });
+      return gestellt
+        ? { success: true, data: { zurFreigabe: true, bis: new Date(v.bis).toISOString() }, display: `Vorhaben zur Freigabe an den Owner gestellt: ${beschreibung}. Nach seinem Ja führe ich es ohne Einzelbestätigung aus (${v.aktionen.join(', ')}). Jetzt nichts weiter tun und dem Owner sagen, dass die Freigabe bei ihm liegt.` }
+        : { success: false, error: 'Freigabe konnte nicht gestellt werden' };
+    }
+    if (aktion === 'vorhaben_freigeben') {
+      const v = this.deps.vorhaben.aktiviere(input.vorhaben);
+      if (!v) return { success: false, error: 'Vorhaben unbekannt oder abgelaufen' };
+      await this.deps.schritt?.({ art: 'bestaetigt' as never, aktion: 'vorhaben', params: { aktionen: v.aktionen, domains: v.domains }, beschreibung: `Vorhaben freigegeben: ${v.beschreibung}`, autonomie: 'bestaetigen' });
+      void this.deps.vorhaben.nachFreigabe?.(v).catch(() => undefined);
+      return { success: true, data: { freigegeben: true, bis: new Date(v.bis).toISOString() }, display: `Vorhaben freigegeben bis ${new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })}: ${v.beschreibung}. Alfred führt es jetzt aus.` };
+    }
     const def = this.deps.manifest.aktionen.find(a => a.name === aktion);
     if (!def) return { success: false, error: `Unbekannte Aktion „${aktion}" auf ${this.deps.name}. Verfügbar: ${this.deps.manifest.aktionen.map(a => a.name).join(', ')}` };
     const params: Record<string, unknown> = { ...input };
@@ -59,7 +97,9 @@ export class GeraetSkill extends Skill {
       await this.deps.schritt?.({ art: 'blockiert', aktion, params, beschreibung, ergebnis: 'Autonomie-Klasse nie', autonomie: 'nie' });
       return { success: false, error: `„${aktion}" auf ${this.deps.name} ist für Alfred gesperrt (Autonomie: nie) — nur der Owner selbst.` };
     }
-    if (def.autonomie === 'bestaetigen' && !bestaetigt) {
+    // v1230 — ein aktives Vorhaben deckt die Aktion: keine Einzelbestätigung
+    const vorhaben = def.autonomie === 'bestaetigen' && !bestaetigt ? this.deps.vorhaben.deckt(aktion, params) : undefined;
+    if (def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben) {
       const gestellt = await this.deps.bestaetigung({ description: beschreibung, aktion, params });
       await this.deps.schritt?.({ art: 'zur_bestaetigung', aktion, params, beschreibung, autonomie: 'bestaetigen' });
       return gestellt
@@ -67,7 +107,7 @@ export class GeraetSkill extends Skill {
         : { success: false, error: 'Bestätigung konnte nicht gestellt werden (keine Bestätigungs-Queue oder Anfrage verworfen) — dem Owner sagen, dass keine Frage bei ihm liegt.' };
     }
     const r = await this.deps.sendeAktion(aktion, params, aktion === 'shell' ? 10 * 60_000 : undefined);
-    await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, 300) : (r.error ?? '').slice(0, 300), autonomie: def.autonomie });
+    await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, 300) : (r.error ?? '').slice(0, 300), autonomie: def.autonomie });
     if (!r.success) return { success: false, error: r.error ?? 'Gerät meldete Fehler' };
     // v1229 — Screenshots vom Gerät kommen als Bild zum Owner
     const d = r.data as { screenshotBase64?: string; mimeType?: string } | undefined;

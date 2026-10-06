@@ -13439,6 +13439,27 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             chatId: this.config.security?.ownerUserId ?? '',
           }),
           enqueueBestaetigung: async (o) => { if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue'); return this.confirmationQueue.enqueue(o); },
+          // v1230 — nach dem Ja des Owners setzt Alfred das Vorhaben selbst fort: synthetische Owner-Nachricht
+          // durch die Pipeline (wie geplante Aufgaben), Antwort und Screenshots zurück in den Owner-Chat.
+          nachFreigabe: async (v) => {
+            const platform = this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api';
+            const chatId = this.config.security?.ownerUserId ?? '';
+            if (!chatId) return;
+            const bisText = new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
+            const text = `Freigabe erteilt für das Vorhaben auf ${v.geraet}: „${v.beschreibung}" (erlaubt: ${v.aktionen.join(', ')}${v.domains.length ? ' auf ' + v.domains.join(', ') : ''}, bis ${bisText}). Führe es jetzt Schritt für Schritt aus — die Aktionen laufen ohne Einzelbestätigung — und berichte am Ende kurz, was du getan hast. Lies nach jedem Klick die Seite neu.`;
+            try {
+              const result = await this.pipeline.process({
+                id: `vorhaben-${Date.now()}`, platform: platform as import('@alfred/types').Platform, chatId, chatType: 'dm', userId: chatId, userName: 'owner',
+                text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId },
+              } as import('@alfred/types').NormalizedMessage);
+              const adapter = this.adapters.get(platform as import('@alfred/types').Platform);
+              if (adapter && result?.text) {
+                const formatted = this.formatter.format(result.text, platform as import('@alfred/types').Platform);
+                await adapter.sendMessage(chatId, formatted.text, { parseMode: formatted.parseMode !== 'text' ? formatted.parseMode : undefined });
+                for (const att of result.attachments ?? []) { try { if (att.mimeType.startsWith('image/')) await adapter.sendPhoto(chatId, att.data, att.fileName); } catch { /* */ } }
+              }
+            } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1230 Fortsetzung nach Vorhaben-Freigabe fehlgeschlagen'); }
+          },
           schritt: async (s) => { await vorgaengeG.schritt({ userId: s.userId, art: s.art as import('@alfred/storage').SchrittArt, skill: s.skill, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie as import('@alfred/storage').Autonomie | undefined, quelle: s.quelle }); },
         });
         gw.start();

@@ -1,5 +1,39 @@
 import { describe, it, expect } from 'vitest';
-import { Freigaben, paramsFingerabdruck, FREIGABE_GUELTIG_MS } from '../geraete/freigaben.js';
+import { Freigaben, paramsFingerabdruck, FREIGABE_GUELTIG_MS, VorhabenFreigaben, domainErlaubt, hostAus } from '../geraete/freigaben.js';
+
+// v1230 — Vorhaben-Freigabe: ein Ja für viele Schritte, Umfang nach Aktionen und Domains.
+describe('VorhabenFreigaben', () => {
+  it('deckt erst nach Aktivierung, nur genannte Aktionen, nur erlaubte Domains, zählt Schritte', () => {
+    const f = new VorhabenFreigaben();
+    const v = f.erzeuge('geraet_pc', { beschreibung: 'Bartschneider in den Einkaufswagen', aktionen: ['browser_*'], domains: ['amazon.de'], dauerMin: 30 });
+    expect(f.deckt('geraet_pc', 'browser_klicken', {})).toBeUndefined(); // noch nicht freigegeben
+    expect(f.aktiviere('falsch', 'geraet_pc')).toBeUndefined();
+    expect(f.aktiviere(v.nonce, 'anderes_geraet')).toBeUndefined();
+    expect(f.aktiviere(v.nonce, 'geraet_pc')?.beschreibung).toBe('Bartschneider in den Einkaufswagen');
+    expect(f.deckt('geraet_pc', 'browser_klicken', {})?.schritte).toBe(1);
+    expect(f.deckt('geraet_pc', 'browser_oeffnen', { url: 'https://www.amazon.de/s?k=x' })?.schritte).toBe(2);
+    expect(f.deckt('geraet_pc', 'browser_oeffnen', { url: 'https://www.paypal.com/' })).toBeUndefined();
+    expect(f.deckt('geraet_pc', 'shell', { command: 'dir' })).toBeUndefined();
+    expect(f.deckt('anderes_geraet', 'browser_klicken', {})).toBeUndefined();
+  });
+  it('läuft ab und Dauer ist auf 5–120 Minuten begrenzt', () => {
+    let t = 1_000_000;
+    const f = new VorhabenFreigaben(() => t);
+    const v = f.erzeuge('s', { beschreibung: 'x', aktionen: ['a'], dauerMin: 999 });
+    expect(v.bis - t).toBe(120 * 60_000);
+    f.aktiviere(v.nonce, 's');
+    t += 121 * 60_000;
+    expect(f.deckt('s', 'a', {})).toBeUndefined();
+  });
+  it('Domain-Regeln', () => {
+    expect(hostAus('https://www.amazon.de/s?k=1')).toBe('www.amazon.de');
+    expect(hostAus('amazon.de')).toBe('amazon.de');
+    expect(hostAus(undefined)).toBeUndefined();
+    expect(domainErlaubt('www.amazon.de', ['amazon.de'])).toBe(true);
+    expect(domainErlaubt('amazon.de.evil.com', ['amazon.de'])).toBe(false);
+    expect(domainErlaubt('x', [])).toBe(true);
+  });
+});
 
 // v1225 — Sicherheitsbefund .1224: `confirmed: true` im Tool-Aufruf hätte die Owner-Bestätigung umgangen.
 describe('Freigaben', () => {
