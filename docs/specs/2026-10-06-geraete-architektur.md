@@ -139,9 +139,12 @@ Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Rele
 | .1227 | Shell unter Windows über PowerShell | Shell-Aktion am PC |
 | .1228 | Autostart-Dienst (Windows Startup-VBS, launchd, systemd --user) | Satellit nach Neustart verbunden |
 | .1229 | Browser-Hand (puppeteer-core, eigenes Profil, Element-Karte, Sperren für Kauf/Zahlung/Anmeldung) | amazon.de über den Server geöffnet, 120 Elemente, 15 s |
-| .1230 | Vorhaben-Freigabe: ein Ja für viele Schritte (Aktionen, Domains, Dauer), automatische Fortsetzung im Owner-Chat | Chat → Vorhaben-Frage → Owner-Ja → Suche + Lesen ohne Einzelbestätigung |
+| .1230 | Vorhaben-Freigabe: ein Ja für viele Schritte (Aktionen, Domains, Dauer), automatische Fortsetzung im Owner-Chat | Bartschneider: Chat → Vorhaben-Frage → Owner-Ja nach 9 s → Suche, Produkt, Einkaufswagen ohne Einzelbestätigung, Bericht nach 54 s |
+| .1231 | Fortsetzung nur mit dem Geräte-Skill (`allowedSkills`); Kachel Geräte mit laufenden Vorhaben | Werkzeug-Tokens je Runde 28.876 → 1.028; Vorhaben orf.at 0,19 $ statt 1,11 $ |
+| .1232 | Terminal-Sitzung `alfred sitzung`: Chat als Owner, Bestätigungen (/ja, /nein), Satellit mitgelesen oder gestartet; Gerätetoken nur für Sitzungs-Routen | Sitzung auf PC-madh: Ausweis, Bestätigungen, Geräteliste |
+| .1233 | Sitzungs-Alias an den Master des Geräts gebunden; Wettlauf beim ersten Kontakt | „Wie heiße ich?" aus dem Owner-Gedächtnis beantwortet |
 
-Offen in Phase 1: Terminal-Sitzung (Chat, Talk, Bestätigung in einer CLI), Kachel Geräte in der Web-GUI, Sinne, Dateitransfer.
+Offen in Phase 1: Sinne, Dateitransfer. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink.
 
 ### Vorhaben-Freigabe (v1230)
 
