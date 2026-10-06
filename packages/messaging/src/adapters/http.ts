@@ -906,6 +906,8 @@ export class HttpAdapter extends MessagingAdapter {
     upgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
     /** v1232 — Gerätetoken → Identität des Geräts für die Sitzung (userId = Plattform-Kennung des Alias, an den Owner gebunden). */
     authentifiziere?(token: string): Promise<{ userId: string; geraetId: string; name: string } | undefined>;
+    /** v1251 — Hör-Relais (Echtzeit-Transkription) für die Sitzung. */
+    hoerenUpgrade?(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
     /** v1249 — blockweiser Dateitransfer. */
     transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
   };
@@ -969,6 +971,11 @@ export class HttpAdapter extends MessagingAdapter {
           this.handleSandboxProxyUpgrade(req, socket, head, u, refererMatch[1], u.pathname).catch(err => {
             try { socket.write(`HTTP/1.1 500 Internal Server Error\r\n\r\nUpgrade failed: ${(err as Error).message}\n`); socket.destroy(); } catch { /* */ }
           });
+          return;
+        }
+        // v1251 — Hör-Relais: Gerätetoken im Authorization-Header, Audio als Binärrahmen
+        if (u.pathname === '/api/geraete/hoeren' && this.geraeteCallbacks?.hoerenUpgrade) {
+          this.geraeteCallbacks.hoerenUpgrade(req, socket, head);
           return;
         }
         // v1224 — Geräte-Satelliten (Token-Prüfung im Gateway nach dem hallo)

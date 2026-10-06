@@ -138,6 +138,13 @@ async function main(): Promise<void> {
     }
 
     case 'sitzung': {
+      if (parsed.flags['hoertest']) { // v1251 — eine WAV durch das Hör-Relais schicken
+        const { hoerTest } = await import('./commands/satellit-hoeren.js');
+        const { ladeKonfig } = await import('./commands/pair.js');
+        const k = ladeKonfig(); if (!k) { console.error('Nicht gekoppelt (alfred pair).'); process.exit(1); }
+        await hoerTest(k, String(parsed.flags['hoertest']));
+        process.exit(0);
+      }
       if (parsed.flags['mikrofontest']) { // v1250 — Mikrofonstrom + Satzende-Erkennung lokal prüfen
         const { mikrofonTest } = await import('./commands/satellit-audio.js');
         const { SatzendeErkenner, rms16 } = await import('@alfred/core');

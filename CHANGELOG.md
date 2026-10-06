@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1251] - 2026-10-07
+
+### Added — Echtzeit-Sprache, Schritt 2: Hör-Relais am Server (v1251)
+
+- **Relais** `/api/geraete/hoeren` (WebSocket, Gerätetoken im Authorization-Header): die Sitzung schickt PCM 16 kHz mono als Binärrahmen und kleine Steuerzeichen (`start`, `ende`, `schluss`); das Relais hält je Sitzung eine Verbindung zu Mistral Realtime (`voxtral-mini-transcribe-realtime-2602`, 480 ms Verzögerung), reicht Audio als `input_audio.append` weiter und liefert `delta`/`fertig` zurück. Der Mistral-Schlüssel bleibt am Server.
+- **Kosten:** je Äußerung werden die gesendeten Audiosekunden als Service-Nutzung `stt-realtime` verbucht; Tageslimit `ALFRED_HOEREN_MAX_MIN_TAG` (Standard 180 min) stoppt weiteres Audio mit `limit`. Lebenszeichen zeigt laufende Hör-Sitzungen.
+- **Protokoll empirisch bestätigt** (07.10.): `session.update` mit `audio_format {encoding: pcm_s16le, sample_rate: 16000}` und `target_streaming_delay_ms`; eine Verbindung trägt mehrere Äußerungen, jeder Flush liefert `transcription.done` mit dem Text seit dem letzten Flush; `input_audio.end` schließt.
+- **Prüfbefehl** `alfred sitzung --hoertest <wav>`: eine WAV-Datei in 80-ms-Rahmen durch das Relais schicken, Textstücke live, Endtext mit Zeit bis zum ersten Wort. Tests für die Protokollübersetzung und das Tageslimit.
+
 ## [0.19.0-jarvis.1250] - 2026-10-07
 
 ### Added — Echtzeit-Sprache, Schritt 1: Mikrofonstrom und Satzende-Erkennung (v1250)

@@ -18,6 +18,7 @@ export { istGesperrteUrl, istGesperrteBeschriftung, formatiereSeite } from './ge
 export { TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, TRANSFER_BLOCK_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from './geraete/protokoll.js'; // v1235, v1249
 export { sprachfassung, audioMimeAusBytes, sprachBloecke, schneideSaetze } from './interaktion/sprache.js'; // v1241, v1247, v1248
 export { SatzendeErkenner, rms16, pcm16ZuWav } from './interaktion/satzende.js'; // v1250
+export { HoerRelais, HOEREN_MODELL } from './geraete/hoeren.js'; // v1251
 export type { SatzendeEreignis, SatzendeOptionen } from './interaktion/satzende.js';
 export type { BrowserElement } from './geraete/browser-regeln.js';
 export type { ContextSource, ContextResult } from './context-factory.js';

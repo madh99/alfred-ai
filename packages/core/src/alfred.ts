@@ -414,6 +414,8 @@ export class Alfred {
   private befundeRepo?: import('@alfred/storage').BefundeRepository;
   /** v1224 — Geräte-Gateway (Satelliten). */
   private geraeteGateway?: import('./geraete/gateway.js').GeraeteGateway;
+  /** v1251 — Hör-Relais (Echtzeit-Transkription für die Sitzung). */
+  private hoerRelais?: import('./geraete/hoeren.js').HoerRelais;
   /** v1220 — Lage als Delta (Befunde + Vorgänge), alle 10 min und bei jedem Befund-Wechsel neu gerechnet; steht im Weltmodell-Block des Chats. */
   private lageText?: string;
   private lageStand?: string;
@@ -497,6 +499,7 @@ export class Alfred {
       lage: this.lageText ? { stand: this.lageStand, text: this.lageText } : null, // v1220
       geraete: await (this.geraeteGateway?.liste().catch(() => []) ?? Promise.resolve([])), // v1224
       vorhaben: this.geraeteGateway?.vorhabenAktive() ?? [], // v1231
+      hoeren: this.hoerRelais?.aktive() ?? [], // v1251
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
       // v1196 — letzte Begründungen („Warum?") für die Kachel
@@ -13490,6 +13493,22 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
         gw.start();
         this.geraeteGateway = gw;
+        // v1251 — Hör-Relais: Mistral-Schlüssel bleibt am Server, Sekunden werden verbucht, Tageslimit per ENV
+        const { HoerRelais } = await import('./geraete/hoeren.js');
+        const sttKey = () => {
+          const sp = this.config.speech as { sttProvider?: string; provider?: string; sttApiKey?: string; apiKey?: string } | undefined;
+          const mistralKey = (this.config as { mistralApiKey?: string }).mistralApiKey;
+          if (sp?.sttProvider === 'mistral') return sp.sttApiKey ?? mistralKey ?? sp.apiKey;
+          return mistralKey ?? sp?.sttApiKey;
+        };
+        const hoerRelais = new HoerRelais({
+          logger: this.logger.child({ component: 'hoeren' }),
+          authentifiziere: (t: string) => gw.authentifiziere(t),
+          mistralKey: sttKey,
+          maxMinutenProTag: Number(process.env.ALFRED_HOEREN_MAX_MIN_TAG ?? '') || 180,
+          verbuche: (sekunden: number, modell: string) => { this.serviceUsageRepo?.record('stt-realtime', modell, sekunden).catch(() => {}); },
+        });
+        this.hoerRelais = hoerRelais;
         // v1237 — Sinne: Weltmodell-Quelle „Geräte", Befunde über den Beobachter (10-min-Raster), Zustellsignal „Owner am PC"
         (this.reasoningEngine as unknown as { collector?: { setGeraeteQuelle?: (fn: () => Promise<unknown[]>) => void } } | undefined)?.collector?.setGeraeteQuelle?.(() => gw.zustaende());
         this.registriereJob({
@@ -13510,6 +13529,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // v1233 — Sitzung spricht als Owner: Alias api/geraet:<id> wird beim ersten Kontakt angelegt und an den
           // Master des Geräts gebunden (kein Auto-Link-Raten; bei mehreren Mastern wäre der Alias sonst ein Fremder).
           transfer: (art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: Parameters<typeof gw.transferRoute>[1]) => gw.transferRoute(art, p), // v1249
+          hoerenUpgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => hoerRelais.handleUpgrade(req, s, h), // v1251
           authentifiziere: async (t: string) => {
             const g = await gw.authentifiziere(t);
             if (!g) return undefined;
