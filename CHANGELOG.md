@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1218] - 2026-10-06
+
+### Fixed — Befund-Titel aus dem passenden Segment (v1218)
+
+Erster Live-Befund 13:22 (Sensor „Temp Terrasse" nicht erreichbar) bekam als Titel den Zeilenanfang „20 Sensoren · Holztüre Garage Batterie: 50 %", weil die Sensorbatterien-Deutung alle Sensoren in einer Zeile aufreiht. Der Titel wird jetzt aus dem ⚠️-Segment gewählt, das den Gegenstand nennt. Der betroffene Vorgang wurde korrigiert.
+
 ## [0.19.0-jarvis.1217] - 2026-10-06
 
 ### Added — Jarvis Schicht 3: Befunde mit Identität, Teil 1 (v1217)

@@ -18,6 +18,11 @@ describe('befundeAusDeutung', () => {
     expect(b[1].titel).toBe('Wohnzimmer Fenster: 8 % (−3 %/Tag) → in ~2 Tagen tauschen');
     expect(b[0].detail).toContain('Sensorbatterien: 12 Sensoren');
   });
+  it('v1218 Realfall: mehrere Sensoren in EINER Zeile mit „ · " → Titel ist das passende ⚠️-Segment', () => {
+    const zeile = '**Sensorbatterien:** 20 Sensoren · Holztüre Garage Batterie: 50 % (Trend im Aufbau) ↳ beobachten · ⚠️ Terrasse Temp Terrasse Batterie: nicht erreichbar (zuletzt 05.10. 13:20) → Sensor prüfen · niedrigster ok 61 %';
+    const b = befundeAusDeutung('sensorbatterien', { zeilen: [zeile], auffaellig: ['sensorbatterie:sensor.terrasse_temp_terrasse_batterie:offline'] });
+    expect(b[0].titel).toBe('Terrasse Temp Terrasse Batterie: nicht erreichbar (zuletzt 05.10. 13:20) → Sensor prüfen');
+  });
   it('eine einzige ⚠️-Zeile gilt für den einen Schlüssel; ohne Zeile generischer Titel; Duplikate und leer', () => {
     expect(befundeAusDeutung('energie', { zeilen: ['**Hausbatterie:** 12 % ⚠️ niedrig (≤ 15 %)'], auffaellig: ['hausbatterie:niedrig'] })[0].titel).toBe('Hausbatterie: 12 % ⚠️ niedrig (≤ 15 %)');
     expect(befundeAusDeutung('mikrotik', { zeilen: ['Interfaces: 8 up'], auffaellig: ['mikrotik:ether5:neu-down'] })[0].titel).toBe('mikrotik: mikrotik:ether5:neu-down');
