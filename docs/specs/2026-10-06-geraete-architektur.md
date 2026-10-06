@@ -177,7 +177,9 @@ Analyse 07.10.: Mistral `voxtral-mini-transcribe-realtime-2602` (WebSocket, PCM 
 |---|---|---|
 | .1250 | Mikrofon als PCM-Strom (Windows waveIn, macOS sox, Linux arecord); `SatzendeErkenner` im Kern mit Tests; `alfred sitzung --mikrofontest N` | 11,5 s Audio in 12 s, 16 kHz; Sprach-Erkennung mit synthetischem Signal getestet, am Mikro noch vom Owner zu bestätigen |
 
-Nächste Stufe: Relais am Server, dann `/hören`. Danach Ink-Oberfläche.
+| .1251 | Hör-Relais `/api/geraete/hoeren`: Gerätetoken, PCM-Binärrahmen → Mistral Realtime (eine Verbindung je Sitzung, Flush je Äußerung), Sekunden als Service-Nutzung, Tageslimit; `alfred sitzung --hoertest <wav>` | Synthetisierter Satz durch das Relais: erstes Wort nach 1,55 s, fertig 0,25 s nach Audioende, Text exakt |
+
+Nächste Stufe: `/hören` in der Sitzung mit Aktivierungswort, Gesprächsfenster, Stoppwort, Halbduplex. Danach Ink-Oberfläche.
 
 **Phase 1 ist damit vollständig** (Protokoll, Registry, Satellit, Sitzung, Browser-Hand, Vorhaben, Dateitransfer, Sinne). Noch offen aus Phase 1 im Kleinen: Dateitransfer blockweise für mehr als 8 MB, Gerätename der Sitzung im Prompt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink. Phase 3 (Zone des Handys) kommt mit der Android-App.
 
