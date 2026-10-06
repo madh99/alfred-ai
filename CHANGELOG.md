@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1242] - 2026-10-06
+
+### Fixed — /api/transcribe und /api/sprich werden tatsächlich verdrahtet (v1242)
+
+Beim Live-Beweis von v1241 antworteten beide Endpunkte mit „not configured". Ursache: Die Verdrahtung lief in der Sprach-Initialisierung, bevor der HTTP-Adapter überhaupt angelegt war — für `/api/transcribe` galt das seit v644, der Endpunkt hat auf diesem Weg nie funktioniert. Beide Callbacks werden jetzt dort gesetzt, wo die übrigen API-Callbacks verdrahtet werden.
+
 ## [0.19.0-jarvis.1241] - 2026-10-06
 
 ### Added — Sprache in der Sitzung: /talk und vorgelesene Antworten (v1241)

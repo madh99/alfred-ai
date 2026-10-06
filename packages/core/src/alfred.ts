@@ -442,6 +442,8 @@ export class Alfred {
   private contentStudio?: import('./content-studio.js').ContentStudio;
   /** v938 — Video-Pipeline (Slideshow-Renderer; TTS-Ref für Voiceover) */
   private speechSynthesizerRef?: import('./speech-synthesizer.js').SpeechSynthesizer;
+  /** v1242 — Transkription für /api/transcribe; die Verdrahtung passiert erst, wenn der HTTP-Adapter existiert. */
+  private speechTranscriberRef?: SpeechTranscriber;
   /** v929 — Interessen-Radar */
   private interestsRepo?: import('@alfred/storage').InterestsRepository;
   private interestsSkillRef?: import('@alfred/skills').InterestsSkill;
@@ -6142,14 +6144,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const effectiveSttProvider = this.config.speech.sttProvider ?? this.config.speech.provider;
       this.logger.info({ provider: effectiveSttProvider }, 'Speech-to-text initialized');
 
-      // v644 — Wire transcribe endpoint into HTTP-Adapter
-      const apiAdapterForStt = this.adapters.get('api');
-      if (apiAdapterForStt && 'setTranscribeCallback' in apiAdapterForStt) {
-        (apiAdapterForStt as any).setTranscribeCallback(async (audio: Buffer, mimeType: string) => {
-          return speechTranscriber!.transcribe(audio, mimeType);
-        });
-        this.logger.info('Transcribe API endpoint registered (/api/transcribe)');
-      }
+      // v1242 — /api/transcribe wird unten verdrahtet, sobald der HTTP-Adapter existiert (hier gab es ihn noch nicht:
+      // der v644-Aufruf lief ins Leere, der Endpunkt meldete seit jeher „Transcribe not configured").
+      this.speechTranscriberRef = speechTranscriber;
     }
 
     // 5b. Initialize text-to-speech (optional)
@@ -6163,16 +6160,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         serviceUsageRepo.record('tts', model, units).catch(() => {});
       });
       this.speechSynthesizerRef = synthesizer; // v938 — Voiceover für die Video-Pipeline
-      // v1241 — Sprache in der Sitzung: /api/sprich (Text → Audio, knapp wie die Sprachantwort im Chat)
-      const apiAdapterForTts = this.adapters.get('api');
-      if (apiAdapterForTts && 'setSprichCallback' in apiAdapterForTts) {
-        (apiAdapterForTts as unknown as { setSprichCallback: (fn: (text: string, knapp: boolean) => Promise<{ data: Buffer; mimeType: string }>) => void }).setSprichCallback(async (text, knapp) => {
-          const gesprochen = knapp ? sprachfassung(text) : text;
-          const data = await synthesizer.synthesize(gesprochen.length >= 2 ? gesprochen : text, this.ownerMasterUserId);
-          return { data, mimeType: audioMimeAusBytes(data) };
-        });
-        this.logger.info('v1241 Sprich-Endpunkt registriert (/api/sprich)');
-      }
+
       skillRegistry.register(new TTSSkill(synthesizer));
       const effectiveTtsProvider = this.config.speech.ttsProvider ?? 'openai';
       this.logger.info({ provider: effectiveTtsProvider }, 'Text-to-speech skill registered');
@@ -13543,6 +13531,21 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     }
     if (logApiAdapter && 'setLebenszeichenCallback' in logApiAdapter) {
       (logApiAdapter as any).setLebenszeichenCallback(() => this.lebenszeichenStatus());
+      // v1242 — Sprache: /api/transcribe und /api/sprich hier verdrahten, wo der HTTP-Adapter sicher existiert
+      if (this.speechTranscriberRef && 'setTranscribeCallback' in logApiAdapter) {
+        const stt = this.speechTranscriberRef;
+        (logApiAdapter as any).setTranscribeCallback(async (audio: Buffer, mimeType: string) => stt.transcribe(audio, mimeType));
+        this.logger.info('Transcribe API endpoint registered (/api/transcribe)');
+      }
+      if (this.speechSynthesizerRef && 'setSprichCallback' in logApiAdapter) {
+        const tts = this.speechSynthesizerRef;
+        (logApiAdapter as unknown as { setSprichCallback: (fn: (text: string, knapp: boolean) => Promise<{ data: Buffer; mimeType: string }>) => void }).setSprichCallback(async (text, knapp) => {
+          const gesprochen = knapp ? sprachfassung(text) : text;
+          const data = await tts.synthesize(gesprochen.length >= 2 ? gesprochen : text, this.ownerMasterUserId);
+          return { data, mimeType: audioMimeAusBytes(data) };
+        });
+        this.logger.info('v1241 Sprich-Endpunkt registriert (/api/sprich)');
+      }
       // v1185 — Kachel Vorgänge (Jarvis Schicht 3)
       (logApiAdapter as any).setVorgaengeCallback?.(async () => {
         const owner = this.tryOwner();
