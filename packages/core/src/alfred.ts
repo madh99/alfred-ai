@@ -6339,6 +6339,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const { parseMailRegel, neueMails, begrenzeGesehen, ausloeserText, MAIL_STANDARD_SKILLS } = await import('./ereignisse/mail-ereignisse.js');
       const { buildSkillContext: baueKontext } = await import('./context-factory.js');
       const schedulerRef = this.proactiveScheduler;
+      const { AlfredUserRepository: AlfredUserRepoMail } = await import('@alfred/storage');
+      const alfredUserRepoMail = new AlfredUserRepoMail(adapter);
       this.registriereJob({
         key: 'mail-ereignisse', beschreibung: 'Mail-Ereignisquelle: neue Post löst Mail-Aufgaben aus (Schicht 2)',
         takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 2, timeoutMin: 9,
@@ -6352,7 +6354,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const regel = parseMailRegel(a.scheduleValue);
             if (!regel) { zaehler.fehler++; this.logger.warn({ aufgabe: a.name, scheduleValue: a.scheduleValue.slice(0, 120) }, 'v1211 Mail-Aufgabe ohne gültige Regel'); continue; }
             try {
-              const { context } = await baueKontext(userRepo, { userId: a.userId, platform: a.platform as import('@alfred/types').Platform, chatId: a.chatId });
+              const { context, user: ctxUser } = await baueKontext(userRepo, { userId: a.userId, platform: a.platform as import('@alfred/types').Platform, chatId: a.chatId });
+              // v1212 — Konten des Benutzers (z. B. Outlook per Microsoft-Login) hängen am Alfred-Benutzer und am
+              // Service-Resolver; ohne beide kennt der E-Mail-Skill nur die globalen Konten (Realfall Erstlauf 10:02:
+              // „Unknown email account outlook. Available: GmailMarkus").
+              try {
+                const au = await alfredUserRepoMail.getUserByPlatform(a.platform, ctxUser.platformUserId) as { id: string; role: string; active?: boolean } | undefined;
+                if (au) {
+                  context.userRole = au.role;
+                  context.alfredUserId = au.id;
+                  if (this.userServiceResolverRef) context.userServiceResolver = this.userServiceResolverRef as import('@alfred/types').SkillContext['userServiceResolver'];
+                }
+              } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1212 Alfred-Benutzer für Mail-Aufgabe nicht aufgelöst'); }
               const r = await skillSandbox.execute(emailSkill, { action: 'new_messages', ...(regel.account ? { account: regel.account } : {}), ...(regel.from ? { from: regel.from } : {}), ...(regel.subject ? { subject: regel.subject } : {}), count: 50 }, context);
               if (!r.success) { zaehler.fehler++; this.logger.warn({ aufgabe: a.name, err: r.error }, 'v1211 Posteingang nicht lesbar'); continue; }
               const mails = ((r.data as { messages?: Array<{ id: string; from: string; subject: string; date: string }> })?.messages) ?? [];

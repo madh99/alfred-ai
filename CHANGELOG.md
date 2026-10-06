@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1212] - 2026-10-06
+
+### Fixed — Mail-Ereignisquelle kennt die Konten des Benutzers (v1212)
+
+Erstlauf 10:02: „Unknown email account outlook. Available: GmailMarkus". Der Job baute den Skill-Kontext ohne Alfred-Benutzer und Service-Resolver; der E-Mail-Skill sah deshalb nur die globalen Konten, nicht das per Microsoft-Login hinterlegte Outlook-Postfach.
+
+- Der Job `mail-ereignisse` löst den Alfred-Benutzer über die Plattform-ID auf und gibt Rolle, Benutzer-ID und Service-Resolver in den Kontext, genau wie die Chat-Pipeline.
+
 ## [0.19.0-jarvis.1211] - 2026-10-06
 
 ### Added — Jarvis Schicht 2: Mail-Ereignisquelle, Aufgaben vom Typ `mail` (v1211)
