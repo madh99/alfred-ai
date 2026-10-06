@@ -18,6 +18,7 @@ export type KennzahlName =
   | 'gateTreffer' | 'gateAusgesetzt'
   | 'aktionenAusgefuehrt' | 'aktionenFehlgeschlagen' | 'aktionenBestaetigung' | 'aktionenBlockiert' | 'aktionenUebersprungen'
   | 'vorgaengeAngelegt'
+  | 'vorgaengeWiderspruch' | 'vorgaengeDubletten' // v1214 — Fakten-Gegenprobe, Zusammenführung
   | 'miniPassDauerMs';
 
 export const KENNZAHL_NAMEN: readonly KennzahlName[] = [
@@ -26,6 +27,7 @@ export const KENNZAHL_NAMEN: readonly KennzahlName[] = [
   'gateTreffer', 'gateAusgesetzt',
   'aktionenAusgefuehrt', 'aktionenFehlgeschlagen', 'aktionenBestaetigung', 'aktionenBlockiert', 'aktionenUebersprungen',
   'vorgaengeAngelegt',
+  'vorgaengeWiderspruch', 'vorgaengeDubletten',
   'miniPassDauerMs', // v1192 — Summe der Mini-Pass-Dauern (Ereignis → Reaktion), Ø = Summe / miniPaesse
 ];
 

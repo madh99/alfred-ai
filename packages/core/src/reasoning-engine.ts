@@ -471,10 +471,18 @@ export class ReasoningEngine {
       const { kategorieAus } = await import('./vorgaenge/kategorie.js');
       const userId = this.resolvedOwnerUserId || this.defaultChatId;
       let angelegt = 0;
+      const { widersprichtWeltmodell } = await import('./vorgaenge/faktenpruefung.js');
       for (const insight of insights) {
         if (!istHandlungsInsight(insight)) continue;
         const titel = vorgangTitelAus(insight);
         if (istGenerischerTitel(titel)) continue;
+        // v1214 — Fakten-Gegenprobe: Ausfall-Behauptung gegen Datenlage NORMAL → kein Vorgang
+        const widerspruch = widersprichtWeltmodell(insight, (k) => this.collector.sektionsInhalt(k));
+        if (widerspruch) {
+          this.kennzahlen.zaehle('vorgaengeWiderspruch');
+          this.logger.info({ titel, sektion: widerspruch.sektion, grund: widerspruch.grund }, 'v1214 Vorgang widerspricht Weltmodell — nicht angelegt');
+          continue;
+        }
         const v = await this.vorgaengeRepo.anlegen({
           userId, titel, ziel: insight.slice(0, 500), besitzer: 'user', status: 'offen', naechsterSchritt: 'Owner entscheidet',
           frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'reasoning-insight', autonomie: 'bestaetigen',
@@ -495,8 +503,16 @@ export class ReasoningEngine {
     if (!this.vorgaengeRepo || actions.length === 0) return ids;
     try {
       const { klassifiziereAktion } = await import('./vorgaenge/autonomie.js');
+      const { widersprichtWeltmodell } = await import('./vorgaenge/faktenpruefung.js');
       const userId = this.resolvedOwnerUserId || this.defaultChatId;
       for (const a of actions.slice(0, 5)) {
+        // v1214 — Fakten-Gegenprobe auch für vorgeschlagene Aktionen (Realfall „BMW OAuth-Flow neu starten")
+        const widerspruch = widersprichtWeltmodell(a.description, (k) => this.collector.sektionsInhalt(k));
+        if (widerspruch) {
+          this.kennzahlen.zaehle('vorgaengeWiderspruch');
+          this.logger.info({ titel: a.description.slice(0, 120), sektion: widerspruch.sektion, grund: widerspruch.grund }, 'v1214 Vorgang widerspricht Weltmodell — nicht angelegt');
+          continue;
+        }
         const autonomie = klassifiziereAktion(a.skillName, a.skillParams);
         const dedupeKey = `${a.skillName}:${a.description.toLowerCase().replace(/[^a-zäöüß0-9]+/g, ' ').trim().slice(0, 80)}`;
         const v = await this.vorgaengeRepo.anlegen({

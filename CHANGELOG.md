@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1214] - 2026-10-06
+
+### Fixed — Vorgänge: Dubletten zusammenführen, Fakten-Gegenprobe (v1214)
+
+Tages-Audit 06.10.: 42 offene Vorgänge, dieselben drei Themen fünf- bis sechsmal in neuem Wortlaut (Proxmox git-server 95 % RAM, easyname-Domains, BMW-OAuth). Die Wortgleichheits-Regel aus .1185 griff nicht, weil das Modell jeden Pass neu formuliert. Dazu forderten drei Vorgänge, den BMW-OAuth-Flow neu zu starten, während der stündliche BMW-Abruf fehlerfrei lief.
+
+- **Themen-Regel:** Zwei Titel meinen dasselbe Thema, wenn sie zwei Anker teilen oder einen Anker plus ein Inhaltswort. Anker sind Hostnamen und Domains (git-server, nic.at), Zitate („Temp Terrasse"), Kürzel und Markennamen (BMW, RAM, ITSM, OAuth, TeamViewer), Tokens mit Ziffern. Deutsche Substantive sind keine Anker, Einheiten (kWh, GB) auch nicht. Zwei Sensoren bleiben zwei Vorgänge.
+- **Beim Anlegen** greift die Themen-Regel vor der Wortgleichheit: ein offener Vorgang gleichen Themas wird fortgeschrieben statt dupliziert.
+- **Job `vorgaenge-dubletten`** (täglich 05:35, Nachholen nach Neustart): legt bestehende Dubletten auf den ältesten Vorgang zusammen; die jüngeren werden verworfen mit Verweis „Dublette von …". Kennzahl `vorgaengeDubletten`.
+- **Fakten-Gegenprobe:** Behauptet ein Vorgang den Ausfall einer Quelle (BMW, Home Assistant, Energiepreise), deren Datenlage im Weltmodell NORMAL ist, wird er nicht angelegt, sondern protokolliert („widerspricht Weltmodell"). Kennzahl `vorgaengeWiderspruch`. Gilt für Insight- und Aktions-Vorgänge.
+- 11 Tests (Anker, Themen-Regel an den echten Titeln, Gegenprobe).
+
 ## [0.19.0-jarvis.1213] - 2026-10-06
 
 ### Fixed — Tagesbudget erreichte die Konfiguration nie (v1213)

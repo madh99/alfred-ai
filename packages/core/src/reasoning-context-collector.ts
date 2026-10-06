@@ -336,6 +336,8 @@ export class ReasoningContextCollector {
   private letztesSammelnAt?: string;
 
   /** v1206 — Weltmodell-Kurzfassung für den Chat aus dem letzten Sammeln (ohne neue Aufrufe). */
+  /** v1214 — Inhalt einer Sektion aus dem letzten Sammeln (Fakten-Gegenprobe der Vorgänge). */
+  sektionsInhalt(key: string): string | undefined { return this.previousContent.get(key); }
   weltmodellKurz(): string | undefined {
     return weltmodellKurzAus(this.previousContent, this.letztesSammelnAt);
   }

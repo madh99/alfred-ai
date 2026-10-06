@@ -13692,6 +13692,17 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           key: 'vorgaenge-aufraeumen', beschreibung: 'Ausführungsgedächtnis: Schritte älter als 90 Tage entfernen', takt: { art: 'taeglich', um: '04:50' }, bereich: 'global', slot: true,
           run: async () => ({ ok: true, zaehler: { geloescht: await vorgaengeRepo.aufraeumen(90), verfallen: await vorgaengeRepo.verfalleAbgelaufene() } }),
         });
+        // v1214 — Dubletten gleichen Themas auf den ältesten Vorgang zusammenlegen (täglich, Nachholen nach Restart)
+        this.registriereJob({
+          key: 'vorgaenge-dubletten', beschreibung: 'Vorgänge: Dubletten gleichen Themas zusammenführen', takt: { art: 'taeglich', um: '05:35' }, bereich: 'master', slot: true,
+          run: async ({ userId }) => {
+            if (!userId) return { ok: true, zaehler: { zusammengelegt: 0, gruppen: 0 } };
+            const r = await vorgaengeRepo.fuehreDublettenZusammen(userId);
+            for (const g of r.gruppen) this.logger.info({ behalten: g.behalten.slice(0, 8), titel: g.titel.slice(0, 90), verworfen: g.verworfen.length }, 'v1214 Vorgangs-Dubletten zusammengelegt');
+            if (r.zusammengelegt > 0) this.reasoningEngine?.kennzahlen.zaehle('vorgaengeDubletten', r.zusammengelegt);
+            return { ok: true, zaehler: { zusammengelegt: r.zusammengelegt, gruppen: r.gruppen.length } };
+          },
+        });
         // v1183 — Jarvis Schicht 4, Teil 1: Tagesabschluss der Kennzahlen. Die Engine-
         // Zähler (Vollpässe, Rundgänge, Mini-Pässe, Zustellweg, Gate, Aktionsausgänge)
         // werden als Messwerte (quelle 'kennzahl') geschrieben und zurückgesetzt; die

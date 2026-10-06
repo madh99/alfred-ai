@@ -73,6 +73,57 @@ export function titelAehnlichkeit(a: string, b: string): number {
 /** Gleiches Thema nur, wenn jedes Wort des kürzeren Titels wiederkehrt. */
 export const VORGANG_AEHNLICHKEIT_SCHWELLE = 1;
 
+/**
+ * v1214 — Anker eines Titels: Bezeichner, die ein Thema eindeutig machen — Hostnamen und Domains
+ * (git-server, nic.at, 3051.at), Zitate in Anführungszeichen oder Backticks („Temp Terrasse"),
+ * Kürzel und Markennamen (BMW, RAM, OAuth, ITSM, TeamViewer, MikroTik), Tokens mit Ziffern (52bdf33).
+ * Deutsche Substantive sind groß geschrieben und darum KEIN Anker (Terrasse ≠ Anker).
+ */
+export function titelAnker(titel: string): Set<string> {
+  const anker = new Set<string>();
+  const t = titel ?? '';
+  for (const m of t.matchAll(/[`"„“”']([^`"„“”']{3,40})[`"„“”']/g)) anker.add(m[1].trim().toLowerCase());
+  const EINHEIT = /^(ct\/?kwh|kwh|kw|mwh|wh|gb|mb|tb|kb|ghz|mhz|km\/?h|km|mbit|mbps|°c)$/i;
+  for (const tok of t.replace(/[,:;()\[\]!?\/]/g, ' ').split(/\s+/)) {
+    const w = tok.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (w.length < 2 || EINHEIT.test(w)) continue;
+    const lower = w.toLowerCase();
+    // Kürzel innerhalb zusammengesetzter Tokens zählen eigenständig (ITSM-Incident → itsm, OAuth-Flow → oauth)
+    for (const teil of w.split('-')) {
+      if (teil.length >= 2 && !EINHEIT.test(teil) && (/^[A-ZÄÖÜ]{2,}$/.test(teil) || (/[a-zäöü][A-ZÄÖÜ]/.test(teil) && teil.length >= 4))) anker.add(teil.toLowerCase());
+    }
+    if (/^[\p{L}\p{N}]+-[\p{L}\p{N}-]+$/u.test(w) && /[a-z]/.test(w) && !/^(e-mail|follow-up|smart-home|home-assistant|to-do)/i.test(w)) { anker.add(lower); continue; } // git-server, nic.at-Rechnungen → unten
+    if (/^[\p{L}\p{N}-]+\.(at|com|de|net|org|club|io|eu|ch)$/iu.test(w)) { anker.add(lower); continue; }
+    if (/\d/.test(w) && /[a-z]/i.test(w) && !/^\d+(%|h|d|min|kwh|ct)$/i.test(w)) { anker.add(lower); continue; }
+    if (/^[A-ZÄÖÜ]{2,}$/.test(w) || (/[a-zäöü][A-ZÄÖÜ]/.test(w) && w.length >= 4)) { anker.add(lower); continue; }
+  }
+  // Domain-Anker auch aus zusammengesetzten Tokens ziehen (nic.at-Rechnungen → nic.at)
+  for (const m of t.matchAll(/\b([a-z0-9-]+\.(?:at|com|de|net|org|club|io|eu|ch))\b/gi)) anker.add(m[1].toLowerCase());
+  return anker;
+}
+
+/** Inhaltswörter (≥ 5 Zeichen) ohne die Anker. */
+function inhaltsWoerter(titel: string, anker: ReadonlySet<string>): Set<string> {
+  return new Set((titel ?? '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length >= 5 && !anker.has(w)));
+}
+
+/**
+ * v1214 — Gleiches Thema trotz neuem Wortlaut: zwei gemeinsame Anker, oder ein Anker plus ein
+ * gemeinsames Inhaltswort. Realfall 06.10.: „Proxmox git-server bei 95 % RAM" fünfmal offen,
+ * easyname-Domains sechsmal, BMW-OAuth dreimal — die Wortgleichheits-Regel (v1185) griff nicht,
+ * weil das Modell jeden Pass neu formuliert. Gegenbeispiel bleibt getrennt: zwei Sensoren.
+ */
+export function themenGleich(a: string, b: string): boolean {
+  const aa = titelAnker(a), ab = titelAnker(b);
+  const gemeinsam = [...aa].filter(x => ab.has(x));
+  if (gemeinsam.length >= 2) return true;
+  if (gemeinsam.length === 1) {
+    const wa = inhaltsWoerter(a, aa), wb = inhaltsWoerter(b, ab);
+    for (const w of wa) if (wb.has(w)) return true;
+  }
+  return false;
+}
+
 export class VorgaengeRepository {
   constructor(private readonly db: AsyncDbAdapter) {}
 
@@ -113,7 +164,7 @@ export class VorgaengeRepository {
     const offene = await this.offene(userId, 100);
     let best: Vorgang | null = null; let bestWert = 0;
     for (const v of offene) {
-      const w = titelAehnlichkeit(v.titel, titel);
+      const w = themenGleich(v.titel, titel) ? 1 : titelAehnlichkeit(v.titel, titel); // v1214 — Anker-Regel vor Wortgleichheit
       if (w >= schwelle && w > bestWert) { best = v; bestWert = w; }
     }
     return best;
@@ -179,6 +230,42 @@ export class VorgaengeRepository {
       out.set(r.kategorie, e);
     }
     return [...out.values()].sort((a, b) => b.angelegt - a.angelegt);
+  }
+
+  /**
+   * v1214 — Bestehende Dubletten einmalig zusammenführen: offene Vorgänge gleichen Themas werden auf
+   * den ÄLTESTEN zusammengelegt; die jüngeren werden „verworfen" mit Verweis, der älteste bekommt den
+   * jüngsten Titel als Ergänzung im Ziel nicht, nur ein frisches aktualisiert. Liefert die Zahl der
+   * zusammengelegten Vorgänge und die Gruppen (für Log und Kennzahl).
+   */
+  async fuehreDublettenZusammen(userId: string): Promise<{ zusammengelegt: number; gruppen: Array<{ behalten: string; titel: string; verworfen: string[] }> }> {
+    const offene = (await this.offene(userId, 200)).sort((a, b) => a.erstellt.localeCompare(b.erstellt));
+    const gruppen: Array<{ behalten: string; titel: string; verworfen: string[] }> = [];
+    const zugeordnet = new Set<string>();
+    const jetzt = new Date().toISOString();
+    let zusammengelegt = 0;
+    for (let i = 0; i < offene.length; i++) {
+      const kopf = offene[i];
+      if (zugeordnet.has(kopf.id)) continue;
+      zugeordnet.add(kopf.id);
+      const verworfen: string[] = [];
+      for (let j = i + 1; j < offene.length; j++) {
+        const v = offene[j];
+        if (zugeordnet.has(v.id)) continue;
+        if (themenGleich(kopf.titel, v.titel) || titelAehnlichkeit(kopf.titel, v.titel) >= VORGANG_AEHNLICHKEIT_SCHWELLE) {
+          zugeordnet.add(v.id);
+          await this.db.execute('UPDATE vorgaenge SET status = ?, ergebnis = ?, aktualisiert = ? WHERE user_id = ? AND id = ?',
+            ['verworfen', 'Dublette von ' + kopf.id.slice(0, 8) + ' („' + kopf.titel.slice(0, 80) + '")', jetzt, userId, v.id]);
+          verworfen.push(v.id);
+        }
+      }
+      if (verworfen.length > 0) {
+        await this.db.execute('UPDATE vorgaenge SET aktualisiert = ? WHERE user_id = ? AND id = ?', [jetzt, userId, kopf.id]);
+        zusammengelegt += verworfen.length;
+        gruppen.push({ behalten: kopf.id, titel: kopf.titel, verworfen });
+      }
+    }
+    return { zusammengelegt, gruppen };
   }
 
   async offene(userId: string, limit = 50): Promise<Vorgang[]> {
