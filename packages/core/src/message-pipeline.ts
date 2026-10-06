@@ -635,154 +635,280 @@ export class MessagePipeline {
       await this.conversationManager.addMessage(conversation.id, 'user', message.text);
       tracePhase('conversation', { convId: conversation.id, historyLen: history.length, hasSummary: !!summary });
 
-      // 5. Load user memories for prompt injection (hybrid retrieval or fallback)
-      //    Uses masterUserId so linked cross-platform accounts share memories.
-      //    Skip memory loading entirely for media without captions (files, images) to avoid
-      //    context contamination from irrelevant memories. Voice messages still load memories
-      //    because the transcribed audio is the real user content.
+      // 5. Kontext laden — v1210: PARALLEL statt nacheinander.
+      //    Realfall 06.10. (Telegram 07:51): Memories 1,7 s → Regeln 1,9 s → Kalender 2,0 s →
+      //    Wissensgraph 1 s, alles sequentiell = 5,7 s von 11 s Antwortzeit, bevor das Modell
+      //    überhaupt arbeitete. Die Lader sind voneinander unabhängig; jeder bleibt in seinem
+      //    eigenen try/catch, Ergebnisse und Reihenfolge im Prompt sind unverändert.
       let memories: { key: string; value: string; category: string; type?: string; score?: number }[] | undefined;
       const syntheticInput = this.isSyntheticLabel(message.text);
       const hasAudioAttachment = message.attachments?.some(a => a.type === 'audio') ?? false;
       const skipMemories = syntheticInput && !hasAudioAttachment;
-      if (this.memoryRetriever && message.text && !skipMemories) {
-        try {
-          memories = await this.memoryRetriever.retrieve(masterUserId, message.text, 15, linkedPlatformUserIds);
-        } catch (err) { this.logger.debug({ err }, 'Hybrid memory retrieval failed'); }
-      }
-      if (!memories && this.memoryRepo && !skipMemories) {
-        try {
-          // Build all user IDs for cross-platform memory access
-          const memUserIds = [masterUserId, ...(linkedPlatformUserIds ?? []).filter(id => id !== masterUserId)];
-          if (this.embeddingService && message.text && this.llm.supportsEmbeddings()) {
-            // Use semantic search: top-10 relevant + 5 newest across all linked IDs
-            const seen = new Set<string>();
-            memories = [];
-            for (const uid of memUserIds) {
-              for (const m of await this.embeddingService.semanticSearch(uid, message.text, 10)) {
-                if (!seen.has(m.key)) { seen.add(m.key); memories.push(m); }
+      const kontextUserIds = [masterUserId, ...(linkedPlatformUserIds ?? []).filter(id => id !== masterUserId)];
+      const dauer: Record<string, number> = {};
+      const gemessen = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+        const t0 = Date.now();
+        try { return await fn(); } finally { dauer[name] = Date.now() - t0; }
+      };
+
+      // 5a. Memories (hybrid retrieval oder Fallback)
+      const ladeMemories = async (): Promise<typeof memories> => {
+        if (skipMemories || !message.text) return undefined;
+        let mem: typeof memories;
+        if (this.memoryRetriever) {
+          try {
+            mem = await this.memoryRetriever.retrieve(masterUserId, message.text, 15, linkedPlatformUserIds);
+          } catch (err) { this.logger.debug({ err }, 'Hybrid memory retrieval failed'); }
+        }
+        if (!mem && this.memoryRepo) {
+          try {
+            if (this.embeddingService && this.llm.supportsEmbeddings()) {
+              // Use semantic search: top-10 relevant + 5 newest across all linked IDs
+              const seen = new Set<string>();
+              mem = [];
+              for (const uid of kontextUserIds) {
+                for (const m of await this.embeddingService.semanticSearch(uid, message.text, 10)) {
+                  if (!seen.has(m.key)) { seen.add(m.key); mem.push(m); }
+                }
+              }
+              for (const uid of kontextUserIds) {
+                for (const m of await this.memoryRepo.getRecentForPrompt(uid, 5)) {
+                  if (!seen.has(m.key)) { seen.add(m.key); mem.push(m); }
+                }
+              }
+            } else {
+              const seen = new Set<string>();
+              mem = [];
+              for (const uid of kontextUserIds) {
+                for (const m of await this.memoryRepo.getRecentForPrompt(uid, 20)) {
+                  if (!seen.has(m.key)) { seen.add(m.key); mem.push(m); }
+                }
               }
             }
-            for (const uid of memUserIds) {
-              for (const m of await this.memoryRepo.getRecentForPrompt(uid, 5)) {
-                if (!seen.has(m.key)) { seen.add(m.key); memories.push(m); }
-              }
-            }
-          } else {
-            const seen = new Set<string>();
-            memories = [];
-            for (const uid of memUserIds) {
-              for (const m of await this.memoryRepo.getRecentForPrompt(uid, 20)) {
-                if (!seen.has(m.key)) { seen.add(m.key); memories.push(m); }
-              }
+          } catch (err) { this.logger.debug({ err }, 'Memory loading failed'); }
+
+          // Apply temporal decay to fallback results (MemoryRetriever does this internally, fallback paths don't)
+          if (mem && mem.length > 0) {
+            const now = Date.now();
+            const HALF_LIFE = 30 * 24 * 60 * 60_000;
+            mem = mem
+              .map(m => {
+                const age = now - new Date((m as any).updatedAt ?? (m as any).createdAt ?? now).getTime();
+                const decay = Math.exp((-Math.LN2 * Math.max(0, age)) / HALF_LIFE);
+                const conf = (m as any).confidence ?? 1;
+                return { ...m, score: (m.score ?? 1) * conf * decay };
+              })
+              .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+          }
+        }
+        return mem;
+      };
+
+      // 5a2. pattern/connection/correction — immer dabei, unabhängig von der Relevanz
+      const ladeMuster = async (): Promise<Array<{ key: string; value: string; category: string; type?: string }>> => {
+        const out: Array<{ key: string; value: string; category: string; type?: string }> = [];
+        if (!this.memoryRepo || skipMemories) return out;
+        try {
+          for (const uid of kontextUserIds) {
+            for (const type of ['pattern', 'connection', 'correction'] as const) {
+              for (const m of await this.memoryRepo.getByType(uid, type, 5)) out.push({ key: m.key, value: m.value, category: m.category, type: m.type });
             }
           }
-        } catch (err) { this.logger.debug({ err }, 'Memory loading failed'); }
+        } catch { /* non-critical */ }
+        return out;
+      };
 
-        // Apply temporal decay to fallback results (MemoryRetriever does this internally, fallback paths don't)
-        if (memories && memories.length > 0) {
-          const now = Date.now();
-          const HALF_LIFE = 30 * 24 * 60 * 60_000;
-          memories = memories
-            .map(m => {
-              const age = now - new Date((m as any).updatedAt ?? (m as any).createdAt ?? now).getTime();
-              const decay = Math.exp((-Math.LN2 * Math.max(0, age)) / HALF_LIFE);
-              const conf = (m as any).confidence ?? 1;
-              return { ...m, score: (m.score ?? 1) * conf * decay };
-            })
-            .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-        }
-      }
+      // 5a3. Regeln: alle rule-Memories + Relevanz-Treffer des Retrievers (für den Boost)
+      const ladeRegelnRoh = async (): Promise<{ key: string; value: string; confidence: number; score?: number }[]> => {
+        const allRules: { key: string; value: string; confidence: number; score?: number }[] = [];
+        if (!this.memoryRepo || skipMemories) return allRules;
+        try {
+          const seenRuleKeys = new Set<string>();
+          for (const uid of kontextUserIds) {
+            for (const m of await this.memoryRepo.getByType(uid, 'rule', 50)) {
+              if (!seenRuleKeys.has(m.key)) { seenRuleKeys.add(m.key); allRules.push({ key: m.key, value: m.value, confidence: m.confidence }); }
+            }
+          }
+        } catch { /* non-critical */ }
+        return allRules;
+      };
+      const ladeRegelTreffer = async (): Promise<Set<string> | undefined> => {
+        if (!this.memoryRepo || skipMemories || !this.memoryRetriever || !message.text) return undefined;
+        try {
+          const retrieved = await this.memoryRetriever.retrieve(masterUserId, message.text, 50, linkedPlatformUserIds);
+          return new Set(retrieved.filter(m => m.type === 'rule').map(m => m.key));
+        } catch { return undefined; }
+      };
 
-      tracePhase('memories_load', { count: memories?.length ?? 0, skipped: skipMemories });
+      // 5b. Profil
+      const ladeProfil = async (): Promise<import('@alfred/llm').UserProfile | undefined> => {
+        let userProfile: import('@alfred/llm').UserProfile | undefined;
+        try {
+          if ('getProfile' in this.users) {
+            userProfile = await (this.users as { getProfile(id: string): Promise<import('@alfred/llm').UserProfile | undefined> }).getProfile(masterUserId);
+            if (userProfile && !userProfile.displayName) {
+              userProfile.displayName = user.displayName ?? user.username;
+            }
+            if (userProfile && alfredUser?.username) {
+              userProfile.alfredUsername = alfredUser.username;
+            }
+          }
+        } catch (err) { this.logger.debug({ err }, 'Profile loading failed'); }
+        return userProfile;
+      };
 
-      // 5a. Apply memory token budget: filter low-relevance and cap by token count
+      // Kalender: alle Konten, je Konto 5 s Zeitlimit
+      const ladeKalender = async (): Promise<Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> | undefined> => {
+        let upcomingEvents: Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> | undefined;
+        if (!this.skillRegistry || !this.skillSandbox) return undefined;
+        try {
+          const calSkill = this.skillRegistry.get('calendar');
+          if (calSkill) {
+            const now = new Date();
+            const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+            const allEvents: Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> = [];
+
+            // Get all calendar accounts
+            const accountsResult = await this.skillSandbox.execute(calSkill, { action: 'list_accounts' }, baseContext);
+            const accounts: string[] = [];
+            if (accountsResult.success && accountsResult.data) {
+              // data is { accounts: string[], default: string } — not a direct array
+              const raw = (accountsResult.data as any).accounts ?? accountsResult.data;
+              const list = Array.isArray(raw) ? raw : [];
+              for (const a of list) {
+                const name = typeof a === 'string' ? a : a?.name ?? a?.account;
+                if (name) accounts.push(name);
+              }
+            }
+            if (accounts.length === 0) accounts.push(''); // fallback: default account
+
+            // v1210 — Konten parallel abfragen, je Konto 5 s Zeitlimit
+            const CALENDAR_ACCOUNT_TIMEOUT = 5_000;
+            await Promise.all(accounts.map(async (account) => {
+              try {
+                const fetchPromise = this.skillSandbox!.execute(calSkill, {
+                  action: 'list_events',
+                  start: now.toISOString(),
+                  end: weekEnd.toISOString(),
+                  ...(account ? { account } : {}),
+                }, baseContext);
+                const timeoutPromise = new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error(`Calendar account "${account}" timed out after ${CALENDAR_ACCOUNT_TIMEOUT}ms`)), CALENDAR_ACCOUNT_TIMEOUT),
+                );
+                const result = await Promise.race([fetchPromise, timeoutPromise]);
+                if (result.success && Array.isArray(result.data)) {
+                  for (const e of result.data as any[]) {
+                    allEvents.push({
+                      title: e.title ?? e.subject ?? '',
+                      start: new Date(e.start),
+                      end: new Date(e.end),
+                      location: e.location,
+                      allDay: e.allDay,
+                    });
+                  }
+                }
+              } catch (accountErr) {
+                this.logger.warn({ account, err: accountErr instanceof Error ? accountErr.message : String(accountErr) }, 'Calendar account skipped (timeout or error)');
+              }
+            }));
+
+            this.logger.info({ totalEvents: allEvents.length, accounts: accounts.join(',') }, 'Calendar events loaded for system prompt');
+            if (allEvents.length > 0) {
+              // Sort by start time, deduplicate by title+start
+              allEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
+              const seen = new Set<string>();
+              upcomingEvents = allEvents.filter(e => {
+                const key = `${e.title}:${e.start.toISOString().slice(0, 16)}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
+            }
+          }
+        } catch (calErr) { this.logger.warn({ err: calErr instanceof Error ? calErr.message : String(calErr) }, 'Calendar loading for system prompt failed'); }
+        return upcomingEvents;
+      };
+
+      // Wissensgraph: Tier 1 (Personen, Orte, Geräte), dann Tier 2 abhängig von Tier 1
+      const ladeKg = async (): Promise<{ personalContext?: string; queryContext?: string }> => {
+        let personalContext: string | undefined;
+        let queryContext: string | undefined;
+        if (!this.kgService) return {};
+        try {
+          personalContext = await this.kgService.buildPersonalContext(masterUserId) || undefined;
+          if (personalContext) this.logger.info({ chars: personalContext.length }, 'KG Tier 1: personalContext loaded');
+        } catch { /* skip, not critical */ }
+        try {
+          queryContext = await this.kgService.queryRelevantContext(masterUserId, message.text, personalContext) || undefined;
+          if (queryContext) this.logger.info({ chars: queryContext.length, preview: queryContext.slice(0, 120) }, 'KG Tier 2: queryContext loaded');
+        } catch { /* skip, not critical */ }
+        return { personalContext, queryContext };
+      };
+
+      // v605 M7 — laufende project-agent Sessions (interject-Ziele)
+      const ladeSessions = async () => {
+        if (!this.projectAgentSessionRepo) return undefined;
+        try {
+          const running = await this.projectAgentSessionRepo.listRunning();
+          return running.map(s => ({ taskId: s.taskId, goal: s.goal, currentPhase: s.currentPhase, cwd: s.cwd, lastProgressAt: s.lastProgressAt }));
+        } catch { return undefined; }
+      };
+      // v607 D7 — bekannte (skill, host)-Fehlerkombinationen
+      const ladeHostFehler = async () => {
+        if (!this.skillHealthRepo) return undefined;
+        try { return await this.skillHealthRepo.listRecentHostFailures(10); } catch { return undefined; }
+      };
+      // v929 — aktive Interessen-Themen
+      const ladeInteressen = async () => {
+        if (!this.interestsRepo) return undefined;
+        try {
+          const topics = await this.interestsRepo.listTopics(masterUserId, 'active');
+          return topics.length > 0 ? topics.map(t => t.name) : undefined;
+        } catch { return undefined; }
+      };
+
+      const [memRoh, muster, regelnRoh, regelTreffer, userProfile, upcomingEvents, kg, runningProjectAgentSessions, recentHostFailures, interestTopics] = await Promise.all([
+        gemessen('memories', ladeMemories),
+        gemessen('muster', ladeMuster),
+        gemessen('regeln', ladeRegelnRoh),
+        gemessen('regelTreffer', ladeRegelTreffer),
+        gemessen('profil', ladeProfil),
+        gemessen('kalender', ladeKalender),
+        gemessen('kg', ladeKg),
+        gemessen('sessions', ladeSessions),
+        gemessen('hostFehler', ladeHostFehler),
+        gemessen('interessen', ladeInteressen),
+      ]);
+      const { personalContext, queryContext } = kg;
+      memories = memRoh;
+      tracePhase('kontext_parallel', { ...dauer, embeddingCache: this.embeddingService?.abfrageCacheStatistik?.() });
+
+      // 5a. Memory-Budget (Relevanz + Token-Deckel) — unverändert
       if (memories && memories.length > 0) {
         memories = this.applyMemoryBudget(memories);
       }
+      tracePhase('memories_load', { count: memories?.length ?? 0, skipped: skipMemories });
 
-      // 5a2. Ensure pattern/connection/insight memories are ALWAYS present.
-      // These describe the user's behavior and preferences — not topic-specific,
-      // so keyword/semantic retrieval often misses them.
-      if (this.memoryRepo && !skipMemories) {
-        try {
-          const existingKeys = new Set((memories ?? []).map(m => m.key));
-          const userIds = [masterUserId, ...(linkedPlatformUserIds ?? []).filter(id => id !== masterUserId)];
-          for (const uid of userIds) {
-            for (const type of ['pattern', 'connection', 'correction'] as const) {
-              const typed = await this.memoryRepo.getByType(uid, type, 5);
-              for (const m of typed) {
-                if (!existingKeys.has(m.key)) {
-                  existingKeys.add(m.key);
-                  (memories ??= []).push({ key: m.key, value: m.value, category: m.category, type: m.type });
-                }
-              }
-            }
-          }
-        } catch { /* non-critical */ }
+      // 5a2. pattern/connection/correction anhängen, falls nicht schon enthalten
+      if (muster.length > 0) {
+        const existingKeys = new Set((memories ?? []).map(m => m.key));
+        for (const m of muster) {
+          if (!existingKeys.has(m.key)) { existingKeys.add(m.key); (memories ??= []).push(m); }
+        }
       }
 
-      // 5a3. Load rule memories for prompt injection (learned behavior rules).
-      // Select the most relevant rules based on user message (via retriever) or by confidence.
+      // 5a3. Regeln: Retriever-Treffer bekommen den Boost, sonst nach Konfidenz
       let rules: string[] | undefined;
-      if (this.memoryRepo && !skipMemories) {
-        try {
-          const userIds = [masterUserId, ...(linkedPlatformUserIds ?? []).filter(id => id !== masterUserId)];
-          const allRules: { key: string; value: string; confidence: number; score?: number }[] = [];
-          const seenRuleKeys = new Set<string>();
-          for (const uid of userIds) {
-            const typed = await this.memoryRepo.getByType(uid, 'rule', 50);
-            for (const m of typed) {
-              if (!seenRuleKeys.has(m.key)) {
-                seenRuleKeys.add(m.key);
-                allRules.push({ key: m.key, value: m.value, confidence: m.confidence });
-              }
-            }
-          }
-
-          if (allRules.length > 0) {
-            // Try to use MemoryRetriever for relevance-based selection
-            if (this.memoryRetriever && message.text) {
-              try {
-                const retrieved = await this.memoryRetriever.retrieve(masterUserId, message.text, 50, linkedPlatformUserIds);
-                const retrievedRuleKeys = new Set(
-                  retrieved.filter(m => m.type === 'rule').map(m => m.key),
-                );
-                // Score rules: retrieved ones get a boost
-                for (const r of allRules) {
-                  if (retrievedRuleKeys.has(r.key)) {
-                    r.score = r.confidence + 0.5;
-                  } else {
-                    r.score = r.confidence;
-                  }
-                }
-                allRules.sort((a, b) => (b.score ?? b.confidence) - (a.score ?? a.confidence));
-              } catch {
-                // Fallback: sort by confidence
-                allRules.sort((a, b) => b.confidence - a.confidence);
-              }
-            } else {
-              allRules.sort((a, b) => b.confidence - a.confidence);
-            }
-
-            rules = allRules.slice(0, 10).map(r => r.value);
-          }
-        } catch { /* non-critical */ }
+      if (regelnRoh.length > 0) {
+        if (regelTreffer) {
+          for (const r of regelnRoh) r.score = regelTreffer.has(r.key) ? r.confidence + 0.5 : r.confidence;
+          regelnRoh.sort((a, b) => (b.score ?? b.confidence) - (a.score ?? a.confidence));
+        } else {
+          regelnRoh.sort((a, b) => b.confidence - a.confidence);
+        }
+        rules = regelnRoh.slice(0, 10).map(r => r.value);
       }
       tracePhase('rules_load', { count: rules?.length ?? 0 });
-
-      // 5b. Load user profile for prompt injection
-      let userProfile: import('@alfred/llm').UserProfile | undefined;
-      try {
-        if ('getProfile' in this.users) {
-          userProfile = await (this.users as { getProfile(id: string): Promise<import('@alfred/llm').UserProfile | undefined> }).getProfile(masterUserId);
-          if (userProfile && !userProfile.displayName) {
-            userProfile.displayName = user.displayName ?? user.username;
-          }
-          if (userProfile && alfredUser?.username) {
-            userProfile.alfredUsername = alfredUser.username;
-          }
-        }
-      } catch (err) { this.logger.debug({ err }, 'Profile loading failed'); }
       tracePhase('profile_load', { hasProfile: !!userProfile });
 
       // 5c. Timezone already resolved by buildSkillContext
@@ -863,124 +989,6 @@ export class MessagePipeline {
         ? this.promptBuilder.buildTools(skillMetas)
         : undefined;
       tracePhase('skill_filter', { count: skillMetas?.length ?? 0 });
-
-      // Load upcoming calendar events from ALL accounts for proactive cross-context awareness
-      let upcomingEvents: Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> | undefined;
-      if (this.skillRegistry && this.skillSandbox) {
-        try {
-          const calSkill = this.skillRegistry.get('calendar');
-          if (calSkill) {
-            const now = new Date();
-            const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-            const allEvents: Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> = [];
-
-            // Get all calendar accounts
-            const accountsResult = await this.skillSandbox.execute(calSkill, { action: 'list_accounts' }, baseContext);
-            const accounts: string[] = [];
-            if (accountsResult.success && accountsResult.data) {
-              // data is { accounts: string[], default: string } — not a direct array
-              const raw = (accountsResult.data as any).accounts ?? accountsResult.data;
-              const list = Array.isArray(raw) ? raw : [];
-              for (const a of list) {
-                const name = typeof a === 'string' ? a : a?.name ?? a?.account;
-                if (name) accounts.push(name);
-              }
-            }
-            if (accounts.length === 0) accounts.push(''); // fallback: default account
-
-            // Query each account with per-account timeout (5s) to avoid slow accounts blocking the pipeline
-            const CALENDAR_ACCOUNT_TIMEOUT = 5_000;
-            for (const account of accounts) {
-              try {
-                const fetchPromise = this.skillSandbox.execute(calSkill, {
-                  action: 'list_events',
-                  start: now.toISOString(),
-                  end: weekEnd.toISOString(),
-                  ...(account ? { account } : {}),
-                }, baseContext);
-                const timeoutPromise = new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error(`Calendar account "${account}" timed out after ${CALENDAR_ACCOUNT_TIMEOUT}ms`)), CALENDAR_ACCOUNT_TIMEOUT),
-                );
-                const result = await Promise.race([fetchPromise, timeoutPromise]);
-                if (result.success && Array.isArray(result.data)) {
-                  for (const e of result.data as any[]) {
-                    allEvents.push({
-                      title: e.title ?? e.subject ?? '',
-                      start: new Date(e.start),
-                      end: new Date(e.end),
-                      location: e.location,
-                      allDay: e.allDay,
-                    });
-                  }
-                }
-              } catch (accountErr) {
-                this.logger.warn({ account, err: accountErr instanceof Error ? accountErr.message : String(accountErr) }, 'Calendar account skipped (timeout or error)');
-              }
-            }
-
-            this.logger.info({ totalEvents: allEvents.length, accounts: accounts.join(',') }, 'Calendar events loaded for system prompt');
-            if (allEvents.length > 0) {
-              // Sort by start time, deduplicate by title+start
-              allEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
-              const seen = new Set<string>();
-              upcomingEvents = allEvents.filter(e => {
-                const key = `${e.title}:${e.start.toISOString().slice(0, 16)}`;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              });
-            }
-          }
-        } catch (calErr) { this.logger.warn({ err: calErr instanceof Error ? calErr.message : String(calErr) }, 'Calendar loading for system prompt failed'); }
-      }
-
-      // Build personal context from KG (Tier 1: family, work, locations, devices)
-      let personalContext: string | undefined;
-      let queryContext: string | undefined;
-      if (this.kgService) {
-        try {
-          personalContext = await this.kgService.buildPersonalContext(masterUserId) || undefined;
-          if (personalContext) this.logger.info({ chars: personalContext.length }, 'KG Tier 1: personalContext loaded');
-        } catch { /* skip, not critical */ }
-        // Query-aware KG context (Tier 2: entities relevant to this specific message)
-        try {
-          queryContext = await this.kgService.queryRelevantContext(masterUserId, message.text, personalContext) || undefined;
-          if (queryContext) this.logger.info({ chars: queryContext.length, preview: queryContext.slice(0, 120) }, 'KG Tier 2: queryContext loaded');
-        } catch { /* skip, not critical */ }
-      }
-
-      // v605 M7 — list currently running project-agent sessions so the LLM
-      // knows which task_ids accept interject. Empty list → must use 'start'.
-      let runningProjectAgentSessions: Array<{ taskId: string; goal: string; currentPhase: string; cwd?: string; lastProgressAt?: string }> | undefined;
-      if (this.projectAgentSessionRepo) {
-        try {
-          const running = await this.projectAgentSessionRepo.listRunning();
-          runningProjectAgentSessions = running.map(s => ({
-            taskId: s.taskId, goal: s.goal, currentPhase: s.currentPhase,
-            cwd: s.cwd, lastProgressAt: s.lastProgressAt,
-          }));
-        } catch { /* non-critical */ }
-      }
-
-      // v607 D7 — recent host-specific skill failures (Skill-Pattern-Memory).
-      // Surfaces known-broken (skill, host) combinations so the LLM can avoid
-      // running into the same wall twice.
-      let recentHostFailures: Array<{ skillName: string; host: string; errorClass: string; count: number; lastSeen: string }> | undefined;
-      if (this.skillHealthRepo) {
-        try {
-          recentHostFailures = await this.skillHealthRepo.listRecentHostFailures(10);
-        } catch { /* non-critical */ }
-      }
-
-      // v929 — aktive Interessen-Themen: Fragen nach Neuigkeiten dazu sollen
-      // über interests/topic_briefing (gesammeltes Dossier) beantwortet werden.
-      let interestTopics: string[] | undefined;
-      if (this.interestsRepo) {
-        try {
-          const topics = await this.interestsRepo.listTopics(masterUserId, 'active');
-          if (topics.length > 0) interestTopics = topics.map(t => t.name);
-        } catch { /* non-critical */ }
-      }
 
       let system = this.promptBuilder.buildSystemPrompt({
         memories,

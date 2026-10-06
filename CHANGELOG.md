@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1210] - 2026-10-06
+
+### Changed — Chat-Kontext parallel laden, Abfrage-Embedding einmal berechnen (v1210)
+
+Realfall 06.10. (Telegram 07:51): Memories 1,7 s, Regeln 1,9 s, Kalender 2,0 s und Wissensgraph 1 s wurden nacheinander geladen. 5,7 von 11 Sekunden Antwortzeit vergingen, bevor das Modell arbeitete.
+
+- **Pipeline:** Memories, Muster-Memories, Regeln, Profil, Kalender (Konten ebenfalls parallel), Wissensgraph, laufende Agent-Sessions, Host-Fehler und Interessen-Themen laden gleichzeitig. Jeder Lader behält sein eigenes Fehlerverhalten; Inhalte und Reihenfolge im Prompt sind unverändert. Neue Phase `kontext_parallel` protokolliert die Dauer je Lader.
+- **Embedding-Service:** Das Embedding des Abfragetexts wird 60 Sekunden zwischengespeichert. Vorher wurde derselbe Text je Nachricht bis zu 14-mal eingebettet (Memory- und Regel-Suche mal sieben verknüpfte Benutzer-IDs). Gleicher Text ergibt dasselbe Embedding, die Ergebnisse ändern sich nicht. Trefferstatistik in der Phase `kontext_parallel`.
+- 2 Tests (Abfrage-Cache).
+
 ## [0.19.0-jarvis.1209] - 2026-10-06
 
 ### Fixed — Intervall-Jobs überleben Neustarts, Self-Modify nur mit Anlass, Prompt-Messung (v1209)

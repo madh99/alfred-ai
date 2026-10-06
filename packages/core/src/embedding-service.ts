@@ -18,6 +18,36 @@ export class EmbeddingService {
   ) {}
 
   /**
+   * v1210 — Abfrage-Embeddings 60 s zwischenspeichern. Realfall 06.10.: je Chat-Nachricht wurde
+   * derselbe Text bis zu 14× eingebettet (Memory- und Regel-Suche × 7 verknüpfte Benutzer-IDs),
+   * jedes Mal ein Netzaufruf. Gleicher Text → gleiches Embedding; der Cache ändert kein Ergebnis.
+   */
+  private readonly abfrageCache = new Map<string, { at: number; embedding: number[] }>();
+  private abfrageTreffer = 0;
+  private abfrageFehltreffer = 0;
+  static readonly ABFRAGE_CACHE_MS = 60_000;
+  static readonly ABFRAGE_CACHE_MAX = 50;
+
+  private async embedAbfrage(query: string): Promise<number[] | undefined> {
+    const key = query.trim();
+    const jetzt = Date.now();
+    const hit = this.abfrageCache.get(key);
+    if (hit && jetzt - hit.at < EmbeddingService.ABFRAGE_CACHE_MS) { this.abfrageTreffer++; return hit.embedding; }
+    const r = await this.llm.embed(query);
+    if (!r) return undefined;
+    this.abfrageFehltreffer++;
+    this.abfrageCache.set(key, { at: jetzt, embedding: r.embedding });
+    if (this.abfrageCache.size > EmbeddingService.ABFRAGE_CACHE_MAX) {
+      const aeltester = this.abfrageCache.keys().next().value;
+      if (aeltester !== undefined) this.abfrageCache.delete(aeltester);
+    }
+    return r.embedding;
+  }
+
+  /** Für Messung und Tests. */
+  abfrageCacheStatistik(): { treffer: number; fehltreffer: number } { return { treffer: this.abfrageTreffer, fehltreffer: this.abfrageFehltreffer }; }
+
+  /**
    * Check stored embeddings model against current provider and invalidate if mismatched.
    * Returns the number of deleted embeddings, or 0 if no mismatch.
    */
@@ -82,8 +112,9 @@ export class EmbeddingService {
   ): Promise<Array<{ sourceId: string; content: string; score: number }>> {
     if (!this.llm.supportsEmbeddings()) return [];
     try {
-      const queryResult = await this.llm.embed(query);
-      if (!queryResult) return [];
+      const abfrage = await this.embedAbfrage(query);
+      if (!abfrage) return [];
+      const queryResult = { embedding: abfrage };
       const pgResults = await this.embeddingRepo.vectorSearch(userId, queryResult.embedding, limit * 6);
       let kandidaten: Array<{ sourceType: string; sourceId: string; content: string; score: number }>;
       if (pgResults) {
@@ -119,8 +150,9 @@ export class EmbeddingService {
     }
 
     try {
-      const queryResult = await this.llm.embed(query);
-      if (!queryResult) return [];
+      const abfrage = await this.embedAbfrage(query); // v1210 — gecacht
+      if (!abfrage) return [];
+      const queryResult = { embedding: abfrage };
 
       // Try pgvector-accelerated search first (PG only, much faster for large datasets)
       const pgResults = await this.embeddingRepo.vectorSearch(userId, queryResult.embedding, limit);
