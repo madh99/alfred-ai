@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1207] - 2026-10-06
+
+### Added — Jarvis Schleife 3: Lücke wird Lernbedarf (v1207)
+
+Alfred legt sich selbst einen Vorgang an, wenn ihm etwas fehlt, statt die Lücke zu vergessen. Aus wiederkehrenden Lücken entstehen die Szenarien von selbst.
+
+- **Absage im Chat:** Enthält Alfreds Antwort eine Absage („kann ich nicht", „kein Zugriff", „nicht möglich" und englische Entsprechungen), entsteht ein Vorgang „Lernbedarf: ‚<Frage>' konnte ich nicht beantworten" mit Frage, Absage-Satz, nächstem Schritt (fehlende Quelle, Watch oder Skill-Konfiguration benennen) und Kategorie der Frage. Dedupliziert über die Wörter der Frage, Frist 14 Tage, Besitzer Alfred.
+- **Skill-Fehlermuster:** Erkennt der Skill-Failure-Reflektor ein wiederholtes Scheitern mit Umweg, entsteht zusätzlich zum Runbook-Vorschlag ein Vorgang „Lernbedarf: Skill ‚x' scheitert <Klasse> bei <Ort>" mit dem beobachteten Umweg.
+- Beide erscheinen in der Kachel Vorgänge mit Quelle `lernbedarf` und tragen ihre Begründung. 3 Tests.
+
 ## [0.19.0-jarvis.1206] - 2026-10-06
 
 ### Added — Jarvis Schleife 1: Alfred kennt im Gespräch das Haus (v1206)

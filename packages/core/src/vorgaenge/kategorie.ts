@@ -26,7 +26,7 @@ const REGELN: Array<[VorgangKategorie, RegExp]> = [
   ['energie', woerter('strom', 'strompreis', 'energie', 'kwh', 'photovoltaik', 'pv', 'ess', 'hausbatterie', 'wallbox', 'awattar', 'einspeisung', 'netzbezug', 'ladeplan')],
   ['haus', woerter('tür', 'türe', 'türen', 'fenster', 'bewegung', 'anwesenheit', 'zu hause', 'rauch', 'wasser', 'smart[- ]?home', 'home[- ]?assistant', 'sensors?', 'sensoren', 'batterie', 'heizung', 'thermostat', 'temperatur')],
   ['infra', woerter('proxmox', 'unifi', 'mikrotik', 'docker', 'container', 'server', 'vm', 'ram', 'cpu', 'disk', 'festplatte', 'backup', 'dns', 'nginx', 'npm', 'commvault', 'git-server', 'netzwerk', 'wlan', 'switch', 'router', 'uptime')],
-  ['email', woerter('e-?mails?', 'mailbox', 'posteingang', 'follow-?up', 'newsletter', 'absender')],
+  ['email', woerter('e-?mails?', 'outlook', 'mailbox', 'posteingang', 'follow-?up', 'newsletter', 'absender')],
   ['kalender', woerter('kalender', 'termine?', 'meeting', 'besprechung', 'einladung')],
   ['aufgaben', woerter('todo', 'to-do', 'aufgaben?', 'erinnerung', 'reminder', 'fällig', 'erledigen')],
   ['projekte', woerter('projekte?', 'fussball-cc', 'lokalkraft', 'deploy', 'repository', 'repo', 'pull request', 'agent', 'sprint')],

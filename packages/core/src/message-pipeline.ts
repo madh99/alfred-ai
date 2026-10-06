@@ -304,6 +304,10 @@ export class MessagePipeline {
   }
 
   /** v924 — Quick-Actions (todo:/reminder:-Callbacks) vor dem LLM abfangen. */
+  /** v1207 — Jarvis Schleife 3: Lernbedarf als Vorgang, wenn Alfred absagt. */
+  private vorgaengeRepo?: import('@alfred/storage').VorgaengeRepository;
+  setVorgaengeRepo(repo: import('@alfred/storage').VorgaengeRepository): void { this.vorgaengeRepo = repo; }
+
   /** v1206 — Weltmodell-Zusammenfassung für den Chat (lazy, aus dem Reasoning-Kollektor). */
   private weltmodellQuelle?: () => string | undefined;
   setWeltmodellQuelle(fn: () => string | undefined): void { this.weltmodellQuelle = fn; }
@@ -1563,6 +1567,22 @@ export class MessagePipeline {
         'assistant',
         redactSecrets(responseText),
       );
+
+      // v1207 — Jarvis Schleife 3: Absage → Vorgang „Lernbedarf" (Lücke → Fähigkeit)
+      if (this.vorgaengeRepo && message.text && responseText) {
+        try {
+          const { lernbedarfAusAbsage } = await import('./vorgaenge/lernbedarf.js');
+          const lb = lernbedarfAusAbsage(message.text, responseText);
+          if (lb) {
+            const v = await this.vorgaengeRepo.anlegen({
+              userId: masterUserId, titel: lb.titel, ziel: lb.ziel, besitzer: 'alfred', status: 'offen', naechsterSchritt: lb.naechsterSchritt,
+              frist: new Date(Date.now() + 14 * 86_400_000).toISOString(), quelle: 'lernbedarf', autonomie: 'bestaetigen',
+              dedupeKey: lb.dedupeKey, kategorie: lb.kategorie, begruendung: lb.begruendung,
+            });
+            if (v.erstellt === v.aktualisiert) this.logger.info({ titel: lb.titel, kategorie: lb.kategorie }, 'v1207 Lernbedarf angelegt (Absage im Chat)');
+          }
+        } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1207 Lernbedarf nicht angelegt'); }
+      }
 
       // 9. Active learning: extract memories from conversation (fire-and-forget)
       if (this.activeLearning) {

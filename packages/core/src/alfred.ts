@@ -13621,6 +13621,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const { VorgaengeRepository } = await import('@alfred/storage');
         const vorgaengeRepo = new VorgaengeRepository(this.database.getAdapter());
         this.reasoningEngine?.setVorgaengeRepo(vorgaengeRepo);
+        this.pipeline.setVorgaengeRepo(vorgaengeRepo); // v1207 — Lernbedarf bei Absagen im Chat
         (this.reasoningEngine as unknown as { collector?: { setVorgaengeRepo?: (r: unknown) => void } } | undefined)?.collector?.setVorgaengeRepo?.(vorgaengeRepo);
         this.registriereJob({
           key: 'vorgaenge-aufraeumen', beschreibung: 'Ausführungsgedächtnis: Schritte älter als 90 Tage entfernen', takt: { art: 'taeglich', um: '04:50' }, bereich: 'global', slot: true,
@@ -14027,6 +14028,17 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               });
               this.logger.info({ skill: p.failedSkill, scope: p.scope, errorClass: p.errorClass },
                 'SkillFailureReflector: runbook-confirmation enqueued');
+              // v1207 — Jarvis Schleife 3: das Fehlermuster ist ein Lernbedarf (Vorgang von Alfred)
+              try {
+                const { lernbedarfAusSkillFehler } = await import('./vorgaenge/lernbedarf.js');
+                const { VorgaengeRepository: VRepoL } = await import('@alfred/storage');
+                const lb = lernbedarfAusSkillFehler(p);
+                await new VRepoL(this.database.getAdapter()).anlegen({
+                  userId: ownerUid, titel: lb.titel, ziel: lb.ziel, besitzer: 'alfred', status: 'offen', naechsterSchritt: lb.naechsterSchritt,
+                  frist: new Date(Date.now() + 14 * 86_400_000).toISOString(), quelle: 'lernbedarf', autonomie: 'bestaetigen',
+                  dedupeKey: lb.dedupeKey, kategorie: lb.kategorie, begruendung: lb.begruendung,
+                });
+              } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1207 Lernbedarf (Skill-Fehler) nicht angelegt'); }
 
               // v607 D4 — parallel Workflow-Vorschlag wenn Sequence parametrisierbar wirkt.
               // Heuristik: nur wenn >= 2 shell-steps UND scope=host → könnte ein
