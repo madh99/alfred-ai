@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1213] - 2026-10-06
+
+### Fixed — Tagesbudget erreichte die Konfiguration nie (v1213)
+
+Der Owner setzte `ALFRED_LLM_TAGESBUDGET_USD`, die Kachel zeigte trotzdem kein Budget. Reproduziert mit dem Loader: Sobald die Umgebung flache Modellschlüssel setzt (`ALFRED_LLM_PROVIDER`, `ALFRED_LLM_MODEL`), verschiebt der Loader alle übrigen Schlüssel ins `default`-Tier. Das Budget landete in `default.tagesbudgetUsd` und wurde dort vom Provider-Schema verworfen. Der Kostenwächter aus .1205 konnte in dieser Konstellation nie ein Budget sehen.
+
+- `tagesbudgetUsd` bleibt auf Ebene der Gesamtkonfiguration.
+- Nebenbefund behoben: Das `default`-Tier aus der YAML (temperature, maxTokens) ging bei gesetzten Flachschlüsseln verloren; es bleibt jetzt erhalten, ENV-Werte gewinnen.
+- Regressionstest mit Live-Konstellation (YAML-Tiers plus ENV-Flachschlüssel).
+
 ## [0.19.0-jarvis.1212] - 2026-10-06
 
 ### Fixed — Mail-Ereignisquelle kennt die Konten des Benutzers (v1212)

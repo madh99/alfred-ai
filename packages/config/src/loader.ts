@@ -442,15 +442,24 @@ export class ConfigLoader {
     if (preLlm && 'provider' in preLlm) {
       const hasTierSubObjects = tiers.some(t => preLlm[t] && typeof preLlm[t] === 'object');
       if (hasTierSubObjects) {
+        // v1213 — Schlüssel, die zur Gesamtkonfiguration gehören und NICHT ins default-Tier wandern dürfen.
+        // Realfall 06.10.: ALFRED_LLM_TAGESBUDGET_USD landete in default.tagesbudgetUsd und wurde dort vom
+        // Provider-Schema verworfen — der Kostenwächter blieb trotz gesetzter Variable ohne Budget.
+        const gesamtKeys = ['tagesbudgetUsd'];
         const flatKeys: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(preLlm)) {
-          if (!tiers.includes(k as typeof tiers[number]) && k !== 'default') {
+          if (!tiers.includes(k as typeof tiers[number]) && k !== 'default' && !gesamtKeys.includes(k)) {
             flatKeys[k] = v;
           }
         }
-        const normalized: Record<string, unknown> = { default: flatKeys };
+        // v1213 — das default-Tier aus der YAML (temperature, maxTokens …) bleibt erhalten; ENV-Flachschlüssel gewinnen.
+        const yamlDefault = preLlm.default && typeof preLlm.default === 'object' ? preLlm.default as Record<string, unknown> : {};
+        const normalized: Record<string, unknown> = { default: { ...yamlDefault, ...flatKeys } };
         for (const tier of tiers) {
           if (preLlm[tier]) normalized[tier] = preLlm[tier];
+        }
+        for (const k of gesamtKeys) {
+          if (preLlm[k] !== undefined) normalized[k] = preLlm[k];
         }
         withEnv.llm = normalized;
       }
