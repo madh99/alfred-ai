@@ -151,6 +151,15 @@ Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Rele
 | .1239 | Systemwerte alle 5 min (Laufzeit, Start, RAM, CPU, GPU, Laufwerke; knappes Laufwerk = Befund); nach einer freigegebenen Geräteaktion arbeitet Alfred mit dem Ergebnis weiter | Tabelle mit Laufzeit 13 d, Start 23.09. 03:31, CPU, GPU, RAM, C/E/F; freigegebene Shell → formatierte Programmliste statt Rohausgabe |
 | .1240 | Vorhaben überleben einen Neustart (`data/geraete-vorhaben.json`) | Test mit simuliertem Neustart; Realfall 20:52 erklärt |
 
+### Phase 2 — Sprache in der Sitzung
+
+| Release | Inhalt | Beweis |
+|---|---|---|
+| .1241 | `/talk` (Push-to-Talk, Enter stoppt) → Transkription → Nachricht → Antwort vorgelesen; `/stimme an`; Server `POST /api/sprich`; Audio je Plattform ohne native Module (Windows MCI, macOS sox/afplay, Linux arecord/mpg123) | MCI-Aufnahme 2 s = 62.702 B WAV, Wiedergabe 2,0 s |
+| .1242 | STT/TTS-Callbacks wurden vor dem HTTP-Adapter verdrahtet (`/api/transcribe` seit v644 tot) — jetzt mit den übrigen API-Callbacks | `/api/sprich` → mp3, dasselbe Audio → `/api/transcribe` → „Sprachtest, was macht mein PC gerade?" |
+
+Nächste Stufe: Streaming-Sprache (Satz für Satz vorlesen, während die Antwort entsteht), eine Taste statt Enter, Ink-Oberfläche.
+
 **Phase 1 ist damit vollständig** (Protokoll, Registry, Satellit, Sitzung, Browser-Hand, Vorhaben, Dateitransfer, Sinne). Noch offen aus Phase 1 im Kleinen: Dateitransfer blockweise für mehr als 8 MB, Gerätename der Sitzung im Prompt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink. Phase 3 (Zone des Handys) kommt mit der Android-App.
 
 ### Vorhaben-Freigabe (v1230)
