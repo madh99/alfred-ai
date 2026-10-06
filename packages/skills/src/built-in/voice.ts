@@ -415,16 +415,22 @@ export class VoiceSkill extends Skill {
     const voiceId = input.voice_id as string | undefined;
     if (!voiceId) return { success: false, error: 'Missing required parameter: voice_id' };
 
+    // v1244 — Name → UUID auflösen und die UUID speichern: die Sprachsynthese versteht nur UUIDs
+    // (Realfall: „alfred-jav" stand als Name in der DB, gesprochen wurde die Konfigurationsstimme).
+    const aufgeloest = await this.resolveVoiceId(voiceId, context);
+    if (!aufgeloest) return { success: false, error: `Stimme „${voiceId}" nicht gefunden — list_voices zeigt die vorhandenen Stimmen.` };
+
     const userId = effectiveUserId(context);
     if (this.skillState) {
-      await this.skillState.set(userId, 'voice', 'voice_default', voiceId);
+      await this.skillState.set(userId, 'voice', 'voice_default', aufgeloest);
     } else {
-      await this.memoryRepo.save(userId, 'voice_default', voiceId, 'voice');
+      await this.memoryRepo.save(userId, 'voice_default', aufgeloest, 'voice');
     }
 
     return {
       success: true,
-      display: `Default-Voice auf ${voiceId} gesetzt.`,
+      data: { voice_id: aufgeloest },
+      display: `Standardstimme gesetzt: ${voiceId}${aufgeloest !== voiceId ? ` (${aufgeloest})` : ''} — gilt für Sprachantworten, Sitzung, Sonos-Durchsagen und text_to_speech.`,
     };
   }
 
@@ -482,11 +488,12 @@ export class VoiceSkill extends Skill {
 
     // No explicit ID — check for user-specific default voice
     const userId = effectiveUserId(context);
-    if (this.skillState) {
-      return await this.skillState.get(userId, 'voice', 'voice_default');
-    }
-    const defaultMem = await this.memoryRepo.recall(userId, 'voice_default');
-    return defaultMem?.value ?? undefined;
+    let standard: string | undefined;
+    if (this.skillState) standard = await this.skillState.get(userId, 'voice', 'voice_default') ?? undefined;
+    else standard = (await this.memoryRepo.recall(userId, 'voice_default'))?.value ?? undefined;
+    // v1244 — ein als Name gespeicherter Standard wird aufgelöst
+    if (standard && !/^[0-9a-f]{8}-/.test(standard)) return this.resolveVoiceId(standard, context);
+    return standard;
   }
 
   private formatToMime(format: string): string {

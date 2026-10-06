@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1244] - 2026-10-06
+
+### Fixed — Alfred spricht überall mit der vom Owner gewählten Stimme (v1244)
+
+Owner-Frage 22:45: „kann er immer mit der Stimme alfred-jav antworten?" Bisher nicht, aus zwei Gründen:
+
+- Die Stimmen-Kaskade der Sprachsynthese ließ die Konfiguration (`ALFRED_TTS_VOICE_ID`) vor der vom Owner gesetzten Standardstimme gelten. Jetzt: expliziter Parameter → Owner-Standard aus der Datenbank → Konfiguration → eingebaute Stimme. Der Cache des Owner-Standards läuft nach einer Minute ab, `set_default` wirkt ohne Neustart.
+- `set_default` speicherte den Namen („alfred-jav"), die Synthese versteht nur UUIDs und fiel still auf die Konfigurationsstimme zurück. Jetzt wird der Name über die Stimmenliste aufgelöst und die UUID gespeichert; ein bereits als Name gespeicherter Standard wird beim Sprechen aufgelöst. Unbekannte Namen werden abgewiesen statt stumm übernommen. Test.
+
+Gilt damit für Sprachantworten in Telegram, die Sitzung (`/talk`, `/stimme`), Sonos-Durchsagen und `text_to_speech`.
+
 ## [0.19.0-jarvis.1243] - 2026-10-06
 
 ### Fixed — Sprachantworten des Modells werden in der Sitzung abgespielt (v1243)

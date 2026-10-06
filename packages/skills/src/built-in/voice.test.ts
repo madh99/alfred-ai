@@ -14,6 +14,25 @@ function makeSkill() {
   return new VoiceSkill('test-key', 'https://mistral.test/v1', 'voxtral-mini-tts-2603', memoryRepo);
 }
 
+// v1244 — set_default speichert die UUID, auch wenn der Owner den Namen nennt.
+describe('VoiceSkill set_default', () => {
+  it('löst den Namen über die Stimmenliste auf und speichert die UUID', async () => {
+    const gespeichert: Record<string, string> = {};
+    const skillState = { get: vi.fn().mockResolvedValue(undefined), set: vi.fn(async (_u: string, _s: string, k: string, v: string) => { gespeichert[k] = v; }) };
+    const memoryRepo = { save: vi.fn().mockResolvedValue(undefined), recall: vi.fn().mockResolvedValue(undefined) } as unknown as MemoryRepository;
+    const skill = new VoiceSkill('test-key', 'https://mistral.test/v1', 'voxtral-mini-tts-2603', memoryRepo, undefined, undefined, skillState as never);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [{ id: '01a1129f-15fc-72ae-a21d-07f6be678385', name: 'alfred-jav' }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const r = await skill.execute({ action: 'set_default', voice_id: 'alfred-jav' }, { userId: 'u1' } as unknown as SkillContext);
+      expect(r.success).toBe(true);
+      expect(gespeichert.voice_default).toBe('01a1129f-15fc-72ae-a21d-07f6be678385');
+      const r2 = await skill.execute({ action: 'set_default', voice_id: 'gibt-es-nicht' }, { userId: 'u1' } as unknown as SkillContext);
+      expect(r2.success).toBe(false);
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
 describe('VoiceSkill create_voice — Sample-Erkennung', () => {
   const fetchMock = vi.fn();
 
