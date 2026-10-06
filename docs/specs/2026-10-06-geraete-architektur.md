@@ -19,7 +19,7 @@ Stand: 06.10.2026, Entwurf zur Entscheidung (keine Freigabe erteilt). Gehört zu
 | **Gehirn** | Der Alfred-Server (`alfred start`). Einziger Ort für Zustand und Entscheidung. |
 | **Gerät** | Ein Rechner oder Handy des Owners mit eigener Identität (ID, Token, Name, Plattform). Genau eine Identität je physischem Gerät. |
 | **Satellit** | Der Dienst auf dem Gerät, der die Verbindung zum Gehirn hält, Fähigkeiten anbietet, Sinne liefert und Aktionen ausführt. Läuft ohne Fenster, startet mit dem System. |
-| **Sitzung** | Die Oberfläche, die sich an den Satelliten hängt: Terminal (`alfred`), Desktop-Fenster (Electron) oder Handy-App (Capacitor). Chat, Talk, Bestätigungen und Meldungen in einem Verlauf. |
+| **Sitzung** | Die Oberfläche, die sich an den Satelliten hängt: Terminal (`alfred`), Desktop-Fenster oder Handy-App (beide Flutter, Entscheidung 06.10.). Chat, Talk, Bestätigungen und Meldungen in einem Verlauf. |
 | **Manifest** | Was ein Gerät kann: Plattform, angebotene Aktionen mit Autonomie-Klasse, gelieferte Sinne, Version. |
 | **Fähigkeit** | Eine Aktion (etwas tun) oder ein Sinn (etwas liefern). Aktionen laufen als Skills durch die Skill-Sandbox des Satelliten. |
 | **Pairing** | Einmalige Kopplung eines Geräts mit dem Gehirn über einen kurzlebigen Code aus der Web-GUI; ergibt ein langlebiges, widerrufbares Gerätetoken. |
