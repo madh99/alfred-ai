@@ -8,6 +8,13 @@ describe('istAbsage', () => {
     expect(istAbsage("I can't access that mailbox.")).toBe(true);
     expect(istAbsage('Dein BMW steht zu Hause, Akku 30 %.')).toBe(false);
   });
+  it('v1215 Realfall: langer Lagebericht mit „nicht verfügbar" tief im Text ist keine Absage', () => {
+    const lage = '**Die Gesamtlage: BMW-Zugang funktioniert wieder, zwei Infrastrukturwarnungen bleiben offen.** - **BMW:** Autorisierung erfolgreich. Letzter Fahrzeugstand: 30 % Akku, 137 km Reichweite, verriegelt. - **Infrastruktur:** Der git-server liegt bei rund 96 % RAM-Auslastung. Außerdem ist der UniFi-Access-Point „AC Mesh" nicht verbunden. Beide Vorfälle sind weiterhin offen. - **aWATTar:** Der Rechnungscheck ist noch blockiert: Der gewünschte Outlook-Account ist nicht verfügbar, der E-Mail-Skill ist deaktiviert. - **Domains:** Zahlungs- und Verlängerungsstatus bei easyname, nic.at und pinkribbons.club müssen geprüft werden. **Priorität:** Zuerst den git-server prüfen.';
+    expect(lage.length).toBeGreaterThan(500);
+    expect(istAbsage(lage)).toBe(false);
+    expect(istAbsage('Dazu habe ich keinen Zugriff. ' + 'x'.repeat(600))).toBe(true); // Absage im Kopf zählt auch bei langem Text
+    expect(lernbedarfAusAbsage('zu der gesamtlage ?', lage)).toBeUndefined();
+  });
 });
 
 describe('lernbedarfAusAbsage', () => {

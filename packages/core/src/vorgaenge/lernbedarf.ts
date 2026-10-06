@@ -24,9 +24,17 @@ export const ABSAGE_MUSTER = [
   /\b(i can'?t|i cannot|not possible|not implemented|no way to|no access)\b/i,
 ];
 
+/** v1215 — Eine Absage steht am Anfang. Lange Antworten mit einem Störwort tief im Text sind Inhalt, keine Absage. */
+export const ABSAGE_KOPF_ZEICHEN = 300;
+export const ABSAGE_KURZ_ZEICHEN = 500;
+
 export function istAbsage(text: string): boolean {
-  const t = (text ?? '').slice(0, 1500);
-  return ABSAGE_MUSTER.some(p => p.test(t));
+  const t = text ?? '';
+  // Realfall 06.10. 11:09: Die Antwort auf „zu der Gesamtlage?" war ein 1.300-Zeichen-Lagebericht; weit hinten
+  // stand „Outlook-Account ist nicht verfügbar" → fälschlich ein Lernbedarf-Vorgang. Jetzt zählt nur, was im
+  // Kopf der Antwort steht, oder die ganze Antwort, wenn sie kurz ist.
+  const pruef = t.length <= ABSAGE_KURZ_ZEICHEN ? t : t.slice(0, ABSAGE_KOPF_ZEICHEN);
+  return ABSAGE_MUSTER.some(p => p.test(pruef));
 }
 
 function schluessel(text: string): string {

@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1215] - 2026-10-06
+
+### Fixed — Lernbedarf: Absage nur im Kopf der Antwort (v1215)
+
+Realfall 11:09: Die Antwort auf „zu der Gesamtlage?" war ein Lagebericht mit 1.300 Zeichen; weit hinten stand „Outlook-Account ist nicht verfügbar". Die Absage-Erkennung aus .1207 prüfte den ganzen Text und legte fälschlich einen Lernbedarf-Vorgang an.
+
+- Eine Absage zählt nur, wenn sie in den ersten 300 Zeichen steht oder die ganze Antwort kürzer als 500 Zeichen ist. Echte Absagen („Dazu habe ich keinen Zugriff …") bleiben erkannt.
+- Der fälschlich angelegte Vorgang wurde mit Verweis verworfen.
+
 ## [0.19.0-jarvis.1214] - 2026-10-06
 
 ### Fixed — Vorgänge: Dubletten zusammenführen, Fakten-Gegenprobe (v1214)
