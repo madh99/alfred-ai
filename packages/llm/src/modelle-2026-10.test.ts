@@ -51,14 +51,27 @@ describe('v1204 Anthropic — Opus 5.5 / Sonnet 5.5', () => {
     expect(getModelPricing('claude-opus-5')).toMatchObject({ input: 5.00, output: 25.00 });
     expect(lookupContextWindow('claude-opus-5-5')).toEqual({ maxInputTokens: 1_000_000, maxOutputTokens: 128_000 });
   });
-  it('keine temperature; Opus 5.5 Thinking immer an (effort low), Sonnet 5.5 wie Sonnet 5 (disabled)', () => {
+  it('keine temperature; Opus 5.5 Thinking immer an (effort low), Sonnet 5.5 between_tools statt disabled (v1208)', () => {
     const opus = anthropic('claude-opus-5-5') as unknown as { supportsTemperature(): boolean; thinkingParam(r: { reasoningEffort?: string }): Record<string, unknown> };
     const sonnet = anthropic('claude-sonnet-5-5') as unknown as { supportsTemperature(): boolean; thinkingParam(r: { reasoningEffort?: string }): Record<string, unknown> };
     expect(opus.supportsTemperature()).toBe(false);
     expect(sonnet.supportsTemperature()).toBe(false);
     expect(opus.thinkingParam({ reasoningEffort: 'low' })).toEqual({ output_config: { effort: 'low' } });
-    expect(sonnet.thinkingParam({ reasoningEffort: 'low' })).toEqual({ thinking: { type: 'disabled' } });
+    expect(sonnet.thinkingParam({ reasoningEffort: 'low' })).toEqual({ thinking: { type: 'between_tools' } });
     expect(sonnet.thinkingParam({ reasoningEffort: 'high' })).toEqual({});
+  });
+  it('v1208 Selbstheilung: 400 mit Hinweis auf between_tools bzw. effort wird gelernt, anderes nicht', () => {
+    type P = { thinkingParam(r: { reasoningEffort?: string }): Record<string, unknown>; lerneThinkingAusFehler(e: unknown): boolean };
+    const opus5 = anthropic('claude-opus-5') as unknown as P;
+    expect(opus5.thinkingParam({ reasoningEffort: 'low' })).toEqual({ thinking: { type: 'disabled' } });
+    expect(opus5.lerneThinkingAusFehler({ status: 429, message: 'thinking rate limit' })).toBe(false);
+    expect(opus5.lerneThinkingAusFehler({ status: 400, message: 'temperature is deprecated' })).toBe(false);
+    expect(opus5.lerneThinkingAusFehler({ status: 400, message: 'To turn thinking off on this model, send "thinking": {"type": "between_tools"} instead of {"type": "disabled"}.' })).toBe(true);
+    expect(opus5.thinkingParam({ reasoningEffort: 'low' })).toEqual({ thinking: { type: 'between_tools' } });
+    expect(opus5.lerneThinkingAusFehler({ status: 400, message: 'send between_tools' })).toBe(false); // schon gelernt → kein zweiter Retry
+    const neu = anthropic('claude-sonnet-5-7') as unknown as P;
+    expect(neu.lerneThinkingAusFehler({ status: 400, message: 'Thinking cannot be disabled on this model; use output_config.effort' })).toBe(true);
+    expect(neu.thinkingParam({ reasoningEffort: 'none' })).toEqual({ output_config: { effort: 'low' } });
   });
 });
 

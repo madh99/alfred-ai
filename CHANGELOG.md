@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1208] - 2026-10-06
+
+### Fixed — Sonnet 5.5 lehnt thinking:disabled ab, Vollpässe scheiterten (v1208)
+
+Seit dem Modellwechsel auf `claude-sonnet-5-5` im fast-Tier (01:31) scheiterten alle drei Vollpässe der Reasoning-Engine mit HTTP 400: „To turn thinking off on this model, send thinking: {type: between_tools} instead of {type: disabled}."
+
+- **Sonnet 5.5:** Thinking wird mit `between_tools` abgeschaltet statt mit `disabled`.
+- **Selbstheilung, modellunabhängig:** Lehnt die API die Abschalt-Form mit 400 ab, lernt der Provider aus der Fehlermeldung die verlangte Form (`between_tools` oder `output_config.effort`), wiederholt den Aufruf einmal und behält die Form für die Laufzeit. Gilt für `complete` und für Streams, die vor dem ersten Ereignis scheitern. Künftige Konventionswechsel laufen so ohne Code-Änderung weiter.
+- Tests angepasst und ergänzt (modelle-2026-10.test.ts).
+
 ## [0.19.0-jarvis.1207] - 2026-10-06
 
 ### Added — Jarvis Schleife 3: Lücke wird Lernbedarf (v1207)

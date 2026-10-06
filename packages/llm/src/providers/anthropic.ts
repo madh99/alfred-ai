@@ -80,8 +80,39 @@ export class AnthropicProvider extends LLMProvider {
     // Live-Probe war wegen leerem Guthaben nicht möglich). Die Tiefe wird dort
     // ausschließlich über output_config.effort gesteuert — 'low' ist das Äquivalent
     // zum bisherigen Abschalten für Serienproduktion.
-    if (this.thinkingImmerAn()) return { output_config: { effort: 'low' } };
+    if (this.thinkingImmerAn() || this.thinkingAusModus === 'effort') return { output_config: { effort: 'low' } };
+    if (this.thinkingZwischenTools() || this.thinkingAusModus === 'between_tools') return { thinking: { type: 'between_tools' } };
     return { thinking: { type: 'disabled' } };
+  }
+
+  /**
+   * v1208 — Sonnet 5.5 (live 06.10.2026, HTTP 400): „To turn thinking off on this model, send
+   * thinking: {type: between_tools} instead of {type: disabled}. The model does not think before
+   * responding. The short updates it writes between tool calls come back as thinking blocks."
+   * Drei Vollpässe der Reasoning-Engine (fast-Tier) scheiterten daran in Serie.
+   */
+  private thinkingZwischenTools(): boolean {
+    return /^claude-sonnet-5-5/.test((this.config.model ?? '').toLowerCase());
+  }
+
+  /**
+   * v1208 — Selbstheilung, modellunabhängig: lehnt die API die gewählte Abschalt-Form mit 400 ab,
+   * wird aus der Fehlermeldung die verlangte Form gelernt (between_tools bzw. output_config.effort)
+   * und der Aufruf einmal wiederholt. Künftige Modelle, die die Konvention erneut ändern, laufen
+   * damit ohne Code-Änderung weiter.
+   */
+  private thinkingAusModus?: 'between_tools' | 'effort';
+  private lerneThinkingAusFehler(err: unknown): boolean {
+    const status = (err as { status?: number })?.status;
+    const text = String((err as { message?: string })?.message ?? err ?? '');
+    if (status !== 400 || !/thinking/i.test(text)) return false;
+    let neu: 'between_tools' | 'effort' | undefined;
+    if (/between_tools/.test(text)) neu = 'between_tools';
+    else if (/output_config|effort|cannot be (turned off|disabled)|always on/i.test(text)) neu = 'effort';
+    if (!neu || neu === this.thinkingAusModus) return false;
+    this.thinkingAusModus = neu;
+    console.warn('[anthropic] v1208 Thinking-Abschaltung gelernt: ' + neu + ' (' + this.config.model + ')');
+    return true;
   }
 
   /**
@@ -95,6 +126,15 @@ export class AnthropicProvider extends LLMProvider {
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
+    try {
+      return await this.completeEinmal(request);
+    } catch (err) {
+      if (!this.lerneThinkingAusFehler(err)) throw err;
+      return await this.completeEinmal(request); // v1208 — einmal mit gelernter Abschalt-Form
+    }
+  }
+
+  private async completeEinmal(request: LLMRequest): Promise<LLMResponse> {
     const messages = this.mapMessages(request.messages);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
 
@@ -126,6 +166,18 @@ export class AnthropicProvider extends LLMProvider {
   }
 
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
+    // v1208 — scheitert der Stream vor dem ersten Ereignis an der Thinking-Abschaltung,
+    // wird die verlangte Form gelernt und der Stream einmal neu gestartet.
+    let geliefert = false;
+    try {
+      for await (const ev of this.streamEinmal(request)) { geliefert = true; yield ev; }
+    } catch (err) {
+      if (geliefert || !this.lerneThinkingAusFehler(err)) throw err;
+      yield* this.streamEinmal(request);
+    }
+  }
+
+  private async *streamEinmal(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
     const messages = this.mapMessages(request.messages);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
 
