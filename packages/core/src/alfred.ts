@@ -6746,6 +6746,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         });
       }
       this.pipeline.setQuickActions(quickActions);
+      // v1206 — Jarvis Schleife 1: Weltmodell im Gespräch (lazy, Engine wird später gesetzt)
+      this.pipeline.setWeltmodellQuelle(() => (this.reasoningEngine as unknown as { collector?: { weltmodellKurz?: () => string | undefined } } | undefined)?.collector?.weltmodellKurz?.());
     }
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);

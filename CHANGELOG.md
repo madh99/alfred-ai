@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1206] - 2026-10-06
+
+### Added — Jarvis Schleife 1: Alfred kennt im Gespräch das Haus (v1206)
+
+Das Weltmodell (Auto, Haus, Energie, Infrastruktur, offene Vorgänge) floss bisher nur in die proaktiven Pässe. Im Chat suchte das Modell bei „wie steht es ums Auto?" mit Werkzeugen, statt den Zustand zu kennen; die Antwort auf die Sprachnachricht vom 05.10. brauchte so sieben Werkzeug-Runden.
+
+- Jeder Chat-Prompt enthält eine kompakte Weltmodell-Zusammenfassung aus dem letzten Sammeln des Reasonings: Auto, Haus, Energie, Infrastruktur, offene Vorgänge und bereits Getanes, je Sektion mit Zeichenbudget, mit Stand-Uhrzeit. Deterministisch, ohne zusätzliche Aufrufe; Fehlertexte einzelner Quellen werden nicht eingespeist.
+- Das Modell wird angewiesen, diese Fakten vor Werkzeugen zu nutzen und Werkzeuge nur zu rufen, wenn die Frage darüber hinausgeht oder Aktualität entscheidend ist.
+- 2 Tests.
+
 ## [0.19.0-jarvis.1205] - 2026-10-06
 
 ### Added — Kostenwächter: Tagesbudget für LLM-Kosten (v1205)

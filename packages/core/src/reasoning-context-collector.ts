@@ -99,6 +99,37 @@ export function ersteAbweichung(alt: string, neu: string): { alt: string; neu: s
   return undefined;
 }
 
+/** v1206 — Sektionen und Zeichenbudget der Weltmodell-Kurzfassung für den Chat. */
+export const WELTMODELL_CHAT_SEKTIONEN: Array<[key: string, titel: string, maxZeichen: number]> = [
+  ['bmw', 'Auto (BMW)', 500],
+  ['smarthome', 'Haus (Home Assistant)', 700],
+  ['energy', 'Energie', 300],
+  ['infra', 'Infrastruktur', 400],
+  ['vorgaenge', 'Offene Vorgänge & bereits getan', 600],
+];
+
+/**
+ * v1206 — Jarvis Schleife 1: kompakte Weltmodell-Zusammenfassung aus den zuletzt gesammelten
+ * Sektionen. Deterministisch, ohne Aufrufe; das Modell kennt damit im Gespräch Auto, Haus,
+ * Energie, Infrastruktur und offene Vorgänge, statt erst Werkzeuge zu suchen.
+ */
+export function weltmodellKurzAus(inhalte: ReadonlyMap<string, string>, standIso?: string): string | undefined {
+  const teile: string[] = [];
+  for (const [key, titel, max] of WELTMODELL_CHAT_SEKTIONEN) {
+    const inhalt = inhalte.get(key)?.trim();
+    if (!inhalt || inhalt.startsWith('(')) continue; // Fehlertexte „(… fehlgeschlagen)" nicht einspeisen
+    const kurz = inhalt.length > max ? `${inhalt.slice(0, max).trimEnd()}…` : inhalt;
+    teile.push(`### ${titel}\n${kurz}`);
+  }
+  if (teile.length === 0) return undefined;
+  const stand = standIso ? new Date(standIso).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' }) : 'unbekannt';
+  return [
+    `## Weltmodell (automatisch erhoben, Stand ${stand})`,
+    'Nutze diese Fakten für Fragen zu Auto, Haus, Energie, Infrastruktur und offenen Vorgängen, bevor du Werkzeuge aufrufst. Werkzeuge nur, wenn die Frage über diese Fakten hinausgeht oder Aktualität entscheidend ist. Nenne bei Bedarf den Stand.',
+    ...teile,
+  ].join('\n\n');
+}
+
 export function extrahiereAnwesenheit(haContent: string): string | null {
   const status: string[] = [];
   for (const zeile of haContent.split('\n')) {
@@ -301,10 +332,18 @@ export class ReasoningContextCollector {
   readonly letzteAuffaelligeObjekte = new Set<string>();
   /** v1196 — geänderte Sektionen des letzten Sammelns mit erster Abweichung (nur Infrastruktur mit Inhalt) — Quelle für „Warum?". */
   readonly letzteAbweichungen = new Map<string, { alt: string; neu: string } | undefined>();
+  /** v1206 — Zeitpunkt des letzten Sammelns (Stand-Angabe der Weltmodell-Kurzfassung). */
+  private letztesSammelnAt?: string;
+
+  /** v1206 — Weltmodell-Kurzfassung für den Chat aus dem letzten Sammeln (ohne neue Aufrufe). */
+  weltmodellKurz(): string | undefined {
+    return weltmodellKurzAus(this.previousContent, this.letztesSammelnAt);
+  }
 
   async collect(): Promise<CollectedContext> {
     this.letzteAuffaelligeObjekte.clear();
     this.letzteAbweichungen.clear();
+    this.letztesSammelnAt = new Date().toISOString();
     // Resolve master user ID once per collect() for all memory lookups
     this.resolvedUserId = await this.getEffectiveUserId();
 

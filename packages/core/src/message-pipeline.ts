@@ -304,6 +304,10 @@ export class MessagePipeline {
   }
 
   /** v924 — Quick-Actions (todo:/reminder:-Callbacks) vor dem LLM abfangen. */
+  /** v1206 — Weltmodell-Zusammenfassung für den Chat (lazy, aus dem Reasoning-Kollektor). */
+  private weltmodellQuelle?: () => string | undefined;
+  setWeltmodellQuelle(fn: () => string | undefined): void { this.weltmodellQuelle = fn; }
+
   setQuickActions(handler: import('./quick-actions.js').QuickActionHandler): void {
     this.quickActions = handler;
   }
@@ -987,6 +991,7 @@ export class MessagePipeline {
         runningProjectAgentSessions,
         recentHostFailures,
         interestTopics,
+        weltmodell: (() => { try { return this.weltmodellQuelle?.(); } catch { return undefined; } })(), // v1206
       });
 
       tracePhase('system_prompt_built', { chars: system.length });

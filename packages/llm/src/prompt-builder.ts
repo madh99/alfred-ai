@@ -83,6 +83,8 @@ export interface SystemPromptContext {
    *  Neuigkeiten zu einem dieser Themen soll das LLM interests/topic_briefing
    *  nutzen statt einer frischen Web-Suche — dort liegt das gesammelte Dossier. */
   interestTopics?: string[];
+  /** v1206 — Jarvis Schleife 1: kompakte Weltmodell-Zusammenfassung (Auto, Haus, Energie, Infra, Vorgänge) aus dem letzten Sammeln. */
+  weltmodell?: string;
 }
 
 /**
@@ -411,6 +413,12 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
       // v929 — Interessen-Radar: aktive Themen, zu denen stündlich gesammelt wird.
       // Fragen nach Neuigkeiten zu einem dieser Themen → interests/topic_briefing
       // (Dossier + gesammelte Beiträge), NICHT frisch per web_search suchen.
+      // v1206 — Jarvis Schleife 1: Alfred kennt im Gespräch das Haus. Die Zusammenfassung ist
+      // deterministisch aus dem letzten Sammeln des Reasonings (keine zusätzlichen Aufrufe).
+      if (context.weltmodell && context.weltmodell.trim()) {
+        prompt += `\n\n${context.weltmodell.trim()}`;
+      }
+
       const interestTopics = context.interestTopics ?? [];
       if (interestTopics.length > 0) {
         prompt += `\n\n## Beobachtete Interessen-Themen (Interessen-Radar)\nZu diesen Themen sammelt Alfred laufend Beiträge: ${interestTopics.map(t => `„${t}"`).join(', ')}.\nBei Fragen wie "was gibt's Neues zu <Thema>" zu einem dieser Themen: NUTZE das interests-Tool mit action=topic_briefing — dort liegt das aktuelle Dossier. Web-Suche nur als Ergänzung, wenn das Dossier die Frage nicht beantwortet.`;
