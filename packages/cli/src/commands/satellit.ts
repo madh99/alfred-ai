@@ -1,11 +1,11 @@
 import os from 'node:os';
 import path from 'node:path';
-import { readdirSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
+import { readdirSync, statSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { exec, execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import type { GeraetManifest, GeraetNachricht, GeraetPlattform } from '@alfred/types';
-import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS } from '@alfred/core';
+import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS, TRANSFER_MAX_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from '@alfred/core';
 import { getVersion } from '../version.js';
 import { ladeKonfig, type GeraetKonfig } from './pair.js';
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
@@ -46,6 +46,9 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'shell', beschreibung: `Führt einen Befehl auf diesem Gerät aus — ${process.platform === 'win32' ? 'PowerShell' : 'sh'} (Arbeitsverzeichnis innerhalb freigegebener Verzeichnisse). Zum Öffnen von Dateien, Ordnern oder URLs lieber „oeffnen" nutzen.`, autonomie: 'bestaetigen', parameter: { command: { type: 'string', description: process.platform === 'win32' ? 'PowerShell-Befehl' : 'Shell-Befehl' }, cwd: { type: 'string', description: 'Arbeitsverzeichnis (optional)' } } },
       { name: 'liste', beschreibung: 'Listet ein freigegebenes Verzeichnis dieses Geräts (Namen, Größe, Datum)', autonomie: 'auto', parameter: { path: { type: 'string', description: 'Absoluter Pfad eines freigegebenen Verzeichnisses' } } },
       { name: 'hinweis', beschreibung: 'Zeigt dem Owner einen kurzen Hinweis auf diesem Gerät', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
+      // v1235 — Dateitransfer in beide Richtungen (bis 8 MB, SHA-256, nur freigegebene Verzeichnisse)
+      { name: 'datei_holen', beschreibung: 'Holt eine Datei (bis 8 MB) aus einem freigegebenen Verzeichnis dieses Geräts zum Server — kommt als Anhang zum Owner und in den Dateispeicher', autonomie: 'bestaetigen', parameter: { path: { type: 'string', description: 'Absoluter Pfad der Datei (innerhalb freigegebener Verzeichnisse)' } } },
+      { name: 'datei_ablegen', beschreibung: 'Legt eine Datei vom Server in einem freigegebenen Verzeichnis dieses Geräts ab (überschreibt nie)', autonomie: 'bestaetigen', parameter: { path: { type: 'string', description: 'Zielverzeichnis oder Zielpfad (innerhalb freigegebener Verzeichnisse)' }, quelle: { type: 'string', description: 'FileStore-Schlüssel (aus „Saved to FileStore … key=…") oder Pfad der Datei am Server' } } },
       // v1229 — Browser-Hand (eigenes Alfred-Profil im Browser des Geräts, Fenster sichtbar)
       { name: 'browser_oeffnen', beschreibung: 'Öffnet eine URL im Alfred-Browser auf diesem Gerät und liefert Titel und Seitentext', autonomie: 'auto', parameter: { url: { type: 'string', description: 'URL' } } },
       { name: 'browser_lesen', beschreibung: 'Liest die aktuelle Browser-Seite: Text und nummerierte Element-Karte (Links, Buttons, Felder). Vor jedem Klicken/Tippen nötig', autonomie: 'auto' },
@@ -97,6 +100,32 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
         if (process.platform === 'win32') execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], opts, fertig);
         else exec(command, { ...opts, shell: '/bin/sh' }, fertig);
       });
+    }
+    case 'datei_holen': {
+      const p = String(params.path ?? '');
+      if (!istPfadErlaubt(p, frei)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Freigegeben: ${frei.join(', ')}` };
+      if (!existsSync(p) || !statSync(p).isFile()) return { success: false, error: `Keine Datei: ${p}` };
+      const groesse = statSync(p).size;
+      if (groesse > TRANSFER_MAX_BYTES) return { success: false, error: `Datei zu groß (${groesse} B, Grenze ${TRANSFER_MAX_BYTES} B)` };
+      const data = readFileSync(p);
+      const name = path.basename(p);
+      return { success: true, data: { dateiBase64: data.toString('base64'), dateiName: name, mimeType: mimeAusName(name), groesse, sha256: sha256Hex(data) }, display: `${name} (${groesse} B) von ${k.name} geholt` };
+    }
+    case 'datei_ablegen': {
+      const ziel = String(params.path ?? '');
+      if (!istPfadErlaubt(ziel, frei)) return { success: false, error: `Pfad nicht freigegeben: ${ziel}. Freigegeben: ${frei.join(', ')}` };
+      const inhalt = typeof params.inhaltBase64 === 'string' ? Buffer.from(params.inhaltBase64, 'base64') : undefined;
+      if (!inhalt) return { success: false, error: 'Kein Inhalt vom Server erhalten' };
+      if (inhalt.length > TRANSFER_MAX_BYTES) return { success: false, error: 'Datei zu groß' };
+      if (typeof params.sha256 === 'string' && sha256Hex(inhalt) !== params.sha256) return { success: false, error: 'Prüfsumme stimmt nicht' };
+      const istOrdner = existsSync(ziel) && statSync(ziel).isDirectory();
+      const ordner = istOrdner ? ziel : path.dirname(ziel);
+      if (!existsSync(ordner)) return { success: false, error: `Zielordner fehlt: ${ordner}` };
+      const gewuenscht = istOrdner ? sichererDateiname(params.dateiName) : path.basename(ziel);
+      const name = eindeutigerName(gewuenscht, n => existsSync(path.join(ordner, n)));
+      const voll = path.join(ordner, name);
+      writeFileSync(voll, inhalt, { flag: 'wx' });
+      return { success: true, data: { path: voll, groesse: inhalt.length, sha256: sha256Hex(inhalt) }, display: `Abgelegt auf ${k.name}: ${voll} (${inhalt.length} B)` };
     }
     case 'hinweis': {
       const text = String(params.text ?? '');

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1235] - 2026-10-06
+
+### Added — Dateitransfer Gerät ⇄ Server (v1235)
+
+Geräte-Architektur Abschnitt 5a, erste Ausbaustufe: Nutzlast über die bestehende WebSocket-Verbindung, bis 8 MB, SHA-256-Prüfsumme, nur freigegebene Verzeichnisse, beide Richtungen `bestaetigen`.
+
+- **`datei_holen`** (Gerät → Server): Datei aus einem freigegebenen Verzeichnis kommt als Anhang zum Owner und in den Dateispeicher (FileStore-Schlüssel im Ergebnis). Prüfsumme wird am Server geprüft.
+- **`datei_ablegen`** (Server → Gerät): Quelle ist ein FileStore-Schlüssel (z. B. ein im Chat gesendeter Anhang) oder ein Pfad unter dem Alfred-Datenordner. Die Nutzlast wird erst nach der Freigabe geladen und geht nie durch die Bestätigungs-Queue. Das Gerät überschreibt nie (Name (2).ext), prüft die Prüfsumme und nimmt Dateinamen nur bereinigt an.
+- Jeder Transfer ist ein Schritt im Ausführungsgedächtnis (Name, Größe, Prüfsumme, Schlüssel). Blockweise Übertragung mit Wiederaufnahme für größere Dateien folgt.
+
 ## [0.19.0-jarvis.1234] - 2026-10-06
 
 ### Fixed — Sprachnachricht aus einem delegierten Lauf kam nie an (v1234)

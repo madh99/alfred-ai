@@ -106,3 +106,34 @@ export function paramsKurz(params: Record<string, unknown>): string {
   }
   return teile.join(' ');
 }
+
+/** v1235 — Dateitransfer Gerät ⇄ Gehirn (Phase 1: Nutzlast über die WebSocket-Verbindung, bis 8 MB, SHA-256). */
+export const TRANSFER_MAX_BYTES = 8 * 1024 * 1024;
+
+export function sha256Hex(data: Buffer | string): string { return createHash('sha256').update(data).digest('hex'); }
+
+const MIME_NACH_ENDUNG: Record<string, string> = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf',
+  txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', zip: 'application/zip',
+  mp3: 'audio/mpeg', ogg: 'audio/ogg', opus: 'audio/opus', wav: 'audio/wav', mp4: 'video/mp4', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+export function mimeAusName(name: string): string {
+  const m = /\.([a-z0-9]+)$/i.exec(name);
+  return (m && MIME_NACH_ENDUNG[m[1].toLowerCase()]) || 'application/octet-stream';
+}
+
+/** Zielpfad, der nichts überschreibt: name.ext, name (2).ext, name (3).ext … */
+export function eindeutigerName(name: string, existiert: (n: string) => boolean): string {
+  if (!existiert(name)) return name;
+  const m = /^(.*?)(\.[^.]+)?$/.exec(name);
+  const basis = m?.[1] ?? name; const ext = m?.[2] ?? '';
+  for (let i = 2; i < 1000; i++) { const k = `${basis} (${i})${ext}`; if (!existiert(k)) return k; }
+  throw new Error('kein freier Dateiname');
+}
+
+/** Dateiname ohne Pfadanteile und Steuerzeichen (vom Gegenüber geliefert → nie vertrauen). */
+export function sichererDateiname(name: unknown): string {
+  const s = String(name ?? '').split(/[\\/]/).pop() ?? '';
+  const sauber = s.replace(/[\u0000-\u001f<>:"|?*]/g, '_').trim();
+  return sauber && sauber !== '.' && sauber !== '..' ? sauber.slice(0, 180) : 'datei';
+}

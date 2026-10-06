@@ -1,6 +1,6 @@
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult, GeraetManifest, GeraetAktionDef } from '@alfred/types';
-import { paramsKurz } from './protokoll.js';
+import { paramsKurz, TRANSFER_MAX_BYTES, sha256Hex, mimeAusName, sichererDateiname } from './protokoll.js';
 
 /**
  * v1224 — Skill-Proxy: ein verbundenes Gerät erscheint im Gehirn als Skill `geraet_<name>`.
@@ -25,6 +25,11 @@ export interface GeraetSkillDeps {
     deckt: (aktion: string, params: Record<string, unknown>) => { beschreibung: string; schritte: number } | undefined;
     nachFreigabe?: (v: { beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
   };
+  /** v1235 — Dateitransfer: Quelle am Server laden (FileStore-Schlüssel oder Serverpfad), geholte Datei ablegen. */
+  dateien?: {
+    lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>;
+    speichere: (name: string, data: Buffer) => Promise<string>;
+  };
   schritt?: (s: { art: 'ausgefuehrt' | 'fehlgeschlagen' | 'zur_bestaetigung' | 'blockiert'; aktion: string; params: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie: GeraetAktionDef['autonomie'] }) => Promise<void>;
 }
 
@@ -45,7 +50,7 @@ export class GeraetSkill extends Skill {
     this.metadata = {
       name: deps.skillName,
       category: 'core',
-      description: `Gerät „${deps.name}" (${deps.manifest.plattform}) des Owners — Alfred handelt DORT, nicht auf dem Server. Aktionen: ${aktionen.map(a => a.name).join(', ')}. Verändernde Aktionen fragen den Owner vorher (Bestätigung per Button); melde dann nur „zur Bestätigung gestellt". Nutze dieses Gerät, wenn der Owner „auf meinem PC/Mac/Rechner/Laptop" oder den Gerätenamen nennt. Browser: browser_oeffnen → browser_lesen (Element-Karte mit Nummern) → browser_klicken/browser_tippen mit der Nummer; nach jedem Klick erneut lesen. Kauf, Bestellung, Zahlung und Anmeldung sind gesperrt — das macht der Owner selbst. Für mehrschrittige Aufgaben (z. B. etwas suchen und in den Einkaufswagen legen) zuerst action=vorhaben mit beschreibung, aktionen und domains anfordern; läuft bereits ein freigegebenes Vorhaben, einfach die Aktionen ausführen.`,
+      description: `Gerät „${deps.name}" (${deps.manifest.plattform}) des Owners — Alfred handelt DORT, nicht auf dem Server. Aktionen: ${aktionen.map(a => a.name).join(', ')}. Verändernde Aktionen fragen den Owner vorher (Bestätigung per Button); melde dann nur „zur Bestätigung gestellt". Nutze dieses Gerät, wenn der Owner „auf meinem PC/Mac/Rechner/Laptop" oder den Gerätenamen nennt. Dateien: datei_holen holt eine Datei vom Gerät (als Anhang + FileStore-key); datei_ablegen legt eine Datei vom Server ab — quelle = FileStore-key (aus „Saved to FileStore … key=…") oder Serverpfad. Browser: browser_oeffnen → browser_lesen (Element-Karte mit Nummern) → browser_klicken/browser_tippen mit der Nummer; nach jedem Klick erneut lesen. Kauf, Bestellung, Zahlung und Anmeldung sind gesperrt — das macht der Owner selbst. Für mehrschrittige Aufgaben (z. B. etwas suchen und in den Einkaufswagen legen) zuerst action=vorhaben mit beschreibung, aktionen und domains anfordern; läuft bereits ein freigegebenes Vorhaben, einfach die Aktionen ausführen.`,
       riskLevel: 'write',
       version: '1.0.0',
       timeoutMs: 11 * 60_000,
@@ -106,9 +111,31 @@ export class GeraetSkill extends Skill {
         ? { success: true, data: { zurBestaetigung: true, geraet: this.deps.name, aktion }, display: `Zur Bestätigung an den Owner gestellt: ${beschreibung}. Nach Freigabe wird es auf dem Gerät ausgeführt.` }
         : { success: false, error: 'Bestätigung konnte nicht gestellt werden (keine Bestätigungs-Queue oder Anfrage verworfen) — dem Owner sagen, dass keine Frage bei ihm liegt.' };
     }
-    const r = await this.deps.sendeAktion(aktion, params, aktion === 'shell' ? 10 * 60_000 : undefined);
+    // v1235 — datei_ablegen: Quelle erst jetzt (nach Freigabe) laden; die Nutzlast geht nie durch die Queue
+    let geraetParams = params;
+    if (aktion === 'datei_ablegen') {
+      const quelle = String(params.quelle ?? '');
+      if (!quelle) return { success: false, error: 'quelle fehlt (FileStore-Schlüssel oder Serverpfad)' };
+      if (!this.deps.dateien) return { success: false, error: 'Dateitransfer am Server nicht eingerichtet' };
+      const q = await this.deps.dateien.lade(quelle).catch(() => undefined);
+      if (!q) return { success: false, error: `Quelle nicht lesbar: ${quelle}` };
+      if (q.data.length > TRANSFER_MAX_BYTES) return { success: false, error: `Datei zu groß (${q.data.length} B, Grenze ${TRANSFER_MAX_BYTES} B)` };
+      geraetParams = { ...params, dateiName: sichererDateiname(q.name), inhaltBase64: q.data.toString('base64'), sha256: sha256Hex(q.data), groesse: q.data.length };
+    }
+    const r = await this.deps.sendeAktion(aktion, geraetParams, aktion === 'shell' ? 10 * 60_000 : undefined);
     await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, 300) : (r.error ?? '').slice(0, 300), autonomie: def.autonomie });
     if (!r.success) return { success: false, error: r.error ?? 'Gerät meldete Fehler' };
+    // v1235 — datei_holen: Prüfsumme prüfen, im Dateispeicher ablegen, als Anhang zum Owner
+    const dh = r.data as { dateiBase64?: string; dateiName?: string; sha256?: string } | undefined;
+    if (aktion === 'datei_holen' && dh && typeof dh.dateiBase64 === 'string') {
+      const data = Buffer.from(dh.dateiBase64, 'base64');
+      if (dh.sha256 && sha256Hex(data) !== dh.sha256) return { success: false, error: 'Prüfsumme der geholten Datei stimmt nicht' };
+      const name = sichererDateiname(dh.dateiName);
+      let key: string | undefined;
+      try { key = await this.deps.dateien?.speichere(name, data); } catch { key = undefined; }
+      await this.deps.schritt?.({ art: 'ausgefuehrt', aktion: 'datei_holen:gespeichert', params: { name, groesse: data.length, sha256: dh.sha256 ?? sha256Hex(data), key }, beschreibung: `Datei von ${this.deps.name} übernommen: ${name} (${data.length} B)`, ergebnis: key ?? 'nur als Anhang', autonomie: def.autonomie });
+      return { success: true, data: { geraet: this.deps.name, name, groesse: data.length, key }, display: `Datei von ${this.deps.name} geholt: ${name} (${data.length} B)${key ? `, gespeichert als key="${key}"` : ''} — als Anhang zugestellt.`, attachments: [{ fileName: name, mimeType: mimeAusName(name), data }] };
+    }
     // v1229 — Screenshots vom Gerät kommen als Bild zum Owner
     const d = r.data as { screenshotBase64?: string; mimeType?: string } | undefined;
     if (d && typeof d.screenshotBase64 === 'string') {

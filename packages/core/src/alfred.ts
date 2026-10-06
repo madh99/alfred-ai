@@ -13440,6 +13440,26 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             chatId: this.config.security?.ownerUserId ?? '',
           }),
           enqueueBestaetigung: async (o) => { if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue'); return this.confirmationQueue.enqueue(o); },
+          // v1235 — Dateitransfer: Quelle = FileStore-Schlüssel des Owners oder Serverpfad unter dem Alfred-Datenordner
+          dateien: {
+            lade: async (quelle: string) => {
+              const owner = this.ownerMasterUserId ?? this.tryOwner();
+              if (this.fileStoreRef && !path.isAbsolute(quelle)) {
+                try { const data = await this.fileStoreRef.read(quelle, owner); return { name: path.basename(quelle), data }; } catch { /* kein Schlüssel */ }
+              }
+              if (path.isAbsolute(quelle)) {
+                const erlaubt = [path.resolve(process.cwd(), 'data'), path.join(os.homedir(), '.alfred'), '/root/alfred/data'].map(d => path.resolve(d) + path.sep);
+                const real = path.resolve(quelle);
+                if (erlaubt.some(d => real.startsWith(d)) && fs.existsSync(real) && fs.statSync(real).isFile()) return { name: path.basename(real), data: fs.readFileSync(real) };
+              }
+              return undefined;
+            },
+            speichere: async (name: string, data: Buffer) => {
+              const owner = this.ownerMasterUserId ?? this.tryOwner();
+              if (!this.fileStoreRef || !owner) throw new Error('kein FileStore');
+              return (await this.fileStoreRef.save(owner, name, data)).key;
+            },
+          },
           // v1230 — nach dem Ja des Owners setzt Alfred das Vorhaben selbst fort: synthetische Owner-Nachricht
           // durch die Pipeline (wie geplante Aufgaben), Antwort und Screenshots zurück in den Owner-Chat.
           nachFreigabe: async (v) => {

@@ -24,6 +24,8 @@ export interface GeraeteGatewayDeps {
   ownerZiel: () => { platform: string; chatId: string };
   enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number }) => Promise<boolean | void>;
   schritt?: (s: { userId: string; art: string; skill: string; aktion?: string; params?: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }) => Promise<void>;
+  /** v1235 — Dateitransfer: Quelle laden / geholte Datei speichern (FileStore des Owners). */
+  dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
   nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
   now?: () => number;
@@ -178,6 +180,7 @@ export class GeraeteGateway {
         return ok !== false; // v1226 — Dedup-Übersprung ehrlich melden
       },
       pruefeFreigabe: (nonce, aktion, params) => this.freigaben.verbrauche(nonce, v.skillName, aktion, params),
+      dateien: this.deps.dateien, // v1235
       vorhaben: {
         erzeuge: (x) => this.vorhaben.erzeuge(v.skillName, x),
         aktiviere: (nonce) => { const a = this.vorhaben.aktiviere(nonce, v.skillName); if (a) this.deps.logger.info({ geraet: v.eintrag.name, beschreibung: a.beschreibung, aktionen: a.aktionen, domains: a.domains, bis: new Date(a.bis).toISOString() }, 'v1230 Vorhaben freigegeben'); return a; },

@@ -1,4 +1,21 @@
 import { describe, it, expect } from 'vitest';
+import { sha256Hex, mimeAusName, eindeutigerName, sichererDateiname, TRANSFER_MAX_BYTES } from '../geraete/protokoll.js';
+
+// v1235 — Dateitransfer-Helfer
+describe('Dateitransfer-Helfer', () => {
+  it('Prüfsumme, MIME, eindeutiger Name, sicherer Dateiname', () => {
+    expect(sha256Hex('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    expect(mimeAusName('Bericht.PDF')).toBe('application/pdf');
+    expect(mimeAusName('x.unbekannt')).toBe('application/octet-stream');
+    const vorhanden = new Set(['a.txt', 'a (2).txt']);
+    expect(eindeutigerName('a.txt', n => vorhanden.has(n))).toBe('a (3).txt');
+    expect(eindeutigerName('b.txt', n => vorhanden.has(n))).toBe('b.txt');
+    expect(sichererDateiname('../../etc/passwd')).toBe('passwd');
+    expect(sichererDateiname('C:\\Users\\x\\a<b>.txt')).toBe('a_b_.txt');
+    expect(sichererDateiname('..')).toBe('datei');
+    expect(TRANSFER_MAX_BYTES).toBe(8 * 1024 * 1024);
+  });
+});
 import { erzeugePairingCode, erzeugeToken, hashToken, geraetSkillName, pruefeManifest, istPfadErlaubt, paramsKurz } from '../geraete/protokoll.js';
 
 // v1224 — Geräte-Protokoll: reine Helfer (Spec docs/specs/2026-10-06-geraete-architektur.md).
