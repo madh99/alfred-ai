@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1233] - 2026-10-06
+
+### Fixed — Sitzung spricht wirklich als Owner (v1233)
+
+- **Identität der Sitzung.** Beim ersten Kontakt entstand für die Sitzung ein neuer API-Alias, der bei mehreren Master-Usern absichtlich nicht automatisch verknüpft wird — Alfred sprach mit einem Fremden ohne Gedächtnis. Jetzt legt der Server den Alias `api/geraet:<Gerät>` an und bindet ihn deterministisch an den Master des gekoppelten Geräts (Identitäts-Regel: Plattform-Kennung nur für Zustellung, Wissen am Master).
+- **Wettlauf beim ersten Kontakt.** Zwei gleichzeitige `findOrCreate` für eine neue Plattform-Kennung endeten im UNIQUE-Fehler („Sorry, I encountered an error"); der zweite Aufruf liest jetzt nach statt zu scheitern.
+
 ## [0.19.0-jarvis.1232] - 2026-10-06
 
 ### Added — Die Sitzung: ein Terminal für Chat, Bestätigungen und Satellit (v1232)

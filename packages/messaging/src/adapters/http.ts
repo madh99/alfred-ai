@@ -901,7 +901,7 @@ export class HttpAdapter extends MessagingAdapter {
     liste(): Promise<unknown[]>;
     widerrufe(id: string): Promise<boolean>;
     upgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
-    /** v1232 — Gerätetoken → Identität des Geräts (Owner-User) für die Sitzung. */
+    /** v1232 — Gerätetoken → Identität des Geräts für die Sitzung (userId = Plattform-Kennung des Alias, an den Owner gebunden). */
     authentifiziere?(token: string): Promise<{ userId: string; geraetId: string; name: string } | undefined>;
   };
   /** v1232 — Identität des Geräts je Anfrage, wenn der Ausweis ein Gerätetoken war. */

@@ -30,10 +30,20 @@ export class UserRepository {
       updatedAt: now,
     };
 
-    await this.adapter.execute(`
-      INSERT INTO users (id, platform, platform_user_id, username, display_name, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [user.id, user.platform, user.platformUserId, user.username ?? null, user.displayName ?? null, user.createdAt, user.updatedAt]);
+    try {
+      await this.adapter.execute(`
+        INSERT INTO users (id, platform, platform_user_id, username, display_name, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [user.id, user.platform, user.platformUserId, user.username ?? null, user.displayName ?? null, user.createdAt, user.updatedAt]);
+    } catch (err) {
+      // v1233 — Wettlauf: ein paralleler Aufruf hat denselben (platform, platform_user_id) gerade angelegt → nachlesen
+      const wieder = await this.adapter.queryOne(
+        'SELECT * FROM users WHERE platform = ? AND platform_user_id = ?',
+        [platform, platformUserId]
+      ) as Record<string, string> | undefined;
+      if (wieder) return this.mapRow(wieder);
+      throw err;
+    }
 
     return user;
   }

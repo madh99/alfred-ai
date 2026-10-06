@@ -13471,7 +13471,24 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           paare: (b: Record<string, unknown>, r: string) => gw.paare(b, r),
           liste: () => gw.liste(),
           widerrufe: (id: string) => gw.widerrufe(id),
-          authentifiziere: (t: string) => gw.authentifiziere(t), // v1232
+          // v1233 — Sitzung spricht als Owner: Alias api/geraet:<id> wird beim ersten Kontakt angelegt und an den
+          // Master des Geräts gebunden (kein Auto-Link-Raten; bei mehreren Mastern wäre der Alias sonst ein Fremder).
+          authentifiziere: async (t: string) => {
+            const g = await gw.authentifiziere(t);
+            if (!g) return undefined;
+            const platformUserId = `geraet:${g.geraetId}`;
+            try {
+              if (this.userRepo) {
+                const alias = await this.userRepo.findOrCreate('api', platformUserId, `sitzung:${g.name}`, `Sitzung ${g.name}`);
+                const master = await this.userRepo.getMasterUserId(g.userId);
+                if (alias.id !== master && (await this.userRepo.getMasterUserId(alias.id)) !== master) {
+                  await this.userRepo.setMasterUser(alias.id, master);
+                  this.logger.info({ alias: alias.id, master, geraet: g.name }, 'v1233 Sitzungs-Alias an Master gebunden');
+                }
+              }
+            } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1233 Sitzungs-Alias nicht gebunden'); }
+            return { ...g, userId: platformUserId };
+          },
           upgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => gw.handleUpgrade(req, s, h),
         });
         this.logger.info({}, 'v1224 Geräte-Gateway bereit (/api/geraete)');
