@@ -10,6 +10,8 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/confirmations/abc-123/reject')).toBe(true);
     expect(istSitzungsPfad('/api/lebenszeichen')).toBe(true);
     expect(istSitzungsPfad('/api/geraete')).toBe(true);
+    expect(istSitzungsPfad('/api/transcribe')).toBe(true); // v1241
+    expect(istSitzungsPfad('/api/sprich')).toBe(true);
   });
   it('sperrt alles andere', () => {
     expect(istSitzungsPfad('/api/geraete/abc')).toBe(false); // Widerruf

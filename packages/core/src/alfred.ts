@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import yaml from 'js-yaml';
 import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@alfred/types';
 import { formatiereWarum } from './interaktion/warum.js';
-import { sprachfassung, istSprachnachricht } from './interaktion/sprache.js';
+import { sprachfassung, istSprachnachricht, audioMimeAusBytes } from './interaktion/sprache.js';
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
@@ -6163,6 +6163,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         serviceUsageRepo.record('tts', model, units).catch(() => {});
       });
       this.speechSynthesizerRef = synthesizer; // v938 — Voiceover für die Video-Pipeline
+      // v1241 — Sprache in der Sitzung: /api/sprich (Text → Audio, knapp wie die Sprachantwort im Chat)
+      const apiAdapterForTts = this.adapters.get('api');
+      if (apiAdapterForTts && 'setSprichCallback' in apiAdapterForTts) {
+        (apiAdapterForTts as unknown as { setSprichCallback: (fn: (text: string, knapp: boolean) => Promise<{ data: Buffer; mimeType: string }>) => void }).setSprichCallback(async (text, knapp) => {
+          const gesprochen = knapp ? sprachfassung(text) : text;
+          const data = await synthesizer.synthesize(gesprochen.length >= 2 ? gesprochen : text, this.ownerMasterUserId);
+          return { data, mimeType: audioMimeAusBytes(data) };
+        });
+        this.logger.info('v1241 Sprich-Endpunkt registriert (/api/sprich)');
+      }
       skillRegistry.register(new TTSSkill(synthesizer));
       const effectiveTtsProvider = this.config.speech.ttsProvider ?? 'openai';
       this.logger.info({ provider: effectiveTtsProvider }, 'Text-to-speech skill registered');

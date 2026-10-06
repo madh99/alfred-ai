@@ -402,6 +402,9 @@ export class HttpAdapter extends MessagingAdapter {
   setTranscribeCallback(fn: (audioBuffer: Buffer, mimeType: string) => Promise<string>): void {
     this.transcribeFn = fn;
   }
+  /** v1241 — Sprachsynthese für die Sitzung: Text → Audio (mp3/ogg je Anbieter). */
+  private sprichFn?: (text: string, knapp: boolean) => Promise<{ data: Buffer; mimeType: string }>;
+  setSprichCallback(fn: NonNullable<HttpAdapter['sprichFn']>): void { this.sprichFn = fn; }
 
   setConversationCallbacks(opts: {
     list: (filter?: { platform?: string; limit?: number; offset?: number; sortBy?: string; sinceIso?: string; untilIso?: string; includeDeleted?: boolean }) => Promise<any[]>;
@@ -1274,6 +1277,8 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/conversations\/[^/]+\/replay$/) && req.method === 'POST') {
       this.handleConversationsReplay(req, res, url).catch(err => this.safeError(res, err));
     // ── Chat multi-modal (v644) ──
+    } else if (url.pathname === '/api/sprich' && req.method === 'POST') {
+      this.handleSprich(req, res).catch(err => this.safeError(res, err)); // v1241
     } else if (url.pathname === '/api/transcribe' && req.method === 'POST') {
       this.handleTranscribe(req, res).catch(err => this.safeError(res, err));
     // ── Confirmations + Reminders Side-Panel (v629) ──
@@ -2771,6 +2776,26 @@ export class HttpAdapter extends MessagingAdapter {
     const result = await this.conversationsExportFn(data.conversation_ids);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+  }
+
+  // v1241 — Sprachsynthese für die Sitzung (Gerätetoken erlaubt)
+  private async handleSprich(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sprichFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sprachsynthese nicht eingerichtet' })); return; }
+    const body = await this.readBody(req);
+    let data: { text?: string; knapp?: boolean };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const text = typeof data.text === 'string' ? data.text.trim() : '';
+    if (!text) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'text fehlt' })); return; }
+    if (text.length > 4000) { res.writeHead(413, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'text zu lang (max 4000 Zeichen)' })); return; }
+    try {
+      const audio = await this.sprichFn(text, data.knapp !== false);
+      res.writeHead(200, { 'Content-Type': audio.mimeType, 'Content-Length': audio.data.length, 'Cache-Control': 'no-store' });
+      res.end(audio.data);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
   }
 
   // v644 — Audio-Transcription für Chat-Voice-Input

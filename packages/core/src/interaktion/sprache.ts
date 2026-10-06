@@ -8,6 +8,15 @@
  */
 export const SPRACHFASSUNG_MAX_ZEICHEN = 700;
 
+/** v1241 — MIME-Typ synthetisierter Sprache aus den ersten Bytes (Mistral liefert mp3, OpenAI opus/ogg). */
+export function audioMimeAusBytes(data: Buffer): string {
+  if (data.length >= 4 && data.toString('latin1', 0, 4) === 'OggS') return 'audio/ogg';
+  if (data.length >= 3 && data.toString('latin1', 0, 3) === 'ID3') return 'audio/mpeg';
+  if (data.length >= 2 && data[0] === 0xff && (data[1] & 0xe0) === 0xe0) return 'audio/mpeg';
+  if (data.length >= 4 && data.toString('latin1', 0, 4) === 'RIFF') return 'audio/wav';
+  return 'application/octet-stream';
+}
+
 /** Text für die Sprachausgabe: Markdown raus, Listen zu Sätzen, an Satzgrenze gekürzt. */
 export function sprachfassung(text: string, max = SPRACHFASSUNG_MAX_ZEICHEN): string {
   let t = text

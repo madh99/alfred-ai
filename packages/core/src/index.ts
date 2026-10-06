@@ -16,6 +16,7 @@ export { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS, pruefeManifest, ge
 export { GeraeteGateway } from './geraete/gateway.js'; // v1224
 export { istGesperrteUrl, istGesperrteBeschriftung, formatiereSeite } from './geraete/browser-regeln.js'; // v1229
 export { TRANSFER_MAX_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from './geraete/protokoll.js'; // v1235
+export { sprachfassung, audioMimeAusBytes } from './interaktion/sprache.js'; // v1241
 export type { BrowserElement } from './geraete/browser-regeln.js';
 export type { ContextSource, ContextResult } from './context-factory.js';
 export { DocumentProcessor } from './document-processor.js';

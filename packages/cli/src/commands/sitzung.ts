@@ -8,6 +8,7 @@ import { ladeKonfig, type GeraetKonfig } from './pair.js';
 import { starteSatellit } from './satellit.js';
 import { dienstLogPfad, satellitDienstLaeuft } from './satellit-dienst.js';
 import { getVersion } from '../version.js';
+import { Audio, type Aufnahme } from './satellit-audio.js'; // v1241
 
 /**
  * v1232 — Die Sitzung: EIN Terminal für Chat, Bestätigungen und den Satelliten.
@@ -75,6 +76,29 @@ function anfrageStrom(k: GeraetKonfig, pfad: string, body: unknown, aufEreignis:
   });
 }
 
+/** v1241 — Rohdaten senden (Audio zur Transkription) und Rohdaten empfangen (Sprachsynthese). */
+function anfrageRoh(k: GeraetKonfig, pfad: string, body: Buffer | string, contentType: string): Promise<{ status: number; data: Buffer; contentType: string }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(pfad, k.server);
+    const mod = u.protocol === 'https:' ? https : http;
+    const daten = typeof body === 'string' ? Buffer.from(body) : body;
+    const req = mod.request(u, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${k.token}`, 'Content-Type': contentType, 'Content-Length': daten.length },
+      rejectUnauthorized: !k.insecure,
+      timeout: 120_000,
+    }, (res) => {
+      const teile: Buffer[] = [];
+      res.on('data', (c: Buffer) => teile.push(c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, data: Buffer.concat(teile), contentType: String(res.headers['content-type'] ?? '') }));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(new Error('Zeitüberschreitung')); });
+    req.write(daten);
+    req.end();
+  });
+}
+
 function zeit(): string { return new Date().toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' }); }
 
 /** Liest neue Zeilen des Dienst-Protokolls (ab Start der Sitzung). */
@@ -133,7 +157,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   console.log(`\nAlfred-Sitzung auf ${k.name} (v${getVersion()}) → ${k.server}`);
   console.log(`Satellit: ${satellitArt}`);
-  console.log('Schreiben = Chat als Owner · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
+  console.log('Schreiben = Chat als Owner · /talk (sprechen, Enter stoppt) · /stimme an|aus · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
   rl.prompt();
 
   // Bestätigungen: alle 4 s abholen, neue melden
@@ -167,14 +191,26 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   const ablage = path.join(os.homedir(), '.alfred', 'sitzung');
   const chatId = `sitzung:${k.geraetId}`;
+  // v1241 — Sprache: Push-to-Talk und vorgelesene Antworten
+  const audio = new Audio();
+  let aufnahme: Aufnahme | undefined;
+  let stimme = false;
+  const sprich = async (text: string) => {
+    try {
+      const r = await anfrageRoh(k, '/api/sprich', JSON.stringify({ text, knapp: true }), 'application/json');
+      if (r.status !== 200) { drucke(`🔇 Sprachausgabe nicht möglich (HTTP ${r.status}): ${r.data.toString('utf8').slice(0, 120)}`); return; }
+      await audio.abspielen(r.data, r.contentType || 'audio/mpeg');
+    } catch (err) { drucke(`🔇 Sprachausgabe fehlgeschlagen: ${(err as Error).message}`); }
+  };
 
-  const sende = async (text: string) => {
+  const sende = async (text: string, gesprochen = false) => {
     antwortLaeuft = true;
     let status = '';
+    let antwortText = '';
     try {
       await anfrageStrom(k, '/api/message', { text, chatId }, (e) => {
         if (e.type === 'status') { status = e.text ?? ''; readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`… ${status.slice(0, 100)}`); }
-        else if (e.type === 'response') { readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`\nAlfred (${zeit()}): ${e.text ?? ''}\n\n`); }
+        else if (e.type === 'response') { antwortText = e.text ?? ''; readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`\nAlfred (${zeit()}): ${e.text ?? ''}\n\n`); }
         else if (e.type === 'attachment' && e.data) {
           try {
             mkdirSync(ablage, { recursive: true });
@@ -187,18 +223,48 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
         else if (e.type === 'error') { process.stdout.write(`\nFehler: ${e.text ?? 'unbekannt'}\n`); }
       });
     } catch (err) { process.stdout.write(`\nFehler: ${(err as Error).message}\n`); }
+    if ((gesprochen || stimme) && antwortText && antwortText !== '(no response)') { process.stdout.write('🔊 …'); await sprich(antwortText); readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); }
     antwortLaeuft = false;
     rl.prompt(true);
   };
 
+  const talkStart = async () => {
+    try {
+      aufnahme = await audio.aufnehmen();
+      rl.setPrompt('● Aufnahme läuft — Enter zum Stoppen ');
+      rl.prompt(true);
+    } catch (err) { drucke(`🎙 ${(err as Error).message}`); }
+  };
+  const talkStop = async (a: Aufnahme) => {
+    rl.setPrompt('Du: ');
+    antwortLaeuft = true;
+    process.stdout.write('… höre zu');
+    try {
+      const { data, mimeType } = await a.stop();
+      if (data.length < 2000) { antwortLaeuft = false; drucke('🎙 Aufnahme zu kurz — nichts gesendet.'); return; }
+      const r = await anfrageRoh(k, '/api/transcribe', data, mimeType);
+      if (r.status !== 200) { antwortLaeuft = false; drucke(`🎙 Transkription fehlgeschlagen (HTTP ${r.status}): ${r.data.toString('utf8').slice(0, 120)}`); return; }
+      const text = String((JSON.parse(r.data.toString('utf8')) as { text?: string }).text ?? '').trim();
+      if (!text) { antwortLaeuft = false; drucke('🎙 Nichts verstanden.'); return; }
+      readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+      process.stdout.write(`Du (gesprochen): ${text}\n`);
+      antwortLaeuft = false;
+      await sende(text, true);
+    } catch (err) { antwortLaeuft = false; drucke(`🎙 ${(err as Error).message}`); }
+  };
+
   rl.on('line', (zeile) => {
     const t = zeile.trim();
+    // v1241 — während einer Aufnahme stoppt jede Eingabe (Enter) die Aufnahme
+    if (aufnahme) { const a = aufnahme; aufnahme = undefined; void talkStop(a); return; }
     if (!t) { rl.prompt(); return; }
     const [befehl, ...rest] = t.split(/\s+/);
     const arg = rest.join(' ');
     void (async () => {
       switch (befehl.toLowerCase()) {
         case '/quit': case '/exit': case '/ende': beende(); return;
+        case '/talk': case '/sprechen': await talkStart(); return;
+        case '/stimme': stimme = arg ? /^(an|on|ja|1)$/i.test(arg) : !stimme; drucke(`🔊 Vorgelesene Antworten: ${stimme ? 'an' : 'aus'}`); return;
         case '/ja': await entscheide(arg, 'approve'); return;
         case '/nein': await entscheide(arg, 'reject'); return;
         case '/offen': drucke(offen.length ? offen.map((b, i) => `[${i + 1}] ${b.description ?? b.skillName ?? ''}`).join('\n') : 'Keine offene Bestätigung.'); return;
@@ -214,7 +280,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
           drucke(lage?.text ? `Lage (${lage.stand ?? ''}):\n${lage.text}` : 'Keine Lage vorhanden.');
           return;
         }
-        case '/hilfe': case '/help': drucke('Schreiben = Chat als Owner · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit'); return;
+        case '/hilfe': case '/help': drucke('Schreiben = Chat als Owner · /talk (sprechen, Enter stoppt) · /stimme an|aus · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit'); return;
         default: await sende(t);
       }
     })().catch(err => drucke(`Fehler: ${(err as Error).message}`));
@@ -222,6 +288,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   const beende = () => {
     clearInterval(bestaetigungsTimer);
+    audio.stop();
     satellitStop?.();
     console.log('\nSitzung beendet.');
     rl.close();

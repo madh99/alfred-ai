@@ -10,6 +10,9 @@ const SITZUNG_PFADE = [
   /^\/api\/lebenszeichen$/,
   /^\/api\/geraete$/,
   /^\/api\/health$/,
+  // v1241 — Sprache in der Sitzung
+  /^\/api\/transcribe$/,
+  /^\/api\/sprich$/,
 ];
 
 export function istSitzungsPfad(url: string | undefined): boolean {

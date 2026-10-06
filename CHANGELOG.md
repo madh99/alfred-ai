@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1241] - 2026-10-06
+
+### Added — Sprache in der Sitzung: /talk und vorgelesene Antworten (v1241)
+
+Geräte-Architektur Phase 2, erste Stufe. Ohne native Node-Module, mit Bordmitteln je Plattform.
+
+- **`/talk`** in `alfred sitzung`: Mikrofon aufnehmen (Push-to-Talk, Enter stoppt), auf dem Server transkribieren (`/api/transcribe`), als Nachricht senden; die Antwort wird vorgelesen. **`/stimme an`** liest auch getippte Antworten vor.
+- **Server:** neuer Endpunkt `POST /api/sprich` (Text → Audio über die vorhandene Sprachsynthese, knapp wie die Sprachantwort im Chat), für die Sitzung mit Gerätetoken erreichbar; `/api/transcribe` ebenfalls.
+- **Audio je Plattform:** Windows über einen dauerhaften PowerShell-Kindprozess mit MCI (winmm): Aufnahme 16 kHz mono WAV, Wiedergabe mp3/wav; macOS über sox/ffmpeg und afplay; Linux über arecord und mpg123/ffplay/aplay. Fehlt ein Werkzeug, sagt die Sitzung es klar.
+- Nächste Stufe: Streaming-Sprache (Satz für Satz) und eine Taste statt Enter.
+
 ## [0.19.0-jarvis.1240] - 2026-10-06
 
 ### Fixed — Vorhaben überleben einen Neustart (v1240)
