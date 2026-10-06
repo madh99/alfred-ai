@@ -147,6 +147,9 @@ Freigabe des Owners am 06.10. („ok, freigabe"). Jeder Schritt als eigenes Rele
 | .1235 | Dateitransfer Stufe 1: `datei_holen` / `datei_ablegen`, ≤ 8 MB über WebSocket, SHA-256, nie überschreiben | Documents → Server (FileStore-Schlüssel) → Downloads, Inhalt identisch |
 | .1236 | Bestätigungs-Queue stellt nach dem Ja auch Anhänge zu | — |
 | .1237 | Sinne: Leerlauf, Fenster, Akku jede Minute; Weltmodell-Quelle „Geräte" mit Befunden (getrennt > 3 h, Akku < 15 %); Zustellsignal „Owner am PC" | Sinne von PC-madh im Lebenszeichen, Job `geraete-beobachten` |
+| .1238 | Weltmodell-Block trägt Geräte live; Aktion `zustand` (auto) statt Shell mit Bestätigung | „Was macht mein PC gerade?" → ein Werkzeug, keine Bestätigung |
+| .1239 | Systemwerte alle 5 min (Laufzeit, Start, RAM, CPU, GPU, Laufwerke; knappes Laufwerk = Befund); nach einer freigegebenen Geräteaktion arbeitet Alfred mit dem Ergebnis weiter | Tabelle mit Laufzeit 13 d, Start 23.09. 03:31, CPU, GPU, RAM, C/E/F; freigegebene Shell → formatierte Programmliste statt Rohausgabe |
+| .1240 | Vorhaben überleben einen Neustart (`data/geraete-vorhaben.json`) | Test mit simuliertem Neustart; Realfall 20:52 erklärt |
 
 **Phase 1 ist damit vollständig** (Protokoll, Registry, Satellit, Sitzung, Browser-Hand, Vorhaben, Dateitransfer, Sinne). Noch offen aus Phase 1 im Kleinen: Dateitransfer blockweise für mehr als 8 MB, Gerätename der Sitzung im Prompt. Talk in der Sitzung ist Phase 2; die Sitzung nutzt bis dahin readline statt Ink. Phase 3 (Zone des Handys) kommt mit der Android-App.
 
