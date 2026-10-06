@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sprachfassung, istSprachnachricht, SPRACHFASSUNG_MAX_ZEICHEN , sprachBloecke } from '../interaktion/sprache.js';
+import { sprachfassung, istSprachnachricht, SPRACHFASSUNG_MAX_ZEICHEN , sprachBloecke, schneideSaetze } from '../interaktion/sprache.js';
 
 // v1202 — Jarvis Interaktion: gesprochene Antwort auf Sprachnachricht, knapp und ohne Markdown.
 describe('sprachfassung', () => {
@@ -44,5 +44,19 @@ describe('sprachBloecke', () => {
     expect(sprachBloecke('**Kurz.**')).toEqual(['Kurz.']);
     expect(sprachBloecke('')).toEqual([]);
     expect(sprachBloecke('a. '.repeat(100), 20, 3)).toHaveLength(3);
+  });
+});
+
+// v1248 — Streaming-Sprache Stufe 2: Sätze aus dem wachsenden Puffer
+describe('schneideSaetze', () => {
+  it('schneidet fertige Sätze ab, bündelt bis min, lässt den unfertigen Rest', () => {
+    const r = schneideSaetze('Dein PC ist aktiv. Die letzte Eingabe liegt unter einer Minute zurück. Im Vordergrund ist der Bro', 60);
+    expect(r.bloecke).toEqual(['Dein PC ist aktiv. Die letzte Eingabe liegt unter einer Minute zurück.']);
+    expect(r.rest).toBe('Im Vordergrund ist der Bro');
+  });
+  it('Zahlen und Abkürzungen trennen nicht; ohne Satzende kein Block', () => {
+    expect(schneideSaetze('Der Wert ist 3.5 Prozent, z. B. heute. Und weiter', 10)).toEqual({ bloecke: ['Der Wert ist 3.5 Prozent, z. B. heute.'], rest: 'Und weiter' });
+    expect(schneideSaetze('Noch kein Satzende', 10)).toEqual({ bloecke: [], rest: 'Noch kein Satzende' });
+    expect(schneideSaetze('Kurz. ', 60)).toEqual({ bloecke: [], rest: 'Kurz. ' });
   });
 });

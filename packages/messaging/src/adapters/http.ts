@@ -6084,6 +6084,8 @@ export class HttpAdapter extends MessagingAdapter {
       if (aborted) return;
       try {
         const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string; replyToText?: string; replyToFrom?: string; replyToMessageId?: string; projectId?: string;
+          // v1248 — Sitzung: Antwort stückweise (stream) und Modellstufe (tier) je Nachricht
+          stream?: boolean; tier?: string;
           // v687 — Project-Chat: optionale Context-Refs für In-Chat-Attachments/@-Mentions
           contextRefs?: Array<{ kind: string; refId: string; label?: string }>;
           // v890 — Project-Chat: CLI-Wahl des Pickers ('auto' = Projekt-Strategie, sonst konkrete CLI)
@@ -6164,6 +6166,9 @@ export class HttpAdapter extends MessagingAdapter {
         };
         // v1245 — Gerät der Sitzung mitgeben: der Prompt nennt es, „von welchem Gerät schreibe ich?" beantwortet sich daraus
         if (geraet) message.metadata = { ...(message.metadata ?? {}), sitzungGeraet: geraet.name };
+        // v1248 — stückweise Antwort und Modellstufe (nur erlaubte Stufen; 'fallback' bleibt Notfall-Kette)
+        if (parsed.stream === true) message.metadata = { ...(message.metadata ?? {}), stream: true };
+        if (typeof parsed.tier === 'string' && ['default', 'strong', 'medium', 'fast'].includes(parsed.tier)) message.metadata = { ...(message.metadata ?? {}), tier: parsed.tier as import('@alfred/types').ModelTier };
 
         this.emit('message', message);
       } catch {

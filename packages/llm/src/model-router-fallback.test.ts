@@ -44,6 +44,26 @@ function buildRouter(tiers: Record<string, LLMProvider>, config?: Partial<MultiM
   return router;
 }
 
+// v1248 — gestreamte Antworten werden verbucht wie complete()
+describe('v1248 Stream-Kosten', () => {
+  it('message_complete im Stream landet im Kostenzähler', async () => {
+    const p = {
+      ...mockProvider('ok', 'gpt'),
+      async *stream() {
+        yield { type: 'text_delta', text: 'Hal' };
+        yield { type: 'text_delta', text: 'lo' };
+        yield { type: 'message_complete', response: { content: 'Hallo', model: 'gpt-4o', usage: { inputTokens: 120, outputTokens: 30 }, stopReason: 'end_turn' } };
+      },
+    } as unknown as LLMProvider;
+    const router = buildRouter({ default: p });
+    const vorher = router.getCostSummary().totalInputTokens;
+    let text = '';
+    for await (const ev of router.stream({ messages: [{ role: 'user', content: 'hi' }] })) if (ev.type === 'text_delta') text += ev.text;
+    expect(text).toBe('Hallo');
+    expect(router.getCostSummary().totalInputTokens - vorher).toBe(120);
+  });
+});
+
 describe('v868 ModelRouter Billing-Fallback', () => {
   it('Vorfalls-Szenario: fast (Anthropic, Guthaben leer) → Fallback auf default (OpenAI)', async () => {
     const router = buildRouter({

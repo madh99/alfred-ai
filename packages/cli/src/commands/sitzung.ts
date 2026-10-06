@@ -9,7 +9,7 @@ import { starteSatellit } from './satellit.js';
 import { dienstLogPfad, satellitDienstLaeuft } from './satellit-dienst.js';
 import { getVersion } from '../version.js';
 import { Audio, type Aufnahme } from './satellit-audio.js'; // v1241
-import { audioMimeAusBytes, sprachBloecke } from '@alfred/core'; // v1243, v1247
+import { audioMimeAusBytes, sprachBloecke, schneideSaetze } from '@alfred/core'; // v1243, v1247, v1248
 
 /**
  * v1232 — Die Sitzung: EIN Terminal für Chat, Bestätigungen und den Satelliten.
@@ -21,7 +21,7 @@ import { audioMimeAusBytes, sprachBloecke } from '@alfred/core'; // v1243, v1247
  * Sprache (Talk) folgt in Phase 2 der Geräte-Architektur.
  */
 interface Bestaetigung { id: string; description?: string; skillName?: string; createdAt?: string; source?: string }
-interface SseEreignis { type: string; text?: string; attachmentType?: string; fileName?: string; data?: string; caption?: string }
+interface SseEreignis { type: string; text?: string; attachmentType?: string; fileName?: string; data?: string; caption?: string; kind?: string; tool?: string }
 
 function anfrage(k: GeraetKonfig, methode: 'GET' | 'POST', pfad: string, body?: unknown): Promise<{ status: number; text: string }> {
   return new Promise((resolve, reject) => {
@@ -160,7 +160,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   console.log(`\nAlfred-Sitzung auf ${k.name} (v${getVersion()}) → ${k.server}`);
   console.log(`Satellit: ${satellitArt}`);
-  console.log('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen (Strg+T/Enter stoppt) · /stimme an|aus · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
+  console.log('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen (Strg+T/Enter stoppt) · /stimme an|aus · /tier fast|default|strong · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
   rl.prompt();
 
   // Bestätigungen: alle 4 s abholen, neue melden
@@ -198,6 +198,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
   const audio = new Audio();
   let aufnahme: Aufnahme | undefined;
   let stimme = false;
+  let tier: string | undefined; // v1248 — Modellstufe je Nachricht (/tier)
   // v1247 — Streaming-Sprache Stufe 1: Block für Block — der nächste wird synthetisiert, während der vorige läuft
   const synthetisiere = async (block: string): Promise<{ data: Buffer; mimeType: string }> => {
     const r = await anfrageRoh(k, '/api/sprich', JSON.stringify({ text: block, knapp: false }), 'application/json');
@@ -221,14 +222,42 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   const sende = async (text: string, gesprochen = false) => {
     antwortLaeuft = true;
+    const sendeStart = Date.now();
     let status = '';
     let antwortText = '';
     // v1243 — Sprachantworten des Modells (text_to_speech / Voice) werden abgespielt statt als .bin abgelegt
     let sprachAnhang: { data: Buffer; mimeType: string } | undefined;
     const dateiAnhaenge: string[] = [];
+    // v1248 — Streaming: Textstücke sofort zeigen; fertige Sätze sofort sprechen (Synthese im Hintergrund, Wiedergabe der Reihe nach)
+    const sprechen = gesprochen || stimme;
+    let gezeigt = '';
+    let puffer = '';
+    let gesprochenBis = 0;
+    let erstesWort = 0;
+    let wiedergabe: Promise<void> = Promise.resolve();
+    let gesprochenBloecke = 0;
+    const spiele = (block: string) => {
+      const synth = synthetisiere(block);
+      wiedergabe = wiedergabe.then(async () => { const a = await synth; await audio.abspielen(a.data, a.mimeType); }).catch(err => { drucke(`🔇 ${(err as Error).message}`); });
+      gesprochenBloecke += 1;
+    };
+    const zeigeDelta = (t: string) => {
+      if (!gezeigt) { readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`\nAlfred (${zeit()}): `); erstesWort = Date.now(); }
+      process.stdout.write(t);
+      gezeigt += t;
+      if (sprechen) {
+        puffer += t;
+        const { bloecke, rest } = schneideSaetze(puffer, 60);
+        for (const b of bloecke) { spiele(b); gesprochenBis += b.length; }
+        puffer = rest;
+      }
+    };
+    const neuerAnlauf = () => { if (gezeigt) process.stdout.write('\n'); gezeigt = ''; puffer = ''; };
     try {
-      await anfrageStrom(k, '/api/message', { text, chatId }, (e) => {
-        if (e.type === 'status') { status = e.text ?? ''; readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`… ${status.slice(0, 100)}`); }
+      await anfrageStrom(k, '/api/message', { text, chatId, stream: true, ...(tier ? { tier } : {}) }, (e) => {
+        if (e.type === 'progress' && e.kind === 'delta') { zeigeDelta(e.text ?? ''); return; }
+        if (e.type === 'progress' && (e.kind === 'tool_call' || e.kind === 'thinking')) { if (gezeigt) neuerAnlauf(); status = e.text ?? ''; readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`… ${status.slice(0, 100)}`); return; }
+        if (e.type === 'status') { if (!gezeigt) { status = e.text ?? ''; readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`… ${status.slice(0, 100)}`); } }
         else if (e.type === 'response') { antwortText = e.text ?? ''; }
         else if (e.type === 'attachment' && e.data) {
           const data = Buffer.from(e.data, 'base64');
@@ -245,9 +274,15 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
         else if (e.type === 'error') { process.stdout.write(`\nFehler: ${e.text ?? 'unbekannt'}\n`); }
       });
     } catch (err) { process.stdout.write(`\nFehler: ${(err as Error).message}\n`); }
-    readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
     const hatText = antwortText && antwortText !== '(no response)';
-    process.stdout.write(`\nAlfred (${zeit()}): ${hatText ? antwortText : (sprachAnhang ? '🔊 (Sprachantwort)' : antwortText)}\n`);
+    if (gezeigt && hatText && antwortText.trim() === gezeigt.trim()) {
+      // v1248 — die Antwort stand schon stückweise da: nur abschließen
+      process.stdout.write('\n');
+    } else {
+      if (gezeigt) process.stdout.write('\n');
+      readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+      process.stdout.write(`\nAlfred (${zeit()}): ${hatText ? antwortText : (sprachAnhang ? '🔊 (Sprachantwort)' : antwortText)}\n`);
+    }
     for (const z of dateiAnhaenge) process.stdout.write(z + '\n');
     process.stdout.write('\n');
     if (sprachAnhang) {
@@ -255,8 +290,17 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
       process.stdout.write('🔊 …');
       try { await audio.abspielen(sprachAnhang.data, sprachAnhang.mimeType); } catch (err) { process.stdout.write(`\n🔇 Wiedergabe fehlgeschlagen: ${(err as Error).message}\n`); }
       readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
-    } else if ((gesprochen || stimme) && hatText) {
-      process.stdout.write('🔊 …'); await sprich(antwortText); readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+    } else if (sprechen && hatText) {
+      if (gesprochenBloecke > 0 && antwortText.trim() === gezeigt.trim()) {
+        // Rest, der noch keinen Satzschluss hatte, jetzt sprechen; dann auf die laufende Wiedergabe warten
+        const rest = puffer.trim();
+        if (rest) spiele(rest);
+        process.stdout.write(`🔊 ${gesprochenBloecke} ${gesprochenBloecke === 1 ? 'Block' : 'Blöcke'} während des Schreibens${erstesWort ? `, erstes Wort nach ${((erstesWort - sendeStart) / 1000).toFixed(1)} s` : ''}`);
+        await wiedergabe;
+        readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+      } else {
+        process.stdout.write('🔊 …'); await sprich(antwortText); readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+      }
     }
     antwortLaeuft = false;
     rl.prompt(true);
@@ -305,6 +349,12 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
         case '/quit': case '/exit': case '/ende': beende(); return;
         case '/talk': case '/sprechen': await talkStart(); return;
         case '/stimme': stimme = arg ? /^(an|on|ja|1)$/i.test(arg) : !stimme; drucke(`🔊 Vorgelesene Antworten: ${stimme ? 'an' : 'aus'}`); return;
+        case '/tier': { // v1248 — Modellstufe wie überall: default · strong · medium · fast
+          const w = arg.trim().toLowerCase();
+          if (!w || w === 'auto' || w === 'server') { tier = undefined; drucke('Modellstufe: Server-Standard'); return; }
+          if (!['default', 'strong', 'medium', 'fast'].includes(w)) { drucke('Modellstufe: default · strong · medium · fast · auto'); return; }
+          tier = w; drucke(`Modellstufe: ${w}`); return;
+        }
         case '/ja': await entscheide(arg, 'approve'); return;
         case '/nein': await entscheide(arg, 'reject'); return;
         case '/offen': drucke(offen.length ? offen.map((b, i) => `[${i + 1}] ${b.description ?? b.skillName ?? ''}`).join('\n') : 'Keine offene Bestätigung.'); return;
@@ -320,7 +370,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
           drucke(lage?.text ? `Lage (${lage.stand ?? ''}):\n${lage.text}` : 'Keine Lage vorhanden.');
           return;
         }
-        case '/hilfe': case '/help': drucke('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen (Strg+T/Enter stoppt) · /stimme an|aus · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit'); return;
+        case '/hilfe': case '/help': drucke('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen (Strg+T/Enter stoppt) · /stimme an|aus · /tier fast|default|strong · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit'); return;
         default: await sende(t);
       }
     })().catch(err => drucke(`Fehler: ${(err as Error).message}`));

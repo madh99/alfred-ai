@@ -312,6 +312,23 @@ export class ModelRouter extends LLMProvider {
     } catch { /* Alert darf nichts brechen */ }
   }
 
+  /** v1248 — Streams verbuchen Kosten wie complete(): Kostenwächter und llm_usage sehen auch gestreamte Antworten. */
+  private verbucheStream(resolvedTier: ModelTier, event: LLMStreamEvent): void {
+    if (event.type !== 'message_complete' || !event.response) return;
+    const tierConfig = this.multiConfig[resolvedTier];
+    const model = event.response.model ?? tierConfig?.model ?? 'unknown';
+    if (!event.response.model) event.response.model = model;
+    const costUsd = this.costTracker.record(model, event.response.usage);
+    this.logger?.info(
+      {
+        tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, stream: true,
+        inputTokens: event.response.usage?.inputTokens, outputTokens: event.response.usage?.outputTokens,
+        cacheReadTokens: event.response.usage?.cacheReadTokens, cacheWriteTokens: event.response.usage?.cacheCreationTokens,
+      },
+      'LLM call completed',
+    );
+  }
+
   private async executeComplete(provider: LLMProvider, resolvedTier: ModelTier, request: LLMRequest): Promise<LLMResponse> {
     const tierConfig = this.multiConfig[resolvedTier];
     const response = await provider.complete(request);
@@ -390,6 +407,7 @@ export class ModelRouter extends LLMProvider {
     try {
       for await (const event of provider.stream(withEffort)) {
         hasYielded = true;
+        this.verbucheStream(resolvedTier, event); // v1248
         yield event;
       }
       this.maybeNotifyRecovery(resolvedTier); // v868.3 — Re-Probe erfolgreich
@@ -419,7 +437,7 @@ export class ModelRouter extends LLMProvider {
       if (!fbProvider) continue;
       try {
         this.logger?.info({ tier }, 'Stream fallback to tier');
-        yield* fbProvider.stream(this.withTierEffort(request, tier));
+        for await (const event of fbProvider.stream(this.withTierEffort(request, tier))) { this.verbucheStream(tier, event); yield event; }
         this.maybeNotifyRecovery(tier);
         this.meldePuls('erfolg', tier);
         return;

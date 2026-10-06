@@ -27,6 +27,29 @@ export function sprachBloecke(text: string, min = 90, maxBloecke = 6): string[] 
   return bloecke;
 }
 
+/**
+ * v1248 — Streaming-Sprache Stufe 2: aus einem wachsenden Textpuffer die fertigen Sätze abschneiden.
+ * Ein Satz ist fertig, wenn nach . ! ? … ein Leerzeichen/Zeilenumbruch folgt. Zahlen wie „3.5" und
+ * Abkürzungen wie „z. B." bleiben beisammen, weil dort kein Leerzeichen bzw. ein Kleinbuchstabe folgt.
+ * Liefert Blöcke ab `min` Zeichen (gebündelte Sätze) und den unfertigen Rest.
+ */
+export function schneideSaetze(puffer: string, min = 60): { bloecke: string[]; rest: string } {
+  const bloecke: string[] = [];
+  let rest = puffer;
+  let aktuell = '';
+  for (;;) {
+    const m = /(?<!\b\w)[.!?…](?=\s+[^\sa-zäöüß])/.exec(rest); // kein Satzende nach einbuchstabigen Abkürzungen (z. B.)
+    if (!m) break;
+    const ende = m.index + 1;
+    const satz = rest.slice(0, ende).trim();
+    rest = rest.slice(ende);
+    if (satz) aktuell = aktuell ? `${aktuell} ${satz}` : satz;
+    if (aktuell.length >= min) { bloecke.push(aktuell); aktuell = ''; }
+  }
+  rest = (aktuell ? `${aktuell} ` : '') + rest.replace(/^\s+/, '');
+  return { bloecke, rest };
+}
+
 /** v1241 — MIME-Typ synthetisierter Sprache aus den ersten Bytes (Mistral liefert mp3, OpenAI opus/ogg). */
 export function audioMimeAusBytes(data: Buffer): string {
   if (data.length >= 4 && data.toString('latin1', 0, 4) === 'OggS') return 'audio/ogg';

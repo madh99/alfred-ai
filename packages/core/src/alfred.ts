@@ -15003,6 +15003,14 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         };
 
         const onProgress = async (status: string | import('./message-pipeline.js').ProgressEvent) => {
+          // v1248 — Textstücke der Antwort: nur an den API-Strom (Sitzung/Web), nie als Telegram-Edit
+          if (typeof status === 'object' && status.kind === 'delta') {
+            if (platform === 'api') {
+              const a = adapter as unknown as { writeProgressEvent?: (chatId: string, evt: unknown) => Promise<void> };
+              if (a.writeProgressEvent) { try { await a.writeProgressEvent(message.chatId, status); } catch { /* Strom weg */ } }
+            }
+            return;
+          }
           const stringRepr = formatProgressString(status);
           if (stringRepr === lastStatus) return;
           lastStatus = stringRepr;

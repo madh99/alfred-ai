@@ -149,7 +149,8 @@ const HISTORY_WITH_SUMMARY = 10; // When summary exists, load 10 recent messages
  * übergeben werden als `kind='status'` interpretiert.
  */
 export interface ProgressEvent {
-  kind: 'thinking' | 'tool_call' | 'tool_done' | 'tool_error' | 'status';
+  /** v1248 — 'delta': ein Textstück der entstehenden Antwort (nur bei metadata.stream). */
+  kind: 'thinking' | 'tool_call' | 'tool_done' | 'tool_error' | 'status' | 'delta';
   text: string;
   /** Bei tool_call/tool_done/tool_error: Skill-Name */
   tool?: string;
@@ -437,6 +438,29 @@ export class MessagePipeline {
     this.conversationSummarizer = options.conversationSummarizer;
     this.personality = options.personality;
     this.promptBuilder = new PromptBuilder();
+  }
+
+  /**
+   * v1248 — Modellaufruf als Stream: Textstücke sofort nach außen, Ergebnis wie complete().
+   * Scheitert der Stream vor dem ersten Stück, läuft der normale Aufruf (Fallback-Kette des Routers greift dort).
+   */
+  private async llmGestreamt(anfrage: Parameters<LLMProvider['complete']>[0], onDelta: (t: string) => void): Promise<Awaited<ReturnType<LLMProvider['complete']>>> {
+    let text = '';
+    let fertig: Awaited<ReturnType<LLMProvider['complete']>> | undefined;
+    let geliefert = false;
+    try {
+      for await (const ev of this.llm.stream(anfrage)) {
+        if (ev.type === 'text_delta' && ev.text) { text += ev.text; geliefert = true; try { onDelta(ev.text); } catch { /* Anzeige optional */ } }
+        else if (ev.type === 'message_complete' && ev.response) fertig = ev.response;
+      }
+    } catch (err) {
+      if (geliefert) throw err;
+      this.logger.warn({ err: (err as Error).message }, 'v1248 Stream vor dem ersten Stück gescheitert — normaler Aufruf');
+      return this.llm.complete(anfrage);
+    }
+    if (!fertig) return { content: text, stopReason: 'end_turn', usage: { inputTokens: 0, outputTokens: 0 } } as Awaited<ReturnType<LLMProvider['complete']>>;
+    if (!fertig.content && text) fertig = { ...fertig, content: text };
+    return fertig;
   }
 
   async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
@@ -1374,7 +1398,7 @@ export class MessagePipeline {
         }
 
         try {
-          response = await this.llm.complete({
+          const anfrage = {
             messages,
             system,
             tools: tools && tools.length > 0 ? tools : undefined,
@@ -1384,7 +1408,12 @@ export class MessagePipeline {
             // OpenAI-Provider sendet dann nur die neuen Tool-Ergebnisse);
             // andere Provider ignorieren das Feld, messages bleiben komplett.
             ...(previousResponseId ? { previousResponseId } : {}),
-          });
+          };
+          // v1248 — Streaming-Pfad: Textstücke gehen als Progress-Ereignis (kind=delta) nach außen,
+          // die Antwort selbst bleibt dieselbe Struktur wie bei complete().
+          response = message.metadata?.stream && onProgress
+            ? await this.llmGestreamt(anfrage, (t) => onProgress({ kind: 'delta', text: t }))
+            : await this.llm.complete(anfrage);
           previousResponseId = response.toolCalls?.length ? response.responseId : undefined;
           totalInputTokens += response.usage?.inputTokens ?? 0;
           totalOutputTokens += response.usage?.outputTokens ?? 0;

@@ -35,6 +35,8 @@ export interface NormalizedMessage {
     allowedSkills?: string[];
     /** v1245 — Nachricht kommt aus der Terminal-Sitzung auf diesem Gerät (Name); steht im Prompt. */
     sitzungGeraet?: string;
+    /** v1248 — Antwort stückweise liefern (Progress-Ereignisse kind=delta), z. B. für Vorlesen während des Schreibens. */
+    stream?: boolean;
     /** v658 — Projekt-Chat: projectId für Kontext-Injection in der Pipeline */
     projectId?: string;
     /** v687 — Project-Chat: Refs auf Open-Items/Notes/Documents/Files die vom User

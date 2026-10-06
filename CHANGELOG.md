@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1248] - 2026-10-06
+
+### Added — Streaming-Pfad: Vorlesen, während das Modell schreibt (v1248)
+
+Owner-Freigabe „wie vorgeschlagen". Kein Modell- oder Anbieterwechsel nötig: alle Anbieter streamen bereits, der Kern nutzte es nur nicht.
+
+- **Pipeline:** Mit `metadata.stream` läuft der Modellaufruf über den Stream des Routers; Textstücke gehen als Progress-Ereignis `delta` nach außen, das Ergebnis hat dieselbe Struktur wie bisher (Werkzeugaufrufe, Fortsetzung bei max_tokens, Fallback-Kette). Scheitert der Stream vor dem ersten Stück, läuft der normale Aufruf.
+- **Router:** gestreamte Antworten werden verbucht wie bisherige (Kostenwächter, llm_usage) — vorher nicht. Test.
+- **API:** `POST /api/message` nimmt `stream: true` und `tier` (default · strong · medium · fast); Textstücke kommen als `progress`-Ereignis mit `kind: "delta"`. Telegram und andere Plattformen bekommen keine Stücke (keine Edit-Flut).
+- **Sitzung:** zeigt die Antwort, während sie entsteht; mit `/stimme an` oder nach `/talk` werden fertige Sätze sofort synthetisiert und der Reihe nach abgespielt, der Rest am Ende. `/tier fast|default|strong|medium|auto` wählt die Modellstufe je Sitzung. Helfer `schneideSaetze` im Kern mit Test.
+
+### Geprüft — Sprachmodelle und Anbieter (06.10.)
+
+Live-Listen beider Anbieter: Mistral bietet `voxtral-mini-2602` (Transkription, konfiguriert), `voxtral-mini-realtime-2602` (Echtzeit-Transkription), `voxtral-mini-tts-2603` (Sprachsynthese, konfiguriert, einzige mit eigenen Stimmen wie alfred-jav) und `voxtral-small` (Audio-Chat). OpenAI bietet `gpt-4o-mini-transcribe`/`gpt-4o-transcribe` (+diarize), `gpt-4o-mini-tts`, `gpt-audio`, `gpt-realtime`-Familie und `gpt-live-transcribe`. Entscheidung: Mistral bleibt für STT und TTS (geklonte Stimme nur dort; Latenz STT ≈ 2 s ausreichend). Echtzeit-Transkription (Mistral realtime / OpenAI realtime) wäre die nächste Stufe, wenn das Sprechen ohne Taste laufen soll — eigener Schritt.
+
 ## [0.19.0-jarvis.1247] - 2026-10-06
 
 ### Added — Streaming-Sprache, Stufe 1: Block für Block vorlesen (v1247)
