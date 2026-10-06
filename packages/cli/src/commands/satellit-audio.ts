@@ -41,7 +41,7 @@ const PS_ZEILEN = [
   "    [AlfredMci]::Send('close p') | Out-Null",
   "    $typ = 'mpegvideo'; if ($arg -match '\\.wav$') { $typ = 'waveaudio' }",
   "    $r = [AlfredMci]::Send('open \"' + $arg + '\" type ' + $typ + ' alias p')",
-  "    if ($r -like 'ok*') { $r = [AlfredMci]::Send('play p wait'); [AlfredMci]::Send('close p') | Out-Null }",
+  "    if ($r -like 'ok*') { $r = [AlfredMci]::Send('play p'); $flag = $arg + '.stopp'; while ($true) { Start-Sleep -Milliseconds 60; if (Test-Path $flag) { [AlfredMci]::Send('stop p') | Out-Null; break }; $m = [AlfredMci]::Send('status p mode'); if ($m -notlike 'ok playing*') { break } }; [AlfredMci]::Send('close p') | Out-Null; if (Test-Path $flag) { Remove-Item $flag -ErrorAction SilentlyContinue } }",
   '  }',
   '  [Console]::Out.WriteLine($r)',
   '  [Console]::Out.Flush()',
@@ -56,6 +56,16 @@ function vorhanden(cmd: string): Promise<boolean> {
 
 export class Audio {
   private ps?: ChildProcess;
+  /** v1252 — laufende Wiedergabe (Datei) und Abspielprozess, zum Abbrechen per Stoppwort. */
+  private laufendeDatei?: string;
+  private spieler?: ChildProcess;
+  get spielt(): boolean { return !!this.laufendeDatei; }
+
+  /** Bricht die laufende Wiedergabe ab (Stoppwort). */
+  abbrechen(): void {
+    if (process.platform === 'win32') { if (this.laufendeDatei) { try { writeFileSync(this.laufendeDatei + '.stopp', ''); } catch { /* */ } } return; }
+    try { this.spieler?.kill(); } catch { /* */ }
+  }
   private warteschlange: Array<(z: string) => void> = [];
   private rest = '';
   readonly ordner = path.join(os.homedir(), '.alfred', 'sitzung');
@@ -99,6 +109,7 @@ export class Audio {
     const ext = mimeType.includes('wav') ? 'wav' : mimeType.includes('ogg') || mimeType.includes('opus') ? 'ogg' : 'mp3';
     const datei = path.join(this.ordner, `antwort-${Date.now()}.${ext}`);
     writeFileSync(datei, data);
+    this.laufendeDatei = datei;
     try {
       if (process.platform === 'win32') {
         if (ext === 'ogg') { await new Promise<void>((resolve) => { execFile('cmd', ['/c', 'start', '', datei], { windowsHide: true }, () => resolve()); }); return; }
@@ -112,12 +123,15 @@ export class Audio {
           : [['mpg123', ['-q', datei]], ['ffplay', ['-nodisp', '-autoexit', '-loglevel', 'quiet', datei]], ['paplay', [datei]]];
       for (const [c, a] of kandidaten) {
         if (!(await vorhanden(c))) continue;
-        await new Promise<void>((resolve, reject) => { execFile(c, a, { timeout: 10 * 60_000 }, (err) => err ? reject(err) : resolve()); });
+        await new Promise<void>((resolve) => { this.spieler = execFile(c, a, { timeout: 10 * 60_000 }, () => resolve()); });
+        this.spieler = undefined;
         return;
       }
       throw new Error('Kein Abspielwerkzeug gefunden (afplay / mpg123 / ffplay / aplay).');
     } finally {
+      this.laufendeDatei = undefined;
       try { unlinkSync(datei); } catch { /* */ }
+      try { unlinkSync(datei + '.stopp'); } catch { /* */ }
     }
   }
 

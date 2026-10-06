@@ -19,7 +19,7 @@ export interface SatzendeOptionen {
 }
 
 export type SatzendeEreignis =
-  | { art: 'start' }
+  | { art: 'start'; audio: Buffer }
   | { art: 'ende'; audio: Buffer; dauerMs: number }
   | { art: 'verworfen'; dauerMs: number };
 
@@ -81,7 +81,7 @@ export class SatzendeErkenner {
         if (this.lauteFolge >= this.o.startRahmen) {
           this.aktiv = true; this.stilleMs = 0; this.dauerMs = this.vorlauf.length * this.o.rahmenMs;
           this.teile = [...this.vorlauf]; this.vorlauf = [];
-          e.push({ art: 'start' });
+          e.push({ art: 'start', audio: Buffer.concat(this.teile) });
         }
       } else {
         this.lauteFolge = 0;

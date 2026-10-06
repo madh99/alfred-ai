@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1252] - 2026-10-07
+
+### Added — Echtzeit-Sprache, Schritt 3: `/hören` mit Aktivierungswort (v1252)
+
+Sprechen ohne Taste, wie bei Alexa oder Siri, nur mit Alfreds Gehirn dahinter. Taste, `/talk`, Tippen und Telegram bleiben.
+
+- **`/hören`** in der Sitzung: Mikrofonstrom → Satzende-Erkennung → Hör-Relais → Text. Nur Äußerungen, die mit dem **Aktivierungswort** beginnen (Standard „Alfred", in `~/.alfred/geraet.json` als `aktivierungswort` änderbar; tolerant gegen „Alfried", „Hey Alfred"), gehen als Nachricht an Alfred, der Rest wird gedimmt als „nicht an mich" gezeigt und verworfen. Nach einer Antwort bleibt 20 Sekunden ein **Gesprächsfenster** ohne Wort. Nur das Wort allein → „Ja?". **Stoppwort** („Alfred, stopp") bricht die Wiedergabe ab. **Halbduplex:** während Alfred antwortet oder spricht, hört die Sitzung nicht. `/hören aus` beendet.
+- Satzende-Erkennung liefert beim Start den Anlaut mit, damit das erste Wort nicht fehlt. Wiedergabe lässt sich abbrechen (Windows über eine Stoppmarke am MCI-Prozess, sonst Prozessende).
+- Preis der Echtzeit-Transkription in der Preistabelle (0,006 $/min), Buchung in Minuten.
+- Tests für Aktivierungswort, Gesprächsfenster und Stoppwort.
+
 ## [0.19.0-jarvis.1251] - 2026-10-07
 
 ### Added — Echtzeit-Sprache, Schritt 2: Hör-Relais am Server (v1251)

@@ -16,6 +16,7 @@ const SERVICE_PRICING: Record<string, { costPer: number; unitSize: number; unitT
   'voxtral-mini-tts-2603': { costPer: 0.016, unitSize: 1_000, unitType: 'characters' },
   'voxtral-mini-latest': { costPer: 0.003, unitSize: 1, unitType: 'minutes' },
   'voxtral-mini-2602': { costPer: 0.003, unitSize: 1, unitType: 'minutes' },
+  'voxtral-mini-transcribe-realtime-2602': { costPer: 0.006, unitSize: 1, unitType: 'minutes' }, // v1252 — Echtzeit
   'mistral-ocr-latest': { costPer: 2.00, unitSize: 1_000, unitType: 'pages' },
   'mistral-moderation-latest': { costPer: 0.10, unitSize: 1_000_000, unitType: 'tokens' },
   'mistral-moderation-2603': { costPer: 0.10, unitSize: 1_000_000, unitType: 'tokens' },

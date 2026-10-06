@@ -13506,7 +13506,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           authentifiziere: (t: string) => gw.authentifiziere(t),
           mistralKey: sttKey,
           maxMinutenProTag: Number(process.env.ALFRED_HOEREN_MAX_MIN_TAG ?? '') || 180,
-          verbuche: (sekunden: number, modell: string) => { this.serviceUsageRepo?.record('stt-realtime', modell, sekunden).catch(() => {}); },
+          verbuche: (sekunden: number, modell: string) => { this.serviceUsageRepo?.record('stt-realtime', modell, sekunden / 60).catch(() => {}); }, // Minuten wie die Preistabelle
         });
         this.hoerRelais = hoerRelais;
         // v1237 — Sinne: Weltmodell-Quelle „Geräte", Befunde über den Beobachter (10-min-Raster), Zustellsignal „Owner am PC"

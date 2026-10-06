@@ -9,7 +9,9 @@ import { starteSatellit } from './satellit.js';
 import { dienstLogPfad, satellitDienstLaeuft } from './satellit-dienst.js';
 import { getVersion } from '../version.js';
 import { Audio, type Aufnahme } from './satellit-audio.js'; // v1241
-import { audioMimeAusBytes, sprachBloecke, schneideSaetze } from '@alfred/core'; // v1243, v1247, v1248
+import { audioMimeAusBytes, sprachBloecke, schneideSaetze, SatzendeErkenner, pruefeAktivierung } from '@alfred/core'; // v1243, v1247, v1248, v1252
+import { mikrofonStrom, type MikrofonStrom } from './satellit-audio.js'; // v1252
+import { HoerClient } from './satellit-hoeren.js'; // v1252
 
 /**
  * v1232 — Die Sitzung: EIN Terminal für Chat, Bestätigungen und den Satelliten.
@@ -160,7 +162,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   console.log(`\nAlfred-Sitzung auf ${k.name} (v${getVersion()}) → ${k.server}`);
   console.log(`Satellit: ${satellitArt}`);
-  console.log('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen (Strg+T/Enter stoppt) · /stimme an|aus · /tier fast|default|strong · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
+  console.log('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen · /hören [aus] = zuhören mit Aktivierungswort · /stimme an|aus · /tier fast|default|strong · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
   rl.prompt();
 
   // Bestätigungen: alle 4 s abholen, neue melden
@@ -199,6 +201,11 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
   let aufnahme: Aufnahme | undefined;
   let stimme = false;
   let tier: string | undefined; // v1248 — Modellstufe je Nachricht (/tier)
+  // v1252 — Zuhören ohne Taste: Mikrofonstrom → Satzende → Relais → Aktivierungswort → Nachricht
+  const aktivierungswort = String((k as GeraetKonfig & { aktivierungswort?: string }).aktivierungswort ?? 'Alfred');
+  let hoeren: { strom: MikrofonStrom; client: HoerClient; erkenner: SatzendeErkenner } | undefined;
+  let gespraechsfensterBis = 0;
+  let gehoert = '';
   // v1247 — Streaming-Sprache Stufe 1: Block für Block — der nächste wird synthetisiert, während der vorige läuft
   const synthetisiere = async (block: string): Promise<{ data: Buffer; mimeType: string }> => {
     const r = await anfrageRoh(k, '/api/sprich', JSON.stringify({ text: block, knapp: false }), 'application/json');
@@ -218,6 +225,50 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
         await audio.abspielen(a.data, a.mimeType);
       }
     } catch (err) { drucke(`🔇 Sprachausgabe fehlgeschlagen: ${(err as Error).message}`); }
+  };
+
+  const hoerenStart = async () => {
+    if (hoeren) { drucke(`🎧 Höre schon zu (Wort: „${aktivierungswort}")`); return; }
+    const erkenner = new SatzendeErkenner();
+    let client: HoerClient;
+    try {
+      client = new HoerClient(k, (e) => {
+        if (e.typ === 'delta') { gehoert += e.text ?? ''; readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`🎧 ${gehoert.slice(-100)}`); }
+        else if (e.typ === 'fertig') {
+          const text = (e.text ?? '').trim(); gehoert = '';
+          readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0);
+          if (!text) { rl.prompt(true); return; }
+          const a = pruefeAktivierung(text, aktivierungswort, Date.now() < gespraechsfensterBis);
+          if (a.art === 'ignoriert') { process.stdout.write(`\x1b[2m(nicht an mich: ${text})\x1b[0m\n`); rl.prompt(true); return; }
+          if (a.art === 'stopp') { audio.abbrechen(); process.stdout.write('⏹ gestoppt\n'); gespraechsfensterBis = Date.now() + 20_000; rl.prompt(true); return; }
+          if (a.art === 'nur_wort') { gespraechsfensterBis = Date.now() + 20_000; process.stdout.write(`Du (gesprochen): ${text}\n`); void sprich('Ja?'); rl.prompt(true); return; }
+          process.stdout.write(`Du (gesprochen): ${a.text}\n`);
+          void sende(a.text, true).then(() => { gespraechsfensterBis = Date.now() + 20_000; });
+        }
+        else if (e.typ === 'limit' || e.typ === 'fehler') drucke(`🎧 ${e.typ}: ${e.grund ?? ''}`);
+      }, (grund) => { drucke(`🎧 Relais: ${grund} — Zuhören beendet`); void hoerenStop(); });
+      await client.verbinde();
+    } catch (err) { drucke(`🎧 Relais nicht erreichbar: ${(err as Error).message}`); return; }
+    const strom = await mikrofonStrom((pcm) => {
+      // Halbduplex: während Alfred spricht oder antwortet, nicht hören (sonst transkribiert er sich selbst)
+      if (antwortLaeuft || audio.spielt) { return; }
+      for (const ev of erkenner.schiebe(pcm)) {
+        if (ev.art === 'start') { client.start(); client.audio(ev.audio); }
+        else if (ev.art === 'ende') { client.ende(); }
+      }
+      if (erkenner.spricht) client.audio(pcm);
+    }, (grund) => { drucke(`🎧 Mikrofon: ${grund}`); void hoerenStop(); });
+    hoeren = { strom, client, erkenner };
+    rl.setPrompt(`🎧 ${aktivierungswort}: `);
+    drucke(`🎧 Höre zu — sag „${aktivierungswort}, …". Nach einer Antwort 20 s ohne Wort. „${aktivierungswort}, stopp" bricht die Wiedergabe ab. /hören aus beendet.`);
+  };
+  const hoerenStop = async () => {
+    if (!hoeren) return;
+    const h = hoeren; hoeren = undefined;
+    try { h.strom.stop(); } catch { /* */ }
+    try { h.client.schluss(); } catch { /* */ }
+    rl.setPrompt('Du: ');
+    drucke('🎧 Zuhören aus.');
   };
 
   const sende = async (text: string, gesprochen = false) => {
@@ -348,6 +399,11 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
       switch (befehl.toLowerCase()) {
         case '/quit': case '/exit': case '/ende': beende(); return;
         case '/talk': case '/sprechen': await talkStart(); return;
+        case '/hören': case '/hoeren': case '/listen': { // v1252
+          const w = arg.trim().toLowerCase();
+          if (w === 'aus' || w === 'off' || w === 'stop') await hoerenStop(); else await hoerenStart();
+          return;
+        }
         case '/stimme': stimme = arg ? /^(an|on|ja|1)$/i.test(arg) : !stimme; drucke(`🔊 Vorgelesene Antworten: ${stimme ? 'an' : 'aus'}`); return;
         case '/tier': { // v1248 — Modellstufe wie überall: default · strong · medium · fast
           const w = arg.trim().toLowerCase();
@@ -370,7 +426,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
           drucke(lage?.text ? `Lage (${lage.stand ?? ''}):\n${lage.text}` : 'Keine Lage vorhanden.');
           return;
         }
-        case '/hilfe': case '/help': drucke('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen (Strg+T/Enter stoppt) · /stimme an|aus · /tier fast|default|strong · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit'); return;
+        case '/hilfe': case '/help': drucke('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen · /hören [aus] = zuhören mit Aktivierungswort · /stimme an|aus · /tier fast|default|strong · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit'); return;
         default: await sende(t);
       }
     })().catch(err => drucke(`Fehler: ${(err as Error).message}`));
@@ -378,6 +434,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   const beende = () => {
     clearInterval(bestaetigungsTimer);
+    void hoerenStop();
     audio.stop();
     satellitStop?.();
     console.log('\nSitzung beendet.');
