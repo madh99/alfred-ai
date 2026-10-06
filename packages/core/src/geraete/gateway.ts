@@ -38,6 +38,9 @@ interface Verbindung {
   zuletztPuls: number;
   verbundenSeit: string;
   offen: Map<string, { resolve: (r: GeraetAktionErgebnis) => void; timer: ReturnType<typeof setTimeout> }>;
+  /** v1237 — letzte Sinne (Leerlauf, Fenster, Akku) und ihr Zeitpunkt. */
+  sinne?: Record<string, unknown>;
+  sinneZeit?: number;
 }
 
 export class GeraeteGateway {
@@ -105,11 +108,29 @@ export class GeraeteGateway {
     return { ok: true, id: eintrag.id, token, name, skillName: geraetSkillName(name) };
   }
 
-  async liste(): Promise<Array<GeraetEintrag & { online: boolean; verbundenSeit?: string; skillName?: string }>> {
+  async liste(): Promise<Array<GeraetEintrag & { online: boolean; verbundenSeit?: string; skillName?: string; sinne?: Record<string, unknown>; sinneZeit?: string }>> {
     const userId = this.deps.ownerUserId();
     if (!userId) return [];
     const rows = await this.deps.repo.liste(userId);
-    return rows.map(r => { const v = this.verbindungen.get(r.id); return { ...r, online: !!v, verbundenSeit: v?.verbundenSeit, skillName: v?.skillName }; });
+    return rows.map(r => { const v = this.verbindungen.get(r.id); return { ...r, online: !!v, verbundenSeit: v?.verbundenSeit, skillName: v?.skillName, sinne: v?.sinne, sinneZeit: v?.sinneZeit ? new Date(v.sinneZeit).toISOString() : undefined }; });
+  }
+
+  /** v1237 — Zustände für die Weltmodell-Deutung (normalzustaende/geraete.ts). */
+  async zustaende(): Promise<import('../normalzustaende/geraete.js').GeraetZustand[]> {
+    const l = await this.liste();
+    return l.filter(g => g.status === 'aktiv').map(g => ({ name: g.name, plattform: g.manifest.plattform, online: g.online, verbundenSeit: g.verbundenSeit, zuletztGesehen: g.zuletztGesehen, sinne: g.sinne as import('../normalzustaende/geraete.js').GeraetSinne | undefined, sinneZeit: g.sinneZeit }));
+  }
+
+  /** v1237 — Gerät, an dem der Owner gerade sitzt (frische Sinne, kurzer Leerlauf) — Zustellsignal. */
+  aktivesGeraet(): { name: string; leerlaufSek: number } | undefined {
+    const jetzt = this.deps.now?.() ?? Date.now();
+    let best: { name: string; leerlaufSek: number } | undefined;
+    for (const v of this.verbindungen.values()) {
+      const sek = v.sinne?.leerlaufSek;
+      if (typeof sek !== 'number' || !v.sinneZeit || jetzt - v.sinneZeit > 3 * 60_000) continue;
+      if (!best || sek < best.leerlaufSek) best = { name: v.eintrag.name, leerlaufSek: sek };
+    }
+    return best;
   }
 
   async widerrufe(id: string): Promise<boolean> {
@@ -216,7 +237,9 @@ export class GeraeteGateway {
       }
       case 'sinne':
         v.zuletztPuls = Date.now();
-        this.deps.logger.debug({ geraet: v.eintrag.name, werte: Object.keys(n.werte ?? {}) }, 'v1224 Sinne empfangen (Phase 3 wertet aus)');
+        // v1237 — Sinne merken: Weltmodell-Quelle „Geräte" und Anwesenheitssignal lesen sie
+        v.sinne = n.werte ?? {};
+        v.sinneZeit = Date.now();
         return;
       default:
         this.deps.logger.debug({ typ: (n as { typ?: string }).typ }, 'v1224 unbekannter Nachrichtentyp');

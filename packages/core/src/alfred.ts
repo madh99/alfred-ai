@@ -13486,6 +13486,18 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
         gw.start();
         this.geraeteGateway = gw;
+        // v1237 — Sinne: Weltmodell-Quelle „Geräte", Befunde über den Beobachter (10-min-Raster), Zustellsignal „Owner am PC"
+        (this.reasoningEngine as unknown as { collector?: { setGeraeteQuelle?: (fn: () => Promise<unknown[]>) => void } } | undefined)?.collector?.setGeraeteQuelle?.(() => gw.zustaende());
+        this.registriereJob({
+          key: 'geraete-beobachten', beschreibung: 'Geräte (Satelliten): Sinne deuten, Befunde fortschreiben', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 2,
+          run: async () => {
+            const { deuteGeraete } = await import('./normalzustaende/geraete.js');
+            const z = await gw.zustaende();
+            const d = deuteGeraete({ geraete: z });
+            if (d) await this.weltmodellBeobachter?.beobachte('geraete', { zeilen: d.zeilen, auffaellig: d.auffaellig });
+            return { ok: true, zaehler: { geraete: z.length, auffaellig: d?.auffaellig.length ?? 0, aktiv: d?.aktiv ? 1 : 0 } };
+          },
+        });
         (logApiAdapter as any).setGeraeteCallbacks({
           pairingCode: () => gw.erzeugePairingCode(),
           paare: (b: Record<string, unknown>, r: string) => gw.paare(b, r),
@@ -14150,7 +14162,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
         });
         this.haEreignisQuelle.start();
-        this.reasoningEngine?.setAnwesenheitsQuelle(() => this.hausAnwesenheit); // v1198
+        this.reasoningEngine?.setAnwesenheitsQuelle(() => ({ ...(this.hausAnwesenheit ?? {}), amGeraet: this.geraeteGateway?.aktivesGeraet() })); // v1198, v1237 Owner am Gerät
         const quelle = this.haEreignisQuelle;
         this.registriereJob({
           key: 'ha-ereignisse-watchdog', beschreibung: 'Home-Assistant-WebSocket: Verbindung prüfen, Hänger neu verbinden', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 5,

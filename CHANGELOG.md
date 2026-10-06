@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1237] - 2026-10-06
+
+### Added — Sinne der Geräte: Leerlauf, Fenster, Akku (v1237)
+
+Letzter offener Punkt von Phase 1 der Geräte-Architektur.
+
+- **Satellit** sendet jede Minute seine Sinne: Sekunden seit der letzten Eingabe, Titel des aktiven Fensters, Akku (Prozent, lädt). Windows über einen dauerhaften PowerShell-Kindprozess (P/Invoke, einmal kompiliert), macOS über ioreg/osascript/pmset, Linux über xprintidle/xdotool/sysfs. Fehlende Werkzeuge liefern keinen Wert, keinen Fehler. `sinneOhneFenster: true` in `~/.alfred/geraet.json` lässt den Fenstertitel weg.
+- **Weltmodell-Quelle „Geräte"** (`normalzustaende/geraete.ts`): je Gerät gedeutet — aktiv mit Fenster, im Leerlauf seit, getrennt seit; ⚠️ getrennt über 3 h, ⚠️ Akku unter 15 % ohne Netz. Steht im Weltmodell-Block des Chats und wird alle 10 Minuten über den Beobachter zu Befunden (`geraet:<Name>:getrennt`, `geraet:<Name>:akku`).
+- **Zustellsignal „Owner am PC".** Sitzt der Owner gerade an einem Satelliten (Leerlauf bis 2 min), liefert der Zustell-Scheduler sofort, außer im Ruhefenster oder bei niedriger Dringlichkeit; der Grund steht im Warum.
+- Kachel Lebenszeichen zeigt Leerlauf, Fenster und Akku je Gerät. Tests für Deutung und Zustellregel.
+
 ## [0.19.0-jarvis.1236] - 2026-10-06
 
 ### Fixed — Anhänge nach einer Freigabe kommen an (v1236)

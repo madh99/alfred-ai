@@ -10,6 +10,7 @@ import { getVersion } from '../version.js';
 import { ladeKonfig, type GeraetKonfig } from './pair.js';
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
+import { SinneErfasser } from './satellit-sinne.js'; // v1237
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
 let browserHand: BrowserHand | undefined;
@@ -58,9 +59,12 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'browser_screenshot', beschreibung: 'Screenshot der aktuellen Seite (JPEG, an den Owner)', autonomie: 'auto' },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
     ],
-    sinne: [],
+    sinne: ['leerlauf', 'fenster', 'akku'], // v1237
   };
 }
+
+/** v1237 — Sinne alle 60 s an das Gehirn. */
+export const SINNE_INTERVALL_MS = 60_000;
 
 type Ergebnis = { success: boolean; data?: unknown; display?: string; error?: string };
 
@@ -198,7 +202,8 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   let rueckzugMs = 1000;
   let laeuft = true;
   let aktiv: WebSocket | undefined;
-  const stop = () => { laeuft = false; try { aktiv?.close(); } catch { /* */ } };
+  const sinne = new SinneErfasser({ ohneFenster: (k as GeraetKonfig & { sinneOhneFenster?: boolean }).sinneOhneFenster === true });
+  const stop = () => { laeuft = false; sinne.stop(); try { aktiv?.close(); } catch { /* */ } };
 
   log(`Satellit ${k.name} (${manifest.plattform}, v${version}) → ${k.server}`);
   log(`Freigegebene Verzeichnisse: ${k.freigegebeneVerzeichnisse.join(', ')}`);
@@ -209,10 +214,15 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
         const ws = new WebSocket(wsUrl, { rejectUnauthorized: !k.insecure });
         aktiv = ws;
         let puls: ReturnType<typeof setInterval> | undefined;
+        let sinneTimer: ReturnType<typeof setInterval> | undefined;
         const sende = (n: Record<string, unknown>) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); };
+        const sendeSinne = async () => { try { const w = await sinne.erfasse(); if (Object.keys(w).length) sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } };
         ws.on('open', () => {
           sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });
           puls = setInterval(() => sende({ typ: 'puls' }), PULS_INTERVALL_MS);
+          // v1237 — Sinne: sofort nach dem Willkommen, dann jede Minute
+          setTimeout(() => { void sendeSinne(); }, 1500);
+          sinneTimer = setInterval(() => { void sendeSinne(); }, SINNE_INTERVALL_MS);
         });
         ws.on('message', async (raw) => {
           let n: GeraetNachricht;
@@ -230,7 +240,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             log(`  → ${r.success ? 'ok' : 'Fehler: ' + r.error}`);
           }
         });
-        ws.on('close', (code, reason) => { if (puls) clearInterval(puls); resolve(`geschlossen (${code} ${String(reason)})`); });
+        ws.on('close', (code, reason) => { if (puls) clearInterval(puls); if (sinneTimer) clearInterval(sinneTimer); resolve(`geschlossen (${code} ${String(reason)})`); });
         ws.on('error', (err) => { resolve(`Fehler: ${err.message}`); });
       });
       if (!laeuft || opts.einmal) break;

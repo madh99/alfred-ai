@@ -282,6 +282,9 @@ export class ReasoningContextCollector {
   /** v1179 — Jarvis Schicht 3: Vorgänge + Ausführungsgedächtnis als Kontext. */
   private vorgaengeRepo?: import('@alfred/storage').VorgaengeRepository;
   setVorgaengeRepo(repo: import('@alfred/storage').VorgaengeRepository): void { this.vorgaengeRepo = repo; }
+  /** v1237 — Geräte (Satelliten) als Weltmodell-Quelle. */
+  private geraeteQuelle?: () => Promise<import('./normalzustaende/geraete.js').GeraetZustand[]>;
+  setGeraeteQuelle(fn: () => Promise<import('./normalzustaende/geraete.js').GeraetZustand[]>): void { this.geraeteQuelle = fn; }
   private async fetchVorgaenge(): Promise<string> {
     if (!this.vorgaengeRepo) return '(Vorgänge nicht verfügbar)';
     const uid = await this.getEffectiveUserId();
@@ -1654,6 +1657,15 @@ export class ReasoningContextCollector {
           }
         }
       } catch (err) { this.logger.debug({ err }, 'v1171 Sensorbatterien-Deutung fehlgeschlagen'); }
+    }
+
+    // v1237 — Geräte (Satelliten) gedeutet: online/Leerlauf/Fenster/Akku
+    if (this.geraeteQuelle) {
+      try {
+        const { deuteGeraete } = await import('./normalzustaende/geraete.js');
+        const d = deuteGeraete({ geraete: await this.geraeteQuelle() });
+        if (d) { parts.push('Geräte (gedeutet):'); for (const z of d.zeilen) parts.push(`  ${z}`); }
+      } catch (err) { this.logger.debug({ err }, 'v1237 Geräte-Deutung fehlgeschlagen'); }
     }
 
     // v1143 — J4: Anwesenheit als erste Zeile — deterministisches

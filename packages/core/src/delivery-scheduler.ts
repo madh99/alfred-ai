@@ -24,7 +24,9 @@ const MIN_HOUR_CLASS: Record<Urgency, HourClass> = {
 const CLASS_ORDER: Record<HourClass, number> = { QUIET: 0, WAKING: 1, WINDING_DOWN: 2, ACTIVE: 3 };
 
 /** v1198 — Anwesenheit aus Home Assistant (Personen-Entitäten, Innenraum-Bewegung). */
-export interface Anwesenheit { jemandZuhause?: boolean; letzteBewegungAt?: number }
+export interface Anwesenheit { jemandZuhause?: boolean; letzteBewegungAt?: number; /** v1237 — Gerät mit frischen Sinnen und kurzem Leerlauf. */ amGeraet?: { name: string; leerlaufSek: number } }
+/** v1237 — Leerlauf bis hierher heißt „sitzt gerade davor". */
+export const GERAET_AKTIV_SEK = 120;
 /** Bewegung im Haus innerhalb dieser Spanne gilt als „jemand ist wach und da". */
 export const BEWEGUNG_FRISCH_MIN = 10;
 
@@ -42,6 +44,11 @@ export function entscheideZustellung(e: {
   if (e.chatAktiv) return { liefern: true, grund: 'Chat aktiv (letzte 30 min)' };
   if (e.imRuhefenster) return { liefern: false, grund: 'Ruhefenster' };
   const now = e.now ?? Date.now();
+  // v1237 — Owner sitzt gerade an einem Satelliten (PC, Mac, Laptop): zustellen, außer bei niedriger Dringlichkeit
+  const g = e.anwesenheit?.amGeraet;
+  if (g && g.leerlaufSek <= GERAET_AKTIV_SEK && e.urgency !== 'low') {
+    return { liefern: true, grund: `Owner am ${g.name} (Leerlauf ${g.leerlaufSek < 60 ? 'unter 1 min' : Math.round(g.leerlaufSek / 60) + ' min'})` };
+  }
   const bewegungMin = e.anwesenheit?.letzteBewegungAt ? (now - e.anwesenheit.letzteBewegungAt) / 60_000 : undefined;
   if (e.anwesenheit?.jemandZuhause === true && bewegungMin !== undefined && bewegungMin <= BEWEGUNG_FRISCH_MIN && e.urgency !== 'low') {
     return { liefern: true, grund: `Bewegung im Haus vor ${Math.round(bewegungMin)} min (zu Hause, wach)` };

@@ -153,6 +153,9 @@ export function LebenszeichenPage() {
                   <li key={g.id}>
                     <span className={g.online ? 'text-emerald-400' : 'text-gray-500'}>{g.online ? '●' : '○'}</span> <span className="font-medium">{g.name}</span> <span className="text-gray-500">({g.plattform}{g.manifest?.version ? ', v' + g.manifest.version : ''})</span>{' '}
                     <span className="text-gray-500">{g.online ? `verbunden seit ${alter(g.verbundenSeit)}` : `zuletzt gesehen ${alter(g.zuletztGesehen)}`}</span>
+                    {g.online && g.sinne && (
+                      <span className="text-gray-400"> · {g.sinne.leerlaufSek !== undefined ? (g.sinne.leerlaufSek < 300 ? `aktiv (Leerlauf ${Math.round(g.sinne.leerlaufSek / 60)} min)` : `Leerlauf ${Math.round(g.sinne.leerlaufSek / 60)} min`) : ''}{g.sinne.fenster && g.sinne.leerlaufSek !== undefined && g.sinne.leerlaufSek < 300 ? ` · „${g.sinne.fenster.slice(0, 50)}"` : ''}{g.sinne.akkuProzent !== undefined ? ` · Akku ${g.sinne.akkuProzent} %${g.sinne.akkuLaedt ? ' (lädt)' : ''}` : ''}</span>
+                    )}
                     <div className="text-gray-500 mt-0.5">{(g.manifest?.aktionen ?? []).map(a => `${a.name}${a.autonomie === 'auto' ? '' : a.autonomie === 'nie' ? ' ⛔' : ' ✋'}`).join(' · ')}</div>
                   </li>
                 ))}
