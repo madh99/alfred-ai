@@ -214,6 +214,13 @@ Owner-Vorgabe: Alfred soll auf alles dynamisch antworten, Wissen aufbauen und si
 - Schleife 2 „Reaktion → Verhalten" (Schicht 4 Teil 2): bewusst zurückgestellt, bis zwei Wochen Kennzahlen vorliegen (ab etwa 20.10.); Regeln (Digest-Modus unter Quote, Aufstieg nach `auto`) nur mit Owner-Freigabe.
 - Stolperstein (.1208): Sonnet 5.5 lehnt `thinking:{type:"disabled"}` ab und verlangt `between_tools`; drei Vollpässe scheiterten in Serie. Fix deterministisch plus modellunabhängige Selbstheilung: der Provider lernt die verlangte Abschalt-Form aus der 400-Antwort, wiederholt einmal und behält sie für die Laufzeit.
 
+### Kosten und Antwortzeit: Ursachen statt Prompt-Diät (.1209–.1211, 06.10.2026)
+Owner-Frage: Soll der System-Prompt gekürzt werden? Analyse: drei frühere Kürzungen nach vermuteter Relevanz (Skill-Filter, Memory-Auswahl, Kontextfenster) schlugen jedes Mal zurück. Der statische Prompt-Text ist 6.000 Zeichen; die Masse sind Werkzeug-Schemata (29.000 Tokens bei 61 Skills gegen 16.000 für den ganzen System-Prompt), ein nach jedem Neustart laufender Generator und vier tägliche Chat-Aufgaben mit allen Werkzeugen. Entscheidung Owner: System-Prompt unangetastet, Ursachen beheben.
+- Messung (.1209): `llm_request_prep` protokolliert System-, Werkzeug- und Verlaufs-Tokens je Nachricht. Entscheidung über Werkzeug-Stufen erst mit zwei Tagen Daten.
+- Intervall-Jobs überleben Neustarts (.1209): das Register übernimmt den jüngsten Lauf aus `job_runs`. Der wöchentliche Self-Modify-Job lief vorher 15 Minuten nach jedem Neustart (drei Opus-Läufe in einer Nacht, ein Drittel der Tageskosten) und überspringt nun bei unverändertem Scan.
+- Kontext parallel (.1210): die zehn Kontext-Lader der Chat-Pipeline laufen gleichzeitig, das Abfrage-Embedding wird 60 s zwischengespeichert (vorher bis zu 14 Netzaufrufe je Nachricht). Beweis: Vorbereitung bis zum Modellaufruf 5.674 ms → 411 ms.
+- Mail-Ereignisquelle (.1211, Schicht 2): geplante Aufgaben vom Typ `mail` werden von neuer Post ausgelöst, nicht von der Uhr, genau einmal je Nachricht, mit Verweis auf die Nachricht und nur den Werkzeugen der Aufgabe. Der aWATTar-Rechnungscheck (per Chat angelegt, viermal täglich, 81 Werkzeuge) ist darauf umgestellt; der 22-Uhr-Lauf bleibt als Sicherheitsnetz, bis der Mail-Auslöser zweimal nachweislich gefeuert hat.
+
 ### Arbeitsweise, die sich bewährt hat
 - Kleine Releases mit sofortigem Live-Audit; mehrere Fehler wurden erst durch die vorangegangene Schicht sichtbar (Stream stabil → Refresh-Schleife → stiller REST-Ausfall → Tageskontingent).
 - Fixes an der Quelle (Schreiber, Datenlage) statt am Modell; alles funktioniert mit jedem Modell der Fallback-Kette.
