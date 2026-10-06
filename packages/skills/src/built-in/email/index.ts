@@ -73,7 +73,7 @@ export class EmailSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment', 'extract', 'summarize_inbox', 'categorize', 'list_accounts'],
+            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment', 'extract', 'summarize_inbox', 'categorize', 'list_accounts', 'new_messages'],
             description: 'The email action to perform. Use "extract" for bulk invoice/receipt extraction. Use "summarize_inbox" for an AI-generated summary of recent unread emails. Use "categorize" to classify unread emails by priority.',
           },
           ...accountProp,
@@ -221,6 +221,8 @@ export class EmailSkill extends Skill {
           return await this.handleCategorize(input);
         case 'list_accounts':
           return this.handleListAccounts(providers);
+        case 'new_messages':
+          return this.handleNewMessages(input);
         default:
           return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, forward, attachment, extract, summarize_inbox, categorize, list_accounts` };
       }
@@ -337,6 +339,30 @@ export class EmailSkill extends Skill {
 
   /** Automated sender patterns — emails from these don't need user action. */
   private static readonly AUTOMATED_SENDERS = /no[_-]?reply@|noreply@|notifications?@|ci@|builds?@|npm|github\.com|gitlab\.com|sentry\.io/i;
+
+  /**
+   * v1211 — Deterministisch: Posteingang holen und nach Absender/Betreff/Zeit filtern (Teilstrings,
+   * ohne Groß-/Kleinschreibung). Grundlage der Mail-Ereignisquelle; kein Modell, keine Operatoren.
+   * Parameter: account, from, subject, since (ISO), count (≤ 50, Standard 50).
+   */
+  private async handleNewMessages(input: Record<string, unknown>): Promise<SkillResult> {
+    const resolved = this.resolveProvider(input);
+    if ('success' in resolved) return resolved;
+    const { provider, account } = resolved;
+    const limit = Math.min(Math.max(1, (input.count as number | undefined) ?? 50), 50);
+    const from = typeof input.from === 'string' ? input.from.trim().toLowerCase() : '';
+    const subject = typeof input.subject === 'string' ? input.subject.trim().toLowerCase() : '';
+    const sinceMs = typeof input.since === 'string' && !isNaN(new Date(input.since).getTime()) ? new Date(input.since).getTime() : undefined;
+    const alle = await provider.fetchInbox(limit);
+    const treffer = alle
+      .filter(m => (!from || m.from.toLowerCase().includes(from)) && (!subject || m.subject.toLowerCase().includes(subject)) && (sinceMs === undefined || m.date.getTime() > sinceMs))
+      .sort((a, b) => b.date.getTime() - a.date.getTime())
+      .map(m => ({ id: this.encodeId(account, m.id), from: m.from, subject: m.subject, date: m.date.toISOString(), read: m.read, hasAttachments: m.hasAttachments ?? false }));
+    const display = treffer.length === 0
+      ? 'Keine passenden neuen Nachrichten.'
+      : treffer.map((m, i) => `${i + 1}. [${m.id}] ${m.subject}\n   From: ${m.from} | ${m.date}`).join('\n');
+    return { success: true, data: { account, count: treffer.length, messages: treffer }, display: this.accountLabel(account, display) };
+  }
 
   private async handleInbox(input: Record<string, unknown>): Promise<SkillResult> {
     const resolved = this.resolveProvider(input);

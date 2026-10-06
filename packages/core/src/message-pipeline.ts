@@ -940,6 +940,10 @@ export class MessagePipeline {
         if (hasAudioAttachment) {
           // Voice messages: skip skill filter — text is not yet transcribed
           skillMetas = allSkillMetas;
+        } else if (Array.isArray(message.metadata?.allowedSkills) && message.metadata.allowedSkills.length > 0) {
+          // v1211 — deterministische Werkzeugliste des Aufrufers (Mail-Ereignisquelle): kein Raten per Keyword
+          const erlaubt = new Set(message.metadata.allowedSkills);
+          skillMetas = allSkillMetas.filter(s => erlaubt.has(s.name));
         } else if (isProjectChat) {
           // Project-Chat: Whitelist statt Keyword-Filter
           skillMetas = allSkillMetas.filter(s => PROJECT_CHAT_WHITELIST.has(s.name));

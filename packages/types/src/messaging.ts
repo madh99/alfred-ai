@@ -31,6 +31,8 @@ export interface NormalizedMessage {
     callbackQuery?: boolean;
     /** Real user chatId for scheduled tasks (which use isolated chatIds for conversation). */
     originalChatId?: string;
+    /** v1211 — Werkzeuge, die dieser Lauf bekommt (deterministisch statt Keyword-Filter), z. B. bei Mail-Aufgaben. */
+    allowedSkills?: string[];
     /** v658 — Projekt-Chat: projectId für Kontext-Injection in der Pipeline */
     projectId?: string;
     /** v687 — Project-Chat: Refs auf Open-Items/Notes/Documents/Files die vom User

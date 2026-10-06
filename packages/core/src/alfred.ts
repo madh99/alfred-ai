@@ -6332,6 +6332,58 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.config.cluster?.nodeId ?? 'single',
     );
 
+    // 7c2. v1211 — Jarvis Schicht 2: Mail-Ereignisquelle. Geplante Aufgaben vom Typ 'mail'
+    // werden nicht von der Uhr, sondern von neuer Post ausgelöst — genau einmal je Nachricht,
+    // mit Verweis auf die Nachricht und nur den Werkzeugen der Aufgabe.
+    {
+      const { parseMailRegel, neueMails, begrenzeGesehen, ausloeserText, MAIL_STANDARD_SKILLS } = await import('./ereignisse/mail-ereignisse.js');
+      const { buildSkillContext: baueKontext } = await import('./context-factory.js');
+      const schedulerRef = this.proactiveScheduler;
+      this.registriereJob({
+        key: 'mail-ereignisse', beschreibung: 'Mail-Ereignisquelle: neue Post löst Mail-Aufgaben aus (Schicht 2)',
+        takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 2, timeoutMin: 9,
+        run: async () => {
+          const aufgaben = (await scheduledActionRepo.getAll()).filter(a => a.enabled && a.scheduleType === 'mail');
+          const zaehler = { aufgaben: aufgaben.length, neue: 0, ausgeloest: 0, fehler: 0 };
+          if (aufgaben.length === 0) return { ok: true, zaehler };
+          const emailSkill = skillRegistry.get('email');
+          if (!emailSkill) return { ok: false, fehler: 'email-Skill nicht registriert', zaehler };
+          for (const a of aufgaben) {
+            const regel = parseMailRegel(a.scheduleValue);
+            if (!regel) { zaehler.fehler++; this.logger.warn({ aufgabe: a.name, scheduleValue: a.scheduleValue.slice(0, 120) }, 'v1211 Mail-Aufgabe ohne gültige Regel'); continue; }
+            try {
+              const { context } = await baueKontext(userRepo, { userId: a.userId, platform: a.platform as import('@alfred/types').Platform, chatId: a.chatId });
+              const r = await skillSandbox.execute(emailSkill, { action: 'new_messages', ...(regel.account ? { account: regel.account } : {}), ...(regel.from ? { from: regel.from } : {}), ...(regel.subject ? { subject: regel.subject } : {}), count: 50 }, context);
+              if (!r.success) { zaehler.fehler++; this.logger.warn({ aufgabe: a.name, err: r.error }, 'v1211 Posteingang nicht lesbar'); continue; }
+              const mails = ((r.data as { messages?: Array<{ id: string; from: string; subject: string; date: string }> })?.messages) ?? [];
+              const schluessel = 'gesehen:' + a.id;
+              const gespeichert = await skillStateRepo.get(a.userId, 'mail-ereignisse', schluessel);
+              if (gespeichert === undefined) {
+                // Erstlauf: Bestand nur merken, nichts auslösen — alte Post ist kein Ereignis
+                await skillStateRepo.set(a.userId, 'mail-ereignisse', schluessel, JSON.stringify(begrenzeGesehen(mails.map(m => m.id))));
+                this.logger.info({ aufgabe: a.name, bekannt: mails.length, regel }, 'v1211 Mail-Ereignisquelle initialisiert');
+                continue;
+              }
+              let gesehen: string[] = [];
+              try { gesehen = JSON.parse(gespeichert) as string[]; } catch { gesehen = []; }
+              const neu = neueMails(mails, regel, new Set(gesehen));
+              zaehler.neue += neu.length;
+              for (const m of neu) {
+                gesehen.push(m.id);
+                await skillStateRepo.set(a.userId, 'mail-ereignisse', schluessel, JSON.stringify(begrenzeGesehen(gesehen)));
+                this.logger.info({ aufgabe: a.name, betreff: m.subject, absender: m.from, messageId: m.id }, 'v1211 Mail-Ereignis → Aufgabe läuft');
+                try {
+                  await schedulerRef.fuehreAusDurchEreignis(a, { text: ausloeserText(m, regel.account), allowedSkills: regel.skills ?? MAIL_STANDARD_SKILLS });
+                  zaehler.ausgeloest++;
+                } catch (err) { zaehler.fehler++; this.logger.warn({ aufgabe: a.name, err: (err as Error).message }, 'v1211 Mail-Aufgabe fehlgeschlagen'); }
+              }
+            } catch (err) { zaehler.fehler++; this.logger.warn({ aufgabe: a.name, err: (err as Error).message }, 'v1211 Mail-Ereignisquelle: Prüfung fehlgeschlagen'); }
+          }
+          return { ok: zaehler.fehler === 0, zaehler };
+        },
+      });
+    }
+
     // 7d. Initialize watch engine (condition-based alerts)
     const watchRepo = new WatchRepository(adapter);
     this.watchRepo = watchRepo;

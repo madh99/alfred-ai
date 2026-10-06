@@ -35,12 +35,12 @@ export class ScheduledTaskSkill extends Skill {
         },
         schedule_type: {
           type: 'string',
-          enum: ['cron', 'interval', 'once'],
-          description: 'Type of schedule: cron expression, interval in minutes, or one-time ISO date (for create)',
+          enum: ['cron', 'interval', 'once', 'mail'],
+          description: 'Type of schedule: cron expression, interval in minutes, one-time ISO date, or "mail" = triggered by new e-mail matching schedule_value JSON {"account":"outlook","from":"service@awattar.com","subject":"Rechnung","skills":["email","memory"]} (for create). Prefer "mail" over polling crons when the task reacts to incoming e-mail.',
         },
         schedule_value: {
           type: 'string',
-          description: 'Schedule value: cron expression, minutes as string, or ISO date (for create)',
+          description: 'Schedule value: cron expression, minutes as string, ISO date, or for "mail" a JSON string with account/from/subject (at least from or subject) and optional skills (for create)',
         },
         skill_name: {
           type: 'string',
@@ -128,8 +128,8 @@ export class ScheduledTaskSkill extends Skill {
     if (!description || typeof description !== 'string') {
       return { success: false, error: 'Missing required field "description" for create action' };
     }
-    if (!scheduleType || !['cron', 'interval', 'once'].includes(scheduleType)) {
-      return { success: false, error: 'Missing or invalid "schedule_type". Must be "cron", "interval", or "once"' };
+    if (!scheduleType || !['cron', 'interval', 'once', 'mail'].includes(scheduleType)) {
+      return { success: false, error: 'Missing or invalid "schedule_type". Must be "cron", "interval", "once", or "mail"' };
     }
     if (!scheduleValue || typeof scheduleValue !== 'string') {
       return { success: false, error: 'Missing required field "schedule_value" for create action' };
@@ -157,6 +157,18 @@ export class ScheduledTaskSkill extends Skill {
       const parts = scheduleValue.trim().split(/\s+/);
       if (parts.length !== 5) {
         return { success: false, error: 'Cron expression must have 5 fields: minute hour dayOfMonth month dayOfWeek' };
+      }
+    }
+    if (scheduleType === 'mail') {
+      // v1211 — Mail-Auslöser: JSON mit account/from/subject, mindestens from oder subject
+      let regel: Record<string, unknown> | undefined;
+      try { regel = JSON.parse(scheduleValue); } catch { regel = undefined; }
+      const text = (v: unknown) => typeof v === 'string' && v.trim().length > 0;
+      if (!regel || typeof regel !== 'object' || Array.isArray(regel) || (!text(regel.from) && !text(regel.subject))) {
+        return { success: false, error: 'For mail schedule, value must be a JSON string like {"account":"outlook","from":"service@awattar.com","subject":"Rechnung"} with at least "from" or "subject"' };
+      }
+      if (!promptTemplate) {
+        return { success: false, error: 'For mail schedule, "prompt_template" is required — it runs once per matching new e-mail with the message reference attached' };
       }
     }
     if (scheduleType === 'once') {

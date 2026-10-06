@@ -114,7 +114,8 @@ export interface ScheduledAction {
   chatId: string;
   name: string;
   description: string;
-  scheduleType: 'cron' | 'interval' | 'once';
+  /** v1211 — 'mail': ausgelöst durch neue Post (schedule_value = JSON {account, from, subject, skills}), nie durch die Uhr. */
+  scheduleType: 'cron' | 'interval' | 'once' | 'mail';
   scheduleValue: string;
   skillName: string;
   skillInput: string;

@@ -60,10 +60,18 @@ export class ProactiveScheduler {
     }
   }
 
-  private async executeAction(action: ScheduledAction): Promise<void> {
+  /**
+   * v1211 — Ereignisgetriebener Lauf (Mail-Ereignisquelle): die Aufgabe läuft genau einmal für
+   * den Auslöser, der Auslöser-Text hängt am Prompt, die Werkzeuge sind auf die Liste begrenzt.
+   */
+  async fuehreAusDurchEreignis(action: ScheduledAction, ausloeser: { text: string; allowedSkills?: string[] }): Promise<void> {
+    await this.executeAction(action, ausloeser);
+  }
+
+  private async executeAction(action: ScheduledAction, ausloeser?: { text: string; allowedSkills?: string[] }): Promise<void> {
     const now = new Date().toISOString();
     const startMs = Date.now();
-    this.logger.info({ actionId: action.id, name: action.name }, 'Executing scheduled action');
+    this.logger.info({ actionId: action.id, name: action.name, ...(ausloeser ? { ausloeser: ausloeser.text.slice(0, 160), allowedSkills: ausloeser.allowedSkills } : {}) }, 'Executing scheduled action');
 
     let resultText: string;
     let resultParseMode: 'text' | 'markdown' | 'html' = 'text';
@@ -114,9 +122,9 @@ export class ProactiveScheduler {
           chatType: 'dm',
           userId: platformUserId,
           userName: resolvedUser?.username ?? platformUserId,
-          text: action.promptTemplate + '\n\n[Format: Use only Markdown (**, *, ~~, `, ```). Do NOT use HTML tags like <b>, <i>, <code>. The system converts Markdown to platform-specific formatting automatically.]',
+          text: action.promptTemplate + (ausloeser ? '\n\n' + ausloeser.text : '') + '\n\n[Format: Use only Markdown (**, *, ~~, `, ```). Do NOT use HTML tags like <b>, <i>, <code>. The system converts Markdown to platform-specific formatting automatically.]',
           timestamp: new Date(),
-          metadata: { scheduled: true, skipHistory: true, tier: 'fast', originalChatId: action.chatId },
+          metadata: { scheduled: true, skipHistory: true, tier: 'fast', originalChatId: action.chatId, ...(ausloeser?.allowedSkills ? { allowedSkills: ausloeser.allowedSkills } : {}) },
         };
 
         const result = await this.pipeline.process(syntheticMessage);
@@ -243,7 +251,10 @@ export class ProactiveScheduler {
     // Calculate next run
     const nextRunAt = this.calculateNextRun(action);
 
-    if (nextRunAt) {
+    if (action.scheduleType === 'mail') {
+      // v1211 — Mail-Aufgaben haben keinen Zeitplan; sie bleiben aktiv und warten auf die nächste Post.
+      await this.actionRepo.updateLastRun(action.id, now, null);
+    } else if (nextRunAt) {
       await this.actionRepo.updateLastRun(action.id, now, nextRunAt);
     } else {
       // No next run (e.g. 'once' type) — disable the action

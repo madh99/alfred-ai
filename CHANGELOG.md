@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1211] - 2026-10-06
+
+### Added — Jarvis Schicht 2: Mail-Ereignisquelle, Aufgaben vom Typ `mail` (v1211)
+
+Realfall: Der aWATTar-Rechnungscheck lief viermal täglich als Chat-Aufgabe mit allen 81 Werkzeugen (67.000 bis 103.000 Tokens je Aufruf), weil es keine Ereignisquelle für den Posteingang gab. Sechs E-Mail-Watches hatten nie ausgelöst. Fachlich ist der Bedarf ein Ereignis: neue Mail von aWATTar, dann prüfen.
+
+- **Geplante Aufgaben, Typ `mail`:** `schedule_value` ist ein JSON mit `account`, `from`, `subject` (mindestens eines von from/subject) und optional `skills`. Solche Aufgaben haben keinen Zeitplan; sie bleiben aktiv und laufen genau einmal je neuer passender Nachricht. Der Chat kann sie über den scheduled_task-Skill anlegen.
+- **Job `mail-ereignisse`** (alle 10 Minuten, Lebenszeichen-Register): prüft je Mail-Aufgabe den Posteingang deterministisch, merkt sich gesehene Nachrichten (skill_state, 200 Einträge), startet die Aufgabe mit Auslöser-Text (Betreff, Absender, messageId, Konto) und nur den Werkzeugen der Aufgabe (Standard: email, memory, calculator). Erstlauf merkt nur den Bestand und löst nichts aus.
+- **E-Mail-Skill `new_messages`:** Posteingang nach Absender/Betreff/Zeit filtern, Teilstrings ohne Groß-/Kleinschreibung, zusammengesetzte IDs mit Kontopräfix. Kein Modell, keine Suchoperatoren.
+- **Pipeline:** `metadata.allowedSkills` begrenzt die Werkzeugliste eines Laufs deterministisch (vor Projekt-Whitelist und Keyword-Filter).
+- **Scheduler:** Mail-Aufgaben werden nach einem Lauf nicht deaktiviert (kein nächster Termin, aber weiter aktiv).
+- 8 Tests (Regel-Parser, Filter, Auslöser-Text, new_messages).
+
 ## [0.19.0-jarvis.1210] - 2026-10-06
 
 ### Changed — Chat-Kontext parallel laden, Abfrage-Embedding einmal berechnen (v1210)
