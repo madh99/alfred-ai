@@ -245,6 +245,23 @@ export class ConfirmationQueue {
     this.defaultPlatform = platform;
   }
 
+  /**
+   * v1236 — Anhänge des nach Freigabe ausgeführten Skills (geholte Datei, Screenshot, Sprachnachricht) zustellen.
+   * Vorher kam nur der Text; derselbe Fehler wie bei delegate (v1234): ein Wrapper verwarf attachments.
+   */
+  private async sendeAnhaenge(adapter: MessagingAdapter, chatId: string, attachments?: Array<{ fileName?: string; mimeType?: string; data: Buffer }>): Promise<void> {
+    for (const att of attachments ?? []) {
+      try {
+        const mime = att.mimeType ?? '';
+        if (mime.startsWith('image/')) await adapter.sendPhoto(chatId, att.data, att.fileName);
+        else if (mime.startsWith('audio/')) await adapter.sendVoice(chatId, att.data);
+        else await adapter.sendFile(chatId, att.data, att.fileName ?? 'datei');
+      } catch (err) {
+        this.logger.warn({ err: (err as Error).message, fileName: att.fileName, chatId }, 'v1236 Anhang nach Freigabe nicht zugestellt');
+      }
+    }
+  }
+
   async enqueuePlan(plan: import('@alfred/types').Plan, display: string): Promise<void> {
     if (!this.defaultChatId || !this.defaultPlatform) return;
     await this.enqueue({
@@ -337,6 +354,7 @@ export class ConfirmationQueue {
                     ? (display ? `✅ **${ea.label}**\n\n${display}` : `✅ ${ea.label}`)
                     : `❌ ${ea.label} fehlgeschlagen: ${result?.error ?? 'unknown'}`;
                   await adapter.sendMessage(chatId, msg);
+                  await this.sendeAnhaenge(adapter, chatId, result?.attachments); // v1236
                 }
               } else if (adapter) {
                 await adapter.sendMessage(chatId, `❌ Skill "${ea.skillName}" nicht registriert.`);
@@ -441,6 +459,7 @@ export class ConfirmationQueue {
               ? `\u2705 **${pending.description}**\n\n${display}`
               : `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`;
             await adapter.sendMessage(chatId, msg);
+            await this.sendeAnhaenge(adapter, chatId, result?.attachments); // v1236
           }
           this.activityLogger?.logConfirmation({
             confirmationId: pending.id, skillName: pending.skillName, description: pending.description,

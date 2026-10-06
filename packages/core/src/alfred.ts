@@ -13445,7 +13445,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             lade: async (quelle: string) => {
               const owner = this.ownerMasterUserId ?? this.tryOwner();
               if (this.fileStoreRef && !path.isAbsolute(quelle)) {
-                try { const data = await this.fileStoreRef.read(quelle, owner); return { name: path.basename(quelle), data }; } catch { /* kein Schlüssel */ }
+                try { const data = await this.fileStoreRef.read(quelle, owner); return { name: path.basename(quelle).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, ''), data }; } catch { /* kein Schlüssel */ }
               }
               if (path.isAbsolute(quelle)) {
                 const erlaubt = [path.resolve(process.cwd(), 'data'), path.join(os.homedir(), '.alfred'), '/root/alfred/data'].map(d => path.resolve(d) + path.sep);

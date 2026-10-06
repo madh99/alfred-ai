@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1236] - 2026-10-06
+
+### Fixed — Anhänge nach einer Freigabe kommen an (v1236)
+
+- Die Bestätigungs-Queue stellte nach dem Ja des Owners nur den Text des ausgeführten Skills zu; geholte Dateien (`datei_holen`), Screenshots und Sprachnachrichten gingen verloren. Jetzt werden Anhänge wie im Chat zugestellt (Bild als Foto, Audio als Sprachnachricht, sonst Datei). Gleiche Fehlerklasse wie v1234: ein Wrapper verwarf `attachments`.
+- `datei_ablegen`: der Dateiname auf dem Gerät ist wieder der ursprüngliche, ohne den Zeitstempel des Dateispeichers.
+
 ## [0.19.0-jarvis.1235] - 2026-10-06
 
 ### Added — Dateitransfer Gerät ⇄ Server (v1235)
