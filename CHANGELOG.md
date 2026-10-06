@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1227] - 2026-10-06
+
+### Fixed — Satellit: Shell-Aktion nutzt unter Windows PowerShell (v1227)
+
+Erster echter Owner-Lauf nach der Freigabe: „Downloads öffnen" wurde um 19:42 bestätigt und ausgeführt. Der zweite Versuch, Brave per `Start-Process` zu starten, scheiterte, weil die Shell-Aktion unter Windows an cmd.exe ging. Jetzt läuft sie dort in PowerShell (ohne Profil, nicht interaktiv), auf macOS und Linux in sh. Das Manifest nennt dem Modell die Shell und verweist fürs Öffnen von Dateien, Ordnern und URLs auf „oeffnen".
+
 ## [0.19.0-jarvis.1226] - 2026-10-06
 
 ### Fixed — Geräteaktionen werden nicht von der Bestätigungs-Dedupe verschluckt (v1226)

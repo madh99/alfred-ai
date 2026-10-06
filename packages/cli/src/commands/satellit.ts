@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { readdirSync, statSync } from 'node:fs';
-import { exec, spawn } from 'node:child_process';
+import { exec, execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import type { GeraetManifest, GeraetNachricht, GeraetPlattform } from '@alfred/types';
@@ -34,7 +34,7 @@ export function baueManifest(version: string): GeraetManifest {
     satellitVersion: version,
     aktionen: [
       { name: 'oeffnen', beschreibung: 'Öffnet eine Datei, einen Ordner (im Explorer/Finder) oder eine URL auf diesem Gerät', autonomie: 'bestaetigen', parameter: { path: { type: 'string', description: 'Absoluter Pfad (innerhalb freigegebener Verzeichnisse) oder URL' } } },
-      { name: 'shell', beschreibung: 'Führt einen Shell-Befehl auf diesem Gerät aus (Arbeitsverzeichnis innerhalb freigegebener Verzeichnisse)', autonomie: 'bestaetigen', parameter: { command: { type: 'string', description: 'Befehl' }, cwd: { type: 'string', description: 'Arbeitsverzeichnis (optional)' } } },
+      { name: 'shell', beschreibung: `Führt einen Befehl auf diesem Gerät aus — ${process.platform === 'win32' ? 'PowerShell' : 'sh'} (Arbeitsverzeichnis innerhalb freigegebener Verzeichnisse). Zum Öffnen von Dateien, Ordnern oder URLs lieber „oeffnen" nutzen.`, autonomie: 'bestaetigen', parameter: { command: { type: 'string', description: process.platform === 'win32' ? 'PowerShell-Befehl' : 'Shell-Befehl' }, cwd: { type: 'string', description: 'Arbeitsverzeichnis (optional)' } } },
       { name: 'liste', beschreibung: 'Listet ein freigegebenes Verzeichnis dieses Geräts (Namen, Größe, Datum)', autonomie: 'auto', parameter: { path: { type: 'string', description: 'Absoluter Pfad eines freigegebenen Verzeichnisses' } } },
       { name: 'hinweis', beschreibung: 'Zeigt dem Owner einen kurzen Hinweis auf diesem Gerät', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
     ],
@@ -68,12 +68,17 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!command) return { success: false, error: 'command fehlt' };
       const cwd = params.cwd ? String(params.cwd) : frei[0];
       if (!istPfadErlaubt(cwd, frei)) return { success: false, error: `Arbeitsverzeichnis nicht freigegeben: ${cwd}` };
+      // v1227 — Realfall 19:43: „Start-Process brave.exe" scheiterte, weil exec() unter Windows cmd.exe nutzt.
+      // Der Owner (und das Modell) denken auf Windows in PowerShell → dort PowerShell, sonst sh.
       return await new Promise<Ergebnis>((resolve) => {
-        exec(command, { cwd, timeout: SHELL_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+        const fertig = (err: Error | null, stdout: string | Buffer, stderr: string | Buffer) => {
           const out = String(stdout).slice(0, 4000); const errOut = String(stderr).slice(0, 2000);
           if (err) resolve({ success: false, error: `${err.message}\n${errOut}`.trim(), data: { stdout: out, stderr: errOut } });
           else resolve({ success: true, data: { stdout: out, stderr: errOut, cwd }, display: out || errOut || '(keine Ausgabe)' });
-        });
+        };
+        const opts = { cwd, timeout: SHELL_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true };
+        if (process.platform === 'win32') execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], opts, fertig);
+        else exec(command, { ...opts, shell: '/bin/sh' }, fertig);
       });
     }
     case 'hinweis': {
