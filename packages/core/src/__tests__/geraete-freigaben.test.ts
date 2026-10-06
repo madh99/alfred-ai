@@ -16,6 +16,17 @@ describe('VorhabenFreigaben', () => {
     expect(f.deckt('geraet_pc', 'shell', { command: 'dir' })).toBeUndefined();
     expect(f.deckt('anderes_geraet', 'browser_klicken', {})).toBeUndefined();
   });
+  it('aktive() listet nur freigegebene, nicht abgelaufene Vorhaben', () => {
+    let t = 1_000_000;
+    const f = new VorhabenFreigaben(() => t);
+    const a = f.erzeuge('s', { beschreibung: 'a', aktionen: ['x'], dauerMin: 10 });
+    f.erzeuge('s', { beschreibung: 'b', aktionen: ['x'], dauerMin: 10 });
+    expect(f.aktive()).toHaveLength(0);
+    f.aktiviere(a.nonce, 's');
+    expect(f.aktive().map(v => v.beschreibung)).toEqual(['a']);
+    t += 11 * 60_000;
+    expect(f.aktive()).toHaveLength(0);
+  });
   it('läuft ab und Dauer ist auf 5–120 Minuten begrenzt', () => {
     let t = 1_000_000;
     const f = new VorhabenFreigaben(() => t);

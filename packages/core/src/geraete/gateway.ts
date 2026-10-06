@@ -25,7 +25,7 @@ export interface GeraeteGatewayDeps {
   enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number }) => Promise<boolean | void>;
   schritt?: (s: { userId: string; art: string; skill: string; aktion?: string; params?: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }) => Promise<void>;
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
-  nachFreigabe?: (v: { geraet: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
+  nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
   now?: () => number;
 }
 
@@ -182,7 +182,7 @@ export class GeraeteGateway {
         erzeuge: (x) => this.vorhaben.erzeuge(v.skillName, x),
         aktiviere: (nonce) => { const a = this.vorhaben.aktiviere(nonce, v.skillName); if (a) this.deps.logger.info({ geraet: v.eintrag.name, beschreibung: a.beschreibung, aktionen: a.aktionen, domains: a.domains, bis: new Date(a.bis).toISOString() }, 'v1230 Vorhaben freigegeben'); return a; },
         deckt: (aktion, params) => this.vorhaben.deckt(v.skillName, aktion, params),
-        nachFreigabe: async (a) => { await this.deps.nachFreigabe?.({ geraet: v.eintrag.name, ...a }); },
+        nachFreigabe: async (a) => { await this.deps.nachFreigabe?.({ geraet: v.eintrag.name, skillName: v.skillName, ...a }); },
       },
       schritt: async (s) => { await this.deps.schritt?.({ userId, art: s.art, skill: v.skillName, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie, quelle: 'geraet' }); },
     });
@@ -230,6 +230,12 @@ export class GeraeteGateway {
       v.offen.set(id, { resolve: (r) => resolve({ success: r.success, data: r.data, display: r.display, error: r.error, dauerMs: r.dauerMs ?? Date.now() - start }), timer });
       this.sende(v.ws, { typ: 'aktion', id, aktion, params });
     });
+  }
+
+  /** v1231 — laufende Vorhaben für die Kachel. */
+  vorhabenAktive(): Array<{ geraet: string; beschreibung: string; aktionen: string[]; domains: string[]; bis: string; schritte: number }> {
+    const namen = new Map([...this.verbindungen.values()].map(v => [v.skillName, v.eintrag.name]));
+    return this.vorhaben.aktive().map(a => ({ geraet: namen.get(a.skillName) ?? a.skillName, beschreibung: a.beschreibung, aktionen: a.aktionen, domains: a.domains, bis: new Date(a.bis).toISOString(), schritte: a.schritte }));
   }
 
   verbundene(): Array<{ id: string; name: string; plattform: string; skillName: string; verbundenSeit: string }> {

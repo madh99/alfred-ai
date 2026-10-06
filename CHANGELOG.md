@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1231] - 2026-10-06
+
+### Changed — Vorhaben günstiger, Kachel Geräte (v1231)
+
+- **Fortsetzung eines Vorhabens nur mit dem Geräte-Skill.** Die Nachricht nach der Freigabe trägt `allowedSkills` mit genau dem Gerät; die rund 60 übrigen Werkzeug-Schemata (etwa 29.000 Tokens je Runde beim Beweis v1230) bleiben draußen. Deterministisch, modellunabhängig.
+- **Lebenszeichen zeigt Geräte.** Gekoppelte Satelliten mit Online-Zustand, Plattform, Version und Autonomie je Aktion; laufende Vorhaben mit Frist und Schrittzahl (Status-Feld `vorhaben`).
+
 ## [0.19.0-jarvis.1230] - 2026-10-06
 
 ### Added — Vorhaben-Freigabe: ein Ja für viele Schritte (v1230)

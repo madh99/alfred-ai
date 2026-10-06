@@ -3149,7 +3149,11 @@ export interface LebenszeichenStatus {
   adapter?: Array<{ platform: string; status: string; getrenntSeitMs?: number }>;
   /** v1217 — Befunde mit Identität: offene und seit 24 h erledigte Auffälligkeiten des Weltmodells */
   befunde?: { offen: LebenszeichenBefund[]; erledigt24h: LebenszeichenBefund[] } | null;
+  /** v1224/v1231 — gekoppelte Geräte (Satelliten) und laufende Vorhaben */
+  geraete?: LebenszeichenGeraet[];
+  vorhaben?: Array<{ geraet: string; beschreibung: string; aktionen: string[]; domains: string[]; bis: string; schritte: number }>;
 }
+export interface LebenszeichenGeraet { id: string; name: string; plattform: string; status: 'aktiv' | 'widerrufen'; online: boolean; verbundenSeit?: string; zuletztGesehen?: string; manifest: { version?: string; aktionen: Array<{ name: string; autonomie: string }> } }
 export interface LebenszeichenBefund { id: string; quelle: string; gegenstand: string; titel: string; zustand: 'offen' | 'erledigt'; entstanden: string; zuletztGesehen: string; erledigtAm?: string; gesehenAnzahl: number; vorgangId?: string }
 export interface CliUsageOverview {
   totals: { runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number };

@@ -143,6 +143,30 @@ export function LebenszeichenPage() {
             </section>
           )}
 
+          {/* Geräte (v1224/v1231 — Satelliten und laufende Vorhaben) */}
+          {data.geraete && data.geraete.length > 0 && (
+            <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <h2 className="text-sm font-semibold text-gray-300 mb-1">Geräte</h2>
+              <div className="text-xs text-gray-500 mb-3">Gekoppelte Satelliten, auf denen Alfred handeln darf — mit Autonomie je Aktion (auto / bestätigen / nie).</div>
+              <ul className="text-xs text-gray-300 space-y-1.5">
+                {data.geraete.filter(g => g.status === 'aktiv').map(g => (
+                  <li key={g.id}>
+                    <span className={g.online ? 'text-emerald-400' : 'text-gray-500'}>{g.online ? '●' : '○'}</span> <span className="font-medium">{g.name}</span> <span className="text-gray-500">({g.plattform}{g.manifest?.version ? ', v' + g.manifest.version : ''})</span>{' '}
+                    <span className="text-gray-500">{g.online ? `verbunden seit ${alter(g.verbundenSeit)}` : `zuletzt gesehen ${alter(g.zuletztGesehen)}`}</span>
+                    <div className="text-gray-500 mt-0.5">{(g.manifest?.aktionen ?? []).map(a => `${a.name}${a.autonomie === 'auto' ? '' : a.autonomie === 'nie' ? ' ⛔' : ' ✋'}`).join(' · ')}</div>
+                  </li>
+                ))}
+              </ul>
+              {data.vorhaben && data.vorhaben.length > 0 && (
+                <ul className="text-xs text-amber-300/90 space-y-1 mt-3">
+                  {data.vorhaben.map((v, i) => (
+                    <li key={i}>▶ Vorhaben auf {v.geraet}: {v.beschreibung} <span className="text-gray-500">(bis {new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })}, {v.schritte} Schritte{v.domains.length ? ', ' + v.domains.join(', ') : ''})</span></li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
           {/* Befunde (v1217 — Jarvis Schicht 3: Auffälligkeiten mit Identität) */}
           {data.befunde && (data.befunde.offen.length > 0 || data.befunde.erledigt24h.length > 0) && (
             <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">

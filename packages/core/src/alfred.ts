@@ -493,6 +493,7 @@ export class Alfred {
       befunde: await (async () => { const o = this.tryOwner(); if (!o || !this.befundeRepo) return null; try { return await this.befundeRepo.uebersicht(o); } catch { return null; } })(), // v1217
       lage: this.lageText ? { stand: this.lageStand, text: this.lageText } : null, // v1220
       geraete: await (this.geraeteGateway?.liste().catch(() => []) ?? Promise.resolve([])), // v1224
+      vorhaben: this.geraeteGateway?.vorhabenAktive() ?? [], // v1231
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
       // v1196 — letzte Begründungen („Warum?") für die Kachel
@@ -13450,7 +13451,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             try {
               const result = await this.pipeline.process({
                 id: `vorhaben-${Date.now()}`, platform: platform as import('@alfred/types').Platform, chatId, chatType: 'dm', userId: chatId, userName: 'owner',
-                text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId },
+                // v1231 — nur der Geräte-Skill als Werkzeug: die 60 anderen Schemata (≈29k Tokens je Runde) bleiben draußen
+                text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, allowedSkills: [v.skillName] },
               } as import('@alfred/types').NormalizedMessage);
               const adapter = this.adapters.get(platform as import('@alfred/types').Platform);
               if (adapter && result?.text) {
