@@ -152,14 +152,20 @@ export class ConfirmationQueue {
     timeoutMinutes?: number;
     /** v657 \u2014 zus\u00E4tzliche Buttons neben approve/reject (z.B. Open-Item-Eskalation: Ablehnen/Zur\u00FCckstellen) */
     extraActions?: ConfirmationExtraAction[];
-  }): Promise<void> {
+  }): Promise<boolean> {
+    // v1226 — Rückgabe: true = eingereiht, false = per Dedup übersprungen (Aufrufer können ehrlich melden).
     // v1142 — H2: Enqueue-Dedup über Anfrage-IDENTITÄT statt wortgleichem Text.
     // Gleiche Frage noch pending → nicht doppelt stellen; gleiche Frage in den
     // letzten 7 Tagen abgelaufen/abgelehnt → User hat entschieden bzw. ignoriert,
     // Cooldown statt Dauerschleife (Realfall: „BMW-Token erneuern" 25×, MikroTik-
     // Incident ~20×, 308 von 329 August-Confirmations liefen unbeantwortet ab).
     // approved blockiert bewusst NICHT — eine erneute Anfrage kann legitim sein.
+    // v1226 — Geräteaktionen stellt der Owner selbst im Gespräch; jede trägt eine neue Einmal-Freigabe.
+    // Die 7-Tage-Sperre für ignorierte/abgelehnte Vorschläge des Reasonings gilt für sie nicht
+    // (Realfall 19:30: zweite Anfrage „Downloads öffnen" wurde stumm verworfen, kein Button beim Owner).
+    const dedupPruefen = opts.source !== 'geraet';
     try {
+      if (!dedupPruefen) throw new Error('kein Dedup für Geräteaktionen');
       const seit = new Date(Date.now() - 7 * 86_400_000).toISOString();
       const juengste = await this.confirmRepo.findRecent(opts.chatId, seit, 100);
       const doppel = juengste.find(r =>
@@ -168,10 +174,10 @@ export class ConfirmationQueue {
       if (doppel) {
         this.logger.info({ description: opts.description.slice(0, 80), vorgaenger: doppel.id, vorgaengerStatus: doppel.status },
           'v1142 confirmation dedup — gleiche Anfrage übersprungen');
-        return;
+        return false;
       }
     } catch (err) {
-      this.logger.debug({ err }, 'v1142 confirmation dedup check failed — enqueue läuft weiter');
+      if (dedupPruefen) this.logger.debug({ err }, 'v1142 confirmation dedup check failed — enqueue läuft weiter');
     }
 
     const expiresAt = new Date(Date.now() + (opts.timeoutMinutes ?? 30) * 60_000).toISOString();
@@ -224,6 +230,7 @@ export class ConfirmationQueue {
         this.logger.error({ err }, 'Failed to send confirmation request');
       }
     }
+    return true;
   }
 
   /**

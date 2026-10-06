@@ -13438,7 +13438,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             platform: this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api',
             chatId: this.config.security?.ownerUserId ?? '',
           }),
-          enqueueBestaetigung: async (o) => { if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue'); await this.confirmationQueue.enqueue(o); },
+          enqueueBestaetigung: async (o) => { if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue'); return this.confirmationQueue.enqueue(o); },
           schritt: async (s) => { await vorgaengeG.schritt({ userId: s.userId, art: s.art as import('@alfred/storage').SchrittArt, skill: s.skill, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie as import('@alfred/storage').Autonomie | undefined, quelle: s.quelle }); },
         });
         gw.start();

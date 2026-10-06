@@ -64,7 +64,7 @@ export class GeraetSkill extends Skill {
       await this.deps.schritt?.({ art: 'zur_bestaetigung', aktion, params, beschreibung, autonomie: 'bestaetigen' });
       return gestellt
         ? { success: true, data: { zurBestaetigung: true, geraet: this.deps.name, aktion }, display: `Zur Bestätigung an den Owner gestellt: ${beschreibung}. Nach Freigabe wird es auf dem Gerät ausgeführt.` }
-        : { success: false, error: 'Bestätigung konnte nicht gestellt werden (keine Bestätigungs-Queue)' };
+        : { success: false, error: 'Bestätigung konnte nicht gestellt werden (keine Bestätigungs-Queue oder Anfrage verworfen) — dem Owner sagen, dass keine Frage bei ihm liegt.' };
     }
     const r = await this.deps.sendeAktion(aktion, params, aktion === 'shell' ? 10 * 60_000 : undefined);
     await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, 300) : (r.error ?? '').slice(0, 300), autonomie: def.autonomie });

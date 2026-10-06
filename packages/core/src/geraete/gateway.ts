@@ -22,7 +22,7 @@ export interface GeraeteGatewayDeps {
   ownerUserId: () => string | undefined;
   /** Zustellziel für Bestätigungsfragen (Owner-Chat). */
   ownerZiel: () => { platform: string; chatId: string };
-  enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number }) => Promise<void>;
+  enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number }) => Promise<boolean | void>;
   schritt?: (s: { userId: string; art: string; skill: string; aktion?: string; params?: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }) => Promise<void>;
   now?: () => number;
 }
@@ -170,8 +170,8 @@ export class GeraeteGateway {
         const ziel = this.deps.ownerZiel();
         if (!ziel.chatId) return false;
         const nonce = this.freigaben.erzeuge(v.skillName, frage.aktion, frage.params); // v1225
-        await this.deps.enqueueBestaetigung({ chatId: ziel.chatId, platform: ziel.platform, source: 'geraet', sourceId: `geraet-${v.eintrag.id.slice(0, 8)}-${Date.now()}`, description: frage.description, skillName: v.skillName, skillParams: { ...frage.params, action: frage.aktion, freigabe: nonce }, timeoutMinutes: 60 });
-        return true;
+        const ok = await this.deps.enqueueBestaetigung({ chatId: ziel.chatId, platform: ziel.platform, source: 'geraet', sourceId: `geraet-${v.eintrag.id.slice(0, 8)}-${Date.now()}`, description: frage.description, skillName: v.skillName, skillParams: { ...frage.params, action: frage.aktion, freigabe: nonce }, timeoutMinutes: 60 });
+        return ok !== false; // v1226 — Dedup-Übersprung ehrlich melden
       },
       pruefeFreigabe: (nonce, aktion, params) => this.freigaben.verbrauche(nonce, v.skillName, aktion, params),
       schritt: async (s) => { await this.deps.schritt?.({ userId, art: s.art, skill: v.skillName, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie, quelle: 'geraet' }); },

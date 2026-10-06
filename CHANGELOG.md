@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1226] - 2026-10-06
+
+### Fixed — Geräteaktionen werden nicht von der Bestätigungs-Dedupe verschluckt (v1226)
+
+Realfall 19:30: Die zweite Anfrage „Öffne auf PC-madh den Ordner Downloads" meldete „zur Bestätigung gestellt", aber beim Owner kam kein Button an. Die 7-Tage-Sperre der Bestätigungs-Queue für ignorierte Vorschläge (v1142) griff auch für Geräteaktionen, die der Owner selbst im Gespräch anstößt.
+
+- Geräteaktionen (Quelle `geraet`) umgehen die Dedupe-Sperre; jede trägt ohnehin eine neue Einmal-Freigabe.
+- `enqueue` meldet jetzt, ob eingereiht wurde; der Geräte-Skill sagt dem Modell andernfalls ehrlich, dass keine Frage beim Owner liegt.
+
 ## [0.19.0-jarvis.1225] - 2026-10-06
 
 ### Security — Geräte Phase 1: Befunde der Commit-Prüfung behoben (v1225)
