@@ -134,6 +134,8 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
   } catch (err) { console.error(`Keine Verbindung zu ${k.server}: ${(err as Error).message}`); process.exit(1); }
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'Du: ' });
+  // v1245 — Strg+T startet und stoppt die Aufnahme (statt /talk + Enter)
+  readline.emitKeypressEvents(process.stdin, rl);
   let antwortLaeuft = false;
   const drucke = (text: string) => {
     readline.clearLine(process.stdout, 0);
@@ -158,7 +160,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
 
   console.log(`\nAlfred-Sitzung auf ${k.name} (v${getVersion()}) → ${k.server}`);
   console.log(`Satellit: ${satellitArt}`);
-  console.log('Schreiben = Chat als Owner · /talk (sprechen, Enter stoppt) · /stimme an|aus · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
+  console.log('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen (Strg+T/Enter stoppt) · /stimme an|aus · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
   rl.prompt();
 
   // Bestätigungen: alle 4 s abholen, neue melden
@@ -250,7 +252,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
   const talkStart = async () => {
     try {
       aufnahme = await audio.aufnehmen();
-      rl.setPrompt('● Aufnahme läuft — Enter zum Stoppen ');
+      rl.setPrompt('● Aufnahme läuft — Strg+T oder Enter zum Stoppen ');
       rl.prompt(true);
     } catch (err) { drucke(`🎙 ${(err as Error).message}`); }
   };
@@ -271,6 +273,12 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
       await sende(text, true);
     } catch (err) { antwortLaeuft = false; drucke(`🎙 ${(err as Error).message}`); }
   };
+
+  process.stdin.on('keypress', (_ch: string, key: { ctrl?: boolean; name?: string } | undefined) => {
+    if (!key?.ctrl || key.name !== 't') return;
+    if (aufnahme) { const a = aufnahme; aufnahme = undefined; rl.write(null, { ctrl: true, name: 'u' }); void talkStop(a); return; }
+    if (!antwortLaeuft) void talkStart();
+  });
 
   rl.on('line', (zeile) => {
     const t = zeile.trim();
@@ -299,7 +307,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
           drucke(lage?.text ? `Lage (${lage.stand ?? ''}):\n${lage.text}` : 'Keine Lage vorhanden.');
           return;
         }
-        case '/hilfe': case '/help': drucke('Schreiben = Chat als Owner · /talk (sprechen, Enter stoppt) · /stimme an|aus · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit'); return;
+        case '/hilfe': case '/help': drucke('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen (Strg+T/Enter stoppt) · /stimme an|aus · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit'); return;
         default: await sende(t);
       }
     })().catch(err => drucke(`Fehler: ${(err as Error).message}`));

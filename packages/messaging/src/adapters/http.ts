@@ -6162,6 +6162,8 @@ export class HttpAdapter extends MessagingAdapter {
               } }
             : {}),
         };
+        // v1245 — Gerät der Sitzung mitgeben: der Prompt nennt es, „von welchem Gerät schreibe ich?" beantwortet sich daraus
+        if (geraet) message.metadata = { ...(message.metadata ?? {}), sitzungGeraet: geraet.name };
 
         this.emit('message', message);
       } catch {

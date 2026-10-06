@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1245] - 2026-10-06
+
+### Added — Strg+T zum Sprechen, Gerät der Sitzung im Prompt (v1245)
+
+- **Strg+T** startet die Aufnahme in `alfred sitzung` und stoppt sie wieder — ohne `/talk` und Enter. `/talk` bleibt.
+- **Gerät im Prompt.** Nachrichten aus der Sitzung tragen das Gerät (`metadata.sitzungGeraet`); der Weltmodell-Block nennt den Gesprächskanal („Terminal-Sitzung auf dem Gerät PC-madh"). „Von welchem Gerät schreibe ich dir?" beantwortet sich ohne Werkzeug — der letzte kleine offene Punkt aus Phase 1.
+
 ## [0.19.0-jarvis.1244] - 2026-10-06
 
 ### Fixed — Alfred spricht überall mit der vom Owner gewählten Stimme (v1244)

@@ -1008,7 +1008,17 @@ export class MessagePipeline {
         runningProjectAgentSessions,
         recentHostFailures,
         interestTopics,
-        weltmodell: (() => { try { return this.weltmodellQuelle?.(); } catch { return undefined; } })(), // v1206
+        weltmodell: (() => {
+          let welt: string | undefined;
+          try { welt = this.weltmodellQuelle?.(); } catch { welt = undefined; }
+          // v1245 — Gesprächskanal: Terminal-Sitzung auf einem Gerät des Owners (deterministisch, ohne Werkzeug)
+          const sitzungGeraet = message.metadata?.sitzungGeraet;
+          if (sitzungGeraet) {
+            const kanal = `Gesprächskanal: Terminal-Sitzung (alfred sitzung) auf dem Gerät „${sitzungGeraet}" des Owners — er sitzt gerade an diesem Gerät und schreibt von dort.`;
+            welt = welt ? `${welt}\n\n${kanal}` : `## Weltmodell (automatisch erhoben)\n\n${kanal}`;
+          }
+          return welt;
+        })(), // v1206, v1245
       });
 
       tracePhase('system_prompt_built', { chars: system.length });
