@@ -262,6 +262,10 @@ export class ConfirmationQueue {
     }
   }
 
+  /** v1239 — nach einer freigegebenen Ausführung: liefert true, wenn der Aufrufer die Antwort selbst zustellt (Fortsetzung durch die Pipeline). */
+  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown } | undefined, ziel: { platform: string; chatId: string }) => Promise<boolean>;
+  setNachAusfuehrung(fn: NonNullable<ConfirmationQueue['nachAusfuehrung']>): void { this.nachAusfuehrung = fn; }
+
   async enqueuePlan(plan: import('@alfred/types').Plan, display: string): Promise<void> {
     if (!this.defaultChatId || !this.defaultPlatform) return;
     await this.enqueue({
@@ -452,14 +456,20 @@ export class ConfirmationQueue {
           if (result && !result.success) {
             throw new Error(result.error ?? 'Skill returned success=false');
           }
-          if (adapter) {
+          if (adapter) await this.sendeAnhaenge(adapter, chatId, result?.attachments); // v1236
+          // v1239 — Fortsetzung: Alfred arbeitet mit dem Ergebnis weiter (Owner-Beobachtung: Rohergebnis statt Antwort)
+          let uebernommen = false;
+          if (this.nachAusfuehrung) {
+            try { uebernommen = await this.nachAusfuehrung(pending as unknown as { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result ?? undefined, { platform: String(platform), chatId }); }
+            catch (err) { this.logger.warn({ err: (err as Error).message, confirmationId: pending.id }, 'v1239 Fortsetzung nach Bestätigung fehlgeschlagen'); }
+          }
+          if (adapter && !uebernommen) {
             // Show full skill result (like a normal chat interaction), not just "Ausgeführt"
             const display = result?.display ?? result?.data ? String(result.display ?? JSON.stringify(result.data)) : '';
             const msg = display
               ? `\u2705 **${pending.description}**\n\n${display}`
               : `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`;
             await adapter.sendMessage(chatId, msg);
-            await this.sendeAnhaenge(adapter, chatId, result?.attachments); // v1236
           }
           this.activityLogger?.logConfirmation({
             confirmationId: pending.id, skillName: pending.skillName, description: pending.description,

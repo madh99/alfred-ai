@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1239] - 2026-10-06
+
+### Added — Systemwerte als Sinne, Weiterarbeiten nach einer Bestätigung (v1239)
+
+Owner-Beobachtung 22:05: Alfred sollte Laufzeit, Startzeit, RAM, Laufwerke, CPU und GPU kennen, und nach einer freigegebenen Shell-Abfrage weitermachen statt das Rohergebnis zu senden.
+
+- **Systemwerte alle fünf Minuten** vom Satelliten: Laufzeit seit Start (daraus die Startzeit), RAM gesamt/frei, CPU-Last, GPU-Last, Laufwerke mit Größe und freiem Platz. Plattformunabhängig aus Node (Laufzeit, RAM, CPU-Delta, statfs), Windows ergänzt Laufwerke, CPU und GPU über den PowerShell-Kindprozess, Linux die GPU über nvidia-smi. Die Werte bleiben zwischen den Messungen erhalten.
+- **Deutung** als Systemzeile je Gerät („↳ PC-madh System: läuft seit 13 d 2 h (Start 23.09. 03:31) · CPU 12 % · GPU 3 % · RAM 68 GB frei von 125 · C: 120 GB frei von 931"); ein Laufwerk unter 10 % frei wird ein Befund (`geraet:<Name>:laufwerk:<Buchstabe>`). Steht im Weltmodell-Block des Chats, in `zustand` und in der Kachel.
+- **Weiterarbeiten nach Bestätigung.** Nach einer freigegebenen Geräteaktion läuft das Ergebnis als Fortsetzung durch die Pipeline: Alfred beantwortet die ursprüngliche Frage sauber formatiert und führt nötige weitere Schritte aus, statt das Rohergebnis zu senden. Anhänge der Aktion werden weiterhin direkt zugestellt. Die Fortsetzung nach Vorhaben-Freigabe nutzt denselben Weg.
+
 ## [0.19.0-jarvis.1238] - 2026-10-06
 
 ### Fixed — „Was macht mein PC gerade?" ohne Shell und ohne Bestätigung (v1238)

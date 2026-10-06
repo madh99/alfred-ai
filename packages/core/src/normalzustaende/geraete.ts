@@ -7,7 +7,14 @@
  * ⚠️ getrennt über 3 h; ⚠️ Akku unter 15 % ohne Netz. Schlüssel wie `geraet:PC-madh:getrennt`
  * werden über den Weltmodell-Beobachter zu Befunden mit Identität.
  */
-export interface GeraetSinne { leerlaufSek?: number; fenster?: string; akkuProzent?: number; akkuLaedt?: boolean }
+export interface GeraetSinne {
+  leerlaufSek?: number; fenster?: string; akkuProzent?: number; akkuLaedt?: boolean;
+  /** v1239 — System: Laufzeit seit Start, RAM, CPU, GPU, Laufwerke */
+  uptimeSek?: number; ramGesamtMb?: number; ramFreiMb?: number; cpuProzent?: number; gpuProzent?: number;
+  laufwerke?: Array<{ name: string; gesamtGb: number; freiGb: number }>;
+}
+/** v1239 — Laufwerk unter diesem Anteil frei ist auffällig. */
+export const LAUFWERK_KNAPP_ANTEIL = 0.1;
 export interface GeraetZustand {
   name: string;
   plattform: string;
@@ -68,6 +75,22 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       }
     }
     zeilen.push(`${warn ? '⚠️ ' : ''}${g.name} (${g.plattform}): ${teile.join(', ')}`);
+    // v1239 — Systemzeile: Laufzeit, CPU, GPU, RAM, Laufwerke (knappe Laufwerke als Befund)
+    if (g.online) {
+      const s = g.sinne;
+      const sys: string[] = [];
+      let warnSys = false;
+      if (s?.uptimeSek !== undefined) sys.push(`läuft seit ${formatiereDauerKurz(s.uptimeSek * 1000)} (Start ${new Date(jetzt - s.uptimeSek * 1000).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})`);
+      if (s?.cpuProzent !== undefined) sys.push(`CPU ${s.cpuProzent} %`);
+      if (s?.gpuProzent !== undefined) sys.push(`GPU ${s.gpuProzent} %`);
+      if (s?.ramGesamtMb !== undefined && s.ramFreiMb !== undefined) sys.push(`RAM ${Math.round(s.ramFreiMb / 1024)} GB frei von ${Math.round(s.ramGesamtMb / 1024)}`);
+      for (const l of s?.laufwerke ?? []) {
+        const knapp = l.gesamtGb > 0 && l.freiGb / l.gesamtGb < LAUFWERK_KNAPP_ANTEIL;
+        if (knapp) { warnSys = true; auffaellig.push(`geraet:${g.name}:laufwerk:${l.name.replace(/[:\\/]+$/, '')}`); }
+        sys.push(`${knapp ? '⚠️ ' : ''}${l.name} ${l.freiGb} GB frei von ${l.gesamtGb}`);
+      }
+      if (sys.length) zeilen.push(`${warnSys ? '⚠️ ' : ''}↳ ${g.name} System: ${sys.join(' · ')}`);
+    }
   }
   return { zeilen, auffaellig, aktiv };
 }

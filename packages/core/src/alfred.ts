@@ -6857,6 +6857,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
 
     // Wire confirmation queue, activity logger, skill health tracker, and insight tracker into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
+    // v1239 — nach einer freigegebenen Geräteaktion arbeitet Alfred mit dem Ergebnis weiter (Antwort auf die
+    // ursprüngliche Frage, nächste Schritte), statt das Rohergebnis zu senden. Vorhaben haben ihre eigene Fortsetzung.
+    this.confirmationQueue.setNachAusfuehrung(async (pending, result, ziel) => {
+      if (pending.source !== 'geraet') return false;
+      if (pending.skillParams?.action === 'vorhaben_freigeben') return false;
+      const display = (result?.display ?? (result?.data !== undefined ? JSON.stringify(result.data) : '')).slice(0, 3500);
+      const text = `Die von mir freigegebene Aktion wurde gerade ausgeführt: ${pending.description}.\n\nErgebnis:\n${display || '(keine Ausgabe)'}\n\nMach damit weiter: Beantworte meine ursprüngliche Frage bzw. erledige die Aufgabe, für die diese Aktion nötig war — kurz, sauber formatiert, mit den wichtigen Werten. Sind weitere Schritte nötig, führe sie aus.`;
+      return this.fortsetzungImOwnerChat(text, { id: 'bestaetigt', platform: ziel.platform, chatId: ziel.chatId });
+    });
     // v924 — Quick-Actions (todo:/reminder:-Button-Callbacks) vor dem LLM abfangen
     if (this.todoRepo && this.reminderRepo) {
       const { QuickActionHandler } = await import('./quick-actions.js');
@@ -13472,24 +13481,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // v1230 — nach dem Ja des Owners setzt Alfred das Vorhaben selbst fort: synthetische Owner-Nachricht
           // durch die Pipeline (wie geplante Aufgaben), Antwort und Screenshots zurück in den Owner-Chat.
           nachFreigabe: async (v) => {
-            const platform = this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api';
-            const chatId = this.config.security?.ownerUserId ?? '';
-            if (!chatId) return;
             const bisText = new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
             const text = `Freigabe erteilt für das Vorhaben auf ${v.geraet}: „${v.beschreibung}" (erlaubt: ${v.aktionen.join(', ')}${v.domains.length ? ' auf ' + v.domains.join(', ') : ''}, bis ${bisText}). Führe es jetzt Schritt für Schritt aus — die Aktionen laufen ohne Einzelbestätigung — und berichte am Ende kurz, was du getan hast. Lies nach jedem Klick die Seite neu.`;
-            try {
-              const result = await this.pipeline.process({
-                id: `vorhaben-${Date.now()}`, platform: platform as import('@alfred/types').Platform, chatId, chatType: 'dm', userId: chatId, userName: 'owner',
-                // v1231 — nur der Geräte-Skill als Werkzeug: die 60 anderen Schemata (≈29k Tokens je Runde) bleiben draußen
-                text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, allowedSkills: [v.skillName] },
-              } as import('@alfred/types').NormalizedMessage);
-              const adapter = this.adapters.get(platform as import('@alfred/types').Platform);
-              if (adapter && result?.text) {
-                const formatted = this.formatter.format(result.text, platform as import('@alfred/types').Platform);
-                await adapter.sendMessage(chatId, formatted.text, { parseMode: formatted.parseMode !== 'text' ? formatted.parseMode : undefined });
-                for (const att of result.attachments ?? []) { try { if (att.mimeType.startsWith('image/')) await adapter.sendPhoto(chatId, att.data, att.fileName); } catch { /* */ } }
-              }
-            } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1230 Fortsetzung nach Vorhaben-Freigabe fehlgeschlagen'); }
+            // v1231 — nur der Geräte-Skill als Werkzeug: die 60 anderen Schemata (≈29k Tokens je Runde) bleiben draußen
+            await this.fortsetzungImOwnerChat(text, { id: 'vorhaben', allowedSkills: [v.skillName] });
           },
           schritt: async (s) => { await vorgaengeG.schritt({ userId: s.userId, art: s.art as import('@alfred/storage').SchrittArt, skill: s.skill, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie as import('@alfred/storage').Autonomie | undefined, quelle: s.quelle }); },
         });
@@ -14849,6 +14844,35 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
 
     lines.push('');
     return lines.join('\n');
+  }
+
+  /**
+   * v1239 — Fortsetzung im Owner-Chat: eine synthetische Owner-Nachricht läuft durch die Pipeline (wie geplante
+   * Aufgaben), Antwort und Anhänge gehen zurück in den Chat. Genutzt nach Vorhaben-Freigabe (v1230) und nach
+   * jeder freigegebenen Geräteaktion (Owner-Beobachtung: Rohergebnis statt Antwort, kein Weitermachen).
+   */
+  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string }): Promise<boolean> {
+    const platform = (opts.platform ?? (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api')) as Platform;
+    const chatId = opts.chatId ?? this.config.security?.ownerUserId ?? '';
+    if (!chatId) return false;
+    try {
+      const result = await this.pipeline.process({
+        id: `${opts.id}-${Date.now()}`, platform, chatId, chatType: 'dm', userId: chatId, userName: 'owner',
+        text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, ...(opts.allowedSkills ? { allowedSkills: opts.allowedSkills } : {}) },
+      } as NormalizedMessage);
+      const adapter = this.adapters.get(platform);
+      if (!adapter || !result?.text) return false;
+      const formatted = this.formatter.format(result.text, platform);
+      await adapter.sendMessage(chatId, formatted.text, { parseMode: formatted.parseMode !== 'text' ? formatted.parseMode : undefined });
+      for (const att of result.attachments ?? []) {
+        try {
+          if (att.mimeType.startsWith('image/')) await adapter.sendPhoto(chatId, att.data, att.fileName);
+          else if (att.mimeType.startsWith('audio/')) await adapter.sendVoice(chatId, att.data);
+          else await adapter.sendFile(chatId, att.data, att.fileName);
+        } catch { /* Anhang optional */ }
+      }
+      return true;
+    } catch (err) { this.logger.warn({ err: (err as Error).message, id: opts.id }, 'v1239 Fortsetzung im Owner-Chat fehlgeschlagen'); return false; }
   }
 
   private async autoLinkApiUser(message: NormalizedMessage): Promise<void> {

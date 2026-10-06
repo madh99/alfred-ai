@@ -3153,7 +3153,7 @@ export interface LebenszeichenStatus {
   geraete?: LebenszeichenGeraet[];
   vorhaben?: Array<{ geraet: string; beschreibung: string; aktionen: string[]; domains: string[]; bis: string; schritte: number }>;
 }
-export interface LebenszeichenGeraet { id: string; name: string; plattform: string; status: 'aktiv' | 'widerrufen'; online: boolean; verbundenSeit?: string; zuletztGesehen?: string; manifest: { version?: string; aktionen: Array<{ name: string; autonomie: string }> }; sinne?: { leerlaufSek?: number; fenster?: string; akkuProzent?: number; akkuLaedt?: boolean }; sinneZeit?: string }
+export interface LebenszeichenGeraet { id: string; name: string; plattform: string; status: 'aktiv' | 'widerrufen'; online: boolean; verbundenSeit?: string; zuletztGesehen?: string; manifest: { version?: string; aktionen: Array<{ name: string; autonomie: string }> }; sinne?: { leerlaufSek?: number; fenster?: string; akkuProzent?: number; akkuLaedt?: boolean; uptimeSek?: number; ramGesamtMb?: number; ramFreiMb?: number; cpuProzent?: number; gpuProzent?: number; laufwerke?: Array<{ name: string; gesamtGb: number; freiGb: number }> }; sinneZeit?: string }
 export interface LebenszeichenBefund { id: string; quelle: string; gegenstand: string; titel: string; zustand: 'offen' | 'erledigt'; entstanden: string; zuletztGesehen: string; erledigtAm?: string; gesehenAnzahl: number; vorgangId?: string }
 export interface CliUsageOverview {
   totals: { runs: number; durationS: number; tokensIn: number; tokensOut: number; cacheReadTokens: number; costUsd: number };

@@ -156,6 +156,15 @@ export function LebenszeichenPage() {
                     {g.online && g.sinne && (
                       <span className="text-gray-400"> · {g.sinne.leerlaufSek !== undefined ? (g.sinne.leerlaufSek < 300 ? `aktiv (Leerlauf ${Math.round(g.sinne.leerlaufSek / 60)} min)` : `Leerlauf ${Math.round(g.sinne.leerlaufSek / 60)} min`) : ''}{g.sinne.fenster && g.sinne.leerlaufSek !== undefined && g.sinne.leerlaufSek < 300 ? ` · „${g.sinne.fenster.slice(0, 50)}"` : ''}{g.sinne.akkuProzent !== undefined ? ` · Akku ${g.sinne.akkuProzent} %${g.sinne.akkuLaedt ? ' (lädt)' : ''}` : ''}</span>
                     )}
+                    {g.online && g.sinne && (g.sinne.uptimeSek !== undefined || g.sinne.cpuProzent !== undefined) && (
+                      <div className="text-gray-500 mt-0.5">{[
+                        g.sinne.uptimeSek !== undefined ? `läuft seit ${Math.floor(g.sinne.uptimeSek / 86400)} d ${Math.floor((g.sinne.uptimeSek % 86400) / 3600)} h` : '',
+                        g.sinne.cpuProzent !== undefined ? `CPU ${g.sinne.cpuProzent} %` : '',
+                        g.sinne.gpuProzent !== undefined ? `GPU ${g.sinne.gpuProzent} %` : '',
+                        g.sinne.ramGesamtMb && g.sinne.ramFreiMb !== undefined ? `RAM ${Math.round(g.sinne.ramFreiMb / 1024)}/${Math.round(g.sinne.ramGesamtMb / 1024)} GB frei` : '',
+                        ...(g.sinne.laufwerke ?? []).map(l => `${l.name} ${l.freiGb}/${l.gesamtGb} GB frei`),
+                      ].filter(Boolean).join(' · ')}</div>
+                    )}
                     <div className="text-gray-500 mt-0.5">{(g.manifest?.aktionen ?? []).map(a => `${a.name}${a.autonomie === 'auto' ? '' : a.autonomie === 'nie' ? ' ⛔' : ' ✋'}`).join(' · ')}</div>
                   </li>
                 ))}

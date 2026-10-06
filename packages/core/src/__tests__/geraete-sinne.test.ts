@@ -23,6 +23,14 @@ describe('deuteGeraete', () => {
     expect(d.auffaellig).toEqual(['geraet:Mac:akku', 'geraet:Handy:getrennt']);
     expect(d.aktiv).toEqual({ name: 'Laptop', leerlaufSek: 10 });
   });
+  it('Systemzeile mit Laufzeit, CPU, GPU, RAM und knappem Laufwerk als Befund', () => {
+    const d = deuteGeraete({ jetzt: JETZT, geraete: [
+      { name: 'PC', plattform: 'windows', online: true, sinneZeit: iso(1), sinne: { leerlaufSek: 5, uptimeSek: 13 * 86_400 + 2 * 3600, cpuProzent: 12, gpuProzent: 3, ramGesamtMb: 128_000, ramFreiMb: 70_000, laufwerke: [{ name: 'C:', gesamtGb: 931, freiGb: 120 }, { name: 'D:', gesamtGb: 1863, freiGb: 90 }] } },
+    ] })!;
+    expect(d.zeilen[1]).toContain('⚠️ ↳ PC System: läuft seit 13 d');
+    expect(d.zeilen[1]).toContain('CPU 12 % · GPU 3 % · RAM 68 GB frei von 125 · C: 120 GB frei von 931 · ⚠️ D: 90 GB frei von 1863');
+    expect(d.auffaellig).toEqual(['geraet:PC:laufwerk:D']);
+  });
   it('alte Sinne zählen nicht; ohne Geräte keine Deutung', () => {
     const d = deuteGeraete({ jetzt: JETZT, geraete: [{ name: 'PC', plattform: 'windows', online: true, verbundenSeit: iso(90), sinneZeit: iso(10), sinne: { leerlaufSek: 5 } }] })!;
     expect(d.zeilen[0]).toBe('PC (windows): online seit 1 h 30 min');
