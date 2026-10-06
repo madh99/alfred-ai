@@ -14,6 +14,8 @@ export { ProactiveScheduler } from './proactive-scheduler.js';
 export { buildSkillContext } from './context-factory.js';
 export { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS, pruefeManifest, geraetSkillName } from './geraete/protokoll.js'; // v1224
 export { GeraeteGateway } from './geraete/gateway.js'; // v1224
+export { istGesperrteUrl, istGesperrteBeschriftung, formatiereSeite } from './geraete/browser-regeln.js'; // v1229
+export type { BrowserElement } from './geraete/browser-regeln.js';
 export type { ContextSource, ContextResult } from './context-factory.js';
 export { DocumentProcessor } from './document-processor.js';
 export type { OcrServiceInterface } from './document-processor.js';

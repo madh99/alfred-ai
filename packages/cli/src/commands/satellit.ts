@@ -9,6 +9,14 @@ import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS } from '@alfred/cor
 import { getVersion } from '../version.js';
 import { ladeKonfig, type GeraetKonfig } from './pair.js';
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
+import { BrowserHand, formatiereSeite } from './satellit-browser.js';
+
+/** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
+let browserHand: BrowserHand | undefined;
+function browser(k: GeraetKonfig): BrowserHand {
+  if (!browserHand) browserHand = new BrowserHand({ executablePath: (k as GeraetKonfig & { browserPfad?: string }).browserPfad });
+  return browserHand;
+}
 
 /**
  * v1224 — `alfred satellit`: der Dienst auf dem Gerät. Hält die Verbindung zum Gehirn, meldet
@@ -38,6 +46,14 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'shell', beschreibung: `Führt einen Befehl auf diesem Gerät aus — ${process.platform === 'win32' ? 'PowerShell' : 'sh'} (Arbeitsverzeichnis innerhalb freigegebener Verzeichnisse). Zum Öffnen von Dateien, Ordnern oder URLs lieber „oeffnen" nutzen.`, autonomie: 'bestaetigen', parameter: { command: { type: 'string', description: process.platform === 'win32' ? 'PowerShell-Befehl' : 'Shell-Befehl' }, cwd: { type: 'string', description: 'Arbeitsverzeichnis (optional)' } } },
       { name: 'liste', beschreibung: 'Listet ein freigegebenes Verzeichnis dieses Geräts (Namen, Größe, Datum)', autonomie: 'auto', parameter: { path: { type: 'string', description: 'Absoluter Pfad eines freigegebenen Verzeichnisses' } } },
       { name: 'hinweis', beschreibung: 'Zeigt dem Owner einen kurzen Hinweis auf diesem Gerät', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
+      // v1229 — Browser-Hand (eigenes Alfred-Profil im Browser des Geräts, Fenster sichtbar)
+      { name: 'browser_oeffnen', beschreibung: 'Öffnet eine URL im Alfred-Browser auf diesem Gerät und liefert Titel und Seitentext', autonomie: 'auto', parameter: { url: { type: 'string', description: 'URL' } } },
+      { name: 'browser_lesen', beschreibung: 'Liest die aktuelle Browser-Seite: Text und nummerierte Element-Karte (Links, Buttons, Felder). Vor jedem Klicken/Tippen nötig', autonomie: 'auto' },
+      { name: 'browser_klicken', beschreibung: 'Klickt Element Nr. N aus der Element-Karte. Kauf-, Bestell- und Anmelde-Elemente sind gesperrt', autonomie: 'bestaetigen', parameter: { element: { type: 'number', description: 'Nummer aus browser_lesen' } } },
+      { name: 'browser_tippen', beschreibung: 'Tippt Text in Element Nr. N (Suchfeld, Formular), optional mit Enter. Passwortfelder sind gesperrt', autonomie: 'bestaetigen', parameter: { element: { type: 'number', description: 'Nummer aus browser_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'Enter danach' } } },
+      { name: 'browser_zurueck', beschreibung: 'Eine Seite zurück', autonomie: 'auto' },
+      { name: 'browser_screenshot', beschreibung: 'Screenshot der aktuellen Seite (JPEG, an den Owner)', autonomie: 'auto' },
+      { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
     ],
     sinne: [],
   };
@@ -86,6 +102,35 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const text = String(params.text ?? '');
       console.log(`\n🔔 Hinweis von Alfred: ${text}\n`);
       return { success: true, display: `Hinweis angezeigt auf ${k.name}` };
+    }
+    // v1229 — Browser-Hand
+    case 'browser_oeffnen': {
+      const s = await browser(k).oeffnen(String(params.url ?? ''));
+      return { success: true, data: s, display: formatiereSeite(s) };
+    }
+    case 'browser_lesen': {
+      const s = await browser(k).lesen();
+      return { success: true, data: { url: s.url, titel: s.titel, elemente: s.elemente.length }, display: formatiereSeite(s) };
+    }
+    case 'browser_klicken': {
+      const s = await browser(k).klicken(Number(params.element));
+      return { success: true, data: { url: s.url, titel: s.titel, geklickt: s.geklickt }, display: formatiereSeite(s) };
+    }
+    case 'browser_tippen': {
+      const s = await browser(k).tippen(Number(params.element), String(params.text ?? ''), params.enter === true || params.enter === 'true');
+      return { success: true, data: { url: s.url, titel: s.titel }, display: formatiereSeite(s) };
+    }
+    case 'browser_zurueck': {
+      const s = await browser(k).zurueck();
+      return { success: true, data: { url: s.url, titel: s.titel }, display: formatiereSeite(s) };
+    }
+    case 'browser_screenshot': {
+      const b64 = await browser(k).screenshot();
+      return { success: true, data: { screenshotBase64: b64, mimeType: 'image/jpeg' }, display: 'Screenshot aufgenommen' };
+    }
+    case 'browser_schliessen': {
+      await browser(k).schliessen();
+      return { success: true, display: 'Alfred-Browser geschlossen' };
     }
     default:
       return { success: false, error: `Aktion unbekannt: ${aktion}` };

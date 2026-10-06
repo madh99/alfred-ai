@@ -34,7 +34,7 @@ export class GeraetSkill extends Skill {
     this.metadata = {
       name: deps.skillName,
       category: 'core',
-      description: `Gerät „${deps.name}" (${deps.manifest.plattform}) des Owners — Alfred handelt DORT, nicht auf dem Server. Aktionen: ${aktionen.map(a => a.name).join(', ')}. Verändernde Aktionen fragen den Owner vorher (Bestätigung per Button); melde dann nur „zur Bestätigung gestellt". Nutze dieses Gerät, wenn der Owner „auf meinem PC/Mac/Rechner/Laptop" oder den Gerätenamen nennt.`,
+      description: `Gerät „${deps.name}" (${deps.manifest.plattform}) des Owners — Alfred handelt DORT, nicht auf dem Server. Aktionen: ${aktionen.map(a => a.name).join(', ')}. Verändernde Aktionen fragen den Owner vorher (Bestätigung per Button); melde dann nur „zur Bestätigung gestellt". Nutze dieses Gerät, wenn der Owner „auf meinem PC/Mac/Rechner/Laptop" oder den Gerätenamen nennt. Browser: browser_oeffnen → browser_lesen (Element-Karte mit Nummern) → browser_klicken/browser_tippen mit der Nummer; nach jedem Klick erneut lesen. Kauf, Bestellung, Zahlung und Anmeldung sind gesperrt — das macht der Owner selbst.`,
       riskLevel: 'write',
       version: '1.0.0',
       timeoutMs: 11 * 60_000,
@@ -68,8 +68,12 @@ export class GeraetSkill extends Skill {
     }
     const r = await this.deps.sendeAktion(aktion, params, aktion === 'shell' ? 10 * 60_000 : undefined);
     await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, 300) : (r.error ?? '').slice(0, 300), autonomie: def.autonomie });
-    return r.success
-      ? { success: true, data: r.data, display: r.display ?? `${beschreibung} — ausgeführt (${r.dauerMs} ms)` }
-      : { success: false, error: r.error ?? 'Gerät meldete Fehler' };
+    if (!r.success) return { success: false, error: r.error ?? 'Gerät meldete Fehler' };
+    // v1229 — Screenshots vom Gerät kommen als Bild zum Owner
+    const d = r.data as { screenshotBase64?: string; mimeType?: string } | undefined;
+    if (d && typeof d.screenshotBase64 === 'string') {
+      return { success: true, data: { geraet: this.deps.name, aktion }, display: r.display ?? 'Screenshot', attachments: [{ fileName: 'screenshot.jpg', mimeType: d.mimeType ?? 'image/jpeg', data: Buffer.from(d.screenshotBase64, 'base64') }] };
+    }
+    return { success: true, data: r.data, display: r.display ?? `${beschreibung} — ausgeführt (${r.dauerMs} ms)` };
   }
 }

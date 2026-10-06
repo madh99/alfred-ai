@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1229] - 2026-10-06
+
+### Added — Die Browser-Hand des Satelliten (v1229)
+
+Owner-Realfall 19:52: Brave ließ sich per Shell starten, aber „leg einen Bartschneider in den Warenkorb" konnte Alfred nicht, weil er den Browser am Gerät nicht bedienen konnte.
+
+- **Sieben Browser-Aktionen im Satelliten** über das Chrome-DevTools-Protokoll (puppeteer-core, bereits Abhängigkeit der CLI): `browser_oeffnen`, `browser_lesen` (Seitentext plus nummerierte Element-Karte aus Links, Buttons und Feldern), `browser_klicken`, `browser_tippen`, `browser_zurueck`, `browser_screenshot` (kommt als Bild zum Owner), `browser_schliessen`.
+- **Eigenes Alfred-Profil** (~/.alfred/browser-profil) in Brave, Chrome oder Edge des Geräts; der Owner meldet sich dort einmal an, wo Alfred handeln darf. Das Fenster bleibt sichtbar.
+- **Autonomie:** Öffnen, Lesen, Zurück, Screenshot `auto`; Klicken und Tippen `bestaetigen`. **Gesperrt** (deterministisch an URL und Beschriftung): Kasse, Zahlung, Bestellung, Anmeldung, Passwortfelder. „In den Einkaufswagen" ist erlaubt, „Jetzt kaufen" nicht.
+- Der Pfad zum Browser wird erkannt oder in ~/.alfred/geraet.json als `browserPfad` gesetzt.
+- 3 Tests (Sperren, Element-Karte).
+
 ## [0.19.0-jarvis.1228] - 2026-10-06
 
 ### Added — Satellit als Autostart-Dienst (v1228)
