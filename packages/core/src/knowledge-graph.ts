@@ -44,7 +44,9 @@ const DISTANCE_TABLE: Record<string, Record<string, number>> = {
 // v1141 — rule_skill_/open_item_/_alfred_internal_ ergänzt: rule_skill_homeassistant_*
 // enthält „home" im Key und stempelte Orte aus dem Regel-Text als Zuhause; die
 // Employment-Suche fand „Position/Company" in Eskalations- und News-Texten.
-export const INTERNAL_MEMORY_KEY_PREFIXES = /^(kg_connection_|kg_|insight_|pattern_|temporal_|action_feedback_|connection_|llm_usage_|service_usage_|rule_skill_|open_item_|_alfred_internal_)/i;
+// v1216 — gemeinsames Modul, gilt jetzt auch für Memory-Suche und Chat-Prompt
+import { INTERNAL_MEMORY_KEY_PREFIXES } from './active-learning/interne-memories.js';
+export { INTERNAL_MEMORY_KEY_PREFIXES };
 
 /**
  * Markers that indicate a memory describes ANOTHER PERSON's home/location, not the user's own.

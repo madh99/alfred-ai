@@ -640,7 +640,8 @@ export class MessagePipeline {
       //    Wissensgraph 1 s, alles sequentiell = 5,7 s von 11 s Antwortzeit, bevor das Modell
       //    überhaupt arbeitete. Die Lader sind voneinander unabhängig; jeder bleibt in seinem
       //    eigenen try/catch, Ergebnisse und Reihenfolge im Prompt sind unverändert.
-      let memories: { key: string; value: string; category: string; type?: string; score?: number }[] | undefined;
+      let memories: { key: string; value: string; category: string; type?: string; score?: number; updatedAt?: string }[] | undefined;
+      const { istInterneMemory } = await import('./active-learning/interne-memories.js'); // v1216
       const syntheticInput = this.isSyntheticLabel(message.text);
       const hasAudioAttachment = message.attachments?.some(a => a.type === 'audio') ?? false;
       const skipMemories = syntheticInput && !hasAudioAttachment;
@@ -668,12 +669,12 @@ export class MessagePipeline {
               mem = [];
               for (const uid of kontextUserIds) {
                 for (const m of await this.embeddingService.semanticSearch(uid, message.text, 10)) {
-                  if (!seen.has(m.key)) { seen.add(m.key); mem.push(m); }
+                  if (!istInterneMemory(m.key) && !seen.has(m.key)) { seen.add(m.key); mem.push(m); }
                 }
               }
               for (const uid of kontextUserIds) {
                 for (const m of await this.memoryRepo.getRecentForPrompt(uid, 5)) {
-                  if (!seen.has(m.key)) { seen.add(m.key); mem.push(m); }
+                  if (!istInterneMemory(m.key) && !seen.has(m.key)) { seen.add(m.key); mem.push(m); }
                 }
               }
             } else {
@@ -681,7 +682,7 @@ export class MessagePipeline {
               mem = [];
               for (const uid of kontextUserIds) {
                 for (const m of await this.memoryRepo.getRecentForPrompt(uid, 20)) {
-                  if (!seen.has(m.key)) { seen.add(m.key); mem.push(m); }
+                  if (!istInterneMemory(m.key) && !seen.has(m.key)) { seen.add(m.key); mem.push(m); }
                 }
               }
             }
@@ -705,13 +706,13 @@ export class MessagePipeline {
       };
 
       // 5a2. pattern/connection/correction — immer dabei, unabhängig von der Relevanz
-      const ladeMuster = async (): Promise<Array<{ key: string; value: string; category: string; type?: string }>> => {
-        const out: Array<{ key: string; value: string; category: string; type?: string }> = [];
+      const ladeMuster = async (): Promise<Array<{ key: string; value: string; category: string; type?: string; updatedAt?: string }>> => {
+        const out: Array<{ key: string; value: string; category: string; type?: string; updatedAt?: string }> = [];
         if (!this.memoryRepo || skipMemories) return out;
         try {
           for (const uid of kontextUserIds) {
             for (const type of ['pattern', 'connection', 'correction'] as const) {
-              for (const m of await this.memoryRepo.getByType(uid, type, 5)) out.push({ key: m.key, value: m.value, category: m.category, type: m.type });
+              for (const m of await this.memoryRepo.getByType(uid, type, 5)) if (!istInterneMemory(m.key)) out.push({ key: m.key, value: m.value, category: m.category, type: m.type, updatedAt: m.updatedAt });
             }
           }
         } catch { /* non-critical */ }

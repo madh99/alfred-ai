@@ -1,4 +1,5 @@
 import type { Logger } from 'pino';
+import { istInterneMemory } from './interne-memories.js';
 import type { MemoryRepository, MemoryEntry } from '@alfred/storage';
 import type { EmbeddingService, SemanticSearchResult } from '../embedding-service.js';
 
@@ -8,6 +9,8 @@ export interface RetrievedMemory {
   category: string;
   type: string;
   score: number;
+  /** v1216 — Alter der Erinnerung für den Prompt (Vergangenheit sichtbar machen). */
+  updatedAt?: string;
 }
 
 // 30-day half-life for temporal decay
@@ -58,6 +61,7 @@ export class MemoryRetriever {
       const keywordResults: MemoryEntry[] = [];
       for (const uid of userIds) {
         for (const m of await this.memoryRepo.keywordSearch(uid, query, 30)) {
+          if (istInterneMemory(m.key)) continue; // v1216 — Dedup-Marker/Zähler sind kein Wissen
           if (!keywordSeen.has(m.id)) {
             keywordSeen.add(m.id);
             keywordResults.push(m);
@@ -73,6 +77,7 @@ export class MemoryRetriever {
           const semanticSeen = new Set<string>();
           for (const uid of userIds) {
             for (const r of await this.embeddingService.semanticSearch(uid, query, 30)) {
+              if (istInterneMemory(r.key)) continue; // v1216
               if (!semanticSeen.has(r.key)) {
                 semanticSeen.add(r.key);
                 semanticResults.push(r);
@@ -108,6 +113,7 @@ export class MemoryRetriever {
             category: mem.category,
             type: mem.type,
             score: combined,
+            updatedAt: mem.updatedAt, // v1216
           },
           score: combined,
         });
@@ -142,6 +148,7 @@ export class MemoryRetriever {
                 category: sr.category,
                 type: memEntry?.type || 'general',
                 score: combined,
+                updatedAt: memEntry?.updatedAt, // v1216
               },
               score: combined,
             });

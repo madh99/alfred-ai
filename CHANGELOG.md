@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1216] - 2026-10-06
+
+### Fixed — Auto-Vorgänge bleiben nicht hängen, Dedup-Marker raus aus dem Prompt, Erinnerungen tragen ihr Alter (v1216)
+
+Befunde aus dem Audit 06.10.: Vier Vorgänge der Klasse auto standen seit 20 Stunden auf „offen, ausführen", weil nur der Erfolg einen Status setzte. Zwei scheiterten an fehlenden Pflichtfeldern, einer wurde fünfmal vom Akzeptanz-Gate übersprungen. 394 Dedup-Marker („insight_delivered:…", Kopien zugestellter Meldungen seit April) liefen als „Behavior Feedback" in den Chat-Prompt; daraus wurde „E-Mail-Skill ist deaktiviert". Ein falscher BMW-Vorgang führte den Owner zur unnötigen Token-Erneuerung, die dann als Korrektur-Erinnerung zur Wahrheit wurde.
+
+- **Ausführungspfad:** Fehlschlag setzt den Vorgang auf „wartet" mit Fehlertext und nächstem Schritt für den Owner. Übersprungen durch Akzeptanz- oder Knowledge-Gate setzt „verworfen" mit Grund. Pflichtfelder werden vor der Ausführung deterministisch aus der Beschreibung ergänzt (reminder.message, watch.name, todo.title, memory.value).
+- **Interne Memories** (Marker, Zähler, KG-Verbindungen, Skill-Regeln) sind von der Memory-Suche und allen Fallback-Pfaden des Chat-Prompts ausgeschlossen. Eine Liste, gemeinsam mit dem Knowledge-Graph (v1141).
+- **Prompt:** Jede Erinnerung trägt ihr Alter („vor 4 Monaten"), und der Memory-Abschnitt beginnt mit der Regel, dass der aktuelle Zustand von Auto, Haus, Energie, Infrastruktur und Skills ausschließlich aus dem Weltmodell oder einem Werkzeug stammt.
+- 10 Tests.
+
 ## [0.19.0-jarvis.1215] - 2026-10-06
 
 ### Fixed — Lernbedarf: Absage nur im Kopf der Antwort (v1215)

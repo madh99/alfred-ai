@@ -2304,6 +2304,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           if (rate !== undefined && rate < 0.2) {
             this.logger.info({ skillName: action.skillName, rate }, 'Reasoning: action skipped (low acceptance rate)');
             await this.protokolliereSchritt(action, 'uebersprungen', `Akzeptanzrate ${Math.round(rate * 100)} %`, this.aktuelleVorgangIds?.get(action));
+            // v1216 — ein übersprungener Vorgang bleibt nicht „offen, ausführen" (Realfall: fünfmal neu vorgeschlagen, fünfmal übersprungen)
+            { const vid = this.aktuelleVorgangIds?.get(action); if (vid && this.vorgaengeRepo) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', `Übersprungen: Akzeptanzrate ${Math.round(rate * 100)} % für ${action.skillName}`).catch(() => undefined); }
             continue;
           }
         }
@@ -2411,6 +2413,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           if (gate === 'reject') {
             this.logger.info({ action: action.description, gate: 'reject' }, 'Reasoning: knowledge gate rejected action');
             await this.protokolliereSchritt(action, 'uebersprungen', 'Knowledge-Gate: Ziel unbekannt', this.aktuelleVorgangIds?.get(action));
+            { const vid = this.aktuelleVorgangIds?.get(action); if (vid && this.vorgaengeRepo) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'verworfen', 'Übersprungen: Knowledge-Gate — Ziel unbekannt').catch(() => undefined); } // v1216
             continue;
           }
           if (gate === 'confirm') {
@@ -2421,6 +2424,15 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         }
 
         if (executeDirectly) {
+          // v1216 — Pflichtfelder deterministisch aus der Beschreibung ergänzen (Realfall: reminder ohne message, watch ohne name)
+          try {
+            const { ergaenzePflichtfelder } = await import('./vorgaenge/pflichtfelder.js');
+            const erg = ergaenzePflichtfelder(action);
+            if (erg.ergaenzt.length > 0) {
+              action.skillParams = erg.action.skillParams;
+              this.logger.info({ action: action.description.slice(0, 100), skillName: action.skillName, ergaenzt: erg.ergaenzt }, 'v1216 Pflichtfelder aus Beschreibung ergänzt');
+            }
+          } catch { /* best-effort */ }
           let result = await this.executeDirectly(action);
 
           // v693 — Self-Heal mit zweitem LLM-Pass: wenn execute failed, das LLM
@@ -2477,6 +2489,10 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           if (this.vorgaengeRepo && result.success) {
             const vid = this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action);
             if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'erledigt', `automatisch ausgeführt${ruecknahme ? ` — Rücknahme: ${ruecknahme}` : ''}`).catch(() => undefined);
+          } else if (this.vorgaengeRepo && !result.success) {
+            // v1216 — Fehlschlag sichtbar machen: „wartet" mit Fehlertext statt ewig „offen, ausführen"
+            const vid = this.aktuelleVorgangIds?.get(_origAction) ?? this.aktuelleVorgangIds?.get(action);
+            if (vid) await this.vorgaengeRepo.setzeStatus(this.resolvedOwnerUserId || this.defaultChatId, vid, 'wartet', `Fehlgeschlagen: ${String(result.error ?? 'unbekannt').slice(0, 200)}`, 'Owner: Aktion schlug fehl — prüfen, anpassen oder verwerfen').catch(() => undefined);
           }
           continue;
         }

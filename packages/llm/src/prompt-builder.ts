@@ -12,7 +12,27 @@ export interface MemoryForPrompt {
   value: string;
   category: string;
   type?: string;
+  /** v1216 — letzte Änderung; wird als Alter angezeigt, damit Vergangenheit erkennbar ist. */
+  updatedAt?: string;
 }
+
+/** v1216 — Alter einer Erinnerung in Worten (deutsch, grob). */
+export function alterText(iso: string | undefined, now: number = Date.now()): string | undefined {
+  if (!iso) return undefined;
+  const ms = now - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return undefined;
+  const tage = Math.floor(ms / 86_400_000);
+  if (tage === 0) return 'heute';
+  if (tage === 1) return 'gestern';
+  if (tage < 31) return 'vor ' + tage + ' Tagen';
+  const monate = Math.floor(tage / 30);
+  if (monate < 12) return 'vor ' + monate + (monate === 1 ? ' Monat' : ' Monaten');
+  const jahre = Math.floor(tage / 365);
+  return 'vor ' + jahre + (jahre === 1 ? ' Jahr' : ' Jahren');
+}
+
+/** v1216 — Zustandsaussagen kommen aus dem Weltmodell, nicht aus Erinnerungen. */
+export const MEMORY_ZUSTANDS_REGEL = 'Regel: Der AKTUELLE Zustand von Auto, Haus, Energie, Infrastruktur und Skills steht ausschließlich im Abschnitt „Weltmodell" oder kommt aus einem Werkzeug. Erinnerungen sind Vergangenheit — ihr Alter steht in Klammern. Alte Zustands- oder Störungsmeldungen nie als Gegenwart wiedergeben.';
 
 export interface UserProfile {
   displayName?: string;
@@ -533,6 +553,8 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
 
     if (memories && memories.length > 0) {
       prompt += '\n\n## Memories about this user\n';
+      prompt += MEMORY_ZUSTANDS_REGEL + '\n'; // v1216
+      const mitAlter = (m: MemoryForPrompt) => { const a = alterText(m.updatedAt); return a ? ` (${a})` : ''; };
 
       // Group by type if type info is available
       const hasTypes = memories.some(m => m.type && m.type !== 'general');
@@ -569,12 +591,12 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
         for (const [type, items] of groups) {
           prompt += `\n### ${typeLabels[type] || type}\n`;
           for (const m of items) {
-            prompt += `- ${m.key}: ${m.value}\n`;
+            prompt += `- ${m.key}: ${m.value}${mitAlter(m)}\n`;
           }
         }
       } else {
         for (const m of memories) {
-          prompt += `- [${m.category}] ${m.key}: ${m.value}\n`;
+          prompt += `- [${m.category}] ${m.key}: ${m.value}${mitAlter(m)}\n`;
         }
       }
 

@@ -155,8 +155,8 @@ export class VorgaengeRepository {
     return { ...v, id, erstellt: jetzt, aktualisiert: jetzt };
   }
 
-  async setzeStatus(userId: string, id: string, status: VorgangStatus, ergebnis?: string): Promise<void> {
-    await this.db.execute('UPDATE vorgaenge SET status = ?, ergebnis = COALESCE(?, ergebnis), aktualisiert = ? WHERE user_id = ? AND id = ?', [status, ergebnis ?? null, new Date().toISOString(), userId, id]);
+  async setzeStatus(userId: string, id: string, status: VorgangStatus, ergebnis?: string, naechsterSchritt?: string): Promise<void> {
+    await this.db.execute('UPDATE vorgaenge SET status = ?, ergebnis = COALESCE(?, ergebnis), naechster_schritt = COALESCE(?, naechster_schritt), aktualisiert = ? WHERE user_id = ? AND id = ?', [status, ergebnis ?? null, naechsterSchritt ?? null, new Date().toISOString(), userId, id]);
   }
 
   /** v1185 — offener Vorgang, dessen Titel dem gegebenen ähnlich ist (Jaccard ≥ Schwelle). */
