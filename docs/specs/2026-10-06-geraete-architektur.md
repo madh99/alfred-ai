@@ -81,7 +81,7 @@ Versionierung: `version` im Rahmen; das Gehirn akzeptiert die letzten zwei Proto
 - **Terminal (`alfred`).** Ink-Oberfläche (React im Terminal): Statuszeile (Gerät, Verbindung, offene Bestätigungen, Lage-Kurzform), Verlauf, Eingabezeile. Tasten: Enter sendet Text; F9 oder Leertaste halten spricht; j/n bestätigt; l zeigt die Lage; q schließt die Sitzung, der Satellit läuft weiter.
 - **Ein Verlauf.** Text, Sprache, Bestätigungsfragen und proaktive Meldungen stehen in derselben Folge, weil es dasselbe Gespräch ist (Gesprächsfaden aus .1203 gilt auch hier).
 - **Anhängen statt verbinden.** Die Sitzung spricht über IPC mit dem Satelliten; mehrere Sitzungen sind möglich, die Geräteidentität bleibt eine.
-- **Desktop-Fenster (Electron).** Dieselbe Sitzung mit Fenster, Tray, globalem Tastenkürzel für Push-to-Talk, Benachrichtigungen des Systems, Autostart. Node im Prozess, Satellit eingebettet oder angehängt. Web-GUI-Komponenten werden wiederverwendet.
+- **Desktop-Fenster (Flutter, Entscheidung 06.10.).** Dieselbe Sitzung mit Fenster, Tray, globalem Tastenkürzel für Push-to-Talk, Benachrichtigungen des Systems. Die App hängt sich per IPC an den Satelliten (CLI-Dienst) wie die Terminal-Sitzung; kein Node in der App.
 
 ## 9. Sprache
 
@@ -92,7 +92,7 @@ Versionierung: `version` im Rahmen; das Gehirn akzeptiert die letzten zwei Proto
 
 ## 10. Handy-Apps
 
-- **Rahmen.** Capacitor um die React-Oberfläche (Empfehlung) oder Flutter, wenn Plattform-Optik gewünscht ist. Beide signiert, Store-fähig (App Store über den Apple-Account, Play oder direkte APK).
+- **Rahmen.** Flutter (Entscheidung 06.10.), dieselbe Codebasis wie die Desktop-App. Signiert, Store-fähig (App Store über den Apple-Account, Play oder direkte APK).
 - **Kein Dienst im Hintergrund.** Betriebssysteme erlauben keine dauerhafte Verbindung. Die App verbindet sich, solange sie offen ist; sonst weckt sie Push (Apple Push, Firebase) mit einem Verweis, worauf die App die Verbindung kurz öffnet. Das Gehirn speichert Push-Token je Gerät.
 - **Fähigkeiten.** Benachrichtigung, Standort mit Zonen, Mikrofon, Kamera und Foto senden, Teilen-Ziel (Text, Link, Datei an Alfred), Kalender und Kontakte lesen mit Erlaubnis, auf iOS Kurzbefehle und Siri, auf Android Schnelleinstellung. Keine Shell, keine Dateisystem-Vollzugriffe.
 - **Oberfläche.** Dieselbe Sitzung wie im Terminal: Verlauf, Push-to-Talk, Bestätigungen, Lage auf dem Sperrbildschirm als Benachrichtigung.
@@ -128,12 +128,15 @@ Jede Phase ist eine Folge kleiner Releases mit Audit, wie bei Jarvis.
 - **Audio auf dem Desktop** hängt von Systemwerkzeugen ab; Phase 2 prüft je Plattform, welche Aufnahme-Bibliothek ohne Native-Build auskommt.
 - **Kosten.** Jede Sprachrunde kostet Transkription, Modellaufruf und Synthese; der Kostenwächter deckt es, die Lage im Prompt hält Antworten kurz.
 
-## 14. Offene Entscheidungen des Owners
+## 14. Entscheidungen des Owners (06.10.2026, noch keine Freigabe zur Umsetzung)
 
-1. Erreichbarkeit: WireGuard auf der Dream Machine (empfohlen) oder öffentlicher Proxy.
-2. Handy-Rahmen: Capacitor (eine Oberfläche, TypeScript) oder Flutter (Plattform-Optik, Dart).
-3. Reihenfolge: Phase 1 und 2 auf dem Windows-PC des Owners zuerst; Handy ab Phase 5.
-4. Shell-Freigabe für den Desktop-Satelliten: ja, mit Verzeichnis-Grenzen, oder zunächst ohne Shell.
+1. **Erreichbarkeit:** vorerst VPN (WireGuard auf der Dream Machine). Geräte brauchen ein Always-on- bzw. On-Demand-Profil; der Server bleibt intern.
+2. **App-Rahmen: Flutter.** Folge: Die Apps für Windows, macOS, Linux, iOS und Android sind EINE Flutter-Codebasis. Es gibt kein Electron. Die Desktop-App bettet kein Node ein, sondern hängt sich wie die Terminal-Sitzung per IPC an den Satelliten (CLI-Dienst). Handy-Apps sprechen direkt mit dem Gehirn. Protokoll-Typen entstehen einmal in TypeScript und werden als JSON-Schema für Dart generiert, damit es eine Quelle der Wahrheit gibt.
+3. **Reihenfolge:** Phase 1 und 2 (Protokoll, Satellit, Terminal-Sitzung, Sprache) zuerst auf dem Windows-PC des Owners, aber von Beginn an für macOS und Linux gebaut: Satellit und Terminal-Sitzung sind Node und laufen auf allen drei; plattformspezifisch sind nur die Sinne (Leerlauf, aktives Fenster, Akku) und die Autostart-Registrierung. Beweise auf Mac und Linux folgen in derselben Phase.
+4. **Shell am Desktop: ja,** mit Verzeichnis-Grenzen, erlaubten Programmen und Standard `bestaetigen`; `nie` für Löschen außerhalb der freigegebenen Verzeichnisse und für Systemänderungen. Auf dem Handy keine Shell.
+5. **CLI:** bleibt das Kernprogramm und wird zuerst gebaut. Ein npm-Paket mit den Rollen `start` (Gehirn), `satellit` (Dienst), `alfred` (Sitzung: Chat, Talk, Bestätigung), `pair`. Die Flutter-Apps sind Oberflächen über demselben Protokoll; sie ersetzen die CLI nicht, sie setzen auf ihr auf.
+
+**Geänderte Phasen durch Flutter:** Phase 4 wird „Flutter-Desktop-App für Windows, macOS, Linux" (statt Electron), Phase 5 bleibt Android, dann iOS, aus derselben Codebasis.
 
 ## 15. Einordnung in Jarvis
 
