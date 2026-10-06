@@ -60,6 +60,13 @@ Stand: 06.10.2026, Entwurf zur Entscheidung (keine Freigabe erteilt). Gehört zu
 
 Versionierung: `version` im Rahmen; das Gehirn akzeptiert die letzten zwei Protokollversionen.
 
+## 5a. Dateitransfer (Entscheidung 06.10.: in beide Richtungen)
+
+- **Server → Gerät** (`datei_ablegen`): Alfred legt eine Datei aus dem Dateispeicher des Servers (Anhänge, erzeugte PDFs, Exporte) in ein freigegebenes Verzeichnis des Geräts. Autonomie `bestaetigen` (schreibt auf dem Gerät).
+- **Gerät → Server** (`datei_holen`): Screenshot, Dokument oder eine in der Sitzung abgelegte Datei wandert in den Dateispeicher des Servers und steht sofort als Anhang und für Werkzeuge bereit. Autonomie `bestaetigen` (private Daten verlassen das Gerät). Quelle nur aus freigegebenen Verzeichnissen.
+- **Technik.** Steuerung über die WebSocket-Verbindung, Nutzlast über HTTPS mit Gerätetoken (`PUT/GET /api/geraete/dateien/<id>`), in Blöcken mit SHA-256-Prüfsumme und Wiederaufnahme. Standardgrenze 50 MB, größer nur mit ausdrücklicher Freigabe im Scope. Jeder Transfer ist ein Schritt im Ausführungsgedächtnis (Pfad, Größe, Prüfsumme, Richtung).
+- **Nicht-Ziel.** Keine Ordner-Synchronisation; Alfred kopiert gezielt einzelne Dateien im Rahmen einer Aufgabe.
+
 ## 6. Gehirn: was auf dem Server entsteht
 
 - **Geräte-Registry** (`geraete`: id, user_id, name, plattform, manifest, token_hash, scopes, status, zuletzt_gesehen, erstellt). API: Pairing-Code erzeugen, Geräte auflisten, Scopes setzen, widerrufen.
@@ -135,6 +142,8 @@ Jede Phase ist eine Folge kleiner Releases mit Audit, wie bei Jarvis.
 3. **Reihenfolge:** Phase 1 und 2 (Protokoll, Satellit, Terminal-Sitzung, Sprache) zuerst auf dem Windows-PC des Owners, aber von Beginn an für macOS und Linux gebaut: Satellit und Terminal-Sitzung sind Node und laufen auf allen drei; plattformspezifisch sind nur die Sinne (Leerlauf, aktives Fenster, Akku) und die Autostart-Registrierung. Beweise auf Mac und Linux folgen in derselben Phase.
 4. **Shell am Desktop: ja,** mit Verzeichnis-Grenzen, erlaubten Programmen und Standard `bestaetigen`; `nie` für Löschen außerhalb der freigegebenen Verzeichnisse und für Systemänderungen. Auf dem Handy keine Shell.
 5. **CLI:** bleibt das Kernprogramm und wird zuerst gebaut. Ein npm-Paket mit den Rollen `start` (Gehirn), `satellit` (Dienst), `alfred` (Sitzung: Chat, Talk, Bestätigung), `pair`. Die Flutter-Apps sind Oberflächen über demselben Protokoll; sie ersetzen die CLI nicht, sie setzen auf ihr auf.
+
+6. **Flutter gegen Electron, erneut geprüft (06.10.):** Weil die CLI der Satellit ist, entfällt Electrons Hauptvorteil (Node im Prozess). Flutter bleibt richtig für fünf Plattformen aus einer Codebasis. Der einzige Nachteil, die React-Kacheln sind nicht übertragbar, wird durch den **Hybrid** aufgehoben: Die Flutter-App baut die Sitzung nativ (Verlauf, Push-to-Talk, Bestätigungen, Lage, Tray, Tastenkürzel) und zeigt die Kacheln Lebenszeichen, Vorgänge, Befunde und Geräte in einem eingebetteten Browserfenster aus der bestehenden Web-GUI. Einzelne Kacheln können später nativ nachgezogen werden.
 
 **Geänderte Phasen durch Flutter:** Phase 4 wird „Flutter-Desktop-App für Windows, macOS, Linux" (statt Electron), Phase 5 bleibt Android, dann iOS, aus derselben Codebasis.
 
