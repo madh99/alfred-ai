@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sprachfassung, istSprachnachricht, SPRACHFASSUNG_MAX_ZEICHEN } from '../interaktion/sprache.js';
+import { sprachfassung, istSprachnachricht, SPRACHFASSUNG_MAX_ZEICHEN , sprachBloecke } from '../interaktion/sprache.js';
 
 // v1202 — Jarvis Interaktion: gesprochene Antwort auf Sprachnachricht, knapp und ohne Markdown.
 describe('sprachfassung', () => {
@@ -27,5 +27,22 @@ describe('istSprachnachricht', () => {
     expect(istSprachnachricht([{ type: 'audio' }])).toBe(true);
     expect(istSprachnachricht([{ type: 'image' }])).toBe(false);
     expect(istSprachnachricht(undefined)).toBe(false);
+  });
+});
+
+// v1247 — Streaming-Sprache Stufe 1: Blöcke aus ganzen Sätzen
+describe('sprachBloecke', () => {
+  it('bündelt Sätze zu Blöcken ab 90 Zeichen, höchstens 6, ohne Satz zu zerschneiden', () => {
+    const text = 'Dein PC ist aktiv. Die letzte Eingabe liegt unter einer Minute zurück. Im Vordergrund ist der Browser. Der Akku ist voll. Die CPU liegt bei zwölf Prozent, die GPU bei drei. Alles ruhig.';
+    const b = sprachBloecke(text);
+    expect(b.length).toBeGreaterThanOrEqual(2);
+    expect(b.join(' ')).toBe(text);
+    for (const x of b.slice(0, -1)) expect(x.length).toBeGreaterThanOrEqual(90);
+    expect(b.every(x => /[.!?]$/.test(x))).toBe(true);
+  });
+  it('kurzer Text = ein Block; Markdown wird entfernt; leer bleibt leer', () => {
+    expect(sprachBloecke('**Kurz.**')).toEqual(['Kurz.']);
+    expect(sprachBloecke('')).toEqual([]);
+    expect(sprachBloecke('a. '.repeat(100), 20, 3)).toHaveLength(3);
   });
 });

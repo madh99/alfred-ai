@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1247] - 2026-10-06
+
+### Added — Streaming-Sprache, Stufe 1: Block für Block vorlesen (v1247)
+
+Die Sitzung teilt die Antwort in Blöcke aus ganzen Sätzen (ab 90 Zeichen, höchstens 6) und synthetisiert den nächsten Block, während der vorige abgespielt wird. Der erste Ton kommt nach dem ersten Block statt nach dem ganzen Text; die Sitzung zeigt die Zeit bis zum ersten Ton. Helfer `sprachBloecke` im Kern mit Test. Stufe 2 (Vorlesen, während das Modell noch schreibt) braucht einen Streaming-Pfad durch die Pipeline und folgt getrennt.
+
 ## [0.19.0-jarvis.1246] - 2026-10-06
 
 ### Fixed — Strg+T zum Stoppen stürzte ohne Terminal ab (v1246)

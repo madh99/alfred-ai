@@ -9,7 +9,7 @@ import { starteSatellit } from './satellit.js';
 import { dienstLogPfad, satellitDienstLaeuft } from './satellit-dienst.js';
 import { getVersion } from '../version.js';
 import { Audio, type Aufnahme } from './satellit-audio.js'; // v1241
-import { audioMimeAusBytes } from '@alfred/core'; // v1243
+import { audioMimeAusBytes, sprachBloecke } from '@alfred/core'; // v1243, v1247
 
 /**
  * v1232 — Die Sitzung: EIN Terminal für Chat, Bestätigungen und den Satelliten.
@@ -198,11 +198,24 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
   const audio = new Audio();
   let aufnahme: Aufnahme | undefined;
   let stimme = false;
+  // v1247 — Streaming-Sprache Stufe 1: Block für Block — der nächste wird synthetisiert, während der vorige läuft
+  const synthetisiere = async (block: string): Promise<{ data: Buffer; mimeType: string }> => {
+    const r = await anfrageRoh(k, '/api/sprich', JSON.stringify({ text: block, knapp: false }), 'application/json');
+    if (r.status !== 200) throw new Error(`HTTP ${r.status}: ${r.data.toString('utf8').slice(0, 120)}`);
+    return { data: r.data, mimeType: r.contentType || 'audio/mpeg' };
+  };
   const sprich = async (text: string) => {
+    const bloecke = sprachBloecke(text);
+    if (bloecke.length === 0) return;
+    const start = Date.now();
+    let naechster = synthetisiere(bloecke[0]);
     try {
-      const r = await anfrageRoh(k, '/api/sprich', JSON.stringify({ text, knapp: true }), 'application/json');
-      if (r.status !== 200) { drucke(`🔇 Sprachausgabe nicht möglich (HTTP ${r.status}): ${r.data.toString('utf8').slice(0, 120)}`); return; }
-      await audio.abspielen(r.data, r.contentType || 'audio/mpeg');
+      for (let i = 0; i < bloecke.length; i++) {
+        const a = await naechster;
+        if (i + 1 < bloecke.length) naechster = synthetisiere(bloecke[i + 1]);
+        if (i === 0) { readline.clearLine(process.stdout, 0); readline.cursorTo(process.stdout, 0); process.stdout.write(`🔊 ${bloecke.length} ${bloecke.length === 1 ? 'Block' : 'Blöcke'}, erster Ton nach ${((Date.now() - start) / 1000).toFixed(1)} s`); }
+        await audio.abspielen(a.data, a.mimeType);
+      }
     } catch (err) { drucke(`🔇 Sprachausgabe fehlgeschlagen: ${(err as Error).message}`); }
   };
 

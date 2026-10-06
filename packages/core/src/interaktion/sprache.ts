@@ -8,6 +8,25 @@
  */
 export const SPRACHFASSUNG_MAX_ZEICHEN = 700;
 
+/**
+ * v1247 — Streaming-Sprache, Stufe 1: Die Antwort wird in Blöcke aus ganzen Sätzen geteilt; der nächste Block
+ * wird synthetisiert, während der vorige abgespielt wird. Erster Ton nach dem ersten Block statt nach dem ganzen Text.
+ * Blöcke sind mindestens `min` Zeichen (sonst zu viele kleine Anfragen), höchstens `maxBloecke`.
+ */
+export function sprachBloecke(text: string, min = 90, maxBloecke = 6): string[] {
+  const t = sprachfassung(text, 100_000);
+  if (!t) return [];
+  const saetze = t.split(/(?<=[.!?…])\s+(?=[^\s])/).map(s => s.trim()).filter(Boolean);
+  const bloecke: string[] = [];
+  let aktuell = '';
+  for (const satz of saetze) {
+    aktuell = aktuell ? `${aktuell} ${satz}` : satz;
+    if (aktuell.length >= min && bloecke.length < maxBloecke - 1) { bloecke.push(aktuell); aktuell = ''; }
+  }
+  if (aktuell) bloecke.push(aktuell);
+  return bloecke;
+}
+
 /** v1241 — MIME-Typ synthetisierter Sprache aus den ersten Bytes (Mistral liefert mp3, OpenAI opus/ogg). */
 export function audioMimeAusBytes(data: Buffer): string {
   if (data.length >= 4 && data.toString('latin1', 0, 4) === 'OggS') return 'audio/ogg';
