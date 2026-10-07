@@ -76,7 +76,9 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const p = String(params.path ?? '');
       if (!istPfadErlaubt(p, frei)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Freigegeben: ${frei.join(', ')}` };
       const eintraege = readdirSync(p).slice(0, 200).map(n => { try { const s = statSync(path.join(p, n)); return { name: n, typ: s.isDirectory() ? 'ordner' : 'datei', groesse: s.size, geaendert: s.mtime.toISOString() }; } catch { return { name: n, typ: '?' }; } });
-      return { success: true, data: { path: p, eintraege }, display: `${p}: ${eintraege.length} Einträge\n` + eintraege.slice(0, 50).map(e => `- ${e.typ === 'ordner' ? '📁' : '📄'} ${e.name}`).join('\n') };
+      // v1255 — Größe und Datum stehen in der Anzeige (Owner-Fall Mac: „die drei kleinsten Dateien" löste sonst eine Shell aus)
+      const groesseText = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : b < 1073741824 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1073741824).toFixed(2)} GB`;
+      return { success: true, data: { path: p, eintraege }, display: `${p}: ${eintraege.length} Einträge (Name · Größe · geändert)\n` + eintraege.slice(0, 80).map(e => `- ${e.typ === 'ordner' ? '📁' : '📄'} ${e.name}${e.typ === 'datei' ? ` · ${groesseText(e.groesse)}` : ''} · ${e.geaendert.slice(0, 10)}`).join('\n') };
     }
     case 'oeffnen': {
       const ziel = String(params.path ?? params.url ?? '');
@@ -110,9 +112,14 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const p = String(params.path ?? '');
       if (!istPfadErlaubt(p, frei)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Freigegeben: ${frei.join(', ')}` };
       if (!existsSync(p) || !statSync(p).isFile()) return { success: false, error: `Keine Datei: ${p}` };
-      const groesse = statSync(p).size;
+      const st = statSync(p);
+      const groesse = st.size;
       if (groesse > TRANSFER_GROSS_MAX_BYTES) return { success: false, error: `Datei zu groß (${groesse} B, Grenze ${TRANSFER_GROSS_MAX_BYTES} B)` };
-      const data = readFileSync(p);
+      // v1255 — Owner-Fall Mac: iCloud-Drive-Dateien ohne lokale Kopie lassen sich nicht lesen (Systemfehler -11)
+      if (process.platform !== 'win32' && groesse > 0 && st.blocks === 0) return { success: false, error: `Datei liegt nicht lokal vor (Cloud-Platzhalter, z. B. iCloud Drive): ${p} — bitte am Gerät herunterladen.` };
+      let data: Buffer;
+      try { data = readFileSync(p); }
+      catch (err) { const m = (err as Error).message; return { success: false, error: /-11|EDEADLK|ENOTSUP|dataless/i.test(m) ? `Datei liegt nicht lokal vor (Cloud-Platzhalter): ${p} — bitte am Gerät herunterladen.` : `Lesen fehlgeschlagen: ${m}` }; }
       const name = path.basename(p);
       const sha256 = sha256Hex(data);
       if (groesse > TRANSFER_MAX_BYTES) {

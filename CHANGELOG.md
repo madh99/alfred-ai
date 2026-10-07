@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1255] - 2026-10-07
+
+### Fixed — Befunde vom MacBook (v1255)
+
+- `liste` zeigt Größe und Änderungsdatum je Eintrag. Bisher stand nur der Name in der Anzeige; die Frage nach den kleinsten Dateien löste eine Shell mit Bestätigung aus.
+- `datei_holen` meldet Cloud-Platzhalter klar: iCloud-Drive-Dateien ohne lokale Kopie scheiterten mit „Unknown system error -11". Jetzt: „Datei liegt nicht lokal vor — bitte am Gerät herunterladen", erkannt an fehlenden Datenblöcken oder am Lesefehler.
+
 ## [0.19.0-jarvis.1254] - 2026-10-07
 
 ### Fixed — Erstes zweites Gerät: MacBook (v1254)
