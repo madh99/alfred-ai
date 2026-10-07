@@ -13964,7 +13964,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // Puls; Abnahme: entfernter API-Key → binnen 70 min genau ein Owner-Satz)
       // und synthetische Proben 06:50 (Tiers direkt, Jobs im Takt, Daten-Frische).
       {
-        const { DegradationsWaechter, bewertePuls, bewerteProben, bewerteAdapter, bewerteKosten, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
+        const { DegradationsWaechter, bewertePuls, nachzuprobendeTiers, bewerteProben, bewerteAdapter, bewerteKosten, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
         const { fuehreProbenAus } = await import('./lebenszeichen/proben.js');
         const { JobRunsRepository } = await import('@alfred/storage');
         const lzRepo = this.lebenszeichenRepo;
@@ -14090,6 +14090,16 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           key: 'degradations-waechter', beschreibung: 'Provider-Puls bewerten (Degradation/Guthaben)', takt: { art: 'intervall', minuten: 10 }, bereich: 'global',
           run: async () => {
             const kosten = await this.kostenHeute();
+            // v1270 — gestörte Tiers nachproben, damit Erholung (Guthaben aufgeladen, API wieder da) im Puls ankommt
+            // und die Entwarnung im selben Lauf fällt — auch für Tiers, die sonst niemand aufruft (strong)
+            const nachproben: Record<string, boolean> = {};
+            if (puls) {
+              for (const tier of nachzuprobendeTiers(puls.alle())) {
+                try { const r = await this.llmProvider.probeTier(tier as import('@alfred/types').ModelTier); nachproben[tier] = r.ok; }
+                catch (err) { nachproben[tier] = false; this.logger.warn({ tier, err: (err as Error).message }, 'v1270 Nachprobe fehlgeschlagen'); }
+              }
+              if (Object.keys(nachproben).length) this.logger.info({ nachproben }, 'v1270 Nachprobe gestörter Tiers');
+            }
             const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteAdapter(this.adapterZustaende(), new Date()), ...bewerteKosten(kosten)];
             const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier', 'adapter', 'kosten'] });
             const gesendet = await melde(meldungen);

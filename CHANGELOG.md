@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1270] - 2026-10-07
+
+### Fixed — Entwarnung nach aufgeladenem Guthaben (v1270)
+
+Der Degradations-Wächter entwarnt einen Tier erst, wenn der Puls wieder einen Erfolg sieht. Ein selten genutzter Tier (strong) bekam nach dem Aufladen keinen Aufruf mehr, der Befund blieb offen und die Gutmeldung kam nie (Owner-Beobachtung 07.10.). Der 10-Minuten-Lauf probt jetzt alle gestörten Tiers mit einer Fünf-Token-Anfrage nach; fehlschlagende Proben kosten nichts. Die Entwarnung fällt damit spätestens zehn Minuten nach der Erholung.
+
 ## [0.19.0-jarvis.1269] - 2026-10-07
 
 ### Fixed — Bildschirmfoto erreichte das Modell nicht (v1269)

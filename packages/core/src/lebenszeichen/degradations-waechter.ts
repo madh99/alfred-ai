@@ -36,6 +36,15 @@ function datumKurz(iso: string): string {
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
 }
 
+/**
+ * v1270 — Tiers, die der 10-min-Lauf vor der Bewertung nachprobt: alle gestörten. Ein selten genutzter Tier
+ * (strong) bekommt sonst nie wieder einen Erfolg in den Puls, und die Entwarnung kommt nie (Owner-Beobachtung
+ * 07.10.: Guthaben aufgeladen, Alfred schwieg). Fehlschlagende Proben kosten nichts, eine erfolgreiche fünf Tokens.
+ */
+export function nachzuprobendeTiers(puls: TierPuls[]): string[] {
+  return puls.filter(p => ProviderPuls.istGestoert(p) && p.tier !== 'embeddings').map(p => p.tier);
+}
+
 /** Regel 1+2: Provider-Zustände → Befunde. Rein, testbar. */
 export function bewertePuls(puls: TierPuls[], now: Date): Befund[] {
   const befunde: Befund[] = [];

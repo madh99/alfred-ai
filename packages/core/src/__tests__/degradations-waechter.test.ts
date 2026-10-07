@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ProviderPuls, type TierPuls } from '../lebenszeichen/provider-puls.js';
-import { bewertePuls, bewerteProben, DegradationsWaechter, formatiereMeldungen } from '../lebenszeichen/degradations-waechter.js';
+import { bewertePuls, bewerteProben, DegradationsWaechter, formatiereMeldungen, nachzuprobendeTiers } from '../lebenszeichen/degradations-waechter.js';
 import { fuehreProbenAus, erwarteteFristMs } from '../lebenszeichen/proben.js';
 
 // Jarvis Schicht 0 — Realfälle: Anthropic seit 18.08. und OpenAI seit 19.08.
@@ -75,6 +75,21 @@ describe('bewertePuls', () => {
     const now = T(12);
     expect(bewertePuls([gestoert('fast', 'billing', 90, now)], now)[0].text).toMatch(/ohne anthropic-Guthaben \(Tier fast/);
     expect(bewertePuls([gestoert('fast', 'netz', 90, now)], now)).toHaveLength(0);
+  });
+});
+
+describe('nachzuprobendeTiers (v1270)', () => {
+  const now = new Date('2026-10-07T12:00:00Z');
+  const puls = (tier: string, o: Partial<TierPuls>): TierPuls => ({ tier, provider: 'x', model: 'm', erfolge: 0, fehler: 0, updatedAt: now.toISOString(), ...o });
+  it('nennt gestörte Tiers (Fehler nach letztem Erfolg oder noch kein Erfolg), nie embeddings, keine gesunden', () => {
+    const t = [
+      puls('strong', { letzterErfolg: '2026-10-07T08:00:00Z', letzterFehler: '2026-10-07T11:00:00Z', fehlerKlasse: 'billing' }),
+      puls('default', { letzterErfolg: '2026-10-07T11:30:00Z', letzterFehler: '2026-10-07T11:00:00Z' }),
+      puls('fast', { letzterFehler: '2026-10-07T11:00:00Z' }),
+      puls('embeddings', { letzterFehler: '2026-10-07T11:00:00Z' }),
+      puls('medium', {}),
+    ];
+    expect(nachzuprobendeTiers(t)).toEqual(['strong', 'fast']);
   });
 });
 
