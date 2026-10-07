@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1282] - 2026-10-07
+
+### Fixed — `alfred auth microsoft` per SSH (v1282)
+
+Lief der Token-Flow per SSH auf dem Server und der Browser auf dem PC, ging die Weiterleitung auf localhost:3000 ins Leere (Owner-Fall 07.10.). Jetzt läuft parallel zum Callback-Server eine Eingabe: die Weiterleitungs-URL aus der Adresszeile (oder nur der Code) wird eingefügt und eingetauscht. Der Befehl nennt den SSH-Tunnel als Alternative und bricht sofort ab, wenn im Arbeitsverzeichnis keine .env liegt (zweiter Fehler im selben Fall: Start aus /home statt /root/alfred). Der Starter reicht jetzt ALLE Befehle an die neueste installierte Version weiter, nicht nur start, satellit und sitzung — sonst liefe `alfred auth` auf dem Server weiter mit dem alten globalen Paket.
+
 ## [0.19.0-jarvis.1281] - 2026-10-07
 
 ### Added — Bedienen Stufe B: Klick nach Fotokoordinaten, optionale Foto-Sperre (v1281)

@@ -111,7 +111,8 @@ async function main(): Promise<void> {
 
   // v1258 — Starter: für satellit/sitzung die neueste vom Server installierte Version ausführen und auf sie warten
   // v1266 — auch für `start`: das Selbstupdate installiert nach ~/.alfred/cli/<Version> und beendet sich mit 75
-  if ((parsed.command === 'satellit' || parsed.command === 'sitzung' || parsed.command === 'start') && !process.env.ALFRED_STARTER_VERSION && !process.env.ALFRED_KEIN_UPDATE) {
+  // v1282 — ALLE Befehle laufen in der neuesten installierten Version (Realfall: `alfred auth` lief auf dem Server noch mit dem alten globalen Starter)
+  if (parsed.command && !process.env.ALFRED_STARTER_VERSION && !process.env.ALFRED_KEIN_UPDATE) {
     const { starteNeuesteVersion } = await import('./commands/satellit-update.js');
     // Dienstmodus: immer als Kind, damit nach einem Update (Code 75) der Starter die neue Version startet
     const code = starteNeuesteVersion(VERSION, process.argv.slice(2), parsed.command === 'satellit' && !!parsed.flags['dienst']);

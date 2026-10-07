@@ -208,7 +208,39 @@ function updateEnvFile(creds: Credentials, refreshToken: string): void {
   writeFileSync(envPath, content);
 }
 
-function waitForCallback(creds: Credentials): Promise<string> {
+/**
+ * v1282 — Realfall 07.10.: `alfred auth microsoft` lief per SSH auf dem Server, der Browser auf dem PC — die
+ * Weiterleitung auf localhost:3000 ging ins Leere. Zweiter Weg parallel zum Callback-Server: die vollständige
+ * Weiterleitungs-URL (oder nur den Code) in die Konsole einfügen.
+ */
+function codeAusEingabe(eingabe: string): string | undefined {
+  const t = eingabe.trim();
+  if (!t) return undefined;
+  try { const u = new URL(t); const c = u.searchParams.get('code'); if (c) return c; } catch { /* kein URL */ }
+  const m = /[?&]code=([^&\s]+)/.exec(t);
+  if (m) return decodeURIComponent(m[1]!);
+  return /^[A-Za-z0-9._~-]{20,}$/.test(t) ? t : undefined;
+}
+
+type Abbruch = { fertig: boolean; schliesse?: () => void; schliesseServer?: () => void };
+
+function waitForPastedCode(creds: Credentials, abbruch: Abbruch): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!process.stdin.isTTY) return; // ohne Konsole nur der Callback-Server
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const frage = () => rl.question('  Oder hier die Weiterleitungs-URL aus der Adresszeile einfügen (Enter): ', async (antwort) => {
+      if (abbruch.fertig) { rl.close(); return; }
+      const code = codeAusEingabe(antwort);
+      if (!code) { console.log('  Kein Code erkannt — die ganze URL „http://localhost:3000/callback?code=…" einfügen.'); frage(); return; }
+      try { const token = await exchangeCode(code, creds); rl.close(); resolve(token); }
+      catch (err) { rl.close(); reject(err); }
+    });
+    frage();
+    abbruch.schliesse = () => { try { rl.close(); } catch { /* */ } };
+  });
+}
+
+function waitForCallback(creds: Credentials, abbruch: Abbruch): Promise<string> {
   return new Promise((resolve, reject) => {
     const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
       const url = new URL(req.url ?? '/', `http://localhost:3000`);
@@ -251,7 +283,11 @@ function waitForCallback(creds: Credentials): Promise<string> {
 
     server.listen(3000, () => {
       console.log('  Callback-Server gestartet auf http://localhost:3000');
+      console.log('  Läuft das hier per SSH auf dem Server? Dann entweder auf dem PC einen Tunnel öffnen:');
+      console.log('    ssh -L 3000:localhost:3000 <benutzer>@<server>   (und die URL dort im Browser öffnen)');
+      console.log('  oder nach der Fehlerseite „localhost nicht erreichbar" die URL aus der Adresszeile unten einfügen.');
     });
+    abbruch.schliesseServer = () => { try { server.close(); } catch { /* */ } };
 
     server.on('error', (err) => {
       reject(new Error(`Server konnte nicht gestartet werden: ${err.message}`));
@@ -277,6 +313,13 @@ export async function authCommand(provider: string): Promise<void> {
   console.log('  ================================================');
   console.log('');
 
+  // v1282 — .env muss im Arbeitsverzeichnis liegen (Realfall: Start aus /home/madh statt /root/alfred → Zugangsdaten fehlten)
+  const envPfad = resolve(process.cwd(), '.env');
+  if (!existsSync(envPfad)) {
+    console.error(`  Fehler: keine .env in ${process.cwd()} — bitte aus dem Alfred-Verzeichnis starten (z. B. cd /root/alfred).`);
+    process.exit(1);
+  }
+  console.log(`  Schreibe nach: ${envPfad}`);
   const creds = await ensureCredentials();
 
   const authUrl = buildAuthUrl(creds);
@@ -288,7 +331,9 @@ export async function authCommand(provider: string): Promise<void> {
   openBrowser(authUrl);
 
   try {
-    const refreshToken = await waitForCallback(creds);
+    const abbruch: Abbruch = { fertig: false };
+    const refreshToken = await Promise.race([waitForCallback(creds, abbruch), waitForPastedCode(creds, abbruch)]);
+    abbruch.fertig = true; abbruch.schliesse?.(); abbruch.schliesseServer?.();
     console.log('');
     console.log('  Refresh Token erhalten! Schreibe in .env ...');
     updateEnvFile(creds, refreshToken);
