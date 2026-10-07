@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1263] - 2026-10-07
+
+### Changed — Beweis-Release Satelliten-Autoupdate, zweiter Anlauf (v1263)
+
+Keine Code-Änderung. Server auf 1263, PC-Satellit läuft 1262 unter dem Starter: Erkennen, Laden, Prüfen, Installieren, Code 75, Neustart durch den Starter.
+
 ## [0.19.0-jarvis.1262] - 2026-10-07
 
 ### Changed — Update-Prüfung sichtbar im Satellitenprotokoll (v1262)
