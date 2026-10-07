@@ -276,10 +276,14 @@ Grundlage ist die Recherche vom 07.10. (Memory „computer-use-recherche-2026-10
 
 Owner 07.10.: nutzt klassisches und neues Outlook, auf dem PC ist keines eingerichtet (Mac und eine VM schon). COM hat auf dem PC kein Ziel, auf dem Mac gibt es kein COM; Mail, Kalender, Kontakte laufen bei Alfred über die Graph-API. Office-COM bleibt liegen, bis es einen konkreten Fall gibt.
 
-### 18.5 macOS (.1283, vom Owner zu testen)
+### 18.5 macOS (.1283, vom Owner bewiesen 07.10. 23:31)
+
+Beweis: Vorhaben „Rechner öffnen, 3 × 4 über die Tasten" → programm_starten Calculator, fenster_lesen, taste 3 / * / 4 / enter → Anzeige 12. Berechtigungen für `~/.alfred/bin/alfred-node` (Bedienungshilfen, Bildschirmaufnahme) sind gesetzt. Update-Kette auf dem Mac nach vier Ursachen (.1285–.1290) geschlossen: npm im PATH, node für den npm-Shebang, root-eigener npm-Cache nach sudo-Installation, node für Install-Skripte der Abhängigkeiten.
 
 Dieselben Aktionen über System Events (Accessibility, JXA): `fenster_lesen` liest das vorderste Fenster (Rollen AXButton, AXTextField, AXCheckBox, AXPopUpButton, AXLink, AXTab, AXMenuItem …), `element_klicken` per AXPress, `tippen` per value oder keystroke, `taste` mit cmd/strg/alt/shift und Key-Codes, `klicken_bei` per `click at`. Notbremse über HIDIdleTime. Voraussetzung: Bedienungshilfen-Berechtigung für node (Satellit) unter Datenschutz & Sicherheit; ohne sie meldet der Satellit „Bedienhilfen-Berechtigung fehlt". Testvorschlag: „Öffne den Rechner und rechne 3 mal 4". Markierte Fotos bisher nur Windows.
 
-### 18.4 Eigene Arbeitsfläche (offen, Owner-Entscheidung)
+### 18.4 Eigene Arbeitsfläche (Owner 07.10. 23:55: nicht nötig, Plan gemerkt)
+
+Entscheidung: Satelliten arbeiten nur auf Zuruf oder auf VMs, an denen gerade niemand sitzt; eine getrennte Arbeitsfläche am PC ist deshalb nicht nötig. Der Plan bleibt dokumentiert und wird nicht umgesetzt.
 
 Windows „Agent Workspace" (eigenes Standardkonto, isolierte Sitzung parallel zum Owner, Zugriff auf Dokumente/Downloads/Desktop/Bilder; Preview, aus; Einstellungen → System → KI-Komponenten → Agent-Tools) oder ein zweites Windows-Konto per Remote-Desktop-Loopback, in dem der Satellit läuft. Erklärt 07.10. abends; bis zur Entscheidung Notbremse und Bestätigung. Linux: AT-SPI, offen.
