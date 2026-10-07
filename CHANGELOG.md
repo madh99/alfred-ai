@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1260] - 2026-10-07
+
+### Changed — Beweis-Release für das Satelliten-Autoupdate (v1260)
+
+Keine Code-Änderung. Dieses Release existiert, damit die Satelliten auf PC-madh und MacBook die Aktualisierung vom Server einmal live durchlaufen: Willkommen mit neuerer Serverversion → Download, Prüfsumme, Signatur, Installation nach ~/.alfred/cli, Neustart über den Starter.
+
 ## [0.19.0-jarvis.1259] - 2026-10-07
 
 ### Fixed — Release-Ablage findet das Paket (v1259)
