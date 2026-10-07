@@ -236,3 +236,15 @@ Quelle ist ein Tarball im Eingang `data/updates/<Version>.tgz` mit Begleitdatei 
 Beweis 07.10. 14:09–14:12: Chat „aktualisiere dich" → Frage beim Owner → Ja → 1267 geprüft, installiert (13 s), Startprobe, Neustart 14:10:05 (Code 75, systemd startete den Starter) → 1267 lief als Kind, Lebenszeichen bestätigt 14:12:17, Meldung beim Owner; PC-Satellit erkannte 1267 und folgte in zwei Minuten automatisch. `npm ls -g` zeigt seither nur den Starter (1266); die laufende Version steht in `/root/.alfred/cli/aktuell.json`.
 
 Noch offen: Flutter-App über denselben Endpunkt mit signierten Installern; Handy über die Stores.
+
+
+## 17. CLI-Ausbau vor jeder App (freigegeben 07.10.2026)
+
+Der Owner hat die Reihung freigegeben; Punkt 4 (Tastatur und Maus) braucht eine eigene Entscheidung.
+
+1. **Bildschirm sehen — umgesetzt .1268/.1269.** Aktion `bildschirm` (ganzer Bildschirm oder aktives Fenster, JPEG auf 1600 px, Fenstertitel) auf Windows, macOS, Linux. Das Modell sieht Bilder aus Werkzeugergebnissen selbst (Bildblöcke hinter den tool_result-Blöcken, höchstens drei je Runde, nie in der Historie). Beweis 14:45: „Schau auf meinen PC-Bildschirm" → Foto in 3 s → Alfred beschrieb das Terminalfenster korrekt bis in Details (Version, Exit-Codes, Hooks). Fallen: Windows Defender blockt P/Invoke plus CopyFromScreen in einem Skript und CopyFromScreen mit JPEG-Qualitätsparameter (deshalb zwei Aufrufe, ohne Parameter); der OpenAI-Kontinuitätsmodus ließ Nutzer-Items der letzten Nachricht weg (.1269). Sicherheit: Geräte-Skills prüfen den Aufrufer, nur der Owner bedient seine Geräte. macOS braucht die Berechtigung „Bildschirmaufnahme" für den Satelliten.
+2. **Programme und Fenster** — Fensterliste, Programm starten, Fenster in den Vordergrund. Offen.
+3. **Freigegebene Verzeichnisse aus dem Chat pflegen**, Lese- und Schreibrecht getrennt. Offen.
+4. **Tastatur und Maus** nur im Vorhaben mit Bildschirmprobe je Schritt. Eigene Owner-Entscheidung.
+5. **Zwischenablage, Systembenachrichtigungen.** Offen.
+6. **Linux-Satellit beweisen.** Offen.
