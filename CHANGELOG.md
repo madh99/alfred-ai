@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1289] - 2026-10-07
+
+### Fixed — Satelliten-Update mit eigenem npm-Cache (v1289)
+
+Realfall MacBook 07.10.: nach `sudo npm install -g` liegen in ~/.npm root-eigene Dateien, npm bricht als Benutzer mit „Your cache folder contains root-owned files" ab, das Update blieb bei „Installiere …" hängen. Satellit und Selbstupdate nutzen jetzt einen eigenen Cache unter ~/.alfred/npm-cache.
+
 ## [0.19.0-jarvis.1288] - 2026-10-07
 
 ### Fixed — Satellit räumt alte Installationen auf (v1288)

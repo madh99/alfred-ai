@@ -133,7 +133,9 @@ export async function installiereTarball(tgz: string, version: string, ordner = 
   const npm = npmBefehl();
   await new Promise<void>((resolve, reject) => {
     // v1287 — ohne --silent: der Grund eines Fehlschlags muss im Protokoll stehen (Realfall Mac: „Command failed" ohne Text)
-    execFile(npm.cmd, [...npm.args, 'install', '--prefix', ziel, '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error', tgz], { timeout: 900_000, windowsHide: true, shell: npm.shell, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, _out, stderr) => err ? reject(new Error(`npm install (${npm.args[0] ?? npm.cmd}): ${String(stderr).trim().split('\n').slice(-4).join(' | ').slice(0, 400) || err.message}`)) : resolve());
+    // v1289 — eigener npm-Cache: ~/.npm des Owners enthält nach `sudo npm install -g` root-eigene Dateien, npm bricht
+    // dann als Benutzer ab („Your cache folder contains root-owned files", Realfall MacBook 07.10.)
+    execFile(npm.cmd, [...npm.args, 'install', '--prefix', ziel, '--cache', path.join(ordner, '..', 'npm-cache'), '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error', tgz], { timeout: 900_000, windowsHide: true, shell: npm.shell, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, _out, stderr) => err ? reject(new Error(`npm install (${npm.args[0] ?? npm.cmd}): ${String(stderr).trim().split('\n').slice(-4).join(' | ').slice(0, 400) || err.message}`)) : resolve());
   });
   const einstieg = einstiegVon(ordner, version);
   if (!existsSync(einstieg)) throw new Error(`Installation unvollständig: ${einstieg} fehlt`);

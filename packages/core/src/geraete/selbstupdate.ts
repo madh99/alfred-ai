@@ -234,7 +234,7 @@ export class Selbstupdate {
   private npm(args: string[], timeout: number): Promise<string> {
     const npm = npmBefehl(); // v1285/v1287 — ohne PATH, über node + npm-cli.js
     return new Promise((resolve, reject) => {
-      execFile(npm.cmd, [...npm.args, ...args], { timeout, windowsHide: true, shell: npm.shell, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, stdout, stderr) => err ? reject(new Error(`npm ${args[0]}: ${String(stderr).slice(0, 300) || err.message}`)) : resolve(String(stdout)));
+      execFile(npm.cmd, [...npm.args, ...args, '--cache', path.join(this.ordner, '..', 'npm-cache')], { timeout, windowsHide: true, shell: npm.shell, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, stdout, stderr) => err ? reject(new Error(`npm ${args[0]}: ${String(stderr).slice(0, 300) || err.message}`)) : resolve(String(stdout)));
     });
   }
 }
