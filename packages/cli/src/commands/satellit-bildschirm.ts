@@ -54,7 +54,7 @@ $out.Save($ziel, [System.Drawing.Imaging.ImageFormat]::Jpeg)
 `;
 
 async function powershell(script: string, timeout = 60_000): Promise<string> {
-  const enc = Buffer.from(script, 'utf16le').toString('base64');
+  const enc = Buffer.from('[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n' + script, 'utf16le').toString('base64');
   const out = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc], timeout);
   return out.trim().split('\n').pop() ?? '{}';
 }

@@ -15,6 +15,7 @@ import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from '
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto } from './satellit-bildschirm.js'; // v1268
+import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fenster.js'; // v1271
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
 let browserHand: BrowserHand | undefined;
@@ -61,6 +62,10 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'browser_tippen', beschreibung: 'Tippt Text in Element Nr. N (Suchfeld, Formular), optional mit Enter. Passwortfelder sind gesperrt', autonomie: 'bestaetigen', parameter: { element: { type: 'number', description: 'Nummer aus browser_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'Enter danach' } } },
       { name: 'browser_zurueck', beschreibung: 'Eine Seite zurück', autonomie: 'auto' },
       { name: 'browser_screenshot', beschreibung: 'Screenshot der aktuellen Seite (JPEG, an den Owner)', autonomie: 'auto' },
+      // v1271 — Programme und Fenster
+      { name: 'fenster', beschreibung: 'Listet die offenen Fenster dieses Geräts (Titel, Programm) — für „was ist offen", „welche Programme laufen"', autonomie: 'auto' },
+      { name: 'fenster_vordergrund', beschreibung: 'Holt ein offenes Fenster in den Vordergrund (Suchtext im Titel oder Programmname)', autonomie: 'auto', parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname, z. B. Outlook' } } },
+      { name: 'programm_starten', beschreibung: 'Startet ein Programm auf diesem Gerät (Name im Pfad, App-Name unter macOS, oder voller Pfad), optional mit Argumenten', autonomie: 'bestaetigen', parameter: { programm: { type: 'string', description: 'Programmname oder Pfad, z. B. notepad, outlook, Safari' }, argumente: { type: 'string', description: 'Argumente, durch Leerzeichen getrennt (optional)' } } },
       // v1268 — Bildschirm sehen: das Modell bekommt das Bild zu sehen und kann es beschreiben
       { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler", „was zeigt mein PC gerade". Das Foto geht auch an den Owner.', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' } } },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
@@ -209,6 +214,20 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     case 'browser_screenshot': {
       const b64 = await browser(k).screenshot();
       return { success: true, data: { screenshotBase64: b64, mimeType: 'image/jpeg' }, display: 'Screenshot aufgenommen' };
+    }
+    // v1271 — Programme und Fenster
+    case 'fenster': {
+      const l = await fensterListe();
+      return { success: true, data: { fenster: l }, display: l.length ? `Offene Fenster auf ${k.name} (${l.length}):\n${l.map(f => `- ${f.titel || '(ohne Titel)'} — ${f.programm}`).join('\n')}` : `Keine Fenster mit Titel auf ${k.name}` };
+    }
+    case 'fenster_vordergrund': {
+      const f = await fensterVordergrund(String(params.titel ?? ''));
+      return { success: true, data: f, display: `Im Vordergrund: ${f.titel || f.programm} (${f.programm})` };
+    }
+    case 'programm_starten': {
+      const argumente = Array.isArray(params.argumente) ? (params.argumente as unknown[]).map(String) : String(params.argumente ?? '').split(/\s+/).filter(Boolean);
+      const t = await programmStarten(String(params.programm ?? ''), argumente);
+      return { success: true, data: { programm: params.programm, argumente }, display: t };
     }
     // v1268 — Bildschirm sehen
     case 'bildschirm': {

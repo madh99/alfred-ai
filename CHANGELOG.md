@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1271] - 2026-10-07
+
+### Added — Programme und Fenster am Satelliten (v1271)
+
+Drei neue Satelliten-Aktionen (Spec §17 Punkt 2): `fenster` listet die offenen Fenster mit Titel und Programm, `fenster_vordergrund` holt ein Fenster nach Suchtext in den Vordergrund (beide ohne Rückfrage), `programm_starten` startet ein Programm mit optionalen Argumenten (mit Bestätigung, gleichwertig zur Shell). Windows über PowerShell und SetForegroundWindow, macOS über System Events und open, Linux über wmctrl. PowerShell-Ausgaben der Satelliten-Skripte sind jetzt UTF-8 (Umlaute in Fenstertiteln).
+
 ## [0.19.0-jarvis.1270] - 2026-10-07
 
 ### Fixed — Entwarnung nach aufgeladenem Guthaben (v1270)
