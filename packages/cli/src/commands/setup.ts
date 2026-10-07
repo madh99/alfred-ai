@@ -54,7 +54,7 @@ const PROVIDERS: ProviderDef[] = [
       { id: 'claude-sonnet-4-6',        desc: 'Sonnet 4.6 — Vorgänger, 1M/64K, $3/$15' },
       { id: 'claude-opus-4-7',          desc: 'Opus 4.7 — capable, agentic coding' },
       { id: 'claude-opus-4-6',          desc: 'Opus 4.6 — capable, extended thinking' },
-      { id: 'claude-haiku-4-5-20251001', desc: 'Haiku 4.5 — fastest, cheapest' },
+      { id: 'claude-haiku-4-5-20251001', desc: 'Haiku 4.5 — fastest, cheapest (Retirement ab 15.10.2026, lieber Sonnet 5)' },
     ],
   },
   {
@@ -577,7 +577,7 @@ export async function setupCommand(): Promise<void> {
     if (enableMultiModel) {
       const tierDefs: { key: string; label: string; hint: string; defaultModel: string }[] = [
         { key: 'strong', label: 'Strong', hint: 'complex reasoning, coding, long documents', defaultModel: 'claude-opus-4-8' },
-        { key: 'fast', label: 'Fast', hint: 'quick responses, simple tasks', defaultModel: 'claude-haiku-4-5-20251001' },
+        { key: 'fast', label: 'Fast', hint: 'quick responses, simple tasks', defaultModel: 'claude-sonnet-5' }, // v1278 — Haiku 4.5 Retirement 15.10.2026
         { key: 'embeddings', label: 'Embeddings', hint: 'semantic search & memory', defaultModel: 'text-embedding-3-small' },
         { key: 'local', label: 'Local', hint: 'offline fallback via Ollama', defaultModel: 'llama3.2' },
         // v868.1 — Notfall-Provider: springt nur ein wenn default/strong/fast ausfallen (Outage/Guthaben)

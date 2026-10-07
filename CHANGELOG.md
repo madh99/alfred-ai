@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1278] - 2026-10-07
+
+### Fixed
+
+- Satellit: wird das Manifest vom Gehirn abgewiesen (Code 4004), beendet sich der Satellit unter dem Starter nach dem zweiten Mal mit Code 1; der Starter markiert die Probe als gescheitert und startet die vorige Version. Vorher blieb er in einer Verbindungsschleife, die Rückfall-Logik kam nie zum Zug (Realfall 1276).
+- Setup-Assistent: Standardmodell für den Tier fast ist Sonnet 5, Haiku 4.5 ist mit dem Retirement ab 15.10.2026 gekennzeichnet.
+
 ## [0.19.0-jarvis.1277] - 2026-10-07
 
 ### Fixed — Satellit 1276 wurde vom Gehirn abgewiesen (v1277)

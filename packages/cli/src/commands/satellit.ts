@@ -393,6 +393,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   // v1258 — Autoupdate: nach dem Willkommen prüfen, nur im Leerlauf, dann mit Code 75 beenden (der Starter startet die neue Version)
   let aktionenLaufend = 0;
   let updateLaeuft = false;
+  let manifestAbgewiesen = 0; // v1278
   const pruefeUpdate = (serverVersion: string) => {
     if (updateLaeuft || vergleicheVersion(serverVersion, version) <= 0) return;
     updateLaeuft = true;
@@ -461,6 +462,12 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
         ws.on('close', (code, reason) => { if (puls) clearInterval(puls); if (sinneTimer) clearInterval(sinneTimer); resolve(`geschlossen (${code} ${String(reason)})`); });
         ws.on('error', (err) => { resolve(`Fehler: ${err.message}`); });
       });
+      // v1278 — Realfall 1276: Manifest vom Gehirn abgewiesen (4004) → Endlosschleife, der Starter konnte nicht zurückfallen.
+      // Unter dem Starter nach dem zweiten Mal beenden (Code 1): er markiert die Probe als gescheitert und startet die vorige Version.
+      if (/4004/.test(ende)) {
+        manifestAbgewiesen += 1;
+        if (manifestAbgewiesen >= 2 && process.env.ALFRED_STARTER_VERSION) { fehler('Manifest zweimal abgewiesen — beende mich, der Starter startet die vorige Version'); process.exit(1); }
+      } else manifestAbgewiesen = 0;
       if (!laeuft || opts.einmal) break;
       log(`[${new Date().toLocaleTimeString('de-AT')}] Verbindung ${ende} — neuer Versuch in ${Math.round(rueckzugMs / 1000)} s`);
       await new Promise(r => setTimeout(r, rueckzugMs));
