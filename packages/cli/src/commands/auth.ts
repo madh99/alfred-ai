@@ -154,6 +154,35 @@ function openBrowser(url: string): void {
   if (cmd) exec(cmd, () => { /* ignore errors */ });
 }
 
+/**
+ * v1284 — Realfall 07.10.: Der neue Token landete nur in der .env (Pfad email.microsoft = Konto „outlook"), das
+ * YAML-Konto email.accounts[0] („default") behielt seinen abgelaufenen Token und blieb tot. Alle refreshToken-Werte
+ * in config/default.yml, die zur selben Client-ID gehören, werden textuell ersetzt (Formatierung und Kommentare
+ * bleiben), mit Sicherungskopie.
+ */
+function updateYamlTokens(creds: Credentials, refreshToken: string): string[] {
+  const yamlPfad = resolve(process.cwd(), 'config', 'default.yml');
+  if (!existsSync(yamlPfad)) return [];
+  let text = readFileSync(yamlPfad, 'utf-8');
+  let cfg: Record<string, unknown>;
+  try { cfg = (new ConfigLoader().loadConfig() as unknown as Record<string, unknown>); } catch { return []; }
+  const alte = new Set<string>();
+  const ersetzt: string[] = [];
+  const pruefe = (ms: unknown, pfad: string) => {
+    const m = ms as { clientId?: string; refreshToken?: string } | undefined;
+    if (m?.clientId === creds.clientId && m.refreshToken && m.refreshToken !== refreshToken && text.includes(m.refreshToken)) { alte.add(m.refreshToken); ersetzt.push(pfad); }
+  };
+  const email = cfg['email'] as { accounts?: Array<{ name?: string; microsoft?: unknown }>; microsoft?: unknown } | undefined;
+  for (const [i, a] of (email?.accounts ?? []).entries()) pruefe(a.microsoft, `email.accounts[${i}] (${a.name ?? '?'})`);
+  pruefe(email?.microsoft, 'email.microsoft');
+  for (const sect of ['calendar', 'contacts', 'todo']) { const s = cfg[sect] as { microsoft?: unknown } | undefined; pruefe(s?.microsoft, `${sect}.microsoft`); pruefe(sect === 'todo' ? s : undefined, 'todo'); }
+  if (alte.size === 0) return [];
+  writeFileSync(`${yamlPfad}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`, text);
+  for (const alt of alte) text = text.split(alt).join(refreshToken);
+  writeFileSync(yamlPfad, text);
+  return ersetzt;
+}
+
 function updateEnvFile(creds: Credentials, refreshToken: string): void {
   const envPath = resolve(process.cwd(), '.env');
   let lines: string[] = [];
@@ -338,6 +367,9 @@ export async function authCommand(provider: string): Promise<void> {
     console.log('  Refresh Token erhalten! Schreibe in .env ...');
     updateEnvFile(creds, refreshToken);
     console.log('  .env aktualisiert (Email, Calendar, Contacts, To Do).');
+    const yamlStellen = updateYamlTokens(creds, refreshToken);
+    if (yamlStellen.length) console.log(`  config/default.yml aktualisiert: ${yamlStellen.join(', ')} (Sicherungskopie daneben).`);
+    console.log('  Danach Alfred neu starten — außerhalb des Pass-Fensters (:57–:02, :27–:32): sudo systemctl restart alfred');
     console.log('');
     console.log('  Fertig! Du kannst Alfred jetzt mit Microsoft 365 nutzen.');
     console.log('');

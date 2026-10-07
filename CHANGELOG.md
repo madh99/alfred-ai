@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1284] - 2026-10-07
+
+### Fixed — `alfred auth microsoft` erneuert auch YAML-Konten (v1284)
+
+Realfall 07.10.: Der neue Refresh-Token stand nur in der .env, das YAML-Konto `email.accounts[0]` („default") behielt seinen abgelaufenen Token (AADSTS700082) und fiel beim Start aus. Der Befehl ersetzt jetzt alle refreshToken-Werte in config/default.yml, die zur selben Client-ID gehören, textuell (Formatierung bleibt, Sicherungskopie daneben), und erinnert an den Neustart außerhalb des Pass-Fensters.
+
 ## [0.19.0-jarvis.1283] - 2026-10-07
 
 ### Added — Bedienen auf macOS (v1283, vom Owner zu testen)
