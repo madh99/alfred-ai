@@ -19,6 +19,7 @@ export { TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, TRANSFER_BLOCK_BYTES, sha
 export { sprachfassung, audioMimeAusBytes, sprachBloecke, schneideSaetze } from './interaktion/sprache.js'; // v1241, v1247, v1248
 export { SatzendeErkenner, rms16, pcm16ZuWav } from './interaktion/satzende.js'; // v1250
 export { HoerRelais, HOEREN_MODELL } from './geraete/hoeren.js'; // v1251
+export { Releases, vergleicheVersion, signiere, pruefeSignatur, sha256Datei } from './geraete/releases.js'; // v1258
 export { pruefeAktivierung, STOPPWOERTER } from './interaktion/aktivierung.js'; // v1252
 export type { SatzendeEreignis, SatzendeOptionen } from './interaktion/satzende.js';
 export type { BrowserElement } from './geraete/browser-regeln.js';

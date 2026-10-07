@@ -15,6 +15,8 @@ const SITZUNG_PFADE = [
   /^\/api\/sprich$/,
   // v1249 — blockweiser Dateitransfer des Satelliten
   /^\/api\/geraete\/dateien(\/[^/]+(\/fertig)?)?$/,
+  // v1258 — Satelliten-Autoupdate
+  /^\/api\/geraete\/update(\/datei)?$/,
 ];
 
 export function istSitzungsPfad(url: string | undefined): boolean {

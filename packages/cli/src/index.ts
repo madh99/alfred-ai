@@ -108,6 +108,13 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // v1258 — Starter: für satellit/sitzung die neueste vom Server installierte Version ausführen und auf sie warten
+  if ((parsed.command === 'satellit' || parsed.command === 'sitzung') && !process.env.ALFRED_STARTER_VERSION) {
+    const { starteNeuesteVersion } = await import('./commands/satellit-update.js');
+    const code = starteNeuesteVersion(VERSION, process.argv.slice(2));
+    if (code !== undefined) process.exit(code);
+  }
+
   // Dispatch to command — dynamic imports keep startup fast
   switch (parsed.command) {
     case 'start': {

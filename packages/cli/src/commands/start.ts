@@ -23,6 +23,7 @@ export async function startCommand(): Promise<void> {
 
   logger.info({ nodeVersion: process.version }, 'Alfred starting');
 
+  (config as { version?: string }).version = version; // v1258 — Gateway/Willkommen und Releases brauchen die echte Version
   const alfred = new Alfred(config);
 
   // Set up graceful shutdown

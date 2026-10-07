@@ -31,6 +31,8 @@ export interface GeraeteGatewayDeps {
   vorhabenDatei?: string;
   /** v1249 — Ordner für Teildateien des blockweisen Transfers. */
   transferOrdner?: string;
+  /** v1258 — öffentlicher Release-Schlüssel für das Willkommen (Satelliten prüfen Updates damit). */
+  releaseKey?: () => string | undefined;
   /** v1235 — Dateitransfer: Quelle laden / geholte Datei speichern (FileStore des Owners). */
   dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
@@ -198,7 +200,7 @@ export class GeraeteGateway {
     this.verbindungen.set(eintrag.id, verbindung);
     await this.deps.repo.setzeZuletztGesehen(eintrag.id, gepr.manifest).catch(() => undefined);
     this.registriereSkill(verbindung);
-    this.sende(ws, { typ: 'willkommen', geraetId: eintrag.id, name: eintrag.name, serverVersion: this.deps.serverVersion, skillName });
+    this.sende(ws, { typ: 'willkommen', geraetId: eintrag.id, name: eintrag.name, serverVersion: this.deps.serverVersion, skillName, releaseKey: this.deps.releaseKey?.() }); // v1258
     this.deps.logger.info({ geraetId: eintrag.id, name: eintrag.name, plattform: gepr.manifest.plattform, aktionen: gepr.manifest.aktionen.map(a => a.name), skillName, remote }, 'v1224 Gerät verbunden');
     return verbindung;
   }

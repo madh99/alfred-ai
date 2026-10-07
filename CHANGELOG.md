@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1258] - 2026-10-07
+
+### Added — Satelliten aktualisieren sich vom Server (v1258)
+
+Owner-Freigabe 07.10. Mehrere Satelliten, bald die Apps: Updates müssen von selbst kommen.
+
+- **Server als Quelle.** Beim Start packt der Server sein eigenes installiertes Paket nach `data/releases/<Version>.tgz`, berechnet SHA-256 und signiert sie mit einem Ed25519-Schlüssel, der beim ersten Start entsteht (`data/release-key.json`). `GET /api/geraete/update` liefert Version, Prüfsumme, Signatur; `…/update/datei` den Tarball — für Gerätetoken erreichbar. Der öffentliche Schlüssel geht mit dem Willkommen an die Geräte und wird beim ersten Kontakt gemerkt; weicht er später ab, lehnt der Satellit Updates ab.
+- **Satellit.** Nach dem Willkommen vergleicht er die Serverversion mit seiner eigenen. Ist der Server neuer, lädt er im Leerlauf den Tarball, prüft Prüfsumme und Signatur, installiert nach `~/.alfred/cli/<Version>` (npm mit eigenem Präfix, ohne sudo) und beendet sich mit Code 75.
+- **Starter.** `alfred satellit` und `alfred sitzung` führen die neueste installierte Version aus und warten auf sie, damit launchd, systemd und der Autostart-Eintrag intakt bleiben; Code 75 heißt „neu starten mit der neuen Version". Eine frische Version gilt zehn Minuten als Probe; meldet sie sich beim Server, ist sie bestätigt, sonst fällt der Starter auf die vorige zurück. `ALFRED_KEIN_UPDATE=1` schaltet das Prüfen ab.
+- Das Willkommen trägt jetzt die echte Serverversion (bisher „jarvis"). Tests: Versionsvergleich, Signatur, Ablage, Routen.
+
 ## [0.19.0-jarvis.1257] - 2026-10-07
 
 ### Fixed — Jarvis-Hygiene: Zeitzone der Tages-Buckets, kein Lernbedarf aus synthetischen Nachrichten (v1257)

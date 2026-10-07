@@ -19,6 +19,8 @@ export interface GeraetKonfig {
   insecure?: boolean;
   freigegebeneVerzeichnisse: string[];
   erlaubteProgramme: string[];
+  /** v1258 — öffentlicher Release-Schlüssel des Servers (beim ersten Willkommen gemerkt). */
+  releaseKey?: string;
 }
 
 export function konfigPfad(): string { return path.join(os.homedir(), '.alfred', 'geraet.json'); }

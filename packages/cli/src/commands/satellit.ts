@@ -7,6 +7,8 @@ import WebSocket from 'ws';
 import type { GeraetManifest, GeraetNachricht, GeraetPlattform } from '@alfred/types';
 import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS, TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from '@alfred/core';
 import { geraetAnfrage, geraetJson } from './geraet-http.js'; // v1249
+import { aktualisiereWennNeuer, bestaetigeAktuell, merkeReleaseKey, NEUSTART_CODE } from './satellit-update.js'; // v1258
+import { vergleicheVersion } from '@alfred/core';
 import { getVersion } from '../version.js';
 import { ladeKonfig, type GeraetKonfig } from './pair.js';
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
@@ -246,6 +248,22 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   let rueckzugMs = 1000;
   let laeuft = true;
   let aktiv: WebSocket | undefined;
+  // v1258 — Autoupdate: nach dem Willkommen prüfen, nur im Leerlauf, dann mit Code 75 beenden (der Starter startet die neue Version)
+  let aktionenLaufend = 0;
+  let updateLaeuft = false;
+  const pruefeUpdate = (serverVersion: string) => {
+    if (updateLaeuft || vergleicheVersion(serverVersion, version) <= 0) return;
+    updateLaeuft = true;
+    const versuch = async (runde: number) => {
+      if (aktionenLaufend > 0) { if (runde < 60) setTimeout(() => versuch(runde + 1), 30_000); else updateLaeuft = false; return; }
+      try {
+        const neu = await aktualisiereWennNeuer(k, version, log);
+        if (neu) { log(`Update auf ${neu} installiert — Neustart über den Starter`); setTimeout(() => { stop(); process.exit(NEUSTART_CODE); }, 500); return; }
+      } catch (err) { fehler(`Update fehlgeschlagen: ${(err as Error).message}`); }
+      updateLaeuft = false;
+    };
+    setTimeout(() => versuch(0), 15_000);
+  };
   const sinne = new SinneErfasser({ ohneFenster: (k as GeraetKonfig & { sinneOhneFenster?: boolean }).sinneOhneFenster === true });
   const stop = () => { laeuft = false; sinne.stop(); try { aktiv?.close(); } catch { /* */ } };
 
@@ -271,7 +289,15 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
         ws.on('message', async (raw) => {
           let n: GeraetNachricht;
           try { n = JSON.parse(String(raw)) as GeraetNachricht; } catch { return; }
-          if (n.typ === 'willkommen') { rueckzugMs = 1000; log(`[${new Date().toLocaleTimeString('de-AT')}] Verbunden mit Alfred ${n.serverVersion} — im Gehirn als Skill ${n.skillName}`); return; }
+          if (n.typ === 'willkommen') {
+            rueckzugMs = 1000; log(`[${new Date().toLocaleTimeString('de-AT')}] Verbunden mit Alfred ${n.serverVersion} — im Gehirn als Skill ${n.skillName} (Satellit ${version})`);
+            // v1258 — Release-Schlüssel merken, laufende Version bestätigen, Update prüfen
+            const rk = merkeReleaseKey((n as { releaseKey?: unknown }).releaseKey);
+            if (rk === 'gemerkt') log('Release-Schlüssel des Servers gemerkt'); else if (rk === 'abweichend') fehler('WARNUNG: Release-Schlüssel des Servers weicht vom gemerkten ab — Updates werden abgelehnt');
+            bestaetigeAktuell(version);
+            if (rk !== 'abweichend' && !process.env.ALFRED_KEIN_UPDATE) pruefeUpdate(String(n.serverVersion ?? ''));
+            return;
+          }
           if (n.typ === 'puls_ok') return;
           if (n.typ === 'fehler') { fehler(`Fehler vom Gehirn: ${n.grund}`); return; }
           if (n.typ === 'abgemeldet') { fehler(`Abgemeldet: ${n.grund}. Bitte neu koppeln (alfred pair).`); stop(); ws.close(); return; }
@@ -279,7 +305,9 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             const start = Date.now();
             log(`[${new Date().toLocaleTimeString('de-AT')}] Aktion ${n.aktion} ${JSON.stringify(n.params).slice(0, 160)}`);
             let r: Ergebnis;
+            aktionenLaufend += 1;
             try { r = await fuehreAus(k, n.aktion, n.params ?? {}); } catch (err) { r = { success: false, error: (err as Error).message }; }
+            finally { aktionenLaufend -= 1; }
             sende({ typ: 'aktion_ergebnis', id: n.id, success: r.success, data: r.data, display: r.display, error: r.error, dauerMs: Date.now() - start });
             log(`  → ${r.success ? 'ok' : 'Fehler: ' + r.error}`);
           }

@@ -416,6 +416,8 @@ export class Alfred {
   private geraeteGateway?: import('./geraete/gateway.js').GeraeteGateway;
   /** v1251 — Hör-Relais (Echtzeit-Transkription für die Sitzung). */
   private hoerRelais?: import('./geraete/hoeren.js').HoerRelais;
+  /** v1258 — Releases für das Satelliten-Autoupdate. */
+  private releasesRef?: import('./geraete/releases.js').Releases;
   /** v1220 — Lage als Delta (Befunde + Vorgänge), alle 10 min und bei jedem Befund-Wechsel neu gerechnet; steht im Weltmodell-Block des Chats. */
   private lageText?: string;
   private lageStand?: string;
@@ -13466,6 +13468,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           enqueueBestaetigung: async (o) => { if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue'); return this.confirmationQueue.enqueue(o); },
           vorhabenDatei: path.resolve(process.cwd(), 'data', 'geraete-vorhaben.json'), // v1240 — Vorhaben überleben Neustarts
           transferOrdner: path.resolve(process.cwd(), 'data', 'transfers'), // v1249
+          releaseKey: () => this.releasesRef?.publicKey, // v1258
           // v1235 — Dateitransfer: Quelle = FileStore-Schlüssel des Owners oder Serverpfad unter dem Alfred-Datenordner
           dateien: {
             lade: async (quelle: string) => {
@@ -13498,6 +13501,15 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
         gw.start();
         this.geraeteGateway = gw;
+        // v1258 — Releases: eigenes Paket als Tarball bereitstellen, signiert; Satelliten holen Updates hier
+        const { Releases } = await import('./geraete/releases.js');
+        const releases = new Releases(path.resolve(process.cwd(), 'data', 'releases'), this.logger.child({ component: 'releases' }));
+        this.releasesRef = releases;
+        const eigeneVersion = (this.config as { version?: string }).version;
+        if (eigeneVersion) {
+          const paketOrdner = path.resolve(path.dirname(process.argv[1] ?? ''), '..');
+          setTimeout(() => { releases.sichereAktuell(eigeneVersion, paketOrdner).catch(err => this.logger.warn({ err: (err as Error).message }, 'v1258 Release nicht bereitgestellt')); }, 20_000);
+        }
         // v1251 — Hör-Relais: Mistral-Schlüssel bleibt am Server, Sekunden werden verbucht, Tageslimit per ENV
         const { HoerRelais } = await import('./geraete/hoeren.js');
         const sttKey = () => {
@@ -13535,6 +13547,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // Master des Geräts gebunden (kein Auto-Link-Raten; bei mehreren Mastern wäre der Alias sonst ein Fremder).
           transfer: (art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: Parameters<typeof gw.transferRoute>[1]) => gw.transferRoute(art, p), // v1249
           hoerenUpgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => hoerRelais.handleUpgrade(req, s, h), // v1251
+          updateInfo: () => releases.info(), // v1258
+          updateStream: () => { const i = releases.info(); return i ? releases.stream(i.version) : undefined; },
           authentifiziere: async (t: string) => {
             const g = await gw.authentifiziere(t);
             if (!g) return undefined;

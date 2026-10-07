@@ -906,6 +906,9 @@ export class HttpAdapter extends MessagingAdapter {
     upgrade(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
     /** v1232 — Gerätetoken → Identität des Geräts für die Sitzung (userId = Plattform-Kennung des Alias, an den Owner gebunden). */
     authentifiziere?(token: string): Promise<{ userId: string; geraetId: string; name: string } | undefined>;
+    /** v1258 — Satelliten-Autoupdate: Info und Tarball des aktuellen Releases. */
+    updateInfo?(): { version: string; sha256: string; groesse: number; signatur: string; datei: string } | undefined;
+    updateStream?(): import('node:fs').ReadStream | undefined;
     /** v1251 — Hör-Relais (Echtzeit-Transkription) für die Sitzung. */
     hoerenUpgrade?(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
     /** v1249 — blockweiser Dateitransfer. */
@@ -1826,6 +1829,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetePair(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/geraete' && req.method === 'GET') {
       this.handleGeraeteListe(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/geraete/update' && req.method === 'GET') {
+      this.handleUpdate(req, res, false).catch(err => this.safeError(res, err)); // v1258
+    } else if (url.pathname === '/api/geraete/update/datei' && req.method === 'GET') {
+      this.handleUpdate(req, res, true).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/geraete/dateien' && req.method === 'POST') {
       this.handleTransfer(req, res, url, 'start').catch(err => this.safeError(res, err)); // v1249
     } else if (url.pathname.match(/^\/api\/geraete\/dateien\/[^/]+\/fertig$/) && req.method === 'POST') {
@@ -6435,6 +6442,18 @@ export class HttpAdapter extends MessagingAdapter {
     const liste = await this.geraeteCallbacks.liste();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ geraete: liste }));
+  }
+
+  // v1258 — Satelliten-Autoupdate: Info (JSON) oder Tarball (Stream)
+  private async handleUpdate(req: http.IncomingMessage, res: http.ServerResponse, datei: boolean): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const info = this.geraeteCallbacks?.updateInfo?.();
+    if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'kein Release bereit' })); return; }
+    if (!datei) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ...info, datei: '/api/geraete/update/datei' })); return; }
+    const s = this.geraeteCallbacks?.updateStream?.();
+    if (!s) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Tarball fehlt' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Length': info.groesse, 'Content-Disposition': `attachment; filename="alfred-${info.version}.tgz"` });
+    s.pipe(res);
   }
 
   // v1249 — blockweiser Dateitransfer: Ausweis Gerätetoken (Transfers des Geräts) oder API-Token

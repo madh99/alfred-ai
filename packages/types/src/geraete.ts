@@ -32,7 +32,7 @@ export interface GeraetManifest {
 export interface GeraetRahmen { typ: string; id: string; zeit: string; version: 1 }
 
 export interface GeraetHallo extends GeraetRahmen { typ: 'hallo'; geraetId: string; token: string; manifest: GeraetManifest }
-export interface GeraetWillkommen extends GeraetRahmen { typ: 'willkommen'; geraetId: string; name: string; serverVersion: string; skillName: string }
+export interface GeraetWillkommen extends GeraetRahmen { typ: 'willkommen'; geraetId: string; name: string; serverVersion: string; skillName: string; /** v1258 — öffentlicher Release-Schlüssel (PEM) für signierte Updates */ releaseKey?: string }
 export interface GeraetPuls extends GeraetRahmen { typ: 'puls' }
 export interface GeraetPulsOk extends GeraetRahmen { typ: 'puls_ok' }
 export interface GeraetAktion extends GeraetRahmen { typ: 'aktion'; aktion: string; params: Record<string, unknown>; begruendung?: string; vorgangId?: string }
