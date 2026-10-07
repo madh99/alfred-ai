@@ -1841,6 +1841,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleTransfer(req, res, url, 'block').catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/geraete\/dateien\/[^/]+$/) && req.method === 'GET') {
       this.handleTransfer(req, res, url, req.headers.range ? 'lesen' : 'status').catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/geraete/abmelden' && req.method === 'POST') {
+      this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {
@@ -6489,6 +6491,16 @@ export class HttpAdapter extends MessagingAdapter {
     } catch (err) {
       json(400, { error: (err as Error).message });
     }
+  }
+
+  /** v1274 — Entkoppeln vom Gerät aus (`alfred satellit --entkoppeln`): das Gerät widerruft mit seinem eigenen Token. */
+  private async handleGeraetAbmelden(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const ok = await this.geraeteCallbacks.widerrufe(geraet.geraetId);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok, name: geraet.name }));
   }
 
   private async handleGeraetWiderruf(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

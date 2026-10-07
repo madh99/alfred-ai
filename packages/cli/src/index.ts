@@ -23,6 +23,7 @@ Commands:
   satellit       Gerätedienst: Verbindung zum Gehirn halten, Aktionen lokal ausführen (--einmal)
                    --install    als Autostart-Dienst einrichten (Aufgabenplanung / launchd / systemd --user)
                    --uninstall  Autostart-Dienst entfernen     --status  Zustand des Dienstes
+                   --entkoppeln Gerät vollständig entfernen (Token im Gehirn, Kopplung, Versionen, Dienst)
   setup          Interactive setup wizard (configure LLM, platforms, API keys)
   config         Show current resolved configuration (API keys redacted)
   rules          List loaded security rules from the rules path
@@ -166,7 +167,7 @@ async function main(): Promise<void> {
     }
     case 'satellit': {
       const { satellitCommand } = await import('./commands/satellit.js');
-      await satellitCommand({ einmal: !!parsed.flags['einmal'], install: !!parsed.flags['install'], uninstall: !!parsed.flags['uninstall'], status: !!parsed.flags['status'], dienst: !!parsed.flags['dienst'] });
+      await satellitCommand({ einmal: !!parsed.flags['einmal'], install: !!parsed.flags['install'], uninstall: !!parsed.flags['uninstall'], status: !!parsed.flags['status'], entkoppeln: !!parsed.flags['entkoppeln'], dienst: !!parsed.flags['dienst'] });
       break;
     }
 

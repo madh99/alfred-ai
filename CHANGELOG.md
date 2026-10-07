@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1274] - 2026-10-07
+
+### Added — Satellit entkoppeln (v1274)
+
+Zwei Wege, ein Gerät wieder loszuwerden: am Gerät `alfred satellit --entkoppeln` (widerruft das Token im Gehirn über die neue Route `POST /api/geraete/abmelden`, entfernt Kopplung, installierte Versionen und Autostart-Dienst), oder im Chat „Alfred, entkopple <Gerät>" (Aktion `entkoppeln` mit Bestätigung: der Satellit entfernt sich selbst, das Gehirn widerruft das Token). Widerrufene Geräte erscheinen nicht mehr in Kachel und Weltmodell. Die globale CLI bleibt installiert (`npm uninstall -g @madh-io/alfred-ai`).
+
 ## [0.19.0-jarvis.1273] - 2026-10-07
 
 ### Added — Zwischenablage am Satelliten (v1273)

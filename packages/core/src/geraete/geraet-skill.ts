@@ -30,6 +30,8 @@ export interface GeraetSkillDeps {
   };
   /** v1249 — große Datei für das Gerät bereitstellen (blockweiser Download über HTTPS). */
   transfer?: { bereitstellen: (name: string, data: Buffer) => { id: string; groesse: number; sha256: string; blockGroesse: number } };
+  /** v1274 — Gerät entkoppeln: Satellit entfernt sich, Gehirn widerruft das Token. */
+  entkoppeln?: () => Promise<{ ok: boolean; geraet?: string; hinweis: string }>;
   /** v1238 — Zustand des Geräts aus den Sinnen (online, Leerlauf, Fenster, Akku), ohne Rückfrage ans Gerät. */
   zustand?: () => import('../normalzustaende/geraete.js').GeraetZustand | undefined;
   /** v1235 — Dateitransfer: Quelle am Server laden (FileStore-Schlüssel oder Serverpfad), geholte Datei ablegen. */
@@ -47,7 +49,7 @@ export class GeraetSkill extends Skill {
     super();
     const aktionen = deps.manifest.aktionen;
     const params: Record<string, unknown> = {
-      action: { type: 'string', enum: ['zustand', ...aktionen.map(a => a.name), 'vorhaben'], description: 'zustand (auto): Was das Gerät gerade macht — online, Leerlauf, aktives Fenster, Akku; für „was macht mein PC", „ist der PC an", „Akku" IMMER zustand, nie shell. Aktion auf dem Gerät: ' + aktionen.map(a => `${a.name} (${a.autonomie}): ${a.beschreibung}`).join(' | ') + ' | vorhaben: Freigabe für ein mehrschrittiges Vorhaben beim Owner anfordern (beschreibung, aktionen, domains, dauerMin) — nach seinem Ja laufen die genannten Aktionen ohne Einzelbestätigung' },
+      action: { type: 'string', enum: ['zustand', ...aktionen.map(a => a.name), 'vorhaben', 'entkoppeln'], description: 'entkoppeln (Bestätigung): Gerät dauerhaft entfernen — Satellit-Dienst und Kopplung dort, Token hier. zustand (auto): Was das Gerät gerade macht — online, Leerlauf, aktives Fenster, Akku; für „was macht mein PC", „ist der PC an", „Akku" IMMER zustand, nie shell. Aktion auf dem Gerät: ' + aktionen.map(a => `${a.name} (${a.autonomie}): ${a.beschreibung}`).join(' | ') + ' | vorhaben: Freigabe für ein mehrschrittiges Vorhaben beim Owner anfordern (beschreibung, aktionen, domains, dauerMin) — nach seinem Ja laufen die genannten Aktionen ohne Einzelbestätigung' },
       beschreibung: { type: 'string', description: 'Nur für vorhaben: was Alfred vorhat, in einem Satz' },
       aktionen: { type: 'array', items: { type: 'string' }, description: 'Nur für vorhaben: Aktionen, die das Vorhaben braucht (z. B. browser_klicken, browser_tippen)' },
       domains: { type: 'array', items: { type: 'string' }, description: 'Nur für vorhaben: erlaubte Domains (z. B. amazon.de)' },
@@ -90,6 +92,19 @@ export class GeraetSkill extends Skill {
       return gestellt
         ? { success: true, data: { zurFreigabe: true, bis: new Date(v.bis).toISOString() }, display: `Vorhaben zur Freigabe an den Owner gestellt: ${beschreibung}. Nach seinem Ja führe ich es ohne Einzelbestätigung aus (${v.aktionen.join(', ')}). Jetzt nichts weiter tun und dem Owner sagen, dass die Freigabe bei ihm liegt.` }
         : { success: false, error: 'Freigabe konnte nicht gestellt werden' };
+    }
+    // v1274 — Entkoppeln: immer mit Bestätigung, danach gibt es das Gerät nicht mehr
+    if (aktion === 'entkoppeln') {
+      if (!this.deps.entkoppeln) return { success: false, error: 'Entkoppeln nicht verfügbar' };
+      const freigabe = input.freigabe; const bestaetigt = this.deps.pruefeFreigabe(freigabe, 'entkoppeln', {});
+      if (!bestaetigt) {
+        const frage = `Gerät ${this.deps.name} entkoppeln: Satellit-Dienst und Kopplung dort entfernen, Token hier widerrufen. Danach ist das Gerät weg — neu koppeln nur mit alfred pair.`;
+        const gestellt = await this.deps.bestaetigung({ description: frage, aktion: 'entkoppeln', params: {} });
+        return gestellt ? { success: true, data: { zurBestaetigung: true }, display: `Zur Bestätigung an den Owner gestellt: ${frage}` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
+      }
+      const r = await this.deps.entkoppeln();
+      await this.deps.schritt?.({ art: r.ok ? 'ausgefuehrt' : 'fehlgeschlagen', aktion: 'entkoppeln', params: {}, beschreibung: `Gerät ${this.deps.name} entkoppelt`, ergebnis: r.hinweis, autonomie: 'bestaetigen' });
+      return { success: r.ok, data: r, display: r.ok ? `${this.deps.name} entkoppelt — ${r.hinweis}. Die globale CLI dort bleibt installiert (npm uninstall -g @madh-io/alfred-ai entfernt sie).` : `Entkoppeln fehlgeschlagen: ${r.hinweis}`, error: r.ok ? undefined : r.hinweis };
     }
     // v1238 — Zustand aus den Sinnen: keine Shell, keine Bestätigung
     if (aktion === 'zustand') {

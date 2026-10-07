@@ -127,7 +127,7 @@ export class GeraeteGateway {
   async liste(): Promise<Array<GeraetEintrag & { online: boolean; verbundenSeit?: string; skillName?: string; sinne?: Record<string, unknown>; sinneZeit?: string }>> {
     const userId = this.deps.ownerUserId();
     if (!userId) return [];
-    const rows = await this.deps.repo.liste(userId);
+    const rows = (await this.deps.repo.liste(userId)).filter(r => r.status === 'aktiv'); // v1274 — widerrufene Geräte verschwinden aus Kachel und Weltmodell
     return rows.map(r => { const v = this.verbindungen.get(r.id); return { ...r, online: !!v, verbundenSeit: v?.verbundenSeit, skillName: v?.skillName, sinne: v?.sinne, sinneZeit: v?.sinneZeit ? new Date(v.sinneZeit).toISOString() : undefined }; });
   }
 
@@ -152,6 +152,18 @@ export class GeraeteGateway {
       if (!best || sek < best.leerlaufSek) best = { name: v.eintrag.name, leerlaufSek: sek };
     }
     return best;
+  }
+
+  /** v1274 — Entkoppeln aus dem Chat: Satellit entfernt Dienst und Kopplung lokal, dann widerruft das Gehirn das Token. */
+  async entkoppeln(id: string): Promise<{ ok: boolean; geraet?: string; hinweis: string }> {
+    const v = this.verbindungen.get(id);
+    let hinweis = 'Gerät war nicht verbunden — Dienst und Kopplung dort mit „alfred satellit --entkoppeln" entfernen';
+    if (v) {
+      const r = await this.sendeAktion(id, 'entkoppeln', {}, 15_000);
+      hinweis = r.success ? (r.display ?? 'Satellit entfernt sich') : `Satellit konnte sich nicht entfernen: ${r.error ?? 'unbekannt'}`;
+    }
+    const ok = await this.widerrufe(id);
+    return { ok, geraet: v?.eintrag.name, hinweis };
   }
 
   async widerrufe(id: string): Promise<boolean> {
@@ -225,6 +237,7 @@ export class GeraeteGateway {
       pruefeFreigabe: (nonce, aktion, params) => this.freigaben.verbrauche(nonce, v.skillName, aktion, params),
       dateien: this.deps.dateien, // v1235
       zustand: () => this.zustaendeVerbunden().find(z => z.name === v.eintrag.name), // v1238
+      entkoppeln: () => this.entkoppeln(v.eintrag.id), // v1274
       transfer: { bereitstellen: (name, data) => this.transfers.bereitstellen(v.eintrag.id, name, data) }, // v1249
       vorhaben: {
         erzeuge: (x) => this.vorhaben.erzeuge(v.skillName, x),

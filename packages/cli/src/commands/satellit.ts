@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { readdirSync, statSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readdirSync, statSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { exec, execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
@@ -10,7 +10,8 @@ import { geraetAnfrage, geraetJson } from './geraet-http.js'; // v1249
 import { aktualisiereWennNeuer, bestaetigeAktuell, merkeReleaseKey, NEUSTART_CODE } from './satellit-update.js'; // v1258
 import { vergleicheVersion } from '@alfred/core';
 import { getVersion } from '../version.js';
-import { ladeKonfig, speichereKonfig, type GeraetKonfig } from './pair.js';
+import { ladeKonfig, speichereKonfig, konfigPfad, type GeraetKonfig } from './pair.js';
+import { cliOrdner } from './satellit-update.js'; // v1274
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
@@ -85,6 +86,18 @@ export function baueManifest(version: string): GeraetManifest {
 export const SINNE_INTERVALL_MS = 60_000;
 
 type Ergebnis = { success: boolean; data?: unknown; display?: string; error?: string };
+
+/**
+ * v1274 — Entkoppeln: Kopplung (geraet.json), installierte Versionen (~/.alfred/cli) und den Autostart-Dienst entfernen,
+ * dann beenden. Reihenfolge: erst die Dateien, dann der Dienst — der Dienst-Stopp kann diesen Prozess selbst beenden.
+ */
+export function entkoppleLokal(): string[] {
+  const schritte: string[] = [];
+  try { if (existsSync(konfigPfad())) { rmSync(konfigPfad(), { force: true }); schritte.push('Kopplung entfernt (geraet.json)'); } } catch (err) { schritte.push(`geraet.json nicht entfernt: ${(err as Error).message}`); }
+  try { if (existsSync(cliOrdner())) { rmSync(cliOrdner(), { recursive: true, force: true }); schritte.push('installierte Versionen entfernt (~/.alfred/cli)'); } } catch (err) { schritte.push(`~/.alfred/cli nicht entfernt: ${(err as Error).message}`); }
+  try { schritte.push(entferneDienst()); } catch (err) { schritte.push(`Dienst nicht entfernt: ${(err as Error).message}`); }
+  return schritte;
+}
 
 export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<string, unknown>): Promise<Ergebnis> {
   const frei = k.freigegebeneVerzeichnisse;
@@ -282,12 +295,28 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       await browser(k).schliessen();
       return { success: true, display: 'Alfred-Browser geschlossen' };
     }
+    // v1274 — vom Gehirn angestoßen: erst antworten, dann lokal entkoppeln und beenden
+    case 'entkoppeln': {
+      setTimeout(() => { const s = entkoppleLokal(); console.log(`Entkoppelt: ${s.join('; ')}`); process.exit(0); }, 800);
+      return { success: true, data: { entkoppelt: true }, display: `Satellit ${k.name} entfernt Kopplung, installierte Versionen und Dienst und beendet sich` };
+    }
     default:
       return { success: false, error: `Aktion unbekannt: ${aktion}` };
   }
 }
 
-export async function satellitCommand(opts: { einmal?: boolean; install?: boolean; uninstall?: boolean; status?: boolean; dienst?: boolean }): Promise<void> {
+export async function satellitCommand(opts: { einmal?: boolean; install?: boolean; uninstall?: boolean; status?: boolean; dienst?: boolean; entkoppeln?: boolean }): Promise<void> {
+  // v1274 — vollständig entkoppeln: Token im Gehirn widerrufen, dann lokal alles entfernen
+  if (opts.entkoppeln) {
+    const k = ladeKonfig();
+    if (k) {
+      try { const r = await geraetJson<{ ok: boolean }>(k, 'POST', '/api/geraete/abmelden'); console.log(r?.ok ? `Im Gehirn abgemeldet: ${k.name}` : 'Gehirn kannte das Gerät nicht mehr'); }
+      catch (err) { console.log(`Gehirn nicht erreichbar (${(err as Error).message}) — das Gerät dort per Chat entkoppeln („Alfred, entkopple ${k.name}")`); }
+    } else console.log('Keine Kopplung vorhanden');
+    for (const s of entkoppleLokal()) console.log(s);
+    console.log('Die CLI selbst bleibt installiert — entfernen mit: npm uninstall -g @madh-io/alfred-ai');
+    return;
+  }
   // v1228 — Dienst-Verwaltung
   if (opts.install) { console.log(installiereDienst()); return; }
   if (opts.uninstall) { console.log(entferneDienst()); return; }
