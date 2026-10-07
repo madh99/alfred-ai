@@ -268,9 +268,9 @@ Grundlage ist die Recherche vom 07.10. (Memory „computer-use-recherche-2026-10
 - **Beweis 07.10. 20:28 (Owner ließ den PC in Ruhe):** Chat „Starte den Rechner und rechne 12 mal 7 über die Tasten" → Alfred legte selbst ein Vorhaben an (programm_starten, element_klicken, tippen, taste, bis 20:37) → Ja → Rechner gestartet, fünfmal Karte lesen und Taste betätigen (1, 2, ×, 7, =) in 45 s, Antwort „Ergebnis aus der Anzeige: 84". Unabhängig geprüft: die Anzeige des Rechners stand auf 84. Lektion .1277: Beschreibungen im Manifest sind auf 300 Zeichen begrenzt, 1276 wurde deshalb abgewiesen; der Satellit kürzt jetzt selbst. Offen: ein Satellit, dessen Manifest abgewiesen wird, muss sich beenden, damit der Starter zurückfallen kann (heute Endlosschleife, manuell gelöst).
 - Grenzen: Task-Manager und andere erhöhte Programme liefern keinen Baum; Electron-Apps teils magere Bäume (Edge, Chrome, VS Code sind gut); Spiele und eigengezeichnete Oberflächen gar nicht.
 
-### 18.2 Stufe B — Foto mit Markierungen (offen)
+### 18.2 Stufe B — Foto mit Markierungen (erster Teil umgesetzt .1279)
 
-Für Fenster ohne brauchbaren Baum: Bildschirmfoto mit nummerierten Rahmen aus Bilderkennung (OmniParser-Klasse) und Klick auf die Rahmenmitte, auf Modellmaß skaliert, mit Zoom. Erst nach Erfahrung aus Stufe A.
+`bildschirm` mit `markieren=true` zeichnet Nummern und Rahmen der letzten Element-Karte ins Foto (Windows; UIA-Rechtecke und Aufnahme teilen bei 100 % Skalierung die Koordinaten, bei anderer Skalierung rechnet der Satellit um). Damit sieht das Modell, was es betätigt, und prüft das Ergebnis im Bild. Offen: Rahmen aus Bilderkennung für Fenster ohne Baum und Klick auf die Rahmenmitte, erst nach Erfahrung aus Stufe A. Hinweis Datenschutz: Bildschirmfotos gehen an den Modellanbieter; auf dem Schirm sichtbare Geheimnisse (z. B. eine offene .env im Editor) wandern mit. Der Owner entscheidet, wann er fotografieren lässt.
 
 ### 18.3 Schnittstellen vor Oberfläche (offen)
 

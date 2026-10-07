@@ -213,6 +213,12 @@ export class Bedienung {
     return keys;
   }
 
+  /** v1279 — Marken für das markierte Bildschirmfoto (Set of Marks) aus der letzten Karte. */
+  marken(): { nr: number; x: number; y: number; w: number; h: number }[] {
+    return (this.karte?.elemente ?? []).filter(e => e.w > 1 && e.h > 1 && e.x > -30000).map(e => ({ nr: e.nr, x: e.x, y: e.y, w: e.w, h: e.h }));
+  }
+  letzteKarte(): Karte | undefined { return this.karte; }
+
   /** Karte als Text für das Modell: Nummer, Typ, Name, Wert, Zustand. */
   static formatiere(k: Karte): string {
     const z = k.elemente.map(e => `${e.nr}. [${e.typ}] ${e.name || '(ohne Name)'}${e.wert ? ` = „${e.wert}"` : ''}${e.zustand ? ` (${e.zustand})` : ''}${e.passwort ? ' 🔒' : ''}`);

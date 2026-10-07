@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 
 /**
  * v1268 — Bildschirm sehen: Foto des ganzen Bildschirms (alle Monitore) oder des aktiven Fensters als JPEG,
@@ -10,7 +10,9 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs';
  * ohne sie liefert screencapture nur den Schreibtisch.
  */
 export type Bereich = 'alles' | 'fenster';
-export interface Bildschirmfoto { jpegBase64: string; breite: number; hoehe: number; titel?: string; bereich: Bereich }
+export interface Bildschirmfoto { jpegBase64: string; breite: number; hoehe: number; titel?: string; bereich: Bereich; marken?: number }
+/** v1279 — Markierung aus der Element-Karte (Set of Marks): Nummer und Rechteck in Bildschirmkoordinaten. */
+export interface Marke { nr: number; x: number; y: number; w: number; h: number }
 
 // Windows: ZWEI PowerShell-Aufrufe. Defender/AMSI blockt ein Skript, das P/Invoke (Fensterrechteck) UND CopyFromScreen
 // enthält, als „schädlich" (Befund 07.10.); getrennt läuft beides. Keine DPI-Bewusstheit, damit Fensterrechteck und
@@ -45,6 +47,27 @@ if ($w -lt 10 -or $hh -lt 10) {
 $bmp = New-Object System.Drawing.Bitmap $w, $hh
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $g.CopyFromScreen($x, $y, 0, 0, $bmp.Size)
+# v1279 — Markierungen (Set of Marks) aus der Element-Karte: rote Rahmen, Nummer mit weißem Grund
+$markenDatei = '__MARKEN__'
+if ($markenDatei -and (Test-Path $markenDatei)) {
+  $marken = Get-Content -Raw -Encoding UTF8 $markenDatei | ConvertFrom-Json
+  # UIA liefert physische Pixel, die Aufnahme hier ist nicht DPI-bewusst (virtualisiert): bei 125 % durch 1,25 teilen
+  $dpi = 96; try { $dpi = (Get-ItemProperty 'HKCU:\\Control Panel\\Desktop\\WindowMetrics' -Name AppliedDPI -ErrorAction Stop).AppliedDPI } catch {}
+  $skala = [double]$dpi / 96.0
+  if ($skala -le 0) { $skala = 1.0 }
+  $stift = New-Object System.Drawing.Pen ([System.Drawing.Color]::Red), 2
+  $schrift = New-Object System.Drawing.Font 'Arial', 11, ([System.Drawing.FontStyle]::Bold)
+  foreach ($m in $marken) {
+    $mx = [int]([double]$m.x / $skala) - $x; $my = [int]([double]$m.y / $skala) - $y
+    $mw = [int]([double]$m.w / $skala); $mh = [int]([double]$m.h / $skala)
+    if ($mw -lt 2 -or $mh -lt 2) { continue }
+    $g.DrawRectangle($stift, $mx, $my, $mw, $mh)
+    $t = [string]$m.nr
+    $sz = $g.MeasureString($t, $schrift)
+    $g.FillRectangle([System.Drawing.Brushes]::White, $mx, $my, $sz.Width + 2, $sz.Height)
+    $g.DrawString($t, $schrift, [System.Drawing.Brushes]::Red, $mx + 1, $my)
+  }
+}
 $g.Dispose()
 $out = $bmp
 if ($w -gt $maxB) { $nh = [int]($hh * $maxB / $w); $out = New-Object System.Drawing.Bitmap $bmp, $maxB, $nh }
@@ -69,8 +92,10 @@ async function vorhanden(cmd: string): Promise<boolean> {
   try { await run(process.platform === 'win32' ? 'where' : 'which', [cmd], 5000); return true; } catch { return false; }
 }
 
-export async function bildschirmfoto(bereich: Bereich = 'alles', maxBreite = 1600): Promise<Bildschirmfoto> {
+export async function bildschirmfoto(bereich: Bereich = 'alles', maxBreite = 1600, marken: Marke[] = []): Promise<Bildschirmfoto> {
   const ziel = path.join(os.tmpdir(), `alfred-bildschirm-${process.pid}-${Date.now()}.jpg`);
+  const markenDatei = marken.length && process.platform === 'win32' ? ziel.replace(/\.jpg$/, '-marken.json') : '';
+  if (markenDatei) writeFileSync(markenDatei, JSON.stringify(marken));
   try {
     let titel: string | undefined; let breite = 0; let hoehe = 0; let effektiv: Bereich = bereich;
     if (process.platform === 'win32') {
@@ -82,7 +107,7 @@ export async function bildschirmfoto(bereich: Bereich = 'alles', maxBreite = 160
         } catch { /* ganzer Bildschirm */ }
         if (w < 10 || h < 10) effektiv = 'alles';
       }
-      const script = WIN_FOTO.replace('__ZIEL__', ziel.replace(/'/g, "''")).replace('__MAXB__', String(maxBreite))
+      const script = WIN_FOTO.replace('__ZIEL__', ziel.replace(/'/g, "''")).replace('__MARKEN__', markenDatei.replace(/'/g, "''")).replace('__MAXB__', String(maxBreite))
         .replace('__X__', String(x)).replace('__Y__', String(y)).replace('__W__', String(effektiv === 'fenster' ? w : 0)).replace('__H__', String(effektiv === 'fenster' ? h : 0));
       const j = JSON.parse(await powershell(script)) as { breite?: number; hoehe?: number };
       breite = j.breite ?? 0; hoehe = j.hoehe ?? 0;
@@ -120,8 +145,9 @@ export async function bildschirmfoto(bereich: Bereich = 'alles', maxBreite = 160
     if (!existsSync(ziel)) throw new Error('Bildschirmfoto wurde nicht erzeugt');
     const data = readFileSync(ziel);
     if (data.length < 100) throw new Error('Bildschirmfoto ist leer');
-    return { jpegBase64: data.toString('base64'), breite, hoehe, titel, bereich: effektiv };
+    return { jpegBase64: data.toString('base64'), breite, hoehe, titel, bereich: effektiv, marken: markenDatei ? marken.length : undefined };
   } finally {
     try { unlinkSync(ziel); } catch { /* weg */ }
+    if (markenDatei) { try { unlinkSync(markenDatei); } catch { /* weg */ } }
   }
 }

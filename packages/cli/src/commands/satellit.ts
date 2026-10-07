@@ -86,7 +86,7 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'fenster_vordergrund', beschreibung: 'Holt ein offenes Fenster in den Vordergrund (Suchtext im Titel oder Programmname)', autonomie: 'auto', parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname, z. B. Outlook' } } },
       { name: 'programm_starten', beschreibung: 'Startet ein Programm auf diesem Gerät (Name im Pfad, App-Name unter macOS, oder voller Pfad), optional mit Argumenten', autonomie: 'bestaetigen', parameter: { programm: { type: 'string', description: 'Programmname oder Pfad, z. B. notepad, outlook, Safari' }, argumente: { type: 'string', description: 'Argumente, durch Leerzeichen getrennt (optional)' } } },
       // v1268 — Bildschirm sehen: das Modell bekommt das Bild zu sehen und kann es beschreiben
-      { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler", „was zeigt mein PC gerade". Das Foto geht auch an den Owner.', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' } } },
+      { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler". Mit markieren=true trägt es die Nummern der letzten Element-Karte ein (Windows).', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' }, markieren: { type: 'boolean', description: 'Nummern der Element-Karte (fenster_lesen) ins Bild zeichnen' } } },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
     ],
     sinne: ['leerlauf', 'fenster', 'akku'], // v1237
@@ -329,8 +329,10 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     // v1268 — Bildschirm sehen
     case 'bildschirm': {
       const bereich = params.bereich === 'fenster' ? 'fenster' : 'alles';
-      const f = await bildschirmfoto(bereich);
-      return { success: true, data: { screenshotBase64: f.jpegBase64, mimeType: 'image/jpeg', breite: f.breite, hoehe: f.hoehe, titel: f.titel, bereich: f.bereich }, display: `Bildschirmfoto (${f.bereich === 'fenster' ? 'aktives Fenster' : 'ganzer Bildschirm'}, ${f.breite}×${f.hoehe}${f.titel ? `, Fenster „${f.titel}"` : ''})` };
+      // v1279 — Set of Marks: Nummern der letzten Element-Karte ins Bild (nur Windows, nur mit frischer Karte)
+      const marken = (params.markieren === true || params.markieren === 'true') && process.platform === 'win32' ? bedienen(k).marken() : [];
+      const f = await bildschirmfoto(bereich, 1600, marken);
+      return { success: true, data: { screenshotBase64: f.jpegBase64, mimeType: 'image/jpeg', breite: f.breite, hoehe: f.hoehe, titel: f.titel, bereich: f.bereich }, display: `Bildschirmfoto (${f.bereich === 'fenster' ? 'aktives Fenster' : 'ganzer Bildschirm'}, ${f.breite}×${f.hoehe}${f.titel ? `, Fenster „${f.titel}"` : ''}${f.marken ? `, ${f.marken} Elemente nummeriert wie in fenster_lesen` : ''})` };
     }
     case 'browser_schliessen': {
       await browser(k).schliessen();

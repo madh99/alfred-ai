@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1279] - 2026-10-07
+
+### Added — Markiertes Bildschirmfoto (Set of Marks) (v1279)
+
+`bildschirm` mit `markieren=true` zeichnet die Nummern und Rahmen der letzten Element-Karte (fenster_lesen) ins Foto, in Bildschirmkoordinaten vor dem Verkleinern. Das Modell sieht damit, welches Element hinter welcher Nummer steckt, und prüft nach einem Schritt, ob das Fenster so aussieht wie erwartet. Windows; Spec §18.2, erster Teil. Klick nach Koordinaten bleibt offen.
+
 ## [0.19.0-jarvis.1278] - 2026-10-07
 
 ### Fixed
