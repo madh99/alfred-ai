@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1293] - 2026-10-08
+
+### Fixed — Outlook-Erkennung für Exchange-Konten (v1293)
+
+Die Erkennung aus v1292 verlangte einen Wert „Email" im Outlook-Profil, den Exchange- und Microsoft-365-Konten nicht haben; die Office-VM bot darum nur Excel an. Jetzt zählt der Mailkonten-Zähler des Profils (REG_BINARY `{ED475418-…}` im Kontenverwalter): leer bedeutet kein Mailkonto (Einrichtungsdialog würde erscheinen), sonst werden die Outlook-Aktionen angeboten.
+
 ## [0.19.0-jarvis.1292] - 2026-10-08
 
 ### Added — Office über COM auf Windows-Satelliten (v1292)

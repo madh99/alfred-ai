@@ -41,9 +41,11 @@ export function outlookVorhanden(): boolean {
   if (process.platform !== 'win32') return false;
   try {
     execFileSync('reg', ['query', 'HKCR\\Outlook.Application'], { stdio: 'pipe', timeout: 5000, windowsHide: true });
-    // Ein Profil mit nur dem Adressbuch-Konto existiert auch ohne Einrichtung (PC-madh) → es zählt ein Mailkonto (Wert „Email")
-    const konten = execFileSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Office\\16.0\\Outlook\\Profiles', '/s', '/f', 'Email', '/v', '/e'], { stdio: 'pipe', timeout: 10_000, windowsHide: true, encoding: 'utf8' });
-    return konten.split(/\r?\n/).some(z => /^\s*Email\s+REG_/.test(z));
+    // Ein Profil mit nur dem Adressbuch existiert auch ohne Einrichtung (PC-madh). Zähler der Mailkonten je Profil ist der
+    // REG_BINARY-Wert {ED475418-…} im Kontenverwalter 9375CFF0…: leer = kein Mailkonto (PC), 02000000 = zwei (Office-VM, Exchange
+    // ohne „Email"-Wert — v1292 erkannte darum nichts).
+    const konten = execFileSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Office\\16.0\\Outlook\\Profiles', '/s', '/f', '{ED475418-B0D6-11D2-8C3B-00104B2A6676}', '/v', '/e'], { stdio: 'pipe', timeout: 10_000, windowsHide: true, encoding: 'utf8' });
+    return konten.split(/\r?\n/).some(z => /\{ED475418-[0-9A-F-]+\}\s+REG_BINARY\s+[0-9A-Fa-f]{2,}/i.test(z));
   } catch { return false; }
 }
 export function excelVorhanden(): boolean {
