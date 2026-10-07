@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1276] - 2026-10-07
+
+### Added — Bedienen, Stufe A: Element-Karte statt Maus (v1276)
+
+Spec §18 (Owner: „ausarbeiten und umsetzen", 07.10.). Windows-Satellit bedient Programme über die Bedienhilfen (UI Automation): `fenster_lesen` liefert eine nummerierte Element-Karte (Buttons, Felder, Menüs, Tabs mit Name, Wert, Zustand), `element_klicken` betätigt per Nummer über Invoke/Toggle/Select/Expand, `tippen` schreibt per ValuePattern oder SendKeys, `taste` sendet Kombinationen wie strg+s. Kein Mausklick nach Koordinaten. Sicherungen im Satelliten: Karte verfällt nach jeder Aktion und nach 45 s, Passwortfelder gesperrt, gesperrte Fenster nach Titelmuster (Banking, PayPal, Kasse, Checkout; `gesperrteFenster` in geraet.json), Notbremse bei eigener Eingabe des Owners, alle verändernden Aktionen mit Bestätigung oder im Vorhaben. macOS und Linux folgen.
+
 ## [0.19.0-jarvis.1275] - 2026-10-07
 
 ### Added — Systembenachrichtigungen lesen (v1275)

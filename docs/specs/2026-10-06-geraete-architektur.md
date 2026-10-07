@@ -252,3 +252,29 @@ Der Owner hat die Reihung freigegeben; Punkt 4 (Tastatur und Maus) braucht eine 
 ### 17.1 Satellit entkoppeln (.1274, Owner-Frage 07.10.)
 
 Zwei Wege. Am Gerät: `alfred satellit --entkoppeln` widerruft das Token im Gehirn (`POST /api/geraete/abmelden` mit Gerätetoken), entfernt `~/.alfred/geraet.json`, die installierten Versionen unter `~/.alfred/cli` und den Autostart-Dienst (Windows Autostart-VBS, macOS launchd, Linux systemd --user). Im Chat: „Alfred, entkopple <Gerät>" → Bestätigung → der Satellit entfernt sich selbst und beendet sich, das Gehirn widerruft das Token. Widerrufene Geräte verschwinden aus Kachel und Weltmodell, der Skill `geraet_<name>` ist weg. Die globale CLI bleibt auf dem Gerät (`npm uninstall -g @madh-io/alfred-ai`), ebenso das Browser-Profil unter `~/.alfred/browser-profil`. Neu koppeln geht jederzeit mit `alfred pair`.
+
+
+## 18. Bedienen: Tastatur und Maus (§17 Punkt 4; Owner 07.10.: „ausarbeiten und umsetzen")
+
+Grundlage ist die Recherche vom 07.10. (Memory „computer-use-recherche-2026-10"): Schnittstelle vor Oberfläche, Bedienhilfen-Baum vor Pixeln, Prüfung nach jedem Schritt, eigene Arbeitsfläche, Mensch im Kreis für Unumkehrbares.
+
+### 18.1 Stufe A — Element-Karte (umgesetzt .1276, Windows)
+
+- `fenster_lesen` liest das aktive Fenster (oder eines nach Titel) über Windows UI Automation als nummerierte Element-Karte: Typ, Name, Wert, Zustand, Passwortkennzeichen. Nur sichtbare, aktive Bedienelemente; höchstens 150. Dauer 0,2 bis 0,5 s.
+- `element_klicken` betätigt per Nummer über die Muster Invoke, Toggle, Select, Expand, DefaultAction; letzter Rückfall Fokus plus Leertaste. Kein Mausklick nach Koordinaten.
+- `tippen` schreibt per ValuePattern, sonst Fokus und SendKeys; optional Enter. `taste` sendet Kombinationen (strg+s, alt+f4, enter, f5); die Windows-Taste bleibt gesperrt.
+- Sicherungen im Satelliten, modellunabhängig: Karte verfällt nach jeder Aktion und nach 45 s; Passwortfelder gesperrt; gesperrte Fenster nach Titelmuster (Standard: Banking, PayPal, Zahlung, Checkout, Kasse, Bezahlen, Anmelden bei, Sign in; `gesperrteFenster` in geraet.json); Notbremse: eigene Eingabe des Owners nach der letzten Alfred-Aktion bricht ab. Alle verändernden Aktionen sind `bestaetigen`; ein Vorhaben deckt die Folge mit einer Frage.
+- Ablauf für das Modell: fenster_vordergrund → fenster_lesen → Aktion → fenster_lesen → bei Bedarf bildschirm zur Kontrolle.
+- Grenzen: Task-Manager und andere erhöhte Programme liefern keinen Baum; Electron-Apps teils magere Bäume (Edge, Chrome, VS Code sind gut); Spiele und eigengezeichnete Oberflächen gar nicht.
+
+### 18.2 Stufe B — Foto mit Markierungen (offen)
+
+Für Fenster ohne brauchbaren Baum: Bildschirmfoto mit nummerierten Rahmen aus Bilderkennung (OmniParser-Klasse) und Klick auf die Rahmenmitte, auf Modellmaß skaliert, mit Zoom. Erst nach Erfahrung aus Stufe A.
+
+### 18.3 Schnittstellen vor Oberfläche (offen)
+
+Office über COM (Outlook-Entwurf, Termin, Excel-Zellen) als eigene Aktionen; klassisches Outlook startet auf dem Owner-PC beim COM-Aufruf einen Einrichtungsdialog (Befund 07.10.), deshalb erst nach Klärung, welches Outlook der Owner nutzt.
+
+### 18.4 Eigene Arbeitsfläche (offen)
+
+Windows „Agent Workspace" (eigenes Standardkonto, isolierte Sitzung, Preview) oder ein zweites Windows-Konto per Remote-Desktop-Loopback, in dem der Satellit läuft, damit Alfred nicht in der Sitzung des Owners tippt. macOS: Accessibility-Baum über System Events; Linux: AT-SPI.

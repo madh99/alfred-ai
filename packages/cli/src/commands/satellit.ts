@@ -19,6 +19,7 @@ import { bildschirmfoto } from './satellit-bildschirm.js'; // v1268
 import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fenster.js'; // v1271
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
+import { Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js'; // v1276
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
 let browserHand: BrowserHand | undefined;
@@ -68,6 +69,13 @@ export function baueManifest(version: string): GeraetManifest {
       // v1273 — Zwischenablage (Lesen mit Bestätigung: oft Passwörter oder Vertrauliches)
       { name: 'zwischenablage_lesen', beschreibung: 'Liest den Text in der Zwischenablage dieses Geräts (für „was habe ich kopiert", „nimm den Text aus der Zwischenablage")', autonomie: 'bestaetigen' },
       { name: 'zwischenablage_setzen', beschreibung: 'Legt Text in die Zwischenablage dieses Geräts („kopier mir das in die Zwischenablage")', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
+      // v1276 — Bedienen Stufe A (Windows): Element-Karte über UI Automation, kein Mausklick nach Koordinaten
+      ...(process.platform === 'win32' ? [
+        { name: 'fenster_lesen', beschreibung: 'Liest das aktive Fenster (oder eines nach Titel) als nummerierte Element-Karte: Buttons, Felder, Menüs, Tabs mit Name, Wert, Zustand. VOR jedem element_klicken/tippen nötig; nach jeder Aktion erneut lesen (die Karte verfällt). Für mehrschrittiges Bedienen zuerst action=vorhaben mit aktionen [fenster_vordergrund, fenster_lesen, element_klicken, tippen, taste, bildschirm].', autonomie: 'auto' as const, parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname (optional, sonst das aktive Fenster)' } } },
+        { name: 'element_klicken', beschreibung: 'Betätigt Element Nr. N aus der Element-Karte (Button, Menü, Tab, Kontrollkästchen) über die Bedienhilfen — kein Mausklick. Kauf-, Zahlungs-, Banking-Fenster sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' } } },
+        { name: 'tippen', beschreibung: 'Tippt Text in Element Nr. N (Eingabefeld, Dokument), optional mit Enter. Passwortfelder sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'danach Enter' } } },
+        { name: 'taste', beschreibung: 'Tastenkombination im aktiven Fenster, z. B. strg+s, alt+f4, enter, strg+shift+t, f5', autonomie: 'bestaetigen' as const, parameter: { kombi: { type: 'string', description: 'z. B. strg+s' } } },
+      ] : []),
       // v1275 — Systembenachrichtigungen (Bestätigung: Nachrichtenvorschauen, Codes)
       ...(process.platform === 'linux' ? [] : [{ name: 'benachrichtigungen', beschreibung: 'Liest die letzten Systembenachrichtigungen dieses Geräts (App, Zeit, Titel, Text) — für „was ist an Meldungen gekommen", „habe ich etwas verpasst"', autonomie: 'bestaetigen' as const, parameter: { stunden: { type: 'number', description: 'Zeitraum in Stunden (Standard 24)' }, anzahl: { type: 'number', description: 'Höchstens so viele (Standard 20)' } } }]),
       // v1272 — Freigaben aus dem Chat
@@ -90,6 +98,13 @@ export const SINNE_INTERVALL_MS = 60_000;
 
 type Ergebnis = { success: boolean; data?: unknown; display?: string; error?: string };
 
+// v1276 — Bedienen (Stufe A): ein Zustand je Satellit (letzte Element-Karte, Notbremse)
+let bedienung: Bedienung | undefined;
+function bedienen(k: GeraetKonfig): Bedienung {
+  if (!bedienung) bedienung = new Bedienung(k.gesperrteFenster ?? GESPERRTE_FENSTER_STANDARD);
+  return bedienung;
+}
+
 /**
  * v1274 — Entkoppeln: Kopplung (geraet.json), installierte Versionen (~/.alfred/cli) und den Autostart-Dienst entfernen,
  * dann beenden. Reihenfolge: erst die Dateien, dann der Dienst — der Dienst-Stopp kann diesen Prozess selbst beenden.
@@ -106,6 +121,23 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
   const frei = k.freigegebeneVerzeichnisse;
   const lesbar = [...frei, ...(k.nurLesen ?? [])]; // v1272 — Leserecht: freigegebene plus nur-lesen
   switch (aktion) {
+    // v1276 — Bedienen Stufe A
+    case 'fenster_lesen': {
+      const karte = await bedienen(k).fensterLesen(params.titel ? String(params.titel) : undefined);
+      return { success: true, data: { fenster: karte.fenster, programm: karte.programm, karte: karte.hash, elemente: karte.elemente.map(e => ({ nr: e.nr, typ: e.typ, name: e.name, wert: e.wert ?? undefined, zustand: e.zustand ?? undefined, passwort: e.passwort || undefined })) }, display: Bedienung.formatiere(karte) };
+    }
+    case 'element_klicken': {
+      const r = await bedienen(k).klicken(Number(params.nr));
+      return { success: true, data: { nr: r.element.nr, name: r.element.name, wie: r.wie, fenster: r.fenster }, display: `Betätigt: ${r.element.nr}. [${r.element.typ}] ${r.element.name} (${r.wie}) — Fenster jetzt „${r.fenster}". Karte verfallen: fenster_lesen vor dem nächsten Schritt.` };
+    }
+    case 'tippen': {
+      const r = await bedienen(k).tippen(Number(params.nr), String(params.text ?? ''), params.enter === true || params.enter === 'true');
+      return { success: true, data: { nr: r.element.nr, name: r.element.name, wie: r.wie, fenster: r.fenster }, display: `Getippt in ${r.element.nr}. [${r.element.typ}] ${r.element.name} (${r.wie}). Karte verfallen: fenster_lesen vor dem nächsten Schritt.` };
+    }
+    case 'taste': {
+      const keys = await bedienen(k).taste(String(params.kombi ?? ''));
+      return { success: true, data: { kombi: params.kombi, sendkeys: keys }, display: `Taste ${String(params.kombi)} gesendet. Karte verfallen: fenster_lesen vor dem nächsten Schritt.` };
+    }
     // v1275 — Systembenachrichtigungen
     case 'benachrichtigungen': {
       const l = await benachrichtigungen(Number(params.stunden ?? 24) || 24, Number(params.anzahl ?? 20) || 20);

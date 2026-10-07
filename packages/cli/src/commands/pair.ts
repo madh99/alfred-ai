@@ -21,6 +21,8 @@ export interface GeraetKonfig {
   freigegebeneVerzeichnisse: string[];
   /** v1272 — Verzeichnisse nur zum Lesen (liste, oeffnen, datei_holen); aus dem Chat gepflegt. */
   nurLesen?: string[];
+  /** v1276 — Fenster, die Alfred nie bedient (Titelmuster); fehlt der Eintrag, gilt die Standardliste (Banking, PayPal, Kasse …). */
+  gesperrteFenster?: string[];
   erlaubteProgramme: string[];
   /** v1258 — öffentlicher Release-Schlüssel des Servers (beim ersten Willkommen gemerkt). */
   releaseKey?: string;
