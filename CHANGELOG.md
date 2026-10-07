@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1287] - 2026-10-07
+
+### Fixed — Satelliten-Update: npm über node + npm-cli.js, ohne PATH und Shell (v1287)
+
+Zwei Realfälle am Abend: Unter launchd (MacBook) fehlt node im PATH, `npm` ist ein Skript mit `#!/usr/bin/env node` und scheiterte mit „env: node: No such file or directory"; unter Windows zerbrach der volle Pfad „C:\Program Files\nodejs\npm.cmd" mit shell:true, der PC blieb auf 1285. Satellit und Selbstupdate suchen jetzt npm-cli.js (neben node, in lib/node_modules/npm, über den Symlink von /usr/local/bin/npm) und führen es mit der laufenden node-Binärdatei aus. Fehlschläge zeigen die letzten Zeilen von npm im Protokoll (kein --silent mehr). Geräte auf 1285/1286 brauchen einmal ein manuelles Paket ab 1287.
+
 ## [0.19.0-jarvis.1286] - 2026-10-07
 
 ### Changed — macOS: eigene node-Kopie für den Satelliten (v1286)

@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, realpathSync } from 'node:fs';
 import { vergleicheVersion, sha256Datei } from './releases.js';
 
 /**
@@ -109,18 +109,21 @@ export async function pruefeTarball(tgz: string, eigene: string, erwarteteSha?: 
 }
 
 /**
- * v1285 — npm finden, auch ohne PATH: launchd (macOS) und Dienste starten mit minimalem PATH, „spawn npm ENOENT"
- * (Realfall MacBook 07.10.: blieb auf 1265). Reihenfolge: neben der laufenden node-Binärdatei, dann PATH, dann die
- * üblichen Orte.
+ * v1285/v1287 — npm ohne PATH und ohne Shebang: unter launchd (macOS) fehlt node im PATH, und `npm` ist ein Skript mit
+ * `#!/usr/bin/env node` → „env: node: No such file or directory" (Realfall MacBook 07.10.). Unter Windows zerbrach
+ * der volle Pfad „C:\Program Files\nodejs\npm.cmd" mit shell:true (Realfall PC 07.10.). Deshalb: npm-cli.js suchen
+ * und mit der laufenden node-Binärdatei ausführen — kein PATH, keine Shell. Rückfall: `npm` bzw. `npm.cmd` über PATH.
  */
-export function npmBefehl(): string {
-  const name = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const kandidaten = [
-    path.join(path.dirname(process.execPath), name),
-    ...(process.platform === 'win32' ? [] : ['/usr/local/bin/npm', '/opt/homebrew/bin/npm', '/usr/bin/npm', path.join(process.env.HOME ?? '', '.nvm/versions/node', process.version, 'bin/npm')]),
-  ];
-  for (const k of kandidaten) if (existsSync(k)) return k;
-  return name; // PATH entscheidet
+export function npmBefehl(): { cmd: string; args: string[]; shell: boolean } {
+  const nodeDir = path.dirname(process.execPath);
+  const kandidaten = process.platform === 'win32'
+    ? [path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+    : [path.join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'), '/usr/local/lib/node_modules/npm/bin/npm-cli.js', '/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js', '/usr/lib/node_modules/npm/bin/npm-cli.js'];
+  for (const link of process.platform === 'win32' ? [] : [path.join(nodeDir, 'npm'), '/usr/local/bin/npm', '/opt/homebrew/bin/npm', '/usr/bin/npm']) {
+    try { const ziel = realpathSync(link); if (ziel.endsWith('npm-cli.js')) kandidaten.push(ziel); } catch { /* kein Link */ }
+  }
+  for (const k of kandidaten) if (existsSync(k)) return { cmd: process.execPath, args: [k], shell: false };
+  return { cmd: process.platform === 'win32' ? 'npm.cmd' : 'npm', args: [], shell: process.platform === 'win32' };
 }
 
 /** Installiert einen Tarball nach <ordner>/<version> (npm install --prefix) und liefert den Einstieg. */
@@ -129,7 +132,8 @@ export async function installiereTarball(tgz: string, version: string, ordner = 
   mkdirSync(ziel, { recursive: true });
   const npm = npmBefehl();
   await new Promise<void>((resolve, reject) => {
-    execFile(npm, ['install', '--prefix', ziel, '--no-audit', '--no-fund', '--omit=dev', '--silent', tgz], { timeout: 900_000, windowsHide: true, shell: process.platform === 'win32', maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, _out, stderr) => err ? reject(new Error(`npm install (${npm}): ${String(stderr).slice(0, 300) || err.message}`)) : resolve());
+    // v1287 — ohne --silent: der Grund eines Fehlschlags muss im Protokoll stehen (Realfall Mac: „Command failed" ohne Text)
+    execFile(npm.cmd, [...npm.args, 'install', '--prefix', ziel, '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error', tgz], { timeout: 900_000, windowsHide: true, shell: npm.shell, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, _out, stderr) => err ? reject(new Error(`npm install (${npm.args[0] ?? npm.cmd}): ${String(stderr).trim().split('\n').slice(-4).join(' | ').slice(0, 400) || err.message}`)) : resolve());
   });
   const einstieg = einstiegVon(ordner, version);
   if (!existsSync(einstieg)) throw new Error(`Installation unvollständig: ${einstieg} fehlt`);
