@@ -261,7 +261,9 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
       try {
         const neu = await aktualisiereWennNeuer(k, version, log);
         if (neu) { log(`Update auf ${neu} installiert — Neustart über den Starter`); setTimeout(() => { stop(); process.exit(NEUSTART_CODE); }, 500); return; }
-      } catch (err) { fehler(`Update fehlgeschlagen: ${(err as Error).message}`); }
+        // v1265 — Server ist neuer, hat sein Release aber noch nicht bereit (kurz nach dem Start): später erneut
+        if (runde < 10) { log(`Release ${serverVersion} noch nicht bereit — neuer Versuch in 60 s`); setTimeout(() => versuch(runde + 1), 60_000); return; }
+      } catch (err) { fehler(`Update fehlgeschlagen: ${(err as Error).message}`); if (runde < 10) { setTimeout(() => versuch(runde + 1), 60_000); return; } }
       updateLaeuft = false;
     };
     setTimeout(() => versuch(0), 15_000);

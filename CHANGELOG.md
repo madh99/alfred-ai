@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1265] - 2026-10-07
+
+### Fixed — Autoupdate: Wettlauf beim Server-Neustart (v1265)
+
+Der Satellit verbindet sich zwei Sekunden nach dem Server-Start und prüft 15 Sekunden später; der Server packte sein Release erst nach 20 Sekunden. Die Abfrage trug noch das alte Release, der Satellit sah nichts Neueres und blieb still. Jetzt: der Server packt sofort nach dem Start und meldet nie ein Release einer fremden Version; der Satellit versucht es bei „noch nicht bereit" oder Fehlern bis zu zehnmal im Minutenabstand.
+
 ## [0.19.0-jarvis.1264] - 2026-10-07
 
 ### Fixed — Satelliten-Autoupdate: Startweg und Fristen (v1264)

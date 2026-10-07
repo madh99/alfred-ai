@@ -13519,7 +13519,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             }
             return path.resolve(path.dirname(p), '..');
           })();
-          setTimeout(() => { releases.sichereAktuell(eigeneVersion, paketOrdner).catch(err => this.logger.warn({ err: (err as Error).message }, 'v1258 Release nicht bereitgestellt')); }, 20_000);
+          // v1265 — sofort packen (Satelliten fragen ~17 s nach dem Start); bis dahin liefert updateInfo nichts
+          releases.sichereAktuell(eigeneVersion, paketOrdner).catch(err => this.logger.warn({ err: (err as Error).message }, 'v1258 Release nicht bereitgestellt'));
         }
         // v1251 — Hör-Relais: Mistral-Schlüssel bleibt am Server, Sekunden werden verbucht, Tageslimit per ENV
         const { HoerRelais } = await import('./geraete/hoeren.js');
@@ -13558,7 +13559,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // Master des Geräts gebunden (kein Auto-Link-Raten; bei mehreren Mastern wäre der Alias sonst ein Fremder).
           transfer: (art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: Parameters<typeof gw.transferRoute>[1]) => gw.transferRoute(art, p), // v1249
           hoerenUpgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => hoerRelais.handleUpgrade(req, s, h), // v1251
-          updateInfo: () => releases.info(), // v1258
+          updateInfo: () => { const i = releases.info(); return i && i.version === eigeneVersion ? i : undefined; }, // v1258, v1265 — nie ein altes Release melden
           updateStream: () => { const i = releases.info(); return i ? releases.stream(i.version) : undefined; },
           authentifiziere: async (t: string) => {
             const g = await gw.authentifiziere(t);
