@@ -272,9 +272,29 @@ Grundlage ist die Recherche vom 07.10. (Memory „computer-use-recherche-2026-10
 
 `bildschirm` mit `markieren=true` zeichnet Nummern und Rahmen der letzten Element-Karte ins Foto (Windows; UIA-Rechtecke und Aufnahme teilen bei 100 % Skalierung die Koordinaten, bei anderer Skalierung rechnet der Satellit um). Damit sieht das Modell, was es betätigt, und prüft das Ergebnis im Bild. **Klick nach Fotokoordinaten (.1281):** `klicken_bei` mit x, y aus dem letzten Foto (höchstens 60 s alt), umgerechnet auf den Bildschirm; der Klick wird nur ausgeführt, wenn an der Stelle das Vordergrundfenster liegt (Befund 07.10.: Klick auf verdecktes Fenster traf das Terminal davor). Optionale Foto-Sperre `fotoSperre` (Titelmuster), standardmäßig aus. Offen: Rahmen aus Bilderkennung für Fenster ohne Baum (OmniParser-Klasse). Hinweis Datenschutz: Bildschirmfotos gehen an den Modellanbieter; auf dem Schirm sichtbare Geheimnisse (z. B. eine offene .env im Editor) wandern mit. Der Owner entscheidet, wann er fotografieren lässt.
 
-### 18.3 Schnittstellen vor Oberfläche (zurückgestellt)
+### 18.3 Schnittstellen vor Oberfläche — Office über COM (.1292–.1294, Owner 08.10.: „office-com mit lesen")
 
-Owner 07.10.: nutzt klassisches und neues Outlook, auf dem PC ist keines eingerichtet (Mac und eine VM schon). COM hat auf dem PC kein Ziel, auf dem Mac gibt es kein COM; Mail, Kalender, Kontakte laufen bei Alfred über die Graph-API. Office-COM bleibt liegen, bis es einen konkreten Fall gibt.
+Owner 07.10.: nutzt klassisches und neues Outlook; auf dem PC ist kein Mailkonto eingerichtet, auf dem Mac und der Office-VM schon. Dritter Satellit „Office-VM" (Windows 11, Office 365 ProPlus, klassisches Outlook) gekoppelt 08.10. 00:35.
+
+**Umgesetzt (`packages/cli/src/commands/satellit-office.ts`):** PowerShell-Skripte als `-EncodedCommand` gegen `Outlook.Application` (MAPI-Namespace) und `Excel.Application`, Ergebnis als JSON in der letzten Zeile. Aktionen nur auf Windows und nur, wenn die Registry sie trägt:
+
+| Aktion | Autonomie | Inhalt |
+|---|---|---|
+| `outlook_mails` | auto | Posteingang/Entwürfe/Gesendet, neueste zuerst (max. 50), optional nur ungelesen oder Suchtext; mit `id` eine Mail vollständig (Text bis 6000 Zeichen, Anhänge mit Namen) |
+| `outlook_entwurf` | bestaetigen | neu oder Antwort (`antwortAuf`), `.Save()` + `.Display()`, nie gesendet; Anhänge nur aus Freigaben |
+| `outlook_senden` | bestaetigen | eigener Schritt für einen Entwurf (`.Send()`), bereits Gesendetes wird abgelehnt |
+| `outlook_termine` | auto | Kalender heute + 7 Tage (oder von/bis), `IncludeRecurrences`, max. 100 |
+| `outlook_termin_anlegen` | bestaetigen | Termin gespeichert, Einladungen werden nicht versendet |
+| `excel_lesen` | auto | Datei aus Freigabe, unsichtbar und nur lesend, benutzter Bereich oder A1:F20, max. 200 × 30 Zellen |
+| `excel_schreiben` | bestaetigen | eine Zelle (Wert oder Formel), nur in Verzeichnissen mit Schreibrecht, speichert |
+
+**Erkennung:** Outlook nur mit COM-Klasse `HKCR\Outlook.Application` UND einem Mailkonto im Profil: REG_BINARY `{ED475418-B0D6-11D2-8C3B-00104B2A6676}` im Kontenverwalter `…\Profiles\<Profil>\9375CFF0413111d3B88A00104B2A6676` ist nicht leer (PC-madh: leer, nur Adressbuch → kein Outlook, sonst öffnet COM den Einrichtungsdialog; Office-VM: 02000000 = zwei Konten). Ein Wert „Email" existiert bei Exchange-Konten nicht (.1292 erkannte darum nichts, .1293 behoben). Excel über `HKCR\Excel.Application`. Manifest-Grenze des Gehirns 30 → 40 Aktionen (Office-VM meldet 34).
+
+**Beweise 08.10.:** `excel_lesen` auf PC-madh 01:48 (Blatt Umsatz, 5 Zeilen, Summe 3720 korrekt wiedergegeben), `excel_schreiben` 01:49 zwei Zellen mit Bestätigung (A6 = April, B6 = 1100, Datei gespeichert, Formel in B5 unverändert). Office-VM meldet alle sieben Aktionen.
+
+**Offen — Realfall Office-VM:** `outlook_mails` scheiterte mit COM 80080005 (CO_E_SERVER_EXEC_FAIL). Diagnose per shell-Aktion: der Satellit läuft mit Integritätsstufe hoch (`S-1-16-12288`, aus einer Administrator-PowerShell installiert), Outlook normal — COM bindet nicht an einen Prozess anderer Integrität. Abhilfe .1294: `alfred satellit --install` startet aus einer erhöhten Shell über `explorer.exe` (Benutzer-Shell, mittlere Integrität); der Satellit warnt beim Start, wenn er erhöht läuft; 80080005 nennt Ursache und Abhilfe. Der laufende erhöhte Satellit auf der Office-VM muss einmal vom Owner beendet und normal gestartet werden (Abmelden/Anmelden genügt: der Autostart läuft normal), danach Outlook-Beweis (Posteingang lesen, Entwurf, Termine).
+
+**Grenzen:** nur klassisches Outlook (das neue Outlook hat kein COM); Word/PowerPoint nicht angebunden; Kontakte nicht angebunden (Graph-API deckt sie); keine Lösch-Aktion. Mail-Inhalte gehen an das Modell — Owner hat das Lesen des Firmenpostfachs am 08.10. ausdrücklich freigegeben.
 
 ### 18.5 macOS (.1283, vom Owner bewiesen 07.10. 23:31)
 
