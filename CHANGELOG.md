@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1272] - 2026-10-07
+
+### Added — Freigaben aus dem Chat pflegen (v1272)
+
+Spec §17 Punkt 3. Satelliten-Aktionen `freigaben` (Liste mit Recht) und `freigabe_aendern` (pfad, recht = lesen | schreiben | keins, mit Bestätigung). Lese- und Schreibrecht sind getrennt: nur-lesen-Verzeichnisse erlauben liste, öffnen und datei_holen; datei_ablegen und shell brauchen Schreibrecht. Bisherige Freigaben behalten beide Rechte. Änderungen gelten sofort und stehen dauerhaft in der Gerätekonfiguration.
+
 ## [0.19.0-jarvis.1271] - 2026-10-07
 
 ### Added — Programme und Fenster am Satelliten (v1271)

@@ -17,7 +17,10 @@ export interface GeraetKonfig {
   token: string;
   name: string;
   insecure?: boolean;
+  /** Verzeichnisse mit Lese- UND Schreibrecht (liste, oeffnen, datei_holen, datei_ablegen, shell). */
   freigegebeneVerzeichnisse: string[];
+  /** v1272 — Verzeichnisse nur zum Lesen (liste, oeffnen, datei_holen); aus dem Chat gepflegt. */
+  nurLesen?: string[];
   erlaubteProgramme: string[];
   /** v1258 — öffentlicher Release-Schlüssel des Servers (beim ersten Willkommen gemerkt). */
   releaseKey?: string;

@@ -10,7 +10,7 @@ import { geraetAnfrage, geraetJson } from './geraet-http.js'; // v1249
 import { aktualisiereWennNeuer, bestaetigeAktuell, merkeReleaseKey, NEUSTART_CODE } from './satellit-update.js'; // v1258
 import { vergleicheVersion } from '@alfred/core';
 import { getVersion } from '../version.js';
-import { ladeKonfig, type GeraetKonfig } from './pair.js';
+import { ladeKonfig, speichereKonfig, type GeraetKonfig } from './pair.js';
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
@@ -62,6 +62,9 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'browser_tippen', beschreibung: 'Tippt Text in Element Nr. N (Suchfeld, Formular), optional mit Enter. Passwortfelder sind gesperrt', autonomie: 'bestaetigen', parameter: { element: { type: 'number', description: 'Nummer aus browser_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'Enter danach' } } },
       { name: 'browser_zurueck', beschreibung: 'Eine Seite zurück', autonomie: 'auto' },
       { name: 'browser_screenshot', beschreibung: 'Screenshot der aktuellen Seite (JPEG, an den Owner)', autonomie: 'auto' },
+      // v1272 — Freigaben aus dem Chat
+      { name: 'freigaben', beschreibung: 'Zeigt die freigegebenen Verzeichnisse dieses Geräts mit Recht (lesen + schreiben / nur lesen)', autonomie: 'auto' },
+      { name: 'freigabe_aendern', beschreibung: 'Gibt ein Verzeichnis frei oder entzieht die Freigabe: recht=lesen (liste, öffnen, holen), schreiben (zusätzlich ablegen, shell) oder keins (entfernen). Gilt sofort und dauerhaft.', autonomie: 'bestaetigen', parameter: { pfad: { type: 'string', description: 'Absoluter Pfad des Verzeichnisses (oder ~/…)' }, recht: { type: 'string', description: 'lesen | schreiben | keins' } } },
       // v1271 — Programme und Fenster
       { name: 'fenster', beschreibung: 'Listet die offenen Fenster dieses Geräts (Titel, Programm) — für „was ist offen", „welche Programme laufen"', autonomie: 'auto' },
       { name: 'fenster_vordergrund', beschreibung: 'Holt ein offenes Fenster in den Vordergrund (Suchtext im Titel oder Programmname)', autonomie: 'auto', parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname, z. B. Outlook' } } },
@@ -81,10 +84,34 @@ type Ergebnis = { success: boolean; data?: unknown; display?: string; error?: st
 
 export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<string, unknown>): Promise<Ergebnis> {
   const frei = k.freigegebeneVerzeichnisse;
+  const lesbar = [...frei, ...(k.nurLesen ?? [])]; // v1272 — Leserecht: freigegebene plus nur-lesen
   switch (aktion) {
+    // v1272 — Freigaben aus dem Chat pflegen (Spec §17 Punkt 3)
+    case 'freigaben': {
+      const zeilen = [...frei.map(p => `- ${p} (lesen + schreiben)`), ...(k.nurLesen ?? []).map(p => `- ${p} (nur lesen)`)];
+      return { success: true, data: { schreiben: frei, lesen: k.nurLesen ?? [] }, display: zeilen.length ? `Freigaben auf ${k.name}:\n${zeilen.join('\n')}` : `Keine Freigaben auf ${k.name}` };
+    }
+    case 'freigabe_aendern': {
+      const roh = String(params.pfad ?? '').trim();
+      const recht = String(params.recht ?? 'lesen');
+      if (!roh) return { success: false, error: 'pfad fehlt' };
+      if (!['lesen', 'schreiben', 'keins'].includes(recht)) return { success: false, error: 'recht muss lesen, schreiben oder keins sein' };
+      const pfad = path.resolve(roh.startsWith('~') ? path.join(os.homedir(), roh.slice(1)) : roh);
+      if (recht !== 'keins') {
+        try { if (!statSync(pfad).isDirectory()) return { success: false, error: `Kein Verzeichnis: ${pfad}` }; } catch { return { success: false, error: `Verzeichnis nicht gefunden: ${pfad}` }; }
+      }
+      const gleich = (a: string, b: string) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+      k.freigegebeneVerzeichnisse = k.freigegebeneVerzeichnisse.filter(p => !gleich(path.resolve(p), pfad));
+      k.nurLesen = (k.nurLesen ?? []).filter(p => !gleich(path.resolve(p), pfad));
+      if (recht === 'schreiben') k.freigegebeneVerzeichnisse.push(pfad);
+      if (recht === 'lesen') k.nurLesen.push(pfad);
+      speichereKonfig(k);
+      const text = recht === 'keins' ? `Freigabe entfernt: ${pfad}` : `Freigegeben (${recht === 'schreiben' ? 'lesen + schreiben' : 'nur lesen'}): ${pfad}`;
+      return { success: true, data: { pfad, recht, schreiben: k.freigegebeneVerzeichnisse, lesen: k.nurLesen }, display: `${text} — gilt sofort auf ${k.name}` };
+    }
     case 'liste': {
       const p = String(params.path ?? '');
-      if (!istPfadErlaubt(p, frei)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Freigegeben: ${frei.join(', ')}` };
+      if (!istPfadErlaubt(p, lesbar)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Lesbar: ${lesbar.join(', ')}` };
       const eintraege = readdirSync(p).slice(0, 200).map(n => { try { const s = statSync(path.join(p, n)); return { name: n, typ: s.isDirectory() ? 'ordner' : 'datei', groesse: s.size, geaendert: s.mtime.toISOString() }; } catch { return { name: n, typ: '?' }; } });
       // v1255 — Größe und Datum stehen in der Anzeige (Owner-Fall Mac: „die drei kleinsten Dateien" löste sonst eine Shell aus)
       const groesseText = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : b < 1073741824 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1073741824).toFixed(2)} GB`;
@@ -93,7 +120,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     case 'oeffnen': {
       const ziel = String(params.path ?? params.url ?? '');
       const istUrl = /^https?:\/\//i.test(ziel);
-      if (!istUrl && !istPfadErlaubt(ziel, frei)) return { success: false, error: `Pfad nicht freigegeben: ${ziel}. Freigegeben: ${frei.join(', ')}` };
+      if (!istUrl && !istPfadErlaubt(ziel, lesbar)) return { success: false, error: `Pfad nicht freigegeben: ${ziel}. Lesbar: ${lesbar.join(', ')}` };
       const cmd = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', ziel]] as const
         : process.platform === 'darwin' ? ['open', [ziel]] as const
         : ['xdg-open', [ziel]] as const;
@@ -104,7 +131,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const command = String(params.command ?? '').trim();
       if (!command) return { success: false, error: 'command fehlt' };
       const cwd = params.cwd ? String(params.cwd) : frei[0];
-      if (!istPfadErlaubt(cwd, frei)) return { success: false, error: `Arbeitsverzeichnis nicht freigegeben: ${cwd}` };
+      if (!istPfadErlaubt(cwd, frei)) return { success: false, error: `Arbeitsverzeichnis nicht freigegeben (Schreibrecht nötig): ${cwd}. Mit Schreibrecht: ${frei.join(', ')}` };
       // v1227 — Realfall 19:43: „Start-Process brave.exe" scheiterte, weil exec() unter Windows cmd.exe nutzt.
       // Der Owner (und das Modell) denken auf Windows in PowerShell → dort PowerShell, sonst sh.
       return await new Promise<Ergebnis>((resolve) => {
@@ -120,7 +147,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     }
     case 'datei_holen': {
       const p = String(params.path ?? '');
-      if (!istPfadErlaubt(p, frei)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Freigegeben: ${frei.join(', ')}` };
+      if (!istPfadErlaubt(p, lesbar)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Lesbar: ${lesbar.join(', ')}` };
       if (!existsSync(p) || !statSync(p).isFile()) return { success: false, error: `Keine Datei: ${p}` };
       const st = statSync(p);
       const groesse = st.size;
@@ -157,7 +184,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     }
     case 'datei_ablegen': {
       const ziel = String(params.path ?? '');
-      if (!istPfadErlaubt(ziel, frei)) return { success: false, error: `Pfad nicht freigegeben: ${ziel}. Freigegeben: ${frei.join(', ')}` };
+      if (!istPfadErlaubt(ziel, frei)) return { success: false, error: `Pfad nicht freigegeben (Schreibrecht nötig): ${ziel}. Mit Schreibrecht: ${frei.join(', ')}` };
       let inhalt = typeof params.inhaltBase64 === 'string' ? Buffer.from(params.inhaltBase64, 'base64') : undefined;
       if (!inhalt && typeof params.downloadId === 'string') {
         // v1249 — große Datei blockweise vom Server holen (Range), mit Wiederaufnahme
