@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1267] - 2026-10-07
+
+### Chore
+
+Beweis-Release für das Selbstupdate: wird über den Eingang `data/updates/` eingespielt (erste Aktualisierung von Alfred durch Alfred).
+
 ## [0.19.0-jarvis.1266] - 2026-10-07
 
 ### Added — Alfred aktualisiert sich selbst (v1266)
