@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1275] - 2026-10-07
+
+### Added — Systembenachrichtigungen lesen (v1275)
+
+Spec §17 Punkt 5, zweiter Teil, doch möglich: Windows hält die Benachrichtigungen in der Datenbank des Benutzers (wpndatabase.db, SQLite), die der Satellit als Kopie mit dem eingebauten node:sqlite liest; macOS in der Datenbank von usernoted (sqlite3 und plutil, ggf. „Voller Festplattenzugriff"). Aktion `benachrichtigungen` (Stunden, Anzahl) mit Bestätigung, weil Nachrichtenvorschauen und Codes darin stehen. Unter Linux gibt es keinen zentralen Speicher, die Aktion fehlt dort im Manifest.
+
 ## [0.19.0-jarvis.1274] - 2026-10-07
 
 ### Added — Satellit entkoppeln (v1274)

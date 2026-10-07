@@ -18,6 +18,7 @@ import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto } from './satellit-bildschirm.js'; // v1268
 import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fenster.js'; // v1271
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
+import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
 let browserHand: BrowserHand | undefined;
@@ -67,6 +68,8 @@ export function baueManifest(version: string): GeraetManifest {
       // v1273 — Zwischenablage (Lesen mit Bestätigung: oft Passwörter oder Vertrauliches)
       { name: 'zwischenablage_lesen', beschreibung: 'Liest den Text in der Zwischenablage dieses Geräts (für „was habe ich kopiert", „nimm den Text aus der Zwischenablage")', autonomie: 'bestaetigen' },
       { name: 'zwischenablage_setzen', beschreibung: 'Legt Text in die Zwischenablage dieses Geräts („kopier mir das in die Zwischenablage")', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
+      // v1275 — Systembenachrichtigungen (Bestätigung: Nachrichtenvorschauen, Codes)
+      ...(process.platform === 'linux' ? [] : [{ name: 'benachrichtigungen', beschreibung: 'Liest die letzten Systembenachrichtigungen dieses Geräts (App, Zeit, Titel, Text) — für „was ist an Meldungen gekommen", „habe ich etwas verpasst"', autonomie: 'bestaetigen' as const, parameter: { stunden: { type: 'number', description: 'Zeitraum in Stunden (Standard 24)' }, anzahl: { type: 'number', description: 'Höchstens so viele (Standard 20)' } } }]),
       // v1272 — Freigaben aus dem Chat
       { name: 'freigaben', beschreibung: 'Zeigt die freigegebenen Verzeichnisse dieses Geräts mit Recht (lesen + schreiben / nur lesen)', autonomie: 'auto' },
       { name: 'freigabe_aendern', beschreibung: 'Gibt ein Verzeichnis frei oder entzieht die Freigabe: recht=lesen (liste, öffnen, holen), schreiben (zusätzlich ablegen, shell) oder keins (entfernen). Gilt sofort und dauerhaft.', autonomie: 'bestaetigen', parameter: { pfad: { type: 'string', description: 'Absoluter Pfad des Verzeichnisses (oder ~/…)' }, recht: { type: 'string', description: 'lesen | schreiben | keins' } } },
@@ -103,6 +106,12 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
   const frei = k.freigegebeneVerzeichnisse;
   const lesbar = [...frei, ...(k.nurLesen ?? [])]; // v1272 — Leserecht: freigegebene plus nur-lesen
   switch (aktion) {
+    // v1275 — Systembenachrichtigungen
+    case 'benachrichtigungen': {
+      const l = await benachrichtigungen(Number(params.stunden ?? 24) || 24, Number(params.anzahl ?? 20) || 20);
+      const zeile = (b: { app: string; zeit: string; titel?: string; text: string }) => `- ${new Date(b.zeit).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} ${b.app}: ${b.titel ? `${b.titel} — ` : ''}${b.text}`;
+      return { success: true, data: { benachrichtigungen: l }, display: l.length ? `Benachrichtigungen auf ${k.name} (${l.length}):\n${l.map(zeile).join('\n')}` : `Keine Benachrichtigungen im Zeitraum auf ${k.name}` };
+    }
     // v1273 — Zwischenablage
     case 'zwischenablage_lesen': {
       const z = await zwischenablageLesen();
