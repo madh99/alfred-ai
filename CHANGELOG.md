@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1285] - 2026-10-07
+
+### Fixed — Satelliten-Update ohne npm im PATH (v1285)
+
+Der MacBook-Satellit blieb auf 1265: unter launchd fehlt npm im PATH, jedes Update endete mit „spawn npm ENOENT". Satellit und Selbstupdate suchen npm jetzt neben der laufenden node-Binärdatei, im PATH und an den üblichen Orten (/usr/local/bin, /opt/homebrew/bin, /usr/bin, nvm). Der Mac braucht dafür EINMAL manuell ein Paket ab 1285.
+
 ## [0.19.0-jarvis.1284] - 2026-10-07
 
 ### Fixed — `alfred auth microsoft` erneuert auch YAML-Konten (v1284)

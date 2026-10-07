@@ -6,7 +6,7 @@ import type { Logger } from 'pino';
 import { vergleicheVersion } from './releases.js';
 import {
   PAKET_NAME, cliOrdner, ladeAktuell, speichereAktuell, bestaetigeAktuell, imPassFenster,
-  pruefeTarball, installiereTarball, startprobe, raeumeVersionen, tarballInfo, type AktuellEintrag,
+  pruefeTarball, installiereTarball, startprobe, raeumeVersionen, tarballInfo, npmBefehl, type AktuellEintrag,
 } from './aktualisierung.js';
 
 /**
@@ -232,9 +232,9 @@ export class Selbstupdate {
   }
 
   private npm(args: string[], timeout: number): Promise<string> {
-    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const npm = npmBefehl(); // v1285 — auch ohne PATH
     return new Promise((resolve, reject) => {
-      execFile(npm, args, { timeout, windowsHide: true, shell: process.platform === 'win32', maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => err ? reject(new Error(`npm ${args[0]}: ${String(stderr).slice(0, 300) || err.message}`)) : resolve(String(stdout)));
+      execFile(npm, args, { timeout, windowsHide: true, shell: process.platform === 'win32', maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, stdout, stderr) => err ? reject(new Error(`npm ${args[0]}: ${String(stderr).slice(0, 300) || err.message}`)) : resolve(String(stdout)));
     });
   }
 }

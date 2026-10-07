@@ -108,13 +108,28 @@ export async function pruefeTarball(tgz: string, eigene: string, erwarteteSha?: 
   return { version: info.version, sha256: sha };
 }
 
+/**
+ * v1285 — npm finden, auch ohne PATH: launchd (macOS) und Dienste starten mit minimalem PATH, „spawn npm ENOENT"
+ * (Realfall MacBook 07.10.: blieb auf 1265). Reihenfolge: neben der laufenden node-Binärdatei, dann PATH, dann die
+ * üblichen Orte.
+ */
+export function npmBefehl(): string {
+  const name = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const kandidaten = [
+    path.join(path.dirname(process.execPath), name),
+    ...(process.platform === 'win32' ? [] : ['/usr/local/bin/npm', '/opt/homebrew/bin/npm', '/usr/bin/npm', path.join(process.env.HOME ?? '', '.nvm/versions/node', process.version, 'bin/npm')]),
+  ];
+  for (const k of kandidaten) if (existsSync(k)) return k;
+  return name; // PATH entscheidet
+}
+
 /** Installiert einen Tarball nach <ordner>/<version> (npm install --prefix) und liefert den Einstieg. */
 export async function installiereTarball(tgz: string, version: string, ordner = cliOrdner()): Promise<string> {
   const ziel = path.join(ordner, version);
   mkdirSync(ziel, { recursive: true });
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const npm = npmBefehl();
   await new Promise<void>((resolve, reject) => {
-    execFile(npm, ['install', '--prefix', ziel, '--no-audit', '--no-fund', '--omit=dev', '--silent', tgz], { timeout: 900_000, windowsHide: true, shell: process.platform === 'win32', maxBuffer: 8 * 1024 * 1024 }, (err, _out, stderr) => err ? reject(new Error(`npm install: ${String(stderr).slice(0, 300) || err.message}`)) : resolve());
+    execFile(npm, ['install', '--prefix', ziel, '--no-audit', '--no-fund', '--omit=dev', '--silent', tgz], { timeout: 900_000, windowsHide: true, shell: process.platform === 'win32', maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, _out, stderr) => err ? reject(new Error(`npm install (${npm}): ${String(stderr).slice(0, 300) || err.message}`)) : resolve());
   });
   const einstieg = einstiegVon(ordner, version);
   if (!existsSync(einstieg)) throw new Error(`Installation unvollständig: ${einstieg} fehlt`);
