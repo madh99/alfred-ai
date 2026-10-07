@@ -25,7 +25,7 @@ describe('deuteGeraete', () => {
   });
   it('Systemzeile mit Laufzeit, CPU, GPU, RAM und knappem Laufwerk als Befund', () => {
     const d = deuteGeraete({ jetzt: JETZT, geraete: [
-      { name: 'PC', plattform: 'windows', online: true, sinneZeit: iso(1), sinne: { leerlaufSek: 5, uptimeSek: 13 * 86_400 + 2 * 3600, cpuProzent: 12, gpuProzent: 3, ramGesamtMb: 128_000, ramFreiMb: 70_000, laufwerke: [{ name: 'C:', gesamtGb: 931, freiGb: 120 }, { name: 'D:', gesamtGb: 1863, freiGb: 90 }] } },
+      { name: 'PC', plattform: 'windows', online: true, sinneZeit: iso(1), sinne: { leerlaufSek: 5, uptimeSek: 13 * 86_400 + 2 * 3600, cpuProzent: 12, gpuProzent: 3, ramGesamtMb: 128_000, ramFreiMb: 70_000, laufwerke: [{ name: 'C:', gesamtGb: 931, freiGb: 120 }, { name: 'D:', gesamtGb: 1863, freiGb: 90 }, { name: '/home', gesamtGb: 0, freiGb: 0 }] } },
     ] })!;
     expect(d.zeilen[1]).toContain('⚠️ ↳ PC System: läuft seit 13 d');
     expect(d.zeilen[1]).toContain('CPU 12 % · GPU 3 % · RAM 68 GB frei von 125 · C: 120 GB frei von 931 · ⚠️ D: 90 GB frei von 1863');

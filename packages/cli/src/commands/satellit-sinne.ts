@@ -106,7 +106,7 @@ export class SinneErfasser {
     if (process.platform !== 'win32') {
       const pfade = ['/', '/home'].filter(p => existsSync(p));
       const laufwerke: Sinne['laufwerke'] = [];
-      for (const p of pfade) { try { const st = statfsSync(p); laufwerke.push({ name: p, gesamtGb: gb(st.blocks * st.bsize), freiGb: gb(st.bavail * st.bsize) }); } catch { /* */ } }
+      for (const p of pfade) { try { const st = statfsSync(p); const gesamt = gb(st.blocks * st.bsize); if (gesamt > 0) laufwerke.push({ name: p, gesamtGb: gesamt, freiGb: gb(st.bavail * st.bsize) }); } catch { /* */ } } // v1254 — macOS /home ist ein leeres Pseudo-Volume
       if (laufwerke.length) r.laufwerke = laufwerke;
     }
     return r;

@@ -85,7 +85,8 @@ export function deuteGeraete(input: { geraete: GeraetZustand[]; jetzt?: Date }):
       if (s?.gpuProzent !== undefined) sys.push(`GPU ${s.gpuProzent} %`);
       if (s?.ramGesamtMb !== undefined && s.ramFreiMb !== undefined) sys.push(`RAM ${Math.round(s.ramFreiMb / 1024)} GB frei von ${Math.round(s.ramGesamtMb / 1024)}`);
       for (const l of s?.laufwerke ?? []) {
-        const knapp = l.gesamtGb > 0 && l.freiGb / l.gesamtGb < LAUFWERK_KNAPP_ANTEIL;
+        if (!(l.gesamtGb > 0)) continue; // v1254 — Pseudo-Volumes (macOS /home) nicht zeigen
+        const knapp = l.freiGb / l.gesamtGb < LAUFWERK_KNAPP_ANTEIL;
         if (knapp) { warnSys = true; auffaellig.push(`geraet:${g.name}:laufwerk:${l.name.replace(/[:\\/]+$/, '')}`); }
         sys.push(`${knapp ? '⚠️ ' : ''}${l.name} ${l.freiGb} GB frei von ${l.gesamtGb}`);
       }

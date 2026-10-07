@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1254] - 2026-10-07
+
+### Fixed — Erstes zweites Gerät: MacBook (v1254)
+
+Owner-Test 07.10. 09:06: MacBook gekoppelt, launchd-Agent läuft, Sinne kommen an (Laufzeit, RAM, Platte, Akku, Fenster über osascript). Befund: macOS meldet ein leeres Pseudo-Volume `/home` mit 0 GB. Der Satellit lässt Volumes ohne Größe jetzt weg, die Deutung überspringt sie auch bei älteren Satelliten.
+
 ## [0.19.0-jarvis.1253] - 2026-10-07
 
 ### Fixed — Feinschliff Zuhören (v1253)
