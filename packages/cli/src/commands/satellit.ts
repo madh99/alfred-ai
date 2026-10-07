@@ -254,8 +254,10 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   const pruefeUpdate = (serverVersion: string) => {
     if (updateLaeuft || vergleicheVersion(serverVersion, version) <= 0) return;
     updateLaeuft = true;
+    log(`Server ${serverVersion} ist neuer als ${version} — Update in 15 s`); // v1262 — sichtbar machen
     const versuch = async (runde: number) => {
-      if (aktionenLaufend > 0) { if (runde < 60) setTimeout(() => versuch(runde + 1), 30_000); else updateLaeuft = false; return; }
+      if (aktionenLaufend > 0) { log(`Update wartet: ${aktionenLaufend} Aktion(en) laufen (Runde ${runde + 1})`); if (runde < 60) setTimeout(() => versuch(runde + 1), 30_000); else updateLaeuft = false; return; }
+      log('Update-Prüfung beim Server …');
       try {
         const neu = await aktualisiereWennNeuer(k, version, log);
         if (neu) { log(`Update auf ${neu} installiert — Neustart über den Starter`); setTimeout(() => { stop(); process.exit(NEUSTART_CODE); }, 500); return; }

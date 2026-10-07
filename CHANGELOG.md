@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1262] - 2026-10-07
+
+### Changed — Update-Prüfung sichtbar im Satellitenprotokoll (v1262)
+
+Beim ersten Live-Lauf blieb unklar, ob der Satellit die neuere Serverversion erkannt hatte. Jetzt protokolliert er „Server … ist neuer — Update in 15 s", wartende Aktionen und den Beginn der Prüfung.
+
 ## [0.19.0-jarvis.1261] - 2026-10-07
 
 ### Fixed — Starter hält den Satelliten im Dienstmodus immer als Kind (v1261)
