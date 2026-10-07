@@ -78,7 +78,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const eintraege = readdirSync(p).slice(0, 200).map(n => { try { const s = statSync(path.join(p, n)); return { name: n, typ: s.isDirectory() ? 'ordner' : 'datei', groesse: s.size, geaendert: s.mtime.toISOString() }; } catch { return { name: n, typ: '?' }; } });
       // v1255 — Größe und Datum stehen in der Anzeige (Owner-Fall Mac: „die drei kleinsten Dateien" löste sonst eine Shell aus)
       const groesseText = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : b < 1073741824 ? `${(b / 1048576).toFixed(1)} MB` : `${(b / 1073741824).toFixed(2)} GB`;
-      return { success: true, data: { path: p, eintraege }, display: `${p}: ${eintraege.length} Einträge (Name · Größe · geändert)\n` + eintraege.slice(0, 80).map(e => `- ${e.typ === 'ordner' ? '📁' : '📄'} ${e.name}${e.typ === 'datei' ? ` · ${groesseText(e.groesse)}` : ''} · ${e.geaendert.slice(0, 10)}`).join('\n') };
+      return { success: true, data: { path: p, eintraege }, display: `${p}: ${eintraege.length} Einträge (Name · Größe · geändert)\n` + eintraege.slice(0, 80).map(e => `- ${e.typ === 'ordner' ? '📁' : '📄'} ${e.name}${e.typ === 'datei' ? ` · ${groesseText(e.groesse ?? 0)}` : ''}${e.geaendert ? ` · ${e.geaendert.slice(0, 10)}` : ''}`).join('\n') };
     }
     case 'oeffnen': {
       const ziel = String(params.path ?? params.url ?? '');

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1256] - 2026-10-07
+
+### Fixed — Build von v1255 (v1256)
+
+v1255 wurde mit zwei Typfehlern im Satelliten gebaut, die Build-Kette hatte den Fehler verschluckt (Exit-Code hinter einem Filter). Typen korrigiert, Kette bricht jetzt bei Build-Fehlern ab. Inhaltlich identisch mit v1255.
+
 ## [0.19.0-jarvis.1255] - 2026-10-07
 
 ### Fixed — Befunde vom MacBook (v1255)
