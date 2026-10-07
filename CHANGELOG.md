@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1286] - 2026-10-07
+
+### Changed — macOS: eigene node-Kopie für den Satelliten (v1286)
+
+`alfred satellit --install` legt unter macOS `~/.alfred/bin/alfred-node` (Kopie der laufenden node-Binärdatei) an und trägt sie in den launchd-Dienst ein. macOS vergibt Bedienungshilfen und Bildschirmaufnahme je Programmdatei; so bekommt nur der Satellit die Rechte, nicht jedes node-Skript auf dem Mac. Der Befehl nennt den Pfad für die Freigabe (Datenschutz & Sicherheit → „+" → Cmd+Shift+G).
+
 ## [0.19.0-jarvis.1285] - 2026-10-07
 
 ### Fixed — Satelliten-Update ohne npm im PATH (v1285)

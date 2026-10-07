@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { mkdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, unlinkSync, copyFileSync, chmodSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 
 /**
@@ -40,11 +40,18 @@ export function installiereDienst(): string {
     const dir = path.join(os.homedir(), 'Library', 'LaunchAgents');
     mkdirSync(dir, { recursive: true });
     const plist = path.join(dir, `${LAUNCHD_LABEL}.plist`);
+    // v1286 — eigene node-Kopie für den Satelliten: macOS vergibt Bedienungshilfen und Bildschirmaufnahme je Programmdatei.
+    // Mit ~/.alfred/bin/alfred-node bekommt nur der Satellit die Rechte, nicht jedes node-Skript auf dem Mac (Owner-Frage 07.10.).
+    const binDir = path.join(os.homedir(), '.alfred', 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const alfredNode = path.join(binDir, 'alfred-node');
+    let nodeFuerDienst = node;
+    try { copyFileSync(node, alfredNode); chmodSync(alfredNode, 0o755); nodeFuerDienst = alfredNode; } catch { /* dann das normale node */ }
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
-  <key>ProgramArguments</key><array><string>${node}</string><string>${einstieg}</string><string>satellit</string><string>--dienst</string></array>
+  <key>ProgramArguments</key><array><string>${nodeFuerDienst}</string><string>${einstieg}</string><string>satellit</string><string>--dienst</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>${dienstLogPfad()}</string>
@@ -54,7 +61,8 @@ export function installiereDienst(): string {
     writeFileSync(plist, xml);
     try { execFileSync('launchctl', ['unload', plist], { stdio: 'pipe' }); } catch { /* war nicht geladen */ }
     execFileSync('launchctl', ['load', plist], { stdio: 'pipe' });
-    return `launchd-Agent ${LAUNCHD_LABEL} geladen (startet bei Anmeldung). Protokoll: ${dienstLogPfad()}`;
+    return `launchd-Agent ${LAUNCHD_LABEL} geladen (startet bei Anmeldung). Protokoll: ${dienstLogPfad()}`
+      + (nodeFuerDienst === alfredNode ? `\nBerechtigungen für Bedienen und Bildschirmfoto: Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen bzw. Bildschirmaufnahme → „+" → Cmd+Shift+G → ${alfredNode}` : '');
   }
   const dir = path.join(os.homedir(), '.config', 'systemd', 'user');
   mkdirSync(dir, { recursive: true });
