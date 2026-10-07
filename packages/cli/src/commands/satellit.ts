@@ -16,6 +16,7 @@ import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto } from './satellit-bildschirm.js'; // v1268
 import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fenster.js'; // v1271
+import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
 let browserHand: BrowserHand | undefined;
@@ -62,6 +63,9 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'browser_tippen', beschreibung: 'Tippt Text in Element Nr. N (Suchfeld, Formular), optional mit Enter. Passwortfelder sind gesperrt', autonomie: 'bestaetigen', parameter: { element: { type: 'number', description: 'Nummer aus browser_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'Enter danach' } } },
       { name: 'browser_zurueck', beschreibung: 'Eine Seite zurück', autonomie: 'auto' },
       { name: 'browser_screenshot', beschreibung: 'Screenshot der aktuellen Seite (JPEG, an den Owner)', autonomie: 'auto' },
+      // v1273 — Zwischenablage (Lesen mit Bestätigung: oft Passwörter oder Vertrauliches)
+      { name: 'zwischenablage_lesen', beschreibung: 'Liest den Text in der Zwischenablage dieses Geräts (für „was habe ich kopiert", „nimm den Text aus der Zwischenablage")', autonomie: 'bestaetigen' },
+      { name: 'zwischenablage_setzen', beschreibung: 'Legt Text in die Zwischenablage dieses Geräts („kopier mir das in die Zwischenablage")', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
       // v1272 — Freigaben aus dem Chat
       { name: 'freigaben', beschreibung: 'Zeigt die freigegebenen Verzeichnisse dieses Geräts mit Recht (lesen + schreiben / nur lesen)', autonomie: 'auto' },
       { name: 'freigabe_aendern', beschreibung: 'Gibt ein Verzeichnis frei oder entzieht die Freigabe: recht=lesen (liste, öffnen, holen), schreiben (zusätzlich ablegen, shell) oder keins (entfernen). Gilt sofort und dauerhaft.', autonomie: 'bestaetigen', parameter: { pfad: { type: 'string', description: 'Absoluter Pfad des Verzeichnisses (oder ~/…)' }, recht: { type: 'string', description: 'lesen | schreiben | keins' } } },
@@ -86,6 +90,18 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
   const frei = k.freigegebeneVerzeichnisse;
   const lesbar = [...frei, ...(k.nurLesen ?? [])]; // v1272 — Leserecht: freigegebene plus nur-lesen
   switch (aktion) {
+    // v1273 — Zwischenablage
+    case 'zwischenablage_lesen': {
+      const z = await zwischenablageLesen();
+      if (!z.text) return { success: true, data: { text: '', leer: true }, display: `Die Zwischenablage auf ${k.name} enthält keinen Text` };
+      return { success: true, data: { text: z.text, zeichen: z.text.length, gekuerzt: z.gekuerzt }, display: `Zwischenablage auf ${k.name} (${z.text.length} Zeichen${z.gekuerzt ? `, auf ${ZWISCHENABLAGE_MAX_ZEICHEN} gekürzt` : ''}):\n${z.text}` };
+    }
+    case 'zwischenablage_setzen': {
+      const text = String(params.text ?? '');
+      if (!text) return { success: false, error: 'text fehlt' };
+      await zwischenablageSetzen(text);
+      return { success: true, data: { zeichen: text.length }, display: `${text.length} Zeichen in die Zwischenablage auf ${k.name} gelegt` };
+    }
     // v1272 — Freigaben aus dem Chat pflegen (Spec §17 Punkt 3)
     case 'freigaben': {
       const zeilen = [...frei.map(p => `- ${p} (lesen + schreiben)`), ...(k.nurLesen ?? []).map(p => `- ${p} (nur lesen)`)];

@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1273] - 2026-10-07
+
+### Added — Zwischenablage am Satelliten (v1273)
+
+Spec §17 Punkt 5, erster Teil: `zwischenablage_lesen` (mit Bestätigung, weil dort oft Passwörter oder Vertrauliches liegen und der Text an das Modell geht) und `zwischenablage_setzen` (ohne Rückfrage). Windows über Get-/Set-Clipboard (Text über stdin, UTF-8), macOS pbpaste/pbcopy, Linux wl-clipboard oder xclip. Text bis 20 000 Zeichen.
+
+Systembenachrichtigungen lesen bleibt offen: Windows gibt den Benachrichtigungs-Listener nur Apps mit Paket-Identität frei, macOS hält sie in einer geschützten Datenbank; das kommt mit der Flutter-App.
+
 ## [0.19.0-jarvis.1272] - 2026-10-07
 
 ### Added — Freigaben aus dem Chat pflegen (v1272)
