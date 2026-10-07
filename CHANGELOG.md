@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1257] - 2026-10-07
+
+### Fixed — Jarvis-Hygiene: Zeitzone der Tages-Buckets, kein Lernbedarf aus synthetischen Nachrichten (v1257)
+
+- **Nutzungsdatum war UTC.** Die Tages-Buckets für LLM-Nutzung und Kostenwächter nahmen die Zeitzone aus dem Owner-Profil; dort stand keine, also galt UTC — die ersten zwei Stunden eines Tages wurden dem Vortag zugeschlagen. Jetzt gilt ohne Profil-Zeitzone die des Servers (Europe/Vienna). Logzeile beim Start zeigt die Zeitzone.
+
+Die Fortsetzung nach einer Freigabe (v1239) läuft als synthetische Owner-Nachricht durch die Pipeline. Enthielt die Antwort eine Absage-Formulierung, legte Schleife 3 daraus einen Vorgang „Lernbedarf" an — mit dem Fortsetzungstext als Owner-Frage. Jetzt entsteht Lernbedarf nur aus echten Nachrichten des Owners.
+
+Messdaten zu den Werkzeug-Schemata (06./07.10., 116 Anfragen): System Ø 13.400 Tokens, Werkzeuge Ø 20.200 (max 48.400), Verlauf Ø 1.400 — und 63 % aller Eingabe-Tokens kamen aus dem Prompt-Cache. Entscheidung: Schemata bleiben; der Cache trägt den Großteil, eine Kürzung brächte wenig und riskiert Werkzeugwahl.
+
 ## [0.19.0-jarvis.1256] - 2026-10-07
 
 ### Fixed — Build von v1255 (v1256)

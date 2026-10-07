@@ -6665,10 +6665,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         }
         // Resolve user timezone for reasoning engine
         let userTimezone: string | undefined;
+        let ownerProfileTimezone: string | undefined;
         try {
           const ownerProfile = await userRepo.getProfile?.(this.ownerMasterUserId || ownerUserId);
           userTimezone = ownerProfile?.timezone;
+          ownerProfileTimezone = userTimezone;
         } catch { /* fallback to server TZ */ }
+        // v1257 — ohne Profil-Zeitzone galt UTC für Tages-Buckets (Kostenwächter, Nutzung): jetzt die Zeitzone des Servers
+        if (!userTimezone) { try { userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* UTC bleibt */ } }
+        this.logger.info({ timezone: userTimezone ?? 'UTC', ausProfil: !!ownerProfileTimezone }, 'v1257 Zeitzone für Tages-Buckets');
 
         // v656 — Timezone an Usage-Repos reichen, damit Tages/Stunden-Buckets in
         // Lokalzeit fallen. Vorher: UTC → "kein neuer Tag um 00:00 lokal".

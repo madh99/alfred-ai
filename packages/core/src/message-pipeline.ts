@@ -1626,7 +1626,9 @@ export class MessagePipeline {
       );
 
       // v1207 — Jarvis Schleife 3: Absage → Vorgang „Lernbedarf" (Lücke → Fähigkeit)
-      if (this.vorgaengeRepo && message.text && responseText) {
+      // v1257 — nicht bei synthetischen Nachrichten (Fortsetzung nach Freigabe/Vorhaben, geplante Aufgaben): das ist
+      // keine Frage des Owners, ein vermeintlicher „Lernbedarf" daraus war ein Fehlalarm (Realfall 07.10. 07:14).
+      if (this.vorgaengeRepo && message.text && responseText && !message.metadata?.scheduled) {
         try {
           const { lernbedarfAusAbsage } = await import('./vorgaenge/lernbedarf.js');
           const lb = lernbedarfAusAbsage(message.text, responseText);
