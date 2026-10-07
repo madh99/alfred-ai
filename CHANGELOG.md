@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1277] - 2026-10-07
+
+### Fixed — Satellit 1276 wurde vom Gehirn abgewiesen (v1277)
+
+Die Beschreibung von `fenster_lesen` war länger als die 300 Zeichen, die das Gehirn je Aktion zulässt; der Satellit bekam „4004 Manifest" und blieb offline, der Starter fiel nach der Probezeit auf 1275 zurück (so gewollt). Beschreibung gekürzt; der Satellit kürzt Beschreibungen künftig selbst vor dem Senden.
+
 ## [0.19.0-jarvis.1276] - 2026-10-07
 
 ### Added — Bedienen, Stufe A: Element-Karte statt Maus (v1276)

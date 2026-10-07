@@ -71,7 +71,7 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'zwischenablage_setzen', beschreibung: 'Legt Text in die Zwischenablage dieses Geräts („kopier mir das in die Zwischenablage")', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
       // v1276 — Bedienen Stufe A (Windows): Element-Karte über UI Automation, kein Mausklick nach Koordinaten
       ...(process.platform === 'win32' ? [
-        { name: 'fenster_lesen', beschreibung: 'Liest das aktive Fenster (oder eines nach Titel) als nummerierte Element-Karte: Buttons, Felder, Menüs, Tabs mit Name, Wert, Zustand. VOR jedem element_klicken/tippen nötig; nach jeder Aktion erneut lesen (die Karte verfällt). Für mehrschrittiges Bedienen zuerst action=vorhaben mit aktionen [fenster_vordergrund, fenster_lesen, element_klicken, tippen, taste, bildschirm].', autonomie: 'auto' as const, parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname (optional, sonst das aktive Fenster)' } } },
+        { name: 'fenster_lesen', beschreibung: 'Nummerierte Element-Karte des aktiven Fensters (oder nach Titel): Buttons, Felder, Menüs, Tabs mit Name, Wert, Zustand. Vor jedem element_klicken/tippen nötig, nach jeder Aktion erneut (Karte verfällt). Mehrschrittig: zuerst action=vorhaben mit den Bedien-Aktionen.', autonomie: 'auto' as const, parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname (optional, sonst das aktive Fenster)' } } },
         { name: 'element_klicken', beschreibung: 'Betätigt Element Nr. N aus der Element-Karte (Button, Menü, Tab, Kontrollkästchen) über die Bedienhilfen — kein Mausklick. Kauf-, Zahlungs-, Banking-Fenster sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' } } },
         { name: 'tippen', beschreibung: 'Tippt Text in Element Nr. N (Eingabefeld, Dokument), optional mit Enter. Passwortfelder sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'danach Enter' } } },
         { name: 'taste', beschreibung: 'Tastenkombination im aktiven Fenster, z. B. strg+s, alt+f4, enter, strg+shift+t, f5', autonomie: 'bestaetigen' as const, parameter: { kombi: { type: 'string', description: 'z. B. strg+s' } } },
@@ -385,6 +385,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   const fehler = opts.fehler ?? log;
   const version = getVersion();
   const manifest = baueManifest(version);
+  for (const a of manifest.aktionen) if (a.beschreibung.length > 300) a.beschreibung = a.beschreibung.slice(0, 297) + '…'; // v1277 — Manifest-Grenze des Gehirns
   const wsUrl = k.server.replace(/^http/i, 'ws') + '/api/geraete/ws';
   let rueckzugMs = 1000;
   let laeuft = true;
