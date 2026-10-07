@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1269] - 2026-10-07
+
+### Fixed — Bildschirmfoto erreichte das Modell nicht (v1269)
+
+Im Kontinuitätsmodus der OpenAI-Responses-API schickte der Provider nach einem Werkzeugaufruf nur die Tool-Ergebnisse und ließ das Bild aus dem Werkzeugergebnis weg; Alfred sah nur den Fenstertitel. Jetzt gehen Nutzer-Inhalte derselben Nachricht (Text und Bild) mit.
+
 ## [0.19.0-jarvis.1268] - 2026-10-07
 
 ### Added — Bildschirm sehen (v1268)

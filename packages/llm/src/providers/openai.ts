@@ -299,7 +299,9 @@ export class OpenAIProvider extends LLMProvider {
     let input: Array<Record<string, unknown>>;
     if (request.previousResponseId) {
       const last = request.messages[request.messages.length - 1];
-      input = last ? this.mapResponsesInput([last]).filter(i => i.type === 'function_call_output') : [];
+      // v1269 — Bilder aus Werkzeugergebnissen (Bildschirmfoto) hängen als Nutzer-Item hinter den Tool-Ergebnissen
+      // derselben Nachricht; sie müssen mit, sonst sieht das Modell nur den Text (Realfall 07.10.: „nur der Fenstertitel")
+      input = last ? this.mapResponsesInput([last]).filter(i => i.type === 'function_call_output' || i.role === 'user') : [];
       if (input.length === 0) input = this.mapResponsesInput(request.messages); // Kontrakt verletzt → voll senden
     } else {
       input = this.mapResponsesInput(request.messages);
