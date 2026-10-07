@@ -219,3 +219,14 @@ Der Owner wollte nicht jeden Schritt bestätigen. Die Antwort ist kein „alles 
 | 3 Vorgänge | Geräteaktionen sind Schritte mit Autonomie und Rücknahme; Befunde für Geräte |
 | 4 Messen | Kennzahlen je Zustellweg, Sprachrunden, Bestätigungsquote je Gerät |
 | Interaktion | Ein Gespräch über alle Wege; Lage auf dem Sperrbildschirm; Warum auch für Geräteaktionen |
+
+
+## 16. Aktualisierung der Geräte (freigegeben und umgesetzt 07.10.2026, .1258–.1265)
+
+Der Server ist die Quelle: beim Start packt er sein installiertes Paket nach `data/releases/<Version>.tgz`, signiert die SHA-256-Prüfsumme mit einem Ed25519-Schlüssel (`data/release-key.json`) und liefert `GET /api/geraete/update` (Version, Prüfsumme, Signatur) sowie den Tarball unter `…/update/datei`, beides mit Gerätetoken. Der öffentliche Schlüssel geht mit dem Willkommen an die Geräte und wird beim ersten Kontakt gemerkt; weicht er später ab, lehnt das Gerät Updates ab.
+
+Der Satellit vergleicht nach dem Willkommen die Serverversion mit seiner eigenen, lädt im Leerlauf, prüft Prüfsumme und Signatur, installiert nach `~/.alfred/cli/<Version>` (npm mit eigenem Präfix, ohne sudo) und beendet sich mit Code 75. Der global installierte `alfred` ist der Starter: er führt im Dienstmodus die neueste bestätigte Version als Kindprozess aus und startet bei Code 75 die neue. Eine frische Version gilt zehn Minuten als Probe; meldet sie sich beim Server, ist sie bestätigt, sonst fällt der Starter auf die vorige zurück. Dienst-Einträge (launchd, systemd, Autostart-VBS) zeigen auf den Starter und bleiben unverändert.
+
+Beweis 07.10. 12:44: PC-Satellit 1263 erkannte Server 1265, lud 9,8 MB, prüfte, installierte in 45 s; der über den Autostart gestartete Starter führte 1265 aus, bestätigt. Erkannte Fallen: Wettlauf beim Server-Neustart (Server packt jetzt sofort und meldet nie eine fremde Version; Satellit versucht bis zu zehnmal), Symlink-Programmpfad auf dem Server, Installer-Start unter Windows jetzt über das VBS.
+
+Noch offen: Alfred-Selbstupdate (gleicher Ablauf mit Suite, Neustart außerhalb des Pass-Fensters, Rückfall) und die Flutter-App über denselben Endpunkt mit signierten Installern; Handy über die Stores.
