@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import { tastenkombi, istGesperrtesFenster, Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js';
+import { macTaste } from './satellit-bedienen-mac.js';
+
+describe('macTaste (v1283)', () => {
+  it('cmd+s, strg+c, enter, cmd+shift+t, Pfeile', () => {
+    expect(macTaste('cmd+s')).toBe("Application('System Events').keystroke(\"s\", { using: ['command down'] }); 'ok'");
+    expect(macTaste('strg+c')).toContain("'control down'");
+    expect(macTaste('enter')).toBe("Application('System Events').keyCode(36); 'ok'");
+    expect(macTaste('cmd+shift+t')).toContain("['command down', 'shift down']");
+    expect(macTaste('runter')).toContain('keyCode(125)');
+  });
+  it('lehnt Unbekanntes ab', () => {
+    expect(() => macTaste('cmd+foo')).toThrow(/Unbekannte Taste/);
+    expect(() => macTaste('cmd')).toThrow(/Taste fehlt/);
+  });
+});
 
 describe('tastenkombi', () => {
   it('übersetzt Modifikatoren und Sondertasten in SendKeys', () => {

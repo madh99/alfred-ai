@@ -272,10 +272,14 @@ Grundlage ist die Recherche vom 07.10. (Memory „computer-use-recherche-2026-10
 
 `bildschirm` mit `markieren=true` zeichnet Nummern und Rahmen der letzten Element-Karte ins Foto (Windows; UIA-Rechtecke und Aufnahme teilen bei 100 % Skalierung die Koordinaten, bei anderer Skalierung rechnet der Satellit um). Damit sieht das Modell, was es betätigt, und prüft das Ergebnis im Bild. **Klick nach Fotokoordinaten (.1281):** `klicken_bei` mit x, y aus dem letzten Foto (höchstens 60 s alt), umgerechnet auf den Bildschirm; der Klick wird nur ausgeführt, wenn an der Stelle das Vordergrundfenster liegt (Befund 07.10.: Klick auf verdecktes Fenster traf das Terminal davor). Optionale Foto-Sperre `fotoSperre` (Titelmuster), standardmäßig aus. Offen: Rahmen aus Bilderkennung für Fenster ohne Baum (OmniParser-Klasse). Hinweis Datenschutz: Bildschirmfotos gehen an den Modellanbieter; auf dem Schirm sichtbare Geheimnisse (z. B. eine offene .env im Editor) wandern mit. Der Owner entscheidet, wann er fotografieren lässt.
 
-### 18.3 Schnittstellen vor Oberfläche (offen)
+### 18.3 Schnittstellen vor Oberfläche (zurückgestellt)
 
-Office über COM (Outlook-Entwurf, Termin, Excel-Zellen) als eigene Aktionen; klassisches Outlook startet auf dem Owner-PC beim COM-Aufruf einen Einrichtungsdialog (Befund 07.10.), deshalb erst nach Klärung, welches Outlook der Owner nutzt.
+Owner 07.10.: nutzt klassisches und neues Outlook, auf dem PC ist keines eingerichtet (Mac und eine VM schon). COM hat auf dem PC kein Ziel, auf dem Mac gibt es kein COM; Mail, Kalender, Kontakte laufen bei Alfred über die Graph-API. Office-COM bleibt liegen, bis es einen konkreten Fall gibt.
 
-### 18.4 Eigene Arbeitsfläche (offen)
+### 18.5 macOS (.1283, vom Owner zu testen)
 
-Windows „Agent Workspace" (eigenes Standardkonto, isolierte Sitzung, Preview) oder ein zweites Windows-Konto per Remote-Desktop-Loopback, in dem der Satellit läuft, damit Alfred nicht in der Sitzung des Owners tippt. macOS: Accessibility-Baum über System Events; Linux: AT-SPI.
+Dieselben Aktionen über System Events (Accessibility, JXA): `fenster_lesen` liest das vorderste Fenster (Rollen AXButton, AXTextField, AXCheckBox, AXPopUpButton, AXLink, AXTab, AXMenuItem …), `element_klicken` per AXPress, `tippen` per value oder keystroke, `taste` mit cmd/strg/alt/shift und Key-Codes, `klicken_bei` per `click at`. Notbremse über HIDIdleTime. Voraussetzung: Bedienungshilfen-Berechtigung für node (Satellit) unter Datenschutz & Sicherheit; ohne sie meldet der Satellit „Bedienhilfen-Berechtigung fehlt". Testvorschlag: „Öffne den Rechner und rechne 3 mal 4". Markierte Fotos bisher nur Windows.
+
+### 18.4 Eigene Arbeitsfläche (offen, Owner-Entscheidung)
+
+Windows „Agent Workspace" (eigenes Standardkonto, isolierte Sitzung parallel zum Owner, Zugriff auf Dokumente/Downloads/Desktop/Bilder; Preview, aus; Einstellungen → System → KI-Komponenten → Agent-Tools) oder ein zweites Windows-Konto per Remote-Desktop-Loopback, in dem der Satellit läuft. Erklärt 07.10. abends; bis zur Entscheidung Notbremse und Bestätigung. Linux: AT-SPI, offen.

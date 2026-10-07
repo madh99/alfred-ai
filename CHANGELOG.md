@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1283] - 2026-10-07
+
+### Added — Bedienen auf macOS (v1283, vom Owner zu testen)
+
+Dieselben Aktionen wie unter Windows über die Bedienhilfen: `fenster_lesen` liest das vorderste Fenster per System Events (Rollen AXButton, AXTextField, AXCheckBox, AXPopUpButton, AXLink, AXTab …) als nummerierte Karte, `element_klicken` betätigt per AXPress, `tippen` setzt den Wert oder tippt per Tastatur, `taste` versteht cmd, strg, alt, shift und Sondertasten über Key-Codes, `klicken_bei` klickt per System Events an Koordinaten. Notbremse über HIDIdleTime, Passwortfelder (AXSecureTextField) gesperrt. Voraussetzung: Berechtigung „Bedienungshilfen" für node unter Datenschutz & Sicherheit; fehlt sie, meldet der Satellit das klar.
+
 ## [0.19.0-jarvis.1282] - 2026-10-07
 
 ### Fixed — `alfred auth microsoft` per SSH (v1282)

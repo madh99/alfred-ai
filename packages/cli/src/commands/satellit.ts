@@ -69,12 +69,12 @@ export function baueManifest(version: string): GeraetManifest {
       // v1273 — Zwischenablage (Lesen mit Bestätigung: oft Passwörter oder Vertrauliches)
       { name: 'zwischenablage_lesen', beschreibung: 'Liest den Text in der Zwischenablage dieses Geräts (für „was habe ich kopiert", „nimm den Text aus der Zwischenablage")', autonomie: 'bestaetigen' },
       { name: 'zwischenablage_setzen', beschreibung: 'Legt Text in die Zwischenablage dieses Geräts („kopier mir das in die Zwischenablage")', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
-      // v1276 — Bedienen Stufe A (Windows): Element-Karte über UI Automation, kein Mausklick nach Koordinaten
-      ...(process.platform === 'win32' ? [
+      // v1276 — Bedienen Stufe A (Windows UIA, v1283 auch macOS Accessibility): Element-Karte, kein blinder Mausklick
+      ...(process.platform === 'win32' || process.platform === 'darwin' ? [
         { name: 'fenster_lesen', beschreibung: 'Nummerierte Element-Karte des aktiven Fensters (oder nach Titel): Buttons, Felder, Menüs, Tabs mit Name, Wert, Zustand. Vor jedem element_klicken/tippen nötig, nach jeder Aktion erneut (Karte verfällt). Mehrschrittig: zuerst action=vorhaben mit den Bedien-Aktionen.', autonomie: 'auto' as const, parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname (optional, sonst das aktive Fenster)' } } },
         { name: 'element_klicken', beschreibung: 'Betätigt Element Nr. N aus der Element-Karte (Button, Menü, Tab, Kontrollkästchen) über die Bedienhilfen — kein Mausklick. Kauf-, Zahlungs-, Banking-Fenster sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' } } },
         { name: 'tippen', beschreibung: 'Tippt Text in Element Nr. N (Eingabefeld, Dokument), optional mit Enter. Passwortfelder sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'danach Enter' } } },
-        { name: 'taste', beschreibung: 'Tastenkombination im aktiven Fenster, z. B. strg+s, alt+f4, enter, strg+shift+t, f5', autonomie: 'bestaetigen' as const, parameter: { kombi: { type: 'string', description: 'z. B. strg+s' } } },
+        { name: 'taste', beschreibung: process.platform === 'darwin' ? 'Tastenkombination im aktiven Programm, z. B. cmd+s, cmd+q, enter, cmd+shift+t (cmd ist die Mac-Taste, strg = control)' : 'Tastenkombination im aktiven Fenster, z. B. strg+s, alt+f4, enter, strg+shift+t, f5', autonomie: 'bestaetigen' as const, parameter: { kombi: { type: 'string', description: process.platform === 'darwin' ? 'z. B. cmd+s' : 'z. B. strg+s' } } },
         { name: 'klicken_bei', beschreibung: 'Rückfall ohne Element-Karte: Mausklick an einer Stelle des LETZTEN Bildschirmfotos (x, y in Fotopixeln). Nur wenn das Ziel keine Nummer hat. Klickt nur ins Vordergrundfenster; danach neues Foto zur Kontrolle.', autonomie: 'bestaetigen' as const, parameter: { x: { type: 'number', description: 'x im letzten Foto' }, y: { type: 'number', description: 'y im letzten Foto' }, doppelt: { type: 'boolean', description: 'Doppelklick' } } },
       ] : []),
       // v1275 — Systembenachrichtigungen (Bestätigung: Nachrichtenvorschauen, Codes)
@@ -342,7 +342,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     case 'bildschirm': {
       const bereich = params.bereich === 'fenster' ? 'fenster' : 'alles';
       // v1279 — Set of Marks: Nummern der letzten Element-Karte ins Bild (nur Windows, nur mit frischer Karte)
-      const marken = (params.markieren === true || params.markieren === 'true') && process.platform === 'win32' ? bedienen(k).marken() : [];
+      const marken = (params.markieren === true || params.markieren === 'true') && process.platform === 'win32' ? bedienen(k).marken() : []; // Markierungen bisher nur Windows
       // v1281 — optionale Foto-Sperre (Owner: keine Sperre, wenn dann nur optional): Titelmuster in geraet.json `fotoSperre`
       const sperre = (k as GeraetKonfig & { fotoSperre?: string[] }).fotoSperre ?? [];
       if (sperre.length) {

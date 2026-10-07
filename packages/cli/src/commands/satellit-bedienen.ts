@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { macFensterLesen, macAktion, macTasteSenden, macLeerlaufMs, macKlickenBei } from './satellit-bedienen-mac.js'; // v1283
 
 /**
  * v1276 — Bedienen, Stufe A (Spec §18, Owner-Freigabe 07.10. „ausarbeiten und umsetzen"):
@@ -186,9 +187,10 @@ export class Bedienung {
   constructor(private readonly gesperrteFenster: string[] = GESPERRTE_FENSTER_STANDARD) {}
 
   async fensterLesen(suche?: string): Promise<Karte> {
-    if (process.platform !== 'win32') throw new Error('Bedienen gibt es bisher nur unter Windows (macOS/Linux folgen)');
-    const out = letzteZeile(await powershell(PS_LESEN.replace('__SUCHE__', ps1(suche ?? ''))));
-    const j = JSON.parse(out) as { fehler?: string; fenster?: string; programm?: string; pid?: number; elemente?: Element[] | Element };
+    if (process.platform !== 'win32' && process.platform !== 'darwin') throw new Error('Bedienen gibt es unter Windows und macOS (Linux folgt)');
+    const j = process.platform === 'darwin'
+      ? await macFensterLesen(suche) as { fehler?: string; fenster?: string; programm?: string; pid?: number; elemente?: Element[] | Element }
+      : JSON.parse(letzteZeile(await powershell(PS_LESEN.replace('__SUCHE__', ps1(suche ?? ''))))) as { fehler?: string; fenster?: string; programm?: string; pid?: number; elemente?: Element[] | Element };
     if (j.fehler) throw new Error(j.fehler);
     const elemente = Array.isArray(j.elemente) ? j.elemente : j.elemente ? [j.elemente] : [];
     const karte: Karte = { fenster: j.fenster ?? '', programm: j.programm ?? '', pid: j.pid ?? 0, elemente, zeit: Date.now(), hash: createHash('sha1').update(JSON.stringify(elemente.map(e => [e.typ, e.name, e.id]))).digest('hex').slice(0, 8) };
@@ -203,7 +205,7 @@ export class Bedienung {
     if (Date.now() - k.zeit > KARTE_FRIST_MS) throw new Error(`Element-Karte ist ${Math.round((Date.now() - k.zeit) / 1000)} s alt — fenster_lesen wiederholen`);
     const gesperrt = istGesperrtesFenster(k.fenster, this.gesperrteFenster);
     if (gesperrt) throw new Error(`Fenster „${k.fenster}" ist gesperrt (Muster „${gesperrt}") — das bedient der Owner selbst`);
-    const leerlauf = Number(letzteZeile(await powershell(PS_LEERLAUF, 15_000)));
+    const leerlauf = await this.leerlaufMs();
     if (Number.isFinite(leerlauf)) {
       const ownerEingabe = Date.now() - leerlauf;
       if (ownerEingabe > this.letzteEigeneEingabe + 700 && leerlauf < 3000) throw new Error(`Notbremse: der Owner hat vor ${Math.round(leerlauf / 100) / 10} s selbst Eingaben gemacht — Vorhaben abgebrochen`);
@@ -216,9 +218,13 @@ export class Bedienung {
     const e = k.elemente.find(x => x.nr === nr);
     if (!e) throw new Error(`Element Nr. ${nr} gibt es nicht (1–${k.elemente.length})`);
     if (e.passwort) throw new Error('Passwortfeld — gesperrt');
-    const script = PS_AKTION.replace('__PID__', String(k.pid)).replace('__ID__', ps1(e.id ?? '')).replace('__NAME__', ps1(e.name ?? '')).replace('__TYP__', ps1(e.typ)).replace('__X__', String(e.x)).replace('__Y__', String(e.y)).replace('__AKTION__', aktion).replace('__TEXT64__', Buffer.from(text, 'utf8').toString('base64')).replace('__ENTER__', enter ? 'true' : 'false');
     this.letzteEigeneEingabe = Date.now();
-    const j = JSON.parse(letzteZeile(await powershell(script))) as { ok: boolean; wie?: string; fehler?: string; fenster?: string };
+    let j: { ok: boolean; wie?: string; fehler?: string; fenster?: string };
+    if (process.platform === 'darwin') j = await macAktion(k.pid, e, aktion, text, enter);
+    else {
+      const script = PS_AKTION.replace('__PID__', String(k.pid)).replace('__ID__', ps1(e.id ?? '')).replace('__NAME__', ps1(e.name ?? '')).replace('__TYP__', ps1(e.typ)).replace('__X__', String(e.x)).replace('__Y__', String(e.y)).replace('__AKTION__', aktion).replace('__TEXT64__', Buffer.from(text, 'utf8').toString('base64')).replace('__ENTER__', enter ? 'true' : 'false');
+      j = JSON.parse(letzteZeile(await powershell(script))) as { ok: boolean; wie?: string; fehler?: string; fenster?: string };
+    }
     this.letzteEigeneEingabe = Date.now();
     if (!j.ok) throw new Error(j.fehler ?? 'Aktion fehlgeschlagen');
     if (this.karte) this.karte.zeit = 0; // nach jeder Aktion ist die Karte ungültig: neu lesen
@@ -229,14 +235,16 @@ export class Bedienung {
 
   /** v1281 — Stufe B: Klick nach Bildschirmkoordinaten (Aufrufer rechnet Fotokoordinaten um). Sicherungen wie bei Aktionen, plus Vordergrund-Prüfung im Skript. */
   async klickenBei(x: number, y: number, doppelt = false, fensterTitel = ''): Promise<{ x: number; y: number; pid: number }> {
-    if (process.platform !== 'win32') throw new Error('Klick nach Koordinaten gibt es bisher nur unter Windows');
+    if (process.platform !== 'win32' && process.platform !== 'darwin') throw new Error('Klick nach Koordinaten gibt es unter Windows und macOS');
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('x und y fehlen');
     const gesperrt = istGesperrtesFenster(fensterTitel, this.gesperrteFenster);
     if (gesperrt) throw new Error(`Fenster „${fensterTitel}" ist gesperrt (Muster „${gesperrt}")`);
-    const leerlauf = Number(letzteZeile(await powershell(PS_LEERLAUF, 15_000)));
+    const leerlauf = await this.leerlaufMs();
     if (Number.isFinite(leerlauf) && Date.now() - leerlauf > this.letzteEigeneEingabe + 700 && leerlauf < 3000) throw new Error(`Notbremse: der Owner hat vor ${Math.round(leerlauf / 100) / 10} s selbst Eingaben gemacht — Vorhaben abgebrochen`);
     this.letzteEigeneEingabe = Date.now();
-    const j = JSON.parse(letzteZeile(await powershell(PS_KLICK.replace('__X__', String(Math.round(x))).replace('__Y__', String(Math.round(y))).replace('__DOPPELT__', doppelt ? 'true' : 'false'), 30_000))) as { ok: boolean; fehler?: string; pid?: number };
+    const j = process.platform === 'darwin'
+      ? await macKlickenBei(x, y, doppelt)
+      : JSON.parse(letzteZeile(await powershell(PS_KLICK.replace('__X__', String(Math.round(x))).replace('__Y__', String(Math.round(y))).replace('__DOPPELT__', doppelt ? 'true' : 'false'), 30_000))) as { ok: boolean; fehler?: string; pid?: number };
     this.letzteEigeneEingabe = Date.now();
     if (!j.ok) throw new Error(j.fehler ?? 'Klick fehlgeschlagen');
     if (this.karte) this.karte.zeit = 0;
@@ -244,11 +252,18 @@ export class Bedienung {
   }
   tippen(nr: number, text: string, enter = false) { return this.aktion(nr, 'tippen', text, enter); }
 
+  /** Leerlauf seit der letzten Eingabe (Notbremse): Windows GetLastInputInfo, macOS HIDIdleTime. */
+  private async leerlaufMs(): Promise<number> {
+    if (process.platform === 'darwin') return macLeerlaufMs();
+    return Number(letzteZeile(await powershell(PS_LEERLAUF, 15_000)));
+  }
+
   async taste(kombi: string): Promise<string> {
-    const keys = tastenkombi(kombi);
+    const keys = process.platform === 'darwin' ? kombi : tastenkombi(kombi);
     await this.pruefeVorAktion();
     this.letzteEigeneEingabe = Date.now();
-    await powershell(PS_TASTE.replace('__KEYS__', ps1(keys)), 20_000);
+    if (process.platform === 'darwin') await macTasteSenden(kombi);
+    else await powershell(PS_TASTE.replace('__KEYS__', ps1(keys)), 20_000);
     this.letzteEigeneEingabe = Date.now();
     if (this.karte) this.karte.zeit = 0;
     return keys;
