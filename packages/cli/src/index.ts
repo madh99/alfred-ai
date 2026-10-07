@@ -111,7 +111,8 @@ async function main(): Promise<void> {
   // v1258 — Starter: für satellit/sitzung die neueste vom Server installierte Version ausführen und auf sie warten
   if ((parsed.command === 'satellit' || parsed.command === 'sitzung') && !process.env.ALFRED_STARTER_VERSION) {
     const { starteNeuesteVersion } = await import('./commands/satellit-update.js');
-    const code = starteNeuesteVersion(VERSION, process.argv.slice(2));
+    // Dienstmodus: immer als Kind, damit nach einem Update (Code 75) der Starter die neue Version startet
+    const code = starteNeuesteVersion(VERSION, process.argv.slice(2), parsed.command === 'satellit' && !!parsed.flags['dienst']);
     if (code !== undefined) process.exit(code);
   }
 

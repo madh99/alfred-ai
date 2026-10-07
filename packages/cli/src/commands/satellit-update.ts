@@ -46,14 +46,19 @@ export function startbareVersion(eigene: string): AktuellEintrag | undefined {
   return undefined;
 }
 
-/** Vom Starter aufgerufen: neueste Version ausführen und warten; bei Code 75 (aktualisiert) erneut mit der dann neuesten. */
-export function starteNeuesteVersion(eigene: string, args: string[]): number | undefined {
+/**
+ * Vom Starter aufgerufen: die laufende Version als Kindprozess ausführen und warten; bei Code 75 (aktualisiert) erneut
+ * mit der dann neuesten. `immerKind` (Dienstmodus): auch die eigene Version läuft als Kind, damit der Starter nach einem
+ * Update neu starten kann — unter Windows gibt es keinen Dienstwächter, der das übernähme (v1261).
+ */
+export function starteNeuesteVersion(eigene: string, args: string[], immerKind = false): number | undefined {
   let runden = 0;
   for (;;) {
     const z = startbareVersion(eigene);
-    if (!z) return undefined; // selbst die neueste → normal weitermachen
-    if (++runden > 5) return 1;
-    const r = spawnSync(process.execPath, [z.einstieg, ...args], { stdio: 'inherit', env: { ...process.env, ALFRED_STARTER_VERSION: eigene } });
+    if (!z && !immerKind) return undefined; // selbst die neueste → normal weitermachen
+    const einstieg = z?.einstieg ?? path.resolve(process.argv[1] ?? '');
+    if (++runden > 20) return 1;
+    const r = spawnSync(process.execPath, [einstieg, ...args], { stdio: 'inherit', env: { ...process.env, ALFRED_STARTER_VERSION: eigene } });
     if (r.status !== NEUSTART_CODE) return r.status ?? 1;
   }
 }

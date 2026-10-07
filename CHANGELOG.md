@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1261] - 2026-10-07
+
+### Fixed — Starter hält den Satelliten im Dienstmodus immer als Kind (v1261)
+
+Lief der Starter selbst die neueste Version, führte er den Satelliten im eigenen Prozess aus; nach einem Update endete er mit Code 75 und niemand startete die neue Version — unter Windows gibt es keinen Dienstwächter. Im Dienstmodus läuft der Satellit jetzt immer als Kindprozess des Starters, der bei Code 75 die neue Version startet.
+
 ## [0.19.0-jarvis.1260] - 2026-10-07
 
 ### Changed — Beweis-Release für das Satelliten-Autoupdate (v1260)
