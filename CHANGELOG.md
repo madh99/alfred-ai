@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1266] - 2026-10-07
+
+### Added — Alfred aktualisiert sich selbst (v1266)
+
+Punkt 2 der Geräte-Aktualisierung. Der Skill `selbstupdate` („Alfred, aktualisiere dich") zeigt die laufende Version, Tarballs im Eingang `data/updates/` und npm-Tags, und stellt ein Update als Frage an den Owner. Nach dem Ja: Tarball prüfen (Paketname, Version neuer, Prüfsumme aus der Begleitdatei `.sha256`), installieren nach `~/.alfred/cli/<Version>`, Startprobe, dann Neustart mit Code 75 — aber erst außerhalb des Pass-Fensters (:57–:02, :27–:32) und ohne laufendes Vorhaben oder Hör-Sitzung (höchstens 60 Minuten Warten). Quelle wahlweise das npm-Register (Tag oder Version). Der Starter (`alfred start` global) führt die neue Version als Kind aus; sie bestätigt sich nach zwei Minuten Lebenszeichen und meldet das dem Owner. Stürzt die Probe ab, markiert der Starter sie sofort als gescheitert und startet die vorige Version, die den Fehlschlag meldet. Ältere Installationen werden nach der Bestätigung entfernt.
+
+### Changed
+
+- Ablage, `aktuell.json` und die Probe/Rückfall-Logik der Satelliten liegen jetzt in `@alfred/core` (`geraete/aktualisierung.ts`) und werden vom Satelliten- und vom Selbstupdate gemeinsam genutzt; der Satelliten-Starter erkennt abgestürzte Proben ebenfalls sofort.
+- Lebenszeichen-Status trägt das Feld `aktualisierung` (laufender Update-Vorgang).
+
 ## [0.19.0-jarvis.1265] - 2026-10-07
 
 ### Fixed — Autoupdate: Wettlauf beim Server-Neustart (v1265)

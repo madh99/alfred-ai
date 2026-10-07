@@ -418,6 +418,9 @@ export class Alfred {
   private hoerRelais?: import('./geraete/hoeren.js').HoerRelais;
   /** v1258 — Releases für das Satelliten-Autoupdate. */
   private releasesRef?: import('./geraete/releases.js').Releases;
+  /** v1266 — Alfred-Selbstupdate (Eingang data/updates, Starter, Rückfall). */
+  private selbstupdate?: import('./geraete/selbstupdate.js').Selbstupdate;
+  private neustartHandler?: () => void;
   /** v1220 — Lage als Delta (Befunde + Vorgänge), alle 10 min und bei jedem Befund-Wechsel neu gerechnet; steht im Weltmodell-Block des Chats. */
   private lageText?: string;
   private lageStand?: string;
@@ -466,6 +469,9 @@ export class Alfred {
     this.jobRegister.registriere(def);
   }
 
+  /** v1266 — Der CLI-Start registriert hier den sauberen Stop mit Code 75 (Starter startet die neue Version). */
+  setNeustartHandler(fn: () => void): void { this.neustartHandler = fn; }
+
   /** v1162 — Ein Satz an den Owner über den primären Chat-Adapter (best-effort). */
   private async sendeAnOwner(text: string): Promise<boolean> {
     const ownerChatId = this.config.security?.ownerUserId;
@@ -502,6 +508,7 @@ export class Alfred {
       geraete: await (this.geraeteGateway?.liste().catch(() => []) ?? Promise.resolve([])), // v1224
       vorhaben: this.geraeteGateway?.vorhabenAktive() ?? [], // v1231
       hoeren: this.hoerRelais?.aktive() ?? [], // v1251
+      aktualisierung: this.selbstupdate?.status() ?? null, // v1266
       // v1183 — Jarvis Schicht 4: Zähler seit Tagesabschluss/Start
       kennzahlen: this.reasoningEngine?.kennzahlen.snapshot() ?? null,
       // v1196 — letzte Begründungen („Warum?") für die Kachel
@@ -6870,6 +6877,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     this.confirmationQueue.setNachAusfuehrung(async (pending, result, ziel) => {
       if (pending.source !== 'geraet') return false;
       if (pending.skillParams?.action === 'vorhaben_freigeben') return false;
+      if (pending.skillName === 'selbstupdate') return false; // v1266 — deterministische Meldung statt LLM-Runde
       const display = (result?.display ?? (result?.data !== undefined ? JSON.stringify(result.data) : '')).slice(0, 3500);
       const text = `Die von mir freigegebene Aktion wurde gerade ausgeführt: ${pending.description}.\n\nErgebnis:\n${display || '(keine Ausgabe)'}\n\nMach damit weiter: Beantworte meine ursprüngliche Frage bzw. erledige die Aufgabe, für die diese Aktion nötig war — kurz, sauber formatiert, mit den wichtigen Werten. Sind weitere Schritte nötig, führe sie aus.`;
       return this.fortsetzungImOwnerChat(text, { id: 'bestaetigt', platform: ziel.platform, chatId: ziel.chatId });
@@ -13521,6 +13529,31 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           })();
           // v1265 — sofort packen (Satelliten fragen ~17 s nach dem Start); bis dahin liefert updateInfo nichts
           releases.sichereAktuell(eigeneVersion, paketOrdner).catch(err => this.logger.warn({ err: (err as Error).message }, 'v1258 Release nicht bereitgestellt'));
+          // v1266 — Selbstupdate: Tarball im Eingang oder npm-Register, Owner-Bestätigung, Neustart außerhalb des Pass-Fensters
+          const { Selbstupdate } = await import('./geraete/selbstupdate.js');
+          const { SelbstupdateSkill } = await import('./geraete/selbstupdate-skill.js');
+          const { NEUSTART_CODE } = await import('./geraete/aktualisierung.js');
+          const selbstupdate = new Selbstupdate({
+            eigeneVersion,
+            eingangOrdner: path.resolve(process.cwd(), 'data', 'updates'),
+            logger: this.logger.child({ component: 'selbstupdate' }),
+            ruhe: () => ({ vorhaben: this.geraeteGateway?.vorhabenAktive().length ?? 0, hoeren: this.hoerRelais?.aktive().length ?? 0 }),
+            melde: (t) => this.sendeAnOwner(t),
+            neustart: () => { if (this.neustartHandler) this.neustartHandler(); else process.exit(NEUSTART_CODE); },
+          });
+          this.selbstupdate = selbstupdate;
+          this.skillRegistry.register(new SelbstupdateSkill({
+            update: selbstupdate,
+            bestaetigung: async (frage) => {
+              if (!this.confirmationQueue) return false;
+              const chatId = this.config.security?.ownerUserId ?? '';
+              if (!chatId) return false;
+              const platform = this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api';
+              const ok = await this.confirmationQueue.enqueue({ chatId, platform, source: 'geraet', sourceId: `update-${String(frage.params.version)}-${Date.now()}`, description: frage.description, skillName: 'selbstupdate', skillParams: frage.params, timeoutMinutes: 60 });
+              return ok !== false;
+            },
+          }));
+          selbstupdate.nachStart();
         }
         // v1251 — Hör-Relais: Mistral-Schlüssel bleibt am Server, Sekunden werden verbucht, Tageslimit per ENV
         const { HoerRelais } = await import('./geraete/hoeren.js');

@@ -51,6 +51,7 @@ export async function startCommand(): Promise<void> {
 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  alfred.setNeustartHandler(() => { void shutdown('update', 75); }); // v1266 — Selbstupdate: Starter startet die neue Version
 
   process.on('uncaughtException', (err) => {
     // v611 — use `err` key so pino's stdSerializers.err captures stack trace.

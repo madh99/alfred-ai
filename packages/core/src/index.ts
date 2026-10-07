@@ -20,6 +20,11 @@ export { sprachfassung, audioMimeAusBytes, sprachBloecke, schneideSaetze } from 
 export { SatzendeErkenner, rms16, pcm16ZuWav } from './interaktion/satzende.js'; // v1250
 export { HoerRelais, HOEREN_MODELL } from './geraete/hoeren.js'; // v1251
 export { Releases, vergleicheVersion, signiere, pruefeSignatur, sha256Datei } from './geraete/releases.js'; // v1258
+export { NEUSTART_CODE, PROBE_MINUTEN, PAKET_NAME, cliOrdner, einstiegVon, ladeAktuell, speichereAktuell, bestaetigeAktuell, markiereGescheitert, startbareVersion, imPassFenster, tarballInfo, pruefeTarball, installiereTarball, startprobe, raeumeVersionen } from './geraete/aktualisierung.js'; // v1266
+export type { AktuellEintrag } from './geraete/aktualisierung.js';
+export { Selbstupdate } from './geraete/selbstupdate.js'; // v1266
+export type { UpdateQuelle, UpdateLauf, UpdateUebersicht } from './geraete/selbstupdate.js';
+export { SelbstupdateSkill } from './geraete/selbstupdate-skill.js'; // v1266
 export { pruefeAktivierung, STOPPWOERTER } from './interaktion/aktivierung.js'; // v1252
 export type { SatzendeEreignis, SatzendeOptionen } from './interaktion/satzende.js';
 export type { BrowserElement } from './geraete/browser-regeln.js';

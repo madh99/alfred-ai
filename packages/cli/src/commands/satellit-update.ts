@@ -1,9 +1,8 @@
-import os from 'node:os';
 import path from 'node:path';
-import { execFile, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { vergleicheVersion, pruefeSignatur } from '@alfred/core';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
+import { vergleicheVersion, pruefeSignatur, NEUSTART_CODE, cliOrdner, ladeAktuell, speichereAktuell, bestaetigeAktuell, startbareVersion, markiereGescheitert, installiereTarball, type AktuellEintrag } from '@alfred/core';
 import { geraetAnfrage, geraetJson } from './geraet-http.js';
 import { ladeKonfig, speichereKonfig, type GeraetKonfig } from './pair.js';
 
@@ -17,34 +16,9 @@ import { ladeKonfig, speichereKonfig, type GeraetKonfig } from './pair.js';
  * Eine frisch installierte Version gilt zehn Minuten als „auf Probe"; meldet sie sich beim Server, wird sie bestätigt,
  * sonst fällt der Starter auf die vorige bestätigte Version zurück.
  */
-export const NEUSTART_CODE = 75;
-export interface AktuellEintrag { version: string; einstieg: string; zeit: string; bestaetigt: boolean; vorige?: string }
-
-export function cliOrdner(): string { return path.join(os.homedir(), '.alfred', 'cli'); }
-function aktuellPfad(): string { return path.join(cliOrdner(), 'aktuell.json'); }
-
-export function ladeAktuell(): AktuellEintrag | undefined {
-  try { const a = JSON.parse(readFileSync(aktuellPfad(), 'utf8')) as AktuellEintrag; return a?.version && a?.einstieg && existsSync(a.einstieg) ? a : undefined; } catch { return undefined; }
-}
-export function speichereAktuell(a: AktuellEintrag): void { mkdirSync(cliOrdner(), { recursive: true }); writeFileSync(aktuellPfad(), JSON.stringify(a, null, 2)); }
-
-/** Die laufende Version hat sich beim Server gemeldet: bestätigen. */
-export function bestaetigeAktuell(version: string): void {
-  const a = ladeAktuell();
-  if (a && a.version === version && !a.bestaetigt) { a.bestaetigt = true; speichereAktuell(a); }
-}
-
-/** Starter: gibt die Version zurück, die laufen soll — die neueste bestätigte oder eine frische auf Probe. */
-export function startbareVersion(eigene: string): AktuellEintrag | undefined {
-  const a = ladeAktuell();
-  if (!a || vergleicheVersion(a.version, eigene) <= 0) return undefined;
-  if (a.bestaetigt) return a;
-  const alterMin = (Date.now() - Date.parse(a.zeit)) / 60_000;
-  if (alterMin <= 10) return a;
-  // Probe gescheitert: auf vorige zurück
-  if (a.vorige) { const v = path.join(cliOrdner(), a.vorige, 'node_modules', '@madh-io', 'alfred-ai', 'bundle', 'index.js'); if (existsSync(v) && vergleicheVersion(a.vorige, eigene) > 0) return { version: a.vorige, einstieg: v, zeit: a.zeit, bestaetigt: true }; }
-  return undefined;
-}
+// v1266 — Ablage, aktuell.json, Probe/Rückfall-Logik liegen jetzt in @alfred/core (geraete/aktualisierung.ts), gemeinsam mit dem Alfred-Selbstupdate
+export { NEUSTART_CODE, cliOrdner, ladeAktuell, speichereAktuell, bestaetigeAktuell, startbareVersion };
+export type { AktuellEintrag };
 
 /**
  * Vom Starter aufgerufen: die laufende Version als Kindprozess ausführen und warten; bei Code 75 (aktualisiert) erneut
@@ -59,7 +33,11 @@ export function starteNeuesteVersion(eigene: string, args: string[], immerKind =
     const einstieg = z?.einstieg ?? path.resolve(process.argv[1] ?? '');
     if (++runden > 20) return 1;
     const r = spawnSync(process.execPath, [einstieg, ...args], { stdio: 'inherit', env: { ...process.env, ALFRED_STARTER_VERSION: eigene } });
-    if (r.status !== NEUSTART_CODE) return r.status ?? 1;
+    if (r.status !== NEUSTART_CODE) {
+      // v1266 — eine Version auf Probe ist abgestürzt: sofort als gescheitert merken und die vorige starten
+      if (z && !z.bestaetigt && r.status !== 0 && markiereGescheitert(z.version)) { console.error(`[starter] ${z.version} beendet mit Code ${r.status ?? 'Signal'} — zurück auf die vorige Version`); continue; }
+      return r.status ?? 1;
+    }
   }
 }
 
@@ -82,17 +60,12 @@ export async function aktualisiereWennNeuer(k: GeraetKonfig, eigene: string, log
   const schluessel = (k as GeraetKonfig & { releaseKey?: string }).releaseKey;
   if (schluessel) { if (!pruefeSignatur(info.sha256, info.signatur, schluessel)) throw new Error('Signatur des Releases ungültig'); }
   else log('Hinweis: kein Release-Schlüssel bekannt — Signatur nicht geprüft (wird beim nächsten Willkommen gemerkt)');
-  const ordner = path.join(cliOrdner(), info.version);
-  mkdirSync(ordner, { recursive: true });
+  mkdirSync(cliOrdner(), { recursive: true });
   const tgz = path.join(cliOrdner(), `${info.version}.tgz`);
   writeFileSync(tgz, r.data);
   log('Installiere …');
-  await new Promise<void>((resolve, reject) => {
-    execFile(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--prefix', ordner, '--no-audit', '--no-fund', '--omit=dev', '--silent', tgz], { timeout: 600_000, windowsHide: true, shell: process.platform === 'win32' }, (err, _out, stderr) => err ? reject(new Error(`npm install: ${String(stderr).slice(0, 300) || err.message}`)) : resolve());
-  });
+  const einstieg = await installiereTarball(tgz, info.version); // v1266 — gemeinsame Basis mit dem Selbstupdate
   try { unlinkSync(tgz); } catch { /* */ }
-  const einstieg = path.join(ordner, 'node_modules', '@madh-io', 'alfred-ai', 'bundle', 'index.js');
-  if (!existsSync(einstieg)) throw new Error(`Installation unvollständig: ${einstieg} fehlt`);
   speichereAktuell({ version: info.version, einstieg, zeit: new Date().toISOString(), bestaetigt: false, vorige: a?.bestaetigt ? a.version : undefined });
   log(`Installiert: ${info.version} in ${Math.round((Date.now() - t0) / 1000)} s → Neustart`);
   return info.version;
