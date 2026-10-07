@@ -19,6 +19,24 @@ function anthropic(model: string): AnthropicProvider {
 const usage = (inputTokens: number, outputTokens: number, cacheReadTokens = 0) =>
   ({ inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens: 0 });
 
+describe('v1280 Anthropic — Haiku 5.5', () => {
+  it('Limits 1M/128k, Preis $0.10/$0.50, Cache-Read 10 %', () => {
+    expect(lookupContextWindow('claude-haiku-5-5')).toMatchObject({ maxInputTokens: 1_000_000, maxOutputTokens: 128_000 });
+    expect(getModelPricing('claude-haiku-5-5')).toMatchObject({ input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 });
+  });
+  it('Staffel: 80k Input + 2k Output = $0.009; 150k Input + 2k Output = $0.08 (×5 über 100k)', () => {
+    expect(longPromptMultiplier('claude-haiku-5-5', 80_000)).toEqual({ input: 1.0, output: 1.0 });
+    expect(longPromptMultiplier('claude-haiku-5-5', 150_000)).toEqual({ input: 5.0, output: 5.0 });
+    expect(calculateCost('claude-haiku-5-5', usage(80_000, 2_000))).toBeCloseTo(0.009, 4);
+    expect(calculateCost('claude-haiku-5-5', usage(150_000, 2_000))).toBeCloseTo(0.08, 3);
+  });
+  it('kein temperature (Gen 5), thinking darf aus (Models-API: disabled unterstützt)', () => {
+    const p = anthropic('claude-haiku-5-5') as unknown as { supportsTemperature(): boolean; thinkingZwischenTools(): boolean };
+    expect(p.supportsTemperature()).toBe(false);
+    expect(p.thinkingZwischenTools()).toBe(false);
+  });
+});
+
 describe('v1204 OpenAI — GPT-6.1 Sol, GPT-6 Sol/Luna', () => {
   it('Preise stehen VOR dem generischen gpt-6-Präfix', () => {
     expect(getModelPricing('gpt-6.1-sol')).toMatchObject({ input: 2.00, output: 10.00, cacheRead: 0.10, cacheWrite: 2.50 });

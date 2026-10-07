@@ -64,6 +64,8 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   // v1204 — Opus 5.5 / Sonnet 5.5 (Models-Overview 06.10.2026: 1M / 128k; Live-Models-API: claude-opus-5-5, claude-sonnet-5-5)
   'claude-opus-5-5':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-sonnet-5-5':            { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
+  // v1280 — Haiku 5.5 (Release 07.10.2026; Models-API: max_input_tokens 1000000, max_tokens 128000, thinking.disabled unterstützt)
+  'claude-haiku-5-5':             { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   // v1135 — Claude Opus 5 (Juli 2026, per Live-Models-API verifiziert)
   'claude-opus-5':                { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
   'claude-opus-4-8':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },

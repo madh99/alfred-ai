@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1280] - 2026-10-07
+
+### Added — Claude Haiku 5.5 (v1280)
+
+Release 07.10.2026, Models-API verifiziert: `claude-haiku-5-5`, 1M Kontext, 128k Ausgabe, adaptives Thinking, Thinking abschaltbar. Preis als Staffel: $0.10/$0.50 je Million bis 100k Prompt-Tokens, darüber $0.50/$2.50; der Kostenrechner wendet den Faktor fünf an. Cache-Read 10 %. Setup-Assistent: Haiku 5.5 als Standard für den Tier fast. Auf .92 läuft der Tier fast seit dem Neustart 20:40 mit Haiku 5.5 (ENV und YAML vom Owner gesetzt).
+
 ## [0.19.0-jarvis.1279] - 2026-10-07
 
 ### Added — Markiertes Bildschirmfoto (Set of Marks) (v1279)

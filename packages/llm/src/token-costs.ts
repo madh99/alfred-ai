@@ -72,6 +72,9 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // claude.com/pricing + Models-Overview 06.10.; Opus 5 / Sonnet 5 / Fable 5 sind „legacy".
   ['claude-opus-5-5',   { input: 4.00, output: 20.00, cacheRead: 0.20, cacheWrite: 5.00 }],
   ['claude-sonnet-5-5', { input: 2.00, output: 10.00, cacheRead: 0.20, cacheWrite: 2.50 }],
+  // v1280 — Haiku 5.5 (07.10.2026): Staffelpreis — bis 100k Prompt-Tokens $0.10/$0.50, darüber $0.50/$2.50
+  // (longPromptMultiplier ×5); Cache-Read 10 % des Basispreises, Cache-Write 125 %.
+  ['claude-haiku-5-5',  { input: 0.10, output: 0.50,  cacheRead: 0.01, cacheWrite: 0.125 }],
   ['claude-opus-5',     { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
   ['claude-opus-4-8',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
   ['claude-opus-4-7',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
@@ -182,6 +185,8 @@ export function getModelPricing(model: string): ModelPricing | undefined {
  */
 export function longPromptMultiplier(model: string, inputTokens: number): { input: number; output: number } {
   const lower = model.toLowerCase();
+  // v1280 — Haiku 5.5: über 100k Prompt-Tokens das Fünffache (Input, Cache und Output)
+  if (/^claude-haiku-5-5/.test(lower)) return inputTokens > 100_000 ? { input: 5.0, output: 5.0 } : { input: 1.0, output: 1.0 };
   if (inputTokens <= 272_000) return { input: 1.0, output: 1.0 };
   // v1204 — gpt-6.1-sol: >272k → 2× Input/Cache, 1,5× Output (Ankündigung 29.09.2026); Präfix gpt-6 deckt es ab
   const langkontext = /^(gpt-6|gpt-5\.6|gpt-5\.5($|-\d)|gpt-5\.4($|-\d|-pro))/.test(lower);
