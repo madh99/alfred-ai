@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1264] - 2026-10-07
+
+### Fixed — Satelliten-Autoupdate: Startweg und Fristen (v1264)
+
+Live-Beweis 07.10. 12:26: PC-Satellit 1260 erkannte Server 1263, lud, prüfte Prüfsumme und Signatur, installierte in 38 s und der Starter führte die neue Version aus — auch über den Autostart-Eintrag. Zwei Befunde dabei:
+
+- Ein vom Installer direkt abgelöster Satellit hatte minutenlang hängende HTTPS-Anfragen bei der Update-Prüfung, der über das Autostart-VBS gestartete nicht. `alfred satellit --install` startet unter Windows jetzt über dasselbe VBS wie bei der Anmeldung.
+- Geräte-HTTP bekommt eine Gesamtfrist unabhängig von Socket-Aktivität, und das Protokoll nennt die Dauer von Abfrage und Installation.
+
 ## [0.19.0-jarvis.1263] - 2026-10-07
 
 ### Changed — Beweis-Release Satelliten-Autoupdate, zweiter Anlauf (v1263)

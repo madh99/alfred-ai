@@ -30,7 +30,10 @@ export function installiereDienst(): string {
     const vbs = windowsStartSkript();
     const kommando = `""${node}"" ""${einstieg}"" satellit --dienst`;
     writeFileSync(vbs, `CreateObject("WScript.Shell").Run "${kommando}", 0, False\r\n`);
-    starteWindowsJetzt(node, einstieg);
+    // v1264 — sofort über dasselbe VBS starten wie bei der Anmeldung (gleiche Umgebung): ein direkt abgelöster
+    // Kindprozess des Installers hatte hängende HTTPS-Anfragen (Update-Prüfung), der VBS-Start nicht.
+    try { execFileSync('wscript.exe', [vbs], { stdio: 'ignore', windowsHide: true, timeout: 10_000 }); }
+    catch { starteWindowsJetzt(node, einstieg); }
     return `Autostart eingerichtet (${vbs}) und Satellit gestartet. Protokoll: ${dienstLogPfad()}`;
   }
   if (process.platform === 'darwin') {

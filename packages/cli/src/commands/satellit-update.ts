@@ -67,11 +67,14 @@ export interface UpdateInfo { version: string; sha256: string; groesse: number; 
 
 /** Prüft beim Server und aktualisiert, wenn dort eine neuere Version liegt. Liefert die neue Version oder undefined. */
 export async function aktualisiereWennNeuer(k: GeraetKonfig, eigene: string, log: (z: string) => void): Promise<string | undefined> {
+  const tStart = Date.now();
   const info = await geraetJson<UpdateInfo>(k, 'GET', '/api/geraete/update');
+  if (Date.now() - tStart > 5000) log(`Hinweis: Update-Abfrage dauerte ${Math.round((Date.now() - tStart) / 1000)} s`);
   if (!info?.version || vergleicheVersion(info.version, eigene) <= 0) return undefined;
   const a = ladeAktuell();
   if (a && a.version === info.version && existsSync(a.einstieg)) { log(`Update ${info.version} liegt schon bereit`); return info.version; }
   log(`Update verfügbar: ${eigene} → ${info.version} (${Math.round(info.groesse / 1024)} KB)`);
+  const t0 = Date.now();
   const r = await geraetAnfrage(k, 'GET', '/api/geraete/update/datei', undefined, { timeoutMs: 300_000 });
   if (r.status !== 200) throw new Error(`Download HTTP ${r.status}`);
   const sha = createHash('sha256').update(r.data).digest('hex');
@@ -91,7 +94,7 @@ export async function aktualisiereWennNeuer(k: GeraetKonfig, eigene: string, log
   const einstieg = path.join(ordner, 'node_modules', '@madh-io', 'alfred-ai', 'bundle', 'index.js');
   if (!existsSync(einstieg)) throw new Error(`Installation unvollständig: ${einstieg} fehlt`);
   speichereAktuell({ version: info.version, einstieg, zeit: new Date().toISOString(), bestaetigt: false, vorige: a?.bestaetigt ? a.version : undefined });
-  log(`Installiert: ${info.version} → Neustart`);
+  log(`Installiert: ${info.version} in ${Math.round((Date.now() - t0) / 1000)} s → Neustart`);
   return info.version;
 }
 

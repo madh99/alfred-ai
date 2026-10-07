@@ -26,6 +26,7 @@ export function geraetAnfrage(
       rejectUnauthorized: !k.insecure,
       timeout: opts.timeoutMs ?? 120_000,
     }, (res) => {
+      res.setTimeout(opts.timeoutMs ?? 120_000, () => { try { res.destroy(new Error('Antwort-Zeitüberschreitung')); } catch { /* */ } }); // v1264
       const teile: Buffer[] = [];
       res.on('data', (c: Buffer) => teile.push(c));
       res.on('end', () => resolve({ status: res.statusCode ?? 0, data: Buffer.concat(teile), headers: res.headers }));
@@ -33,6 +34,9 @@ export function geraetAnfrage(
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(new Error('Zeitüberschreitung')); });
+    // v1264 — Gesamtfrist unabhängig von Socket-Aktivität (hängende Anfrage im Dienstmodus beobachtet)
+    const frist = setTimeout(() => { try { req.destroy(new Error('Gesamt-Zeitüberschreitung')); } catch { /* */ } }, (opts.timeoutMs ?? 120_000) + 5_000);
+    req.on('close', () => clearTimeout(frist));
     if (daten) req.write(daten);
     req.end();
   });
