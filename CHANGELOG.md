@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1294] - 2026-10-08
+
+### Fixed — Satellit nie mit Administratorrechten (v1294)
+
+Realfall Office-VM: der Satellit war aus einer Administrator-PowerShell installiert worden und lief erhöht (Integritätsstufe hoch); Outlook lief normal, die COM-Anbindung scheiterte mit 80080005. `alfred satellit --install` startet den Satelliten aus einer erhöhten Shell jetzt über die Benutzer-Shell (explorer.exe) mit normaler Integrität, genau wie der Autostart bei der Anmeldung. Ein erhöht laufender Satellit warnt beim Start im Protokoll, und COM-Fehler 80080005 nennen Ursache und Abhilfe.
+
 ## [0.19.0-jarvis.1293] - 2026-10-08
 
 ### Fixed — Outlook-Erkennung für Exchange-Konten (v1293)

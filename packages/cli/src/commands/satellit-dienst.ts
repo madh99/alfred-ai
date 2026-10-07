@@ -20,6 +20,18 @@ function programm(): { node: string; einstieg: string } {
   return { node: process.execPath, einstieg: path.resolve(process.argv[1] ?? '') };
 }
 
+/**
+ * v1294 — Läuft dieser Prozess erhöht (Administrator, Integritätsstufe hoch/System)? Realfall Office-VM 08.10.: der Satellit
+ * war aus einer Administrator-PowerShell gestartet; Outlook lief normal → COM-Anbindung scheiterte (80080005), UIA ebenso.
+ */
+export function laeuftErhoeht(): boolean {
+  if (process.platform !== 'win32') return false;
+  try {
+    const g = execFileSync('whoami', ['/groups', '/fo', 'csv'], { encoding: 'utf8', stdio: 'pipe', timeout: 5000, windowsHide: true });
+    return /S-1-16-(12288|16384)/.test(g);
+  } catch { return false; }
+}
+
 export function installiereDienst(): string {
   const { node, einstieg } = programm();
   mkdirSync(path.join(os.homedir(), '.alfred'), { recursive: true });
@@ -32,9 +44,12 @@ export function installiereDienst(): string {
     writeFileSync(vbs, `CreateObject("WScript.Shell").Run "${kommando}", 0, False\r\n`);
     // v1264 — sofort über dasselbe VBS starten wie bei der Anmeldung (gleiche Umgebung): ein direkt abgelöster
     // Kindprozess des Installers hatte hängende HTTPS-Anfragen (Update-Prüfung), der VBS-Start nicht.
-    try { execFileSync('wscript.exe', [vbs], { stdio: 'ignore', windowsHide: true, timeout: 10_000 }); }
-    catch { starteWindowsJetzt(node, einstieg); }
-    return `Autostart eingerichtet (${vbs}) und Satellit gestartet. Protokoll: ${dienstLogPfad()}`;
+    // v1294 — aus einer erhöhten Shell würde der Satellit erhöht laufen (Office-COM/Bedienen scheitern): explorer.exe öffnet
+    // das Skript in der normalen Benutzer-Shell mit mittlerer Integrität — so wie der Autostart bei der Anmeldung.
+    const erhoeht = laeuftErhoeht();
+    try { execFileSync(erhoeht ? 'explorer.exe' : 'wscript.exe', [vbs], { stdio: 'ignore', windowsHide: true, timeout: 10_000 }); }
+    catch { if (!erhoeht) starteWindowsJetzt(node, einstieg); }
+    return `Autostart eingerichtet (${vbs}) und Satellit gestartet${erhoeht ? ' (ohne Administratorrechte, über die Benutzer-Shell)' : ''}. Protokoll: ${dienstLogPfad()}`;
   }
   if (process.platform === 'darwin') {
     const dir = path.join(os.homedir(), 'Library', 'LaunchAgents');

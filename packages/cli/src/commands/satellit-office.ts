@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { laeuftErhoeht } from './satellit-dienst.js'; // v1294
 
 /**
  * v1292 — Office über COM (Spec §18.3, Owner 08.10.: „office-com mit lesen"): klassisches Outlook und Excel auf einem
@@ -15,7 +16,7 @@ function run(script: string, timeout = 60_000): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc], { timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
       const out = String(stdout).trim();
-      if (err) return reject(new Error(psFehlertext(String(stderr)) || err.message));
+      if (err) return reject(new Error(mitUrsache(psFehlertext(String(stderr)) || err.message)));
       resolve(letzteZeile(out));
     });
   });
@@ -24,6 +25,15 @@ function run(script: string, timeout = 60_000): Promise<string> {
 /** PowerShell-Fehlerausgabe (oft CLIXML oder mehrzeilig) auf einen lesbaren Satz kürzen. */
 export function psFehlertext(stderr: string): string {
   return stderr.replace(/^#< CLIXML\s*/, '').replace(/<[^>]+>/g, ' ').replace(/_x000D__x000A_/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+}
+/** v1294 — bekannte COM-Fehler mit Ursache und Abhilfe: 80080005 = Office läuft in einer anderen Integritätsstufe als der Satellit. */
+export function mitUrsache(text: string, erhoeht: boolean = laeuftErhoeht()): string {
+  if (/80080005/.test(text)) {
+    return text + (erhoeht
+      ? ' — Ursache: Der Satellit läuft mit Administratorrechten, Outlook/Excel normal. Abhilfe: Satellit beenden und aus einer normalen Eingabeaufforderung neu starten (alfred satellit --install).'
+      : ' — Ursache: Outlook/Excel läuft erhöht oder zeigt einen Dialog (Profilauswahl, Anmeldung). Abhilfe: Dialog schließen bzw. Office normal starten.');
+  }
+  return text;
 }
 /** Die Skripte geben als letzte Zeile JSON aus; alles davor (Warnungen) wird ignoriert. */
 export function letzteZeile(out: string): string {

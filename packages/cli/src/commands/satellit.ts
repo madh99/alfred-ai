@@ -12,7 +12,7 @@ import { vergleicheVersion, raeumeVersionen } from '@alfred/core';
 import { getVersion } from '../version.js';
 import { ladeKonfig, speichereKonfig, konfigPfad, type GeraetKonfig } from './pair.js';
 import { cliOrdner } from './satellit-update.js'; // v1274
-import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
+import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad, laeuftErhoeht } from './satellit-dienst.js';
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
@@ -453,6 +453,8 @@ export async function satellitCommand(opts: { einmal?: boolean; install?: boolea
   }
   const k = ladeKonfig();
   if (!k) { console.error('Nicht gekoppelt. Zuerst: alfred pair --server https://host:3420 --code <Code>'); process.exit(1); }
+  // v1294 — Realfall Office-VM: erhöht gestarteter Satellit erreicht weder Outlook (COM 80080005) noch normale Fenster (UIA)
+  if (laeuftErhoeht()) console.error('WARNUNG: Der Satellit läuft mit Administratorrechten. Outlook/Excel über COM und das Bedienen normaler Fenster scheitern dann. Bitte aus einer normalen (nicht erhöhten) Eingabeaufforderung starten: alfred satellit --install');
   const s = starteSatellit(k, { einmal: opts.einmal, log: m => console.log(m), fehler: m => console.error(m) });
   process.on('SIGINT', () => { console.log('\nSatellit beendet.'); s.stop(); process.exit(0); });
   process.on('SIGTERM', () => { s.stop(); process.exit(0); });
