@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1281] - 2026-10-07
+
+### Added — Bedienen Stufe B: Klick nach Fotokoordinaten, optionale Foto-Sperre (v1281)
+
+`klicken_bei` (x, y in Pixeln des letzten Bildschirmfotos, höchstens 60 s alt, optional Doppelklick) für Ziele ohne Nummer in der Element-Karte. Der Satellit rechnet in Bildschirmkoordinaten um und klickt nur, wenn an der Stelle das Vordergrundfenster liegt; sonst Ablehnung mit Hinweis auf fenster_vordergrund (Befund 07.10.: ein Klick auf ein verdecktes Fenster landete im Terminal davor). Dazu Notbremse, gesperrte Fenster, Bestätigung. Das Bildschirmfoto liefert jetzt Aufnahmebereich und Skalierung. Optional `fotoSperre` in geraet.json: Titelmuster, bei denen kein Foto gemacht wird; standardmäßig leer.
+
 ## [0.19.0-jarvis.1280] - 2026-10-07
 
 ### Added — Claude Haiku 5.5 (v1280)

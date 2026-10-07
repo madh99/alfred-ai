@@ -270,7 +270,7 @@ Grundlage ist die Recherche vom 07.10. (Memory „computer-use-recherche-2026-10
 
 ### 18.2 Stufe B — Foto mit Markierungen (erster Teil umgesetzt .1279)
 
-`bildschirm` mit `markieren=true` zeichnet Nummern und Rahmen der letzten Element-Karte ins Foto (Windows; UIA-Rechtecke und Aufnahme teilen bei 100 % Skalierung die Koordinaten, bei anderer Skalierung rechnet der Satellit um). Damit sieht das Modell, was es betätigt, und prüft das Ergebnis im Bild. Offen: Rahmen aus Bilderkennung für Fenster ohne Baum und Klick auf die Rahmenmitte, erst nach Erfahrung aus Stufe A. Hinweis Datenschutz: Bildschirmfotos gehen an den Modellanbieter; auf dem Schirm sichtbare Geheimnisse (z. B. eine offene .env im Editor) wandern mit. Der Owner entscheidet, wann er fotografieren lässt.
+`bildschirm` mit `markieren=true` zeichnet Nummern und Rahmen der letzten Element-Karte ins Foto (Windows; UIA-Rechtecke und Aufnahme teilen bei 100 % Skalierung die Koordinaten, bei anderer Skalierung rechnet der Satellit um). Damit sieht das Modell, was es betätigt, und prüft das Ergebnis im Bild. **Klick nach Fotokoordinaten (.1281):** `klicken_bei` mit x, y aus dem letzten Foto (höchstens 60 s alt), umgerechnet auf den Bildschirm; der Klick wird nur ausgeführt, wenn an der Stelle das Vordergrundfenster liegt (Befund 07.10.: Klick auf verdecktes Fenster traf das Terminal davor). Optionale Foto-Sperre `fotoSperre` (Titelmuster), standardmäßig aus. Offen: Rahmen aus Bilderkennung für Fenster ohne Baum (OmniParser-Klasse). Hinweis Datenschutz: Bildschirmfotos gehen an den Modellanbieter; auf dem Schirm sichtbare Geheimnisse (z. B. eine offene .env im Editor) wandern mit. Der Owner entscheidet, wann er fotografieren lässt.
 
 ### 18.3 Schnittstellen vor Oberfläche (offen)
 

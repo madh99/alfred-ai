@@ -113,6 +113,31 @@ Add-Type -AssemblyName System.Windows.Forms
 "ok"
 `;
 
+// v1281 — Stufe B: Mausklick nach Koordinaten, nur wenn an der Stelle das Vordergrundfenster liegt (WindowFromPoint),
+// damit kein verdecktes Ziel und kein fremdes Fenster getroffen wird (Befund 07.10.: Klick landete im Terminal davor).
+const PS_KLICK = `
+Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public class AlfredMaus {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(System.Drawing.Point p);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public static uint PidVon(IntPtr h) { uint pid; GetWindowThreadProcessId(h, out pid); return pid; }
+  public static IntPtr WurzelBei(int x, int y) { IntPtr h = WindowFromPoint(new System.Drawing.Point(x, y)); IntPtr r = GetAncestor(h, 2); return r == IntPtr.Zero ? h : r; }
+  public static void Klick(int x, int y, bool doppelt) { SetCursorPos(x, y); System.Threading.Thread.Sleep(60); mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); if (doppelt) { System.Threading.Thread.Sleep(80); mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); } }
+}
+"@ -ReferencedAssemblies System.Drawing
+$x = __X__; $y = __Y__; $doppelt = $__DOPPELT__
+$vorne = [AlfredMaus]::GetForegroundWindow()
+$dort = [AlfredMaus]::WurzelBei($x, $y)
+if ($dort -ne $vorne) { @{ ok = $false; fehler = 'An der Stelle liegt nicht das Vordergrundfenster — erst fenster_vordergrund, dann neues Foto' } | ConvertTo-Json -Compress; exit 0 }
+[AlfredMaus]::Klick($x, $y, $doppelt)
+@{ ok = $true; x = $x; y = $y; pid = [AlfredMaus]::PidVon($vorne) } | ConvertTo-Json -Compress
+`;
+
 const PS_LEERLAUF = `
 Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class AlfredIdle { [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; } [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii); public static uint Ms() { LASTINPUTINFO i = new LASTINPUTINFO(); i.cbSize = (uint)Marshal.SizeOf(i); GetLastInputInfo(ref i); return (uint)Environment.TickCount - i.dwTime; } }'
 [AlfredIdle]::Ms()
@@ -201,6 +226,22 @@ export class Bedienung {
   }
 
   klicken(nr: number) { return this.aktion(nr, 'klicken'); }
+
+  /** v1281 — Stufe B: Klick nach Bildschirmkoordinaten (Aufrufer rechnet Fotokoordinaten um). Sicherungen wie bei Aktionen, plus Vordergrund-Prüfung im Skript. */
+  async klickenBei(x: number, y: number, doppelt = false, fensterTitel = ''): Promise<{ x: number; y: number; pid: number }> {
+    if (process.platform !== 'win32') throw new Error('Klick nach Koordinaten gibt es bisher nur unter Windows');
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('x und y fehlen');
+    const gesperrt = istGesperrtesFenster(fensterTitel, this.gesperrteFenster);
+    if (gesperrt) throw new Error(`Fenster „${fensterTitel}" ist gesperrt (Muster „${gesperrt}")`);
+    const leerlauf = Number(letzteZeile(await powershell(PS_LEERLAUF, 15_000)));
+    if (Number.isFinite(leerlauf) && Date.now() - leerlauf > this.letzteEigeneEingabe + 700 && leerlauf < 3000) throw new Error(`Notbremse: der Owner hat vor ${Math.round(leerlauf / 100) / 10} s selbst Eingaben gemacht — Vorhaben abgebrochen`);
+    this.letzteEigeneEingabe = Date.now();
+    const j = JSON.parse(letzteZeile(await powershell(PS_KLICK.replace('__X__', String(Math.round(x))).replace('__Y__', String(Math.round(y))).replace('__DOPPELT__', doppelt ? 'true' : 'false'), 30_000))) as { ok: boolean; fehler?: string; pid?: number };
+    this.letzteEigeneEingabe = Date.now();
+    if (!j.ok) throw new Error(j.fehler ?? 'Klick fehlgeschlagen');
+    if (this.karte) this.karte.zeit = 0;
+    return { x: Math.round(x), y: Math.round(y), pid: j.pid ?? 0 };
+  }
   tippen(nr: number, text: string, enter = false) { return this.aktion(nr, 'tippen', text, enter); }
 
   async taste(kombi: string): Promise<string> {

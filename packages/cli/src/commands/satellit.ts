@@ -15,7 +15,7 @@ import { cliOrdner } from './satellit-update.js'; // v1274
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
-import { bildschirmfoto } from './satellit-bildschirm.js'; // v1268
+import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fenster.js'; // v1271
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
@@ -75,6 +75,7 @@ export function baueManifest(version: string): GeraetManifest {
         { name: 'element_klicken', beschreibung: 'Betätigt Element Nr. N aus der Element-Karte (Button, Menü, Tab, Kontrollkästchen) über die Bedienhilfen — kein Mausklick. Kauf-, Zahlungs-, Banking-Fenster sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' } } },
         { name: 'tippen', beschreibung: 'Tippt Text in Element Nr. N (Eingabefeld, Dokument), optional mit Enter. Passwortfelder sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'danach Enter' } } },
         { name: 'taste', beschreibung: 'Tastenkombination im aktiven Fenster, z. B. strg+s, alt+f4, enter, strg+shift+t, f5', autonomie: 'bestaetigen' as const, parameter: { kombi: { type: 'string', description: 'z. B. strg+s' } } },
+        { name: 'klicken_bei', beschreibung: 'Rückfall ohne Element-Karte: Mausklick an einer Stelle des LETZTEN Bildschirmfotos (x, y in Fotopixeln). Nur wenn das Ziel keine Nummer hat. Klickt nur ins Vordergrundfenster; danach neues Foto zur Kontrolle.', autonomie: 'bestaetigen' as const, parameter: { x: { type: 'number', description: 'x im letzten Foto' }, y: { type: 'number', description: 'y im letzten Foto' }, doppelt: { type: 'boolean', description: 'Doppelklick' } } },
       ] : []),
       // v1275 — Systembenachrichtigungen (Bestätigung: Nachrichtenvorschauen, Codes)
       ...(process.platform === 'linux' ? [] : [{ name: 'benachrichtigungen', beschreibung: 'Liest die letzten Systembenachrichtigungen dieses Geräts (App, Zeit, Titel, Text) — für „was ist an Meldungen gekommen", „habe ich etwas verpasst"', autonomie: 'bestaetigen' as const, parameter: { stunden: { type: 'number', description: 'Zeitraum in Stunden (Standard 24)' }, anzahl: { type: 'number', description: 'Höchstens so viele (Standard 20)' } } }]),
@@ -100,6 +101,8 @@ type Ergebnis = { success: boolean; data?: unknown; display?: string; error?: st
 
 // v1276 — Bedienen (Stufe A): ein Zustand je Satellit (letzte Element-Karte, Notbremse)
 let bedienung: Bedienung | undefined;
+// v1281 — Geometrie des letzten Bildschirmfotos (für klicken_bei: Fotokoordinaten → Bildschirm)
+let letztesFoto: { region: { x: number; y: number; w: number; h: number }; skala: number; zeit: number; breite: number; hoehe: number } | undefined;
 function bedienen(k: GeraetKonfig): Bedienung {
   if (!bedienung) bedienung = new Bedienung(k.gesperrteFenster ?? GESPERRTE_FENSTER_STANDARD);
   return bedienung;
@@ -133,6 +136,15 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     case 'tippen': {
       const r = await bedienen(k).tippen(Number(params.nr), String(params.text ?? ''), params.enter === true || params.enter === 'true');
       return { success: true, data: { nr: r.element.nr, name: r.element.name, wie: r.wie, fenster: r.fenster }, display: `Getippt in ${r.element.nr}. [${r.element.typ}] ${r.element.name} (${r.wie}). Karte verfallen: fenster_lesen vor dem nächsten Schritt.` };
+    }
+    case 'klicken_bei': {
+      if (!letztesFoto || Date.now() - letztesFoto.zeit > 60_000) return { success: false, error: 'Kein frisches Bildschirmfoto (höchstens 60 s alt) — erst bildschirm, dann klicken_bei' };
+      const px = Number(params.x), py = Number(params.y);
+      if (!Number.isFinite(px) || !Number.isFinite(py) || px < 0 || py < 0 || px > letztesFoto.breite || py > letztesFoto.hoehe) return { success: false, error: `x/y müssen im Foto liegen (0–${letztesFoto.breite} × 0–${letztesFoto.hoehe})` };
+      const sx = letztesFoto.region.x + px * letztesFoto.skala, sy = letztesFoto.region.y + py * letztesFoto.skala;
+      const r = await bedienen(k).klickenBei(sx, sy, params.doppelt === true || params.doppelt === 'true', await aktivesFensterTitel());
+      letztesFoto = undefined; // nach dem Klick ist das Foto veraltet
+      return { success: true, data: r, display: `Geklickt bei Foto (${Math.round(px)}, ${Math.round(py)}) = Bildschirm (${r.x}, ${r.y}). Neues Foto zur Kontrolle machen.` };
     }
     case 'taste': {
       const keys = await bedienen(k).taste(String(params.kombi ?? ''));
@@ -331,7 +343,15 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const bereich = params.bereich === 'fenster' ? 'fenster' : 'alles';
       // v1279 — Set of Marks: Nummern der letzten Element-Karte ins Bild (nur Windows, nur mit frischer Karte)
       const marken = (params.markieren === true || params.markieren === 'true') && process.platform === 'win32' ? bedienen(k).marken() : [];
+      // v1281 — optionale Foto-Sperre (Owner: keine Sperre, wenn dann nur optional): Titelmuster in geraet.json `fotoSperre`
+      const sperre = (k as GeraetKonfig & { fotoSperre?: string[] }).fotoSperre ?? [];
+      if (sperre.length) {
+        const titel = await aktivesFensterTitel();
+        const treffer = sperre.find(m => m && titel.toLowerCase().includes(m.toLowerCase()));
+        if (treffer) return { success: false, error: `Kein Bildschirmfoto: das aktive Fenster „${titel}" fällt unter die Foto-Sperre („${treffer}")` };
+      }
       const f = await bildschirmfoto(bereich, 1600, marken);
+      if (f.region && f.skala) letztesFoto = { region: f.region, skala: f.skala, zeit: Date.now(), breite: f.breite, hoehe: f.hoehe };
       return { success: true, data: { screenshotBase64: f.jpegBase64, mimeType: 'image/jpeg', breite: f.breite, hoehe: f.hoehe, titel: f.titel, bereich: f.bereich }, display: `Bildschirmfoto (${f.bereich === 'fenster' ? 'aktives Fenster' : 'ganzer Bildschirm'}, ${f.breite}×${f.hoehe}${f.titel ? `, Fenster „${f.titel}"` : ''}${f.marken ? `, ${f.marken} Elemente nummeriert wie in fenster_lesen` : ''})` };
     }
     case 'browser_schliessen': {

@@ -23,6 +23,8 @@ export interface GeraetKonfig {
   nurLesen?: string[];
   /** v1276 — Fenster, die Alfred nie bedient (Titelmuster); fehlt der Eintrag, gilt die Standardliste (Banking, PayPal, Kasse …). */
   gesperrteFenster?: string[];
+  /** v1281 — optional: kein Bildschirmfoto, wenn der Titel des aktiven Fensters eines dieser Muster enthält (Standard: keine Sperre). */
+  fotoSperre?: string[];
   erlaubteProgramme: string[];
   /** v1258 — öffentlicher Release-Schlüssel des Servers (beim ersten Willkommen gemerkt). */
   releaseKey?: string;

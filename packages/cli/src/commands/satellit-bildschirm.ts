@@ -10,7 +10,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
  * ohne sie liefert screencapture nur den Schreibtisch.
  */
 export type Bereich = 'alles' | 'fenster';
-export interface Bildschirmfoto { jpegBase64: string; breite: number; hoehe: number; titel?: string; bereich: Bereich; marken?: number }
+export interface Bildschirmfoto { jpegBase64: string; breite: number; hoehe: number; titel?: string; bereich: Bereich; marken?: number; /** v1281 — Aufnahmebereich in Bildschirmkoordinaten und Verkleinerungsfaktor (Bildschirm = Foto × skala) */ region?: { x: number; y: number; w: number; h: number }; skala?: number }
 /** v1279 — Markierung aus der Element-Karte (Set of Marks): Nummer und Rechteck in Bildschirmkoordinaten. */
 export interface Marke { nr: number; x: number; y: number; w: number; h: number }
 
@@ -73,7 +73,7 @@ $out = $bmp
 if ($w -gt $maxB) { $nh = [int]($hh * $maxB / $w); $out = New-Object System.Drawing.Bitmap $bmp, $maxB, $nh }
 # Kein EncoderParameter (JPEG-Qualitaet): Defender/AMSI blockt CopyFromScreen + EncoderParameter als schaedlich (Befund 07.10.)
 $out.Save($ziel, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-@{ breite = $out.Width; hoehe = $out.Height } | ConvertTo-Json -Compress
+@{ breite = $out.Width; hoehe = $out.Height; rx = $x; ry = $y; rw = $w; rh = $hh } | ConvertTo-Json -Compress
 `;
 
 async function powershell(script: string, timeout = 60_000): Promise<string> {
@@ -92,12 +92,19 @@ async function vorhanden(cmd: string): Promise<boolean> {
   try { await run(process.platform === 'win32' ? 'where' : 'which', [cmd], 5000); return true; } catch { return false; }
 }
 
+/** v1281 — Titel des aktiven Fensters (Windows), für die optionale Foto-Sperre. */
+export async function aktivesFensterTitel(): Promise<string> {
+  if (process.platform !== 'win32') return '';
+  try { const f = JSON.parse(await powershell(WIN_FENSTER, 15_000)) as { titel?: string }; return f.titel ?? ''; } catch { return ''; }
+}
+
 export async function bildschirmfoto(bereich: Bereich = 'alles', maxBreite = 1600, marken: Marke[] = []): Promise<Bildschirmfoto> {
   const ziel = path.join(os.tmpdir(), `alfred-bildschirm-${process.pid}-${Date.now()}.jpg`);
   const markenDatei = marken.length && process.platform === 'win32' ? ziel.replace(/\.jpg$/, '-marken.json') : '';
   if (markenDatei) writeFileSync(markenDatei, JSON.stringify(marken));
   try {
     let titel: string | undefined; let breite = 0; let hoehe = 0; let effektiv: Bereich = bereich;
+    let region: Bildschirmfoto['region'];
     if (process.platform === 'win32') {
       let x = 0; let y = 0; let w = 0; let h = 0;
       if (bereich === 'fenster') {
@@ -109,8 +116,9 @@ export async function bildschirmfoto(bereich: Bereich = 'alles', maxBreite = 160
       }
       const script = WIN_FOTO.replace('__ZIEL__', ziel.replace(/'/g, "''")).replace('__MARKEN__', markenDatei.replace(/'/g, "''")).replace('__MAXB__', String(maxBreite))
         .replace('__X__', String(x)).replace('__Y__', String(y)).replace('__W__', String(effektiv === 'fenster' ? w : 0)).replace('__H__', String(effektiv === 'fenster' ? h : 0));
-      const j = JSON.parse(await powershell(script)) as { breite?: number; hoehe?: number };
+      const j = JSON.parse(await powershell(script)) as { breite?: number; hoehe?: number; rx?: number; ry?: number; rw?: number; rh?: number };
       breite = j.breite ?? 0; hoehe = j.hoehe ?? 0;
+      region = { x: j.rx ?? 0, y: j.ry ?? 0, w: j.rw ?? breite, h: j.rh ?? hoehe };
     } else if (process.platform === 'darwin') {
       if (bereich === 'fenster') {
         try {
@@ -145,7 +153,7 @@ export async function bildschirmfoto(bereich: Bereich = 'alles', maxBreite = 160
     if (!existsSync(ziel)) throw new Error('Bildschirmfoto wurde nicht erzeugt');
     const data = readFileSync(ziel);
     if (data.length < 100) throw new Error('Bildschirmfoto ist leer');
-    return { jpegBase64: data.toString('base64'), breite, hoehe, titel, bereich: effektiv, marken: markenDatei ? marken.length : undefined };
+    return { jpegBase64: data.toString('base64'), breite, hoehe, titel, bereich: effektiv, marken: markenDatei ? marken.length : undefined, region, skala: region && breite ? region.w / breite : undefined };
   } finally {
     try { unlinkSync(ziel); } catch { /* weg */ }
     if (markenDatei) { try { unlinkSync(markenDatei); } catch { /* weg */ } }
