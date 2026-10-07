@@ -233,3 +233,8 @@ Tages-Audit: 42 offene Vorgänge, dieselben drei Themen fünf- bis sechsmal in n
 - Kleine Releases mit sofortigem Live-Audit; mehrere Fehler wurden erst durch die vorangegangene Schicht sichtbar (Stream stabil → Refresh-Schleife → stiller REST-Ausfall → Tageskontingent).
 - Fixes an der Quelle (Schreiber, Datenlage) statt am Modell; alles funktioniert mit jedem Modell der Fallback-Kette.
 
+
+
+## Werkzeug-Schemata: Entscheidung (07.10.2026)
+
+Messung über zwei Tage (06./07.10., 116 Chat-Anfragen, Phase `llm_request_prep`): System-Prompt Ø 13.400 Tokens, Werkzeug-Schemata Ø 20.200 (max 48.400), Verlauf Ø 1.400. Gleichzeitig kamen über 565 Modellaufrufe 63 % aller Eingabe-Tokens aus dem Prompt-Cache der Anbieter. Entscheidung: Die Schemata bleiben, wie sie sind. Der Cache trägt den Großteil der Kosten; eine Kürzung der Beschreibungen brächte wenig und riskiert falsche Werkzeugwahl. Wo es deterministisch geht, bleibt die Werkzeugliste klein (`allowedSkills` bei Mail-Aufgaben und Vorhaben-Fortsetzungen). Ebenfalls 07.10.: Tages-Buckets der Nutzung liefen in UTC (kein Zeitzonen-Eintrag im Owner-Profil), jetzt Server-Zeitzone; Schleife 3 legt keinen Lernbedarf mehr aus synthetischen Nachrichten an.
