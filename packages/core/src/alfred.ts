@@ -13507,7 +13507,18 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         this.releasesRef = releases;
         const eigeneVersion = (this.config as { version?: string }).version;
         if (eigeneVersion) {
-          const paketOrdner = path.resolve(path.dirname(process.argv[1] ?? ''), '..');
+          // v1259 — der Programmpfad ist auf dem Server der Symlink /usr/bin/alfred: Symlinks auflösen und die package.json
+          // des Pakets nach oben suchen (bundle/index.js → Paketordner)
+          const paketOrdner = (() => {
+            let p = process.argv[1] ?? '';
+            try { p = fs.realpathSync(p); } catch { /* bleibt */ }
+            let d = path.dirname(p);
+            for (let i = 0; i < 4; i++) {
+              try { const pkg = JSON.parse(fs.readFileSync(path.join(d, 'package.json'), 'utf8')) as { name?: string }; if (pkg.name === '@madh-io/alfred-ai') return d; } catch { /* weiter nach oben */ }
+              d = path.dirname(d);
+            }
+            return path.resolve(path.dirname(p), '..');
+          })();
           setTimeout(() => { releases.sichereAktuell(eigeneVersion, paketOrdner).catch(err => this.logger.warn({ err: (err as Error).message }, 'v1258 Release nicht bereitgestellt')); }, 20_000);
         }
         // v1251 — Hör-Relais: Mistral-Schlüssel bleibt am Server, Sekunden werden verbucht, Tageslimit per ENV

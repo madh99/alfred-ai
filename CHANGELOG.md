@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1259] - 2026-10-07
+
+### Fixed — Release-Ablage findet das Paket (v1259)
+
+Auf dem Server zeigt der Programmpfad auf den Symlink `/usr/bin/alfred`; der Paketordner wurde nicht gefunden („kein package.json"). Symlinks werden aufgelöst und die package.json des Pakets nach oben gesucht.
+
 ## [0.19.0-jarvis.1258] - 2026-10-07
 
 ### Added — Satelliten aktualisieren sich vom Server (v1258)
