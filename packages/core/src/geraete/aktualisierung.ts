@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
 import { vergleicheVersion, sha256Datei } from './releases.js';
 
 /**
@@ -131,11 +131,24 @@ export async function installiereTarball(tgz: string, version: string, ordner = 
   const ziel = path.join(ordner, version);
   mkdirSync(ziel, { recursive: true });
   const npm = npmBefehl();
+  // v1290 — Install-Skripte von Abhängigkeiten rufen `node` beim Namen (sh -c node install/check.js). Läuft der
+  // Satellit als ~/.alfred/bin/alfred-node (macOS, v1286), gibt es im PATH kein `node` → „node: command not found"
+  // (Realfall MacBook 07.10.). Deshalb ein Symlink `node` → laufende Binärdatei im eigenen bin-Ordner, vorn im PATH.
+  const binDir = path.join(ordner, '..', 'bin');
+  if (process.platform !== 'win32') {
+    try {
+      mkdirSync(binDir, { recursive: true });
+      const link = path.join(binDir, 'node');
+      try { if (realpathSync(link) !== realpathSync(process.execPath)) { rmSync(link, { force: true }); symlinkSync(process.execPath, link); } }
+      catch { symlinkSync(process.execPath, link); }
+    } catch { /* dann nur PATH */ }
+  }
+  const pfad = `${binDir}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}`;
   await new Promise<void>((resolve, reject) => {
     // v1287 — ohne --silent: der Grund eines Fehlschlags muss im Protokoll stehen (Realfall Mac: „Command failed" ohne Text)
     // v1289 — eigener npm-Cache: ~/.npm des Owners enthält nach `sudo npm install -g` root-eigene Dateien, npm bricht
     // dann als Benutzer ab („Your cache folder contains root-owned files", Realfall MacBook 07.10.)
-    execFile(npm.cmd, [...npm.args, 'install', '--prefix', ziel, '--cache', path.join(ordner, '..', 'npm-cache'), '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error', tgz], { timeout: 900_000, windowsHide: true, shell: npm.shell, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}` } }, (err, _out, stderr) => err ? reject(new Error(`npm install (${npm.args[0] ?? npm.cmd}): ${String(stderr).trim().split('\n').slice(-4).join(' | ').slice(0, 400) || err.message}`)) : resolve());
+    execFile(npm.cmd, [...npm.args, 'install', '--prefix', ziel, '--cache', path.join(ordner, '..', 'npm-cache'), '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error', tgz], { timeout: 900_000, windowsHide: true, shell: npm.shell, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PATH: pfad } }, (err, _out, stderr) => err ? reject(new Error(`npm install (${npm.args[0] ?? npm.cmd}): ${String(stderr).trim().split('\n').slice(-4).join(' | ').slice(0, 400) || err.message}`)) : resolve());
   });
   const einstieg = einstiegVon(ordner, version);
   if (!existsSync(einstieg)) throw new Error(`Installation unvollständig: ${einstieg} fehlt`);

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1290] - 2026-10-07
+
+### Fixed — Satelliten-Update: `node` im PATH für Install-Skripte (v1290)
+
+Realfall MacBook 07.10.: Install-Skripte von Abhängigkeiten rufen `node` beim Namen (`sh -c node install/check.js`); läuft der Satellit als ~/.alfred/bin/alfred-node, gibt es im PATH kein `node` → „node: command not found". Der Installer legt einen Symlink `~/.alfred/bin/node` auf die laufende Binärdatei an und setzt den Ordner vorn in den PATH.
+
+### Bewiesen — Bedienen auf macOS
+
+Owner-Test 07.10. 23:31: Vorhaben „Rechner öffnen, 3 × 4 über die Tasten" → programm_starten Calculator, fenster_lesen, taste 3, *, 4, enter → Anzeige 12. Bildschirmfoto scheiterte noch an der fehlenden Berechtigung „Bildschirmaufnahme" für alfred-node.
+
 ## [0.19.0-jarvis.1289] - 2026-10-07
 
 ### Fixed — Satelliten-Update mit eigenem npm-Cache (v1289)
