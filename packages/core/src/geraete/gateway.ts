@@ -23,6 +23,8 @@ export interface GeraeteGatewayDeps {
   skillRegistry: SkillRegistry;
   serverVersion: string;
   ownerUserId: () => string | undefined;
+  /** v1268 — ist der Aufrufer der Owner (Master, verknüpfte Plattform-IDs)? */
+  istOwner?: (ctx: import('@alfred/types').SkillContext) => boolean;
   /** Zustellziel für Bestätigungsfragen (Owner-Chat). */
   ownerZiel: () => { platform: string; chatId: string };
   enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number }) => Promise<boolean | void>;
@@ -209,6 +211,7 @@ export class GeraeteGateway {
     if (this.deps.skillRegistry.has(v.skillName)) this.deps.skillRegistry.unregister(v.skillName);
     const userId = v.eintrag.userId;
     const skill = new GeraetSkill({
+      istOwner: this.deps.istOwner, // v1268
       geraetId: v.eintrag.id, name: v.eintrag.name, manifest: v.eintrag.manifest, skillName: v.skillName,
       sendeAktion: (aktion, params, timeoutMs) => this.sendeAktion(v.eintrag.id, aktion, params, timeoutMs),
       bestaetigung: async (frage) => {

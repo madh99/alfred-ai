@@ -10,6 +10,8 @@ import { deuteGeraete } from '../normalzustaende/geraete.js'; // v1238
  * Jede Ausführung wird als Schritt im Ausführungsgedächtnis protokolliert (Quelle `geraet`).
  */
 export interface GeraetSkillDeps {
+  /** v1268 — nur der Owner (und seine verknüpften Identitäten) bedient seine Geräte. */
+  istOwner?: (ctx: SkillContext) => boolean;
   geraetId: string;
   name: string;
   manifest: GeraetManifest;
@@ -65,6 +67,10 @@ export class GeraetSkill extends Skill {
 
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const aktion = String(input.action ?? '');
+    // v1268 — Sicherheitsbefund: Geräte gehören dem Owner; andere Nutzer (Familie, Gäste) bekommen weder Dateien noch Bildschirm
+    if (this.deps.istOwner && !this.deps.istOwner(_context)) {
+      return { success: false, error: `Das Gerät ${this.deps.name} gehört dem Owner — nur er kann es bedienen.` };
+    }
     // v1230 — Vorhaben anfordern: eine Owner-Frage für viele Schritte
     if (aktion === 'vorhaben') {
       const beschreibung = String(input.beschreibung ?? '').trim();
@@ -166,7 +172,8 @@ export class GeraetSkill extends Skill {
     // v1229 — Screenshots vom Gerät kommen als Bild zum Owner
     const d = r.data as { screenshotBase64?: string; mimeType?: string } | undefined;
     if (d && typeof d.screenshotBase64 === 'string') {
-      return { success: true, data: { geraet: this.deps.name, aktion }, display: r.display ?? 'Screenshot', attachments: [{ fileName: 'screenshot.jpg', mimeType: d.mimeType ?? 'image/jpeg', data: Buffer.from(d.screenshotBase64, 'base64') }] };
+      const dateiName = aktion === 'bildschirm' ? `bildschirm-${this.deps.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.jpg` : 'screenshot.jpg'; // v1268
+      return { success: true, data: { geraet: this.deps.name, aktion, breite: (d as { breite?: number }).breite, hoehe: (d as { hoehe?: number }).hoehe, titel: (d as { titel?: string }).titel }, display: `${r.display ?? 'Screenshot'} — das Bild siehst du gleich; beschreibe, was darauf zu sehen ist, wenn der Owner danach gefragt hat.`, attachments: [{ fileName: dateiName, mimeType: d.mimeType ?? 'image/jpeg', data: Buffer.from(d.screenshotBase64, 'base64') }] };
     }
     return { success: true, data: r.data, display: r.display ?? `${beschreibung} — ausgeführt (${r.dauerMs} ms)` };
   }

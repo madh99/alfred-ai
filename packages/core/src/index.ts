@@ -26,6 +26,7 @@ export { Selbstupdate } from './geraete/selbstupdate.js'; // v1266
 export type { UpdateQuelle, UpdateLauf, UpdateUebersicht } from './geraete/selbstupdate.js';
 export { SelbstupdateSkill } from './geraete/selbstupdate-skill.js'; // v1266
 export { pruefeAktivierung, STOPPWOERTER } from './interaktion/aktivierung.js'; // v1252
+export { bildBloeckeAusAnhaengen, ohneBilder } from './interaktion/werkzeug-bilder.js'; // v1268
 export type { SatzendeEreignis, SatzendeOptionen } from './interaktion/satzende.js';
 export type { BrowserElement } from './geraete/browser-regeln.js';
 export type { ContextSource, ContextResult } from './context-factory.js';

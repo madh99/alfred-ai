@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1268] - 2026-10-07
+
+### Added — Bildschirm sehen (v1268)
+
+Satelliten-Aktion `bildschirm` (ganzer Bildschirm über alle Monitore oder nur das aktive Fenster, JPEG auf 1600 px verkleinert, mit Fenstertitel): Windows über PowerShell und System.Drawing, macOS über screencapture und sips (braucht die Berechtigung „Bildschirmaufnahme"), Linux über gnome-screenshot, ImageMagick oder scrot. Das Modell sieht Bilder aus Werkzeugergebnissen jetzt selbst: die Pipeline hängt Bildanhänge (höchstens drei je Runde, je bis 2 MB) als Bildblöcke hinter die Werkzeugergebnisse derselben Nachricht, ohne sie in die Gesprächshistorie zu schreiben. Damit beantwortet Alfred „was ist auf meinem Bildschirm" und „was ist das für ein Fehler" aus dem Bild; das Foto geht zusätzlich als Anhang an den Owner.
+
+### Security
+
+Geräte-Skills prüfen den Aufrufer: nur der Owner und seine verknüpften Identitäten bedienen seine Geräte. Andere Nutzer bekommen weder Dateilisten noch Bildschirmfotos.
+
+### Notes
+
+Windows Defender blockt ein PowerShell-Skript, das P/Invoke für das Fensterrechteck und CopyFromScreen zusammen enthält, ebenso CopyFromScreen mit JPEG-Qualitätsparameter. Die Aufnahme läuft deshalb in zwei Aufrufen und speichert ohne Qualitätsparameter.
+
 ## [0.19.0-jarvis.1267] - 2026-10-07
 
 ### Chore

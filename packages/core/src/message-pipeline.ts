@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { bildBloeckeAusAnhaengen, ohneBilder } from './interaktion/werkzeug-bilder.js'; // v1268
 import type {
   NormalizedMessage,
   LLMResponse,
@@ -1541,7 +1542,7 @@ export class MessagePipeline {
         // to avoid bloating the DB with 2 messages per iteration (which quickly exhausts
         // the history window, especially with HISTORY_WITH_SUMMARY = 6).
         accumulatedToolCalls.push(...response.toolCalls);
-        accumulatedToolResults.push(...toolResultBlocks);
+        accumulatedToolResults.push(...ohneBilder(toolResultBlocks)); // v1268 — Bildblöcke nicht in die Historie
 
         // Detect repeated identical errors: build a signature from error results
         const errorSignature = this.buildErrorSignature(toolResultBlocks);
@@ -1986,7 +1987,7 @@ export class MessagePipeline {
       onProgress?.(result.isError
         ? { kind: 'tool_error', text: `${tc.name} fehlgeschlagen`, tool: tc.name, durationMs }
         : { kind: 'tool_done',  text: `${tc.name} fertig`, tool: tc.name, durationMs });
-      return { blocks: [buildBlock(tc, result)], attachments: allAttachments };
+      return { blocks: [buildBlock(tc, result), ...bildBloeckeAusAnhaengen(allAttachments)], attachments: allAttachments }; // v1268 — Bilder sieht das Modell
     }
 
     // Multiple tool calls: execute with per-skill concurrency limit
@@ -2071,7 +2072,7 @@ export class MessagePipeline {
       }
     });
 
-    return { blocks, attachments: allAttachments };
+    return { blocks: [...blocks, ...bildBloeckeAusAnhaengen(allAttachments)], attachments: allAttachments }; // v1268
   }
 
   private async executeToolCall(

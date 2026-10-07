@@ -13469,6 +13469,15 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           skillRegistry: this.skillRegistry,
           serverVersion: (this.config as { version?: string }).version ?? 'jarvis',
           ownerUserId: () => this.ownerMasterUserId ?? this.tryOwner(),
+          // v1268 — Owner-Identitäten: Master, Plattform-ID aus der Config, verknüpfte IDs des Aufrufers
+          istOwner: (ctx) => {
+            const owner = new Set([this.ownerMasterUserId, this.tryOwner(), this.config.security?.ownerUserId].filter((x): x is string => !!x));
+            if (owner.size === 0) return true;
+            const ids = [ctx.masterUserId, ctx.userId, ...(ctx.linkedPlatformUserIds ?? [])].filter((x): x is string => !!x);
+            const ok = ids.some(id => owner.has(id));
+            if (!ok) this.logger.warn({ userId: ctx.userId, masterUserId: ctx.masterUserId, platform: ctx.platform }, 'v1268 Gerätezugriff eines Nicht-Owners abgewiesen');
+            return ok;
+          },
           ownerZiel: () => ({
             platform: this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api',
             chatId: this.config.security?.ownerUserId ?? '',

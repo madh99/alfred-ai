@@ -14,6 +14,7 @@ import { ladeKonfig, type GeraetKonfig } from './pair.js';
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad } from './satellit-dienst.js';
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
+import { bildschirmfoto } from './satellit-bildschirm.js'; // v1268
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
 let browserHand: BrowserHand | undefined;
@@ -60,6 +61,8 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'browser_tippen', beschreibung: 'Tippt Text in Element Nr. N (Suchfeld, Formular), optional mit Enter. Passwortfelder sind gesperrt', autonomie: 'bestaetigen', parameter: { element: { type: 'number', description: 'Nummer aus browser_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'Enter danach' } } },
       { name: 'browser_zurueck', beschreibung: 'Eine Seite zurück', autonomie: 'auto' },
       { name: 'browser_screenshot', beschreibung: 'Screenshot der aktuellen Seite (JPEG, an den Owner)', autonomie: 'auto' },
+      // v1268 — Bildschirm sehen: das Modell bekommt das Bild zu sehen und kann es beschreiben
+      { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler", „was zeigt mein PC gerade". Das Foto geht auch an den Owner.', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' } } },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
     ],
     sinne: ['leerlauf', 'fenster', 'akku'], // v1237
@@ -206,6 +209,12 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     case 'browser_screenshot': {
       const b64 = await browser(k).screenshot();
       return { success: true, data: { screenshotBase64: b64, mimeType: 'image/jpeg' }, display: 'Screenshot aufgenommen' };
+    }
+    // v1268 — Bildschirm sehen
+    case 'bildschirm': {
+      const bereich = params.bereich === 'fenster' ? 'fenster' : 'alles';
+      const f = await bildschirmfoto(bereich);
+      return { success: true, data: { screenshotBase64: f.jpegBase64, mimeType: 'image/jpeg', breite: f.breite, hoehe: f.hoehe, titel: f.titel, bereich: f.bereich }, display: `Bildschirmfoto (${f.bereich === 'fenster' ? 'aktives Fenster' : 'ganzer Bildschirm'}, ${f.breite}×${f.hoehe}${f.titel ? `, Fenster „${f.titel}"` : ''})` };
     }
     case 'browser_schliessen': {
       await browser(k).schliessen();
