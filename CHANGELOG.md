@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1291] - 2026-10-08
+
+### Fixed — Klare Fehler bei fehlendem Arbeitsverzeichnis, Warnung beim Koppeln (v1291)
+
+Realfall Office-VM 08.10.: PowerShell klebte die kommagetrennten Verzeichnisse beim `alfred pair` zu einem Pfad zusammen; der Satellit meldete nur „spawn powershell.exe ENOENT". `pair` warnt jetzt bei nicht vorhandenen Verzeichnissen, die Shell-Aktion meldet ein fehlendes Arbeitsverzeichnis mit Hinweis auf `freigaben`. Die Freigaben der VM wurden über den Chat mit `freigabe_aendern` repariert — der Weg aus .1272 hat sich damit bezahlt gemacht.
+
+### Notes
+
+1290 ist vom Owner im npm-Register veröffentlicht (Office-VM damit installiert). Dritter Satellit „Office-VM" (Windows 11, Office 365 16.0.20326, klassisches Outlook) gekoppelt.
+
 ## [0.19.0-jarvis.1290] - 2026-10-07
 
 ### Fixed — Satelliten-Update: `node` im PATH für Install-Skripte (v1290)

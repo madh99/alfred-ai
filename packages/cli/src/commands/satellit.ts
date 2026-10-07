@@ -213,7 +213,10 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const command = String(params.command ?? '').trim();
       if (!command) return { success: false, error: 'command fehlt' };
       const cwd = params.cwd ? String(params.cwd) : frei[0];
+      if (!cwd) return { success: false, error: 'Kein Arbeitsverzeichnis: es ist kein Verzeichnis mit Schreibrecht freigegeben (freigabe_aendern)' };
       if (!istPfadErlaubt(cwd, frei)) return { success: false, error: `Arbeitsverzeichnis nicht freigegeben (Schreibrecht nötig): ${cwd}. Mit Schreibrecht: ${frei.join(', ')}` };
+      // v1291 — Realfall Office-VM: Freigabe-Eintrag war ein zusammengeklebter Pfad → cwd existierte nicht → „spawn powershell.exe ENOENT" ohne Hinweis
+      if (!existsSync(cwd)) return { success: false, error: `Arbeitsverzeichnis existiert nicht: ${cwd} — Freigaben mit freigaben prüfen` };
       // v1227 — Realfall 19:43: „Start-Process brave.exe" scheiterte, weil exec() unter Windows cmd.exe nutzt.
       // Der Owner (und das Modell) denken auf Windows in PowerShell → dort PowerShell, sonst sh.
       return await new Promise<Ergebnis>((resolve) => {

@@ -72,6 +72,10 @@ export async function pairCommand(opts: { server?: string; code?: string; name?:
   const server = opts.server.replace(/\/+$/, '');
   const name = opts.name ?? os.hostname();
   const freigegebene = (opts.verzeichnisse ? opts.verzeichnisse.split(/[;,]/).map(s => s.trim()).filter(Boolean) : SATELLIT_STANDARD_VERZEICHNISSE());
+  // v1291 — Realfall Office-VM: PowerShell klebte zwei kommagetrennte Argumente mit Leerzeichen zusammen → ein Pfad, der nicht existiert
+  for (const v of freigegebene) {
+    if (!existsSync(v)) console.error(`  WARNUNG: Verzeichnis existiert nicht: ${v} — in PowerShell die Liste in EIN Anführungszeichenpaar setzen, Trenner ; oder ,`);
+  }
   const manifest = baueManifest(getVersion());
   const dispatcher = opts.insecure ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
   const res = await undiciFetch(`${server}/api/geraete/pair`, {
