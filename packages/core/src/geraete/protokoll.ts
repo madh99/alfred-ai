@@ -39,7 +39,7 @@ export function pruefeManifest(m: unknown): { ok: true; manifest: GeraetManifest
   const r = m as Record<string, unknown>;
   if (r.protokoll !== 1) return { ok: false, grund: 'Protokollversion nicht unterstützt' };
   if (!PLATTFORMEN.includes(r.plattform as GeraetPlattform)) return { ok: false, grund: 'Plattform unbekannt' };
-  if (!Array.isArray(r.aktionen) || r.aktionen.length > 30) return { ok: false, grund: 'Aktionen fehlen oder zu viele' };
+  if (!Array.isArray(r.aktionen) || r.aktionen.length > 40) return { ok: false, grund: 'Aktionen fehlen oder zu viele' }; // v1292 — Office-Aktionen: 30 → 40
   const namen = new Set<string>();
   for (const a of r.aktionen as unknown[]) {
     const x = a as Record<string, unknown>;

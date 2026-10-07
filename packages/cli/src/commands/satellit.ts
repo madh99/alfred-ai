@@ -20,6 +20,7 @@ import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fe
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
 import { Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js'; // v1276
+import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
 let browserHand: BrowserHand | undefined;
@@ -89,6 +90,18 @@ export function baueManifest(version: string): GeraetManifest {
       // v1268 — Bildschirm sehen: das Modell bekommt das Bild zu sehen und kann es beschreiben
       { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler". Mit markieren=true trägt es die Nummern der letzten Element-Karte ein (Windows).', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' }, markieren: { type: 'boolean', description: 'Nummern der Element-Karte (fenster_lesen) ins Bild zeichnen' } } },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
+      // v1292 — Office über COM (nur Windows mit klassischem Outlook-Profil bzw. Excel): Schnittstelle statt Oberfläche
+      ...(outlookVorhanden() ? [
+        { name: 'outlook_mails', beschreibung: 'Liest Outlook auf diesem Gerät: ohne id die neuesten Mails des Posteingangs (Absender, Betreff, Vorschau; optional nur ungelesen, Suchtext, Ordner), mit id eine Mail vollständig', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'EntryID aus der Liste → ganze Mail lesen' }, anzahl: { type: 'number', description: 'Anzahl (Standard 15, max 50)' }, ungelesen: { type: 'boolean', description: 'nur ungelesene' }, suche: { type: 'string', description: 'Text in Betreff oder Absender' }, ordner: { type: 'string', description: 'posteingang (Standard), entwuerfe, gesendet' } } },
+        { name: 'outlook_entwurf', beschreibung: 'Legt in Outlook einen Mail-Entwurf an (neu oder Antwort auf id) — gespeichert und geöffnet, NICHT gesendet. Senden ist ein eigener Schritt (outlook_senden).', autonomie: 'bestaetigen' as const, parameter: { an: { type: 'string', description: 'Empfänger (bei Antwort leer lassen)' }, betreff: { type: 'string', description: 'Betreff' }, text: { type: 'string', description: 'Mailtext' }, cc: { type: 'string', description: 'CC (optional)' }, antwortAuf: { type: 'string', description: 'EntryID der Mail, auf die geantwortet wird (optional)' }, anhaenge: { type: 'string', description: 'Dateipfade aus freigegebenen Verzeichnissen, durch ; getrennt (optional)' } } },
+        { name: 'outlook_senden', beschreibung: 'Sendet einen vorhandenen Outlook-Entwurf (id aus outlook_entwurf oder Ordner entwuerfe)', autonomie: 'bestaetigen' as const, parameter: { id: { type: 'string', description: 'EntryID des Entwurfs' } } },
+        { name: 'outlook_termine', beschreibung: 'Liest Termine aus dem Outlook-Kalender dieses Geräts (Standard: heute bis in 7 Tagen, Serien aufgelöst)', autonomie: 'auto' as const, parameter: { von: { type: 'string', description: 'Datum JJJJ-MM-TT (Standard heute)' }, bis: { type: 'string', description: 'Datum JJJJ-MM-TT (Standard heute + 7)' }, anzahl: { type: 'number', description: 'max. Anzahl (Standard 40)' } } },
+        { name: 'outlook_termin_anlegen', beschreibung: 'Legt einen Termin im Outlook-Kalender an (gespeichert; Einladungen an Teilnehmer werden NICHT versendet)', autonomie: 'bestaetigen' as const, parameter: { betreff: { type: 'string', description: 'Betreff' }, start: { type: 'string', description: 'Beginn JJJJ-MM-TT HH:MM' }, ende: { type: 'string', description: 'Ende JJJJ-MM-TT HH:MM' }, ort: { type: 'string', description: 'Ort (optional)' }, text: { type: 'string', description: 'Notiz (optional)' }, teilnehmer: { type: 'string', description: 'Teilnehmer-Adressen, durch ; getrennt (optional)' } } },
+      ] : []),
+      ...(excelVorhanden() ? [
+        { name: 'excel_lesen', beschreibung: 'Liest einen Bereich aus einer Excel-Datei in einem freigegebenen Verzeichnis (unsichtbar, nur lesend; max. 200 Zeilen × 30 Spalten)', autonomie: 'auto' as const, parameter: { datei: { type: 'string', description: 'Pfad der .xlsx' }, blatt: { type: 'string', description: 'Blattname (Standard erstes Blatt)' }, bereich: { type: 'string', description: 'z. B. A1:F20 (Standard: benutzter Bereich)' } } },
+        { name: 'excel_schreiben', beschreibung: 'Schreibt einen Wert in eine Zelle einer Excel-Datei in einem freigegebenen Verzeichnis mit Schreibrecht und speichert', autonomie: 'bestaetigen' as const, parameter: { datei: { type: 'string', description: 'Pfad der .xlsx' }, blatt: { type: 'string', description: 'Blattname (optional)' }, zelle: { type: 'string', description: 'z. B. B7' }, wert: { type: 'string', description: 'Wert oder Formel (=SUMME(…))' } } },
+      ] : []),
     ],
     sinne: ['leerlauf', 'fenster', 'akku'], // v1237
   };
@@ -149,6 +162,51 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     case 'taste': {
       const keys = await bedienen(k).taste(String(params.kombi ?? ''));
       return { success: true, data: { kombi: params.kombi, sendkeys: keys }, display: `Taste ${String(params.kombi)} gesendet. Karte verfallen: fenster_lesen vor dem nächsten Schritt.` };
+    }
+    // v1292 — Office über COM
+    case 'outlook_mails': {
+      if (params.id) {
+        const m = await outlookMailLesen(String(params.id));
+        return { success: true, data: m, display: `Mail auf ${k.name}: Von ${m.von} · ${m.datum}\nAn: ${m.an}${m.cc ? ` · CC: ${m.cc}` : ''}\nBetreff: ${m.betreff}${m.anhaenge.length ? `\nAnhänge: ${m.anhaenge.join(', ')}` : ''}\n\n${m.text}${m.gekuerzt ? '\n[… gekürzt]' : ''}` };
+      }
+      const ordner = ['posteingang', 'entwuerfe', 'gesendet'].includes(String(params.ordner)) ? String(params.ordner) as 'posteingang' | 'entwuerfe' | 'gesendet' : 'posteingang';
+      const r = await outlookPosteingang({ anzahl: Number(params.anzahl) || undefined, ungelesen: params.ungelesen === true || params.ungelesen === 'true', suche: params.suche ? String(params.suche) : undefined, ordner });
+      const zeile = (m: { id: string; datum: string; von: string; betreff: string; ungelesen: boolean; anhaenge: number; vorschau?: string }) => `- ${m.ungelesen ? '● ' : ''}${m.datum.slice(0, 16).replace('T', ' ')} ${m.von} — ${m.betreff}${m.anhaenge ? ` [${m.anhaenge} Anh.]` : ''} (id ${m.id.slice(-12)})`;
+      return { success: true, data: r, display: `${r.ordner} auf ${k.name}: ${r.gesamt} Mails, ${r.ungelesen} ungelesen — ${r.mails.length} gezeigt:\n${r.mails.map(zeile).join('\n') || '(keine)'}\nGanze Mail: outlook_mails mit id (volle EntryID in data).` };
+    }
+    case 'outlook_entwurf': {
+      const anhaenge = params.anhaenge ? String(params.anhaenge).split(';').map(p => p.trim()).filter(Boolean) : [];
+      for (const p of anhaenge) if (!istPfadErlaubt(p, lesbar)) return { success: false, error: `Anhang nicht in einem freigegebenen Verzeichnis: ${p}` };
+      const r = await outlookEntwurf({ an: String(params.an ?? ''), betreff: String(params.betreff ?? ''), text: String(params.text ?? ''), cc: params.cc ? String(params.cc) : undefined, antwortAuf: params.antwortAuf ? String(params.antwortAuf) : undefined, anhaenge });
+      return { success: true, data: r, display: `Entwurf in Outlook angelegt und geöffnet: „${r.betreff}" an ${r.an || '(kein Empfänger)'} — NICHT gesendet. Senden: outlook_senden mit id ${r.id}` };
+    }
+    case 'outlook_senden': {
+      if (!params.id) return { success: false, error: 'id des Entwurfs fehlt' };
+      const r = await outlookSenden(String(params.id));
+      return r.gesendet ? { success: true, data: r, display: `Gesendet: „${r.betreff}" an ${r.an}` } : { success: false, error: `Nicht gesendet: „${r.betreff}" (schon gesendet oder kein Entwurf)` };
+    }
+    case 'outlook_termine': {
+      const r = await outlookTermine({ von: params.von ? String(params.von) : undefined, bis: params.bis ? String(params.bis) : undefined, anzahl: Number(params.anzahl) || undefined });
+      const zeile = (t: { start: string; ende: string; betreff: string; ort: string; ganztags: boolean }) => `- ${t.ganztags ? t.start.slice(0, 10) + ' ganztags' : t.start.slice(0, 16).replace('T', ' ') + '–' + t.ende.slice(11, 16)} ${t.betreff}${t.ort ? ` (${t.ort})` : ''}`;
+      return { success: true, data: r, display: `Termine ${r.von} bis ${r.bis} auf ${k.name} (${r.termine.length}):\n${r.termine.map(zeile).join('\n') || '(keine)'}` };
+    }
+    case 'outlook_termin_anlegen': {
+      if (!params.betreff || !params.start || !params.ende) return { success: false, error: 'betreff, start und ende sind nötig' };
+      const r = await outlookTerminAnlegen({ betreff: String(params.betreff), start: String(params.start), ende: String(params.ende), ort: params.ort ? String(params.ort) : undefined, text: params.text ? String(params.text) : undefined, teilnehmer: params.teilnehmer ? String(params.teilnehmer) : undefined });
+      return { success: true, data: r, display: `Termin angelegt: „${r.betreff}" ${r.start.replace('T', ' ')} bis ${r.ende.slice(11, 16)}` };
+    }
+    case 'excel_lesen': {
+      const datei = String(params.datei ?? '');
+      if (!istPfadErlaubt(datei, lesbar)) return { success: false, error: `Datei nicht in einem freigegebenen Verzeichnis: ${datei}` };
+      const r = await excelLesen({ datei, blatt: params.blatt ? String(params.blatt) : undefined, bereich: params.bereich ? String(params.bereich) : undefined });
+      return { success: true, data: r, display: `${path.basename(datei)} · Blatt ${r.blatt} · ${r.bereich}${r.gekuerzt ? ' (gekürzt)' : ''}:\n${r.zeilen.map(z => z.join(' | ')).join('\n')}` };
+    }
+    case 'excel_schreiben': {
+      const datei = String(params.datei ?? '');
+      if (!istPfadErlaubt(datei, frei)) return { success: false, error: `Datei nicht in einem Verzeichnis mit Schreibrecht: ${datei}` };
+      if (!params.zelle) return { success: false, error: 'zelle fehlt' };
+      const r = await excelSchreiben({ datei, blatt: params.blatt ? String(params.blatt) : undefined, zelle: String(params.zelle), wert: String(params.wert ?? '') });
+      return { success: true, data: r, display: `${path.basename(datei)} · ${r.blatt}!${r.zelle} = ${r.wert} (gespeichert)` };
     }
     // v1275 — Systembenachrichtigungen
     case 'benachrichtigungen': {

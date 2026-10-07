@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1292] - 2026-10-08
+
+### Added — Office über COM auf Windows-Satelliten (v1292)
+
+Satelliten mit klassischem Outlook (eingerichtetes Profil) bieten jetzt Office-Aktionen über die COM-Schnittstelle statt über die Oberfläche: `outlook_mails` (Posteingang, Entwürfe, Gesendet auflisten; mit id eine Mail vollständig lesen), `outlook_entwurf` (neu oder Antwort, gespeichert und geöffnet, nie gesendet), `outlook_senden` (eigener Schritt mit eigener Bestätigung), `outlook_termine` (Kalender mit aufgelösten Serien) und `outlook_termin_anlegen`. Mit Excel kommen `excel_lesen` (unsichtbar, nur lesend, bis 200 × 30 Zellen) und `excel_schreiben` (eine Zelle, nur in Verzeichnissen mit Schreibrecht) dazu. Lesen ist `auto`, alles Speichernde oder Sendende `bestaetigen`; Anhänge und Dateien bleiben an die Freigaben gebunden. Outlook ohne Profil (COM würde den Einrichtungsdialog öffnen) bietet die Aktionen nicht an. Das Gehirn akzeptiert Manifeste mit bis zu 40 Aktionen (bisher 30).
+
 ## [0.19.0-jarvis.1291] - 2026-10-08
 
 ### Fixed — Klare Fehler bei fehlendem Arbeitsverzeichnis, Warnung beim Koppeln (v1291)
