@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1288] - 2026-10-07
+
+### Fixed — Satellit räumt alte Installationen auf (v1288)
+
+Befund PC 07.10.: 22 Versionen unter ~/.alfred/cli, je rund 800 MB. Der Satellit entfernt nach jedem Verbinden alle Installationen außer der laufenden und der vorigen.
+
 ## [0.19.0-jarvis.1287] - 2026-10-07
 
 ### Fixed — Satelliten-Update: npm über node + npm-cli.js, ohne PATH und Shell (v1287)

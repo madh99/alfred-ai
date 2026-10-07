@@ -119,7 +119,8 @@ describe('Selbstupdate', () => {
     const tgz = tarball('0.19.0-jarvis.1270');
     writeFileSync(`${tgz}.sha256`, 'f'.repeat(64));
     const neustart = vi.fn(); const melde = vi.fn(async (_t: string) => undefined); const installiere = fakeInstaller();
-    const su = new Selbstupdate({ eigeneVersion: '0.19.0-jarvis.1265', eingangOrdner: eingang, cliOrdner: cli, logger, ruhe: () => ({ vorhaben: 0, hoeren: 0 }), melde, neustart, installiere, probe: async () => undefined, warteMs: 10 });
+    // jetzt injiziert: mit der echten Uhr hing der Test im Pass-Fenster (:27–:32) fest (Realfall 07.10. 22:30)
+    const su = new Selbstupdate({ eigeneVersion: '0.19.0-jarvis.1265', eingangOrdner: eingang, cliOrdner: cli, logger, ruhe: () => ({ vorhaben: 0, hoeren: 0 }), melde, neustart, installiere, probe: async () => undefined, warteMs: 10, jetzt: () => new Date(2026, 9, 7, 12, 10) });
     su.starte({ art: 'datei' }, '0.19.0-jarvis.1270');
     await vi.waitFor(() => expect(su.status()?.phase).toBe('fehler'));
     expect(su.status()?.hinweis).toMatch(/Prüfsumme/);
@@ -131,8 +132,8 @@ describe('Selbstupdate', () => {
     // danach darf ein neuer Lauf starten
     writeFileSync(`${tgz}.sha256`, sha256Datei(tgz));
     expect(() => su.starte({ art: 'datei' }, '0.19.0-jarvis.1270')).not.toThrow();
-    await vi.waitFor(() => expect(neustart).toHaveBeenCalled()); // Lauf zu Ende, bevor afterEach aufräumt
-  });
+    await vi.waitFor(() => expect(neustart).toHaveBeenCalled(), { timeout: 8000 }); // Lauf zu Ende, bevor afterEach aufräumt (tar + Dateisystem können langsam sein)
+  }, 20_000);
 
   it('nachStart: frische Version bestätigt sich nach der Frist und räumt alte Versionen', async () => {
     const e70 = einstiegVon(cli, '0.19.0-jarvis.1270'); mkdirSync(path.dirname(e70), { recursive: true }); writeFileSync(e70, '');

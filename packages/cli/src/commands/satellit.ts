@@ -7,8 +7,8 @@ import WebSocket from 'ws';
 import type { GeraetManifest, GeraetNachricht, GeraetPlattform } from '@alfred/types';
 import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS, TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from '@alfred/core';
 import { geraetAnfrage, geraetJson } from './geraet-http.js'; // v1249
-import { aktualisiereWennNeuer, bestaetigeAktuell, merkeReleaseKey, NEUSTART_CODE } from './satellit-update.js'; // v1258
-import { vergleicheVersion } from '@alfred/core';
+import { aktualisiereWennNeuer, bestaetigeAktuell, merkeReleaseKey, NEUSTART_CODE, ladeAktuell } from './satellit-update.js'; // v1258
+import { vergleicheVersion, raeumeVersionen } from '@alfred/core';
 import { getVersion } from '../version.js';
 import { ladeKonfig, speichereKonfig, konfigPfad, type GeraetKonfig } from './pair.js';
 import { cliOrdner } from './satellit-update.js'; // v1274
@@ -464,6 +464,8 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             const rk = merkeReleaseKey((n as { releaseKey?: unknown }).releaseKey);
             if (rk === 'gemerkt') log('Release-Schlüssel des Servers gemerkt'); else if (rk === 'abweichend') fehler('WARNUNG: Release-Schlüssel des Servers weicht vom gemerkten ab — Updates werden abgelehnt');
             bestaetigeAktuell(version);
+            // v1288 — alte Installationen aufräumen (Befund PC 07.10.: 22 Versionen, je ~800 MB); bleibt: laufende + vorige
+            try { const a = ladeAktuell(); const weg = raeumeVersionen([version, a?.version ?? '', a?.vorige ?? '']); if (weg.length) log(`Alte Versionen entfernt: ${weg.join(', ')}`); } catch { /* beim nächsten Mal */ }
             if (rk !== 'abweichend' && !process.env.ALFRED_KEIN_UPDATE) pruefeUpdate(String(n.serverVersion ?? ''));
             return;
           }
