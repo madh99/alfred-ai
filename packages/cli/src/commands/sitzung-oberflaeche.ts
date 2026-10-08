@@ -5,7 +5,13 @@ import readline from 'node:readline';
  * Satellit) spricht nur noch mit dieser Schnittstelle; dahinter steht entweder die bisherige readline-Ausgabe
  * (Rückfall für Skripte, Tests, Terminals ohne Rohmodus, `--einfach`) oder die Ink-Oberfläche (`sitzung-ink.tsx`).
  */
-export type Taste = 'strg+t' | 'ja' | 'nein' | 'lage' | 'ende' | 'hoeren'; // v1307 hoeren = Strg+G
+export type Taste = 'strg+t' | 'ja' | 'nein' | 'lage' | 'ende' | 'hoeren' | 'einstellungen'; // v1307 hoeren = Strg+G, v1309 einstellungen = Strg+E
+
+/** v1309 — Einstellungen für die Oberfläche: Liste lesen, Befehl anwenden (derselbe Weg wie /einstellungen und alfred einstellungen). */
+export interface EinstellungenAnbindung {
+  liste: () => import('./satellit-einstellungen.js').Einstellung[];
+  befehl: (zeile: string) => string;
+}
 
 export interface SitzungStatus {
   geraet: string; version: string; server: string;
@@ -31,6 +37,8 @@ export interface Oberflaeche {
   aufEingabe(cb: (zeile: string) => void): void;
   /** v1306 — `nr` nennt die gewählte Bestätigung (1-basiert, Reihenfolge wie /offen); ohne nr gilt die jüngste. */
   aufTaste(cb: (t: Taste, nr?: number) => void): void;
+  /** v1309 — Einstellungsbild (Ink: Strg+E); readline zeigt die Liste über /einstellungen. */
+  einstellungen?(a: EinstellungenAnbindung): void;
   schliessen(): void;
 }
 
@@ -48,6 +56,7 @@ export class ReadlineOberflaeche implements Oberflaeche {
     inp.on('keypress', (_ch: string, key: { ctrl?: boolean; name?: string } | undefined) => {
       if (key?.ctrl && key.name === 't') this.tasteCb?.('strg+t');
       if (key?.ctrl && key.name === 'g') this.tasteCb?.('hoeren'); // v1307
+      if (key?.ctrl && key.name === 'e') this.tasteCb?.('einstellungen'); // v1309
     });
   }
   private loescheZeile(): void { readline.clearLine(this.out, 0); readline.cursorTo(this.out, 0); }

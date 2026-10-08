@@ -26,6 +26,12 @@ export interface GeraetKonfig {
   /** v1281 — optional: kein Bildschirmfoto, wenn der Titel des aktiven Fensters eines dieser Muster enthält (Standard: keine Sperre). */
   fotoSperre?: string[];
   erlaubteProgramme: string[];
+  /** v1252 — Wort fürs Zuhören (Standard „Alfred"); v1309 über die Einstellungen pflegbar. */
+  aktivierungswort?: string;
+  /** v1237 — Fenstertitel nicht in den Sinnen mitsenden. */
+  sinneOhneFenster?: boolean;
+  /** v1309 — Sitzung mit einfacher Ausgabe statt Ink starten. */
+  sitzungEinfach?: boolean;
   /** v1258 — öffentlicher Release-Schlüssel des Servers (beim ersten Willkommen gemerkt). */
   releaseKey?: string;
 }

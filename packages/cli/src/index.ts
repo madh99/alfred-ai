@@ -19,6 +19,7 @@ Commands:
   start          Start Alfred (load config, bootstrap, and run)
   chat           Auf gekoppelten Geräten: die Sitzung (wie alfred sitzung); sonst Terminal-Chat zum Server (--model, --tier)
   pair           Dieses Gerät mit Alfred koppeln (--server <url> --code <Code> [--name] [--insecure] [--verzeichnisse "a;b"])
+  einstellungen  Satelliten-Einstellungen anzeigen oder ändern (freigabe, fenster-sperre, foto-sperre, wort, sinne-fenster, oberflaeche)
   sitzung        EIN Terminal für alles: Chat als Owner, Sprache (/talk, /hören, /stimme), Bestätigungen (/ja, /nein), Satellit (--ohne-satellit, --einfach = ohne Ink-Oberfläche)
   satellit       Gerätedienst: Verbindung zum Gehirn halten, Aktionen lokal ausführen (--einmal, --install, --starter = alfred in den PATH)
                    --install    als Autostart-Dienst einrichten (Aufgabenplanung / launchd / systemd --user)
@@ -127,6 +128,12 @@ async function main(): Promise<void> {
     case 'start': {
       const { startCommand } = await import('./commands/start.js');
       await startCommand();
+      break;
+    }
+
+    case 'einstellungen': { // v1309 — Satelliten-Einstellungen ohne Sitzung: anzeigen oder einen Befehl anwenden
+      const { einstellungenCommand } = await import('./commands/sitzung-einstellungen.js');
+      await einstellungenCommand(process.argv.slice(process.argv.indexOf('einstellungen') + 1));
       break;
     }
 

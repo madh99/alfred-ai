@@ -20,7 +20,7 @@ export type IpcNachricht =
   | { typ: 'status'; status: SatellitStatus }
   | { typ: 'ereignis'; zeit: string; art: IpcEreignisArt; text: string }
   | { typ: 'bestaetigung'; bestaetigung: BestaetigungKurz }
-  | { typ: 'befehl'; befehl: 'status' | 'beenden' };
+  | { typ: 'befehl'; befehl: 'status' | 'beenden' | 'neuladen' }; // v1309 neuladen = geraet.json neu lesen (Einstellungen)
 
 export function ipcPfad(): string {
   if (process.platform === 'win32') {
@@ -49,7 +49,7 @@ export class IpcServer {
   private readonly clients = new Set<net.Socket>();
   constructor(
     private readonly statusQuelle: () => SatellitStatus,
-    private readonly beiBefehl: (befehl: 'status' | 'beenden', antworte: (n: IpcNachricht) => void) => void,
+    private readonly beiBefehl: (befehl: 'status' | 'beenden' | 'neuladen', antworte: (n: IpcNachricht) => void) => void,
     private readonly pfad: string = ipcPfad(),
   ) {}
 

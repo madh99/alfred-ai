@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { render, Box, Text, Static, useInput, usePaste, useStdout, type Instance } from 'ink';
-import type { Oberflaeche, SitzungStatus, Taste } from './sitzung-oberflaeche.js';
+import type { Oberflaeche, SitzungStatus, Taste, EinstellungenAnbindung } from './sitzung-oberflaeche.js';
+import type { Einstellung } from './satellit-einstellungen.js';
 
 /**
  * v1303 — Ink-Oberfläche der Sitzung (Spec §8 Punkt 3): Verlauf (scrollt mit dem Terminal), laufende Antwort, flüchtige
@@ -97,7 +98,62 @@ export function eingabeTaste(e: Eingabe, input: string, key: { leftArrow?: boole
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEingabe: (z: string) => void; aufTaste: (t: Taste, nr?: number) => void }) {
+/** v1309 — Zustand des Einstellungsbilds (Strg+E). */
+interface EinstellungenSicht { offen: boolean; liste: Einstellung[]; auswahl: number; modus: 'liste' | 'eintraege' | 'text'; eintrag: number; text: Eingabe; zweck: 'wort' | 'neu' | ''; meldung: string }
+const SICHT_ZU: EinstellungenSicht = { offen: false, liste: [], auswahl: 0, modus: 'liste', eintrag: 0, text: { text: '', cursor: 0 }, zweck: '', meldung: '' };
+
+/** Eintrag „pfad (lesen)" → Befehl zum Umschalten bzw. Entfernen. Rein, testbar. */
+export function eintragBefehl(schluessel: string, eintrag: string, aktion: 'umschalten' | 'entfernen'): string | undefined {
+  if (schluessel === 'freigabe') {
+    const m = /^(.*) \((lesen|schreiben)\)$/.exec(eintrag);
+    if (!m) return undefined;
+    return `freigabe ${m[1]} ${aktion === 'entfernen' ? 'keins' : (m[2] === 'lesen' ? 'schreiben' : 'lesen')}`;
+  }
+  if (schluessel === 'fenster-sperre' || schluessel === 'foto-sperre') return aktion === 'entfernen' ? `${schluessel} - ${eintrag}` : undefined;
+  return undefined;
+}
+
+function Sitzung({ speicher, aufEingabe, aufTaste, anbindung }: { speicher: Speicher; aufEingabe: (z: string) => void; aufTaste: (t: Taste, nr?: number) => void; anbindung: () => EinstellungenAnbindung | undefined }) {
+  const [sicht, setSicht] = useState<EinstellungenSicht>(SICHT_ZU);
+  const oeffneEinstellungen = () => { const a = anbindung(); if (!a) return; setSicht({ ...SICHT_ZU, offen: true, liste: a.liste() }); };
+  const wende = (befehl: string, s: EinstellungenSicht): EinstellungenSicht => {
+    const a = anbindung(); if (!a) return s;
+    const meldung = a.befehl(befehl);
+    return { ...s, liste: a.liste(), meldung, modus: s.modus === 'text' ? (s.zweck === 'wort' ? 'liste' : 'eintraege') : s.modus, zweck: '' };
+  };
+  const einstellungTaste = (input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]): void => {
+    const s = sicht;
+    const e = s.liste[s.auswahl];
+    if (s.modus === 'text') {
+      if (key.escape) { setSicht({ ...s, modus: s.zweck === 'wort' ? 'liste' : 'eintraege', zweck: '' }); return; }
+      if (key.return) {
+        const t = s.text.text.trim();
+        if (!t || !e) { setSicht({ ...s, modus: s.zweck === 'wort' ? 'liste' : 'eintraege', zweck: '' }); return; }
+        const befehl = s.zweck === 'wort' ? `wort ${t}` : e.schluessel === 'freigabe' ? `freigabe ${t} lesen` : `${e.schluessel} + ${t}`;
+        setSicht(wende(befehl, { ...s, text: { text: '', cursor: 0 } })); return;
+      }
+      setSicht({ ...s, text: eingabeTaste(s.text, input, key) }); return;
+    }
+    if (s.modus === 'eintraege') {
+      const eintraege = e?.eintraege ?? [];
+      const i = Math.min(s.eintrag, Math.max(0, eintraege.length - 1));
+      if (key.escape) { setSicht({ ...s, modus: 'liste' }); return; }
+      if (key.upArrow) { setSicht({ ...s, eintrag: Math.max(0, i - 1) }); return; }
+      if (key.downArrow) { setSicht({ ...s, eintrag: Math.min(Math.max(0, eintraege.length - 1), i + 1) }); return; }
+      if (input === '+') { setSicht({ ...s, modus: 'text', zweck: 'neu', text: { text: '', cursor: 0 } }); return; }
+      if (e && eintraege[i] && (key.delete || key.backspace || input === '-')) { const b = eintragBefehl(e.schluessel, eintraege[i]!, 'entfernen'); if (b) setSicht(wende(b, { ...s, eintrag: Math.max(0, i - 1) })); return; }
+      if (e && eintraege[i] && key.return) { const b = eintragBefehl(e.schluessel, eintraege[i]!, 'umschalten'); if (b) setSicht(wende(b, s)); return; }
+      return;
+    }
+    if (key.escape) { setSicht(SICHT_ZU); return; }
+    if (key.upArrow) { setSicht({ ...s, auswahl: Math.max(0, s.auswahl - 1), meldung: '' }); return; }
+    if (key.downArrow) { setSicht({ ...s, auswahl: Math.min(s.liste.length - 1, s.auswahl + 1), meldung: '' }); return; }
+    if (key.return && e) {
+      if (e.art === 'schalter') { setSicht(wende(e.schluessel === 'oberflaeche' ? `oberflaeche ${e.wert === 'ink' ? 'einfach' : 'ink'}` : `sinne-fenster ${e.wert === 'an' ? 'aus' : 'an'}`, s)); return; }
+      if (e.art === 'text') { setSicht({ ...s, modus: 'text', zweck: 'wort', text: { text: e.wert, cursor: e.wert.length } }); return; }
+      if (e.art === 'liste') { setSicht({ ...s, modus: 'eintraege', eintrag: 0 }); return; }
+    }
+  };
   const [z, setZ] = useState(speicher.z);
   const [e, setE] = useState<Eingabe>({ text: '', cursor: 0 });
   const [verlaufEingaben, setVerlaufEingaben] = useState<string[]>([]);
@@ -121,6 +177,8 @@ function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEi
     if (key.ctrl && input === 't') { aufTaste('strg+t'); return; }
     if (key.ctrl && input === 'l') { aufTaste('lage'); return; }
     if (key.ctrl && input === 'g') { aufTaste('hoeren'); return; } // v1307 — Zuhören an/aus (Strg+H wäre die Rücktaste)
+    if (key.ctrl && input === 'e') { if (sicht.offen) setSicht(SICHT_ZU); else oeffneEinstellungen(); return; } // v1309
+    if (sicht.offen && !(key.ctrl && (input === 'q' || input === 'd'))) { einstellungTaste(input, key); return; }
     if (key.ctrl && (input === 'q' || input === 'd')) { aufTaste('ende'); return; }
     if (key.meta && (input === 'j' || input === 'J')) { aufTaste('ja'); return; }
     if (key.meta && (input === 'n' || input === 'N')) { aufTaste('nein'); return; }
@@ -188,11 +246,24 @@ function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEi
           })}
         </Box>
       ) : null}
+      {sicht.offen ? (
+        <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} marginTop={1}>
+          <Text color="magenta" bold>Einstellungen — {sicht.modus === 'liste' ? '↑/↓ wählen · Enter öffnen/umschalten · Esc oder Strg+E schließen' : sicht.modus === 'eintraege' ? '↑/↓ wählen · Enter lesen↔schreiben · Entf/- entfernen · + hinzufügen · Esc zurück' : 'Text eingeben · Enter übernehmen · Esc abbrechen'}</Text>
+          {sicht.liste.map((e, i) => (
+            <Box key={e.schluessel} flexDirection="column">
+              <Text inverse={sicht.modus === 'liste' && i === sicht.auswahl} dimColor={e.art === 'info'}>{sicht.modus === 'liste' && i === sicht.auswahl ? '▶ ' : '  '}{e.titel}: {e.wert}{e.hinweis && i === sicht.auswahl ? <Text dimColor>  ({e.hinweis})</Text> : null}</Text>
+              {i === sicht.auswahl && sicht.modus === 'eintraege' ? (e.eintraege?.length ? e.eintraege.map((x, j) => <Text key={x} inverse={j === Math.min(sicht.eintrag, e.eintraege!.length - 1)}>{'     '}{x}</Text>) : <Text dimColor>{'     '}(leer — + fügt hinzu)</Text>) : null}
+              {i === sicht.auswahl && sicht.modus === 'text' ? <Text>{'     '}{sicht.zweck === 'wort' ? 'Wort: ' : 'Neu: '}{sicht.text.text.slice(0, sicht.text.cursor)}<Text inverse>{sicht.text.text.charAt(sicht.text.cursor) || ' '}</Text>{sicht.text.text.slice(sicht.text.cursor + 1)}</Text> : null}
+            </Box>
+          ))}
+          {sicht.meldung ? <Text color="green">{sicht.meldung}</Text> : null}
+        </Box>
+      ) : null}
       <Box borderStyle="single" borderColor="gray" paddingX={1} marginTop={1} flexDirection="column">
         <Text dimColor wrap="wrap">{statusText}</Text>
         <Text>{z.label}{e.text.slice(0, e.cursor)}<Text inverse>{e.text.charAt(e.cursor) || ' '}</Text>{e.text.slice(e.cursor + 1)}</Text>
       </Box>
-      {spalten >= 70 ? <Text dimColor>Enter sendet · Strg+N oder \ am Zeilenende = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+G zuhören · Strg+B Bestätigungen · Strg+L Lage · Strg+Q Ende</Text> : null}
+      {spalten >= 70 ? <Text dimColor>Enter sendet · Strg+N oder \ am Zeilenende = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+G zuhören · Strg+B Bestätigungen · Strg+E Einstellungen · Strg+L Lage · Strg+Q Ende</Text> : null}
     </Box>
   );
 }
@@ -207,7 +278,7 @@ export class InkOberflaeche implements Oberflaeche {
   constructor(status: SitzungStatus, private readonly opts: InkOptionen = {}) { this.speicher = new Speicher(status); }
   start(): void {
     this.instanz = render(
-      <Sitzung speicher={this.speicher} aufEingabe={(z) => this.eingabeCb(z)} aufTaste={(t, nr) => this.tasteCb(t, nr)} />,
+      <Sitzung speicher={this.speicher} aufEingabe={(z) => this.eingabeCb(z)} aufTaste={(t, nr) => this.tasteCb(t, nr)} anbindung={() => this.anbindung} />,
       { stdout: this.opts.stdout ?? process.stdout, stdin: this.opts.stdin ?? process.stdin, debug: this.opts.debug ?? false, exitOnCtrlC: false, patchConsole: false },
     );
   }
@@ -231,6 +302,8 @@ export class InkOberflaeche implements Oberflaeche {
   prompt(label?: string): void { if (label !== undefined) this.speicher.aendere(z => { z.label = label; }); }
   aufEingabe(cb: (zeile: string) => void): void { this.eingabeCb = cb; }
   aufTaste(cb: (t: Taste, nr?: number) => void): void { this.tasteCb = cb; }
+  private anbindung?: EinstellungenAnbindung;
+  einstellungen(a: EinstellungenAnbindung): void { this.anbindung = a; } // v1309
   schliessen(): void { try { this.instanz?.unmount(); } catch { /* */ } }
 }
 

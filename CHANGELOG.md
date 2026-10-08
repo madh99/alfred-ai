@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1309] - 2026-10-08
+
+### Added — Einstellungen des Satelliten: Bild in der Sitzung, Befehle, `alfred einstellungen` (v1309)
+
+Owner 08.10.: „es fehlt eine Setup- bzw. Config-Oberfläche". Alles, was in `geraet.json` lebt und der Owner selbst ändern darf, gibt es jetzt an drei Stellen über denselben Weg: Strg+E in der Ink-Sitzung öffnet ein Bild mit Gerät, Server, Freigaben (Enter schaltet lesen und schreiben um, Entf entfernt, + fügt hinzu), gesperrten Fenstern, Foto-Sperre, Aktivierungswort (Text), Fenstertitel in den Sinnen (an/aus) und der Sitzungs-Oberfläche (ink/einfach); `/einstellungen` zeigt die Liste in jeder Sitzung und nimmt Befehle an (`freigabe <pfad> lesen|schreiben|keins`, `fenster-sperre + <muster>`, `foto-sperre - <muster>`, `wort <Wort>`, `sinne-fenster an|aus`, `oberflaeche ink|einfach`); `alfred einstellungen [befehl …]` macht dasselbe ohne Sitzung. Änderungen landen in `geraet.json`, der laufende Satellit liest sie per IPC sofort neu (Freigaben, Sperrlisten, Aktivierungswort gelten ab der nächsten Aktion). Server und Kopplung bleiben `alfred pair` und dem Entkoppeln vorbehalten.
+
 ## [0.19.0-jarvis.1308] - 2026-10-08
 
 ### Fixed — Satellitendienst überlebt Absturz und Update, Dienst-Einträge zeigen auf den Starter (v1308)

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Readable, Writable } from 'node:stream';
-import { InkOberflaeche, markdownZeile, eingabeTaste, alterText } from './sitzung-ink.js';
+import { InkOberflaeche, markdownZeile, eingabeTaste, alterText, eintragBefehl } from './sitzung-ink.js';
 import type { Taste } from './sitzung-oberflaeche.js';
 
 /** Falsches Terminal: stdin mit Rohmodus (Ink liest über 'readable'), stdout sammelt Rahmen. */
@@ -111,6 +111,51 @@ describe('Ink-Oberfläche der Sitzung (v1303)', () => {
     t.tippe(''); await warte(80);
     expect(t.ausgabe().slice(vorher)).toContain('Offene Bestätigungen (3)');
     ui.schliessen();
+  });
+
+  it('v1309: Strg+E öffnet die Einstellungen; Enter schaltet um, Listen lassen sich bearbeiten, Esc schließt', async () => {
+    const t = terminal();
+    const ui = new InkOberflaeche({ geraet: 'PC', version: '1309', server: 'https://x', satellit: 'aus', offen: 0, modus: 'bereit', stimme: false, hoeren: false }, { stdin: t.stdin as unknown as NodeJS.ReadStream, stdout: t.stdout as unknown as NodeJS.WriteStream, debug: true });
+    const befehle: string[] = [];
+    let ober = 'ink'; let frei = ['C:\\Daten (schreiben)'];
+    ui.einstellungen({
+      liste: () => [
+        { schluessel: 'geraet', titel: 'Gerät', wert: 'PC', art: 'info' },
+        { schluessel: 'freigabe', titel: 'Freigaben', wert: `${frei.length} Verzeichnisse`, art: 'liste', eintraege: frei },
+        { schluessel: 'wort', titel: 'Aktivierungswort', wert: 'Alfred', art: 'text' },
+        { schluessel: 'oberflaeche', titel: 'Sitzungs-Oberfläche', wert: ober, art: 'schalter' },
+      ],
+      befehl: (z) => { befehle.push(z); if (z.startsWith('oberflaeche ')) ober = z.split(' ')[1]!; if (z === 'freigabe C:\\Daten lesen') frei = ['C:\\Daten (lesen)']; if (z === 'freigabe C:\\Daten keins') frei = []; return '✓ ' + z; },
+    });
+    ui.start();
+    t.tippe('\u0005'); await warte(80); // Strg+E
+    expect(t.ausgabe()).toContain('Einstellungen —');
+    expect(t.ausgabe()).toContain('▶ Gerät: PC');
+    // ↓↓↓ auf „Sitzungs-Oberfläche", Enter → umschalten
+    for (const k of ['\u001b[B', '\u001b[B', '\u001b[B', '\r']) { t.tippe(k); await warte(30); }
+    await warte(60);
+    expect(befehle).toEqual(['oberflaeche einfach']);
+    expect(t.ausgabe()).toContain('Sitzungs-Oberfläche: einfach');
+    // ↑↑ auf Freigaben, Enter → Einträge, Enter → lesen↔schreiben, Entf → entfernen
+    for (const k of ['\u001b[A', '\u001b[A', '\r', '\r']) { t.tippe(k); await warte(30); }
+    await warte(60);
+    expect(befehle[1]).toBe('freigabe C:\\Daten lesen');
+    t.tippe('\u001b[3~'); await warte(60); // Entf
+    expect(befehle[2]).toBe('freigabe C:\\Daten keins');
+    expect(t.ausgabe()).toContain('(leer — + fügt hinzu)');
+    // Esc zurück zur Liste, Esc schließt
+    t.tippe('\u001b'); await warte(30); t.tippe('\u001b'); await warte(60);
+    const vorher = t.ausgabe().length;
+    t.tippe('x'); await warte(60);
+    expect(t.ausgabe().slice(vorher)).toContain('Du: x');
+    ui.schliessen();
+  });
+
+  it('eintragBefehl — rein', () => {
+    expect(eintragBefehl('freigabe', 'C:\\a (lesen)', 'umschalten')).toBe('freigabe C:\\a schreiben');
+    expect(eintragBefehl('freigabe', '/x (schreiben)', 'entfernen')).toBe('freigabe /x keins');
+    expect(eintragBefehl('fenster-sperre', 'Bank', 'entfernen')).toBe('fenster-sperre - Bank');
+    expect(eintragBefehl('fenster-sperre', 'Bank', 'umschalten')).toBeUndefined();
   });
 
   it('markdownZeile, eingabeTaste, alterText — rein', () => {

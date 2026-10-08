@@ -12,6 +12,8 @@ import { audioMimeAusBytes, sprachBloecke, schneideSaetze, SatzendeErkenner, pru
 import { mikrofonStrom, type MikrofonStrom } from './satellit-audio.js'; // v1252
 import { HoerClient } from './satellit-hoeren.js'; // v1252
 import { verbindeIpc, type IpcClient } from './satellit-ipc.js'; // v1302
+import { einstellungenAnbindung } from './sitzung-einstellungen.js'; // v1309
+import { einstellungenText } from './satellit-einstellungen.js'; // v1309
 import { ReadlineOberflaeche, type Oberflaeche, type SitzungStatus } from './sitzung-oberflaeche.js'; // v1303
 
 /**
@@ -130,7 +132,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
   const status: SitzungStatus = { geraet: k.name, version: getVersion(), server: k.server, satellit: 'aus', offen: 0, modus: 'bereit', stimme: false, hoeren: false };
   let ui: Oberflaeche;
   let inkAktiv = false;
-  if (!opts.einfach && !process.env.ALFRED_SITZUNG_EINFACH) {
+  if (!opts.einfach && !process.env.ALFRED_SITZUNG_EINFACH && !k.sitzungEinfach) { // v1309 — auch per Einstellung „oberflaeche einfach"
     try {
       const { InkOberflaeche, inkMoeglich } = await import('./sitzung-ink.js');
       if (inkMoeglich()) { const ink = new InkOberflaeche(status); ink.start(); ui = ink; inkAktiv = true; }
@@ -182,6 +184,9 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
     }
   }
   ui.status({ satellit: satellitArt });
+  // v1309 — Einstellungen: Ink-Bild (Strg+E) und /einstellungen über denselben Weg (geraet.json + Satellit neu laden)
+  const einstellungen = einstellungenAnbindung(k, () => ipc, () => satellitArt);
+  ui.einstellungen?.(einstellungen);
 
   drucke(`\nAlfred-Sitzung auf ${k.name} (v${getVersion()}) → ${k.server}`);
   drucke(`Satellit: ${satellitArt}`);
@@ -412,6 +417,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
       return;
     }
     if (t === 'ende') { beende(); return; }
+    if (t === 'einstellungen') { if (!inkAktiv) drucke(einstellungenText(einstellungen.liste()) + '\n\nÄndern: /einstellungen <befehl> … (hilfe zeigt die Befehle)'); return; } // v1309 — Ink zeigt das Bild selbst
     if (t === 'hoeren') { void (hoeren ? hoerenStop() : hoerenStart()).catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; } // v1307 Strg+G
     if (t === 'lage') { void zeigeLage().catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
     if (t === 'ja') { void entscheide(nr ? String(nr) : '', 'approve').catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
@@ -458,6 +464,11 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
           return;
         }
         case '/lage': await zeigeLage(); return;
+        case '/einstellungen': case '/settings': { // v1309
+          if (!arg.trim()) drucke(einstellungenText(einstellungen.liste()) + '\n\nÄndern: /einstellungen <befehl> … (hilfe zeigt die Befehle)' + (inkAktiv ? ' · Strg+E öffnet das Bild' : ''));
+          else drucke(einstellungen.befehl(arg));
+          return;
+        }
         case '/hilfe': case '/help': drucke(HILFE); return;
         default: await sende(t);
       }

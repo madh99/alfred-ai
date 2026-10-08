@@ -485,6 +485,11 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
     const s = new IpcServer(status, (befehl, antworte) => {
       if (befehl === 'status') antworte({ typ: 'status', status: status() });
       if (befehl === 'beenden') { log('Beendet über IPC (Sitzung)'); stop(); setTimeout(() => process.exit(0), 200); }
+      // v1309 — Einstellungen geändert (Sitzung oder alfred einstellungen): geraet.json neu lesen, Bedienung mit neuer Sperrliste
+      if (befehl === 'neuladen') {
+        const neu = ladeKonfig();
+        if (neu) { Object.assign(k, neu); bedienung = undefined; log('Einstellungen neu geladen'); antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
+      }
     });
     s.start().then(() => { ipc = s; log(`IPC bereit: ${ipcPfadText()}`); }).catch(err => fehler(`IPC nicht verfügbar: ${(err as Error).message}`));
   }
