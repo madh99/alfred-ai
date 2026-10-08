@@ -115,7 +115,10 @@ async function main(): Promise<void> {
   if (parsed.command && !process.env.ALFRED_STARTER_VERSION && !process.env.ALFRED_KEIN_UPDATE) {
     const { starteNeuesteVersion } = await import('./commands/satellit-update.js');
     // Dienstmodus: immer als Kind, damit nach einem Update (Code 75) der Starter die neue Version startet
-    const code = starteNeuesteVersion(VERSION, process.argv.slice(2), parsed.command === 'satellit' && !!parsed.flags['dienst']);
+    // v1299 — auch der Vordergrund-Satellit (`alfred satellit` ohne --dienst) läuft immer als Kind: lief er in diesem Prozess,
+    // beendete ihn das eigene Update mit Code 75 und niemand startete ihn neu (Realfall Office-VM 08.10., 35 min offline)
+    const satellitLauf = parsed.command === 'satellit' && !parsed.flags['install'] && !parsed.flags['uninstall'] && !parsed.flags['status'] && !parsed.flags['entkoppeln'] && !parsed.flags['einmal'];
+    const code = starteNeuesteVersion(VERSION, process.argv.slice(2), satellitLauf);
     if (code !== undefined) process.exit(code);
   }
 

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1299] - 2026-10-08
+
+### Fixed — Vordergrund-Satellit überlebt sein eigenes Update (v1299)
+
+`alfred satellit` ohne `--dienst` lief bisher im Starter-Prozess selbst, wenn keine neuere Version installiert war; sein eigenes Update beendete ihn dann mit Code 75, und niemand startete ihn neu (Realfall Office-VM 08.10.: 35 Minuten offline). Jetzt läuft jeder dauerhafte Satellitenlauf als Kind des Starters, der nach Code 75 die neue Version startet. Einmal-, Install-, Status- und Entkoppeln-Aufrufe bleiben wie bisher.
+
 ## [0.19.0-jarvis.1298] - 2026-10-08
 
 ### Fixed — Fensterliste am Mac, längere Schrittergebnisse (v1298)
