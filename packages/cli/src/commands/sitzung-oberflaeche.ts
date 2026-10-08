@@ -11,6 +11,8 @@ export interface SitzungStatus {
   geraet: string; version: string; server: string;
   satellit: string; verbunden?: boolean;
   offen: number; modus: 'bereit' | 'antwort' | 'aufnahme'; tier?: string; stimme: boolean; hoeren: boolean;
+  /** v1305 — offene Bestätigungen fürs Feld der Ink-Oberfläche (Reihenfolge wie /offen). */
+  offenListe?: Array<{ id: string; text: string; quelle?: string; seit?: string }>;
 }
 
 export interface Oberflaeche {

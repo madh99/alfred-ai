@@ -144,10 +144,12 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
   // Bestätigungen: Liste und Meldung (per IPC sofort, per Abfrage als Rückfall und für Erledigtes)
   const offen: Bestaetigung[] = [];
   const gemeldet = new Set<string>();
+  // v1305 — Feld der offenen Bestätigungen in der Ink-Oberfläche
+  const offenStatus = () => ui.status({ offen: offen.length, offenListe: offen.map(b => ({ id: b.id, text: b.description ?? b.skillName ?? '', quelle: b.source, seit: b.createdAt })) });
   const meldeNeu = (b: Bestaetigung) => {
     if (gemeldet.has(b.id)) return;
     gemeldet.add(b.id); offen.push(b);
-    ui.status({ offen: offen.length });
+    offenStatus();
     drucke(`\n🔔 Bestätigung [${offen.length}] ${b.source === 'geraet' ? '(Gerät) ' : ''}${b.description ?? b.skillName ?? ''}\n   → /ja ${offen.length} oder /nein ${offen.length}${inkAktiv ? ' (Alt+J / Alt+N für die jüngste)' : ''}`);
   };
 
@@ -190,7 +192,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
       if (r.status !== 200) return;
       const liste = (JSON.parse(r.text) as { confirmations?: Bestaetigung[] }).confirmations ?? [];
       const ids = new Set(liste.map(b => b.id));
-      for (let i = offen.length - 1; i >= 0; i--) if (!ids.has(offen[i].id)) { drucke(`✓ Bestätigung erledigt: ${(offen[i].description ?? '').slice(0, 80)}`); offen.splice(i, 1); ui.status({ offen: offen.length }); }
+      for (let i = offen.length - 1; i >= 0; i--) if (!ids.has(offen[i].id)) { drucke(`✓ Bestätigung erledigt: ${(offen[i].description ?? '').slice(0, 80)}`); offen.splice(i, 1); offenStatus(); }
       for (const b of liste) meldeNeu(b);
     } catch { /* nächste Runde */ }
   };
@@ -202,7 +204,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
     const b = offen[n - 1];
     if (!b) { drucke(offen.length ? `Keine Bestätigung mit Nummer ${arg}. Offen: 1–${offen.length}` : 'Keine offene Bestätigung.'); return; }
     const r = await anfrage(k, 'POST', `/api/confirmations/${encodeURIComponent(b.id)}/${entscheidung}`);
-    if (r.status === 200) { offen.splice(n - 1, 1); ui.status({ offen: offen.length }); drucke(`${entscheidung === 'approve' ? '✅ Freigegeben' : '❌ Abgelehnt'}: ${(b.description ?? '').slice(0, 100)}`); }
+    if (r.status === 200) { offen.splice(n - 1, 1); offenStatus(); drucke(`${entscheidung === 'approve' ? '✅ Freigegeben' : '❌ Abgelehnt'}: ${(b.description ?? '').slice(0, 100)}`); }
     else drucke(`Entscheidung nicht angenommen (HTTP ${r.status}): ${r.text.slice(0, 120)}`);
   };
 

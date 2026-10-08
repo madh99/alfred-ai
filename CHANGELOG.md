@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1305] - 2026-10-08
+
+### Changed — Ink-Sitzung: Eingabe wie ein Editor, Feld für Bestätigungen, lesbare Antworten (v1305)
+
+Owner-Freigabe 08.10. („ok 1-4"). (1) Eingabezeile mit Cursor: Pfeile links/rechts, Pos1/Ende und Strg+A/Strg+E, Strg+W löscht das Wort, Strg+U die Zeile, Esc leert; Pfeil hoch/runter blättert durch gesendete Eingaben; Einfügen aus der Zwischenablage über den Paste-Modus des Terminals; Alt+Enter (Shift+Enter, wo das Terminal es meldet) fügt eine neue Zeile ein. (2) Offene Bestätigungen stehen in einem eigenen Kasten über der Eingabe, nummeriert wie bei /offen, die jüngste fett, mit Alter und Quelle. (3) Antworten und Verlauf zeigen Fettdruck, Code und Aufzählungen aus Alfreds Markdown, Überschriften unterstrichen; Satelliten- und Bestätigungszeilen tragen einen Zeitstempel; während der Antwort dreht ein Spinner in der Statuszeile. (4) Statuszeile umbricht, unter 70 Spalten entfällt die Hinweiszeile, Größenänderungen des Terminals werden beachtet. Readline-Rückfall unverändert.
+
 ## [0.19.0-jarvis.1304] - 2026-10-08
 
 ### Added — `alfred` im PATH ohne globales npm-Paket (v1304)
