@@ -2,6 +2,24 @@ import { describe, it, expect } from 'vitest';
 import { tastenkombi, istGesperrtesFenster, Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js';
 import { macTaste } from './satellit-bedienen-mac.js';
 
+describe('Zeichen-Aliase (v1297)', () => {
+  it('Mac: shift+8 und „mal" tippen *, Wörter werden Zeichen', () => {
+    expect(macTaste('shift+8')).toBe("Application('System Events').keystroke(\"*\"); 'ok'");
+    expect(macTaste('mal')).toContain('keystroke("*")');
+    expect(macTaste('*')).toContain('keystroke("*")');
+    expect(macTaste('plus')).toContain('keystroke("+")');
+    expect(macTaste('cmd+plus')).toBe("Application('System Events').keystroke(\"+\", { using: ['command down'] }); 'ok'");
+    expect(macTaste('enter')).toContain('keyCode(36)');
+  });
+  it('Windows: shift+8 und „mal" werden {*}, gleich wird =', () => {
+    expect(tastenkombi('shift+8')).toBe('*');
+    expect(tastenkombi('mal')).toBe('*');
+    expect(tastenkombi('plus')).toBe('{+}');
+    expect(tastenkombi('gleich')).toBe('=');
+    expect(tastenkombi('strg+s')).toBe('^s');
+  });
+});
+
 describe('macTaste (v1283)', () => {
   it('cmd+s, strg+c, enter, cmd+shift+t, Pfeile', () => {
     expect(macTaste('cmd+s')).toBe("Application('System Events').keystroke(\"s\", { using: ['command down'] }); 'ok'");

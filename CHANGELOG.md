@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1297] - 2026-10-08
+
+### Fixed — Vorhaben enden nach der Fortsetzung, Zeichen statt US-Tastennamen, bessere Element-Namen am Mac (v1297)
+
+Drei Befunde aus dem Mac-Rechner-Vorhaben vom 08.10.: (1) Ein freigegebenes Vorhaben blieb bis zu seinem Ablauf aktiv und blockierte so Selbstupdate und Ruhephasen (der Server wartete 25 Minuten auf zwei längst fertige Vorhaben); jetzt wird es nach der Fortsetzung auf eine Gnadenfrist von fünf Minuten verkürzt. (2) `taste` verstand „shift+8" als Taste und tippte auf dem deutschen Layout „(" statt „*"; Symbole und Wörter („mal", „plus", „gleich", „shift+8") werden jetzt als Zeichen getippt, auf Mac und Windows, und die Beschreibung sagt dem Modell, Zeichen direkt anzugeben. (3) Die Element-Karte am Mac nahm als Namen die Beschreibung, die beim Rechner nur der Rollenname „Taste" ist; jetzt zählt die Beschreibung nur, wenn sie nicht dem Rollennamen gleicht, sonst der Hilfetext.
+
 ## [0.19.0-jarvis.1296] - 2026-10-08
 
 ### Fixed — Klarer Hinweis bei verfallener Element-Karte (v1296)

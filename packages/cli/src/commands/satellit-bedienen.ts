@@ -161,6 +161,9 @@ export function tastenkombi(kombi: string): string {
   if (teile.length === 0) throw new Error('Taste fehlt');
   const mod: Record<string, string> = { strg: '^', ctrl: '^', control: '^', alt: '%', shift: '+', umschalt: '+', win: '' };
   const spezial: Record<string, string> = { enter: '{ENTER}', eingabe: '{ENTER}', tab: '{TAB}', esc: '{ESC}', escape: '{ESC}', backspace: '{BACKSPACE}', rücktaste: '{BACKSPACE}', entf: '{DELETE}', delete: '{DELETE}', del: '{DELETE}', pos1: '{HOME}', home: '{HOME}', ende: '{END}', end: '{END}', hoch: '{UP}', up: '{UP}', runter: '{DOWN}', down: '{DOWN}', links: '{LEFT}', left: '{LEFT}', rechts: '{RIGHT}', right: '{RIGHT}', bildauf: '{PGUP}', pageup: '{PGUP}', bildab: '{PGDN}', pagedown: '{PGDN}', leer: ' ', space: ' ', leertaste: ' ' };
+  // v1297 — Zeichen-Aliase wie am Mac: „mal"/„shift+8" → *, „plus" → + (SendKeys tippt Zeichen layoutunabhängig)
+  const aliase: Record<string, string> = { mal: '*', multiply: '*', star: '*', stern: '*', 'shift+8': '*', plus: '+', 'shift+=': '+', minus: '-', geteilt: '/', divide: '/', slash: '/', gleich: '=', equals: '=', komma: ',', punkt: '.', prozent: '%', 'shift+5': '%', 'shift+9': '(', 'shift+0': ')' };
+  if (roh.trim() in aliase) { const z = aliase[roh.trim()]!; return /[+^%~(){}[\]]/.test(z) ? `{${z}}` : z; }
   let prefix = ''; let taste = '';
   for (const t of teile) {
     if (t in mod) { if (t === 'win') throw new Error('Windows-Taste wird nicht unterstützt'); prefix += mod[t]; continue; }

@@ -243,7 +243,13 @@ export class GeraeteGateway {
         erzeuge: (x) => this.vorhaben.erzeuge(v.skillName, x),
         aktiviere: (nonce) => { const a = this.vorhaben.aktiviere(nonce, v.skillName); if (a) this.deps.logger.info({ geraet: v.eintrag.name, beschreibung: a.beschreibung, aktionen: a.aktionen, domains: a.domains, bis: new Date(a.bis).toISOString() }, 'v1230 Vorhaben freigegeben'); return a; },
         deckt: (aktion, params) => this.vorhaben.deckt(v.skillName, aktion, params),
-        nachFreigabe: async (a) => { await this.deps.nachFreigabe?.({ geraet: v.eintrag.name, skillName: v.skillName, ...a }); },
+        nachFreigabe: async (a) => {
+          await this.deps.nachFreigabe?.({ geraet: v.eintrag.name, skillName: v.skillName, ...a });
+          // v1297 — Fortsetzung beendet: Vorhaben auf eine Gnadenfrist verkürzen statt bis zum Ablauf aktiv zu lassen
+          const nonce = (a as { nonce?: string }).nonce;
+          const k = nonce ? this.vorhaben.verkuerze(nonce) : undefined;
+          if (k) this.deps.logger.info({ geraet: v.eintrag.name, beschreibung: k.beschreibung.slice(0, 80), bis: new Date(k.bis).toISOString() }, 'v1297 Vorhaben verkürzt');
+        },
       },
       schritt: async (s) => { await this.deps.schritt?.({ userId, art: s.art, skill: v.skillName, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie, quelle: 'geraet' }); },
     });

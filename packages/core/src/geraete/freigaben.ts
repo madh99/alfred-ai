@@ -55,6 +55,7 @@ export class Freigaben {
  * ein Vorhaben kann nur Bestätigungen ersetzen, nie Sperren aufheben.
  */
 export const VORHABEN_MAX_MIN = 120;
+export const VORHABEN_GNADENFRIST_MS = 5 * 60_000; // v1297
 
 /**
  * v1295 — Bedienen günstiger (Owner-Freigabe 08.10.): Die Schritte eines freigegebenen Vorhabens (Fenster lesen, klicken,
@@ -149,6 +150,19 @@ export class VorhabenFreigaben {
   aktive(skillName?: string): Vorhaben[] { this.raeumeAuf(); return [...this.vorhaben.values()].filter(v => v.aktiv && (!skillName || v.skillName === skillName)); }
 
   beende(nonce: string): void { this.vorhaben.delete(nonce); this.sichere(); }
+
+  /**
+   * v1297 — Nach der Fortsetzung ist das Vorhaben erledigt; bis zum Ablauf (bis 120 min) blockierte es Selbstupdate und
+   * Ruhephasen (Realfall 08.10.: Server wartete 25 min auf zwei fertige Mac-Vorhaben). Statt sofort zu löschen bleibt
+   * eine Gnadenfrist für Nachfragen des Owners („mach weiter"), danach läuft es aus.
+   */
+  verkuerze(nonce: string, gnadenfristMs = VORHABEN_GNADENFRIST_MS): Vorhaben | undefined {
+    const v = this.vorhaben.get(nonce);
+    if (!v) return undefined;
+    v.bis = Math.min(v.bis, this.now() + gnadenfristMs);
+    this.sichere();
+    return v;
+  }
 
   private raeumeAuf(): void {
     const jetzt = this.now(); let geaendert = false;

@@ -24,9 +24,9 @@ export interface GeraetSkillDeps {
   /** v1230 — Vorhaben-Freigabe: anlegen, nach Owner-Ja aktivieren, Deckung prüfen. */
   vorhaben: {
     erzeuge: (v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number }) => { nonce: string; bis: number; aktionen: string[]; domains: string[] };
-    aktiviere: (nonce: unknown) => { beschreibung: string; bis: number; aktionen: string[]; domains: string[] } | undefined;
+    aktiviere: (nonce: unknown) => { nonce: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] } | undefined; // v1297 nonce
     deckt: (aktion: string, params: Record<string, unknown>) => { beschreibung: string; schritte: number } | undefined;
-    nachFreigabe?: (v: { beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
+    nachFreigabe?: (v: { nonce: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
   };
   /** v1249 — große Datei für das Gerät bereitstellen (blockweiser Download über HTTPS). */
   transfer?: { bereitstellen: (name: string, data: Buffer) => { id: string; groesse: number; sha256: string; blockGroesse: number } };

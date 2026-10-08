@@ -50,8 +50,12 @@ else {
       let enabled = true; try { enabled = el.enabled(); } catch (e) {}
       if (enabled === false) continue;
       let name = ''; try { name = el.name() || ''; } catch (e) {}
-      if (!name) { try { name = el.description() || ''; } catch (e) {} }
       if (!name) { try { name = el.title() || ''; } catch (e) {} }
+      // v1297 — Rechner-Diagnose 08.10.: description ist bei allen Knöpfen nur der Rollenname „Taste"; dann hilft der Hilfetext
+      let rollenName = ''; try { rollenName = el.roleDescription() || ''; } catch (e) {}
+      if (!name) { try { const d = el.description() || ''; if (d && d !== rollenName) name = d; } catch (e) {} }
+      if (!name) { try { name = (el.help() || '').slice(0, 60); } catch (e) {} }
+      if (!name) { try { const d = el.description() || ''; name = d; } catch (e) {} }
       let wert = null; try { const v = el.value(); if (v !== null && v !== undefined && typeof v !== 'object') wert = String(v).slice(0, 80); } catch (e) {}
       let pos = [0, 0], size = [0, 0]; try { pos = el.position(); size = el.size(); } catch (e) {}
       if (!size[0] || !size[1]) continue;
@@ -109,15 +113,32 @@ else {
 const KEYCODES: Record<string, number> = { enter: 36, eingabe: 36, tab: 48, esc: 53, escape: 53, backspace: 51, rücktaste: 51, entf: 117, delete: 117, del: 117, pos1: 115, home: 115, ende: 119, end: 119, hoch: 126, up: 126, runter: 125, down: 125, links: 123, left: 123, rechts: 124, right: 124, bildauf: 116, pageup: 116, bildab: 121, pagedown: 121, leer: 49, space: 49, leertaste: 49, f1: 122, f2: 120, f3: 99, f4: 118, f5: 96, f6: 97, f7: 98, f8: 100, f9: 101, f10: 109, f11: 103, f12: 111 };
 const MODS: Record<string, string> = { cmd: 'command down', befehl: 'command down', command: 'command down', strg: 'control down', ctrl: 'control down', control: 'control down', alt: 'option down', option: 'option down', shift: 'shift down', umschalt: 'shift down' };
 
+/**
+ * v1297 — Zeichen-Aliase: das Modell denkt in US-Tastennamen („shift+8" für *), auf dem deutschen Layout ist das „(".
+ * `keystroke` tippt ein Zeichen layoutunabhängig, darum werden Symbole und Wörter auf das gemeinte Zeichen abgebildet.
+ * Realfall Mac 08.10.: Rechner bekam „6 ( 7" statt „6 * 7".
+ */
+export const ZEICHEN_ALIASE: Record<string, string> = {
+  mal: '*', multiply: '*', multiplizieren: '*', star: '*', stern: '*', asterisk: '*', 'shift+8': '*',
+  plus: '+', 'shift+=': '+', minus: '-', dash: '-', bindestrich: '-',
+  geteilt: '/', dividieren: '/', divide: '/', slash: '/',
+  gleich: '=', equals: '=', equal: '=', ist: '=',
+  komma: ',', comma: ',', punkt: '.', dot: '.', period: '.', prozent: '%', percent: '%', 'shift+5': '%',
+  'shift+1': '!', 'shift+2': '@', 'shift+3': '#', 'shift+4': '$', 'shift+6': '^', 'shift+7': '&', 'shift+9': '(', 'shift+0': ')',
+  leer: ' ', space: ' ', leertaste: ' ',
+};
+
 /** „cmd+s", „strg+c", „enter", „alt+f4" → JXA-Aufruf. Unter macOS ist cmd die übliche Taste; strg bleibt control. */
 export function macTaste(kombi: string): string {
-  const teile = kombi.toLowerCase().split('+').map(t => t.trim()).filter(Boolean);
+  const roh = kombi.trim().toLowerCase();
+  if (roh in ZEICHEN_ALIASE) return `Application('System Events').keystroke(${JSON.stringify(ZEICHEN_ALIASE[roh])}); 'ok'`; // v1297
+  const teile = roh.split('+').map(t => t.trim()).filter(Boolean);
   if (/\+\s*$/.test(kombi)) teile.push('+');
   const mods: string[] = []; let taste = '';
   for (const t of teile) {
     if (t in MODS) { mods.push(MODS[t]!); continue; }
     if (taste) throw new Error(`Nur eine Taste je Kombination: ${kombi}`);
-    taste = t;
+    taste = t in ZEICHEN_ALIASE && !(t in KEYCODES) ? ZEICHEN_ALIASE[t]! : t; // v1297 — „cmd+plus" → cmd +
   }
   if (!taste) throw new Error('Taste fehlt (nur Modifikatoren)');
   const using = mods.length ? `, { using: [${mods.map(m => `'${m}'`).join(', ')}] }` : '';
