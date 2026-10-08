@@ -337,7 +337,9 @@ Treiber: jede default-Runde trägt 47–57k Prompt-Tokens (61 Werkzeugschemata �
 
 Alle drei Antworten fachlich richtig (Betreffzeilen aus Outlook, Wetter-Hinweis, Dank). Der Systemprompt (6,8–10k Tokens im API-Chat, 18k im Owner-Chat) ist jetzt der größere Block — nächster Hebel, falls gewünscht.
 
-**Befund dabei (09:18): Tier default (gpt-6.1-sol) steht im billing-cooldown** — der Router überspringt den Primary und fällt auf strong (Opus 5.5) zurück: 9 Opus-Aufrufe in 90 min = 0,91 $, davon je Erst-Aufruf 0,09–0,19 $ allein für Cache-Schreiben (37k Tokens). Ursache und Dauer siehe Stand-Eintrag; Fallback-Reihenfolge default → strong ist die teuerste Variante (Owner-Entscheidung: medium/fast davor?).
+**Befund dabei (09:18): Tier default (gpt-6.1-sol) steht im billing-cooldown** — der Router überspringt den Primary und fällt auf strong (Opus 5.5) zurück: 9 Opus-Aufrufe in 90 min = 0,91 $, davon je Erst-Aufruf 0,09–0,19 $ allein für Cache-Schreiben (37k Tokens). Fallback-Reihenfolge default → strong ist die teuerste Variante; Owner 08.10.: nichts am Fallback ändern.
+
+**Nachtrag .1301 (Owner „freigabe für punkt 1"):** Die Warnung „Tier default seit 1 h nicht erreichbar (unbekannt)" um 08:05 kam NICHT von OpenAI, sondern von Alfreds eigener Probe (`provider_puls`: fehler_text „400 Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 5", gestoert_seit 06:55 = synthetische Probe 06:50). Die Nachprobe alle zehn Minuten scheiterte am selben Fehler; das echte Guthaben-Ende („429 You have no credits remaining") begann erst 09:14. Fix: `PROBE_MAX_TOKENS = 16`, Klasse `anfrage` für 400/422, `fehlerGrund()` im Wächter schreibt Klasse in Worten plus Anbieter-Text (110 Zeichen). Beweis nach Deploy 10:08: Live-Beweis steht aus — Tier default ist seit 10:05 wieder gesund (Owner lud OpenAI-Guthaben, Log „billing recovered"), eine Nachprobe gestörter Tiers läuft daher nicht; die synthetische Probe am 09.10. 06:50 muss default: true liefern (vorher jeden Tag false). Unit-Tests decken Klasse „anfrage", Wortlaut und Kürzung ab.
 
 ### 18.4 Eigene Arbeitsfläche (Owner 07.10. 23:55: nicht nötig, Plan gemerkt)
 
