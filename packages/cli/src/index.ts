@@ -99,21 +99,15 @@ function parseArgs(argv: string[]): ParsedArgs {
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv);
 
-  // Handle global flags
-  if (parsed.flags['help'] || parsed.flags['h']) {
-    console.log(HELP_TEXT);
-    process.exit(0);
-  }
-
-  if (parsed.flags['version'] || parsed.flags['v']) {
-    console.log(`alfred v${VERSION}`);
-    process.exit(0);
-  }
+  // v1316 — auch --version/--help laufen in der neuesten installierten Version: Realfall 08.10., `sudo alfred --version` auf
+  // dem Server zeigte 1282 (das globale Starter-Paket), obwohl jeder Befehl seit v1282 in der aktuellen Version läuft —
+  // das wurde als „keine Weiterleitung" fehlgedeutet. Der Starter nennt sich dazu in der Versionszeile.
+  const nurFlag = !parsed.command && !!(parsed.flags['help'] || parsed.flags['h'] || parsed.flags['version'] || parsed.flags['v']);
 
   // v1258 — Starter: für satellit/sitzung die neueste vom Server installierte Version ausführen und auf sie warten
   // v1266 — auch für `start`: das Selbstupdate installiert nach ~/.alfred/cli/<Version> und beendet sich mit 75
   // v1282 — ALLE Befehle laufen in der neuesten installierten Version (Realfall: `alfred auth` lief auf dem Server noch mit dem alten globalen Starter)
-  if (parsed.command && !process.env.ALFRED_STARTER_VERSION && !process.env.ALFRED_KEIN_UPDATE) {
+  if ((parsed.command || nurFlag) && !process.env.ALFRED_STARTER_VERSION && !process.env.ALFRED_KEIN_UPDATE) {
     const { starteNeuesteVersion } = await import('./commands/satellit-update.js');
     // Dienstmodus: immer als Kind, damit nach einem Update (Code 75) der Starter die neue Version startet
     // v1299 — auch der Vordergrund-Satellit (`alfred satellit` ohne --dienst) läuft immer als Kind: lief er in diesem Prozess,
@@ -121,6 +115,18 @@ async function main(): Promise<void> {
     const satellitLauf = parsed.command === 'satellit' && !parsed.flags['install'] && !parsed.flags['uninstall'] && !parsed.flags['status'] && !parsed.flags['entkoppeln'] && !parsed.flags['einmal'] && !parsed.flags['starter'];
     const code = starteNeuesteVersion(VERSION, process.argv.slice(2), satellitLauf);
     if (code !== undefined) process.exit(code);
+  }
+
+  // Handle global flags (v1316: nach der Weiterleitung, damit die laufende Version antwortet)
+  if (parsed.flags['help'] || parsed.flags['h']) {
+    console.log(HELP_TEXT);
+    process.exit(0);
+  }
+
+  if (parsed.flags['version'] || parsed.flags['v']) {
+    const starter = process.env.ALFRED_STARTER_VERSION;
+    console.log(`alfred v${VERSION}${starter && starter !== VERSION ? ` (Starter v${starter})` : ''}`);
+    process.exit(0);
   }
 
   // Dispatch to command — dynamic imports keep startup fast

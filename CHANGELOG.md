@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1316] - 2026-10-08
+
+### Fixed — `alfred --version` und `--help` antworten aus der laufenden Version (v1316)
+
+Realfall 08.10.: `sudo alfred --version` auf dem Server meldete 1282, die Version des globalen Starter-Pakets, obwohl seit v1282 jeder Befehl in der neuesten installierten Version aus `~/.alfred/cli/aktuell.json` läuft. Die beiden globalen Flags wurden vor der Weiterleitung beantwortet; das wurde als „der Starter reicht Befehle nicht weiter" fehlgedeutet. Jetzt laufen auch `--version` und `--help` in der aktuellen Version, und die Versionszeile nennt den Starter mit („alfred v…1316 (Starter v…1282)"). Wirksam für das globale Paket erst nach einer einmaligen Neuinstallation (`npm install -g` des Tarballs); Satelliten-Starter (`alfred-start.js`) reichten Flags schon immer weiter.
+
 ## [0.19.0-jarvis.1315] - 2026-10-08
 
 ### Fixed — Microsoft-Token an allen drei Orten, gestörte Dienste sichtbar (v1315)
