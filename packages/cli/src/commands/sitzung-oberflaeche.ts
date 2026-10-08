@@ -5,7 +5,7 @@ import readline from 'node:readline';
  * Satellit) spricht nur noch mit dieser Schnittstelle; dahinter steht entweder die bisherige readline-Ausgabe
  * (Rückfall für Skripte, Tests, Terminals ohne Rohmodus, `--einfach`) oder die Ink-Oberfläche (`sitzung-ink.tsx`).
  */
-export type Taste = 'strg+t' | 'ja' | 'nein' | 'lage' | 'ende';
+export type Taste = 'strg+t' | 'ja' | 'nein' | 'lage' | 'ende' | 'hoeren'; // v1307 hoeren = Strg+G
 
 export interface SitzungStatus {
   geraet: string; version: string; server: string;
@@ -47,6 +47,7 @@ export class ReadlineOberflaeche implements Oberflaeche {
     readline.emitKeypressEvents(inp, this.rl);
     inp.on('keypress', (_ch: string, key: { ctrl?: boolean; name?: string } | undefined) => {
       if (key?.ctrl && key.name === 't') this.tasteCb?.('strg+t');
+      if (key?.ctrl && key.name === 'g') this.tasteCb?.('hoeren'); // v1307
     });
   }
   private loescheZeile(): void { readline.clearLine(this.out, 0); readline.cursorTo(this.out, 0); }

@@ -17,7 +17,7 @@ Usage:
 
 Commands:
   start          Start Alfred (load config, bootstrap, and run)
-  chat           Interactive terminal chat (--model, --tier)
+  chat           Auf gekoppelten Geräten: die Sitzung (wie alfred sitzung); sonst Terminal-Chat zum Server (--model, --tier)
   pair           Dieses Gerät mit Alfred koppeln (--server <url> --code <Code> [--name] [--insecure] [--verzeichnisse "a;b"])
   sitzung        EIN Terminal für alles: Chat als Owner, Sprache (/talk, /hören, /stimme), Bestätigungen (/ja, /nein), Satellit (--ohne-satellit, --einfach = ohne Ink-Oberfläche)
   satellit       Gerätedienst: Verbindung zum Gehirn halten, Aktionen lokal ausführen (--einmal, --install, --starter = alfred in den PATH)
@@ -131,6 +131,9 @@ async function main(): Promise<void> {
     }
 
     case 'chat': {
+      // v1307 — gekoppeltes Gerät: alfred chat öffnet die Sitzung (Satellit, Bestätigungen, Sprache); sonst der alte Server-Chat
+      const { ladeKonfig: ladeGeraet } = await import('./commands/pair.js');
+      if (ladeGeraet()) { const { sitzungCommand } = await import('./commands/sitzung.js'); await sitzungCommand({ ohneSatellit: !!parsed.flags['ohne-satellit'], einfach: !!parsed.flags['einfach'] }); break; }
       const { chatCommand } = await import('./commands/chat.js');
       await chatCommand({
         model: typeof parsed.flags['model'] === 'string' ? parsed.flags['model'] : undefined,

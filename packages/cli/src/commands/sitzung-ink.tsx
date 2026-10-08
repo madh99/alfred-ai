@@ -120,6 +120,7 @@ function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEi
   useInput((input, key) => {
     if (key.ctrl && input === 't') { aufTaste('strg+t'); return; }
     if (key.ctrl && input === 'l') { aufTaste('lage'); return; }
+    if (key.ctrl && input === 'g') { aufTaste('hoeren'); return; } // v1307 — Zuhören an/aus (Strg+H wäre die Rücktaste)
     if (key.ctrl && (input === 'q' || input === 'd')) { aufTaste('ende'); return; }
     if (key.meta && (input === 'j' || input === 'J')) { aufTaste('ja'); return; }
     if (key.meta && (input === 'n' || input === 'N')) { aufTaste('nein'); return; }
@@ -191,7 +192,7 @@ function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEi
         <Text dimColor wrap="wrap">{statusText}</Text>
         <Text>{z.label}{e.text.slice(0, e.cursor)}<Text inverse>{e.text.charAt(e.cursor) || ' '}</Text>{e.text.slice(e.cursor + 1)}</Text>
       </Box>
-      {spalten >= 70 ? <Text dimColor>Enter sendet · Strg+N oder \ am Zeilenende = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+B Bestätigungen · Strg+L Lage · Strg+Q Ende</Text> : null}
+      {spalten >= 70 ? <Text dimColor>Enter sendet · Strg+N oder \ am Zeilenende = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+G zuhören · Strg+B Bestätigungen · Strg+L Lage · Strg+Q Ende</Text> : null}
     </Box>
   );
 }

@@ -161,7 +161,10 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
     if (satellitDienstLaeuft()) {
       ipc = await verbindeIpc((n) => {
         if (n.typ === 'status') {
-          ui.status({ verbunden: n.status.verbunden, satellit: `Dienst ${n.status.version}` });
+          // v1307 — Owner-Befund: die Sitzung behält ihre Startversion; läuft der Satellit neuer, sagen wir es
+          const neuer = n.status.version !== getVersion();
+          ui.status({ verbunden: n.status.verbunden, satellit: `Dienst ${n.status.version}${neuer ? ' (neuer als die Sitzung)' : ''}` });
+          if (neuer) drucke(`ℹ Satellit läuft ${n.status.version}, diese Sitzung ${getVersion()} — für die neue Version Strg+Q und „alfred sitzung" neu starten.`);
           drucke(`⚙ Satellit ${n.status.version} (PID ${n.status.pid}) ${n.status.verbunden ? `verbunden mit Alfred ${n.status.serverVersion ?? ''}` : 'nicht verbunden'}${n.status.aktionenLaufend ? `, ${n.status.aktionenLaufend} Aktion(en) laufen` : ''}`);
         }
         else if (n.typ === 'ereignis') { if (n.art === 'verbunden') ui.status({ verbunden: true }); if (n.art === 'getrennt') ui.status({ verbunden: false }); drucke(`⚙ ${n.text}`); }
@@ -409,6 +412,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
       return;
     }
     if (t === 'ende') { beende(); return; }
+    if (t === 'hoeren') { void (hoeren ? hoerenStop() : hoerenStart()).catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; } // v1307 Strg+G
     if (t === 'lage') { void zeigeLage().catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
     if (t === 'ja') { void entscheide(nr ? String(nr) : '', 'approve').catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
     if (t === 'nein') { void entscheide(nr ? String(nr) : '', 'reject').catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1307] - 2026-10-08
+
+### Changed — Sitzung: Versionshinweis, Zuhören per Strg+G, `alfred chat` öffnet die Sitzung (v1307)
+
+Owner-Fragen 08.10. Die Sitzung behält die Version, mit der sie gestartet wurde; läuft der Satellit inzwischen neuer, zeigt sie es in der Statuszeile und als Hinweis mit dem Rat, die Sitzung neu zu starten. Strg+G schaltet das Zuhören mit Aktivierungswort ein und aus, wie `/hören` und `/hören aus` (Strg+H ist in Terminals die Rücktaste). Auf einem gekoppelten Gerät öffnet `alfred chat` jetzt die Sitzung mit Satellit, Bestätigungen und Sprache; ohne Kopplung bleibt es der Terminal-Chat zum Server.
+
 ## [0.19.0-jarvis.1306] - 2026-10-08
 
 ### Fixed — Ink-Sitzung: neue Zeile ohne Alt+Enter, Bestätigungen ein-/ausblenden und mit Pfeilen bedienen (v1306)
