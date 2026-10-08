@@ -20,7 +20,7 @@ class Server {
   Future<HttpClientRequest> _anfrage(String methode, String pfad) async {
     final req = await _client.openUrl(methode, Uri.parse('${k.server}$pfad'));
     req.headers.set('Authorization', 'Bearer ${k.token}');
-    req.headers.set('Content-Type', 'application/json');
+    req.headers.set('Content-Type', 'application/json; charset=utf-8');
     return req;
   }
 
@@ -57,7 +57,7 @@ class Server {
 
   Future<(List<int>, String)> sprich(String text) async {
     final req = await _anfrage('POST', '/api/sprich');
-    req.write(jsonEncode({'text': text, 'knapp': false}));
+    req.add(utf8.encode(jsonEncode({'text': text, 'knapp': false}))); // UTF-8: req.write kodiert Latin-1 — „–" und „„" warfen „Contains invalid characters" (Owner 14:26)
     final res = await req.close();
     final teile = <int>[];
     await for (final c in res) { teile.addAll(c); }
@@ -69,7 +69,7 @@ class Server {
   Future<String> sende(String text, {required void Function(String) aufDelta, required void Function(String) aufStatus, String? tier}) async {
     final req = await _anfrage('POST', '/api/message');
     final body = jsonEncode({'text': text, 'chatId': chatId, 'stream': true, 'tier': ?tier});
-    req.write(body);
+    req.add(utf8.encode(body)); // UTF-8 statt Latin-1
     final res = await req.close();
     if (res.statusCode != 200) {
       final t = await res.transform(utf8.decoder).join();
