@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1313] - 2026-10-08
+
+### Changed — Gerätetoken darf die Vorgangsliste lesen (v1313)
+
+Phase 4, Kacheln nativ (Owner-Entscheidung 08.10.): Die Desktop-App zeichnet Lage, Befunde, Vorgänge und Geräte aus den JSON-Routen statt über ein Webview mit API-Token. Lebenszeichen (mit Lage, Befunden, Puls, Geräten, Kosten) und Geräteliste waren für das Gerätetoken schon offen; jetzt zusätzlich `GET /api/vorgaenge` (nur die Liste, Entscheidungen zu Vorgängen bleiben dem API-Token vorbehalten).
+
 ## [0.19.0-jarvis.1312] - 2026-10-08
 
 ### Added — IPC-Zugang für die Desktop-App: 127.0.0.1 mit Geheimnis, Befehl konfig (v1312)

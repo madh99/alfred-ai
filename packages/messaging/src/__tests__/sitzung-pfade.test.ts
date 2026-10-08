@@ -17,6 +17,8 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete/dateien/abc/fertig')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/update')).toBe(true); // v1258
     expect(istSitzungsPfad('/api/geraete/update/datei')).toBe(true);
+    expect(istSitzungsPfad('/api/vorgaenge?limit=20')).toBe(true); // v1313
+    expect(istSitzungsPfad('/api/vorgaenge/abc/entscheidung')).toBe(false);
   });
   it('sperrt alles andere', () => {
     expect(istSitzungsPfad('/api/geraete/abc')).toBe(false); // Widerruf

@@ -18,6 +18,7 @@ const SITZUNG_PFADE = [
   // v1258 — Satelliten-Autoupdate
   /^\/api\/geraete\/update(\/datei)?$/,
   /^\/api\/geraete\/abmelden$/, // v1274
+  /^\/api\/vorgaenge$/, // v1313 — Kachel „Vorgänge" der Desktop-App (nur Liste; Entscheidungen bleiben beim API-Token)
 ];
 
 export function istSitzungsPfad(url: string | undefined): boolean {
