@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1312] - 2026-10-08
+
+### Added — IPC-Zugang für die Desktop-App: 127.0.0.1 mit Geheimnis, Befehl konfig (v1312)
+
+Phase 4 (Flutter-App, Spec 2026-10-07, Owner „danach weiter mit phase 4"): Die App hängt sich wie die Sitzung an den Satelliten, kann aber die Named Pipe von Node nicht öffnen. Der Satellit lauscht darum zusätzlich auf 127.0.0.1 mit zufälligem Port; Port und Geheimnis stehen in `~/.alfred/ipc.json` (nur für den Benutzer lesbar). Eine TCP-Verbindung muss zuerst `hallo` mit dem Geheimnis schicken, sonst wird sie getrennt; danach gelten Status, Ereignisse, Bestätigungen und Befehle wie über die Pipe. Neuer Befehl `konfig` liefert Server, Gerät und Gerätetoken, damit die App dieselbe HTTP-Schnittstelle nutzt wie die Sitzung, ohne die DPAPI-geschützte Datei selbst zu lesen. Test: Zugang nur mit richtigem Geheimnis, falsches trennt, Datei verschwindet beim Stopp.
+
 ## [0.19.0-jarvis.1311] - 2026-10-08
 
 ### Changed — Ink-Sitzung: Eingabe zwischen zwei Linien, Fußzeile darunter (v1311)

@@ -484,6 +484,8 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   if (!opts.einmal && !opts.ohneIpc && !process.env.ALFRED_KEIN_IPC) {
     const s = new IpcServer(status, (befehl, antworte) => {
       if (befehl === 'status') antworte({ typ: 'status', status: status() });
+      // v1312 — Desktop-App holt sich Server und Gerätetoken vom Satelliten (gleicher Benutzer, geschützter Zugang)
+      if (befehl === 'konfig') antworte({ typ: 'konfig', konfig: { server: k.server, geraetId: k.geraetId, token: k.token, name: k.name, insecure: !!k.insecure } });
       if (befehl === 'beenden') { log('Beendet über IPC (Sitzung)'); stop(); setTimeout(() => process.exit(0), 200); }
       // v1309 — Einstellungen geändert (Sitzung oder alfred einstellungen): geraet.json neu lesen, Bedienung mit neuer Sperrliste
       if (befehl === 'neuladen') {

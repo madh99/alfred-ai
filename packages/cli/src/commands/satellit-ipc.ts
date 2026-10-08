@@ -1,7 +1,8 @@
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { existsSync, unlinkSync, chmodSync, mkdirSync } from 'node:fs';
+import { existsSync, unlinkSync, chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 
 /**
  * v1302 — Lokales IPC des Satelliten (Spec §8 „Anhängen statt verbinden", Owner-Freigabe 08.10. „punkt 1 und 2").
@@ -20,7 +21,13 @@ export type IpcNachricht =
   | { typ: 'status'; status: SatellitStatus }
   | { typ: 'ereignis'; zeit: string; art: IpcEreignisArt; text: string }
   | { typ: 'bestaetigung'; bestaetigung: BestaetigungKurz }
-  | { typ: 'befehl'; befehl: 'status' | 'beenden' | 'neuladen' }; // v1309 neuladen = geraet.json neu lesen (Einstellungen)
+  | { typ: 'befehl'; befehl: 'status' | 'beenden' | 'neuladen' | 'konfig' | 'hallo'; geheimnis?: string } // v1309 neuladen; v1312 konfig/hallo für die Desktop-App
+  | { typ: 'konfig'; konfig: { server: string; geraetId: string; token: string; name: string; insecure: boolean } }; // v1312 — Antwort auf befehl konfig
+
+export type IpcBefehl = 'status' | 'beenden' | 'neuladen' | 'konfig';
+
+/** v1312 — Zugang für die Desktop-App (Flutter kann keine Named Pipe von Node öffnen): zusätzlich 127.0.0.1:<Port> mit Geheimnis in ~/.alfred/ipc.json (0600). */
+export function ipcTcpDatei(): string { return path.join(os.homedir(), '.alfred', 'ipc.json'); }
 
 export function ipcPfad(): string {
   if (process.platform === 'win32') {
@@ -46,14 +53,38 @@ export function zeilenLeser(aufNachricht: (n: IpcNachricht) => void): (stueck: B
 
 export class IpcServer {
   private server?: net.Server;
+  private tcp?: net.Server;
   private readonly clients = new Set<net.Socket>();
+  private geheimnis = '';
   constructor(
     private readonly statusQuelle: () => SatellitStatus,
-    private readonly beiBefehl: (befehl: 'status' | 'beenden' | 'neuladen', antworte: (n: IpcNachricht) => void) => void,
+    private readonly beiBefehl: (befehl: IpcBefehl, antworte: (n: IpcNachricht) => void) => void,
     private readonly pfad: string = ipcPfad(),
+    private readonly tcpDatei: string | null = ipcTcpDatei(),
   ) {}
 
   get verbundene(): number { return this.clients.size; }
+  /** Port des TCP-Zugangs (nach start), für Tests. */
+  get tcpPort(): number | undefined { const a = this.tcp?.address(); return a && typeof a === 'object' ? a.port : undefined; }
+
+  /** Verbindung aufnehmen; bei `geschuetzt` erst nach korrektem hallo mit Geheimnis (TCP). */
+  private nimmAuf(sock: net.Socket, geschuetzt: boolean): void {
+    this.clients.add(sock);
+    let frei = !geschuetzt;
+    const antworte = (n: IpcNachricht) => { try { sock.write(JSON.stringify(n) + '\n'); } catch { /* */ } };
+    if (frei) antworte({ typ: 'status', status: this.statusQuelle() });
+    sock.on('data', zeilenLeser((n) => {
+      if (n.typ !== 'befehl') return;
+      if (!frei) {
+        if (n.befehl === 'hallo' && n.geheimnis && n.geheimnis === this.geheimnis) { frei = true; antworte({ typ: 'status', status: this.statusQuelle() }); }
+        else { try { sock.destroy(); } catch { /* */ } }
+        return;
+      }
+      if (n.befehl !== 'hallo') this.beiBefehl(n.befehl, antworte);
+    }));
+    sock.on('close', () => this.clients.delete(sock));
+    sock.on('error', () => this.clients.delete(sock));
+  }
 
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -61,19 +92,22 @@ export class IpcServer {
         try { mkdirSync(path.dirname(this.pfad), { recursive: true }); } catch { /* */ }
         if (existsSync(this.pfad)) { try { unlinkSync(this.pfad); } catch { /* */ } } // Leiche eines früheren Laufs
       }
-      const server = net.createServer((sock) => {
-        this.clients.add(sock);
-        const antworte = (n: IpcNachricht) => { try { sock.write(JSON.stringify(n) + '\n'); } catch { /* */ } };
-        antworte({ typ: 'status', status: this.statusQuelle() });
-        sock.on('data', zeilenLeser((n) => { if (n.typ === 'befehl') this.beiBefehl(n.befehl, antworte); }));
-        sock.on('close', () => this.clients.delete(sock));
-        sock.on('error', () => this.clients.delete(sock));
-      });
+      const server = net.createServer((sock) => this.nimmAuf(sock, false));
       server.on('error', (err) => reject(err));
       server.listen(this.pfad, () => {
         if (process.platform !== 'win32') { try { chmodSync(this.pfad, 0o600); } catch { /* */ } }
         this.server = server;
-        resolve();
+        // v1312 — TCP-Zugang für die Desktop-App: nur 127.0.0.1, zufälliger Port, Geheimnis in der Datei (0600)
+        if (this.tcpDatei) {
+          const tcp = net.createServer((sock) => this.nimmAuf(sock, true));
+          tcp.on('error', () => { /* dann nur Pipe/Socket */ });
+          tcp.listen(0, '127.0.0.1', () => {
+            this.tcp = tcp;
+            this.geheimnis = randomBytes(24).toString('hex');
+            try { mkdirSync(path.dirname(this.tcpDatei!), { recursive: true }); writeFileSync(this.tcpDatei!, JSON.stringify({ port: this.tcpPort, geheimnis: this.geheimnis, pid: process.pid }), { mode: 0o600 }); } catch { /* */ }
+            resolve();
+          });
+        } else resolve();
       });
     });
   }
@@ -87,6 +121,8 @@ export class IpcServer {
     for (const c of this.clients) { try { c.destroy(); } catch { /* */ } }
     this.clients.clear();
     try { this.server?.close(); } catch { /* */ }
+    try { this.tcp?.close(); } catch { /* */ }
+    if (this.tcpDatei && existsSync(this.tcpDatei)) { try { unlinkSync(this.tcpDatei); } catch { /* */ } }
     if (process.platform !== 'win32' && existsSync(this.pfad)) { try { unlinkSync(this.pfad); } catch { /* */ } }
   }
 }
