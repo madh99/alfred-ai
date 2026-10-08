@@ -35,6 +35,15 @@ export function selectCategories(
   message: string,
   availableCategories: Set<SkillCategory>,
 ): Set<SkillCategory> {
+  return waehleKategorien(message, availableCategories, true)!;
+}
+
+/** v1300 — wie selectCategories, aber ohne Rückfall: undefined, wenn kein Schlüsselwort trifft. */
+export function selectCategoriesOhneRueckfall(message: string, availableCategories: Set<SkillCategory>): Set<SkillCategory> | undefined {
+  return waehleKategorien(message, availableCategories, false);
+}
+
+function waehleKategorien(message: string, availableCategories: Set<SkillCategory>, rueckfall: boolean): Set<SkillCategory> | undefined {
   const selected = new Set<SkillCategory>(['core']);
 
   let anyMatch = false;
@@ -62,6 +71,7 @@ export function selectCategories(
   // Fallback: if nothing matched, include common categories instead of ALL.
   // Heavy categories (infrastructure, identity, mcp) only appear when keywords match,
   // saving ~1500-2000 tokens per request on generic messages.
+  if (!anyMatch && !rueckfall) return undefined; // v1300
   if (!anyMatch) {
     const commonCategories: SkillCategory[] = ['productivity', 'information', 'media', 'automation', 'files'];
     for (const cat of commonCategories) {
@@ -70,6 +80,52 @@ export function selectCategories(
   }
 
   return selected;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * v1300 — Werkzeugwahl je Nachricht (Owner-Freigabe 08.10. „freigabe für beide"; Spec §18.7)
+ * Messung 07./08.10.: 64 Werkzeugschemata ≈ 35k Prompt-Tokens je Runde, Cache-Quote 50–61 %, 9 $/Tag auf default.
+ * Hebel 1: Nennt die Nachricht ein Gerät (Name oder Skill-Kürzel), bekommt das Modell NUR die Geräte-Werkzeuge.
+ * Hebel 2: Kategorien zuerst aus der aktuellen Nachricht; der Verlauf zählt nur, wenn die Nachricht selbst nichts
+ * trifft (bisher wurde die Vereinigung aus Nachricht + 3 Vorgängern genommen); der Rückfall ohne Treffer ist klein
+ * (core, productivity, information). Geräte-Skills kommen außerhalb von Hebel 1 nur bei Geräte-Wörtern dazu.
+ * Deterministisch, modellunabhängig; allowedSkills (Mail-Regeln, Vorhaben) und Projekt-Chats bleiben unberührt.
+ * ──────────────────────────────────────────────────────────────────────────── */
+export const GERAETE_KEYWORDS = /\b(ger[äa]te?\w*|satellit\w*|bildschirm\w*|screenshot\w*|fenster\w*|zwischenablage|tasten?\w*|laptop\w*|notebook\w*|pc|vm|mac|macbook|rechner\w*|outlook|excel|vorhaben|programm\w*)\b/i;
+
+export function istGeraeteSkill(meta: Pick<SkillMetadata, 'name'>): boolean { return meta.name.startsWith('geraet_'); }
+
+/** Namen, unter denen ein Gerät in Nachrichten vorkommt: der Anzeigename aus der Beschreibung („Office-VM") und das Kürzel (office_vm, office-vm, office vm). */
+export function geraeteNamen(meta: Pick<SkillMetadata, 'name' | 'description'>): string[] {
+  const namen: string[] = [];
+  const m = /Ger[äa]t „([^"“”]+)["“”]/.exec(meta.description ?? '');
+  if (m?.[1]) namen.push(m[1].trim());
+  const slug = meta.name.replace(/^geraet_/, '');
+  if (slug) namen.push(slug, slug.replace(/_/g, '-'), slug.replace(/_/g, ' '));
+  return [...new Set(namen.map(n => n.toLowerCase()).filter(n => n.length >= 2))];
+}
+
+export function genannteGeraete<T extends Pick<SkillMetadata, 'name' | 'description'>>(text: string, metas: T[]): T[] {
+  const t = text.toLowerCase();
+  return metas.filter(m => istGeraeteSkill(m) && geraeteNamen(m).some(n => new RegExp(`(^|[^\\p{L}\\p{N}])${n.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'iu').test(t)));
+}
+
+export type WerkzeugwahlGrund = 'geraet_genannt' | 'nachricht' | 'verlauf' | 'rueckfall';
+
+export function werkzeugeFuerNachricht<T extends SkillMetadata>(text: string, verlauf: string[], alle: T[]): { metas: T[]; grund: WerkzeugwahlGrund } {
+  const geraete = alle.filter(istGeraeteSkill);
+  const genannt = genannteGeraete(text, geraete);
+  if (genannt.length) return { metas: genannt, grund: 'geraet_genannt' };
+  const ohneGeraete = alle.filter(m => !istGeraeteSkill(m));
+  const available = new Set<SkillCategory>(ohneGeraete.map(s => s.category ?? 'core'));
+  const mitGeraeten = (metas: T[], quelle: string): T[] => GERAETE_KEYWORDS.test(quelle) ? [...metas, ...geraete] : metas;
+  const eigene = selectCategoriesOhneRueckfall(text, available);
+  if (eigene) return { metas: mitGeraeten(filterSkills(ohneGeraete, eigene) as T[], text), grund: 'nachricht' };
+  const vText = verlauf.filter(Boolean).join(' ');
+  const ausVerlauf = vText ? selectCategoriesOhneRueckfall(vText, available) : undefined;
+  if (ausVerlauf) return { metas: mitGeraeten(filterSkills(ohneGeraete, ausVerlauf) as T[], `${text} ${vText}`), grund: 'verlauf' };
+  const klein = new Set<SkillCategory>((['core', 'productivity', 'information'] as SkillCategory[]).filter(c => available.has(c)));
+  return { metas: mitGeraeten(filterSkills(ohneGeraete, klein) as T[], text), grund: 'rueckfall' };
 }
 
 /**

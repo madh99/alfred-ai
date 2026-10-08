@@ -23,7 +23,7 @@ import type { EmbeddingService } from './embedding-service.js';
 import type { ActiveLearningService } from './active-learning/active-learning-service.js';
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
-import { selectCategories, filterSkills } from './skill-filter.js';
+import { werkzeugeFuerNachricht, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
 const NODE_LOCAL_SKILLS = new Set([
@@ -947,6 +947,7 @@ export class MessagePipeline {
         ? this.skillRegistry.getAll().map(s => s.metadata)
         : undefined;
       let skillMetas = allSkillMetas;
+      let werkzeugwahl: WerkzeugwahlGrund | 'alle' | 'erlaubt' | 'projekt' = 'alle'; // v1300 — Messgröße im llm_request_prep
       // v683 — Project-Chat (metadata.projectId gesetzt — NUR vom WebUI ProjectChat-
       // Komponente via HTTP-Adapter, NICHT von Telegram/Matrix/Discord/normalem Web-Chat)
       // bekommt eine kuratierte Whitelist statt der Keyword-basierten selectCategories-
@@ -970,22 +971,18 @@ export class MessagePipeline {
           // v1211 — deterministische Werkzeugliste des Aufrufers (Mail-Ereignisquelle): kein Raten per Keyword
           const erlaubt = new Set(message.metadata.allowedSkills);
           skillMetas = allSkillMetas.filter(s => erlaubt.has(s.name));
+          werkzeugwahl = 'erlaubt';
         } else if (isProjectChat) {
           // Project-Chat: Whitelist statt Keyword-Filter
           skillMetas = allSkillMetas.filter(s => PROJECT_CHAT_WHITELIST.has(s.name));
+          werkzeugwahl = 'projekt';
         } else {
-          // Default (alle anderen Chats: Telegram, Matrix, Web, Signal, …) — UNVERÄNDERT
-          const availableCategories = new Set(allSkillMetas.map(s => s.category ?? 'core' as const));
-          // Include recent user messages from conversation history so follow-up
-          // questions retain the skill category context of earlier messages.
-          const recentUserTexts = history
-            .filter(m => m.role === 'user')
-            .slice(-3)
-            .map(m => m.content)
-            .join(' ');
-          const categoryInput = recentUserTexts ? `${message.text} ${recentUserTexts}` : message.text;
-          const selectedCategories = selectCategories(categoryInput, availableCategories);
-          skillMetas = filterSkills(allSkillMetas, selectedCategories);
+          // Default (alle anderen Chats: Telegram, Matrix, Web, Signal, …)
+          // v1300 — Gerät genannt → nur Geräte-Werkzeuge; sonst Kategorien aus der Nachricht, Verlauf nur als Rückfall
+          const recentUserTexts = history.filter(m => m.role === 'user').slice(-3).map(m => m.content);
+          const wahl = werkzeugeFuerNachricht(message.text, recentUserTexts, allSkillMetas);
+          skillMetas = wahl.metas;
+          werkzeugwahl = wahl.grund;
         }
       }
 
@@ -1314,7 +1311,7 @@ export class MessagePipeline {
 
       // v1209 — Messgrundlage für die Prompt-Zusammensetzung (Freigabe Owner 06.10.: erst messen, dann entscheiden)
       tracePhase('llm_request_prep', {
-        systemChars: system.length, toolCount: tools?.length ?? 0,
+        systemChars: system.length, toolCount: tools?.length ?? 0, werkzeugwahl,
         systemTokens: estimateTokens(system), toolTokens,
         historyMsgs: messages.length - 1, historyTokens: messages.slice(0, -1).reduce((s, m) => s + estimateMessageTokens(m), 0),
       });

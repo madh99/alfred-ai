@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1300] - 2026-10-08
+
+### Changed — Weniger Werkzeuge je Nachricht: Geräte-Nachrichten nur mit Geräte-Werkzeugen, engerer Skill-Filter (v1300)
+
+Messung 07./08.10.: eine Runde auf dem Standardmodell trug bis zu 64 Werkzeugschemata (≈ 35k Prompt-Tokens) bei einer Cache-Quote von 50–61 %; das Standardmodell kostete 9 $ am Tag. Zwei Änderungen, beide deterministisch: (1) Nennt eine Nachricht ein Gerät mit Namen oder Kürzel („auf Office-VM", „am MacBook", „pc-madh"), bekommt das Modell nur die Werkzeuge dieser Geräte. (2) Die Skill-Kategorien kommen zuerst aus der aktuellen Nachricht; die drei vorigen Nachrichten zählen nur noch, wenn die Nachricht selbst kein Schlüsselwort trifft, und der Rückfall ohne jeden Treffer umfasst core, productivity und information statt fünf Kategorien. Geräte-Werkzeuge kommen außerhalb von (1) nur bei Geräte-Wörtern (Bildschirm, Fenster, Satellit, Taste …) dazu. Mail-Regeln, Vorhaben und Projekt-Chats behalten ihre feste Werkzeugliste. Die Logzeile `llm_request_prep` trägt den Grund der Wahl (`werkzeugwahl`).
+
 ## [0.19.0-jarvis.1299] - 2026-10-08
 
 ### Fixed — Vordergrund-Satellit überlebt sein eigenes Update (v1299)

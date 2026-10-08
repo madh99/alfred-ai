@@ -203,3 +203,47 @@ describe('filterSkills', () => {
     expect(filtered.length).toBe(skills.length);
   });
 });
+
+import { werkzeugeFuerNachricht, genannteGeraete, geraeteNamen, selectCategoriesOhneRueckfall } from '../skill-filter.js';
+
+describe('Werkzeugwahl je Nachricht (v1300)', () => {
+  const mk = (name: string, category: SkillCategory, description = ''): SkillMetadata => ({ name, description, category, riskLevel: 'low', version: '1', inputSchema: {} } as unknown as SkillMetadata);
+  const alle = [
+    mk('memory', 'core'), mk('help', 'core'), mk('selbstupdate', 'core'),
+    mk('calendar', 'productivity'), mk('email', 'productivity'), mk('web_search', 'information'), mk('weather', 'information'),
+    mk('tts', 'media'), mk('shell', 'automation'), mk('file', 'files'), mk('proxmox', 'infrastructure'),
+    mk('geraet_office_vm', 'core', 'Gerät „Office-VM" (windows) des Owners — Alfred handelt DORT'),
+    mk('geraet_macbook', 'core', 'Gerät „MacBook" (macos) des Owners — Alfred handelt DORT'),
+    mk('geraet_pc_madh', 'core', 'Gerät „PC-madh" (windows) des Owners'),
+  ];
+  const namen = (r: { metas: SkillMetadata[] }) => r.metas.map(m => m.name).sort();
+
+  it('kennt Anzeigename und Kürzel eines Geräts', () => {
+    expect(geraeteNamen(alle[11]!)).toEqual(['office-vm', 'office_vm', 'office vm']);
+    expect(genannteGeraete('Lies auf Office-VM die Mails', alle).map(m => m.name)).toEqual(['geraet_office_vm']);
+    expect(genannteGeraete('was läuft auf dem macbook und dem pc-madh?', alle).map(m => m.name)).toEqual(['geraet_macbook', 'geraet_pc_madh']);
+    expect(genannteGeraete('mach das', alle)).toEqual([]);
+    expect(genannteGeraete('Macbooks sind teuer', alle)).toEqual([]); // kein Wortende → kein Treffer
+  });
+  it('Hebel 1: genanntes Gerät → nur dessen Werkzeuge', () => {
+    const r = werkzeugeFuerNachricht('Lies auf Office-VM die letzten 5 Mails', ['irgendwas mit Kalender'], alle);
+    expect(r.grund).toBe('geraet_genannt');
+    expect(namen(r)).toEqual(['geraet_office_vm']);
+  });
+  it('Hebel 2: Kategorien aus der Nachricht, Geräte nur bei Geräte-Wörtern', () => {
+    const r = werkzeugeFuerNachricht('Wie ist das Wetter morgen?', ['starte proxmox vm 101'], alle);
+    expect(r.grund).toBe('nachricht');
+    expect(namen(r)).toEqual(['help', 'memory', 'selbstupdate', 'weather', 'web_search']);
+    const g = werkzeugeFuerNachricht('mach einen Screenshot vom Bildschirm', [], alle);
+    expect(g.metas.filter(m => m.name.startsWith('geraet_'))).toHaveLength(3);
+  });
+  it('Hebel 2: Verlauf nur, wenn die Nachricht selbst nichts trifft; sonst kleiner Rückfall', () => {
+    const v = werkzeugeFuerNachricht('ja bitte', ['erstelle mir ein pdf aus der datei'], alle);
+    expect(v.grund).toBe('verlauf');
+    expect(namen(v)).toContain('file');
+    const r = werkzeugeFuerNachricht('danke', [], alle);
+    expect(r.grund).toBe('rueckfall');
+    expect(namen(r)).toEqual(['calendar', 'email', 'help', 'memory', 'selbstupdate', 'weather', 'web_search']);
+    expect(selectCategoriesOhneRueckfall('danke', new Set(['core', 'media']))).toBeUndefined();
+  });
+});
