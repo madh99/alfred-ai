@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1302] - 2026-10-08
+
+### Added — Sitzung hängt sich per IPC an den Satelliten, Bestätigungen kommen sofort (v1302)
+
+Spec §8 „Anhängen statt verbinden", Owner-Freigabe 08.10. für Punkt 1 und 2. Der Satellit öffnet ein lokales IPC (Unix-Socket `~/.alfred/satellit.sock` mit Rechten 0600, unter Windows eine Named Pipe je Benutzer) und liefert darüber Status (Version, Verbindung, laufende Aktionen), Ereignisse (verbunden, getrennt, Aktion, Ergebnis, Update) und neue Bestätigungen als JSON-Zeilen; Befehle `status` und `beenden`. `alfred sitzung` hängt sich daran, statt das Protokoll per Regex mitzulesen; ein älterer Satellit ohne IPC wird weiter über das Protokoll begleitet. Chat und Entscheidungen bleiben beim Server über HTTP mit Gerätetoken. Neue Bestätigungen schickt das Gehirn über die bestehende Satellitenverbindung an alle Geräte (`ConfirmationQueue.beiNeu` → `GeraeteGateway.sendeAnAlle`); die Sitzung zeigt sie sofort, die 4-Sekunden-Abfrage bleibt als Rückfall und für Erledigtes. Die Desktop-App (Flutter) bekommt damit die Schnittstelle, die die Spec für sie vorsieht. Abschaltbar mit `ALFRED_KEIN_IPC=1`.
+
 ## [0.19.0-jarvis.1301] - 2026-10-08
 
 ### Fixed — Tier-Probe mit gültigem Minimum, Wächter nennt den Grund (v1301)

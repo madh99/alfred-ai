@@ -119,6 +119,10 @@ export class ConfirmationQueue {
     private readonly activityLogger?: ActivityLogger,
   ) {}
 
+  /** v1302 — Hörer für neue Bestätigungen (Geräte-Gateway schickt sie an verbundene Satelliten; Sitzungen zeigen sie sofort). */
+  private readonly neuHoerer: Array<(b: { id: string; chatId: string; platform: string; description: string; source: string; skillName: string; createdAt: string; expiresAt: string }) => void> = [];
+  beiNeu(cb: (typeof this.neuHoerer)[number]): void { this.neuHoerer.push(cb); }
+
   setFeedbackService(service: FeedbackService): void {
     this.feedbackService = service;
   }
@@ -193,6 +197,11 @@ export class ConfirmationQueue {
       extraActions: opts.extraActions,
       expiresAt,
     });
+
+    // v1302 — sofort an die Geräte des Owners (Sitzungen), bevor die Chat-Nachricht rausgeht
+    for (const h of this.neuHoerer) {
+      try { h({ id: confirmation.id, chatId: opts.chatId, platform: opts.platform, description: opts.description, source: opts.source, skillName: opts.skillName, createdAt: new Date().toISOString(), expiresAt }); } catch { /* Hörer dürfen nichts brechen */ }
+    }
 
     const adapter = this.adapters.get(opts.platform as Platform);
     if (adapter) {

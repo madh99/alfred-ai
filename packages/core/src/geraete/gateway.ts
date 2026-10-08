@@ -349,6 +349,13 @@ export class GeraeteGateway {
     }
   }
 
+  /** v1302 — Nachricht an alle verbundenen Geräte (Bestätigungen für Sitzungen). Liefert die Zahl der Empfänger. */
+  sendeAnAlle(n: Partial<GeraetNachricht> & { typ: string }): number {
+    let z = 0;
+    for (const v of this.verbindungen.values()) { if (v.ws.readyState === WebSocket.OPEN) { this.sende(v.ws, n); z++; } }
+    return z;
+  }
+
   private sende(ws: WebSocket, n: Partial<GeraetNachricht> & { typ: string; id?: string }): void {
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); } catch { /* */ }

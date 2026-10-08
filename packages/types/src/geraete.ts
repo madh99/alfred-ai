@@ -41,9 +41,12 @@ export interface GeraetSinne extends GeraetRahmen { typ: 'sinne'; werte: Record<
 export interface GeraetFehler extends GeraetRahmen { typ: 'fehler'; grund: string }
 export interface GeraetAbgemeldet extends GeraetRahmen { typ: 'abgemeldet'; grund: string }
 
+/** v1302 — Gehirn → Gerät: neue Bestätigung für den Owner (Sitzungen am Gerät zeigen sie sofort; Entscheidung weiter per HTTP). */
+export interface GeraetBestaetigung extends GeraetRahmen { typ: 'bestaetigung'; bestaetigung: { id: string; description: string; source?: string; skillName?: string; createdAt?: string; expiresAt?: string } }
+
 export type GeraetNachricht =
   | GeraetHallo | GeraetWillkommen | GeraetPuls | GeraetPulsOk
-  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet;
+  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung;
 
 /** Eintrag der Geräte-Registry (Gehirn). */
 export interface GeraetEintrag {

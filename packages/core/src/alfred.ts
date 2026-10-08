@@ -13522,6 +13522,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
         gw.start();
         this.geraeteGateway = gw;
+        // v1302 — neue Bestätigungen sofort an die Satelliten (Sitzungen am Gerät zeigen sie ohne 4-s-Abfrage)
+        this.confirmationQueue?.beiNeu((b) => {
+          const n = gw.sendeAnAlle({ typ: 'bestaetigung', bestaetigung: { id: b.id, description: b.description, source: b.source, skillName: b.skillName, createdAt: b.createdAt, expiresAt: b.expiresAt } });
+          if (n) this.logger.debug({ id: b.id, geraete: n }, 'v1302 Bestätigung an Geräte geschickt');
+        });
         // v1258 — Releases: eigenes Paket als Tarball bereitstellen, signiert; Satelliten holen Updates hier
         const { Releases } = await import('./geraete/releases.js');
         const releases = new Releases(path.resolve(process.cwd(), 'data', 'releases'), this.logger.child({ component: 'releases' }));

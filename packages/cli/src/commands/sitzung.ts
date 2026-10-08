@@ -12,6 +12,7 @@ import { Audio, type Aufnahme } from './satellit-audio.js'; // v1241
 import { audioMimeAusBytes, sprachBloecke, schneideSaetze, SatzendeErkenner, pruefeAktivierung } from '@alfred/core'; // v1243, v1247, v1248, v1252
 import { mikrofonStrom, type MikrofonStrom } from './satellit-audio.js'; // v1252
 import { HoerClient } from './satellit-hoeren.js'; // v1252
+import { verbindeIpc, type IpcClient } from './satellit-ipc.js'; // v1302
 
 /**
  * v1232 — Die Sitzung: EIN Terminal für Chat, Bestätigungen und den Satelliten.
@@ -146,13 +147,31 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
     if (!antwortLaeuft) rl.prompt(true);
   };
 
-  // Satellit: Dienst mitlesen oder selbst betreiben
+  // Bestätigungen: Liste und Meldung (per IPC sofort, per Abfrage als Rückfall und für Erledigtes)
+  const offen: Bestaetigung[] = [];
+  const gemeldet = new Set<string>();
+  const meldeNeu = (b: Bestaetigung) => {
+    if (gemeldet.has(b.id)) return;
+    gemeldet.add(b.id); offen.push(b);
+    drucke(`\n🔔 Bestätigung [${offen.length}] ${b.source === 'geraet' ? '(Gerät) ' : ''}${b.description ?? b.skillName ?? ''}\n   → /ja ${offen.length} oder /nein ${offen.length}`);
+  };
+
+  // Satellit: per IPC anhängen (v1302), sonst Protokoll mitlesen, sonst selbst betreiben
   let satellitStop: (() => void) | undefined;
   let satellitArt = 'aus';
+  let ipc: IpcClient | undefined;
   if (!opts.ohneSatellit) {
     if (satellitDienstLaeuft()) {
-      satellitArt = 'Dienst läuft, Protokoll wird mitgelesen';
-      satellitStop = protokollLeser(dienstLogPfad(), z => { if (/Aktion |→ |Verbunden|Verbindung|Fehler/.test(z)) drucke(`⚙ ${z}`); });
+      ipc = await verbindeIpc((n) => {
+        if (n.typ === 'status') drucke(`⚙ Satellit ${n.status.version} (PID ${n.status.pid}) ${n.status.verbunden ? `verbunden mit Alfred ${n.status.serverVersion ?? ''}` : 'nicht verbunden'}${n.status.aktionenLaufend ? `, ${n.status.aktionenLaufend} Aktion(en) laufen` : ''}`);
+        else if (n.typ === 'ereignis') drucke(`⚙ ${n.text}`);
+        else if (n.typ === 'bestaetigung') meldeNeu(n.bestaetigung as Bestaetigung);
+      }, () => drucke('⚙ Verbindung zum Satelliten beendet'));
+      if (ipc) { satellitArt = 'Dienst läuft, angehängt über IPC'; satellitStop = ipc.close; }
+      else {
+        satellitArt = 'Dienst läuft (älter, ohne IPC), Protokoll wird mitgelesen';
+        satellitStop = protokollLeser(dienstLogPfad(), z => { if (/Aktion |→ |Verbunden|Verbindung|Fehler/.test(z)) drucke(`⚙ ${z}`); });
+      }
     } else {
       satellitArt = 'in dieser Sitzung gestartet';
       const s = starteSatellit(k, { log: z => drucke(`⚙ ${z}`), fehler: z => drucke(`⚙ ${z}`) });
@@ -165,9 +184,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
   console.log('Schreiben = Chat als Owner · Strg+T oder /talk = sprechen · /hören [aus] = zuhören mit Aktivierungswort · /stimme an|aus · /tier fast|default|strong · /ja [n] · /nein [n] · /offen · /geraete · /lage · /quit\n');
   rl.prompt();
 
-  // Bestätigungen: alle 4 s abholen, neue melden
-  const offen: Bestaetigung[] = [];
-  const gemeldet = new Set<string>();
+  // Bestätigungen: alle 4 s abholen — neue melden (Rückfall ohne IPC), erledigte entfernen
   const holeBestaetigungen = async () => {
     try {
       const r = await anfrage(k, 'GET', '/api/confirmations/pending');
@@ -175,11 +192,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean }): Promise<
       const liste = (JSON.parse(r.text) as { confirmations?: Bestaetigung[] }).confirmations ?? [];
       const ids = new Set(liste.map(b => b.id));
       for (let i = offen.length - 1; i >= 0; i--) if (!ids.has(offen[i].id)) { drucke(`✓ Bestätigung erledigt: ${(offen[i].description ?? '').slice(0, 80)}`); offen.splice(i, 1); }
-      for (const b of liste) {
-        if (gemeldet.has(b.id)) continue;
-        gemeldet.add(b.id); offen.push(b);
-        drucke(`\n🔔 Bestätigung [${offen.length}] ${b.source === 'geraet' ? '(Gerät) ' : ''}${b.description ?? b.skillName ?? ''}\n   → /ja ${offen.length} oder /nein ${offen.length}`);
-      }
+      for (const b of liste) meldeNeu(b);
     } catch { /* nächste Runde */ }
   };
   void holeBestaetigungen();

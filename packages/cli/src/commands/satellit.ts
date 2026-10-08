@@ -20,6 +20,7 @@ import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fe
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
 import { Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js'; // v1276
+import { IpcServer, type IpcEreignisArt, type SatellitStatus } from './satellit-ipc.js'; // v1302
 import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
@@ -465,10 +466,24 @@ export async function satellitCommand(opts: { einmal?: boolean; install?: boolea
  * v1232 — Der Satellit als Funktion: Verbindung halten, Aktionen ausführen, Ereignisse melden.
  * Genutzt vom Dienst (`alfred satellit`) und von der Sitzung (`alfred sitzung`), wenn kein Dienst läuft.
  */
-export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: (zeile: string) => void; fehler?: (zeile: string) => void }): { stop: () => void; fertig: Promise<void> } {
+function ipcPfadText(): string { try { return process.platform === 'win32' ? 'Named Pipe' : '~/.alfred/satellit.sock'; } catch { return 'IPC'; } }
+
+export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: (zeile: string) => void; fehler?: (zeile: string) => void; ohneIpc?: boolean }): { stop: () => void; fertig: Promise<void> } {
   const log = opts.log ?? (() => undefined);
   const fehler = opts.fehler ?? log;
   const version = getVersion();
+  // v1302 — lokales IPC: Status, Ereignisse und Bestätigungen für Sitzungen am Gerät (Spec §8)
+  let verbunden = false; let serverVersion: string | undefined; let verbundenSeit: string | undefined;
+  const status = (): SatellitStatus => ({ name: k.name, version, pid: process.pid, verbunden, serverVersion, verbundenSeit, aktionenLaufend });
+  let ipc: IpcServer | undefined;
+  const ereignis = (art: IpcEreignisArt, text: string) => { try { ipc?.sende({ typ: 'ereignis', zeit: new Date().toISOString(), art, text }); } catch { /* */ } };
+  if (!opts.einmal && !opts.ohneIpc && !process.env.ALFRED_KEIN_IPC) {
+    const s = new IpcServer(status, (befehl, antworte) => {
+      if (befehl === 'status') antworte({ typ: 'status', status: status() });
+      if (befehl === 'beenden') { log('Beendet über IPC (Sitzung)'); stop(); setTimeout(() => process.exit(0), 200); }
+    });
+    s.start().then(() => { ipc = s; log(`IPC bereit: ${ipcPfadText()}`); }).catch(err => fehler(`IPC nicht verfügbar: ${(err as Error).message}`));
+  }
   const manifest = baueManifest(version);
   for (const a of manifest.aktionen) if (a.beschreibung.length > 300) a.beschreibung = a.beschreibung.slice(0, 297) + '…'; // v1277 — Manifest-Grenze des Gehirns
   const wsUrl = k.server.replace(/^http/i, 'ws') + '/api/geraete/ws';
@@ -488,7 +503,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
       log('Update-Prüfung beim Server …');
       try {
         const neu = await aktualisiereWennNeuer(k, version, log);
-        if (neu) { log(`Update auf ${neu} installiert — Neustart über den Starter`); setTimeout(() => { stop(); process.exit(NEUSTART_CODE); }, 500); return; }
+        if (neu) { log(`Update auf ${neu} installiert — Neustart über den Starter`); ereignis('update', `Update auf ${neu} installiert — Neustart`); setTimeout(() => { stop(); process.exit(NEUSTART_CODE); }, 500); return; }
         // v1265 — Server ist neuer, hat sein Release aber noch nicht bereit (kurz nach dem Start): später erneut
         if (runde < 10) { log(`Release ${serverVersion} noch nicht bereit — neuer Versuch in 60 s`); setTimeout(() => versuch(runde + 1), 60_000); return; }
       } catch (err) { fehler(`Update fehlgeschlagen: ${(err as Error).message}`); if (runde < 10) { setTimeout(() => versuch(runde + 1), 60_000); return; } }
@@ -497,7 +512,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
     setTimeout(() => versuch(0), 15_000);
   };
   const sinne = new SinneErfasser({ ohneFenster: (k as GeraetKonfig & { sinneOhneFenster?: boolean }).sinneOhneFenster === true });
-  const stop = () => { laeuft = false; sinne.stop(); try { aktiv?.close(); } catch { /* */ } };
+  const stop = () => { laeuft = false; sinne.stop(); try { aktiv?.close(); } catch { /* */ } try { ipc?.stop(); } catch { /* */ } };
 
   log(`Satellit ${k.name} (${manifest.plattform}, v${version}) → ${k.server}`);
   log(`Freigegebene Verzeichnisse: ${k.freigegebeneVerzeichnisse.join(', ')}`);
@@ -523,6 +538,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
           try { n = JSON.parse(String(raw)) as GeraetNachricht; } catch { return; }
           if (n.typ === 'willkommen') {
             rueckzugMs = 1000; log(`[${new Date().toLocaleTimeString('de-AT')}] Verbunden mit Alfred ${n.serverVersion} — im Gehirn als Skill ${n.skillName} (Satellit ${version})`);
+            verbunden = true; serverVersion = String(n.serverVersion ?? ''); verbundenSeit = new Date().toISOString(); ereignis('verbunden', `Verbunden mit Alfred ${serverVersion}`); // v1302
             // v1258 — Release-Schlüssel merken, laufende Version bestätigen, Update prüfen
             const rk = merkeReleaseKey((n as { releaseKey?: unknown }).releaseKey);
             if (rk === 'gemerkt') log('Release-Schlüssel des Servers gemerkt'); else if (rk === 'abweichend') fehler('WARNUNG: Release-Schlüssel des Servers weicht vom gemerkten ab — Updates werden abgelehnt');
@@ -535,18 +551,26 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
           if (n.typ === 'puls_ok') return;
           if (n.typ === 'fehler') { fehler(`Fehler vom Gehirn: ${n.grund}`); return; }
           if (n.typ === 'abgemeldet') { fehler(`Abgemeldet: ${n.grund}. Bitte neu koppeln (alfred pair).`); stop(); ws.close(); return; }
+          // v1302 — neue Bestätigung vom Gehirn: an angehängte Sitzungen weiterreichen
+          if ((n as { typ: string }).typ === 'bestaetigung') {
+            const b = (n as { bestaetigung?: { id: string; description: string } }).bestaetigung;
+            if (b?.id) { log(`Bestätigung offen: ${b.description.slice(0, 100)}`); try { ipc?.sende({ typ: 'bestaetigung', bestaetigung: b }); } catch { /* */ } }
+            return;
+          }
           if (n.typ === 'aktion') {
             const start = Date.now();
             log(`[${new Date().toLocaleTimeString('de-AT')}] Aktion ${n.aktion} ${JSON.stringify(n.params).slice(0, 160)}`);
+            ereignis('aktion', `Aktion ${n.aktion}`);
             let r: Ergebnis;
             aktionenLaufend += 1;
             try { r = await fuehreAus(k, n.aktion, n.params ?? {}); } catch (err) { r = { success: false, error: (err as Error).message }; }
             finally { aktionenLaufend -= 1; }
             sende({ typ: 'aktion_ergebnis', id: n.id, success: r.success, data: r.data, display: r.display, error: r.error, dauerMs: Date.now() - start });
             log(`  → ${r.success ? 'ok' : 'Fehler: ' + r.error}`);
+            ereignis('ergebnis', `${n.aktion}: ${r.success ? (r.display ?? 'ok').split('\n')[0]!.slice(0, 120) : 'Fehler: ' + (r.error ?? '').slice(0, 120)}`);
           }
         });
-        ws.on('close', (code, reason) => { if (puls) clearInterval(puls); if (sinneTimer) clearInterval(sinneTimer); resolve(`geschlossen (${code} ${String(reason)})`); });
+        ws.on('close', (code, reason) => { if (puls) clearInterval(puls); if (sinneTimer) clearInterval(sinneTimer); if (verbunden) { verbunden = false; ereignis('getrennt', `Verbindung geschlossen (${code})`); } resolve(`geschlossen (${code} ${String(reason)})`); });
         ws.on('error', (err) => { resolve(`Fehler: ${err.message}`); });
       });
       // v1278 — Realfall 1276: Manifest vom Gehirn abgewiesen (4004) → Endlosschleife, der Starter konnte nicht zurückfallen.
