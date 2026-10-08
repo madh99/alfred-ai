@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1296] - 2026-10-08
+
+### Fixed — Klarer Hinweis bei verfallener Element-Karte (v1296)
+
+Nach einer Aktion (Klick, Tippen, Taste) ist die Element-Karte absichtlich ungültig. Die Meldung dazu nannte bisher ein unsinniges Alter („Element-Karte ist 1791418999 s alt"); jetzt heißt es „nach der letzten Aktion verfallen — fenster_lesen wiederholen".
+
 ## [0.19.0-jarvis.1295] - 2026-10-08
 
 ### Changed — Vorhaben auf Geräten laufen auf dem günstigen Tier (v1295)

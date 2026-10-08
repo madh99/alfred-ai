@@ -202,6 +202,8 @@ export class Bedienung {
   private async pruefeVorAktion(): Promise<Karte> {
     const k = this.karte;
     if (!k) throw new Error('Erst fenster_lesen — ohne Element-Karte keine Aktion');
+    // v1296 — nach einer Aktion steht zeit auf 0: dann „verfallen" statt „1791418999 s alt" (Realfall Mac 08.10.)
+    if (k.zeit === 0) throw new Error('Element-Karte ist nach der letzten Aktion verfallen — fenster_lesen wiederholen');
     if (Date.now() - k.zeit > KARTE_FRIST_MS) throw new Error(`Element-Karte ist ${Math.round((Date.now() - k.zeit) / 1000)} s alt — fenster_lesen wiederholen`);
     const gesperrt = istGesperrtesFenster(k.fenster, this.gesperrteFenster);
     if (gesperrt) throw new Error(`Fenster „${k.fenster}" ist gesperrt (Muster „${gesperrt}") — das bedient der Owner selbst`);
