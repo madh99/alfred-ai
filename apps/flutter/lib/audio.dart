@@ -49,3 +49,64 @@ class Audio {
 
   Future<void> dispose() async { try { await _rec.dispose(); } catch (_) {} try { await _player.dispose(); } catch (_) {} }
 }
+
+/// Satzgrenzen für die blockweise Sprachausgabe (wie `schneideSaetze` in der Terminal-Sitzung, v1247/v1248):
+/// ab `min` Zeichen am nächsten Satzende (. ! ? :) trennen; der Rest bleibt stehen, bis mehr Text kommt.
+(List<String>, String) schneideSaetze(String text, {int min = 60}) {
+  final bloecke = <String>[];
+  var rest = text;
+  while (true) {
+    Match? schnitt;
+    for (final m in RegExp(r'[.!?:]["“”)]*(\s|$)').allMatches(rest)) {
+      if (m.end >= min) { schnitt = m; break; }
+    }
+    if (schnitt == null || schnitt.end >= rest.length && !RegExp(r'\s$').hasMatch(rest) && rest.length < min * 3) break;
+    bloecke.add(rest.substring(0, schnitt.end).trim());
+    rest = rest.substring(schnitt.end);
+    if (rest.trim().isEmpty) { rest = ''; break; }
+  }
+  return (bloecke, rest);
+}
+
+/// Markdown aus dem Vorlesetext entfernen (Fettdruck, Code, Aufzählungszeichen).
+String sprechbar(String t) => t.replaceAll('**', '').replaceAll('`', '').replaceAll(RegExp(r'^\s*[-*•]\s+', multiLine: true), '').replaceAll(RegExp(r'^#{1,6}\s+', multiLine: true), '');
+
+/// Blockweise vorlesen: Sätze werden synthetisiert, sobald sie vollständig sind, und der Reihe nach abgespielt;
+/// der nächste Block wird schon geholt, während der vorige läuft.
+class Vorleser {
+  Vorleser(this.synthetisiere, this.audio, {this.beiErstemTon});
+  final Future<(List<int>, String)> Function(String) synthetisiere;
+  final Audio audio;
+  final void Function()? beiErstemTon;
+  String _puffer = '';
+  Future<void> _wiedergabe = Future.value();
+  int bloecke = 0;
+  bool _ersterTon = false;
+  String? fehler;
+
+  void fuege(String text) {
+    _puffer += text;
+    final (b, rest) = schneideSaetze(_puffer);
+    for (final x in b) { _spiele(x); }
+    _puffer = rest;
+  }
+
+  void _spiele(String block) {
+    final t = sprechbar(block).trim();
+    if (t.isEmpty) return;
+    bloecke++;
+    final synth = synthetisiere(t);
+    _wiedergabe = _wiedergabe.then((_) async {
+      final (bytes, mime) = await synth;
+      if (!_ersterTon) { _ersterTon = true; beiErstemTon?.call(); }
+      await audio.abspielen(Uint8List.fromList(bytes), mime);
+    }).catchError((e) { fehler ??= '$e'; });
+  }
+
+  /// Rest sprechen (oder den ganzen Text, wenn noch nichts lief) und auf die Wiedergabe warten.
+  Future<void> schluss({String? ganzerText}) async {
+    if (bloecke == 0 && ganzerText != null && ganzerText.trim().isNotEmpty) { _puffer = ''; _spiele(ganzerText); }
+    else if (_puffer.trim().isNotEmpty) { _spiele(_puffer); _puffer = ''; }
+    await _wiedergabe;
+  }
+}

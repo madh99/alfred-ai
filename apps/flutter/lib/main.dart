@@ -229,14 +229,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       final text = await s.transkribiere(daten, mime);
       if (text.isEmpty) { setState(() => fluechtig = ''); _zeile(Eintrag(Art.hinweis, '🎙 Nichts verstanden.')); return; }
       _zeile(Eintrag(Art.du, '🎙 $text'));
-      final ende = await _senden(text: text);
-      if (ende != null && ende.trim().isNotEmpty) {
-        setState(() => fluechtig = '🔊 …');
-        final (bytes, m) = await s.sprich(ende);
-        final tTon = DateTime.now().difference(t0).inMilliseconds / 1000;
-        _zeile(Eintrag(Art.hinweis, '🔊 erster Ton nach ${tTon.toStringAsFixed(1)} s'));
-        await audio.abspielen(Uint8List.fromList(bytes), m);
-      }
+      await _senden(text: text, sprechen: true, seit: t0); // blockweise vorgelesen, während die Antwort noch kommt
     } catch (e) { _zeile(Eintrag(Art.fehler, '🎙 $e')); }
     finally { setState(() => fluechtig = ''); }
   }
@@ -308,7 +301,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   }
 
   /// Sendet `text` (oder die Eingabezeile) und liefert den Endtext der Antwort.
-  Future<String?> _senden({String? text}) async {
+  /// `sprechen`: Antwort satzweise vorlesen, sobald Sätze vollständig sind (erster Ton nach dem ersten Satz, nicht nach dem Ende).
+  Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit}) async {
     final t = (text ?? eingabe.text).trim();
     final s = server;
     if (t.isEmpty || antwortet) return null;
@@ -318,11 +312,16 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final e = Eintrag(Art.alfred, '');
     var gezeigt = '';
     String? ergebnis;
+    final start = seit ?? DateTime.now();
+    final vorleser = (sprechen || stimme)
+      ? Vorleser(s.sprich, audio, beiErstemTon: () { final sek = DateTime.now().difference(start).inMilliseconds / 1000; _zeile(Eintrag(Art.hinweis, '🔊 erster Ton nach ${sek.toStringAsFixed(1)} s')); })
+      : null;
     try {
       final ende = await s.sende(t,
         aufDelta: (d) {
           if (laufend == null) { laufend = e; setState(() { verlauf.add(e); fluechtig = ''; }); }
           gezeigt += d;
+          vorleser?.fuege(d);
           setState(() => e.text = gezeigt);
           _nachUnten();
         },
@@ -331,8 +330,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       if (laufend == null) { _zeile(Eintrag(Art.alfred, ende.isEmpty ? '(keine Antwort)' : ende)); }
       else { if (ende.trim().isNotEmpty && ende.trim() != gezeigt.trim()) setState(() => e.text = ende); _protokolliere(e); }
       ergebnis = ende.isNotEmpty ? ende : gezeigt;
-      if (text == null && stimme && ergebnis.trim().isNotEmpty) {
-        try { setState(() => fluechtig = '🔊 …'); final (bytes, m) = await s.sprich(ergebnis); await audio.abspielen(Uint8List.fromList(bytes), m); } catch (err) { _zeile(Eintrag(Art.fehler, '🔊 $err')); }
+      if (vorleser != null && ergebnis.trim().isNotEmpty) {
+        setState(() => fluechtig = '🔊 …');
+        await vorleser.schluss(ganzerText: gezeigt.trim().isEmpty ? ergebnis : null);
+        if (vorleser.fehler != null) _zeile(Eintrag(Art.fehler, '🔊 ${vorleser.fehler}'));
       }
     } catch (err) {
       _zeile(Eintrag(Art.fehler, 'Fehler: $err'));
