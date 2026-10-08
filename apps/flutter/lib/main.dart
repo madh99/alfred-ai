@@ -151,7 +151,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   // ── Tray, Fenster, Tastenkürzel (Meilenstein 2) ──────────────────────────────────────────────────────────────────
   Future<void> _trayEinrichten() async {
     try {
-      await trayManager.setIcon('assets/alfred.ico');
+      await trayManager.setIcon(Platform.isWindows ? 'assets/alfred.ico' : 'assets/alfred.png'); // M5: macOS/Linux brauchen PNG
       await trayManager.setToolTip('Alfred');
       await trayManager.setContextMenu(Menu(items: [
         MenuItem(key: 'zeigen', label: 'Alfred öffnen'),
