@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1317] - 2026-10-08
+
+### Fixed — Vorgangs-Dubletten ohne Anker: Kennzahlen als Themenmerkmal (v1317)
+
+Realfall 08.10.: fünf offene Vorgänge „E-Mail- (50 %) und Dateifehlerquote (75 %) …" in neuem Wortlaut aus fünf Vollpässen. Die Anker-Regel (v1214) kennt Hostnamen, Domains, Zitate und Kürzel, aber „E-Mail" ist bewusst kein Anker und Zahlen mit Einheit waren ausgeschlossen; die Wortgleichheits-Regel (v1185) verlangt den ganzen Titel. Neu: zwei gemeinsame Kennzahlen (Zahl plus Einheit, etwa „50 %" und „75 %") plus ein gemeinsames Inhaltswort gelten als gleiches Thema. Eine Kennzahl allein trennt weiterhin (Strompreis-Beobachtung und Ladefenster-Aktion bei 27,97 ct/kWh bleiben zwei Vorgänge). Wirkt beim Anlegen (`findeAehnlichenOffenen`) und im täglichen Zusammenführen um 05:35.
+
 ## [0.19.0-jarvis.1316] - 2026-10-08
 
 ### Fixed — `alfred --version` und `--help` antworten aus der laufenden Version (v1316)

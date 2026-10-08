@@ -113,14 +113,28 @@ function inhaltsWoerter(titel: string, anker: ReadonlySet<string>): Set<string> 
  * easyname-Domains sechsmal, BMW-OAuth dreimal — die Wortgleichheits-Regel (v1185) griff nicht,
  * weil das Modell jeden Pass neu formuliert. Gegenbeispiel bleibt getrennt: zwei Sensoren.
  */
+/**
+ * v1317 — Kennzahl-Anker: Zahl plus Einheit („50 %", „75 %", „27,97 ct/kWh", „95,1%"). Eine Kennzahl allein ist kein
+ * Thema (Strompreis-Beobachtung ≠ Ladefenster-Aktion, beide 27,97 ct/kWh), zwei gleiche Kennzahlen plus ein gemeinsames
+ * Inhaltswort sind es. Realfall 08.10.: „E-Mail- (50 %) und Dateifehlerquote (75 %) …" fünfmal offen in neuem Wortlaut —
+ * ohne Hostnamen, Domains oder Kürzel griff die Anker-Regel nicht, und die Wortgleichheits-Regel verlangt den ganzen Titel.
+ */
+export function kennzahlAnker(titel: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of (titel ?? '').matchAll(/(\d+(?:[.,]\d+)?)\s?(%|ct\/?kwh|kwh|kw|mwh|°c|gb|mb|tb)(?![\p{L}\p{N}])/giu)) out.add(`${m[1].replace('.', ',')}${m[2].toLowerCase().replace('/', '')}`);
+  return out;
+}
+
 export function themenGleich(a: string, b: string): boolean {
   const aa = titelAnker(a), ab = titelAnker(b);
   const gemeinsam = [...aa].filter(x => ab.has(x));
   if (gemeinsam.length >= 2) return true;
-  if (gemeinsam.length === 1) {
-    const wa = inhaltsWoerter(a, aa), wb = inhaltsWoerter(b, ab);
-    for (const w of wa) if (wb.has(w)) return true;
-  }
+  const wa = inhaltsWoerter(a, aa), wb = inhaltsWoerter(b, ab);
+  const inhaltGemeinsam = [...wa].some(w => wb.has(w));
+  if (gemeinsam.length === 1 && inhaltGemeinsam) return true;
+  // v1317 — zwei gemeinsame Kennzahlen plus ein gemeinsames Inhaltswort
+  const ka = kennzahlAnker(a), kb = kennzahlAnker(b);
+  if ([...ka].filter(x => kb.has(x)).length >= 2 && inhaltGemeinsam) return true;
   return false;
 }
 
