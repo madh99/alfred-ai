@@ -71,6 +71,16 @@ describe('bewertePuls', () => {
     expect(bewertePuls([gestoert('default', 'netz', 59, now)], now)).toHaveLength(0);
   });
 
+  it('v1301: nennt Klasse in Worten und den Anbieter-Text, gekürzt', () => {
+    const now = T(12);
+    const p = { ...gestoert('default', 'anfrage', 70, now), fehlerText: "400 Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 5 instead." };
+    const text = bewertePuls([p], now)[0].text;
+    expect(text).toContain('nicht erreichbar (unsere Anfrage ist ungültig — Fehler auf unserer Seite: „400 Invalid');
+    expect(bewertePuls([{ ...p, fehlerText: 'x'.repeat(150) }], now)[0].text).toContain('x'.repeat(110) + '…"');
+    expect(bewertePuls([gestoert('default', 'unbekannt', 70, now)], now)[0].text).toContain('(Grund unbekannt)');
+    expect(bewertePuls([gestoert('strong', 'netz', 70, now)], now)[0].text).toContain('(Netzwerk)');
+  });
+
   it('Billing wird für JEDEN Tier gemeldet, Netz-Fehler nur für default/strong', () => {
     const now = T(12);
     expect(bewertePuls([gestoert('fast', 'billing', 90, now)], now)[0].text).toMatch(/ohne anthropic-Guthaben \(Tier fast/);

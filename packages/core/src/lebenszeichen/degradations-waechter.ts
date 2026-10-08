@@ -45,6 +45,20 @@ export function nachzuprobendeTiers(puls: TierPuls[]): string[] {
   return puls.filter(p => ProviderPuls.istGestoert(p) && p.tier !== 'embeddings').map(p => p.tier);
 }
 
+/**
+ * v1301 — Der Wächter nennt den Grund in Worten plus den Anbieter-Text (Owner 08.10.: „(unbekannt)" half nicht; dahinter
+ * stand „400 Invalid 'max_output_tokens' … got 5" aus der eigenen Probe). „anfrage" heißt: der Fehler liegt bei uns.
+ */
+const KLASSE_TEXT: Record<string, string> = {
+  auth: 'Schlüssel oder Anmeldung abgelehnt', rate: 'Rate-Limit oder überlastet', netz: 'Netzwerk', modell: 'Modell unbekannt oder nicht verfügbar',
+  anfrage: 'unsere Anfrage ist ungültig — Fehler auf unserer Seite', unbekannt: 'Grund unbekannt',
+};
+export function fehlerGrund(p: Pick<TierPuls, 'fehlerKlasse' | 'fehlerText'>): string {
+  const klasse = KLASSE_TEXT[p.fehlerKlasse ?? 'unbekannt'] ?? p.fehlerKlasse ?? 'fehler';
+  const text = (p.fehlerText ?? '').replace(/\s+/g, ' ').trim();
+  return text ? `${klasse}: „${text.length > 110 ? text.slice(0, 110) + '…' : text}"` : klasse;
+}
+
 /** Regel 1+2: Provider-Zustände → Befunde. Rein, testbar. */
 export function bewertePuls(puls: TierPuls[], now: Date): Befund[] {
   const befunde: Befund[] = [];
@@ -57,7 +71,7 @@ export function bewertePuls(puls: TierPuls[], now: Date): Befund[] {
     const letzterErfolg = p.letzterErfolg ? `letzter Erfolg ${datumKurz(p.letzterErfolg)}` : 'noch kein Erfolg seit Start';
     const text = billing
       ? `Seit ${datumKurz(p.gestoertSeit)} ohne ${p.provider}-Guthaben (Tier ${p.tier}, ${p.model}) — läuft über den Fallback, ${letzterErfolg}`
-      : `Tier ${p.tier} (${p.provider}/${p.model}) seit ${formatiereDauer(dauer)} nicht erreichbar (${p.fehlerKlasse ?? 'fehler'}) — läuft über den Fallback, ${letzterErfolg}`;
+      : `Tier ${p.tier} (${p.provider}/${p.model}) seit ${formatiereDauer(dauer)} nicht erreichbar (${fehlerGrund(p)}) — läuft über den Fallback, ${letzterErfolg}`;
     befunde.push({ key: `tier:${p.tier}`, text });
   }
   return befunde;

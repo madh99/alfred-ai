@@ -16,7 +16,15 @@ const TIERS: ModelTier[] = ['default', 'strong', 'medium', 'fast', 'embeddings',
 /** v868 — Payload des Billing-Alert-Callbacks (Owner-Benachrichtigung).
  *  v868.3 — kind: 'failure' (Guthaben/Quota-Fehler) | 'recovered' (Entwarnung). */
 /** v1162 — Jarvis Schicht 0: Puls-Ereignis je Tier (Erfolg oder klassifizierter Fehler). */
-export type PulsFehlerKlasse = 'billing' | 'auth' | 'rate' | 'netz' | 'modell' | 'unbekannt';
+export type PulsFehlerKlasse = 'billing' | 'auth' | 'rate' | 'netz' | 'modell' | 'anfrage' | 'unbekannt';
+
+/**
+ * v1301 — Realfall 08.10.: die Probe schickte maxTokens 5; die OpenAI-Responses-API verlangt max_output_tokens ≥ 16
+ * („400 Invalid 'max_output_tokens' … got 5"). Tier default galt ab 06:55 als gestört (Klasse „unbekannt"), der Wächter
+ * warnte um 08:05 „nicht erreichbar (unbekannt)" — das echte Guthaben-Ende kam erst 09:14. 16 ist das kleinste Maximum,
+ * das alle Anbieter annehmen.
+ */
+export const PROBE_MAX_TOKENS = 16;
 export interface PulsEreignis {
   art: 'erfolg' | 'fehler';
   tier: ModelTier;
@@ -223,6 +231,8 @@ export class ModelRouter extends LLMProvider {
     const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
     const status = (err as Record<string, unknown>)?.status ?? (err as Record<string, unknown>)?.statusCode;
     if (status === 401 || status === 403 || msg.includes('401') || msg.includes('403') || msg.includes('invalid api key') || msg.includes('invalid x-api-key') || msg.includes('authentication') || msg.includes('permission')) return 'auth';
+    // v1301 — 400/422 = unsere Anfrage ist ungültig (Parameter, Schema), nicht der Anbieter: eigene Klasse statt „unbekannt"
+    if (status === 400 || status === 422 || /\b(400|422)\b/.test(msg) || msg.includes('invalid_request') || msg.includes('below minimum value') || msg.includes('unsupported parameter')) return 'anfrage';
     if (status === 429 || msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('overloaded') || msg.includes('529')) return 'rate';
     if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('etimedout') || msg.includes('econnreset') || msg.includes('socket hang up') || msg.includes('fetch failed') || msg.includes('eai_again') || msg.includes('getaddrinfo') || msg.includes('connection error') || msg.includes('502') || msg.includes('503') || msg.includes('504')) return 'netz';
     if (status === 404 || msg.includes('404') || msg.includes('model') && (msg.includes('not found') || msg.includes('does not exist') || msg.includes('not supported'))) return 'modell';
@@ -242,7 +252,7 @@ export class ModelRouter extends LLMProvider {
     if (!provider) return { ...basis, ok: false, klasse: 'modell', fehler: 'Tier nicht konfiguriert', dauerMs: 0 };
     const t0 = Date.now();
     try {
-      await provider.complete({ messages: [{ role: 'user', content: 'Antworte nur mit OK.' }], maxTokens: 5, tier });
+      await provider.complete({ messages: [{ role: 'user', content: 'Antworte nur mit OK.' }], maxTokens: PROBE_MAX_TOKENS, tier });
       this.meldePuls('erfolg', tier);
       this.maybeNotifyRecovery(tier);
       return { ...basis, ok: true, dauerMs: Date.now() - t0 };

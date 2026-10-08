@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1301] - 2026-10-08
+
+### Fixed — Tier-Probe mit gültigem Minimum, Wächter nennt den Grund (v1301)
+
+Die Warnung „Tier default seit 1 h nicht erreichbar (unbekannt)" vom 08.10. 08:05 kam nicht vom Anbieter, sondern von Alfreds eigener Probe: sie schickte `maxTokens: 5`, die OpenAI-Responses-API verlangt mindestens 16 und antwortete mit „400 Invalid 'max_output_tokens'". Der Tier galt ab 06:55 als gestört, und die Nachprobe alle zehn Minuten scheiterte am selben Fehler; das echte Guthaben-Ende begann erst um 09:14. Die Probe nutzt jetzt 16 Tokens. Fehler mit Status 400/422 bekommen die Klasse `anfrage` (Fehler auf unserer Seite), und der Wächter schreibt die Klasse in Worten plus den gekürzten Text des Anbieters in den Satz, statt nur „(unbekannt)".
+
 ## [0.19.0-jarvis.1300] - 2026-10-08
 
 ### Changed — Weniger Werkzeuge je Nachricht: Geräte-Nachrichten nur mit Geräte-Werkzeugen, engerer Skill-Filter (v1300)

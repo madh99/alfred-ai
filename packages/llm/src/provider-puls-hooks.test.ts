@@ -81,6 +81,9 @@ describe('v1162 Provider-Puls-Hooks im ModelRouter', () => {
     expect(router.klassifiziereFehler(new Error('fetch failed'))).toBe('netz');
     expect(router.klassifiziereFehler(new Error('404 model gpt-9 does not exist'))).toBe('modell');
     expect(router.klassifiziereFehler(new Error('irgendwas'))).toBe('unbekannt');
+    // v1301 — Realfall 08.10.: Probe mit maxTokens 5 → 400 der Responses-API, lief als „unbekannt"
+    expect(router.klassifiziereFehler(Object.assign(new Error("400 Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 5 instead."), { status: 400 }))).toBe('anfrage');
+    expect(router.klassifiziereFehler(new Error('422 invalid_request: unsupported parameter temperature'))).toBe('anfrage');
   });
 
   it('ohne Puls-Callback ändert sich nichts (kein Fehler)', async () => {

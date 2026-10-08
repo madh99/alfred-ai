@@ -9,7 +9,7 @@ import type { Logger } from 'pino';
  * URTEILT nicht — er hält nur fest. Urteilen tut der Degradations-Wächter.
  */
 
-export type FehlerKlasse = 'billing' | 'auth' | 'rate' | 'netz' | 'modell' | 'unbekannt';
+export type FehlerKlasse = 'billing' | 'auth' | 'rate' | 'netz' | 'modell' | 'anfrage' | 'unbekannt'; // v1301 anfrage
 
 export interface PulsEreignis {
   art: 'erfolg' | 'fehler';

@@ -15,7 +15,7 @@ export interface ProviderPulsRow {
   model: string;
   letzterErfolg?: string;
   letzterFehler?: string;
-  fehlerKlasse?: 'billing' | 'auth' | 'rate' | 'netz' | 'modell' | 'unbekannt';
+  fehlerKlasse?: 'billing' | 'auth' | 'rate' | 'netz' | 'modell' | 'anfrage' | 'unbekannt'; // v1301 anfrage
   fehlerText?: string;
   gestoertSeit?: string;
   erfolge: number;
