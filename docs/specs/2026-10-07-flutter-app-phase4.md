@@ -66,3 +66,13 @@ Ablage der Installer auf dem Server: durch mich, wie heute der CLI-Tarball über
 ## 9. Nicht Teil von Phase 4
 
 Android und iOS (Phase 5), Raumgerät, Tastatur und Maus am Gerät (§17 Punkt 4, eigene Owner-Entscheidung), Ablösung der CLI.
+
+
+## 10. Umsetzungsstand
+
+**08.10.2026 — Start (Owner „danach weiter mit phase 4"), Meilenstein 1 am PC bewiesen (14:00).**
+- Werkzeuge: Flutter 3.47.6 stable nach `F:	oolslutter` (ohne Admin), Visual Studio Build Tools 2022 mit C++ waren da; `flutter doctor` grün für Windows-Desktop. App unter `apps/flutter` (`alfred_app`, nur Windows-Plattform angelegt).
+- Anbindung: wie die Terminal-Sitzung — HTTP mit Gerätetoken zum Gehirn (Chat mit SSE-Streaming, offene Bestätigungen, Entscheidung) und IPC zum Satelliten. Weil Flutter die Named Pipe von Node nicht öffnen kann, lauscht der Satellit seit CLI .1312 zusätzlich auf 127.0.0.1 (Port und Geheimnis in `~/.alfred/ipc.json`, 0600, `hallo` mit Geheimnis zuerst) und liefert per Befehl `konfig` Server, Gerät und Token — die App liest die DPAPI-geschützte `geraet.json` nicht selbst. Ohne laufenden Satelliten zeigt die App das und versucht es alle 3 s neu.
+- Dateien: `lib/modell.dart` (Eintrag, Bestätigung, Status, Konfig), `lib/ipc.dart` (TCP-IPC, JSON-Zeilen, Wiederverbindung), `lib/server.dart` (HttpClient, `insecure` = Zertifikat akzeptieren, SSE-Parser), `lib/main.dart` (Verlauf als Liste mit Du/Alfred-Blasen, Satelliten- und Bestätigungszeilen mit Zeit, Kasten „Offene Bestätigungen" mit Ja/Nein, Eingabe mit Senden, Statuszeile; Startargumente `--protokoll <datei>` und `--sende "<text>"` für Beweisläufe). Keine Zusatzpakete außer dem Gerüst; Riverpod, Tray, Hotkey, Audio folgen mit den Meilensteinen 2 ff.
+- **Beweis Meilenstein 1 (13:55–13:56):** App gestartet mit `--sende "Öffne auf PC-madh den Ordner Downloads im Explorer."` → Protokoll: Anhängen über IPC, Nachricht gesendet 13:55:37, Bestätigung „(Gerät) Auf PC-madh: oeffnen path=~/Downloads" per IPC-Push 13:55:41 in der App, Antwort „zur Bestätigung gestellt"; Freigabe (per API, in der App ist es der Ja-Button auf demselben Weg) 13:56:18 → Schrittprotokoll `oeffnen ausgefuehrt — Geöffnet auf PC-madh: C:UsersmadhDownloads`; die App zeigte anschließend die Satelliten-Ereignisse (Aktion, Ergebnis) mit. Das Spec-Kriterium „Frage in der App → Ja → Ordner offen" ist erfüllt; der Ja-Button selbst steht noch für den Owner-Test (gleiche Route wie der API-Aufruf).
+- Offen in Meilenstein 1: Markdown in Antworten, Fenstertitel mit Bestätigungszahl, Verlauf beim Start aus dem Gehirn laden. Danach Meilenstein 2 (Talk und Tray).
