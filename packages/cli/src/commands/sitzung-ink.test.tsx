@@ -84,6 +84,35 @@ describe('Ink-Oberfläche der Sitzung (v1303)', () => {
     ui.schliessen();
   });
 
+  it('v1306: Strg+N und \\ am Zeilenende = neue Zeile; Strg+B blendet das Feld aus/ein; im Fokus ↑/↓ wählen, Enter = ja mit Nummer', async () => {
+    const t = terminal();
+    const ui = new InkOberflaeche({ geraet: 'PC', version: '1306', server: 'https://x', satellit: 'aus', offen: 0, modus: 'bereit', stimme: false, hoeren: false }, { stdin: t.stdin as unknown as NodeJS.ReadStream, stdout: t.stdout as unknown as NodeJS.WriteStream, debug: true });
+    const eingaben: string[] = []; const tasten: Array<[Taste, number | undefined]> = [];
+    ui.aufEingabe(z => eingaben.push(z)); ui.aufTaste((x, nr) => tasten.push([x, nr]));
+    ui.start();
+    for (const k of ['a', '', 'b', '\\', '\r', 'c', '\r']) { t.tippe(k); await warte(30); }
+    await warte(80);
+    expect(eingaben).toEqual(['a\nb\nc']);
+    ui.status({ offen: 3, offenListe: [{ id: 'a', text: 'Erste' }, { id: 'b', text: 'Zweite' }, { id: 'c', text: 'Dritte' }] });
+    await warte(80);
+    expect(t.ausgabe()).toContain('Offene Bestätigungen (3)');
+    // Strg+B → Fokus (jüngste gewählt), ↑ ↑ → erste, Enter → ja 1; ↓ → zweite, n → nein 2
+    for (const k of ['', '[A', '[A', '\r', '[B', 'n']) { t.tippe(k); await warte(30); }
+    await warte(80);
+    expect(tasten).toEqual([['ja', 1], ['nein', 2]]);
+    expect(t.ausgabe()).toContain('▶ ');
+    // Esc verlässt den Fokus; Strg+B nimmt den Fokus, Strg+B blendet aus; „x" geht wieder in die Eingabe; Strg+B blendet ein
+    t.tippe(''); await warte(30); t.tippe(''); await warte(30); t.tippe(''); await warte(80);
+    const vorher = t.ausgabe().length;
+    t.tippe('x'); await warte(80);
+    const danach = t.ausgabe().slice(vorher);
+    expect(danach).toContain('Du: x');
+    expect(danach).not.toContain('Offene Bestätigungen');
+    t.tippe(''); await warte(80);
+    expect(t.ausgabe().slice(vorher)).toContain('Offene Bestätigungen (3)');
+    ui.schliessen();
+  });
+
   it('markdownZeile, eingabeTaste, alterText — rein', () => {
     expect(markdownZeile('a **b** `c` d')).toEqual({ art: 'text', stuecke: [{ text: 'a ' }, { text: 'b', fett: true }, { text: ' ' }, { text: 'c', code: true }, { text: ' d' }] });
     expect(markdownZeile('1. eins').art).toBe('punkt');

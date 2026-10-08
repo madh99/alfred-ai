@@ -402,7 +402,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
     process.exit(0);
   };
 
-  ui.aufTaste((t) => {
+  ui.aufTaste((t, nr) => {
     if (t === 'strg+t') {
       if (aufnahme) { const a = aufnahme; aufnahme = undefined; void talkStop(a); return; }
       if (!antwortLaeuft) void talkStart();
@@ -410,8 +410,8 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
     }
     if (t === 'ende') { beende(); return; }
     if (t === 'lage') { void zeigeLage().catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
-    if (t === 'ja') { void entscheide('', 'approve').catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
-    if (t === 'nein') { void entscheide('', 'reject').catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
+    if (t === 'ja') { void entscheide(nr ? String(nr) : '', 'approve').catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
+    if (t === 'nein') { void entscheide(nr ? String(nr) : '', 'reject').catch(err => drucke(`Fehler: ${(err as Error).message}`)); return; }
   });
 
   const zeigeLage = async () => {

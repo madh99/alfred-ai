@@ -29,7 +29,8 @@ export interface Oberflaeche {
   status(s: Partial<SitzungStatus>): void;
   prompt(label?: string): void;
   aufEingabe(cb: (zeile: string) => void): void;
-  aufTaste(cb: (t: Taste) => void): void;
+  /** v1306 — `nr` nennt die gewählte Bestätigung (1-basiert, Reihenfolge wie /offen); ohne nr gilt die jüngste. */
+  aufTaste(cb: (t: Taste, nr?: number) => void): void;
   schliessen(): void;
 }
 
@@ -40,7 +41,7 @@ export class ReadlineOberflaeche implements Oberflaeche {
   private readonly rl: readline.Interface;
   private gezeigt = '';
   private modus: SitzungStatus['modus'] = 'bereit';
-  private tasteCb?: (t: Taste) => void;
+  private tasteCb?: (t: Taste, nr?: number) => void;
   constructor(private readonly out: NodeJS.WriteStream = process.stdout, inp: NodeJS.ReadStream = process.stdin) {
     this.rl = readline.createInterface({ input: inp, output: out, prompt: 'Du: ' });
     readline.emitKeypressEvents(inp, this.rl);
@@ -66,6 +67,6 @@ export class ReadlineOberflaeche implements Oberflaeche {
   status(s: Partial<SitzungStatus>): void { if (s.modus) this.modus = s.modus; }
   prompt(label?: string): void { if (label !== undefined) this.rl.setPrompt(label); this.rl.prompt(true); }
   aufEingabe(cb: (zeile: string) => void): void { this.rl.on('line', cb); }
-  aufTaste(cb: (t: Taste) => void): void { this.tasteCb = cb; this.rl.on('close', () => cb('ende')); }
+  aufTaste(cb: (t: Taste, nr?: number) => void): void { this.tasteCb = cb; this.rl.on('close', () => cb('ende')); }
   schliessen(): void { this.rl.close(); }
 }

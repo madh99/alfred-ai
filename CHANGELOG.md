@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1306] - 2026-10-08
+
+### Fixed — Ink-Sitzung: neue Zeile ohne Alt+Enter, Bestätigungen ein-/ausblenden und mit Pfeilen bedienen (v1306)
+
+Owner-Befund 08.10.: Alt+Enter kam weder im Windows Terminal (dort Vollbild) noch auf dem Mac (Terminal.app schickt für Option+Return nur Enter) bei der Sitzung an. Neue Zeile jetzt mit Strg+N oder mit „\" am Zeilenende plus Enter, beides in jedem Terminal; Alt+Enter und Shift+Enter bleiben dort, wo sie durchgereicht werden. Das Feld der offenen Bestätigungen lässt sich mit Strg+B einblenden, in den Fokus nehmen und ausblenden; im Fokus wählen Pfeil hoch/runter die Bestätigung (▶ markiert sie), Enter oder J gibt sie frei, N oder Rücktaste lehnt ab, Esc geht zurück zur Eingabe. Die Entscheidung trägt die Nummer der gewählten Bestätigung; Alt+J und Alt+N bleiben für die jüngste.
+
 ## [0.19.0-jarvis.1305] - 2026-10-08
 
 ### Changed — Ink-Sitzung: Eingabe wie ein Editor, Feld für Bestätigungen, lesbare Antworten (v1305)

@@ -88,19 +88,25 @@ export function eingabeTaste(e: Eingabe, input: string, key: { leftArrow?: boole
   if (key.ctrl && input === 'u') return { text: text.slice(cursor), cursor: 0 };
   if (key.ctrl && input === 'w') { const vor = text.slice(0, cursor).replace(/\S+\s*$/, ''); return { text: vor + text.slice(cursor), cursor: vor.length }; }
   if (key.backspace || (key.delete && !key.meta && input === '')) { if (cursor === 0) return e; return { text: text.slice(0, cursor - 1) + text.slice(cursor), cursor: cursor - 1 }; }
-  if (key.return && (key.meta || key.shift)) return { text: text.slice(0, cursor) + '\n' + text.slice(cursor), cursor: cursor + 1 };
+  // v1306 — neue Zeile: Strg+N (überall), Alt+Enter/Shift+Enter nur dort, wo das Terminal sie durchreicht (Windows Terminal
+  // nimmt Alt+Enter für Vollbild, Terminal.app schickt für Option+Return nur \r) — Owner-Befund 08.10.
+  if ((key.return && (key.meta || key.shift)) || (key.ctrl && input === 'n')) return { text: text.slice(0, cursor) + '\n' + text.slice(cursor), cursor: cursor + 1 };
   if (key.ctrl || key.meta || !input) return e;
   return { text: text.slice(0, cursor) + input + text.slice(cursor), cursor: cursor + input.length };
 }
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEingabe: (z: string) => void; aufTaste: (t: Taste) => void }) {
+function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEingabe: (z: string) => void; aufTaste: (t: Taste, nr?: number) => void }) {
   const [z, setZ] = useState(speicher.z);
   const [e, setE] = useState<Eingabe>({ text: '', cursor: 0 });
   const [verlaufEingaben, setVerlaufEingaben] = useState<string[]>([]);
   const [verlaufPos, setVerlaufPos] = useState(-1);
   const [tick, setTick] = useState(0);
+  // v1306 — Feld der Bestätigungen: Strg+B blendet ein/aus und nimmt den Fokus; im Fokus ↑/↓ wählen, Enter/J freigeben, N ablehnen, Esc zurück
+  const [feldSichtbar, setFeldSichtbar] = useState(true);
+  const [feldFokus, setFeldFokus] = useState(false);
+  const [auswahl, setAuswahl] = useState(0);
   const stdout = useStdout().stdout as unknown as NodeJS.WriteStream | undefined; // Breite und 'resize' nur am echten Terminal
   const [spalten, setSpalten] = useState(stdout?.columns ?? 80);
   useEffect(() => speicher.on(() => setZ(speicher.z)), [speicher]);
@@ -117,6 +123,22 @@ function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEi
     if (key.ctrl && (input === 'q' || input === 'd')) { aufTaste('ende'); return; }
     if (key.meta && (input === 'j' || input === 'J')) { aufTaste('ja'); return; }
     if (key.meta && (input === 'n' || input === 'N')) { aufTaste('nein'); return; }
+    const anzahl = z.status.offenListe?.length ?? 0;
+    if (key.ctrl && input === 'b') {
+      if (!feldSichtbar) { setFeldSichtbar(true); setFeldFokus(anzahl > 0); setAuswahl(Math.max(0, anzahl - 1)); }
+      else if (!feldFokus && anzahl > 0) { setFeldFokus(true); setAuswahl(Math.max(0, anzahl - 1)); }
+      else { setFeldSichtbar(false); setFeldFokus(false); }
+      return;
+    }
+    if (feldFokus) {
+      const nr = Math.min(auswahl, Math.max(0, anzahl - 1));
+      if (key.escape) { setFeldFokus(false); return; }
+      if (key.upArrow) { setAuswahl(Math.max(0, nr - 1)); return; }
+      if (key.downArrow) { setAuswahl(Math.min(Math.max(0, anzahl - 1), nr + 1)); return; }
+      if (anzahl && (key.return || input === 'j' || input === 'J')) { aufTaste('ja', nr + 1); return; }
+      if (anzahl && (input === 'n' || input === 'N' || key.backspace || key.delete)) { aufTaste('nein', nr + 1); return; }
+      return; // im Fokus geht nichts in die Eingabe
+    }
     if (key.escape) { setE({ text: '', cursor: 0 }); setVerlaufPos(-1); return; }
     if (key.upArrow || key.downArrow) {
       if (!verlaufEingaben.length) return;
@@ -127,6 +149,8 @@ function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEi
       return;
     }
     if (key.return && !key.meta && !key.shift) {
+      // v1306 — Zeile endet mit „\": Zeilenumbruch statt Senden (geht in jedem Terminal)
+      if (e.text.endsWith('\\')) { setE({ text: e.text.slice(0, -1) + '\n', cursor: e.text.length }); return; }
       const t = e.text; setE({ text: '', cursor: 0 }); setVerlaufPos(-1);
       if (t.trim()) setVerlaufEingaben(v => [...v.slice(-99), t]);
       aufEingabe(t); return;
@@ -152,19 +176,22 @@ function Sitzung({ speicher, aufEingabe, aufTaste }: { speicher: Speicher; aufEi
       )}</Static>
       {z.antwort ? <Box flexDirection="column" marginTop={1}><Text color="cyan">{z.antwortKopf}</Text>{z.antwort.split('\n').map((l, i) => <Markiert key={i} text={l} />)}</Box> : null}
       {z.fluechtig ? <Text dimColor>{z.fluechtig}</Text> : null}
-      {offene.length ? (
-        <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1}>
-          <Text color="yellow" bold>Offene Bestätigungen ({offene.length}) — /ja n · /nein n · Alt+J/Alt+N = jüngste</Text>
-          {offene.map((b, i) => (
-            <Text key={b.id} bold={i === offene.length - 1}>[{i + 1}] {b.quelle === 'geraet' ? '(Gerät) ' : ''}{b.text.slice(0, Math.max(20, spalten - 24))}{alterText(b.seit, jetzt) ? <Text dimColor> {alterText(b.seit, jetzt)}</Text> : null}</Text>
-          ))}
+      {offene.length && feldSichtbar ? (
+        <Box flexDirection="column" borderStyle="round" borderColor={feldFokus ? 'green' : 'yellow'} paddingX={1} marginTop={1}>
+          <Text color={feldFokus ? 'green' : 'yellow'} bold>Offene Bestätigungen ({offene.length}) — {feldFokus ? '↑/↓ wählen · Enter/J freigeben · N ablehnen · Esc zurück' : 'Strg+B wählen/ausblenden · /ja n · /nein n · Alt+J/Alt+N = jüngste'}</Text>
+          {offene.map((b, i) => {
+            const gewaehlt = feldFokus && i === Math.min(auswahl, offene.length - 1);
+            return (
+              <Text key={b.id} bold={i === offene.length - 1} inverse={gewaehlt}>{gewaehlt ? '▶ ' : '  '}[{i + 1}] {b.quelle === 'geraet' ? '(Gerät) ' : ''}{b.text.slice(0, Math.max(20, spalten - 26))}{alterText(b.seit, jetzt) ? <Text dimColor> {alterText(b.seit, jetzt)}</Text> : null}</Text>
+            );
+          })}
         </Box>
       ) : null}
       <Box borderStyle="single" borderColor="gray" paddingX={1} marginTop={1} flexDirection="column">
         <Text dimColor wrap="wrap">{statusText}</Text>
         <Text>{z.label}{e.text.slice(0, e.cursor)}<Text inverse>{e.text.charAt(e.cursor) || ' '}</Text>{e.text.slice(e.cursor + 1)}</Text>
       </Box>
-      {spalten >= 70 ? <Text dimColor>Enter sendet · Alt+Enter neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Alt+J/Alt+N Bestätigung · Strg+L Lage · Strg+Q Ende</Text> : null}
+      {spalten >= 70 ? <Text dimColor>Enter sendet · Strg+N oder \ am Zeilenende = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+B Bestätigungen · Strg+L Lage · Strg+Q Ende</Text> : null}
     </Box>
   );
 }
@@ -175,11 +202,11 @@ export class InkOberflaeche implements Oberflaeche {
   private readonly speicher: Speicher;
   private instanz?: Instance;
   private eingabeCb: (z: string) => void = () => undefined;
-  private tasteCb: (t: Taste) => void = () => undefined;
+  private tasteCb: (t: Taste, nr?: number) => void = () => undefined;
   constructor(status: SitzungStatus, private readonly opts: InkOptionen = {}) { this.speicher = new Speicher(status); }
   start(): void {
     this.instanz = render(
-      <Sitzung speicher={this.speicher} aufEingabe={(z) => this.eingabeCb(z)} aufTaste={(t) => this.tasteCb(t)} />,
+      <Sitzung speicher={this.speicher} aufEingabe={(z) => this.eingabeCb(z)} aufTaste={(t, nr) => this.tasteCb(t, nr)} />,
       { stdout: this.opts.stdout ?? process.stdout, stdin: this.opts.stdin ?? process.stdin, debug: this.opts.debug ?? false, exitOnCtrlC: false, patchConsole: false },
     );
   }
@@ -202,7 +229,7 @@ export class InkOberflaeche implements Oberflaeche {
   status(s: Partial<SitzungStatus>): void { this.speicher.aendere(z => { z.status = { ...z.status, ...s }; }); }
   prompt(label?: string): void { if (label !== undefined) this.speicher.aendere(z => { z.label = label; }); }
   aufEingabe(cb: (zeile: string) => void): void { this.eingabeCb = cb; }
-  aufTaste(cb: (t: Taste) => void): void { this.tasteCb = cb; }
+  aufTaste(cb: (t: Taste, nr?: number) => void): void { this.tasteCb = cb; }
   schliessen(): void { try { this.instanz?.unmount(); } catch { /* */ } }
 }
 
