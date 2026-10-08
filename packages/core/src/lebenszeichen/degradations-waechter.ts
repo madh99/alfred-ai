@@ -106,6 +106,14 @@ export function bewerteKosten(k: { datum: string; heuteUsd: number; budgetUsd?: 
   return [{ key: `kosten:${k.datum}`, text: `LLM-Kosten heute $${k.heuteUsd.toFixed(2)} über dem Tagesbudget von $${k.budgetUsd.toFixed(2)}${posten} — läuft weiter, prüfe die Kachel Lebenszeichen` }];
 }
 
+/**
+ * v1315 — eingerichtete Benutzer-Dienste, deren Anbieter nicht gebaut werden kann (abgelaufener Token, fehlende
+ * Konfiguration). Realfall 08.10.: Kalender fam@dohnal.co seit Wochen tot, nur im Journal sichtbar.
+ */
+export function bewerteDienste(dienste: Array<{ serviceType: string; serviceName: string; grund: string }>): Befund[] {
+  return dienste.map(d => ({ key: `dienst:${d.serviceType}/${d.serviceName}`, text: `Dienst ${d.serviceType} „${d.serviceName}": Zugang scheitert — ${d.grund.slice(0, 160)}. Zugang erneuern (z. B. alfred auth microsoft --sync).` }));
+}
+
 export function bewerteAdapter(zustaende: Array<{ platform: string; status: string; getrenntSeitMs?: number }>, now: Date): Befund[] {
   const befunde: Befund[] = [];
   for (const a of zustaende) {
@@ -184,6 +192,7 @@ function beschreibeKey(key: string): string {
   if (art === 'tier') return `Tier ${name}`;
   if (art === 'job') return `Job ${name}`;
   if (art === 'daten') return `Tabelle ${name}`;
+  if (art === 'dienst') return `Dienst ${name}`; // v1315
   return key;
 }
 

@@ -212,7 +212,7 @@ async function main(): Promise<void> {
     case 'auth': {
       const provider = parsed.positional[0] ?? '';
       const { authCommand } = await import('./commands/auth.js');
-      await authCommand(provider);
+      await authCommand(provider, { sync: !!parsed.flags['sync'] }); // v1315 --sync
       break;
     }
 

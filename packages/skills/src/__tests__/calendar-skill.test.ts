@@ -272,3 +272,46 @@ describe('CalendarSkill — provider resolution', () => {
     expect(result.error).toContain('nicht konfiguriert');
   });
 });
+
+describe('v1315 CalendarSkill — eingerichteter, aber gestörter Benutzer-Dienst', () => {
+  function resolverMit(services: Array<{ serviceType: string; serviceName: string; config: Record<string, unknown> }>) {
+    const meldungen: Array<[string, string, string | null]> = [];
+    const resolver = {
+      getServiceConfig: vi.fn().mockResolvedValue(null),
+      getUserServices: vi.fn().mockResolvedValue(services),
+      saveServiceConfig: vi.fn(),
+      removeServiceConfig: vi.fn(),
+      meldeStoerung: (t: string, n: string, g: string | null) => { meldungen.push([t, n, g]); },
+    };
+    return { resolver, meldungen };
+  }
+
+  it('nennt dem Modell den Grund statt „unbekannt", meldet die Störung und zeigt sie in list_accounts', async () => {
+    const skill = new CalendarSkill(new Map([['default', createMockProvider()]]), 'Europe/Vienna');
+    // provider microsoft ohne microsoft-Block → Factory wirft deterministisch „Microsoft Calendar config missing"
+    const { resolver, meldungen } = resolverMit([{ serviceType: 'calendar', serviceName: 'fam@dohnal.co', config: { provider: 'microsoft' } }]);
+    const ctx = createContext({ alfredUserId: 'u1', userRole: 'admin', userServiceResolver: resolver as unknown as SkillContext['userServiceResolver'] });
+
+    const r = await skill.execute({ action: 'list_events', account: 'fam@dohnal.co', start: '2026-10-08T00:00:00', end: '2026-10-09T00:00:00' }, ctx);
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('eingerichtet, aber der Zugang scheitert');
+    expect(r.error).toContain('Microsoft Calendar config missing');
+    expect(meldungen).toContainEqual(['calendar', 'fam@dohnal.co', 'Microsoft Calendar config missing']);
+
+    const liste = await skill.execute({ action: 'list_accounts' }, ctx);
+    expect(liste.success).toBe(true);
+    expect((liste.data as { gestoert: Array<{ name: string }> }).gestoert.map(g => g.name)).toEqual(['fam@dohnal.co']);
+    expect(liste.display).toContain('gestört');
+  });
+
+  it('meldet Entwarnung (null), wenn der Anbieter wieder gebaut werden kann', async () => {
+    const skill = new CalendarSkill(new Map(), 'Europe/Vienna');
+    const { resolver, meldungen } = resolverMit([{ serviceType: 'calendar', serviceName: 'cal', config: { provider: 'caldav', caldav: { url: 'http://x', username: 'u', password: 'p' } } }]);
+    vi.doMock('../built-in/calendar/factory.js', () => ({ createCalendarProvider: vi.fn().mockResolvedValue(createMockProvider()) }));
+    const ctx = createContext({ alfredUserId: 'u1', userRole: 'admin', userServiceResolver: resolver as unknown as SkillContext['userServiceResolver'] });
+    const r = await skill.execute({ action: 'list_accounts' }, ctx);
+    vi.doUnmock('../built-in/calendar/factory.js');
+    if (r.success) expect(meldungen).toContainEqual(['calendar', 'cal', null]);
+    else expect(meldungen.some(m => m[1] === 'cal' && m[2] !== null)).toBe(true); // ohne Netz: Störung mit Grund, nie still
+  });
+});

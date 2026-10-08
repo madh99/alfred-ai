@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import { ConfigLoader } from '@alfred/config';
+import { erneuereDienstTokens, tokenAusEnv } from './auth-dienste.js'; // v1315
 
 const REDIRECT_URI = 'http://localhost:3000/callback';
 const SCOPES = [
@@ -183,6 +184,26 @@ function updateYamlTokens(creds: Credentials, refreshToken: string): string[] {
   return ersetzt;
 }
 
+/**
+ * v1315 — dritter Ort: Benutzer-Dienste in der Datenbank (`user_services`). Realfall 08.10.: der Familienkalender
+ * fam@dohnal.co (Dienst mit sharedCalendar, eigene Token-Kopie vom März) blieb nach `alfred auth microsoft` tot.
+ * Alle Dienste mit derselben Client-ID bekommen den neuen Token; Rückgabe = „typ/name" je geänderter Zeile.
+ */
+async function updateDbTokens(creds: Credentials, refreshToken: string): Promise<string[]> {
+  const cfg = new ConfigLoader().loadConfig();
+  const { Database } = await import('@alfred/storage');
+  const db = await Database.create({ backend: cfg.storage.backend ?? 'sqlite', path: cfg.storage.path, connectionString: cfg.storage.connectionString });
+  try {
+    const adapter = db.getAdapter();
+    const rows = await adapter.query('SELECT id, service_type, service_name, config FROM user_services') as Array<Record<string, unknown>>;
+    const updates = erneuereDienstTokens(rows.map(r => ({ id: String(r.id), serviceType: String(r.service_type), serviceName: String(r.service_name), config: r.config as string })), creds.clientId, refreshToken);
+    for (const u of updates) await adapter.execute('UPDATE user_services SET config = ? WHERE id = ?', [u.config, u.id]);
+    return updates.map(u => `${u.serviceType}/${u.serviceName}`);
+  } finally {
+    await db.close().catch(() => undefined);
+  }
+}
+
 function updateEnvFile(creds: Credentials, refreshToken: string): void {
   const envPath = resolve(process.cwd(), '.env');
   let lines: string[] = [];
@@ -324,9 +345,9 @@ function waitForCallback(creds: Credentials, abbruch: Abbruch): Promise<string> 
   });
 }
 
-export async function authCommand(provider: string): Promise<void> {
+export async function authCommand(provider: string, opts: { sync?: boolean } = {}): Promise<void> {
   if (!provider) {
-    console.error('Usage: alfred auth <provider>');
+    console.error('Usage: alfred auth <provider> [--sync]');
     console.error('  Unterstützte Provider: microsoft');
     process.exit(1);
   }
@@ -351,6 +372,22 @@ export async function authCommand(provider: string): Promise<void> {
   console.log(`  Schreibe nach: ${envPfad}`);
   const creds = await ensureCredentials();
 
+  // v1315 — `--sync`: keine neue Anmeldung, der Token aus der .env wird in YAML-Konten und Datenbank-Dienste
+  // derselben Client-ID übernommen (Realfall 08.10.: Familienkalender als DB-Dienst mit altem Token).
+  if (opts.sync) {
+    const gefunden = tokenAusEnv(readFileSync(envPfad, 'utf-8'));
+    if (!gefunden) { console.error('  Fehler: kein ALFRED_MICROSOFT_*_REFRESH_TOKEN in der .env — zuerst ohne --sync anmelden.'); process.exit(1); }
+    console.log(`  Token aus ${gefunden.schluessel} wird übernommen (ohne neue Anmeldung).`);
+    const yamlStellen = updateYamlTokens(creds, gefunden.token);
+    console.log(yamlStellen.length ? `  config/default.yml aktualisiert: ${yamlStellen.join(', ')} (Sicherungskopie daneben).` : '  config/default.yml: nichts zu tun.');
+    try {
+      const dienste = await updateDbTokens(creds, gefunden.token);
+      console.log(dienste.length ? `  Datenbank-Dienste aktualisiert: ${dienste.join(', ')}.` : '  Datenbank-Dienste: nichts zu tun.');
+    } catch (err) { console.error(`  Datenbank-Dienste nicht aktualisiert: ${(err as Error).message}`); process.exit(1); }
+    console.log('  Datenbank-Dienste wirken sofort; für YAML-Konten Alfred neu starten (außerhalb des Pass-Fensters :57–:02, :27–:32).');
+    process.exit(0);
+  }
+
   const authUrl = buildAuthUrl(creds);
   console.log('');
   console.log('  Öffne diese URL im Browser:');
@@ -369,6 +406,10 @@ export async function authCommand(provider: string): Promise<void> {
     console.log('  .env aktualisiert (Email, Calendar, Contacts, To Do).');
     const yamlStellen = updateYamlTokens(creds, refreshToken);
     if (yamlStellen.length) console.log(`  config/default.yml aktualisiert: ${yamlStellen.join(', ')} (Sicherungskopie daneben).`);
+    try { // v1315 — Datenbank-Dienste (z. B. geteilter Kalender) derselben Client-ID
+      const dienste = await updateDbTokens(creds, refreshToken);
+      if (dienste.length) console.log(`  Datenbank-Dienste aktualisiert: ${dienste.join(', ')}.`);
+    } catch (err) { console.error(`  Datenbank-Dienste nicht aktualisiert: ${(err as Error).message} — später: alfred auth microsoft --sync`); }
     console.log('  Danach Alfred neu starten — außerhalb des Pass-Fensters (:57–:02, :27–:32): sudo systemctl restart alfred');
     console.log('');
     console.log('  Fertig! Du kannst Alfred jetzt mit Microsoft 365 nutzen.');

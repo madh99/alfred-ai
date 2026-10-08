@@ -2310,8 +2310,10 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       }
 
       // Action-Gating: skip skills with very low historical acceptance rate
+      // v1315 — Reparatur-Aktionen (reauthorize …) bleiben sichtbar (Realfall: Kalender-Token-Vorgang still verworfen)
       try {
-        const feedback = await this.memoryRepo.recall(this.resolvedOwnerUserId || this.defaultChatId, `action_feedback_${action.skillName}`);
+        const { istReparaturAktion } = await import('./vorgaenge/reparatur.js');
+        const feedback = istReparaturAktion(action.skillParams) ? null : await this.memoryRepo.recall(this.resolvedOwnerUserId || this.defaultChatId, `action_feedback_${action.skillName}`);
         if (feedback) {
           const rate = ActionFeedbackTracker.extractRate(feedback.value);
           if (rate !== undefined && rate < 0.2) {

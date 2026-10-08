@@ -147,6 +147,7 @@ export class CalendarSkill extends Skill {
     } finally {
       this.activeProviders = undefined;
       this.mergedProviders = undefined;
+      this.toteDienste = undefined;
     }
   }
 
@@ -162,16 +163,32 @@ export class CalendarSkill extends Skill {
     if (services.length === 0) return null;
 
     const providers = new Map<string, CalendarProvider>();
+    this.toteDienste = new Map();
     for (const svc of services) {
       try {
         const { createCalendarProvider } = await import('./factory.js');
         const provider = await createCalendarProvider(svc.config as unknown as CalendarConfig);
         providers.set(svc.serviceName, provider);
+        context.userServiceResolver.meldeStoerung?.('calendar', svc.serviceName, null); // v1315 — wieder in Ordnung
       } catch (err) {
-        console.error(`[calendar] Failed to create per-user provider "${svc.serviceName}":`, err instanceof Error ? err.message : String(err));
+        // v1315 — Realfall 08.10.: fam@dohnal.co (abgelaufener Token) fiel still aus der Kontenliste; jetzt gemerkt,
+        // dem Modell als Grund genannt und über den Resolver als Befund ins Lebenszeichen gemeldet.
+        const grund = err instanceof Error ? err.message : String(err);
+        this.toteDienste.set(svc.serviceName, grund);
+        context.userServiceResolver.meldeStoerung?.('calendar', svc.serviceName, grund);
+        console.error(`[calendar] Failed to create per-user provider "${svc.serviceName}":`, grund);
       }
     }
     return providers.size > 0 ? providers : null;
+  }
+
+  /** v1315 — eingerichtete, aber nicht nutzbare Konten der laufenden Ausführung (Name → Grund). */
+  private toteDienste?: Map<string, string>;
+
+  private hinweisToterDienst(account: string): string | undefined {
+    const grund = this.toteDienste?.get(account);
+    if (grund === undefined) return undefined;
+    return `Kalender-Konto "${account}" ist eingerichtet, aber der Zugang scheitert: ${grund.slice(0, 200)}. Der Owner muss den Zugang erneuern (z. B. alfred auth microsoft --sync); bis dahin diesen Kalender nicht abfragen.`;
   }
 
   private resolveProvider(input: Record<string, unknown>, contextTimezone?: string): { provider: CalendarProvider; account: string } | SkillResult {
@@ -181,6 +198,8 @@ export class CalendarSkill extends Skill {
     const account = (input.account as string) ?? defaultAccount;
     const provider = providers.get(account);
     if (!provider) {
+      const tot = this.hinweisToterDienst(account); // v1315
+      if (tot) return { success: false, error: tot };
       return {
         success: false,
         error: `Unbekannter Kalender-Account "${account}". Verfügbar: ${accountNames.join(', ')}`,
@@ -576,10 +595,11 @@ export class CalendarSkill extends Skill {
     if (names.length === 0) {
       return { success: true, data: { accounts: [] }, display: 'Keine Kalender-Accounts konfiguriert.\nNutze "setup_service" um einen Kalender zu verbinden.' };
     }
+    const gestoert = [...(this.toteDienste ?? new Map<string, string>()).entries()]; // v1315
     return {
       success: true,
-      data: { accounts: names, default: names[0] },
-      display: `Verfügbare Kalender-Accounts:\n${names.map((n, i) => `${i === 0 ? '• ' + n + ' (Standard)' : '• ' + n}`).join('\n')}`,
+      data: { accounts: names, default: names[0], gestoert: gestoert.map(([name, grund]) => ({ name, grund: grund.slice(0, 200) })) },
+      display: `Verfügbare Kalender-Accounts:\n${names.map((n, i) => `${i === 0 ? '• ' + n + ' (Standard)' : '• ' + n}`).join('\n')}${gestoert.length ? `\nEingerichtet, aber gestört (Zugang erneuern):\n${gestoert.map(([n, g]) => `• ${n} — ${g.slice(0, 120)}`).join('\n')}` : ''}`,
     };
   }
 

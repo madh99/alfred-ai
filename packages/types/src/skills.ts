@@ -81,6 +81,8 @@ export interface SkillContext {
     getUserServices(alfredUserId: string | undefined, serviceType?: string): Promise<Array<{ serviceType: string; serviceName: string; config: Record<string, unknown> }>>;
     saveServiceConfig(alfredUserId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): Promise<void>;
     removeServiceConfig(alfredUserId: string, serviceType: string, serviceName: string): Promise<boolean>;
+    /** v1315 — Skill meldet, dass ein eingerichteter Dienst nicht nutzbar ist (grund) oder wieder geht (null); wird Befund im Lebenszeichen. */
+    meldeStoerung?(serviceType: string, serviceName: string, grund: string | null): void;
   };
   /** HA cluster node ID (set when cluster.enabled). */
   nodeId?: string;

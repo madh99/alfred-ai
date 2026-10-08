@@ -619,7 +619,7 @@ export class Alfred {
     } catch { /* DB-Fehler → nur in-memory-Quelle */ }
     return resolveAgentForRun({ available, strategy, requestedAgent, busy, isAutomatic: opts?.isAutomatic, resumeAgent: opts?.resumeAgent });
   }
-  private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
+  private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function; meldeStoerung?: Function; gestoerteDienste?: () => Array<{ serviceType: string; serviceName: string; grund: string; seit: string }> };
   private readonly startedAt = new Date().toISOString();
 
   /**
@@ -7629,7 +7629,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const { ROLE_SKILL_ACCESS } = await import('@alfred/skills');
       const pipelineUserRepo = new AlfredUserRepository(adapter);
       const { UserServiceResolver } = await import('./user-service-resolver.js');
-      const serviceResolver = new UserServiceResolver(pipelineUserRepo);
+      const serviceResolver = new UserServiceResolver(pipelineUserRepo, this.logger); // v1315 Logger für Dienst-Störungen
       this.userServiceResolverRef = serviceResolver;
       this.pipeline.setAlfredUserRepo(pipelineUserRepo, ROLE_SKILL_ACCESS, this.usageRepo, serviceResolver);
       // Wire role access into help skill
@@ -13981,7 +13981,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       // Puls; Abnahme: entfernter API-Key → binnen 70 min genau ein Owner-Satz)
       // und synthetische Proben 06:50 (Tiers direkt, Jobs im Takt, Daten-Frische).
       {
-        const { DegradationsWaechter, bewertePuls, nachzuprobendeTiers, bewerteProben, bewerteAdapter, bewerteKosten, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js');
+        const { DegradationsWaechter, bewertePuls, nachzuprobendeTiers, bewerteProben, bewerteAdapter, bewerteKosten, bewerteDienste, formatiereMeldungen } = await import('./lebenszeichen/degradations-waechter.js'); // v1315 bewerteDienste
         const { fuehreProbenAus } = await import('./lebenszeichen/proben.js');
         const { JobRunsRepository } = await import('@alfred/storage');
         const lzRepo = this.lebenszeichenRepo;
@@ -14117,8 +14117,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               }
               if (Object.keys(nachproben).length) this.logger.info({ nachproben }, 'v1270 Nachprobe gestörter Tiers');
             }
-            const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteAdapter(this.adapterZustaende(), new Date()), ...bewerteKosten(kosten)];
-            const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier', 'adapter', 'kosten'] });
+            // v1315 — gestörte Benutzer-Dienste (z. B. Kalender fam@dohnal.co mit abgelaufenem Token) als Befund
+            const befunde = [...(puls ? bewertePuls(puls.alle(), new Date()) : []), ...bewerteAdapter(this.adapterZustaende(), new Date()), ...bewerteKosten(kosten), ...bewerteDienste(this.userServiceResolverRef?.gestoerteDienste?.() ?? [])];
+            const meldungen = await waechter.abgleich(befunde, { wiederholen: false, nurBereiche: ['tier', 'adapter', 'kosten', 'dienst'] });
             const gesendet = await melde(meldungen);
             // v1219 — Wächter-Zustand als Befunde (Quelle lebenszeichen, ohne Vorgang: Alfreds eigene Gesundheit, der Wächter meldet selbst)
             try {

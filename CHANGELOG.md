@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1315] - 2026-10-08
+
+### Fixed — Microsoft-Token an allen drei Orten, gestörte Dienste sichtbar (v1315)
+
+Realfall 08.10.: Der Familienkalender fam@dohnal.co ist ein Benutzer-Dienst in der Datenbank (`user_services`, geteilter Kalender über das Hauptkonto) mit eigener Token-Kopie vom März. `alfred auth microsoft` erneuerte .env und YAML, die Datenbank nicht; Microsoft meldete AADSTS700082 (90 Tage inaktiv). Der Kalender-Skill ließ den Dienst still aus der Kontenliste fallen, der Fehler stand nur im Journal, und Alfreds eigener Vorgang „Kalender-Token erneuern" wurde eine Sekunde nach dem Vorschlag von der Akzeptanzraten-Regel (E-Mail 11 % < 20 %) verworfen, ohne dass der Owner ihn sah.
+
+- `alfred auth microsoft` erneuert jetzt auch alle Datenbank-Dienste derselben Client-ID; `--sync` übernimmt den Token aus der .env ohne neue Anmeldung in YAML und Datenbank.
+- Kalender-Skill: ein eingerichtetes, aber gestörtes Konto wird dem Modell mit Grund genannt (statt „unbekannt"), `list_accounts` zeigt es unter „gestört"; die Störung geht über den Dienst-Resolver ins Alfred-Log und als Befund `dienst:calendar/<name>` ins Lebenszeichen (Entwarnung, sobald der Anbieter wieder gebaut wird).
+- Reasoning: Reparatur-Aktionen (reauthorize, reconnect, renew_token) umgehen das Akzeptanzraten-Gate.
+
 ## [0.19.0-jarvis.1314] - 2026-10-08
 
 ### Added — Verlauf der Gerätesitzung und Aktivierungswort für die Desktop-App (v1314)
