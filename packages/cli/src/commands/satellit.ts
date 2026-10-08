@@ -21,6 +21,7 @@ import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN }
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
 import { Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js'; // v1276
 import { IpcServer, type IpcEreignisArt, type SatellitStatus } from './satellit-ipc.js'; // v1302
+import { heimInParams } from './satellit-pfad.js'; // v1303
 import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
@@ -137,6 +138,7 @@ export function entkoppleLokal(): string[] {
 export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<string, unknown>): Promise<Ergebnis> {
   const frei = k.freigegebeneVerzeichnisse;
   const lesbar = [...frei, ...(k.nurLesen ?? [])]; // v1272 — Leserecht: freigegebene plus nur-lesen
+  heimInParams(params); // v1303 — „~/Downloads" → Home-Verzeichnis, sonst scheitert die Rechteprüfung an der Tilde
   switch (aktion) {
     // v1276 — Bedienen Stufe A
     case 'fenster_lesen': {

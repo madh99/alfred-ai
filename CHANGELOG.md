@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1303] - 2026-10-08
+
+### Added — Ink-Oberfläche für die Sitzung, Tilde in Gerätepfaden (v1303)
+
+Spec §8 Punkt 3, Owner-Freigabe 08.10. `alfred sitzung` zeichnet im Terminal jetzt eine Oberfläche mit Ink: Verlauf, laufende Antwort, flüchtige Zeile, Statuszeile (Gerät, Version, Satellit mit Verbindungspunkt, offene Bestätigungen, Modellstufe, Stimme, Zuhören) und Eingabezeile. Tasten: Enter sendet, Strg+T spricht, Alt+J und Alt+N beantworten die jüngste Bestätigung, Strg+L zeigt die Lage, Strg+Q beendet; die Spec nannte j/n/l/q als Einzeltasten, das kollidiert mit dem Tippen von Nachrichten wie „ja, mach das", darum Alt und Strg. Ohne echtes Terminal (Skripte, umgeleitete Eingabe), mit `--einfach` oder `ALFRED_SITZUNG_EINFACH=1` bleibt die bisherige readline-Ausgabe. Die Sitzungslogik spricht nur noch mit der Schnittstelle `Oberflaeche`, hinter der beide Ausgaben stehen; Sprache, Zuhören, Bestätigungen und IPC sind unverändert. Neue Abhängigkeiten `ink` und `react` (nur in der CLI).
+
+Gerätepfade: `~` und `~/…` in path, pfad, datei und cwd werden auf das Home-Verzeichnis aufgelöst, bevor die Freigaben geprüft werden (Realfall 08.10.: „Pfad nicht freigegeben: ~/Downloads", obwohl Downloads freigegeben war).
+
 ## [0.19.0-jarvis.1302] - 2026-10-08
 
 ### Added — Sitzung hängt sich per IPC an den Satelliten, Bestätigungen kommen sofort (v1302)

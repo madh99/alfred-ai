@@ -19,7 +19,7 @@ Commands:
   start          Start Alfred (load config, bootstrap, and run)
   chat           Interactive terminal chat (--model, --tier)
   pair           Dieses Gerät mit Alfred koppeln (--server <url> --code <Code> [--name] [--insecure] [--verzeichnisse "a;b"])
-  sitzung        EIN Terminal für alles: Chat als Owner, Sprache (/talk, /hören, /stimme), Bestätigungen (/ja, /nein), Satellit (--ohne-satellit)
+  sitzung        EIN Terminal für alles: Chat als Owner, Sprache (/talk, /hören, /stimme), Bestätigungen (/ja, /nein), Satellit (--ohne-satellit, --einfach = ohne Ink-Oberfläche)
   satellit       Gerätedienst: Verbindung zum Gehirn halten, Aktionen lokal ausführen (--einmal)
                    --install    als Autostart-Dienst einrichten (Aufgabenplanung / launchd / systemd --user)
                    --uninstall  Autostart-Dienst entfernen     --status  Zustand des Dienstes
@@ -166,7 +166,7 @@ async function main(): Promise<void> {
         process.exit(0);
       }
       const { sitzungCommand } = await import('./commands/sitzung.js');
-      await sitzungCommand({ ohneSatellit: !!parsed.flags['ohne-satellit'] });
+      await sitzungCommand({ ohneSatellit: !!parsed.flags['ohne-satellit'], einfach: !!parsed.flags['einfach'] }); // v1303 --einfach = readline statt Ink
       break;
     }
     case 'satellit': {
