@@ -13610,6 +13610,14 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // Master des Geräts gebunden (kein Auto-Link-Raten; bei mehreren Mastern wäre der Alias sonst ein Fremder).
           transfer: (art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: Parameters<typeof gw.transferRoute>[1]) => gw.transferRoute(art, p), // v1249
           hoerenUpgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => hoerRelais.handleUpgrade(req, s, h), // v1251
+          // v1314 — Verlauf der Gerätesitzung für die Desktop-App (chatId wie in /api/message: sitzung:<geraetId>)
+          verlauf: async (geraetId: string, limit: number) => {
+            if (!this.conversationRepo) return [];
+            const c = await this.conversationRepo.findByPlatformChat('api', `sitzung:${geraetId}`);
+            if (!c) return [];
+            const m = await this.conversationRepo.getMessages(c.id, limit);
+            return m.filter(x => x.role === 'user' || x.role === 'assistant').map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
+          },
           updateInfo: () => { const i = releases.info(); return i && i.version === eigeneVersion ? i : undefined; }, // v1258, v1265 — nie ein altes Release melden
           updateStream: () => { const i = releases.info(); return i ? releases.stream(i.version) : undefined; },
           authentifiziere: async (t: string) => {

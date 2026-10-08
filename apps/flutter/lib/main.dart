@@ -114,6 +114,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         final erste = server == null;
         setState(() { konfig = k; server = Server(k); });
         _titel();
+        if (erste) _holeVerlauf(); // v1314 — was zuletzt besprochen wurde
         _holeBestaetigungen();
         abfrage ??= Timer.periodic(const Duration(seconds: 4), (_) => _holeBestaetigungen());
         if (erste) {
@@ -396,6 +397,19 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     _zeile(Eintrag(Art.bestaetigung, '${b.quelle == 'geraet' ? '(Gerät) ' : ''}${b.text}'));
     _titel();
     _benachrichtige(b);
+  }
+
+  /// Verlauf der Gerätesitzung vom Gehirn (`/api/geraete/verlauf`, v1314) — vor den Zeilen dieses Starts einsortiert.
+  Future<void> _holeVerlauf() async {
+    final s = server; if (s == null) return;
+    try {
+      final j = await s.json('/api/geraete/verlauf?limit=30');
+      final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+      if (n.isEmpty) return;
+      final alte = n.map((m) => Eintrag(m['rolle'] == 'user' ? Art.du : Art.alfred, '${m['text']}', zeit: DateTime.tryParse('${m['zeit']}')?.toLocal())).toList();
+      setState(() => verlauf.insertAll(0, alte));
+      _zeile(Eintrag(Art.hinweis, 'Verlauf geladen: ${alte.length} Nachrichten aus früheren Sitzungen dieses Geräts.'));
+    } catch (e) { _zeile(Eintrag(Art.hinweis, 'Verlauf nicht geladen: $e')); }
   }
 
   Future<void> _holeBestaetigungen() async {

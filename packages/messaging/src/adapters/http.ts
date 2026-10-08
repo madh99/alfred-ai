@@ -911,6 +911,8 @@ export class HttpAdapter extends MessagingAdapter {
     updateStream?(): import('node:fs').ReadStream | undefined;
     /** v1251 — Hör-Relais (Echtzeit-Transkription) für die Sitzung. */
     hoerenUpgrade?(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
+    /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start). */
+    verlauf?(geraetId: string, limit: number): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
     /** v1249 — blockweiser Dateitransfer. */
     transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
   };
@@ -1843,6 +1845,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleTransfer(req, res, url, req.headers.range ? 'lesen' : 'status').catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/geraete/abmelden' && req.method === 'POST') {
       this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
+    } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
+      this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {
@@ -6501,6 +6505,17 @@ export class HttpAdapter extends MessagingAdapter {
     const ok = await this.geraeteCallbacks.widerrufe(geraet.geraetId);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok, name: geraet.name }));
+  }
+
+  /** v1314 — Verlauf der eigenen Sitzung (chatId sitzung:<geraetId>), nur mit Gerätetoken; nie fremde Gespräche. */
+  private async handleGeraetVerlauf(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.verlauf) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 30));
+    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ geraet: geraet.name, nachrichten }));
   }
 
   private async handleGeraetWiderruf(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

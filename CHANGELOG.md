@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1314] - 2026-10-08
+
+### Added — Verlauf der Gerätesitzung und Aktivierungswort für die Desktop-App (v1314)
+
+- `GET /api/geraete/verlauf?limit=30`: letzte Nachrichten der eigenen Sitzung (`sitzung:<geraetId>`), nur mit Gerätetoken; fremde Gespräche bleiben unerreichbar. Die Desktop-App zeigt damit beim Start, was zuletzt besprochen wurde (offener Punkt aus Phase 4, Meilenstein 1).
+- Der Satellit schickt der App in der IPC-Konfig das Aktivierungswort aus `geraet.json` mit, damit „Zuhören" in der App dasselbe Wort nutzt wie die Terminal-Sitzung.
+
 ## [0.19.0-jarvis.1313] - 2026-10-08
 
 ### Changed — Gerätetoken darf die Vorgangsliste lesen (v1313)

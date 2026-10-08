@@ -22,7 +22,7 @@ export type IpcNachricht =
   | { typ: 'ereignis'; zeit: string; art: IpcEreignisArt; text: string }
   | { typ: 'bestaetigung'; bestaetigung: BestaetigungKurz }
   | { typ: 'befehl'; befehl: 'status' | 'beenden' | 'neuladen' | 'konfig' | 'hallo'; geheimnis?: string } // v1309 neuladen; v1312 konfig/hallo für die Desktop-App
-  | { typ: 'konfig'; konfig: { server: string; geraetId: string; token: string; name: string; insecure: boolean } }; // v1312 — Antwort auf befehl konfig
+  | { typ: 'konfig'; konfig: { server: string; geraetId: string; token: string; name: string; insecure: boolean; aktivierungswort?: string } }; // v1312 — Antwort auf befehl konfig; v1314 Aktivierungswort
 
 export type IpcBefehl = 'status' | 'beenden' | 'neuladen' | 'konfig';
 
