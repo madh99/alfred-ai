@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import 'package:tray_manager/legacy.dart'; // trayManager, Menu, MenuItem, TrayL
 import 'package:window_manager/window_manager.dart';
 
 import 'audio.dart';
+import 'hoeren.dart';
 import 'ipc.dart';
 import 'kacheln.dart';
 import 'modell.dart';
@@ -86,6 +88,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool aufnahme = false;
   bool sichtbar = true;
   bool kachelnOffen = false; // Meilenstein 3 — Kacheln nativ statt Webview
+  bool hoeren = false; // Meilenstein 4 — Echtzeit-Hören mit Aktivierungswort
+  HoerClient? hoerClient;
+  SatzendeErkenner? erkenner;
+  DateTime gespraechsfensterBis = DateTime.fromMillisecondsSinceEpoch(0);
+  String gehoert = '';
   Timer? abfrage;
   int benachrichtigungNr = 0;
   late final IpcVerbindung ipc;
@@ -115,6 +122,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           final wav = startArgs['sprachtest'];
           if (wav != null && wav.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _sprachtest(wav));
           if (startArgs['kacheln'] == 'an') setState(() => kachelnOffen = true); // Beweislauf: Kacheln sofort öffnen
+          if (startArgs['hoeren'] == 'an') Future.delayed(const Duration(milliseconds: 800), _hoerenStart); // Meilenstein 4
+          final hoertest = startArgs['hoertest'];
+          if (hoertest != null && hoertest.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _hoertest(hoertest));
           final datei = startArgs['datei']; // Meilenstein 3: Beweislauf Datei zum Gehirn
           if (datei != null && datei.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _dateienAbgelegt([datei]));
         }
@@ -128,6 +138,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   @override
   void dispose() {
     abfrage?.cancel();
+    hoerClient?.schluss();
     ipc.stop();
     windowManager.removeListener(this);
     trayManager.removeListener(this);
@@ -189,6 +200,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   Future<void> _beenden() async {
     abfrage?.cancel();
+    hoerClient?.schluss();
     ipc.stop();
     try { await trayManager.destroy(); } catch (_) {}
     await windowManager.setPreventClose(false);
@@ -215,6 +227,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Future<void> _talkUmschalten() async {
     if (aufnahme) { await _talkStop(); return; }
     if (antwortet) return;
+    if (hoeren) { _zeile(Eintrag(Art.hinweis, '🎧 Zuhören läuft — einfach „${konfig?.aktivierungswort ?? 'Alfred'}, …“ sagen.')); return; }
     final ok = await audio.aufnehmen();
     if (!ok) { _zeile(Eintrag(Art.fehler, 'Mikrofon nicht verfügbar oder nicht erlaubt')); return; }
     setState(() { aufnahme = true; fluechtig = '● Aufnahme läuft — Strg+Alt+Leertaste stoppt'; });
@@ -246,6 +259,94 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       _zeile(Eintrag(Art.hinweis, 'Sprachtest mit $wav (${(daten.length / 1024).round()} KB)'));
       await _sprachEingabe(daten, 'audio/wav');
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Sprachtest: $e')); }
+  }
+
+
+  // ── Echtzeit-Hören (Meilenstein 4): Mikrofonstrom → Satzende lokal → Relais → Aktivierungswort → Nachricht ───────
+  Future<void> _hoerenUmschalten() async { if (hoeren) { await _hoerenStop('aus'); } else { await _hoerenStart(); } }
+
+  Future<void> _hoerenStart() async {
+    final k = konfig;
+    if (k == null) { _zeile(Eintrag(Art.fehler, 'Noch nicht mit dem Satelliten verbunden — $ipcZustand')); return; }
+    if (hoeren) return;
+    if (aufnahme) await _talkStop();
+    final client = HoerClient(k, _hoerEreignis, (grund) { _zeile(Eintrag(Art.fehler, '🎧 Relais: $grund — Zuhören beendet')); _hoerenStop(null); });
+    try { await client.verbinde(); } catch (e) { _zeile(Eintrag(Art.fehler, '🎧 Relais nicht erreichbar: $e')); return; }
+    final erk = SatzendeErkenner();
+    final ok = await audio.stromStart((pcm) {
+      if (antwortet || audio.spielt) return; // Halbduplex: während Alfred antwortet oder spricht, nicht hören
+      for (final ev in erk.schiebe(pcm)) {
+        if (ev is SatzStart) { client.start(); client.audio(ev.audio); }
+        else if (ev is SatzEnde) { client.ende(); }
+      }
+      if (erk.spricht) client.audio(pcm);
+    }, (grund) { _zeile(Eintrag(Art.fehler, '🎧 Mikrofon: $grund')); _hoerenStop(null); });
+    if (!ok) { client.schluss(); _zeile(Eintrag(Art.fehler, 'Mikrofon nicht verfügbar oder nicht erlaubt')); return; }
+    hoerClient = client; erkenner = erk;
+    setState(() => hoeren = true);
+    _zeile(Eintrag(Art.hinweis, '🎧 Höre zu — sag „${k.aktivierungswort}, …". Nach einer Antwort 20 s ohne Wort. „${k.aktivierungswort}, stopp" bricht die Wiedergabe ab.'));
+  }
+
+  Future<void> _hoerenStop(String? meldung) async {
+    final c = hoerClient; hoerClient = null; erkenner = null;
+    await audio.stromStop();
+    try { c?.schluss(); } catch (_) {}
+    if (!mounted) return;
+    setState(() { hoeren = false; if (fluechtig.startsWith('🎧')) fluechtig = ''; });
+    if (meldung != null) _zeile(Eintrag(Art.hinweis, '🎧 Zuhören $meldung.'));
+  }
+
+  void _hoerEreignis(HoerEreignis e) {
+    final k = konfig; if (k == null) return;
+    if (e.typ == 'delta') { gehoert += e.text ?? ''; setState(() => fluechtig = '🎧 ${gehoert.length > 100 ? gehoert.substring(gehoert.length - 100) : gehoert}'); }
+    else if (e.typ == 'fertig') {
+      final text = (e.text ?? '').trim(); gehoert = '';
+      setState(() => fluechtig = '');
+      if (text.isEmpty) return;
+      final a = pruefeAktivierung(text, k.aktivierungswort, DateTime.now().isBefore(gespraechsfensterBis));
+      switch (a.art) {
+        case AktivierungsArt.ignoriert: _zeile(Eintrag(Art.hinweis, '(nicht an mich: $text)'));
+        case AktivierungsArt.stopp: audio.abbrechen(); _zeile(Eintrag(Art.hinweis, '⏹ gestoppt')); gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20));
+        case AktivierungsArt.nurWort: gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20)); _zeile(Eintrag(Art.du, '🎧 $text')); _sprichKurz('Ja?');
+        case AktivierungsArt.nachricht:
+          _zeile(Eintrag(Art.du, '🎧 ${a.text}'));
+          _senden(text: a.text, sprechen: true).then((_) { gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20)); });
+      }
+    }
+    else if (e.typ == 'fehler' || e.typ == 'limit') _zeile(Eintrag(Art.fehler, '🎧 ${e.typ}: ${e.grund ?? ''}'));
+  }
+
+  Future<void> _sprichKurz(String text) async {
+    final s = server; if (s == null) return;
+    try { final (b, mime) = await s.sprich(text); await audio.abspielen(Uint8List.fromList(b), mime); } catch (e) { _zeile(Eintrag(Art.fehler, '🔊 $e')); }
+  }
+
+  /// Beweislauf: WAV durch dieselbe Kette (Satzende → Relais → Aktivierung) schicken, in Echtzeit-Blöcken von 80 ms.
+  Future<void> _hoertest(String wav) async {
+    try {
+      final pcm = wavZuPcm16k(await File(wav).readAsBytes());
+      _zeile(Eintrag(Art.hinweis, 'Hörtest mit $wav (${(pcm.length / 32000).toStringAsFixed(1)} s Audio); Gesprächsfenster offen, als hätte Alfred gerade geantwortet'));
+      final k = konfig!;
+      final erk = SatzendeErkenner();
+      final client = HoerClient(k, _hoerEreignis, (grund) => _zeile(Eintrag(Art.fehler, '🎧 Relais: $grund')));
+      await client.verbinde();
+      gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 60));
+      final t0 = DateTime.now();
+      var saetze = 0;
+      for (var off = 0; off < pcm.length; off += 2560) {
+        final block = Uint8List.sublistView(pcm, off, off + 2560 > pcm.length ? pcm.length : off + 2560);
+        for (final ev in erk.schiebe(block)) {
+          if (ev is SatzStart) { client.start(); client.audio(ev.audio); saetze++; }
+          else if (ev is SatzEnde) { client.ende(); _zeile(Eintrag(Art.hinweis, '🎧 Satzende nach ${ev.dauerMs} ms Sprache (${DateTime.now().difference(t0).inMilliseconds} ms)')); }
+        }
+        if (erk.spricht) client.audio(block);
+        await Future.delayed(const Duration(milliseconds: 80));
+      }
+      for (final ev in erk.schliesse()) { if (ev is SatzEnde) { client.ende(); _zeile(Eintrag(Art.hinweis, '🎧 Satzende am Stromende nach ${ev.dauerMs} ms Sprache')); } }
+      _zeile(Eintrag(Art.hinweis, '🎧 Hörtest: Audio gesendet, $saetze Äußerung(en) erkannt'));
+      await Future.delayed(const Duration(seconds: 8));
+      client.schluss();
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Hörtest: $e')); }
   }
 
   // ── Verlauf, Bestätigungen, Chat (Meilenstein 1) ────────────────────────────────────────────────────────────────
@@ -383,6 +484,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           IconButton(tooltip: kachelnOffen ? 'Zurück zum Gespräch' : 'Kacheln: Lage, Befunde, Vorgänge, Geräte', onPressed: server == null ? null : () => setState(() => kachelnOffen = !kachelnOffen), icon: Icon(kachelnOffen ? Icons.chat_bubble_outline : Icons.dashboard_outlined)),
           IconButton(tooltip: stimme ? 'Antworten vorlesen: an' : 'Antworten vorlesen: aus', onPressed: () => setState(() => stimme = !stimme), icon: Icon(stimme ? Icons.volume_up : Icons.volume_off)),
           IconButton(tooltip: aufnahme ? 'Aufnahme stoppen' : 'Sprechen (Strg+Alt+Leertaste)', onPressed: _talkUmschalten, icon: Icon(aufnahme ? Icons.stop_circle : Icons.mic, color: aufnahme ? Colors.redAccent : null)),
+          IconButton(tooltip: hoeren ? 'Zuhören aus' : 'Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“', onPressed: server == null ? null : _hoerenUmschalten, icon: Icon(hoeren ? Icons.headset_mic : Icons.headset, color: hoeren ? Colors.greenAccent : null)),
           if (offen.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(right: 12, left: 4),

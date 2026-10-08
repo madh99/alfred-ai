@@ -27,10 +27,12 @@ class SatellitStatus {
 }
 
 class Konfig {
-  Konfig({required this.server, required this.geraetId, required this.token, required this.name, required this.insecure});
+  Konfig({required this.server, required this.geraetId, required this.token, required this.name, required this.insecure, this.aktivierungswort = 'Alfred'});
   final String server;
   final String geraetId;
   final String token;
   final String name;
   final bool insecure;
+  /// Meilenstein 4 — Wort, mit dem eine Äußerung an Alfred beginnt (GeraetKonfig.aktivierungswort, v1309).
+  final String aktivierungswort;
 }

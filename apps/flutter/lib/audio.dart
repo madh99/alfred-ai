@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -11,8 +12,28 @@ class Audio {
   final AudioRecorder _rec = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
   String? _datei;
+  StreamSubscription<Uint8List>? _strom;
+  /// Wiedergabe läuft (Halbduplex beim Zuhören: dann nicht hören, sonst transkribiert Alfred sich selbst).
+  bool spielt = false;
 
   bool get nimmtAuf => _datei != null;
+  bool get hoert => _strom != null;
+
+  /// Meilenstein 4 — Mikrofonstrom PCM 16 kHz mono 16 Bit (record.startStream), Blöcke an [aufDaten].
+  Future<bool> stromStart(void Function(Uint8List) aufDaten, void Function(String) aufEnde) async {
+    if (_strom != null) return true;
+    if (!await _rec.hasPermission()) return false;
+    final s = await _rec.startStream(const RecordConfig(encoder: AudioEncoder.pcm16bits, sampleRate: 16000, numChannels: 1));
+    _strom = s.listen(aufDaten, onError: (Object e) => aufEnde('$e'), onDone: () { if (_strom != null) { _strom = null; aufEnde('Strom zu Ende'); } });
+    return true;
+  }
+
+  Future<void> stromStop() async {
+    final s = _strom; _strom = null;
+    if (s == null) return;
+    try { await s.cancel(); } catch (_) {}
+    try { await _rec.stop(); } catch (_) {}
+  }
 
   Future<bool> aufnehmen() async {
     if (_datei != null) return true;
@@ -41,8 +62,11 @@ class Audio {
   Future<void> abspielen(Uint8List daten, String mime) async {
     await _player.stop();
     final fertig = _player.onPlayerStateChanged.firstWhere((s) => s == PlayerState.completed || s == PlayerState.stopped);
-    await _player.play(BytesSource(daten, mimeType: mime));
-    await fertig.timeout(const Duration(minutes: 5), onTimeout: () => PlayerState.completed);
+    spielt = true;
+    try {
+      await _player.play(BytesSource(daten, mimeType: mime));
+      await fertig.timeout(const Duration(minutes: 5), onTimeout: () => PlayerState.completed);
+    } finally { spielt = false; }
   }
 
   Future<void> abbrechen() async { try { await _player.stop(); } catch (_) {} }

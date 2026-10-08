@@ -86,7 +86,7 @@ class IpcVerbindung {
         aufBestaetigung(Bestaetigung(id: '${b['id']}', text: '${b['description'] ?? ''}', quelle: b['source'] as String?, seit: DateTime.tryParse('${b['createdAt'] ?? ''}')));
       case 'konfig':
         final k = n['konfig'] as Map<String, dynamic>;
-        aufKonfig(Konfig(server: '${k['server']}', geraetId: '${k['geraetId']}', token: '${k['token']}', name: '${k['name']}', insecure: k['insecure'] == true));
+        aufKonfig(Konfig(server: '${k['server']}', geraetId: '${k['geraetId']}', token: '${k['token']}', name: '${k['name']}', insecure: k['insecure'] == true, aktivierungswort: (k['aktivierungswort'] as String?)?.trim().isNotEmpty == true ? '${k['aktivierungswort']}' : 'Alfred'));
     }
   }
 }
