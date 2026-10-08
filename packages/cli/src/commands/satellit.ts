@@ -13,6 +13,7 @@ import { getVersion } from '../version.js';
 import { ladeKonfig, speichereKonfig, konfigPfad, type GeraetKonfig } from './pair.js';
 import { cliOrdner } from './satellit-update.js'; // v1274
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad, laeuftErhoeht } from './satellit-dienst.js';
+import { installiereStarter } from './satellit-starter.js'; // v1304
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
@@ -432,7 +433,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
   }
 }
 
-export async function satellitCommand(opts: { einmal?: boolean; install?: boolean; uninstall?: boolean; status?: boolean; dienst?: boolean; entkoppeln?: boolean }): Promise<void> {
+export async function satellitCommand(opts: { starter?: boolean; einmal?: boolean; install?: boolean; uninstall?: boolean; status?: boolean; dienst?: boolean; entkoppeln?: boolean }): Promise<void> {
   // v1274 — vollständig entkoppeln: Token im Gehirn widerrufen, dann lokal alles entfernen
   if (opts.entkoppeln) {
     const k = ladeKonfig();
@@ -445,7 +446,8 @@ export async function satellitCommand(opts: { einmal?: boolean; install?: boolea
     return;
   }
   // v1228 — Dienst-Verwaltung
-  if (opts.install) { console.log(installiereDienst()); return; }
+  if (opts.install) { console.log(installiereDienst()); for (const z of installiereStarter()) console.log(z); return; } // v1304 — Starter in ~/.alfred/bin + PATH
+  if (opts.starter) { for (const z of installiereStarter()) console.log(z); return; }
   if (opts.uninstall) { console.log(entferneDienst()); return; }
   if (opts.status) { console.log(dienstStatus()); return; }
   if (opts.dienst) {

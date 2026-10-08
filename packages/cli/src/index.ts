@@ -20,7 +20,7 @@ Commands:
   chat           Interactive terminal chat (--model, --tier)
   pair           Dieses Gerät mit Alfred koppeln (--server <url> --code <Code> [--name] [--insecure] [--verzeichnisse "a;b"])
   sitzung        EIN Terminal für alles: Chat als Owner, Sprache (/talk, /hören, /stimme), Bestätigungen (/ja, /nein), Satellit (--ohne-satellit, --einfach = ohne Ink-Oberfläche)
-  satellit       Gerätedienst: Verbindung zum Gehirn halten, Aktionen lokal ausführen (--einmal)
+  satellit       Gerätedienst: Verbindung zum Gehirn halten, Aktionen lokal ausführen (--einmal, --install, --starter = alfred in den PATH)
                    --install    als Autostart-Dienst einrichten (Aufgabenplanung / launchd / systemd --user)
                    --uninstall  Autostart-Dienst entfernen     --status  Zustand des Dienstes
                    --entkoppeln Gerät vollständig entfernen (Token im Gehirn, Kopplung, Versionen, Dienst)
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     // Dienstmodus: immer als Kind, damit nach einem Update (Code 75) der Starter die neue Version startet
     // v1299 — auch der Vordergrund-Satellit (`alfred satellit` ohne --dienst) läuft immer als Kind: lief er in diesem Prozess,
     // beendete ihn das eigene Update mit Code 75 und niemand startete ihn neu (Realfall Office-VM 08.10., 35 min offline)
-    const satellitLauf = parsed.command === 'satellit' && !parsed.flags['install'] && !parsed.flags['uninstall'] && !parsed.flags['status'] && !parsed.flags['entkoppeln'] && !parsed.flags['einmal'];
+    const satellitLauf = parsed.command === 'satellit' && !parsed.flags['install'] && !parsed.flags['uninstall'] && !parsed.flags['status'] && !parsed.flags['entkoppeln'] && !parsed.flags['einmal'] && !parsed.flags['starter'];
     const code = starteNeuesteVersion(VERSION, process.argv.slice(2), satellitLauf);
     if (code !== undefined) process.exit(code);
   }
@@ -171,7 +171,7 @@ async function main(): Promise<void> {
     }
     case 'satellit': {
       const { satellitCommand } = await import('./commands/satellit.js');
-      await satellitCommand({ einmal: !!parsed.flags['einmal'], install: !!parsed.flags['install'], uninstall: !!parsed.flags['uninstall'], status: !!parsed.flags['status'], entkoppeln: !!parsed.flags['entkoppeln'], dienst: !!parsed.flags['dienst'] });
+      await satellitCommand({ einmal: !!parsed.flags['einmal'], install: !!parsed.flags['install'], uninstall: !!parsed.flags['uninstall'], status: !!parsed.flags['status'], entkoppeln: !!parsed.flags['entkoppeln'], dienst: !!parsed.flags['dienst'], starter: !!parsed.flags['starter'] }); // v1304 --starter
       break;
     }
 

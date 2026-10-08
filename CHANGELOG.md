@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1304] - 2026-10-08
+
+### Added — `alfred` im PATH ohne globales npm-Paket (v1304)
+
+Owner-Freigabe 08.10. (Punkt 4). Auf dem PC lief der Satellit über den expliziten Node-Pfad, ein `alfred sitzung` im Terminal gab es nicht. `alfred satellit --install` legt jetzt zusätzlich einen Starter in `~/.alfred/bin` ab (`alfred.cmd` unter Windows, `alfred` sonst, dazu `alfred-start.js`), der die unter `~/.alfred/cli` installierte Version ausführt, bei gescheiterter Probe die vorige, und den PATH des Benutzers ergänzt (Windows: Benutzer-Registry ohne die Kürzung von setx; macOS/Linux: eine Zeile in ~/.zshrc bzw. ~/.bashrc). `alfred satellit --starter` macht nur das, ohne den Dienst anzufassen. Gilt in neuen Terminals.
+
 ## [0.19.0-jarvis.1303] - 2026-10-08
 
 ### Added — Ink-Oberfläche für die Sitzung, Tilde in Gerätepfaden (v1303)
