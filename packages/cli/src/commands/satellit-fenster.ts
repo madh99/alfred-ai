@@ -32,17 +32,35 @@ export async function fensterListe(): Promise<Fenster[]> {
     return j.map(p => ({ titel: p.MainWindowTitle, programm: p.ProcessName, pid: p.Id }));
   }
   if (process.platform === 'darwin') {
-    const out = await run('osascript', ['-e', 'tell application "System Events" to repeat with p in (every process whose background only is false)\nrepeat with w in (every window of p)\nlog (name of p as text) & "|" & (name of w as text)\nend repeat\nend repeat'], 20_000).catch(async (err: Error) => {
-      // osascript schreibt `log` nach stderr → über stderr lesen
-      const m = /osascript: ([\s\S]*)/.exec(err.message); return m ? m[1]! : '';
-    });
-    return out.split('\n').map(z => z.trim()).filter(z => z.includes('|')).map(z => { const [programm, ...rest] = z.split('|'); return { titel: rest.join('|'), programm: programm! }; });
+    // v1298 — Realfall 08.10.: `log` schreibt nach stderr, run() liefert bei Erfolg nur stdout → Liste leer („offen sind:").
+    // Jetzt sammelt das Skript die Zeilen und gibt sie als Ergebnis (stdout) zurück; Prozesse ohne Fensterzugriff werden übersprungen.
+    const out = await run('osascript', ['-e', MAC_FENSTER_SKRIPT], 20_000);
+    return parseFensterZeilen(out);
   }
   if (await vorhanden('wmctrl')) {
     const out = await run('wmctrl', ['-lp']);
     return out.split('\n').filter(Boolean).map(z => { const t = z.split(/\s+/); const pid = parseInt(t[2] ?? '', 10); return { titel: t.slice(4).join(' '), programm: t[3] ?? '', pid: Number.isFinite(pid) ? pid : undefined }; });
   }
   throw new Error('Keine Fensterliste möglich (wmctrl installieren)');
+}
+
+const MAC_FENSTER_SKRIPT = [
+  'set out to ""',
+  'tell application "System Events"',
+  '  repeat with p in (every process whose background only is false)',
+  '    try',
+  '      repeat with w in (every window of p)',
+  '        set out to out & (name of p as text) & "|" & (name of w as text) & linefeed',
+  '      end repeat',
+  '    end try',
+  '  end repeat',
+  'end tell',
+  'return out',
+].join('\n');
+
+/** v1298 — „Programm|Titel" je Zeile → Fensterliste; Titel dürfen selbst „|" enthalten. */
+export function parseFensterZeilen(out: string): Array<{ titel: string; programm: string; pid?: number }> {
+  return out.split('\n').map(z => z.trim()).filter(z => z.includes('|')).map(z => { const [programm, ...rest] = z.split('|'); return { titel: rest.join('|'), programm: programm! }; });
 }
 
 /** Startet ein Programm (Name im Pfad, App-Name unter macOS oder voller Pfad), optional mit Argumenten. */

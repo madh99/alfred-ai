@@ -9,6 +9,9 @@ import { deuteGeraete } from '../normalzustaende/geraete.js'; // v1238
  * geht in die Bestätigungs-Queue (Owner-Button), `nie` wird abgewiesen, `auto` läuft sofort.
  * Jede Ausführung wird als Schritt im Ausführungsgedächtnis protokolliert (Quelle `geraet`).
  */
+/** v1298 — Schrittergebnis im Ausführungsgedächtnis: 300 Zeichen reichten nicht einmal für eine Element-Karte (Spalte ist TEXT). */
+export const ERGEBNIS_MAX_ZEICHEN = 2000;
+
 export interface GeraetSkillDeps {
   /** v1268 — nur der Owner (und seine verknüpften Identitäten) bedient seine Geräte. */
   istOwner?: (ctx: SkillContext) => boolean;
@@ -164,7 +167,7 @@ export class GeraetSkill extends Skill {
       }
     }
     const r = await this.deps.sendeAktion(aktion, geraetParams, aktion === 'shell' ? 10 * 60_000 : undefined);
-    await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, 300) : (r.error ?? '').slice(0, 300), autonomie: def.autonomie });
+    await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, ERGEBNIS_MAX_ZEICHEN) : (r.error ?? '').slice(0, ERGEBNIS_MAX_ZEICHEN), autonomie: def.autonomie });
     if (!r.success) return { success: false, error: r.error ?? 'Gerät meldete Fehler' };
     // v1249 — datei_holen über 8 MB: das Gerät hat blockweise hochgeladen, der Server hat schon gespeichert (key)
     const dg = r.data as { key?: string; dateiName?: string; groesse?: number; sha256?: string; gross?: boolean } | undefined;

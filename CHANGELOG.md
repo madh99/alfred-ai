@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1298] - 2026-10-08
+
+### Fixed — Fensterliste am Mac, längere Schrittergebnisse (v1298)
+
+Die Fensterliste am Mac (`fenster`, `fenster_vordergrund`) kam leer zurück, obwohl Fenster offen waren: das AppleScript schrieb seine Zeilen mit `log` nach stderr, gelesen wurde aber nur stdout. Das Skript gibt die Liste jetzt als Ergebnis zurück und überspringt Prozesse ohne Fensterzugriff. Schrittergebnisse im Ausführungsgedächtnis (`vorgang_schritte`) werden auf 2000 statt 300 Zeichen gekürzt, damit Element-Karten, Mail-Listen und Beweise erhalten bleiben.
+
 ## [0.19.0-jarvis.1297] - 2026-10-08
 
 ### Fixed — Vorhaben enden nach der Fortsetzung, Zeichen statt US-Tastennamen, bessere Element-Namen am Mac (v1297)
