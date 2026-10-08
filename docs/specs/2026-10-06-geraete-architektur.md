@@ -327,6 +327,18 @@ Messung 08.10. im Log: eine Runde auf `default` (gpt-6.1-sol) mit allen Werkzeug
 
 Treiber: jede default-Runde trägt 47–57k Prompt-Tokens (61 Werkzeugschemata ≈ 29k, Verlauf, Kontext) bei einer Cache-Quote von nur 50–61 %; am 07.10. kamen 2,4 Runden je Nachricht. Auslöser waren fast ausschließlich der Owner-Chat und die Beweisläufe (Chat-IDs `api-*-beweis`, Sitzungen), nicht die Nachtjobs. Hebel in dieser Reihenfolge: (1) Geräteaktionen aus dem normalen Chat laufen noch mit allen Werkzeugen auf default — nur Vorhaben sind seit .1295 günstig; (2) Werkzeugsatz je Nachricht enger ziehen (Skill-Filter), damit die Cache-Quote steigt und die Runde kleiner wird; (3) fast-Tier seit 07.10. abends Haiku 5.5 statt Sonnet (3,90 $ → 0,07 $ bei ähnlicher Aufrufzahl — das ist bereits eingespart). Owner-Entscheidung nötig für (1) und (2).
 
+**Umgesetzt .1300 (Owner 08.10. „freigabe für beide", live 09:17):** `werkzeugeFuerNachricht()` in `core/skill-filter.ts` ersetzt den Default-Zweig der Pipeline. Hebel 1: nennt die Nachricht ein Gerät (Anzeigename aus der Skill-Beschreibung oder Kürzel `office_vm`/`office-vm`/`office vm`, Wortgrenzen), bekommt das Modell nur die Geräte-Skills. Hebel 2: Kategorien zuerst aus der aktuellen Nachricht; die drei vorigen Nutzer-Nachrichten zählen nur, wenn die Nachricht selbst kein Schlüsselwort trifft (bisher Vereinigung); Rückfall ohne Treffer = core, productivity, information; Geräte-Skills außerhalb von Hebel 1 nur bei Geräte-Wörtern (`GERAETE_KEYWORDS`). Unverändert: allowedSkills (Mail-Regeln, Vorhaben), Projekt-Chat-Whitelist, Sprachnachrichten. Logfeld `werkzeugwahl` in `llm_request_prep`.
+
+| Nachricht (09:18) | werkzeugwahl | Werkzeuge | Werkzeug-Tokens | vorher |
+|---|---|---|---|---|
+| „Lies auf Office-VM die letzten 3 Mails …" | geraet_genannt | 1 | 3,3k | 64 / 35k |
+| „Wie ist das Wetter morgen in Wien?" | nachricht | 24 | 7,5k | 64 / 35k |
+| „danke" | rueckfall | 38 | 14,4k | 64 / 35k |
+
+Alle drei Antworten fachlich richtig (Betreffzeilen aus Outlook, Wetter-Hinweis, Dank). Der Systemprompt (6,8–10k Tokens im API-Chat, 18k im Owner-Chat) ist jetzt der größere Block — nächster Hebel, falls gewünscht.
+
+**Befund dabei (09:18): Tier default (gpt-6.1-sol) steht im billing-cooldown** — der Router überspringt den Primary und fällt auf strong (Opus 5.5) zurück: 9 Opus-Aufrufe in 90 min = 0,91 $, davon je Erst-Aufruf 0,09–0,19 $ allein für Cache-Schreiben (37k Tokens). Ursache und Dauer siehe Stand-Eintrag; Fallback-Reihenfolge default → strong ist die teuerste Variante (Owner-Entscheidung: medium/fast davor?).
+
 ### 18.4 Eigene Arbeitsfläche (Owner 07.10. 23:55: nicht nötig, Plan gemerkt)
 
 Entscheidung: Satelliten arbeiten nur auf Zuruf oder auf VMs, an denen gerade niemand sitzt; eine getrennte Arbeitsfläche am PC ist deshalb nicht nötig. Der Plan bleibt dokumentiert und wird nicht umgesetzt.
