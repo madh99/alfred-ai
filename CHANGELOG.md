@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1308] - 2026-10-08
+
+### Fixed — Satellitendienst überlebt Absturz und Update, Dienst-Einträge zeigen auf den Starter (v1308)
+
+Realfall PC 08.10. 12:34: Nach dem Update auf 1307 blieb der Satellit tot. Der Autostart zeigte auf `dist/index.js` des Quell-Repos (so installiert), und die Starterschleife endete, als die Kindversion nicht mit Code 75 zurückkam. Jetzt zeigen die Dienst-Einträge (Windows-Autostart, macOS-LaunchAgent, systemd-Benutzerdienst) auf `~/.alfred/bin/alfred-start.js`, das bei jedem Start die aktuelle Version aus `aktuell.json` nimmt; im Dienstmodus läuft es als Schleife: Code 75 startet sofort die neue Version, ein Absturz startet nach 5 Sekunden neu (Wartezeit verdoppelt sich bis 60 s, nach 10 Minuten stabilem Lauf wieder 5 s), bei mehr als 50 Neustarts je Stunde gibt es auf. Jede Runde steht als `[starter]`-Zeile im Satellitenprotokoll. Test mit zwei falschen Versionen (Update, Absturz, sauberes Ende).
+
 ## [0.19.0-jarvis.1307] - 2026-10-08
 
 ### Changed — Sitzung: Versionshinweis, Zuhören per Strg+G, `alfred chat` öffnet die Sitzung (v1307)

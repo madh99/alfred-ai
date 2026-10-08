@@ -33,6 +33,35 @@ describe('alfred-Starter in ~/.alfred/bin (v1304)', () => {
     expect(JSON.parse(r2.stdout.trim()).v).toBe('0.19.0-jarvis.1303');
   });
 
+  it('v1308: Dienstschleife — nach Code 75 die Version aus aktuell.json, nach Absturz mit Wartezeit, Ende bei 0', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'alfred-dienst-'));
+    const bundle = (v: string) => path.join(home, '.alfred', 'cli', v, 'node_modules', '@madh-io', 'alfred-ai', 'bundle');
+    const zaehler = path.join(home, 'zaehler.txt');
+    const aktuell = path.join(home, '.alfred', 'cli', 'aktuell.json');
+    for (const v of ['v1', 'v2']) {
+      mkdirSync(bundle(v), { recursive: true });
+      // v1: Code 75 und Update auf v2 eintragen; v2: erster Lauf Absturz (1), zweiter Lauf sauber (0)
+      const js = [
+        "const fs = require('fs');",
+        `const Z = ${JSON.stringify(zaehler)}; const n = fs.existsSync(Z) ? Number(fs.readFileSync(Z, 'utf8')) : 0; fs.writeFileSync(Z, String(n + 1));`,
+        `console.log('lauf ' + (n + 1) + ' ${v}');`,
+        v === 'v1'
+          ? `fs.writeFileSync(${JSON.stringify(aktuell)}, JSON.stringify({ version: 'v2', einstieg: ${JSON.stringify(path.join(bundle('v2'), 'index.js'))}, bestaetigt: true })); process.exit(75);`
+          : 'process.exit(n + 1 === 2 ? 1 : 0);',
+      ].join('\n');
+      writeFileSync(path.join(bundle(v), 'index.js'), js);
+    }
+    writeFileSync(aktuell, JSON.stringify({ version: 'v1', einstieg: path.join(bundle('v1'), 'index.js'), bestaetigt: true }));
+    const [js] = schreibeStarter(path.join(home, '.alfred', 'bin'), process.execPath, process.platform);
+    const r = spawnSync(process.execPath, [js!, 'satellit', '--dienst'], { env: { ...process.env, HOME: home, USERPROFILE: home, ALFRED_STARTER_WARTE_MS: '50' }, encoding: 'utf8', timeout: 20_000 });
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim().split(/\r?\n/)).toEqual(['lauf 1 v1', 'lauf 2 v2', 'lauf 3 v2']);
+    const log = readFileSync(path.join(home, '.alfred', 'satellit.log'), 'utf8');
+    expect(log).toContain('[starter] Update (Code 75)');
+    expect(log).toContain('[starter] Satellit beendet mit Code 1 — Neustart in 0 s');
+  });
+
   it('ergaenzePath (unix): Zeile einmal in die erste Datei, nie doppelt', () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'alfred-path-'));
     expect(ergaenzePath(path.join(home, '.alfred', 'bin'), 'linux', home)).toContain('.bashrc');

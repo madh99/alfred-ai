@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdirSync, writeFileSync, existsSync, unlinkSync, copyFileSync, chmodSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
+import { starterEinstieg } from './satellit-starter.js'; // v1308
 
 /**
  * v1228 — Satellit als Dienst: startet mit der Anmeldung des Benutzers und läuft ohne Fenster.
@@ -33,7 +34,12 @@ export function laeuftErhoeht(): boolean {
 }
 
 export function installiereDienst(): string {
-  const { node, einstieg } = programm();
+  const { node, einstieg: einstiegDirekt } = programm();
+  // v1308 — Realfall PC 08.10.: der Autostart zeigte auf dist/index.js des Repos bzw. auf eine Versionsdatei, die das
+  // Aufräumen später löscht; nach einem Update ohne Starter blieb der Dienst tot. Jetzt zeigt der Dienst auf
+  // ~/.alfred/bin/alfred-start.js, das immer die aktuelle Version startet und nach Absturz oder Update neu startet.
+  let einstieg = einstiegDirekt;
+  try { einstieg = starterEinstieg(node); } catch { /* dann direkt */ }
   mkdirSync(path.join(os.homedir(), '.alfred'), { recursive: true });
   if (process.platform === 'win32') {
     // Autostart-Ordner des Benutzers statt Aufgabenplanung: braucht keine Administratorrechte
@@ -47,6 +53,8 @@ export function installiereDienst(): string {
     // v1294 — aus einer erhöhten Shell würde der Satellit erhöht laufen (Office-COM/Bedienen scheitern): explorer.exe öffnet
     // das Skript in der normalen Benutzer-Shell mit mittlerer Integrität — so wie der Autostart bei der Anmeldung.
     const erhoeht = laeuftErhoeht();
+    // v1308 — läuft schon ein Satellit, nur den Eintrag erneuern (sonst liefe ein zweiter; Realfall Office-VM)
+    if (satellitDienstLaeuft()) return `Autostart erneuert (${vbs}) — zeigt jetzt auf den Starter. Der laufende Satellit bleibt; der Eintrag gilt ab dem nächsten Start.`;
     try { execFileSync(erhoeht ? 'explorer.exe' : 'wscript.exe', [vbs], { stdio: 'ignore', windowsHide: true, timeout: 10_000 }); }
     catch { if (!erhoeht) starteWindowsJetzt(node, einstieg); }
     return `Autostart eingerichtet (${vbs}) und Satellit gestartet${erhoeht ? ' (ohne Administratorrechte, über die Benutzer-Shell)' : ''}. Protokoll: ${dienstLogPfad()}`;

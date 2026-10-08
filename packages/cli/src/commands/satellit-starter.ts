@@ -34,9 +34,46 @@ if (!einstieg) {
   } catch (e) { /* kein Ordner */ }
 }
 if (!einstieg) { console.error('Keine installierte Alfred-Version unter ~/.alfred/cli. Erst koppeln und installieren: alfred satellit --install'); process.exit(1); }
-const r = spawnSync(process.execPath, [einstieg, ...process.argv.slice(2)], { stdio: 'inherit', env: { ...process.env, ALFRED_STARTER_PFAD: __filename } });
-process.exit(r.status === null ? 1 : r.status);
+const args = process.argv.slice(2);
+const env = { ...process.env, ALFRED_STARTER_PFAD: __filename };
+const dienst = args.includes('satellit') && args.includes('--dienst');
+if (!dienst) {
+  const r = spawnSync(process.execPath, [einstieg, ...args], { stdio: 'inherit', env });
+  process.exit(r.status === null ? 1 : r.status);
+}
+// Dienstschleife (v1308): Code 75 = Update → sofort die (neue) Version aus aktuell.json; Absturz → mit Wartezeit neu,
+// höchstens 50 Neustarts je Stunde. Vorher endete der Dienst mit dem ersten Absturz oder einem verlorenen Starter.
+const log = (z) => { try { fs.appendFileSync(path.join(os.homedir(), '.alfred', 'satellit.log'), new Date().toISOString() + ' [starter] ' + z + '\\n'); } catch (e) { /* */ } };
+const warteMs = Number(process.env.ALFRED_STARTER_WARTE_MS || 5000);
+let neustarts = []; let warte = warteMs;
+for (;;) {
+  const start = Date.now();
+  const r = spawnSync(process.execPath, [aktuellerEinstieg() || einstieg, ...args], { stdio: 'inherit', env });
+  const code = r.status === null ? 1 : r.status;
+  if (code === 0) process.exit(0);
+  const jetzt = Date.now();
+  neustarts = neustarts.filter(t => jetzt - t < 3600000); neustarts.push(jetzt);
+  if (neustarts.length > 50) { log('mehr als 50 Neustarts in einer Stunde — gebe auf'); process.exit(1); }
+  if (code === 75) { log('Update (Code 75) — starte die aktuelle Version'); warte = warteMs; continue; }
+  if (jetzt - start > 600000) warte = warteMs; // lief länger als 10 min stabil → Wartezeit zurücksetzen
+  log('Satellit beendet mit Code ' + code + ' — Neustart in ' + Math.round(warte / 1000) + ' s');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, warte);
+  warte = Math.min(warte * 2, 60000);
+}
+function aktuellerEinstieg() {
+  try {
+    const a = JSON.parse(fs.readFileSync(path.join(dir, 'aktuell.json'), 'utf8'));
+    const k = a.gescheitert && a.vorige ? bundle(a.vorige) : (a.einstieg || (a.version ? bundle(a.version) : undefined));
+    return k && fs.existsSync(k) ? k : undefined;
+  } catch (e) { return undefined; }
+}
 `;
+}
+
+/** v1308 — Dienst-Einträge zeigen auf den Starter in ~/.alfred/bin statt auf eine Versionsdatei, die später aufgeräumt wird. */
+export function starterEinstieg(node: string = process.execPath, plattform: NodeJS.Platform = process.platform): string {
+  const [js] = schreibeStarter(binOrdner(), node, plattform);
+  return js!;
 }
 
 export function starterAufrufWindows(node: string): string {
