@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'audio.dart';
 import 'ipc.dart';
+import 'kacheln.dart';
 import 'modell.dart';
 import 'server.dart';
 import 'transfer.dart';
@@ -85,6 +85,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool stimme = false;
   bool aufnahme = false;
   bool sichtbar = true;
+  bool kachelnOffen = false; // Meilenstein 3 — Kacheln nativ statt Webview
   Timer? abfrage;
   int benachrichtigungNr = 0;
   late final IpcVerbindung ipc;
@@ -113,6 +114,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           if (auto != null && auto.isNotEmpty) { eingabe.text = auto; Future.delayed(const Duration(milliseconds: 800), _senden); }
           final wav = startArgs['sprachtest'];
           if (wav != null && wav.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _sprachtest(wav));
+          if (startArgs['kacheln'] == 'an') setState(() => kachelnOffen = true); // Beweislauf: Kacheln sofort öffnen
           final datei = startArgs['datei']; // Meilenstein 3: Beweislauf Datei zum Gehirn
           if (datei != null && datei.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _dateienAbgelegt([datei]));
         }
@@ -378,6 +380,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       appBar: AppBar(
         title: Text('Alfred — $geraet'),
         actions: [
+          IconButton(tooltip: kachelnOffen ? 'Zurück zum Gespräch' : 'Kacheln: Lage, Befunde, Vorgänge, Geräte', onPressed: server == null ? null : () => setState(() => kachelnOffen = !kachelnOffen), icon: Icon(kachelnOffen ? Icons.chat_bubble_outline : Icons.dashboard_outlined)),
           IconButton(tooltip: stimme ? 'Antworten vorlesen: an' : 'Antworten vorlesen: aus', onPressed: () => setState(() => stimme = !stimme), icon: Icon(stimme ? Icons.volume_up : Icons.volume_off)),
           IconButton(tooltip: aufnahme ? 'Aufnahme stoppen' : 'Sprechen (Strg+Alt+Leertaste)', onPressed: _talkUmschalten, icon: Icon(aufnahme ? Icons.stop_circle : Icons.mic, color: aufnahme ? Colors.redAccent : null)),
           if (offen.isNotEmpty)
@@ -387,7 +390,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             ),
         ],
       ),
-      body: DropTarget(
+      body: kachelnOffen && server != null ? Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t))) : DropTarget(
         onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()),
         child: Column(
         children: [

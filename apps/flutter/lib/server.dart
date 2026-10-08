@@ -24,6 +24,15 @@ class Server {
     return req;
   }
 
+  /// Meilenstein 3 — JSON einer erlaubten Route (Kacheln).
+  Future<Map<String, dynamic>> json(String pfad) async {
+    final req = await _anfrage('GET', pfad);
+    final res = await req.close();
+    final body = await res.transform(utf8.decoder).join();
+    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}: ${body.length > 120 ? body.substring(0, 120) : body}');
+    return jsonDecode(body) as Map<String, dynamic>;
+  }
+
   Future<List<Bestaetigung>> offeneBestaetigungen() async {
     final req = await _anfrage('GET', '/api/confirmations/pending');
     final res = await req.close();
