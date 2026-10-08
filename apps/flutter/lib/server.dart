@@ -43,6 +43,28 @@ class Server {
     return res.statusCode == 200 ? (ja ? 'freigegeben' : 'abgelehnt') : 'HTTP ${res.statusCode}: ${body.length > 120 ? body.substring(0, 120) : body}';
   }
 
+  /// Meilenstein 2 — Audio zum Gehirn (Transkription) und Text vom Gehirn als Sprache (mp3).
+  Future<String> transkribiere(List<int> audio, String mime) async {
+    final req = await _anfrage('POST', '/api/transcribe');
+    req.headers.set('Content-Type', mime);
+    req.headers.contentLength = audio.length;
+    req.add(audio);
+    final res = await req.close();
+    final body = await res.transform(utf8.decoder).join();
+    if (res.statusCode != 200) throw Exception('Transkription HTTP ${res.statusCode}: ${body.length > 120 ? body.substring(0, 120) : body}');
+    return '${(jsonDecode(body) as Map<String, dynamic>)['text'] ?? ''}'.trim();
+  }
+
+  Future<(List<int>, String)> sprich(String text) async {
+    final req = await _anfrage('POST', '/api/sprich');
+    req.write(jsonEncode({'text': text, 'knapp': false}));
+    final res = await req.close();
+    final teile = <int>[];
+    await for (final c in res) { teile.addAll(c); }
+    if (res.statusCode != 200) throw Exception('Sprache HTTP ${res.statusCode}');
+    return (teile, res.headers.contentType?.mimeType ?? 'audio/mpeg');
+  }
+
   /// Nachricht senden; `aufDelta` bekommt Textstücke, `aufStatus` Zwischenstände (Werkzeuge, Denken). Liefert den Endtext.
   Future<String> sende(String text, {required void Function(String) aufDelta, required void Function(String) aufStatus, String? tier}) async {
     final req = await _anfrage('POST', '/api/message');
