@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1311] - 2026-10-08
+
+### Changed — Ink-Sitzung: Eingabe zwischen zwei Linien, Fußzeile darunter (v1311)
+
+Nach den Vorlagen des Owners: Linie, Eingabezeile mit „>", Linie, darunter die Fußzeile mit Gerät, Version, Satellit und Stufe links und den Abzeichen rechts. Die Tastenhinweise erscheinen erst ab 90 Spalten als eigene Zeile.
+
 ## [0.19.0-jarvis.1310] - 2026-10-08
 
 ### Changed — Ink-Sitzung: schlanke Leiste mit Abzeichen statt Rahmen (v1310)

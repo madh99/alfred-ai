@@ -262,13 +262,15 @@ function Sitzung({ speicher, aufEingabe, aufTaste, anbindung }: { speicher: Spei
           {sicht.meldung ? <Text color="green">{sicht.meldung}</Text> : null}
         </Box>
       ) : null}
-      <Box marginTop={1} width={spalten} justifyContent="space-between">
+      {/* v1311 — wie die Vorlagen des Owners: Linie, Eingabe, Linie, darunter die Fußzeile mit Status links und Abzeichen rechts */}
+      <Text dimColor>{'─'.repeat(Math.max(10, spalten))}</Text>
+      <Text>{prompt}{e.text.slice(0, e.cursor)}<Text inverse>{e.text.charAt(e.cursor) || ' '}</Text>{e.text.slice(e.cursor + 1)}</Text>
+      <Text dimColor>{'─'.repeat(Math.max(10, spalten))}</Text>
+      <Box width={spalten} justifyContent="space-between">
         <Text dimColor>{links}</Text>
         <Box>{abzeichen.map((a, i) => <Text key={i} color={a.farbe}>{i ? '  ' : ''}{a.text}</Text>)}</Box>
       </Box>
-      <Text dimColor>{'─'.repeat(Math.max(10, spalten))}</Text>
-      <Text>{prompt}{e.text.slice(0, e.cursor)}<Text inverse>{e.text.charAt(e.cursor) || ' '}</Text>{e.text.slice(e.cursor + 1)}</Text>
-      {spalten >= 70 ? <Text dimColor>Enter sendet · Strg+N oder \ = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+G zuhören · Strg+B Bestätigungen · Strg+E Einstellungen · Strg+L Lage · Strg+Q Ende</Text> : null}
+      {spalten >= 90 ? <Text dimColor>Enter sendet · Strg+N oder \ = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+G zuhören · Strg+B Bestätigungen · Strg+E Einstellungen · Strg+L Lage · Strg+Q Ende</Text> : null}
     </Box>
   );
 }
