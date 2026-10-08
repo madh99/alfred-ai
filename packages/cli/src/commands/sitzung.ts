@@ -141,7 +141,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
   ui ??= new ReadlineOberflaeche();
   const drucke = (text: string) => ui.drucke(text);
   let antwortLaeuft = false;
-  const setzeModus = (m: SitzungStatus['modus']) => { status.modus = m; ui.status({ modus: m }); };
+  const setzeModus = (m: SitzungStatus['modus']) => { status.modus = m; ui.status({ modus: m, antwortSeit: m === 'antwort' ? Date.now() : undefined }); };
 
   // Bestätigungen: Liste und Meldung (per IPC sofort, per Abfrage als Rückfall und für Erledigtes)
   const offen: Bestaetigung[] = [];
@@ -165,7 +165,7 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
         if (n.typ === 'status') {
           // v1307 — Owner-Befund: die Sitzung behält ihre Startversion; läuft der Satellit neuer, sagen wir es
           const neuer = n.status.version !== getVersion();
-          ui.status({ verbunden: n.status.verbunden, satellit: `Dienst ${n.status.version}${neuer ? ' (neuer als die Sitzung)' : ''}` });
+          ui.status({ verbunden: n.status.verbunden, satellit: `Dienst ${n.status.version}${neuer ? ' (neuer als die Sitzung)' : ''}`, satellitVersion: n.status.version, neuer });
           if (neuer) drucke(`ℹ Satellit läuft ${n.status.version}, diese Sitzung ${getVersion()} — für die neue Version Strg+Q und „alfred sitzung" neu starten.`);
           drucke(`⚙ Satellit ${n.status.version} (PID ${n.status.pid}) ${n.status.verbunden ? `verbunden mit Alfred ${n.status.serverVersion ?? ''}` : 'nicht verbunden'}${n.status.aktionenLaufend ? `, ${n.status.aktionenLaufend} Aktion(en) laufen` : ''}`);
         }

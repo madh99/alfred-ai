@@ -167,7 +167,7 @@ function Sitzung({ speicher, aufEingabe, aufTaste, anbindung }: { speicher: Spei
   const [spalten, setSpalten] = useState(stdout?.columns ?? 80);
   useEffect(() => speicher.on(() => setZ(speicher.z)), [speicher]);
   useEffect(() => {
-    const t = setInterval(() => setTick(x => x + 1), 1000); // Spinner und Alter der Bestätigungen
+    const t = setInterval(() => setTick(x => x + 1), 250); // Spinner, Antwortdauer, Alter der Bestätigungen
     const aufGroesse = () => setSpalten(stdout?.columns ?? 80);
     stdout?.on?.('resize', aufGroesse);
     return () => { clearInterval(t); stdout?.off?.('resize', aufGroesse); };
@@ -218,16 +218,19 @@ function Sitzung({ speicher, aufEingabe, aufTaste, anbindung }: { speicher: Spei
     setE(x => eingabeTaste(x, input, key));
   });
   const s = z.status;
-  const spinner = s.modus === 'antwort' ? SPINNER[tick % SPINNER.length] + ' antwortet' : s.modus === 'aufnahme' ? '● Aufnahme' : '';
-  const statusText = [
-    `${s.geraet} ${s.version}`,
-    `Satellit: ${s.satellit}${s.verbunden === undefined ? '' : s.verbunden ? ' ●' : ' ○'}`,
-    `Bestätigungen: ${s.offen}`,
-    `Stufe: ${s.tier ?? 'auto'}`,
-    s.stimme ? '🔊' : '', s.hoeren ? '🎧' : '', spinner,
-  ].filter(Boolean).join(' · ');
   const offene = s.offenListe ?? [];
   const jetzt = Date.now();
+  // v1310 — Leiste wie im Terminal des Owners: links knapp das Gerät, rechts Abzeichen nur für das, was gerade zählt
+  const links = [`${s.geraet} ${s.version}`, `Satellit: ${s.satellitVersion ?? s.satellit}${s.verbunden === undefined ? '' : s.verbunden ? ' ●' : ' ○'}`, s.tier ? `Stufe ${s.tier}` : ''].filter(Boolean).join(' · ');
+  const feldZeigt = feldSichtbar && offene.length > 0;
+  const abzeichen: Array<{ text: string; farbe: string }> = [];
+  if (s.offen > 0 && !feldZeigt) abzeichen.push({ text: `🔔 ${s.offen} ${s.offen === 1 ? 'Bestätigung' : 'Bestätigungen'} · Strg+B`, farbe: 'yellow' });
+  if (s.neuer && s.satellitVersion) abzeichen.push({ text: `⬆ Satellit ${s.satellitVersion} · Sitzung neu starten`, farbe: 'green' });
+  if (s.modus === 'antwort') abzeichen.push({ text: `${SPINNER[tick % SPINNER.length]} antwortet${s.antwortSeit ? ` ${Math.round((jetzt - s.antwortSeit) / 1000)} s` : ''}`, farbe: 'cyan' });
+  if (s.modus === 'aufnahme') abzeichen.push({ text: '● Aufnahme · Strg+T stoppt', farbe: 'red' });
+  if (s.hoeren) abzeichen.push({ text: '🎧 hört zu', farbe: 'magenta' });
+  if (s.stimme) abzeichen.push({ text: '🔊 liest vor', farbe: 'blue' });
+  const prompt = z.label === 'Du: ' ? '> ' : z.label;
   return (
     <Box flexDirection="column">
       <Static items={z.verlauf}>{(item) => (
@@ -259,11 +262,13 @@ function Sitzung({ speicher, aufEingabe, aufTaste, anbindung }: { speicher: Spei
           {sicht.meldung ? <Text color="green">{sicht.meldung}</Text> : null}
         </Box>
       ) : null}
-      <Box borderStyle="single" borderColor="gray" paddingX={1} marginTop={1} flexDirection="column">
-        <Text dimColor wrap="wrap">{statusText}</Text>
-        <Text>{z.label}{e.text.slice(0, e.cursor)}<Text inverse>{e.text.charAt(e.cursor) || ' '}</Text>{e.text.slice(e.cursor + 1)}</Text>
+      <Box marginTop={1} width={spalten} justifyContent="space-between">
+        <Text dimColor>{links}</Text>
+        <Box>{abzeichen.map((a, i) => <Text key={i} color={a.farbe}>{i ? '  ' : ''}{a.text}</Text>)}</Box>
       </Box>
-      {spalten >= 70 ? <Text dimColor>Enter sendet · Strg+N oder \ am Zeilenende = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+G zuhören · Strg+B Bestätigungen · Strg+E Einstellungen · Strg+L Lage · Strg+Q Ende</Text> : null}
+      <Text dimColor>{'─'.repeat(Math.max(10, spalten))}</Text>
+      <Text>{prompt}{e.text.slice(0, e.cursor)}<Text inverse>{e.text.charAt(e.cursor) || ' '}</Text>{e.text.slice(e.cursor + 1)}</Text>
+      {spalten >= 70 ? <Text dimColor>Enter sendet · Strg+N oder \ = neue Zeile · ↑/↓ Verlauf · Strg+T sprechen · Strg+G zuhören · Strg+B Bestätigungen · Strg+E Einstellungen · Strg+L Lage · Strg+Q Ende</Text> : null}
     </Box>
   );
 }

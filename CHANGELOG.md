@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1310] - 2026-10-08
+
+### Changed — Ink-Sitzung: schlanke Leiste mit Abzeichen statt Rahmen (v1310)
+
+Owner-Wunsch 08.10. nach dem Vorbild seines Terminals: Über der Eingabe steht eine einzeilige Leiste, links knapp Gerät, Version, Satellit mit Verbindungspunkt und Modellstufe, rechts Abzeichen nur für das, was gerade zählt — „🔔 2 Bestätigungen · Strg+B" in Gelb, solange das Feld ausgeblendet ist, „⬆ Satellit 1310 · Sitzung neu starten" in Grün, wenn der Satellit neuer läuft, der Spinner mit Antwortdauer, „● Aufnahme", „🎧 hört zu", „🔊 liest vor". Darunter eine Trennlinie und die Eingabe mit „>" als Prompt; die Hinweiszeile bleibt unter 70 Spalten weg. Der Spinner läuft jetzt flüssig.
+
 ## [0.19.0-jarvis.1309] - 2026-10-08
 
 ### Added — Einstellungen des Satelliten: Bild in der Sitzung, Befehle, `alfred einstellungen` (v1309)

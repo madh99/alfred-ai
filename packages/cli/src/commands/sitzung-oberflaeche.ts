@@ -19,6 +19,8 @@ export interface SitzungStatus {
   offen: number; modus: 'bereit' | 'antwort' | 'aufnahme'; tier?: string; stimme: boolean; hoeren: boolean;
   /** v1305 — offene Bestätigungen fürs Feld der Ink-Oberfläche (Reihenfolge wie /offen). */
   offenListe?: Array<{ id: string; text: string; quelle?: string; seit?: string }>;
+  /** v1310 — Version des Satelliten (IPC) und ob sie neuer ist als die Sitzung; Beginn der laufenden Antwort. */
+  satellitVersion?: string; neuer?: boolean; antwortSeit?: number;
 }
 
 export interface Oberflaeche {

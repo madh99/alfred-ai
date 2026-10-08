@@ -28,7 +28,7 @@ describe('Ink-Oberfläche der Sitzung (v1303)', () => {
     const rahmen = t.ausgabe(); // debug-Modus: jeder Rahmen vollständig auf stdout
     expect(rahmen).toContain('PC-test 1303');
     expect(rahmen).toContain('Satellit: angehängt über IPC ●');
-    expect(rahmen).toContain('Bestätigungen: 2');
+    expect(rahmen).toContain('🔔 2 Bestätigungen · Strg+B'); // v1310 Abzeichen, solange das Feld nichts zeigt
     expect(rahmen).toContain('Hallo Verlauf');
     expect(rahmen).toContain('Erstes Stück');
     expect(rahmen).toContain('… denkt');
@@ -43,7 +43,7 @@ describe('Ink-Oberfläche der Sitzung (v1303)', () => {
     ui.status({ offen: 0, modus: 'antwort' });
     await warte(100);
     const r2 = t.ausgabe();
-    expect(r2).toContain('Bestätigungen: 0');
+    expect(r2.slice(r2.lastIndexOf('PC-test'))).not.toContain('🔔');
     expect(r2).toContain('antwortet');
     ui.schliessen();
     expect(t.ausgabe()).toContain('Erstes Stück');
@@ -58,12 +58,12 @@ describe('Ink-Oberfläche der Sitzung (v1303)', () => {
     // „ab", Cursor links, „x" → „axb"; Enter
     for (const k of ['a', 'b', '[D', 'x']) { t.tippe(k); await warte(25); }
     await warte(60);
-    expect(t.ausgabe()).toContain('Du: ax');
+    expect(t.ausgabe()).toContain('> ax');
     t.tippe('\r'); await warte(80);
     expect(eingaben).toEqual(['axb']);
     // ↑ holt „axb" zurück, Esc leert
     t.tippe('[A'); await warte(60);
-    expect(t.ausgabe().split('Du: axb').length).toBeGreaterThan(1);
+    expect(t.ausgabe().split('> axb').length).toBeGreaterThan(1);
     t.tippe(''); await warte(40);
     // Einfügen (bracketed paste) und Alt+Enter → mehrzeilig
     t.tippe('[200~eins zwei[201~'); await warte(60);
@@ -106,7 +106,7 @@ describe('Ink-Oberfläche der Sitzung (v1303)', () => {
     const vorher = t.ausgabe().length;
     t.tippe('x'); await warte(80);
     const danach = t.ausgabe().slice(vorher);
-    expect(danach).toContain('Du: x');
+    expect(danach).toContain('> x');
     expect(danach).not.toContain('Offene Bestätigungen');
     t.tippe(''); await warte(80);
     expect(t.ausgabe().slice(vorher)).toContain('Offene Bestätigungen (3)');
@@ -147,7 +147,7 @@ describe('Ink-Oberfläche der Sitzung (v1303)', () => {
     t.tippe('\u001b'); await warte(30); t.tippe('\u001b'); await warte(60);
     const vorher = t.ausgabe().length;
     t.tippe('x'); await warte(60);
-    expect(t.ausgabe().slice(vorher)).toContain('Du: x');
+    expect(t.ausgabe().slice(vorher)).toContain('> x');
     ui.schliessen();
   });
 
