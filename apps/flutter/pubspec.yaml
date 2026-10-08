@@ -41,7 +41,8 @@ dependencies:
   audioplayers: ^6.8.1
   path_provider: ^2.1.6
   local_notifier: ^0.1.6
-
+  desktop_drop: ^0.8.4
+  crypto: ^3.0.7
 dev_dependencies:
   flutter_test:
     sdk: flutter

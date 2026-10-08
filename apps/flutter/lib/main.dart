@@ -13,6 +13,8 @@ import 'audio.dart';
 import 'ipc.dart';
 import 'modell.dart';
 import 'server.dart';
+import 'transfer.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 
 /// Alfred — Desktop-App, Phase 4 (Spec docs/specs/2026-10-07-flutter-app-phase4.md).
 /// Meilenstein 1: hängt sich an den Satelliten (IPC), spricht per HTTP mit dem Gehirn, zeigt Verlauf, streamt Antworten,
@@ -111,6 +113,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           if (auto != null && auto.isNotEmpty) { eingabe.text = auto; Future.delayed(const Duration(milliseconds: 800), _senden); }
           final wav = startArgs['sprachtest'];
           if (wav != null && wav.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _sprachtest(wav));
+          final datei = startArgs['datei']; // Meilenstein 3: Beweislauf Datei zum Gehirn
+          if (datei != null && datei.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _dateienAbgelegt([datei]));
         }
       },
       aufZustand: (z) => setState(() => ipcZustand = z),
@@ -243,6 +247,27 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   }
 
   // ── Verlauf, Bestätigungen, Chat (Meilenstein 1) ────────────────────────────────────────────────────────────────
+  // ── Dateien (Meilenstein 3): per Drag-and-drop ins Fenster → Dateispeicher des Owners, dann Alfred Bescheid geben ──
+  Future<void> _dateienAbgelegt(List<String> pfade) async {
+    final k = konfig;
+    if (k == null) { _zeile(Eintrag(Art.fehler, 'Noch nicht mit dem Satelliten verbunden — $ipcZustand')); return; }
+    final t = Transfer(k);
+    for (final p in pfade) {
+      final f = File(p);
+      if (!f.existsSync()) { _zeile(Eintrag(Art.fehler, 'Keine Datei: $p')); continue; }
+      final name = f.uri.pathSegments.last;
+      final t0 = DateTime.now();
+      try {
+        setState(() => fluechtig = '📎 $name wird hochgeladen …');
+        final r = await t.hochladen(f, fortschritt: (g, s) => setState(() => fluechtig = '📎 $name: ${(100 * g / s).round()} %'));
+        final sek = DateTime.now().difference(t0).inMilliseconds / 1000;
+        _zeile(Eintrag(Art.hinweis, '📎 $name (${(r.groesse / 1024 / 1024).toStringAsFixed(1)} MB) in ${sek.toStringAsFixed(1)} s hochgeladen · Schlüssel ${r.key} · SHA-256 ${r.sha256}'));
+        await _senden(text: 'Ich habe die Datei „$name" (${r.groesse} Bytes, SHA-256 ${r.sha256}) in deinen Dateispeicher gelegt, Schlüssel: ${r.key}. Bestätige kurz den Empfang.');
+      } catch (e) { _zeile(Eintrag(Art.fehler, '📎 $name: $e')); }
+      finally { setState(() => fluechtig = ''); }
+    }
+  }
+
   void _zeile(Eintrag e) {
     setState(() => verlauf.add(e));
     _protokolliere(e);
@@ -362,7 +387,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             ),
         ],
       ),
-      body: Column(
+      body: DropTarget(
+        onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()),
+        child: Column(
         children: [
           Expanded(
             child: ListView.builder(
@@ -409,7 +436,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             ),
           ),
         ],
-      ),
+      )),
     );
   }
 
