@@ -13512,7 +13512,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const bisText = new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
             const text = `Freigabe erteilt für das Vorhaben auf ${v.geraet}: „${v.beschreibung}" (erlaubt: ${v.aktionen.join(', ')}${v.domains.length ? ' auf ' + v.domains.join(', ') : ''}, bis ${bisText}). Führe es jetzt Schritt für Schritt aus — die Aktionen laufen ohne Einzelbestätigung — und berichte am Ende kurz, was du getan hast. Lies nach jedem Klick die Seite neu.`;
             // v1231 — nur der Geräte-Skill als Werkzeug: die 60 anderen Schemata (≈29k Tokens je Runde) bleiben draußen
-            await this.fortsetzungImOwnerChat(text, { id: 'vorhaben', allowedSkills: [v.skillName] });
+            // v1295 — und auf dem günstigen Tier: Planung ist erledigt, die Schritte sind Werkzeugaufrufe gegen die Element-Karte
+            const { vorhabenTier } = await import('./geraete/freigaben.js');
+            const tier = vorhabenTier();
+            this.logger.info({ geraet: v.geraet, tier, beschreibung: v.beschreibung.slice(0, 80) }, 'v1295 Vorhaben-Fortsetzung');
+            await this.fortsetzungImOwnerChat(text, { id: 'vorhaben', allowedSkills: [v.skillName], tier });
           },
           schritt: async (s) => { await vorgaengeG.schritt({ userId: s.userId, art: s.art as import('@alfred/storage').SchrittArt, skill: s.skill, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie as import('@alfred/storage').Autonomie | undefined, quelle: s.quelle }); },
         });
@@ -14970,14 +14974,14 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
    * Aufgaben), Antwort und Anhänge gehen zurück in den Chat. Genutzt nach Vorhaben-Freigabe (v1230) und nach
    * jeder freigegebenen Geräteaktion (Owner-Beobachtung: Rohergebnis statt Antwort, kein Weitermachen).
    */
-  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string }): Promise<boolean> {
+  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier }): Promise<boolean> {
     const platform = (opts.platform ?? (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api')) as Platform;
     const chatId = opts.chatId ?? this.config.security?.ownerUserId ?? '';
     if (!chatId) return false;
     try {
       const result = await this.pipeline.process({
         id: `${opts.id}-${Date.now()}`, platform, chatId, chatType: 'dm', userId: chatId, userName: 'owner',
-        text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, ...(opts.allowedSkills ? { allowedSkills: opts.allowedSkills } : {}) },
+        text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, ...(opts.allowedSkills ? { allowedSkills: opts.allowedSkills } : {}), ...(opts.tier ? { tier: opts.tier } : {}) }, // v1295 — Tier für Vorhaben
       } as NormalizedMessage);
       const adapter = this.adapters.get(platform);
       if (!adapter || !result?.text) return false;

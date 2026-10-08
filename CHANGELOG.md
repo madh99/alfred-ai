@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1295] - 2026-10-08
+
+### Changed — Vorhaben auf Geräten laufen auf dem günstigen Tier (v1295)
+
+Nach der Freigabe eines Vorhabens (Bedienen, Browser, Office) führt Alfred die Schritte auf dem Tier `fast` aus statt auf dem Standardmodell: die Planung und die Owner-Frage sind erledigt, die Schritte sind Werkzeugaufrufe gegen die Element-Karte oder das Foto. Zusammen mit dem seit v1231 auf das Geräte-Werkzeug beschränkten Werkzeugsatz sinken die Kosten je Runde von rund 0,10 $ auf rund 0,003 $ (Messung 08.10.). Kein Modell-Gate: fällt das Tier aus, greift die Fallback-Kette des Routers. Über `ALFRED_GERAETE_VORHABEN_TIER` lässt sich das Tier umstellen.
+
 ## [0.19.0-jarvis.1294] - 2026-10-08
 
 ### Fixed — Satellit nie mit Administratorrechten (v1294)

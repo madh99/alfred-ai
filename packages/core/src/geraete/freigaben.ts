@@ -56,6 +56,19 @@ export class Freigaben {
  */
 export const VORHABEN_MAX_MIN = 120;
 
+/**
+ * v1295 — Bedienen günstiger (Owner-Freigabe 08.10.): Die Schritte eines freigegebenen Vorhabens (Fenster lesen, klicken,
+ * tippen, Foto) brauchen kein Planungsmodell — das Standardmodell hat geplant und die Owner-Frage formuliert. Die
+ * Fortsetzung läuft auf dem Tier `fast` (nur mit dem Geräte-Werkzeug, s. v1231); Messung 08.10.: default ≈ 0,10 $ je
+ * Runde bei ~50k Prompt-Tokens, fast ≈ 0,003 $. Kein Modell-Gate: fällt das Tier aus, greift die normale Fallback-Kette
+ * des Routers. Über ALFRED_GERAETE_VORHABEN_TIER umstellbar (default|medium|strong|fast|fallback); Unsinn → fast.
+ */
+export const VORHABEN_TIER_STANDARD = 'fast';
+export function vorhabenTier(env: Record<string, string | undefined> = process.env): 'default' | 'medium' | 'strong' | 'fast' | 'fallback' {
+  const w = (env.ALFRED_GERAETE_VORHABEN_TIER ?? '').trim().toLowerCase();
+  return w === 'default' || w === 'medium' || w === 'strong' || w === 'fast' || w === 'fallback' ? w : VORHABEN_TIER_STANDARD;
+}
+
 export interface Vorhaben {
   nonce: string;
   skillName: string;
