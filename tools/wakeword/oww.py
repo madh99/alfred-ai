@@ -34,8 +34,9 @@ def einbetten(af, clips: list[np.ndarray]) -> list[np.ndarray]:
     """Je Clip (int16) die Einbettungen (Frames, 96)."""
     aus = []
     for c in clips:
-        e = af.embed_clips(c[np.newaxis, :], batch_size=1)  # (1, Frames, 96)
-        aus.append(np.asarray(e[0], dtype=np.float32))
+        # Einzelclip-Pfad: embed_clips mit batch_size=1 bricht in openwakeword 0.6 am squeeze() (Form (144,32) vs (1,145,32))
+        e = af._get_embeddings(c)  # (Frames, 96), Fenster 76 Mel-Frames, Schritt 8
+        aus.append(np.asarray(e, dtype=np.float32))
     return aus
 
 def fenster_aus(e: np.ndarray, hop: int = 2) -> np.ndarray:
