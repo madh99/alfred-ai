@@ -139,6 +139,15 @@ export function spiegelBefehl(text: string, store: FadenStore): string {
 
 export interface FadenEintrag { faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }
 
+/** v1335 — Abhängigkeiten der Faden-Befehle und der Pipeline (ein Typ für beide Seiten). */
+export interface FadenDeps {
+  store: FadenStore;
+  liste: () => Promise<FadenEintrag[]>;
+  loeschen: (faden: string) => Promise<boolean>;
+  umbenennen?: (faden: string, titel: string) => Promise<boolean>;
+  geraetName: (geraetId: string) => string | undefined;
+}
+
 /**
  * Befehl `/faden` (Telegram und jeder andere Kanal): Liste, Wechsel, neu, haupt, löschen. Liefert die Antwort als Text.
  */

@@ -51,7 +51,7 @@ export function istRueckfrageOderBefehl(frage: string): boolean {
   const f = (frage ?? '').trim();
   if (!f || f.startsWith('/')) return true;
   const woerter = f.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
-  if (woerter.length <= 4) return true;
+  if (woerter.length <= 2) return true; // „ich warte", „ok danke" — Dreiwortfragen wie „Outlook Problem heute?" bleiben Lücken
   return RUECKFRAGE_MUSTER.test(f);
 }
 

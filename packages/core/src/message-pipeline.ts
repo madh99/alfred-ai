@@ -24,7 +24,7 @@ import type { ActiveLearningService } from './active-learning/active-learning-se
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
 import { werkzeugeFuerNachricht, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300
-import { gespraechsZiel, fadenBefehl, verlaufBefehl, spiegelBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenStore, type FadenEintrag } from './gespraeche.js'; // v1330, v1334
+import { gespraechsZiel, fadenBefehl, verlaufBefehl, spiegelBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenDeps } from './gespraeche.js'; // v1330, v1334, v1335
 import type { Platform } from '@alfred/types';
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
@@ -271,9 +271,9 @@ export class MessagePipeline {
   setOwnerMasterUserId(id: string | undefined): void { this.ownerMasterUserId = id; }
   // v1330 — Gespräche des Owners kanalunabhängig: Schlüssel-Auflösung, Faden-Befehl, Änderungs-Push
   private gespraechsOptionen?: GespraechsOptionen;
-  private fadenDeps?: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean>; umbenennen?: (faden: string, titel: string) => Promise<boolean>; geraetName: (geraetId: string) => string | undefined }; // v1335 umbenennen
+  private fadenDeps?: FadenDeps; // v1335 — ein Typ für Pipeline und Befehle
   private beiGespraech?: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string }; frage: string; antwort: string }) => void;
-  setGespraeche(o: GespraechsOptionen, fadenDeps: NonNullable<MessagePipeline['fadenDeps']>, beiGespraech: NonNullable<MessagePipeline['beiGespraech']>): void {
+  setGespraeche(o: GespraechsOptionen, fadenDeps: FadenDeps, beiGespraech: NonNullable<MessagePipeline['beiGespraech']>): void {
     this.gespraechsOptionen = o; this.fadenDeps = fadenDeps; this.beiGespraech = beiGespraech;
   }
   private usageRepo?: import('@alfred/storage').UsageRepository;
