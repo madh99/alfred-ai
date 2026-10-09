@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1329] - 2026-10-09
+
+### Security — Chat-Prüfung für Gerätetokens strikt (v1329)
+
+Sicherheitsreview zu v1328: Die neue Prüfung griff nur, wenn `chatId` als Zeichenkette kam; andere Typen und ein mitgeschicktes `projectId` rutschten durch. Jetzt weist `/api/message` mit Gerätetoken jede `chatId` ab, die nicht als Zeichenkette zur eigenen Sitzung gehört, und jeden Projekt-Chat.
+
 ## [0.19.0-jarvis.1328] - 2026-10-09
 
 ### Added — Gesprächsfäden je Gerätesitzung, Kamera-Foto auf Windows und Linux (v1328)

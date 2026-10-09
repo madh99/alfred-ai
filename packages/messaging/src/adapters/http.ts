@@ -6168,10 +6168,12 @@ export class HttpAdapter extends MessagingAdapter {
         const projectId = typeof parsed.projectId === 'string' && parsed.projectId.length > 0 ? parsed.projectId : undefined;
         // v1232 — Sitzung eines gekoppelten Geräts: spricht als dessen Owner, eigener Chat je Gerät
         const geraet = this.geraetIdentitaet.get(req);
-        // v1328 — Gerätetoken: nur Chats der eigenen Sitzung (`sitzung:<id>` oder `sitzung:<id>:<faden>`); vorher ungeprüft
-        if (geraet && typeof parsed.chatId === 'string' && !sitzungsChatErlaubt(parsed.chatId, geraet.geraetId)) {
+        // v1328 — Gerätetoken: nur Chats der eigenen Sitzung (`sitzung:<id>` oder `sitzung:<id>:<faden>`); vorher ungeprüft.
+        // Strikt (Sicherheitsreview 09.10.): jede mitgeschickte chatId, die keine Zeichenkette der eigenen Sitzung ist,
+        // und jeder Projekt-Chat werden abgewiesen — kein Durchrutschen über andere Typen.
+        if (geraet && (projectId || (parsed.chatId !== undefined && parsed.chatId !== null && (typeof parsed.chatId !== 'string' || !sitzungsChatErlaubt(parsed.chatId, geraet.geraetId))))) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'chatId gehört nicht zu dieser Gerätesitzung' }));
+          res.end(JSON.stringify({ error: 'Gerätetoken: nur Chats der eigenen Sitzung' }));
           return;
         }
         const chatId = projectId ? `project:${projectId}` : (parsed.chatId ?? (geraet ? `sitzung:${geraet.geraetId}` : `api-chat-${crypto.randomUUID()}`));
