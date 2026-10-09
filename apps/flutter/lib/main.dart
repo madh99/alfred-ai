@@ -43,6 +43,12 @@ Future<void> main(List<String> args) async {
   });
   try { await hotKeyManager.unregisterAll(); } catch (_) {}
   // Systembenachrichtigungen über local_notifier (WinToast, ohne ATL — flutter_local_notifications brauchte atlbase.h der VS-Build-Tools)
+  // Windows: local_notifier legt für die App-Identität eine Startmenü-Verknüpfung „Alfred.lnk" an und lässt sie danach in Ruhe.
+  // Zeigt sie auf eine alte Exe (Realfall 09.10.: alfred_app.exe → Alfred.exe), übernimmt die Taskleiste deren altes Symbol.
+  // Deshalb vor dem Setup entfernen; sie wird gleich für die laufende Exe neu angelegt.
+  if (Platform.isWindows) {
+    try { final lnk = File('${Platform.environment['APPDATA']}\\Microsoft\\Windows\\Start Menu\\Programs\\Alfred.lnk'); if (await lnk.exists()) await lnk.delete(); } catch (_) { /* dann bleibt die alte */ }
+  }
   try { await localNotifier.setup(appName: 'Alfred', shortcutPolicy: ShortcutPolicy.requireCreate); } catch (_) { /* ohne Benachrichtigungen weiter */ }
   runApp(const AlfredApp());
 }
