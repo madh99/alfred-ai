@@ -707,7 +707,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Widget _chat(ThemeData theme) {
     final dim = theme.colorScheme.onSurfaceVariant;
     final geraet = konfig?.name ?? satellit?.name ?? '…';
-    return Column(children: [
+    // 1.1.1 — Owner 16:12: Dateien ließen sich nicht mehr hineinziehen. Die Ablagezone deckte nur den Verlauf ab,
+    // nicht die Eingabekarte; jetzt liegt sie über dem ganzen Chat-Bereich (zusätzlich zum Plus-Knopf).
+    return DropTarget(onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()), child: Column(children: [
       SizedBox(height: 48, child: Row(children: [
         if (!seitenleisteOffen) IconButton(tooltip: 'Seitenleiste', onPressed: () { setState(() => seitenleisteOffen = true); seitenleisteSpeichern(true); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),
         const SizedBox(width: 12),
@@ -718,9 +720,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         const SizedBox(width: 8),
       ])),
       const Divider(height: 1),
-      Expanded(child: DropTarget(
-        onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()),
-        child: verlauf.isEmpty
+      Expanded(child: verlauf.isEmpty
           ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.auto_awesome, size: 40, color: dim), const SizedBox(height: 12), Text('Was kann ich für dich tun?', style: theme.textTheme.headlineSmall)]))
           : Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: ListView.builder(
               controller: scroll,
@@ -733,10 +733,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
                 return neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w;
               },
             ))),
-      )),
+      ),
       if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _bestaetigungen(theme))),
       Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _eingabekarte(theme))),
-    ]);
+    ]));
   }
 
   static bool _gleicherTag(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
