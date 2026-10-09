@@ -46,8 +46,10 @@ class LinuxHotkey {
         if (r.exitCode != 0) return 'Tastenkürzel nicht angelegt: ${r.stderr.toString().trim()}';
       }
       final s = '$_schema.custom-keybinding:$_pfad';
+      // Werte als GVariant-Zeichenkette ('…'), sonst „expected end of input" bei Leerzeichen/Anführungszeichen (VM 09.10.)
+      String gv(String v) => "'${v.replaceAll("'", r"\'")}'";
       for (final (k, v) in [('name', 'Alfred: sprechen'), ('command', '"$exe" --sprechen'), ('binding', '<Control><Alt>space')]) {
-        final r = await Process.run('gsettings', ['set', s, k, v]);
+        final r = await Process.run('gsettings', ['set', s, k, gv(v)]);
         if (r.exitCode != 0) return 'Tastenkürzel unvollständig ($k): ${r.stderr.toString().trim()}';
       }
       return null;

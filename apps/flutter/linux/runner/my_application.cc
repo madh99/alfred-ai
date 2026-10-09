@@ -7,6 +7,9 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+#include <signal.h>
+#include <sys/types.h>
+
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
@@ -83,6 +86,20 @@ static gboolean my_application_local_command_line(GApplication* application,
                                                   gchar*** arguments,
                                                   int* exit_status) {
   MyApplication* self = MY_APPLICATION(application);
+  // 1.0.4 — `--sprechen` (GNOME-Tastenkürzel unter Wayland, siehe lib/linux_hotkey.dart): der laufenden App SIGUSR1
+  // schicken und sofort enden, ohne Fenster und ohne Flutter-Engine (PID-Datei im Laufzeitordner).
+  for (gchar** a = *arguments + 1; a && *a; a++) {
+    if (g_strcmp0(*a, "--sprechen") != 0) continue;
+    const gchar* laufzeit = g_getenv("XDG_RUNTIME_DIR");
+    g_autofree gchar* pfad = g_build_filename(laufzeit && *laufzeit ? laufzeit : g_get_tmp_dir(), "alfred-app.pid", nullptr);
+    g_autofree gchar* inhalt = nullptr;
+    *exit_status = 1;
+    if (g_file_get_contents(pfad, &inhalt, nullptr, nullptr)) {
+      pid_t pid = (pid_t)g_ascii_strtoll(inhalt, nullptr, 10);
+      if (pid > 1 && kill(pid, SIGUSR1) == 0) *exit_status = 0;
+    }
+    return TRUE;
+  }
   // Strip out the first argument as it is the binary name.
   self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
 

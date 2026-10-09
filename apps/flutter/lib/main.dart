@@ -276,7 +276,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     if (aufnahme) { await _talkStop(); return; }
     if (antwortet) return;
     if (hoeren) { _zeile(Eintrag(Art.hinweis, '🎧 Zuhören läuft — einfach „${konfig?.aktivierungswort ?? 'Alfred'}, …“ sagen.')); return; }
-    final ok = await audio.aufnehmen();
+    bool ok;
+    try { ok = await audio.aufnehmen(); } catch (e) { _zeile(Eintrag(Art.fehler, 'Mikrofon: $e')); return; } // 1.0.4 — Fehler sichtbar statt verschluckt (VM ohne Mikrofon)
     if (!ok) { _zeile(Eintrag(Art.fehler, 'Mikrofon nicht verfügbar oder nicht erlaubt')); return; }
     setState(() { aufnahme = true; fluechtig = '● Aufnahme läuft — Strg+Alt+Leertaste stoppt'; });
   }
