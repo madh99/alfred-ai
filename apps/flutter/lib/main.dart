@@ -93,6 +93,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   SatzendeErkenner? erkenner;
   DateTime gespraechsfensterBis = DateTime.fromMillisecondsSinceEpoch(0);
   String gehoert = '';
+  /// Hineingezogene Dateien warten als Anhänge in der Eingabezeile, bis gesendet wird (Owner 09.10.: nicht sofort schicken).
+  final List<File> anhaenge = [];
   Timer? abfrage;
   int benachrichtigungNr = 0;
   late final IpcVerbindung ipc;
@@ -108,7 +110,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     _tastenkuerzelEinrichten();
     ipc = IpcVerbindung(
       aufStatus: (s) => setState(() => satellit = s),
-      aufEreignis: (art, text, zeit) => _zeile(Eintrag(Art.satellit, text, zeit: zeit)),
+      aufEreignis: (art, text, zeit) {
+        if (art == 'nachricht') { _zeile(Eintrag(Art.alfred, text, zeit: zeit)); if (stimme) _sprichKurz(text); return; } // v1318 — Ergebnis nach Freigabe
+        _zeile(Eintrag(Art.satellit, text, zeit: zeit));
+      },
       aufBestaetigung: _meldeNeu,
       aufKonfig: (k) {
         final erste = server == null;
@@ -127,7 +132,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           final hoertest = startArgs['hoertest'];
           if (hoertest != null && hoertest.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _hoertest(hoertest));
           final datei = startArgs['datei']; // Meilenstein 3: Beweislauf Datei zum Gehirn
-          if (datei != null && datei.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _dateienAbgelegt([datei]));
+          if (datei != null && datei.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () { _dateienAbgelegt([datei]); _senden(); }); // Beweislauf: Anhang + sofort senden
         }
       },
       aufZustand: (z) => setState(() => ipcZustand = z),
@@ -352,24 +357,33 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   // ── Verlauf, Bestätigungen, Chat (Meilenstein 1) ────────────────────────────────────────────────────────────────
   // ── Dateien (Meilenstein 3): per Drag-and-drop ins Fenster → Dateispeicher des Owners, dann Alfred Bescheid geben ──
-  Future<void> _dateienAbgelegt(List<String> pfade) async {
-    final k = konfig;
-    if (k == null) { _zeile(Eintrag(Art.fehler, 'Noch nicht mit dem Satelliten verbunden — $ipcZustand')); return; }
-    final t = Transfer(k);
+  /// Hineingezogene Dateien werden Anhänge der Eingabezeile; hochgeladen wird erst beim Senden (mit oder ohne Text).
+  void _dateienAbgelegt(List<String> pfade) {
     for (final p in pfade) {
       final f = File(p);
       if (!f.existsSync()) { _zeile(Eintrag(Art.fehler, 'Keine Datei: $p')); continue; }
+      if (anhaenge.any((a) => a.path == f.path)) continue;
+      setState(() => anhaenge.add(f));
+    }
+    fokus.requestFocus();
+  }
+
+  /// Anhänge blockweise in den Dateispeicher des Owners laden; liefert die Zeilen für die Nachricht an Alfred.
+  Future<List<String>> _anhaengeHochladen() async {
+    final k = konfig!;
+    final t = Transfer(k);
+    final zeilen = <String>[];
+    for (final f in List<File>.of(anhaenge)) {
       final name = f.uri.pathSegments.last;
       final t0 = DateTime.now();
-      try {
-        setState(() => fluechtig = '📎 $name wird hochgeladen …');
-        final r = await t.hochladen(f, fortschritt: (g, s) => setState(() => fluechtig = '📎 $name: ${(100 * g / s).round()} %'));
-        final sek = DateTime.now().difference(t0).inMilliseconds / 1000;
-        _zeile(Eintrag(Art.hinweis, '📎 $name (${(r.groesse / 1024 / 1024).toStringAsFixed(1)} MB) in ${sek.toStringAsFixed(1)} s hochgeladen · Schlüssel ${r.key} · SHA-256 ${r.sha256}'));
-        await _senden(text: 'Ich habe die Datei „$name" (${r.groesse} Bytes, SHA-256 ${r.sha256}) in deinen Dateispeicher gelegt, Schlüssel: ${r.key}. Bestätige kurz den Empfang.');
-      } catch (e) { _zeile(Eintrag(Art.fehler, '📎 $name: $e')); }
-      finally { setState(() => fluechtig = ''); }
+      setState(() => fluechtig = '📎 $name wird hochgeladen …');
+      final r = await t.hochladen(f, fortschritt: (g, s) => setState(() => fluechtig = '📎 $name: ${(100 * g / s).round()} %'));
+      final sek = DateTime.now().difference(t0).inMilliseconds / 1000;
+      _zeile(Eintrag(Art.hinweis, '📎 $name (${(r.groesse / 1024 / 1024).toStringAsFixed(1)} MB) in ${sek.toStringAsFixed(1)} s hochgeladen · Schlüssel ${r.key} · SHA-256 ${r.sha256}'));
+      zeilen.add('Datei „$name" (${r.groesse} Bytes, SHA-256 ${r.sha256}) liegt in deinem Dateispeicher, Schlüssel: ${r.key}.');
     }
+    setState(() { anhaenge.clear(); fluechtig = ''; });
+    return zeilen;
   }
 
   void _zeile(Eintrag e) {
@@ -445,11 +459,22 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// Sendet `text` (oder die Eingabezeile) und liefert den Endtext der Antwort.
   /// `sprechen`: Antwort satzweise vorlesen, sobald Sätze vollständig sind (erster Ton nach dem ersten Satz, nicht nach dem Ende).
   Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit}) async {
-    final t = (text ?? eingabe.text).trim();
+    var t = (text ?? eingabe.text).trim();
     final s = server;
-    if (t.isEmpty || antwortet) return null;
+    final mitAnhang = text == null && anhaenge.isNotEmpty;
+    if ((t.isEmpty && !mitAnhang) || antwortet) return null;
     if (s == null) { _zeile(Eintrag(Art.fehler, 'Noch nicht mit dem Satelliten verbunden — $ipcZustand')); return null; }
-    if (text == null) { eingabe.clear(); _zeile(Eintrag(Art.du, t)); }
+    if (text == null) {
+      eingabe.clear();
+      final namen = anhaenge.map((f) => f.uri.pathSegments.last).toList();
+      _zeile(Eintrag(Art.du, namen.isEmpty ? t : '${t.isEmpty ? '' : '$t\n'}📎 ${namen.join(', ')}'));
+      if (mitAnhang) {
+        // Anhänge zuerst hochladen, dann Alfred mit Text und Schlüsseln ansprechen (Datei + Frage in einer Nachricht)
+        List<String> zeilen;
+        try { zeilen = await _anhaengeHochladen(); } catch (e) { _zeile(Eintrag(Art.fehler, '📎 $e')); setState(() => fluechtig = ''); return null; }
+        t = t.isEmpty ? '${zeilen.join('\n')}\nBestätige kurz den Empfang.' : '$t\n\n${zeilen.join('\n')}';
+      }
+    }
     setState(() { antwortet = true; fluechtig = '… denkt'; });
     final e = Eintrag(Art.alfred, '');
     var gezeigt = '';
@@ -519,6 +544,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             ),
           ),
           if (offen.isNotEmpty) _bestaetigungen(theme),
+          if (anhaenge.isNotEmpty) Padding(padding: const EdgeInsets.fromLTRB(12, 6, 12, 0), child: Align(alignment: Alignment.centerLeft, child: Wrap(spacing: 6, runSpacing: 4, children: [
+            for (final f in anhaenge) InputChip(avatar: const Icon(Icons.insert_drive_file_outlined, size: 18), label: Text(f.uri.pathSegments.last, overflow: TextOverflow.ellipsis), tooltip: f.path, onDeleted: () => setState(() => anhaenge.remove(f))),
+          ]))),
           if (fluechtig.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: Align(alignment: Alignment.centerLeft, child: Text(fluechtig, style: theme.textTheme.bodySmall?.copyWith(color: aufnahme ? Colors.redAccent : Colors.white54)))),
           const Divider(height: 1),
           Padding(
@@ -533,7 +561,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
                     enabled: !antwortet,
                     minLines: 1,
                     maxLines: 5,
-                    decoration: const InputDecoration(hintText: 'Nachricht an Alfred … (Enter sendet)', border: OutlineInputBorder(), isDense: true),
+                    decoration: InputDecoration(hintText: anhaenge.isEmpty ? 'Nachricht an Alfred … (Enter sendet, Dateien hineinziehen)' : 'Was soll Alfred mit ${anhaenge.length == 1 ? 'der Datei' : 'den Dateien'} tun? (Enter sendet, leer = nur ablegen)', border: const OutlineInputBorder(), isDense: true),
                     onSubmitted: (_) => _senden(),
                   ),
                 ),

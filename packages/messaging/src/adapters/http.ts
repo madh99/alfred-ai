@@ -911,6 +911,8 @@ export class HttpAdapter extends MessagingAdapter {
     updateStream?(): import('node:fs').ReadStream | undefined;
     /** v1251 — Hör-Relais (Echtzeit-Transkription) für die Sitzung. */
     hoerenUpgrade?(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
+    /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
+    nachricht?(geraetId: string, text: string): boolean;
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start). */
     verlauf?(geraetId: string, limit: number): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
     /** v1249 — blockweiser Dateitransfer. */
@@ -1035,6 +1037,10 @@ export class HttpAdapter extends MessagingAdapter {
     const res = this.streams.get(chatId);
     if (res) {
       this.writeSseEvent(res, 'response', { type: 'response', text });
+    } else if (chatId.startsWith('sitzung:') && this.geraeteCallbacks?.nachricht) {
+      // v1318 — Realfall Mac 09.10.: Ergebnis der freigegebenen Aktion („✅ datei_ablegen …") ging ins Leere, weil der
+      // SSE-Strom der Frage längst zu war; die Sitzung sah nur „Noch ist nichts übertragen". Jetzt über das Gerät gepusht.
+      this.geraeteCallbacks.nachricht(chatId.slice('sitzung:'.length), text); // false = Gerät gerade nicht verbunden; die Zeile steht im Verlauf (v1314)
     }
     return id;
   }

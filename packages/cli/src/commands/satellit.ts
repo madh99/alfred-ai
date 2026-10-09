@@ -136,6 +136,12 @@ export function entkoppleLokal(): string[] {
   return schritte;
 }
 
+/** v1318 — erster nicht-leerer String unter mehreren Parameternamen (das Modell schreibt „pfad", „ziel", „datei" statt „path"). */
+export function pfadVon(params: Record<string, unknown>, ...namen: string[]): string {
+  for (const n of namen) { const v = params[n]; if (typeof v === 'string' && v.trim()) return v.trim(); }
+  return '';
+}
+
 export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<string, unknown>): Promise<Ergebnis> {
   const frei = k.freigegebeneVerzeichnisse;
   const lesbar = [...frei, ...(k.nurLesen ?? [])]; // v1272 — Leserecht: freigegebene plus nur-lesen
@@ -254,7 +260,8 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       return { success: true, data: { pfad, recht, schreiben: k.freigegebeneVerzeichnisse, lesen: k.nurLesen }, display: `${text} — gilt sofort auf ${k.name}` };
     }
     case 'liste': {
-      const p = String(params.path ?? '');
+      const p = pfadVon(params, 'path', 'pfad', 'ordner', 'verzeichnis'); // v1318 — Realfall Mac 09.10.: Modell schickte „pfad", Fehler hieß „Pfad nicht freigegeben: ."
+      if (!p) return { success: false, error: 'Kein Pfad angegeben — Parameter "path" (z. B. /Users/madh/Downloads)' };
       if (!istPfadErlaubt(p, lesbar)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Lesbar: ${lesbar.join(', ')}` };
       const eintraege = readdirSync(p).slice(0, 200).map(n => { try { const s = statSync(path.join(p, n)); return { name: n, typ: s.isDirectory() ? 'ordner' : 'datei', groesse: s.size, geaendert: s.mtime.toISOString() }; } catch { return { name: n, typ: '?' }; } });
       // v1255 — Größe und Datum stehen in der Anzeige (Owner-Fall Mac: „die drei kleinsten Dateien" löste sonst eine Shell aus)
@@ -262,7 +269,8 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       return { success: true, data: { path: p, eintraege }, display: `${p}: ${eintraege.length} Einträge (Name · Größe · geändert)\n` + eintraege.slice(0, 80).map(e => `- ${e.typ === 'ordner' ? '📁' : '📄'} ${e.name}${e.typ === 'datei' ? ` · ${groesseText(e.groesse ?? 0)}` : ''}${e.geaendert ? ` · ${e.geaendert.slice(0, 10)}` : ''}`).join('\n') };
     }
     case 'oeffnen': {
-      const ziel = String(params.path ?? params.url ?? '');
+      const ziel = pfadVon(params, 'path', 'url', 'pfad', 'ziel', 'datei'); // v1318 Aliase
+      if (!ziel) return { success: false, error: 'Kein Ziel angegeben — Parameter "path" (Datei/Ordner) oder "url"' };
       const istUrl = /^https?:\/\//i.test(ziel);
       if (!istUrl && !istPfadErlaubt(ziel, lesbar)) return { success: false, error: `Pfad nicht freigegeben: ${ziel}. Lesbar: ${lesbar.join(', ')}` };
       const cmd = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', ziel]] as const
@@ -293,7 +301,8 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       });
     }
     case 'datei_holen': {
-      const p = String(params.path ?? '');
+      const p = pfadVon(params, 'path', 'pfad', 'datei'); // v1318 Aliase
+      if (!p) return { success: false, error: 'Keine Datei angegeben — Parameter "path"' };
       if (!istPfadErlaubt(p, lesbar)) return { success: false, error: `Pfad nicht freigegeben: ${p}. Lesbar: ${lesbar.join(', ')}` };
       if (!existsSync(p) || !statSync(p).isFile()) return { success: false, error: `Keine Datei: ${p}` };
       const st = statSync(p);
@@ -330,7 +339,8 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       return { success: true, data: { dateiBase64: data.toString('base64'), dateiName: name, mimeType: mimeAusName(name), groesse, sha256 }, display: `${name} (${groesse} B) von ${k.name} geholt` };
     }
     case 'datei_ablegen': {
-      const ziel = String(params.path ?? '');
+      const ziel = pfadVon(params, 'path', 'pfad', 'ziel'); // v1318 Aliase
+      if (!ziel) return { success: false, error: 'Kein Zielpfad angegeben — Parameter "path" (Datei mit Namen, z. B. /Users/madh/Downloads/x.txt)' };
       if (!istPfadErlaubt(ziel, frei)) return { success: false, error: `Pfad nicht freigegeben (Schreibrecht nötig): ${ziel}. Mit Schreibrecht: ${frei.join(', ')}` };
       let inhalt = typeof params.inhaltBase64 === 'string' ? Buffer.from(params.inhaltBase64, 'base64') : undefined;
       if (!inhalt && typeof params.downloadId === 'string') {
@@ -566,6 +576,12 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
           if ((n as { typ: string }).typ === 'bestaetigung') {
             const b = (n as { bestaetigung?: { id: string; description: string } }).bestaetigung;
             if (b?.id) { log(`Bestätigung offen: ${b.description.slice(0, 100)}`); try { ipc?.sende({ typ: 'bestaetigung', bestaetigung: b }); } catch { /* */ } }
+            return;
+          }
+          // v1318 — Antwort/Ergebnis vom Gehirn für die Sitzung dieses Geräts (z. B. „✅ datei_ablegen …" nach der Freigabe)
+          if ((n as { typ: string }).typ === 'nachricht') {
+            const text = String((n as { text?: string }).text ?? '');
+            if (text) { log(`Nachricht vom Gehirn: ${text.slice(0, 100)}`); ereignis('nachricht', text); }
             return;
           }
           if (n.typ === 'aktion') {

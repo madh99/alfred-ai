@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1318] - 2026-10-09
+
+### Fixed — Ergebnis einer Freigabe erreicht die Gerätesitzung; Pfad-Aliase im Satelliten (v1318)
+
+Realfall Mac 09.10.: Der Owner zog eine Datei in die App, bat um Übertragung auf das MacBook und gab die Aktion frei. Die Datei kam an, Alfreds Antwort blieb aber bei „wartet auf Bestätigung, noch ist nichts übertragen" — das Ergebnis „✅ datei_ablegen …" schickt der API-Adapter nur in einen offenen SSE-Strom, und der war längst zu. Jetzt gehen Nachrichten an `sitzung:<geraetId>` ohne Strom über das Gateway an das Gerät (`nachricht`), der Satellit reicht sie per IPC weiter, Terminal-Sitzung und Desktop-App zeigen sie als Antwort (mit Stimme, wenn eingeschaltet). Zweiter Teil derselben Antwort, der „Zugriffsfehler beim Dateispeicher": das Modell hatte `liste` mit `pfad` statt `path` aufgerufen, der Satellit meldete „Pfad nicht freigegeben: .". Die Dateiaktionen nehmen jetzt `pfad`, `ziel`, `datei`, `ordner`, `url` als Aliase an und sagen bei leerem Pfad, welcher Parameter fehlt.
+
+Desktop-App: Hineingezogene Dateien sind Anhänge der Eingabezeile (Chips, abwählbar) und werden erst beim Senden hochgeladen, zusammen mit dem Text; leer gesendet bedeutet „nur ablegen, Empfang bestätigen".
+
 ## [0.19.0-jarvis.1317] - 2026-10-08
 
 ### Fixed — Vorgangs-Dubletten ohne Anker: Kennzahlen als Themenmerkmal (v1317)

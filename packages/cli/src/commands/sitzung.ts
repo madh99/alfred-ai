@@ -169,7 +169,11 @@ export async function sitzungCommand(opts: { ohneSatellit?: boolean; einfach?: b
           if (neuer) drucke(`ℹ Satellit läuft ${n.status.version}, diese Sitzung ${getVersion()} — für die neue Version Strg+Q und „alfred sitzung" neu starten.`);
           drucke(`⚙ Satellit ${n.status.version} (PID ${n.status.pid}) ${n.status.verbunden ? `verbunden mit Alfred ${n.status.serverVersion ?? ''}` : 'nicht verbunden'}${n.status.aktionenLaufend ? `, ${n.status.aktionenLaufend} Aktion(en) laufen` : ''}`);
         }
-        else if (n.typ === 'ereignis') { if (n.art === 'verbunden') ui.status({ verbunden: true }); if (n.art === 'getrennt') ui.status({ verbunden: false }); drucke(`⚙ ${n.text}`); }
+        else if (n.typ === 'ereignis') {
+          if (n.art === 'verbunden') ui.status({ verbunden: true }); if (n.art === 'getrennt') ui.status({ verbunden: false });
+          if (n.art === 'nachricht') { drucke(`Alfred: ${n.text}`); if (status.stimme) void sprich(String(n.text)); } // v1318 — Ergebnis nach Freigabe
+          else drucke(`⚙ ${n.text}`);
+        }
         else if (n.typ === 'bestaetigung') meldeNeu(n.bestaetigung as Bestaetigung);
       }, () => { ui.status({ verbunden: undefined, satellit: 'Verbindung beendet' }); drucke('⚙ Verbindung zum Satelliten beendet'); });
       if (ipc) { satellitArt = 'Dienst läuft, angehängt über IPC'; satellitStop = ipc.close; }

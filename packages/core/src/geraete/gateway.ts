@@ -356,6 +356,14 @@ export class GeraeteGateway {
     return z;
   }
 
+  /** v1318 — Nachricht an EIN Gerät (Antworten/Ergebnisse für dessen Sitzung, chatId sitzung:<geraetId>). */
+  sendeAn(geraetId: string, n: { typ: string; text?: string; [k: string]: unknown }): boolean {
+    for (const v of this.verbindungen.values()) {
+      if (v.eintrag.id === geraetId && v.ws.readyState === WebSocket.OPEN) { this.sende(v.ws, n as unknown as Partial<GeraetNachricht> & { typ: string }); return true; }
+    }
+    return false;
+  }
+
   private sende(ws: WebSocket, n: Partial<GeraetNachricht> & { typ: string; id?: string }): void {
     if (ws.readyState !== WebSocket.OPEN) return;
     try { ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); } catch { /* */ }
