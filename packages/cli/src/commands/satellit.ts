@@ -607,6 +607,12 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             return;
           }
           // v1318 — Antwort/Ergebnis vom Gehirn für die Sitzung dieses Geräts (z. B. „✅ datei_ablegen …" nach der Freigabe)
+          // v1330 — das Gespräch wurde auf einem anderen Kanal fortgeführt (Telegram, andere App): Desktop-App lädt nach
+          if ((n as { typ: string }).typ === 'gespraech') {
+            const g = n as { faden?: string | null; von?: string };
+            ereignis('gespraech', String(g.von ?? ''), undefined, typeof g.faden === 'string' ? g.faden : undefined);
+            return;
+          }
           if ((n as { typ: string }).typ === 'nachricht') {
             const text = String((n as { text?: string }).text ?? '');
             // v1325 — Anhang (Foto, Bildschirmfoto, Datei) für die Desktop-App; Telegram bekam Bilder, die Sitzung nur Text

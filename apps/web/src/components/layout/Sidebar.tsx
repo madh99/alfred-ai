@@ -48,6 +48,24 @@ export function Sidebar() {
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [chats, setChats] = useState<ConvItem[]>([]);
   const [usage, setUsage] = useState<{ tokens?: number; costUsd?: number; calls?: number }>({});
+  // v1330 — Gespräche des Owners kanalunabhängig (Hauptgespräch + Fäden), dieselben wie in Telegram und den Apps
+  const [faeden, setFaeden] = useState<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number }>>([]);
+  const aktiverFaden = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('faden') : null;
+  useEffect(() => {
+    if (!client) return;
+    client.fetchGespraeche().then(setFaeden).catch(() => setFaeden([]));
+  }, [client]);
+  function neuerFaden() {
+    const id = Date.now().toString(36);
+    try { localStorage.removeItem('alfred-chat-messages'); } catch {}
+    window.location.href = `${BASE}/chat/?faden=${id}`;
+  }
+  async function fadenLoeschen(f: string) {
+    if (!client || !confirm('Gespräch löschen?')) return;
+    try { await client.deleteGespraech(f); } catch {}
+    setFaeden(prev => prev.filter(x => x.faden !== f));
+    if (aktiverFaden === f) window.location.href = `${BASE}/chat/`;
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -161,6 +179,8 @@ export function Sidebar() {
   function newChat() {
     try { localStorage.removeItem('alfred-chat-active-conversation-id'); } catch {}
     try { localStorage.removeItem('alfred-chat-messages'); } catch {}
+    // v1330 — „Neuer Chat" legt einen Faden an; das Hauptgespräch bleibt über „Gespräche" erreichbar
+    if (faeden.length > 0) { neuerFaden(); return; }
     window.location.href = `${BASE}/chat/`;
   }
 
@@ -180,6 +200,22 @@ export function Sidebar() {
           <span className="text-base">💬</span>
           <span>Neuer Chat</span>
         </button>
+        {faeden.length > 0 && (
+          <div className="pt-1">
+            <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-gray-500">Gespräche</div>
+            {faeden.slice(0, 12).map(f => (
+              <div key={f.faden ?? 'haupt'} className={clsx('group flex items-center gap-2 px-3 py-1 rounded-lg', (f.faden ?? null) === (aktiverFaden ?? null) && isActive(`${BASE}/chat`) ? 'bg-blue-500/10 text-blue-400' : 'text-gray-300 hover:bg-[#1a1a1a]')}>
+                <a href={f.faden ? `${BASE}/chat/?faden=${encodeURIComponent(f.faden)}` : `${BASE}/chat/`} className="flex-1 min-w-0 flex items-center gap-2">
+                  <span className="text-xs">{f.faden ? '🧵' : '🏠'}</span>
+                  <span className="truncate text-xs" title={f.titel}>{f.faden ? (f.titel || `Gespräch ${f.faden}`) : 'Hauptgespräch'}</span>
+                </a>
+                {f.faden && (
+                  <button onClick={() => fadenLoeschen(f.faden!)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs" title="Gespräch löschen">✕</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         <a
           href={`${BASE}/history/`}
           className={clsx('w-full flex items-center gap-3 px-3 py-1.5 rounded-lg transition-colors',

@@ -16,7 +16,7 @@ export interface SatellitStatus {
   name: string; version: string; pid: number; verbunden: boolean; serverVersion?: string; verbundenSeit?: string; aktionenLaufend: number;
 }
 export interface BestaetigungKurz { id: string; description: string; source?: string; skillName?: string; createdAt?: string; expiresAt?: string }
-export type IpcEreignisArt = 'verbunden' | 'getrennt' | 'aktion' | 'ergebnis' | 'update' | 'hinweis' | 'nachricht'; // v1318 nachricht = Antwort vom Gehirn
+export type IpcEreignisArt = 'verbunden' | 'getrennt' | 'aktion' | 'ergebnis' | 'update' | 'hinweis' | 'nachricht' | 'gespraech'; // v1318 nachricht = Antwort vom Gehirn; v1330 gespraech = Gespräch anderswo fortgeführt
 /** v1325 — Anhang einer Nachricht vom Gehirn (Foto, Bildschirmfoto, Datei), base64 bis ~8 MB. */
 export interface IpcAnhang { name: string; mime: string; base64: string }
 export type IpcNachricht =

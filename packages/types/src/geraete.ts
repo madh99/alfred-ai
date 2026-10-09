@@ -44,9 +44,12 @@ export interface GeraetAbgemeldet extends GeraetRahmen { typ: 'abgemeldet'; grun
 /** v1302 — Gehirn → Gerät: neue Bestätigung für den Owner (Sitzungen am Gerät zeigen sie sofort; Entscheidung weiter per HTTP). */
 export interface GeraetBestaetigung extends GeraetRahmen { typ: 'bestaetigung'; bestaetigung: { id: string; description: string; source?: string; skillName?: string; createdAt?: string; expiresAt?: string } }
 
+/** v1330 — Gehirn → Gerät: ein Owner-Gespräch (Hauptgespräch oder Faden) wurde auf einem anderen Kanal fortgeführt. */
+export interface GeraetGespraech extends GeraetRahmen { typ: 'gespraech'; faden: string | null; von: string }
+
 export type GeraetNachricht =
   | GeraetHallo | GeraetWillkommen | GeraetPuls | GeraetPulsOk
-  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung;
+  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung | GeraetGespraech;
 
 /** Eintrag der Geräte-Registry (Gehirn). */
 export interface GeraetEintrag {

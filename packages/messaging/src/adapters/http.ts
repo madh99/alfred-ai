@@ -394,6 +394,13 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   // v627 — Conversation-History API (WebUI viewer)
+  /** v1330 — Gespräche des Owners (Hauptgespräch + Fäden) für die Web-Oberfläche. */
+  private gespraecheFn?: {
+    liste: () => Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
+    verlauf: (faden: string | undefined, limit: number) => Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
+    loeschen: (faden: string) => Promise<boolean>;
+  };
+  setGespraeche(fn: NonNullable<HttpAdapter['gespraecheFn']>): void { this.gespraecheFn = fn; }
   private conversationsListFn?: (filter?: { platform?: string; limit?: number; offset?: number; sortBy?: string; sinceIso?: string; untilIso?: string; includeDeleted?: boolean }) => Promise<any[]>;
   private conversationsMessagesFn?: (id: string, opts?: { beforeIso?: string; limit?: number }) => Promise<any[]>;
   private conversationsSummaryFn?: (id: string) => Promise<any | null>;
@@ -924,9 +931,9 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
     nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string): boolean; // v1325 Anhang, v1328 Faden
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
-    verlauf?(geraetId: string, limit: number, faden?: string): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
-    /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen. */
-    faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number }>>;
+    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
+    /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
+    faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
     /** v1249 — blockweiser Dateitransfer. */
     transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
@@ -1299,6 +1306,12 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/background-tasks\/[^/]+\/cancel$/) && req.method === 'POST') {
       this.handleBackgroundTasksCancel(req, res, url).catch(err => this.safeError(res, err));
     // ── Conversation-History API (v627) ──
+    } else if (url.pathname === '/api/gespraeche' && req.method === 'GET') {
+      this.handleGespraeche(req, res, url, 'liste').catch(err => this.safeError(res, err)); // v1330
+    } else if (url.pathname === '/api/gespraeche/verlauf' && req.method === 'GET') {
+      this.handleGespraeche(req, res, url, 'verlauf').catch(err => this.safeError(res, err)); // v1330
+    } else if (/^\/api\/gespraeche\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'DELETE') {
+      this.handleGespraeche(req, res, url, 'loeschen').catch(err => this.safeError(res, err)); // v1330
     } else if (url.pathname === '/api/conversations' && req.method === 'GET') {
       this.handleConversationsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/conversations/search' && req.method === 'GET') {
@@ -2791,6 +2804,25 @@ export class HttpAdapter extends MessagingAdapter {
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ conversations: list }));
+  }
+
+  /** v1330 — Gespräche des Owners für die Web-Oberfläche: Liste, Verlauf je Faden, Löschen (API-Token / Web-Sitzung). */
+  private async handleGespraeche(req: http.IncomingMessage, res: http.ServerResponse, url: URL, art: 'liste' | 'verlauf' | 'loeschen'): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.gespraecheFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    if (art === 'liste') {
+      const faeden = (await this.gespraecheFn.liste()).filter(f => !f.archiv);
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ faeden })); return;
+    }
+    if (art === 'verlauf') {
+      const faden = url.searchParams.get('faden');
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 100));
+      const nachrichten = await this.gespraecheFn.verlauf(istFaden(faden) ? faden : undefined, limit);
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ faden: istFaden(faden) ? faden : null, nachrichten })); return;
+    }
+    const faden = url.pathname.split('/').pop() ?? '';
+    const ok = istFaden(faden) ? await this.gespraecheFn.loeschen(faden) : false;
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok }));
   }
 
   // v644 — Lifecycle handlers
@@ -6569,9 +6601,11 @@ export class HttpAdapter extends MessagingAdapter {
     if (!geraet || !this.geraeteCallbacks?.verlauf) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 30));
     const faden = url.searchParams.get('faden'); // v1328
-    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined);
+    const archiv = url.searchParams.get('archiv'); // v1330 — alte Kanal-Sitzung dieses Geräts, nur lesen
+    const archivOk = archiv && archiv.startsWith(`sitzung:${geraet.geraetId}`) ? archiv : undefined;
+    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined, archivOk);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, nachrichten }));
+    res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, ...(archivOk ? { archiv: archivOk } : {}), nachrichten }));
   }
 
   /** v1328 — Gesprächsfäden der eigenen Sitzung (Desktop-App, Seitenleiste). */

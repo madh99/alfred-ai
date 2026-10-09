@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1330] - 2026-10-09
+
+### Changed — Gespräche des Owners kanalunabhängig: ein Hauptgespräch, Fäden überall, `/faden` (v1330)
+
+Owner-Freigabe 09.10.: „ein Gespräch, viele Kanäle". Bisher hing jeder Verlauf am Kanal (Telegram-Chat, Gerätesitzung, Web-Chat), Telegram wusste nichts von der App und umgekehrt. Jetzt hängt der Verlauf am Owner, der Kanal ist nur noch der Zustellweg.
+
+- Hauptgespräch: der bisherige Telegram-Chat des Owners. Telegram, die Desktop-Apps, das Terminal und der Web-Chat lesen und schreiben darin. Die Herkunft jeder Nachricht (Gerät, Kanal) bleibt erhalten, Streams, Pushes und Bestätigungen laufen weiter über die Kanal-Chat-ID.
+- Fäden: `owner:faden:<faden>`, aus jeder Oberfläche erreichbar — Apps und Terminal über `sitzung:<id>:<faden>`, Web über `web-faden-<faden>`, Telegram über den Befehl `/faden` (Liste, `neu`, Wechsel per Nummer oder Kennung, `haupt`, `löschen`); der aktive Faden je Telegram-Chat liegt in `data/gespraeche.json`.
+- Push „Gespräch geändert" an alle Geräte: Eine offene App lädt das Gespräch nach, wenn es anderswo weiterlief (Telegram, andere App).
+- Familie und Gäste, Gruppen, Projekt-Chats und interne API-Chats bleiben in ihren Kanal-Gesprächen. Alte Gerätesitzungen bleiben als Archiv lesbar (`/api/geraete/verlauf?archiv=`).
+
+Desktop-App 1.2.1: Hauptgespräch und Fäden kanalunabhängig, Nachladen bei Push, Archiv früherer Sitzungen in der Seitenleiste (nur lesen).
+
 ## [0.19.0-jarvis.1329] - 2026-10-09
 
 ### Security — Chat-Prüfung für Gerätetokens strikt (v1329)

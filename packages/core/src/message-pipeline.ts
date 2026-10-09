@@ -24,6 +24,8 @@ import type { ActiveLearningService } from './active-learning/active-learning-se
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
 import { werkzeugeFuerNachricht, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300
+import { gespraechsZiel, fadenBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenStore, type FadenEintrag } from './gespraeche.js'; // v1330
+import type { Platform } from '@alfred/types';
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
 const NODE_LOCAL_SKILLS = new Set([
@@ -267,6 +269,13 @@ export class MessagePipeline {
   // erbt der User die Owner-Role ('admin') statt auf 'guest' zurückzufallen.
   private ownerMasterUserId?: string;
   setOwnerMasterUserId(id: string | undefined): void { this.ownerMasterUserId = id; }
+  // v1330 — Gespräche des Owners kanalunabhängig: Schlüssel-Auflösung, Faden-Befehl, Änderungs-Push
+  private gespraechsOptionen?: GespraechsOptionen;
+  private fadenDeps?: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean> };
+  private beiGespraech?: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string } }) => void;
+  setGespraeche(o: GespraechsOptionen, fadenDeps: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean> }, beiGespraech: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string } }) => void): void {
+    this.gespraechsOptionen = o; this.fadenDeps = fadenDeps; this.beiGespraech = beiGespraech;
+  }
   private usageRepo?: import('@alfred/storage').UsageRepository;
   private userServiceResolver?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
 
@@ -544,6 +553,13 @@ export class MessagePipeline {
       );
       // v667 — masterUserId mutable: bei Project-Chat überschreiben wir es auf den project-owner.
       let masterUserId = resolvedMasterUserId;
+      // v1330 — Owner-Gespräche kanalunabhängig: Hauptgespräch/Faden statt Kanal-Chat; `/faden` ohne Modell
+      const istOwnerGespraech = !!this.ownerMasterUserId && masterUserId === this.ownerMasterUserId && !!this.gespraechsOptionen;
+      const gespraech: GespraechsZiel | undefined = istOwnerGespraech ? gespraechsZiel(message, this.gespraechsOptionen!) : undefined;
+      if (istOwnerGespraech && this.fadenDeps && /^\/faden\b/i.test(message.text.trim())) {
+        const antwort = await fadenBefehl(message.text.trim(), message.platform, message.chatId, this.fadenDeps);
+        return { text: antwort };
+      }
       tracePhase('skill_context', { masterUserId, linkedCount: linkedPlatformUserIds.length });
 
       // 1a. Track insight reactions (non-blocking, fire-and-forget)
@@ -642,8 +658,8 @@ export class MessagePipeline {
 
       // 2. Find or create conversation
       const conversation = await this.conversationManager.getOrCreateConversation(
-        message.platform,
-        conversationChatId,
+        gespraech?.platform ?? message.platform, // v1330 — Owner: Hauptgespräch/Faden statt Kanal-Chat
+        gespraech?.chatId ?? conversationChatId,
         user.id,
       );
 
@@ -658,7 +674,7 @@ export class MessagePipeline {
 
       // 4. Save user message
       await this.conversationManager.addMessage(conversation.id, 'user', message.text);
-      tracePhase('conversation', { convId: conversation.id, historyLen: history.length, hasSummary: !!summary });
+      tracePhase('conversation', { convId: conversation.id, historyLen: history.length, hasSummary: !!summary, ...(gespraech ? { gespraech: gespraech.chatId, faden: gespraech.faden } : {}) });
 
       // 5. Kontext laden — v1210: PARALLEL statt nacheinander.
       //    Realfall 06.10. (Telegram 07:51): Memories 1,7 s → Regeln 1,9 s → Kalender 2,0 s →
@@ -1622,6 +1638,8 @@ export class MessagePipeline {
         'assistant',
         redactSecrets(responseText),
       );
+      // v1330 — andere Oberflächen des Owners laden das Gespräch nach (App zeigt, was in Telegram lief, und umgekehrt)
+      if (gespraech) { try { this.beiGespraech?.({ platform: gespraech.platform, chatId: gespraech.chatId, faden: gespraech.faden, von: { platform: message.platform, chatId: message.chatId } }); } catch { /* Push ist Komfort */ } }
 
       // v1207 — Jarvis Schleife 3: Absage → Vorgang „Lernbedarf" (Lücke → Fähigkeit)
       // v1257 — nicht bei synthetischen Nachrichten (Fortsetzung nach Freigabe/Vorhaben, geplante Aufgaben): das ist

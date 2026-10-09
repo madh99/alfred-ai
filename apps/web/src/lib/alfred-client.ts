@@ -188,6 +188,25 @@ export class AlfredClient {
     return data.success;
   }
 
+  // v1330 — Gespräche des Owners kanalunabhängig: Hauptgespräch (faden null) und Fäden, Verlauf je Faden, Löschen
+  async fetchGespraeche(): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number }>> {
+    const res = await fetch(`${this.baseUrl}/api/gespraeche`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) throw new Error(`Gespräche: ${res.status}`);
+    return (await res.json()).faeden ?? [];
+  }
+
+  async fetchGespraechVerlauf(faden: string | null, limit = 200): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>> {
+    const q = `limit=${limit}${faden ? `&faden=${encodeURIComponent(faden)}` : ''}`;
+    const res = await fetch(`${this.baseUrl}/api/gespraeche/verlauf?${q}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) throw new Error(`Verlauf: ${res.status}`);
+    return (await res.json()).nachrichten ?? [];
+  }
+
+  async deleteGespraech(faden: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/gespraeche/${encodeURIComponent(faden)}`, { method: 'DELETE', headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    return res.ok;
+  }
+
   async fetchMemories(type?: string): Promise<MemoryEntry[]> {
     const url = type ? `${this.baseUrl}/api/memories?type=${encodeURIComponent(type)}` : `${this.baseUrl}/api/memories`;
     const res = await fetch(url, {

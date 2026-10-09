@@ -160,6 +160,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     ipc = IpcVerbindung(
       aufStatus: (s) => setState(() => satellit = s),
       aufEreignis: (art, text, zeit, anhang, faden) {
+        if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
+          if (text == server?.chatId) return; // eigene Nachricht
+          if (faden == server?.faden) { _gespraechNachladen(); } else { _faedenLaden(); }
+          return;
+        }
         if (art == 'nachricht') { // v1318 — Ergebnis nach Freigabe; 1.0.5 — mit Anhang (Foto, Bildschirmfoto, Datei)
           if (faden != server?.faden) { // 1.2.0 — Antwort gehört zu einem anderen Gespräch: Hinweis mit Sprungmarke
             _zeile(Eintrag(Art.hinweis, '💬 Antwort im Gespräch „${_fadenTitel(faden)}“: ${text.isEmpty && anhang != null ? '📎 ${anhang.name}' : (text.length > 80 ? '${text.substring(0, 80)}…' : text)} — in der Seitenleiste öffnen'));
@@ -677,10 +682,14 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 8), children: [
           abschnitt('Gespräche'),
           ListTile(dense: true, selected: server?.faden == null, leading: const Icon(Icons.forum_outlined, size: 18), title: Text('Hauptgespräch', style: theme.textTheme.bodySmall), onTap: () => _fadenWechseln(null)),
-          for (final f in faeden.where((x) => x['faden'] != null).take(12)) ListTile(dense: true, selected: server?.faden == f['faden'], leading: const Icon(Icons.chat_bubble_outline, size: 18), title: Text('${(f['titel'] ?? '').toString().isEmpty ? 'Gespräch' : f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)), trailing: IconButton(tooltip: 'Gespräch löschen', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _fadenLoeschen('${f['faden']}'), icon: const Icon(Icons.delete_outline)), onTap: () => _fadenWechseln('${f['faden']}')),
+          for (final f in faeden.where((x) => x['faden'] != null && x['archiv'] == null).take(12)) ListTile(dense: true, selected: server?.faden == f['faden'], leading: const Icon(Icons.chat_bubble_outline, size: 18), title: Text('${(f['titel'] ?? '').toString().isEmpty ? 'Gespräch' : f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)), trailing: IconButton(tooltip: 'Gespräch löschen', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _fadenLoeschen('${f['faden']}'), icon: const Icon(Icons.delete_outline)), onTap: () => _fadenWechseln('${f['faden']}')),
           if (offen.isNotEmpty) ...[
             abschnitt('Bestätigungen (${offen.length})'),
             for (final b in offen) ListTile(dense: true, leading: Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700), title: Text(b.text, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () => setState(() => ansicht = Ansicht.chat)),
+          ],
+          if (faeden.any((x) => x['archiv'] != null)) ...[
+            abschnitt('Archiv (frühere Sitzungen)'),
+            for (final f in faeden.where((x) => x['archiv'] != null).take(6)) ListTile(dense: true, selected: archiv == f['archiv'], leading: const Icon(Icons.inventory_2_outlined, size: 18), title: Text('${f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text('${_fadenZeit('${f['zeit'] ?? ''}')} · ${f['anzahl']} Nachrichten', style: theme.textTheme.labelSmall?.copyWith(color: dim)), onTap: () => _archivOeffnen('${f['archiv']}')),
           ],
           abschnitt('Vorgänge${vorgaenge.isEmpty ? '' : ' (${vorgaenge.length})'}'),
           if (vorgaenge.isEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('Keine offenen Vorgänge.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
@@ -722,7 +731,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final s = server; if (s == null) return;
     if (antwortet) { _zeile(Eintrag(Art.hinweis, 'Bitte warten, bis die Antwort fertig ist.')); return; }
     s.faden = faden;
-    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; });
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; });
     await _holeVerlauf();
     if (verlauf.isEmpty && faden != null) _zeile(Eintrag(Art.hinweis, 'Neues Gespräch — was möchtest du besprechen?'));
     fokus.requestFocus();
@@ -731,6 +740,30 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   void _neuerChat() {
     final id = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
     _fadenWechseln(id);
+  }
+
+  /// 1.2.1 — Gespräch wurde auf einem anderen Kanal fortgeführt: Verlauf vom Server neu laden, lokale Hinweise behalten.
+  Future<void> _gespraechNachladen() async {
+    if (antwortet) return;
+    final hinweise = verlauf.where((e) => e.art != Art.du && e.art != Art.alfred).toList();
+    setState(() { verlauf.clear(); laufend = null; });
+    await _holeVerlauf();
+    if (hinweise.isNotEmpty) setState(() { verlauf.addAll(hinweise); verlauf.sort((a, b) => a.zeit.compareTo(b.zeit)); });
+    _nachUnten();
+    _faedenLaden();
+  }
+
+  String? archiv; // 1.2.1 — geöffnete alte Kanal-Sitzung (nur lesen)
+
+  Future<void> _archivOeffnen(String chatId) async {
+    final s = server; if (s == null) return;
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = chatId; });
+    try {
+      final j = await s.json('/api/geraete/verlauf?limit=100&archiv=${Uri.encodeQueryComponent(chatId)}');
+      final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+      setState(() { verlauf.addAll(n.map((m) => Eintrag(m['rolle'] == 'user' ? Art.du : Art.alfred, '${m['text']}', zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()))); });
+      _zeile(Eintrag(Art.hinweis, 'Archiv — nur lesen. Zum Weiterschreiben ein Gespräch in der Seitenleiste wählen.'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Archiv nicht geladen: $e')); }
   }
 
   Future<void> _fadenLoeschen(String faden) async {

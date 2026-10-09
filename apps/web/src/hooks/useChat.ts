@@ -124,7 +124,32 @@ function loadPersistedMessages(): ChatMessage[] {
 export function useChat() {
   const { client, user: authUser } = useConfig();
   const userId = useMemo(() => authUser?.userId ? `web-${authUser.userId}` : getPersistentUserId(), [authUser]);
-  const chatId = useMemo(() => authUser?.userId ? `web-chat-${authUser.userId}` : getPersistentChatId(), [authUser]);
+  // v1330 — Gespräche kanalunabhängig: `?faden=<id>` öffnet einen Faden des Owners (web-faden-<id>),
+  // ohne Parameter das Hauptgespräch (web-chat-<user> wird serverseitig darauf abgebildet).
+  const faden = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    const f = new URLSearchParams(window.location.search).get('faden');
+    return f && /^[a-z0-9-]{1,40}$/.test(f) ? f : null;
+  }, []);
+  const chatId = useMemo(() => faden ? `web-faden-${faden}` : authUser?.userId ? `web-chat-${authUser.userId}` : getPersistentChatId(), [authUser, faden]);
+  // v1330 — Verlauf des Gesprächs vom Server (was in Telegram oder der App lief, steht hier auch)
+  const verlaufGeladenRef = useRef(false);
+  useEffect(() => {
+    if (!client || verlaufGeladenRef.current) return;
+    verlaufGeladenRef.current = true;
+    (async () => {
+      try {
+        const msgs = await client.fetchGespraechVerlauf(faden, 200);
+        if (msgs.length === 0 && faden) { dispatch({ type: 'CLEAR' }); return; }
+        if (msgs.length === 0) return;
+        dispatch({ type: 'CLEAR' });
+        for (const m of msgs) {
+          if (m.rolle === 'user') dispatch({ type: 'ADD_USER', text: m.text });
+          else { dispatch({ type: 'START_ASSISTANT' }); dispatch({ type: 'APPEND_RESPONSE', text: m.text }); dispatch({ type: 'DONE' }); }
+        }
+      } catch { /* kein Owner oder Server ohne Gespräche: lokaler Verlauf bleibt */ }
+    })();
+  }, [client, faden]);
   // v647 — Active-Conversation-ID aus localStorage (von Sidebar "Chat fortsetzen")
   const [activeConvId, setActiveConvId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;

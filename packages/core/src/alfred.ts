@@ -6931,6 +6931,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     if (this.pipeline.setOwnerMasterUserId) {
       this.pipeline.setOwnerMasterUserId(this.ownerMasterUserId);
     }
+    // v1330 — Gespräche des Owners kanalunabhängig: Hauptgespräch (Telegram-Zeile) + Fäden, `/faden`, Push an die Geräte
+    {
+      const { FadenStore } = await import('./gespraeche.js');
+      this.fadenStoreRef = new FadenStore(path.resolve(process.cwd(), 'data', 'gespraeche.json'));
+      this.pipeline.setGespraeche(
+        this.gespraechsOptionen(),
+        { store: this.fadenStoreRef, liste: () => this.ownerFaeden(), loeschen: (f) => this.ownerFadenLoeschen(f) },
+        (e) => { const n = this.geraeteGateway?.sendeAnAlle({ typ: 'gespraech', faden: e.faden, von: e.von.chatId }) ?? 0; this.logger.debug({ faden: e.faden, von: e.von.chatId, geraete: n }, 'v1330 Gespräch geändert'); },
+      );
+    }
     if (this.skillHealthRepo) this.pipeline.setSkillHealthRepo(this.skillHealthRepo);
     if (insightTracker) this.pipeline.setInsightTracker(insightTracker);
 
@@ -8570,6 +8580,22 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             return ids;
           } catch { return [ownerUid]; }
         };
+        // v1330 — Gespräche des Owners (Hauptgespräch + Fäden) für die Web-Oberfläche
+        if ('setGespraeche' in apiAdapter) {
+          (apiAdapter as any).setGespraeche({
+            liste: () => this.ownerFaeden(),
+            verlauf: async (faden: string | undefined, limit: number) => {
+              if (!this.conversationRepo) return [];
+              const { hauptgespraech, fadenSchluessel } = await import('./gespraeche.js');
+              const ziel = faden ? fadenSchluessel(faden) : hauptgespraech(this.gespraechsOptionen());
+              const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
+              if (!c || c.deletedAt) return [];
+              const m = await this.conversationRepo.getMessages(c.id, limit);
+              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
+            },
+            loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
+          });
+        }
         (apiAdapter as any).setConversationCallbacks({
           list: async (filter?: { platform?: string; limit?: number; offset?: number; sortBy?: string; sinceIso?: string; untilIso?: string; includeDeleted?: boolean }) => {
             try {
@@ -13615,33 +13641,19 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           hoerenUpgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => hoerRelais.handleUpgrade(req, s, h), // v1251
           nachricht: (geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string) => gw.sendeAn(geraetId, { typ: 'nachricht', text, ...(anhang ? { anhang } : {}), ...(faden ? { faden } : {}) }), // v1318 — Antworten an die Gerätesitzung ohne SSE-Strom; v1325 Anhang; v1328 Faden
           // v1314 — Verlauf der Gerätesitzung für die Desktop-App (chatId wie in /api/message: sitzung:<geraetId>)
-          verlauf: async (geraetId: string, limit: number, faden?: string) => {
+          // v1330 — Gespräche des Owners kanalunabhängig: Hauptgespräch (Telegram-Zeile) und `owner:faden:<f>`,
+          // alte Kanal-Sitzungen dieses Geräts als Archiv nur lesbar
+          verlauf: async (geraetId: string, limit: number, faden?: string, archiv?: string) => {
             if (!this.conversationRepo) return [];
-            const c = await this.conversationRepo.findByPlatformChat('api', faden ? `sitzung:${geraetId}:${faden}` : `sitzung:${geraetId}`); // v1328 je Faden
+            const { hauptgespraech, fadenSchluessel } = await import('./gespraeche.js');
+            const ziel = archiv ? { platform: 'api' as const, chatId: archiv } : faden ? fadenSchluessel(faden) : hauptgespraech(this.gespraechsOptionen());
+            const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
             if (!c || c.deletedAt) return [];
             const m = await this.conversationRepo.getMessages(c.id, limit);
-            return m.filter(x => x.role === 'user' || x.role === 'assistant').map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
+            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
           },
-          // v1328 — Gesprächsfäden (Redesign Stufe 2): Hauptgespräch `sitzung:<id>` plus `sitzung:<id>:<faden>`
-          faeden: async (geraetId: string) => {
-            if (!this.conversationRepo) return [];
-            const liste = await this.conversationRepo.listByChatPrefix('api', `sitzung:${geraetId}`, 60);
-            const praefix = `sitzung:${geraetId}`;
-            return liste
-              .filter(c => c.chatId === praefix || c.chatId.startsWith(praefix + ':'))
-              .map(c => {
-                const faden = c.chatId === praefix ? null : c.chatId.slice(praefix.length + 1);
-                const titel = (c.customLabel ?? c.erste ?? '').replace(/\s+/g, ' ').trim();
-                return { faden, titel: titel.length > 80 ? titel.slice(0, 77) + '…' : titel, zeit: c.updatedAt, anzahl: c.anzahl };
-              });
-          },
-          fadenLoeschen: async (geraetId: string, faden: string) => {
-            if (!this.conversationRepo) return false;
-            const c = await this.conversationRepo.findByPlatformChat('api', `sitzung:${geraetId}:${faden}`);
-            if (!c) return false;
-            await this.conversationRepo.softDelete(c.id);
-            return true;
-          },
+          faeden: async (geraetId: string) => this.ownerFaeden(geraetId),
+          fadenLoeschen: async (_geraetId: string, faden: string) => this.ownerFadenLoeschen(faden),
           // v1322 — Desktop-App-Releases (M6): data/app-releases/<plattform>/
           appUpdateInfo: (plattform: string) => istAppPlattform(plattform) ? appReleases.info(plattform) : undefined,
           appUpdateStream: (plattform: string, datei: string) => istAppPlattform(plattform) ? appReleases.stream(plattform, datei) : undefined,
@@ -15015,6 +15027,47 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
    * Aufgaben), Antwort und Anhänge gehen zurück in den Chat. Genutzt nach Vorhaben-Freigabe (v1230) und nach
    * jeder freigegebenen Geräteaktion (Owner-Beobachtung: Rohergebnis statt Antwort, kein Weitermachen).
    */
+  // ── v1330 — Gespräche des Owners kanalunabhängig (Hauptgespräch + Fäden) ────────────────────────────────────────
+  private fadenStoreRef?: import('./gespraeche.js').FadenStore;
+
+  gespraechsOptionen(): import('./gespraeche.js').GespraechsOptionen {
+    const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : undefined) as Platform | undefined;
+    const ownerChatId = ownerPlatform ? this.config.security?.ownerUserId : undefined;
+    return { ownerChatId, ownerPlatform, aktiverFaden: (p, c) => this.fadenStoreRef?.aktiver(p, c) ?? null };
+  }
+
+  /** Hauptgespräch, Fäden des Owners und (optional) die alten Kanal-Sitzungen eines Geräts als Archiv. */
+  async ownerFaeden(geraetId?: string): Promise<import('./gespraeche.js').FadenEintrag[]> {
+    if (!this.conversationRepo) return [];
+    const { hauptgespraech, FADEN_PRAEFIX } = await import('./gespraeche.js');
+    const kurz = (s: string | undefined) => { const t = (s ?? '').replace(/\s+/g, ' ').trim(); return t.length > 80 ? t.slice(0, 77) + '…' : t; };
+    const aus: import('./gespraeche.js').FadenEintrag[] = [];
+    const haupt = hauptgespraech(this.gespraechsOptionen());
+    const h = await this.conversationRepo.findByPlatformChat(haupt.platform, haupt.chatId);
+    aus.push({ faden: null, titel: 'Hauptgespräch', zeit: h?.updatedAt ?? new Date(0).toISOString(), anzahl: 0 });
+    for (const c of await this.conversationRepo.listByChatPrefix('api', FADEN_PRAEFIX, 60)) {
+      if (!c.chatId.startsWith(FADEN_PRAEFIX)) continue;
+      aus.push({ faden: c.chatId.slice(FADEN_PRAEFIX.length), titel: kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl });
+    }
+    if (geraetId) {
+      for (const c of await this.conversationRepo.listByChatPrefix('api', `sitzung:${geraetId}`, 20)) {
+        if (c.anzahl === 0) continue;
+        aus.push({ faden: null, titel: kurz(c.customLabel ?? c.erste) || 'Archiv', zeit: c.updatedAt, anzahl: c.anzahl, archiv: c.chatId });
+      }
+    }
+    return aus;
+  }
+
+  async ownerFadenLoeschen(faden: string): Promise<boolean> {
+    if (!this.conversationRepo) return false;
+    const { fadenSchluessel } = await import('./gespraeche.js');
+    const k = fadenSchluessel(faden);
+    const c = await this.conversationRepo.findByPlatformChat(k.platform, k.chatId);
+    if (!c || c.deletedAt) return false;
+    await this.conversationRepo.softDelete(c.id);
+    return true;
+  }
+
   private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string } }): Promise<boolean> {
     const ownerPlatform = (opts.platform ?? (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api')) as Platform;
     const ownerChatId = opts.chatId ?? this.config.security?.ownerUserId ?? '';
