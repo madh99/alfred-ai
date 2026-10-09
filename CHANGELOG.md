@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1328] - 2026-10-09
+
+### Added — Gesprächsfäden je Gerätesitzung, Kamera-Foto auf Windows und Linux (v1328)
+
+Redesign Stufe 2 der Desktop-App: Ein Gerät kann mehrere Gespräche führen. Chat-IDs `sitzung:<geraetId>` (Hauptgespräch) und `sitzung:<geraetId>:<faden>`; neue Routen `GET /api/geraete/faeden` (Liste mit Titel aus der ersten Frage, Zeit, Nachrichtenzahl) und `DELETE /api/geraete/faeden/<faden>` (weiches Löschen), `GET /api/geraete/verlauf?faden=`. Antworten und Anhänge, die nach einer Freigabe gepusht werden, tragen den Faden, damit die App sie dem richtigen Gespräch zuordnet.
+
+- Sicherheitsbefund dabei: Ein Gerätetoken konnte in `/api/message` eine beliebige `chatId` mitschicken. Jetzt sind nur Chats der eigenen Sitzung erlaubt (403 sonst).
+- `foto` auch auf Windows (WinRT MediaCapture über PowerShell, am PC mit BRIO-Kamera bewiesen) und Linux (ffmpeg oder fswebcam, nur mit `/dev/video0`).
+
+Desktop-App 1.2.0: Gespräche in der Seitenleiste (Hauptgespräch, weitere Fäden mit Titel und Zeit, Löschen), „Neuer Chat" legt einen Faden an, Antworten aus anderen Fäden erscheinen als Hinweis mit Sprungmarke.
+
 ## [0.19.0-jarvis.1327] - 2026-10-09
 
 ### Added — Geräteaktion `programm_beenden` (v1327)

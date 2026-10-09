@@ -1,5 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { istSitzungsPfad } from '../sitzung-pfade.js';
+import { istSitzungsPfad, zerlegeSitzungsChat, sitzungsChat, sitzungsChatErlaubt, istFaden } from '../sitzung-pfade.js';
+
+// v1328 — Gesprächsfäden: nur die eigene Sitzung, Faden aus [a-z0-9-]{1,40}
+describe('Sitzungs-Chats (v1328)', () => {
+  it('zerlegt Hauptgespräch und Faden', () => {
+    expect(zerlegeSitzungsChat('sitzung:abc')).toEqual({ geraetId: 'abc' });
+    expect(zerlegeSitzungsChat('sitzung:abc:f-1')).toEqual({ geraetId: 'abc', faden: 'f-1' });
+    expect(zerlegeSitzungsChat('sitzung:abc:F 1')).toBeUndefined();
+    expect(zerlegeSitzungsChat('sitzung:')).toBeUndefined();
+    expect(zerlegeSitzungsChat('api-chat-1')).toBeUndefined();
+    expect(sitzungsChat('abc')).toBe('sitzung:abc');
+    expect(sitzungsChat('abc', 'xyz')).toBe('sitzung:abc:xyz');
+    expect(sitzungsChat('abc', 'nicht ok')).toBe('sitzung:abc');
+    expect(istFaden('m1x2')).toBe(true); expect(istFaden('')).toBe(false); expect(istFaden(null)).toBe(false);
+  });
+  it('erlaubt einem Gerätetoken nur Chats seiner Sitzung (Sicherheitsbefund 09.10.)', () => {
+    expect(sitzungsChatErlaubt('sitzung:abc', 'abc')).toBe(true);
+    expect(sitzungsChatErlaubt('sitzung:abc:t1', 'abc')).toBe(true);
+    expect(sitzungsChatErlaubt('sitzung:def', 'abc')).toBe(false);
+    expect(sitzungsChatErlaubt('sitzung:abc:', 'abc')).toBe(false);
+    expect(sitzungsChatErlaubt('5060785419', 'abc')).toBe(false);
+    expect(istSitzungsPfad('/api/geraete/faeden')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/faeden/m1x2')).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/faeden/../x')).toBe(false);
+  });
+});
 
 // v1232 — Gerätetoken ist kein Generalschlüssel: nur Sitzungs-Routen.
 describe('istSitzungsPfad', () => {

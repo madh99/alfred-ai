@@ -13613,14 +13613,34 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // Master des Geräts gebunden (kein Auto-Link-Raten; bei mehreren Mastern wäre der Alias sonst ein Fremder).
           transfer: (art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: Parameters<typeof gw.transferRoute>[1]) => gw.transferRoute(art, p), // v1249
           hoerenUpgrade: (req: import('node:http').IncomingMessage, s: import('node:stream').Duplex, h: Buffer) => hoerRelais.handleUpgrade(req, s, h), // v1251
-          nachricht: (geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }) => gw.sendeAn(geraetId, { typ: 'nachricht', text, ...(anhang ? { anhang } : {}) }), // v1318 — Antworten an die Gerätesitzung ohne SSE-Strom; v1325 Anhang
+          nachricht: (geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string) => gw.sendeAn(geraetId, { typ: 'nachricht', text, ...(anhang ? { anhang } : {}), ...(faden ? { faden } : {}) }), // v1318 — Antworten an die Gerätesitzung ohne SSE-Strom; v1325 Anhang; v1328 Faden
           // v1314 — Verlauf der Gerätesitzung für die Desktop-App (chatId wie in /api/message: sitzung:<geraetId>)
-          verlauf: async (geraetId: string, limit: number) => {
+          verlauf: async (geraetId: string, limit: number, faden?: string) => {
             if (!this.conversationRepo) return [];
-            const c = await this.conversationRepo.findByPlatformChat('api', `sitzung:${geraetId}`);
-            if (!c) return [];
+            const c = await this.conversationRepo.findByPlatformChat('api', faden ? `sitzung:${geraetId}:${faden}` : `sitzung:${geraetId}`); // v1328 je Faden
+            if (!c || c.deletedAt) return [];
             const m = await this.conversationRepo.getMessages(c.id, limit);
             return m.filter(x => x.role === 'user' || x.role === 'assistant').map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
+          },
+          // v1328 — Gesprächsfäden (Redesign Stufe 2): Hauptgespräch `sitzung:<id>` plus `sitzung:<id>:<faden>`
+          faeden: async (geraetId: string) => {
+            if (!this.conversationRepo) return [];
+            const liste = await this.conversationRepo.listByChatPrefix('api', `sitzung:${geraetId}`, 60);
+            const praefix = `sitzung:${geraetId}`;
+            return liste
+              .filter(c => c.chatId === praefix || c.chatId.startsWith(praefix + ':'))
+              .map(c => {
+                const faden = c.chatId === praefix ? null : c.chatId.slice(praefix.length + 1);
+                const titel = (c.customLabel ?? c.erste ?? '').replace(/\s+/g, ' ').trim();
+                return { faden, titel: titel.length > 80 ? titel.slice(0, 77) + '…' : titel, zeit: c.updatedAt, anzahl: c.anzahl };
+              });
+          },
+          fadenLoeschen: async (geraetId: string, faden: string) => {
+            if (!this.conversationRepo) return false;
+            const c = await this.conversationRepo.findByPlatformChat('api', `sitzung:${geraetId}:${faden}`);
+            if (!c) return false;
+            await this.conversationRepo.softDelete(c.id);
+            return true;
           },
           // v1322 — Desktop-App-Releases (M6): data/app-releases/<plattform>/
           appUpdateInfo: (plattform: string) => istAppPlattform(plattform) ? appReleases.info(plattform) : undefined,

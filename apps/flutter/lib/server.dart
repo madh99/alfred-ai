@@ -21,8 +21,10 @@ class Server {
 
   final Konfig k;
   late final HttpClient _client;
+  /// 1.2.0 — aktueller Gesprächsfaden (null = Hauptgespräch); Chat-ID `sitzung:<geraetId>[:<faden>]` (v1328).
+  String? faden;
 
-  String get chatId => 'sitzung:${k.geraetId}';
+  String get chatId => faden == null ? 'sitzung:${k.geraetId}' : 'sitzung:${k.geraetId}:$faden'; // 1.2.0 Fäden
 
   Future<HttpClientRequest> _anfrage(String methode, String pfad) async {
     final req = await _client.openUrl(methode, Uri.parse('${k.server}$pfad'));
@@ -38,8 +40,8 @@ class Server {
   }
 
   /// Meilenstein 3 — JSON einer erlaubten Route (Kacheln).
-  Future<Map<String, dynamic>> json(String pfad) async {
-    final req = await _anfrage('GET', pfad);
+  Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET'}) async {
+    final req = await _anfrage(methode, pfad);
     final res = await req.close();
     final body = await res.transform(utf8.decoder).join();
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}: ${body.length > 120 ? body.substring(0, 120) : body}');

@@ -17,7 +17,7 @@ import { installiereStarter } from './satellit-starter.js'; // v1304
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
-import { kameraFoto } from './satellit-kamera.js'; // v1325
+import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
@@ -97,8 +97,8 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler". Mit markieren=true trägt es die Nummern der letzten Element-Karte ein (Windows).', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' }, markieren: { type: 'boolean', description: 'Nummern der Element-Karte (fenster_lesen) ins Bild zeichnen' } } },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
       // v1325 — Kamera: feste Aktion statt Oberflächen-Steuerung von Photo Booth (lokalisierte Ordner, 3-s-Countdown)
-      ...(process.platform === 'darwin' ? [
-        { name: 'foto', beschreibung: 'Nimmt ein Foto mit der Kamera dieses Geräts auf (macOS über Photo Booth: Auslöser, 3 s Countdown, neue Datei) und liefert es dem Owner als Bild — für „mach ein Foto mit der Kamera", „Kamerabild". Nicht für Bildschirmfotos (dafür bildschirm).', autonomie: 'bestaetigen' as const },
+      ...(kameraVerfuegbar() ? [ // v1328 — auch Windows (WinRT MediaCapture) und Linux (ffmpeg/fswebcam)
+        { name: 'foto', beschreibung: 'Nimmt ein Foto mit der Kamera dieses Geräts auf (macOS über Photo Booth mit 3 s Countdown, Windows über die Windows-Kamera, Linux über ffmpeg/fswebcam) und liefert es dem Owner als Bild — für „mach ein Foto mit der Kamera", „Kamerabild". Nicht für Bildschirmfotos (dafür bildschirm).', autonomie: 'bestaetigen' as const },
       ] : []),
       // v1292 — Office über COM (nur Windows mit klassischem Outlook-Profil bzw. Excel): Schnittstelle statt Oberfläche
       ...(outlookVorhanden() ? [
@@ -518,7 +518,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   let verbunden = false; let serverVersion: string | undefined; let verbundenSeit: string | undefined;
   const status = (): SatellitStatus => ({ name: k.name, version, pid: process.pid, verbunden, serverVersion, verbundenSeit, aktionenLaufend });
   let ipc: IpcServer | undefined;
-  const ereignis = (art: IpcEreignisArt, text: string, anhang?: IpcAnhang) => { try { ipc?.sende({ typ: 'ereignis', zeit: new Date().toISOString(), art, text, ...(anhang ? { anhang } : {}) }); } catch { /* */ } };
+  const ereignis = (art: IpcEreignisArt, text: string, anhang?: IpcAnhang, faden?: string) => { try { ipc?.sende({ typ: 'ereignis', zeit: new Date().toISOString(), art, text, ...(anhang ? { anhang } : {}), ...(faden ? { faden } : {}) }); } catch { /* */ } };
   if (!opts.einmal && !opts.ohneIpc && !process.env.ALFRED_KEIN_IPC) {
     const s = new IpcServer(status, (befehl, antworte) => {
       if (befehl === 'status') antworte({ typ: 'status', status: status() });
@@ -612,7 +612,8 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             // v1325 — Anhang (Foto, Bildschirmfoto, Datei) für die Desktop-App; Telegram bekam Bilder, die Sitzung nur Text
             const a = (n as { anhang?: { name?: string; mime?: string; base64?: string } }).anhang;
             const anhang: IpcAnhang | undefined = a && typeof a.base64 === 'string' && a.base64.length <= 12_000_000 ? { name: String(a.name ?? 'anhang'), mime: String(a.mime ?? 'application/octet-stream'), base64: a.base64 } : undefined;
-            if (text || anhang) { log(`Nachricht vom Gehirn: ${text.slice(0, 100)}${anhang ? ` [+${anhang.name}]` : ''}`); ereignis('nachricht', text, anhang); }
+            const faden = (n as { faden?: unknown }).faden; // v1328 — Gesprächsfaden der Desktop-App
+            if (text || anhang) { log(`Nachricht vom Gehirn: ${text.slice(0, 100)}${anhang ? ` [+${anhang.name}]` : ''}${typeof faden === 'string' ? ` (Faden ${faden})` : ''}`); ereignis('nachricht', text, anhang, typeof faden === 'string' ? faden : undefined); }
             return;
           }
           if (n.typ === 'aktion') {

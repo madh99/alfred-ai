@@ -185,6 +185,24 @@ export class ConversationRepository {
   }
 
   /** v644 — Soft-delete (sets deleted_at). Messages bleiben für eventuelle Wiederherstellung. */
+  /**
+   * v1328 — Gesprächsfäden einer Gerätesitzung: alle Chats mit Präfix (z. B. `sitzung:<geraetId>`), neueste zuerst,
+   * mit erster Benutzerfrage als Titel-Vorschlag und Nachrichtenzahl. Nur nicht gelöschte.
+   */
+  async listByChatPrefix(platform: Platform, prefix: string, limit = 50): Promise<Array<{ id: string; chatId: string; updatedAt: string; customLabel?: string; erste?: string; anzahl: number }>> {
+    const like = prefix.replace(/[%_\\]/g, '\\$&') + '%';
+    const rows = await this.adapter.query(`
+      SELECT c.id, c.chat_id, c.updated_at, c.custom_label,
+        (SELECT m.content FROM messages m WHERE m.conversation_id = c.id AND m.role = 'user' ORDER BY m.created_at ASC, m.id ASC LIMIT 1) AS erste,
+        (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id) AS anzahl
+      FROM conversations c
+      WHERE c.platform = ? AND c.chat_id LIKE ? ESCAPE '\\' AND c.deleted_at IS NULL
+      ORDER BY c.updated_at DESC
+      LIMIT ?
+    `, [platform, like, limit]) as Array<Record<string, unknown>>;
+    return rows.map(r => ({ id: String(r.id), chatId: String(r.chat_id), updatedAt: String(r.updated_at), customLabel: r.custom_label ? String(r.custom_label) : undefined, erste: r.erste ? String(r.erste) : undefined, anzahl: Number(r.anzahl ?? 0) }));
+  }
+
   async softDelete(id: string): Promise<void> {
     await this.adapter.execute('UPDATE conversations SET deleted_at = ? WHERE id = ?', [new Date().toISOString(), id]);
   }

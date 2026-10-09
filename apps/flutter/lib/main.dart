@@ -159,8 +159,13 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     _tastenkuerzelEinrichten();
     ipc = IpcVerbindung(
       aufStatus: (s) => setState(() => satellit = s),
-      aufEreignis: (art, text, zeit, anhang) {
+      aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'nachricht') { // v1318 — Ergebnis nach Freigabe; 1.0.5 — mit Anhang (Foto, Bildschirmfoto, Datei)
+          if (faden != server?.faden) { // 1.2.0 — Antwort gehört zu einem anderen Gespräch: Hinweis mit Sprungmarke
+            _zeile(Eintrag(Art.hinweis, '💬 Antwort im Gespräch „${_fadenTitel(faden)}“: ${text.isEmpty && anhang != null ? '📎 ${anhang.name}' : (text.length > 80 ? '${text.substring(0, 80)}…' : text)} — in der Seitenleiste öffnen'));
+            _faedenLaden();
+            return;
+          }
           _zeile(Eintrag(Art.alfred, text.isEmpty && anhang != null ? '📎 ${anhang.name}' : text, zeit: zeit, anhaenge: anhang == null ? null : [anhang]));
           if (stimme && text.isNotEmpty) _sprichKurz(text);
           return;
@@ -177,6 +182,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         abfrage ??= Timer.periodic(const Duration(seconds: 4), (_) => _holeBestaetigungen());
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); } // M6
         if (erste) { _vorgaengeLaden(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) => _vorgaengeLaden()); } // 1.1.0 Seitenleiste
+        if (erste) _faedenLaden(); // 1.2.0 Gespräche
         if (erste) {
           final auto = startArgs['sende'];
           if (auto != null && auto.isNotEmpty) { eingabe.text = auto; Future.delayed(const Duration(milliseconds: 800), _senden); }
@@ -510,7 +516,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Future<void> _holeVerlauf() async {
     final s = server; if (s == null) return;
     try {
-      final j = await s.json('/api/geraete/verlauf?limit=30');
+      final j = await s.json('/api/geraete/verlauf?limit=30${s.faden == null ? '' : '&faden=${s.faden}'}'); // 1.2.0 je Faden
       final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
       if (n.isEmpty) return;
       // 1.1.0 — die synthetische Fortsetzungs-Nachricht („Freigabe erteilt für das Vorhaben …", v1324) steht im Verlauf als
@@ -593,6 +599,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       if (laufend == null) { _zeile(Eintrag(Art.alfred, ende.isEmpty ? '(keine Antwort)' : ende)); }
       else { if (ende.trim().isNotEmpty && ende.trim() != gezeigt.trim()) setState(() => e.text = ende); _protokolliere(e); }
       ergebnis = ende.isNotEmpty ? ende : gezeigt;
+      _faedenLaden(); // 1.2.0 — Titel/Zeit des Gesprächs in der Seitenleiste nachziehen
       if (vorleser != null && ergebnis.trim().isNotEmpty) {
         setState(() => fluechtig = '🔊 …');
         await vorleser.schluss(ganzerText: gezeigt.trim().isEmpty ? ergebnis : null);
@@ -666,8 +673,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           ])),
           IconButton(tooltip: 'Seitenleiste einklappen', onPressed: () { setState(() => seitenleisteOffen = false); seitenleisteSpeichern(false); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),
         ])),
-        Padding(padding: const EdgeInsets.fromLTRB(10, 10, 10, 0), child: ListTile(dense: true, leading: const Icon(Icons.edit_square, size: 20), title: const Text('Neuer Chat'), subtitle: Text('Verlauf hier ausblenden', style: theme.textTheme.labelSmall?.copyWith(color: dim)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), tileColor: theme.colorScheme.surfaceContainerHigh, onTap: _neuerChat)),
+        Padding(padding: const EdgeInsets.fromLTRB(10, 10, 10, 0), child: ListTile(dense: true, leading: const Icon(Icons.edit_square, size: 20), title: const Text('Neuer Chat'), subtitle: Text('Eigenes Gespräch mit Alfred', style: theme.textTheme.labelSmall?.copyWith(color: dim)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), tileColor: theme.colorScheme.surfaceContainerHigh, onTap: _neuerChat)),
         Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 8), children: [
+          abschnitt('Gespräche'),
+          ListTile(dense: true, selected: server?.faden == null, leading: const Icon(Icons.forum_outlined, size: 18), title: Text('Hauptgespräch', style: theme.textTheme.bodySmall), onTap: () => _fadenWechseln(null)),
+          for (final f in faeden.where((x) => x['faden'] != null).take(12)) ListTile(dense: true, selected: server?.faden == f['faden'], leading: const Icon(Icons.chat_bubble_outline, size: 18), title: Text('${(f['titel'] ?? '').toString().isEmpty ? 'Gespräch' : f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)), trailing: IconButton(tooltip: 'Gespräch löschen', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _fadenLoeschen('${f['faden']}'), icon: const Icon(Icons.delete_outline)), onTap: () => _fadenWechseln('${f['faden']}')),
           if (offen.isNotEmpty) ...[
             abschnitt('Bestätigungen (${offen.length})'),
             for (final b in offen) ListTile(dense: true, leading: Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700), title: Text(b.text, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () => setState(() => ansicht = Ansicht.chat)),
@@ -688,10 +698,48 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     );
   }
 
+  // ── 1.2.0 Gesprächsfäden (Redesign Stufe 2, v1328): Hauptgespräch + beliebig viele Fäden je Gerät ────────────────
+  List<Map<String, dynamic>> faeden = [];
+
+  String _fadenTitel(String? faden) {
+    if (faden == null) return 'Hauptgespräch';
+    final f = faeden.where((x) => x['faden'] == faden).toList();
+    final t = f.isEmpty ? '' : '${f.first['titel'] ?? ''}';
+    return t.isEmpty ? 'Gespräch $faden' : t;
+  }
+
+  Future<void> _faedenLaden() async {
+    final s = server; if (s == null) return;
+    try {
+      final j = await s.json('/api/geraete/faeden');
+      final l = ((j['faeden'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
+      if (mounted) setState(() => faeden = l);
+    } catch (_) { /* Seitenleiste ist Komfort */ }
+  }
+
+  /// Zu einem Gespräch wechseln (null = Hauptgespräch): Verlauf vom Server, Eingabe bleibt.
+  Future<void> _fadenWechseln(String? faden) async {
+    final s = server; if (s == null) return;
+    if (antwortet) { _zeile(Eintrag(Art.hinweis, 'Bitte warten, bis die Antwort fertig ist.')); return; }
+    s.faden = faden;
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; });
+    await _holeVerlauf();
+    if (verlauf.isEmpty && faden != null) _zeile(Eintrag(Art.hinweis, 'Neues Gespräch — was möchtest du besprechen?'));
+    fokus.requestFocus();
+  }
+
   void _neuerChat() {
-    if (verlauf.isEmpty) return;
-    setState(() { verlauf.clear(); laufend = null; });
-    _zeile(Eintrag(Art.hinweis, 'Verlauf ausgeblendet — Alfred erinnert sich weiterhin an das Gespräch dieses Geräts.'));
+    final id = DateTime.now().millisecondsSinceEpoch.toRadixString(36);
+    _fadenWechseln(id);
+  }
+
+  Future<void> _fadenLoeschen(String faden) async {
+    final s = server; if (s == null) return;
+    try {
+      await s.json('/api/geraete/faeden/$faden', methode: 'DELETE');
+      if (s.faden == faden) await _fadenWechseln(null);
+      await _faedenLaden();
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Gespräch nicht gelöscht: $e')); }
   }
 
   Future<void> _vorgaengeLaden() async {
@@ -740,6 +788,14 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   }
 
   static bool _gleicherTag(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
+
+  static String _fadenZeit(String iso) {
+    final d = DateTime.tryParse(iso)?.toLocal();
+    if (d == null) return '';
+    final h = DateTime.now();
+    final z = '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    return _gleicherTag(d, h) ? 'heute, $z' : '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}., $z';
+  }
 
   Widget _datumstrenner(DateTime d, ThemeData theme) {
     final heute = DateTime.now();

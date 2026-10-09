@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { istSitzungsPfad } from '../sitzung-pfade.js'; // v1232
+import { istSitzungsPfad, zerlegeSitzungsChat, sitzungsChatErlaubt, istFaden } from '../sitzung-pfade.js'; // v1232, v1328 Fäden
 import https from 'node:https';
 import net from 'node:net';
 import fs from 'node:fs';
@@ -922,9 +922,12 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1251 — Hör-Relais (Echtzeit-Transkription) für die Sitzung. */
     hoerenUpgrade?(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
-    nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }): boolean; // v1325 Anhang
-    /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start). */
-    verlauf?(geraetId: string, limit: number): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
+    nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string): boolean; // v1325 Anhang, v1328 Faden
+    /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
+    verlauf?(geraetId: string, limit: number, faden?: string): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
+    /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen. */
+    faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number }>>;
+    fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
     /** v1249 — blockweiser Dateitransfer. */
     transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
   };
@@ -1050,7 +1053,8 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (chatId.startsWith('sitzung:') && this.geraeteCallbacks?.nachricht) {
       // v1318 — Realfall Mac 09.10.: Ergebnis der freigegebenen Aktion („✅ datei_ablegen …") ging ins Leere, weil der
       // SSE-Strom der Frage längst zu war; die Sitzung sah nur „Noch ist nichts übertragen". Jetzt über das Gerät gepusht.
-      this.geraeteCallbacks.nachricht(chatId.slice('sitzung:'.length), text); // false = Gerät gerade nicht verbunden; die Zeile steht im Verlauf (v1314)
+      const z = zerlegeSitzungsChat(chatId); // v1328 — Faden mitgeben, die App ordnet die Antwort dem Gespräch zu
+      if (z) this.geraeteCallbacks.nachricht(z.geraetId, text, undefined, z.faden); // false = Gerät gerade nicht verbunden; die Zeile steht im Verlauf (v1314)
     }
     return id;
   }
@@ -1108,9 +1112,10 @@ export class HttpAdapter extends MessagingAdapter {
 
   /** v1325 — Anhang ohne SSE-Strom an die Gerätesitzung pushen (Realfall 09.10.: Kamerafoto kam nur in Telegram an). Bis 8 MB. */
   private anGeraet(chatId: string, text: string | undefined, name: string, mime: string, daten: Buffer): void {
-    if (!chatId.startsWith('sitzung:') || !this.geraeteCallbacks?.nachricht) return;
-    if (daten.length > 8 * 1024 * 1024) { this.geraeteCallbacks.nachricht(chatId.slice('sitzung:'.length), `📎 ${name} (${Math.round(daten.length / 1024 / 1024)} MB) — zu groß für die Sitzung, liegt im Dateispeicher.`); return; }
-    this.geraeteCallbacks.nachricht(chatId.slice('sitzung:'.length), text && text !== name ? text : '', { name, mime, base64: daten.toString('base64') });
+    const z = zerlegeSitzungsChat(chatId);
+    if (!z || !this.geraeteCallbacks?.nachricht) return;
+    if (daten.length > 8 * 1024 * 1024) { this.geraeteCallbacks.nachricht(z.geraetId, `📎 ${name} (${Math.round(daten.length / 1024 / 1024)} MB) — zu groß für die Sitzung, liegt im Dateispeicher.`, undefined, z.faden); return; }
+    this.geraeteCallbacks.nachricht(z.geraetId, text && text !== name ? text : '', { name, mime, base64: daten.toString('base64') }, z.faden);
   }
 
   async sendVoice(chatId: string, audio: Buffer, caption?: string): Promise<string | undefined> {
@@ -1870,6 +1875,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
     } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
       this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
+    } else if (url.pathname === '/api/geraete/faeden' && req.method === 'GET') {
+      this.handleGeraetFaeden(req, res).catch(err => this.safeError(res, err)); // v1328
+    } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'DELETE') {
+      this.handleGeraetFadenLoeschen(req, res, url).catch(err => this.safeError(res, err)); // v1328
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
@@ -6159,6 +6168,12 @@ export class HttpAdapter extends MessagingAdapter {
         const projectId = typeof parsed.projectId === 'string' && parsed.projectId.length > 0 ? parsed.projectId : undefined;
         // v1232 — Sitzung eines gekoppelten Geräts: spricht als dessen Owner, eigener Chat je Gerät
         const geraet = this.geraetIdentitaet.get(req);
+        // v1328 — Gerätetoken: nur Chats der eigenen Sitzung (`sitzung:<id>` oder `sitzung:<id>:<faden>`); vorher ungeprüft
+        if (geraet && typeof parsed.chatId === 'string' && !sitzungsChatErlaubt(parsed.chatId, geraet.geraetId)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'chatId gehört nicht zu dieser Gerätesitzung' }));
+          return;
+        }
         const chatId = projectId ? `project:${projectId}` : (parsed.chatId ?? (geraet ? `sitzung:${geraet.geraetId}` : `api-chat-${crypto.randomUUID()}`));
         const userId = geraet ? geraet.userId : (parsed.userId ?? 'api-user');
 
@@ -6551,9 +6566,30 @@ export class HttpAdapter extends MessagingAdapter {
     const geraet = this.geraetIdentitaet.get(req);
     if (!geraet || !this.geraeteCallbacks?.verlauf) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 30));
-    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit);
+    const faden = url.searchParams.get('faden'); // v1328
+    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ geraet: geraet.name, nachrichten }));
+    res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, nachrichten }));
+  }
+
+  /** v1328 — Gesprächsfäden der eigenen Sitzung (Desktop-App, Seitenleiste). */
+  private async handleGeraetFaeden(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.faeden) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const faeden = await this.geraeteCallbacks.faeden(geraet.geraetId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ geraet: geraet.name, faeden }));
+  }
+
+  private async handleGeraetFadenLoeschen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.fadenLoeschen) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const faden = url.pathname.split('/').pop() ?? '';
+    const ok = istFaden(faden) ? await this.geraeteCallbacks.fadenLoeschen(geraet.geraetId, faden) : false;
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok }));
   }
 
   private async handleGeraetWiderruf(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

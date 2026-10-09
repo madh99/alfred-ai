@@ -21,7 +21,7 @@ export type IpcEreignisArt = 'verbunden' | 'getrennt' | 'aktion' | 'ergebnis' | 
 export interface IpcAnhang { name: string; mime: string; base64: string }
 export type IpcNachricht =
   | { typ: 'status'; status: SatellitStatus }
-  | { typ: 'ereignis'; zeit: string; art: IpcEreignisArt; text: string; anhang?: IpcAnhang }
+  | { typ: 'ereignis'; zeit: string; art: IpcEreignisArt; text: string; anhang?: IpcAnhang; faden?: string } // v1328 faden
   | { typ: 'bestaetigung'; bestaetigung: BestaetigungKurz }
   | { typ: 'befehl'; befehl: 'status' | 'beenden' | 'neuladen' | 'konfig' | 'hallo'; geheimnis?: string } // v1309 neuladen; v1312 konfig/hallo für die Desktop-App
   | { typ: 'konfig'; konfig: { server: string; geraetId: string; token: string; name: string; insecure: boolean; aktivierungswort?: string } }; // v1312 — Antwort auf befehl konfig; v1314 Aktivierungswort

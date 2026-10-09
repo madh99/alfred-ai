@@ -21,6 +21,7 @@ const SITZUNG_PFADE = [
   /^\/api\/geraete\/verlauf$/, // v1314
   /^\/api\/app\/update(\/datei)?$/, // v1322 — Desktop-App holt ihr eigenes Update (M6) — Verlauf der eigenen Sitzung für die Desktop-App
   /^\/api\/vorgaenge$/, // v1313 — Kachel „Vorgänge" der Desktop-App (nur Liste; Entscheidungen bleiben beim API-Token)
+  /^\/api\/geraete\/faeden(\/[a-z0-9-]{1,40})?$/, // v1328 — Gesprächsfäden der eigenen Sitzung (Liste, Löschen)
 ];
 
 export function istSitzungsPfad(url: string | undefined): boolean {
@@ -28,3 +29,30 @@ export function istSitzungsPfad(url: string | undefined): boolean {
   const pfad = url.split('?')[0];
   return SITZUNG_PFADE.some(r => r.test(pfad));
 }
+
+/**
+ * v1328 — Gesprächsfäden je Gerät (Redesign Stufe 2): chatId `sitzung:<geraetId>` (Hauptgespräch) oder
+ * `sitzung:<geraetId>:<faden>` mit faden aus [a-z0-9-]{1,40}. Ein Gerätetoken darf nur Chats seiner eigenen Sitzung
+ * ansprechen — vorher wurde eine mitgeschickte chatId ungeprüft übernommen.
+ */
+const FADEN = /^[a-z0-9-]{1,40}$/;
+
+export function zerlegeSitzungsChat(chatId: string): { geraetId: string; faden?: string } | undefined {
+  if (!chatId.startsWith('sitzung:')) return undefined;
+  const rest = chatId.slice('sitzung:'.length);
+  const i = rest.indexOf(':');
+  if (i < 0) return rest ? { geraetId: rest } : undefined;
+  const geraetId = rest.slice(0, i); const faden = rest.slice(i + 1);
+  return geraetId && FADEN.test(faden) ? { geraetId, faden } : undefined;
+}
+
+export function sitzungsChat(geraetId: string, faden?: string): string {
+  return faden && FADEN.test(faden) ? `sitzung:${geraetId}:${faden}` : `sitzung:${geraetId}`;
+}
+
+export function sitzungsChatErlaubt(chatId: string, geraetId: string): boolean {
+  const z = zerlegeSitzungsChat(chatId);
+  return !!z && z.geraetId === geraetId;
+}
+
+export function istFaden(s: unknown): s is string { return typeof s === 'string' && FADEN.test(s); }

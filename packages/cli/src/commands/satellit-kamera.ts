@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 
 /**
  * v1325 — Kamera-Foto als feste Geräteaktion. Realfall 09.10. 15:20 (Owner, PC-App → MacBook): das Modell steuerte Photo Booth
@@ -71,8 +71,69 @@ async function wartenAufFoto(ordner: string[], seit: number, sekunden: number): 
   return undefined;
 }
 
+/** v1328 — Windows: WinRT MediaCapture über PowerShell (ohne Zusatzwerkzeug; am PC des Owners mit BRIO bewiesen). */
+const WIN_FOTO = `
+param([string]$Ziel)
+[Windows.Media.Capture.MediaCapture, Windows.Media.Capture, ContentType = WindowsRuntime] | Out-Null
+[Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime] | Out-Null
+[Windows.Media.MediaProperties.ImageEncodingProperties, Windows.Media.MediaProperties, ContentType = WindowsRuntime] | Out-Null
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' })[0]
+$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' })[0]
+function Await($op, $t) { $m = $asTaskGeneric.MakeGenericMethod($t); $task = $m.Invoke($null, @($op)); $task.Wait(-1) | Out-Null; $task.Result }
+function AwaitAction($op) { $task = $asTask.Invoke($null, @($op)); $task.Wait(-1) | Out-Null }
+$mc = New-Object Windows.Media.Capture.MediaCapture
+$s = New-Object Windows.Media.Capture.MediaCaptureInitializationSettings
+$s.StreamingCaptureMode = [Windows.Media.Capture.StreamingCaptureMode]::Video
+AwaitAction($mc.InitializeAsync($s))
+Start-Sleep -Milliseconds 1500
+$dir = Split-Path $Ziel -Parent; $name = Split-Path $Ziel -Leaf
+$folder = Await ([Windows.Storage.StorageFolder]::GetFolderFromPathAsync($dir)) ([Windows.Storage.StorageFolder])
+$file = Await ($folder.CreateFileAsync($name, [Windows.Storage.CreationCollisionOption]::ReplaceExisting)) ([Windows.Storage.StorageFile])
+$props = [Windows.Media.MediaProperties.ImageEncodingProperties]::CreateJpeg()
+AwaitAction($mc.CapturePhotoToStorageFileAsync($props, $file))
+$mc.Dispose()
+(Get-Item $Ziel).Length
+`;
+
+function linuxWerkzeug(): 'ffmpeg' | 'fswebcam' | undefined {
+  for (const [w, p] of [['ffmpeg', '/usr/bin/ffmpeg'], ['fswebcam', '/usr/bin/fswebcam']] as const) if (existsSync(p)) return w;
+  return undefined;
+}
+
+/** Steht eine Kamera-Aktion auf dieser Plattform zur Verfügung? (Manifest; Linux nur mit Werkzeug und /dev/video0) */
+export function kameraVerfuegbar(): boolean {
+  if (process.platform === 'darwin' || process.platform === 'win32') return true;
+  return !!linuxWerkzeug() && existsSync('/dev/video0');
+}
+
+async function fotoWindows(ziel: string): Promise<void> {
+  const skript = path.join(os.tmpdir(), `alfred-foto-${process.pid}.ps1`);
+  writeFileSync(skript, WIN_FOTO, 'utf8');
+  try { await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', skript, ziel], 45_000); }
+  finally { try { unlinkSync(skript); } catch { /* egal */ } }
+}
+
+async function fotoLinux(ziel: string): Promise<void> {
+  const w = linuxWerkzeug();
+  if (!w) throw new Error('Keine Kamera-Software: ffmpeg oder fswebcam installieren.');
+  if (w === 'ffmpeg') await run('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'v4l2', '-i', '/dev/video0', '-frames:v', '1', ziel], 30_000);
+  else await run('fswebcam', ['-r', '1280x720', '--no-banner', '-S', '5', ziel], 30_000);
+}
+
 export async function kameraFoto(geraetName: string): Promise<KameraFoto> {
-  if (process.platform !== 'darwin') throw new Error('Kamera-Foto gibt es bisher nur auf macOS (Photo Booth).');
+  const slug = geraetName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const stempel = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
+  if (process.platform !== 'darwin') {
+    const start = Date.now();
+    const ziel = path.join(os.tmpdir(), `alfred-foto-${process.pid}-${Date.now()}.jpg`);
+    try {
+      if (process.platform === 'win32') await fotoWindows(ziel); else await fotoLinux(ziel);
+      if (!existsSync(ziel)) throw new Error('Die Kamera hat kein Bild geliefert.');
+      const daten = readFileSync(ziel);
+      return { dateiName: `foto-${slug}-${stempel}.jpg`, daten, pfad: ziel, dauerMs: Date.now() - start };
+    } finally { try { unlinkSync(ziel); } catch { /* egal */ } }
+  }
   const start = Date.now();
   const seit = start - 1000;
   const liefSchon = await photoBoothLaeuft();
@@ -90,7 +151,5 @@ export async function kameraFoto(geraetName: string): Promise<KameraFoto> {
   if (!pfad) throw new Error(`Photo Booth hat kein neues Bild gespeichert (geprüft: ${ordner.join(', ')}).`);
   await schlaf(500); // Datei fertig geschrieben
   const daten = readFileSync(pfad);
-  const stempel = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');
-  const slug = geraetName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   return { dateiName: `foto-${slug}-${stempel}${path.extname(pfad).toLowerCase() || '.jpg'}`, daten, pfad, dauerMs: Date.now() - start };
 }
