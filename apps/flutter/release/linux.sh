@@ -43,7 +43,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Installed-Size: $GROESSE_KB
-Depends: libgtk-3-0, libayatana-appindicator3-1, libkeybinder-3.0-0, libnotify4, libasound2t64 | libasound2, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good
+Depends: libgtk-3-0, libayatana-appindicator3-1, libkeybinder-3.0-0, libnotify4, libasound2t64 | libasound2, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, pulseaudio-utils
 Maintainer: Alfred <alfred@lokalkraft.at>
 Description: Alfred Desktop-App
  Chat, Bestätigungen, Sprache und Kacheln für das Alfred-Gehirn, verbunden über den Satelliten dieses Geräts.
