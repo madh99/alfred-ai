@@ -12,7 +12,10 @@ import 'package:window_manager/window_manager.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:file_selector/file_selector.dart';
+
 import 'audio.dart';
+import 'einstellungen.dart';
 import 'hoeren.dart';
 import 'update.dart';
 import 'ipc.dart';
@@ -43,8 +46,9 @@ Future<void> main(List<String> args) async {
   }
   startArgs = m;
   WidgetsFlutterBinding.ensureInitialized();
+  einstellungenLaden(); // 1.1.0 — Farbschema vor dem ersten Bild
   await windowManager.ensureInitialized();
-  await windowManager.waitUntilReadyToShow(const WindowOptions(title: 'Alfred', size: Size(960, 720), minimumSize: Size(560, 420), center: true), () async {
+  await windowManager.waitUntilReadyToShow(const WindowOptions(title: 'Alfred', size: Size(1180, 800), minimumSize: Size(640, 480), center: true), () async {
     await windowManager.show();
     await windowManager.focus();
   });
@@ -79,11 +83,17 @@ class AlfredApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Alfred',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(brightness: Brightness.dark, colorSchemeSeed: const Color(0xFF4FC3F7), useMaterial3: true),
-      home: const Sitzung(),
+    // 1.1.0 — hell als Standard, dunkel folgt dem System oder der Einstellung (Redesign Stufe 1, Owner-Vorlage 09.10.)
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModus,
+      builder: (context, modus, _) => MaterialApp(
+        title: 'Alfred',
+        debugShowCheckedModeBanner: false,
+        theme: alfredTheme(Brightness.light),
+        darkTheme: alfredTheme(Brightness.dark),
+        themeMode: modus,
+        home: const Sitzung(),
+      ),
     );
   }
 }
@@ -115,6 +125,13 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool aufnahme = false;
   bool sichtbar = true;
   bool kachelnOffen = false; // Meilenstein 3 — Kacheln nativ statt Webview
+  /// 1.1.0 — Redesign Stufe 1: Symbolleiste links (Chat, Lage, Bestätigungen, Einstellungen), einklappbare Seitenleiste,
+  /// Chat mittig mit Datumstrennern, Eingabekarte mit Stufenwahl.
+  Ansicht ansicht = Ansicht.chat;
+  bool seitenleisteOffen = seitenleisteGespeichert();
+  String? tierWahl; // null = Automatisch, sonst fast/default/strong
+  List<Map<String, dynamic>> vorgaenge = [];
+  Timer? vorgaengeTakt;
   bool hoeren = false; // Meilenstein 4 — Echtzeit-Hören mit Aktivierungswort
   HoerClient? hoerClient;
   SatzendeErkenner? erkenner;
@@ -159,12 +176,13 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         _holeBestaetigungen();
         abfrage ??= Timer.periodic(const Duration(seconds: 4), (_) => _holeBestaetigungen());
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); } // M6
+        if (erste) { _vorgaengeLaden(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) => _vorgaengeLaden()); } // 1.1.0 Seitenleiste
         if (erste) {
           final auto = startArgs['sende'];
           if (auto != null && auto.isNotEmpty) { eingabe.text = auto; Future.delayed(const Duration(milliseconds: 800), _senden); }
           final wav = startArgs['sprachtest'];
           if (wav != null && wav.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _sprachtest(wav));
-          if (startArgs['kacheln'] == 'an') setState(() => kachelnOffen = true); // Beweislauf: Kacheln sofort öffnen
+          if (startArgs['kacheln'] == 'an') setState(() { kachelnOffen = true; ansicht = Ansicht.kacheln; }); // Beweislauf: Kacheln sofort öffnen
           if (startArgs['hoeren'] == 'an') Future.delayed(const Duration(milliseconds: 800), _hoerenStart); // Meilenstein 4
           final hoertest = startArgs['hoertest'];
           if (hoertest != null && hoertest.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _hoertest(hoertest));
@@ -181,6 +199,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   @override
   void dispose() {
     abfrage?.cancel();
+    vorgaengeTakt?.cancel();
     _signal?.cancel();
     hoerClient?.schluss();
     ipc.stop();
@@ -494,7 +513,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       final j = await s.json('/api/geraete/verlauf?limit=30');
       final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
       if (n.isEmpty) return;
-      final alte = n.map((m) => Eintrag(m['rolle'] == 'user' ? Art.du : Art.alfred, '${m['text']}', zeit: DateTime.tryParse('${m['zeit']}')?.toLocal())).toList();
+      // 1.1.0 — die synthetische Fortsetzungs-Nachricht („Freigabe erteilt für das Vorhaben …", v1324) steht im Verlauf als
+      // Benutzerzeile; in der App als Hinweis zeigen, nicht als eigene Blase
+      final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; return Eintrag(du && t.startsWith('Freigabe erteilt für das Vorhaben') ? Art.hinweis : du ? Art.du : Art.alfred, t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()); }).toList();
       setState(() => verlauf.insertAll(0, alte));
       _zeile(Eintrag(Art.hinweis, 'Verlauf geladen: ${alte.length} Nachrichten aus früheren Sitzungen dieses Geräts.'));
     } catch (e) { _zeile(Eintrag(Art.hinweis, 'Verlauf nicht geladen: $e')); }
@@ -558,7 +579,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       ? Vorleser(s.sprich, audio, beiErstemTon: () { final sek = DateTime.now().difference(start).inMilliseconds / 1000; _zeile(Eintrag(Art.hinweis, '🔊 erster Ton nach ${sek.toStringAsFixed(1)} s')); })
       : null;
     try {
-      final ende = await s.sende(t,
+      final ende = await s.sende(t, tier: tierWahl, // 1.1.0 — Stufenwahl aus der Eingabekarte
         aufDelta: (d) {
           if (laufend == null) { laufend = e; setState(() { verlauf.add(e); fluechtig = ''; }); }
           gezeigt += d;
@@ -588,120 +609,263 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   // ── Oberfläche ──────────────────────────────────────────────────────────────────────────────────────────────────
   @override
+  // ── 1.1.0 Redesign Stufe 1 (Owner-Vorlage 09.10.): Symbolleiste | Seitenleiste | Hauptbereich ──────────────────────
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final geraet = konfig?.name ?? satellit?.name ?? '…';
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Alfred — $geraet'),
-        actions: [
-          IconButton(tooltip: kachelnOffen ? 'Zurück zum Gespräch' : 'Kacheln: Lage, Befunde, Vorgänge, Geräte', onPressed: server == null ? null : () => setState(() => kachelnOffen = !kachelnOffen), icon: Icon(kachelnOffen ? Icons.chat_bubble_outline : Icons.dashboard_outlined)),
-          IconButton(tooltip: stimme ? 'Antworten vorlesen: an' : 'Antworten vorlesen: aus', onPressed: () => setState(() => stimme = !stimme), icon: Icon(stimme ? Icons.volume_up : Icons.volume_off)),
-          IconButton(tooltip: aufnahme ? 'Aufnahme stoppen' : 'Sprechen (Strg+Alt+Leertaste)', onPressed: _talkUmschalten, icon: Icon(aufnahme ? Icons.stop_circle : Icons.mic, color: aufnahme ? Colors.redAccent : null)),
-          IconButton(tooltip: hoeren ? 'Zuhören aus' : 'Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“', onPressed: server == null ? null : _hoerenUmschalten, icon: Icon(hoeren ? Icons.headset_mic : Icons.headset, color: hoeren ? Colors.greenAccent : null)),
-          if (update != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: ActionChip(avatar: updateLaeuft ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.system_update_alt, size: 18), label: Text('Update ${update!.version}'), tooltip: 'Herunterladen und installieren (${(update!.groesse / 1024 / 1024).toStringAsFixed(1)} MB)', onPressed: updateLaeuft ? null : _updateInstallieren),
-            ),
-          if (offen.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 12, left: 4),
-              child: Chip(avatar: const Icon(Icons.notifications_active, size: 18), label: Text('${offen.length} ${offen.length == 1 ? 'Bestätigung' : 'Bestätigungen'}'), backgroundColor: Colors.amber.shade900),
-            ),
-        ],
-      ),
-      body: kachelnOffen && server != null ? Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t))) : DropTarget(
-        onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()),
-        child: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              controller: scroll,
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-              itemCount: verlauf.length,
-              itemBuilder: (context, i) => _eintrag(verlauf[i], theme),
-            ),
-          ),
-          if (offen.isNotEmpty) _bestaetigungen(theme),
-          if (anhaenge.isNotEmpty) Padding(padding: const EdgeInsets.fromLTRB(12, 6, 12, 0), child: Align(alignment: Alignment.centerLeft, child: Wrap(spacing: 6, runSpacing: 4, children: [
-            for (final f in anhaenge) InputChip(avatar: const Icon(Icons.insert_drive_file_outlined, size: 18), label: Text(f.uri.pathSegments.last, overflow: TextOverflow.ellipsis), tooltip: f.path, onDeleted: () => setState(() => anhaenge.remove(f))),
-          ]))),
-          if (fluechtig.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: Align(alignment: Alignment.centerLeft, child: Text(fluechtig, style: theme.textTheme.bodySmall?.copyWith(color: aufnahme ? Colors.redAccent : Colors.white54)))),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  // 1.0.3 — mehrzeiliges Feld: Enter fügte nur eine Zeile ein (onSubmitted feuert bei maxLines > 1 nicht).
-                  // Enter sendet, Umschalt+Enter macht eine neue Zeile.
-                  child: Focus(
-                    onKeyEvent: (node, ev) {
-                      if (ev is KeyDownEvent && (ev.logicalKey == LogicalKeyboardKey.enter || ev.logicalKey == LogicalKeyboardKey.numpadEnter) && !HardwareKeyboard.instance.isShiftPressed) {
-                        if (!antwortet) _senden();
-                        return KeyEventResult.handled;
-                      }
-                      return KeyEventResult.ignored;
-                    },
-                    child: TextField(
-                      controller: eingabe,
-                      focusNode: fokus,
-                      autofocus: true,
-                      enabled: !antwortet,
-                      minLines: 1,
-                      maxLines: 5,
-                      decoration: InputDecoration(hintText: anhaenge.isEmpty ? 'Nachricht an Alfred … (Enter sendet, Umschalt+Enter neue Zeile, Dateien hineinziehen)' : 'Was soll Alfred mit ${anhaenge.length == 1 ? 'der Datei' : 'den Dateien'} tun? (Enter sendet, leer = nur ablegen)', border: const OutlineInputBorder(), isDense: true),
-                      onSubmitted: (_) => _senden(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(onPressed: antwortet ? null : () => _senden(), icon: antwortet ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send), label: const Text('Senden')),
-              ],
-            ),
-          ),
-          Container(
-            color: theme.colorScheme.surfaceContainerHighest,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Row(
-              children: [
-                Icon(Icons.circle, size: 10, color: satellit?.verbunden == true ? Colors.greenAccent : Colors.redAccent),
-                const SizedBox(width: 6),
-                Expanded(child: Text(satellit == null ? ipcZustand : 'Satellit ${satellit!.version} · ${satellit!.verbunden ? 'verbunden mit Alfred ${satellit!.serverVersion ?? ''}' : 'nicht verbunden'}${satellit!.aktionenLaufend > 0 ? ' · ${satellit!.aktionenLaufend} Aktion(en)' : ''}', style: theme.textTheme.bodySmall, overflow: TextOverflow.ellipsis)),
-                Text(konfig?.server ?? '', style: theme.textTheme.bodySmall?.copyWith(color: Colors.white38)),
-              ],
-            ),
-          ),
-        ],
-      )),
+      body: Row(children: [
+        _leiste(theme),
+        if (seitenleisteOffen) _seitenleiste(theme),
+        const VerticalDivider(width: 1),
+        Expanded(child: switch (ansicht) {
+          Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t))),
+          Ansicht.einstellungen => _einstellungen(theme),
+          Ansicht.chat => _chat(theme),
+        }),
+      ]),
     );
   }
 
-  Widget _bestaetigungen(ThemeData theme) {
+  /// Schmale Symbolleiste links: Chat, Lage (Kacheln), Bestätigungen (mit Zähler), unten Einstellungen.
+  Widget _leiste(ThemeData theme) {
+    Widget knopf(IconData icon, IconData aktivIcon, String tip, bool aktiv, VoidCallback? auf, {int zaehler = 0}) {
+      final i = Icon(aktiv ? aktivIcon : icon);
+      final b = aktiv ? IconButton.filledTonal(tooltip: tip, onPressed: auf, icon: i) : IconButton(tooltip: tip, onPressed: auf, icon: i);
+      return Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: zaehler > 0 ? Badge.count(count: zaehler, child: b) : b);
+    }
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(border: Border.all(color: Colors.amber.shade700), borderRadius: BorderRadius.circular(8)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Offene Bestätigungen (${offen.length})', style: theme.textTheme.titleSmall?.copyWith(color: Colors.amber.shade300)),
-          for (final b in offen)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Row(
-                children: [
-                  Expanded(child: Text('${b.quelle == 'geraet' ? '(Gerät) ' : ''}${b.text}', maxLines: 3, overflow: TextOverflow.ellipsis)),
-                  const SizedBox(width: 8),
-                  FilledButton(onPressed: () => _entscheide(b, true), child: const Text('Ja')),
-                  const SizedBox(width: 6),
-                  OutlinedButton(onPressed: () => _entscheide(b, false), child: const Text('Nein')),
-                ],
-              ),
-            ),
-        ],
+      width: 60,
+      color: theme.colorScheme.surfaceContainerLow,
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(children: [
+        Tooltip(message: 'Alfred', child: CircleAvatar(radius: 16, backgroundColor: theme.colorScheme.primary, child: Text('A', style: TextStyle(color: theme.colorScheme.onPrimary, fontWeight: FontWeight.bold)))),
+        const SizedBox(height: 10),
+        knopf(Icons.chat_bubble_outline, Icons.chat_bubble, 'Chat', ansicht == Ansicht.chat, () => setState(() => ansicht = Ansicht.chat)),
+        knopf(Icons.dashboard_outlined, Icons.dashboard, 'Lage: Befunde, Vorgänge, Geräte', ansicht == Ansicht.kacheln, server == null ? null : () => setState(() { ansicht = Ansicht.kacheln; kachelnOffen = true; })),
+        knopf(Icons.notifications_none, Icons.notifications, offen.isEmpty ? 'Keine offenen Bestätigungen' : '${offen.length} offene Bestätigung(en)', false, () => setState(() { ansicht = Ansicht.chat; seitenleisteOffen = true; }), zaehler: offen.length),
+        const Spacer(),
+        knopf(Icons.settings_outlined, Icons.settings, 'Einstellungen', ansicht == Ansicht.einstellungen, () => setState(() => ansicht = Ansicht.einstellungen)),
+      ]),
+    );
+  }
+
+  /// Einklappbare Seitenleiste: Gerät, „Neuer Chat", offene Bestätigungen, Vorgänge, letzte Fragen, Satellitenstatus.
+  Widget _seitenleiste(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    final geraet = konfig?.name ?? satellit?.name ?? '…';
+    final letzte = verlauf.where((e) => e.art == Art.du && e.text.trim().isNotEmpty).toList().reversed.take(8).toList();
+    Widget abschnitt(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 4), child: Text(t, style: theme.textTheme.labelMedium?.copyWith(color: dim)));
+    return Container(
+      width: 270,
+      color: theme.colorScheme.surfaceContainerLow,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(padding: const EdgeInsets.fromLTRB(16, 12, 6, 0), child: Row(children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Alfred', style: theme.textTheme.titleMedium),
+            Text(geraet, style: theme.textTheme.bodySmall?.copyWith(color: dim), overflow: TextOverflow.ellipsis),
+          ])),
+          IconButton(tooltip: 'Seitenleiste einklappen', onPressed: () { setState(() => seitenleisteOffen = false); seitenleisteSpeichern(false); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),
+        ])),
+        Padding(padding: const EdgeInsets.fromLTRB(10, 10, 10, 0), child: ListTile(dense: true, leading: const Icon(Icons.edit_square, size: 20), title: const Text('Neuer Chat'), subtitle: Text('Verlauf hier ausblenden', style: theme.textTheme.labelSmall?.copyWith(color: dim)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), tileColor: theme.colorScheme.surfaceContainerHigh, onTap: _neuerChat)),
+        Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 8), children: [
+          if (offen.isNotEmpty) ...[
+            abschnitt('Bestätigungen (${offen.length})'),
+            for (final b in offen) ListTile(dense: true, leading: Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700), title: Text(b.text, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () => setState(() => ansicht = Ansicht.chat)),
+          ],
+          abschnitt('Vorgänge${vorgaenge.isEmpty ? '' : ' (${vorgaenge.length})'}'),
+          if (vorgaenge.isEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text('Keine offenen Vorgänge.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+          for (final v in vorgaenge.take(8)) ListTile(dense: true, leading: const Icon(Icons.assignment_outlined, size: 18), title: Text('${v['titel'] ?? ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text('${v['status'] ?? ''}${v['naechsterSchritt'] != null ? ' · ${v['naechsterSchritt']}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: dim)), onTap: () { eingabe.text = 'Wie steht es um „${v['titel'] ?? ''}“?'; fokus.requestFocus(); setState(() => ansicht = Ansicht.chat); }),
+          if (letzte.isNotEmpty) abschnitt('Letzte'),
+          for (final e in letzte) ListTile(dense: true, leading: const Icon(Icons.history, size: 18), title: Text(e.text.split('\n').first, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () { eingabe.text = e.text; fokus.requestFocus(); setState(() => ansicht = Ansicht.chat); }),
+        ])),
+        const Divider(height: 1),
+        Padding(padding: const EdgeInsets.fromLTRB(16, 8, 12, 10), child: Row(children: [
+          Icon(Icons.circle, size: 9, color: satellit?.verbunden == true ? Colors.green : theme.colorScheme.error),
+          const SizedBox(width: 6),
+          Expanded(child: Text(satellit == null ? ipcZustand : 'Satellit ${satellit!.version}${satellit!.verbunden ? ' · Alfred ${satellit!.serverVersion ?? ''}' : ' · nicht verbunden'}', style: theme.textTheme.labelSmall?.copyWith(color: dim), overflow: TextOverflow.ellipsis)),
+        ])),
+      ]),
+    );
+  }
+
+  void _neuerChat() {
+    if (verlauf.isEmpty) return;
+    setState(() { verlauf.clear(); laufend = null; });
+    _zeile(Eintrag(Art.hinweis, 'Verlauf ausgeblendet — Alfred erinnert sich weiterhin an das Gespräch dieses Geräts.'));
+  }
+
+  Future<void> _vorgaengeLaden() async {
+    final s = server; if (s == null) return;
+    try {
+      final v = await s.json('/api/vorgaenge?limit=12');
+      final offene = ((v['offene'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
+      if (mounted) setState(() => vorgaenge = offene);
+    } catch (_) { /* Seitenleiste ist Komfort */ }
+  }
+
+  /// Hauptbereich Chat: Kopfzeile, Verlauf (mittig, Datumstrenner), Bestätigungskarten, Eingabekarte.
+  Widget _chat(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    final geraet = konfig?.name ?? satellit?.name ?? '…';
+    return Column(children: [
+      SizedBox(height: 48, child: Row(children: [
+        if (!seitenleisteOffen) IconButton(tooltip: 'Seitenleiste', onPressed: () { setState(() => seitenleisteOffen = true); seitenleisteSpeichern(true); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),
+        const SizedBox(width: 12),
+        Text('Chat · $geraet', style: theme.textTheme.titleSmall),
+        const Spacer(),
+        if (update != null) Padding(padding: const EdgeInsets.only(right: 8), child: ActionChip(avatar: updateLaeuft ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.system_update_alt, size: 18), label: Text('Update ${update!.version}'), tooltip: 'Herunterladen und installieren (${(update!.groesse / 1024 / 1024).toStringAsFixed(1)} MB)', onPressed: updateLaeuft ? null : _updateInstallieren)),
+        IconButton(tooltip: stimme ? 'Antworten vorlesen: an' : 'Antworten vorlesen: aus', onPressed: () => setState(() => stimme = !stimme), icon: Icon(stimme ? Icons.volume_up : Icons.volume_off, size: 20)),
+        const SizedBox(width: 8),
+      ])),
+      const Divider(height: 1),
+      Expanded(child: DropTarget(
+        onDragDone: (d) => _dateienAbgelegt(d.files.map((f) => f.path).toList()),
+        child: verlauf.isEmpty
+          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.auto_awesome, size: 40, color: dim), const SizedBox(height: 12), Text('Was kann ich für dich tun?', style: theme.textTheme.headlineSmall)]))
+          : Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: ListView.builder(
+              controller: scroll,
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+              itemCount: verlauf.length,
+              itemBuilder: (context, i) {
+                final e = verlauf[i];
+                final neuerTag = i == 0 || !_gleicherTag(verlauf[i - 1].zeit, e.zeit);
+                final w = _eintrag(e, theme);
+                return neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w;
+              },
+            ))),
+      )),
+      if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _bestaetigungen(theme))),
+      Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _eingabekarte(theme))),
+    ]);
+  }
+
+  static bool _gleicherTag(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
+
+  Widget _datumstrenner(DateTime d, ThemeData theme) {
+    final heute = DateTime.now();
+    final tag = _gleicherTag(d, heute) ? 'heute' : _gleicherTag(d, heute.subtract(const Duration(days: 1))) ? 'gestern' : '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
+    final zeit = '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    return Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Center(child: Text('$tag, $zeit', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant))));
+  }
+
+  /// Eingabekarte wie in der Vorlage: Textfeld oben, darunter Anhang, Stufenwahl, Status, Mikrofon, Zuhören, Senden.
+  Widget _eingabekarte(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    const stufen = {null: 'Automatisch', 'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'};
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 6, 20, 14),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 6),
+      decoration: BoxDecoration(
+        color: theme.brightness == Brightness.light ? Colors.white : theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        boxShadow: theme.brightness == Brightness.light ? [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 12, offset: const Offset(0, 4))] : null,
       ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (anhaenge.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 6), child: Wrap(spacing: 6, runSpacing: 4, children: [
+          for (final f in anhaenge) InputChip(avatar: const Icon(Icons.insert_drive_file_outlined, size: 18), label: Text(f.uri.pathSegments.last, overflow: TextOverflow.ellipsis), tooltip: f.path, onDeleted: () => setState(() => anhaenge.remove(f))),
+        ])),
+        // 1.0.3 — mehrzeiliges Feld: Enter sendet, Umschalt+Enter macht eine neue Zeile (onSubmitted feuert bei maxLines > 1 nicht).
+        Focus(
+          onKeyEvent: (node, ev) {
+            if (ev is KeyDownEvent && (ev.logicalKey == LogicalKeyboardKey.enter || ev.logicalKey == LogicalKeyboardKey.numpadEnter) && !HardwareKeyboard.instance.isShiftPressed) {
+              if (!antwortet) _senden();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: TextField(
+            controller: eingabe,
+            focusNode: fokus,
+            autofocus: true,
+            enabled: !antwortet,
+            minLines: 1,
+            maxLines: 6,
+            decoration: InputDecoration.collapsed(hintText: anhaenge.isEmpty ? 'Nachricht an Alfred … (Umschalt+Enter: neue Zeile, Dateien hineinziehen)' : 'Was soll Alfred mit ${anhaenge.length == 1 ? 'der Datei' : 'den Dateien'} tun? (leer = nur ablegen)', hintStyle: TextStyle(color: dim)),
+            onSubmitted: (_) => _senden(),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(children: [
+          IconButton(tooltip: 'Datei anhängen', onPressed: antwortet ? null : _anhangWaehlen, icon: const Icon(Icons.add_circle_outline, size: 22), visualDensity: VisualDensity.compact),
+          PopupMenuButton<String?>(
+            tooltip: 'Stufe: wie gründlich Alfred denkt (Kosten, Tempo)',
+            initialValue: tierWahl,
+            onSelected: (v) => setState(() => tierWahl = v == '' ? null : v),
+            itemBuilder: (_) => [for (final s in stufen.entries) PopupMenuItem<String?>(value: s.key ?? '', child: Text(s.value))],
+            child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Row(mainAxisSize: MainAxisSize.min, children: [Text(stufen[tierWahl] ?? 'Automatisch', style: theme.textTheme.bodySmall?.copyWith(color: dim)), Icon(Icons.expand_more, size: 16, color: dim)])),
+          ),
+          const SizedBox(width: 8),
+          if (fluechtig.isNotEmpty) Expanded(child: Text(fluechtig, style: theme.textTheme.bodySmall?.copyWith(color: aufnahme ? theme.colorScheme.error : dim), overflow: TextOverflow.ellipsis)) else const Spacer(),
+          IconButton(tooltip: aufnahme ? 'Aufnahme stoppen' : 'Sprechen (Strg+Alt+Leertaste)', onPressed: _talkUmschalten, icon: Icon(aufnahme ? Icons.stop_circle : Icons.mic_none, size: 22, color: aufnahme ? theme.colorScheme.error : null), visualDensity: VisualDensity.compact),
+          hoeren
+            ? IconButton.filledTonal(tooltip: 'Zuhören aus', onPressed: _hoerenUmschalten, icon: const Icon(Icons.headset_mic, size: 20), visualDensity: VisualDensity.compact)
+            : IconButton(tooltip: 'Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“', onPressed: server == null ? null : _hoerenUmschalten, icon: const Icon(Icons.headset, size: 22), visualDensity: VisualDensity.compact),
+          const SizedBox(width: 4),
+          IconButton.filled(tooltip: 'Senden (Enter)', onPressed: antwortet ? null : () => _senden(), icon: antwortet ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.arrow_upward, size: 20)),
+        ]),
+      ]),
+    );
+  }
+
+  Future<void> _anhangWaehlen() async {
+    try {
+      final dateien = await openFiles();
+      if (dateien.isNotEmpty) _dateienAbgelegt(dateien.map((x) => x.path).toList());
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Dateiauswahl: $e')); }
+  }
+
+  /// Einstellungen: Farbschema, Vorlesen, Seitenleiste, Tastenkürzel, Version und Update.
+  Widget _einstellungen(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    Widget karte(String titel, Widget inhalt) => Card(margin: const EdgeInsets.only(bottom: 12), child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(titel, style: theme.textTheme.titleSmall), const SizedBox(height: 8), inhalt])));
+    return ListView(padding: const EdgeInsets.all(20), children: [
+      Text('Einstellungen', style: theme.textTheme.headlineSmall),
+      const SizedBox(height: 14),
+      karte('Darstellung', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        ValueListenableBuilder<ThemeMode>(valueListenable: themeModus, builder: (_, m, __) => SegmentedButton<ThemeMode>(segments: const [ButtonSegment(value: ThemeMode.system, label: Text('System'), icon: Icon(Icons.brightness_auto)), ButtonSegment(value: ThemeMode.light, label: Text('Hell'), icon: Icon(Icons.light_mode)), ButtonSegment(value: ThemeMode.dark, label: Text('Dunkel'), icon: Icon(Icons.dark_mode))], selected: {m}, onSelectionChanged: (s) => themaSpeichern(s.first))),
+        const SizedBox(height: 8),
+        SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Seitenleiste beim Start'), value: seitenleisteOffen, onChanged: (v) { setState(() => seitenleisteOffen = v); seitenleisteSpeichern(v); }),
+      ])),
+      karte('Sprache', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Antworten vorlesen'), value: stimme, onChanged: (v) => setState(() => stimme = v)),
+        Text('Sprechen: Strg+Alt+Leertaste (global). Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“ über den Kopfhörer-Knopf in der Eingabekarte.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+      ])),
+      karte('Verbindung', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Gerät: ${konfig?.name ?? '…'}', style: theme.textTheme.bodyMedium),
+        Text('Server: ${konfig?.server ?? '…'}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        Text(satellit == null ? ipcZustand : 'Satellit ${satellit!.version} · ${satellit!.verbunden ? 'verbunden mit Alfred ${satellit!.serverVersion ?? ''}' : 'nicht verbunden'}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+      ])),
+      karte('App', Row(children: [
+        Expanded(child: Text('Version ${appVersion.isEmpty ? '…' : appVersion}${update != null ? ' — Update ${update!.version} verfügbar' : ' — aktuell'}', style: theme.textTheme.bodyMedium)),
+        if (update != null) FilledButton.tonalIcon(onPressed: updateLaeuft ? null : _updateInstallieren, icon: const Icon(Icons.system_update_alt, size: 18), label: Text(updateLaeuft ? 'läuft …' : 'Installieren')),
+        if (update == null) OutlinedButton(onPressed: _updatePruefen, child: const Text('Nach Update suchen')),
+      ])),
+    ]);
+  }
+
+  Widget _bestaetigungen(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+      child: Column(children: [
+        for (final b in offen.take(3))
+          Card(
+            margin: const EdgeInsets.only(bottom: 6),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              child: Row(children: [
+                Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700),
+                const SizedBox(width: 10),
+                Expanded(child: Text('${b.quelle == 'geraet' ? 'Gerät · ' : ''}${b.text}', maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall)),
+                const SizedBox(width: 8),
+                FilledButton(onPressed: () => _entscheide(b, true), child: const Text('Ja')),
+                const SizedBox(width: 6),
+                OutlinedButton(onPressed: () => _entscheide(b, false), child: const Text('Nein')),
+              ]),
+            ),
+          ),
+        if (offen.length > 3) Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('… und ${offen.length - 3} weitere in der Seitenleiste', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant))),
+      ]),
     );
   }
 
@@ -709,7 +873,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Widget _anhang(Anhang a, ThemeData theme) {
     final kb = (a.bytes.length / 1024).round();
     final knoepfe = Row(mainAxisSize: MainAxisSize.min, children: [
-      Text('${a.name} · $kb KB', style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70)),
+      Text('${a.name} · $kb KB', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
       const SizedBox(width: 8),
       TextButton.icon(onPressed: () => _anhangOeffnen(a), icon: const Icon(Icons.open_in_new, size: 16), label: const Text('Öffnen')),
       TextButton.icon(onPressed: () => _anhangSpeichern(a), icon: const Icon(Icons.download, size: 16), label: const Text('Speichern')),
@@ -748,19 +912,30 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   Widget _eintrag(Eintrag e, ThemeData theme) {
     final zeit = '${e.zeit.hour.toString().padLeft(2, '0')}:${e.zeit.minute.toString().padLeft(2, '0')}';
+    final dim = theme.colorScheme.onSurfaceVariant;
     switch (e.art) {
       case Art.du:
         return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerRight, child: Container(constraints: const BoxConstraints(maxWidth: 720), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: SelectableText(e.text))));
       case Art.alfred:
-        return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerLeft, child: Container(constraints: const BoxConstraints(maxWidth: 820), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(12)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Alfred · $zeit', style: theme.textTheme.labelSmall?.copyWith(color: Colors.cyanAccent)), const SizedBox(height: 4), SelectableText.rich(markdown(e.text.isEmpty ? '…' : e.text, theme)), for (final a in e.anhaenge) _anhang(a, theme)]))));
+        // 1.1.0 — Antwort ohne Blase (wie in der Vorlage), darunter Aktionen: kopieren, vorlesen
+        return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Align(alignment: Alignment.centerLeft, child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 820), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [Text('Alfred', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)), Text(' · $zeit', style: theme.textTheme.labelSmall?.copyWith(color: dim))]),
+          const SizedBox(height: 4),
+          SelectableText.rich(markdown(e.text.isEmpty ? '…' : e.text, theme)),
+          for (final a in e.anhaenge) _anhang(a, theme),
+          if (e.text.isNotEmpty) Row(children: [
+            IconButton(tooltip: 'Kopieren', onPressed: () { Clipboard.setData(ClipboardData(text: e.text)); setState(() => fluechtig = 'kopiert'); }, icon: Icon(Icons.copy_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+            IconButton(tooltip: 'Vorlesen', onPressed: () => _sprichKurz(e.text), icon: Icon(Icons.volume_up_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+          ]),
+        ]))));
       case Art.satellit:
-        return Text('$zeit  ⚙ ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: Colors.white54));
+        return Text('$zeit  ⚙ ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: dim));
       case Art.bestaetigung:
-        return Text('$zeit  🔔 ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: Colors.amber.shade200));
+        return Text('$zeit  🔔 ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: Colors.amber.shade700));
       case Art.hinweis:
-        return Text('$zeit  ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70));
+        return Text('$zeit  ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: dim));
       case Art.fehler:
-        return Text('$zeit  ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: Colors.redAccent));
+        return Text('$zeit  ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error));
     }
   }
 }
@@ -781,7 +956,7 @@ TextSpan markdown(String text, ThemeData theme) {
     for (final m in re.allMatches(zeile)) {
       if (m.start > i) spans.add(TextSpan(text: zeile.substring(i, m.start), style: fettZeile ? const TextStyle(fontWeight: FontWeight.bold) : null));
       if (m.group(2) != null) spans.add(TextSpan(text: m.group(2), style: const TextStyle(fontWeight: FontWeight.bold)));
-      else spans.add(TextSpan(text: m.group(3), style: TextStyle(fontFamily: 'Consolas', color: Colors.amber.shade200)));
+      else spans.add(TextSpan(text: m.group(3), style: TextStyle(fontFamily: 'Consolas', color: theme.colorScheme.tertiary)));
       i = m.end;
     }
     if (i < zeile.length) spans.add(TextSpan(text: zeile.substring(i), style: fettZeile ? const TextStyle(fontWeight: FontWeight.bold) : null));

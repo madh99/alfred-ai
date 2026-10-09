@@ -2,6 +2,9 @@
 /// Dieselben Begriffe wie in der Terminal-Sitzung: Verlauf, Bestätigungen, Satellitenstatus.
 enum Art { du, alfred, satellit, bestaetigung, hinweis, fehler }
 
+/// 1.1.0 — Bereiche der Oberfläche (Symbolleiste links).
+enum Ansicht { chat, kacheln, einstellungen }
+
 class Eintrag {
   Eintrag(this.art, this.text, {DateTime? zeit, List<Anhang>? anhaenge}) : zeit = zeit ?? DateTime.now(), anhaenge = anhaenge ?? [];
   final Art art;
