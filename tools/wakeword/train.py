@@ -52,11 +52,11 @@ def merkmale(x: torch.Tensor) -> torch.Tensor:
 
 def augment(x: torch.Tensor) -> torch.Tensor:
     B = x.shape[0]
-    g = torch.pow(10.0, torch.empty(B, 1).uniform_(-1.2, 0.3))  # -24 .. +6 dB
+    g = torch.pow(10.0, torch.empty(B, 1).uniform_(-0.6, 0.3))  # -12 .. +6 dB
     x = x * g
     shift = torch.randint(-int(0.3 * SR), int(0.3 * SR), (1,)).item()
     x = torch.roll(x, shifts=shift, dims=1)
-    noise = torch.randn_like(x) * torch.pow(10.0, torch.empty(B, 1).uniform_(-3.5, -1.5))
+    noise = torch.randn_like(x) * torch.pow(10.0, torch.empty(B, 1).uniform_(-4.0, -2.0))
     x = x + noise
     if random.random() < 0.3:  # Hall
         t = torch.arange(0, int(0.25 * SR)) / SR
@@ -96,6 +96,8 @@ def echt(data: Path):
 def main(argv) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', default='/data'); ap.add_argument('--epochs', type=int, default=20); ap.add_argument('--echt-mittrainieren', action='store_true')
+    ap.add_argument('--ohne-augment', action='store_true', help='Lernkontrolle: ohne Augmentierung muss das Netz die synthetischen Daten sicher lernen')
+    ap.add_argument('--lr', type=float, default=1e-3)
     a = ap.parse_args(argv)
     data = Path(a.data); torch.manual_seed(7); random.seed(7)
     X, y = daten(data)
@@ -104,16 +106,18 @@ def main(argv) -> None:
         X = torch.cat([X, torch.from_numpy(np.stack([c for c, _, _ in e]))]); y = torch.cat([y, torch.tensor([l for _, l, _ in e], dtype=torch.float32)])
     idx = torch.randperm(len(X)); n_val = max(50, len(X) // 10)
     val, tr = idx[:n_val], idx[n_val:]
-    netz = Netz(); opt = torch.optim.AdamW(netz.parameters(), lr=2e-3, weight_decay=1e-4); loss = nn.BCEWithLogitsLoss()
+    netz = Netz(); opt = torch.optim.AdamW(netz.parameters(), lr=a.lr, weight_decay=1e-4); loss = nn.BCEWithLogitsLoss()
+    print(f'Daten: {len(tr)} Training, {len(val)} Hold-out, {int(y.sum())} positiv, Augmentierung {"aus" if a.ohne_augment else "an"}', file=sys.stderr)
     for ep in range(a.epochs):
-        netz.train(); perm = tr[torch.randperm(len(tr))]; tot = 0.0
+        netz.train(); perm = tr[torch.randperm(len(tr))]; tot = 0.0; richtig = 0
         for i in range(0, len(perm), 64):
-            b = perm[i:i + 64]; xb = augment(X[b]); opt.zero_grad()
-            l = loss(netz(merkmale(xb)), y[b]); l.backward(); opt.step(); tot += l.item() * len(b)
+            b = perm[i:i + 64]; xb = X[b] if a.ohne_augment else augment(X[b]); opt.zero_grad()
+            out = netz(merkmale(xb)); l = loss(out, y[b]); l.backward(); opt.step(); tot += l.item() * len(b)
+            richtig += ((out > 0).float() == y[b]).float().sum().item()
         netz.eval()
         with torch.no_grad():
             p = torch.sigmoid(netz(merkmale(X[val]))); acc = ((p > 0.5).float() == y[val]).float().mean().item()
-        print(f'Epoche {ep + 1}: Verlust {tot / len(tr):.4f}, Genauigkeit (synthetisch, Hold-out) {acc:.3f}', file=sys.stderr)
+        print(f'Epoche {ep + 1}: Verlust {tot / len(tr):.4f}, Training {richtig / len(tr):.3f}, Hold-out (synthetisch) {acc:.3f}', file=sys.stderr)
     torch.save(netz.state_dict(), data / 'alfred.pt')
     komplett = Komplett(netz).eval()
     torch.onnx.export(komplett, torch.zeros(1, N), str(data / 'alfred.onnx'), input_names=['pcm'], output_names=['p'], dynamic_axes={'pcm': {0: 'b'}, 'p': {0: 'b'}}, opset_version=17, dynamo=False)
