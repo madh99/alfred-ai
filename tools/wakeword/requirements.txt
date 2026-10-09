@@ -5,4 +5,5 @@ torch==2.5.1+cpu
 torchaudio==2.5.1+cpu
 onnx>=1.16
 onnxruntime>=1.19
+openwakeword>=0.6,<0.7
 --extra-index-url https://download.pytorch.org/whl/cpu
