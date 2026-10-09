@@ -368,3 +368,18 @@ Alle drei Antworten fachlich richtig (Betreffzeilen aus Outlook, Wetter-Hinweis,
 Entscheidung: Satelliten arbeiten nur auf Zuruf oder auf VMs, an denen gerade niemand sitzt; eine getrennte Arbeitsfläche am PC ist deshalb nicht nötig. Der Plan bleibt dokumentiert und wird nicht umgesetzt.
 
 Windows „Agent Workspace" (eigenes Standardkonto, isolierte Sitzung parallel zum Owner, Zugriff auf Dokumente/Downloads/Desktop/Bilder; Preview, aus; Einstellungen → System → KI-Komponenten → Agent-Tools) oder ein zweites Windows-Konto per Remote-Desktop-Loopback, in dem der Satellit läuft. Erklärt 07.10. abends; bis zur Entscheidung Notbremse und Bestätigung. Linux: AT-SPI, offen.
+
+### 18.8 Linux/Wayland (.1339/.1340, Owner-Freigabe 09.10. 22:10 „linux tippen auch freigegeben", bewiesen 22:31)
+
+Unter GNOME Wayland gibt es keinen Zugriff auf fremde Fenster: keine Fensterliste (`org.gnome.Shell.Introspect` → Access denied, wmctrl ist X11), keine Elemente, keine Fenstertitel. Deshalb Stufe A „light" in `satellit-bedienen-linux.ts`:
+
+- **Ziele statt Element-Karte:** `fenster_lesen` liefert zwei feste Ziele — 1 = Fokusfenster (Text per Strg+V), 2 = Terminalfenster (Strg+Umschalt+V). Vorher mit `bildschirm` prüfen, welches Fenster vorne ist; `taste` legt die Karte bei Bedarf selbst an (.1340).
+- **Tasten:** `ydotool key` mit Tastennamen (strg+s → ctrl+s, alt+f4, strg+alt+t, enter, Bild ab → pagedown); ydotool 0.1.8 (Ubuntu) kennt keine Keycode-Form.
+- **Text:** nie tippen — uinput ist layoutblind. Realfall 22:16: aus `echo YDOTOOL-TEST > /tmp/yd.txt` wurde `echo ZDOTOOLßTEST : -tmp-zd.txt` (deutsches Layout). Text geht per `wl-copy` in die Zwischenablage und wird eingefügt; einzelne Zeichen (* + / =) bei `taste` ebenso.
+- **Maus:** `klicken_bei` nach Fotokoordinaten; ydotool 0.1.8 bewegt nur relativ → erst −20000/−20000 (Ecke), dann (x, y), dann `click 1`.
+- **Notbremse:** Leerlauf über `org.gnome.Mutter.IdleMonitor GetIdletime` (funktioniert unter Wayland, auch aus dem Dienst).
+- **Umgebung:** Dienste ohne Anmeldesitzung bekommen DBUS_SESSION_BUS_ADDRESS, WAYLAND_DISPLAY, XDG_RUNTIME_DIR ergänzt (`linuxSitzungsUmgebung`).
+- **Voraussetzungen auf dem Gerät:** `ydotool`, `wl-clipboard`, `gnome-screenshot` (apt); `/dev/uinput` per udev-Regel `/etc/udev/rules.d/60-alfred-uinput.rules` (`KERNEL=="uinput", MODE="0660", GROUP="input", TAG+="uaccess"` — Nummer < 70, sonst greift uaccess nicht) → ACL `user:madh:rw-` für den angemeldeten Benutzer, ohne Neuanmeldung. Benutzer zusätzlich in Gruppe input.
+- **Freigaben:** Linux-Standardordner aus `~/.config/user-dirs.dirs` (Dokumente, Schreibtisch); fehlende englische Standardeinträge werden beim Start ersetzt (Log „Freigabe repariert"); die Shell nimmt das erste vorhandene Verzeichnis mit Schreibrecht.
+
+Beweis 09.10. 22:31 (Ubuntu-VM, Gerätesitzung): Vorhaben „Terminal öffnen, `echo ALFRED-TIPPTEST > /tmp/tipp.txt` einfügen, Strg+D" → Satellit-Log fenster_lesen → tippen (Zwischenablage + Strg+Umschalt+V + Enter) → taste strg+d, Datei `/tmp/tipp.txt` mit Inhalt um 22:31:56; die laufende Claude-Code-Sitzung im anderen Terminal blieb unberührt. Grenze: Eingaben gehen immer an das Fenster mit Fokus — für gezielte Terminalsteuerung (Claude Code) ist `tmux` mit `send-keys`/`capture-pane` über die Shell-Aktion der robuste Weg.
