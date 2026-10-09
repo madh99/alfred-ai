@@ -8594,6 +8594,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
             },
             loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
+            // v1331 — Web-Sitzung → Alias `web-<id>` auf Plattform api → Master muss der Owner sein
+            istOwner: async (webUserId: string) => {
+              if (!this.ownerMasterUserId) return false;
+              try {
+                const alias = await this.userRepo.findOrCreate('api', `web-${webUserId}`);
+                const master = await this.userRepo.getMasterUserId(alias.id);
+                return master === this.ownerMasterUserId;
+              } catch { return false; }
+            },
           });
         }
         (apiAdapter as any).setConversationCallbacks({

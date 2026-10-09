@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1331] - 2026-10-09
+
+### Security — Gespräche-Routen nur für den Owner (v1331)
+
+Sicherheitsreview zu v1330: `/api/gespraeche*` prüfte nur die Anmeldung. Eine Web-Sitzung eines anderen Benutzers (Familie, Gast) hätte die Gespräche des Owners lesen und löschen können. Jetzt antworten die Routen nur dem API-Token oder einer Web-Sitzung, deren Master-Identität der Owner ist; sonst 403.
+
 ## [0.19.0-jarvis.1330] - 2026-10-09
 
 ### Changed — Gespräche des Owners kanalunabhängig: ein Hauptgespräch, Fäden überall, `/faden` (v1330)

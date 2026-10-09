@@ -399,8 +399,24 @@ export class HttpAdapter extends MessagingAdapter {
     liste: () => Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     verlauf: (faden: string | undefined, limit: number) => Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
     loeschen: (faden: string) => Promise<boolean>;
+    /** v1331 — nur der Owner sieht und löscht seine Gespräche (Web-Sitzungen von Familie/Gästen nicht). */
+    istOwner: (webUserId: string) => Promise<boolean>;
   };
   setGespraeche(fn: NonNullable<HttpAdapter['gespraecheFn']>): void { this.gespraecheFn = fn; }
+
+  /** v1331 — Ist die Anfrage vom Owner? API-Token = Owner; Web-Sitzung nur, wenn ihre Master-Identität der Owner ist. */
+  private async istOwnerAnfrage(req: http.IncomingMessage): Promise<boolean> {
+    const authHeader = req.headers['authorization'];
+    let token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token && req.method === 'GET' && req.url) { try { token = new URL(req.url, 'http://x').searchParams.get('token'); } catch { token = null; } }
+    if (!token) return false;
+    if (this.apiToken && token.length === this.apiToken.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(this.apiToken))) return true;
+    if (this.authCb && this.gespraecheFn) {
+      const user = await this.authCb.getUserByToken(token).catch(() => null);
+      if (user?.userId) return this.gespraecheFn.istOwner(user.userId).catch(() => false);
+    }
+    return false;
+  }
   private conversationsListFn?: (filter?: { platform?: string; limit?: number; offset?: number; sortBy?: string; sinceIso?: string; untilIso?: string; includeDeleted?: boolean }) => Promise<any[]>;
   private conversationsMessagesFn?: (id: string, opts?: { beforeIso?: string; limit?: number }) => Promise<any[]>;
   private conversationsSummaryFn?: (id: string) => Promise<any | null>;
@@ -2810,6 +2826,8 @@ export class HttpAdapter extends MessagingAdapter {
   private async handleGespraeche(req: http.IncomingMessage, res: http.ServerResponse, url: URL, art: 'liste' | 'verlauf' | 'loeschen'): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.gespraecheFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    // v1331 — Sicherheitsreview zu v1330: Gespräche des Owners nur für den Owner (IDOR über fremde Web-Sitzungen)
+    if (!(await this.istOwnerAnfrage(req))) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur der Owner' })); return; }
     if (art === 'liste') {
       const faeden = (await this.gespraecheFn.liste()).filter(f => !f.archiv);
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ faeden })); return;
