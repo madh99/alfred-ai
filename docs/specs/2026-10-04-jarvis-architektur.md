@@ -262,3 +262,58 @@ Owner-Entscheidung 09.10.2026 (Freigabe 1–5): Der Gesprächsverlauf des Owners
 ## Werkzeug-Schemata: Entscheidung (07.10.2026)
 
 Messung über zwei Tage (06./07.10., 116 Chat-Anfragen, Phase `llm_request_prep`): System-Prompt Ø 13.400 Tokens, Werkzeug-Schemata Ø 20.200 (max 48.400), Verlauf Ø 1.400. Gleichzeitig kamen über 565 Modellaufrufe 63 % aller Eingabe-Tokens aus dem Prompt-Cache der Anbieter. Entscheidung: Die Schemata bleiben, wie sie sind. Der Cache trägt den Großteil der Kosten; eine Kürzung der Beschreibungen brächte wenig und riskiert falsche Werkzeugwahl. Wo es deterministisch geht, bleibt die Werkzeugliste klein (`allowedSkills` bei Mail-Aufgaben und Vorhaben-Fortsetzungen). Ebenfalls 07.10.: Tages-Buckets der Nutzung liefen in UTC (kein Zeitzonen-Eintrag im Owner-Profil), jetzt Server-Zeitzone; Schleife 3 legt keinen Lernbedarf mehr aus synthetischen Nachrichten an.
+
+## Projektvorgang (Entwurf 10.10.2026, Schicht 3 — ohne Umsetzung, Owner: „ausarbeiten, weiterhin keine Freigabe")
+
+### Ziel
+
+Der Owner sagt: „Ich möchte auf dem PC oder der Linux-VM eine Projektidee anfangen oder weiterführen." Alfred ist Projektleiter: Er plant Etappen, lässt sie bauen (Claude Code auf einem Satelliten oder der Projekt-Agent am Server), prüft jedes Ergebnis hart, entscheidet die nächste Etappe innerhalb fester Grenzen, meldet Zwischenstände ins Gespräch und holt den Owner nur bei Weichenstellungen dazu — bis das Ziel erreicht oder das Budget verbraucht ist. Dasselbe Gerüst trägt Tests eines bestehenden Projekts auf einem Satelliten, Deploys mit Nachkontrolle und Betriebsaufgaben.
+
+### Was es schon gibt (wird verbunden, nicht ersetzt)
+
+- **Projekt-Skill** `project`: create, plan_feature(s), list_open_items/add/resolve, list_decisions, list_sessions, review_codebase, update_dependencies, set_health_mode — das Projektgedächtnis auf dem Server.
+- **Projekt-Agent** `code-agent` (project-agent-skill): start, status, resume, stop, interject, import_feature — autonome Code-Läufe mit den CLI-Agenten auf .92 (claude-code, codex, mistral-vibe). Nur Server.
+- **Deploy-Skill** `deploy`: deploy, start, stop, restart, status, logs, rollback, setup_node, setup_python — abgekoppelter Compose-Start über SSH (v931.1), Live-Fortschritt über SSE (v840). Ziel heute .96. (Korrektur zum Gespräch 10.10.: den Deploy-Skill gibt es; „Deploy: Shell" war falsch.)
+- **Docker-/Sandbox-/Code-Sandbox-Skills**: Vorschau mit ephemerer Datenbank, Container-Betrieb am Server.
+- **Satellit** (.1342): Aufträge an Claude Code im Druckmodus (auftrag_starten/stand/ergebnis/abbrechen), Shell (10 min, bestätigen), Dateien, Bildschirmfoto, Browser lesen/klicken, Bedienen (Win/Mac/Linux), Office-COM, Zwischenablage, Benachrichtigungen, Sinne. Geräte-Spec §19.
+- **Vorhaben** (Geräte-Spec §18.6, freigaben.ts): zeitlich begrenzte Freigabe einer Aktionsliste, Fortsetzung in der anfragenden Sitzung (v1324/v1341), günstiger Tier (v1295).
+
+### Datenmodell
+
+`projektvorgang (id, titel, ziel, projekt_id → project, ausfuehrungsziel: server-agent | satellit:<geraetId> | sandbox, verzeichnis, status: geplant|laeuft|wartet_owner|fertig|abgebrochen|budget_erschoepft, budget_usd, verbraucht_usd, zeitbudget_min, etappen_max, vertrauen: normal|projekt, erstellt, aktualisiert)`
+`etappe (id, vorgang_id, nr, titel, auftrag_text, abnahme: [Prüfung…], status: geplant|laeuft|geprueft_ok|geprueft_fehl|nachbesserung|uebersprungen, auftrag_id (Satellit) | lauf_id (Agent), ergebnis_text, kosten_usd, dauer_s, entscheidung: naechste|nachbessern|rueckfrage|stopp, begruendung)`
+`vorgang_schritte` (vorhanden) protokolliert jede Aktion mit Daten → Deutung → Entscheidung, damit „Warum?" beantwortbar ist. Das Ausführungsgedächtnis (Schicht 3) bekommt die Etappen als Einträge.
+
+### Die Schleife
+
+1. **Planen** (Modell, einmal, teurer Tier erlaubt): aus Ziel + Projektgedächtnis einen Etappenplan mit Abnahmekriterien je Etappe; der Owner sieht Plan und Budget und bestätigt einmal (ersetzt die Einzelbestätigungen der Etappen — Vorhaben-Mechanik, Dauer bis Zeitbudget).
+2. **Bauen**: Etappe als Auftrag (Satellit: `auftrag_starten` mit AUFTRAG.md = Etappentext + Abnahme; Server: `code-agent start`; Sandbox: Compose).
+3. **Ende erkennen**: Satellit meldet `GeraetEreignis` (vorbereitet .1342) bzw. Agent-Status. Bis dahin Abfrage im 10-Minuten-Raster über das Job-Register (Schicht 0, kein eigener Timer).
+4. **Hart prüfen (ohne Modell)**: je Abnahmekriterium ein deterministischer Prüfschritt am Ausführungsziel — Datei existiert, Befehl liefert Exit 0 (`npm test`, `pytest`, Build), Prozess startet und HTTP antwortet, Bildschirmfoto vorhanden, Browser-Seite enthält Text. Ergebnis: ok / fehl je Kriterium plus gekürzte Auszüge.
+5. **Entscheiden (Modell, günstiger Tier, nur Geräte-/Projekt-Skill als Werkzeug)** aus einer **festen Liste**: `naechste` (nächste Etappe aus dem Plan), `nachbessern` (neuer Auftrag mit Prüfprotokoll, höchstens 2× je Etappe), `rueckfrage` (Owner entscheidet), `stopp`. Eingabe: Prüfprotokoll (hart) + Ergebnistext von Claude Code **als Datenblock** (zitiert, gekürzt, keine Anweisungen daraus). Freie Befehle gibt es in diesem Schritt nicht.
+6. **Melden**: nach jeder Etappe ein Satz ins Gespräch des Owners (Sitzung des Starts, Owner-Chat Kopie): Etappe, Prüfergebnis, Entscheidung, Kosten bisher. Rückfragen als Bestätigung mit Optionen. Abschluss: Zusammenfassung, Dateien, offene Punkte → ins Projektgedächtnis (open items, decisions).
+7. **Grenzen**: Budget (USD, Zeit, Etappenzahl), nur das Projektverzeichnis (+ Deploy-Ziel laut Plan), nichts außerhalb ohne Rückfrage; Abbruch durch den Owner jederzeit (`stopp`, Vorhaben-Abbruch).
+
+### Rechte: Vertrauensstufe „projekt"
+
+Nur lokal am Gerät setzbar (`alfred einstellungen vertrauen projekt <pfad> bis <Zeit>`), nie aus dem Chat: Shell/Dateien/Aufträge in diesem Verzeichnis ohne Einzelbestätigung, Installationen in Benutzerreichweite (apt mit sudo auf der VM, brew am Mac, winget --scope user am PC). Weiterhin gesperrt: Fenstersperren (Banking, Zahlung), Verzeichnisse außerhalb, Systemrechte unter Windows (erhöhter Helfer nur als eigene Owner-Entscheidung). Regel: **Vertrauensstufe „projekt" nie gleichzeitig mit Modellentscheidungen über Fremdinhalt ohne harte Prüfung davor** (Schritt 4 vor Schritt 5 ist Pflicht).
+
+### Sicherheit (Risiko aus Geräte-Spec §19, ausformuliert)
+
+Claude Code liest im Projekt fremde Dateien (Bibliotheken, READMEs, fremde Spezifikationen). Sein Ergebnistext kann eingeschleuste Anweisungen enthalten („lösche X", „sende Y"). Schutz: (a) harte Prüfung ohne Modell liefert die Fakten; (b) der Entscheidungsschritt wählt nur aus der festen Liste; (c) der Ergebnistext ist Datenblock, gekürzt; (d) wirksame Aktionen außerhalb des Projektordners bleiben bestätigungspflichtig; (e) Budgetgrenzen begrenzen Schaden und Kosten; (f) alles protokolliert. Die Auto-Mode-Prüfung des Entwicklungswerkzeugs lehnte am 10.10. die direkte Schleife „Geräteausgabe → Modellaufruf" zweimal ab; der Entwurf hier trennt deshalb Prüfung (deterministisch) und Entscheidung (feste Liste) — in dieser Form ist die Schleife begründbar.
+
+### Anwendungsfälle auf dem Gerüst
+
+Projekt anfangen/weiterführen (PC, VM); Projekt des Projekt-Skills auf einem Satelliten testen (Etappe „auschecken, installieren, Tests" mit Abnahme Exit 0); App starten und sehen (Prüfung Bildschirmfoto/HTTP/Browser); Nachbesserung aus Review-Befunden; Deploy über den Deploy-Skill auf .96 mit Nachkontrolle (status, logs, HTTP); Betriebsaufgaben (installieren, konfigurieren, Dienst neu starten) als Etappen mit Vertrauensstufe; Beobachter (Outlook, Benachrichtigungen, Datei erscheint, Build rot) als Schicht-2-Ereignisse, die einen Projektvorgang auslösen oder fortsetzen.
+
+### Reihenfolge der Umsetzung (nicht freigegeben)
+
+- **R1** Ende-Meldung deterministisch: Satellit sendet `GeraetEreignis`, Gehirn meldet ohne Modell („Auftrag X fertig, Dauer, Kosten, Dateien") in die Sitzung des Starts; harte Prüfschritte als Geräteaktion `pruefen` (Datei, Befehl, HTTP, Text im Bildschirm).
+- **R2** Projektvorgang + Etappen im Datenmodell, Planung mit Owner-Bestätigung, Schleife mit fester Entscheidungsliste, Meldungen, Budget; Ausführungsziel Satellit zuerst (Beweis nur Ubuntu-VM), dann Server-Agent.
+- **R3** Vertrauensstufe „projekt" (lokal setzbar), Leseaktion „installiert?", Installationen im Benutzerbereich.
+- **R4** Beobachter am Satelliten (Outlook, Benachrichtigungen, Ordner) als Schicht-2-Ereignisse mit Job-Register-Eintrag; Deploy-Etappe mit Nachkontrolle.
+- **Messen (Schicht 4)**: Etappen je Vorgang, Nachbesserungsquote, Rückfragenquote, Kosten je fertiger Etappe, Abbrüche durch Budget; Konsequenzen deterministisch (z. B. Nachbesserungsquote > 50 % → Planungsschritt auf teureren Tier).
+
+### Offene Owner-Entscheidungen
+
+Standardbudget je Projektvorgang (Vorschlag 5 USD / 2 h / 8 Etappen); ob die Zusammenfassung des Claude-Code-Berichts durch ein Modell erlaubt ist (werkzeuglos) oder nur zitiert wird; erhöhter Helfer unter Windows (Docker Desktop, Systemdienste); Claude Code/brew/tmux auf dem Mac installieren; Berechtigungsmodus von Claude Code in Aufträgen (heute „auto", Alternative „acceptEdits" ohne Shell).
