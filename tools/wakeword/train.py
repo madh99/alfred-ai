@@ -12,7 +12,31 @@ import soundfile as sf
 import torch, torch.nn as nn, torchaudio
 
 SR = 16000; N = int(1.5 * SR)
-MEL = torchaudio.transforms.MelSpectrogram(sample_rate=SR, n_fft=400, win_length=400, hop_length=160, n_mels=40)
+
+class MelFrontend(nn.Module):
+    """Log-Mel ohne torch.stft (das lässt sich nicht nach ONNX exportieren): Fensterung + DFT als Conv1d mit festen
+    Kosinus/Sinus-Kernen (n_fft 400, Schritt 160), Leistung, Mel-Filterbank als Matrixprodukt, Logarithmus.
+    Dieselbe Rechnung im Training und im exportierten Modell — die App liefert nur rohes PCM."""
+    def __init__(self, n_fft: int = 400, hop: int = 160, n_mels: int = 40):
+        super().__init__()
+        n = torch.arange(n_fft, dtype=torch.float32)
+        fenster = torch.hann_window(n_fft, periodic=True)
+        k = torch.arange(n_fft // 2 + 1, dtype=torch.float32).unsqueeze(1)
+        winkel = 2 * torch.pi * k * n.unsqueeze(0) / n_fft
+        kern = torch.cat([torch.cos(winkel), -torch.sin(winkel)], dim=0) * fenster  # (2*(n_fft/2+1), n_fft)
+        self.register_buffer('kern', kern.unsqueeze(1))  # Conv1d-Gewichte (out, 1, n_fft)
+        fb = torchaudio.functional.melscale_fbanks(n_fft // 2 + 1, 0.0, SR / 2, n_mels, SR)  # (n_freqs, n_mels)
+        self.register_buffer('fb', fb)
+        self.hop = hop; self.bins = n_fft // 2 + 1
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, N) → (B, 1, n_mels, T)
+        y = nn.functional.conv1d(x.unsqueeze(1), self.kern, stride=self.hop)  # (B, 2*bins, T)
+        re, im = y[:, :self.bins], y[:, self.bins:]
+        leistung = re * re + im * im  # (B, bins, T)
+        mel = torch.matmul(leistung.transpose(1, 2), self.fb).transpose(1, 2)  # (B, n_mels, T)
+        return torch.log(mel + 1e-6).unsqueeze(1)
+
+MEL = MelFrontend()
 
 def lade(pfad: Path) -> np.ndarray:
     a, sr = sf.read(pfad, dtype='float32', always_2d=False)
@@ -23,9 +47,8 @@ def lade(pfad: Path) -> np.ndarray:
     return a.astype(np.float32)
 
 def merkmale(x: torch.Tensor) -> torch.Tensor:
-    """x: (B, N) → (B, 1, 40, T) log-mel."""
-    m = MEL(x)
-    return torch.log(m + 1e-6).unsqueeze(1)
+    """x: (B, N) → (B, 1, 40, T) log-mel (ONNX-tauglicher Frontend, siehe MelFrontend)."""
+    return MEL(x)
 
 def augment(x: torch.Tensor) -> torch.Tensor:
     B = x.shape[0]
@@ -93,7 +116,13 @@ def main(argv) -> None:
         print(f'Epoche {ep + 1}: Verlust {tot / len(tr):.4f}, Genauigkeit (synthetisch, Hold-out) {acc:.3f}', file=sys.stderr)
     torch.save(netz.state_dict(), data / 'alfred.pt')
     komplett = Komplett(netz).eval()
-    torch.onnx.export(komplett, torch.zeros(1, N), str(data / 'alfred.onnx'), input_names=['pcm'], output_names=['p'], dynamic_axes={'pcm': {0: 'b'}, 'p': {0: 'b'}}, opset_version=17)
+    torch.onnx.export(komplett, torch.zeros(1, N), str(data / 'alfred.onnx'), input_names=['pcm'], output_names=['p'], dynamic_axes={'pcm': {0: 'b'}, 'p': {0: 'b'}}, opset_version=17, dynamo=False)
+    # Gegenprobe: ONNX und Torch müssen dasselbe liefern
+    import onnxruntime as ort
+    s = ort.InferenceSession(str(data / 'alfred.onnx')); probe = X[:4]
+    with torch.no_grad(): a = komplett(probe).numpy()
+    b = s.run(None, {'pcm': probe.numpy()})[0]
+    print('ONNX-Gegenprobe max. Abweichung:', float(np.abs(a - b).max()))
     print('exportiert:', data / 'alfred.onnx', (data / 'alfred.onnx').stat().st_size, 'Bytes')
     if e: messe(komplett, e)
 
