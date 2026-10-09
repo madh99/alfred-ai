@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1332] - 2026-10-09
+
+### Security — Geräte-Routen für Gespräche nur für Geräte des Owners (v1332)
+
+Sicherheitsreview zu v1330: Die Geräte-Rückrufe für Verlauf, Fäden und Löschen bildeten jedes gekoppelte Gerät auf die Gespräche des Owners ab. Jetzt wird geprüft, ob der Sitzungs-Alias des Geräts an die Master-Identität des Owners gebunden ist; andere Geräte sehen und löschen nur ihre eigenen Kanal-Gespräche (`sitzung:<id>[:<faden>]`). Heute gehören alle Geräte dem Owner, das Verhalten ändert sich für ihn nicht.
+
 ## [0.19.0-jarvis.1331] - 2026-10-09
 
 ### Security — Gespräche-Routen nur für den Owner (v1331)

@@ -13652,17 +13652,29 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // v1314 — Verlauf der Gerätesitzung für die Desktop-App (chatId wie in /api/message: sitzung:<geraetId>)
           // v1330 — Gespräche des Owners kanalunabhängig: Hauptgespräch (Telegram-Zeile) und `owner:faden:<f>`,
           // alte Kanal-Sitzungen dieses Geräts als Archiv nur lesbar
+          // v1332 — Sicherheitsreview: nur ein Gerät des Owners sieht die Owner-Gespräche; andere Geräte bleiben bei
+          // ihren Kanal-Gesprächen `sitzung:<id>[:<faden>]` (so wie die Pipeline sie für Nicht-Owner weiter ablegt)
           verlauf: async (geraetId: string, limit: number, faden?: string, archiv?: string) => {
             if (!this.conversationRepo) return [];
             const { hauptgespraech, fadenSchluessel } = await import('./gespraeche.js');
-            const ziel = archiv ? { platform: 'api' as const, chatId: archiv } : faden ? fadenSchluessel(faden) : hauptgespraech(this.gespraechsOptionen());
+            const owner = await this.geraetGehoertOwner(geraetId);
+            const ziel = archiv ? { platform: 'api' as const, chatId: archiv }
+              : !owner ? { platform: 'api' as const, chatId: faden ? `sitzung:${geraetId}:${faden}` : `sitzung:${geraetId}` }
+              : faden ? fadenSchluessel(faden) : hauptgespraech(this.gespraechsOptionen());
             const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
             if (!c || c.deletedAt) return [];
             const m = await this.conversationRepo.getMessages(c.id, limit);
             return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
           },
-          faeden: async (geraetId: string) => this.ownerFaeden(geraetId),
-          fadenLoeschen: async (_geraetId: string, faden: string) => this.ownerFadenLoeschen(faden),
+          faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
+          fadenLoeschen: async (geraetId: string, faden: string) => {
+            if (await this.geraetGehoertOwner(geraetId)) return this.ownerFadenLoeschen(faden);
+            if (!this.conversationRepo) return false;
+            const c = await this.conversationRepo.findByPlatformChat('api', `sitzung:${geraetId}:${faden}`);
+            if (!c || c.deletedAt) return false;
+            await this.conversationRepo.softDelete(c.id);
+            return true;
+          },
           // v1322 — Desktop-App-Releases (M6): data/app-releases/<plattform>/
           appUpdateInfo: (plattform: string) => istAppPlattform(plattform) ? appReleases.info(plattform) : undefined,
           appUpdateStream: (plattform: string, datei: string) => istAppPlattform(plattform) ? appReleases.stream(plattform, datei) : undefined,
@@ -15065,6 +15077,25 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       }
     }
     return aus;
+  }
+
+  /** v1332 — Gehört das Gerät dem Owner? Der Sitzungs-Alias `geraet:<id>` ist an den Master des koppelnden Benutzers gebunden (v1233). */
+  async geraetGehoertOwner(geraetId: string): Promise<boolean> {
+    if (!this.ownerMasterUserId || !this.userRepo) return false;
+    try {
+      const alias = await this.userRepo.findOrCreate('api', `geraet:${geraetId}`);
+      return (await this.userRepo.getMasterUserId(alias.id)) === this.ownerMasterUserId;
+    } catch { return false; }
+  }
+
+  /** v1332 — Fäden eines Nicht-Owner-Geräts: nur seine eigenen Kanal-Gespräche. */
+  async geraetFaeden(geraetId: string): Promise<import('./gespraeche.js').FadenEintrag[]> {
+    if (!this.conversationRepo) return [];
+    const praefix = `sitzung:${geraetId}`;
+    const kurz = (s: string | undefined) => { const t = (s ?? '').replace(/\s+/g, ' ').trim(); return t.length > 80 ? t.slice(0, 77) + '…' : t; };
+    return (await this.conversationRepo.listByChatPrefix('api', praefix, 60))
+      .filter(c => c.chatId === praefix || c.chatId.startsWith(praefix + ':'))
+      .map(c => ({ faden: c.chatId === praefix ? null : c.chatId.slice(praefix.length + 1), titel: c.chatId === praefix ? 'Hauptgespräch' : kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl }));
   }
 
   async ownerFadenLoeschen(faden: string): Promise<boolean> {
