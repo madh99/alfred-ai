@@ -233,7 +233,31 @@ Tages-Audit: 42 offene Vorgänge, dieselben drei Themen fünf- bis sechsmal in n
 - Kleine Releases mit sofortigem Live-Audit; mehrere Fehler wurden erst durch die vorangegangene Schicht sichtbar (Stream stabil → Refresh-Schleife → stiller REST-Ausfall → Tageskontingent).
 - Fixes an der Quelle (Schreiber, Datenlage) statt am Modell; alles funktioniert mit jedem Modell der Fallback-Kette.
 
+## Gespräche: ein Gespräch, viele Kanäle (Leitfaden, 09.10.2026, v1330/v1331)
 
+Owner-Entscheidung 09.10.2026 (Freigabe 1–5): Der Gesprächsverlauf des Owners hängt am Owner, nicht am Kanal. Der Kanal (Telegram, Desktop-App, Terminal, Web) ist nur der Weg, auf dem eine Nachricht kommt und die Antwort zurückgeht. Gedächtnis, Wissen, Bestätigungen und Vorgänge liefen schon vorher über die Master-Identität; seit v1330 gilt das auch für den Verlauf.
+
+**Begriffe**
+- **Hauptgespräch**: der eine durchgehende Strang des Owners. Technisch die bisherige Telegram-Zeile (`conversations`: platform telegram, chat_id = Owner-Chat), damit nichts migriert werden musste. Ohne Telegram: `api` / `owner:haupt`.
+- **Faden**: ein Nebenstrang für ein Thema. Schlüssel `owner:faden:<faden>` (faden aus `[a-z0-9-]{1,40}`). Titel = erste Frage, umbenennbar über das Feld `custom_label`. Löschen ist ein weiches Löschen.
+- **Archiv**: alte Kanal-Gespräche (z. B. frühere Gerätesitzungen `sitzung:<id>`) bleiben lesbar, nichts wird gelöscht.
+- **Herkunft**: Kanal und Chat-ID, aus denen eine Nachricht kam (`message.chatId`). Sie bleibt unverändert und steuert Streams, Pushes und die Antwort auf Bestätigungen und Vorhaben.
+
+**Zuordnung (`packages/core/src/gespraeche.ts`, `gespraechsZiel`)** — nur für den Owner (masterUserId = Owner), nie für Gruppen, Projekt-Chats oder interne API-Chats (`api-chat-…`, `api-update-…`, `scheduled-…`):
+- Telegram-Owner-Chat → Hauptgespräch, oder der aktive Faden dieses Chats (`/faden`, Ablage `data/gespraeche.json`).
+- Gerätesitzung/Terminal `sitzung:<id>` → Hauptgespräch; `sitzung:<id>:<faden>` → Faden.
+- Web `web-chat-<user>` → Hauptgespräch; `web-faden-<faden>` → Faden.
+- Familie und Gäste: unverändert, Kanal-Gespräch.
+
+**Wohin Antworten gehen**: immer in den Kanal der Frage. Andere offene Oberflächen bekommen den Push `gespraech` (Faden, Herkunft) und laden den Verlauf nach — so zeigt die App, was in Telegram lief, und umgekehrt. Spiegelung von Nachrichten in andere Kanäle: aus (Owner-Entscheidung), zuschaltbar als späterer Schalter.
+
+**Bedienung**: Apps und Terminal über die Seitenleiste bzw. `sitzung:<id>:<faden>`; Web über die Seitenleiste „Gespräche" und `?faden=`; Telegram über `/faden` (Liste), `/faden neu [Titel]`, `/faden <Nr|Kennung>`, `/faden haupt`, `/faden löschen <Kennung>` — ohne Modellaufruf.
+
+**Schnittstellen**: Gerätetoken `GET /api/geraete/faeden`, `GET /api/geraete/verlauf?faden=|archiv=`, `DELETE /api/geraete/faeden/<f>`; API-Token oder Owner-Web-Sitzung `GET /api/gespraeche`, `GET /api/gespraeche/verlauf?faden=`, `DELETE /api/gespraeche/<f>` (v1331: 403 für alle anderen Web-Sitzungen — Sicherheitsreview).
+
+**Kosten**: Das Hauptgespräch wird durch die vorhandene Zusammenfassung begrenzt (`hasSummary` bei jeder Nachricht); Nebenthemen gehören in einen Faden.
+
+**Beweis 09.10. 17:43** (Ubuntu-VM-Sitzung, Skript `/tmp/gespraeche.cjs`): `faeden` liefert Hauptgespräch + Archiv der alten Sitzung; `verlauf` ohne Faden zeigt die Telegram-Nachrichten („Photo Booth wurde beendet", Foto-Ergebnis); `/faden` antwortet ohne Modell; eine Nachricht aus der VM landet laut Pipeline-Log (`gespraech: "5060785419"`) in der Telegram-Zeile und steht dort als Antwort „OK"; `/api/gespraeche` mit Gerätetoken 401, mit API-Token 200.
 
 ## Werkzeug-Schemata: Entscheidung (07.10.2026)
 
