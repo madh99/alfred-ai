@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1323] - 2026-10-09
+
+### Fixed — Dateispeicher über die Master-UUID, keine Dringlichkeiten aus Hilfsläufen (v1323)
+
+Realfall 09.10. 07:59 (Dateiübertragung aus der Desktop-App zum MacBook): Der Datei-Skill las aus dem Dateispeicher mit der Kennung des Sitzungs-Alias statt der Master-UUID und bekam „Access denied: file does not belong to this user" — die Datei gehörte dem Owner, nur unter seiner Master-UUID (Identitäts-Regel v1159). `read_store` und `send` nutzen jetzt `masterUserId`. Zweitens: Alfred hatte für dieselbe Übertragung einen Delegate-Lauf gestartet; dessen Nachschritte landeten als drei „high"-Items im Misc-Bucket, und der Open-Items-Reflector eskalierte sie vier Stunden später als Bestätigungen an den Owner („Zieldatei verifizieren", „FileStore-Zugriffssperre klären", „Ablage per Button bestätigen"). Nachschritte eines Hilfslaufs ohne Projekt sind Notizen: im Misc-Bucket nie mehr „high", also keine Eskalation. Die drei Items sind storniert, die Bestätigungen abgelehnt.
+
 ## [0.19.0-jarvis.1322] - 2026-10-09
 
 ### Added — Desktop-App-Releases vom Server, Phase 4 M6 Teil 1 (v1322)

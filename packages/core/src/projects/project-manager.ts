@@ -645,9 +645,13 @@ export class ProjectManager {
           existingTitles,
         });
         for (const item of kept) {
+          // v1323 — Realfall 09.10.: ein Delegate-Lauf für eine Dateiübertragung hinterließ drei „high"-Items im Misc-Bucket
+          // („Zieldatei verifizieren", „FileStore-Zugriffssperre klären", „Ablage per Button bestätigen"); vier Stunden später
+          // eskalierte der Reflector sie als Bestätigungen an den Owner. Nachschritte eines Hilfslaufs ohne Projekt sind
+          // Notizen, keine Dringlichkeiten: im Misc-Bucket nie „high".
           await this.repo.addOpenItem(misc.id, {
             title: item.title, description: item.description,
-            priority: item.priority ?? 'normal', sessionId: session.id,
+            priority: item.priority === 'high' ? 'normal' : (item.priority ?? 'normal'), sessionId: session.id,
             linkedIncidentId: item.linkedIncidentId,
           });
         }

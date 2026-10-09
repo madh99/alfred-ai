@@ -397,7 +397,7 @@ export class FileSkill extends Skill {
 
     if (isStoreKey && context.fileStore) {
       try {
-        const data = await context.fileStore.read(rawPath, context.userId);
+        const data = await context.fileStore.read(rawPath, context.masterUserId ?? context.userId); // v1323 — Identitäts-Regel: Dateien liegen unter der Master-UUID (Realfall Gerätesitzung 09.10.: „file does not belong to this user")
         if (data.length === 0) return { success: false, error: `Store key "${rawPath}" is empty (0 bytes)` };
         if (data.length > MAX_SEND_SIZE) return { success: false, error: `File too large to send (${data.length} bytes, max ${MAX_SEND_SIZE})` };
         const rawName = rawPath.split('/').pop() ?? rawPath;
@@ -454,7 +454,7 @@ export class FileSkill extends Skill {
       return this.readFile(this.resolvePath(key));
     }
     try {
-      const data = await store.read(key, context.userId);
+      const data = await store.read(key, context.masterUserId ?? context.userId); // v1323 — Master-UUID statt Alias
       const isText = data.length < MAX_READ_SIZE && !data.includes(0);
       if (isText) {
         const text = data.toString('utf-8');
