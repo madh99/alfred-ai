@@ -367,6 +367,25 @@ function isNoInsights(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed === 'KEINE_INSIGHTS') return true;
   if (trimmed.toLowerCase() === 'keine_insights') return true;
+  return istLeererInsightText(trimmed); // v1337
+}
+
+/**
+ * v1337 — Owner-Befund 09.10. 21:00: Der Reasoning-Pass lieferte „```json\n[]\n```", das wurde als Insight verschickt
+ * („💡 Alfred Insights — ```json — []```" in Telegram und allen Apps). Leere JSON-Hüllen, Codezäune ohne Inhalt und
+ * „Keine Insights …" sind keine Insights — deterministisch, unabhängig vom Modell.
+ */
+export function istLeererInsightText(text: string): boolean {
+  const ohneZaun = (text ?? '').replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
+  if (ohneZaun.length === 0) return true;
+  if (/^(\[\s*\]|\{\s*\}|null|none|leer)$/i.test(ohneZaun)) return true;
+  if (/^keine (neuen )?insights\b/i.test(ohneZaun)) return true;
+  try {
+    const j = JSON.parse(ohneZaun) as unknown;
+    if (Array.isArray(j) && j.length === 0) return true;
+    if (j && typeof j === 'object' && Object.keys(j as object).length === 0) return true;
+    if (Array.isArray(j) && j.every(x => typeof x === 'string' && x.trim().length === 0)) return true;
+  } catch { /* kein JSON — normaler Text */ }
   return false;
 }
 
@@ -1624,8 +1643,11 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   // ── Dedup & Parsing ─────────────────────────────────────────
 
   private parseInsights(text: string): string[] {
-    const lines = text.split(/\n{2,}|\n(?=\d+\.\s)/).map(l => l.trim()).filter(l => l.length > 10);
-    if (lines.length <= 1) return [text.trim()];
+    // v1337 — Codezäune abstreifen; leere Hüllen fallen weg (siehe istLeererInsightText)
+    const bereinigt = (text ?? '').replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
+    if (istLeererInsightText(bereinigt)) return [];
+    const lines = bereinigt.split(/\n{2,}|\n(?=\d+\.\s)/).map(l => l.trim()).filter(l => l.length > 10 && !istLeererInsightText(l));
+    if (lines.length <= 1) return lines.length === 1 ? lines : [bereinigt];
     return lines;
   }
 

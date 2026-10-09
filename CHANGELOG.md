@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1337] - 2026-10-09
+
+### Fixed — leere Insights-Nachricht, Kamera-Kaltstart am Mac (v1337)
+
+- Owner-Befund 09.10. 21:00: Der Reasoning-Pass lieferte eine leere JSON-Hülle (`json []`), die als „Alfred Insights" nach Telegram und in alle Apps ging. Leere Hüllen, Codezäune ohne Inhalt und „Keine Insights …" werden jetzt deterministisch verworfen, Codezäune aus Insight-Texten entfernt. Tests.
+- `foto` auf macOS: beim Kaltstart von Photo Booth länger warten, das Fenster erneut nach vorn holen, bis zu drei Auslöseversuche (Beweislauf 19:47 scheiterte mit „kein neues Bild").
+
 ## [0.19.0-jarvis.1336] - 2026-10-09
 
 ### Fixed — interne Fortsetzungen als Hinweis, Fäden im Terminal, Spiegelung mit Anhängen (v1336)

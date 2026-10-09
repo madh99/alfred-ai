@@ -141,12 +141,14 @@ export async function kameraFoto(geraetName: string): Promise<KameraFoto> {
   let laeuft = liefSchon;
   for (let i = 0; i < 20 && !laeuft; i++) { await schlaf(500); laeuft = await photoBoothLaeuft(); }
   if (!laeuft) throw new Error('Photo Booth ließ sich nicht starten — Kamera nicht verfügbar?');
-  await schlaf(liefSchon ? 1500 : 5000); // Kaltstart: Fenster + Live-Bild brauchen einen Moment, sonst wird das Foto schwarz
+  // v1337 — Kaltstart (Beweislauf 19:47: „kein neues Bild"): Fenster und Live-Bild brauchen länger, danach erneut nach vorn holen
+  await schlaf(liefSchon ? 1500 : 9000);
+  if (!liefSchon) { try { await run('open', ['-a', 'Photo Booth']); } catch { /* bleibt */ } await schlaf(1500); }
   const ordner = photoBoothBilderOrdner();
   if (ordner.length === 0) throw new Error('Kein Photo-Booth-Ordner unter ~/Pictures gefunden — Photo Booth noch nie benutzt?');
   await ausloesen();
   let pfad = await wartenAufFoto(ordner, seit, 12); // Countdown 3 s + Speichern
-  if (!pfad) { await ausloesen(); pfad = await wartenAufFoto(ordner, seit, 12); } // zweiter Versuch (erster Tastendruck ging ins Leere)
+  for (let versuch = 2; !pfad && versuch <= 3; versuch++) { await schlaf(2000); await ausloesen(); pfad = await wartenAufFoto(ordner, seit, 12); } // weitere Versuche (Tastendruck ging ins Leere)
   if (!liefSchon) { try { await run('osascript', ['-e', 'tell application "Photo Booth" to quit']); } catch { /* bleibt offen */ } }
   if (!pfad) throw new Error(`Photo Booth hat kein neues Bild gespeichert (geprüft: ${ordner.join(', ')}).`);
   await schlaf(500); // Datei fertig geschrieben
