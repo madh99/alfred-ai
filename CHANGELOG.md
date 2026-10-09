@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1326] - 2026-10-09
+
+### Fixed — Kamera-Foto ohne Fensterzählung, Anhänge bestätigter Aktionen in die anfragende Sitzung (v1326)
+
+Beweislauf 15:39 (Foto auf dem MacBook aus der Ubuntu-VM-Sitzung): Die Aktion `foto` wartete über System Events auf ein Fenster von Photo Booth, bekam zehn Sekunden lang „0" und brach ab — das Ergebnis erreichte die Sitzung korrekt, aber ohne Bild.
+
+- `foto` wartet jetzt auf den Prozess, gibt Photo Booth beim Kaltstart fünf Sekunden für Fenster und Live-Bild, löst per Eingabetaste aus und nimmt allein die neue Datei als Erfolgskriterium (zweiter Auslöseversuch, bis 12 s je Versuch). Lief Photo Booth vorher nicht, wird es danach wieder beendet, damit das Kameralicht ausgeht.
+- Bestätigte Einzelaktionen mit Anhang (Foto, geholte Datei) liefern den Anhang auch in die anfragende Sitzung, nicht nur in den Owner-Chat.
+- Tests für die Ordnersuche (lokalisierte Photo-Booth-Namen) und die Auswahl der neuen Datei.
+
 ## [0.19.0-jarvis.1325] - 2026-10-09
 
 ### Added — Kamera-Foto als feste Geräteaktion, Anhänge an Gerätesitzungen (v1325)

@@ -10,6 +10,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
  * Das Foto lag um 15:21 da, Alfred meldete „bisher kein Foto". Deshalb deterministisch: Photo Booth öffnen, Auslöser
  * (Eingabetaste) über System Events, warten, die neue Datei aus allen „Photo Booth*"-Ordnern holen. Keine zusätzliche
  * Kameraberechtigung nötig — Photo Booth hat sie, und der Owner sieht am Bildschirm, dass die Kamera läuft.
+ * v1326 — kein Fenster-Zählen über System Events mehr (lieferte 0, Beweislauf 15:39): Prozess abwarten, feste Anlaufzeit,
+ * Auslöser, Datei als einziges Erfolgskriterium; zweiter Auslöseversuch; Photo Booth danach wieder beenden, wenn es
+ * vorher nicht lief (Kameralicht aus).
  */
 export interface KameraFoto { dateiName: string; daten: Buffer; pfad: string; dauerMs: number }
 
@@ -22,6 +25,10 @@ function run(cmd: string, args: string[], timeout = 20_000): Promise<string> {
 }
 
 const schlaf = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+async function photoBoothLaeuft(): Promise<boolean> {
+  try { return (await run('pgrep', ['-x', 'Photo Booth'], 5_000)).trim() !== ''; } catch { return false; }
+}
 
 /** Alle Photo-Booth-Ordner (lokalisierte Namen: „Photo Booth Library", „Photo Booth-Mediathek", …) mit ihrem Bilderordner. */
 export function photoBoothBilderOrdner(heim = os.homedir()): string[] {
@@ -50,25 +57,37 @@ export function neuestesFotoSeit(ordner: string[], seit: number): string | undef
   return best?.pfad;
 }
 
+async function ausloesen(): Promise<void> {
+  // Photo Booth nach vorn, dann Eingabetaste (key code 36 = Return) — der Auslöser von Photo Booth
+  await run('osascript', ['-e', 'tell application "Photo Booth" to activate', '-e', 'delay 1', '-e', 'tell application "System Events" to key code 36']);
+}
+
+async function wartenAufFoto(ordner: string[], seit: number, sekunden: number): Promise<string | undefined> {
+  for (let i = 0; i < sekunden * 2; i++) {
+    const p = neuestesFotoSeit(ordner, seit);
+    if (p) return p;
+    await schlaf(500);
+  }
+  return undefined;
+}
+
 export async function kameraFoto(geraetName: string): Promise<KameraFoto> {
   if (process.platform !== 'darwin') throw new Error('Kamera-Foto gibt es bisher nur auf macOS (Photo Booth).');
   const start = Date.now();
   const seit = start - 1000;
+  const liefSchon = await photoBoothLaeuft();
   await run('open', ['-a', 'Photo Booth']);
-  // Fenster abwarten (Kaltstart dauert), dann Auslöser: Eingabetaste in Photo Booth
-  let offen = false;
-  for (let i = 0; i < 20 && !offen; i++) {
-    await schlaf(500);
-    try { offen = (await run('osascript', ['-e', 'tell application "System Events" to return (count of windows of process "Photo Booth")'])).trim() !== '0'; } catch { offen = false; }
-  }
-  if (!offen) throw new Error('Photo Booth hat kein Fenster geöffnet — Kamera nicht verfügbar?');
-  await schlaf(1500); // Live-Bild braucht einen Moment, sonst kommt ein schwarzes Foto
-  await run('osascript', ['-e', 'tell application "Photo Booth" to activate', '-e', 'delay 0.5', '-e', 'tell application "System Events" to keystroke return']);
-  // Countdown 3 s + Speichern: bis zu 10 s auf die neue Datei warten
+  let laeuft = liefSchon;
+  for (let i = 0; i < 20 && !laeuft; i++) { await schlaf(500); laeuft = await photoBoothLaeuft(); }
+  if (!laeuft) throw new Error('Photo Booth ließ sich nicht starten — Kamera nicht verfügbar?');
+  await schlaf(liefSchon ? 1500 : 5000); // Kaltstart: Fenster + Live-Bild brauchen einen Moment, sonst wird das Foto schwarz
   const ordner = photoBoothBilderOrdner();
-  let pfad: string | undefined;
-  for (let i = 0; i < 20 && !pfad; i++) { await schlaf(500); pfad = neuestesFotoSeit(ordner, seit); }
-  if (!pfad) throw new Error(`Photo Booth hat kein neues Bild gespeichert (geprüft: ${ordner.join(', ') || 'kein Photo-Booth-Ordner unter ~/Pictures'}).`);
+  if (ordner.length === 0) throw new Error('Kein Photo-Booth-Ordner unter ~/Pictures gefunden — Photo Booth noch nie benutzt?');
+  await ausloesen();
+  let pfad = await wartenAufFoto(ordner, seit, 12); // Countdown 3 s + Speichern
+  if (!pfad) { await ausloesen(); pfad = await wartenAufFoto(ordner, seit, 12); } // zweiter Versuch (erster Tastendruck ging ins Leere)
+  if (!liefSchon) { try { await run('osascript', ['-e', 'tell application "Photo Booth" to quit']); } catch { /* bleibt offen */ } }
+  if (!pfad) throw new Error(`Photo Booth hat kein neues Bild gespeichert (geprüft: ${ordner.join(', ')}).`);
   await schlaf(500); // Datei fertig geschrieben
   const daten = readFileSync(pfad);
   const stempel = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '');

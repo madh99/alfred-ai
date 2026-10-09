@@ -113,13 +113,14 @@ export class ConfirmationQueue {
   private readonly herkuenfte = new Map<string, { chatId: string; platform: string }>();
 
   /** v1319 — Ergebnis einer Entscheidung zusätzlich an den anfragenden Chat (z. B. Gerätesitzung in App oder Terminal). */
-  private async anHerkunft(confirmationId: string, text: string): Promise<void> {
+  private async anHerkunft(confirmationId: string, text: string, attachments?: Array<{ fileName?: string; mimeType?: string; data: Buffer }>): Promise<void> {
     const h = this.herkuenfte.get(confirmationId);
     this.herkuenfte.delete(confirmationId);
     if (!h) return;
     const a = this.adapters.get(h.platform as Platform);
     if (!a) return;
-    try { await a.sendMessage(h.chatId, text); } catch (err) { this.logger.debug({ err: (err as Error).message, chatId: h.chatId }, 'v1319 Ergebnis an Herkunft nicht zustellbar'); }
+    try { await a.sendMessage(h.chatId, text); } catch (err) { this.logger.debug({ err: (err as Error).message, chatId: h.chatId }, 'v1319 Ergebnis an Herkunft nicht zustellbar'); return; }
+    if (attachments?.length) await this.sendeAnhaenge(a, h.chatId, attachments); // v1325 — Foto/Datei auch in die anfragende Sitzung
   }
 
   constructor(
@@ -494,7 +495,7 @@ export class ConfirmationQueue {
             ? `\u2705 **${pending.description}**\n\n${display}`
             : `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`;
           if (adapter && !uebernommen) await adapter.sendMessage(chatId, msg);
-          await this.anHerkunft(pending.id, msg); // v1319 — auch an die anfragende Sitzung (App, Terminal)
+          await this.anHerkunft(pending.id, msg, result?.attachments); // v1319 — auch an die anfragende Sitzung (App, Terminal); v1325 mit Anhängen (Foto)
           this.activityLogger?.logConfirmation({
             confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
             source: pending.source, sourceId: pending.sourceId, outcome: 'approved',
