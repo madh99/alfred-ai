@@ -24,6 +24,8 @@ export interface GeraetSkillDeps {
   /** Reiht die Frage beim Owner ein; die Queue erhält Parameter mit einer Einmal-Freigabe (v1225). */
   /** v1319 — herkunft = Chat, aus dem die Anfrage kam (Gerätesitzung); das Ergebnis geht nach der Freigabe auch dorthin. */
   bestaetigung: (frage: { description: string; aktion: string; params: Record<string, unknown> }, herkunft?: { chatId: string; platform: string }) => Promise<boolean>;
+  /** v1342 — gestarteter Auftrag (Claude Code) und seine Sitzung: das Ende wird dort gemeldet. */
+  merkeAuftrag?: (auftragId: string, herkunft: { chatId: string; platform: string; userId: string }) => void;
   /** v1225 — prüft und verbraucht die Einmal-Freigabe aus den Parametern der Bestätigungs-Queue. */
   pruefeFreigabe: (nonce: unknown, aktion: string, params: Record<string, unknown>) => boolean;
   /** v1230 — Vorhaben-Freigabe: anlegen, nach Owner-Ja aktivieren, Deckung prüfen. */
@@ -174,6 +176,8 @@ export class GeraetSkill extends Skill {
       }
     }
     const r = await this.deps.sendeAktion(aktion, geraetParams, aktion === 'shell' ? 10 * 60_000 : undefined);
+    // v1342 — Auftrag gestartet: Sitzung merken, damit das Ende (Ereignis vom Gerät) dort gemeldet wird
+    if (aktion === 'auftrag_starten' && r.success && herkunft) { const id = (r.data as { id?: string } | undefined)?.id; if (id) this.deps.merkeAuftrag?.(id, herkunft); }
     await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, ERGEBNIS_MAX_ZEICHEN) : (r.error ?? '').slice(0, ERGEBNIS_MAX_ZEICHEN), autonomie: def.autonomie });
     if (!r.success) return { success: false, error: r.error ?? 'Gerät meldete Fehler' };
     // v1249 — datei_holen über 8 MB: das Gerät hat blockweise hochgeladen, der Server hat schon gespeichert (key)

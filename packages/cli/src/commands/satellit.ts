@@ -18,6 +18,7 @@ import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
+import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta } from './satellit-auftrag.js'; // v1342
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
@@ -101,6 +102,14 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler". Mit markieren=true trägt es die Nummern der letzten Element-Karte ein (Windows).', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' }, markieren: { type: 'boolean', description: 'Nummern der Element-Karte (fenster_lesen) ins Bild zeichnen' } } },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
       // v1325 — Kamera: feste Aktion statt Oberflächen-Steuerung von Photo Booth (lokalisierte Ordner, 3-s-Countdown)
+      // v1342 — Aufträge an Claude Code im Druckmodus (Owner 10.10.): Projekt anlegen/ändern nach Spezifikation, läuft abgekoppelt, Ende wird gemeldet
+      ...(claudeVerfuegbar() ? [
+        { name: 'auftrag_starten', beschreibung: 'Gibt Claude Code auf diesem Gerät einen Auftrag (Projekt anlegen, Funktion bauen, Fehler beheben) nach einer Spezifikation. Läuft im Hintergrund, oft viele Minuten; das Ende wird automatisch gemeldet. projekt = vorhandenes Verzeichnis mit Schreibrecht; auftrag = vollständige Spezifikation (Ziel, Technik, Dateien, Abnahme).', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Pfad des Projektverzeichnisses (freigegeben, schreibend)' }, auftrag: { type: 'string', description: 'Spezifikation als Text (Markdown)' }, titel: { type: 'string', description: 'Kurztitel' } } },
+        { name: 'auftrag_stand', beschreibung: 'Stand eines laufenden oder beendeten Auftrags: läuft noch?, Dauer, letzte Protokollzeilen', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung aus auftrag_starten' } } },
+        { name: 'auftrag_ergebnis', beschreibung: 'Ergebnis eines beendeten Auftrags (Zusammenfassung von Claude Code, Kosten, Dauer)', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung' } } },
+        { name: 'auftraege', beschreibung: 'Liste der letzten Aufträge auf diesem Gerät mit Status', autonomie: 'auto' as const },
+        { name: 'auftrag_abbrechen', beschreibung: 'Bricht einen laufenden Auftrag ab', autonomie: 'bestaetigen' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung' } } },
+      ] : []),
       ...(kameraVerfuegbar() ? [ // v1328 — auch Windows (WinRT MediaCapture) und Linux (ffmpeg/fswebcam)
         { name: 'foto', beschreibung: 'Nimmt ein Foto mit der Kamera dieses Geräts auf (macOS über Photo Booth mit 3 s Countdown, Windows über die Windows-Kamera, Linux über ffmpeg/fswebcam) und liefert es dem Owner als Bild — für „mach ein Foto mit der Kamera", „Kamerabild". Nicht für Bildschirmfotos (dafür bildschirm).', autonomie: 'bestaetigen' as const },
       ] : []),
@@ -289,6 +298,45 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
         : ['xdg-open', [ziel]] as const;
       await new Promise<void>((resolve, reject) => { const c = spawn(cmd[0], [...cmd[1]], { detached: true, stdio: 'ignore', shell: false }); c.on('error', reject); c.on('spawn', () => { c.unref(); resolve(); }); });
       return { success: true, data: { ziel }, display: `Geöffnet auf ${k.name}: ${ziel}` };
+    }
+    // v1342 — Aufträge an Claude Code (Druckmodus, abgekoppelt); Stand und Ergebnis werden abgefragt (auftrag_stand/auftrag_ergebnis)
+    case 'auftrag_starten': {
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      const auftrag = String(params.auftrag ?? params.spezifikation ?? params.text ?? '').trim();
+      if (!projekt) return { success: false, error: 'projekt fehlt (absoluter Pfad eines freigegebenen Verzeichnisses)' };
+      if (!auftrag) return { success: false, error: 'auftrag fehlt (Spezifikation als Text)' };
+      if (!istPfadErlaubt(projekt, frei)) return { success: false, error: `Projektverzeichnis nicht freigegeben (Schreibrecht nötig): ${projekt}. Mit Schreibrecht: ${frei.join(', ')}` };
+      try {
+        const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined });
+        return { success: true, data: { id: m.id, titel: m.titel, projekt: m.projekt, start: m.start, auftragDatei: m.auftragDatei }, display: `Auftrag ${m.id} („${m.titel}") auf ${k.name} gestartet in ${m.projekt}. Läuft im Hintergrund; Stand mit auftrag_stand ${m.id}, Ergebnis mit auftrag_ergebnis ${m.id}.` };
+      } catch (err) { return { success: false, error: (err as Error).message }; }
+    }
+    case 'auftrag_stand': {
+      const id = String(params.id ?? '').trim();
+      if (!id) return { success: false, error: 'id fehlt' };
+      try {
+        const s = auftragStand(id);
+        return { success: true, data: { id, status: s.meta.status, laeuft: s.laeuft, dauerS: s.dauerS, titel: s.meta.titel, projekt: s.meta.projekt }, display: `${formatiereMeta(s.meta)}${s.laeuft ? ' (läuft)' : ''}\n\nLetzte Protokollzeilen:\n${s.letzteZeilen || '(noch keine Ausgabe)'}` };
+      } catch (err) { return { success: false, error: (err as Error).message }; }
+    }
+    case 'auftrag_ergebnis': {
+      const id = String(params.id ?? '').trim();
+      if (!id) return { success: false, error: 'id fehlt' };
+      try {
+        const r = auftragErgebnis(id);
+        const kosten = r.ergebnis.kosten !== undefined ? ` · Kosten ${r.ergebnis.kosten.toFixed(2)} $` : '';
+        return { success: true, data: { id, status: r.meta.status, text: r.ergebnis.text.slice(0, 8000), kosten: r.ergebnis.kosten, dauerMs: r.ergebnis.dauerMs, fehler: r.ergebnis.fehler }, display: `${formatiereMeta(r.meta)}${kosten}\n\n${r.ergebnis.fehler ? `Fehler: ${r.ergebnis.fehler}\n\n` : ''}${r.ergebnis.text.slice(0, 8000) || '(keine Ausgabe)'}` };
+      } catch (err) { return { success: false, error: (err as Error).message }; }
+    }
+    case 'auftraege': {
+      const l = auftraege();
+      return { success: true, data: { auftraege: l.map(m => ({ id: m.id, titel: m.titel, projekt: m.projekt, status: m.status, start: m.start, ende: m.ende })) }, display: l.length ? `Aufträge auf ${k.name}:\n${l.map(formatiereMeta).join('\n')}` : `Keine Aufträge auf ${k.name}` };
+    }
+    case 'auftrag_abbrechen': {
+      const id = String(params.id ?? '').trim();
+      if (!id) return { success: false, error: 'id fehlt' };
+      try { const m = auftragAbbrechen(id); return { success: true, data: { id, status: m.status }, display: `Auftrag ${id} abgebrochen (${m.titel})` }; }
+      catch (err) { return { success: false, error: (err as Error).message }; }
     }
     case 'shell': {
       const command = String(params.command ?? '').trim();

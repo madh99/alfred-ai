@@ -38,6 +38,8 @@ export interface GeraeteGatewayDeps {
   /** v1235 — Dateitransfer: Quelle laden / geholte Datei speichern (FileStore des Owners). */
   dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
+  /** v1342 — Auftrag an Claude Code auf dem Gerät beendet: Alfred fasst in der anfragenden Sitzung zusammen. */
+  beiEreignis?: (e: { geraet: string; skillName: string; ereignis: import('@alfred/types').GeraetEreignis; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   now?: () => number;
 }
@@ -52,6 +54,8 @@ interface Verbindung {
   /** v1237 — letzte Sinne (Leerlauf, Fenster, Akku) und ihr Zeitpunkt. */
   sinne?: Record<string, unknown>;
   sinneZeit?: number;
+  /** v1342 — gestartete Aufträge (Claude Code) und die Sitzung, aus der sie kamen: das Ende wird dort gemeldet. */
+  auftraege?: Map<string, { chatId: string; platform: string; userId: string }>;
 }
 
 export class GeraeteGateway {
@@ -226,6 +230,7 @@ export class GeraeteGateway {
       istOwner: this.deps.istOwner, // v1268
       geraetId: v.eintrag.id, name: v.eintrag.name, manifest: v.eintrag.manifest, skillName: v.skillName,
       sendeAktion: (aktion, params, timeoutMs) => this.sendeAktion(v.eintrag.id, aktion, params, timeoutMs),
+      merkeAuftrag: (auftragId, herkunft) => { v.auftraege ??= new Map(); v.auftraege.set(auftragId, herkunft); }, // v1342
       bestaetigung: async (frage, herkunft) => {
         if (!this.deps.enqueueBestaetigung) return false;
         const ziel = this.deps.ownerZiel();
@@ -276,6 +281,14 @@ export class GeraeteGateway {
         const o = v.offen.get(n.id);
         if (!o) return;
         clearTimeout(o.timer); v.offen.delete(n.id); o.resolve(n);
+        return;
+      }
+      case 'ereignis': {
+        // v1342 — Auftrag (Claude Code) auf dem Gerät beendet → Fortsetzung in der Sitzung, aus der er gestartet wurde
+        const herkunft = v.auftraege?.get(n.auftragId);
+        v.auftraege?.delete(n.auftragId);
+        this.deps.logger.info({ geraet: v.eintrag.name, auftrag: n.auftragId, status: n.status, herkunft: herkunft?.chatId }, 'v1342 Auftrag beendet');
+        this.deps.beiEreignis?.({ geraet: v.eintrag.name, skillName: v.skillName, ereignis: n, herkunft }).catch(err => this.deps.logger.warn({ err: (err as Error).message }, 'v1342 Ereignis nicht verarbeitet'));
         return;
       }
       case 'sinne':

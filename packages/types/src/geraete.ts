@@ -47,9 +47,12 @@ export interface GeraetBestaetigung extends GeraetRahmen { typ: 'bestaetigung'; 
 /** v1330 — Gehirn → Gerät: ein Owner-Gespräch (Hauptgespräch oder Faden) wurde auf einem anderen Kanal fortgeführt. */
 export interface GeraetGespraech extends GeraetRahmen { typ: 'gespraech'; faden: string | null; von: string }
 
+/** v1342 — Ereignis vom Gerät (Auftrag an Claude Code beendet); das Gehirn setzt in der anfragenden Sitzung fort. */
+export interface GeraetEreignis extends GeraetRahmen { typ: 'ereignis'; art: 'auftrag'; auftragId: string; status: 'fertig' | 'fehler' | 'abgebrochen'; titel: string; projekt: string; text: string; dauerS?: number; kosten?: number }
+
 export type GeraetNachricht =
   | GeraetHallo | GeraetWillkommen | GeraetPuls | GeraetPulsOk
-  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung | GeraetGespraech;
+  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung | GeraetGespraech | GeraetEreignis;
 
 /** Eintrag der Geräte-Registry (Gehirn). */
 export interface GeraetEintrag {

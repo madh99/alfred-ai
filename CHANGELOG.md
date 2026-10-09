@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1342] - 2026-10-10
+
+### Added — Aufträge an Claude Code auf dem Satelliten (Druckmodus, Hintergrund) (v1342)
+
+Owner 10.10. („erstelle mit der Claude-Code-Session Projekt XY, die Spezifikationen sind wie folgt"; Tests nur auf der Ubuntu-VM). Neue Geräteaktionen, sobald Claude Code auf dem Gerät installiert ist: `auftrag_starten` (Bestätigung; Projektverzeichnis mit Schreibrecht, Spezifikation als Text → `AUFTRAG-<id>.md` im Projekt, `claude -p … --output-format json --permission-mode auto` abgekoppelt im Hintergrund, Protokoll unter `~/.alfred/auftraege/<id>/`), `auftrag_stand` (läuft?, Dauer, letzte Protokollzeilen), `auftrag_ergebnis` (Zusammenfassung von Claude Code, Kosten, Dauer), `auftraege` (Liste), `auftrag_abbrechen` (Bestätigung). Kein tmux, kein Tippen — läuft auf Windows, macOS und Linux gleich; die 10-Minuten-Grenze der Shell gilt nicht, weil der Auftrag abgekoppelt läuft. Vorbereitet, aber noch nicht aktiv: das Gerät meldet das Ende als Ereignis (`GeraetEreignis`), das Gateway merkt sich die Sitzung des Starts (`merkeAuftrag`) — die automatische Zusammenfassung durch Alfred in der anfragenden Sitzung folgt nach Owner-Entscheidung (siehe Spec Geräte §19).
+
 ## [0.19.0-jarvis.1341] - 2026-10-09
 
 ### Fixed — Antwort nach einer Bestätigung landet in der anfragenden Sitzung, nicht nur in Telegram (v1341)
