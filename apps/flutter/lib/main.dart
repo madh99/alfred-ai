@@ -501,15 +501,18 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     _nachUnten();
   }
 
-  void _protokolliere(Eintrag e) {
+  void _protokolliere(Eintrag e, [String? quelle]) {
     final p = startArgs['protokoll'];
     if (p == null) return;
-    try { File(p).writeAsStringSync('${e.zeit.toIso8601String()} ${e.art.name} ${e.text.replaceAll('\n', ' ')}\n', mode: FileMode.append, flush: true); } catch (_) {}
+    try { File(p).writeAsStringSync('${e.zeit.toIso8601String()} ${quelle == null ? '' : '$quelle '}${e.art.name} ${e.text.replaceAll('\n', ' ')}\n', mode: FileMode.append, flush: true); } catch (_) {}
   }
 
+  /// 1.2.7 — die Liste ist von unten verankert (`reverse: true`); Offset 0 = neueste Zeile. Damit landet man beim Öffnen
+  /// eines Gesprächs immer bei der letzten Nachricht, auch bei sehr langen Einträgen (maxScrollExtent ist bei lazy
+  /// gebauten Listen nur geschätzt und griff vorher zu kurz).
   void _nachUnten() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (scroll.hasClients) scroll.animateTo(scroll.position.maxScrollExtent, duration: const Duration(milliseconds: 150), curve: Curves.easeOut);
+      if (scroll.hasClients) scroll.animateTo(0, duration: const Duration(milliseconds: 150), curve: Curves.easeOut);
     });
   }
 
@@ -534,7 +537,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       // 1.2.5 — rolle „system" (v1336: interne Fortsetzungen nach Freigabe) als Hinweis, nicht als eigene Blase
       final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; final sys = m['rolle'] == 'system'; return Eintrag(sys || (du && t.startsWith('Freigabe erteilt für das Vorhaben')) ? Art.hinweis : du ? Art.du : Art.alfred, sys ? 'ℹ ${t.split('\n').first}' : t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()); }).toList();
       setState(() => verlauf.insertAll(0, alte));
+      for (final e in alte) _protokolliere(e, 'verlauf'); // 1.2.7 — geladene Zeilen im Protokoll (Beweis, Fehlersuche)
       _zeile(Eintrag(Art.hinweis, 'Verlauf geladen: ${alte.length} Nachrichten aus früheren Sitzungen dieses Geräts.'));
+      _nachUnten();
     } catch (e) { _zeile(Eintrag(Art.hinweis, 'Verlauf nicht geladen: $e')); }
   }
 
@@ -852,9 +857,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.auto_awesome, size: 40, color: dim), const SizedBox(height: 12), Text('Was kann ich für dich tun?', style: theme.textTheme.headlineSmall)]))
           : Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: ListView.builder(
               controller: scroll,
+              reverse: true, // 1.2.7 — von unten verankert: Öffnen eines Gesprächs zeigt die letzte Nachricht
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
               itemCount: verlauf.length,
-              itemBuilder: (context, i) {
+              itemBuilder: (context, ri) {
+                final i = verlauf.length - 1 - ri;
                 final e = verlauf[i];
                 final neuerTag = i == 0 || !_gleicherTag(verlauf[i - 1].zeit, e.zeit);
                 final w = _eintrag(e, theme);
