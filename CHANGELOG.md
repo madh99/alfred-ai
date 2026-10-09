@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1321] - 2026-10-09
+
+### Fixed — Satellit: Erstinstallation aus dem globalen Paket, kein Chrome-Download (v1321)
+
+Realfall Ubuntu-VM 09.10.: `alfred satellit --install` aus dem frisch global installierten Paket legte Starter und Dienst an, aber keinen Versionsordner unter `~/.alfred/cli` — der Starter fand keine Version, der Dienst startete alle fünf Sekunden neu mit dem Rat „alfred satellit --install", der nichts geändert hätte. Jetzt schreibt `--install` auf einem Gerät ohne `aktuell.json` den eigenen Einstieg (das laufende Paket) als bestätigte Version; das erste Selbstupdate legt dann wie gewohnt `~/.alfred/cli/<Version>` an. Zweitens: Satelliten-Installationen setzen `PUPPETEER_SKIP_DOWNLOAD`, denn der Satellit braucht kein Chrome — bisher lud jedes Update rund 150 MB Browser nach, und auf der VM scheiterte daran die ganze Installation.
+
 ## [0.19.0-jarvis.1320] - 2026-10-09
 
 ### Fixed — Ergebnis einer Geräte-Freigabe geht auch an die anfragende Sitzung (v1320)

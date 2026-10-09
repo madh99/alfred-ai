@@ -1,13 +1,13 @@
 import os from 'node:os';
 import path from 'node:path';
-import { readdirSync, statSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { readdirSync, statSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, realpathSync } from 'node:fs';
 import { exec, execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import type { GeraetManifest, GeraetNachricht, GeraetPlattform } from '@alfred/types';
 import { istPfadErlaubt, PULS_INTERVALL_MS, SHELL_TIMEOUT_MS, TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, sha256Hex, mimeAusName, eindeutigerName, sichererDateiname } from '@alfred/core';
 import { geraetAnfrage, geraetJson } from './geraet-http.js'; // v1249
-import { aktualisiereWennNeuer, bestaetigeAktuell, merkeReleaseKey, NEUSTART_CODE, ladeAktuell } from './satellit-update.js'; // v1258
+import { aktualisiereWennNeuer, bestaetigeAktuell, merkeReleaseKey, NEUSTART_CODE, ladeAktuell, speichereAktuell } from './satellit-update.js'; // v1258, v1321 speichereAktuell
 import { vergleicheVersion, raeumeVersionen } from '@alfred/core';
 import { getVersion } from '../version.js';
 import { ladeKonfig, speichereKonfig, konfigPfad, type GeraetKonfig } from './pair.js';
@@ -456,7 +456,19 @@ export async function satellitCommand(opts: { starter?: boolean; einmal?: boolea
     return;
   }
   // v1228 — Dienst-Verwaltung
-  if (opts.install) { console.log(installiereDienst()); for (const z of installiereStarter()) console.log(z); return; } // v1304 — Starter in ~/.alfred/bin + PATH
+  if (opts.install) {
+    // v1321 — Erstinstallation aus dem globalen Paket (Realfall Ubuntu-VM 09.10.): ohne aktuell.json fand der Starter keine
+    // Version und der Dienst startete alle 5 s neu. Das laufende Paket wird als bestätigte Startversion eingetragen;
+    // das erste Selbstupdate legt dann ~/.alfred/cli/<Version> an.
+    if (!ladeAktuell()) {
+      const einstieg = (() => { try { return realpathSync(process.argv[1] ?? ''); } catch { return process.argv[1] ?? ''; } })();
+      if (einstieg && existsSync(einstieg)) {
+        speichereAktuell({ version: getVersion(), einstieg, zeit: new Date().toISOString(), bestaetigt: true });
+        console.log(`Startversion eingetragen: ${getVersion()} (${einstieg}) — Updates landen künftig unter ~/.alfred/cli`);
+      }
+    }
+    console.log(installiereDienst()); for (const z of installiereStarter()) console.log(z); return; // v1304 — Starter in ~/.alfred/bin + PATH
+  }
   if (opts.starter) { for (const z of installiereStarter()) console.log(z); return; }
   if (opts.uninstall) { console.log(entferneDienst()); return; }
   if (opts.status) { console.log(dienstStatus()); return; }
