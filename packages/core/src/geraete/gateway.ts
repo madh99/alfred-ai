@@ -38,7 +38,7 @@ export interface GeraeteGatewayDeps {
   /** v1235 — Dateitransfer: Quelle laden / geholte Datei speichern (FileStore des Owners). */
   dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
-  nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
+  nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   now?: () => number;
 }
 

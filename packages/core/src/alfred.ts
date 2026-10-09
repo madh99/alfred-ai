@@ -13515,8 +13515,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             // v1295 — und auf dem günstigen Tier: Planung ist erledigt, die Schritte sind Werkzeugaufrufe gegen die Element-Karte
             const { vorhabenTier } = await import('./geraete/freigaben.js');
             const tier = vorhabenTier();
-            this.logger.info({ geraet: v.geraet, tier, beschreibung: v.beschreibung.slice(0, 80) }, 'v1295 Vorhaben-Fortsetzung');
-            await this.fortsetzungImOwnerChat(text, { id: 'vorhaben', allowedSkills: [v.skillName], tier });
+            this.logger.info({ geraet: v.geraet, tier, herkunft: v.herkunft?.chatId, beschreibung: v.beschreibung.slice(0, 80) }, 'v1295 Vorhaben-Fortsetzung');
+            // v1324 — in der Sitzung, aus der der Auftrag kam (App, Terminal): Antwort dort und im Verlauf, Owner-Chat bekommt eine Kopie
+            await this.fortsetzungImOwnerChat(text, { id: 'vorhaben', allowedSkills: [v.skillName], tier, herkunft: v.herkunft });
           },
           schritt: async (s) => { await vorgaengeG.schritt({ userId: s.userId, art: s.art as import('@alfred/storage').SchrittArt, skill: s.skill, aktion: s.aktion, params: s.params, beschreibung: s.beschreibung, ergebnis: s.ergebnis, autonomie: s.autonomie as import('@alfred/storage').Autonomie | undefined, quelle: s.quelle }); },
         });
@@ -14994,27 +14995,41 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
    * Aufgaben), Antwort und Anhänge gehen zurück in den Chat. Genutzt nach Vorhaben-Freigabe (v1230) und nach
    * jeder freigegebenen Geräteaktion (Owner-Beobachtung: Rohergebnis statt Antwort, kein Weitermachen).
    */
-  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier }): Promise<boolean> {
-    const platform = (opts.platform ?? (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api')) as Platform;
-    const chatId = opts.chatId ?? this.config.security?.ownerUserId ?? '';
+  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string } }): Promise<boolean> {
+    const ownerPlatform = (opts.platform ?? (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api')) as Platform;
+    const ownerChatId = opts.chatId ?? this.config.security?.ownerUserId ?? '';
+    // v1324 — kam der Auftrag aus einer anderen Sitzung (Desktop-App, Terminal), läuft die Fortsetzung dort: die Antwort steht in
+    // deren Verlauf, Rückfragen bauen darauf auf. Der Owner-Chat bekommt Text und Anhänge als Kopie (wie bei Bestätigungen, v1319).
+    const h = opts.herkunft && (opts.herkunft.chatId !== ownerChatId || opts.herkunft.platform !== ownerPlatform) ? opts.herkunft : undefined;
+    const platform = (h?.platform ?? ownerPlatform) as Platform;
+    const chatId = h?.chatId ?? ownerChatId;
     if (!chatId) return false;
     try {
       const result = await this.pipeline.process({
-        id: `${opts.id}-${Date.now()}`, platform, chatId, chatType: 'dm', userId: chatId, userName: 'owner',
+        id: `${opts.id}-${Date.now()}`, platform, chatId, chatType: 'dm', userId: h?.userId ?? chatId, userName: 'owner',
         text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, ...(opts.allowedSkills ? { allowedSkills: opts.allowedSkills } : {}), ...(opts.tier ? { tier: opts.tier } : {}) }, // v1295 — Tier für Vorhaben
       } as NormalizedMessage);
-      const adapter = this.adapters.get(platform);
-      if (!adapter || !result?.text) return false;
-      const formatted = this.formatter.format(result.text, platform);
-      await adapter.sendMessage(chatId, formatted.text, { parseMode: formatted.parseMode !== 'text' ? formatted.parseMode : undefined });
-      for (const att of result.attachments ?? []) {
+      if (!result?.text) return false;
+      const ziele: Array<{ platform: Platform; chatId: string }> = [{ platform, chatId }];
+      if (h && ownerChatId) ziele.push({ platform: ownerPlatform, chatId: ownerChatId });
+      let zugestellt = false;
+      for (const z of ziele) {
+        const adapter = this.adapters.get(z.platform);
+        if (!adapter) continue;
         try {
-          if (att.mimeType.startsWith('image/')) await adapter.sendPhoto(chatId, att.data, att.fileName);
-          else if (att.mimeType.startsWith('audio/')) await adapter.sendVoice(chatId, att.data);
-          else await adapter.sendFile(chatId, att.data, att.fileName);
-        } catch { /* Anhang optional */ }
+          const formatted = this.formatter.format(result.text, z.platform);
+          await adapter.sendMessage(z.chatId, formatted.text, { parseMode: formatted.parseMode !== 'text' ? formatted.parseMode : undefined });
+          zugestellt = true;
+        } catch (err) { this.logger.debug({ err: (err as Error).message, chatId: z.chatId }, 'v1324 Fortsetzung nicht zustellbar'); continue; }
+        for (const att of result.attachments ?? []) {
+          try {
+            if (att.mimeType.startsWith('image/')) await adapter.sendPhoto(z.chatId, att.data, att.fileName);
+            else if (att.mimeType.startsWith('audio/')) await adapter.sendVoice(z.chatId, att.data);
+            else await adapter.sendFile(z.chatId, att.data, att.fileName);
+          } catch { /* Anhang optional */ }
+        }
       }
-      return true;
+      return zugestellt;
     } catch (err) { this.logger.warn({ err: (err as Error).message, id: opts.id }, 'v1239 Fortsetzung im Owner-Chat fehlgeschlagen'); return false; }
   }
 

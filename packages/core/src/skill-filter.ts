@@ -118,14 +118,21 @@ export function werkzeugeFuerNachricht<T extends SkillMetadata>(text: string, ve
   if (genannt.length) return { metas: genannt, grund: 'geraet_genannt' };
   const ohneGeraete = alle.filter(m => !istGeraeteSkill(m));
   const available = new Set<SkillCategory>(ohneGeraete.map(s => s.category ?? 'core'));
-  const mitGeraeten = (metas: T[], quelle: string): T[] => GERAETE_KEYWORDS.test(quelle) ? [...metas, ...geraete] : metas;
+  const vText = verlauf.filter(Boolean).join(' ');
+  // v1324 — Realfall 09.10. 13:45: „warum setzt du es nicht um?" nach dem MacBook-Auftrag landete im Rückfall ohne Gerätewerkzeug,
+  // Alfred erklärte, er habe kein Werkzeug. Ein in den letzten Nachrichten genanntes Gerät bleibt in jedem Zweig dabei,
+  // und der Rückfall prüft Nachricht UND Verlauf auf Gerätewörter.
+  const ausVerlaufGenannt = vText ? genannteGeraete(vText, geraete) : [];
+  const mitGeraeten = (metas: T[], quelle: string): T[] => {
+    const dazu = GERAETE_KEYWORDS.test(quelle) ? geraete : ausVerlaufGenannt;
+    return dazu.length ? [...metas, ...dazu.filter(g => !metas.includes(g))] : metas;
+  };
   const eigene = selectCategoriesOhneRueckfall(text, available);
   if (eigene) return { metas: mitGeraeten(filterSkills(ohneGeraete, eigene) as T[], text), grund: 'nachricht' };
-  const vText = verlauf.filter(Boolean).join(' ');
   const ausVerlauf = vText ? selectCategoriesOhneRueckfall(vText, available) : undefined;
   if (ausVerlauf) return { metas: mitGeraeten(filterSkills(ohneGeraete, ausVerlauf) as T[], `${text} ${vText}`), grund: 'verlauf' };
   const klein = new Set<SkillCategory>((['core', 'productivity', 'information'] as SkillCategory[]).filter(c => available.has(c)));
-  return { metas: mitGeraeten(filterSkills(ohneGeraete, klein) as T[], text), grund: 'rueckfall' };
+  return { metas: mitGeraeten(filterSkills(ohneGeraete, klein) as T[], `${text} ${vText}`), grund: 'rueckfall' };
 }
 
 /**

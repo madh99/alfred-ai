@@ -246,4 +246,16 @@ describe('Werkzeugwahl je Nachricht (v1300)', () => {
     expect(namen(r)).toEqual(['calendar', 'email', 'help', 'memory', 'selbstupdate', 'weather', 'web_search']);
     expect(selectCategoriesOhneRueckfall('danke', new Set(['core', 'media']))).toBeUndefined();
   });
+  it('v1324: ein zuletzt genanntes Gerät bleibt bei der Rückfrage dabei (Realfall 09.10. „warum setzt du es nicht um?")', () => {
+    const r = werkzeugeFuerNachricht('warum setzt du es nicht um ?', ['kannst du am mac bitte mit der camera einen shoot machen'], alle);
+    expect(r.grund).toBe('rueckfall');
+    expect(namen(r)).toContain('geraet_macbook'); // „mac" ist Gerätewort → alle Geräte, wie im Verlauf-Zweig
+    const n = werkzeugeFuerNachricht('wo soll ich es bestätigen?', ['nimm bitte auf dem MacBook ein Foto auf'], alle);
+    expect(n.metas.map(m => m.name)).toContain('geraet_macbook');
+    const w = werkzeugeFuerNachricht('Wie ist das Wetter morgen?', ['lies auf Office-VM die Mails'], alle);
+    expect(w.grund).toBe('nachricht');
+    expect(namen(w)).toEqual(['geraet_office_vm', 'help', 'memory', 'selbstupdate', 'weather', 'web_search']); // genanntes Gerät kommt dazu, nicht alle drei
+    const o = werkzeugeFuerNachricht('danke', ['bis morgen'], alle);
+    expect(namen(o)).not.toContain('geraet_macbook');
+  });
 });

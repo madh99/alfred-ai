@@ -16,6 +16,7 @@ import 'hoeren.dart';
 import 'update.dart';
 import 'ipc.dart';
 import 'kacheln.dart';
+import 'linux_hotkey.dart';
 import 'modell.dart';
 import 'server.dart';
 import 'transfer.dart';
@@ -33,6 +34,8 @@ import 'package:desktop_drop/desktop_drop.dart';
 late final Map<String, String> startArgs;
 
 Future<void> main(List<String> args) async {
+  // 1.0.3 — Linux/Wayland: zweiter Prozess aus dem GNOME-Tastenkürzel signalisiert der laufenden App und endet
+  if (Platform.isLinux && args.contains('--sprechen')) { exit(await LinuxHotkey.signal() ? 0 : 1); }
   final m = <String, String>{};
   for (var i = 0; i < args.length; i++) {
     if (args[i].startsWith('--') && i + 1 < args.length) { m[args[i].substring(2)] = args[i + 1]; i++; }
@@ -173,6 +176,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   @override
   void dispose() {
     abfrage?.cancel();
+    _signal?.cancel();
     hoerClient?.schluss();
     ipc.stop();
     windowManager.removeListener(this);
@@ -196,7 +200,16 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Tray nicht verfügbar: $e')); }
   }
 
+  StreamSubscription<ProcessSignal>? _signal;
+
   Future<void> _tastenkuerzelEinrichten() async {
+    if (Platform.isLinux) {
+      // 1.0.3 — Wayland: keybinder kann nicht binden; GNOME-Kürzel + SIGUSR1 (linux_hotkey.dart). Unter X11 zusätzlich wie bisher.
+      _signal = LinuxHotkey.hoere(_talkUmschalten);
+      final m = await LinuxHotkey.einrichten();
+      if (m != null) _zeile(Eintrag(Art.hinweis, m));
+      if (LinuxHotkey.wayland) return;
+    }
     try {
       await hotKeyManager.register(tastenkuerzel, keyDownHandler: (_) => _talkUmschalten());
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Tastenkürzel nicht registriert: $e')); }
@@ -614,15 +627,26 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: eingabe,
-                    focusNode: fokus,
-                    autofocus: true,
-                    enabled: !antwortet,
-                    minLines: 1,
-                    maxLines: 5,
-                    decoration: InputDecoration(hintText: anhaenge.isEmpty ? 'Nachricht an Alfred … (Enter sendet, Dateien hineinziehen)' : 'Was soll Alfred mit ${anhaenge.length == 1 ? 'der Datei' : 'den Dateien'} tun? (Enter sendet, leer = nur ablegen)', border: const OutlineInputBorder(), isDense: true),
-                    onSubmitted: (_) => _senden(),
+                  // 1.0.3 — mehrzeiliges Feld: Enter fügte nur eine Zeile ein (onSubmitted feuert bei maxLines > 1 nicht).
+                  // Enter sendet, Umschalt+Enter macht eine neue Zeile.
+                  child: Focus(
+                    onKeyEvent: (node, ev) {
+                      if (ev is KeyDownEvent && (ev.logicalKey == LogicalKeyboardKey.enter || ev.logicalKey == LogicalKeyboardKey.numpadEnter) && !HardwareKeyboard.instance.isShiftPressed) {
+                        if (!antwortet) _senden();
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: TextField(
+                      controller: eingabe,
+                      focusNode: fokus,
+                      autofocus: true,
+                      enabled: !antwortet,
+                      minLines: 1,
+                      maxLines: 5,
+                      decoration: InputDecoration(hintText: anhaenge.isEmpty ? 'Nachricht an Alfred … (Enter sendet, Umschalt+Enter neue Zeile, Dateien hineinziehen)' : 'Was soll Alfred mit ${anhaenge.length == 1 ? 'der Datei' : 'den Dateien'} tun? (Enter sendet, leer = nur ablegen)', border: const OutlineInputBorder(), isDense: true),
+                      onSubmitted: (_) => _senden(),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),

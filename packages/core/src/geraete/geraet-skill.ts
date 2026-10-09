@@ -2,6 +2,7 @@ import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult, GeraetManifest, GeraetAktionDef } from '@alfred/types';
 import { paramsKurz, TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, sha256Hex, mimeAusName, sichererDateiname } from './protokoll.js';
 import { deuteGeraete } from '../normalzustaende/geraete.js'; // v1238
+import type { VorhabenHerkunft } from './freigaben.js'; // v1324
 
 /**
  * v1224 — Skill-Proxy: ein verbundenes Gerät erscheint im Gehirn als Skill `geraet_<name>`.
@@ -27,10 +28,10 @@ export interface GeraetSkillDeps {
   pruefeFreigabe: (nonce: unknown, aktion: string, params: Record<string, unknown>) => boolean;
   /** v1230 — Vorhaben-Freigabe: anlegen, nach Owner-Ja aktivieren, Deckung prüfen. */
   vorhaben: {
-    erzeuge: (v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number }) => { nonce: string; bis: number; aktionen: string[]; domains: string[] };
-    aktiviere: (nonce: unknown) => { nonce: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] } | undefined; // v1297 nonce
+    erzeuge: (v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number; herkunft?: VorhabenHerkunft }) => { nonce: string; bis: number; aktionen: string[]; domains: string[] };
+    aktiviere: (nonce: unknown) => { nonce: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: VorhabenHerkunft } | undefined; // v1297 nonce, v1324 herkunft
     deckt: (aktion: string, params: Record<string, unknown>) => { beschreibung: string; schritte: number } | undefined;
-    nachFreigabe?: (v: { nonce: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[] }) => Promise<void>;
+    nachFreigabe?: (v: { nonce: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: VorhabenHerkunft }) => Promise<void>;
   };
   /** v1249 — große Datei für das Gerät bereitstellen (blockweiser Download über HTTPS). */
   transfer?: { bereitstellen: (name: string, data: Buffer) => { id: string; groesse: number; sha256: string; blockGroesse: number } };
@@ -75,7 +76,9 @@ export class GeraetSkill extends Skill {
     const aktion = String(input.action ?? '');
     // v1319 — Realfall Mac 09.10.: Frage aus der Desktop-App, Bestätigung im Telegram-Chat des Owners, Ergebnis nur dort —
     // die Sitzung sah „noch ist nichts übertragen". Die Herkunft wandert mit der Bestätigung.
-    const herkunft = _context?.chatId && _context?.platform ? { chatId: String(_context.chatId), platform: String(_context.platform) } : undefined;
+    // v1324 — mit userId: die Fortsetzung eines Vorhabens läuft als Nachricht in dieser Sitzung (Realfall 09.10. 13:44: Foto-Auftrag
+    // aus der PC-App, Ergebnis nur in Telegram, die Rückfrage in der App fand kein MacBook-Werkzeug).
+    const herkunft = _context?.chatId && _context?.platform ? { chatId: String(_context.chatId), platform: String(_context.platform), userId: String(_context.userId ?? _context.chatId) } : undefined;
     // v1268 — Sicherheitsbefund: Geräte gehören dem Owner; andere Nutzer (Familie, Gäste) bekommen weder Dateien noch Bildschirm
     if (this.deps.istOwner && !this.deps.istOwner(_context)) {
       return { success: false, error: `Das Gerät ${this.deps.name} gehört dem Owner — nur er kann es bedienen.` };
@@ -91,7 +94,7 @@ export class GeraetSkill extends Skill {
       if (unbekannt.length) return { success: false, error: `Unbekannte Aktionen im Vorhaben: ${unbekannt.join(', ')}` };
       const gesperrt = this.deps.manifest.aktionen.filter(a => a.autonomie === 'nie' && aktionen.includes(a.name)).map(a => a.name);
       if (gesperrt.length) return { success: false, error: `Diese Aktionen bleiben gesperrt und gehören in kein Vorhaben: ${gesperrt.join(', ')}` };
-      const v = this.deps.vorhaben.erzeuge({ beschreibung, aktionen, domains, dauerMin: typeof input.dauerMin === 'number' ? input.dauerMin : undefined });
+      const v = this.deps.vorhaben.erzeuge({ beschreibung, aktionen, domains, dauerMin: typeof input.dauerMin === 'number' ? input.dauerMin : undefined, herkunft });
       const bisText = new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
       const frage = `Vorhaben auf ${this.deps.name}: ${beschreibung} — Umfang: ${v.aktionen.join(', ')}${v.domains.length ? ' auf ' + v.domains.join(', ') : ''}, bis ${bisText}. Kauf, Zahlung und Anmeldung bleiben gesperrt.`;
       const gestellt = await this.deps.bestaetigung({ description: frage, aktion: 'vorhaben_freigeben', params: { vorhaben: v.nonce } }, herkunft);

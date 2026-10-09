@@ -80,7 +80,8 @@ class IpcVerbindung {
         final s = n['status'] as Map<String, dynamic>;
         aufStatus(SatellitStatus(name: '${s['name']}', version: '${s['version']}', verbunden: s['verbunden'] == true, serverVersion: s['serverVersion'] as String?, aktionenLaufend: (s['aktionenLaufend'] as num?)?.toInt() ?? 0));
       case 'ereignis':
-        aufEreignis('${n['art']}', '${n['text']}', DateTime.tryParse('${n['zeit']}') ?? DateTime.now());
+        // 1.0.3 — der Satellit schickt UTC („…Z"); ohne toLocal() stand im Verlauf 11:44 statt 13:44 (Realfall Mac 09.10.)
+        aufEreignis('${n['art']}', '${n['text']}', DateTime.tryParse('${n['zeit']}')?.toLocal() ?? DateTime.now());
       case 'bestaetigung':
         final b = n['bestaetigung'] as Map<String, dynamic>;
         aufBestaetigung(Bestaetigung(id: '${b['id']}', text: '${b['description'] ?? ''}', quelle: b['source'] as String?, seit: DateTime.tryParse('${b['createdAt'] ?? ''}')));

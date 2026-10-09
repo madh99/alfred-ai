@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1324] - 2026-10-09
+
+### Fixed — Vorhaben-Fortsetzung in der anfragenden Sitzung, genanntes Gerät bleibt Werkzeug (v1324)
+
+Realfall 09.10. 13:44 (Foto-Auftrag an das MacBook aus der Desktop-App am PC): Nach der Freigabe lief die Fortsetzung des Vorhabens ausschließlich im Telegram-Chat des Owners; die Sitzung am PC bekam weder das Ergebnis noch stand es in ihrem Verlauf. Auf die Rückfrage „warum setzt du es nicht um?" fiel die Werkzeugwahl in den Rückfall-Zweig, der nur die Nachricht selbst auf Gerätewörter prüfte — das MacBook-Werkzeug fehlte, und Alfred erklärte, ihm stehe kein Werkzeug für die MacBook-Steuerung zur Verfügung.
+
+- Ein Vorhaben merkt sich seine Herkunft (Chat, Plattform, Benutzerkennung der anfragenden Sitzung). Die Fortsetzung nach der Freigabe läuft als Nachricht in dieser Sitzung: Antwort und Anhänge gehen dorthin und stehen im Verlauf, der Owner-Chat bekommt eine Kopie (wie bei Bestätigungen seit v1319).
+- Werkzeugwahl: Ein in den letzten Nachrichten genanntes Gerät bleibt in jedem Zweig als Werkzeug dabei; der Rückfall-Zweig prüft Nachricht und Verlauf auf Gerätewörter. Tests für den Realfall ergänzt.
+
+Desktop-App 1.0.3 (eigener Release, keine Server-Änderung): Enter sendet auch im mehrzeiligen Feld (Umschalt+Enter neue Zeile); Zeiten der Satelliten-Ereignisse in Ortszeit statt UTC; Tastenkürzel unter Linux/Wayland über ein GNOME-Kürzel, das der laufenden App ein Signal schickt (keybinder bindet unter Wayland nicht).
+
 ## [0.19.0-jarvis.1323] - 2026-10-09
 
 ### Fixed — Dateispeicher über die Master-UUID, keine Dringlichkeiten aus Hilfsläufen (v1323)

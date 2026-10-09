@@ -79,7 +79,11 @@ export interface Vorhaben {
   bis: number;
   aktiv: boolean;
   schritte: number;
+  /** v1324 — Chat, aus dem das Vorhaben angefordert wurde (Gerätesitzung): die Fortsetzung läuft dort, nicht nur im Owner-Chat. */
+  herkunft?: VorhabenHerkunft;
 }
+
+export interface VorhabenHerkunft { chatId: string; platform: string; userId: string }
 
 export function hostAus(url: unknown): string | undefined {
   if (typeof url !== 'string' || !url) return undefined;
@@ -108,7 +112,7 @@ export class VorhabenFreigaben {
     try { this.speicher.speichere([...this.vorhaben.values()]); } catch { /* Ablage optional */ }
   }
 
-  erzeuge(skillName: string, v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number }): Vorhaben {
+  erzeuge(skillName: string, v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number; herkunft?: VorhabenHerkunft }): Vorhaben {
     this.raeumeAuf();
     const dauer = Math.min(Math.max(5, Math.round(v.dauerMin ?? 30)), VORHABEN_MAX_MIN);
     const vorhaben: Vorhaben = {
@@ -116,6 +120,7 @@ export class VorhabenFreigaben {
       aktionen: [...new Set(v.aktionen.map(a => a.trim()).filter(Boolean))].slice(0, 20),
       domains: [...new Set((v.domains ?? []).map(d => d.trim().toLowerCase()).filter(Boolean))].slice(0, 20),
       bis: this.now() + dauer * 60_000, aktiv: false, schritte: 0,
+      ...(v.herkunft ? { herkunft: v.herkunft } : {}),
     };
     this.vorhaben.set(vorhaben.nonce, vorhaben);
     this.sichere();
