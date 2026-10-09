@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1327] - 2026-10-09
+
+### Added — Geräteaktion `programm_beenden` (v1327)
+
+Owner 09.10. 16:07: „bitte die Photo Booth App am Mac wieder schließen" — Alfred griff zu `taste cmd+q`, das ohne vorherige Element-Karte abgewiesen wird (zweimal „Erst fenster_lesen"). Neue Aktion `programm_beenden` (Bestätigung nötig): macOS beendet das Programm über AppleScript, aber nur, wenn es läuft (sonst würde es gestartet); Windows schließt das Hauptfenster und meldet, wenn der Prozess wegen einer Rückfrage weiterläuft; Linux schließt über wmctrl, sonst Signal.
+
 ## [0.19.0-jarvis.1326] - 2026-10-09
 
 ### Fixed — Kamera-Foto ohne Fensterzählung, Anhänge bestätigter Aktionen in die anfragende Sitzung (v1326)

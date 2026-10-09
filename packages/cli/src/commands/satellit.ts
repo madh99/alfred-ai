@@ -18,7 +18,7 @@ import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto } from './satellit-kamera.js'; // v1325
-import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fenster.js'; // v1271
+import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
 import { Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js'; // v1276
@@ -91,6 +91,8 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'fenster', beschreibung: 'Listet die offenen Fenster dieses Geräts (Titel, Programm) — für „was ist offen", „welche Programme laufen"', autonomie: 'auto' },
       { name: 'fenster_vordergrund', beschreibung: 'Holt ein offenes Fenster in den Vordergrund (Suchtext im Titel oder Programmname)', autonomie: 'auto', parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname, z. B. Outlook' } } },
       { name: 'programm_starten', beschreibung: 'Startet ein Programm auf diesem Gerät (Name im Pfad, App-Name unter macOS, oder voller Pfad), optional mit Argumenten', autonomie: 'bestaetigen', parameter: { programm: { type: 'string', description: 'Programmname oder Pfad, z. B. notepad, outlook, Safari' }, argumente: { type: 'string', description: 'Argumente, durch Leerzeichen getrennt (optional)' } } },
+      // v1327 — sauberes Beenden statt Tastendruck (cmd+q hängt an der Element-Karte)
+      { name: 'programm_beenden', beschreibung: 'Beendet ein laufendes Programm auf diesem Gerät sauber (macOS: Beenden, Windows: Hauptfenster schließen, Linux: Fenster schließen oder Signal) — für „schließe Photo Booth", „beende Outlook". Programmname wie in fenster.', autonomie: 'bestaetigen', parameter: { programm: { type: 'string', description: 'Programmname, z. B. Photo Booth, Outlook, firefox' } } },
       // v1268 — Bildschirm sehen: das Modell bekommt das Bild zu sehen und kann es beschreiben
       { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler". Mit markieren=true trägt es die Nummern der letzten Element-Karte ein (Windows).', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' }, markieren: { type: 'boolean', description: 'Nummern der Element-Karte (fenster_lesen) ins Bild zeichnen' } } },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
@@ -417,6 +419,10 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const argumente = Array.isArray(params.argumente) ? (params.argumente as unknown[]).map(String) : String(params.argumente ?? '').split(/\s+/).filter(Boolean);
       const t = await programmStarten(String(params.programm ?? ''), argumente);
       return { success: true, data: { programm: params.programm, argumente }, display: t };
+    }
+    case 'programm_beenden': { // v1327
+      const t = await programmBeenden(String(params.programm ?? ''));
+      return { success: true, data: { programm: params.programm }, display: t };
     }
     // v1325 — Kamera-Foto: wie datei_holen zugestellt (Dateispeicher + Anhang), das Gehirn muss keine Pfade raten
     case 'foto': {

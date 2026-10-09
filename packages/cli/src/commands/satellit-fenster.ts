@@ -82,6 +82,34 @@ export async function programmStarten(programm: string, argumente: string[] = []
   return `${programm} gestartet`;
 }
 
+/**
+ * v1327 — Programm sauber beenden. Owner 09.10. 16:07: „bitte die Photo Booth App am Mac wieder schließen" — das Modell
+ * griff zu `taste cmd+q`, das ohne Element-Karte abgewiesen wird. macOS: `quit` nur, wenn das Programm läuft (sonst
+ * würde osascript es starten). Windows: Hauptfenster schließen, kein Abschuss (ungesicherte Arbeit). Linux: wmctrl, sonst SIGTERM.
+ */
+export async function programmBeenden(programm: string): Promise<string> {
+  const p = programm.trim();
+  if (!p) throw new Error('Programm fehlt');
+  const name = p.replace(/\.(app|exe)$/i, '').split(/[\\/]/).pop()!;
+  if (process.platform === 'darwin') {
+    let ziel: string | undefined;
+    try { if ((await run('pgrep', ['-x', name], 5_000)).trim()) ziel = name; } catch { /* nicht exakt */ }
+    if (!ziel) {
+      const liste = await fensterListe();
+      ziel = liste.find(f => f.programm.toLowerCase().includes(name.toLowerCase()))?.programm;
+    }
+    if (!ziel) return `${programm} läuft nicht`;
+    await run('osascript', ['-e', `tell application "${ziel.replace(/"/g, '\\"')}" to quit`], 15_000);
+    return `${ziel} beendet`;
+  }
+  if (process.platform === 'win32') {
+    const out = await powershell(`$ps = Get-Process -Name ${psString(name)} -ErrorAction SilentlyContinue; if (-not $ps) { 'laeuft nicht' } else { $ps | ForEach-Object { $_.CloseMainWindow() | Out-Null }; Start-Sleep -Seconds 3; if (Get-Process -Name ${psString(name)} -ErrorAction SilentlyContinue) { 'fenster geschlossen, prozess laeuft noch (Rueckfrage im Programm?)' } else { 'beendet' } }`);
+    return out === 'laeuft nicht' ? `${programm} läuft nicht` : `${programm}: ${out}`;
+  }
+  if (await vorhanden('wmctrl')) { try { await run('wmctrl', ['-c', name], 5_000); return `${name}: Fenster geschlossen`; } catch { /* dann Signal */ } }
+  try { await run('pkill', ['-x', name], 5_000); return `${name} beendet`; } catch { return `${programm} läuft nicht`; }
+}
+
 /** Holt das erste Fenster, dessen Titel oder Programm den Suchtext enthält, in den Vordergrund. */
 export async function fensterVordergrund(suche: string): Promise<Fenster> {
   const s = suche.trim().toLowerCase();
