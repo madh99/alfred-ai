@@ -4,6 +4,13 @@ import 'dart:io';
 
 import 'modell.dart';
 
+/// 1.0.5 — MIME-Typ aus der Dateiendung (für Anhänge aus dem SSE-Strom).
+String _mimeAusName(String name) {
+  final e = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+  const m = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif', 'webp': 'image/webp', 'pdf': 'application/pdf', 'txt': 'text/plain', 'md': 'text/markdown', 'csv': 'text/csv', 'json': 'application/json', 'zip': 'application/zip', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'mp4': 'video/mp4'};
+  return m[e] ?? 'application/octet-stream';
+}
+
 /// HTTP zum Gehirn mit dem Gerätetoken — dieselben Routen wie die Terminal-Sitzung (v1232): Chat mit Streaming (SSE),
 /// offene Bestätigungen, Entscheidung. `insecure` = selbst signiertes Zertifikat des Servers akzeptieren (wie beim Satelliten).
 class Server {
@@ -81,7 +88,7 @@ class Server {
   }
 
   /// Nachricht senden; `aufDelta` bekommt Textstücke, `aufStatus` Zwischenstände (Werkzeuge, Denken). Liefert den Endtext.
-  Future<String> sende(String text, {required void Function(String) aufDelta, required void Function(String) aufStatus, String? tier}) async {
+  Future<String> sende(String text, {required void Function(String) aufDelta, required void Function(String) aufStatus, void Function(Anhang)? aufAnhang, String? tier}) async {
     final req = await _anfrage('POST', '/api/message');
     final body = jsonEncode({'text': text, 'chatId': chatId, 'stream': true, 'tier': ?tier});
     req.add(utf8.encode(body)); // UTF-8 statt Latin-1
@@ -107,6 +114,13 @@ class Server {
         if (typ == 'progress' && e['kind'] == 'delta') { aufDelta('${e['text'] ?? ''}'); }
         else if (typ == 'progress' || typ == 'status') { aufStatus('${e['text'] ?? ''}'); }
         else if (typ == 'response') { antwort = '${e['text'] ?? ''}'; }
+        else if (typ == 'attachment' && e['data'] is String) { // 1.0.5 — Bild/Datei aus der Antwort (bisher verworfen)
+          try {
+            final bild = e['attachmentType'] == 'image';
+            final name = '${e['fileName'] ?? (bild ? 'bild-${DateTime.now().millisecondsSinceEpoch}.jpg' : 'datei')}';
+            aufAnhang?.call(Anhang(name: name, mime: bild ? 'image/jpeg' : _mimeAusName(name), bytes: base64Decode(e['data'] as String)));
+          } catch (_) { /* Anhang optional */ }
+        }
         else if (typ == 'error') { throw Exception('${e['text'] ?? 'unbekannt'}'); }
       }
     }

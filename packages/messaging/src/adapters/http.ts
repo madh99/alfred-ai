@@ -231,6 +231,13 @@ export interface DbSeedsCallbacks {
  * HTTP API adapter — exposes Alfred as an HTTP server with SSE streaming.
  * Accepts POST /api/message and streams responses back via Server-Sent Events.
  */
+/** v1325 — MIME-Typ aus der Dateiendung für Anhänge an Gerätesitzungen (klein, ohne Paket). */
+function mimeAusDateiname(name: string): string {
+  const e = (name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '').toLowerCase();
+  const m: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', zip: 'application/zip', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', mp4: 'video/mp4', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+  return m[e] ?? 'application/octet-stream';
+}
+
 export class HttpAdapter extends MessagingAdapter {
   readonly platform: Platform = 'api';
   private server: http.Server | https.Server | null = null;
@@ -915,7 +922,7 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1251 — Hör-Relais (Echtzeit-Transkription) für die Sitzung. */
     hoerenUpgrade?(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
-    nachricht?(geraetId: string, text: string): boolean;
+    nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }): boolean; // v1325 Anhang
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start). */
     verlauf?(geraetId: string, limit: number): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
     /** v1249 — blockweiser Dateitransfer. */
@@ -1081,7 +1088,7 @@ export class HttpAdapter extends MessagingAdapter {
         data: photo.toString('base64'),
         caption,
       });
-    }
+    } else this.anGeraet(chatId, caption, caption && /\.\w{2,5}$/.test(caption) ? caption : 'bild.jpg', 'image/jpeg', photo); // v1325
     return `api-photo-${++this.messageCounter}`;
   }
 
@@ -1095,8 +1102,15 @@ export class HttpAdapter extends MessagingAdapter {
         fileName,
         caption,
       });
-    }
+    } else this.anGeraet(chatId, caption, fileName, mimeAusDateiname(fileName), file); // v1325
     return `api-file-${++this.messageCounter}`;
+  }
+
+  /** v1325 — Anhang ohne SSE-Strom an die Gerätesitzung pushen (Realfall 09.10.: Kamerafoto kam nur in Telegram an). Bis 8 MB. */
+  private anGeraet(chatId: string, text: string | undefined, name: string, mime: string, daten: Buffer): void {
+    if (!chatId.startsWith('sitzung:') || !this.geraeteCallbacks?.nachricht) return;
+    if (daten.length > 8 * 1024 * 1024) { this.geraeteCallbacks.nachricht(chatId.slice('sitzung:'.length), `📎 ${name} (${Math.round(daten.length / 1024 / 1024)} MB) — zu groß für die Sitzung, liegt im Dateispeicher.`); return; }
+    this.geraeteCallbacks.nachricht(chatId.slice('sitzung:'.length), text && text !== name ? text : '', { name, mime, base64: daten.toString('base64') });
   }
 
   async sendVoice(chatId: string, audio: Buffer, caption?: string): Promise<string | undefined> {

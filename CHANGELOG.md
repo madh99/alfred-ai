@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1325] - 2026-10-09
+
+### Added — Kamera-Foto als feste Geräteaktion, Anhänge an Gerätesitzungen (v1325)
+
+Realfall 09.10. 15:20 (Foto-Auftrag an das MacBook aus der Desktop-App): Alfred steuerte Photo Booth über die Oberfläche, löste aus und suchte das Bild eine Sekunde später im englischen Ordner „Photo Booth Library". Auf dem deutschen Mac heißt der Ordner „Photo Booth-Mediathek", und Photo Booth zählt vor dem Auslösen drei Sekunden herunter — das Foto lag um 15:21 da, gemeldet wurde „bisher kein Foto". Das Bildschirmfoto aus dem Lauf kam nur in Telegram an, die Sitzung in der App bekam nur Text.
+
+- Geräteaktion `foto` (macOS, Bestätigung nötig): öffnet Photo Booth, löst über System Events aus, wartet den Countdown ab und holt die neue Datei aus allen „Photo Booth*"-Ordnern unter Bilder. Das Foto wird wie bei `datei_holen` im Dateispeicher des Owners abgelegt und als Anhang zugestellt. Windows und Linux folgen.
+- Anhänge (Fotos, Bildschirmfotos, geholte Dateien) gehen an Gerätesitzungen ohne offenen Antwortstrom jetzt als Push an die App (bis 8 MB); größere Dateien werden mit Hinweis auf den Dateispeicher gemeldet. Der Satellit reicht den Anhang über die lokale Schnittstelle an die Desktop-App weiter.
+
+Desktop-App 1.0.5: Bilder in der Antwort als Vorschau mit „Öffnen" und „Speichern" (Downloads), Dateien als Chip; Anhänge aus dem Antwortstrom (bisher verworfen) und aus gepushten Nachrichten.
+
 ## [0.19.0-jarvis.1324] - 2026-10-09
 
 ### Fixed — Vorhaben-Fortsetzung in der anfragenden Sitzung, genanntes Gerät bleibt Werkzeug (v1324)

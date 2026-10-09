@@ -185,7 +185,7 @@ export class GeraetSkill extends Skill {
     }
     // v1235 — datei_holen: Prüfsumme prüfen, im Dateispeicher ablegen, als Anhang zum Owner
     const dh = r.data as { dateiBase64?: string; dateiName?: string; sha256?: string } | undefined;
-    if (aktion === 'datei_holen' && dh && typeof dh.dateiBase64 === 'string') {
+    if ((aktion === 'datei_holen' || aktion === 'foto') && dh && typeof dh.dateiBase64 === 'string') { // v1325 foto wie datei_holen
       const data = Buffer.from(dh.dateiBase64, 'base64');
       if (dh.sha256 && sha256Hex(data) !== dh.sha256) return { success: false, error: 'Prüfsumme der geholten Datei stimmt nicht' };
       const name = sichererDateiname(dh.dateiName);

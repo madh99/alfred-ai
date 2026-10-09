@@ -3,10 +3,20 @@
 enum Art { du, alfred, satellit, bestaetigung, hinweis, fehler }
 
 class Eintrag {
-  Eintrag(this.art, this.text, {DateTime? zeit}) : zeit = zeit ?? DateTime.now();
+  Eintrag(this.art, this.text, {DateTime? zeit, List<Anhang>? anhaenge}) : zeit = zeit ?? DateTime.now(), anhaenge = anhaenge ?? [];
   final Art art;
   String text;
   final DateTime zeit;
+  /// 1.0.5 — Bilder und Dateien, die mit der Antwort kommen (Kamerafoto, Bildschirmfoto, geholte Datei).
+  final List<Anhang> anhaenge;
+}
+
+class Anhang {
+  Anhang({required this.name, required this.mime, required this.bytes});
+  final String name;
+  final String mime;
+  final List<int> bytes;
+  bool get istBild => mime.startsWith('image/');
 }
 
 class Bestaetigung {

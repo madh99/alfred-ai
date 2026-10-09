@@ -17,11 +17,12 @@ import { installiereStarter } from './satellit-starter.js'; // v1304
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
+import { kameraFoto } from './satellit-kamera.js'; // v1325
 import { fensterListe, programmStarten, fensterVordergrund } from './satellit-fenster.js'; // v1271
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
 import { Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js'; // v1276
-import { IpcServer, type IpcEreignisArt, type SatellitStatus } from './satellit-ipc.js'; // v1302
+import { IpcServer, type IpcEreignisArt, type IpcAnhang, type SatellitStatus } from './satellit-ipc.js'; // v1302, v1325 Anhang
 import { heimInParams } from './satellit-pfad.js'; // v1303
 import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
 
@@ -93,6 +94,10 @@ export function baueManifest(version: string): GeraetManifest {
       // v1268 — Bildschirm sehen: das Modell bekommt das Bild zu sehen und kann es beschreiben
       { name: 'bildschirm', beschreibung: 'Bildschirmfoto dieses Geräts (ganzer Bildschirm oder aktives Fenster). Alfred SIEHT das Bild danach selbst — für „was ist auf meinem Bildschirm", „was ist das für ein Fehler". Mit markieren=true trägt es die Nummern der letzten Element-Karte ein (Windows).', autonomie: 'auto', parameter: { bereich: { type: 'string', description: 'alles (alle Monitore, Standard) oder fenster (nur das aktive Fenster)' }, markieren: { type: 'boolean', description: 'Nummern der Element-Karte (fenster_lesen) ins Bild zeichnen' } } },
       { name: 'browser_schliessen', beschreibung: 'Schließt den Alfred-Browser', autonomie: 'auto' },
+      // v1325 — Kamera: feste Aktion statt Oberflächen-Steuerung von Photo Booth (lokalisierte Ordner, 3-s-Countdown)
+      ...(process.platform === 'darwin' ? [
+        { name: 'foto', beschreibung: 'Nimmt ein Foto mit der Kamera dieses Geräts auf (macOS über Photo Booth: Auslöser, 3 s Countdown, neue Datei) und liefert es dem Owner als Bild — für „mach ein Foto mit der Kamera", „Kamerabild". Nicht für Bildschirmfotos (dafür bildschirm).', autonomie: 'bestaetigen' as const },
+      ] : []),
       // v1292 — Office über COM (nur Windows mit klassischem Outlook-Profil bzw. Excel): Schnittstelle statt Oberfläche
       ...(outlookVorhanden() ? [
         { name: 'outlook_mails', beschreibung: 'Liest Outlook auf diesem Gerät: ohne id die neuesten Mails des Posteingangs (Absender, Betreff, Vorschau; optional nur ungelesen, Suchtext, Ordner), mit id eine Mail vollständig', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'EntryID aus der Liste → ganze Mail lesen' }, anzahl: { type: 'number', description: 'Anzahl (Standard 15, max 50)' }, ungelesen: { type: 'boolean', description: 'nur ungelesene' }, suche: { type: 'string', description: 'Text in Betreff oder Absender' }, ordner: { type: 'string', description: 'posteingang (Standard), entwuerfe, gesendet' } } },
@@ -413,6 +418,11 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const t = await programmStarten(String(params.programm ?? ''), argumente);
       return { success: true, data: { programm: params.programm, argumente }, display: t };
     }
+    // v1325 — Kamera-Foto: wie datei_holen zugestellt (Dateispeicher + Anhang), das Gehirn muss keine Pfade raten
+    case 'foto': {
+      const f = await kameraFoto(k.name);
+      return { success: true, data: { dateiBase64: f.daten.toString('base64'), dateiName: f.dateiName, sha256: sha256Hex(f.daten), mimeType: mimeAusName(f.dateiName), pfad: f.pfad, groesse: f.daten.length }, display: `Foto aufgenommen (${f.daten.length} B, ${f.dauerMs} ms): ${f.pfad}` };
+    }
     // v1268 — Bildschirm sehen
     case 'bildschirm': {
       const bereich = params.bereich === 'fenster' ? 'fenster' : 'alles';
@@ -502,7 +512,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   let verbunden = false; let serverVersion: string | undefined; let verbundenSeit: string | undefined;
   const status = (): SatellitStatus => ({ name: k.name, version, pid: process.pid, verbunden, serverVersion, verbundenSeit, aktionenLaufend });
   let ipc: IpcServer | undefined;
-  const ereignis = (art: IpcEreignisArt, text: string) => { try { ipc?.sende({ typ: 'ereignis', zeit: new Date().toISOString(), art, text }); } catch { /* */ } };
+  const ereignis = (art: IpcEreignisArt, text: string, anhang?: IpcAnhang) => { try { ipc?.sende({ typ: 'ereignis', zeit: new Date().toISOString(), art, text, ...(anhang ? { anhang } : {}) }); } catch { /* */ } };
   if (!opts.einmal && !opts.ohneIpc && !process.env.ALFRED_KEIN_IPC) {
     const s = new IpcServer(status, (befehl, antworte) => {
       if (befehl === 'status') antworte({ typ: 'status', status: status() });
@@ -593,7 +603,10 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
           // v1318 — Antwort/Ergebnis vom Gehirn für die Sitzung dieses Geräts (z. B. „✅ datei_ablegen …" nach der Freigabe)
           if ((n as { typ: string }).typ === 'nachricht') {
             const text = String((n as { text?: string }).text ?? '');
-            if (text) { log(`Nachricht vom Gehirn: ${text.slice(0, 100)}`); ereignis('nachricht', text); }
+            // v1325 — Anhang (Foto, Bildschirmfoto, Datei) für die Desktop-App; Telegram bekam Bilder, die Sitzung nur Text
+            const a = (n as { anhang?: { name?: string; mime?: string; base64?: string } }).anhang;
+            const anhang: IpcAnhang | undefined = a && typeof a.base64 === 'string' && a.base64.length <= 12_000_000 ? { name: String(a.name ?? 'anhang'), mime: String(a.mime ?? 'application/octet-stream'), base64: a.base64 } : undefined;
+            if (text || anhang) { log(`Nachricht vom Gehirn: ${text.slice(0, 100)}${anhang ? ` [+${anhang.name}]` : ''}`); ereignis('nachricht', text, anhang); }
             return;
           }
           if (n.typ === 'aktion') {

@@ -10,6 +10,7 @@ import 'package:tray_manager/legacy.dart'; // trayManager, Menu, MenuItem, TrayL
 import 'package:window_manager/window_manager.dart';
 
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'audio.dart';
 import 'hoeren.dart';
@@ -141,8 +142,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     _tastenkuerzelEinrichten();
     ipc = IpcVerbindung(
       aufStatus: (s) => setState(() => satellit = s),
-      aufEreignis: (art, text, zeit) {
-        if (art == 'nachricht') { _zeile(Eintrag(Art.alfred, text, zeit: zeit)); if (stimme) _sprichKurz(text); return; } // v1318 — Ergebnis nach Freigabe
+      aufEreignis: (art, text, zeit, anhang) {
+        if (art == 'nachricht') { // v1318 — Ergebnis nach Freigabe; 1.0.5 — mit Anhang (Foto, Bildschirmfoto, Datei)
+          _zeile(Eintrag(Art.alfred, text.isEmpty && anhang != null ? '📎 ${anhang.name}' : text, zeit: zeit, anhaenge: anhang == null ? null : [anhang]));
+          if (stimme && text.isNotEmpty) _sprichKurz(text);
+          return;
+        }
         _zeile(Eintrag(Art.satellit, text, zeit: zeit));
       },
       aufBestaetigung: _meldeNeu,
@@ -562,6 +567,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           _nachUnten();
         },
         aufStatus: (st) => setState(() => fluechtig = st.isEmpty ? '' : '… ${st.length > 100 ? st.substring(0, 100) : st}'),
+        aufAnhang: (a) { if (laufend == null) { laufend = e; setState(() { verlauf.add(e); fluechtig = ''; }); } setState(() => e.anhaenge.add(a)); _nachUnten(); }, // 1.0.5
       );
       if (laufend == null) { _zeile(Eintrag(Art.alfred, ende.isEmpty ? '(keine Antwort)' : ende)); }
       else { if (ende.trim().isNotEmpty && ende.trim() != gezeigt.trim()) setState(() => e.text = ende); _protokolliere(e); }
@@ -699,13 +705,54 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     );
   }
 
+  /// 1.0.5 — Anhang in der Antwort: Bilder als Vorschau (Klick öffnet), Dateien als Chip; „Speichern" legt sie in Downloads ab.
+  Widget _anhang(Anhang a, ThemeData theme) {
+    final kb = (a.bytes.length / 1024).round();
+    final knoepfe = Row(mainAxisSize: MainAxisSize.min, children: [
+      Text('${a.name} · $kb KB', style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70)),
+      const SizedBox(width: 8),
+      TextButton.icon(onPressed: () => _anhangOeffnen(a), icon: const Icon(Icons.open_in_new, size: 16), label: const Text('Öffnen')),
+      TextButton.icon(onPressed: () => _anhangSpeichern(a), icon: const Icon(Icons.download, size: 16), label: const Text('Speichern')),
+    ]);
+    if (!a.istBild) return Padding(padding: const EdgeInsets.only(top: 6), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.attach_file, size: 18), const SizedBox(width: 4), knoepfe]));
+    return Padding(padding: const EdgeInsets.only(top: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      InkWell(onTap: () => _anhangOeffnen(a), child: ClipRRect(borderRadius: BorderRadius.circular(8), child: ConstrainedBox(constraints: const BoxConstraints(maxHeight: 360, maxWidth: 640), child: Image.memory(Uint8List.fromList(a.bytes), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Text('(Bild nicht darstellbar)'))))),
+      knoepfe,
+    ]));
+  }
+
+  Future<File> _anhangAblegen(Anhang a, Directory dir) async {
+    await dir.create(recursive: true);
+    var f = File('${dir.path}${Platform.pathSeparator}${a.name}');
+    if (await f.exists()) f = File('${dir.path}${Platform.pathSeparator}${DateTime.now().millisecondsSinceEpoch}-${a.name}');
+    await f.writeAsBytes(a.bytes, flush: true);
+    return f;
+  }
+
+  Future<void> _anhangOeffnen(Anhang a) async {
+    try {
+      final f = await _anhangAblegen(a, await getTemporaryDirectory());
+      if (Platform.isWindows) { await Process.start('cmd', ['/c', 'start', '', f.path], mode: ProcessStartMode.detached); }
+      else if (Platform.isMacOS) { await Process.start('open', [f.path], mode: ProcessStartMode.detached); }
+      else { await Process.start('xdg-open', [f.path], mode: ProcessStartMode.detached); }
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Anhang nicht geöffnet: $e')); }
+  }
+
+  Future<void> _anhangSpeichern(Anhang a) async {
+    try {
+      final dir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+      final f = await _anhangAblegen(a, dir);
+      _zeile(Eintrag(Art.hinweis, '💾 gespeichert: ${f.path}'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Anhang nicht gespeichert: $e')); }
+  }
+
   Widget _eintrag(Eintrag e, ThemeData theme) {
     final zeit = '${e.zeit.hour.toString().padLeft(2, '0')}:${e.zeit.minute.toString().padLeft(2, '0')}';
     switch (e.art) {
       case Art.du:
         return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerRight, child: Container(constraints: const BoxConstraints(maxWidth: 720), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: SelectableText(e.text))));
       case Art.alfred:
-        return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerLeft, child: Container(constraints: const BoxConstraints(maxWidth: 820), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(12)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Alfred · $zeit', style: theme.textTheme.labelSmall?.copyWith(color: Colors.cyanAccent)), const SizedBox(height: 4), SelectableText.rich(markdown(e.text.isEmpty ? '…' : e.text, theme))]))));
+        return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerLeft, child: Container(constraints: const BoxConstraints(maxWidth: 820), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(12)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Alfred · $zeit', style: theme.textTheme.labelSmall?.copyWith(color: Colors.cyanAccent)), const SizedBox(height: 4), SelectableText.rich(markdown(e.text.isEmpty ? '…' : e.text, theme)), for (final a in e.anhaenge) _anhang(a, theme)]))));
       case Art.satellit:
         return Text('$zeit  ⚙ ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: Colors.white54));
       case Art.bestaetigung:
