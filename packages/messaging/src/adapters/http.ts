@@ -401,6 +401,8 @@ export class HttpAdapter extends MessagingAdapter {
     loeschen: (faden: string) => Promise<boolean>;
     /** v1331 — nur der Owner sieht und löscht seine Gespräche (Web-Sitzungen von Familie/Gästen nicht). */
     istOwner: (webUserId: string) => Promise<boolean>;
+    /** v1335 — Faden umbenennen. */
+    umbenennen?: (faden: string, titel: string) => Promise<boolean>;
   };
   setGespraeche(fn: NonNullable<HttpAdapter['gespraecheFn']>): void { this.gespraecheFn = fn; }
 
@@ -953,6 +955,8 @@ export class HttpAdapter extends MessagingAdapter {
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
     /** v1334 — Spiegel-Schalter des Owners lesen/setzen (nur Geräte des Owners; sonst undefined = 403). */
     spiegelung?(geraetId: string, setzen?: boolean): Promise<boolean | undefined>;
+    /** v1335 — Faden umbenennen (nur Geräte des Owners). */
+    fadenUmbenennen?(geraetId: string, faden: string, titel: string): Promise<boolean>;
     /** v1249 — blockweiser Dateitransfer. */
     transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
   };
@@ -1330,6 +1334,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGespraeche(req, res, url, 'verlauf').catch(err => this.safeError(res, err)); // v1330
     } else if (/^\/api\/gespraeche\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'DELETE') {
       this.handleGespraeche(req, res, url, 'loeschen').catch(err => this.safeError(res, err)); // v1330
+    } else if (/^\/api\/gespraeche\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'PATCH') {
+      this.handleGespraeche(req, res, url, 'umbenennen').catch(err => this.safeError(res, err)); // v1335
     } else if (url.pathname === '/api/conversations' && req.method === 'GET') {
       this.handleConversationsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/conversations/search' && req.method === 'GET') {
@@ -1910,6 +1916,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetFaeden(req, res).catch(err => this.safeError(res, err)); // v1328
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'DELETE') {
       this.handleGeraetFadenLoeschen(req, res, url).catch(err => this.safeError(res, err)); // v1328
+    } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'PATCH') {
+      this.handleGeraetFadenUmbenennen(req, res, url).catch(err => this.safeError(res, err)); // v1335
     } else if (url.pathname === '/api/geraete/spiegelung' && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraetSpiegelung(req, res).catch(err => this.safeError(res, err)); // v1334
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
@@ -2827,7 +2835,7 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /** v1330 — Gespräche des Owners für die Web-Oberfläche: Liste, Verlauf je Faden, Löschen (API-Token / Web-Sitzung). */
-  private async handleGespraeche(req: http.IncomingMessage, res: http.ServerResponse, url: URL, art: 'liste' | 'verlauf' | 'loeschen'): Promise<void> {
+  private async handleGespraeche(req: http.IncomingMessage, res: http.ServerResponse, url: URL, art: 'liste' | 'verlauf' | 'loeschen' | 'umbenennen'): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.gespraecheFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     // v1331 — Sicherheitsreview zu v1330: Gespräche des Owners nur für den Owner (IDOR über fremde Web-Sitzungen)
@@ -2843,6 +2851,12 @@ export class HttpAdapter extends MessagingAdapter {
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ faden: istFaden(faden) ? faden : null, nachrichten })); return;
     }
     const faden = url.pathname.split('/').pop() ?? '';
+    if (art === 'umbenennen') { // v1335
+      let titel = '';
+      try { const j = JSON.parse((await this.readBody(req)) || '{}') as { titel?: unknown }; titel = typeof j.titel === 'string' ? j.titel.trim().slice(0, 80) : ''; } catch { titel = ''; }
+      const ok = istFaden(faden) && titel && this.gespraecheFn.umbenennen ? await this.gespraecheFn.umbenennen(faden, titel) : false;
+      res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok })); return;
+    }
     const ok = istFaden(faden) ? await this.gespraecheFn.loeschen(faden) : false;
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok }));
   }
@@ -6654,6 +6668,20 @@ export class HttpAdapter extends MessagingAdapter {
     if (an === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ an }));
+  }
+
+  /** v1335 — Faden umbenennen: PATCH {"titel": "…"} */
+  private async handleGeraetFadenUmbenennen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.fadenUmbenennen) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const faden = url.pathname.split('/').pop() ?? '';
+    let titel = '';
+    try { const j = JSON.parse((await this.readBody(req)) || '{}') as { titel?: unknown }; titel = typeof j.titel === 'string' ? j.titel.trim().slice(0, 80) : ''; } catch { titel = ''; }
+    if (!istFaden(faden) || !titel) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'faden und titel nötig' })); return; }
+    const ok = await this.geraeteCallbacks.fadenUmbenennen(geraet.geraetId, faden, titel);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok }));
   }
 
   private async handleGeraetFadenLoeschen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

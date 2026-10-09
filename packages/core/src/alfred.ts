@@ -6937,7 +6937,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.fadenStoreRef = new FadenStore(path.resolve(process.cwd(), 'data', 'gespraeche.json'));
       this.pipeline.setGespraeche(
         this.gespraechsOptionen(),
-        { store: this.fadenStoreRef, liste: () => this.ownerFaeden(), loeschen: (f) => this.ownerFadenLoeschen(f), geraetName: (id) => this.geraeteGateway?.nameVon(id) },
+        { store: this.fadenStoreRef, liste: () => this.ownerFaeden(), loeschen: (f) => this.ownerFadenLoeschen(f), umbenennen: (f, t) => this.ownerFadenUmbenennen(f, t), geraetName: (id) => this.geraeteGateway?.nameVon(id) },
         (e) => {
           const n = this.geraeteGateway?.sendeAnAlle({ typ: 'gespraech', faden: e.faden, von: e.von.chatId }) ?? 0;
           this.logger.debug({ faden: e.faden, von: e.von.chatId, geraete: n }, 'v1330 Gespräch geändert');
@@ -8607,6 +8607,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
             },
             loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
+            umbenennen: (faden: string, titel: string) => this.ownerFadenUmbenennen(faden, titel), // v1335
             // v1331 — Web-Sitzung → Alias `web-<id>` auf Plattform api → Master muss der Owner sein
             istOwner: async (webUserId: string) => {
               if (!this.ownerMasterUserId) return false;
@@ -13684,6 +13685,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
           },
           faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
+          fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
           spiegelung: async (geraetId: string, setzen?: boolean) => {
             if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
@@ -15120,6 +15122,21 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     return (await this.conversationRepo.listByChatPrefix('api', praefix, 60))
       .filter(c => c.chatId === praefix || c.chatId.startsWith(praefix + ':'))
       .map(c => ({ faden: c.chatId === praefix ? null : c.chatId.slice(praefix.length + 1), titel: c.chatId === praefix ? 'Hauptgespräch' : kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl }));
+  }
+
+  /** v1335 — Faden umbenennen (custom_label); legt die Zeile an, wenn der Faden gerade erst angelegt wurde. */
+  async ownerFadenUmbenennen(faden: string, titel: string): Promise<boolean> {
+    if (!this.conversationRepo) return false;
+    const { fadenSchluessel, FADEN_RE } = await import('./gespraeche.js');
+    if (!FADEN_RE.test(faden) || !titel.trim()) return false;
+    const k = fadenSchluessel(faden);
+    let c = await this.conversationRepo.findByPlatformChat(k.platform, k.chatId);
+    if (!c || c.deletedAt) {
+      if (!this.ownerMasterUserId) return false;
+      c = await this.conversationRepo.create(k.platform, k.chatId, this.ownerMasterUserId);
+    }
+    await this.conversationRepo.updateLifecycle(c.id, { customLabel: titel.trim().slice(0, 80) });
+    return true;
   }
 
   async ownerFadenLoeschen(faden: string): Promise<boolean> {

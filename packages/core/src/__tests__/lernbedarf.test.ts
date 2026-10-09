@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { istAbsage, lernbedarfAusAbsage, lernbedarfAusSkillFehler } from '../vorgaenge/lernbedarf.js';
+import { istAbsage, lernbedarfAusAbsage, lernbedarfAusSkillFehler, istRueckfrageOderBefehl } from '../vorgaenge/lernbedarf.js';
+
+// v1335 — Owner-Review 09.10.: Rückfragen und Befehle aus Gerätesitzungen sind kein Lernbedarf
+describe('istRueckfrageOderBefehl (v1335)', () => {
+  it('erkennt Rückfragen, Kurztexte und Befehle', () => {
+    for (const t of ['warum setzt du es nicht um ?', 'dann mach doch weiter !', 'ich warte', '/verlauf', 'ok danke', 'und jetzt?', 'kannst du?']) expect(istRueckfrageOderBefehl(t)).toBe(true);
+    for (const t of ['Wie viele Schritte bin ich heute laut meiner Garmin-Uhr gegangen?', 'Home Assistant, ist alles in Ordnung? Wie viel Strom haben wir heute verbraucht?']) expect(istRueckfrageOderBefehl(t)).toBe(false);
+  });
+  it('legt bei einer Rückfrage keinen Lernbedarf an, bei einer echten Frage schon', () => {
+    const absage = 'Das kann ich nicht, mir fehlt der Zugriff.';
+    expect(lernbedarfAusAbsage('warum setzt du es nicht um ?', absage)).toBeUndefined();
+    expect(lernbedarfAusAbsage('/verlauf', absage)).toBeUndefined();
+    expect(lernbedarfAusAbsage('Wie viele Schritte bin ich heute laut meiner Garmin-Uhr gegangen?', absage)?.titel).toContain('Garmin');
+  });
+});
 
 // v1207 — Jarvis Schleife 3: Lücke → Fähigkeit.
 describe('istAbsage', () => {

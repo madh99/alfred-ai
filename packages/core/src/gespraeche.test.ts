@@ -84,4 +84,17 @@ describe('Gespräche kanalunabhängig (v1330)', () => {
     expect(geloescht).toEqual(['t1']); expect(store.aktiver('telegram', '5060785419')).toBeNull();
     expect(await fadenBefehl('/faden gibtsnicht', 'telegram', '5060785419', deps)).toContain('Kein Faden');
   });
+  it('v1335: /faden name und /faden neu mit Titel benennen über umbenennen', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'alfred-faden-name-'));
+    const store = new FadenStore(path.join(dir, 'g.json'));
+    const namen: Array<[string, string]> = [];
+    const deps = { store, liste: async () => [{ faden: 't1', titel: 'alt', zeit: '2026-10-09T14:00:00Z', anzahl: 1 }], loeschen: async () => false, umbenennen: async (f: string, t: string) => { namen.push([f, t]); return f === 't1' || f.length > 3; } };
+    expect(await fadenBefehl('/faden name t1 Urlaub Kroatien', 'telegram', '1', deps)).toContain('heißt jetzt „Urlaub Kroatien“');
+    expect(namen).toEqual([['t1', 'Urlaub Kroatien']]);
+    expect(await fadenBefehl('/faden name', 'telegram', '1', deps)).toContain('Welcher Faden');
+    store.setze('telegram', '1', 't1');
+    expect(await fadenBefehl('/faden name Nur Titel', 'telegram', '1', deps)).toContain('Faden t1 heißt jetzt „Nur Titel“'); // aktiver Faden
+    const neu = await fadenBefehl('/faden neu Steuer 2026', 'telegram', '1', deps);
+    expect(neu).toContain('(„Steuer 2026“)'); expect(namen.at(-1)?.[1]).toBe('Steuer 2026');
+  });
 });

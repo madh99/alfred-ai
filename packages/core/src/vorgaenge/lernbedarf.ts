@@ -41,10 +41,25 @@ function schluessel(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w.length >= 4).sort().slice(0, 12).join(' ');
 }
 
+/**
+ * v1335 — Rückfragen und Befehle sind keine Lücken. Realfall 09.10. (Owner-Review): „warum setzt du es nicht um ?",
+ * „dann mach doch weiter !", „ich warte", „/verlauf" wurden als Lernbedarf angelegt — Rauschen in der Vorgangsliste.
+ */
+export const RUECKFRAGE_MUSTER = /^(warum|wieso|weshalb|dann|und|also|ok|okay|na|aha|ich warte|mach doch|mach weiter|weiter|noch ?mal|nochmal|bitte)\b/i;
+
+export function istRueckfrageOderBefehl(frage: string): boolean {
+  const f = (frage ?? '').trim();
+  if (!f || f.startsWith('/')) return true;
+  const woerter = f.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+  if (woerter.length <= 4) return true;
+  return RUECKFRAGE_MUSTER.test(f);
+}
+
 /** Lernbedarf aus einer Chat-Absage: Frage + Kern der Antwort. */
 export function lernbedarfAusAbsage(frage: string, antwort: string): LernbedarfVorgang | undefined {
   const f = (frage ?? '').trim();
   if (f.length < 6 || !istAbsage(antwort)) return undefined;
+  if (istRueckfrageOderBefehl(f)) return undefined; // v1335
   const kurzFrage = f.replace(/\s+/g, ' ').slice(0, 120);
   const absatz = antwort.split('\n').find(z => ABSAGE_MUSTER.some(p => p.test(z)))?.trim().slice(0, 200) ?? '';
   return {

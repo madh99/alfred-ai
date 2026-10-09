@@ -146,19 +146,33 @@ export async function fadenBefehl(
   text: string,
   platform: Platform,
   chatId: string,
-  deps: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean> },
+  deps: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean>; umbenennen?: (faden: string, titel: string) => Promise<boolean> },
 ): Promise<string> {
   const arg = text.replace(/^\/faden\b/i, '').trim();
   const [wort, ...rest] = arg.split(/\s+/);
   const aktiv = deps.store.aktiver(platform, chatId);
+  // v1335 — `/faden name <Kennung> <Titel>` (oder ohne Kennung: aktiver Faden)
+  if (wort === 'name' || wort === 'titel') {
+    let f = rest[0] ?? ''; let titel = rest.slice(1).join(' ').trim();
+    if (!FADEN_RE.test(f) || !titel) { f = aktiv ?? ''; titel = rest.join(' ').trim(); }
+    if (!f) return 'Welcher Faden? /faden name <Kennung> <Titel> — im Hauptgespräch geht das nicht.';
+    if (!titel) return 'Welcher Titel? /faden name <Kennung> <Titel>';
+    const ok = deps.umbenennen ? await deps.umbenennen(f, titel.slice(0, 80)) : false;
+    return ok ? `Faden ${f} heißt jetzt „${titel.slice(0, 80)}“.` : `Faden ${f} nicht gefunden.`;
+  }
   const zeit = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
   if (!wort || wort === 'liste') {
     const l = (await deps.liste()).filter(f => !f.archiv);
     const zeilen = l.map((f, i) => `${f.faden === aktiv ? '▶' : ' '} ${i + 1}. ${f.faden ? f.faden : 'Hauptgespräch'} — ${f.titel || '(leer)'} · ${zeit(f.zeit)} · ${f.anzahl}`);
-    return `Gespräche (▶ = aktiv hier):\n${zeilen.join('\n')}\n\n/faden <Nr|Kennung> wechseln · /faden neu [Titel] · /faden haupt · /faden löschen <Kennung>`;
+    return `Gespräche (▶ = aktiv hier):\n${zeilen.join('\n')}\n\n/faden <Nr|Kennung> wechseln · /faden neu [Titel] · /faden haupt · /faden name <Kennung> <Titel> · /faden löschen <Kennung>`;
   }
   if (wort === 'haupt') { deps.store.setze(platform, chatId, null); return 'Zurück im Hauptgespräch.'; }
-  if (wort === 'neu') { const f = neuerFadenId(); deps.store.setze(platform, chatId, f); return `Neuer Faden ${f} angelegt — alles ab jetzt läuft dort${rest.length ? ` (${rest.join(' ')})` : ''}. /faden haupt bringt dich zurück.`; }
+  if (wort === 'neu') {
+    const f = neuerFadenId(); deps.store.setze(platform, chatId, f);
+    // v1335 — Titel gleich setzen (legt die Gesprächszeile an, bevor die erste Nachricht kommt)
+    if (rest.length && deps.umbenennen) await deps.umbenennen(f, rest.join(' ').slice(0, 80));
+    return `Neuer Faden ${f} angelegt — alles ab jetzt läuft dort${rest.length ? ` („${rest.join(' ').slice(0, 80)}“)` : ''}. /faden haupt bringt dich zurück.`;
+  }
   if (wort === 'löschen' || wort === 'loeschen') {
     const f = rest[0] ?? '';
     if (!FADEN_RE.test(f)) return 'Welchen Faden? /faden löschen <Kennung>';

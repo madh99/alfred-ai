@@ -686,7 +686,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 8), children: [
           abschnitt('Gespräche'),
           ListTile(dense: true, selected: server?.faden == null, leading: const Icon(Icons.forum_outlined, size: 18), title: Text('Hauptgespräch', style: theme.textTheme.bodySmall), onTap: () => _fadenWechseln(null)),
-          for (final f in faeden.where((x) => x['faden'] != null && x['archiv'] == null).take(12)) ListTile(dense: true, selected: server?.faden == f['faden'], leading: const Icon(Icons.chat_bubble_outline, size: 18), title: Text('${(f['titel'] ?? '').toString().isEmpty ? 'Gespräch' : f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)), trailing: IconButton(tooltip: 'Gespräch löschen', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _fadenLoeschen('${f['faden']}'), icon: const Icon(Icons.delete_outline)), onTap: () => _fadenWechseln('${f['faden']}')),
+          for (final f in faeden.where((x) => x['faden'] != null && x['archiv'] == null).take(12)) ListTile(dense: true, selected: server?.faden == f['faden'], leading: const Icon(Icons.chat_bubble_outline, size: 18), title: Text('${(f['titel'] ?? '').toString().isEmpty ? 'Gespräch' : f['titel']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), subtitle: Text(_fadenZeit('${f['zeit'] ?? ''}'), style: theme.textTheme.labelSmall?.copyWith(color: dim)), trailing: Row(mainAxisSize: MainAxisSize.min, children: [IconButton(tooltip: 'Umbenennen', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _fadenUmbenennen('${f['faden']}', '${f['titel'] ?? ''}'), icon: const Icon(Icons.edit_outlined)), IconButton(tooltip: 'Gespräch löschen', iconSize: 16, visualDensity: VisualDensity.compact, onPressed: () => _fadenLoeschen('${f['faden']}'), icon: const Icon(Icons.delete_outline))]), onTap: () => _fadenWechseln('${f['faden']}')),
           if (offen.isNotEmpty) ...[
             abschnitt('Bestätigungen (${offen.length})'),
             for (final b in offen) ListTile(dense: true, leading: Icon(Icons.notifications_active, size: 18, color: Colors.amber.shade700), title: Text(b.text, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall), onTap: () => setState(() => ansicht = Ansicht.chat)),
@@ -781,6 +781,20 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       setState(() { verlauf.addAll(n.map((m) => Eintrag(m['rolle'] == 'user' ? Art.du : Art.alfred, '${m['text']}', zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()))); });
       _zeile(Eintrag(Art.hinweis, 'Archiv — nur lesen. Zum Weiterschreiben ein Gespräch in der Seitenleiste wählen.'));
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Archiv nicht geladen: $e')); }
+  }
+
+  /// 1.2.4 — Faden umbenennen (Owner-Freigabe 09.10.): kleiner Dialog, PATCH an den Server.
+  Future<void> _fadenUmbenennen(String faden, String alt) async {
+    final s = server; if (s == null) return;
+    final c = TextEditingController(text: alt);
+    final titel = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('Gespräch umbenennen'),
+      content: TextField(controller: c, autofocus: true, maxLength: 80, decoration: const InputDecoration(labelText: 'Titel'), onSubmitted: (v) => Navigator.of(ctx).pop(v)),
+      actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Abbrechen')), FilledButton(onPressed: () => Navigator.of(ctx).pop(c.text), child: const Text('Speichern'))],
+    ));
+    if (titel == null || titel.trim().isEmpty) return;
+    try { await s.json('/api/geraete/faeden/$faden', methode: 'PATCH', koerper: {'titel': titel.trim()}); await _faedenLaden(); }
+    catch (e) { _zeile(Eintrag(Art.fehler, 'Nicht umbenannt: $e')); }
   }
 
   Future<void> _fadenLoeschen(String faden) async {

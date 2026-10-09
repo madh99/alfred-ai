@@ -271,7 +271,7 @@ export class MessagePipeline {
   setOwnerMasterUserId(id: string | undefined): void { this.ownerMasterUserId = id; }
   // v1330 — Gespräche des Owners kanalunabhängig: Schlüssel-Auflösung, Faden-Befehl, Änderungs-Push
   private gespraechsOptionen?: GespraechsOptionen;
-  private fadenDeps?: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean>; geraetName: (geraetId: string) => string | undefined };
+  private fadenDeps?: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean>; umbenennen?: (faden: string, titel: string) => Promise<boolean>; geraetName: (geraetId: string) => string | undefined }; // v1335 umbenennen
   private beiGespraech?: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string }; frage: string; antwort: string }) => void;
   setGespraeche(o: GespraechsOptionen, fadenDeps: NonNullable<MessagePipeline['fadenDeps']>, beiGespraech: NonNullable<MessagePipeline['beiGespraech']>): void {
     this.gespraechsOptionen = o; this.fadenDeps = fadenDeps; this.beiGespraech = beiGespraech;

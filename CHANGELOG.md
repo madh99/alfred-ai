@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1335] - 2026-10-09
+
+### Added — Fäden umbenennen, keine Lernbedarf-Vorgänge aus Rückfragen (v1335)
+
+- Fäden umbenennen: Desktop-App (Stift in der Seitenleiste), Web (Stift neben dem Gespräch), Telegram `/faden name <Kennung> <Titel>` und `/faden neu <Titel>`. Routen `PATCH /api/geraete/faeden/<f>` (Geräte des Owners) und `PATCH /api/gespraeche/<f>` (Owner).
+- Vorgangsliste: Rückfragen und Befehle erzeugen keinen „Lernbedarf" mehr (Owner-Review 09.10.: „warum setzt du es nicht um?", „dann mach doch weiter", „ich warte", „/verlauf" waren als Lernbedarf angelegt). Kurze Texte bis vier Wörter, Texte, die mit einem Schrägstrich beginnen, und typische Rückfrage-Anfänge sind ausgenommen; fünf solche Einträge wurden verworfen.
+- Aufräumen: Gerätezeile des widerrufenen Satelliten test-ubuntu entfernt.
+
+Desktop-App 1.2.4: Umbenennen in der Seitenleiste.
+
 ## [0.19.0-jarvis.1334] - 2026-10-09
 
 ### Added — Spiegelung in den Owner-Chat (Standard aus), `/verlauf` und `/spiegel`, Herkunft je Nachricht (v1334)

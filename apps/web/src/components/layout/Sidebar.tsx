@@ -60,6 +60,12 @@ export function Sidebar() {
     try { localStorage.removeItem('alfred-chat-messages'); } catch {}
     window.location.href = `${BASE}/chat/?faden=${id}`;
   }
+  async function fadenUmbenennen(f: string, alt: string) { // v1335
+    if (!client) return;
+    const titel = prompt('Gespräch umbenennen', alt)?.trim();
+    if (!titel) return;
+    try { if (await client.renameGespraech(f, titel.slice(0, 80))) setFaeden(prev => prev.map(x => x.faden === f ? { ...x, titel: titel.slice(0, 80) } : x)); } catch {}
+  }
   async function fadenLoeschen(f: string) {
     if (!client || !confirm('Gespräch löschen?')) return;
     try { await client.deleteGespraech(f); } catch {}
@@ -210,7 +216,10 @@ export function Sidebar() {
                   <span className="truncate text-xs" title={f.titel}>{f.faden ? (f.titel || `Gespräch ${f.faden}`) : 'Hauptgespräch'}</span>
                 </a>
                 {f.faden && (
-                  <button onClick={() => fadenLoeschen(f.faden!)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs" title="Gespräch löschen">✕</button>
+                  <>
+                    <button onClick={() => fadenUmbenennen(f.faden!, f.titel)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-blue-400 text-xs" title="Umbenennen">✎</button>
+                    <button onClick={() => fadenLoeschen(f.faden!)} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs" title="Gespräch löschen">✕</button>
+                  </>
                 )}
               </div>
             ))}

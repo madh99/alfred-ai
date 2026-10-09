@@ -202,6 +202,11 @@ export class AlfredClient {
     return (await res.json()).nachrichten ?? [];
   }
 
+  async renameGespraech(faden: string, titel: string): Promise<boolean> { // v1335
+    const res = await fetch(`${this.baseUrl}/api/gespraeche/${encodeURIComponent(faden)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) }, body: JSON.stringify({ titel }) });
+    return res.ok;
+  }
+
   async deleteGespraech(faden: string): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/gespraeche/${encodeURIComponent(faden)}`, { method: 'DELETE', headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     return res.ok;
