@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1338] - 2026-10-09
+
+### Fixed — Verlauf der Apps zeigt die letzten sichtbaren Nachrichten, nicht die letzten Zeilen (v1338)
+
+Owner-Befund 09.10. 21:04: Die Insights von 20:00 und 20:30 standen im Hauptgespräch, fehlten aber in der App. Die Verlauf-Routen holten 30 Zeilen und filterten danach Werkzeugzeilen ohne Text heraus, so blieben nur 22 sichtbare, und ältere fielen weg. Jetzt werden mehr Zeilen geholt, gefiltert und die letzten sichtbaren geliefert. Desktop-App 1.2.6 lädt 60 statt 30 Zeilen.
+
 ## [0.19.0-jarvis.1337] - 2026-10-09
 
 ### Fixed — leere Insights-Nachricht, Kamera-Kaltstart am Mac (v1337)

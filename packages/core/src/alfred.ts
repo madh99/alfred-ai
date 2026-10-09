@@ -8613,8 +8613,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const ziel = faden ? fadenSchluessel(faden) : hauptgespraech(this.gespraechsOptionen());
               const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
               if (!c || c.deletedAt) return [];
-              const m = await this.conversationRepo.getMessages(c.id, limit);
-              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336
+              const m = await this.conversationRepo.getMessages(c.id, limit * 4); // v1338 — Werkzeugzeilen zählen nicht
+              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336
             },
             loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
             umbenennen: (faden: string, titel: string) => this.ownerFadenUmbenennen(faden, titel), // v1335
@@ -13691,8 +13691,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               : faden ? fadenSchluessel(faden) : hauptgespraech(this.gespraechsOptionen());
             const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
             if (!c || c.deletedAt) return [];
-            const m = await this.conversationRepo.getMessages(c.id, limit);
-            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336 intern → system
+            // v1338 — Owner-Befund 21:04: Insights von 20:00/20:30 fehlten in der App, weil Werkzeugzeilen (leerer Inhalt)
+            // das Fenster von 30 Zeilen aufbrauchten. Mehr holen, filtern, dann die letzten `limit` sichtbaren liefern.
+            const m = await this.conversationRepo.getMessages(c.id, limit * 4);
+            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336 intern → system
           },
           faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335

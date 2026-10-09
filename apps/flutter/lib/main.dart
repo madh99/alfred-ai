@@ -526,7 +526,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Future<void> _holeVerlauf() async {
     final s = server; if (s == null) return;
     try {
-      final j = await s.json('/api/geraete/verlauf?limit=30${s.faden == null ? '' : '&faden=${s.faden}'}'); // 1.2.0 je Faden
+      final j = await s.json('/api/geraete/verlauf?limit=60${s.faden == null ? '' : '&faden=${s.faden}'}'); // 1.2.0 je Faden; 1.2.6: 60 sichtbare Zeilen
       final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
       if (n.isEmpty) return;
       // 1.1.0 — die synthetische Fortsetzungs-Nachricht („Freigabe erteilt für das Vorhaben …", v1324) steht im Verlauf als
