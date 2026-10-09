@@ -272,7 +272,7 @@ export class MessagePipeline {
   // v1330 — Gespräche des Owners kanalunabhängig: Schlüssel-Auflösung, Faden-Befehl, Änderungs-Push
   private gespraechsOptionen?: GespraechsOptionen;
   private fadenDeps?: FadenDeps; // v1335 — ein Typ für Pipeline und Befehle
-  private beiGespraech?: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string }; frage: string; antwort: string }) => void;
+  private beiGespraech?: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string }; frage: string; antwort: string; anhaenge?: SkillResultAttachment[]; intern?: boolean }) => void; // v1336 Anhänge, intern
   setGespraeche(o: GespraechsOptionen, fadenDeps: FadenDeps, beiGespraech: NonNullable<MessagePipeline['beiGespraech']>): void {
     this.gespraechsOptionen = o; this.fadenDeps = fadenDeps; this.beiGespraech = beiGespraech;
   }
@@ -569,7 +569,7 @@ export class MessagePipeline {
         const antwort = await verlaufBefehl(message.text.trim(), async (n) => {
           const c = await this.conversationManager.getOrCreateConversation(gespraech.platform, gespraech.chatId, user.id);
           const m = await this.conversationManager.getHistory(c.id, n * 3);
-          return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-n).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt, herkunft: x.herkunft }));
+          return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-n).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt, herkunft: x.herkunft }));
         }, deps.geraetName, `${message.platform}:${message.chatId}`);
         return { text: antwort };
       }
@@ -685,8 +685,10 @@ export class MessagePipeline {
         ? []
         : await this.conversationManager.getHistory(conversation.id, historyLimit);
 
-      // 4. Save user message (v1334 — mit Herkunft: Kanal und Chat, für /verlauf und Spiegelung)
-      const herkunft = `${message.platform}:${message.chatId}`;
+      // 4. Save user message (v1334 — mit Herkunft: Kanal und Chat, für /verlauf und Spiegelung;
+      // v1336 — synthetische Nachrichten (Fortsetzung nach Freigabe/Vorhaben, geplante Aufgaben) als „intern", damit die
+      // Oberflächen sie als Hinweis zeigen und nicht als Worte des Owners — Owner-Befund 09.10. 19:16)
+      const herkunft = `${message.metadata?.scheduled ? 'intern:' : ''}${message.platform}:${message.chatId}`;
       await this.conversationManager.addMessage(conversation.id, 'user', message.text, undefined, herkunft);
       tracePhase('conversation', { convId: conversation.id, historyLen: history.length, hasSummary: !!summary, ...(gespraech ? { gespraech: gespraech.chatId, faden: gespraech.faden } : {}) });
 
@@ -1656,7 +1658,7 @@ export class MessagePipeline {
       );
       // v1330 — andere Oberflächen des Owners laden das Gespräch nach (App zeigt, was in Telegram lief, und umgekehrt);
       // v1334 — mit Frage und Antwort für die optionale Spiegelung in den Owner-Chat
-      if (gespraech) { try { this.beiGespraech?.({ platform: gespraech.platform, chatId: gespraech.chatId, faden: gespraech.faden, von: { platform: message.platform, chatId: message.chatId }, frage: message.text, antwort: responseText }); } catch { /* Push ist Komfort */ } }
+      if (gespraech) { try { this.beiGespraech?.({ platform: gespraech.platform, chatId: gespraech.chatId, faden: gespraech.faden, von: { platform: message.platform, chatId: message.chatId }, frage: message.text, antwort: responseText, anhaenge: pendingAttachments, intern: !!message.metadata?.scheduled }); } catch { /* Push ist Komfort */ } }
 
       // v1207 — Jarvis Schleife 3: Absage → Vorgang „Lernbedarf" (Lücke → Fähigkeit)
       // v1257 — nicht bei synthetischen Nachrichten (Fortsetzung nach Freigabe/Vorhaben, geplante Aufgaben): das ist

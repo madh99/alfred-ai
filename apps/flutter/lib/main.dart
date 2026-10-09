@@ -171,6 +171,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             _faedenLaden();
             return;
           }
+          // 1.2.5 — Anhang ohne Text direkt nach einer Alfred-Antwort: an diese hängen statt eigene Zeile (zwei Pushes vom Server)
+          if (text.isEmpty && anhang != null && verlauf.isNotEmpty && verlauf.last.art == Art.alfred && zeit.difference(verlauf.last.zeit).inSeconds.abs() <= 10) {
+            setState(() => verlauf.last.anhaenge.add(anhang)); _nachUnten(); return;
+          }
           _zeile(Eintrag(Art.alfred, text.isEmpty && anhang != null ? '📎 ${anhang.name}' : text, zeit: zeit, anhaenge: anhang == null ? null : [anhang]));
           if (stimme && text.isNotEmpty) _sprichKurz(text);
           return;
@@ -527,7 +531,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       if (n.isEmpty) return;
       // 1.1.0 — die synthetische Fortsetzungs-Nachricht („Freigabe erteilt für das Vorhaben …", v1324) steht im Verlauf als
       // Benutzerzeile; in der App als Hinweis zeigen, nicht als eigene Blase
-      final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; return Eintrag(du && t.startsWith('Freigabe erteilt für das Vorhaben') ? Art.hinweis : du ? Art.du : Art.alfred, t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()); }).toList();
+      // 1.2.5 — rolle „system" (v1336: interne Fortsetzungen nach Freigabe) als Hinweis, nicht als eigene Blase
+      final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; final sys = m['rolle'] == 'system'; return Eintrag(sys || (du && t.startsWith('Freigabe erteilt für das Vorhaben')) ? Art.hinweis : du ? Art.du : Art.alfred, sys ? 'ℹ ${t.split('\n').first}' : t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()); }).toList();
       setState(() => verlauf.insertAll(0, alte));
       _zeile(Eintrag(Art.hinweis, 'Verlauf geladen: ${alte.length} Nachrichten aus früheren Sitzungen dieses Geräts.'));
     } catch (e) { _zeile(Eintrag(Art.hinweis, 'Verlauf nicht geladen: $e')); }
@@ -571,6 +576,17 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final mitAnhang = text == null && anhaenge.isNotEmpty;
     if ((t.isEmpty && !mitAnhang) || antwortet) return null;
     if (s == null) { _zeile(Eintrag(Art.fehler, 'Noch nicht mit dem Satelliten verbunden — $ipcZustand')); return null; }
+    // 1.2.5 — `/faden …` in der App lokal: die App hat ihre eigene Seitenleiste, der Server-Stand gilt für Telegram/Terminal
+    if (text == null && RegExp(r'^/faden\b', caseSensitive: false).hasMatch(t)) {
+      eingabe.clear();
+      final arg = t.replaceFirst(RegExp(r'^/faden\s*', caseSensitive: false), '').trim();
+      final teile = arg.split(RegExp(r'\s+'));
+      if (arg.isEmpty) { setState(() { seitenleisteOffen = true; }); _zeile(Eintrag(Art.hinweis, 'Gespräche stehen in der Seitenleiste. /faden neu [Titel] · /faden haupt · /faden <Kennung>')); return null; }
+      if (teile.first == 'haupt') { await _fadenWechseln(null); return null; }
+      if (teile.first == 'neu') { final id = DateTime.now().millisecondsSinceEpoch.toRadixString(36); await _fadenWechseln(id); final titel = teile.skip(1).join(' ').trim(); if (titel.isNotEmpty) { try { await s.json('/api/geraete/faeden/$id', methode: 'PATCH', koerper: {'titel': titel}); await _faedenLaden(); } catch (_) {} } return null; }
+      if (RegExp(r'^[a-z0-9-]{1,40}$').hasMatch(teile.first)) { await _fadenWechseln(teile.first); return null; }
+      _zeile(Eintrag(Art.hinweis, 'Unbekannt: /faden $arg')); return null;
+    }
     if (text == null) {
       eingabe.clear();
       final namen = anhaenge.map((f) => f.uri.pathSegments.last).toList();
@@ -853,6 +869,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   static bool _gleicherTag(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
 
+  /// 1.2.5 — Zitatzeile (↩ „…“) und Anhang-Zeile (📎 …) aus einer eigenen Nachricht entfernen, bevor sie wiederholt wird.
+  static String _ohneZitat(String t) => t.split('\n').where((z) => !z.startsWith('↩ „') && !z.startsWith('📎 ')).join('\n').trim();
+
   static String _fadenZeit(String iso) {
     final d = DateTime.tryParse(iso)?.toLocal();
     if (d == null) return '';
@@ -1049,7 +1068,14 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final dim = theme.colorScheme.onSurfaceVariant;
     switch (e.art) {
       case Art.du:
-        return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerRight, child: Container(constraints: const BoxConstraints(maxWidth: 720), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: SelectableText(e.text))));
+        // 1.2.5 — eigene Nachricht wiederholen oder bearbeiten (Owner-Freigabe 09.10.)
+        return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerRight, child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
+          Container(constraints: const BoxConstraints(maxWidth: 720), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: SelectableText(e.text)),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            IconButton(tooltip: 'Bearbeiten (Text in die Eingabe legen)', onPressed: antwortet ? null : () { eingabe.text = _ohneZitat(e.text); eingabe.selection = TextSelection.collapsed(offset: eingabe.text.length); fokus.requestFocus(); }, icon: Icon(Icons.edit_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+            IconButton(tooltip: 'Erneut senden', onPressed: antwortet ? null : () => _senden(text: _ohneZitat(e.text)), icon: Icon(Icons.replay_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+          ]),
+        ])));
       case Art.alfred:
         // 1.1.0 — Antwort ohne Blase (wie in der Vorlage), darunter Aktionen: kopieren, vorlesen
         return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Align(alignment: Alignment.centerLeft, child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 820), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

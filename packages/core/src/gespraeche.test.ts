@@ -52,6 +52,13 @@ describe('Gespräche kanalunabhängig (v1330)', () => {
     expect(gespraechsZiel({ platform: 'telegram', chatId: '5060785419', chatType: 'dm' }, { ...o, aktiverFaden: () => 'm1x2' })).toEqual(f);
     expect(gespraechsZiel({ platform: 'telegram', chatId: '5060785419', chatType: 'dm' }, { ...o, aktiverFaden: () => 'nicht ok!' })?.faden).toBeNull();
   });
+  it('v1336: sitzung:<id>:haupt ist ausdrücklich das Hauptgespräch, sitzung:<id> folgt dem aktiven Faden (Terminal)', () => {
+    const mitFaden = { ...o, aktiverFaden: (p: string, c: string) => (p === 'api' && c === 'sitzung:abc') ? 'm1x2' : null };
+    expect(gespraechsZiel({ platform: 'api', chatId: 'sitzung:abc:haupt', chatType: 'dm' }, mitFaden)?.faden).toBeNull();
+    expect(gespraechsZiel({ platform: 'api', chatId: 'sitzung:abc', chatType: 'dm' }, mitFaden)?.faden).toBe('m1x2');
+    expect(gespraechsZiel({ platform: 'api', chatId: 'sitzung:abc', chatType: 'dm' }, o)?.faden).toBeNull();
+    expect(herkunftName('intern:api:sitzung:abc', () => 'PC')).toBe('System');
+  });
   it('bleibt beim Kanal-Gespräch: Gruppen, Projekt-Chats, interne API-Chats, fremde Telegram-Chats', () => {
     expect(gespraechsZiel({ platform: 'telegram', chatId: '-100123', chatType: 'group' }, o)).toBeUndefined();
     expect(gespraechsZiel({ platform: 'api', chatId: 'project:abc', chatType: 'dm' }, o)).toBeUndefined();

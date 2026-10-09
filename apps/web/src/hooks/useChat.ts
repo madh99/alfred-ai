@@ -145,6 +145,7 @@ export function useChat() {
         dispatch({ type: 'CLEAR' });
         for (const m of msgs) {
           if (m.rolle === 'user') dispatch({ type: 'ADD_USER', text: m.text });
+          else if ((m.rolle as string) === 'system') { dispatch({ type: 'START_ASSISTANT' }); dispatch({ type: 'APPEND_RESPONSE', text: `ℹ ${m.text.split('\n')[0]}` }); dispatch({ type: 'DONE' }); } // v1336 — interne Fortsetzung als Hinweis
           else { dispatch({ type: 'START_ASSISTANT' }); dispatch({ type: 'APPEND_RESPONSE', text: m.text }); dispatch({ type: 'DONE' }); }
         }
       } catch { /* kein Owner oder Server ohne Gespräche: lokaler Verlauf bleibt */ }

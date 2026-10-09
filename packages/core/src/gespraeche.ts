@@ -52,7 +52,14 @@ export function gespraechsZiel(
   }
   if (m.platform !== 'api') return undefined;
   const sitzung = /^sitzung:([^:]+)(?::([a-z0-9-]{1,40}))?$/.exec(m.chatId);
-  if (sitzung) return mitFaden(sitzung[2] ?? null);
+  if (sitzung) {
+    // v1336 — `sitzung:<id>:haupt` = ausdrücklich Hauptgespräch (Desktop-App); `sitzung:<id>` ohne Faden folgt dem aktiven
+    // Faden des Chats (Terminal-Sitzung nach `/faden …`, Ablage wie bei Telegram)
+    if (sitzung[2] === 'haupt') return mitFaden(null);
+    if (sitzung[2]) return mitFaden(sitzung[2]);
+    const f = o.aktiverFaden?.(m.platform, m.chatId) ?? null;
+    return mitFaden(f && FADEN_RE.test(f) ? f : null);
+  }
   if (m.chatId.startsWith('web-chat-')) return mitFaden(null);
   const web = /^web-faden-([a-z0-9-]{1,40})$/.exec(m.chatId);
   if (web) return mitFaden(web[1]!);
@@ -95,6 +102,7 @@ export class FadenStore {
 /** v1334 — Anzeigename einer Herkunft (`telegram:<chat>`, `api:sitzung:<geraet>[:<faden>]`, `api:web-chat-<user>`). */
 export function herkunftName(herkunft: string | undefined, geraetName: (geraetId: string) => string | undefined): string {
   if (!herkunft) return '';
+  if (herkunft.startsWith('intern:')) return 'System'; // v1336 — Fortsetzung nach Freigabe, geplante Aufgaben
   const [platform, ...rest] = herkunft.split(':');
   const chat = rest.join(':');
   if (platform === 'telegram') return 'Telegram';
@@ -113,7 +121,7 @@ export function herkunftName(herkunft: string | undefined, geraetName: (geraetId
  */
 export async function verlaufBefehl(
   text: string,
-  nachrichten: (n: number) => Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string; herkunft?: string }>>,
+  nachrichten: (n: number) => Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; herkunft?: string }>>,
   geraetName: (geraetId: string) => string | undefined,
   eigeneHerkunft: string,
 ): Promise<string> {
@@ -124,7 +132,8 @@ export async function verlaufBefehl(
   const kurz = (s: string) => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > 160 ? t.slice(0, 157) + '…' : t; };
   const zeilen = liste.map(m => {
     const woher = m.herkunft && m.herkunft !== eigeneHerkunft ? ` (${herkunftName(m.herkunft, geraetName)})` : '';
-    return `${zeit(m.zeit)} ${m.rolle === 'user' ? 'Du' : 'Alfred'}${m.rolle === 'user' ? woher : ''}: ${kurz(m.text)}`;
+    const wer = m.rolle === 'system' ? 'System' : m.rolle === 'user' ? 'Du' : 'Alfred';
+    return `${zeit(m.zeit)} ${wer}${m.rolle === 'user' ? woher : ''}: ${kurz(m.text)}`;
   });
   return `Letzte ${liste.length} Nachrichten dieses Gesprächs:\n${zeilen.join('\n')}`;
 }

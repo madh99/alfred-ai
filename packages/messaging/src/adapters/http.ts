@@ -397,7 +397,7 @@ export class HttpAdapter extends MessagingAdapter {
   /** v1330 — Gespräche des Owners (Hauptgespräch + Fäden) für die Web-Oberfläche. */
   private gespraecheFn?: {
     liste: () => Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
-    verlauf: (faden: string | undefined, limit: number) => Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
+    verlauf: (faden: string | undefined, limit: number) => Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string }>>;
     loeschen: (faden: string) => Promise<boolean>;
     /** v1331 — nur der Owner sieht und löscht seine Gespräche (Web-Sitzungen von Familie/Gästen nicht). */
     istOwner: (webUserId: string) => Promise<boolean>;
@@ -949,7 +949,7 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
     nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string): boolean; // v1325 Anhang, v1328 Faden
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
-    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>>;
+    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string }>>; // v1336 system = interne Fortsetzung
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;

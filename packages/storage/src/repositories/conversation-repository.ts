@@ -204,6 +204,12 @@ export class ConversationRepository {
     return rows.map(r => ({ id: String(r.id), chatId: String(r.chat_id), updatedAt: String(r.updated_at), customLabel: r.custom_label ? String(r.custom_label) : undefined, erste: r.erste ? String(r.erste) : undefined, anzahl: Number(r.anzahl ?? 0) }));
   }
 
+  /** v1336 — Nachrichtenzahl eines Gesprächs (Hauptgespräch in der Fäden-Liste). */
+  async countMessages(conversationId: string): Promise<number> {
+    const row = await this.adapter.queryOne('SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?', [conversationId]) as { n?: unknown } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
   async softDelete(id: string): Promise<void> {
     await this.adapter.execute('UPDATE conversations SET deleted_at = ? WHERE id = ?', [new Date().toISOString(), id]);
   }

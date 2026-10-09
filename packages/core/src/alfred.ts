@@ -6944,11 +6944,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           // v1334 — Spiegelung (Owner-Freigabe, Standard aus): Frage und Antwort aus App/Web/Terminal auch in den Owner-Chat
           const o = this.gespraechsOptionen();
           const ausOwnerChat = e.von.platform === o.ownerPlatform && e.von.chatId === o.ownerChatId;
-          if (this.fadenStoreRef?.spiegelung && !ausOwnerChat && o.ownerChatId) {
-            void import('./gespraeche.js').then(({ herkunftName }) => {
+          if (this.fadenStoreRef?.spiegelung && !ausOwnerChat && o.ownerChatId && !e.intern) { // v1336 — interne Fortsetzungen nicht spiegeln (kamen schon als Ergebnis)
+            void import('./gespraeche.js').then(async ({ herkunftName }) => {
               const woher = herkunftName(`${e.von.platform}:${e.von.chatId}`, (id) => this.geraeteGateway?.nameVon(id));
               const faden = e.faden ? ` · Faden ${e.faden}` : '';
-              return this.sendeAnOwner(`📱 ${woher}${faden}: ${e.frage}\n\n${e.antwort}`);
+              await this.sendeAnOwner(`📱 ${woher}${faden}: ${e.frage}\n\n${e.antwort}`);
+              // v1336 — Anhänge (Foto, Bildschirmfoto, Datei) mitspiegeln
+              const adapter = o.ownerPlatform ? this.adapters.get(o.ownerPlatform) : undefined;
+              for (const a of e.anhaenge ?? []) {
+                try {
+                  if (!adapter || !o.ownerChatId) break;
+                  if (a.mimeType.startsWith('image/')) await adapter.sendPhoto(o.ownerChatId, a.data, a.fileName);
+                  else if (a.mimeType.startsWith('audio/')) await adapter.sendVoice(o.ownerChatId, a.data);
+                  else await adapter.sendFile(o.ownerChatId, a.data, a.fileName ?? 'anhang');
+                } catch { /* Anhang optional */ }
+              }
             }).catch(err => this.logger.debug({ err: (err as Error).message }, 'v1334 Spiegelung nicht zugestellt'));
           }
         },
@@ -8604,7 +8614,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
               if (!c || c.deletedAt) return [];
               const m = await this.conversationRepo.getMessages(c.id, limit);
-              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
+              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336
             },
             loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
             umbenennen: (faden: string, titel: string) => this.ownerFadenUmbenennen(faden, titel), // v1335
@@ -13682,7 +13692,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
             if (!c || c.deletedAt) return [];
             const m = await this.conversationRepo.getMessages(c.id, limit);
-            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
+            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336 intern → system
           },
           faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
@@ -15091,7 +15101,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const aus: import('./gespraeche.js').FadenEintrag[] = [];
     const haupt = hauptgespraech(this.gespraechsOptionen());
     const h = await this.conversationRepo.findByPlatformChat(haupt.platform, haupt.chatId);
-    aus.push({ faden: null, titel: 'Hauptgespräch', zeit: h?.updatedAt ?? new Date(0).toISOString(), anzahl: 0 });
+    aus.push({ faden: null, titel: 'Hauptgespräch', zeit: h?.updatedAt ?? new Date(0).toISOString(), anzahl: h ? await this.conversationRepo.countMessages(h.id) : 0 }); // v1336 Zahl statt 0
     for (const c of await this.conversationRepo.listByChatPrefix('api', FADEN_PRAEFIX, 60)) {
       if (!c.chatId.startsWith(FADEN_PRAEFIX)) continue;
       aus.push({ faden: c.chatId.slice(FADEN_PRAEFIX.length), titel: kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl });

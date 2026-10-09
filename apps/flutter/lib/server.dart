@@ -24,7 +24,7 @@ class Server {
   /// 1.2.0 — aktueller Gesprächsfaden (null = Hauptgespräch); Chat-ID `sitzung:<geraetId>[:<faden>]` (v1328).
   String? faden;
 
-  String get chatId => faden == null ? 'sitzung:${k.geraetId}' : 'sitzung:${k.geraetId}:$faden'; // 1.2.0 Fäden
+  String get chatId => faden == null ? 'sitzung:${k.geraetId}:haupt' : 'sitzung:${k.geraetId}:$faden'; // 1.2.0 Fäden; 1.2.5 „haupt" ausdrücklich (v1336: ohne Suffix folgt die Sitzung dem /faden-Stand des Terminals)
 
   Future<HttpClientRequest> _anfrage(String methode, String pfad) async {
     final req = await _client.openUrl(methode, Uri.parse('${k.server}$pfad'));

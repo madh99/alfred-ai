@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1336] - 2026-10-09
+
+### Fixed — interne Fortsetzungen als Hinweis, Fäden im Terminal, Spiegelung mit Anhängen (v1336)
+
+Owner-Befund 09.10. 19:16: Nach einer Freigabe erschien die interne Fortsetzungsnachricht („Die von mir freigegebene Aktion wurde gerade ausgeführt …") in der App als eigene Blase des Owners.
+
+- Synthetische Nachrichten (Fortsetzung nach Freigabe oder Vorhaben, geplante Aufgaben) tragen die Herkunft `intern:…`; Verlauf-Routen liefern sie als Rolle `system`, `/verlauf` nennt sie „System", App und Web zeigen sie als Hinweis. Die Spiegelung lässt sie aus.
+- `sitzung:<id>` ohne Faden folgt jetzt dem aktiven Faden des Chats, damit `/faden` auch in der Terminal-Sitzung wirkt; die Desktop-App schickt `sitzung:<id>:haupt`, wenn sie im Hauptgespräch ist.
+- Spiegelung überträgt Anhänge (Fotos, Bildschirmfotos, Dateien) mit.
+- Hauptgespräch zeigt in der Fäden-Liste die Nachrichtenzahl.
+
+Desktop-App 1.2.5: eigene Nachrichten bearbeiten oder erneut senden; `/faden …` in der Eingabe wirkt lokal auf die Seitenleiste; Anhänge direkt nach einer Antwort hängen an dieser statt als eigene Zeile.
+
 ## [0.19.0-jarvis.1335] - 2026-10-09
 
 ### Added — Fäden umbenennen, keine Lernbedarf-Vorgänge aus Rückfragen (v1335)

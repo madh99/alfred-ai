@@ -195,7 +195,7 @@ export class AlfredClient {
     return (await res.json()).faeden ?? [];
   }
 
-  async fetchGespraechVerlauf(faden: string | null, limit = 200): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string }>> {
+  async fetchGespraechVerlauf(faden: string | null, limit = 200): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string }>> {
     const q = `limit=${limit}${faden ? `&faden=${encodeURIComponent(faden)}` : ''}`;
     const res = await fetch(`${this.baseUrl}/api/gespraeche/verlauf?${q}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     if (!res.ok) throw new Error(`Verlauf: ${res.status}`);
