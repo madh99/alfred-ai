@@ -39,6 +39,7 @@ class Audio {
     if (_datei != null) return true;
     if (!await _rec.hasPermission()) return false;
     final dir = await getTemporaryDirectory();
+    await dir.create(recursive: true); // macOS: ~/Library/Caches/<bundle> existiert beim ersten Start nicht
     final p = '${dir.path}${Platform.pathSeparator}alfred-aufnahme-${DateTime.now().millisecondsSinceEpoch}.wav';
     await _rec.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: p);
     _datei = p;
@@ -63,10 +64,16 @@ class Audio {
     await _player.stop();
     final fertig = _player.onPlayerStateChanged.firstWhere((s) => s == PlayerState.completed || s == PlayerState.stopped);
     spielt = true;
+    // M5 (Mac 09.10.): BytesSource legt die Datei unter ~/Library/Caches/<bundle>/ ab, den Ordner gibt es beim ersten Start nicht
+    // („PathNotFoundException"). Eigene Datei im Temp-Ordner, danach wieder weg.
+    final dir = await getTemporaryDirectory();
+    await dir.create(recursive: true); // macOS: ~/Library/Caches/<bundle> existiert beim ersten Start nicht
+    final f = File('${dir.path}${Platform.pathSeparator}alfred-ton-${DateTime.now().microsecondsSinceEpoch}.${mime.contains('wav') ? 'wav' : 'mp3'}');
+    await f.writeAsBytes(daten, flush: true);
     try {
-      await _player.play(BytesSource(daten, mimeType: mime));
+      await _player.play(DeviceFileSource(f.path, mimeType: mime));
       await fertig.timeout(const Duration(minutes: 5), onTimeout: () => PlayerState.completed);
-    } finally { spielt = false; }
+    } finally { spielt = false; try { await f.delete(); } catch (_) {} }
   }
 
   Future<void> abbrechen() async { try { await _player.stop(); } catch (_) {} }
