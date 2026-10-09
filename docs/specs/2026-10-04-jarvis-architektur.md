@@ -314,6 +314,36 @@ Projekt anfangen/weiterführen (PC, VM); Projekt des Projekt-Skills auf einem Sa
 - **R4** Beobachter am Satelliten (Outlook, Benachrichtigungen, Ordner) als Schicht-2-Ereignisse mit Job-Register-Eintrag; Deploy-Etappe mit Nachkontrolle.
 - **Messen (Schicht 4)**: Etappen je Vorgang, Nachbesserungsquote, Rückfragenquote, Kosten je fertiger Etappe, Abbrüche durch Budget; Konsequenzen deterministisch (z. B. Nachbesserungsquote > 50 % → Planungsschritt auf teureren Tier).
 
+### Stages: dev, test, prod je Projekt (Erweiterung 10.10.2026, Owner: „ja mach das, pfSense nicht vergessen", ohne Umsetzung)
+
+**Gedanke:** Alfred hat alle Infrastruktur-Skills schon; was fehlt, ist die Klammer „Stage" im Projektvorgang, damit er Umgebungen selbst bereitstellt, befördert und zurückbaut — mit festen Toren statt freier Improvisation.
+
+**Vorhandene Bausteine je Schritt**
+- Rechner: **Proxmox** (clone_vm, create_lxc aus Vorlagen, wait_ready, create/rollback_snapshot, backup_vm, start/stop/shutdown, node_stats, list_storage).
+- Netz: **UniFi** (next_free_ip, create_firewall_rule, list_networks/clients; Standort Dream Machine Pro), **pfSense** (create_rule/delete_rule, list_rules, list_vlans, list_dhcp_leases, list_gateways, status — zweite Firewall-Welt, gleiche Autonomieklasse), **Cloudflare DNS** (Einträge), **Nginx Proxy Manager** (create/update/delete_host, Zertifikate).
+- Ausrollen/Betrieb: **Deploy** (deploy, rollback, logs, status, setup_node/python über SSH), **Docker**, **Monitor**, **System-Backup**, **CMDB** (Stage als Konfigurationselement), **ITSM** (Störungen), **Infra-Docs**.
+- Bauen/Prüfen: Aufträge an Claude Code (PC, VM), **Mac als Satellit** für alles, was macOS braucht (Mac-/iOS-Builds, Notarisierung — wie bei der Alfred-App bewiesen), Bildschirm/Browser/HTTP-Prüfungen.
+
+**Datenmodell**
+`stage (id, vorgang_id | projekt_id, name: dev|test|prod|<frei>, rechner: proxmox-vm:<vmid> | lxc:<id> | satellit:<geraetId> | extern, ip, dns_name, proxy_host_id, firewall: [{system: unifi|pfsense, regel_id}], deploy_ziel (Host, Pfad, Compose), secrets_quelle: project_environments:<stage>, gesundheit: [Prüfung…] (HTTP 200, Container up, Log ohne Fehler), snapshot_vor_deploy: bool, status: geplant|wird_bereitgestellt|bereit|wird_ausgerollt|gesund|gestoert|abgebaut, kosten (vCPU, RAM, Platz), erstellt, aktualisiert)`.
+Jede Stage ist zugleich ein CMDB-Eintrag (Quelle: Projektvorgang) und erscheint im Weltmodell (Schicht 1) unter Infrastruktur, damit Normalzustände (gesund) und Abweichungen (Schicht 2) dafür gelten.
+
+**Bereitstellungskette einer Stage (deterministisch, jeder Schritt protokolliert, Rückbau in umgekehrter Reihenfolge)**
+1. Proxmox: Klon aus Vorlage (oder LXC), Ressourcen laut Plan, Snapshot „frisch", wait_ready.
+2. Netz: freie IP (UniFi/pfSense DHCP-Leases), DNS (Cloudflare oder intern), Firewall-Regel nur so weit wie nötig (Zielport, Quelle), Proxy-Host mit Zertifikat.
+3. Satellit koppeln: Vorlagen-Image mit vorinstalliertem Satelliten oder Cloud-Init mit `alfred pair` (Pairing-Code aus dem Gehirn, Gerätename = Stage); ohne Satellit nur SSH über den Deploy-Skill.
+4. Secrets der Stage aus den Projektumgebungen (nie aus dem Chat), Deploy, Gesundheitsprüfung, CMDB-Eintrag, Meldung.
+
+**Beförderung mit Toren**
+- dev → test → prod nur, wenn die harten Prüfungen der vorigen Stage grün sind (Tests, Gesundheit, ggf. Bildschirm-/Browser-Prüfung).
+- Vor jedem Deploy auf test/prod ein Snapshot; Rollback-Pfad ist Teil des Plans (Deploy-Skill rollback oder Snapshot).
+- **prod immer mit Owner-Bestätigung**, ebenso jede Firewall-, DNS- und Proxy-Änderung (Heimnetz: ein Fehler stört alle anderen Dienste). Autonomieklassen: Proxmox-Klon/Snapshot in dev `auto` innerhalb der Obergrenzen; test `bestaetigen` je Stage; prod, Firewall (UniFi und pfSense), DNS, Proxy, Löschen von VMs `bestaetigen`, prod-Löschen `nie` ohne ausdrückliche Owner-Freigabe.
+
+**Gerätewahl je Etappe (Regel, nicht Raten):** macOS-Build/Notarisierung → Mac-Satellit; Linux-Tests, Docker-Builds → Ubuntu-VM oder Stage-VM; Windows-Installer → PC-Satellit (keine Claude-Code-Tests am PC, Owner-Regel 10.10.); Server-Code ohne Gerätebezug → Projekt-Agent auf .92; Datenbank-/Compose-Vorschau → Sandbox. Steht im Etappenplan und wird vom Owner mit dem Plan bestätigt.
+
+**Obergrenzen und Kosten:** je Projekt höchstens N Stages (Vorschlag 3), vCPU/RAM/Platz-Budget aus node_stats/list_storage geprüft, bevor geklont wird; verwaiste Stages (ohne Deploy seit X Tagen) als Vorgang „Stage abbauen?" an den Owner; Rückbau nur mit Snapshot/Backup.
+
+**Reihenfolge:** als **R5** nach R2 (Projektvorgang) — zuerst dev-Stage auf Proxmox mit Satellit-Kopplung und Deploy (Beweis mit einem Wegwerf-Projekt), dann Netz (Firewall/DNS/Proxy) mit Bestätigungen, dann Beförderungstore und Rückbau. Messen (Schicht 4): Zeit bis „Stage bereit", Fehlversuche je Schritt, Rollbacks, Ressourcen je Projekt.
 ### Offene Owner-Entscheidungen
 
 Standardbudget je Projektvorgang (Vorschlag 5 USD / 2 h / 8 Etappen); ob die Zusammenfassung des Claude-Code-Berichts durch ein Modell erlaubt ist (werkzeuglos) oder nur zitiert wird; erhöhter Helfer unter Windows (Docker Desktop, Systemdienste); Claude Code/brew/tmux auf dem Mac installieren; Berechtigungsmodus von Claude Code in Aufträgen (heute „auto", Alternative „acceptEdits" ohne Shell).
