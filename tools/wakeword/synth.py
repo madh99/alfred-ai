@@ -53,11 +53,29 @@ def piper(text: str, modell: Path, laenge: float, rausch: float) -> np.ndarray:
         audio = torchaudio.functional.resample(torch.from_numpy(audio), sr, 16000).numpy()
     return audio
 
-def fenster(audio: np.ndarray, sek: float = 1.5, sr: int = 16000) -> np.ndarray:
+def stille_weg(audio: np.ndarray, sr: int = 16000, schwelle_db: float = -40.0) -> np.ndarray:
+    """Führende und abschließende Stille entfernen (Piper liefert Stille vor und nach dem Satz)."""
+    if len(audio) == 0: return audio
+    hop = sr // 100
+    rms = np.array([np.sqrt(np.mean(audio[i:i + hop] ** 2) + 1e-12) for i in range(0, len(audio), hop)])
+    db = 20 * np.log10(rms + 1e-9)
+    laut = np.where(db > db.max() + schwelle_db)[0]
+    if len(laut) == 0: return audio
+    a = max(0, laut[0] * hop - hop); b = min(len(audio), (laut[-1] + 2) * hop)
+    return audio[a:b]
+
+def fenster(audio: np.ndarray, text: str = '', sek: float = 1.5, sr: int = 16000) -> np.ndarray | None:
+    """1,5-s-Fenster. Kurze Äußerungen werden zufällig im Fenster platziert (der Erkenner sieht das Wort an jeder Stelle).
+    Längere: Ausschnitt dort, wo „Alfred" steht (Anfang oder Ende des Satzes) — ein mittiger Ausschnitt ließ bei
+    längeren Sätzen das Wort weg und lieferte falsch beschriftete Positive (Lauf 09.10.: Hold-out ≈ 0,6)."""
     n = int(sek * sr)
-    if len(audio) >= n:
-        # Wort mittig behalten
-        start = max(0, (len(audio) - n) // 2)
+    audio = stille_weg(audio, sr)
+    if len(audio) > n:
+        t = text.lower()
+        if t.startswith('alfred'): return audio[:n]
+        if t.endswith('alfred') or t.endswith('alfred?') or t.endswith('alfred!'): return audio[-n:]
+        if 'alfred' in t: return None  # Wort irgendwo in der Mitte: Lage unbekannt → Clip verwerfen
+        start = random.randint(0, len(audio) - n)
         return audio[start:start + n]
     pad = n - len(audio)
     links = random.randint(0, pad)
@@ -75,12 +93,13 @@ def main(argv) -> None:
         pos = i % 2 == 0
         text = random.choice(POS if pos else NEG)
         modell = random.choice(stimmen)
-        laenge = random.uniform(0.8, 1.3); rausch = random.uniform(0.3, 0.8)
+        laenge = random.uniform(0.8, 1.2); rausch = random.uniform(0.3, 0.8)
         try:
             audio = piper(text, modell, laenge, rausch)
         except subprocess.CalledProcessError as e:
             print('piper-Fehler', text, e.stderr[:200], file=sys.stderr); continue
-        clip = fenster(audio)
+        clip = fenster(audio, text)
+        if clip is None: continue
         name = f'{"pos" if pos else "neg"}/{i:05d}.wav'
         sf.write(out / name, clip, 16000, subtype='PCM_16')
         manifest.append({'datei': name, 'label': 1 if pos else 0, 'text': text, 'stimme': modell.stem, 'laenge': laenge})

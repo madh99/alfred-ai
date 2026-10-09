@@ -34,7 +34,11 @@ class MelFrontend(nn.Module):
         re, im = y[:, :self.bins], y[:, self.bins:]
         leistung = re * re + im * im  # (B, bins, T)
         mel = torch.matmul(leistung.transpose(1, 2), self.fb).transpose(1, 2)  # (B, n_mels, T)
-        return torch.log(mel + 1e-6).unsqueeze(1)
+        logmel = torch.log(mel + 1e-6)
+        # Lauf 09.10.: ohne Normierung hing das Netz an der Lautstärke (Piper vs. Mikrofon) — Mittelwert je Clip abziehen
+        # (ONNX-tauglich: ReduceMean), damit nur Form und Verlauf zählen, nicht der Pegel
+        logmel = logmel - logmel.mean(dim=(1, 2), keepdim=True)
+        return logmel.unsqueeze(1)
 
 MEL = MelFrontend()
 
@@ -82,15 +86,34 @@ def daten(data: Path):
     X = np.stack([lade(data / m['datei']) for m in man]); y = np.array([m['label'] for m in man], np.float32)
     return torch.from_numpy(X), torch.from_numpy(y)
 
+def lade_voll(pfad: Path) -> np.ndarray:
+    """Ganze Aufnahme (16 kHz, mono), mindestens N Samples — für die Messung mit gleitendem Fenster wie in der App."""
+    a, sr = sf.read(pfad, dtype='float32', always_2d=False)
+    if a.ndim > 1: a = a.mean(axis=1)
+    if sr != SR: a = torchaudio.functional.resample(torch.from_numpy(a), sr, SR).numpy()
+    if len(a) < N: a = np.pad(a, (0, N - len(a)))
+    return a.astype(np.float32)
+
+def fenster_alle(a: np.ndarray, hop: int = SR // 5) -> np.ndarray:
+    """Alle 1,5-s-Fenster einer Aufnahme im 200-ms-Raster (wie der Erkenner in der App) → (F, N)."""
+    starts = list(range(0, max(1, len(a) - N + 1), hop))
+    if starts[-1] != len(a) - N: starts.append(len(a) - N)
+    return np.stack([a[s:s + N] for s in starts])
+
 def echt(data: Path):
+    """Owner-Aufnahmen als Hold-out: (ganze Aufnahme, Label, Name). Gemessen wird das Maximum über alle Fenster —
+    im Lauf 09.10. nahm `lade` nur die Mitte der Aufnahme, bei längeren Aufnahmen lag das Wort daneben."""
     aus = []
     for label, ordner in ((1, 'pos'), (0, 'neg')):
         d = data / 'echt' / ordner
         if d.exists():
             for p in sorted(d.glob('*')):
                 if p.suffix.lower() in ('.wav', '.flac', '.ogg', '.m4a', '.mp3'):
-                    try: aus.append((lade(p), label, p.name))
+                    try: aus.append((lade_voll(p), label, p.name))
                     except Exception as e: print('überspringe', p, e, file=sys.stderr)
+    if aus:
+        sek = [len(a) / SR for a, _, _ in aus]
+        print(f'Echte Aufnahmen: {len(aus)}, Länge {min(sek):.1f}–{max(sek):.1f} s (Median {float(np.median(sek)):.1f} s)', file=sys.stderr)
     return aus
 
 def main(argv) -> None:
@@ -103,7 +126,8 @@ def main(argv) -> None:
     X, y = daten(data)
     e = echt(data)
     if a.echt_mittrainieren and e:
-        X = torch.cat([X, torch.from_numpy(np.stack([c for c, _, _ in e]))]); y = torch.cat([y, torch.tensor([l for _, l, _ in e], dtype=torch.float32)])
+        mitte = lambda c: c[(len(c) - N) // 2:(len(c) - N) // 2 + N]
+        X = torch.cat([X, torch.from_numpy(np.stack([mitte(c) for c, _, _ in e]))]); y = torch.cat([y, torch.tensor([l for _, l, _ in e], dtype=torch.float32)])
     idx = torch.randperm(len(X)); n_val = max(50, len(X) // 10)
     val, tr = idx[:n_val], idx[n_val:]
     netz = Netz(); opt = torch.optim.AdamW(netz.parameters(), lr=a.lr, weight_decay=1e-4); loss = nn.BCEWithLogitsLoss()
@@ -130,12 +154,18 @@ def main(argv) -> None:
     print('exportiert:', data / 'alfred.onnx', (data / 'alfred.onnx').stat().st_size, 'Bytes')
     if e: messe(komplett, e)
 
-def messe(modell, e) -> None:
+def messe(modell, e, schwelle: float = 0.5) -> None:
+    """Je Aufnahme das Maximum über alle 1,5-s-Fenster (200-ms-Raster) — so arbeitet der Erkenner in der App."""
+    p = []
     with torch.no_grad():
-        X = torch.from_numpy(np.stack([c for c, _, _ in e])); p = modell(X).numpy()
-    tp = sum(1 for (_, l, _), pp in zip(e, p) if l == 1 and pp > 0.5); P = sum(1 for _, l, _ in e if l == 1)
-    fp = sum(1 for (_, l, _), pp in zip(e, p) if l == 0 and pp > 0.5); Nn = sum(1 for _, l, _ in e if l == 0)
-    print(f'ECHTE AUFNAHMEN: Treffer {tp}/{P}, Fehlauslösungen {fp}/{Nn}')
+        for c, _, _ in e:
+            p.append(float(modell(torch.from_numpy(fenster_alle(c))).numpy().max()))
+    tp = sum(1 for (_, l, _), pp in zip(e, p) if l == 1 and pp > schwelle); P = sum(1 for _, l, _ in e if l == 1)
+    fp = sum(1 for (_, l, _), pp in zip(e, p) if l == 0 and pp > schwelle); Nn = sum(1 for _, l, _ in e if l == 0)
+    print(f'ECHTE AUFNAHMEN: Treffer {tp}/{P}, Fehlauslösungen {fp}/{Nn} (Schwelle {schwelle}, Maximum über Fenster)')
+    for s in (0.7, 0.9):
+        tp2 = sum(1 for (_, l, _), pp in zip(e, p) if l == 1 and pp > s); fp2 = sum(1 for (_, l, _), pp in zip(e, p) if l == 0 and pp > s)
+        print(f'  Schwelle {s}: Treffer {tp2}/{P}, Fehlauslösungen {fp2}/{Nn}')
     for (_, l, name), pp in zip(e, p): print(f'  {name}: {pp:.2f} ({"Alfred" if l else "nicht"})')
 
 def evaluate_cli(argv) -> None:
@@ -145,8 +175,9 @@ def evaluate_cli(argv) -> None:
     s = ort.InferenceSession(a.model)
     e = echt(Path(a.dir))
     if not e: print('keine echten Aufnahmen unter', Path(a.dir) / 'echt'); return
-    X = np.stack([c for c, _, _ in e]); p = s.run(None, {'pcm': X})[0]
-    for (_, l, name), pp in zip(e, p): print(f'{name}: {float(pp):.2f} ({"Alfred" if l else "nicht"})')
+    class Onnx:  # wie messe(): Maximum über alle Fenster, Modell = ONNX-Laufzeit
+        def __call__(self, X): return torch.from_numpy(s.run(None, {'pcm': X.numpy()})[0])
+    messe(Onnx(), e)
 
 if __name__ == '__main__':
     main(sys.argv[1:])
