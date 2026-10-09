@@ -1,0 +1,119 @@
+"""Training des Aktivierungswort-Klassifikators und ONNX-Export.
+
+Eingabe: /data/manifest.json + wav-Clips (16 kHz, 1,5 s) aus synth.py; optional /data/echt/{pos,neg}/*.wav (Owner-Aufnahmen),
+die als Hold-out gemessen werden (nicht trainiert), solange --echt-mittrainieren nicht gesetzt ist.
+Merkmale: Log-Mel (40 Bänder, 25 ms Fenster, 10 ms Schritt) → 40 × 149. Modell: 3 Faltungsblöcke + Mittelung, < 300 KB.
+Augmentierung je Epoche: Rauschen, Lautstärke, Zeitversatz, leichter Hall (Exponentialimpuls), Bandbreite.
+"""
+import argparse, json, random, sys
+from pathlib import Path
+import numpy as np
+import soundfile as sf
+import torch, torch.nn as nn, torchaudio
+
+SR = 16000; N = int(1.5 * SR)
+MEL = torchaudio.transforms.MelSpectrogram(sample_rate=SR, n_fft=400, win_length=400, hop_length=160, n_mels=40)
+
+def lade(pfad: Path) -> np.ndarray:
+    a, sr = sf.read(pfad, dtype='float32', always_2d=False)
+    if a.ndim > 1: a = a.mean(axis=1)
+    if sr != SR: a = torchaudio.functional.resample(torch.from_numpy(a), sr, SR).numpy()
+    if len(a) >= N: a = a[(len(a) - N) // 2:(len(a) - N) // 2 + N]
+    else: a = np.pad(a, (0, N - len(a)))
+    return a.astype(np.float32)
+
+def merkmale(x: torch.Tensor) -> torch.Tensor:
+    """x: (B, N) → (B, 1, 40, T) log-mel."""
+    m = MEL(x)
+    return torch.log(m + 1e-6).unsqueeze(1)
+
+def augment(x: torch.Tensor) -> torch.Tensor:
+    B = x.shape[0]
+    g = torch.pow(10.0, torch.empty(B, 1).uniform_(-1.2, 0.3))  # -24 .. +6 dB
+    x = x * g
+    shift = torch.randint(-int(0.3 * SR), int(0.3 * SR), (1,)).item()
+    x = torch.roll(x, shifts=shift, dims=1)
+    noise = torch.randn_like(x) * torch.pow(10.0, torch.empty(B, 1).uniform_(-3.5, -1.5))
+    x = x + noise
+    if random.random() < 0.3:  # Hall
+        t = torch.arange(0, int(0.25 * SR)) / SR
+        ir = torch.exp(-t / random.uniform(0.03, 0.12)) * torch.randn(len(t)) * 0.05
+        ir[0] = 1.0
+        x = torchaudio.functional.fftconvolve(x, ir.unsqueeze(0))[:, :N]
+    return torch.clamp(x, -1, 1)
+
+class Netz(nn.Module):
+    def __init__(self):
+        super().__init__()
+        def block(i, o): return nn.Sequential(nn.Conv2d(i, o, 3, padding=1), nn.BatchNorm2d(o), nn.ReLU(), nn.MaxPool2d(2))
+        self.f = nn.Sequential(block(1, 16), block(16, 32), block(32, 48), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Dropout(0.2), nn.Linear(48, 1))
+    def forward(self, x): return self.f(x).squeeze(1)
+
+class Komplett(nn.Module):
+    """Für den Export: rohes PCM (B, N) → Wahrscheinlichkeit, damit die App nur Audio liefert."""
+    def __init__(self, netz): super().__init__(); self.netz = netz
+    def forward(self, pcm): return torch.sigmoid(self.netz(merkmale(pcm)))
+
+def daten(data: Path):
+    man = json.loads((data / 'manifest.json').read_text())
+    X = np.stack([lade(data / m['datei']) for m in man]); y = np.array([m['label'] for m in man], np.float32)
+    return torch.from_numpy(X), torch.from_numpy(y)
+
+def echt(data: Path):
+    aus = []
+    for label, ordner in ((1, 'pos'), (0, 'neg')):
+        d = data / 'echt' / ordner
+        if d.exists():
+            for p in sorted(d.glob('*')):
+                if p.suffix.lower() in ('.wav', '.flac', '.ogg', '.m4a', '.mp3'):
+                    try: aus.append((lade(p), label, p.name))
+                    except Exception as e: print('überspringe', p, e, file=sys.stderr)
+    return aus
+
+def main(argv) -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--data', default='/data'); ap.add_argument('--epochs', type=int, default=20); ap.add_argument('--echt-mittrainieren', action='store_true')
+    a = ap.parse_args(argv)
+    data = Path(a.data); torch.manual_seed(7); random.seed(7)
+    X, y = daten(data)
+    e = echt(data)
+    if a.echt_mittrainieren and e:
+        X = torch.cat([X, torch.from_numpy(np.stack([c for c, _, _ in e]))]); y = torch.cat([y, torch.tensor([l for _, l, _ in e], dtype=torch.float32)])
+    idx = torch.randperm(len(X)); n_val = max(50, len(X) // 10)
+    val, tr = idx[:n_val], idx[n_val:]
+    netz = Netz(); opt = torch.optim.AdamW(netz.parameters(), lr=2e-3, weight_decay=1e-4); loss = nn.BCEWithLogitsLoss()
+    for ep in range(a.epochs):
+        netz.train(); perm = tr[torch.randperm(len(tr))]; tot = 0.0
+        for i in range(0, len(perm), 64):
+            b = perm[i:i + 64]; xb = augment(X[b]); opt.zero_grad()
+            l = loss(netz(merkmale(xb)), y[b]); l.backward(); opt.step(); tot += l.item() * len(b)
+        netz.eval()
+        with torch.no_grad():
+            p = torch.sigmoid(netz(merkmale(X[val]))); acc = ((p > 0.5).float() == y[val]).float().mean().item()
+        print(f'Epoche {ep + 1}: Verlust {tot / len(tr):.4f}, Genauigkeit (synthetisch, Hold-out) {acc:.3f}', file=sys.stderr)
+    torch.save(netz.state_dict(), data / 'alfred.pt')
+    komplett = Komplett(netz).eval()
+    torch.onnx.export(komplett, torch.zeros(1, N), str(data / 'alfred.onnx'), input_names=['pcm'], output_names=['p'], dynamic_axes={'pcm': {0: 'b'}, 'p': {0: 'b'}}, opset_version=17)
+    print('exportiert:', data / 'alfred.onnx', (data / 'alfred.onnx').stat().st_size, 'Bytes')
+    if e: messe(komplett, e)
+
+def messe(modell, e) -> None:
+    with torch.no_grad():
+        X = torch.from_numpy(np.stack([c for c, _, _ in e])); p = modell(X).numpy()
+    tp = sum(1 for (_, l, _), pp in zip(e, p) if l == 1 and pp > 0.5); P = sum(1 for _, l, _ in e if l == 1)
+    fp = sum(1 for (_, l, _), pp in zip(e, p) if l == 0 and pp > 0.5); Nn = sum(1 for _, l, _ in e if l == 0)
+    print(f'ECHTE AUFNAHMEN: Treffer {tp}/{P}, Fehlauslösungen {fp}/{Nn}')
+    for (_, l, name), pp in zip(e, p): print(f'  {name}: {pp:.2f} ({"Alfred" if l else "nicht"})')
+
+def evaluate_cli(argv) -> None:
+    ap = argparse.ArgumentParser(); ap.add_argument('--model', default='/data/alfred.onnx'); ap.add_argument('--dir', default='/data')
+    a = ap.parse_args(argv)
+    import onnxruntime as ort
+    s = ort.InferenceSession(a.model)
+    e = echt(Path(a.dir))
+    if not e: print('keine echten Aufnahmen unter', Path(a.dir) / 'echt'); return
+    X = np.stack([c for c, _, _ in e]); p = s.run(None, {'pcm': X})[0]
+    for (_, l, name), pp in zip(e, p): print(f'{name}: {float(pp):.2f} ({"Alfred" if l else "nicht"})')
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

@@ -1,0 +1,8 @@
+piper-tts==1.2.0
+numpy>=1.26,<2
+soundfile>=0.12
+torch==2.5.1+cpu
+torchaudio==2.5.1+cpu
+onnx>=1.16
+onnxruntime>=1.19
+--extra-index-url https://download.pytorch.org/whl/cpu
