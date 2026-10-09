@@ -249,9 +249,9 @@ Owner-Entscheidung 09.10.2026 (Freigabe 1–5): Der Gesprächsverlauf des Owners
 - Web `web-chat-<user>` → Hauptgespräch; `web-faden-<faden>` → Faden.
 - Familie und Gäste: unverändert, Kanal-Gespräch.
 
-**Wohin Antworten gehen**: immer in den Kanal der Frage. Andere offene Oberflächen bekommen den Push `gespraech` (Faden, Herkunft) und laden den Verlauf nach — so zeigt die App, was in Telegram lief, und umgekehrt. Spiegelung von Nachrichten in andere Kanäle: aus (Owner-Entscheidung), zuschaltbar als späterer Schalter.
+**Wohin Antworten gehen**: immer in den Kanal der Frage. Andere offene Oberflächen bekommen den Push `gespraech` (Faden, Herkunft) und laden den Verlauf nach — so zeigt die App, was in Telegram lief, und umgekehrt. Spiegelung in den Owner-Chat: Standard aus, Schalter in der App (Einstellungen → Gespräche) oder `/spiegel an` (v1334); jede Nachricht trägt ihre Herkunft (`messages.herkunft`).
 
-**Bedienung**: Apps und Terminal über die Seitenleiste bzw. `sitzung:<id>:<faden>`; Web über die Seitenleiste „Gespräche" und `?faden=`; Telegram über `/faden` (Liste), `/faden neu [Titel]`, `/faden <Nr|Kennung>`, `/faden haupt`, `/faden löschen <Kennung>` — ohne Modellaufruf.
+**Bedienung**: Apps und Terminal über die Seitenleiste bzw. `sitzung:<id>:<faden>`; Web über die Seitenleiste „Gespräche" und `?faden=`; Telegram über `/faden` (Liste), `/faden neu [Titel]`, `/faden <Nr|Kennung>`, `/faden haupt`, `/faden löschen <Kennung>`, dazu `/verlauf [n]` (letzte Nachrichten mit Herkunft) und `/spiegel an|aus` — alle ohne Modellaufruf (v1334).
 
 **Schnittstellen**: Gerätetoken `GET /api/geraete/faeden`, `GET /api/geraete/verlauf?faden=|archiv=`, `DELETE /api/geraete/faeden/<f>`; API-Token oder Owner-Web-Sitzung `GET /api/gespraeche`, `GET /api/gespraeche/verlauf?faden=`, `DELETE /api/gespraeche/<f>` (v1331: 403 für alle anderen Web-Sitzungen; v1332: Geräte-Rückrufe nur für Geräte, deren Sitzungs-Alias am Owner-Master hängt, sonst Kanal-Gespräche des Geräts; v1333: Archiv nur eigene alte Sitzungen, Faden nur im Muster, auch im Kern geprüft — alle drei aus dem Sicherheitsreview).
 
