@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { macFensterLesen, macAktion, macTasteSenden, macLeerlaufMs, macKlickenBei } from './satellit-bedienen-mac.js'; // v1283
+import { LINUX_ZIELE, linuxAktion, linuxTasteSenden, linuxLeerlaufMs, linuxKlickenBei } from './satellit-bedienen-linux.js'; // v1339
 
 /**
  * v1276 — Bedienen, Stufe A (Spec §18, Owner-Freigabe 07.10. „ausarbeiten und umsetzen"):
@@ -190,7 +191,14 @@ export class Bedienung {
   constructor(private readonly gesperrteFenster: string[] = GESPERRTE_FENSTER_STANDARD) {}
 
   async fensterLesen(suche?: string): Promise<Karte> {
-    if (process.platform !== 'win32' && process.platform !== 'darwin') throw new Error('Bedienen gibt es unter Windows und macOS (Linux folgt)');
+    if (process.platform === 'linux') {
+      // v1339 — Wayland liefert keine Fensterliste und keine Elemente: feste Ziele (aktives Fenster, Terminal), Titel unbekannt
+      const elemente: Element[] = LINUX_ZIELE.map(z => ({ ...z }));
+      const karte: Karte = { fenster: suche ?? '', programm: '', pid: 0, elemente, zeit: Date.now(), hash: 'linux-wayland' };
+      this.karte = karte;
+      return karte;
+    }
+    if (process.platform !== 'win32' && process.platform !== 'darwin') throw new Error('Bedienen gibt es unter Windows, macOS und Linux');
     const j = process.platform === 'darwin'
       ? await macFensterLesen(suche) as { fehler?: string; fenster?: string; programm?: string; pid?: number; elemente?: Element[] | Element }
       : JSON.parse(letzteZeile(await powershell(PS_LESEN.replace('__SUCHE__', ps1(suche ?? ''))))) as { fehler?: string; fenster?: string; programm?: string; pid?: number; elemente?: Element[] | Element };
@@ -226,6 +234,7 @@ export class Bedienung {
     this.letzteEigeneEingabe = Date.now();
     let j: { ok: boolean; wie?: string; fehler?: string; fenster?: string };
     if (process.platform === 'darwin') j = await macAktion(k.pid, e, aktion, text, enter);
+    else if (process.platform === 'linux') j = await linuxAktion(e.id === 'terminal' ? 'terminal' : 'fenster', aktion, text, enter); // v1339
     else {
       const script = PS_AKTION.replace('__PID__', String(k.pid)).replace('__ID__', ps1(e.id ?? '')).replace('__NAME__', ps1(e.name ?? '')).replace('__TYP__', ps1(e.typ)).replace('__X__', String(e.x)).replace('__Y__', String(e.y)).replace('__AKTION__', aktion).replace('__TEXT64__', Buffer.from(text, 'utf8').toString('base64')).replace('__ENTER__', enter ? 'true' : 'false');
       j = JSON.parse(letzteZeile(await powershell(script))) as { ok: boolean; wie?: string; fehler?: string; fenster?: string };
@@ -240,7 +249,7 @@ export class Bedienung {
 
   /** v1281 — Stufe B: Klick nach Bildschirmkoordinaten (Aufrufer rechnet Fotokoordinaten um). Sicherungen wie bei Aktionen, plus Vordergrund-Prüfung im Skript. */
   async klickenBei(x: number, y: number, doppelt = false, fensterTitel = ''): Promise<{ x: number; y: number; pid: number }> {
-    if (process.platform !== 'win32' && process.platform !== 'darwin') throw new Error('Klick nach Koordinaten gibt es unter Windows und macOS');
+    if (process.platform !== 'win32' && process.platform !== 'darwin' && process.platform !== 'linux') throw new Error('Klick nach Koordinaten gibt es unter Windows, macOS und Linux');
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('x und y fehlen');
     const gesperrt = istGesperrtesFenster(fensterTitel, this.gesperrteFenster);
     if (gesperrt) throw new Error(`Fenster „${fensterTitel}" ist gesperrt (Muster „${gesperrt}")`);
@@ -249,6 +258,7 @@ export class Bedienung {
     this.letzteEigeneEingabe = Date.now();
     const j = process.platform === 'darwin'
       ? await macKlickenBei(x, y, doppelt)
+      : process.platform === 'linux' ? await linuxKlickenBei(x, y, doppelt) // v1339
       : JSON.parse(letzteZeile(await powershell(PS_KLICK.replace('__X__', String(Math.round(x))).replace('__Y__', String(Math.round(y))).replace('__DOPPELT__', doppelt ? 'true' : 'false'), 30_000))) as { ok: boolean; fehler?: string; pid?: number };
     this.letzteEigeneEingabe = Date.now();
     if (!j.ok) throw new Error(j.fehler ?? 'Klick fehlgeschlagen');
@@ -260,14 +270,16 @@ export class Bedienung {
   /** Leerlauf seit der letzten Eingabe (Notbremse): Windows GetLastInputInfo, macOS HIDIdleTime. */
   private async leerlaufMs(): Promise<number> {
     if (process.platform === 'darwin') return macLeerlaufMs();
+    if (process.platform === 'linux') return linuxLeerlaufMs(); // v1339 — Mutter IdleMonitor
     return Number(letzteZeile(await powershell(PS_LEERLAUF, 15_000)));
   }
 
   async taste(kombi: string): Promise<string> {
-    const keys = process.platform === 'darwin' ? kombi : tastenkombi(kombi);
+    let keys = process.platform === 'darwin' || process.platform === 'linux' ? kombi : tastenkombi(kombi);
     await this.pruefeVorAktion();
     this.letzteEigeneEingabe = Date.now();
     if (process.platform === 'darwin') await macTasteSenden(kombi);
+    else if (process.platform === 'linux') keys = await linuxTasteSenden(kombi); // v1339 — ydotool (Tastennamen), Zeichen über Zwischenablage
     else await powershell(PS_TASTE.replace('__KEYS__', ps1(keys)), 20_000);
     this.letzteEigeneEingabe = Date.now();
     if (this.karte) this.karte.zeit = 0;

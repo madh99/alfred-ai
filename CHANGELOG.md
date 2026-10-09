@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1339] - 2026-10-09
+
+### Added — Bedienen unter Linux/Wayland: Tasten, Text und Klick über ydotool (v1339)
+
+Owner-Freigabe 09.10. 22:10 („linux tippen auch freigegeben"). Unter GNOME Wayland gibt es keinen Zugriff auf fremde Fenster und Elemente; der Satellit bietet deshalb feste Ziele (aktives Fenster, Terminalfenster) statt einer Element-Karte. Tastenkombinationen gehen über `ydotool key` mit Tastennamen (strg+s, alt+f4, strg+alt+t, enter …); Text wird nicht getippt, sondern in die Zwischenablage gelegt (`wl-copy`) und mit Strg+V bzw. Strg+Umschalt+V (Terminal) eingefügt — uinput ist layoutblind (deutsches Layout: aus „YDOTOOL-TEST > /tmp" wurde „ZDOTOOLßTEST : -tmp"). `klicken_bei` klickt nach Bildschirmkoordinaten des letzten Fotos (ydotool bewegt relativ: erst in die Ecke, dann an die Stelle). Notbremse über den Leerlauf des Mutter IdleMonitor. Dienste ohne Anmeldesitzung bekommen die Sitzungsumgebung (D-Bus, Wayland) ergänzt. Voraussetzungen: ydotool, wl-clipboard, gnome-screenshot; /dev/uinput für die Gruppe input (udev-Regel) und der Benutzer in dieser Gruppe.
+
+### Fixed — Standardfreigaben auf deutschem Linux und Arbeitsverzeichnis der Shell (v1339)
+
+Realfall Ubuntu-VM 09.10. 22:01: Die festen Standardfreigaben `~/Documents` und `~/Desktop` existieren auf einem deutschen Ubuntu nicht (dort `Dokumente`, `Schreibtisch`); die Shell-Aktion nahm das erste freigegebene Verzeichnis und scheiterte mit „Arbeitsverzeichnis existiert nicht". Jetzt kommen die Linux-Standardfreigaben aus `~/.config/user-dirs.dirs`, beim Start werden fehlende englische Standardeinträge durch die vorhandenen XDG-Ordner ersetzt (eigene Freigaben bleiben unberührt, Logzeile „Freigabe repariert"), und die Shell nimmt das erste vorhandene Verzeichnis mit Schreibrecht.
+
 ## [0.19.0-jarvis.1338] - 2026-10-09
 
 ### Fixed — Verlauf der Apps zeigt die letzten sichtbaren Nachrichten, nicht die letzten Zeilen (v1338)

@@ -41,7 +41,8 @@ export async function fensterListe(): Promise<Fenster[]> {
     const out = await run('wmctrl', ['-lp']);
     return out.split('\n').filter(Boolean).map(z => { const t = z.split(/\s+/); const pid = parseInt(t[2] ?? '', 10); return { titel: t.slice(4).join(' '), programm: t[3] ?? '', pid: Number.isFinite(pid) ? pid : undefined }; });
   }
-  throw new Error('Keine Fensterliste möglich (wmctrl installieren)');
+  // v1339 — unter Wayland gibt es keine Fensterliste für fremde Fenster; wmctrl hilft nur unter X11
+  throw new Error(process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland' ? 'Keine Fensterliste unter Wayland (GNOME gibt fremde Fenster nicht frei) — mit bildschirm prüfen, was offen ist' : 'Keine Fensterliste möglich (wmctrl installieren)');
 }
 
 const MAC_FENSTER_SKRIPT = [

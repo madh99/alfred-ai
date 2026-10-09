@@ -22,6 +22,8 @@ import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } fr
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
 import { Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js'; // v1276
+import { linuxStandardVerzeichnisse, repariereStandardFreigaben } from './satellit-verzeichnisse.js'; // v1339
+import { linuxSitzungsUmgebung } from './satellit-bedienen-linux.js'; // v1339
 import { IpcServer, type IpcEreignisArt, type IpcAnhang, type SatellitStatus } from './satellit-ipc.js'; // v1302, v1325 Anhang
 import { heimInParams } from './satellit-pfad.js'; // v1303
 import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
@@ -47,6 +49,7 @@ export function plattform(): GeraetPlattform {
 
 export function SATELLIT_STANDARD_VERZEICHNISSE(): string[] {
   const h = os.homedir();
+  if (process.platform === 'linux') return linuxStandardVerzeichnisse(h); // v1339 — Dokumente/Schreibtisch aus user-dirs.dirs
   return [path.join(h, 'Documents'), path.join(h, 'Downloads'), path.join(h, 'Desktop')];
 }
 
@@ -75,11 +78,12 @@ export function baueManifest(version: string): GeraetManifest {
       { name: 'zwischenablage_lesen', beschreibung: 'Liest den Text in der Zwischenablage dieses Geräts (für „was habe ich kopiert", „nimm den Text aus der Zwischenablage")', autonomie: 'bestaetigen' },
       { name: 'zwischenablage_setzen', beschreibung: 'Legt Text in die Zwischenablage dieses Geräts („kopier mir das in die Zwischenablage")', autonomie: 'auto', parameter: { text: { type: 'string', description: 'Text' } } },
       // v1276 — Bedienen Stufe A (Windows UIA, v1283 auch macOS Accessibility): Element-Karte, kein blinder Mausklick
-      ...(process.platform === 'win32' || process.platform === 'darwin' ? [
+      // v1339 — Linux/Wayland: feste Ziele statt Element-Karte, Text über Zwischenablage, Tasten/Maus über ydotool
+      ...(process.platform === 'win32' || process.platform === 'darwin' || process.platform === 'linux' ? [
         { name: 'fenster_lesen', beschreibung: 'Nummerierte Element-Karte des aktiven Fensters (oder nach Titel): Buttons, Felder, Menüs, Tabs mit Name, Wert, Zustand. Vor jedem element_klicken/tippen nötig, nach jeder Aktion erneut (Karte verfällt). Mehrschrittig: zuerst action=vorhaben mit den Bedien-Aktionen.', autonomie: 'auto' as const, parameter: { titel: { type: 'string', description: 'Teil des Fenstertitels oder Programmname (optional, sonst das aktive Fenster)' } } },
         { name: 'element_klicken', beschreibung: 'Betätigt Element Nr. N aus der Element-Karte (Button, Menü, Tab, Kontrollkästchen) über die Bedienhilfen — kein Mausklick. Kauf-, Zahlungs-, Banking-Fenster sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' } } },
         { name: 'tippen', beschreibung: 'Tippt Text in Element Nr. N (Eingabefeld, Dokument), optional mit Enter. Passwortfelder sind gesperrt.', autonomie: 'bestaetigen' as const, parameter: { nr: { type: 'number', description: 'Nummer aus fenster_lesen' }, text: { type: 'string', description: 'Text' }, enter: { type: 'boolean', description: 'danach Enter' } } },
-        { name: 'taste', beschreibung: process.platform === 'darwin' ? 'Tastenkombination im aktiven Programm, z. B. cmd+s, cmd+q, enter, cmd+shift+t (cmd ist die Mac-Taste, strg = control). Zeichen wie * + / = direkt angeben, nicht shift+Ziffer (deutsches Layout)' : 'Tastenkombination im aktiven Fenster, z. B. strg+s, alt+f4, enter, strg+shift+t, f5. Zeichen wie * + / = direkt angeben, nicht shift+Ziffer', autonomie: 'bestaetigen' as const, parameter: { kombi: { type: 'string', description: process.platform === 'darwin' ? 'z. B. cmd+s' : 'z. B. strg+s' } } },
+        { name: 'taste', beschreibung: process.platform === 'darwin' ? 'Tastenkombination im aktiven Programm, z. B. cmd+s, cmd+q, enter, cmd+shift+t (cmd ist die Mac-Taste, strg = control). Zeichen wie * + / = direkt angeben, nicht shift+Ziffer (deutsches Layout)' : process.platform === 'linux' ? 'Tastenkombination im aktiven Fenster (ydotool), z. B. strg+s, alt+f4, enter, strg+shift+t, f5, strg+alt+t. Zeichen wie * + / = direkt angeben (werden über die Zwischenablage eingefügt). Der Fenstertitel ist unter Wayland nicht lesbar — vorher mit bildschirm prüfen, was aktiv ist' : 'Tastenkombination im aktiven Fenster, z. B. strg+s, alt+f4, enter, strg+shift+t, f5. Zeichen wie * + / = direkt angeben, nicht shift+Ziffer', autonomie: 'bestaetigen' as const, parameter: { kombi: { type: 'string', description: process.platform === 'darwin' ? 'z. B. cmd+s' : 'z. B. strg+s' } } },
         { name: 'klicken_bei', beschreibung: 'Rückfall ohne Element-Karte: Mausklick an einer Stelle des LETZTEN Bildschirmfotos (x, y in Fotopixeln). Nur wenn das Ziel keine Nummer hat. Klickt nur ins Vordergrundfenster; danach neues Foto zur Kontrolle.', autonomie: 'bestaetigen' as const, parameter: { x: { type: 'number', description: 'x im letzten Foto' }, y: { type: 'number', description: 'y im letzten Foto' }, doppelt: { type: 'boolean', description: 'Doppelklick' } } },
       ] : []),
       // v1275 — Systembenachrichtigungen (Bestätigung: Nachrichtenvorschauen, Codes)
@@ -289,7 +293,8 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     case 'shell': {
       const command = String(params.command ?? '').trim();
       if (!command) return { success: false, error: 'command fehlt' };
-      const cwd = params.cwd ? String(params.cwd) : frei[0];
+      // v1339 — Realfall Ubuntu-VM: frei[0] („Documents") existierte nicht → erstes vorhandenes Verzeichnis mit Schreibrecht
+      const cwd = params.cwd ? String(params.cwd) : (frei.find(p => existsSync(p)) ?? frei[0]);
       if (!cwd) return { success: false, error: 'Kein Arbeitsverzeichnis: es ist kein Verzeichnis mit Schreibrecht freigegeben (freigabe_aendern)' };
       if (!istPfadErlaubt(cwd, frei)) return { success: false, error: `Arbeitsverzeichnis nicht freigegeben (Schreibrecht nötig): ${cwd}. Mit Schreibrecht: ${frei.join(', ')}` };
       // v1291 — Realfall Office-VM: Freigabe-Eintrag war ein zusammengeklebter Pfad → cwd existierte nicht → „spawn powershell.exe ENOENT" ohne Hinweis
@@ -564,6 +569,13 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   const stop = () => { laeuft = false; sinne.stop(); try { aktiv?.close(); } catch { /* */ } try { ipc?.stop(); } catch { /* */ } };
 
   log(`Satellit ${k.name} (${manifest.plattform}, v${version}) → ${k.server}`);
+  if (process.platform === 'linux') {
+    // v1339 — Dienst ohne Anmeldesitzung: D-Bus/Wayland der Benutzersitzung ergänzen (Bildschirmfoto, Zwischenablage, Leerlauf, ydotool)
+    Object.assign(process.env, linuxSitzungsUmgebung());
+    // v1339 — nicht existierende englische Standardfreigaben durch die XDG-Ordner ersetzen (deutsches Ubuntu: Dokumente, Schreibtisch)
+    const ersetzt = repariereStandardFreigaben(k.freigegebeneVerzeichnisse);
+    if (ersetzt.length) { try { speichereKonfig(k); } catch { /* nur im Speicher */ } for (const e of ersetzt) log(`Freigabe repariert: ${e.alt} (fehlt) → ${e.neu}`); }
+  }
   log(`Freigegebene Verzeichnisse: ${k.freigegebeneVerzeichnisse.join(', ')}`);
 
   const fertig = (async () => {
