@@ -569,7 +569,7 @@ export class MessagePipeline {
         const antwort = await verlaufBefehl(message.text.trim(), async (n) => {
           const c = await this.conversationManager.getOrCreateConversation(gespraech.platform, gespraech.chatId, user.id);
           const m = await this.conversationManager.getHistory(c.id, n * 3);
-          return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-n).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt, herkunft: x.herkunft }));
+          return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-n).map(x => ({ rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt, herkunft: x.herkunft }));
         }, deps.geraetName, `${message.platform}:${message.chatId}`);
         return { text: antwort };
       }

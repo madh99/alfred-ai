@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1341] - 2026-10-09
+
+### Fixed — Antwort nach einer Bestätigung landet in der anfragenden Sitzung, nicht nur in Telegram (v1341)
+
+Owner-Befund 09.10. 23:35 („die antwort wurde aber nur in telegram angezeigt"): Eine Frage aus der Desktop-App oder Terminalsitzung, deren Geräteaktion in Telegram bestätigt wurde, bekam ihre Fortsetzung (Alfreds eigentliche Antwort) im Telegram-Chat — die Bestätigungs-Warteschlange reichte nur den Zustell-Chat weiter, die Herkunft der Anfrage blieb liegen. Jetzt wandert die Herkunft mit: Die Fortsetzung läuft wie bei Vorhaben (v1324) in der anfragenden Sitzung, die App bekommt die Antwort per Push, Telegram die Kopie. Zusätzlich zeigen die Verlauf-Routen Alfreds Antworten aus internen Fortsetzungen als normale Antworten; nur die synthetische Owner-Zeile („Freigabe erteilt …") bleibt ein Hinweis — bisher kürzten die Apps auch den Bericht auf eine Zeile.
+
 ## [0.19.0-jarvis.1340] - 2026-10-09
 
 ### Changed — Linux-Bedienen: Tasten ohne vorheriges fenster_lesen, Beschreibung der festen Ziele (v1340)

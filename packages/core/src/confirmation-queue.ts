@@ -110,7 +110,7 @@ export class ConfirmationQueue {
   private expireTimer: ReturnType<typeof setInterval> | null = null;
   private feedbackService?: FeedbackService;
   /** v1319 — Herkunft je Bestätigung (nur im Prozess): Chat der Anfrage, wenn er nicht der Zustell-Chat ist. */
-  private readonly herkuenfte = new Map<string, { chatId: string; platform: string }>();
+  private readonly herkuenfte = new Map<string, { chatId: string; platform: string; userId?: string }>();
 
   /** v1319 — Ergebnis einer Entscheidung zusätzlich an den anfragenden Chat (z. B. Gerätesitzung in App oder Terminal). */
   private async anHerkunft(confirmationId: string, text: string, attachments?: Array<{ fileName?: string; mimeType?: string; data: Buffer }>): Promise<void> {
@@ -170,7 +170,7 @@ export class ConfirmationQueue {
     /** v657 \u2014 zus\u00E4tzliche Buttons neben approve/reject (z.B. Open-Item-Eskalation: Ablehnen/Zur\u00FCckstellen) */
     extraActions?: ConfirmationExtraAction[];
     /** v1319 \u2014 Chat, aus dem die Anfrage kam (z. B. Ger\u00E4tesitzung); Ergebnis geht nach der Entscheidung auch dorthin. */
-    herkunft?: { chatId: string; platform: string };
+    herkunft?: { chatId: string; platform: string; userId?: string };
   }): Promise<boolean> {
     // v1226 — Rückgabe: true = eingereiht, false = per Dedup übersprungen (Aufrufer können ehrlich melden).
     // v1142 — H2: Enqueue-Dedup über Anfrage-IDENTITÄT statt wortgleichem Text.
@@ -289,7 +289,7 @@ export class ConfirmationQueue {
   }
 
   /** v1239 — nach einer freigegebenen Ausführung: liefert true, wenn der Aufrufer die Antwort selbst zustellt (Fortsetzung durch die Pipeline). */
-  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown } | undefined, ziel: { platform: string; chatId: string }) => Promise<boolean>;
+  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean>;
   setNachAusfuehrung(fn: NonNullable<ConfirmationQueue['nachAusfuehrung']>): void { this.nachAusfuehrung = fn; }
 
   async enqueuePlan(plan: import('@alfred/types').Plan, display: string): Promise<void> {
@@ -486,7 +486,9 @@ export class ConfirmationQueue {
           // v1239 — Fortsetzung: Alfred arbeitet mit dem Ergebnis weiter (Owner-Beobachtung: Rohergebnis statt Antwort)
           let uebernommen = false;
           if (this.nachAusfuehrung) {
-            try { uebernommen = await this.nachAusfuehrung(pending as unknown as { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result ?? undefined, { platform: String(platform), chatId }); }
+            // v1341 — Realfall 09.10. 23:29: Frage aus der Gerätesitzung, „Ja" in Telegram → die Fortsetzung lief im Telegram-Chat und
+            // die Antwort stand nur dort. Mit der Herkunft läuft sie in der anfragenden Sitzung (Push an die App), Telegram bekommt die Kopie.
+            try { uebernommen = await this.nachAusfuehrung(pending as unknown as { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result ?? undefined, { platform: String(platform), chatId, herkunft: this.herkuenfte.get(pending.id) }); }
             catch (err) { this.logger.warn({ err: (err as Error).message, confirmationId: pending.id }, 'v1239 Fortsetzung nach Bestätigung fehlgeschlagen'); }
           }
           // Show full skill result (like a normal chat interaction), not just "Ausgeführt"

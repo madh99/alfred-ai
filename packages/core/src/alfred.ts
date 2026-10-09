@@ -6880,7 +6880,9 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       if (pending.skillName === 'selbstupdate') return false; // v1266 — deterministische Meldung statt LLM-Runde
       const display = (result?.display ?? (result?.data !== undefined ? JSON.stringify(result.data) : '')).slice(0, 3500);
       const text = `Die von mir freigegebene Aktion wurde gerade ausgeführt: ${pending.description}.\n\nErgebnis:\n${display || '(keine Ausgabe)'}\n\nMach damit weiter: Beantworte meine ursprüngliche Frage bzw. erledige die Aufgabe, für die diese Aktion nötig war — kurz, sauber formatiert, mit den wichtigen Werten. Sind weitere Schritte nötig, führe sie aus.`;
-      return this.fortsetzungImOwnerChat(text, { id: 'bestaetigt', platform: ziel.platform, chatId: ziel.chatId });
+      // v1341 — mit Herkunft (Gerätesitzung, App, Terminal) läuft die Fortsetzung dort, der Owner-Chat bekommt die Kopie (wie Vorhaben, v1324)
+      const herkunft = ziel.herkunft?.userId ? { chatId: ziel.herkunft.chatId, platform: ziel.herkunft.platform, userId: ziel.herkunft.userId } : undefined;
+      return this.fortsetzungImOwnerChat(text, { id: 'bestaetigt', platform: ziel.platform, chatId: ziel.chatId, herkunft });
     });
     // v924 — Quick-Actions (todo:/reminder:-Button-Callbacks) vor dem LLM abfangen
     if (this.todoRepo && this.reminderRepo) {
@@ -8614,7 +8616,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
               if (!c || c.deletedAt) return [];
               const m = await this.conversationRepo.getMessages(c.id, limit * 4); // v1338 — Werkzeugzeilen zählen nicht
-              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336
+              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336
             },
             loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
             umbenennen: (faden: string, titel: string) => this.ownerFadenUmbenennen(faden, titel), // v1335
@@ -13694,7 +13696,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             // v1338 — Owner-Befund 21:04: Insights von 20:00/20:30 fehlten in der App, weil Werkzeugzeilen (leerer Inhalt)
             // das Fenster von 30 Zeilen aufbrauchten. Mehr holen, filtern, dann die letzten `limit` sichtbaren liefern.
             const m = await this.conversationRepo.getMessages(c.id, limit * 4);
-            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336 intern → system
+            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336 intern → system
           },
           faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
