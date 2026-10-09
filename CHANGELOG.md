@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1320] - 2026-10-09
+
+### Fixed — Ergebnis einer Geräte-Freigabe geht auch an die anfragende Sitzung (v1320)
+
+Beweislauf zu v1318 zeigte die eigentliche Lücke: Bestätigungen für Geräteaktionen werden immer im Chat des Owners (Telegram) gestellt, auch wenn die Frage aus der Desktop-App oder der Terminal-Sitzung kam. Nach der Freigabe ging das Ergebnis deshalb nur nach Telegram; der Push an Gerätesitzungen (v1318) griff nie, weil die Bestätigung nie den Sitzungs-Chat trug. Jetzt merkt sich die Bestätigungs-Warteschlange die Herkunft der Anfrage (Chat und Plattform des Geräte-Skill-Aufrufs) und schickt das Ergebnis — Erfolg wie Fehler — zusätzlich dorthin; für Gerätesitzungen über den Push aus v1318. Die Frage selbst bleibt im Owner-Chat, damit sie wie gewohnt auch dort beantwortet werden kann.
+
 ## [0.19.0-jarvis.1319] - 2026-10-09
 
 ### Fixed — Satelliten-Update: unvollständige Installation erkennen, keine Neustart-Schleife (v1319)

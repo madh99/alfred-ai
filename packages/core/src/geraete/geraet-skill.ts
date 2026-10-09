@@ -21,7 +21,8 @@ export interface GeraetSkillDeps {
   skillName: string;
   sendeAktion: (aktion: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<{ success: boolean; data?: unknown; display?: string; error?: string; dauerMs: number }>;
   /** Reiht die Frage beim Owner ein; die Queue erhält Parameter mit einer Einmal-Freigabe (v1225). */
-  bestaetigung: (frage: { description: string; aktion: string; params: Record<string, unknown> }) => Promise<boolean>;
+  /** v1319 — herkunft = Chat, aus dem die Anfrage kam (Gerätesitzung); das Ergebnis geht nach der Freigabe auch dorthin. */
+  bestaetigung: (frage: { description: string; aktion: string; params: Record<string, unknown> }, herkunft?: { chatId: string; platform: string }) => Promise<boolean>;
   /** v1225 — prüft und verbraucht die Einmal-Freigabe aus den Parametern der Bestätigungs-Queue. */
   pruefeFreigabe: (nonce: unknown, aktion: string, params: Record<string, unknown>) => boolean;
   /** v1230 — Vorhaben-Freigabe: anlegen, nach Owner-Ja aktivieren, Deckung prüfen. */
@@ -72,6 +73,9 @@ export class GeraetSkill extends Skill {
 
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const aktion = String(input.action ?? '');
+    // v1319 — Realfall Mac 09.10.: Frage aus der Desktop-App, Bestätigung im Telegram-Chat des Owners, Ergebnis nur dort —
+    // die Sitzung sah „noch ist nichts übertragen". Die Herkunft wandert mit der Bestätigung.
+    const herkunft = _context?.chatId && _context?.platform ? { chatId: String(_context.chatId), platform: String(_context.platform) } : undefined;
     // v1268 — Sicherheitsbefund: Geräte gehören dem Owner; andere Nutzer (Familie, Gäste) bekommen weder Dateien noch Bildschirm
     if (this.deps.istOwner && !this.deps.istOwner(_context)) {
       return { success: false, error: `Das Gerät ${this.deps.name} gehört dem Owner — nur er kann es bedienen.` };
@@ -90,7 +94,7 @@ export class GeraetSkill extends Skill {
       const v = this.deps.vorhaben.erzeuge({ beschreibung, aktionen, domains, dauerMin: typeof input.dauerMin === 'number' ? input.dauerMin : undefined });
       const bisText = new Date(v.bis).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
       const frage = `Vorhaben auf ${this.deps.name}: ${beschreibung} — Umfang: ${v.aktionen.join(', ')}${v.domains.length ? ' auf ' + v.domains.join(', ') : ''}, bis ${bisText}. Kauf, Zahlung und Anmeldung bleiben gesperrt.`;
-      const gestellt = await this.deps.bestaetigung({ description: frage, aktion: 'vorhaben_freigeben', params: { vorhaben: v.nonce } });
+      const gestellt = await this.deps.bestaetigung({ description: frage, aktion: 'vorhaben_freigeben', params: { vorhaben: v.nonce } }, herkunft);
       await this.deps.schritt?.({ art: 'zur_bestaetigung', aktion: 'vorhaben', params: { beschreibung, aktionen: v.aktionen, domains: v.domains }, beschreibung: frage, autonomie: 'bestaetigen' });
       return gestellt
         ? { success: true, data: { zurFreigabe: true, bis: new Date(v.bis).toISOString() }, display: `Vorhaben zur Freigabe an den Owner gestellt: ${beschreibung}. Nach seinem Ja führe ich es ohne Einzelbestätigung aus (${v.aktionen.join(', ')}). Jetzt nichts weiter tun und dem Owner sagen, dass die Freigabe bei ihm liegt.` }
@@ -102,7 +106,7 @@ export class GeraetSkill extends Skill {
       const freigabe = input.freigabe; const bestaetigt = this.deps.pruefeFreigabe(freigabe, 'entkoppeln', {});
       if (!bestaetigt) {
         const frage = `Gerät ${this.deps.name} entkoppeln: Satellit-Dienst und Kopplung dort entfernen, Token hier widerrufen. Danach ist das Gerät weg — neu koppeln nur mit alfred pair.`;
-        const gestellt = await this.deps.bestaetigung({ description: frage, aktion: 'entkoppeln', params: {} });
+        const gestellt = await this.deps.bestaetigung({ description: frage, aktion: 'entkoppeln', params: {} }, herkunft);
         return gestellt ? { success: true, data: { zurBestaetigung: true }, display: `Zur Bestätigung an den Owner gestellt: ${frage}` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
       }
       const r = await this.deps.entkoppeln();
@@ -142,7 +146,7 @@ export class GeraetSkill extends Skill {
     // v1230 — ein aktives Vorhaben deckt die Aktion: keine Einzelbestätigung
     const vorhaben = def.autonomie === 'bestaetigen' && !bestaetigt ? this.deps.vorhaben.deckt(aktion, params) : undefined;
     if (def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben) {
-      const gestellt = await this.deps.bestaetigung({ description: beschreibung, aktion, params });
+      const gestellt = await this.deps.bestaetigung({ description: beschreibung, aktion, params }, herkunft);
       await this.deps.schritt?.({ art: 'zur_bestaetigung', aktion, params, beschreibung, autonomie: 'bestaetigen' });
       return gestellt
         ? { success: true, data: { zurBestaetigung: true, geraet: this.deps.name, aktion }, display: `Zur Bestätigung an den Owner gestellt: ${beschreibung}. Nach Freigabe wird es auf dem Gerät ausgeführt.` }

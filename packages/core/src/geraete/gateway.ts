@@ -27,7 +27,7 @@ export interface GeraeteGatewayDeps {
   istOwner?: (ctx: import('@alfred/types').SkillContext) => boolean;
   /** Zustellziel für Bestätigungsfragen (Owner-Chat). */
   ownerZiel: () => { platform: string; chatId: string };
-  enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number }) => Promise<boolean | void>;
+  enqueueBestaetigung?: (opts: { chatId: string; platform: string; source: 'geraet'; sourceId: string; description: string; skillName: string; skillParams: Record<string, unknown>; timeoutMinutes?: number; herkunft?: { chatId: string; platform: string } }) => Promise<boolean | void>; // v1319 herkunft
   schritt?: (s: { userId: string; art: string; skill: string; aktion?: string; params?: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }) => Promise<void>;
   /** v1240 — Datei, in der laufende Vorhaben Neustarts überleben. */
   vorhabenDatei?: string;
@@ -226,12 +226,12 @@ export class GeraeteGateway {
       istOwner: this.deps.istOwner, // v1268
       geraetId: v.eintrag.id, name: v.eintrag.name, manifest: v.eintrag.manifest, skillName: v.skillName,
       sendeAktion: (aktion, params, timeoutMs) => this.sendeAktion(v.eintrag.id, aktion, params, timeoutMs),
-      bestaetigung: async (frage) => {
+      bestaetigung: async (frage, herkunft) => {
         if (!this.deps.enqueueBestaetigung) return false;
         const ziel = this.deps.ownerZiel();
         if (!ziel.chatId) return false;
         const nonce = this.freigaben.erzeuge(v.skillName, frage.aktion, frage.params); // v1225
-        const ok = await this.deps.enqueueBestaetigung({ chatId: ziel.chatId, platform: ziel.platform, source: 'geraet', sourceId: `geraet-${v.eintrag.id.slice(0, 8)}-${Date.now()}`, description: frage.description, skillName: v.skillName, skillParams: { ...frage.params, action: frage.aktion, freigabe: nonce }, timeoutMinutes: 60 });
+        const ok = await this.deps.enqueueBestaetigung({ herkunft, chatId: ziel.chatId, platform: ziel.platform, source: 'geraet', sourceId: `geraet-${v.eintrag.id.slice(0, 8)}-${Date.now()}`, description: frage.description, skillName: v.skillName, skillParams: { ...frage.params, action: frage.aktion, freigabe: nonce }, timeoutMinutes: 60 });
         return ok !== false; // v1226 — Dedup-Übersprung ehrlich melden
       },
       pruefeFreigabe: (nonce, aktion, params) => this.freigaben.verbrauche(nonce, v.skillName, aktion, params),

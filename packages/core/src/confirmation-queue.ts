@@ -109,6 +109,18 @@ export function istGleicheConfirmationsIdentitaet(
 export class ConfirmationQueue {
   private expireTimer: ReturnType<typeof setInterval> | null = null;
   private feedbackService?: FeedbackService;
+  /** v1319 — Herkunft je Bestätigung (nur im Prozess): Chat der Anfrage, wenn er nicht der Zustell-Chat ist. */
+  private readonly herkuenfte = new Map<string, { chatId: string; platform: string }>();
+
+  /** v1319 — Ergebnis einer Entscheidung zusätzlich an den anfragenden Chat (z. B. Gerätesitzung in App oder Terminal). */
+  private async anHerkunft(confirmationId: string, text: string): Promise<void> {
+    const h = this.herkuenfte.get(confirmationId);
+    this.herkuenfte.delete(confirmationId);
+    if (!h) return;
+    const a = this.adapters.get(h.platform as Platform);
+    if (!a) return;
+    try { await a.sendMessage(h.chatId, text); } catch (err) { this.logger.debug({ err: (err as Error).message, chatId: h.chatId }, 'v1319 Ergebnis an Herkunft nicht zustellbar'); }
+  }
 
   constructor(
     private readonly confirmRepo: ConfirmationRepository,
@@ -156,6 +168,8 @@ export class ConfirmationQueue {
     timeoutMinutes?: number;
     /** v657 \u2014 zus\u00E4tzliche Buttons neben approve/reject (z.B. Open-Item-Eskalation: Ablehnen/Zur\u00FCckstellen) */
     extraActions?: ConfirmationExtraAction[];
+    /** v1319 \u2014 Chat, aus dem die Anfrage kam (z. B. Ger\u00E4tesitzung); Ergebnis geht nach der Entscheidung auch dorthin. */
+    herkunft?: { chatId: string; platform: string };
   }): Promise<boolean> {
     // v1226 — Rückgabe: true = eingereiht, false = per Dedup übersprungen (Aufrufer können ehrlich melden).
     // v1142 — H2: Enqueue-Dedup über Anfrage-IDENTITÄT statt wortgleichem Text.
@@ -198,6 +212,8 @@ export class ConfirmationQueue {
       expiresAt,
     });
 
+    // v1319 — Herkunft merken, wenn die Anfrage aus einem anderen Chat kam als dem Zustell-Chat (Gerätesitzung)
+    if (opts.herkunft && (opts.herkunft.chatId !== opts.chatId || opts.herkunft.platform !== opts.platform)) this.herkuenfte.set(confirmation.id, opts.herkunft);
     // v1302 — sofort an die Geräte des Owners (Sitzungen), bevor die Chat-Nachricht rausgeht
     for (const h of this.neuHoerer) {
       try { h({ id: confirmation.id, chatId: opts.chatId, platform: opts.platform, description: opts.description, source: opts.source, skillName: opts.skillName, createdAt: new Date().toISOString(), expiresAt }); } catch { /* Hörer dürfen nichts brechen */ }
@@ -472,14 +488,13 @@ export class ConfirmationQueue {
             try { uebernommen = await this.nachAusfuehrung(pending as unknown as { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result ?? undefined, { platform: String(platform), chatId }); }
             catch (err) { this.logger.warn({ err: (err as Error).message, confirmationId: pending.id }, 'v1239 Fortsetzung nach Bestätigung fehlgeschlagen'); }
           }
-          if (adapter && !uebernommen) {
-            // Show full skill result (like a normal chat interaction), not just "Ausgeführt"
-            const display = result?.display ?? result?.data ? String(result.display ?? JSON.stringify(result.data)) : '';
-            const msg = display
-              ? `\u2705 **${pending.description}**\n\n${display}`
-              : `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`;
-            await adapter.sendMessage(chatId, msg);
-          }
+          // Show full skill result (like a normal chat interaction), not just "Ausgeführt"
+          const display = result?.display ?? result?.data ? String(result.display ?? JSON.stringify(result.data)) : '';
+          const msg = display
+            ? `\u2705 **${pending.description}**\n\n${display}`
+            : `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`;
+          if (adapter && !uebernommen) await adapter.sendMessage(chatId, msg);
+          await this.anHerkunft(pending.id, msg); // v1319 — auch an die anfragende Sitzung (App, Terminal)
           this.activityLogger?.logConfirmation({
             confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
             source: pending.source, sourceId: pending.sourceId, outcome: 'approved',
@@ -490,6 +505,7 @@ export class ConfirmationQueue {
           if (adapter) {
             await adapter.sendMessage(chatId, `\u274C Aktion fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
           }
+          await this.anHerkunft(pending.id, `\u274C Aktion fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`); // v1319
           this.activityLogger?.logConfirmation({
             confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
             source: pending.source, sourceId: pending.sourceId, outcome: 'error',
