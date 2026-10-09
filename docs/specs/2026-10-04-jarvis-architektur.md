@@ -253,7 +253,7 @@ Owner-Entscheidung 09.10.2026 (Freigabe 1–5): Der Gesprächsverlauf des Owners
 
 **Bedienung**: Apps und Terminal über die Seitenleiste bzw. `sitzung:<id>:<faden>`; Web über die Seitenleiste „Gespräche" und `?faden=`; Telegram über `/faden` (Liste), `/faden neu [Titel]`, `/faden <Nr|Kennung>`, `/faden haupt`, `/faden löschen <Kennung>` — ohne Modellaufruf.
 
-**Schnittstellen**: Gerätetoken `GET /api/geraete/faeden`, `GET /api/geraete/verlauf?faden=|archiv=`, `DELETE /api/geraete/faeden/<f>`; API-Token oder Owner-Web-Sitzung `GET /api/gespraeche`, `GET /api/gespraeche/verlauf?faden=`, `DELETE /api/gespraeche/<f>` (v1331: 403 für alle anderen Web-Sitzungen — Sicherheitsreview).
+**Schnittstellen**: Gerätetoken `GET /api/geraete/faeden`, `GET /api/geraete/verlauf?faden=|archiv=`, `DELETE /api/geraete/faeden/<f>`; API-Token oder Owner-Web-Sitzung `GET /api/gespraeche`, `GET /api/gespraeche/verlauf?faden=`, `DELETE /api/gespraeche/<f>` (v1331: 403 für alle anderen Web-Sitzungen; v1332: Geräte-Rückrufe nur für Geräte, deren Sitzungs-Alias am Owner-Master hängt, sonst Kanal-Gespräche des Geräts — beides aus dem Sicherheitsreview).
 
 **Kosten**: Das Hauptgespräch wird durch die vorhandene Zusammenfassung begrenzt (`hasSummary` bei jeder Nachricht); Nebenthemen gehören in einen Faden.
 
