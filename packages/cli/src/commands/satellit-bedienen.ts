@@ -211,6 +211,8 @@ export class Bedienung {
 
   /** Sicherungen vor jeder Aktion: Karte frisch, Fenster erlaubt, Owner tippt nicht gerade selbst. */
   private async pruefeVorAktion(): Promise<Karte> {
+    // v1340 — Linux: die Karte besteht nur aus festen Zielen, deshalb bei Bedarf selbst anlegen (Realfall 09.10.: „taste strg+alt+t" scheiterte an „Erst fenster_lesen")
+    if (process.platform === 'linux' && (!this.karte || this.karte.zeit === 0 || Date.now() - this.karte.zeit > KARTE_FRIST_MS)) await this.fensterLesen();
     const k = this.karte;
     if (!k) throw new Error('Erst fenster_lesen — ohne Element-Karte keine Aktion');
     // v1296 — nach einer Aktion steht zeit auf 0: dann „verfallen" statt „1791418999 s alt" (Realfall Mac 08.10.)

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1340] - 2026-10-09
+
+### Changed — Linux-Bedienen: Tasten ohne vorheriges fenster_lesen, Beschreibung der festen Ziele (v1340)
+
+Live-Beweis v1339 auf der Ubuntu-VM (22:31): Text per Zwischenablage in ein Terminal eingefügt und ausgeführt, Strg+D geschlossen. Dabei scheiterte der erste Schritt „taste strg+alt+t" an „Erst fenster_lesen", obwohl die Linux-Karte nur aus festen Zielen besteht — der Satellit legt sie jetzt bei Bedarf selbst an. Die Beschreibung von `fenster_lesen` sagt unter Linux, was die beiden Ziele sind (Fokusfenster mit Strg+V, Terminal mit Strg+Umschalt+V) und dass vorher mit `bildschirm` geprüft werden soll, welches Fenster vorne ist.
+
 ## [0.19.0-jarvis.1339] - 2026-10-09
 
 ### Added — Bedienen unter Linux/Wayland: Tasten, Text und Klick über ydotool (v1339)
