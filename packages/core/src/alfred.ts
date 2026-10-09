@@ -13656,7 +13656,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // ihren Kanal-Gesprächen `sitzung:<id>[:<faden>]` (so wie die Pipeline sie für Nicht-Owner weiter ablegt)
           verlauf: async (geraetId: string, limit: number, faden?: string, archiv?: string) => {
             if (!this.conversationRepo) return [];
-            const { hauptgespraech, fadenSchluessel } = await import('./gespraeche.js');
+            const { hauptgespraech, fadenSchluessel, FADEN_RE } = await import('./gespraeche.js');
+            // v1333 — Sicherheitsreview: Archiv nur die eigenen alten Sitzungen dieses Geräts, Faden nur im erlaubten Muster
+            // (die HTTP-Schicht prüft das schon; hier als zweite Linie, falls ein anderer Aufrufer kommt)
+            if (archiv && !(archiv === `sitzung:${geraetId}` || archiv.startsWith(`sitzung:${geraetId}:`))) return [];
+            if (faden && !FADEN_RE.test(faden)) return [];
             const owner = await this.geraetGehoertOwner(geraetId);
             const ziel = archiv ? { platform: 'api' as const, chatId: archiv }
               : !owner ? { platform: 'api' as const, chatId: faden ? `sitzung:${geraetId}:${faden}` : `sitzung:${geraetId}` }
@@ -13668,6 +13672,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
           faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
           fadenLoeschen: async (geraetId: string, faden: string) => {
+            if (!/^[a-z0-9-]{1,40}$/.test(faden)) return false; // v1333
             if (await this.geraetGehoertOwner(geraetId)) return this.ownerFadenLoeschen(faden);
             if (!this.conversationRepo) return false;
             const c = await this.conversationRepo.findByPlatformChat('api', `sitzung:${geraetId}:${faden}`);
@@ -15100,7 +15105,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
 
   async ownerFadenLoeschen(faden: string): Promise<boolean> {
     if (!this.conversationRepo) return false;
-    const { fadenSchluessel } = await import('./gespraeche.js');
+    const { fadenSchluessel, FADEN_RE } = await import('./gespraeche.js');
+    if (!FADEN_RE.test(faden)) return false; // v1333
     const k = fadenSchluessel(faden);
     const c = await this.conversationRepo.findByPlatformChat(k.platform, k.chatId);
     if (!c || c.deletedAt) return false;

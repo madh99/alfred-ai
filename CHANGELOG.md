@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1333] - 2026-10-09
+
+### Security — Archiv- und Faden-Parameter auch im Kern geprüft (v1333)
+
+Sicherheitsreview zu v1332: Die Geräte-Rückrufe verließen sich auf die Prüfung der HTTP-Schicht. Jetzt prüft auch der Kern, dass `archiv` nur alte Sitzungen desselben Geräts nennt und `faden` dem Muster `[a-z0-9-]{1,40}` entspricht (keine Doppelpunkte, kein zusammengesetzter Schlüssel), beim Lesen und beim Löschen.
+
 ## [0.19.0-jarvis.1332] - 2026-10-09
 
 ### Security — Geräte-Routen für Gespräche nur für Geräte des Owners (v1332)
