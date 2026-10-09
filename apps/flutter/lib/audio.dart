@@ -115,11 +115,20 @@ class Vorleser {
   bool _ersterTon = false;
   String? fehler;
 
+  Timer? _ruhe;
+
   void fuege(String text) {
     _puffer += text;
     final (b, rest) = schneideSaetze(_puffer);
     for (final x in b) { _spiele(x); }
     _puffer = rest;
+    // M6 (09.10., Messung): die Synthese selbst braucht 0,7–1,2 s; die 7–14 s bis zum ersten Ton entstanden, weil kurze Antworten
+    // („Es ist 09:39 Uhr.", unter 60 Zeichen) erst beim Stream-Ende gesprochen wurden — und das Ende kommt erst nach der
+    // Nachbearbeitung des Servers. Daher: endet der Puffer mit einem Satzzeichen und kommt 500 ms nichts nach, sofort sprechen.
+    _ruhe?.cancel();
+    if (RegExp(r'[.!?…]["“”)]*\s*$').hasMatch(_puffer)) {
+      _ruhe = Timer(const Duration(milliseconds: 500), () { if (_puffer.trim().isNotEmpty) { _spiele(_puffer); _puffer = ''; } });
+    }
   }
 
   void _spiele(String block) {
@@ -136,6 +145,7 @@ class Vorleser {
 
   /// Rest sprechen (oder den ganzen Text, wenn noch nichts lief) und auf die Wiedergabe warten.
   Future<void> schluss({String? ganzerText}) async {
+    _ruhe?.cancel();
     if (bloecke == 0 && ganzerText != null && ganzerText.trim().isNotEmpty) { _puffer = ''; _spiele(ganzerText); }
     else if (_puffer.trim().isNotEmpty) { _spiele(_puffer); _puffer = ''; }
     await _wiedergabe;

@@ -53,6 +53,20 @@ Future<void> main(List<String> args) async {
     try { final lnk = File('${Platform.environment['APPDATA']}\\Microsoft\\Windows\\Start Menu\\Programs\\Alfred.lnk'); if (await lnk.exists()) await lnk.delete(); } catch (_) { /* dann bleibt die alte */ }
   }
   try { await localNotifier.setup(appName: 'Alfred', shortcutPolicy: ShortcutPolicy.requireCreate); } catch (_) { /* ohne Benachrichtigungen weiter */ }
+  // M6 macOS — Autostart als LaunchAgent (Windows: Installer-Option, Linux: /etc/xdg/autostart aus dem Paket).
+  // Nur wenn die App aus einem Bundle läuft; die Datei zeigt immer auf das aktuelle Bundle (nach Updates/Verschieben neu).
+  if (Platform.isMacOS) {
+    try {
+      final bundle = AppUpdate.eigenesBundle();
+      if (bundle != null) {
+        final dir = Directory('${Platform.environment['HOME']}/Library/LaunchAgents');
+        await dir.create(recursive: true);
+        final plist = File('${dir.path}/at.alfred.app.plist');
+        final inhalt = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>at.alfred.app</string>\n<key>ProgramArguments</key><array><string>$bundle/Contents/MacOS/Alfred</string></array>\n<key>RunAtLoad</key><true/>\n<key>ProcessType</key><string>Interactive</string>\n</dict></plist>\n';
+        if (!await plist.exists() || await plist.readAsString() != inhalt) await plist.writeAsString(inhalt);
+      }
+    } catch (_) { /* Autostart ist Komfort */ }
+  }
   runApp(const AlfredApp());
 }
 
@@ -390,7 +404,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     try {
       final f = await AppUpdate(s, appVersion).lade(u, fortschritt: (g, ges) => setState(() => fluechtig = '⬆ ${u.datei}: ${ges > 0 ? (100 * g / ges).round() : 0} %'));
       _zeile(Eintrag(Art.hinweis, '⬆ ${u.datei} geladen, Prüfsumme stimmt — Installer startet.'));
-      final beenden = await AppUpdate(s, appVersion).installiere(f);
+      final beenden = await AppUpdate(s, appVersion).installiere(f, melde: (t) => _zeile(Eintrag(Art.hinweis, '⬆ $t')));
       if (beenden) { await Future.delayed(const Duration(milliseconds: 800)); exit(0); }
     } catch (e) { _zeile(Eintrag(Art.fehler, '⬆ Update: $e')); }
     finally { if (mounted) setState(() { updateLaeuft = false; fluechtig = ''; }); }

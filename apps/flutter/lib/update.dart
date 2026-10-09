@@ -63,15 +63,66 @@ class AppUpdate {
     return f;
   }
 
-  /// Installer starten. Liefert true, wenn die App sich danach beenden soll (Windows: Setup schließt und startet sie neu).
-  Future<bool> installiere(File f) async {
+  /// Installer starten. Liefert true, wenn die App sich danach beenden soll (die neue Version startet dann neu).
+  /// Windows: Inno Setup still. macOS: DMG einhängen, laufendes Bundle ersetzen, neu starten (Rückfall: DMG öffnen).
+  /// Linux: .deb über pkexec installieren (Passwortdialog der Oberfläche), dann neu starten (Rückfall: Paketmanager öffnen).
+  Future<bool> installiere(File f, {void Function(String)? melde}) async {
     if (Platform.isWindows) {
       await Process.start(f.path, ['/SILENT', '/CLOSEAPPLICATIONS', '/NORESTART'], mode: ProcessStartMode.detached);
       return true;
     }
-    if (Platform.isMacOS) { await Process.start('open', [f.path], mode: ProcessStartMode.detached); return false; }
-    await Process.start('xdg-open', [f.path], mode: ProcessStartMode.detached);
-    return false;
+    if (Platform.isMacOS) return _installiereMac(f, melde);
+    return _installiereLinux(f, melde);
+  }
+
+  /// Pfad des laufenden App-Bundles (…/Alfred.app) oder null, wenn nicht aus einem Bundle gestartet.
+  static String? eigenesBundle() {
+    final m = RegExp(r'^(.*\.app)/Contents/MacOS/').firstMatch(Platform.resolvedExecutable);
+    return m?.group(1);
+  }
+
+  Future<bool> _installiereMac(File dmg, void Function(String)? melde) async {
+    final ziel = eigenesBundle();
+    final att = await Process.run('hdiutil', ['attach', '-nobrowse', '-readonly', dmg.path]);
+    final mount = RegExp(r'(/Volumes/.+)$', multiLine: true).firstMatch(att.stdout.toString())?.group(1)?.trim();
+    if (att.exitCode != 0 || mount == null) { await Process.start('open', [dmg.path], mode: ProcessStartMode.detached); return false; }
+    try {
+      final quelle = Directory('$mount/Alfred.app');
+      if (ziel == null || !quelle.existsSync()) { await Process.start('open', [dmg.path], mode: ProcessStartMode.detached); return false; }
+      // Austausch neben dem alten Bundle, dann umbenennen — kurze Lücke, atomar genug für ein Benutzerverzeichnis
+      final neu = '$ziel.neu';
+      await Process.run('rm', ['-rf', neu]);
+      final cp = await Process.run('cp', ['-R', quelle.path, neu]);
+      if (cp.exitCode != 0) throw Exception('Kopieren fehlgeschlagen: ${cp.stderr}'.trim());
+      final alt = '$ziel.alt';
+      await Process.run('rm', ['-rf', alt]);
+      final r1 = await Process.run('mv', [ziel, alt]);
+      final r2 = await Process.run('mv', [neu, ziel]);
+      if (r1.exitCode != 0 || r2.exitCode != 0) { await Process.run('mv', [alt, ziel]); throw Exception('Austausch fehlgeschlagen (${r1.stderr}${r2.stderr})'.trim()); }
+      await Process.run('rm', ['-rf', alt]);
+      await Process.run('xattr', ['-dr', 'com.apple.quarantine', ziel]);
+      melde?.call('App ersetzt: $ziel — Neustart');
+      await Process.start('/bin/sh', ['-c', r'sleep 1; open -n "$0"', ziel], mode: ProcessStartMode.detached);
+      return true;
+    } catch (e) {
+      melde?.call('Stiller Austausch nicht möglich ($e) — DMG wird geöffnet');
+      await Process.start('open', [dmg.path], mode: ProcessStartMode.detached);
+      return false;
+    } finally {
+      await Future.delayed(const Duration(milliseconds: 500));
+      await Process.run('hdiutil', ['detach', mount, '-quiet']);
+    }
+  }
+
+  Future<bool> _installiereLinux(File deb, void Function(String)? melde) async {
+    final pkexec = await Process.run('sh', ['-c', 'command -v pkexec']);
+    if (pkexec.exitCode != 0) { await Process.start('xdg-open', [deb.path], mode: ProcessStartMode.detached); return false; }
+    melde?.call('Installation über den Paketmanager — bitte das Passwort im Dialog eingeben');
+    final r = await Process.run('pkexec', ['dpkg', '-i', deb.path]);
+    if (r.exitCode != 0) { melde?.call('Paketinstallation abgebrochen (${r.exitCode}) — Paket wird geöffnet'); await Process.start('xdg-open', [deb.path], mode: ProcessStartMode.detached); return false; }
+    final exe = File('/opt/alfred/alfred_app').existsSync() ? '/opt/alfred/alfred_app' : Platform.resolvedExecutable;
+    await Process.start('/bin/sh', ['-c', r'sleep 1; exec "$0"', exe], mode: ProcessStartMode.detached);
+    return true;
   }
 }
 
