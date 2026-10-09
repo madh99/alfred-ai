@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1319] - 2026-10-09
+
+### Fixed — Satelliten-Update: unvollständige Installation erkennen, keine Neustart-Schleife (v1319)
+
+Realfall PC 09.10. 08:19–08:27: npm installierte 1318 nur zur Hälfte (625 statt 719 Pakete, `yoga-layout` fehlte; der PC war nahe am Commit-Limit des Arbeitsspeichers). Der Starter sah den Absturz, fiel auf 1317 zurück und merkte „gescheitert" — der Satellit prüfte aber nur, ob die Einstiegsdatei existiert, meldete „Update liegt schon bereit" und startete alle 20 Sekunden neu, bis der Starter nach 50 Neustarts aufgab und das Gerät offline war. Jetzt: nach der Installation läuft die Startprobe (`--version`) sofort im Satelliten; schlägt sie fehl, wird der Ordner entfernt und der Fehler protokolliert. Eine als gescheitert markierte Version gilt nie als „bereit", sondern wird neu installiert. Nach zwei Fehlschlägen derselben Version pausiert der Satellit 30 Minuten, nach fünf sechs Stunden — er bleibt auf der laufenden Version verbunden.
+
 ## [0.19.0-jarvis.1318] - 2026-10-09
 
 ### Fixed — Ergebnis einer Freigabe erreicht die Gerätesitzung; Pfad-Aliase im Satelliten (v1318)
