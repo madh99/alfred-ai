@@ -909,6 +909,9 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1258 — Satelliten-Autoupdate: Info und Tarball des aktuellen Releases. */
     updateInfo?(): { version: string; sha256: string; groesse: number; signatur: string; datei: string } | undefined;
     updateStream?(): import('node:fs').ReadStream | undefined;
+    /** v1322 — Desktop-App-Releases je Plattform (M6): Info und Installer-Datei. */
+    appUpdateInfo?(plattform: string): { plattform: string; version: string; datei: string; sha256: string; groesse: number; zeit: string } | undefined;
+    appUpdateStream?(plattform: string, datei: string): import('node:fs').ReadStream | undefined;
     /** v1251 — Hör-Relais (Echtzeit-Transkription) für die Sitzung. */
     hoerenUpgrade?(req: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer): void;
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
@@ -1853,6 +1856,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
     } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
       this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
+    } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
+      this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {
@@ -6465,6 +6470,19 @@ export class HttpAdapter extends MessagingAdapter {
     const s = this.geraeteCallbacks?.updateStream?.();
     if (!s) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Tarball fehlt' })); return; }
     res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Length': info.groesse, 'Content-Disposition': `attachment; filename="alfred-${info.version}.tgz"` });
+    s.pipe(res);
+  }
+
+  // v1322 — Desktop-App-Update (M6): Info (JSON) oder Installer (Stream), je Plattform; Gerätetoken oder API-Token
+  private async handleAppUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL, datei: boolean): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const plattform = url.searchParams.get('plattform') ?? '';
+    const info = this.geraeteCallbacks?.appUpdateInfo?.(plattform);
+    if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `kein App-Release für ${plattform || '?'}` })); return; }
+    if (!datei) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ...info, url: `/api/app/update/datei?plattform=${encodeURIComponent(info.plattform)}` })); return; }
+    const s = this.geraeteCallbacks?.appUpdateStream?.(info.plattform, info.datei);
+    if (!s) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Installer fehlt' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': info.groesse, 'Content-Disposition': `attachment; filename="${info.datei}"` });
     s.pipe(res);
   }
 

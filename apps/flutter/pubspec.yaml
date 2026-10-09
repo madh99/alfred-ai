@@ -43,6 +43,7 @@ dependencies:
   local_notifier: ^0.1.6
   desktop_drop: ^0.8.4
   crypto: ^3.0.7
+  package_info_plus: ^9.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

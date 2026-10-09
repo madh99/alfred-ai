@@ -24,6 +24,12 @@ class Server {
     return req;
   }
 
+  /// M6 — rohe Antwort (Download des Installers).
+  Future<HttpClientResponse> hole(String pfad) async {
+    final req = await _anfrage('GET', pfad);
+    return req.close();
+  }
+
   /// Meilenstein 3 — JSON einer erlaubten Route (Kacheln).
   Future<Map<String, dynamic>> json(String pfad) async {
     final req = await _anfrage('GET', pfad);

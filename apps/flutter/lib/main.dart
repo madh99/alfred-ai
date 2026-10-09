@@ -9,8 +9,11 @@ import 'package:local_notifier/local_notifier.dart';
 import 'package:tray_manager/legacy.dart'; // trayManager, Menu, MenuItem, TrayListener (0.5-kompatible API)
 import 'package:window_manager/window_manager.dart';
 
+import 'package:package_info_plus/package_info_plus.dart';
+
 import 'audio.dart';
 import 'hoeren.dart';
+import 'update.dart';
 import 'ipc.dart';
 import 'kacheln.dart';
 import 'modell.dart';
@@ -101,6 +104,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   String gehoert = '';
   /// Hineingezogene Dateien warten als Anhänge in der Eingabezeile, bis gesendet wird (Owner 09.10.: nicht sofort schicken).
   final List<File> anhaenge = [];
+  /// M6 — Selbstupdate über den Server: eigene Version, gefundenes Update, Prüf-Takt.
+  String appVersion = '';
+  UpdateInfo? update;
+  bool updateLaeuft = false;
+  Timer? updateTakt;
   Timer? abfrage;
   int benachrichtigungNr = 0;
   late final IpcVerbindung ipc;
@@ -128,6 +136,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         if (erste) _holeVerlauf(); // v1314 — was zuletzt besprochen wurde
         _holeBestaetigungen();
         abfrage ??= Timer.periodic(const Duration(seconds: 4), (_) => _holeBestaetigungen());
+        if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); } // M6
         if (erste) {
           final auto = startArgs['sende'];
           if (auto != null && auto.isNotEmpty) { eingabe.text = auto; Future.delayed(const Duration(milliseconds: 800), _senden); }
@@ -361,6 +370,32 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Hörtest: $e')); }
   }
 
+  // ── Selbstupdate (M6): Server kennt den neuesten Installer je Plattform ──────────────────────────────────────────
+  Future<void> _updatePruefen() async {
+    final s = server; if (s == null) return;
+    if (appVersion.isEmpty) { try { final p = await PackageInfo.fromPlatform(); appVersion = p.version; } catch (_) { appVersion = '0.0.0'; } }
+    final u = await AppUpdate(s, appVersion).pruefe();
+    if (!mounted || u == null) return;
+    if (update?.version != u.version) {
+      setState(() => update = u);
+      _zeile(Eintrag(Art.hinweis, '⬆ Update ${u.version} verfügbar (du hast $appVersion) — Knopf in der Titelleiste installiert es.'));
+      if (startArgs['update'] == 'sofort') _updateInstallieren(); // Beweislauf: ohne Klick installieren
+    }
+  }
+
+  Future<void> _updateInstallieren() async {
+    final s = server; final u = update;
+    if (s == null || u == null || updateLaeuft) return;
+    setState(() => updateLaeuft = true);
+    try {
+      final f = await AppUpdate(s, appVersion).lade(u, fortschritt: (g, ges) => setState(() => fluechtig = '⬆ ${u.datei}: ${ges > 0 ? (100 * g / ges).round() : 0} %'));
+      _zeile(Eintrag(Art.hinweis, '⬆ ${u.datei} geladen, Prüfsumme stimmt — Installer startet.'));
+      final beenden = await AppUpdate(s, appVersion).installiere(f);
+      if (beenden) { await Future.delayed(const Duration(milliseconds: 800)); exit(0); }
+    } catch (e) { _zeile(Eintrag(Art.fehler, '⬆ Update: $e')); }
+    finally { if (mounted) setState(() { updateLaeuft = false; fluechtig = ''; }); }
+  }
+
   // ── Verlauf, Bestätigungen, Chat (Meilenstein 1) ────────────────────────────────────────────────────────────────
   // ── Dateien (Meilenstein 3): per Drag-and-drop ins Fenster → Dateispeicher des Owners, dann Alfred Bescheid geben ──
   /// Hineingezogene Dateien werden Anhänge der Eingabezeile; hochgeladen wird erst beim Senden (mit oder ohne Text).
@@ -530,6 +565,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           IconButton(tooltip: stimme ? 'Antworten vorlesen: an' : 'Antworten vorlesen: aus', onPressed: () => setState(() => stimme = !stimme), icon: Icon(stimme ? Icons.volume_up : Icons.volume_off)),
           IconButton(tooltip: aufnahme ? 'Aufnahme stoppen' : 'Sprechen (Strg+Alt+Leertaste)', onPressed: _talkUmschalten, icon: Icon(aufnahme ? Icons.stop_circle : Icons.mic, color: aufnahme ? Colors.redAccent : null)),
           IconButton(tooltip: hoeren ? 'Zuhören aus' : 'Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“', onPressed: server == null ? null : _hoerenUmschalten, icon: Icon(hoeren ? Icons.headset_mic : Icons.headset, color: hoeren ? Colors.greenAccent : null)),
+          if (update != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: ActionChip(avatar: updateLaeuft ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.system_update_alt, size: 18), label: Text('Update ${update!.version}'), tooltip: 'Herunterladen und installieren (${(update!.groesse / 1024 / 1024).toStringAsFixed(1)} MB)', onPressed: updateLaeuft ? null : _updateInstallieren),
+            ),
           if (offen.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(right: 12, left: 4),

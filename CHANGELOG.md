@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1322] - 2026-10-09
+
+### Added — Desktop-App-Releases vom Server, Phase 4 M6 Teil 1 (v1322)
+
+Der Server verteilt jetzt auch die Desktop-App: Ablage `data/app-releases/<windows|macos|linux>/` mit `Alfred-<Version>-setup.exe`, `Alfred-<Version>.dmg`, `alfred_<Version>_amd64.deb` (plus `.sha256`), Routen `GET /api/app/update?plattform=…` (neueste Version, Größe, Prüfsumme) und `GET /api/app/update/datei?plattform=…` (Installer), für Gerätetoken freigegeben. Die App prüft beim Start und alle sechs Stunden, zeigt bei einer neueren Version einen Knopf in der Titelleiste, lädt mit Prüfsumme in den Temp-Ordner und startet den Installer (Windows still über Inno Setup, schließt und startet die App neu). Windows-Release-Kette `apps/flutter/release/windows.cjs`: Bauen, Authenticode über Azure Key Vault (AzureSignTool, Zertifikat wie im eda-Projekt), Inno Setup je Benutzer mit Autostart-Option, Upload auf den Server.
+
 ## [0.19.0-jarvis.1321] - 2026-10-09
 
 ### Fixed — Satellit: Erstinstallation aus dem globalen Paket, kein Chrome-Download (v1321)

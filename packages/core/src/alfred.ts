@@ -13531,6 +13531,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const { Releases } = await import('./geraete/releases.js');
         const releases = new Releases(path.resolve(process.cwd(), 'data', 'releases'), this.logger.child({ component: 'releases' }));
         this.releasesRef = releases;
+        const { AppReleases, istAppPlattform } = await import('./geraete/app-releases.js'); // v1322
+        const appReleases = new AppReleases(path.resolve(process.cwd(), 'data', 'app-releases'), this.logger.child({ component: 'app-releases' }));
         const eigeneVersion = (this.config as { version?: string }).version;
         if (eigeneVersion) {
           // v1259 — der Programmpfad ist auf dem Server der Symlink /usr/bin/alfred: Symlinks auflösen und die package.json
@@ -13619,6 +13621,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const m = await this.conversationRepo.getMessages(c.id, limit);
             return m.filter(x => x.role === 'user' || x.role === 'assistant').map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
           },
+          // v1322 — Desktop-App-Releases (M6): data/app-releases/<plattform>/
+          appUpdateInfo: (plattform: string) => istAppPlattform(plattform) ? appReleases.info(plattform) : undefined,
+          appUpdateStream: (plattform: string, datei: string) => istAppPlattform(plattform) ? appReleases.stream(plattform, datei) : undefined,
           updateInfo: () => { const i = releases.info(); return i && i.version === eigeneVersion ? i : undefined; }, // v1258, v1265 — nie ein altes Release melden
           updateStream: () => { const i = releases.info(); return i ? releases.stream(i.version) : undefined; },
           authentifiziere: async (t: string) => {
