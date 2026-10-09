@@ -951,6 +951,8 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
+    /** v1334 — Spiegel-Schalter des Owners lesen/setzen (nur Geräte des Owners; sonst undefined = 403). */
+    spiegelung?(geraetId: string, setzen?: boolean): Promise<boolean | undefined>;
     /** v1249 — blockweiser Dateitransfer. */
     transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
   };
@@ -1908,6 +1910,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetFaeden(req, res).catch(err => this.safeError(res, err)); // v1328
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'DELETE') {
       this.handleGeraetFadenLoeschen(req, res, url).catch(err => this.safeError(res, err)); // v1328
+    } else if (url.pathname === '/api/geraete/spiegelung' && (req.method === 'GET' || req.method === 'POST')) {
+      this.handleGeraetSpiegelung(req, res).catch(err => this.safeError(res, err)); // v1334
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
@@ -6634,6 +6638,22 @@ export class HttpAdapter extends MessagingAdapter {
     const faeden = await this.geraeteCallbacks.faeden(geraet.geraetId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ geraet: geraet.name, faeden }));
+  }
+
+  /** v1334 — Spiegel-Schalter aus der Desktop-App (GET liest, POST {"an": true|false} setzt). */
+  private async handleGeraetSpiegelung(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.spiegelung) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    let setzen: boolean | undefined;
+    if (req.method === 'POST') {
+      const body = await this.readBody(req).catch(() => '');
+      try { const j = JSON.parse(body || '{}') as { an?: unknown }; if (typeof j.an === 'boolean') setzen = j.an; } catch { /* ohne Wert = lesen */ }
+    }
+    const an = await this.geraeteCallbacks.spiegelung(geraet.geraetId, setzen);
+    if (an === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ an }));
   }
 
   private async handleGeraetFadenLoeschen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

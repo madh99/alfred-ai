@@ -24,7 +24,7 @@ import type { ActiveLearningService } from './active-learning/active-learning-se
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
 import { werkzeugeFuerNachricht, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300
-import { gespraechsZiel, fadenBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenStore, type FadenEintrag } from './gespraeche.js'; // v1330
+import { gespraechsZiel, fadenBefehl, verlaufBefehl, spiegelBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenStore, type FadenEintrag } from './gespraeche.js'; // v1330, v1334
 import type { Platform } from '@alfred/types';
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
@@ -271,9 +271,9 @@ export class MessagePipeline {
   setOwnerMasterUserId(id: string | undefined): void { this.ownerMasterUserId = id; }
   // v1330 — Gespräche des Owners kanalunabhängig: Schlüssel-Auflösung, Faden-Befehl, Änderungs-Push
   private gespraechsOptionen?: GespraechsOptionen;
-  private fadenDeps?: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean> };
-  private beiGespraech?: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string } }) => void;
-  setGespraeche(o: GespraechsOptionen, fadenDeps: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean> }, beiGespraech: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string } }) => void): void {
+  private fadenDeps?: { store: FadenStore; liste: () => Promise<FadenEintrag[]>; loeschen: (faden: string) => Promise<boolean>; geraetName: (geraetId: string) => string | undefined };
+  private beiGespraech?: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string }; frage: string; antwort: string }) => void;
+  setGespraeche(o: GespraechsOptionen, fadenDeps: NonNullable<MessagePipeline['fadenDeps']>, beiGespraech: NonNullable<MessagePipeline['beiGespraech']>): void {
     this.gespraechsOptionen = o; this.fadenDeps = fadenDeps; this.beiGespraech = beiGespraech;
   }
   private usageRepo?: import('@alfred/storage').UsageRepository;
@@ -560,6 +560,19 @@ export class MessagePipeline {
         const antwort = await fadenBefehl(message.text.trim(), message.platform, message.chatId, this.fadenDeps);
         return { text: antwort };
       }
+      // v1334 — `/verlauf [n]` und `/spiegel an|aus` ebenfalls ohne Modell
+      if (istOwnerGespraech && this.fadenDeps && /^\/spiegel\b/i.test(message.text.trim())) {
+        return { text: spiegelBefehl(message.text.trim(), this.fadenDeps.store) };
+      }
+      if (istOwnerGespraech && this.fadenDeps && gespraech && /^\/verlauf\b/i.test(message.text.trim())) {
+        const deps = this.fadenDeps;
+        const antwort = await verlaufBefehl(message.text.trim(), async (n) => {
+          const c = await this.conversationManager.getOrCreateConversation(gespraech.platform, gespraech.chatId, user.id);
+          const m = await this.conversationManager.getHistory(c.id, n * 3);
+          return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-n).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt, herkunft: x.herkunft }));
+        }, deps.geraetName, `${message.platform}:${message.chatId}`);
+        return { text: antwort };
+      }
       tracePhase('skill_context', { masterUserId, linkedCount: linkedPlatformUserIds.length });
 
       // 1a. Track insight reactions (non-blocking, fire-and-forget)
@@ -672,8 +685,9 @@ export class MessagePipeline {
         ? []
         : await this.conversationManager.getHistory(conversation.id, historyLimit);
 
-      // 4. Save user message
-      await this.conversationManager.addMessage(conversation.id, 'user', message.text);
+      // 4. Save user message (v1334 — mit Herkunft: Kanal und Chat, für /verlauf und Spiegelung)
+      const herkunft = `${message.platform}:${message.chatId}`;
+      await this.conversationManager.addMessage(conversation.id, 'user', message.text, undefined, herkunft);
       tracePhase('conversation', { convId: conversation.id, historyLen: history.length, hasSummary: !!summary, ...(gespraech ? { gespraech: gespraech.chatId, faden: gespraech.faden } : {}) });
 
       // 5. Kontext laden — v1210: PARALLEL statt nacheinander.
@@ -1637,9 +1651,12 @@ export class MessagePipeline {
         conversation.id,
         'assistant',
         redactSecrets(responseText),
+        undefined,
+        herkunft, // v1334 — die Antwort ging in denselben Kanal
       );
-      // v1330 — andere Oberflächen des Owners laden das Gespräch nach (App zeigt, was in Telegram lief, und umgekehrt)
-      if (gespraech) { try { this.beiGespraech?.({ platform: gespraech.platform, chatId: gespraech.chatId, faden: gespraech.faden, von: { platform: message.platform, chatId: message.chatId } }); } catch { /* Push ist Komfort */ } }
+      // v1330 — andere Oberflächen des Owners laden das Gespräch nach (App zeigt, was in Telegram lief, und umgekehrt);
+      // v1334 — mit Frage und Antwort für die optionale Spiegelung in den Owner-Chat
+      if (gespraech) { try { this.beiGespraech?.({ platform: gespraech.platform, chatId: gespraech.chatId, faden: gespraech.faden, von: { platform: message.platform, chatId: message.chatId }, frage: message.text, antwort: responseText }); } catch { /* Push ist Komfort */ } }
 
       // v1207 — Jarvis Schleife 3: Absage → Vorgang „Lernbedarf" (Lücke → Fähigkeit)
       // v1257 — nicht bei synthetischen Nachrichten (Fortsetzung nach Freigabe/Vorhaben, geplante Aufgaben): das ist

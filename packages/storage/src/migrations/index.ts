@@ -2879,4 +2879,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_geraete_user ON geraete(user_id, status)');
     },
   },
+  {
+    version: 130,
+    description: 'v1334 — messages.herkunft: Kanal und Chat, aus dem eine Nachricht kam (Gespräche kanalunabhängig, /verlauf, Spiegelung) (SQLite-Spiegel zu PG v134).',
+    up(db) {
+      try { db.exec(`ALTER TABLE messages ADD COLUMN herkunft TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

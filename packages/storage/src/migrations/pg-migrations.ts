@@ -2187,4 +2187,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_geraete_user ON geraete(user_id, status)', []);
     },
   },
+  {
+    version: 134,
+    description: 'v1334 — messages.herkunft: Kanal und Chat, aus dem eine Nachricht kam (Gespräche kanalunabhängig, /verlauf, Spiegelung) (PG-Spiegel zu SQLite v130).',
+    async up(db) {
+      await db.execute(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS herkunft TEXT`, []);
+    },
+  },
 ];

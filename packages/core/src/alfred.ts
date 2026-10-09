@@ -6937,8 +6937,21 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.fadenStoreRef = new FadenStore(path.resolve(process.cwd(), 'data', 'gespraeche.json'));
       this.pipeline.setGespraeche(
         this.gespraechsOptionen(),
-        { store: this.fadenStoreRef, liste: () => this.ownerFaeden(), loeschen: (f) => this.ownerFadenLoeschen(f) },
-        (e) => { const n = this.geraeteGateway?.sendeAnAlle({ typ: 'gespraech', faden: e.faden, von: e.von.chatId }) ?? 0; this.logger.debug({ faden: e.faden, von: e.von.chatId, geraete: n }, 'v1330 Gespräch geändert'); },
+        { store: this.fadenStoreRef, liste: () => this.ownerFaeden(), loeschen: (f) => this.ownerFadenLoeschen(f), geraetName: (id) => this.geraeteGateway?.nameVon(id) },
+        (e) => {
+          const n = this.geraeteGateway?.sendeAnAlle({ typ: 'gespraech', faden: e.faden, von: e.von.chatId }) ?? 0;
+          this.logger.debug({ faden: e.faden, von: e.von.chatId, geraete: n }, 'v1330 Gespräch geändert');
+          // v1334 — Spiegelung (Owner-Freigabe, Standard aus): Frage und Antwort aus App/Web/Terminal auch in den Owner-Chat
+          const o = this.gespraechsOptionen();
+          const ausOwnerChat = e.von.platform === o.ownerPlatform && e.von.chatId === o.ownerChatId;
+          if (this.fadenStoreRef?.spiegelung && !ausOwnerChat && o.ownerChatId) {
+            void import('./gespraeche.js').then(({ herkunftName }) => {
+              const woher = herkunftName(`${e.von.platform}:${e.von.chatId}`, (id) => this.geraeteGateway?.nameVon(id));
+              const faden = e.faden ? ` · Faden ${e.faden}` : '';
+              return this.sendeAnOwner(`📱 ${woher}${faden}: ${e.frage}\n\n${e.antwort}`);
+            }).catch(err => this.logger.debug({ err: (err as Error).message }, 'v1334 Spiegelung nicht zugestellt'));
+          }
+        },
       );
     }
     if (this.skillHealthRepo) this.pipeline.setSkillHealthRepo(this.skillHealthRepo);
@@ -13671,6 +13684,12 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).map(x => ({ rolle: x.role as 'user' | 'assistant', text: x.content, zeit: x.createdAt }));
           },
           faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
+          // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
+          spiegelung: async (geraetId: string, setzen?: boolean) => {
+            if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+            if (typeof setzen === 'boolean') { this.fadenStoreRef.setzeSpiegelung(setzen); this.logger.info({ an: setzen, geraetId }, 'v1334 Spiegelung umgeschaltet'); }
+            return this.fadenStoreRef.spiegelung;
+          },
           fadenLoeschen: async (geraetId: string, faden: string) => {
             if (!/^[a-z0-9-]{1,40}$/.test(faden)) return false; // v1333
             if (await this.geraetGehoertOwner(geraetId)) return this.ownerFadenLoeschen(faden);

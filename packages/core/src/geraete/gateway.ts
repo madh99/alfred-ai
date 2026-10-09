@@ -350,6 +350,12 @@ export class GeraeteGateway {
   }
 
   /** v1302 — Nachricht an alle verbundenen Geräte (Bestätigungen für Sitzungen). Liefert die Zahl der Empfänger. */
+  /** v1334 — Anzeigename eines verbundenen Geräts (für /verlauf und Spiegelung). */
+  nameVon(geraetId: string): string | undefined {
+    for (const v of this.verbindungen.values()) if (v.eintrag.id === geraetId) return v.eintrag.name;
+    return undefined;
+  }
+
   sendeAnAlle(n: Partial<GeraetNachricht> & { typ: string }): number {
     let z = 0;
     for (const v of this.verbindungen.values()) { if (v.ws.readyState === WebSocket.OPEN) { this.sende(v.ws, n); z++; } }

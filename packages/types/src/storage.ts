@@ -28,6 +28,8 @@ export interface ConversationMessage {
   content: string;
   toolCalls?: string;
   createdAt: string;
+  /** v1334 — Kanal und Chat der Herkunft (`telegram:<chat>`, `api:sitzung:<geraet>`, `api:web-chat-<user>`), für /verlauf und Spiegelung. */
+  herkunft?: string;
 }
 
 export interface User {

@@ -188,6 +188,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); } // M6
         if (erste) { _vorgaengeLaden(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) => _vorgaengeLaden()); } // 1.1.0 Seitenleiste
         if (erste) _faedenLaden(); // 1.2.0 Gespräche
+        if (erste) _spiegelungLaden(); // 1.2.3
         if (erste) {
           final auto = startArgs['sende'];
           if (auto != null && auto.isNotEmpty) { eingabe.text = auto; Future.delayed(const Duration(milliseconds: 800), _senden); }
@@ -758,6 +759,18 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   String? archiv; // 1.2.1 — geöffnete alte Kanal-Sitzung (nur lesen)
   Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
+  bool? spiegelung; // 1.2.3 — Spiegel-Schalter (null = noch nicht geladen)
+
+  Future<void> _spiegelungLaden() async {
+    final s = server; if (s == null) return;
+    try { final j = await s.json('/api/geraete/spiegelung'); if (mounted) setState(() => spiegelung = j['an'] == true); } catch (_) { /* kein Owner-Gerät oder alter Server */ }
+  }
+
+  Future<void> _spiegelungSetzen(bool an) async {
+    final s = server; if (s == null) return;
+    try { final j = await s.json('/api/geraete/spiegelung', methode: 'POST', koerper: {'an': an}); setState(() => spiegelung = j['an'] == true); _zeile(Eintrag(Art.hinweis, 'Spiegelung nach Telegram: ${j['an'] == true ? 'an' : 'aus'}')); }
+    catch (e) { _zeile(Eintrag(Art.fehler, 'Spiegelung nicht umgeschaltet: $e')); }
+  }
 
   Future<void> _archivOeffnen(String chatId) async {
     final s = server; if (s == null) return;
@@ -933,6 +946,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       karte('Sprache', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Antworten vorlesen'), value: stimme, onChanged: (v) => setState(() => stimme = v)),
         Text('Sprechen: Strg+Alt+Leertaste (global). Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“ über den Kopfhörer-Knopf in der Eingabekarte.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+      ])),
+      karte('Gespräche', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [ // 1.2.3 — Spiegel-Schalter (Owner-Freigabe 09.10., Standard aus)
+        SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Spiegelung nach Telegram'), subtitle: Text(spiegelung == null ? 'Stand wird geladen …' : 'Fragen und Antworten aus App, Web und Terminal erscheinen auch im Telegram-Chat', style: theme.textTheme.labelSmall?.copyWith(color: dim)), value: spiegelung ?? false, onChanged: spiegelung == null ? null : (v) => _spiegelungSetzen(v)),
+        Text('Alfred kennt den Verlauf aus allen Kanälen immer. In Telegram zeigt „/verlauf" die letzten Nachrichten, „/spiegel an" schaltet dasselbe wie dieser Schalter.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
       ])),
       karte('Verbindung', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('Gerät: ${konfig?.name ?? '…'}', style: theme.textTheme.bodyMedium),

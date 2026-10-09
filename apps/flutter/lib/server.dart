@@ -40,8 +40,9 @@ class Server {
   }
 
   /// Meilenstein 3 — JSON einer erlaubten Route (Kacheln).
-  Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET'}) async {
+  Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
     final req = await _anfrage(methode, pfad);
+    if (koerper != null) req.add(utf8.encode(jsonEncode(koerper))); // 1.2.3 — kleine POST-Körper (Spiegel-Schalter)
     final res = await req.close();
     final body = await res.transform(utf8.decoder).join();
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}: ${body.length > 120 ? body.substring(0, 120) : body}');

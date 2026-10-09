@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1334] - 2026-10-09
+
+### Added — Spiegelung in den Owner-Chat (Standard aus), `/verlauf` und `/spiegel`, Herkunft je Nachricht (v1334)
+
+Owner-Freigabe 09.10.: Wer in der App schreibt, soll das wahlweise auch in Telegram sehen.
+
+- Jede Nachricht speichert ihre Herkunft (Kanal und Chat, neue Spalte `messages.herkunft`, SQLite v130 / PG v134).
+- `/verlauf [n]` in Telegram oder jedem anderen Kanal: die letzten n Nachrichten des aktuellen Gesprächs mit Uhrzeit, fremde Kanäle mit Gerätenamen („Du (PC-madh): …"), ohne Modellaufruf.
+- Spiegelung: Fragen und Antworten aus App, Web und Terminal gehen zusätzlich in den Owner-Chat, markiert mit Gerät und Faden. Standard aus; Schalter in den Einstellungen der Desktop-App (`/api/geraete/spiegelung`, nur Geräte des Owners) und per `/spiegel an|aus` in Telegram. Ablage in `data/gespraeche.json`.
+
+Desktop-App 1.2.3: Einstellungskarte „Gespräche" mit dem Spiegel-Schalter.
+
 ## [0.19.0-jarvis.1333] - 2026-10-09
 
 ### Security — Archiv- und Faden-Parameter auch im Kern geprüft (v1333)

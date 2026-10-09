@@ -67,16 +67,74 @@ export function neuerFadenId(): string { return Date.now().toString(36); }
  */
 export class FadenStore {
   private daten: Record<string, string> = {};
+  /** v1334 — Spiegelung: Fragen und Antworten aus App/Web/Terminal auch in den Owner-Chat (Telegram). Standard aus (Owner-Entscheidung). */
+  private spiegel = false;
   constructor(private readonly datei: string) {
-    try { if (existsSync(datei)) this.daten = JSON.parse(readFileSync(datei, 'utf8')) as Record<string, string>; } catch { this.daten = {}; }
+    try {
+      if (existsSync(datei)) {
+        const j = JSON.parse(readFileSync(datei, 'utf8')) as Record<string, unknown>;
+        this.spiegel = j['__spiegelung'] === true;
+        for (const [k, v] of Object.entries(j)) if (!k.startsWith('__') && typeof v === 'string') this.daten[k] = v;
+      }
+    } catch { this.daten = {}; }
   }
   private key(platform: Platform, chatId: string): string { return `${platform}:${chatId}`; }
   aktiver(platform: Platform, chatId: string): string | null { const f = this.daten[this.key(platform, chatId)]; return f && FADEN_RE.test(f) ? f : null; }
   setze(platform: Platform, chatId: string, faden: string | null): void {
     const k = this.key(platform, chatId);
     if (faden) this.daten[k] = faden; else delete this.daten[k];
-    try { mkdirSync(path.dirname(this.datei), { recursive: true }); writeFileSync(this.datei, JSON.stringify(this.daten, null, 2)); } catch { /* Ablage optional */ }
+    this.sichere();
   }
+  get spiegelung(): boolean { return this.spiegel; }
+  setzeSpiegelung(an: boolean): void { this.spiegel = an; this.sichere(); }
+  private sichere(): void {
+    try { mkdirSync(path.dirname(this.datei), { recursive: true }); writeFileSync(this.datei, JSON.stringify({ ...this.daten, __spiegelung: this.spiegel }, null, 2)); } catch { /* Ablage optional */ }
+  }
+}
+
+/** v1334 — Anzeigename einer Herkunft (`telegram:<chat>`, `api:sitzung:<geraet>[:<faden>]`, `api:web-chat-<user>`). */
+export function herkunftName(herkunft: string | undefined, geraetName: (geraetId: string) => string | undefined): string {
+  if (!herkunft) return '';
+  const [platform, ...rest] = herkunft.split(':');
+  const chat = rest.join(':');
+  if (platform === 'telegram') return 'Telegram';
+  if (platform === 'api') {
+    const s = /^sitzung:([^:]+)/.exec(chat);
+    if (s) return geraetName(s[1]!) ?? 'Gerät';
+    if (chat.startsWith('web-')) return 'Web';
+    return 'API';
+  }
+  return platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : '';
+}
+
+/**
+ * v1334 — Befehl `/verlauf [n]`: die letzten n Nachrichten des aktuellen Gesprächs mit Zeit und Herkunft — ohne Modell.
+ * In Telegram sieht man so, was in der App oder im Web lief.
+ */
+export async function verlaufBefehl(
+  text: string,
+  nachrichten: (n: number) => Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string; herkunft?: string }>>,
+  geraetName: (geraetId: string) => string | undefined,
+  eigeneHerkunft: string,
+): Promise<string> {
+  const n = Math.min(40, Math.max(1, parseInt(text.replace(/^\/verlauf\b/i, '').trim(), 10) || 10));
+  const liste = await nachrichten(n);
+  if (liste.length === 0) return 'Noch keine Nachrichten in diesem Gespräch.';
+  const zeit = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' }); };
+  const kurz = (s: string) => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > 160 ? t.slice(0, 157) + '…' : t; };
+  const zeilen = liste.map(m => {
+    const woher = m.herkunft && m.herkunft !== eigeneHerkunft ? ` (${herkunftName(m.herkunft, geraetName)})` : '';
+    return `${zeit(m.zeit)} ${m.rolle === 'user' ? 'Du' : 'Alfred'}${m.rolle === 'user' ? woher : ''}: ${kurz(m.text)}`;
+  });
+  return `Letzte ${liste.length} Nachrichten dieses Gesprächs:\n${zeilen.join('\n')}`;
+}
+
+/** v1334 — Befehl `/spiegel an|aus|status`: Spiegelung von App/Web-Nachrichten in den Owner-Chat. */
+export function spiegelBefehl(text: string, store: FadenStore): string {
+  const arg = text.replace(/^\/spiegel\b/i, '').trim().toLowerCase();
+  if (arg === 'an' || arg === 'ein') { store.setzeSpiegelung(true); return 'Spiegelung an: Fragen und Antworten aus App, Web und Terminal erscheinen ab jetzt auch hier.'; }
+  if (arg === 'aus') { store.setzeSpiegelung(false); return 'Spiegelung aus.'; }
+  return `Spiegelung ist ${store.spiegelung ? 'an' : 'aus'}. /spiegel an · /spiegel aus`;
 }
 
 export interface FadenEintrag { faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }

@@ -2,7 +2,38 @@ import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtempSync } from 'node:fs';
-import { gespraechsZiel, fadenBefehl, FadenStore, hauptgespraech, type FadenEintrag } from './gespraeche.js';
+import { gespraechsZiel, fadenBefehl, FadenStore, hauptgespraech, verlaufBefehl, spiegelBefehl, herkunftName, type FadenEintrag } from './gespraeche.js';
+
+describe('/verlauf und /spiegel (v1334)', () => {
+  it('zeigt die letzten Nachrichten mit Zeit und Herkunft fremder Kanäle, nie die eigene', async () => {
+    const liste = [
+      { rolle: 'user' as const, text: 'Mach ein Foto', zeit: '2026-10-09T14:43:00Z', herkunft: 'api:sitzung:f883' },
+      { rolle: 'assistant' as const, text: 'Erledigt', zeit: '2026-10-09T14:43:10Z', herkunft: 'api:sitzung:f883' },
+      { rolle: 'user' as const, text: 'Und jetzt?', zeit: '2026-10-09T14:50:00Z', herkunft: 'telegram:5060785419' },
+    ];
+    const t = await verlaufBefehl('/verlauf 3', async () => liste, (id) => id === 'f883' ? 'Ubuntu-VM' : undefined, 'telegram:5060785419');
+    expect(t).toContain('Du (Ubuntu-VM): Mach ein Foto');
+    expect(t).toContain('Alfred: Erledigt');
+    expect(t).toContain('Du: Und jetzt?');
+    expect(await verlaufBefehl('/verlauf', async () => [], () => undefined, 'telegram:1')).toContain('Noch keine');
+    expect(herkunftName('api:web-chat-abc', () => undefined)).toBe('Web');
+    expect(herkunftName('api:sitzung:x:faden1', () => 'PC-madh')).toBe('PC-madh');
+    expect(herkunftName('telegram:1', () => undefined)).toBe('Telegram');
+  });
+  it('/spiegel schaltet und bleibt gespeichert, Standard aus', () => {
+    const dir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'alfred-spiegel-'));
+    const datei = require('node:path').join(dir, 'gespraeche.json');
+    const store = new FadenStore(datei);
+    expect(store.spiegelung).toBe(false);
+    expect(spiegelBefehl('/spiegel', store)).toContain('aus');
+    expect(spiegelBefehl('/spiegel an', store)).toContain('Spiegelung an');
+    expect(new FadenStore(datei).spiegelung).toBe(true);
+    store.setze('telegram', '1', 'f1');
+    expect(new FadenStore(datei).aktiver('telegram', '1')).toBe('f1'); // Fäden-Ablage bleibt neben dem Schalter erhalten
+    expect(spiegelBefehl('/spiegel aus', store)).toBe('Spiegelung aus.');
+    expect(new FadenStore(datei).spiegelung).toBe(false);
+  });
+});
 
 const o = { ownerChatId: '5060785419', ownerPlatform: 'telegram' as const };
 
