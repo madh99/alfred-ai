@@ -12,8 +12,13 @@ SERVER="${ALFRED_RELEASE_SERVER:-madh@192.168.1.92}"
 ZIEL=/root/alfred/data/app-releases/macos
 VERSION=$(grep -E '^version:' "$APP/pubspec.yaml" | sed -E 's/^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
 [ -n "$VERSION" ] || { echo "version in pubspec.yaml fehlt"; exit 1; }
-IDENT="${ALFRED_MAC_IDENTITY:-}"
-echo "Alfred $VERSION — macOS-Release (DMG)${IDENT:+, signiert als $IDENT}"
+# Identität: ALFRED_MAC_IDENTITY oder automatisch das Developer-ID-Zertifikat aus dem Schlüsselbund (nie „Apple Development“, das ist nur zum Entwickeln)
+IDENT="${ALFRED_MAC_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | grep -o "\"Developer ID Application: [^\"]*\"" | head -1 | tr -d \")}"
+# Notarisierung: Profil ALFRED_NOTARY_PROFILE (Standard „alfred“, angelegt mit xcrun notarytool store-credentials alfred …), nur wenn es sich öffnen lässt
+PROFIL="${ALFRED_NOTARY_PROFILE:-alfred}"
+if ! xcrun notarytool history --keychain-profile "$PROFIL" >/dev/null 2>&1; then PROFIL=""; fi
+echo "Alfred $VERSION — macOS-Release (DMG)${IDENT:+, signiert als $IDENT}${PROFIL:+, Notarisierung über Profil $PROFIL}"
+[ -n "$IDENT" ] || echo "HINWEIS: keine Developer-ID-Identität gefunden — DMG wird nur ad-hoc signiert"
 
 cd "$APP"
 flutter build macos --release
@@ -32,8 +37,8 @@ DMG="$APP/build/Alfred-$VERSION.dmg"; rm -f "$DMG"
 hdiutil create -volname "Alfred $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 if [ -n "$IDENT" ]; then
   codesign --force --timestamp --sign "$IDENT" "$DMG"
-  if [ -n "${ALFRED_NOTARY_PROFILE:-}" ]; then
-    xcrun notarytool submit "$DMG" --keychain-profile "$ALFRED_NOTARY_PROFILE" --wait
+  if [ -n "$PROFIL" ]; then
+    xcrun notarytool submit "$DMG" --keychain-profile "$PROFIL" --wait
     xcrun stapler staple "$DMG" && echo "notarisiert und gestapelt"
   fi
 fi
