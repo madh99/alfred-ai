@@ -877,6 +877,15 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   static bool _gleicherTag(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
 
   /// 1.2.5 — Zitatzeile (↩ „…“) und Anhang-Zeile (📎 …) aus einer eigenen Nachricht entfernen, bevor sie wiederholt wird.
+  /// 1.2.8 — lange eigene Nachrichten (Upload-Listen) eingeklappt zeigen; nie Alfreds Antworten, nie die neueste Nachricht
+  /// (Owner-Freigabe 09.10. 21:55). Aufgeklappt bleibt aufgeklappt, bis das Gespräch neu geladen wird.
+  static const klappAb = 1500;
+  bool _eingeklappt(Eintrag e) {
+    if (e.art != Art.du || e.aufgeklappt || e.text.length <= klappAb) return false;
+    final i = verlauf.lastIndexWhere((x) => x.art == Art.du || x.art == Art.alfred);
+    return i >= 0 && !identical(verlauf[i], e);
+  }
+
   static String _ohneZitat(String t) => t.split('\n').where((z) => !z.startsWith('↩ „') && !z.startsWith('📎 ')).join('\n').trim();
 
   static String _fadenZeit(String iso) {
@@ -1077,7 +1086,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       case Art.du:
         // 1.2.5 — eigene Nachricht wiederholen oder bearbeiten (Owner-Freigabe 09.10.)
         return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Align(alignment: Alignment.centerRight, child: Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
-          Container(constraints: const BoxConstraints(maxWidth: 720), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: SelectableText(e.text)),
+          Container(constraints: const BoxConstraints(maxWidth: 720), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(12)), child: _eingeklappt(e)
+            ? Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                SelectableText(gekuerzt(e.text)),
+                TextButton.icon(onPressed: () => setState(() => e.aufgeklappt = true), icon: const Icon(Icons.unfold_more, size: 16), label: Text('mehr anzeigen (${(e.text.length / 1024).toStringAsFixed(0)} KB)'), style: TextButton.styleFrom(visualDensity: VisualDensity.compact)),
+              ])
+            : SelectableText(e.text)),
           Row(mainAxisSize: MainAxisSize.min, children: [
             IconButton(tooltip: 'Bearbeiten (Text in die Eingabe legen)', onPressed: antwortet ? null : () { eingabe.text = _ohneZitat(e.text); eingabe.selection = TextSelection.collapsed(offset: eingabe.text.length); fokus.requestFocus(); }, icon: Icon(Icons.edit_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
             IconButton(tooltip: 'Erneut senden', onPressed: antwortet ? null : () => _senden(text: _ohneZitat(e.text)), icon: Icon(Icons.replay_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
