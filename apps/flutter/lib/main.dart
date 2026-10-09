@@ -573,7 +573,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     if (text == null) {
       eingabe.clear();
       final namen = anhaenge.map((f) => f.uri.pathSegments.last).toList();
-      _zeile(Eintrag(Art.du, namen.isEmpty ? t : '${t.isEmpty ? '' : '$t\n'}📎 ${namen.join(', ')}'));
+      final zitat = bezug == null ? '' : '↩ „${bezug!.text.replaceAll('\n', ' ').substring(0, bezug!.text.length > 80 ? 80 : bezug!.text.length)}${bezug!.text.length > 80 ? '…' : ''}“\n'; // 1.2.2
+      _zeile(Eintrag(Art.du, '$zitat${namen.isEmpty ? t : '${t.isEmpty ? '' : '$t\n'}📎 ${namen.join(', ')}'}'));
       if (mitAnhang) {
         // Anhänge zuerst hochladen, dann Alfred mit Text und Schlüsseln ansprechen (Datei + Frage in einer Nachricht)
         List<String> zeilen;
@@ -590,7 +591,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       ? Vorleser(s.sprich, audio, beiErstemTon: () { final sek = DateTime.now().difference(start).inMilliseconds / 1000; _zeile(Eintrag(Art.hinweis, '🔊 erster Ton nach ${sek.toStringAsFixed(1)} s')); })
       : null;
     try {
-      final ende = await s.sende(t, tier: tierWahl, // 1.1.0 — Stufenwahl aus der Eingabekarte
+      final bezugText = bezug?.text; // 1.2.2 — Antwort-Bezug geht mit, dann ist er erledigt
+      if (bezug != null) setState(() => bezug = null);
+      final ende = await s.sende(t, tier: tierWahl, bezug: bezugText, // 1.1.0 — Stufenwahl aus der Eingabekarte
         aufDelta: (d) {
           if (laufend == null) { laufend = e; setState(() { verlauf.add(e); fluechtig = ''; }); }
           gezeigt += d;
@@ -754,6 +757,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   }
 
   String? archiv; // 1.2.1 — geöffnete alte Kanal-Sitzung (nur lesen)
+  Eintrag? bezug; // 1.2.2 — Alfred-Nachricht, auf die die nächste Eingabe antwortet (Owner-Freigabe 09.10.)
 
   Future<void> _archivOeffnen(String chatId) async {
     final s = server; if (s == null) return;
@@ -851,6 +855,16 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         boxShadow: theme.brightness == Brightness.light ? [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 12, offset: const Offset(0, 4))] : null,
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (bezug != null) Padding(padding: const EdgeInsets.only(bottom: 6), child: Container( // 1.2.2 — Zitat der Nachricht, auf die geantwortet wird
+          padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+          decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(10), border: Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))),
+          child: Row(children: [
+            Icon(Icons.reply, size: 16, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Antwort auf Alfred: ${bezug!.text.replaceAll('\n', ' ')}', maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+            IconButton(tooltip: 'Bezug entfernen', onPressed: () => setState(() => bezug = null), icon: const Icon(Icons.close, size: 16), visualDensity: VisualDensity.compact),
+          ]),
+        )),
         if (anhaenge.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 6), child: Wrap(spacing: 6, runSpacing: 4, children: [
           for (final f in anhaenge) InputChip(avatar: const Icon(Icons.insert_drive_file_outlined, size: 18), label: Text(f.uri.pathSegments.last, overflow: TextOverflow.ellipsis), tooltip: f.path, onDeleted: () => setState(() => anhaenge.remove(f))),
         ])),
@@ -1015,6 +1029,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           if (e.text.isNotEmpty) Row(children: [
             IconButton(tooltip: 'Kopieren', onPressed: () { Clipboard.setData(ClipboardData(text: e.text)); setState(() => fluechtig = 'kopiert'); }, icon: Icon(Icons.copy_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
             IconButton(tooltip: 'Vorlesen', onPressed: () => _sprichKurz(e.text), icon: Icon(Icons.volume_up_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
+            IconButton(tooltip: 'Darauf antworten (Alfred weiß dann, worauf du dich beziehst)', onPressed: () { setState(() => bezug = e); fokus.requestFocus(); }, icon: Icon(Icons.reply_outlined, size: 16, color: bezug == e ? theme.colorScheme.primary : dim), visualDensity: VisualDensity.compact), // 1.2.2
           ]),
         ]))));
       case Art.satellit:

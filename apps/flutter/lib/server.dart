@@ -90,9 +90,10 @@ class Server {
   }
 
   /// Nachricht senden; `aufDelta` bekommt Textstücke, `aufStatus` Zwischenstände (Werkzeuge, Denken). Liefert den Endtext.
-  Future<String> sende(String text, {required void Function(String) aufDelta, required void Function(String) aufStatus, void Function(Anhang)? aufAnhang, String? tier}) async {
+  Future<String> sende(String text, {required void Function(String) aufDelta, required void Function(String) aufStatus, void Function(Anhang)? aufAnhang, String? tier, String? bezug}) async {
     final req = await _anfrage('POST', '/api/message');
-    final body = jsonEncode({'text': text, 'chatId': chatId, 'stream': true, 'tier': ?tier});
+    // 1.2.2 — Bezug auf eine frühere Alfred-Nachricht (wie Antworten in Telegram): replyToText/replyToFrom wie in der Web-Oberfläche
+    final body = jsonEncode({'text': text, 'chatId': chatId, 'stream': true, 'tier': ?tier, if (bezug != null && bezug.trim().isNotEmpty) ...{'replyToText': bezug, 'replyToFrom': 'Alfred'}});
     req.add(utf8.encode(body)); // UTF-8 statt Latin-1
     final res = await req.close();
     if (res.statusCode != 200) {
