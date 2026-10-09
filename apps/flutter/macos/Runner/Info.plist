@@ -28,6 +28,8 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Alfred spricht mit dem Alfred-Server und dem Satelliten in deinem Heimnetz (z. B. 192.168.1.92).</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Alfred hört über das Mikrofon zu: Sprechen per Tastenkürzel und Zuhören mit Aktivierungswort.</string>
 </dict>
