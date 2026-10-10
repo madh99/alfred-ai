@@ -1760,6 +1760,7 @@ export class MessagePipeline {
           costUsd: Math.round(requestCostUsd * 1_000_000) / 1_000_000,
           stopReason: response.stopReason,
           toolIterations: iteration,
+          chatId: message.chatId, platform: message.platform, // v1345 — Antwortzeit je Gespräch auswertbar
         },
         'Message processed',
       );

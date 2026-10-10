@@ -54,6 +54,9 @@ const BILLING_COOLDOWN_MS = 5 * 60_000;
  *  steht bewusst am ENDE — er springt nur ein wenn alle regulären Tiers
  *  ausgefallen sind. 'fallback' wird nie regulär geroutet (resolve() kennt
  *  ihn nicht als Request-Tier-Ziel; er lebt nur in dieser Kette). */
+/** v1345 — Zeitmessung eines Stream-Aufrufs: Start und Zeit bis zum ersten Ereignis. */
+interface StreamUhr { start: number; erstesMs?: number }
+
 const FALLBACK_ORDER: ModelTier[] = ['default', 'strong', 'medium', 'fast', 'fallback'];
 
 /**
@@ -323,7 +326,9 @@ export class ModelRouter extends LLMProvider {
   }
 
   /** v1248 — Streams verbuchen Kosten wie complete(): Kostenwächter und llm_usage sehen auch gestreamte Antworten. */
-  private verbucheStream(resolvedTier: ModelTier, event: LLMStreamEvent): void {
+  private verbucheStream(resolvedTier: ModelTier, event: LLMStreamEvent, uhr?: StreamUhr): void {
+    // v1345 — Zeit bis zur ersten Antwort (erstes Text-/Werkzeug-Ereignis) und Gesamtdauer je Aufruf.
+    if (uhr && uhr.erstesMs === undefined && event.type !== 'message_complete') uhr.erstesMs = Date.now() - uhr.start;
     if (event.type !== 'message_complete' || !event.response) return;
     const tierConfig = this.multiConfig[resolvedTier];
     const model = event.response.model ?? tierConfig?.model ?? 'unknown';
@@ -332,6 +337,7 @@ export class ModelRouter extends LLMProvider {
     this.logger?.info(
       {
         tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, stream: true,
+        ...(uhr ? { durationMs: Date.now() - uhr.start, ersteAntwortMs: uhr.erstesMs ?? null } : {}),
         inputTokens: event.response.usage?.inputTokens, outputTokens: event.response.usage?.outputTokens,
         cacheReadTokens: event.response.usage?.cacheReadTokens, cacheWriteTokens: event.response.usage?.cacheCreationTokens,
       },
@@ -341,13 +347,15 @@ export class ModelRouter extends LLMProvider {
 
   private async executeComplete(provider: LLMProvider, resolvedTier: ModelTier, request: LLMRequest): Promise<LLMResponse> {
     const tierConfig = this.multiConfig[resolvedTier];
+    const start = Date.now();
     const response = await provider.complete(request);
+    const durationMs = Date.now() - start; // v1345 — Dauer je Modellaufruf (ohne Stream: erste Antwort = Ende)
     const model = response.model ?? tierConfig?.model ?? 'unknown';
     if (!response.model) response.model = model;
     const costUsd = this.costTracker.record(model, response.usage);
     this.logger?.info(
       {
-        tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000,
+        tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000, durationMs,
         inputTokens: response.usage?.inputTokens, outputTokens: response.usage?.outputTokens,
         cacheReadTokens: response.usage?.cacheReadTokens, cacheWriteTokens: response.usage?.cacheCreationTokens,
       },
@@ -415,9 +423,10 @@ export class ModelRouter extends LLMProvider {
     }
     let hasYielded = false;
     try {
+      const uhr: StreamUhr = { start: Date.now() };
       for await (const event of provider.stream(withEffort)) {
         hasYielded = true;
-        this.verbucheStream(resolvedTier, event); // v1248
+        this.verbucheStream(resolvedTier, event, uhr); // v1248, v1345 Zeitmessung
         yield event;
       }
       this.maybeNotifyRecovery(resolvedTier); // v868.3 — Re-Probe erfolgreich
@@ -447,7 +456,8 @@ export class ModelRouter extends LLMProvider {
       if (!fbProvider) continue;
       try {
         this.logger?.info({ tier }, 'Stream fallback to tier');
-        for await (const event of fbProvider.stream(this.withTierEffort(request, tier))) { this.verbucheStream(tier, event); yield event; }
+        const uhr: StreamUhr = { start: Date.now() };
+        for await (const event of fbProvider.stream(this.withTierEffort(request, tier))) { this.verbucheStream(tier, event, uhr); yield event; }
         this.maybeNotifyRecovery(tier);
         this.meldePuls('erfolg', tier);
         return;

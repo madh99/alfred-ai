@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1345] - 2026-10-10
+
+### Added — Dauer je Modellaufruf im Log (v1345)
+
+Ist-Aufnahme Punkt 8 (Antwortzeit): Gespräche brauchen ohne Werkzeug im Median 5 s, mit einer Werkzeugrunde 11 s, ab vier Runden 40–60 s; Vorbereitung (~1 s) und Werkzeuge (Median 0,15 s) fallen kaum ins Gewicht, die Zeit liegt in den Modellaufrufen. Bisher war die Dauer eines einzelnen Aufrufs nicht messbar. Jede Zeile „LLM call completed" trägt jetzt `durationMs`, gestreamte Aufrufe zusätzlich `ersteAntwortMs` (Zeit bis zum ersten Text- oder Werkzeug-Ereignis). „Message processed" nennt Chat und Plattform, damit die Antwortzeit je Gespräch auswertbar ist. Reine Messung, kein geändertes Verhalten.
+
 ## [0.19.0-jarvis.1344] - 2026-10-10
 
 ### Fixed — E-Mail: Datumssuche, Kontoname „default", Anhang ohne Kennung (v1344)
