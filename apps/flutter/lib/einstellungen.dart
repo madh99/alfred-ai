@@ -42,6 +42,11 @@ void themaSpeichern(ThemeMode m) {
 bool seitenleisteGespeichert() => _lesen()['seitenleiste'] != false;
 void seitenleisteSpeichern(bool offen) { final j = _lesen(); j['seitenleiste'] = offen; _schreiben(j); }
 
+/// 1.3.0 — Aktivierungswort lokal erkennen (ONNX in der App): Standard an. Aus = jede Äußerung geht wie bisher ans Relais,
+/// der Server prüft das Wort im Transkript.
+bool wortLokalGespeichert() => _lesen()['wortLokal'] != false;
+void wortLokalSpeichern(bool an) { final j = _lesen(); j['wortLokal'] = an; _schreiben(j); }
+
 /// Helle und dunkle Variante aus einem Samen — Aufbau wie die Vorlage des Owners (ruhige Flächen, blaue Akzente).
 ThemeData alfredTheme(Brightness b) {
   final base = ThemeData(brightness: b, colorSchemeSeed: const Color(0xFF3B6FD8), useMaterial3: true);

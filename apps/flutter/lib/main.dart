@@ -14,9 +14,11 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:file_selector/file_selector.dart';
 
+import 'aktivierungswort.dart'; // 1.3.0
 import 'audio.dart';
 import 'einstellungen.dart';
 import 'hoeren.dart';
+import 'wortmodell_onnx.dart'; // 1.3.0
 import 'update.dart';
 import 'ipc.dart';
 import 'kacheln.dart';
@@ -136,6 +138,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   HoerClient? hoerClient;
   SatzendeErkenner? erkenner;
   DateTime gespraechsfensterBis = DateTime.fromMillisecondsSinceEpoch(0);
+  // 1.3.0 — Aktivierungswort lokal (ONNX): nur Äußerungen mit erkanntem Wort (oder im Gesprächsfenster) gehen ans Relais
+  OnnxWortModell? wortModell;
+  WortErkenner? wortErkenner;
+  bool wortLokal = wortLokalGespeichert();
+  DateTime letzterWortTreffer = DateTime.fromMillisecondsSinceEpoch(0);
+  int wortVerworfen = 0;
   String gehoert = '';
   /// Hineingezogene Dateien warten als Anhänge in der Eingabezeile, bis gesendet wird (Owner 09.10.: nicht sofort schicken).
   final List<File> anhaenge = [];
@@ -202,6 +210,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           if (startArgs['hoeren'] == 'an') Future.delayed(const Duration(milliseconds: 800), _hoerenStart); // Meilenstein 4
           final hoertest = startArgs['hoertest'];
           if (hoertest != null && hoertest.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _hoertest(hoertest));
+          final wortprobe = startArgs['wortprobe']; // 1.3.0 — Beweislauf Aktivierungswort: WAV nur durch den lokalen Erkenner
+          if (wortprobe != null && wortprobe.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _wortprobe(wortprobe));
           final datei = startArgs['datei']; // Meilenstein 3: Beweislauf Datei zum Gehirn
           if (datei != null && datei.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () { _dateienAbgelegt([datei]); _senden(); }); // Beweislauf: Anhang + sofort senden
         }
@@ -362,22 +372,39 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final client = HoerClient(k, _hoerEreignis, (grund) { _zeile(Eintrag(Art.fehler, '🎧 Relais: $grund — Zuhören beendet')); _hoerenStop(null); });
     try { await client.verbinde(); } catch (e) { _zeile(Eintrag(Art.fehler, '🎧 Relais nicht erreichbar: $e')); return; }
     final erk = SatzendeErkenner();
+    // 1.3.0 — lokales Aktivierungswort: Äußerung wird gesammelt und erst ans Relais gegeben, wenn das Wort darin erkannt
+    // wurde oder das Gesprächsfenster offen ist; sonst am Satzende verworfen (Server sieht sie nie — kein Transkript, kein Verkehr)
+    final wort = wortLokal ? await _wortModellLaden() : null;
+    final erkW = wort == null ? null : (WortErkenner(wort, hopMs: 80, schwelle: 0.95, treffer: 3, sperreMs: 2000)..treffer$.listen((t) { letzterWortTreffer = t.zeit; _protokolliere(Eintrag(Art.hinweis, '🔑 Aktivierungswort erkannt (${t.wahrscheinlichkeit.toStringAsFixed(2)})')); }));
+    wort?.zuruecksetzen();
+    final puffer = BytesBuilder(copy: false); var offen = false; var gesendet = false;
+    bool freigegeben() => erkW == null || DateTime.now().isBefore(gespraechsfensterBis) || DateTime.now().difference(letzterWortTreffer).inSeconds < 4;
     final ok = await audio.stromStart((pcm) {
       if (antwortet || audio.spielt) return; // Halbduplex: während Alfred antwortet oder spricht, nicht hören
+      erkW?.verarbeite(pcm);
       for (final ev in erk.schiebe(pcm)) {
-        if (ev is SatzStart) { client.start(); client.audio(ev.audio); }
-        else if (ev is SatzEnde) { client.ende(); }
+        if (ev is SatzStart) { offen = true; gesendet = false; puffer.clear(); puffer.add(ev.audio); }
+        else if (ev is SatzEnde) {
+          if (gesendet) { client.ende(); }
+          else if (freigegeben()) { client.start(); client.audio(puffer.takeBytes()); client.ende(); }
+          else { wortVerworfen++; puffer.clear(); if (wortVerworfen % 10 == 1) _protokolliere(Eintrag(Art.hinweis, '🔑 ohne Aktivierungswort verworfen ($wortVerworfen)')); }
+          offen = false; gesendet = false;
+        }
       }
-      if (erk.spricht) client.audio(pcm);
+      if (erk.spricht && offen) {
+        if (!gesendet && freigegeben()) { client.start(); client.audio(puffer.takeBytes()); gesendet = true; }
+        if (gesendet) { client.audio(pcm); } else { puffer.add(pcm); }
+      }
     }, (grund) { _zeile(Eintrag(Art.fehler, '🎧 Mikrofon: $grund')); _hoerenStop(null); });
     if (!ok) { client.schluss(); _zeile(Eintrag(Art.fehler, 'Mikrofon nicht verfügbar oder nicht erlaubt')); return; }
-    hoerClient = client; erkenner = erk;
+    hoerClient = client; erkenner = erk; wortErkenner = erkW;
     setState(() => hoeren = true);
     _zeile(Eintrag(Art.hinweis, '🎧 Höre zu — sag „${k.aktivierungswort}, …". Nach einer Antwort 20 s ohne Wort. „${k.aktivierungswort}, stopp" bricht die Wiedergabe ab.'));
   }
 
   Future<void> _hoerenStop(String? meldung) async {
     final c = hoerClient; hoerClient = null; erkenner = null;
+    final w = wortErkenner; wortErkenner = null; w?.schliesse(); // 1.3.0
     await audio.stromStop();
     try { c?.schluss(); } catch (_) {}
     if (!mounted) return;
@@ -408,6 +435,42 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   Future<void> _sprichKurz(String text) async {
     final s = server; if (s == null) return;
     try { final (b, mime) = await s.sprich(text); await audio.abspielen(Uint8List.fromList(b), mime); } catch (e) { _zeile(Eintrag(Art.fehler, '🔊 $e')); }
+  }
+
+  /// 1.3.0 — ONNX-Modelle einmal laden (2,8 MB aus den Assets); bei Fehler bleibt es beim Serverpfad (Wort im Transkript).
+  Future<OnnxWortModell?> _wortModellLaden() async {
+    if (wortModell != null) return wortModell;
+    try {
+      wortModell = await OnnxWortModell.lade();
+      _zeile(Eintrag(Art.hinweis, '🔑 Aktivierungswort lokal: Modelle geladen (Mel, Einbettung, Kopf)'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, '🔑 Aktivierungswort lokal nicht verfügbar: $e — Erkennung über den Server')); }
+    return wortModell;
+  }
+
+  /// 1.3.0 — Beweislauf: WAV (16 kHz mono) in 80-ms-Blöcken nur durch den lokalen Erkenner; schreibt Treffer-Zeitpunkte,
+  /// Höchstwert und Rechenzeit je Hop ins Protokoll. Vergleich mit `tools/wakeword/ref.py` (gleiche Rechnung in Python).
+  Future<void> _wortprobe(String wav) async {
+    try {
+      final pcm = wavZuPcm16k(await File(wav).readAsBytes());
+      final modell = await _wortModellLaden();
+      if (modell == null) { _zeile(Eintrag(Art.fehler, 'Wortprobe: kein Modell')); return; }
+      modell.zuruecksetzen();
+      final treffer = <double>[]; var maxP = 0.0; var hops = 0;
+      final erk = WortErkenner(modell, hopMs: 80, schwelle: 0.95, treffer: 3, sperreMs: 2000);
+      var verarbeitet = 0;
+      erk.treffer$.listen((t) => treffer.add(verarbeitet / 32000));
+      final t0 = DateTime.now();
+      for (var off = 0; off < pcm.length; off += 2560) {
+        final block = Uint8List.sublistView(pcm, off, off + 2560 > pcm.length ? pcm.length : off + 2560);
+        await erk.verarbeite(block); verarbeitet = off + block.length;
+        hops++;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      maxP = 0; // Höchstwert liefert das Modell nicht gesammelt — Treffer und Rechenzeit sind die Messgrößen
+      final ms = DateTime.now().difference(t0).inMilliseconds;
+      _zeile(Eintrag(Art.hinweis, 'WORTPROBE ${wav.split(RegExp(r'[\\/]')).last}: ${(pcm.length / 32000).toStringAsFixed(1)} s, $hops Blöcke in $ms ms (${modell.msJeAufruf.toStringAsFixed(1)} ms je Modellaufruf, ${modell.aufrufe} Aufrufe), Treffer ${treffer.length}: ${treffer.map((t) => t.toStringAsFixed(2)).join(' ')}${maxP > 0 ? '' : ''}'));
+      erk.schliesse();
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Wortprobe: $e')); }
   }
 
   /// Beweislauf: WAV durch dieselbe Kette (Satzende → Relais → Aktivierung) schicken, in Echtzeit-Blöcken von 80 ms.
@@ -994,6 +1057,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       ])),
       karte('Sprache', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Antworten vorlesen'), value: stimme, onChanged: (v) => setState(() => stimme = v)),
+        // 1.3.0 — lokales Aktivierungswort (Owner-Ok 10.10.): Standard an; gilt ab dem nächsten Start des Zuhörens
+        SwitchListTile(dense: true, contentPadding: EdgeInsets.zero, title: const Text('Aktivierungswort in der App erkennen'), subtitle: Text(wortLokal ? 'Nur Äußerungen mit erkanntem Wort gehen an den Server (Modell in der App, 2,8 MB).${wortVerworfen > 0 ? ' Verworfen seit Start: $wortVerworfen.' : ''}' : 'Aus: jede Äußerung geht an den Server, der das Wort im Transkript prüft.', style: theme.textTheme.bodySmall?.copyWith(color: dim)), value: wortLokal, onChanged: (v) { setState(() => wortLokal = v); wortLokalSpeichern(v); }),
         Text('Sprechen: Strg+Alt+Leertaste (global). Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“ über den Kopfhörer-Knopf in der Eingabekarte.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
       ])),
       karte('Gespräche', Column(crossAxisAlignment: CrossAxisAlignment.start, children: [ // 1.2.3 — Spiegel-Schalter (Owner-Freigabe 09.10., Standard aus)
