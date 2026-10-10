@@ -84,7 +84,7 @@ def bewerte(kopf, e: np.ndarray) -> tuple[float, float, float]:
     drei = max((min(p[i], p[i + 1], p[i + 2]) for i in range(len(p) - 2)), default=float(zwei))
     return float(p.max()), float(zwei), float(drei)
 
-def ist_lang_stueck(name: str) -> bool: return bool(re.search(r'_\d{3}\.wav$', name))
+def ist_lang_stueck(name: str) -> bool: return bool(re.match(r'^Negativ_\d+_\d{3}\.wav$', name))  # nur Stücke langer Negativaufnahmen (neu-sortiere.py), nicht „Negativ_172"/„Unterthurm_100"
 
 def messe(kopf, echt, titel: str) -> None:
     kopf.eval()
