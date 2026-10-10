@@ -13711,7 +13711,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // (Logzeile; Drosselung erst nach Beobachtung, Grundsatz „Baselines erst beobachtend").
           hinweise: async (geraetId: string) => {
             if (!this.insightsRepo || !this.ownerMasterUserId || !(await this.geraetGehoertOwner(geraetId))) return undefined;
-            const l = await this.insightsRepo.listSammlung(this.ownerMasterUserId, '2026-10-10T00:00:00.000Z', 150);
+            // v1344 — Themen-Digests und Quellen-Pflege (Kategorie „interests") nicht in der Sammlung: Lesestoff, keine Entscheidung
+            // (Owner 10.10.). Nur ausgeblendet — Themen, Dossiers und Content-Studio bleiben unberührt; Vorschläge
+            // („interest-suggestion", mit Aktion „Thema anlegen") bleiben sichtbar.
+            const l = (await this.insightsRepo.listSammlung(this.ownerMasterUserId, '2026-10-10T00:00:00.000Z', 300)).filter(i => i.category !== 'interests').slice(0, 150);
             return l.map(i => {
               const sd = (i.sourceData ?? {}) as Record<string, unknown>;
               return { id: i.id, quelle: i.category, titel: i.title, text: i.body, status: i.status, zeit: i.createdAt, dringlichkeit: sd.urgency ?? null, zugestellt: sd.zugestellt ?? (sd.router === true ? 'still' : null), aktion: i.actionSkill ? (typeof sd.actionLabel === 'string' ? sd.actionLabel : 'Ausführen') : null };

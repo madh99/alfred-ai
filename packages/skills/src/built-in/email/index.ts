@@ -10,6 +10,17 @@ import type { EmailProvider, SendEmailAttachment } from './email-provider.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+/**
+ * v1344 — Kontoname aus der Modell-Eingabe auflösen: leer/„default" → undefined (= erstes Konto), sonst exakter oder
+ * Groß-/Kleinschreibung-unabhängiger Treffer; unbekannte Namen bleiben unverändert (der Aufrufer meldet den Fehler mit Liste).
+ */
+export function kontoName(eingabe: string | undefined, konten: string[]): string | undefined {
+  const e = (eingabe ?? '').trim();
+  if (!e || e.toLowerCase() === 'default') return undefined;
+  if (konten.includes(e)) return e;
+  return konten.find(k => k.toLowerCase() === e.toLowerCase()) ?? e;
+}
+
 /** Minimal LLM interface to avoid hard dependency on @alfred/llm. */
 interface EmailLLM {
   complete(request: LLMRequest): Promise<LLMResponse>;
@@ -264,7 +275,9 @@ export class EmailSkill extends Skill {
     const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     const accountNames = [...providers.keys()];
     const defaultAccount = accountNames[0] ?? 'default';
-    const account = (input.account as string) ?? defaultAccount;
+    // v1344 — Realfall 07.10. 19:26: das Modell schrieb account „default" → „Unknown email account". „default"/leer = erstes Konto,
+    // Groß-/Kleinschreibung egal (deterministisch, modellunabhängig)
+    const account = kontoName(input.account as string | undefined, accountNames) ?? defaultAccount;
     const provider = providers.get(account);
     if (!provider) {
       return {
@@ -414,7 +427,7 @@ export class EmailSkill extends Skill {
     }
 
     // v861 — account-Param wird jetzt respektiert (vorher ignoriert)
-    const { account, rawId } = this.decodeId(messageId, input.account as string | undefined);
+    const { account, rawId } = this.decodeId(messageId, kontoName(input.account as string | undefined, [...(this.mergedProviders ?? this.activeProviders ?? this.providers).keys()]));
     const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
@@ -661,13 +674,13 @@ export class EmailSkill extends Skill {
 
   private async handleAttachment(input: Record<string, unknown>): Promise<SkillResult> {
     const messageId = input.messageId as string;
-    const attachmentId = input.attachmentId as string;
+    const attachmentId = (input.attachmentId as string | undefined) ?? '';
     const savePath = input.save as string | undefined;
     if (!messageId) return { success: false, error: '"messageId" is required.' };
-    if (!attachmentId) return { success: false, error: '"attachmentId" is required.' };
 
-    // v861 — account-Param wird jetzt respektiert (vorher ignoriert)
-    const { account, rawId } = this.decodeId(messageId, input.account as string | undefined);
+    // v861 — account-Param wird jetzt respektiert (vorher ignoriert); v1344 „default" → erstes Konto
+    const konten = [...(this.mergedProviders ?? this.activeProviders ?? this.providers).keys()];
+    const { account, rawId } = this.decodeId(messageId, kontoName(input.account as string | undefined, konten));
     const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
@@ -675,9 +688,16 @@ export class EmailSkill extends Skill {
 
     // Resolve attachment: try by ID first, then fall back to filename match
     const detail = await provider.readMessage(rawId);
-    let attMeta = detail.attachments?.find(a => a.id === attachmentId);
-    if (!attMeta) {
+    let attMeta = attachmentId ? detail.attachments?.find(a => a.id === attachmentId) : undefined;
+    if (!attMeta && attachmentId) {
       attMeta = detail.attachments?.find(a => a.name.toLowerCase() === attachmentId.toLowerCase());
+    }
+    // v1344 — Realfall 05./07.10. (geplante Aufgabe 20:00, aWATTar-Rechnung): Anhang ohne attachmentId bzw. mit der
+    // Nachrichten-ID als attachmentId → Fehler. Hat die Nachricht genau EINEN Anhang, ist er gemeint.
+    if (!attMeta && (detail.attachments?.length ?? 0) === 1) attMeta = detail.attachments![0];
+    if (!attMeta && !attachmentId) {
+      const available = detail.attachments?.map(a => `[${a.id}] ${a.name}`).join(', ') ?? 'none';
+      return { success: false, error: `"attachmentId" is required (mehrere Anhänge). Available: ${available}` };
     }
     if (!attMeta) {
       const available = detail.attachments?.map(a => `[${a.id}] ${a.name}`).join(', ') ?? 'none';

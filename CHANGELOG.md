@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1344] - 2026-10-10
+
+### Fixed — E-Mail: Datumssuche, Kontoname „default", Anhang ohne Kennung (v1344)
+
+Ist-Aufnahme 10.10.: 28 E-Mail-Fehler in sieben Tagen, davon 23 ein bereits behobener Ausfall des Outlook-Kontos (03.–05.10.). Die übrigen Muster: Die Suche mit Datumsbereich setzte die Anfrage ungeprüft in Anführungszeichen, innere Anführungszeichen (`subject:"Rechnung Strom 09/2026"`) führten zu einem Graph-Syntaxfehler — sie werden jetzt wie bei der normalen Suche entfernt. Der Kontoname „default" bzw. eine abweichende Groß-/Kleinschreibung führte zu „Unknown email account" — „default" und leer bedeuten jetzt das erste Konto, Namen werden unabhängig von der Schreibweise erkannt. Ein Anhang-Abruf ohne oder mit falscher Anhangskennung scheiterte (geplante aWATTar-Rechnungsprüfung um 20:00) — hat die Nachricht genau einen Anhang, wird dieser genommen.
+
+### Fixed — Rückfragen des Reasonings wurden in neuem Wortlaut wieder gestellt (v1344)
+
+107 Reasoning-Rückfragen liefen in 35 Tagen unbeantwortet ab, dieselben Themen in neuem Wortlaut (MikroTik-Incident siebenmal, Proxmox-Muster neunmal). Die Sperre für ignorierte oder abgelehnte Rückfragen (sieben Tage, seit v1142) verglich bei ITSM-Incidents nur den Titel. Jetzt gelten gleicher Skill, gleiche Aktion und gleiches Thema (Anker-Vergleich wie bei den Vorgangs-Dubletten, v1317) als dieselbe Frage.
+
+### Changed — Themenmeldungen nicht mehr in der Sammlung „Hinweise" (v1344)
+
+Themen-Digests und Quellen-Pflege-Berichte (Kategorie `interests`) erscheinen nicht mehr in der Sammlung; sie sind Lesestoff, keine Entscheidung. Nur ausgeblendet: Themen, Dossiers, Sammler und Content-Studio bleiben unverändert, Interessen-Vorschläge mit Aktion bleiben sichtbar.
+
 ## [0.19.0-jarvis.1343] - 2026-10-10
 
 ### Added — Sammlung „Hinweise" mit Status, Markierung von Insights im Gespräch (v1343)

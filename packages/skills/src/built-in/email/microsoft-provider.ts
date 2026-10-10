@@ -342,9 +342,12 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     }
 
     // Keywords
-    if (query) {
+    // v1344 — Realfall 05.10. 21:46: `subject:"Rechnung Strom 09/2026"` → innere Anführungszeichen im $search-String →
+    // Graph „Syntax error … position 87". Wie searchMessages: Anführungszeichen entfernen (KQL-Properties wie from:/subject: bleiben).
+    const q = (query ?? '').replace(/"/g, '').replace(/\s+/g, ' ').trim();
+    if (q) {
       // Wrap multi-term query in parentheses to combine with AND
-      parts.push(query.includes(' ') ? `(${query})` : query);
+      parts.push(q.includes(' ') ? `(${q})` : q);
     }
 
     const searchExpr = parts.join(' AND ');

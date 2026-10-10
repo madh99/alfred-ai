@@ -1,5 +1,6 @@
 import type { Logger } from 'pino';
 import type { ConfirmationRepository, ConversationRepository, ProjectRepository, MemoryRepository } from '@alfred/storage';
+import { themenGleich } from '@alfred/storage'; // v1344 — Themenvergleich für die Rückfrage-Sperre
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, SkillContext, PendingConfirmation, ConfirmationExtraAction } from '@alfred/types';
@@ -96,14 +97,30 @@ export function istGleicheConfirmationsIdentitaet(
 ): boolean {
   const keyNeu = computeTopicKey(neu as PendingConfirmation);
   const keyAlt = computeTopicKey(alt as PendingConfirmation);
+  // v1344 — Ist-Aufnahme 10.10.: 107 Reasoning-Rückfragen in 35 Tagen unbeantwortet abgelaufen, dieselben Themen in neuem
+  // Wortlaut (MikroTik-Incident 7×, Proxmox-Muster 9×). Gleicher Skill + gleiche Aktion + gleiches Thema (Anker-Vergleich wie
+  // bei den Vorgangs-Dubletten, v1317) = gleiche Frage. Deterministisch, modellunabhängig.
+  const themaGleich = gleicherAuftrag(neu, alt) && themenGleich(titelOderBeschreibung(neu), titelOderBeschreibung(alt));
   if (keyNeu && keyAlt) {
     if (keyNeu === keyAlt) return true;
     // Beide Keys stammen aus VERLÄSSLICHEN Skill-Signalen (Titel/Name — kein
     // ':desc:'-Fallback) und unterscheiden sich → verschiedene Anliegen,
-    // auch wenn die Beschreibungen sich ähneln („Incident anlegen" ×2).
-    if (!keyNeu.includes(':desc:') && !keyAlt.includes(':desc:')) return false;
+    // auch wenn die Beschreibungen sich ähneln („Incident anlegen" ×2) — außer das Thema ist dasselbe (v1344).
+    if (!keyNeu.includes(':desc:') && !keyAlt.includes(':desc:')) return themaGleich;
   }
-  return beschreibungsAehnlichkeit(neu.description, alt.description) >= 0.6;
+  return beschreibungsAehnlichkeit(neu.description, alt.description) >= 0.6 || themaGleich;
+}
+
+/** v1344 — gleicher Skill und gleiche Aktion (ohne Aktion: nur Skill). */
+function gleicherAuftrag(a: Pick<PendingConfirmation, 'skillName' | 'skillParams'>, b: Pick<PendingConfirmation, 'skillName' | 'skillParams'>): boolean {
+  return !!a.skillName && a.skillName === b.skillName && String(a.skillParams?.action ?? '') === String(b.skillParams?.action ?? '');
+}
+
+/** v1344 — Titel aus den Parametern (ITSM, Workflow-Name) samt Beschreibung: mehr Anker für den Themenvergleich. */
+function titelOderBeschreibung(c: Pick<PendingConfirmation, 'description' | 'skillParams'>): string {
+  const p = c.skillParams ?? {};
+  const t = [p.title, p.name].filter(x => typeof x === 'string').join(' ');
+  return `${t} ${c.description ?? ''}`.trim();
 }
 
 export class ConfirmationQueue {

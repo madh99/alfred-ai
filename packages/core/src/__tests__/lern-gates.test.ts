@@ -55,6 +55,19 @@ describe('H2 — BMW-Test: Confirmation-Identität statt Wortgleichheit', () => 
     )).toBe(false);
   });
 
+  it('v1344 — umformulierte ITSM-Incidents zum selben Thema gelten als dieselbe Frage (Realfall MikroTik 7×)', () => {
+    const a = { description: 'ITSM-Incident für MikroTik-Ausfall erstellen (Severity: critical). Symptome: Router nicht erreichbar', skillName: 'itsm', skillParams: { action: 'create_incident', title: 'MikroTik-Ausfall: Router nicht erreichbar' } };
+    const b = { description: 'ITSM Incident für MikroTik-Interfaces erstellen (3 Interfaces down seit 06.10.)', skillName: 'itsm', skillParams: { action: 'create_incident', title: 'MikroTik Interfaces down' } };
+    expect(istGleicheConfirmationsIdentitaet(a, b)).toBe(true);
+  });
+
+  it('v1344 — gleiches Thema, aber anderer Skill oder andere Aktion bleibt verschieden', () => {
+    const a = { description: 'ITSM-Incident für MikroTik-Ausfall erstellen', skillName: 'itsm', skillParams: { action: 'create_incident', title: 'MikroTik-Ausfall' } };
+    // (Wortgleiche Beschreibungen greifen schon über die Beschreibungsähnlichkeit seit v1142 — hier bewusst anders formuliert)
+    expect(istGleicheConfirmationsIdentitaet(a, { description: 'Root-Cause im Ticket zum Router-Problem nachtragen', skillName: 'itsm', skillParams: { action: 'update_incident', title: 'MikroTik-Ausfall' } })).toBe(false);
+    expect(istGleicheConfirmationsIdentitaet(a, { description: 'MikroTik-Ausfall: Router neu starten', skillName: 'mikrotik', skillParams: { action: 'reboot' } })).toBe(false);
+  });
+
   it('beschreibungsAehnlichkeit: unähnliche Texte bleiben unter der Schwelle', () => {
     expect(beschreibungsAehnlichkeit(
       'BMW API-Token erneuern (OAuth-Flow starten).',
