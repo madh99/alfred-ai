@@ -31,6 +31,33 @@ NEG = ['Alfons', 'Albert', 'Alfredo', 'alles fertig', 'Manfred', 'Alfreds Auto',
        'Der Zug fährt um acht', 'Bitte leise', 'Ja genau', 'Nein danke', 'Komm her', 'Fertig', 'Alles klar', 'Hast du Zeit',
        'Eins zwei drei', 'Markus', 'Alexandra', 'Telefon', 'Kalender', 'Küche', 'Musik an', 'Fernseher aus']
 
+# Lauf 5 (10.10.): lange Negative — fließende deutsche Sätze ohne „Alfred" (Dauerton gegen Fehlauslösungen; 39/h in Lauf 4)
+NEG_LANG = [
+    'Heute Morgen habe ich den Kaffee auf dem Balkon getrunken und die Zeitung gelesen.', 'Die Kinder müssen um halb acht in der Schule sein, also bitte nicht trödeln.',
+    'Kannst du mir sagen, wann der nächste Zug nach Innsbruck fährt und ob er pünktlich ist?', 'Im Garten blühen die Rosen, aber der Rasen müsste dringend gemäht werden.',
+    'Wir haben gestern Abend einen Film geschaut und sind erst nach Mitternacht ins Bett gegangen.', 'Der Elektriker kommt am Dienstag zwischen neun und elf Uhr vorbei.',
+    'Bitte leg die Wäsche in den Trockner und räum danach die Spülmaschine aus.', 'Das Wetter soll am Wochenende besser werden, vielleicht gehen wir wandern.',
+    'Ich habe die Rechnung schon überwiesen, die Bestätigung müsste per Mail kommen.', 'Die Heizung läuft seit gestern auf Sparbetrieb, im Wohnzimmer ist es trotzdem warm.',
+    'Hast du den Schlüssel für die Garage gesehen? Er lag gestern noch auf der Kommode.', 'Nach dem Mittagessen fahren wir zum Baumarkt und holen Farbe für das Kinderzimmer.',
+    'Der Akku vom Laptop hält nur noch zwei Stunden, ich brauche ein neues Ladegerät.', 'Mama ruft nachher an, sie will wissen, ob wir am Sonntag zum Essen kommen.',
+    'Die Mannschaft hat zwei zu eins gewonnen, das Spiel war bis zur letzten Minute spannend.', 'Vergiss nicht, den Müll rauszustellen, morgen ist Abholung.',
+    'Ich war beim Arzt, der Blutdruck ist in Ordnung, aber ich soll mehr Sport machen.', 'Die neue Software wird nächste Woche installiert, dann läuft das Programm schneller.',
+    'Auf der Autobahn war Stau, deshalb bin ich fast eine Stunde später gekommen.', 'Wir brauchen noch Milch, Butter, Eier und etwas Obst für die Woche.',
+    'Der Drucker im Büro druckt wieder nur jede zweite Seite, bitte den Toner tauschen.', 'Am Freitag ist das Konzert im Stadtpark, die Karten liegen auf dem Schreibtisch.',
+    'Die Katze hat die ganze Nacht miaut, wahrscheinlich war sie hungrig.', 'Lass uns morgen früh mit dem Rad zum See fahren, bevor es zu heiß wird.',
+    'Das Paket wurde beim Nachbarn abgegeben, ich hole es nach der Arbeit.', 'Im Keller tropft der Wasserhahn, ich habe den Installateur schon angerufen.',
+    'Die Präsentation ist fertig, ich muss nur noch die Zahlen vom letzten Quartal einfügen.', 'Oma hat zum Geburtstag einen Gutschein bekommen und sich sehr gefreut.',
+    'Bitte mach das Fenster zu, es zieht, und schalte das Licht im Flur aus.', 'Der Zahnarzttermin ist am Mittwoch um vierzehn Uhr, ich habe ihn im Kalender eingetragen.',
+    'Wir sollten die Winterreifen bald wechseln lassen, es wird kälter.', 'Das Brot vom Bäcker an der Ecke ist viel besser als das aus dem Supermarkt.',
+    'Ich habe den ganzen Nachmittag am Computer gesessen und Berichte geschrieben.', 'Die Nachbarn feiern am Samstag, wir sind eingeladen, bring bitte einen Salat mit.',
+    'Der Flug geht um sechs Uhr früh, wir müssen spätestens um vier aus dem Haus.', 'Hast du gehört, dass die Brücke über den Fluss gesperrt ist? Wir müssen außen herum.',
+    'Die Solaranlage hat heute mehr Strom erzeugt als wir verbraucht haben.', 'Ich koche heute Abend Nudeln mit Tomatensoße, die Kinder wollten das.',
+    'Der Termin mit dem Steuerberater wurde auf nächste Woche verschoben.', 'Im Fernsehen läuft gleich die Nachrichtensendung, danach das Wetter.',
+    'Albert und Alfons kommen morgen zu Besuch, Manfred bringt die Alpenmilch mit.', 'Alfreds Nachbar heißt Alfonso, und Elfriede wohnt gegenüber von der Bäckerei.',
+    'Alle Fenster sind zu, alles fertig, der Adler kreist über den Alpen.', 'Halb fertig ist auch nicht fertig, hat der Alte immer gesagt.',
+    'Eins, zwei, drei, vier, fünf, sechs, sieben, acht, neun, zehn, elf, zwölf.', 'Guten Morgen, guten Abend, gute Nacht, danke schön, bitte sehr, bis später.',
+]
+
 def lade_stimme(name: str, ziel: Path) -> Path:
     rel = VOICES[name]
     onnx = ziel / f'{name}.onnx'
@@ -84,11 +111,25 @@ def fenster(audio: np.ndarray, text: str = '', sek: float = 1.5, sr: int = 16000
 def main(argv) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default='/data'); ap.add_argument('--n', type=int, default=1500); ap.add_argument('--voices', default=','.join(VOICES.keys()))
+    ap.add_argument('--lang', type=int, default=0, help='nur lange Negative erzeugen (fließende Sätze ohne Alfred) nach /data/neg_lang, Anzahl Clips')
     a = ap.parse_args(argv)
     out = Path(a.out); (out / 'pos').mkdir(parents=True, exist_ok=True); (out / 'neg').mkdir(parents=True, exist_ok=True); (out / 'voices').mkdir(exist_ok=True)
     stimmen = [lade_stimme(v, out / 'voices') for v in a.voices.split(',') if v in VOICES]
     manifest = []
     random.seed(7)
+    if a.lang:
+        # Lauf 5: lange Negative in voller Länge (kein 1,5-s-Fenster), 1–2 Sätze, alle Stimmen, Tempo-Varianten
+        (out / 'neg_lang').mkdir(exist_ok=True); sek = 0.0
+        for i in range(a.lang):
+            text = ' '.join(random.choice(NEG_LANG) for _ in range(random.randint(1, 2)))
+            modell = random.choice(stimmen); laenge = random.uniform(0.85, 1.2); rausch = random.uniform(0.3, 0.8)
+            try: audio = stille_weg(piper(text, modell, laenge, rausch))
+            except subprocess.CalledProcessError as e: print('piper-Fehler', text[:40], e.stderr[:120], file=sys.stderr); continue
+            name = f'neg_lang/{i:05d}.wav'; sf.write(out / name, audio, 16000, subtype='PCM_16'); sek += len(audio) / 16000
+            manifest.append({'datei': name, 'label': 0, 'text': text, 'stimme': modell.stem, 'laenge': laenge})
+            if i % 50 == 0: print(i, name, f'{sek / 60:.1f} min', modell.stem, file=sys.stderr)
+        (out / 'manifest_lang.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=0))
+        print('fertig:', len(manifest), 'lange Negative,', f'{sek / 60:.1f} min'); return
     for i in range(a.n):
         pos = i % 2 == 0
         text = random.choice(POS if pos else NEG)

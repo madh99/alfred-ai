@@ -76,22 +76,29 @@ class Kopf(nn.Module):
         self.f = nn.Sequential(nn.Flatten(), nn.Linear(FENSTER_FRAMES * 96, 64), nn.LayerNorm(64), nn.ReLU(), nn.Dropout(0.3), nn.Linear(64, 1))
     def forward(self, x): return self.f(x).squeeze(1)
 
-def bewerte(kopf, e: np.ndarray) -> tuple[float, float]:
-    """(Maximum über Fenster, Maximum der App-Regel: Minimum zweier aufeinanderfolgender Fenster)."""
+def bewerte(kopf, e: np.ndarray) -> tuple[float, float, float]:
+    """(Maximum über Fenster, App-Regel 2 Fenster: Minimum zweier aufeinanderfolgender, App-Regel 3 Fenster)."""
     with torch.no_grad():
         p = torch.sigmoid(kopf(torch.from_numpy(fenster_aus(e, hop=1)))).numpy()
     zwei = max((min(p[i], p[i + 1]) for i in range(len(p) - 1)), default=float(p.max()))
-    return float(p.max()), float(zwei)
+    drei = max((min(p[i], p[i + 1], p[i + 2]) for i in range(len(p) - 2)), default=float(zwei))
+    return float(p.max()), float(zwei), float(drei)
+
+def ist_lang_stueck(name: str) -> bool: return bool(re.search(r'_\d{3}\.wav$', name))
 
 def messe(kopf, echt, titel: str) -> None:
     kopf.eval()
     w = [(bewerte(kopf, e), l, n) for e, l, n in echt]
     P = sum(1 for _, l, _ in echt if l == 1); N = len(echt) - P
-    for s in (0.5, 0.7, 0.9):
-        tp = sum(1 for (pm, _), l, _ in w if l == 1 and pm > s); fp = sum(1 for (pm, _), l, _ in w if l == 0 and pm > s)
-        tp2 = sum(1 for (_, pz), l, _ in w if l == 1 and pz > s); fp2 = sum(1 for (_, pz), l, _ in w if l == 0 and pz > s)
-        print(f'ECHTE AUFNAHMEN {titel} Schwelle {s}: Treffer {tp}/{P}, Fehlauslösungen {fp}/{N} | App-Regel (2 Fenster): Treffer {tp2}/{P}, Fehlauslösungen {fp2}/{N}')
-    for (pm, pz), l, n in w: print(f'  {n}: {pm:.2f}/{pz:.2f} ({"Alfred" if l else "nicht"})')
+    lang = [x for x in w if x[1] == 0 and ist_lang_stueck(x[2])]; minuten = len(lang) * 3 / 60
+    for s in (0.5, 0.7, 0.9, 0.95):
+        tp = sum(1 for (pm, _, _), l, _ in w if l == 1 and pm > s); fp = sum(1 for (pm, _, _), l, _ in w if l == 0 and pm > s)
+        tp2 = sum(1 for (_, pz, _), l, _ in w if l == 1 and pz > s); fp2 = sum(1 for (_, pz, _), l, _ in w if l == 0 and pz > s)
+        tp3 = sum(1 for (_, _, pd), l, _ in w if l == 1 and pd > s); fp3 = sum(1 for (_, _, pd), l, _ in w if l == 0 and pd > s)
+        fa2 = sum(1 for (_, pz, _), _, _ in lang if pz > s); fa3 = sum(1 for (_, _, pd), _, _ in lang if pd > s)
+        dauer = f' | Dauerton {minuten:.1f} min: {fa2 / minuten * 60:.0f}/h (2 F.), {fa3 / minuten * 60:.0f}/h (3 F.)' if minuten > 0 else ''
+        print(f'ECHTE AUFNAHMEN {titel} Schwelle {s}: Treffer {tp}/{P}, Fehlauslösungen {fp}/{N} | 2 Fenster: {tp2}/{P}, {fp2}/{N} | 3 Fenster: {tp3}/{P}, {fp3}/{N}{dauer}')
+    for (pm, pz, pd), l, n in w: print(f'  {n}: {pm:.2f}/{pz:.2f}/{pd:.2f} ({"Alfred" if l else "nicht"})')
 
 def trainiere(X: torch.Tensor, y: torch.Tensor, epochs: int, lr: float, seed: int = 7, still=False) -> Kopf:
     torch.manual_seed(seed)
@@ -121,6 +128,14 @@ def synthetische_trainingsdaten(af, data: Path, kopien: int, rng: random.Random)
     for _ in range(len(pos) // 2):
         p = rng.choice(pos); a = rng.choice(neg); b = rng.choice(neg)
         clips.append((augmentiere(np.concatenate([a, p, b])[:4 * SR], rng), 1))
+    # Lauf 5: lange synthetische Negative (fließende Sätze, /data/neg_lang, synth --lang) — in voller Länge, einmal augmentiert
+    lang = sorted((data / 'neg_lang').glob('*.wav')) if (data / 'neg_lang').exists() else []
+    if lang:
+        sek = 0.0
+        for p in lang:
+            c = lade_f32(p); sek += len(c) / SR
+            clips.append((augmentiere(c, rng), 0))
+        print(f'Lange synthetische Negative: {len(lang)} Clips, {sek / 60:.1f} min', file=sys.stderr)
     emb = einbetten(af, [c for c, _ in clips])
     Xs, ys = [], []
     for e, (_, l) in zip(emb, clips):
@@ -152,9 +167,13 @@ def echte_aufnahmen(af, data: Path):
     e1 = einbetten(af, [c for c, _, _ in klar]); e2 = einbetten(af, [c for c, _, _ in unsicher])
     return [(e, l, n) for e, (_, l, n) in zip(e1, klar)], [(e, l, n) for e, (_, l, n) in zip(e2, unsicher)]
 
-def echt_fenster(aufn) -> tuple[torch.Tensor, torch.Tensor]:
-    X = np.concatenate([fenster_aus(e, hop=1) for e, _, _ in aufn]); y = np.concatenate([np.full(len(fenster_aus(e, hop=1)), float(l), np.float32) for e, l, _ in aufn])
-    return torch.from_numpy(X), torch.from_numpy(y)
+def echt_fenster(aufn, lang_gewicht: int = 3) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fenster der echten Aufnahmen; Stücke aus langen Negativaufnahmen (Dauerton) zählen lang_gewicht-fach (Lauf 5: 39 Fehlauslösungen/h in Lauf 4)."""
+    Xs, ys = [], []
+    for e, l, n in aufn:
+        w = fenster_aus(e, hop=1); k = lang_gewicht if (l == 0 and ist_lang_stueck(n)) else 1
+        for _ in range(k): Xs.append(w); ys.append(np.full(len(w), float(l), np.float32))
+    return torch.from_numpy(np.concatenate(Xs)), torch.from_numpy(np.concatenate(ys))
 
 def main(argv) -> None:
     ap = argparse.ArgumentParser()
@@ -182,11 +201,15 @@ def main(argv) -> None:
             kopf = trainiere(torch.cat([X] + [Xe] * a.echt_gewicht), torch.cat([y] + [ye] * a.echt_gewicht), a.epochs, a.lr, seed=7 + f, still=True)
             kopf.eval(); gesamt += [(bewerte(kopf, e), l, n) for e, l, n in test]
         P = sum(1 for _, l, _ in gesamt if l == 1); N = len(gesamt) - P
-        for s in (0.5, 0.7, 0.9):
-            tp = sum(1 for (pm, _), l, _ in gesamt if l == 1 and pm > s); fp = sum(1 for (pm, _), l, _ in gesamt if l == 0 and pm > s)
-            tp2 = sum(1 for (_, pz), l, _ in gesamt if l == 1 and pz > s); fp2 = sum(1 for (_, pz), l, _ in gesamt if l == 0 and pz > s)
-            print(f'ECHTE AUFNAHMEN (5-fach kreuzvalidiert, {len(gesamt)}) Schwelle {s}: Treffer {tp}/{P}, Fehlauslösungen {fp}/{N} | App-Regel: Treffer {tp2}/{P}, Fehlauslösungen {fp2}/{N}')
-        for (pm, pz), l, n in sorted(gesamt, key=lambda t: t[2]): print(f'  {n}: {pm:.2f}/{pz:.2f} ({"Alfred" if l else "nicht"})')
+        lang = [x for x in gesamt if x[1] == 0 and ist_lang_stueck(x[2])]; minuten = len(lang) * 3 / 60
+        for s in (0.5, 0.7, 0.9, 0.95):
+            tp = sum(1 for (pm, _, _), l, _ in gesamt if l == 1 and pm > s); fp = sum(1 for (pm, _, _), l, _ in gesamt if l == 0 and pm > s)
+            tp2 = sum(1 for (_, pz, _), l, _ in gesamt if l == 1 and pz > s); fp2 = sum(1 for (_, pz, _), l, _ in gesamt if l == 0 and pz > s)
+            tp3 = sum(1 for (_, _, pd), l, _ in gesamt if l == 1 and pd > s); fp3 = sum(1 for (_, _, pd), l, _ in gesamt if l == 0 and pd > s)
+            fa2 = sum(1 for (_, pz, _), _, _ in lang if pz > s); fa3 = sum(1 for (_, _, pd), _, _ in lang if pd > s)
+            dauer = f' | Dauerton {minuten:.1f} min: {fa2 / minuten * 60:.0f}/h (2 F.), {fa3 / minuten * 60:.0f}/h (3 F.)' if minuten > 0 else ''
+            print(f'ECHTE AUFNAHMEN (5-fach kreuzvalidiert, {len(gesamt)}) Schwelle {s}: Treffer {tp}/{P}, Fehlauslösungen {fp}/{N} | 2 Fenster: {tp2}/{P}, {fp2}/{N} | 3 Fenster: {tp3}/{P}, {fp3}/{N}{dauer}')
+        for (pm, pz, pd), l, n in sorted(gesamt, key=lambda t: t[2]): print(f'  {n}: {pm:.2f}/{pz:.2f}/{pd:.2f} ({"Alfred" if l else "nicht"})')
         Xe, ye = echt_fenster(klar)
         kopf = trainiere(torch.cat([X] + [Xe] * a.echt_gewicht), torch.cat([y] + [ye] * a.echt_gewicht), a.epochs, a.lr)
         if unsicher: messe(kopf, unsicher, f'(unsicher beschriftet {len(unsicher)}, Kopf auf allen klaren trainiert)')
