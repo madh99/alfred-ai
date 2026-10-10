@@ -6662,7 +6662,17 @@ export class HttpAdapter extends MessagingAdapter {
     if (!geraet || !this.geraeteCallbacks?.anhang) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
     const a = await this.geraeteCallbacks.anhang(geraet.geraetId, id);
     if (!a) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Anhang nicht (mehr) vorhanden' })); return; }
-    res.writeHead(200, { 'Content-Type': a.mime, 'Content-Length': a.daten.length, 'Content-Disposition': `inline; filename="${encodeURIComponent(a.name)}"`, 'Cache-Control': 'private, max-age=86400' });
+    // v1348 — Sicherheitsreview: gespeicherter Typ/Inhalt stammt aus Skill-Ergebnissen; inline nur Rasterbilder, alles andere
+    // (auch SVG/HTML) als Download mit neutralem Typ; nosniff + abgeschottete CSP gegen Ausführung im Server-Ursprung.
+    const inline = /^image\/(jpeg|png|gif|webp)$/i.test(a.mime);
+    res.writeHead(200, {
+      'Content-Type': inline ? a.mime : 'application/octet-stream',
+      'Content-Length': a.daten.length,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(a.name)}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Cache-Control': 'private, max-age=86400',
+    });
     res.end(a.daten);
   }
 

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1348] - 2026-10-10
+
+### Security — Anhang-Abruf liefert nur Rasterbilder inline aus (v1348)
+
+Sicherheitsreview zu v1347: `/api/geraete/anhang/<id>` übernahm den gespeicherten Typ und lieferte inline aus — ein HTML- oder SVG-Anhang aus einem Skill-Ergebnis wäre im Ursprung des Servers gelaufen. Inline jetzt nur JPEG/PNG/GIF/WebP, alles andere als Download mit neutralem Typ; dazu `X-Content-Type-Options: nosniff` und `Content-Security-Policy: default-src 'none'; sandbox`.
+
 ## [0.19.0-jarvis.1347] - 2026-10-10
 
 ### Added — Anhänge bleiben im Verlauf sichtbar (v1347, App 1.4.2)
