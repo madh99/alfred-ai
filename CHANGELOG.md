@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1346] - 2026-10-10
+
+### Fixed — Zuhören: Sätze gingen mit Fehler 3804 verloren (v1346, App 1.4.1)
+
+Realfall 10.10. 22:57: „Timeout waiting for response from streaming transcription" (3804), zwei lange Sätze abgeschnitten. Nachgestellt gegen den Transkriptionsdienst: Leerlauf ohne Ton ist unschädlich (120 s geprüft), aber Ton ohne abschließenden Flush führt nach ~30 s zu 3804, der Dienst schließt die Verbindung und der Ton ist verloren. Das passierte, wenn Alfred zu antworten begann, während noch gesprochen wurde — die App hört dann nicht mehr zu (Halbduplex) und schickte weder Ton noch Äußerungsende. Das Relais schließt eine Äußerung jetzt selbst ab, wenn 4 s kein Ton mehr kommt; Anbieterfehler und Abbrüche mit offenem Ton stehen im Log; nach einem Abbruch beginnt die nächste Äußerung auf einer frischen Verbindung. Die App 1.4.1 schließt die laufende Äußerung beim Beginn der Antwort sofort ab, hebt deren Ton für den Ersatzweg auf und sendet Text, der während einer Antwort eintrifft, danach statt ihn zu verwerfen.
+
+### Fixed — App: Antworten aus dem Hauptgespräch erschienen als Hinweis auf ein fremdes Gespräch (App 1.4.1)
+
+Realfall 10.10. 22:49: Das Foto nach der Freigabe kam in der App nur als „Antwort im Gespräch ‚Gespräch haupt'" an. Die App schickt ihr Hauptgespräch seit 1.2.5 ausdrücklich als „haupt", verglich eingehende Antworten aber mit „kein Faden". „haupt" gilt jetzt als Hauptgespräch; die Kopie in Telegram bleibt wie gewünscht.
+
 ## [0.19.0-jarvis.1345] - 2026-10-10
 
 ### Added — Dauer je Modellaufruf im Log (v1345)

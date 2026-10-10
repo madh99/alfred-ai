@@ -16,6 +16,9 @@ import { WebSocketServer, WebSocket } from 'ws';
  * {"typ":"fehler","grund"}, {"typ":"limit","grund"}.
  * Empirisch 07.10.: eine Mistral-Verbindung trägt mehrere Äußerungen; jeder Flush liefert `transcription.done` mit dem
  * Text seit dem letzten Flush; `input_audio.end` schließt die Verbindung.
+ * Empirisch 10.10. (v1346): Leerlauf ohne Ton ist unschädlich (120 s geprüft); Ton OHNE Flush führt nach ~30 s zu
+ * Fehler 3804 „Timeout waiting for response from streaming transcription" und Mistral schließt die Verbindung (1013) —
+ * der Ton der Äußerung ist verloren. Darum schließt das Relais eine Äußerung selbst ab, wenn die Sitzung den Ton abbricht.
  */
 export interface HoerRelaisDeps {
   logger: Logger;
@@ -43,6 +46,8 @@ export interface UpstreamSocket {
 export const HOEREN_MODELL = 'voxtral-mini-transcribe-realtime-2602';
 export const HOEREN_URL = 'wss://api.mistral.ai/v1/audio/transcriptions/realtime';
 const BYTES_PRO_SEKUNDE = 32_000;
+/** v1346 — so lange ohne neuen Ton nach begonnener Äußerung → das Relais schickt den Flush selbst (Mistral bricht nach ~30 s ab). */
+export const NACHLAUF_MS = 4_000;
 
 interface Sitzung {
   geraetId: string;
@@ -55,6 +60,9 @@ interface Sitzung {
   bytes: number;
   bytesGesamt: number;
   begonnen: number;
+  /** v1346 — Ton seit dem letzten Flush gesendet (Äußerung offen). */
+  offen?: boolean;
+  nachlauf?: ReturnType<typeof setTimeout>;
 }
 
 export class HoerRelais {
@@ -102,9 +110,21 @@ export class HoerRelais {
     this.sichereUpstream(s);
     const nachricht = JSON.stringify({ type: 'input_audio.append', audio: pcm.toString('base64') });
     if (s.upstreamBereit) s.upstream!.send(nachricht); else s.wartend.push(nachricht);
+    // v1346 — Realfall 10.10. 22:57: Alfred begann zu antworten, während eine Äußerung lief; die App (Halbduplex) schickte
+    // keinen Ton und kein Ende mehr → 3804 nach 30 s, Satz verloren. Bleibt der Ton aus, schließt das Relais die Äußerung ab.
+    s.offen = true;
+    if (s.nachlauf) clearTimeout(s.nachlauf);
+    s.nachlauf = setTimeout(() => {
+      s.nachlauf = undefined;
+      if (!s.offen || this.sitzungen.get(s.geraetId) !== s) return;
+      this.deps.logger.info({ geraet: s.name, sekunden: Math.round(s.bytes / BYTES_PRO_SEKUNDE * 10) / 10 }, 'v1346 Hören: Äußerung ohne Ende — Relais schließt sie ab');
+      this.flush(s);
+    }, NACHLAUF_MS);
   }
 
   private flush(s: Sitzung): void {
+    s.offen = false;
+    if (s.nachlauf) { clearTimeout(s.nachlauf); s.nachlauf = undefined; }
     const nachricht = JSON.stringify({ type: 'input_audio.flush' });
     if (s.upstreamBereit) s.upstream!.send(nachricht); else s.wartend.push(nachricht);
   }
@@ -134,15 +154,30 @@ export class HoerRelais {
         this.deps.logger.info({ geraet: s.name, sekunden, zeichen: (j.text ?? s.text).length, anbieterSekunden: j.usage?.prompt_audio_seconds }, 'v1251 Hören: Äußerung transkribiert');
         s.text = ''; s.bytes = 0;
       }
-      else if (j.type === 'error') { this.sende(s, { typ: 'fehler', grund: JSON.stringify(j.error ?? j).slice(0, 200) }); }
+      else if (j.type === 'error') {
+        const grund = JSON.stringify(j.error ?? j).slice(0, 200);
+        // v1346 — Anbieterfehler mitschreiben (bisher nur an die App weitergereicht, im Log unsichtbar)
+        this.deps.logger.warn({ geraet: s.name, grund, offen: !!s.offen, sekunden: Math.round(s.bytes / BYTES_PRO_SEKUNDE * 10) / 10 }, 'v1346 Hören: Fehler vom Anbieter');
+        this.sende(s, { typ: 'fehler', grund });
+      }
     });
-    up.on('close', () => { if (s.upstream === up) { s.upstream = undefined; s.upstreamBereit = false; } });
-    up.on('error', (err) => { this.sende(s, { typ: 'fehler', grund: `Anbieter: ${(err as Error)?.message ?? 'Verbindung'}` }); });
+    up.on('close', (code?: unknown, grund?: unknown) => {
+      if (s.upstream !== up) return;
+      s.upstream = undefined; s.upstreamBereit = false;
+      // v1346 — nach einem Abbruch beginnt die nächste Äußerung auf einer frischen Verbindung ohne Altlast
+      if (s.bytes > 0) this.deps.logger.warn({ geraet: s.name, code, grund: String(grund ?? '').slice(0, 120), sekunden: Math.round(s.bytes / BYTES_PRO_SEKUNDE * 10) / 10 }, 'v1346 Hören: Anbieter schloss mit offenem Ton');
+      s.bytes = 0; s.text = ''; s.offen = false;
+    });
+    up.on('error', (err) => {
+      this.deps.logger.warn({ geraet: s.name, err: (err as Error)?.message }, 'v1346 Hören: Verbindungsfehler zum Anbieter');
+      this.sende(s, { typ: 'fehler', grund: `Anbieter: ${(err as Error)?.message ?? 'Verbindung'}` });
+    });
   }
 
   private beende(s: Sitzung, grund: string): void {
     if (this.sitzungen.get(s.geraetId) !== s) return; // v1253 — schon beendet (schluss + close)
     this.sitzungen.delete(s.geraetId);
+    if (s.nachlauf) { clearTimeout(s.nachlauf); s.nachlauf = undefined; }
     try { s.upstream?.send(JSON.stringify({ type: 'input_audio.end' })); } catch { /* */ }
     try { s.upstream?.close(); } catch { /* */ }
     try { s.ws.close(); } catch { /* */ }

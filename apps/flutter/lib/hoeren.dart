@@ -55,6 +55,9 @@ class SatzendeErkenner {
     return e;
   }
 
+  /// 1.4.1 — offene Äußerung ohne Ereignis verwerfen (Alfred beginnt zu antworten; der Rest wird nicht mehr gehört).
+  void zuruecksetzen() { _aktiv = false; _lauteFolge = 0; _teile.clear(); _vorlauf.clear(); _stilleMs = 0; _dauerMs = 0; }
+
   List<SatzendeEreignis> schliesse() { final e = <SatzendeEreignis>[]; if (_aktiv) _beende(e); return e; }
 
   void _verarbeite(Uint8List rahmen, List<SatzendeEreignis> e) {

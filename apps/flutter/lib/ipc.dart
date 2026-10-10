@@ -84,7 +84,7 @@ class IpcVerbindung {
         Anhang? anhang;
         final a = n['anhang'];
         if (a is Map<String, dynamic> && a['base64'] is String) { try { anhang = Anhang(name: '${a['name'] ?? 'anhang'}', mime: '${a['mime'] ?? 'application/octet-stream'}', bytes: base64Decode(a['base64'] as String)); } catch (_) { anhang = null; } } // 1.0.5
-        aufEreignis('${n['art']}', '${n['text']}', DateTime.tryParse('${n['zeit']}')?.toLocal() ?? DateTime.now(), anhang, n['faden'] is String ? n['faden'] as String : null); // 1.2.0 faden
+        aufEreignis('${n['art']}', '${n['text']}', DateTime.tryParse('${n['zeit']}')?.toLocal() ?? DateTime.now(), anhang, n['faden'] is String && n['faden'] != 'haupt' ? n['faden'] as String : null); // 1.2.0 faden; 1.4.1 „haupt" = Hauptgespräch (Realfall 10.10. 22:49: Foto als „Antwort im Gespräch haupt" statt im Chat)
       case 'bestaetigung':
         final b = n['bestaetigung'] as Map<String, dynamic>;
         aufBestaetigung(Bestaetigung(id: '${b['id']}', text: '${b['description'] ?? ''}', quelle: b['source'] as String?, seit: DateTime.tryParse('${b['createdAt'] ?? ''}')));

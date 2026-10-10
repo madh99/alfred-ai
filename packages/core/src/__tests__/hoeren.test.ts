@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { HoerRelais, type UpstreamSocket } from '../geraete/hoeren.js';
+import { HoerRelais, NACHLAUF_MS, type UpstreamSocket } from '../geraete/hoeren.js';
 
 // v1251 — Relais: Protokollübersetzung Sitzung ⇄ Mistral Realtime mit gefälschtem Anbieter und gefälschter Sitzung.
 class FakeUpstream extends EventEmitter implements UpstreamSocket {
@@ -57,5 +57,52 @@ describe('HoerRelais', () => {
     const letzte = JSON.parse(ws.raus[ws.raus.length - 1]);
     expect(letzte.typ).toBe('limit');
     expect(r.aktive()[0]).toMatchObject({ geraet: 'PC', sekunden: 61 });
+  });
+  // v1346 — Realfall 10.10. 22:57: Ton ohne Ende (App verstummt, weil Alfred antwortet) → Mistral 3804 nach 30 s, Satz verloren.
+  it('schließt eine Äußerung ohne Ende nach dem Nachlauf selbst ab (kein 3804)', () => {
+    vi.useFakeTimers();
+    try {
+      const up = new FakeUpstream();
+      const { ws } = relais(up);
+      ws.emit('message', Buffer.alloc(32_000, 1), true);
+      up.oeffne();
+      vi.advanceTimersByTime(NACHLAUF_MS - 100);
+      expect(up.gesendet.some(x => JSON.parse(x).type === 'input_audio.flush')).toBe(false);
+      ws.emit('message', Buffer.alloc(3_200, 1), true); // weiterer Ton verlängert den Nachlauf
+      vi.advanceTimersByTime(NACHLAUF_MS - 100);
+      expect(up.gesendet.some(x => JSON.parse(x).type === 'input_audio.flush')).toBe(false);
+      vi.advanceTimersByTime(200);
+      expect(up.gesendet.filter(x => JSON.parse(x).type === 'input_audio.flush')).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it('kein zusätzlicher Flush, wenn die Sitzung das Ende selbst schickt', () => {
+    vi.useFakeTimers();
+    try {
+      const up = new FakeUpstream();
+      const { ws } = relais(up);
+      ws.emit('message', Buffer.alloc(32_000, 1), true);
+      up.oeffne();
+      ws.emit('message', Buffer.from('{"typ":"ende"}'), false);
+      vi.advanceTimersByTime(NACHLAUF_MS * 3);
+      expect(up.gesendet.filter(x => JSON.parse(x).type === 'input_audio.flush')).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it('Anbieter schließt mit offenem Ton → nächste Äußerung auf frischer Verbindung', () => {
+    const erste = new FakeUpstream(); const zweite = new FakeUpstream();
+    const fabrik = vi.fn().mockReturnValueOnce(erste).mockReturnValueOnce(zweite);
+    const r = new HoerRelais({
+      logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() } as never,
+      authentifiziere: async () => ({ userId: 'u', geraetId: 'g1', name: 'PC' }),
+      mistralKey: () => 'k', upstreamFabrik: fabrik, now: () => Date.parse('2026-10-07T00:00:00Z'),
+    });
+    const ws = new FakeWs();
+    (r as unknown as { starte: (w: unknown, g: unknown) => void }).starte(ws, { geraetId: 'g1', name: 'PC' });
+    ws.emit('message', Buffer.alloc(32_000, 1), true);
+    erste.oeffne();
+    erste.emit('message', JSON.stringify({ type: 'error', error: { message: 'Timeout waiting for response from streaming transcription.', code: 3804 } }));
+    erste.close();
+    ws.emit('message', Buffer.alloc(3_200, 1), true);
+    expect(fabrik).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(ws.raus[1])).toMatchObject({ typ: 'fehler' });
   });
 });

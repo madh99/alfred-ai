@@ -149,6 +149,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   // Gesprächsfenster erst am Ende der Transkription geprüft wurde. Jetzt zählt der Zustand beim Beginn der Äußerung.
   int hinweiseOffen = 0; // 1.4.0 — Zähler der Sammlung Hinweise (Symbolleiste)
   bool aeusserungImFenster = false;
+  /// 1.4.1 — gehörter Text, der eintraf, während Alfred noch antwortete; wird danach gesendet statt verworfen.
+  String? nachreichen;
   Uint8List? letzteAeusserung; // für den Ersatzweg, wenn das Relais die Transkription nicht liefert (Timeout 3804)
   String gehoert = '';
   /// Hineingezogene Dateien warten als Anhänge in der Eingabezeile, bis gesendet wird (Owner 09.10.: nicht sofort schicken).
@@ -384,13 +386,22 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final erkW = wort == null ? null : (WortErkenner(wort, hopMs: 80, schwelle: 0.95, treffer: 3, sperreMs: 2000)..treffer$.listen((t) { letzterWortTreffer = t.zeit; _protokolliere(Eintrag(Art.hinweis, '🔑 Aktivierungswort erkannt (${t.wahrscheinlichkeit.toStringAsFixed(2)})')); }));
     wort?.zuruecksetzen();
     final puffer = BytesBuilder(copy: false); var offen = false; var gesendet = false;
+    final aeusserungTon = BytesBuilder(copy: true); // 1.4.1 — Ton der laufenden Äußerung (Ersatzweg, wenn sie abgebrochen wird)
     bool freigegeben() => erkW == null || aeusserungImFenster || DateTime.now().isBefore(gespraechsfensterBis) || DateTime.now().difference(letzterWortTreffer).inSeconds < 4;
     final ok = await audio.stromStart((pcm) {
-      if (antwortet || audio.spielt) return; // Halbduplex: während Alfred antwortet oder spricht, nicht hören
+      if (antwortet || audio.spielt) { // Halbduplex: während Alfred antwortet oder spricht, nicht hören
+        // 1.4.1 — Realfall 10.10. 22:57: lief gerade eine Äußerung, blieb sie beim Transkriptionsdienst offen → 3804 nach 30 s, Satz
+        // verloren. Jetzt wird sie sofort abgeschlossen (der bisher gesendete Teil wird transkribiert), der Erkenner beginnt neu.
+        if (offen) {
+          if (gesendet) { letzteAeusserung = aeusserungTon.toBytes(); client.ende(); }
+          offen = false; gesendet = false; puffer.clear(); aeusserungTon.clear(); erk.zuruecksetzen();
+        }
+        return;
+      }
       erkW?.verarbeite(pcm);
       for (final ev in erk.schiebe(pcm)) {
         if (ev is SatzStart) {
-          offen = true; gesendet = false; puffer.clear(); puffer.add(ev.audio);
+          offen = true; gesendet = false; puffer.clear(); puffer.add(ev.audio); aeusserungTon.clear(); aeusserungTon.add(ev.audio);
           // 1.4.0 — Fenster-Zustand beim Beginn festhalten (ein Satz, der im Fenster beginnt, gilt als Antwort, egal wie lang)
           aeusserungImFenster = DateTime.now().isBefore(gespraechsfensterBis) || DateTime.now().difference(letzterWortTreffer).inSeconds < 4;
         }
@@ -405,6 +416,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       if (erk.spricht && offen) {
         if (!gesendet && freigegeben()) { client.start(); client.audio(puffer.takeBytes()); gesendet = true; }
         if (gesendet) { client.audio(pcm); } else { puffer.add(pcm); }
+        aeusserungTon.add(pcm);
       }
     }, (grund) { _zeile(Eintrag(Art.fehler, '🎧 Mikrofon: $grund')); _hoerenStop(null); });
     if (!ok) { client.schluss(); _zeile(Eintrag(Art.fehler, 'Mikrofon nicht verfügbar oder nicht erlaubt')); return; }
@@ -439,6 +451,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         case AktivierungsArt.stopp: audio.abbrechen(); _zeile(Eintrag(Art.hinweis, '⏹ gestoppt')); gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20));
         case AktivierungsArt.nurWort: gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20)); _zeile(Eintrag(Art.du, '🎧 $text')); _sprichKurz('Ja?');
         case AktivierungsArt.nachricht:
+          if (antwortet) { // 1.4.1 — sonst verwirft _senden den Text still
+            nachreichen = nachreichen == null ? a.text : '$nachreichen ${a.text}';
+            _zeile(Eintrag(Art.hinweis, '🎧 „${a.text}“ — wird nach der Antwort gesendet'));
+            return;
+          }
           _zeile(Eintrag(Art.du, '🎧 ${a.text}'));
           _senden(text: a.text, sprechen: true).then((_) { gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20)); });
       }
@@ -727,6 +744,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     } finally {
       setState(() { antwortet = false; fluechtig = ''; laufend = null; });
       fokus.requestFocus();
+      final rest = nachreichen; nachreichen = null; // 1.4.1
+      if (rest != null && hoeren) {
+        _zeile(Eintrag(Art.du, '🎧 $rest'));
+        Future.microtask(() => _senden(text: rest, sprechen: true).then((_) { gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20)); }));
+      }
     }
     return ergebnis;
   }

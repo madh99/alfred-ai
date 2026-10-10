@@ -45,6 +45,16 @@ void main() {
       e.schiebe(pcm(1000, amp: 8000));
       expect(e.schliesse().whereType<SatzEnde>().length, 1);
     });
+
+    test('1.4.1 zuruecksetzen() verwirft die laufende Äußerung ohne Ereignis, die nächste beginnt neu', () {
+      final e = SatzendeErkenner();
+      e.schiebe(pcm(500));
+      expect(e.schiebe(pcm(1000, amp: 8000)).whereType<SatzStart>().length, 1);
+      e.zuruecksetzen();
+      expect(e.spricht, isFalse);
+      expect(e.schiebe(pcm(800)), isEmpty); // kein SatzEnde der verworfenen Äußerung
+      expect(e.schiebe(pcm(1000, amp: 8000)).whereType<SatzStart>().length, 1);
+    });
   });
 
   group('pruefeAktivierung (Portierung aktivierung.ts)', () {
