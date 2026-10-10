@@ -379,6 +379,21 @@ Jede Stage ist zugleich ein CMDB-Eintrag (Quelle: Projektvorgang) und erscheint 
 6. **Alltagsproben vor jedem Release:** Die synthetischen Proben (Schicht 0, 06:50) um feste Alltagsszenarien erweitern (Mail zusammenfassen, Termin anlegen, Erinnerung, Hausfrage, Insight-Gate) und als Pflichtlauf auf der Ubuntu-VM vor Deploys — damit Projektarbeit den Alltag nie unbemerkt verschlechtert.
 7. **Weltmodell füttert den Alltag:** Dienste, Geräte, Projekte stehen als Zustand im Weltmodell, damit Alltagsantworten Zusammenhänge kennen („der Server war nachts weg, deshalb kam die Mail nicht"). Das ist der Gewinn, nicht die Last.
 8. **Kostenbild nebeneinander:** Tagesabschluss zeigt Kosten je Vorgangsart (Alltag, Haus, Infrastruktur, Projekte) in einer Zeile; Projekte haben ein eigenes Budget und dürfen das Alltagsbudget nicht anzapfen.
+**Nullpunkt (Ist-Aufnahme 10.10.2026 02:30, nur lesen; Owner: September wenig genutzt, davor Entwicklung — kein Normalzustand):**
+
+| Größe | Wert | Lesart |
+|---|---|---|
+| Owner-Nachrichten je Woche | Sept. 1–11 (Telegram); Woche ab 05.10.: 189 Telegram + 280 api (Beweisläufe) | Alltag kaum gemessen, Entwicklungswoche dominiert |
+| LLM-Kosten je Tag | 1.–5.10. 1,0–2,4 $ (nur Fallback mistral, Guthaben aus); 6.–9.10. 14,9 / 16,4 / 9,6 / 6,4 $ | gpt-6.1-sol trägt 28 $ von 55 $ in 10 Tagen; Haiku (638 Aufrufe) 0,70 $ |
+| Antwortzeit Pipeline | p50 10,7 s, p95 69 s (n=481, 10 Tage) | Messlatte: darf durch Projekte nicht steigen; schon jetzt zu langsam |
+| Insights je Woche | 150–220, davon „interests" 144–219, fast alle expired; acted 4/Woche im Sept. | lauteste Quelle ohne Reaktion → zuerst senken |
+| Vorgänge (Woche ab 05.10.) | 156 (123 Owner, 33 Alfred); erledigt 61, verworfen 61, offen 30 | Reasoning-Vorgänge ≈ 50 % verworfen |
+| Bestätigungen gesamt | 3 484 expired, 696 approved, 40 rejected; expired je Skill: itsm 64, project_agent 10, email 8 (35 Tage) | reasoning stellt Fragen, die niemand beantwortet |
+| Fehler 7 Tage | email 39, geraet_macbook 19, geraet_ubuntu_vm 13, geraet_office_vm 12 | E-Mail-Skill zuerst prüfen |
+| Job-Register 7 Tage | 25 Jobs, ≈700 Läufe je 10-min-Job, Fehler nur bmw-rest-poll 3, mail-ereignisse 1 | Schicht 0 hält |
+| Erinnerungen | 22–28 je Woche (Sept.), 9 (Entwicklungswoche) | echter Alltagsnutzen, klein |
+
+Folgerung: Das Aufmerksamkeitsbudget (Regel 1) muss zuerst den Bestand senken (Interessen-Insights, unbeantwortete Reasoning-Bestätigungen), bevor Projektmeldungen dazukommen; E-Mail-Fehler und Antwortzeit sind Alltagsschulden vor jedem Projektvorgang. Details und Skripte: Gedächtnis `ist-aufnahme-2026-10-10`.
 **Messbar halten (Schicht 4):** Anteil Projektmeldungen an allen proaktiven Meldungen (Zielkorridor), Reaktionsquote darauf, Korrekturen des Owners mit Bezug auf Ton oder Timing, Kosten je Vorgangsart nebeneinander — wenn Projekte den Alltag verdrängen, zeigt es die Wochenkennzahl, bevor es der Owner spürt.
 ### Lücken im Plan (Selbstprüfung 10.10.2026, Owner: „was fehlt dem Plan noch?", ohne Umsetzung)
 
