@@ -39,6 +39,7 @@ def main(argv) -> None:
     schritt = 60 * SR
     for i in range(0, len(pcm), schritt):
         teil = pcm[i:i + schritt + int(1.3 * SR)]  # Überlappung für Fenster am Rand
+        if len(teil) < int(1.5 * SR): teil = np.pad(teil, (0, int(1.5 * SR) - len(teil)))  # Rest < 1,5 s auffüllen
         embs.append(np.asarray(af._get_embeddings(teil), dtype=np.float32))
     e = np.concatenate(embs)
     kopf = ort.InferenceSession(a.kopf)

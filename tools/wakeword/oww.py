@@ -61,7 +61,9 @@ def features():
 
 def einbetten(af, clips: list[np.ndarray]) -> list[np.ndarray]:
     """Je Clip (float32 −1…1) die Einbettungen (Frames, 96). Einzelclip-Pfad (embed_clips bricht bei batch_size 1)."""
-    return [np.asarray(af._get_embeddings(zu_int16(c)), dtype=np.float32) for c in clips]
+    # Lauf 6: letzte Stücke langer Aufnahmen können < 1,5 s sein → auf 1,5 s auffüllen (sonst „Invalid rank for input" in der Einbettung)
+    mind = int(1.5 * SR)
+    return [np.asarray(af._get_embeddings(zu_int16(np.pad(c, (0, max(0, mind - len(c)))))), dtype=np.float32) for c in clips]
 
 def fenster_aus(e: np.ndarray, hop: int = 2) -> np.ndarray:
     """Gleitende Fenster über die Frame-Achse → (F, FENSTER_FRAMES, 96); zu kurze Clips vorne mit Nullen auffüllen."""
