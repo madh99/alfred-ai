@@ -306,7 +306,7 @@ export class ConfirmationQueue {
   }
 
   /** v1239 — nach einer freigegebenen Ausführung: liefert true, wenn der Aufrufer die Antwort selbst zustellt (Fortsetzung durch die Pipeline). */
-  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean>;
+  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown; attachments?: import('@alfred/types').SkillResultAttachment[] } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean>;
   setNachAusfuehrung(fn: NonNullable<ConfirmationQueue['nachAusfuehrung']>): void { this.nachAusfuehrung = fn; }
 
   async enqueuePlan(plan: import('@alfred/types').Plan, display: string): Promise<void> {

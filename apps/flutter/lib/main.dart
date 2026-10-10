@@ -639,12 +639,23 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       // 1.1.0 — die synthetische Fortsetzungs-Nachricht („Freigabe erteilt für das Vorhaben …", v1324) steht im Verlauf als
       // Benutzerzeile; in der App als Hinweis zeigen, nicht als eigene Blase
       // 1.2.5 — rolle „system" (v1336: interne Fortsetzungen nach Freigabe) als Hinweis, nicht als eigene Blase
-      final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; final sys = m['rolle'] == 'system'; final ins = m['insight'] == true; return Eintrag(sys || ins || (du && t.startsWith('Freigabe erteilt für das Vorhaben')) ? Art.hinweis : du ? Art.du : Art.alfred, ins ? hinweisKurzzeile(t) : sys ? 'ℹ ${t.split('\n').first}' : t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()); }).toList();
+      final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; final sys = m['rolle'] == 'system'; final ins = m['insight'] == true; return _mitAnhaengen(Eintrag(sys || ins || (du && t.startsWith('Freigabe erteilt für das Vorhaben')) ? Art.hinweis : du ? Art.du : Art.alfred, ins ? hinweisKurzzeile(t) : sys ? 'ℹ ${t.split('\n').first}' : t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()), m); }).toList();
       setState(() => verlauf.insertAll(0, alte));
       for (final e in alte) _protokolliere(e, 'verlauf'); // 1.2.7 — geladene Zeilen im Protokoll (Beweis, Fehlersuche)
       _zeile(Eintrag(Art.hinweis, 'Verlauf geladen: ${alte.length} Nachrichten aus früheren Sitzungen dieses Geräts.'));
       _nachUnten();
     } catch (e) { _zeile(Eintrag(Art.hinweis, 'Verlauf nicht geladen: $e')); }
+  }
+
+  /// 1.4.2 — Owner 10.10. 23:40: nach erneutem Öffnen des Hauptgesprächs fehlte das Foto. Der Verlauf liefert jetzt Verweise
+  /// (Server v1347); die Bilder kommen im Hintergrund nach und erscheinen in ihrer Nachricht.
+  Eintrag _mitAnhaengen(Eintrag e, Map<String, dynamic> m) {
+    final s = server; final liste = m['anhaenge'];
+    if (s == null || liste is! List) return e;
+    for (final v in liste.whereType<Map<String, dynamic>>()) {
+      s.anhang(v).then((a) { if (a != null && mounted) setState(() => e.anhaenge.add(a)); }).catchError((Object _) {});
+    }
+    return e;
   }
 
   Future<void> _holeBestaetigungen() async {
@@ -910,7 +921,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     try {
       final j = await s.json('/api/geraete/verlauf?limit=100&archiv=${Uri.encodeQueryComponent(chatId)}');
       final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
-      setState(() { verlauf.addAll(n.map((m) => Eintrag(m['rolle'] == 'user' ? Art.du : Art.alfred, '${m['text']}', zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()))); });
+      setState(() { verlauf.addAll(n.map((m) => _mitAnhaengen(Eintrag(m['rolle'] == 'user' ? Art.du : Art.alfred, '${m['text']}', zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()), m))); });
       _zeile(Eintrag(Art.hinweis, 'Archiv — nur lesen. Zum Weiterschreiben ein Gespräch in der Seitenleiste wählen.'));
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Archiv nicht geladen: $e')); }
   }
@@ -1162,7 +1173,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     ]);
     if (!a.istBild) return Padding(padding: const EdgeInsets.only(top: 6), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.attach_file, size: 18), const SizedBox(width: 4), knoepfe]));
     return Padding(padding: const EdgeInsets.only(top: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      InkWell(onTap: () => _anhangOeffnen(a), child: ClipRRect(borderRadius: BorderRadius.circular(8), child: ConstrainedBox(constraints: const BoxConstraints(maxHeight: 360, maxWidth: 640), child: Image.memory(Uint8List.fromList(a.bytes), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Text('(Bild nicht darstellbar)'))))),
+      InkWell(onTap: () => _anhangOeffnen(a), child: ClipRRect(borderRadius: BorderRadius.circular(8), child: ConstrainedBox(constraints: const BoxConstraints(maxHeight: 360, maxWidth: 640), child: Image.memory(a.daten, fit: BoxFit.contain, gaplessPlayback: true, errorBuilder: (_, __, ___) => const Text('(Bild nicht darstellbar)'))))),
       knoepfe,
     ]));
   }

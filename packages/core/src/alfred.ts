@@ -464,6 +464,9 @@ export class Alfred {
 
   /** v930 — HA-Tages-Slot über reasoning_slots (nur PG; Single-Node/SQLite → immer true). */
   /** v1165 — Job deklarieren; fehlt das Register, wird das LAUT (Lektion v1154: stille Nicht-Registrierung). */
+  /** v1347 — Ablage zugestellter Anhänge (data/anhaenge). */
+  private anhangAblage?: import('./anhang-ablage.js').AnhangAblage;
+
   private registriereJob(def: import('./lebenszeichen/job-register.js').JobDefinition): void {
     if (!this.jobRegister) { this.logger.error({ job: def.key }, 'Lebenszeichen: Job-Register fehlt — Job NICHT registriert'); return; }
     this.jobRegister.registriere(def);
@@ -6882,7 +6885,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const text = `Die von mir freigegebene Aktion wurde gerade ausgeführt: ${pending.description}.\n\nErgebnis:\n${display || '(keine Ausgabe)'}\n\nMach damit weiter: Beantworte meine ursprüngliche Frage bzw. erledige die Aufgabe, für die diese Aktion nötig war — kurz, sauber formatiert, mit den wichtigen Werten. Sind weitere Schritte nötig, führe sie aus.`;
       // v1341 — mit Herkunft (Gerätesitzung, App, Terminal) läuft die Fortsetzung dort, der Owner-Chat bekommt die Kopie (wie Vorhaben, v1324)
       const herkunft = ziel.herkunft?.userId ? { chatId: ziel.herkunft.chatId, platform: ziel.herkunft.platform, userId: ziel.herkunft.userId } : undefined;
-      return this.fortsetzungImOwnerChat(text, { id: 'bestaetigt', platform: ziel.platform, chatId: ziel.chatId, herkunft });
+      return this.fortsetzungImOwnerChat(text, { id: 'bestaetigt', platform: ziel.platform, chatId: ziel.chatId, herkunft, ablageAnhaenge: result?.attachments }); // v1347
     });
     // v924 — Quick-Actions (todo:/reminder:-Button-Callbacks) vor dem LLM abfangen
     if (this.todoRepo && this.reminderRepo) {
@@ -6937,6 +6940,16 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     {
       const { FadenStore } = await import('./gespraeche.js');
       this.fadenStoreRef = new FadenStore(path.resolve(process.cwd(), 'data', 'gespraeche.json'));
+      // v1347 — zugestellte Anhänge ablegen (Verlauf zeigt Fotos auch nach dem Neuladen), Aufbewahrung einstellbar
+      const { AnhangAblage } = await import('./anhang-ablage.js');
+      const ablage = new AnhangAblage(path.resolve(process.cwd(), 'data', 'anhaenge'));
+      this.anhangAblage = ablage;
+      this.pipeline.setAnhangAblage(ablage);
+      const aufbewahrung = this.config.conversation?.anhangAufbewahrungTage ?? 30;
+      this.registriereJob({
+        key: 'anhaenge-aufraeumen', beschreibung: `Zugestellte Anhänge älter als ${aufbewahrung} Tage entfernen`, takt: { art: 'taeglich', um: '04:55' }, bereich: 'global', slot: true,
+        run: async () => ({ ok: true, zaehler: { geloescht: ablage.aufraeumen(aufbewahrung) } }),
+      });
       this.pipeline.setGespraeche(
         this.gespraechsOptionen(),
         { store: this.fadenStoreRef, liste: () => this.ownerFaeden(), loeschen: (f) => this.ownerFadenLoeschen(f), umbenennen: (f, t) => this.ownerFadenUmbenennen(f, t), geraetName: (id) => this.geraeteGateway?.nameVon(id) },
@@ -13696,9 +13709,20 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             // v1338 — Owner-Befund 21:04: Insights von 20:00/20:30 fehlten in der App, weil Werkzeugzeilen (leerer Inhalt)
             // das Fenster von 30 Zeilen aufbrauchten. Mehr holen, filtern, dann die letzten `limit` sichtbaren liefern.
             const m = await this.conversationRepo.getMessages(c.id, limit * 4);
-            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt, ...(x.herkunft?.startsWith('insight:') ? { insight: true } : {}) })); // v1343 Markierung Insight // v1336 intern → system
+            const { verweiseAus } = await import('./anhang-ablage.js');
+            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => {
+              const anhaenge = verweiseAus(x.anhaenge).filter(v => this.anhangAblage?.vorhanden(v.id)); // v1347 — abgelaufene fallen weg
+              return { rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt, ...(x.herkunft?.startsWith('insight:') ? { insight: true } : {}), ...(anhaenge.length ? { anhaenge } : {}) };
+            }); // v1343 Markierung Insight // v1336 intern → system
           },
           faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
+          anhang: async (geraetId: string, id: string) => { // v1347
+            const a = this.anhangAblage?.lies(id);
+            if (!a) return undefined;
+            const eigene = a.gespraech === `api:sitzung:${geraetId}` || a.gespraech.startsWith(`api:sitzung:${geraetId}:`);
+            if (!eigene && !(await this.geraetGehoertOwner(geraetId))) return undefined;
+            return { daten: a.daten, name: a.name, mime: a.mime };
+          },
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
           spiegelung: async (geraetId: string, setzen?: boolean) => {
@@ -15201,7 +15225,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     return true;
   }
 
-  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string } }): Promise<boolean> {
+  private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string }; ablageAnhaenge?: import('@alfred/types').SkillResultAttachment[] }): Promise<boolean> {
     const ownerPlatform = (opts.platform ?? (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api')) as Platform;
     const ownerChatId = opts.chatId ?? this.config.security?.ownerUserId ?? '';
     // v1324 — kam der Auftrag aus einer anderen Sitzung (Desktop-App, Terminal), läuft die Fortsetzung dort: die Antwort steht in
@@ -15213,7 +15237,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     try {
       const result = await this.pipeline.process({
         id: `${opts.id}-${Date.now()}`, platform, chatId, chatType: 'dm', userId: h?.userId ?? chatId, userName: 'owner',
-        text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, ...(opts.allowedSkills ? { allowedSkills: opts.allowedSkills } : {}), ...(opts.tier ? { tier: opts.tier } : {}) }, // v1295 — Tier für Vorhaben
+        text, timestamp: new Date(), metadata: { scheduled: true, originalChatId: chatId, ...(opts.allowedSkills ? { allowedSkills: opts.allowedSkills } : {}), ...(opts.tier ? { tier: opts.tier } : {}), ...(opts.ablageAnhaenge?.length ? { ablageAnhaenge: opts.ablageAnhaenge } : {}) }, // v1295 — Tier für Vorhaben; v1347 Anhänge der Freigabe ablegen
       } as NormalizedMessage);
       if (!result?.text) return false;
       const ziele: Array<{ platform: Platform; chatId: string }> = [{ platform, chatId }];

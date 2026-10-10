@@ -1169,6 +1169,8 @@ export interface AlfredConfig {
   personality?: PersonalityConfig;
   conversation?: {
     maxHistoryMessages?: number;
+    /** v1347 — Aufbewahrung zugestellter Anhänge in Tagen (Standard 30). */
+    anhangAufbewahrungTage?: number;
   };
 }
 

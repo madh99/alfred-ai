@@ -46,6 +46,8 @@ export interface NormalizedMessage {
     /** v890 — Project-Chat: CLI-Wahl des Pickers ('auto' = Projekt-Strategie, sonst
      *  konkrete CLI). Bestimmt nur welche CLI ein Agent-Lauf nutzt, nicht ob/welcher. */
     agentChoice?: string;
+    /** v1347 — Anhänge einer vorausgegangenen Freigabe (schon zugestellt): werden mit der Antwort nur abgelegt. */
+    ablageAnhaenge?: import('./skills.js').SkillResultAttachment[];
   };
 }
 

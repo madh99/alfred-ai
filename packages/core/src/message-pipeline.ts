@@ -273,6 +273,10 @@ export class MessagePipeline {
   private gespraechsOptionen?: GespraechsOptionen;
   private fadenDeps?: FadenDeps; // v1335 — ein Typ für Pipeline und Befehle
   private beiGespraech?: (e: { platform: Platform; chatId: string; faden: string | null; von: { platform: Platform; chatId: string }; frage: string; antwort: string; anhaenge?: SkillResultAttachment[]; intern?: boolean }) => void; // v1336 Anhänge, intern
+  /** v1347 — Ablage zugestellter Anhänge: die Antwort trägt Verweise, der Verlauf zeigt Fotos auch nach dem Neuladen. */
+  private anhangAblage?: { lege(a: SkillResultAttachment[], gespraech: string): Array<{ id: string; name: string; mime: string; groesse: number }> };
+  setAnhangAblage(a: NonNullable<MessagePipeline['anhangAblage']>): void { this.anhangAblage = a; }
+
   setGespraeche(o: GespraechsOptionen, fadenDeps: FadenDeps, beiGespraech: NonNullable<MessagePipeline['beiGespraech']>): void {
     this.gespraechsOptionen = o; this.fadenDeps = fadenDeps; this.beiGespraech = beiGespraech;
   }
@@ -1649,12 +1653,22 @@ export class MessagePipeline {
       }
 
       // 9. Save final assistant response (redact any secrets that may have leaked into the response)
+      // v1347 — Anhänge dieser Antwort ablegen; dazu die einer vorausgegangenen Freigabe (Foto nach „Ja"), die schon zugestellt sind
+      let anhangVerweise: string | undefined;
+      const abzulegen = [...pendingAttachments, ...(message.metadata?.ablageAnhaenge ?? [])];
+      if (abzulegen.length > 0 && this.anhangAblage) {
+        try {
+          const v = this.anhangAblage.lege(abzulegen, `${conversation.platform}:${conversation.chatId}`);
+          if (v.length > 0) anhangVerweise = JSON.stringify(v);
+        } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1347 Anhänge nicht abgelegt'); }
+      }
       await this.conversationManager.addMessage(
         conversation.id,
         'assistant',
         redactSecrets(responseText),
         undefined,
         herkunft, // v1334 — die Antwort ging in denselben Kanal
+        anhangVerweise,
       );
       // v1330 — andere Oberflächen des Owners laden das Gespräch nach (App zeigt, was in Telegram lief, und umgekehrt);
       // v1334 — mit Frage und Antwort für die optionale Spiegelung in den Owner-Chat

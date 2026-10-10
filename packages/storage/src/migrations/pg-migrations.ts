@@ -2194,4 +2194,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS herkunft TEXT`, []);
     },
   },
+  {
+    version: 135,
+    description: 'v1347 — messages.anhaenge: Verweise auf abgelegte Anhänge (Foto bleibt im Verlauf sichtbar) (PG-Spiegel zu SQLite v131).',
+    async up(db) {
+      await db.execute(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS anhaenge TEXT`, []);
+    },
+  },
 ];

@@ -2886,4 +2886,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE messages ADD COLUMN herkunft TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 131,
+    description: 'v1347 — messages.anhaenge: Verweise auf abgelegte Anhänge (Foto bleibt im Verlauf sichtbar) (SQLite-Spiegel zu PG v135).',
+    up(db) {
+      try { db.exec(`ALTER TABLE messages ADD COLUMN anhaenge TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

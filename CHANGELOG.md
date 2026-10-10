@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1347] - 2026-10-10
+
+### Added — Anhänge bleiben im Verlauf sichtbar (v1347, App 1.4.2)
+
+Owner-Befund 10.10. 23:40: Nach erneutem Öffnen des Hauptgesprächs war das Foto weg, nur der Text blieb — der Verlauf speicherte nur Text. Zugestellte Anhänge (Fotos, Bildschirmfotos, Dateien) werden jetzt unter `data/anhaenge/` abgelegt, die Antwort trägt in `messages.anhaenge` die Verweise (Migration PG 135 / SQLite 131). Das gilt für normale Antworten und für Ergebnisse nach einer Freigabe (die Fortsetzung legt die schon zugestellten Anhänge zu ihrer Antwort). Der Verlauf liefert die Verweise mit, die App holt den Inhalt über `GET /api/geraete/anhang/<id>` (Gerätetoken; Owner-Geräte alles, andere Geräte nur aus ihren eigenen Sitzungen). Aufbewahrung einstellbar: `conversation.anhangAufbewahrungTage` bzw. `ALFRED_ANHANG_AUFBEWAHRUNG_TAGE` (Standard 30); der tägliche Job `anhaenge-aufraeumen` (04:55) entfernt ältere, danach bleibt nur der Text.
+
+### Fixed — App: Foto flackerte während des Mitschreibens (App 1.4.2)
+
+Die Bilddaten wurden bei jedem Zeichnen neu kopiert — für Flutter jedes Mal ein neues Bild. Jetzt einmal umgewandelt und wiederverwendet, ohne Lücke beim Neuzeichnen.
+
 ## [0.19.0-jarvis.1346] - 2026-10-10
 
 ### Fixed — Zuhören: Sätze gingen mit Fehler 3804 verloren (v1346, App 1.4.1)

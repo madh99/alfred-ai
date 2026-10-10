@@ -78,7 +78,7 @@ export class ConversationRepository {
     return { id, platform: 'api', chatId, userId, projectId, createdAt: now, updatedAt: now } as Conversation;
   }
 
-  async addMessage(conversationId: string, role: ConversationMessage['role'], content: string, toolCalls?: string, herkunft?: string): Promise<ConversationMessage> {
+  async addMessage(conversationId: string, role: ConversationMessage['role'], content: string, toolCalls?: string, herkunft?: string, anhaenge?: string): Promise<ConversationMessage> {
     const message: ConversationMessage = {
       id: crypto.randomUUID(),
       conversationId,
@@ -86,6 +86,7 @@ export class ConversationRepository {
       content,
       toolCalls,
       herkunft, // v1334
+      anhaenge, // v1347
       createdAt: (() => {
         let now = Date.now();
         if (now <= lastMessageTs) now = lastMessageTs + 1;
@@ -95,9 +96,9 @@ export class ConversationRepository {
     };
 
     await this.adapter.execute(`
-      INSERT INTO messages (id, conversation_id, role, content, tool_calls, created_at, herkunft)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [message.id, message.conversationId, message.role, message.content, message.toolCalls ?? null, message.createdAt, message.herkunft ?? null]);
+      INSERT INTO messages (id, conversation_id, role, content, tool_calls, created_at, herkunft, anhaenge)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [message.id, message.conversationId, message.role, message.content, message.toolCalls ?? null, message.createdAt, message.herkunft ?? null, message.anhaenge ?? null]);
 
     return message;
   }
@@ -292,6 +293,7 @@ export class ConversationRepository {
       toolCalls: row.tool_calls ?? undefined,
       createdAt: row.created_at,
       herkunft: row.herkunft ?? undefined, // v1334
+      anhaenge: row.anhaenge ?? undefined, // v1347
     }));
   }
 

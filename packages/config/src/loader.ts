@@ -60,6 +60,7 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_LLM_FAST_MODEL: ['llm', 'fast', 'model'],
   ALFRED_LLM_FAST_API_KEY: ['llm', 'fast', 'apiKey'],
   ALFRED_LLM_TAGESBUDGET_USD: ['llm', 'tagesbudgetUsd'], // v1205
+  ALFRED_ANHANG_AUFBEWAHRUNG_TAGE: ['conversation', 'anhangAufbewahrungTage'], // v1347
   ALFRED_LLM_EMBEDDINGS_PROVIDER: ['llm', 'embeddings', 'provider'],
   ALFRED_LLM_EMBEDDINGS_MODEL: ['llm', 'embeddings', 'model'],
   ALFRED_LLM_EMBEDDINGS_API_KEY: ['llm', 'embeddings', 'apiKey'],
@@ -358,6 +359,7 @@ const NUMERIC_ENV_KEYS = new Set([
   'ALFRED_API_PORT',
   'ALFRED_BMW_STREAMING_PORT',
   'ALFRED_LLM_TAGESBUDGET_USD', // v1205 — Dezimalzahl erlaubt
+  'ALFRED_ANHANG_AUFBEWAHRUNG_TAGE', // v1347
 ]);
 
 let _currentEnvKey = '';

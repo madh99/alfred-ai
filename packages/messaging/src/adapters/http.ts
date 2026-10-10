@@ -949,7 +949,9 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
     nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string): boolean; // v1325 Anhang, v1328 Faden
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
-    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean }>>; // v1336 system = interne Fortsetzung
+    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean; anhaenge?: Array<{ id: string; name: string; mime: string; groesse: number }> }>>;
+    /** v1347 — abgelegten Anhang einer Nachricht abrufen (undefined = unbekannt, abgelaufen oder nicht erlaubt). */
+    anhang?(geraetId: string, id: string): Promise<{ daten: Buffer; name: string; mime: string } | undefined>; // v1336 system = interne Fortsetzung
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
@@ -1913,6 +1915,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleTransfer(req, res, url, req.headers.range ? 'lesen' : 'status').catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/geraete/abmelden' && req.method === 'POST') {
       this.handleGeraetAbmelden(req, res).catch(err => this.safeError(res, err)); // v1274
+    } else if (/^\/api\/geraete\/anhang\/[0-9a-f]{32}$/.test(url.pathname) && req.method === 'GET') {
+      this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
     } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
       this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
     } else if (url.pathname === '/api/geraete/faeden' && req.method === 'GET') {
@@ -6649,6 +6653,17 @@ export class HttpAdapter extends MessagingAdapter {
     const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined, archivOk);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, ...(archivOk ? { archiv: archivOk } : {}), nachrichten }));
+  }
+
+  /** v1347 — abgelegter Anhang aus dem Verlauf (Foto, Datei), nur mit Gerätetoken. */
+  private async handleGeraetAnhang(req: http.IncomingMessage, res: http.ServerResponse, id: string): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.anhang) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const a = await this.geraeteCallbacks.anhang(geraet.geraetId, id);
+    if (!a) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Anhang nicht (mehr) vorhanden' })); return; }
+    res.writeHead(200, { 'Content-Type': a.mime, 'Content-Length': a.daten.length, 'Content-Disposition': `inline; filename="${encodeURIComponent(a.name)}"`, 'Cache-Control': 'private, max-age=86400' });
+    res.end(a.daten);
   }
 
   /** v1328 — Gesprächsfäden der eigenen Sitzung (Desktop-App, Seitenleiste). */

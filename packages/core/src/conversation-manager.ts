@@ -13,8 +13,8 @@ export class ConversationManager {
     return this.conversations.create(platform, chatId, userId);
   }
 
-  async addMessage(conversationId: string, role: 'user' | 'assistant' | 'system', content: string, toolCalls?: string, herkunft?: string): Promise<ConversationMessage> {
-    return this.conversations.addMessage(conversationId, role, content, toolCalls, herkunft); // v1334 herkunft
+  async addMessage(conversationId: string, role: 'user' | 'assistant' | 'system', content: string, toolCalls?: string, herkunft?: string, anhaenge?: string): Promise<ConversationMessage> {
+    return this.conversations.addMessage(conversationId, role, content, toolCalls, herkunft, anhaenge); // v1334 herkunft, v1347 anhaenge
   }
 
   async getHistory(conversationId: string, limit = 20): Promise<ConversationMessage[]> {

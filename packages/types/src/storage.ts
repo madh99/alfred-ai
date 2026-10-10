@@ -30,6 +30,8 @@ export interface ConversationMessage {
   createdAt: string;
   /** v1334 — Kanal und Chat der Herkunft (`telegram:<chat>`, `api:sitzung:<geraet>`, `api:web-chat-<user>`), für /verlauf und Spiegelung. */
   herkunft?: string;
+  /** v1347 — Verweise auf abgelegte Anhänge (JSON `[{id,name,mime,groesse}]`, Inhalt unter data/anhaenge/). */
+  anhaenge?: string;
 }
 
 export interface User {

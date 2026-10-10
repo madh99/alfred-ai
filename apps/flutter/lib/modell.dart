@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 /// Phase 4 — Datenmodell der Desktop-App (Spec docs/specs/2026-10-07-flutter-app-phase4.md, Meilenstein 1).
 /// Dieselben Begriffe wie in der Terminal-Sitzung: Verlauf, Bestätigungen, Satellitenstatus.
 enum Art { du, alfred, satellit, bestaetigung, hinweis, fehler }
@@ -22,6 +23,9 @@ class Anhang {
   final String mime;
   final List<int> bytes;
   bool get istBild => mime.startsWith('image/');
+  /// 1.4.2 — einmal umgewandelt und wiederverwendet: eine neue Kopie je Zeichnen war für Flutter jedes Mal ein neues Bild
+  /// (neu dekodiert) → das Foto flackerte, während beim Mitschreiben mehrmals pro Sekunde neu gezeichnet wurde.
+  late final Uint8List daten = bytes is Uint8List ? bytes as Uint8List : Uint8List.fromList(bytes);
 }
 
 class Bestaetigung {

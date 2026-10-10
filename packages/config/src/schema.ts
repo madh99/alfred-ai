@@ -462,6 +462,8 @@ export const MicrosoftTodoConfigSchema = z.object({
 
 export const ConversationConfigSchema = z.object({
   maxHistoryMessages: z.number().min(10).max(500).optional(),
+  /** v1347 — Tage, die zugestellte Anhänge (Fotos, Dateien) im Verlauf abrufbar bleiben (Standard 30). */
+  anhangAufbewahrungTage: z.coerce.number().int().min(1).max(3650).optional(),
 }).optional();
 
 export const WebhookConfigSchema = z.object({
