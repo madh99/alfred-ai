@@ -42,7 +42,9 @@ class WortErkenner {
   int _seitHop = 0;
   final int _hopSamples;
   int _folge = 0;
-  DateTime? _gesperrtBis;
+  /// Sperre in Audiozeit (Samples), nicht Wanduhr — sonst deckt sie beim Beweislauf (63 s Audio in 0,2 s) die ganze Datei ab (1.3.0).
+  int _samples = 0;
+  int _gesperrtBisSample = -1;
   bool _laeuft = false;
   int _ausgelassen = 0;
 
@@ -62,7 +64,7 @@ class WortErkenner {
       _fenster[_pos] = bd.getInt16(i * 2, Endian.little) / 32768.0;
       _pos = (_pos + 1) % fensterSamples;
       if (_gefuellt < fensterSamples) _gefuellt++;
-      _seitHop++;
+      _seitHop++; _samples++;
       if (_seitHop >= _hopSamples && _gefuellt >= fensterSamples) {
         _seitHop = 0;
         await _pruefe();
@@ -71,19 +73,18 @@ class WortErkenner {
   }
 
   Future<void> _pruefe() async {
-    final jetzt = _uhr();
-    if (_gesperrtBis != null && jetzt.isBefore(_gesperrtBis!)) { _folge = 0; return; }
     if (_laeuft) { _ausgelassen++; return; }
     _laeuft = true;
     try {
       abfragen++;
-      final p = await modell.wahrscheinlichkeit(fensterKopie());
+      final p = await modell.wahrscheinlichkeit(fensterKopie()); // Modell immer füttern (es hält seinen Ring), Sperre nur für die Auslösung
+      if (_samples < _gesperrtBisSample) { _folge = 0; return; }
       if (p >= schwelle) {
         _folge++;
         if (_folge >= treffer) {
           _folge = 0;
-          _gesperrtBis = jetzt.add(Duration(milliseconds: sperreMs));
-          _treffer.add(WortTreffer(p, jetzt));
+          _gesperrtBisSample = _samples + sperreMs * 16;
+          _treffer.add(WortTreffer(p, _uhr()));
         }
       } else {
         _folge = 0;

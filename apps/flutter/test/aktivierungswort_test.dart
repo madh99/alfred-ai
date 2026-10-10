@@ -31,24 +31,24 @@ void main() {
       expect(e.abfragen, 4, reason: 'danach eine Abfrage je Hop (100 ms = 1 600 Samples)');
     });
 
-    test('Treffer erst nach zwei Fenstern über der Schwelle, danach Sperre', () async {
-      var t = DateTime(2026, 10, 9, 22, 0);
+    test('Treffer erst nach zwei Fenstern über der Schwelle, danach Sperre in Audiozeit (nicht Wanduhr)', () async {
       final m = FestesModell([0.9]);
-      final e = WortErkenner(m, hopMs: 100, treffer: 2, sperreMs: 2000, uhr: () => t);
+      final e = WortErkenner(m, hopMs: 100, treffer: 2, sperreMs: 2000);
       final treffer = <WortTreffer>[];
       e.treffer$.listen(treffer.add);
-      await e.verarbeite(block(24000, 100)); // Fenster voll, 1. Hop? nein: _seitHop zählt 24000 ≥ 1600 → Abfrage 1
+      await e.verarbeite(block(24000, 100)); // Fenster voll → Abfrage 1
       await e.verarbeite(block(1600, 100)); // Abfrage 2 → Treffer
       await Future<void>.delayed(Duration.zero);
       expect(treffer.length, 1);
-      // innerhalb der Sperre: keine weiteren Treffer, egal wie viele Fenster
+      // innerhalb der Sperre (2 s = 32 000 Samples): keine weiteren Treffer, das Modell wird aber weiter gefüttert
+      final vorher = e.abfragen;
       await e.verarbeite(block(1600 * 5, 100));
       await Future<void>.delayed(Duration.zero);
       expect(treffer.length, 1);
-      // Sperre abgelaufen → wieder zwei Fenster nötig
-      t = t.add(const Duration(milliseconds: 2500));
-      await e.verarbeite(block(1600, 100));
-      await e.verarbeite(block(1600, 100));
+      expect(e.abfragen, vorher + 5);
+      // Sperre abgelaufen (nach 32 000 Samples ab dem Treffer) → wieder zwei Fenster nötig
+      await e.verarbeite(block(32000 - 1600 * 5, 100));
+      await e.verarbeite(block(1600 * 2, 100));
       await Future<void>.delayed(Duration.zero);
       expect(treffer.length, 2);
     });
