@@ -17,6 +17,7 @@ import 'package:file_selector/file_selector.dart';
 import 'aktivierungswort.dart'; // 1.3.0
 import 'audio.dart';
 import 'einstellungen.dart';
+import 'hinweise.dart'; // 1.4.0
 import 'hoeren.dart';
 import 'wortmodell_onnx.dart'; // 1.3.0
 import 'update.dart';
@@ -144,6 +145,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool wortLokal = wortLokalGespeichert();
   DateTime letzterWortTreffer = DateTime.fromMillisecondsSinceEpoch(0);
   int wortVerworfen = 0;
+  // 1.4.0 — Owner-Befund 10.10. 19:46: lange Antworten im Zuhören wurden als „nicht an mich" verworfen, weil das
+  // Gesprächsfenster erst am Ende der Transkription geprüft wurde. Jetzt zählt der Zustand beim Beginn der Äußerung.
+  int hinweiseOffen = 0; // 1.4.0 — Zähler der Sammlung Hinweise (Symbolleiste)
+  bool aeusserungImFenster = false;
+  Uint8List? letzteAeusserung; // für den Ersatzweg, wenn das Relais die Transkription nicht liefert (Timeout 3804)
   String gehoert = '';
   /// Hineingezogene Dateien warten als Anhänge in der Eingabezeile, bis gesendet wird (Owner 09.10.: nicht sofort schicken).
   final List<File> anhaenge = [];
@@ -378,13 +384,18 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final erkW = wort == null ? null : (WortErkenner(wort, hopMs: 80, schwelle: 0.95, treffer: 3, sperreMs: 2000)..treffer$.listen((t) { letzterWortTreffer = t.zeit; _protokolliere(Eintrag(Art.hinweis, '🔑 Aktivierungswort erkannt (${t.wahrscheinlichkeit.toStringAsFixed(2)})')); }));
     wort?.zuruecksetzen();
     final puffer = BytesBuilder(copy: false); var offen = false; var gesendet = false;
-    bool freigegeben() => erkW == null || DateTime.now().isBefore(gespraechsfensterBis) || DateTime.now().difference(letzterWortTreffer).inSeconds < 4;
+    bool freigegeben() => erkW == null || aeusserungImFenster || DateTime.now().isBefore(gespraechsfensterBis) || DateTime.now().difference(letzterWortTreffer).inSeconds < 4;
     final ok = await audio.stromStart((pcm) {
       if (antwortet || audio.spielt) return; // Halbduplex: während Alfred antwortet oder spricht, nicht hören
       erkW?.verarbeite(pcm);
       for (final ev in erk.schiebe(pcm)) {
-        if (ev is SatzStart) { offen = true; gesendet = false; puffer.clear(); puffer.add(ev.audio); }
+        if (ev is SatzStart) {
+          offen = true; gesendet = false; puffer.clear(); puffer.add(ev.audio);
+          // 1.4.0 — Fenster-Zustand beim Beginn festhalten (ein Satz, der im Fenster beginnt, gilt als Antwort, egal wie lang)
+          aeusserungImFenster = DateTime.now().isBefore(gespraechsfensterBis) || DateTime.now().difference(letzterWortTreffer).inSeconds < 4;
+        }
         else if (ev is SatzEnde) {
+          letzteAeusserung = ev.audio; // 1.4.0 — Ersatzweg bei Relais-Timeout
           if (gesendet) { client.ende(); }
           else if (freigegeben()) { client.start(); client.audio(puffer.takeBytes()); client.ende(); }
           else { wortVerworfen++; puffer.clear(); if (wortVerworfen % 10 == 1) _protokolliere(Eintrag(Art.hinweis, '🔑 ohne Aktivierungswort verworfen ($wortVerworfen)')); }
@@ -419,7 +430,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       final text = (e.text ?? '').trim(); gehoert = '';
       setState(() => fluechtig = '');
       if (text.isEmpty) return;
-      final a = pruefeAktivierung(text, k.aktivierungswort, DateTime.now().isBefore(gespraechsfensterBis));
+      // 1.4.0 — Fenster gilt, wenn die Äußerung darin begonnen hat (nicht erst am Ende der Transkription)
+      final imFenster = aeusserungImFenster || DateTime.now().isBefore(gespraechsfensterBis);
+      aeusserungImFenster = false; letzteAeusserung = null;
+      final a = pruefeAktivierung(text, k.aktivierungswort, imFenster);
       switch (a.art) {
         case AktivierungsArt.ignoriert: _zeile(Eintrag(Art.hinweis, '(nicht an mich: $text)'));
         case AktivierungsArt.stopp: audio.abbrechen(); _zeile(Eintrag(Art.hinweis, '⏹ gestoppt')); gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20));
@@ -427,6 +441,16 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         case AktivierungsArt.nachricht:
           _zeile(Eintrag(Art.du, '🎧 ${a.text}'));
           _senden(text: a.text, sprechen: true).then((_) { gespraechsfensterBis = DateTime.now().add(const Duration(seconds: 20)); });
+      }
+    }
+    else if (e.typ == 'fehler' && letzteAeusserung != null && RegExp(r'3804|[Tt]imeout').hasMatch(e.grund ?? '')) {
+      // 1.4.0 — Realfall 19:45: Transkriptionsdienst lieferte bei einer langen Äußerung nicht (3804) → Satz ging verloren.
+      // Ersatzweg: dieselbe Äußerung als WAV über /api/transcribe (wie Strg+Alt+Leertaste), dann normal weiter.
+      final pcm = letzteAeusserung!; letzteAeusserung = null;
+      _zeile(Eintrag(Art.hinweis, '🎧 Transkription hing — Ersatzweg (${(pcm.length / 32000).toStringAsFixed(1)} s)'));
+      final s = server;
+      if (s != null) {
+        s.transkribiere(pcmZuWav(pcm), 'audio/wav').then((t) { _hoerEreignis(HoerEreignis('fertig', text: t)); }).catchError((Object err) { _zeile(Eintrag(Art.fehler, '🎧 Ersatzweg: $err')); });
       }
     }
     else if (e.typ == 'fehler' || e.typ == 'limit') _zeile(Eintrag(Art.fehler, '🎧 ${e.typ}: ${e.grund ?? ''}'));
@@ -598,7 +622,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       // 1.1.0 — die synthetische Fortsetzungs-Nachricht („Freigabe erteilt für das Vorhaben …", v1324) steht im Verlauf als
       // Benutzerzeile; in der App als Hinweis zeigen, nicht als eigene Blase
       // 1.2.5 — rolle „system" (v1336: interne Fortsetzungen nach Freigabe) als Hinweis, nicht als eigene Blase
-      final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; final sys = m['rolle'] == 'system'; return Eintrag(sys || (du && t.startsWith('Freigabe erteilt für das Vorhaben')) ? Art.hinweis : du ? Art.du : Art.alfred, sys ? 'ℹ ${t.split('\n').first}' : t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()); }).toList();
+      final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; final sys = m['rolle'] == 'system'; final ins = m['insight'] == true; return Eintrag(sys || ins || (du && t.startsWith('Freigabe erteilt für das Vorhaben')) ? Art.hinweis : du ? Art.du : Art.alfred, ins ? hinweisKurzzeile(t) : sys ? 'ℹ ${t.split('\n').first}' : t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()); }).toList();
       setState(() => verlauf.insertAll(0, alte));
       for (final e in alte) _protokolliere(e, 'verlauf'); // 1.2.7 — geladene Zeilen im Protokoll (Beweis, Fehlersuche)
       _zeile(Eintrag(Art.hinweis, 'Verlauf geladen: ${alte.length} Nachrichten aus früheren Sitzungen dieses Geräts.'));
@@ -718,6 +742,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         if (seitenleisteOffen) _seitenleiste(theme),
         const VerticalDivider(width: 1),
         Expanded(child: switch (ansicht) {
+          Ansicht.hinweise => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Hinweise(server: server!, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAnzahl: (n) { if (mounted && n != hinweiseOffen) setState(() => hinweiseOffen = n); }, aufNachfragen: (text) { setState(() { bezug = Eintrag(Art.alfred, text); ansicht = Ansicht.chat; }); fokus.requestFocus(); }), // 1.4.0
           Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t))),
           Ansicht.einstellungen => _einstellungen(theme),
           Ansicht.chat => _chat(theme),
@@ -742,6 +767,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         const SizedBox(height: 10),
         knopf(Icons.chat_bubble_outline, Icons.chat_bubble, 'Chat', ansicht == Ansicht.chat, () => setState(() => ansicht = Ansicht.chat)),
         knopf(Icons.dashboard_outlined, Icons.dashboard, 'Lage: Befunde, Vorgänge, Geräte', ansicht == Ansicht.kacheln, server == null ? null : () => setState(() { ansicht = Ansicht.kacheln; kachelnOffen = true; })),
+        knopf(Icons.lightbulb_outline, Icons.lightbulb, hinweiseOffen == 0 ? 'Hinweise' : '$hinweiseOffen offene Hinweise', ansicht == Ansicht.hinweise, server == null ? null : () => setState(() => ansicht = Ansicht.hinweise), zaehler: hinweiseOffen), // 1.4.0
         knopf(Icons.notifications_none, Icons.notifications, offen.isEmpty ? 'Keine offenen Bestätigungen' : '${offen.length} offene Bestätigung(en)', false, () => setState(() { ansicht = Ansicht.chat; seitenleisteOffen = true; }), zaehler: offen.length),
         const Spacer(),
         knopf(Icons.settings_outlined, Icons.settings, 'Einstellungen', ansicht == Ansicht.einstellungen, () => setState(() => ansicht = Ansicht.einstellungen)),

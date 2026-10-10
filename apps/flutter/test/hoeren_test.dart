@@ -86,4 +86,12 @@ void main() {
     final wav = Uint8List.fromList([...kopf.buffer.asUint8List(), ...daten]);
     expect(wavZuPcm16k(wav).length, daten.length * 2);
   });
+
+  test('pcmZuWav (1.4.0): 16-kHz-WAV hin und zurück ergibt dieselben Abtastwerte', () {
+    final daten = pcm(200, amp: 1234);
+    final wav = pcmZuWav(daten);
+    expect(wav.length, 44 + daten.length);
+    expect(String.fromCharCodes(wav.sublist(0, 4)), 'RIFF');
+    expect(wavZuPcm16k(wav), daten);
+  });
 }

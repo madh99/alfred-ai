@@ -84,7 +84,7 @@ export { ItsmRepository } from './repositories/itsm-repository.js';
 export { ProblemRepository, normalizeTitle as normalizeIncidentTitle } from './repositories/problem-repository.js';
 export { MetricSamplesRepository } from './repositories/metric-samples-repository.js';
 export type { MetricSample, MetricForecast } from './repositories/metric-samples-repository.js';
-export { InsightsRepository } from './repositories/insights-repository.js';
+export { InsightsRepository, istNeueEpisode, EPISODE_TAGE } from './repositories/insights-repository.js';
 export type { Insight, InsightCandidate, InsightCategory, InsightStatus } from './repositories/insights-repository.js';
 export { InterestsRepository, topicItemDedupeHash } from './repositories/interests-repository.js';
 export type { InterestTopic, TopicSource, TopicItem, TopicDigest, TopicStatus, TopicOrigin, TopicSourceKind } from './repositories/interests-repository.js';

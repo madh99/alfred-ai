@@ -27,6 +27,9 @@ export interface RoutedNotification {
   actionParams?: Record<string, unknown>;
   dedupeKey?: string;
   confidence?: number;
+  /** v1343 — schon im Gespräch zugestellt (sofort/aufgeschoben): nur für die Sammlung „Hinweise" ablegen, NICHT als
+   *  still gesammelt markieren (router:false), sonst bringt die stille Zusammenfassung sie ein zweites Mal. */
+  zugestellt?: 'sofort' | 'aufgeschoben';
 }
 
 const URGENCY_RANK: Record<NotificationUrgency, number> = { low: 0, normal: 1, high: 2, urgent: 3 };
@@ -103,7 +106,7 @@ export class NotificationRouter {
         title: n.title.slice(0, 200),
         body: `${n.body}${reasonsSuffix}`,
         confidence: n.confidence ?? 0.6,
-        sourceData: { router: true, urgency: n.urgency, storedAt: new Date().toISOString() },
+        sourceData: { router: !n.zugestellt, urgency: n.urgency, storedAt: new Date().toISOString(), ...(n.zugestellt ? { zugestellt: n.zugestellt } : {}) },
         actionSkill: n.actionSkill,
         actionParams: n.actionParams,
         dedupeKey: n.dedupeKey,

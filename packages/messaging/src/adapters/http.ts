@@ -397,7 +397,7 @@ export class HttpAdapter extends MessagingAdapter {
   /** v1330 — Gespräche des Owners (Hauptgespräch + Fäden) für die Web-Oberfläche. */
   private gespraecheFn?: {
     liste: () => Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
-    verlauf: (faden: string | undefined, limit: number) => Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string }>>;
+    verlauf: (faden: string | undefined, limit: number) => Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean }>>;
     loeschen: (faden: string) => Promise<boolean>;
     /** v1331 — nur der Owner sieht und löscht seine Gespräche (Web-Sitzungen von Familie/Gästen nicht). */
     istOwner: (webUserId: string) => Promise<boolean>;
@@ -949,7 +949,7 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
     nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string): boolean; // v1325 Anhang, v1328 Faden
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
-    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string }>>; // v1336 system = interne Fortsetzung
+    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean }>>; // v1336 system = interne Fortsetzung
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
     faeden?(geraetId: string): Promise<Array<{ faden: string | null; titel: string; zeit: string; anzahl: number; archiv?: string }>>;
     fadenLoeschen?(geraetId: string, faden: string): Promise<boolean>;
@@ -957,6 +957,9 @@ export class HttpAdapter extends MessagingAdapter {
     spiegelung?(geraetId: string, setzen?: boolean): Promise<boolean | undefined>;
     /** v1335 — Faden umbenennen (nur Geräte des Owners). */
     fadenUmbenennen?(geraetId: string, faden: string, titel: string): Promise<boolean>;
+    /** v1343 — Sammlung „Hinweise" (Insights mit Status): Liste und Entscheidung; undefined = kein Owner-Gerät (403). */
+    hinweise?(geraetId: string): Promise<unknown[] | undefined>;
+    hinweisEntscheiden?(geraetId: string, id: string, aktion: string): Promise<{ ok: boolean; grund?: string } | undefined>;
     /** v1249 — blockweiser Dateitransfer. */
     transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
   };
@@ -1920,6 +1923,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetFadenUmbenennen(req, res, url).catch(err => this.safeError(res, err)); // v1335
     } else if (url.pathname === '/api/geraete/spiegelung' && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraetSpiegelung(req, res).catch(err => this.safeError(res, err)); // v1334
+    } else if (url.pathname === '/api/geraete/hinweise' && req.method === 'GET') {
+      this.handleGeraetHinweise(req, res).catch(err => this.safeError(res, err)); // v1343
+    } else if (/^\/api\/geraete\/hinweise\/[A-Za-z0-9-]{1,64}$/.test(url.pathname) && req.method === 'POST') {
+      this.handleGeraetHinweisEntscheiden(req, res, url).catch(err => this.safeError(res, err)); // v1343
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
@@ -6668,6 +6675,33 @@ export class HttpAdapter extends MessagingAdapter {
     if (an === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ an }));
+  }
+
+  /** v1343 — Sammlung „Hinweise": GET Liste (nur Geräte des Owners). */
+  private async handleGeraetHinweise(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.hinweise) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const l = await this.geraeteCallbacks.hinweise(geraet.geraetId);
+    if (l === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ hinweise: l }));
+  }
+
+  /** v1343 — Hinweis entscheiden: POST {"aktion": "erledigt"|"verwerfen"|"spaeter"|"ausfuehren"} */
+  private async handleGeraetHinweisEntscheiden(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.hinweisEntscheiden) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const id = url.pathname.split('/').pop() ?? '';
+    const body = await this.readBody(req).catch(() => '');
+    let aktion = '';
+    try { aktion = String((JSON.parse(body || '{}') as { aktion?: unknown }).aktion ?? ''); } catch { /* leer */ }
+    if (!['erledigt', 'verwerfen', 'spaeter', 'ausfuehren'].includes(aktion)) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'aktion: erledigt | verwerfen | spaeter | ausfuehren' })); return; }
+    const r = await this.geraeteCallbacks.hinweisEntscheiden(geraet.geraetId, id, aktion);
+    if (r === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
+    res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(r));
   }
 
   /** v1335 — Faden umbenennen: PATCH {"titel": "…"} */

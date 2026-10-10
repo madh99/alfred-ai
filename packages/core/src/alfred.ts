@@ -8616,7 +8616,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
               const c = await this.conversationRepo.findByPlatformChat(ziel.platform, ziel.chatId);
               if (!c || c.deletedAt) return [];
               const m = await this.conversationRepo.getMessages(c.id, limit * 4); // v1338 — Werkzeugzeilen zählen nicht
-              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336
+              return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt, ...(x.herkunft?.startsWith('insight:') ? { insight: true } : {}) })); // v1343 Markierung Insight // v1336
             },
             loeschen: (faden: string) => this.ownerFadenLoeschen(faden),
             umbenennen: (faden: string, titel: string) => this.ownerFadenUmbenennen(faden, titel), // v1335
@@ -13696,7 +13696,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             // v1338 — Owner-Befund 21:04: Insights von 20:00/20:30 fehlten in der App, weil Werkzeugzeilen (leerer Inhalt)
             // das Fenster von 30 Zeilen aufbrauchten. Mehr holen, filtern, dann die letzten `limit` sichtbaren liefern.
             const m = await this.conversationRepo.getMessages(c.id, limit * 4);
-            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt })); // v1336 intern → system
+            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => ({ rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt, ...(x.herkunft?.startsWith('insight:') ? { insight: true } : {}) })); // v1343 Markierung Insight // v1336 intern → system
           },
           faeden: async (geraetId: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFaeden(geraetId) : this.geraetFaeden(geraetId),
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
@@ -13705,6 +13705,40 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             if (!this.fadenStoreRef || !(await this.geraetGehoertOwner(geraetId))) return undefined;
             if (typeof setzen === 'boolean') { this.fadenStoreRef.setzeSpiegelung(setzen); this.logger.info({ an: setzen, geraetId }, 'v1334 Spiegelung umgeschaltet'); }
             return this.fadenStoreRef.spiegelung;
+          },
+          // v1343 — Sammlung „Hinweise" (Owner 10.10.): Insights gesammelt mit Status statt im Chat-Verlauf zu verschwinden.
+          // Ab Einführung (kein Altbestand), nur Geräte des Owners. Entscheidungen sind Ergebnis-Signale für Schicht 4
+          // (Logzeile; Drosselung erst nach Beobachtung, Grundsatz „Baselines erst beobachtend").
+          hinweise: async (geraetId: string) => {
+            if (!this.insightsRepo || !this.ownerMasterUserId || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+            const l = await this.insightsRepo.listSammlung(this.ownerMasterUserId, '2026-10-10T00:00:00.000Z', 150);
+            return l.map(i => {
+              const sd = (i.sourceData ?? {}) as Record<string, unknown>;
+              return { id: i.id, quelle: i.category, titel: i.title, text: i.body, status: i.status, zeit: i.createdAt, dringlichkeit: sd.urgency ?? null, zugestellt: sd.zugestellt ?? (sd.router === true ? 'still' : null), aktion: i.actionSkill ? (typeof sd.actionLabel === 'string' ? sd.actionLabel : 'Ausführen') : null };
+            });
+          },
+          hinweisEntscheiden: async (geraetId: string, id: string, aktion: string) => {
+            const repo = this.insightsRepo; const owner = this.ownerMasterUserId;
+            if (!repo || !owner || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+            const insight = await repo.getById(owner, id);
+            if (!insight) return { ok: false, grund: 'nicht gefunden' };
+            this.logger.info({ id, quelle: insight.category, aktion, vorher: insight.status }, 'v1343 Hinweis entschieden'); // Schicht-4-Signal
+            if (aktion === 'erledigt') { await repo.markActed(owner, id); return { ok: true }; }
+            if (aktion === 'verwerfen') { await repo.dismiss(owner, id); return { ok: true }; }
+            if (aktion === 'spaeter') { await repo.snooze(owner, id, 24); return { ok: true }; }
+            // ausfuehren: wie die Insight-Aktion im Web (v928); Geräte-Skills fragen selbst noch einmal nach (Bestätigung)
+            if (!insight.actionSkill) return { ok: false, grund: 'keine Aktion' };
+            const skill = this.skillRegistry?.get(insight.actionSkill);
+            if (!skill) return { ok: false, grund: `Skill ${insight.actionSkill} nicht verfügbar` };
+            const { extractInputFields, applyActionInputs } = await import('./insight-action-input.js');
+            const applied = applyActionInputs(insight.actionParams ?? {}, extractInputFields(insight.sourceData), undefined);
+            if (!applied.ok) return { ok: false, grund: `Eingabe fehlt: ${applied.missing.join(', ')}` };
+            try {
+              const r = await skill.execute(applied.params, { userId: owner, masterUserId: owner } as any);
+              if (r && typeof r === 'object' && 'success' in r && (r as { success: boolean }).success === false) return { ok: false, grund: (r as { error?: string }).error ?? 'fehlgeschlagen' };
+              await repo.markActed(owner, id);
+              return { ok: true };
+            } catch (err) { return { ok: false, grund: (err as Error).message }; }
           },
           fadenLoeschen: async (geraetId: string, faden: string) => {
             if (!/^[a-z0-9-]{1,40}$/.test(faden)) return false; // v1333

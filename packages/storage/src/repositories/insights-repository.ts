@@ -3,6 +3,16 @@ import { randomUUID } from 'node:crypto';
 
 export type InsightStatus = 'pending' | 'acted' | 'dismissed' | 'snoozed' | 'expired';
 
+/** v1343 — Ruhezeit, nach der ein erledigter oder abgelaufener Schlüssel als neue Episode wiederkommen darf. */
+export const EPISODE_TAGE = 7;
+
+/** v1343 — neue Episode: erledigt (acted) oder abgelaufen (expired) und seit EPISODE_TAGE unverändert. Verworfen, offen, später: nein. */
+export function istNeueEpisode(z: { status: InsightStatus; updated_at?: string | null; acted_at?: string | null }, jetzt: number): boolean {
+  if (z.status !== 'acted' && z.status !== 'expired') return false;
+  const seit = Date.parse((z.status === 'acted' ? z.acted_at : null) ?? z.updated_at ?? '');
+  return Number.isFinite(seit) && jetzt - seit >= EPISODE_TAGE * 86_400_000;
+}
+
 export type InsightCategory =
   | 'infra-forecast'
   | 'calendar-mismatch'
@@ -69,9 +79,24 @@ export class InsightsRepository {
     }
     if (candidate.dedupeKey) {
       const existing = await this.db.queryOne(
-        `SELECT id, status FROM alfred_insights WHERE user_id = ? AND dedupe_key = ?`,
+        `SELECT id, status, updated_at, acted_at FROM alfred_insights WHERE user_id = ? AND dedupe_key = ?`,
         [userId, candidate.dedupeKey],
-      ) as { id: string; status: InsightStatus } | undefined;
+      ) as { id: string; status: InsightStatus; updated_at?: string | null; acted_at?: string | null } | undefined;
+      // v1343 — Episoden statt „für immer blockiert": eine als erledigt markierte oder abgelaufene Meldung blockierte
+      // ihren Schlüssel dauerhaft (z. B. „Wallbox nicht erreichbar" erledigt → der nächste echte Ausfall kam nie).
+      // Nach EPISODE_TAGE ohne Änderung darf derselbe Schlüssel als neue Episode wiederkommen. „Verworfen" bleibt
+      // dauerhaft (bewusstes Nein des Owners).
+      if (existing && istNeueEpisode(existing, Date.now())) {
+        await this.db.execute(
+          `UPDATE alfred_insights SET title = ?, body = ?, confidence = ?, source_data = ?, action_skill = ?, action_params = ?, status = 'pending', snoozed_until = NULL, acted_at = NULL, dismissed_at = NULL, created_at = ?, updated_at = ? WHERE id = ?`,
+          [candidate.title, candidate.body, candidate.confidence ?? 0.5,
+           candidate.sourceData ? JSON.stringify(candidate.sourceData) : null,
+           candidate.actionSkill ?? null,
+           candidate.actionParams ? JSON.stringify(candidate.actionParams) : null,
+           now, now, existing.id],
+        );
+        return { inserted: true, id: existing.id };
+      }
       if (existing) {
         // Skip if user already decided. Only refresh active rows.
         if (existing.status === 'pending' || existing.status === 'snoozed') {
@@ -215,6 +240,19 @@ export class InsightsRepository {
   async markActed(userId: string, id: string): Promise<void> {
     const now = new Date().toISOString();
     await this.db.execute(`UPDATE alfred_insights SET status = 'acted', acted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`, [now, now, id, userId]);
+  }
+
+  /**
+   * v1343 — Sammlung „Hinweise" für Apps und Web: alles ab `seit` (Einführung, kein Altbestand), offen und später zuerst,
+   * entschiedene der letzten 7 Tage dahinter; abgelaufene nicht. Neueste zuerst.
+   */
+  async listSammlung(userId: string, seit: string, limit = 150): Promise<Insight[]> {
+    const grenze = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const rows = await this.db.query(
+      `SELECT * FROM alfred_insights WHERE user_id = ? AND created_at >= ? AND (status IN ('pending', 'snoozed') OR (status IN ('acted', 'dismissed') AND updated_at >= ?)) ORDER BY created_at DESC LIMIT ?`,
+      [userId, seit, grenze, limit],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
   }
 
   /** Reactivate snoozes whose snoozed_until is past. */

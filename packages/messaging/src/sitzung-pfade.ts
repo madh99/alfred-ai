@@ -23,6 +23,7 @@ const SITZUNG_PFADE = [
   /^\/api\/vorgaenge$/, // v1313 — Kachel „Vorgänge" der Desktop-App (nur Liste; Entscheidungen bleiben beim API-Token)
   /^\/api\/geraete\/faeden(\/[a-z0-9-]{1,40})?$/, // v1328 — Gesprächsfäden der eigenen Sitzung (Liste, Löschen)
   /^\/api\/geraete\/spiegelung$/, // v1334 — Spiegel-Schalter (nur Geräte des Owners)
+  /^\/api\/geraete\/hinweise(\/[A-Za-z0-9-]{1,64})?$/, // v1343 — Sammlung „Hinweise" (nur Geräte des Owners): Liste, Entscheidung
 ];
 
 export function istSitzungsPfad(url: string | undefined): boolean {

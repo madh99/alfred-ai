@@ -208,3 +208,15 @@ Uint8List wavZuPcm16k(Uint8List wav) {
   }
   return out;
 }
+
+/// 1.4.0 — PCM 16 kHz mono 16 Bit → WAV (für den Ersatzweg über /api/transcribe, wenn das Relais nicht liefert).
+Uint8List pcmZuWav(Uint8List pcm, {int rate = 16000}) {
+  final b = ByteData(44 + pcm.length);
+  void s(int o, String t) { for (var i = 0; i < t.length; i++) { b.setUint8(o + i, t.codeUnitAt(i)); } }
+  s(0, 'RIFF'); b.setUint32(4, 36 + pcm.length, Endian.little); s(8, 'WAVE');
+  s(12, 'fmt '); b.setUint32(16, 16, Endian.little); b.setUint16(20, 1, Endian.little); b.setUint16(22, 1, Endian.little);
+  b.setUint32(24, rate, Endian.little); b.setUint32(28, rate * 2, Endian.little); b.setUint16(32, 2, Endian.little); b.setUint16(34, 16, Endian.little);
+  s(36, 'data'); b.setUint32(40, pcm.length, Endian.little);
+  final out = b.buffer.asUint8List(); out.setRange(44, 44 + pcm.length, pcm);
+  return out;
+}

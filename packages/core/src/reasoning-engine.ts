@@ -786,7 +786,9 @@ ${this.buildTopicInstructions()}`;
     if (!this.conversationRepo || !text) return;
     try {
       const conv = await this.conversationRepo.findByPlatformChat(this.defaultPlatform, this.defaultChatId);
-      if (conv) await this.conversationRepo.addMessage(conv.id, 'assistant', text.slice(0, 4000));
+      // v1343 — Markierung „Insight" (herkunft): bleibt im Gespräch (Telegram, /verlauf, Kontext für „ja"), die Apps zeigen
+      // sie kompakt und verweisen auf die Sammlung „Hinweise"
+      if (conv) await this.conversationRepo.addMessage(conv.id, 'assistant', text.slice(0, 4000), undefined, 'insight:reasoning');
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1203 Meldung nicht in Unterhaltung abgelegt'); }
   }
   /** v1198 — Anwesenheit (Home Assistant) als Zustell-Signal an den Scheduler. */
@@ -2057,6 +2059,25 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     } catch { /* non-critical */ }
   }
 
+  /** v1343 — zugestellte Insights einzeln für die Sammlung ablegen (Schlüssel je Tag und Titel = eine Episode je Tag). */
+  private async legeHinweiseAb(insights: string[], actions: ProposedAction[], urgency: 'urgent' | 'high' | 'normal' | 'low', weg: 'sofort' | 'aufgeschoben'): Promise<void> {
+    if (!this.notificationRouter || insights.length === 0) return;
+    const tag = new Date().toISOString().slice(0, 10);
+    const erste = actions[0];
+    for (const insight of insights) {
+      const titel = insight.split('\n')[0].replace(/^[\s\-*•\d.)]+/, '').replace(/\*\*/g, '').trim().slice(0, 120) || 'Hinweis';
+      try {
+        await this.notificationRouter.store({
+          source: 'reasoning', urgency, title: titel, body: insight,
+          chatId: this.defaultChatId, platform: this.defaultPlatform,
+          actionSkill: erste?.skillName, actionParams: erste?.skillParams as Record<string, unknown> | undefined,
+          dedupeKey: `hinweis:${tag}:${titel.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-').slice(0, 80)}`,
+          zugestellt: weg,
+        });
+      } catch { /* Sammlung ist Komfort, die Zustellung läuft unabhängig */ }
+    }
+  }
+
   private resolveUrgency(actions: ProposedAction[]): 'urgent' | 'high' | 'normal' | 'low' {
     const levels: Array<'urgent' | 'high' | 'normal' | 'low'> = actions.map(a => a.urgency ?? 'normal');
     if (levels.includes('urgent')) return 'urgent';
@@ -2132,6 +2153,11 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         deliver = await this.deliveryScheduler.shouldDeliverNow(urgency, this.activityProfile, this.resolvedOwnerUserId);
       } catch { deliver = true; /* fallback: deliver */ }
     }
+
+    // v1343 — Sammlung „Hinweise": zugestellte (sofort/aufgeschoben) Insights zusätzlich in alfred_insights ablegen, damit
+    // Apps und Web sie gesammelt mit Status zeigen (Owner 10.10.: „in der App verschwinden sie"). router:false — die
+    // stille Zusammenfassung zählt nur still abgelegte, sonst käme dieselbe Meldung zweimal.
+    if (message) await this.legeHinweiseAb(insights, actions, urgency, !deliver && this.deliveryScheduler ? 'aufgeschoben' : 'sofort');
 
     if (!deliver && this.deliveryScheduler && message) {
       // Defer for later

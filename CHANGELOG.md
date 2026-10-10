@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1343] - 2026-10-10
+
+### Added — Sammlung „Hinweise" mit Status, Markierung von Insights im Gespräch (v1343)
+
+Owner-Befund 10.10.: Insights verschwinden in der App im Chat-Verlauf, man kann nichts mit ihnen tun. Zugestellte Insights (sofort oder aufgeschoben) werden zusätzlich einzeln in der Insight-Ablage gespeichert (Schlüssel je Tag und Titel), aber ohne Router-Markierung, damit die stille Zusammenfassung sie nicht ein zweites Mal bringt. Im Gespräch bleiben sie unverändert (Telegram, `/verlauf`, Kontext für Antworten), tragen aber die Herkunft „insight", und die Verlauf-Routen melden das als `insight: true`. Neue Geräte-Routen `/api/geraete/hinweise` (Liste ab Einführung, offene zuerst, entschiedene der letzten 7 Tage) und `/api/geraete/hinweise/<id>` (erledigt, später, verwerfen, ausführen), nur für Geräte des Owners; jede Entscheidung wird als Signal protokolliert (Schicht 4 beobachtet, gedrosselt wird nichts).
+
+### Fixed — Erledigte oder abgelaufene Meldungen blockierten ihren Schlüssel für immer (v1343)
+
+Eine einmal erledigte oder abgelaufene Meldung verhinderte jede spätere Meldung mit demselben Schlüssel, z. B. einen erneuten Ausfall. Jetzt darf derselbe Schlüssel nach sieben Tagen ohne Änderung als neue Episode wiederkommen; „verworfen" bleibt dauerhaft.
+
 ## [0.19.0-jarvis.1342] - 2026-10-10
 
 ### Added — Aufträge an Claude Code auf dem Satelliten (Druckmodus, Hintergrund) (v1342)
