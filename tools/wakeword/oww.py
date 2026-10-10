@@ -102,52 +102,70 @@ def messe(kopf, echt, titel: str) -> None:
         print(f'ECHTE AUFNAHMEN {titel} Schwelle {s}: Treffer {tp}/{P}, Fehlauslösungen {fp}/{N} | 2 Fenster: {tp2}/{P}, {fp2}/{N} | 3 Fenster: {tp3}/{P}, {fp3}/{N}{dauer}')
     for (pm, pz, pd), l, n in w: print(f'  {n}: {pm:.2f}/{pz:.2f}/{pd:.2f} ({"Alfred" if l else "nicht"})')
 
-def trainiere(X: torch.Tensor, y: torch.Tensor, epochs: int, lr: float, seed: int = 7, still=False) -> Kopf:
+Teil = tuple[torch.Tensor, torch.Tensor, torch.Tensor]  # (X float16 [n,16,96], y [n], Gewicht [n])
+
+def trainiere(teile: list[Teil], epochs: int, lr: float, seed: int = 7, still=False) -> Kopf:
+    """Lauf 6: ohne Kopieren der Daten (OOM bei 4 GB auf der .96) — Teile bleiben getrennt, Stichprobe über einen gemeinsamen
+    Indexraum, Gewichte je Fenster statt Vervielfachung, Speicherung float16, Umwandlung je Batch."""
     torch.manual_seed(seed)
-    kopf = Kopf(); opt = torch.optim.AdamW(kopf.parameters(), lr=lr, weight_decay=1e-3); loss = nn.BCEWithLogitsLoss()
-    n = len(X)
+    kopf = Kopf(); opt = torch.optim.AdamW(kopf.parameters(), lr=lr, weight_decay=1e-3); loss = nn.BCEWithLogitsLoss(reduction='none')
+    laengen = [len(t[0]) for t in teile]; n = sum(laengen); grenzen = np.cumsum([0] + laengen)
+    def hole(idx: torch.Tensor):
+        xs, ys, ws = [], [], []
+        for k, (X, y, w) in enumerate(teile):
+            m = (idx >= grenzen[k]) & (idx < grenzen[k + 1])
+            if m.any(): j = idx[m] - grenzen[k]; xs.append(X[j].float()); ys.append(y[j]); ws.append(w[j])
+        return torch.cat(xs), torch.cat(ys), torch.cat(ws)
     for ep in range(epochs):
         kopf.train(); perm = torch.randperm(n); tot = 0.0
         for i in range(0, n, 128):
-            b = perm[i:i + 128]; opt.zero_grad(); l = loss(kopf(X[b]), y[b]); l.backward(); opt.step(); tot += l.item() * len(b)
+            xb, yb, wb = hole(perm[i:i + 128]); opt.zero_grad(); l = (loss(kopf(xb), yb) * wb).sum() / wb.sum(); l.backward(); opt.step(); tot += l.item() * len(yb)
         if not still and ((ep + 1) % 10 == 0 or ep == 0): print(f'Epoche {ep + 1}: Verlust {tot / n:.4f}', file=sys.stderr)
     return kopf
+
+def genauigkeit(kopf: Kopf, teile: list[Teil]) -> float:
+    kopf.eval(); richtig = 0; n = 0
+    with torch.no_grad():
+        for X, y, _ in teile:
+            for i in range(0, len(X), 1024):
+                p = torch.sigmoid(kopf(X[i:i + 1024].float())); richtig += ((p > 0.5).float() == y[i:i + 1024]).sum().item(); n += len(p)
+    return richtig / max(1, n)
 
 def synthetische_trainingsdaten(af, data: Path, kopien: int, rng: random.Random):
     man = json.loads((data / 'manifest.json').read_text())
     pos = [lade_f32(data / m['datei']) for m in man if m['label'] == 1]
     neg = [lade_f32(data / m['datei']) for m in man if m['label'] == 0]
     print(f'Synthetisch: {len(pos)} positiv, {len(neg)} negativ; Augmentierung ×{kopien}', file=sys.stderr)
-    clips: list[tuple[np.ndarray, int]] = []
+    Xs, ys = [], []
+    def nimm(c: np.ndarray, l: int) -> None:
+        # Lauf 6: sofort einbetten und das PCM verwerfen (OOM auf der .96 mit allen Clips im Speicher)
+        e = einbetten(af, [c])[0]
+        if l == 1 and e.shape[0] > FENSTER_FRAMES + 4:
+            w = fenster_aus(e, hop=2); m = len(w) // 2; w = w[max(0, m - 3):m + 4]  # langes Positiv: nur die Mitte (dort liegt das Wort)
+        else:
+            w = fenster_aus(e, hop=2)
+        Xs.append(w.astype(np.float16)); ys.append(np.full(len(w), float(l), np.float32))
     for _ in range(kopien):
-        for c in pos: clips.append((augmentiere(c, rng), 1))
-        for c in neg: clips.append((augmentiere(c, rng), 0))
+        for c in pos: nimm(augmentiere(c, rng), 1)
+        for c in neg: nimm(augmentiere(c, rng), 0)
     # zusammengesetzte lange Negative (2–3 Negative hintereinander, bis 4 s): lange Sätze lösten in Lauf 3 aus
     for _ in range(len(neg)):
         teile = [rng.choice(neg) for _ in range(rng.randint(2, 3))]
-        clips.append((augmentiere(np.concatenate(teile)[:4 * SR], rng), 0))
+        nimm(augmentiere(np.concatenate(teile)[:4 * SR], rng), 0)
     # Positive im Sprachkontext (Negativ + Alfred + Negativ): das Wort mitten im Reden
     for _ in range(len(pos) // 2):
         p = rng.choice(pos); a = rng.choice(neg); b = rng.choice(neg)
-        clips.append((augmentiere(np.concatenate([a, p, b])[:4 * SR], rng), 1))
+        nimm(augmentiere(np.concatenate([a, p, b])[:4 * SR], rng), 1)
     # Lauf 5: lange synthetische Negative (fließende Sätze, /data/neg_lang, synth --lang) — in voller Länge, einmal augmentiert
     lang = sorted((data / 'neg_lang').glob('*.wav')) if (data / 'neg_lang').exists() else []
     if lang:
         sek = 0.0
         for p in lang:
             c = lade_f32(p); sek += len(c) / SR
-            clips.append((augmentiere(c, rng), 0))
+            nimm(augmentiere(c, rng), 0)
         print(f'Lange synthetische Negative: {len(lang)} Clips, {sek / 60:.1f} min', file=sys.stderr)
-    emb = einbetten(af, [c for c, _ in clips])
-    Xs, ys = [], []
-    for e, (_, l) in zip(emb, clips):
-        if l == 1 and e.shape[0] > FENSTER_FRAMES + 4:
-            # bei langen Positiven nur die Fenster, die den Wortbereich (Mitte) enthalten — grob: mittleres Drittel
-            w = fenster_aus(e, hop=2); m = len(w) // 2; w = w[max(0, m - 3):m + 4]
-        else:
-            w = fenster_aus(e, hop=2)
-        Xs.append(w); ys.append(np.full(len(w), float(l), np.float32))
-    return torch.from_numpy(np.concatenate(Xs)), torch.from_numpy(np.concatenate(ys))
+    X = torch.from_numpy(np.concatenate(Xs)); y = torch.from_numpy(np.concatenate(ys))
+    return (X, y, torch.ones(len(y)))
 
 def echte_aufnahmen(af, data: Path):
     labels = {}
@@ -169,28 +187,30 @@ def echte_aufnahmen(af, data: Path):
     e1 = einbetten(af, [c for c, _, _ in klar]); e2 = einbetten(af, [c for c, _, _ in unsicher])
     return [(e, l, n) for e, (_, l, n) in zip(e1, klar)], [(e, l, n) for e, (_, l, n) in zip(e2, unsicher)]
 
-def echt_fenster(aufn, lang_gewicht: int = 3) -> tuple[torch.Tensor, torch.Tensor]:
-    """Fenster der echten Aufnahmen; Stücke aus langen Negativaufnahmen (Dauerton) zählen lang_gewicht-fach (Lauf 5: 39 Fehlauslösungen/h in Lauf 4)."""
-    Xs, ys = [], []
+def echt_fenster(aufn, lang_gewicht: float = 3.0, grundgewicht: float = 5.0) -> Teil:
+    """Fenster der echten Aufnahmen als Teil (X float16, y, Gewicht): echte Fenster zählen grundgewicht-fach (wenige, richtige Domäne),
+    Stücke aus langen Negativaufnahmen (Dauerton) zusätzlich lang_gewicht-fach (Lauf 5: 39 Fehlauslösungen/h in Lauf 4) — ohne Kopien."""
+    Xs, ys, ws = [], [], []
     for e, l, n in aufn:
-        w = fenster_aus(e, hop=1); k = lang_gewicht if (l == 0 and ist_lang_stueck(n)) else 1
-        for _ in range(k): Xs.append(w); ys.append(np.full(len(w), float(l), np.float32))
-    return torch.from_numpy(np.concatenate(Xs)), torch.from_numpy(np.concatenate(ys))
+        w = fenster_aus(e, hop=1); g = grundgewicht * (lang_gewicht if (l == 0 and ist_lang_stueck(n)) else 1.0)
+        Xs.append(w.astype(np.float16)); ys.append(np.full(len(w), float(l), np.float32)); ws.append(np.full(len(w), g, np.float32))
+    return (torch.from_numpy(np.concatenate(Xs)), torch.from_numpy(np.concatenate(ys)), torch.from_numpy(np.concatenate(ws)))
 
 def main(argv) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', default='/data'); ap.add_argument('--epochs', type=int, default=40); ap.add_argument('--lr', type=float, default=1e-3)
     ap.add_argument('--kopien', type=int, default=3, help='augmentierte Kopien je synthetischem Clip')
     ap.add_argument('--echt-mittrainieren', action='store_true', help='echte Aufnahmen mittrainieren: 5-fache Kreuzvalidierung zur Messung, dann Kopf auf allen Daten')
-    ap.add_argument('--echt-gewicht', type=int, default=5)
+    ap.add_argument('--echt-gewicht', type=float, default=5.0)
     a = ap.parse_args(argv)
     data = Path(a.data); rng = random.Random(7); np.random.seed(7)
     af = features()
-    X, y = synthetische_trainingsdaten(af, data, a.kopien, rng)
-    print(f'Trainingsfenster synthetisch: {len(X)} ({int(y.sum())} positiv)', file=sys.stderr)
+    syn = synthetische_trainingsdaten(af, data, a.kopien, rng)
+    print(f'Trainingsfenster synthetisch: {len(syn[0])} ({int(syn[1].sum())} positiv)', file=sys.stderr)
     klar, unsicher = echte_aufnahmen(af, data)
     if not a.echt_mittrainieren or not klar:
-        kopf = trainiere(X, y, a.epochs, a.lr)
+        kopf = trainiere([syn], a.epochs, a.lr)
+        print(f'Training (Fenster): {genauigkeit(kopf, [syn]):.3f}', file=sys.stderr)
         if klar: messe(kopf, klar, f'(Hold-out {len(klar)} klar)')
         if unsicher: messe(kopf, unsicher, f'(unsicher beschriftet {len(unsicher)})')
     else:
@@ -198,10 +218,11 @@ def main(argv) -> None:
         falten = [idx[i::k] for i in range(k)]
         gesamt = []
         for f in range(k):
-            test = [klar[i] for i in falten[f]]; train = [klar[i] for i in idx if i not in set(falten[f])]
-            Xe, ye = echt_fenster(train)
-            kopf = trainiere(torch.cat([X] + [Xe] * a.echt_gewicht), torch.cat([y] + [ye] * a.echt_gewicht), a.epochs, a.lr, seed=7 + f, still=True)
+            test_idx = set(falten[f])
+            test = [klar[i] for i in falten[f]]; train = [klar[i] for i in idx if i not in test_idx]
+            kopf = trainiere([syn, echt_fenster(train, grundgewicht=a.echt_gewicht)], a.epochs, a.lr, seed=7 + f, still=True)
             kopf.eval(); gesamt += [(bewerte(kopf, e), l, n) for e, l, n in test]
+            print(f'Falte {f + 1}/{k} fertig', file=sys.stderr)
         P = sum(1 for _, l, _ in gesamt if l == 1); N = len(gesamt) - P
         lang = [x for x in gesamt if x[1] == 0 and ist_lang_stueck(x[2])]; minuten = len(lang) * 3 / 60
         for s in (0.5, 0.7, 0.9, 0.95):
@@ -212,8 +233,7 @@ def main(argv) -> None:
             dauer = f' | Dauerton {minuten:.1f} min: {fa2 / minuten * 60:.0f}/h (2 F.), {fa3 / minuten * 60:.0f}/h (3 F.)' if minuten > 0 else ''
             print(f'ECHTE AUFNAHMEN (5-fach kreuzvalidiert, {len(gesamt)}) Schwelle {s}: Treffer {tp}/{P}, Fehlauslösungen {fp}/{N} | 2 Fenster: {tp2}/{P}, {fp2}/{N} | 3 Fenster: {tp3}/{P}, {fp3}/{N}{dauer}')
         for (pm, pz, pd), l, n in sorted(gesamt, key=lambda t: t[2]): print(f'  {n}: {pm:.2f}/{pz:.2f}/{pd:.2f} ({"Alfred" if l else "nicht"})')
-        Xe, ye = echt_fenster(klar)
-        kopf = trainiere(torch.cat([X] + [Xe] * a.echt_gewicht), torch.cat([y] + [ye] * a.echt_gewicht), a.epochs, a.lr)
+        kopf = trainiere([syn, echt_fenster(klar, grundgewicht=a.echt_gewicht)], a.epochs, a.lr)
         if unsicher: messe(kopf, unsicher, f'(unsicher beschriftet {len(unsicher)}, Kopf auf allen klaren trainiert)')
     kopf.eval()
     torch.onnx.export(kopf, torch.zeros(1, FENSTER_FRAMES, 96), str(data / 'oww-kopf.onnx'), input_names=['emb'], output_names=['logit'], dynamic_axes={'emb': {0: 'b'}, 'logit': {0: 'b'}}, opset_version=17, dynamo=False)
