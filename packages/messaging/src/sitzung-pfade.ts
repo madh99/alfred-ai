@@ -24,6 +24,7 @@ const SITZUNG_PFADE = [
   /^\/api\/geraete\/faeden(\/[a-z0-9-]{1,40})?$/, // v1328 — Gesprächsfäden der eigenen Sitzung (Liste, Löschen)
   /^\/api\/geraete\/spiegelung$/, // v1334 — Spiegel-Schalter (nur Geräte des Owners)
   /^\/api\/geraete\/hinweise(\/[A-Za-z0-9-]{1,64})?$/, // v1343 — Sammlung „Hinweise" (nur Geräte des Owners): Liste, Entscheidung
+  /^\/api\/geraete\/anhang\/[0-9a-f]{32}$/, // v1349 — abgelegte Anhänge aus dem Verlauf (v1347 fehlte hier → 401)
 ];
 
 export function istSitzungsPfad(url: string | undefined): boolean {

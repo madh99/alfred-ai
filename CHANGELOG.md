@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1349] - 2026-10-11
+
+### Fixed — Anhang-Abruf mit Gerätetoken antwortete 401 (v1349)
+
+Live-Beweis zu v1347: Ablage und Verweise im Verlauf funktionierten, `/api/geraete/anhang/<id>` fehlte aber in der Liste der Routen, die ein Gerätetoken erreichen darf — die App bekam 401 statt des Bildes. Route ergänzt (nur 32-stellige Kennung), Test dazu.
+
 ## [0.19.0-jarvis.1348] - 2026-10-10
 
 ### Security — Anhang-Abruf liefert nur Rasterbilder inline aus (v1348)

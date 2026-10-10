@@ -56,5 +56,8 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/config')).toBe(false);
     expect(istSitzungsPfad('/api/messages')).toBe(false);
     expect(istSitzungsPfad(undefined)).toBe(false);
+    // v1349 — Anhang-Abruf (v1347) nur mit gültiger Kennung
+    expect(istSitzungsPfad('/api/geraete/anhang/'+'a'.repeat(32))).toBe(true);
+    expect(istSitzungsPfad('/api/geraete/anhang/../config')).toBe(false);
   });
 });
