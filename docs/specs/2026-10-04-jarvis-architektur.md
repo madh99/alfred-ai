@@ -263,6 +263,52 @@ Owner-Entscheidung 09.10.2026 (Freigabe 1–5): Der Gesprächsverlauf des Owners
 
 Messung über zwei Tage (06./07.10., 116 Chat-Anfragen, Phase `llm_request_prep`): System-Prompt Ø 13.400 Tokens, Werkzeug-Schemata Ø 20.200 (max 48.400), Verlauf Ø 1.400. Gleichzeitig kamen über 565 Modellaufrufe 63 % aller Eingabe-Tokens aus dem Prompt-Cache der Anbieter. Entscheidung: Die Schemata bleiben, wie sie sind. Der Cache trägt den Großteil der Kosten; eine Kürzung der Beschreibungen brächte wenig und riskiert falsche Werkzeugwahl. Wo es deterministisch geht, bleibt die Werkzeugliste klein (`allowedSkills` bei Mail-Aufgaben und Vorhaben-Fortsetzungen). Ebenfalls 07.10.: Tages-Buckets der Nutzung liefen in UTC (kein Zeitzonen-Eintrag im Owner-Profil), jetzt Server-Zeitzone; Schleife 3 legt keinen Lernbedarf mehr aus synthetischen Nachrichten an.
 
+## Interessen als Wissen statt Meldungen (Entwurf 10.10.2026, Schicht 1/2 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe")
+
+### Ausgangslage (CHANGELOG + Code, 10.10.)
+
+- **Ursprünglicher Zweck (v929/v930, Juli 2026):** „Alfred beobachtet Themen laufend und beantwortet ‚Was gibt's Neues zu X?' aus gesammeltem Wissen". Stiller Sammler (TopicCollector, stündlich), rollendes Dossier je Thema (`topic_digests`), automatische Themen- und Quellenpflege (Interest-Detector 05:15, Source-Provisioner, Quellen-Pflege samstags), Meldung nur über Schwelle, sonst stille Ablage; Score-Kriterium 4 „Themen-Boost" im Reasoning.
+- **Tatsächliche Wirkung heute:** Chat kennt nur die Themen-**Namen** (System-Prompt) und holt das Dossier nur auf ausdrückliche Frage (`topic_briefing`); Reasoning hebt Items bei Namensgleichheit an, liest aber keine Dossiers; die Dossiers liest im Kern nur das **Content-Studio** (Social, pausiert seit 01.08.). Sichtbar ist fast nur der Digest 06:30: v1197 „756 Themen-Insights in 28 Tagen, 592 unbeachtet"; Nullpunkt 10.10.: 144–219 je Woche, 40 offen an einem Tag in der Sammlung „Hinweise".
+- **Folgerung:** Die Verknüpfung „Themenwissen ↔ Alltag des Owners → Ableitung" wurde nie gebaut; der Nebenausgang (Meldungen) wurde zum Hauptkanal. Bedienbare Themenkarten würden den Nebenausgang polieren — verworfen.
+
+### Zielbild
+
+Interessen sind **Wissen**. Alfred nutzt es von selbst im Gespräch und meldet sich nur, wenn eine neue Information **mit etwas aus dem Leben des Owners verbunden** ist — mit einer Ableitung („betrifft deine Speichererweiterung, Frist …"), nicht mit einer Linkliste.
+
+### Bausteine
+
+1. **Themen melden standardmäßig nichts.** `notify_threshold = mute` (seit v1143: Dossier wird gepflegt, aber nie aktiv gemeldet). Sammler, Dossier, Quellenpflege, Interest-Detector laufen unverändert. Ein Schalter „täglich melden" je Thema bleibt für Themen, die der Owner bewusst täglich will.
+2. **Verknüpfung (Schicht 2, ereignisgetrieben):** neue `topic_items` des Tages werden gegen einen **Anker-Katalog** aus dem Weltmodell (Schicht 1) geprüft: Haus/Energie (PV, Speicher, Wallbox, Tarif, Netzbetreiber), Auto, Kalender (nächste 30 Tage), offene Vorgänge und Projekte, Mail-Absender/Organisationen der letzten 30 Tage, CMDB/Infrastruktur, Familie/Interessen der Personen. Vorauswahl **deterministisch** (Begriffe, Entitäten, Synonyme je Anker, Mindestüberlappung); nur Treffer gehen in einen Mini-Pass (günstiger Tier, Ausschnitt: Beitrag mit Feed-Summary + betroffener Weltmodell-Ausschnitt), der aus einer **festen Liste** antwortet: `ableitung` (ein Satz Bezug + ein Satz Bedeutung + optional nächster Schritt), `nur_wissen` (kein Hinweis), `vorgang` (Handlung mit Frist → Vorgang). Kein Treffer → keine Meldung, kein Modellaufruf.
+3. **Wissen im Gespräch:** passt eine Owner-Frage zu einem Thema (Name, Keywords, Anker), kommt ein kurzer Dossier-Auszug (höchstens ~600 Zeichen, Stand-Datum) in den Kontext — nicht nur der Name. Fakten-Treue wie v986 (Feed-Summaries, keine Schlagzeilen-Raterei).
+4. **Wochenüberblick je Thema** (Lesestoff, kein Entscheidungsbedarf): ein Eintrag im Sonntags-Überblick bzw. in der Kachel, nicht in der Sammlung „Hinweise".
+5. **Sammlung „Hinweise" (v1343)** zeigt Themen nur noch als abgeleitete Hinweise; Themen-Digests und Quellen-Pflege-Berichte erscheinen dort nicht mehr (Quellen-Pflege → Interessen-Ansicht bzw. Kachel).
+6. **Messen (Schicht 4):** Hinweise aus Verknüpfung je Thema/Anker, Owner-Entscheidungen (erledigt/verworfen) als Präzision je Anker; Anker unter Präzision X werden nach Beobachtungszeit enger gefasst (deterministisch).
+
+### Content-Studio / Social bleiben unberührt (Owner-Vorgabe 10.10.)
+
+Das Content-Studio liest `topic_items` (listItems), `topic_digests` (getDigest), `interest_topics` (getTopicById, findTopicByName) und legt eigene Nischen-Themen an (createTopic). Daraus folgen harte Regeln für die Umsetzung:
+- **Nur `notify_threshold` ändern**, nie `status` (active/paused/archived): der Sammler sammelt nur aktive Themen, ein pausiertes Thema würde dem Studio die Items entziehen.
+- Sammler, Dossier-Fortschreibung (Digest-Builder ruft `buildSummary` auch bei `mute`), Quellenpflege und Item-Schema bleiben unverändert; keine Löschung, kein Kürzen der Item-Historie, keine Änderung an `listItems`/`getDigest`/`createTopic`.
+- Vom Studio angelegte Nischen-Themen (Social-Kanäle) behalten ihre Einstellungen; der Wechsel auf `mute` betrifft nur Owner-/Auto-Themen und wird je Thema protokolliert (umkehrbar).
+- Die Verknüpfung (Baustein 2) **liest** nur; sie schreibt keine Items und keine Dossiers.
+- Prüfung vor jedem Release dieses Abschnitts: Studio-Probe auf der Sandbox/VM (Dossier-Sektion je Thema vorhanden, Items der letzten 7 Tage abrufbar) — auch solange die Kanäle pausiert sind.
+
+### Risiken und Gegenmittel
+
+- **Owner verpasst Neuigkeiten ohne Bezug:** Wochenüberblick, „Was gibt's Neues zu X?" jederzeit, Schalter „täglich melden" je Thema.
+- **Falsche Verknüpfungen erzeugen Lärm:** deterministische Vorauswahl mit Mindestüberlappung, feste Antwortliste, Owner-Entscheidungen als Signal, Anker enger fassen statt Modell-Gate.
+- **Dünnes Weltmodell → wenige Treffer:** leise und unschädlich; Trefferquote je Anker zeigt Lücken im Weltmodell (Schicht 1 gezielt füllen).
+- **Kosten:** Modellaufruf nur bei Vorauswahl-Treffer, günstiger Tier, Tagesobergrenze je Thema.
+- **Modellunabhängigkeit (Grundsatz 29.08.):** Vorauswahl, Rangfolge, Zustellweg und Drosselung deterministisch; das Modell formuliert nur die Ableitung.
+- **Content-Studio:** siehe eigener Abschnitt; jede Änderung, die Status, Items oder Dossiers berührt, ist ausgeschlossen.
+
+### Reihenfolge (nicht freigegeben)
+
+- **I1** Alle Owner-/Auto-Themen auf `mute` (umkehrbar, protokolliert), Themen-Digests und Quellen-Pflege aus der Sammlung „Hinweise" heraus — sofort Ruhe, kein Wissensverlust, Studio unberührt.
+- **I2** Dossier-Auszug im Gespräch (Baustein 3).
+- **I3** Anker-Katalog aus dem Weltmodell + deterministische Vorauswahl, zuerst **beobachtend** (nur Logzeilen „wäre Hinweis geworden", zwei Wochen).
+- **I4** Mini-Pass mit fester Antwortliste, Hinweise in die Sammlung, Vorgänge bei Handlung mit Frist; Wochenüberblick.
+- **I5** Messen und Anker nachschärfen (Schicht 4).
 ## Projektvorgang (Entwurf 10.10.2026, Schicht 3 — ohne Umsetzung, Owner: „ausarbeiten, weiterhin keine Freigabe")
 
 ### Ziel
