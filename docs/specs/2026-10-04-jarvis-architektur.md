@@ -615,6 +615,24 @@ Sammeln kostet nur Home-Assistant-Abrufe (Messung 12.10.: Zuordnung 5,8 s, Verla
 - **H4** Vorschläge mit Entwurf und Klasse `bestaetigen`, Sicherung vor Änderung, Merken abgelehnter Vorschläge.
 - **H5** Musterbasierte Vorschläge (Handschaltungen, fehlende Ausschaltung) nach zwei Wochen Beobachtung.
 
+### Owner-Entscheidungen (12.10.2026, „ok wie empfohlen freigegeben")
+
+1. Umfang: H1 + H2, zwei Wochen beobachtend (nur Befunde, keine Vorgänge, keine Änderungen an Home Assistant); danach Entscheidung über H3–H5.
+2. Rhythmus: wöchentlich So 09:00, zusätzlich nach erkannten Änderungen der Zuordnung.
+3. Kanal: App + ein Satz auf Telegram. **Präzisiert nach Owner-Rückfrage („ist ein Gesprächsfaden die richtige Herangehensweise?")**: kein Faden, sondern **Befunde** (Schicht 3, Quelle `haus-check`) — Liste mit Zustand (neu/offen/erledigt, Wiederöffnen), in der Lage jedes Gesprächs, später per Einstellung mit Vorgang (H4). Native App-Ansicht „Befunde" für alle Quellen, der Haus-Check gruppiert nach Regel.
+4. Umbau bestehender Automationen: ja (neue vorschlagen + bestehende umbauen), immer mit Bestätigung und Sicherung; Löschen nur auf ausdrücklichen Auftrag (gilt ab H4).
+5. Grenzen: deaktiviert > 30 Tage, nicht ausgelöst > 30 Tage, nicht verfügbar > 7 Tage; Rauch/Wasser/Alarm bei „nicht ausgelöst" ausgenommen.
+6. Ausgenommen: EMS/Batterie/Pool, Netzwerk-LEDs, Diagnose.
+7. Lücken aus v1358 mitbeheben (Licht über Türkontakt, doppeltes Laden).
+
+### Umsetzungsstand
+
+- **v1359 (12.10.):** `skills/built-in/ha-pruefung.ts` (Regeln A1–A3, B1–B3, Ausnahmen inkl. Wiedergabe-Sitzungen und Batteriestände — die meldet „sensorbatterien"), Skill-Aktion `review`, `hausCheck()` mit Vollständigkeit (Abgleich nur nach vollständigem Lauf, sonst gälten Punkte fälschlich als erledigt), Deaktiviert-seit selbst beobachtet (HA hält ~10 Tage Verlauf), B1 aus dem Verlauf (HA-Neustart setzt last_changed zurück). Jobs `haus-check` (So 09:00, Slot) und `ha-zuordnung` (stündlich; Erstlauf einmalig über Slot ohne Datum, nach Änderungen je 6-h-Block). Lage bündelt den Haus-Check zu einer Zeile (sonst belegen 20–60 Punkte die 6 Plätze). Route `/api/geraete/befunde` (+ SITZUNG_PFADE). App 1.12.0: Ansicht „Befunde", Kachel-Zeile, Befehlspalette.
+- **Live-Probe 12.10. 00:52:** 51 Punkte, vollständig, 17 s (107 Automationen, 412 Entitäten mit Verlauf). Kalibriert: Emby-Sitzungen ausgenommen (Rauschen); „UniFi Network: 151 Regel-Schalter nicht verfügbar" bleibt als ein echter Befund.
+
 ### Offene Owner-Entscheidungen
 
+Nach der Beobachtungsphase (ab ~26.10.): H3–H5 freigeben? Bis dahin offen: welche Bereiche zusätzlich ausgenommen werden; ob Befunde des Haus-Checks Vorgänge erzeugen sollen.
+
+<!-- ursprünglicher Stand der offenen Fragen (12.10. vor der Entscheidung): -->
 Rhythmus (wöchentlich?) und Kanal (Bericht in der App, Telegram, nur Vorgänge?); ob Alfred bestehende Automationen umbauen darf (immer mit Bestätigung) oder nur neue vorschlägt; Grenze „lange deaktiviert" und „lange nicht ausgelöst" (Vorschlag 30 Tage); welche Räume/Bereiche ausgenommen sind (z. B. EMS/Batterie — eigene Spec); ob der Haus-Check auch die Netzwerkgeräte-LEDs und Diagnose-Entitäten ausblendet (Vorschlag: ja).
