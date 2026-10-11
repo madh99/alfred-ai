@@ -126,6 +126,26 @@ class AppUpdate {
   }
 }
 
+/// 1.8.0 — stille Updates (Owner-Freigabe 11.10., Punkt 10): installieren ohne Klick, aber nur wenn niemand die App
+/// gerade braucht — keine Antwort läuft, kein Zuhören/keine Aufnahme, keine Schnellfrage offen, das Fenster ist nicht im
+/// Vordergrund und seit `ruhe` (10 min) gab es keine Eingabe. Linux nie still (dpkg braucht das Passwort im Dialog).
+bool stillesUpdateErlaubt({
+  required bool eingeschaltet,
+  required bool plattformStill,
+  required bool antwortet,
+  required bool hoeren,
+  required bool aufnahme,
+  required bool schnellfrage,
+  required bool imVordergrund,
+  required DateTime letzteAktivitaet,
+  DateTime? jetzt,
+  Duration ruhe = const Duration(minutes: 10),
+}) {
+  if (!eingeschaltet || !plattformStill) return false;
+  if (antwortet || hoeren || aufnahme || schnellfrage || imVordergrund) return false;
+  return (jetzt ?? DateTime.now()).difference(letzteAktivitaet) >= ruhe;
+}
+
 /// Kleiner Sammler für die blockweise SHA-256 (crypto bietet keinen Stream-Sink).
 class AccumulatorSink<T> implements Sink<T> {
   final List<T> events = [];

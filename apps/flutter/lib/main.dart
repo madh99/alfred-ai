@@ -21,6 +21,7 @@ import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
 import 'suche.dart'; // 1.5.0
 import 'verlauf.dart'; // 1.5.0
+import 'warteschlange.dart'; // 1.8.0
 import 'einstellungen.dart';
 import 'hinweise.dart'; // 1.4.0
 import 'hoeren.dart';
@@ -186,7 +187,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       aufStatus: (s) {
         final wieder = s.verbunden && satellit?.verbunden != true; // 1.6.0 — nach Wiederverbinden verpasste Bestätigungen holen
         setState(() => satellit = s);
-        if (wieder) _holeBestaetigungen();
+        if (wieder) { _holeBestaetigungen(); _nachsenden(); } // 1.8.0 Warteschlange
       },
       aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
@@ -223,7 +224,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         // 1.6.0 — Punkt 11: neue Bestätigungen meldet der Satellit sofort (IPC „bestaetigung"); die Abfrage räumt nur noch
         // erledigte weg und fängt verpasste Meldungen auf — 30 s statt 4 s, zusätzlich beim Zurückholen des Fensters
         abfrage ??= Timer.periodic(const Duration(seconds: 30), (_) => _holeBestaetigungen());
-        if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); } // M6
+        if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); stillTakt ??= Timer.periodic(const Duration(minutes: 5), (_) => _stillPruefen()); } // M6; 1.8.0 still
+        if (erste && !warteschlange.leer) { _zeile(Eintrag(Art.hinweis, '⏳ ${warteschlange.eintraege.length} Nachricht(en) aus der letzten Sitzung warten auf das Nachsenden.')); _wartenStarten(); } // 1.8.0
         if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler
         if (erste) _faedenLaden(); // 1.2.0 Gespräche
         if (erste) _spiegelungLaden(); // 1.2.3
@@ -374,7 +376,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   }
 
   @override
-  void onWindowFocus() { sichtbar = true; _gesehenMerken(); _holeBestaetigungen(); }
+  void onWindowFocus() { sichtbar = true; fokussiert = true; letzteAktivitaet = DateTime.now(); _gesehenMerken(); _holeBestaetigungen(); }
+
+  @override
+  void onWindowBlur() { fokussiert = false; } // 1.8.0 — stilles Update nur, wenn die App nicht im Vordergrund ist
 
   @override
   void onWindowMinimize() { sichtbar = false; } // 1.5.0 — minimiert zählt wie ausgeblendet (Benachrichtigung, „neu")
@@ -881,6 +886,49 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     }
   }
 
+  // ── 1.8.0 Warteschlange (Punkt 9) und stille Updates (Punkt 10) ─────────────────────────────────────────────────
+  final Warteschlange warteschlange = Warteschlange.standard()..lade();
+  Timer? warteTakt;
+  bool _sendetNach = false;
+  Timer? stillTakt;
+  bool fokussiert = true;
+  DateTime letzteAktivitaet = DateTime.now();
+  bool stillUpdate = stillUpdateGespeichert();
+
+  void _wartenStarten() { warteTakt ??= Timer.periodic(const Duration(seconds: 15), (_) => _nachsenden()); }
+
+  /// Nächste wartende Nachricht des offenen Gesprächs senden (eine je Takt, in Reihenfolge).
+  Future<void> _nachsenden() async {
+    final s = server;
+    if (s == null || antwortet || _sendetNach || fundstelle != null || archiv != null) return;
+    for (final alt in warteschlange.verfallene()) {
+      _zeile(Eintrag(Art.hinweis, '⏳ Nicht nachgesendet (älter als 24 Stunden): „${alt.text.length > 80 ? '${alt.text.substring(0, 80)}…' : alt.text}“ — bitte bei Bedarf neu senden.'));
+    }
+    if (warteschlange.leer) { warteTakt?.cancel(); warteTakt = null; return; }
+    final w = warteschlange.naechster(s.faden);
+    if (w == null) return; // wartet in einem anderen Gespräch — wird dort nachgesendet, sobald es offen ist
+    _sendetNach = true;
+    try {
+      if (!verlauf.any((e) => e.art == Art.du && e.text == w.text)) _zeile(Eintrag(Art.du, w.text, zeit: w.zeit)); // nach App-Neustart wieder sichtbar
+      await _senden(text: w.text, nachsenden: w);
+    } finally { _sendetNach = false; }
+  }
+
+  /// Alle 5 Minuten: Update vorhanden und App unbenutzt → still installieren (Windows, macOS).
+  Future<void> _stillPruefen() async {
+    final u = update;
+    if (u == null || updateLaeuft) return;
+    final erlaubt = stillesUpdateErlaubt(
+      eingeschaltet: stillUpdate, plattformStill: Platform.isWindows || (Platform.isMacOS && AppUpdate.eigenesBundle() != null),
+      antwortet: antwortet, hoeren: hoeren, aufnahme: aufnahme, schnellfrage: schnell, imVordergrund: fokussiert && sichtbar,
+      letzteAktivitaet: letzteAktivitaet,
+    );
+    if (!erlaubt) return;
+    _protokolliere(Eintrag(Art.hinweis, '⬆ stilles Update auf ${u.version} (App seit ${DateTime.now().difference(letzteAktivitaet).inMinutes} min unbenutzt)'));
+    await server?.melde('Stilles Update $appVersion → ${u.version}', art: 'update', version: appVersion, plattform: Platform.operatingSystem);
+    await _updateInstallieren();
+  }
+
   // ── 1.7.0 Antwort abbrechen (Punkt 5) ──────────────────────────────────────────────────────────────────────────
   Vorleser? vorleserLaufend;
   bool abbruch = false;
@@ -897,7 +945,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   /// Sendet `text` (oder die Eingabezeile) und liefert den Endtext der Antwort.
   /// `sprechen`: Antwort satzweise vorlesen, sobald Sätze vollständig sind (erster Ton nach dem ersten Satz, nicht nach dem Ende).
-  Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit}) async {
+  Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit, Wartend? nachsenden}) async {
+    letzteAktivitaet = DateTime.now(); // 1.8.0
     var t = (text ?? eingabe.text).trim();
     final s = server;
     final mitAnhang = text == null && anhaenge.isNotEmpty;
@@ -953,6 +1002,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       if (laufend == null) { _zeile(Eintrag(Art.alfred, ende.isEmpty ? '(keine Antwort)' : ende)); }
       else { if (ende.trim().isNotEmpty && ende.trim() != gezeigt.trim()) setState(() => e.text = ende); _protokolliere(e); }
       ergebnis = ende.isNotEmpty ? ende : gezeigt;
+      if (nachsenden != null) { warteschlange.entferne(nachsenden); _protokolliere(Eintrag(Art.hinweis, '✓ nachgesendet: ${nachsenden.text.length > 60 ? nachsenden.text.substring(0, 60) : nachsenden.text}')); } // 1.8.0
       _faedenLaden(); // 1.2.0 — Titel/Zeit des Gesprächs in der Seitenleiste nachziehen
       if (vorleser != null && ergebnis.trim().isNotEmpty) {
         setState(() => fluechtig = '🔊 …');
@@ -963,6 +1013,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       if (abbruch) { // 1.7.0 — vom Owner abgebrochen: kein Fehler, das bisher Gezeigte bleibt mit Vermerk stehen
         if (laufend != null) setState(() => e.text = gezeigt.trim().isEmpty ? '⏹ Abgebrochen.' : '$gezeigt\n\n⏹ abgebrochen');
         else _zeile(Eintrag(Art.hinweis, '⏹ Abgebrochen.'));
+      } else if (laufend == null && istVerbindungsfehler(err) && t.trim().isNotEmpty) { // 1.8.0 — Punkt 9: nicht verlieren, nachsenden
+        if (nachsenden == null) {
+          warteschlange.hinzu(Wartend(text: t, faden: s.faden, tier: tierWahl));
+          _zeile(Eintrag(Art.hinweis, '⏳ Keine Verbindung zum Server — die Nachricht wird automatisch nachgesendet, sobald er wieder antwortet.'));
+        }
+        _wartenStarten();
       } else {
         _zeile(Eintrag(Art.fehler, 'Fehler: $err'));
       }
@@ -1105,6 +1161,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     s.faden = faden;
     setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; fundstelle = null; mehrAeltere = false; });
     await _holeVerlauf();
+    if (!warteschlange.leer) Future.microtask(_nachsenden); // 1.8.0
     if (verlauf.isEmpty && faden != null) _zeile(Eintrag(Art.hinweis, 'Neues Gespräch — was möchtest du besprechen?'));
     fokus.requestFocus();
   }
@@ -1400,6 +1457,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         if (update != null) FilledButton.tonalIcon(onPressed: updateLaeuft ? null : _updateInstallieren, icon: const Icon(Icons.system_update_alt, size: 18), label: Text(updateLaeuft ? 'läuft …' : 'Installieren')),
         if (update == null) OutlinedButton(onPressed: _updatePruefen, child: const Text('Nach Update suchen')),
       ])),
+      SwitchListTile(dense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 14), title: const Text('Updates still installieren'), subtitle: Text(Platform.isLinux ? 'Unter Linux nicht möglich — die Paketinstallation fragt nach dem Passwort.' : 'Wenn die App seit 10 Minuten nicht benutzt wird und nicht im Vordergrund ist (kein Zuhören, keine laufende Antwort).', style: theme.textTheme.bodySmall?.copyWith(color: dim)), value: stillUpdate && !Platform.isLinux, onChanged: Platform.isLinux ? null : (v) { setState(() => stillUpdate = v); stillUpdateSpeichern(v); }), // 1.8.0
     ]);
   }
 

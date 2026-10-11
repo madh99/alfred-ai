@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — App: Nachrichten bei Verbindungsabbruch zurückhalten (App 1.8.0)
+
+Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachricht nicht mehr als Fehler verloren: sie wartet in `~/.alfred/warteschlange.json` (übersteht einen App-Neustart) und wird nachgesendet, sobald der Server wieder antwortet — in ihrem Gespräch und in der Reihenfolge des Schreibens. Nach 24 Stunden verfällt sie mit Hinweis. Abgebrochene oder halb beantwortete Anfragen werden nie erneut gesendet.
+
+### Added — App: Updates still installieren (App 1.8.0)
+
+Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
+
 ## [0.19.0-jarvis.1352] - 2026-10-11
 
 ### Added — Antwort abbrechen (v1352, App 1.7.0)

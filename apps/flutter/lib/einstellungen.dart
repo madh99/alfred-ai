@@ -52,6 +52,10 @@ void wortLokalSpeichern(bool an) { final j = _lesen(); j['wortLokal'] = an; _sch
 DateTime? gesehenGespeichert() => DateTime.tryParse('${_lesen()['gesehen'] ?? ''}');
 void gesehenSpeichern(DateTime t) { final j = _lesen(); j['gesehen'] = t.toUtc().toIso8601String(); _schreiben(j); }
 
+/// 1.8.0 — Updates still installieren, wenn die App nicht benutzt wird (Standard an; Linux immer mit Klick).
+bool stillUpdateGespeichert() => _lesen()['stillUpdate'] != false;
+void stillUpdateSpeichern(bool an) { final j = _lesen(); j['stillUpdate'] = an; _schreiben(j); }
+
 /// Helle und dunkle Variante aus einem Samen — Aufbau wie die Vorlage des Owners (ruhige Flächen, blaue Akzente).
 ThemeData alfredTheme(Brightness b) {
   final base = ThemeData(brightness: b, colorSchemeSeed: const Color(0xFF3B6FD8), useMaterial3: true);
