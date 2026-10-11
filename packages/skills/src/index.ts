@@ -53,6 +53,7 @@ export type { ImageGeneratorInterface } from './built-in/image-generate.js';
 export { ProxmoxSkill } from './built-in/proxmox.js';
 export { UniFiSkill } from './built-in/unifi.js';
 export { HomeAssistantSkill } from './built-in/home-assistant.js';
+export { pruefSatz, type PruefBefund } from './built-in/ha-pruefung.js'; // v1359 Haus-Check
 export { ContactsSkill, ContactsProvider, createContactsProvider } from './built-in/contacts/index.js';
 export type { Contact, CreateContactInput } from './built-in/contacts/index.js';
 export { TodoSkill } from './built-in/todo.js';

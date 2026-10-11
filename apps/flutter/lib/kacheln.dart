@@ -8,7 +8,9 @@ import 'vorgaenge.dart'; // 1.9.0 A4
 /// Meilenstein 3 — Kacheln nativ (Owner-Entscheidung 08.10. „nativ"): Lage, Befunde, Vorgänge und Geräte aus den
 /// JSON-Routen, die das Gerätetoken lesen darf (`/api/lebenszeichen`, `/api/vorgaenge`). Kein Webview, kein API-Token.
 class Kacheln extends StatefulWidget {
-  const Kacheln({super.key, required this.server, this.aufHinweis, this.aufMeldung, this.aufNachfragen});
+  const Kacheln({super.key, required this.server, this.aufHinweis, this.aufMeldung, this.aufNachfragen, this.aufBefunde});
+  /// 1.12.0 — Sprung in die Ansicht „Befunde" (mit Quellenfilter)
+  final void Function(String? quelle)? aufBefunde;
   final Server server;
   /// 1.9.0 A4 — Ergebnis einer Vorgangs-Entscheidung; Nachfragen springt mit vorbereiteter Frage in den Chat.
   final void Function(String)? aufMeldung;
@@ -67,7 +69,10 @@ class _KachelnState extends State<Kacheln> {
     if (leben == null && fehler == null) return const Center(child: CircularProgressIndicator());
     final l = leben ?? {};
     final lage = (l['lage'] as Map<String, dynamic>?)?['text'] as String? ?? '(keine Lage)';
-    final befunde = ((l['befunde'] as Map<String, dynamic>?)?['offen'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    final alleBefunde = ((l['befunde'] as Map<String, dynamic>?)?['offen'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    // 1.12.0 — Haus-Check gebündelt: 20–60 Punkte würden die Kachel füllen; eine Zeile mit Sprung in die Ansicht „Befunde"
+    final hausCheck = alleBefunde.where((b) => b['quelle'] == 'haus-check').length;
+    final befunde = alleBefunde.where((b) => b['quelle'] != 'haus-check').toList();
     final geraete = ((l['geraete'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
     final puls = ((l['puls'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
     final kosten = l['kosten'] as Map<String, dynamic>?;
@@ -75,7 +80,8 @@ class _KachelnState extends State<Kacheln> {
     final breit = MediaQuery.of(context).size.width >= 900;
     final kacheln = <Widget>[
       _kachel(theme, 'Lage', Icons.radar, child: SelectableText(lage.replaceFirst(RegExp(r'^###\s*'), ''), style: theme.textTheme.bodyMedium), fuss: stand == null ? null : 'Stand ${_zeit(stand!)}${kosten != null ? ' · heute ${_kosten(kosten)}' : ''}'),
-      _kachel(theme, 'Befunde (${befunde.length})', Icons.report_problem_outlined, child: befunde.isEmpty ? const Text('Keine offenen Befunde.') : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _kachel(theme, 'Befunde (${alleBefunde.length})', Icons.report_problem_outlined, child: alleBefunde.isEmpty ? const Text('Keine offenen Befunde.') : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (hausCheck > 0) InkWell(onTap: widget.aufBefunde == null ? null : () => widget.aufBefunde!('haus-check'), child: Padding(padding: const EdgeInsets.only(bottom: 6), child: Text('• [Haus-Check] $hausCheck Punkte — öffnen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)))),
         for (final b in befunde.take(12)) Padding(padding: const EdgeInsets.only(bottom: 6), child: Text('• [${b['quelle'] ?? '?'}] ${b['titel'] ?? ''}', style: theme.textTheme.bodySmall)),
         if (befunde.length > 12) Text('… +${befunde.length - 12} weitere', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
       ])),

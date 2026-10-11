@@ -248,6 +248,7 @@ export interface GeraetOwnerAnsichten {
   gedaechtnisAendern(id: string, text: unknown): Promise<boolean>;
   gedaechtnisLoeschen(id: string): Promise<boolean>;
   vorgangEntscheiden(id: string, status: unknown, notiz: unknown): Promise<{ titel: string } | null>;
+  befunde(): Promise<unknown>; // v1359
 }
 
 export class HttpAdapter extends MessagingAdapter {
@@ -1964,7 +1965,7 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetHinweise(req, res).catch(err => this.safeError(res, err)); // v1343
     } else if (/^\/api\/geraete\/hinweise\/[A-Za-z0-9-]{1,64}$/.test(url.pathname) && req.method === 'POST') {
       this.handleGeraetHinweisEntscheiden(req, res, url).catch(err => this.safeError(res, err)); // v1343
-    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) {
+    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) {
       this.handleGeraetOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1353
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
@@ -6860,6 +6861,7 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'gedaechtnis' && !id && m === 'GET') { antwort(200, await a.gedaechtnis({ typ: url.searchParams.get('typ') || undefined, q: url.searchParams.get('q')?.slice(0, 200) || undefined })); return; }
       if (bereich === 'gedaechtnis' && id && m === 'POST') { const ok = await a.gedaechtnisAendern(id, body.text); antwort(ok ? 200 : 404, { ok }); return; }
       if (bereich === 'gedaechtnis' && id && m === 'DELETE') { const ok = await a.gedaechtnisLoeschen(id); antwort(ok ? 200 : 404, { ok }); return; }
+      if (bereich === 'befunde' && !id && m === 'GET') { antwort(200, await a.befunde()); return; } // v1359
       if (bereich === 'vorgaenge' && id && m === 'POST') { const v = await a.vorgangEntscheiden(id, body.status, body.notiz); antwort(v ? 200 : 404, v ? { ok: true, titel: v.titel } : { error: 'nicht gefunden' }); return; }
     } catch (err) { antwort(400, { error: (err as Error).message }); return; }
     antwort(405, { error: 'Methode nicht erlaubt' });

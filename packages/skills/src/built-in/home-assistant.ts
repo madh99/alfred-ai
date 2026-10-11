@@ -2,6 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult, HomeAssistantConfig } fr
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { Skill } from '../skill.js';
+import { pruefe, pruefText, istAusgenommen, GRENZEN, type PruefBefund, type EntitaetZustand } from './ha-pruefung.js';
 import { baueZuordnung, bezuegeAus, zuordnungsAenderungen, zuordnungsZeilen, steuerndeAutomationen, type HaZuordnung, type AutoQuelle, type EntitaetInfo } from './ha-zuordnung.js';
 import { werteAus, ursachenAus, berichtText, anJeTag, zeitText, type HaZustand, type EntitaetsBericht, type LogbuchEintrag, type Fenster } from './ha-verlauf.js';
 
@@ -37,7 +38,8 @@ type Action =
   | 'briefing_summary'
   | 'energy_stats'
   | 'history_summary'
-  | 'relations';
+  | 'relations'
+  | 'review';
 
 function parsePeriod(period: string): string {
   const m = period.match(/^(\d+)\s*(h|d|m|w)$/i);
@@ -70,6 +72,11 @@ interface ZuordnungsStand {
   geladen: number;
   bereiche: Map<string, { raum?: string; geraet?: string }>;
   aenderungen: Array<{ zeit: string; text: string }>;
+  /** v1359 — Automation → erstmals deaktiviert gesehen (Home Assistant hält nur ~10 Tage Verlauf) */
+  deaktiviertSeit: Record<string, string>;
+  beobachtetSeit: string;
+  /** v1359 — Änderungen, die beim letzten Laden neu erkannt wurden */
+  neu: string[];
 }
 const ZUORDNUNG_MAX_ALTER_MS = 30 * 60_000;
 
@@ -77,12 +84,12 @@ const ZUORDNUNG_MAX_ALTER_MS = 30 * 60_000;
 function suchText(id: string, zustaende: Map<string, any>, stand?: ZuordnungsStand): string {
   const b = stand?.bereiche.get(id);
   const steuernd = stand ? steuerndeAutomationen(stand.z, id) : [];
-  // Regel: ein Schalter/Licht, das eine Automation auf Auslösung eines Bewegungsmelders schaltet, gilt als Licht
-  // (Realfall: „SpeisskuecheON", „AbstellkammerlON" schalten Licht, ohne „Licht" im Namen)
+  // Regel: ein Schalter/Licht, das eine Automation auf Auslösung eines Bewegungsmelders oder Tür-/Fensterkontakts schaltet,
+  // gilt als Licht (Realfall: „SpeisskuecheON" über Türkontakt, „AbstellkammerlON" — Licht ohne „Licht" im Namen)
   const bewegung = /^(switch|light)\./.test(id) && steuernd.some((a) => a.ausloeser.some((t) => BEWEGUNGSMELDER.has(String(zustaende.get(t)?.attributes?.device_class ?? ''))));
   return [id, zustaende.get(id)?.attributes?.friendly_name ?? '', b?.raum ?? '', b?.geraet ?? '', ...steuernd.map((a) => a.name), bewegung ? 'bewegungslicht' : ''].join(' ').toLowerCase();
 }
-const BEWEGUNGSMELDER = new Set(['occupancy', 'motion', 'presence', 'moving']);
+const BEWEGUNGSMELDER = new Set(['occupancy', 'motion', 'presence', 'moving', 'door', 'window', 'opening', 'garage_door']); // v1359 Kontakte
 
 /** Ab dieser Länge kürzt die Pipeline Werkzeugergebnisse in der Mitte (message-pipeline MAX_TOOL_RESULT_CHARS). */
 const KUERZUNG_AB = 11_000;
@@ -113,7 +120,9 @@ export class HomeAssistantSkill extends Skill {
       'optional compareWith = window directly before (e.g. period "3d", compareWith "7d"). Do not recompute its numbers. ' +
       'match also checks area, device name and the names of automations switching the entity (e.g. match "licht" finds switch.shelly… switched by automation „Licht Eingang"). ' +
       '"relations" — which motion sensor triggers which automation switching which light/switch, read live from the automation configs (entities/entityId/area/match; ' +
-      'without filter: overview of broken references, deactivated automations and recent changes such as replaced sensors). Use it instead of guessing or reading configs via ssh.',
+      'without filter: overview of broken references, deactivated automations and recent changes such as replaced sensors). Use it instead of guessing or reading configs via ssh. ' +
+      '"review" — Haus-Check: checks the whole Home Assistant setup by fixed rules (broken references, automations not triggered for 30 days or disabled for 30 days, ' +
+      'devices unavailable for 7 days, silent motion sensors, frozen values, unstable connections). Read-only; the weekly check stores the results as findings (Befunde).',
     riskLevel: 'write',
     version: '2.1.0',
     inputSchema: {
@@ -154,6 +163,7 @@ export class HomeAssistantSkill extends Skill {
             'energy_stats',
             'history_summary',
             'relations',
+            'review',
           ],
           description: 'The Home Assistant action to perform',
         },
@@ -250,6 +260,7 @@ export class HomeAssistantSkill extends Skill {
   /** v1358 — von alfred.ts gesetzt (Logzeilen „v1358 HA-Zuordnung …") */
   logger?: { info: (obj: Record<string, unknown>, msg: string) => void };
   private zuordnungStand?: ZuordnungsStand;
+  private zuordnungLaeuft?: Promise<ZuordnungsStand>;
   private readonly zuordnungDatei: string;
 
   constructor(config: HomeAssistantConfig, optionen?: { zuordnungDatei?: string }) {
@@ -364,6 +375,10 @@ export class HomeAssistantSkill extends Skill {
           return await this.getHistorySummary(input);
         case 'relations':
           return await this.getRelations(input);
+        case 'review': {
+          const c = await this.hausCheck();
+          return { success: true, data: { punkte: c.befunde.length, vollstaendig: c.vollstaendig }, display: c.text };
+        }
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
       }
@@ -723,9 +738,15 @@ export class HomeAssistantSkill extends Skill {
    * v1358 — Zuordnung aus den Automations-Konfigurationen, höchstens alle 30 min neu gelesen; Vergleich mit dem
    * letzten Stand (auch über Neustarts, Datei unter data/) → Änderungsprotokoll (Sensortausch, Stilllegung, Umbau).
    */
-  private async ladeZuordnung(alle: any[], zwingend = false): Promise<ZuordnungsStand> {
+  private ladeZuordnung(alle: any[], zwingend = false): Promise<ZuordnungsStand> {
+    if (!zwingend && this.zuordnungStand && Date.now() - this.zuordnungStand.geladen < ZUORDNUNG_MAX_ALTER_MS) return Promise.resolve(this.zuordnungStand);
+    // v1359 — gleichzeitige Erstabrufe teilen sich einen Ladevorgang (Realfall 12.10.: zwei parallele Aufrufe luden doppelt)
+    if (!this.zuordnungLaeuft) this.zuordnungLaeuft = this.ladeZuordnungJetzt(alle).finally(() => { this.zuordnungLaeuft = undefined; });
+    return this.zuordnungLaeuft;
+  }
+
+  private async ladeZuordnungJetzt(alle: any[]): Promise<ZuordnungsStand> {
     const jetzt = Date.now();
-    if (!zwingend && this.zuordnungStand && jetzt - this.zuordnungStand.geladen < ZUORDNUNG_MAX_ALTER_MS) return this.zuordnungStand;
 
     const info = new Map<string, EntitaetInfo>(alle.map((e) => [String(e.entity_id), { state: String(e.state), deviceClass: e.attributes?.device_class, name: e.attributes?.friendly_name }]));
     const domains = new Set([...info.keys()].map((e) => e.split('.')[0]));
@@ -763,11 +784,21 @@ export class HomeAssistantSkill extends Skill {
     const z = baueZuordnung(quellen, geraete, info);
     let vorher = this.zuordnungStand?.z;
     let aenderungen = this.zuordnungStand?.aenderungen ?? [];
+    let deaktiviertSeit = { ...(this.zuordnungStand?.deaktiviertSeit ?? {}) };
+    let beobachtetSeit = this.zuordnungStand?.beobachtetSeit;
     if (!vorher) {
       try {
-        const d = JSON.parse(await fsp.readFile(this.zuordnungDatei, 'utf8')) as { zuordnung?: HaZuordnung; aenderungen?: Array<{ zeit: string; text: string }> };
-        vorher = d.zuordnung; aenderungen = d.aenderungen ?? [];
+        const d = JSON.parse(await fsp.readFile(this.zuordnungDatei, 'utf8')) as { zuordnung?: HaZuordnung; aenderungen?: Array<{ zeit: string; text: string }>; deaktiviertSeit?: Record<string, string>; beobachtetSeit?: string };
+        vorher = d.zuordnung; aenderungen = d.aenderungen ?? []; deaktiviertSeit = d.deaktiviertSeit ?? {}; beobachtetSeit = d.beobachtetSeit;
       } catch { /* erster Lauf */ }
+    }
+    // v1359 — Deaktiviert-seit selbst beobachten: erstes Sehen merken, bei Aktivierung/Entfernen vergessen
+    beobachtetSeit ??= z.stand;
+    const vorhanden = new Set(z.automationen.map((a) => a.entityId));
+    for (const k of Object.keys(deaktiviertSeit)) if (!vorhanden.has(k)) delete deaktiviertSeit[k];
+    for (const a of z.automationen) {
+      if (a.aktiv) delete deaktiviertSeit[a.entityId];
+      else deaktiviertSeit[a.entityId] ??= z.stand;
     }
     const neu = vorher ? zuordnungsAenderungen(vorher, z) : [];
     if (neu.length > 0) {
@@ -782,10 +813,77 @@ export class HomeAssistantSkill extends Skill {
     }, 'v1358 HA-Zuordnung geladen');
     try {
       await fsp.mkdir(path.dirname(this.zuordnungDatei), { recursive: true });
-      await fsp.writeFile(this.zuordnungDatei, JSON.stringify({ zuordnung: z, aenderungen }));
+      await fsp.writeFile(this.zuordnungDatei, JSON.stringify({ zuordnung: z, aenderungen, deaktiviertSeit, beobachtetSeit }));
     } catch { /* nur Komfort: Vergleich über Neustarts */ }
-    this.zuordnungStand = { z, geladen: jetzt, bereiche, aenderungen };
+    this.zuordnungStand = { z, geladen: jetzt, bereiche, aenderungen, deaktiviertSeit, beobachtetSeit, neu };
     return this.zuordnungStand;
+  }
+
+  /** v1359 — für den stündlichen Job: Zuordnung frisch lesen; Rückgabe = neu erkannte Änderungen. */
+  async aktualisiereZuordnung(): Promise<string[]> {
+    const alle = await this.api<any[]>('GET', '/api/states');
+    return (await this.ladeZuordnung(alle, true)).neu;
+  }
+
+  /**
+   * v1359 — Haus-Check (Spec H1/H2): Daten sammeln, Regeln anwenden. `vollstaendig` nur, wenn jeder Abruf gelang —
+   * nur dann darf der Job den Befund-Abgleich machen (sonst gälten fehlende Punkte fälschlich als erledigt).
+   */
+  async hausCheck(): Promise<{ befunde: PruefBefund[]; vollstaendig: boolean; text: string }> {
+    const tz = ortsZeitzone();
+    const jetzt = Date.now();
+    const alle = await this.api<any[]>('GET', '/api/states');
+    const stand = await this.ladeZuordnung(alle);
+    const zustaende = new Map<string, EntitaetZustand>(alle.map((e) => [String(e.entity_id), { state: String(e.state), lastChanged: e.last_changed, deviceClass: e.attributes?.device_class, name: e.attributes?.friendly_name }]));
+    const ausgenommen = (id: string) => istAusgenommen(id, zustaende.get(id)?.name ?? '');
+
+    const nichtVerfuegbar = new Set(alle.filter((e) => e.state === 'unavailable' && !ausgenommen(String(e.entity_id))).map((e) => String(e.entity_id)));
+    const melder = new Set(alle.filter((e) => String(e.entity_id).startsWith('binary_sensor.') && ['occupancy', 'motion', 'presence', 'moving'].includes(e.attributes?.device_class) && !ausgenommen(String(e.entity_id))).map((e) => String(e.entity_id)));
+    const beteiligt = new Set(stand.z.automationen.flatMap((a) => [...a.ausloeser, ...a.ziele]).filter((id) => /^(switch|light|binary_sensor|cover|fan)\./.test(id) && zustaende.has(id) && !ausgenommen(id)));
+    const ids = [...new Set([...nichtVerfuegbar, ...melder, ...beteiligt])];
+
+    const fenster: Fenster = { von: jetzt - GRENZEN.nichtVerfuegbarTage * 86_400_000, bis: jetzt };
+    const startIso = new Date(fenster.von).toISOString();
+    const endeIso = encodeURIComponent(new Date(jetzt).toISOString());
+    const reihen = new Map<string, HaZustand[]>();
+    let vollstaendig = true;
+    const hinweise: string[] = [];
+    for (let i = 0; i < ids.length; i += 60) {
+      const block = ids.slice(i, i + 60).map(encodeURIComponent).join(',');
+      try {
+        const data = await this.api<any[][]>('GET', `/api/history/period/${startIso}?filter_entity_id=${block}&end_time=${endeIso}&minimal_response&no_attributes`);
+        for (const reihe of data ?? []) {
+          if (!Array.isArray(reihe) || reihe.length === 0) continue;
+          reihen.set(String(reihe[0].entity_id), reihe.map((x) => ({ state: String(x.state), last_changed: String(x.last_changed ?? x.last_updated) })));
+        }
+      } catch (err) {
+        vollstaendig = false;
+        hinweise.push(`Hinweis: Verlauf teilweise nicht lesbar (${err instanceof Error ? err.message.slice(0, 100) : String(err)}) — B1–B3 unvollständig.`);
+      }
+    }
+
+    const langNichtVerfuegbar = new Set<string>();
+    const nieAusgeloest = new Set<string>();
+    const aussetzerJeTag = new Map<string, number>();
+    const tage = (fenster.bis - fenster.von) / 86_400_000;
+    for (const id of ids) {
+      const reihe = reihen.get(id);
+      if (!reihe) continue;
+      const a = werteAus(reihe, fenster, tz);
+      const voll = a.datenAb <= fenster.von; // Verlauf deckt das ganze Fenster ab
+      if (nichtVerfuegbar.has(id) && voll && a.unverfuegbar >= 0.99 * (fenster.bis - fenster.von)) langNichtVerfuegbar.add(id);
+      if (melder.has(id) && voll && a.werte.art === 'zustand' && !a.werte.dauer.on && !langNichtVerfuegbar.has(id)) nieAusgeloest.add(id);
+      if ((beteiligt.has(id) || melder.has(id)) && a.aussetzer > 0) aussetzerJeTag.set(id, a.aussetzer / tage);
+    }
+
+    const befunde = pruefe({
+      jetzt, tz, zuordnung: stand.z, zustaende, bereiche: stand.bereiche,
+      deaktiviertSeit: stand.deaktiviertSeit, beobachtetSeit: stand.beobachtetSeit,
+      langNichtVerfuegbar, nieAusgeloest, aussetzerJeTag,
+    });
+    this.logger?.info({ punkte: befunde.length, vollstaendig, verlauf: ids.length, nichtVerfuegbar: langNichtVerfuegbar.size, stumm: nieAusgeloest.size }, 'v1359 Haus-Check gelaufen');
+    const text = pruefText(befunde, { tz, jetzt, deaktiviert: stand.z.automationen.filter((a) => !a.aktiv).length, beobachtetSeit: stand.beobachtetSeit, hinweise });
+    return { befunde, vollstaendig, text };
   }
 
   /** v1358 — Zuordnung Melder → Automation → Schalter, kaputte Verweise, Änderungen. Nur lesend. */

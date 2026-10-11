@@ -123,3 +123,19 @@ describe('OwnerAnsichten — Vorgänge', () => {
     await expect(a.vorgangEntscheiden('v1', 'loeschen', undefined)).rejects.toThrow('status');
   });
 });
+
+describe('OwnerAnsichten — Befunde (v1359)', () => {
+  it('offen und erledigt, Regel aus dem Haus-Check-Schlüssel, ohne Quelle leer', async () => {
+    const { OwnerAnsichten } = await import('../geraete/owner-ansichten.js');
+    const b = (x: Partial<import('../geraete/owner-ansichten.js').BefundLike>) => ({ id: 'b', quelle: 'haus-check', gegenstand: 'B2:binary_sensor.wk', titel: 'Melder stumm', entstanden: '2026-10-12T00:00:00Z', zuletztGesehen: '2026-10-12T01:00:00Z', gesehenAnzahl: 2, ...x });
+    const a = new OwnerAnsichten({
+      owner: 'o', todos: {} as never, erinnerungen: {} as never, db: {} as never, vorgangEntscheiden: async () => null,
+      befunde: async () => ({ offen: [b({}), b({ id: 'c', quelle: 'infra', gegenstand: 'unifi:ac-mesh', vorgangId: 'v' })], erledigt: [b({ id: 'd', erledigtAm: '2026-10-12T02:00:00Z' })] }),
+    });
+    const r = await a.befunde();
+    expect(r.offen.map(x => [x.quelle, x.regel, x.vorgang])).toEqual([['haus-check', 'B2', false], ['infra', undefined, true]]);
+    expect(r.erledigt[0]).toMatchObject({ id: 'd', erledigt: '2026-10-12T02:00:00Z', anzahl: 2 });
+    const leer = new OwnerAnsichten({ owner: 'o', todos: {} as never, erinnerungen: {} as never, db: {} as never, vorgangEntscheiden: async () => null });
+    expect(await leer.befunde()).toEqual({ offen: [], erledigt: [] });
+  });
+});

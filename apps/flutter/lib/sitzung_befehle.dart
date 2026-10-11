@@ -10,6 +10,8 @@ extension _Befehle on _SitzungState {
       Befehl(titel: 'Hinweise', untertitel: hinweiseOffen == 0 ? null : '$hinweiseOffen offen', icon: Icons.lightbulb_outline, stichworte: 'insights', aktion: (_) => zeige(Ansicht.hinweise)),
       Befehl(titel: 'Aufgaben & Erinnerungen', untertitel: aufgabenFaelligZahl == 0 ? null : '$aufgabenFaelligZahl heute oder überfällig', icon: Icons.checklist, stichworte: 'todo todos erinnerung reminder', aktion: (_) => zeige(Ansicht.aufgaben)),
       Befehl(titel: 'Gedächtnis', untertitel: 'was Alfred über dich weiß', icon: Icons.psychology_outlined, stichworte: 'memory erinnerungen wissen fakten', aktion: (_) => zeige(Ansicht.gedaechtnis)),
+      Befehl(titel: 'Befunde', untertitel: 'was Alfred als auffällig führt', icon: Icons.report_problem_outlined, stichworte: 'auffallig probleme warnungen', aktion: (_) { befundeFilter = null; zeige(Ansicht.befunde); }), // 1.12.0
+      Befehl(titel: 'Haus-Check', untertitel: 'Home Assistant nach festen Regeln geprüft', icon: Icons.home_work_outlined, stichworte: 'home assistant automationen gerate melder hauscheck', aktion: (_) { befundeFilter = 'haus-check'; zeige(Ansicht.befunde); }), // 1.12.0
       Befehl(titel: 'Suche im Verlauf', icon: Icons.search, stichworte: 'finden', aktion: (_) => zeige(Ansicht.suche)),
       Befehl(titel: 'Anhänge', untertitel: 'Fotos und Dateien', icon: Icons.photo_library_outlined, stichworte: 'galerie bilder dateien', aktion: (_) => zeige(Ansicht.anhaenge)),
       Befehl(titel: 'Einstellungen', icon: Icons.settings_outlined, stichworte: 'optionen', aktion: (_) => zeige(Ansicht.einstellungen)),

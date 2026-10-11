@@ -17,6 +17,9 @@ interface TodoLike { id: string; userId: string; list: string; title: string; de
 interface ReminderLike { id: string; userId: string; message: string; triggerAt: string; fired: boolean }
 interface MemoryRow { id: string; user_id: string; key: string; value: string; type: string; source: string; updated_at: string }
 
+export interface BefundLike { id: string; quelle: string; gegenstand: string; titel: string; detail?: string; entstanden: string; zuletztGesehen: string; erledigtAm?: string; gesehenAnzahl: number; vorgangId?: string }
+export interface BefundZeile { id: string; quelle: string; regel?: string; titel: string; detail?: string; entstanden: string; zuletzt: string; erledigt?: string; anzahl: number; vorgang: boolean }
+
 export interface OwnerAnsichtenDeps {
   owner: string;
   todos: {
@@ -30,6 +33,8 @@ export interface OwnerAnsichtenDeps {
   erinnerungen: { getByUser(userId: string): Promise<ReminderLike[]>; getById(id: string): Promise<ReminderLike | undefined>; cancel(id: string): Promise<boolean> };
   db: { query(sql: string, params: unknown[]): Promise<unknown[]>; execute(sql: string, params: unknown[]): Promise<{ changes: number }> };
   vorgangEntscheiden(userId: string, id: string, status: 'erledigt' | 'verworfen', notiz?: string): Promise<{ titel: string } | null>;
+  /** v1359 — Befunde (Schicht 3) des Owners: offene und kürzlich erledigte */
+  befunde?: () => Promise<{ offen: BefundLike[]; erledigt: BefundLike[] }>;
   jetzt?: () => Date;
   /** Jede Änderung aus der App ins Server-Log (Beweis, Schicht-4-Signal). */
   protokoll?: (was: string, daten: Record<string, unknown>) => void;
@@ -119,6 +124,17 @@ export class OwnerAnsichten {
     const r = await this.d.db.execute('DELETE FROM memories WHERE id = ? AND user_id = ?', [id, this.d.owner]);
     if (r.changes > 0) this.d.protokoll?.('Gedächtnis gelöscht', { id });
     return r.changes > 0;
+  }
+
+  /** v1359 — Befunde für die App: offen (älteste zuerst) und in den letzten 7 Tagen erledigt; Regel aus dem Schlüssel (Haus-Check „A1:…"). */
+  async befunde(): Promise<{ offen: BefundZeile[]; erledigt: BefundZeile[] }> {
+    if (!this.d.befunde) return { offen: [], erledigt: [] };
+    const b = await this.d.befunde();
+    const zeile = (x: BefundLike): BefundZeile => ({
+      id: x.id, quelle: x.quelle, regel: /^[A-Z]\d:/.test(x.gegenstand) ? x.gegenstand.slice(0, 2) : undefined, titel: x.titel, detail: x.detail,
+      entstanden: x.entstanden, zuletzt: x.zuletztGesehen, erledigt: x.erledigtAm, anzahl: x.gesehenAnzahl, vorgang: !!x.vorgangId,
+    });
+    return { offen: b.offen.map(zeile), erledigt: b.erledigt.map(zeile) };
   }
 
   async vorgangEntscheiden(id: string, status: unknown, notiz: unknown): Promise<{ titel: string } | null> {

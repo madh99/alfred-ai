@@ -21,6 +21,7 @@ import 'aufgaben.dart'; // 1.9.0
 import 'befehle.dart'; // 1.10.0
 import 'fremde_arbeit.dart'; // 1.11.0
 import 'gedaechtnis.dart'; // 1.9.0
+import 'befunde.dart'; // 1.12.0
 import 'vorgaenge.dart'; // 1.9.0
 import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
@@ -149,6 +150,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool aufnahme = false;
   bool sichtbar = true;
   bool kachelnOffen = false; // Meilenstein 3 — Kacheln nativ statt Webview
+  String? befundeFilter; // 1.12.0 — Startfilter der Ansicht „Befunde" (z. B. 'haus-check' aus der Kachel)
   /// 1.1.0 — Redesign Stufe 1: Symbolleiste links (Chat, Lage, Bestätigungen, Einstellungen), einklappbare Seitenleiste,
   /// Chat mittig mit Datumstrennern, Eingabekarte mit Stufenwahl.
   Ansicht ansicht = Ansicht.chat;
@@ -401,9 +403,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         const VerticalDivider(width: 1),
         Expanded(child: switch (ansicht) {
           Ansicht.hinweise => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Hinweise(server: server!, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAnzahl: (n) { if (mounted && n != hinweiseOffen) setState(() => hinweiseOffen = n); }, aufNachfragen: (text) { setState(() { bezug = Eintrag(Art.alfred, text); ansicht = Ansicht.chat; }); fokus.requestFocus(); }), // 1.4.0
-          Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufMeldung: (t) { _protokolliere(Eintrag(Art.hinweis, t)); _vorgaengeLaden(); }, aufNachfragen: _nachfragen),
+          Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufMeldung: (t) { _protokolliere(Eintrag(Art.hinweis, t)); _vorgaengeLaden(); }, aufNachfragen: _nachfragen, aufBefunde: (q) => setState(() { befundeFilter = q; ansicht = Ansicht.befunde; })),
           Ansicht.aufgaben => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Aufgaben(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufStand: _aufgabenStand), // 1.9.0 A1
           Ansicht.gedaechtnis => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Gedaechtnis(json: server!.json, aufMeldung: (t) => _protokolliere(Eintrag(Art.hinweis, t))), // 1.9.0 A3
+          Ansicht.befunde => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Befunde(key: ValueKey(befundeFilter), json: server!.json, aufNachfragen: _nachfragen, anfang: befundeFilter), // 1.12.0
           Ansicht.suche => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Suche(json: server!.json, aufOeffnen: _fundstelleOeffnen, anfang: letzteSuche, aufAnfrage: (q) => letzteSuche = q), // 1.5.0
           Ansicht.anhaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Galerie(json: server!.json, lade: server!.anhang, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufGespraech: _fadenWechseln), // 1.5.0
           Ansicht.einstellungen => _einstellungen(theme),

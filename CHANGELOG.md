@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — App: Ansicht „Befunde" (App 1.12.0)
+
+Neue native Ansicht für alles, was Alfred als auffällig führt — gruppiert nach Quelle, der Haus-Check nach seinen Regeln. Jeder Befund zeigt Dauer, Häufigkeit und auf Klick die Begründung mit Hinweis; „Nachfragen" springt mit Bezug in den Chat. Erledigte Befunde der letzten 7 Tage lassen sich aufklappen. In der Kachel „Befunde" erscheint der Haus-Check als eine Zeile mit Sprung in die Ansicht; die Befehlspalette kennt „Befunde" und „Haus-Check".
+
 ### Fixed — App: Beschriftungen (App 1.11.1)
 
 Das Gedächtnis kennzeichnet ausdrücklich gespeicherte Einträge als „ausdrücklich gemerkt" statt „von dir" — meist hat Alfred sie im Chat selbst gespeichert. Die Leiste „Alfred arbeitet" nennt Fäden ohne eigenen Titel nicht mehr doppelt („Gespräch „Gespräch …"").
@@ -32,6 +36,27 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 ### Added — App: Updates still installieren (App 1.8.0)
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
+
+## [0.19.0-jarvis.1359] - 2026-10-12
+
+### Added — Haus-Check: Home Assistant nach festen Regeln prüfen (v1359)
+
+Alfred prüft die Home-Assistant-Umgebung als Ganzes — zunächst beobachtend: Er legt Befunde an, ändert aber nichts an Home Assistant und erzeugt keine Vorgänge. Die Regeln laufen im Code, ohne Modell:
+
+- **A1** Automation verweist auf eine fehlende Entität oder ein fehlendes Gerät (z. B. nach einem Sensortausch)
+- **A2** Automation aktiv, aber seit über 30 Tagen nicht ausgelöst — mit dem Zustand ihres Auslösers; Alarm-, Rauch- und Wasser-Automationen ausgenommen
+- **A3** Automation seit über 30 Tagen deaktiviert — Alfred beobachtet die Dauer selbst, weil Home Assistant nur etwa 10 Tage Verlauf hält
+- **B1** Gerät seit über 7 Tagen nicht verfügbar, je Gerät gebündelt, aus dem Verlauf statt aus „zuletzt geändert" (ein Neustart von Home Assistant setzt das zurück)
+- **B2** Bewegungsmelder 7 Tage nie ausgelöst, Temperatur oder Luftfeuchte 48 Stunden unverändert
+- **B3** Verbindung instabil (mindestens 5 kurze Aussetzer pro Tag)
+
+Ausgenommen sind EMS, Hausbatterie und Pool, Netzwerk-LEDs, Diagnose-Entitäten, Wiedergabe-Sitzungen und Batteriestände (die meldet bereits die Quelle „sensorbatterien").
+
+Die Ergebnisse sind Befunde der Quelle „haus-check": Sie erledigen sich von selbst, sobald die Ursache verschwindet, und öffnen erneut, wenn sie wiederkehren. Der Abgleich findet nur nach einem vollständigen Lauf statt. Der Haus-Check läuft sonntags um 09:00, zusätzlich nach erkannten Änderungen der Zuordnung (höchstens alle 6 Stunden) und einmal nach dem ersten Start. Danach kommt ein Satz auf Telegram; die Einzelheiten stehen in der App unter „Befunde". Im Chat liefert die Aktion `review` denselben Bericht.
+
+In der Lage des Chats erscheint der Haus-Check als eine zusammengefasste Zeile, damit seine Punkte neue wichtige Befunde nicht verdrängen. Außerdem gilt die Licht-Erkennung von `history_summary` auch für Lichter, die über Tür- oder Fensterkontakte geschaltet werden, und gleichzeitige Abfragen laden die Zuordnung nur noch einmal.
+
+Live-Probe 12.10.: 107 Automationen und 412 Entitäten mit Verlauf in 17 s, vollständig; unter anderem 5 Automationen mit Verweisen auf fehlende Geräte, die zwei stummen Melder (Waschkammerl, Gang OG) und eine instabile Verbindung in der Speisekammer.
 
 ## [0.19.0-jarvis.1358] - 2026-10-12
 

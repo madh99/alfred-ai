@@ -20,6 +20,11 @@ export interface LageEingang {
 }
 
 export const LAGE_MAX_BEFUNDE = 6;
+/**
+ * v1359 — Quellen, deren Befunde in der Lage nur als eine Zeile erscheinen. Der Haus-Check liefert 20–60 dauerhafte
+ * Punkte; einzeln würden sie (älteste zuerst) die 6 Plätze belegen und neue wichtige Befunde aus dem Prompt drängen.
+ */
+export const GEBUENDELTE_QUELLEN = new Set(['haus-check']);
 export const LAGE_MAX_ZEICHEN = 1100;
 
 function zeit(iso: string, now: Date): string {
@@ -40,16 +45,24 @@ export function formatiereLage(e: LageEingang, now: Date = new Date()): string {
   const stand = now.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
   const zeilen: string[] = [`### Lage (Befunde und Vorgänge, Stand ${stand})`];
 
-  const offen = [...e.befundeOffen].sort((a, b) => a.entstanden.localeCompare(b.entstanden));
+  const gebuendelt = e.befundeOffen.filter(b => GEBUENDELTE_QUELLEN.has(b.quelle));
+  const gebuendeltErledigt = e.befundeErledigt24h.filter(b => GEBUENDELTE_QUELLEN.has(b.quelle));
+  const offen = e.befundeOffen.filter(b => !GEBUENDELTE_QUELLEN.has(b.quelle)).sort((a, b) => a.entstanden.localeCompare(b.entstanden));
   if (offen.length === 0) {
-    zeilen.push('Offene Befunde: keine — das Weltmodell führt derzeit nichts als auffällig.');
+    zeilen.push(gebuendelt.length ? 'Offene Befunde (ohne Haus-Check): keine.' : 'Offene Befunde: keine — das Weltmodell führt derzeit nichts als auffällig.');
   } else {
     const teile = offen.slice(0, LAGE_MAX_BEFUNDE).map(b => `[${quelleZuKategorie(b.quelle)}] ${b.titel} — ${zeit(b.entstanden, now)}, ${b.gesehenAnzahl}× gesehen`);
     const rest = offen.length - teile.length;
     zeilen.push(`Offene Befunde (${offen.length}): ${teile.join(' · ')}${rest > 0 ? ` · … und ${rest} weitere` : ''}`);
   }
-  if (e.befundeErledigt24h.length > 0) {
-    zeilen.push(`Seit 24 h von selbst erledigt (${e.befundeErledigt24h.length}): ${e.befundeErledigt24h.slice(0, 4).map(b => `[${quelleZuKategorie(b.quelle)}] ${b.titel}`).join(' · ')}`);
+  if (gebuendelt.length || gebuendeltErledigt.length) {
+    const seit7 = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+    const neu7 = gebuendelt.filter(b => b.entstanden >= seit7).length;
+    zeilen.push(`Haus-Check: ${gebuendelt.length} offene Punkte (${neu7} neu in 7 Tagen${gebuendeltErledigt.length ? `, ${gebuendeltErledigt.length} seit 24 h erledigt` : ''}) — Einzelheiten: homeassistant action review, App „Befunde".`);
+  }
+  const erledigt24 = e.befundeErledigt24h.filter(b => !GEBUENDELTE_QUELLEN.has(b.quelle));
+  if (erledigt24.length > 0) {
+    zeilen.push(`Seit 24 h von selbst erledigt (${erledigt24.length}): ${erledigt24.slice(0, 4).map(b => `[${quelleZuKategorie(b.quelle)}] ${b.titel}`).join(' · ')}`);
   }
 
   const vo = e.vorgaengeOffen;

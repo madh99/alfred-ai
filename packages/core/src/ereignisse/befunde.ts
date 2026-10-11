@@ -9,7 +9,7 @@
 export interface BefundKandidat { gegenstand: string; titel: string; detail?: string }
 
 const QUELLE_ZU_KATEGORIE: Record<string, string> = {
-  bmw: 'bmw', energie: 'energie', sensorbatterien: 'haus', haus: 'haus', mikrotik: 'infra', infra: 'infra', geraete: 'geraete',
+  bmw: 'bmw', energie: 'energie', sensorbatterien: 'haus', haus: 'haus', mikrotik: 'infra', infra: 'infra', geraete: 'geraete', 'haus-check': 'haus', // v1359
 };
 
 export function quelleZuKategorie(quelle: string): string {

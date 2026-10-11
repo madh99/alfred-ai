@@ -37,6 +37,20 @@ describe('formatiereLage', () => {
     expect(t).toContain('Offene Befunde: keine');
     expect(t).toContain('Offene Vorgänge: keine.');
   });
+  it('v1359 — Haus-Check erscheint als eine Zeile und verdrängt keine anderen Befunde', () => {
+    const hc = Array.from({ length: 40 }, (_, i) => ({ quelle: 'haus-check', gegenstand: `B1:g${i}`, titel: `Gerät ${i} nicht verfügbar`, entstanden: iso('08:00', '2026-10-01'), gesehenAnzahl: 3 }));
+    const t = formatiereLage({
+      befundeOffen: [...hc, { quelle: 'bmw', gegenstand: 'fahrzeug-unverriegelt', titel: 'Fahrzeug unverriegelt', entstanden: iso('14:00'), gesehenAnzahl: 1 }],
+      befundeErledigt24h: [{ quelle: 'haus-check', gegenstand: 'B3:x', titel: 'x', entstanden: iso('08:00', '2026-10-01'), erledigtAm: iso('12:00'), gesehenAnzahl: 2 }],
+      vorgaengeOffen: [], vorgaengeAbgeschlossen24h: [],
+    }, now);
+    expect(t).toContain('Offene Befunde (1): [bmw] Fahrzeug unverriegelt');
+    expect(t).toContain('Haus-Check: 40 offene Punkte (40 neu in 7 Tagen, 1 seit 24 h erledigt)');
+    expect(t).not.toContain('Gerät 0 nicht verfügbar');
+    expect(t).not.toContain('Seit 24 h von selbst erledigt');
+    const nurHc = formatiereLage({ befundeOffen: hc.slice(0, 2), befundeErledigt24h: [], vorgaengeOffen: [], vorgaengeAbgeschlossen24h: [] }, now);
+    expect(nurHc).toContain('Offene Befunde (ohne Haus-Check): keine.');
+  });
   it('viele Befunde werden gekappt („… und N weitere"), Gesamtlänge bleibt begrenzt', () => {
     const viele = Array.from({ length: 12 }, (_, i) => ({ quelle: 'infra', gegenstand: `k${i}`, titel: `Befund Nummer ${i} mit etwas längerem Titel`, entstanden: iso('10:00'), gesehenAnzahl: i + 1 }));
     const t = formatiereLage({ befundeOffen: viele, befundeErledigt24h: [], vorgaengeOffen: [], vorgaengeAbgeschlossen24h: [] }, now);

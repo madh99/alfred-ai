@@ -2877,6 +2877,44 @@ export class Alfred {
       haSkill.logger = this.logger; // v1358 — Logzeilen „v1358 HA-Zuordnung …"
       skillRegistry.register(haSkill);
       this.logger.info({ baseUrl: this.config.homeassistant.baseUrl }, 'Home Assistant skill enabled');
+
+      // v1359 — Haus-Check (Spec „Home-Assistant-Prüfung nach Best Practice" H1/H2, Owner 12.10. „wie empfohlen"):
+      // Befunde der Quelle „haus-check" — beobachtend, ohne Vorgänge und ohne Änderungen an Home Assistant.
+      // Wöchentlich So 09:00; zusätzlich nach erkannten Änderungen der Zuordnung (höchstens ein Lauf je 6 h) und einmal nach dem ersten Start.
+      {
+        const { pruefSatz } = await import('@alfred/skills');
+        const haHolen = () => skillRegistry.get('homeassistant') as import('@alfred/skills').HomeAssistantSkill | undefined; // nach Neuladen die aktuelle Instanz
+        const hausCheck = async (anlass: 'woche' | 'aenderung' | 'erstlauf'): Promise<import('./lebenszeichen/job-register.js').JobErgebnis> => {
+          const ha = haHolen(); const owner = this.tryOwner();
+          if (!ha || !owner || !this.befundeRepo) return { ok: false, fehler: 'Home Assistant, Owner oder Befunde nicht bereit' };
+          const c = await ha.hausCheck();
+          // Abgleich nur nach vollständigem Lauf — sonst gälten nicht gelesene Punkte als erledigt
+          if (!c.vollstaendig) { this.logger.warn({ anlass, punkte: c.befunde.length }, 'v1359 Haus-Check unvollständig — kein Abgleich'); return { ok: false, fehler: 'unvollständig, kein Abgleich' }; }
+          const r = await this.befundeRepo.sync(owner, 'haus-check', c.befunde.map(b => ({ gegenstand: b.gegenstand, titel: b.titel, detail: b.detail })));
+          const offen = r.neu.length + r.weiter.length;
+          this.logger.info({ anlass, neu: r.neu.length, offen, erledigt: r.erledigt.length, neuBeispiele: r.neu.slice(0, 5).map(b => b.gegenstand) }, 'v1359 Haus-Check abgeglichen');
+          void this.aktualisiereLage();
+          // Telegram: ein Satz — wöchentlich und beim ersten Lauf immer, nach Änderungen nur bei neuen Punkten
+          if (anlass !== 'aenderung' || r.neu.length > 0) await this.sendeAnOwner(pruefSatz({ neu: r.neu.length, offen, erledigt: r.erledigt.length }));
+          return { ok: true, zaehler: { neu: r.neu.length, offen, erledigt: r.erledigt.length } };
+        };
+        this.registriereJob({
+          key: 'haus-check', beschreibung: 'Haus-Check: Home Assistant nach festen Regeln prüfen (Befunde, beobachtend)', takt: { art: 'woechentlich', tag: 0, um: '09:00' }, bereich: 'global', slot: true, timeoutMin: 5,
+          run: () => hausCheck('woche'),
+        });
+        this.registriereJob({
+          key: 'ha-zuordnung', beschreibung: 'Home-Assistant-Zuordnung frisch lesen; bei Änderungen Haus-Check', takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 10, timeoutMin: 5,
+          run: async () => {
+            const ha = haHolen();
+            if (!ha) return { ok: true };
+            const neu = await ha.aktualisiereZuordnung();
+            // Erstlauf einmal für alle Knoten (Slot ohne Datum), danach nur bei Änderungen, je 6-h-Block ein Lauf
+            if (await this.claimDailySlot('haus-check-erstlauf')) return hausCheck('erstlauf');
+            if (neu.length > 0 && await this.claimDailySlot(`haus-check-aenderung:${Math.floor(Date.now() / (6 * 3_600_000))}`)) return hausCheck('aenderung');
+            return { ok: true, zaehler: { aenderungen: neu.length } };
+          },
+        });
+      }
     }
 
     // 4i. Contacts (optional)
@@ -15292,6 +15330,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       erinnerungen: this.reminderRepo,
       db: { query: (q, pa) => db.query(q, pa) as Promise<unknown[]>, execute: async (q, pa) => ({ changes: (await db.execute(q, pa)).changes }) },
       vorgangEntscheiden: (u, id, status, notiz) => new VorgaengeRepository(db).entscheideOwner(u, id, status, notiz),
+      // v1359 — Befunde aller Quellen für die App-Ansicht „Befunde" (offen + 7 Tage erledigt)
+      befunde: this.befundeRepo ? async () => ({ offen: await this.befundeRepo!.offene(owner), erledigt: await this.befundeRepo!.erledigtSeit(owner, new Date(Date.now() - 7 * 86_400_000).toISOString()) }) : undefined,
       protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (App)`),
     });
   }

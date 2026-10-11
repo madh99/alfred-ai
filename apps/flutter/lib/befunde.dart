@@ -1,0 +1,174 @@
+/// 1.12.0 — Befunde nativ (Owner 12.10.: Haus-Check als Befunde statt Gesprächsfaden). Liest `/api/geraete/befunde`
+/// (Server v1359, nur Geräte des Owners): offene Befunde aller Quellen und die der letzten 7 Tage erledigten.
+/// Befunde sind Zustände mit Identität (Schicht 3): sie erledigen sich von selbst, wenn die Ursache verschwindet.
+/// Der Haus-Check ist eine Quelle davon, gruppiert nach seinen Regeln A1–B3. „Nachfragen" springt mit Bezug in den Chat.
+library;
+
+import 'package:flutter/material.dart';
+
+import 'aufgaben.dart' show JsonAbruf;
+
+class Befund {
+  Befund(Map<String, dynamic> j)
+      : id = '${j['id']}', quelle = '${j['quelle'] ?? ''}', regel = j['regel'] as String?, titel = '${j['titel'] ?? ''}',
+        detail = j['detail'] as String?, entstanden = DateTime.tryParse('${j['entstanden'] ?? ''}')?.toLocal(),
+        erledigt = DateTime.tryParse('${j['erledigt'] ?? ''}')?.toLocal(), anzahl = (j['anzahl'] as num?)?.toInt() ?? 1,
+        vorgang = j['vorgang'] == true;
+  final String id, quelle, titel;
+  final String? regel, detail;
+  final DateTime? entstanden, erledigt;
+  final int anzahl;
+  final bool vorgang;
+}
+
+/// Anzeigename je Quelle (befunde.quelle).
+String befundQuelle(String q) => switch (q) {
+      'haus-check' => 'Haus-Check',
+      'infra' => 'Infrastruktur',
+      'energie' => 'Energie',
+      'sensorbatterien' => 'Sensorbatterien',
+      'haus' => 'Haus',
+      'bmw' => 'Auto',
+      'geraete' => 'Geräte',
+      'mikrotik' => 'Netzwerk',
+      'lebenszeichen' => 'Alfred selbst',
+      _ => q,
+    };
+
+/// Regeln des Haus-Checks (Server ha-pruefung.ts REGEL_TEXT, Kurzform).
+String regelName(String r) => switch (r) {
+      'A1' => 'Automation verweist auf Fehlendes',
+      'A2' => 'Automation lange nicht ausgelöst',
+      'A3' => 'Automation lange deaktiviert',
+      'B1' => 'Gerät lange nicht verfügbar',
+      'B2' => 'Melder oder Messwert stumm',
+      'B3' => 'Verbindung instabil',
+      _ => r,
+    };
+
+/// Quellen-Reihenfolge: die übrigen (meist wenige, wichtige) zuerst, der Haus-Check zuletzt.
+List<String> quellenReihenfolge(Iterable<Befund> l) {
+  final z = <String, int>{};
+  for (final b in l) { z[b.quelle] = (z[b.quelle] ?? 0) + 1; }
+  return z.keys.toList()..sort((a, b) => a == 'haus-check' ? 1 : b == 'haus-check' ? -1 : befundQuelle(a).compareTo(befundQuelle(b)));
+}
+
+/// Gruppen einer Quelle: Haus-Check nach Regel (A1 … B3), sonst eine Gruppe.
+List<MapEntry<String?, List<Befund>>> befundGruppen(List<Befund> l) {
+  final m = <String?, List<Befund>>{};
+  for (final b in l) { (m[b.regel] ??= []).add(b); }
+  final k = m.keys.toList()..sort((a, b) => (a ?? '').compareTo(b ?? ''));
+  return [for (final x in k) MapEntry(x, m[x]!)];
+}
+
+/// „neu" = in den letzten 7 Tagen entstanden.
+bool befundNeu(Befund b, DateTime jetzt) => b.entstanden != null && jetzt.difference(b.entstanden!).inDays < 7;
+
+class Befunde extends StatefulWidget {
+  const Befunde({super.key, required this.json, this.aufNachfragen, this.anfang});
+  final JsonAbruf json;
+  final void Function(String text)? aufNachfragen;
+  /// Startfilter (z. B. 'haus-check' aus dem Telegram-Satz)
+  final String? anfang;
+  @override
+  State<Befunde> createState() => _BefundeState();
+}
+
+class _BefundeState extends State<Befunde> {
+  List<Befund>? offen;
+  List<Befund> erledigt = [];
+  String? quelle;
+  String? fehler;
+  bool erledigteZeigen = false;
+  final ganz = <String>{};
+
+  @override
+  void initState() { super.initState(); quelle = widget.anfang; laden(); }
+
+  Future<void> laden() async {
+    try {
+      final j = await widget.json('/api/geraete/befunde');
+      List<Befund> liste(String k) => ((j[k] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Befund.new).toList();
+      if (!mounted) return;
+      setState(() { offen = liste('offen'); erledigt = liste('erledigt'); fehler = null; });
+    } catch (e) { if (mounted) setState(() => fehler = '$e'); }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final dim = theme.colorScheme.onSurfaceVariant;
+    final jetzt = DateTime.now();
+    final o = offen;
+    String datum(DateTime d) => '${d.day}.${d.month}.';
+
+    Widget karte(Befund b, {bool istErledigt = false}) {
+      final auf = ganz.contains(b.id);
+      final neu = !istErledigt && befundNeu(b, jetzt);
+      return Card(margin: const EdgeInsets.only(bottom: 8), child: Padding(padding: const EdgeInsets.fromLTRB(14, 10, 6, 4), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        InkWell(onTap: b.detail == null ? null : () => setState(() => auf ? ganz.remove(b.id) : ganz.add(b.id)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (neu) Padding(padding: const EdgeInsets.only(right: 8, top: 2), child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(6)), child: Text('neu', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onPrimaryContainer)))),
+            Expanded(child: Text(b.titel, style: theme.textTheme.bodyMedium?.copyWith(decoration: istErledigt ? TextDecoration.lineThrough : null))),
+          ]),
+          if (b.detail != null && auf) Padding(padding: const EdgeInsets.only(top: 6), child: SelectableText(b.detail!, style: theme.textTheme.bodySmall)),
+        ])),
+        Row(children: [
+          Expanded(child: Text([
+            if (b.entstanden != null) 'seit ${datum(b.entstanden!)}',
+            if (istErledigt && b.erledigt != null) 'erledigt ${datum(b.erledigt!)}',
+            '${b.anzahl}× gesehen',
+            if (b.vorgang) 'mit Vorgang',
+            if (b.detail != null && !auf) 'Klick: Einzelheiten',
+          ].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: dim))),
+          if (widget.aufNachfragen != null && !istErledigt)
+            IconButton(tooltip: 'Nachfragen: im Chat mit Bezug weiterfragen', icon: const Icon(Icons.question_answer_outlined, size: 18),
+                onPressed: () => widget.aufNachfragen!('Zum Befund „${b.titel}"${b.detail != null ? ' (${b.detail})' : ''}: ')),
+        ]),
+      ])));
+    }
+
+    final sichtbar = (o ?? []).where((b) => quelle == null || b.quelle == quelle).toList();
+    final sichtbarErledigt = erledigt.where((b) => quelle == null || b.quelle == quelle).toList();
+    final quellen = quellenReihenfolge([...(o ?? []), ...erledigt]);
+
+    return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: Column(children: [
+      Padding(padding: const EdgeInsets.fromLTRB(20, 20, 20, 0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text('Befunde', style: theme.textTheme.headlineSmall),
+          const SizedBox(width: 12),
+          if (o != null) Text('${o.length} offen', style: theme.textTheme.bodyMedium?.copyWith(color: dim)),
+          const Spacer(),
+          IconButton(tooltip: 'Neu laden', onPressed: laden, icon: const Icon(Icons.refresh)),
+        ]),
+        Text('Was Alfred als auffällig führt. Befunde erledigen sich von selbst, sobald die Ursache weg ist.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        const SizedBox(height: 10),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          ChoiceChip(label: Text('Alle (${o?.length ?? 0})'), selected: quelle == null, onSelected: (_) => setState(() => quelle = null)),
+          for (final q in quellen) ChoiceChip(label: Text('${befundQuelle(q)} (${(o ?? []).where((b) => b.quelle == q).length})'), selected: quelle == q, onSelected: (_) => setState(() => quelle = q)),
+        ]),
+        const SizedBox(height: 8),
+      ])),
+      Expanded(child: fehler != null
+          ? Center(child: Text('Befunde nicht geladen: $fehler'))
+          : o == null
+              ? const Center(child: CircularProgressIndicator())
+              : ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 20), children: [
+                  if (sichtbar.isEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 24), child: Text('Keine offenen Befunde${quelle == null ? '' : ' für ${befundQuelle(quelle!)}'}.', style: theme.textTheme.bodyMedium?.copyWith(color: dim))),
+                  for (final q in quellenReihenfolge(sichtbar)) ...[
+                    if (quelle == null) Padding(padding: const EdgeInsets.fromLTRB(0, 12, 0, 6), child: Text(befundQuelle(q), style: theme.textTheme.titleMedium)),
+                    for (final g in befundGruppen(sichtbar.where((b) => b.quelle == q).toList())) ...[
+                      if (g.key != null) Padding(padding: const EdgeInsets.fromLTRB(0, 6, 0, 6), child: Text('${g.key} — ${regelName(g.key!)} (${g.value.length})', style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.primary))),
+                      for (final b in g.value) karte(b),
+                    ],
+                  ],
+                  if (sichtbarErledigt.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    TextButton.icon(onPressed: () => setState(() => erledigteZeigen = !erledigteZeigen), icon: Icon(erledigteZeigen ? Icons.expand_less : Icons.expand_more),
+                        label: Text('In den letzten 7 Tagen erledigt (${sichtbarErledigt.length})')),
+                    if (erledigteZeigen) for (final b in sichtbarErledigt) karte(b, istErledigt: true),
+                  ],
+                ])),
+    ])));
+  }
+}
