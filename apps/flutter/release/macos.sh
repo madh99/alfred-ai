@@ -19,6 +19,10 @@ PROFIL="${ALFRED_NOTARY_PROFILE:-alfred}"
 if ! xcrun notarytool history --keychain-profile "$PROFIL" >/dev/null 2>&1; then PROFIL=""; fi
 echo "Alfred $VERSION — macOS-Release (DMG)${IDENT:+, signiert als $IDENT}${PROFIL:+, Notarisierung über Profil $PROFIL}"
 [ -n "$IDENT" ] || echo "HINWEIS: keine Developer-ID-Identität gefunden — DMG wird nur ad-hoc signiert"
+# Fernbuild (release/macos-dienst.sh): ohne Signatur oder Notarisierung abbrechen statt ein unbrauchbares DMG zu liefern
+if [ -n "${ALFRED_MAC_STRENG:-}" ] && { [ -z "$IDENT" ] || [ -z "$PROFIL" ]; }; then
+  echo "Abbruch: Schlüsselbund nicht erreichbar (Identität '${IDENT}', Profil '${PROFIL}')"; exit 3
+fi
 
 cd "$APP"
 flutter build macos --release
