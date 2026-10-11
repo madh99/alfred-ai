@@ -20,6 +20,11 @@ class Hinweis {
   bool get offen => status == 'pending' || status == 'snoozed';
 }
 
+/// 1.5.1 — Zahl offener Hinweise aus der Antwort von `/api/geraete/hinweise`. Owner-Befund 11.10.: der Zähler in der
+/// Symbolleiste erschien erst nach dem Öffnen der Ansicht — jetzt fragt die App ihn beim Start und jede Minute selbst ab.
+int offeneHinweise(Map<String, dynamic> j) =>
+    ((j['hinweise'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Hinweis.new).where((h) => h.offen).length;
+
 /// Anzeigename je Quelle (Kategorie in alfred_insights).
 String quellenName(String q) => switch (q) {
       'reasoning' => 'Alfred',

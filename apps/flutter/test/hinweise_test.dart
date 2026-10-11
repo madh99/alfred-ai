@@ -2,6 +2,13 @@ import 'package:alfred_app/hinweise.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('offeneHinweise zählt pending und snoozed, nicht erledigt/verworfen (1.5.1)', () {
+    expect(offeneHinweise({'hinweise': [
+      {'id': '1', 'status': 'pending'}, {'id': '2', 'status': 'snoozed'}, {'id': '3', 'status': 'acted'}, {'id': '4', 'status': 'dismissed'}, {'id': '5'},
+    ]}), 3);
+    expect(offeneHinweise({}), 0);
+  });
+
   group('hinweisKurzzeile (1.4.0)', () {
     test('erster Punkt, Anzahl weiterer, Verweis auf die Sammlung', () {
       const t = '💡 **Alfred Insights**\n\n1. **Wallbox** nicht erreichbar seit 18:00.\n2. Zwei Sensoren offline.\n3. Akku Auto 12 %.';

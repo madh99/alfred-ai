@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Zähler offener Hinweise erst nach dem Öffnen sichtbar (App 1.5.1)
+
+Die Zahl an der Symbolleiste berechnete nur die Ansicht „Hinweise" selbst. Die App fragt sie jetzt beim Start und jede Minute ab.
+
 ## [0.19.0-jarvis.1350] - 2026-10-11
 
 ### Added — Suche im Verlauf und Übersicht der Anhänge (v1350, App 1.5.0)

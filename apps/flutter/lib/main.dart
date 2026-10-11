@@ -212,7 +212,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         _holeBestaetigungen();
         abfrage ??= Timer.periodic(const Duration(seconds: 4), (_) => _holeBestaetigungen());
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); } // M6
-        if (erste) { _vorgaengeLaden(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) => _vorgaengeLaden()); } // 1.1.0 Seitenleiste
+        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler
         if (erste) _faedenLaden(); // 1.2.0 Gespräche
         if (erste) _spiegelungLaden(); // 1.2.3
         if (erste) {
@@ -1011,6 +1011,15 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       if (s.faden == faden) await _fadenWechseln(null);
       await _faedenLaden();
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Gespräch nicht gelöscht: $e')); }
+  }
+
+  /// 1.5.1 — Zähler offener Hinweise ohne geöffnete Ansicht (Owner 11.10.); kein Owner-Gerät/alter Server → bleibt still.
+  Future<void> _hinweiseZaehlen() async {
+    final s = server; if (s == null) return;
+    try {
+      final n = offeneHinweise(await s.json('/api/geraete/hinweise'));
+      if (mounted && n != hinweiseOffen) setState(() => hinweiseOffen = n);
+    } catch (_) { /* Zähler ist Komfort */ }
   }
 
   Future<void> _vorgaengeLaden() async {
