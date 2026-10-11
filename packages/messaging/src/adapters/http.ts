@@ -949,6 +949,8 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
     nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string): boolean; // v1325 Anhang, v1328 Faden
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
+    /** v1352 — laufende Anfrage einer Sitzung abbrechen (App-Knopf „Stopp"); true = es lief etwas. */
+    abbrechen?(chatId: string, userId: string): boolean;
     /** v1351 — Fehlermeldung der Desktop-App ins Log; false = Grenze erreicht (429). */
     appMeldung?(geraetId: string, name: string, m: { art: string; text: string; version: string; plattform: string }): boolean;
     verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string, um?: string, vor?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean; anhaenge?: Array<{ id: string; name: string; mime: string; groesse: number }> }>>; // v1350 um = Fundstelle
@@ -1928,6 +1930,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
     } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
       this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
+    } else if (url.pathname === '/api/geraete/abbrechen' && req.method === 'POST') {
+      this.handleGeraetAbbrechen(req, res).catch(err => this.safeError(res, err)); // v1352
     } else if (url.pathname === '/api/geraete/meldung' && req.method === 'POST') {
       this.handleGeraetMeldung(req, res).catch(err => this.safeError(res, err)); // v1351
     } else if ((url.pathname === '/api/geraete/suche' || url.pathname === '/api/geraete/anhaenge') && req.method === 'GET') {
@@ -6669,6 +6673,23 @@ export class HttpAdapter extends MessagingAdapter {
     const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined, archivOk, um, vor);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, ...(archivOk ? { archiv: archivOk } : {}), ...(um ? { um } : {}), ...(vor ? { vor } : {}), nachrichten }));
+  }
+
+  /**
+   * v1352 — laufende Antwort abbrechen (Owner-Freigabe 11.10., Punkt 5): {chatId} der eigenen Sitzung. Bricht zwischen
+   * Modellaufrufen und Werkzeugrunden ab (wie /stop in Telegram); eine gerade fertig werdende Antwort wird nicht mehr zugestellt.
+   * Eigener Weg statt „/stop" über /api/message, weil ein zweiter Aufruf auf derselben chatId den laufenden Strom schließt.
+   */
+  private async handleGeraetAbbrechen(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.abbrechen) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    let chatId = '';
+    try { const j = JSON.parse((await this.readBody(req)).slice(0, 2048) || '{}') as { chatId?: unknown }; if (typeof j.chatId === 'string') chatId = j.chatId; } catch { /* leer */ }
+    if (!sitzungsChatErlaubt(chatId, geraet.geraetId)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Chats der eigenen Sitzung' })); return; }
+    const abgebrochen = this.geraeteCallbacks.abbrechen(chatId, geraet.userId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ abgebrochen }));
   }
 
   /** v1351 — Fehlermeldung der Desktop-App ins Server-Log (Owner-Freigabe 11.10., Punkt 8): {art, text, version, plattform}. */

@@ -32,6 +32,7 @@ import 'linux_hotkey.dart';
 import 'markdown.dart'; // 1.6.0
 import 'zwischenablage.dart'; // 1.6.0
 import 'modell.dart';
+import 'schnellfrage.dart'; // 1.7.0
 import 'server.dart';
 import 'transfer.dart';
 import 'package:desktop_drop/desktop_drop.dart';
@@ -192,6 +193,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           if (faden == server?.faden) { _gespraechNachladen(); } else { _faedenLaden(); }
           return;
         }
+        if (art == 'nachricht' && text.startsWith('⏹') && DateTime.now().difference(abgebrochenUm).inMinutes < 5) { _protokolliere(Eintrag(Art.hinweis, 'Server bestätigt: $text')); return; } // 1.7.0
         if (art == 'nachricht') { // v1318 — Ergebnis nach Freigabe; 1.0.5 — mit Anhang (Foto, Bildschirmfoto, Datei)
           if (faden != server?.faden) { // 1.2.0 — Antwort gehört zu einem anderen Gespräch: Hinweis mit Sprungmarke
             _zeile(Eintrag(Art.hinweis, '💬 Antwort im Gespräch „${_fadenTitel(faden)}“: ${text.isEmpty && anhang != null ? '📎 ${anhang.name}' : (text.length > 80 ? '${text.substring(0, 80)}…' : text)} — in der Seitenleiste öffnen'));
@@ -250,7 +252,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   void dispose() {
     abfrage?.cancel();
     vorgaengeTakt?.cancel();
-    _signal?.cancel();
+    for (final s in _signale) { s.cancel(); }
     hoerClient?.schluss();
     ipc.stop();
     windowManager.removeListener(this);
@@ -268,18 +270,19 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       await trayManager.setContextMenu(Menu(items: [
         MenuItem(key: 'zeigen', label: 'Alfred öffnen'),
         MenuItem(key: 'sprechen', label: 'Sprechen (Strg+Alt+Leertaste)'),
+        MenuItem(key: 'schnellfrage', label: 'Schnellfrage (Strg+Alt+A)'),
         MenuItem.separator(),
         MenuItem(key: 'beenden', label: 'Beenden'),
       ]));
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Tray nicht verfügbar: $e')); }
   }
 
-  StreamSubscription<ProcessSignal>? _signal;
+  List<StreamSubscription<ProcessSignal>> _signale = [];
 
   Future<void> _tastenkuerzelEinrichten() async {
     if (Platform.isLinux) {
-      // 1.0.3 — Wayland: keybinder kann nicht binden; GNOME-Kürzel + SIGUSR1 (linux_hotkey.dart). Unter X11 zusätzlich wie bisher.
-      _signal = LinuxHotkey.hoere(_talkUmschalten);
+      // 1.0.3 — Wayland: keybinder kann nicht binden; GNOME-Kürzel + SIGUSR1/SIGUSR2 (linux_hotkey.dart). Unter X11 zusätzlich wie bisher.
+      _signale = LinuxHotkey.hoere(_talkUmschalten, _schnellfrageUmschalten);
       final m = await LinuxHotkey.einrichten();
       if (m != null) _zeile(Eintrag(Art.hinweis, m));
       if (LinuxHotkey.wayland) return;
@@ -287,11 +290,71 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     try {
       await hotKeyManager.register(tastenkuerzel, keyDownHandler: (_) => _talkUmschalten());
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Tastenkürzel nicht registriert: $e')); }
+    try {
+      await hotKeyManager.register(schnellKuerzel, keyDownHandler: (_) => _schnellfrageUmschalten()); // 1.7.0
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Tastenkürzel Schnellfrage nicht registriert: $e')); }
+  }
+
+  // ── 1.7.0 Schnellfrage (Punkt 4): kleines Fenster über allem, nur Eingabe + Antwort ──────────────────────────────
+  final HotKey schnellKuerzel = HotKey(key: PhysicalKeyboardKey.keyA, modifiers: [HotKeyModifier.control, HotKeyModifier.alt], scope: HotKeyScope.system);
+  bool schnell = false;
+  Rect? _rahmenVorher;
+  bool _sichtbarVorher = true;
+  DateTime? schnellSeit;
+
+  Future<void> _schnellfrageUmschalten() async { if (schnell) { await _schnellfrageSchliessen(); } else { await _schnellfrageOeffnen(); } }
+
+  Future<void> _schnellfrageOeffnen() async {
+    if (schnell) return;
+    try { _rahmenVorher = await windowManager.getBounds(); _sichtbarVorher = await windowManager.isVisible() && !await windowManager.isMinimized(); } catch (_) {}
+    setState(() { schnell = true; schnellSeit = null; ansicht = Ansicht.chat; });
+    try {
+      await windowManager.setMinimumSize(const Size(420, 110));
+      await windowManager.setSize(const Size(680, 130));
+      await windowManager.center();
+      await windowManager.setAlwaysOnTop(true);
+      await windowManager.show();
+      await windowManager.focus();
+    } catch (_) {}
+    sichtbar = true;
+    fokus.requestFocus();
+    _protokolliere(Eintrag(Art.hinweis, '⚡ Schnellfrage geöffnet'));
+  }
+
+  /// Schnellfrage schließen; `insFenster` = ins normale Fenster wechseln statt es wieder wie vorher zu verstecken.
+  Future<void> _schnellfrageSchliessen({bool insFenster = false}) async {
+    if (!schnell) return;
+    if (antwortet && !insFenster) await _abbrechen();
+    setState(() => schnell = false);
+    try {
+      await windowManager.setAlwaysOnTop(false);
+      await windowManager.setMinimumSize(const Size(640, 480));
+      final r = _rahmenVorher;
+      if (r != null && r.width >= 640 && r.height >= 480) { await windowManager.setBounds(r); } else { await windowManager.setSize(const Size(1180, 800)); await windowManager.center(); }
+      if (!insFenster && !_sichtbarVorher) { await windowManager.hide(); sichtbar = false; }
+    } catch (_) {}
+    if (insFenster) _nachUnten();
+  }
+
+  Future<void> _schnellSenden() async {
+    if (eingabe.text.trim().isEmpty || antwortet) return;
+    schnellSeit = DateTime.now();
+    try { await windowManager.setSize(const Size(680, 460)); } catch (_) {}
+    await _senden();
+  }
+
+  /// Antwort auf die Schnellfrage: die laufende oder die letzte Alfred-Zeile seit dem Senden.
+  Eintrag? get _schnellAntwort {
+    final seit = schnellSeit; if (seit == null) return null;
+    if (laufend != null) return laufend;
+    for (final e in verlauf.reversed) { if (e.zeit.isBefore(seit)) break; if (e.art == Art.alfred || e.art == Art.fehler) return e; }
+    return null;
   }
 
   @override
   void onWindowClose() async {
     // Schließen = in den Tray; Beenden über das Tray-Menü
+    if (schnell) { _sichtbarVorher = false; await _schnellfrageSchliessen(); return; } // 1.7.0 — X an der Schnellfrage
     await windowManager.hide();
     setState(() => sichtbar = false);
   }
@@ -343,6 +406,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     switch (menuItem.key) {
       case 'zeigen': _zeigen();
       case 'sprechen': _talkUmschalten();
+      case 'schnellfrage': _schnellfrageOeffnen();
       case 'beenden': _beenden();
     }
   }
@@ -803,6 +867,20 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     }
   }
 
+  // ── 1.7.0 Antwort abbrechen (Punkt 5) ──────────────────────────────────────────────────────────────────────────
+  Vorleser? vorleserLaufend;
+  bool abbruch = false;
+  DateTime abgebrochenUm = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Stopp: Anzeige und Vorlesen sofort beenden, den Server bitten, vor dem nächsten Schritt aufzuhören (v1352).
+  Future<void> _abbrechen() async {
+    final s = server; if (s == null || !antwortet) return;
+    abbruch = true; abgebrochenUm = DateTime.now();
+    vorleserLaufend?.stopp(); audio.abbrechen();
+    final lief = await s.abbrechen();
+    _protokolliere(Eintrag(Art.hinweis, '⏹ Abbruch angefordert (am Server lief ${lief ? 'eine Anfrage' : 'nichts mehr'})'));
+  }
+
   /// Sendet `text` (oder die Eingabezeile) und liefert den Endtext der Antwort.
   /// `sprechen`: Antwort satzweise vorlesen, sobald Sätze vollständig sind (erster Ton nach dem ersten Satz, nicht nach dem Ende).
   Future<String?> _senden({String? text, bool sprechen = false, DateTime? seit}) async {
@@ -843,6 +921,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final vorleser = (sprechen || stimme)
       ? Vorleser(s.sprich, audio, beiErstemTon: () { final sek = DateTime.now().difference(start).inMilliseconds / 1000; _zeile(Eintrag(Art.hinweis, '🔊 erster Ton nach ${sek.toStringAsFixed(1)} s')); })
       : null;
+    vorleserLaufend = vorleser; abbruch = false; // 1.7.0 Stopp-Knopf
     try {
       final bezugText = bezug?.text; // 1.2.2 — Antwort-Bezug geht mit, dann ist er erledigt
       if (bezug != null) setState(() => bezug = null);
@@ -867,8 +946,14 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         if (vorleser.fehler != null) _zeile(Eintrag(Art.fehler, '🔊 ${vorleser.fehler}'));
       }
     } catch (err) {
-      _zeile(Eintrag(Art.fehler, 'Fehler: $err'));
+      if (abbruch) { // 1.7.0 — vom Owner abgebrochen: kein Fehler, das bisher Gezeigte bleibt mit Vermerk stehen
+        if (laufend != null) setState(() => e.text = gezeigt.trim().isEmpty ? '⏹ Abgebrochen.' : '$gezeigt\n\n⏹ abgebrochen');
+        else _zeile(Eintrag(Art.hinweis, '⏹ Abgebrochen.'));
+      } else {
+        _zeile(Eintrag(Art.fehler, 'Fehler: $err'));
+      }
     } finally {
+      vorleserLaufend = null;
       setState(() { antwortet = false; fluechtig = ''; laufend = null; });
       fokus.requestFocus();
       final rest = nachreichen; nachreichen = null; // 1.4.1
@@ -885,6 +970,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   // ── 1.1.0 Redesign Stufe 1 (Owner-Vorlage 09.10.): Symbolleiste | Seitenleiste | Hauptbereich ──────────────────────
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (schnell) { // 1.7.0
+      return Scaffold(body: Schnellfrage(
+        eingabe: eingabe, fokus: fokus, ziel: _fadenTitel(server?.faden), antwortet: antwortet, status: fluechtig, antwort: _schnellAntwort,
+        aufSenden: _schnellSenden, aufStopp: _abbrechen, aufSchliessen: _schnellfrageSchliessen, aufFensterOeffnen: () => _schnellfrageSchliessen(insFenster: true),
+      ));
+    }
     return Scaffold(
       body: Row(children: [
         _leiste(theme),
@@ -1204,6 +1295,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
               _bildEinfuegen();
               return KeyEventResult.ignored;
             }
+            if (ev is KeyDownEvent && ev.logicalKey == LogicalKeyboardKey.escape && antwortet) { _abbrechen(); return KeyEventResult.handled; } // 1.7.0
             if (ev is KeyDownEvent && (ev.logicalKey == LogicalKeyboardKey.enter || ev.logicalKey == LogicalKeyboardKey.numpadEnter) && !HardwareKeyboard.instance.isShiftPressed) {
               if (!antwortet) _senden();
               return KeyEventResult.handled;
@@ -1238,7 +1330,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
             ? IconButton.filledTonal(tooltip: 'Zuhören aus', onPressed: _hoerenUmschalten, icon: const Icon(Icons.headset_mic, size: 20), visualDensity: VisualDensity.compact)
             : IconButton(tooltip: 'Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“', onPressed: server == null ? null : _hoerenUmschalten, icon: const Icon(Icons.headset, size: 22), visualDensity: VisualDensity.compact),
           const SizedBox(width: 4),
-          IconButton.filled(tooltip: 'Senden (Enter)', onPressed: antwortet ? null : () => _senden(), icon: antwortet ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.arrow_upward, size: 20)),
+          antwortet // 1.7.0 — während der Antwort wird Senden zu Stopp (Owner-Freigabe 11.10., Punkt 5)
+            ? IconButton.filled(key: const Key('stopp'), tooltip: 'Antwort abbrechen', onPressed: _abbrechen, icon: const Icon(Icons.stop_rounded, size: 20))
+            : IconButton.filled(tooltip: 'Senden (Enter)', onPressed: () => _senden(), icon: const Icon(Icons.arrow_upward, size: 20)),
         ]),
       ]),
     );

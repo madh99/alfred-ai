@@ -13694,6 +13694,12 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // alte Kanal-Sitzungen dieses Geräts als Archiv nur lesbar
           // v1332 — Sicherheitsreview: nur ein Gerät des Owners sieht die Owner-Gespräche; andere Geräte bleiben bei
           // ihren Kanal-Gesprächen `sitzung:<id>[:<faden>]` (so wie die Pipeline sie für Nicht-Owner weiter ablegt)
+          // v1352 — App-Knopf „Stopp": dieselbe Abbruchstelle wie /stop in Telegram
+          abbrechen: (chatId: string, userId: string) => {
+            const ok = this.pipeline.cancelRequest(chatId, userId);
+            this.logger.info({ chatId, abgebrochen: ok }, 'v1352 Abbruch aus der App');
+            return ok;
+          },
           // v1351 — Fehler der Desktop-App ins Log (Grenze je Gerät: gleicher Text 10 min, 30/h)
           appMeldung: (geraetId: string, name: string, m: { art: string; text: string; version: string; plattform: string }) => {
             if (!appMeldungsGrenze.erlaube(geraetId, m.text)) return false;

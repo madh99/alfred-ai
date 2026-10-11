@@ -5,9 +5,16 @@ import 'dart:io';
 /// („Binding '<Primary><Alt>KP_Space' failed!", Ubuntu-VM 09.10.). Weg über die Oberfläche: ein eigenes GNOME-Tastenkürzel
 /// (gsettings, media-keys) startet `alfred_app --sprechen`; dieser zweite Prozess schickt der laufenden App SIGUSR1
 /// (PID-Datei im Laufzeitordner) und beendet sich. Die App schaltet darauf das Mikrofon um.
+/// 1.7.0 — zweites Kürzel Strg+Alt+A für die Schnellfrage (`--schnellfrage`, SIGUSR2; Runner my_application.cc).
 class LinuxHotkey {
   static const _schema = 'org.gnome.settings-daemon.plugins.media-keys';
-  static const _pfad = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/alfred-sprechen/';
+  static const _basis = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/';
+
+  /// (Pfad-Name, Anzeigename, Startargument, Tastenkombination)
+  static const kuerzel = [
+    ('alfred-sprechen', 'Alfred: sprechen', '--sprechen', '<Control><Alt>space'),
+    ('alfred-schnellfrage', 'Alfred: Schnellfrage', '--schnellfrage', '<Control><Alt>a'),
+  ];
 
   static bool get wayland => (Platform.environment['WAYLAND_DISPLAY'] ?? '').isNotEmpty || Platform.environment['XDG_SESSION_TYPE'] == 'wayland';
 
@@ -16,10 +23,13 @@ class LinuxHotkey {
     return '$dir/alfred-app.pid';
   }
 
-  /// Laufende Instanz: PID merken und auf SIGUSR1 hören.
-  static StreamSubscription<ProcessSignal> hoere(void Function() beiSignal) {
+  /// Laufende Instanz: PID merken und auf SIGUSR1 (sprechen) bzw. SIGUSR2 (Schnellfrage) hören.
+  static List<StreamSubscription<ProcessSignal>> hoere(void Function() sprechen, void Function() schnellfrage) {
     try { File(pidDatei).writeAsStringSync('$pid'); } catch (_) { /* dann kein Kürzel */ }
-    return ProcessSignal.sigusr1.watch().listen((_) => beiSignal());
+    return [
+      ProcessSignal.sigusr1.watch().listen((_) => sprechen()),
+      ProcessSignal.sigusr2.watch().listen((_) => schnellfrage()),
+    ];
   }
 
   /// Zweiter Prozess (`--sprechen`): Signal an die laufende Instanz. true = zugestellt.
@@ -31,7 +41,7 @@ class LinuxHotkey {
     } catch (_) { return false; }
   }
 
-  /// GNOME-Tastenkürzel Strg+Alt+Leertaste anlegen oder nachziehen (idempotent). Liefert eine Meldung für den Verlauf.
+  /// GNOME-Tastenkürzel anlegen oder nachziehen (idempotent). Liefert eine Meldung für den Verlauf.
   static Future<String?> einrichten() async {
     final exe = Platform.resolvedExecutable;
     try {
@@ -40,17 +50,20 @@ class LinuxHotkey {
       final liste = await Process.run('gsettings', ['get', _schema, 'custom-keybindings']);
       if (liste.exitCode != 0) return 'GNOME-Tastenkürzel nicht verfügbar (${liste.stderr.toString().trim()}).';
       final pfade = RegExp(r"'([^']+)'").allMatches(liste.stdout.toString()).map((m) => m.group(1)!).toList();
-      if (!pfade.contains(_pfad)) {
-        pfade.add(_pfad);
+      final fehlend = kuerzel.map((k) => '$_basis${k.$1}/').where((p) => !pfade.contains(p)).toList();
+      if (fehlend.isNotEmpty) {
+        pfade.addAll(fehlend);
         final r = await Process.run('gsettings', ['set', _schema, 'custom-keybindings', '[${pfade.map((p) => "'$p'").join(', ')}]']);
         if (r.exitCode != 0) return 'Tastenkürzel nicht angelegt: ${r.stderr.toString().trim()}';
       }
-      final s = '$_schema.custom-keybinding:$_pfad';
       // Werte als GVariant-Zeichenkette ('…'), sonst „expected end of input" bei Leerzeichen/Anführungszeichen (VM 09.10.)
       String gv(String v) => "'${v.replaceAll("'", r"\'")}'";
-      for (final (k, v) in [('name', 'Alfred: sprechen'), ('command', '"$exe" --sprechen'), ('binding', '<Control><Alt>space')]) {
-        final r = await Process.run('gsettings', ['set', s, k, gv(v)]);
-        if (r.exitCode != 0) return 'Tastenkürzel unvollständig ($k): ${r.stderr.toString().trim()}';
+      for (final (pfad, name, arg, taste) in kuerzel) {
+        final s = '$_schema.custom-keybinding:$_basis$pfad/';
+        for (final (k, v) in [('name', name), ('command', '"$exe" $arg'), ('binding', taste)]) {
+          final r = await Process.run('gsettings', ['set', s, k, gv(v)]);
+          if (r.exitCode != 0) return 'Tastenkürzel unvollständig ($name, $k): ${r.stderr.toString().trim()}';
+        }
       }
       return null;
     } catch (e) { return 'Tastenkürzel nicht eingerichtet: $e'; }

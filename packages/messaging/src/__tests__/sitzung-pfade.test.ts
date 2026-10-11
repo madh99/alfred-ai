@@ -64,5 +64,6 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete/anhaenge?limit=50')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/suche/x')).toBe(false);
     expect(istSitzungsPfad('/api/geraete/meldung')).toBe(true); // v1351
+    expect(istSitzungsPfad('/api/geraete/abbrechen')).toBe(true); // v1352
   });
 });

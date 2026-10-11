@@ -131,13 +131,18 @@ class Vorleser {
     }
   }
 
+  /// 1.7.0 — Stopp-Knopf: nichts mehr vorlesen, laufende Wiedergabe beenden.
+  bool gestoppt = false;
+  void stopp() { gestoppt = true; _ruhe?.cancel(); _puffer = ''; audio.abbrechen(); }
+
   void _spiele(String block) {
     final t = sprechbar(block).trim();
-    if (t.isEmpty) return;
+    if (t.isEmpty || gestoppt) return;
     bloecke++;
     final synth = synthetisiere(t);
     _wiedergabe = _wiedergabe.then((_) async {
       final (bytes, mime) = await synth;
+      if (gestoppt) return;
       if (!_ersterTon) { _ersterTon = true; beiErstemTon?.call(); }
       await audio.abspielen(Uint8List.fromList(bytes), mime);
     }).catchError((e) { fehler ??= '$e'; });

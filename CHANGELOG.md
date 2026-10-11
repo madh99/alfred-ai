@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1352] - 2026-10-11
+
+### Added — Antwort abbrechen (v1352, App 1.7.0)
+
+Während Alfred antwortet, wird der Senden-Knopf der App zum Stopp-Knopf. Die App beendet Anzeige und Vorlesen sofort; `POST /api/geraete/abbrechen` (nur Chats der eigenen Sitzung) stoppt die Anfrage am Server an derselben Stelle wie `/stop` in Telegram — vor dem nächsten Modellaufruf bzw. der nächsten Werkzeugrunde. Eine Antwort, die während des Abbruchs noch fertig wird, wird nicht mehr zugestellt, sondern im Verlauf als abgebrochen vermerkt. Ein Werkzeug, das gerade läuft, läuft noch zu Ende.
+
+### Added — App: Schnellfrage mit Strg+Alt+A (App 1.7.0)
+
+Ein globales Tastenkürzel (auch im Tray-Menü) öffnet über allen Programmen ein kleines Fenster mit nur einer Eingabezeile; die Antwort erscheint darunter, Esc schließt es und das große Fenster bleibt, wie es war. Die Frage läuft im gerade gewählten Gespräch. Unter Linux/Wayland als zweites GNOME-Tastenkürzel (`--schnellfrage`).
+
 ## [0.19.0-jarvis.1351] - 2026-10-11
 
 ### Added — App: Links, Tabellen und Code-Blöcke in Antworten (App 1.6.0)

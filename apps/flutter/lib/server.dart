@@ -124,8 +124,28 @@ class Server {
   }
 
   /// Nachricht senden; `aufDelta` bekommt Textstücke, `aufStatus` Zwischenstände (Werkzeuge, Denken). Liefert den Endtext.
+  /// 1.7.0 — laufende Antwort (Stopp-Knopf): Anfrage zum Server und Antwortstrom.
+  HttpClientRequest? _laufend;
+  bool get antwortLaeuft => _laufend != null;
+
+  /// Bricht die laufende Antwort ab: Strom sofort schließen (die App zeigt nichts mehr an), Server stoppt die Anfrage
+  /// vor dem nächsten Modellaufruf bzw. der nächsten Werkzeugrunde (v1352). Liefert, ob am Server etwas lief.
+  Future<bool> abbrechen() async {
+    final chat = chatId;
+    _laufend?.abort(const HttpException('vom Benutzer abgebrochen'));
+    _laufend = null;
+    try { final j = await json('/api/geraete/abbrechen', methode: 'POST', koerper: {'chatId': chat}); return j['abgebrochen'] == true; }
+    catch (_) { return false; }
+  }
+
   Future<String> sende(String text, {required void Function(String) aufDelta, required void Function(String) aufStatus, void Function(Anhang)? aufAnhang, String? tier, String? bezug}) async {
     final req = await _anfrage('POST', '/api/message');
+    _laufend = req;
+    try { return await _sende(req, text, aufDelta: aufDelta, aufStatus: aufStatus, aufAnhang: aufAnhang, tier: tier, bezug: bezug); }
+    finally { if (identical(_laufend, req)) _laufend = null; }
+  }
+
+  Future<String> _sende(HttpClientRequest req, String text, {required void Function(String) aufDelta, required void Function(String) aufStatus, void Function(Anhang)? aufAnhang, String? tier, String? bezug}) async {
     // 1.2.2 — Bezug auf eine frühere Alfred-Nachricht (wie Antworten in Telegram): replyToText/replyToFrom wie in der Web-Oberfläche
     final body = jsonEncode({'text': text, 'chatId': chatId, 'stream': true, 'tier': ?tier, if (bezug != null && bezug.trim().isNotEmpty) ...{'replyToText': bezug, 'replyToFrom': 'Alfred'}});
     req.add(utf8.encode(body)); // UTF-8 statt Latin-1

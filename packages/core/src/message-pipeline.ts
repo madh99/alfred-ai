@@ -1610,6 +1610,14 @@ export class MessagePipeline {
         onProgress?.({ kind: 'thinking', text: 'verarbeitet Tool-Ergebnisse…' });
       }
 
+      // v1352 — Abbruch während der letzten Antwort (App-Knopf „Stopp"): die fertig gewordene Antwort nicht mehr zustellen
+      // (sonst käme sie der App als Push nach, obwohl der Owner abgebrochen hat); im Verlauf als abgebrochen vermerkt.
+      if (abortController.signal.aborted) {
+        await this.conversationManager.addMessage(conversation.id, 'assistant', '⏹ Abgebrochen.');
+        this.activeRequests.delete(requestKey);
+        return { text: '⏹ Anfrage abgebrochen.' };
+      }
+
       // Use the final response content, or fall back to the last assistant text
       // from a previous tool iteration (the LLM may have already answered inline
       // with a tool_use and then returned empty content after the tool_result).

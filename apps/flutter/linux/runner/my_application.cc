@@ -88,15 +88,17 @@ static gboolean my_application_local_command_line(GApplication* application,
   MyApplication* self = MY_APPLICATION(application);
   // 1.0.4 — `--sprechen` (GNOME-Tastenkürzel unter Wayland, siehe lib/linux_hotkey.dart): der laufenden App SIGUSR1
   // schicken und sofort enden, ohne Fenster und ohne Flutter-Engine (PID-Datei im Laufzeitordner).
+  // 1.7.0 — `--schnellfrage` (Strg+Alt+A) genauso, mit SIGUSR2.
   for (gchar** a = *arguments + 1; a && *a; a++) {
-    if (g_strcmp0(*a, "--sprechen") != 0) continue;
+    const gboolean schnell = g_strcmp0(*a, "--schnellfrage") == 0;
+    if (!schnell && g_strcmp0(*a, "--sprechen") != 0) continue;
     const gchar* laufzeit = g_getenv("XDG_RUNTIME_DIR");
     g_autofree gchar* pfad = g_build_filename(laufzeit && *laufzeit ? laufzeit : g_get_tmp_dir(), "alfred-app.pid", nullptr);
     g_autofree gchar* inhalt = nullptr;
     *exit_status = 1;
     if (g_file_get_contents(pfad, &inhalt, nullptr, nullptr)) {
       pid_t pid = (pid_t)g_ascii_strtoll(inhalt, nullptr, 10);
-      if (pid > 1 && kill(pid, SIGUSR1) == 0) *exit_status = 0;
+      if (pid > 1 && kill(pid, schnell ? SIGUSR2 : SIGUSR1) == 0) *exit_status = 0;
     }
     return TRUE;
   }
