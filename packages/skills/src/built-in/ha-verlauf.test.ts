@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { phasenAus, werteAus, naechsteMitternacht, tagSchluessel, zeitText, ursachenAus, berichtText, auffaelligkeiten, type HaZustand, type EntitaetsBericht } from './ha-verlauf.js';
 import { HomeAssistantSkill } from './home-assistant.js';
 import type { SkillContext, HomeAssistantConfig } from '@alfred/types';
@@ -136,7 +138,7 @@ describe('HomeAssistantSkill history_summary', () => {
       ]);
       throw new Error(`unerwartet ${url}`);
     }));
-    const skill = new HomeAssistantSkill({ baseUrl: 'http://ha', accessToken: 'x' } as HomeAssistantConfig);
+    const skill = new HomeAssistantSkill({ baseUrl: 'http://ha', accessToken: 'x' } as HomeAssistantConfig, { zuordnungDatei: path.join(tmpdir(), `ha-zuo-${process.pid}-${Math.random()}.json`) });
     const r = await skill.execute({ action: 'history_summary', area: 'Waschkammerl', period: '3d', compareWith: '7d' }, {} as SkillContext);
     expect(r.success).toBe(true);
     const h = aufrufe.find(u => u.includes('/api/history/period/'))!;
@@ -166,7 +168,7 @@ describe('HomeAssistantSkill history_summary', () => {
 
   it('ohne Auswahl → klare Fehlermeldung', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => [] })));
-    const skill = new HomeAssistantSkill({ baseUrl: 'http://ha', accessToken: 'x' } as HomeAssistantConfig);
+    const skill = new HomeAssistantSkill({ baseUrl: 'http://ha', accessToken: 'x' } as HomeAssistantConfig, { zuordnungDatei: path.join(tmpdir(), `ha-zuo-${process.pid}-${Math.random()}.json`) });
     const r = await skill.execute({ action: 'history_summary', period: '3d' }, {} as SkillContext);
     expect(r.success).toBe(false);
     expect(r.error).toContain('needs entities');

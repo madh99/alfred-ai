@@ -542,3 +542,79 @@ Waschkammerl nachgestellt (Verlauf 04.–11.10.): Meldung enthält Dauervergleic
 ### Offene Owner-Entscheidungen
 
 Tagesbudget für Läufe und für Planungen; Reihenfolge der Quellen (Vorschlag: Haus/HA, dann Infra); Schwelle für „bewährt" (Vorschlag 3 bestätigte Läufe); eigene Todo-Liste „Alfred-Aufgaben" oder Standardliste; freie Untersuchung als Rückfall (N6) ja/nein; ob Alfred risikoarme Selbsthilfe vorschlagen darf (z. B. Integration neu laden — das ist eine Schaltung und bliebe Klasse `bestaetigen`).
+
+## Home-Assistant-Prüfung nach Best Practice (Entwurf 12.10.2026, Schicht 1–3 — ohne Umsetzung, Owner: „alfred sollte auch die homeassistant umgebung nach best practice untersuchen … und diese vorschlagen")
+
+### Anlass
+
+Realfall 11.10.: Bei der Frage „welche Lichter waren länger an" entdeckte Alfred nebenbei einen seit Tagen stummen Melder (Waschkammerl), einen zweiten im Gang OG (Automation zuletzt 07.09.) und einen Lichtschalter mit über 20 Verbindungsaussetzern pro Tag — alles nur, weil zufällig danach gefragt wurde. Der Owner will, dass Alfred die Umgebung als Ganzes prüft: Sind die Automationen sinnvoll, wie ließen sie sich verbessern, wo fehlen welche — und das als Vorschläge.
+
+### Ist-Stand (Code und Live, 12.10.)
+
+- **v1357 `history_summary`:** Verlauf, Schaltungen, Aussetzer, „unverändert seit", Ursachen aus dem Logbuch — im Code gerechnet.
+- **v1358 `relations`:** Zuordnung Melder → Automation → Schalter aus den Konfigurationen (Entitäts- und Geräte-Trigger), Raum und Gerät je Entität, höchstens alle 30 min neu gelesen, Vergleich mit dem letzten Stand (auch über Neustarts) → Änderungsprotokoll (Sensortausch, Stilllegung, Umbau, neue fehlende Verweise). Live 12.10. 00:16: 107 Automationen, 4 ohne lesbare Konfiguration, 5 mit Verweisen auf fehlende Entitäten/Geräte, 15 deaktiviert, 34 aktiv aber seit über 30 Tagen nicht ausgelöst; 643 von 2 402 Entitäten haben einen Raum.
+- Schreibende Aktionen gibt es bereits (`create_automation`, `update_automation`, `delete_automation`) — heute ohne eigenen Vorschlagsweg.
+- Weltmodell „Haus" (Schicht 1) deutet Anwesenheit, Öffnungen, Rauch/Wasser; Sensorbatterien als Zeitreihe (v1171); Befunde/Vorgänge (Schicht 3) existieren.
+
+### Grundsatz
+
+Die Umgebung ändert sich (Sensortausch, Stilllegung, umgebaute Automation). Darum **kein gemerktes Bild der Anlage**, sondern bei jeder Prüfung frisch aus Home Assistant gelesen; gemerkt wird nur, **was sich seit dem letzten Stand geändert hat** und **wie der Owner auf einen Vorschlag reagiert hat**. Gesammelt wird ohne Modell nach festen Regeln; das Modell deutet und formuliert nur.
+
+### Prüfkatalog (deterministisch, jede Regel mit Begründung in der Ausgabe)
+
+**A — Automationen**
+1. Verweis auf fehlende Entität oder fehlendes Gerät (Sensortausch ohne Nachziehen der Automation).
+2. Aktiv, aber seit über 30 Tagen nie ausgelöst — getrennt nach „Auslöser stumm/defekt" (Verlauf des Auslösers) und „Anlass selten" (z. B. Rauchmelder, Saisonales).
+3. Lange deaktiviert (> 30 Tage) — aufräumen oder bewusst behalten?
+4. Ein/Aus-Paare: Einschalt-Automation aktiv, zugehörige Ausschalt-Automation deaktiviert oder fehlend → Licht bleibt an.
+5. Konkurrenz: mehrere aktive Automationen schalten dasselbe Ziel mit widersprüchlicher Wirkung im selben Zeitfenster.
+6. Geräte-Trigger/-Aktionen (Registry-IDs) statt Entitäten — Best Practice: Entitätsbezug, der übersteht Gerätetausch und ist lesbar.
+7. Bewegungslicht mit Nachlauf im Modus `single` statt `restart` (Nachlauf wird nicht verlängert).
+8. Auslöser ist ein Melder mit Auffälligkeit aus `history_summary` (stumm, Wert eingefroren, instabil).
+
+**B — Entitäten und Geräte**
+1. Dauerhaft nicht verfügbar (> 7 Tage), gruppiert nach Gerät/Integration.
+2. Messwert eingefroren (Batterie 100 % seit Tagen, „letzte Meldung" alt).
+3. Verbindung instabil (≥ 5 kurze Aussetzer/Tag).
+4. Ohne Raum, obwohl Teil einer Automation (erschwert Zuordnung und Sprachsteuerung).
+5. Doppelte Geräte für dieselbe Funktion (z. B. zwei Trockner-Shellys, eines dauerhaft an).
+
+**C — System**
+1. Neustarts und nicht sauber beendeter Recorder (Logbuch „stopped/started", Fehlerprotokoll).
+2. Ausstehende Updates (`update.*`), gruppiert.
+3. Fehler im Home-Assistant-Protokoll, nach Integration gezählt (nur Zählung + Beispiel, nie ganze Logs).
+
+### Vorschläge für neue oder geänderte Automationen
+
+Abgeleitet aus Mustern in Verlauf, Logbuch und Zuordnung — jede mit Beleg und fertigem Entwurf (Konfiguration als JSON wie `create_automation` sie braucht):
+- **Licht ohne Ausschaltung:** Schalter wird oft ohne Kontext (Taster) eingeschaltet, bleibt lange an, im selben Raum gibt es einen Melder → Ausschalt-Automation mit Nachlauf.
+- **Raum mit Melder ohne Licht-Automation** (oder umgekehrt).
+- **Wiederkehrende Handschaltung** zur gleichen Zeit an ≥ 5 Tagen (±15 min) → Zeitplan.
+- **Umstellung Geräte- auf Entitäts-Trigger** für bestehende Automationen (A6), **Modus `restart`** (A7), **Nachziehen nach Sensortausch** (A1, mit dem neuen Sensor aus dem Änderungsprotokoll).
+- **Wächter**, wo ein Ausfall teuer wäre und noch keiner existiert (Melder stumm, Gerät offline) — anknüpfend an vorhandene „Wächter:"-Automationen.
+
+Jeder Vorschlag ist Autonomie-Klasse **`bestaetigen`**: Alfred legt nichts an und ändert nichts ohne Zustimmung. Vor jeder Änderung wird die alte Konfiguration gesichert (Rückbau mit einem Schritt). Abgelehnte Vorschläge werden mit ihrem Schlüssel gemerkt und nicht erneut gebracht, solange sich die Grundlage nicht ändert.
+
+### Ablauf
+
+1. **Sammeln (ohne Modell):** Zuordnung + Verlauf + Logbuch + Fehlerzählung → Liste von Befunden mit stabilem Schlüssel (Regel + Objekt).
+2. **Abgleich mit dem letzten Lauf:** neu / unverändert / erledigt (Befunde-Mechanik aus Schicht 3).
+3. **Ein Modellaufruf** (Tier medium) bekommt nur die neuen und geänderten Befunde und formuliert: Priorität, Erklärung in einem Satz, Vorschlag mit Entwurf.
+4. **Ausgabe:** ein Bericht „Haus-Check" (Kachel/Ansicht in der App) plus Vorgänge nur für die wichtigsten Punkte; Änderungsvorschläge als Bestätigungen.
+5. **Rhythmus:** wöchentlich als Job im Register; zusätzlich gezielt, wenn das Änderungsprotokoll (v1358) etwas Neues meldet (z. B. Automation verweist plötzlich auf fehlende Entität).
+
+### Budget und Grenzen
+
+Sammeln kostet nur Home-Assistant-Abrufe (Messung 12.10.: Zuordnung 5,8 s, Verlaufsauswertung 0,3–1,4 s). Modell: ein Aufruf je Lauf, Zielgröße unter 0,10 USD. Keine ungefilterten Logbuch-Abrufe (1 Tag = 34 MB). Keine ssh-Zugriffe auf den Home-Assistant-Host für die Prüfung — alles über die API.
+
+### Reihenfolge (nicht freigegeben)
+
+- **H1** Prüfkatalog A1–A3, B1–B3 als reine Funktionen auf v1357/v1358 + Aktion `review` im Skill (nur lesend, Bericht).
+- **H2** Befunde mit Schlüssel und Abgleich gegen den letzten Lauf; Wochen-Job im Register, zuerst **beobachtend** (nur Bericht an den Owner, keine Vorgänge).
+- **H3** Restliche Regeln (A4–A8, B4–B5, C1–C3).
+- **H4** Vorschläge mit Entwurf und Klasse `bestaetigen`, Sicherung vor Änderung, Merken abgelehnter Vorschläge.
+- **H5** Musterbasierte Vorschläge (Handschaltungen, fehlende Ausschaltung) nach zwei Wochen Beobachtung.
+
+### Offene Owner-Entscheidungen
+
+Rhythmus (wöchentlich?) und Kanal (Bericht in der App, Telegram, nur Vorgänge?); ob Alfred bestehende Automationen umbauen darf (immer mit Bestätigung) oder nur neue vorschlägt; Grenze „lange deaktiviert" und „lange nicht ausgelöst" (Vorschlag 30 Tage); welche Räume/Bereiche ausgenommen sind (z. B. EMS/Batterie — eigene Spec); ob der Haus-Check auch die Netzwerkgeräte-LEDs und Diagnose-Entitäten ausblendet (Vorschlag: ja).

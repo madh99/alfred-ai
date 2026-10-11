@@ -210,6 +210,9 @@ export interface EntitaetsBericht {
   vergleich?: Auswertung;
   ursachen?: Ursache[];
   automationen?: Array<{ entityId: string; name?: string; state?: string; lastTriggered?: string }>;
+  /** v1358 — Raum/Gerät und Zuordnung aus den Automations-Konfigurationen */
+  raum?: string;
+  beziehungen?: string[];
 }
 
 const std = (ms: number) => (ms / 3_600_000).toLocaleString('de-AT', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
@@ -251,7 +254,7 @@ function zustandText(z: string): string {
 
 export function berichtDetail(b: EntitaetsBericht, tz: string, jetzt: number): string[] {
   const a = b.aktuell;
-  const z: string[] = [`### ${b.name ?? b.entityId} (\`${b.entityId}\`)`];
+  const z: string[] = [`### ${b.name ?? b.entityId} (\`${b.entityId}\`)${b.raum ? ` — ${b.raum}` : ''}`];
   if (a.datenAb > a.fenster.von) z.push(`Daten erst ab ${zeitText(a.datenAb, tz)} (davor kein Eintrag im Verlauf)`);
   if (a.werte.art === 'messwert') {
     const w = a.werte; const e = b.einheit ? ` ${b.einheit}` : '';
@@ -283,6 +286,7 @@ export function berichtDetail(b: EntitaetsBericht, tz: string, jetzt: number): s
   for (const au of b.automationen ?? []) {
     z.push(`Automation ${au.name ?? au.entityId}: ${au.state === 'off' ? 'DEAKTIVIERT' : 'aktiv'}` + (au.lastTriggered ? `, zuletzt ausgelöst ${zeitText(Date.parse(au.lastTriggered), tz)}` : ''));
   }
+  for (const zeile of b.beziehungen ?? []) z.push(zeile);
   if (b.jetzt) z.push(`jetzt: ${zustandText(b.jetzt.state)}` + (b.jetzt.lastChanged ? ` seit ${zeitText(Date.parse(b.jetzt.lastChanged), tz)}` : ''));
   const auff = auffaelligkeiten(b, jetzt);
   if (auff.length > 0) z.push(`**auffällig:** ${auff.join(' · ')}`);

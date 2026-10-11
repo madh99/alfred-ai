@@ -1,5 +1,8 @@
 import type { SkillMetadata, SkillContext, SkillResult, HomeAssistantConfig } from '@alfred/types';
+import { promises as fsp } from 'node:fs';
+import path from 'node:path';
 import { Skill } from '../skill.js';
+import { baueZuordnung, bezuegeAus, zuordnungsAenderungen, zuordnungsZeilen, steuerndeAutomationen, type HaZuordnung, type AutoQuelle, type EntitaetInfo } from './ha-zuordnung.js';
 import { werteAus, ursachenAus, berichtText, anJeTag, zeitText, type HaZustand, type EntitaetsBericht, type LogbuchEintrag, type Fenster } from './ha-verlauf.js';
 
 type Action =
@@ -33,7 +36,8 @@ type Action =
   | 'delete_scene'
   | 'briefing_summary'
   | 'energy_stats'
-  | 'history_summary';
+  | 'history_summary'
+  | 'relations';
 
 function parsePeriod(period: string): string {
   const m = period.match(/^(\d+)\s*(h|d|m|w)$/i);
@@ -61,6 +65,25 @@ const ortsZeit = (iso: string | number) => zeitText(typeof iso === 'number' ? is
 /** v1357 — Domains ohne echten Zustandsverlauf; bei Raum-/Domain-Auswahl ausgelassen. */
 const OHNE_VERLAUF = new Set(['button', 'input_button', 'event', 'update', 'scene', 'image', 'camera', 'tts', 'conversation', 'notify', 'todo', 'stt', 'wake_word']);
 
+interface ZuordnungsStand {
+  z: HaZuordnung;
+  geladen: number;
+  bereiche: Map<string, { raum?: string; geraet?: string }>;
+  aenderungen: Array<{ zeit: string; text: string }>;
+}
+const ZUORDNUNG_MAX_ALTER_MS = 30 * 60_000;
+
+/** v1358 — Suchtext für match: ID, Name, Raum, Gerät und Namen der Automationen, die die Entität schalten. */
+function suchText(id: string, zustaende: Map<string, any>, stand?: ZuordnungsStand): string {
+  const b = stand?.bereiche.get(id);
+  const steuernd = stand ? steuerndeAutomationen(stand.z, id) : [];
+  // Regel: ein Schalter/Licht, das eine Automation auf Auslösung eines Bewegungsmelders schaltet, gilt als Licht
+  // (Realfall: „SpeisskuecheON", „AbstellkammerlON" schalten Licht, ohne „Licht" im Namen)
+  const bewegung = /^(switch|light)\./.test(id) && steuernd.some((a) => a.ausloeser.some((t) => BEWEGUNGSMELDER.has(String(zustaende.get(t)?.attributes?.device_class ?? ''))));
+  return [id, zustaende.get(id)?.attributes?.friendly_name ?? '', b?.raum ?? '', b?.geraet ?? '', ...steuernd.map((a) => a.name), bewegung ? 'bewegungslicht' : ''].join(' ').toLowerCase();
+}
+const BEWEGUNGSMELDER = new Set(['occupancy', 'motion', 'presence', 'moving']);
+
 /** Ab dieser Länge kürzt die Pipeline Werkzeugergebnisse in der Mitte (message-pipeline MAX_TOOL_RESULT_CHARS). */
 const KUERZUNG_AB = 11_000;
 
@@ -87,7 +110,10 @@ export class HomeAssistantSkill extends Skill {
       '"energy_stats" for energy consumption statistics over a period (today, yesterday, last_week, etc.) — auto-discovers all energy sensors and calculates kWh consumed. ' +
       '"history_summary" — PREFER over "history"/"template" for durations, on-time per day, switch counts, longest phases, outages, causes (which automation/person switched), ' +
       'stale sensors (value unchanged since) and comparisons: computed in code for entities[] / entityId / area / domain (comma list) / match (name filter) over period, ' +
-      'optional compareWith = window directly before (e.g. period "3d", compareWith "7d"). Do not recompute its numbers.',
+      'optional compareWith = window directly before (e.g. period "3d", compareWith "7d"). Do not recompute its numbers. ' +
+      'match also checks area, device name and the names of automations switching the entity (e.g. match "licht" finds switch.shelly… switched by automation „Licht Eingang"). ' +
+      '"relations" — which motion sensor triggers which automation switching which light/switch, read live from the automation configs (entities/entityId/area/match; ' +
+      'without filter: overview of broken references, deactivated automations and recent changes such as replaced sensors). Use it instead of guessing or reading configs via ssh.',
     riskLevel: 'write',
     version: '2.1.0',
     inputSchema: {
@@ -127,6 +153,7 @@ export class HomeAssistantSkill extends Skill {
             'briefing_summary',
             'energy_stats',
             'history_summary',
+            'relations',
           ],
           description: 'The Home Assistant action to perform',
         },
@@ -220,9 +247,15 @@ export class HomeAssistantSkill extends Skill {
 
   private readonly config: HomeAssistantConfig;
 
-  constructor(config: HomeAssistantConfig) {
+  /** v1358 — von alfred.ts gesetzt (Logzeilen „v1358 HA-Zuordnung …") */
+  logger?: { info: (obj: Record<string, unknown>, msg: string) => void };
+  private zuordnungStand?: ZuordnungsStand;
+  private readonly zuordnungDatei: string;
+
+  constructor(config: HomeAssistantConfig, optionen?: { zuordnungDatei?: string }) {
     super();
     this.config = config;
+    this.zuordnungDatei = optionen?.zuordnungDatei ?? path.resolve(process.cwd(), 'data', 'homeassistant-zuordnung.json');
   }
 
   async execute(
@@ -329,6 +362,8 @@ export class HomeAssistantSkill extends Skill {
           );
         case 'history_summary':
           return await this.getHistorySummary(input);
+        case 'relations':
+          return await this.getRelations(input);
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
       }
@@ -574,6 +609,9 @@ export class HomeAssistantSkill extends Skill {
 
     const alle = await this.api<any[]>('GET', '/api/states');
     const zustaende = new Map<string, any>(alle.map((e) => [e.entity_id, e]));
+    let zuordnung: ZuordnungsStand | undefined;
+    let zuordnungHinweis = '';
+    try { zuordnung = await this.ladeZuordnung(alle); } catch (err) { zuordnungHinweis = `Hinweis: Zuordnung zu Automationen nicht geladen (${err instanceof Error ? err.message.slice(0, 120) : String(err)}).`; }
 
     // Auswahl: ausdrückliche IDs ∪ Raum; sonst ganze Domain(s); danach Domain-/Namensfilter
     const liste = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',') : []).map((x) => x.trim()).filter(Boolean);
@@ -596,7 +634,7 @@ export class HomeAssistantSkill extends Skill {
     const woerter = liste(input.match).map((w) => w.toLowerCase());
     if (woerter.length > 0) {
       ausGruppe = ausGruppe.filter((id) => {
-        const text = `${id} ${zustaende.get(id)?.attributes?.friendly_name ?? ''}`.toLowerCase();
+        const text = suchText(id, zustaende, zuordnung);
         return woerter.some((w) => text.includes(w));
       });
     }
@@ -629,6 +667,8 @@ export class HomeAssistantSkill extends Skill {
         entityId: id,
         name: st?.attributes?.friendly_name,
         klasse: st?.attributes?.device_class,
+        raum: zuordnung?.bereiche.get(id)?.raum,
+        beziehungen: zuordnung ? zuordnungsZeilen(zuordnung.z, id, (e) => zustaende.get(e)?.attributes?.friendly_name ?? e) : undefined,
         einheit: st?.attributes?.unit_of_measurement,
         jetzt: st ? { state: String(st.state), lastChanged: st.last_changed, lastReported: st.last_reported } : undefined,
         aktuell: werteAus(reihe, aktuell, tz),
@@ -671,11 +711,135 @@ export class HomeAssistantSkill extends Skill {
     let display = berichtText(berichte, { tz, jetzt, aktuell, vergleich, nichtAusgewertet });
     if (unbekannt.length > 0) display += `\nUnbekannte Entitäten: ${unbekannt.join(', ')}`;
     if (logbuchHinweis) display += `\n${logbuchHinweis}`;
+    if (zuordnungHinweis) display += `\n${zuordnungHinweis}`;
     return {
       success: true,
       data: { zeitzone: tz, entitaeten: berichte.length, von: new Date(aktuell.von).toISOString(), bis: new Date(aktuell.bis).toISOString(), vergleich: !!vergleich, unbekannt },
       display,
     };
+  }
+
+  /**
+   * v1358 — Zuordnung aus den Automations-Konfigurationen, höchstens alle 30 min neu gelesen; Vergleich mit dem
+   * letzten Stand (auch über Neustarts, Datei unter data/) → Änderungsprotokoll (Sensortausch, Stilllegung, Umbau).
+   */
+  private async ladeZuordnung(alle: any[], zwingend = false): Promise<ZuordnungsStand> {
+    const jetzt = Date.now();
+    if (!zwingend && this.zuordnungStand && jetzt - this.zuordnungStand.geladen < ZUORDNUNG_MAX_ALTER_MS) return this.zuordnungStand;
+
+    const info = new Map<string, EntitaetInfo>(alle.map((e) => [String(e.entity_id), { state: String(e.state), deviceClass: e.attributes?.device_class, name: e.attributes?.friendly_name }]));
+    const domains = new Set([...info.keys()].map((e) => e.split('.')[0]));
+    const autos = alle.filter((e) => String(e.entity_id).startsWith('automation.'));
+    const quellen: AutoQuelle[] = new Array(autos.length);
+    let naechste = 0;
+    await Promise.all(Array.from({ length: 8 }, async () => {
+      while (naechste < autos.length) {
+        const k = naechste++;
+        const a = autos[k];
+        let konfig: Record<string, unknown> | undefined;
+        if (a.attributes?.id !== undefined) {
+          try { konfig = await this.api<Record<string, unknown>>('GET', `/api/config/automation/config/${encodeURIComponent(String(a.attributes.id))}`); } catch { /* YAML ohne id o. ä. */ }
+        }
+        quellen[k] = { entityId: String(a.entity_id), name: String(a.attributes?.friendly_name ?? a.entity_id), aktiv: a.state !== 'off', letzteAusloesung: a.attributes?.last_triggered ?? undefined, konfig };
+      }
+    }));
+
+    // Geräteverweise (im Editor gebaute Automationen) → Entitäten
+    const geraetIds = [...new Set(quellen.flatMap((q) => bezuegeAus(q.konfig ?? {}, domains).map((b) => b.geraet).filter((g): g is string => !!g && /^[a-f0-9]{32}$/.test(g))))];
+    const geraete = new Map<string, string[]>();
+    for (let i = 0; i < geraetIds.length; i += 100) {
+      const block = geraetIds.slice(i, i + 100).map((g) => `'${g}'`).join(',');
+      const text = await this.apiText('POST', '/api/template', { template: `{% for d in [${block}] %}{{ d }}|{{ device_entities(d) | join(',') }}\n{% endfor %}` });
+      for (const zeile of text.split('\n')) { const [g, e] = zeile.split('|'); if (g && e !== undefined) geraete.set(g.trim(), e.split(',').map((x) => x.trim()).filter(Boolean)); }
+    }
+    // Raum und Gerätename je Entität (ein Template, ~40 ms)
+    const bereiche = new Map<string, { raum?: string; geraet?: string }>();
+    const raumText = await this.apiText('POST', '/api/template', { template: "{% for s in states %}{{ s.entity_id }}|{{ area_name(s.entity_id) or '' }}|{% set d = device_id(s.entity_id) %}{{ device_attr(d, 'name') if d else '' }}\n{% endfor %}" });
+    for (const zeile of raumText.split('\n')) {
+      const [e, raum, geraet] = zeile.split('|');
+      if (e && (raum || geraet)) bereiche.set(e.trim(), { raum: raum?.trim() || undefined, geraet: geraet?.trim() || undefined });
+    }
+
+    const z = baueZuordnung(quellen, geraete, info);
+    let vorher = this.zuordnungStand?.z;
+    let aenderungen = this.zuordnungStand?.aenderungen ?? [];
+    if (!vorher) {
+      try {
+        const d = JSON.parse(await fsp.readFile(this.zuordnungDatei, 'utf8')) as { zuordnung?: HaZuordnung; aenderungen?: Array<{ zeit: string; text: string }> };
+        vorher = d.zuordnung; aenderungen = d.aenderungen ?? [];
+      } catch { /* erster Lauf */ }
+    }
+    const neu = vorher ? zuordnungsAenderungen(vorher, z) : [];
+    if (neu.length > 0) {
+      aenderungen = [...neu.map((text) => ({ zeit: z.stand, text })), ...aenderungen].slice(0, 100);
+      this.logger?.info({ anzahl: neu.length, beispiele: neu.slice(0, 5) }, 'v1358 HA-Zuordnung geändert');
+    }
+    this.logger?.info({
+      automationen: z.automationen.length,
+      ohneKonfig: z.automationen.filter((a) => a.ohneKonfig).length,
+      mitFehlendenVerweisen: z.automationen.filter((a) => a.fehlend.length > 0).length,
+      geraete: geraete.size, aenderungen: neu.length,
+    }, 'v1358 HA-Zuordnung geladen');
+    try {
+      await fsp.mkdir(path.dirname(this.zuordnungDatei), { recursive: true });
+      await fsp.writeFile(this.zuordnungDatei, JSON.stringify({ zuordnung: z, aenderungen }));
+    } catch { /* nur Komfort: Vergleich über Neustarts */ }
+    this.zuordnungStand = { z, geladen: jetzt, bereiche, aenderungen };
+    return this.zuordnungStand;
+  }
+
+  /** v1358 — Zuordnung Melder → Automation → Schalter, kaputte Verweise, Änderungen. Nur lesend. */
+  private async getRelations(input: Record<string, unknown>): Promise<SkillResult> {
+    const tz = ortsZeitzone();
+    const alle = await this.api<any[]>('GET', '/api/states');
+    const zustaende = new Map<string, any>(alle.map((e) => [e.entity_id, e]));
+    const stand = await this.ladeZuordnung(alle, input.refresh === true);
+    const { z } = stand;
+    const name = (e: string) => zustaende.get(e)?.attributes?.friendly_name ?? e;
+    const liste = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',') : []).map((x) => x.trim()).filter(Boolean);
+
+    let ids = [...liste(input.entities), ...liste(input.entityId)];
+    if (typeof input.area === 'string' && input.area.trim()) {
+      const area = input.area.trim().toLowerCase();
+      ids.push(...[...stand.bereiche.entries()].filter(([, b]) => b.raum?.toLowerCase() === area).map(([e]) => e));
+    }
+    const woerter = liste(input.match).map((w) => w.toLowerCase());
+    if (woerter.length > 0) {
+      const beteiligt = new Set(z.automationen.flatMap((a) => [...a.ausloeser, ...a.ziele]));
+      ids.push(...[...beteiligt].filter((e) => woerter.some((w) => suchText(e, zustaende, stand).includes(w))));
+    }
+    ids = [...new Set(ids)].filter((e) => !e.startsWith('automation.'));
+    const lines: string[] = [`## Zuordnung Home Assistant (Stand ${zeitText(Date.parse(z.stand), tz)}, ${z.automationen.length} Automationen)`, ''];
+
+    if (ids.length > 0) {
+      let gezeigt = 0;
+      for (const e of ids) {
+        const zeilen = zuordnungsZeilen(z, e, name);
+        if (zeilen.length === 0 && ids.length > 10) continue;
+        const b = stand.bereiche.get(e);
+        lines.push(`### ${name(e)} (\`${e}\`)${b?.raum ? ` — ${b.raum}` : ''}${zustaende.has(e) ? `: ${zustaende.get(e).state}` : ' — FEHLT in Home Assistant'}`);
+        lines.push(...(zeilen.length ? zeilen : ['keine Automation schaltet oder nutzt diese Entität']), '');
+        if (++gezeigt >= 30) { lines.push(`… weitere ${ids.length - gezeigt} nicht gezeigt — enger filtern`); break; }
+      }
+      if (gezeigt === 0) lines.push('Keine der gewählten Entitäten kommt in einer Automation vor.');
+    } else {
+      const kaputt = z.automationen.filter((a) => a.fehlend.length > 0);
+      const aus = z.automationen.filter((a) => !a.aktiv);
+      const grenze = Date.now() - 30 * 86_400_000;
+      const lange = z.automationen.filter((a) => a.aktiv && (!a.letzteAusloesung || Date.parse(a.letzteAusloesung) < grenze));
+      lines.push(`**Verweise auf fehlende Entitäten/Geräte (${kaputt.length}):**`);
+      for (const a of kaputt) lines.push(`- ${a.name} (\`${a.entityId}\`): ${a.fehlend.join(', ')}`);
+      lines.push('', `**Deaktiviert (${aus.length}):** ${aus.map((a) => a.name).join(', ') || '–'}`);
+      lines.push('', `**Aktiv, aber seit über 30 Tagen nicht ausgelöst (${lange.length}):**`);
+      for (const a of lange.slice(0, 40)) lines.push(`- ${a.name}: ${a.letzteAusloesung ? zeitText(Date.parse(a.letzteAusloesung), tz) : 'nie'}${a.ausloeser.length ? ` — Auslöser ${a.ausloeser.slice(0, 3).map(name).join(', ')}` : ''}`);
+      const ohne = z.automationen.filter((a) => a.ohneKonfig).length;
+      if (ohne) lines.push('', `${ohne} Automationen ohne lesbare Konfiguration (YAML ohne id).`);
+    }
+    if (stand.aenderungen.length > 0) {
+      lines.push('', '**Letzte erkannte Änderungen:**');
+      for (const a of stand.aenderungen.slice(0, 10)) lines.push(`- ${zeitText(Date.parse(a.zeit), tz)}: ${a.text}`);
+    }
+    return { success: true, data: { stand: z.stand, automationen: z.automationen.length, entitaeten: ids.length }, display: lines.join('\n') };
   }
 
   private async getLogbook(entityId?: string, period?: string): Promise<SkillResult> {

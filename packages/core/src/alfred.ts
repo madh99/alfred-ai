@@ -2873,7 +2873,9 @@ export class Alfred {
     // 4h. Home Assistant (optional)
     if (this.config.homeassistant) {
       const { HomeAssistantSkill } = await import('@alfred/skills');
-      skillRegistry.register(new HomeAssistantSkill(this.config.homeassistant));
+      const haSkill = new HomeAssistantSkill(this.config.homeassistant);
+      haSkill.logger = this.logger; // v1358 — Logzeilen „v1358 HA-Zuordnung …"
+      skillRegistry.register(haSkill);
       this.logger.info({ baseUrl: this.config.homeassistant.baseUrl }, 'Home Assistant skill enabled');
     }
 
@@ -14959,7 +14961,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       }
       if (service === 'homeassistant' && freshConfig.homeassistant) {
         const { HomeAssistantSkill } = await import('@alfred/skills');
-        this.skillRegistry.register(new HomeAssistantSkill(freshConfig.homeassistant));
+        const haSkill = new HomeAssistantSkill(freshConfig.homeassistant);
+        haSkill.logger = this.logger; // v1358
+        this.skillRegistry.register(haSkill);
         this.config.homeassistant = freshConfig.homeassistant;
         this.logger.info({ baseUrl: freshConfig.homeassistant.baseUrl }, 'Home Assistant skill hot-reloaded');
       }

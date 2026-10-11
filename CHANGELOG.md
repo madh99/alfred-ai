@@ -33,6 +33,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1358] - 2026-10-12
+
+### Added — Home Assistant: Zuordnung Melder → Automation → Schalter, Änderungen erkannt (v1358)
+
+Bei der Frage nach Lichtern, die länger an waren, fand die Verlaufsauswertung mit dem Namensfilter „licht" nur einen Schalter — die übrigen heißen technisch (z. B. `shelly1pmminig3_…`). Alfred gab deshalb eine Tiefensuche an eine Unteraufgabe ab, die die Zusammenhänge mühsam über Konfigurationen, ssh und MQTT suchte. Die Zuordnung steht aber in den Automationen selbst.
+
+- Neue Aktion `relations`: liest die Konfigurationen aller Automationen (auch im Editor gebaute mit Geräte-Triggern) und zeigt, welcher Melder welche Automation auslöst und welchen Schalter sie schaltet, dazu Raum und Gerät. Ohne Filter eine Übersicht: Verweise auf fehlende Entitäten oder Geräte, deaktivierte Automationen, seit über 30 Tagen nicht ausgelöste.
+- Die Zuordnung wird nicht als fester Fakt gemerkt, sondern höchstens alle 30 Minuten frisch gelesen und mit dem letzten Stand verglichen — auch über Neustarts. Sensortausch, Stilllegung, Umbau einer Automation oder ein neuer Verweis auf eine fehlende Entität stehen im Änderungsprotokoll (Logzeile „v1358 HA-Zuordnung geändert").
+- `history_summary`: der Namensfilter prüft auch Raum, Gerätename und die Namen der schaltenden Automationen; ein Schalter, den eine Automation auf Auslösung eines Bewegungsmelders schaltet, gilt als „bewegungslicht". In den Details steht, wer eine Entität schaltet und was sie auslöst.
+
+Live 12.10.: 107 Automationen gelesen (5,8 s, danach aus dem Zwischenspeicher), 5 mit Verweisen auf fehlende Entitäten/Geräte, 15 deaktiviert, 34 aktiv aber seit über 30 Tagen nicht ausgelöst; der Filter „licht" findet jetzt auch Gang OG, Eingangsbereich und Garage.
+
 ## [0.19.0-jarvis.1357] - 2026-10-11
 
 ### Added — Home Assistant: Verlaufsauswertung im Code (v1357)
