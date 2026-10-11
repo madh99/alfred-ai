@@ -63,5 +63,6 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete/suche?q=rechnung')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/anhaenge?limit=50')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/suche/x')).toBe(false);
+    expect(istSitzungsPfad('/api/geraete/meldung')).toBe(true); // v1351
   });
 });

@@ -29,6 +29,8 @@ import 'update.dart';
 import 'ipc.dart';
 import 'kacheln.dart';
 import 'linux_hotkey.dart';
+import 'markdown.dart'; // 1.6.0
+import 'zwischenablage.dart'; // 1.6.0
 import 'modell.dart';
 import 'server.dart';
 import 'transfer.dart';
@@ -179,7 +181,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     _trayEinrichten();
     _tastenkuerzelEinrichten();
     ipc = IpcVerbindung(
-      aufStatus: (s) => setState(() => satellit = s),
+      aufStatus: (s) {
+        final wieder = s.verbunden && satellit?.verbunden != true; // 1.6.0 — nach Wiederverbinden verpasste Bestätigungen holen
+        setState(() => satellit = s);
+        if (wieder) _holeBestaetigungen();
+      },
       aufEreignis: (art, text, zeit, anhang, faden) {
         if (art == 'gespraech') { // 1.2.1 / v1330 — das Gespräch lief anderswo weiter (Telegram, andere App): nachladen
           if (text == server?.chatId) return; // eigene Nachricht
@@ -190,6 +196,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           if (faden != server?.faden) { // 1.2.0 — Antwort gehört zu einem anderen Gespräch: Hinweis mit Sprungmarke
             _zeile(Eintrag(Art.hinweis, '💬 Antwort im Gespräch „${_fadenTitel(faden)}“: ${text.isEmpty && anhang != null ? '📎 ${anhang.name}' : (text.length > 80 ? '${text.substring(0, 80)}…' : text)} — in der Seitenleiste öffnen'));
             _faedenLaden();
+            _neueNachrichtMelden(text, anhang, faden: faden, andererFaden: true); // 1.6.0 — Klick öffnet dieses Gespräch
             return;
           }
           // 1.2.5 — Anhang ohne Text direkt nach einer Alfred-Antwort: an diese hängen statt eigene Zeile (zwei Pushes vom Server)
@@ -210,7 +217,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         _titel();
         if (erste) _holeVerlauf(); // v1314 — was zuletzt besprochen wurde
         _holeBestaetigungen();
-        abfrage ??= Timer.periodic(const Duration(seconds: 4), (_) => _holeBestaetigungen());
+        // 1.6.0 — Punkt 11: neue Bestätigungen meldet der Satellit sofort (IPC „bestaetigung"); die Abfrage räumt nur noch
+        // erledigte weg und fängt verpasste Meldungen auf — 30 s statt 4 s, zusätzlich beim Zurückholen des Fensters
+        abfrage ??= Timer.periodic(const Duration(seconds: 30), (_) => _holeBestaetigungen());
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); } // M6
         if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler
         if (erste) _faedenLaden(); // 1.2.0 Gespräche
@@ -288,7 +297,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   }
 
   @override
-  void onWindowFocus() { sichtbar = true; _gesehenMerken(); }
+  void onWindowFocus() { sichtbar = true; _gesehenMerken(); _holeBestaetigungen(); }
 
   @override
   void onWindowMinimize() { sichtbar = false; } // 1.5.0 — minimiert zählt wie ausgeblendet (Benachrichtigung, „neu")
@@ -297,13 +306,21 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   void onWindowRestore() { sichtbar = true; _gesehenMerken(); }
 
   /// 1.5.0 — Punkt 3: Antwort kam, während das Fenster nicht zu sehen war → Systembenachrichtigung; sonst gilt sie als gesehen.
-  Future<void> _neueNachrichtMelden(String text, Anhang? anhang) async {
-    if (sichtbar) { _gesehenMerken(); return; }
+  /// 1.6.0 — Punkt 6: Klick auf die Benachrichtigung öffnet das Gespräch, zu dem die Antwort gehört (vorher nur die App).
+  Future<void> _neueNachrichtMelden(String text, Anhang? anhang, {String? faden, bool andererFaden = false}) async {
+    if (sichtbar) { if (!andererFaden) _gesehenMerken(); return; }
     try {
-      final n = LocalNotification(title: 'Alfred', body: text.isEmpty && anhang != null ? '📎 ${anhang.name}' : (text.length > 180 ? '${text.substring(0, 180)}…' : text));
-      n.onClick = () => _zeigen();
+      final n = LocalNotification(title: andererFaden ? 'Alfred — ${_fadenTitel(faden)}' : 'Alfred', body: text.isEmpty && anhang != null ? '📎 ${anhang.name}' : (text.length > 180 ? '${text.substring(0, 180)}…' : text));
+      n.onClick = () => _gespraechZeigen(faden);
       await n.show();
     } catch (_) {}
+  }
+
+  /// Fenster zeigen und in das Gespräch wechseln (null = Hauptgespräch), falls nicht schon offen.
+  Future<void> _gespraechZeigen(String? faden) async {
+    await _zeigen();
+    final s = server; if (s == null) return;
+    if (s.faden != faden || fundstelle != null || archiv != null || ansicht != Ansicht.chat) { await _fadenWechseln(faden); }
   }
 
   /// Neueste sichtbare Alfred-Antwort als gesehen speichern (nur im Live-Verlauf, nicht in Fundstelle/Archiv).
@@ -357,7 +374,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     try {
       benachrichtigungNr++;
       final n = LocalNotification(title: 'Alfred — Bestätigung', body: b.text.length > 180 ? '${b.text.substring(0, 180)}…' : b.text);
-      n.onClick = () => _zeigen();
+      n.onClick = () { _zeigen(); setState(() => ansicht = Ansicht.chat); }; // 1.6.0 — Bestätigungskarten stehen im Chat
       await n.show();
     } catch (_) {}
   }
@@ -636,6 +653,20 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     setState(() => verlauf.add(e));
     _protokolliere(e);
     _nachUnten();
+    if (e.art == Art.fehler) _fehlerMelden(e.text);
+  }
+
+  /// 1.6.0 — Punkt 8: Fehler der App gehen ins Server-Log (Logzeile „v1351 App-Meldung"), damit sie auffallen, ohne dass
+  /// der Owner sie meldet. Gleicher Text höchstens alle 10 min (der Server begrenzt zusätzlich).
+  final Map<String, DateTime> _gemeldeteFehler = {};
+  Future<void> _fehlerMelden(String text) async {
+    final s = server; if (s == null) return;
+    final jetzt = DateTime.now();
+    final vorher = _gemeldeteFehler[text];
+    if (vorher != null && jetzt.difference(vorher).inMinutes < 10) return;
+    _gemeldeteFehler[text] = jetzt;
+    if (appVersion.isEmpty) { try { appVersion = (await PackageInfo.fromPlatform()).version; } catch (_) {} }
+    await s.melde(text, version: appVersion, plattform: Platform.operatingSystem);
   }
 
   void _protokolliere(Eintrag e, [String? quelle]) {
@@ -672,6 +703,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       if (n.isEmpty) return;
       // Zuordnung Server-Zeile → Eintrag in verlauf.dart (testbar); Anhänge kommen im Hintergrund nach (1.4.2)
       final zeilen = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).toList();
+      if (um == null) { aeltesteZeit = '${n.first['zeit']}'; mehrAeltere = n.length >= 60; } // 1.6.0 — „Ältere Nachrichten laden"
       final alte = <Eintrag>[for (final m in zeilen) _mitAnhaengen(eintragAusVerlauf(m), m)..fund = um != null && '${m['zeit']}' == um];
       // 1.5.0 — Punkt 3: Antworten seit dem letzten Blick (App war zu/ausgeblendet) mit Trennzeile markieren
       final neu = um == null ? neueAntworten(alte, gesehenGespeichert()) : null;
@@ -684,6 +716,30 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     } catch (e) { _zeile(Eintrag(Art.hinweis, 'Verlauf nicht geladen: $e')); }
   }
 
+  // ── 1.6.0 Ältere Nachrichten (Punkt 2): bisher endete der Verlauf nach 60 Nachrichten ─────────────────────────────
+  String? aeltesteZeit;
+  bool mehrAeltere = false;
+  bool laedtAeltere = false;
+
+  Future<void> _aeltereLaden() async {
+    final s = server; final vor = aeltesteZeit;
+    if (s == null || vor == null || laedtAeltere) return;
+    setState(() => laedtAeltere = true);
+    try {
+      final j = await s.json('/api/geraete/verlauf?limit=60${s.faden == null ? '' : '&faden=${s.faden}'}&vor=${Uri.encodeQueryComponent(vor)}');
+      final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+      final alte = <Eintrag>[for (final m in n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty)) _mitAnhaengen(eintragAusVerlauf(m), m)];
+      if (!mounted) return;
+      setState(() {
+        verlauf.insertAll(0, alte); // Liste ist von unten verankert: oben anfügen verschiebt die Ansicht nicht
+        if (n.isNotEmpty) aeltesteZeit = '${n.first['zeit']}';
+        mehrAeltere = n.length >= 60;
+      });
+      _protokolliere(Eintrag(Art.hinweis, 'Ältere Nachrichten: ${alte.length} geladen (vor $vor)'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Ältere Nachrichten nicht geladen: $e')); }
+    finally { if (mounted) setState(() => laedtAeltere = false); }
+  }
+
   // ── 1.5.0 Suche (Punkt 4): Treffer öffnet die Fundstelle im Chat ─────────────────────────────────────────────────
   Map<String, dynamic>? fundstelle;
   String letzteSuche = ''; // „Zur Suche" zeigt die letzte Anfrage wieder
@@ -694,7 +750,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     if (antwortet) { _zeile(Eintrag(Art.hinweis, 'Bitte warten, bis die Antwort fertig ist.')); return; }
     final faden = t['faden'] is String ? t['faden'] as String : null;
     s.faden = faden;
-    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; fundstelle = t; });
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; fundstelle = t; mehrAeltere = false; });
     await _holeVerlauf(um: '${t['zeit']}');
     _protokolliere(Eintrag(Art.hinweis, 'Fundstelle ${t['gespraech']} ${t['zeit']} geöffnet (${verlauf.where((e) => e.fund).length} Treffer markiert)'));
     WidgetsBinding.instance.addPostFrameCallback((_) { final c = fundSchluessel.currentContext; if (c != null) Scrollable.ensureVisible(c, alignment: 0.4, duration: const Duration(milliseconds: 200)); });
@@ -942,7 +998,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final s = server; if (s == null) return;
     if (antwortet) { _zeile(Eintrag(Art.hinweis, 'Bitte warten, bis die Antwort fertig ist.')); return; }
     s.faden = faden;
-    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; fundstelle = null; });
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; fundstelle = null; mehrAeltere = false; });
     await _holeVerlauf();
     if (verlauf.isEmpty && faden != null) _zeile(Eintrag(Art.hinweis, 'Neues Gespräch — was möchtest du besprechen?'));
     fokus.requestFocus();
@@ -981,7 +1037,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   Future<void> _archivOeffnen(String chatId) async {
     final s = server; if (s == null) return;
-    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = chatId; fundstelle = null; });
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = chatId; fundstelle = null; mehrAeltere = false; });
     try {
       final j = await s.json('/api/geraete/verlauf?limit=100&archiv=${Uri.encodeQueryComponent(chatId)}');
       final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
@@ -1061,8 +1117,13 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
               controller: scroll,
               reverse: true, // 1.2.7 — von unten verankert: Öffnen eines Gesprächs zeigt die letzte Nachricht
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-              itemCount: verlauf.length,
+              itemCount: verlauf.length + (mehrAeltere ? 1 : 0),
               itemBuilder: (context, ri) {
+                if (ri == verlauf.length) { // 1.6.0 — ganz oben: ältere Nachrichten
+                  return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Center(child: laedtAeltere
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : TextButton.icon(onPressed: _aeltereLaden, icon: const Icon(Icons.expand_less, size: 18), label: const Text('Ältere Nachrichten laden'))));
+                }
                 final i = verlauf.length - 1 - ri;
                 final e = verlauf[i];
                 final neuerTag = i == 0 || !_gleicherTag(verlauf[i - 1].zeit, e.zeit);
@@ -1138,6 +1199,11 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         // 1.0.3 — mehrzeiliges Feld: Enter sendet, Umschalt+Enter macht eine neue Zeile (onSubmitted feuert bei maxLines > 1 nicht).
         Focus(
           onKeyEvent: (node, ev) {
+            // 1.6.0 — Strg+V / ⌘V: liegt ein Bild in der Zwischenablage, wird es Anhang (Text fügt das Feld wie gewohnt ein)
+            if (ev is KeyDownEvent && ev.logicalKey == LogicalKeyboardKey.keyV && (Platform.isMacOS ? HardwareKeyboard.instance.isMetaPressed : HardwareKeyboard.instance.isControlPressed)) {
+              _bildEinfuegen();
+              return KeyEventResult.ignored;
+            }
             if (ev is KeyDownEvent && (ev.logicalKey == LogicalKeyboardKey.enter || ev.logicalKey == LogicalKeyboardKey.numpadEnter) && !HardwareKeyboard.instance.isShiftPressed) {
               if (!antwortet) _senden();
               return KeyEventResult.handled;
@@ -1176,6 +1242,15 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         ]),
       ]),
     );
+  }
+
+  /// 1.6.0 — Punkt 3: Bild aus der Zwischenablage als Anhang der Eingabezeile.
+  Future<void> _bildEinfuegen() async {
+    if (antwortet) return;
+    final f = await bildAusZwischenablage();
+    if (f == null || !mounted) return;
+    _dateienAbgelegt([f.path]);
+    setState(() => fluechtig = '📎 Bild aus der Zwischenablage angehängt (${(f.lengthSync() / 1024).round()} KB)');
   }
 
   Future<void> _anhangWaehlen() async {
@@ -1293,7 +1368,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Align(alignment: Alignment.centerLeft, child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 820), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [Text('Alfred', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)), Text(' · $zeit', style: theme.textTheme.labelSmall?.copyWith(color: dim))]),
           const SizedBox(height: 4),
-          SelectableText.rich(markdown(e.text.isEmpty ? '…' : e.text, theme)),
+          AlfredText(e.text, aufKopiert: () => setState(() => fluechtig = 'kopiert')), // 1.6.0 Links, Tabellen, Code-Blöcke
           for (final a in e.anhaenge) AnhangAnsicht(a, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufAbspielen: (x) => audio.abspielen(x.daten, x.mime).catchError((Object err) => _zeile(Eintrag(Art.fehler, '🔊 $err')))), // 1.5.0 eigenes Widget
           if (e.text.isNotEmpty) Row(children: [
             IconButton(tooltip: 'Kopieren', onPressed: () { Clipboard.setData(ClipboardData(text: e.text)); setState(() => fluechtig = 'kopiert'); }, icon: Icon(Icons.copy_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
@@ -1311,29 +1386,4 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         return Text('$zeit  ${e.text}', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error));
     }
   }
-}
-
-/// Kleines Markdown wie in der Terminal-Sitzung: **fett**, `code`, Aufzählungen, Überschriften. Rein, ohne Paket.
-TextSpan markdown(String text, ThemeData theme) {
-  final zeilen = text.split('\n');
-  final spans = <InlineSpan>[];
-  final re = RegExp(r'(\*\*([^*]+)\*\*|`([^`]+)`)');
-  for (var z = 0; z < zeilen.length; z++) {
-    var zeile = zeilen[z];
-    var fettZeile = false;
-    final u = RegExp(r'^#{1,6}\s+(.*)$').firstMatch(zeile);
-    if (u != null) { zeile = u.group(1)!; fettZeile = true; }
-    final p = RegExp(r'^(\s*)([-*•]|\d+[.)])\s+(.*)$').firstMatch(zeile);
-    if (u == null && p != null) zeile = '${p.group(1)}• ${p.group(3)}';
-    var i = 0;
-    for (final m in re.allMatches(zeile)) {
-      if (m.start > i) spans.add(TextSpan(text: zeile.substring(i, m.start), style: fettZeile ? const TextStyle(fontWeight: FontWeight.bold) : null));
-      if (m.group(2) != null) spans.add(TextSpan(text: m.group(2), style: const TextStyle(fontWeight: FontWeight.bold)));
-      else spans.add(TextSpan(text: m.group(3), style: TextStyle(fontFamily: 'Consolas', color: theme.colorScheme.tertiary)));
-      i = m.end;
-    }
-    if (i < zeile.length) spans.add(TextSpan(text: zeile.substring(i), style: fettZeile ? const TextStyle(fontWeight: FontWeight.bold) : null));
-    if (z < zeilen.length - 1) spans.add(const TextSpan(text: '\n'));
-  }
-  return TextSpan(children: spans, style: theme.textTheme.bodyMedium);
 }

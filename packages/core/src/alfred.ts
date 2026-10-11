@@ -13678,6 +13678,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             return { ok: true, zaehler: { geraete: z.length, auffaellig: d?.auffaellig.length ?? 0, aktiv: d?.aktiv ? 1 : 0 } };
           },
         });
+        const appMeldungsGrenze = new (await import('./geraete/app-meldungen.js')).AppMeldungsGrenze(); // v1351
         (logApiAdapter as any).setGeraeteCallbacks({
           pairingCode: () => gw.erzeugePairingCode(),
           paare: (b: Record<string, unknown>, r: string) => gw.paare(b, r),
@@ -13693,7 +13694,13 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // alte Kanal-Sitzungen dieses Geräts als Archiv nur lesbar
           // v1332 — Sicherheitsreview: nur ein Gerät des Owners sieht die Owner-Gespräche; andere Geräte bleiben bei
           // ihren Kanal-Gesprächen `sitzung:<id>[:<faden>]` (so wie die Pipeline sie für Nicht-Owner weiter ablegt)
-          verlauf: async (geraetId: string, limit: number, faden?: string, archiv?: string, um?: string) => {
+          // v1351 — Fehler der Desktop-App ins Log (Grenze je Gerät: gleicher Text 10 min, 30/h)
+          appMeldung: (geraetId: string, name: string, m: { art: string; text: string; version: string; plattform: string }) => {
+            if (!appMeldungsGrenze.erlaube(geraetId, m.text)) return false;
+            this.logger.warn({ geraetId, geraet: name, art: m.art, version: m.version, plattform: m.plattform, text: m.text }, 'v1351 App-Meldung');
+            return true;
+          },
+          verlauf: async (geraetId: string, limit: number, faden?: string, archiv?: string, um?: string, vor?: string) => {
             if (!this.conversationRepo) return [];
             const { hauptgespraech, fadenSchluessel, FADEN_RE } = await import('./gespraeche.js');
             // v1333 — Sicherheitsreview: Archiv nur die eigenen alten Sitzungen dieses Geräts, Faden nur im erlaubten Muster
@@ -13716,6 +13723,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               const r = (await this.conversationRepo.nachrichtenUm(c.id, um, halb * 4, halb * 4)).filter(sichtbar);
               const i = Math.max(0, r.findIndex(x => x.createdAt >= um));
               auswahl = r.slice(Math.max(0, i - halb), i + halb);
+            } else if (vor) { // v1351 — ältere Nachrichten nachladen (App: „Ältere Nachrichten laden")
+              auswahl = (await this.conversationRepo.nachrichtenUm(c.id, vor, limit * 4, 0)).filter(sichtbar).slice(-limit);
             } else auswahl = (await this.conversationRepo.getMessages(c.id, limit * 4)).filter(sichtbar).slice(-limit);
             return auswahl.map(x => {
               const anhaenge = verweiseAus(x.anhaenge).filter(v => this.anhangAblage?.vorhanden(v.id)); // v1347 — abgelaufene fallen weg

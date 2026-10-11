@@ -949,7 +949,9 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
     nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string): boolean; // v1325 Anhang, v1328 Faden
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
-    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string, um?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean; anhaenge?: Array<{ id: string; name: string; mime: string; groesse: number }> }>>; // v1350 um = Fundstelle
+    /** v1351 — Fehlermeldung der Desktop-App ins Log; false = Grenze erreicht (429). */
+    appMeldung?(geraetId: string, name: string, m: { art: string; text: string; version: string; plattform: string }): boolean;
+    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string, um?: string, vor?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean; anhaenge?: Array<{ id: string; name: string; mime: string; groesse: number }> }>>; // v1350 um = Fundstelle
     /** v1350 — Suche im Verlauf der Gespräche, die das Gerät lesen darf. */
     suche?(geraetId: string, text: string, limit: number): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string; faden: string | null; gespraech: string }>>;
     /** v1350 — Übersicht abgelegter Anhänge (neueste zuerst). */
@@ -1926,6 +1928,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
     } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
       this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
+    } else if (url.pathname === '/api/geraete/meldung' && req.method === 'POST') {
+      this.handleGeraetMeldung(req, res).catch(err => this.safeError(res, err)); // v1351
     } else if ((url.pathname === '/api/geraete/suche' || url.pathname === '/api/geraete/anhaenge') && req.method === 'GET') {
       this.handleGeraetSucheAnhaenge(req, res, url).catch(err => this.safeError(res, err)); // v1350
     } else if (url.pathname === '/api/geraete/faeden' && req.method === 'GET') {
@@ -6659,11 +6663,28 @@ export class HttpAdapter extends MessagingAdapter {
     const faden = url.searchParams.get('faden'); // v1328
     const archiv = url.searchParams.get('archiv'); // v1330 — alte Kanal-Sitzung dieses Geräts, nur lesen
     const archivOk = archiv && archiv.startsWith(`sitzung:${geraet.geraetId}`) ? archiv : undefined;
-    const umRoh = url.searchParams.get('um'); // v1350 — Fundstelle der Suche (Zeitpunkt der gefundenen Nachricht)
-    const um = umRoh && !Number.isNaN(Date.parse(umRoh)) && umRoh.length <= 40 ? umRoh : undefined;
-    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined, archivOk, um);
+    const zeitParam = (n: string) => { const v = url.searchParams.get(n); return v && v.length <= 40 && !Number.isNaN(Date.parse(v)) ? v : undefined; };
+    const um = zeitParam('um'); // v1350 — Fundstelle der Suche (Zeitpunkt der gefundenen Nachricht)
+    const vor = um ? undefined : zeitParam('vor'); // v1351 — ältere Nachrichten nachladen (strikt vor diesem Zeitpunkt)
+    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined, archivOk, um, vor);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, ...(archivOk ? { archiv: archivOk } : {}), ...(um ? { um } : {}), nachrichten }));
+    res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, ...(archivOk ? { archiv: archivOk } : {}), ...(um ? { um } : {}), ...(vor ? { vor } : {}), nachrichten }));
+  }
+
+  /** v1351 — Fehlermeldung der Desktop-App ins Server-Log (Owner-Freigabe 11.10., Punkt 8): {art, text, version, plattform}. */
+  private async handleGeraetMeldung(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.appMeldung) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    if (Number(req.headers['content-length'] ?? 0) > 16_384) { res.writeHead(413, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'zu groß' })); req.resume(); return; }
+    let j: Record<string, unknown> = {};
+    try { j = JSON.parse((await this.readBody(req)).slice(0, 16_384) || '{}') as Record<string, unknown>; } catch { /* leer */ }
+    const s = (v: unknown, n: number) => (typeof v === 'string' ? v : '').replace(/[\r\n]+/g, ' ').slice(0, n);
+    const text = s(j.text, 1000);
+    if (!text) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'text fehlt' })); return; }
+    const angenommen = this.geraeteCallbacks.appMeldung(geraet.geraetId, geraet.name, { art: s(j.art, 20) || 'fehler', text, version: s(j.version, 20), plattform: s(j.plattform, 20) });
+    res.writeHead(angenommen ? 200 : 429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: angenommen }));
   }
 
   /** v1350 — Suche im Verlauf (`?q=`) und Übersicht der Anhänge, nur mit Gerätetoken; Grenzen setzt der Callback je Gerät. */

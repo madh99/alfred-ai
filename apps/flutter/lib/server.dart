@@ -72,6 +72,16 @@ class Server {
     return jsonDecode(body) as Map<String, dynamic>;
   }
 
+  /// 1.6.0 — Fehler der App ins Server-Log (v1351 `/api/geraete/meldung`); Fehler hier werden geschluckt (keine Schleife).
+  Future<void> melde(String text, {String art = 'fehler', String version = '', String plattform = ''}) async {
+    try {
+      final req = await _anfrage('POST', '/api/geraete/meldung');
+      req.add(utf8.encode(jsonEncode({'art': art, 'text': text.length > 1000 ? text.substring(0, 1000) : text, 'version': version, 'plattform': plattform})));
+      final res = await req.close();
+      await res.drain<void>();
+    } catch (_) {}
+  }
+
   Future<List<Bestaetigung>> offeneBestaetigungen() async {
     final req = await _anfrage('GET', '/api/confirmations/pending');
     final res = await req.close();

@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1351] - 2026-10-11
+
+### Added — App: Links, Tabellen und Code-Blöcke in Antworten (App 1.6.0)
+
+Antworten zeigen Links anklickbar (nur Web und Mail, im Standardprogramm), Markdown-Tabellen als Tabelle und Code-Blöcke mit eigenem Kopier-Knopf. Vorher standen Tabellen (etwa Rechnungszusammenfassungen) und Code als Rohtext da.
+
+### Added — Ältere Nachrichten nachladen (v1351, App 1.6.0)
+
+Der Verlauf endete nach den letzten 60 Nachrichten. `/api/geraete/verlauf?vor=<zeit>` liefert die davor; die App zeigt oben „Ältere Nachrichten laden".
+
+### Added — App: Bild aus der Zwischenablage einfügen (App 1.6.0)
+
+Strg+V (macOS ⌘V) in der Eingabe hängt ein kopiertes Bild als PNG an, etwa ein Bildschirmfoto; Text wird wie gewohnt eingefügt. Ohne zusätzliches Paket über die Bordmittel des Systems.
+
+### Added — Fehler der App im Server-Log (v1351, App 1.6.0)
+
+Fehler, die die App anzeigt (Mikrofon, Relais, Update, Verlauf), gehen über `POST /api/geraete/meldung` ins Server-Log (Logzeile „v1351 App-Meldung" mit Gerät, Version, Plattform). Grenze je Gerät: gleicher Text höchstens alle 10 Minuten, höchstens 30 je Stunde.
+
+### Changed — App: Benachrichtigungen öffnen das richtige Gespräch, weniger Abfragen (App 1.6.0)
+
+Ein Klick auf eine Benachrichtigung öffnet das Gespräch, zu dem die Antwort gehört; Antworten aus anderen Gesprächen melden sich ebenfalls, wenn das Fenster nicht zu sehen ist. Offene Bestätigungen fragt die App alle 30 statt alle 4 Sekunden ab — neue meldet der Satellit ohnehin sofort; zusätzlich beim Zurückholen des Fensters und nach dem Wiederverbinden.
+
 ### Fixed — App: Zähler offener Hinweise erst nach dem Öffnen sichtbar (App 1.5.1)
 
 Die Zahl an der Symbolleiste berechnete nur die Ansicht „Hinweise" selbst. Die App fragt sie jetzt beim Start und jede Minute ab.
