@@ -18,6 +18,7 @@ import 'aktivierungswort.dart'; // 1.3.0
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
+import 'befehle.dart'; // 1.10.0
 import 'gedaechtnis.dart'; // 1.9.0
 import 'vorgaenge.dart'; // 1.9.0
 import 'audio.dart';
@@ -46,6 +47,7 @@ part 'sitzung_sprache.dart';
 part 'sitzung_senden.dart';
 part 'sitzung_oberflaeche.dart';
 part 'sitzung_gespraeche.dart';
+part 'sitzung_befehle.dart'; // 1.10.0
 
 /// Alfred — Desktop-App, Phase 4 (Spec docs/specs/2026-10-07-flutter-app-phase4.md).
 /// Meilenstein 1: hängt sich an den Satelliten (IPC), spricht per HTTP mit dem Gehirn, zeigt Verlauf, streamt Antworten,
@@ -158,6 +160,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   final Set<String> erinnerungGemeldet = {};
   final Map<String, DateTime> erinnerungTexte = {}; // gemeldeter Text → Zeit (keine Doppelmeldung, falls der Server sie auch schickt)
   Timer? erinnerungTakt;
+  bool paletteOffen = false; // 1.10.0 B1
+  String _traySignatur = ''; // 1.10.0 B2 — Menü nur bei Änderung neu setzen
+  Timer? trayTakt;
+  DateTime updateGeprueft = DateTime.fromMillisecondsSinceEpoch(0); // 1.10.0 — stilles Update sucht selbst
   Timer? vorgaengeTakt;
   bool hoeren = false; // Meilenstein 4 — Echtzeit-Hören mit Aktivierungswort
   HoerClient? hoerClient;
@@ -197,6 +203,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     trayManager.addListener(this);
     windowManager.setPreventClose(true);
     _trayEinrichten();
+    trayTakt = Timer.periodic(const Duration(seconds: 5), (_) => _trayAktualisieren()); // 1.10.0 B2
     _tastenkuerzelEinrichten();
     ipc = IpcVerbindung(
       aufStatus: (s) {
@@ -250,6 +257,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           final wav = startArgs['sprachtest'];
           if (wav != null && wav.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _sprachtest(wav));
           if (startArgs['kacheln'] == 'an') setState(() { kachelnOffen = true; ansicht = Ansicht.kacheln; }); // Beweislauf: Kacheln sofort öffnen
+          final start = Ansicht.values.where((a) => a.name == startArgs['ansicht']).firstOrNull; // 1.10.0 — Beweislauf: --ansicht aufgaben|gedaechtnis|…
+          if (start != null) setState(() { ansicht = start; if (start == Ansicht.kacheln) kachelnOffen = true; });
           if (startArgs['hoeren'] == 'an') Future.delayed(const Duration(milliseconds: 800), _hoerenStart); // Meilenstein 4
           final hoertest = startArgs['hoertest'];
           if (hoertest != null && hoertest.isNotEmpty) Future.delayed(const Duration(milliseconds: 800), () => _hoertest(hoertest));
@@ -274,6 +283,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     abfrage?.cancel();
     vorgaengeTakt?.cancel();
     erinnerungTakt?.cancel(); // 1.9.0
+    trayTakt?.cancel(); // 1.10.0
     for (final s in _signale) { s.cancel(); }
     hoerClient?.schluss();
     ipc.stop();
@@ -298,6 +308,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   /// 1.7.1 — Esc schließt die Schnellfrage unabhängig vom Fokus (VM-Beweis 12:26: ohne Fokus kam Esc nicht an).
   bool _schnellTaste(KeyEvent ev) {
     if (schnell && ev is KeyDownEvent && ev.logicalKey == LogicalKeyboardKey.escape) { _schnellfrageSchliessen(); return true; }
+    // 1.10.0 B1 — Strg+K (macOS ⌘K) öffnet die Befehlspalette
+    if (!schnell && ev is KeyDownEvent && ev.logicalKey == LogicalKeyboardKey.keyK && (HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed) && !HardwareKeyboard.instance.isAltPressed) { _paletteOeffnen(); return true; }
     return false;
   }
 
@@ -333,6 +345,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       case 'zeigen': _zeigen();
       case 'sprechen': _talkUmschalten();
       case 'schnellfrage': _schnellfrageOeffnen();
+      case 'hoeren': _hoerenUmschalten(); // 1.10.0 B2
+      case 'hinweise': _zeigen(); setState(() => ansicht = Ansicht.hinweise);
+      case 'aufgaben': _zeigen(); setState(() => ansicht = Ansicht.aufgaben);
+      case 'bestaetigungen': _zeigen(); setState(() { ansicht = Ansicht.chat; seitenleisteOffen = true; });
       case 'beenden': _beenden();
     }
   }

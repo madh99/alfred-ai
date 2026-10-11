@@ -5,6 +5,7 @@ extension _Senden on _SitzungState {
   // ── Selbstupdate (M6): Server kennt den neuesten Installer je Plattform ──────────────────────────────────────────
   Future<void> _updatePruefen() async {
     final s = server; if (s == null) return;
+    updateGeprueft = DateTime.now(); // 1.10.0
     if (appVersion.isEmpty) { try { final p = await PackageInfo.fromPlatform(); appVersion = p.version; } catch (_) { appVersion = '0.0.0'; } }
     final u = await AppUpdate(s, appVersion).pruefe();
     if (!mounted || u == null) return;
@@ -239,6 +240,8 @@ extension _Senden on _SitzungState {
 
   /// Alle 5 Minuten: Update vorhanden und App unbenutzt → still installieren (Windows, macOS).
   Future<void> _stillPruefen() async {
+    // 1.10.0 — vorher installierte das stille Update nur, was die 6-h-Prüfung schon gefunden hatte; jetzt sucht es alle 30 min selbst
+    if (update == null && !updateLaeuft && DateTime.now().difference(updateGeprueft) >= const Duration(minutes: 30)) await _updatePruefen();
     final u = update;
     if (u == null || updateLaeuft) return;
     final erlaubt = stillesUpdateErlaubt(

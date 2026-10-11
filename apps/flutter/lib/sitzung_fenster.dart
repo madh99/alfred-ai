@@ -6,14 +6,7 @@ extension _Fenster on _SitzungState {
   Future<void> _trayEinrichten() async {
     try {
       await trayManager.setIcon(Platform.isWindows ? 'assets/alfred.ico' : 'assets/alfred.png'); // M5: macOS/Linux brauchen PNG
-      await trayManager.setToolTip('Alfred');
-      await trayManager.setContextMenu(Menu(items: [
-        MenuItem(key: 'zeigen', label: 'Alfred öffnen'),
-        MenuItem(key: 'sprechen', label: 'Sprechen (Strg+Alt+Leertaste)'),
-        MenuItem(key: 'schnellfrage', label: 'Schnellfrage (Strg+Alt+A)'),
-        MenuItem.separator(),
-        MenuItem(key: 'beenden', label: 'Beenden'),
-      ]));
+      await _trayAktualisieren(erzwingen: true); // 1.10.0 B2 — Menü mit Zählern und Zuhören-Schalter
     } catch (e) { _zeile(Eintrag(Art.fehler, 'Tray nicht verfügbar: $e')); }
   }
 

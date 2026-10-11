@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — App: Befehlspalette mit Strg+K (App 1.10.0)
+
+Strg+K (macOS ⌘K) oder der neue Knopf in der Symbolleiste öffnet eine Befehlsliste: alle Ansichten, „Neuer Chat", jedes Gespräch, Schnellfrage, Zuhören, Vorlesen, Seitenleiste, Farbschema, Update-Suche. Mit eingetipptem Text zusätzlich „An Alfred senden", „Im Verlauf suchen" und „Als Aufgabe anlegen". Pfeiltasten wählen, Enter führt aus, Esc schließt.
+
+### Added — App: Tray-Menü mit Zählern (App 1.10.0)
+
+Das Tray-Menü zeigt offene Hinweise, fällige Aufgaben und offene Bestätigungen mit Zahl und springt direkt in die jeweilige Ansicht; Zuhören lässt sich dort ein- und ausschalten. Der Tooltip des Tray-Symbols fasst die Zahlen zusammen, unter macOS steht neben dem Symbol die Zahl der offenen Entscheidungen.
+
+### Fixed — App: stilles Update wartete bis zu 6 Stunden (App 1.10.0)
+
+Das stille Update installierte nur, was die sechsstündliche Update-Prüfung schon gefunden hatte. Es sucht jetzt selbst alle 30 Minuten nach einer neuen Version.
+
 ### Added — App: Nachrichten bei Verbindungsabbruch zurückhalten (App 1.8.0)
 
 Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachricht nicht mehr als Fehler verloren: sie wartet in `~/.alfred/warteschlange.json` (übersteht einen App-Neustart) und wird nachgesendet, sobald der Server wieder antwortet — in ihrem Gespräch und in der Reihenfolge des Schreibens. Nach 24 Stunden verfällt sie mit Hinweis. Abgebrochene oder halb beantwortete Anfragen werden nie erneut gesendet.
