@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { createHash } from 'node:crypto'; // v1355 Cache-Schlüssel
 import type {
   LLMProviderConfig,
   LLMRequest,
@@ -76,8 +77,31 @@ export class OpenAIProvider extends LLMProvider {
    * requests (e.g. Mistral's `prompt_cache_key`). The OpenAI SDK passes unknown fields
    * through in the request body. Default: no extras.
    */
-  protected extraRequestParams(_request: LLMRequest): Record<string, unknown> {
-    return {};
+  protected extraRequestParams(request: LLMRequest): Record<string, unknown> {
+    // v1355 — beim echten OpenAI-Endpunkt den Cache-Schlüssel mitschicken: Anfragen mit demselben System und denselben
+    // Werkzeugen landen so auf demselben Cache (Live-Probe 11.10. gpt-6.1-sol: 3 219 von 3 222 Tokens gecacht).
+    // Andere OpenAI-kompatible Endpunkte (OpenRouter, OpenWebUI) bekommen nichts Unbekanntes geschickt.
+    if (!this.istEchterOpenAiEndpunkt()) return {};
+    const key = this.computeCacheKey(request);
+    return key ? { prompt_cache_key: key } : {};
+  }
+
+  /** v1355 — kein eigener baseUrl oder api.openai.com. */
+  protected istEchterOpenAiEndpunkt(): boolean {
+    const u = this.config.baseUrl;
+    return !u || /^https:\/\/api\.openai\.com(\/|$)/i.test(u);
+  }
+
+  /**
+   * Stabiler Cache-Schlüssel je (System + Werkzeuge), 32 Hex-Zeichen. undefined, wenn beides fehlt — für einen leeren
+   * Aufbau bringt ein Schlüssel nichts. (v596 für Mistral eingeführt, v1355 in die Basisklasse gezogen.)
+   */
+  protected computeCacheKey(request: LLMRequest): string | undefined {
+    const hasSystem = typeof request.system === 'string' && request.system.length > 0;
+    const hasTools = Array.isArray(request.tools) && request.tools.length > 0;
+    if (!hasSystem && !hasTools) return undefined;
+    const seed = `${request.system ?? ''}\n${JSON.stringify(request.tools ?? [])}`;
+    return createHash('sha256').update(seed).digest('hex').slice(0, 32);
   }
 
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
@@ -316,6 +340,7 @@ export class OpenAIProvider extends LLMProvider {
       ...(effort ? { reasoning: { effort } } : {}),
       ...(request.previousResponseId && input.some(i => i.type === 'function_call_output')
         ? { previous_response_id: request.previousResponseId } : {}),
+      ...this.extraRequestParams(request), // v1355 — prompt_cache_key auch im Responses-Weg (gpt-6.1-sol)
       // temperature bewusst weggelassen — Reasoning-Modelle lehnen sie ab
     };
   }

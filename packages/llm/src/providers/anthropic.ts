@@ -10,6 +10,24 @@ import type {
 } from '@alfred/types';
 import { LLMProvider, lookupContextWindow, withPrematureCloseRetry } from '../provider.js';
 
+/**
+ * v1355 — Verlauf im Cache (Punkt 8, Owner-Freigabe 11.10.): bisher trugen nur System und Werkzeuge eine Cache-Marke
+ * (0.10.52). In Werkzeug-Schleifen ging der wachsende Verlauf jede Runde ungecacht hinaus (Realfall delegate 11.10.
+ * 13:26: Cache konstant 89 182 Tokens, ungecacht 908 → 146 038 über 18 Runden). Jetzt bekommt der letzte Block der
+ * letzten Nachricht eine Marke — aber nur, wenn sie Werkzeugergebnisse enthält, also eine weitere Runde zu erwarten ist:
+ * Cache-Schreiben kostet 25 % Aufschlag und lohnt sich bei Einzelanfragen nicht. Höchstens 3 Marken (System, Werkzeuge,
+ * Verlauf) — Anthropic erlaubt 4. Die nächste Runde findet das Präfix über die Rückschau der Marke wieder.
+ */
+export function markiereVerlaufFuerCache(messages: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
+  const letzte = messages[messages.length - 1];
+  if (!letzte || letzte.role !== 'user' || typeof letzte.content === 'string' || letzte.content.length === 0) return messages;
+  if (!letzte.content.some(b => b.type === 'tool_result')) return messages;
+  const bloecke = [...letzte.content];
+  const i = bloecke.length - 1;
+  bloecke[i] = { ...bloecke[i], cache_control: { type: 'ephemeral' as const } } as Anthropic.ContentBlockParam;
+  return [...messages.slice(0, -1), { ...letzte, content: bloecke }];
+}
+
 export class AnthropicProvider extends LLMProvider {
   private client!: Anthropic;
 
@@ -135,7 +153,7 @@ export class AnthropicProvider extends LLMProvider {
   }
 
   private async completeEinmal(request: LLMRequest): Promise<LLMResponse> {
-    const messages = this.mapMessages(request.messages);
+    const messages = markiereVerlaufFuerCache(this.mapMessages(request.messages)); // v1355
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
 
     const params: Anthropic.MessageCreateParams = {
@@ -178,7 +196,7 @@ export class AnthropicProvider extends LLMProvider {
   }
 
   private async *streamEinmal(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
-    const messages = this.mapMessages(request.messages);
+    const messages = markiereVerlaufFuerCache(this.mapMessages(request.messages)); // v1355
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
 
     const stream = this.client.messages.stream({

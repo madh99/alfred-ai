@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { LLMProviderConfig, LLMRequest } from '@alfred/types';
 import { OpenAIProvider } from './openai.js';
 
@@ -40,19 +39,6 @@ export class MistralProvider extends OpenAIProvider {
   protected supportsPromptCaching(): boolean {
     // v1156 — Medium 3.5 heißt live auch 'mistral-medium-3.5', '-2604' und '-latest'.
     return /^mistral-medium-(3-5|3\.5|2604|latest)/i.test(this.config.model);
-  }
-
-  /**
-   * Stable cache key per (system+tools). Returns undefined when neither a non-empty
-   * system prompt nor any tools are present — sending a cache key for an "empty"
-   * setup buys nothing. 32 hex chars = 128 bits, ample uniqueness for cache slots.
-   */
-  protected computeCacheKey(request: LLMRequest): string | undefined {
-    const hasSystem = typeof request.system === 'string' && request.system.length > 0;
-    const hasTools = Array.isArray(request.tools) && request.tools.length > 0;
-    if (!hasSystem && !hasTools) return undefined;
-    const seed = `${request.system ?? ''}\n${JSON.stringify(request.tools ?? [])}`;
-    return createHash('sha256').update(seed).digest('hex').slice(0, 32);
   }
 
   /** Inject prompt_cache_key into the chat completion request body via the parent hook. */

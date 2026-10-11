@@ -33,6 +33,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1355] - 2026-10-11
+
+### Changed — Prompt-Caching auch für den Verlauf und für OpenAI (v1355)
+
+Auswertung der Antwortzeit (Owner 11.10.): Bei Claude-Modellen lagen nur System-Prompt und Werkzeuge im Cache (seit 0.10.52). In Werkzeug-Schleifen ging der wachsende Verlauf jede Runde ungecacht hinaus — Realfall: eine Untersuchung mit 18 Opus-Runden, Cache konstant 89 182 Tokens, ungecachter Anteil von 908 auf 146 038 Tokens, 275 s und 3,12 USD. Jetzt trägt bei Claude zusätzlich der letzte Block einer Nachricht mit Werkzeugergebnissen eine Cache-Marke, sodass jede weitere Runde den bisherigen Verlauf aus dem Cache liest; Einzelanfragen bleiben ohne (Cache-Schreiben kostet Aufschlag). Beim echten OpenAI-Endpunkt geht ein stabiler `prompt_cache_key` je System und Werkzeugen mit, im Responses-Weg (gpt-6.1-sol) wie im Chat-Weg; vorher lag er nur bei Mistral Medium. Andere OpenAI-kompatible Endpunkte bekommen keinen zusätzlichen Parameter, Google cacht weiterhin von selbst.
+
 ## [0.19.0-jarvis.1354] - 2026-10-11
 
 ### Added — „Alfred arbeitet" auf allen Geräten, auch bei Fragen aus Telegram (v1354, App 1.11.0)
