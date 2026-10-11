@@ -20,6 +20,7 @@ export type KennzahlName =
   | 'vorgaengeAngelegt'
   | 'vorgaengeWiderspruch' | 'vorgaengeDubletten' // v1214 — Fakten-Gegenprobe, Zusammenführung
   | 'vorgaengeZuBefund' // v1222 — Insight einem offenen Befund zugeordnet statt Prosa-Vorgang
+  | 'hinweisWiederholung' | 'hinweisWiderspruch' // v1360 — Punkt wiederholt Bekanntes; Ausfall-Behauptung gegen Live-Daten
   | 'miniPassDauerMs';
 
 export const KENNZAHL_NAMEN: readonly KennzahlName[] = [
@@ -29,6 +30,7 @@ export const KENNZAHL_NAMEN: readonly KennzahlName[] = [
   'aktionenAusgefuehrt', 'aktionenFehlgeschlagen', 'aktionenBestaetigung', 'aktionenBlockiert', 'aktionenUebersprungen',
   'vorgaengeAngelegt',
   'vorgaengeWiderspruch', 'vorgaengeDubletten', 'vorgaengeZuBefund',
+  'hinweisWiederholung', 'hinweisWiderspruch', // v1360
   'miniPassDauerMs', // v1192 — Summe der Mini-Pass-Dauern (Ereignis → Reaktion), Ø = Summe / miniPaesse
 ];
 

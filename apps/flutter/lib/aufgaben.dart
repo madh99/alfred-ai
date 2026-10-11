@@ -131,6 +131,9 @@ class _AufgabenState extends State<Aufgaben> {
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
       content: Text('Erledigt: ${a.titel}'),
       action: SnackBarAction(label: 'Rückgängig', onPressed: () => _aendern(a, {'erledigt': false})),
+      // 1.12.1 — seit Flutter 3.47 bleibt eine Meldung mit Knopf stehen (persist = action != null); Owner 12.10.: sie verschwand nie
+      persist: false,
+      duration: const Duration(seconds: 8),
     ));
   }
 

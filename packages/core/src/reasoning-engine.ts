@@ -21,6 +21,8 @@ import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
+import { entferneWiederholungen, istMetaText, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360
+import { anbieterDatenlage } from './vorgaenge/faktenpruefung.js'; // v1360
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
 import { WarumSpeicher, insightTitel, kurzBegruendung, type PassBegruendung } from './interaktion/warum.js';
 import { ruecknahmeHinweis } from './vorgaenge/ruecknahme.js';
@@ -735,11 +737,7 @@ ${this.buildTopicInstructions()}`;
 
       // Send insights (event-triggered are always at least HIGH urgency)
       const newInsights: string[] = [];
-      for (const insight of parsed.insights) {
-        const fein = await this.filtereBulletsDurchKorrekturen(insight);
-        if (!fein) continue;
-        if (!await this.wasRecentlySent(fein)) newInsights.push(fein);
-      }
+      for (const insight of parsed.insights) await this.pruefeHinweis(insight, newInsights); // v1360 — legt Zugelassenes in newInsights ab
       if (newInsights.length > 0 || parsed.actions.length > 0) {
         const urgency = this.resolveUrgency(parsed.actions);
         // Event-triggered insights are at least 'high' urgency
@@ -828,11 +826,7 @@ ${this.buildTopicInstructions()}`;
       if (isNoInsights(text)) { this.logger.info({ quelle: ereignis.quelle, objekte: ereignis.objekte, dauerMs: Date.now() - start }, 'v1175 Mini-Pass: keine Meldung'); return; }
       const parsed = this.parseReasoningResponse(text);
       const neu: string[] = [];
-      for (const insight of parsed.insights) {
-        const fein = await this.filtereBulletsDurchKorrekturen(insight);
-        if (!fein) continue;
-        if (!await this.wasRecentlySent(fein)) neu.push(fein);
-      }
+      for (const insight of parsed.insights) await this.pruefeHinweis(insight, neu); // v1360 — legt Zugelassenes in neu ab
       this.logger.info({ quelle: ereignis.quelle, objekte: ereignis.objekte, insights: neu.length, verworfen: parsed.insights.length - neu.length, dauerMs: Date.now() - start }, 'v1175 Mini-Pass gelaufen');
       if (neu.length > 0 || parsed.actions.length > 0) await this.deliverOrDefer(neu, parsed.actions, 'high', Date.now() - start);
     } catch (err) {
@@ -1118,16 +1112,14 @@ ${this.buildTopicInstructions()}`;
       const parsed = this.parseReasoningResponse(text);
       const newInsights: string[] = [];
       for (const insight of parsed.insights) {
-        // v1157 — erst feinkörnig (nur getroffene Bullets entfernen), dann Ganzsegment-Gate
-        const fein = await this.filtereBulletsDurchKorrekturen(insight);
+        // v1157 — erst feinkörnig (nur getroffene Bullets entfernen), dann Ganzsegment-Gate; v1360 — Wiederholung je Punkt, Fakten-Gegenprobe
+        const fein = await this.pruefeHinweis(insight, newInsights);
         if (!fein) continue;
-        if (await this.wasRecentlySent(fein)) continue;
         // Resolved-correction backup-gate: log if an insight slips through that could be
         // construed as overlapping with a `_resolved` correction. Default = pass (we trust
         // the LLM to follow the prompt rule about new vs. old refs). Programmatic check
         // here is for visibility/audit, not blocking.
         await this.auditResolvedCorrectionOverlap(fein).catch(() => { /* non-critical */ });
-        newInsights.push(fein);
       }
 
       if (newInsights.length === 0 && parsed.actions.length === 0) {
@@ -1648,9 +1640,54 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // v1337 — Codezäune abstreifen; leere Hüllen fallen weg (siehe istLeererInsightText)
     const bereinigt = (text ?? '').replace(/```[a-z]*\s*/gi, '').replace(/```/g, '').trim();
     if (istLeererInsightText(bereinigt)) return [];
+    // v1360 — rohe JSON-Antwort: Texte retten, nie das JSON zustellen (Realfall 11.10. 19:00)
+    const json = texteAusJson(bereinigt);
+    if (json !== null) {
+      this.logger.info({ gerettet: json.length }, 'v1360 Reasoning-Antwort war JSON — Texte übernommen');
+      return json.filter(t => t.length > 10 && !istMetaText(t));
+    }
     const lines = bereinigt.split(/\n{2,}|\n(?=\d+\.\s)/).map(l => l.trim()).filter(l => l.length > 10 && !istLeererInsightText(l));
-    if (lines.length <= 1) return lines.length === 1 ? lines : [bereinigt];
-    return lines;
+    const segmente = lines.length <= 1 ? (lines.length === 1 ? lines : [bereinigt]) : lines;
+    // v1360 — Vorreden und Selbstauskünfte des Modells sind keine Hinweise (Realfälle 11.10.: „Hier sind die Insights …")
+    const inhalt = segmente.filter(s => !istMetaText(s));
+    if (inhalt.length < segmente.length) this.logger.info({ verworfen: segmente.filter(s => istMetaText(s)).map(s => s.slice(0, 60)) }, 'v1360 Vorrede des Modells verworfen');
+    return inhalt;
+  }
+
+  /** v1360 — Puls der Modell-Anbieter (Schicht 0) für die Fakten-Gegenprobe; von alfred.ts gesetzt. */
+  private anbieterPuls?: () => import('./vorgaenge/faktenpruefung.js').AnbieterPuls[];
+  setAnbieterPuls(fn: () => import('./vorgaenge/faktenpruefung.js').AnbieterPuls[]): void { this.anbieterPuls = fn; }
+
+  /** v1360 — Sektionsinhalt für die Fakten-Gegenprobe: Modell-Anbieter aus dem Puls, sonst aus dem Kollektor. */
+  private datenlageFuer(sektion: string): string | undefined {
+    if (sektion.startsWith('llm-')) return this.anbieterPuls ? anbieterDatenlage(this.anbieterPuls(), sektion.slice(4)) : undefined;
+    return this.collector.sektionsInhalt(sektion);
+  }
+
+  /**
+   * v1360 — ein Hinweis vor der Zustellung (alle drei Wege: Pass, Ereignis, Mini-Pass): Korrekturen (v1157), bekannt
+   * (v1142-Gate), Wiederholung je Aufzählungspunkt gegen die Zustellungen der letzten 48 h und gegen diesen Lauf,
+   * Fakten-Gegenprobe (Ausfall-Behauptung gegen Datenlage NORMAL). Rückgabe: zuzustellender Text oder null.
+   */
+  private async pruefeHinweis(insight: string, imLauf: string[]): Promise<string | null> {
+    const fein = await this.filtereBulletsDurchKorrekturen(insight);
+    if (!fein) return null;
+    if (await this.wasRecentlySent(fein)) return null;
+    const { text, entfernt } = entferneWiederholungen(fein, [...await this.holeGelieferteInsights(), ...imLauf]);
+    for (const e of entfernt) {
+      this.kennzahlen.zaehle('hinweisWiederholung');
+      this.logger.info({ punkt: e.punkt.slice(0, 140), wie: e.w.gegen.slice(0, 100), anker: e.w.anker, ueberlappung: Number(e.w.ueberlappung.toFixed(2)) }, 'v1360 Hinweis wiederholt Bekanntes — Punkt nicht zugestellt');
+    }
+    if (!text) return null;
+    const { widersprichtWeltmodell } = await import('./vorgaenge/faktenpruefung.js');
+    const widerspruch = widersprichtWeltmodell(text, (k) => this.datenlageFuer(k));
+    if (widerspruch) {
+      this.kennzahlen.zaehle('hinweisWiderspruch');
+      this.logger.info({ hinweis: text.slice(0, 160), sektion: widerspruch.sektion, grund: widerspruch.grund }, 'v1360 Hinweis widerspricht Live-Daten — nicht zugestellt');
+      return null;
+    }
+    imLauf.push(text);
+    return text;
   }
 
   /** Content-based hash: first 100 chars normalized. Catches exact/near-exact repeats. */

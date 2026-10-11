@@ -6830,6 +6830,8 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
         this.ownerMasterUserId,
       );
       this.reasoningEngine.setNotificationRouter(this.notificationRouter);
+      // v1360 — Fakten-Gegenprobe der Hinweise kennt den Zustand der Modell-Anbieter (Realfall 11.10.: „Claude-API gesperrt" 9×)
+      this.reasoningEngine.setAnbieterPuls(() => this.providerPuls?.alle() ?? []);
       this.logger.info({ minUrgency: this.config.notifications?.minUrgency ?? 'high', devMode: this.config.notifications?.devMode ?? false }, 'v927 notification router active');
     } else if (this.reasoningEngine && !this.ownerMasterUserId) {
       this.logger.warn('v927 notification router NOT active (no ownerMasterUserId) — sending behaviour unchanged');

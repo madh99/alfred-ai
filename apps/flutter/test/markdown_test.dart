@@ -51,7 +51,7 @@ void main() {
   testWidgets('Link antippen ruft aufLink mit der Adresse', (t) async {
     String? geoeffnet;
     await t.pumpWidget(MaterialApp(home: Scaffold(body: AlfredText('Mehr unter [aWATTar](https://www.awattar.at/) bitte.', aufLink: (u) async => geoeffnet = u))));
-    final rich = t.widget<SelectableText>(find.byType(SelectableText)).textSpan!;
+    final rich = t.widget<RichText>(find.byType(RichText).first).text; // 1.12.1 Text.rich in SelectionArea
     TapGestureRecognizer? r;
     rich.visitChildren((s) { if (s is TextSpan && s.recognizer is TapGestureRecognizer) { r = s.recognizer as TapGestureRecognizer; return false; } return true; });
     expect(r, isNotNull);
@@ -66,13 +66,57 @@ void main() {
       return null;
     });
     var gemeldet = false;
-    await t.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: AlfredText('| A | B |\n|---|---|\n| 1 | 2 |\n\n```\nnpm pack\n```', aufKopiert: () => gemeldet = true)))));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: AlfredText('| A | B |\n|---|---|\n| 1 | 2 |\n\n```\nnpm pack\n```', aufKopiert: (_) => gemeldet = true)))));
     expect(find.byType(Table), findsOneWidget);
     expect(find.text('A'), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
     await t.tap(find.byTooltip('Code kopieren'));
     expect(kopiert, 'npm pack');
     expect(gemeldet, isTrue);
+  });
+
+  // 1.12.1 — Owner 12.10.: Tabellenwerte und IPs ließen sich weder markieren noch anklicken
+  test('IP-Adressen: gültige IPv4 mit/ohne Port, keine Versionsnummern, auch am Satzende', () {
+    expect(istIpAdresse('172.16.0.38'), isTrue);
+    expect(istIpAdresse('192.168.1.92:3420'), isTrue);
+    expect(istIpAdresse('300.1.1.1'), isFalse);
+    expect(istIpAdresse('0.19.0'), isFalse);
+    final theme = ThemeData();
+    final codes = <String>[];
+    TapGestureRecognizer code(String c) { codes.add(c); return TapGestureRecognizer(); }
+    inlineSpans('IP 172.16.0.38. Version 0.19.0-jarvis.1359, Port 192.168.1.92:3420, falsch 999.1.1.1 und `sensor.x`', theme, aufCode: code);
+    expect(codes, ['172.16.0.38', '192.168.1.92:3420', 'sensor.x']);
+  });
+
+  testWidgets('ganze Antwort in einer SelectionArea; Tabellenzelle ist Text darin', (t) async {
+    await t.pumpWidget(const MaterialApp(home: Scaffold(body: AlfredText('Vorher\n\n| Wert | Zustand |\n|---|---|\n| IP | `172.16.0.38` |\n\nNachher'))));
+    expect(find.byType(SelectionArea), findsOneWidget);
+    expect(find.byType(SelectableText), findsNothing); // kein Insel-Markieren je Block mehr
+    expect(find.descendant(of: find.byType(SelectionArea), matching: find.byType(Table)), findsOneWidget);
+  });
+
+  testWidgets('Klick auf Code kopiert; Klick auf IP öffnet Menü mit Kopieren und Browser', (t) async {
+    String? kopiert;
+    t.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') kopiert = (call.arguments as Map)['text'] as String?;
+      return null;
+    });
+    String? gemeldet; String? geoeffnet;
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: AlfredText('Schalter `switch.licht` an 172.16.0.38', aufKopiert: (w) => gemeldet = w, aufLink: (u) async => geoeffnet = u))));
+    final erkenner = <String, TapGestureRecognizer>{};
+    t.widget<RichText>(find.byType(RichText).first).text.visitChildren((s) {
+      if (s is TextSpan && s.recognizer is TapGestureRecognizer) erkenner[s.text!] = s.recognizer as TapGestureRecognizer;
+      return true;
+    });
+    erkenner['switch.licht']!.onTapUp!(TapUpDetails(kind: PointerDeviceKind.mouse, globalPosition: const Offset(10, 10)));
+    expect(kopiert, 'switch.licht');
+    expect(gemeldet, 'switch.licht');
+    erkenner['172.16.0.38']!.onTapUp!(TapUpDetails(kind: PointerDeviceKind.mouse, globalPosition: const Offset(10, 10)));
+    await t.pumpAndSettle();
+    expect(find.text('Kopieren'), findsOneWidget);
+    await t.tap(find.text('Im Browser öffnen (http://172.16.0.38)'));
+    await t.pumpAndSettle();
+    expect(geoeffnet, 'http://172.16.0.38');
   });
 
   testWidgets('leerer Text zeigt die Denkpunkte', (t) async {

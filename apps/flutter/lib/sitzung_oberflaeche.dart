@@ -378,7 +378,7 @@ extension _Oberflaeche on _SitzungState {
         return Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Align(alignment: Alignment.centerLeft, child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 820), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [Text('Alfred', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)), Text(' · $zeit', style: theme.textTheme.labelSmall?.copyWith(color: dim))]),
           const SizedBox(height: 4),
-          AlfredText(e.text, aufKopiert: () => _neu(() => fluechtig = 'kopiert')), // 1.6.0 Links, Tabellen, Code-Blöcke
+          AlfredText(e.text, aufKopiert: (was) => _neu(() => fluechtig = '„${was.length > 40 ? '${was.substring(0, 40)}…' : was}" kopiert')), // 1.6.0 Links, Tabellen, Code-Blöcke; 1.12.1 Text
           for (final a in e.anhaenge) AnhangAnsicht(a, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufAbspielen: (x) => audio.abspielen(x.daten, x.mime).catchError((Object err) => _zeile(Eintrag(Art.fehler, '🔊 $err')))), // 1.5.0 eigenes Widget
           if (e.text.isNotEmpty) Row(children: [
             IconButton(tooltip: 'Kopieren', onPressed: () { Clipboard.setData(ClipboardData(text: e.text)); _neu(() => fluechtig = 'kopiert'); }, icon: Icon(Icons.copy_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),

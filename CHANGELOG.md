@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Antworten markieren und kopieren, Code und IPs anklickbar (App 1.12.1)
+
+Werte in Tabellen ließen sich weder markieren noch kopieren, und eine IP-Adresse im Text war nicht anklickbar. Jetzt liegt die ganze Antwort in einem Markierbereich: Markieren über Absätze, Tabellen und Code hinweg, Strg+C und Rechtsklick „Kopieren". Ein Klick auf eine Code-Stelle kopiert sie; ein Klick auf eine IP-Adresse (auch ohne Code-Markierung im Text) öffnet ein Menü mit „Kopieren" und „Im Browser öffnen". Versionsnummern wie „0.19.0" gelten nicht als Adresse.
+
+Die Meldung „Erledigt: … Rückgängig" in den Aufgaben verschwindet nach 8 Sekunden von selbst — seit Flutter 3.47 blieb eine Meldung mit Knopf stehen, bis man sie wegklickte.
+
 ### Added — App: Ansicht „Befunde" (App 1.12.0)
 
 Neue native Ansicht für alles, was Alfred als auffällig führt — gruppiert nach Quelle, der Haus-Check nach seinen Regeln. Jeder Befund zeigt Dauer, Häufigkeit und auf Klick die Begründung mit Hinweis; „Nachfragen" springt mit Bezug in den Chat. Erledigte Befunde der letzten 7 Tage lassen sich aufklappen. In der Kachel „Befunde" erscheint der Haus-Check als eine Zeile mit Sprung in die Ansicht; die Befehlspalette kennt „Befunde" und „Haus-Check".
@@ -36,6 +42,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 ### Added — App: Updates still installieren (App 1.8.0)
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
+
+## [0.19.0-jarvis.1360] - 2026-10-12
+
+### Fixed — Hinweise: keine Vorreden, kein rohes JSON, keine Wiederholungen, Prüfung gegen Live-Daten (v1360)
+
+Am 11.10. meldete Alfred „Claude-API-Zugang deaktiviert" neunmal mit Sofort-Zustellung — jedes Mal anders formuliert, während die Claude-Aufrufe fehlerfrei liefen. Dazu wurden Vorreden des Modells („Hier sind die Insights für heute …", „Ich habe die Vorab-Analyse durchgesehen …") und einmal die rohe JSON-Antwort als Hinweis zugestellt.
+
+- **Vorreden** und Selbstauskünfte des Modells sind keine Hinweise mehr; eine **JSON-Antwort** wird ausgelesen statt zugestellt.
+- **Wiederholungen** werden über Anker erkannt — Datum, Uhrzeit, Prozentwert, Domain, Eigenname, Kennung — zusammen mit der Wortüberlappung, und zwar je Aufzählungspunkt: Ein Sammelhinweis verliert nur den bekannten Punkt, das Neue bleibt. Die bisherige Prüfung erkannte dasselbe Thema nur bei fast gleichem Wortlaut oder bei Objekten einer festen Liste. Kalibriert an 103 echten Hinweisen der letzten 30 Tage: die Serien (Anthropic, Power Platform, Agent-Autonomie, DDNSS, Domains, E-Mail-Fehlerquote) werden erkannt, verschiedene Geräte oder Feed-Artikel nicht zusammengelegt.
+- **Fakten-Gegenprobe vor der Zustellung**: Bisher prüfte Alfred Ausfall-Behauptungen nur beim Anlegen von Vorgängen. Jetzt gilt das auch für Hinweise, und die Modell-Anbieter (Anthropic, OpenAI, Mistral) sind Quellen mit Datenlage aus dem Provider-Puls. Behauptet ein Hinweis, ein Anbieter sei gesperrt, während dessen Aufrufe in den letzten 6 Stunden gelangen, wird er nicht zugestellt (Logzeile „v1360 Hinweis widerspricht Live-Daten").
+- Gilt für alle drei Wege: Reasoning-Pass, Ereignis-Pass und Mini-Pass. Neue Kennzahlen `hinweisWiederholung` und `hinweisWiderspruch`.
 
 ## [0.19.0-jarvis.1359] - 2026-10-12
 
