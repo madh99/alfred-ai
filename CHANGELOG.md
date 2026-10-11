@@ -33,6 +33,23 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1357] - 2026-10-11
+
+### Added — Home Assistant: Verlaufsauswertung im Code (v1357)
+
+Fragen wie „welche Lichter waren länger an als sonst" ließen das Modell bisher aus Rohverläufen selbst rechnen: Unteraufgaben schrieben dafür lange Jinja-Templates, kleinere Modelle verrechneten sich oder verwechselten UTC mit Ortszeit, und lange Verläufe wurden in der Mitte gekürzt. Die neue Aktion `history_summary` rechnet im Code — für einzelne Entitäten, einen Raum oder eine Domain (optional mit Namensfilter) über einen Zeitraum, wahlweise mit Vergleichszeitraum davor:
+
+- Dauer je Zustand und je Ortstag (Europe/Vienna, Sommer-/Winterzeit-fest), Schaltungen, längste Phase mit Von–Bis
+- kurze Aussetzer unter 5 Minuten überbrückt und gezählt; viele davon gelten als instabile Verbindung
+- Messwerte: Minimum, Maximum, zeitgewichtetes Mittel, „unverändert seit" und letzte Meldung des Sensors
+- Ursache jeder Einschaltung aus dem Logbuch (Automation mit Auslöser, Person, ohne Kontext) samt Zustand und letzter Auslösung der Automation
+- feste, in der Ausgabe genannte Regeln für „auffällig", z. B. Bewegungsmelder nie ausgelöst
+- viele Entitäten als Übersicht, Details nur für die Auffälligsten; Taster und Updates werden bei Raum-/Domain-Auswahl ausgelassen
+
+Live-Probe Waschkammerl (10 Tage): ein Aufruf, unter 1 s, 5,5 kB — Melder seit 04.10. nie ausgelöst, Batteriewert seit 04.10. unverändert, Lichtschalter mit 22,5 Verbindungsaussetzern pro Tag; an-Stunden je Tag stimmen mit einer unabhängigen Abtastung der Rohdaten überein.
+
+Begleitend: `history` fragt Home Assistant ohne Attribute ab, alle Zeitangaben des Skills stehen in Ortszeit statt im Server-Format, und ein zu langer Verlauf trägt vorn den Hinweis auf `history_summary`, weil die Pipeline ihn in der Mitte kürzt.
+
 ## [0.19.0-jarvis.1356] - 2026-10-11
 
 ### Fixed — Unteraufgaben (delegate) bekamen fast alle Werkzeuge (v1356)

@@ -1,5 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, HomeAssistantConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
+import { werteAus, ursachenAus, berichtText, anJeTag, zeitText, type HaZustand, type EntitaetsBericht, type LogbuchEintrag, type Fenster } from './ha-verlauf.js';
 
 type Action =
   | 'states'
@@ -31,7 +32,8 @@ type Action =
   | 'update_scene'
   | 'delete_scene'
   | 'briefing_summary'
-  | 'energy_stats';
+  | 'energy_stats'
+  | 'history_summary';
 
 function parsePeriod(period: string): string {
   const m = period.match(/^(\d+)\s*(h|d|m|w)$/i);
@@ -41,6 +43,26 @@ function parsePeriod(period: string): string {
   const ms = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[unit] ?? 3_600_000;
   return new Date(Date.now() - n * ms).toISOString();
 }
+
+/** v1357 — Zeitraum in ms („24h", "3d", "2w", "90m"); undefined bei ungültiger Angabe. */
+function periodeMs(period: string): number | undefined {
+  const m = period.trim().match(/^(\d+)\s*(h|d|m|w)$/i);
+  if (!m) return undefined;
+  const n = parseInt(m[1], 10);
+  return n * ({ m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 } as Record<string, number>)[m[2].toLowerCase()];
+}
+
+/** v1357 — Zeitzone des Servers (Europe/Vienna); alle Zeiten in Ausgaben in dieser Zone statt toLocaleString(). */
+function ortsZeitzone(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Vienna'; } catch { return 'Europe/Vienna'; }
+}
+const ortsZeit = (iso: string | number) => zeitText(typeof iso === 'number' ? iso : Date.parse(iso), ortsZeitzone(), true);
+
+/** v1357 — Domains ohne echten Zustandsverlauf; bei Raum-/Domain-Auswahl ausgelassen. */
+const OHNE_VERLAUF = new Set(['button', 'input_button', 'event', 'update', 'scene', 'image', 'camera', 'tts', 'conversation', 'notify', 'todo', 'stt', 'wake_word']);
+
+/** Ab dieser Länge kürzt die Pipeline Werkzeugergebnisse in der Mitte (message-pipeline MAX_TOOL_RESULT_CHARS). */
+const KUERZUNG_AB = 11_000;
 
 function extractDomain(entityId: string): string {
   const dot = entityId.indexOf('.');
@@ -62,7 +84,10 @@ export class HomeAssistantSkill extends Skill {
       'create persistent automations, scripts, and scenes in HA. Use configData (JSON) with the HA automation/script/scene schema. ' +
       '"briefing_summary" for a compact smart home overview (open contacts, lights on, battery/SoC, energy, climate, presence). ' +
       'Optionally pass entities[] or domains[] to filter. ' +
-      '"energy_stats" for energy consumption statistics over a period (today, yesterday, last_week, etc.) — auto-discovers all energy sensors and calculates kWh consumed.',
+      '"energy_stats" for energy consumption statistics over a period (today, yesterday, last_week, etc.) — auto-discovers all energy sensors and calculates kWh consumed. ' +
+      '"history_summary" — PREFER over "history"/"template" for durations, on-time per day, switch counts, longest phases, outages, causes (which automation/person switched), ' +
+      'stale sensors (value unchanged since) and comparisons: computed in code for entities[] / entityId / area / domain (comma list) / match (name filter) over period, ' +
+      'optional compareWith = window directly before (e.g. period "3d", compareWith "7d"). Do not recompute its numbers.',
     riskLevel: 'write',
     version: '2.1.0',
     inputSchema: {
@@ -101,6 +126,7 @@ export class HomeAssistantSkill extends Skill {
             'delete_scene',
             'briefing_summary',
             'energy_stats',
+            'history_summary',
           ],
           description: 'The Home Assistant action to perform',
         },
@@ -122,11 +148,19 @@ export class HomeAssistantSkill extends Skill {
         },
         period: {
           type: 'string',
-          description: 'Time period for history/logbook/energy_stats. Formats: "1h", "24h", "7d" or friendly names "today", "yesterday", "this_week", "last_week", "this_month", "last_month" (default for energy_stats: "today")',
+          description: 'Time period for history/logbook/energy_stats/history_summary. Formats: "1h", "24h", "7d" or friendly names "today", "yesterday", "this_week", "last_week", "this_month", "last_month" (default for energy_stats: "today")',
         },
         area: {
           type: 'string',
-          description: 'Area name or ID (for areas action)',
+          description: 'Area name or ID (for areas and history_summary)',
+        },
+        compareWith: {
+          type: 'string',
+          description: 'history_summary: length of the comparison window directly before period, e.g. "7d"',
+        },
+        match: {
+          type: 'string',
+          description: 'history_summary: only entities whose ID or name contains one of these comma-separated words (e.g. "licht,lampe")',
         },
         template: {
           type: 'string',
@@ -172,7 +206,7 @@ export class HomeAssistantSkill extends Skill {
         entities: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Specific entity IDs for briefing_summary (e.g. ["sensor.victron_soc", "sensor.power_consumption"])',
+          description: 'Specific entity IDs for briefing_summary and history_summary (e.g. ["sensor.victron_soc", "switch.licht_keller"])',
         },
         domains: {
           type: 'array',
@@ -293,6 +327,8 @@ export class HomeAssistantSkill extends Skill {
             input.period as string | undefined,
             input.entityId as string | undefined,
           );
+        case 'history_summary':
+          return await this.getHistorySummary(input);
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
       }
@@ -484,12 +520,13 @@ export class HomeAssistantSkill extends Skill {
   private async getHistory(entityId?: string, period?: string): Promise<SkillResult> {
     const ts = parsePeriod(period ?? '1h');
     const now = new Date().toISOString();
+    // v1357 — minimal_response/no_attributes: nur Zustand + Zeit (Attribute machten 10 Tage Lichtschalter ~12k Zeichen)
     const params = entityId
-      ? `?filter_entity_id=${entityId}&end_time=${now}`
-      : `?end_time=${now}`;
+      ? `?filter_entity_id=${entityId}&end_time=${now}&minimal_response&no_attributes`
+      : `?end_time=${now}&minimal_response&no_attributes`;
     const data = await this.api<any[][]>('GET', `/api/history/period/${ts}${params}`);
 
-    const lines = ['## History', ''];
+    const lines = ['## History', '', `Zeiten: ${ortsZeitzone()}`, ''];
 
     if (!data || data.length === 0 || data.every((arr) => arr.length === 0)) {
       lines.push('No history entries found for the given period.');
@@ -505,15 +542,140 @@ export class HomeAssistantSkill extends Skill {
       lines.push('| Time | State |');
       lines.push('|------|-------|');
       for (const entry of entityHistory) {
-        const time = entry.last_changed
-          ? new Date(entry.last_changed).toLocaleString()
-          : '-';
+        const time = entry.last_changed ? ortsZeit(entry.last_changed) : '-';
         lines.push(`| ${time} | ${entry.state} |`);
       }
       lines.push('');
     }
 
+    // v1357 — lange Verläufe kürzt die Pipeline in der Mitte; der Hinweis steht vorn, damit er die Kürzung übersteht
+    if (lines.join('\n').length > KUERZUNG_AB) {
+      lines.splice(1, 0, '**Hinweis: Verlauf zu lang — er wird in der Mitte gekürzt. Für Dauern, Summen und Vergleiche action "history_summary" nutzen.**');
+    }
     return { success: true, data, display: lines.join('\n') };
+  }
+
+  /**
+   * v1357 — Verlaufsauswertung im Code (ha-verlauf.ts): Dauer je Zustand/Tag, Schaltungen, längste Phasen, Aussetzer,
+   * Messwert-Statistik, Vergleichszeitraum, Ursachen aus dem Logbuch. Nur lesend.
+   */
+  private async getHistorySummary(input: Record<string, unknown>): Promise<SkillResult> {
+    const tz = ortsZeitzone();
+    const jetzt = Date.now();
+    const dauer = periodeMs(String(input.period ?? '24h'));
+    if (!dauer) return { success: false, error: 'Invalid "period" for history_summary — use e.g. "24h", "3d", "7d"' };
+    let vergleichMs: number | undefined;
+    if (input.compareWith !== undefined && input.compareWith !== '') {
+      vergleichMs = periodeMs(String(input.compareWith));
+      if (!vergleichMs) return { success: false, error: 'Invalid "compareWith" — use e.g. "7d"' };
+    }
+    const aktuell: Fenster = { von: jetzt - dauer, bis: jetzt };
+    const vergleich: Fenster | undefined = vergleichMs ? { von: aktuell.von - vergleichMs, bis: aktuell.von } : undefined;
+
+    const alle = await this.api<any[]>('GET', '/api/states');
+    const zustaende = new Map<string, any>(alle.map((e) => [e.entity_id, e]));
+
+    // Auswahl: ausdrückliche IDs ∪ Raum; sonst ganze Domain(s); danach Domain-/Namensfilter
+    const liste = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? v.split(',') : []).map((x) => x.trim()).filter(Boolean);
+    const ausdruecklich = [...liste(input.entities), ...liste(input.entityId)];
+    const domains = liste(input.domain);
+    let ids: string[] = [...ausdruecklich];
+    let ausGruppe: string[] = [];
+    if (typeof input.area === 'string' && input.area.trim()) {
+      const area = input.area.trim();
+      if (!/^[\w\s\-äöüÄÖÜß]+$/u.test(area)) return { success: false, error: `Invalid area name: "${area}"` };
+      const text = await this.apiText('POST', '/api/template', { template: `{{ area_entities('${area}') | join(',') }}` });
+      ausGruppe = liste(text);
+      if (ausGruppe.length === 0) return { success: false, error: `No entities found for area "${area}" — use action "areas" to list areas` };
+    } else if (domains.length > 0 && ausdruecklich.length === 0) {
+      ausGruppe = alle.map((e) => String(e.entity_id));
+    }
+    if (domains.length > 0) ausGruppe = ausGruppe.filter((id) => domains.includes(id.split('.')[0]));
+    // Taster, Updates, Ereignisse u. ä. haben keinen Zustandsverlauf im eigentlichen Sinn (Zeitstempel als Zustand) — nur ausdrücklich genannt
+    ausGruppe = ausGruppe.filter((id) => !OHNE_VERLAUF.has(id.split('.')[0]) || domains.includes(id.split('.')[0]));
+    const woerter = liste(input.match).map((w) => w.toLowerCase());
+    if (woerter.length > 0) {
+      ausGruppe = ausGruppe.filter((id) => {
+        const text = `${id} ${zustaende.get(id)?.attributes?.friendly_name ?? ''}`.toLowerCase();
+        return woerter.some((w) => text.includes(w));
+      });
+    }
+    ids = [...new Set([...ids, ...ausGruppe])];
+    if (ids.length === 0) return { success: false, error: 'history_summary needs entities, entityId, area or domain (optionally match) — nothing matched' };
+    const MAX = 300;
+    const nichtAusgewertet = Math.max(0, ids.length - MAX);
+    ids = ids.slice(0, MAX);
+
+    // Verlauf in Blöcken (URL-Länge), beide Fenster in einem Abruf
+    const startIso = new Date((vergleich ?? aktuell).von).toISOString();
+    const endeIso = encodeURIComponent(new Date(jetzt).toISOString());
+    const reihen = new Map<string, HaZustand[]>();
+    for (let i = 0; i < ids.length; i += 60) {
+      const block = ids.slice(i, i + 60).map(encodeURIComponent).join(',');
+      const data = await this.api<any[][]>('GET', `/api/history/period/${startIso}?filter_entity_id=${block}&end_time=${endeIso}&minimal_response&no_attributes`);
+      for (const r of data ?? []) {
+        if (!Array.isArray(r) || r.length === 0) continue;
+        reihen.set(String(r[0].entity_id), r.map((x) => ({ state: String(x.state), last_changed: String(x.last_changed ?? x.last_updated) })));
+      }
+    }
+
+    const berichte: EntitaetsBericht[] = [];
+    const unbekannt: string[] = [];
+    for (const id of ids) {
+      const st = zustaende.get(id);
+      const reihe = reihen.get(id) ?? (st ? [{ state: String(st.state), last_changed: String(st.last_changed) }] : undefined);
+      if (!reihe) { unbekannt.push(id); continue; }
+      berichte.push({
+        entityId: id,
+        name: st?.attributes?.friendly_name,
+        klasse: st?.attributes?.device_class,
+        einheit: st?.attributes?.unit_of_measurement,
+        jetzt: st ? { state: String(st.state), lastChanged: st.last_changed, lastReported: st.last_reported } : undefined,
+        aktuell: werteAus(reihe, aktuell, tz),
+        vergleich: vergleich ? werteAus(reihe, vergleich, tz) : undefined,
+      });
+    }
+
+    // Ursachen der Einschaltungen aus dem Logbuch (nur aktueller Zeitraum, höchstens 40 Entitäten mit den meisten an-Stunden)
+    let logbuchHinweis = '';
+    const mitEin = berichte
+      .filter((b) => b.aktuell.werte.art === 'zustand' && b.aktuell.werte.einschaltZeiten.length > 0)
+      .sort((a, b) => anJeTag(b.aktuell) - anJeTag(a.aktuell))
+      .slice(0, 40);
+    if (mitEin.length > 0) {
+      try {
+        const jeEntitaet = new Map<string, LogbuchEintrag[]>();
+        for (let i = 0; i < mitEin.length; i += 40) {
+          const block = mitEin.slice(i, i + 40).map((b) => encodeURIComponent(b.entityId)).join(',');
+          const lb = await this.api<LogbuchEintrag[]>('GET', `/api/logbook/${new Date(aktuell.von).toISOString()}?entity=${block}&end_time=${endeIso}`);
+          for (const e of lb ?? []) {
+            const k = String(e.entity_id ?? '');
+            if (!jeEntitaet.has(k)) jeEntitaet.set(k, []);
+            jeEntitaet.get(k)!.push(e);
+          }
+        }
+        for (const b of mitEin) {
+          if (b.aktuell.werte.art !== 'zustand') continue;
+          b.ursachen = ursachenAus(b.aktuell.werte.einschaltZeiten, jeEntitaet.get(b.entityId) ?? []);
+          const autos = [...new Set(b.ursachen.map((u) => u.automation).filter((a): a is string => !!a))];
+          b.automationen = autos.map((a) => {
+            const st = zustaende.get(a);
+            return { entityId: a, name: st?.attributes?.friendly_name, state: st?.state, lastTriggered: st?.attributes?.last_triggered ?? undefined };
+          });
+        }
+      } catch (err) {
+        logbuchHinweis = `Hinweis: Ursachen nicht ermittelt (Logbuch: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}).`;
+      }
+    }
+
+    let display = berichtText(berichte, { tz, jetzt, aktuell, vergleich, nichtAusgewertet });
+    if (unbekannt.length > 0) display += `\nUnbekannte Entitäten: ${unbekannt.join(', ')}`;
+    if (logbuchHinweis) display += `\n${logbuchHinweis}`;
+    return {
+      success: true,
+      data: { zeitzone: tz, entitaeten: berichte.length, von: new Date(aktuell.von).toISOString(), bis: new Date(aktuell.bis).toISOString(), vergleich: !!vergleich, unbekannt },
+      display,
+    };
   }
 
   private async getLogbook(entityId?: string, period?: string): Promise<SkillResult> {
@@ -531,13 +693,12 @@ export class HomeAssistantSkill extends Skill {
       return { success: true, data: [], display: lines.join('\n') };
     }
 
+    lines.push(`Zeiten: ${ortsZeitzone()}`, '');
     lines.push('| Time | Entity | Message |');
     lines.push('|------|--------|---------|');
 
     for (const entry of data) {
-      const time = entry.when
-        ? new Date(entry.when).toLocaleString()
-        : '-';
+      const time = entry.when ? ortsZeit(entry.when) : '-';
       const name = entry.name ?? entry.entity_id ?? '-';
       const message = entry.message ?? entry.state ?? '-';
       lines.push(`| ${time} | ${name} | ${message} |`);
@@ -731,7 +892,7 @@ export class HomeAssistantSkill extends Skill {
       const name = p.attributes?.friendly_name ?? p.entity_id;
       const status = p.state ?? 'unknown';
       const changed = p.last_changed
-        ? new Date(p.last_changed).toLocaleString()
+        ? ortsZeit(p.last_changed)
         : '-';
       lines.push(`| ${name} | ${status} | ${changed} |`);
     }
@@ -821,7 +982,7 @@ export class HomeAssistantSkill extends Skill {
       for (const a of autos) {
         const name = a.attributes?.friendly_name ?? a.entity_id;
         const lastTriggered = a.attributes?.last_triggered
-          ? new Date(a.attributes.last_triggered).toLocaleString()
+          ? ortsZeit(a.attributes.last_triggered)
           : '-';
         lines.push(`| ${a.entity_id} | ${name} | ${a.state} | ${lastTriggered} |`);
       }
@@ -846,7 +1007,7 @@ export class HomeAssistantSkill extends Skill {
 
     const name = result?.[0]?.attributes?.friendly_name ?? entityId;
     const lastTriggered = result?.[0]?.attributes?.last_triggered
-      ? new Date(result[0].attributes.last_triggered).toLocaleString()
+      ? ortsZeit(result[0].attributes.last_triggered)
       : '-';
 
     return {
@@ -948,10 +1109,10 @@ export class HomeAssistantSkill extends Skill {
 
     for (const ev of events) {
       const s = ev.start?.dateTime
-        ? new Date(ev.start.dateTime).toLocaleString()
+        ? ortsZeit(ev.start.dateTime)
         : ev.start?.date ?? '-';
       const e = ev.end?.dateTime
-        ? new Date(ev.end.dateTime).toLocaleString()
+        ? ortsZeit(ev.end.dateTime)
         : ev.end?.date ?? '-';
       lines.push(`| ${s} | ${e} | ${ev.summary ?? '-'} | ${ev.location ?? '-'} |`);
     }
