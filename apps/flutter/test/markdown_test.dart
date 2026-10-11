@@ -119,6 +119,21 @@ void main() {
     expect(geoeffnet, 'http://172.16.0.38');
   });
 
+  testWidgets('echter Mausklick durch die SelectionArea erreicht IP und Code', (t) async {
+    String? kopiert;
+    t.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') kopiert = (call.arguments as Map)['text'] as String?;
+      return null;
+    });
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: Center(child: AlfredText('172.16.0.38', aufKopiert: (_) {})))));
+    await t.tapAt(t.getCenter(find.byType(RichText).first), kind: PointerDeviceKind.mouse);
+    await t.pumpAndSettle();
+    expect(find.text('Im Browser öffnen (http://172.16.0.38)'), findsOneWidget);
+    await t.tap(find.text('Kopieren'));
+    await t.pumpAndSettle();
+    expect(kopiert, '172.16.0.38');
+  });
+
   testWidgets('leerer Text zeigt die Denkpunkte', (t) async {
     await t.pumpWidget(const MaterialApp(home: Scaffold(body: AlfredText(''))));
     expect(find.text('…'), findsOneWidget);
