@@ -171,10 +171,13 @@ extension _Gespraeche on _SitzungState {
     if (phase == 'start') {
       // Frage sofort im offenen Gespräch zeigen; die fertige Antwort lädt das Gespräch ohnehin neu (Ereignis „gespraech")
       if (a.faden == server?.faden && archiv == null && fundstelle == null && a.frage.trim().isNotEmpty) _zeile(Eintrag(Art.du, a.frage));
-      _protokolliere(Eintrag(Art.hinweis, 'Alfred arbeitet an einer Anfrage aus ${a.kanal}${a.faden != server?.faden ? ' (Gespräch „${_fadenTitel(a.faden)}“)' : ''}'));
+      _protokolliere(Eintrag(Art.hinweis, 'Alfred arbeitet an einer Anfrage aus ${a.kanal}${a.faden != server?.faden ? ' (${_gespraechName(a.faden)})' : ''}'));
     }
     _neu(() {});
   }
+
+  /// „Gespräch „Strompreise““ bzw. „Hauptgespräch" — ohne doppeltes „Gespräch" bei Fäden ohne eigenen Titel.
+  String _gespraechName(String? faden) { final t = _fadenTitel(faden); return t.startsWith('Gespräch') || t.startsWith('Hauptgespräch') ? t : 'Gespräch „$t“'; }
 
   void _fremdeArbeitAufraeumen() { if (fremdeArbeitAufraeumen(fremdeArbeit, DateTime.now())) _neu(() {}); }
 

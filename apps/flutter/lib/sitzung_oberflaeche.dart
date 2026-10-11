@@ -158,7 +158,7 @@ extension _Oberflaeche on _SitzungState {
         const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
         const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Alfred arbeitet · aus ${a.kanal}${a.faden != server?.faden ? ' · Gespräch „${_fadenTitel(a.faden)}“' : ''}', style: theme.textTheme.labelMedium),
+          Text('Alfred arbeitet · aus ${a.kanal}${a.faden != server?.faden ? ' · ${_gespraechName(a.faden)}' : ''}', style: theme.textTheme.labelMedium),
           Text(a.status?.isNotEmpty == true ? a.status! : (a.frage.length > 90 ? '${a.frage.substring(0, 90)}…' : a.frage), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         ])),
         if (a.faden != server?.faden) TextButton(onPressed: () => _fadenWechseln(a.faden), child: const Text('Öffnen')),

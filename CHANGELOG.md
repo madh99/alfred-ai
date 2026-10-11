@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Beschriftungen (App 1.11.1)
+
+Das Gedächtnis kennzeichnet ausdrücklich gespeicherte Einträge als „ausdrücklich gemerkt" statt „von dir" — meist hat Alfred sie im Chat selbst gespeichert. Die Leiste „Alfred arbeitet" nennt Fäden ohne eigenen Titel nicht mehr doppelt („Gespräch „Gespräch …"").
+
 ### Fixed — App: Befehlspalette schickte bei Enter ohne Treffer Text an Alfred (App 1.10.1)
 
 Fand die Palette keinen Befehl, war „An Alfred senden" vorausgewählt — ein Tippfehler ging so als Nachricht ins Hauptgespräch. Jetzt steht „Im Verlauf suchen" vorne, „An Alfred senden" zuletzt und nur auf ausdrückliche Wahl. Außerdem finden „ae/oe/ue" und „ä/ö/ü" dieselben Befehle („gedaechtnis" fand „Gedächtnis" nicht).
