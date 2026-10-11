@@ -125,7 +125,7 @@ class _GedaechtnisState extends State<Gedaechtnis> {
       return Card(margin: const EdgeInsets.only(bottom: 8), child: Padding(padding: const EdgeInsets.fromLTRB(14, 10, 6, 4), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         InkWell(onTap: () => setState(() => offen ? ganz.remove(e.id) : ganz.add(e.id)), child: Text(e.text, maxLines: offen ? null : 4, overflow: offen ? null : TextOverflow.ellipsis, style: theme.textTheme.bodyMedium)),
         Row(children: [
-          Expanded(child: Text([typName(e.typ), if (e.quelle == 'manual') 'von dir', if (e.geaendert != null) datum(e.geaendert!), schluesselLesbar(e.schluessel)].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: dim))),
+          Expanded(child: Text([typName(e.typ), if (e.quelle == 'manual') 'ausdrücklich gemerkt', if (e.geaendert != null) datum(e.geaendert!), schluesselLesbar(e.schluessel)].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: dim))),
           IconButton(tooltip: 'Korrigieren', onPressed: () => korrigieren(e), icon: const Icon(Icons.edit_outlined, size: 18)),
           IconButton(tooltip: 'Löschen', onPressed: () => loeschen(e), icon: const Icon(Icons.delete_outline, size: 18)),
         ]),
