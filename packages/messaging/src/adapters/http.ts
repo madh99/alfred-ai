@@ -963,6 +963,8 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
     /** v1352 — laufende Anfrage einer Sitzung abbrechen (App-Knopf „Stopp"); true = es lief etwas. */
     abbrechen?(chatId: string, userId: string): boolean;
+    /** v1354 — Anfrage eines anderen Kanals (Arbeits-ID) abbrechen; undefined = kein Owner-Gerät (403). */
+    arbeitAbbrechen?(geraetId: string, arbeit: string): Promise<boolean | undefined>;
     /** v1351 — Fehlermeldung der Desktop-App ins Log; false = Grenze erreicht (429). */
     appMeldung?(geraetId: string, name: string, m: { art: string; text: string; version: string; plattform: string }): boolean;
     verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string, um?: string, vor?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean; anhaenge?: Array<{ id: string; name: string; mime: string; groesse: number }> }>>; // v1350 um = Fundstelle
@@ -6700,8 +6702,13 @@ export class HttpAdapter extends MessagingAdapter {
     if (!(await this.checkAuth(req, res))) return;
     const geraet = this.geraetIdentitaet.get(req);
     if (!geraet || !this.geraeteCallbacks?.abbrechen) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
-    let chatId = '';
-    try { const j = JSON.parse((await this.readBody(req)).slice(0, 2048) || '{}') as { chatId?: unknown }; if (typeof j.chatId === 'string') chatId = j.chatId; } catch { /* leer */ }
+    let chatId = ''; let arbeit = '';
+    try { const j = JSON.parse((await this.readBody(req)).slice(0, 2048) || '{}') as { chatId?: unknown; arbeit?: unknown }; if (typeof j.chatId === 'string') chatId = j.chatId; if (typeof j.arbeit === 'string') arbeit = j.arbeit; } catch { /* leer */ }
+    if (arbeit) { // v1354 — Anfrage aus Telegram/anderer App, nur Owner-Geräte
+      const ok = /^[0-9a-f-]{36}$/.test(arbeit) && this.geraeteCallbacks.arbeitAbbrechen ? await this.geraeteCallbacks.arbeitAbbrechen(geraet.geraetId, arbeit) : undefined;
+      if (ok === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ abgebrochen: ok })); return;
+    }
     if (!sitzungsChatErlaubt(chatId, geraet.geraetId)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Chats der eigenen Sitzung' })); return; }
     const abgebrochen = this.geraeteCallbacks.abbrechen(chatId, geraet.userId);
     res.writeHead(200, { 'Content-Type': 'application/json' });

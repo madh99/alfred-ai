@@ -128,6 +128,7 @@ extension _Oberflaeche on _SitzungState {
             ))),
       ),
       if (offen.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _bestaetigungen(theme))),
+      if (fremdeArbeit.isNotEmpty) Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _arbeitsLeiste(theme))), // 1.11.0
       Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _eingabekarte(theme))),
     ]));
   }
@@ -149,6 +150,23 @@ extension _Oberflaeche on _SitzungState {
 
 
   /// Eingabekarte wie in der Vorlage: Textfeld oben, darunter Anhang, Stufenwahl, Status, Mikrofon, Zuhören, Senden.
+  /// 1.11.0 — Leiste über der Eingabe: Alfred arbeitet an einer Anfrage aus Telegram oder einem anderen Gerät.
+  Widget _arbeitsLeiste(ThemeData theme) {
+    final dim = theme.colorScheme.onSurfaceVariant;
+    return Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 0), child: Column(children: [
+      for (final a in fremdeArbeit.values.take(3)) Card(key: Key('arbeit-${a.id}'), color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5), margin: const EdgeInsets.only(bottom: 4), child: Padding(padding: const EdgeInsets.fromLTRB(12, 6, 4, 6), child: Row(children: [
+        const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Alfred arbeitet · aus ${a.kanal}${a.faden != server?.faden ? ' · Gespräch „${_fadenTitel(a.faden)}“' : ''}', style: theme.textTheme.labelMedium),
+          Text(a.status?.isNotEmpty == true ? a.status! : (a.frage.length > 90 ? '${a.frage.substring(0, 90)}…' : a.frage), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        ])),
+        if (a.faden != server?.faden) TextButton(onPressed: () => _fadenWechseln(a.faden), child: const Text('Öffnen')),
+        IconButton(tooltip: 'Anfrage abbrechen', onPressed: () => _fremdeArbeitStoppen(a), icon: const Icon(Icons.stop_circle_outlined)),
+      ]))),
+    ]));
+  }
+
   Widget _eingabekarte(ThemeData theme) {
     final dim = theme.colorScheme.onSurfaceVariant;
     const stufen = {null: 'Automatisch', 'fast': 'Schnell', 'default': 'Normal', 'strong': 'Stark'};

@@ -673,6 +673,12 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             ereignis('gespraech', String(g.von ?? ''), undefined, typeof g.faden === 'string' ? g.faden : undefined);
             return;
           }
+          // v1354 — Alfred arbeitet an einer Anfrage (auch aus Telegram): Phase, Status, Frage als JSON an die App
+          if ((n as { typ: string }).typ === 'arbeit') {
+            const a = n as { arbeit?: string; phase?: string; faden?: string | null; von?: string; kanal?: string; text?: string; frage?: string };
+            ereignis('arbeit', JSON.stringify({ arbeit: a.arbeit, phase: a.phase, von: a.von, kanal: a.kanal, text: a.text, frage: a.frage }), undefined, typeof a.faden === 'string' ? a.faden : undefined);
+            return;
+          }
           if ((n as { typ: string }).typ === 'nachricht') {
             const text = String((n as { text?: string }).text ?? '');
             // v1325 — Anhang (Foto, Bildschirmfoto, Datei) für die Desktop-App; Telegram bekam Bilder, die Sitzung nur Text

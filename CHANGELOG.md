@@ -29,6 +29,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1354] - 2026-10-11
+
+### Added — „Alfred arbeitet" auf allen Geräten, auch bei Fragen aus Telegram (v1354, App 1.11.0)
+
+Fragte der Owner in Telegram (oder auf einem anderen Gerät), sah die App nichts, bis die Antwort fertig war. Jetzt erfahren alle Geräte des Owners Beginn, Zwischenstand und Ende jeder Anfrage im Hauptgespräch und in den Fäden: die App zeigt die Frage sofort im offenen Gespräch und darüber eine Leiste „Alfred arbeitet · aus Telegram" mit demselben Status, den der anfragende Kanal sieht (gedrosselt auf höchstens alle 2 Sekunden). Läuft die Anfrage in einem anderen Gespräch, führt „Öffnen" dorthin. Der Stopp-Knopf der Leiste bricht die Anfrage ab wie `/stop` im anfragenden Kanal. Die Ereignisse gehen nur an Geräte des Owners; geplante und interne Läufe erzeugen keine.
+
 ## [0.19.0-jarvis.1353] - 2026-10-11
 
 ### Added — App: Aufgaben & Erinnerungen (v1353, App 1.9.0)

@@ -369,6 +369,11 @@ export class GeraeteGateway {
     return undefined;
   }
 
+  /** v1354 — IDs der gerade verbundenen Geräte (Empfänger nach Owner-Prüfung auswählen). */
+  verbundeneIds(): string[] {
+    return [...this.verbindungen.values()].filter(v => v.ws.readyState === WebSocket.OPEN).map(v => v.eintrag.id);
+  }
+
   sendeAnAlle(n: Partial<GeraetNachricht> & { typ: string }): number {
     let z = 0;
     for (const v of this.verbindungen.values()) { if (v.ws.readyState === WebSocket.OPEN) { this.sende(v.ws, n); z++; } }

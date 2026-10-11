@@ -6938,7 +6938,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
     }
     // v1330 — Gespräche des Owners kanalunabhängig: Hauptgespräch (Telegram-Zeile) + Fäden, `/faden`, Push an die Geräte
     {
-      const { FadenStore } = await import('./gespraeche.js');
+      const { FadenStore, herkunftName: kanalName } = await import('./gespraeche.js');
       this.fadenStoreRef = new FadenStore(path.resolve(process.cwd(), 'data', 'gespraeche.json'));
       // v1347 — zugestellte Anhänge ablegen (Verlauf zeigt Fotos auch nach dem Neuladen), Aufbewahrung einstellbar
       const { AnhangAblage } = await import('./anhang-ablage.js');
@@ -6949,6 +6949,29 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.registriereJob({
         key: 'anhaenge-aufraeumen', beschreibung: `Zugestellte Anhänge älter als ${aufbewahrung} Tage entfernen`, takt: { art: 'taeglich', um: '04:55' }, bereich: 'global', slot: true,
         run: async () => ({ ok: true, zaehler: { geloescht: ablage.aufraeumen(aufbewahrung) } }),
+      });
+      // v1354 — „Alfred arbeitet" nur an Geräte des Owners (der Fragetext ist privat); Owner-Prüfung je Gerät 10 min gemerkt
+      const ownerGeraetCache = new Map<string, { ja: boolean; bis: number }>();
+      const istOwnerGeraet = async (id: string): Promise<boolean> => {
+        const c = ownerGeraetCache.get(id);
+        if (c && c.bis > Date.now()) return c.ja;
+        const ja = await this.geraetGehoertOwner(id);
+        ownerGeraetCache.set(id, { ja, bis: Date.now() + 600_000 });
+        return ja;
+      };
+      this.istOwnerGeraetGemerkt = istOwnerGeraet;
+      this.pipeline.setArbeit((e) => {
+        const gw = this.geraeteGateway;
+        if (!gw) return;
+        const kanal = kanalName(`${e.von.platform}:${e.von.chatId}`, (id) => gw.nameVon(id));
+        void (async () => {
+          let n = 0;
+          for (const id of gw.verbundeneIds()) {
+            if (!(await istOwnerGeraet(id))) continue;
+            if (gw.sendeAn(id, { typ: 'arbeit', arbeit: e.arbeit, phase: e.phase, faden: e.faden, von: e.von.chatId, kanal, ...(e.text ? { text: e.text } : {}), ...(e.frage ? { frage: e.frage } : {}) })) n++;
+          }
+          if (e.phase !== 'status') this.logger.info({ arbeit: e.arbeit, phase: e.phase, faden: e.faden, kanal, geraete: n }, 'v1354 Arbeit an Geräte');
+        })().catch(() => { /* Komfort */ });
       });
       this.pipeline.setGespraeche(
         this.gespraechsOptionen(),
@@ -13695,6 +13718,13 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // v1332 — Sicherheitsreview: nur ein Gerät des Owners sieht die Owner-Gespräche; andere Geräte bleiben bei
           // ihren Kanal-Gesprächen `sitzung:<id>[:<faden>]` (so wie die Pipeline sie für Nicht-Owner weiter ablegt)
           // v1352 — App-Knopf „Stopp": dieselbe Abbruchstelle wie /stop in Telegram
+          // v1354 — Owner-Gerät bricht eine Anfrage aus einem anderen Kanal ab (Arbeits-ID aus dem Ereignis „arbeit")
+          arbeitAbbrechen: async (geraetId: string, arbeit: string) => {
+            if (!(await (this.istOwnerGeraetGemerkt ?? ((id: string) => this.geraetGehoertOwner(id)))(geraetId))) return undefined;
+            const ok = this.pipeline.cancelArbeit(arbeit);
+            this.logger.info({ geraetId, arbeit, abgebrochen: ok }, 'v1354 Abbruch aus der App (anderer Kanal)');
+            return ok;
+          },
           abbrechen: (chatId: string, userId: string) => {
             const ok = this.pipeline.cancelRequest(chatId, userId);
             this.logger.info({ chatId, abgebrochen: ok }, 'v1352 Abbruch aus der App');
@@ -15225,6 +15255,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     }
     return aus;
   }
+
+  /** v1354 — Owner-Prüfung mit 10-min-Gedächtnis (gesetzt beim Einrichten der Gespräche). */
+  private istOwnerGeraetGemerkt?: (geraetId: string) => Promise<boolean>;
 
   /** v1332 — Gehört das Gerät dem Owner? Der Sitzungs-Alias `geraet:<id>` ist an den Master des koppelnden Benutzers gebunden (v1233). */
   async geraetGehoertOwner(geraetId: string): Promise<boolean> {

@@ -19,6 +19,7 @@ import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
 import 'aufgaben.dart'; // 1.9.0
 import 'befehle.dart'; // 1.10.0
+import 'fremde_arbeit.dart'; // 1.11.0
 import 'gedaechtnis.dart'; // 1.9.0
 import 'vorgaenge.dart'; // 1.9.0
 import 'audio.dart';
@@ -161,6 +162,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   final Map<String, DateTime> erinnerungTexte = {}; // gemeldeter Text → Zeit (keine Doppelmeldung, falls der Server sie auch schickt)
   Timer? erinnerungTakt;
   bool paletteOffen = false; // 1.10.0 B1
+  final Map<String, FremdeArbeit> fremdeArbeit = {}; // 1.11.0 — Alfred arbeitet an einer Anfrage aus Telegram/anderem Gerät
   String _traySignatur = ''; // 1.10.0 B2 — Menü nur bei Änderung neu setzen
   Timer? trayTakt;
   DateTime updateGeprueft = DateTime.fromMillisecondsSinceEpoch(0); // 1.10.0 — stilles Update sucht selbst
@@ -217,6 +219,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           if (faden == server?.faden) { _gespraechNachladen(); } else { _faedenLaden(); }
           return;
         }
+        if (art == 'arbeit') { _fremdeArbeit(text, faden); return; } // 1.11.0 / v1354
         if (art == 'nachricht' && text.startsWith('⏹') && DateTime.now().difference(abgebrochenUm).inMinutes < 5) { _protokolliere(Eintrag(Art.hinweis, 'Server bestätigt: $text')); return; } // 1.7.0
         if (art == 'nachricht') { // v1318 — Ergebnis nach Freigabe; 1.0.5 — mit Anhang (Foto, Bildschirmfoto, Datei)
           if (faden != server?.faden) { // 1.2.0 — Antwort gehört zu einem anderen Gespräch: Hinweis mit Sprungmarke
@@ -248,7 +251,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         abfrage ??= Timer.periodic(const Duration(seconds: 30), (_) => _holeBestaetigungen());
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); stillTakt ??= Timer.periodic(const Duration(minutes: 5), (_) => _stillPruefen()); } // M6; 1.8.0 still
         if (erste && !warteschlange.leer) { _zeile(Eintrag(Art.hinweis, '⏳ ${warteschlange.eintraege.length} Nachricht(en) aus der letzten Sitzung warten auf das Nachsenden.')); _wartenStarten(); } // 1.8.0
-        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); }); erinnerungTakt ??= Timer.periodic(const Duration(seconds: 15), (_) => _erinnerungenPruefen()); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler; 1.9.0 Aufgaben/Erinnerungen
+        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); }); erinnerungTakt ??= Timer.periodic(const Duration(seconds: 15), (_) { _erinnerungenPruefen(); _fremdeArbeitAufraeumen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler; 1.9.0 Aufgaben/Erinnerungen
         if (erste) _faedenLaden(); // 1.2.0 Gespräche
         if (erste) _spiegelungLaden(); // 1.2.3
         if (erste) {

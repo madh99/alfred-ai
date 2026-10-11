@@ -25,6 +25,8 @@ import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
 import { werkzeugeFuerNachricht, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300
 import { gespraechsZiel, fadenBefehl, verlaufBefehl, spiegelBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenDeps } from './gespraeche.js'; // v1330, v1334, v1335
+import { randomUUID as arbeitsId } from 'node:crypto';
+import { arbeitsMelder, type ArbeitsEreignis } from './geraete/arbeits-melder.js'; // v1354
 import type { Platform } from '@alfred/types';
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
@@ -277,6 +279,21 @@ export class MessagePipeline {
   private anhangAblage?: { lege(a: SkillResultAttachment[], gespraech: string): Array<{ id: string; name: string; mime: string; groesse: number }> };
   setAnhangAblage(a: NonNullable<MessagePipeline['anhangAblage']>): void { this.anhangAblage = a; }
 
+  /** v1354 — „Alfred arbeitet" an die Geräte des Owners (start/status/ende je Anfrage in einem Owner-Gespräch). */
+  private beiArbeit?: (e: ArbeitsEreignis) => void;
+  /** v1354 — laufende Owner-Anfragen: Arbeits-ID → Schlüssel in activeRequests (Abbruch von einem Owner-Gerät). */
+  private readonly ownerArbeit = new Map<string, string>();
+  setArbeit(cb: (e: ArbeitsEreignis) => void): void { this.beiArbeit = cb; }
+  /** v1354 — Anfrage eines Owner-Gesprächs abbrechen (gleiche Wirkung wie /stop im anfragenden Kanal). */
+  cancelArbeit(id: string): boolean {
+    const key = this.ownerArbeit.get(id);
+    const controller = key ? this.activeRequests.get(key) : undefined;
+    if (!key || !controller) return false;
+    controller.abort();
+    this.activeRequests.delete(key);
+    return true;
+  }
+
   setGespraeche(o: GespraechsOptionen, fadenDeps: FadenDeps, beiGespraech: NonNullable<MessagePipeline['beiGespraech']>): void {
     this.gespraechsOptionen = o; this.fadenDeps = fadenDeps; this.beiGespraech = beiGespraech;
   }
@@ -525,6 +542,7 @@ export class MessagePipeline {
 
     // v847 — declared outside try so catch can reach it
     let chatActionId: string | null = null;
+    let arbeitEnde: (() => void) | undefined; // v1354 — „Alfred arbeitet" beenden, auf jedem Weg aus der Anfrage
 
     try {
       // 0b. HA Message dedup — ensure each message is processed by exactly one node
@@ -560,6 +578,17 @@ export class MessagePipeline {
       // v1330 — Owner-Gespräche kanalunabhängig: Hauptgespräch/Faden statt Kanal-Chat; `/faden` ohne Modell
       const istOwnerGespraech = !!this.ownerMasterUserId && masterUserId === this.ownerMasterUserId && !!this.gespraechsOptionen;
       const gespraech: GespraechsZiel | undefined = istOwnerGespraech ? gespraechsZiel(message, this.gespraechsOptionen!) : undefined;
+      // v1354 — Owner 11.10.: in Telegram arbeitete Alfred, die App sah nichts bis zur fertigen Antwort. Jetzt erfahren alle
+      // Geräte des Owners Beginn, Status (dieselben Texte wie der anfragende Kanal) und Ende; geplante/interne Läufe nicht.
+      if (gespraech && this.beiArbeit && !message.metadata?.scheduled && !/^\/(faden|stop)\b/i.test(message.text.trim())) {
+        const id = arbeitsId();
+        this.ownerArbeit.set(id, requestKey);
+        const melder = arbeitsMelder({ arbeit: id, faden: gespraech.faden, von: { platform: message.platform, chatId: message.chatId } }, this.beiArbeit);
+        melder.start(message.text);
+        const kanal = onProgress;
+        onProgress = (p) => { kanal?.(p); melder.status(p); };
+        arbeitEnde = () => { melder.ende(); this.ownerArbeit.delete(id); };
+      }
       if (istOwnerGespraech && this.fadenDeps && /^\/faden\b/i.test(message.text.trim())) {
         const antwort = await fadenBefehl(message.text.trim(), message.platform, message.chatId, this.fadenDeps);
         return { text: antwort };
@@ -1446,7 +1475,7 @@ export class MessagePipeline {
           // v1248 — Streaming-Pfad: Textstücke gehen als Progress-Ereignis (kind=delta) nach außen,
           // die Antwort selbst bleibt dieselbe Struktur wie bei complete().
           response = message.metadata?.stream && onProgress
-            ? await this.llmGestreamt(anfrage, (t) => onProgress({ kind: 'delta', text: t }))
+            ? await this.llmGestreamt(anfrage, (t) => onProgress?.({ kind: 'delta', text: t }))
             : await this.llm.complete(anfrage);
           previousResponseId = response.toolCalls?.length ? response.responseId : undefined;
           totalInputTokens += response.usage?.inputTokens ?? 0;
@@ -1835,6 +1864,8 @@ export class MessagePipeline {
       } catch { /* best effort — don't mask the original error */ }
 
       throw error;
+    } finally {
+      arbeitEnde?.(); // v1354
     }
   }
 

@@ -162,6 +162,30 @@ extension _Gespraeche on _SitzungState {
     return erinnerungTexte.containsKey(text.substring(vorsatz.length).trim());
   }
 
+  // ── 1.11.0 — Alfred arbeitet an einer Anfrage aus einem anderen Kanal (v1354) ─────────────────────────────────────
+  void _fremdeArbeit(String json, String? faden) {
+    final k = konfig; if (k == null) return;
+    final r = fremdeArbeitAnwenden(fremdeArbeit, json, faden, k.geraetId, DateTime.now());
+    if (r == null) return;
+    final (phase, a) = r;
+    if (phase == 'start') {
+      // Frage sofort im offenen Gespräch zeigen; die fertige Antwort lädt das Gespräch ohnehin neu (Ereignis „gespraech")
+      if (a.faden == server?.faden && archiv == null && fundstelle == null && a.frage.trim().isNotEmpty) _zeile(Eintrag(Art.du, a.frage));
+      _protokolliere(Eintrag(Art.hinweis, 'Alfred arbeitet an einer Anfrage aus ${a.kanal}${a.faden != server?.faden ? ' (Gespräch „${_fadenTitel(a.faden)}“)' : ''}'));
+    }
+    _neu(() {});
+  }
+
+  void _fremdeArbeitAufraeumen() { if (fremdeArbeitAufraeumen(fremdeArbeit, DateTime.now())) _neu(() {}); }
+
+  Future<void> _fremdeArbeitStoppen(FremdeArbeit a) async {
+    final s = server; if (s == null) return;
+    try {
+      final r = await s.json('/api/geraete/abbrechen', methode: 'POST', koerper: {'arbeit': a.id});
+      _zeile(Eintrag(Art.hinweis, r['abgebrochen'] == true ? '⏹ Anfrage aus ${a.kanal} abgebrochen.' : '⏹ Die Anfrage war schon fertig.'));
+    } catch (e) { _zeile(Eintrag(Art.fehler, 'Abbrechen nicht möglich: $e')); }
+  }
+
   void _nachfragen(String text) { eingabe.text = text; fokus.requestFocus(); _neu(() => ansicht = Ansicht.chat); }
 
   Future<void> _vorgangOeffnen(Map<String, dynamic> v) async {
