@@ -177,6 +177,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   void initState() {
     super.initState();
     windowManager.addListener(this);
+    HardwareKeyboard.instance.addHandler(_schnellTaste); // 1.7.1
     trayManager.addListener(this);
     windowManager.setPreventClose(true);
     _trayEinrichten();
@@ -256,6 +257,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     hoerClient?.schluss();
     ipc.stop();
     windowManager.removeListener(this);
+    HardwareKeyboard.instance.removeHandler(_schnellTaste);
     trayManager.removeListener(this);
     hotKeyManager.unregisterAll();
     audio.dispose();
@@ -300,15 +302,18 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool schnell = false;
   Rect? _rahmenVorher;
   bool _sichtbarVorher = true;
+  bool _maximiertVorher = false;
   DateTime? schnellSeit;
 
   Future<void> _schnellfrageUmschalten() async { if (schnell) { await _schnellfrageSchliessen(); } else { await _schnellfrageOeffnen(); } }
 
   Future<void> _schnellfrageOeffnen() async {
     if (schnell) return;
-    try { _rahmenVorher = await windowManager.getBounds(); _sichtbarVorher = await windowManager.isVisible() && !await windowManager.isMinimized(); } catch (_) {}
+    try { _rahmenVorher = await windowManager.getBounds(); _sichtbarVorher = await windowManager.isVisible() && !await windowManager.isMinimized(); _maximiertVorher = await windowManager.isMaximized(); } catch (_) {}
     setState(() { schnell = true; schnellSeit = null; ansicht = Ansicht.chat; });
     try {
+      // 1.7.1 — VM-Beweis 12:24: ein maximiertes Fenster ignoriert setSize → erst zurücksetzen, beim Schließen wieder maximieren
+      if (_maximiertVorher) { await windowManager.unmaximize(); await Future<void>.delayed(const Duration(milliseconds: 150)); }
       await windowManager.setMinimumSize(const Size(420, 110));
       await windowManager.setSize(const Size(680, 130));
       await windowManager.center();
@@ -330,7 +335,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       await windowManager.setAlwaysOnTop(false);
       await windowManager.setMinimumSize(const Size(640, 480));
       final r = _rahmenVorher;
-      if (r != null && r.width >= 640 && r.height >= 480) { await windowManager.setBounds(r); } else { await windowManager.setSize(const Size(1180, 800)); await windowManager.center(); }
+      if (_maximiertVorher) { await windowManager.maximize(); }
+      else if (r != null && r.width >= 640 && r.height >= 480) { await windowManager.setBounds(r); } else { await windowManager.setSize(const Size(1180, 800)); await windowManager.center(); }
       if (!insFenster && !_sichtbarVorher) { await windowManager.hide(); sichtbar = false; }
     } catch (_) {}
     if (insFenster) _nachUnten();
@@ -341,6 +347,14 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     schnellSeit = DateTime.now();
     try { await windowManager.setSize(const Size(680, 460)); } catch (_) {}
     await _senden();
+    // 1.7.1 — VM-Beweis 12:26: das während der Antwort gesperrte Feld verlor den Fokus, requestFocus kam einen Frame zu früh
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (schnell) fokus.requestFocus(); });
+  }
+
+  /// 1.7.1 — Esc schließt die Schnellfrage unabhängig vom Fokus (VM-Beweis 12:26: ohne Fokus kam Esc nicht an).
+  bool _schnellTaste(KeyEvent ev) {
+    if (schnell && ev is KeyDownEvent && ev.logicalKey == LogicalKeyboardKey.escape) { _schnellfrageSchliessen(); return true; }
+    return false;
   }
 
   /// Antwort auf die Schnellfrage: die laufende oder die letzte Alfred-Zeile seit dem Senden.
