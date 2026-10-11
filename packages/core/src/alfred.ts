@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { werkzeugeFuerNachricht } from './skill-filter.js'; // v1356
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -946,6 +947,12 @@ export class Alfred {
     skillRegistry.register(memorySkill);
     this.memorySkillRef = memorySkill;
     const delegateSkill = new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager);
+    // v1356 — Unteragenten bekommen dieselbe Werkzeugauswahl wie die Hauptschleife (Kategorien + genannte Geräte)
+    delegateSkill.setWerkzeugwahl((task, kandidaten) => {
+      const { metas, grund } = werkzeugeFuerNachricht(task, [], kandidaten);
+      this.logger.info({ werkzeuge: metas.length, von: kandidaten.length, grund }, 'v1356 delegate Werkzeugwahl');
+      return metas;
+    });
     skillRegistry.register(delegateSkill);
     this.delegateSkillRef = delegateSkill;
 

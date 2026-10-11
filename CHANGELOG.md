@@ -33,6 +33,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1356] - 2026-10-11
+
+### Fixed — Unteraufgaben (delegate) bekamen fast alle Werkzeuge (v1356)
+
+Der Werkzeugfilter für Unteraufgaben behielt jedes Werkzeug, in dessen Beschreibung irgendein Wort der Aufgabe mit mindestens drei Zeichen vorkam — bei deutschen Aufgaben auch „und", „die" oder „mit", also praktisch alle. Eine Unteraufgabe startete dadurch mit 74 000 bis 89 000 Tokens für System und Werkzeuge, die Hauptschleife mit rund 23 000. Jetzt bekommen Unteraufgaben dieselbe Werkzeugauswahl wie die Hauptschleife (Kategorien und genannte Geräte, Logzeile „v1356 delegate Werkzeugwahl"); der Stichwortfilter bleibt als Rückfall und übergeht Füllwörter.
+
 ## [0.19.0-jarvis.1355] - 2026-10-11
 
 ### Changed — Prompt-Caching auch für den Verlauf und für OpenAI (v1355)

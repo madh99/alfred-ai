@@ -44,6 +44,9 @@ const FILE_WRITE_TOOLS = new Set([
   'document', 'onedrive', 'screenshot', 'image_generate', 'tts',
 ]);
 
+/** v1356 — häufige deutsche/englische Wörter ≥ 4 Zeichen, die in fast jeder Werkzeugbeschreibung stehen. */
+export const FUELLWOERTER = new Set(['eine', 'einen', 'einem', 'einer', 'eines', 'nicht', 'oder', 'aber', 'auch', 'noch', 'nach', 'durch', 'über', 'ueber', 'unter', 'dass', 'wenn', 'dann', 'sind', 'wird', 'werden', 'kann', 'können', 'koennen', 'soll', 'sollen', 'muss', 'alle', 'allen', 'jede', 'jeden', 'jeweils', 'bitte', 'diese', 'dieser', 'dieses', 'welche', 'welcher', 'ausschließlich', 'ausschliesslich', 'lesend', 'letzten', 'danach', 'dabei', 'damit', 'from', 'with', 'this', 'that', 'into', 'about', 'only', 'then', 'have', 'will', 'your', 'their', 'when', 'also', 'each', 'list', 'action', 'actions', 'get', 'data']);
+
 export class DelegateSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'delegate',
@@ -79,6 +82,8 @@ export class DelegateSkill extends Skill {
   };
 
   private onProgress?: ProgressCallback;
+  /** v1356 — Werkzeugauswahl der Hauptschleife (core/skill-filter werkzeugeFuerNachricht), von alfred.ts gesetzt. */
+  private werkzeugwahl?: (task: string, kandidaten: SkillMetadata[]) => SkillMetadata[] | undefined;
   private onSessionCompletion?: (info: DelegateSessionInfo) => void | Promise<void>;
 
   constructor(
@@ -95,6 +100,13 @@ export class DelegateSkill extends Skill {
    * The pipeline calls this so the user sees live status updates
    * like "Sub-agent using web_search (2/5)".
    */
+  /**
+   * v1356 — Analyse 11.10.: der Stichwortfilter behielt jedes Werkzeug, dessen Beschreibung irgendein Wort der Aufgabe
+   * mit ≥ 3 Zeichen enthielt — bei deutschen Aufgaben auch „und", „die", „mit" → praktisch alle Werkzeuge, 74–89k Tokens
+   * je Lauf (Hauptschleife mit Werkzeugwahl ~23k). Jetzt dieselbe Auswahl wie die Hauptschleife.
+   */
+  setWerkzeugwahl(fn: (task: string, kandidaten: SkillMetadata[]) => SkillMetadata[] | undefined): void { this.werkzeugwahl = fn; }
+
   setProgressCallback(cb: ProgressCallback): void {
     this.onProgress = cb;
   }
@@ -376,11 +388,24 @@ export class DelegateSkill extends Skill {
       .getAll()
       .filter(s => s.metadata.name !== 'delegate'); // prevent recursion
 
+    // v1356 — zuerst die Werkzeugwahl der Hauptschleife; leer oder nicht gesetzt → Stichwortfilter unten
+    if (task && this.werkzeugwahl) {
+      try {
+        const wahl = this.werkzeugwahl(task, skills.map(s => s.metadata));
+        if (wahl && wahl.length > 0) {
+          const namen = new Set(wahl.map(m => m.name));
+          skills = skills.filter(s => namen.has(s.metadata.name));
+          return skills.map(s => ({ name: s.metadata.name, description: s.metadata.description, inputSchema: s.metadata.inputSchema }));
+        }
+      } catch { /* Rückfall: Stichwortfilter */ }
+    }
+
     // Minimal mode: keyword-match task against skill descriptions to filter irrelevant tools.
     // Saves 2000-8000 tokens per delegate iteration while keeping all relevant skills.
+    // v1356 — Füllwörter zählen nicht mehr (vorher behielt „und"/„die" fast jedes Werkzeug)
     if (task && skills.length > 15) {
       const taskLower = task.toLowerCase();
-      const taskWords = taskLower.split(/\s+/).filter(w => w.length >= 3);
+      const taskWords = taskLower.split(/[^\p{L}\p{N}_]+/u).filter(w => w.length >= 4 && !FUELLWOERTER.has(w));
       const scored = skills.map(s => {
         const desc = (s.metadata.description + ' ' + s.metadata.name).toLowerCase();
         const hits = taskWords.filter(w => desc.includes(w)).length;
