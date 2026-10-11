@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Befehlspalette schickte bei Enter ohne Treffer Text an Alfred (App 1.10.1)
+
+Fand die Palette keinen Befehl, war „An Alfred senden" vorausgewählt — ein Tippfehler ging so als Nachricht ins Hauptgespräch. Jetzt steht „Im Verlauf suchen" vorne, „An Alfred senden" zuletzt und nur auf ausdrückliche Wahl. Außerdem finden „ae/oe/ue" und „ä/ö/ü" dieselben Befehle („gedaechtnis" fand „Gedächtnis" nicht).
+
 ### Added — App: Befehlspalette mit Strg+K (App 1.10.0)
 
 Strg+K (macOS ⌘K) oder der neue Knopf in der Symbolleiste öffnet eine Befehlsliste: alle Ansichten, „Neuer Chat", jedes Gespräch, Schnellfrage, Zuhören, Vorlesen, Seitenleiste, Farbschema, Update-Suche. Mit eingetipptem Text zusätzlich „An Alfred senden", „Im Verlauf suchen" und „Als Aufgabe anlegen". Pfeiltasten wählen, Enter führt aus, Esc schließt.

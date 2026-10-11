@@ -25,10 +25,11 @@ extension _Befehle on _SitzungState {
       Befehl(titel: 'Farbschema: dunkel', icon: Icons.dark_mode_outlined, stichworte: 'thema theme', aktion: (_) => themaSpeichern(ThemeMode.dark)),
       Befehl(titel: 'Farbschema: wie das System', icon: Icons.brightness_auto_outlined, stichworte: 'thema theme', aktion: (_) => themaSpeichern(ThemeMode.system)),
       Befehl(titel: 'Nach Update suchen', untertitel: appVersion.isEmpty ? null : 'installiert: $appVersion', icon: Icons.system_update_alt, aktion: (_) => _updatePruefen()),
-      // mit eingetipptem Text
-      Befehl(titel: 'An Alfred senden:', icon: Icons.send, mitText: true, aktion: (t) { if (t.isEmpty) return; zeige(Ansicht.chat); eingabe.text = t; _senden(); }),
+      // mit eingetipptem Text — harmlos zuerst: ohne Treffer wählt Enter „suchen", nie „senden" (1.10.1, VM-Befund:
+      // ein Tippfehler ging als Nachricht ins Hauptgespräch)
       Befehl(titel: 'Im Verlauf suchen:', icon: Icons.manage_search, mitText: true, aktion: (t) { if (t.isEmpty) return; letzteSuche = t; zeige(Ansicht.suche); }),
       Befehl(titel: 'Als Aufgabe anlegen:', icon: Icons.add_task, mitText: true, aktion: (t) => _aufgabeAusPalette(t)),
+      Befehl(titel: 'An Alfred senden:', icon: Icons.send, mitText: true, aktion: (t) { if (t.isEmpty) return; zeige(Ansicht.chat); eingabe.text = t; _senden(); }),
     ];
   }
 

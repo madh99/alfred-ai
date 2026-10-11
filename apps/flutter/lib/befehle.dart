@@ -18,26 +18,31 @@ class Befehl {
   final void Function(String text) aktion;
 }
 
+/// Zwei Schreibweisen gelten gleich: „Gedächtnis" = „gedachtnis" = „gedaechtnis" (VM-Befund 1.10.0: ae fand nichts).
 String _norm(String s) => s.toLowerCase().replaceAll('ä', 'a').replaceAll('ö', 'o').replaceAll('ü', 'u').replaceAll('ß', 'ss');
+String _normE(String s) => s.toLowerCase().replaceAll('ä', 'ae').replaceAll('ö', 'oe').replaceAll('ü', 'ue').replaceAll('ß', 'ss');
+bool _enthaelt(String heu, String wort) => _norm(heu).contains(_norm(wort)) || _normE(heu).contains(_normE(wort));
 
 /// Treffer für die Eingabe: jedes Wort muss im Titel oder in den Stichworten vorkommen. Titel, die mit der Eingabe
-/// beginnen, zuerst; dann Wortanfänge; sonst Reihenfolge der Liste. Befehle mit Text stehen bei Text immer am Ende.
+/// beginnen, zuerst; dann Wortanfänge; sonst Reihenfolge der Liste. Befehle mit Text stehen bei Text immer am Ende —
+/// in Listenreihenfolge; die Sitzung stellt „senden" zuletzt, damit Enter ohne Treffer nie etwas an Alfred schickt.
 List<Befehl> filtereBefehle(List<Befehl> alle, String eingabe) {
-  final q = _norm(eingabe.trim());
-  if (q.isEmpty) return alle.where((b) => !b.mitText).toList();
-  final woerter = q.split(RegExp(r'\s+'));
+  final roh = eingabe.trim();
+  if (roh.isEmpty) return alle.where((b) => !b.mitText).toList();
+  final woerter = roh.split(RegExp(r'\s+'));
+  bool beginnt(String t, String w) => _norm(t).startsWith(_norm(w)) || _normE(t).startsWith(_normE(w));
+  bool wortAnfang(String t, String w) => RegExp('(^|[\\s:„(/-])${RegExp.escape(_norm(w))}').hasMatch(_norm(t)) || RegExp('(^|[\\s:„(/-])${RegExp.escape(_normE(w))}').hasMatch(_normE(t));
   int rang(Befehl b) {
-    final t = _norm(b.titel);
-    if (t.startsWith(q)) return 0;
-    if (woerter.every((w) => RegExp('(^|[\\s:„(/-])${RegExp.escape(w)}').hasMatch(t))) return 1;
+    if (beginnt(b.titel, roh)) return 0;
+    if (woerter.every((w) => wortAnfang(b.titel, w))) return 1;
     return 2;
   }
   final treffer = <(int, int, Befehl)>[];
   for (var i = 0; i < alle.length; i++) {
     final b = alle[i];
     if (b.mitText) continue;
-    final heu = _norm('${b.titel} ${b.stichworte}');
-    if (woerter.every(heu.contains)) treffer.add((rang(b), i, b));
+    final heu = '${b.titel} ${b.stichworte}';
+    if (woerter.every((w) => _enthaelt(heu, w))) treffer.add((rang(b), i, b));
   }
   treffer.sort((a, b) => a.$1 != b.$1 ? a.$1 - b.$1 : a.$2 - b.$2);
   return [...treffer.map((t) => t.$3), ...alle.where((b) => b.mitText)];
