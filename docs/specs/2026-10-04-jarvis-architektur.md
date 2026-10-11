@@ -459,7 +459,7 @@ Folgerung: Das Aufmerksamkeitsbudget (Regel 1) muss zuerst den Bestand senken (I
 
 Standardbudget je Projektvorgang (Vorschlag 5 USD / 2 h / 8 Etappen); ob die Zusammenfassung des Claude-Code-Berichts durch ein Modell erlaubt ist (werkzeuglos) oder nur zitiert wird; erhöhter Helfer unter Windows (Docker Desktop, Systemdienste); Claude Code/brew/tmux auf dem Mac installieren; Berechtigungsmodus von Claude Code in Aufträgen (heute „auto", Alternative „acceptEdits" ohne Shell).
 
-## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe")
+## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
 
@@ -484,9 +484,9 @@ Meldeformat (kurz; Details im Vorgang, „Warum?" und App-Dialog):
 
 ### Bausteine
 
-**1. Auslöser (wann nachgeforscht wird).** Neuer Befund; Befund, der nach „erledigt" wieder auftritt; Handlungs-Insight, aus dem ein Vorgang würde (Weg b). Nicht: reine Informations-Insights, Interessen/Digest, Lebenszeichen-Befunde ohne Vorgang, geplante oder interne Läufe. Voraussetzung: Für die Art des Befunds gibt es ein **Prüfrezept** (Baustein 2); ohne Rezept bleibt es beim heutigen Verhalten plus Lernschleife (Baustein 7). Einmal je Befund — erneut nur bei Zustandswechsel.
+**1. Auslöser (wann nachgeforscht wird).** Neuer Befund; Befund, der nach „erledigt" wieder auftritt; Handlungs-Insight, aus dem ein Vorgang würde (Weg b). Nicht: reine Informations-Insights, Interessen/Digest, Lebenszeichen-Befunde ohne Vorgang, geplante oder interne Läufe. Gibt es für die Art des Befunds noch kein **Prüfrezept** (Baustein 2), erstellt Alfred es beim ersten Auftreten selbst (Baustein 7) und wendet es sofort an — schon die erste Meldung ist untersucht. Einmal je Befund — erneut nur bei Zustandswechsel.
 
-**2. Prüfrezepte statt freier Untersuchung.** Datenmodell `pruefrezept (id, muster {quelle, gegenstand_regex}, schritte [{werkzeug, aktion, params_vorlage, zweck}], deutungsfragen[], eigene_schritte[], aufgaben_vorlagen[], nachpruefung {werkzeug, aktion, bedingung, takt}, herkunft owner|runbook|chat, aktiv, version, laeufe, erfolgsquote)`. Die Schritte führt der Code **ohne Modell** aus; Platzhalter (Entität, Bereich, Host) kommen aus dem Befund. Ergebnis ist ein **Belegblock**: gekürzte Rohdaten mit Zeitstempeln und Quelle je Zeile. Beispielrezept „HA: Licht ungewöhnlich lange an / Entität nicht verfügbar":
+**2. Prüfrezepte statt freier Untersuchung.** Datenmodell `pruefrezept (id, muster {quelle, gegenstand_regex}, schritte [{werkzeug, aktion, params_vorlage, zweck}], deutungsfragen[], eigene_schritte[], aufgaben_vorlagen[], nachpruefung {werkzeug, aktion, bedingung, takt}, herkunft dynamisch|chat|owner, status bewaehrung|bewaehrt|ueberarbeitet|stillgelegt, version, vorgaenger, laeufe, bestaetigt, widerlegt, unsicher)`. Rezepte entstehen **dynamisch** (Baustein 7); das unten stehende Beispiel ist zugleich die Messlatte, die ein selbst erstelltes Rezept für den Waschkammerl-Fall erreichen muss. Die Schritte führt der Code **ohne Modell** aus; Platzhalter (Entität, Bereich, Host) kommen aus dem Befund. Ergebnis ist ein **Belegblock**: gekürzte Rohdaten mit Zeitstempeln und Quelle je Zeile. Beispielrezept „HA: Licht ungewöhnlich lange an / Entität nicht verfügbar":
 1. `history` der Entität, 10 Tage → Einschaltdauer je Tag, Vergleich mit dem Normalzustand (Schicht 1);
 2. `areas` → Bewegungsmelder desselben Bereichs, deren `history` → letzte Bewegung;
 3. Automationen, die Entität oder Melder nennen → `last_triggered`;
@@ -501,15 +501,23 @@ Meldeformat (kurz; Details im Vorgang, „Warum?" und App-Dialog):
 
 **6. Nachprüfen und Schließen.** Die `nachpruefung` des Rezepts (z. B. „Melder meldet Bewegung mit Zeitstempel nach Aufgabenbeginn") läuft über Weltmodell-Beobachter bzw. Watch. Erfüllt → Befund, Vorgang und Todo erledigt, kurze Meldung „erledigt, bestätigt durch …". Hakt der Owner die Aufgabe ab, wird sofort nachgeprüft; bleibt der Befund, sagt Alfred das mit dem neuen Stand. Nach Ablauf der Frist einmal erinnern, mit aktualisierten Belegen.
 
-**7. Rezepte lernen.** Aus einer Chat-Untersuchung wie der vom 11.10. schlägt der Runbook-Reflektor ein Rezept vor (Werkzeugfolge der Sitzung, Platzhalter statt fester Entitäten). Der Owner übernimmt es mit einem Klick (Vorgang „Prüfrezept übernehmen?"); vom Modell vorgeschlagene Rezepte werden **nie** automatisch aktiv. Fehlt ein Rezept für eine wiederkehrende Befund-Art, entsteht über Lernschleife 3 („Lücke → Fähigkeit", .1207) ein Vorgang „Prüfrezept fehlt für …".
+**7. Rezepte dynamisch erstellen, bewähren, verbessern.** Owner 11.10.: Alfred soll Rezepte beim Auftreten eines Fehlers selbst erstellen, nicht auf eine Übernahme warten. Die Sicherheit kommt aus der Lese-Positivliste in der Ausführung (Abschnitt Sicherheit), nicht aus einer Freigabe des Rezepts — ein selbst erstelltes Rezept kann nichts schalten.
+1. **Planen beim ersten Auftreten:** Neuer Befund bzw. Handlungs-Hinweis ohne passendes Rezept (Muster aus Quelle und Gegenstand) → ein Planungsaufruf mit Stufe strong. Er bekommt den Befund, den Weltmodell-Ausschnitt und **nur den Katalog der erlaubten Lese-Werkzeuge** (Werkzeug, Aktion, Parameter, Beispielausgabe) und antwortet im Rezept-Schema (Schritte, Deutungsfragen, eigene Schritte, Aufgaben-Vorlagen, Nachprüfung).
+2. **Prüfen vor dem Lauf (deterministisch):** jeder Schritt in der Positivliste, Parameter-Platzhalter auflösbar, ≤ 12 Schritte, Nachprüfung ist eine Leseaktion mit prüfbarer Bedingung. Ungültig → einmal mit Fehlerliste neu planen, dann Rückfall auf das heutige Verhalten plus Vorgang „Prüfrezept fehlt" (Lernschleife 3).
+3. **Sofort anwenden:** Das Rezept läuft gleich für diesen Befund — Sammeln, Deutung, Gegenprobe und Meldung wie in den Bausteinen 2–5.
+4. **Verallgemeinern und speichern:** konkrete Bezeichner werden Platzhalter (Entität → „Licht des Bereichs", Melder → „Bewegungsmelder des Bereichs", Host → „betroffener Host"), das Muster wird so weit wie belegt gefasst (Quelle + Art des Gegenstands, nicht der einzelne Gegenstand). Nächster ähnlicher Befund: kein Planungsaufruf, die Deutung läuft mit fast/medium — damit tragen die schwächeren Modelle der Kette den Alltag.
+5. **Bewährung statt Freigabe:** Status `bewaehrung` ab dem ersten Lauf, aktiv. Ergebnis-Signale je Lauf: **bestätigt** (Nachprüfung erfüllt nach Owner-Aufgabe oder Selbstheilung passend zur Hypothese, Owner hakt Aufgabe ab und Befund verschwindet), **widerlegt** (Owner korrigiert die Hypothese, Befund verschwindet aus anderem Grund, Aufgabe ohne Wirkung), **unsicher** (Deutung nur „niedrig"). Nach ≥ 3 bestätigten Läufen ohne Widerlegung → `bewaehrt`.
+6. **Selbst verbessern:** zwei Widerlegungen oder drei „unsicher" in Folge → Überarbeitung: Planungsaufruf mit dem alten Rezept, den Belegblöcken und den Signalen; neue Version (`vorgaenger` verweist), alte `ueberarbeitet`. Nach drei erfolglosen Versionen `stillgelegt` und Vorgang „Prüfrezept für … taugt nicht" an den Owner (Lernschleife 3).
+7. **Weitere Quellen für Rezepte:** Untersuchungen im Chat (wie Waschkammerl 11.10.) liefert der Runbook-Reflektor als Rezept mit Herkunft `chat`; bei gleichem Muster gewinnt das Rezept mit der besseren Bestätigungsquote, gleichstand → `chat` (der Owner hat mitgedacht). Owner-Rezepte (`owner`) gehen immer vor.
+8. **Owner behält den Überblick, ohne freizugeben:** Liste der Rezepte in App und Web (Muster, Status, Läufe, bestätigt/widerlegt, letzte Version, Diff zur Vorgängerin); jederzeit abschaltbar oder als Owner-Rezept festschreibbar. Neue Rezepte erscheinen einmal als Hinweis in der Sammlung („Neues Prüfrezept: …"), nicht als Bestätigung.
 
 ### Budget und Grenzen
 
-Erwartet je Rezeptlauf: 0 Modellaufrufe für das Sammeln, 1 für die Deutung (Kosten zu messen; Ziel deutlich unter 0,05 USD statt 3,43 USD frei). Tagesbudget (Vorschlag 20 Läufe oder 1 USD, danach Verhalten wie heute mit Hinweis im Lagebild), Zeitlimit 60 s je Lauf, Werkzeugaufrufe je Lauf ≤ 12, Belegblock ≤ 6 000 Zeichen. Kennzahlen in Schicht 4: Läufe, Kosten, Sicherheit je Rezept, Anteil Owner-Aufgaben erledigt, Anteil selbst geschlossener Befunde, Korrekturen des Owners an Hypothesen.
+Erwartet je Rezeptlauf: 0 Modellaufrufe für das Sammeln, 1 für die Deutung (Kosten zu messen; Ziel deutlich unter 0,05 USD statt 3,43 USD frei). Beim ersten Auftreten einer Art zusätzlich 1 Planungsaufruf (strong, ggf. ein zweiter nach Prüffehler), bei Überarbeitung ebenso; eigenes Teilbudget für Planungen (Vorschlag 5 je Tag), danach Rückfall auf das heutige Verhalten mit Vorgang „Prüfrezept fehlt". Tagesbudget (Vorschlag 20 Läufe oder 1 USD, danach Verhalten wie heute mit Hinweis im Lagebild), Zeitlimit 60 s je Lauf, Werkzeugaufrufe je Lauf ≤ 12, Belegblock ≤ 6 000 Zeichen. Kennzahlen in Schicht 4: Läufe, Kosten, Sicherheit je Rezept, Anteil Owner-Aufgaben erledigt, Anteil selbst geschlossener Befunde, Korrekturen des Owners an Hypothesen.
 
 ### Sicherheit
 
-Nur lesende Aktionen: Positivliste je Werkzeug **und** Aktion (z. B. HA `state/history/logbook/areas`, Automation lesen; nie `call_service`, `trigger_automation`, `create/update/delete_automation`), durchgesetzt in der Ausführung, nicht im Prompt. Belege können Fremdtext enthalten (Mail, Logbuch, Gerätenamen) → Deutung ohne Werkzeuge, Ausgabe nur im Schema, Owner-Aufgaben sind Text und lösen nichts aus. Rezepte mit Schreibschritten sind ungültig.
+Nur lesende Aktionen: Positivliste je Werkzeug **und** Aktion (z. B. HA `state/history/logbook/areas`, Automation lesen; nie `call_service`, `trigger_automation`, `create/update/delete_automation`), durchgesetzt in der Ausführung, nicht im Prompt. Belege können Fremdtext enthalten (Mail, Logbuch, Gerätenamen) → Deutung ohne Werkzeuge, Ausgabe nur im Schema, Owner-Aufgaben sind Text und lösen nichts aus. Rezepte mit Schreibschritten sind ungültig — die Prüfung vor dem Lauf (Baustein 7.2) und die Positivliste in der Ausführung greifen beide, auch für dynamisch erstellte Rezepte. Der Planungsaufruf sieht nur den Lese-Katalog; Befund- und Belegtexte sind für ihn Daten, keine Anweisungen (Fremdtext aus Logbuch, Mail, Gerätenamen).
 
 ### Verhältnis zu anderen Entwürfen
 
@@ -520,16 +528,17 @@ Nur lesende Aktionen: Positivliste je Werkzeug **und** Aktion (z. B. HA `state/h
 ### Reihenfolge (nicht freigegeben)
 
 - **N0** HA-Anomalien als Befunde, deterministisch gegen den Normalzustand: Licht/Schalter ungewöhnlich lange an, Entität neu nicht verfügbar, Melder seit X ohne Meldung.
-- **N1** Rezept-Gerüst, Lese-Positivliste, ein Rezept (HA Licht/Melder); Belegblock als Vorgangsschritt — beobachtend, Meldungen unverändert, Kennzahlen.
+- **N1** Rezept-Gerüst, Lese-Katalog und Positivliste, Prüfung vor dem Lauf; ein von Hand geschriebenes Referenzrezept (HA Licht/Melder) als Messlatte; Belegblock als Vorgangsschritt — beobachtend, Meldungen unverändert, Kennzahlen.
 - **N2** Deutung mit Schema und Gegenprobe, Meldeformat, Owner-Aufgaben als Todos.
-- **N3** Nachprüfen und selbst schließen.
-- **N4** weitere Rezepte (Sensorbatterie, MikroTik-Interface down, Monitor-Alert, BMW); Rezeptvorschläge aus Chat-Sitzungen.
-- **N5** (nur mit Owner-Entscheidung) freie Untersuchung als Rückfall mit eigenem Budget.
+- **N3** Dynamische Erstellung beim ersten Auftreten (Planen, Prüfen, Anwenden, Verallgemeinern) — erst beobachtend neben dem Referenzrezept (gleiche Befunde, Ergebnisse vergleichen), dann aktiv.
+- **N4** Nachprüfen und selbst schließen; Bewährung und Selbstverbesserung (Signale, Versionen, Stilllegen); Rezeptliste in App und Web.
+- **N5** Rezepte aus Chat-Untersuchungen (Runbook-Reflektor); alle Befund-Quellen.
+- **N6** (nur mit Owner-Entscheidung) freie Untersuchung als Rückfall mit eigenem Budget.
 
 ### Abnahme (messbar)
 
-Waschkammerl nachgestellt (Verlauf 04.–11.10.): Meldung enthält Dauervergleich, stummen Melder, letzte Automationsauslösung, „nicht unterscheidbar" und die Aufgabe „betreten, Zigbee2MQTT prüfen" — mit Haiku und mit Mistral gleich; im Log 0 Schreibaktionen während des Laufs; Kosten je Lauf gemessen und unter Ziel; nach Melder-Reparatur (oder simuliertem Zustandswechsel auf der Test-VM) schließt Alfred Befund, Vorgang und Todo selbst. Über zwei Wochen: Meldungen „prüfen, ob …" ohne Belege für Rezept-Quellen = 0.
+Waschkammerl nachgestellt (Verlauf 04.–11.10.): Meldung enthält Dauervergleich, stummen Melder, letzte Automationsauslösung, „nicht unterscheidbar" und die Aufgabe „betreten, Zigbee2MQTT prüfen" — mit Haiku und mit Mistral gleich; im Log 0 Schreibaktionen während des Laufs; Kosten je Lauf gemessen und unter Ziel; nach Melder-Reparatur (oder simuliertem Zustandswechsel auf der Test-VM) schließt Alfred Befund, Vorgang und Todo selbst. Dynamisch: Für den Waschkammerl-Fall erstellt Alfred ohne vorhandenes Rezept beim ersten Auftreten ein Rezept, das die Messlatte erreicht (gleiche Belege wie das Referenzrezept); ein ähnlicher Befund in einem anderen Raum nutzt es ohne Planungsaufruf; ein absichtlich schlechtes Rezept wird nach den Signalen überarbeitet bzw. stillgelegt (Test-VM, simulierte Zustände). Über zwei Wochen: Meldungen „prüfen, ob …" ohne Belege = 0 für alle Quellen mit Befunden; Planungsaufrufe pro Tag fallen nach der Anlaufphase gegen 0.
 
 ### Offene Owner-Entscheidungen
 
-Tagesbudget; Reihenfolge der Quellen (Vorschlag: Haus/HA, dann Infra); eigene Todo-Liste „Alfred-Aufgaben" oder Standardliste; freie Untersuchung als Rückfall (N5) ja/nein; ob Alfred risikoarme Selbsthilfe vorschlagen darf (z. B. Integration neu laden — das ist eine Schaltung und bliebe Klasse `bestaetigen`).
+Tagesbudget für Läufe und für Planungen; Reihenfolge der Quellen (Vorschlag: Haus/HA, dann Infra); Schwelle für „bewährt" (Vorschlag 3 bestätigte Läufe); eigene Todo-Liste „Alfred-Aufgaben" oder Standardliste; freie Untersuchung als Rückfall (N6) ja/nein; ob Alfred risikoarme Selbsthilfe vorschlagen darf (z. B. Integration neu laden — das ist eine Schaltung und bliebe Klasse `bestaetigen`).
