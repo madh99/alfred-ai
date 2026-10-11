@@ -13693,7 +13693,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // alte Kanal-Sitzungen dieses Geräts als Archiv nur lesbar
           // v1332 — Sicherheitsreview: nur ein Gerät des Owners sieht die Owner-Gespräche; andere Geräte bleiben bei
           // ihren Kanal-Gesprächen `sitzung:<id>[:<faden>]` (so wie die Pipeline sie für Nicht-Owner weiter ablegt)
-          verlauf: async (geraetId: string, limit: number, faden?: string, archiv?: string) => {
+          verlauf: async (geraetId: string, limit: number, faden?: string, archiv?: string, um?: string) => {
             if (!this.conversationRepo) return [];
             const { hauptgespraech, fadenSchluessel, FADEN_RE } = await import('./gespraeche.js');
             // v1333 — Sicherheitsreview: Archiv nur die eigenen alten Sitzungen dieses Geräts, Faden nur im erlaubten Muster
@@ -13708,9 +13708,16 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             if (!c || c.deletedAt) return [];
             // v1338 — Owner-Befund 21:04: Insights von 20:00/20:30 fehlten in der App, weil Werkzeugzeilen (leerer Inhalt)
             // das Fenster von 30 Zeilen aufbrauchten. Mehr holen, filtern, dann die letzten `limit` sichtbaren liefern.
-            const m = await this.conversationRepo.getMessages(c.id, limit * 4);
             const { verweiseAus } = await import('./anhang-ablage.js');
-            return m.filter(x => (x.role === 'user' || x.role === 'assistant') && x.content.trim()).slice(-limit).map(x => {
+            const sichtbar = (x: { role: string; content: string }) => (x.role === 'user' || x.role === 'assistant') && !!x.content.trim();
+            let auswahl: import('@alfred/types').ConversationMessage[];
+            if (um) { // v1350 — Fundstelle der Suche: Nachrichten rund um den Treffer statt der neuesten
+              const halb = Math.max(1, Math.floor(limit / 2));
+              const r = (await this.conversationRepo.nachrichtenUm(c.id, um, halb * 4, halb * 4)).filter(sichtbar);
+              const i = Math.max(0, r.findIndex(x => x.createdAt >= um));
+              auswahl = r.slice(Math.max(0, i - halb), i + halb);
+            } else auswahl = (await this.conversationRepo.getMessages(c.id, limit * 4)).filter(sichtbar).slice(-limit);
+            return auswahl.map(x => {
               const anhaenge = verweiseAus(x.anhaenge).filter(v => this.anhangAblage?.vorhanden(v.id)); // v1347 — abgelaufene fallen weg
               return { rolle: (x.role === 'user' && x.herkunft?.startsWith('intern:') ? 'system' : x.role) as 'user' | 'assistant' | 'system', text: x.content, zeit: x.createdAt, ...(x.herkunft?.startsWith('insight:') ? { insight: true } : {}), ...(anhaenge.length ? { anhaenge } : {}) };
             }); // v1343 Markierung Insight // v1336 intern → system
@@ -13722,6 +13729,29 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const eigene = a.gespraech === `api:sitzung:${geraetId}` || a.gespraech.startsWith(`api:sitzung:${geraetId}:`);
             if (!eigene && !(await this.geraetGehoertOwner(geraetId))) return undefined;
             return { daten: a.daten, name: a.name, mime: a.mime };
+          },
+          // v1350 — Suche im Verlauf (Owner-Freigabe 11.10., Punkt 4): Owner-Geräte suchen in Hauptgespräch und Fäden,
+          // andere Geräte nur in ihren eigenen Sitzungs-Gesprächen (dieselbe Grenze wie verlauf/faeden).
+          suche: async (geraetId: string, text: string, limit: number) => {
+            if (!this.conversationRepo) return [];
+            const gespraeche = await this.sichtbareGespraeche(geraetId);
+            const woerter = text.split(/\s+/).filter(w => w.length >= 2);
+            const treffer = await this.conversationRepo.sucheInGespraechen(gespraeche.map(g => g.id), woerter, limit);
+            const nach = new Map(gespraeche.map(g => [g.id, g]));
+            return treffer.map(t => {
+              const g = nach.get(t.conversationId)!;
+              return { rolle: t.role as 'user' | 'assistant', text: t.content.length > 4000 ? t.content.slice(0, 4000) : t.content, zeit: t.createdAt, faden: g.faden, gespraech: g.titel };
+            });
+          },
+          // v1350 — Übersicht der abgelegten Anhänge (Punkt 4): Owner-Geräte alles, andere nur ihre Sitzung
+          anhaenge: async (geraetId: string, limit: number) => {
+            if (!this.anhangAblage) return [];
+            const owner = await this.geraetGehoertOwner(geraetId);
+            const eigen = (g: string) => g === `api:sitzung:${geraetId}` || g.startsWith(`api:sitzung:${geraetId}:`);
+            return this.anhangAblage.liste(g => owner || eigen(g), limit).map(({ gespraech, ...v }) => {
+              const f = /^api:(?:owner:faden:|sitzung:[^:]+:)([a-z0-9-]{1,40})$/.exec(gespraech)?.[1];
+              return { ...v, faden: f && f !== 'haupt' ? f : null };
+            });
           },
           fadenUmbenennen: async (geraetId: string, faden: string, titel: string) => (await this.geraetGehoertOwner(geraetId)) ? this.ownerFadenUmbenennen(faden, titel) : false, // v1335
           // v1334 — Spiegel-Schalter aus der App, nur Geräte des Owners
@@ -15197,6 +15227,27 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     return (await this.conversationRepo.listByChatPrefix('api', praefix, 60))
       .filter(c => c.chatId === praefix || c.chatId.startsWith(praefix + ':'))
       .map(c => ({ faden: c.chatId === praefix ? null : c.chatId.slice(praefix.length + 1), titel: c.chatId === praefix ? 'Hauptgespräch' : kurz(c.customLabel ?? c.erste), zeit: c.updatedAt, anzahl: c.anzahl }));
+  }
+
+  /** v1350 — Gespräche, die ein Gerät lesen darf (Suche): Owner-Gerät Hauptgespräch + Fäden, sonst die eigenen Sitzungen. */
+  async sichtbareGespraeche(geraetId: string): Promise<Array<{ id: string; faden: string | null; titel: string }>> {
+    if (!this.conversationRepo) return [];
+    const kurz = (s: string | undefined) => { const t = (s ?? '').replace(/\s+/g, ' ').trim(); return t.length > 80 ? t.slice(0, 77) + '…' : t; };
+    if (await this.geraetGehoertOwner(geraetId)) {
+      const { hauptgespraech, FADEN_PRAEFIX } = await import('./gespraeche.js');
+      const aus: Array<{ id: string; faden: string | null; titel: string }> = [];
+      const haupt = hauptgespraech(this.gespraechsOptionen());
+      const h = await this.conversationRepo.findByPlatformChat(haupt.platform, haupt.chatId);
+      if (h && !h.deletedAt) aus.push({ id: h.id, faden: null, titel: 'Hauptgespräch' });
+      for (const c of await this.conversationRepo.listByChatPrefix('api', FADEN_PRAEFIX, 200)) {
+        if (c.chatId.startsWith(FADEN_PRAEFIX)) aus.push({ id: c.id, faden: c.chatId.slice(FADEN_PRAEFIX.length), titel: kurz(c.customLabel ?? c.erste) || 'Gespräch' });
+      }
+      return aus;
+    }
+    const praefix = `sitzung:${geraetId}`;
+    return (await this.conversationRepo.listByChatPrefix('api', praefix, 200))
+      .filter(c => c.chatId === praefix || c.chatId.startsWith(praefix + ':'))
+      .map(c => ({ id: c.id, faden: c.chatId === praefix ? null : c.chatId.slice(praefix.length + 1), titel: c.chatId === praefix ? 'Hauptgespräch' : kurz(c.customLabel ?? c.erste) || 'Gespräch' }));
   }
 
   /** v1335 — Faden umbenennen (custom_label); legt die Zeile an, wenn der Faden gerade erst angelegt wurde. */

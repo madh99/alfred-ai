@@ -47,6 +47,11 @@ void seitenleisteSpeichern(bool offen) { final j = _lesen(); j['seitenleiste'] =
 bool wortLokalGespeichert() => _lesen()['wortLokal'] != false;
 void wortLokalSpeichern(bool an) { final j = _lesen(); j['wortLokal'] = an; _schreiben(j); }
 
+/// 1.5.0 — Punkt 3: Zeitpunkt der neuesten Alfred-Antwort, die im sichtbaren Fenster stand. Was danach kam (App zu,
+/// ausgeblendet, Gerät aus), zeigt die App beim nächsten Öffnen als „neu" an.
+DateTime? gesehenGespeichert() => DateTime.tryParse('${_lesen()['gesehen'] ?? ''}');
+void gesehenSpeichern(DateTime t) { final j = _lesen(); j['gesehen'] = t.toUtc().toIso8601String(); _schreiben(j); }
+
 /// Helle und dunkle Variante aus einem Samen — Aufbau wie die Vorlage des Owners (ruhige Flächen, blaue Akzente).
 ThemeData alfredTheme(Brightness b) {
   final base = ThemeData(brightness: b, colorSchemeSeed: const Color(0xFF3B6FD8), useMaterial3: true);

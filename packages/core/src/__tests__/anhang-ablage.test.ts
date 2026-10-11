@@ -46,6 +46,20 @@ describe('AnhangAblage', () => {
     expect(a.vorhanden(neu.id)).toBe(true);
   });
 
+  it('liste: neueste zuerst, nach Gespräch gefiltert, entfernte fehlen (v1350)', async () => {
+    const a = new AnhangAblage(dir);
+    const [x] = a.lege([{ fileName: 'a.jpg', mimeType: 'image/jpeg', data: Buffer.from([1]) }], 'api:sitzung:g1');
+    await new Promise(r => setTimeout(r, 5));
+    const [y] = a.lege([{ fileName: 'b.pdf', mimeType: 'application/pdf', data: Buffer.from([2]) }], 'telegram:1');
+    await new Promise(r => setTimeout(r, 5));
+    const [z] = a.lege([{ fileName: 'c.png', mimeType: 'image/png', data: Buffer.from([3]) }], 'api:sitzung:g1:abc');
+    expect(a.liste(() => true).map(v => v.name)).toEqual(['c.png', 'b.pdf', 'a.jpg']);
+    expect(a.liste(g => g.startsWith('api:sitzung:g1')).map(v => v.id)).toEqual([z.id, x.id]);
+    fs.rmSync(path.join(dir, y.id));
+    expect(a.liste(() => true).map(v => v.name)).toEqual(['c.png', 'a.jpg']);
+    expect(a.liste(() => true, 1)).toHaveLength(1);
+  });
+
   it('verweiseAus: JSON der Spalte, fehlerhafte Einträge fallen weg', () => {
     expect(verweiseAus(undefined)).toEqual([]);
     expect(verweiseAus('kaputt')).toEqual([]);

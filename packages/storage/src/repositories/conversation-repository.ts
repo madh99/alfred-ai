@@ -297,6 +297,36 @@ export class ConversationRepository {
     }));
   }
 
+  /**
+   * v1350 — Suche im Verlauf der Desktop-App: Teilwort-Treffer (jedes Wort muss vorkommen, Groß/Klein egal) in den
+   * angegebenen Gesprächen, neueste zuerst. Bewusst LIKE statt Volltextindex: findet auch Wortteile („Rechn" → Rechnung).
+   */
+  async sucheInGespraechen(conversationIds: string[], woerter: string[], limit = 50): Promise<Array<{ id: string; conversationId: string; role: string; content: string; createdAt: string }>> {
+    const w = woerter.map(x => x.trim().toLowerCase()).filter(Boolean).slice(0, 6);
+    if (conversationIds.length === 0 || w.length === 0) return [];
+    const ids = conversationIds.map(() => '?').join(',');
+    const like = w.map(() => `LOWER(m.content) LIKE ? ESCAPE '\\'`).join(' AND ');
+    const rows = await this.adapter.query(`
+      SELECT m.id, m.conversation_id, m.role, m.content, m.created_at
+      FROM messages m
+      WHERE m.conversation_id IN (${ids}) AND m.role IN ('user', 'assistant') AND ${like}
+      ORDER BY m.created_at DESC, m.id DESC
+      LIMIT ?
+    `, [...conversationIds, ...w.map(x => `%${x.replace(/[%_\\]/g, '\\$&')}%`), limit]) as Array<Record<string, unknown>>;
+    return rows.map(r => ({ id: String(r.id), conversationId: String(r.conversation_id), role: String(r.role), content: String(r.content ?? ''), createdAt: String(r.created_at) }));
+  }
+
+  /** v1350 — Nachrichten rund um einen Zeitpunkt (Fundstelle der Suche): `vorher` davor, `nachher` ab dem Zeitpunkt, aufsteigend. */
+  async nachrichtenUm(conversationId: string, zeitIso: string, vorher: number, nachher: number): Promise<ConversationMessage[]> {
+    const map = (row: Record<string, string>): ConversationMessage => ({
+      id: row.id, conversationId: row.conversation_id, role: row.role as ConversationMessage['role'], content: row.content,
+      toolCalls: row.tool_calls ?? undefined, createdAt: row.created_at, herkunft: row.herkunft ?? undefined, anhaenge: row.anhaenge ?? undefined,
+    });
+    const davor = await this.adapter.query('SELECT * FROM messages WHERE conversation_id = ? AND created_at < ? ORDER BY created_at DESC, id DESC LIMIT ?', [conversationId, zeitIso, vorher]) as Record<string, string>[];
+    const ab = await this.adapter.query('SELECT * FROM messages WHERE conversation_id = ? AND created_at >= ? ORDER BY created_at ASC, id ASC LIMIT ?', [conversationId, zeitIso, nachher]) as Record<string, string>[];
+    return [...davor.reverse(), ...ab].map(map);
+  }
+
   async updateTimestamp(id: string): Promise<void> {
     await this.adapter.execute('UPDATE conversations SET updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
   }

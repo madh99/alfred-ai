@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'anhang_speicher.dart';
 import 'modell.dart';
 
 /// 1.0.5 — MIME-Typ aus der Dateiendung (für Anhänge aus dem SSE-Strom).
@@ -42,17 +44,22 @@ class Server {
   /// 1.4.2 — abgelegter Anhang aus dem Verlauf (v1347); einmal geladen, dann aus dem Zwischenspeicher (kein erneuter
   /// Abruf bei jedem Nachladen des Gesprächs). null = nicht (mehr) vorhanden.
   final Map<String, Anhang> _anhaenge = {};
+  /// 1.5.0 — Zwischenspeicher auf dem Gerät (Punkt 2): erst Arbeitsspeicher, dann Datenträger, dann Server.
+  AnhangSpeicher? speicher = AnhangSpeicher.standard();
   Future<Anhang?> anhang(Map<String, dynamic> v) async {
     final id = '${v['id'] ?? ''}';
     if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(id)) return null;
     final da = _anhaenge[id]; if (da != null) return da;
+    final name = '${v['name'] ?? 'anhang'}';
+    final mime = '${v['mime'] ?? _mimeAusName(name)}';
+    final lokal = await speicher?.lies(id);
+    if (lokal != null) return _anhaenge[id] = Anhang(name: name, mime: mime, bytes: lokal);
     final res = await hole('/api/geraete/anhang/$id');
     if (res.statusCode != 200) { await res.drain<void>(); return null; }
-    final bytes = <int>[]; await for (final teil in res) { bytes.addAll(teil); }
-    final name = '${v['name'] ?? 'anhang'}';
-    final a = Anhang(name: name, mime: '${v['mime'] ?? _mimeAusName(name)}', bytes: bytes);
-    _anhaenge[id] = a;
-    return a;
+    final b = BytesBuilder(copy: false); await for (final teil in res) { b.add(teil); }
+    final bytes = b.takeBytes();
+    await speicher?.schreibe(id, bytes);
+    return _anhaenge[id] = Anhang(name: name, mime: mime, bytes: bytes);
   }
 
   /// Meilenstein 3 — JSON einer erlaubten Route (Kacheln).

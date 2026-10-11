@@ -949,7 +949,11 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1318 — Nachricht an die Sitzung eines Geräts ohne offenen SSE-Strom (Ergebnis einer Freigabe, Fortsetzung). */
     nachricht?(geraetId: string, text: string, anhang?: { name: string; mime: string; base64: string }, faden?: string): boolean; // v1325 Anhang, v1328 Faden
     /** v1314 — letzte Nachrichten der Sitzung dieses Geräts (Desktop-App zeigt den Verlauf beim Start); v1328 je Faden. */
-    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean; anhaenge?: Array<{ id: string; name: string; mime: string; groesse: number }> }>>;
+    verlauf?(geraetId: string, limit: number, faden?: string, archiv?: string, um?: string): Promise<Array<{ rolle: 'user' | 'assistant' | 'system'; text: string; zeit: string; insight?: boolean; anhaenge?: Array<{ id: string; name: string; mime: string; groesse: number }> }>>; // v1350 um = Fundstelle
+    /** v1350 — Suche im Verlauf der Gespräche, die das Gerät lesen darf. */
+    suche?(geraetId: string, text: string, limit: number): Promise<Array<{ rolle: 'user' | 'assistant'; text: string; zeit: string; faden: string | null; gespraech: string }>>;
+    /** v1350 — Übersicht abgelegter Anhänge (neueste zuerst). */
+    anhaenge?(geraetId: string, limit: number): Promise<Array<{ id: string; name: string; mime: string; groesse: number; zeit: string; faden: string | null }>>;
     /** v1347 — abgelegten Anhang einer Nachricht abrufen (undefined = unbekannt, abgelaufen oder nicht erlaubt). */
     anhang?(geraetId: string, id: string): Promise<{ daten: Buffer; name: string; mime: string } | undefined>; // v1336 system = interne Fortsetzung
     /** v1328 — Gesprächsfäden der Sitzung (Redesign Stufe 2): Liste und Löschen; v1330 kanalunabhängig, mit Archiv alter Sitzungen. */
@@ -1161,6 +1165,9 @@ export class HttpAdapter extends MessagingAdapter {
         data: audio.toString('base64'),
         caption,
       });
+    } else { // v1350 — Sprachnachricht ohne SSE-Strom ging an Geräte verloren; Format am Inhalt (OpenAI: Opus/Ogg, Mistral: MP3)
+      const ogg = audio.subarray(0, 4).toString('latin1') === 'OggS';
+      this.anGeraet(chatId, caption, ogg ? 'sprachnachricht.ogg' : 'sprachnachricht.mp3', ogg ? 'audio/ogg' : 'audio/mpeg', audio);
     }
     return `api-voice-${++this.messageCounter}`;
   }
@@ -1919,6 +1926,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetAnhang(req, res, url.pathname.slice('/api/geraete/anhang/'.length)).catch(err => this.safeError(res, err)); // v1347
     } else if (url.pathname === '/api/geraete/verlauf' && req.method === 'GET') {
       this.handleGeraetVerlauf(req, res, url).catch(err => this.safeError(res, err)); // v1314
+    } else if ((url.pathname === '/api/geraete/suche' || url.pathname === '/api/geraete/anhaenge') && req.method === 'GET') {
+      this.handleGeraetSucheAnhaenge(req, res, url).catch(err => this.safeError(res, err)); // v1350
     } else if (url.pathname === '/api/geraete/faeden' && req.method === 'GET') {
       this.handleGeraetFaeden(req, res).catch(err => this.safeError(res, err)); // v1328
     } else if (/^\/api\/geraete\/faeden\/[a-z0-9-]{1,40}$/.test(url.pathname) && req.method === 'DELETE') {
@@ -6650,9 +6659,32 @@ export class HttpAdapter extends MessagingAdapter {
     const faden = url.searchParams.get('faden'); // v1328
     const archiv = url.searchParams.get('archiv'); // v1330 — alte Kanal-Sitzung dieses Geräts, nur lesen
     const archivOk = archiv && archiv.startsWith(`sitzung:${geraet.geraetId}`) ? archiv : undefined;
-    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined, archivOk);
+    const umRoh = url.searchParams.get('um'); // v1350 — Fundstelle der Suche (Zeitpunkt der gefundenen Nachricht)
+    const um = umRoh && !Number.isNaN(Date.parse(umRoh)) && umRoh.length <= 40 ? umRoh : undefined;
+    const nachrichten = await this.geraeteCallbacks.verlauf(geraet.geraetId, limit, istFaden(faden) ? faden : undefined, archivOk, um);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, ...(archivOk ? { archiv: archivOk } : {}), nachrichten }));
+    res.end(JSON.stringify({ geraet: geraet.name, faden: istFaden(faden) ? faden : null, ...(archivOk ? { archiv: archivOk } : {}), ...(um ? { um } : {}), nachrichten }));
+  }
+
+  /** v1350 — Suche im Verlauf (`?q=`) und Übersicht der Anhänge, nur mit Gerätetoken; Grenzen setzt der Callback je Gerät. */
+  private async handleGeraetSucheAnhaenge(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    const suche = url.pathname.endsWith('/suche');
+    const fn = suche ? this.geraeteCallbacks?.suche : this.geraeteCallbacks?.anhaenge;
+    if (!geraet || !fn) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur mit Gerätetoken' })); return; }
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    if (suche) {
+      const q = (url.searchParams.get('q') ?? '').trim().slice(0, 200);
+      if (q.length < 2) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Suchtext zu kurz (mindestens 2 Zeichen)' })); return; }
+      const treffer = await this.geraeteCallbacks!.suche!(geraet.geraetId, q, limit);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ q, treffer }));
+      return;
+    }
+    const anhaenge = await this.geraeteCallbacks!.anhaenge!(geraet.geraetId, limit);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ anhaenge }));
   }
 
   /** v1347 — abgelegter Anhang aus dem Verlauf (Foto, Datei), nur mit Gerätetoken. */

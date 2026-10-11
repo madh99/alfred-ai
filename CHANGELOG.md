@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-jarvis.1350] - 2026-10-11
+
+### Added — Suche im Verlauf und Übersicht der Anhänge (v1350, App 1.5.0)
+
+Die Desktop-App durchsucht jetzt den Verlauf: `GET /api/geraete/suche?q=` findet Wortteile in Fragen und Antworten (jedes Wort muss vorkommen, Groß/Klein egal), neueste zuerst. Geräte des Owners suchen im Hauptgespräch und in allen Fäden, andere Geräte nur in ihren eigenen Gesprächen. Ein Treffer öffnet die Fundstelle: `/api/geraete/verlauf?um=<zeit>` liefert die Nachrichten rund um den Treffer, die App hebt ihn hervor; wer weiterschreibt, landet wieder bei den neuesten Nachrichten des Gesprächs. `GET /api/geraete/anhaenge` listet die abgelegten Fotos und Dateien (neueste zuerst, dieselben Grenzen); die App zeigt sie als eigene Ansicht „Anhänge" mit Bildkacheln und Dateizeilen.
+
+### Added — App: Anhänge auf dem Gerät zwischengespeichert (App 1.5.0)
+
+Einmal geholte Anhänge liegen unter `~/.alfred/anhaenge/` und erscheinen beim nächsten Start sofort, auch wenn der Server kurz nicht erreichbar ist. Aufgeräumt wird nach 30 Tagen wie am Server.
+
+### Added — Zustellung, während die App zu oder ausgeblendet ist (v1350, App 1.5.0)
+
+Kommt eine Antwort, während das Fenster ausgeblendet oder minimiert ist, zeigt die App eine Systembenachrichtigung. Antworten, die eintrafen, während die App geschlossen oder das Gerät aus war, markiert sie beim nächsten Öffnen mit einer Trennzeile „neue Antworten seit deinem letzten Blick". Sprachnachrichten gingen an Geräte ohne offenen Antwortstrom bisher verloren — sie werden jetzt wie Fotos an die App zugestellt (Ogg/Opus oder MP3, am Inhalt erkannt) und lassen sich dort abspielen.
+
+### Changed — App: Oberflächentests und macOS-Fernbuild (App 1.5.0)
+
+Anhang-Darstellung, Suche, Anhang-Übersicht und Verlaufslogik sind als eigene Bausteine mit Oberflächentests abgedeckt (45 statt 23 App-Tests); dabei fiel eine überlaufende Knopfzeile bei langen Dateinamen auf und ist behoben. Das macOS-Release entsteht jetzt ohne Handgriff am Mac (`release/macos-fern.sh`, Build-Dienst `at.alfred.build` in der angemeldeten Sitzung).
+
 ## [0.19.0-jarvis.1349] - 2026-10-11
 
 ### Fixed — Anhang-Abruf mit Gerätetoken antwortete 401 (v1349)

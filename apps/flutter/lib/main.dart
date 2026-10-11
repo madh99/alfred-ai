@@ -15,7 +15,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import 'aktivierungswort.dart'; // 1.3.0
+import 'anhang_ansicht.dart'; // 1.5.0
+import 'anhang_speicher.dart'; // 1.5.0
 import 'audio.dart';
+import 'galerie.dart'; // 1.5.0
+import 'suche.dart'; // 1.5.0
+import 'verlauf.dart'; // 1.5.0
 import 'einstellungen.dart';
 import 'hinweise.dart'; // 1.4.0
 import 'hoeren.dart';
@@ -193,6 +198,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           }
           _zeile(Eintrag(Art.alfred, text.isEmpty && anhang != null ? '📎 ${anhang.name}' : text, zeit: zeit, anhaenge: anhang == null ? null : [anhang]));
           if (stimme && text.isNotEmpty) _sprichKurz(text);
+          _neueNachrichtMelden(text, anhang); // 1.5.0 — Punkt 3
           return;
         }
         _zeile(Eintrag(Art.satellit, text, zeit: zeit));
@@ -227,7 +233,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       aufZustand: (z) => setState(() => ipcZustand = z),
     );
     ipc.start();
-    _zeile(Eintrag(Art.hinweis, 'Alfred-App — Verlauf, Chat und Bestätigungen laufen über den Satelliten dieses Geräts. Strg+Alt+Leertaste: sprechen (auch aus anderen Programmen).'));
+    AnhangSpeicher.standard().aufraeumen(); // 1.5.0 — Gerätespeicher der Anhänge: älter als 30 Tage weg (wie am Server)
+    _zeile(Eintrag(Art.hinweis,'Alfred-App — Verlauf, Chat und Bestätigungen laufen über den Satelliten dieses Geräts. Strg+Alt+Leertaste: sprechen (auch aus anderen Programmen).'));
   }
 
   @override
@@ -281,7 +288,32 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   }
 
   @override
-  void onWindowFocus() { sichtbar = true; }
+  void onWindowFocus() { sichtbar = true; _gesehenMerken(); }
+
+  @override
+  void onWindowMinimize() { sichtbar = false; } // 1.5.0 — minimiert zählt wie ausgeblendet (Benachrichtigung, „neu")
+
+  @override
+  void onWindowRestore() { sichtbar = true; _gesehenMerken(); }
+
+  /// 1.5.0 — Punkt 3: Antwort kam, während das Fenster nicht zu sehen war → Systembenachrichtigung; sonst gilt sie als gesehen.
+  Future<void> _neueNachrichtMelden(String text, Anhang? anhang) async {
+    if (sichtbar) { _gesehenMerken(); return; }
+    try {
+      final n = LocalNotification(title: 'Alfred', body: text.isEmpty && anhang != null ? '📎 ${anhang.name}' : (text.length > 180 ? '${text.substring(0, 180)}…' : text));
+      n.onClick = () => _zeigen();
+      await n.show();
+    } catch (_) {}
+  }
+
+  /// Neueste sichtbare Alfred-Antwort als gesehen speichern (nur im Live-Verlauf, nicht in Fundstelle/Archiv).
+  void _gesehenMerken() {
+    if (fundstelle != null || archiv != null) return;
+    final t = neuesteAntwort(verlauf);
+    if (t == null) return;
+    final alt = gesehenGespeichert();
+    if (alt == null || t.isAfter(alt)) gesehenSpeichern(t);
+  }
 
   @override
   void onTrayIconMouseDown() { _zeigen(); }
@@ -302,6 +334,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     await windowManager.show();
     await windowManager.focus();
     setState(() => sichtbar = true);
+    _gesehenMerken(); // 1.5.0
   }
 
   Future<void> _beenden() async {
@@ -630,21 +663,47 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   }
 
   /// Verlauf der Gerätesitzung vom Gehirn (`/api/geraete/verlauf`, v1314) — vor den Zeilen dieses Starts einsortiert.
-  Future<void> _holeVerlauf() async {
+  Future<void> _holeVerlauf({String? um}) async {
     final s = server; if (s == null) return;
     try {
-      final j = await s.json('/api/geraete/verlauf?limit=60${s.faden == null ? '' : '&faden=${s.faden}'}'); // 1.2.0 je Faden; 1.2.6: 60 sichtbare Zeilen
+      // 1.2.0 je Faden; 1.2.6: 60 sichtbare Zeilen; 1.5.0 `um` = Fundstelle der Suche (20 Zeilen rund um den Treffer)
+      final j = await s.json('/api/geraete/verlauf?limit=${um == null ? 60 : 20}${s.faden == null ? '' : '&faden=${s.faden}'}${um == null ? '' : '&um=${Uri.encodeQueryComponent(um)}'}');
       final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
       if (n.isEmpty) return;
-      // 1.1.0 — die synthetische Fortsetzungs-Nachricht („Freigabe erteilt für das Vorhaben …", v1324) steht im Verlauf als
-      // Benutzerzeile; in der App als Hinweis zeigen, nicht als eigene Blase
-      // 1.2.5 — rolle „system" (v1336: interne Fortsetzungen nach Freigabe) als Hinweis, nicht als eigene Blase
-      final alte = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).map((m) { final t = '${m['text']}'; final du = m['rolle'] == 'user'; final sys = m['rolle'] == 'system'; final ins = m['insight'] == true; return _mitAnhaengen(Eintrag(sys || ins || (du && t.startsWith('Freigabe erteilt für das Vorhaben')) ? Art.hinweis : du ? Art.du : Art.alfred, ins ? hinweisKurzzeile(t) : sys ? 'ℹ ${t.split('\n').first}' : t, zeit: DateTime.tryParse('${m['zeit']}')?.toLocal()), m); }).toList();
+      // Zuordnung Server-Zeile → Eintrag in verlauf.dart (testbar); Anhänge kommen im Hintergrund nach (1.4.2)
+      final zeilen = n.where((m) => '${m['text'] ?? ''}'.trim().isNotEmpty).toList();
+      final alte = <Eintrag>[for (final m in zeilen) _mitAnhaengen(eintragAusVerlauf(m), m)..fund = um != null && '${m['zeit']}' == um];
+      // 1.5.0 — Punkt 3: Antworten seit dem letzten Blick (App war zu/ausgeblendet) mit Trennzeile markieren
+      final neu = um == null ? neueAntworten(alte, gesehenGespeichert()) : null;
+      if (neu != null) alte.insert(neu.ab, Eintrag(Art.hinweis, '── ${neu.anzahl == 1 ? '1 neue Antwort' : '${neu.anzahl} neue Antworten'} seit deinem letzten Blick ──', zeit: alte[neu.ab].zeit));
       setState(() => verlauf.insertAll(0, alte));
       for (final e in alte) _protokolliere(e, 'verlauf'); // 1.2.7 — geladene Zeilen im Protokoll (Beweis, Fehlersuche)
-      _zeile(Eintrag(Art.hinweis, 'Verlauf geladen: ${alte.length} Nachrichten aus früheren Sitzungen dieses Geräts.'));
+      if (um == null) _zeile(Eintrag(Art.hinweis, 'Verlauf geladen: ${zeilen.length} Nachrichten aus früheren Sitzungen dieses Geräts.'));
+      if (sichtbar) _gesehenMerken();
       _nachUnten();
     } catch (e) { _zeile(Eintrag(Art.hinweis, 'Verlauf nicht geladen: $e')); }
+  }
+
+  // ── 1.5.0 Suche (Punkt 4): Treffer öffnet die Fundstelle im Chat ─────────────────────────────────────────────────
+  Map<String, dynamic>? fundstelle;
+  String letzteSuche = ''; // „Zur Suche" zeigt die letzte Anfrage wieder
+  final GlobalKey fundSchluessel = GlobalKey();
+
+  Future<void> _fundstelleOeffnen(Map<String, dynamic> t) async {
+    final s = server; if (s == null) return;
+    if (antwortet) { _zeile(Eintrag(Art.hinweis, 'Bitte warten, bis die Antwort fertig ist.')); return; }
+    final faden = t['faden'] is String ? t['faden'] as String : null;
+    s.faden = faden;
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; fundstelle = t; });
+    await _holeVerlauf(um: '${t['zeit']}');
+    _protokolliere(Eintrag(Art.hinweis, 'Fundstelle ${t['gespraech']} ${t['zeit']} geöffnet (${verlauf.where((e) => e.fund).length} Treffer markiert)'));
+    WidgetsBinding.instance.addPostFrameCallback((_) { final c = fundSchluessel.currentContext; if (c != null) Scrollable.ensureVisible(c, alignment: 0.4, duration: const Duration(milliseconds: 200)); });
+  }
+
+  /// Fundstelle verlassen: dasselbe Gespräch mit den neuesten Nachrichten.
+  Future<void> _fundstelleVerlassen() async {
+    final s = server; if (s == null) return;
+    await _fadenWechseln(s.faden);
   }
 
   /// 1.4.2 — Owner 10.10. 23:40: nach erneutem Öffnen des Hauptgesprächs fehlte das Foto. Der Verlauf liefert jetzt Verweise
@@ -696,6 +755,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final mitAnhang = text == null && anhaenge.isNotEmpty;
     if ((t.isEmpty && !mitAnhang) || antwortet) return null;
     if (s == null) { _zeile(Eintrag(Art.fehler, 'Noch nicht mit dem Satelliten verbunden — $ipcZustand')); return null; }
+    if (fundstelle != null) await _fundstelleVerlassen(); // 1.5.0 — weiter im Gespräch mit den neuesten Nachrichten, nicht unter der Fundstelle
     // 1.2.5 — `/faden …` in der App lokal: die App hat ihre eigene Seitenleiste, der Server-Stand gilt für Telegram/Terminal
     if (text == null && RegExp(r'^/faden\b', caseSensitive: false).hasMatch(t)) {
       eingabe.clear();
@@ -777,6 +837,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         Expanded(child: switch (ansicht) {
           Ansicht.hinweise => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Hinweise(server: server!, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAnzahl: (n) { if (mounted && n != hinweiseOffen) setState(() => hinweiseOffen = n); }, aufNachfragen: (text) { setState(() { bezug = Eintrag(Art.alfred, text); ansicht = Ansicht.chat; }); fokus.requestFocus(); }), // 1.4.0
           Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t))),
+          Ansicht.suche => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Suche(json: server!.json, aufOeffnen: _fundstelleOeffnen, anfang: letzteSuche, aufAnfrage: (q) => letzteSuche = q), // 1.5.0
+          Ansicht.anhaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Galerie(json: server!.json, lade: server!.anhang, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufGespraech: _fadenWechseln), // 1.5.0
           Ansicht.einstellungen => _einstellungen(theme),
           Ansicht.chat => _chat(theme),
         }),
@@ -801,6 +863,8 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         knopf(Icons.chat_bubble_outline, Icons.chat_bubble, 'Chat', ansicht == Ansicht.chat, () => setState(() => ansicht = Ansicht.chat)),
         knopf(Icons.dashboard_outlined, Icons.dashboard, 'Lage: Befunde, Vorgänge, Geräte', ansicht == Ansicht.kacheln, server == null ? null : () => setState(() { ansicht = Ansicht.kacheln; kachelnOffen = true; })),
         knopf(Icons.lightbulb_outline, Icons.lightbulb, hinweiseOffen == 0 ? 'Hinweise' : '$hinweiseOffen offene Hinweise', ansicht == Ansicht.hinweise, server == null ? null : () => setState(() => ansicht = Ansicht.hinweise), zaehler: hinweiseOffen), // 1.4.0
+        knopf(Icons.search, Icons.manage_search, 'Suche im Verlauf', ansicht == Ansicht.suche, server == null ? null : () => setState(() => ansicht = Ansicht.suche)), // 1.5.0
+        knopf(Icons.photo_library_outlined, Icons.photo_library, 'Anhänge: Fotos und Dateien', ansicht == Ansicht.anhaenge, server == null ? null : () => setState(() => ansicht = Ansicht.anhaenge)), // 1.5.0
         knopf(Icons.notifications_none, Icons.notifications, offen.isEmpty ? 'Keine offenen Bestätigungen' : '${offen.length} offene Bestätigung(en)', false, () => setState(() { ansicht = Ansicht.chat; seitenleisteOffen = true; }), zaehler: offen.length),
         const Spacer(),
         knopf(Icons.settings_outlined, Icons.settings, 'Einstellungen', ansicht == Ansicht.einstellungen, () => setState(() => ansicht = Ansicht.einstellungen)),
@@ -878,7 +942,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     final s = server; if (s == null) return;
     if (antwortet) { _zeile(Eintrag(Art.hinweis, 'Bitte warten, bis die Antwort fertig ist.')); return; }
     s.faden = faden;
-    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; });
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = null; fundstelle = null; });
     await _holeVerlauf();
     if (verlauf.isEmpty && faden != null) _zeile(Eintrag(Art.hinweis, 'Neues Gespräch — was möchtest du besprechen?'));
     fokus.requestFocus();
@@ -891,7 +955,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   /// 1.2.1 — Gespräch wurde auf einem anderen Kanal fortgeführt: Verlauf vom Server neu laden, lokale Hinweise behalten.
   Future<void> _gespraechNachladen() async {
-    if (antwortet) return;
+    if (antwortet || fundstelle != null) return; // 1.5.0 — Fundstelle bleibt stehen, bis sie verlassen wird
     final hinweise = verlauf.where((e) => e.art != Art.du && e.art != Art.alfred).toList();
     setState(() { verlauf.clear(); laufend = null; });
     await _holeVerlauf();
@@ -917,7 +981,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
 
   Future<void> _archivOeffnen(String chatId) async {
     final s = server; if (s == null) return;
-    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = chatId; });
+    setState(() { verlauf.clear(); laufend = null; ansicht = Ansicht.chat; archiv = chatId; fundstelle = null; });
     try {
       final j = await s.json('/api/geraete/verlauf?limit=100&archiv=${Uri.encodeQueryComponent(chatId)}');
       final n = (j['nachrichten'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
@@ -975,6 +1039,13 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         const SizedBox(width: 8),
       ])),
       const Divider(height: 1),
+      if (fundstelle != null) Material(color: theme.colorScheme.primaryContainer, child: Padding(padding: const EdgeInsets.fromLTRB(16, 4, 8, 4), child: Row(children: [ // 1.5.0
+        Icon(Icons.manage_search, size: 18, color: theme.colorScheme.onPrimaryContainer),
+        const SizedBox(width: 8),
+        Expanded(child: Text('Fundstelle in „${fundstelle!['gespraech'] ?? 'Gespräch'}“ — Schreiben setzt das Gespräch mit den neuesten Nachrichten fort.', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onPrimaryContainer), overflow: TextOverflow.ellipsis)),
+        TextButton(onPressed: () => setState(() => ansicht = Ansicht.suche), child: const Text('Zur Suche')),
+        TextButton(onPressed: _fundstelleVerlassen, child: const Text('Zum Gespräch')),
+      ]))),
       Expanded(child: verlauf.isEmpty
           ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.auto_awesome, size: 40, color: dim), const SizedBox(height: 12), Text('Was kann ich für dich tun?', style: theme.textTheme.headlineSmall)]))
           : Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: ListView.builder(
@@ -986,7 +1057,10 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
                 final i = verlauf.length - 1 - ri;
                 final e = verlauf[i];
                 final neuerTag = i == 0 || !_gleicherTag(verlauf[i - 1].zeit, e.zeit);
-                final w = _eintrag(e, theme);
+                final roh = _eintrag(e, theme);
+                final w = e.fund // 1.5.0 — Treffer der Suche hervorheben
+                    ? Container(key: fundSchluessel, padding: const EdgeInsets.only(left: 8), decoration: BoxDecoration(color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3), border: Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))), child: roh)
+                    : roh;
                 return neuerTag ? Column(children: [_datumstrenner(e.zeit, theme), w]) : w;
               },
             ))),
@@ -1162,22 +1236,6 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
     );
   }
 
-  /// 1.0.5 — Anhang in der Antwort: Bilder als Vorschau (Klick öffnet), Dateien als Chip; „Speichern" legt sie in Downloads ab.
-  Widget _anhang(Anhang a, ThemeData theme) {
-    final kb = (a.bytes.length / 1024).round();
-    final knoepfe = Row(mainAxisSize: MainAxisSize.min, children: [
-      Text('${a.name} · $kb KB', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-      const SizedBox(width: 8),
-      TextButton.icon(onPressed: () => _anhangOeffnen(a), icon: const Icon(Icons.open_in_new, size: 16), label: const Text('Öffnen')),
-      TextButton.icon(onPressed: () => _anhangSpeichern(a), icon: const Icon(Icons.download, size: 16), label: const Text('Speichern')),
-    ]);
-    if (!a.istBild) return Padding(padding: const EdgeInsets.only(top: 6), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.attach_file, size: 18), const SizedBox(width: 4), knoepfe]));
-    return Padding(padding: const EdgeInsets.only(top: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      InkWell(onTap: () => _anhangOeffnen(a), child: ClipRRect(borderRadius: BorderRadius.circular(8), child: ConstrainedBox(constraints: const BoxConstraints(maxHeight: 360, maxWidth: 640), child: Image.memory(a.daten, fit: BoxFit.contain, gaplessPlayback: true, errorBuilder: (_, __, ___) => const Text('(Bild nicht darstellbar)'))))),
-      knoepfe,
-    ]));
-  }
-
   Future<File> _anhangAblegen(Anhang a, Directory dir) async {
     await dir.create(recursive: true);
     var f = File('${dir.path}${Platform.pathSeparator}${a.name}');
@@ -1227,7 +1285,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Row(children: [Text('Alfred', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)), Text(' · $zeit', style: theme.textTheme.labelSmall?.copyWith(color: dim))]),
           const SizedBox(height: 4),
           SelectableText.rich(markdown(e.text.isEmpty ? '…' : e.text, theme)),
-          for (final a in e.anhaenge) _anhang(a, theme),
+          for (final a in e.anhaenge) AnhangAnsicht(a, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufAbspielen: (x) => audio.abspielen(x.daten, x.mime).catchError((Object err) => _zeile(Eintrag(Art.fehler, '🔊 $err')))), // 1.5.0 eigenes Widget
           if (e.text.isNotEmpty) Row(children: [
             IconButton(tooltip: 'Kopieren', onPressed: () { Clipboard.setData(ClipboardData(text: e.text)); setState(() => fluechtig = 'kopiert'); }, icon: Icon(Icons.copy_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),
             IconButton(tooltip: 'Vorlesen', onPressed: () => _sprichKurz(e.text), icon: Icon(Icons.volume_up_outlined, size: 16, color: dim), visualDensity: VisualDensity.compact),

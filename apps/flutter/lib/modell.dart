@@ -4,7 +4,7 @@ import 'dart:typed_data';
 enum Art { du, alfred, satellit, bestaetigung, hinweis, fehler }
 
 /// 1.1.0 — Bereiche der Oberfläche (Symbolleiste links).
-enum Ansicht { chat, kacheln, hinweise, einstellungen }
+enum Ansicht { chat, kacheln, hinweise, suche, anhaenge, einstellungen } // 1.5.0 suche, anhaenge
 
 class Eintrag {
   Eintrag(this.art, this.text, {DateTime? zeit, List<Anhang>? anhaenge}) : zeit = zeit ?? DateTime.now(), anhaenge = anhaenge ?? [];
@@ -15,6 +15,8 @@ class Eintrag {
   final List<Anhang> anhaenge;
   /// 1.2.8 — lange eigene Nachricht vom Benutzer aufgeklappt (Einklappen in main.dart `_eingeklappt`).
   bool aufgeklappt = false;
+  /// 1.5.0 — Treffer der Suche (Fundstelle hervorgehoben).
+  bool fund = false;
 }
 
 class Anhang {
@@ -23,6 +25,8 @@ class Anhang {
   final String mime;
   final List<int> bytes;
   bool get istBild => mime.startsWith('image/');
+  /// 1.5.0 — Sprachnachricht (v1350: kommt jetzt auch ohne offenen Antwortstrom an die App).
+  bool get istTon => mime.startsWith('audio/');
   /// 1.4.2 — einmal umgewandelt und wiederverwendet: eine neue Kopie je Zeichnen war für Flutter jedes Mal ein neues Bild
   /// (neu dekodiert) → das Foto flackerte, während beim Mitschreiben mehrmals pro Sekunde neu gezeichnet wurde.
   late final Uint8List daten = bytes is Uint8List ? bytes as Uint8List : Uint8List.fromList(bytes);

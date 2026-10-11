@@ -68,7 +68,7 @@ class Audio {
     // („PathNotFoundException"). Eigene Datei im Temp-Ordner, danach wieder weg.
     final dir = await getTemporaryDirectory();
     await dir.create(recursive: true); // macOS: ~/Library/Caches/<bundle> existiert beim ersten Start nicht
-    final f = File('${dir.path}${Platform.pathSeparator}alfred-ton-${DateTime.now().microsecondsSinceEpoch}.${mime.contains('wav') ? 'wav' : 'mp3'}');
+    final f = File('${dir.path}${Platform.pathSeparator}alfred-ton-${DateTime.now().microsecondsSinceEpoch}.${mime.contains('wav') ? 'wav' : mime.contains('ogg') ? 'ogg' : 'mp3'}'); // 1.5.0 Sprachnachrichten (Opus/Ogg)
     await f.writeAsBytes(daten, flush: true);
     try {
       await _player.play(DeviceFileSource(f.path, mimeType: mime));

@@ -44,6 +44,24 @@ export class AnhangAblage {
     } catch { return undefined; }
   }
 
+  /** v1350 — abgelegte Anhänge, neueste zuerst (Übersicht in der App); `erlaubt` filtert nach Gespräch. */
+  liste(erlaubt: (gespraech: string) => boolean, limit = 200): Array<AnhangVerweis & { zeit: string; gespraech: string }> {
+    let dateien: string[];
+    try { dateien = fs.readdirSync(this.verzeichnis); } catch { return []; }
+    const aus: Array<AnhangVerweis & { zeit: string; gespraech: string }> = [];
+    for (const d of dateien) {
+      if (!d.endsWith('.json')) continue;
+      const id = d.slice(0, -5);
+      if (!ANHANG_ID_RE.test(id)) continue;
+      try {
+        const m = JSON.parse(fs.readFileSync(path.join(this.verzeichnis, d), 'utf8')) as AnhangMeta;
+        if (!erlaubt(m.gespraech) || !fs.existsSync(path.join(this.verzeichnis, id))) continue;
+        aus.push({ id, name: m.name, mime: m.mime, groesse: m.groesse, zeit: m.zeit, gespraech: m.gespraech });
+      } catch { /* defekte Kopfdatei überspringen */ }
+    }
+    return aus.sort((a, b) => b.zeit.localeCompare(a.zeit)).slice(0, limit);
+  }
+
   vorhanden(id: string): boolean {
     return ANHANG_ID_RE.test(id) && fs.existsSync(path.join(this.verzeichnis, id));
   }
