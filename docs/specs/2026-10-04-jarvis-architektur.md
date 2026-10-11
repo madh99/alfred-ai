@@ -458,3 +458,78 @@ Folgerung: Das Aufmerksamkeitsbudget (Regel 1) muss zuerst den Bestand senken (I
 ### Offene Owner-Entscheidungen
 
 Standardbudget je Projektvorgang (Vorschlag 5 USD / 2 h / 8 Etappen); ob die Zusammenfassung des Claude-Code-Berichts durch ein Modell erlaubt ist (werkzeuglos) oder nur zitiert wird; erhöhter Helfer unter Windows (Docker Desktop, Systemdienste); Claude Code/brew/tmux auf dem Mac installieren; Berechtigungsmodus von Claude Code in Aufträgen (heute „auto", Alternative „acceptEdits" ohne Shell).
+
+## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe")
+
+### Anlass (Realfall 10./11.10.)
+
+Am 10.10. 09:30 meldete Alfred von sich aus: „Home Assistant meldet zwei neu nicht verfügbare Entitäten (LichtWaschkammerl …): **prüfen, ob** das zugehörige Gerät/die Integration offline ist". Die Untersuchung ging an den Owner. Am 11.10. 13:26 fragte der Owner im Chat, welche Lichter länger als sonst an waren und was dahinterstecken könnte. Alfred untersuchte dieselbe Sache selbst und nur lesend und lieferte: Einschaltdauer 14,8 statt 9,8 h/Tag (+51 %) mit den langen Phasen, Melder `0x00158d0004867bb2` seit 04.10. ohne Bewegung, Einschaltautomation zuletzt am 23.09., die Ausschaltautomation lief nur bei Zigbee-Neuverbindungen, Batterie 100 % als nicht frischer Wert; Abgrenzung (kein Zigbee-Gesamtausfall, Eingang/Garage melden; Gang OG und Küche ebenfalls verdächtig); offen „Batterie, Funk oder Defekt nicht unterscheidbar"; konkrete Aufgabe „Waschkammerl betreten, in Zigbee2MQTT auf frischen Zeitstempel prüfen".
+
+Owner (11.10.): Das zweite ist das erwartete Verhalten — **weiter Fehler melden, aber vorher selbst nachsehen, ableiten und, was Alfred nicht selbst kann, als Aufgabe an den Owner geben**.
+
+### Ist-Stand (Code, DB, Log 11.10.)
+
+- **Zwei Wege zur Meldung:** (a) Befunde mit Identität (.1217, `ereignisse/befunde.ts`): Quellen `bmw`, `energie`, `sensorbatterien`, `infra` (MikroTik, Monitor-Alerts), `geraete`, `lebenszeichen`, je 1–7 neue pro Tag; (b) Handlungs-Insights des Reasonings → Prosa-Vorgänge nur ohne Befund (.1222). Die Waschkammerl-Meldung kam über (b) — **HA-Anomalien sind heute keine Befunde**.
+- **Volumen:** 18–44 neue Vorgänge pro Tag (05.–11.10.); offen nach Quelle: reasoning-insight 27, reasoning 15, lernbedarf 7, befund 3.
+- **Kosten einer freien Untersuchung** (die Chat-Antwort vom 11.10. 13:26–13:31, Log): 25 Modellaufrufe, 3,43 USD, 308 s Modellzeit (Stufe default). Freie Untersuchung bei jeder Meldung wäre bei diesem Volumen nicht tragbar — und verstieße gegen den Grundsatz, dass Fähigkeiten mit dem schwächsten Modell der Kette funktionieren müssen.
+- **Vorhanden und wiederverwendbar:** Vorgänge mit Besitzer `alfred|user`, `naechster_schritt`, Schritte (`vorgang_schritte`, Arten `vorgeschlagen … notiz`); Autonomie-Klassen in der Ausführung (`vorgaenge/autonomie.ts`, `klassifiziereAktion`); Fakten-Gegenprobe gegen die Datenlage (.1214); Weltmodell-Beobachter und Watches (Nachprüfung); Runbooks mit `symptom/cause/steps/verification` und der Chat-Runbook-Reflektor (`reflection/chat-session-runbook-reflector.ts`); HA-Skill mit Leseaktionen `state`, `history`, `logbook`, `areas`, Automationen lesen; Todos und App-Ansicht Aufgaben (v1353); Vorgangs-Dialog mit Entscheidung (App 1.9.0); Sammlung „Hinweise" (v1343).
+
+### Zielverhalten
+
+Neuer Befund oder Handlungs-Hinweis → **Nachforschen** (nur lesen) → **Ableiten** (Hypothese, Belege, Sicherheit, offen) → **Aufteilen** (was Alfred selbst tut, was der Owner tun muss, was eine Bestätigung braucht) → **Melden** in einem festen Format → **Nachprüfen** und selbst schließen. Melden bleibt — das Nachforschen kommt davor, ersetzt es nicht.
+
+Meldeformat (kurz; Details im Vorgang, „Warum?" und App-Dialog):
+
+> **Waschkammerl: Licht bleibt an, Bewegungsmelder stumm.** Geprüft: Licht zuletzt 14,8 statt 9,8 h/Tag an; Melder seit 04.10. ohne Bewegung; Automation zuletzt 23.09. Wahrscheinlich: Melder meldet nicht mehr (Batterie, Funk oder Defekt — noch nicht unterscheidbar). **Deine Aufgabe:** Waschkammerl betreten und in Zigbee2MQTT auf eine frische Meldung achten. **Ich:** prüfe ab jetzt stündlich, ob der Melder wieder meldet, und schließe den Befund dann selbst.
+
+### Bausteine
+
+**1. Auslöser (wann nachgeforscht wird).** Neuer Befund; Befund, der nach „erledigt" wieder auftritt; Handlungs-Insight, aus dem ein Vorgang würde (Weg b). Nicht: reine Informations-Insights, Interessen/Digest, Lebenszeichen-Befunde ohne Vorgang, geplante oder interne Läufe. Voraussetzung: Für die Art des Befunds gibt es ein **Prüfrezept** (Baustein 2); ohne Rezept bleibt es beim heutigen Verhalten plus Lernschleife (Baustein 7). Einmal je Befund — erneut nur bei Zustandswechsel.
+
+**2. Prüfrezepte statt freier Untersuchung.** Datenmodell `pruefrezept (id, muster {quelle, gegenstand_regex}, schritte [{werkzeug, aktion, params_vorlage, zweck}], deutungsfragen[], eigene_schritte[], aufgaben_vorlagen[], nachpruefung {werkzeug, aktion, bedingung, takt}, herkunft owner|runbook|chat, aktiv, version, laeufe, erfolgsquote)`. Die Schritte führt der Code **ohne Modell** aus; Platzhalter (Entität, Bereich, Host) kommen aus dem Befund. Ergebnis ist ein **Belegblock**: gekürzte Rohdaten mit Zeitstempeln und Quelle je Zeile. Beispielrezept „HA: Licht ungewöhnlich lange an / Entität nicht verfügbar":
+1. `history` der Entität, 10 Tage → Einschaltdauer je Tag, Vergleich mit dem Normalzustand (Schicht 1);
+2. `areas` → Bewegungsmelder desselben Bereichs, deren `history` → letzte Bewegung;
+3. Automationen, die Entität oder Melder nennen → `last_triggered`;
+4. Batterie, Linkqualität, `last_seen` der Melder (Zeitstempel der Messung, nicht nur Wert);
+5. Gegenprobe Gesamtausfall: andere Melder derselben Integration mit Bewegung im selben Zeitraum.
+
+**3. Deutung mit festem Schema.** Ein werkzeugloser Modellaufruf (Stufe fast oder medium) bekommt Belegblock und Deutungsfragen und antwortet nur im Schema `{hypothese, sicherheit hoch|mittel|niedrig, belege[{text, beleg_zeile}], nicht_unterscheidbar[], alfred_schritte[], owner_aufgaben[{titel, ort, handgriff, erledigt_wenn}], bestaetigungen[]}`. Deterministische Gegenprobe danach: Jeder Beleg muss auf eine Zeile des Belegblocks verweisen und deren Zahl/Zeitstempel enthalten; `alfred_schritte` nur aus `eigene_schritte` des Rezepts; fehlt etwas → Sicherheit „niedrig", Beleg gestrichen. So trägt die Logik das Rezept, nicht das Modell; Abnahme mit Haiku und Mistral.
+
+**4. Ergebnis im Vorgang.** Neue Schrittart `nachgeforscht` mit Belegblock-Verweis, Hypothese und Sicherheit; der Befund erhält die Hypothese als `detail`. Besitzer des Vorgangs: `user`, wenn Owner-Aufgaben offen sind, sonst `alfred`. **Owner-Aufgaben werden Todos** (Liste „Alfred-Aufgaben", Fälligkeit aus der Dringlichkeit, Verweis auf Vorgang) und erscheinen damit in Telegram, Web und der App-Ansicht Aufgaben. Schalt- oder Konfigurationsschritte gehen als Bestätigung (Klasse `bestaetigen`), nie still.
+
+**5. Meldung.** Formular wie oben; Zustellung über die bestehenden Wege (Sammlung Hinweise, Telegram) mit Ruhefenstern. Die Nachforschung selbst läuft auch im Ruhefenster, gemeldet wird danach. Eine Meldung „prüfen, ob …" ohne eigene Belege gibt es für Quellen mit Rezept nicht mehr.
+
+**6. Nachprüfen und Schließen.** Die `nachpruefung` des Rezepts (z. B. „Melder meldet Bewegung mit Zeitstempel nach Aufgabenbeginn") läuft über Weltmodell-Beobachter bzw. Watch. Erfüllt → Befund, Vorgang und Todo erledigt, kurze Meldung „erledigt, bestätigt durch …". Hakt der Owner die Aufgabe ab, wird sofort nachgeprüft; bleibt der Befund, sagt Alfred das mit dem neuen Stand. Nach Ablauf der Frist einmal erinnern, mit aktualisierten Belegen.
+
+**7. Rezepte lernen.** Aus einer Chat-Untersuchung wie der vom 11.10. schlägt der Runbook-Reflektor ein Rezept vor (Werkzeugfolge der Sitzung, Platzhalter statt fester Entitäten). Der Owner übernimmt es mit einem Klick (Vorgang „Prüfrezept übernehmen?"); vom Modell vorgeschlagene Rezepte werden **nie** automatisch aktiv. Fehlt ein Rezept für eine wiederkehrende Befund-Art, entsteht über Lernschleife 3 („Lücke → Fähigkeit", .1207) ein Vorgang „Prüfrezept fehlt für …".
+
+### Budget und Grenzen
+
+Erwartet je Rezeptlauf: 0 Modellaufrufe für das Sammeln, 1 für die Deutung (Kosten zu messen; Ziel deutlich unter 0,05 USD statt 3,43 USD frei). Tagesbudget (Vorschlag 20 Läufe oder 1 USD, danach Verhalten wie heute mit Hinweis im Lagebild), Zeitlimit 60 s je Lauf, Werkzeugaufrufe je Lauf ≤ 12, Belegblock ≤ 6 000 Zeichen. Kennzahlen in Schicht 4: Läufe, Kosten, Sicherheit je Rezept, Anteil Owner-Aufgaben erledigt, Anteil selbst geschlossener Befunde, Korrekturen des Owners an Hypothesen.
+
+### Sicherheit
+
+Nur lesende Aktionen: Positivliste je Werkzeug **und** Aktion (z. B. HA `state/history/logbook/areas`, Automation lesen; nie `call_service`, `trigger_automation`, `create/update/delete_automation`), durchgesetzt in der Ausführung, nicht im Prompt. Belege können Fremdtext enthalten (Mail, Logbuch, Gerätenamen) → Deutung ohne Werkzeuge, Ausgabe nur im Schema, Owner-Aufgaben sind Text und lösen nichts aus. Rezepte mit Schreibschritten sind ungültig.
+
+### Verhältnis zu anderen Entwürfen
+
+- **Projektvorgang:** dieselbe Schleife — planen (Rezept bzw. Plan), prüfen (Gegenprobe, Nachprüfung), feste Entscheidungsliste (Owner-Aufgaben, Bestätigungen), melden. Gemeinsamer Unterbau: Vorgangsschritte, Budget je Lauf, Meldeformat. Nachforschen ist der kleinere, risikoärmere erste Anwender (keine Schreibrechte).
+- **Interessen als Wissen:** unberührt; Interessen lösen kein Nachforschen aus.
+- **HA-Entitäten (offene Owner-Entscheidung, 72 nicht verfügbar):** Voraussetzung N0 — erst HA-Anomalien als Befunde, sonst bleibt der Waschkammerl-Fall auf dem Prosa-Weg. Dauerhaft tote Entitäten brauchen einen Normalzustand „bekannt tot", sonst erzeugen sie Dauerbefunde.
+
+### Reihenfolge (nicht freigegeben)
+
+- **N0** HA-Anomalien als Befunde, deterministisch gegen den Normalzustand: Licht/Schalter ungewöhnlich lange an, Entität neu nicht verfügbar, Melder seit X ohne Meldung.
+- **N1** Rezept-Gerüst, Lese-Positivliste, ein Rezept (HA Licht/Melder); Belegblock als Vorgangsschritt — beobachtend, Meldungen unverändert, Kennzahlen.
+- **N2** Deutung mit Schema und Gegenprobe, Meldeformat, Owner-Aufgaben als Todos.
+- **N3** Nachprüfen und selbst schließen.
+- **N4** weitere Rezepte (Sensorbatterie, MikroTik-Interface down, Monitor-Alert, BMW); Rezeptvorschläge aus Chat-Sitzungen.
+- **N5** (nur mit Owner-Entscheidung) freie Untersuchung als Rückfall mit eigenem Budget.
+
+### Abnahme (messbar)
+
+Waschkammerl nachgestellt (Verlauf 04.–11.10.): Meldung enthält Dauervergleich, stummen Melder, letzte Automationsauslösung, „nicht unterscheidbar" und die Aufgabe „betreten, Zigbee2MQTT prüfen" — mit Haiku und mit Mistral gleich; im Log 0 Schreibaktionen während des Laufs; Kosten je Lauf gemessen und unter Ziel; nach Melder-Reparatur (oder simuliertem Zustandswechsel auf der Test-VM) schließt Alfred Befund, Vorgang und Todo selbst. Über zwei Wochen: Meldungen „prüfen, ob …" ohne Belege für Rezept-Quellen = 0.
+
+### Offene Owner-Entscheidungen
+
+Tagesbudget; Reihenfolge der Quellen (Vorschlag: Haus/HA, dann Infra); eigene Todo-Liste „Alfred-Aufgaben" oder Standardliste; freie Untersuchung als Rückfall (N5) ja/nein; ob Alfred risikoarme Selbsthilfe vorschlagen darf (z. B. Integration neu laden — das ist eine Schaltung und bliebe Klasse `bestaetigen`).
