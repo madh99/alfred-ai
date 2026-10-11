@@ -13,6 +13,28 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1353] - 2026-10-11
+
+### Added — App: Aufgaben & Erinnerungen (v1353, App 1.9.0)
+
+Eigene Ansicht in der Symbolleiste mit Zähler für heute fällige und überfällige Aufgaben. Offene Aufgaben nach Fälligkeit gruppiert (überfällig, heute, morgen, diese Woche, später, ohne Termin), abhaken mit Rückgängig, verschieben (morgen, nächste Woche, Datum), umbenennen, als dringend markieren, neu anlegen. Darunter die kommenden Erinnerungen mit Löschen. Fällige Erinnerungen meldet die App selbst als Systembenachrichtigung; kommt dieselbe Erinnerung zusätzlich als Nachricht, bleibt es bei einer Meldung.
+
+### Added — App: Gedächtnis einsehen und korrigieren (v1353, App 1.9.0)
+
+Was Alfred über den Owner weiß, mit Suche und Filter nach Art (Fakten, Vorlieben, Korrekturen, Regeln …). Ein Eintrag lässt sich korrigieren (neuer Text, gilt danach als vom Owner bestätigt) oder löschen. Interne Buchführung (zugestellte Hinweise, Verknüpfungen) ist ausgeblendet und auf Wunsch sichtbar.
+
+### Added — App: Vorgänge entscheiden (v1353, App 1.9.0)
+
+Ein Klick auf einen Vorgang in der Lage oder der Seitenleiste öffnet Ziel, nächsten Schritt, Frist, Begründung und die letzten Schritte. Der Owner entscheidet dort „erledigt" oder „verworfen", optional mit Notiz — wie in der Web-Kachel.
+
+### Security — Geräte-Routen nur für Einträge des Owners (v1353)
+
+Die neuen Routen `/api/geraete/aufgaben`, `/erinnerungen`, `/gedaechtnis` und `/vorgaenge` stehen nur Geräten des Owners offen und prüfen bei jeder Änderung, dass der Eintrag dem Owner gehört. Die Web-Routen mit API-Token bleiben unverändert und für das Gerätetoken gesperrt.
+
+### Changed — App: Aufbau der Sitzung aufgeteilt (App 1.9.0)
+
+Die Hauptdatei der App ist in Teile für Fenster, Sprache, Senden, Gespräche und Oberfläche aufgeteilt; das Verhalten ist unverändert.
+
 ## [0.19.0-jarvis.1352] - 2026-10-11
 
 ### Added — Antwort abbrechen (v1352, App 1.7.0)

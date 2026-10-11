@@ -17,6 +17,9 @@ import 'package:file_selector/file_selector.dart';
 import 'aktivierungswort.dart'; // 1.3.0
 import 'anhang_ansicht.dart'; // 1.5.0
 import 'anhang_speicher.dart'; // 1.5.0
+import 'aufgaben.dart'; // 1.9.0
+import 'gedaechtnis.dart'; // 1.9.0
+import 'vorgaenge.dart'; // 1.9.0
 import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
 import 'suche.dart'; // 1.5.0
@@ -149,6 +152,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool seitenleisteOffen = seitenleisteGespeichert();
   String? tierWahl; // null = Automatisch, sonst fast/default/strong
   List<Map<String, dynamic>> vorgaenge = [];
+  List<dynamic>? vorgangSchritte; // 1.9.0 — Schritte für den Vorgangs-Dialog
+  int aufgabenFaelligZahl = 0; // 1.9.0 — überfällig + heute (Symbolleiste)
+  final Map<String, Erinnerung> erinnerungBekannt = {}; // 1.9.0 — bis zur Meldung, auch nach dem Auslösen am Server
+  final Set<String> erinnerungGemeldet = {};
+  final Map<String, DateTime> erinnerungTexte = {}; // gemeldeter Text → Zeit (keine Doppelmeldung, falls der Server sie auch schickt)
+  Timer? erinnerungTakt;
   Timer? vorgaengeTakt;
   bool hoeren = false; // Meilenstein 4 — Echtzeit-Hören mit Aktivierungswort
   HoerClient? hoerClient;
@@ -215,7 +224,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           }
           _zeile(Eintrag(Art.alfred, text.isEmpty && anhang != null ? '📎 ${anhang.name}' : text, zeit: zeit, anhaenge: anhang == null ? null : [anhang]));
           if (stimme && text.isNotEmpty) _sprichKurz(text);
-          _neueNachrichtMelden(text, anhang); // 1.5.0 — Punkt 3
+          if (!_erinnerungSchonGemeldet(text)) _neueNachrichtMelden(text, anhang); // 1.5.0 — Punkt 3; 1.9.0 keine Doppelmeldung
           return;
         }
         _zeile(Eintrag(Art.satellit, text, zeit: zeit));
@@ -232,7 +241,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         abfrage ??= Timer.periodic(const Duration(seconds: 30), (_) => _holeBestaetigungen());
         if (erste) { _updatePruefen(); updateTakt ??= Timer.periodic(const Duration(hours: 6), (_) => _updatePruefen()); stillTakt ??= Timer.periodic(const Duration(minutes: 5), (_) => _stillPruefen()); } // M6; 1.8.0 still
         if (erste && !warteschlange.leer) { _zeile(Eintrag(Art.hinweis, '⏳ ${warteschlange.eintraege.length} Nachricht(en) aus der letzten Sitzung warten auf das Nachsenden.')); _wartenStarten(); } // 1.8.0
-        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); }); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler
+        if (erste) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); vorgaengeTakt ??= Timer.periodic(const Duration(seconds: 60), (_) { _vorgaengeLaden(); _hinweiseZaehlen(); _aufgabenZaehlen(); }); erinnerungTakt ??= Timer.periodic(const Duration(seconds: 15), (_) => _erinnerungenPruefen()); } // 1.1.0 Seitenleiste; 1.5.1 Hinweis-Zähler; 1.9.0 Aufgaben/Erinnerungen
         if (erste) _faedenLaden(); // 1.2.0 Gespräche
         if (erste) _spiegelungLaden(); // 1.2.3
         if (erste) {
@@ -264,6 +273,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   void dispose() {
     abfrage?.cancel();
     vorgaengeTakt?.cancel();
+    erinnerungTakt?.cancel(); // 1.9.0
     for (final s in _signale) { s.cancel(); }
     hoerClient?.schluss();
     ipc.stop();
@@ -372,7 +382,9 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
         const VerticalDivider(width: 1),
         Expanded(child: switch (ansicht) {
           Ansicht.hinweise => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Hinweise(server: server!, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufAnzahl: (n) { if (mounted && n != hinweiseOffen) setState(() => hinweiseOffen = n); }, aufNachfragen: (text) { setState(() { bezug = Eintrag(Art.alfred, text); ansicht = Ansicht.chat; }); fokus.requestFocus(); }), // 1.4.0
-          Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t))),
+          Ansicht.kacheln => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Kacheln(server: server!, aufHinweis: (t) => _zeile(Eintrag(Art.hinweis, t)), aufMeldung: (t) { _protokolliere(Eintrag(Art.hinweis, t)); _vorgaengeLaden(); }, aufNachfragen: _nachfragen),
+          Ansicht.aufgaben => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Aufgaben(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufStand: _aufgabenStand), // 1.9.0 A1
+          Ansicht.gedaechtnis => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Gedaechtnis(json: server!.json, aufMeldung: (t) => _protokolliere(Eintrag(Art.hinweis, t))), // 1.9.0 A3
           Ansicht.suche => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Suche(json: server!.json, aufOeffnen: _fundstelleOeffnen, anfang: letzteSuche, aufAnfrage: (q) => letzteSuche = q), // 1.5.0
           Ansicht.anhaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Galerie(json: server!.json, lade: server!.anhang, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufGespraech: _fadenWechseln), // 1.5.0
           Ansicht.einstellungen => _einstellungen(theme),

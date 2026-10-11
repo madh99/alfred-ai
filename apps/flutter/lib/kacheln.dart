@@ -3,12 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'server.dart';
+import 'vorgaenge.dart'; // 1.9.0 A4
 
 /// Meilenstein 3 — Kacheln nativ (Owner-Entscheidung 08.10. „nativ"): Lage, Befunde, Vorgänge und Geräte aus den
 /// JSON-Routen, die das Gerätetoken lesen darf (`/api/lebenszeichen`, `/api/vorgaenge`). Kein Webview, kein API-Token.
 class Kacheln extends StatefulWidget {
-  const Kacheln({super.key, required this.server, this.aufHinweis});
+  const Kacheln({super.key, required this.server, this.aufHinweis, this.aufMeldung, this.aufNachfragen});
   final Server server;
+  /// 1.9.0 A4 — Ergebnis einer Vorgangs-Entscheidung; Nachfragen springt mit vorbereiteter Frage in den Chat.
+  final void Function(String)? aufMeldung;
+  final void Function(String)? aufNachfragen;
   /// Erste erfolgreiche Ladung als Verlaufszeile (Beweisläufe, Protokoll).
   final void Function(String)? aufHinweis;
 
@@ -52,6 +56,11 @@ class _KachelnState extends State<Kacheln> {
     }
   }
 
+  Future<void> _vorgang(Map<String, dynamic> v) async {
+    final entschieden = await zeigeVorgang(context, v: v, schritte: vorgaenge?['schritte'] as List<dynamic>?, json: widget.server.json, aufMeldung: (t) => widget.aufMeldung?.call(t), aufNachfragen: widget.aufNachfragen);
+    if (entschieden) await _laden();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -71,10 +80,10 @@ class _KachelnState extends State<Kacheln> {
         if (befunde.length > 12) Text('… +${befunde.length - 12} weitere', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
       ])),
       _kachel(theme, 'Vorgänge (${offene.length})', Icons.assignment_outlined, child: offene.isEmpty ? const Text('Keine offenen Vorgänge.') : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        for (final v in offene.take(12)) Padding(padding: const EdgeInsets.only(bottom: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        for (final v in offene.take(12)) InkWell(onTap: () => _vorgang(v), child: Padding(padding: const EdgeInsets.only(bottom: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [ // 1.9.0 A4 — Klick: Details, Entscheidung
           Text('${v['titel'] ?? ''}', style: theme.textTheme.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
           Text('${v['status'] ?? ''} · ${v['naechsterSchritt'] ?? ''}${v['frist'] != null ? ' · bis ${_datum('${v['frist']}')}' : ''}', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-        ])),
+        ]))),
         if (offene.length > 12) Text('… +${offene.length - 12} weitere', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
       ])),
       _kachel(theme, 'Geräte (${geraete.where((g) => g['online'] == true).length}/${geraete.length} online)', Icons.devices, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

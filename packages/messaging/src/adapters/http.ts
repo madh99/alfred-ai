@@ -238,6 +238,18 @@ function mimeAusDateiname(name: string): string {
   return m[e] ?? 'application/octet-stream';
 }
 
+/** v1353 — Form der nativen Ansichten aus dem Kern (geraete/owner-ansichten.ts), strukturell, ohne Abhängigkeit auf core. */
+export interface GeraetOwnerAnsichten {
+  aufgaben(): Promise<unknown>;
+  aufgabeNeu(e: Record<string, unknown>): Promise<unknown>;
+  aufgabeAendern(id: string, e: Record<string, unknown>): Promise<unknown | null>;
+  erinnerungLoeschen(id: string): Promise<boolean>;
+  gedaechtnis(o: { typ?: string; q?: string }): Promise<unknown>;
+  gedaechtnisAendern(id: string, text: unknown): Promise<boolean>;
+  gedaechtnisLoeschen(id: string): Promise<boolean>;
+  vorgangEntscheiden(id: string, status: unknown, notiz: unknown): Promise<{ titel: string } | null>;
+}
+
 export class HttpAdapter extends MessagingAdapter {
   readonly platform: Platform = 'api';
   private server: http.Server | https.Server | null = null;
@@ -970,6 +982,8 @@ export class HttpAdapter extends MessagingAdapter {
     /** v1343 — Sammlung „Hinweise" (Insights mit Status): Liste und Entscheidung; undefined = kein Owner-Gerät (403). */
     hinweise?(geraetId: string): Promise<unknown[] | undefined>;
     hinweisEntscheiden?(geraetId: string, id: string, aktion: string): Promise<{ ok: boolean; grund?: string } | undefined>;
+    /** v1353 — native Ansichten der Desktop-App (Aufgaben, Erinnerungen, Gedächtnis, Vorgänge); undefined = kein Owner-Gerät (403). */
+    ownerAnsichten?(geraetId: string): Promise<GeraetOwnerAnsichten | undefined>;
     /** v1249 — blockweiser Dateitransfer. */
     transfer?(art: 'start' | 'block' | 'status' | 'fertig' | 'lesen', p: { id?: string; geraetId?: string; body?: unknown; offset?: number; laenge?: number; data?: Buffer }): Promise<unknown> | unknown;
   };
@@ -1948,6 +1962,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetHinweise(req, res).catch(err => this.safeError(res, err)); // v1343
     } else if (/^\/api\/geraete\/hinweise\/[A-Za-z0-9-]{1,64}$/.test(url.pathname) && req.method === 'POST') {
       this.handleGeraetHinweisEntscheiden(req, res, url).catch(err => this.safeError(res, err)); // v1343
+    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) {
+      this.handleGeraetOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1353
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
@@ -6801,6 +6817,45 @@ export class HttpAdapter extends MessagingAdapter {
     if (r === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
     res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(r));
+  }
+
+  /**
+   * v1353 — native Ansichten der Desktop-App (Owner-Freigabe 11.10., A1/A3/A4). Nur Geräte des Owners.
+   *   GET    /api/geraete/aufgaben              offene Aufgaben + kommende Erinnerungen
+   *   POST   /api/geraete/aufgaben              { titel, faellig?, prioritaet?, liste? }
+   *   POST   /api/geraete/aufgaben/:id          { erledigt?, faellig?, titel?, prioritaet? }
+   *   DELETE /api/geraete/erinnerungen/:id
+   *   GET    /api/geraete/gedaechtnis?typ=&q=
+   *   POST   /api/geraete/gedaechtnis/:id       { text }
+   *   DELETE /api/geraete/gedaechtnis/:id
+   *   POST   /api/geraete/vorgaenge/:id         { status: erledigt | verworfen, notiz? }
+   */
+  private async handleGeraetOwnerAnsicht(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    const geraet = this.geraetIdentitaet.get(req);
+    if (!geraet || !this.geraeteCallbacks?.ownerAnsichten) { antwort(403, { error: 'nur mit Gerätetoken' }); return; }
+    const a = await this.geraeteCallbacks.ownerAnsichten(geraet.geraetId);
+    if (!a) { antwort(403, { error: 'nur Geräte des Owners' }); return; }
+    const [, , , bereich, id] = url.pathname.split('/');
+    const m = req.method;
+    let body: Record<string, unknown> = {};
+    if (m === 'POST') {
+      const roh = await this.readBody(req).catch(() => '');
+      if (roh.length > 20_000) { antwort(413, { error: 'zu groß' }); return; }
+      try { const j = JSON.parse(roh || '{}'); if (j && typeof j === 'object' && !Array.isArray(j)) body = j as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    }
+    try {
+      if (bereich === 'aufgaben' && !id && m === 'GET') { antwort(200, await a.aufgaben()); return; }
+      if (bereich === 'aufgaben' && !id && m === 'POST') { antwort(200, { aufgabe: await a.aufgabeNeu(body) }); return; }
+      if (bereich === 'aufgaben' && id && m === 'POST') { const t = await a.aufgabeAendern(id, body); antwort(t ? 200 : 404, t ? { aufgabe: t } : { error: 'nicht gefunden' }); return; }
+      if (bereich === 'erinnerungen' && id && m === 'DELETE') { const ok = await a.erinnerungLoeschen(id); antwort(ok ? 200 : 404, { ok }); return; }
+      if (bereich === 'gedaechtnis' && !id && m === 'GET') { antwort(200, await a.gedaechtnis({ typ: url.searchParams.get('typ') || undefined, q: url.searchParams.get('q')?.slice(0, 200) || undefined })); return; }
+      if (bereich === 'gedaechtnis' && id && m === 'POST') { const ok = await a.gedaechtnisAendern(id, body.text); antwort(ok ? 200 : 404, { ok }); return; }
+      if (bereich === 'gedaechtnis' && id && m === 'DELETE') { const ok = await a.gedaechtnisLoeschen(id); antwort(ok ? 200 : 404, { ok }); return; }
+      if (bereich === 'vorgaenge' && id && m === 'POST') { const v = await a.vorgangEntscheiden(id, body.status, body.notiz); antwort(v ? 200 : 404, v ? { ok: true, titel: v.titel } : { error: 'nicht gefunden' }); return; }
+    } catch (err) { antwort(400, { error: (err as Error).message }); return; }
+    antwort(405, { error: 'Methode nicht erlaubt' });
   }
 
   /** v1335 — Faden umbenennen: PATCH {"titel": "…"} */

@@ -116,7 +116,56 @@ extension _Gespraeche on _SitzungState {
     try {
       final v = await s.json('/api/vorgaenge?limit=12');
       final offene = ((v['offene'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
-      if (mounted) _neu(() => vorgaenge = offene);
+      if (mounted) _neu(() { vorgaenge = offene; vorgangSchritte = v['schritte'] as List<dynamic>?; });
     } catch (_) { /* Seitenleiste ist Komfort */ }
+  }
+
+  // ── 1.9.0 A1/A4 — Aufgaben-Zähler, fällige Erinnerungen, Vorgangs-Dialog ─────────────────────────────────────────
+  Future<void> _aufgabenZaehlen() async {
+    final s = server; if (s == null) return;
+    try {
+      final j = await s.json('/api/geraete/aufgaben');
+      _aufgabenStand(((j['aufgaben'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Aufgabe.new).toList(),
+          ((j['erinnerungen'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Erinnerung.new).toList());
+    } catch (_) { /* Zähler ist Komfort; kein Owner-Gerät → 403 */ }
+  }
+
+  void _aufgabenStand(List<Aufgabe> aufgaben, List<Erinnerung> erinnerungen) {
+    final jetzt = DateTime.now();
+    erinnerungenAbgleichen(erinnerungBekannt, erinnerungen, jetzt);
+    final n = aufgabenFaellig(aufgaben, jetzt);
+    if (mounted && n != aufgabenFaelligZahl) _neu(() => aufgabenFaelligZahl = n);
+    _erinnerungenPruefen();
+  }
+
+  /// Fällige Erinnerung als Systembenachrichtigung (auch bei sichtbarem Fenster — sie ist zeitkritisch) und Zeile im Chat.
+  Future<void> _erinnerungenPruefen() async {
+    final jetzt = DateTime.now();
+    for (final e in faelligeErinnerungen(erinnerungBekannt.values.toList(), jetzt, erinnerungGemeldet)) {
+      erinnerungGemeldet.add(e.id);
+      erinnerungTexte[e.text] = jetzt;
+      _zeile(Eintrag(Art.hinweis, '⏰ Erinnerung: ${e.text}'));
+      try {
+        final n = LocalNotification(title: 'Alfred — Erinnerung', body: e.text.length > 180 ? '${e.text.substring(0, 180)}…' : e.text);
+        n.onClick = () { _zeigen(); _neu(() => ansicht = Ansicht.aufgaben); };
+        await n.show();
+      } catch (_) {}
+    }
+  }
+
+  /// Der Server schickt Erinnerungen auch an verknüpfte Kanäle („⏰ Reminder: …"). Hat die App sie eben selbst gemeldet,
+  /// bleibt es bei der Zeile im Chat — keine zweite Systembenachrichtigung.
+  bool _erinnerungSchonGemeldet(String text) {
+    const vorsatz = '⏰ Reminder: ';
+    if (!text.startsWith(vorsatz)) return false;
+    erinnerungTexte.removeWhere((_, t) => DateTime.now().difference(t) > const Duration(minutes: 10));
+    return erinnerungTexte.containsKey(text.substring(vorsatz.length).trim());
+  }
+
+  void _nachfragen(String text) { eingabe.text = text; fokus.requestFocus(); _neu(() => ansicht = Ansicht.chat); }
+
+  Future<void> _vorgangOeffnen(Map<String, dynamic> v) async {
+    final s = server; if (s == null) return;
+    if (await zeigeVorgang(context, v: v, schritte: vorgangSchritte, json: s.json, aufMeldung: (t) => _protokolliere(Eintrag(Art.hinweis, t)), aufNachfragen: _nachfragen)) await _vorgaengeLaden();
   }
 }

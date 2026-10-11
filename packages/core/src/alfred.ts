@@ -13812,6 +13812,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               return { ok: true };
             } catch (err) { return { ok: false, grund: (err as Error).message }; }
           },
+          ownerAnsichten: (geraetId: string) => this.ownerAnsichten(geraetId), // v1353 — Aufgaben, Gedächtnis, Vorgänge in der App
           fadenLoeschen: async (geraetId: string, faden: string) => {
             if (!/^[a-z0-9-]{1,40}$/.test(faden)) return false; // v1333
             if (await this.geraetGehoertOwner(geraetId)) return this.ownerFadenLoeschen(faden);
@@ -15232,6 +15233,23 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       const alias = await this.userRepo.findOrCreate('api', `geraet:${geraetId}`);
       return (await this.userRepo.getMasterUserId(alias.id)) === this.ownerMasterUserId;
     } catch { return false; }
+  }
+
+  /** v1353 — native Ansichten der Desktop-App (Aufgaben, Erinnerungen, Gedächtnis, Vorgänge); nur für Geräte des Owners. */
+  async ownerAnsichten(geraetId: string): Promise<import('./geraete/owner-ansichten.js').OwnerAnsichten | undefined> {
+    const owner = this.ownerMasterUserId;
+    if (!owner || !this.todoRepo || !this.reminderRepo || !this.database || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+    const { OwnerAnsichten } = await import('./geraete/owner-ansichten.js');
+    const { VorgaengeRepository } = await import('@alfred/storage');
+    const db = this.database.getAdapter();
+    return new OwnerAnsichten({
+      owner,
+      todos: this.todoRepo as any,
+      erinnerungen: this.reminderRepo,
+      db: { query: (q, pa) => db.query(q, pa) as Promise<unknown[]>, execute: async (q, pa) => ({ changes: (await db.execute(q, pa)).changes }) },
+      vorgangEntscheiden: (u, id, status, notiz) => new VorgaengeRepository(db).entscheideOwner(u, id, status, notiz),
+      protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (App)`),
+    });
   }
 
   /** v1332 — Fäden eines Nicht-Owner-Geräts: nur seine eigenen Kanal-Gespräche. */
