@@ -326,7 +326,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       try {
         const maxK = Number(params.max_kosten_usd);
         const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg), ...(Number.isFinite(maxK) && maxK > 0 ? { maxKostenUsd: Math.min(maxK, 100) } : {}) }); // v1382 R1, v1394 Budget
-        return { success: true, data: { id: m.id, titel: m.titel, projekt: m.projekt, start: m.start, auftragDatei: m.auftragDatei }, display: `Auftrag ${m.id} („${m.titel}") auf ${k.name} gestartet in ${m.projekt}. Läuft im Hintergrund; Stand mit auftrag_stand ${m.id}, Ergebnis mit auftrag_ergebnis ${m.id}.` };
+        return { success: true, data: { id: m.id, titel: m.titel, projekt: m.projekt, start: m.start, auftragDatei: m.auftragDatei }, display: `Auftrag ${m.id} („${m.titel}") auf ${k.name} gestartet in ${m.projekt}${m.gitAngelegt ? ' (neues Verzeichnis, als Git-Repository angelegt)' : ''}. Läuft im Hintergrund; Stand mit auftrag_stand ${m.id}, Ergebnis mit auftrag_ergebnis ${m.id}.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
     case 'auftrag_stand': {

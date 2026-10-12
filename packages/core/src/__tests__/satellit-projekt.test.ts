@@ -182,7 +182,7 @@ describe('Fortsetzen angehaltener Projekte', () => {
   it('Planfrage nennt ein neues Verzeichnis', async () => {
     const { p, fragen } = aufbau();
     await p.starte({ ...start, verzeichnisNeu: true });
-    expect(fragen[0]!.text).toMatch(/Verzeichnis: \/home\/madh\/claudecode\/r2 \(neu — wird angelegt\)/);
+    expect(fragen[0]!.text).toMatch(/Verzeichnis: \/home\/madh\/claudecode\/r2 \(neu — wird als Git-Repository angelegt/);
   });
 });
 

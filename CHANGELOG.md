@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1396] - 2026-10-12
+
+### Added — Neue Projektordner als Git-Repository (v1396)
+
+Legt der Satellit für einen Claude-Code-Auftrag ein neues Projektverzeichnis an, wird es gleich als Git-Repository mit `.gitignore` (Abhängigkeiten, `.env`, Logs) eingerichtet. Damit committet jede Etappe eines Geräte-Projekts nachvollziehbar. Liegt der neue Ordner bereits in einem Repository, entsteht kein verschachteltes. Fehlt eine Git-Identität, bekommt das Repository eine lokale. Ohne installiertes Git läuft der Auftrag wie bisher. Die Planfrage nennt das.
+
 ## [0.19.0-jarvis.1395] - 2026-10-12
 
 ### Fixed — Claude-Code-Aufträge ohne fremde MCP-Server (v1395)

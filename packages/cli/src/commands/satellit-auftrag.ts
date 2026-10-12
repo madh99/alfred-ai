@@ -18,6 +18,8 @@ export interface AuftragMeta {
   status: 'laeuft' | 'fertig' | 'fehler' | 'abgebrochen'; befehl: string; auftragDatei: string;
   /** v1382 — Ende ans Gehirn gemeldet (Zeitpunkt); fehlt bei Aufträgen, deren Ende noch zu melden ist */
   gemeldet?: string;
+  /** v1396 — neues Projektverzeichnis als Git-Repository angelegt */
+  gitAngelegt?: boolean;
 }
 
 export interface AuftragErgebnis { text: string; kosten?: number; dauerMs?: number; sitzung?: string; fehler?: string }
@@ -78,8 +80,11 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   const claude = opts.claude ?? claudePfad();
   if (!claude) throw new Error('Claude Code ist auf diesem Gerät nicht installiert (claude nicht im PATH)');
   // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
-  if (!existsSync(opts.projekt)) mkdirSync(opts.projekt, { recursive: true });
+  const neu = !existsSync(opts.projekt);
+  if (neu) mkdirSync(opts.projekt, { recursive: true });
   if (!statSync(opts.projekt).isDirectory()) throw new Error(`Projektpfad ist kein Verzeichnis: ${opts.projekt}`);
+  // v1396 — Owner 12.10.: neue Projektordner automatisch als Git-Repository, damit jede Etappe nachvollziehbar committet wird
+  const gitAngelegt = neu && gitAnlegen(opts.projekt) === 'angelegt';
   const id = neueAuftragId();
   const ordner = path.join(auftraegeOrdner(opts.home), id);
   mkdirSync(ordner, { recursive: true });
@@ -93,7 +98,7 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   const log = openSync(logPfad(id, opts.home), 'a');
   const istCmd = /\.cmd$/i.test(claude);
   const kind = spawn(istCmd ? 'cmd.exe' : claude, istCmd ? ['/c', claude, ...args] : args, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, CLAUDE_CODE_NO_UPDATE_CHECK: '1' } });
-  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto --setting-sources project,local --strict-mcp-config${opts.maxKostenUsd ? ` --max-budget-usd ${opts.maxKostenUsd}` : ''}`, auftragDatei };
+  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto --setting-sources project,local --strict-mcp-config${opts.maxKostenUsd ? ` --max-budget-usd ${opts.maxKostenUsd}` : ''}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}) };
   speichereMeta(meta, opts.home);
   kind.on('error', (err) => {
     closeSync(log);
@@ -266,4 +271,27 @@ export function fortschrittAus(protokoll: string, n = 10): { schritte: string[];
     }
   }
   return { schritte: schritte.slice(-n), werkzeuge };
+}
+
+/**
+ * v1396 — neues Projektverzeichnis als Git-Repository anlegen (Owner 12.10.: „git init automatisch freigegeben"). Die Etappen-
+ * Aufträge committen bereits, sobald ein Repository da ist. Nur für Verzeichnisse, die der Satellit selbst neu angelegt hat:
+ * - liegt das Verzeichnis schon in einem Repository (neuer Unterordner eines Projekts), KEIN verschachteltes Repository;
+ * - .gitignore gegen Abhängigkeiten und Geheimnisse (node_modules, .env) — sonst landen sie im ersten Etappen-Commit;
+ * - fehlt eine Git-Identität, eine lokale für dieses Repository (sonst scheitern die Commits still);
+ * - ohne installiertes Git oder bei Fehlern: weiter ohne Repository (der Auftrag läuft trotzdem).
+ */
+export function gitAnlegen(dir: string, git = 'git'): 'angelegt' | 'schon-repository' | 'ohne-git' {
+  const lauf = (args: string[]) => execFileSync(git, ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000, windowsHide: true }).toString().trim();
+  try { lauf(['--version']); } catch { return 'ohne-git'; }
+  try { if (lauf(['rev-parse', '--is-inside-work-tree']) === 'true') return 'schon-repository'; } catch { /* kein Repository: anlegen */ }
+  try {
+    lauf(['init', '-q']);
+    const ignore = path.join(dir, '.gitignore');
+    if (!existsSync(ignore)) writeFileSync(ignore, ['node_modules/', '.env', '.env.*', '*.log', ''].join('\n'));
+    let email = '';
+    try { email = lauf(['config', 'user.email']); } catch { /* keine Identität */ }
+    if (!email) { lauf(['config', 'user.name', 'Alfred']); lauf(['config', 'user.email', `alfred@${os.hostname()}.local`]); }
+    return 'angelegt';
+  } catch { return 'ohne-git'; }
 }
