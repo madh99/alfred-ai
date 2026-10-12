@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1379] - 2026-10-12
+
+### Fixed — Nachforschen: UniFi-Rezept liest, was der Controller liefert (v1379)
+
+Die erste vollständige Untersuchung (AC Mesh, 12.10. 15:09) zeigte, dass zwei der drei Leseschritte auf dem Controller nichts liefern: die Warnungsliste antwortet mit HTTP 400, die Ereignisliste gibt es in Network 8.x nicht. Das Rezept liest jetzt statt dessen die Site-Statistik (Subsysteme, WAN, Geräte online/offline). Die Untersuchung selbst arbeitete wie vorgesehen: Lage, Hypothese mit Sicherheit „niedrig", drei belegte Aussagen, zwei von der Gegenprobe gestrichen, eine Aufgabe für den Owner — 4,7 Sekunden, 0,0006 USD.
+
 ## [0.19.0-jarvis.1378] - 2026-10-12
 
 ### Fixed — Nachforschen: Deutung am Token-Limit abgeschnitten (v1378)
