@@ -47,6 +47,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1365] - 2026-10-12
+
+### Fixed — Weitere Selbstauskünfte des Modells kamen als Hinweis an (v1365)
+
+Nach v1360 wurden am 12.10. noch vier Arten von Selbstgesprächen zugestellt: „Nicht als Insight übernommen: …", „Die Hausbatterie-Meldung … habe ich bewusst weggelassen …", „Insights sind nicht immer leicht … deshalb hier meine Auswertung …:" und „Keine Artikel im RSS-Feed passen klar zu deinem Profil …". Sie werden jetzt verworfen. Steht hinter einem solchen Leerlauf-Satz echter Inhalt (Realfall 08:00: „Keine passenden RSS-Treffer … (Hinweis: Die Studenten-Demo am 13.10. mit gesperrtem Wiener Ring …)"), wird nur der Vorsatz entfernt und der Inhalt zugestellt (Logzeile „v1365 Leerlauf-Vorsatz entfernt, Inhalt behalten"). Gegenprobe mit den echten Hinweisen der Woche: keiner wird verändert.
+
 ## [0.19.0-jarvis.1364] - 2026-10-12
 
 ### Added — Auf Hinweise reagieren: nützlich, gelesen, nicht nützlich mit Grund (v1364, App 1.14.0)

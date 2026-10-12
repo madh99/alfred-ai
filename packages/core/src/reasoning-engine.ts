@@ -21,7 +21,7 @@ import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
-import { entferneWiederholungen, istMetaText, punkteAus, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360
+import { entferneWiederholungen, istMetaText, ohneMetaVorsatz, punkteAus, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360, v1365
 import { hinweisKnoepfe, gezeigteIds, bekanntTreffer } from './insights/hinweis-reaktion.js'; // v1364
 import { anbieterDatenlage } from './vorgaenge/faktenpruefung.js'; // v1360
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
@@ -1653,7 +1653,10 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       return json.filter(t => t.length > 10 && !istMetaText(t));
     }
     const lines = bereinigt.split(/\n{2,}|\n(?=\d+\.\s)/).map(l => l.trim()).filter(l => l.length > 10 && !istLeererInsightText(l));
-    const segmente = lines.length <= 1 ? (lines.length === 1 ? lines : [bereinigt]) : lines;
+    const roh = lines.length <= 1 ? (lines.length === 1 ? lines : [bereinigt]) : lines;
+    // v1365 — Leerlauf-Vorsatz vor echtem Inhalt abschneiden, Inhalt behalten
+    const segmente = roh.map(ohneMetaVorsatz);
+    if (segmente.some((x, i) => x !== roh[i])) this.logger.info({ gekuerzt: roh.filter((x, i) => x !== segmente[i]).map(x => x.slice(0, 80)) }, 'v1365 Leerlauf-Vorsatz entfernt, Inhalt behalten');
     // v1360 — Vorreden und Selbstauskünfte des Modells sind keine Hinweise (Realfälle 11.10.: „Hier sind die Insights …")
     const inhalt = segmente.filter(s => !istMetaText(s));
     if (inhalt.length < segmente.length) this.logger.info({ verworfen: segmente.filter(s => istMetaText(s)).map(s => s.slice(0, 60)) }, 'v1360 Vorrede des Modells verworfen');

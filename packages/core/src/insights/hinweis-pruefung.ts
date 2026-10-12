@@ -122,7 +122,32 @@ export function istMetaText(text: string): boolean {
   // Selbstauskunft über die Arbeit statt Inhalt
   if (/^(hier (sind|ist) (die|meine|deine)\b|ich (habe|erstelle|prüfe|nenne|gehe|liste|fasse|beginne)\b|die (system)?vorgaben\b|die (drei |zwei |vier )?vorab-(auffälligkeiten|analyse)\b|die vorab-analyse\b|die lage nach dem ereignis\b|die zustandsänderung betrifft\b|es gibt keine zeile mit\b|keine (neuen )?insights\b|weitere punkte wie\b)/i.test(erste)) return true;
   if (/^hinweis:\s*die insight-tracking-liste\b/i.test(erste)) return true;
+  // v1365 — Realfälle 12.10. nach v1360: „Nicht als Insight übernommen: …", „Die Hausbatterie-Meldung … habe ich bewusst
+  // weggelassen …", „Insights sind nicht immer leicht … deshalb hier meine Auswertung …:", „Keine Artikel im RSS-Feed passen …"
+  if (/^(nicht als insight (übernommen|gemeldet)|insights sind\b|keine\b.{0,60}\b(rss|feeds?|artikel|treffer)\b)/i.test(erste)) return true;
+  if (META_SATZ.test(ersterSatz(erste))) return true;
   return false;
+}
+
+/** v1365 — Selbstauskunft über Weggelassenes oder die eigene Auswertung, irgendwo im ersten Satz. */
+const META_SATZ = /\b(habe ich (bewusst |daher |deshalb )?(weggelassen|ausgelassen|nicht (aufgenommen|gemeldet|übernommen))|lasse (ich )?(diesen punkt|das|sie|ihn) (daher |deshalb )?weg|hier (ist |folgt )?meine auswertung)\b/i;
+
+function ersterSatz(zeile: string): string {
+  const m = /^(.+?[.;!?])(\s|$)/.exec(zeile);
+  return (m ? m[1]! : zeile).trim();
+}
+
+/**
+ * v1365 — Leerlauf-Vorsatz vor echtem Inhalt (Realfall 12.10. 08:00: „Keine passenden RSS-Treffer mit klarem Bezug zu deinem
+ * Profil in diesem Lauf. (Hinweis: Die Studenten-Demo am 13.10. mit gesperrtem Wiener Ring …)"): den Vorsatz entfernen, den Inhalt
+ * behalten. Ohne genug Inhalt danach bleibt der Text unverändert — dann verwirft ihn istMetaText.
+ */
+export function ohneMetaVorsatz(text: string): string {
+  const t = text.trim().replace(/\*\*/g, '').replace(/^[\s#>\-*•]+/, '');
+  const satz = ersterSatz(t.split('\n')[0]!);
+  if (!istMetaText(satz)) return text;
+  const rest = t.slice(satz.length).trim().replace(/^\(\s*(hinweis|aber|jedoch)\s*:\s*/i, '').replace(/\)\s*$/, '').trim();
+  return rest.length >= 40 && !istMetaText(rest) ? rest : text;
 }
 
 /**
