@@ -567,6 +567,10 @@ Fremdinhalt aus dem Projekt im Planer-Prompt (nur als Daten, gekürzt); falsche 
 3. Frage zum Projekt: ohne Bestätigung nur mit belegtem Nur-Lese-Modus (Empfehlung) — oder immer mit Bestätigung.
 4. Probe-Ordner `r1-probe`, `r2-probe`, `hallo-alfred` auf der VM: löschen oder als archivierte Akten behalten.
 
+### Owner-Entscheidungen und Umsetzungsstand (12./13.10.2026)
+
+Owner 12.10.: „wie empfohlen freigegeben, Projektnamen soll auch genannt werden können“; Probe-Ordner gelöscht. Nach P1 (v1398, eigene Tabelle projekt_akten) fiel auf, dass das Projekt-System `projects` (Web „Projects“, Projekt-Chat, offene Punkte) schon existiert. Owner: „ja wie vorgeschlagen machen“ → **integriert**: v1399/v1400 Geräte-Projekte = `projects` mit `geraet_id`, Lauf = `project_sessions` (Typ geraet), Server-Funktionen im Projektordner gesperrt (Web-API 409, Skill `project`, list()/findByCwd() ohne Geräte-Projekte). Web-Detailansicht (v1399, vom Owner geprüft), App-Ansicht „Projekte“ (v1401/v1402, App 1.15.0), Herkunft App-Sitzung und Freigeben/Ablehnen direkt in der Projektansicht (v1403, App 1.15.1), **P4 Frage zum Projekt** (v1404, App 1.15.2): Claude Code im Plan-Modus mit gesperrten Schreib-/Shell-Werkzeugen, ohne Bestätigung, 0,50 USD je Frage; Nachweis VM 13.10. 00:02 (Ändern/Anlegen/Löschen verlangt → unverändert) und 00:11 am Owner-Projekt (Antwort nach 37 s, 0,32 USD, Commit/Status/Dateizeiten unverändert). P5 Projektfaden: Projekt-Chat je Projekt besteht im Web; Etappenmeldungen gehen weiter an Herkunft + Telegram.
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
