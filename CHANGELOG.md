@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1402] - 2026-10-12
+
+### Fixed — App darf die Projekte lesen (v1402)
+
+Die Route `/api/geraete/projekte` fehlte in der Liste der Pfade, die ein Gerätetoken erreichen darf, und antwortete der App deshalb mit 401.
+
 ## [0.19.0-jarvis.1401] - 2026-10-12
 
 ### Added — Projekte in der App (v1401, App 1.15.0)
