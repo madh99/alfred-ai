@@ -51,6 +51,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1412] - 2026-10-13
+
+### Security — Vertrauensstufe deckt nur bekannte Entwicklungsbefehle (v1412)
+
+Unter der Vertrauensstufe „projekt“ laufen Befehle ohne Bestätigung jetzt nur, wenn sie streng geprüft sind:
+
+- **Nur bekannte Programme mit festen Unterbefehlen:** npm, pnpm, yarn, node und python mit Datei, pytest, go, cargo, make, flutter, dart, git (status, log, diff, show, add, commit, branch), ls, tree, cat, head, tail und wc.
+- **Keine Shell-Sonderzeichen.**
+- **Kein Code als Text:** `node -e` und `python -c` sind nicht erlaubt.
+
+Alles andere fragt nach, zum Beispiel `npx`, `docker`, `curl | sh`, `git push`, `rm` oder Umgebungsvariablen. Anlass war die automatische Sicherheitsprüfung: Eine Sperrliste über freie Shell-Befehle ist keine verlässliche Grenze.
+
 ## [0.19.0-jarvis.1411] - 2026-10-13
 
 ### Added — Vertrauensstufe „projekt“ (v1411, R3d)

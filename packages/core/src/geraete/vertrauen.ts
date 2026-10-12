@@ -24,11 +24,36 @@ export function imVerzeichnis(p: string, basis: string, win = false): boolean {
  */
 export function befehlBleibtIm(befehl: string, basis: string, win = false): boolean {
   if (!befehl.trim()) return false;
+  // v1412 — Sicherheitsprüfung 13.10.: eine Sperrliste über freie Shell-Befehle ist keine Grenze. Deshalb nur bekannte
+  // Entwicklungswerkzeuge ohne Shell-Sonderzeichen und ohne Code-als-Text (node -e, python -c); alles andere fragt nach.
+  if (/[$`;|&<>()\\\r\n{}]/.test(befehl)) return false;
+  const teile = befehl.trim().split(/\s+/);
+  const prog = (teile[0] ?? '').toLowerCase().replace(/\.(exe|cmd)$/, '');
+  const regel = ERLAUBTE_PROGRAMME[prog];
+  if (!regel || !regel(teile.slice(1))) return false;
   if (/(^|[\s;&|(`$])(sudo|su|doas|runas|pkexec)(\s|$)/i.test(befehl)) return false;
   if (/(^|[\s"'=:/\\])\.\.([\\/]|\s|$|["'])/.test(befehl)) return false;
   const pfade = befehl.match(/(?:^|[\s"'=])((?:~|\/|[A-Za-z]:[\\/])[^\s"';|&<>()]*)/g) ?? [];
   return pfade.map(t => t.replace(/^[\s"'=]+/, '')).every(t => t !== '/' && !t.startsWith('~') && imVerzeichnis(t, basis, win));
 }
+
+/** v1412 — erlaubte Programme unter der Vertrauensstufe und ihre Argumentregel (true = erlaubt). */
+const keinCodeText = (a: string[]) => !a.some(x => /^(-e|--eval|-p|--print|-c|-m|--command|-r|--require|--import|--loader)$/.test(x));
+const mitUnterbefehl = (erlaubt: string[]) => (a: string[]) => a.length > 0 && erlaubt.includes(a[0]!.toLowerCase());
+export const ERLAUBTE_PROGRAMME: Record<string, (args: string[]) => boolean> = {
+  npm: mitUnterbefehl(['test', 't', 'run', 'run-script', 'install', 'i', 'ci', 'ls', 'outdated', 'audit', 'start', 'build']),
+  pnpm: mitUnterbefehl(['test', 'run', 'install', 'i', 'ls', 'outdated', 'audit', 'start', 'build']),
+  yarn: (a) => a.length === 0 || ['test', 'run', 'install', 'start', 'build'].includes(a[0]!.toLowerCase()),
+  node: (a) => a.length > 0 && keinCodeText(a) && !a[0]!.startsWith('-'),
+  python: (a) => a.length > 0 && keinCodeText(a) && !a[0]!.startsWith('-'),
+  python3: (a) => a.length > 0 && keinCodeText(a) && !a[0]!.startsWith('-'),
+  pytest: () => true,
+  go: mitUnterbefehl(['test', 'build', 'vet']),
+  cargo: mitUnterbefehl(['test', 'build', 'check', 'clippy']),
+  make: () => true, flutter: mitUnterbefehl(['test', 'build', 'analyze', 'pub']), dart: mitUnterbefehl(['test', 'analyze', 'format']),
+  git: mitUnterbefehl(['status', 'log', 'diff', 'show', 'add', 'commit', 'branch']),
+  ls: () => true, tree: () => true, cat: () => true, head: () => true, tail: () => true, wc: () => true,
+};
 
 function nurLokal(url: string): boolean {
   try { const h = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, ''); return h === 'localhost' || h === '::1' || /^127(\.\d{1,3}){3}$/.test(h); } catch { return false; }
