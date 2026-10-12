@@ -51,7 +51,13 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
-## [0.19.0-jarvis.1387] - 2026-10-12
+## [0.19.0-jarvis.1388] - 2026-10-12
+
+### Fixed — Mehrstufige Geräte-Projekte landen beim Projekt-Agenten (v1388)
+
+Realfall 12.10.: „Bau mir auf der Ubuntu-VM ein Kommandozeilenwerkzeug … Abnahme je Etappe" wurde als einzelner Claude-Code-Auftrag gestartet statt als Projekt mit Etappen und Abnahme. Die Geräteaktion `auftrag_starten` sagt jetzt ausdrücklich, dass sie ein einzelner Auftrag ist und mehrstufige Projekte mit Abnahme über den Projekt-Agenten mit Gerät laufen; zusätzlich aktivieren Begriffe wie Etappe, Abnahme, Claude Code, programmieren und entwickeln die Projektwerkzeuge.
+
+
 
 ### Added — Projekt-Agent auf Geräten (v1387)
 

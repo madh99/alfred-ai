@@ -112,3 +112,14 @@ describe('Satelliten-Projekt', () => {
     expect(grenzeErreicht({ kostenUsd: 0, startMs: 0, jetztMs: 4 * 3_600_000, g: STANDARD_GRENZEN })).toMatch(/Zeitlimit/);
   });
 });
+
+// v1388 — Realfall 12.10.: ohne das Wort „Projekt" fehlte project_agent in der Werkzeugliste
+import { selectCategories } from '../skill-filter.js';
+describe('Werkzeugwahl Projekt auf Gerät', () => {
+  it('Bau-Auftrag mit Etappen/Abnahme aktiviert die Automation-Kategorie (project_agent)', () => {
+    const alle = new Set(['core', 'automation', 'infrastructure', 'productivity'] as never[]);
+    const t = 'Bau mir bitte auf der Ubuntu-VM im Verzeichnis /home/madh/claudecode/r2-probe ein kleines Node-Kommandozeilenwerkzeug zaehler.js ohne Abhängigkeiten, mit Tests über node:test. Abnahme je Etappe: node --test.';
+    expect([...selectCategories(t, alle as never)]).toContain('automation');
+    expect([...selectCategories('Lass Claude Code auf dem PC das Skript entwickeln', alle as never)]).toContain('automation');
+  });
+});
