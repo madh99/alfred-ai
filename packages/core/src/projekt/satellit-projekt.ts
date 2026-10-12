@@ -39,6 +39,8 @@ export interface ProjektStand {
   akteName?: string;
   /** v1398 — Weiterarbeit an einem bestehenden Projekt (Etappen-Auftrag erweitert statt neu) */
   bestehend?: boolean;
+  /** v1408 R3a — Umgebung des Geräts (eine Zeile) für Planfrage und Etappen-Auftrag */
+  umgebung?: string;
   frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation'; mutation?: Mutation; text: string };
   letzterText?: string;
 }
@@ -116,7 +118,7 @@ export class SatellitProjekte {
   gehoertZuProjekt(auftragId: string): boolean { return [...this.staende.values()].some(s => s.auftragId === auftragId && s.status === 'laeuft'); }
 
   /** Start: Plan erstellen, Owner einmal fragen. Liefert die Projekt-ID sofort. */
-  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; akteId?: string; akteName?: string; nameNeu?: boolean; kontext?: PlanKontext }): Promise<ProjektStand> {
+  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; akteId?: string; akteName?: string; nameNeu?: boolean; kontext?: PlanKontext; umgebung?: string }): Promise<ProjektStand> {
     const g = { ...STANDARD_GRENZEN, ...(o.grenzen ?? {}) };
     const roh = await this.d.planen(o.ziel, o.kontext);
     if (!roh.length) throw new Error('Der Planer lieferte keine Etappen');
@@ -124,9 +126,9 @@ export class SatellitProjekte {
     const s: ProjektStand = {
       id: `sat-${randomUUID().slice(0, 8)}`, geraetId: o.geraetId, geraet: o.geraet, projekt: o.projekt, ziel: o.ziel,
       pruefBefehle: [...new Set((o.pruefBefehle ?? []).map(b => b.trim()).filter(Boolean))] /* v1390 doppelte (Build = Test) nur einmal */, grenzen: g, herkunft: o.herkunft, ownerId: o.ownerId,
-      ...(o.gitUebernehmen && !o.verzeichnisNeu ? { gitUebernehmen: true } : {}), ...(o.akteId ? { akteId: o.akteId } : {}), ...(o.akteName ? { akteName: o.akteName } : {}), ...(o.kontext?.vorherige?.length || o.kontext?.bestand ? { bestehend: true } : {}), grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
+      ...(o.gitUebernehmen && !o.verzeichnisNeu ? { gitUebernehmen: true } : {}), ...(o.akteId ? { akteId: o.akteId } : {}), ...(o.akteName ? { akteName: o.akteName } : {}), ...(o.umgebung ? { umgebung: o.umgebung } : {}), ...(o.kontext?.vorherige?.length || o.kontext?.bestand ? { bestehend: true } : {}), grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
     };
-    const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu, gitUebernehmen: s.gitUebernehmen, name: s.akteName, nameNeu: o.nameNeu, laeufeBisher: o.kontext?.vorherige?.length });
+    const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu, gitUebernehmen: s.gitUebernehmen, name: s.akteName, nameNeu: o.nameNeu, laeufeBisher: o.kontext?.vorherige?.length, umgebung: o.umgebung });
     await this.stelleFrage(s, 'plan', text);
     try { s.vorgangId = await this.d.vorgang?.anlegen(s); } catch { /* optional */ }
     this.sichere(s);
@@ -208,7 +210,7 @@ export class SatellitProjekte {
   private async naechsteEtappe(s: ProjektStand): Promise<void> {
     if (s.nr >= s.plan.length) { await this.beende(s, 'fertig'); return; }
     s.nr += 1; s.fixVersuch = 0; s.etappeKostenUsd = 0;
-    await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
+    await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend, umgebung: s.umgebung }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
   }
 
   private async starteAuftrag(s: ProjektStand, auftrag: string, titel: string): Promise<void> {
@@ -313,7 +315,7 @@ export class SatellitProjekte {
       if (s.nr === 0) { await this.naechsteEtappe(s); return; }
       s.fixVersuch = 0;
       await this.d.melde(s, `▶ Fortgesetzt mit Etappe ${s.nr}/${s.plan.length}.`);
-      await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
+      await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend, umgebung: s.umgebung }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
     }).then(() => ({ ok: true }));
   }
 

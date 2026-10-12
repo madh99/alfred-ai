@@ -122,3 +122,22 @@ describe('Ablauf mit Akte', () => {
     expect(p.laeufeDerAkte('prj-anders01')[0]!.akteName).toBe('Anders');
   });
 });
+
+// v1408 R3a — Umgebung in Planer, Planfrage und Etappen-Auftrag
+import { umgebungZeile } from '../projekt/akten.js';
+import { planFrage, STANDARD_GRENZEN } from '../projekt/satellit-projekt-regeln.js';
+describe('Umgebung', () => {
+  const u = { os: 'Ubuntu 24.04.1 LTS', werkzeuge: { node: '22.23.3', npm: '10.9.2', pnpm: null, docker: '28.1.1', java: null }, freiGb: 80 };
+  it('eine Zeile mit Vorhandenem, Fehlendem und Platz', () => {
+    expect(umgebungZeile(u)).toBe('Ubuntu 24.04.1 LTS · Node 22.23.3, npm 10.9.2, Docker 28.1.1 · fehlt: pnpm, Java · 80 GB frei');
+    expect(umgebungZeile(undefined)).toBeUndefined();
+  });
+  it('Planfrage, Bestandsblock und Etappen-Auftrag nennen sie', () => {
+    const z = umgebungZeile(u)!;
+    expect(planFrage({ geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', plan: ['A'], pruefBefehle: [], g: STANDARD_GRENZEN, gekuerzt: false, umgebung: z })).toContain(`Umgebung: ${z}`);
+    expect(bestandsBlock({ baum: ['a.js'], umgebung: u })).toContain(`Umgebung des Geräts: ${z}`);
+    const a = etappenAuftrag({ ziel: 'Z', plan: ['A'], nr: 1, pruefBefehle: [], umgebung: z });
+    expect(a).toContain(`Umgebung des Geräts: ${z}.`);
+    expect(a).toMatch(/FEHLT: <werkzeug>/);
+  });
+});

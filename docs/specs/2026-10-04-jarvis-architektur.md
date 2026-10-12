@@ -600,7 +600,7 @@ Planfrage nennt die Umgebung; ein Plan verlangt kein Werkzeug, das „fehlt“, 
 2. R3c: erlaubte Quellen — Vorschlag apt (VM), brew (Mac), winget --scope user (PC); npm global und pip --user nur auf Wunsch.
 3. R3d: Vertrauensstufe „projekt“ zurückstellen und messen — Empfehlung ja.
 
-**Owner-Entscheidungen 13.10.:** 1. **nicht sperren, aber optional sperrbar** — Standard offen; Sperre zuschaltbar je Gerät (lokale Einstellung) und je Projekt (Option beim Start/in der Akte). 2. **Quellen vollumfänglich** — apt, brew, winget (Benutzer und System), npm global, pip; jede Installation weiter einzeln bestätigt. 3. Rückfrage (Erklärung gegeben, Antwort offen).
+**Owner-Entscheidungen 13.10.:** 1. **nicht sperren, aber optional sperrbar** — Standard offen; Sperre zuschaltbar je Gerät (lokale Einstellung) und je Projekt (Option beim Start/in der Akte). 2. **Quellen vollumfänglich** — apt, brew, winget (Benutzer und System), npm global, pip; jede Installation weiter einzeln bestätigt. 3. **Schalter bauen** (Vertrauensstufe „projekt“, nur lokal am Gerät setzbar). Umsetzung freigegeben „wie empfohlen“: R3a → R3b → R3c → R3d, je ein Release mit Beweis auf der VM.
 
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 

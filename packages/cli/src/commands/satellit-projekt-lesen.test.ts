@@ -41,3 +41,22 @@ describe('projektLesen', () => {
     expect(b.commits[0]!.sha).toMatch(/^[0-9a-f]{7,}$/);
   });
 });
+
+// v1408 R3a — Umgebung des Geräts
+import { umgebungLesen, versionAus } from './satellit-auftrag.js';
+describe('Umgebung lesen', () => {
+  it('Versionen aus typischen Ausgaben', () => {
+    expect(versionAus('v22.23.3')).toBe('22.23.3');
+    expect(versionAus('Python 3.12.3')).toBe('3.12.3');
+    expect(versionAus('openjdk version "21.0.4" 2024-07-16')).toBe('21.0.4');
+    expect(versionAus('kein Treffer')).toBeNull();
+  });
+  it('fehlende Werkzeuge = null, vorhandene mit Version, OS und freier Platz', () => {
+    const u = umgebungLesen(os.tmpdir(), (cmd) => (cmd === 'node' ? 'v22.23.3' : cmd === 'git' ? 'git version 2.43.0' : null));
+    expect(u.werkzeuge.node).toBe('22.23.3');
+    expect(u.werkzeuge.git).toBe('2.43.0');
+    expect(u.werkzeuge.pnpm).toBeNull();
+    expect(u.os.length).toBeGreaterThan(0);
+    expect(typeof u.freiGb).toBe('number');
+  });
+});

@@ -15728,7 +15728,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const owner = () => this.ownerMasterUserId ?? this.tryOwner();
     // v1398 — Projektakten (Spec „Projekte sichtbar und fortsetzbar", Owner-Freigabe 12.10.)
     const { ProjektAktenUeberProjekte } = await import('./projekt/akten-projekte.js'); // v1399 — Akten im Projekt-System
-    const { nameAusPfad, nameBereinigen, akteTreffer, namensMuster, vorherigeLaeufe, bestandsBlock, akteZeile, akteDetail } = await import('./projekt/akten.js');
+    const { nameAusPfad, nameBereinigen, akteTreffer, namensMuster, vorherigeLaeufe, bestandsBlock, akteZeile, akteDetail, umgebungZeile } = await import('./projekt/akten.js');
     type Bestand = import('./projekt/akten.js').Bestand;
     const { setzeProjektNamenMuster } = await import('./skill-filter.js');
     const aktenRepo = this.projectRepo ? new ProjektAktenUeberProjekte(this.projectRepo) : undefined;
@@ -15833,7 +15833,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // v1398 — Akte (Gerät + Pfad) und Bestand: frühere Läufe, Commits, README/Struktur als Daten für den Planer
       const ow = owner();
       const akte = ow && aktenRepo ? await aktenRepo.findePfad(ow, g.id, projekt).catch(() => null) : null;
-      const lesen = !verzeichnisNeu && g.aktionen.includes('projekt_lesen') ? await gw.sendeAktion(g.id, 'projekt_lesen', { projekt }, 30_000).catch(() => undefined) : undefined;
+      // v1408 R3a — auch bei neuem Verzeichnis lesen: der Satellit liefert dann nur die Umgebung
+      const lesen = g.aktionen.includes('projekt_lesen') ? await gw.sendeAktion(g.id, 'projekt_lesen', { projekt }, 60_000).catch(() => undefined) : undefined;
       const bestand = lesen?.success ? lesen.data as Bestand : undefined;
       const vorherige = akte ? vorherigeLaeufe(laeufeVon(akte.id)) : [];
       const hatBestand = !!bestand && (bestand.baum?.length ?? 0) > 0;
@@ -15842,7 +15843,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       const grenzen: Record<string, number> = {};
       if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
       if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
-      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext });
+      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext, umgebung: umgebungZeile(bestand?.umgebung) });
       return ergebnis(s, `Projekt ${akteName} (${s.id}) auf ${g.name} geplant (${s.plan.length} Etappen${vorherige.length ? `, Weiterarbeit nach ${vorherige.length} früheren Läufen` : ''}) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
     };
     const ergebnis = (s: import('./projekt/satellit-projekt.js').ProjektStand | undefined, display: string) => ({ success: !!s, data: s ? { task_id: s.id, status: s.status, etappe: s.nr, etappen: s.plan.length, kostenUsd: Number(s.kostenUsd.toFixed(2)) } : undefined, display });

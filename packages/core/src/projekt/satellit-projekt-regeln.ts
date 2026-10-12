@@ -27,7 +27,7 @@ export function begrenzePlan(phasen: string[], max: number): string[] {
   return [...p.slice(0, max - 1), `${p.slice(max - 1).join(' — danach: ')}`];
 }
 
-export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pruefBefehle: string[]; bestehend?: boolean }): string {
+export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pruefBefehle: string[]; bestehend?: boolean; umgebung?: string }): string {
   const etappe = o.plan[o.nr - 1]!;
   return [
     `Projektziel: ${o.ziel}`,
@@ -38,6 +38,8 @@ export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pr
     `Aufgabe: Setze NUR Etappe ${o.nr} um: ${etappe}`,
     // v1398 — Weiterarbeit an einem bestehenden Projekt
     ...(o.bestehend ? ['Bestehendes Projekt: lies zuerst README und Struktur, erweitere das Vorhandene, lege nichts neu an, was es schon gibt, und halte die bestehenden Tests grün.'] : []),
+    // v1408 R3a — Umgebung bekannt; Systemweites nicht selbst installieren, sondern melden (Installieren mit Bestätigung, R3c)
+    ...(o.umgebung ? [`Umgebung des Geräts: ${o.umgebung}.`, 'Fehlt ein Werkzeug systemweit, installiere es nicht selbst, sondern schreib am Ende eine eigene Zeile „FEHLT: <werkzeug>“. Projekt-lokale Abhängigkeiten (z. B. npm install im Projekt) sind erlaubt.'] : []),
     o.pruefBefehle.length ? `Abnahme: Danach müssen diese Befehle im Projektverzeichnis mit Exit 0 laufen: ${o.pruefBefehle.join(' ; ')}` : 'Abnahme: Der Owner prüft diese Etappe selbst; beschreibe am Ende, wie man sie prüft.',
     'Ist das Verzeichnis ein Git-Repository, committe am Ende mit der Nachricht „Etappe ' + o.nr + ': <Kurztitel>".',
     'Arbeite nur in diesem Verzeichnis. Fasse am Ende in wenigen Sätzen zusammen, was du gemacht hast und was offen ist.',
@@ -56,7 +58,7 @@ export function fixAuftrag(o: { ziel: string; nr: number; etappe: string; versuc
   ].join('\n');
 }
 
-export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; name?: string; nameNeu?: boolean; laeufeBisher?: number }): string {
+export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; name?: string; nameNeu?: boolean; laeufeBisher?: number; umgebung?: string }): string {
   return [
     `🧭 Projekt auf ${o.geraet} starten?`,
     // v1398 — Projektakte: Name (Vorschlag oder vom Owner), Weiterarbeit mit früheren Läufen
@@ -65,6 +67,7 @@ export function planFrage(o: { geraet: string; projekt: string; ziel: string; pl
     `Verzeichnis: ${o.projekt}${o.verzeichnisNeu ? ' (neu — wird als Git-Repository angelegt, jede Etappe ein Commit)' : ''}`,
     // v1397 — bestehendes Verzeichnis ohne Git
     ...(o.gitUebernehmen ? ['Kein Git-Repository: wird angelegt, der jetzige Stand als Ausgangs-Commit „Stand vor Alfred" gesichert (ohne node_modules, .env, Logs und Dateien über 10 MB), danach jede Etappe ein Commit.'] : []),
+    ...(o.umgebung ? [`Umgebung: ${o.umgebung}`] : []), // v1408 R3a
     `Etappen${o.gekuerzt ? ` (auf ${o.g.maxEtappen} gekürzt)` : ''}:`,
     ...o.plan.map((p, i) => `${i + 1}. ${p.slice(0, 200)}`),
     `Abnahme je Etappe: ${o.pruefBefehle.length ? o.pruefBefehle.join(' ; ') : 'keine Prüfbefehle — nach jeder Etappe frage ich dich'}`,

@@ -18,7 +18,7 @@ import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
-import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, projektLesen, kurzTitel, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
+import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, projektLesen, kurzTitel, umgebungLesen, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
@@ -348,7 +348,9 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
       if (!projekt) return { success: false, error: 'projekt fehlt (absoluter Pfad)' };
       if (!istPfadErlaubt(projekt, lesbar)) return { success: false, error: `Verzeichnis nicht freigegeben: ${projekt}` };
-      if (!existsSync(projekt) || !statSync(projekt).isDirectory()) return { success: false, error: `Verzeichnis fehlt: ${projekt}` };
+      // v1408 R3a — fehlt das Verzeichnis (neues Projekt), trotzdem die Umgebung des Geräts liefern
+      if (!existsSync(projekt)) return { success: true, data: { baum: [], commits: [], git: false, fehlt: true, umgebung: umgebungLesen(projekt) }, display: `${projekt} fehlt noch — nur Umgebung gelesen` };
+      if (!statSync(projekt).isDirectory()) return { success: false, error: `Kein Verzeichnis: ${projekt}` };
       const b = projektLesen(projekt);
       return { success: true, data: b, display: `${projekt}: ${b.baum.length} Einträge, ${b.git ? `Git, ${b.commits.length} letzte Commits` : 'kein Git'}${b.readme ? ', README' : ''}` };
     }

@@ -51,6 +51,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1408] - 2026-10-13
+
+### Added — Projekte kennen die Umgebung des Geräts (v1408, R3a)
+
+Vor dem Planen liest der Satellit die Umgebung: Betriebssystem, installierte Werkzeuge mit Version (Node, npm, pnpm, Yarn, Python, pip, Docker, Git, Java, Go, Rust, Flutter, Paketverwaltung) und den freien Platz. Das geht auch bei einem neuen Verzeichnis.
+
+- **Planfrage:** zeigt sie, zum Beispiel „Umgebung: Ubuntu 24.04 · Node 22.23.3, Docker 28.1 · fehlt: pnpm, Java · 80 GB frei“.
+- **Planer:** bekommt sie mit dem Bestand.
+- **Etappen-Auftrag:** nennt sie ebenfalls. Fehlt ein Werkzeug systemweit, soll Claude Code es nicht selbst installieren, sondern „FEHLT: <werkzeug>“ melden. Projekt-lokale Abhängigkeiten bleiben erlaubt.
+
 ## [0.19.0-jarvis.1407] - 2026-10-13
 
 ### Fixed — Titel von Projektfragen und Projektzeile (v1407)

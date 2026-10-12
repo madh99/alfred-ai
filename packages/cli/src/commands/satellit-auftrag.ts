@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, readdirSync, statSync, appendFileSync } from 'node:fs';
+import { spawn, execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, readdirSync, statSync, appendFileSync, statfsSync } from 'node:fs';
 
 /**
  * v1342 — Aufträge an Claude Code im Druckmodus (Owner 10.10.: „erstelle mit der Claude-Code-Session Projekt XY, die
@@ -345,7 +345,7 @@ export function gitUebernehmen(dir: string, git = 'git', maxBytes = 10 * 1024 * 
   }
 }
 
-export interface ProjektBestand { readme?: string; paket?: string; baum: string[]; commits: Array<{ sha: string; message: string; files: string[] }>; git: boolean }
+export interface ProjektBestand { readme?: string; paket?: string; baum: string[]; commits: Array<{ sha: string; message: string; files: string[] }>; git: boolean; /** v1408 R3a */ umgebung?: Umgebung }
 
 /**
  * v1398 — Spec „Projekte sichtbar und fortsetzbar" P2: Bestand eines Projektordners nur lesend — README (≤ 4 KB), Paket und
@@ -392,7 +392,7 @@ export function projektLesen(dir: string, git = 'git'): ProjektBestand {
       }
     }
   } catch { /* kein Git oder noch keine Commits */ }
-  return { ...(readme ? { readme } : {}), ...(paket ? { paket } : {}), baum, commits, git: istGit };
+  return { ...(readme ? { readme } : {}), ...(paket ? { paket } : {}), baum, commits, git: istGit, umgebung: umgebungLesen(dir) };
 }
 
 /** v1404 — Werkzeuge, die eine Frage zum Projekt nicht hat (Nachweis VM 13.10. 00:02: Datei unverändert, nichts angelegt, git status leer). */
@@ -422,4 +422,42 @@ export function kurzTitel(text: string, max: number): string {
   const schnitt = z.slice(0, max - 1);
   const wort = schnitt.lastIndexOf(' ');
   return `${(wort > max * 0.6 ? schnitt.slice(0, wort) : schnitt).replace(/[\s,;:.\-–]+$/, '')}…`;
+}
+
+/** v1408 — R3a: Umgebung des Geräts (Owner 13.10. „ja wie empfohlen"): Betriebssystem, Werkzeug-Versionen, freier Platz. */
+export interface Umgebung { os: string; werkzeuge: Record<string, string | null>; freiGb?: number }
+
+const WIN = process.platform === 'win32';
+/** Werkzeuge und ihr Versionsaufruf (Name → Befehl, Argumente). */
+export const UMGEBUNG_WERKZEUGE: Array<[string, string, string[]]> = [
+  ['node', 'node', ['-v']], ['npm', 'npm', ['-v']], ['pnpm', 'pnpm', ['-v']], ['yarn', 'yarn', ['-v']],
+  ['python', WIN ? 'python' : 'python3', ['--version']], ['pip', WIN ? 'pip' : 'pip3', ['--version']],
+  ['docker', 'docker', ['--version']], ['git', 'git', ['--version']], ['java', 'java', ['-version']],
+  ['go', 'go', ['version']], ['cargo', 'cargo', ['--version']], ['flutter', 'flutter', ['--version', '--suppress-analytics']],
+  ...(process.platform === 'darwin' ? [['brew', 'brew', ['--version']] as [string, string, string[]]] : process.platform === 'linux' ? [['apt', 'apt-get', ['--version']] as [string, string, string[]]] : [['winget', 'winget', ['--version']] as [string, string, string[]]]),
+];
+
+/** Version aus der Ausgabe (`v22.23.3`, `Python 3.12.3`, `openjdk version "21.0.4"`) — null, wenn keine erkennbar. */
+export function versionAus(ausgabe: string): string | null {
+  const m = /(\d+\.\d+(?:\.\d+)?)/.exec(ausgabe);
+  return m ? m[1]! : null;
+}
+
+let umgebungCache: { zeit: number; u: Umgebung } | undefined;
+/** Versionen je Werkzeug (je höchstens 8 s, fehlend = null), 10 min zwischengespeichert. `lauf` für Tests. */
+export function umgebungLesen(dir: string, lauf?: (cmd: string, args: string[]) => string | null): Umgebung {
+  if (!lauf && umgebungCache && Date.now() - umgebungCache.zeit < 600_000) return umgebungCache.u;
+  const ausfuehren = lauf ?? ((cmd: string, args: string[]) => {
+    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 8_000, windowsHide: true, shell: WIN });
+    return r.status === 0 || (r.stdout || r.stderr) && !r.error && r.status !== null && r.status !== 127 && !/not recognized|nicht als|command not found/i.test(`${r.stderr}`) ? `${r.stdout ?? ''}\n${r.stderr ?? ''}` : null;
+  });
+  const werkzeuge: Record<string, string | null> = {};
+  for (const [name, cmd, args] of UMGEBUNG_WERKZEUGE) { const a = ausfuehren(cmd, args); werkzeuge[name] = a === null ? null : (versionAus(a) ?? 'vorhanden'); }
+  let osName = `${os.type()} ${os.release()}`;
+  try { if (process.platform === 'linux') { const m = /PRETTY_NAME="([^"]+)"/.exec(readFileSync('/etc/os-release', 'utf8')); if (m) osName = m[1]!; } else if (process.platform === 'darwin') osName = `macOS ${os.release()}`; } catch { /* Standard */ }
+  let freiGb: number | undefined;
+  try { const st = statfsSync(existsSync(dir) ? dir : os.homedir()); freiGb = Math.round((st.bavail * st.bsize) / 1e9); } catch { /* unbekannt */ }
+  const u: Umgebung = { os: osName, werkzeuge, ...(freiGb !== undefined ? { freiGb } : {}) };
+  if (!lauf) umgebungCache = { zeit: Date.now(), u };
+  return u;
 }
