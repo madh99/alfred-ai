@@ -47,6 +47,14 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1368] - 2026-10-12
+
+### Fixed — Fertige Ergebnisse wurden still verworfen: geplante Aufgaben und Korrektur-Sperre (v1368)
+
+**Geplante Aufgaben.** Die aWATTar-Rechnung 09/2026 kam am 11.10. an, der Mail-Auslöser startete die Aufgabe, Mail und PDF wurden verarbeitet und abgelegt — die Zusammenfassung wurde aber nie zugestellt. Ursache war eine Regel von März 2026: Stand im Prompt irgendwo „nichts", galt die Aufgabe als „still" und meldete nur Texte mit Fehlerwörtern. Der Prompt enthielt „… bereits verarbeitet: nichts erneut verarbeiten"; dass Rechnungen früher ankamen, lag an zufälligen Alarmwörtern in den viermal täglichen Statusmeldungen. Jetzt entscheidet eine feste Regel: Fehler des Laufs werden immer gemeldet; nur eine ausdrückliche Stille-Anweisung („antworte nichts, wenn …", „sonst keine Nachricht") meldet allein bei Alarm; sonst wird gemeldet, wenn das Ergebnis etwas Neues enthält — Nummern ab fünf Stellen oder Euro-Beträge, die in keiner gemeldeten Aufgabe der letzten 60 Tage vorkamen (neue Rechnung → Meldung, „keine neue Rechnung, letzte ist …" → still, echte Probleme → Meldung). Verworfene Ergebnisse stehen mit Grund und Textanfang im Log.
+
+**Korrektur-Sperre (v1148).** Korrekturen des Owners unterdrückten auch fremde, echte Hinweise, weil lange Alltagswörter („erreichbar", „Bestätigung", „verlängert") als Fach-Objekt galten — die Korrektur „BMW-Token erledigt" schluckte so u. a. „BMW steht seit 15:40 unverriegelt", „Claude-API-Zugang deaktiviert" und den Microsoft-Token-Hinweis, die Shelly-Korrektur Wallbox-Meldungen, die pinkribbons-Korrektur offene Verlängerungen anderer Domains (55 Unterdrückungen in sieben Tagen). Jetzt gilt eine Korrektur nur für Hinweise, die ihren Gegenstand nennen (aus dem Korrektur-Schlüssel, z. B. BMW, pinkribbons, Shelly 68C63AFADBA8, Haus und Batterie); Verfahrenswörter zählen nie als Fach-Objekt; Sicherheitsmeldungen (unverriegelt, Rauch, Wasser/Leck, Einbruch, Alarm ausgelöst) sind nie unterdrückbar. Gegenprobe mit allen 55 Fällen: 30 echte Hinweise kommen durch, gesperrt bleiben Vorreden und Hinweise, zu denen es eine passende Korrektur gibt.
+
 ## [0.19.0-jarvis.1367] - 2026-10-12
 
 ### Added — Interessen: Neuigkeiten mit Bezug zu den Dingen des Owners erkennen (beobachtend) (v1367)

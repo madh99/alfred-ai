@@ -11,6 +11,7 @@ import type { ConversationManager } from './conversation-manager.js';
 import { matchesCron, getNextCronDate } from '@alfred/types';
 import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
+import { entscheideMeldung, kennungenAus } from './geplant/meldung.js'; // v1368
 
 export class ProactiveScheduler {
   private tickTimer?: ReturnType<typeof setInterval>;
@@ -30,6 +31,13 @@ export class ProactiveScheduler {
     private readonly activityLogger?: ActivityLogger,
     private readonly nodeId: string = 'single',
   ) {}
+
+  /**
+   * v1368 — Gedächtnis der gemeldeten Kennungen (Rechnungs-/Vertragsnummern, Beträge) über alle Aufgaben des Benutzers, 60 Tage;
+   * von alfred.ts gesetzt. Ohne Gedächtnis gilt jede Kennung als neu (lieber einmal zu viel melden als eine Rechnung verlieren).
+   */
+  private meldeGedaechtnis?: { laden(userId: string): Promise<Set<string>>; merken(userId: string, kennungen: string[]): Promise<void> };
+  setMeldeGedaechtnis(g: NonNullable<ProactiveScheduler['meldeGedaechtnis']>): void { this.meldeGedaechtnis = g; }
 
   start(): void {
     this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
@@ -189,21 +197,20 @@ export class ProactiveScheduler {
       error: isError ? resultText : undefined,
     });
 
-    // Send result to user — for prompt_template tasks whose prompt contains
-    // "antworte NICHTS" or similar, use whitelist logic: only send if the
-    // response contains actual problem indicators.  This avoids chasing every
-    // creative LLM variation of "all clear" (e.g. "silenzio.", "(no response)").
+    // v1368 — Meldeentscheidung deterministisch (geplant/meldung.ts): Fehler immer; ausdrückliche Stille-Anweisung nur bei
+    // Alarm; sonst nur, wenn der Text Neues enthält (Kennungen, die noch in keiner Meldung standen). Vorher genügte irgendein
+    // „nichts" im Prompt für „still" — Realfall 11.10.: die aWATTar-Rechnung 09/2026 wurde verarbeitet, aber nie gemeldet.
     const trimmed = resultText.trim();
-    const promptLower = (action.promptTemplate ?? '').toLowerCase();
-    const isSilentPrompt = /nichts|silent|no\s*output|don't\s*respond|do\s*not\s*respond/i.test(promptLower);
-    const hasAlertIndicators = /offline|down|fehler|error|warn|critical|alert|fail|nicht\s+(erreichbar|verf[uü]gbar|gefunden|online)|ausgefallen|stopped|unreachable|unavailable|⚠|❌|🚨|🔴/i.test(trimmed)
-      && !/keine\s+(probleme|fehler|auff[aä]lligkeiten)/i.test(trimmed);
-    const isSilent = !trimmed
-      || trimmed.length < 3
-      || (isSilentPrompt && !hasAlertIndicators);
-    if (isSilent) {
-      this.logger.info({ actionId: action.id, name: action.name }, 'Scheduled action produced no actionable output — skipping notification');
+    let bekannt = new Set<string>();
+    if (action.promptTemplate && this.meldeGedaechtnis) { try { bekannt = await this.meldeGedaechtnis.laden(action.userId); } catch { /* ohne Gedächtnis: alles neu */ } }
+    const entscheidung = action.promptTemplate
+      ? entscheideMeldung({ text: trimmed, prompt: action.promptTemplate, istFehler: isError || trimmed.startsWith('Scheduled action'), bekannt })
+      : { senden: trimmed.length >= 3, grund: trimmed.length >= 3 ? 'Skill-Aufgabe' : 'leer', neu: [] as string[] };
+    if (!entscheidung.senden) {
+      this.logger.info({ actionId: action.id, name: action.name, grund: entscheidung.grund, text: trimmed.slice(0, 200) }, 'Scheduled action produced no actionable output — skipping notification');
     } else {
+      this.logger.info({ actionId: action.id, name: action.name, grund: entscheidung.grund, neu: entscheidung.neu.slice(0, 6) }, 'v1368 Geplante Aufgabe meldet');
+      if (action.promptTemplate && this.meldeGedaechtnis) void this.meldeGedaechtnis.merken(action.userId, kennungenAus(trimmed)).catch(() => undefined);
       const adapter = this.adapters.get(action.platform as Platform);
       if (adapter) {
         try {

@@ -6489,6 +6489,24 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       activityLogger,
       this.config.cluster?.nodeId ?? 'single',
     );
+    // v1368 — gemeldete Kennungen (Rechnungsnummern, Beträge) je Benutzer, 60 Tage: „Neues" melden, Bekanntes nicht wiederholen
+    if (this.database) {
+      const { SkillStateRepository: SSRMeld } = await import('@alfred/storage');
+      const zustandMeld = new SSRMeld(this.database.getAdapter());
+      const TAGE = 60 * 86_400_000;
+      const lesen = async (userId: string): Promise<Record<string, string>> => {
+        try { return JSON.parse((await zustandMeld.get(userId, 'geplante-meldungen', 'kennungen')) ?? '{}') as Record<string, string>; } catch { return {}; }
+      };
+      this.proactiveScheduler.setMeldeGedaechtnis({
+        laden: async (userId) => new Set(Object.keys(await lesen(userId))),
+        merken: async (userId, kennungen) => {
+          const jetzt = Date.now(); const alt = await lesen(userId);
+          const neu = Object.fromEntries(Object.entries(alt).filter(([, am]) => jetzt - Date.parse(am) < TAGE));
+          for (const k of kennungen) neu[k] = new Date(jetzt).toISOString();
+          await zustandMeld.set(userId, 'geplante-meldungen', 'kennungen', JSON.stringify(neu));
+        },
+      });
+    }
 
     // 7c2. v1211 — Jarvis Schicht 2: Mail-Ereignisquelle. Geplante Aufgaben vom Typ 'mail'
     // werden nicht von der Uhr, sondern von neuer Post ausgelöst — genau einmal je Nachricht,

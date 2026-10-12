@@ -23,6 +23,7 @@ import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { entferneWiederholungen, istMetaText, ohneMetaVorsatz, punkteAus, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360, v1365
 import { hinweisKnoepfe, gezeigteIds, bekanntTreffer } from './insights/hinweis-reaktion.js'; // v1364
+import { istSicherheitsText } from './vorgaenge/regeln.js'; // v1368
 import { anbieterDatenlage } from './vorgaenge/faktenpruefung.js'; // v1360
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
 import { WarumSpeicher, insightTitel, kurzBegruendung, type PassBegruendung } from './interaktion/warum.js';
@@ -82,7 +83,12 @@ const GENERISCHE_WOERTER = new Set(['kritisch', 'kritischen', 'batterie', 'fehle
   'konfigurierte', 'minimum', 'maximum', 'wieder', 'weiterhin', 'gerade', 'handlungsbedarf', 'offen', 'offene',
   'offenen', 'gemeldet', 'gemeldeten', 'vollständig', 'insight', 'insights',
   // v1152 — häufige Bindestrich-Wörter, die sonst als Fach-Anker durchgingen
-  'e-mail', 'e-mails', 'nachricht', 'nachrichten', 'benachrichtigung', 'benachrichtigungen']);
+  'e-mail', 'e-mails', 'nachricht', 'nachrichten', 'benachrichtigung', 'benachrichtigungen',
+  // v1368 — Verfahrens- und Zustandswörter ≥10 Zeichen galten als Fach-Objekt (Realfälle 06.–12.10.: „erreichbar" aus
+  // der Shelly-Korrektur schluckte Wallbox-Meldungen, „bestätigung" aus der BMW-Token-Korrektur den Claude-API-Hinweis)
+  'erreichbar', 'unerreichbar', 'bestätigung', 'bestätigt', 'bestätigen', 'verlängert', 'verlängerung', 'erneuert',
+  'erneuerung', 'prüfung', 'auftretende', 'aufforderung', 'aufforderungen', 'berücksichtigen', 'ausdrücklich', 'hinterlegt',
+  'handlungsbedarfs', 'entscheidung', 'erledigung', 'durchgeführt', 'eingegangen']);
 
 /**
  * v1149 — deterministischer Wortstamm: Beugungen desselben Worts („aktuelle"/
@@ -191,11 +197,44 @@ export function gateAusgesetztDurchWeltmodell(treffer: { key: string; grund: str
   return false;
 }
 
+/** v1368 — Füllteile von Korrektur-Schlüsseln (correction_bmw_api_token_resolved → Gegenstand „bmw"). */
+const SCHLUESSEL_FUELL = new Set(['correction', 'korrektur', 'resolved', 'erledigt', 'done', 'alert', 'unterdruecke', 'unterdrücke',
+  'issue', 'problem', 'renewal', 'domain', 'token', 'api', 'auth', 'oauth', 'current', 'minimum', 'maximum', 'not', 'no', 'kein',
+  'low', 'high', 'new', 'old', 'alt', 'user', 'owner', 'check', 'status', 'fehler', 'error', 'warning', 'warnung', 'soc', 'id',
+  'payment', 'bezahlt', 'beglichen', 'nicht', 'stream']);
+/** Englische Schlüsselteile → deutsches Wort im Hinweis. */
+const SCHLUESSEL_DEUTSCH: Record<string, string> = { house: 'haus', battery: 'batterie', car: 'auto', vehicle: 'fahrzeug', window: 'fenster',
+  door: 'tür', heating: 'heizung', camera: 'kamera', invoice: 'rechnung', charger: 'wallbox' };
+
+/**
+ * v1368 — Gegenstand einer Korrektur aus ihrem Schlüssel: „correction_shelly_68c63afadba8_alert_resolved" → shelly, 68c63afadba8;
+ * „correction_house_battery_low_soc_resolved" → haus, batterie. Ein Kernwörter-Treffer zählt nur, wenn der Hinweis den
+ * Gegenstand nennt (Teilwort genügt: „Hausbatterie"): übersetzte Teile alle (Haus UND Batterie — sonst schluckte eine
+ * Hausbatterie-Korrektur Sensor-Batterien), sonst mindestens einen Teil (Elternaufsicht ODER Linus). Ohne Gegenstand im
+ * Schlüssel bleibt die bisherige Regel.
+ */
+export function gegenstandAusKorrekturSchluessel(key: string): string[] {
+  return [...new Set(key.toLowerCase().split(/[^a-z0-9äöüß]+/)
+    .filter(t => t.length >= 3 && !/^\d+$/.test(t) && !SCHLUESSEL_FUELL.has(t))
+    .map(t => SCHLUESSEL_DEUTSCH[t] ?? t))];
+}
+
+export function nenntGegenstand(insightKlein: string, key: string): boolean {
+  const teile = key.toLowerCase().split(/[^a-z0-9äöüß]+/).filter(t => t.length >= 3 && !/^\d+$/.test(t) && !SCHLUESSEL_FUELL.has(t));
+  if (teile.length === 0) return true;
+  const uebersetzt = teile.filter(t => SCHLUESSEL_DEUTSCH[t]).map(t => SCHLUESSEL_DEUTSCH[t]!);
+  const eigen = teile.filter(t => !SCHLUESSEL_DEUTSCH[t]);
+  if (!uebersetzt.every(g => insightKlein.includes(g))) return false;
+  return eigen.length === 0 || eigen.some(g => insightKlein.includes(g));
+}
+
 export function findeVerletzteUnterdrueckungsKorrektur(
   insight: string,
   korrekturen: Array<{ key: string; value: string }>,
 ): UnterdrueckungsTreffer | null {
   const il = insight.toLowerCase();
+  // v1368 — Sicherheit (unverriegelt, Rauch, Wasser, Einbruch …) ist nie durch eine Korrektur unterdrückbar
+  if (istSicherheitsText(insight)) return null;
   for (const k of korrekturen) {
     if (!istUnterdrueckungsAussage(k.value)) continue;
     const kl = k.value.toLowerCase();
@@ -211,6 +250,7 @@ export function findeVerletzteUnterdrueckungsKorrektur(
     if (kennung) return { key: k.key, grund: `geraete-kennung:${kennung}` };
     // v1149 — Treffer nach Wortstamm dedupliziert; v1152 — Block nur mit Fach-Anker.
     const staemme = new Set(treffer.map(wortstamm));
+    if (!nenntGegenstand(il, k.key)) continue; // v1368 — Hinweis betrifft einen anderen Gegenstand
     if (staemme.size >= 2 && treffer.some(istFachAnker)) {
       return { key: k.key, grund: `kernwoerter:${treffer.join('+')}` };
     }

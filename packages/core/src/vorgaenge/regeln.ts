@@ -21,6 +21,16 @@ export function befundSchluesselAus(dedupeKey: string | undefined): BefundSchlue
 
 const SICHERHEIT = /(rauch|smoke|carbon_monoxide|(^|[:._])co([:._]|$)|wasser|moisture|leck|leak|alarm|einbruch|sabotage|tamper|intrusion)/i;
 
+/**
+ * v1368 — dieselben Kategorien für Hinweis-Texte (Prosa): nie durch eine Korrektur unterdrückbar (Owner 12.10.: „nie
+ * stummschaltbar: Rauch, CO, Wasser/Leck, Alarm, Einbruch/Sabotage"). Realfall 06.10.: „BMW steht seit 15:40 unverriegelt"
+ * wurde von der Korrektur „BMW-Token erledigt" geschluckt. Fahrzeug/Haus offen oder unverriegelt gehört dazu.
+ */
+const SICHERHEIT_TEXT = /\b(unverriegelt|entriegelt|nicht (ab|ver)geschlossen|aufgebrochen|rauch\w*|kohlenmonoxid|co-?(melder|alarm)|wasser(alarm|schaden|leck|austritt)|leck\w*|einbruch\w*|sabotage|alarm(anlage)? (ausgelöst|löst aus)|alarm ausgelöst)\b/i;
+export function istSicherheitsText(text: string): boolean {
+  return SICHERHEIT_TEXT.test(text);
+}
+
 /** Owner-Entscheidung 5 — hier darf keine Regel eine echte Gefahr oder Alfreds eigenen Ausfall verdecken. */
 export function nieStummschaltbar(s: BefundSchluessel): boolean {
   return s.quelle === 'lebenszeichen' || SICHERHEIT.test(`${s.quelle}:${s.gegenstand}`);
