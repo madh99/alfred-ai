@@ -735,3 +735,79 @@ Nach E2-Beobachtung (~26.10.): Haltefristen scharf schalten? Danach E3–E6.
 
 <!-- ursprünglicher Stand der offenen Fragen (12.10. vor der Entscheidung): -->
 Haltefristen je Befundart (Vorschlag oben); Standarddauer für „nicht mehr melden" (Vorschlag 30 Tage); ob Alfred Regeln selbst vorschlagen darf, wenn derselbe Befund dreimal „kein Problem" war; welche Befundarten nie stummschaltbar sind (Vorschlag: Rauch, CO, Wasser, Alarm, Einbruch); ob Vorgangsfäden in der Seitenleiste erscheinen oder nur aus dem Vorgang erreichbar sind.
+
+## Auf Hinweise reagieren (Entwurf 12.10.2026, Schicht 3/4 — ohne Umsetzung, Owner: „vorher analysieren, was mit Hinweisen eigentlich geplant war und ob das Vorgehen das ändert oder beeinträchtigt — keine Freigabe")
+
+### Wofür Hinweise gedacht sind (CHANGELOG + Specs)
+
+| Stand | Festlegung | Quelle |
+|---|---|---|
+| Insight-Präferenzen (Juni/Juli) | Alfred lernt aus Reaktionen im Chat („danke/ok" positiv, „stopp/nervig" negativ, keine Reaktion = ignoriert) je Kategorie; Präferenz als Kontext im Reasoning-Prompt | `insight-tracker.ts` |
+| Tracker-Umbau | **Informative Hinweise erwarten keine Reaktion** und werden nicht als „ignoriert" gezählt — „das System bestrafte Alfred für nützliche Insights, die keine Antwort brauchten" | CHANGELOG „Insight-Tracker: Fundamentaler Redesign" |
+| v928 (02.07.) | Insights-Seite (Web): Aktion mit Eingabefeldern, Erledigen je Gruppe, „Mit Alfred besprechen", **„Solche nicht mehr" = Kategorie-Mute** (`insight_category_prefs`, zentral in `upsertCandidate`) | CHANGELOG v928 |
+| v1148 (29.08.) | „Das ist normal / nicht mehr melden" im Chat wird **Korrektur** (ohne Verfall) und **hart** im Zustell-Gate durchgesetzt, objektweit, dauerhaft | CHANGELOG v1148 |
+| Jarvis Schicht 3 (04.10.) | Handlungs-Insights werden Vorgänge; **reine Informationen bleiben Hinweise mit Ablaufdatum** | Spec oben |
+| Jarvis Schicht 4 (04.10.) | Jede proaktive Nachricht bekommt ein Ergebnis-Signal (Reaktion, Erledigung, Ignorieren, Korrektur); Präzision je Quelle → Digest-Modus unter Schwelle (Schleife 2, **zurückgestellt bis Datenlage ~20.10. und Owner-Freigabe**) | Spec oben |
+| .1186 | „Die Insight-Tabelle taugt nicht als Ergebnis-Signal — das Signal entsteht an den Vorgängen" | Umsetzungsstand Schicht 4 |
+| v1343 (10.10.) | Sammlung „Hinweise": Erledigt/Später/Verwerfen/Ausführen, **jede Entscheidung nur als Signal protokolliert, gedrosselt wird nichts**; „verworfen" sperrt den Schlüssel dauerhaft | CHANGELOG v1343 |
+| Interessen (Entwurf 10.10.) | Erledigt/Verworfen als Präzision je Anker (I5) | Spec „Interessen als Wissen" |
+| Entscheiden (12.10.) | Hinweis = Mitteilung mit Ablaufdatum, endet durch Ablauf oder Reaktion; Regeln wirken auch im Hinweis-Gate (Baustein D) | Spec „Entscheiden statt Abhaken" |
+
+**Kern:** Ein Hinweis ist Information, kein Auftrag. Er darf unbeantwortet ablaufen, ohne dass das als schlecht gilt. Reaktionen sind ein **Lernsignal** (Schicht 4); „nicht mehr melden" gibt es bereits zweimal (Kategorie-Mute v928, Korrektur v1148).
+
+### Ist-Stand (belegt 12.10.)
+
+- **Knöpfe in der App:** Nachfragen (Chat mit Titel + Text), Erledigt (`acted`), Später (24 h), Verwerfen (`dismissed`), Ausführen nur bei echter Aktion (Reasoning seit v1361 ohne).
+- **Wirkung:** Erledigt/Verwerfen setzen nur den Status und schreiben die Logzeile „v1343 Hinweis entschieden". Verwerfen sperrt den Schlüssel dauerhaft — bei Reasoning-Hinweisen ist der Schlüssel aber „Tag + Titel", also praktisch ohne Wirkung. Die Wiederholungssperre (v1360) vergleicht mit den **zugestellten** Hinweisen der letzten 48 h, unabhängig vom Status.
+- **Nicht verbunden:** Die App-Knöpfe speisen weder den Insight-Tracker (lernt nur aus Chat-Wörtern) noch die Korrekturen (v1148) noch die Regeln (v1362). Kategorie-Mute gibt es nur im Web — und für Reasoning wäre es zu grob: alle Reasoning-Hinweise haben die eine Kategorie `reasoning`.
+- **Zahlen seit 10.10.:** reasoning 69 erledigt / 1 verworfen / 39 offen; interests 95 offen; vorausschau 1, kg-gap 2, lern-telemetrie 1. **68 der 69 „Erledigt" kamen am 11.10. zwischen 00:00 und 01:00 in einem Zug** — „Erledigt" wird als „gelesen / weg damit" benutzt. Als Präzisionssignal (Schicht 4, I5) ist es damit wertlos.
+- Kein Grund beim Verwerfen; keine Kategorie gemutet; Korrekturen: 32 (alle aus dem Chat).
+
+### Würde „Verwerfen mit Grund + Regel" den Zweck ändern oder beeinträchtigen?
+
+| Gefahr | Bewertung | Folge für die Spec |
+|---|---|---|
+| Hinweise werden zu Mini-Vorgängen, die eine Entscheidung verlangen | widerspräche Schicht 3 und dem Tracker-Umbau | Reaktion bleibt **freiwillig**, Ablauf ohne Reaktion bleibt neutral, Grund ist optional, kein Pflichtdialog |
+| Dritter Stumm-Mechanismus neben Kategorie-Mute und Korrektur | Doppelung, Owner sieht nicht, was wirkt | **Keine neue Mechanik:** „nicht mehr melden" schreibt in die Tabelle `regeln` (v1362), die laut Baustein D ohnehin im Hinweis-Gate wirken soll; Korrekturen und Kategorie-Mute bleiben unverändert und werden in der Regel-Ansicht nur **angezeigt** |
+| Zu grobes Stummschalten verschluckt Wichtiges | real (Kategorie `reasoning` = alles) | Geltung je **Anker** (v1360 `ankerAus`: Hostnamen, Entitäten, Zitate, Kürzel), mit Ablauf; nie stummschaltbar wie bei Befunden (Sicherheit, Alfreds eigener Zustand) |
+| Ein einzelnes „Verwerfen" bremst ein Thema | wäre Lernen aus Rauschen | Ein Verwerfen sperrt nur diesen Hinweis; **Regel nur auf Owner-Wunsch** oder als **Vorschlag ab dem dritten** Verwerfen mit gleichem Anker und Grund — übernehmbar mit einem Klick (wie E1) |
+| „Falsch" als Grund vermischt Meinung und Fakt | ein falscher Hinweis ist ein Fehler, keine Vorliebe | „falsch" zählt als Fehlerfall je Quelle (Kennzahl) und läuft — mit Satz des Owners — durch dieselbe deterministische Korrektur-Erfassung wie v1148 (keine zweite Erfassung) |
+| Interessen/Content-Studio betroffen | Interessen-Hinweise sind 95 der 139 seit 10.10. | Für Quelle `interests` nur der Vorschlag „Thema nicht mehr melden" = `notify_threshold: mute` (wie I1), nie `status`; ohne Freigabe I1–I5 wird nur gezählt |
+| Schleife 2 (Digest-Modus) wird vorweggenommen | nein — sie braucht genau dieses saubere Signal | Spec liefert nur das Signal; Konsequenzen je Quelle bleiben Schleife 2 mit eigener Freigabe |
+| Modellabhängigkeit | Grundsatz 29.08. | Grund, Anker, Regel, Gate: alles deterministisch; kein Modellaufruf |
+
+**Ergebnis der Prüfung:** Der Zweck bleibt — es wird eingelöst, was Schicht 4, v1343 („Signal") und Baustein D („Regeln im Hinweis-Gate") schon vorsehen. Verändert würde nur „Erledigt": heute Abhaken ohne Bedeutung, künftig getrennt in „gelesen" (neutral) und „nützlich" (Signal).
+
+### Bausteine
+
+**K-A — Knöpfe mit Bedeutung.**
+- **Nützlich** (ersetzt „Erledigt"; positives Signal für Quelle/Anker).
+- **Gelesen** / „Alle gelesen" (neutral; räumt auf, zählt weder positiv noch negativ — für den Abend-Durchgang wie am 11.10.).
+- **Nicht nützlich ▾** mit optionalem Grund: `schon bekannt` · `falsch` · `interessiert mich nicht` · `zu oft`. Ohne Auswahl = Verwerfen wie heute.
+- **Später** und **Nachfragen** bleiben; Nachfragen markiert den Hinweis als `besprochen` (schwach positiv).
+- Telegram: dieselben Antworten als Knöpfe unter der Meldung (QuickActionHandler, ohne Modell).
+
+Speicherung: Status wie heute + Feld `reaktion` (`nuetzlich|gelesen|bekannt|falsch|kein_interesse|zu_oft|besprochen`) und `anker[]` beim Ablegen (aus v1360).
+
+**K-B — „Und künftig?" nur auf Wunsch.** Bei `kein_interesse`/`zu_oft` bietet die App eine Zeile an: „Zu **<Anker>** nicht mehr melden — 7/30/90 Tage" (Standard 30, wie E1). Ergebnis ist eine Regel `stumm` mit Geltung `{quelle: 'hinweis', anker}` in `regeln`; das Hinweis-Gate behandelt passende Punkte wie Wiederholungen (Logzeile „Regel: Hinweis nicht zugestellt"). Bei `schon bekannt` keine Regel, aber das Thema gilt 7 Tage als bekannt (Wiederholungssperre statt 48 h). Nie stummschaltbar: dieselbe Liste wie bei Befunden.
+
+**K-C — Vorschläge statt Eigenmächtigkeit.** Ab dem dritten `kein_interesse`/`zu_oft` mit überlappendem Anker in 30 Tagen schlägt Alfred die Regel vor (Status `vorgeschlagen`, übernehmbar mit einem Klick, Ansicht „Befunde → Regeln"). Für `interests` lautet der Vorschlag „Thema X nicht mehr täglich melden" (`notify_threshold`), sonst nichts am Thema.
+
+**K-D — Eine Regel-Ansicht für alles, was stumm macht.** Abschnitt „Regeln" zeigt zusätzlich, nur lesend: Korrekturen aus dem Chat (v1148) und gemutete Kategorien (v928), je mit Herkunft und „widerrufen" (dieselben Endpunkte wie heute). Der Owner sieht an einer Stelle, warum etwas nicht mehr kommt.
+
+**K-E — Messen (Schicht 4).** Präzision je Quelle und Anker = nützlich / (nützlich + nicht nützlich); „gelesen" und Ablauf zählen nicht. Kennzahlen `hinweisNuetzlich`, `hinweisNichtNuetzlich` je Grund, `hinweisRegelTreffer`. Grundlage für Schleife 2 und I5 — Konsequenzen dort, mit eigener Freigabe.
+
+### Reihenfolge (nicht freigegeben)
+
+- **K1** Knöpfe + Feld `reaktion` + Anker beim Ablegen + Kennzahlen (K-A, K-E), App und Telegram — reine Erfassung, nichts wird gedrosselt.
+- **K2** „Und künftig?" + Regel im Hinweis-Gate + Vorschläge (K-B, K-C), Logzeilen; „schon bekannt" = 7 Tage.
+- **K3** Regel-Ansicht inkl. Korrekturen und Kategorie-Mute (K-D).
+
+
+### Abnahme (messbar)
+
+Jede Owner-Reaktion trägt eine Art; „gelesen" verfälscht die Präzision nicht mehr (Gegenprobe: ein Abend-Durchgang wie am 11.10. ergibt 0 Präzisions-Ereignisse); eine aus einem Hinweis übernommene Regel unterdrückt nachweislich (Logzeile) einen späteren Hinweis zum selben Anker, ohne fremde Hinweise zu treffen (Test mit echten Hinweisen der Woche); kein Hinweis verlangt eine Reaktion.
+
+### Offene Owner-Entscheidungen
+
+„Erledigt" in „Nützlich" + „Gelesen" teilen (Vorschlag ja); Gründe-Liste wie oben; „schon bekannt" sperrt 7 Tage; Telegram-Knöpfe ja/nein; Reihenfolge K1 → K2 → K3 sofort oder K1 erst nach Auswertung E2 (~26.10.).
