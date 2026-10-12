@@ -18,7 +18,7 @@ import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
-import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, projektLesen, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
+import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, projektLesen, kurzTitel, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
@@ -339,7 +339,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!frage) return { success: false, error: 'frage fehlt' };
       if (!istPfadErlaubt(projekt, lesbar)) return { success: false, error: `Verzeichnis nicht freigegeben: ${projekt}` };
       try {
-        const m = auftragStarten({ projekt, auftrag: frage, titel: `Frage: ${frage.split('\n')[0]!.slice(0, 70)}`, nurLesen: true, maxKostenUsd: 0.5, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) });
+        const m = auftragStarten({ projekt, auftrag: frage, titel: `Frage: ${kurzTitel(frage, 70)}`, nurLesen: true, maxKostenUsd: 0.5, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) });
         return { success: true, data: { id: m.id, projekt: m.projekt }, display: `Frage an Claude Code auf ${k.name} gestellt (nur lesend, höchstens 0,50 $). Die Antwort kommt in etwa einer Minute.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }

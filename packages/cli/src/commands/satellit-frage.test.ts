@@ -35,3 +35,14 @@ describe('Frage zum Projekt', () => {
     expect(existsSync(fehlt)).toBe(false);
   });
 });
+
+// v1407 — Titel an einer Wortgrenze kürzen
+import { kurzTitel } from './satellit-auftrag.js';
+describe('kurzTitel', () => {
+  it('kurz bleibt, lang wird an der Wortgrenze mit … gekürzt', () => {
+    expect(kurzTitel('Woher kommen die Angebote?', 70)).toBe('Woher kommen die Angebote?');
+    expect(kurzTitel('Welche Supermärkte unterstützt die App und in welcher Datei steht die Liste der Quellen genau?', 70)).toBe('Welche Supermärkte unterstützt die App und in welcher Datei steht…');
+    expect(kurzTitel('Erste Zeile\nzweite', 70)).toBe('Erste Zeile');
+    expect(kurzTitel('x'.repeat(100), 10)).toBe('xxxxxxxxx…');
+  });
+});

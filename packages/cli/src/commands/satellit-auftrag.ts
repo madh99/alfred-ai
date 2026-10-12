@@ -414,3 +414,12 @@ export function argumenteFuer(o: { prompt: string; nurLesen: boolean; maxKostenU
 export function fragePrompt(frage: string, projekt: string): string {
   return `Beantworte eine Frage zum Projekt im Verzeichnis ${projekt}. Lies dafür, was du brauchst (README, Code, Konfiguration), ändere aber nichts. Antworte auf Deutsch, knapp und konkret, mit Dateinamen und Zeilen, wo hilfreich. Geheimnisse (Schlüssel, Passwörter, Tokens) nie wörtlich wiedergeben.\n\nFrage: ${frage.trim()}`;
 }
+
+/** v1407 — Titel aus Freitext: erste Zeile, an einer Wortgrenze gekürzt mit „…" (Realfall 13.10.: „… in welcher Datei steht die"). */
+export function kurzTitel(text: string, max: number): string {
+  const z = text.split('\n')[0]!.trim().replace(/\s+/g, ' ');
+  if (z.length <= max) return z;
+  const schnitt = z.slice(0, max - 1);
+  const wort = schnitt.lastIndexOf(' ');
+  return `${(wort > max * 0.6 ? schnitt.slice(0, wort) : schnitt).replace(/[\s,;:.\-–]+$/, '')}…`;
+}

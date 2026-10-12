@@ -94,7 +94,7 @@ export function aktenZustand(laeufe: LaufKurz[]): 'laeuft' | 'wartet' | 'ruht' {
 export function akteZeile(a: AkteKurz, laeufe: LaufKurz[]): string {
   const z = aktenZustand(laeufe);
   const kosten = laeufe.reduce((s, l) => s + l.kostenUsd, 0);
-  const zustand = z === 'laeuft' ? '▶ läuft' : z === 'wartet' ? '⏳ wartet auf dich' : a.status === 'archiviert' ? '🗄 archiviert' : '· ruht';
+  const zustand = z === 'laeuft' ? '▶ läuft' : z === 'wartet' ? '⏳ wartet auf dich' : a.status === 'archiviert' ? '🗄 archiviert' : 'ruht'; // v1407 kein doppelter Trenner
   return `${a.name} (${a.id}) — ${zustand} · ${a.geraet}: ${a.pfad} · ${laeufe.length} ${laeufe.length === 1 ? 'Lauf' : 'Läufe'}, ${usd(kosten)}`;
 }
 
