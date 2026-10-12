@@ -51,6 +51,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1381] - 2026-10-12
+
+### Fixed — UniFi-Warnungen und -Ereignisse aus dem System-Log (v1381)
+
+Seit UniFi Network 8.x antwortet der Controller auf `list/alarm` und `rest/alarm` mit HTTP 400; Ereignisse unter `stat/event` gibt es nicht mehr. Dadurch lieferte `list_alerts` einen Fehler, `list_events` war nicht verfügbar, und die Alarmprüfung des Monitors scheiterte seit dem Controller-Update still.
+
+- **`list_alerts`** liest das System-Log der v2-API: kritische Einträge der letzten 14 Tage und alle Einträge über Routine-Schwere der letzten 24 Stunden, schwerste zuerst. Ausgabe, Filter und Zählung je Art bleiben wie bisher; der Text wird mit den Gerätenamen aus den Parametern lesbar gemacht. Live gesehen: SFP-Sende-/Empfangsfehler (HIGH), ISP-Latenz, Admin-Zugriffe — vorher unsichtbar.
+- **`list_events`** liefert die neuesten Infrastruktur-Ereignisse der letzten 7 Tage (Geräte, WAN, Änderungen), ohne Client-Roaming und Firewall-Blocks (zusammen rund 1 000 pro Tag).
+- **Monitor** prüft die kritischen Einträge des System-Logs der letzten 24 Stunden statt des toten `rest/alarm`; das Meldungsformat bleibt.
+- **Nachforschen-Rezept „UniFi-Gerät getrennt"** liest wieder Warnungen und Geräte-Ereignisse, damit die Deutungsfrage „was geschah unmittelbar davor" Belege hat.
+- Klassische Controller (ohne UniFi OS) behalten den bisherigen Weg.
+
 ## [0.19.0-jarvis.1380] - 2026-10-12
 
 ### Fixed — Hinweise ohne Inhalt, Vorgänge ohne Gegenstand; Nachforschen-Rezept für die PV (v1380)

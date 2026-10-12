@@ -172,8 +172,10 @@ REFERENZ_REZEPTE.push(
     muster: { quelle: 'infra', gegenstand: /^unifi:device:/ },
     schritte: [
       { werkzeug: 'unifi', aktion: 'list_devices', params: {}, zweck: 'alle UniFi-Geräte mit Zustand, Uplink, letzter Meldung' },
-      // v1379 — list_alerts (HTTP 400) und list_events (Network 8.x) liefern auf dem Controller nichts (Realfall 12.10. 15:09)
       { werkzeug: 'unifi', aktion: 'site_stats', params: {}, zweck: 'Zustand der Site: Subsysteme, WAN, Geräte online/offline' },
+      // v1381 — Warnungen und Geräte-Ereignisse aus dem System-Log (v2); vorher HTTP 400 bzw. nicht unterstützt
+      { werkzeug: 'unifi', aktion: 'list_alerts', params: { limit: 20 }, zweck: 'Warnungen der letzten 24 h, schwerste zuerst' },
+      { werkzeug: 'unifi', aktion: 'list_events', params: { limit: 30 }, zweck: 'Geräte- und WAN-Ereignisse der letzten Tage (Neustart, Upgrade, Trennung)' },
     ],
     deutungsfragen: ['Seit wann ist das Gerät getrennt, und was geschah unmittelbar davor (Neustart, Upgrade, Stromausfall)?', 'Sind weitere Geräte am selben Uplink betroffen, oder nur dieses?', 'Hängt das Gerät per Funk (Mesh) oder per Kabel?'],
     eigeneSchritte: [BEOBACHTEN],

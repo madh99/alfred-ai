@@ -281,9 +281,17 @@ export class MonitorSkill extends Skill {
       }
     } catch { /* ignore */ }
 
-    // 3. Open alerts
+    // 3. Open alerts — v1381: `rest/alarm` antwortet auf UniFi OS (Network 8.x/9.x) mit HTTP 400 und wurde still ignoriert;
+    // jetzt die kritischen Einträge des System-Logs (v2) der letzten 24 h. Meldungstext bleibt („N open alert(s): …").
     try {
-      const unAlerts = await unifiGet<any[]>('rest/alarm?archived=false');
+      const jetzt = Date.now();
+      const res = await this.apiFetch(`${cfg.baseUrl.replace(/\/+$/, '')}/proxy/network/v2/api/site/${site}/system-log/critical`, {
+        method: 'POST', headers, signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ timestampFrom: jetzt - 86_400_000, timestampTo: jetzt, pageNumber: 0, pageSize: 50 }),
+      }, cfg.verifyTls);
+      if (!res.ok) throw new Error(`UniFi System-Log HTTP ${res.status}`);
+      const j = (await res.json()) as { data?: any[] } | any[];
+      const unAlerts = Array.isArray(j) ? j : (j.data ?? []);
       if (unAlerts && unAlerts.length > 0) {
         alerts.push({
           source: 'unifi',

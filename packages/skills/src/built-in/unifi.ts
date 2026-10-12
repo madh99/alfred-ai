@@ -1,5 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, UniFiConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
+import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
 
 type ControllerMode = 'unifi-os' | 'classic';
 
@@ -646,11 +647,35 @@ export class UniFiSkill extends Skill {
    * oder "IPS"), weil der `?key=...` Query-Param vom Controller akzeptiert
    * aber ignoriert wird (verifiziert).
    */
+  /**
+   * v1381 — System-Log der v2-API (UniFi OS). `art` = all | critical; Rückgabe die Einträge (Seite 0).
+   */
+  private async systemLog(art: 'all' | 'critical', vonMs: number, groesse: number): Promise<SystemLogEintrag[]> {
+    await this.ensureAuth();
+    const base = this.config.baseUrl.replace(/\/+$/, '');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.config.apiKey) headers['X-API-Key'] = this.config.apiKey;
+    else { if (this.cookies.length > 0) headers['Cookie'] = this.cookies.join('; '); if (this.csrfToken) headers['X-CSRF-Token'] = this.csrfToken; }
+    const jetzt = Date.now();
+    const res = await this.rawFetch(`${base}/proxy/network/v2/api/site/${this.site}/system-log/${art}`, {
+      method: 'POST', headers, signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify({ timestampFrom: jetzt - vonMs, timestampTo: jetzt, pageNumber: 0, pageSize: groesse }),
+    });
+    if (!res.ok) throw new Error(`UniFi System-Log HTTP ${res.status}`);
+    const j = (await res.json()) as { data?: SystemLogEintrag[] } | SystemLogEintrag[];
+    return Array.isArray(j) ? j : (j.data ?? []);
+  }
+
   private async listAlerts(limit?: number, filter?: string): Promise<SkillResult> {
     // v845 — Default-Limit 20→200, Cap 200→1000. Für Backlog-Triage müssen
     // wir mehr als die letzten 20 Items sehen.
     const n = Math.min(Math.max(1, limit ?? 200), 1000);
-    const alerts = await this.request<any[]>('GET', `list/alarm?_limit=${n}`);
+    // v1381 — UniFi OS: `list/alarm` antwortet mit HTTP 400 (Network 8.x/9.x). Warnungen kommen aus dem System-Log:
+    // kritische der letzten 14 Tage plus alles außer Routine (LOW) der letzten 24 h; Format wie bisher.
+    await this.ensureAuth();
+    const alerts: any[] = this.controllerMode === 'unifi-os'
+      ? nachSchwere([...await this.systemLog('critical', 14 * 86_400_000, 200), ...(await this.systemLog('all', 86_400_000, 1000)).filter(istWarnung)]).map(alsAlarm).slice(0, n)
+      : await this.request<any[]>('GET', `list/alarm?_limit=${n}`);
 
     let filtered = alerts ?? [];
     if (filter && filter.length > 0) {
@@ -674,7 +699,7 @@ export class UniFiSkill extends Skill {
 
     const rows = filtered.map((a) => ({
       time: a.datetime ?? a.time ?? '-',
-      type: a.key ?? a.msg ?? '-',
+      type: a.msg && a.key ? `${a.key}: ${String(a.msg).slice(0, 120)}` : (a.key ?? a.msg ?? '-'), // v1381 Text aus dem System-Log
       device: a.device_name ?? a.ap_name ?? a.mac ?? a.src_ip ?? '-',
       archived: a.archived ? 'yes' : 'no',
     }));
@@ -716,7 +741,16 @@ export class UniFiSkill extends Skill {
    * wir einen klaren Hinweis statt eines silent fail, damit Watches/
    * Reasoning nicht endlos retried.
    */
-  private async listEvents(_limit?: number): Promise<SkillResult> {
+  private async listEvents(limit?: number): Promise<SkillResult> {
+    // v1381 — UniFi OS: Ereignisse = System-Log (v2), neueste zuerst
+    await this.ensureAuth();
+    if (this.controllerMode === 'unifi-os') {
+      const n = Math.min(Math.max(1, limit ?? 50), 500);
+      // ohne Client-Verbindungen und Firewall-Blocks (≈ 1 000/Tag), sonst sieht man nur Roaming
+      const ev = (await this.systemLog('all', 7 * 86_400_000, 3000)).filter(istInfraEreignis).slice(0, n).map(alsAlarm);
+      const zeilen = ev.map(a => `| ${a.datetime} | ${a.severity} | ${a.key} | ${a.msg.slice(0, 140)} |`);
+      return { success: true, data: { events: ev, count: ev.length }, display: ev.length ? ['| Zeit | Schwere | Art | Text |', '|---|---|---|---|', ...zeilen].join('\n') : 'Keine Ereignisse.' };
+    }
     return {
       success: false,
       error:
