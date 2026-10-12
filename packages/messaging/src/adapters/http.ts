@@ -249,6 +249,9 @@ export interface GeraetOwnerAnsichten {
   gedaechtnisLoeschen(id: string): Promise<boolean>;
   vorgangEntscheiden(id: string, status: unknown, notiz: unknown): Promise<{ titel: string } | null>;
   befunde(): Promise<unknown>; // v1359
+  projekte?(): Promise<unknown>; // v1401
+  projekt?(id: string): Promise<unknown | null>;
+  projektAktion?(id: string, aktion: unknown, text: unknown): Promise<unknown>;
   vorgangAbschliessen(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1362
   regeln(): Promise<unknown>; // v1362
   regelAendern(id: string, aktion: unknown): Promise<unknown | null>; // v1362
@@ -2007,7 +2010,7 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetHinweise(req, res).catch(err => this.safeError(res, err)); // v1343
     } else if (/^\/api\/geraete\/hinweise\/[A-Za-z0-9-]{1,64}$/.test(url.pathname) && req.method === 'POST') {
       this.handleGeraetHinweisEntscheiden(req, res, url).catch(err => this.safeError(res, err)); // v1343
-    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) {
+    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) { // v1401 projekte
       this.handleGeraetOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1353
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
@@ -6905,6 +6908,10 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'gedaechtnis' && id && m === 'POST') { const ok = await a.gedaechtnisAendern(id, body.text); antwort(ok ? 200 : 404, { ok }); return; }
       if (bereich === 'gedaechtnis' && id && m === 'DELETE') { const ok = await a.gedaechtnisLoeschen(id); antwort(ok ? 200 : 404, { ok }); return; }
       if (bereich === 'befunde' && !id && m === 'GET') { antwort(200, await a.befunde()); return; } // v1359
+      // v1401 — Geräte-Projekte in der App
+      if (bereich === 'projekte' && !id && m === 'GET' && a.projekte) { antwort(200, await a.projekte()); return; }
+      if (bereich === 'projekte' && id && m === 'GET' && a.projekt) { const p = await a.projekt(id); antwort(p ? 200 : 404, p ?? { error: 'nicht gefunden' }); return; }
+      if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text)); return; }
       // v1362 — Abschluss mit Ergebnis (neu) bzw. Erledigt/Verwerfen (bisherige Clients); Regeln
       if (bereich === 'vorgaenge' && id && m === 'POST' && body.ergebnis) { const v = await a.vorgangAbschliessen(id, body); antwort(v ? 200 : 404, v ? { ok: true, ...(v as object) } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'regeln' && !id && m === 'GET') { antwort(200, await a.regeln()); return; }

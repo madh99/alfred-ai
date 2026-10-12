@@ -22,6 +22,7 @@ import 'befehle.dart'; // 1.10.0
 import 'fremde_arbeit.dart'; // 1.11.0
 import 'gedaechtnis.dart'; // 1.9.0
 import 'befunde.dart'; // 1.12.0
+import 'projekte.dart'; // 1.15.0
 import 'vorgaenge.dart'; // 1.9.0
 import 'audio.dart';
 import 'galerie.dart'; // 1.5.0
@@ -408,6 +409,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Ansicht.aufgaben => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Aufgaben(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufStand: _aufgabenStand), // 1.9.0 A1
           Ansicht.gedaechtnis => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Gedaechtnis(json: server!.json, aufMeldung: (t) => _protokolliere(Eintrag(Art.hinweis, t))), // 1.9.0 A3
           Ansicht.befunde => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Befunde(key: ValueKey(befundeFilter), json: server!.json, aufNachfragen: _nachfragen, anfang: befundeFilter, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t))), // 1.12.0
+          Ansicht.projekte => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Projekte(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t))), // 1.15.0
           Ansicht.suche => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Suche(json: server!.json, aufOeffnen: _fundstelleOeffnen, anfang: letzteSuche, aufAnfrage: (q) => letzteSuche = q), // 1.5.0
           Ansicht.anhaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Galerie(json: server!.json, lade: server!.anhang, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufGespraech: _fadenWechseln), // 1.5.0
           Ansicht.einstellungen => _einstellungen(theme),

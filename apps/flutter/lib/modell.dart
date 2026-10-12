@@ -4,7 +4,7 @@ import 'dart:typed_data';
 enum Art { du, alfred, satellit, bestaetigung, hinweis, fehler }
 
 /// 1.1.0 — Bereiche der Oberfläche (Symbolleiste links).
-enum Ansicht { chat, kacheln, hinweise, aufgaben, gedaechtnis, befunde, suche, anhaenge, einstellungen } // 1.5.0 suche, anhaenge; 1.9.0 aufgaben, gedaechtnis; 1.12.0 befunde
+enum Ansicht { chat, kacheln, hinweise, aufgaben, gedaechtnis, befunde, projekte, suche, anhaenge, einstellungen } // 1.5.0 suche, anhaenge; 1.9.0 aufgaben, gedaechtnis; 1.12.0 befunde; 1.15.0 projekte
 
 class Eintrag {
   Eintrag(this.art, this.text, {DateTime? zeit, List<Anhang>? anhaenge}) : zeit = zeit ?? DateTime.now(), anhaenge = anhaenge ?? [];

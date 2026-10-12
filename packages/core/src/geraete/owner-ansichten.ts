@@ -55,6 +55,13 @@ export interface OwnerAnsichtenDeps {
   regeln?: RegelnDeps;
   /** v1359 — Befunde (Schicht 3) des Owners: offene und kürzlich erledigte */
   befunde?: () => Promise<{ offen: BefundLike[]; erledigt: BefundLike[] }>;
+  /** v1401 — Geräte-Projekte für die App-Ansicht „Projekte" (Liste, Detail mit Läufen, Stand vom Gerät, Weiterarbeiten) */
+  projekte?: {
+    liste: () => Promise<unknown[]>;
+    detail: (id: string) => Promise<unknown | null>;
+    stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+    weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+  };
   jetzt?: () => Date;
   /** Jede Änderung aus der App ins Server-Log (Beweis, Schicht-4-Signal). */
   protokoll?: (was: string, daten: Record<string, unknown>) => void;
@@ -147,6 +154,19 @@ export class OwnerAnsichten {
   }
 
   /** v1359 — Befunde für die App: offen (älteste zuerst) und in den letzten 7 Tagen erledigt; Regel aus dem Schlüssel (Haus-Check „A1:…"). */
+  /** v1401 — Geräte-Projekte (nur Owner-Geräte; Weiterarbeiten plant und fragt den Owner wie im Gespräch) */
+  async projekte(): Promise<{ projekte: unknown[] }> { return { projekte: this.d.projekte ? await this.d.projekte.liste() : [] }; }
+  async projekt(id: string): Promise<unknown | null> { return this.d.projekte ? this.d.projekte.detail(id) : null; }
+  async projektAktion(id: string, aktion: unknown, text: unknown): Promise<{ success: boolean; display?: string; error?: string }> {
+    if (!this.d.projekte) return { success: false, error: 'Projekte nicht verfügbar' };
+    if (aktion === 'stand') return this.d.projekte.stand(id);
+    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand oder weiter sein' };
+    const t = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
+    if (!t) return { success: false, error: 'text fehlt (was soll als Nächstes passieren?)' };
+    this.d.protokoll?.('Projekt weiter', { projekt: id, laenge: t.length });
+    return this.d.projekte.weiter(id, t);
+  }
+
   async befunde(): Promise<{ offen: BefundZeile[]; erledigt: BefundZeile[] }> {
     if (!this.d.befunde) return { offen: [], erledigt: [] };
     const b = await this.d.befunde();

@@ -67,3 +67,11 @@ export class ProjektAktenUeberProjekte {
     await this.repo.updateSessionSummary(da.id, summary, ende ? new Date(ende).toISOString() : undefined);
   }
 }
+
+/** v1401 — ein Lauf für Web und App (Etappen, Kosten, Zustand); gemeinsame Form statt zweier Abbildungen. */
+export function laufAnzeige(l: { id: string; status: string; grund?: string; ziel: string; plan: string[]; erledigt: Array<{ nr: number; ok: boolean; kostenUsd: number }>; nr: number; kostenUsd: number; start: number; aktualisiert: number }) {
+  return {
+    id: l.id, status: l.status, grund: l.grund, ziel: l.ziel, plan: l.plan, erledigt: l.erledigt.map(e => ({ nr: e.nr, ok: e.ok, kostenUsd: e.kostenUsd })),
+    nr: l.nr, kostenUsd: Number(l.kostenUsd.toFixed(2)), start: new Date(l.start).toISOString(), aktualisiert: new Date(l.aktualisiert).toISOString(), wartetAufDich: l.status === 'wartet_owner',
+  };
+}

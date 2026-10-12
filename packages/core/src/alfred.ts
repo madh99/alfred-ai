@@ -11526,7 +11526,8 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               ]);
               const openItems = [...activeItems, ...doneItems, ...cancelledItems];
               // v1399 — Geräte-Projekt: Läufe mit Etappen und Kosten (aus den Laufdateien)
-              const geraetLaeufe = project.geraetId ? (this.satellitProjekte?.laeufeDerAkte(project.id) ?? []).map(l => ({ id: l.id, status: l.status, grund: l.grund, ziel: l.ziel, plan: l.plan, erledigt: l.erledigt.map(e => ({ nr: e.nr, ok: e.ok, kostenUsd: e.kostenUsd })), nr: l.nr, kostenUsd: Number(l.kostenUsd.toFixed(2)), start: new Date(l.start).toISOString(), aktualisiert: new Date(l.aktualisiert).toISOString(), wartetAufDich: l.status === 'wartet_owner' })) : undefined;
+              const { laufAnzeige } = await import('./projekt/akten-projekte.js');
+              const geraetLaeufe = project.geraetId ? (this.satellitProjekte?.laeufeDerAkte(project.id) ?? []).map(laufAnzeige) : undefined;
               return { project, sessions, openItems, decisions, health, openItemTotals: { active: activeItems.length }, ...(geraetLaeufe ? { geraetLaeufe } : {}) };
             } catch (err) { this.logger.warn({ err }, 'Projects API get failed'); return null; }
           },
@@ -15627,7 +15628,33 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // v1359 — Befunde aller Quellen für die App-Ansicht „Befunde" (offen + 7 Tage erledigt)
       befunde: this.befundeRepo ? async () => ({ offen: await this.befundeRepo!.offene(owner), erledigt: await this.befundeRepo!.erledigtSeit(owner, new Date(Date.now() - 7 * 86_400_000).toISOString()) }) : undefined,
       protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (App)`),
+      projekte: await this.geraeteProjekteFuerApp(owner),
     });
+  }
+
+  /** v1401 — Geräte-Projekte für die App: Liste mit Zustand, Detail mit Läufen, Stand vom Gerät, Weiterarbeiten (Plan → Bestätigung). */
+  private async geraeteProjekteFuerApp(owner: string): Promise<import('./geraete/owner-ansichten.js').OwnerAnsichtenDeps['projekte']> {
+    const repo = this.projectRepo;
+    const skill = this.projectAgentSkillRef;
+    if (!repo || !skill || !this.satellitProjekte) return undefined;
+    const { laufAnzeige } = await import('./projekt/akten-projekte.js');
+    const { aktenZustand } = await import('./projekt/akten.js');
+    const laeufe = (id: string) => this.satellitProjekte?.laeufeDerAkte(id) ?? [];
+    const ctx = (chatId: string) => ({ userId: owner, masterUserId: owner, platform: 'api', chatId }) as never;
+    return {
+      liste: async () => (await repo.list(owner, { nurGeraete: true, limit: 200 })).filter(p => p.status !== 'archived').map(p => {
+        const l = laeufe(p.id);
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, zustand: aktenZustand(l), laeufe: l.length, kostenUsd: Number(l.reduce((s, x) => s + x.kostenUsd, 0).toFixed(2)), letzteAktivitaet: p.lastActiveAt };
+      }),
+      detail: async (id: string) => {
+        const p = await repo.getById(owner, id);
+        if (!p?.geraetId) return null;
+        const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, laeufe: laeufe(p.id).map(laufAnzeige), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
+      },
+      stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
+      weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, ctx('')),
+    };
   }
 
   /** v1332 — Fäden eines Nicht-Owner-Geräts: nur seine eigenen Kanal-Gespräche. */

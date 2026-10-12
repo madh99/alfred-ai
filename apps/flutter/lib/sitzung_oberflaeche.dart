@@ -22,6 +22,7 @@ extension _Oberflaeche on _SitzungState {
         knopf(Icons.checklist, Icons.checklist_rtl, aufgabenFaelligZahl == 0 ? 'Aufgaben & Erinnerungen' : '$aufgabenFaelligZahl Aufgabe(n) heute oder überfällig', ansicht == Ansicht.aufgaben, server == null ? null : () => _neu(() => ansicht = Ansicht.aufgaben), zaehler: aufgabenFaelligZahl), // 1.9.0 A1
         knopf(Icons.psychology_outlined, Icons.psychology, 'Gedächtnis: was Alfred über dich weiß', ansicht == Ansicht.gedaechtnis, server == null ? null : () => _neu(() => ansicht = Ansicht.gedaechtnis)), // 1.9.0 A3
         knopf(Icons.report_problem_outlined, Icons.report_problem, 'Befunde: was Alfred als auffällig führt (Haus-Check u. a.)', ansicht == Ansicht.befunde, server == null ? null : () => _neu(() { befundeFilter = null; ansicht = Ansicht.befunde; })), // 1.12.0
+        knopf(Icons.construction_outlined, Icons.construction, 'Projekte auf Geräten', ansicht == Ansicht.projekte, server == null ? null : () => _neu(() => ansicht = Ansicht.projekte)), // 1.15.0
         knopf(Icons.keyboard_command_key, Icons.keyboard_command_key, 'Befehle (Strg+K)', false, () => _paletteOeffnen()), // 1.10.0 B1
         knopf(Icons.search, Icons.manage_search, 'Suche im Verlauf', ansicht == Ansicht.suche, server == null ? null : () => _neu(() => ansicht = Ansicht.suche)), // 1.5.0
         knopf(Icons.photo_library_outlined, Icons.photo_library, 'Anhänge: Fotos und Dateien', ansicht == Ansicht.anhaenge, server == null ? null : () => _neu(() => ansicht = Ansicht.anhaenge)), // 1.5.0
