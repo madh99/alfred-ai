@@ -15692,8 +15692,39 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const { SatellitProjekte } = await import('./projekt/satellit-projekt.js');
     const { createProjectPlan, assessPlanProgress, applyMutation } = await import('@alfred/skills');
     const owner = () => this.ownerMasterUserId ?? this.tryOwner();
+    // v1398 — Projektakten (Spec „Projekte sichtbar und fortsetzbar", Owner-Freigabe 12.10.)
+    const { ProjektAktenRepository } = await import('@alfred/storage');
+    const { nameAusPfad, nameBereinigen, akteTreffer, namensMuster, vorherigeLaeufe, bestandsBlock, akteZeile, akteDetail } = await import('./projekt/akten.js');
+    type Bestand = import('./projekt/akten.js').Bestand;
+    const { setzeProjektNamenMuster } = await import('./skill-filter.js');
+    const aktenRepo = this.database ? new ProjektAktenRepository(this.database.getAdapter()) : undefined;
+    const nameVorschlag = async (ziel: string, pfad: string): Promise<string> => {
+      try {
+        const r = await this.llmProvider.complete({ messages: [{ role: 'user', content: `Gib diesem Software-Projekt einen kurzen deutschen Namen (2 bis 4 Wörter, ohne Anführungszeichen, ohne das Wort „Projekt"). Antworte NUR mit dem Namen.\n\nZiel:\n${ziel.slice(0, 600)}` }], tier: 'fast', maxTokens: 20, temperature: 0.1 });
+        return nameBereinigen(r.content, pfad);
+      } catch { return nameAusPfad(pfad); }
+    };
+    const namenAuffrischen = async (): Promise<void> => { const o = owner(); if (o && aktenRepo) setzeProjektNamenMuster(namensMuster(await aktenRepo.liste(o, false).catch(() => []))); };
+    const zuordnen = async (s: import('./projekt/satellit-projekt.js').ProjektStand): Promise<string | undefined> => {
+      const o = owner();
+      if (!o || !aktenRepo) return undefined;
+      const da = await aktenRepo.findePfad(o, s.geraetId, s.projekt);
+      if (da) {
+        const neueBefehle = s.pruefBefehle.length && s.pruefBefehle.join('\n') !== da.pruefBefehle.join('\n') ? s.pruefBefehle : undefined;
+        await aktenRepo.aendern(o, da.id, { ...(neueBefehle ? { pruefBefehle: neueBefehle } : {}), ...(da.status !== 'aktiv' ? { status: 'aktiv' as const } : {}), geraet: s.geraet });
+        if (!s.akteName) s.akteName = da.name;
+        return da.id;
+      }
+      const a = await aktenRepo.anlegen({ userId: o, name: s.akteName ?? await nameVorschlag(s.ziel, s.projekt), geraetId: s.geraetId, geraet: s.geraet, pfad: s.projekt, beschreibung: s.ziel.slice(0, 500), pruefBefehle: s.pruefBefehle });
+      s.akteName = a.name;
+      this.logger.info({ akte: a.id, name: a.name, pfad: a.pfad }, 'v1398 Projektakte angelegt');
+      void namenAuffrischen();
+      return a.id;
+    };
     const projekte = new SatellitProjekte({
-      planen: async (ziel) => (await createProjectPlan(ziel, this.llmProvider)).phases,
+      // v1398 — Weiterarbeit: Bestand als Daten an das Ziel, frühere Läufe und Commits über die vorhandenen Blöcke des Planers
+      planen: async (ziel, k) => (await createProjectPlan(k?.bestand ? `${ziel}\n\n${k.bestand}` : ziel, this.llmProvider, k?.vorherige, k?.commits)).phases,
+      akte: { zuordnen: (s) => zuordnen(s), beruehren: async (s) => { const o = owner(); if (o && aktenRepo && s.akteId) await aktenRepo.aendern(o, s.akteId, {}); } },
       bewerten: async (i) => assessPlanProgress(this.llmProvider, i) as Promise<import('./projekt/satellit-projekt.js').Mutation>,
       anwenden: (rest, n, m) => applyMutation(rest, n, m as never).newRemaining,
       aktion: (geraetId, aktion, params, timeoutMs) => gw.sendeAktion(geraetId, aktion, params, timeoutMs),
@@ -15713,34 +15744,103 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       logger: this.logger.child({ component: 'satellit-projekt' }),
     });
     this.satellitProjekte = projekte;
+    const laeufeVon = (akteId: string) => projekte.laeufeDerAkte(akteId);
+    const akteAus = async (ref: string): Promise<{ o: string; akte: import('@alfred/storage').ProjektAkte } | { fehler: string }> => {
+      const o = owner();
+      if (!o || !aktenRepo) return { fehler: 'Projektakten nicht verfügbar' };
+      const akten = await aktenRepo.liste(o, true);
+      const t = akteTreffer(akten.filter(a => a.status !== 'archiviert' || ref.startsWith('prj-')), ref);
+      if (t.length === 1) return { o, akte: t[0]! };
+      if (t.length > 1) return { fehler: `Mehrere Projekte passen zu „${ref}": ${t.map(a => a.name).join(', ')} — welches?` };
+      return { fehler: `Kein Projekt „${ref}" gefunden. Vorhanden: ${akten.filter(a => a.status !== 'archiviert').map(a => a.name).join(', ') || 'keine'}` };
+    };
+    /** Gemeinsamer Start (start und projekt_weiter): Verzeichnis prüfen, Akte und Bestand ermitteln, Plan erstellen, Owner fragen. */
+    const planeLauf = async (g: { id: string; name: string; aktionen: string[] }, o: { projekt: string; ziel: string; befehle: string[]; input: Record<string, unknown>; context: import('@alfred/types').SkillContext; name?: string }) => {
+      const { projekt, ziel, befehle, input, context } = o;
+      if (!g.aktionen.includes('auftrag_starten') || !g.aktionen.includes('pruefen_befehl')) return { success: false, error: `Auf ${g.name} fehlt Claude Code oder die Prüfaktion (Satellit ≥ 1383 und claude im PATH nötig)` };
+      // v1391 — Verzeichnis vor dem Planen prüfen: nicht freigegeben → sofort ablehnen; fehlt → wird beim ersten Auftrag angelegt
+      const pr = await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: projekt }] }, 30_000).catch(() => undefined);
+      const grundV = (pr?.data as { ergebnisse?: Array<{ ok: boolean; grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '';
+      if (/nicht freigegeben/i.test(grundV)) return { success: false, error: `${grundV}. Projekte nur in freigegebenen Verzeichnissen mit Schreibrecht auf ${g.name}.` };
+      const verzeichnisNeu = /fehlt/i.test(grundV);
+      // v1397 — bestehendes Verzeichnis ohne .git: in der Planfrage nennen, mit dem Plan freigeben, beim ersten Auftrag anlegen
+      let gitUebernehmen = false;
+      if (!verzeichnisNeu && grundV) {
+        const trenner = projekt.includes('\\') && !projekt.includes('/') ? '\\' : '/';
+        const pg = await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: `${projekt.replace(/[\\/]+$/, '')}${trenner}.git` }] }, 30_000).catch(() => undefined);
+        gitUebernehmen = /fehlt/i.test((pg?.data as { ergebnisse?: Array<{ grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '');
+      }
+      // v1398 — Akte (Gerät + Pfad) und Bestand: frühere Läufe, Commits, README/Struktur als Daten für den Planer
+      const ow = owner();
+      const akte = ow && aktenRepo ? await aktenRepo.findePfad(ow, g.id, projekt).catch(() => null) : null;
+      const lesen = !verzeichnisNeu && g.aktionen.includes('projekt_lesen') ? await gw.sendeAktion(g.id, 'projekt_lesen', { projekt }, 30_000).catch(() => undefined) : undefined;
+      const bestand = lesen?.success ? lesen.data as Bestand : undefined;
+      const vorherige = akte ? vorherigeLaeufe(laeufeVon(akte.id)) : [];
+      const hatBestand = !!bestand && (bestand.baum?.length ?? 0) > 0;
+      const kontext = hatBestand || vorherige.length ? { vorherige, commits: bestand?.commits, bestand: hatBestand ? bestandsBlock(bestand, akte?.beschreibung) : undefined } : undefined;
+      const akteName = akte?.name ?? (o.name?.trim() ? nameBereinigen(o.name, projekt) : await nameVorschlag(ziel, projekt));
+      const grenzen: Record<string, number> = {};
+      if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
+      if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
+      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext });
+      return ergebnis(s, `Projekt ${akteName} (${s.id}) auf ${g.name} geplant (${s.plan.length} Etappen${vorherige.length ? `, Weiterarbeit nach ${vorherige.length} früheren Läufen` : ''}) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
+    };
     const ergebnis = (s: import('./projekt/satellit-projekt.js').ProjektStand | undefined, display: string) => ({ success: !!s, data: s ? { task_id: s.id, status: s.status, etappe: s.nr, etappen: s.plan.length, kostenUsd: Number(s.kostenUsd.toFixed(2)) } : undefined, display });
     skill.setSatellit({
       start: async (input, context) => {
         const name = String(input.geraet ?? '').trim();
         const g = gw.geraetNachName(name);
         if (!g) return { success: false, error: `Gerät „${name}" ist nicht verbunden` };
-        if (!g.aktionen.includes('auftrag_starten') || !g.aktionen.includes('pruefen_befehl')) return { success: false, error: `Auf ${g.name} fehlt Claude Code oder die Prüfaktion (Satellit ≥ 1383 und claude im PATH nötig)` };
         const projekt = String(input.cwd ?? '').trim();
         const ziel = String(input.goal ?? '').trim();
         if (!projekt || !ziel) return { success: false, error: 'goal und cwd (Verzeichnis auf dem Gerät) angeben' };
-        // v1391 — Verzeichnis vor dem Planen prüfen: nicht freigegeben → sofort ablehnen; fehlt → wird beim ersten Auftrag angelegt
-        const pr = await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: projekt }] }, 30_000).catch(() => undefined);
-        const grundV = (pr?.data as { ergebnisse?: Array<{ ok: boolean; grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '';
-        if (/nicht freigegeben/i.test(grundV)) return { success: false, error: `${grundV}. Projekte nur in freigegebenen Verzeichnissen mit Schreibrecht auf ${g.name}.` };
-        const verzeichnisNeu = /fehlt/i.test(grundV);
-        // v1397 — bestehendes Verzeichnis ohne .git: in der Planfrage nennen, mit dem Plan freigeben, beim ersten Auftrag anlegen
-        let gitUebernehmen = false;
-        if (!verzeichnisNeu && grundV) {
-          const trenner = projekt.includes('\\') && !projekt.includes('/') ? '\\' : '/';
-          const pg = await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: `${projekt.replace(/[\\/]+$/, '')}${trenner}.git` }] }, 30_000).catch(() => undefined);
-          gitUebernehmen = /fehlt/i.test((pg?.data as { ergebnisse?: Array<{ grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '');
-        }
         const befehle = [...((input.buildCommands as string[] | undefined) ?? []), ...((input.testCommands as string[] | undefined) ?? [])].map(String);
-        const grenzen: Record<string, number> = {};
-        if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
-        if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
-        const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen });
-        return ergebnis(s, `Projekt ${s.id} auf ${g.name} geplant (${s.plan.length} Etappen) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
+        return planeLauf(g, { projekt, ziel, befehle, input, context, name: typeof input.name === 'string' ? input.name : undefined });
+      },
+      // v1398 — Projektakten (Spec „Projekte sichtbar und fortsetzbar")
+      projekte: async () => {
+        const o = owner();
+        if (!o || !aktenRepo) return { success: false, error: 'Projektakten nicht verfügbar' };
+        const akten = await aktenRepo.liste(o, true);
+        if (!akten.length) return { success: true, data: { projekte: [] }, display: 'Noch keine Projekte auf Geräten.' };
+        const aktiv = akten.filter(a => a.status !== 'archiviert');
+        const archiv = akten.length - aktiv.length;
+        return { success: true, data: { projekte: akten.map(a => ({ id: a.id, name: a.name, geraet: a.geraet, pfad: a.pfad, status: a.status })) }, display: `Projekte:\n${aktiv.map(a => `- ${akteZeile(a, laeufeVon(a.id))}`).join('\n') || '(keine aktiven)'}${archiv ? `\n(${archiv} archiviert)` : ''}` };
+      },
+      akte: async (ref) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        const geraet = gw.geraetNachName(t.akte.geraetId);
+        const b = geraet ? await gw.sendeAktion(geraet.id, 'projekt_lesen', { projekt: t.akte.pfad }, 30_000).catch(() => undefined) : undefined;
+        return { success: true, data: { id: t.akte.id, name: t.akte.name, laeufe: laeufeVon(t.akte.id).map(l => l.id) }, display: akteDetail(t.akte, laeufeVon(t.akte.id), b?.success ? b.data as Bestand : undefined) };
+      },
+      projektWeiter: async (ref, input, context) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        const g = gw.geraetNachName(t.akte.geraetId) ?? gw.geraetNachName(t.akte.geraet);
+        if (!g) return { success: false, error: `${t.akte.geraet} ist gerade nicht verbunden — ${t.akte.name} kann erst weitergehen, wenn das Gerät online ist` };
+        const ziel = String(input.goal ?? '').trim();
+        if (!ziel) return { success: false, error: `goal fehlt: was soll am Projekt ${t.akte.name} als Nächstes passieren?` };
+        const neu = [...((input.buildCommands as string[] | undefined) ?? []), ...((input.testCommands as string[] | undefined) ?? [])].map(String);
+        return planeLauf(g, { projekt: t.akte.pfad, ziel, befehle: neu.length ? neu : t.akte.pruefBefehle, input, context });
+      },
+      umbenennen: async (ref, neu) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        const n = nameBereinigen(neu, t.akte.pfad);
+        if (!neu.trim()) return { success: false, error: 'name fehlt (neuer Projektname)' };
+        await aktenRepo!.aendern(t.o, t.akte.id, { name: n });
+        for (const l of laeufeVon(t.akte.id)) projekte.setzeAkte(l.id, t.akte.id, n);
+        await namenAuffrischen();
+        return { success: true, display: `Projekt ${t.akte.name} heißt jetzt ${n}.` };
+      },
+      archivieren: async (ref) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        if (laeufeVon(t.akte.id).some(l => l.status === 'laeuft' || l.status === 'wartet_owner')) return { success: false, error: `${t.akte.name} hat einen laufenden oder wartenden Lauf — erst stoppen` };
+        await aktenRepo!.aendern(t.o, t.akte.id, { status: 'archiviert' });
+        await namenAuffrischen();
+        return { success: true, display: `Projekt ${t.akte.name} archiviert (Ordner und Läufe bleiben erhalten).` };
       },
       status: async (id) => {
         const s0 = projekte.hole(id);
@@ -15756,6 +15856,23 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     });
     // R2c — nach einem Neustart offene Aufträge prüfen (Geräte brauchen ein paar Sekunden zum Verbinden)
     setTimeout(() => { void projekte.fortsetzen().then(n => { if (n) this.logger.info({ projekte: n }, 'v1387 Satelliten-Projekte fortgesetzt'); }); }, 90_000).unref?.();
+    // v1398 — Läufe ohne Akte (vor v1398) einordnen, ältester zuerst (sein Ziel gibt den Namen); fehlt der Ordner auf dem Gerät → archiviert
+    setTimeout(() => { void (async () => {
+      const o = owner();
+      for (const l of projekte.ohneAkte().sort((x, y) => x.start - y.start)) {
+        try {
+          const id = await zuordnen(l);
+          if (!id) continue;
+          projekte.setzeAkte(l.id, id, l.akteName);
+          const g = gw.geraetNachName(l.geraetId);
+          const pr = g ? await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: l.projekt }] }, 30_000).catch(() => undefined) : undefined;
+          if (o && aktenRepo && /fehlt/i.test((pr?.data as { ergebnisse?: Array<{ grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '')) await aktenRepo.aendern(o, id, { status: 'archiviert' });
+          this.logger.info({ lauf: l.id, akte: id, name: l.akteName }, 'v1398 Lauf einer Akte zugeordnet');
+        } catch (err) { this.logger.warn({ lauf: l.id, err: (err as Error).message }, 'v1398 Lauf nicht zugeordnet'); }
+      }
+      await namenAuffrischen();
+    })(); }, 95_000).unref?.();
+    void namenAuffrischen();
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
     // v1393 — Lage nach dem Start einmal berechnen (sonst fehlte sie bis zum nächsten Befund-/Vorgangsereignis; Realfall 12.10.: stand null nach Update)
     setTimeout(() => { void this.aktualisiereLage(); }, 30_000).unref?.();

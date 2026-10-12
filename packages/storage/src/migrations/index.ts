@@ -2929,4 +2929,15 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_anfrage_protokoll_zeit ON anfrage_protokoll(zeit)');
     },
   },
+  {
+    version: 135,
+    description: 'v1398 — Projekte sichtbar und fortsetzbar P1: projekt_akten (SQLite-Spiegel zu PG v139).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS projekt_akten (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, geraet_id TEXT NOT NULL, geraet TEXT, pfad TEXT NOT NULL,
+        beschreibung TEXT, pruef_befehle TEXT, status TEXT NOT NULL, erstellt TEXT NOT NULL, aktualisiert TEXT NOT NULL
+      )`);
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projekt_akten_ort ON projekt_akten(user_id, geraet_id, pfad)');
+    },
+  },
 ];

@@ -51,6 +51,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1398] - 2026-10-12
+
+### Added — Projekte auf Geräten als dauerhafte Akten, Weiterarbeiten nur mit dem Wunsch (v1398)
+
+Ein Projekt auf einem Gerät ist jetzt eine Akte mit Namen. Gerät und Verzeichnis bilden den Schlüssel, und jeder Lauf mit Plan und Etappen ist eine Episode darin. Ein zweiter Lauf im selben Ordner landet ohne Zutun in derselben Akte, bestehende Läufe werden beim Start übernommen.
+
+- **Name:** Den Namen schlägt Alfred aus dem Ziel vor, oder der Owner nennt ihn. Die Planfrage zeigt ihn, umbenennen geht jederzeit.
+- **Weiterarbeiten:** „Am Supermarkt-Projekt weiter: …“ genügt. Gerät, Verzeichnis und Prüfbefehle kommen aus der Akte. Der Planer bekommt die früheren Läufe, die letzten Commits und den Bestand des Ordners (README, Skripte, Struktur) als Daten und plant eine Erweiterung statt eines neuen Projekts. Die Etappen-Aufträge weisen Claude Code an, das Vorhandene zu erweitern und die bestehenden Tests grün zu halten.
+- **Projektname erkannt:** Er holt den Projekt-Agenten auch ohne Gerätenamen ins Gespräch.
+- **Weitere Aktionen:** Liste aller Projekte, Akte mit Läufen, Etappen und Commits, Umbenennen, Archivieren. Läufe in nicht mehr vorhandenen Ordnern werden beim Übernehmen archiviert.
+- **Satellit:** Die neue Aktion `projekt_lesen` liest den Bestand eines Projektordners, nur lesend.
+
 ## [0.19.0-jarvis.1397] - 2026-10-12
 
 ### Added — Bestehende Projektordner ohne Git übernehmen (v1397)

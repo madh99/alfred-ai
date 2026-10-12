@@ -27,7 +27,7 @@ export function begrenzePlan(phasen: string[], max: number): string[] {
   return [...p.slice(0, max - 1), `${p.slice(max - 1).join(' — danach: ')}`];
 }
 
-export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pruefBefehle: string[] }): string {
+export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pruefBefehle: string[]; bestehend?: boolean }): string {
   const etappe = o.plan[o.nr - 1]!;
   return [
     `Projektziel: ${o.ziel}`,
@@ -36,6 +36,8 @@ export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pr
     ...o.plan.map((p, i) => `${i + 1}. ${p}${i + 1 === o.nr ? '  ← JETZT' : i + 1 < o.nr ? '  (erledigt)' : ''}`),
     '',
     `Aufgabe: Setze NUR Etappe ${o.nr} um: ${etappe}`,
+    // v1398 — Weiterarbeit an einem bestehenden Projekt
+    ...(o.bestehend ? ['Bestehendes Projekt: lies zuerst README und Struktur, erweitere das Vorhandene, lege nichts neu an, was es schon gibt, und halte die bestehenden Tests grün.'] : []),
     o.pruefBefehle.length ? `Abnahme: Danach müssen diese Befehle im Projektverzeichnis mit Exit 0 laufen: ${o.pruefBefehle.join(' ; ')}` : 'Abnahme: Der Owner prüft diese Etappe selbst; beschreibe am Ende, wie man sie prüft.',
     'Ist das Verzeichnis ein Git-Repository, committe am Ende mit der Nachricht „Etappe ' + o.nr + ': <Kurztitel>".',
     'Arbeite nur in diesem Verzeichnis. Fasse am Ende in wenigen Sätzen zusammen, was du gemacht hast und was offen ist.',
@@ -54,9 +56,11 @@ export function fixAuftrag(o: { ziel: string; nr: number; etappe: string; versuc
   ].join('\n');
 }
 
-export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean }): string {
+export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; name?: string; nameNeu?: boolean; laeufeBisher?: number }): string {
   return [
     `🧭 Projekt auf ${o.geraet} starten?`,
+    // v1398 — Projektakte: Name (Vorschlag oder vom Owner), Weiterarbeit mit früheren Läufen
+    ...(o.name ? [`Projekt: ${o.name}${o.nameNeu ? ' (neu — anderer Name? Sag „Projekt … heißt …“)' : ''}${o.laeufeBisher ? ` — Weiterarbeit, ${o.laeufeBisher} frühere${o.laeufeBisher === 1 ? 'r Lauf' : ' Läufe'} und der Bestand sind im Plan berücksichtigt` : ''}`] : []),
     `Ziel: ${o.ziel.slice(0, 300)}`,
     `Verzeichnis: ${o.projekt}${o.verzeichnisNeu ? ' (neu — wird als Git-Repository angelegt, jede Etappe ein Commit)' : ''}`,
     // v1397 — bestehendes Verzeichnis ohne Git

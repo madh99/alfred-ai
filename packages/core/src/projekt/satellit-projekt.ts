@@ -34,14 +34,24 @@ export interface ProjektStand {
   etappeStart?: number;
   /** v1397 — bestehendes Verzeichnis ohne Git: beim ersten Auftrag Repository + Ausgangs-Commit (mit dem Plan freigegeben) */
   gitUebernehmen?: boolean;
+  /** v1398 — Projektakte (Gerät + Pfad); Name schon bei der Planfrage, Kennung spätestens nach der Freigabe */
+  akteId?: string;
+  akteName?: string;
+  /** v1398 — Weiterarbeit an einem bestehenden Projekt (Etappen-Auftrag erweitert statt neu) */
+  bestehend?: boolean;
   frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation'; mutation?: Mutation; text: string };
   letzterText?: string;
 }
+/** v1398 — Kontext für den Planer bei Weiterarbeit: frühere Läufe, letzte Commits, Bestand (als Daten). */
+export interface PlanKontext { vorherige?: Array<{ goal: string; milestones: string[] }>; commits?: Array<{ sha: string; message: string; files: string[] }>; bestand?: string }
+
 export interface Mutation { kind: MutationsArt; reasoning?: string; phaseIndices?: number[]; newPhase?: string; newPhases?: string[]; afterIndex?: number }
 type AktionsErgebnis = { success: boolean; data?: unknown; display?: string; error?: string };
 
 export interface SatellitProjektDeps {
-  planen: (ziel: string) => Promise<string[]>;
+  planen: (ziel: string, kontext?: PlanKontext) => Promise<string[]>;
+  /** v1398 — Projektakte: nach der Plan-Freigabe zuordnen bzw. anlegen; nach dem Ende berühren (letzte Aktivität) */
+  akte?: { zuordnen: (s: ProjektStand) => Promise<string | undefined>; beruehren?: (s: ProjektStand) => Promise<void> };
   bewerten: (i: { goal: string; completedPhases: Array<{ index: number; description: string; modifiedFiles: string[]; resultSummary?: string }>; remainingPhases: string[]; buildPassed: boolean; buildOutput?: string }) => Promise<Mutation>;
   anwenden: (rest: string[], erledigt: number, m: Mutation) => string[];
   aktion: (geraetId: string, aktion: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<AktionsErgebnis>;
@@ -98,20 +108,25 @@ export class SatellitProjekte {
     return z.length ? `Projekte auf Geräten: ${z.slice(0, 3).join(' · ')}${z.length > 3 ? ` · +${z.length - 3}` : ''}` : null;
   }
 
+  /** v1398 — Läufe einer Akte (neueste zuerst) und Läufe ohne Akte (Migration beim Start). */
+  laeufeDerAkte(akteId: string): ProjektStand[] { return this.liste().filter(s => s.akteId === akteId); }
+  ohneAkte(): ProjektStand[] { return this.liste().filter(s => !s.akteId && s.status !== 'wartet_owner'); }
+  setzeAkte(id: string, akteId: string, akteName?: string): void { const s = this.staende.get(id); if (!s) return; s.akteId = akteId; if (akteName) s.akteName = akteName; this.sichere(s); }
+
   gehoertZuProjekt(auftragId: string): boolean { return [...this.staende.values()].some(s => s.auftragId === auftragId && s.status === 'laeuft'); }
 
   /** Start: Plan erstellen, Owner einmal fragen. Liefert die Projekt-ID sofort. */
-  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean; gitUebernehmen?: boolean }): Promise<ProjektStand> {
+  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; akteId?: string; akteName?: string; nameNeu?: boolean; kontext?: PlanKontext }): Promise<ProjektStand> {
     const g = { ...STANDARD_GRENZEN, ...(o.grenzen ?? {}) };
-    const roh = await this.d.planen(o.ziel);
+    const roh = await this.d.planen(o.ziel, o.kontext);
     if (!roh.length) throw new Error('Der Planer lieferte keine Etappen');
     const plan = begrenzePlan(roh, g.maxEtappen);
     const s: ProjektStand = {
       id: `sat-${randomUUID().slice(0, 8)}`, geraetId: o.geraetId, geraet: o.geraet, projekt: o.projekt, ziel: o.ziel,
       pruefBefehle: [...new Set((o.pruefBefehle ?? []).map(b => b.trim()).filter(Boolean))] /* v1390 doppelte (Build = Test) nur einmal */, grenzen: g, herkunft: o.herkunft, ownerId: o.ownerId,
-      ...(o.gitUebernehmen && !o.verzeichnisNeu ? { gitUebernehmen: true } : {}), grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
+      ...(o.gitUebernehmen && !o.verzeichnisNeu ? { gitUebernehmen: true } : {}), ...(o.akteId ? { akteId: o.akteId } : {}), ...(o.akteName ? { akteName: o.akteName } : {}), ...(o.kontext?.vorherige?.length || o.kontext?.bestand ? { bestehend: true } : {}), grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
     };
-    const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu, gitUebernehmen: s.gitUebernehmen });
+    const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu, gitUebernehmen: s.gitUebernehmen, name: s.akteName, nameNeu: o.nameNeu, laeufeBisher: o.kontext?.vorherige?.length });
     await this.stelleFrage(s, 'plan', text);
     try { s.vorgangId = await this.d.vorgang?.anlegen(s); } catch { /* optional */ }
     this.sichere(s);
@@ -135,7 +150,12 @@ export class SatellitProjekte {
     const f = s.frage;
     s.frage = undefined;
     return this.seriell(id, async () => {
-      if (f.art === 'plan') { s.status = 'laeuft'; s.start = this.jetzt(); await this.naechsteEtappe(s); return; }
+      if (f.art === 'plan') {
+        s.status = 'laeuft'; s.start = this.jetzt();
+        // v1398 — Akte zuordnen bzw. anlegen (erst mit der Freigabe: abgelehnte Pläne legen keine Akte an)
+        if (this.d.akte) { const a = await this.d.akte.zuordnen(s).catch((err: Error) => { this.d.logger.warn({ id: s.id, err: err.message }, 'v1398 Akte nicht zugeordnet'); return undefined; }); if (a) s.akteId = a; }
+        await this.naechsteEtappe(s); return;
+      }
       if (f.art === 'mutation' && f.mutation) {
         const rest = s.plan.slice(s.nr);
         s.plan = [...s.plan.slice(0, s.nr), ...this.d.anwenden(rest, s.nr, f.mutation)];
@@ -188,7 +208,7 @@ export class SatellitProjekte {
   private async naechsteEtappe(s: ProjektStand): Promise<void> {
     if (s.nr >= s.plan.length) { await this.beende(s, 'fertig'); return; }
     s.nr += 1; s.fixVersuch = 0; s.etappeKostenUsd = 0;
-    await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
+    await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
   }
 
   private async starteAuftrag(s: ProjektStand, auftrag: string, titel: string): Promise<void> {
@@ -293,7 +313,7 @@ export class SatellitProjekte {
       if (s.nr === 0) { await this.naechsteEtappe(s); return; }
       s.fixVersuch = 0;
       await this.d.melde(s, `▶ Fortgesetzt mit Etappe ${s.nr}/${s.plan.length}.`);
-      await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
+      await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
     }).then(() => ({ ok: true }));
   }
 
@@ -313,6 +333,7 @@ export class SatellitProjekte {
     this.d.logger.info({ id: s.id, status, grund, etappenOk: ok, etappen: s.plan.length, kostenUsd: s.kostenUsd }, 'v1387 Satelliten-Projekt beendet');
     await this.d.melde(s, text);
     await this.d.vorgang?.abschliessen(s, text).catch(() => undefined);
+    await this.d.akte?.beruehren?.(s).catch(() => undefined); // v1398
   }
 }
 

@@ -18,7 +18,7 @@ import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
-import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
+import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, projektLesen, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
@@ -109,6 +109,7 @@ export function baueManifest(version: string): GeraetManifest {
       // v1342 — Aufträge an Claude Code im Druckmodus (Owner 10.10.): Projekt anlegen/ändern nach Spezifikation, läuft abgekoppelt, Ende wird gemeldet
       ...(claudeVerfuegbar() ? [
         { name: 'auftrag_starten', beschreibung: 'Gibt Claude Code auf diesem Gerät einen Auftrag (Projekt anlegen, Funktion bauen, Fehler beheben) nach einer Spezifikation. Läuft im Hintergrund, oft viele Minuten; das Ende wird automatisch gemeldet. Ein EINZELNER Auftrag — für ein Projekt in mehreren Etappen mit Abnahme (Tests/Build je Etappe) stattdessen project_agent start mit geraet=<dieses Gerät>. projekt = vorhandenes Verzeichnis mit Schreibrecht; auftrag = vollständige Spezifikation (Ziel, Technik, Dateien, Abnahme).', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Pfad des Projektverzeichnisses (freigegeben, schreibend)' }, auftrag: { type: 'string', description: 'Spezifikation als Text (Markdown)' }, titel: { type: 'string', description: 'Kurztitel' }, max_kosten_usd: { type: 'number', description: 'Optional: Kostengrenze für diesen Auftrag in USD (Claude Code hält sie selbst ein)' }, git_uebernehmen: { type: 'boolean', description: 'Nur für Projekte (project_agent): bestehendes Verzeichnis ohne Git als Repository anlegen und den Stand als Ausgangs-Commit sichern' } } },
+        { name: 'projekt_lesen', beschreibung: 'Bestand eines Projektordners nur lesend: README, Paket und Skripte, Struktur (Tiefe 2), letzte Commits — für Projekte (project_agent) und Fragen zum Stand', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Pfad des Projektverzeichnisses (freigegeben, lesend)' } } }, // v1398
         { name: 'auftrag_stand', beschreibung: 'Stand eines laufenden oder beendeten Auftrags: läuft noch?, Dauer, letzte Protokollzeilen', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung aus auftrag_starten' } } },
         { name: 'auftrag_ergebnis', beschreibung: 'Ergebnis eines beendeten Auftrags (Zusammenfassung von Claude Code, Kosten, Dauer)', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung' } } },
         { name: 'auftraege', beschreibung: 'Liste der letzten Aufträge auf diesem Gerät mit Status', autonomie: 'auto' as const },
@@ -328,6 +329,15 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
         const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg), ...(Number.isFinite(maxK) && maxK > 0 ? { maxKostenUsd: Math.min(maxK, 100) } : {}), ...(params.git_uebernehmen === true ? { gitUebernehmen: true } : {}) }); // v1382 R1, v1394 Budget, v1397 Git
         return { success: true, data: { id: m.id, titel: m.titel, projekt: m.projekt, start: m.start, auftragDatei: m.auftragDatei, ...(m.git ? { git: m.git } : {}) }, display: `Auftrag ${m.id} („${m.titel}") auf ${k.name} gestartet in ${m.projekt}${m.gitAngelegt ? ' (neues Verzeichnis, als Git-Repository angelegt)' : ''}. Läuft im Hintergrund; Stand mit auftrag_stand ${m.id}, Ergebnis mit auftrag_ergebnis ${m.id}.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
+    }
+    // v1398 — Projekte sichtbar und fortsetzbar: Bestand lesen (nur lesend, nur freigegebene Verzeichnisse)
+    case 'projekt_lesen': {
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      if (!projekt) return { success: false, error: 'projekt fehlt (absoluter Pfad)' };
+      if (!istPfadErlaubt(projekt, lesbar)) return { success: false, error: `Verzeichnis nicht freigegeben: ${projekt}` };
+      if (!existsSync(projekt) || !statSync(projekt).isDirectory()) return { success: false, error: `Verzeichnis fehlt: ${projekt}` };
+      const b = projektLesen(projekt);
+      return { success: true, data: b, display: `${projekt}: ${b.baum.length} Einträge, ${b.git ? `Git, ${b.commits.length} letzte Commits` : 'kein Git'}${b.readme ? ', README' : ''}` };
     }
     case 'auftrag_stand': {
       const id = String(params.id ?? '').trim();

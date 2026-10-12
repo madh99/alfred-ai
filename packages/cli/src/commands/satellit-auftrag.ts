@@ -342,3 +342,53 @@ export function gitUebernehmen(dir: string, git = 'git', maxBytes = 10 * 1024 * 
     return { status, grosse: [], fehler: (err as Error).message.slice(0, 200) };
   }
 }
+
+export interface ProjektBestand { readme?: string; paket?: string; baum: string[]; commits: Array<{ sha: string; message: string; files: string[] }>; git: boolean }
+
+/**
+ * v1398 — Spec „Projekte sichtbar und fortsetzbar" P2: Bestand eines Projektordners nur lesend — README (≤ 4 KB), Paket und
+ * Skripte, Struktur (Tiefe 2, ohne Abhängigkeiten/Build), letzte 10 Commits. Grundlage für „weiter" (Planer) und die Akte.
+ */
+export function projektLesen(dir: string, git = 'git'): ProjektBestand {
+  const liesText = (p: string, max: number): string | undefined => {
+    try { const st = statSync(p); if (!st.isFile() || st.size > 2_000_000) return undefined; const t = readFileSync(p, 'utf8'); return t.includes('\u0000') ? undefined : t.slice(0, max); } catch { return undefined; }
+  };
+  let readme: string | undefined;
+  for (const n of ['README.md', 'readme.md', 'Readme.md', 'README', 'docs/README.md']) { readme = liesText(path.join(dir, n), 4000); if (readme) break; }
+  let paket: string | undefined;
+  const pj = liesText(path.join(dir, 'package.json'), 200_000);
+  if (pj) {
+    try { const j = JSON.parse(pj) as { name?: string; description?: string; scripts?: Record<string, string> }; paket = [j.name && `name: ${j.name}`, j.description && `beschreibung: ${j.description}`, ...Object.entries(j.scripts ?? {}).map(([k, v]) => `npm run ${k}: ${v}`)].filter(Boolean).join('\n').slice(0, 1000); } catch { paket = pj.slice(0, 1000); }
+  } else {
+    for (const n of ['pyproject.toml', 'Cargo.toml', 'pubspec.yaml', 'go.mod']) { const t = liesText(path.join(dir, n), 1000); if (t) { paket = `${n}:\n${t}`; break; } }
+  }
+  const baum: string[] = [];
+  const geh = (rel: string, tiefe: number) => {
+    let namen: string[] = [];
+    try { namen = readdirSync(path.join(dir, rel)).sort(); } catch { return; }
+    for (const n of namen) {
+      if (baum.length >= 150) return;
+      if (DATEIEN_OHNE.has(n) || (n.startsWith('.') && n !== '.gitignore') || /^AUFTRAG-.*\.md$/.test(n)) continue;
+      const r = rel ? `${rel}/${n}` : n;
+      let ordner = false;
+      try { ordner = statSync(path.join(dir, r)).isDirectory(); } catch { continue; }
+      baum.push(ordner ? `${r}/` : r);
+      if (ordner && tiefe < 2) geh(r, tiefe + 1);
+    }
+  };
+  geh('', 1);
+  let istGit = false;
+  const commits: ProjektBestand['commits'] = [];
+  try {
+    istGit = gitLauf(git, dir, ['rev-parse', '--is-inside-work-tree']) === 'true';
+    if (istGit) {
+      const log = gitLauf(git, dir, ['log', '-n', '10', '--name-only', '--format=%x01%h%x02%s']);
+      for (const block of log.split('\u0001').filter(Boolean)) {
+        const [kopf, ...rest] = block.split('\n');
+        const [sha, message] = (kopf ?? '').split('\u0002');
+        if (sha) commits.push({ sha: sha.trim(), message: (message ?? '').trim(), files: rest.map(z => z.trim()).filter(Boolean).slice(0, 20) });
+      }
+    }
+  } catch { /* kein Git oder noch keine Commits */ }
+  return { ...(readme ? { readme } : {}), ...(paket ? { paket } : {}), baum, commits, git: istGit };
+}

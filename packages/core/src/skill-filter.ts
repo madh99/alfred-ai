@@ -118,7 +118,21 @@ export type WerkzeugwahlGrund = 'geraet_genannt' | 'nachricht' | 'verlauf' | 'ru
  */
 export const PROJEKT_AUF_GERAET = /(^|[^\p{L}])(projekt\w*|etapp\w*|abnahme\w*|claude.?code\w*|programmier\w*|entwickl\w*|bau(e|en|t)?|baue?\s+mir)(?![\p{L}])/iu;
 
+/**
+ * v1398 — Projektakten: Namen der aktiven Projekte (Teile ≥ 4 Buchstaben). Nennt der Owner eines („am Supermarkt-Projekt
+ * weiter: …"), ist project_agent in jedem Zweig dabei — ohne Gerätenamen und ohne Bau-Wort.
+ */
+let projektNamenMuster: RegExp | undefined;
+export function setzeProjektNamenMuster(m: RegExp | undefined): void { projektNamenMuster = m; }
+
 export function werkzeugeFuerNachricht<T extends SkillMetadata>(text: string, verlauf: string[], alle: T[]): { metas: T[]; grund: WerkzeugwahlGrund } {
+  const r = werkzeugeOhneAkten(text, verlauf, alle);
+  if (!projektNamenMuster?.test(text) || r.metas.some(m => m.name === 'project_agent')) return r;
+  const pa = alle.find(m => m.name === 'project_agent');
+  return pa ? { metas: [...r.metas, pa], grund: r.grund } : r;
+}
+
+function werkzeugeOhneAkten<T extends SkillMetadata>(text: string, verlauf: string[], alle: T[]): { metas: T[]; grund: WerkzeugwahlGrund } {
   const geraete = alle.filter(istGeraeteSkill);
   const genannt = genannteGeraete(text, geraete);
   if (genannt.length) {

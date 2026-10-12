@@ -2236,4 +2236,15 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_anfrage_protokoll_zeit ON anfrage_protokoll(zeit)', []);
     },
   },
+  {
+    version: 139,
+    description: 'v1398 — Projekte sichtbar und fortsetzbar P1: projekt_akten (Akte je Benutzer + Gerät + Pfad; Läufe in den Laufdateien) (PG-Spiegel zu SQLite v135).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS projekt_akten (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, geraet_id TEXT NOT NULL, geraet TEXT, pfad TEXT NOT NULL,
+        beschreibung TEXT, pruef_befehle TEXT, status TEXT NOT NULL, erstellt TEXT NOT NULL, aktualisiert TEXT NOT NULL
+      )`, []);
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_projekt_akten_ort ON projekt_akten(user_id, geraet_id, pfad)', []);
+    },
+  },
 ];
