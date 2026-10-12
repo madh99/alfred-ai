@@ -6673,10 +6673,13 @@ export class HttpAdapter extends MessagingAdapter {
     const plattform = url.searchParams.get('plattform') ?? '';
     const info = this.geraeteCallbacks?.appUpdateInfo?.(plattform);
     if (!info) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `kein App-Release für ${plattform || '?'}` })); return; }
-    if (!datei) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ...info, url: `/api/app/update/datei?plattform=${encodeURIComponent(info.plattform)}` })); return; }
-    const s = this.geraeteCallbacks?.appUpdateStream?.(info.plattform, info.datei);
+    // v1405 — die Adresse nennt die angekündigte Datei. Realfall 13.10. 00:11: die App bekam 1.15.1 samt Prüfsumme angekündigt,
+    // dazwischen kam 1.15.2 auf den Server, der Download lieferte „die neueste" → Prüfsumme stimmt nicht, bei jeder Wiederholung.
+    if (!datei) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ...info, url: `/api/app/update/datei?plattform=${encodeURIComponent(info.plattform)}&datei=${encodeURIComponent(info.datei)}` })); return; }
+    const gewuenscht = url.searchParams.get('datei') || info.datei;
+    const s = this.geraeteCallbacks?.appUpdateStream?.(info.plattform, gewuenscht); // prüft das Namensmuster (keine Pfade)
     if (!s) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Installer fehlt' })); return; }
-    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': info.groesse, 'Content-Disposition': `attachment; filename="${info.datei}"` });
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', ...(gewuenscht === info.datei ? { 'Content-Length': info.groesse } : {}), 'Content-Disposition': `attachment; filename="${gewuenscht}"` });
     s.pipe(res);
   }
 

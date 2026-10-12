@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1405] - 2026-10-13
+
+### Fixed — App-Update lädt genau die angekündigte Version (v1405)
+
+Die Download-Adresse eines App-Updates lieferte immer den neuesten Installer. Kam zwischen Ankündigung und Download eine neuere Version auf den Server, stimmte die Prüfsumme nicht. Die App versuchte es dann bei jeder Wiederholung erneut mit der alten Ankündigung. Die Adresse nennt jetzt die angekündigte Datei.
+
 ## [0.19.0-jarvis.1404] - 2026-10-13
 
 ### Added — Frage zum Projekt (v1404, App 1.15.2)
