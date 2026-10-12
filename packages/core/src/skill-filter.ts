@@ -112,10 +112,19 @@ export function genannteGeraete<T extends Pick<SkillMetadata, 'name' | 'descript
 
 export type WerkzeugwahlGrund = 'geraet_genannt' | 'nachricht' | 'verlauf' | 'rueckfall';
 
+/**
+ * v1388 — Realfall 12.10.: „Bau mir auf der Ubuntu-VM … ein Werkzeug, Abnahme je Etappe" — Hebel 1 gab NUR das Gerätewerkzeug,
+ * der Projekt-Agent mit Gerät (v1387) war nie wählbar. Beschreibt die Nachricht ein Bau-Projekt, kommt project_agent dazu.
+ */
+export const PROJEKT_AUF_GERAET = /(^|[^\p{L}])(projekt\w*|etapp\w*|abnahme\w*|claude.?code\w*|programmier\w*|entwickl\w*|bau(e|en|t)?|baue?\s+mir)(?![\p{L}])/iu;
+
 export function werkzeugeFuerNachricht<T extends SkillMetadata>(text: string, verlauf: string[], alle: T[]): { metas: T[]; grund: WerkzeugwahlGrund } {
   const geraete = alle.filter(istGeraeteSkill);
   const genannt = genannteGeraete(text, geraete);
-  if (genannt.length) return { metas: genannt, grund: 'geraet_genannt' };
+  if (genannt.length) {
+    const projekt = PROJEKT_AUF_GERAET.test(text) ? alle.filter(m => m.name === 'project_agent') : [];
+    return { metas: [...genannt, ...projekt], grund: 'geraet_genannt' };
+  }
   const ohneGeraete = alle.filter(m => !istGeraeteSkill(m));
   const available = new Set<SkillCategory>(ohneGeraete.map(s => s.category ?? 'core'));
   const vText = verlauf.filter(Boolean).join(' ');

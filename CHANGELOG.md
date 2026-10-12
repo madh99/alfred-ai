@@ -51,7 +51,13 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
-## [0.19.0-jarvis.1388] - 2026-10-12
+## [0.19.0-jarvis.1389] - 2026-10-12
+
+### Fixed — Projekt-Agent wählbar, wenn ein Gerät genannt wird (v1389)
+
+Die eigentliche Ursache des Falls aus v1388: Nennt eine Nachricht ein Gerät, bekommt das Modell seit v1300 nur dessen Werkzeuge (spart Tokens). Damit war der Projekt-Agent mit Gerät nie wählbar. Beschreibt die Nachricht ein Bau-Projekt (Projekt, Etappe, Abnahme, Claude Code, programmieren, entwickeln, bauen), kommt der Projekt-Agent jetzt dazu; alle anderen Gerätenachrichten bleiben bei den Gerätewerkzeugen.
+
+
 
 ### Fixed — Mehrstufige Geräte-Projekte landen beim Projekt-Agenten (v1388)
 

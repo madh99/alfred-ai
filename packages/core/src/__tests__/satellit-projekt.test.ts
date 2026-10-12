@@ -123,3 +123,22 @@ describe('Werkzeugwahl Projekt auf Gerät', () => {
     expect([...selectCategories('Lass Claude Code auf dem PC das Skript entwickeln', alle as never)]).toContain('automation');
   });
 });
+
+// v1388 — Hebel 1 („Gerät genannt → nur Gerätewerkzeuge") ließ den Projekt-Agenten nie zu
+import { werkzeugeFuerNachricht } from '../skill-filter.js';
+describe('Werkzeugwahl: Gerät genannt + Bau-Projekt', () => {
+  const metas = [
+    { name: 'geraet_ubuntu_vm', description: 'Gerät „Ubuntu-VM" (linux) des Owners', category: 'core' },
+    { name: 'project_agent', description: 'Projekt-Agent', category: 'automation' },
+    { name: 'calendar', description: 'Kalender', category: 'productivity' },
+  ] as never[];
+  it('Projekt auf dem Gerät: Gerät + project_agent', () => {
+    const r = werkzeugeFuerNachricht('Bau mir bitte auf der Ubuntu-VM ein kleines Werkzeug, Abnahme je Etappe: node --test', [], metas);
+    expect(r.grund).toBe('geraet_genannt');
+    expect((r.metas as Array<{ name: string }>).map(m => m.name)).toEqual(['geraet_ubuntu_vm', 'project_agent']);
+  });
+  it('sonstige Gerätenachricht: weiter nur das Gerät', () => {
+    for (const t of ['Mach einen Screenshot auf der Ubuntu-VM', 'Was läuft gerade auf der Ubuntu-VM?', 'Öffne auf der Ubuntu-VM den Ordner Downloads'])
+      expect((werkzeugeFuerNachricht(t, [], metas).metas as Array<{ name: string }>).map(m => m.name), t).toEqual(['geraet_ubuntu_vm']);
+  });
+});
