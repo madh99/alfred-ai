@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Skill } from '../skill.js';
 import { pruefe, pruefText, istAusgenommen, GRENZEN, type PruefBefund, type EntitaetZustand } from './ha-pruefung.js';
 import { baueZuordnung, bezuegeAus, zuordnungsAenderungen, zuordnungsZeilen, steuerndeAutomationen, type HaZuordnung, type AutoQuelle, type EntitaetInfo } from './ha-zuordnung.js';
-import { werteAus, ursachenAus, berichtText, anJeTag, zeitText, type HaZustand, type EntitaetsBericht, type LogbuchEintrag, type Fenster } from './ha-verlauf.js';
+import { werteAus, ursachenAus, berichtText, anJeTag, zeitText, lichtDauerAuffaellig, type HaZustand, type EntitaetsBericht, type LogbuchEintrag, type Fenster } from './ha-verlauf.js';
 
 type Action =
   | 'states'
@@ -827,6 +827,52 @@ export class HomeAssistantSkill extends Skill {
     const liste = text.split('\n').map(z => z.trim()).filter(Boolean).map(z => { const [hersteller, modell] = z.split('|'); return { hersteller: hersteller!.trim(), modell: modell?.trim() || undefined }; });
     this.herstellerStand = { liste, geladen: Date.now() };
     return liste;
+  }
+
+  /**
+   * v1371 — Nachforschen N0(b): Lichter, die eine Automation mit Bewegungs-/Belegungsmelder schaltet — letzte 24 h gegen den
+   * Schnitt der 7 Tage davor. Ein Befund je auffälligem Licht (Gegenstand `licht:lange-an:<entity>`).
+   */
+  async lichtDauerPruefung(): Promise<{ befunde: Array<{ gegenstand: string; titel: string; detail: string }>; geprueft: number }> {
+    const tz = ortsZeitzone();
+    const jetzt = Date.now();
+    const alle = await this.api<any[]>('GET', '/api/states');
+    const zustaende = new Map<string, any>(alle.map((e) => [e.entity_id, e]));
+    const stand = await this.ladeZuordnung(alle);
+    const istMelder = (id: string) => id.startsWith('binary_sensor.') && ['motion', 'occupancy', 'presence'].includes(String(zustaende.get(id)?.attributes?.device_class ?? ''));
+    const lichter = alle.map((e) => String(e.entity_id)).filter((id) => id.startsWith('light.')
+      && steuerndeAutomationen(stand.z, id).some((a) => a.ausloeser.some(istMelder)));
+    if (lichter.length === 0) return { befunde: [], geprueft: 0 };
+    const aktuell: Fenster = { von: jetzt - 24 * 3_600_000, bis: jetzt };
+    const vergleich: Fenster = { von: aktuell.von - 7 * 24 * 3_600_000, bis: aktuell.von };
+    const endeIso = encodeURIComponent(new Date(jetzt).toISOString());
+    const reihen = new Map<string, HaZustand[]>();
+    for (let i = 0; i < lichter.length; i += 60) {
+      const block = lichter.slice(i, i + 60).map(encodeURIComponent).join(',');
+      const data = await this.api<any[][]>('GET', `/api/history/period/${new Date(vergleich.von).toISOString()}?filter_entity_id=${block}&end_time=${endeIso}&minimal_response&no_attributes`);
+      for (const r of data ?? []) {
+        if (!Array.isArray(r) || r.length === 0) continue;
+        reihen.set(String(r[0].entity_id), r.map((x) => ({ state: String(x.state), last_changed: String(x.last_changed ?? x.last_updated) })));
+      }
+    }
+    const befunde: Array<{ gegenstand: string; titel: string; detail: string }> = [];
+    for (const id of lichter) {
+      const reihe = reihen.get(id);
+      if (!reihe) continue;
+      const st = zustaende.get(id);
+      const name = String(st?.attributes?.friendly_name ?? id);
+      const raum = stand.bereiche.get(id)?.raum;
+      const b: EntitaetsBericht = { entityId: id, name, raum, aktuell: werteAus(reihe, aktuell, tz), vergleich: werteAus(reihe, vergleich, tz) };
+      const auff = lichtDauerAuffaellig(b, jetzt);
+      if (!auff) continue;
+      const bez = zuordnungsZeilen(stand.z, id, (e) => zustaende.get(e)?.attributes?.friendly_name ?? e);
+      befunde.push({
+        gegenstand: `licht:lange-an:${id}`,
+        titel: `${name}${raum ? ` (${raum})` : ''}: ${auff}`,
+        detail: [`Licht ${name} (${id}), letzte 24 h gegen den Schnitt der 7 Tage davor: ${auff}.`, ...bez].join('\n').slice(0, 1500),
+      });
+    }
+    return { befunde, geprueft: lichter.length };
   }
 
   /** v1359 — für den stündlichen Job: Zuordnung frisch lesen; Rückgabe = neu erkannte Änderungen. */

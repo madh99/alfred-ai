@@ -2930,6 +2930,20 @@ export class Alfred {
           key: 'haus-check', beschreibung: 'Haus-Check: Home Assistant nach festen Regeln prüfen (Befunde, beobachtend)', takt: { art: 'woechentlich', tag: 0, um: '09:00' }, bereich: 'global', slot: true, timeoutMin: 5,
           run: () => hausCheck('woche'),
         });
+        // v1371 — Nachforschen N0(b), Owner 12.10. „wie empfohlen": Licht mit Bewegungsbezug ungewöhnlich lange an → Befund der
+        // Quelle „licht" (täglich, beobachtend — ohne Vorgang wie der Haus-Check). Abgleich nur nach gelungenem Lauf.
+        this.registriereJob({
+          key: 'licht-dauer', beschreibung: 'Lichter mit Bewegungsbezug: ungewöhnlich lange an (Befunde, beobachtend)', takt: { art: 'taeglich', um: '05:40' }, bereich: 'global', slot: true, timeoutMin: 5,
+          run: async () => {
+            const ha = haHolen(); const owner = this.tryOwner();
+            if (!ha || !owner || !this.befundeRepo) return { ok: false, fehler: 'Home Assistant, Owner oder Befunde nicht bereit' };
+            const c = await ha.lichtDauerPruefung();
+            const r = await this.befundeRepo.sync(owner, 'licht', c.befunde);
+            this.logger.info({ geprueft: c.geprueft, neu: r.neu.length, offen: r.neu.length + r.weiter.length, erledigt: r.erledigt.length, beispiele: c.befunde.slice(0, 5).map(b => b.titel) }, 'v1371 Licht-Dauer geprüft');
+            void this.aktualisiereLage();
+            return { ok: true, zaehler: { geprueft: c.geprueft, auffaellig: c.befunde.length } };
+          },
+        });
         this.registriereJob({
           key: 'ha-zuordnung', beschreibung: 'Home-Assistant-Zuordnung frisch lesen; bei Änderungen Haus-Check', takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 10, timeoutMin: 5,
           run: async () => {
@@ -14667,12 +14681,24 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           const alle = await res.json() as import('./normalzustaende/haus.js').HaZustand[];
           return alle.filter(z => /^(person|binary_sensor|alarm_control_panel|zone)\./.test(z.entity_id)); // v1181: Zonen für Heimzonen-Erkennung
         };
+        // v1371 — Nachforschen N0(a), Owner 12.10. „wie empfohlen": die Haus-Deutung (offen/Bewegung bei Abwesenheit, Rauch, CO,
+        // Wasser, Alarm) wird Befund-Quelle „haus" — Identität, Regeln, Haltefristen, Lage. Vorher liefen diese Fälle nur über
+        // den Prosa-Weg (ohne Identität, Dubletten wie „Fenster von Lena prüfen" zweimal). Fortgeschrieben bei geänderten
+        // Auffälligkeiten und alle 10 min (Watchdog), damit ein geschlossenes Fenster den Befund sicher beendet.
+        let hausBefundStand = '';
+        const hausBefundeFortschreiben = async (d: { zeilen: string[]; auffaellig: string[] }, immer: boolean): Promise<void> => {
+          const stand = [...d.auffaellig].sort().join('|');
+          if (!immer && stand === hausBefundStand) return;
+          hausBefundStand = stand;
+          await this.weltmodellBeobachter?.befundeFortschreiben('haus', { zeilen: d.zeilen, auffaellig: d.auffaellig });
+        };
         this.haEreignisQuelle = new HaEreignisQuelle({
           baseUrl: haCfg.baseUrl, accessToken: haCfg.accessToken, logger: haLog,
           onEreignis: async (e) => {
             const name = (e.entity.attributes?.friendly_name as string | undefined) ?? e.entity.entity_id;
             const zustaende = await ladeZustaende();
             const d = deuteHaus(zustaende);
+            await hausBefundeFortschreiben(d, false).catch(() => undefined); // v1371
             // v1198 — Anwesenheit/Bewegung für die Zustellentscheidung (Interaktion)
             this.hausAnwesenheit = {
               jemandZuhause: d.personen.length > 0 ? !d.alleAbwesend : undefined,
@@ -14698,7 +14724,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const quelle = this.haEreignisQuelle;
         this.registriereJob({
           key: 'ha-ereignisse-watchdog', beschreibung: 'Home-Assistant-WebSocket: Verbindung prüfen, Hänger neu verbinden', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 5,
-          run: async () => { const u = quelle.ensureConnected(); const st = quelle.status(); return { ok: true, zaehler: { neustart: u === 'neustart' ? 1 : 0, verbunden: st.verbunden ? 1 : 0, ereignisse: st.ereignisse, nachrichten: st.nachrichten } }; },
+          run: async () => {
+            try { await hausBefundeFortschreiben(deuteHaus(await ladeZustaende()), true); } catch (err) { haLog.debug({ err: (err as Error).message }, 'v1371 Haus-Befunde: Fortschreiben fehlgeschlagen'); } const u = quelle.ensureConnected(); const st = quelle.status(); return { ok: true, zaehler: { neustart: u === 'neustart' ? 1 : 0, verbunden: st.verbunden ? 1 : 0, ereignisse: st.ereignisse, nachrichten: st.nachrichten } }; },
         });
       }
       // v1161 — Register starten: registriert-Logzeilen sind oben gefallen, der

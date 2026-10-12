@@ -342,3 +342,13 @@ export function berichtText(berichte: EntitaetsBericht[], opt: { tz: string; jet
   if (details.length > 0) z.push('Details der Auffälligsten:', '', ...details.flatMap(b => [...berichtDetail(b, tz, jetzt), '']));
   return z.join('\n');
 }
+
+/**
+ * v1371 — Nachforschen N0(b): „Licht ungewöhnlich lange an" als Befund (täglicher Lauf, beobachtend). Nur die Dauer-Regeln
+ * aus `auffaelligkeiten` — Verfügbarkeit, Aussetzer und stumme Melder deckt der Haus-Check (B1–B3) ab. Rückgabe: Titelteil
+ * („an 14,8 statt 9,8 h/Tag", „an am Stück 16 h") oder null.
+ */
+export function lichtDauerAuffaellig(b: EntitaetsBericht, jetzt: number): string | null {
+  const teile = auffaelligkeiten(b, jetzt).filter(t => /^an (am Stück|\d)/.test(t));
+  return teile.length ? teile.join(', ') : null;
+}

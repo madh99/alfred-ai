@@ -47,6 +47,14 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1371] - 2026-10-12
+
+### Added — Nachforschen N0: Haus-Auffälligkeiten und lange brennende Lichter als Befunde (v1371)
+
+Erster Schritt von „Nachforschen vor dem Melden" (Owner-Freigabe 12.10.). Die deterministische Haus-Deutung — Fenster oder Tür offen und Bewegung, während niemand zu Hause ist, Rauch, CO, Wasser, ausgelöster Alarm — wurde bisher nur für Mini-Pässe genutzt und nie zu Befunden; solche Fälle kamen deshalb als Prosa-Vorgänge ohne Identität (Realfall: „Fenster von Lena prüfen" zweimal offen). Jetzt ist die Haus-Deutung Befund-Quelle `haus` mit allen Folgen: Identität, Regeln des Owners, Haltefristen (Rauch, Wasser, Alarm sofort und nie stummschaltbar), Lage und App-Ansicht „Befunde". Fortgeschrieben wird bei jeder Änderung und alle zehn Minuten, damit ein geschlossenes Fenster den Befund sicher beendet; der Mini-Pass läuft nicht doppelt.
+
+Neu ist außerdem eine tägliche Prüfung um 05:40 (beobachtend, ohne Vorgang): Lichter, die eine Automation mit Bewegungs- oder Belegungsmelder schaltet, werden über die letzten 24 Stunden mit dem Schnitt der sieben Tage davor verglichen. Brennt eines deutlich länger (Faktor 1,5, mindestens eine halbe Stunde) oder zwölf Stunden am Stück, entsteht ein Befund der Quelle `licht` mit Raum und zugehörigen Automationen (Logzeile „v1371 Licht-Dauer geprüft"). Stumme Melder und tote Geräte deckt weiterhin der Haus-Check ab.
+
 ## [0.19.0-jarvis.1370] - 2026-10-12
 
 ### Fixed — Lage schnitt ihre letzten Zeilen ab (v1370)

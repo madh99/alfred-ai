@@ -61,6 +61,15 @@ export class WeltmodellBeobachter {
   private befundeSync?: (quelle: string, deutung: { zeilen: string[]; auffaellig: string[] }) => Promise<void>;
   setBefundeSync(fn: (quelle: string, deutung: { zeilen: string[]; auffaellig: string[] }) => Promise<void>): void { this.befundeSync = fn; }
 
+  /**
+   * v1371 — nur Befunde fortschreiben, ohne Zustandswechsel-Ereignis: für Quellen, die ihren Mini-Pass selbst auslösen
+   * (Haus: HA-Ereignisse in Echtzeit, v1177) — sonst liefe derselbe Mini-Pass doppelt.
+   */
+  async befundeFortschreiben(quelle: string, deutung: { zeilen: string[]; auffaellig: string[] }): Promise<void> {
+    if (!this.befundeSync) return;
+    try { await this.befundeSync(quelle, deutung); } catch (err) { this.logger.warn({ err: (err as Error).message, quelle }, 'v1217 Befunde nicht fortgeschrieben'); }
+  }
+
   async beobachte(quelle: string, deutung: { zeilen: string[]; auffaellig: string[] } | undefined): Promise<Zustandswechsel | undefined> {
     if (!deutung) return undefined;
     if (this.befundeSync) {
