@@ -1829,7 +1829,20 @@ export class ReasoningContextCollector {
         parts.push(`Trends:\n${trends.value}`);
       }
       if (anomalies?.value && anomalies.value !== 'Keine Anomalien.') {
-        parts.push(`Anomalien:\n${anomalies.value}`);
+        // v1363 — Fehlerquoten der Wochenanalyse gegen die letzten 48 h prüfen (behobene Ausfälle nicht weiter melden)
+        let text = anomalies.value;
+        if (this.activityRepo) {
+          try {
+            const { aktuelleAnomalien } = await import('./active-learning/temporal-analyzer.js');
+            const zeilen = await this.activityRepo.weeklySkillStats(new Date(Date.now() - 48 * 3_600_000).toISOString(), this.resolvedUserId!);
+            const aktuell = new Map<string, { calls: number; errors: number }>();
+            for (const z of zeilen) { const a = aktuell.get(z.skillName) ?? { calls: 0, errors: 0 }; a.calls += z.calls; a.errors += z.errors; aktuell.set(z.skillName, a); }
+            const pr = aktuelleAnomalien(text, aktuell);
+            if (pr.entfernt.length) this.logger.info({ entfernt: pr.entfernt }, 'v1363 Wochen-Anomalie behoben — nicht mehr im Kontext');
+            text = pr.text;
+          } catch { /* Prüfung ist Zusatz — ohne sie bleibt die Wochenanalyse */ }
+        }
+        if (text.trim()) parts.push(`Anomalien:\n${text}`);
       }
       return parts.length > 0 ? parts.join('\n\n') : 'Keine temporalen Auffälligkeiten.';
     } catch {

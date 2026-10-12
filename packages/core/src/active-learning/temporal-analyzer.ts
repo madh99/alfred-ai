@@ -335,6 +335,25 @@ export class TemporalAnalyzer {
   }
 }
 
+/**
+ * v1363 — Wochen-Anomalien gegen den aktuellen Stand prüfen. Die Analyse läuft sonntags 04:00 über die Kalenderwoche;
+ * ihr Ergebnis lag dann eine ganze Woche unverändert im Reasoning-Kontext. Realfall 11.10.: „email: Error-Rate 50 %
+ * (normal 9 %)" aus den Fehlern vom 05.–07.10. (vor dem Token-Tausch) erzeugte bis 12.10. immer neue Hinweise und
+ * Vorgänge „Microsoft-Token erneuern", obwohl E-Mail 219/0 lief. Eine Fehlerquoten-Zeile entfällt, wenn der Skill in den
+ * letzten 48 h mindestens 5 Aufrufe mit unter 10 % Fehlern hatte; ohne genug Aufrufe bleibt sie (kein Beleg).
+ */
+export function aktuelleAnomalien(text: string, aktuell: Map<string, { calls: number; errors: number }>): { text: string; entfernt: string[] } {
+  const entfernt: string[] = [];
+  const bleiben = text.split('\n').filter((zeile) => {
+    const m = /^\[(?:\w+)\]\s+([\w.-]+):\s+(?:Error-Rate\b|\d+% Fehler\b)/.exec(zeile.trim());
+    if (!m) return true;
+    const a = aktuell.get(m[1]!);
+    if (a && a.calls >= 5 && a.errors / a.calls < 0.1) { entfernt.push(`${zeile.trim()} → letzte 48 h ${a.errors}/${a.calls} Fehler`); return false; }
+    return true;
+  });
+  return { text: bleiben.join('\n'), entfernt };
+}
+
 // ── Internal Types ────────────────────────────────────────────
 
 interface SkillWeekData {

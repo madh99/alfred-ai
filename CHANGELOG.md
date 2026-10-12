@@ -47,6 +47,14 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1363] - 2026-10-12
+
+### Fixed — Behobene Fehlerquoten blieben eine Woche im Kontext (v1363)
+
+Die Wochenanalyse vom 04.10. ergab „E-Mail 50 % Fehler (normal 9 %), Dateien 75 % (normal 6 %)" — die Fehler vor dem Tausch des Microsoft-Tokens am 07.10. Weil die Analyse nur sonntags läuft, stand die Zahl bis 11.10. unverändert im Kontext jedes Reasoning-Durchlaufs; Alfred meldete die Fehlerquote deshalb immer wieder, legte Vorgänge „Microsoft-Token erneuern" an und hielt die Behauptung danach über seine eigenen zugestellten Hinweise am Leben, obwohl E-Mail längst fehlerfrei lief.
+
+Jetzt wird jede Fehlerquote der Wochenanalyse beim Lesen gegen die letzten 48 Stunden geprüft: Hatte der Skill dort mindestens 5 Aufrufe mit unter 10 % Fehlern, entfällt sie (Logzeile „v1363 Wochen-Anomalie behoben"). Ohne genug Aufrufe bleibt sie stehen — ein einzelner Aufruf ist kein Beleg für Erholung.
+
 ## [0.19.0-jarvis.1362] - 2026-10-12
 
 ### Added — Entscheiden statt Abhaken: Ergebnis am Vorgang, Regeln für die Zukunft (v1362)
