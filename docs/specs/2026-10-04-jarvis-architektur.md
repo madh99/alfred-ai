@@ -811,3 +811,11 @@ Jede Owner-Reaktion trägt eine Art; „gelesen" verfälscht die Präzision nich
 ### Offene Owner-Entscheidungen
 
 „Erledigt" in „Nützlich" + „Gelesen" teilen (Vorschlag ja); Gründe-Liste wie oben; „schon bekannt" sperrt 7 Tage; Telegram-Knöpfe ja/nein; Reihenfolge K1 → K2 → K3 sofort oder K1 erst nach Auswertung E2 (~26.10.).
+
+### Owner-Entscheidungen (12.10.2026, „ok wie empfohlen freigegeben")
+
+„Erledigt" geteilt in „Nützlich" + „Gelesen"; Gründe-Liste wie oben; Telegram-Knöpfe ja. „Schon bekannt": Sperrdauer offen (Owner unsicher) → zwei Wochen beobachten (Logzeile „wäre als bekannt gesperrt", Tag seit Markierung, Inhalt gleich/geändert), dann entscheiden. Reihenfolge: K1 sofort, K2/K3 nach Auswertung ~26.10. (zusammen mit E2, Haus-Check und Schleife 2).
+
+### Umsetzungsstand
+
+- **v1364 + App 1.14.0 (12.10. 10:30):** K1 — Spalten `reaktion`, `reaktion_am` (PG v137 / SQLite v133); Reaktionen nuetzlich, gelesen, nicht_nuetzlich, bekannt, falsch, kein_interesse, zu_oft, besprochen über `/api/geraete/hinweise/<id>` (App bis 1.13: erledigt = gelesen, verwerfen = nicht nützlich); Logzeile „v1364 Hinweis-Reaktion" mit Ankern; Kennzahlen `hinweisNuetzlich`, `hinweisNichtNuetzlich`, `hinweisBekanntBeobachtet`; Telegram 👍/👎 je Hinweis passend zur Zeilennummer (auch aufgeschoben), Grund nach 👎, nur Owner-Chat; Beobachtung „bekannt" (`insights/hinweis-reaktion.ts`). Anker werden aus Titel + Text berechnet statt gespeichert (deterministisch, gleiche Funktion wie v1360). Live geprüft: Route 200, Reaktion in der DB, Logzeile, ungültige Aktion 400; Telegram-Knöpfe erst bei der nächsten Zustellung sichtbar.
