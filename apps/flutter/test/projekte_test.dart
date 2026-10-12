@@ -23,6 +23,7 @@ void main() {
       return {'id': 'p1', 'name': 'Angebots-Radar Österreich', 'geraet': 'Ubuntu-VM', 'pfad': '/home/madh/game', 'pruefBefehle': ['npm test'], 'offenePunkte': [],
         'laeufe': [{'id': 'sat-1', 'status': 'fertig', 'ziel': 'Grundgerüst', 'plan': ['A'], 'erledigt': [{'nr': 1, 'ok': true, 'kostenUsd': 4.73}], 'nr': 1, 'kostenUsd': 4.73, 'start': '2026-10-12T16:42:00Z'}]};
     }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
     await t.pumpWidget(MaterialApp(home: Scaffold(body: Projekte(json: json))));
     await t.pumpAndSettle();
     expect(find.text('Angebots-Radar Österreich'), findsOneWidget);
@@ -30,12 +31,28 @@ void main() {
     await t.pumpAndSettle();
     expect(find.textContaining('Abnahme: npm test'), findsOneWidget);
     expect(find.textContaining('✅ A'), findsOneWidget);
-    await t.enterText(find.byType(TextField), 'Merkliste teilen');
+    await t.enterText(find.byKey(const Key('wunsch-feld')), 'Merkliste teilen');
     await t.tap(find.text('Planen lassen'));
     await t.pumpAndSettle();
     expect(gesendet, {'aktion': 'weiter', 'text': 'Merkliste teilen'});
     expect(find.textContaining('Die Planfrage kommt zur Bestätigung'), findsOneWidget);
     expect(aufrufe, contains('POST /api/geraete/projekte/p1'));
+  });
+
+  testWidgets('1.15.2 Frage zum Projekt schickt die Frage', (t) async {
+    Map<String, dynamic>? gesendet;
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet = koerper; return {'success': true, 'display': 'Frage gestellt'}; }
+      return {'id': 'p1', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': []};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'p1', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('frage-feld')), 'Woher kommen die Hofer-Angebote?');
+    await t.tap(find.byKey(const Key('fragen')));
+    await t.pumpAndSettle();
+    expect(gesendet, {'aktion': 'frage', 'text': 'Woher kommen die Hofer-Angebote?'});
+    expect(find.textContaining('Die Antwort kommt als Meldung in den Chat'), findsOneWidget);
   });
 
   testWidgets('1.15.1 offene Planfrage: Freigeben direkt in der Projektansicht', (t) async {
@@ -45,6 +62,7 @@ void main() {
       return {'id': 'p1', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [],
         'laeufe': [{'id': 'sat-9', 'status': 'wartet_owner', 'ziel': 'Merkliste teilen', 'plan': ['A'], 'erledigt': [], 'nr': 0, 'kostenUsd': 0, 'start': '2026-10-12T21:00:00Z', 'frage': '🧭 Projekt auf Ubuntu-VM starten?', 'frageArt': 'plan'}]};
     }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
     await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'p1', json: json, zurueck: () {}))));
     await t.pumpAndSettle();
     expect(find.textContaining('Projekt auf Ubuntu-VM starten?'), findsOneWidget);

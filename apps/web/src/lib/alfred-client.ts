@@ -1648,6 +1648,11 @@ export class AlfredClient {
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
 
+  /** v1404 — Frage zum Projekt (Claude Code nur lesend; Antwort als Meldung) */
+  async geraetProjektFrage(id: string, text: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/frage`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ text }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   /** v1403 — offene Frage eines Laufs freigeben/ablehnen */
   async geraetLaufEntscheiden(id: string, lauf: string, entscheidung: 'freigeben' | 'ablehnen'): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/entscheiden`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ lauf, entscheidung }) });

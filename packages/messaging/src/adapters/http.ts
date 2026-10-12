@@ -807,7 +807,7 @@ export class HttpAdapter extends MessagingAdapter {
   private geraeteProjektIds = new Set<string>();
   setGeraeteProjektIds(ids: Set<string>): void { this.geraeteProjektIds = ids; }
   /** v1399 — Geräte-Projekt im Web: Stand (Akte mit Commits vom Gerät) und Weiterarbeiten (Plan → Owner-Bestätigung) */
-  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }> };
+  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }> };
   setGeraeteProjektCallbacks(cb: HttpAdapter['geraeteProjektCallbacks']): void { this.geraeteProjektCallbacks = cb; }
   private async handleGeraeteProjekt(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -820,6 +820,7 @@ export class HttpAdapter extends MessagingAdapter {
     let text = '';
     let j: { text?: unknown; lauf?: unknown; entscheidung?: unknown } = {};
     try { j = JSON.parse((await this.readBody(req)) || '{}') as typeof j; text = typeof j.text === 'string' ? j.text.trim().slice(0, 4000) : ''; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    if (url.pathname.endsWith('/frage')) { antwort(200, cb.frage && text ? await cb.frage(id, text) : { success: false, error: 'text fehlt (die Frage)' }); return; } // v1404
     if (url.pathname.endsWith('/entscheiden')) { antwort(200, cb.entscheiden && typeof j.lauf === 'string' && typeof j.entscheidung === 'string' ? await cb.entscheiden(id, j.lauf, j.entscheidung) : { success: false, error: 'lauf und entscheidung (freigeben|ablehnen) nötig' }); return; } // v1403
     if (!text) { antwort(400, { error: 'text fehlt (was soll als Nächstes passieren?)' }); return; }
     antwort(200, await cb.weiter(id, text));
@@ -1338,7 +1339,7 @@ export class HttpAdapter extends MessagingAdapter {
     }
 
     // v1399 — Geräte-Projekte: VOR allen Projekt-Routen (Realfall Live-Test: /environments lag weiter oben in der Kette und lief durch)
-    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err));
       return;
     }

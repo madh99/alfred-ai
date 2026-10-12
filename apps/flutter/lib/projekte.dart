@@ -124,12 +124,13 @@ class _ProjektDetailState extends State<ProjektDetail> {
   String? fehler, stand, meldung;
   bool standLaedt = false, plant = false, meldungOk = true;
   final wunsch = TextEditingController();
+  final frage = TextEditingController(); // 1.15.2
   final offen = <String>{};
 
   @override
   void initState() { super.initState(); laden(); }
   @override
-  void dispose() { wunsch.dispose(); super.dispose(); }
+  void dispose() { wunsch.dispose(); frage.dispose(); super.dispose(); }
 
   Future<void> laden() async {
     try {
@@ -158,6 +159,21 @@ class _ProjektDetailState extends State<ProjektDetail> {
       if (!mounted) return;
       setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Entschieden.'}' : '${r['error'] ?? 'Fehler'}'; });
       if (ok) { widget.aufMeldung?.call(aktion == 'freigeben' ? '🧭 Projekt freigegeben' : '🧭 Projekt abgelehnt'); await laden(); }
+    } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
+    finally { if (mounted) setState(() => plant = false); }
+  }
+
+  /// 1.15.2 — Frage zum Projekt: Claude Code liest nur; die Antwort kommt als Meldung in den Chat (≈1 min)
+  Future<void> fragen() async {
+    final t = frage.text.trim();
+    if (t.isEmpty) return;
+    setState(() { plant = true; meldung = null; });
+    try {
+      final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': 'frage', 'text': t});
+      final ok = r['success'] == true;
+      if (!mounted) return;
+      setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Gefragt.'}\nDie Antwort kommt als Meldung in den Chat.' : '${r['error'] ?? 'Fehler'}'; });
+      if (ok) frage.clear();
     } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
     finally { if (mounted) setState(() => plant = false); }
   }
@@ -206,13 +222,22 @@ class _ProjektDetailState extends State<ProjektDetail> {
           Text('Weiterarbeiten', style: theme.textTheme.titleSmall),
           Text('Nur, was als Nächstes passieren soll. Gerät, Verzeichnis, Abnahme und den Bestand kennt Alfred. Er plant und fragt dich vor dem Start.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
           const SizedBox(height: 8),
-          TextField(controller: wunsch, minLines: 2, maxLines: 5, enabled: !plant && !laeuftGerade, decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'z. B. Die Merkliste soll man per Link teilen können.')),
+          TextField(key: const Key('wunsch-feld'), controller: wunsch, minLines: 2, maxLines: 5, enabled: !plant && !laeuftGerade, decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'z. B. Die Merkliste soll man per Link teilen können.')),
           const SizedBox(height: 8),
           Row(children: [
             FilledButton.tonal(onPressed: plant || laeuftGerade ? null : weiter, child: Text(plant ? 'Plane …' : 'Planen lassen')),
             if (laeuftGerade) Expanded(child: Padding(padding: const EdgeInsets.only(left: 12), child: Text('Ein Lauf läuft oder wartet gerade.', style: theme.textTheme.bodySmall))),
           ]),
           if (meldung != null) Padding(padding: const EdgeInsets.only(top: 8), child: SelectableText(meldung!, style: theme.textTheme.bodySmall?.copyWith(color: meldungOk ? null : theme.colorScheme.error))),
+        ]))),
+        const SizedBox(height: 8),
+        Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Frage zum Projekt', style: theme.textTheme.titleSmall),
+          Text('Claude Code liest im Projekt und antwortet, ändert aber nichts. Die Antwort kommt nach etwa einer Minute als Meldung in den Chat.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+          const SizedBox(height: 8),
+          TextField(key: const Key('frage-feld'), controller: frage, minLines: 1, maxLines: 4, enabled: !plant, decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'z. B. Woher holt die App die Hofer-Angebote?')),
+          const SizedBox(height: 8),
+          OutlinedButton(key: const Key('fragen'), onPressed: plant ? null : fragen, child: const Text('Fragen')),
         ]))),
         const SizedBox(height: 12),
         Text('Läufe', style: theme.textTheme.titleSmall),

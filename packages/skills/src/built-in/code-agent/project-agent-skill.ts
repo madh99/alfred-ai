@@ -311,6 +311,8 @@ export interface SatellitProjektHandler {
   projektWeiter?: (ref: string, input: Record<string, unknown>, context: SkillContext) => Promise<SkillResult>;
   umbenennen?: (ref: string, name: string) => Promise<SkillResult>;
   archivieren?: (ref: string) => Promise<SkillResult>;
+  /** v1404 — Frage zum Projekt (Claude Code nur lesend) */
+  frage?: (ref: string, frage: string, context: SkillContext) => Promise<SkillResult>;
 }
 
 export class ProjectAgentSkill extends Skill {
@@ -400,7 +402,7 @@ WANN NICHT NUTZEN — stattdessen code_agent.run:
 Faustregel: Wenn du selbst sagen würdest "das sind 1-2 Edits" → code_agent. Sonst project_agent.
 
 Actions:
-- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs"). WICHTIG zur cwd: das ist der LOKALE Entwicklungs-Pfad auf der Alfred-Node (z.B. /home/madh/projects/<projektname>), NICHT der Deploy-Target-Pfad auf einem Remote-Host. Wenn die Deploy-Memory sagt "Projekt X läuft auf 192.168.1.96 als ubuntu" ist das der Deploy-Target, NICHT der Workspace. Für Continue-Sessions desselben Projekts: gleichen cwd wie der letzte erfolgreiche Lauf benutzen (siehe project_workspace_<projektname> Memory falls vorhanden). v1387 — Soll das Projekt auf einem GERÄT des Owners entstehen (z. B. „auf der Ubuntu-VM"): zusätzlich geraet=<Gerätename>; cwd ist dann ein freigegebenes Verzeichnis auf dem Gerät, buildCommands/testCommands sind die Abnahme je Etappe (ohne sie fragt Alfred nach jeder Etappe). Status/Stopp mit der task_id sat-…. v1398 — PROJEKTE AUF GERÄTEN SIND AKTEN mit Namen (z. B. „Supermarkt-Angebote“): projekte = Liste aller Projekte; projekt_akte projekt=<Name oder prj-…> = Läufe, Etappen, Commits; projekt_weiter projekt=<Name> goal=<NUR was der Owner jetzt will> = am bestehenden Projekt weiterarbeiten — Gerät, Verzeichnis, Prüfbefehle und Bestand kennt Alfred aus der Akte, NICHT nachfragen und NICHT start verwenden; projekt_umbenennen projekt=<alt> name=<neu>; projekt_archivieren projekt=<Name>. Nennt der Owner beim Start einen Projektnamen, name=<Name> mitgeben.
+- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs"). WICHTIG zur cwd: das ist der LOKALE Entwicklungs-Pfad auf der Alfred-Node (z.B. /home/madh/projects/<projektname>), NICHT der Deploy-Target-Pfad auf einem Remote-Host. Wenn die Deploy-Memory sagt "Projekt X läuft auf 192.168.1.96 als ubuntu" ist das der Deploy-Target, NICHT der Workspace. Für Continue-Sessions desselben Projekts: gleichen cwd wie der letzte erfolgreiche Lauf benutzen (siehe project_workspace_<projektname> Memory falls vorhanden). v1387 — Soll das Projekt auf einem GERÄT des Owners entstehen (z. B. „auf der Ubuntu-VM"): zusätzlich geraet=<Gerätename>; cwd ist dann ein freigegebenes Verzeichnis auf dem Gerät, buildCommands/testCommands sind die Abnahme je Etappe (ohne sie fragt Alfred nach jeder Etappe). Status/Stopp mit der task_id sat-…. v1398 — PROJEKTE AUF GERÄTEN SIND AKTEN mit Namen (z. B. „Supermarkt-Angebote“): projekte = Liste aller Projekte; projekt_akte projekt=<Name oder prj-…> = Läufe, Etappen, Commits; projekt_weiter projekt=<Name> goal=<NUR was der Owner jetzt will> = am bestehenden Projekt weiterarbeiten — Gerät, Verzeichnis, Prüfbefehle und Bestand kennt Alfred aus der Akte, NICHT nachfragen und NICHT start verwenden; projekt_umbenennen projekt=<alt> name=<neu>; projekt_archivieren projekt=<Name>; projekt_frage projekt=<Name> frage=<Frage> = Frage zum Code/Stand an Claude Code im Nur-Lese-Modus (ändert nichts, ohne Bestätigung, Antwort kommt nach ≈1 min). Nennt der Owner beim Start einen Projektnamen, name=<Name> mitgeben.
 - status: Check current status of a project agent session. Params: task_id. Returns currentPhase — if 'done' or 'failed', the session has ENDED and interject will not work; start a fresh one instead.
 - interject: Send a message to a CURRENTLY RUNNING project agent (e.g. "add feature X"). Params: task_id, message. DO NOT use interject if the session is already finished/done/failed — start a new session with action='start' instead. The skill will reject interject on terminated sessions with a clear error.
 - stop: Stop a running project agent. Params: task_id
@@ -413,7 +415,7 @@ Actions:
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren'],
+            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage'],
             description: 'Project agent action',
           },
           goal: { type: 'string', description: 'What to build (for start)' },
@@ -426,6 +428,7 @@ Actions:
           // v1398 — Projektakten
           projekt: { type: 'string', description: 'Für projekt_akte/projekt_weiter/projekt_umbenennen/projekt_archivieren: Projektname, wie der Owner ihn nennt, oder Kennung prj-…' },
           name: { type: 'string', description: 'Projektname: beim start mit geraet, wenn der Owner einen nennt; bei projekt_umbenennen der neue Name' },
+          frage: { type: 'string', description: 'Für projekt_frage: die Frage zum Projekt' },
           // v851.1 — import_feature params
           feature_id: { type: 'string', description: 'Feature-UUID aus Features-Library (für import_feature)' },
           target_cwd: { type: 'string', description: 'Target-Projekt-cwd wohin der Snapshot importiert wird (für import_feature)' },
@@ -475,7 +478,7 @@ Actions:
       return this.satellit.start(input, context);
     }
     // v1398 — Projektakten
-    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren'].includes(action) || satId.startsWith('prj-')) {
+    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage'].includes(action) || satId.startsWith('prj-')) {
       if (!this.satellit?.projekte) return { success: false, error: 'Projektakten sind nicht verfügbar' };
       const ref = String(input.projekt ?? input.task_id ?? '').trim();
       if (action === 'projekte') return this.satellit.projekte();
@@ -483,6 +486,7 @@ Actions:
       if (action === 'projekt_weiter') return this.satellit.projektWeiter!(ref, input, context);
       if (action === 'projekt_umbenennen') return this.satellit.umbenennen!(ref, String(input.name ?? '').trim());
       if (action === 'projekt_archivieren') return this.satellit.archivieren!(ref);
+      if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };
       return this.satellit.akte!(ref);
     }
     if (satId.startsWith('sat-') || action === 'satellit_antwort' || action === 'satellit_weiter') {

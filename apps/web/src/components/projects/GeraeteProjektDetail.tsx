@@ -34,6 +34,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
   const laeufe = [...(detail.geraetLaeufe ?? [])].sort((a, b) => b.start.localeCompare(a.start));
   const kosten = laeufe.reduce((s, l) => s + l.kostenUsd, 0);
   const [wunsch, setWunsch] = useState('');
+  const [frage, setFrage] = useState(''); // v1404
   const [busy, setBusy] = useState(false);
   const [meldung, setMeldung] = useState<{ ok: boolean; text: string } | null>(null);
   const [stand, setStand] = useState<string | null>(null);
@@ -60,6 +61,18 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
       const r = await client.geraetLaufEntscheiden(p.id, lauf, e);
       setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Entschieden.') : (r.error ?? 'Fehler') });
       if (r.success) setTimeout(onReload, 800);
+    } catch (err) { setMeldung({ ok: false, text: err instanceof Error ? err.message : String(err) }); }
+    finally { setBusy(false); }
+  }
+
+  async function fragen() {
+    const text = frage.trim();
+    if (!text) return;
+    setBusy(true); setMeldung(null);
+    try {
+      const r = await client.geraetProjektFrage(p.id, text);
+      setMeldung({ ok: r.success, text: r.success ? `${r.display ?? 'Gefragt.'}\nDie Antwort kommt als Meldung (Telegram/App).` : (r.error ?? 'Fehler') });
+      if (r.success) setFrage('');
     } catch (err) { setMeldung({ ok: false, text: err instanceof Error ? err.message : String(err) }); }
     finally { setBusy(false); }
   }
@@ -116,6 +129,15 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
           {meldung && <div className={`text-xs whitespace-pre-wrap rounded px-2 py-1 border ${meldung.ok ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10' : 'text-red-300 border-red-500/30 bg-red-500/10'}`}>{meldung.text}</div>}
         </div>
       )}
+
+      <div className="bg-[#161616] border border-[#2a2a2a] rounded p-3 space-y-2">
+        <div className="text-sm text-gray-200 font-medium">Frage zum Projekt</div>
+        <div className="text-[11px] text-gray-500">Claude Code liest im Projekt und antwortet, ändert aber nichts. Die Antwort kommt nach etwa einer Minute als Meldung.</div>
+        <div className="flex gap-2">
+          <input value={frage} onChange={e => setFrage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') fragen(); }} placeholder="z. B. Woher holt die App die Hofer-Angebote?" className="flex-1 px-3 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-sm text-gray-200" disabled={busy} />
+          <button onClick={fragen} disabled={busy || !frage.trim()} className="px-3 py-1.5 text-xs bg-[#1a1a1a] text-gray-200 rounded border border-[#2a2a2a] disabled:opacity-40">Fragen</button>
+        </div>
+      </div>
 
       <div className="space-y-2">
         <div className="text-sm text-gray-200 font-medium">Läufe</div>

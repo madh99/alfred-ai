@@ -23,6 +23,11 @@ export function alsDatenblock(text: string, max = 1500): string {
 }
 
 export function auftragMeldung(geraet: string, e: GeraetEreignis): string {
+  // v1404 — Frage zum Projekt (nur lesend): die Antwort selbst ist die Meldung
+  if (e.titel.startsWith('Frage: ')) {
+    const kopf = `❓ ${e.titel.slice(7)} — ${e.status === 'fertig' ? 'Antwort' : `keine Antwort (${STATUS[e.status] ?? e.status})`} von Claude Code auf ${geraet}${e.kosten !== undefined ? ` (${e.kosten.toFixed(2).replace('.', ',')} $)` : ''}:`;
+    return [kopf, `Projekt: ${e.projekt}`, ...(e.fehler ? [`Fehler: ${alsDatenblock(e.fehler, 300)}`] : []), '', alsDatenblock(e.text ?? '', 3500) || '(keine Ausgabe)'].join('\n');
+  }
   const teile = [dauerText(e.dauerS), e.kosten !== undefined ? `${e.kosten.toFixed(2).replace('.', ',')} $` : ''].filter(Boolean);
   const zeilen = [`Claude-Code-Auftrag „${e.titel}" auf ${geraet} ${STATUS[e.status] ?? e.status}${teile.length ? ` (${teile.join(', ')})` : ''}.`, `Projekt: ${e.projekt}`];
   const anzahl = e.dateienAnzahl ?? e.dateien?.length ?? 0;

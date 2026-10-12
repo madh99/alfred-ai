@@ -1228,6 +1228,7 @@ export class MessagePipeline {
               lines.push(`- **ZIEL-BINDUNG**: Arbeite NUR an diesem Projekt.`);
               lines.push(`- Bauen/Erweitern/Fixen ("baue X ein", "fix Y") → project_agent action=projekt_weiter projekt="${proj.name}" goal=<NUR der Wunsch des Owners>. Gerät, Verzeichnis, Prüfbefehle und Bestand kennt Alfred — nicht nachfragen.`);
               lines.push(`- Stand, Läufe, Etappen, Commits → project_agent action=projekt_akte projekt="${proj.name}".`);
+              lines.push(`- Fragen zum Code oder Inhalt ("wie funktioniert …", "woher kommen …") → project_agent action=projekt_frage projekt="${proj.name}" frage=<Frage> (Claude Code nur lesend, Antwort nach ≈1 min).`);
               lines.push(`- NIE project_agent.start ohne geraet, NIE code_agent, shell, deploy oder git auf dem Server mit diesem Verzeichnis — es existiert dort nicht.`);
               lines.push(`- "füge … zur Liste" → project.add_open_item.`);
             }

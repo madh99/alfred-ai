@@ -109,6 +109,7 @@ export function baueManifest(version: string): GeraetManifest {
       // v1342 — Aufträge an Claude Code im Druckmodus (Owner 10.10.): Projekt anlegen/ändern nach Spezifikation, läuft abgekoppelt, Ende wird gemeldet
       ...(claudeVerfuegbar() ? [
         { name: 'auftrag_starten', beschreibung: 'Gibt Claude Code auf diesem Gerät einen Auftrag (Projekt anlegen, Funktion bauen, Fehler beheben) nach einer Spezifikation. Läuft im Hintergrund, oft viele Minuten; das Ende wird automatisch gemeldet. Ein EINZELNER Auftrag — für ein Projekt in mehreren Etappen mit Abnahme (Tests/Build je Etappe) stattdessen project_agent start mit geraet=<dieses Gerät>. projekt = vorhandenes Verzeichnis mit Schreibrecht; auftrag = vollständige Spezifikation (Ziel, Technik, Dateien, Abnahme).', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Pfad des Projektverzeichnisses (freigegeben, schreibend)' }, auftrag: { type: 'string', description: 'Spezifikation als Text (Markdown)' }, titel: { type: 'string', description: 'Kurztitel' }, max_kosten_usd: { type: 'number', description: 'Optional: Kostengrenze für diesen Auftrag in USD (Claude Code hält sie selbst ein)' }, git_uebernehmen: { type: 'boolean', description: 'Nur für Projekte (project_agent): bestehendes Verzeichnis ohne Git als Repository anlegen und den Stand als Ausgangs-Commit sichern' } } },
+        { name: 'projekt_frage', beschreibung: 'Frage zum Projekt an Claude Code im Nur-Lese-Modus (Plan-Modus, ohne Schreib- und Shell-Werkzeuge — kann nichts ändern). Läuft im Hintergrund (≈1 min), die Antwort kommt als Ende-Meldung', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Pfad des Projektverzeichnisses (freigegeben)' }, frage: { type: 'string', description: 'Die Frage' } } }, // v1404
         { name: 'projekt_lesen', beschreibung: 'Bestand eines Projektordners nur lesend: README, Paket und Skripte, Struktur (Tiefe 2), letzte Commits — für Projekte (project_agent) und Fragen zum Stand', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Pfad des Projektverzeichnisses (freigegeben, lesend)' } } }, // v1398
         { name: 'auftrag_stand', beschreibung: 'Stand eines laufenden oder beendeten Auftrags: läuft noch?, Dauer, letzte Protokollzeilen', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung aus auftrag_starten' } } },
         { name: 'auftrag_ergebnis', beschreibung: 'Ergebnis eines beendeten Auftrags (Zusammenfassung von Claude Code, Kosten, Dauer)', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung' } } },
@@ -328,6 +329,18 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
         const maxK = Number(params.max_kosten_usd);
         const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg), ...(Number.isFinite(maxK) && maxK > 0 ? { maxKostenUsd: Math.min(maxK, 100) } : {}), ...(params.git_uebernehmen === true ? { gitUebernehmen: true } : {}) }); // v1382 R1, v1394 Budget, v1397 Git
         return { success: true, data: { id: m.id, titel: m.titel, projekt: m.projekt, start: m.start, auftragDatei: m.auftragDatei, ...(m.git ? { git: m.git } : {}) }, display: `Auftrag ${m.id} („${m.titel}") auf ${k.name} gestartet in ${m.projekt}${m.gitAngelegt ? ' (neues Verzeichnis, als Git-Repository angelegt)' : ''}. Läuft im Hintergrund; Stand mit auftrag_stand ${m.id}, Ergebnis mit auftrag_ergebnis ${m.id}.` };
+      } catch (err) { return { success: false, error: (err as Error).message }; }
+    }
+    // v1404 — Frage zum Projekt: Claude Code nur lesend (Plan-Modus + gesperrte Schreib-/Shell-Werkzeuge), Kosten je Frage gedeckelt
+    case 'projekt_frage': {
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      const frage = String(params.frage ?? params.text ?? '').trim().slice(0, 4000);
+      if (!projekt) return { success: false, error: 'projekt fehlt (absoluter Pfad)' };
+      if (!frage) return { success: false, error: 'frage fehlt' };
+      if (!istPfadErlaubt(projekt, lesbar)) return { success: false, error: `Verzeichnis nicht freigegeben: ${projekt}` };
+      try {
+        const m = auftragStarten({ projekt, auftrag: frage, titel: `Frage: ${frage.split('\n')[0]!.slice(0, 70)}`, nurLesen: true, maxKostenUsd: 0.5, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) });
+        return { success: true, data: { id: m.id, projekt: m.projekt }, display: `Frage an Claude Code auf ${k.name} gestellt (nur lesend, höchstens 0,50 $). Die Antwort kommt in etwa einer Minute.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
     // v1398 — Projekte sichtbar und fortsetzbar: Bestand lesen (nur lesend, nur freigegebene Verzeichnisse)

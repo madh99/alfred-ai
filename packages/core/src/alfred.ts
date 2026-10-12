@@ -15657,6 +15657,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
       weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, ctx(`sitzung:${geraetId}`)),
+      frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, ctx(`sitzung:${geraetId}`)), // v1404 Antwort in die App-Sitzung
       entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
     };
   }
@@ -15893,6 +15894,21 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         await namenAuffrischen();
         return { success: true, display: `Projekt ${t.akte.name} heißt jetzt ${n}.` };
       },
+      // v1404 — Frage zum Projekt: Claude Code nur lesend auf dem Gerät; Antwort als Ende-Meldung in die fragende Sitzung
+      frage: async (ref, frage, context) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        if (!frage) return { success: false, error: 'frage fehlt' };
+        const g = gw.geraetNachName(t.akte.geraetId) ?? gw.geraetNachName(t.akte.geraet);
+        if (!g) return { success: false, error: `${t.akte.geraet} ist gerade nicht verbunden` };
+        if (!g.aktionen.includes('projekt_frage')) return { success: false, error: `Der Satellit auf ${g.name} kann noch keine Fragen (Update ≥ 1404 nötig)` };
+        const r = await gw.sendeAktion(g.id, 'projekt_frage', { projekt: t.akte.pfad, frage }, 60_000);
+        const id = (r.data as { id?: string } | undefined)?.id;
+        if (!r.success || !id) return { success: false, error: r.error ?? 'Frage nicht gestellt' };
+        if (context.chatId) gw.merkeAuftragHerkunft(g.id, id, { chatId: context.chatId, platform: context.platform, userId: context.userId });
+        this.logger.info({ projekt: t.akte.id, auftrag: id, laenge: frage.length }, 'v1404 Frage zum Projekt gestellt');
+        return { success: true, data: { auftrag: id }, display: `Frage zu ${t.akte.name} an Claude Code auf ${g.name} gestellt (nur lesend, höchstens 0,50 $). Die Antwort kommt in etwa einer Minute.` };
+      },
       archivieren: async (ref) => {
         const t = await akteAus(ref);
         if ('fehler' in t) return { success: false, error: t.fehler };
@@ -15956,6 +15972,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: `project:${id}` } as never),
       weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never),
       entscheiden: async (id: string, lauf: string, e: string) => (projekte.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') ? this.geraeteLaufEntscheiden!(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }), // v1403
+      frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never), // v1404
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
     // v1393 — Lage nach dem Start einmal berechnen (sonst fehlte sie bis zum nächsten Befund-/Vorgangsereignis; Realfall 12.10.: stand null nach Update)

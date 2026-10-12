@@ -306,6 +306,9 @@ export class GeraeteGateway {
     }
   }
 
+  /** v1404 — Herkunft eines vom Gehirn direkt gestarteten Auftrags (Frage zum Projekt): die Ende-Meldung geht in die fragende Sitzung. */
+  merkeAuftragHerkunft(geraetId: string, auftragId: string, h: { chatId: string; platform: string; userId: string }): void { this.auftraege.merke(geraetId, auftragId, h); }
+
   /** v1387 — verbundenes Gerät nach Name (ohne Groß-/Kleinschreibung) oder ID. */
   geraetNachName(name: string): { id: string; name: string; aktionen: string[] } | undefined {
     const n = name.trim().toLowerCase();

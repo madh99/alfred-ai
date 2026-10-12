@@ -78,32 +78,34 @@ function laeuft(pid: number | undefined): boolean {
 }
 
 /** Auftrag starten: Spezifikation als AUFTRAG-<id>.md ins Projekt, `claude -p` abgekoppelt, Protokoll in ~/.alfred/auftraege/<id>/. */
-export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean }): AuftragMeta {
+export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean; nurLesen?: boolean }): AuftragMeta {
   const claude = opts.claude ?? claudePfad();
   if (!claude) throw new Error('Claude Code ist auf diesem Gerät nicht installiert (claude nicht im PATH)');
   // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
+  // v1404 — Frage zum Projekt: Verzeichnis muss existieren; keine Auftragsdatei, kein Git, keine Schreib-/Shell-Werkzeuge (siehe argumenteFuer)
+  if (opts.nurLesen && !existsSync(opts.projekt)) throw new Error(`Projektverzeichnis fehlt: ${opts.projekt}`);
   const neu = !existsSync(opts.projekt);
   if (neu) mkdirSync(opts.projekt, { recursive: true });
   if (!statSync(opts.projekt).isDirectory()) throw new Error(`Projektpfad ist kein Verzeichnis: ${opts.projekt}`);
   // v1396 — Owner 12.10.: neue Projektordner automatisch als Git-Repository, damit jede Etappe nachvollziehbar committet wird
-  let gitAngelegt = neu && gitAnlegen(opts.projekt) === 'angelegt';
+  let gitAngelegt = !opts.nurLesen && neu && gitAnlegen(opts.projekt) === 'angelegt';
   // v1397 — bestehendes Verzeichnis ohne Git: nur wenn das Projekt es verlangt (Owner hat es mit dem Plan freigegeben); vor der Auftragsdatei
-  const git = !neu && opts.gitUebernehmen ? gitUebernehmen(opts.projekt) : undefined;
+  const git = !opts.nurLesen && !neu && opts.gitUebernehmen ? gitUebernehmen(opts.projekt) : undefined;
   if (git?.status === 'angelegt') gitAngelegt = true;
   const id = neueAuftragId();
   const ordner = path.join(auftraegeOrdner(opts.home), id);
   mkdirSync(ordner, { recursive: true });
-  const auftragDatei = path.join(opts.projekt, `AUFTRAG-${id}.md`);
+  // v1404 — die Frage liegt im Auftragsordner, nicht im Projekt (nur lesend: das Projekt bleibt unberührt)
+  const auftragDatei = opts.nurLesen ? path.join(ordner, 'FRAGE.md') : path.join(opts.projekt, `AUFTRAG-${id}.md`);
   writeFileSync(auftragDatei, `# ${opts.titel ?? 'Auftrag'}\n\n${opts.auftrag.trim()}\n`);
   // v1392 — stream-json: Claude Code schreibt jeden Schritt sofort ins Protokoll (Fortschritt sichtbar), die result-Zeile am Ende bleibt gleich
   // v1394 — ohne die Benutzereinstellungen (~/.claude: Hooks, MCP-Server, Umgebung des Owners; Realfall 12.10.: claude-flow-Hook vor jedem
   // Befehl bremste die Etappe) — Projekt-Einstellungen gelten weiter; optional Kostengrenze je Auftrag
-  const args = ['-p', auftragPrompt(auftragDatei, opts.projekt), '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto', '--setting-sources', 'project,local', '--strict-mcp-config', // v1395 — keine MCP-Server aus ~/.mcp.json (claude-flow, ruv-swarm)
-    ...(opts.maxKostenUsd !== undefined && opts.maxKostenUsd > 0 ? ['--max-budget-usd', String(opts.maxKostenUsd)] : [])];
+  const args = argumenteFuer({ prompt: opts.nurLesen ? fragePrompt(opts.auftrag, opts.projekt) : auftragPrompt(auftragDatei, opts.projekt), nurLesen: !!opts.nurLesen, maxKostenUsd: opts.maxKostenUsd });
   const log = openSync(logPfad(id, opts.home), 'a');
   const istCmd = /\.cmd$/i.test(claude);
   const kind = spawn(istCmd ? 'cmd.exe' : claude, istCmd ? ['/c', claude, ...args] : args, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, CLAUDE_CODE_NO_UPDATE_CHECK: '1' } });
-  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto --setting-sources project,local --strict-mcp-config${opts.maxKostenUsd ? ` --max-budget-usd ${opts.maxKostenUsd}` : ''}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}), ...(git ? { git } : {}) };
+  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … ${args.slice(2).join(' ')}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}), ...(git ? { git } : {}) };
   speichereMeta(meta, opts.home);
   kind.on('error', (err) => {
     closeSync(log);
@@ -391,4 +393,24 @@ export function projektLesen(dir: string, git = 'git'): ProjektBestand {
     }
   } catch { /* kein Git oder noch keine Commits */ }
   return { ...(readme ? { readme } : {}), ...(paket ? { paket } : {}), baum, commits, git: istGit };
+}
+
+/** v1404 — Werkzeuge, die eine Frage zum Projekt nicht hat (Nachweis VM 13.10. 00:02: Datei unverändert, nichts angelegt, git status leer). */
+export const NUR_LESEN_GESPERRT = 'Edit Write MultiEdit NotebookEdit Bash';
+
+/**
+ * v1392/v1394/v1395 — Argumente für `claude -p`: stream-json (Fortschritt), ohne Benutzereinstellungen und fremde MCP-Server;
+ * v1404 — nurLesen: Plan-Modus (nur lesen) UND Schreib-/Shell-Werkzeuge gesperrt — technisch keine Änderung möglich.
+ */
+export function argumenteFuer(o: { prompt: string; nurLesen: boolean; maxKostenUsd?: number }): string[] {
+  return ['-p', o.prompt, '--output-format', 'stream-json', '--verbose',
+    '--permission-mode', o.nurLesen ? 'plan' : 'auto',
+    ...(o.nurLesen ? ['--disallowedTools', NUR_LESEN_GESPERRT] : []),
+    '--setting-sources', 'project,local', '--strict-mcp-config',
+    ...(o.maxKostenUsd !== undefined && o.maxKostenUsd > 0 ? ['--max-budget-usd', String(o.maxKostenUsd)] : [])];
+}
+
+/** v1404 — Prompt für eine Frage zum Projekt (Frage als Text; Claude Code liest im Projektverzeichnis und antwortet). */
+export function fragePrompt(frage: string, projekt: string): string {
+  return `Beantworte eine Frage zum Projekt im Verzeichnis ${projekt}. Lies dafür, was du brauchst (README, Code, Konfiguration), ändere aber nichts. Antworte auf Deutsch, knapp und konkret, mit Dateinamen und Zeilen, wo hilfreich. Geheimnisse (Schlüssel, Passwörter, Tokens) nie wörtlich wiedergeben.\n\nFrage: ${frage.trim()}`;
 }
