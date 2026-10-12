@@ -4,7 +4,7 @@ import { begrenzePlan, mutationAutomatisch, grenzeErreicht, STANDARD_GRENZEN } f
 import type { GeraetEreignis } from '@alfred/types';
 
 // v1387 (R2) — Projekt-Agent am Satelliten, Ablauf mit simuliertem Gerät
-function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number } = {}) {
+function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown> } = {}) {
   const aufrufe: Array<{ aktion: string; params: Record<string, unknown> }> = [];
   const fragen: Array<{ text: string; nonce: string }> = [];
   const meldungen: string[] = [];
@@ -15,7 +15,7 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
     anwenden: (rest, _n, m) => m.kind === 'skip' ? rest.filter((_, i) => !(m.phaseIndices ?? []).includes(i)) : m.kind === 'extend' ? [m.newPhase!, ...rest] : rest,
     aktion: async (_g, aktion, params) => {
       aufrufe.push({ aktion, params });
-      if (aktion === 'auftrag_starten') return { success: true, data: { id: `a${++auftragNr}` } };
+      if (aktion === 'auftrag_starten') return { success: true, data: { id: `a${++auftragNr}`, ...(params.git_uebernehmen && o.git ? { git: o.git } : {}) } };
       if (aktion === 'pruefen_befehl') { const ok = (o.pruefung ?? (() => true))(++pruefNr); return { success: true, data: { ok }, display: ok ? 'Alle Prüfungen bestanden' : '❌ befehl npm test — Exit 1\n   FAIL x.test.js' }; }
       return { success: true };
     },
@@ -183,6 +183,30 @@ describe('Fortsetzen angehaltener Projekte', () => {
     const { p, fragen } = aufbau();
     await p.starte({ ...start, verzeichnisNeu: true });
     expect(fragen[0]!.text).toMatch(/Verzeichnis: \/home\/madh\/claudecode\/r2 \(neu — wird als Git-Repository angelegt/);
+  });
+  it('v1397 bestehendes Verzeichnis ohne Git: Planfrage nennt es, nur der erste Auftrag legt an, Ergebnis wird gemeldet', async () => {
+    const { p, fragen, aufrufe, meldungen, ende } = aufbau({ git: { status: 'angelegt', commit: 'abc1234', grosse: ['daten/dump.sql'] } });
+    const s = await p.starte({ ...start, gitUebernehmen: true });
+    expect(fragen[0]!.text).toMatch(/Kein Git-Repository: wird angelegt, der jetzige Stand als Ausgangs-Commit „Stand vor Alfred"/);
+    expect(fragen[0]!.text).toMatch(/und das Anlegen des Git-Repositorys/);
+    expect(aufrufe).toHaveLength(0); // erst mit der Freigabe
+    await p.antwort(s.id, fragen[0]!.nonce);
+    expect(aufrufe[0]!.params.git_uebernehmen).toBe(true);
+    expect(meldungen.some(m => /Git: Repository angelegt, Ausgangs-Commit abc1234 „Stand vor Alfred"\. Nicht aufgenommen \(über 10 MB\): daten\/dump\.sql/.test(m))).toBe(true);
+    await ende(s);
+    const starts = aufrufe.filter(a => a.aktion === 'auftrag_starten');
+    expect(starts).toHaveLength(2);
+    expect(starts[1]!.params.git_uebernehmen).toBeUndefined();
+  });
+  it('v1397 ohne Git-Übernahme: kein Hinweis, kein Parameter; neues Verzeichnis hat Vorrang', async () => {
+    const a = aufbau();
+    const s = await a.p.starte(start);
+    expect(a.fragen[0]!.text).not.toMatch(/Kein Git-Repository/);
+    await a.p.antwort(s.id, a.fragen[0]!.nonce);
+    expect(a.aufrufe[0]!.params.git_uebernehmen).toBeUndefined();
+    const b = aufbau();
+    await b.p.starte({ ...start, verzeichnisNeu: true, gitUebernehmen: true });
+    expect(b.fragen[0]!.text).not.toMatch(/Kein Git-Repository/);
   });
 });
 

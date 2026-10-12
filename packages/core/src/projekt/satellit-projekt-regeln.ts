@@ -54,16 +54,18 @@ export function fixAuftrag(o: { ziel: string; nr: number; etappe: string; versuc
   ].join('\n');
 }
 
-export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean }): string {
+export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean }): string {
   return [
     `🧭 Projekt auf ${o.geraet} starten?`,
     `Ziel: ${o.ziel.slice(0, 300)}`,
     `Verzeichnis: ${o.projekt}${o.verzeichnisNeu ? ' (neu — wird als Git-Repository angelegt, jede Etappe ein Commit)' : ''}`,
+    // v1397 — bestehendes Verzeichnis ohne Git
+    ...(o.gitUebernehmen ? ['Kein Git-Repository: wird angelegt, der jetzige Stand als Ausgangs-Commit „Stand vor Alfred" gesichert (ohne node_modules, .env, Logs und Dateien über 10 MB), danach jede Etappe ein Commit.'] : []),
     `Etappen${o.gekuerzt ? ` (auf ${o.g.maxEtappen} gekürzt)` : ''}:`,
     ...o.plan.map((p, i) => `${i + 1}. ${p.slice(0, 200)}`),
     `Abnahme je Etappe: ${o.pruefBefehle.length ? o.pruefBefehle.join(' ; ') : 'keine Prüfbefehle — nach jeder Etappe frage ich dich'}`,
     `Grenzen: ${[o.g.budgetUsd !== undefined ? `${o.g.budgetUsd} USD` : 'kein Budget', o.g.maxStunden !== undefined ? `${o.g.maxStunden} h` : 'keine Zeitgrenze'].join(', ')}, ${o.g.maxFixVersuche} Fix-Versuche je Etappe.`,
-    'Freigabe gilt nur für Claude-Code-Aufträge und Prüfbefehle in diesem Verzeichnis, bis Budget, Zeit oder Ende.',
+    `Freigabe gilt nur für Claude-Code-Aufträge und Prüfbefehle in diesem Verzeichnis${o.gitUebernehmen ? ' und das Anlegen des Git-Repositorys' : ''}, bis Budget, Zeit oder Ende.`,
   ].join('\n');
 }
 

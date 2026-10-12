@@ -32,6 +32,8 @@ export interface ProjektStand {
   grenzenStand?: number;
   /** v1392 — Start des laufenden Auftrags (Lage, Vorgang) */
   etappeStart?: number;
+  /** v1397 — bestehendes Verzeichnis ohne Git: beim ersten Auftrag Repository + Ausgangs-Commit (mit dem Plan freigegeben) */
+  gitUebernehmen?: boolean;
   frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation'; mutation?: Mutation; text: string };
   letzterText?: string;
 }
@@ -99,7 +101,7 @@ export class SatellitProjekte {
   gehoertZuProjekt(auftragId: string): boolean { return [...this.staende.values()].some(s => s.auftragId === auftragId && s.status === 'laeuft'); }
 
   /** Start: Plan erstellen, Owner einmal fragen. Liefert die Projekt-ID sofort. */
-  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean }): Promise<ProjektStand> {
+  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean; gitUebernehmen?: boolean }): Promise<ProjektStand> {
     const g = { ...STANDARD_GRENZEN, ...(o.grenzen ?? {}) };
     const roh = await this.d.planen(o.ziel);
     if (!roh.length) throw new Error('Der Planer lieferte keine Etappen');
@@ -107,9 +109,9 @@ export class SatellitProjekte {
     const s: ProjektStand = {
       id: `sat-${randomUUID().slice(0, 8)}`, geraetId: o.geraetId, geraet: o.geraet, projekt: o.projekt, ziel: o.ziel,
       pruefBefehle: [...new Set((o.pruefBefehle ?? []).map(b => b.trim()).filter(Boolean))] /* v1390 doppelte (Build = Test) nur einmal */, grenzen: g, herkunft: o.herkunft, ownerId: o.ownerId,
-      grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
+      ...(o.gitUebernehmen && !o.verzeichnisNeu ? { gitUebernehmen: true } : {}), grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
     };
-    const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu });
+    const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu, gitUebernehmen: s.gitUebernehmen });
     await this.stelleFrage(s, 'plan', text);
     try { s.vorgangId = await this.d.vorgang?.anlegen(s); } catch { /* optional */ }
     this.sichere(s);
@@ -194,12 +196,16 @@ export class SatellitProjekte {
     if (grenze) { await this.beende(s, 'angehalten', grenze); return; }
     // v1394 — mit Budget: Claude Code bekommt das Restbudget und hält es selbst ein (--max-budget-usd)
     const rest = s.grenzen.budgetUsd !== undefined ? Math.max(0.05, Number((s.grenzen.budgetUsd - s.kostenUsd).toFixed(2))) : undefined;
-    const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel, ...(rest !== undefined ? { max_kosten_usd: rest } : {}) }, 60_000);
+    const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel, ...(rest !== undefined ? { max_kosten_usd: rest } : {}), ...(s.gitUebernehmen ? { git_uebernehmen: true } : {}) }, 150_000);
     const id = (r.data as { id?: string } | undefined)?.id;
     if (!r.success || !id) { await this.beende(s, 'angehalten', `Auftrag nicht gestartet: ${r.error ?? 'keine Kennung'}`); return; }
     s.auftragId = id;
     s.etappeStart = this.jetzt();
+    // v1397 — Ergebnis der Git-Übernahme melden (einmal; ältere Satelliten liefern nichts → ohne Meldung)
+    const gitText = s.gitUebernehmen ? gitMeldung((r.data as { git?: GitErgebnis } | undefined)?.git) : undefined;
+    s.gitUebernehmen = undefined;
     this.sichere(s);
+    if (gitText) await this.d.melde(s, gitText);
     this.d.logger.info({ id: s.id, etappe: s.nr, fix: s.fixVersuch, auftrag: id }, 'v1387 Etappe gestartet');
     // v1392 — sichtbar machen, dass etwas läuft (Fix-Versuche haben ihre eigene Meldung)
     if (!s.fixVersuch) await this.d.melde(s, `▶ Etappe ${s.nr}/${s.plan.length} gestartet: ${s.plan[s.nr - 1]!.slice(0, 140)}`);
@@ -308,4 +314,16 @@ export class SatellitProjekte {
     await this.d.melde(s, text);
     await this.d.vorgang?.abschliessen(s, text).catch(() => undefined);
   }
+}
+
+/** v1397 — Antwort des Satelliten auf git_uebernehmen */
+export interface GitErgebnis { status?: string; commit?: string; grosse?: string[]; fehler?: string }
+
+export function gitMeldung(g: GitErgebnis | undefined): string | undefined {
+  if (!g?.status) return undefined;
+  if (g.status === 'schon-repository') return 'Git: Das Verzeichnis liegt bereits in einem Git-Repository — die Etappen committen dort.';
+  if (g.status === 'ohne-git') return 'Git: Auf dem Gerät ist Git nicht installiert — das Projekt läuft ohne Commits weiter.';
+  if (g.fehler) return `Git: Repository angelegt, Ausgangs-Commit fehlgeschlagen (${g.fehler}) — die Etappen committen trotzdem.`;
+  const gross = g.grosse?.length ? ` Nicht aufgenommen (über 10 MB): ${g.grosse.slice(0, 5).join(', ')}${g.grosse.length > 5 ? ` und ${g.grosse.length - 5} weitere` : ''}.` : '';
+  return `Git: Repository angelegt${g.commit ? `, Ausgangs-Commit ${g.commit} „Stand vor Alfred"` : ' (Verzeichnis war leer)'}.${gross}`;
 }

@@ -15728,11 +15728,18 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const grundV = (pr?.data as { ergebnisse?: Array<{ ok: boolean; grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '';
         if (/nicht freigegeben/i.test(grundV)) return { success: false, error: `${grundV}. Projekte nur in freigegebenen Verzeichnissen mit Schreibrecht auf ${g.name}.` };
         const verzeichnisNeu = /fehlt/i.test(grundV);
+        // v1397 — bestehendes Verzeichnis ohne .git: in der Planfrage nennen, mit dem Plan freigeben, beim ersten Auftrag anlegen
+        let gitUebernehmen = false;
+        if (!verzeichnisNeu && grundV) {
+          const trenner = projekt.includes('\\') && !projekt.includes('/') ? '\\' : '/';
+          const pg = await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: `${projekt.replace(/[\\/]+$/, '')}${trenner}.git` }] }, 30_000).catch(() => undefined);
+          gitUebernehmen = /fehlt/i.test((pg?.data as { ergebnisse?: Array<{ grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '');
+        }
         const befehle = [...((input.buildCommands as string[] | undefined) ?? []), ...((input.testCommands as string[] | undefined) ?? [])].map(String);
         const grenzen: Record<string, number> = {};
         if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
         if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
-        const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu });
+        const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen });
         return ergebnis(s, `Projekt ${s.id} auf ${g.name} geplant (${s.plan.length} Etappen) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
       },
       status: async (id) => {

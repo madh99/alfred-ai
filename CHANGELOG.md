@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1397] - 2026-10-12
+
+### Added — Bestehende Projektordner ohne Git übernehmen (v1397)
+
+Startet ein Geräte-Projekt in einem vorhandenen Verzeichnis ohne Git-Repository, nennt die Planfrage das. Mit der Freigabe des Plans legt der Satellit vor der ersten Etappe das Repository an und sichert den jetzigen Stand als Ausgangs-Commit „Stand vor Alfred“. Danach zeigt jede Etappe genau, was am bestehenden Code geändert wurde. Abhängigkeiten, `.env`, Logs und Dateien über 10 MB kommen nicht ins Repository. Eine vorhandene `.gitignore` bleibt erhalten und wird nur ergänzt. Alfred meldet das Ergebnis mit Commit-Kennung und nicht aufgenommenen Dateien. Einzelne Claude-Code-Aufträge lassen bestehende Ordner unverändert.
+
 ## [0.19.0-jarvis.1396] - 2026-10-12
 
 ### Added — Neue Projektordner als Git-Repository (v1396)

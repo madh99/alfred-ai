@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, readdirSync, statSync, appendFileSync } from 'node:fs';
 
 /**
  * v1342 — Aufträge an Claude Code im Druckmodus (Owner 10.10.: „erstelle mit der Claude-Code-Session Projekt XY, die
@@ -20,6 +20,8 @@ export interface AuftragMeta {
   gemeldet?: string;
   /** v1396 — neues Projektverzeichnis als Git-Repository angelegt */
   gitAngelegt?: boolean;
+  /** v1397 — bestehendes Verzeichnis übernommen (nur auf Wunsch des Projekts) */
+  git?: GitUebernahme;
 }
 
 export interface AuftragErgebnis { text: string; kosten?: number; dauerMs?: number; sitzung?: string; fehler?: string }
@@ -76,7 +78,7 @@ function laeuft(pid: number | undefined): boolean {
 }
 
 /** Auftrag starten: Spezifikation als AUFTRAG-<id>.md ins Projekt, `claude -p` abgekoppelt, Protokoll in ~/.alfred/auftraege/<id>/. */
-export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number }): AuftragMeta {
+export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean }): AuftragMeta {
   const claude = opts.claude ?? claudePfad();
   if (!claude) throw new Error('Claude Code ist auf diesem Gerät nicht installiert (claude nicht im PATH)');
   // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
@@ -84,7 +86,10 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   if (neu) mkdirSync(opts.projekt, { recursive: true });
   if (!statSync(opts.projekt).isDirectory()) throw new Error(`Projektpfad ist kein Verzeichnis: ${opts.projekt}`);
   // v1396 — Owner 12.10.: neue Projektordner automatisch als Git-Repository, damit jede Etappe nachvollziehbar committet wird
-  const gitAngelegt = neu && gitAnlegen(opts.projekt) === 'angelegt';
+  let gitAngelegt = neu && gitAnlegen(opts.projekt) === 'angelegt';
+  // v1397 — bestehendes Verzeichnis ohne Git: nur wenn das Projekt es verlangt (Owner hat es mit dem Plan freigegeben); vor der Auftragsdatei
+  const git = !neu && opts.gitUebernehmen ? gitUebernehmen(opts.projekt) : undefined;
+  if (git?.status === 'angelegt') gitAngelegt = true;
   const id = neueAuftragId();
   const ordner = path.join(auftraegeOrdner(opts.home), id);
   mkdirSync(ordner, { recursive: true });
@@ -98,7 +103,7 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   const log = openSync(logPfad(id, opts.home), 'a');
   const istCmd = /\.cmd$/i.test(claude);
   const kind = spawn(istCmd ? 'cmd.exe' : claude, istCmd ? ['/c', claude, ...args] : args, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, CLAUDE_CODE_NO_UPDATE_CHECK: '1' } });
-  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto --setting-sources project,local --strict-mcp-config${opts.maxKostenUsd ? ` --max-budget-usd ${opts.maxKostenUsd}` : ''}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}) };
+  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto --setting-sources project,local --strict-mcp-config${opts.maxKostenUsd ? ` --max-budget-usd ${opts.maxKostenUsd}` : ''}`, auftragDatei, ...(gitAngelegt ? { gitAngelegt } : {}), ...(git ? { git } : {}) };
   speichereMeta(meta, opts.home);
   kind.on('error', (err) => {
     closeSync(log);
@@ -281,17 +286,59 @@ export function fortschrittAus(protokoll: string, n = 10): { schritte: string[];
  * - fehlt eine Git-Identität, eine lokale für dieses Repository (sonst scheitern die Commits still);
  * - ohne installiertes Git oder bei Fehlern: weiter ohne Repository (der Auftrag läuft trotzdem).
  */
+function gitLauf(git: string, dir: string, args: string[], timeoutMs = 15_000): string {
+  return execFileSync(git, ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }).toString().trim();
+}
+
+/** Schutzzeilen der .gitignore; fehlende werden an eine vorhandene angehängt. */
+const GIT_IGNORE = ['node_modules/', '.env', '.env.*', '!.env.example', '*.log'];
+
 export function gitAnlegen(dir: string, git = 'git'): 'angelegt' | 'schon-repository' | 'ohne-git' {
-  const lauf = (args: string[]) => execFileSync(git, ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000, windowsHide: true }).toString().trim();
+  const lauf = (args: string[]) => gitLauf(git, dir, args);
   try { lauf(['--version']); } catch { return 'ohne-git'; }
   try { if (lauf(['rev-parse', '--is-inside-work-tree']) === 'true') return 'schon-repository'; } catch { /* kein Repository: anlegen */ }
   try {
     lauf(['init', '-q']);
     const ignore = path.join(dir, '.gitignore');
-    if (!existsSync(ignore)) writeFileSync(ignore, ['node_modules/', '.env', '.env.*', '*.log', ''].join('\n'));
+    if (!existsSync(ignore)) writeFileSync(ignore, [...GIT_IGNORE, ''].join('\n'));
+    else {
+      // v1397 — vorhandene .gitignore des Owners bleibt, fehlende Schutzzeilen kommen dazu
+      const da = new Set(readFileSync(ignore, 'utf8').split(/\r?\n/).map(z => z.trim()));
+      const fehlt = GIT_IGNORE.filter(z => !da.has(z));
+      if (fehlt.length) appendFileSync(ignore, `\n# Alfred: Abhängigkeiten und Geheimnisse nicht ins Repository\n${fehlt.join('\n')}\n`);
+    }
     let email = '';
     try { email = lauf(['config', 'user.email']); } catch { /* keine Identität */ }
     if (!email) { lauf(['config', 'user.name', 'Alfred']); lauf(['config', 'user.email', `alfred@${os.hostname()}.local`]); }
     return 'angelegt';
   } catch { return 'ohne-git'; }
+}
+
+export interface GitUebernahme { status: 'angelegt' | 'schon-repository' | 'ohne-git'; commit?: string; grosse: string[]; fehler?: string }
+
+/**
+ * v1397 — bestehendes Projektverzeichnis ohne Git übernehmen (Owner 12.10.: „ja so bauen, freigegeben"): Repository anlegen
+ * (gitAnlegen) und den vorhandenen Stand als Ausgangs-Commit „Stand vor Alfred" sichern — danach zeigt jede Etappe genau,
+ * was Claude Code am bestehenden Code geändert hat. Dateien über `maxBytes` kommen nicht ins Repository (in die .gitignore,
+ * werden gemeldet). Nur für Projekte: deren Planfrage nennt den Schritt, die Owner-Freigabe deckt ihn.
+ */
+export function gitUebernehmen(dir: string, git = 'git', maxBytes = 10 * 1024 * 1024): GitUebernahme {
+  const status = gitAnlegen(dir, git);
+  if (status !== 'angelegt') return { status, grosse: [] };
+  const lauf = (args: string[], t?: number) => gitLauf(git, dir, args, t);
+  try {
+    lauf(['add', '-A'], 120_000);
+    const namen = lauf(['diff', '--cached', '--name-only', '-z']).split('\0').filter(Boolean);
+    const grosse = namen.filter(n => n !== '.gitignore').filter(n => { try { return statSync(path.join(dir, n)).size > maxBytes; } catch { return false; } });
+    if (grosse.length) {
+      lauf(['rm', '--cached', '-q', '--', ...grosse]);
+      appendFileSync(path.join(dir, '.gitignore'), `\n# Alfred: zu groß für Git (über ${Math.round(maxBytes / 1024 / 1024)} MB)\n${grosse.map(n => `/${n}`).join('\n')}\n`);
+      lauf(['add', '.gitignore']);
+    }
+    if (!lauf(['diff', '--cached', '--name-only'])) return { status, grosse };
+    lauf(['commit', '-q', '-m', 'Stand vor Alfred'], 120_000);
+    return { status, grosse, commit: lauf(['rev-parse', '--short', 'HEAD']) };
+  } catch (err) {
+    return { status, grosse: [], fehler: (err as Error).message.slice(0, 200) };
+  }
 }
