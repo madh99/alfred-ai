@@ -571,6 +571,35 @@ Fremdinhalt aus dem Projekt im Planer-Prompt (nur als Daten, gekürzt); falsche 
 
 Owner 12.10.: „wie empfohlen freigegeben, Projektnamen soll auch genannt werden können“; Probe-Ordner gelöscht. Nach P1 (v1398, eigene Tabelle projekt_akten) fiel auf, dass das Projekt-System `projects` (Web „Projects“, Projekt-Chat, offene Punkte) schon existiert. Owner: „ja wie vorgeschlagen machen“ → **integriert**: v1399/v1400 Geräte-Projekte = `projects` mit `geraet_id`, Lauf = `project_sessions` (Typ geraet), Server-Funktionen im Projektordner gesperrt (Web-API 409, Skill `project`, list()/findByCwd() ohne Geräte-Projekte). Web-Detailansicht (v1399, vom Owner geprüft), App-Ansicht „Projekte“ (v1401/v1402, App 1.15.0), Herkunft App-Sitzung und Freigeben/Ablehnen direkt in der Projektansicht (v1403, App 1.15.1), **P4 Frage zum Projekt** (v1404, App 1.15.2): Claude Code im Plan-Modus mit gesperrten Schreib-/Shell-Werkzeugen, ohne Bestätigung, 0,50 USD je Frage; Nachweis VM 13.10. 00:02 (Ändern/Anlegen/Löschen verlangt → unverändert) und 00:11 am Owner-Projekt (Antwort nach 37 s, 0,32 USD, Commit/Status/Dateizeiten unverändert). P5 Projektfaden: Projekt-Chat je Projekt besteht im Web; Etappenmeldungen gehen weiter an Herkunft + Telegram.
 
+## R3 neu zugeschnitten: Umgebung und Installationen (Prüfung 13.10.2026, ohne Umsetzung — Owner: „ok“ zu „R3 prüfen und als Spec ausarbeiten“)
+
+### Ist-Stand (belegt 13.10.)
+
+- **Bauen läuft über Claude Code**, nicht über Alfreds eigene Geräteaktionen: Projektfreigabe (`auftrag_starten`, `pruefen_befehl`, ein Verzeichnis) seit R2. In den Owner-Läufen am Angebots-Radar (5 Läufe, 12.–13.10.) gab es außer Plan und Planänderung keine Einzelbestätigung. Der ursprüngliche Grund für die Vertrauensstufe „projekt“ (Shell/Dateien im Projektordner ohne Einzelbestätigung) ist damit weitgehend entfallen.
+- **Umgebung unbekannt beim Planen:** Planer und Claude Code erfahren erst in der Etappe, was installiert ist. Ubuntu-VM: Node 22 und Docker (Snap), npm, Python 3, Git, Yarn; kein pnpm, Java, Go, Rust, Flutter; 80 GB frei.
+- **Systeminstallationen haben keinen geregelten Weg.** Auf der VM geht `sudo` ohne Passwort; Claude Code im Modus „auto“ könnte damit systemweit installieren. In den bisherigen Protokollen (`~/.alfred/auftraege/*/log.txt`) kommt kein `sudo`/`apt` vor, ausgeschlossen ist es aber nicht. Mac (brew ohne sudo) und PC (winget) sind ähnlich offen.
+
+### Neuer Zuschnitt
+
+- **R3a Umgebung lesen** (auto, nur lesend): `projekt_lesen` liefert zusätzlich `umgebung` — Betriebssystem, Versionen von node/npm/pnpm/yarn/python/pip/docker/git/java/go/cargo/flutter (je `--version`, Zeitlimit, fehlend = „fehlt“), freier Platz. Verwendet im Bestandsblock des Planers, als Zeile in der Planfrage („Umgebung: Node 22, Python 3.12, Docker; fehlt: pnpm“) und im Etappen-Auftrag („vorhanden: …; fehlt: … — nicht systemweit installieren, sondern melden“).
+- **R3b Systemänderungen aus Claude Code heraus sperren:** Projekt-Aufträge zusätzlich mit gesperrtem `sudo` (Regel-Syntax für `--disallowedTools` bei der Umsetzung an Claude Code 2.1.296 auf der VM belegen, wie beim Nur-Lese-Modus). Projekt-lokale Abhängigkeiten (`npm install` im Projekt, Python-venv) bleiben erlaubt.
+- **R3c Installieren als eigene, bestätigte Geräteaktion** `installieren {paket, quelle}`: Quellen fest (siehe Entscheidung 2), Paketname per Muster geprüft (kein freier Befehl, keine Optionen), je Installation eine Bestätigung mit Gerät, Paket und Quelle. Auslöser: scheitert eine Etappe erkennbar an einem fehlenden Werkzeug (Prüfprotokoll „command not found“/„not installed“, deterministisch erkannt), fragt Alfred „X auf <Gerät> installieren?“ statt eines Fix-Versuchs; nach der Installation läuft die Etappe erneut.
+- **R3d Vertrauensstufe „projekt“ (lokal setzbar) zurückstellen:** kein Bedarf belegt. Messen statt bauen: Einzelbestätigungen je Projektlauf (Schicht 4); wird sie wiederholt gebraucht, neu vorlegen.
+
+### Reihenfolge (nicht freigegeben)
+
+R3a (klein, nur lesend) → R3b (Sperre, Nachweis auf der VM: Auftrag verlangt `sudo apt install`, wird verweigert, Etappe meldet fehlendes Werkzeug) → R3c (Installieren mit Bestätigung, Beweis: fehlendes pnpm auf der VM).
+
+### Abnahme (messbar)
+
+Planfrage nennt die Umgebung; ein Plan verlangt kein Werkzeug, das „fehlt“, ohne Installationsschritt; kein `sudo` in Projekt-Protokollen nach R3b; jede systemweite Installation hat eine Bestätigung im Verlauf.
+
+### Offene Owner-Entscheidungen
+
+1. R3b: `sudo` für Claude-Code-Projektaufträge sperren — Empfehlung ja.
+2. R3c: erlaubte Quellen — Vorschlag apt (VM), brew (Mac), winget --scope user (PC); npm global und pip --user nur auf Wunsch.
+3. R3d: Vertrauensstufe „projekt“ zurückstellen und messen — Empfehlung ja.
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
