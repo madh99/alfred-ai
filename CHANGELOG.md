@@ -47,6 +47,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1367] - 2026-10-12
+
+### Added — Interessen: Neuigkeiten mit Bezug zu den Dingen des Owners erkennen (beobachtend) (v1367)
+
+Die Interessen sollten Neuigkeiten erkennen, die mit dem Owner oder mit Dingen, die er verwendet, zu tun haben. Gebaut war das nie: die Themen-Beiträge (rund 6 000 in der Woche) wurden gesammelt und still abgelegt, und die abonnierten RSS-Feeds liefen auf einem zweiten Weg roh durch jeden Reasoning-Durchlauf.
+
+Ein stündlicher Job prüft jetzt neue Beiträge ohne Modell gegen Anker aus dem Leben des Owners: Hersteller und Modelle seiner Geräte in Home Assistant (z. B. Victron, go-e, Shelly, Sonos, Ubiquiti, Aqara, Philips Hue, Proxmox; große Marken nur mit Produktlinie, Integrationen und Handys nicht), Organisationen, Fahrzeug, konkrete Orte und Kürzel aus dem Wissensgraph. Treffer im Titel zählen stark, nur in der Zusammenfassung schwach, je Anker höchstens drei am Tag. Zwei Wochen lang entsteht daraus nur die Logzeile „v1367 Verknüpfung: Beitrag wäre Hinweis geworden (beobachtend)"; gemeldet wird nichts. Kalibriert an den Beiträgen vom 05.–12.10.: 5 % mit Anker, darunter „Home Assistant 2026.10", „Shelly Plug über stündliche Strompreise steuern" und „Ultraschnellladepark Altlengbach".
+
+Die abonnierten Feeds (18) laufen dafür zusätzlich über den Themen-Sammler (neues stummes Thema „Abonnierte Feeds"). Der Feed-Abschnitt im Reasoning bleibt bis zum Vergleich unverändert.
+
 ## [0.19.0-jarvis.1366] - 2026-10-12
 
 ### Fixed — Themen-Erkennung legte dieselben Interessen täglich neu formuliert an (v1366)

@@ -7197,6 +7197,41 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           key: 'topic-digest', beschreibung: 'Themen-Digest an den Owner', takt: { art: 'taeglich', um: '06:30' }, bereich: 'global', slot: true,
           run: async () => { await this.topicDigestBuilder?.run(); return { ok: true }; },
         });
+        // v1367 — Interessen als Wissen, Verknüpfung BEOBACHTEND (I3, Owner 12.10. „ok wie empfohlen"): neue Beiträge gegen
+        // Geräte, Organisationen, Fahrzeug, Orte und Kürzel des Owners — nur Logzeilen, keine Meldung. Die abonnierten
+        // RSS-Feeds laufen dafür zusätzlich über den Themen-Sammler (Thema „Abonnierte Feeds", stumm); der Feed-Abschnitt im
+        // Reasoning bleibt bis zum Vergleich unverändert.
+        {
+          let seit = new Date(Date.now() - 60 * 60_000).toISOString();
+          const heute = { tag: '', zaehler: new Map<string, number>() };
+          this.registriereJob({
+            key: 'interessen-verknuepfung', beschreibung: 'Interessen: neue Beiträge gegen Geräte, Orte und Organisationen des Owners (beobachtend)', takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 15, timeoutMin: 5,
+            run: async () => {
+              const owner = this.tryOwner(); const repo = this.interestsRepo;
+              if (!owner || !repo || !this.database) return { ok: false, fehler: 'Owner oder Interessen nicht bereit' };
+              const { ankerAusGeraeten, ankerAusWissen, vorbereiten, verknuepfe, auswahl } = await import('./interessen/verknuepfung.js');
+              await this.abonnierteFeedsAbgleichen(owner).catch(err => this.logger.warn({ err: (err as Error).message }, 'v1367 Abonnierte Feeds: Abgleich fehlgeschlagen'));
+              const ha = skillRegistry.get('homeassistant') as import('@alfred/skills').HomeAssistantSkill | undefined;
+              const geraete = ha && typeof ha.geraeteHersteller === 'function' ? await ha.geraeteHersteller().catch(() => []) : [];
+              const { KnowledgeGraphRepository: KGRepoV } = await import('@alfred/storage');
+              const kg = new KGRepoV(this.database.getAdapter());
+              const ents = (await Promise.all((['organization', 'vehicle', 'location', 'item'] as const).map(t => kg.getEntitiesByType(owner, t as never).catch(() => [])))).flat()
+                .map(e => ({ name: (e as { name: string }).name, typ: (e as { entityType: string }).entityType }));
+              const anker = vorbereiten([...ankerAusGeraeten(geraete), ...ankerAusWissen(ents)]);
+              const bis = new Date().toISOString();
+              const themen = await repo.listTopics(owner, 'active');
+              const beitraege = (await Promise.all(themen.map(async t => (await repo.listItems(t.id, { sinceIso: seit, limit: 500 }))
+                .map(i => ({ titel: i.title, zusammenfassung: i.summary, url: i.url, thema: t.name }))))).flat();
+              seit = bis;
+              if (heute.tag !== bis.slice(0, 10)) { heute.tag = bis.slice(0, 10); heute.zaehler = new Map(); }
+              const treffer = beitraege.map(b => verknuepfe(b, anker)).filter((t): t is NonNullable<typeof t> => t !== null);
+              const gewaehlt = auswahl(treffer, heute.zaehler);
+              for (const t of gewaehlt) this.logger.info({ titel: t.beitrag.titel.slice(0, 140), anker: t.anker.map(a => a.wort), art: [...new Set(t.anker.map(a => a.art))], stark: t.stark, thema: t.beitrag.thema, url: t.beitrag.url }, 'v1367 Verknüpfung: Beitrag wäre Hinweis geworden (beobachtend)');
+              this.logger.info({ beitraege: beitraege.length, anker: anker.length, geraeteAnker: geraete.length, treffer: treffer.length, gewaehlt: gewaehlt.length, stark: gewaehlt.filter(t => t.stark).length }, 'v1367 Verknüpfung gelaufen');
+              return { ok: true, zaehler: { beitraege: beitraege.length, gewaehlt: gewaehlt.length } };
+            },
+          });
+        }
         this.registriereJob({
           key: 'stammdaten-sync', beschreibung: 'Memory-Fakten → Knowledge Graph (idempotent)', takt: { art: 'intervall', minuten: 60 }, bereich: 'global',
           run: async () => {
@@ -15378,6 +15413,34 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (signal && signal !== signalAus(vorher)) this.reasoningEngine?.kennzahlen.zaehle(signal === 'positiv' ? 'hinweisNuetzlich' : 'hinweisNichtNuetzlich');
     this.logger.info({ id, quelle: insight.category, reaktion: r.reaktion, vorher: vorher ?? null, status: insight.status, anker: [...ankerAus(`${insight.title}\n${insight.body}`)].slice(0, 8) }, 'v1364 Hinweis-Reaktion');
     return { ok: true, titel: insight.title };
+  }
+
+  /**
+   * v1367 — abonnierte RSS-Feeds (Skill feed_reader) als Quellen des stummen Themas „Abonnierte Feeds": der Themen-Sammler
+   * holt sie dedupliziert, die Verknüpfung prüft sie mit. Liest den Feed-Zustand nur (keine „gelesen"-Marke — der
+   * Feed-Abschnitt des Reasoning bleibt unberührt). Bereits vorhandene, auch deaktivierte Quellen werden nicht neu angelegt.
+   */
+  private async abonnierteFeedsAbgleichen(owner: string): Promise<void> {
+    const repo = this.interestsRepo; if (!repo || !this.database) return;
+    const { SkillStateRepository: SSR } = await import('@alfred/storage');
+    const feeds = (await new SSR(this.database.getAdapter()).listBySkill(owner, 'feed_reader'))
+      .filter(e => e.key.startsWith('feed:'))
+      .map(e => { try { return JSON.parse(e.value) as { url?: string; label?: string }; } catch { return null; } })
+      .filter((f): f is { url: string; label?: string } => !!f?.url);
+    if (feeds.length === 0) return;
+    let thema = await repo.findTopicByNameExact(owner, 'Abonnierte Feeds');
+    if (!thema) {
+      thema = await repo.createTopic(owner, { name: 'Abonnierte Feeds', keywords: [], origin: 'auto', notifyThreshold: 'mute' });
+      this.logger.info({ feeds: feeds.length }, 'v1367 Thema „Abonnierte Feeds" angelegt (stumm)');
+    }
+    const vorhanden = new Set((await repo.listSources(thema.id)).map(q => String(q.config.url ?? '')));
+    let neu = 0;
+    for (const f of feeds) {
+      if (vorhanden.has(f.url)) continue;
+      await repo.addSource(thema.id, { kind: 'rss', config: { url: f.url, ...(f.label ? { label: f.label } : {}) }, addedBy: 'auto' });
+      neu++;
+    }
+    if (neu > 0) this.logger.info({ neu, gesamt: feeds.length }, 'v1367 Abonnierte Feeds als Quellen übernommen');
   }
 
   /** v1354 — Owner-Prüfung mit 10-min-Gedächtnis (gesetzt beim Einrichten der Gespräche). */

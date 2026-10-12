@@ -819,6 +819,16 @@ export class HomeAssistantSkill extends Skill {
     return this.zuordnungStand;
   }
 
+  /** v1367 — Hersteller und Modelle der Geräte (Anker für „Interessen als Wissen"); ein Template-Abruf, 24 h gepuffert. */
+  private herstellerStand?: { liste: Array<{ hersteller: string; modell?: string }>; geladen: number };
+  async geraeteHersteller(): Promise<Array<{ hersteller: string; modell?: string }>> {
+    if (this.herstellerStand && Date.now() - this.herstellerStand.geladen < 24 * 3_600_000) return this.herstellerStand.liste;
+    const text = await this.apiText('POST', '/api/template', { template: "{% set ns = namespace(r=[]) %}{% for s in states %}{% set m = device_attr(s.entity_id, 'manufacturer') %}{% if m %}{% set ns.r = ns.r + [m ~ '|' ~ (device_attr(s.entity_id, 'model') or '')] %}{% endif %}{% endfor %}{{ ns.r | unique | join('\\n') }}" });
+    const liste = text.split('\n').map(z => z.trim()).filter(Boolean).map(z => { const [hersteller, modell] = z.split('|'); return { hersteller: hersteller!.trim(), modell: modell?.trim() || undefined }; });
+    this.herstellerStand = { liste, geladen: Date.now() };
+    return liste;
+  }
+
   /** v1359 — für den stündlichen Job: Zuordnung frisch lesen; Rückgabe = neu erkannte Änderungen. */
   async aktualisiereZuordnung(): Promise<string[]> {
     const alle = await this.api<any[]>('GET', '/api/states');
