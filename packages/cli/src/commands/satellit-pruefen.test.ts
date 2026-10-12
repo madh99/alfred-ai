@@ -51,3 +51,24 @@ describe('Prüfschritte', () => {
     expect(r.ergebnisse[1]!.ok).toBe(true);
   });
 });
+
+// v1384 — Sicherheitsbefund SSRF: ohne Bestätigung nur Adressen auf dem Gerät selbst
+describe('HTTP ohne Bestätigung nur lokal', () => {
+  it('pruefen lehnt LAN- und Metadaten-Adressen ab, pruefen_befehl erlaubt sie', () => {
+    const ohne = ['datei', 'http', 'fenster'] as const;
+    for (const u of ['http://192.168.1.1/', 'http://169.254.169.254/latest/meta-data', 'https://ha.3033.at', 'http://localhost.evil.com', 'http://127.0.0.1.nip.io']) {
+      expect(pruefungenAus({ pruefungen: [{ art: 'http', ziel: u }] }, [...ohne]), u).toMatch(/nur Adressen auf diesem Gerät/);
+    }
+    for (const u of ['http://localhost:3000', 'http://127.0.0.1:8080/health', 'http://[::1]:5173']) {
+      expect(Array.isArray(pruefungenAus({ pruefungen: [{ art: 'http', ziel: u }] }, [...ohne])), u).toBe(true);
+    }
+    expect(Array.isArray(pruefungenAus({ pruefungen: [{ art: 'http', ziel: 'http://192.168.1.96:3003' }] }, [...ohne, 'befehl']))).toBe(true);
+  });
+  it('pruefeAlle mit nurLokal fragt fremde Adressen gar nicht erst ab', async () => {
+    let abgefragt = 0;
+    const r = await pruefeAlle([{ art: 'http', ziel: 'http://192.168.1.1/' }], mittel({ http: async () => { abgefragt++; return { status: 200, text: 'geheim' }; } }), true);
+    expect(abgefragt).toBe(0);
+    expect(r.ergebnisse[0]).toMatchObject({ ok: false });
+    expect(JSON.stringify(r)).not.toContain('geheim');
+  });
+});

@@ -51,7 +51,13 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
-## [0.19.0-jarvis.1383] - 2026-10-12
+## [0.19.0-jarvis.1384] - 2026-10-12
+
+### Security — Prüfaktion ohne Bestätigung nur gegen das Gerät selbst (v1384)
+
+Die Geräteaktion `pruefen` (ohne Bestätigung) konnte mit einer HTTP-Prüfung beliebige Adressen vom Gerät aus abfragen und bei Fehlschlag einen Auszug der Antwort zurückgeben — eine eingeschleuste Anweisung hätte so Router-Oberflächen oder interne Dienste im Netz lesen können. Ohne Bestätigung sind jetzt nur Adressen auf dem Gerät selbst erlaubt (localhost, 127.0.0.1, ::1 — der Entwicklungsserver eines Auftrags), ohne Weiterleitungen; andere Adressen prüft `pruefen_befehl` nach Bestätigung.
+
+
 
 ### Added — Prüfschritte auf Geräten; Ende-Meldung auch nach Neustart in der richtigen Sitzung (v1383)
 

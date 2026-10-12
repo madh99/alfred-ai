@@ -63,8 +63,8 @@ export function baueManifest(version: string): GeraetManifest {
     satellitVersion: version,
     aktionen: [
       // v1383 R1 — harte Prüfschritte ohne Modell (Abnahme nach einem Auftrag): ok/fehl je Kriterium
-      { name: 'pruefen', beschreibung: 'Prüft Abnahmekriterien deterministisch und liefert ok/fehl je Kriterium: art datei (ziel = Pfad, existiert; enthaelt = Text), http (ziel = URL, status Standard 200; enthaelt), fenster (ziel = Fenstertitel oder leer = aktives Fenster; enthaelt = Text im Fenster). Für Befehle (npm test, Build) pruefen_befehl.', autonomie: 'auto', parameter: { pruefungen: { type: 'array', description: 'Liste von {art, ziel, enthaelt?, status?, cwd?, timeoutS?}', items: { type: 'object' } } } },
-      { name: 'pruefen_befehl', beschreibung: 'Wie pruefen, zusätzlich art befehl (ziel = Befehl, cwd = Verzeichnis mit Schreibrecht, ok bei Exit 0; enthaelt = Text in der Ausgabe; timeoutS bis 600) — z. B. npm test, pytest, Build nach einem Claude-Code-Auftrag.', autonomie: 'bestaetigen', parameter: { pruefungen: { type: 'array', description: 'Liste von {art, ziel, enthaelt?, status?, cwd?, timeoutS?}', items: { type: 'object' } } } },
+      { name: 'pruefen', beschreibung: 'Prüft Abnahmekriterien deterministisch und liefert ok/fehl je Kriterium: art datei (ziel = Pfad, existiert; enthaelt = Text), http (ziel = URL nur auf diesem Gerät, z. B. http://localhost:3000; status Standard 200; enthaelt), fenster (ziel = Fenstertitel oder leer = aktives Fenster; enthaelt = Text im Fenster). Für Befehle (npm test, Build) pruefen_befehl.', autonomie: 'auto', parameter: { pruefungen: { type: 'array', description: 'Liste von {art, ziel, enthaelt?, status?, cwd?, timeoutS?}', items: { type: 'object' } } } },
+      { name: 'pruefen_befehl', beschreibung: 'Wie pruefen, zusätzlich http auf andere Adressen und art befehl (ziel = Befehl, cwd = Verzeichnis mit Schreibrecht, ok bei Exit 0; enthaelt = Text in der Ausgabe; timeoutS bis 600) — z. B. npm test, pytest, Build nach einem Claude-Code-Auftrag.', autonomie: 'bestaetigen', parameter: { pruefungen: { type: 'array', description: 'Liste von {art, ziel, enthaelt?, status?, cwd?, timeoutS?}', items: { type: 'object' } } } },
       { name: 'oeffnen', beschreibung: 'Öffnet eine Datei, einen Ordner (im Explorer/Finder) oder eine URL auf diesem Gerät', autonomie: 'bestaetigen', parameter: { path: { type: 'string', description: 'Absoluter Pfad (innerhalb freigegebener Verzeichnisse) oder URL' } } },
       { name: 'shell', beschreibung: `Führt einen Befehl auf diesem Gerät aus — ${process.platform === 'win32' ? 'PowerShell' : 'sh'} (Arbeitsverzeichnis innerhalb freigegebener Verzeichnisse). Zum Öffnen von Dateien, Ordnern oder URLs lieber „oeffnen" nutzen.`, autonomie: 'bestaetigen', parameter: { command: { type: 'string', description: process.platform === 'win32' ? 'PowerShell-Befehl' : 'Shell-Befehl' }, cwd: { type: 'string', description: 'Arbeitsverzeichnis (optional)' } } },
       { name: 'liste', beschreibung: 'Listet ein freigegebenes Verzeichnis dieses Geräts (Namen, Größe, Datum)', autonomie: 'auto', parameter: { path: { type: 'string', description: 'Absoluter Pfad eines freigegebenen Verzeichnisses' } } },
@@ -366,8 +366,9 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
           const st = statSync(pfad);
           return { existiert: true, inhalt: st.isFile() && st.size <= 2_000_000 ? readFileSync(pfad, 'utf8') : '' };
         },
-        http: async (url) => {
-          const r = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: 'follow' });
+        // v1384 — ohne Bestätigung keine Weiterleitungen (localhost → LAN-Adresse wäre sonst ein Umweg)
+        http: async (url, nurLokal) => {
+          const r = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: nurLokal ? 'manual' : 'follow' });
           return { status: r.status, text: (await r.text()).slice(0, 200_000) };
         },
         fenster: async (titel) => {
@@ -389,7 +390,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
           });
         },
       };
-      const r = await pruefeAlle(liste, mittel);
+      const r = await pruefeAlle(liste, mittel, aktion === 'pruefen'); // v1384 nurLokal ohne Bestätigung
       return { success: true, data: { ok: r.ok, ergebnisse: r.ergebnisse }, display: r.text };
     }
     case 'shell': {
