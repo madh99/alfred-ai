@@ -48,7 +48,7 @@ export interface GeraetBestaetigung extends GeraetRahmen { typ: 'bestaetigung'; 
 export interface GeraetGespraech extends GeraetRahmen { typ: 'gespraech'; faden: string | null; von: string }
 
 /** v1342 — Ereignis vom Gerät (Auftrag an Claude Code beendet); das Gehirn setzt in der anfragenden Sitzung fort. */
-export interface GeraetEreignis extends GeraetRahmen { typ: 'ereignis'; art: 'auftrag'; auftragId: string; status: 'fertig' | 'fehler' | 'abgebrochen'; titel: string; projekt: string; text: string; dauerS?: number; kosten?: number }
+export interface GeraetEreignis extends GeraetRahmen { typ: 'ereignis'; art: 'auftrag'; auftragId: string; status: 'fertig' | 'fehler' | 'abgebrochen'; titel: string; projekt: string; text: string; dauerS?: number; kosten?: number; fehler?: string; dateien?: string[]; dateienAnzahl?: number } // v1382 fehler/dateien
 
 export type GeraetNachricht =
   | GeraetHallo | GeraetWillkommen | GeraetPuls | GeraetPulsOk

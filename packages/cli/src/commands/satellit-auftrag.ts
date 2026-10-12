@@ -16,6 +16,8 @@ import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync
 export interface AuftragMeta {
   id: string; titel: string; projekt: string; start: string; ende?: string; exit?: number | null; pid?: number;
   status: 'laeuft' | 'fertig' | 'fehler' | 'abgebrochen'; befehl: string; auftragDatei: string;
+  /** v1382 — Ende ans Gehirn gemeldet (Zeitpunkt); fehlt bei Aufträgen, deren Ende noch zu melden ist */
+  gemeldet?: string;
 }
 
 export interface AuftragErgebnis { text: string; kosten?: number; dauerMs?: number; sitzung?: string; fehler?: string }
@@ -97,7 +99,9 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
     let protokoll = '';
     try { protokoll = readFileSync(logPfad(id, opts.home), 'utf8'); } catch { /* leer */ }
     const erg = parseErgebnis(protokoll);
-    const m: AuftragMeta = { ...meta, status: code === 0 && !erg.fehler ? 'fertig' : 'fehler', ende: new Date().toISOString(), exit: code };
+    // v1382 — abgebrochen bleibt abgebrochen (auftragAbbrechen schreibt den Status vor dem Prozessende)
+    const abgebrochen = ladeMeta(id, opts.home)?.status === 'abgebrochen';
+    const m: AuftragMeta = { ...meta, status: abgebrochen ? 'abgebrochen' : code === 0 && !erg.fehler ? 'fertig' : 'fehler', ende: ladeMeta(id, opts.home)?.ende ?? new Date().toISOString(), exit: code };
     speichereMeta(m, opts.home);
     opts.beiEnde?.(m, erg);
   });
@@ -149,4 +153,74 @@ export function auftraege(home?: string, n = 10): AuftragMeta[] {
 export function formatiereMeta(m: AuftragMeta): string {
   const dauer = Math.round(((m.ende ? new Date(m.ende).getTime() : Date.now()) - new Date(m.start).getTime()) / 1000);
   return `${m.id} · ${m.titel} · ${m.projekt} · ${m.status} · ${dauer} s`;
+}
+
+/** v1382 — Ende melden (R1): geänderte Dateien im Projekt seit dem Start, ohne Abhängigkeiten und Build-Ordner. */
+const DATEIEN_OHNE = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.venv', 'venv', '__pycache__', '.dart_tool', 'target', '.turbo', 'coverage']);
+export function geaenderteDateien(projekt: string, seitMs: number, opts: { max?: number; ohne?: string[] } = {}): { dateien: string[]; anzahl: number } {
+  const max = opts.max ?? 20;
+  const ohne = new Set((opts.ohne ?? []).map(d => path.resolve(d)));
+  const treffer: string[] = [];
+  let anzahl = 0, besucht = 0;
+  const geh = (dir: string, tiefe: number) => {
+    if (tiefe > 8 || besucht > 20_000) return;
+    let eintraege: import('node:fs').Dirent[];
+    try { eintraege = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of eintraege) {
+      if (++besucht > 20_000) return;
+      const voll = path.join(dir, e.name);
+      if (e.isDirectory()) { if (!DATEIEN_OHNE.has(e.name)) geh(voll, tiefe + 1); continue; }
+      if (!e.isFile() || ohne.has(path.resolve(voll))) continue;
+      try { if (statSync(voll).mtimeMs >= seitMs) { anzahl++; if (treffer.length < max) treffer.push(path.relative(projekt, voll).split(path.sep).join('/')); } } catch { /* weg */ }
+    }
+  };
+  geh(projekt, 0);
+  return { dateien: treffer.sort(), anzahl };
+}
+
+/** Ereignis fürs Gehirn (Typ GeraetEreignis ohne Rahmen). Der Ergebnistext von Claude Code ist fremder Inhalt: gekürzt, nie ausgewertet. */
+export function endeEreignis(m: AuftragMeta, erg: AuftragErgebnis): Record<string, unknown> {
+  const status = m.status === 'laeuft' ? 'fehler' : m.status;
+  const { dateien, anzahl } = geaenderteDateien(m.projekt, new Date(m.start).getTime(), { ohne: [m.auftragDatei] });
+  return {
+    typ: 'ereignis', art: 'auftrag', auftragId: m.id, status, titel: m.titel, projekt: m.projekt,
+    text: (erg.fehler && !erg.text ? erg.fehler : erg.text).slice(0, 3000),
+    ...(erg.fehler ? { fehler: erg.fehler.slice(0, 500) } : {}),
+    dauerS: Math.round(((m.ende ? new Date(m.ende).getTime() : Date.now()) - new Date(m.start).getTime()) / 1000),
+    ...(erg.kosten !== undefined ? { kosten: erg.kosten } : {}),
+    dateien, dateienAnzahl: anzahl,
+  };
+}
+
+/** Als gemeldet markieren — danach sendet der Satellit das Ende nicht noch einmal. */
+export function markiereGemeldet(id: string, home?: string): void {
+  const m = ladeMeta(id, home);
+  if (m && !m.gemeldet) { m.gemeldet = new Date().toISOString(); speichereMeta(m, home); }
+}
+
+/**
+ * Beendete, noch nicht gemeldete Aufträge (nach Verbindungsabbruch oder Neustart des Satelliten; der Claude-Prozess läuft
+ * abgekoppelt weiter und kann ohne Exit-Handler enden). Ein toter Prozess mit Status „läuft" wird aus dem Protokoll bestimmt.
+ * Aufträge älter als 7 Tage werden nicht mehr nachgemeldet.
+ */
+export function offeneEndmeldungen(home?: string, jetzt = Date.now()): Array<{ meta: AuftragMeta; ergebnis: AuftragErgebnis }> {
+  const o = auftraegeOrdner(home);
+  if (!existsSync(o)) return [];
+  const aus: Array<{ meta: AuftragMeta; ergebnis: AuftragErgebnis }> = [];
+  for (const id of readdirSync(o).sort()) {
+    const m = ladeMeta(id, home);
+    if (!m || m.gemeldet || jetzt - new Date(m.start).getTime() > 7 * 86_400_000) continue;
+    if (m.status === 'laeuft' && laeuft(m.pid)) continue;
+    let log = '';
+    try { log = readFileSync(logPfad(id, home), 'utf8'); } catch { /* leer */ }
+    const erg = parseErgebnis(log);
+    if (m.status === 'laeuft') {
+      m.status = erg.fehler ? 'fehler' : 'fertig';
+      let bis = jetzt; try { bis = statSync(logPfad(id, home)).mtimeMs; } catch { /* kein Protokoll */ }
+      m.ende = m.ende ?? new Date(bis).toISOString();
+      speichereMeta(m, home);
+    }
+    aus.push({ meta: m, ergebnis: erg });
+  }
+  return aus;
 }

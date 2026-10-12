@@ -372,7 +372,7 @@ Projekt anfangen/weiterführen (PC, VM); Projekt des Projekt-Skills auf einem Sa
 
 ### Reihenfolge der Umsetzung (nicht freigegeben)
 
-- **R1** Ende-Meldung deterministisch: Satellit sendet `GeraetEreignis`, Gehirn meldet ohne Modell („Auftrag X fertig, Dauer, Kosten, Dateien") in die Sitzung des Starts; harte Prüfschritte als Geräteaktion `pruefen` (Datei, Befehl, HTTP, Text im Bildschirm).
+- **R1** (Ende-Meldung umgesetzt v1382, Owner-Freigabe 12.10.; Prüfschritte `pruefen` offen) Ende-Meldung deterministisch: Satellit sendet `GeraetEreignis`, Gehirn meldet ohne Modell („Auftrag X fertig, Dauer, Kosten, Dateien") in die Sitzung des Starts; harte Prüfschritte als Geräteaktion `pruefen` (Datei, Befehl, HTTP, Text im Bildschirm).
 - **R2** Projektvorgang + Etappen im Datenmodell, Planung mit Owner-Bestätigung, Schleife mit fester Entscheidungsliste, Meldungen, Budget; Ausführungsziel Satellit zuerst (Beweis nur Ubuntu-VM), dann Server-Agent.
 - **R3** Vertrauensstufe „projekt" (lokal setzbar), Leseaktion „installiert?", Installationen im Benutzerbereich.
 - **R4** Beobachter am Satelliten (Outlook, Benachrichtigungen, Ordner) als Schicht-2-Ereignisse mit Job-Register-Eintrag; Deploy-Etappe mit Nachkontrolle.

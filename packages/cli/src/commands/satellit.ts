@@ -18,7 +18,7 @@ import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
-import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta } from './satellit-auftrag.js'; // v1342
+import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
@@ -160,6 +160,18 @@ export function entkoppleLokal(): string[] {
 export function pfadVon(params: Record<string, unknown>, ...namen: string[]): string {
   for (const n of namen) { const v = params[n]; if (typeof v === 'string' && v.trim()) return v.trim(); }
   return '';
+}
+
+/**
+ * v1382 (R1) — Ende eines Claude-Code-Auftrags ans Gehirn melden. Gesendet wird über die gerade offene Verbindung; ohne
+ * Verbindung bleibt der Auftrag ungemeldet und wird nach dem nächsten Willkommen nachgereicht (offeneEndmeldungen).
+ */
+let gehirnSende: ((n: Record<string, unknown>) => boolean) | undefined;
+function meldeAuftragEnde(m: AuftragMeta, erg: AuftragErgebnis, log?: (t: string) => void): void {
+  if (m.gemeldet) return;
+  try {
+    if (gehirnSende?.(endeEreignis(m, erg))) { markiereGemeldet(m.id); log?.(`Auftrag ${m.id} (${m.status}) ans Gehirn gemeldet`); }
+  } catch (err) { log?.(`Ende von Auftrag ${m.id} nicht gemeldet: ${(err as Error).message}`); }
 }
 
 export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<string, unknown>): Promise<Ergebnis> {
@@ -307,7 +319,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!auftrag) return { success: false, error: 'auftrag fehlt (Spezifikation als Text)' };
       if (!istPfadErlaubt(projekt, frei)) return { success: false, error: `Projektverzeichnis nicht freigegeben (Schreibrecht nötig): ${projekt}. Mit Schreibrecht: ${frei.join(', ')}` };
       try {
-        const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined });
+        const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) }); // v1382 R1
         return { success: true, data: { id: m.id, titel: m.titel, projekt: m.projekt, start: m.start, auftragDatei: m.auftragDatei }, display: `Auftrag ${m.id} („${m.titel}") auf ${k.name} gestartet in ${m.projekt}. Läuft im Hintergrund; Stand mit auftrag_stand ${m.id}, Ergebnis mit auftrag_ergebnis ${m.id}.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
@@ -633,7 +645,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
         aktiv = ws;
         let puls: ReturnType<typeof setInterval> | undefined;
         let sinneTimer: ReturnType<typeof setInterval> | undefined;
-        const sende = (n: Record<string, unknown>) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); };
+        const sende = (n: Record<string, unknown>): boolean => { if (ws.readyState !== WebSocket.OPEN) return false; ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); return true; };
         const sendeSinne = async () => { try { const w = await sinne.erfasse(); if (Object.keys(w).length) sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } };
         ws.on('open', () => {
           sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });
@@ -655,6 +667,9 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             // v1288 — alte Installationen aufräumen (Befund PC 07.10.: 22 Versionen, je ~800 MB); bleibt: laufende + vorige
             try { const a = ladeAktuell(); const weg = raeumeVersionen([version, a?.version ?? '', a?.vorige ?? '']); if (weg.length) log(`Alte Versionen entfernt: ${weg.join(', ')}`); } catch { /* beim nächsten Mal */ }
             if (rk !== 'abweichend' && !process.env.ALFRED_KEIN_UPDATE) pruefeUpdate(String(n.serverVersion ?? ''));
+            // v1382 R1 — ab jetzt Auftragsenden über diese Verbindung; Enden während Trennung/Neustart nachreichen
+            gehirnSende = sende;
+            try { for (const o of offeneEndmeldungen()) meldeAuftragEnde(o.meta, o.ergebnis, log); } catch (err) { log(`Offene Auftragsenden nicht lesbar: ${(err as Error).message}`); }
             return;
           }
           if (n.typ === 'puls_ok') return;
@@ -701,7 +716,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             ereignis('ergebnis', `${n.aktion}: ${r.success ? (r.display ?? 'ok').split('\n')[0]!.slice(0, 120) : 'Fehler: ' + (r.error ?? '').slice(0, 120)}`);
           }
         });
-        ws.on('close', (code, reason) => { if (puls) clearInterval(puls); if (sinneTimer) clearInterval(sinneTimer); if (verbunden) { verbunden = false; ereignis('getrennt', `Verbindung geschlossen (${code})`); } resolve(`geschlossen (${code} ${String(reason)})`); });
+        ws.on('close', (code, reason) => { if (gehirnSende === sende) gehirnSende = undefined; if (puls) clearInterval(puls); if (sinneTimer) clearInterval(sinneTimer); if (verbunden) { verbunden = false; ereignis('getrennt', `Verbindung geschlossen (${code})`); } resolve(`geschlossen (${code} ${String(reason)})`); });
         ws.on('error', (err) => { resolve(`Fehler: ${err.message}`); });
       });
       // v1278 — Realfall 1276: Manifest vom Gehirn abgewiesen (4004) → Endlosschleife, der Starter konnte nicht zurückfallen.

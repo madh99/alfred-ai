@@ -54,12 +54,13 @@ interface Verbindung {
   /** v1237 — letzte Sinne (Leerlauf, Fenster, Akku) und ihr Zeitpunkt. */
   sinne?: Record<string, unknown>;
   sinneZeit?: number;
-  /** v1342 — gestartete Aufträge (Claude Code) und die Sitzung, aus der sie kamen: das Ende wird dort gemeldet. */
-  auftraege?: Map<string, { chatId: string; platform: string; userId: string }>;
 }
 
 export class GeraeteGateway {
   private readonly wss = new WebSocketServer({ noServer: true });
+  /** v1342/v1382 — gestartete Aufträge (Claude Code) je Gerät und die Sitzung, aus der sie kamen: das Ende wird dort gemeldet.
+   *  Am Gateway statt an der Verbindung, damit ein Wiederverbinden des Satelliten die Zuordnung nicht verliert. */
+  private readonly auftraege = new Map<string, { chatId: string; platform: string; userId: string }>();
   private readonly verbindungen = new Map<string, Verbindung>();
   private readonly pairingCodes = new Map<string, { userId: string; gueltigBis: number; fehlversuche: number }>();
   /** v1225 — Fehlversuche je Absender: nach 10 in 10 Minuten wird das Pairing für diesen Absender abgelehnt. */
@@ -230,7 +231,7 @@ export class GeraeteGateway {
       istOwner: this.deps.istOwner, // v1268
       geraetId: v.eintrag.id, name: v.eintrag.name, manifest: v.eintrag.manifest, skillName: v.skillName,
       sendeAktion: (aktion, params, timeoutMs) => this.sendeAktion(v.eintrag.id, aktion, params, timeoutMs),
-      merkeAuftrag: (auftragId, herkunft) => { v.auftraege ??= new Map(); v.auftraege.set(auftragId, herkunft); }, // v1342
+      merkeAuftrag: (auftragId, herkunft) => { this.auftraege.set(`${v.eintrag.id}:${auftragId}`, herkunft); }, // v1342/v1382
       bestaetigung: async (frage, herkunft) => {
         if (!this.deps.enqueueBestaetigung) return false;
         const ziel = this.deps.ownerZiel();
@@ -285,8 +286,9 @@ export class GeraeteGateway {
       }
       case 'ereignis': {
         // v1342 — Auftrag (Claude Code) auf dem Gerät beendet → Fortsetzung in der Sitzung, aus der er gestartet wurde
-        const herkunft = v.auftraege?.get(n.auftragId);
-        v.auftraege?.delete(n.auftragId);
+        const schluessel = `${v.eintrag.id}:${n.auftragId}`;
+        const herkunft = this.auftraege.get(schluessel);
+        this.auftraege.delete(schluessel);
         this.deps.logger.info({ geraet: v.eintrag.name, auftrag: n.auftragId, status: n.status, herkunft: herkunft?.chatId }, 'v1342 Auftrag beendet');
         this.deps.beiEreignis?.({ geraet: v.eintrag.name, skillName: v.skillName, ereignis: n, herkunft }).catch(err => this.deps.logger.warn({ err: (err as Error).message }, 'v1342 Ereignis nicht verarbeitet'));
         return;

@@ -13840,6 +13840,29 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               return (await this.fileStoreRef.save(owner, name, data)).key;
             },
           },
+          // v1382 (R1) — Claude-Code-Auftrag beendet: Meldung ohne Modell in die Sitzung des Starts, Owner-Chat als Kopie.
+          // Die Ausgabe von Claude Code steht nur als gekennzeichneter Datenblock darin und geht an kein Modell.
+          beiEreignis: async ({ geraet, ereignis, herkunft }) => {
+            if (ereignis.art !== 'auftrag') return;
+            const { auftragMeldung } = await import('./geraete/auftrag-meldung.js');
+            const text = auftragMeldung(geraet, ereignis);
+            const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api') as Platform;
+            const ownerChatId = this.config.security?.ownerUserId ?? '';
+            const ziele: Array<{ platform: Platform; chatId: string }> = [];
+            if (herkunft?.chatId) ziele.push({ platform: herkunft.platform as Platform, chatId: herkunft.chatId });
+            if (ownerChatId && !ziele.some(z => z.platform === ownerPlatform && z.chatId === ownerChatId)) ziele.push({ platform: ownerPlatform, chatId: ownerChatId });
+            const zugestellt: string[] = [];
+            for (const z of ziele) {
+              const adapter = this.adapters.get(z.platform);
+              if (!adapter) continue;
+              try {
+                const f = this.formatter.format(text, z.platform);
+                await adapter.sendMessage(z.chatId, f.text, { parseMode: f.parseMode !== 'text' ? f.parseMode : undefined });
+                zugestellt.push(`${z.platform}:${z.chatId}`);
+              } catch (err) { this.logger.warn({ err: (err as Error).message, chatId: z.chatId }, 'v1382 Auftragsende nicht zustellbar'); }
+            }
+            this.logger.info({ geraet, auftrag: ereignis.auftragId, status: ereignis.status, dauerS: ereignis.dauerS, kosten: ereignis.kosten, dateien: ereignis.dateienAnzahl ?? 0, herkunft: herkunft?.chatId, zugestellt }, 'v1382 Auftragsende gemeldet');
+          },
           // v1230 — nach dem Ja des Owners setzt Alfred das Vorhaben selbst fort: synthetische Owner-Nachricht
           // durch die Pipeline (wie geplante Aufgaben), Antwort und Screenshots zurück in den Owner-Chat.
           nachFreigabe: async (v) => {

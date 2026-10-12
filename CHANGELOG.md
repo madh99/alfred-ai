@@ -51,7 +51,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
-## [0.19.0-jarvis.1381] - 2026-10-12
+## [0.19.0-jarvis.1382] - 2026-10-12
+
+### Added — Claude-Code-Aufträge melden ihr Ende selbst (v1382)
+
+Bisher musste man bei Aufträgen an Claude Code auf einem Gerät selbst nachfragen, ob sie fertig sind. Jetzt meldet der Satellit das Ende, und Alfred schreibt in die Sitzung, aus der der Auftrag kam (App, Terminal, Telegram), mit Kopie in den Owner-Chat:
+
+- Titel, Gerät, Status (fertig, mit Fehler beendet, abgebrochen), Dauer, Kosten, die geänderten Dateien im Projekt (ohne Abhängigkeiten und Build-Ordner) und die Ausgabe von Claude Code als gekennzeichneter, gekürzter Datenblock.
+- **Ohne Modell:** Die Meldung wird fest zusammengesetzt. Die Ausgabe von Claude Code ist fremder Inhalt und geht nie automatisch an ein Modell; eine Zusammenfassung gibt es nur auf Nachfrage („Ergebnis von Auftrag …").
+- Endet ein Auftrag, während der Satellit getrennt ist oder neu startet (Claude Code läuft abgekoppelt weiter), wird das Ende nach dem nächsten Verbinden nachgereicht; jedes Ende wird genau einmal gemeldet. Die Zuordnung zur Sitzung des Starts übersteht ein Wiederverbinden.
+- Behoben: Ein abgebrochener Auftrag stand nach dem Prozessende als „Fehler" im Protokoll.
+
+
 
 ### Fixed — UniFi-Warnungen und -Ereignisse aus dem System-Log (v1381)
 
