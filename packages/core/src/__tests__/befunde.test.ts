@@ -96,3 +96,19 @@ describe('Doppelter Batterie-Alarm', () => {
     expect(d.zeilen.join('\n')).not.toContain('Low battery');
   });
 });
+
+// v1380 — Realfall 12.10. 13:48: Vorgangstitel „deutlich unter der Baseline dieser Stunde (Median 3 175,1 W, n=113)" ohne „PV"
+describe('Befund-Titel nennt den Gegenstand', () => {
+  it('Urteil ohne Bezeichnung bekommt den Kopf seiner Zeile; Detail beginnt mit der betroffenen Zeile', () => {
+    const d = {
+      zeilen: [
+        '**Hausbatterie:** SoC 33 % · entlädt 2 177 W ↳ NORMAL zur Stunde (Median 75 %, n=129)',
+        '**PV:** PV 736 W · Ertrag heute 0,11 kWh · Verbrauch heute 0,87 kWh · ↳ ⚠️ deutlich unter der Baseline dieser Stunde (Median 3 175,1 W, n=113)',
+      ],
+      auffaellig: ['pv:baseline'],
+    };
+    const b = befundeAusDeutung('energie', d)[0]!;
+    expect(b.titel).toBe('PV: PV 736 W — deutlich unter der Baseline dieser Stunde (Median 3 175,1 W, n=113)');
+    expect(b.detail!.split('\n')[0]).toMatch(/^PV: PV 736 W/);
+  });
+});

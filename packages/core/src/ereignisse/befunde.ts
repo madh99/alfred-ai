@@ -67,8 +67,18 @@ export function befundeAusDeutung(quelle: string, deutung: { zeilen: string[]; a
       }
       if (!seg && warnSegmente.length === 1) seg = warnSegmente[0];
     }
-    const titel = seg ? bereinigeZeile(seg).slice(0, 200) : `${quelle}: ${key}`;
-    out.push({ gegenstand: key, titel, detail: deutung.zeilen.map(bereinigeZeile).filter(Boolean).join('\n').slice(0, 2000) });
+    // v1380 — Segment ohne eigene Bezeichnung (nur das Urteil „↳ ⚠ deutlich unter der Baseline …") bekommt den Kopf seiner Zeile
+    // davor — Realfall 12.10.: Vorgangstitel „deutlich unter der Baseline dieser Stunde (Median 3 175,1 W)" ohne „PV" und ohne Messwert.
+    const zeile = seg ? deutung.zeilen.find(z => z.includes(seg!)) : undefined;
+    const kopf = zeile ? bereinigeZeile(zeile.split(/\s·\s/)[0] ?? '') : '';
+    const urteil = seg ? bereinigeZeile(seg) : '';
+    const ohneBezeichnung = !!urteil && !/^[^:]{1,60}:/.test(urteil) && !!kopf && !kopf.includes(urteil);
+    const titel = seg ? (ohneBezeichnung ? `${kopf} — ${urteil}` : urteil).slice(0, 200) : `${quelle}: ${key}`;
+    // betroffene Zeile zuerst (Ziel des Vorgangs = erste Zeile), danach der übrige Abschnitt als Kontext
+    const alle = deutung.zeilen.map(bereinigeZeile).filter(Boolean);
+    const eigene = zeile ? bereinigeZeile(zeile) : '';
+    const detail = (eigene ? [eigene, ...alle.filter(z => z !== eigene)] : alle).join('\n').slice(0, 2000);
+    out.push({ gegenstand: key, titel, detail });
   });
   return out;
 }

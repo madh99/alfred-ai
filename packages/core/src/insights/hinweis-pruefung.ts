@@ -119,6 +119,8 @@ export function istMetaText(text: string): boolean {
   // reine Überschrift: eine Zeile, endet auf Doppelpunkt oder ist nur ein Abschnittswort
   if (!t.includes('\n') && (/:\s*$/.test(erste) && erste.length <= 140)) return true;
   if (/^(insights?|aktionen|actions?|hinweise?|zusammenfassung)\s*:?\s*$/i.test(erste)) return true;
+  // v1380 — Abschnittsüberschriften ohne Inhalt (Realfall 12.10. 14:01: Hinweise „Relevante Information" und „Handlungsbedarf")
+  if (!t.includes('\n') && /^(handlungsbedarf|relevante information(en)?|information(en)?|zur information|info|weitere hinweise|wichtig|dringend|offene punkte|sonstiges|(kurz)?überblick|übersicht|ergebnis(se)?|fazit|empfehlung(en)?|nächste schritte|beobachtung(en)?|status)(\s*\([^)]{0,40}\))?\s*:?\s*$/i.test(erste)) return true;
   // Selbstauskunft über die Arbeit statt Inhalt
   if (/^(hier (sind|ist) (die|meine|deine)\b|ich (habe|erstelle|prüfe|nenne|gehe|liste|fasse|beginne)\b|die (system)?vorgaben\b|die (drei |zwei |vier )?vorab-(auffälligkeiten|analyse)\b|die vorab-analyse\b|die lage nach dem ereignis\b|die zustandsänderung betrifft\b|es gibt keine zeile mit\b|keine (neuen )?insights\b|weitere punkte wie\b)/i.test(erste)) return true;
   if (/^hinweis:\s*die insight-tracking-liste\b/i.test(erste)) return true;

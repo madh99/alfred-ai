@@ -809,7 +809,7 @@ export class Alfred {
               // v1362 — E2 beobachtend: Haltefrist nur protokollieren, der Vorgang entsteht wie bisher
               log.info({ quelle, gegenstand: b.gegenstand, haltefristMin: haltefristMin(schluessel), regel: regel?.wirkung ?? null }, 'v1362 E2 Haltefrist (beobachtend)');
               const v = await vorgaengeRepoB.anlegen({
-                userId: owner, titel: b.titel.slice(0, 200), ziel: b.detail ?? `Befund ${quelle}/${b.gegenstand}`, besitzer: 'user', status: 'offen',
+                userId: owner, titel: b.titel.slice(0, 200), ziel: b.detail?.split('\n')[0] ?? `Befund ${quelle}/${b.gegenstand}`, besitzer: 'user', status: 'offen', // v1380 — Ziel = betroffene Zeile, nicht der ganze Abschnitt
                 naechsterSchritt: 'Owner entscheidet', frist: new Date(Date.now() + 14 * 86_400_000).toISOString(), quelle: 'befund', autonomie: 'bestaetigen',
                 dedupeKey: `befund:${quelle}:${b.gegenstand}`, kategorie: quelleZuKategorie(quelle), begruendung: `Befund ${quelle}/${b.gegenstand} neu auffällig (Weltmodell)`,
               });
@@ -2954,6 +2954,7 @@ export class Alfred {
           const { haltefristMin: haltefristN, nieStummschaltbar: nieStummN } = await import('./vorgaenge/regeln.js');
           const nachforscher = new Nachforscher({
             llm: this.llmProvider, logger: this.logger,
+            standardPlatz: (): Record<string, string> => (this.config.briefing?.location ? { ort: this.config.briefing.location } : {}), // v1380 Wetter am Wohnort
             lese: async (werkzeug, _aktion, params) => {
               const skill = skillRegistry.get(werkzeug);
               const owner = this.tryOwner();

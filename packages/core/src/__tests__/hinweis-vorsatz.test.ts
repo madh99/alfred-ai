@@ -40,3 +40,13 @@ describe('ohneMetaVorsatz', () => {
     expect(istMetaText(t)).toBe(true);
   });
 });
+
+// v1380 — Realfall 12.10. 14:01: Abschnittsüberschriften kamen als eigene Hinweise an
+describe('Überschriften ohne Inhalt', () => {
+  it('werden verworfen', () => {
+    for (const t of ['**Relevante Information**', '**Handlungsbedarf**', 'Weitere Hinweise:', 'Nächste Schritte', 'Übersicht (heute)', 'Empfehlung', 'Beobachtungen', 'Relevante Informationen']) expect(istMetaText(t), t).toBe(true);
+  });
+  it('kurze echte Hinweise bleiben', () => {
+    for (const t of ['Garagentor offen', 'Status: Wallbox offline seit 31.08.', 'Handlungsbedarf: Domain noahhabel.at läuft am 15.10. ab']) expect(istMetaText(t), t).toBe(false);
+  });
+});

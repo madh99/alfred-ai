@@ -51,6 +51,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1380] - 2026-10-12
+
+### Fixed — Hinweise ohne Inhalt, Vorgänge ohne Gegenstand; Nachforschen-Rezept für die PV (v1380)
+
+Drei Funde des Owners vom 12.10.:
+
+- **Hinweis „Relevante Information" ohne Inhalt.** Der Reasoning-Lauf schrieb Abschnittsüberschriften („Handlungsbedarf", „Relevante Information") als eigene Absätze; die Inhalte darunter fielen der Wiederholungssperre zum Opfer, die nackte Überschrift blieb als Hinweis stehen. Einzeilige Überschriften ohne Inhalt werden jetzt verworfen; kurze echte Hinweise („Garagentor offen") bleiben.
+- **Vorgang „deutlich unter der Baseline dieser Stunde (Median 3 175,1 W, n=113)".** Der Titel bestand nur aus dem Urteil, ohne Gegenstand und Messwert, das Ziel war der ganze Energie-Abschnitt. Ein Urteil ohne eigene Bezeichnung bekommt jetzt den Kopf seiner Zeile davor („PV: PV 736 W — deutlich unter der Baseline …"); das Ziel des Vorgangs ist nur die betroffene Zeile, der übrige Abschnitt steht als Kontext im Befund.
+- **Nachforschen-Rezept „PV unter der Baseline".** Liest das Wetter am Wohnort des Owners und die PV-, Wechselrichter- und Prognose-Sensoren der letzten 24 Stunden gegen die Woche davor; Deutungsfragen: erklärt die Bewölkung den Ertrag, liefern alle Wechselrichter, lag auch die Prognose niedrig. Der Lese-Katalog erlaubt dafür die lesende Wetterabfrage.
+
 ## [0.19.0-jarvis.1379] - 2026-10-12
 
 ### Fixed — Nachforschen: UniFi-Rezept liest, was der Controller liefert (v1379)

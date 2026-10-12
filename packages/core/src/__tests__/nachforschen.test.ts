@@ -23,7 +23,7 @@ describe('Lese-Katalog und Rezepte', () => {
     expect(r.id).toBe('licht-lange-an');
     expect(pruefeRezept(r, platzhalterAus(LICHT))).toEqual([]);
     // jedes Referenzrezept besteht die Prüfung vor dem Lauf (v1376: auch Infra)
-    for (const x of REFERENZ_REZEPTE) expect(pruefeRezept(x, { entity: 'light.x', raum: 'R' }), x.id).toEqual([]);
+    for (const x of REFERENZ_REZEPTE) expect(pruefeRezept(x, { entity: 'light.x', raum: 'R', ort: 'Altlengbach' }), x.id).toEqual([]);
   });
 
   it('ein Rezept mit Schreibschritt ist ungültig (auch künftig dynamisch erstellte)', () => {
@@ -104,5 +104,15 @@ describe('v1378 — abgeschnittene Deutung (Realfall 12.10. 14:46: 900 von 900 A
     const e = await n.untersuche({ ...LICHT, quelle: 'infra', gegenstand: 'unifi:device:ac-mesh', titel: 'unifi: Device "AC Mesh" is not connected' });
     expect(e).toMatchObject({ status: 'deutung_ungueltig', fehler: 'Antwort am Token-Limit abgeschnitten' });
     expect(llm.complete.mock.calls[0]![0].maxTokens).toBe(2000);
+  });
+});
+
+describe('v1380 — PV-Rezept', () => {
+  it('„PV unter der Baseline" hat ein Rezept mit Wetter am Wohnort und PV-Sensoren', () => {
+    const pv = { ...LICHT, quelle: 'energie', gegenstand: 'pv:baseline', titel: 'PV: PV 736 W — deutlich unter der Baseline dieser Stunde' };
+    const r = rezeptFuer(pv)!;
+    expect(r.id).toBe('pv-unter-baseline');
+    expect(pruefeRezept(r, { ...platzhalterAus(pv), ort: 'Altlengbach' })).toEqual([]);
+    expect(pruefeRezept(r, platzhalterAus(pv)).join()).toMatch(/Platzhalter fehlt \(ort\)/);
   });
 });

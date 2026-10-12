@@ -29,6 +29,8 @@ export interface NachforscherDeps {
   llm: Pick<LLMProvider, 'complete'>;
   logger: Logger;
   jetzt?: () => number;
+  /** v1380 — feste Platzhalter (z. B. {ort} = Wohnort des Owners für das Wetter) */
+  standardPlatz?: () => Record<string, string>;
 }
 
 export class Nachforscher {
@@ -46,7 +48,7 @@ export class Nachforscher {
   async untersuche(b: BefundKurz, rezepte?: Rezept[]): Promise<LaufErgebnis> {
     const r = rezeptFuer(b, rezepte);
     if (!r) return { befund: b, rezept: null, status: 'kein_rezept' };
-    const platz = platzhalterAus(b);
+    const platz = { ...(this.d.standardPlatz?.() ?? {}), ...platzhalterAus(b) };
     const fehler = pruefeRezept(r, platz);
     if (fehler.length) return { befund: b, rezept: r.id, status: 'rezept_ungueltig', fehler: fehler.join('; ') };
     if (!this.budgetFrei()) return { befund: b, rezept: r.id, status: 'budget' };

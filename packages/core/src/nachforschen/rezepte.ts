@@ -30,7 +30,7 @@ export const LESE_KATALOG: Record<string, Record<string, (p: Record<string, unkn
   homeassistant: {
     state: p => (p.entityId ? null : 'state braucht entityId'),
     relations: p => (p.entityId || p.match ? null : 'relations braucht entityId oder match'),
-    history_summary: p => (!(p.entities || p.entityId || p.area) ? 'history_summary braucht entities, entityId oder area'
+    history_summary: p => (!(p.entities || p.entityId || p.area || (p.domain && p.match)) ? 'history_summary braucht entities, entityId, area oder domain mit match'
       : PERIODE_TAGE(String(p.period ?? '24h')) > 10 ? 'history_summary höchstens 10 Tage' : null),
     history: p => (!p.entityId ? 'history nur mit entityId' : PERIODE_TAGE(String(p.period ?? '24h')) > 7 ? 'history höchstens 7 Tage' : null),
     logbook: p => (!p.entityId ? 'logbook nur mit entityId (ungefiltert 34 MB/Tag)' : PERIODE_TAGE(String(p.period ?? '24h')) > 3 ? 'logbook höchstens 3 Tage' : null),
@@ -44,6 +44,10 @@ export const LESE_KATALOG: Record<string, Record<string, (p: Record<string, unkn
     list_networks: () => null,
     list_alerts: p => (Number(p.limit ?? 0) > 0 && Number(p.limit) <= 50 ? null : 'list_alerts mit limit 1–50'),
     list_events: p => (Number(p.limit ?? 0) > 0 && Number(p.limit) <= 50 ? null : 'list_events mit limit 1–50'),
+  },
+  // v1380 — Wetter am Ort des Owners (PV-Rezept); der Skill liest nur (Open-Meteo)
+  weather: {
+    aktuell: p => (p.location ? null : 'Wetter braucht location'),
   },
   proxmox: {
     cluster_status: () => null,
@@ -151,6 +155,18 @@ export const REFERENZ_REZEPTE: Rezept[] = [
 ];
 
 REFERENZ_REZEPTE.push(
+  {
+    // v1380 — Realfall 12.10.: Vorgang „PV deutlich unter der Baseline" ohne Kontext; der Owner musste selbst herausfinden,
+    // ob es nur bewölkt war. Das Rezept liest Wetter und die PV-/Wechselrichter-Sensoren gegen die Woche davor.
+    id: 'pv-unter-baseline', herkunft: 'referenz',
+    muster: { quelle: 'energie', gegenstand: /^pv:/ },
+    schritte: [
+      { werkzeug: 'weather', aktion: 'aktuell', params: { location: '{ort}' }, zweck: 'Wetter jetzt am Haus (Bewölkung, Sonne)' },
+      { werkzeug: 'homeassistant', aktion: 'history_summary', params: { domain: 'sensor', match: 'pv,solar,dtu,hoymiles,wechselrichter,inverter,forecast', period: '24h', compareWith: '7d' }, zweck: 'PV-, Wechselrichter- und Prognose-Sensoren: letzte 24 h gegen die Woche davor' },
+    ],
+    deutungsfragen: ['Erklärt das Wetter (Bewölkung) den geringen Ertrag?', 'Liefern alle Wechselrichter bzw. Strings, oder fällt einer aus (nicht verfügbar, 0 W bei Sonne)?', 'Lag auch die Prognose (Forecast.Solar) niedrig?'],
+    eigeneSchritte: [BEOBACHTEN],
+  },
   {
     id: 'unifi-geraet-getrennt', herkunft: 'referenz',
     muster: { quelle: 'infra', gegenstand: /^unifi:device:/ },
