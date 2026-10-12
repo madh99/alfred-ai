@@ -51,6 +51,24 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1410] - 2026-10-13
+
+### Added — Werkzeuge installieren mit Bestätigung (v1410, R3c)
+
+Satelliten haben die Geräteaktion „installieren“. Quelle und Paketname werden geprüft, der Aufruf läuft ohne Shell, es gibt keinen freien Befehl. Jede Installation braucht eine Bestätigung. Unterstützte Quellen:
+
+- apt unter Linux, wenn `sudo` ohne Passwort geht,
+- brew,
+- winget für den Benutzer oder systemweit,
+- npm global,
+- pip für den Benutzer (über pipx, wenn vorhanden).
+
+**Im Projekt:** Meldet Claude Code „FEHLT: <werkzeug>“ oder zeigt die Abnahme „command not found“, fragt Alfred „pnpm auf der Ubuntu-VM installieren? (npm: pnpm)“ und versucht keinen Fix auf gut Glück. Bei „Ja“ wird installiert und die Etappe neu gestartet. Bei „Nein“ oder „weiter ohne Installation“ folgt der übliche Fix-Versuch. Nach demselben Werkzeug fragt Alfred nur einmal.
+
+### Fixed — sudo-Sperre ausschalten wirkt sofort
+
+Beim Ausschalten blieb die Sperre im laufenden Satelliten aktiv, bis er neu startete.
+
 ## [0.19.0-jarvis.1409] - 2026-10-13
 
 ### Added — sudo in Claude-Code-Aufträgen optional sperrbar (v1409, R3b)

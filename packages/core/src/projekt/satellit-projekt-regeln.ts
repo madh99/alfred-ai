@@ -112,3 +112,39 @@ export function projektZeile(s: { id: string; geraet: string; status: string; nr
   if (s.status === 'wartet_owner') return `${s.id} auf ${s.geraet}: wartet auf dich — ${(s.frage?.text ?? '').split('\n')[0]!.slice(0, 100)}`;
   return null;
 }
+
+/**
+ * v1410 R3c — fehlende Werkzeuge deterministisch erkennen: „FEHLT: x" im Ergebnis von Claude Code (Etappen-Auftrag verlangt es)
+ * und typische Shell-Meldungen im Prüfprotokoll. Höchstens drei, ohne Doppel.
+ */
+export function fehlendeWerkzeuge(ergebnis: string, protokoll: string): string[] {
+  const funde: string[] = [];
+  const name = '([A-Za-z0-9][A-Za-z0-9._+-]{0,39})';
+  for (const m of ergebnis.matchAll(new RegExp(`^\\s*FEHLT:\\s*${name}`, 'gm'))) funde.push(m[1]!);
+  for (const re of [new RegExp(`${name}: (?:command )?not found`, 'g'), new RegExp(`command not found: ${name}`, 'g'), new RegExp(`'${name}' is not recognized`, 'g'), new RegExp(`Der Befehl "${name}" ist entweder falsch`, 'g')])
+    for (const m of protokoll.matchAll(re)) funde.push(m[1]!);
+  const ohne = new Set(['sh', 'bash', 'zsh', 'line', 'Error', 'error', 'npm', 'node']);
+  return [...new Set(funde.filter(f => !ohne.has(f) && !/^\d+$/.test(f)).map(f => f.toLowerCase()))].slice(0, 3);
+}
+
+/** v1410 — Paket je Werkzeug und Plattform; unbekannt → Paketverwaltung des Systems mit dem Werkzeugnamen. */
+const PAKETE: Record<string, Partial<Record<'npm' | 'apt' | 'brew' | 'winget' | 'pip', string>>> = {
+  pnpm: { npm: 'pnpm' }, yarn: { npm: 'yarn' }, tsc: { npm: 'typescript' }, typescript: { npm: 'typescript' }, tsx: { npm: 'tsx' }, 'ts-node': { npm: 'ts-node' },
+  python: { apt: 'python3', brew: 'python', winget: 'Python.Python.3.12' }, python3: { apt: 'python3', brew: 'python', winget: 'Python.Python.3.12' },
+  pip: { apt: 'python3-pip' }, pip3: { apt: 'python3-pip' }, pipx: { apt: 'pipx', brew: 'pipx' },
+  docker: { apt: 'docker.io', brew: 'docker', winget: 'Docker.DockerDesktop' }, git: { apt: 'git', brew: 'git', winget: 'Git.Git' },
+  java: { apt: 'default-jdk', brew: 'openjdk', winget: 'EclipseAdoptium.Temurin.21.JDK' }, javac: { apt: 'default-jdk', brew: 'openjdk', winget: 'EclipseAdoptium.Temurin.21.JDK' },
+  go: { apt: 'golang-go', brew: 'go', winget: 'GoLang.Go' }, cargo: { apt: 'cargo', brew: 'rust', winget: 'Rustlang.Rustup' }, rustc: { apt: 'rustc', brew: 'rust', winget: 'Rustlang.Rustup' },
+  psql: { apt: 'postgresql-client', brew: 'libpq' }, sqlite3: { apt: 'sqlite3', brew: 'sqlite' }, ffmpeg: { apt: 'ffmpeg', brew: 'ffmpeg', winget: 'Gyan.FFmpeg' },
+  make: { apt: 'build-essential' }, gcc: { apt: 'build-essential' }, 'g++': { apt: 'build-essential' }, curl: { apt: 'curl' }, jq: { apt: 'jq', brew: 'jq', winget: 'jqlang.jq' },
+  node: { apt: 'nodejs', brew: 'node', winget: 'OpenJS.NodeJS.LTS' }, chromium: { apt: 'chromium-browser', brew: 'chromium' },
+};
+
+export function installVorschlag(werkzeug: string, umgebung?: string): { quelle: string; paket: string } {
+  const sys = /windows/i.test(umgebung ?? '') ? 'winget' : /macos|darwin/i.test(umgebung ?? '') ? 'brew' : 'apt';
+  const e = PAKETE[werkzeug.toLowerCase()] ?? {};
+  if (e.npm) return { quelle: 'npm', paket: e.npm };
+  if (e[sys as 'apt']) return { quelle: sys, paket: e[sys as 'apt']! };
+  if (e.pip) return { quelle: 'pip', paket: e.pip };
+  return { quelle: sys, paket: werkzeug };
+}

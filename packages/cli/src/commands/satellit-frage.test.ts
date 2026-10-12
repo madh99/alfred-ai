@@ -62,7 +62,7 @@ describe('sudo-Sperre', () => {
     expect(wendeAn(k, 'sudo-sperre', 'an')).toEqual({ ok: true, text: 'sudo in Claude-Code-Aufträgen: gesperrt' });
     expect(k.sudoSperre).toBe(true);
     expect(wendeAn(k, 'sudo-sperre', 'aus').text).toMatch(/erlaubt/);
-    expect(k.sudoSperre).toBeUndefined();
+    expect(k.sudoSperre).toBe(false);
     expect(wendeAn(k, 'sudo-sperre', 'vielleicht').ok).toBe(false);
   });
 });

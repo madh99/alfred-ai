@@ -85,7 +85,7 @@ export function wendeAn(k: GeraetKonfig, befehl: string, arg: string): { ok: boo
     }
     case 'sudo-sperre': { // v1409 R3b
       if (!/^(an|aus)$/i.test(a)) return { ok: false, text: 'sudo-sperre an|aus' };
-      k.sudoSperre = a.toLowerCase() === 'an' ? true : undefined;
+      k.sudoSperre = a.toLowerCase() === 'an'; // false statt undefined: Object.assign beim Neuladen übernimmt das Ausschalten (v1410)
       return { ok: true, text: `sudo in Claude-Code-Aufträgen: ${k.sudoSperre ? 'gesperrt' : 'erlaubt'}` };
     }
     default:

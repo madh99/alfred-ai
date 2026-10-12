@@ -464,3 +464,6 @@ export function umgebungLesen(dir: string, lauf?: (cmd: string, args: string[]) 
   if (!lauf) umgebungCache = { zeit: Date.now(), u };
   return u;
 }
+
+/** v1410 — nach einer Installation die zwischengespeicherte Umgebung verwerfen. */
+export function umgebungNeu(): void { umgebungCache = undefined; }

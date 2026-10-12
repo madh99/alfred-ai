@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 
 import path from 'node:path';
 import type { GeraetEreignis } from '@alfred/types';
 import {
-  STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit,
+  STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit, fehlendeWerkzeuge, installVorschlag,
   type Grenzen, type MutationsArt,
 } from './satellit-projekt-regeln.js';
 
@@ -43,7 +43,10 @@ export interface ProjektStand {
   umgebung?: string;
   /** v1409 R3b — sudo in den Aufträgen gesperrt (Projekt-Option); die Geräte-Einstellung wirkt am Satelliten selbst */
   sudoSperre?: boolean;
-  frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation'; mutation?: Mutation; text: string };
+  frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation' | 'installieren'; mutation?: Mutation; text: string; /** v1410 R3c */ installation?: { werkzeug: string; quelle: string; paket: string } };
+  /** v1410 R3c — Werkzeuge, nach deren Installation schon gefragt wurde (keine Schleife); letztes Prüfprotokoll für den Fix-Versuch ohne Installation */
+  installiertGefragt?: string[];
+  letztesProtokoll?: string;
   letzterText?: string;
 }
 /** v1398 — Kontext für den Planer bei Weiterarbeit: frühere Läufe, letzte Commits, Bestand (als Daten). */
@@ -138,9 +141,9 @@ export class SatellitProjekte {
     return s;
   }
 
-  private async stelleFrage(s: ProjektStand, art: 'plan' | 'weiter' | 'mutation', text: string, mutation?: Mutation): Promise<void> {
+  private async stelleFrage(s: ProjektStand, art: 'plan' | 'weiter' | 'mutation' | 'installieren', text: string, mutation?: Mutation, installation?: { werkzeug: string; quelle: string; paket: string }): Promise<void> {
     const nonce = randomUUID();
-    s.frage = { nonce, art, text, ...(mutation ? { mutation } : {}) };
+    s.frage = { nonce, art, text, ...(mutation ? { mutation } : {}), ...(installation ? { installation } : {}) };
     if (art !== 'plan') s.status = 'wartet_owner';
     this.sichere(s);
     await this.d.frage(s, text, nonce);
@@ -160,6 +163,7 @@ export class SatellitProjekte {
         if (this.d.akte) { const a = await this.d.akte.zuordnen(s).catch((err: Error) => { this.d.logger.warn({ id: s.id, err: err.message }, 'v1398 Akte nicht zugeordnet'); return undefined; }); if (a) s.akteId = a; }
         await this.naechsteEtappe(s); return;
       }
+      if (f.art === 'installieren' && f.installation) { await this.installiereUndWiederhole(s, f.installation); return; } // v1410 R3c
       if (f.art === 'mutation' && f.mutation) {
         const rest = s.plan.slice(s.nr);
         s.plan = [...s.plan.slice(0, s.nr), ...this.d.anwenden(rest, s.nr, f.mutation)];
@@ -247,6 +251,9 @@ export class SatellitProjekte {
     if (e.status === 'abgebrochen') { await this.beende(s, 'abgebrochen', 'Auftrag am Gerät abgebrochen'); return; }
 
     if (!s.pruefBefehle.length) {
+      // v1410 R3c — auch ohne Abnahme: meldet Claude Code ein fehlendes Werkzeug, zuerst nach der Installation fragen
+      const fehltOhne = fehlendeWerkzeuge(e.text ?? '', '').filter(w => !(s.installiertGefragt ?? []).includes(w));
+      if (fehltOhne.length) { await this.frageInstallation(s, fehltOhne[0]!, etappe); return; }
       // ohne Abnahme keine automatische nächste Etappe (Owner-Entscheidung 12.10.)
       this.vermerke(s, { ok: e.status === 'fertig', geprueft: false });
       await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" ${e.status === 'fertig' ? 'fertig' : 'mit Fehler beendet'} (ungeprüft, ${s.etappeKostenUsd.toFixed(2)} USD). Mit der nächsten Etappe weitermachen?`);
@@ -262,6 +269,14 @@ export class SatellitProjekte {
       await this.umplanen(s, true, protokoll);
       return;
     }
+    // v1410 R3c — fehlt ein Werkzeug, statt Fix-Versuch fragen, ob installiert werden soll (einmal je Werkzeug)
+    const fehlt = fehlendeWerkzeuge(e.text ?? '', protokoll).filter(w => !(s.installiertGefragt ?? []).includes(w));
+    if (fehlt.length) { s.letztesProtokoll = protokoll; await this.frageInstallation(s, fehlt[0]!, etappe); return; }
+    await this.nachRot(s, etappe, protokoll);
+  }
+
+  /** Abnahme rot: Fix-Versuch oder (nach maxFixVersuche) Rückfrage. */
+  private async nachRot(s: ProjektStand, etappe: string, protokoll: string): Promise<void> {
     if (s.fixVersuch < s.grenzen.maxFixVersuche) {
       s.fixVersuch += 1;
       await this.d.melde(s, `🔧 Etappe ${s.nr}: Abnahme rot — Fix-Versuch ${s.fixVersuch}/${s.grenzen.maxFixVersuche}.`);
@@ -324,9 +339,36 @@ export class SatellitProjekte {
   /** Owner will ohne die vorgeschlagene Änderung weiter (Rückfrage „mutation" abgelehnt). */
   weiterOhneAenderung(id: string): Promise<boolean> {
     const s = this.staende.get(id);
-    if (!s?.frage || s.frage.art !== 'mutation') return Promise.resolve(false);
+    if (!s?.frage || (s.frage.art !== 'mutation' && s.frage.art !== 'installieren')) return Promise.resolve(false);
+    const art = s.frage.art;
     s.frage = undefined;
-    return this.seriell(id, async () => { s.status = 'laeuft'; await this.naechsteEtappe(s); }).then(() => true);
+    return this.seriell(id, async () => {
+      s.status = 'laeuft';
+      if (art === 'mutation') { await this.naechsteEtappe(s); return; }
+      // v1410 R3c — ohne Installation: wie bisher Fix-Versuch (mit Abnahme) bzw. Frage nach der nächsten Etappe (ohne)
+      const etappe = s.plan[s.nr - 1]!;
+      if (s.pruefBefehle.length) { await this.nachRot(s, etappe, s.letztesProtokoll ?? ''); return; }
+      this.vermerke(s, { ok: false, geprueft: false });
+      await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" ohne Installation (ungeprüft). Mit der nächsten Etappe weitermachen?`);
+    }).then(() => true);
+  }
+
+  /** v1410 R3c — Rückfrage „Werkzeug installieren?" (Owner 13.10.: jede Installation einzeln bestätigt). */
+  private async frageInstallation(s: ProjektStand, werkzeug: string, etappe: string): Promise<void> {
+    const v = installVorschlag(werkzeug, s.umgebung);
+    s.installiertGefragt = [...(s.installiertGefragt ?? []), werkzeug];
+    this.d.logger.info({ id: s.id, etappe: s.nr, werkzeug, ...v }, 'v1410 Installation zur Rückfrage');
+    await this.stelleFrage(s, 'installieren', `🧩 Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 100)}" braucht „${werkzeug}“, das auf ${s.geraet} fehlt.\nInstallieren mit ${v.quelle}: ${v.paket}?\nJa: installieren und die Etappe neu starten · Nein / „weiter ohne Installation": normaler Fix-Versuch.`, undefined, { werkzeug, ...v });
+  }
+
+  /** v1410 R3c — nach dem Ja: installieren (Geräteaktion), Ergebnis melden, Etappe neu starten; Fehlschlag hält das Projekt an. */
+  private async installiereUndWiederhole(s: ProjektStand, i: { werkzeug: string; quelle: string; paket: string }): Promise<void> {
+    await this.d.melde(s, `🧩 Installiere ${i.paket} (${i.quelle}) auf ${s.geraet} …`);
+    const r = await this.d.aktion(s.geraetId, 'installieren', { quelle: i.quelle, paket: i.paket }, 16 * 60_000);
+    if (!r.success) { await this.beende(s, 'angehalten', `Installation von ${i.paket} fehlgeschlagen: ${String(r.error ?? '').slice(0, 300)}`); return; }
+    await this.d.melde(s, `✅ ${i.paket} installiert — Etappe ${s.nr} startet neu.`);
+    s.status = 'laeuft';
+    await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend, umgebung: s.umgebung ? `${s.umgebung} · neu installiert: ${i.werkzeug}` : undefined }), `Etappe ${s.nr}: nach Installation`);
   }
 
   private async beende(s: ProjektStand, status: 'fertig' | 'abgebrochen' | 'angehalten', grund?: string): Promise<void> {

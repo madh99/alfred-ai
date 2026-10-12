@@ -151,3 +151,75 @@ describe('Systemrechte in der Planfrage', () => {
     expect(planFrage({ ...basis, sudoSperre: 'geraet' })).toContain('Systemrechte: sudo gesperrt (Einstellung am Gerät)');
   });
 });
+
+// v1410 R3c — fehlende Werkzeuge erkennen, Installation vorschlagen, im Ablauf fragen
+import { fehlendeWerkzeuge, installVorschlag } from '../projekt/satellit-projekt-regeln.js';
+describe('Installieren im Projektablauf', () => {
+  it('erkennt FEHLT-Zeilen und Shell-Meldungen, ohne Doppel und Rauschen', () => {
+    expect(fehlendeWerkzeuge('Fertig.\nFEHLT: pnpm\nFEHLT: pnpm', '')).toEqual(['pnpm']);
+    expect(fehlendeWerkzeuge('', 'sh: 1: pnpm: not found\nbash: tsc: command not found\nzsh: command not found: jq')).toEqual(['pnpm', 'tsc', 'jq']);
+    expect(fehlendeWerkzeuge('', "'ffmpeg' is not recognized as an internal or external command")).toEqual(['ffmpeg']);
+    expect(fehlendeWerkzeuge('alles gut', 'Error: 3 tests failed')).toEqual([]);
+  });
+  it('Vorschlag je Werkzeug und Plattform', () => {
+    expect(installVorschlag('pnpm', 'Ubuntu 24.04')).toEqual({ quelle: 'npm', paket: 'pnpm' });
+    expect(installVorschlag('ffmpeg', 'Ubuntu 24.04')).toEqual({ quelle: 'apt', paket: 'ffmpeg' });
+    expect(installVorschlag('ffmpeg', 'macOS 25.0')).toEqual({ quelle: 'brew', paket: 'ffmpeg' });
+    expect(installVorschlag('git', 'Windows_NT 10.0')).toEqual({ quelle: 'winget', paket: 'Git.Git' });
+    expect(installVorschlag('unbekanntes-tool', 'Ubuntu')).toEqual({ quelle: 'apt', paket: 'unbekanntes-tool' });
+  });
+  it('rote Abnahme mit fehlendem Werkzeug → Rückfrage; Ja installiert und startet die Etappe neu; einmal je Werkzeug', async () => {
+    const aufrufe: Array<{ aktion: string; params: Record<string, unknown> }> = []; const fragen: Array<{ text: string; nonce: string }> = []; const meldungen: string[] = [];
+    let n = 0; let pruef = 0;
+    const p = new SatellitProjekte({
+      planen: async () => ['Build mit pnpm'], bewerten: async () => ({ kind: 'proceed' }), anwenden: (r) => r,
+      aktion: async (_g, a, params) => {
+        aufrufe.push({ aktion: a, params });
+        if (a === 'auftrag_starten') return { success: true, data: { id: `a${++n}` } };
+        if (a === 'pruefen_befehl') { pruef++; return pruef === 1 ? { success: true, data: { ok: false }, display: '❌ befehl pnpm build — Exit 127\n   sh: 1: pnpm: not found' } : { success: true, data: { ok: true }, display: 'ok' }; }
+        if (a === 'installieren') return { success: true, display: 'installiert' };
+        return { success: true };
+      },
+      frage: async (_s, text, nonce) => { fragen.push({ text, nonce }); }, melde: async (_s, t) => { meldungen.push(t); },
+      logger: { info: () => undefined, warn: () => undefined },
+    });
+    const s = await p.starte({ geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', pruefBefehle: ['pnpm build'], umgebung: 'Ubuntu 24.04 · Node 22' });
+    await p.antwort(s.id, fragen[0]!.nonce);
+    p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: 'a1', status: 'fertig', titel: '', projekt: '/x', text: 'FEHLT: pnpm', kosten: 0.1 } as GeraetEreignis);
+    await new Promise(r => setTimeout(r, 10));
+    expect(p.hole(s.id)!.status).toBe('wartet_owner');
+    expect(fragen.at(-1)!.text).toMatch(/braucht „pnpm“, das auf Ubuntu-VM fehlt\.\nInstallieren mit npm: pnpm\?/);
+    expect(aufrufe.filter(a => a.aktion === 'auftrag_starten')).toHaveLength(1); // kein Fix-Versuch ohne Antwort
+    await p.antwort(s.id, fragen.at(-1)!.nonce);
+    expect(aufrufe.find(a => a.aktion === 'installieren')!.params).toEqual({ quelle: 'npm', paket: 'pnpm' });
+    const starts = aufrufe.filter(a => a.aktion === 'auftrag_starten');
+    expect(starts).toHaveLength(2);
+    expect(String(starts[1]!.params.auftrag)).toMatch(/neu installiert: pnpm/);
+    expect(meldungen.some(m => /pnpm installiert — Etappe 1 startet neu/.test(m))).toBe(true);
+    p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: 'a2', status: 'fertig', titel: '', projekt: '/x', text: 'ok', kosten: 0.1 } as GeraetEreignis);
+    await new Promise(r => setTimeout(r, 10));
+    expect(p.hole(s.id)!.status).toBe('fertig');
+  });
+  it('Nein → weiter ohne Installation = Fix-Versuch; dasselbe Werkzeug wird nicht noch einmal erfragt', async () => {
+    const aufrufe: string[] = []; const fragen: Array<{ text: string; nonce: string }> = [];
+    let n = 0;
+    const p = new SatellitProjekte({
+      planen: async () => ['A'], bewerten: async () => ({ kind: 'proceed' }), anwenden: (r) => r,
+      aktion: async (_g, a, params) => { aufrufe.push(a === 'auftrag_starten' ? `auftrag:${String(params.titel)}` : a); return a === 'auftrag_starten' ? { success: true, data: { id: `a${++n}` } } : a === 'pruefen_befehl' ? { success: true, data: { ok: false }, display: 'bash: tsc: command not found' } : { success: true }; },
+      frage: async (_s, text, nonce) => { fragen.push({ text, nonce }); }, melde: async () => undefined,
+      logger: { info: () => undefined, warn: () => undefined },
+    });
+    const s = await p.starte({ geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', pruefBefehle: ['tsc'] });
+    await p.antwort(s.id, fragen[0]!.nonce);
+    p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: 'a1', status: 'fertig', titel: '', projekt: '/x', text: '', kosten: 0 } as GeraetEreignis);
+    await new Promise(r => setTimeout(r, 10));
+    expect(fragen.at(-1)!.text).toMatch(/tsc/);
+    expect(await p.weiterOhneAenderung(s.id)).toBe(true);
+    await new Promise(r => setTimeout(r, 10));
+    expect(aufrufe.filter(a => a.startsWith('auftrag:'))).toEqual(['auftrag:Etappe 1: A', 'auftrag:Etappe 1: Fix 1']);
+    p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: 'a2', status: 'fertig', titel: '', projekt: '/x', text: '', kosten: 0 } as GeraetEreignis);
+    await new Promise(r => setTimeout(r, 10));
+    expect(aufrufe.filter(a => a.startsWith('auftrag:'))).toEqual(['auftrag:Etappe 1: A', 'auftrag:Etappe 1: Fix 1', 'auftrag:Etappe 1: Fix 2']); // keine zweite Installationsfrage
+    expect(aufrufe).not.toContain('installieren');
+  });
+});

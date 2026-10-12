@@ -15800,7 +15800,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       if (!row?.id) return { success: false, error: 'Keine offene Bestätigung für diesen Lauf (abgelaufen oder schon entschieden)' };
       const r = await this.confirmationQueue.handleWebDecision({ id: String(row.id), decision: entscheidung === 'freigeben' ? 'approve' : 'reject', userId: o });
       if (!r.ok) return { success: false, error: `Nicht entschieden (${r.reason ?? 'unbekannt'})` };
-      if (entscheidung === 'ablehnen' && s.frage?.art === 'plan') await projekte.stoppe(laufId, 'Plan vom Owner abgelehnt');
+      const art = s.frage?.art;
+      if (entscheidung === 'ablehnen' && art === 'plan') await projekte.stoppe(laufId, 'Plan vom Owner abgelehnt');
+      if (entscheidung === 'ablehnen' && (art === 'installieren' || art === 'mutation')) await projekte.weiterOhneAenderung(laufId); // v1410 R3c: ohne Installation weiter
       this.logger.info({ lauf: laufId, entscheidung, art: s.frage?.art }, 'v1403 Lauf aus der Projektansicht entschieden');
       return { success: true, display: entscheidung === 'freigeben' ? 'Freigegeben — es geht weiter.' : 'Abgelehnt.' };
     };
