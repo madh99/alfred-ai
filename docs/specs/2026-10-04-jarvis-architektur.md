@@ -720,6 +720,18 @@ Zu frühes Stummschalten verdeckt echte Probleme → Regeln mit Ablauf, Sicherhe
 
 „Nachforschen vor dem Melden" liefert Belege, Hypothese und Owner-Aufgaben (Baustein B speist sich daraus); „Home-Assistant-Prüfung" (H4) braucht genau diesen Abschluss mit Regel für Vorschläge an Automationen; Befunde-Ansicht (App 1.12.0) wird Ort für Befunde ohne Vorgang und für Regeln.
 
+### Owner-Entscheidungen (12.10.2026, „ok wie empfohlen freigegeben aber alfreds vorgeschlagene regeln sollte man auch übernehmen können")
+
+Umsetzung E1 + E2 (E2 zwei Wochen beobachtend); Haltefristen Sicherheit sofort, Ausfall 2 h, Batterie 24 h, Abweichung 24 h, Haus-Check kein Vorgang; „nicht mehr melden" 7/30/90 Tage, Standard 30, danach einmal nachfragen; Alfred schlägt Regeln vor (ab drittem „kein Problem") — **übernehmbar mit einem Klick**, nie selbst angelegt; nie stummschaltbar: Rauch, CO, Wasser/Leck, Alarm, Einbruch/Sabotage, Alfreds eigener Zustand; Vorgangsfäden nur über den Vorgang (E4).
+
+### Umsetzungsstand
+
+- **v1361 (12.10.):** Reasoning-Hinweise ohne „Ausführen" (Baustein F, Vorstufe).
+- **v1362 + App 1.13.0 (12.10. 03:03):** E1 — Ergebnis am Vorgang (Migration PG v136/SQLite v132: ergebnis_art, ursache, massnahme, entscheidung; Schritt `abgeschlossen`), Tabelle `regeln` (stumm/immer_fragen, Herkunft owner/alfred, Status aktiv/vorgeschlagen/widerrufen/abgelehnt), Regel „stumm" wirkt beim Befund-Abgleich (Logzeile „v1362 Regel: Befund ohne Vorgang"), Prüfung vor dem Abschluss (Sicherheitsbefund nicht stummschaltbar → 400 ohne Abschluss), Regelvorschlag ab drittem „kein Problem", Übernehmen mit Frist ab Übernahme, Lage-Zeile „Regeln des Owners"; App-Dialog „Was war es?"/„Und künftig?" mit vorausgewähltem Vorschlag, Regeln in „Befunde". E2 — Haltefristen nur protokolliert („v1362 E2 Haltefrist (beobachtend)", „v1362 E2 Vorgang wäre entfallen"); Auswertung ~26.10. Live geprüft: Routen mit Gerätetoken der VM (Regeln leer, 2 Befund-Vorgänge mit Bezug, ungültige Art 400).
+
 ### Offene Owner-Entscheidungen
 
+Nach E2-Beobachtung (~26.10.): Haltefristen scharf schalten? Danach E3–E6.
+
+<!-- ursprünglicher Stand der offenen Fragen (12.10. vor der Entscheidung): -->
 Haltefristen je Befundart (Vorschlag oben); Standarddauer für „nicht mehr melden" (Vorschlag 30 Tage); ob Alfred Regeln selbst vorschlagen darf, wenn derselbe Befund dreimal „kein Problem" war; welche Befundarten nie stummschaltbar sind (Vorschlag: Rauch, CO, Wasser, Alarm, Einbruch); ob Vorgangsfäden in der Seitenleiste erscheinen oder nur aus dem Vorgang erreichbar sind.
