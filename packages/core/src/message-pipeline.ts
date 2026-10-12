@@ -1217,6 +1217,20 @@ export class MessagePipeline {
             lines.push(`- "füge … zur Liste" → project.add_open_item.`);
             lines.push(`- Brainstorming-Anfragen ("lass uns über X nachdenken") → brainstorming.start.`);
             lines.push(`- Bei Brainstorming-Erkenntnissen: schlage vor sie als Open-Items zu übernehmen.`);
+            // v1399 — Geräte-Projekt: der Ordner liegt auf einem Satelliten, nicht auf dem Server — eigene Anweisungen statt der Server-Werkzeuge
+            const geraetP = proj as { geraetId?: string; geraet?: string; pruefBefehle?: string[] };
+            if (geraetP.geraetId) {
+              const ab = lines.findIndex(l => l.includes('### Anweisungen für diesen Projekt-Chat'));
+              if (ab >= 0) lines.splice(ab);
+              lines.push(`- Gerät: ${geraetP.geraet ?? 'Satellit'} (Verzeichnis liegt AUF DEM GERÄT, nicht auf dem Server)`);
+              if (geraetP.pruefBefehle?.length) lines.push(`- Abnahme je Etappe: ${geraetP.pruefBefehle.join(' ; ')}`);
+              lines.push(`\n### Anweisungen für diesen Projekt-Chat (Projekt auf einem Gerät)`);
+              lines.push(`- **ZIEL-BINDUNG**: Arbeite NUR an diesem Projekt.`);
+              lines.push(`- Bauen/Erweitern/Fixen ("baue X ein", "fix Y") → project_agent action=projekt_weiter projekt="${proj.name}" goal=<NUR der Wunsch des Owners>. Gerät, Verzeichnis, Prüfbefehle und Bestand kennt Alfred — nicht nachfragen.`);
+              lines.push(`- Stand, Läufe, Etappen, Commits → project_agent action=projekt_akte projekt="${proj.name}".`);
+              lines.push(`- NIE project_agent.start ohne geraet, NIE code_agent, shell, deploy oder git auf dem Server mit diesem Verzeichnis — es existiert dort nicht.`);
+              lines.push(`- "füge … zur Liste" → project.add_open_item.`);
+            }
             system += `\n\n${lines.join('\n')}`;
           }
         } catch (err) {

@@ -2940,4 +2940,14 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projekt_akten_ort ON projekt_akten(user_id, geraet_id, pfad)');
     },
   },
+  {
+    version: 136,
+    description: 'v1399 — Geräte-Projekte im Projekt-System: projects.geraet_id/geraet/pruef_befehle (SQLite-Spiegel zu PG v140).',
+    up(db) {
+      try { db.exec('ALTER TABLE projects ADD COLUMN geraet_id TEXT'); } catch { /* Spalte existiert bereits */ }
+      try { db.exec('ALTER TABLE projects ADD COLUMN geraet TEXT'); } catch { /* Spalte existiert bereits */ }
+      try { db.exec('ALTER TABLE projects ADD COLUMN pruef_befehle TEXT'); } catch { /* Spalte existiert bereits */ }
+      db.exec('CREATE INDEX IF NOT EXISTS idx_projects_geraet ON projects(user_id, geraet_id, cwd)');
+    },
+  },
 ];

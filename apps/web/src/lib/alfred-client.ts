@@ -1637,6 +1637,17 @@ export class AlfredClient {
     return data.projects ?? [];
   }
 
+  /** v1399 — Geräte-Projekt: Stand mit Commits (liest das Gerät) */
+  async geraetProjektStand(id: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet`, { headers: this.authHeaders });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+  /** v1399 — Geräte-Projekt weiterarbeiten: Alfred plant mit Bestand und fragt den Owner */
+  async geraetProjektWeiter(id: string, text: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/weiter`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ text }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+
   async fetchProject(id: string): Promise<ProjectDetail | null> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     if (!res.ok) return null;
@@ -3415,6 +3426,16 @@ export interface Project {
   persistDbVolumes?: boolean;
   /** v849 — Wann project_db_seeds beim Sandbox-Start angewendet werden */
   dbSeedStrategy?: 'none' | 'first-start-only' | 'every-start';
+  /** v1399 — Geräte-Projekt: Verzeichnis liegt auf diesem Gerät (nicht auf dem Server) */
+  geraetId?: string;
+  geraet?: string;
+  pruefBefehle?: string[];
+}
+
+/** v1399 — ein Lauf (Plan mit Etappen) eines Geräte-Projekts */
+export interface GeraetLauf {
+  id: string; status: 'wartet_owner' | 'laeuft' | 'fertig' | 'abgebrochen' | 'angehalten'; grund?: string; ziel: string; plan: string[];
+  erledigt: Array<{ nr: number; ok: boolean; kostenUsd: number }>; nr: number; kostenUsd: number; start: string; aktualisiert: string; wartetAufDich: boolean;
 }
 
 // v643 — Per-Phase Commit eines Project-Agent-Laufs
@@ -3511,6 +3532,8 @@ export interface ProjectDetail {
   openItems: ProjectOpenItem[];
   decisions: ProjectDecision[];
   health: Partial<Record<HealthProbe, ProjectHealthEntry>>;
+  /** v1399 — nur bei Geräte-Projekten */
+  geraetLaeufe?: GeraetLauf[];
 }
 
 /** v872 — frischer Git-Zustand für die Repo-Status-Karte. */

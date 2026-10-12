@@ -797,6 +797,35 @@ export class HttpAdapter extends MessagingAdapter {
     this.socialCallbacks = cb;
   }
 
+  /**
+   * v1399 — Geräte-Projekte (cwd liegt auf einem Satelliten): Routen, die auf dem Server im Projektordner arbeiten (Git, Build,
+   * Deploy, Agenten, Umgebungen …), antworten für sie mit 409. Erlaubt bleibt, was nur Projekt-Daten liest oder ändert.
+   */
+  private geraeteProjektIds = new Set<string>();
+  setGeraeteProjektIds(ids: Set<string>): void { this.geraeteProjektIds = ids; }
+  /** v1399 — Geräte-Projekt im Web: Stand (Akte mit Commits vom Gerät) und Weiterarbeiten (Plan → Owner-Bestätigung) */
+  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }> };
+  setGeraeteProjektCallbacks(cb: HttpAdapter['geraeteProjektCallbacks']): void { this.geraeteProjektCallbacks = cb; }
+  private async handleGeraeteProjekt(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
+    const cb = this.geraeteProjektCallbacks;
+    const id = decodeURIComponent(url.pathname.split('/')[3] ?? '');
+    if (!cb || !this.geraeteProjektIds.has(id)) { antwort(404, { error: 'kein Geräte-Projekt' }); return; }
+    if (req.method === 'GET') { antwort(200, await cb.stand(id)); return; }
+    let text = '';
+    try { const j = JSON.parse((await this.readBody(req)) || '{}') as { text?: unknown }; text = typeof j.text === 'string' ? j.text.trim().slice(0, 4000) : ''; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    if (!text) { antwort(400, { error: 'text fehlt (was soll als Nächstes passieren?)' }); return; }
+    antwort(200, await cb.weiter(id, text));
+  }
+  /** @internal v1399 — gesperrte Route eines Geräte-Projekts? (exportiert über die Klasse für Tests) */
+  geraeteProjektGesperrt(pathname: string): boolean {
+    const m = /^\/api\/projects\/([^/]+)\/([^/]+)/.exec(pathname);
+    if (!m || !this.geraeteProjektIds.has(decodeURIComponent(m[1]!))) return false;
+    return !GERAETE_PROJEKT_ERLAUBT.has(m[2]!);
+  }
+
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
@@ -1770,6 +1799,12 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/goals\/[^/]+\/check$/) && req.method === 'POST') {
       this.handleGoalsCheck(req, res, url).catch(err => this.safeError(res, err));
     // ── Projects API ──
+    } else if (/^\/api\/projects\/[^/]+\/geraet(\/weiter)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+      this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err)); // v1399
+    } else if (this.geraeteProjektGesperrt(url.pathname)) {
+      // v1399 — Geräte-Projekt: nichts auf dem Server im (fremden) Projektordner ausführen
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Projekt auf einem Gerät — diese Funktion arbeitet auf dem Server und gilt dafür nicht. Weiterarbeiten über Alfred (project_agent projekt_weiter).', geraeteProjekt: true }));
     } else if (url.pathname === '/api/projects' && req.method === 'GET') {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/projects' && req.method === 'POST') {
@@ -6934,3 +6969,6 @@ export class HttpAdapter extends MessagingAdapter {
     res.end(JSON.stringify(data ?? { totals: null }));
   }
 }
+
+/** v1399 — Unterrouten, die für Geräte-Projekte erlaubt sind (nur Projekt-Daten, nichts im Projektordner auf dem Server). */
+const GERAETE_PROJEKT_ERLAUBT = new Set(['chat-history', 'open-items', 'decisions', 'health-log', 'work-stats', 'chat-actions', 'geraet']);

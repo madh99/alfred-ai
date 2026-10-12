@@ -51,6 +51,19 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1399] - 2026-10-12
+
+### Changed — Geräte-Projekte im vorhandenen Projekt-System (v1399)
+
+Projekte auf Geräten haben keine eigenen Akten mehr. Sie sind Einträge im Projekt-System, das auch die Server-Projekte führt (Web-Seite „Projects“), gekennzeichnet mit dem Gerät, auf dem ihr Verzeichnis liegt. Jeder Lauf ist dort eine Projekt-Sitzung mit Zusammenfassung. Die Akten aus v1398 werden beim Start übernommen.
+
+- **Web:** Geräte-Projekte erscheinen in der Projektliste mit eigener Detailansicht:
+  - Läufe mit Etappen und Kosten,
+  - „Weiterarbeiten“ mit nur dem Wunsch (Alfred plant mit dem Bestand und fragt vor dem Start),
+  - Stand mit den Commits vom Gerät, offene Punkte und der Projekt-Chat.
+- **Projekt-Chat:** Er kennt das Gerät und leitet Bau-Wünsche an die Weiterarbeit auf dem Gerät statt an Werkzeuge auf dem Server.
+- **Schutz:** Alles, was auf dem Server im Projektordner arbeitet, lässt Geräte-Projekte aus: Health-Monitor, Git- und Repo-Status, Abhängigkeiten, Review, Deploy, Umgebungen, Server-Agenten und die entsprechenden Aktionen des Projekt-Skills. Die Web-API antwortet für diese Routen mit 409.
+
 ## [0.19.0-jarvis.1398] - 2026-10-12
 
 ### Added — Projekte auf Geräten als dauerhafte Akten, Weiterarbeiten nur mit dem Wunsch (v1398)

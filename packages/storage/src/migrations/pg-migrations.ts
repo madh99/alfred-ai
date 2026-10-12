@@ -2247,4 +2247,14 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_projekt_akten_ort ON projekt_akten(user_id, geraet_id, pfad)', []);
     },
   },
+  {
+    version: 140,
+    description: 'v1399 — Geräte-Projekte im Projekt-System (statt eigener projekt_akten): projects.geraet_id/geraet/pruef_befehle; cwd liegt dann auf dem Gerät (PG-Spiegel zu SQLite v136).',
+    async up(db) {
+      await db.execute('ALTER TABLE projects ADD COLUMN IF NOT EXISTS geraet_id TEXT', []);
+      await db.execute('ALTER TABLE projects ADD COLUMN IF NOT EXISTS geraet TEXT', []);
+      await db.execute('ALTER TABLE projects ADD COLUMN IF NOT EXISTS pruef_befehle TEXT', []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_projects_geraet ON projects(user_id, geraet_id, cwd)', []);
+    },
+  },
 ];

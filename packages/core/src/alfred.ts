@@ -11503,7 +11503,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           list: async (filter?: { status?: string }) => {
             try {
               const uid = await resolveOwnerProj();
-              return await projRepo.list(uid, filter as any);
+              return await projRepo.list(uid, { ...(filter as any), mitGeraeten: true }); // v1399 inkl. Geräte-Projekte
             } catch (err) { this.logger.warn({ err }, 'Projects API list failed'); return []; }
           },
           get: async (id: string) => {
@@ -11525,7 +11525,9 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 projRepo.getCurrentHealthSummary(project.id),
               ]);
               const openItems = [...activeItems, ...doneItems, ...cancelledItems];
-              return { project, sessions, openItems, decisions, health, openItemTotals: { active: activeItems.length } };
+              // v1399 — Geräte-Projekt: Läufe mit Etappen und Kosten (aus den Laufdateien)
+              const geraetLaeufe = project.geraetId ? (this.satellitProjekte?.laeufeDerAkte(project.id) ?? []).map(l => ({ id: l.id, status: l.status, grund: l.grund, ziel: l.ziel, plan: l.plan, erledigt: l.erledigt.map(e => ({ nr: e.nr, ok: e.ok, kostenUsd: e.kostenUsd })), nr: l.nr, kostenUsd: Number(l.kostenUsd.toFixed(2)), start: new Date(l.start).toISOString(), aktualisiert: new Date(l.aktualisiert).toISOString(), wartetAufDich: l.status === 'wartet_owner' })) : undefined;
+              return { project, sessions, openItems, decisions, health, openItemTotals: { active: activeItems.length }, ...(geraetLaeufe ? { geraetLaeufe } : {}) };
             } catch (err) { this.logger.warn({ err }, 'Projects API get failed'); return null; }
           },
           create: async (input: Record<string, unknown>) => {
@@ -15693,18 +15695,25 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const { createProjectPlan, assessPlanProgress, applyMutation } = await import('@alfred/skills');
     const owner = () => this.ownerMasterUserId ?? this.tryOwner();
     // v1398 — Projektakten (Spec „Projekte sichtbar und fortsetzbar", Owner-Freigabe 12.10.)
-    const { ProjektAktenRepository } = await import('@alfred/storage');
+    const { ProjektAktenUeberProjekte } = await import('./projekt/akten-projekte.js'); // v1399 — Akten im Projekt-System
     const { nameAusPfad, nameBereinigen, akteTreffer, namensMuster, vorherigeLaeufe, bestandsBlock, akteZeile, akteDetail } = await import('./projekt/akten.js');
     type Bestand = import('./projekt/akten.js').Bestand;
     const { setzeProjektNamenMuster } = await import('./skill-filter.js');
-    const aktenRepo = this.database ? new ProjektAktenRepository(this.database.getAdapter()) : undefined;
+    const aktenRepo = this.projectRepo ? new ProjektAktenUeberProjekte(this.projectRepo) : undefined;
     const nameVorschlag = async (ziel: string, pfad: string): Promise<string> => {
       try {
         const r = await this.llmProvider.complete({ messages: [{ role: 'user', content: `Gib diesem Software-Projekt einen kurzen deutschen Namen (2 bis 4 Wörter, ohne Anführungszeichen, ohne das Wort „Projekt"). Antworte NUR mit dem Namen.\n\nZiel:\n${ziel.slice(0, 600)}` }], tier: 'fast', maxTokens: 20, temperature: 0.1 });
         return nameBereinigen(r.content, pfad);
       } catch { return nameAusPfad(pfad); }
     };
-    const namenAuffrischen = async (): Promise<void> => { const o = owner(); if (o && aktenRepo) setzeProjektNamenMuster(namensMuster(await aktenRepo.liste(o, false).catch(() => []))); };
+    const namenAuffrischen = async (): Promise<void> => {
+      const o = owner(); if (o && aktenRepo) setzeProjektNamenMuster(namensMuster(await aktenRepo.liste(o, false).catch(() => [])));
+      // v1399 — Web-API: Routen, die auf dem Server im Projektordner arbeiten, für Geräte-Projekte sperren (alle Benutzer)
+      try {
+        const ids = (await this.database!.getAdapter().query('SELECT id FROM projects WHERE geraet_id IS NOT NULL', []) as Array<{ id: string }>).map(r => String(r.id));
+        (this.adapters.get('api') as unknown as { setGeraeteProjektIds?: (x: Set<string>) => void } | undefined)?.setGeraeteProjektIds?.(new Set(ids));
+      } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1399 Geräte-Projekte für die Web-API nicht geladen'); }
+    };
     const zuordnen = async (s: import('./projekt/satellit-projekt.js').ProjektStand): Promise<string | undefined> => {
       const o = owner();
       if (!o || !aktenRepo) return undefined;
@@ -15724,7 +15733,11 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const projekte = new SatellitProjekte({
       // v1398 — Weiterarbeit: Bestand als Daten an das Ziel, frühere Läufe und Commits über die vorhandenen Blöcke des Planers
       planen: async (ziel, k) => (await createProjectPlan(k?.bestand ? `${ziel}\n\n${k.bestand}` : ziel, this.llmProvider, k?.vorherige, k?.commits)).phases,
-      akte: { zuordnen: (s) => zuordnen(s), beruehren: async (s) => { const o = owner(); if (o && aktenRepo && s.akteId) await aktenRepo.aendern(o, s.akteId, {}); } },
+      // v1399 — jeder Lauf ist eine Projekt-Sitzung (Typ geraet): angelegt mit der Freigabe, zusammengefasst beim Ende
+      akte: {
+        zuordnen: async (s) => { const id = await zuordnen(s); if (id && aktenRepo) await aktenRepo.sitzung(id, s, s.start).catch((err: Error) => this.logger.warn({ err: err.message, lauf: s.id }, 'v1399 Projekt-Sitzung nicht angelegt')); return id; },
+        beruehren: async (s) => { if (!aktenRepo || !s.akteId) return; await aktenRepo.sitzung(s.akteId, s, s.start, Date.now()).catch(() => undefined); await this.projectRepo?.touch(s.akteId).catch(() => undefined); },
+      },
       bewerten: async (i) => assessPlanProgress(this.llmProvider, i) as Promise<import('./projekt/satellit-projekt.js').Mutation>,
       anwenden: (rest, n, m) => applyMutation(rest, n, m as never).newRemaining,
       aktion: (geraetId, aktion, params, timeoutMs) => gw.sendeAktion(geraetId, aktion, params, timeoutMs),
@@ -15745,7 +15758,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     });
     this.satellitProjekte = projekte;
     const laeufeVon = (akteId: string) => projekte.laeufeDerAkte(akteId);
-    const akteAus = async (ref: string): Promise<{ o: string; akte: import('@alfred/storage').ProjektAkte } | { fehler: string }> => {
+    const akteAus = async (ref: string): Promise<{ o: string; akte: import('./projekt/akten-projekte.js').ProjektAkte } | { fehler: string }> => {
       const o = owner();
       if (!o || !aktenRepo) return { fehler: 'Projektakten nicht verfügbar' };
       const akten = await aktenRepo.liste(o, true);
@@ -15859,11 +15872,30 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     // v1398 — Läufe ohne Akte (vor v1398) einordnen, ältester zuerst (sein Ziel gibt den Namen); fehlt der Ordner auf dem Gerät → archiviert
     setTimeout(() => { void (async () => {
       const o = owner();
+      // v1399 — Akten aus v1398 (Tabelle projekt_akten) ins Projekt-System übernehmen; idempotent (Gerät + Pfad, Sitzung je Lauf)
+      const alt = new Map<string, string>();
+      try {
+        const rows = await this.database!.getAdapter().query('SELECT * FROM projekt_akten', []) as Array<Record<string, unknown>>;
+        for (const r of rows) {
+          if (!aktenRepo) break;
+          const uid = String(r.user_id);
+          let befehle: string[] = []; try { befehle = [...new Set((JSON.parse(String(r.pruef_befehle ?? '[]')) as unknown[]).map(String))]; } catch { /* leer */ }
+          const da = await aktenRepo.findePfad(uid, String(r.geraet_id), String(r.pfad))
+            ?? await aktenRepo.anlegen({ userId: uid, name: String(r.name), geraetId: String(r.geraet_id), geraet: String(r.geraet ?? ''), pfad: String(r.pfad), beschreibung: r.beschreibung ? String(r.beschreibung) : undefined, pruefBefehle: befehle, status: r.status === 'archiviert' ? 'archiviert' : 'aktiv' });
+          alt.set(String(r.id), da.id);
+        }
+      } catch { /* keine alte Tabelle */ }
+      for (const l of projekte.liste()) {
+        const neu = l.akteId ? alt.get(l.akteId) : undefined;
+        if (neu) { projekte.setzeAkte(l.id, neu); this.logger.info({ lauf: l.id, projekt: neu }, 'v1399 Lauf ins Projekt-System übernommen'); }
+        if (l.akteId && aktenRepo && !l.akteId.startsWith('prj-') && l.status !== 'wartet_owner') await aktenRepo.sitzung(l.akteId, l, l.start, ['fertig', 'abgebrochen', 'angehalten'].includes(l.status) ? l.aktualisiert : undefined).catch(() => undefined);
+      }
       for (const l of projekte.ohneAkte().sort((x, y) => x.start - y.start)) {
         try {
           const id = await zuordnen(l);
           if (!id) continue;
           projekte.setzeAkte(l.id, id, l.akteName);
+          await aktenRepo?.sitzung(id, l, l.start, ['fertig', 'abgebrochen', 'angehalten'].includes(l.status) ? l.aktualisiert : undefined).catch(() => undefined);
           const g = gw.geraetNachName(l.geraetId);
           const pr = g ? await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: l.projekt }] }, 30_000).catch(() => undefined) : undefined;
           if (o && aktenRepo && /fehlt/i.test((pr?.data as { ergebnisse?: Array<{ grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '')) await aktenRepo.aendern(o, id, { status: 'archiviert' });
@@ -15873,6 +15905,11 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       await namenAuffrischen();
     })(); }, 95_000).unref?.();
     void namenAuffrischen();
+    // v1399 — Web: Geräte-Projekt-Stand und Weiterarbeiten über denselben Skill-Weg wie im Gespräch (Plan → Bestätigung)
+    (this.adapters.get('api') as unknown as { setGeraeteProjektCallbacks?: (cb: unknown) => void } | undefined)?.setGeraeteProjektCallbacks?.({
+      stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: `project:${id}` } as never),
+      weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never),
+    });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
     // v1393 — Lage nach dem Start einmal berechnen (sonst fehlte sie bis zum nächsten Befund-/Vorgangsereignis; Realfall 12.10.: stand null nach Update)
     setTimeout(() => { void this.aktualisiereLage(); }, 30_000).unref?.();

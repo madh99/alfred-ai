@@ -25,7 +25,7 @@ export interface AgentStrategy {
  *  - 'shared' : auf einem konfigurierten Share (share_id gesetzt), allen Nodes zugänglich
  */
 export type ProjectStorageType = 'local' | 'shared';
-export type ProjectSessionType = 'project_agent' | 'code_agent' | 'delegate' | 'chat';
+export type ProjectSessionType = 'project_agent' | 'code_agent' | 'delegate' | 'chat' | 'geraet'; // v1399 geraet = Lauf auf einem Satelliten
 export type OpenItemStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
 export type OpenItemPriority = 'low' | 'normal' | 'high';
 export type HealthProbe = 'git' | 'build' | 'deps' | 'http';
@@ -139,6 +139,15 @@ export interface Project {
    * - 'every-start': bei jedem Sandbox-Start (auch resume)
    */
   dbSeedStrategy?: 'none' | 'first-start-only' | 'every-start';
+  /**
+   * v1399 — Geräte-Projekt (Spec „Projekte sichtbar und fortsetzbar", Owner 12.10.: ins vorhandene Projekt-System statt
+   * eigener Akten): das Verzeichnis `cwd` liegt auf dem Gerät `geraetId`, NICHT auf dem Server. Alles, was auf dem Server mit
+   * cwd arbeitet (Health, Git, Build, Deploy, Agenten), lässt Geräte-Projekte aus: list()/findByCwd() liefern sie nur auf Wunsch.
+   */
+  geraetId?: string;
+  geraet?: string;
+  /** v1399 — Abnahme je Etappe der Geräte-Läufe */
+  pruefBefehle?: string[];
 }
 
 export interface ProjectSessionSummary {
@@ -278,6 +287,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     sandboxMode: ((row.sandbox_mode as string | null) ?? 'single') as 'single' | 'compose',
     persistDbVolumes: Boolean(row.persist_db_volumes),
     dbSeedStrategy: ((row.db_seed_strategy as string | null) ?? 'first-start-only') as 'none' | 'first-start-only' | 'every-start',
+    ...(row.geraet_id ? { geraetId: String(row.geraet_id), geraet: String(row.geraet ?? ''), pruefBefehle: parseTags(row.pruef_befehle) } : {}),
   };
 }
 
@@ -357,16 +367,18 @@ export class ProjectRepository {
 
   // ── Projects ────────────────────────────────────────────────────────────
 
-  async create(userId: string, input: { name: string; description?: string; cwd?: string; repoUrl?: string; tags?: string[]; status?: ProjectStatus; healthMode?: ProjectHealthMode }): Promise<Project> {
+  async create(userId: string, input: { name: string; description?: string; cwd?: string; repoUrl?: string; tags?: string[]; status?: ProjectStatus; healthMode?: ProjectHealthMode; geraetId?: string; geraet?: string; pruefBefehle?: string[] }): Promise<Project> {
     const id = randomUUID();
     const now = new Date().toISOString();
     const slug = await this.uniqueSlug(userId, input.name);
+    const geraet = !!input.geraetId; // v1399 — Geräte-Projekt: Server-Health aus
     await this.adapter.execute(
-      `INSERT INTO projects (id, user_id, name, slug, description, cwd, repo_url, status, health_mode, tags, created_at, last_active_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO projects (id, user_id, name, slug, description, cwd, repo_url, status, health_mode, tags, created_at, last_active_at, geraet_id, geraet, pruef_befehle)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, userId, input.name, slug, input.description ?? null, input.cwd ?? null, input.repoUrl ?? null,
-        input.status ?? 'active', input.healthMode ?? 'full', JSON.stringify(input.tags ?? []), now, now,
+        input.status ?? 'active', geraet ? 'off' : (input.healthMode ?? 'full'), JSON.stringify(input.tags ?? []), now, now,
+        input.geraetId ?? null, geraet ? (input.geraet ?? null) : null, geraet ? JSON.stringify(input.pruefBefehle ?? []) : null,
       ],
     );
     return (await this.getById(userId, id))!;
@@ -421,7 +433,7 @@ export class ProjectRepository {
 
   async findByCwd(userId: string, cwd: string): Promise<Project | null> {
     const row = await this.adapter.queryOne(
-      `SELECT * FROM projects WHERE user_id = ? AND cwd = ? AND status != 'archived' ORDER BY last_active_at DESC LIMIT 1`,
+      `SELECT * FROM projects WHERE user_id = ? AND cwd = ? AND status != 'archived' AND geraet_id IS NULL ORDER BY last_active_at DESC LIMIT 1`,
       [userId, cwd],
     ) as Record<string, unknown> | undefined;
     return row ? rowToProject(row) : null;
@@ -436,15 +448,21 @@ export class ProjectRepository {
    */
   async findByCwdAnyOwner(cwd: string): Promise<Project | null> {
     const row = await this.adapter.queryOne(
-      `SELECT * FROM projects WHERE cwd = ? AND status != 'archived' ORDER BY last_active_at DESC LIMIT 1`,
+      `SELECT * FROM projects WHERE cwd = ? AND status != 'archived' AND geraet_id IS NULL ORDER BY last_active_at DESC LIMIT 1`,
       [cwd],
     ) as Record<string, unknown> | undefined;
     return row ? rowToProject(row) : null;
   }
 
-  async list(userId: string, filters?: { status?: ProjectStatus; limit?: number }): Promise<Project[]> {
+  /**
+   * v1399 — `mitGeraeten`: Geräte-Projekte nur auf ausdrücklichen Wunsch (Web-Liste, Skill-Liste, Projektablauf). Ohne den
+   * Schalter sehen Health-Monitor, Reasoning, Runner usw. sie nicht — deren cwd liegt nicht auf dem Server.
+   */
+  async list(userId: string, filters?: { status?: ProjectStatus; limit?: number; mitGeraeten?: boolean; nurGeraete?: boolean }): Promise<Project[]> {
     let sql = `SELECT * FROM projects WHERE user_id = ?`;
     const params: unknown[] = [userId];
+    if (filters?.nurGeraete) sql += ` AND geraet_id IS NOT NULL`;
+    else if (!filters?.mitGeraeten) sql += ` AND geraet_id IS NULL`;
     if (filters?.status) { sql += ` AND status = ?`; params.push(filters.status); }
     sql += ` ORDER BY last_active_at DESC LIMIT ?`;
     params.push(filters?.limit ?? 100);
@@ -493,6 +511,19 @@ export class ProjectRepository {
     params.push(existing.id);
     await this.adapter.execute(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`, params);
     return this.getById(userId, existing.id);
+  }
+
+  /** v1399 — Geräte-Projekt nach Gerät und Pfad (Schlüssel wie die frühere Projektakte). */
+  async findByGeraetPfad(userId: string, geraetId: string, pfad: string): Promise<Project | null> {
+    const p = pfad.trim().length > 1 ? pfad.trim().replace(/[\\/]+$/, '') : pfad.trim();
+    const row = await this.adapter.queryOne(`SELECT * FROM projects WHERE user_id = ? AND geraet_id = ? AND cwd = ? ORDER BY last_active_at DESC LIMIT 1`, [userId, geraetId, p]) as Record<string, unknown> | undefined;
+    return row ? rowToProject(row) : null;
+  }
+
+  /** v1399 — Gerät/Abnahme eines Geräte-Projekts nachführen. */
+  async updateGeraet(id: string, f: { geraet?: string; pruefBefehle?: string[] }): Promise<void> {
+    if (f.geraet !== undefined) await this.adapter.execute('UPDATE projects SET geraet = ? WHERE id = ? AND geraet_id IS NOT NULL', [f.geraet, id]);
+    if (f.pruefBefehle !== undefined) await this.adapter.execute('UPDATE projects SET pruef_befehle = ? WHERE id = ? AND geraet_id IS NOT NULL', [JSON.stringify(f.pruefBefehle), id]);
   }
 
   async touch(projectId: string): Promise<void> {

@@ -329,7 +329,7 @@ export class ProjectManager {
 
       const summarizerInput: SummarizerInput = {
         goal: params.goal,
-        sessionType: params.sessionType,
+        sessionType: params.sessionType as SummarizerInput['sessionType'], // v1399 geraet nie hier
         cwd: params.cwd,
         milestones: params.milestones,
         totalFilesChanged: params.totalFilesChanged,
@@ -611,7 +611,7 @@ export class ProjectManager {
 
       let summary = await this.summarizer.summarize({
         goal: params.goal,
-        sessionType: params.sessionType,
+        sessionType: params.sessionType as SummarizerInput['sessionType'],
         milestones: params.milestones,
         totalFilesChanged: params.totalFilesChanged,
         success: params.success,

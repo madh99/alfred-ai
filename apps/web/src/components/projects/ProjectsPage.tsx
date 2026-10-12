@@ -8,6 +8,7 @@ import type {
 } from '@/lib/alfred-client';
 import { AuditModal } from './AuditModal';
 import { ProjectChat } from './ProjectChat';
+import { GeraeteProjektDetail } from './GeraeteProjektDetail'; // v1399
 import { RunningAgentsBanner } from './RunningAgentsBanner';
 import { ProjectWorkStatsView } from './ProjectWorkStatsView';
 import { ProjectChatActionsView } from './ProjectChatActionsView';
@@ -294,8 +295,8 @@ export function ProjectsPage() {
       } else {
         setDetailError('Projekt-Detail konnte nicht geladen werden (Server lieferte kein Ergebnis).');
       }
-      // v824 — Agent-Conventions Badge laden (best-effort, non-blocking)
-      client.conventionsStatus(id).then(r => {
+      // v824 — Agent-Conventions Badge laden (best-effort, non-blocking); v1399 nicht für Geräte-Projekte
+      if (!d?.project.geraetId) client.conventionsStatus(id).then(r => {
         if (r.ok && r.data) setConventionsBadge(r.data.badge);
         else setConventionsBadge(null);
       }).catch(() => setConventionsBadge(null));
@@ -722,7 +723,7 @@ export function ProjectsPage() {
                 <span className="text-[10px] text-gray-600 font-mono ml-auto">{p.id.slice(0, 8)}</span>
               </div>
               <div className="text-sm text-gray-200 font-medium">{p.name}</div>
-              {p.cwd && <div className="text-[11px] text-gray-500 font-mono truncate">{p.cwd}</div>}
+              {p.cwd && <div className="text-[11px] text-gray-500 font-mono truncate">{p.geraetId ? `📟 ${p.geraet ?? 'Gerät'}: ` : ''}{p.cwd}</div>}
               <div className="text-[10px] text-gray-600 mt-1">aktiv vor {relativeTime(p.lastActiveAt)}</div>
             </div>
           ))}
@@ -735,7 +736,11 @@ export function ProjectsPage() {
               Wähle ein Projekt aus der Liste links.
             </div>
           )}
-          {detail && (
+          {/* v1399 — Geräte-Projekt: eigene Ansicht (Läufe, Weiterarbeiten, Stand, Projekt-Chat) statt der Server-Bereiche */}
+          {detail && detail.project.geraetId && client && (
+            <GeraeteProjektDetail client={client} detail={detail} onReload={() => loadDetail(detail.project.id)} onArchive={() => archiveProject(detail.project)} onRename={async (name) => { const u = await client.updateProject(detail.project.id, { name }); if (u) { setDetail({ ...detail, project: u }); setProjects(ps => ps.map(x => x.id === u.id ? u : x)); } }} />
+          )}
+          {detail && !detail.project.geraetId && (
             <div className="space-y-4">
               {/* v871.3 — Inline-Notice (ersetzt die prominentesten alert()s) */}
               {pageNotice && (

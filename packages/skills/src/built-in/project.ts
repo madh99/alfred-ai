@@ -384,6 +384,14 @@ export class ProjectSkill extends Skill {
     const userId = context.masterUserId ?? context.alfredUserId ?? context.userId;
     if (!userId) return { success: false, error: 'Kein User-Kontext.' };
 
+    // v1399 — Geräte-Projekte: das Verzeichnis liegt auf einem Gerät, nicht auf dem Server. Aktionen, die auf dem Server im
+    // Projektordner arbeiten (Agenten, Audit, Review, Abhängigkeiten, Health), gibt es für sie nicht — Arbeit über project_agent.
+    if (SERVER_ORDNER_AKTIONEN.has(action) && typeof input.project_id === 'string' && input.project_id) {
+      const pid = await this.resolveProjectId(userId, input.project_id).catch(() => null);
+      const p = pid ? await this.repo.getById(userId, pid).catch(() => null) : null;
+      if (p?.geraetId) return { success: false, error: `${p.name} ist ein Projekt auf ${p.geraet ?? 'einem Gerät'} — „${action}" arbeitet auf dem Server und gilt dafür nicht. Weiterarbeiten: project_agent action=projekt_weiter projekt="${p.name}" goal=<Wunsch>; Stand: project_agent action=projekt_akte.` };
+    }
+
     switch (action) {
       case 'list': return this.listProjects(userId, input);
       case 'get': return this.getProject(userId, input);
@@ -411,18 +419,18 @@ export class ProjectSkill extends Skill {
     }
   }
 
-  private async listProjects(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+  private async listProjects(userId: string, input: Record<string, unknown>): Promise<SkillResult> { // v1399 Geräte-Projekte mit Gerät
     const status = input.status_filter as ProjectStatus | undefined;
     if (status && !VALID_STATUS.includes(status)) {
       return { success: false, error: `Ungültiger status_filter. Erlaubt: ${VALID_STATUS.join(', ')}` };
     }
-    const projects = await this.repo.list(userId, { status });
+    const projects = await this.repo.list(userId, { status, mitGeraeten: true }); // v1399 inkl. Geräte-Projekte
     if (projects.length === 0) {
       return { success: true, data: [], display: '_Keine Projekte._' };
     }
     const lines = projects.map(p => {
       const age = this.relativeTime(p.lastActiveAt);
-      return `- **${p.name}** (${p.status}, ${age}) — ID: ${p.id.slice(0, 8)}${p.cwd ? ` · \`${p.cwd}\`` : ''}`;
+      return `- **${p.name}** (${p.status}, ${age}) — ID: ${p.id.slice(0, 8)}${p.cwd ? ` · \`${p.cwd}\`` : ''}${p.geraetId ? ` · auf ${p.geraet ?? 'Gerät'}` : ''}`;
     });
     return { success: true, data: projects, display: `## Projekte\n\n${lines.join('\n')}` };
   }
@@ -2055,6 +2063,9 @@ ${decLines.join('\n') || '  _keine_'}`;
     return this.repo.findIdByPrefixOrName(userId, input);
   }
 }
+
+/** v1399 — Aktionen, die auf dem Server im Projektordner arbeiten: für Geräte-Projekte gesperrt. */
+const SERVER_ORDNER_AKTIONEN = new Set<string>(['set_health_mode', 'work_on_open_items', 'audit_open_items', 'deep_verify_items', 'update_dependencies', 'review_codebase', 'suggest_features', 'plan_feature', 'plan_features', 'consolidate_milestones']);
 
 // ── Helpers for v642 audit ─────────────────────────────────────────────
 
