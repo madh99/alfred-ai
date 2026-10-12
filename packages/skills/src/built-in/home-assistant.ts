@@ -840,7 +840,8 @@ export class HomeAssistantSkill extends Skill {
     const zustaende = new Map<string, any>(alle.map((e) => [e.entity_id, e]));
     const stand = await this.ladeZuordnung(alle);
     const istMelder = (id: string) => id.startsWith('binary_sensor.') && ['motion', 'occupancy', 'presence'].includes(String(zustaende.get(id)?.attributes?.device_class ?? ''));
-    const lichter = alle.map((e) => String(e.entity_id)).filter((id) => id.startsWith('light.')
+    // v1373 — auch Schalter (Shelly-Relais schalten die meisten Lichter; Realfall 12.10.: nur light.* → 0 geprüft)
+    const lichter = alle.map((e) => String(e.entity_id)).filter((id) => (id.startsWith('light.') || id.startsWith('switch.'))
       && steuerndeAutomationen(stand.z, id).some((a) => a.ausloeser.some(istMelder)));
     if (lichter.length === 0) return { befunde: [], geprueft: 0 };
     const aktuell: Fenster = { von: jetzt - 24 * 3_600_000, bis: jetzt };

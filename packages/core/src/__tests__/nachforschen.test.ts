@@ -75,3 +75,9 @@ describe('Nachforscher', () => {
     expect((await n.untersuche(LICHT)).status).toBe('budget');
   });
 });
+
+describe('v1373 — Lichter über Schalter', () => {
+  it('Licht-Rezept passt auch auf Shelly-Schalter (Realfall: Abstellkammerl über switch.shellywalldisplay_…)', () => {
+    expect(rezeptFuer({ ...LICHT, gegenstand: 'licht:lange-an:switch.shellywalldisplay_00082201697b_switch_0' })?.id).toBe('licht-lange-an');
+  });
+});

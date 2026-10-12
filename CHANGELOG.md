@@ -47,6 +47,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1373] - 2026-10-12
+
+### Fixed — Licht-Dauer-Prüfung fand keine Lichter (v1373)
+
+Der erste Lauf der Licht-Dauer-Prüfung (v1371) prüfte 0 Lichter: gesucht wurden nur `light.*`, im Haus schalten die Belegungsmelder die Lichter aber über Shelly-Schalter (`switch.*`, z. B. „AbstellkammerlON/OFF"). Jetzt zählen auch Schalter, sofern eine Automation mit Bewegungs- oder Belegungsmelder sie schaltet; das Prüfrezept „Licht lange an" gilt ebenso für sie.
+
 ## [0.19.0-jarvis.1372] - 2026-10-12
 
 ### Added — Nachforschen N1/N2: Befunde nach der Haltefrist selbst untersuchen (beobachtend) (v1372)

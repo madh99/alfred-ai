@@ -87,7 +87,7 @@ const BEOBACHTEN = 'Befund weiter beobachten und schließen, sobald er nicht meh
 export const REFERENZ_REZEPTE: Rezept[] = [
   {
     id: 'licht-lange-an', herkunft: 'referenz',
-    muster: { quelle: 'licht', gegenstand: /^licht:lange-an:light\./ },
+    muster: { quelle: 'licht', gegenstand: /^licht:lange-an:(light|switch)\./ }, // v1373 auch Shelly-Schalter
     schritte: [
       { werkzeug: 'homeassistant', aktion: 'relations', params: { entityId: '{entity}' }, zweck: 'Schalter, Melder und Automationen dieses Lichts, letzte Auslösung' },
       { werkzeug: 'homeassistant', aktion: 'history_summary', params: { entityId: '{entity}', period: '3d', compareWith: '7d' }, zweck: 'Einschaltdauer und lange Phasen, Ursachen laut Logbuch' },
