@@ -15702,7 +15702,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const platform = this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api';
         await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform, source: 'geraet', sourceId: `projekt-${s.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'satellit_antwort', task_id: s.id, freigabe: nonce }, timeoutMinutes: 720 });
       },
-      melde: async (s, text) => { await this.meldeOhneModell(`[${s.id}] ${text}`, s.herkunft); },
+      melde: async (s, text) => { await this.meldeOhneModell(`[${s.id}] ${text}`, s.herkunft); void this.aktualisiereLage(); }, // v1393 Lage-Zeile sofort nachziehen
       vorgang: {
         anlegen: async (s) => { const o = owner(); if (!o) return undefined; return (await vorgaenge.anlegen({ userId: o, titel: `Projekt auf ${s.geraet}: ${s.ziel.slice(0, 80)}`, ziel: s.projekt, besitzer: 'alfred', status: 'offen', quelle: 'projekt', autonomie: 'bestaetigen', kategorie: 'projekt', naechsterSchritt: 'Plan bestätigen' })).id; },
         schritt: async (s, text) => { const o = owner(); if (!o || !s.vorgangId) return; await vorgaenge.schritt({ vorgangId: s.vorgangId, userId: o, art: 'ausgefuehrt', skill: 'project_agent', aktion: 'etappe', beschreibung: text, autonomie: 'bestaetigen', quelle: 'projekt' }); },
@@ -15750,6 +15750,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     // R2c — nach einem Neustart offene Aufträge prüfen (Geräte brauchen ein paar Sekunden zum Verbinden)
     setTimeout(() => { void projekte.fortsetzen().then(n => { if (n) this.logger.info({ projekte: n }, 'v1387 Satelliten-Projekte fortgesetzt'); }); }, 90_000).unref?.();
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
+    // v1393 — Lage nach dem Start einmal berechnen (sonst fehlte sie bis zum nächsten Befund-/Vorgangsereignis; Realfall 12.10.: stand null nach Update)
+    setTimeout(() => { void this.aktualisiereLage(); }, 30_000).unref?.();
   }
 
   /** v1386 — Firewall-Änderungen des UniFi-Skills: Bestätigung beim Owner; nach dem Ja ruft die Queue den Skill mit der Einmal-Freigabe erneut auf. */

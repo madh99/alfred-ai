@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1393] - 2026-10-12
+
+### Fixed — Lage nach dem Start und bei Projektschritten aktuell (v1393)
+
+Die Lage wurde nur bei Befund- und Vorgangsereignissen neu berechnet: Nach einem Update fehlte sie bis zum nächsten solchen Ereignis ganz (Realfall 12.10.), und die Projektzeile aus v1392 erschien erst verspätet. Jetzt wird sie 30 s nach dem Start und nach jeder Projektmeldung neu berechnet.
+
 ## [0.19.0-jarvis.1392] - 2026-10-12
 
 ### Added — Sichtbar, dass ein Geräte-Projekt läuft (v1392)
