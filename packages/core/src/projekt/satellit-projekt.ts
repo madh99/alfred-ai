@@ -47,6 +47,8 @@ export interface ProjektStand {
   /** v1410 R3c — Werkzeuge, nach deren Installation schon gefragt wurde (keine Schleife); letztes Prüfprotokoll für den Fix-Versuch ohne Installation */
   installiertGefragt?: string[];
   letztesProtokoll?: string;
+  /** v1415 — Etappe konnte nicht starten, weil das Gerät kurz weg war (Update, Neustart): startet, sobald es wieder verbunden ist */
+  wartetAufGeraet?: { auftrag: string; titel: string; seit: number };
   letzterText?: string;
 }
 /** v1398 — Kontext für den Planer bei Weiterarbeit: frühere Läufe, letzte Commits, Bestand (als Daten). */
@@ -113,6 +115,25 @@ export class SatellitProjekte {
   lageZeile(): string | null {
     const z = this.liste().map(s => projektZeile(s, this.jetzt())).filter((x): x is string => !!x);
     return z.length ? `Projekte auf Geräten: ${z.slice(0, 3).join(' · ')}${z.length > 3 ? ` · +${z.length - 3}` : ''}` : null;
+  }
+
+  /**
+   * v1415 — wartende Etappen starten (Gerät wieder verbunden bzw. Rückfall-Job). Nach 24 h ohne Gerät: angehalten.
+   * `geraetId` = nur Läufe dieses Geräts. Liefert die Zahl der Startversuche.
+   */
+  async nachholen(geraetId?: string): Promise<number> {
+    let n = 0;
+    for (const s of this.staende.values()) {
+      const w = s.wartetAufGeraet;
+      if (s.status !== 'laeuft' || !w || (geraetId && s.geraetId !== geraetId)) continue;
+      n++;
+      await this.seriell(s.id, async () => {
+        if (s.status !== 'laeuft' || !s.wartetAufGeraet) return;
+        if (this.jetzt() - s.wartetAufGeraet.seit > 24 * 3_600_000) { s.wartetAufGeraet = undefined; await this.beende(s, 'angehalten', `${s.geraet} 24 h nicht erreichbar`); return; }
+        await this.starteAuftrag(s, w.auftrag, w.titel);
+      });
+    }
+    return n;
   }
 
   /** v1398 — Läufe einer Akte (neueste zuerst) und Läufe ohne Akte (Migration beim Start). */
@@ -226,7 +247,21 @@ export class SatellitProjekte {
     const rest = s.grenzen.budgetUsd !== undefined ? Math.max(0.05, Number((s.grenzen.budgetUsd - s.kostenUsd).toFixed(2))) : undefined;
     const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel, ...(rest !== undefined ? { max_kosten_usd: rest } : {}), ...(s.gitUebernehmen ? { git_uebernehmen: true } : {}), ...(s.sudoSperre ? { sudo_sperre: true } : {}) }, 150_000);
     const id = (r.data as { id?: string } | undefined)?.id;
+    // v1415 — Realfall 13.10. 01:11: Etappe 2 sollte genau starten, als der Satellit für ein Update kurz weg war → Projekt angehalten.
+    // Ein nicht verbundenes Gerät hält das Projekt nicht an: die Etappe startet, sobald es wieder da ist (höchstens 24 h).
+    if (!r.success && /nicht verbunden|antwortete nicht/i.test(r.error ?? '')) {
+      const erstes = !s.wartetAufGeraet;
+      s.wartetAufGeraet = { auftrag, titel, seit: s.wartetAufGeraet?.seit ?? this.jetzt() };
+      this.sichere(s);
+      this.d.logger.info({ id: s.id, etappe: s.nr, geraet: s.geraet }, 'v1415 Etappe wartet auf das Gerät');
+      if (erstes) {
+        await this.d.melde(s, `⏳ ${s.geraet} ist gerade nicht verbunden — Etappe ${s.nr}/${s.plan.length} startet, sobald es wieder da ist.`);
+        await this.d.vorgang?.stand?.(s, `Etappe ${s.nr}/${s.plan.length} wartet auf ${s.geraet}`, false).catch(() => undefined);
+      }
+      return;
+    }
     if (!r.success || !id) { await this.beende(s, 'angehalten', `Auftrag nicht gestartet: ${r.error ?? 'keine Kennung'}`); return; }
+    s.wartetAufGeraet = undefined;
     s.auftragId = id;
     s.etappeStart = this.jetzt();
     // v1397 — Ergebnis der Git-Übernahme melden (einmal; ältere Satelliten liefern nichts → ohne Meldung)

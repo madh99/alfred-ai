@@ -77,6 +77,16 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
     finally { setBusy(false); }
   }
 
+  async function fortsetzen(lauf: string) {
+    setBusy(true); setMeldung(null);
+    try {
+      const r = await client.geraetLaufFortsetzen(p.id, lauf);
+      setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Fortgesetzt.') : (r.error ?? 'Fehler') });
+      if (r.success) setTimeout(onReload, 800);
+    } catch (err) { setMeldung({ ok: false, text: err instanceof Error ? err.message : String(err) }); }
+    finally { setBusy(false); }
+  }
+
   async function standLaden() {
     setStandLaedt(true);
     try { const r = await client.geraetProjektStand(p.id); setStand(r.success ? (r.display ?? '') : `Fehler: ${r.error ?? 'unbekannt'}`); }
@@ -144,7 +154,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
         {laeufe.length === 0 && <div className="text-xs text-gray-500 italic">Noch keine Läufe.</div>}
         {laeufe.map(l => {
           const ok = l.erledigt.filter(e => e.ok).length;
-          const st = STATUS[l.status] ?? STATUS.abgebrochen;
+          const st = l.status === 'laeuft' && l.wartetAufGeraet ? { text: '⏳ wartet auf Gerät', cls: 'text-amber-300 border-amber-500/40 bg-amber-500/10' } : (STATUS[l.status] ?? STATUS.abgebrochen);
           return (
             <div key={l.id} className="bg-[#1a1a1a] border border-[#2a2a2a] rounded">
               <button onClick={() => setOffen(offen === l.id ? null : l.id)} className="w-full text-left px-3 py-2 flex items-center gap-2 flex-wrap">
@@ -152,6 +162,9 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
                 <span className="text-xs text-gray-200 flex-1 min-w-[12rem]">{l.ziel.slice(0, 140)}</span>
                 <span className="text-[11px] text-gray-500">{ok}/{l.plan.length} · {usd(l.kostenUsd)} · {datum(l.start)}</span>
               </button>
+              {l.status === 'angehalten' && (
+                <div className="mx-3 mb-2"><button onClick={() => fortsetzen(l.id)} disabled={busy} className="px-3 py-1 text-xs bg-blue-500/20 text-blue-300 rounded border border-blue-500/40 disabled:opacity-40">▶ Fortsetzen</button></div>
+              )}
               {l.status === 'wartet_owner' && l.frage && (
                 <div className="mx-3 mb-2 p-2 rounded border border-amber-500/40 bg-amber-500/10 space-y-2">
                   <div className="text-xs text-amber-100 whitespace-pre-wrap">{l.frage}</div>

@@ -13806,6 +13806,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const dbG = this.database.getAdapter();
         const vorgaengeG = new VRepoG(dbG);
         const gw = new GeraeteGateway({
+          // v1415 — wartende Projekt-Etappen starten, sobald das Gerät wieder da ist (kurz warten, bis die Aktionen registriert sind)
+          beiVerbindung: (geraetId: string) => { setTimeout(() => { void this.satellitProjekte?.nachholen(geraetId).then(n => { if (n) this.logger.info({ geraetId, laeufe: n }, 'v1415 wartende Etappen nachgeholt'); }); }, 15_000).unref?.(); },
           logger: this.logger.child({ component: 'geraete' }),
           repo: new GeraeteRepository(dbG),
           skillRegistry: this.skillRegistry,
@@ -15634,6 +15636,15 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     });
   }
 
+  /** v1415 — angehaltenen Lauf fortsetzen (App/Web „Fortsetzen"): aktuelle Etappe neu, gleiche Freigabe und Grenzen. */
+  private async geraeteLaufFortsetzen(projektId: string, laufId: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const s = this.satellitProjekte?.hole(laufId);
+    if (!s || s.akteId !== projektId) return { success: false, error: 'Lauf gehört nicht zu diesem Projekt' };
+    const r = await this.satellitProjekte!.fortsetzenNach(laufId);
+    this.logger.info({ lauf: laufId, ok: r.ok, grund: r.grund }, 'v1415 Lauf fortgesetzt (App/Web)');
+    return r.ok ? { success: true, display: `Etappe ${s.nr} startet neu — gleiche Freigabe und Grenzen.` } : { success: false, error: r.grund ?? 'nicht möglich' };
+  }
+
   /** v1401 — Geräte-Projekte für die App: Liste mit Zustand, Detail mit Läufen, Stand vom Gerät, Weiterarbeiten (Plan → Bestätigung). */
   private async geraeteProjekteFuerApp(owner: string, geraetId: string): Promise<import('./geraete/owner-ansichten.js').OwnerAnsichtenDeps['projekte']> {
     const repo = this.projectRepo;
@@ -15659,6 +15670,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, ctx(`sitzung:${geraetId}`)),
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, ctx(`sitzung:${geraetId}`)), // v1404 Antwort in die App-Sitzung
       entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
+      fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
     };
   }
 
@@ -15789,6 +15801,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       logger: this.logger.child({ component: 'satellit-projekt' }),
     });
     this.satellitProjekte = projekte;
+    // v1415 — Rückfall: wartende Etappen alle 10 min nachholen (falls ein Verbindungsereignis fehlte) und nach 24 h anhalten
+    this.registriereJob({ key: 'projekte-nachholen', beschreibung: 'Projekt-Etappen starten, die auf ein Gerät warten', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', run: async () => ({ ok: true, zaehler: { versuche: await projekte.nachholen() } }) });
     // v1403 — Owner 12.10.: „aus den Geräte-Projekten fortsetzen → man muss zu den Bestätigungen wechseln, um es freizugeben".
     // Freigabe direkt in der Projektansicht: die offene Bestätigung dieses Laufs (source_id projekt-<lauf>-…) wie ein Knopfdruck entscheiden.
     this.geraeteLaufEntscheiden = async (laufId, entscheidung) => {
@@ -15985,6 +15999,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: `project:${id}` } as never),
       weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never),
       entscheiden: async (id: string, lauf: string, e: string) => (projekte.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') ? this.geraeteLaufEntscheiden!(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }), // v1403
+      fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never), // v1404
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');

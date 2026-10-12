@@ -51,6 +51,14 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1415] - 2026-10-13
+
+### Fixed — Projekt wartet auf das Gerät statt anzuhalten; Fortsetzen in App und Web (v1415, App 1.15.3)
+
+- **Warten statt anhalten:** Sollte eine Etappe genau dann starten, als der Satellit für ein Update kurz weg war, wurde das Projekt mit „Gerät nicht verbunden“ angehalten. Jetzt wartet die Etappe. Alfred meldet einmal „⏳ … ist gerade nicht verbunden“. Sobald sich das Gerät wieder verbindet, startet die Etappe. Als Rückfall prüft ein Job alle 10 Minuten nach. Nach 24 Stunden ohne Gerät hält Alfred das Projekt an.
+- **Anzeige:** Lage und Projektansicht zeigen „wartet auf Gerät“.
+- **Knopf „Fortsetzen“:** Angehaltene Läufe lassen sich in App und Web fortsetzen. Die aktuelle Etappe startet dann neu, mit gleicher Freigabe und gleichen Grenzen.
+
 ## [0.19.0-jarvis.1414] - 2026-10-13
 
 ### Security — Vertrauensstufe installiert nur aus der vorhandenen package.json (v1414)

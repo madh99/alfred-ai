@@ -42,6 +42,8 @@ export interface GeraeteGatewayDeps {
   dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
   /** v1342 — Auftrag an Claude Code auf dem Gerät beendet: Alfred fasst in der anfragenden Sitzung zusammen. */
+  /** v1415 — Gerät hat sich (wieder) verbunden (nach dem Willkommen) */
+  beiVerbindung?: (geraetId: string) => void;
   beiEreignis?: (e: { geraet: string; skillName: string; ereignis: import('@alfred/types').GeraetEreignis; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   now?: () => number;
@@ -224,6 +226,7 @@ export class GeraeteGateway {
     await this.deps.repo.setzeZuletztGesehen(eintrag.id, gepr.manifest).catch(() => undefined);
     this.registriereSkill(verbindung);
     this.sende(ws, { typ: 'willkommen', geraetId: eintrag.id, name: eintrag.name, serverVersion: this.deps.serverVersion, skillName, releaseKey: this.deps.releaseKey?.() }); // v1258
+    try { this.deps.beiVerbindung?.(eintrag.id); } catch { /* Folgearbeit darf die Verbindung nicht stören */ } // v1415
     this.deps.logger.info({ geraetId: eintrag.id, name: eintrag.name, plattform: gepr.manifest.plattform, aktionen: gepr.manifest.aktionen.map(a => a.name), skillName, remote }, 'v1224 Gerät verbunden');
     return verbindung;
   }

@@ -1653,6 +1653,11 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/frage`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ text }) });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
+  /** v1415 — angehaltenen Lauf fortsetzen */
+  async geraetLaufFortsetzen(id: string, lauf: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/fortsetzen`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ lauf }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   /** v1403 — offene Frage eines Laufs freigeben/ablehnen */
   async geraetLaufEntscheiden(id: string, lauf: string, entscheidung: 'freigeben' | 'ablehnen'): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/entscheiden`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ lauf, entscheidung }) });
@@ -3449,6 +3454,8 @@ export interface GeraetLauf {
   erledigt: Array<{ nr: number; ok: boolean; kostenUsd: number }>; nr: number; kostenUsd: number; start: string; aktualisiert: string; wartetAufDich: boolean;
   /** v1403 — offene Frage zum Freigeben in der Projektansicht */
   frage?: string; frageArt?: string;
+  /** v1415 — Etappe wartet auf das Gerät (seit) */
+  wartetAufGeraet?: string;
 }
 
 // v643 — Per-Phase Commit eines Project-Agent-Laufs

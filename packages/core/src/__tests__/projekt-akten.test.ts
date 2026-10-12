@@ -223,3 +223,44 @@ describe('Installieren im Projektablauf', () => {
     expect(aufrufe).not.toContain('installieren');
   });
 });
+
+// v1415 — Gerät beim Etappenstart nicht verbunden: warten statt anhalten
+describe('Etappe wartet auf das Gerät', () => {
+  function aufbauWarten(verbunden: { an: boolean }, jetzt: { t: number }) {
+    const meldungen: string[] = []; const fragen: Array<{ nonce: string }> = []; let n = 0;
+    const p = new SatellitProjekte({
+      planen: async () => ['A', 'B'], bewerten: async () => ({ kind: 'proceed' }), anwenden: (r) => r,
+      aktion: async (_g, a) => (a === 'auftrag_starten' ? (verbunden.an ? { success: true, data: { id: `a${++n}` } } : { success: false, error: 'Gerät nicht verbunden' }) : { success: true, data: { ok: true } }),
+      frage: async (_s, _t, nonce) => { fragen.push({ nonce }); }, melde: async (_s, t) => { meldungen.push(t); },
+      logger: { info: () => undefined, warn: () => undefined }, now: () => jetzt.t,
+    });
+    return { p, meldungen, fragen };
+  }
+  it('wartet, meldet einmal, startet beim Wiederverbinden', async () => {
+    const verbunden = { an: false }; const jetzt = { t: 1_000_000 };
+    const { p, meldungen, fragen } = aufbauWarten(verbunden, jetzt);
+    const s = await p.starte({ geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', pruefBefehle: ['npm test'] });
+    await p.antwort(s.id, fragen[0]!.nonce);
+    expect(p.hole(s.id)!.status).toBe('laeuft');
+    expect(p.hole(s.id)!.wartetAufGeraet).toBeDefined();
+    expect(meldungen.filter(m => m.startsWith('⏳'))).toHaveLength(1);
+    expect(p.lageZeile()).toMatch(/wartet auf Ubuntu-VM/);
+    await p.nachholen('g1'); // noch weg: keine zweite Meldung
+    expect(meldungen.filter(m => m.startsWith('⏳'))).toHaveLength(1);
+    verbunden.an = true;
+    expect(await p.nachholen('g2')).toBe(0); // anderes Gerät
+    expect(await p.nachholen('g1')).toBe(1);
+    expect(p.hole(s.id)!.wartetAufGeraet).toBeUndefined();
+    expect(p.hole(s.id)!.auftragId).toBe('a1');
+  });
+  it('nach 24 h ohne Gerät angehalten', async () => {
+    const verbunden = { an: false }; const jetzt = { t: 1_000_000 };
+    const { p, fragen, meldungen } = aufbauWarten(verbunden, jetzt);
+    const s = await p.starte({ geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', pruefBefehle: ['npm test'] });
+    await p.antwort(s.id, fragen[0]!.nonce);
+    jetzt.t += 25 * 3_600_000;
+    await p.nachholen();
+    expect(p.hole(s.id)!.status).toBe('angehalten');
+    expect(meldungen.at(-1)).toMatch(/24 h nicht erreichbar/);
+  });
+});

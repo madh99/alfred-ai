@@ -103,8 +103,9 @@ export function uhrzeit(ms: number): string {
  * v1392 — eine Zeile je laufendem oder wartendem Projekt (Lage, Vorgang „nächster Schritt"). Owner 12.10.: „wo sieht man,
  * dass etwas läuft?" — zwischen Bestätigung und erster Etappenmeldung war nichts zu sehen.
  */
-export function projektZeile(s: { id: string; geraet: string; status: string; nr: number; plan: string[]; kostenUsd: number; etappeStart?: number; fixVersuch: number; frage?: { text: string } }, jetztMs: number): string | null {
+export function projektZeile(s: { id: string; geraet: string; status: string; nr: number; plan: string[]; kostenUsd: number; etappeStart?: number; fixVersuch: number; frage?: { text: string }; wartetAufGeraet?: { seit: number } }, jetztMs: number): string | null {
   const kosten = `${s.kostenUsd.toFixed(2).replace('.', ',')} USD`;
+  if (s.status === 'laeuft' && s.wartetAufGeraet) return `${s.id}: Etappe ${s.nr}/${s.plan.length} wartet auf ${s.geraet} (nicht verbunden seit ${uhrzeit(s.wartetAufGeraet.seit)}), ${kosten}`; // v1415
   if (s.status === 'laeuft') {
     const seit = s.etappeStart !== undefined ? ` seit ${uhrzeit(s.etappeStart)} (${Math.max(0, Math.round((jetztMs - s.etappeStart) / 60_000))} min)` : '';
     return `${s.id} auf ${s.geraet}: Etappe ${s.nr}/${s.plan.length}${s.fixVersuch ? ` (Fix ${s.fixVersuch})` : ''} läuft${seit}, ${kosten}`;

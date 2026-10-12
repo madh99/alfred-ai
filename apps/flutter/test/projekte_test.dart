@@ -55,6 +55,23 @@ void main() {
     expect(find.textContaining('Die Antwort kommt als Meldung in den Chat'), findsOneWidget);
   });
 
+  testWidgets('1.15.3 angehaltener Lauf: Fortsetzen; wartender Lauf zeigt „wartet auf Gerät"', (t) async {
+    Map<String, dynamic>? gesendet;
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet = koerper; return {'success': true, 'display': 'Etappe 2 startet neu'}; }
+      return {'id': 'p1', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [
+        {'id': 'sat-1', 'status': 'angehalten', 'grund': 'Auftrag nicht gestartet: Gerät nicht verbunden', 'ziel': 'SPAR', 'plan': ['A', 'B'], 'erledigt': [], 'nr': 2, 'kostenUsd': 0.61, 'start': '2026-10-12T23:09:00Z'},
+        {'id': 'sat-2', 'status': 'laeuft', 'ziel': 'X', 'plan': ['A'], 'erledigt': [], 'nr': 1, 'kostenUsd': 0, 'start': '2026-10-12T22:00:00Z', 'wartetAufGeraet': '2026-10-12T23:00:00Z'}]};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'p1', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    expect(find.text('⏳ wartet auf Gerät'), findsOneWidget);
+    await t.tap(find.byKey(const Key('fortsetzen-sat-1')));
+    await t.pumpAndSettle();
+    expect(gesendet, {'aktion': 'fortsetzen', 'lauf': 'sat-1'});
+  });
+
   testWidgets('1.15.1 offene Planfrage: Freigeben direkt in der Projektansicht', (t) async {
     Map<String, dynamic>? gesendet;
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {

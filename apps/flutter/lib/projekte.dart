@@ -25,11 +25,13 @@ class Lauf {
         plan = ((j['plan'] as List<dynamic>?) ?? []).map((e) => '$e').toList(),
         erledigt = ((j['erledigt'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList(),
         nr = (j['nr'] as num?)?.toInt() ?? 0, kostenUsd = (j['kostenUsd'] as num?)?.toDouble() ?? 0,
-        start = DateTime.tryParse('${j['start'] ?? ''}')?.toLocal(), frage = j['frage'] as String?, frageArt = j['frageArt'] as String?;
+        start = DateTime.tryParse('${j['start'] ?? ''}')?.toLocal(), frage = j['frage'] as String?, frageArt = j['frageArt'] as String?, wartetAufGeraet = j['wartetAufGeraet'] != null;
   final String id, status, ziel;
   final String? grund;
   /// 1.15.1 — offene Frage (Plan, Weiter, Planänderung): direkt hier freigeben statt in den Bestätigungen
   final String? frage, frageArt;
+  /// 1.15.3 — Etappe wartet, bis das Gerät wieder verbunden ist
+  final bool wartetAufGeraet;
   final List<String> plan;
   final List<Map<String, dynamic>> erledigt;
   final int nr;
@@ -46,6 +48,8 @@ class Lauf {
 }
 
 String usd(double n) => '${n.toStringAsFixed(2).replaceAll('.', ',')} USD';
+
+String laufStatusMit(Lauf l) => l.status == 'laeuft' && l.wartetAufGeraet ? '⏳ wartet auf Gerät' : laufStatus(l.status);
 
 String laufStatus(String s) => switch (s) {
       'laeuft' => '▶ läuft',
@@ -151,6 +155,19 @@ class _ProjektDetailState extends State<ProjektDetail> {
     finally { if (mounted) setState(() => standLaedt = false); }
   }
 
+  /// 1.15.3 — angehaltenen Lauf fortsetzen (aktuelle Etappe neu, gleiche Freigabe)
+  Future<void> fortsetzen(Lauf l) async {
+    setState(() { plant = true; meldung = null; });
+    try {
+      final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': 'fortsetzen', 'lauf': l.id});
+      final ok = r['success'] == true;
+      if (!mounted) return;
+      setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Fortgesetzt.'}' : '${r['error'] ?? 'Fehler'}'; });
+      if (ok) await laden();
+    } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
+    finally { if (mounted) setState(() => plant = false); }
+  }
+
   Future<void> entscheiden(Lauf l, String aktion) async {
     setState(() { plant = true; meldung = null; });
     try {
@@ -247,10 +264,11 @@ class _ProjektDetailState extends State<ProjektDetail> {
             onTap: () => setState(() => offen.contains(l.id) ? offen.remove(l.id) : offen.add(l.id)),
             child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                Text(laufStatus(l.status), style: theme.textTheme.labelMedium),
+                Text(laufStatusMit(l), style: theme.textTheme.labelMedium),
                 const SizedBox(width: 8),
                 Expanded(child: Text('${l.ok}/${l.plan.length} · ${usd(l.kostenUsd)}${l.start != null ? ' · ${datum(l.start!)}' : ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
               ]),
+              if (l.status == 'angehalten') Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(key: Key('fortsetzen-${l.id}'), onPressed: plant ? null : () => fortsetzen(l), icon: const Icon(Icons.play_arrow, size: 18), label: const Text('Fortsetzen'))),
               if (l.status == 'wartet_owner' && l.frage != null) Container(
                 margin: const EdgeInsets.only(top: 8), padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(color: theme.colorScheme.tertiaryContainer, borderRadius: BorderRadius.circular(8)),
