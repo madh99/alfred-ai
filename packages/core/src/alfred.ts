@@ -2944,6 +2944,58 @@ export class Alfred {
             return { ok: true, zaehler: { geprueft: c.geprueft, auffaellig: c.befunde.length } };
           },
         });
+        // v1372 — Nachforschen N1/N2 BEOBACHTEND (Owner 12.10. „wie empfohlen"): offene Befunde nach ihrer Haltefrist einmal
+        // untersuchen — Leseschritte des Rezepts ohne Modell, eine Deutung (fast), Gegenprobe. Ergebnis als Vorgangsschritt
+        // „nachgeforscht" und im Zustand (für E3); Meldungen bleiben unverändert. Budget 10 Läufe / 0,50 USD am Tag.
+        {
+          const { Nachforscher } = await import('./nachforschen/lauf.js');
+          const { untersuchungKurz } = await import('./nachforschen/deutung.js');
+          const { haltefristMin: haltefristN, nieStummschaltbar: nieStummN } = await import('./vorgaenge/regeln.js');
+          const nachforscher = new Nachforscher({
+            llm: this.llmProvider, logger: this.logger,
+            lese: async (werkzeug, _aktion, params) => {
+              const skill = skillRegistry.get(werkzeug);
+              const owner = this.tryOwner();
+              if (!skill || !owner) throw new Error(`${werkzeug} nicht verfügbar`);
+              const r = await skill.execute(params, { userId: owner, masterUserId: owner } as never);
+              if (!r.success) throw new Error(r.error ?? 'fehlgeschlagen');
+              return (r.display ?? JSON.stringify(r.data ?? '')).slice(0, 8000);
+            },
+          });
+          this.registriereJob({
+            key: 'nachforschen', beschreibung: 'Nachforschen: offene Befunde nach Haltefrist untersuchen (beobachtend)', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 12, timeoutMin: 5,
+            run: async () => {
+              const owner = this.tryOwner();
+              if (!owner || !this.befundeRepo || !this.database) return { ok: true, zaehler: { uebersprungen: 1 } as Record<string, number> };
+              const { SkillStateRepository: SSRN, VorgaengeRepository: VRepoN } = await import('@alfred/storage');
+              const zustand = new SSRN(this.database.getAdapter());
+              const jetztN = Date.now();
+              let gelaufen = 0;
+              for (const b of await this.befundeRepo.offene(owner)) {
+                if (gelaufen >= 2) break;
+                if (b.quelle === 'haus-check' || b.quelle === 'lebenszeichen') continue;
+                const schluessel = { quelle: b.quelle, gegenstand: b.gegenstand };
+                const frist = haltefristN(schluessel);
+                if (frist === null || jetztN - Date.parse(b.entstanden) < frist * 60_000) continue;
+                const marke = `lauf:${b.id}:${b.entstanden}`;
+                if (await zustand.get(owner, 'nachforschen', marke)) continue;
+                const regel = await this.regelnRepo?.wirksam(owner, b.quelle, b.gegenstand).catch(() => null);
+                if (regel?.wirkung === 'stumm' && !nieStummN(schluessel)) continue;
+                const e = await nachforscher.untersuche({ id: b.id, quelle: b.quelle, gegenstand: b.gegenstand, titel: b.titel, detail: b.detail, entstanden: b.entstanden, vorgangId: b.vorgangId });
+                if (e.status === 'budget') { this.logger.info({ befund: b.gegenstand }, 'v1372 Nachforschen: Tagesbudget erreicht'); break; }
+                await zustand.set(owner, 'nachforschen', marke, e.status);
+                if (e.status === 'kein_rezept') { this.logger.info({ quelle: b.quelle, gegenstand: b.gegenstand }, 'v1372 Nachforschen: kein Rezept (dynamisch erst ab N3)'); continue; }
+                gelaufen++;
+                if (e.untersuchung) {
+                  await zustand.set(owner, 'nachforschen', `ergebnis:${b.id}`, JSON.stringify({ rezept: e.rezept, zeit: new Date().toISOString(), ...e.untersuchung }));
+                  if (b.vorgangId) await new VRepoN(this.database.getAdapter()).schritt({ vorgangId: b.vorgangId, userId: owner, art: 'nachgeforscht', skill: 'nachforschen', aktion: e.rezept ?? undefined, beschreibung: untersuchungKurz(e.untersuchung).slice(0, 1500), ergebnis: e.untersuchung.sicherheit, quelle: 'nachforschen' }).catch(() => undefined);
+                }
+                this.logger.info({ quelle: b.quelle, gegenstand: b.gegenstand, rezept: e.rezept, status: e.status, sicherheit: e.untersuchung?.sicherheit, hypothese: e.untersuchung?.hypothese?.slice(0, 200), belege: e.untersuchung?.belege.length, gestrichen: e.gestrichen, aufgaben: e.untersuchung?.owner_aufgaben.map(a => a.titel), belegZeilen: e.belegZeilen, kostenUsd: e.kostenUsd, dauerMs: e.dauerMs, fehler: e.fehler }, 'v1372 Nachforschen (beobachtend)');
+              }
+              return { ok: true, zaehler: { untersucht: gelaufen } as Record<string, number> };
+            },
+          });
+        }
         this.registriereJob({
           key: 'ha-zuordnung', beschreibung: 'Home-Assistant-Zuordnung frisch lesen; bei Änderungen Haus-Check', takt: { art: 'intervall', minuten: 60 }, bereich: 'global', startVerzoegerungMin: 10, timeoutMin: 5,
           run: async () => {

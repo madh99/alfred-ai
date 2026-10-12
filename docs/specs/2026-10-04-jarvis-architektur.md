@@ -593,6 +593,12 @@ Tagesbudget für Läufe und für Planungen; Reihenfolge der Quellen (Vorschlag: 
 - Freie Untersuchung als Rückfall (N6) — *nein*.
 - Selbsthilfe vorschlagen (z. B. Integration neu laden, Klasse `bestaetigen`) — *später, nach N4*.
 
+**Owner-Entscheidungen 12.10. („ok wie empfohlen freigegeben"):** alle Empfehlungen oben angenommen.
+
+**Umsetzungsstand:**
+- **v1371 (12.10.):** N0 — Haus-Deutung als Befund-Quelle `haus` (bei Änderung und alle 10 min, ohne doppelten Mini-Pass); täglich 05:40 Licht-Dauer als Befunde `licht` (beobachtend, ohne Vorgang).
+- **v1372 (12.10.):** N1/N2 beobachtend — Lese-Katalog (HA: state, relations, history_summary ≤ 10 d, history ≤ 7 d und logbook ≤ 3 d nur mit Entität, areas), vier Referenzrezepte (Licht lange an, offen/Bewegung bei Abwesenheit, Rauch/CO/Wasser/Alarm, Sensorbatterie), Prüfung vor dem Lauf und Positivliste bei jedem Aufruf, Belegblock ≤ 6 000 Zeichen, Deutung (fast, ohne Werkzeuge) mit Gegenprobe, gemeinsames Schema mit E3; Job `nachforschen` alle 10 min, je Befund einmal nach der Haltefrist, Budget 10 Läufe / 0,50 USD am Tag; Ergebnis als Vorgangsschritt `nachgeforscht` und im Zustand; Logzeile „v1372 Nachforschen (beobachtend)". Meldungen unverändert bis zur Auswertung ~26.10.
+
 ## Home-Assistant-Prüfung nach Best Practice (Entwurf 12.10.2026, Schicht 1–3 — ohne Umsetzung, Owner: „alfred sollte auch die homeassistant umgebung nach best practice untersuchen … und diese vorschlagen")
 
 ### Anlass

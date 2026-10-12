@@ -47,6 +47,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1372] - 2026-10-12
+
+### Added — Nachforschen N1/N2: Befunde nach der Haltefrist selbst untersuchen (beobachtend) (v1372)
+
+Statt „prüfen, ob …" an den Owner weiterzugeben, untersucht Alfred einen offenen Befund jetzt selbst, sobald seine Haltefrist abgelaufen ist (Sicherheitsfälle sofort) — einmal je Befund, nur lesend. Ein Prüfrezept legt die Leseschritte fest; der Code führt sie ohne Modell aus. Erlaubt ist nur ein Lese-Katalog (Home Assistant: Zustand, Zuordnung, verdichteter Verlauf bis zehn Tage, Rohverlauf und Logbuch nur für eine Entität und kurze Zeiträume), geprüft vor dem Lauf und bei jedem einzelnen Aufruf; ein Rezept mit Schreibschritt ist ungültig. Vier Referenzrezepte: Licht ungewöhnlich lange an, offen oder Bewegung bei Abwesenheit, Rauch/CO/Wasser/Alarm, Sensorbatterie.
+
+Aus den Ergebnissen entsteht ein nummerierter Belegblock; ein werkzeugloser Modellaufruf (Stufe fast) deutet ihn in einem festen Schema — Lage, Hypothese, Sicherheit, Belege, nicht Unterscheidbares, Frage, Optionen, Vorschlag, Aufgaben für den Owner, eigene Schritte. Danach prüft der Code: Jeder Beleg muss auf eine Zeile des Belegblocks zeigen und deren Zahl oder Zeit tragen, eigene Schritte dürfen nur aus dem Rezept stammen, sonst wird gestrichen und die Sicherheit sinkt. Das Schema ist dasselbe, das die Vorgänge später (E3) als Frage mit Optionen zeigen.
+
+Beobachtend: Das Ergebnis steht als Vorgangsschritt „nachgeforscht" am Vorgang und im Zustand, die Logzeile „v1372 Nachforschen (beobachtend)" nennt Hypothese, Sicherheit, Belege, Kosten und Dauer; Meldungen ändern sich bis zur Auswertung nicht. Budget: zehn Läufe oder 0,50 USD am Tag, 60 Sekunden je Lauf.
+
 ## [0.19.0-jarvis.1371] - 2026-10-12
 
 ### Added — Nachforschen N0: Haus-Auffälligkeiten und lange brennende Lichter als Befunde (v1371)
