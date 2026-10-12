@@ -43,10 +43,20 @@ export function befehlBleibtIm(befehl: string, basis: string, win = false): bool
 /** v1412 — erlaubte Programme unter der Vertrauensstufe und ihre Argumentregel (true = erlaubt). */
 const keinCodeText = (a: string[]) => !a.some(x => /^(-e|--eval|-p|--print|-c|-m|--command|-r|--require|--import|--loader)$/.test(x));
 const mitUnterbefehl = (erlaubt: string[]) => (a: string[]) => a.length > 0 && erlaubt.includes(a[0]!.toLowerCase());
+const HARMLOSE_SCHALTER = /^--(no-audit|no-fund|prefer-offline|ignore-scripts|frozen-lockfile|silent|quiet)$/;
+/** Unterbefehle frei (Skripte aus package.json); Installation nur ohne Paketnamen. */
+const paketverwaltung = (frei: string[], installieren: string[]) => (a: string[]) => {
+  if (!a.length) return false;
+  const u = a[0]!.toLowerCase();
+  if (installieren.includes(u)) return a.slice(1).every(x => HARMLOSE_SCHALTER.test(x));
+  return frei.includes(u);
+};
 export const ERLAUBTE_PROGRAMME: Record<string, (args: string[]) => boolean> = {
-  npm: mitUnterbefehl(['test', 't', 'run', 'run-script', 'install', 'i', 'ci', 'ls', 'outdated', 'audit', 'start', 'build']),
-  pnpm: mitUnterbefehl(['test', 'run', 'install', 'i', 'ls', 'outdated', 'audit', 'start', 'build']),
-  yarn: (a) => a.length === 0 || ['test', 'run', 'install', 'start', 'build'].includes(a[0]!.toLowerCase()),
+  // v1414 — Sicherheitsprüfung 13.10.: install nur aus package.json/Lockdatei (ohne Paketnamen, nur harmlose Schalter);
+  // ein neues Paket (npm install x, pnpm add x) fragt nach
+  npm: paketverwaltung(['test', 't', 'run', 'run-script', 'ls', 'outdated', 'audit', 'start', 'build'], ['install', 'i', 'ci']),
+  pnpm: paketverwaltung(['test', 'run', 'ls', 'outdated', 'audit', 'start', 'build'], ['install', 'i']),
+  yarn: (a) => a.length === 0 || paketverwaltung(['test', 'run', 'start', 'build'], ['install'])(a),
   node: (a) => a.length > 0 && keinCodeText(a) && !a[0]!.startsWith('-'),
   python: (a) => a.length > 0 && keinCodeText(a) && !a[0]!.startsWith('-'),
   python3: (a) => a.length > 0 && keinCodeText(a) && !a[0]!.startsWith('-'),

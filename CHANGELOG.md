@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1414] - 2026-10-13
+
+### Security — Vertrauensstufe installiert nur aus der vorhandenen package.json (v1414)
+
+Unter der Vertrauensstufe „projekt“ läuft `npm install`, `npm ci`, `pnpm install` oder `yarn` nur ohne Paketnamen und nur mit harmlosen Schaltern. Installiert wird dabei, was package.json und Lockdatei schon festlegen. Ein neues Paket (`npm install x`, `pnpm add x`, `yarn add x`) fragt nach. Der Hilfetext am Gerät beschreibt die Vertrauensstufe jetzt richtig.
+
 ## [0.19.0-jarvis.1413] - 2026-10-13
 
 ### Security — Vertrauensstufe ohne Aufträge und ohne Ablegen (v1413)

@@ -19,7 +19,7 @@ export const EINSTELLUNGEN_HILFE = [
   'sinne-fenster an|aus                     Fenstertitel in den Sinnen mitsenden (aus = nur Leerlauf/Akku)',
   'oberflaeche ink|einfach                  Sitzung mit Ink-Oberfläche oder einfacher Ausgabe starten',
   'sudo-sperre an|aus                       Claude-Code-Aufträge dürfen kein sudo verwenden (Systemänderungen nur über „installieren" mit Bestätigung)',
-  'vertrauen <pfad> bis <zeit> | - <pfad>   Vertrauensstufe projekt: Befehle/Ablegen/Aufträge/Prüfungen in diesem Ordner ohne Einzelbestätigung (zeit: 18:00, 4h, 2d, 2026-10-20 18:00; höchstens 30 Tage; nur hier am Gerät, nie aus dem Chat)',
+  'vertrauen <pfad> bis <zeit> | - <pfad>   Vertrauensstufe projekt: Entwicklungsbefehle (npm, git, …) und Prüfungen in diesem Ordner ohne Einzelbestätigung (zeit: 18:00, 4h, 2d, 2026-10-20 18:00; höchstens 30 Tage; nur hier am Gerät, nie aus dem Chat)',
 ];
 
 const gleich = (a: string, b: string) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;

@@ -89,3 +89,13 @@ describe('Befehle unter der Vertrauensstufe (eng)', () => {
       expect(befehlBleibtIm(b, G), b).toBe(false);
   });
 });
+
+// v1414 — Installieren nur aus package.json/Lockdatei
+describe('Paketverwaltung unter der Vertrauensstufe', () => {
+  it('install ohne Paket ja, mit Paket nein', () => {
+    for (const b of ['npm install', 'npm ci', 'npm i --no-audit', 'pnpm install --frozen-lockfile', 'yarn', 'yarn install'])
+      expect(befehlBleibtIm(b, G), b).toBe(true);
+    for (const b of ['npm install evil-pkg', 'npm i lodash@latest', 'pnpm install x', 'pnpm add x', 'yarn add x', 'yarn install x', 'npm install --global x'])
+      expect(befehlBleibtIm(b, G), b).toBe(false);
+  });
+});
