@@ -602,6 +602,8 @@ Planfrage nennt die Umgebung; ein Plan verlangt kein Werkzeug, das „fehlt“, 
 
 **Owner-Entscheidungen 13.10.:** 1. **nicht sperren, aber optional sperrbar** — Standard offen; Sperre zuschaltbar je Gerät (lokale Einstellung) und je Projekt (Option beim Start/in der Akte). 2. **Quellen vollumfänglich** — apt, brew, winget (Benutzer und System), npm global, pip; jede Installation weiter einzeln bestätigt. 3. **Schalter bauen** (Vertrauensstufe „projekt“, nur lokal am Gerät setzbar). Umsetzung freigegeben „wie empfohlen“: R3a → R3b → R3c → R3d, je ein Release mit Beweis auf der VM.
 
+**Umsetzungsstand (13.10.):** R3a v1408 (Umgebung in Planfrage/Planer/Etappe). R3b v1409 (sudo-Sperre je Gerät lokal und je Projekt-Tag; Nachweis VM 01:06: ohne Regel root-Datei, mit `Bash(sudo:*)` abgelehnt; Geräte-Einstellung live 01:16). R3c v1410 (Aktion `installieren` apt/brew/winget/winget-system/npm/pip, Projektfrage bei FEHLT/command not found; Nachweis `tree` per apt nach Bestätigung). R3d v1411–v1413 (Vertrauensstufe nur lokal; nach drei automatischen Sicherheitsprüfungen eng: nur Erlaubnisliste-Befehle ohne Shell-Sonderzeichen, Prüfungen, Excel — nicht `auftrag_starten`, nicht `datei_ablegen`; Nachweis 01:27: git status im Ordner ohne Bestätigung, ls außerhalb → Bestätigung).
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
