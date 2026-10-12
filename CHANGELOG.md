@@ -51,6 +51,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1411] - 2026-10-13
+
+### Added — Vertrauensstufe „projekt“ (v1411, R3d)
+
+Am Gerät lässt sich ein Ordner zeitlich begrenzt als vertrauenswürdig markieren. Das geht nur lokal, nie aus dem Chat: `alfred einstellungen vertrauen <ordner> bis <zeit>`. Als Zeit gehen 18:00, 4h, 2d oder ein Datum, höchstens 30 Tage. Entfernen geht mit `vertrauen - <ordner>`.
+
+- **Was ohne Einzelbestätigung läuft:** Befehle, Ablegen, Claude-Code-Aufträge, Prüfungen und Excel-Schreiben in diesem Ordner.
+- **Grenzen bei Befehlen:** Sie dürfen kein `sudo`, kein `..` und keine absoluten Pfade außerhalb des Ordners enthalten. HTTP-Prüfungen sind nur auf das Gerät selbst erlaubt.
+- **Bleibt bestätigungspflichtig:** Installieren, Bedienen, Programme starten, Entkoppeln und alles außerhalb des Ordners.
+- **Technik:** Der Satellit meldet aktive Freigaben mit seinen Zustandsdaten, beim Ändern sofort. Ältere Meldungen als 5 Minuten zählen nicht. Im Verlauf steht bei solchen Schritten „Vertrauensstufe projekt: <ordner>“.
+
 ## [0.19.0-jarvis.1410] - 2026-10-13
 
 ### Added — Werkzeuge installieren mit Bestätigung (v1410, R3c)

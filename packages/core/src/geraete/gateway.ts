@@ -235,6 +235,8 @@ export class GeraeteGateway {
       istOwner: this.deps.istOwner, // v1268
       geraetId: v.eintrag.id, name: v.eintrag.name, manifest: v.eintrag.manifest, skillName: v.skillName,
       sendeAktion: (aktion, params, timeoutMs) => this.sendeAktion(v.eintrag.id, aktion, params, timeoutMs),
+      // v1411 R3d — Vertrauensstufen aus den Sinnen (nur frische Sinne, höchstens 5 min alt)
+      vertrauen: () => (v.sinneZeit && Date.now() - v.sinneZeit < 5 * 60_000 && Array.isArray(v.sinne?.vertrauen) ? (v.sinne!.vertrauen as Array<{ pfad: string; bis: string }>).filter(x => typeof x?.pfad === 'string' && typeof x?.bis === 'string') : undefined),
       merkeAuftrag: (auftragId, herkunft) => { this.auftraege.merke(v.eintrag.id, auftragId, herkunft); }, // v1342/v1383
       bestaetigung: async (frage, herkunft) => {
         if (!this.deps.enqueueBestaetigung) return false;

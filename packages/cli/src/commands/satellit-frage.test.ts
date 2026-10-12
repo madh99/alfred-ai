@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtempSync, writeFileSync, readdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, existsSync, readFileSync } from 'node:fs';
 import { argumenteFuer, fragePrompt, auftragStarten, NUR_LESEN_GESPERRT } from './satellit-auftrag.js';
 
 // v1404 — Frage zum Projekt: Claude Code nur lesend (Nachweis VM 13.10. 00:02)
@@ -64,5 +64,34 @@ describe('sudo-Sperre', () => {
     expect(wendeAn(k, 'sudo-sperre', 'aus').text).toMatch(/erlaubt/);
     expect(k.sudoSperre).toBe(false);
     expect(wendeAn(k, 'sudo-sperre', 'vielleicht').ok).toBe(false);
+  });
+});
+
+// v1411 R3d — Vertrauensstufe lokal setzen
+import { bisAus, aktivesVertrauen } from './satellit-einstellungen.js';
+describe('Vertrauensstufe (lokal)', () => {
+  const jetzt = new Date(2026, 9, 13, 10, 0, 0);
+  it('Zeitangaben: 18:00, 4h, 2d, Datum; über 30 Tage oder vergangen nein', () => {
+    expect(bisAus('18:00', jetzt)!.getHours()).toBe(18);
+    expect(bisAus('09:00', jetzt)!.getDate()).toBe(14); // schon vorbei → morgen
+    expect(bisAus('4h', jetzt)!.getTime() - jetzt.getTime()).toBe(4 * 3_600_000);
+    expect(bisAus('2d', jetzt)!.getTime() - jetzt.getTime()).toBe(2 * 86_400_000);
+    expect(bisAus('2026-10-20 18:00', jetzt)!.getDate()).toBe(20);
+    expect(bisAus('31d', jetzt)).toBeUndefined();
+    expect(bisAus('2026-10-01', jetzt)).toBeUndefined();
+    expect(bisAus('morgen', jetzt)).toBeUndefined();
+  });
+  it('setzen nur in Ordnern mit Schreibrecht; entfernen; abgelaufene zählen nicht', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'alfred-vertrauen-'));
+    const sub = path.join(dir, 'game'); mkdirSync(sub);
+    const k = { freigegebeneVerzeichnisse: [dir] } as never as Parameters<typeof wendeAn>[0];
+    expect(wendeAn(k, 'vertrauen', `${sub} bis 4h`).ok).toBe(true);
+    expect(aktivesVertrauen(k).map(v => v.pfad)).toEqual([sub]);
+    expect(wendeAn(k, 'vertrauen', `${os.homedir()} bis 4h`).text).toMatch(/Nur in einem Verzeichnis mit Schreibrecht/);
+    expect(wendeAn(k, 'vertrauen', `${sub}`).ok).toBe(false);
+    expect(wendeAn(k, 'vertrauen', `- ${sub}`).ok).toBe(true);
+    expect(aktivesVertrauen(k)).toEqual([]);
+    k.vertrauen = [{ pfad: sub, bis: new Date(Date.now() - 1000).toISOString() }];
+    expect(aktivesVertrauen(k)).toEqual([]);
   });
 });

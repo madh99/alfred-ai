@@ -15,6 +15,7 @@ import { cliOrdner } from './satellit-update.js'; // v1274
 import { installiereDienst, entferneDienst, dienstStatus, dienstLogPfad, laeuftErhoeht } from './satellit-dienst.js';
 import { installiereStarter } from './satellit-starter.js'; // v1304
 import { installieren, pruefeInstallation, INSTALL_QUELLEN } from './satellit-installieren.js'; // v1410 R3c
+import { aktivesVertrauen } from './satellit-einstellungen.js'; // v1411 R3d
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
@@ -176,6 +177,7 @@ export function pfadVon(params: Record<string, unknown>, ...namen: string[]): st
  */
 let gehirnSende: ((n: Record<string, unknown>) => boolean) | undefined;
 let endeWaechter: ReturnType<typeof setInterval> | undefined; // v1394
+let sinneSofort: (() => void) | undefined; // v1411
 function meldeAuftragEnde(m: AuftragMeta, erg: AuftragErgebnis, log?: (t: string) => void): void {
   if (m.gemeldet) return;
   try {
@@ -676,7 +678,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
       // v1309 — Einstellungen geändert (Sitzung oder alfred einstellungen): geraet.json neu lesen, Bedienung mit neuer Sperrliste
       if (befehl === 'neuladen') {
         const neu = ladeKonfig();
-        if (neu) { Object.assign(k, neu); bedienung = undefined; log('Einstellungen neu geladen'); antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
+        if (neu) { Object.assign(k, neu); if (!neu.vertrauen) k.vertrauen = undefined; bedienung = undefined; log('Einstellungen neu geladen'); sinneSofort?.(); /* v1411 Vertrauen sofort melden */ antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
       }
     });
     s.start().then(() => { ipc = s; log(`IPC bereit: ${ipcPfadText()}`); }).catch(err => fehler(`IPC nicht verfügbar: ${(err as Error).message}`));
@@ -729,7 +731,9 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
         let puls: ReturnType<typeof setInterval> | undefined;
         let sinneTimer: ReturnType<typeof setInterval> | undefined;
         const sende = (n: Record<string, unknown>): boolean => { if (ws.readyState !== WebSocket.OPEN) return false; ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); return true; };
-        const sendeSinne = async () => { try { const w = await sinne.erfasse(); if (Object.keys(w).length) sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } };
+        // v1411 R3d — aktive Vertrauensstufen mit den Sinnen melden (das Gehirn überspringt damit Einzelbestätigungen im Ordner)
+        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k) }; sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } };
+        sinneSofort = () => { void sendeSinne(); };
         ws.on('open', () => {
           sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });
           puls = setInterval(() => sende({ typ: 'puls' }), PULS_INTERVALL_MS);

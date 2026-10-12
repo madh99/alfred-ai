@@ -1,3 +1,4 @@
+import { vertrauenDeckt } from './vertrauen.js'; // v1411 R3d
 import { Skill } from '@alfred/skills';
 import type { SkillMetadata, SkillContext, SkillResult, GeraetManifest, GeraetAktionDef } from '@alfred/types';
 import { paramsKurz, TRANSFER_MAX_BYTES, TRANSFER_GROSS_MAX_BYTES, sha256Hex, mimeAusName, sichererDateiname } from './protokoll.js';
@@ -29,6 +30,8 @@ export interface GeraetSkillDeps {
   /** v1225 — prüft und verbraucht die Einmal-Freigabe aus den Parametern der Bestätigungs-Queue. */
   pruefeFreigabe: (nonce: unknown, aktion: string, params: Record<string, unknown>) => boolean;
   /** v1230 — Vorhaben-Freigabe: anlegen, nach Owner-Ja aktivieren, Deckung prüfen. */
+  /** v1411 R3d — vom Gerät gemeldete, lokal gesetzte Vertrauensstufen „projekt" (Sinne) */
+  vertrauen?: () => import('./vertrauen.js').Vertrauen[] | undefined;
   vorhaben: {
     erzeuge: (v: { beschreibung: string; aktionen: string[]; domains?: string[]; dauerMin?: number; herkunft?: VorhabenHerkunft }) => { nonce: string; bis: number; aktionen: string[]; domains: string[] };
     aktiviere: (nonce: unknown) => { nonce: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: VorhabenHerkunft } | undefined; // v1297 nonce, v1324 herkunft
@@ -151,7 +154,9 @@ export class GeraetSkill extends Skill {
     }
     // v1230 — ein aktives Vorhaben deckt die Aktion: keine Einzelbestätigung
     const vorhaben = def.autonomie === 'bestaetigen' && !bestaetigt ? this.deps.vorhaben.deckt(aktion, params) : undefined;
-    if (def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben) {
+    // v1411 R3d — Vertrauensstufe „projekt" (nur am Gerät setzbar) deckt Befehle/Ablegen/Aufträge/Prüfungen in ihrem Ordner
+    const vertraut = def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben ? vertrauenDeckt(aktion, params, this.deps.vertrauen?.(), { win: this.deps.manifest.plattform === 'windows' }) : undefined;
+    if (def.autonomie === 'bestaetigen' && !bestaetigt && !vorhaben && !vertraut) {
       const gestellt = await this.deps.bestaetigung({ description: beschreibung, aktion, params }, herkunft);
       await this.deps.schritt?.({ art: 'zur_bestaetigung', aktion, params, beschreibung, autonomie: 'bestaetigen' });
       return gestellt
@@ -179,7 +184,7 @@ export class GeraetSkill extends Skill {
     const r = await this.deps.sendeAktion(aktion, geraetParams, aktion === 'shell' ? 10 * 60_000 : undefined);
     // v1342 — Auftrag gestartet: Sitzung merken, damit das Ende (Ereignis vom Gerät) dort gemeldet wird
     if (aktion === 'auftrag_starten' && r.success && herkunft) { const id = (r.data as { id?: string } | undefined)?.id; if (id) this.deps.merkeAuftrag?.(id, herkunft); }
-    await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, ERGEBNIS_MAX_ZEICHEN) : (r.error ?? '').slice(0, ERGEBNIS_MAX_ZEICHEN), autonomie: def.autonomie });
+    await this.deps.schritt?.({ art: r.success ? 'ausgefuehrt' : 'fehlgeschlagen', aktion, params, beschreibung: vorhaben ? `${beschreibung} (Vorhaben: ${vorhaben.beschreibung.slice(0, 60)}, Schritt ${vorhaben.schritte})` : vertraut ? `${beschreibung} (Vertrauensstufe projekt: ${vertraut.pfad})` : beschreibung, ergebnis: r.success ? (r.display ?? JSON.stringify(r.data ?? null)).slice(0, ERGEBNIS_MAX_ZEICHEN) : (r.error ?? '').slice(0, ERGEBNIS_MAX_ZEICHEN), autonomie: def.autonomie });
     if (!r.success) return { success: false, error: r.error ?? 'Gerät meldete Fehler' };
     // v1249 — datei_holen über 8 MB: das Gerät hat blockweise hochgeladen, der Server hat schon gespeichert (key)
     const dg = r.data as { key?: string; dateiName?: string; groesse?: number; sha256?: string; gross?: boolean } | undefined;

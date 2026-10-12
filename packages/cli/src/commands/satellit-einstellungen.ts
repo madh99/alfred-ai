@@ -19,6 +19,7 @@ export const EINSTELLUNGEN_HILFE = [
   'sinne-fenster an|aus                     Fenstertitel in den Sinnen mitsenden (aus = nur Leerlauf/Akku)',
   'oberflaeche ink|einfach                  Sitzung mit Ink-Oberfläche oder einfacher Ausgabe starten',
   'sudo-sperre an|aus                       Claude-Code-Aufträge dürfen kein sudo verwenden (Systemänderungen nur über „installieren" mit Bestätigung)',
+  'vertrauen <pfad> bis <zeit> | - <pfad>   Vertrauensstufe projekt: Befehle/Ablegen/Aufträge/Prüfungen in diesem Ordner ohne Einzelbestätigung (zeit: 18:00, 4h, 2d, 2026-10-20 18:00; höchstens 30 Tage; nur hier am Gerät, nie aus dem Chat)',
 ];
 
 const gleich = (a: string, b: string) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
@@ -36,6 +37,7 @@ export function einstellungen(k: GeraetKonfig, extra: { version: string; dienst:
     { schluessel: 'wort', titel: 'Aktivierungswort', wert: k.aktivierungswort ?? 'Alfred', art: 'text' },
     { schluessel: 'sinne-fenster', titel: 'Fenstertitel in den Sinnen', wert: k.sinneOhneFenster ? 'aus' : 'an', art: 'schalter' },
     { schluessel: 'oberflaeche', titel: 'Sitzungs-Oberfläche', wert: k.sitzungEinfach ? 'einfach' : 'ink', art: 'schalter' },
+    { schluessel: 'vertrauen', titel: 'Vertrauensstufe projekt', wert: aktivesVertrauen(k).length ? `${aktivesVertrauen(k).length} Ordner` : 'keine', art: 'liste', eintraege: aktivesVertrauen(k).map(v => `${v.pfad} bis ${new Date(v.bis).toLocaleString('de-AT')}`), hinweis: 'nur lokal setzbar; Installieren bleibt bestätigungspflichtig' }, // v1411
     { schluessel: 'sudo-sperre', titel: 'sudo in Claude-Code-Aufträgen', wert: k.sudoSperre ? 'gesperrt' : 'erlaubt', art: 'schalter', hinweis: 'gesperrt: Systemänderungen nur über installieren mit Bestätigung' }, // v1409
   ];
 }
@@ -83,6 +85,20 @@ export function wendeAn(k: GeraetKonfig, befehl: string, arg: string): { ok: boo
       k.sitzungEinfach = a.toLowerCase() === 'einfach';
       return { ok: true, text: `Sitzungs-Oberfläche: ${a.toLowerCase()} (gilt für die nächste Sitzung)` };
     }
+    case 'vertrauen': { // v1411 R3d — nur lokal (Sitzung, alfred einstellungen), nie aus dem Chat
+      const weg = /^-\s*(.+)$/.exec(a);
+      if (weg) { const p = heim(weg[1]!.trim().replace(/^"|"$/g, '')); k.vertrauen = (k.vertrauen ?? []).filter(v => !gleich(path.resolve(v.pfad), p)); return { ok: true, text: `Vertrauensstufe entfernt: ${p}` }; }
+      const m = /^(.*?)\s+bis\s+(.+)$/i.exec(a);
+      if (!m) return { ok: false, text: 'vertrauen <pfad> bis <zeit> | vertrauen - <pfad>' };
+      const p = heim(m[1]!.trim().replace(/^"|"$/g, ''));
+      try { if (!statSync(p).isDirectory()) return { ok: false, text: `Kein Verzeichnis: ${p}` }; } catch { return { ok: false, text: `Verzeichnis nicht gefunden: ${p}` }; }
+      const sep = path.sep;
+      if (!k.freigegebeneVerzeichnisse.some(f => { const fr = path.resolve(f); return gleich(fr, p) || (process.platform === 'win32' ? p.toLowerCase().startsWith(fr.toLowerCase() + sep) : p.startsWith(fr + sep)); })) return { ok: false, text: `Nur in einem Verzeichnis mit Schreibrecht: ${p}` };
+      const bis = bisAus(m[2]!);
+      if (!bis) return { ok: false, text: 'Zeit: 18:00, 4h, 2d oder 2026-10-20 18:00 (höchstens 30 Tage)' };
+      k.vertrauen = [...(k.vertrauen ?? []).filter(v => !gleich(path.resolve(v.pfad), p) && Date.parse(v.bis) > Date.now()), { pfad: p, bis: bis.toISOString() }];
+      return { ok: true, text: `Vertrauensstufe projekt: ${p} bis ${bis.toLocaleString('de-AT')}` };
+    }
     case 'sudo-sperre': { // v1409 R3b
       if (!/^(an|aus)$/i.test(a)) return { ok: false, text: 'sudo-sperre an|aus' };
       k.sudoSperre = a.toLowerCase() === 'an'; // false statt undefined: Object.assign beim Neuladen übernimmt das Ausschalten (v1410)
@@ -102,4 +118,22 @@ export function trenneBefehl(zeile: string): { befehl: string; arg: string } {
 
 export function einstellungenText(liste: Einstellung[]): string {
   return liste.map(e => `${e.titel}: ${e.wert}${e.eintraege?.length ? '\n' + e.eintraege.map(x => `   - ${x}`).join('\n') : ''}`).join('\n');
+}
+
+/** v1411 — aktive (nicht abgelaufene) Vertrauensstufen. */
+export function aktivesVertrauen(k: GeraetKonfig, jetzt = Date.now()): Array<{ pfad: string; bis: string }> {
+  return (k.vertrauen ?? []).filter(v => Date.parse(v.bis) > jetzt);
+}
+
+/** v1411 — Ablaufzeit: „18:00" (heute, sonst morgen), „4h", „2d", „2026-10-20 18:00"; höchstens 30 Tage. */
+export function bisAus(t: string, jetzt = new Date()): Date | undefined {
+  const s = t.trim();
+  let d: Date | undefined;
+  let m: RegExpExecArray | null;
+  if ((m = /^(\d+)\s*h$/i.exec(s))) d = new Date(jetzt.getTime() + Number(m[1]) * 3_600_000);
+  else if ((m = /^(\d+)\s*d$/i.exec(s))) d = new Date(jetzt.getTime() + Number(m[1]) * 86_400_000);
+  else if ((m = /^(\d{1,2}):(\d{2})$/.exec(s))) { d = new Date(jetzt); d.setHours(Number(m[1]), Number(m[2]), 0, 0); if (d.getTime() <= jetzt.getTime()) d = new Date(d.getTime() + 86_400_000); }
+  else if ((m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?$/.exec(s))) d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 23), Number(m[5] ?? 59));
+  if (!d || Number.isNaN(d.getTime()) || d.getTime() <= jetzt.getTime() || d.getTime() - jetzt.getTime() > 30 * 86_400_000) return undefined;
+  return d;
 }
