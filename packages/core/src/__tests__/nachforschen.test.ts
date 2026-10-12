@@ -96,3 +96,13 @@ describe('v1376 — Infra-Rezepte', () => {
     expect(pruefeSchritt('unifi', 'list_events', { limit: 30 })).toBeNull();
   });
 });
+
+describe('v1378 — abgeschnittene Deutung (Realfall 12.10. 14:46: 900 von 900 Ausgabe-Tokens)', () => {
+  it('wird als „am Token-Limit abgeschnitten" gemeldet; das Limit liegt jetzt bei 2000', async () => {
+    const llm = { complete: vi.fn().mockResolvedValue({ content: '{"lage":"AC Mesh getrennt","belege":[{"text":"…', usage: { inputTokens: 1561, outputTokens: 2000 }, stopReason: 'max_tokens' }) };
+    const n = new Nachforscher({ lese: vi.fn().mockResolvedValue('AC Mesh: disconnected 1'), llm, logger: { info: vi.fn() } as never });
+    const e = await n.untersuche({ ...LICHT, quelle: 'infra', gegenstand: 'unifi:device:ac-mesh', titel: 'unifi: Device "AC Mesh" is not connected' });
+    expect(e).toMatchObject({ status: 'deutung_ungueltig', fehler: 'Antwort am Token-Limit abgeschnitten' });
+    expect(llm.complete.mock.calls[0]![0].maxTokens).toBe(2000);
+  });
+});

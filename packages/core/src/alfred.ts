@@ -2981,12 +2981,14 @@ export class Alfred {
                 const marke = `lauf:${b.id}:${b.entstanden}`;
                 const bisher = await zustand.get(owner, 'nachforschen', marke);
                 // v1376 — „kein Rezept" wird neu versucht, sobald es ein passendes Rezept gibt (z. B. neue Infra-Rezepte)
-                if (bisher && !(bisher === 'kein_rezept' && rezeptFuerN({ id: b.id, quelle: b.quelle, gegenstand: b.gegenstand, titel: b.titel, entstanden: b.entstanden }))) continue;
+                // v1378 — „ungueltig_1" (erste Deutung ungültig) wird genau einmal wiederholt
+                if (bisher && bisher !== 'ungueltig_1' && !(bisher === 'kein_rezept' && rezeptFuerN({ id: b.id, quelle: b.quelle, gegenstand: b.gegenstand, titel: b.titel, entstanden: b.entstanden }))) continue;
                 const regel = await this.regelnRepo?.wirksam(owner, b.quelle, b.gegenstand).catch(() => null);
                 if (regel?.wirkung === 'stumm' && !nieStummN(schluessel)) continue;
                 const e = await nachforscher.untersuche({ id: b.id, quelle: b.quelle, gegenstand: b.gegenstand, titel: b.titel, detail: b.detail, entstanden: b.entstanden, vorgangId: b.vorgangId });
                 if (e.status === 'budget') { this.logger.info({ befund: b.gegenstand }, 'v1372 Nachforschen: Tagesbudget erreicht'); break; }
-                await zustand.set(owner, 'nachforschen', marke, e.status);
+                // v1378 — ungültige Deutung (z. B. am Token-Limit abgeschnitten) einmal wiederholen, dann aufgeben
+                await zustand.set(owner, 'nachforschen', marke, e.status === 'deutung_ungueltig' && bisher !== 'ungueltig_1' ? 'ungueltig_1' : e.status);
                 if (e.status === 'kein_rezept') { this.logger.info({ quelle: b.quelle, gegenstand: b.gegenstand }, 'v1372 Nachforschen: kein Rezept (dynamisch erst ab N3)'); continue; }
                 gelaufen++;
                 if (e.untersuchung) {

@@ -61,7 +61,7 @@ export function deutungsPrompt(b: BefundKurz, r: Rezept, block: string): string 
     'ERLAUBTE EIGENE SCHRITTE (nur diese als alfred_schritte):',
     ...r.eigeneSchritte.map(s => `- ${s}`),
     '',
-    'Antworte NUR mit einem JSON-Objekt:',
+    'Antworte NUR mit einem JSON-Objekt, KURZ: höchstens 5 Belege, jeder Text höchstens 120 Zeichen, höchstens 3 Optionen und 3 Aufgaben:',
     '{"lage":"1 Satz, worum es geht","hypothese":"wahrscheinliche Ursache","sicherheit":"hoch|mittel|niedrig",',
     '"belege":[{"text":"Aussage mit Zahl/Zeit aus der Zeile","zeile":"B3"}],"nicht_unterscheidbar":["…"],',
     '"frage":"was der Owner entscheiden soll (1 Satz)","optionen":["2–3 Möglichkeiten"],"vorschlag":"welche Option und warum",',

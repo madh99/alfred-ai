@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1378] - 2026-10-12
+
+### Fixed — Nachforschen: Deutung am Token-Limit abgeschnitten (v1378)
+
+Die erste echte Untersuchung (UniFi „AC Mesh nicht verbunden", 14 Belegzeilen) scheiterte: die Antwort des Modells endete genau am Limit von 900 Ausgabe-Tokens, das JSON war unvollständig. Das Limit liegt jetzt bei 2 000, der Prompt verlangt eine knappe Antwort (höchstens fünf Belege mit je höchstens 120 Zeichen, drei Optionen, drei Aufgaben), die Logzeile nennt den Grund („am Token-Limit abgeschnitten" bzw. „kein gültiges JSON"), und eine ungültige Deutung wird beim nächsten Lauf genau einmal wiederholt.
+
 ## [0.19.0-jarvis.1377] - 2026-10-12
 
 ### Added — Dossier im Gespräch (Interessen I2) (v1377)

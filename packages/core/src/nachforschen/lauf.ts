@@ -66,12 +66,12 @@ export class Nachforscher {
         }
       }
       const block = belegblock(ergebnisse);
-      const antwort = await this.d.llm.complete({ messages: [{ role: 'user', content: deutungsPrompt(b, r, block.text) }], maxTokens: 900, tier: 'fast' });
+      const antwort = await this.d.llm.complete({ messages: [{ role: 'user', content: deutungsPrompt(b, r, block.text) }], maxTokens: 2000, tier: 'fast' });
       const kosten = antwort.model ? calculateCost(antwort.model, antwort.usage) : 0;
       this.usd += kosten;
       const g = pruefeDeutung(antwort.content ?? '', r, block.zeilen);
       const dauerMs = (this.d.jetzt?.() ?? Date.now()) - start;
-      if (!g) return { befund: b, rezept: r.id, status: 'deutung_ungueltig', belegZeilen: block.zeilen.size, kostenUsd: kosten, dauerMs };
+      if (!g) return { befund: b, rezept: r.id, status: 'deutung_ungueltig', belegZeilen: block.zeilen.size, kostenUsd: kosten, dauerMs, fehler: antwort.stopReason === 'max_tokens' ? 'Antwort am Token-Limit abgeschnitten' : 'kein gültiges JSON' };
       return { befund: b, rezept: r.id, status: 'untersucht', untersuchung: g.u, belegZeilen: block.zeilen.size, gestrichen: g.gestrichen, kostenUsd: kosten, dauerMs };
     } catch (err) {
       return { befund: b, rezept: r.id, status: 'fehler', fehler: (err as Error).message.slice(0, 200), dauerMs: (this.d.jetzt?.() ?? Date.now()) - start };
