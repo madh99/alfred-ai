@@ -561,6 +561,38 @@ Waschkammerl nachgestellt (Verlauf 04.–11.10.): Meldung enthält Dauervergleic
 
 Tagesbudget für Läufe und für Planungen; Reihenfolge der Quellen (Vorschlag: Haus/HA, dann Infra); Schwelle für „bewährt" (Vorschlag 3 bestätigte Läufe); eigene Todo-Liste „Alfred-Aufgaben" oder Standardliste; freie Untersuchung als Rückfall (N6) ja/nein; ob Alfred risikoarme Selbsthilfe vorschlagen darf (z. B. Integration neu laden — das ist eine Schaltung und bliebe Klasse `bestaetigen`).
 
+### Prüfung gegen den Stand 12.10.2026 (Owner: „Nachforschen-Spec prüfen")
+
+**Seit dem Entwurf gebaut, das die Spec verändert:**
+
+| Baustein | Wirkung auf Nachforschen |
+|---|---|
+| v1357 `history_summary` (Einschaltdauer, Phasen, Auffälligkeiten, Ursachen aus dem Logbuch — im Code berechnet) | ersetzt Rezeptschritt 1 und 4; begrenzte Ausgabe statt Rohverlauf; **nie ungefiltertes Logbuch** (34 MB/Tag, Lektion 12.10.) |
+| v1358 `relations` (Licht → Schalter → Melder → Automation, inkl. `last_triggered`) | ersetzt Rezeptschritte 2 und 3 |
+| v1359 Haus-Check A1–A3, B1–B3 als Befunde `haus-check` | deckt „Melder meldet nichts mehr" (B2) und tote Geräte (B1) wöchentlich ab — der stumme Waschkammerl-Melder wäre heute ein Befund; Owner-Entscheidung: Haus-Check erzeugt keine Vorgänge |
+| v1362 E1/E2: Regeln (stumm/immer fragen), Haltefristen (Sicherheit sofort, Ausfall 2 h, Batterie 24 h, Abweichung 24 h) beobachtend | Live 12.10.: 8 von 8 Befund-Vorgängen „wären entfallen" (von selbst erledigt) — Nachforschen bei **jedem neuen** Befund wäre Verschwendung |
+| E3 (Vorgang mit Lage, Belegen, Frage, Optionen, Vorschlag) — Spec „Entscheiden statt Abhaken" | Ausgabe der Deutung (Hypothese, Belege, nicht unterscheidbar, Owner-Aufgaben) ist genau das Futter für E3 — **ein** Schema statt zwei |
+| v1368 Korrektur-Sperre nur bei genanntem Gegenstand; Sicherheit nie unterdrückbar | gleiche Regel für „nicht nachforschen": Befunde mit wirksamer Korrektur oder Regel `stumm` werden nicht untersucht |
+| v1369 „Nicht zugestellt"-Zeile | Läufe, die nichts melden, zählen dort mit |
+
+**Live-Befund (Woche 05.–12.10.):** Befunde ohne Haus-Check 32 neu, davon 29 von selbst erledigt. Vorgänge: Befund 85, Reasoning-Prosa 141 (reasoning 76, reasoning-insight 65), Lernbedarf 18. Offen u. a. **„Fenster von Lena prüfen" zweimal** (Prosa, Dublette) — die deterministische Haus-Deutung (`normalzustaende/haus.ts`: Öffnungen bei Abwesenheit, Rauch/CO/Wasser, Alarm) existiert, wird aber **nicht** an den Weltmodell-Beobachter gegeben; Befunde entstehen nur aus bmw, energie, sensorbatterien, mikrotik, infra, geraete, lebenszeichen, haus-check. Darum laufen Haus-Auffälligkeiten über den Prosa-Weg (ohne Identität, mit Dubletten und „prüfen, ob …").
+
+**Änderungen an der Spec (Vorschlag):**
+1. **N0 neu gefasst:** (a) Haus-Deutung als Befund-Quelle `haus` an den Weltmodell-Beobachter (Fenster/Tür offen bei Abwesenheit, Rauch/CO/Wasser, Alarm) — damit gelten Identität, E1-Regeln, Haltefristen, Lage, Korrektur-Gegenstand; der Prosa-Weg wird für diese Fälle schon heute zum Befund zugeordnet (.1222). (b) „Licht ungewöhnlich lange an" als Befund aus `history_summary` (ein Lauf täglich über die Lichter mit Bewegungsbezug aus `relations`). (c) „Entität neu nicht verfügbar" bleibt der bestehende infra-Befund (Monitor), keine zweite Quelle.
+2. **Auslöser:** nachgeforscht wird, wenn ein Befund **seine Haltefrist überschreitet** (= er würde Vorgang), Sicherheit sofort — nicht bei jedem neuen Befund. Befunde mit Regel `stumm` oder passender Korrektur nicht. Prosa-Vorgänge (Weg b) erst in N5.
+3. **Referenzrezept HA** = drei Aufrufe: `relations` (Bereich, Melder, Automationen), `history_summary` (Licht und Melder, 10 Tage), `state` der Melder (Batterie, `last_seen`). Lese-Positivliste HA: `state`, `history_summary`, `relations`, `review`, `areas`, `history` und `logbook` nur mit Entität und Zeitraum.
+4. **Ein Ausgabeschema** für Nachforschen und E3: `{lage, hypothese, sicherheit, belege[], nicht_unterscheidbar[], frage, optionen[], vorschlag, owner_aufgaben[], alfred_schritte[]}` — am Vorgang gespeichert; E3 rendert es.
+5. **Reihenfolge neu:** N0 (Befunde Haus) → N1+N2 zusammen, **beobachtend** (Lauf bei Haltefrist, Ergebnis als Vorgangsschritt `nachgeforscht`, Meldung unverändert, Kosten gemessen) → nach Auswertung E2 (~26.10.) Meldeformat und Owner-Aufgaben aktiv (zusammen mit E3) → N3 dynamische Rezepte → N4 Nachprüfen/Schließen → N5 Prosa-Weg und Chat-Rezepte.
+
+**Offene Owner-Entscheidungen (mit Empfehlung):**
+- Auslöser bei Haltefrist statt bei jedem neuen Befund — *Empfehlung ja*.
+- N0 (a) Haus-Deutung als Befunde — *ja*; (b) Licht-Dauer täglich — *ja, beobachtend*.
+- Owner-Aufgaben als eigene Todo-Liste „Alfred-Aufgaben" — *ja* (trennt sie von deinen eigenen Aufgaben, App-Ansicht Aufgaben zeigt beide).
+- Budget: 10 Läufe oder 0,50 USD am Tag, 3 Planungen — *ja* (Live-Volumen nach Haltefrist: wenige Läufe pro Woche).
+- „bewährt" nach 3 bestätigten Läufen — *ja*.
+- Freie Untersuchung als Rückfall (N6) — *nein*.
+- Selbsthilfe vorschlagen (z. B. Integration neu laden, Klasse `bestaetigen`) — *später, nach N4*.
+
 ## Home-Assistant-Prüfung nach Best Practice (Entwurf 12.10.2026, Schicht 1–3 — ohne Umsetzung, Owner: „alfred sollte auch die homeassistant umgebung nach best practice untersuchen … und diese vorschlagen")
 
 ### Anlass
