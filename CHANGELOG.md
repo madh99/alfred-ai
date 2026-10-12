@@ -51,6 +51,23 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1413] - 2026-10-13
+
+### Security — Vertrauensstufe ohne Aufträge und ohne Ablegen (v1413)
+
+Die Vertrauensstufe „projekt“ deckt nur noch drei Dinge:
+
+- Befehle aus der Erlaubnisliste,
+- Prüfungen,
+- Excel-Schreiben im Ordner.
+
+Zwei Aktionen fragen wieder immer nach:
+
+- **Claude-Code-Aufträge:** Ein Auftrag kann im Auto-Modus fast alles. Projekte deckt weiterhin die Plan-Freigabe.
+- **Dateien ablegen:** Sonst könnte ein eingeschleuster Auftrag erst Code in den Ordner legen und ihn dann ohne Rückfrage ausführen.
+
+Ohne Bestätigung läuft damit nur, was im Projekt schon vorhanden ist.
+
 ## [0.19.0-jarvis.1412] - 2026-10-13
 
 ### Security — Vertrauensstufe deckt nur bekannte Entwicklungsbefehle (v1412)

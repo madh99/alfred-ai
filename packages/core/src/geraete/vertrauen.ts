@@ -1,5 +1,6 @@
 /**
  * v1411 — R3d Vertrauensstufe „projekt" (Owner 13.10.: „Schalter bauen"; Spec: nur lokal am Gerät setzbar, nie aus dem Chat).
+ * v1413: deckt nur shell (Erlaubnisliste), pruefen_befehl und excel_schreiben — nicht auftrag_starten, nicht datei_ablegen.
  * Der Satellit meldet aktive Freigaben (`alfred einstellungen vertrauen <pfad> bis <zeit>`) in seinen Sinnen; das Gehirn
  * überspringt die Einzelbestätigung nur für Aktionen, die nachweislich in diesem Verzeichnis bleiben. Installieren, Bedienen,
  * Programme, Entkoppeln und alles außerhalb bleiben bestätigungspflichtig.
@@ -7,7 +8,9 @@
 export interface Vertrauen { pfad: string; bis: string }
 
 /** Aktionen, die die Vertrauensstufe abdeckt (Pfad-Parameter je Aktion). */
-export const VERTRAUEN_AKTIONEN = ['shell', 'datei_ablegen', 'auftrag_starten', 'pruefen_befehl', 'excel_schreiben'] as const;
+// v1413 — ohne auftrag_starten: ein Claude-Code-Auftrag kann im Auto-Modus fast alles (Sicherheitsprüfung 13.10.); Projekte deckt die Plan-Freigabe
+// v1413 — ohne datei_ablegen: sonst könnte ein eingeschleuster Auftrag erst Code ablegen und ihn dann mit „node datei.js" ohne Rückfrage ausführen
+export const VERTRAUEN_AKTIONEN = ['shell', 'pruefen_befehl', 'excel_schreiben'] as const;
 
 const norm = (p: string, win: boolean): string => { const x = p.trim().replace(/\\/g, '/').replace(/\/+$/, ''); return win ? x.toLowerCase() : x; };
 
@@ -70,8 +73,6 @@ export function vertrauenDeckt(aktion: string, params: Record<string, unknown>, 
     const drin = (p: unknown) => typeof p === 'string' && imVerzeichnis(p, v.pfad, win);
     switch (aktion) {
       case 'shell': if (drin(params.cwd) && befehlBleibtIm(String(params.command ?? ''), v.pfad, win)) return v; break;
-      case 'datei_ablegen': if (drin(params.path)) return v; break;
-      case 'auftrag_starten': if (drin(params.projekt)) return v; break;
       case 'excel_schreiben': if (drin(params.datei)) return v; break;
       case 'pruefen_befehl': {
         const l = Array.isArray(params.pruefungen) ? params.pruefungen as Array<Record<string, unknown>> : [];

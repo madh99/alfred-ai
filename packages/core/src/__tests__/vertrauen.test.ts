@@ -28,8 +28,9 @@ describe('Vertrauensstufe projekt', () => {
   it('deckt nur die vorgesehenen Aktionen im Verzeichnis, solange die Zeit läuft', () => {
     expect(vertrauenDeckt('shell', { command: 'npm test', cwd: G }, liste)?.pfad).toBe(G);
     expect(vertrauenDeckt('shell', { command: 'npm test' }, liste)).toBeUndefined(); // ohne cwd
-    expect(vertrauenDeckt('auftrag_starten', { projekt: `${G}/sub` }, liste)).toBeDefined();
+    expect(vertrauenDeckt('auftrag_starten', { projekt: `${G}/sub` }, liste)).toBeUndefined(); // v1413
     expect(vertrauenDeckt('datei_ablegen', { path: '/home/madh/Downloads' }, liste)).toBeUndefined();
+    expect(vertrauenDeckt('datei_ablegen', { path: `${G}/x.js` }, liste)).toBeUndefined(); // v1413 kein Code ablegen ohne Bestätigung
     expect(vertrauenDeckt('installieren', { quelle: 'npm', paket: 'pnpm' }, liste)).toBeUndefined();
     expect(vertrauenDeckt('programm_starten', { programm: 'firefox' }, liste)).toBeUndefined();
     expect(vertrauenDeckt('shell', { command: 'npm test', cwd: G }, [{ pfad: G, bis: new Date(Date.now() - 1000).toISOString() }])).toBeUndefined();
