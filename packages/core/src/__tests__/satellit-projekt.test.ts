@@ -142,3 +142,11 @@ describe('Werkzeugwahl: Gerät genannt + Bau-Projekt', () => {
       expect((werkzeugeFuerNachricht(t, [], metas).metas as Array<{ name: string }>).map(m => m.name), t).toEqual(['geraet_ubuntu_vm']);
   });
 });
+
+describe('Abnahmebefehle', () => {
+  it('doppelte Befehle (gleich als Build und Test übergeben) nur einmal', async () => {
+    const { p } = aufbau();
+    const s = await p.starte({ ...start, pruefBefehle: ['node --test', ' node --test ', 'npm run lint'] });
+    expect(s.pruefBefehle).toEqual(['node --test', 'npm run lint']);
+  });
+});

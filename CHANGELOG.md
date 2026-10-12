@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1390] - 2026-10-12
+
+### Fixed — Abnahmebefehle nur einmal (v1390)
+
+Wird derselbe Befehl als Build- und als Testbefehl übergeben (Realfall 12.10.: `node --test` zweimal), läuft er in der Abnahme einer Geräte-Etappe jetzt nur einmal.
+
 ## [0.19.0-jarvis.1389] - 2026-10-12
 
 ### Fixed — Projekt-Agent wählbar, wenn ein Gerät genannt wird (v1389)
