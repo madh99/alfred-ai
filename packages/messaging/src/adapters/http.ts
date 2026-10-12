@@ -1332,6 +1332,16 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
 
+    // v1399 — Geräte-Projekte: VOR allen Projekt-Routen (Realfall Live-Test: /environments lag weiter oben in der Kette und lief durch)
+    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+      this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err));
+      return;
+    }
+    if (this.geraeteProjektGesperrt(url.pathname)) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Projekt auf einem Gerät — diese Funktion arbeitet auf dem Server und gilt dafür nicht. Weiterarbeiten über Alfred (project_agent projekt_weiter).', geraeteProjekt: true }));
+      return;
+    }
     if (url.pathname === '/api/health' && req.method === 'GET') {
       this.handleHealth(res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/auth/required' && req.method === 'GET') {
@@ -1799,12 +1809,6 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/goals\/[^/]+\/check$/) && req.method === 'POST') {
       this.handleGoalsCheck(req, res, url).catch(err => this.safeError(res, err));
     // ── Projects API ──
-    } else if (/^\/api\/projects\/[^/]+\/geraet(\/weiter)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
-      this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err)); // v1399
-    } else if (this.geraeteProjektGesperrt(url.pathname)) {
-      // v1399 — Geräte-Projekt: nichts auf dem Server im (fremden) Projektordner ausführen
-      res.writeHead(409, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Projekt auf einem Gerät — diese Funktion arbeitet auf dem Server und gilt dafür nicht. Weiterarbeiten über Alfred (project_agent projekt_weiter).', geraeteProjekt: true }));
     } else if (url.pathname === '/api/projects' && req.method === 'GET') {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/projects' && req.method === 'POST') {

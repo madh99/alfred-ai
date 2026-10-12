@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1400] - 2026-10-12
+
+### Fixed — Sperre für Geräte-Projekte vor allen Projekt-Routen (v1400)
+
+Die Umgebungs-Routen eines Projekts standen in der Routing-Kette vor der Sperre aus v1399 und antworteten für Geräte-Projekte weiter. Die Sperre steht jetzt am Anfang der Kette und gilt für alle Unterrouten.
+
 ## [0.19.0-jarvis.1399] - 2026-10-12
 
 ### Changed — Geräte-Projekte im vorhandenen Projekt-System (v1399)
