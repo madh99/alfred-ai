@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 
 import path from 'node:path';
 import type { GeraetEreignis } from '@alfred/types';
 import {
-  STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage,
+  STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit,
   type Grenzen, type MutationsArt,
 } from './satellit-projekt-regeln.js';
 
@@ -28,6 +28,8 @@ export interface ProjektStand {
   plan: string[]; nr: number; erledigt: EtappenErgebnis[]; fixVersuch: number; kostenUsd: number; etappeKostenUsd: number;
   start: number; aktualisiert: number;
   auftragId?: string;
+  /** v1392 — Start des laufenden Auftrags (Lage, Vorgang) */
+  etappeStart?: number;
   frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation'; mutation?: Mutation; text: string };
   letzterText?: string;
 }
@@ -41,7 +43,7 @@ export interface SatellitProjektDeps {
   aktion: (geraetId: string, aktion: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<AktionsErgebnis>;
   frage: (s: ProjektStand, text: string, nonce: string) => Promise<void>;
   melde: (s: ProjektStand, text: string) => Promise<void>;
-  vorgang?: { anlegen: (s: ProjektStand) => Promise<string | undefined>; schritt: (s: ProjektStand, text: string) => Promise<void>; abschliessen: (s: ProjektStand, text: string) => Promise<void> };
+  vorgang?: { anlegen: (s: ProjektStand) => Promise<string | undefined>; schritt: (s: ProjektStand, text: string) => Promise<void>; abschliessen: (s: ProjektStand, text: string) => Promise<void>; /** v1392 — „nächster Schritt" nachführen */ stand?: (s: ProjektStand, text: string, wartet: boolean) => Promise<void> };
   ordner?: string;
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
   now?: () => number;
@@ -81,6 +83,12 @@ export class SatellitProjekte {
 
   liste(): ProjektStand[] { return [...this.staende.values()].sort((a, b) => b.start - a.start); }
   hole(id: string): ProjektStand | undefined { return this.staende.get(id); }
+  /** v1392 — Lage: laufende und wartende Projekte in einer Zeile (null, wenn keine). */
+  lageZeile(): string | null {
+    const z = this.liste().map(s => projektZeile(s, this.jetzt())).filter((x): x is string => !!x);
+    return z.length ? `Projekte auf Geräten: ${z.slice(0, 3).join(' · ')}${z.length > 3 ? ` · +${z.length - 3}` : ''}` : null;
+  }
+
   gehoertZuProjekt(auftragId: string): boolean { return [...this.staende.values()].some(s => s.auftragId === auftragId && s.status === 'laeuft'); }
 
   /** Start: Plan erstellen, Owner einmal fragen. Liefert die Projekt-ID sofort. */
@@ -108,6 +116,7 @@ export class SatellitProjekte {
     if (art !== 'plan') s.status = 'wartet_owner';
     this.sichere(s);
     await this.d.frage(s, text, nonce);
+    if (art !== 'plan') await this.d.vorgang?.stand?.(s, `Wartet auf dich: ${text.split('\n')[0]!.slice(0, 150)}`, true).catch(() => undefined);
   }
 
   /** Owner hat bestätigt (Bestätigungs-Queue ruft mit der Einmal-Kennung). Falsche oder alte Kennungen bewirken nichts. */
@@ -180,8 +189,12 @@ export class SatellitProjekte {
     const id = (r.data as { id?: string } | undefined)?.id;
     if (!r.success || !id) { await this.beende(s, 'angehalten', `Auftrag nicht gestartet: ${r.error ?? 'keine Kennung'}`); return; }
     s.auftragId = id;
+    s.etappeStart = this.jetzt();
     this.sichere(s);
     this.d.logger.info({ id: s.id, etappe: s.nr, fix: s.fixVersuch, auftrag: id }, 'v1387 Etappe gestartet');
+    // v1392 — sichtbar machen, dass etwas läuft (Fix-Versuche haben ihre eigene Meldung)
+    if (!s.fixVersuch) await this.d.melde(s, `▶ Etappe ${s.nr}/${s.plan.length} gestartet: ${s.plan[s.nr - 1]!.slice(0, 140)}`);
+    await this.d.vorgang?.stand?.(s, `Etappe ${s.nr}/${s.plan.length}${s.fixVersuch ? ` (Fix ${s.fixVersuch})` : ''} läuft seit ${uhrzeit(s.etappeStart)}`, false).catch(() => undefined);
   }
 
   private async nachAuftrag(s: ProjektStand, e: GeraetEreignis): Promise<void> {

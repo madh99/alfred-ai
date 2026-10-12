@@ -21,6 +21,8 @@ export interface LageEingang {
   regeln?: string[];
   /** v1369 — in 24 h nicht zugestellt, mit Grund (zustellung/protokoll.ts) */
   nichtZugestellt?: string | null;
+  /** v1392 — laufende/wartende Projekte auf Geräten */
+  projekte?: string | null;
 }
 
 export const LAGE_MAX_BEFUNDE = 6;
@@ -86,6 +88,7 @@ export function formatiereLage(e: LageEingang, now: Date = new Date()): string {
   const verworfen = e.vorgaengeAbgeschlossen24h.filter(v => v.status === 'verworfen').length;
   zeilen.push(`Letzte 24 h: ${neu24} neue Vorgänge, ${erledigt} erledigt, ${verworfen} verworfen.`);
   if (e.nichtZugestellt) zeilen.push(e.nichtZugestellt); // v1369
+  if (e.projekte) zeilen.push(e.projekte); // v1392
   if (e.regeln && e.regeln.length > 0) zeilen.push(`Regeln des Owners (${e.regeln.length}): ${e.regeln.slice(0, 3).join(' · ')}${e.regeln.length > 3 ? ' · …' : ''}`);
   zeilen.push('Hinweis: Das ist der belegte Stand. Was hier nicht steht, ist nicht bekannt — nichts erfinden; für Details ein Werkzeug nutzen.');
 

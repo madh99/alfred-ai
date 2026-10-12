@@ -51,7 +51,8 @@ export function parseErgebnis(protokoll: string): AuftragErgebnis {
     const z = zeilen[i]!;
     if (!z.startsWith('{')) continue;
     try {
-      const j = JSON.parse(z) as { result?: string; total_cost_usd?: number; duration_ms?: number; session_id?: string; is_error?: boolean; subtype?: string };
+      const j = JSON.parse(z) as { type?: string; result?: string; total_cost_usd?: number; duration_ms?: number; session_id?: string; is_error?: boolean; subtype?: string };
+      if (j.type !== undefined && j.type !== 'result') continue; // v1392 — stream-json: nur die Abschlusszeile
       if (typeof j.result === 'string' || j.subtype) return { text: j.result ?? `(${j.subtype})`, kosten: j.total_cost_usd, dauerMs: j.duration_ms, sitzung: j.session_id, fehler: j.is_error ? (j.result ?? j.subtype ?? 'Fehler') : undefined };
     } catch { /* keine JSON-Zeile */ }
   }
@@ -84,11 +85,12 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   mkdirSync(ordner, { recursive: true });
   const auftragDatei = path.join(opts.projekt, `AUFTRAG-${id}.md`);
   writeFileSync(auftragDatei, `# ${opts.titel ?? 'Auftrag'}\n\n${opts.auftrag.trim()}\n`);
-  const args = ['-p', auftragPrompt(auftragDatei, opts.projekt), '--output-format', 'json', '--permission-mode', 'auto'];
+  // v1392 — stream-json: Claude Code schreibt jeden Schritt sofort ins Protokoll (Fortschritt sichtbar), die result-Zeile am Ende bleibt gleich
+  const args = ['-p', auftragPrompt(auftragDatei, opts.projekt), '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto'];
   const log = openSync(logPfad(id, opts.home), 'a');
   const istCmd = /\.cmd$/i.test(claude);
   const kind = spawn(istCmd ? 'cmd.exe' : claude, istCmd ? ['/c', claude, ...args] : args, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, CLAUDE_CODE_NO_UPDATE_CHECK: '1' } });
-  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format json --permission-mode auto`, auftragDatei };
+  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto`, auftragDatei };
   speichereMeta(meta, opts.home);
   kind.on('error', (err) => {
     closeSync(log);
@@ -119,7 +121,8 @@ export function auftragStand(id: string, home?: string, zeilen = 15): { meta: Au
   if (meta.status === 'laeuft' && !aktiv) { meta.status = 'fehler'; meta.ende = meta.ende ?? new Date().toISOString(); speichereMeta(meta, home); } // Satellit war zwischendurch neu gestartet
   let log = '';
   try { log = readFileSync(logPfad(id, home), 'utf8'); } catch { /* leer */ }
-  const letzte = log.split('\n').filter(z => z.trim()).slice(-zeilen).map(z => z.length > 300 ? `${z.slice(0, 300)}…` : z).join('\n');
+  const fort = fortschrittAus(log, zeilen);
+  const letzte = fort.schritte.length ? `${fort.werkzeuge} Werkzeugschritte bisher, zuletzt:\n${fort.schritte.join('\n')}` : log.split('\n').filter(z => z.trim()).slice(-zeilen).map(z => z.length > 300 ? `${z.slice(0, 300)}…` : z).join('\n');
   const ende = meta.ende ? new Date(meta.ende).getTime() : Date.now();
   return { meta, laeuft: aktiv, dauerS: Math.round((ende - new Date(meta.start).getTime()) / 1000), letzteZeilen: letzte };
 }
@@ -225,4 +228,39 @@ export function offeneEndmeldungen(home?: string, jetzt = Date.now()): Array<{ m
     aus.push({ meta: m, ergebnis: erg });
   }
   return aus;
+}
+
+/**
+ * v1392 — Fortschritt aus dem stream-json-Protokoll von Claude Code: eine Zeile je Werkzeugschritt bzw. Zwischentext,
+ * die letzten `n`. Owner 12.10.: „wo sieht man, dass etwas läuft?" — vorher stand im Protokoll bis zum Ende nichts.
+ * Fremdinhalt (Befehle, Texte) wird gekürzt, nie ausgeführt.
+ */
+export function fortschrittAus(protokoll: string, n = 10): { schritte: string[]; werkzeuge: number } {
+  const schritte: string[] = [];
+  let werkzeuge = 0;
+  const kurz = (t: unknown, max = 90) => { const s = String(t ?? '').replace(/\s+/g, ' ').trim(); return s.length > max ? `${s.slice(0, max)}…` : s; };
+  const datei = (p: unknown) => { const s = String(p ?? ''); return s.split(/[\\/]/).slice(-2).join('/'); };
+  for (const z of protokoll.split('\n')) {
+    const t = z.trim();
+    if (!t.startsWith('{')) continue;
+    let j: { type?: string; message?: { content?: Array<{ type?: string; text?: string; name?: string; input?: Record<string, unknown> }> } };
+    try { j = JSON.parse(t); } catch { continue; }
+    if (j.type !== 'assistant') continue;
+    for (const b of j.message?.content ?? []) {
+      if (b.type === 'text' && b.text?.trim()) schritte.push(`💬 ${kurz(b.text, 120)}`);
+      if (b.type !== 'tool_use') continue;
+      werkzeuge++;
+      const i = b.input ?? {};
+      switch (b.name) {
+        case 'Write': schritte.push(`✏️ schreibt ${datei(i.file_path)}`); break;
+        case 'Edit': case 'MultiEdit': schritte.push(`✏️ ändert ${datei(i.file_path)}`); break;
+        case 'Read': schritte.push(`📖 liest ${datei(i.file_path)}`); break;
+        case 'Bash': schritte.push(`▶ ${kurz(i.command)}`); break;
+        case 'Glob': case 'Grep': schritte.push(`🔎 sucht ${kurz(i.pattern, 60)}`); break;
+        case 'TodoWrite': schritte.push('📝 aktualisiert die Aufgabenliste'); break;
+        default: schritte.push(`🔧 ${kurz(b.name, 40)}`);
+      }
+    }
+  }
+  return { schritte: schritte.slice(-n), werkzeuge };
 }

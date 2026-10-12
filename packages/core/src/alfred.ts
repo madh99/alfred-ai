@@ -443,7 +443,7 @@ export class Alfred {
       const jetztL = new Date();
       const regeln = this.regelnRepo ? (await this.regelnRepo.liste(owner).catch(() => [])).filter(x => x.status === 'aktiv' && (!x.bis || Date.parse(x.bis) > jetztL.getTime())).map(x => regelText(x, jetztL)) : [];
       const { zustellProtokoll, nichtZugestelltZeile } = await import('./zustellung/protokoll.js'); // v1369
-      this.lageText = formatiereLage({ befundeOffen: b.offen, befundeErledigt24h: b.erledigt24h, vorgaengeOffen: v.offene, vorgaengeAbgeschlossen24h: v.abgeschlossene, regeln, nichtZugestellt: nichtZugestelltZeile(zustellProtokoll.zaehlung24h()) });
+      this.lageText = formatiereLage({ befundeOffen: b.offen, befundeErledigt24h: b.erledigt24h, vorgaengeOffen: v.offene, vorgaengeAbgeschlossen24h: v.abgeschlossene, regeln, nichtZugestellt: nichtZugestelltZeile(zustellProtokoll.zaehlung24h()), projekte: this.satellitProjekte?.lageZeile() ?? null });
       this.lageStand = new Date().toISOString();
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1220 Lage nicht aktualisiert'); }
   }
@@ -15707,6 +15707,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         anlegen: async (s) => { const o = owner(); if (!o) return undefined; return (await vorgaenge.anlegen({ userId: o, titel: `Projekt auf ${s.geraet}: ${s.ziel.slice(0, 80)}`, ziel: s.projekt, besitzer: 'alfred', status: 'offen', quelle: 'projekt', autonomie: 'bestaetigen', kategorie: 'projekt', naechsterSchritt: 'Plan bestätigen' })).id; },
         schritt: async (s, text) => { const o = owner(); if (!o || !s.vorgangId) return; await vorgaenge.schritt({ vorgangId: s.vorgangId, userId: o, art: 'ausgefuehrt', skill: 'project_agent', aktion: 'etappe', beschreibung: text, autonomie: 'bestaetigen', quelle: 'projekt' }); },
         abschliessen: async (s, text) => { const o = owner(); if (!o || !s.vorgangId) return; await vorgaenge.abschliessen(o, s.vorgangId, { art: s.status === 'fertig' ? 'behoben' : 'anders', text }); },
+        stand: async (s, text, wartet) => { const o = owner(); if (!o || !s.vorgangId) return; await vorgaenge.setzeStatus(o, s.vorgangId, wartet ? 'wartet' : 'offen', undefined, text); }, // v1392
       },
       ordner: path.resolve(process.cwd(), 'data', 'projekte-satellit'),
       logger: this.logger.child({ component: 'satellit-projekt' }),
@@ -15734,7 +15735,13 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu });
         return ergebnis(s, `Projekt ${s.id} auf ${g.name} geplant (${s.plan.length} Etappen) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
       },
-      status: (id) => { const s = projekte.hole(id); return s ? ergebnis(s, `${s.id} · ${s.status}${s.grund ? ` (${s.grund})` : ''} · Etappe ${s.nr}/${s.plan.length}${s.auftragId ? ' läuft' : ''} · ${s.kostenUsd.toFixed(2)} USD${s.frage ? `\nWartet auf dich: ${s.frage.text.slice(0, 300)}` : ''}\n${s.plan.map((p, i) => `${i + 1}. ${s.erledigt.find(e => e.nr === i + 1)?.ok ? '✅' : i + 1 === s.nr ? '▶' : '·'} ${p.slice(0, 120)}`).join('\n')}`) : { success: false, error: `Projekt ${id} unbekannt` }; },
+      status: async (id) => {
+        const s0 = projekte.hole(id);
+        // v1392 — laufende Etappe: was Claude Code gerade tut (Protokoll am Gerät, gekürzt, als Daten)
+        let live = '';
+        if (s0?.auftragId) { const st = await gw.sendeAktion(s0.geraetId, 'auftrag_stand', { id: s0.auftragId }, 20_000).catch(() => undefined); const d = String(st?.display ?? ''); const i = d.indexOf('Letzte Protokollzeilen:'); if (i >= 0) live = `\n\nAuf ${s0.geraet} gerade (Claude Code):\n${d.slice(i + 'Letzte Protokollzeilen:'.length).trim().slice(0, 1500)}`; }
+        const s = s0; return s ? ergebnis(s, `${s.id} · ${s.status}${s.grund ? ` (${s.grund})` : ''} · Etappe ${s.nr}/${s.plan.length}${s.auftragId ? ' läuft' : ''} · ${s.kostenUsd.toFixed(2)} USD${s.frage ? `\nWartet auf dich: ${s.frage.text.slice(0, 300)}` : ''}\n${s.plan.map((p, i) => `${i + 1}. ${s.erledigt.find(e => e.nr === i + 1)?.ok ? '✅' : i + 1 === s.nr ? '▶' : '·'} ${p.slice(0, 120)}`).join('\n')}${live}`) : { success: false, error: `Projekt ${id} unbekannt` };
+      },
       stop: async (id) => ((await projekte.stoppe(id)) ? { success: true, display: `Projekt ${id} gestoppt` } : { success: false, error: `Projekt ${id} läuft nicht` }),
       antwort: async (id, nonce) => ((await projekte.antwort(id, nonce)) ? { success: true, display: `Projekt ${id}: weiter` } : { success: false, error: 'Freigabe ungültig oder schon verwendet' }),
       fortsetzen: async (id) => { const r = await projekte.fortsetzenNach(id); return r.ok ? { success: true, display: `Projekt ${id} wird fortgesetzt (aktuelle Etappe neu, gleiche Freigabe und Grenzen)` } : { success: false, error: r.grund ?? 'nicht möglich' }; }, // v1391

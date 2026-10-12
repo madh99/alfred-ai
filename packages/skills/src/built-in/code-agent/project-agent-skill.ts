@@ -299,7 +299,7 @@ export async function extendedPreflight(cwd: string, agentCommand: string): Prom
 /** v1387 (R2) — Projekte auf einem Satelliten; Umsetzung im Gehirn (core/projekt/satellit-projekt.ts). */
 export interface SatellitProjektHandler {
   start: (input: Record<string, unknown>, context: SkillContext) => Promise<SkillResult>;
-  status: (id: string) => SkillResult;
+  status: (id: string) => SkillResult | Promise<SkillResult>; // v1392 mit Live-Schritten vom Gerät
   stop: (id: string) => Promise<SkillResult>;
   antwort: (id: string, nonce: string) => Promise<SkillResult>;
   weiter: (id: string) => Promise<SkillResult>;

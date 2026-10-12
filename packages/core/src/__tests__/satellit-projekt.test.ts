@@ -184,3 +184,23 @@ describe('Fortsetzen angehaltener Projekte', () => {
     expect(fragen[0]!.text).toMatch(/Verzeichnis: \/home\/madh\/claudecode\/r2 \(neu — wird angelegt\)/);
   });
 });
+
+// v1392 — sichtbar, dass etwas läuft
+import { projektZeile } from '../projekt/satellit-projekt-regeln.js';
+describe('Sichtbarkeit', () => {
+  it('Startmeldung je Etappe, Lage-Zeile, keine Zeile für beendete', async () => {
+    const { p, fragen, meldungen } = aufbau();
+    const s = await p.starte(start);
+    expect(p.lageZeile()).toMatch(/^Projekte auf Geräten: sat-\w+ auf Ubuntu-VM: wartet auf dich — 🧭 Projekt auf Ubuntu-VM starten\?/);
+    await p.antwort(s.id, fragen[0]!.nonce);
+    expect(meldungen.at(-1)).toBe('▶ Etappe 1/3 gestartet: Gerüst anlegen');
+    expect(p.lageZeile()).toMatch(/Etappe 1\/3 läuft seit \d\d:\d\d \(0 min\), 0,00 USD/);
+    await p.stoppe(s.id);
+    expect(p.lageZeile()).toBeNull();
+  });
+  it('Zeilenform', () => {
+    const z = projektZeile({ id: 'sat-1', geraet: 'VM', status: 'laeuft', nr: 2, plan: ['a', 'b', 'c'], kostenUsd: 0.5, etappeStart: 0, fixVersuch: 1 }, 12 * 60_000);
+    expect(z).toMatch(/^sat-1 auf VM: Etappe 2\/3 \(Fix 1\) läuft seit \d\d:\d\d \(12 min\), 0,50 USD$/);
+    expect(projektZeile({ id: 'x', geraet: 'VM', status: 'fertig', nr: 3, plan: ['a'], kostenUsd: 1, fixVersuch: 0 }, 0)).toBeNull();
+  });
+});

@@ -82,3 +82,22 @@ export function grenzeErreicht(o: { kostenUsd: number; startMs: number; jetztMs:
   if (o.jetztMs - o.startMs >= o.g.maxStunden * 3_600_000) return `Zeitlimit erreicht (${o.g.maxStunden} h)`;
   return undefined;
 }
+
+/** v1392 — Uhrzeit in Wien für Meldungen und Lage. */
+export function uhrzeit(ms: number): string {
+  return new Date(ms).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Vienna' });
+}
+
+/**
+ * v1392 — eine Zeile je laufendem oder wartendem Projekt (Lage, Vorgang „nächster Schritt"). Owner 12.10.: „wo sieht man,
+ * dass etwas läuft?" — zwischen Bestätigung und erster Etappenmeldung war nichts zu sehen.
+ */
+export function projektZeile(s: { id: string; geraet: string; status: string; nr: number; plan: string[]; kostenUsd: number; etappeStart?: number; fixVersuch: number; frage?: { text: string } }, jetztMs: number): string | null {
+  const kosten = `${s.kostenUsd.toFixed(2).replace('.', ',')} USD`;
+  if (s.status === 'laeuft') {
+    const seit = s.etappeStart !== undefined ? ` seit ${uhrzeit(s.etappeStart)} (${Math.max(0, Math.round((jetztMs - s.etappeStart) / 60_000))} min)` : '';
+    return `${s.id} auf ${s.geraet}: Etappe ${s.nr}/${s.plan.length}${s.fixVersuch ? ` (Fix ${s.fixVersuch})` : ''} läuft${seit}, ${kosten}`;
+  }
+  if (s.status === 'wartet_owner') return `${s.id} auf ${s.geraet}: wartet auf dich — ${(s.frage?.text ?? '').split('\n')[0]!.slice(0, 100)}`;
+  return null;
+}

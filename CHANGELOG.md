@@ -51,6 +51,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1392] - 2026-10-12
+
+### Added — Sichtbar, dass ein Geräte-Projekt läuft (v1392)
+
+Owner 12.10.: „wo sieht man, dass etwas läuft?" — zwischen Bestätigung und erster Etappenmeldung war nichts zu sehen, der Vorgang stand weiter auf „Plan bestätigen".
+
+- **Startmeldung je Etappe** in die Sitzung des Starts und den Owner-Chat („▶ Etappe 1/3 gestartet: …").
+- **Vorgang nachgeführt:** „Etappe 1/3 läuft seit 18:42" bzw. „Wartet auf dich: …" (Status „wartet") — sichtbar in der App-Ansicht Vorgänge.
+- **Lage:** eine Zeile für laufende und wartende Projekte mit Etappe, Laufzeit und Kosten.
+- **Live-Einblick:** Claude Code schreibt auf dem Gerät jeden Schritt sofort ins Protokoll (stream-json). „Wie weit ist mein Projekt?" zeigt die letzten Schritte — welche Dateien geschrieben, welche Befehle ausgeführt werden. Das Ergebnis wird nur noch aus der Abschlusszeile gelesen.
+
 ## [0.19.0-jarvis.1391] - 2026-10-12
 
 ### Fixed — Geräte-Projekte in neuen Ordnern, Fortsetzen nach Anhalten (v1391)
