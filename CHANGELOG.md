@@ -51,7 +51,19 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
-## [0.19.0-jarvis.1385] - 2026-10-12
+## [0.19.0-jarvis.1386] - 2026-10-12
+
+### Added — UniFi-Firewall auf dem Zonen-Modell (v1386)
+
+Auf UniFi Network 9 und neuer gibt es keine klassischen Firewall-Regeln mehr, sondern Policies je Zonenpaar. `create_firewall_rule` schrieb ins alte, leere Regelmodell und blieb wirkungslos. Neu über das offizielle Integration-API des Controllers:
+
+- **`list_firewall_policies`** — eigene Policies lesbar (Zonen, Netze, Ports, Protokoll); mit Quell- und Zielzone die tatsächliche Auswertungsreihenfolge (erste passende Policy gewinnt).
+- **`create_firewall_policy`** — Policy aus Name, Aktion (erlauben/sperren/ablehnen), Quellnetz oder -zone, Zielzone oder -netz, Ports, Protokoll. Mit `before_policy` wird sie direkt **vor** eine bestehende Sperre gesetzt — sonst hinge eine Ausnahme hinten an und griffe nie. Die Reihenfolge wird nach dem Setzen zurückgelesen und geprüft.
+- **`set_firewall_policy_enabled`**, **`delete_firewall_policy`** — nur für eigene Policies, nie für Systemregeln.
+- **Jede Änderung nur nach Bestätigung des Owners**: Alfred zeigt die Policy lesbar an und führt sie erst nach dem Ja aus, über eine Einmal-Freigabe, die nur für genau diesen Inhalt gilt und verbraucht wird.
+- `create_firewall_rule` verweist auf einer Zonen-Firewall auf die neue Aktion, `list_firewall_rules` zeigt dort die Policies.
+
+
 
 ### Security — Zertifikatsprüfung nur noch je Anfrage abschaltbar (v1385)
 

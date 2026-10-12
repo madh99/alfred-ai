@@ -1,7 +1,9 @@
 import type { SkillMetadata, SkillContext, SkillResult, UniFiConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
-import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
+import { tlsFetch } from './social/tls-fetch.js';
+import { randomUUID } from 'node:crypto';
+import { baueRegel, neueReihenfolge, policyZeile, type Netz, type Policy, type Reihenfolge, type Zone, type RegelWunsch } from './unifi-policies.js'; // v1386 // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type ControllerMode = 'unifi-os' | 'classic';
 
@@ -12,7 +14,8 @@ export class UniFiSkill extends Skill {
     description:
       'Manage UniFi network devices, clients, and WLANs. ' +
       'Use "list_devices" to see APs/switches, "list_clients" for connected clients, ' +
-      '"restart_device" to reboot a device, "block_client"/"unblock_client" for access control.',
+      '"restart_device" to reboot a device, "block_client"/"unblock_client" for access control. ' +
+      'Firewall (Zonen-Modell, UniFi Network 9+): "list_firewall_policies" (mit source_zone+destination_zone = Auswertungsreihenfolge), "create_firewall_policy" (Ausnahmen mit before_policy VOR die Sperre setzen), "set_firewall_policy_enabled", "delete_firewall_policy" — Änderungen nur nach Owner-Bestätigung.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
@@ -46,6 +49,10 @@ export class UniFiSkill extends Skill {
             'next_free_ip',
             'list_firewall_rules',
             'create_firewall_rule',
+            'list_firewall_policies',
+            'create_firewall_policy',
+            'set_firewall_policy_enabled',
+            'delete_firewall_policy',
           ],
           description: 'The UniFi action to perform',
         },
@@ -125,6 +132,19 @@ export class UniFiSkill extends Skill {
           type: 'string',
           description: 'accept oder drop (default: accept)',
         },
+        // v1386 — Zonen-Firewall (UniFi Network 9+): Policies statt Regeln
+        policy_name: { type: 'string', description: 'Name der Policy (create_firewall_policy) bzw. Suchtext (list_firewall_policies)' },
+        policy_action: { type: 'string', description: 'ALLOW, BLOCK oder REJECT (create_firewall_policy)' },
+        source_zone: { type: 'string', description: 'Quellzone (Internal, External, Gateway, Vpn, Dmz, Hotspot …); entfällt, wenn source_network genannt ist' },
+        source_network: { type: 'string', description: 'Quellnetz: Name, ID oder VLAN-Nummer (z. B. DeviceLAN oder 817)' },
+        source_port: { type: 'string', description: 'Quellport(s): 5353, 80,443 oder 8000-8100' },
+        destination_zone: { type: 'string', description: 'Zielzone (Gateway = die UDM selbst, External = Internet, Internal …)' },
+        destination_network: { type: 'string', description: 'Zielnetz: Name, ID oder VLAN-Nummer' },
+        destination_port: { type: 'string', description: 'Zielport(s)' },
+        policy_protocol: { type: 'string', description: 'TCP, UDP, TCP_UDP, ICMP oder alle (Ports brauchen TCP/UDP)' },
+        before_policy: { type: 'string', description: 'Name oder ID der Policy, VOR die die neue gesetzt wird (z. B. eine Sperre, für die eine Ausnahme gilt) — sonst hängt sie hinten an und greift ggf. nie' },
+        policy_id: { type: 'string', description: 'ID der Policy (set_firewall_policy_enabled, delete_firewall_policy)' },
+        freigabe: { type: 'string', description: 'Nur intern: Einmal-Freigabe nach Owner-Bestätigung — nie selbst setzen' },
       },
       required: ['action'],
     },
@@ -228,9 +248,18 @@ export class UniFiSkill extends Skill {
         case 'next_free_ip':
           return await this.nextFreeIp(input.network_name as string | undefined, input.start_ip as number | undefined);
         case 'list_firewall_rules':
+          if (await this.hatZonenFirewall()) return await this.listFirewallPolicies(input); // v1386 — altes Modell ist leer
           return await this.listFirewallRules();
         case 'create_firewall_rule':
+          // v1386 — auf der Zonen-Firewall wäre eine Regel im alten Modell wirkungslos
+          if (await this.hatZonenFirewall()) return { success: false, error: 'Diese UniFi-Firewall arbeitet mit Zonen-Policies — create_firewall_rule wirkt hier nicht. create_firewall_policy verwenden (policy_name, policy_action, source_network/source_zone, destination_zone/destination_network, Ports, Protokoll, before_policy).' };
           return await this.createFirewallRule(input);
+        case 'list_firewall_policies':
+          return await this.listFirewallPolicies(input);
+        case 'create_firewall_policy':
+        case 'set_firewall_policy_enabled':
+        case 'delete_firewall_policy':
+          return await this.firewallAenderung(action, input);
 
         default:
           return { success: false, error: `Unknown action: ${action}` };
@@ -239,6 +268,168 @@ export class UniFiSkill extends Skill {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, error: `UniFi error: ${msg}` };
     }
+  }
+
+  // ── v1386 Zonen-Firewall (Integration-API v1) ─────────────────
+
+  /** Bestätigung beim Owner einreihen; die Queue ruft den Skill nach dem Ja mit `freigabe` erneut auf. */
+  private bestaetigung?: (o: { beschreibung: string; params: Record<string, unknown> }) => Promise<boolean>;
+  setBestaetigung(fn: (o: { beschreibung: string; params: Record<string, unknown> }) => Promise<boolean>): void { this.bestaetigung = fn; }
+  /** Einmal-Freigaben: zufällige Kennung je Bestätigung, verbraucht beim Ausführen, 2 h gültig. Ein Modell kann sie nicht erraten. */
+  private readonly freigaben = new Map<string, { schluessel: string; bis: number }>();
+  private integSite?: string;
+
+  private async integ<T = unknown>(method: string, pfad: string, body?: unknown): Promise<T> {
+    if (!this.config.apiKey) throw new Error('Firewall-Policies brauchen den UniFi-API-Schlüssel (Integration-API)');
+    const base = `${this.config.baseUrl.replace(/\/+$/, '')}/proxy/network/integration/v1`;
+    const res = await this.rawFetch(`${base}${pfad}`, {
+      method, headers: { 'X-API-Key': this.config.apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(20_000),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let msg = text.slice(0, 300);
+      try { const j = JSON.parse(text) as { message?: string; code?: string }; msg = `${j.code ?? ''} ${j.message ?? ''}`.trim() || msg; } catch { /* Rohtext */ }
+      throw new Error(`UniFi ${method} ${pfad.split('?')[0]}: HTTP ${res.status} ${msg}`);
+    }
+    return (text ? JSON.parse(text) : {}) as T;
+  }
+
+  private async siteId(): Promise<string> {
+    if (this.integSite) return this.integSite;
+    const r = await this.integ<{ data: Array<{ id: string; internalReference?: string }> }>('GET', '/sites?limit=50');
+    const s = r.data.find(x => x.internalReference === this.site) ?? r.data[0];
+    if (!s) throw new Error('keine UniFi-Site im Integration-API');
+    this.integSite = s.id;
+    return s.id;
+  }
+
+  private async liste<T>(pfad: string): Promise<T[]> {
+    const sid = await this.siteId();
+    const aus: T[] = [];
+    for (let offset = 0; offset < 5000; offset += 200) {
+      const r = await this.integ<{ data: T[]; totalCount?: number }>('GET', `/sites/${sid}${pfad}${pfad.includes('?') ? '&' : '?'}limit=200&offset=${offset}`);
+      aus.push(...r.data);
+      if (r.data.length < 200 || (r.totalCount !== undefined && aus.length >= r.totalCount)) break;
+    }
+    return aus;
+  }
+
+  private zonenFirewall?: boolean;
+  private async hatZonenFirewall(): Promise<boolean> {
+    if (this.zonenFirewall !== undefined) return this.zonenFirewall;
+    if (!this.config.apiKey) return (this.zonenFirewall = false);
+    try { this.zonenFirewall = (await this.liste<Zone>('/firewall/zones')).length > 0; } catch { this.zonenFirewall = false; }
+    return this.zonenFirewall;
+  }
+
+  private async firewallStand(): Promise<{ sid: string; zonen: Zone[]; netze: Netz[]; policies: Policy[] }> {
+    const sid = await this.siteId();
+    const [zonen, netze, policies] = await Promise.all([this.liste<Zone>('/firewall/zones'), this.liste<Netz>('/networks'), this.liste<Policy>('/firewall/policies')]);
+    return { sid, zonen, netze, policies };
+  }
+
+  private async reihenfolge(sid: string, quelle: string, ziel: string): Promise<Reihenfolge> {
+    const r = await this.integ<{ orderedFirewallPolicyIds?: Reihenfolge } & Partial<Reihenfolge>>('GET', `/sites/${sid}/firewall/policies/ordering?sourceFirewallZoneId=${quelle}&destinationFirewallZoneId=${ziel}`);
+    const o = r.orderedFirewallPolicyIds ?? (r as Reihenfolge);
+    return { beforeSystemDefined: o.beforeSystemDefined ?? [], afterSystemDefined: o.afterSystemDefined ?? [] };
+  }
+
+  private async listFirewallPolicies(input: Record<string, unknown>): Promise<SkillResult> {
+    const { sid, zonen, netze, policies } = await this.firewallStand();
+    const such = String(input.policy_name ?? '').trim().toLowerCase();
+    const qz = input.source_zone ? zonen.find(z => z.name.toLowerCase() === String(input.source_zone).toLowerCase()) : undefined;
+    const zz = input.destination_zone ? zonen.find(z => z.name.toLowerCase() === String(input.destination_zone).toLowerCase()) : undefined;
+    if (qz && zz) {
+      // ein Zonenpaar: eigene Policies in Auswertungsreihenfolge (erste passende gewinnt)
+      const r = await this.reihenfolge(sid, qz.id, zz.id);
+      const zeile = (id: string, i: number) => { const p = policies.find(x => x.id === id); return p ? policyZeile(p, zonen, netze, i + 1) : `${i + 1}. ${id}`; };
+      const vor = r.beforeSystemDefined.map(zeile); const nach = r.afterSystemDefined.map((id, i) => zeile(id, i + r.beforeSystemDefined.length));
+      return { success: true, data: { reihenfolge: r }, display: `Eigene Policies ${qz.name} → ${zz.name} in Auswertungsreihenfolge (erste passende gewinnt):\n${vor.join('\n') || '(keine)'}\n— Systemregeln —\n${nach.join('\n') || '(keine)'}` };
+    }
+    const treffer = policies.filter(p => p.metadata?.origin !== 'SYSTEM_DEFINED' || input.system === true)
+      .filter(p => !such || p.name.toLowerCase().includes(such))
+      .filter(p => (!qz || p.source.zoneId === qz.id) && (!zz || p.destination.zoneId === zz.id));
+    const zeilen = treffer.slice(0, 80).map(p => policyZeile(p, zonen, netze));
+    return { success: true, data: { anzahl: treffer.length, gesamt: policies.length }, display: `${treffer.length} eigene Policies${such ? ` mit „${such}"` : ''}${treffer.length > 80 ? ' (erste 80)' : ''}:\n${zeilen.join('\n')}` };
+  }
+
+  /** Schreibende Firewall-Aktionen: ohne gültige Einmal-Freigabe nur Prüfung + Bestätigung beim Owner. */
+  private async firewallAenderung(action: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const { sid, zonen, netze, policies } = await this.firewallStand();
+    const findePolicy = (x: unknown) => { const t = String(x ?? '').trim(); const l = policies.filter(p => p.id === t || p.name.toLowerCase() === t.toLowerCase()); if (l.length > 1) throw new Error(`„${t}" ist nicht eindeutig (${l.length} Policies) — ID angeben`); return l[0]; };
+    // Vorbereitung (deterministisch, ohne Änderung): Body bauen bzw. Ziel finden, Beschreibung für die Bestätigung
+    let beschreibung: string; let schluessel: string;
+    let body: Record<string, unknown> | undefined; let vor: Policy | undefined; let ziel: Policy | undefined;
+    if (action === 'create_firewall_policy') {
+      const w: RegelWunsch = {
+        name: String(input.policy_name ?? ''), aktion: String(input.policy_action ?? '').toUpperCase() as RegelWunsch['aktion'],
+        quelleZone: input.source_zone as string | undefined, quelleNetz: input.source_network as string | undefined, quellePort: input.source_port !== undefined ? String(input.source_port) : undefined,
+        zielZone: input.destination_zone as string | undefined, zielNetz: input.destination_network as string | undefined, zielPort: input.destination_port !== undefined ? String(input.destination_port) : undefined,
+        protokoll: input.policy_protocol as string | undefined,
+      };
+      body = baueRegel(w, zonen, netze);
+      if (input.before_policy) {
+        vor = findePolicy(input.before_policy);
+        if (!vor) throw new Error(`Policy „${String(input.before_policy)}" nicht gefunden`);
+        const b = body as { source: { zoneId: string }; destination: { zoneId: string } };
+        if (vor.source.zoneId !== b.source.zoneId || vor.destination.zoneId !== b.destination.zoneId) throw new Error(`„${vor.name}" liegt in einem anderen Zonenpaar — Reihenfolge gilt nur innerhalb eines Zonenpaars`);
+      }
+      if (policies.some(p => p.name.toLowerCase() === w.name.trim().toLowerCase())) throw new Error(`Es gibt schon eine Policy „${w.name.trim()}" — anderen Namen wählen`);
+      const vorschau = policyZeile({ id: 'neu', enabled: true, ...(body as Omit<Policy, 'id' | 'enabled'>), name: w.name.trim() } as Policy, zonen, netze).replace(/ · neu$/, '');
+      beschreibung = `Firewall-Policy anlegen: ${vorschau}${vor ? `, eingereiht VOR „${vor.name}"` : ', hinten im Zonenpaar'}`;
+      schluessel = JSON.stringify(['create', body, vor?.id ?? null]);
+    } else {
+      ziel = findePolicy(input.policy_id ?? input.policy_name);
+      if (!ziel) throw new Error('Policy nicht gefunden (policy_id oder exakter policy_name)');
+      if (ziel.metadata?.origin === 'SYSTEM_DEFINED') throw new Error('Systemregeln werden nicht verändert');
+      if (action === 'set_firewall_policy_enabled') {
+        const an = input.enabled === true || String(input.enabled).toLowerCase() === 'true';
+        beschreibung = `Firewall-Policy ${an ? 'EINSCHALTEN' : 'AUSSCHALTEN'}: ${policyZeile(ziel, zonen, netze)}`;
+        schluessel = JSON.stringify(['enabled', ziel.id, an]);
+      } else {
+        beschreibung = `Firewall-Policy LÖSCHEN: ${policyZeile(ziel, zonen, netze)}`;
+        schluessel = JSON.stringify(['delete', ziel.id]);
+      }
+    }
+
+    const nonce = typeof input.freigabe === 'string' ? input.freigabe : undefined;
+    const fg = nonce ? this.freigaben.get(nonce) : undefined;
+    if (!fg || fg.bis < Date.now() || fg.schluessel !== schluessel) {
+      if (nonce) this.freigaben.delete(nonce);
+      if (!this.bestaetigung) return { success: false, error: 'Firewall-Änderungen brauchen eine Owner-Bestätigung, die hier nicht verfügbar ist' };
+      const neu = randomUUID();
+      this.freigaben.set(neu, { schluessel, bis: Date.now() + 2 * 3_600_000 });
+      const params = { ...Object.fromEntries(Object.entries(input).filter(([k]) => k !== 'freigabe')), action, freigabe: neu };
+      const ok = await this.bestaetigung({ beschreibung, params });
+      return ok
+        ? { success: true, data: { zurBestaetigung: true }, display: `Zur Bestätigung an den Owner: ${beschreibung}. Nach dem Ja wird die Änderung ausgeführt und die Reihenfolge geprüft.` }
+        : { success: false, error: 'Bestätigung konnte nicht eingereiht werden' };
+    }
+    this.freigaben.delete(nonce!);
+
+    if (action === 'create_firewall_policy') {
+      const neu = await this.integ<Policy>('POST', `/sites/${sid}/firewall/policies`, body);
+      let reihenText = 'hinten im Zonenpaar';
+      if (vor) {
+        const r = await this.reihenfolge(sid, neu.source.zoneId, neu.destination.zoneId);
+        await this.integ('PUT', `/sites/${sid}/firewall/policies/ordering?sourceFirewallZoneId=${neu.source.zoneId}&destinationFirewallZoneId=${neu.destination.zoneId}`, { orderedFirewallPolicyIds: neueReihenfolge(r, neu.id, vor.id) });
+        // zurücklesen: steht die neue Policy wirklich vor der genannten?
+        const pruef = await this.reihenfolge(sid, neu.source.zoneId, neu.destination.zoneId);
+        const alle = [...pruef.beforeSystemDefined, ...pruef.afterSystemDefined];
+        const iNeu = alle.indexOf(neu.id); const iVor = alle.indexOf(vor.id);
+        if (iNeu < 0 || iVor < 0 || iNeu > iVor) return { success: false, data: { id: neu.id }, error: `Policy ${neu.id} angelegt, aber die Reihenfolge stimmt nicht (Position ${iNeu + 1}, „${vor.name}" an ${iVor + 1}) — bitte prüfen` };
+        reihenText = `Position ${iNeu + 1}, direkt vor „${vor.name}" (zurückgelesen)`;
+      }
+      return { success: true, data: { id: neu.id, name: neu.name }, display: `✅ Firewall-Policy angelegt: ${policyZeile(neu, zonen, netze)} — ${reihenText}. Rückgängig: delete_firewall_policy ${neu.id}` };
+    }
+    if (action === 'set_firewall_policy_enabled') {
+      const an = JSON.parse(schluessel)[2] as boolean;
+      await this.integ('PATCH', `/sites/${sid}/firewall/policies/${ziel!.id}`, { enabled: an });
+      return { success: true, data: { id: ziel!.id, enabled: an }, display: `✅ Policy „${ziel!.name}" ${an ? 'eingeschaltet' : 'ausgeschaltet'}` };
+    }
+    await this.integ('DELETE', `/sites/${sid}/firewall/policies/${ziel!.id}`);
+    return { success: true, data: { id: ziel!.id }, display: `✅ Policy „${ziel!.name}" gelöscht` };
   }
 
   // ── URL builder ────────────────────────────────────────────────

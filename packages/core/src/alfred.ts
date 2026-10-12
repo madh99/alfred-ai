@@ -2894,7 +2894,9 @@ export class Alfred {
     // 4g. UniFi (optional)
     if (this.config.unifi) {
       const { UniFiSkill } = await import('@alfred/skills');
-      skillRegistry.register(new UniFiSkill(this.config.unifi));
+      const unifiSkill = new UniFiSkill(this.config.unifi);
+      unifiSkill.setBestaetigung(this.unifiBestaetigung()); // v1386 — Firewall-Policies nur nach Owner-Ja
+      skillRegistry.register(unifiSkill);
       this.logger.info({ baseUrl: this.config.unifi.baseUrl }, 'UniFi skill enabled');
     }
 
@@ -15229,7 +15231,9 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
       }
       if (service === 'unifi' && freshConfig.unifi) {
         const { UniFiSkill } = await import('@alfred/skills');
-        this.skillRegistry.register(new UniFiSkill(freshConfig.unifi));
+        const unifiSkill = new UniFiSkill(freshConfig.unifi);
+        unifiSkill.setBestaetigung(this.unifiBestaetigung()); // v1386
+        this.skillRegistry.register(unifiSkill);
         this.config.unifi = freshConfig.unifi;
         this.logger.info({ baseUrl: freshConfig.unifi.baseUrl }, 'UniFi skill hot-reloaded');
       }
@@ -15688,6 +15692,21 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!c || c.deletedAt) return false;
     await this.conversationRepo.softDelete(c.id);
     return true;
+  }
+
+  /** v1386 — Firewall-Änderungen des UniFi-Skills: Bestätigung beim Owner; nach dem Ja ruft die Queue den Skill mit der Einmal-Freigabe erneut auf. */
+  private unifiBestaetigung(): (o: { beschreibung: string; params: Record<string, unknown> }) => Promise<boolean> {
+    return async ({ beschreibung, params }) => {
+      if (!this.confirmationQueue) return false;
+      const platform = this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api';
+      await this.confirmationQueue.enqueue({
+        chatId: this.config.security?.ownerUserId ?? '', platform, source: 'reasoning',
+        sourceId: `unifi-firewall-${Date.now()}`, description: `🛡️ ${beschreibung}`,
+        skillName: 'unifi', skillParams: params, timeoutMinutes: 120,
+      });
+      this.logger.info({ aktion: params.action, beschreibung: beschreibung.slice(0, 200) }, 'v1386 Firewall-Änderung zur Bestätigung');
+      return true;
+    };
   }
 
   private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string }; ablageAnhaenge?: import('@alfred/types').SkillResultAttachment[] }): Promise<boolean> {
