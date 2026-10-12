@@ -84,3 +84,12 @@ describe('Fakten-Gegenprobe Modell-Anbieter', () => {
     expect(anbieterDatenlage([], 'anthropic', jetzt)).toBeUndefined();
   });
 });
+
+describe('hinweisAktionErlaubt (v1361)', () => {
+  it('Reasoning-Hinweise tragen keine ausführbare Aktion, andere Kategorien schon', async () => {
+    const { hinweisAktionErlaubt } = await import('../insights/hinweis-pruefung.js');
+    expect(hinweisAktionErlaubt('reasoning')).toBe(false);
+    expect(hinweisAktionErlaubt('interest-suggestion')).toBe(true);
+    expect(hinweisAktionErlaubt(undefined)).toBe(true);
+  });
+});

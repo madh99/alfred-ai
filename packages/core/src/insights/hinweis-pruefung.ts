@@ -9,6 +9,19 @@
  * Deterministisch, ohne Modell — gilt für jedes Modell der Fallback-Kette.
  */
 
+/**
+ * v1361 — Darf ein Hinweis dieser Kategorie eine ausführbare Aktion („Ausführen") tragen?
+ *
+ * Reasoning-Hinweise nicht: Jede Aktion eines Reasoning-Passes wird ohnehin behandelt (entscheideAusfuehrung —
+ * `auto` führt Alfred selbst aus, `bestaetigen` landet in den Bestätigungen, `nie` wird blockiert). Ein Knopf am
+ * Hinweis wäre ein Duplikat oder umginge Bestätigung bzw. Sperre. Dazu hing bisher die ERSTE Aktion des Passes an
+ * JEDEM Hinweis des Passes (Realfall 11.10.: DDNSS-Hinweis → Erinnerung zu Anthropic, Domain-Hinweis → UniFi-Liste).
+ * Andere Kategorien mit gezielter eigener Aktion (z. B. Interessen-Vorschlag „Thema anlegen") bleiben.
+ */
+export function hinweisAktionErlaubt(kategorie: string | undefined): boolean {
+  return kategorie !== 'reasoning';
+}
+
 /** Wörter ohne Unterscheidungskraft (häufig in jedem Hinweis). */
 const STOPP = new Set(('aber alle allen auch beim bitte dann dass dein deine deinen deiner dem den der des die dies diese dieser diesem durch '
   + 'eine einem einen einer eines erst etwa gibt habe haben hast hat hier ihre immer jetzt kann keine liegt mehr mit nach nicht noch nur oder '

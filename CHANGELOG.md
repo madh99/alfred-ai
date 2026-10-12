@@ -43,6 +43,14 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1361] - 2026-10-12
+
+### Fixed — „Ausführen" an Hinweisen führte eine fremde Aktion aus (v1361)
+
+Reasoning-Hinweise trugen die erste vorgeschlagene Aktion ihres Durchlaufs — jeder Hinweis dieses Durchlaufs dieselbe. „Ausführen" hätte deshalb beim DDNSS-Hinweis eine Erinnerung zu Anthropic gesetzt oder beim Domain-Hinweis die UniFi-Geräteliste abgerufen, ohne anzuzeigen, was passiert, und ohne Autonomie-Prüfung. Ausgeführt wurde so noch nichts (in der App 70× „Erledigt", nie „Ausführen").
+
+Reasoning-Hinweise tragen jetzt keine ausführbare Aktion mehr: Jede Aktion eines Durchlaufs wird ohnehin behandelt — Alfred führt sie selbst aus, stellt sie zur Bestätigung oder blockiert sie. Ein Knopf am Hinweis wäre ein Duplikat oder umginge Bestätigung und Sperre. Bestehende Hinweise zeigen den Knopf nicht mehr, App und Web lehnen das Ausführen ab (Logzeile „v1361 Ausführen an Reasoning-Hinweis abgelehnt"). Andere Hinweis-Arten mit eigener, gezielter Aktion (etwa „Thema anlegen") bleiben unverändert.
+
 ## [0.19.0-jarvis.1360] - 2026-10-12
 
 ### Fixed — Hinweise: keine Vorreden, kein rohes JSON, keine Wiederholungen, Prüfung gegen Live-Daten (v1360)

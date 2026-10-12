@@ -2097,17 +2097,16 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   }
 
   /** v1343 — zugestellte Insights einzeln für die Sammlung ablegen (Schlüssel je Tag und Titel = eine Episode je Tag). */
-  private async legeHinweiseAb(insights: string[], actions: ProposedAction[], urgency: 'urgent' | 'high' | 'normal' | 'low', weg: 'sofort' | 'aufgeschoben'): Promise<void> {
+  private async legeHinweiseAb(insights: string[], _actions: ProposedAction[], urgency: 'urgent' | 'high' | 'normal' | 'low', weg: 'sofort' | 'aufgeschoben'): Promise<void> {
     if (!this.notificationRouter || insights.length === 0) return;
     const tag = new Date().toISOString().slice(0, 10);
-    const erste = actions[0];
+    // v1361 — keine Aktion am Hinweis: die Aktionen des Passes laufen über die Autonomie-Klassen (siehe hinweisAktionErlaubt)
     for (const insight of insights) {
       const titel = insight.split('\n')[0].replace(/^[\s\-*•\d.)]+/, '').replace(/\*\*/g, '').trim().slice(0, 120) || 'Hinweis';
       try {
         await this.notificationRouter.store({
           source: 'reasoning', urgency, title: titel, body: insight,
           chatId: this.defaultChatId, platform: this.defaultPlatform,
-          actionSkill: erste?.skillName, actionParams: erste?.skillParams as Record<string, unknown> | undefined,
           dedupeKey: `hinweis:${tag}:${titel.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-').slice(0, 80)}`,
           zugestellt: weg,
         });

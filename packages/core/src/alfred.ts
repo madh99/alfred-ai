@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { werkzeugeFuerNachricht } from './skill-filter.js'; // v1356
+import { hinweisAktionErlaubt } from './insights/hinweis-pruefung.js'; // v1361
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -8911,6 +8912,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
             const insight = await insightsRepo.getById(ownerUidForInsights, id);
             if (!insight) return { ok: false, reason: 'not-found' };
             if (!insight.actionSkill) return { ok: false, reason: 'no-action' };
+            if (!hinweisAktionErlaubt(insight.category)) { this.logger.warn({ id, quelle: insight.category, skill: insight.actionSkill }, 'v1361 Ausführen an Reasoning-Hinweis abgelehnt (Web)'); return { ok: false, reason: 'reasoning-hints-have-no-action' }; }
             const skill = this.skillRegistry?.get(insight.actionSkill);
             if (!skill) return { ok: false, reason: `skill ${insight.actionSkill} not registered` };
             const { extractInputFields, applyActionInputs } = await import('./insight-action-input.js');
@@ -13865,7 +13867,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const l = (await this.insightsRepo.listSammlung(this.ownerMasterUserId, '2026-10-10T00:00:00.000Z', 300)).filter(i => i.category !== 'interests').slice(0, 150);
             return l.map(i => {
               const sd = (i.sourceData ?? {}) as Record<string, unknown>;
-              return { id: i.id, quelle: i.category, titel: i.title, text: i.body, status: i.status, zeit: i.createdAt, dringlichkeit: sd.urgency ?? null, zugestellt: sd.zugestellt ?? (sd.router === true ? 'still' : null), aktion: i.actionSkill ? (typeof sd.actionLabel === 'string' ? sd.actionLabel : 'Ausführen') : null };
+              return { id: i.id, quelle: i.category, titel: i.title, text: i.body, status: i.status, zeit: i.createdAt, dringlichkeit: sd.urgency ?? null, zugestellt: sd.zugestellt ?? (sd.router === true ? 'still' : null), aktion: i.actionSkill && hinweisAktionErlaubt(i.category) ? (typeof sd.actionLabel === 'string' ? sd.actionLabel : 'Ausführen') : null }; // v1361
             });
           },
           hinweisEntscheiden: async (geraetId: string, id: string, aktion: string) => {
@@ -13879,6 +13881,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             if (aktion === 'spaeter') { await repo.snooze(owner, id, 24); return { ok: true }; }
             // ausfuehren: wie die Insight-Aktion im Web (v928); Geräte-Skills fragen selbst noch einmal nach (Bestätigung)
             if (!insight.actionSkill) return { ok: false, grund: 'keine Aktion' };
+            if (!hinweisAktionErlaubt(insight.category)) { this.logger.warn({ id, quelle: insight.category, skill: insight.actionSkill }, 'v1361 Ausführen an Reasoning-Hinweis abgelehnt'); return { ok: false, grund: 'Reasoning-Hinweise führen nichts aus — Aktionen laufen über Bestätigungen' }; }
             const skill = this.skillRegistry?.get(insight.actionSkill);
             if (!skill) return { ok: false, grund: `Skill ${insight.actionSkill} nicht verfügbar` };
             const { extractInputFields, applyActionInputs } = await import('./insight-action-input.js');
