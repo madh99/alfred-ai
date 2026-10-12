@@ -527,6 +527,46 @@ Folgerung: Das Aufmerksamkeitsbudget (Regel 1) muss zuerst den Bestand senken (I
 
 Standardbudget je Projektvorgang (Vorschlag 5 USD / 2 h / 8 Etappen); ob die Zusammenfassung des Claude-Code-Berichts durch ein Modell erlaubt ist (werkzeuglos) oder nur zitiert wird; erhöhter Helfer unter Windows (Docker Desktop, Systemdienste); Claude Code/brew/tmux auf dem Mac installieren; Berechtigungsmodus von Claude Code in Aufträgen (heute „auto", Alternative „acceptEdits" ohne Shell).
 
+## Projekte sichtbar und fortsetzbar (Entwurf 12.10.2026, R2-Folge — ohne Umsetzung, Owner: „man sieht in der App oder im Web außer beim Bauen nichts vom Projekt … dort ersichtlich machen und dann bei Weiterarbeiten auswählen, um ihm zu sagen, was man weiter will — das Drumherum sollte er selbst wissen", keine Freigabe)
+
+### Ist-Stand (belegt 12.10.)
+
+- Ein Geräte-Projekt ist heute ein **Lauf** (`sat-…`, Datei `data/projekte-satellit/<id>.json`): Plan, Etappen, Kosten, Gerät, Pfad, Prüfbefehle. In App und Web erscheint er nur als Vorgang (`quelle 'projekt'`): offen, solange er läuft, danach 7 Tage unter „abgeschlossen" (`uebersicht(owner, 7)`), dann nicht mehr.
+- Weiterarbeiten startet einen **neuen, unverbundenen Lauf**: Der Owner muss Gerät, Pfad, Bestand („bestehende App, Beschreibung in docs/README.md") und Testbefehl erneut nennen; der Planer sieht nur diesen Text, nicht den Code und nicht die früheren Etappen. Realfall 12.10. 22:27: `sat-a08a7d26` (Merkliste) neben `sat-42080afb` (Grundgerüst) im selben Ordner `/home/madh/claudecode/game` — für Alfred zwei fremde Läufe.
+- Vorhandene Bausteine, die das Ziel schon beschreiben: Lücke 1 dieses Abschnitts („Kachel Projekte in Apps und Web"), „Projektgespräche" (eigener Faden je Projekt, Hauptgespräch: „bau in Projekt X noch …"), Weltmodell-Zeile je Projekt (Lage-Zeile seit v1392), Vorgänge-Ansicht der App (1.9/1.13), Git je Projektordner (v1396/v1397).
+
+### Zielbild
+
+**Projekt = dauerhafte Akte, Lauf = Episode darin.** Die Akte kennt das Drumherum; der Owner sagt nur noch, *was* er will.
+
+### Bausteine
+
+1. **Projektakte** (Server, `data/projekte-satellit/akten.json` oder Tabelle `projekt_akten` — Entscheidung bei der Umsetzung nach dem Muster der Vorgänge): `prj-<kurz>`, Name (Alfred schlägt ihn aus dem Ziel vor, z. B. „Supermarkt-Angebote"; Owner kann umbenennen), Gerät (ID + Name), Pfad, Beschreibung (Ziel des ersten Laufs + README-Pfad, falls vorhanden), Prüfbefehle, Git ja/nein, Läufe (`sat-…` mit Ziel, Status, Etappen, Kosten, Zeitraum), Kosten gesamt, letzte Aktivität, Status `aktiv` / `ruht` / `archiviert`. **Zuordnung deterministisch:** gleicher Gerät-+Pfad-Schlüssel = dieselbe Akte. **Migration:** vorhandene `sat-*.json` nach (Gerät, Pfad) gruppiert → Akten; Probe-Ordner (`r1-probe`, `r2-probe`, …) als `archiviert` vorschlagen, nicht selbst entscheiden.
+2. **Anzeige in App und Web** (Bereich „Projekte", in der App neben „Vorgänge"): Liste mit Name, Gerät, Status (läuft · wartet auf dich · ruht), letzte Etappe, Kosten gesamt, letzte Aktivität. Detail: Läufe mit ihren Etappen (✅/❌, Kosten, Dauer), Commits aus dem Repository (neueste zuerst), Prüfbefehle, Pfad. Knöpfe: **Weiterarbeiten**, **Frage stellen**, **Stand** (bei laufendem Projekt mit Live-Schritten wie heute `status`), **Archivieren**. API: `GET /api/projekte`, `GET /api/projekte/:id`, `POST /api/projekte/:id/weiter {text}`, `POST /api/projekte/:id/frage {text}` — Verdrahtung wie Vorgänge (`setXxxCallbacks` am apiAdapter, Aktion durch den Skill).
+3. **Weiterarbeiten mit Kontext:** `project_agent` neue Aktion `weiter` (Akte + Wunschtext). Alfred setzt Gerät, Pfad, Prüfbefehle und Git aus der Akte und baut dem Planer einen **Bestandsblock** (als Daten, nicht als Anweisung): Beschreibung, README-Auszug (≤ 4 KB), Dateiliste der obersten zwei Ebenen, Titel der bisherigen Etappen, letzte Commits. Planregel im Prompt: „bestehendes Projekt erweitern, nichts neu anlegen, was es gibt". Danach unverändert: eine Planfrage, eine Freigabe, Etappen mit Abnahme. Im Gespräch ohne App: „Am Supermarkt-Projekt weiter: …" — der Akten-Name wird deterministisch erkannt (Namensliste der Akten in der Werkzeugwahl wie `PROJEKT_AUF_GERAET`, v1389), bei mehreren Treffern Rückfrage mit Optionen.
+4. **Projekt lesen** (Satellit, neue Aktion `projekt_lesen`, Autonomie `auto`, nur lesend): README, `package.json`/`pyproject.toml`, Dateibaum (Tiefe 2, ohne `node_modules`/`.git`), `git log -n 10` — nur in freigegebenen Verzeichnissen, nur Textdateien, Größen gedeckelt. Grundlage für 3 und für die Detailansicht (Commits). Inhalt geht an den Planer nur als Daten (Fremdinhalt, Prompt-Injection-Regel wie Nachforschen).
+5. **Frage zum Projekt** (Vorschlag 12.10., vom Owner für gut befunden): Claude Code im **Nur-Lese-Modus** (`--permission-mode plan` und/oder `--disallowedTools` für Schreiben/Shell — bei der Umsetzung an Claude Code 2.1.296 auf der VM belegen, nicht annehmen), Autonomie `auto`, weil technisch nichts geändert werden kann; Antwort direkt in die fragende Sitzung bzw. im Projektdetail; Kosten in der Akte. Ohne diesen Nachweis bleibt die Aktion `bestaetigen`.
+6. **Projektfaden** (aus „Projektgespräche"): optional als letzter Schritt — Etappenmeldungen im Faden der Akte statt im Hauptgespräch; Hauptgespräch behält Lage-Zeile und Rückfragen mit Rang.
+
+### Reihenfolge (nicht freigegeben)
+
+**P1** Akte + Migration + Zuordnung je Lauf + `GET`-API (Beweis: `sat-42080afb` und `sat-a08a7d26` in einer Akte „Supermarkt-Angebote") → **P2** `projekt_lesen` + Weiterarbeiten mit Bestandsblock im Gespräch (Beweis: „Am Supermarkt-Projekt weiter: …" ohne Pfad/Gerät/Testbefehl → Plan erweitert statt neu, Abnahme `npm test`) → **P3** App/Web-Bereich „Projekte" mit Weiterarbeiten/Stand/Archivieren (App-Release) → **P4** Frage zum Projekt (Nur-Lese-Nachweis zuerst) → **P5** Projektfaden.
+
+### Abnahme (messbar)
+
+Ein zweiter Lauf im selben Ordner landet ohne Zutun in derselben Akte; „weiter" braucht nur den Wunschtext (keine erneute Angabe von Gerät, Pfad, Testbefehl); der Plan des zweiten Laufs enthält keine Etappe „Grundgerüst/Projekt anlegen" für ein bestehendes Projekt; abgeschlossene Projekte bleiben nach 7 Tagen sichtbar; eine Frage ändert nachweislich keine Datei (`git status` leer danach).
+
+### Risiken
+
+Fremdinhalt aus dem Projekt im Planer-Prompt (nur als Daten, gekürzt); falsche Akte bei verschobenen Ordnern (Schlüssel Gerät+Pfad, Umzug als eigene Aktion); App-Ansicht ohne Server-Stand bei älteren Servern (Feature-Abfrage wie bei Befunden).
+
+### Offene Owner-Entscheidungen
+
+1. Akte in Datei (wie Läufe heute) oder Datenbank-Tabelle (wie Vorgänge, für Web/App-Abfragen und Verlauf) — Empfehlung Tabelle.
+2. Projektname: Alfred schlägt vor und fragt mit der Planfrage mit, oder erst beim ersten „weiter".
+3. Frage zum Projekt: ohne Bestätigung nur mit belegtem Nur-Lese-Modus (Empfehlung) — oder immer mit Bestätigung.
+4. Probe-Ordner `r1-probe`, `r2-probe`, `hallo-alfred` auf der VM: löschen oder als archivierte Akten behalten.
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
