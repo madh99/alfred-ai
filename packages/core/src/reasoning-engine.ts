@@ -24,6 +24,7 @@ import { InsightTracker } from './insight-tracker.js';
 import { entferneWiederholungen, istMetaText, ohneMetaVorsatz, punkteAus, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360, v1365
 import { hinweisKnoepfe, gezeigteIds, bekanntTreffer } from './insights/hinweis-reaktion.js'; // v1364
 import { istSicherheitsText } from './vorgaenge/regeln.js'; // v1368
+import { zustellProtokoll } from './zustellung/protokoll.js'; // v1369
 import { anbieterDatenlage } from './vorgaenge/faktenpruefung.js'; // v1360
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
 import { WarumSpeicher, insightTitel, kurzBegruendung, type PassBegruendung } from './interaktion/warum.js';
@@ -931,6 +932,7 @@ ${this.buildTopicInstructions()}`;
       this.lastDeferredCleanupDay = heute;
       try {
         const n = await this.deliveryScheduler.cleanup();
+        if (n > 0) zustellProtokoll.merke('abgelaufen', n); // v1369
         if (n > 0) this.logger.info({ geloescht: n }, 'v1158 Deferred-Insights aufgeräumt');
       } catch { /* non-critical */ }
     }
@@ -1699,6 +1701,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     if (segmente.some((x, i) => x !== roh[i])) this.logger.info({ gekuerzt: roh.filter((x, i) => x !== segmente[i]).map(x => x.slice(0, 80)) }, 'v1365 Leerlauf-Vorsatz entfernt, Inhalt behalten');
     // v1360 — Vorreden und Selbstauskünfte des Modells sind keine Hinweise (Realfälle 11.10.: „Hier sind die Insights …")
     const inhalt = segmente.filter(s => !istMetaText(s));
+    if (inhalt.length < segmente.length) zustellProtokoll.merke('vorrede', segmente.length - inhalt.length); // v1369
     if (inhalt.length < segmente.length) this.logger.info({ verworfen: segmente.filter(s => istMetaText(s)).map(s => s.slice(0, 60)) }, 'v1360 Vorrede des Modells verworfen');
     return inhalt;
   }
@@ -1729,6 +1732,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     const { text, entfernt } = entferneWiederholungen(fein, [...await this.holeGelieferteInsights(), ...imLauf]);
     for (const e of entfernt) {
       this.kennzahlen.zaehle('hinweisWiederholung');
+      zustellProtokoll.merke('wiederholung'); // v1369
       this.logger.info({ punkt: e.punkt.slice(0, 140), wie: e.w.gegen.slice(0, 100), anker: e.w.anker, ueberlappung: Number(e.w.ueberlappung.toFixed(2)) }, 'v1360 Hinweis wiederholt Bekanntes — Punkt nicht zugestellt');
     }
     if (!text) return null;
@@ -1736,6 +1740,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     const widerspruch = widersprichtWeltmodell(text, (k) => this.datenlageFuer(k));
     if (widerspruch) {
       this.kennzahlen.zaehle('hinweisWiderspruch');
+      zustellProtokoll.merke('widerspruch'); // v1369
       this.logger.info({ hinweis: text.slice(0, 160), sektion: widerspruch.sektion, grund: widerspruch.grund }, 'v1360 Hinweis widerspricht Live-Daten — nicht zugestellt');
       return null;
     }
@@ -1868,6 +1873,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1174 Gate ausgesetzt — Weltmodell meldet Auffälligkeit zum Objekt');
         } else {
           this.kennzahlen.zaehle('gateTreffer');
+          zustellProtokoll.merke('korrektur'); // v1369
           this.logger.info({ korrektur: t.key, grund: t.grund, insight: insight.slice(0, 250) }, 'v1148 insight durch User-Korrektur unterdrückt');
           return true;
         }
@@ -1879,6 +1885,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // als BITTE im LLM-Kontext.
     const geliefert = await this.holeGelieferteInsights();
     if (geliefert.length > 0 && istInhaltlichesInsightDuplikat(insight, geliefert)) {
+      zustellProtokoll.merke('wiederholung'); // v1369
       this.logger.info({ insight: insight.slice(0, 80) }, 'v1142 insight inhaltlich bereits geliefert — unterdrückt');
       return true;
     }

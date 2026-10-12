@@ -441,7 +441,8 @@ export class Alfred {
       const { regelText } = await import('./vorgaenge/regeln.js');
       const jetztL = new Date();
       const regeln = this.regelnRepo ? (await this.regelnRepo.liste(owner).catch(() => [])).filter(x => x.status === 'aktiv' && (!x.bis || Date.parse(x.bis) > jetztL.getTime())).map(x => regelText(x, jetztL)) : [];
-      this.lageText = formatiereLage({ befundeOffen: b.offen, befundeErledigt24h: b.erledigt24h, vorgaengeOffen: v.offene, vorgaengeAbgeschlossen24h: v.abgeschlossene, regeln });
+      const { zustellProtokoll, nichtZugestelltZeile } = await import('./zustellung/protokoll.js'); // v1369
+      this.lageText = formatiereLage({ befundeOffen: b.offen, befundeErledigt24h: b.erledigt24h, vorgaengeOffen: v.offene, vorgaengeAbgeschlossen24h: v.abgeschlossene, regeln, nichtZugestellt: nichtZugestelltZeile(zustellProtokoll.zaehlung24h()) });
       this.lageStand = new Date().toISOString();
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1220 Lage nicht aktualisiert'); }
   }

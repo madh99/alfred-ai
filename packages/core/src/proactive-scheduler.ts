@@ -12,6 +12,7 @@ import { matchesCron, getNextCronDate } from '@alfred/types';
 import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
 import { entscheideMeldung, kennungenAus } from './geplant/meldung.js'; // v1368
+import { zustellProtokoll } from './zustellung/protokoll.js'; // v1369
 
 export class ProactiveScheduler {
   private tickTimer?: ReturnType<typeof setInterval>;
@@ -208,6 +209,7 @@ export class ProactiveScheduler {
       : { senden: trimmed.length >= 3, grund: trimmed.length >= 3 ? 'Skill-Aufgabe' : 'leer', neu: [] as string[] };
     if (!entscheidung.senden) {
       this.logger.info({ actionId: action.id, name: action.name, grund: entscheidung.grund, text: trimmed.slice(0, 200) }, 'Scheduled action produced no actionable output — skipping notification');
+      if (action.promptTemplate && entscheidung.grund !== 'leer') zustellProtokoll.merke('aufgabe'); // v1369
     } else {
       this.logger.info({ actionId: action.id, name: action.name, grund: entscheidung.grund, neu: entscheidung.neu.slice(0, 6) }, 'v1368 Geplante Aufgabe meldet');
       if (action.promptTemplate && this.meldeGedaechtnis) void this.meldeGedaechtnis.merken(action.userId, kennungenAus(trimmed)).catch(() => undefined);

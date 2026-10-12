@@ -47,6 +47,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1369] - 2026-10-12
+
+### Added — Lage nennt, was in 24 Stunden nicht zugestellt wurde (v1369)
+
+Verworfene Ergebnisse waren für den Owner unsichtbar — die nicht gemeldete aWATTar-Rechnung ebenso wie 55 Korrektur-Sperren in einer Woche. Jede Stelle, an der Alfred ein fertiges Ergebnis nicht zustellt, zählt jetzt mit Grund: Korrekturen des Owners, geplante Aufgaben ohne Neues, aufgeschoben und abgelaufen, Widerspruch zu Live-Daten, Vorreden des Modells, Wiederholungen. Die Lage (App-Kachel „Lage" und Chat-Kontext) zeigt dazu eine Zeile, z. B. „Nicht zugestellt (24 h): 3 durch deine Korrekturen, 1 geplante Aufgabe ohne Neues, 12 Wiederholungen". Einzelheiten stehen weiter in den Logzeilen der jeweiligen Stelle.
+
 ## [0.19.0-jarvis.1368] - 2026-10-12
 
 ### Fixed — Fertige Ergebnisse wurden still verworfen: geplante Aufgaben und Korrektur-Sperre (v1368)
