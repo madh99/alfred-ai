@@ -2,6 +2,7 @@ import type { Logger } from 'pino';
 import type { InterestsRepository, InsightsRepository } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 import type { SourceProvisioner } from './source-provisioner.js';
+import { aehnlichesThema } from './interessen/thema-aehnlichkeit.js'; // v1366
 
 export interface DetectorSignals {
   /** Häufig erwähnte KG-Entities (personal layer), z.B. Themen/Konzepte/Projekte. */
@@ -75,6 +76,12 @@ export class InterestDetector {
       // Doppel-Check gegen Bestand (LLM kann die Ausschlussliste ignorieren)
       const existing = await this.interestsRepo.findTopicByName(this.ownerUserId, s.name);
       if (existing) continue;
+      // v1366 — ähnliches Thema (auch archiviert/pausiert) → nicht neu anlegen oder vorschlagen; der Bestand bleibt maßgeblich
+      const aehnlich = aehnlichesThema(s.name, s.keywords, existingTopics);
+      if (aehnlich) {
+        this.logger.info({ vorschlag: s.name, aehnlich: aehnlich.thema.name, grund: aehnlich.grund }, 'v1366 Interesse ähnlich zu bestehendem Thema — nicht angelegt');
+        continue;
+      }
 
       if (s.strength === 'strong') {
         const topic = await this.interestsRepo.createTopic(this.ownerUserId, {
@@ -139,6 +146,8 @@ Regeln:
 - KEINE Personen, Orte, Haushaltsgeräte, einmalige Aufgaben oder interne Systeme.
 - strength=strong NUR wenn das Thema mehrfach über verschiedene Gespräche hinweg auftaucht UND klar von Dauer ist. Im Zweifel medium.
 - Maximal 3 Vorschläge. Wenn nichts Substanzielles: leeres Array.
+- Name KURZ: höchstens 4 Wörter, ohne Füllwörter wie „Entwicklungen im Bereich", „Markttrends", „Innovationen".
+- Ein Thema, das inhaltlich schon beobachtet wird (auch anders formuliert), NICHT vorschlagen.
 
 Antworte NUR mit einem JSON-Array:
 [{"name": "…", "keywords": ["…", "…"], "strength": "strong|medium", "warum": "1 Satz Begründung"}]`;

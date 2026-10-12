@@ -47,6 +47,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1366] - 2026-10-12
+
+### Fixed — Themen-Erkennung legte dieselben Interessen täglich neu formuliert an (v1366)
+
+Der Interest-Detector prüfte nur auf exakt gleichen Namen. Das Modell formuliert jeden Tag neu, so entstanden bis 12.10. 64 aktive Themen, davon rund 12 Varianten zu bidirektionalem Laden (V2G/V2H), 6 zu Krypto, 5 zu dynamischen Stromtarifen und 10 zu Energiemanagement zu Hause. Jede Variante sammelt stündlich per Web-Suche (rund 2 300 Suchen am Tag bei DuckDuckGo) und bekommt täglich ein Dossier.
+
+Jetzt prüft die Erkennung vor dem Anlegen oder Vorschlagen gegen alle bestehenden Themen, auch archivierte: drei gemeinsame Stichwörter (oder zwei, wenn das die Hälfte der kleineren Liste ist) oder ein Name, der überwiegend aus Wörtern eines bestehenden Themas besteht, gelten als ähnlich (Logzeile „v1366 Interesse ähnlich zu bestehendem Thema — nicht angelegt"). Namen soll das Modell kurz halten. Das Anlegen durch den Owner bleibt exakt (v952: ein unscharfer Abgleich hatte „Panini-Sammelalbum WM 2026" verweigert).
+
+Bestand am 12.10. zusammengeführt (Datenpflege, umkehrbar): 34 Dubletten archiviert (Beiträge und Dossiers bleiben), ihre 39 Feeds ins behaltene Thema kopiert, Stichwörter vereinigt, vier Themen mit kurzem Namen. Aktiv sind 30 Themen; die 6 Themen des Content-Studios sind unverändert.
+
 ## [0.19.0-jarvis.1365] - 2026-10-12
 
 ### Fixed — Weitere Selbstauskünfte des Modells kamen als Hinweis an (v1365)
