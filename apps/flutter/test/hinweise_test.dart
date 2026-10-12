@@ -1,4 +1,5 @@
 import 'package:alfred_app/hinweise.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -26,6 +27,67 @@ void main() {
       expect(quellenName('reasoning'), 'Alfred');
       expect(quellenName('interests'), 'Interessen');
       expect(quellenName('unbekannt'), 'unbekannt');
+    });
+  });
+
+  group('Reagieren (1.14.0, Server v1364)', () {
+    test('Status nach Reaktion: nützlich/gelesen schließen, Gründe verwerfen, besprochen lässt offen', () {
+      expect(statusNach('nuetzlich'), 'acted');
+      expect(statusNach('gelesen'), 'acted');
+      expect(statusNach('zu_oft'), 'dismissed');
+      expect(statusNach('nicht_nuetzlich'), 'dismissed');
+      expect(statusNach('spaeter'), 'snoozed');
+      expect(statusNach('besprochen'), isNull);
+    });
+    test('Ausgang zeigt die Reaktion, alte Einträge den Status', () {
+      expect(ausgangText('dismissed', 'kein_interesse'), 'nicht nützlich: interessiert mich nicht');
+      expect(ausgangText('acted', 'gelesen'), 'gelesen');
+      expect(ausgangText('acted', null), 'erledigt');
+      expect(ausgangText('pending', 'besprochen'), isNull);
+    });
+
+    testWidgets('Knöpfe: Nützlich, Gelesen, Nicht nützlich mit Grund, Alle gelesen, Nachfragen = besprochen', (t) async {
+      final aufrufe = <String>[];
+      String? nachgefragt;
+      await t.binding.setSurfaceSize(const Size(1000, 1400));
+      await t.pumpWidget(MaterialApp(home: Scaffold(body: Hinweise(
+        json: (p, {methode = 'GET', koerper}) async {
+          if (methode == 'GET') {
+            return {'hinweise': [
+              {'id': 'h1', 'quelle': 'reasoning', 'titel': 'Wallbox offline', 'text': 'seit 2 h', 'status': 'pending', 'zeit': '2026-10-12T08:00:00Z'},
+              {'id': 'h2', 'quelle': 'reasoning', 'titel': 'Paket kommt', 'text': 'morgen', 'status': 'pending', 'zeit': '2026-10-12T07:00:00Z'},
+              {'id': 'h3', 'quelle': 'reasoning', 'titel': 'Domain läuft ab', 'text': '15.10.', 'status': 'pending', 'zeit': '2026-10-12T06:00:00Z'},
+            ]};
+          }
+          aufrufe.add('$p ${koerper?['aktion']}');
+          return {'ok': true};
+        },
+        aufNachfragen: (x) => nachgefragt = x,
+        aufMeldung: (_) {},
+      ))));
+      await t.pumpAndSettle();
+      expect(find.text('Erledigt'), findsNothing);
+      expect(find.text('Verwerfen'), findsNothing);
+
+      await t.tap(find.text('Nützlich').first);
+      await t.pumpAndSettle();
+      expect(aufrufe.last, '/api/geraete/hinweise/h1 nuetzlich');
+
+      await t.tap(find.text('Nicht nützlich').first);
+      await t.pumpAndSettle();
+      await t.tap(find.text('zu oft').last);
+      await t.pumpAndSettle();
+      expect(aufrufe.last, '/api/geraete/hinweise/h2 zu_oft');
+
+      await t.tap(find.text('Nachfragen').first);
+      await t.pumpAndSettle();
+      expect(aufrufe.last, '/api/geraete/hinweise/h3 besprochen');
+      expect(nachgefragt, 'Domain läuft ab\n\n15.10.');
+
+      await t.tap(find.text('Alle gelesen'));
+      await t.pumpAndSettle();
+      expect(aufrufe.last, '/api/geraete/hinweise/h3 gelesen');
+      expect(find.text('Keine offenen Hinweise.'), findsOneWidget);
     });
   });
 }

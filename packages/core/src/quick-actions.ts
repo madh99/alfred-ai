@@ -20,6 +20,7 @@ import type { MessagingAdapter } from '@alfred/messaging';
  *   reminder:<id>:snooze1h → neuen Reminder in 1h anlegen
  */
 import { istWarumFrage } from './interaktion/warum.js';
+import { hinweisCallback, grundKnoepfe, GRUENDE, type HinweisReaktion } from './insights/hinweis-reaktion.js';
 
 export class QuickActionHandler {
   /** v1196 — „warum?" → Begründung der letzten proaktiven Meldung (deterministisch, ohne LLM). */
@@ -43,12 +44,29 @@ export class QuickActionHandler {
     this.socialHandlers = handlers;
   }
 
+  /** v1364 — Hinweis-Knöpfe (hw:<id>:gut|schlecht|bekannt|falsch|kein|oft) → Reaktion am Hinweis (nur Owner-Chat). */
+  private hinweisHandler?: (chatId: string, platform: Platform, id: string, reaktion: HinweisReaktion) => Promise<{ ok: boolean; titel?: string; grund?: string }>;
+  setHinweisHandler(fn: NonNullable<QuickActionHandler['hinweisHandler']>): void { this.hinweisHandler = fn; }
+
   /** @returns true wenn die Nachricht eine Quick-Action war (Pipeline stoppt vor dem LLM). */
   async handle(chatId: string, platform: Platform, text: string): Promise<boolean> {
     if (this.warumHandler && istWarumFrage(text)) {
       try { await this.adapters.get(platform)?.sendMessage(chatId, this.warumHandler()); } catch { /* non-fatal */ }
       this.logger.info({ platform }, 'v1196 warum: Begründung der letzten Meldung geliefert');
       return true;
+    }
+    const hw = hinweisCallback(text);
+    if (hw) {
+      const adapter = this.adapters.get(platform);
+      try {
+        const r = this.hinweisHandler ? await this.hinweisHandler(chatId, platform, hw.id, hw.reaktion) : { ok: false, grund: 'nicht verfügbar' };
+        const titel = r.titel ? ` „${r.titel.slice(0, 60)}"` : '';
+        if (!r.ok) await adapter?.sendMessage(chatId, `⚠️ Hinweis${titel}: ${r.grund ?? 'nicht gefunden'}`);
+        else if (hw.reaktion === 'nuetzlich') await adapter?.sendMessage(chatId, `👍 Notiert${titel}.`);
+        else if (hw.reaktion === 'nicht_nuetzlich') await adapter?.sendMessage(chatId, `👎 Notiert${titel}. Warum? (freiwillig)`, { replyMarkup: { inlineKeyboard: grundKnoepfe(hw.id) } });
+        else await adapter?.sendMessage(chatId, `Danke — Grund: ${GRUENDE[hw.reaktion as keyof typeof GRUENDE] ?? hw.reaktion}.`);
+      } catch (err) { this.logger.warn({ err, id: hw.id }, 'v1364 Hinweis-Knopf fehlgeschlagen'); }
+      return true; // Callback-Daten gehören nie ins LLM
     }
     const m = (text ?? '').trim().match(/^(todo|reminder|content):([0-9a-fA-F-]{8,40}):(done|snooze|ok|snooze1h|approve|publish|reject)$/);
     if (!m) return false;

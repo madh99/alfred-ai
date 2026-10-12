@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { werkzeugeFuerNachricht } from './skill-filter.js'; // v1356
-import { hinweisAktionErlaubt } from './insights/hinweis-pruefung.js'; // v1361
+import { hinweisAktionErlaubt, ankerAus } from './insights/hinweis-pruefung.js'; // v1361
+import { reaktionAus, signalAus } from './insights/hinweis-reaktion.js'; // v1364
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -6858,6 +6859,15 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       this.reasoningEngine.setNotificationRouter(this.notificationRouter);
       // v1360 — Fakten-Gegenprobe der Hinweise kennt den Zustand der Modell-Anbieter (Realfall 11.10.: „Claude-API gesperrt" 9×)
       this.reasoningEngine.setAnbieterPuls(() => this.providerPuls?.alle() ?? []);
+      // v1364 — K1 beobachtend: Hinweise, die der Owner als „schon bekannt" markiert hat (5 min gepuffert)
+      let bekanntPuffer: { am: number; liste: Array<{ text: string; am: string }> } | undefined;
+      this.reasoningEngine.setBekannteHinweise(async () => {
+        if (bekanntPuffer && Date.now() - bekanntPuffer.am < 5 * 60_000) return bekanntPuffer.liste;
+        const repo = this.insightsRepo; const owner = this.ownerMasterUserId;
+        const liste = repo && owner ? (await repo.mitReaktion(owner, ['bekannt'], new Date(Date.now() - 14 * 86_400_000).toISOString())).map(i => ({ text: `${i.title}\n${i.body}`, am: i.reaktionAm ?? i.updatedAt })) : [];
+        bekanntPuffer = { am: Date.now(), liste };
+        return liste;
+      });
       this.logger.info({ minUrgency: this.config.notifications?.minUrgency ?? 'high', devMode: this.config.notifications?.devMode ?? false }, 'v927 notification router active');
     } else if (this.reasoningEngine && !this.ownerMasterUserId) {
       this.logger.warn('v927 notification router NOT active (no ownerMasterUserId) — sending behaviour unchanged');
@@ -6986,6 +6996,11 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
           reject: run('reject_content'),
         });
       }
+      // v1364 — Hinweis-Knöpfe 👍/👎 und Grund, nur aus dem Owner-Chat (Hinweise gehören dem Owner)
+      quickActions.setHinweisHandler(async (chatId, _platform, id, reaktion) => {
+        if (String(chatId) !== String(this.config.security?.ownerUserId ?? '')) return { ok: false, grund: 'nur für den Owner' };
+        return (await this.hinweisReagieren(id, reaktion)) ?? { ok: false, grund: 'nicht verfügbar' };
+      });
       this.pipeline.setQuickActions(quickActions);
       // v1206 — Jarvis Schleife 1: Weltmodell im Gespräch (lazy, Engine wird später gesetzt)
       this.pipeline.setWeltmodellQuelle(() => {
@@ -13892,7 +13907,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             const l = (await this.insightsRepo.listSammlung(this.ownerMasterUserId, '2026-10-10T00:00:00.000Z', 300)).filter(i => i.category !== 'interests').slice(0, 150);
             return l.map(i => {
               const sd = (i.sourceData ?? {}) as Record<string, unknown>;
-              return { id: i.id, quelle: i.category, titel: i.title, text: i.body, status: i.status, zeit: i.createdAt, dringlichkeit: sd.urgency ?? null, zugestellt: sd.zugestellt ?? (sd.router === true ? 'still' : null), aktion: i.actionSkill && hinweisAktionErlaubt(i.category) ? (typeof sd.actionLabel === 'string' ? sd.actionLabel : 'Ausführen') : null }; // v1361
+              return { id: i.id, quelle: i.category, titel: i.title, text: i.body, status: i.status, zeit: i.createdAt, dringlichkeit: sd.urgency ?? null, zugestellt: sd.zugestellt ?? (sd.router === true ? 'still' : null), aktion: i.actionSkill && hinweisAktionErlaubt(i.category) ? (typeof sd.actionLabel === 'string' ? sd.actionLabel : 'Ausführen') : null, reaktion: i.reaktion ?? null }; // v1361, v1364 Reaktion
             });
           },
           hinweisEntscheiden: async (geraetId: string, id: string, aktion: string) => {
@@ -13900,10 +13915,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
             if (!repo || !owner || !(await this.geraetGehoertOwner(geraetId))) return undefined;
             const insight = await repo.getById(owner, id);
             if (!insight) return { ok: false, grund: 'nicht gefunden' };
+            if (aktion === 'spaeter') { this.logger.info({ id, quelle: insight.category, aktion, vorher: insight.status }, 'v1343 Hinweis entschieden'); await repo.snooze(owner, id, 24); return { ok: true }; }
+            // v1364 — nützlich, gelesen, nicht nützlich (mit Grund), besprochen; „erledigt"/„verwerfen" der App bis 1.13 = gelesen/nicht nützlich
+            if (aktion !== 'ausfuehren') { const r = await this.hinweisReagieren(id, aktion); return r ? { ok: r.ok, grund: r.grund } : undefined; }
             this.logger.info({ id, quelle: insight.category, aktion, vorher: insight.status }, 'v1343 Hinweis entschieden'); // Schicht-4-Signal
-            if (aktion === 'erledigt') { await repo.markActed(owner, id); return { ok: true }; }
-            if (aktion === 'verwerfen') { await repo.dismiss(owner, id); return { ok: true }; }
-            if (aktion === 'spaeter') { await repo.snooze(owner, id, 24); return { ok: true }; }
             // ausfuehren: wie die Insight-Aktion im Web (v928); Geräte-Skills fragen selbst noch einmal nach (Bestätigung)
             if (!insight.actionSkill) return { ok: false, grund: 'keine Aktion' };
             if (!hinweisAktionErlaubt(insight.category)) { this.logger.warn({ id, quelle: insight.category, skill: insight.actionSkill }, 'v1361 Ausführen an Reasoning-Hinweis abgelehnt'); return { ok: false, grund: 'Reasoning-Hinweise führen nichts aus — Aktionen laufen über Bestätigungen' }; }
@@ -13916,6 +13931,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               const r = await skill.execute(applied.params, { userId: owner, masterUserId: owner } as any);
               if (r && typeof r === 'object' && 'success' in r && (r as { success: boolean }).success === false) return { ok: false, grund: (r as { error?: string }).error ?? 'fehlgeschlagen' };
               await repo.markActed(owner, id);
+              await repo.setzeReaktion(owner, id, 'nuetzlich'); // v1364 — wer ausführt, fand ihn nützlich
               return { ok: true };
             } catch (err) { return { ok: false, grund: (err as Error).message }; }
           },
@@ -15340,6 +15356,28 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       }
     }
     return aus;
+  }
+
+  /**
+   * v1364 — Reaktion des Owners auf einen Hinweis (App und Telegram, Spec „Auf Hinweise reagieren" K1): Reaktion und
+   * Status speichern, Kennzahl nur bei Wechsel des Signals (👎 und danach Grund zählt einmal), Logzeile mit Ankern.
+   * Erfasst nur — gedrosselt wird nichts.
+   */
+  private async hinweisReagieren(id: string, aktion: string): Promise<{ ok: boolean; titel?: string; grund?: string } | undefined> {
+    const repo = this.insightsRepo; const owner = this.ownerMasterUserId;
+    if (!repo || !owner) return undefined;
+    const r = reaktionAus(aktion);
+    if (!r) return { ok: false, grund: 'unbekannte Reaktion' };
+    const insight = await repo.getById(owner, id);
+    if (!insight) return { ok: false, grund: 'nicht gefunden' };
+    const vorher = insight.reaktion;
+    await repo.setzeReaktion(owner, id, r.reaktion);
+    if (r.status === 'acted') await repo.markActed(owner, id);
+    else if (r.status === 'dismissed') await repo.dismiss(owner, id);
+    const signal = signalAus(r.reaktion);
+    if (signal && signal !== signalAus(vorher)) this.reasoningEngine?.kennzahlen.zaehle(signal === 'positiv' ? 'hinweisNuetzlich' : 'hinweisNichtNuetzlich');
+    this.logger.info({ id, quelle: insight.category, reaktion: r.reaktion, vorher: vorher ?? null, status: insight.status, anker: [...ankerAus(`${insight.title}\n${insight.body}`)].slice(0, 8) }, 'v1364 Hinweis-Reaktion');
+    return { ok: true, titel: insight.title };
   }
 
   /** v1354 — Owner-Prüfung mit 10-min-Gedächtnis (gesetzt beim Einrichten der Gespräche). */

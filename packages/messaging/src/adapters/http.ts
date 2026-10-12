@@ -6823,7 +6823,8 @@ export class HttpAdapter extends MessagingAdapter {
     const body = await this.readBody(req).catch(() => '');
     let aktion = '';
     try { aktion = String((JSON.parse(body || '{}') as { aktion?: unknown }).aktion ?? ''); } catch { /* leer */ }
-    if (!['erledigt', 'verwerfen', 'spaeter', 'ausfuehren'].includes(aktion)) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'aktion: erledigt | verwerfen | spaeter | ausfuehren' })); return; }
+    const AKTIONEN = ['nuetzlich', 'gelesen', 'nicht_nuetzlich', 'bekannt', 'falsch', 'kein_interesse', 'zu_oft', 'besprochen', 'spaeter', 'ausfuehren', 'erledigt', 'verwerfen']; // v1364 Reaktionen; erledigt/verwerfen = App bis 1.13
+    if (!AKTIONEN.includes(aktion)) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `aktion: ${AKTIONEN.join(' | ')}` })); return; }
     const r = await this.geraeteCallbacks.hinweisEntscheiden(geraet.geraetId, id, aktion);
     if (r === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
     res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });

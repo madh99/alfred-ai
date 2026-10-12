@@ -47,6 +47,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1364] - 2026-10-12
+
+### Added — Auf Hinweise reagieren: nützlich, gelesen, nicht nützlich mit Grund (v1364, App 1.14.0)
+
+Ein Hinweis ist Information, kein Auftrag — reagieren bleibt freiwillig, ein Hinweis ohne Reaktion läuft wie bisher ab. „Erledigt" wurde als „gelesen" benutzt (68 von 69 am 11.10. in einem Durchgang) und taugte deshalb nicht als Lernsignal. Die Reaktion ist jetzt aufgeteilt: **Nützlich** (Signal), **Gelesen** (neutral, auch „Alle gelesen"), **Nicht nützlich** mit freiwilligem Grund (schon bekannt, falsch, interessiert mich nicht, zu oft). „Nachfragen" merkt sich „besprochen". Die Reaktion steht am Hinweis (Spalten `reaktion`, `reaktion_am`; Migration PG v137 / SQLite v133), jede Reaktion schreibt die Logzeile „v1364 Hinweis-Reaktion" mit den Ankern des Hinweises, die Kennzahlen zählen nützlich und nicht nützlich (ein 👎 mit nachgereichtem Grund zählt einmal).
+
+Telegram: Unter Alfreds Meldung steht je Hinweis 👍/👎 (bei mehreren nummeriert passend zu den Zeilen), auch bei später zugestellten Meldungen; nach 👎 kommen die Gründe zur Auswahl. Nur aus dem Owner-Chat, ohne Modellaufruf. Ältere App-Versionen bleiben bedienbar („Erledigt" zählt als gelesen, „Verwerfen" als nicht nützlich).
+
+Gedrosselt wird nichts. „Schon bekannt" wird zwei Wochen beobachtet: Kommt ein Hinweis zum selben Thema, schreibt Alfred nur „v1364 Hinweis wäre als bekannt gesperrt (beobachtend)" mit dem Tag seit der Markierung und ob neue Zahlen drinstehen; danach wird entschieden, wie lange „bekannt" sperren soll.
+
 ## [0.19.0-jarvis.1363] - 2026-10-12
 
 ### Fixed — Behobene Fehlerquoten blieben eine Woche im Kontext (v1363)

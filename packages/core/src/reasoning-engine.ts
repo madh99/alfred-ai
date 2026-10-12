@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { Logger } from 'pino';
-import type { Platform, ReasoningConfig } from '@alfred/types';
+import type { Platform, ReasoningConfig, SendMessageOptions } from '@alfred/types';
 import type { LLMProvider } from '@alfred/llm';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type {
@@ -21,12 +21,13 @@ import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
-import { entferneWiederholungen, istMetaText, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360
+import { entferneWiederholungen, istMetaText, punkteAus, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360
+import { hinweisKnoepfe, gezeigteIds, bekanntTreffer } from './insights/hinweis-reaktion.js'; // v1364
 import { anbieterDatenlage } from './vorgaenge/faktenpruefung.js'; // v1360
 import { Kennzahlen, SCHRITT_ZU_KENNZAHL } from './kennzahlen/kennzahlen.js';
 import { WarumSpeicher, insightTitel, kurzBegruendung, type PassBegruendung } from './interaktion/warum.js';
 import { ruecknahmeHinweis } from './vorgaenge/ruecknahme.js';
-import { knappeFassung } from './interaktion/knapp.js';
+import { knappeFassung, knappesInsight } from './interaktion/knapp.js';
 import { ReasoningContextCollector, spaetestesDatumImText, istInsightEcho, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ActionFeedbackTracker } from './action-feedback-tracker.js';
@@ -929,7 +930,12 @@ ${this.buildTopicInstructions()}`;
                     msg = msg.replace(/^(💡 \*\*Alfred Insights\*\*)/, `$1 _(erstellt vor ${ageStr})_`);
                   }
                 }
-                await adapter.sendMessage(this.defaultChatId, msg);
+                // v1364 — gespeichert als Aktionsliste (alt) oder { actions, tastatur }
+                let gespeichert: unknown = [];
+                try { gespeichert = JSON.parse(d.actions); } catch { /* keine Aktionen */ }
+                const gespeicherteAktionen: ProposedAction[] = Array.isArray(gespeichert) ? gespeichert as ProposedAction[] : ((gespeichert as { actions?: ProposedAction[] } | null)?.actions ?? []);
+                const gespeicherteTastatur = Array.isArray(gespeichert) ? undefined : (gespeichert as { tastatur?: SendMessageOptions } | null)?.tastatur;
+                await adapter.sendMessage(this.defaultChatId, msg, gespeicherteTastatur);
                 await this.merkeImGespraech(msg); // v1203
                 if (this.insightTracker && d.message) {
                   const lines = d.message.split('\n').filter((l: string) => l.trim().length > 10);
@@ -937,7 +943,7 @@ ${this.buildTopicInstructions()}`;
                   this.insightTracker.trackInsightBatch(cats, lines);
                 }
                 try {
-                  const deferredActions = JSON.parse(d.actions) as ProposedAction[];
+                  const deferredActions = gespeicherteAktionen;
                   if (deferredActions.length > 0) {
                     this.aktuelleVorgangIds = await this.legeVorgaengeAn(deferredActions); // v1182 — auch aufgeschobene Aktionen sind Vorgänge
                     await this.processActions(deferredActions);
@@ -1658,6 +1664,10 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   private anbieterPuls?: () => import('./vorgaenge/faktenpruefung.js').AnbieterPuls[];
   setAnbieterPuls(fn: () => import('./vorgaenge/faktenpruefung.js').AnbieterPuls[]): void { this.anbieterPuls = fn; }
 
+  /** v1364 — Hinweise, die der Owner als „schon bekannt" markiert hat (Beobachtung K1); von alfred.ts gesetzt. */
+  private bekannteHinweise?: () => Promise<Array<{ text: string; am: string }>>;
+  setBekannteHinweise(fn: () => Promise<Array<{ text: string; am: string }>>): void { this.bekannteHinweise = fn; }
+
   /** v1360 — Sektionsinhalt für die Fakten-Gegenprobe: Modell-Anbieter aus dem Puls, sonst aus dem Kollektor. */
   private datenlageFuer(sektion: string): string | undefined {
     if (sektion.startsWith('llm-')) return this.anbieterPuls ? anbieterDatenlage(this.anbieterPuls(), sektion.slice(4)) : undefined;
@@ -1686,8 +1696,27 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       this.logger.info({ hinweis: text.slice(0, 160), sektion: widerspruch.sektion, grund: widerspruch.grund }, 'v1360 Hinweis widerspricht Live-Daten — nicht zugestellt');
       return null;
     }
+    await this.beobachteBekannt(text);
     imLauf.push(text);
     return text;
+  }
+
+  /**
+   * v1364 — K1 beobachtend (Owner 12.10.: Sperrdauer für „schon bekannt" unsicher): Punkte, die als bekannt gesperrt
+   * würden, nur protokollieren — mit Tag seit der Markierung und ob neue Zahlen drinstehen. Zugestellt wird unverändert.
+   */
+  private async beobachteBekannt(text: string): Promise<void> {
+    if (!this.bekannteHinweise) return;
+    try {
+      const bekannte = await this.bekannteHinweise();
+      if (bekannte.length === 0) return;
+      for (const punkt of punkteAus(text)) {
+        const t = bekanntTreffer(punkt, bekannte, Date.now());
+        if (!t) continue;
+        this.kennzahlen.zaehle('hinweisBekanntBeobachtet');
+        this.logger.info({ punkt: punkt.slice(0, 140), gegen: t.gegen.slice(0, 100), tag: t.tag, inhalt: t.inhalt }, 'v1364 Hinweis wäre als bekannt gesperrt (beobachtend)');
+      }
+    } catch { /* Beobachtung ist optional */ }
   }
 
   /** Content-based hash: first 100 chars normalized. Catches exact/near-exact repeats. */
@@ -2097,21 +2126,32 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   }
 
   /** v1343 — zugestellte Insights einzeln für die Sammlung ablegen (Schlüssel je Tag und Titel = eine Episode je Tag). */
-  private async legeHinweiseAb(insights: string[], _actions: ProposedAction[], urgency: 'urgent' | 'high' | 'normal' | 'low', weg: 'sofort' | 'aufgeschoben'): Promise<void> {
-    if (!this.notificationRouter || insights.length === 0) return;
+  private async legeHinweiseAb(insights: string[], _actions: ProposedAction[], urgency: 'urgent' | 'high' | 'normal' | 'low', weg: 'sofort' | 'aufgeschoben'): Promise<Array<string | undefined>> {
+    if (!this.notificationRouter || insights.length === 0) return [];
     const tag = new Date().toISOString().slice(0, 10);
+    const ids: Array<string | undefined> = [];
     // v1361 — keine Aktion am Hinweis: die Aktionen des Passes laufen über die Autonomie-Klassen (siehe hinweisAktionErlaubt)
     for (const insight of insights) {
       const titel = insight.split('\n')[0].replace(/^[\s\-*•\d.)]+/, '').replace(/\*\*/g, '').trim().slice(0, 120) || 'Hinweis';
+      const n = {
+        source: 'reasoning', urgency, title: titel, body: insight,
+        chatId: this.defaultChatId, platform: this.defaultPlatform,
+        dedupeKey: `hinweis:${tag}:${titel.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-').slice(0, 80)}`,
+        zugestellt: weg,
+      } as const;
       try {
-        await this.notificationRouter.store({
-          source: 'reasoning', urgency, title: titel, body: insight,
-          chatId: this.defaultChatId, platform: this.defaultPlatform,
-          dedupeKey: `hinweis:${tag}:${titel.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-').slice(0, 80)}`,
-          zugestellt: weg,
-        });
-      } catch { /* Sammlung ist Komfort, die Zustellung läuft unabhängig */ }
+        // v1364 — ID für die Knöpfe 👍/👎 unter der Telegram-Meldung
+        if (typeof this.notificationRouter.storeMitId === 'function') ids.push((await this.notificationRouter.storeMitId(n)).id);
+        else { await this.notificationRouter.store(n); ids.push(undefined); }
+      } catch { ids.push(undefined); /* Sammlung ist Komfort, die Zustellung läuft unabhängig */ }
     }
+    return ids;
+  }
+
+  /** v1364 — Telegram-Knöpfe 👍/👎 je gezeigtem Hinweis der knappen Fassung (K1 „Auf Hinweise reagieren"). */
+  private hinweisTastatur(insights: string[], ids: Array<string | undefined>, gezeigt: number): SendMessageOptions | undefined {
+    const knoepfe = hinweisKnoepfe(gezeigteIds(insights, ids, gezeigt));
+    return knoepfe.length > 0 ? { replyMarkup: { inlineKeyboard: knoepfe } } : undefined;
   }
 
   private resolveUrgency(actions: ProposedAction[]): 'urgent' | 'high' | 'normal' | 'low' {
@@ -2169,9 +2209,11 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
     // Build message
     let message = '';
+    let gezeigt = 0;
     if (insights.length > 0) {
       // v1203 — Standard knapp: Titel + ein Satz je Insight, höchstens fünf; Volltext im Vorgang, „warum?" erklärt
       const knapp = knappeFassung(insights);
+      gezeigt = insights.filter(i => knappesInsight(i)).length - knapp.weggelassen; // v1364 — Knöpfe passen zu den Zeilen
       message = `\u{1F4A1} **Alfred Insights**\n\n${knapp.text}`;
       if (actions.length > 0) {
         const actionLines = actions.slice(0, 5).map(a => `\u26A1 ${a.description}`);
@@ -2193,13 +2235,14 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // v1343 — Sammlung „Hinweise": zugestellte (sofort/aufgeschoben) Insights zusätzlich in alfred_insights ablegen, damit
     // Apps und Web sie gesammelt mit Status zeigen (Owner 10.10.: „in der App verschwinden sie"). router:false — die
     // stille Zusammenfassung zählt nur still abgelegte, sonst käme dieselbe Meldung zweimal.
-    if (message) await this.legeHinweiseAb(insights, actions, urgency, !deliver && this.deliveryScheduler ? 'aufgeschoben' : 'sofort');
+    const hinweisIds = message ? await this.legeHinweiseAb(insights, actions, urgency, !deliver && this.deliveryScheduler ? 'aufgeschoben' : 'sofort') : [];
+    const tastatur = this.hinweisTastatur(insights, hinweisIds, gezeigt); // v1364 — 👍/👎 je Hinweis
 
     if (!deliver && this.deliveryScheduler && message) {
       // Defer for later
       await this.deliveryScheduler.defer(
         this.defaultChatId, this.defaultPlatform, urgency,
-        message, JSON.stringify(actions),
+        message, JSON.stringify(tastatur ? { actions, tastatur } : actions), // v1364 — Knöpfe reisen mit (Altform: nur Aktionen)
       );
       this.kennzahlen.zaehle('insightsAufgeschoben', insights.length);
       this.merkeBegruendung(insights, 'aufgeschoben', durationMs, this.deliveryScheduler.letzterGrund); // v1196/v1198
@@ -2213,7 +2256,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     if (message) {
       const adapter = this.adapters.get(this.defaultPlatform);
       if (adapter) {
-        await adapter.sendMessage(this.defaultChatId, message);
+        await adapter.sendMessage(this.defaultChatId, message, tastatur);
         await this.merkeImGespraech(message); // v1203 — Gesprächsfaden: Alfreds Meldung ist Teil der Unterhaltung
         for (const insight of insights) await this.markSent(insight);
         this.kennzahlen.zaehle('insightsGesendet', insights.length);

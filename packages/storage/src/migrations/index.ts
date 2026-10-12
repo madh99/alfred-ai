@@ -2908,4 +2908,13 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_regeln_befund ON regeln(user_id, quelle, gegenstand, status)');
     },
   },
+  {
+    version: 133,
+    description: 'v1364 — Auf Hinweise reagieren (K1): Reaktion des Owners am Hinweis (SQLite-Spiegel zu PG v137).',
+    up(db) {
+      for (const sp of ['reaktion', 'reaktion_am']) {
+        try { db.exec(`ALTER TABLE alfred_insights ADD COLUMN ${sp} TEXT`); } catch { /* exists */ }
+      }
+    },
+  },
 ];

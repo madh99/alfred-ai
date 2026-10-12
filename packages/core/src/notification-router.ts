@@ -96,12 +96,17 @@ export class NotificationRouter {
 
   /** Stille Ablage in alfred_insights (Insights-UI + silent_digest). */
   async store(n: RoutedNotification): Promise<'stored' | 'dropped'> {
-    if (!this.insightsRepo) return 'dropped';
+    return (await this.storeMitId(n)).ergebnis;
+  }
+
+  /** v1364 — wie store, liefert zusätzlich die ID des Hinweises (Telegram-Knöpfe 👍/👎 verweisen darauf). */
+  async storeMitId(n: RoutedNotification): Promise<{ ergebnis: 'stored' | 'dropped'; id?: string }> {
+    if (!this.insightsRepo) return { ergebnis: 'dropped' };
     try {
       const reasonsSuffix = n.reasons && n.reasons.length > 0
         ? `\n\n_Einstufung (${n.urgency}): ${n.reasons.join(' · ')}_`
         : '';
-      await this.insightsRepo.upsertCandidate(this.ownerUserId, {
+      const r = await this.insightsRepo.upsertCandidate(this.ownerUserId, {
         category: n.source,
         title: n.title.slice(0, 200),
         body: `${n.body}${reasonsSuffix}`,
@@ -112,10 +117,10 @@ export class NotificationRouter {
         dedupeKey: n.dedupeKey,
       });
       this.logger.debug({ source: n.source, urgency: n.urgency, title: n.title.slice(0, 60) }, 'v927 router: stored silently');
-      return 'stored';
+      return { ergebnis: 'stored', id: r.id || undefined };
     } catch (err) {
       this.logger.warn({ err, source: n.source }, 'v927 router: store failed');
-      return 'dropped';
+      return { ergebnis: 'dropped' };
     }
   }
 }

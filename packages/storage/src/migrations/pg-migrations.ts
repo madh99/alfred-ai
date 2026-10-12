@@ -2216,4 +2216,12 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_regeln_befund ON regeln(user_id, quelle, gegenstand, status)', []);
     },
   },
+  {
+    version: 137,
+    description: 'v1364 — Auf Hinweise reagieren (K1): Reaktion des Owners am Hinweis (nützlich, gelesen, nicht nützlich mit Grund, besprochen) (PG-Spiegel zu SQLite v133).',
+    async up(db) {
+      await db.execute(`ALTER TABLE alfred_insights ADD COLUMN IF NOT EXISTS reaktion TEXT`, []);
+      await db.execute(`ALTER TABLE alfred_insights ADD COLUMN IF NOT EXISTS reaktion_am TEXT`, []);
+    },
+  },
 ];

@@ -46,6 +46,9 @@ export interface Insight {
   updatedAt: string;
   actedAt?: string;
   dismissedAt?: string;
+  /** v1364 — Reaktion des Owners (nuetzlich, gelesen, nicht_nuetzlich, bekannt, falsch, kein_interesse, zu_oft, besprochen). */
+  reaktion?: string;
+  reaktionAm?: string;
 }
 
 export interface InsightCandidate {
@@ -88,7 +91,7 @@ export class InsightsRepository {
       // dauerhaft (bewusstes Nein des Owners).
       if (existing && istNeueEpisode(existing, Date.now())) {
         await this.db.execute(
-          `UPDATE alfred_insights SET title = ?, body = ?, confidence = ?, source_data = ?, action_skill = ?, action_params = ?, status = 'pending', snoozed_until = NULL, acted_at = NULL, dismissed_at = NULL, created_at = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE alfred_insights SET title = ?, body = ?, confidence = ?, source_data = ?, action_skill = ?, action_params = ?, status = 'pending', snoozed_until = NULL, acted_at = NULL, dismissed_at = NULL, reaktion = NULL, reaktion_am = NULL, created_at = ?, updated_at = ? WHERE id = ?`,
           [candidate.title, candidate.body, candidate.confidence ?? 0.5,
            candidate.sourceData ? JSON.stringify(candidate.sourceData) : null,
            candidate.actionSkill ?? null,
@@ -242,6 +245,22 @@ export class InsightsRepository {
     await this.db.execute(`UPDATE alfred_insights SET status = 'acted', acted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`, [now, now, id, userId]);
   }
 
+  /** v1364 — Reaktion des Owners festhalten (Status setzt der Aufrufer getrennt). */
+  async setzeReaktion(userId: string, id: string, reaktion: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.execute(`UPDATE alfred_insights SET reaktion = ?, reaktion_am = ?, updated_at = ? WHERE id = ? AND user_id = ?`, [reaktion, now, now, id, userId]);
+  }
+
+  /** v1364 — Hinweise mit einer der Reaktionen seit `seit` (Beobachtung „bekannt", Präzision). */
+  async mitReaktion(userId: string, reaktionen: string[], seit: string): Promise<Insight[]> {
+    if (reaktionen.length === 0) return [];
+    const rows = await this.db.query(
+      `SELECT * FROM alfred_insights WHERE user_id = ? AND reaktion IN (${reaktionen.map(() => '?').join(',')}) AND reaktion_am >= ? ORDER BY reaktion_am DESC LIMIT 200`,
+      [userId, ...reaktionen, seit],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   /**
    * v1343 — Sammlung „Hinweise" für Apps und Web: alles ab `seit` (Einführung, kein Altbestand), offen und später zuerst,
    * entschiedene der letzten 7 Tage dahinter; abgelaufene nicht. Neueste zuerst.
@@ -304,6 +323,8 @@ export class InsightsRepository {
       updatedAt: r.updated_at as string,
       actedAt: r.acted_at as string | undefined,
       dismissedAt: r.dismissed_at as string | undefined,
+      reaktion: (r.reaktion as string | null) ?? undefined,
+      reaktionAm: (r.reaktion_am as string | null) ?? undefined,
     };
   }
 }
