@@ -51,7 +51,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
-## [0.19.0-jarvis.1382] - 2026-10-12
+## [0.19.0-jarvis.1383] - 2026-10-12
+
+### Added — Prüfschritte auf Geräten; Ende-Meldung auch nach Neustart in der richtigen Sitzung (v1383)
+
+- **Geräteaktion `pruefen`** (ohne Bestätigung, lesend): prüft Abnahmekriterien ohne Modell und liefert ok oder fehl je Kriterium mit Grund — Datei existiert bzw. enthält einen Text, Adresse antwortet mit dem erwarteten Status bzw. Text, im Fenster steht ein Text (laut Element-Karte, Passwortfelder ausgenommen). Bis zu 10 Kriterien je Aufruf.
+- **Geräteaktion `pruefen_befehl`** (mit Bestätigung): zusätzlich Befehle wie `npm test`, `pytest` oder ein Build — ok bei Exit 0, optional mit erwartetem Text in der Ausgabe, Zeitlimit bis 10 Minuten, nur in Verzeichnissen mit Schreibrecht. Fehlschläge zeigen das Ende der Ausgabe.
+- **Ende-Meldung nach Neustart:** Die Zuordnung „Auftrag → Sitzung des Starts" liegt jetzt in einer Datei; startet Alfred neu, während Claude Code arbeitet, geht die Meldung trotzdem in die Sitzung, aus der der Auftrag kam (vorher nur in den Owner-Chat). Einträge verfallen nach 7 Tagen.
+- **Geräte-Schema:** Listen-Parameter von Geräteaktionen tragen jetzt die Elementbeschreibung, die manche Anbieter verlangen.
+
+
 
 ### Added — Claude-Code-Aufträge melden ihr Ende selbst (v1382)
 

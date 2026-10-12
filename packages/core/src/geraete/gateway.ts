@@ -10,6 +10,7 @@ import type { GeraeteRepository } from '@alfred/storage';
 import type { GeraetEintrag, GeraetManifest, GeraetNachricht, GeraetAktionErgebnis } from '@alfred/types';
 import { GeraetSkill } from './geraet-skill.js';
 import { Freigaben, VorhabenFreigaben, vorhabenDateiSpeicher } from './freigaben.js';
+import { AuftragHerkunft } from './auftrag-herkunft.js'; // v1383
 import { Transfers, TransferOffsetFehler } from './transfers.js'; // v1249
 import { AKTION_TIMEOUT_MS, PAIRING_CODE_GUELTIG_MS, PULS_TIMEOUT_MS, erzeugePairingCode, erzeugeToken, geraetSkillName, hashToken, pruefeManifest } from './protokoll.js';
 
@@ -31,6 +32,8 @@ export interface GeraeteGatewayDeps {
   schritt?: (s: { userId: string; art: string; skill: string; aktion?: string; params?: Record<string, unknown>; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }) => Promise<void>;
   /** v1240 — Datei, in der laufende Vorhaben Neustarts überleben. */
   vorhabenDatei?: string;
+  /** v1383 — Zuordnung Auftrag → Sitzung des Starts (übersteht Neustarts des Gehirns) */
+  auftraegeDatei?: string;
   /** v1249 — Ordner für Teildateien des blockweisen Transfers. */
   transferOrdner?: string;
   /** v1258 — öffentlicher Release-Schlüssel für das Willkommen (Satelliten prüfen Updates damit). */
@@ -60,7 +63,7 @@ export class GeraeteGateway {
   private readonly wss = new WebSocketServer({ noServer: true });
   /** v1342/v1382 — gestartete Aufträge (Claude Code) je Gerät und die Sitzung, aus der sie kamen: das Ende wird dort gemeldet.
    *  Am Gateway statt an der Verbindung, damit ein Wiederverbinden des Satelliten die Zuordnung nicht verliert. */
-  private readonly auftraege = new Map<string, { chatId: string; platform: string; userId: string }>();
+  private readonly auftraege: AuftragHerkunft;
   private readonly verbindungen = new Map<string, Verbindung>();
   private readonly pairingCodes = new Map<string, { userId: string; gueltigBis: number; fehlversuche: number }>();
   /** v1225 — Fehlversuche je Absender: nach 10 in 10 Minuten wird das Pairing für diesen Absender abgelehnt. */
@@ -76,6 +79,7 @@ export class GeraeteGateway {
   private wachhund?: ReturnType<typeof setInterval>;
 
   constructor(private readonly deps: GeraeteGatewayDeps) {
+    this.auftraege = new AuftragHerkunft(this.deps.auftraegeDatei); // v1383
     this.vorhaben = new VorhabenFreigaben(() => this.deps.now?.() ?? Date.now(), this.deps.vorhabenDatei ? vorhabenDateiSpeicher(this.deps.vorhabenDatei) : undefined); // v1240
     this.transfers = new Transfers(this.deps.transferOrdner ?? path.join(os.tmpdir(), 'alfred-transfers'), () => this.deps.now?.() ?? Date.now()); // v1249
   }
@@ -231,7 +235,7 @@ export class GeraeteGateway {
       istOwner: this.deps.istOwner, // v1268
       geraetId: v.eintrag.id, name: v.eintrag.name, manifest: v.eintrag.manifest, skillName: v.skillName,
       sendeAktion: (aktion, params, timeoutMs) => this.sendeAktion(v.eintrag.id, aktion, params, timeoutMs),
-      merkeAuftrag: (auftragId, herkunft) => { this.auftraege.set(`${v.eintrag.id}:${auftragId}`, herkunft); }, // v1342/v1382
+      merkeAuftrag: (auftragId, herkunft) => { this.auftraege.merke(v.eintrag.id, auftragId, herkunft); }, // v1342/v1383
       bestaetigung: async (frage, herkunft) => {
         if (!this.deps.enqueueBestaetigung) return false;
         const ziel = this.deps.ownerZiel();
@@ -286,9 +290,7 @@ export class GeraeteGateway {
       }
       case 'ereignis': {
         // v1342 — Auftrag (Claude Code) auf dem Gerät beendet → Fortsetzung in der Sitzung, aus der er gestartet wurde
-        const schluessel = `${v.eintrag.id}:${n.auftragId}`;
-        const herkunft = this.auftraege.get(schluessel);
-        this.auftraege.delete(schluessel);
+        const herkunft = this.auftraege.nimm(v.eintrag.id, n.auftragId);
         this.deps.logger.info({ geraet: v.eintrag.name, auftrag: n.auftragId, status: n.status, herkunft: herkunft?.chatId }, 'v1342 Auftrag beendet');
         this.deps.beiEreignis?.({ geraet: v.eintrag.name, skillName: v.skillName, ereignis: n, herkunft }).catch(err => this.deps.logger.warn({ err: (err as Error).message }, 'v1342 Ereignis nicht verarbeitet'));
         return;

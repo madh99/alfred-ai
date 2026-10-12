@@ -62,7 +62,8 @@ export class GeraetSkill extends Skill {
       domains: { type: 'array', items: { type: 'string' }, description: 'Nur für vorhaben: erlaubte Domains (z. B. amazon.de)' },
       dauerMin: { type: 'number', description: 'Nur für vorhaben: Gültigkeit in Minuten (Standard 30, höchstens 120)' },
     };
-    for (const a of aktionen) for (const [k, p] of Object.entries(a.parameter ?? {})) if (!params[k]) params[k] = { type: p.type, description: p.description ?? `${k} (für ${a.name})` };
+    // v1383 — Arrays brauchen items (OpenAI lehnt Schemata ohne items ab)
+    for (const a of aktionen) for (const [k, p] of Object.entries(a.parameter ?? {})) if (!params[k]) params[k] = { type: p.type, description: p.description ?? `${k} (für ${a.name})`, ...(p.type === 'array' ? { items: p.items ?? { type: 'object' } } : {}) };
     this.metadata = {
       name: deps.skillName,
       category: 'core',

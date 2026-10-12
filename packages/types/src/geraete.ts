@@ -16,7 +16,7 @@ export interface GeraetAktionDef {
   beschreibung: string;
   autonomie: GeraetAutonomie;
   /** JSON-Schema-artige Parameterbeschreibung für das Modell. */
-  parameter?: Record<string, { type: string; description?: string; required?: boolean }>;
+  parameter?: Record<string, { type: string; description?: string; required?: boolean; items?: Record<string, unknown> }>; // v1383 items für Arrays
 }
 
 export interface GeraetManifest {

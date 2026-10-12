@@ -27,6 +27,7 @@ import { linuxStandardVerzeichnisse, repariereStandardFreigaben } from './satell
 import { linuxSitzungsUmgebung } from './satellit-bedienen-linux.js'; // v1339
 import { IpcServer, type IpcEreignisArt, type IpcAnhang, type SatellitStatus } from './satellit-ipc.js'; // v1302, v1325 Anhang
 import { heimInParams } from './satellit-pfad.js'; // v1303
+import { pruefungenAus, pruefeAlle, type PruefMittel } from './satellit-pruefen.js'; // v1383 R1
 import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
@@ -61,6 +62,9 @@ export function baueManifest(version: string): GeraetManifest {
     hostname: os.hostname(),
     satellitVersion: version,
     aktionen: [
+      // v1383 R1 — harte Prüfschritte ohne Modell (Abnahme nach einem Auftrag): ok/fehl je Kriterium
+      { name: 'pruefen', beschreibung: 'Prüft Abnahmekriterien deterministisch und liefert ok/fehl je Kriterium: art datei (ziel = Pfad, existiert; enthaelt = Text), http (ziel = URL, status Standard 200; enthaelt), fenster (ziel = Fenstertitel oder leer = aktives Fenster; enthaelt = Text im Fenster). Für Befehle (npm test, Build) pruefen_befehl.', autonomie: 'auto', parameter: { pruefungen: { type: 'array', description: 'Liste von {art, ziel, enthaelt?, status?, cwd?, timeoutS?}', items: { type: 'object' } } } },
+      { name: 'pruefen_befehl', beschreibung: 'Wie pruefen, zusätzlich art befehl (ziel = Befehl, cwd = Verzeichnis mit Schreibrecht, ok bei Exit 0; enthaelt = Text in der Ausgabe; timeoutS bis 600) — z. B. npm test, pytest, Build nach einem Claude-Code-Auftrag.', autonomie: 'bestaetigen', parameter: { pruefungen: { type: 'array', description: 'Liste von {art, ziel, enthaelt?, status?, cwd?, timeoutS?}', items: { type: 'object' } } } },
       { name: 'oeffnen', beschreibung: 'Öffnet eine Datei, einen Ordner (im Explorer/Finder) oder eine URL auf diesem Gerät', autonomie: 'bestaetigen', parameter: { path: { type: 'string', description: 'Absoluter Pfad (innerhalb freigegebener Verzeichnisse) oder URL' } } },
       { name: 'shell', beschreibung: `Führt einen Befehl auf diesem Gerät aus — ${process.platform === 'win32' ? 'PowerShell' : 'sh'} (Arbeitsverzeichnis innerhalb freigegebener Verzeichnisse). Zum Öffnen von Dateien, Ordnern oder URLs lieber „oeffnen" nutzen.`, autonomie: 'bestaetigen', parameter: { command: { type: 'string', description: process.platform === 'win32' ? 'PowerShell-Befehl' : 'Shell-Befehl' }, cwd: { type: 'string', description: 'Arbeitsverzeichnis (optional)' } } },
       { name: 'liste', beschreibung: 'Listet ein freigegebenes Verzeichnis dieses Geräts (Namen, Größe, Datum)', autonomie: 'auto', parameter: { path: { type: 'string', description: 'Absoluter Pfad eines freigegebenen Verzeichnisses' } } },
@@ -349,6 +353,44 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!id) return { success: false, error: 'id fehlt' };
       try { const m = auftragAbbrechen(id); return { success: true, data: { id, status: m.status }, display: `Auftrag ${id} abgebrochen (${m.titel})` }; }
       catch (err) { return { success: false, error: (err as Error).message }; }
+    }
+    // v1383 R1 — Prüfschritte; Befehle nur über pruefen_befehl (Bestätigung), Rechte wie shell/datei_holen
+    case 'pruefen':
+    case 'pruefen_befehl': {
+      const liste = pruefungenAus(params, aktion === 'pruefen' ? ['datei', 'http', 'fenster'] : ['datei', 'http', 'fenster', 'befehl']);
+      if (typeof liste === 'string') return { success: false, error: liste };
+      const mittel: PruefMittel = {
+        datei: async (pfad) => {
+          if (!istPfadErlaubt(pfad, lesbar)) return { existiert: false, fehler: `Pfad nicht freigegeben: ${pfad}` };
+          if (!existsSync(pfad)) return { existiert: false };
+          const st = statSync(pfad);
+          return { existiert: true, inhalt: st.isFile() && st.size <= 2_000_000 ? readFileSync(pfad, 'utf8') : '' };
+        },
+        http: async (url) => {
+          const r = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: 'follow' });
+          return { status: r.status, text: (await r.text()).slice(0, 200_000) };
+        },
+        fenster: async (titel) => {
+          const karte = await bedienen(k).fensterLesen(titel);
+          return [karte.fenster, karte.programm, ...karte.elemente.filter(e => !e.passwort).map(e => [e.name, e.wert].filter(Boolean).join(' '))].filter(Boolean).join('\n');
+        },
+        befehl: async (befehl, cwdRoh, timeoutMs) => {
+          const cwd = cwdRoh ?? frei.find(d => existsSync(d)) ?? frei[0];
+          if (!cwd || !istPfadErlaubt(cwd, frei)) throw new Error(`Arbeitsverzeichnis nicht freigegeben (Schreibrecht nötig): ${cwd ?? '-'}`);
+          if (!existsSync(cwd)) throw new Error(`Arbeitsverzeichnis existiert nicht: ${cwd}`);
+          return await new Promise((resolve) => {
+            const fertig = (err: Error | null, so: string | Buffer, se: string | Buffer) => { const fe = err as (Error & { code?: number | string; killed?: boolean }) | null;
+              const ausgabe = `${String(so)}${String(se) ? `\n${String(se)}` : ''}`.slice(-20_000);
+              resolve({ exit: !fe ? 0 : fe.killed ? null : typeof fe.code === 'number' ? fe.code : 1, ausgabe });
+            };
+            const opts = { cwd, timeout: Math.min(timeoutMs, 600_000), maxBuffer: 4 * 1024 * 1024, windowsHide: true };
+            if (process.platform === 'win32') execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', befehl], opts, fertig);
+            else exec(befehl, { ...opts, shell: '/bin/sh' }, fertig);
+          });
+        },
+      };
+      const r = await pruefeAlle(liste, mittel);
+      return { success: true, data: { ok: r.ok, ergebnisse: r.ergebnisse }, display: r.text };
     }
     case 'shell': {
       const command = String(params.command ?? '').trim();
