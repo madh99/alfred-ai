@@ -928,3 +928,7 @@ Falsche Schnellantwort ohne Modell → nur eindeutige Muster, Parallelwoche, uns
 ### Offene Owner-Entscheidungen
 
 Textauszüge speichern (Vorschlag ja, ≤ 200 Zeichen, 90 Tage) oder nur Wortmerkmale; Freigabe L0 jetzt (Vorschlag ja, reine Messung); welche Fragen L1 zuerst (nach L0-Auswertung).
+
+**Owner-Entscheidungen 12.10. („wie empfohlen"):** L0 jetzt, Textauszüge ≤ 200 Zeichen, 90 Tage.
+
+**Umsetzungsstand:** v1374 (12.10.) L0 — Tabelle `anfrage_protokoll`, Haken am Ende jeder Gesprächsanfrage und bei Abbruch, Folgesignal korrigiert/wiederholt (5 min, deterministisch), Aufräumen täglich 03:50; Logzeile „v1374 Anfrage-Folgesignal".

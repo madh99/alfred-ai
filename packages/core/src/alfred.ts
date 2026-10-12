@@ -6446,6 +6446,26 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       personality: this.config.personality,
     });
 
+    // v1374 — Lernende Helfer L0 (Owner 12.10. „wie empfohlen"): je Gesprächsanfrage eine Zeile (Auszug ≤ 200 Zeichen, 90 Tage);
+    // die nächste Nachricht im selben Chat setzt binnen 5 min das Folgesignal der vorigen (korrigiert/wiederholt). Nur Messung.
+    if (this.database) {
+      const { AnfrageProtokollRepository } = await import('@alfred/storage');
+      const { folgesignalFuer, FOLGE_FENSTER_MS } = await import('./lernen/anfrage-protokoll.js');
+      const protokoll = new AnfrageProtokollRepository(this.database.getAdapter());
+      this.pipeline.setAnfrageProtokoll(async (e) => {
+        const vorher = await protokoll.letzteImChat(e.chatId, new Date(Date.now() - FOLGE_FENSTER_MS).toISOString());
+        if (vorher && !vorher.folgesignal) {
+          const signal = folgesignalFuer(vorher.textAuszug, e.text);
+          if (signal) { await protokoll.setzeFolgesignal(vorher.id, signal); this.logger.info({ signal, vorher: vorher.textAuszug.slice(0, 80) }, 'v1374 Anfrage-Folgesignal'); }
+        }
+        await protokoll.anlegen({ userId: e.userId, kanal: e.kanal, chatId: e.chatId, absicht: e.absicht, textAuszug: e.text, werkzeuge: e.werkzeuge, stufe: e.stufe, modell: e.modell, dauerMs: e.dauerMs, kostenUsd: e.kostenUsd, runden: e.runden, folgesignal: e.abgebrochen ? 'abgebrochen' : undefined });
+      });
+      this.registriereJob({
+        key: 'anfrage-protokoll-aufraeumen', beschreibung: 'Anfrage-Protokoll: Einträge älter als 90 Tage löschen', takt: { art: 'taeglich', um: '03:50' }, bereich: 'global', slot: true,
+        run: async () => ({ ok: true, zaehler: { geloescht: await protokoll.aufraeumen(90) } }),
+      });
+    }
+
     // 5e. Initialize cluster manager BEFORE schedulers
     if (this.config.cluster?.enabled) {
       // HA requires PostgreSQL

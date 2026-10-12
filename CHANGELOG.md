@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1374] - 2026-10-12
+
+### Added — Anfrage-Protokoll als Lernsignal (Lernende Helfer L0, v1374)
+
+Erster Schritt der Spec „Lernende Helfer neben dem Sprachmodell" (Owner-Freigabe 12.10.): Bevor ein kleines Lernverfahren einzelne Entscheidungen übernehmen kann, wird zwei Wochen gemessen. Je Gesprächsanfrage entsteht eine Zeile in `anfrage_protokoll` (Migration PG v138 / SQLite v134): Zeit, Kanal, grobe Absicht (Kategorien des Skill-Filters), Textauszug (höchstens 200 Zeichen), genutzte Werkzeuge mit Aktion und Ausgang, Modellstufe und Modell, Dauer, Kosten, Werkzeugrunden — und das Folgesignal: Widerspricht der Owner innerhalb von fünf Minuten („nein, ich meinte …", „das stimmt nicht"), gilt die vorige Anfrage als korrigiert; stellt er fast dieselbe Frage noch einmal, als wiederholt; ein Abbruch per Stopp-Knopf wird als abgebrochen vermerkt. Knöpfe, Bestätigungen, geplante Aufgaben und Update-Befehle zählen nicht. Einträge älter als 90 Tage löscht ein täglicher Job. Nichts entscheidet auf diesen Daten; ausgewertet wird um den 26.10.
+
 ## [0.19.0-jarvis.1373] - 2026-10-12
 
 ### Fixed — Licht-Dauer-Prüfung fand keine Lichter (v1373)

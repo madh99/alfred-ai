@@ -145,3 +145,11 @@ export function filterSkills(
 ): SkillMetadata[] {
   return skills.filter(s => categories.has(s.category ?? 'core'));
 }
+
+/**
+ * v1374 — Lernende Helfer L0: grobe Absicht einer Anfrage = Kategorien, deren Schlüsselwörter treffen (ohne Rückfall,
+ * ohne 'core'). Deterministisch, für das Anfrage-Protokoll.
+ */
+export function absichtenAus(text: string): string[] {
+  return (Object.entries(CATEGORY_KEYWORDS) as [string, RegExp][]).filter(([, p]) => p.test(text)).map(([k]) => k);
+}

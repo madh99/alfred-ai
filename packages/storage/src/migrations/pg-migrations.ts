@@ -2224,4 +2224,16 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE alfred_insights ADD COLUMN IF NOT EXISTS reaktion_am TEXT`, []);
     },
   },
+  {
+    version: 138,
+    description: 'v1374 — Lernende Helfer L0: anfrage_protokoll (Absicht, Werkzeuge, Stufe, Dauer, Kosten, Folgesignal je Gesprächsanfrage) (PG-Spiegel zu SQLite v134).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS anfrage_protokoll (
+        id TEXT PRIMARY KEY, user_id TEXT, zeit TEXT NOT NULL, kanal TEXT NOT NULL, chat_id TEXT NOT NULL, absicht TEXT, text_auszug TEXT,
+        werkzeuge TEXT, stufe TEXT, modell TEXT, dauer_ms INTEGER, kosten_usd DOUBLE PRECISION, runden INTEGER, folgesignal TEXT
+      )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_anfrage_protokoll_chat ON anfrage_protokoll(chat_id, zeit)', []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_anfrage_protokoll_zeit ON anfrage_protokoll(zeit)', []);
+    },
+  },
 ];

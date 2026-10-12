@@ -28,6 +28,8 @@ import { gespraechsZiel, fadenBefehl, verlaufBefehl, spiegelBefehl, type Gesprae
 import { randomUUID as arbeitsId } from 'node:crypto';
 import { arbeitsMelder, type ArbeitsEreignis } from './geraete/arbeits-melder.js'; // v1354
 import type { Platform } from '@alfred/types';
+import { istProtokollAnfrage, werkzeugeAus } from './lernen/anfrage-protokoll.js'; // v1374
+import { absichtenAus } from './skill-filter.js'; // v1374
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
 const NODE_LOCAL_SKILLS = new Set([
@@ -343,6 +345,14 @@ export class MessagePipeline {
   /** v1206 — Weltmodell-Zusammenfassung für den Chat (lazy, aus dem Reasoning-Kollektor). */
   private weltmodellQuelle?: () => string | undefined;
   setWeltmodellQuelle(fn: () => string | undefined): void { this.weltmodellQuelle = fn; }
+
+  /** v1374 — Lernende Helfer L0: Anfrage-Protokoll (von alfred.ts gesetzt; Fehler dort bleiben folgenlos). */
+  private anfrageProtokoll?: (e: { chatId: string; kanal: string; userId?: string; text: string; absicht: string[]; werkzeuge: Array<{ skill: string; aktion?: string; ok: boolean }>; stufe?: string; modell?: string; dauerMs: number; kostenUsd: number; runden: number; abgebrochen?: boolean }) => Promise<void>;
+  setAnfrageProtokoll(fn: NonNullable<MessagePipeline['anfrageProtokoll']>): void { this.anfrageProtokoll = fn; }
+  private protokolliere(message: NormalizedMessage, d: { userId?: string; werkzeuge: Array<{ skill: string; aktion?: string; ok: boolean }>; modell?: string; dauerMs: number; kostenUsd: number; runden: number; abgebrochen?: boolean }): void {
+    if (!this.anfrageProtokoll || !istProtokollAnfrage(message.text, message.chatId, message.metadata as Record<string, unknown> | undefined)) return;
+    void this.anfrageProtokoll({ chatId: message.chatId, kanal: message.platform, text: message.text, absicht: absichtenAus(message.text), stufe: (message.metadata?.tier as string | undefined) ?? 'default', ...d }).catch(() => undefined);
+  }
 
   setQuickActions(handler: import('./quick-actions.js').QuickActionHandler): void {
     this.quickActions = handler;
@@ -1452,7 +1462,7 @@ export class MessagePipeline {
           // Save dummy assistant response to prevent orphaned user message
           await this.conversationManager.addMessage(conversation.id, 'assistant', '⏹ Abgebrochen.');
           this.activeRequests.delete(requestKey);
-          return { text: '⏹ Anfrage abgebrochen.' };
+          this.protokolliere(message, { werkzeuge: [], dauerMs: Date.now() - startTime, kostenUsd: 0, runden: 0, abgebrochen: true }); return { text: '⏹ Anfrage abgebrochen.' }; // v1374
         }
 
         // Re-trim if tool loop has grown beyond the context budget
@@ -1566,7 +1576,7 @@ export class MessagePipeline {
         if (abortController.signal.aborted) {
           await this.conversationManager.addMessage(conversation.id, 'assistant', '⏹ Abgebrochen.');
           this.activeRequests.delete(requestKey);
-          return { text: '⏹ Anfrage abgebrochen.' };
+          this.protokolliere(message, { werkzeuge: [], dauerMs: Date.now() - startTime, kostenUsd: 0, runden: 0, abgebrochen: true }); return { text: '⏹ Anfrage abgebrochen.' }; // v1374
         }
 
         // Build assistant message with text + tool_use blocks
@@ -1644,7 +1654,7 @@ export class MessagePipeline {
       if (abortController.signal.aborted) {
         await this.conversationManager.addMessage(conversation.id, 'assistant', '⏹ Abgebrochen.');
         this.activeRequests.delete(requestKey);
-        return { text: '⏹ Anfrage abgebrochen.' };
+        this.protokolliere(message, { werkzeuge: [], dauerMs: Date.now() - startTime, kostenUsd: 0, runden: 0, abgebrochen: true }); return { text: '⏹ Anfrage abgebrochen.' }; // v1374
       }
 
       // Use the final response content, or fall back to the last assistant text
@@ -1815,6 +1825,7 @@ export class MessagePipeline {
         },
         'Message processed',
       );
+      this.protokolliere(message, { userId: alfredUser?.id, werkzeuge: werkzeugeAus(accumulatedToolCalls, accumulatedToolResults as Array<{ type?: string; tool_use_id?: string; is_error?: boolean }>), modell: model, dauerMs: duration, kostenUsd: requestCostUsd, runden: iteration }); // v1374
 
       this.recordMetric(true, Date.now() - startTime, {
         input: totalInputTokens, output: totalOutputTokens, costUsd: requestCostUsd,

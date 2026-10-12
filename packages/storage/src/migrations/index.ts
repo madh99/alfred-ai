@@ -2917,4 +2917,16 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 134,
+    description: 'v1374 — Lernende Helfer L0: anfrage_protokoll (SQLite-Spiegel zu PG v138).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS anfrage_protokoll (
+        id TEXT PRIMARY KEY, user_id TEXT, zeit TEXT NOT NULL, kanal TEXT NOT NULL, chat_id TEXT NOT NULL, absicht TEXT, text_auszug TEXT,
+        werkzeuge TEXT, stufe TEXT, modell TEXT, dauer_ms INTEGER, kosten_usd REAL, runden INTEGER, folgesignal TEXT
+      )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_anfrage_protokoll_chat ON anfrage_protokoll(chat_id, zeit)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_anfrage_protokoll_zeit ON anfrage_protokoll(zeit)');
+    },
+  },
 ];
