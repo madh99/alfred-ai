@@ -370,6 +370,52 @@ Claude Code liest im Projekt fremde Dateien (Bibliotheken, READMEs, fremde Spezi
 
 Projekt anfangen/weiterführen (PC, VM); Projekt des Projekt-Skills auf einem Satelliten testen (Etappe „auschecken, installieren, Tests" mit Abnahme Exit 0); App starten und sehen (Prüfung Bildschirmfoto/HTTP/Browser); Nachbesserung aus Review-Befunden; Deploy über den Deploy-Skill auf .96 mit Nachkontrolle (status, logs, HTTP); Betriebsaufgaben (installieren, konfigurieren, Dienst neu starten) als Etappen mit Vertrauensstufe; Beobachter (Outlook, Benachrichtigungen, Datei erscheint, Build rot) als Schicht-2-Ereignisse, die einen Projektvorgang auslösen oder fortsetzen.
 
+### R2 — Prüfung gegen den Stand 12.10. (Owner: „R2 spec prüfen", ohne Freigabe)
+
+**Kernbefund: Die Schleife gibt es schon — im Projekt-Agenten am Server.** Der Entwurf vom 10.10. führt den Projekt-Agenten (`project-agent-runner.ts`, 2 335 Zeilen) nur als „Ausführungsziel Server". Tatsächlich enthält er bereits fast alles, was R2 neu bauen wollte:
+
+| R2-Entwurf | vorhanden im Projekt-Agenten |
+|---|---|
+| Planen mit Etappen | `createProjectPlan` (Phasen), Plan-Review vor dem Start, Phasen persistiert (`plansRepo`: markRunning/markFailed, Zeiten) |
+| Bauen je Etappe | `executeAgent` je Phase (claude-code/codex/mistral-vibe auf .92), Zeitlimit je Phase |
+| Hart prüfen | `validateBuild` mit `buildCommands`/`testCommands` (Exit-Code), `extractBuildError` |
+| Entscheiden aus fester Liste | **deterministisch**: Build grün → nächste Phase; rot → Fix-Auftrag mit Build-Fehler, höchstens `maxFixAttempts` (3); danach `awaiting_user` (= Rückfrage). Zusätzlich `assessPlanProgress`: Modell darf den Plan ändern (proceed/skip/insert/modify, Schema, Rückfall „proceed") |
+| Melden | `sendProgress` je Phase ins Gespräch, Ausgabe-Puffer (SSE) |
+| Grenzen | Wochenbudget je Projekt (`budgetStatusResolver`), `maxDurationHours` (8), Stopp, `interject` |
+| Gedächtnis | Commit je Phase, Lessons-Loop (v825), Projekt-Skill (open items, decisions) |
+
+Einen zweiten Projektvorgang daneben zu bauen hieße, dieselbe Schleife doppelt zu pflegen (Grundsatz „vorhandene Bausteine prüfen statt Abkürzung", Owner 12.10.). **Neuer Zuschnitt R2: der Projekt-Agent bekommt das Ausführungsziel „Satellit".** Statt `executeAgent` lokal: `auftrag_starten` auf dem Gerät und Warten auf die Ende-Meldung (R1, v1382); statt `validateBuild` lokal: `pruefen_befehl` (v1383) mit denselben Build-/Test-Befehlen; Dateiliste aus dem Ende-Ereignis statt `git diff` am Server. Dafür eine schmale Schnittstelle „Arbeitsplatz" im Runner (agentAusfuehren, befehlePruefen, geaenderteDateien, commit) mit den Umsetzungen `server` (heutiges Verhalten, unverändert) und `satellit:<geraetId>`.
+
+**Was vom Entwurf bleibt, was entfällt**
+- Bleibt: Ziel, Beweis nur auf der Ubuntu-VM, Wegwerf-Projekt als Pilot, Erfolgsmaß, Meldung nach jeder Etappe, Budget/Zeit/Etappenzahl.
+- Entfällt: eigene Tabellen `projektvorgang`/`etappe` (es gibt Sitzungen und Phasen des Projekt-Agenten), der Entscheidungsschritt per Modell aus der festen Liste (die Entscheidung ist heute schon deterministisch und braucht die Ausgabe von Claude Code nicht — damit entfällt das Hauptrisiko des Entwurfs), das 10-Minuten-Abfragen (R1 meldet das Ende sofort; als Rückfall reicht `auftrag_stand` nach Ablauf des Phasen-Zeitlimits).
+- Sichtbarkeit: Jede Projekt-Sitzung wird zusätzlich ein **Vorgang** (Quelle `projekt`, Besitzer Alfred, Ergebnis am Ende) — damit erscheint sie in Lage, App-Ansicht „Vorgänge" und im Ausführungsgedächtnis, ohne neue Ansicht.
+
+**Lücken, die R2 wirklich schließen muss**
+1. **Freigabe für die Dauer eines Projekts.** Vorhaben sind auf 120 min begrenzt (`VORHABEN_MAX_MIN`), ein Projekt läuft Stunden. Neu: **Projektfreigabe** — mit der Planbestätigung freigegeben werden genau zwei Geräteaktionen (`auftrag_starten`, `pruefen_befehl`) auf einem Gerät, nur im bestätigten Projektverzeichnis, bis Budget, Zeitlimit oder Ende der Sitzung. Alles andere (Shell, Dateien außerhalb, Netz, Deploy) bleibt einzeln zu bestätigen. Das ist bewusst enger als die Vertrauensstufe „projekt" (R3, nur lokal am Gerät setzbar).
+2. **Prüfbefehle festlegen.** Am Server kommen `buildCommands`/`testCommands` aus der Projektkonfiguration; für ein neues Projekt auf dem Satelliten schlägt der Plan sie vor, der Owner sieht sie in der Planbestätigung. Ohne Prüfbefehl keine automatische nächste Etappe (dann je Etappe Rückfrage).
+3. **Umplanen per Modell absichern.** `assessPlanProgress` liest heute schon 400 Zeichen Agent-Ausgabe und Build-Ausgabe und darf Phasen **einfügen oder ändern**. Auf einem Satelliten würde eine eingeschleuste Anweisung so zu einem neuen Claude-Code-Auftrag. Regel: beim Ziel Satellit sind nur `proceed` und `skip` automatisch; `insert`/`modify` gehen als Rückfrage an den Owner (deterministisches Tor, modellunabhängig). Für den Server unverändert lassen, aber als Befund vermerken.
+4. **Kosten.** Claude Code meldet Kosten je Auftrag (R1-Ereignis); sie werden auf das Projektbudget gebucht (heute zählt der Runner nur Server-Läufe).
+5. **Neustarts.** Läuft eine Sitzung, während das Gehirn neu startet (Selbstupdate!), muss sie fortsetzbar sein: Phase und Auftrags-ID stehen in `plansRepo`/Auftrags-Zuordnung (v1383), `resume` setzt mit dem nachgereichten Ende fort. Selbstupdate wartet bereits auf laufende Vorhaben; das muss auch für Projekt-Sitzungen gelten.
+6. **Commits.** Am Satelliten committet Claude Code selbst (Auftragstext: „am Ende committen mit Etappentitel"); der Runner prüft per `pruefen_befehl` „git status sauber". Push/GitLab erst mit dem GitLab-Abschnitt (später).
+
+**Risiken**
+- Die Ausgabe von Claude Code erreicht ein Modell nur noch im Umplanen (Punkt 3, mit Tor); Meldungen bleiben modellfrei (R1).
+- Der Runner ist groß und produktiv genutzt: Die Arbeitsplatz-Schnittstelle muss das Server-Verhalten unverändert lassen (bestehende Tests `project-agent-runner.test.ts`, Push-Guard), Umbau in kleinen Schritten.
+- Claude Code auf dem Satelliten läuft im Modus „auto" (Standard) — keine Freigabe für `--dangerously`.
+
+**Vorgeschlagene Reihenfolge (je ein Release mit Beweis auf der Ubuntu-VM)**
+- **R2a** Arbeitsplatz-Schnittstelle im Runner, Umsetzung `server` = heutiger Code (reiner Umbau, Tests grün, kein Verhaltenswechsel).
+- **R2b** Umsetzung `satellit`: Auftrag + Warten auf Ende + Prüfbefehle + Kosten; Projektfreigabe (Lücke 1); Tor für Umplanen (Lücke 3). Beweis: Wegwerf-Projekt mit 3 Etappen auf der VM ohne Eingriff außer Planbestätigung.
+- **R2c** Vorgang je Sitzung, Fortsetzen nach Neustart, Selbstupdate wartet.
+
+**Owner-Entscheidungen**
+1. Neuer Zuschnitt (Projekt-Agent erweitern statt eigener Projektvorgang) — ja/nein?
+2. Projektfreigabe wie in Lücke 1 (zwei Aktionen, ein Verzeichnis, bis Budget/Zeit) — oder je Etappe bestätigen?
+3. Umplanen beim Satelliten: `insert`/`modify` als Rückfrage — oder ganz aus?
+4. Standardgrenzen für ein Satelliten-Projekt: Vorschlag 5 USD, 4 h, höchstens 8 Etappen, 3 Fix-Versuche je Etappe.
+5. Gilt Punkt 3 (Tor beim Umplanen) auch für den Server-Agenten?
+
 ### Reihenfolge der Umsetzung (nicht freigegeben)
 
 - **R1** (umgesetzt: Ende-Meldung v1382, Prüfschritte `pruefen`/`pruefen_befehl` und Zuordnung über Neustarts v1383 — Owner-Freigabe 12.10.; „Text im Bildschirm" über die Element-Karte, Bildschirmfoto-OCR nicht) Ende-Meldung deterministisch: Satellit sendet `GeraetEreignis`, Gehirn meldet ohne Modell („Auftrag X fertig, Dauer, Kosten, Dateien") in die Sitzung des Starts; harte Prüfschritte als Geräteaktion `pruefen` (Datei, Befehl, HTTP, Text im Bildschirm).
@@ -384,7 +430,7 @@ Projekt anfangen/weiterführen (PC, VM); Projekt des Projekt-Skills auf einem Sa
 
 **Vorhandene Bausteine je Schritt**
 - Rechner: **Proxmox** (clone_vm, create_lxc aus Vorlagen, wait_ready, create/rollback_snapshot, backup_vm, start/stop/shutdown, node_stats, list_storage).
-- Netz: **UniFi** (next_free_ip, create_firewall_rule, list_networks/clients; Standort Dream Machine Pro), **pfSense** (create_rule/delete_rule, list_rules, list_vlans, list_dhcp_leases, list_gateways, status — zweite Firewall-Welt, gleiche Autonomieklasse), **Cloudflare DNS** (Einträge), **Nginx Proxy Manager** (create/update/delete_host, Zertifikate).
+- Netz: **UniFi** (next_free_ip, create_firewall_rule, list_networks/clients; Standort Dream Machine Pro) — **Korrektur 12.10.:** create_firewall_rule/list_firewall_rules nutzen das alte Regelmodell (`rest/firewallrule`, auf Network 11.0.81 leer); die UDM arbeitet zonenbasiert (`v2/firewall-policies`, 263 Policies). Firewall-Änderungen über Alfred brauchen erst neue Aktionen auf dem Policy-Modell, **pfSense** (create_rule/delete_rule, list_rules, list_vlans, list_dhcp_leases, list_gateways, status — zweite Firewall-Welt, gleiche Autonomieklasse), **Cloudflare DNS** (Einträge), **Nginx Proxy Manager** (create/update/delete_host, Zertifikate).
 - Ausrollen/Betrieb: **Deploy** (deploy, rollback, logs, status, setup_node/python über SSH), **Docker**, **Monitor**, **System-Backup**, **CMDB** (Stage als Konfigurationselement), **ITSM** (Störungen), **Infra-Docs**.
 - Bauen/Prüfen: Aufträge an Claude Code (PC, VM), **Mac als Satellit** für alles, was macOS braucht (Mac-/iOS-Builds, Notarisierung — wie bei der Alfred-App bewiesen), Bildschirm/Browser/HTTP-Prüfungen.
 
