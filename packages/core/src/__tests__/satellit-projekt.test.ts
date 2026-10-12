@@ -150,3 +150,37 @@ describe('Abnahmebefehle', () => {
     expect(s.pruefBefehle).toEqual(['node --test', 'npm run lint']);
   });
 });
+
+// v1391 — Realfall 12.10.: Etappe 1 scheiterte (Verzeichnis fehlte), Projekt angehalten, „resume" gab es nicht
+describe('Fortsetzen angehaltener Projekte', () => {
+  it('aktuelle Etappe neu, ohne neue Bestätigung; nicht bei erreichter Grenze', async () => {
+    let erster = true;
+    const { p, aufrufe, fragen } = aufbau();
+    const orig = (p as unknown as { d: { aktion: (...a: unknown[]) => Promise<unknown> } }).d.aktion;
+    (p as unknown as { d: { aktion: (...a: unknown[]) => Promise<unknown> } }).d.aktion = async (...a: unknown[]) => {
+      if (a[1] === 'auftrag_starten' && erster) { erster = false; return { success: false, error: 'Projektverzeichnis fehlt: /x' }; }
+      return orig(...a);
+    };
+    const s = await p.starte(start);
+    await p.antwort(s.id, fragen[0]!.nonce);
+    expect(p.hole(s.id)!.status).toBe('angehalten');
+    const fragenVorher = fragen.length;
+    expect(await p.fortsetzenNach(s.id)).toEqual({ ok: true });
+    expect(p.hole(s.id)!.status).toBe('laeuft');
+    expect(fragen.length).toBe(fragenVorher);
+    expect(String(aufrufe.filter(x => x.aktion === 'auftrag_starten').at(-1)!.params.auftrag)).toMatch(/Etappe 1 um: Gerüst anlegen/);
+    expect((await p.fortsetzenNach(s.id)).ok).toBe(false);
+
+    const b = aufbau({ kosten: 6 });
+    const s2 = await b.p.starte(start);
+    await b.p.antwort(s2.id, b.fragen[0]!.nonce);
+    await b.ende(s2); // 6 USD > 5 USD: nach Etappe 1 angehalten
+    expect(b.p.hole(s2.id)!.status).toBe('angehalten');
+    expect((await b.p.fortsetzenNach(s2.id)).grund).toMatch(/Budget erreicht/);
+  });
+  it('Planfrage nennt ein neues Verzeichnis', async () => {
+    const { p, fragen } = aufbau();
+    await p.starte({ ...start, verzeichnisNeu: true });
+    expect(fragen[0]!.text).toMatch(/Verzeichnis: \/home\/madh\/claudecode\/r2 \(neu — wird angelegt\)/);
+  });
+});

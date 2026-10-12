@@ -303,6 +303,8 @@ export interface SatellitProjektHandler {
   stop: (id: string) => Promise<SkillResult>;
   antwort: (id: string, nonce: string) => Promise<SkillResult>;
   weiter: (id: string) => Promise<SkillResult>;
+  /** v1391 — angehaltenes Projekt fortsetzen */
+  fortsetzen?: (id: string) => Promise<SkillResult>;
 }
 
 export class ProjectAgentSkill extends Skill {
@@ -469,7 +471,8 @@ Actions:
       if (action === 'stop') return this.satellit.stop(satId);
       if (action === 'satellit_antwort') return this.satellit.antwort(satId, String(input.freigabe ?? ''));
       if (action === 'satellit_weiter') return this.satellit.weiter(satId);
-      return { success: false, error: `Aktion ${action} gibt es für Projekte auf Geräten nicht (status, stop, satellit_weiter)` };
+      if (action === 'resume' && this.satellit.fortsetzen) return this.satellit.fortsetzen(satId); // v1391
+      return { success: false, error: `Aktion ${action} gibt es für Projekte auf Geräten nicht (status, stop, resume, satellit_weiter)` };
     }
 
     switch (action) {

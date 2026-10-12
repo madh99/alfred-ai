@@ -53,11 +53,11 @@ export function fixAuftrag(o: { ziel: string; nr: number; etappe: string; versuc
   ].join('\n');
 }
 
-export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean }): string {
+export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean }): string {
   return [
     `🧭 Projekt auf ${o.geraet} starten?`,
     `Ziel: ${o.ziel.slice(0, 300)}`,
-    `Verzeichnis: ${o.projekt}`,
+    `Verzeichnis: ${o.projekt}${o.verzeichnisNeu ? ' (neu — wird angelegt)' : ''}`,
     `Etappen${o.gekuerzt ? ` (auf ${o.g.maxEtappen} gekürzt)` : ''}:`,
     ...o.plan.map((p, i) => `${i + 1}. ${p.slice(0, 200)}`),
     `Abnahme je Etappe: ${o.pruefBefehle.length ? o.pruefBefehle.join(' ; ') : 'keine Prüfbefehle — nach jeder Etappe frage ich dich'}`,

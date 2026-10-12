@@ -76,7 +76,9 @@ function laeuft(pid: number | undefined): boolean {
 export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string }): AuftragMeta {
   const claude = opts.claude ?? claudePfad();
   if (!claude) throw new Error('Claude Code ist auf diesem Gerät nicht installiert (claude nicht im PATH)');
-  if (!existsSync(opts.projekt) || !statSync(opts.projekt).isDirectory()) throw new Error(`Projektverzeichnis fehlt: ${opts.projekt}`);
+  // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
+  if (!existsSync(opts.projekt)) mkdirSync(opts.projekt, { recursive: true });
+  if (!statSync(opts.projekt).isDirectory()) throw new Error(`Projektpfad ist kein Verzeichnis: ${opts.projekt}`);
   const id = neueAuftragId();
   const ordner = path.join(auftraegeOrdner(opts.home), id);
   mkdirSync(ordner, { recursive: true });

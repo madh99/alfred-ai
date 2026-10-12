@@ -84,7 +84,7 @@ export class SatellitProjekte {
   gehoertZuProjekt(auftragId: string): boolean { return [...this.staende.values()].some(s => s.auftragId === auftragId && s.status === 'laeuft'); }
 
   /** Start: Plan erstellen, Owner einmal fragen. Liefert die Projekt-ID sofort. */
-  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string }): Promise<ProjektStand> {
+  async starte(o: { geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle?: string[]; grenzen?: Partial<Grenzen>; herkunft?: Herkunft; ownerId?: string; verzeichnisNeu?: boolean }): Promise<ProjektStand> {
     const g = { ...STANDARD_GRENZEN, ...(o.grenzen ?? {}) };
     const roh = await this.d.planen(o.ziel);
     if (!roh.length) throw new Error('Der Planer lieferte keine Etappen');
@@ -94,7 +94,7 @@ export class SatellitProjekte {
       pruefBefehle: [...new Set((o.pruefBefehle ?? []).map(b => b.trim()).filter(Boolean))] /* v1390 doppelte (Build = Test) nur einmal */, grenzen: g, herkunft: o.herkunft, ownerId: o.ownerId,
       status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
     };
-    const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length });
+    const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu });
     await this.stelleFrage(s, 'plan', text);
     try { s.vorgangId = await this.d.vorgang?.anlegen(s); } catch { /* optional */ }
     this.sichere(s);
@@ -247,6 +247,26 @@ export class SatellitProjekte {
     // neuer Plantext: nur nach Rückfrage
     this.d.logger.info({ id: s.id, art: m.kind }, 'v1387 Planänderung zur Rückfrage');
     await this.stelleFrage(s, 'mutation', `${mutationText(m, rest)}\nÜbernehmen? (Sonst geht es mit dem bisherigen Plan weiter: Projekt stoppen oder mit „weiter ohne Änderung" fortsetzen)`, m);
+  }
+
+  /**
+   * v1391 — angehaltenes Projekt fortsetzen (Realfall 12.10.: Etappe 1 scheiterte am fehlenden Verzeichnis, „resume" gab es nicht,
+   * Alfred plante ein neues Projekt mit neuer Bestätigung). Die aktuelle Etappe startet neu; die Planfreigabe gilt weiter,
+   * Budget und Zeitgrenze ebenso — ist eine erreicht, gibt es kein Fortsetzen.
+   */
+  fortsetzenNach(id: string): Promise<{ ok: boolean; grund?: string }> {
+    const s = this.staende.get(id);
+    if (!s) return Promise.resolve({ ok: false, grund: `Projekt ${id} unbekannt` });
+    if (s.status !== 'angehalten') return Promise.resolve({ ok: false, grund: `Projekt ${id} ist ${s.status}, nicht angehalten` });
+    const grenze = grenzeErreicht({ kostenUsd: s.kostenUsd, startMs: s.start, jetztMs: this.jetzt(), g: s.grenzen });
+    if (grenze) return Promise.resolve({ ok: false, grund: `${grenze} — neues Projekt mit höherer Grenze starten` });
+    return this.seriell(id, async () => {
+      s.status = 'laeuft'; s.grund = undefined;
+      if (s.nr === 0) { await this.naechsteEtappe(s); return; }
+      s.fixVersuch = 0;
+      await this.d.melde(s, `▶ Fortgesetzt mit Etappe ${s.nr}/${s.plan.length}.`);
+      await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
+    }).then(() => ({ ok: true }));
   }
 
   /** Owner will ohne die vorgeschlagene Änderung weiter (Rückfrage „mutation" abgelehnt). */

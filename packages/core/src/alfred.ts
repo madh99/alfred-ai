@@ -15722,16 +15722,22 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const projekt = String(input.cwd ?? '').trim();
         const ziel = String(input.goal ?? '').trim();
         if (!projekt || !ziel) return { success: false, error: 'goal und cwd (Verzeichnis auf dem Gerät) angeben' };
+        // v1391 — Verzeichnis vor dem Planen prüfen: nicht freigegeben → sofort ablehnen; fehlt → wird beim ersten Auftrag angelegt
+        const pr = await gw.sendeAktion(g.id, 'pruefen', { pruefungen: [{ art: 'datei', ziel: projekt }] }, 30_000).catch(() => undefined);
+        const grundV = (pr?.data as { ergebnisse?: Array<{ ok: boolean; grund: string }> } | undefined)?.ergebnisse?.[0]?.grund ?? '';
+        if (/nicht freigegeben/i.test(grundV)) return { success: false, error: `${grundV}. Projekte nur in freigegebenen Verzeichnissen mit Schreibrecht auf ${g.name}.` };
+        const verzeichnisNeu = /fehlt/i.test(grundV);
         const befehle = [...((input.buildCommands as string[] | undefined) ?? []), ...((input.testCommands as string[] | undefined) ?? [])].map(String);
         const grenzen: Record<string, number> = {};
         if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
         if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
-        const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner() });
+        const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu });
         return ergebnis(s, `Projekt ${s.id} auf ${g.name} geplant (${s.plan.length} Etappen) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
       },
       status: (id) => { const s = projekte.hole(id); return s ? ergebnis(s, `${s.id} · ${s.status}${s.grund ? ` (${s.grund})` : ''} · Etappe ${s.nr}/${s.plan.length}${s.auftragId ? ' läuft' : ''} · ${s.kostenUsd.toFixed(2)} USD${s.frage ? `\nWartet auf dich: ${s.frage.text.slice(0, 300)}` : ''}\n${s.plan.map((p, i) => `${i + 1}. ${s.erledigt.find(e => e.nr === i + 1)?.ok ? '✅' : i + 1 === s.nr ? '▶' : '·'} ${p.slice(0, 120)}`).join('\n')}`) : { success: false, error: `Projekt ${id} unbekannt` }; },
       stop: async (id) => ((await projekte.stoppe(id)) ? { success: true, display: `Projekt ${id} gestoppt` } : { success: false, error: `Projekt ${id} läuft nicht` }),
       antwort: async (id, nonce) => ((await projekte.antwort(id, nonce)) ? { success: true, display: `Projekt ${id}: weiter` } : { success: false, error: 'Freigabe ungültig oder schon verwendet' }),
+      fortsetzen: async (id) => { const r = await projekte.fortsetzenNach(id); return r.ok ? { success: true, display: `Projekt ${id} wird fortgesetzt (aktuelle Etappe neu, gleiche Freigabe und Grenzen)` } : { success: false, error: r.grund ?? 'nicht möglich' }; }, // v1391
       weiter: async (id) => ((await projekte.weiterOhneAenderung(id)) ? { success: true, display: `Projekt ${id}: weiter ohne Planänderung` } : { success: false, error: 'Keine offene Planänderung' }),
     });
     // R2c — nach einem Neustart offene Aufträge prüfen (Geräte brauchen ein paar Sekunden zum Verbinden)

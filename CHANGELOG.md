@@ -51,6 +51,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1391] - 2026-10-12
+
+### Fixed — Geräte-Projekte in neuen Ordnern, Fortsetzen nach Anhalten (v1391)
+
+Realfall 12.10. (erster Owner-Test): Das Projektverzeichnis existierte noch nicht; nach der Planbestätigung scheiterte Etappe 1, das Projekt wurde angehalten, und weil es kein Fortsetzen gab, plante Alfred ein neues Projekt mit neuer Bestätigung.
+
+- Alfred prüft das Verzeichnis vor dem Planen auf dem Gerät: nicht freigegeben → sofortige Ablehnung statt nach der Bestätigung; fehlt es, legt der Satellit es beim ersten Auftrag an (nur innerhalb freigegebener Verzeichnisse mit Schreibrecht), und die Planfrage sagt das.
+- Angehaltene Projekte lassen sich fortsetzen (`resume`): die aktuelle Etappe startet neu, ohne neuen Plan und ohne neue Bestätigung; Budget- und Zeitgrenze gelten weiter.
+
 ## [0.19.0-jarvis.1390] - 2026-10-12
 
 ### Fixed — Abnahmebefehle nur einmal (v1390)
