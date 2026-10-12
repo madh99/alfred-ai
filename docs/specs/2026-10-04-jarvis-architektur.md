@@ -636,3 +636,90 @@ Nach der Beobachtungsphase (ab ~26.10.): H3–H5 freigeben? Bis dahin offen: wel
 
 <!-- ursprünglicher Stand der offenen Fragen (12.10. vor der Entscheidung): -->
 Rhythmus (wöchentlich?) und Kanal (Bericht in der App, Telegram, nur Vorgänge?); ob Alfred bestehende Automationen umbauen darf (immer mit Bestätigung) oder nur neue vorschlägt; Grenze „lange deaktiviert" und „lange nicht ausgelöst" (Vorschlag 30 Tage); welche Räume/Bereiche ausgenommen sind (z. B. EMS/Batterie — eigene Spec); ob der Haus-Check auch die Netzwerkgeräte-LEDs und Diagnose-Entitäten ausblendet (Vorschlag: ja).
+
+## Entscheiden statt Abhaken (Entwurf 12.10.2026, Schicht 3/4 — ohne Umsetzung, Owner: „bitte wirklich gründlich und richtig analysieren", Reihenfolge nach Einschätzung freigegeben: erst Fix „Ausführen" (v1361), dann diese Spec)
+
+### Anlass
+
+Owner 12.10. zur Vorgangsmeldung „Hausbatterie: SoC 47 %": „Bei Erledigt muss man doch sagen wie — und ob etwas entschieden wurde oder in Zukunft bei so etwas entschieden werden soll. Aktuell ist es mager: Erledigt mit optionalem Text, Verwerfen oder Chatten, ohne dass es den Befund beeinflusst oder Alfred überhaupt weiß, was und warum man sich über den Vorgang unterhalten hat. Was ist ein Vorgang überhaupt, warum mischst du das mit den Befunden?"
+
+### Begriffe (verbindlich)
+
+| Objekt | Bedeutung | Entsteht | Endet |
+|---|---|---|---|
+| **Befund** | Beobachtung „etwas ist auffällig" mit Identität (Quelle + Gegenstand) | Weltmodell, Haus-Check, Wächter — aus Messung | von selbst, wenn nicht mehr auffällig |
+| **Vorgang** | Anliegen „es ist etwas zu tun oder zu entscheiden" mit Besitzer, Frage, nächstem Schritt, Frist, Ergebnis, Verlauf | aus Befund (nur bei Handlungsbedarf), Hinweis mit Handlung, Aktion, Lernbedarf, Projekt | durch Entscheidung oder Erledigung — mit Ergebnis |
+| **Hinweis** | Mitteilung an den Owner, Ablaufdatum | Reasoning, Interessen, Vorausschau | Ablauf oder Reaktion |
+| **Aufgabe** | konkrete Tätigkeit des Owners | Owner, Vorgang (Nachforschen: Owner-Aufgaben) | abgehakt |
+| **Bestätigung** | Freigabe einer konkreten Aktion | Autonomie-Klasse `bestaetigen` | Ja/Nein |
+| **Regel** (neu) | Entscheidung für die Zukunft: wie mit einer Art Befund/Vorgang umgegangen wird | Abschluss eines Vorgangs, Owner im Chat | widerrufen oder abgelaufen |
+
+Ein Befund ist kein Vorgang; ein Vorgang kann aus einem Befund entstehen und verweist dann auf ihn.
+
+### Ist-Stand (belegt 12.10., Woche ab 05.10.)
+
+- **Jede Befund-Auffälligkeit wird sofort ein Vorgang** (`alfred.ts` setBefundeSync): 77 Befund-Vorgänge, 74 davon „von selbst erledigt: im Weltmodell nicht mehr auffällig" — Messwerte, die um eine Schwelle pendeln. Nächster Schritt jeweils nur „Owner entscheidet", ohne Frage.
+- **Vorgangstext = Rohdatenauszug**: Ziel der Hausbatterie-Meldung ist die ganze Weltmodell-Zeile (inkl. PV und Raumtemperatur ohne Bezug).
+- **Entscheidung ohne Inhalt**: App-Dialog erledigt | verworfen | Notiz (`entscheideOwner` setzt nur Status + Schritt `bestaetigt|abgelehnt`); in der Woche 20× „vom Owner erledigt", 1 Schritt „abgelehnt"; die Notiz wird nirgends gelesen.
+- **Keine Wirkung**: Befund bleibt offen; tritt er wieder auf, entsteht ein neuer Vorgang (Wiederöffnen setzt `vorgang_id` zurück). Korrekturen im Chat (v1148) bremsen nur Hinweise — bei Weltmodell-Befunden setzt das Weltmodell sie bewusst außer Kraft (v1174). Schicht 4 zählt nur Erledigungsquoten je Kategorie.
+- **Gespräch ohne Bezug**: „Nachfragen" schickt „Wie steht es um „<Titel>"?" — ohne Kennung, ohne Inhalt. Im Chat kennt Alfred Vorgänge nur als Zählung in der Lage; das Ausführungsgedächtnis („Bereits getan") sieht nur der Reasoning-Rundgang. **Kein Werkzeug** liest oder schreibt einen Vorgang; was besprochen wird, landet nie im Vorgang.
+- **Baseline ohne Jahreszeit und Mindestabstand**: Vergleich gegen alle Proben ±1 h (Hausbatterie n = 106, rund zweieinhalb Wochen, sonniger Spätsommer), Schwelle |z| ≥ 3 über MAD — bei kleiner Streuung schlagen kleine Abweichungen an (Raumtemperatur 21,7 statt 22,5 °C „deutlich unter").
+- „Ausführen" an Hinweisen: Fehler behoben in v1361 (Reasoning-Hinweise ohne Aktion).
+
+### Ziel
+
+Der Owner beantwortet eine **Frage** statt einen Status zu setzen; seine Antwort wird **Ergebnis** des Vorgangs und, wenn er will, **Regel** für die Zukunft. Regeln wirken deterministisch dort, wo Befunde, Vorgänge und Hinweise entstehen. Gespräche über einen Vorgang gehören zum Vorgang. Alfred legt nur Vorgänge an, bei denen wirklich gehandelt oder entschieden werden muss.
+
+### Bausteine
+
+**A — Vom Befund zum Vorgang nur bei Handlungsbedarf.** Ein Befund wird Vorgang, wenn (a) eine Regel es verlangt, (b) er länger als seine Haltefrist besteht (je Befundart, Vorschlag: Baseline-Abweichung 24 h, Ausfall/offline 2 h, Sicherheit sofort), (c) das Nachforschen (Spec „Nachforschen", N1–N3) eine Owner-Aufgabe oder Entscheidung ergibt, oder (d) der Owner ihn aus der Ansicht „Befunde" ausdrücklich zum Vorgang macht. Sonst bleibt er Befund (App-Ansicht „Befunde", v1359) und erledigt sich dort.
+
+**B — Ein Vorgang stellt eine Frage.** Felder neu: `frage` (ein Satz, was zu entscheiden ist), `lage` (ein Satz, worum es geht), `belege` (gekürzt, mit Zeit und Quelle — aus Nachforschen bzw. Befund-Detail statt Rohzeile), `optionen[]` (2–4 Möglichkeiten, je `art` + Text + optional Aktion mit Vorschau und Autonomie-Klasse), `vorschlag` (welche Option Alfred empfiehlt und warum). Entstehen deterministisch aus Vorlagen je Befundart, sonst ein Modellaufruf (Tier medium) mit festem Schema; ohne gültige Optionen gilt die Standardauswahl (unten).
+
+**C — Abschluss mit Ergebnis.** Der Dialog fragt zwei Dinge:
+1. **Was war es?** `behoben` (Ursache, Maßnahme — je eine Zeile), `entschieden` (was), `kein Problem` (warum), `anders` (Freitext). Pflicht ist die Art; die Zeilen sind vorbefüllt aus Optionen/Gespräch und änderbar.
+2. **Und künftig?** `wie heute` (keine Regel) · `so lassen, nicht mehr melden für …` (7/30/90 Tage) · `Normalwert/Schwelle anpassen` (Vorschlag mit Wert) · `immer so behandeln` (Option als Standard, ggf. Ausführung nach Autonomie-Klasse) · `jedes Mal fragen`.
+Ergebnis schreibt Vorgangsfelder `ergebnis_art`, `ursache`, `massnahme`, `entscheidung` und einen Schritt `abgeschlossen` mit allem; „Erledigt"/„Verwerfen" als nackte Knöpfe entfallen (Kurzweg bleibt: Option mit einem Klick, Ergebnis = Option).
+
+**D — Regeln, die wirken.** Tabelle `regeln (id, user_id, geltung {quelle, gegenstand | art}, wirkung {art: stumm|schwelle|normalwert|standard_option|immer_fragen, wert?, bis?}, begruendung, herkunft owner|chat, vorgang_id, erstellt, widerrufen_am)`. Wirkungsorte, alle deterministisch:
+- Befund→Vorgang (Baustein A): `stumm` → kein Vorgang bis Ablauf; `immer_fragen` → sofort Vorgang.
+- Normalzustände/Baseline: `schwelle`/`normalwert` überschreibt je Gegenstand (z. B. Hausbatterie: Abweichung erst ab 30 Punkten, Oktober–März).
+- Hinweis-Gate (v1360): Hinweise zum geregelten Gegenstand werden wie Wiederholungen behandelt.
+- Lage/Chat: aktive Regeln zum Thema stehen als eine Zeile im Kontext („Regel seit 12.10.: Hausbatterie unter Normal im Herbst — nicht melden").
+- `standard_option`: beim nächsten Auftreten wird die gewählte Option vorgeschlagen bzw. — nur Klasse `auto` — ausgeführt und berichtet.
+Regeln sind in der App einsehbar und widerrufbar (Ansicht „Befunde" → Abschnitt „Regeln"), jede Anwendung schreibt eine Logzeile und zählt (Schicht 4: Regel-Treffer, widerrufene Regeln).
+
+**E — Gespräch gehört zum Vorgang.** „Nachfragen" öffnet einen **Vorgangsfaden** (`owner:faden:v-<id8>`, Fäden seit v1330 kanalunabhängig) mit Systemkopf: Lage, Frage, Optionen, Belege, Verlauf. Alfred bekommt die Werkzeuge `vorgang lesen`, `notiz ergänzen`, `abschluss vorschlagen` (Ergebnis + Regel als Vorschlag), `option ausführen` (über Autonomie-Klasse/Bestätigung). Abschließen und Regel anlegen nur mit Owner-Bestätigung (Knopf im Faden). Am Ende steht im Vorgang ein Schritt `besprochen` mit Kurzfassung und Verweis auf den Faden. Im Hauptgespräch erkennt Alfred Bezüge auf offene Vorgänge (Titel/Anker) und bietet „im Vorgang weiter?" an.
+
+**F — Hinweise zeigen ihre Aktion als Status statt als Knopf.** Ergänzend zu v1361: Zu einem Reasoning-Hinweis zeigt die App, was aus der zugehörigen Aktion wurde („Erinnerung morgen 09:00 gesetzt — automatisch", „wartet auf deine Bestätigung", „blockiert") — Zuordnung über die Vorgangs-ID der Aktion (v1179) und Anker (v1360), sonst nichts.
+
+### Beispieldurchlauf Hausbatterie (Messlatte)
+
+Befund `energie/hausbatterie:baseline` entsteht 11.10. 16:14 → Haltefrist 24 h → besteht noch am 12.10. 16:14 → Vorgang:
+> **Lage:** Hausbatterie seit gestern 16 Uhr unter ihrem üblichen Stand (47 % statt ~92 % um diese Uhrzeit), Vollladung zuletzt 07.10. **Belege:** PV-Ertrag 0,38 kWh am 11.10.; Verbrauch 12,5 kWh; Vergleichswerte 25.09.–11.10. **Frage:** Ist das so in Ordnung? **Optionen:** (1) normal für die Jahreszeit — Vergleich anpassen; (2) Vollladung jetzt anstoßen (Automation „Batterie-Pflege", Klasse bestätigen); (3) beobachten bis 15.10. **Vorschlag:** (1) — wenig PV seit Monatsbeginn.
+Owner wählt (1), „Und künftig?" → „Normalwert/Schwelle anpassen: Abweichung erst ab 30 Punkten, Oktober–März". Ergebnis: Vorgang `entschieden`, Regel `schwelle` für `energie/hausbatterie`; der Befund schließt sich mit der neuen Schwelle; nächster Herbsttag ohne Meldung, im Chat weiß Alfred „Regel seit 12.10.".
+
+### Reihenfolge (nicht freigegeben)
+
+- **E1** Datenmodell (Vorgangsfelder, Tabelle `regeln`, Schritt-Arten `abgeschlossen`, `besprochen`) + Abschluss-Dialog in der App mit „Was war es?/Und künftig?" (Standardoptionen ohne Modell); Regeln `stumm` und `immer_fragen` an Befund→Vorgang wirksam; Ansicht „Regeln".
+- **E2** Haltefristen je Befundart (Baustein A) — zuerst beobachtend: Logzeile „wäre Vorgang geworden", zwei Wochen.
+- **E3** Frage/Lage/Optionen aus Vorlagen je Befundart (Hausbatterie, Sensorbatterie, Offline, Haus-Check-Regeln), Modell nur ohne Vorlage.
+- **E4** Vorgangsfaden + Werkzeuge (Baustein E).
+- **E5** Regeln `schwelle`/`normalwert` in den Normalzuständen, Baseline mit Mindestabstand je Größe und kürzerem Fenster.
+- **E6** Hinweis-Status der Aktion (Baustein F); Schicht-4-Kennzahlen (Regel-Treffer, Abschlüsse je Ergebnisart).
+
+### Abnahme (messbar)
+
+Befund-Vorgänge je Woche von 77 auf ≤ 15 ohne verlorenen echten Handlungsbedarf (Gegenprobe gegen die Liste der von selbst erledigten); jeder vom Owner abgeschlossene Vorgang hat eine Ergebnisart; ≥ 1 Regel wirkt nachweislich (Logzeile) ohne Widerruf in 14 Tagen; ein im Faden besprochener Vorgang trägt den Schritt `besprochen`; Hausbatterie-Durchlauf wie oben live.
+
+### Risiken
+
+Zu frühes Stummschalten verdeckt echte Probleme → Regeln mit Ablauf, Sicherheits-Befunde (Rauch, Wasser, Einbruch) nie stummschaltbar, Regel-Liste sichtbar. Optionen vom Modell können falsch sein → Vorlagen zuerst, Modell-Optionen nur mit Vorschau. Zusätzlicher Aufwand beim Abschließen → Kurzweg „Option mit einem Klick", „Und künftig?" vorbelegt mit „wie heute".
+
+### Verhältnis zu anderen Entwürfen
+
+„Nachforschen vor dem Melden" liefert Belege, Hypothese und Owner-Aufgaben (Baustein B speist sich daraus); „Home-Assistant-Prüfung" (H4) braucht genau diesen Abschluss mit Regel für Vorschläge an Automationen; Befunde-Ansicht (App 1.12.0) wird Ort für Befunde ohne Vorgang und für Regeln.
+
+### Offene Owner-Entscheidungen
+
+Haltefristen je Befundart (Vorschlag oben); Standarddauer für „nicht mehr melden" (Vorschlag 30 Tage); ob Alfred Regeln selbst vorschlagen darf, wenn derselbe Befund dreimal „kein Problem" war; welche Befundarten nie stummschaltbar sind (Vorschlag: Rauch, CO, Wasser, Alarm, Einbruch); ob Vorgangsfäden in der Seitenleiste erscheinen oder nur aus dem Vorgang erreichbar sind.
