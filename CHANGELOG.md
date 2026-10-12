@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1395] - 2026-10-12
+
+### Fixed — Claude-Code-Aufträge ohne fremde MCP-Server (v1395)
+
+Nach v1394 startete Claude Code bei Aufträgen auf der Ubuntu-VM weiter den MCP-Dienst ruv-swarm: Er stand in einer MCP-Datei im Home-Verzeichnis, die für alle Unterordner gilt, und die Auswahl der Einstellungsquellen erfasst MCP-Dateien nicht. Aufträge laufen jetzt mit `--strict-mcp-config` ohne MCP-Server.
+
 ## [0.19.0-jarvis.1394] - 2026-10-12
 
 ### Changed — Geräte-Projekte: Grenzen nur auf Wunsch, Aufträge ohne Benutzereinstellungen, Ende sicher erkannt (v1394)

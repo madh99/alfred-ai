@@ -79,6 +79,7 @@ describe('Claude-Code-Aufruf', () => {
     const a = rf(path.join(home, 'args.txt'), 'utf8').split('\n');
     expect(a).toContain('--setting-sources');
     expect(a[a.indexOf('--setting-sources') + 1]).toBe('project,local');
+    expect(a).toContain('--strict-mcp-config');
     expect(a[a.indexOf('--max-budget-usd') + 1]).toBe('1.5');
     await new Promise<void>(res => auftragStarten({ projekt: proj, auftrag: 'y', home, claude: stub, beiEnde: () => res() }));
     expect(rf(path.join(home, 'args.txt'), 'utf8')).not.toContain('--max-budget-usd');

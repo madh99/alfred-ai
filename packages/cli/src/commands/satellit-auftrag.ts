@@ -88,12 +88,12 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   // v1392 — stream-json: Claude Code schreibt jeden Schritt sofort ins Protokoll (Fortschritt sichtbar), die result-Zeile am Ende bleibt gleich
   // v1394 — ohne die Benutzereinstellungen (~/.claude: Hooks, MCP-Server, Umgebung des Owners; Realfall 12.10.: claude-flow-Hook vor jedem
   // Befehl bremste die Etappe) — Projekt-Einstellungen gelten weiter; optional Kostengrenze je Auftrag
-  const args = ['-p', auftragPrompt(auftragDatei, opts.projekt), '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto', '--setting-sources', 'project,local',
+  const args = ['-p', auftragPrompt(auftragDatei, opts.projekt), '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto', '--setting-sources', 'project,local', '--strict-mcp-config', // v1395 — keine MCP-Server aus ~/.mcp.json (claude-flow, ruv-swarm)
     ...(opts.maxKostenUsd !== undefined && opts.maxKostenUsd > 0 ? ['--max-budget-usd', String(opts.maxKostenUsd)] : [])];
   const log = openSync(logPfad(id, opts.home), 'a');
   const istCmd = /\.cmd$/i.test(claude);
   const kind = spawn(istCmd ? 'cmd.exe' : claude, istCmd ? ['/c', claude, ...args] : args, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, CLAUDE_CODE_NO_UPDATE_CHECK: '1' } });
-  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto --setting-sources project,local${opts.maxKostenUsd ? ` --max-budget-usd ${opts.maxKostenUsd}` : ''}`, auftragDatei };
+  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto --setting-sources project,local --strict-mcp-config${opts.maxKostenUsd ? ` --max-budget-usd ${opts.maxKostenUsd}` : ''}`, auftragDatei };
   speichereMeta(meta, opts.home);
   kind.on('error', (err) => {
     closeSync(log);
