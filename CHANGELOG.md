@@ -51,6 +51,14 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1406] - 2026-10-13
+
+### Fixed — Projekt- und Auftragsmeldungen bleiben im Verlauf (v1406)
+
+Meldungen ohne Modell kamen bisher nur als Live-Nachricht in der App an: Etappenstart, Projektende, Ende eines Claude-Code-Auftrags, Antwort auf eine Frage zum Projekt. Nach einem Neustart der App, etwa beim Update, lud sie den Verlauf vom Server, und dort fehlten die Meldungen. Jede solche Meldung steht jetzt auch in dem Gespräch, das die Sitzung zeigt. Bei Geräten des Owners und in Telegram ist das das Hauptgespräch oder der jeweilige Faden. Alfred kennt sie damit auch im weiteren Gespräch, etwa dass ein Projekt fertig ist.
+
+Außerdem liefert der App-Download nur Dateien direkt aus dem Release-Ordner. Das ist eine zweite Prüfung neben dem Namensmuster.
+
 ## [0.19.0-jarvis.1405] - 2026-10-13
 
 ### Fixed — App-Update lädt genau die angekündigte Version (v1405)

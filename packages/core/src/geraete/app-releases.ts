@@ -61,7 +61,9 @@ export class AppReleases {
 
   stream(plattform: AppPlattform, datei: string): ReadStream | undefined {
     if (!MUSTER[plattform].test(datei)) return undefined; // nur bekannte Namen, keine Pfade
-    const p = path.join(this.ordner, plattform, datei);
+    const ordner = path.resolve(this.ordner, plattform);
+    const p = path.resolve(ordner, datei);
+    if (path.dirname(p) !== ordner) return undefined; // v1405 — zweite Linie: nur Dateien direkt im Release-Ordner
     return existsSync(p) ? createReadStream(p) : undefined;
   }
 }

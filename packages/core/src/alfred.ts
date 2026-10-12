@@ -16011,7 +16011,28 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         zugestellt.push(`${z.platform}:${z.chatId}`);
       } catch (err) { this.logger.warn({ err: (err as Error).message, chatId: z.chatId }, 'v1382 Meldung nicht zustellbar'); }
     }
+    await this.meldungSpeichern(text, herkunft).catch((err: Error) => this.logger.warn({ err: err.message }, 'v1406 Meldung nicht im Verlauf gespeichert'));
     return zugestellt;
+  }
+
+  /**
+   * v1406 — Realfall 13.10. 00:16–00:35: Etappen- und Endmeldungen eines aus der App gestarteten Laufs gingen nur als Live-Push an die
+   * App; nach dem Neustart der App (Update) lud sie den Verlauf vom Server — die Meldungen fehlten dort. Jetzt steht jede Meldung
+   * ohne Modell auch im Gespräch, das die Sitzung anzeigt: Owner-Geräte und Telegram → Hauptgespräch (bzw. Faden), fremde Geräte →
+   * ihre Sitzung. Nur bestehende Gespräche, keine neuen anlegen.
+   */
+  private async meldungSpeichern(text: string, herkunft?: { chatId: string; platform: string }): Promise<void> {
+    if (!this.conversationRepo) return;
+    const { hauptgespraech, fadenSchluessel } = await import('./gespraeche.js');
+    let ziel: { platform: string; chatId: string } = hauptgespraech(this.gespraechsOptionen());
+    const m = herkunft?.platform === 'api' ? /^sitzung:([0-9a-f-]{8,64})(?::([A-Za-z0-9_-]{1,64}))?$/.exec(herkunft.chatId) : null;
+    if (m) {
+      const owner = await this.geraetGehoertOwner(m[1]!).catch(() => false);
+      ziel = !owner ? { platform: 'api', chatId: herkunft!.chatId } : m[2] ? fadenSchluessel(m[2]) : ziel;
+    } else if (herkunft?.chatId?.startsWith('owner:faden:')) ziel = { platform: 'api', chatId: herkunft.chatId };
+    const c = await this.conversationRepo.findByPlatformChat(ziel.platform as Platform, ziel.chatId);
+    if (!c || c.deletedAt) return;
+    await this.conversationRepo.addMessage(c.id, 'assistant', text, undefined, 'meldung');
   }
 
   private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string }; ablageAnhaenge?: import('@alfred/types').SkillResultAttachment[] }): Promise<boolean> {
