@@ -296,6 +296,15 @@ export async function extendedPreflight(cwd: string, agentCommand: string): Prom
   return issues;
 }
 
+/** v1387 (R2) — Projekte auf einem Satelliten; Umsetzung im Gehirn (core/projekt/satellit-projekt.ts). */
+export interface SatellitProjektHandler {
+  start: (input: Record<string, unknown>, context: SkillContext) => Promise<SkillResult>;
+  status: (id: string) => SkillResult;
+  stop: (id: string) => Promise<SkillResult>;
+  antwort: (id: string, nonce: string) => Promise<SkillResult>;
+  weiter: (id: string) => Promise<SkillResult>;
+}
+
 export class ProjectAgentSkill extends Skill {
   readonly metadata: SkillMetadata;
 
@@ -383,7 +392,7 @@ WANN NICHT NUTZEN — stattdessen code_agent.run:
 Faustregel: Wenn du selbst sagen würdest "das sind 1-2 Edits" → code_agent. Sonst project_agent.
 
 Actions:
-- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs"). WICHTIG zur cwd: das ist der LOKALE Entwicklungs-Pfad auf der Alfred-Node (z.B. /home/madh/projects/<projektname>), NICHT der Deploy-Target-Pfad auf einem Remote-Host. Wenn die Deploy-Memory sagt "Projekt X läuft auf 192.168.1.96 als ubuntu" ist das der Deploy-Target, NICHT der Workspace. Für Continue-Sessions desselben Projekts: gleichen cwd wie der letzte erfolgreiche Lauf benutzen (siehe project_workspace_<projektname> Memory falls vorhanden).
+- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs"). WICHTIG zur cwd: das ist der LOKALE Entwicklungs-Pfad auf der Alfred-Node (z.B. /home/madh/projects/<projektname>), NICHT der Deploy-Target-Pfad auf einem Remote-Host. Wenn die Deploy-Memory sagt "Projekt X läuft auf 192.168.1.96 als ubuntu" ist das der Deploy-Target, NICHT der Workspace. Für Continue-Sessions desselben Projekts: gleichen cwd wie der letzte erfolgreiche Lauf benutzen (siehe project_workspace_<projektname> Memory falls vorhanden). v1387 — Soll das Projekt auf einem GERÄT des Owners entstehen (z. B. „auf der Ubuntu-VM"): zusätzlich geraet=<Gerätename>; cwd ist dann ein freigegebenes Verzeichnis auf dem Gerät, buildCommands/testCommands sind die Abnahme je Etappe (ohne sie fragt Alfred nach jeder Etappe). Status/Stopp mit der task_id sat-….
 - status: Check current status of a project agent session. Params: task_id. Returns currentPhase — if 'done' or 'failed', the session has ENDED and interject will not work; start a fresh one instead.
 - interject: Send a message to a CURRENTLY RUNNING project agent (e.g. "add feature X"). Params: task_id, message. DO NOT use interject if the session is already finished/done/failed — start a new session with action='start' instead. The skill will reject interject on terminated sessions with a clear error.
 - stop: Stop a running project agent. Params: task_id
@@ -396,11 +405,16 @@ Actions:
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature'],
+            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter'],
             description: 'Project agent action',
           },
           goal: { type: 'string', description: 'What to build (for start)' },
           cwd: { type: 'string', description: 'Working directory for the project (for start)' },
+          // v1387 (R2) — Ausführungsziel Satellit
+          geraet: { type: 'string', description: 'Nur wenn das Projekt auf einem GERÄT des Owners gebaut werden soll (z. B. "Ubuntu-VM"): Name des gekoppelten Geräts. Dann ist cwd ein Verzeichnis auf diesem Gerät (freigegeben, mit Schreibrecht), Claude Code baut dort Etappe für Etappe, buildCommands/testCommands sind die Abnahme je Etappe. Leer = Server (bisheriges Verhalten).' },
+          budget_usd: { type: 'number', description: 'Nur mit geraet: Kostengrenze in USD (Standard 5)' },
+          max_stunden: { type: 'number', description: 'Nur mit geraet: Zeitgrenze in Stunden (Standard 4)' },
+          freigabe: { type: 'string', description: 'Nur intern (Bestätigung des Owners) — nie selbst setzen' },
           // v851.1 — import_feature params
           feature_id: { type: 'string', description: 'Feature-UUID aus Features-Library (für import_feature)' },
           target_cwd: { type: 'string', description: 'Target-Projekt-cwd wohin der Snapshot importiert wird (für import_feature)' },
@@ -432,12 +446,31 @@ Actions:
     };
   }
 
+  /** v1387 (R2) — Projekte auf einem Satelliten (eigener Ablauf im Gehirn; der Server-Runner bleibt unberührt). */
+  private satellit?: SatellitProjektHandler;
+  setSatellit(h: SatellitProjektHandler): void { this.satellit = h; }
+
   setRunner(runner: { run(sessionId: string, config: Record<string, unknown>, platform: string, chatId: string): Promise<void> }): void {
     this.runner = runner;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = input.action as string;
+
+    // v1387 (R2) — Satelliten-Projekte: nur mit geraet bzw. sat-Kennung; alles andere unverändert zum Server-Runner
+    const satId = String(input.task_id ?? '');
+    if (action === 'start' && typeof input.geraet === 'string' && input.geraet.trim()) {
+      if (!this.satellit) return { success: false, error: 'Projekte auf Geräten sind nicht verfügbar (Geräte-Gateway fehlt)' };
+      return this.satellit.start(input, context);
+    }
+    if (satId.startsWith('sat-') || action === 'satellit_antwort' || action === 'satellit_weiter') {
+      if (!this.satellit) return { success: false, error: 'Projekte auf Geräten sind nicht verfügbar' };
+      if (action === 'status') return this.satellit.status(satId);
+      if (action === 'stop') return this.satellit.stop(satId);
+      if (action === 'satellit_antwort') return this.satellit.antwort(satId, String(input.freigabe ?? ''));
+      if (action === 'satellit_weiter') return this.satellit.weiter(satId);
+      return { success: false, error: `Aktion ${action} gibt es für Projekte auf Geräten nicht (status, stop, satellit_weiter)` };
+    }
 
     switch (action) {
       case 'start':

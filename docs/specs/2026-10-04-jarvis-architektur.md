@@ -416,6 +416,9 @@ Einen zweiten Projektvorgang daneben zu bauen hieße, dieselbe Schleife doppelt 
 4. Standardgrenzen für ein Satelliten-Projekt: Vorschlag 5 USD, 4 h, höchstens 8 Etappen, 3 Fix-Versuche je Etappe.
 5. Gilt Punkt 3 (Tor beim Umplanen) auch für den Server-Agenten?
 
+**Entscheidungen und Umsetzung (Owner 12.10. „ok wie empfohlen freigegeben", Rückfrage „funktioniert der Projekt-Agent am Server weiter wie bisher?" → ja):** 1 ja, 2 Projektfreigabe, 3 Rückfrage, 4 Standardgrenzen 5 USD/4 h/8 Etappen/3 Fix-Versuche, 5 Server unverändert.
+**Abweichung bei der Umsetzung (v1387):** Statt einer Arbeitsplatz-Schnittstelle im Runner (R2a) ein eigener schlanker Ablauf `core/projekt/satellit-projekt.ts` — der Runner arbeitet an ~80 Stellen direkt am Server-Dateisystem (Git-Init, Branches, Sandbox, Lock, Review, Push, Self-Heal); Zweige dort hätten den Server-Weg gefährdet. Wiederverwendet: `createProjectPlan`, `assessPlanProgress`, `applyMutation`, Bestätigungs-Queue, Vorgänge, R1-Bausteine. `project-agent-runner.ts`, Planer und Prüfer sind unverändert (leerer Diff). Selbstupdate wird nicht blockiert (bis 4 h Sperre wäre schlecht); stattdessen Fortsetzen nach Neustart aus `data/projekte-satellit/` (R2c). Einstieg: `project_agent start` mit `geraet`; Rückfragen als Bestätigung mit Einmal-Kennung (`satellit_antwort`), „weiter ohne Planänderung" mit `satellit_weiter`.
+
 ### Reihenfolge der Umsetzung (nicht freigegeben)
 
 - **R1** (umgesetzt: Ende-Meldung v1382, Prüfschritte `pruefen`/`pruefen_befehl` und Zuordnung über Neustarts v1383 — Owner-Freigabe 12.10.; „Text im Bildschirm" über die Element-Karte, Bildschirmfoto-OCR nicht) Ende-Meldung deterministisch: Satellit sendet `GeraetEreignis`, Gehirn meldet ohne Modell („Auftrag X fertig, Dauer, Kosten, Dateien") in die Sitzung des Starts; harte Prüfschritte als Geräteaktion `pruefen` (Datei, Befehl, HTTP, Text im Bildschirm).

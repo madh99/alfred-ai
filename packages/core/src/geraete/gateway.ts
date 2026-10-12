@@ -306,6 +306,13 @@ export class GeraeteGateway {
     }
   }
 
+  /** v1387 — verbundenes Gerät nach Name (ohne Groß-/Kleinschreibung) oder ID. */
+  geraetNachName(name: string): { id: string; name: string; aktionen: string[] } | undefined {
+    const n = name.trim().toLowerCase();
+    for (const v of this.verbindungen.values()) if (v.eintrag.id === name || v.eintrag.name.toLowerCase() === n) return { id: v.eintrag.id, name: v.eintrag.name, aktionen: v.eintrag.manifest.aktionen.map(a => a.name) };
+    return undefined;
+  }
+
   sendeAktion(geraetId: string, aktion: string, params: Record<string, unknown>, timeoutMs = AKTION_TIMEOUT_MS): Promise<{ success: boolean; data?: unknown; display?: string; error?: string; dauerMs: number }> {
     const v = this.verbindungen.get(geraetId);
     if (!v) return Promise.resolve({ success: false, error: 'Gerät nicht verbunden', dauerMs: 0 });

@@ -270,6 +270,7 @@ export class Alfred {
   private projectSkillRef?: import('@alfred/skills').ProjectSkill;
   /** v727 — Late-Wiring von SandboxRepo an Project-Agent-Skill (für dev-safe Build-Detection) */
   private projectAgentSkillRef?: import('@alfred/skills').ProjectAgentSkill;
+  private satellitProjekte?: import('./projekt/satellit-projekt.js').SatellitProjekte; // v1387 R2
   /** v762 — Aktive Code-Agent-Runs pro synthetischer task_id, damit Stop-Signal sie killen kann */
   private codeAgentTaskAborts = new Map<string, AbortController>();
 
@@ -13847,23 +13848,11 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // Die Ausgabe von Claude Code steht nur als gekennzeichneter Datenblock darin und geht an kein Modell.
           beiEreignis: async ({ geraet, ereignis, herkunft }) => {
             if (ereignis.art !== 'auftrag') return;
+            // v1387 (R2) — Auftrag eines Satelliten-Projekts: dort geht es weiter (Etappenmeldung statt Einzelmeldung)
+            if (this.satellitProjekte?.auftragEnde(ereignis)) { this.logger.info({ geraet, auftrag: ereignis.auftragId, status: ereignis.status }, 'v1387 Auftragsende an Projekt'); return; }
             const { auftragMeldung } = await import('./geraete/auftrag-meldung.js');
             const text = auftragMeldung(geraet, ereignis);
-            const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api') as Platform;
-            const ownerChatId = this.config.security?.ownerUserId ?? '';
-            const ziele: Array<{ platform: Platform; chatId: string }> = [];
-            if (herkunft?.chatId) ziele.push({ platform: herkunft.platform as Platform, chatId: herkunft.chatId });
-            if (ownerChatId && !ziele.some(z => z.platform === ownerPlatform && z.chatId === ownerChatId)) ziele.push({ platform: ownerPlatform, chatId: ownerChatId });
-            const zugestellt: string[] = [];
-            for (const z of ziele) {
-              const adapter = this.adapters.get(z.platform);
-              if (!adapter) continue;
-              try {
-                const f = this.formatter.format(text, z.platform);
-                await adapter.sendMessage(z.chatId, f.text, { parseMode: f.parseMode !== 'text' ? f.parseMode : undefined });
-                zugestellt.push(`${z.platform}:${z.chatId}`);
-              } catch (err) { this.logger.warn({ err: (err as Error).message, chatId: z.chatId }, 'v1382 Auftragsende nicht zustellbar'); }
-            }
+            const zugestellt = await this.meldeOhneModell(text, herkunft);
             this.logger.info({ geraet, auftrag: ereignis.auftragId, status: ereignis.status, dauerS: ereignis.dauerS, kosten: ereignis.kosten, dateien: ereignis.dateienAnzahl ?? 0, herkunft: herkunft?.chatId, zugestellt }, 'v1382 Auftragsende gemeldet');
           },
           // v1230 — nach dem Ja des Owners setzt Alfred das Vorhaben selbst fort: synthetische Owner-Nachricht
@@ -13883,6 +13872,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
         gw.start();
         this.geraeteGateway = gw;
+        // v1387 (R2) — Projekt-Agent mit Ausführungsziel Satellit (der Server-Runner bleibt unverändert)
+        try { await this.satellitProjekteAufbauen(gw, vorgaengeG); } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1387 Satelliten-Projekte nicht verfügbar'); }
         // v1302 — neue Bestätigungen sofort an die Satelliten (Sitzungen am Gerät zeigen sie ohne 4-s-Abfrage)
         this.confirmationQueue?.beiNeu((b) => {
           const n = gw.sendeAnAlle({ typ: 'bestaetigung', bestaetigung: { id: b.id, description: b.description, source: b.source, skillName: b.skillName, createdAt: b.createdAt, expiresAt: b.expiresAt } });
@@ -15694,6 +15685,60 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     return true;
   }
 
+  /** v1387 (R2, Owner-Freigabe 12.10.) — Satelliten-Projekte verdrahten: Planer/Umplan-Prüfer des Projekt-Agenten, Geräte-Gateway, Bestätigungen, Vorgang. */
+  private async satellitProjekteAufbauen(gw: import('./geraete/gateway.js').GeraeteGateway, vorgaenge: import('@alfred/storage').VorgaengeRepository): Promise<void> {
+    const skill = this.projectAgentSkillRef;
+    if (!skill) return;
+    const { SatellitProjekte } = await import('./projekt/satellit-projekt.js');
+    const { createProjectPlan, assessPlanProgress, applyMutation } = await import('@alfred/skills');
+    const owner = () => this.ownerMasterUserId ?? this.tryOwner();
+    const projekte = new SatellitProjekte({
+      planen: async (ziel) => (await createProjectPlan(ziel, this.llmProvider)).phases,
+      bewerten: async (i) => assessPlanProgress(this.llmProvider, i) as Promise<import('./projekt/satellit-projekt.js').Mutation>,
+      anwenden: (rest, n, m) => applyMutation(rest, n, m as never).newRemaining,
+      aktion: (geraetId, aktion, params, timeoutMs) => gw.sendeAktion(geraetId, aktion, params, timeoutMs),
+      frage: async (s, text, nonce) => {
+        if (!this.confirmationQueue) throw new Error('keine Bestätigungs-Queue');
+        const platform = this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api';
+        await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform, source: 'geraet', sourceId: `projekt-${s.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'satellit_antwort', task_id: s.id, freigabe: nonce }, timeoutMinutes: 720 });
+      },
+      melde: async (s, text) => { await this.meldeOhneModell(`[${s.id}] ${text}`, s.herkunft); },
+      vorgang: {
+        anlegen: async (s) => { const o = owner(); if (!o) return undefined; return (await vorgaenge.anlegen({ userId: o, titel: `Projekt auf ${s.geraet}: ${s.ziel.slice(0, 80)}`, ziel: s.projekt, besitzer: 'alfred', status: 'offen', quelle: 'projekt', autonomie: 'bestaetigen', kategorie: 'projekt', naechsterSchritt: 'Plan bestätigen' })).id; },
+        schritt: async (s, text) => { const o = owner(); if (!o || !s.vorgangId) return; await vorgaenge.schritt({ vorgangId: s.vorgangId, userId: o, art: 'ausgefuehrt', skill: 'project_agent', aktion: 'etappe', beschreibung: text, autonomie: 'bestaetigen', quelle: 'projekt' }); },
+        abschliessen: async (s, text) => { const o = owner(); if (!o || !s.vorgangId) return; await vorgaenge.abschliessen(o, s.vorgangId, { art: s.status === 'fertig' ? 'behoben' : 'anders', text }); },
+      },
+      ordner: path.resolve(process.cwd(), 'data', 'projekte-satellit'),
+      logger: this.logger.child({ component: 'satellit-projekt' }),
+    });
+    this.satellitProjekte = projekte;
+    const ergebnis = (s: import('./projekt/satellit-projekt.js').ProjektStand | undefined, display: string) => ({ success: !!s, data: s ? { task_id: s.id, status: s.status, etappe: s.nr, etappen: s.plan.length, kostenUsd: Number(s.kostenUsd.toFixed(2)) } : undefined, display });
+    skill.setSatellit({
+      start: async (input, context) => {
+        const name = String(input.geraet ?? '').trim();
+        const g = gw.geraetNachName(name);
+        if (!g) return { success: false, error: `Gerät „${name}" ist nicht verbunden` };
+        if (!g.aktionen.includes('auftrag_starten') || !g.aktionen.includes('pruefen_befehl')) return { success: false, error: `Auf ${g.name} fehlt Claude Code oder die Prüfaktion (Satellit ≥ 1383 und claude im PATH nötig)` };
+        const projekt = String(input.cwd ?? '').trim();
+        const ziel = String(input.goal ?? '').trim();
+        if (!projekt || !ziel) return { success: false, error: 'goal und cwd (Verzeichnis auf dem Gerät) angeben' };
+        const befehle = [...((input.buildCommands as string[] | undefined) ?? []), ...((input.testCommands as string[] | undefined) ?? [])].map(String);
+        const grenzen: Record<string, number> = {};
+        if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
+        if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
+        const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner() });
+        return ergebnis(s, `Projekt ${s.id} auf ${g.name} geplant (${s.plan.length} Etappen) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
+      },
+      status: (id) => { const s = projekte.hole(id); return s ? ergebnis(s, `${s.id} · ${s.status}${s.grund ? ` (${s.grund})` : ''} · Etappe ${s.nr}/${s.plan.length}${s.auftragId ? ' läuft' : ''} · ${s.kostenUsd.toFixed(2)} USD${s.frage ? `\nWartet auf dich: ${s.frage.text.slice(0, 300)}` : ''}\n${s.plan.map((p, i) => `${i + 1}. ${s.erledigt.find(e => e.nr === i + 1)?.ok ? '✅' : i + 1 === s.nr ? '▶' : '·'} ${p.slice(0, 120)}`).join('\n')}`) : { success: false, error: `Projekt ${id} unbekannt` }; },
+      stop: async (id) => ((await projekte.stoppe(id)) ? { success: true, display: `Projekt ${id} gestoppt` } : { success: false, error: `Projekt ${id} läuft nicht` }),
+      antwort: async (id, nonce) => ((await projekte.antwort(id, nonce)) ? { success: true, display: `Projekt ${id}: weiter` } : { success: false, error: 'Freigabe ungültig oder schon verwendet' }),
+      weiter: async (id) => ((await projekte.weiterOhneAenderung(id)) ? { success: true, display: `Projekt ${id}: weiter ohne Planänderung` } : { success: false, error: 'Keine offene Planänderung' }),
+    });
+    // R2c — nach einem Neustart offene Aufträge prüfen (Geräte brauchen ein paar Sekunden zum Verbinden)
+    setTimeout(() => { void projekte.fortsetzen().then(n => { if (n) this.logger.info({ projekte: n }, 'v1387 Satelliten-Projekte fortgesetzt'); }); }, 90_000).unref?.();
+    this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
+  }
+
   /** v1386 — Firewall-Änderungen des UniFi-Skills: Bestätigung beim Owner; nach dem Ja ruft die Queue den Skill mit der Einmal-Freigabe erneut auf. */
   private unifiBestaetigung(): (o: { beschreibung: string; params: Record<string, unknown> }) => Promise<boolean> {
     return async ({ beschreibung, params }) => {
@@ -15707,6 +15752,26 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       this.logger.info({ aktion: params.action, beschreibung: beschreibung.slice(0, 200) }, 'v1386 Firewall-Änderung zur Bestätigung');
       return true;
     };
+  }
+
+  /** v1382/v1387 — feste Meldung ohne Modell: Sitzung des Starts plus Owner-Chat als Kopie. */
+  private async meldeOhneModell(text: string, herkunft?: { chatId: string; platform: string }): Promise<string[]> {
+    const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api') as Platform;
+    const ownerChatId = this.config.security?.ownerUserId ?? '';
+    const ziele: Array<{ platform: Platform; chatId: string }> = [];
+    if (herkunft?.chatId) ziele.push({ platform: herkunft.platform as Platform, chatId: herkunft.chatId });
+    if (ownerChatId && !ziele.some(z => z.platform === ownerPlatform && z.chatId === ownerChatId)) ziele.push({ platform: ownerPlatform, chatId: ownerChatId });
+    const zugestellt: string[] = [];
+    for (const z of ziele) {
+      const adapter = this.adapters.get(z.platform);
+      if (!adapter) continue;
+      try {
+        const f = this.formatter.format(text, z.platform);
+        await adapter.sendMessage(z.chatId, f.text, { parseMode: f.parseMode !== 'text' ? f.parseMode : undefined });
+        zugestellt.push(`${z.platform}:${z.chatId}`);
+      } catch (err) { this.logger.warn({ err: (err as Error).message, chatId: z.chatId }, 'v1382 Meldung nicht zustellbar'); }
+    }
+    return zugestellt;
   }
 
   private async fortsetzungImOwnerChat(text: string, opts: { id: string; allowedSkills?: string[]; platform?: string; chatId?: string; tier?: import('@alfred/types').ModelTier; herkunft?: { chatId: string; platform: string; userId: string }; ablageAnhaenge?: import('@alfred/types').SkillResultAttachment[] }): Promise<boolean> {

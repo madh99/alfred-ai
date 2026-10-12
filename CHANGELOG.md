@@ -51,7 +51,20 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
-## [0.19.0-jarvis.1386] - 2026-10-12
+## [0.19.0-jarvis.1387] - 2026-10-12
+
+### Added — Projekt-Agent auf Geräten (v1387)
+
+Der Projekt-Agent kann ein Projekt jetzt auch auf einem gekoppelten Gerät bauen lassen (`project_agent start` mit `geraet`, z. B. „auf der Ubuntu-VM"). Der bisherige Projekt-Agent am Server bleibt unverändert.
+
+- **Ein Plan, eine Bestätigung:** Alfred plant die Etappen mit dem Planer des Projekt-Agenten und fragt einmal — Gerät, Verzeichnis, Etappen, Abnahmebefehle, Grenzen. Die Freigabe gilt nur für Claude-Code-Aufträge und Prüfbefehle in diesem Verzeichnis.
+- **Je Etappe:** Claude-Code-Auftrag auf dem Gerät, Ende-Meldung, dann die Abnahme (Build-/Testbefehle mit Exit 0). Rot → Korrekturauftrag mit Prüfprotokoll, höchstens 3; danach Rückfrage. Ohne Abnahmebefehle fragt Alfred nach jeder Etappe.
+- **Umplanen:** Verkürzen (überspringen, fertig) geschieht automatisch; neue oder geänderte Etappen nur nach Rückfrage — damit kann eine in der Ausgabe von Claude Code eingeschleuste Anweisung nicht zu einem neuen Auftrag werden.
+- **Grenzen:** 5 USD, 4 Stunden, höchstens 8 Etappen (einstellbar). Meldungen je Etappe und am Ende ohne Modell, in die Sitzung des Starts und den Owner-Chat.
+- **Vorgang und Neustart:** Jedes Projekt ist ein Vorgang (Quelle „projekt") mit einem Schritt je abgenommener Etappe; der Stand liegt in `data/projekte-satellit/`. Nach einem Neustart setzt Alfred fort — Claude Code arbeitet auf dem Gerät weiter, das Ende wird nachgereicht. Selbstupdates werden deshalb nicht blockiert.
+- Status und Stopp über die Kennung `sat-…`.
+
+
 
 ### Added — UniFi-Firewall auf dem Zonen-Modell (v1386)
 
