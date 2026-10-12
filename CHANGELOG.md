@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1376] - 2026-10-12
+
+### Added — Nachforschen: Rezepte für Infra-Befunde (v1376)
+
+Der erste Nachforschen-Lauf traf auf „UniFi: AC Mesh nicht verbunden" und fand kein Rezept. Nach der freigegebenen Reihenfolge (erst Haus, dann Infra) kommen zwei Referenzrezepte dazu: UniFi-Gerät getrennt (Geräteliste mit Zustand und Uplink, letzte Warnungen und Ereignisse des Controllers) und Proxmox-Ressource (VMs mit Speicher und CPU, Auslastung des Hosts). Der Lese-Katalog erlaubt dafür nur lesende UniFi- und Proxmox-Aktionen, Listen begrenzt; Neustart, Sperren oder VM-Schaltungen sind nie erlaubt. Befunde, die bisher „kein Rezept" hatten, werden erneut untersucht, sobald ein Rezept passt.
+
 ## [0.19.0-jarvis.1375] - 2026-10-12
 
 ### Security — Anfrage-Protokoll: je Benutzer, ohne Text im Log, mit dem Gespräch gelöscht (v1375)

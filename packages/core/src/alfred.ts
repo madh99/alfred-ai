@@ -2949,6 +2949,7 @@ export class Alfred {
         // „nachgeforscht" und im Zustand (für E3); Meldungen bleiben unverändert. Budget 10 Läufe / 0,50 USD am Tag.
         {
           const { Nachforscher } = await import('./nachforschen/lauf.js');
+          const { rezeptFuer: rezeptFuerN } = await import('./nachforschen/rezepte.js'); // v1376
           const { untersuchungKurz } = await import('./nachforschen/deutung.js');
           const { haltefristMin: haltefristN, nieStummschaltbar: nieStummN } = await import('./vorgaenge/regeln.js');
           const nachforscher = new Nachforscher({
@@ -2978,7 +2979,9 @@ export class Alfred {
                 const frist = haltefristN(schluessel);
                 if (frist === null || jetztN - Date.parse(b.entstanden) < frist * 60_000) continue;
                 const marke = `lauf:${b.id}:${b.entstanden}`;
-                if (await zustand.get(owner, 'nachforschen', marke)) continue;
+                const bisher = await zustand.get(owner, 'nachforschen', marke);
+                // v1376 — „kein Rezept" wird neu versucht, sobald es ein passendes Rezept gibt (z. B. neue Infra-Rezepte)
+                if (bisher && !(bisher === 'kein_rezept' && rezeptFuerN({ id: b.id, quelle: b.quelle, gegenstand: b.gegenstand, titel: b.titel, entstanden: b.entstanden }))) continue;
                 const regel = await this.regelnRepo?.wirksam(owner, b.quelle, b.gegenstand).catch(() => null);
                 if (regel?.wirkung === 'stumm' && !nieStummN(schluessel)) continue;
                 const e = await nachforscher.untersuche({ id: b.id, quelle: b.quelle, gegenstand: b.gegenstand, titel: b.titel, detail: b.detail, entstanden: b.entstanden, vorgangId: b.vorgangId });

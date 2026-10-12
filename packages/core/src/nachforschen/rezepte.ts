@@ -7,7 +7,7 @@
  * Rohverlauf; das Logbuch nur mit Entität und kurzem Zeitraum (Lektion 12.10.: ungefiltert 34 MB am Tag).
  */
 
-export interface RezeptSchritt { werkzeug: string; aktion: string; params: Record<string, string>; zweck: string }
+export interface RezeptSchritt { werkzeug: string; aktion: string; params: Record<string, string | number>; zweck: string }
 
 export interface Rezept {
   id: string;
@@ -36,6 +36,22 @@ export const LESE_KATALOG: Record<string, Record<string, (p: Record<string, unkn
     logbook: p => (!p.entityId ? 'logbook nur mit entityId (ungefiltert 34 MB/Tag)' : PERIODE_TAGE(String(p.period ?? '24h')) > 3 ? 'logbook höchstens 3 Tage' : null),
     areas: () => null,
   },
+  // v1376 — Infra (Owner-Reihenfolge 12.10.: Haus/HA, dann Infra); nur Lesen, Listen begrenzt
+  unifi: {
+    list_devices: () => null,
+    device_info: p => (p.mac ? null : 'device_info braucht mac'),
+    site_stats: () => null,
+    list_networks: () => null,
+    list_alerts: p => (Number(p.limit ?? 0) > 0 && Number(p.limit) <= 50 ? null : 'list_alerts mit limit 1–50'),
+    list_events: p => (Number(p.limit ?? 0) > 0 && Number(p.limit) <= 50 ? null : 'list_events mit limit 1–50'),
+  },
+  proxmox: {
+    cluster_status: () => null,
+    list_nodes: () => null,
+    node_stats: () => null,
+    list_vms: () => null,
+    list_storage: () => null,
+  },
 };
 
 export function pruefeSchritt(werkzeug: string, aktion: string, params: Record<string, unknown>): string | null {
@@ -59,10 +75,11 @@ export function platzhalterAus(b: BefundKurz): Record<string, string> {
   return p;
 }
 
-export function fuelleParams(params: Record<string, string>, platz: Record<string, string>): { params: Record<string, string>; fehlt: string[] } {
+export function fuelleParams(params: Record<string, string | number>, platz: Record<string, string>): { params: Record<string, string | number>; fehlt: string[] } {
   const fehlt: string[] = [];
-  const aus: Record<string, string> = {};
+  const aus: Record<string, string | number> = {};
   for (const [k, v] of Object.entries(params)) {
+    if (typeof v === 'number') { aus[k] = v; continue; }
     aus[k] = v.replace(/\{(\w+)\}/g, (_, n: string) => { if (platz[n] === undefined) { fehlt.push(n); return ''; } return platz[n]!; });
   }
   return { params: aus, fehlt };
@@ -132,6 +149,30 @@ export const REFERENZ_REZEPTE: Rezept[] = [
     eigeneSchritte: [BEOBACHTEN],
   },
 ];
+
+REFERENZ_REZEPTE.push(
+  {
+    id: 'unifi-geraet-getrennt', herkunft: 'referenz',
+    muster: { quelle: 'infra', gegenstand: /^unifi:device:/ },
+    schritte: [
+      { werkzeug: 'unifi', aktion: 'list_devices', params: {}, zweck: 'alle UniFi-Geräte mit Zustand, Uplink, letzter Meldung' },
+      { werkzeug: 'unifi', aktion: 'list_alerts', params: { limit: 20 }, zweck: 'letzte Warnungen des Controllers' },
+      { werkzeug: 'unifi', aktion: 'list_events', params: { limit: 30 }, zweck: 'letzte Ereignisse (Trennung, Neustart, Upgrade, Stromausfall)' },
+    ],
+    deutungsfragen: ['Seit wann ist das Gerät getrennt, und was geschah unmittelbar davor (Neustart, Upgrade, Stromausfall)?', 'Sind weitere Geräte am selben Uplink betroffen, oder nur dieses?', 'Hängt das Gerät per Funk (Mesh) oder per Kabel?'],
+    eigeneSchritte: [BEOBACHTEN],
+  },
+  {
+    id: 'proxmox-ressource', herkunft: 'referenz',
+    muster: { quelle: 'infra', gegenstand: /^proxmox:/ },
+    schritte: [
+      { werkzeug: 'proxmox', aktion: 'list_vms', params: {}, zweck: 'VMs und Container mit Zustand, Speicher und CPU' },
+      { werkzeug: 'proxmox', aktion: 'node_stats', params: {}, zweck: 'Auslastung des Hosts' },
+    ],
+    deutungsfragen: ['Ist die Auslastung dauerhaft hoch oder eine Spitze?', 'Ist der Speicher der VM zu knapp bemessen oder belegt ein Prozess ungewöhnlich viel?'],
+    eigeneSchritte: [BEOBACHTEN],
+  },
+);
 
 export function rezeptFuer(b: BefundKurz, rezepte: Rezept[] = REFERENZ_REZEPTE): Rezept | null {
   return rezepte.find(r => r.muster.quelle === b.quelle && r.muster.gegenstand.test(b.gegenstand)) ?? null;

@@ -22,7 +22,8 @@ describe('Lese-Katalog und Rezepte', () => {
     const r = rezeptFuer(LICHT)!;
     expect(r.id).toBe('licht-lange-an');
     expect(pruefeRezept(r, platzhalterAus(LICHT))).toEqual([]);
-    for (const x of REFERENZ_REZEPTE) expect(x.schritte.every(s => s.werkzeug === 'homeassistant')).toBe(true);
+    // jedes Referenzrezept besteht die Prüfung vor dem Lauf (v1376: auch Infra)
+    for (const x of REFERENZ_REZEPTE) expect(pruefeRezept(x, { entity: 'light.x', raum: 'R' }), x.id).toEqual([]);
   });
 
   it('ein Rezept mit Schreibschritt ist ungültig (auch künftig dynamisch erstellte)', () => {
@@ -79,5 +80,19 @@ describe('Nachforscher', () => {
 describe('v1373 — Lichter über Schalter', () => {
   it('Licht-Rezept passt auch auf Shelly-Schalter (Realfall: Abstellkammerl über switch.shellywalldisplay_…)', () => {
     expect(rezeptFuer({ ...LICHT, gegenstand: 'licht:lange-an:switch.shellywalldisplay_00082201697b_switch_0' })?.id).toBe('licht-lange-an');
+  });
+});
+
+describe('v1376 — Infra-Rezepte', () => {
+  it('UniFi „AC Mesh nicht verbunden" (Realfall 12.10.: erster Lauf „kein Rezept") und Proxmox-RAM haben jetzt ein Rezept', () => {
+    expect(rezeptFuer({ ...LICHT, quelle: 'infra', gegenstand: 'unifi:device:ac-mesh', titel: 'unifi: Device "AC Mesh" is not connected' })?.id).toBe('unifi-geraet-getrennt');
+    expect(rezeptFuer({ ...LICHT, quelle: 'infra', gegenstand: 'proxmox:git-server:ram', titel: 'proxmox: git-server RAM usage 95.2%' })?.id).toBe('proxmox-ressource');
+  });
+  it('UniFi- und Proxmox-Schaltaktionen sind nie erlaubt; Listen nur begrenzt', () => {
+    expect(pruefeSchritt('unifi', 'restart_device', { mac: 'x' })).toMatch(/keine erlaubte/);
+    expect(pruefeSchritt('unifi', 'block_client', {})).toMatch(/keine erlaubte/);
+    expect(pruefeSchritt('proxmox', 'reboot_vm', {})).toMatch(/keine erlaubte/);
+    expect(pruefeSchritt('unifi', 'list_events', {})).toMatch(/limit/);
+    expect(pruefeSchritt('unifi', 'list_events', { limit: 30 })).toBeNull();
   });
 });
