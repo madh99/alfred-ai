@@ -25,9 +25,11 @@ class Lauf {
         plan = ((j['plan'] as List<dynamic>?) ?? []).map((e) => '$e').toList(),
         erledigt = ((j['erledigt'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList(),
         nr = (j['nr'] as num?)?.toInt() ?? 0, kostenUsd = (j['kostenUsd'] as num?)?.toDouble() ?? 0,
-        start = DateTime.tryParse('${j['start'] ?? ''}')?.toLocal();
+        start = DateTime.tryParse('${j['start'] ?? ''}')?.toLocal(), frage = j['frage'] as String?, frageArt = j['frageArt'] as String?;
   final String id, status, ziel;
   final String? grund;
+  /// 1.15.1 — offene Frage (Plan, Weiter, Planänderung): direkt hier freigeben statt in den Bestätigungen
+  final String? frage, frageArt;
   final List<String> plan;
   final List<Map<String, dynamic>> erledigt;
   final int nr;
@@ -148,6 +150,18 @@ class _ProjektDetailState extends State<ProjektDetail> {
     finally { if (mounted) setState(() => standLaedt = false); }
   }
 
+  Future<void> entscheiden(Lauf l, String aktion) async {
+    setState(() { plant = true; meldung = null; });
+    try {
+      final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': aktion, 'lauf': l.id});
+      final ok = r['success'] == true;
+      if (!mounted) return;
+      setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Entschieden.'}' : '${r['error'] ?? 'Fehler'}'; });
+      if (ok) { widget.aufMeldung?.call(aktion == 'freigeben' ? '🧭 Projekt freigegeben' : '🧭 Projekt abgelehnt'); await laden(); }
+    } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
+    finally { if (mounted) setState(() => plant = false); }
+  }
+
   Future<void> weiter() async {
     final t = wunsch.text.trim();
     if (t.isEmpty) return;
@@ -212,6 +226,19 @@ class _ProjektDetailState extends State<ProjektDetail> {
                 const SizedBox(width: 8),
                 Expanded(child: Text('${l.ok}/${l.plan.length} · ${usd(l.kostenUsd)}${l.start != null ? ' · ${datum(l.start!)}' : ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
               ]),
+              if (l.status == 'wartet_owner' && l.frage != null) Container(
+                margin: const EdgeInsets.only(top: 8), padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: theme.colorScheme.tertiaryContainer, borderRadius: BorderRadius.circular(8)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  SelectableText(l.frage!, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onTertiaryContainer)),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    FilledButton(key: Key('freigeben-${l.id}'), onPressed: plant ? null : () => entscheiden(l, 'freigeben'), child: const Text('Freigeben')),
+                    const SizedBox(width: 8),
+                    OutlinedButton(key: Key('ablehnen-${l.id}'), onPressed: plant ? null : () => entscheiden(l, 'ablehnen'), child: const Text('Ablehnen')),
+                  ]),
+                ]),
+              ),
               const SizedBox(height: 4),
               Text(l.ziel, maxLines: offen.contains(l.id) ? null : 2, overflow: offen.contains(l.id) ? null : TextOverflow.ellipsis, style: theme.textTheme.bodyMedium),
               if (offen.contains(l.id)) ...[

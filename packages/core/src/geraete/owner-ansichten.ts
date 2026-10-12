@@ -61,6 +61,8 @@ export interface OwnerAnsichtenDeps {
     detail: (id: string) => Promise<unknown | null>;
     stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>;
     weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1403 — offene Frage eines Laufs freigeben/ablehnen */
+    entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>;
   };
   jetzt?: () => Date;
   /** Jede Änderung aus der App ins Server-Log (Beweis, Schicht-4-Signal). */
@@ -157,10 +159,15 @@ export class OwnerAnsichten {
   /** v1401 — Geräte-Projekte (nur Owner-Geräte; Weiterarbeiten plant und fragt den Owner wie im Gespräch) */
   async projekte(): Promise<{ projekte: unknown[] }> { return { projekte: this.d.projekte ? await this.d.projekte.liste() : [] }; }
   async projekt(id: string): Promise<unknown | null> { return this.d.projekte ? this.d.projekte.detail(id) : null; }
-  async projektAktion(id: string, aktion: unknown, text: unknown): Promise<{ success: boolean; display?: string; error?: string }> {
+  async projektAktion(id: string, aktion: unknown, text: unknown, lauf?: unknown): Promise<{ success: boolean; display?: string; error?: string }> {
     if (!this.d.projekte) return { success: false, error: 'Projekte nicht verfügbar' };
     if (aktion === 'stand') return this.d.projekte.stand(id);
-    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand oder weiter sein' };
+    if (aktion === 'freigeben' || aktion === 'ablehnen') {
+      if (!this.d.projekte.entscheiden || typeof lauf !== 'string' || !lauf) return { success: false, error: 'lauf fehlt' };
+      this.d.protokoll?.('Projekt entschieden', { projekt: id, lauf, aktion });
+      return this.d.projekte.entscheiden(id, lauf, aktion);
+    }
+    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, freigeben oder ablehnen sein' };
     const t = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     if (!t) return { success: false, error: 'text fehlt (was soll als Nächstes passieren?)' };
     this.d.protokoll?.('Projekt weiter', { projekt: id, laenge: t.length });

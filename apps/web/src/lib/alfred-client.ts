@@ -1648,6 +1648,12 @@ export class AlfredClient {
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
 
+  /** v1403 — offene Frage eines Laufs freigeben/ablehnen */
+  async geraetLaufEntscheiden(id: string, lauf: string, entscheidung: 'freigeben' | 'ablehnen'): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/entscheiden`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ lauf, entscheidung }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+
   async fetchProject(id: string): Promise<ProjectDetail | null> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     if (!res.ok) return null;
@@ -3436,6 +3442,8 @@ export interface Project {
 export interface GeraetLauf {
   id: string; status: 'wartet_owner' | 'laeuft' | 'fertig' | 'abgebrochen' | 'angehalten'; grund?: string; ziel: string; plan: string[];
   erledigt: Array<{ nr: number; ok: boolean; kostenUsd: number }>; nr: number; kostenUsd: number; start: string; aktualisiert: string; wartetAufDich: boolean;
+  /** v1403 — offene Frage zum Freigeben in der Projektansicht */
+  frage?: string; frageArt?: string;
 }
 
 // v643 — Per-Phase Commit eines Project-Agent-Laufs

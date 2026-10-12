@@ -51,6 +51,13 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1403] - 2026-10-12
+
+### Fixed — Projektmeldungen in der App, Freigabe direkt in der Projektansicht (v1403, App 1.15.1)
+
+- **Meldungen in der App:** Ein Lauf, der aus der App-Ansicht „Projekte“ gestartet wurde, hatte keine Herkunft. Seine Etappen- und Endmeldungen gingen nur an Telegram, der App-Chat zeigte das Ende nicht. Die App-Sitzung des Geräts ist jetzt die Herkunft.
+- **Freigabe direkt im Projekt:** Wartet ein Lauf auf eine Entscheidung (Plan, Weiter nach einer Etappe, Planänderung), zeigt die Projektansicht in App und Web die Frage mit „Freigeben“ und „Ablehnen“. Man muss nicht mehr zu den Bestätigungen wechseln. Die Entscheidung läuft über dieselbe Bestätigung wie der Telegram-Knopf. Ein abgelehnter Plan beendet den Lauf.
+
 ## [0.19.0-jarvis.1402] - 2026-10-12
 
 ### Fixed — App darf die Projekte lesen (v1402)

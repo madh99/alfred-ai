@@ -251,7 +251,7 @@ export interface GeraetOwnerAnsichten {
   befunde(): Promise<unknown>; // v1359
   projekte?(): Promise<unknown>; // v1401
   projekt?(id: string): Promise<unknown | null>;
-  projektAktion?(id: string, aktion: unknown, text: unknown): Promise<unknown>;
+  projektAktion?(id: string, aktion: unknown, text: unknown, lauf?: unknown): Promise<unknown>;
   vorgangAbschliessen(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1362
   regeln(): Promise<unknown>; // v1362
   regelAendern(id: string, aktion: unknown): Promise<unknown | null>; // v1362
@@ -807,7 +807,7 @@ export class HttpAdapter extends MessagingAdapter {
   private geraeteProjektIds = new Set<string>();
   setGeraeteProjektIds(ids: Set<string>): void { this.geraeteProjektIds = ids; }
   /** v1399 — Geräte-Projekt im Web: Stand (Akte mit Commits vom Gerät) und Weiterarbeiten (Plan → Owner-Bestätigung) */
-  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }> };
+  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }> };
   setGeraeteProjektCallbacks(cb: HttpAdapter['geraeteProjektCallbacks']): void { this.geraeteProjektCallbacks = cb; }
   private async handleGeraeteProjekt(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -818,7 +818,9 @@ export class HttpAdapter extends MessagingAdapter {
     if (!cb || !this.geraeteProjektIds.has(id)) { antwort(404, { error: 'kein Geräte-Projekt' }); return; }
     if (req.method === 'GET') { antwort(200, await cb.stand(id)); return; }
     let text = '';
-    try { const j = JSON.parse((await this.readBody(req)) || '{}') as { text?: unknown }; text = typeof j.text === 'string' ? j.text.trim().slice(0, 4000) : ''; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    let j: { text?: unknown; lauf?: unknown; entscheidung?: unknown } = {};
+    try { j = JSON.parse((await this.readBody(req)) || '{}') as typeof j; text = typeof j.text === 'string' ? j.text.trim().slice(0, 4000) : ''; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    if (url.pathname.endsWith('/entscheiden')) { antwort(200, cb.entscheiden && typeof j.lauf === 'string' && typeof j.entscheidung === 'string' ? await cb.entscheiden(id, j.lauf, j.entscheidung) : { success: false, error: 'lauf und entscheidung (freigeben|ablehnen) nötig' }); return; } // v1403
     if (!text) { antwort(400, { error: 'text fehlt (was soll als Nächstes passieren?)' }); return; }
     antwort(200, await cb.weiter(id, text));
   }
@@ -1336,7 +1338,7 @@ export class HttpAdapter extends MessagingAdapter {
     }
 
     // v1399 — Geräte-Projekte: VOR allen Projekt-Routen (Realfall Live-Test: /environments lag weiter oben in der Kette und lief durch)
-    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err));
       return;
     }
@@ -6911,7 +6913,7 @@ export class HttpAdapter extends MessagingAdapter {
       // v1401 — Geräte-Projekte in der App
       if (bereich === 'projekte' && !id && m === 'GET' && a.projekte) { antwort(200, await a.projekte()); return; }
       if (bereich === 'projekte' && id && m === 'GET' && a.projekt) { const p = await a.projekt(id); antwort(p ? 200 : 404, p ?? { error: 'nicht gefunden' }); return; }
-      if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text)); return; }
+      if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text, body.lauf)); return; }
       // v1362 — Abschluss mit Ergebnis (neu) bzw. Erledigt/Verwerfen (bisherige Clients); Regeln
       if (bereich === 'vorgaenge' && id && m === 'POST' && body.ergebnis) { const v = await a.vorgangAbschliessen(id, body); antwort(v ? 200 : 404, v ? { ok: true, ...(v as object) } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'regeln' && !id && m === 'GET') { antwort(200, await a.regeln()); return; }

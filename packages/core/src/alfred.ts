@@ -271,6 +271,8 @@ export class Alfred {
   /** v727 — Late-Wiring von SandboxRepo an Project-Agent-Skill (für dev-safe Build-Detection) */
   private projectAgentSkillRef?: import('@alfred/skills').ProjectAgentSkill;
   private satellitProjekte?: import('./projekt/satellit-projekt.js').SatellitProjekte; // v1387 R2
+  /** v1403 — offene Frage eines Geräte-Laufs aus App/Web entscheiden (über die Bestätigungs-Queue) */
+  private geraeteLaufEntscheiden?: (laufId: string, entscheidung: 'freigeben' | 'ablehnen') => Promise<{ success: boolean; display?: string; error?: string }>;
   /** v762 — Aktive Code-Agent-Runs pro synthetischer task_id, damit Stop-Signal sie killen kann */
   private codeAgentTaskAborts = new Map<string, AbortController>();
 
@@ -15628,12 +15630,12 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // v1359 — Befunde aller Quellen für die App-Ansicht „Befunde" (offen + 7 Tage erledigt)
       befunde: this.befundeRepo ? async () => ({ offen: await this.befundeRepo!.offene(owner), erledigt: await this.befundeRepo!.erledigtSeit(owner, new Date(Date.now() - 7 * 86_400_000).toISOString()) }) : undefined,
       protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (App)`),
-      projekte: await this.geraeteProjekteFuerApp(owner),
+      projekte: await this.geraeteProjekteFuerApp(owner, geraetId),
     });
   }
 
   /** v1401 — Geräte-Projekte für die App: Liste mit Zustand, Detail mit Läufen, Stand vom Gerät, Weiterarbeiten (Plan → Bestätigung). */
-  private async geraeteProjekteFuerApp(owner: string): Promise<import('./geraete/owner-ansichten.js').OwnerAnsichtenDeps['projekte']> {
+  private async geraeteProjekteFuerApp(owner: string, geraetId: string): Promise<import('./geraete/owner-ansichten.js').OwnerAnsichtenDeps['projekte']> {
     const repo = this.projectRepo;
     const skill = this.projectAgentSkillRef;
     if (!repo || !skill || !this.satellitProjekte) return undefined;
@@ -15653,7 +15655,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, laeufe: laeufe(p.id).map(laufAnzeige), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
-      weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, ctx('')),
+      // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
+      weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, ctx(`sitzung:${geraetId}`)),
+      entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
     };
   }
 
@@ -15784,6 +15788,21 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       logger: this.logger.child({ component: 'satellit-projekt' }),
     });
     this.satellitProjekte = projekte;
+    // v1403 — Owner 12.10.: „aus den Geräte-Projekten fortsetzen → man muss zu den Bestätigungen wechseln, um es freizugeben".
+    // Freigabe direkt in der Projektansicht: die offene Bestätigung dieses Laufs (source_id projekt-<lauf>-…) wie ein Knopfdruck entscheiden.
+    this.geraeteLaufEntscheiden = async (laufId, entscheidung) => {
+      const s = projekte.hole(laufId);
+      const o = owner();
+      if (!s?.frage) return { success: false, error: 'Dieser Lauf wartet auf keine Entscheidung' };
+      if (!o || !this.confirmationQueue || !this.database) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+      const row = await this.database.getAdapter().queryOne("SELECT id FROM pending_confirmations WHERE status = 'pending' AND source_id LIKE ? ORDER BY created_at DESC LIMIT 1", [`projekt-${laufId}-%`]) as { id?: string } | undefined;
+      if (!row?.id) return { success: false, error: 'Keine offene Bestätigung für diesen Lauf (abgelaufen oder schon entschieden)' };
+      const r = await this.confirmationQueue.handleWebDecision({ id: String(row.id), decision: entscheidung === 'freigeben' ? 'approve' : 'reject', userId: o });
+      if (!r.ok) return { success: false, error: `Nicht entschieden (${r.reason ?? 'unbekannt'})` };
+      if (entscheidung === 'ablehnen' && s.frage?.art === 'plan') await projekte.stoppe(laufId, 'Plan vom Owner abgelehnt');
+      this.logger.info({ lauf: laufId, entscheidung, art: s.frage?.art }, 'v1403 Lauf aus der Projektansicht entschieden');
+      return { success: true, display: entscheidung === 'freigeben' ? 'Freigegeben — es geht weiter.' : 'Abgelehnt.' };
+    };
     const laeufeVon = (akteId: string) => projekte.laeufeDerAkte(akteId);
     const akteAus = async (ref: string): Promise<{ o: string; akte: import('./projekt/akten-projekte.js').ProjektAkte } | { fehler: string }> => {
       const o = owner();
@@ -15936,6 +15955,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     (this.adapters.get('api') as unknown as { setGeraeteProjektCallbacks?: (cb: unknown) => void } | undefined)?.setGeraeteProjektCallbacks?.({
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: `project:${id}` } as never),
       weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never),
+      entscheiden: async (id: string, lauf: string, e: string) => (projekte.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') ? this.geraeteLaufEntscheiden!(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }), // v1403
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
     // v1393 — Lage nach dem Start einmal berechnen (sonst fehlte sie bis zum nächsten Befund-/Vorgangsereignis; Realfall 12.10.: stand null nach Update)

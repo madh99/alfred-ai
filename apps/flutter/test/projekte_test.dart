@@ -37,4 +37,19 @@ void main() {
     expect(find.textContaining('Die Planfrage kommt zur Bestätigung'), findsOneWidget);
     expect(aufrufe, contains('POST /api/geraete/projekte/p1'));
   });
+
+  testWidgets('1.15.1 offene Planfrage: Freigeben direkt in der Projektansicht', (t) async {
+    Map<String, dynamic>? gesendet;
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet = koerper; return {'success': true, 'display': 'Freigegeben — es geht weiter.'}; }
+      return {'id': 'p1', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [],
+        'laeufe': [{'id': 'sat-9', 'status': 'wartet_owner', 'ziel': 'Merkliste teilen', 'plan': ['A'], 'erledigt': [], 'nr': 0, 'kostenUsd': 0, 'start': '2026-10-12T21:00:00Z', 'frage': '🧭 Projekt auf Ubuntu-VM starten?', 'frageArt': 'plan'}]};
+    }
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'p1', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Projekt auf Ubuntu-VM starten?'), findsOneWidget);
+    await t.tap(find.byKey(const Key('freigeben-sat-9')));
+    await t.pumpAndSettle();
+    expect(gesendet, {'aktion': 'freigeben', 'lauf': 'sat-9'});
+  });
 }

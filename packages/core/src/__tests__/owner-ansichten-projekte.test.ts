@@ -27,7 +27,25 @@ describe('OwnerAnsichten: Projekte', () => {
   it('ohne Text oder unbekannte Aktion: nichts ausgelöst', async () => {
     aufrufe.length = 0;
     expect((await a.projektAktion('p1', 'weiter', '   ')).error).toMatch(/text fehlt/);
-    expect((await a.projektAktion('p1', 'loeschen', 'x')).error).toMatch(/stand oder weiter/);
+    expect((await a.projektAktion('p1', 'loeschen', 'x')).error).toMatch(/stand, weiter, freigeben oder ablehnen/);
     expect(aufrufe).toEqual([]);
+  });
+});
+
+// v1403 — offene Frage eines Laufs direkt aus der App entscheiden
+describe('OwnerAnsichten: Lauf entscheiden', () => {
+  const aufrufe: string[] = [];
+  const a = new OwnerAnsichten({
+    owner: 'u', todos: {} as never, erinnerungen: {} as never, db: {} as never, vorgangEntscheiden: async () => null,
+    projekte: {
+      liste: async () => [], detail: async () => null, stand: async () => ({ success: true }), weiter: async () => ({ success: true }),
+      entscheiden: async (id, lauf, e) => { aufrufe.push(`${id} ${lauf} ${e}`); return { success: true, display: 'Freigegeben' }; },
+    },
+  });
+  it('freigeben/ablehnen mit Lauf; ohne Lauf nichts', async () => {
+    expect((await a.projektAktion('p1', 'freigeben', undefined, 'sat-9')).success).toBe(true);
+    expect((await a.projektAktion('p1', 'ablehnen', undefined, 'sat-9')).success).toBe(true);
+    expect((await a.projektAktion('p1', 'freigeben', undefined, undefined)).error).toBe('lauf fehlt');
+    expect(aufrufe).toEqual(['p1 sat-9 freigeben', 'p1 sat-9 ablehnen']);
   });
 });

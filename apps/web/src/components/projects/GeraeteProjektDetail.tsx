@@ -54,6 +54,16 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
     finally { setBusy(false); }
   }
 
+  async function entscheiden(lauf: string, e: 'freigeben' | 'ablehnen') {
+    setBusy(true); setMeldung(null);
+    try {
+      const r = await client.geraetLaufEntscheiden(p.id, lauf, e);
+      setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Entschieden.') : (r.error ?? 'Fehler') });
+      if (r.success) setTimeout(onReload, 800);
+    } catch (err) { setMeldung({ ok: false, text: err instanceof Error ? err.message : String(err) }); }
+    finally { setBusy(false); }
+  }
+
   async function standLaden() {
     setStandLaedt(true);
     try { const r = await client.geraetProjektStand(p.id); setStand(r.success ? (r.display ?? '') : `Fehler: ${r.error ?? 'unbekannt'}`); }
@@ -120,6 +130,15 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
                 <span className="text-xs text-gray-200 flex-1 min-w-[12rem]">{l.ziel.slice(0, 140)}</span>
                 <span className="text-[11px] text-gray-500">{ok}/{l.plan.length} · {usd(l.kostenUsd)} · {datum(l.start)}</span>
               </button>
+              {l.status === 'wartet_owner' && l.frage && (
+                <div className="mx-3 mb-2 p-2 rounded border border-amber-500/40 bg-amber-500/10 space-y-2">
+                  <div className="text-xs text-amber-100 whitespace-pre-wrap">{l.frage}</div>
+                  <div className="flex gap-2">
+                    <button onClick={() => entscheiden(l.id, 'freigeben')} disabled={busy} className="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-300 rounded border border-emerald-500/40 disabled:opacity-40">Freigeben</button>
+                    <button onClick={() => entscheiden(l.id, 'ablehnen')} disabled={busy} className="px-3 py-1 text-xs bg-red-500/10 text-red-300 rounded border border-red-500/30 disabled:opacity-40">Ablehnen</button>
+                  </div>
+                </div>
+              )}
               {offen === l.id && (
                 <div className="px-3 pb-2 space-y-1">
                   {l.grund && <div className="text-[11px] text-gray-400">{l.grund}</div>}
