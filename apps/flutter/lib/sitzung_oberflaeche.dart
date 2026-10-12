@@ -238,7 +238,7 @@ extension _Oberflaeche on _SitzungState {
             : IconButton(tooltip: 'Zuhören mit Aktivierungswort „${konfig?.aktivierungswort ?? 'Alfred'}“', onPressed: server == null ? null : _hoerenUmschalten, icon: const Icon(Icons.headset, size: 22), visualDensity: VisualDensity.compact),
           const SizedBox(width: 4),
           antwortet // 1.7.0 — während der Antwort wird Senden zu Stopp (Owner-Freigabe 11.10., Punkt 5)
-            ? IconButton.filled(key: const Key('stopp'), tooltip: 'Antwort abbrechen', onPressed: _abbrechen, icon: const Icon(Icons.stop_rounded, size: 20))
+            ? StoppKnopf(key: const Key('stopp'), aufStopp: _abbrechen) // 1.14.1 — Lauf-Kreis um Stopp (wie bis 1.6 um Senden)
             : IconButton.filled(tooltip: 'Senden (Enter)', onPressed: () => _senden(), icon: const Icon(Icons.arrow_upward, size: 20)),
         ]),
       ]),

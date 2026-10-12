@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'markdown.dart';
 import 'modell.dart';
+import 'stopp_knopf.dart'; // 1.14.1
 
 /// 1.7.0 — Schnellfrage (Owner-Freigabe 11.10., Punkt 4): Strg+Alt+A öffnet über allen Programmen ein kleines Fenster mit
 /// nur einer Eingabezeile; die Antwort erscheint darunter. Esc schließt es wieder (das große Fenster bleibt, wie es war),
@@ -60,7 +61,7 @@ class Schnellfrage extends StatelessWidget {
               style: theme.textTheme.titleMedium,
               decoration: InputDecoration.collapsed(hintText: 'Schnellfrage an Alfred … (Enter senden, Esc schließen)', hintStyle: TextStyle(color: dim)),
             )),
-            if (antwortet) IconButton(key: const Key('schnellfrage-stopp'), tooltip: 'Antwort abbrechen', onPressed: aufStopp, icon: const Icon(Icons.stop_rounded)),
+            if (antwortet) StoppKnopf(key: const Key('schnellfrage-stopp'), aufStopp: aufStopp, gefuellt: false), // 1.14.1 mit Lauf-Kreis
             IconButton(tooltip: 'Im Fenster öffnen', onPressed: aufFensterOeffnen, icon: const Icon(Icons.open_in_full, size: 18)),
             IconButton(tooltip: 'Schließen (Esc)', onPressed: aufSchliessen, icon: const Icon(Icons.close, size: 18)),
           ]),

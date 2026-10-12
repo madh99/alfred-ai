@@ -40,6 +40,7 @@ import 'markdown.dart'; // 1.6.0
 import 'zwischenablage.dart'; // 1.6.0
 import 'modell.dart';
 import 'schnellfrage.dart'; // 1.7.0
+import 'stopp_knopf.dart'; // 1.14.1
 import 'server.dart';
 import 'transfer.dart';
 import 'package:desktop_drop/desktop_drop.dart';

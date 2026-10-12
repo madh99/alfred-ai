@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Lauf-Kreis um den Stopp-Knopf (App 1.14.1)
+
+Bis App 1.6 lief während einer Antwort ein Kreis im Senden-Knopf; seit 1.7.0 wird Senden zu Stopp, der Kreis fehlte dabei. Jetzt läuft er außen um den Stopp-Knopf — in der Eingabezeile und in der Schnellfrage; antippen bricht die Antwort weiterhin ab.
+
 ### Added — App: Vorgänge abschließen mit Ergebnis, Regeln übernehmen (App 1.13.0)
 
 Statt „Erledigt" und „Verwerfen" fragt der Vorgangs-Dialog „Was war es?" — behoben (Ursache, Maßnahme), entschieden (was), kein Problem (warum) oder anders. Bei Vorgängen aus einem Befund folgt „Und künftig?": wie heute, nicht mehr melden für 7, 30 oder 90 Tage, oder jedes Mal fragen. Sicherheitsbefunde lassen sich nicht stummschalten. Ab dem dritten „kein Problem" zum selben Befund ist Alfreds Vorschlag „nicht mehr melden" vorausgewählt. In der Ansicht „Befunde" stehen die Regeln: Vorschläge von Alfred mit „Übernehmen" und „Ablehnen", aktive Regeln mit „Widerrufen".
