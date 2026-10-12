@@ -89,6 +89,16 @@ export function formatiereLage(e: LageEingang, now: Date = new Date()): string {
   if (e.regeln && e.regeln.length > 0) zeilen.push(`Regeln des Owners (${e.regeln.length}): ${e.regeln.slice(0, 3).join(' · ')}${e.regeln.length > 3 ? ' · …' : ''}`);
   zeilen.push('Hinweis: Das ist der belegte Stand. Was hier nicht steht, ist nicht bekannt — nichts erfinden; für Details ein Werkzeug nutzen.');
 
+  // v1369 — zu lang: die längste Zeile kürzen statt das Ende abzuschneiden (sonst fielen die letzten Zeilen — „Nicht
+  // zugestellt", Regeln, Hinweis — bei vielen Befunden weg; Live 12.10.: die Lage endete mitten im Hinweis)
+  let laenge = zeilen.join('\n').length;
+  for (let runde = 0; laenge > LAGE_MAX_ZEICHEN && runde < 10; runde++) {
+    const i = zeilen.reduce((m, z, j) => (j > 0 && z.length > zeilen[m]!.length ? j : m), 1);
+    const neu = Math.max(80, zeilen[i]!.length - (laenge - LAGE_MAX_ZEICHEN) - 1);
+    if (neu >= zeilen[i]!.length) break;
+    zeilen[i] = `${zeilen[i]!.slice(0, neu).trimEnd()}…`;
+    laenge = zeilen.join('\n').length;
+  }
   const text = zeilen.join('\n');
   return text.length > LAGE_MAX_ZEICHEN ? `${text.slice(0, LAGE_MAX_ZEICHEN).trimEnd()}…` : text;
 }

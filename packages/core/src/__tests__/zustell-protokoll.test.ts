@@ -26,3 +26,13 @@ describe('ZustellProtokoll', () => {
     expect(lage).toContain('Nicht zugestellt (24 h): 1 geplante Aufgabe ohne Neues');
   });
 });
+
+describe('Lage zu lang (Live 12.10.: endete mitten im Hinweis)', () => {
+  it('kürzt die längste Zeile, die letzten Zeilen bleiben', () => {
+    const viele = Array.from({ length: 6 }, (_, i) => ({ quelle: 'infra', gegenstand: `g${i}`, titel: `homeassistant: ${i} newly unavailable entities: ${'shelly1pm-68C63AFADBA8 Überlast, '.repeat(6)}`, entstanden: '2026-10-11T08:00:00Z', erledigtAm: '2026-10-12T07:00:00Z', gesehenAnzahl: 3 }));
+    const lage = formatiereLage({ befundeOffen: viele, befundeErledigt24h: viele, vorgaengeOffen: [], vorgaengeAbgeschlossen24h: [], nichtZugestellt: nichtZugestelltZeile({ korrektur: 2 }) }, new Date('2026-10-12T08:00:00Z'));
+    expect(lage.length).toBeLessThanOrEqual(1100);
+    expect(lage).toContain('Nicht zugestellt (24 h): 2 durch deine Korrekturen');
+    expect(lage).toContain('Hinweis: Das ist der belegte Stand.');
+  });
+});

@@ -47,6 +47,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1370] - 2026-10-12
+
+### Fixed — Lage schnitt ihre letzten Zeilen ab (v1370)
+
+Die Lage war auf 1 100 Zeichen begrenzt und wurde am Ende abgeschnitten; bei vielen Befunden fielen die letzten Zeilen weg (Live 12.10.: sie endete mitten im Hinweis) — damit wäre auch die neue Zeile „Nicht zugestellt (24 h)" nie sichtbar geworden. Jetzt wird die längste Zeile gekürzt, alle Zeilen bleiben erhalten.
+
 ## [0.19.0-jarvis.1369] - 2026-10-12
 
 ### Added — Lage nennt, was in 24 Stunden nicht zugestellt wurde (v1369)
