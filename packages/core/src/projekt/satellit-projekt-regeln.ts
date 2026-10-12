@@ -4,9 +4,10 @@
  * (Planer, Umplan-Prüfer) und die R1-Bausteine am Gerät (Auftrag, Ende-Meldung, pruefen_befehl).
  */
 
-export interface Grenzen { budgetUsd: number; maxStunden: number; maxEtappen: number; maxFixVersuche: number }
-/** Owner-Entscheidung 12.10.: 5 USD, 4 h, höchstens 8 Etappen, 3 Fix-Versuche je Etappe. */
-export const STANDARD_GRENZEN: Grenzen = { budgetUsd: 5, maxStunden: 4, maxEtappen: 8, maxFixVersuche: 3 };
+/** v1394 — Budget und Zeit sind optional: nur, wenn der Owner sie nennt (Owner 12.10.: „das Budget nur prüfen, wenn man es mitgibt; von der Zeit eine harte Grenze finde ich nicht gut"). */
+export interface Grenzen { budgetUsd?: number; maxStunden?: number; maxEtappen: number; maxFixVersuche: number }
+/** Höchstens 8 Etappen, 3 Fix-Versuche je Etappe; Budget und Zeit ohne Vorgabe unbegrenzt. */
+export const STANDARD_GRENZEN: Grenzen = { maxEtappen: 8, maxFixVersuche: 3 };
 
 export type MutationsArt = 'done' | 'proceed' | 'skip' | 'merge' | 'extend' | 'replace';
 
@@ -61,7 +62,7 @@ export function planFrage(o: { geraet: string; projekt: string; ziel: string; pl
     `Etappen${o.gekuerzt ? ` (auf ${o.g.maxEtappen} gekürzt)` : ''}:`,
     ...o.plan.map((p, i) => `${i + 1}. ${p.slice(0, 200)}`),
     `Abnahme je Etappe: ${o.pruefBefehle.length ? o.pruefBefehle.join(' ; ') : 'keine Prüfbefehle — nach jeder Etappe frage ich dich'}`,
-    `Grenzen: ${o.g.budgetUsd} USD, ${o.g.maxStunden} h, ${o.g.maxFixVersuche} Fix-Versuche je Etappe.`,
+    `Grenzen: ${[o.g.budgetUsd !== undefined ? `${o.g.budgetUsd} USD` : 'kein Budget', o.g.maxStunden !== undefined ? `${o.g.maxStunden} h` : 'keine Zeitgrenze'].join(', ')}, ${o.g.maxFixVersuche} Fix-Versuche je Etappe.`,
     'Freigabe gilt nur für Claude-Code-Aufträge und Prüfbefehle in diesem Verzeichnis, bis Budget, Zeit oder Ende.',
   ].join('\n');
 }
@@ -78,8 +79,8 @@ export function mutationText(m: { kind: string; newPhase?: string; newPhases?: s
 
 /** Grenzen prüfen: liefert den Grund zum Anhalten oder undefined. */
 export function grenzeErreicht(o: { kostenUsd: number; startMs: number; jetztMs: number; g: Grenzen }): string | undefined {
-  if (o.kostenUsd >= o.g.budgetUsd) return `Budget erreicht (${o.kostenUsd.toFixed(2)} von ${o.g.budgetUsd} USD)`;
-  if (o.jetztMs - o.startMs >= o.g.maxStunden * 3_600_000) return `Zeitlimit erreicht (${o.g.maxStunden} h)`;
+  if (o.g.budgetUsd !== undefined && o.kostenUsd >= o.g.budgetUsd) return `Budget erreicht (${o.kostenUsd.toFixed(2)} von ${o.g.budgetUsd} USD)`;
+  if (o.g.maxStunden !== undefined && o.jetztMs - o.startMs >= o.g.maxStunden * 3_600_000) return `Zeitlimit erreicht (${o.g.maxStunden} h)`;
   return undefined;
 }
 

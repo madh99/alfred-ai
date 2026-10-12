@@ -51,6 +51,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1394] - 2026-10-12
+
+### Changed — Geräte-Projekte: Grenzen nur auf Wunsch, Aufträge ohne Benutzereinstellungen, Ende sicher erkannt (v1394)
+
+Owner 12.10. nach dem ersten echten Projekt („Supermarkt-Angebote"): Budget nur prüfen, wenn man es mitgibt; eine harte Zeitgrenze ebenso nur auf Wunsch.
+
+- **Budget und Zeitgrenze nur, wenn genannt.** Ohne Angabe läuft ein Projekt ohne Kosten- und Zeitgrenze (höchstens 8 Etappen und 3 Fix-Versuche je Etappe bleiben). Mit Budget bekommt jede Etappe das Restbudget als Grenze an Claude Code (`--max-budget-usd`), die Grenze hält damit auch innerhalb einer langen Etappe. Projekte von vorher verlieren die automatisch gesetzten 5 USD/4 h.
+- **Aufträge ohne die persönlichen Claude-Code-Einstellungen** des Geräts (`--setting-sources project,local`): Auf der Ubuntu-VM lief vor jedem Befehl ein claude-flow-Hook (`npx`) und bremste jede Etappe. Eigene Sitzungen am Gerät bleiben unverändert.
+- **Ende sicher erkannt:** Endet ein Auftrag, nachdem sich der Satellit aktualisiert hat, fehlte der Prozess-Wächter — das Ende wäre erst beim nächsten Verbinden aufgefallen. Der Satellit sieht jetzt jede Minute nach.
+
 ## [0.19.0-jarvis.1393] - 2026-10-12
 
 ### Fixed — Lage nach dem Start und bei Projektschritten aktuell (v1393)

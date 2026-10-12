@@ -414,8 +414,8 @@ Actions:
           cwd: { type: 'string', description: 'Working directory for the project (for start)' },
           // v1387 (R2) — Ausführungsziel Satellit
           geraet: { type: 'string', description: 'Nur wenn das Projekt auf einem GERÄT des Owners gebaut werden soll (z. B. "Ubuntu-VM"): Name des gekoppelten Geräts. Dann ist cwd ein Verzeichnis auf diesem Gerät (freigegeben, mit Schreibrecht), Claude Code baut dort Etappe für Etappe, buildCommands/testCommands sind die Abnahme je Etappe. Leer = Server (bisheriges Verhalten).' },
-          budget_usd: { type: 'number', description: 'Nur mit geraet: Kostengrenze in USD (Standard 5)' },
-          max_stunden: { type: 'number', description: 'Nur mit geraet: Zeitgrenze in Stunden (Standard 4)' },
+          budget_usd: { type: 'number', description: 'Nur mit geraet und nur wenn der Owner ein Budget nennt: Kostengrenze in USD — ohne Angabe keine Grenze' },
+          max_stunden: { type: 'number', description: 'Nur mit geraet und nur wenn der Owner eine Zeitgrenze nennt: Stunden — ohne Angabe keine Grenze' },
           freigabe: { type: 'string', description: 'Nur intern (Bestätigung des Owners) — nie selbst setzen' },
           // v851.1 — import_feature params
           feature_id: { type: 'string', description: 'Feature-UUID aus Features-Library (für import_feature)' },

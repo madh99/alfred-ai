@@ -108,7 +108,7 @@ export function baueManifest(version: string): GeraetManifest {
       // v1325 — Kamera: feste Aktion statt Oberflächen-Steuerung von Photo Booth (lokalisierte Ordner, 3-s-Countdown)
       // v1342 — Aufträge an Claude Code im Druckmodus (Owner 10.10.): Projekt anlegen/ändern nach Spezifikation, läuft abgekoppelt, Ende wird gemeldet
       ...(claudeVerfuegbar() ? [
-        { name: 'auftrag_starten', beschreibung: 'Gibt Claude Code auf diesem Gerät einen Auftrag (Projekt anlegen, Funktion bauen, Fehler beheben) nach einer Spezifikation. Läuft im Hintergrund, oft viele Minuten; das Ende wird automatisch gemeldet. Ein EINZELNER Auftrag — für ein Projekt in mehreren Etappen mit Abnahme (Tests/Build je Etappe) stattdessen project_agent start mit geraet=<dieses Gerät>. projekt = vorhandenes Verzeichnis mit Schreibrecht; auftrag = vollständige Spezifikation (Ziel, Technik, Dateien, Abnahme).', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Pfad des Projektverzeichnisses (freigegeben, schreibend)' }, auftrag: { type: 'string', description: 'Spezifikation als Text (Markdown)' }, titel: { type: 'string', description: 'Kurztitel' } } },
+        { name: 'auftrag_starten', beschreibung: 'Gibt Claude Code auf diesem Gerät einen Auftrag (Projekt anlegen, Funktion bauen, Fehler beheben) nach einer Spezifikation. Läuft im Hintergrund, oft viele Minuten; das Ende wird automatisch gemeldet. Ein EINZELNER Auftrag — für ein Projekt in mehreren Etappen mit Abnahme (Tests/Build je Etappe) stattdessen project_agent start mit geraet=<dieses Gerät>. projekt = vorhandenes Verzeichnis mit Schreibrecht; auftrag = vollständige Spezifikation (Ziel, Technik, Dateien, Abnahme).', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Pfad des Projektverzeichnisses (freigegeben, schreibend)' }, auftrag: { type: 'string', description: 'Spezifikation als Text (Markdown)' }, titel: { type: 'string', description: 'Kurztitel' }, max_kosten_usd: { type: 'number', description: 'Optional: Kostengrenze für diesen Auftrag in USD (Claude Code hält sie selbst ein)' } } },
         { name: 'auftrag_stand', beschreibung: 'Stand eines laufenden oder beendeten Auftrags: läuft noch?, Dauer, letzte Protokollzeilen', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung aus auftrag_starten' } } },
         { name: 'auftrag_ergebnis', beschreibung: 'Ergebnis eines beendeten Auftrags (Zusammenfassung von Claude Code, Kosten, Dauer)', autonomie: 'auto' as const, parameter: { id: { type: 'string', description: 'Auftrags-Kennung' } } },
         { name: 'auftraege', beschreibung: 'Liste der letzten Aufträge auf diesem Gerät mit Status', autonomie: 'auto' as const },
@@ -171,6 +171,7 @@ export function pfadVon(params: Record<string, unknown>, ...namen: string[]): st
  * Verbindung bleibt der Auftrag ungemeldet und wird nach dem nächsten Willkommen nachgereicht (offeneEndmeldungen).
  */
 let gehirnSende: ((n: Record<string, unknown>) => boolean) | undefined;
+let endeWaechter: ReturnType<typeof setInterval> | undefined; // v1394
 function meldeAuftragEnde(m: AuftragMeta, erg: AuftragErgebnis, log?: (t: string) => void): void {
   if (m.gemeldet) return;
   try {
@@ -323,7 +324,8 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!auftrag) return { success: false, error: 'auftrag fehlt (Spezifikation als Text)' };
       if (!istPfadErlaubt(projekt, frei)) return { success: false, error: `Projektverzeichnis nicht freigegeben (Schreibrecht nötig): ${projekt}. Mit Schreibrecht: ${frei.join(', ')}` };
       try {
-        const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) }); // v1382 R1
+        const maxK = Number(params.max_kosten_usd);
+        const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg), ...(Number.isFinite(maxK) && maxK > 0 ? { maxKostenUsd: Math.min(maxK, 100) } : {}) }); // v1382 R1, v1394 Budget
         return { success: true, data: { id: m.id, titel: m.titel, projekt: m.projekt, start: m.start, auftragDatei: m.auftragDatei }, display: `Auftrag ${m.id} („${m.titel}") auf ${k.name} gestartet in ${m.projekt}. Läuft im Hintergrund; Stand mit auftrag_stand ${m.id}, Ergebnis mit auftrag_ergebnis ${m.id}.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
@@ -712,6 +714,8 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             if (rk !== 'abweichend' && !process.env.ALFRED_KEIN_UPDATE) pruefeUpdate(String(n.serverVersion ?? ''));
             // v1382 R1 — ab jetzt Auftragsenden über diese Verbindung; Enden während Trennung/Neustart nachreichen
             gehirnSende = sende;
+            // v1394 — Aufträge, die nach einem Satelliten-Neustart enden, haben keinen Exit-Handler mehr: jede Minute nachsehen
+            if (!endeWaechter) endeWaechter = setInterval(() => { if (!gehirnSende) return; try { for (const o of offeneEndmeldungen()) meldeAuftragEnde(o.meta, o.ergebnis, log); } catch { /* nächste Minute */ } }, 60_000);
             try { for (const o of offeneEndmeldungen()) meldeAuftragEnde(o.meta, o.ergebnis, log); } catch (err) { log(`Offene Auftragsenden nicht lesbar: ${(err as Error).message}`); }
             return;
           }

@@ -38,7 +38,7 @@ describe('Satelliten-Projekt', () => {
     const { p, aufrufe, fragen, meldungen, ende } = aufbau();
     const s = await p.starte(start);
     expect(s.status).toBe('wartet_owner');
-    expect(fragen[0]!.text).toMatch(/Projekt auf Ubuntu-VM starten\?[\s\S]*1\. Gerüst anlegen[\s\S]*npm test[\s\S]*5 USD, 4 h, 3 Fix/);
+    expect(fragen[0]!.text).toMatch(/Projekt auf Ubuntu-VM starten\?[\s\S]*1\. Gerüst anlegen[\s\S]*npm test[\s\S]*kein Budget, keine Zeitgrenze, 3 Fix/);
     expect(aufrufe).toHaveLength(0);
     expect(await p.antwort(s.id, 'geraten')).toBe(false);
     expect(aufrufe).toHaveLength(0);
@@ -98,7 +98,7 @@ describe('Satelliten-Projekt', () => {
     expect(a.aufrufe.some(x => x.aktion === 'pruefen_befehl')).toBe(false);
 
     const b = aufbau({ kosten: 3 });
-    const s2 = await b.p.starte(start);
+    const s2 = await b.p.starte({ ...start, grenzen: { budgetUsd: 5 } }); // v1394 Budget nur mit Vorgabe
     await b.p.antwort(s2.id, b.fragen[0]!.nonce);
     await b.ende(s2); await b.ende(s2);
     expect(b.p.hole(s2.id)!.status).toBe('angehalten');
@@ -109,7 +109,8 @@ describe('Satelliten-Projekt', () => {
     expect(begrenzePlan(['a', 'b', 'c', 'd'], 3)).toEqual(['a', 'b', 'c — danach: d']);
     expect(['proceed', 'skip', 'done'].every(k => mutationAutomatisch(k as never))).toBe(true);
     expect(['merge', 'extend', 'replace'].some(k => mutationAutomatisch(k as never))).toBe(false);
-    expect(grenzeErreicht({ kostenUsd: 0, startMs: 0, jetztMs: 4 * 3_600_000, g: STANDARD_GRENZEN })).toMatch(/Zeitlimit/);
+    expect(grenzeErreicht({ kostenUsd: 0, startMs: 0, jetztMs: 4 * 3_600_000, g: { ...STANDARD_GRENZEN, maxStunden: 4 } })).toMatch(/Zeitlimit/);
+    expect(grenzeErreicht({ kostenUsd: 0, startMs: 0, jetztMs: 400 * 3_600_000, g: STANDARD_GRENZEN })).toBeUndefined();
   });
 });
 
@@ -172,7 +173,7 @@ describe('Fortsetzen angehaltener Projekte', () => {
     expect((await p.fortsetzenNach(s.id)).ok).toBe(false);
 
     const b = aufbau({ kosten: 6 });
-    const s2 = await b.p.starte(start);
+    const s2 = await b.p.starte({ ...start, grenzen: { budgetUsd: 5 } });
     await b.p.antwort(s2.id, b.fragen[0]!.nonce);
     await b.ende(s2); // 6 USD > 5 USD: nach Etappe 1 angehalten
     expect(b.p.hole(s2.id)!.status).toBe('angehalten');
@@ -202,5 +203,36 @@ describe('Sichtbarkeit', () => {
     const z = projektZeile({ id: 'sat-1', geraet: 'VM', status: 'laeuft', nr: 2, plan: ['a', 'b', 'c'], kostenUsd: 0.5, etappeStart: 0, fixVersuch: 1 }, 12 * 60_000);
     expect(z).toMatch(/^sat-1 auf VM: Etappe 2\/3 \(Fix 1\) läuft seit \d\d:\d\d \(12 min\), 0,50 USD$/);
     expect(projektZeile({ id: 'x', geraet: 'VM', status: 'fertig', nr: 3, plan: ['a'], kostenUsd: 1, fixVersuch: 0 }, 0)).toBeNull();
+  });
+});
+
+// v1394 — Budget und Zeit nur, wenn vorgegeben; Restbudget je Auftrag an Claude Code; alte Stände ohne Auto-Grenzen
+import { mkdtempSync as mkd, writeFileSync as wf } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+describe('Grenzen nur auf Wunsch', () => {
+  it('ohne Vorgabe: keine Budget-/Zeitgrenze, kein max_kosten_usd; Planfrage sagt es', async () => {
+    const { p, fragen, aufrufe } = aufbau({ kosten: 50 });
+    const s = await p.starte(start);
+    expect(s.grenzen).toEqual({ maxEtappen: 8, maxFixVersuche: 3 });
+    expect(fragen[0]!.text).toMatch(/Grenzen: kein Budget, keine Zeitgrenze, 3 Fix-Versuche/);
+    await p.antwort(s.id, fragen[0]!.nonce);
+    expect(aufrufe[0]!.params.max_kosten_usd).toBeUndefined();
+    expect(grenzeErreicht({ kostenUsd: 999, startMs: 0, jetztMs: 100 * 3_600_000, g: s.grenzen })).toBeUndefined();
+  });
+  it('mit Budget: Restbudget je Auftrag', async () => {
+    const { p, fragen, aufrufe, ende } = aufbau({ kosten: 0.75 });
+    const s = await p.starte({ ...start, grenzen: { budgetUsd: 2 } });
+    expect(fragen[0]!.text).toMatch(/Grenzen: 2 USD, keine Zeitgrenze/);
+    await p.antwort(s.id, fragen[0]!.nonce);
+    expect(aufrufe[0]!.params.max_kosten_usd).toBe(2);
+    await ende(s);
+    expect(aufrufe.filter(a => a.aktion === 'auftrag_starten')[1]!.params.max_kosten_usd).toBe(1.25);
+  });
+  it('alte Stände: automatisch gesetzte 5 USD/4 h entfallen beim Laden', () => {
+    const ordner = mkd(join(tmpdir(), 'satproj-'));
+    wf(join(ordner, 'sat-alt.json'), JSON.stringify({ id: 'sat-alt', grenzen: { budgetUsd: 5, maxStunden: 4, maxEtappen: 8, maxFixVersuche: 3 }, status: 'laeuft', plan: ['a'], nr: 1, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: 0, aktualisiert: 0, geraetId: 'g', geraet: 'VM', projekt: '/p', ziel: 'z', pruefBefehle: [] }));
+    const p = new SatellitProjekte({ planen: async () => [], bewerten: async () => ({ kind: 'proceed' }), anwenden: r => r, aktion: async () => ({ success: true }), frage: async () => undefined, melde: async () => undefined, logger: { info: () => undefined, warn: () => undefined }, ordner });
+    expect(p.hole('sat-alt')!.grenzen).toEqual({ maxEtappen: 8, maxFixVersuche: 3 });
   });
 });

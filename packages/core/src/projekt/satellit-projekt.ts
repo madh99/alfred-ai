@@ -28,6 +28,8 @@ export interface ProjektStand {
   plan: string[]; nr: number; erledigt: EtappenErgebnis[]; fixVersuch: number; kostenUsd: number; etappeKostenUsd: number;
   start: number; aktualisiert: number;
   auftragId?: string;
+  /** v1394 — Grenzen im neuen Format (Budget/Zeit nur vom Owner) */
+  grenzenStand?: number;
   /** v1392 — Start des laufenden Auftrags (Lage, Vorgang) */
   etappeStart?: number;
   frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation'; mutation?: Mutation; text: string };
@@ -60,7 +62,12 @@ export class SatellitProjekte {
       try {
         for (const f of readdirSync(d.ordner)) {
           if (!f.endsWith('.json')) continue;
-          try { const s = JSON.parse(readFileSync(path.join(d.ordner, f), 'utf8')) as ProjektStand; this.staende.set(s.id, s); } catch { /* kaputt: überspringen */ }
+          try {
+            const s = JSON.parse(readFileSync(path.join(d.ordner, f), 'utf8')) as ProjektStand;
+            // v1394 — alte Stände: automatisch gesetzte 5 USD/4 h entfallen (nur vom Owner genannte Grenzen gelten)
+            if (!s.grenzenStand) { if (s.grenzen.budgetUsd === 5) delete s.grenzen.budgetUsd; if (s.grenzen.maxStunden === 4) delete s.grenzen.maxStunden; s.grenzenStand = 1394; }
+            this.staende.set(s.id, s);
+          } catch { /* kaputt: überspringen */ }
         }
       } catch { /* Ordner fehlt */ }
     }
@@ -100,7 +107,7 @@ export class SatellitProjekte {
     const s: ProjektStand = {
       id: `sat-${randomUUID().slice(0, 8)}`, geraetId: o.geraetId, geraet: o.geraet, projekt: o.projekt, ziel: o.ziel,
       pruefBefehle: [...new Set((o.pruefBefehle ?? []).map(b => b.trim()).filter(Boolean))] /* v1390 doppelte (Build = Test) nur einmal */, grenzen: g, herkunft: o.herkunft, ownerId: o.ownerId,
-      status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
+      grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
     };
     const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu });
     await this.stelleFrage(s, 'plan', text);
@@ -185,7 +192,9 @@ export class SatellitProjekte {
   private async starteAuftrag(s: ProjektStand, auftrag: string, titel: string): Promise<void> {
     const grenze = grenzeErreicht({ kostenUsd: s.kostenUsd, startMs: s.start, jetztMs: this.jetzt(), g: s.grenzen });
     if (grenze) { await this.beende(s, 'angehalten', grenze); return; }
-    const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel }, 60_000);
+    // v1394 — mit Budget: Claude Code bekommt das Restbudget und hält es selbst ein (--max-budget-usd)
+    const rest = s.grenzen.budgetUsd !== undefined ? Math.max(0.05, Number((s.grenzen.budgetUsd - s.kostenUsd).toFixed(2))) : undefined;
+    const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel, ...(rest !== undefined ? { max_kosten_usd: rest } : {}) }, 60_000);
     const id = (r.data as { id?: string } | undefined)?.id;
     if (!r.success || !id) { await this.beende(s, 'angehalten', `Auftrag nicht gestartet: ${r.error ?? 'keine Kennung'}`); return; }
     s.auftragId = id;

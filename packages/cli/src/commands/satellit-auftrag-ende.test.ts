@@ -63,3 +63,24 @@ describe('Auftragsende (v1382)', () => {
     expect(offeneEndmeldungen(home).map(x => x.meta.id)).toEqual(['2-tot']);
   });
 });
+
+// v1394 — Aufrufargumente von Claude Code: ohne Benutzereinstellungen, Budget nur auf Wunsch
+import { auftragStarten } from './satellit-auftrag.js';
+import { chmodSync, readFileSync as rf } from 'node:fs';
+describe('Claude-Code-Aufruf', () => {
+  it('setting-sources project,local; max-budget-usd nur mit Vorgabe; fehlendes Verzeichnis wird angelegt', async () => {
+    if (process.platform === 'win32') return; // Shell-Stub nur unter Unix
+    const home = mkdtempSync(path.join(os.tmpdir(), 'r1-arg-'));
+    const stub = path.join(home, 'claude');
+    writeFileSync(stub, '#!/bin/sh\nprintf "%s\n" "$@" > "$(dirname "$0")/args.txt"\n');
+    chmodSync(stub, 0o755);
+    const proj = path.join(home, 'neu', 'projekt');
+    await new Promise<void>(res => auftragStarten({ projekt: proj, auftrag: 'x', home, claude: stub, maxKostenUsd: 1.5, beiEnde: () => res() }));
+    const a = rf(path.join(home, 'args.txt'), 'utf8').split('\n');
+    expect(a).toContain('--setting-sources');
+    expect(a[a.indexOf('--setting-sources') + 1]).toBe('project,local');
+    expect(a[a.indexOf('--max-budget-usd') + 1]).toBe('1.5');
+    await new Promise<void>(res => auftragStarten({ projekt: proj, auftrag: 'y', home, claude: stub, beiEnde: () => res() }));
+    expect(rf(path.join(home, 'args.txt'), 'utf8')).not.toContain('--max-budget-usd');
+  });
+});

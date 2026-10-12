@@ -74,7 +74,7 @@ function laeuft(pid: number | undefined): boolean {
 }
 
 /** Auftrag starten: Spezifikation als AUFTRAG-<id>.md ins Projekt, `claude -p` abgekoppelt, Protokoll in ~/.alfred/auftraege/<id>/. */
-export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string }): AuftragMeta {
+export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number }): AuftragMeta {
   const claude = opts.claude ?? claudePfad();
   if (!claude) throw new Error('Claude Code ist auf diesem Gerät nicht installiert (claude nicht im PATH)');
   // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
@@ -86,11 +86,14 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   const auftragDatei = path.join(opts.projekt, `AUFTRAG-${id}.md`);
   writeFileSync(auftragDatei, `# ${opts.titel ?? 'Auftrag'}\n\n${opts.auftrag.trim()}\n`);
   // v1392 — stream-json: Claude Code schreibt jeden Schritt sofort ins Protokoll (Fortschritt sichtbar), die result-Zeile am Ende bleibt gleich
-  const args = ['-p', auftragPrompt(auftragDatei, opts.projekt), '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto'];
+  // v1394 — ohne die Benutzereinstellungen (~/.claude: Hooks, MCP-Server, Umgebung des Owners; Realfall 12.10.: claude-flow-Hook vor jedem
+  // Befehl bremste die Etappe) — Projekt-Einstellungen gelten weiter; optional Kostengrenze je Auftrag
+  const args = ['-p', auftragPrompt(auftragDatei, opts.projekt), '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto', '--setting-sources', 'project,local',
+    ...(opts.maxKostenUsd !== undefined && opts.maxKostenUsd > 0 ? ['--max-budget-usd', String(opts.maxKostenUsd)] : [])];
   const log = openSync(logPfad(id, opts.home), 'a');
   const istCmd = /\.cmd$/i.test(claude);
   const kind = spawn(istCmd ? 'cmd.exe' : claude, istCmd ? ['/c', claude, ...args] : args, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, CLAUDE_CODE_NO_UPDATE_CHECK: '1' } });
-  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto`, auftragDatei };
+  const meta: AuftragMeta = { id, titel: opts.titel ?? opts.auftrag.split('\n')[0]!.slice(0, 80), projekt: opts.projekt, start: new Date().toISOString(), pid: kind.pid, status: 'laeuft', befehl: `${path.basename(claude)} -p … --output-format stream-json --verbose --permission-mode auto --setting-sources project,local${opts.maxKostenUsd ? ` --max-budget-usd ${opts.maxKostenUsd}` : ''}`, auftragDatei };
   speichereMeta(meta, opts.home);
   kind.on('error', (err) => {
     closeSync(log);
