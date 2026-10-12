@@ -875,3 +875,56 @@ Jede Owner-Reaktion trägt eine Art; „gelesen" verfälscht die Präzision nich
 ### Umsetzungsstand
 
 - **v1364 + App 1.14.0 (12.10. 10:30):** K1 — Spalten `reaktion`, `reaktion_am` (PG v137 / SQLite v133); Reaktionen nuetzlich, gelesen, nicht_nuetzlich, bekannt, falsch, kein_interesse, zu_oft, besprochen über `/api/geraete/hinweise/<id>` (App bis 1.13: erledigt = gelesen, verwerfen = nicht nützlich); Logzeile „v1364 Hinweis-Reaktion" mit Ankern; Kennzahlen `hinweisNuetzlich`, `hinweisNichtNuetzlich`, `hinweisBekanntBeobachtet`; Telegram 👍/👎 je Hinweis passend zur Zeilennummer (auch aufgeschoben), Grund nach 👎, nur Owner-Chat; Beobachtung „bekannt" (`insights/hinweis-reaktion.ts`). Anker werden aus Titel + Text berechnet statt gespeichert (deterministisch, gleiche Funktion wie v1360). Live geprüft: Route 200, Reaktion in der DB, Logzeile, ungültige Aktion 400; Telegram-Knöpfe erst bei der nächsten Zustellung sichtbar.
+
+## Lernende Helfer neben dem Sprachmodell (Entwurf 12.10.2026, Schicht 4 — ohne Umsetzung, Owner: „ok wie vorgeschlagen, Reihenfolge bestimmst du")
+
+### Anlass
+
+Owner 12.10. (Gedanken zu Machine Learning): Ein kleines ML-System unterstützt das Sprachmodell, ohne es zu trainieren — es übernimmt eng begrenzte Entscheidungen (Art der Anfrage → Ablauf/Werkzeug, relevante Erinnerungen, Schwierigkeit → Code/kleines/großes Modell, Akzeptanz von Vorschlägen, wiederkehrende Muster) und lernt aus Anfrage → gewählter Ablauf → erfolgreich oder korrigiert. Beispiel: häufige Fragen erkennt ein Klassifikator, normaler Code beantwortet sie ohne Modellaufruf.
+
+### Bewertung gegen Alfred (12.10.)
+
+Die Idee entspricht dem Jarvis-Grundsatz „deterministisch zuerst, Modell nur wo nötig". Die Grenze ist die **Datenmenge eines Einzelnutzers**, nicht das Verfahren.
+
+| Aufgabe | Daten bei Alfred | Entscheidung |
+|---|---|---|
+| Vorschläge nach Akzeptanz reihen | Dutzende Reaktionen/Woche (K1, Vorgangs-Ergebnisse, Regeln) | **Zählen statt ML** — Quoten je Quelle/Anker, schon Schicht 4 / Schleife 2 |
+| Relevante Erinnerungen auswählen | keine Beschriftung „gebraucht" | **nicht** — drei frühere Kürzungen nach vermuteter Relevanz schlugen zurück (06.10.); 63 % der Eingabe kommen aus dem Prompt-Cache |
+| Werkzeug/Ablauf wählen | ~760 Anfragen/Woche mit genutzten Skills und Ausgang | **Kandidat für ML** (L2) — Ziel Tempo; „Schemata bleiben" (07.10.) gilt: vorsortieren, nie weglassen |
+| Schwierigkeit → Modellstufe | Kosten/Dauer gemessen, Erfolgssignal fehlt | erst das Signal (L0); Vergleich 11.10.: Opus allein besser als „stark plant, günstig führt aus" |
+| Häufige Fragen ohne Modell | Wiederholungen im Verlauf | **zuerst ohne ML** — feste Schnellantworten aus dem Weltmodell (L1) |
+| Muster → Abläufe vorschlagen | Pattern-Analyse, Runbooks vorhanden | Verbesserung des Bestehenden, eigener Punkt später |
+
+**Ist (05.–12.10.):** ~760 Anfragen (Telegram 397, App/API 366), Antwortzeit p50 9,6 s / p95 42 s (535 Gesprächsanfragen), Modellkosten 65 USD bei 6 589 Aufrufen.
+
+### Grundsätze
+
+Messen vor Lernen; jedes gelernte Teil läuft zuerst **beobachtend** neben der heutigen Entscheidung und darf erst entscheiden, wenn es nachweislich besser ist; erklärbare Verfahren (Zählung, Naive Bayes, logistische Regression) direkt in Alfreds Code, kein eigener Python-Dienst, CPU; modellunabhängig (Grundsatz 29.08.); Daten bleiben in Alfreds Datenbank.
+
+### Bausteine
+
+**L0 — Anfrage-Protokoll (Lernsignal).** Je Gesprächsanfrage eine Zeile: Zeit, Kanal, grobe Absicht (deterministisch aus den Kategorien des Skill-Filters), Textauszug (≤ 200 Zeichen) bzw. Wortmerkmale, genutzte Skills und Aktionen mit Ausgang, Modellstufe und Modell, Dauer, Kosten, Werkzeugrunden, und das **Folgesignal**: innerhalb von 5 Minuten Korrektur („falsch", „nein, …", v1148-Erfassung), gleiche Frage erneut, Abbruch (Stopp-Knopf), Reaktion 👍/👎 bei Hinweisen. Kennzahlen in Schicht 4: häufigste Absichten, Wiederholungsfragen, Anteil korrigiert je Absicht und Stufe. Zwei Wochen, dann Auswertung zusammen mit E2/K1/Verknüpfung (~26.10.).
+
+**L1 — Schnellantworten.** Aus L0 die 5–10 häufigsten, eindeutig aus dem Weltmodell beantwortbaren Fragen (z. B. Ladezustand Auto, Hausbatterie, offene Vorgänge, „was gibt's Neues") als feste Muster mit Antwort aus der Weltmodell-Sektion — wie „warum?" (v1196) ohne Modellaufruf. Erst eine Woche parallel: Schnellantwort berechnen, Modellantwort trotzdem senden, beide vergleichen (Zahlen gleich?); dann scharf. Unsichere Fälle gehen immer ans Modell.
+
+**L2 — Lernende Werkzeugwahl.** Ein Klassifikator (Naive Bayes / logistische Regression über Wortmerkmale) sagt aus L0-Daten die benötigten Skills voraus. Beobachtend: Vorhersage gegen tatsächlich genutzte Skills (Trefferquote, Vollständigkeit). Nur bei Vollständigkeit ≥ 98 % darf er die Werkzeugliste **vorsortieren** (passende zuerst) — weggelassen wird nichts. Nutzen: weniger Werkzeugrunden, kürzere Antwortzeit.
+
+**L3 — Stufenwahl.** Erst wenn L0 ein belastbares Erfolgssignal je Stufe zeigt: Regel oder Klassifikator „reicht fast/medium?" — beobachtend, Kosten- und Korrekturvergleich.
+
+**L4 — Vorschläge reihen:** bleibt Zählung (Schleife 2), kein ML.
+
+### Reihenfolge (nicht freigegeben)
+
+L0 (zwei Wochen messen) → Auswertung → L1 (parallel, dann scharf) → L2 beobachtend → L3 nur mit Signal.
+
+### Abnahme (messbar)
+
+L0: jede Gesprächsanfrage eine Zeile mit Folgesignal; Auswertung nennt die häufigsten Absichten und Wiederholungsfragen. L1: Schnellantworten stimmen in der Parallelwoche zu 100 % mit den Zahlen der Modellantwort überein; danach p50 dieser Fragen < 1 s und 0 Modellaufrufe. L2: Vollständigkeit ≥ 98 % über zwei Wochen, bevor er vorsortiert; Werkzeugrunden je Anfrage sinken messbar.
+
+### Risiken
+
+Falsche Schnellantwort ohne Modell → nur eindeutige Muster, Parallelwoche, unsichere Fälle ans Modell. Zu wenig Daten für L2 → bleibt beobachtend, kein Schaden. Datenschutz: Textauszüge der eigenen Anfragen in Alfreds Datenbank (wie Verlauf heute), Aufbewahrung begrenzt (Vorschlag 90 Tage).
+
+### Offene Owner-Entscheidungen
+
+Textauszüge speichern (Vorschlag ja, ≤ 200 Zeichen, 90 Tage) oder nur Wortmerkmale; Freigabe L0 jetzt (Vorschlag ja, reine Messung); welche Fragen L1 zuerst (nach L0-Auswertung).
