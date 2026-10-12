@@ -137,7 +137,7 @@ void main() {
     await t.binding.setSurfaceSize(null);
   });
 
-  testWidgets('Vorgang: Details mit Schritten, Erledigt mit Notiz', (t) async {
+  testWidgets('Vorgang: Details mit Schritten, Abschluss „behoben" mit Maßnahme (1.13.0)', (t) async {
     final aufrufe = <Aufruf>[];
     bool? ergebnis;
     await t.pumpWidget(MaterialApp(home: Scaffold(body: Builder(builder: (ctx) => TextButton(
@@ -156,10 +156,12 @@ void main() {
     expect(find.text('noahhabel.com läuft weiter'), findsOneWidget);
     expect(find.textContaining('Verlängerung vorgeschlagen'), findsOneWidget);
     expect(find.textContaining('gehört nicht hierher'), findsNothing);
-    await t.enterText(find.byType(TextField), 'bei easyname bezahlt');
-    await t.tap(find.text('Erledigt'));
+    await t.tap(find.text('Behoben'));
     await t.pumpAndSettle();
-    expect(aufrufe.single.toString(), 'POST /api/geraete/vorgaenge/v1 {status: erledigt, notiz: bei easyname bezahlt}');
+    await t.enterText(find.widgetWithText(TextField, 'Maßnahme — was wurde getan?'), 'bei easyname bezahlt');
+    await t.tap(find.text('Abschließen'));
+    await t.pumpAndSettle();
+    expect(aufrufe.single.toString(), 'POST /api/geraete/vorgaenge/v1 {ergebnis: {art: behoben, massnahme: bei easyname bezahlt}, kuenftig: {art: wie_heute}}');
     expect(ergebnis, isTrue);
   });
 }

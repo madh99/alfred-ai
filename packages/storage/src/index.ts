@@ -107,6 +107,10 @@ export { VorgaengeRepository } from './repositories/vorgaenge-repository.js';
 export type { Vorgang, VorgangSchritt, VorgangStatus, Autonomie, SchrittArt } from './repositories/vorgaenge-repository.js';
 export { titelAehnlichkeit, VORGANG_AEHNLICHKEIT_SCHWELLE, themenGleich, titelAnker } from './repositories/vorgaenge-repository.js';
 export { BefundeRepository } from './repositories/befunde-repository.js'; // v1217
+export { RegelnRepository } from './repositories/regeln-repository.js'; // v1362
+export type { Regel, RegelWirkung, RegelStatus, RegelEingang } from './repositories/regeln-repository.js';
+export { ergebnisText, ERGEBNIS_ARTEN } from './repositories/vorgaenge-repository.js';
+export type { ErgebnisArt, VorgangErgebnis } from './repositories/vorgaenge-repository.js';
 export { GeraeteRepository } from './repositories/geraete-repository.js'; // v1224
 export type { Befund, BefundZustand, BefundEingang, BefundSync } from './repositories/befunde-repository.js';
 export type { KgQuestion, QuestionStatus } from './repositories/kg-questions-repository.js';

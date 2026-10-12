@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Added — App: Vorgänge abschließen mit Ergebnis, Regeln übernehmen (App 1.13.0)
+
+Statt „Erledigt" und „Verwerfen" fragt der Vorgangs-Dialog „Was war es?" — behoben (Ursache, Maßnahme), entschieden (was), kein Problem (warum) oder anders. Bei Vorgängen aus einem Befund folgt „Und künftig?": wie heute, nicht mehr melden für 7, 30 oder 90 Tage, oder jedes Mal fragen. Sicherheitsbefunde lassen sich nicht stummschalten. Ab dem dritten „kein Problem" zum selben Befund ist Alfreds Vorschlag „nicht mehr melden" vorausgewählt. In der Ansicht „Befunde" stehen die Regeln: Vorschläge von Alfred mit „Übernehmen" und „Ablehnen", aktive Regeln mit „Widerrufen".
+
 ### Fixed — App: Antworten markieren und kopieren, Code und IPs anklickbar (App 1.12.1)
 
 Werte in Tabellen ließen sich weder markieren noch kopieren, und eine IP-Adresse im Text war nicht anklickbar. Jetzt liegt die ganze Antwort in einem Markierbereich: Markieren über Absätze, Tabellen und Code hinweg, Strg+C und Rechtsklick „Kopieren". Ein Klick auf eine Code-Stelle kopiert sie; ein Klick auf eine IP-Adresse (auch ohne Code-Markierung im Text) öffnet ein Menü mit „Kopieren" und „Im Browser öffnen". Versionsnummern wie „0.19.0" gelten nicht als Adresse.
@@ -42,6 +46,19 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 ### Added — App: Updates still installieren (App 1.8.0)
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
+
+## [0.19.0-jarvis.1362] - 2026-10-12
+
+### Added — Entscheiden statt Abhaken: Ergebnis am Vorgang, Regeln für die Zukunft (v1362)
+
+Bisher setzte der Owner bei einem Vorgang nur „erledigt" oder „verworfen" mit optionaler Notiz — ohne Wirkung: Der zugehörige Befund blieb offen, trat er wieder auf, entstand ein neuer Vorgang, und die Notiz las niemand. Erste Stufe der Spec „Entscheiden statt Abhaken":
+
+- **Ergebnis am Vorgang**: Art (behoben, entschieden, kein Problem, anders) mit Ursache, Maßnahme oder Entscheidung, als Felder und als Schritt „abgeschlossen" im Verlauf.
+- **Regeln**: Beim Abschluss eines Vorgangs aus einem Befund legt der Owner fest, was künftig gilt — „nicht mehr melden" für 7, 30 oder 90 Tage (aus dem Befund entsteht dann kein Vorgang, er bleibt unter „Befunde" sichtbar) oder „jedes Mal fragen". Rauch, CO, Wasser, Alarm, Einbruch und Alfreds eigener Zustand sind nie stummschaltbar. Regeln laufen ab und sind widerrufbar.
+- **Vorschläge von Alfred**: Wird derselbe Befund zum dritten Mal als „kein Problem" abgeschlossen, schlägt Alfred „nicht mehr melden (30 Tage)" vor; der Owner übernimmt oder lehnt ab, die Frist läuft ab der Übernahme.
+- Aktive Regeln stehen als eine Zeile in der Lage — Alfred kennt sie im Gespräch.
+- **Beobachtend (E2)**: Haltefristen je Art von Befund (Sicherheit sofort, Ausfall 2 Stunden, Batterie und Abweichung vom üblichen Wert 24 Stunden) werden zwei Wochen nur protokolliert — Logzeile „v1362 E2 Vorgang wäre entfallen", noch ohne Wirkung.
+- Routen `/api/geraete/regeln` (Liste, übernehmen, ablehnen, widerrufen) und Abschluss über `/api/geraete/vorgaenge/:id`; Migration PG v136 / SQLite v132 (Ergebnisfelder, Tabelle `regeln`).
 
 ## [0.19.0-jarvis.1361] - 2026-10-12
 

@@ -2893,4 +2893,19 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE messages ADD COLUMN anhaenge TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 132,
+    description: 'v1362 — Entscheiden statt Abhaken (E1): Ergebnis am Vorgang und Regeln des Owners (SQLite-Spiegel zu PG v136).',
+    up(db) {
+      for (const sp of ['ergebnis_art', 'ursache', 'massnahme', 'entscheidung']) {
+        try { db.exec(`ALTER TABLE vorgaenge ADD COLUMN ${sp} TEXT`); } catch { /* exists */ }
+      }
+      db.exec(`CREATE TABLE IF NOT EXISTS regeln (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, quelle TEXT NOT NULL, gegenstand TEXT NOT NULL, titel TEXT,
+        wirkung TEXT NOT NULL, bis TEXT, begruendung TEXT, herkunft TEXT NOT NULL, status TEXT NOT NULL, vorgang_id TEXT,
+        erstellt TEXT NOT NULL, geaendert TEXT NOT NULL
+      )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_regeln_befund ON regeln(user_id, quelle, gegenstand, status)');
+    },
+  },
 ];

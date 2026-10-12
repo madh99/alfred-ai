@@ -414,6 +414,8 @@ export class Alfred {
   private weltmodellBeobachter?: import('./ereignisse/zustandswechsel.js').WeltmodellBeobachter;
   /** v1217 — Befunde mit Identität (Kachel, Lage). */
   private befundeRepo?: import('@alfred/storage').BefundeRepository;
+  /** v1362 — Regeln des Owners (Spec „Entscheiden statt Abhaken") */
+  private regelnRepo?: import('@alfred/storage').RegelnRepository;
   /** v1224 — Geräte-Gateway (Satelliten). */
   private geraeteGateway?: import('./geraete/gateway.js').GeraeteGateway;
   /** v1251 — Hör-Relais (Echtzeit-Transkription für die Sitzung). */
@@ -434,7 +436,11 @@ export class Alfred {
       const { formatiereLage } = await import('./interaktion/lage.js');
       const b = await this.befundeRepo.uebersicht(owner);
       const v = await new VRepoL(this.database.getAdapter()).uebersicht(owner, 1);
-      this.lageText = formatiereLage({ befundeOffen: b.offen, befundeErledigt24h: b.erledigt24h, vorgaengeOffen: v.offene, vorgaengeAbgeschlossen24h: v.abgeschlossene });
+      // v1362 — aktive Regeln des Owners als eine Zeile (Alfred kennt sie im Chat)
+      const { regelText } = await import('./vorgaenge/regeln.js');
+      const jetztL = new Date();
+      const regeln = this.regelnRepo ? (await this.regelnRepo.liste(owner).catch(() => [])).filter(x => x.status === 'aktiv' && (!x.bis || Date.parse(x.bis) > jetztL.getTime())).map(x => regelText(x, jetztL)) : [];
+      this.lageText = formatiereLage({ befundeOffen: b.offen, befundeErledigt24h: b.erledigt24h, vorgaengeOffen: v.offene, vorgaengeAbgeschlossen24h: v.abgeschlossene, regeln });
       this.lageStand = new Date().toISOString();
     } catch (err) { this.logger.debug({ err: (err as Error).message }, 'v1220 Lage nicht aktualisiert'); }
   }
@@ -780,6 +786,10 @@ export class Alfred {
         const befundeRepo = new BefundeRepository(adapter);
         const vorgaengeRepoB = new VRepoB(adapter);
         this.befundeRepo = befundeRepo;
+        const { RegelnRepository } = await import('@alfred/storage');
+        const regelnRepo = new RegelnRepository(adapter);
+        this.regelnRepo = regelnRepo;
+        const { haltefristMin, nieStummschaltbar } = await import('./vorgaenge/regeln.js');
         const log = this.logger.child({ component: 'befunde' });
         this.weltmodellBeobachter.setBefundeSync(async (quelle, deutung) => {
           const owner = this.tryOwner();
@@ -787,6 +797,15 @@ export class Alfred {
           const r = await befundeRepo.sync(owner, quelle, befundeAusDeutung(quelle, deutung));
           for (const b of r.neu) {
             try {
+              // v1362 — Regel des Owners: „nicht mehr melden" → Befund ohne Vorgang (Sicherheitsbefunde nie)
+              const schluessel = { quelle, gegenstand: b.gegenstand };
+              const regel = await regelnRepo.wirksam(owner, quelle, b.gegenstand).catch(() => null);
+              if (regel?.wirkung === 'stumm' && !nieStummschaltbar(schluessel)) {
+                log.info({ quelle, gegenstand: b.gegenstand, regel: regel.id.slice(0, 8), bis: regel.bis }, 'v1362 Regel: Befund ohne Vorgang (nicht mehr melden)');
+                continue;
+              }
+              // v1362 — E2 beobachtend: Haltefrist nur protokollieren, der Vorgang entsteht wie bisher
+              log.info({ quelle, gegenstand: b.gegenstand, haltefristMin: haltefristMin(schluessel), regel: regel?.wirkung ?? null }, 'v1362 E2 Haltefrist (beobachtend)');
               const v = await vorgaengeRepoB.anlegen({
                 userId: owner, titel: b.titel.slice(0, 200), ziel: b.detail ?? `Befund ${quelle}/${b.gegenstand}`, besitzer: 'user', status: 'offen',
                 naechsterSchritt: 'Owner entscheidet', frist: new Date(Date.now() + 14 * 86_400_000).toISOString(), quelle: 'befund', autonomie: 'bestaetigen',
@@ -798,6 +817,12 @@ export class Alfred {
           }
           for (const b of r.erledigt) {
             log.info({ quelle, gegenstand: b.gegenstand, seit: b.entstanden, gesehen: b.gesehenAnzahl }, 'v1217 Befund erledigt (nicht mehr auffällig)');
+            // v1362 — E2 beobachtend: wäre der Vorgang durch die Haltefrist entfallen?
+            {
+              const frist = haltefristMin({ quelle, gegenstand: b.gegenstand });
+              const dauerMin = Math.round((Date.now() - Date.parse(b.entstanden)) / 60_000);
+              if (b.vorgangId && frist !== null && frist > 0 && dauerMin < frist) log.info({ quelle, gegenstand: b.gegenstand, dauerMin, haltefristMin: frist, vorgang: b.vorgangId.slice(0, 8) }, 'v1362 E2 Vorgang wäre entfallen');
+            }
             if (b.vorgangId) {
               // v1223 — ein Vorgang kann mehreren Befunden gehören (Dedupe gleicher Themen). Realfall 16:30: der Befund
               // test-ubuntu erledigte den gemeinsamen Vorgang, obwohl git-server noch offen war. Erledigt wird erst,
@@ -13954,7 +13979,14 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const { VorgaengeRepository: VRepoK } = await import('@alfred/storage');
         const repo = new VRepoK(this.database.getAdapter());
         const u = await repo.uebersicht(owner, 7);
-        return { ...u, schritte: await repo.schritte(owner, 14, 150) };
+        // v1362 — Befund-Bezug, „bisher kein Problem" und „nicht stummschaltbar" für den Abschluss-Dialog der App
+        const { befundSchluesselAus, nieStummschaltbar } = await import('./vorgaenge/regeln.js');
+        const keinProblem = await repo.keinProblemJeSchluessel(owner).catch(() => new Map<string, number>());
+        const offene = u.offene.map(v => {
+          const s = befundSchluesselAus(v.dedupeKey);
+          return s ? { ...v, befund: s, nieStumm: nieStummschaltbar(s), keinProblemBisher: keinProblem.get(v.dedupeKey!) ?? 0 } : v;
+        });
+        return { ...u, offene, schritte: await repo.schritte(owner, 14, 150) };
       });
       // v1186 — Entscheidung des Owners aus der Kachel (erledigt/verworfen)
       (logApiAdapter as any).setVorgangEntscheidungCallback?.(async (id: string, status: 'erledigt' | 'verworfen', notiz?: string) => {
@@ -15335,6 +15367,17 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       erinnerungen: this.reminderRepo,
       db: { query: (q, pa) => db.query(q, pa) as Promise<unknown[]>, execute: async (q, pa) => ({ changes: (await db.execute(q, pa)).changes }) },
       vorgangEntscheiden: (u, id, status, notiz) => new VorgaengeRepository(db).entscheideOwner(u, id, status, notiz),
+      // v1362 — Abschluss mit Ergebnis und Regeln (Spec „Entscheiden statt Abhaken", E1)
+      vorgangHolen: async (u, id) => { const v = await new VorgaengeRepository(db).hole(u, id); return v ? { titel: v.titel, dedupeKey: v.dedupeKey, status: v.status } : null; },
+      vorgangAbschliessen: async (u, id, e) => { const v = await new VorgaengeRepository(db).abschliessen(u, id, e); if (v) void this.aktualisiereLage(); return v ? { titel: v.titel, ergebnis: v.ergebnis } : null; },
+      keinProblemAnzahl: async (u, k) => (await new VorgaengeRepository(db).keinProblemJeSchluessel(u)).get(k) ?? 0,
+      regeln: this.regelnRepo ? {
+        liste: () => this.regelnRepo!.liste(owner),
+        anlegen: async (e) => { const r = await this.regelnRepo!.anlegen(owner, e); void this.aktualisiereLage(); return r; },
+        vorschlagen: (e) => this.regelnRepo!.vorschlagen(owner, e),
+        setzeStatus: async (id, s, bis) => { const r = await this.regelnRepo!.setzeStatus(owner, id, s, bis); void this.aktualisiereLage(); return r; },
+        hole: (id) => this.regelnRepo!.hole(owner, id),
+      } : undefined,
       // v1359 — Befunde aller Quellen für die App-Ansicht „Befunde" (offen + 7 Tage erledigt)
       befunde: this.befundeRepo ? async () => ({ offen: await this.befundeRepo!.offene(owner), erledigt: await this.befundeRepo!.erledigtSeit(owner, new Date(Date.now() - 7 * 86_400_000).toISOString()) }) : undefined,
       protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (App)`),

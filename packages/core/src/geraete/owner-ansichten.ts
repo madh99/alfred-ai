@@ -5,6 +5,21 @@
  * Gerätetoken soll aber nie fremde Einträge ändern können.
  */
 
+import { befundSchluesselAus, nieStummschaltbar, regelText, REGEL_VORSCHLAG_AB, STUMM_TAGE, STUMM_STANDARD_TAGE } from '../vorgaenge/regeln.js';
+
+/** v1362 — Spec „Entscheiden statt Abhaken" (E1) */
+export type ErgebnisArtZ = 'behoben' | 'entschieden' | 'kein_problem' | 'anders';
+const ERGEBNIS_ARTEN_Z: readonly ErgebnisArtZ[] = ['behoben', 'entschieden', 'kein_problem', 'anders'];
+export interface RegelLike { id: string; quelle: string; gegenstand: string; titel: string; wirkung: 'stumm' | 'immer_fragen'; bis?: string; begruendung?: string; herkunft: 'owner' | 'alfred'; status: string; erstellt: string }
+export interface RegelZeile { id: string; text: string; wirkung: string; bis?: string; begruendung?: string; herkunft: string; status: string; abgelaufen: boolean; erstellt: string }
+export interface RegelnDeps {
+  liste(): Promise<RegelLike[]>;
+  anlegen(e: { quelle: string; gegenstand: string; titel: string; wirkung: 'stumm' | 'immer_fragen'; bis?: string; begruendung?: string; herkunft: 'owner' | 'alfred'; vorgangId?: string }): Promise<RegelLike>;
+  vorschlagen(e: { quelle: string; gegenstand: string; titel: string; wirkung: 'stumm' | 'immer_fragen'; bis?: string; begruendung?: string; herkunft: 'owner' | 'alfred'; vorgangId?: string }): Promise<RegelLike | null>;
+  setzeStatus(id: string, status: 'aktiv' | 'abgelehnt' | 'widerrufen', bis?: string): Promise<RegelLike | null>;
+  hole(id: string): Promise<RegelLike | null>;
+}
+
 export interface AufgabeZeile { id: string; titel: string; beschreibung?: string; prioritaet: string; faellig?: string; liste: string; erledigt: boolean }
 export interface ErinnerungZeile { id: string; text: string; zeit: string }
 export interface GedaechtnisZeile { id: string; schluessel: string; text: string; typ: string; quelle: string; geaendert: string }
@@ -33,6 +48,11 @@ export interface OwnerAnsichtenDeps {
   erinnerungen: { getByUser(userId: string): Promise<ReminderLike[]>; getById(id: string): Promise<ReminderLike | undefined>; cancel(id: string): Promise<boolean> };
   db: { query(sql: string, params: unknown[]): Promise<unknown[]>; execute(sql: string, params: unknown[]): Promise<{ changes: number }> };
   vorgangEntscheiden(userId: string, id: string, status: 'erledigt' | 'verworfen', notiz?: string): Promise<{ titel: string } | null>;
+  /** v1362 — Abschluss mit Ergebnis (Vorgang holen, abschließen, Zahl der „kein Problem" je Schlüssel) und Regeln */
+  vorgangHolen?: (userId: string, id: string) => Promise<{ titel: string; dedupeKey?: string; status: string } | null>;
+  vorgangAbschliessen?: (userId: string, id: string, e: { art: ErgebnisArtZ; ursache?: string; massnahme?: string; entscheidung?: string; text?: string }) => Promise<{ titel: string; ergebnis?: string } | null>;
+  keinProblemAnzahl?: (userId: string, dedupeKey: string) => Promise<number>;
+  regeln?: RegelnDeps;
   /** v1359 — Befunde (Schicht 3) des Owners: offene und kürzlich erledigte */
   befunde?: () => Promise<{ offen: BefundLike[]; erledigt: BefundLike[] }>;
   jetzt?: () => Date;
@@ -135,6 +155,90 @@ export class OwnerAnsichten {
       entstanden: x.entstanden, zuletzt: x.zuletztGesehen, erledigt: x.erledigtAm, anzahl: x.gesehenAnzahl, vorgang: !!x.vorgangId,
     });
     return { offen: b.offen.map(zeile), erledigt: b.erledigt.map(zeile) };
+  }
+
+  /**
+   * v1362 — Abschluss mit Ergebnis („Was war es?") und, bei Befund-Vorgängen, „Und künftig?" (Regel). Prüft zuerst,
+   * dann schließt es ab: eine Regel „nicht mehr melden" für Sicherheitsbefunde wird abgelehnt, bevor etwas passiert.
+   * Ohne gewählte Regel und ab dem dritten „kein Problem" zum selben Befund legt Alfred einen Regelvorschlag an.
+   */
+  async vorgangAbschliessen(id: string, body: Record<string, unknown>): Promise<{ titel: string; ergebnis?: string; regel?: string; vorschlag?: string } | null> {
+    if (!this.d.vorgangHolen || !this.d.vorgangAbschliessen) throw new Error('Abschluss nicht verfügbar');
+    const e = (body.ergebnis ?? {}) as Record<string, unknown>;
+    const art = e.art as ErgebnisArtZ;
+    if (!ERGEBNIS_ARTEN_Z.includes(art)) throw new Error('ergebnis.art: behoben | entschieden | kein_problem | anders');
+    const feld = (k: string) => (typeof e[k] === 'string' && (e[k] as string).trim() ? (e[k] as string).trim().slice(0, 500) : undefined);
+    const k = (body.kuenftig ?? {}) as Record<string, unknown>;
+    const kuenftig = (k.art ?? 'wie_heute') as string;
+    if (!['wie_heute', 'stumm', 'immer_fragen'].includes(kuenftig)) throw new Error('kuenftig.art: wie_heute | stumm | immer_fragen');
+    const tage = k.tage === undefined ? STUMM_STANDARD_TAGE : Number(k.tage);
+    if (kuenftig === 'stumm' && !(STUMM_TAGE as readonly number[]).includes(tage)) throw new Error(`kuenftig.tage: ${STUMM_TAGE.join(' | ')}`);
+
+    const v = await this.d.vorgangHolen(this.d.owner, id);
+    if (!v) return null;
+    const schluessel = befundSchluesselAus(v.dedupeKey);
+    if (kuenftig !== 'wie_heute' && !schluessel) throw new Error('Regeln gibt es nur für Vorgänge aus einem Befund');
+    if (kuenftig === 'stumm' && schluessel && nieStummschaltbar(schluessel)) throw new Error('Dieser Befund ist nicht stummschaltbar (Sicherheit bzw. Alfreds eigener Zustand)');
+    if (kuenftig !== 'wie_heute' && !this.d.regeln) throw new Error('Regeln nicht verfügbar');
+
+    const fertig = await this.d.vorgangAbschliessen(this.d.owner, id, { art, ursache: feld('ursache'), massnahme: feld('massnahme'), entscheidung: feld('entscheidung'), text: feld('text') });
+    if (!fertig) return null;
+    const jetzt = this.d.jetzt?.() ?? new Date();
+    let regel: string | undefined; let vorschlag: string | undefined;
+    if (schluessel && this.d.regeln && kuenftig !== 'wie_heute') {
+      const rg = await this.d.regeln.anlegen({
+        ...schluessel, titel: v.titel, wirkung: kuenftig as 'stumm' | 'immer_fragen', herkunft: 'owner', vorgangId: id,
+        bis: kuenftig === 'stumm' ? new Date(jetzt.getTime() + tage * 86_400_000).toISOString() : undefined,
+        begruendung: fertig.ergebnis,
+      });
+      regel = regelText(rg, jetzt);
+      this.d.protokoll?.('Regel angelegt', { id: rg.id, regel, befund: `${schluessel.quelle}/${schluessel.gegenstand}` });
+    } else if (schluessel && this.d.regeln && art === 'kein_problem' && this.d.keinProblemAnzahl && v.dedupeKey) {
+      const n = await this.d.keinProblemAnzahl(this.d.owner, v.dedupeKey);
+      if (n >= REGEL_VORSCHLAG_AB && !nieStummschaltbar(schluessel)) {
+        const rg = await this.d.regeln.vorschlagen({
+          ...schluessel, titel: v.titel, wirkung: 'stumm', herkunft: 'alfred', vorgangId: id,
+          bis: new Date(jetzt.getTime() + STUMM_STANDARD_TAGE * 86_400_000).toISOString(),
+          begruendung: `${n}× als „kein Problem" abgeschlossen`,
+        });
+        if (rg) { vorschlag = regelText(rg, jetzt); this.d.protokoll?.('Regel vorgeschlagen', { id: rg.id, vorschlag, anzahl: n }); }
+      }
+    }
+    this.d.protokoll?.('Vorgang abgeschlossen', { id, art, kuenftig, titel: fertig.titel.slice(0, 80), ergebnis: fertig.ergebnis?.slice(0, 160) });
+    return { titel: fertig.titel, ergebnis: fertig.ergebnis, regel, vorschlag };
+  }
+
+  /** v1362 — Regeln für die App: Vorschläge von Alfred und aktive Regeln (abgelaufene markiert). */
+  async regeln(): Promise<{ vorschlaege: RegelZeile[]; aktiv: RegelZeile[] }> {
+    if (!this.d.regeln) return { vorschlaege: [], aktiv: [] };
+    const jetzt = this.d.jetzt?.() ?? new Date();
+    const zeile = (x: RegelLike): RegelZeile => ({
+      id: x.id, text: regelText(x, jetzt), wirkung: x.wirkung, bis: x.bis, begruendung: x.begruendung, herkunft: x.herkunft, status: x.status,
+      abgelaufen: !!x.bis && Date.parse(x.bis) <= jetzt.getTime(), erstellt: x.erstellt,
+    });
+    const l = await this.d.regeln.liste();
+    return { vorschlaege: l.filter(x => x.status === 'vorgeschlagen').map(zeile), aktiv: l.filter(x => x.status === 'aktiv').map(zeile) };
+  }
+
+  /** v1362 — Vorschlag übernehmen (Frist läuft ab jetzt) oder ablehnen; aktive Regel widerrufen. */
+  async regelAendern(id: string, aktion: unknown): Promise<{ text: string } | null> {
+    if (!this.d.regeln) throw new Error('Regeln nicht verfügbar');
+    const r = await this.d.regeln.hole(id);
+    if (!r) return null;
+    const jetzt = this.d.jetzt?.() ?? new Date();
+    let neu: RegelLike | null;
+    if (aktion === 'uebernehmen' && r.status === 'vorgeschlagen') {
+      const bis = r.wirkung === 'stumm' ? new Date(jetzt.getTime() + STUMM_STANDARD_TAGE * 86_400_000).toISOString() : undefined;
+      neu = await this.d.regeln.setzeStatus(id, 'aktiv', bis);
+    } else if (aktion === 'ablehnen' && r.status === 'vorgeschlagen') {
+      neu = await this.d.regeln.setzeStatus(id, 'abgelehnt');
+    } else if (aktion === 'widerrufen' && r.status === 'aktiv') {
+      neu = await this.d.regeln.setzeStatus(id, 'widerrufen');
+    } else throw new Error('aktion: uebernehmen | ablehnen (Vorschlag) · widerrufen (aktive Regel)');
+    if (!neu) return null;
+    const text = regelText(neu, jetzt);
+    this.d.protokoll?.(`Regel ${aktion}`, { id, text });
+    return { text };
   }
 
   async vorgangEntscheiden(id: string, status: unknown, notiz: unknown): Promise<{ titel: string } | null> {

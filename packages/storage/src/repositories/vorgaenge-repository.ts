@@ -10,7 +10,23 @@ import { randomUUID } from 'node:crypto';
  */
 export type VorgangStatus = 'offen' | 'wartet' | 'erledigt' | 'verworfen';
 export type Autonomie = 'auto' | 'bestaetigen' | 'nie';
-export type SchrittArt = 'vorgeschlagen' | 'ausgefuehrt' | 'zur_bestaetigung' | 'bestaetigt' | 'abgelehnt' | 'fehlgeschlagen' | 'blockiert' | 'uebersprungen' | 'notiz';
+export type SchrittArt = 'vorgeschlagen' | 'ausgefuehrt' | 'zur_bestaetigung' | 'bestaetigt' | 'abgelehnt' | 'fehlgeschlagen' | 'blockiert' | 'uebersprungen' | 'notiz' | 'abgeschlossen';
+
+/** v1362 — „Was war es?" beim Abschluss (Spec „Entscheiden statt Abhaken", Baustein C). */
+export type ErgebnisArt = 'behoben' | 'entschieden' | 'kein_problem' | 'anders';
+export const ERGEBNIS_ARTEN: readonly ErgebnisArt[] = ['behoben', 'entschieden', 'kein_problem', 'anders'];
+export interface VorgangErgebnis { art: ErgebnisArt; ursache?: string; massnahme?: string; entscheidung?: string; text?: string }
+
+/** Ergebnis in einem Satz (Feld `ergebnis`, Schritt, Lage). */
+export function ergebnisText(e: VorgangErgebnis): string {
+  const t = (s?: string) => (s ?? '').trim();
+  switch (e.art) {
+    case 'behoben': return ['behoben', t(e.ursache) && `Ursache: ${t(e.ursache)}`, t(e.massnahme) && `Maßnahme: ${t(e.massnahme)}`, t(e.text)].filter(Boolean).join(' — ');
+    case 'entschieden': return ['entschieden', t(e.entscheidung), t(e.text)].filter(Boolean).join(' — ');
+    case 'kein_problem': return ['kein Problem', t(e.text)].filter(Boolean).join(' — ');
+    default: return ['anders', t(e.text)].filter(Boolean).join(' — ');
+  }
+}
 
 export interface Vorgang {
   id: string;
@@ -29,6 +45,11 @@ export interface Vorgang {
   kategorie?: string;
   /** v1201 — „Warum?": Begründung des Passes, aus dem der Vorgang entstand (Art, Auslöser, Gate). */
   begruendung?: string;
+  /** v1362 — Ergebnis beim Abschluss durch den Owner */
+  ergebnisArt?: ErgebnisArt;
+  ursache?: string;
+  massnahme?: string;
+  entscheidung?: string;
   erstellt: string;
   aktualisiert: string;
 }
@@ -226,6 +247,32 @@ export class VorgaengeRepository {
     return this.hole(userId, id);
   }
 
+  /**
+   * v1362 — Abschluss durch den Owner mit Ergebnis („Was war es?"): kein Problem → verworfen, sonst erledigt; Felder und
+   * ein Schritt `abgeschlossen` halten fest, wie und warum. Ersetzt für die App das nackte Erledigt/Verwerfen.
+   */
+  async abschliessen(userId: string, id: string, e: VorgangErgebnis): Promise<Vorgang | null> {
+    const v = await this.hole(userId, id);
+    if (!v) return null;
+    const k = (s?: string) => { const x = (s ?? '').trim(); return x ? x.slice(0, 500) : null; };
+    const text = ergebnisText(e).slice(0, 1000);
+    await this.db.execute(
+      'UPDATE vorgaenge SET status = ?, ergebnis = ?, ergebnis_art = ?, ursache = ?, massnahme = ?, entscheidung = ?, aktualisiert = ? WHERE user_id = ? AND id = ?',
+      [e.art === 'kein_problem' ? 'verworfen' : 'erledigt', text, e.art, k(e.ursache), k(e.massnahme), k(e.entscheidung), new Date().toISOString(), userId, id],
+    );
+    await this.schritt({ vorgangId: id, userId, art: 'abgeschlossen', beschreibung: v.titel, ergebnis: text, autonomie: v.autonomie, quelle: 'owner' });
+    return this.hole(userId, id);
+  }
+
+  /** v1362 — wie oft wurden Vorgänge mit diesem Schlüssel als „kein Problem" abgeschlossen (Regelvorschlag ab 3). */
+  async keinProblemJeSchluessel(userId: string): Promise<Map<string, number>> {
+    const rows = await this.db.query(
+      `SELECT dedupe_key, COUNT(*) AS n FROM vorgaenge WHERE user_id = ? AND ergebnis_art = 'kein_problem' AND dedupe_key IS NOT NULL GROUP BY dedupe_key`,
+      [userId],
+    ) as Array<{ dedupe_key: string; n: number | string }>;
+    return new Map(rows.map(r => [r.dedupe_key, Number(r.n)]));
+  }
+
   /** v1186 — Erledigungsquote je Kategorie über die letzten `tage` Tage (Basis für Schicht-4-Konsequenzen). */
   async erledigungJeKategorie(userId: string, tage = 28): Promise<Array<{ kategorie: string; angelegt: number; erledigt: number; verworfen: number; offen: number }>> {
     const seit = new Date(Date.now() - tage * 86_400_000).toISOString();
@@ -325,6 +372,9 @@ export class VorgaengeRepository {
       quelle: r.quelle as string, ergebnis: (r.ergebnis as string | null) ?? undefined, autonomie: r.autonomie as Autonomie,
       kategorie: (r.kategorie as string | null) ?? undefined,
       begruendung: (r.begruendung as string | null) ?? undefined,
+      ergebnisArt: (r.ergebnis_art as ErgebnisArt | null) ?? undefined,
+      ursache: (r.ursache as string | null) ?? undefined, massnahme: (r.massnahme as string | null) ?? undefined,
+      entscheidung: (r.entscheidung as string | null) ?? undefined,
       dedupeKey: (r.dedupe_key as string | null) ?? undefined, erstellt: r.erstellt as string, aktualisiert: r.aktualisiert as string,
     };
   }

@@ -64,9 +64,21 @@ List<MapEntry<String?, List<Befund>>> befundGruppen(List<Befund> l) {
 /// „neu" = in den letzten 7 Tagen entstanden.
 bool befundNeu(Befund b, DateTime jetzt) => b.entstanden != null && jetzt.difference(b.entstanden!).inDays < 7;
 
+/// 1.13.0 — Regel des Owners (Spec „Entscheiden statt Abhaken"): Vorschlag von Alfred oder aktive Regel.
+class Regel {
+  Regel(Map<String, dynamic> j)
+      : id = '${j['id']}', text = '${j['text'] ?? ''}', begruendung = j['begruendung'] as String?, herkunft = '${j['herkunft'] ?? ''}',
+        status = '${j['status'] ?? ''}', abgelaufen = j['abgelaufen'] == true;
+  final String id, text, herkunft, status;
+  final String? begruendung;
+  final bool abgelaufen;
+}
+
 class Befunde extends StatefulWidget {
-  const Befunde({super.key, required this.json, this.aufNachfragen, this.anfang});
+  const Befunde({super.key, required this.json, this.aufNachfragen, this.anfang, this.aufMeldung});
   final JsonAbruf json;
+  /// 1.13.0 — Rückmeldung nach Übernehmen/Ablehnen/Widerrufen einer Regel
+  final void Function(String text)? aufMeldung;
   final void Function(String text)? aufNachfragen;
   /// Startfilter (z. B. 'haus-check' aus dem Telegram-Satz)
   final String? anfang;
@@ -76,6 +88,7 @@ class Befunde extends StatefulWidget {
 
 class _BefundeState extends State<Befunde> {
   List<Befund>? offen;
+  List<Regel> vorschlaege = [], regeln = [];
   List<Befund> erledigt = [];
   String? quelle;
   String? fehler;
@@ -85,12 +98,29 @@ class _BefundeState extends State<Befunde> {
   @override
   void initState() { super.initState(); quelle = widget.anfang; laden(); }
 
+  Future<void> _regelnLaden() async {
+    try {
+      final j = await widget.json('/api/geraete/regeln');
+      List<Regel> liste(String k) => ((j[k] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Regel.new).toList();
+      if (mounted) setState(() { vorschlaege = liste('vorschlaege'); regeln = liste('aktiv'); });
+    } catch (_) { /* älterer Server ohne Regeln — Abschnitt bleibt leer */ }
+  }
+
+  Future<void> _regelAendern(Regel r, String aktion) async {
+    try {
+      await widget.json('/api/geraete/regeln/${r.id}', methode: 'POST', koerper: {'aktion': aktion});
+      widget.aufMeldung?.call(switch (aktion) { 'uebernehmen' => '📏 Regel übernommen: ${r.text}', 'ablehnen' => '📏 Vorschlag abgelehnt', _ => '📏 Regel widerrufen: ${r.text}' });
+      await _regelnLaden();
+    } catch (e) { widget.aufMeldung?.call('📏 Nicht geändert: $e'); }
+  }
+
   Future<void> laden() async {
     try {
       final j = await widget.json('/api/geraete/befunde');
       List<Befund> liste(String k) => ((j[k] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(Befund.new).toList();
       if (!mounted) return;
       setState(() { offen = liste('offen'); erledigt = liste('erledigt'); fehler = null; });
+      await _regelnLaden();
     } catch (e) { if (mounted) setState(() => fehler = '$e'); }
   }
 
@@ -154,6 +184,23 @@ class _BefundeState extends State<Befunde> {
           : o == null
               ? const Center(child: CircularProgressIndicator())
               : ListView(padding: const EdgeInsets.fromLTRB(20, 4, 20, 20), children: [
+                  // 1.13.0 — Regeln: Vorschläge von Alfred zuerst (übernehmen/ablehnen), dann aktive (widerrufen)
+                  if (vorschlaege.isNotEmpty || regeln.isNotEmpty) Card(margin: const EdgeInsets.only(bottom: 12), child: Padding(padding: const EdgeInsets.fromLTRB(14, 10, 8, 6), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('Regeln', style: theme.textTheme.titleMedium),
+                    for (final r in vorschlaege) Row(children: [
+                      Icon(Icons.lightbulb_outline, size: 16, color: theme.colorScheme.primary),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text('Vorschlag von Alfred: ${r.text}${r.begruendung != null ? ' — ${r.begruendung}' : ''}', style: theme.textTheme.bodySmall)),
+                      TextButton(onPressed: () => _regelAendern(r, 'uebernehmen'), child: const Text('Übernehmen')),
+                      TextButton(onPressed: () => _regelAendern(r, 'ablehnen'), child: const Text('Ablehnen')),
+                    ]),
+                    for (final r in regeln) Row(children: [
+                      Icon(r.abgelaufen ? Icons.history : Icons.rule, size: 16, color: dim),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text('${r.text}${r.herkunft == 'alfred' ? ' · von Alfred vorgeschlagen' : ''}${r.begruendung != null ? ' — ${r.begruendung}' : ''}', style: theme.textTheme.bodySmall?.copyWith(color: r.abgelaufen ? dim : null))),
+                      if (!r.abgelaufen) TextButton(onPressed: () => _regelAendern(r, 'widerrufen'), child: const Text('Widerrufen')),
+                    ]),
+                  ]))),
                   if (sichtbar.isEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 24), child: Text('Keine offenen Befunde${quelle == null ? '' : ' für ${befundQuelle(quelle!)}'}.', style: theme.textTheme.bodyMedium?.copyWith(color: dim))),
                   for (final q in quellenReihenfolge(sichtbar)) ...[
                     if (quelle == null) Padding(padding: const EdgeInsets.fromLTRB(0, 12, 0, 6), child: Text(befundQuelle(q), style: theme.textTheme.titleMedium)),

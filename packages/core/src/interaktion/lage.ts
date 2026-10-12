@@ -17,6 +17,8 @@ export interface LageEingang {
   befundeErledigt24h: LageBefund[];
   vorgaengeOffen: LageVorgang[];
   vorgaengeAbgeschlossen24h: LageVorgang[];
+  /** v1362 — aktive Regeln des Owners in einem Satz je Regel */
+  regeln?: string[];
 }
 
 export const LAGE_MAX_BEFUNDE = 6;
@@ -81,6 +83,7 @@ export function formatiereLage(e: LageEingang, now: Date = new Date()): string {
   const erledigt = e.vorgaengeAbgeschlossen24h.filter(v => v.status === 'erledigt').length;
   const verworfen = e.vorgaengeAbgeschlossen24h.filter(v => v.status === 'verworfen').length;
   zeilen.push(`Letzte 24 h: ${neu24} neue Vorgänge, ${erledigt} erledigt, ${verworfen} verworfen.`);
+  if (e.regeln && e.regeln.length > 0) zeilen.push(`Regeln des Owners (${e.regeln.length}): ${e.regeln.slice(0, 3).join(' · ')}${e.regeln.length > 3 ? ' · …' : ''}`);
   zeilen.push('Hinweis: Das ist der belegte Stand. Was hier nicht steht, ist nicht bekannt — nichts erfinden; für Details ein Werkzeug nutzen.');
 
   const text = zeilen.join('\n');

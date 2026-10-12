@@ -2201,4 +2201,19 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS anhaenge TEXT`, []);
     },
   },
+  {
+    version: 136,
+    description: 'v1362 — Entscheiden statt Abhaken (E1): Ergebnis am Vorgang (Art, Ursache, Maßnahme, Entscheidung) und Regeln des Owners (PG-Spiegel zu SQLite v132).',
+    async up(db) {
+      for (const sp of ['ergebnis_art', 'ursache', 'massnahme', 'entscheidung']) {
+        await db.execute(`ALTER TABLE vorgaenge ADD COLUMN IF NOT EXISTS ${sp} TEXT`, []);
+      }
+      await db.execute(`CREATE TABLE IF NOT EXISTS regeln (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, quelle TEXT NOT NULL, gegenstand TEXT NOT NULL, titel TEXT,
+        wirkung TEXT NOT NULL, bis TEXT, begruendung TEXT, herkunft TEXT NOT NULL, status TEXT NOT NULL, vorgang_id TEXT,
+        erstellt TEXT NOT NULL, geaendert TEXT NOT NULL
+      )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_regeln_befund ON regeln(user_id, quelle, gegenstand, status)', []);
+    },
+  },
 ];

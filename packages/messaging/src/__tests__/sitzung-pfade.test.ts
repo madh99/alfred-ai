@@ -72,6 +72,8 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/geraete/gedaechtnis?typ=fact&q=linz')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/vorgaenge/v-1')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/befunde')).toBe(true); // v1359 Ansicht „Befunde"
+    expect(istSitzungsPfad('/api/geraete/regeln')).toBe(true); // v1362 Regeln
+    expect(istSitzungsPfad('/api/geraete/regeln/0b6c2f1e-1111-4a2b-9c3d-123456789abc')).toBe(true);
     expect(istSitzungsPfad('/api/geraete/gedaechtnis/../config')).toBe(false);
     expect(istSitzungsPfad('/api/geraete/aufgaben/a/b')).toBe(false);
     expect(istSitzungsPfad('/api/todos')).toBe(false); // Web-Routen bleiben dem API-Token vorbehalten
