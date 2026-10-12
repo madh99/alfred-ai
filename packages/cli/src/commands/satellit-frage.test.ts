@@ -46,3 +46,23 @@ describe('kurzTitel', () => {
     expect(kurzTitel('x'.repeat(100), 10)).toBe('xxxxxxxxx…');
   });
 });
+
+// v1409 R3b — sudo-Sperre optional (Gerät oder Projekt)
+import { SUDO_GESPERRT } from './satellit-auftrag.js';
+import { wendeAn } from './satellit-einstellungen.js';
+describe('sudo-Sperre', () => {
+  it('Bau-Auftrag mit Sperre bekommt die Regel; ohne Sperre nicht; Nur-Lesen bleibt strenger', () => {
+    expect(argumenteFuer({ prompt: 'P', nurLesen: false, sudoSperre: true })).toEqual(expect.arrayContaining(['--disallowedTools', SUDO_GESPERRT]));
+    expect(SUDO_GESPERRT).toBe('Bash(sudo:*)');
+    expect(argumenteFuer({ prompt: 'P', nurLesen: false })).not.toContain('--disallowedTools');
+    expect(argumenteFuer({ prompt: 'P', nurLesen: true, sudoSperre: true })).toContain(NUR_LESEN_GESPERRT);
+  });
+  it('lokale Einstellung sudo-sperre an|aus', () => {
+    const k = { freigegebeneVerzeichnisse: [] } as never as Parameters<typeof wendeAn>[0];
+    expect(wendeAn(k, 'sudo-sperre', 'an')).toEqual({ ok: true, text: 'sudo in Claude-Code-Aufträgen: gesperrt' });
+    expect(k.sudoSperre).toBe(true);
+    expect(wendeAn(k, 'sudo-sperre', 'aus').text).toMatch(/erlaubt/);
+    expect(k.sudoSperre).toBeUndefined();
+    expect(wendeAn(k, 'sudo-sperre', 'vielleicht').ok).toBe(false);
+  });
+});

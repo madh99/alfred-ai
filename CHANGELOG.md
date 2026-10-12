@@ -51,6 +51,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1409] - 2026-10-13
+
+### Added — sudo in Claude-Code-Aufträgen optional sperrbar (v1409, R3b)
+
+Claude Code darf in Bau-Aufträgen weiterhin `sudo` verwenden. Das lässt sich jetzt sperren:
+
+- **Am Gerät:** lokal mit `alfred einstellungen sudo-sperre an`.
+- **Je Projekt:** als Option beim Start oder später mit „sudo im Projekt … sperren“.
+- **Wirkung:** Der Auftrag läuft mit der Regel `Bash(sudo:*)`, ein Aufruf mit `sudo` wird abgelehnt, bevor er die Shell erreicht.
+- **Planfrage:** zeigt, ob `sudo` erlaubt oder gesperrt ist und woher die Sperre kommt.
+- **Nachweis auf der Ubuntu-VM:** Ohne Regel legte ein `sudo`-Befehl eine root-Datei an, mit Regel wurde er abgelehnt.
+
 ## [0.19.0-jarvis.1408] - 2026-10-13
 
 ### Added — Projekte kennen die Umgebung des Geräts (v1408, R3a)

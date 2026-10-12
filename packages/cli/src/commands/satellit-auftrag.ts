@@ -78,7 +78,7 @@ function laeuft(pid: number | undefined): boolean {
 }
 
 /** Auftrag starten: Spezifikation als AUFTRAG-<id>.md ins Projekt, `claude -p` abgekoppelt, Protokoll in ~/.alfred/auftraege/<id>/. */
-export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean; nurLesen?: boolean }): AuftragMeta {
+export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean; nurLesen?: boolean; sudoSperre?: boolean }): AuftragMeta {
   const claude = opts.claude ?? claudePfad();
   if (!claude) throw new Error('Claude Code ist auf diesem Gerät nicht installiert (claude nicht im PATH)');
   // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
@@ -101,7 +101,7 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   // v1392 — stream-json: Claude Code schreibt jeden Schritt sofort ins Protokoll (Fortschritt sichtbar), die result-Zeile am Ende bleibt gleich
   // v1394 — ohne die Benutzereinstellungen (~/.claude: Hooks, MCP-Server, Umgebung des Owners; Realfall 12.10.: claude-flow-Hook vor jedem
   // Befehl bremste die Etappe) — Projekt-Einstellungen gelten weiter; optional Kostengrenze je Auftrag
-  const args = argumenteFuer({ prompt: opts.nurLesen ? fragePrompt(opts.auftrag, opts.projekt) : auftragPrompt(auftragDatei, opts.projekt), nurLesen: !!opts.nurLesen, maxKostenUsd: opts.maxKostenUsd });
+  const args = argumenteFuer({ prompt: opts.nurLesen ? fragePrompt(opts.auftrag, opts.projekt) : auftragPrompt(auftragDatei, opts.projekt), nurLesen: !!opts.nurLesen, maxKostenUsd: opts.maxKostenUsd, sudoSperre: opts.sudoSperre });
   const log = openSync(logPfad(id, opts.home), 'a');
   const istCmd = /\.cmd$/i.test(claude);
   const kind = spawn(istCmd ? 'cmd.exe' : claude, istCmd ? ['/c', claude, ...args] : args, { cwd: opts.projekt, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', log, log], env: { ...process.env, CLAUDE_CODE_NO_UPDATE_CHECK: '1' } });
@@ -402,10 +402,13 @@ export const NUR_LESEN_GESPERRT = 'Edit Write MultiEdit NotebookEdit Bash';
  * v1392/v1394/v1395 — Argumente für `claude -p`: stream-json (Fortschritt), ohne Benutzereinstellungen und fremde MCP-Server;
  * v1404 — nurLesen: Plan-Modus (nur lesen) UND Schreib-/Shell-Werkzeuge gesperrt — technisch keine Änderung möglich.
  */
-export function argumenteFuer(o: { prompt: string; nurLesen: boolean; maxKostenUsd?: number }): string[] {
+/** v1409 R3b — Regel, die sudo in Bau-Aufträgen sperrt (Nachweis VM 13.10. 01:06: ohne Regel legte sudo eine root-Datei an, mit Regel abgelehnt). */
+export const SUDO_GESPERRT = 'Bash(sudo:*)';
+
+export function argumenteFuer(o: { prompt: string; nurLesen: boolean; maxKostenUsd?: number; sudoSperre?: boolean }): string[] {
   return ['-p', o.prompt, '--output-format', 'stream-json', '--verbose',
     '--permission-mode', o.nurLesen ? 'plan' : 'auto',
-    ...(o.nurLesen ? ['--disallowedTools', NUR_LESEN_GESPERRT] : []),
+    ...(o.nurLesen ? ['--disallowedTools', NUR_LESEN_GESPERRT] : o.sudoSperre ? ['--disallowedTools', SUDO_GESPERRT] : []),
     '--setting-sources', 'project,local', '--strict-mcp-config',
     ...(o.maxKostenUsd !== undefined && o.maxKostenUsd > 0 ? ['--max-budget-usd', String(o.maxKostenUsd)] : [])];
 }

@@ -141,3 +141,13 @@ describe('Umgebung', () => {
     expect(a).toMatch(/FEHLT: <werkzeug>/);
   });
 });
+
+// v1409 R3b — Planfrage nennt die Systemrechte
+describe('Systemrechte in der Planfrage', () => {
+  const basis = { geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', plan: ['A'], pruefBefehle: [], g: STANDARD_GRENZEN, gekuerzt: false };
+  it('erlaubt, Projekt-Option, Geräte-Einstellung', () => {
+    expect(planFrage(basis)).toContain('Systemrechte: sudo erlaubt (sperrbar je Projekt oder am Gerät)');
+    expect(planFrage({ ...basis, sudoSperre: 'projekt' })).toContain('Systemrechte: sudo gesperrt (Projekt-Option)');
+    expect(planFrage({ ...basis, sudoSperre: 'geraet' })).toContain('Systemrechte: sudo gesperrt (Einstellung am Gerät)');
+  });
+});

@@ -11,6 +11,8 @@ export type AktenStatus = 'aktiv' | 'archiviert';
 export interface ProjektAkte {
   id: string; userId: string; name: string; geraetId: string; geraet: string; pfad: string;
   beschreibung?: string; pruefBefehle: string[]; status: AktenStatus; erstellt: string; aktualisiert: string;
+  /** v1409 R3b — Projekt-Option „sudo gesperrt" (Projekt-Tag sudo-sperre) */
+  sudoSperre?: boolean;
 }
 
 export function akteAusProjekt(p: Project): ProjektAkte {
@@ -18,6 +20,7 @@ export function akteAusProjekt(p: Project): ProjektAkte {
     id: p.id, userId: p.userId, name: p.name, geraetId: p.geraetId ?? '', geraet: p.geraet ?? '', pfad: p.cwd ?? '',
     ...(p.description ? { beschreibung: p.description } : {}), pruefBefehle: p.pruefBefehle ?? [],
     status: p.status === 'archived' ? 'archiviert' : 'aktiv', erstellt: p.createdAt, aktualisiert: p.lastActiveAt,
+    ...(p.tags?.includes('sudo-sperre') ? { sudoSperre: true } : {}),
   };
 }
 
@@ -56,6 +59,14 @@ export class ProjektAktenUeberProjekte {
     }
     if (f.geraet !== undefined || f.pruefBefehle !== undefined) await this.repo.updateGeraet(id, { geraet: f.geraet, pruefBefehle: f.pruefBefehle });
     await this.repo.touch(id);
+  }
+
+  /** v1409 R3b — Projekt-Option sudo-Sperre an/aus (Tag am Projekt). */
+  async setzeSudoSperre(userId: string, id: string, an: boolean): Promise<void> {
+    const p = await this.repo.getById(userId, id);
+    if (!p) return;
+    const tags = (p.tags ?? []).filter(t => t !== 'sudo-sperre');
+    await this.repo.update(userId, id, { tags: an ? [...tags, 'sudo-sperre'] : tags });
   }
 
   /** Lauf als Projekt-Sitzung: anlegen (einmal je Lauf) bzw. beim Ende zusammenfassen. */

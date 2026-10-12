@@ -25,6 +25,8 @@ export interface GeraetKonfig {
   gesperrteFenster?: string[];
   /** v1281 — optional: kein Bildschirmfoto, wenn der Titel des aktiven Fensters eines dieser Muster enthält (Standard: keine Sperre). */
   fotoSperre?: string[];
+  /** v1409 R3b — Claude-Code-Aufträge ohne sudo (lokale Einstellung, Owner 13.10.: „optional sperrbar") */
+  sudoSperre?: boolean;
   erlaubteProgramme: string[];
   /** v1252 — Wort fürs Zuhören (Standard „Alfred"); v1309 über die Einstellungen pflegbar. */
   aktivierungswort?: string;

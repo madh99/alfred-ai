@@ -18,6 +18,7 @@ export const EINSTELLUNGEN_HILFE = [
   'wort <Aktivierungswort>                  Wort fürs Zuhören (Standard: Alfred)',
   'sinne-fenster an|aus                     Fenstertitel in den Sinnen mitsenden (aus = nur Leerlauf/Akku)',
   'oberflaeche ink|einfach                  Sitzung mit Ink-Oberfläche oder einfacher Ausgabe starten',
+  'sudo-sperre an|aus                       Claude-Code-Aufträge dürfen kein sudo verwenden (Systemänderungen nur über „installieren" mit Bestätigung)',
 ];
 
 const gleich = (a: string, b: string) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
@@ -35,6 +36,7 @@ export function einstellungen(k: GeraetKonfig, extra: { version: string; dienst:
     { schluessel: 'wort', titel: 'Aktivierungswort', wert: k.aktivierungswort ?? 'Alfred', art: 'text' },
     { schluessel: 'sinne-fenster', titel: 'Fenstertitel in den Sinnen', wert: k.sinneOhneFenster ? 'aus' : 'an', art: 'schalter' },
     { schluessel: 'oberflaeche', titel: 'Sitzungs-Oberfläche', wert: k.sitzungEinfach ? 'einfach' : 'ink', art: 'schalter' },
+    { schluessel: 'sudo-sperre', titel: 'sudo in Claude-Code-Aufträgen', wert: k.sudoSperre ? 'gesperrt' : 'erlaubt', art: 'schalter', hinweis: 'gesperrt: Systemänderungen nur über installieren mit Bestätigung' }, // v1409
   ];
 }
 
@@ -80,6 +82,11 @@ export function wendeAn(k: GeraetKonfig, befehl: string, arg: string): { ok: boo
       if (!/^(ink|einfach)$/i.test(a)) return { ok: false, text: 'oberflaeche ink|einfach' };
       k.sitzungEinfach = a.toLowerCase() === 'einfach';
       return { ok: true, text: `Sitzungs-Oberfläche: ${a.toLowerCase()} (gilt für die nächste Sitzung)` };
+    }
+    case 'sudo-sperre': { // v1409 R3b
+      if (!/^(an|aus)$/i.test(a)) return { ok: false, text: 'sudo-sperre an|aus' };
+      k.sudoSperre = a.toLowerCase() === 'an' ? true : undefined;
+      return { ok: true, text: `sudo in Claude-Code-Aufträgen: ${k.sudoSperre ? 'gesperrt' : 'erlaubt'}` };
     }
     default:
       return { ok: false, text: `Unbekannt: ${b}\n${EINSTELLUNGEN_HILFE.join('\n')}` };

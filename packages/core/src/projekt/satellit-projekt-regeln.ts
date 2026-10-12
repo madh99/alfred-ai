@@ -58,7 +58,7 @@ export function fixAuftrag(o: { ziel: string; nr: number; etappe: string; versuc
   ].join('\n');
 }
 
-export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; name?: string; nameNeu?: boolean; laeufeBisher?: number; umgebung?: string }): string {
+export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; name?: string; nameNeu?: boolean; laeufeBisher?: number; umgebung?: string; sudoSperre?: 'projekt' | 'geraet' }): string {
   return [
     `🧭 Projekt auf ${o.geraet} starten?`,
     // v1398 — Projektakte: Name (Vorschlag oder vom Owner), Weiterarbeit mit früheren Läufen
@@ -68,6 +68,7 @@ export function planFrage(o: { geraet: string; projekt: string; ziel: string; pl
     // v1397 — bestehendes Verzeichnis ohne Git
     ...(o.gitUebernehmen ? ['Kein Git-Repository: wird angelegt, der jetzige Stand als Ausgangs-Commit „Stand vor Alfred" gesichert (ohne node_modules, .env, Logs und Dateien über 10 MB), danach jede Etappe ein Commit.'] : []),
     ...(o.umgebung ? [`Umgebung: ${o.umgebung}`] : []), // v1408 R3a
+    `Systemrechte: ${o.sudoSperre ? `sudo gesperrt (${o.sudoSperre === 'geraet' ? 'Einstellung am Gerät' : 'Projekt-Option'})` : 'sudo erlaubt (sperrbar je Projekt oder am Gerät)'}`, // v1409 R3b
     `Etappen${o.gekuerzt ? ` (auf ${o.g.maxEtappen} gekürzt)` : ''}:`,
     ...o.plan.map((p, i) => `${i + 1}. ${p.slice(0, 200)}`),
     `Abnahme je Etappe: ${o.pruefBefehle.length ? o.pruefBefehle.join(' ; ') : 'keine Prüfbefehle — nach jeder Etappe frage ich dich'}`,

@@ -15843,7 +15843,10 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       const grenzen: Record<string, number> = {};
       if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
       if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
-      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext, umgebung: umgebungZeile(bestand?.umgebung) });
+      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext, umgebung: umgebungZeile(bestand?.umgebung),
+        // v1409 R3b — Projekt-Option (Tag) oder Start-Option; die Geräte-Einstellung meldet der Satellit beim Lesen
+        sudoSperre: akte?.sudoSperre || input.sudo_sperre === true ? 'projekt' : (lesen?.data as { sudoSperreGeraet?: boolean } | undefined)?.sudoSperreGeraet ? 'geraet' : undefined });
+      if (input.sudo_sperre === true && akte && !akte.sudoSperre && ow && aktenRepo) await aktenRepo.setzeSudoSperre(ow, akte.id, true).catch(() => undefined);
       return ergebnis(s, `Projekt ${akteName} (${s.id}) auf ${g.name} geplant (${s.plan.length} Etappen${vorherige.length ? `, Weiterarbeit nach ${vorherige.length} früheren Läufen` : ''}) — wartet auf die Bestätigung des Owners. Danach baut Claude Code Etappe für Etappe; Meldungen kommen ohne Nachfrage.`);
     };
     const ergebnis = (s: import('./projekt/satellit-projekt.js').ProjektStand | undefined, display: string) => ({ success: !!s, data: s ? { task_id: s.id, status: s.status, etappe: s.nr, etappen: s.plan.length, kostenUsd: Number(s.kostenUsd.toFixed(2)) } : undefined, display });
@@ -15909,6 +15912,13 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (context.chatId) gw.merkeAuftragHerkunft(g.id, id, { chatId: context.chatId, platform: context.platform, userId: context.userId });
         this.logger.info({ projekt: t.akte.id, auftrag: id, laenge: frage.length }, 'v1404 Frage zum Projekt gestellt');
         return { success: true, data: { auftrag: id }, display: `Frage zu ${t.akte.name} an Claude Code auf ${g.name} gestellt (nur lesend, höchstens 0,50 $). Die Antwort kommt in etwa einer Minute.` };
+      },
+      // v1409 R3b — Projekt-Option sudo-Sperre
+      sudoSperre: async (ref, an) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        await aktenRepo!.setzeSudoSperre(t.o, t.akte.id, an);
+        return { success: true, display: `${t.akte.name}: sudo in Claude-Code-Aufträgen ${an ? 'gesperrt' : 'erlaubt'} (gilt ab dem nächsten Auftrag).` };
       },
       archivieren: async (ref) => {
         const t = await akteAus(ref);
