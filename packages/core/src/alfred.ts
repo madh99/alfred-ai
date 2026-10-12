@@ -6453,10 +6453,10 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const { folgesignalFuer, FOLGE_FENSTER_MS } = await import('./lernen/anfrage-protokoll.js');
       const protokoll = new AnfrageProtokollRepository(this.database.getAdapter());
       this.pipeline.setAnfrageProtokoll(async (e) => {
-        const vorher = await protokoll.letzteImChat(e.chatId, new Date(Date.now() - FOLGE_FENSTER_MS).toISOString());
+        const vorher = await protokoll.letzteImChat(e.userId, e.chatId, new Date(Date.now() - FOLGE_FENSTER_MS).toISOString());
         if (vorher && !vorher.folgesignal) {
           const signal = folgesignalFuer(vorher.textAuszug, e.text);
-          if (signal) { await protokoll.setzeFolgesignal(vorher.id, signal); this.logger.info({ signal, vorher: vorher.textAuszug.slice(0, 80) }, 'v1374 Anfrage-Folgesignal'); }
+          if (signal) { await protokoll.setzeFolgesignal(vorher.id, signal); this.logger.info({ signal, anfrage: vorher.id.slice(0, 8) }, 'v1374 Anfrage-Folgesignal'); } // v1375 ohne Anfragetext im Log
         }
         await protokoll.anlegen({ userId: e.userId, kanal: e.kanal, chatId: e.chatId, absicht: e.absicht, textAuszug: e.text, werkzeuge: e.werkzeuge, stufe: e.stufe, modell: e.modell, dauerMs: e.dauerMs, kostenUsd: e.kostenUsd, runden: e.runden, folgesignal: e.abgebrochen ? 'abgebrochen' : undefined });
       });

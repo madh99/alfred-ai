@@ -39,9 +39,12 @@ export class AnfrageProtokollRepository {
     return id;
   }
 
-  /** Letzte Anfrage desselben Chats seit `seitIso` (für das Folgesignal der nächsten Nachricht). */
-  async letzteImChat(chatId: string, seitIso: string): Promise<AnfrageEintrag | null> {
-    const r = await this.db.queryOne(`SELECT * FROM anfrage_protokoll WHERE chat_id = ? AND zeit >= ? ORDER BY zeit DESC LIMIT 1`, [chatId, seitIso]) as Record<string, unknown> | undefined;
+  /** Letzte Anfrage desselben Benutzers im selben Chat seit `seitIso` (für das Folgesignal der nächsten Nachricht). v1375: je Benutzer. */
+  async letzteImChat(userId: string | undefined, chatId: string, seitIso: string): Promise<AnfrageEintrag | null> {
+    const r = await this.db.queryOne(userId
+      ? `SELECT * FROM anfrage_protokoll WHERE user_id = ? AND chat_id = ? AND zeit >= ? ORDER BY zeit DESC LIMIT 1`
+      : `SELECT * FROM anfrage_protokoll WHERE user_id IS NULL AND chat_id = ? AND zeit >= ? ORDER BY zeit DESC LIMIT 1`,
+      userId ? [userId, chatId, seitIso] : [chatId, seitIso]) as Record<string, unknown> | undefined;
     return r ? this.map(r) : null;
   }
 
@@ -49,9 +52,16 @@ export class AnfrageProtokollRepository {
     await this.db.execute(`UPDATE anfrage_protokoll SET folgesignal = ? WHERE id = ? AND folgesignal IS NULL`, [signal, id]);
   }
 
-  async seit(seitIso: string, limit = 5000): Promise<AnfrageEintrag[]> {
-    const rows = await this.db.query(`SELECT * FROM anfrage_protokoll WHERE zeit >= ? ORDER BY zeit LIMIT ?`, [seitIso, limit]) as Record<string, unknown>[];
+  /** v1375 — nur die Einträge eines Benutzers (Mandantentrennung). */
+  async seit(userId: string, seitIso: string, limit = 5000): Promise<AnfrageEintrag[]> {
+    const rows = await this.db.query(`SELECT * FROM anfrage_protokoll WHERE user_id = ? AND zeit >= ? ORDER BY zeit LIMIT ?`, [userId, seitIso, limit]) as Record<string, unknown>[];
     return rows.map(r => this.map(r));
+  }
+
+  /** v1375 — Gespräch gelöscht → auch dessen Protokoll (Auszüge dürfen den Verlauf nicht überleben). */
+  async loescheChat(chatId: string): Promise<number> {
+    const r = await this.db.execute(`DELETE FROM anfrage_protokoll WHERE chat_id = ?`, [chatId]);
+    return r.changes ?? 0;
   }
 
   async aufraeumen(tage = 90): Promise<number> {

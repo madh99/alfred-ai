@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1375] - 2026-10-12
+
+### Security — Anfrage-Protokoll: je Benutzer, ohne Text im Log, mit dem Gespräch gelöscht (v1375)
+
+Befunde des Sicherheits-Reviews zu v1374: Die Suche nach der vorigen Anfrage (Folgesignal) und die Auswertungsabfrage filterten nicht nach Benutzer — jetzt immer je Benutzer. Die Logzeile „v1374 Anfrage-Folgesignal" enthielt einen Auszug der Anfrage — jetzt nur noch Signal und Kennung. Wird ein Gespräch oder Faden gelöscht (weich oder endgültig), verschwinden auch seine Einträge im Anfrage-Protokoll; die Auszüge überleben den Verlauf nicht mehr.
+
 ## [0.19.0-jarvis.1374] - 2026-10-12
 
 ### Added — Anfrage-Protokoll als Lernsignal (Lernende Helfer L0, v1374)

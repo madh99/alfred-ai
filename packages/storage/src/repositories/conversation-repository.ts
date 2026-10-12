@@ -213,10 +213,20 @@ export class ConversationRepository {
 
   async softDelete(id: string): Promise<void> {
     await this.adapter.execute('UPDATE conversations SET deleted_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+    await this.loescheAnfrageProtokoll(id); // v1375
+  }
+
+  /** v1375 — Auszüge im Anfrage-Protokoll (Lernende Helfer L0) dürfen ein gelöschtes Gespräch nicht überleben. */
+  private async loescheAnfrageProtokoll(conversationId: string): Promise<void> {
+    try {
+      const c = await this.adapter.queryOne('SELECT chat_id FROM conversations WHERE id = ?', [conversationId]) as { chat_id?: string } | undefined;
+      if (c?.chat_id) await this.adapter.execute('DELETE FROM anfrage_protokoll WHERE chat_id = ?', [c.chat_id]);
+    } catch { /* Tabelle fehlt (Migration noch nicht gelaufen) */ }
   }
 
   /** v644 — Permanent delete (cascade messages). */
   async hardDelete(id: string): Promise<void> {
+    await this.loescheAnfrageProtokoll(id); // v1375
     await this.adapter.execute('DELETE FROM messages WHERE conversation_id = ?', [id]);
     await this.adapter.execute('DELETE FROM conversations WHERE id = ?', [id]);
   }
