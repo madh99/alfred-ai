@@ -103,6 +103,8 @@ export interface SystemPromptContext {
    *  Neuigkeiten zu einem dieser Themen soll das LLM interests/topic_briefing
    *  nutzen statt einer frischen Web-Suche — dort liegt das gesammelte Dossier. */
   interestTopics?: string[];
+  /** v1377 — I2: Auszug aus dem Dossier des Themas, zu dem die Frage passt (dynamischer Teil des Prompts). */
+  interestDossier?: { thema: string; stand?: string; text: string };
   /** v1206 — Jarvis Schleife 1: kompakte Weltmodell-Zusammenfassung (Auto, Haus, Energie, Infra, Vorgänge) aus dem letzten Sammeln. */
   weltmodell?: string;
 }
@@ -514,6 +516,12 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
         const location = event.location ? ` @ ${event.location}` : '';
         prompt += `\n- ${dateStr} ${startTime}${endTime}: ${event.title}${location}`;
       }
+    }
+
+    // v1377 — I2: Dossier-Auszug zum Thema der Frage (dynamisch, hinter dem gecachten Anfang)
+    if (context.interestDossier?.text) {
+      const d = context.interestDossier;
+      prompt += `\n\n## Dossier „${d.thema}"${d.stand ? ` (Stand ${d.stand})` : ''}\nGesammeltes Wissen zu diesem Thema — beantworte Fragen dazu zuerst hieraus und nenne den Stand; für Einzelheiten und Quellen interests/topic_briefing.\n${d.text}`;
     }
 
     // Personal context from Knowledge Graph (Tier 1: family, work, locations)

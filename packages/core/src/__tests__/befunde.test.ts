@@ -87,3 +87,12 @@ describe('befundeAusDeutung', () => {
     expect(bereinigeZeile('**⚠️ ALARM:** Rauch Küche ausgelöst')).toBe('ALARM: Rauch Küche ausgelöst');
   });
 });
+
+// v1377 — Realfall 12.10.: „Temp Terrasse Batterie" zweimal in der Lage (sensorbatterien + infra/Monitor)
+describe('Doppelter Batterie-Alarm', () => {
+  it('Monitor-„Low battery" wird kein Infra-Befund — die Quelle sensorbatterien meldet ihn (mit Trend)', () => {
+    const d = infraDeutungAus([{ source: 'homeassistant', message: 'Low battery: Temp Terrasse Batterie at 0%' }, { source: 'unifi', message: 'Device "AC Mesh" is not connected (state: 2)' }]);
+    expect(d.auffaellig).toEqual(['unifi:device:ac-mesh']);
+    expect(d.zeilen.join('\n')).not.toContain('Low battery');
+  });
+});

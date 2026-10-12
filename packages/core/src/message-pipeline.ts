@@ -30,6 +30,7 @@ import { arbeitsMelder, type ArbeitsEreignis } from './geraete/arbeits-melder.js
 import type { Platform } from '@alfred/types';
 import { istProtokollAnfrage, werkzeugeAus } from './lernen/anfrage-protokoll.js'; // v1374
 import { absichtenAus } from './skill-filter.js'; // v1374
+import { dossierThemaFuer, dossierAuszug } from './interessen/dossier-auszug.js'; // v1377
 
 /** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
 const NODE_LOCAL_SKILLS = new Set([
@@ -960,10 +961,20 @@ export class MessagePipeline {
         try { return await this.skillHealthRepo.listRecentHostFailures(10); } catch { return undefined; }
       };
       // v929 — aktive Interessen-Themen
+      let interestDossier: { thema: string; stand?: string; text: string } | undefined; // v1377 — I2
       const ladeInteressen = async () => {
         if (!this.interestsRepo) return undefined;
         try {
           const topics = await this.interestsRepo.listTopics(masterUserId, 'active');
+          // v1377 — I2: passt die Frage zu einem Thema, kommt ein Auszug seines Dossiers in den Kontext (nur lesen)
+          try {
+            const thema = dossierThemaFuer(message.text ?? '', topics);
+            const dig = thema ? await this.interestsRepo.getDigest(thema.id) : null;
+            if (thema && dig?.summary) {
+              interestDossier = { thema: thema.name, stand: new Date(dig.updatedAt).toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit' }), text: dossierAuszug(dig.summary) };
+              this.logger.info({ thema: thema.name }, 'v1377 Dossier-Auszug im Gespräch');
+            }
+          } catch { /* ohne Dossier weiter */ }
           return topics.length > 0 ? topics.map(t => t.name) : undefined;
         } catch { return undefined; }
       };
@@ -1105,6 +1116,7 @@ export class MessagePipeline {
         runningProjectAgentSessions,
         recentHostFailures,
         interestTopics,
+        interestDossier, // v1377
         weltmodell: (() => {
           let welt: string | undefined;
           try { welt = this.weltmodellQuelle?.(); } catch { welt = undefined; }

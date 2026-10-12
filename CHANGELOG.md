@@ -51,6 +51,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1377] - 2026-10-12
+
+### Added — Dossier im Gespräch (Interessen I2) (v1377)
+
+Fragt der Owner nach einem beobachteten Thema („Was gibt's Neues zu Bitcoin?", „… bei bidirektionalem Laden mit der Wallbox?"), kommt ein Auszug aus dem Dossier dieses Themas (höchstens 600 Zeichen, mit Stand-Datum) in den Gesprächskontext. Alfred antwortet damit aus dem gesammelten Wissen, statt nur den Themennamen zu kennen und erst ein Werkzeug zu suchen; für Einzelheiten bleibt `topic_briefing`. Die Zuordnung läuft ohne Modell — Stichwörter des Themas zählen doppelt, bedeutungstragende Namenswörter einfach, nötig sind zwei Punkte; Alltagsfragen bekommen kein Dossier. Der Auszug steht im dynamischen Teil des Prompts, der gleichbleibende Anfang bleibt im Prompt-Cache. Dossiers und Themen werden nur gelesen (Content-Studio unberührt). Logzeile „v1377 Dossier-Auszug im Gespräch".
+
+### Fixed — Sensorbatterie doppelt als Befund (v1377)
+
+Ein leerer Sensor erschien zweimal in der Lage und mit zwei Vorgängen: als Befund der Quelle Sensorbatterien und als Infra-Befund aus dem Monitor-Alarm „Low battery: …" (Realfall 12.10.: „Temp Terrasse Batterie"). Beide nutzen seit v1172 dieselbe Einordnung, die Sensorbatterien-Deutung hat zusätzlich den Trend — der Monitor-Alarm zählt deshalb nicht mehr als Infra-Befund. Die ITSM-Incidents des Monitors bleiben unverändert.
+
 ## [0.19.0-jarvis.1376] - 2026-10-12
 
 ### Added — Nachforschen: Rezepte für Infra-Befunde (v1376)

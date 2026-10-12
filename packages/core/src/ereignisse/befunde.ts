@@ -104,12 +104,21 @@ export function infraAlertSchluessel(a: InfraAlert): string {
   return `${a.source}:${slug(m) || 'alert'}`;
 }
 
+/**
+ * v1377 — Sensorbatterien meldet die eigene Quelle `sensorbatterien` (gleiche Einordnung seit v1172, Schwellen 20 %/5 %, mit Trend).
+ * Der Monitor-Alarm „Low battery: …" ergab denselben Fall ein zweites Mal als Infra-Befund mit eigenem Vorgang (Realfall 12.10.:
+ * „Temp Terrasse Batterie" zweimal in der Lage) — er zählt hier nicht mehr. Die ITSM-Incidents des Monitors bleiben unberührt.
+ */
+export function istDoppelterBatterieAlarm(key: string): boolean {
+  return key.startsWith('homeassistant:battery:');
+}
+
 /** Monitor-Alerts als Deutung (eine ⚠️-Zeile je Alert), damit Befunde und Mini-Pass denselben Weg nehmen. */
 export function infraDeutungAus(alerts: InfraAlert[]): { zeilen: string[]; auffaellig: string[] } {
   const zeilen: string[] = []; const auffaellig: string[] = []; const gesehen = new Set<string>();
   for (const a of alerts) {
     const key = infraAlertSchluessel(a);
-    if (gesehen.has(key)) continue;
+    if (gesehen.has(key) || istDoppelterBatterieAlarm(key)) continue; // v1377
     gesehen.add(key);
     auffaellig.push(key);
     zeilen.push(`⚠️ ${a.source}: ${a.message}`);
@@ -122,7 +131,7 @@ export function infraBefunde(alerts: InfraAlert[]): BefundKandidat[] {
   const out: BefundKandidat[] = []; const gesehen = new Set<string>();
   for (const a of alerts) {
     const key = infraAlertSchluessel(a);
-    if (gesehen.has(key)) continue;
+    if (gesehen.has(key) || istDoppelterBatterieAlarm(key)) continue; // v1377
     gesehen.add(key);
     out.push({ gegenstand: key, titel: `${a.source}: ${a.message}`.slice(0, 200), detail: a.message });
   }
