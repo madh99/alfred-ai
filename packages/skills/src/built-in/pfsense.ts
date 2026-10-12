@@ -1,5 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, PfSenseConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
+import { tlsFetch } from './social/tls-fetch.js'; // v1385
 
 type Action = 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status';
 
@@ -82,12 +83,13 @@ export class PfSenseSkill extends Skill {
         return { 'Authorization': `Bearer ${this.jwtToken}` };
       }
       // Get new JWT
-      const res = await fetch(`${this.config.baseUrl}/api/v2/auth/jwt`, {
+      // v1385 — auch die Anmeldung (vorher ohne Ausnahme: JWT scheiterte an selbstsignierten Zertifikaten)
+      const res = await tlsFetch(`${this.config.baseUrl}/api/v2/auth/jwt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: this.config.username, password: this.config.password }),
         signal: AbortSignal.timeout(10_000),
-      });
+      }, this.config.verifyTls === false);
       if (!res.ok) throw new Error(`pfSense JWT Auth fehlgeschlagen: ${res.status}`);
       const data = await res.json() as { token: string; exp?: number };
       this.jwtToken = data.token;
@@ -107,24 +109,12 @@ export class PfSenseSkill extends Skill {
     const authHeaders = await this.getAuthHeaders();
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/api/v2${path}`;
 
-    // Handle self-signed certificates (common for pfSense)
-    if (this.config.verifyTls === false && url.startsWith('https')) {
-      // Temporarily allow self-signed certs for this request
-      const prev = process.env['NODE_TLS_REJECT_UNAUTHORIZED'];
-      process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
-      try {
-        return await this._doFetch(url, authHeaders, options);
-      } finally {
-        if (prev !== undefined) process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = prev;
-        else delete process.env['NODE_TLS_REJECT_UNAUTHORIZED'];
-      }
-    }
-
     return this._doFetch(url, authHeaders, options);
   }
 
   private async _doFetch(url: string, authHeaders: Record<string, string>, options?: RequestInit): Promise<any> {
-    const res = await fetch(url, {
+    // v1385 — selbstsignierte Zertifikate (üblich bei pfSense) request-lokal
+    const res = await tlsFetch(url, {
       ...options,
       headers: {
         ...authHeaders,
@@ -132,7 +122,7 @@ export class PfSenseSkill extends Skill {
         ...(options?.headers ?? {}),
       },
       signal: AbortSignal.timeout(15_000),
-    });
+    }, this.config.verifyTls === false);
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');

@@ -51,7 +51,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
-## [0.19.0-jarvis.1384] - 2026-10-12
+## [0.19.0-jarvis.1385] - 2026-10-12
+
+### Security — Zertifikatsprüfung nur noch je Anfrage abschaltbar (v1385)
+
+Sieben Skills (UniFi, Home Assistant, Proxmox, pfSense, MikroTik, Commvault, Monitor) schalteten für Geräte mit selbstsigniertem Zertifikat die Zertifikatsprüfung über `NODE_TLS_REJECT_UNAUTHORIZED` ab — für den ganzen Prozess. Solange eine solche Anfrage lief, prüften auch alle parallelen Verbindungen (Telegram, Modell-Anbieter, E-Mail) keine Zertifikate; überlappten sich zwei Aufrufe, konnte die Prüfung bis zum nächsten Neustart abgeschaltet bleiben.
+
+- Alle sieben nutzen jetzt `tlsFetch` wie schon die REST-Kanäle seit v1022: die Ausnahme gilt nur für die eine Verbindung zum betreffenden Gerät.
+- pfSense: auch die JWT-Anmeldung berücksichtigt jetzt `verifyTls: false` (scheiterte vorher an selbstsignierten Zertifikaten).
+- Ein Test verhindert, dass die prozessweite Umschaltung wieder in den Quelltext kommt.
+
+
 
 ### Security — Prüfaktion ohne Bestätigung nur gegen das Gerät selbst (v1384)
 

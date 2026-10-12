@@ -10,6 +10,7 @@ import {
   CommvaultCommcell,
 } from './commvault/index.js';
 import type { CommvaultApiClient } from './commvault/types.js';
+import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type SkillCallback = (input: Record<string, unknown>) => Promise<SkillResult>;
 
@@ -359,12 +360,7 @@ export class CommvaultSkill extends Skill implements CommvaultApiClient {
     }
 
     const skipTls = this.config.verifyTls === false;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    try {
-      return await fetch(url, opts);
-    } finally {
-      if (skipTls) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    }
+    return await tlsFetch(url, opts, skipTls);
   }
 
   private async api<T = unknown>(method: string, path: string, body?: Record<string, unknown>): Promise<T> {

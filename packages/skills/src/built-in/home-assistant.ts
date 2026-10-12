@@ -5,6 +5,7 @@ import { Skill } from '../skill.js';
 import { pruefe, pruefText, istAusgenommen, GRENZEN, type PruefBefund, type EntitaetZustand } from './ha-pruefung.js';
 import { baueZuordnung, bezuegeAus, zuordnungsAenderungen, zuordnungsZeilen, steuerndeAutomationen, type HaZuordnung, type AutoQuelle, type EntitaetInfo } from './ha-zuordnung.js';
 import { werteAus, ursachenAus, berichtText, anJeTag, zeitText, lichtDauerAuffaellig, type HaZustand, type EntitaetsBericht, type LogbuchEintrag, type Fenster } from './ha-verlauf.js';
+import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type Action =
   | 'states'
@@ -415,21 +416,8 @@ export class HomeAssistantSkill extends Skill {
     }
 
     const skipTls = this.config.verifyTls === false;
-    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-    let res: Response;
-    try {
-      res = await fetch(url, fetchOpts);
-    } finally {
-      if (skipTls) {
-        if (prev === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-        }
-      }
-    }
+    const res = await tlsFetch(url, fetchOpts, skipTls);
 
     if (!res.ok) {
       let detail = '';
@@ -464,21 +452,8 @@ export class HomeAssistantSkill extends Skill {
     }
 
     const skipTls = this.config.verifyTls === false;
-    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-    let res: Response;
-    try {
-      res = await fetch(url, fetchOpts);
-    } finally {
-      if (skipTls) {
-        if (prev === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-        }
-      }
-    }
+    const res = await tlsFetch(url, fetchOpts, skipTls);
 
     if (!res.ok) {
       let detail = '';
@@ -1946,26 +1921,13 @@ export class HomeAssistantSkill extends Skill {
     };
 
     const skipTls = this.config.verifyTls === false;
-    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(15_000),
-      });
-    } finally {
-      if (skipTls) {
-        if (prev === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-        }
-      }
-    }
+    const res = await tlsFetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    }, skipTls);
 
     if (!res.ok) {
       let detail = '';
@@ -1983,25 +1945,12 @@ export class HomeAssistantSkill extends Skill {
     };
 
     const skipTls = this.config.verifyTls === false;
-    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: 'DELETE',
-        headers,
-        signal: AbortSignal.timeout(15_000),
-      });
-    } finally {
-      if (skipTls) {
-        if (prev === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-        }
-      }
-    }
+    const res = await tlsFetch(url, {
+      method: 'DELETE',
+      headers,
+      signal: AbortSignal.timeout(15_000),
+    }, skipTls);
 
     if (!res.ok) {
       let detail = '';

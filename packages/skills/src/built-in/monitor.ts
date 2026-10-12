@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig, UniFiConfig, HomeAssistantConfig, ProxmoxBackupConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import { klassifiziereBatterie, istMobilgeraeteEntity } from '../batterie-klassen.js';
+import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 // ---------------------------------------------------------------------------
 // Config
@@ -465,19 +466,7 @@ export class MonitorSkill extends Skill {
     verifyTls?: boolean,
   ): Promise<Response> {
     const skipTls = verifyTls === false;
-    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-    try {
-      return await fetch(url, init);
-    } finally {
-      if (skipTls) {
-        if (prev === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-        }
-      }
-    }
+    return await tlsFetch(url, init, skipTls);
   }
 }

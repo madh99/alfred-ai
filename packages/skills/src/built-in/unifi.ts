@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult, UniFiConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import { alsAlarm, istInfraEreignis, istWarnung, nachSchwere, type SystemLogEintrag } from './unifi-systemlog.js'; // v1381
+import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type ControllerMode = 'unifi-os' | 'classic';
 
@@ -332,12 +333,7 @@ export class UniFiSkill extends Skill {
    */
   private async rawFetch(url: string, init: RequestInit): Promise<Response> {
     const skipTls = this.config.verifyTls === false;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    try {
-      return await fetch(url, init);
-    } finally {
-      if (skipTls) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    }
+    return await tlsFetch(url, init, skipTls);
   }
 
   /**

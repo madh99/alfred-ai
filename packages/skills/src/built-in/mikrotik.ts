@@ -1,5 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, MikroTikConfig, MikroTikRouterConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
+import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 type SkillCallback = (input: Record<string, unknown>) => Promise<SkillResult>;
 
@@ -216,13 +217,7 @@ export class MikroTikSkill extends Skill {
     }
 
     const skipTls = cfg.ssl !== false;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    let res: Response;
-    try {
-      res = await fetch(url, opts);
-    } finally {
-      if (skipTls) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    }
+    const res = await tlsFetch(url, opts, skipTls);
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');

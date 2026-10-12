@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@alfred/types';
 import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
+import { tlsFetch } from './social/tls-fetch.js'; // v1385 — Zertifikatsprüfung request-lokal statt prozessweit
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -370,14 +371,8 @@ export class ProxmoxSkill extends Skill {
     }
 
     const skipTls = this.config.verifyTls === false;
-    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-    let res: Response;
-    try {
-      res = await fetch(url, fetchOpts);
-    } finally {
-      if (skipTls) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    }
+    const res = await tlsFetch(url, fetchOpts, skipTls);
 
     if (!res.ok) {
       let detail = '';
