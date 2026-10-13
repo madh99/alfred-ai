@@ -630,6 +630,16 @@ Planfrage nennt die Umgebung; ein Plan verlangt kein Werkzeug, das „fehlt“, 
 
 Nach einem Lauf zeigt jede Etappe Zusammenfassung, Dateien, Commit und Abnahme ohne „Stand laden"; während eines Laufs erscheint ein neuer Schritt von Claude Code in der App nach höchstens 10 s; eine Frage zum Projekt und ihre Antwort stehen im selben Faden; Rückfragen im Faden kennen das Projekt ohne Nennung.
 
+### Umsetzungsstand (13.10.)
+
+Freigabe Owner 13.10. „ok wie vorgeschlagen“: G1 → G2 → G3, Hauptgespräch nur Ende und Entscheidungen, Live-Anzeige nur App/Web.
+
+- **G1** v1417 (App 1.16.0): Etappenbericht mit Zusammenfassung, Dateien, Commit, Abnahme, Dauer; Diff-Ansicht.
+- **G2** v1418 (App 1.16.1): Live-Aktivität über `fortschritt` (5 s), App-Statusleiste + Projektansicht, Web mit Abfrage alle 5 s.
+- **G3** v1419 (App 1.17.0) + v1420: Projektfaden `owner:faden:projekt-<id8>` „🔨 <Name>“; Etappen, Fragen und Antworten im Faden, Hauptgespräch nur Ende-Zeile; Knopf „Gespräch zum Projekt“ in App und Web. v1420: Titel wird auch gesetzt, wenn eine Frage den Faden eröffnet.
+- **Beweis G3 13.10. 00:52/00:56 UTC**: zwei Fragen an Angebots-Radar über die Web-Route → Faden angelegt, Titel „🔨 Angebots-Radar Österreich“ (nach v1420), beide Antworten im Faden (0,12 $ / 0,11 $), Zustellung nur `faden:` (Log „v1342 Auftrag beendet“, herkunft owner:faden:projekt-b77431a2). App 1.17.0 für Windows, Linux und macOS im Update-Eingang.
+- Offen: Abnahme „Rückfragen im Faden kennen das Projekt ohne Nennung“ durch den Owner in der App; Live-Aktivität beim nächsten echten Lauf beobachten.
+
 ### Risiken
 
 Datenmenge (Fortschritt nur gebündelt, nicht gespeichert); Fremdinhalt in Anzeige und Projektfaden-Kontext (gekürzt, als Daten); zwei Orte für Projektmeldungen während der Umstellung (Hauptgespräch bekommt weiterhin die Zeile mit Rang).
