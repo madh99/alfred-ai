@@ -1273,7 +1273,7 @@ Jeder Schritt bekommt eine eigene Version und einen Live-Beweis.
 
 ### Umsetzungsstand
 
-- **v1428 (13.10.):** V1 — Objekt-Hinweise (, Zuordnung über Titelwörter + Anker, kalibriert an 179 echten Punkten 06.–13.10., 108 zugeordnet), Zustellung nur bei neu/geändert/Frist < 24 h, Schritt  am Vorgang; Insight-Vorgänge ohne Dublette eines offenen Vorgangs; Erzähltext-Filter erweitert; Lage-Zähler „Nicht zugestellt“ dauerhaft; Chat- mit v1361-Sperre. Logzeilen „v1428 Objekt-Hinweis …“, Kennzahlen , , .
+- **v1428 (13.10.):** V1 — Objekt-Hinweise (`insights/objekt-hinweis.ts`, Zuordnung über Titelwörter + Anker, kalibriert an 179 echten Punkten 06.–13.10., 108 zugeordnet), Zustellung nur bei neu/geändert/Frist < 24 h, Schritt `gemeldet` am Vorgang; Insight-Vorgänge ohne Dublette eines offenen Vorgangs; Erzähltext-Filter erweitert; Lage-Zähler „Nicht zugestellt“ dauerhaft (`data/zustellprotokoll.json`); Chat-`insights act` mit v1361-Sperre. Logzeilen „v1428 Objekt-Hinweis …“, Kennzahlen `hinweisObjektBekannt`, `hinweisObjektGemeldet`, `vorgaengeZuVorgang`.
 
 ## Lernende Helfer neben dem Sprachmodell (Entwurf 12.10.2026, Schicht 4 — ohne Umsetzung, Owner: „ok wie vorgeschlagen, Reihenfolge bestimmst du")
 
