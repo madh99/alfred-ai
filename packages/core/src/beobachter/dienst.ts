@@ -16,7 +16,7 @@ export interface BeobachterRepo {
 }
 
 export interface GeraetStand { id: string; name: string; online: boolean; sinne?: Record<string, unknown>; sinneZeit?: string }
-type StandZeile = { regel: string; zustand: string; grund?: string; letzte?: string; anzahl?: number };
+type StandZeile = { regel: string; zustand: string; grund?: string; letzte?: string; anzahl?: number; konten?: string[] };
 
 export interface BeobachterDienstDeps {
   repo: BeobachterRepo;
@@ -30,6 +30,8 @@ export interface BeobachterDienstDeps {
   aufgabe: (r: RegelLike, auftrag: string, ausloeser: string, skills: string[]) => Promise<void>;
   bestaetigung: (r: RegelLike, beschreibung: string, ziel: string, sourceId: string) => Promise<boolean>;
   befundeSync: (befunde: Array<{ gegenstand: string; titel: string; detail?: string }>) => Promise<void>;
+  /** v1430 — Mailadressen, die der Server selbst liest (Owner-Entscheidung 3: Outlook nur für andere Konten) */
+  serverMailKonten?: () => string[];
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
   jetzt?: () => number;
 }
@@ -43,6 +45,12 @@ export class BeobachterDienst {
   constructor(private readonly d: BeobachterDienstDeps) {}
 
   private jetzt(): number { return (this.d.jetzt ?? Date.now)(); }
+
+  /** v1430 — liest der Server alle Outlook-Konten dieses Geräts schon selbst? Dann meldet die Outlook-Regel nichts (sonst doppelt). */
+  private outlookDoppelt(z: StandZeile | undefined): boolean {
+    const server = new Set((this.d.serverMailKonten?.() ?? []).map(k => k.toLowerCase()));
+    return !!z?.konten?.length && z.konten.every(k => server.has(k.toLowerCase()));
+  }
 
   private static stand(g: GeraetStand | undefined): StandZeile[] | undefined {
     const b = g?.sinne?.beobachter;
@@ -63,6 +71,7 @@ export class BeobachterDienst {
         if (!st) return { ...r, stand: 'Satellit zu alt', standGrund: 'Update auf ≥ 1429 nötig' };
         const z = st.find(s => s.regel === r.id);
         if (!z) return { ...r, stand: 'wird gestartet' };
+        if (r.quelle === 'outlook' && this.outlookDoppelt(z)) return { ...r, stand: 'ohne Wirkung', standGrund: `Konto ${z.konten!.join(', ')} liest der Server selbst (Mail-Regeln)` };
         return { ...r, stand: z.zustand === 'laeuft' ? 'läuft' : z.zustand === 'aus' ? 'am Gerät aus' : 'gestört', ...(z.grund ? { standGrund: z.grund } : {}) };
       }),
       geraete: geraete.map(g => ({ id: g.id, name: g.name, online: g.online })),
@@ -125,6 +134,10 @@ export class BeobachterDienst {
       const r = await this.d.repo.hole(o, String(t.regel));
       if (!r || !r.aktiv || r.geraetId !== geraetId) { this.d.logger.info({ geraetId, regel: t.regel }, 'v1429 Beobachtung ohne aktive Regel verworfen'); continue; }
       if (this.gesehen.has(t.schluessel)) continue;
+      if (r.quelle === 'outlook') {
+        const g = (await this.d.geraete()).find(x => x.id === geraetId);
+        if (this.outlookDoppelt(BeobachterDienst.stand(g)?.find(s => s.regel === r.id))) { this.d.logger.info({ regel: r.id }, 'v1430 Outlook-Treffer verworfen — Konto liest der Server selbst'); continue; }
+      }
       this.gesehen.set(t.schluessel, jetzt);
       const w = (this.wirkungen.get(r.id) ?? []).filter(x => jetzt - x < 3_600_000);
       if (w.length >= MAX_JE_STUNDE) {

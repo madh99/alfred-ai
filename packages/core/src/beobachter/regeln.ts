@@ -22,10 +22,23 @@ export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: 
   const g = geraete.find(x => x.id === gName || x.name.toLowerCase() === gName) ?? (geraete.length === 1 && !gName ? geraete[0] : undefined);
   if (!g) return { ok: false, fehler: `Gerät fehlt oder unbekannt (${geraete.map(x => x.name).join(', ') || 'keine Geräte'})` };
   const quelle = String(roh.quelle ?? 'ordner') as Quelle;
-  if (quelle !== 'ordner') return { ok: false, fehler: `Quelle „${quelle}" kommt mit R4b — jetzt: ordner` };
+  if (!['ordner', 'benachrichtigung', 'outlook'].includes(quelle)) return { ok: false, fehler: `Quelle „${quelle}" gibt es nicht (ordner, benachrichtigung, outlook)` };
   const f = (roh.filter && typeof roh.filter === 'object' ? roh.filter : roh) as Record<string, unknown>;
-  const pfad = String(f.pfad ?? f.ordner ?? '').trim();
-  if (!pfad || !/^([a-zA-Z]:[\\/]|\/|~)/.test(pfad)) return { ok: false, fehler: 'pfad fehlt (absoluter Ordner auf dem Gerät, z. B. C:\\Users\\madh\\Downloads oder /home/madh/Downloads)' };
+  // v1430 R4b — Benachrichtigungen (Apps, optional Titel) und Outlook (Absender/Betreff)
+  const text = (v: unknown, max = 120) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
+  let filter: Record<string, unknown>;
+  let pfad = '';
+  if (quelle === 'benachrichtigung') {
+    const apps = (Array.isArray(f.apps) ? f.apps : typeof f.apps === 'string' ? f.apps.split(/[,;]/) : typeof f.app === 'string' ? [f.app] : []).map(x => String(x).trim()).filter(Boolean).slice(0, 10);
+    if (!apps.length) return { ok: false, fehler: 'apps fehlt (welche Apps, z. B. WhatsApp, Teams) — ohne App-Liste verlässt keine Benachrichtigung das Gerät' };
+    filter = { apps, ...(text(f.titel) ? { titel: text(f.titel) } : {}) };
+  } else if (quelle === 'outlook') {
+    filter = { ...(text(f.absender) ? { absender: text(f.absender) } : {}), ...(text(f.betreff) ? { betreff: text(f.betreff) } : {}) };
+  } else {
+    pfad = String(f.pfad ?? f.ordner ?? '').trim();
+    if (!pfad || !/^([a-zA-Z]:[\\/]|\/|~)/.test(pfad)) return { ok: false, fehler: 'pfad fehlt (absoluter Ordner auf dem Gerät, z. B. C:\\Users\\madh\\Downloads oder /home/madh/Downloads)' };
+    filter = {};
+  }
   const ereignisse = (Array.isArray(f.ereignisse) ? f.ereignisse : typeof f.ereignisse === 'string' ? f.ereignisse.split(/[,\s]+/) : ['neu'])
     .map(x => String(x).trim().toLowerCase().replace('geändert', 'geaendert').replace('gelöscht', 'geloescht'))
     .filter((x): x is typeof ORDNER_ARTEN[number] => (ORDNER_ARTEN as readonly string[]).includes(x));
@@ -42,13 +55,13 @@ export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: 
     projektId = p.id;
   }
   const muster = typeof f.muster === 'string' && f.muster.trim() ? f.muster.trim().slice(0, 200) : undefined;
-  const name = String(roh.name ?? '').trim().slice(0, 80) || `${muster ?? 'Dateien'} in ${pfad.split(/[\\/]/).filter(Boolean).pop() ?? pfad}`;
+  const name = String(roh.name ?? '').trim().slice(0, 80) || (quelle === 'benachrichtigung' ? `Benachrichtigungen ${(filter.apps as string[]).join(', ')}` : quelle === 'outlook' ? `Outlook${filter.absender ? ` von ${String(filter.absender)}` : ''}${filter.betreff ? ` „${String(filter.betreff)}"` : ''}` : `${muster ?? 'Dateien'} in ${pfad.split(/[\\/]/).filter(Boolean).pop() ?? pfad}`);
   const skills = Array.isArray(roh.skills) ? roh.skills.map(String).slice(0, 12) : undefined;
   return {
     ok: true,
     regel: {
       geraetId: g.id, geraet: g.name, name, quelle, wirkung, aktiv: roh.aktiv !== false,
-      filter: { pfad, ...(muster ? { muster } : {}), ereignisse: ereignisse.length ? ereignisse : ['neu'], ...(f.unterordner === true ? { unterordner: true } : {}) },
+      filter: quelle === 'ordner' ? { pfad, ...(muster ? { muster } : {}), ereignisse: ereignisse.length ? ereignisse : ['neu'], ...(f.unterordner === true ? { unterordner: true } : {}) } : filter,
       ...(auftrag ? { auftrag } : {}), ...(skills?.length ? { skills } : {}), ...(projektId ? { projektId } : {}),
     },
   };
@@ -56,7 +69,9 @@ export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: 
 
 /** Nutzlast für `beobachten` an das Gerät: nur aktive Regeln, nur was der Beobachter braucht. */
 export function geraetNutzlast(regeln: RegelLike[]): Array<Record<string, unknown>> {
-  return regeln.filter(r => r.aktiv && r.quelle === 'ordner').map(r => ({ id: r.id, quelle: 'ordner', pfad: r.filter.pfad, ...(r.filter.muster ? { muster: r.filter.muster } : {}), ereignisse: r.filter.ereignisse ?? ['neu'], ...(r.filter.unterordner ? { unterordner: true } : {}) }));
+  return regeln.filter(r => r.aktiv).map(r => r.quelle === 'ordner'
+    ? { id: r.id, quelle: 'ordner', pfad: r.filter.pfad, ...(r.filter.muster ? { muster: r.filter.muster } : {}), ereignisse: r.filter.ereignisse ?? ['neu'], ...(r.filter.unterordner ? { unterordner: true } : {}) }
+    : { id: r.id, quelle: r.quelle, ...r.filter }); // v1430 benachrichtigung/outlook
 }
 
 const ART_TEXT: Record<string, string> = { neu: 'Neue Datei', geaendert: 'Datei geändert', geloescht: 'Datei gelöscht', sammel: 'Viele Änderungen' };
@@ -64,6 +79,8 @@ const groesse = (b: unknown) => { const n = Number(b); if (!Number.isFinite(n)) 
 
 /** Ein Satz für Hinweis, Vorgangstitel und Bestätigung — nur Kopfdaten. */
 export function trefferText(r: RegelLike, t: Treffer): string {
+  if (r.quelle === 'benachrichtigung') return `Benachrichtigung auf ${r.geraet}: ${String(t.kopf.app ?? '')}${t.kopf.titel ? ` — ${String(t.kopf.titel)}` : ''} (Regel „${r.name}")`;
+  if (r.quelle === 'outlook') return `Neue Mail in Outlook auf ${r.geraet}: ${String(t.kopf.von ?? '')} — „${String(t.kopf.betreff ?? '')}"${Number(t.kopf.anhaenge ?? 0) > 0 ? ` (${Number(t.kopf.anhaenge)} Anhang/Anhänge)` : ''} (Regel „${r.name}")`;
   const ordner = String(r.filter.pfad ?? '');
   if (t.art === 'sammel') return `${ART_TEXT.sammel} in ${ordner} auf ${r.geraet}: ${Number(t.kopf.anzahl ?? 0)} weitere (Regel „${r.name}")`;
   const g = groesse(t.kopf.groesse);
@@ -72,6 +89,8 @@ export function trefferText(r: RegelLike, t: Treffer): string {
 
 /** Auslöser-Text für eine Aufgabe (geplante Aufgabe mit fester Werkzeugliste, wie Mail-Regeln v1211). */
 export function aufgabeText(r: RegelLike, t: Treffer, skillName: string): string {
+  if (r.quelle === 'outlook') return `Auslöser: ${trefferText(r, t)}.\nDie Mail liegt in Outlook auf dem Gerät ${r.geraet} — ganze Mail lesen: Werkzeug ${skillName}, Aktion outlook_mails mit id=${String(t.kopf.id ?? '')}.`;
+  if (r.quelle === 'benachrichtigung') return `Auslöser: ${trefferText(r, t)}.`;
   const voll = `${String(r.filter.pfad ?? '').replace(/[\\/]+$/, '')}/${String(t.kopf.relativ ?? t.kopf.name ?? '')}`;
   return `Auslöser: ${trefferText(r, t)}.\nDie Datei liegt auf dem Gerät ${r.geraet} unter ${voll} — Zugriff über das Werkzeug ${skillName} (Aktion datei_holen holt sie zum Lesen auf den Server).`;
 }

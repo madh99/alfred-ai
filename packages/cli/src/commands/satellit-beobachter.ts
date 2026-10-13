@@ -9,10 +9,14 @@ import { existsSync, readdirSync, statSync, watch, type FSWatcher } from 'node:f
 
 export type OrdnerArt = 'neu' | 'geaendert' | 'geloescht';
 export interface OrdnerRegel { id: string; quelle: 'ordner'; pfad: string; muster?: string; ereignisse?: OrdnerArt[]; unterordner?: boolean }
-export type BeobachterRegel = OrdnerRegel;
+/** v1430 R4b — Benachrichtigungen (Windows/macOS): nur Apps aus der Regel, nur App + Titel verlassen das Gerät */
+export interface BenachrichtigungRegel { id: string; quelle: 'benachrichtigung'; apps: string[]; titel?: string }
+/** v1430 R4b — Outlook-Posteingang (Windows): neue Mails, optional nach Absender/Betreff; nur Kopfdaten */
+export interface OutlookRegel { id: string; quelle: 'outlook'; absender?: string; betreff?: string }
+export type BeobachterRegel = OrdnerRegel | BenachrichtigungRegel | OutlookRegel;
 
 export interface Beobachtung { regel: string; quelle: string; art: string; schluessel: string; zeit: string; kopf: Record<string, unknown> }
-export interface BeobachterStand { regel: string; quelle: string; zustand: 'laeuft' | 'gestoert' | 'aus'; grund?: string; letzte?: string; anzahl: number }
+export interface BeobachterStand { regel: string; quelle: string; zustand: 'laeuft' | 'gestoert' | 'aus'; grund?: string; letzte?: string; anzahl: number; /** v1430 Outlook: Konten am Gerät (Server prüft Doppel-Lesen) */ konten?: string[] }
 
 /** Glob-Muster („*.pdf, Rechnung*") → Prüfung auf den Dateinamen, ohne Groß/Klein. Leer = alles. */
 export function musterPasst(muster: string | undefined, name: string): boolean {
@@ -134,12 +138,56 @@ export class OrdnerBeobachter {
   }
 }
 
+/** Gemeinsame Form der Beobachter (Ordner per fs.watch, Benachrichtigungen/Outlook per Abfrage). */
+interface Laeufer { readonly stand: BeobachterStand; start(): void; stop(): void }
+
+const enthaelt = (s: string | undefined, teil: string | undefined) => !teil || (s ?? '').toLowerCase().includes(teil.toLowerCase());
+
+/**
+ * Abfrage-Beobachter: alle `intervallMs` lesen, beim ersten Lauf nur den Bestand merken (keine Altlasten melden), danach
+ * Neues nach Filter melden. Lesefehler → gestört mit Grund (nie still), nächster Lauf versucht es erneut.
+ */
+export class AbfrageBeobachter<T> implements Laeufer {
+  private timer?: ReturnType<typeof setInterval>;
+  private bekannt = new Set<string>();
+  private erster = true;
+  readonly stand: BeobachterStand;
+  constructor(private readonly o: { regel: string; quelle: string; intervallMs: number; lesen: () => Promise<T[]>; schluessel: (x: T) => string; passt: (x: T) => boolean; kopf: (x: T) => Record<string, unknown>; melde: (b: Beobachtung) => void; info?: () => Promise<Record<string, unknown>> }) {
+    this.stand = { regel: o.regel, quelle: o.quelle, zustand: 'aus', anzahl: 0 };
+  }
+  start(): void {
+    this.stand.zustand = 'laeuft';
+    void this.runde();
+    this.timer = setInterval(() => { void this.runde(); }, this.o.intervallMs);
+    if (this.o.info) void this.o.info().then(i => Object.assign(this.stand, i)).catch(() => undefined);
+  }
+  stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; if (this.stand.zustand === 'laeuft') this.stand.zustand = 'aus'; }
+  async runde(): Promise<void> {
+    let liste: T[];
+    try { liste = await this.o.lesen(); } catch (err) { this.stand.zustand = 'gestoert'; this.stand.grund = (err as Error).message.slice(0, 200); return; }
+    this.stand.zustand = 'laeuft'; this.stand.grund = undefined;
+    for (const x of liste) {
+      const k = this.o.schluessel(x);
+      if (this.bekannt.has(k)) continue;
+      this.bekannt.add(k);
+      if (this.erster || !this.o.passt(x)) continue;
+      const zeit = new Date().toISOString();
+      this.stand.letzte = zeit; this.stand.anzahl++;
+      this.o.melde({ regel: this.o.regel, quelle: this.o.quelle, art: 'neu', schluessel: `${this.o.regel}:${k}`, zeit, kopf: this.o.kopf(x) });
+    }
+    if (this.bekannt.size > 2000) this.bekannt = new Set([...this.bekannt].slice(-1000));
+    this.erster = false;
+  }
+}
+
 /** Alle Beobachter eines Geräts: Regeln vom Gehirn übernehmen (Unterschiede starten/stoppen), Stand für die Sinne. */
 export class BeobachterVerwaltung {
-  private laufend = new Map<string, { sig: string; b: OrdnerBeobachter }>();
+  private laufend = new Map<string, { sig: string; b: Laeufer }>();
   private abgelehnt: BeobachterStand[] = [];
   private readonly buendler: Buendler;
-  constructor(private readonly o: { senden: (e: Beobachtung[]) => void; erlaubt: (pfad: string) => boolean; veto: () => boolean; log?: (t: string) => void; stabilMs?: number; intervallMs?: number }) {
+  constructor(private readonly o: { senden: (e: Beobachtung[]) => void; erlaubt: (pfad: string) => boolean; veto: () => boolean; log?: (t: string) => void; stabilMs?: number; intervallMs?: number;
+    /** v1430 R4b — Quellen (eingespeist, damit Tests ohne Outlook/Benachrichtigungs-DB laufen) */
+    benachrichtigungen?: () => Promise<Array<{ app: string; zeit: string; titel?: string }>>; outlook?: () => Promise<Array<{ id: string; datum: string; von: string; betreff: string; anhaenge?: number }>>; outlookKonten?: () => Promise<string[]>; abfrageMs?: { benachrichtigung?: number; outlook?: number } }) {
     this.buendler = new Buendler(o.senden, { intervallMs: o.intervallMs });
   }
 
@@ -148,8 +196,13 @@ export class BeobachterVerwaltung {
     const veto = this.o.veto();
     const soll = new Map<string, BeobachterRegel>();
     for (const r of veto ? [] : regeln) {
-      if (r.quelle !== 'ordner') continue; // R4b ergänzt weitere Quellen
-      if (!r.pfad || !this.o.erlaubt(r.pfad)) { this.abgelehnt.push({ regel: r.id, quelle: r.quelle, zustand: 'gestoert', grund: `Ordner nicht freigegeben: ${r.pfad}`, anzahl: 0 }); continue; }
+      if (r.quelle === 'ordner') {
+        if (!r.pfad || !this.o.erlaubt(r.pfad)) { this.abgelehnt.push({ regel: r.id, quelle: r.quelle, zustand: 'gestoert', grund: `Ordner nicht freigegeben: ${r.pfad}`, anzahl: 0 }); continue; }
+      } else if (r.quelle === 'benachrichtigung') {
+        if (!this.o.benachrichtigungen) { this.abgelehnt.push({ regel: r.id, quelle: r.quelle, zustand: 'gestoert', grund: 'Benachrichtigungen auf diesem System nicht lesbar (nur Windows/macOS)', anzahl: 0 }); continue; }
+      } else if (r.quelle === 'outlook') {
+        if (!this.o.outlook) { this.abgelehnt.push({ regel: r.id, quelle: r.quelle, zustand: 'gestoert', grund: 'Outlook nicht vorhanden (nur Windows mit Outlook)', anzahl: 0 }); continue; }
+      } else continue;
       soll.set(r.id, r);
     }
     for (const [id, l] of this.laufend) {
@@ -158,12 +211,27 @@ export class BeobachterVerwaltung {
     }
     for (const [id, r] of soll) {
       if (this.laufend.has(id)) continue;
-      const b = new OrdnerBeobachter(r, (x) => this.buendler.push(x), { stabilMs: this.o.stabilMs });
+      const b = this.laeufer(r);
       b.start();
       this.laufend.set(id, { sig: JSON.stringify(r), b });
-      this.o.log?.(`Beobachter ${id} (${r.pfad}${r.muster ? `, ${r.muster}` : ''}): ${b.stand.zustand}${b.stand.grund ? ` — ${b.stand.grund}` : ''}`);
+      this.o.log?.(`Beobachter ${id} (${r.quelle === 'ordner' ? `${r.pfad}${r.muster ? `, ${r.muster}` : ''}` : r.quelle}): ${b.stand.zustand}${b.stand.grund ? ` — ${b.stand.grund}` : ''}`);
     }
     if (veto && regeln.length) this.abgelehnt = regeln.map(r => ({ regel: r.id, quelle: r.quelle, zustand: 'aus' as const, grund: 'am Gerät abgeschaltet', anzahl: 0 }));
+  }
+
+  private laeufer(r: BeobachterRegel): Laeufer {
+    const melde = (x: Beobachtung) => this.buendler.push(x);
+    if (r.quelle === 'ordner') return new OrdnerBeobachter(r, melde, { stabilMs: this.o.stabilMs });
+    if (r.quelle === 'benachrichtigung') {
+      const apps = (r.apps ?? []).map(a => a.toLowerCase()).filter(Boolean);
+      return new AbfrageBeobachter({ regel: r.id, quelle: 'benachrichtigung', intervallMs: this.o.abfrageMs?.benachrichtigung ?? 60_000, lesen: this.o.benachrichtigungen!,
+        schluessel: (b) => `${b.app}|${b.zeit}|${b.titel ?? ''}`, passt: (b) => apps.some(a => b.app.toLowerCase().includes(a)) && enthaelt(b.titel, r.titel),
+        kopf: (b) => ({ app: b.app, titel: (b.titel ?? '').slice(0, 160), zeit: b.zeit }), melde });
+    }
+    return new AbfrageBeobachter({ regel: r.id, quelle: 'outlook', intervallMs: this.o.abfrageMs?.outlook ?? 120_000, lesen: this.o.outlook!,
+      schluessel: (m) => m.id, passt: (m) => enthaelt(m.von, r.absender) && enthaelt(m.betreff, r.betreff),
+      kopf: (m) => ({ id: m.id, von: m.von, betreff: m.betreff, datum: m.datum, anhaenge: m.anhaenge ?? 0 }), melde, // id = Outlook-EntryID (kein Inhalt), damit Alfred die Mail gezielt lesen kann
+      ...(this.o.outlookKonten ? { info: async () => ({ konten: await this.o.outlookKonten!() }) } : {}) });
   }
 
   stand(): BeobachterStand[] { return [...[...this.laufend.values()].map(l => ({ ...l.b.stand })), ...this.abgelehnt]; }

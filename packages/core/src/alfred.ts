@@ -16203,6 +16203,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const { geraetSkillName } = await import('./geraete/protokoll.js');
     const repo = new BeobachterRegelnRepository(this.database.getAdapter());
     const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api') as Platform;
+    const serverDienstKonten: string[] = [];
+    try { const rows = await this.database.getAdapter().query("SELECT service_name FROM user_services WHERE service_type IN ('email', 'calendar')", []) as Array<{ service_name: string }>; serverDienstKonten.push(...rows.map(r => r.service_name).filter(n => n?.includes('@'))); } catch { /* ohne Dienste */ }
     const dienst = new BeobachterDienst({
       repo: repo as never,
       owner: () => this.tryOwner(),
@@ -16223,6 +16225,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         return this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: ownerPlatform, source: 'geraet', sourceId, description: beschreibung, skillName: 'project_agent', skillParams: { action: 'projekt_weiter', projekt: r.projektId, goal: ziel }, timeoutMinutes: 720 });
       },
       befundeSync: async (b) => { const o = this.tryOwner(); if (o && this.befundeRepo) await this.befundeRepo.sync(o, 'beobachter', b); },
+      // v1430 — Adressen, die der Server liest (IMAP-Benutzer, Kontonamen mit @, Dienste mit @); Microsoft-Konten ohne Adresse in der Konfig fehlen
+      serverMailKonten: () => [...(this.config.email?.accounts ?? []).flatMap(a => [a.auth?.user, a.name]), ...serverDienstKonten].filter((x): x is string => typeof x === 'string' && x.includes('@')),
       logger: this.logger.child({ component: 'beobachter' }),
     });
     this.beobachterDienst = dienst;

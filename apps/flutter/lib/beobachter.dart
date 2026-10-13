@@ -5,12 +5,17 @@ import 'aufgaben.dart' show JsonAbruf;
 /// meldet nur Dateiname/Größe. Am Gerät lassen sich alle Beobachter lokal abschalten (`alfred einstellungen beobachter aus`).
 class BeobachterRegel {
   BeobachterRegel(Map<String, dynamic> j)
-      : id = '${j['id']}', name = '${j['name'] ?? ''}', geraet = '${j['geraet'] ?? ''}', wirkung = '${j['wirkung'] ?? ''}',
+      : id = '${j['id']}', quelle = '${j['quelle'] ?? 'ordner'}', filter = (j['filter'] as Map<String, dynamic>?) ?? const {}, name = '${j['name'] ?? ''}', geraet = '${j['geraet'] ?? ''}', wirkung = '${j['wirkung'] ?? ''}',
         auftrag = j['auftrag'] as String?, aktiv = j['aktiv'] == true, stand = '${j['stand'] ?? ''}', standGrund = j['standGrund'] as String?,
         treffer = (j['treffer'] as num?)?.toInt() ?? 0, letzterTreffer = DateTime.tryParse('${j['letzterTreffer'] ?? ''}')?.toLocal(),
         pfad = '${(j['filter'] as Map<String, dynamic>?)?['pfad'] ?? ''}', muster = (j['filter'] as Map<String, dynamic>?)?['muster'] as String?,
         ereignisse = (((j['filter'] as Map<String, dynamic>?)?['ereignisse'] as List<dynamic>?) ?? ['neu']).map((e) => '$e').toList();
-  final String id, name, geraet, wirkung, stand, pfad;
+  final String id, quelle, name, geraet, wirkung, stand, pfad;
+  final Map<String, dynamic> filter;
+  /// 1.21.0 — Filter je Quelle als eine Zeile
+  String get filterText => quelle == 'benachrichtigung' ? 'Benachrichtigungen: ${((filter['apps'] as List<dynamic>?) ?? []).join(', ')}${filter['titel'] != null ? ' · Titel enthält „${filter['titel']}“' : ''}'
+      : quelle == 'outlook' ? 'Outlook-Posteingang${filter['absender'] != null ? ' · von „${filter['absender']}“' : ''}${filter['betreff'] != null ? ' · Betreff „${filter['betreff']}“' : ''}'
+      : '$pfad${muster != null ? ' · $muster' : ''} · ${ereignisse.map((e) => artText[e] ?? e).join('/')}';
   final String? auftrag, standGrund, muster;
   final bool aktiv;
   final int treffer;
@@ -20,6 +25,7 @@ class BeobachterRegel {
 
 const wirkungText = {'hinweis': 'Hinweis', 'vorgang': 'Vorgang', 'aufgabe': 'Aufgabe (Alfred erledigt)', 'projekt': 'Projekt weiterarbeiten (mit Bestätigung)'};
 const artText = {'neu': 'neu', 'geaendert': 'geändert', 'geloescht': 'gelöscht'};
+const quelleText = {'ordner': 'Ordner', 'benachrichtigung': 'Benachrichtigungen (Windows/macOS)', 'outlook': 'Outlook-Posteingang (Windows)'};
 
 class Beobachter extends StatefulWidget {
   const Beobachter({super.key, required this.json, this.aufMeldung});
@@ -35,15 +41,16 @@ class _BeobachterState extends State<Beobachter> {
   String? fehler;
   bool laedt = true, neuOffen = false, sendet = false;
   // Formular
-  String? geraetId, wirkung = 'hinweis', projektId;
-  final pfad = TextEditingController(), muster = TextEditingController(), name = TextEditingController(), auftrag = TextEditingController();
+  String? geraetId, wirkung = 'hinweis', projektId, quelle = 'ordner';
+  final pfad = TextEditingController(), muster = TextEditingController(), name = TextEditingController(), auftrag = TextEditingController(),
+      apps = TextEditingController(), titel = TextEditingController(), absender = TextEditingController(), betreff = TextEditingController();
   final Set<String> arten = {'neu'};
   bool unterordner = false;
 
   @override
   void initState() { super.initState(); laden(); }
   @override
-  void dispose() { for (final c in [pfad, muster, name, auftrag]) { c.dispose(); } super.dispose(); }
+  void dispose() { for (final c in [pfad, muster, name, auftrag, apps, titel, absender, betreff]) { c.dispose(); } super.dispose(); }
 
   Future<void> laden() async {
     try {
@@ -73,13 +80,14 @@ class _BeobachterState extends State<Beobachter> {
     setState(() => sendet = true);
     try {
       final x = await widget.json('/api/geraete/beobachter', methode: 'POST', koerper: {
-        'geraet': geraetId, 'pfad': pfad.text.trim(), 'muster': muster.text.trim(), 'ereignisse': arten.toList(), 'unterordner': unterordner,
+        'geraet': geraetId, 'quelle': quelle, 'pfad': pfad.text.trim(), 'muster': muster.text.trim(), 'ereignisse': arten.toList(), 'unterordner': unterordner,
+        'apps': apps.text.trim(), 'titel': titel.text.trim(), 'absender': absender.text.trim(), 'betreff': betreff.text.trim(),
         'wirkung': wirkung, 'auftrag': auftrag.text.trim(), 'name': name.text.trim(), if (projektId != null) 'projekt': projektId,
       });
       if (!mounted) return;
       if (x['success'] == true) {
         widget.aufMeldung?.call('${x['display'] ?? 'Angelegt.'}');
-        for (final c in [pfad, muster, name, auftrag]) { c.clear(); }
+        for (final c in [pfad, muster, name, auftrag, apps, titel, absender, betreff]) { c.clear(); }
         setState(() => neuOffen = false);
         await laden();
       } else {
@@ -101,14 +109,27 @@ class _BeobachterState extends State<Beobachter> {
         FilledButton.tonalIcon(key: const Key('beobachter-neu'), onPressed: () => setState(() => neuOffen = !neuOffen), icon: Icon(neuOffen ? Icons.close : Icons.add), label: Text(neuOffen ? 'Schließen' : 'Neue Regel')),
         IconButton(tooltip: 'Aktualisieren', onPressed: laden, icon: const Icon(Icons.refresh)),
       ]),
-      Text('Alfred bemerkt, was auf deinen Geräten passiert, und reagiert nach diesen Regeln. Gemeldet werden nur Dateiname und Größe.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+      Text('Alfred bemerkt, was auf deinen Geräten passiert (Ordner, Benachrichtigungen, Outlook), und reagiert nach diesen Regeln. Gemeldet werden nur Kopfdaten, nie Inhalte.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
       if (fehler != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(fehler!, style: TextStyle(color: theme.colorScheme.error))),
       if (neuOffen) Card(margin: const EdgeInsets.only(top: 12), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [const Text('Gerät: '), DropdownButton<String>(key: const Key('beobachter-geraet'), value: geraetId, items: [for (final g in geraete) DropdownMenuItem(value: '${g['id']}', child: Text('${g['name']}${g['online'] == true ? '' : ' (offline)'}'))], onChanged: (v) => setState(() => geraetId = v))]),
-        TextField(key: const Key('beobachter-pfad'), controller: pfad, decoration: const InputDecoration(labelText: 'Ordner auf dem Gerät (absolut, freigegeben)', hintText: r'C:\Users\madh\Downloads')),
-        TextField(key: const Key('beobachter-muster'), controller: muster, decoration: const InputDecoration(labelText: 'Dateimuster (optional)', hintText: '*.pdf, Rechnung*')),
-        Wrap(spacing: 8, children: [for (final a in artText.keys) FilterChip(key: Key('beobachter-art-$a'), label: Text(artText[a]!), selected: arten.contains(a), onSelected: (s) => setState(() { if (s) { arten.add(a); } else if (arten.length > 1) { arten.remove(a); } }))]),
-        SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, value: unterordner, onChanged: (v) => setState(() => unterordner = v), title: const Text('Unterordner einbeziehen')),
+        Row(children: [const Text('Was: '), DropdownButton<String>(key: const Key('beobachter-quelle'), value: quelle, items: [for (final e in quelleText.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: (v) => setState(() => quelle = v))]),
+        if (quelle == 'ordner') ...[
+          TextField(key: const Key('beobachter-pfad'), controller: pfad, decoration: const InputDecoration(labelText: 'Ordner auf dem Gerät (absolut, freigegeben)', hintText: r'C:\Users\madh\Downloads')),
+          TextField(key: const Key('beobachter-muster'), controller: muster, decoration: const InputDecoration(labelText: 'Dateimuster (optional)', hintText: '*.pdf, Rechnung*')),
+          Wrap(spacing: 8, children: [for (final a in artText.keys) FilterChip(key: Key('beobachter-art-$a'), label: Text(artText[a]!), selected: arten.contains(a), onSelected: (s) => setState(() { if (s) { arten.add(a); } else if (arten.length > 1) { arten.remove(a); } }))]),
+          SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, value: unterordner, onChanged: (v) => setState(() => unterordner = v), title: const Text('Unterordner einbeziehen')),
+        ],
+        if (quelle == 'benachrichtigung') ...[
+          TextField(key: const Key('beobachter-apps'), controller: apps, decoration: const InputDecoration(labelText: 'Apps (Pflicht, durch Komma)', hintText: 'WhatsApp, Teams')),
+          TextField(controller: titel, decoration: const InputDecoration(labelText: 'Titel enthält (optional)')),
+          Text('Nur App und Titel verlassen das Gerät; andere Apps verwirft der Satellit.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        ],
+        if (quelle == 'outlook') ...[
+          TextField(key: const Key('beobachter-absender'), controller: absender, decoration: const InputDecoration(labelText: 'Absender enthält (optional)')),
+          TextField(controller: betreff, decoration: const InputDecoration(labelText: 'Betreff enthält (optional)')),
+          Text('Nur für Konten, die Alfred nicht schon am Server liest — sonst kommt jede Mail doppelt.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        ],
         Row(children: [const Text('Dann: '), DropdownButton<String>(key: const Key('beobachter-wirkung'), value: wirkung, items: [for (final e in wirkungText.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: (v) => setState(() => wirkung = v))]),
         if (wirkung == 'projekt') Row(children: [const Text('Projekt: '), DropdownButton<String>(value: projektId, hint: const Text('wählen'), items: [for (final p in projekte) DropdownMenuItem(value: '${p['id']}', child: Text('${p['name']}'))], onChanged: (v) => setState(() => projektId = v))]),
         TextField(key: const Key('beobachter-auftrag'), controller: auftrag, maxLines: 2, decoration: InputDecoration(labelText: wirkung == 'hinweis' ? 'Notiz (optional)' : wirkung == 'vorgang' ? 'Nächster Schritt (optional)' : 'Was soll Alfred tun? (Pflicht)')),
@@ -122,7 +143,7 @@ class _BeobachterState extends State<Beobachter> {
       for (final r in regeln) Card(key: Key('beobachter-${r.id}'), margin: const EdgeInsets.only(bottom: 8), child: Padding(padding: const EdgeInsets.fromLTRB(12, 8, 4, 8), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(r.name, style: theme.textTheme.titleSmall),
-          Text('${r.geraet}: ${r.pfad}${r.muster != null ? ' · ${r.muster}' : ''} · ${r.ereignisse.map((e) => artText[e] ?? e).join('/')}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+          Text('${r.geraet}: ${r.filterText}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
           Text('→ ${wirkungText[r.wirkung] ?? r.wirkung}${r.auftrag != null && r.auftrag!.isNotEmpty ? ': ${r.auftrag}' : ''}', style: theme.textTheme.bodySmall),
           Text('${r.stand}${r.standGrund != null ? ' — ${r.standGrund}' : ''} · ${r.treffer} Treffer${r.letzterTreffer != null ? ', zuletzt ${r.letzterTreffer!.day}.${r.letzterTreffer!.month}. ${r.letzterTreffer!.hour.toString().padLeft(2, '0')}:${r.letzterTreffer!.minute.toString().padLeft(2, '0')}' : ''}', style: theme.textTheme.labelSmall?.copyWith(color: standFarbe(theme, r.stand))),
         ])),

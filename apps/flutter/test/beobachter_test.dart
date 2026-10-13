@@ -26,6 +26,19 @@ void main() {
     await t.pumpAndSettle();
     final k = gesendet.last[1] as Map<String, dynamic>;
     expect(gesendet.last[0], '/api/geraete/beobachter');
-    expect(k['geraet'], 'g1'); expect(k['pfad'], '/home/madh/Downloads'); expect(k['muster'], '*.pdf'); expect(k['wirkung'], 'hinweis'); expect(k['ereignisse'], ['neu']);
+    expect(k['geraet'], 'g1'); expect(k['pfad'], '/home/madh/Downloads'); expect(k['muster'], '*.pdf'); expect(k['wirkung'], 'hinweis'); expect(k['ereignisse'], ['neu']); expect(k['quelle'], 'ordner');
+    // 1.21.0 — Quelle Benachrichtigung
+    await t.tap(find.byKey(const Key('beobachter-neu')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('beobachter-quelle')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Benachrichtigungen (Windows/macOS)').last);
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('beobachter-pfad')), findsNothing);
+    await t.enterText(find.byKey(const Key('beobachter-apps')), 'WhatsApp');
+    await t.tap(find.byKey(const Key('beobachter-anlegen')));
+    await t.pumpAndSettle();
+    final k2 = gesendet.last[1] as Map<String, dynamic>;
+    expect(k2['quelle'], 'benachrichtigung'); expect(k2['apps'], 'WhatsApp');
   });
 }

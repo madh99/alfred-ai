@@ -60,3 +60,42 @@ describe('v1429 R4a — Beobachter am Satelliten', () => {
     expect(v.stand()[0]).toMatchObject({ zustand: 'gestoert', grund: 'Ordner fehlt' });
   });
 });
+
+describe('v1430 R4b — Benachrichtigungen und Outlook', () => {
+  it('Benachrichtigungen: erster Lauf nur Bestand, danach nur Apps der Regel, nur App + Titel', async () => {
+    let liste = [{ app: 'WhatsApp', zeit: '1', titel: 'Alt', text: 'geheim' }];
+    const raus: Beobachtung[] = [];
+    const v = new BeobachterVerwaltung({ senden: (e) => raus.push(...e), erlaubt: () => true, veto: () => false, intervallMs: 10, benachrichtigungen: async () => liste, abfrageMs: { benachrichtigung: 30 } });
+    v.setze([{ id: 'b1', quelle: 'benachrichtigung', apps: ['whatsapp'] }]);
+    await warte(20);
+    liste = [...liste, { app: 'WhatsApp', zeit: '2', titel: 'Neu von Lena', text: 'geheim' }, { app: 'Teams', zeit: '3', titel: 'Fremd', text: 'x' }];
+    await warte(120);
+    v.stopAlle();
+    expect(raus.map(r => r.kopf.titel)).toEqual(['Neu von Lena']);
+    expect(raus[0]!.kopf).not.toHaveProperty('text');
+  });
+
+  it('Outlook: Filter Absender/Betreff, Konten im Stand, Lesefehler = gestört', async () => {
+    let mails = [{ id: 'm1', datum: 'd', von: 'Bank <info@bank.at>', betreff: 'Kontoauszug', anhaenge: 1 }];
+    const raus: Beobachtung[] = [];
+    const v = new BeobachterVerwaltung({ senden: (e) => raus.push(...e), erlaubt: () => true, veto: () => false, intervallMs: 10, outlook: async () => mails, outlookKonten: async () => ['md@firma.at'], abfrageMs: { outlook: 30 } });
+    v.setze([{ id: 'o1', quelle: 'outlook', absender: 'bank' }]);
+    await warte(20);
+    mails = [{ id: 'm3', datum: 'd', von: 'Newsletter <n@x.at>', betreff: 'Angebot', anhaenge: 0 }, { id: 'm2', datum: 'd', von: 'Bank <info@bank.at>', betreff: 'Neue Rechnung', anhaenge: 1 }, ...mails];
+    await warte(120);
+    expect(raus.map(r => r.kopf.betreff)).toEqual(['Neue Rechnung']);
+    expect(v.stand()[0]).toMatchObject({ zustand: 'laeuft', konten: ['md@firma.at'] });
+    v.stopAlle();
+    const kaputt = new BeobachterVerwaltung({ senden: () => undefined, erlaubt: () => true, veto: () => false, outlook: async () => { throw new Error('80080005 Integritätsstufe'); }, abfrageMs: { outlook: 1000 } });
+    kaputt.setze([{ id: 'o2', quelle: 'outlook' }]);
+    await warte(20);
+    expect(kaputt.stand()[0]).toMatchObject({ zustand: 'gestoert', grund: '80080005 Integritätsstufe' });
+    kaputt.stopAlle();
+  });
+
+  it('ohne Quelle (Linux, kein Outlook): gestört mit Grund statt still', () => {
+    const v = new BeobachterVerwaltung({ senden: () => undefined, erlaubt: () => true, veto: () => false });
+    v.setze([{ id: 'b', quelle: 'benachrichtigung', apps: ['x'] }, { id: 'o', quelle: 'outlook' }]);
+    expect(v.stand().map(s => s.zustand)).toEqual(['gestoert', 'gestoert']);
+  });
+});

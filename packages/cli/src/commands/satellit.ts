@@ -31,7 +31,7 @@ import { linuxSitzungsUmgebung } from './satellit-bedienen-linux.js'; // v1339
 import { IpcServer, type IpcEreignisArt, type IpcAnhang, type SatellitStatus } from './satellit-ipc.js'; // v1302, v1325 Anhang
 import { heimInParams } from './satellit-pfad.js'; // v1303
 import { pruefungenAus, pruefeAlle, type PruefMittel } from './satellit-pruefen.js'; // v1383 R1
-import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
+import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookKonten, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
 
 /** v1229 — eine Browser-Hand je Satellit-Prozess (eigenes Profil, sichtbares Fenster). */
 let browserHand: BrowserHand | undefined;
@@ -753,6 +753,9 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
     erlaubt: (p) => istPfadErlaubt(p, [...k.freigegebeneVerzeichnisse, ...(k.nurLesen ?? [])]),
     veto: () => k.beobachterAus === true,
     log,
+    // v1430 R4b — Benachrichtigungen (Windows/macOS) und Outlook (Windows) als Quellen
+    ...(process.platform === 'win32' || process.platform === 'darwin' ? { benachrichtigungen: async () => (await benachrichtigungen(1, 50)).map(b => ({ app: b.app, zeit: b.zeit, titel: b.titel })) } : {}),
+    ...(process.platform === 'win32' && outlookVorhanden() ? { outlook: async () => (await outlookPosteingang({ anzahl: 30 })).mails, outlookKonten: () => outlookKonten() } : {}),
   });
   const stop = () => { laeuft = false; sinne.stop(); beobachter.stopAlle(); try { aktiv?.close(); } catch { /* */ } try { ipc?.stop(); } catch { /* */ } };
 

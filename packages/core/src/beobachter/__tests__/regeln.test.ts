@@ -12,7 +12,7 @@ describe('v1429 R4a Beobachter-Regeln', () => {
     expect(regelPruefen({ geraet: 'g2', pfad: '/a', wirkung: 'aufgabe' }, GERAETE)).toMatchObject({ ok: false });
     expect(regelPruefen({ geraet: 'g2', pfad: '/a', wirkung: 'projekt', auftrag: 'x', projekt: 'fehlt' }, GERAETE, [{ id: 'p1', name: 'Game' }])).toMatchObject({ ok: false });
     expect(regelPruefen({ geraet: 'g2', pfad: '/a', wirkung: 'projekt', auftrag: 'neu bauen', projekt: 'game' }, GERAETE, [{ id: 'p1', name: 'Game' }])).toMatchObject({ ok: true, regel: { projektId: 'p1' } });
-    expect(regelPruefen({ geraet: 'g2', quelle: 'outlook', pfad: '/a' }, GERAETE)).toMatchObject({ ok: false });
+    expect(regelPruefen({ geraet: 'g2', quelle: 'teams', pfad: '/a' }, GERAETE)).toMatchObject({ ok: false }); // v1430: outlook/benachrichtigung sind gültig
     expect((regelPruefen({ geraet: 'g2', pfad: '/home/madh/Downloads' }, GERAETE) as { regel: { name: string } }).regel.name).toBe('Dateien in Downloads');
   });
 
@@ -38,5 +38,20 @@ describe('v1429 R4a Beobachter-Regeln', () => {
     expect(waechterBefunde([regel], [{ id: 'g1', name: 'PC-madh', online: false }], jetzt)).toEqual([]);
     expect(waechterBefunde([regel], [{ id: 'g1', name: 'PC-madh', online: true, sinneZeit: '2026-10-13T19:00:00Z', beobachter: [] }], jetzt)).toEqual([]);
     expect(waechterBefunde([regel], [{ id: 'g1', name: 'PC-madh', online: true, sinneZeit: frisch, beobachter: [{ regel: 'r1', zustand: 'laeuft' }] }], jetzt)).toEqual([]);
+  });
+});
+
+describe('v1430 R4b Quellen', () => {
+  it('Benachrichtigung braucht Apps, Outlook Absender/Betreff optional; Nutzlast und Texte', () => {
+    expect(regelPruefen({ geraet: 'g1', quelle: 'benachrichtigung' }, GERAETE)).toMatchObject({ ok: false });
+    const b = regelPruefen({ geraet: 'g1', quelle: 'benachrichtigung', apps: 'WhatsApp, Teams', titel: 'Lena' }, GERAETE);
+    expect(b).toMatchObject({ ok: true, regel: { quelle: 'benachrichtigung', filter: { apps: ['WhatsApp', 'Teams'], titel: 'Lena' }, name: 'Benachrichtigungen WhatsApp, Teams' } });
+    const o = regelPruefen({ geraet: 'g1', quelle: 'outlook', absender: 'bank', wirkung: 'vorgang' }, GERAETE);
+    expect(o).toMatchObject({ ok: true, regel: { quelle: 'outlook', filter: { absender: 'bank' }, name: 'Outlook von bank' } });
+    const r = { id: 'r9', geraetId: 'g1', geraet: 'PC-madh', name: 'Bank', quelle: 'outlook' as const, filter: { absender: 'bank' }, wirkung: 'aufgabe' as const, aktiv: true };
+    expect(geraetNutzlast([r])).toEqual([{ id: 'r9', quelle: 'outlook', absender: 'bank' }]);
+    const t = { regel: 'r9', quelle: 'outlook', art: 'neu', schluessel: 'k', zeit: '', kopf: { id: 'E1', von: 'Bank <i@b.at>', betreff: 'Rechnung', anhaenge: 1 } };
+    expect(trefferText(r, t)).toBe('Neue Mail in Outlook auf PC-madh: Bank <i@b.at> — „Rechnung" (1 Anhang/Anhänge) (Regel „Bank")');
+    expect(aufgabeText(r, t, 'geraet_pc_madh')).toContain('outlook_mails mit id=E1');
   });
 });

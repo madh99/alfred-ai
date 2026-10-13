@@ -74,3 +74,15 @@ describe('v1429 R4a Beobachter-Dienst', () => {
     expect(a.befunde()).toEqual([{ gegenstand: 'g1:r1', titel: 'Beobachter „H" auf PC-madh gestört: Ordner fehlt' }]);
   });
 });
+
+describe('v1430 Outlook nur für Konten, die der Server nicht liest', () => {
+  it('alle Konten vom Server gelesen → ohne Wirkung, Treffer verworfen', async () => {
+    const g: GeraetStand[] = [{ id: 'g1', name: 'PC-madh', online: true, sinneZeit: new Date().toISOString(), sinne: { beobachter: [{ regel: 'r1', zustand: 'laeuft', konten: ['dohnalmarkus81@gmail.com'] }] } }];
+    const a = aufbau(g);
+    (a.d as unknown as { d: { serverMailKonten: () => string[] } }).d.serverMailKonten = () => ['DohnalMarkus81@gmail.com'];
+    await a.d.anlegen({ geraet: 'g1', quelle: 'outlook', wirkung: 'hinweis', name: 'O' });
+    expect((await a.d.liste()).regeln[0]).toMatchObject({ stand: 'ohne Wirkung' });
+    expect(await a.d.verarbeite('g1', [{ regel: 'r1', quelle: 'outlook', art: 'neu', schluessel: 'x', zeit: '', kopf: { von: 'a', betreff: 'b' } }])).toBe(0);
+    expect(a.meldungen).toEqual([]);
+  });
+});

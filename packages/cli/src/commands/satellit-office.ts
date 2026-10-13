@@ -70,6 +70,17 @@ function Iso($d) { if ($null -eq $d) { return $null } try { return ([datetime]$d
 function Kurz($s, $n) { if ($null -eq $s) { return '' } $t = [string]$s; $t = $t -replace '\\s+', ' '; if ($t.Length -gt $n) { return $t.Substring(0, $n) } return $t }
 `;
 
+/** v1430 R4b — SMTP-Adressen der Outlook-Konten (für „Outlook nur für Konten, die der Server nicht selbst liest"). */
+export async function outlookKonten(): Promise<string[]> {
+  const script = `${OUTLOOK_KOPF}
+$out = New-Object System.Collections.ArrayList
+foreach ($a in $ns.Accounts) { if ($a.SmtpAddress) { $null = $out.Add([string]$a.SmtpAddress) } }
+@{ konten = $out } | ConvertTo-Json -Compress -Depth 3
+`;
+  const j = JSON.parse(await run(script, 60_000)) as { konten: string[] | string };
+  return (Array.isArray(j.konten) ? j.konten : j.konten ? [j.konten] : []).map(k => k.toLowerCase());
+}
+
 /** Posteingang (oder Ordner) auflisten: neueste zuerst, optional nur ungelesen, optional Suchtext in Betreff/Absender. */
 export async function outlookPosteingang(o: { anzahl?: number; ungelesen?: boolean; suche?: string; ordner?: 'posteingang' | 'entwuerfe' | 'gesendet' } = {}): Promise<{ ordner: string; gesamt: number; ungelesen: number; mails: OfficeMail[] }> {
   const anzahl = Math.max(1, Math.min(o.anzahl ?? 15, 50));

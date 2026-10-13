@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1430] - 2026-10-13
+
+### Added — Beobachter für Benachrichtigungen und Outlook (v1430, App 1.21.0, Spec R4b)
+
+- **Benachrichtigungen** (Windows/macOS): Eine Regel nennt die Apps (Pflicht) und optional einen Titeltext. Der Satellit liest jede Minute die Benachrichtigungsdatenbank. Gemeldet werden nur App und Titel, und nur für die genannten Apps; alles andere verwirft der Satellit. Beim ersten Lauf wird nur der Bestand gemerkt.
+- **Outlook-Posteingang** (Windows mit Outlook): alle 2 Minuten neue Mails, optional gefiltert nach Absender bzw. Betreff. Gemeldet werden nur Absender, Betreff, Datum, Zahl der Anhänge und die Outlook-Kennung, damit Alfred die Mail bei einer Aufgabe gezielt lesen kann.
+- **Doppelte Mails vermeiden** (Owner-Entscheidung): Der Satellit meldet die SMTP-Adressen seiner Outlook-Konten. Liest der Server alle diese Konten schon selbst (IMAP-Benutzer, Kontonamen bzw. Dienste mit Adresse), steht die Regel auf „ohne Wirkung“ und Treffer werden verworfen. Microsoft-Konten ohne Adresse in der Konfiguration werden dabei nicht erkannt.
+- Lesefehler (Outlook geschlossen, Integritätsstufe, fehlende Berechtigung) erscheinen als „gestört“ mit Grund, nie still; unter Linux bzw. ohne Outlook ist die Regel mit Grund gestört.
+- App und Web: Auswahl der Quelle im Formular, Filter je Quelle in der Liste; Gespräch: `beobachter` mit `quelle`, `apps`, `titel`, `absender`, `betreff`.
+
 ## [0.19.0-jarvis.1429] - 2026-10-13
 
 ### Added — Beobachter am Satelliten: Ordner (v1429, App 1.20.0, Spec R4a)

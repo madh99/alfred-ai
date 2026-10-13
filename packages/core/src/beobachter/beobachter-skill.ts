@@ -11,7 +11,8 @@ export class BeobachterSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'beobachter',
     category: 'automation',
-    description: 'Beobachter auf den Geräten des Owners (Satelliten): Ordner beobachten und bei neuen/geänderten/gelöschten Dateien etwas tun. ' +
+    description: 'Beobachter auf den Geräten des Owners (Satelliten): Ordner, Systembenachrichtigungen (Windows/macOS) oder den Outlook-Posteingang (Windows) beobachten und bei Treffern etwas tun. ' +
+      'quelle=ordner (pfad, muster, ereignisse) · benachrichtigung (apps = Liste der Apps, optional titel) · outlook (optional absender, betreff; nur Konten, die der Server nicht selbst liest). ' +
       'action=liste (Regeln mit Stand am Gerät) · anlegen (geraet, pfad = absoluter Ordner auf dem Gerät, muster z. B. "*.pdf", ereignisse neu|geaendert|geloescht, unterordner, ' +
       'wirkung hinweis|vorgang|aufgabe|projekt, auftrag = was Alfred tun soll (Pflicht bei aufgabe/projekt), projekt = Projektname bei wirkung projekt, name) · an · aus · loeschen (regel = Name oder Kennung). ' +
       'Wirkung: hinweis = Meldung; vorgang = Vorgang mit nächstem Schritt; aufgabe = Alfred erledigt den Auftrag mit fester Werkzeugliste (Gerät, Aufgaben, Erinnerungen, Gedächtnis); projekt = Weiterarbeiten am Geräte-Projekt, immer mit Bestätigung. ' +
@@ -24,7 +25,12 @@ export class BeobachterSkill extends Skill {
         action: { type: 'string', enum: ['liste', 'anlegen', 'an', 'aus', 'loeschen'] },
         regel: { type: 'string', description: 'Name oder Kennung der Regel (an/aus/loeschen)' },
         geraet: { type: 'string', description: 'Gerätename (z. B. PC-madh, Ubuntu-VM)' },
-        pfad: { type: 'string', description: 'Absoluter Ordner auf dem Gerät' },
+        quelle: { type: 'string', enum: ['ordner', 'benachrichtigung', 'outlook'] },
+        pfad: { type: 'string', description: 'Absoluter Ordner auf dem Gerät (quelle ordner)' },
+        apps: { type: 'array', items: { type: 'string' }, description: 'Apps (quelle benachrichtigung), z. B. WhatsApp' },
+        titel: { type: 'string', description: 'Titel enthält (quelle benachrichtigung)' },
+        absender: { type: 'string', description: 'Absender enthält (quelle outlook)' },
+        betreff: { type: 'string', description: 'Betreff enthält (quelle outlook)' },
         muster: { type: 'string', description: 'Dateimuster, z. B. "*.pdf, Rechnung*"' },
         ereignisse: { type: 'array', items: { type: 'string', enum: ['neu', 'geaendert', 'geloescht'] } },
         unterordner: { type: 'boolean' },
@@ -45,7 +51,7 @@ export class BeobachterSkill extends Skill {
     const l = await this.dienst.liste();
     if (action === 'liste') {
       if (!l.regeln.length) return { success: true, data: l, display: 'Keine Beobachter angelegt.' };
-      return { success: true, data: l, display: l.regeln.map((r, i) => `${i + 1}. ${r.aktiv ? '🟢' : '⚪'} ${r.name} — ${r.geraet}: ${String(r.filter.pfad)}${r.filter.muster ? ` (${String(r.filter.muster)})` : ''} → ${r.wirkung}${r.auftrag ? ` „${r.auftrag.slice(0, 60)}"` : ''} · ${r.stand}${r.standGrund ? ` (${r.standGrund})` : ''} · ${r.treffer ?? 0} Treffer`).join('\n') };
+      return { success: true, data: l, display: l.regeln.map((r, i) => `${i + 1}. ${r.aktiv ? '🟢' : '⚪'} ${r.name} — ${r.geraet}: ${r.quelle === 'ordner' ? String(r.filter.pfad) : r.quelle}${r.filter.muster ? ` (${String(r.filter.muster)})` : ''} → ${r.wirkung}${r.auftrag ? ` „${r.auftrag.slice(0, 60)}"` : ''} · ${r.stand}${r.standGrund ? ` (${r.standGrund})` : ''} · ${r.treffer ?? 0} Treffer`).join('\n') };
     }
     const q = String(input.regel ?? '').trim().toLowerCase();
     const passend = l.regeln.filter(r => r.id === q || r.id.startsWith(q) || r.name.toLowerCase() === q || r.name.toLowerCase().includes(q));
