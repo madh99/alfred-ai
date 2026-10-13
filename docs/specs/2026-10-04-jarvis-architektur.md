@@ -839,6 +839,17 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
     - Probe archiviert, Ordner gelöscht.
   - Erfolgreicher Push nur per Test gegen ein echtes lokales Repo belegt.
   - **Offen (Owner):** `GIT_TOKEN` (GitLab-Projekt-Token, Rolle Developer, Bereich write_repository) in der Projektumgebung eines Projekts hinterlegen — dann ist der erfolgreiche Push live prüfbar.
+- **v1437 (13.10.): B14 Deploy mit Nachkontrolle.**
+  - `projekt_deploy_ziel`, `projekt_deploy`, `projekt_rollback`; Speicher `projects.deploy_ziel`.
+  - Deploy und Rollback nur mit Owner-Bestätigung (Einmal-Kennung).
+  - Nachkontrolle: Status, HTTP, Log-Muster seit dem Deploy; bei Rot ein Rollback-Angebot auf den Commit vor dem Deploy.
+  - Deploy-Skill: Projekt-Token über stdin, Commits vor/nach dem Deploy, `logs seit_minuten`, Rollback auf Commit mit Compose-Zweig und ehrlichem Ergebnis.
+  - `auto_dev` nur für die Stufe dev, nach grüner Abnahme aller Etappen.
+  - Fix: Der API-Deploy merkte `verified=ok` auch bei Fehlschlag.
+  - **Beweis 13.10.:** Migration angelegt. „Deploye Angebots-Radar“ → `projekt_deploy` ohne Ziel abgelehnt, Alfred fragt nach dem Ziel; ohne Deploy alles wie bisher.
+  - **Nicht live:** echter Deploy, Nachkontrolle und Rollback auf einem Zielrechner. Die Bestätigung ist das Tor des Owners und wurde nicht stellvertretend erteilt.
+  - Nur Gespräch, keine App-/Web-Maske für das Deploy-Ziel.
+  - **Offen (Owner):** erstes Projekt mit Remote + Deploy-Ziel (z. B. dev auf .96) deployen und bestätigen → Live-Beweis Nachkontrolle/Rollback.
 
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
