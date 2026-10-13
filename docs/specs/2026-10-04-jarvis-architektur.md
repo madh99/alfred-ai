@@ -1271,6 +1271,10 @@ Jeder Schritt bekommt eine eigene Version und einen Live-Beweis.
 3. Der Sofort-Hinweis bei Befunden mit Haltefrist wird durch die Diagnose-Meldung ersetzt; Sicherheit bleibt sofort.
 4. Reihenfolge: V1 zuerst, V2–V6 nach der E2-Auswertung (~26.10.).
 
+### Umsetzungsstand
+
+- **v1428 (13.10.):** V1 — Objekt-Hinweise (, Zuordnung über Titelwörter + Anker, kalibriert an 179 echten Punkten 06.–13.10., 108 zugeordnet), Zustellung nur bei neu/geändert/Frist < 24 h, Schritt  am Vorgang; Insight-Vorgänge ohne Dublette eines offenen Vorgangs; Erzähltext-Filter erweitert; Lage-Zähler „Nicht zugestellt“ dauerhaft; Chat- mit v1361-Sperre. Logzeilen „v1428 Objekt-Hinweis …“, Kennzahlen , , .
+
 ## Lernende Helfer neben dem Sprachmodell (Entwurf 12.10.2026, Schicht 4 — ohne Umsetzung, Owner: „ok wie vorgeschlagen, Reihenfolge bestimmst du")
 
 ### Anlass
