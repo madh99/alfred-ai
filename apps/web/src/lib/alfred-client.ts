@@ -3111,8 +3111,8 @@ export interface ProjectConventions {
 }
 
 /** v1429 R4a — Beobachter */
-export interface BeobachterRegelDto { id: string; geraetId: string; geraet: string; name: string; quelle: string; filter: Record<string, unknown>; wirkung: string; auftrag?: string; projektId?: string; aktiv: boolean; treffer?: number; letzterTreffer?: string; stand: string; standGrund?: string }
-export interface BeobachterListe { regeln: BeobachterRegelDto[]; geraete: Array<{ id: string; name: string; online: boolean }>; projekte: Array<{ id: string; name: string }> }
+export interface BeobachterRegelDto { /** v1433 B11 */ einmalig?: boolean; bis?: string; id: string; geraetId: string; geraet: string; name: string; quelle: string; filter: Record<string, unknown>; wirkung: string; auftrag?: string; projektId?: string; aktiv: boolean; treffer?: number; letzterTreffer?: string; stand: string; standGrund?: string }
+export interface BeobachterListe { regeln: BeobachterRegelDto[]; geraete: Array<{ id: string; name: string; online: boolean; /** v1433 B10 */ artenAus?: string[] }>; projekte: Array<{ id: string; name: string }>; /** v1433 B12 */ serverKonten?: string[] }
 
 // v661 — Todos + Notes Types
 export interface TodoItem {

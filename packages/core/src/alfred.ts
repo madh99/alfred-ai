@@ -276,6 +276,8 @@ export class Alfred {
   /** v1432 — Fragen zum Projekt: Antworten und Claude-Code-Sitzung je Projekt; wartende Fragen (Ende-Ereignis erfüllt das Warten) */
   private readonly projektFragen = new ProjektFragen(path.resolve(process.cwd(), 'data', 'projekt-fragen.json'));
   private readonly frageWarten = new FrageWarten<import('@alfred/types').GeraetEreignis>();
+  /** v1433 B12 — Adressen der Mailkonten, die Alfred selbst liest (aus den Providern ermittelt) */
+  private readonly eigeneMailAdressen = new Set<string>();
   /** v1418 G2 — Live-Stand laufender Projekt-Etappen (Lauf → letzte Schritte) und schon angekündigte Aufträge */
   private projektLiveStand = new Map<string, { zeit: string; schritte: string[]; werkzeuge: number }>();
   private projektLiveAuftraege = new Map<string, string>(); // auftragId → laufId
@@ -1104,6 +1106,8 @@ export class Alfred {
           this.logger.warn({ err, account: account.name }, 'Email account initialization failed, skipping');
         }
       }
+      // v1433 B12 — Adressen der eigenen Konten (Microsoft „default“ hat keine in der Konfig): für den Abgleich mit Geräte-Outlook
+      for (const [konto, p] of providers) p.eigeneAdresse().then(a => { if (a) this.eigeneMailAdressen.add(a); this.logger.info({ konto, adresse: a ?? null }, 'v1433 Eigene Mailadresse'); }).catch(err => this.logger.warn({ konto, err: (err as Error).message }, 'v1433 Eigene Mailadresse nicht ermittelt'));
       const emailSkill = providers.size > 0 ? new EmailSkill(providers) : new EmailSkill();
       emailSkill.setLLM(llmProvider);
       // v861 — expliziter Default-Account aus config.email.defaultAccount
@@ -16286,7 +16290,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       },
       befundeSync: async (b) => { const o = this.tryOwner(); if (o && this.befundeRepo) await this.befundeRepo.sync(o, 'beobachter', b); },
       // v1430 — Adressen, die der Server liest (IMAP-Benutzer, Kontonamen mit @, Dienste mit @); Microsoft-Konten ohne Adresse in der Konfig fehlen
-      serverMailKonten: () => [...(this.config.email?.accounts ?? []).flatMap(a => [a.auth?.user, a.name]), ...serverDienstKonten].filter((x): x is string => typeof x === 'string' && x.includes('@')),
+      serverMailKonten: () => [...(this.config.email?.accounts ?? []).flatMap(a => [a.auth?.user, a.name]), ...serverDienstKonten, ...this.eigeneMailAdressen].filter((x): x is string => typeof x === 'string' && x.includes('@')),
       logger: this.logger.child({ component: 'beobachter' }),
     });
     this.beobachterDienst = dienst;

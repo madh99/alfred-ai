@@ -2962,4 +2962,13 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_beobachter_regeln_geraet ON beobachter_regeln(user_id, geraet_id, aktiv)');
     },
   },
+  {
+    version: 138,
+    description: 'v1433 B10/B11 — Beobachter: einmalig/bis je Regel, Schalter je Gerät und Art (SQLite-Spiegel zu PG v142).',
+    up(db) {
+      try { db.exec('ALTER TABLE beobachter_regeln ADD COLUMN einmalig INTEGER NOT NULL DEFAULT 0'); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE beobachter_regeln ADD COLUMN bis TEXT'); } catch { /* exists */ }
+      db.exec('CREATE TABLE IF NOT EXISTS beobachter_geraete (user_id TEXT NOT NULL, geraet_id TEXT NOT NULL, arten_aus TEXT NOT NULL, geaendert TEXT NOT NULL, PRIMARY KEY (user_id, geraet_id))');
+    },
+  },
 ];

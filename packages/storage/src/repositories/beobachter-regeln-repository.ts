@@ -24,6 +24,10 @@ export interface BeobachterRegel {
   skills?: string[];
   projektId?: string;
   aktiv: boolean;
+  /** v1433 B11 — nach dem ersten Treffer aus */
+  einmalig?: boolean;
+  /** v1433 B11 — gilt bis (ISO), danach aus */
+  bis?: string;
   erstellt: string;
   geaendert: string;
   letzterTreffer?: string;
@@ -39,7 +43,7 @@ function zeile(r: Record<string, unknown>): BeobachterRegel {
     quelle: String(r.quelle) as BeobachterQuelle, filter: json<Record<string, unknown>>(r.filter, {}), wirkung: String(r.wirkung) as BeobachterWirkung,
     ...(r.auftrag ? { auftrag: String(r.auftrag) } : {}), ...(r.skills ? { skills: json<string[]>(r.skills, []) } : {}),
     ...(r.projekt_id ? { projektId: String(r.projekt_id) } : {}),
-    aktiv: Number(r.aktiv) === 1 || r.aktiv === true, erstellt: String(r.erstellt), geaendert: String(r.geaendert),
+    aktiv: Number(r.aktiv) === 1 || r.aktiv === true, ...(Number(r.einmalig) === 1 ? { einmalig: true } : {}), ...(r.bis ? { bis: String(r.bis) } : {}), erstellt: String(r.erstellt), geaendert: String(r.geaendert),
     ...(r.letzter_treffer ? { letzterTreffer: String(r.letzter_treffer) } : {}), treffer: Number(r.treffer ?? 0),
   };
 }
@@ -65,19 +69,19 @@ export class BeobachterRegelnRepository {
     const id = randomUUID();
     const jetzt = new Date().toISOString();
     await this.db.execute(
-      'INSERT INTO beobachter_regeln (id, user_id, geraet_id, geraet, name, quelle, filter, wirkung, auftrag, skills, projekt_id, aktiv, erstellt, geaendert, treffer) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
-      [id, e.userId, e.geraetId, e.geraet, e.name, e.quelle, JSON.stringify(e.filter ?? {}), e.wirkung, e.auftrag ?? null, e.skills?.length ? JSON.stringify(e.skills) : null, e.projektId ?? null, e.aktiv ? 1 : 0, jetzt, jetzt],
+      'INSERT INTO beobachter_regeln (id, user_id, geraet_id, geraet, name, quelle, filter, wirkung, auftrag, skills, projekt_id, aktiv, einmalig, bis, erstellt, geaendert, treffer) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+      [id, e.userId, e.geraetId, e.geraet, e.name, e.quelle, JSON.stringify(e.filter ?? {}), e.wirkung, e.auftrag ?? null, e.skills?.length ? JSON.stringify(e.skills) : null, e.projektId ?? null, e.aktiv ? 1 : 0, e.einmalig ? 1 : 0, e.bis ?? null, jetzt, jetzt],
     );
     return (await this.hole(e.userId, id))!;
   }
 
-  async aendern(userId: string, id: string, p: Partial<Pick<BeobachterRegel, 'name' | 'filter' | 'wirkung' | 'auftrag' | 'skills' | 'projektId' | 'aktiv'>>): Promise<BeobachterRegel | null> {
+  async aendern(userId: string, id: string, p: Partial<Pick<BeobachterRegel, 'name' | 'filter' | 'wirkung' | 'auftrag' | 'skills' | 'projektId' | 'aktiv' | 'einmalig' | 'bis'>>): Promise<BeobachterRegel | null> {
     const alt = await this.hole(userId, id);
     if (!alt) return null;
     const n = { ...alt, ...p };
     await this.db.execute(
-      'UPDATE beobachter_regeln SET name = ?, filter = ?, wirkung = ?, auftrag = ?, skills = ?, projekt_id = ?, aktiv = ?, geaendert = ? WHERE user_id = ? AND id = ?',
-      [n.name, JSON.stringify(n.filter ?? {}), n.wirkung, n.auftrag ?? null, n.skills?.length ? JSON.stringify(n.skills) : null, n.projektId ?? null, n.aktiv ? 1 : 0, new Date().toISOString(), userId, id],
+      'UPDATE beobachter_regeln SET name = ?, filter = ?, wirkung = ?, auftrag = ?, skills = ?, projekt_id = ?, aktiv = ?, einmalig = ?, bis = ?, geaendert = ? WHERE user_id = ? AND id = ?',
+      [n.name, JSON.stringify(n.filter ?? {}), n.wirkung, n.auftrag ?? null, n.skills?.length ? JSON.stringify(n.skills) : null, n.projektId ?? null, n.aktiv ? 1 : 0, n.einmalig ? 1 : 0, n.bis ?? null, new Date().toISOString(), userId, id],
     );
     return this.hole(userId, id);
   }
@@ -85,6 +89,19 @@ export class BeobachterRegelnRepository {
   async loeschen(userId: string, id: string): Promise<boolean> {
     const r = await this.db.execute('DELETE FROM beobachter_regeln WHERE user_id = ? AND id = ?', [userId, id]);
     return (r?.changes ?? 0) > 0;
+  }
+
+  /** v1433 B10 — ausgeschaltete Beobachtungsarten je Gerät (Schlüssel geraetId). */
+  async artenAus(userId: string): Promise<Record<string, string[]>> {
+    const rows = await this.db.query('SELECT geraet_id, arten_aus FROM beobachter_geraete WHERE user_id = ?', [userId]) as Array<{ geraet_id: string; arten_aus: string }>;
+    const aus: Record<string, string[]> = {};
+    for (const r of rows) { try { const a = JSON.parse(r.arten_aus) as unknown; if (Array.isArray(a) && a.length) aus[r.geraet_id] = a.map(String); } catch { /* leer */ } }
+    return aus;
+  }
+
+  async setzeArtenAus(userId: string, geraetId: string, arten: string[]): Promise<void> {
+    await this.db.execute('DELETE FROM beobachter_geraete WHERE user_id = ? AND geraet_id = ?', [userId, geraetId]);
+    if (arten.length) await this.db.execute('INSERT INTO beobachter_geraete (user_id, geraet_id, arten_aus, geaendert) VALUES (?, ?, ?, ?)', [userId, geraetId, JSON.stringify(arten), new Date().toISOString()]);
   }
 
   async treffer(id: string, zeit = new Date().toISOString()): Promise<void> {

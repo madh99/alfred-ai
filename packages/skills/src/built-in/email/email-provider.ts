@@ -56,6 +56,8 @@ export abstract class EmailProvider {
    */
   abstract readonly providerType: 'microsoft' | 'imap';
   abstract initialize(): Promise<void>;
+  /** v1433 B12 — Adresse des Kontos (für den Abgleich mit Geräte-Outlook); undefined = unbekannt */
+  async eigeneAdresse(): Promise<string | undefined> { return undefined; }
   abstract fetchInbox(count: number): Promise<EmailMessage[]>;
   abstract readMessage(id: string): Promise<EmailDetail>;
   abstract searchMessages(query: string, count: number): Promise<EmailMessage[]>;

@@ -11,7 +11,29 @@ export const ORDNER_ARTEN = ['neu', 'geaendert', 'geloescht'] as const;
 export interface RegelLike {
   id: string; geraetId: string; geraet: string; name: string; quelle: Quelle; filter: Record<string, unknown>;
   wirkung: Wirkung; auftrag?: string; skills?: string[]; projektId?: string; aktiv: boolean; treffer?: number; letzterTreffer?: string;
+  /** v1433 B11 */ einmalig?: boolean; bis?: string;
 }
+
+export const QUELLEN: readonly Quelle[] = ['ordner', 'benachrichtigung', 'outlook', 'build'];
+const MAX_BIS_MS = 366 * 86_400_000;
+
+/**
+ * v1433 B11 — „bis“ aus der Eingabe: ISO-Zeitpunkt oder Dauer (stunden/tage). Leer = unbegrenzt; Fehler bei Vergangenheit
+ * oder mehr als einem Jahr.
+ */
+export function bisAus(roh: Record<string, unknown>, jetzt = Date.now()): { bis?: string } | { fehler: string } {
+  const h = Number(roh.stunden ?? roh.dauerStunden), t = Number(roh.tage ?? roh.dauerTage);
+  let ms: number | undefined;
+  if (typeof roh.bis === 'string' && roh.bis.trim()) { ms = Date.parse(roh.bis.trim()); if (!Number.isFinite(ms)) return { fehler: `bis „${roh.bis}“ ist kein Zeitpunkt (ISO, z. B. 2026-10-16T18:00)` }; }
+  else if (Number.isFinite(t) && t > 0) ms = jetzt + t * 86_400_000;
+  else if (Number.isFinite(h) && h > 0) ms = jetzt + h * 3_600_000;
+  if (ms === undefined) return {};
+  if (ms <= jetzt) return { fehler: 'bis liegt in der Vergangenheit' };
+  if (ms - jetzt > MAX_BIS_MS) return { fehler: 'bis höchstens ein Jahr im Voraus' };
+  return { bis: new Date(ms).toISOString() };
+}
+
+export const abgelaufen = (r: { bis?: string }, jetzt = Date.now()): boolean => !!r.bis && Date.parse(r.bis) <= jetzt;
 
 export interface Treffer { regel: string; quelle: string; art: string; schluessel: string; zeit: string; kopf: Record<string, unknown> }
 
@@ -66,19 +88,22 @@ export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: 
   const muster = typeof f.muster === 'string' && f.muster.trim() ? f.muster.trim().slice(0, 200) : undefined;
   const name = String(roh.name ?? '').trim().slice(0, 80) || (quelle === 'build' ? `Build-Wache ${buildProjekt?.name ?? ''}` : quelle === 'benachrichtigung' ? `Benachrichtigungen ${(filter.apps as string[]).join(', ')}` : quelle === 'outlook' ? `Outlook${filter.absender ? ` von ${String(filter.absender)}` : ''}${filter.betreff ? ` „${String(filter.betreff)}"` : ''}` : `${muster ?? 'Dateien'} in ${pfad.split(/[\\/]/).filter(Boolean).pop() ?? pfad}`);
   const skills = Array.isArray(roh.skills) ? roh.skills.map(String).slice(0, 12) : undefined;
+  const b = bisAus(roh);
+  if ('fehler' in b) return { ok: false, fehler: b.fehler };
+  const einmalig = roh.einmalig === true || roh.einmalig === 'true' || roh.einmalig === 'ja';
   return {
     ok: true,
     regel: {
-      geraetId: g.id, geraet: g.name, name, quelle, wirkung, aktiv: roh.aktiv !== false,
+      geraetId: g.id, geraet: g.name, name, quelle, wirkung, aktiv: roh.aktiv !== false, einmalig, ...(b.bis ? { bis: b.bis } : {}),
       filter: quelle === 'ordner' ? { pfad, ...(muster ? { muster } : {}), ereignisse: ereignisse.length ? ereignisse : ['neu'], ...(f.unterordner === true ? { unterordner: true } : {}) } : filter,
       ...(auftrag ? { auftrag } : {}), ...(skills?.length ? { skills } : {}), ...(projektId ? { projektId } : {}),
     },
   };
 }
 
-/** Nutzlast für `beobachten` an das Gerät: nur aktive Regeln, nur was der Beobachter braucht. */
-export function geraetNutzlast(regeln: RegelLike[]): Array<Record<string, unknown>> {
-  return regeln.filter(r => r.aktiv).map(r => r.quelle === 'ordner'
+/** Nutzlast für `beobachten` an das Gerät: nur aktive, nicht abgelaufene Regeln eingeschalteter Arten (v1433 B10/B11), nur was der Beobachter braucht. */
+export function geraetNutzlast(regeln: RegelLike[], artenAus: readonly string[] = [], jetzt = Date.now()): Array<Record<string, unknown>> {
+  return regeln.filter(r => r.aktiv && !artenAus.includes(r.quelle) && !abgelaufen(r, jetzt)).map(r => r.quelle === 'ordner'
     ? { id: r.id, quelle: 'ordner', pfad: r.filter.pfad, ...(r.filter.muster ? { muster: r.filter.muster } : {}), ereignisse: r.filter.ereignisse ?? ['neu'], ...(r.filter.unterordner ? { unterordner: true } : {}) }
     : { id: r.id, quelle: r.quelle, ...r.filter }); // v1430 benachrichtigung/outlook
 }
@@ -109,10 +134,10 @@ export function aufgabeText(r: RegelLike, t: Treffer, skillName: string): string
 export function standardSkills(geraetSkill: string): string[] { return [geraetSkill, 'todo', 'reminder', 'memory', 'note']; }
 
 /** Lebenszeichen: Befunde für gestörte Beobachter (Quelle „beobachter"), nur für aktive Regeln auf verbundenen Geräten. */
-export function waechterBefunde(regeln: RegelLike[], geraete: Array<{ id: string; name: string; online: boolean; beobachter?: Array<{ regel: string; zustand: string; grund?: string }>; sinneZeit?: string }>, jetzt = Date.now()):
+export function waechterBefunde(regeln: RegelLike[], geraete: Array<{ id: string; name: string; online: boolean; beobachter?: Array<{ regel: string; zustand: string; grund?: string }>; sinneZeit?: string }>, jetzt = Date.now(), artenAus: Record<string, string[]> = {}):
   Array<{ gegenstand: string; titel: string; detail?: string }> {
   const aus: Array<{ gegenstand: string; titel: string; detail?: string }> = [];
-  for (const r of regeln.filter(x => x.aktiv)) {
+  for (const r of regeln.filter(x => x.aktiv && !abgelaufen(x, jetzt) && !(artenAus[x.geraetId] ?? []).includes(x.quelle))) { // v1433 — ausgeschaltete Art ist kein Befund
     const g = geraete.find(x => x.id === r.geraetId);
     if (!g?.online) continue; // offline meldet die Geräte-Quelle
     const frisch = g.sinneZeit ? jetzt - Date.parse(g.sinneZeit) < 5 * 60_000 : false;

@@ -9,7 +9,8 @@ class BeobachterRegel {
         auftrag = j['auftrag'] as String?, aktiv = j['aktiv'] == true, stand = '${j['stand'] ?? ''}', standGrund = j['standGrund'] as String?,
         treffer = (j['treffer'] as num?)?.toInt() ?? 0, letzterTreffer = DateTime.tryParse('${j['letzterTreffer'] ?? ''}')?.toLocal(),
         pfad = '${(j['filter'] as Map<String, dynamic>?)?['pfad'] ?? ''}', muster = (j['filter'] as Map<String, dynamic>?)?['muster'] as String?,
-        ereignisse = (((j['filter'] as Map<String, dynamic>?)?['ereignisse'] as List<dynamic>?) ?? ['neu']).map((e) => '$e').toList();
+        ereignisse = (((j['filter'] as Map<String, dynamic>?)?['ereignisse'] as List<dynamic>?) ?? ['neu']).map((e) => '$e').toList(),
+        einmalig = j['einmalig'] == true, bis = DateTime.tryParse('${j['bis'] ?? ''}')?.toLocal(); // 1.23.0 B11
   final String id, quelle, name, geraet, wirkung, stand, pfad;
   final Map<String, dynamic> filter;
   /// 1.21.0 — Filter je Quelle als eine Zeile
@@ -22,10 +23,17 @@ class BeobachterRegel {
   final int treffer;
   final DateTime? letzterTreffer;
   final List<String> ereignisse;
+  final bool einmalig;
+  final DateTime? bis;
+  /// 1.23.0 — „einmalig“ / „bis 16.10. 18:00“
+  String get dauerText => [if (einmalig) 'einmalig', if (bis != null) 'bis ${bis!.day}.${bis!.month}. ${bis!.hour.toString().padLeft(2, '0')}:${bis!.minute.toString().padLeft(2, '0')}'].join(' · ');
 }
+
+const dauerTage = {0: 'unbegrenzt', 1: '1 Tag', 3: '3 Tage', 7: '7 Tage', 30: '30 Tage'};
 
 const wirkungText = {'hinweis': 'Hinweis', 'vorgang': 'Vorgang', 'aufgabe': 'Aufgabe (Alfred erledigt)', 'projekt': 'Projekt weiterarbeiten (mit Bestätigung)'};
 const artText = {'neu': 'neu', 'geaendert': 'geändert', 'geloescht': 'gelöscht'};
+const quelleKurz = {'ordner': 'Ordner', 'benachrichtigung': 'Benachrichtigungen', 'outlook': 'Outlook', 'build': 'Build-Wache'};
 const quelleText = {'ordner': 'Ordner', 'benachrichtigung': 'Benachrichtigungen (Windows/macOS)', 'outlook': 'Outlook-Posteingang (Windows)', 'build': 'Build-Wache (Prüfbefehle eines Projekts)'};
 
 class Beobachter extends StatefulWidget {
@@ -39,6 +47,7 @@ class Beobachter extends StatefulWidget {
 class _BeobachterState extends State<Beobachter> {
   List<BeobachterRegel> regeln = [];
   List<Map<String, dynamic>> geraete = [], projekte = [];
+  List<String> serverKonten = []; // 1.23.0 B12
   String? fehler;
   bool laedt = true, neuOffen = false, sendet = false;
   // Formular
@@ -46,13 +55,14 @@ class _BeobachterState extends State<Beobachter> {
   final pfad = TextEditingController(), muster = TextEditingController(), name = TextEditingController(), auftrag = TextEditingController(),
       apps = TextEditingController(), titel = TextEditingController(), absender = TextEditingController(), betreff = TextEditingController();
   final Set<String> arten = {'neu'};
-  bool unterordner = false;
+  bool unterordner = false, einmalig = false; // 1.23.0 B11
+  int tage = 0;
   final intervall = TextEditingController(text: '60'); // 1.22.0 Build-Wache
 
   @override
   void initState() { super.initState(); laden(); }
   @override
-  void dispose() { for (final c in [pfad, muster, name, auftrag, apps, titel, absender, betreff]) { c.dispose(); } super.dispose(); }
+  void dispose() { for (final c in [pfad, muster, name, auftrag, apps, titel, absender, betreff, intervall]) { c.dispose(); } super.dispose(); }
 
   Future<void> laden() async {
     try {
@@ -62,6 +72,7 @@ class _BeobachterState extends State<Beobachter> {
         regeln = ((j['regeln'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().map(BeobachterRegel.new).toList();
         geraete = ((j['geraete'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList();
         projekte = ((j['projekte'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList();
+        serverKonten = ((j['serverKonten'] as List<dynamic>?) ?? []).map((e) => '$e').toList();
         geraetId ??= geraete.isNotEmpty ? '${geraete.first['id']}' : null;
         fehler = null; laedt = false;
       });
@@ -78,6 +89,17 @@ class _BeobachterState extends State<Beobachter> {
     finally { if (mounted) setState(() => sendet = false); }
   }
 
+  /// 1.23.0 B10 — eine Beobachtungsart auf einem Gerät ein-/ausschalten
+  Future<void> geraetArt(String geraet, String q, bool an) async {
+    setState(() => sendet = true);
+    try {
+      final x = await widget.json('/api/geraete/beobachter', methode: 'POST', koerper: {'aktion': 'geraet_art', 'geraet': geraet, 'quelle': q, 'an': an});
+      widget.aufMeldung?.call(x['success'] == true ? '${x['display'] ?? 'Gespeichert.'}' : 'Fehler: ${x['error'] ?? 'unbekannt'}');
+      await laden();
+    } catch (e) { widget.aufMeldung?.call('Fehler: $e'); }
+    finally { if (mounted) setState(() => sendet = false); }
+  }
+
   Future<void> anlegen() async {
     setState(() => sendet = true);
     try {
@@ -85,6 +107,7 @@ class _BeobachterState extends State<Beobachter> {
         if (quelle != 'build') 'geraet': geraetId, 'quelle': quelle, 'pfad': pfad.text.trim(), 'muster': muster.text.trim(), 'ereignisse': arten.toList(), 'unterordner': unterordner,
         'apps': apps.text.trim(), 'titel': titel.text.trim(), 'absender': absender.text.trim(), 'betreff': betreff.text.trim(), 'intervallMin': int.tryParse(intervall.text.trim()) ?? 60,
         'wirkung': wirkung, 'auftrag': auftrag.text.trim(), 'name': name.text.trim(), if (projektId != null) 'projekt': projektId,
+        'einmalig': einmalig, if (tage > 0) 'tage': tage,
       });
       if (!mounted) return;
       if (x['success'] == true) {
@@ -113,6 +136,15 @@ class _BeobachterState extends State<Beobachter> {
       ]),
       Text('Alfred bemerkt, was auf deinen Geräten passiert (Ordner, Benachrichtigungen, Outlook), und reagiert nach diesen Regeln. Gemeldet werden nur Kopfdaten, nie Inhalte.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
       if (fehler != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(fehler!, style: TextStyle(color: theme.colorScheme.error))),
+      // 1.23.0 B10 — je Gerät jede Beobachtungsart einzeln
+      if (geraete.isNotEmpty) Card(margin: const EdgeInsets.only(top: 12), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Was darf Alfred je Gerät beobachten?', style: theme.textTheme.titleSmall),
+        for (final g in geraete) Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          SizedBox(width: 120, child: Text('${g['name']}${g['online'] == true ? '' : ' (offline)'}')),
+          for (final q in quelleText.keys) FilterChip(key: Key('beobachter-art-${g['id']}-$q'), label: Text(quelleKurz[q] ?? q), selected: !(((g['artenAus'] as List<dynamic>?) ?? []).contains(q)), onSelected: sendet ? null : (an) => geraetArt('${g['id']}', q, an)),
+        ])),
+        if (serverKonten.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Alfred liest selbst: ${serverKonten.join(', ')} — diese Konten bleiben bei Alfreds Mail und kommen nie über Outlook-Beobachter.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+      ]))),
       if (neuOffen) Card(margin: const EdgeInsets.only(top: 12), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (quelle != 'build') Row(children: [const Text('Gerät: '), DropdownButton<String>(key: const Key('beobachter-geraet'), value: geraetId, items: [for (final g in geraete) DropdownMenuItem(value: '${g['id']}', child: Text('${g['name']}${g['online'] == true ? '' : ' (offline)'}'))], onChanged: (v) => setState(() => geraetId = v))]),
         Row(children: [const Text('Was: '), DropdownButton<String>(key: const Key('beobachter-quelle'), value: quelle, items: [for (final e in quelleText.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: (v) => setState(() => quelle = v))]),
@@ -141,6 +173,8 @@ class _BeobachterState extends State<Beobachter> {
         if (wirkung == 'projekt' && quelle != 'build') Row(children: [const Text('Projekt: '), DropdownButton<String>(value: projektId, hint: const Text('wählen'), items: [for (final p in projekte) DropdownMenuItem(value: '${p['id']}', child: Text('${p['name']}'))], onChanged: (v) => setState(() => projektId = v))]),
         TextField(key: const Key('beobachter-auftrag'), controller: auftrag, maxLines: 2, decoration: InputDecoration(labelText: wirkung == 'hinweis' ? 'Notiz (optional)' : wirkung == 'vorgang' ? 'Nächster Schritt (optional)' : 'Was soll Alfred tun? (Pflicht)')),
         TextField(key: const Key('beobachter-name'), controller: name, decoration: const InputDecoration(labelText: 'Name (optional)', hintText: 'z. B. Rechnungen')),
+        SwitchListTile(key: const Key('beobachter-einmalig'), contentPadding: EdgeInsets.zero, dense: true, value: einmalig, onChanged: (v) => setState(() => einmalig = v), title: const Text('Einmalig (nach dem ersten Treffer aus)')),
+        Row(children: [const Text('Gilt: '), DropdownButton<int>(key: const Key('beobachter-tage'), value: tage, items: [for (final e in dauerTage.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: (v) => setState(() => tage = v ?? 0))]),
         const SizedBox(height: 8),
         Align(alignment: Alignment.centerRight, child: FilledButton(key: const Key('beobachter-anlegen'), onPressed: sendet || (quelle == 'build' ? projektId == null : geraetId == null) ? null : anlegen, child: const Text('Anlegen'))),
       ]))),
@@ -151,7 +185,7 @@ class _BeobachterState extends State<Beobachter> {
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(r.name, style: theme.textTheme.titleSmall),
           Text('${r.geraet}: ${r.filterText}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
-          Text('→ ${wirkungText[r.wirkung] ?? r.wirkung}${r.auftrag != null && r.auftrag!.isNotEmpty ? ': ${r.auftrag}' : ''}', style: theme.textTheme.bodySmall),
+          Text('→ ${wirkungText[r.wirkung] ?? r.wirkung}${r.auftrag != null && r.auftrag!.isNotEmpty ? ': ${r.auftrag}' : ''}${r.dauerText.isNotEmpty ? ' · ${r.dauerText}' : ''}', style: theme.textTheme.bodySmall),
           Text('${r.stand}${r.standGrund != null ? ' — ${r.standGrund}' : ''} · ${r.treffer} Treffer${r.letzterTreffer != null ? ', zuletzt ${r.letzterTreffer!.day}.${r.letzterTreffer!.month}. ${r.letzterTreffer!.hour.toString().padLeft(2, '0')}:${r.letzterTreffer!.minute.toString().padLeft(2, '0')}' : ''}', style: theme.textTheme.labelSmall?.copyWith(color: standFarbe(theme, r.stand))),
         ])),
         Switch(key: Key('beobachter-schalter-${r.id}'), value: r.aktiv, onChanged: sendet ? null : (v) => aendern(r, v ? 'an' : 'aus')),

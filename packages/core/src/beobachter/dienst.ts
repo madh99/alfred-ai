@@ -4,7 +4,7 @@
  * Wirkungen (Owner-Entscheidung 13.10.): Hinweis, Vorgang und Aufgabe (feste Werkzeugliste) automatisch; Projekt-Wunsch nur
  * mit Bestätigung. Treffer tragen nur Kopfdaten.
  */
-import { regelPruefen, geraetNutzlast, trefferText, aufgabeText, standardSkills, waechterBefunde, type RegelLike, type Treffer } from './regeln.js';
+import { regelPruefen, geraetNutzlast, trefferText, aufgabeText, standardSkills, waechterBefunde, abgelaufen, QUELLEN, type Quelle, type RegelLike, type Treffer } from './regeln.js';
 
 export interface BeobachterRepo {
   liste(userId: string): Promise<RegelLike[]>;
@@ -13,7 +13,12 @@ export interface BeobachterRepo {
   aendern(userId: string, id: string, p: Partial<RegelLike>): Promise<RegelLike | null>;
   loeschen(userId: string, id: string): Promise<boolean>;
   treffer(id: string, zeit?: string): Promise<void>;
+  /** v1433 B10 */
+  artenAus(userId: string): Promise<Record<string, string[]>>;
+  setzeArtenAus(userId: string, geraetId: string, arten: string[]): Promise<void>;
 }
+
+const QUELLE_TEXT: Record<Quelle, string> = { ordner: 'Ordner', benachrichtigung: 'Benachrichtigungen', outlook: 'Outlook', build: 'Build-Wache' };
 
 export interface GeraetStand { id: string; name: string; online: boolean; sinne?: Record<string, unknown>; sinneZeit?: string }
 type StandZeile = { regel: string; zustand: string; grund?: string; letzte?: string; anzahl?: number; konten?: string[] };
@@ -58,13 +63,16 @@ export class BeobachterDienst {
   }
 
   /** Regeln mit Stand am Gerät, Owner-Geräte und Projekte (für Auswahllisten in App/Web). */
-  async liste(): Promise<{ regeln: Array<RegelLike & { stand: string; standGrund?: string }>; geraete: Array<{ id: string; name: string; online: boolean }>; projekte: Array<{ id: string; name: string }> }> {
+  async liste(): Promise<{ regeln: Array<RegelLike & { stand: string; standGrund?: string }>; geraete: Array<{ id: string; name: string; online: boolean; artenAus: string[] }>; projekte: Array<{ id: string; name: string }>; serverKonten: string[] }> {
     const o = this.d.owner();
-    if (!o) return { regeln: [], geraete: [], projekte: [] };
-    const [regeln, geraete, projekte] = await Promise.all([this.d.repo.liste(o), this.d.geraete(), this.d.projekte().catch(() => [])]);
+    if (!o) return { regeln: [], geraete: [], projekte: [], serverKonten: [] };
+    const [regeln, geraete, projekte, artenAus] = await Promise.all([this.d.repo.liste(o), this.d.geraete(), this.d.projekte().catch(() => []), this.d.repo.artenAus(o).catch(() => ({} as Record<string, string[]>))]);
+    const jetzt = this.jetzt();
     return {
       regeln: regeln.map(r => {
         if (!r.aktiv) return { ...r, stand: 'aus' };
+        if (abgelaufen(r, jetzt)) return { ...r, stand: 'abgelaufen' }; // v1433 B11 (der Wächter schaltet sie ab)
+        if ((artenAus[r.geraetId] ?? []).includes(r.quelle)) return { ...r, stand: 'Art am Gerät aus', standGrund: `${QUELLE_TEXT[r.quelle]} auf ${r.geraet} ausgeschaltet` }; // v1433 B10
         const g = geraete.find(x => x.id === r.geraetId);
         if (!g?.online) return { ...r, stand: 'Gerät offline' };
         const st = BeobachterDienst.stand(g);
@@ -74,12 +82,33 @@ export class BeobachterDienst {
         if (r.quelle === 'outlook' && this.outlookDoppelt(z)) return { ...r, stand: 'ohne Wirkung', standGrund: `Konto ${z.konten!.join(', ')} liest der Server selbst (Mail-Regeln)` };
         return { ...r, stand: z.zustand === 'laeuft' ? 'läuft' : z.zustand === 'aus' ? 'am Gerät aus' : 'gestört', ...(z.grund ? { standGrund: z.grund } : {}) };
       }),
-      geraete: geraete.map(g => ({ id: g.id, name: g.name, online: g.online })),
+      geraete: geraete.map(g => ({ id: g.id, name: g.name, online: g.online, artenAus: artenAus[g.id] ?? [] })),
       projekte,
+      serverKonten: [...new Set((this.d.serverMailKonten?.() ?? []).map(k => k.toLowerCase()))].sort(), // v1433 B12 — die liest Alfred selbst
     };
   }
 
+  /** v1433 B10 — eine Beobachtungsart auf einem Gerät ein- oder ausschalten (App, Web, Gespräch). */
+  async geraetArt(roh: Record<string, unknown>): Promise<{ success: boolean; display?: string; error?: string }> {
+    const o = this.d.owner();
+    if (!o) return { success: false, error: 'kein Owner' };
+    const n = String(roh.geraet ?? roh.geraetId ?? '').trim().toLowerCase();
+    const geraete = await this.d.geraete();
+    const g = geraete.find(x => x.id === n || x.name.toLowerCase() === n);
+    if (!g) return { success: false, error: `Gerät fehlt oder unbekannt (${geraete.map(x => x.name).join(', ') || 'keine Geräte'})` };
+    const q = String(roh.quelle ?? '') as Quelle;
+    if (!QUELLEN.includes(q)) return { success: false, error: `quelle muss ${QUELLEN.join(', ')} sein` };
+    const an = roh.an === true || roh.an === 'true' || roh.schalter === 'an';
+    const alt = (await this.d.repo.artenAus(o))[g.id] ?? [];
+    const neu = an ? alt.filter(x => x !== q) : [...new Set([...alt, q])];
+    await this.d.repo.setzeArtenAus(o, g.id, neu);
+    this.d.logger.info({ geraet: g.name, quelle: q, an }, 'v1433 Beobachtungsart je Gerät geschaltet');
+    await this.anGeraet(g.id, o);
+    return { success: true, display: `${QUELLE_TEXT[q]} auf ${g.name}: ${an ? 'eingeschaltet' : 'ausgeschaltet — dort läuft keine Regel dieser Art'}.` };
+  }
+
   async anlegen(roh: Record<string, unknown>): Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> {
+    if (roh.aktion === 'geraet_art') return this.geraetArt(roh); // v1433 — derselbe Weg für App, Web und Gespräch
     const o = this.d.owner();
     if (!o) return { success: false, error: 'kein Owner' };
     const p = regelPruefen(roh, (await this.d.geraete()).map(g => ({ id: g.id, name: g.name })), await this.d.projekte().catch(() => []));
@@ -87,7 +116,9 @@ export class BeobachterDienst {
     const r = await this.d.repo.anlegen({ ...p.regel, userId: o });
     this.d.logger.info({ regel: r.id, name: r.name, geraet: r.geraet, wirkung: r.wirkung }, 'v1429 Beobachter-Regel angelegt');
     const gesendet = this.anGeraet(r.geraetId, o);
-    return { success: true, data: r, display: `Beobachter „${r.name}" angelegt (${r.geraet}: ${String(r.filter.pfad)}${r.filter.muster ? `, ${String(r.filter.muster)}` : ''} → ${r.wirkung})${await gesendet ? '' : ' — Gerät gerade nicht verbunden, startet bei der nächsten Verbindung'}.` };
+    const artAus = ((await this.d.repo.artenAus(o).catch(() => ({} as Record<string, string[]>)))[r.geraetId] ?? []).includes(r.quelle);
+    const dauer = `${r.einmalig ? ', einmalig' : ''}${r.bis ? `, bis ${new Date(r.bis).toLocaleString('de-AT', { timeZone: 'Europe/Vienna', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}`;
+    return { success: true, data: r, display: `Beobachter „${r.name}" angelegt (${r.geraet}: ${r.quelle === 'ordner' ? String(r.filter.pfad) : QUELLE_TEXT[r.quelle]}${r.filter.muster ? `, ${String(r.filter.muster)}` : ''} → ${r.wirkung}${dauer})${artAus ? ` — ${QUELLE_TEXT[r.quelle]} ist auf ${r.geraet} ausgeschaltet, die Regel läuft erst nach dem Einschalten` : await gesendet ? '' : ' — Gerät gerade nicht verbunden, startet bei der nächsten Verbindung'}.` };
   }
 
   /** aktion an|aus|loeschen oder Änderung einzelner Felder. */
@@ -119,8 +150,8 @@ export class BeobachterDienst {
   /** Aktive Regeln an ein Gerät (bei Verbindung und nach jeder Änderung). */
   async anGeraet(geraetId: string, owner = this.d.owner()): Promise<boolean> {
     if (!owner) return false;
-    const regeln = (await this.d.repo.liste(owner)).filter(r => r.geraetId === geraetId);
-    return this.d.sendeAn(geraetId, { typ: 'beobachten', regeln: geraetNutzlast(regeln) });
+    const [alle, artenAus] = await Promise.all([this.d.repo.liste(owner), this.d.repo.artenAus(owner).catch(() => ({} as Record<string, string[]>))]);
+    return this.d.sendeAn(geraetId, { typ: 'beobachten', regeln: geraetNutzlast(alle.filter(r => r.geraetId === geraetId), artenAus[geraetId] ?? [], this.jetzt()) });
   }
 
   /** Treffer vom Gerät → Wirkung. Fremde oder ausgeschaltete Regeln, Dubletten und Überlauf werden verworfen (Logzeile). */
@@ -133,6 +164,7 @@ export class BeobachterDienst {
     for (const t of ereignisse.slice(0, 50)) {
       const r = await this.d.repo.hole(o, String(t.regel));
       if (!r || !r.aktiv || r.geraetId !== geraetId) { this.d.logger.info({ geraetId, regel: t.regel }, 'v1429 Beobachtung ohne aktive Regel verworfen'); continue; }
+      if (abgelaufen(r, jetzt) || ((await this.d.repo.artenAus(o).catch(() => ({} as Record<string, string[]>)))[geraetId] ?? []).includes(r.quelle)) { this.d.logger.info({ geraetId, regel: r.id }, 'v1433 Beobachtung verworfen — Regel abgelaufen oder Art am Gerät aus'); continue; }
       if (this.gesehen.has(t.schluessel)) continue;
       if (r.quelle === 'outlook') {
         const g = (await this.d.geraete()).find(x => x.id === geraetId);
@@ -149,6 +181,8 @@ export class BeobachterDienst {
       w.push(jetzt); this.wirkungen.set(r.id, w);
       await this.d.repo.treffer(r.id).catch(() => undefined);
       try { await this.wirke(r, t); n++; } catch (err) { this.d.logger.warn({ regel: r.id, err: (err as Error).message }, 'v1429 Beobachter-Wirkung fehlgeschlagen'); }
+      // v1433 B11 — „sag mir Bescheid, sobald …“: nach dem ersten Treffer aus
+      if (r.einmalig) { await this.beende(r, o, `🔭 Beobachter „${r.name}" auf ${r.geraet} hat angeschlagen und ist jetzt aus (einmalig) — erledigt.`); break; }
     }
     return n;
   }
@@ -174,12 +208,22 @@ export class BeobachterDienst {
     if (!ok) this.d.logger.info({ regel: r.id }, 'v1429 Projekt-Bestätigung schon offen (Dublette)');
   }
 
-  /** Lebenszeichen: gestörte/fehlende Beobachter als Befunde (Quelle „beobachter"). */
+  /** v1433 B11 — Regel abschalten (einmalig erledigt oder abgelaufen), Gerät neu versorgen, Owner Bescheid geben. */
+  private async beende(r: RegelLike, o: string, text: string): Promise<void> {
+    await this.d.repo.aendern(o, r.id, { aktiv: false });
+    this.d.logger.info({ regel: r.id, name: r.name, einmalig: !!r.einmalig, bis: r.bis }, 'v1433 Beobachter beendet');
+    await this.anGeraet(r.geraetId, o).catch(() => false);
+    await this.d.melde(text).catch(() => undefined);
+  }
+
+  /** Lebenszeichen: gestörte/fehlende Beobachter als Befunde (Quelle „beobachter"); v1433 — abgelaufene Regeln abschalten. */
   async waechter(): Promise<number> {
     const o = this.d.owner();
     if (!o) return 0;
-    const [regeln, geraete] = await Promise.all([this.d.repo.liste(o), this.d.geraete()]);
-    const befunde = waechterBefunde(regeln, geraete.map(g => ({ id: g.id, name: g.name, online: g.online, sinneZeit: g.sinneZeit, beobachter: BeobachterDienst.stand(g) })), this.jetzt());
+    const jetzt = this.jetzt();
+    for (const r of (await this.d.repo.liste(o)).filter(x => x.aktiv && abgelaufen(x, jetzt))) await this.beende(r, o, `🔭 Beobachter „${r.name}" auf ${r.geraet} ist abgelaufen und jetzt aus.`);
+    const [regeln, geraete, artenAus] = await Promise.all([this.d.repo.liste(o), this.d.geraete(), this.d.repo.artenAus(o).catch(() => ({} as Record<string, string[]>))]);
+    const befunde = waechterBefunde(regeln, geraete.map(g => ({ id: g.id, name: g.name, online: g.online, sinneZeit: g.sinneZeit, beobachter: BeobachterDienst.stand(g) })), jetzt, artenAus);
     await this.d.befundeSync(befunde);
     return befunde.length;
   }

@@ -4,6 +4,8 @@ import type { RegelLike } from '../regeln.js';
 
 function aufbau(geraete: GeraetStand[] = [{ id: 'g1', name: 'PC-madh', online: true }]) {
   const regeln = new Map<string, RegelLike>();
+  const arten: Record<string, string[]> = {};
+  const uhr = { jetzt: Date.now() };
   let nr = 0;
   const repo: BeobachterRepo = {
     liste: async () => [...regeln.values()],
@@ -12,6 +14,8 @@ function aufbau(geraete: GeraetStand[] = [{ id: 'g1', name: 'PC-madh', online: t
     aendern: async (_u, id, p) => { const r = regeln.get(id); if (!r) return null; const n = { ...r, ...p }; regeln.set(id, n); return n; },
     loeschen: async (_u, id) => regeln.delete(id),
     treffer: async (id) => { const r = regeln.get(id); if (r) r.treffer = (r.treffer ?? 0) + 1; },
+    artenAus: async () => ({ ...arten }), // v1433
+    setzeArtenAus: async (_u, g, a) => { if (a.length) arten[g] = a; else delete arten[g]; },
   };
   const gesendet: Array<{ geraetId: string; n: Record<string, unknown> }> = [];
   const meldungen: string[] = [];
@@ -25,9 +29,9 @@ function aufbau(geraete: GeraetStand[] = [{ id: 'g1', name: 'PC-madh', online: t
     melde: async (t) => { meldungen.push(t); }, vorgang: async (e) => { vorgaenge.push(e); },
     aufgabe: async (_r, auftrag, ausloeser, skills) => { aufgaben.push({ auftrag, ausloeser, skills }); },
     bestaetigung: async (_r, b) => { bestaetigungen.push(b); return true; },
-    befundeSync: async (b) => { befunde = b; }, logger: { info: () => undefined, warn: () => undefined },
+    befundeSync: async (b) => { befunde = b; }, logger: { info: () => undefined, warn: () => undefined }, jetzt: () => uhr.jetzt,
   });
-  return { d, regeln, gesendet, meldungen, vorgaenge, aufgaben, bestaetigungen, befunde: () => befunde };
+  return { d, uhr, arten, regeln, gesendet, meldungen, vorgaenge, aufgaben, bestaetigungen, befunde: () => befunde };
 }
 const t = (regel: string, schluessel: string, name = 'rechnung.pdf') => ({ regel, quelle: 'ordner', art: 'neu', schluessel, zeit: '', kopf: { name, relativ: name, groesse: 2048 } });
 
@@ -84,5 +88,47 @@ describe('v1430 Outlook nur für Konten, die der Server nicht liest', () => {
     expect((await a.d.liste()).regeln[0]).toMatchObject({ stand: 'ohne Wirkung' });
     expect(await a.d.verarbeite('g1', [{ regel: 'r1', quelle: 'outlook', art: 'neu', schluessel: 'x', zeit: '', kopf: { von: 'a', betreff: 'b' } }])).toBe(0);
     expect(a.meldungen).toEqual([]);
+  });
+});
+
+describe('v1433 B10/B11 Schalter je Gerät und Art, einmalig/bis', () => {
+  it('Art am Gerät aus: Nutzlast ohne diese Regeln, Stand „Art am Gerät aus“, Treffer verworfen; wieder an → zurück', async () => {
+    const a = aufbau();
+    await a.d.anlegen({ geraet: 'PC-madh', pfad: '/d', wirkung: 'hinweis', name: 'Ordner' });
+    await a.d.anlegen({ geraet: 'PC-madh', quelle: 'benachrichtigung', apps: ['WhatsApp'], wirkung: 'hinweis' });
+    const aus = await a.d.anlegen({ aktion: 'geraet_art', geraet: 'pc-madh', quelle: 'ordner', an: false });
+    expect(aus).toMatchObject({ success: true, display: 'Ordner auf PC-madh: ausgeschaltet — dort läuft keine Regel dieser Art.' });
+    expect((a.gesendet.at(-1)!.n.regeln as Array<{ quelle: string }>).map(r => r.quelle)).toEqual(['benachrichtigung']);
+    const l = await a.d.liste();
+    expect(l.regeln[0]).toMatchObject({ stand: 'Art am Gerät aus' });
+    expect(l.geraete[0]).toMatchObject({ artenAus: ['ordner'] });
+    expect(await a.d.verarbeite('g1', [t('r1', 'k1')])).toBe(0);
+    await a.d.geraetArt({ geraet: 'g1', quelle: 'ordner', an: true });
+    expect(a.gesendet.at(-1)!.n.regeln).toHaveLength(2);
+    expect(await a.d.verarbeite('g1', [t('r1', 'k2')])).toBe(1);
+    expect((await a.d.geraetArt({ geraet: 'g1', quelle: 'mail', an: false })).success).toBe(false);
+  });
+
+  it('einmalig: erster Treffer wirkt, dann aus mit Meldung „erledigt“, Gerät bekommt leere Liste', async () => {
+    const a = aufbau();
+    await a.d.anlegen({ geraet: 'g1', pfad: '/d', wirkung: 'hinweis', name: 'Sobald', einmalig: true });
+    expect(await a.d.verarbeite('g1', [t('r1', 'k1'), t('r1', 'k2')])).toBe(1);
+    expect(a.regeln.get('r1')!.aktiv).toBe(false);
+    expect(a.meldungen.at(-1)).toContain('ist jetzt aus (einmalig) — erledigt');
+    expect(a.gesendet.at(-1)!.n.regeln).toEqual([]);
+  });
+
+  it('bis: Dauer in Tagen, danach abgelaufen — Wächter schaltet ab und meldet', async () => {
+    const a = aufbau();
+    const r = await a.d.anlegen({ geraet: 'g1', pfad: '/d', wirkung: 'hinweis', name: 'Drei Tage', tage: 3 });
+    expect(r.display).toContain(', bis ');
+    expect(a.regeln.get('r1')!.bis).toBe(new Date(Date.parse(a.regeln.get('r1')!.bis!)).toISOString());
+    a.uhr.jetzt += 3 * 86_400_000 + 1000;
+    expect(await a.d.verarbeite('g1', [t('r1', 'k1')])).toBe(0);
+    expect((await a.d.liste()).regeln[0]).toMatchObject({ stand: 'abgelaufen' });
+    await a.d.waechter();
+    expect(a.regeln.get('r1')!.aktiv).toBe(false);
+    expect(a.meldungen.at(-1)).toContain('ist abgelaufen und jetzt aus');
+    expect((await a.d.anlegen({ geraet: 'g1', pfad: '/d', bis: '2020-01-01T00:00:00Z' })).error).toBe('bis liegt in der Vergangenheit');
   });
 });

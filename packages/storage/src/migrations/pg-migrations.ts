@@ -2269,4 +2269,13 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_beobachter_regeln_geraet ON beobachter_regeln(user_id, geraet_id, aktiv)', []);
     },
   },
+  {
+    version: 142,
+    description: 'v1433 B10/B11 — Beobachter: einmalig/bis je Regel, Schalter je Gerät und Art (PG-Spiegel zu SQLite v138).',
+    async up(db) {
+      await db.execute('ALTER TABLE beobachter_regeln ADD COLUMN IF NOT EXISTS einmalig INTEGER NOT NULL DEFAULT 0', []);
+      await db.execute('ALTER TABLE beobachter_regeln ADD COLUMN IF NOT EXISTS bis TEXT', []);
+      await db.execute('CREATE TABLE IF NOT EXISTS beobachter_geraete (user_id TEXT NOT NULL, geraet_id TEXT NOT NULL, arten_aus TEXT NOT NULL, geaendert TEXT NOT NULL, PRIMARY KEY (user_id, geraet_id))', []);
+    },
+  },
 ];

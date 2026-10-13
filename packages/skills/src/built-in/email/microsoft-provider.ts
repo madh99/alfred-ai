@@ -21,6 +21,14 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     await this.refreshAccessToken();
   }
 
+  /** v1433 B12 — Microsoft-Konten ohne Adresse in der Konfig („default“): einmal Graph /me fragen */
+  override async eigeneAdresse(): Promise<string | undefined> {
+    if (this.config.sharedMailbox) return this.config.sharedMailbox;
+    const me = await this.graphRequest('/me?$select=mail,userPrincipalName') as { mail?: string | null; userPrincipalName?: string } | undefined;
+    const a = me?.mail ?? me?.userPrincipalName;
+    return a && a.includes('@') ? a : undefined;
+  }
+
   private async refreshAccessToken(): Promise<void> {
     if (!this.config.refreshToken) {
       throw new Error('Microsoft email: refreshToken is missing from config');

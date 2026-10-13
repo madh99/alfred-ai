@@ -10,6 +10,8 @@ import type { BeobachterListe, BeobachterRegelDto } from '@/lib/alfred-client';
 
 const WIRKUNG: Record<string, string> = { hinweis: 'Hinweis', vorgang: 'Vorgang', aufgabe: 'Aufgabe (Alfred erledigt)', projekt: 'Projekt weiterarbeiten (mit Bestätigung)' };
 const ART: Record<string, string> = { neu: 'neu', geaendert: 'geändert', geloescht: 'gelöscht' };
+const QUELLE_KURZ: Record<string, string> = { ordner: 'Ordner', benachrichtigung: 'Benachrichtigungen', outlook: 'Outlook', build: 'Build-Wache' };
+const DAUER: Record<string, string> = { '0': 'unbegrenzt', '1': '1 Tag', '3': '3 Tage', '7': '7 Tage', '30': '30 Tage' };
 const QUELLE: Record<string, string> = { ordner: 'Ordner', benachrichtigung: 'Benachrichtigungen (Windows/macOS)', outlook: 'Outlook-Posteingang (Windows)', build: 'Build-Wache (Prüfbefehle eines Projekts)' };
 function filterText(r: BeobachterRegelDto): string {
   const f = r.filter;
@@ -25,7 +27,7 @@ export function BeobachterPage() {
   const [meldung, setMeldung] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [neu, setNeu] = useState(false);
-  const [f, setF] = useState({ intervallMin: '60', geraet: '', quelle: 'ordner', apps: '', titel: '', absender: '', betreff: '', pfad: '', muster: '', ereignisse: ['neu'] as string[], unterordner: false, wirkung: 'hinweis', auftrag: '', projekt: '', name: '' });
+  const [f, setF] = useState({ intervallMin: '60', geraet: '', quelle: 'ordner', apps: '', titel: '', absender: '', betreff: '', pfad: '', muster: '', ereignisse: ['neu'] as string[], unterordner: false, wirkung: 'hinweis', auftrag: '', projekt: '', name: '', einmalig: false, tage: '0' });
 
   const laden = useCallback(async () => {
     if (!client) return;
@@ -43,10 +45,19 @@ export function BeobachterPage() {
     setMeldung({ ok: x.success, text: x.success ? (x.display ?? 'Gespeichert.') : (x.error ?? 'Fehler') });
     await laden();
   };
+  // v1433 B10 — Beobachtungsart je Gerät ein/aus
+  const geraetArt = async (geraet: string, quelle: string, an: boolean) => {
+    if (!client) return;
+    setBusy(true);
+    const x: { success: boolean; display?: string; error?: string } = await client.beobachterAnlegen({ aktion: 'geraet_art', geraet, quelle, an }).catch((e: Error) => ({ success: false, error: e.message }));
+    setBusy(false);
+    setMeldung({ ok: x.success, text: x.success ? (x.display ?? 'Gespeichert.') : (x.error ?? 'Fehler') });
+    await laden();
+  };
   const anlegen = async () => {
     if (!client) return;
     setBusy(true);
-    const x: { success: boolean; display?: string; error?: string } = await client.beobachterAnlegen({ ...f, intervallMin: Number(f.intervallMin) || 60, ...(f.quelle === 'build' ? { geraet: undefined } : {}), ...(f.wirkung === 'projekt' || f.quelle === 'build' ? {} : { projekt: undefined }) }).catch((e: Error) => ({ success: false, error: e.message }));
+    const x: { success: boolean; display?: string; error?: string } = await client.beobachterAnlegen({ ...f, tage: Number(f.tage) || undefined, intervallMin: Number(f.intervallMin) || 60, ...(f.quelle === 'build' ? { geraet: undefined } : {}), ...(f.wirkung === 'projekt' || f.quelle === 'build' ? {} : { projekt: undefined }) }).catch((e: Error) => ({ success: false, error: e.message }));
     setBusy(false);
     setMeldung({ ok: x.success, text: x.success ? (x.display ?? 'Angelegt.') : (x.error ?? 'Fehler') });
     if (x.success) { setNeu(false); setF(v => ({ ...v, pfad: '', muster: '', auftrag: '', name: '', apps: '', titel: '', absender: '', betreff: '' })); await laden(); }
@@ -62,6 +73,16 @@ export function BeobachterPage() {
       </div>
       <div className="text-xs text-gray-500">Alfred bemerkt, was auf deinen Geräten passiert, und reagiert nach diesen Regeln. Gemeldet werden nur Kopfdaten (Dateiname/Größe, App/Titel, Absender/Betreff), nie Inhalte; am Gerät abschaltbar mit <code>alfred einstellungen beobachter aus</code>.</div>
       {meldung && <div className={`text-xs ${meldung.ok ? 'text-emerald-400' : 'text-red-400'}`}>{meldung.text}</div>}
+      {d && d.geraete.length > 0 && (
+        <div className="bg-[#141414] border border-[#2a2a2a] rounded p-3 space-y-1 text-xs text-gray-300">
+          <div className="text-gray-100">Was darf Alfred je Gerät beobachten?</div>
+          {d.geraete.map(g => (
+            <div key={g.id} className="flex flex-wrap items-center gap-3"><span className="w-32">{g.name}{g.online ? '' : ' (offline)'}</span>
+              {Object.keys(QUELLE_KURZ).map(q => (
+                <label key={q} className="flex items-center gap-1"><input type="checkbox" disabled={busy} checked={!(g.artenAus ?? []).includes(q)} onChange={e => void geraetArt(g.id, q, e.target.checked)} />{QUELLE_KURZ[q]}</label>))}
+            </div>))}
+          {(d.serverKonten?.length ?? 0) > 0 && <div className="text-gray-500">Alfred liest selbst: {d.serverKonten!.join(', ')} — diese Konten bleiben bei Alfreds Mail und kommen nie über Outlook-Beobachter.</div>}
+        </div>)}
       {neu && d && (
         <div className="bg-[#141414] border border-[#2a2a2a] rounded p-3 space-y-2 text-xs text-gray-300">
           {f.quelle !== 'build' && <label className="flex items-center gap-2">Gerät
@@ -99,6 +120,10 @@ export function BeobachterPage() {
               <select className={feld} value={f.projekt} onChange={e => setF({ ...f, projekt: e.target.value })}><option value="">wählen</option>{d.projekte.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>)}
           <textarea className={`${feld} w-full`} rows={2} placeholder={f.wirkung === 'hinweis' ? 'Notiz (optional)' : f.wirkung === 'vorgang' ? 'Nächster Schritt (optional)' : 'Was soll Alfred tun? (Pflicht)'} value={f.auftrag} onChange={e => setF({ ...f, auftrag: e.target.value })} />
           <input className={`${feld} w-full`} placeholder="Name (optional), z. B. Rechnungen" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-1"><input type="checkbox" checked={f.einmalig} onChange={e => setF({ ...f, einmalig: e.target.checked })} />Einmalig (nach dem ersten Treffer aus)</label>
+            <label className="flex items-center gap-2">Gilt<select className={feld} value={f.tage} onChange={e => setF({ ...f, tage: e.target.value })}>{Object.entries(DAUER).map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></label>
+          </div>
           <div className="text-right"><button disabled={busy || (f.quelle === 'build' ? !f.projekt : !f.geraet)} onClick={() => void anlegen()} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded">Anlegen</button></div>
         </div>
       )}
@@ -108,7 +133,7 @@ export function BeobachterPage() {
           <div className="flex-1 text-xs space-y-0.5">
             <div className="text-gray-100 text-sm">{r.name}</div>
             <div className="text-gray-400">{r.geraet}: {filterText(r)}</div>
-            <div className="text-gray-300">→ {WIRKUNG[r.wirkung] ?? r.wirkung}{r.auftrag ? `: ${r.auftrag}` : ''}</div>
+            <div className="text-gray-300">→ {WIRKUNG[r.wirkung] ?? r.wirkung}{r.auftrag ? `: ${r.auftrag}` : ''}{r.einmalig ? ' · einmalig' : ''}{r.bis ? ` · bis ${new Date(r.bis).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}</div>
             <div className={r.stand === 'läuft' ? 'text-emerald-400' : r.stand === 'gestört' || r.stand === 'Satellit zu alt' ? 'text-red-400' : 'text-gray-500'}>{r.stand}{r.standGrund ? ` — ${r.standGrund}` : ''} · {r.treffer ?? 0} Treffer{r.letzterTreffer ? `, zuletzt ${new Date(r.letzterTreffer).toLocaleString('de-AT')}` : ''}</div>
           </div>
           <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">

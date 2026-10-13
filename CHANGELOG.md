@@ -55,6 +55,23 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1433] - 2026-10-13
+
+### Added — Beobachter: Schalter je Gerät und Art, einmalig/bis, eigene Mailkonten (v1433, App 1.23.0, Spec R4-Erweiterung B10–B12)
+
+- **Schalter je Gerät und Beobachtungsart (B10):** Ordner, Benachrichtigungen, Outlook und Build-Wache lassen sich in App, Web und Gespräch (`beobachter action=geraet_art`) je Gerät einzeln ein- und ausschalten.
+  - Ist eine Art aus, bekommt das Gerät keine Regel dieser Art; der Stand zeigt „Art am Gerät aus“.
+  - Treffer dieser Art werden verworfen und gelten nicht als Störung.
+  - Schalter je Regel und das lokale Veto am Gerät bleiben.
+- **„einmalig“ und „bis“ (B11):** „Sag mir Bescheid, sobald …“ schaltet die Regel nach dem ersten Treffer ab und meldet „erledigt“.
+  - Eine Dauer (`tage`/`stunden` oder `bis` als Zeitpunkt, höchstens ein Jahr) lässt die Regel ablaufen.
+  - Der Wächter schaltet abgelaufene Regeln ab und meldet es.
+- **Eigene Mailkonten zuverlässig (B12):** Beim Start ermittelt Alfred die Adresse jedes Microsoft-Kontos über Graph `/me` (bisher fehlte „default“ ohne Adresse in der Konfiguration).
+  - Geräte-Outlook-Regeln wirken so nie für Konten, die Alfred selbst liest.
+  - App und Web zeigen die Liste „Alfred liest selbst“.
+  - Alfreds eigene Mailverarbeitung bleibt unverändert.
+- Speicher: `beobachter_regeln.einmalig`/`bis`, Tabelle `beobachter_geraete` (PG v142 / SQLite v138).
+
 ## [0.19.0-jarvis.1432] - 2026-10-13
 
 ### Changed — Frage zum Projekt: eine Antwort, auf Basis von Claude Code (v1432)
