@@ -415,7 +415,9 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       try {
         const r = auftragErgebnis(id);
         const kosten = r.ergebnis.kosten !== undefined ? ` · Kosten ${r.ergebnis.kosten.toFixed(2)} $` : '';
-        return { success: true, data: { id, status: r.meta.status, text: r.ergebnis.text.slice(0, 8000), kosten: r.ergebnis.kosten, dauerMs: r.ergebnis.dauerMs, fehler: r.ergebnis.fehler }, display: `${formatiereMeta(r.meta)}${kosten}\n\n${r.ergebnis.fehler ? `Fehler: ${r.ergebnis.fehler}\n\n` : ''}${r.ergebnis.text.slice(0, 8000) || '(keine Ausgabe)'}` };
+        // v1426 — dieselben Ende-Daten wie das Ereignis (Dateien, Dauer, Changelog): der Ende-Wächter des Gehirns baut daraus das Etappenende
+        const ende = endeEreignis(r.meta, r.ergebnis) as { dateien?: string[]; dateienAnzahl?: number; dauerS?: number; changelogGeaendert?: boolean };
+        return { success: true, data: { id, status: r.meta.status, text: r.ergebnis.text.slice(0, 8000), kosten: r.ergebnis.kosten, dauerMs: r.ergebnis.dauerMs, fehler: r.ergebnis.fehler, dateien: ende.dateien, dateienAnzahl: ende.dateienAnzahl, dauerS: ende.dauerS, changelogGeaendert: ende.changelogGeaendert }, display: `${formatiereMeta(r.meta)}${kosten}\n\n${r.ergebnis.fehler ? `Fehler: ${r.ergebnis.fehler}\n\n` : ''}${r.ergebnis.text.slice(0, 8000) || '(keine Ausgabe)'}` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
     case 'auftraege': {

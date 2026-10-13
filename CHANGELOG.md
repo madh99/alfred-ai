@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1427] - 2026-10-13
+
+### Fixed — Auftragsende nach Satelliten-Neustart (v1427)
+
+Startete der Satellit während eines Claude-Code-Auftrags neu (z. B. Selbst-Update), wurde der Auftrag danach pauschal als „fehler“ geführt, auch wenn Claude Code erfolgreich war. Das Etappenende, das der Ende-Wächter des Gehirns dann erkennt, hatte zudem keine Dateiliste und keine Changelog-Angabe (Bericht „keine Dateien“, Changelog-Prüfung entfiel).
+
+- Ohne beobachtetes Prozessende entscheidet die Ergebniszeile im Protokoll von Claude Code über „fertig“ oder „fehler“.
+- `auftrag_ergebnis` liefert dieselben Ende-Daten wie das Ende-Ereignis (geänderte Dateien, Dauer, Changelog geändert); der Ende-Wächter übernimmt sie.
+
 ## [0.19.0-jarvis.1426] - 2026-10-13
 
 ### Added — Projektregeln für Geräte-Projekte, mit Schaltern in App und Web (v1426, App 1.19.0)

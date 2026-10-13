@@ -129,14 +129,21 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   return meta;
 }
 
+/** v1426 — Status eines Auftrags ohne beobachtetes Prozessende: fertig nur mit erfolgreicher result-Zeile von Claude Code. */
+export function statusAusProtokoll(log: string): 'fertig' | 'fehler' {
+  return /"type":"result"/.test(log) && !parseErgebnis(log).fehler ? 'fertig' : 'fehler';
+}
+
 /** Stand: läuft noch?, Dauer, letzte Protokollzeilen. */
 export function auftragStand(id: string, home?: string, zeilen = 15): { meta: AuftragMeta; laeuft: boolean; dauerS: number; letzteZeilen: string } {
   const meta = ladeMeta(id, home);
   if (!meta) throw new Error(`Auftrag ${id} unbekannt`);
   const aktiv = meta.status === 'laeuft' && laeuft(meta.pid);
-  if (meta.status === 'laeuft' && !aktiv) { meta.status = 'fehler'; meta.ende = meta.ende ?? new Date().toISOString(); speichereMeta(meta, home); } // Satellit war zwischendurch neu gestartet
   let log = '';
   try { log = readFileSync(logPfad(id, home), 'utf8'); } catch { /* leer */ }
+  // Satellit war zwischendurch neu gestartet (Update mitten im Auftrag), das Prozessende hat niemand gesehen.
+  // v1426 — Realfall 13.10. 12:46: Claude Code war erfolgreich, Status wurde trotzdem „fehler" → das Ergebnis im Protokoll entscheidet.
+  if (meta.status === 'laeuft' && !aktiv) { meta.status = statusAusProtokoll(log); meta.ende = meta.ende ?? new Date().toISOString(); speichereMeta(meta, home); }
   const fort = fortschrittAus(log, zeilen);
   const letzte = fort.schritte.length ? `${fort.werkzeuge} Werkzeugschritte bisher, zuletzt:\n${fort.schritte.join('\n')}` : log.split('\n').filter(z => z.trim()).slice(-zeilen).map(z => z.length > 300 ? `${z.slice(0, 300)}…` : z).join('\n');
   const ende = meta.ende ? new Date(meta.ende).getTime() : Date.now();

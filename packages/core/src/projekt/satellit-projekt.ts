@@ -239,9 +239,10 @@ export class SatellitProjekte {
         const daten = st?.data as { laeuft?: boolean; status?: string } | undefined;
         if (!st?.success || daten?.laeuft) return; // Gerät offline oder Auftrag läuft: Ende kommt als Ereignis
         const er = await this.d.aktion(s.geraetId, 'auftrag_ergebnis', { id }, 30_000).catch(() => undefined);
-        const e = er?.data as { status?: string; text?: string; kosten?: number; dauerMs?: number; fehler?: string } | undefined;
+        const e = er?.data as { status?: string; text?: string; kosten?: number; dauerMs?: number; fehler?: string; dateien?: string[]; dateienAnzahl?: number; dauerS?: number; changelogGeaendert?: boolean } | undefined;
         if (s.auftragId !== id) return;
-        await this.nachAuftrag(s, { typ: 'ereignis', art: 'auftrag', auftragId: id, status: (e?.status === 'fertig' ? 'fertig' : 'fehler'), titel: '', projekt: s.projekt, text: e?.text ?? '', kosten: e?.kosten, ...(e?.fehler ? { fehler: e.fehler } : {}) } as GeraetEreignis);
+        // v1426 — Ende-Daten wie beim Ereignis übernehmen (ältere Satelliten liefern sie nicht)
+        await this.nachAuftrag(s, { typ: 'ereignis', art: 'auftrag', auftragId: id, status: (e?.status === 'fertig' ? 'fertig' : 'fehler'), titel: '', projekt: s.projekt, text: e?.text ?? '', kosten: e?.kosten, ...(e?.fehler ? { fehler: e.fehler } : {}), ...(Array.isArray(e?.dateien) ? { dateien: e!.dateien, dateienAnzahl: e!.dateienAnzahl } : {}), ...(typeof e?.dauerS === 'number' ? { dauerS: e.dauerS } : {}), ...(typeof e?.changelogGeaendert === 'boolean' ? { changelogGeaendert: e.changelogGeaendert } : {}) } as GeraetEreignis);
       });
     }
     return n;

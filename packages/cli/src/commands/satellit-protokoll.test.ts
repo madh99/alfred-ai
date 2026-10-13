@@ -58,6 +58,15 @@ describe('v1425 — Protokoll eines Projektlaufs im Projekt', () => {
   });
 });
 
+describe('v1426 — Status ohne beobachtetes Prozessende', () => {
+  it('erfolgreiche result-Zeile → fertig, sonst fehler', async () => {
+    const { statusAusProtokoll } = await import('./satellit-auftrag.js');
+    expect(statusAusProtokoll('{"type":"result","subtype":"success","is_error":false,"result":"ok"}\n')).toBe('fertig');
+    expect(statusAusProtokoll('{"type":"assistant"}\n')).toBe('fehler');
+    expect(statusAusProtokoll('')).toBe('fehler');
+  });
+});
+
 describe('v1426 — Changelog seit Auftragsstart geändert?', () => {
   it('erkennt CHANGELOG.md (Groß/Klein egal) nach Zeitstempel, ohne Datei false', async () => {
     const { changelogGeaendert } = await import('./satellit-auftrag.js');
