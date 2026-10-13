@@ -866,6 +866,11 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
   - **Beweis 13.10. (Angebots-Radar, nur lesend):** Umgebungs-Route 200 (vorher 409); Erkennen am Gerät lieferte die echten Schlüssel (AKTUALISIERUNG_MIN, BROWSER_* …); Deploy-Stand mit Stufen; Apps 1.25.0 auf allen Plattformen.
   - Beobachtung: Auf „Welche Umgebungsvariablen braucht Angebots-Radar?“ (außerhalb des Projektfadens) fragte Alfred Claude Code (0,26 $) statt kostenlos zu erkennen.
   - Nicht live: Stage-Deploy, Hochstufen und Rollback auf einem echten Zielrechner — wartet auf die erste Bestätigung des Owners.
+- **v1444 + App 1.26.0 (Owner 13.10. spät: Remote für bestehende Geräte-Projekte, „beides“, unter madh/):**
+  - `projekt_remote` (App/Web „Remote einrichten“): Adresse eintragen oder neues privates Repo auf der eigenen GitLab-Instanz anlegen (`gitlabRepoAnlegen`, nur https, vorhandene Pfade nie überschrieben); immer mit Bestätigung.
+  - Danach `origin` am Gerät (`git_remote`, ohne abweichende pushurl) und erster Push über den abgesicherten Weg. Ändern und Entfernen möglich.
+  - **Beweis 13.10.:** Für Angebots-Radar über die Web-Route angefordert → Bestätigung „Neues privates Repo „angebots-radar-osterreich“ … anlegen und … pushen?“ mit Token-Hinweis; selbst abgelehnt, nichts angelegt.
+  - Offen klein: Der Token-Hinweis spricht beim Remote vom „Zielrechner“ statt vom Gerät.
   - **Offen (Owner):** erstes Projekt mit Remote + Deploy-Ziel (z. B. dev auf .96) deployen und bestätigen → Live-Beweis Nachkontrolle/Rollback.
 
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
