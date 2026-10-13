@@ -13,7 +13,9 @@ export interface OrdnerRegel { id: string; quelle: 'ordner'; pfad: string; muste
 export interface BenachrichtigungRegel { id: string; quelle: 'benachrichtigung'; apps: string[]; titel?: string }
 /** v1430 R4b — Outlook-Posteingang (Windows): neue Mails, optional nach Absender/Betreff; nur Kopfdaten */
 export interface OutlookRegel { id: string; quelle: 'outlook'; absender?: string; betreff?: string }
-export type BeobachterRegel = OrdnerRegel | BenachrichtigungRegel | OutlookRegel;
+/** v1431 R4c — Build-Wache: die freigegebenen Prüfbefehle eines Geräte-Projekts regelmäßig ausführen, Wechsel rot/grün melden */
+export interface BuildRegel { id: string; quelle: 'build'; pfad: string; befehle: string[]; intervallMin?: number }
+export type BeobachterRegel = OrdnerRegel | BenachrichtigungRegel | OutlookRegel | BuildRegel;
 
 export interface Beobachtung { regel: string; quelle: string; art: string; schluessel: string; zeit: string; kopf: Record<string, unknown> }
 export interface BeobachterStand { regel: string; quelle: string; zustand: 'laeuft' | 'gestoert' | 'aus'; grund?: string; letzte?: string; anzahl: number; /** v1430 Outlook: Konten am Gerät (Server prüft Doppel-Lesen) */ konten?: string[] }
@@ -180,6 +182,40 @@ export class AbfrageBeobachter<T> implements Laeufer {
   }
 }
 
+/** v1431 R4c — Build-Wache: meldet nur Wechsel (unbekannt/grün → rot, rot → grün); pausiert, solange im Ordner ein Auftrag läuft. */
+export class BuildWache implements Laeufer {
+  private timer?: ReturnType<typeof setInterval>;
+  private letzter?: boolean;
+  private laeuft = false;
+  readonly stand: BeobachterStand;
+  constructor(private readonly r: BuildRegel, private readonly o: { pruefen: (pfad: string, befehle: string[]) => Promise<{ ok: boolean; text: string }>; beschaeftigt: (pfad: string) => boolean; melde: (b: Beobachtung) => void; intervallMs?: number }) {
+    this.stand = { regel: r.id, quelle: 'build', zustand: 'aus', anzahl: 0 };
+  }
+  start(): void {
+    this.stand.zustand = 'laeuft';
+    const ms = this.o.intervallMs ?? Math.max(15, Math.min(1440, this.r.intervallMin ?? 60)) * 60_000;
+    void this.runde();
+    this.timer = setInterval(() => { void this.runde(); }, ms);
+  }
+  stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; if (this.stand.zustand === 'laeuft') this.stand.zustand = 'aus'; }
+  async runde(): Promise<void> {
+    if (this.laeuft || !this.r.befehle?.length) return;
+    if (this.o.beschaeftigt(this.r.pfad)) { this.stand.grund = 'pausiert: Auftrag läuft im Projekt'; return; }
+    this.laeuft = true;
+    try {
+      const e = await this.o.pruefen(this.r.pfad, this.r.befehle);
+      this.stand.zustand = 'laeuft'; this.stand.grund = e.ok ? undefined : 'zuletzt rot';
+      if (this.letzter !== e.ok && !(this.letzter === undefined && e.ok)) {
+        const zeit = new Date().toISOString();
+        this.stand.letzte = zeit; this.stand.anzahl++;
+        this.o.melde({ regel: this.r.id, quelle: 'build', art: e.ok ? 'gruen' : 'rot', schluessel: `${this.r.id}:${e.ok ? 'gruen' : 'rot'}:${zeit}`, zeit, kopf: { pfad: this.r.pfad, befehle: this.r.befehle, auszug: e.text.slice(-600) } });
+      }
+      this.letzter = e.ok;
+    } catch (err) { this.stand.zustand = 'gestoert'; this.stand.grund = (err as Error).message.slice(0, 200); }
+    finally { this.laeuft = false; }
+  }
+}
+
 /** Alle Beobachter eines Geräts: Regeln vom Gehirn übernehmen (Unterschiede starten/stoppen), Stand für die Sinne. */
 export class BeobachterVerwaltung {
   private laufend = new Map<string, { sig: string; b: Laeufer }>();
@@ -187,7 +223,9 @@ export class BeobachterVerwaltung {
   private readonly buendler: Buendler;
   constructor(private readonly o: { senden: (e: Beobachtung[]) => void; erlaubt: (pfad: string) => boolean; veto: () => boolean; log?: (t: string) => void; stabilMs?: number; intervallMs?: number;
     /** v1430 R4b — Quellen (eingespeist, damit Tests ohne Outlook/Benachrichtigungs-DB laufen) */
-    benachrichtigungen?: () => Promise<Array<{ app: string; zeit: string; titel?: string }>>; outlook?: () => Promise<Array<{ id: string; datum: string; von: string; betreff: string; anhaenge?: number }>>; outlookKonten?: () => Promise<string[]>; abfrageMs?: { benachrichtigung?: number; outlook?: number } }) {
+    benachrichtigungen?: () => Promise<Array<{ app: string; roh?: string; zeit: string; titel?: string }>>;
+    /** v1431 R4c — Build-Wache: Prüfbefehle ausführen, laufende Aufträge erkennen */
+    pruefen?: (pfad: string, befehle: string[]) => Promise<{ ok: boolean; text: string }>; beschaeftigt?: (pfad: string) => boolean; buildMs?: number; outlook?: () => Promise<Array<{ id: string; datum: string; von: string; betreff: string; anhaenge?: number }>>; outlookKonten?: () => Promise<string[]>; abfrageMs?: { benachrichtigung?: number; outlook?: number } }) {
     this.buendler = new Buendler(o.senden, { intervallMs: o.intervallMs });
   }
 
@@ -202,6 +240,8 @@ export class BeobachterVerwaltung {
         if (!this.o.benachrichtigungen) { this.abgelehnt.push({ regel: r.id, quelle: r.quelle, zustand: 'gestoert', grund: 'Benachrichtigungen auf diesem System nicht lesbar (nur Windows/macOS)', anzahl: 0 }); continue; }
       } else if (r.quelle === 'outlook') {
         if (!this.o.outlook) { this.abgelehnt.push({ regel: r.id, quelle: r.quelle, zustand: 'gestoert', grund: 'Outlook nicht vorhanden (nur Windows mit Outlook)', anzahl: 0 }); continue; }
+      } else if (r.quelle === 'build') {
+        if (!this.o.pruefen || !r.pfad || !this.o.erlaubt(r.pfad) || !r.befehle?.length) { this.abgelehnt.push({ regel: r.id, quelle: r.quelle, zustand: 'gestoert', grund: !r.befehle?.length ? 'Projekt hat keine Prüfbefehle' : `Projektordner nicht freigegeben: ${r.pfad}`, anzahl: 0 }); continue; }
       } else continue;
       soll.set(r.id, r);
     }
@@ -214,7 +254,7 @@ export class BeobachterVerwaltung {
       const b = this.laeufer(r);
       b.start();
       this.laufend.set(id, { sig: JSON.stringify(r), b });
-      this.o.log?.(`Beobachter ${id} (${r.quelle === 'ordner' ? `${r.pfad}${r.muster ? `, ${r.muster}` : ''}` : r.quelle}): ${b.stand.zustand}${b.stand.grund ? ` — ${b.stand.grund}` : ''}`);
+      this.o.log?.(`Beobachter ${id} (${r.quelle === 'ordner' ? `${r.pfad}${r.muster ? `, ${r.muster}` : ''}` : r.quelle === 'build' ? `build ${r.pfad}` : r.quelle}): ${b.stand.zustand}${b.stand.grund ? ` — ${b.stand.grund}` : ''}`);
     }
     if (veto && regeln.length) this.abgelehnt = regeln.map(r => ({ regel: r.id, quelle: r.quelle, zustand: 'aus' as const, grund: 'am Gerät abgeschaltet', anzahl: 0 }));
   }
@@ -222,10 +262,11 @@ export class BeobachterVerwaltung {
   private laeufer(r: BeobachterRegel): Laeufer {
     const melde = (x: Beobachtung) => this.buendler.push(x);
     if (r.quelle === 'ordner') return new OrdnerBeobachter(r, melde, { stabilMs: this.o.stabilMs });
+    if (r.quelle === 'build') return new BuildWache(r, { pruefen: this.o.pruefen!, beschaeftigt: this.o.beschaeftigt ?? (() => false), melde, intervallMs: this.o.buildMs });
     if (r.quelle === 'benachrichtigung') {
       const apps = (r.apps ?? []).map(a => a.toLowerCase()).filter(Boolean);
       return new AbfrageBeobachter({ regel: r.id, quelle: 'benachrichtigung', intervallMs: this.o.abfrageMs?.benachrichtigung ?? 60_000, lesen: this.o.benachrichtigungen!,
-        schluessel: (b) => `${b.app}|${b.zeit}|${b.titel ?? ''}`, passt: (b) => apps.some(a => b.app.toLowerCase().includes(a)) && enthaelt(b.titel, r.titel),
+        schluessel: (b) => `${b.roh ?? b.app}|${b.zeit}|${b.titel ?? ''}`, passt: (b) => apps.some(a => b.app.toLowerCase().includes(a) || (b.roh ?? '').toLowerCase().includes(a)) && enthaelt(b.titel, r.titel), // v1431 lesbarer Name oder Kennung
         kopf: (b) => ({ app: b.app, titel: (b.titel ?? '').slice(0, 160), zeit: b.zeit }), melde });
     }
     return new AbfrageBeobachter({ regel: r.id, quelle: 'outlook', intervallMs: this.o.abfrageMs?.outlook ?? 120_000, lesen: this.o.outlook!,

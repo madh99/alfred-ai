@@ -10,10 +10,11 @@ import type { BeobachterListe, BeobachterRegelDto } from '@/lib/alfred-client';
 
 const WIRKUNG: Record<string, string> = { hinweis: 'Hinweis', vorgang: 'Vorgang', aufgabe: 'Aufgabe (Alfred erledigt)', projekt: 'Projekt weiterarbeiten (mit Bestätigung)' };
 const ART: Record<string, string> = { neu: 'neu', geaendert: 'geändert', geloescht: 'gelöscht' };
-const QUELLE: Record<string, string> = { ordner: 'Ordner', benachrichtigung: 'Benachrichtigungen (Windows/macOS)', outlook: 'Outlook-Posteingang (Windows)' };
+const QUELLE: Record<string, string> = { ordner: 'Ordner', benachrichtigung: 'Benachrichtigungen (Windows/macOS)', outlook: 'Outlook-Posteingang (Windows)', build: 'Build-Wache (Prüfbefehle eines Projekts)' };
 function filterText(r: BeobachterRegelDto): string {
   const f = r.filter;
   if (r.quelle === 'benachrichtigung') return `Benachrichtigungen: ${((f.apps as string[] | undefined) ?? []).join(', ')}${f.titel ? ` · Titel enthält „${String(f.titel)}“` : ''}`;
+  if (r.quelle === 'build') return `Build-Wache: ${((f.befehle as string[] | undefined) ?? []).join(' ; ')} · alle ${String(f.intervallMin ?? 60)} min`;
   if (r.quelle === 'outlook') return `Outlook-Posteingang${f.absender ? ` · von „${String(f.absender)}“` : ''}${f.betreff ? ` · Betreff „${String(f.betreff)}“` : ''}`;
   return `${String(f.pfad ?? '')}${f.muster ? ` · ${String(f.muster)}` : ''} · ${((f.ereignisse as string[] | undefined) ?? ['neu']).map(x => ART[x] ?? x).join('/')}`;
 }
@@ -24,7 +25,7 @@ export function BeobachterPage() {
   const [meldung, setMeldung] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [neu, setNeu] = useState(false);
-  const [f, setF] = useState({ geraet: '', quelle: 'ordner', apps: '', titel: '', absender: '', betreff: '', pfad: '', muster: '', ereignisse: ['neu'] as string[], unterordner: false, wirkung: 'hinweis', auftrag: '', projekt: '', name: '' });
+  const [f, setF] = useState({ intervallMin: '60', geraet: '', quelle: 'ordner', apps: '', titel: '', absender: '', betreff: '', pfad: '', muster: '', ereignisse: ['neu'] as string[], unterordner: false, wirkung: 'hinweis', auftrag: '', projekt: '', name: '' });
 
   const laden = useCallback(async () => {
     if (!client) return;
@@ -45,7 +46,7 @@ export function BeobachterPage() {
   const anlegen = async () => {
     if (!client) return;
     setBusy(true);
-    const x: { success: boolean; display?: string; error?: string } = await client.beobachterAnlegen({ ...f, ...(f.wirkung === 'projekt' ? {} : { projekt: undefined }) }).catch((e: Error) => ({ success: false, error: e.message }));
+    const x: { success: boolean; display?: string; error?: string } = await client.beobachterAnlegen({ ...f, intervallMin: Number(f.intervallMin) || 60, ...(f.quelle === 'build' ? { geraet: undefined } : {}), ...(f.wirkung === 'projekt' || f.quelle === 'build' ? {} : { projekt: undefined }) }).catch((e: Error) => ({ success: false, error: e.message }));
     setBusy(false);
     setMeldung({ ok: x.success, text: x.success ? (x.display ?? 'Angelegt.') : (x.error ?? 'Fehler') });
     if (x.success) { setNeu(false); setF(v => ({ ...v, pfad: '', muster: '', auftrag: '', name: '', apps: '', titel: '', absender: '', betreff: '' })); await laden(); }
@@ -63,14 +64,20 @@ export function BeobachterPage() {
       {meldung && <div className={`text-xs ${meldung.ok ? 'text-emerald-400' : 'text-red-400'}`}>{meldung.text}</div>}
       {neu && d && (
         <div className="bg-[#141414] border border-[#2a2a2a] rounded p-3 space-y-2 text-xs text-gray-300">
-          <label className="flex items-center gap-2">Gerät
-            <select className={feld} value={f.geraet} onChange={e => setF({ ...f, geraet: e.target.value })}>{d.geraete.map(g => <option key={g.id} value={g.id}>{g.name}{g.online ? '' : ' (offline)'}</option>)}</select></label>
+          {f.quelle !== 'build' && <label className="flex items-center gap-2">Gerät
+            <select className={feld} value={f.geraet} onChange={e => setF({ ...f, geraet: e.target.value })}>{d.geraete.map(g => <option key={g.id} value={g.id}>{g.name}{g.online ? '' : ' (offline)'}</option>)}</select></label>}
           <label className="flex items-center gap-2">Was
             <select className={feld} value={f.quelle} onChange={e => setF({ ...f, quelle: e.target.value })}>{Object.entries(QUELLE).map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></label>
           {f.quelle === 'benachrichtigung' && (<>
             <input className={`${feld} w-full`} placeholder="Apps (Pflicht, durch Komma), z. B. WhatsApp, Teams" value={f.apps} onChange={e => setF({ ...f, apps: e.target.value })} />
             <input className={`${feld} w-full`} placeholder="Titel enthält (optional)" value={f.titel} onChange={e => setF({ ...f, titel: e.target.value })} />
             <div className="text-gray-500">Nur App und Titel verlassen das Gerät; andere Apps verwirft der Satellit.</div>
+          </>)}
+          {f.quelle === 'build' && (<>
+            <label className="flex items-center gap-2">Projekt
+              <select className={feld} value={f.projekt} onChange={e => setF({ ...f, projekt: e.target.value })}><option value="">wählen</option>{d.projekte.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+            <input className={`${feld} w-32`} type="number" min={15} max={1440} placeholder="Minuten" value={f.intervallMin} onChange={e => setF({ ...f, intervallMin: e.target.value })} />
+            <div className="text-gray-500">Führt nur die freigegebenen Prüfbefehle des Projekts auf dessen Gerät aus und meldet rot bzw. wieder grün; pausiert während eines Laufs.</div>
           </>)}
           {f.quelle === 'outlook' && (<>
             <input className={`${feld} w-full`} placeholder="Absender enthält (optional)" value={f.absender} onChange={e => setF({ ...f, absender: e.target.value })} />
@@ -87,12 +94,12 @@ export function BeobachterPage() {
           </>)}
           <label className="flex items-center gap-2">Dann
             <select className={feld} value={f.wirkung} onChange={e => setF({ ...f, wirkung: e.target.value })}>{Object.entries(WIRKUNG).map(([k, t]) => <option key={k} value={k}>{t}</option>)}</select></label>
-          {f.wirkung === 'projekt' && (
+          {f.wirkung === 'projekt' && f.quelle !== 'build' && (
             <label className="flex items-center gap-2">Projekt
               <select className={feld} value={f.projekt} onChange={e => setF({ ...f, projekt: e.target.value })}><option value="">wählen</option>{d.projekte.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>)}
           <textarea className={`${feld} w-full`} rows={2} placeholder={f.wirkung === 'hinweis' ? 'Notiz (optional)' : f.wirkung === 'vorgang' ? 'Nächster Schritt (optional)' : 'Was soll Alfred tun? (Pflicht)'} value={f.auftrag} onChange={e => setF({ ...f, auftrag: e.target.value })} />
           <input className={`${feld} w-full`} placeholder="Name (optional), z. B. Rechnungen" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
-          <div className="text-right"><button disabled={busy || !f.geraet} onClick={() => void anlegen()} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded">Anlegen</button></div>
+          <div className="text-right"><button disabled={busy || (f.quelle === 'build' ? !f.projekt : !f.geraet)} onClick={() => void anlegen()} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded">Anlegen</button></div>
         </div>
       )}
       {d && d.regeln.length === 0 && <div className="text-xs text-gray-500 italic">Noch keine Beobachter. Beispiel im Chat: „Sag mir, wenn in Downloads eine PDF-Rechnung landet."</div>}

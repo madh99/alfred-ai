@@ -14,6 +14,7 @@ class BeobachterRegel {
   final Map<String, dynamic> filter;
   /// 1.21.0 — Filter je Quelle als eine Zeile
   String get filterText => quelle == 'benachrichtigung' ? 'Benachrichtigungen: ${((filter['apps'] as List<dynamic>?) ?? []).join(', ')}${filter['titel'] != null ? ' · Titel enthält „${filter['titel']}“' : ''}'
+      : quelle == 'build' ? 'Build-Wache: ${((filter['befehle'] as List<dynamic>?) ?? []).join(' ; ')} · alle ${filter['intervallMin'] ?? 60} min'
       : quelle == 'outlook' ? 'Outlook-Posteingang${filter['absender'] != null ? ' · von „${filter['absender']}“' : ''}${filter['betreff'] != null ? ' · Betreff „${filter['betreff']}“' : ''}'
       : '$pfad${muster != null ? ' · $muster' : ''} · ${ereignisse.map((e) => artText[e] ?? e).join('/')}';
   final String? auftrag, standGrund, muster;
@@ -25,7 +26,7 @@ class BeobachterRegel {
 
 const wirkungText = {'hinweis': 'Hinweis', 'vorgang': 'Vorgang', 'aufgabe': 'Aufgabe (Alfred erledigt)', 'projekt': 'Projekt weiterarbeiten (mit Bestätigung)'};
 const artText = {'neu': 'neu', 'geaendert': 'geändert', 'geloescht': 'gelöscht'};
-const quelleText = {'ordner': 'Ordner', 'benachrichtigung': 'Benachrichtigungen (Windows/macOS)', 'outlook': 'Outlook-Posteingang (Windows)'};
+const quelleText = {'ordner': 'Ordner', 'benachrichtigung': 'Benachrichtigungen (Windows/macOS)', 'outlook': 'Outlook-Posteingang (Windows)', 'build': 'Build-Wache (Prüfbefehle eines Projekts)'};
 
 class Beobachter extends StatefulWidget {
   const Beobachter({super.key, required this.json, this.aufMeldung});
@@ -46,6 +47,7 @@ class _BeobachterState extends State<Beobachter> {
       apps = TextEditingController(), titel = TextEditingController(), absender = TextEditingController(), betreff = TextEditingController();
   final Set<String> arten = {'neu'};
   bool unterordner = false;
+  final intervall = TextEditingController(text: '60'); // 1.22.0 Build-Wache
 
   @override
   void initState() { super.initState(); laden(); }
@@ -80,8 +82,8 @@ class _BeobachterState extends State<Beobachter> {
     setState(() => sendet = true);
     try {
       final x = await widget.json('/api/geraete/beobachter', methode: 'POST', koerper: {
-        'geraet': geraetId, 'quelle': quelle, 'pfad': pfad.text.trim(), 'muster': muster.text.trim(), 'ereignisse': arten.toList(), 'unterordner': unterordner,
-        'apps': apps.text.trim(), 'titel': titel.text.trim(), 'absender': absender.text.trim(), 'betreff': betreff.text.trim(),
+        if (quelle != 'build') 'geraet': geraetId, 'quelle': quelle, 'pfad': pfad.text.trim(), 'muster': muster.text.trim(), 'ereignisse': arten.toList(), 'unterordner': unterordner,
+        'apps': apps.text.trim(), 'titel': titel.text.trim(), 'absender': absender.text.trim(), 'betreff': betreff.text.trim(), 'intervallMin': int.tryParse(intervall.text.trim()) ?? 60,
         'wirkung': wirkung, 'auftrag': auftrag.text.trim(), 'name': name.text.trim(), if (projektId != null) 'projekt': projektId,
       });
       if (!mounted) return;
@@ -112,7 +114,7 @@ class _BeobachterState extends State<Beobachter> {
       Text('Alfred bemerkt, was auf deinen Geräten passiert (Ordner, Benachrichtigungen, Outlook), und reagiert nach diesen Regeln. Gemeldet werden nur Kopfdaten, nie Inhalte.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
       if (fehler != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(fehler!, style: TextStyle(color: theme.colorScheme.error))),
       if (neuOffen) Card(margin: const EdgeInsets.only(top: 12), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [const Text('Gerät: '), DropdownButton<String>(key: const Key('beobachter-geraet'), value: geraetId, items: [for (final g in geraete) DropdownMenuItem(value: '${g['id']}', child: Text('${g['name']}${g['online'] == true ? '' : ' (offline)'}'))], onChanged: (v) => setState(() => geraetId = v))]),
+        if (quelle != 'build') Row(children: [const Text('Gerät: '), DropdownButton<String>(key: const Key('beobachter-geraet'), value: geraetId, items: [for (final g in geraete) DropdownMenuItem(value: '${g['id']}', child: Text('${g['name']}${g['online'] == true ? '' : ' (offline)'}'))], onChanged: (v) => setState(() => geraetId = v))]),
         Row(children: [const Text('Was: '), DropdownButton<String>(key: const Key('beobachter-quelle'), value: quelle, items: [for (final e in quelleText.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: (v) => setState(() => quelle = v))]),
         if (quelle == 'ordner') ...[
           TextField(key: const Key('beobachter-pfad'), controller: pfad, decoration: const InputDecoration(labelText: 'Ordner auf dem Gerät (absolut, freigegeben)', hintText: r'C:\Users\madh\Downloads')),
@@ -125,17 +127,22 @@ class _BeobachterState extends State<Beobachter> {
           TextField(controller: titel, decoration: const InputDecoration(labelText: 'Titel enthält (optional)')),
           Text('Nur App und Titel verlassen das Gerät; andere Apps verwirft der Satellit.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         ],
+        if (quelle == 'build') ...[
+          Row(children: [const Text('Projekt: '), DropdownButton<String>(key: const Key('beobachter-projekt'), value: projektId, hint: const Text('wählen'), items: [for (final p in projekte) DropdownMenuItem(value: '${p['id']}', child: Text('${p['name']}'))], onChanged: (v) => setState(() => projektId = v))]),
+          TextField(key: const Key('beobachter-intervall'), controller: intervall, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Alle wie viele Minuten (15–1440)')),
+          Text('Führt nur die freigegebenen Prüfbefehle des Projekts auf dessen Gerät aus und meldet, wenn sie rot werden oder wieder grün. Pausiert, solange ein Lauf im Projekt arbeitet.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        ],
         if (quelle == 'outlook') ...[
           TextField(key: const Key('beobachter-absender'), controller: absender, decoration: const InputDecoration(labelText: 'Absender enthält (optional)')),
           TextField(controller: betreff, decoration: const InputDecoration(labelText: 'Betreff enthält (optional)')),
           Text('Nur für Konten, die Alfred nicht schon am Server liest — sonst kommt jede Mail doppelt.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         ],
         Row(children: [const Text('Dann: '), DropdownButton<String>(key: const Key('beobachter-wirkung'), value: wirkung, items: [for (final e in wirkungText.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: (v) => setState(() => wirkung = v))]),
-        if (wirkung == 'projekt') Row(children: [const Text('Projekt: '), DropdownButton<String>(value: projektId, hint: const Text('wählen'), items: [for (final p in projekte) DropdownMenuItem(value: '${p['id']}', child: Text('${p['name']}'))], onChanged: (v) => setState(() => projektId = v))]),
+        if (wirkung == 'projekt' && quelle != 'build') Row(children: [const Text('Projekt: '), DropdownButton<String>(value: projektId, hint: const Text('wählen'), items: [for (final p in projekte) DropdownMenuItem(value: '${p['id']}', child: Text('${p['name']}'))], onChanged: (v) => setState(() => projektId = v))]),
         TextField(key: const Key('beobachter-auftrag'), controller: auftrag, maxLines: 2, decoration: InputDecoration(labelText: wirkung == 'hinweis' ? 'Notiz (optional)' : wirkung == 'vorgang' ? 'Nächster Schritt (optional)' : 'Was soll Alfred tun? (Pflicht)')),
         TextField(key: const Key('beobachter-name'), controller: name, decoration: const InputDecoration(labelText: 'Name (optional)', hintText: 'z. B. Rechnungen')),
         const SizedBox(height: 8),
-        Align(alignment: Alignment.centerRight, child: FilledButton(key: const Key('beobachter-anlegen'), onPressed: sendet || geraetId == null ? null : anlegen, child: const Text('Anlegen'))),
+        Align(alignment: Alignment.centerRight, child: FilledButton(key: const Key('beobachter-anlegen'), onPressed: sendet || (quelle == 'build' ? projektId == null : geraetId == null) ? null : anlegen, child: const Text('Anlegen'))),
       ]))),
       const SizedBox(height: 12),
       if (laedt) const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())),

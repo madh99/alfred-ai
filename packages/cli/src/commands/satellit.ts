@@ -21,10 +21,10 @@ import { BeobachterVerwaltung, type BeobachterRegel } from './satellit-beobachte
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
-import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, fortschrittVon, projektLesen, projektDiff, kurzTitel, anhangInsProjekt, protokollSchreiben, umgebungLesen, umgebungNeu, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
+import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, fortschrittVon, projektLesen, projektDiff, kurzTitel, anhangInsProjekt, protokollSchreiben, schwaerze, umgebungLesen, umgebungNeu, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
-import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
+import { benachrichtigungen, appName } from './satellit-benachrichtigungen.js'; // v1275, v1431 appName
 import { Bedienung, GESPERRTE_FENSTER_STANDARD } from './satellit-bedienen.js'; // v1276
 import { linuxStandardVerzeichnisse, repariereStandardFreigaben } from './satellit-verzeichnisse.js'; // v1339
 import { linuxSitzungsUmgebung } from './satellit-bedienen-linux.js'; // v1339
@@ -754,7 +754,10 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
     veto: () => k.beobachterAus === true,
     log,
     // v1430 R4b — Benachrichtigungen (Windows/macOS) und Outlook (Windows) als Quellen
-    ...(process.platform === 'win32' || process.platform === 'darwin' ? { benachrichtigungen: async () => (await benachrichtigungen(1, 50)).map(b => ({ app: b.app, zeit: b.zeit, titel: b.titel })) } : {}),
+    ...(process.platform === 'win32' || process.platform === 'darwin' ? { benachrichtigungen: async () => (await benachrichtigungen(1, 50)).map(b => ({ app: appName(b.app), roh: b.app, zeit: b.zeit, titel: b.titel })) } : {}), // v1431 lesbarer App-Name
+    // v1431 R4c — Build-Wache über dieselbe Prüfung wie die Abnahme (pruefen_befehl), Pause während eines Auftrags im Ordner
+    pruefen: async (pfad, befehle) => { const r = await fuehreAus(k, 'pruefen_befehl', { pruefungen: befehle.map(b => ({ art: 'befehl', ziel: b, cwd: pfad, timeoutS: 600 })) }); return { ok: r.success && (r.data as { ok?: boolean } | undefined)?.ok === true, text: schwaerze(String(r.display ?? r.error ?? '')) }; },
+    beschaeftigt: (pfad) => { try { return auftraege().some(a => a.status === 'laeuft' && path.resolve(a.projekt) === path.resolve(pfad)); } catch { return false; } },
     ...(process.platform === 'win32' && outlookVorhanden() ? { outlook: async () => (await outlookPosteingang({ anzahl: 30 })).mails, outlookKonten: () => outlookKonten() } : {}),
   });
   const stop = () => { laeuft = false; sinne.stop(); beobachter.stopAlle(); try { aktiv?.close(); } catch { /* */ } try { ipc?.stop(); } catch { /* */ } };

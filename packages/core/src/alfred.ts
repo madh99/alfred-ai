@@ -16209,7 +16209,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       repo: repo as never,
       owner: () => this.tryOwner(),
       geraete: async () => (await gw.liste()).map(g => ({ id: g.id, name: g.name, online: g.online, sinne: g.sinne, sinneZeit: g.sinneZeit })),
-      projekte: async () => { const o = this.tryOwner(); return o && this.projectRepo ? (await this.projectRepo.list(o, { nurGeraete: true, limit: 200 })).filter(p => p.status !== 'archived').map(p => ({ id: p.id, name: p.name })) : []; },
+      projekte: async () => { const o = this.tryOwner(); return o && this.projectRepo ? (await this.projectRepo.list(o, { nurGeraete: true, limit: 200 })).filter(p => p.status !== 'archived').map(p => ({ id: p.id, name: p.name, geraetId: p.geraetId, pfad: p.cwd ?? undefined, pruefBefehle: p.pruefBefehle })) : []; }, // v1431 Build-Wache
       sendeAn: (id, n) => gw.sendeAn(id, n),
       geraetSkillName,
       melde: async (text) => { await this.meldeOhneModell(text); },

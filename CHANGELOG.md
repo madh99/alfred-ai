@@ -55,6 +55,19 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1431] - 2026-10-13
+
+### Added — Build-Wache für Geräte-Projekte (v1431, App 1.22.0, Spec R4c B6)
+
+- Eine Beobachter-Regel der Quelle `build` führt die freigegebenen Prüfbefehle eines Geräte-Projekts regelmäßig auf dessen Gerät aus (alle 15–1440 min, Standard 60) und meldet nur Wechsel: rot bzw. wieder grün. Eigene Befehle sind nicht möglich; Gerät und Ordner kommen aus dem Projekt.
+- Während ein Claude-Code-Lauf im Projektordner arbeitet, pausiert die Wache.
+- Wirkungen wie bei allen Beobachtern. Bei „Projekt weiterarbeiten“ wird ein Fix-Lauf im selben Projekt vorgeschlagen, immer mit Bestätigung; „wieder grün“ ist nur eine Meldung.
+- App und Web: Quelle „Build-Wache“ mit Projekt und Intervall; Gespräch: `beobachter` mit `quelle=build`, `projekt`, `intervallMin`.
+
+### Fixed — Lesbarer App-Name bei Benachrichtigungs-Beobachtern (v1431)
+
+Windows meldete die rohe App-Kennung (z. B. `{1AC14E77-…}\WindowsPowerShell\v1.0\powershell.exe`). Der Satellit nutzt jetzt den lesbaren Namen; Regeln passen auf beide Formen.
+
 ## [0.19.0-jarvis.1430] - 2026-10-13
 
 ### Added — Beobachter für Benachrichtigungen und Outlook (v1430, App 1.21.0, Spec R4b)

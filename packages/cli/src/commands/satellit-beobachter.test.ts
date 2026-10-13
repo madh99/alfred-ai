@@ -99,3 +99,20 @@ describe('v1430 R4b — Benachrichtigungen und Outlook', () => {
     expect(v.stand().map(s => s.zustand)).toEqual(['gestoert', 'gestoert']);
   });
 });
+
+describe('v1431 R4c — Build-Wache', () => {
+  it('meldet nur Wechsel (erst rot, dann grün), pausiert bei laufendem Auftrag', async () => {
+    const { BuildWache } = await import('./satellit-beobachter.js');
+    const ergebnisse = [true, false, false, true];
+    let i = 0; let beschaeftigt = false;
+    const raus: Beobachtung[] = [];
+    const w = new BuildWache({ id: 'w1', quelle: 'build', pfad: '/p', befehle: ['npm test'] }, { pruefen: async () => ({ ok: ergebnisse[i++] ?? true, text: 'FAIL x.test.js' }), beschaeftigt: () => beschaeftigt, melde: (b) => raus.push(b), intervallMs: 1_000_000 });
+    for (let n = 0; n < 4; n++) await w.runde();
+    expect(raus.map(r => r.art)).toEqual(['rot', 'gruen']);
+    expect(raus[0]!.kopf).toMatchObject({ pfad: '/p', befehle: ['npm test'], auszug: 'FAIL x.test.js' });
+    beschaeftigt = true;
+    await w.runde();
+    expect(w.stand.grund).toBe('pausiert: Auftrag läuft im Projekt');
+    expect(i).toBe(4);
+  });
+});

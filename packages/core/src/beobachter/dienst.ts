@@ -22,7 +22,7 @@ export interface BeobachterDienstDeps {
   repo: BeobachterRepo;
   owner: () => string | undefined;
   geraete: () => Promise<GeraetStand[]>;
-  projekte: () => Promise<Array<{ id: string; name: string }>>;
+  projekte: () => Promise<Array<{ id: string; name: string; geraetId?: string; pfad?: string; pruefBefehle?: string[] }>>;
   sendeAn: (geraetId: string, n: { typ: string; [k: string]: unknown }) => boolean;
   geraetSkillName: (name: string) => string;
   melde: (text: string) => Promise<void>;
@@ -157,6 +157,8 @@ export class BeobachterDienst {
     const text = trefferText(r, t);
     this.d.logger.info({ regel: r.id, name: r.name, wirkung: r.wirkung, art: t.art, schluessel: t.schluessel.slice(0, 120) }, 'v1429 Beobachtung');
     if (r.wirkung === 'hinweis') { await this.d.melde(`🔭 ${text}`); return; }
+    // v1431 — Build-Wache: „wieder grün" ist nur eine Meldung, kein neuer Vorgang/Fix-Lauf
+    if (r.quelle === 'build' && t.art === 'gruen') { await this.d.melde(`🔭 ${text}`); return; }
     if (r.wirkung === 'vorgang') {
       await this.d.vorgang({ titel: `${r.name}: ${String(t.kopf.name ?? t.art)}`.slice(0, 160), ziel: text, naechsterSchritt: r.auftrag ?? 'Owner entscheidet', dedupeKey: `beobachtung:${r.id}:${t.schluessel}` });
       await this.d.melde(`🔭 ${text} — als Vorgang angelegt.`);

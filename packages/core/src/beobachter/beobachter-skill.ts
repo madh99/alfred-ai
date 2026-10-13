@@ -12,7 +12,7 @@ export class BeobachterSkill extends Skill {
     name: 'beobachter',
     category: 'automation',
     description: 'Beobachter auf den Geräten des Owners (Satelliten): Ordner, Systembenachrichtigungen (Windows/macOS) oder den Outlook-Posteingang (Windows) beobachten und bei Treffern etwas tun. ' +
-      'quelle=ordner (pfad, muster, ereignisse) · benachrichtigung (apps = Liste der Apps, optional titel) · outlook (optional absender, betreff; nur Konten, die der Server nicht selbst liest). ' +
+      'quelle=ordner (pfad, muster, ereignisse) · benachrichtigung (apps = Liste der Apps, optional titel) · outlook (optional absender, betreff; nur Konten, die der Server nicht selbst liest) · build (projekt = Geräte-Projekt, intervallMin 15–1440; führt nur dessen freigegebene Prüfbefehle aus, meldet rot/wieder grün; wirkung projekt = Fix-Lauf mit Bestätigung). ' +
       'action=liste (Regeln mit Stand am Gerät) · anlegen (geraet, pfad = absoluter Ordner auf dem Gerät, muster z. B. "*.pdf", ereignisse neu|geaendert|geloescht, unterordner, ' +
       'wirkung hinweis|vorgang|aufgabe|projekt, auftrag = was Alfred tun soll (Pflicht bei aufgabe/projekt), projekt = Projektname bei wirkung projekt, name) · an · aus · loeschen (regel = Name oder Kennung). ' +
       'Wirkung: hinweis = Meldung; vorgang = Vorgang mit nächstem Schritt; aufgabe = Alfred erledigt den Auftrag mit fester Werkzeugliste (Gerät, Aufgaben, Erinnerungen, Gedächtnis); projekt = Weiterarbeiten am Geräte-Projekt, immer mit Bestätigung. ' +
@@ -25,7 +25,8 @@ export class BeobachterSkill extends Skill {
         action: { type: 'string', enum: ['liste', 'anlegen', 'an', 'aus', 'loeschen'] },
         regel: { type: 'string', description: 'Name oder Kennung der Regel (an/aus/loeschen)' },
         geraet: { type: 'string', description: 'Gerätename (z. B. PC-madh, Ubuntu-VM)' },
-        quelle: { type: 'string', enum: ['ordner', 'benachrichtigung', 'outlook'] },
+        quelle: { type: 'string', enum: ['ordner', 'benachrichtigung', 'outlook', 'build'] },
+        intervallMin: { type: 'number', description: 'Build-Wache: Minuten zwischen zwei Prüfungen (15–1440, Standard 60)' },
         pfad: { type: 'string', description: 'Absoluter Ordner auf dem Gerät (quelle ordner)' },
         apps: { type: 'array', items: { type: 'string' }, description: 'Apps (quelle benachrichtigung), z. B. WhatsApp' },
         titel: { type: 'string', description: 'Titel enthält (quelle benachrichtigung)' },

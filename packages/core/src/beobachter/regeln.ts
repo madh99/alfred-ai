@@ -16,13 +16,16 @@ export interface RegelLike {
 export interface Treffer { regel: string; quelle: string; art: string; schluessel: string; zeit: string; kopf: Record<string, unknown> }
 
 /** Eingabe aus Gespräch/App/Web prüfen. Gerät per Name oder ID aus den Owner-Geräten. */
-export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: string; name: string }>, projekte: Array<{ id: string; name: string }> = []):
+export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: string; name: string }>, projekte: Array<{ id: string; name: string; geraetId?: string; pfad?: string; pruefBefehle?: string[] }> = []):
   { ok: true; regel: Omit<RegelLike, 'id' | 'treffer' | 'letzterTreffer'> } | { ok: false; fehler: string } {
-  const gName = String(roh.geraet ?? roh.geraetId ?? '').trim().toLowerCase();
+  // v1431 — Build-Wache: das Gerät ergibt sich aus dem Projekt
+  const projektVon = (pn: string) => { const t = pn ? projekte.filter(x => x.name.toLowerCase().includes(pn)) : []; return projekte.find(x => x.id === pn || x.name.toLowerCase() === pn || (pn.length >= 8 && x.id.startsWith(pn))) ?? (t.length === 1 ? t[0] : undefined); };
+  const buildProjekt = String(roh.quelle ?? '') === 'build' ? projektVon(String(roh.projekt ?? roh.projektId ?? '').trim().toLowerCase()) : undefined;
+  const gName = String(roh.geraet ?? roh.geraetId ?? buildProjekt?.geraetId ?? '').trim().toLowerCase();
   const g = geraete.find(x => x.id === gName || x.name.toLowerCase() === gName) ?? (geraete.length === 1 && !gName ? geraete[0] : undefined);
   if (!g) return { ok: false, fehler: `Gerät fehlt oder unbekannt (${geraete.map(x => x.name).join(', ') || 'keine Geräte'})` };
   const quelle = String(roh.quelle ?? 'ordner') as Quelle;
-  if (!['ordner', 'benachrichtigung', 'outlook'].includes(quelle)) return { ok: false, fehler: `Quelle „${quelle}" gibt es nicht (ordner, benachrichtigung, outlook)` };
+  if (!['ordner', 'benachrichtigung', 'outlook', 'build'].includes(quelle)) return { ok: false, fehler: `Quelle „${quelle}" gibt es nicht (ordner, benachrichtigung, outlook, build)` };
   const f = (roh.filter && typeof roh.filter === 'object' ? roh.filter : roh) as Record<string, unknown>;
   // v1430 R4b — Benachrichtigungen (Apps, optional Titel) und Outlook (Absender/Betreff)
   const text = (v: unknown, max = 120) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
@@ -32,6 +35,11 @@ export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: 
     const apps = (Array.isArray(f.apps) ? f.apps : typeof f.apps === 'string' ? f.apps.split(/[,;]/) : typeof f.app === 'string' ? [f.app] : []).map(x => String(x).trim()).filter(Boolean).slice(0, 10);
     if (!apps.length) return { ok: false, fehler: 'apps fehlt (welche Apps, z. B. WhatsApp, Teams) — ohne App-Liste verlässt keine Benachrichtigung das Gerät' };
     filter = { apps, ...(text(f.titel) ? { titel: text(f.titel) } : {}) };
+  } else if (quelle === 'build') {
+    if (!buildProjekt) return { ok: false, fehler: `projekt fehlt oder unbekannt (Build-Wache gilt für ein Geräte-Projekt: ${projekte.map(x => x.name).join(', ') || 'keine Projekte'})` };
+    if (!buildProjekt.pruefBefehle?.length) return { ok: false, fehler: `${buildProjekt.name} hat keine Prüfbefehle — die Build-Wache führt nur die freigegebenen Prüfbefehle des Projekts aus` };
+    const iv = Number(f.intervallMin ?? f.intervall ?? 60);
+    filter = { projektId: buildProjekt.id, pfad: buildProjekt.pfad, befehle: buildProjekt.pruefBefehle, intervallMin: Number.isFinite(iv) ? Math.max(15, Math.min(1440, Math.round(iv))) : 60 };
   } else if (quelle === 'outlook') {
     filter = { ...(text(f.absender) ? { absender: text(f.absender) } : {}), ...(text(f.betreff) ? { betreff: text(f.betreff) } : {}) };
   } else {
@@ -47,7 +55,8 @@ export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: 
   const auftrag = typeof roh.auftrag === 'string' && roh.auftrag.trim() ? roh.auftrag.trim().slice(0, 2000) : undefined;
   if ((wirkung === 'aufgabe' || wirkung === 'projekt') && !auftrag) return { ok: false, fehler: `Für „${wirkung}" fehlt der Auftrag (was Alfred tun soll)` };
   let projektId: string | undefined;
-  if (wirkung === 'projekt') {
+  if (wirkung === 'projekt' && buildProjekt) projektId = buildProjekt.id; // Build-Wache: Fix-Lauf im selben Projekt
+  else if (wirkung === 'projekt') {
     const pn = String(roh.projekt ?? roh.projektId ?? '').trim().toLowerCase();
     const teil = pn ? projekte.filter(x => x.name.toLowerCase().includes(pn)) : [];
     const p = projekte.find(x => x.id === pn || x.name.toLowerCase() === pn || (pn.length >= 8 && x.id.startsWith(pn))) ?? (teil.length === 1 ? teil[0] : undefined); // eindeutiger Teilname
@@ -55,7 +64,7 @@ export function regelPruefen(roh: Record<string, unknown>, geraete: Array<{ id: 
     projektId = p.id;
   }
   const muster = typeof f.muster === 'string' && f.muster.trim() ? f.muster.trim().slice(0, 200) : undefined;
-  const name = String(roh.name ?? '').trim().slice(0, 80) || (quelle === 'benachrichtigung' ? `Benachrichtigungen ${(filter.apps as string[]).join(', ')}` : quelle === 'outlook' ? `Outlook${filter.absender ? ` von ${String(filter.absender)}` : ''}${filter.betreff ? ` „${String(filter.betreff)}"` : ''}` : `${muster ?? 'Dateien'} in ${pfad.split(/[\\/]/).filter(Boolean).pop() ?? pfad}`);
+  const name = String(roh.name ?? '').trim().slice(0, 80) || (quelle === 'build' ? `Build-Wache ${buildProjekt?.name ?? ''}` : quelle === 'benachrichtigung' ? `Benachrichtigungen ${(filter.apps as string[]).join(', ')}` : quelle === 'outlook' ? `Outlook${filter.absender ? ` von ${String(filter.absender)}` : ''}${filter.betreff ? ` „${String(filter.betreff)}"` : ''}` : `${muster ?? 'Dateien'} in ${pfad.split(/[\\/]/).filter(Boolean).pop() ?? pfad}`);
   const skills = Array.isArray(roh.skills) ? roh.skills.map(String).slice(0, 12) : undefined;
   return {
     ok: true,
@@ -80,6 +89,7 @@ const groesse = (b: unknown) => { const n = Number(b); if (!Number.isFinite(n)) 
 /** Ein Satz für Hinweis, Vorgangstitel und Bestätigung — nur Kopfdaten. */
 export function trefferText(r: RegelLike, t: Treffer): string {
   if (r.quelle === 'benachrichtigung') return `Benachrichtigung auf ${r.geraet}: ${String(t.kopf.app ?? '')}${t.kopf.titel ? ` — ${String(t.kopf.titel)}` : ''} (Regel „${r.name}")`;
+  if (r.quelle === 'build') return t.art === 'gruen' ? `Build-Wache „${r.name}" auf ${r.geraet}: Prüfbefehle wieder grün` : `Build-Wache „${r.name}" auf ${r.geraet}: Prüfbefehle rot (${((t.kopf.befehle as string[] | undefined) ?? []).join(' ; ')})${t.kopf.auszug ? `\n${String(t.kopf.auszug).slice(-300)}` : ''}`;
   if (r.quelle === 'outlook') return `Neue Mail in Outlook auf ${r.geraet}: ${String(t.kopf.von ?? '')} — „${String(t.kopf.betreff ?? '')}"${Number(t.kopf.anhaenge ?? 0) > 0 ? ` (${Number(t.kopf.anhaenge)} Anhang/Anhänge)` : ''} (Regel „${r.name}")`;
   const ordner = String(r.filter.pfad ?? '');
   if (t.art === 'sammel') return `${ART_TEXT.sammel} in ${ordner} auf ${r.geraet}: ${Number(t.kopf.anzahl ?? 0)} weitere (Regel „${r.name}")`;

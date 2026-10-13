@@ -55,3 +55,15 @@ describe('v1430 R4b Quellen', () => {
     expect(aufgabeText(r, t, 'geraet_pc_madh')).toContain('outlook_mails mit id=E1');
   });
 });
+
+describe('v1431 Build-Wache-Regel', () => {
+  const P = [{ id: 'p1', name: 'Angebots-Radar', geraetId: 'g2', pfad: '/home/madh/claudecode/game', pruefBefehle: ['npm test'] }, { id: 'p2', name: 'Ohne', geraetId: 'g2', pfad: '/x', pruefBefehle: [] }];
+  it('Gerät und Befehle kommen aus dem Projekt; ohne Prüfbefehle keine Wache', () => {
+    expect(regelPruefen({ quelle: 'build', projekt: 'angebots', wirkung: 'projekt', auftrag: 'Prüfbefehle wieder grün machen', intervallMin: 5 }, GERAETE, P)).toMatchObject({ ok: true, regel: { geraetId: 'g2', quelle: 'build', projektId: 'p1', name: 'Build-Wache Angebots-Radar', filter: { pfad: '/home/madh/claudecode/game', befehle: ['npm test'], intervallMin: 15 } } });
+    expect(regelPruefen({ quelle: 'build', projekt: 'ohne' }, GERAETE, P)).toMatchObject({ ok: false });
+    expect(regelPruefen({ quelle: 'build', projekt: 'gibtsnicht' }, GERAETE, P)).toMatchObject({ ok: false });
+    const r = { id: 'w', geraetId: 'g2', geraet: 'Ubuntu-VM', name: 'BW', quelle: 'build' as const, filter: { pfad: '/p', befehle: ['npm test'] }, wirkung: 'vorgang' as const, aktiv: true };
+    expect(trefferText(r, { regel: 'w', quelle: 'build', art: 'rot', schluessel: 'k', zeit: '', kopf: { befehle: ['npm test'], auszug: 'FAIL' } })).toContain('Prüfbefehle rot (npm test)');
+    expect(geraetNutzlast([r])).toEqual([{ id: 'w', quelle: 'build', pfad: '/p', befehle: ['npm test'] }]);
+  });
+});
