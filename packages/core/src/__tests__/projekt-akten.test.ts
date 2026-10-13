@@ -297,3 +297,13 @@ describe('Etappenbericht', () => {
     expect(alt.erledigt[0]!.bericht).toMatchObject({ zusammenfassung: 'kurz', dateien: [], dateienAnzahl: 0 });
   });
 });
+
+// v1418 G2 — Live-Stand nur bei laufender Etappe in der Anzeige
+describe('Live-Aktivität in der Anzeige', () => {
+  it('laufend mit Schritten, beendet ohne', () => {
+    const live = { zeit: 'x', schritte: ['▶ npm test'], werkzeuge: 3 };
+    const basis = { id: 's', ziel: 'Z', plan: ['A'], erledigt: [], nr: 1, kostenUsd: 0, start: 0, aktualisiert: 0 };
+    expect(laufAnzeige({ ...basis, status: 'laeuft' }, live).live).toEqual(live);
+    expect(laufAnzeige({ ...basis, status: 'fertig' }, live).live).toBeUndefined();
+  });
+});

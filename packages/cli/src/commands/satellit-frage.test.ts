@@ -95,3 +95,15 @@ describe('Vertrauensstufe (lokal)', () => {
     expect(aktivesVertrauen(k)).toEqual([]);
   });
 });
+
+// v1418 G2 — Schritte verlassen das Gerät nur geschwärzt
+import { schwaerze } from './satellit-auftrag.js';
+describe('schwaerze', () => {
+  it('Tokens, Passwörter, Schlüssel und Zugangsdaten in URLs', () => {
+    expect(schwaerze('▶ curl -H "Authorization: Bearer abc.def" https://x')).not.toContain('abc.def');
+    expect(schwaerze('▶ API_KEY=sk-123 node a.js')).toBe('▶ API_KEY=*** node a.js');
+    expect(schwaerze('▶ psql postgres://user:geheim@db/x')).toBe('▶ psql postgres://user:***@db/x');
+    expect(schwaerze('▶ export PASSWORD="a b"')).toBe('▶ export PASSWORD=***');
+    expect(schwaerze('✏️ schreibt src/a.js')).toBe('✏️ schreibt src/a.js');
+  });
+});

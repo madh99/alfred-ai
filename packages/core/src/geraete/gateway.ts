@@ -42,6 +42,8 @@ export interface GeraeteGatewayDeps {
   dateien?: { lade: (quelle: string) => Promise<{ name: string; data: Buffer } | undefined>; speichere: (name: string, data: Buffer) => Promise<string> };
   /** v1230 — nach der Freigabe eines Vorhabens: Alfred setzt im Owner-Chat selbst fort. */
   /** v1342 — Auftrag an Claude Code auf dem Gerät beendet: Alfred fasst in der anfragenden Sitzung zusammen. */
+  /** v1418 G2 — Fortschritt eines laufenden Auftrags (Live-Aktivität) */
+  beiFortschritt?: (f: { geraetId: string; geraet: string; auftragId: string; schritte: string[]; werkzeuge: number }) => void;
   /** v1415 — Gerät hat sich (wieder) verbunden (nach dem Willkommen) */
   beiVerbindung?: (geraetId: string) => void;
   beiEreignis?: (e: { geraet: string; skillName: string; ereignis: import('@alfred/types').GeraetEreignis; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
@@ -291,6 +293,11 @@ export class GeraeteGateway {
         const o = v.offen.get(n.id);
         if (!o) return;
         clearTimeout(o.timer); v.offen.delete(n.id); o.resolve(n);
+        return;
+      }
+      case 'fortschritt': { // v1418 G2
+        const schritte = Array.isArray(n.schritte) ? n.schritte.slice(-10).map(x => String(x).slice(0, 200)) : [];
+        try { this.deps.beiFortschritt?.({ geraetId: v.eintrag.id, geraet: v.eintrag.name, auftragId: String(n.auftragId), schritte, werkzeuge: Number(n.werkzeuge) || 0 }); } catch { /* Anzeige */ }
         return;
       }
       case 'ereignis': {

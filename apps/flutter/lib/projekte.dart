@@ -4,6 +4,8 @@
 /// Bestand und fragt vor dem Start zur Bestätigung.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'aufgaben.dart' show JsonAbruf;
@@ -25,13 +27,17 @@ class Lauf {
         plan = ((j['plan'] as List<dynamic>?) ?? []).map((e) => '$e').toList(),
         erledigt = ((j['erledigt'] as List<dynamic>?) ?? []).whereType<Map<String, dynamic>>().toList(),
         nr = (j['nr'] as num?)?.toInt() ?? 0, kostenUsd = (j['kostenUsd'] as num?)?.toDouble() ?? 0,
-        start = DateTime.tryParse('${j['start'] ?? ''}')?.toLocal(), frage = j['frage'] as String?, frageArt = j['frageArt'] as String?, wartetAufGeraet = j['wartetAufGeraet'] != null;
+        start = DateTime.tryParse('${j['start'] ?? ''}')?.toLocal(), frage = j['frage'] as String?, frageArt = j['frageArt'] as String?, wartetAufGeraet = j['wartetAufGeraet'] != null,
+        live = ((j['live'] as Map<String, dynamic>?)?['schritte'] as List<dynamic>? ?? []).map((e) => '$e').toList(), liveWerkzeuge = ((j['live'] as Map<String, dynamic>?)?['werkzeuge'] as num?)?.toInt();
   final String id, status, ziel;
   final String? grund;
   /// 1.15.1 — offene Frage (Plan, Weiter, Planänderung): direkt hier freigeben statt in den Bestätigungen
   final String? frage, frageArt;
   /// 1.15.3 — Etappe wartet, bis das Gerät wieder verbunden ist
   final bool wartetAufGeraet;
+  /// 1.16.1 G2 — letzte Schritte von Claude Code, solange die Etappe läuft
+  final List<String> live;
+  final int? liveWerkzeuge;
   final List<String> plan;
   final List<Map<String, dynamic>> erledigt;
   final int nr;
@@ -64,8 +70,10 @@ String laufStatus(String s) => switch (s) {
 String zustandText(String z) => switch (z) { 'laeuft' => '▶ läuft', 'wartet' => '⏳ wartet auf dich', _ => 'ruht' };
 
 class Projekte extends StatefulWidget {
-  const Projekte({super.key, required this.json, this.aufMeldung});
+  const Projekte({super.key, required this.json, this.aufMeldung, this.anfang});
   final JsonAbruf json;
+  /// 1.16.1 — gleich dieses Projekt öffnen (Live-Leiste)
+  final String? anfang;
   final void Function(String text)? aufMeldung;
   @override
   State<Projekte> createState() => _ProjekteState();
@@ -77,7 +85,7 @@ class _ProjekteState extends State<Projekte> {
   String? gewaehlt;
 
   @override
-  void initState() { super.initState(); laden(); }
+  void initState() { super.initState(); gewaehlt = widget.anfang; laden(); }
 
   Future<void> laden() async {
     try {
@@ -132,18 +140,22 @@ class _ProjektDetailState extends State<ProjektDetail> {
   final wunsch = TextEditingController();
   final frage = TextEditingController(); // 1.15.2
   final berichtOffen = <String>{}; // 1.16.0 G1 — aufgeklappte Etappen (lauf:nr)
+  Timer? liveTakt; // 1.16.1 G2 — läuft eine Etappe, alle 5 s neu laden
   final offen = <String>{};
 
   @override
   void initState() { super.initState(); laden(); }
   @override
-  void dispose() { wunsch.dispose(); frage.dispose(); super.dispose(); }
+  void dispose() { liveTakt?.cancel(); wunsch.dispose(); frage.dispose(); super.dispose(); }
 
   Future<void> laden() async {
     try {
       final j = await widget.json('/api/geraete/projekte/${widget.id}');
       if (!mounted) return;
       setState(() { d = j; fehler = null; });
+      final laeuft = ((j['laeufe'] as List<dynamic>?) ?? []).any((x) => (x as Map<String, dynamic>)['status'] == 'laeuft');
+      if (laeuft && liveTakt == null) { liveTakt = Timer.periodic(const Duration(seconds: 5), (_) { if (mounted) laden(); }); }
+      if (!laeuft) { liveTakt?.cancel(); liveTakt = null; }
       final l = ((j['laeufe'] as List<dynamic>?) ?? []);
       if (offen.isEmpty && l.isNotEmpty) offen.add('${(l.first as Map<String, dynamic>)['id']}');
     } catch (e) { if (mounted) setState(() => fehler = '$e'); }
@@ -325,6 +337,14 @@ class _ProjektDetailState extends State<ProjektDetail> {
                 const SizedBox(width: 8),
                 Expanded(child: Text('${l.ok}/${l.plan.length} · ${usd(l.kostenUsd)}${l.start != null ? ' · ${datum(l.start!)}' : ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
               ]),
+              if (l.status == 'laeuft' && l.live.isNotEmpty) Container( // 1.16.1 G2 — Live-Aktivität
+                key: Key('live-${l.id}'), margin: const EdgeInsets.only(top: 8), padding: const EdgeInsets.all(8), width: double.infinity,
+                decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.25), borderRadius: BorderRadius.circular(6)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('🔨 Claude Code arbeitet${l.liveWerkzeuge != null ? ' · ${l.liveWerkzeuge} Schritte' : ''}', style: theme.textTheme.labelSmall),
+                  for (final z in l.live) Text(z, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace')),
+                ]),
+              ),
               if (l.status == 'angehalten') Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(key: Key('fortsetzen-${l.id}'), onPressed: plant ? null : () => fortsetzen(l), icon: const Icon(Icons.play_arrow, size: 18), label: const Text('Fortsetzen'))),
               if (l.status == 'wartet_owner' && l.frage != null) Container(
                 margin: const EdgeInsets.only(top: 8), padding: const EdgeInsets.all(10),

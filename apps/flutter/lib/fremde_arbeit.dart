@@ -7,7 +7,7 @@ library;
 import 'dart:convert';
 
 class FremdeArbeit {
-  FremdeArbeit({required this.id, required this.faden, required this.kanal, required this.frage, required this.zuletzt});
+  FremdeArbeit({required this.id, required this.faden, required this.kanal, required this.frage, required this.zuletzt, this.projekt});
   final String id;
   /// null = Hauptgespräch
   final String? faden;
@@ -15,6 +15,8 @@ class FremdeArbeit {
   final String frage;
   String? status;
   DateTime zuletzt;
+  /// 1.16.1 G2 — Live-Aktivität eines Geräte-Projekts (Projekt-ID): öffnet das Projekt statt eines Gesprächs, kein Abbrechen hier
+  final String? projekt;
 }
 
 /// Ereignis anwenden. Rückgabe: (phase, arbeit) — `start` heißt neu (Frage anzeigen), `status`, `ende` (schon entfernt);
@@ -29,7 +31,7 @@ class FremdeArbeit {
   if (von == 'sitzung:$geraetId' || von.startsWith('sitzung:$geraetId:')) return null; // eigene Anfrage
   switch (phase) {
     case 'start':
-      final a = FremdeArbeit(id: id, faden: faden, kanal: '${j['kanal'] ?? 'anderer Kanal'}', frage: '${j['frage'] ?? ''}', zuletzt: jetzt);
+      final a = FremdeArbeit(id: id, faden: faden, kanal: '${j['kanal'] ?? 'anderer Kanal'}', frage: '${j['frage'] ?? ''}', zuletzt: jetzt, projekt: j['projekt'] is String ? j['projekt'] as String : null);
       laufend[id] = a;
       return ('start', a);
     case 'status':

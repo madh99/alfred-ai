@@ -51,6 +51,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1418] - 2026-10-13
+
+### Added — Live-Aktivität laufender Projekte (v1418, App 1.16.1, G2)
+
+Läuft eine Projekt-Etappe, sieht man, was Claude Code gerade tut.
+
+- **Satellit:** schickt alle 5 Sekunden die neuen Schritte, etwa „✏️ ändert src/quellen/spar.js“ oder „▶ npm test“. Ohne neue Schritte schickt er jede Minute ein Lebenszeichen. Tokens, Passwörter, Schlüssel und Zugangsdaten werden vorher geschwärzt.
+- **App-Leiste:** zeigt „🔨 Angebots-Radar · Etappe 2/3: …“ mit dem aktuellen Schritt. „Öffnen“ führt direkt ins Projekt.
+- **Projektansicht in App und Web:** zeigt bei der laufenden Etappe die letzten Schritte und aktualisiert sich alle 5 Sekunden.
+- **Nur App und Web:** Im Gespräch wird nichts gespeichert, in Telegram erscheint nichts.
+
 ## [0.19.0-jarvis.1417] - 2026-10-13
 
 ### Added — Etappenbericht: sehen, was gemacht wurde (v1417, App 1.16.0, G1)

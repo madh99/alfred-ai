@@ -160,11 +160,12 @@ extension _Oberflaeche on _SitzungState {
         const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
         const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Alfred arbeitet · aus ${a.kanal}${a.faden != server?.faden ? ' · ${_gespraechName(a.faden)}' : ''}', style: theme.textTheme.labelMedium),
-          Text(a.status?.isNotEmpty == true ? a.status! : (a.frage.length > 90 ? '${a.frage.substring(0, 90)}…' : a.frage), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+          Text(a.projekt != null ? '🔨 ${a.frage}' : 'Alfred arbeitet · aus ${a.kanal}${a.faden != server?.faden ? ' · ${_gespraechName(a.faden)}' : ''}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelMedium), // 1.16.1 G2
+          Text(a.status?.isNotEmpty == true ? a.status! : (a.projekt != null ? a.kanal : a.frage.length > 90 ? '${a.frage.substring(0, 90)}…' : a.frage), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         ])),
-        if (a.faden != server?.faden) TextButton(onPressed: () => _fadenWechseln(a.faden), child: const Text('Öffnen')),
-        IconButton(tooltip: 'Anfrage abbrechen', onPressed: () => _fremdeArbeitStoppen(a), icon: const Icon(Icons.stop_circle_outlined)),
+        if (a.projekt != null) TextButton(key: Key('arbeit-projekt-${a.id}'), onPressed: () => _neu(() { projekteAnfang = a.projekt; ansicht = Ansicht.projekte; }), child: const Text('Öffnen')) // 1.16.1 G2
+        else if (a.faden != server?.faden) TextButton(onPressed: () => _fadenWechseln(a.faden), child: const Text('Öffnen')),
+        if (a.projekt == null) IconButton(tooltip: 'Anfrage abbrechen', onPressed: () => _fremdeArbeitStoppen(a), icon: const Icon(Icons.stop_circle_outlined)),
       ]))),
     ]));
   }

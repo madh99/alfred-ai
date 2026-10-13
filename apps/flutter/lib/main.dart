@@ -152,6 +152,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
   bool aufnahme = false;
   bool sichtbar = true;
   bool kachelnOffen = false; // Meilenstein 3 — Kacheln nativ statt Webview
+  String? projekteAnfang; // 1.16.1 G2 — Projekt, das die Live-Leiste öffnet
   String? befundeFilter; // 1.12.0 — Startfilter der Ansicht „Befunde" (z. B. 'haus-check' aus der Kachel)
   /// 1.1.0 — Redesign Stufe 1: Symbolleiste links (Chat, Lage, Bestätigungen, Einstellungen), einklappbare Seitenleiste,
   /// Chat mittig mit Datumstrennern, Eingabekarte mit Stufenwahl.
@@ -409,7 +410,7 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
           Ansicht.aufgaben => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Aufgaben(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t)), aufStand: _aufgabenStand), // 1.9.0 A1
           Ansicht.gedaechtnis => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Gedaechtnis(json: server!.json, aufMeldung: (t) => _protokolliere(Eintrag(Art.hinweis, t))), // 1.9.0 A3
           Ansicht.befunde => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Befunde(key: ValueKey(befundeFilter), json: server!.json, aufNachfragen: _nachfragen, anfang: befundeFilter, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t))), // 1.12.0
-          Ansicht.projekte => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Projekte(json: server!.json, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t))), // 1.15.0
+          Ansicht.projekte => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Projekte(key: ValueKey(projekteAnfang), json: server!.json, anfang: projekteAnfang, aufMeldung: (t) => _zeile(Eintrag(Art.hinweis, t))), // 1.15.0, 1.16.1 anfang
           Ansicht.suche => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Suche(json: server!.json, aufOeffnen: _fundstelleOeffnen, anfang: letzteSuche, aufAnfrage: (q) => letzteSuche = q), // 1.5.0
           Ansicht.anhaenge => server == null ? const Center(child: Text('Noch nicht mit dem Satelliten verbunden.')) : Galerie(json: server!.json, lade: server!.anhang, aufOeffnen: _anhangOeffnen, aufSpeichern: _anhangSpeichern, aufGespraech: _fadenWechseln), // 1.5.0
           Ansicht.einstellungen => _einstellungen(theme),

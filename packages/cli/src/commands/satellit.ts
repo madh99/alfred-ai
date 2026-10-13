@@ -20,7 +20,7 @@ import { BrowserHand, formatiereSeite } from './satellit-browser.js';
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
-import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, projektLesen, projektDiff, kurzTitel, umgebungLesen, umgebungNeu, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
+import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, fortschrittVon, projektLesen, projektDiff, kurzTitel, umgebungLesen, umgebungNeu, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen } from './satellit-benachrichtigungen.js'; // v1275
@@ -180,6 +180,7 @@ let gehirnSende: ((n: Record<string, unknown>) => boolean) | undefined;
 let endeWaechter: ReturnType<typeof setInterval> | undefined; // v1394
 let sinneSofort: (() => void) | undefined; // v1411
 function meldeAuftragEnde(m: AuftragMeta, erg: AuftragErgebnis, log?: (t: string) => void): void {
+  beendeFortschritt(m.id); // v1418
   if (m.gemeldet) return;
   try {
     if (gehirnSende?.(endeEreignis(m, erg))) { markiereGemeldet(m.id); log?.(`Auftrag ${m.id} (${m.status}) ans Gehirn gemeldet`); }
@@ -332,7 +333,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!istPfadErlaubt(projekt, frei)) return { success: false, error: `Projektverzeichnis nicht freigegeben (Schreibrecht nötig): ${projekt}. Mit Schreibrecht: ${frei.join(', ')}` };
       try {
         const maxK = Number(params.max_kosten_usd);
-        const m = auftragStarten({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg), ...(Number.isFinite(maxK) && maxK > 0 ? { maxKostenUsd: Math.min(maxK, 100) } : {}), ...(params.git_uebernehmen === true ? { gitUebernehmen: true } : {}), ...(params.sudo_sperre === true || k.sudoSperre ? { sudoSperre: true } : {}) }); // v1382 R1, v1394 Budget, v1397 Git, v1409 sudo-Sperre (Projekt oder Gerät)
+        const m = auftragStartenMitFortschritt({ projekt, auftrag, titel: params.titel ? String(params.titel) : undefined, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg), ...(Number.isFinite(maxK) && maxK > 0 ? { maxKostenUsd: Math.min(maxK, 100) } : {}), ...(params.git_uebernehmen === true ? { gitUebernehmen: true } : {}), ...(params.sudo_sperre === true || k.sudoSperre ? { sudoSperre: true } : {}) }); // v1382 R1, v1394 Budget, v1397 Git, v1409 sudo-Sperre (Projekt oder Gerät)
         return { success: true, data: { id: m.id, titel: m.titel, projekt: m.projekt, start: m.start, auftragDatei: m.auftragDatei, ...(m.git ? { git: m.git } : {}) }, display: `Auftrag ${m.id} („${m.titel}") auf ${k.name} gestartet in ${m.projekt}${m.gitAngelegt ? ' (neues Verzeichnis, als Git-Repository angelegt)' : ''}. Läuft im Hintergrund; Stand mit auftrag_stand ${m.id}, Ergebnis mit auftrag_ergebnis ${m.id}.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
@@ -355,7 +356,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!frage) return { success: false, error: 'frage fehlt' };
       if (!istPfadErlaubt(projekt, lesbar)) return { success: false, error: `Verzeichnis nicht freigegeben: ${projekt}` };
       try {
-        const m = auftragStarten({ projekt, auftrag: frage, titel: `Frage: ${kurzTitel(frage, 70)}`, nurLesen: true, maxKostenUsd: 0.5, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) });
+        const m = auftragStartenMitFortschritt({ projekt, auftrag: frage, titel: `Frage: ${kurzTitel(frage, 70)}`, nurLesen: true, maxKostenUsd: 0.5, beiEnde: (meta, erg) => meldeAuftragEnde(meta, erg) });
         return { success: true, data: { id: m.id, projekt: m.projekt }, display: `Frage an Claude Code auf ${k.name} gestellt (nur lesend, höchstens 0,50 $). Die Antwort kommt in etwa einer Minute.` };
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
@@ -833,4 +834,31 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
 /** v1410 — pipx vorhanden? (pip-Installationen dann über pipx: Ubuntu 24 lehnt pip --user ab, „externally managed") */
 function spawnPipx(): boolean {
   try { return spawnSync('pipx', ['--version'], { timeout: 5000, windowsHide: true }).status === 0; } catch { return false; }
+}
+
+/**
+ * v1418 G2 — Live-Aktivität: solange ein Auftrag läuft, alle 5 s neue Schritte ans Gehirn (nur wenn sich etwas geändert hat),
+ * sonst jede Minute ein Lebenszeichen mit dem letzten Stand. Endet mit dem Auftrag.
+ */
+const fortschrittTimer = new Map<string, ReturnType<typeof setInterval>>();
+function beendeFortschritt(id: string): void { const t = fortschrittTimer.get(id); if (t) { clearInterval(t); fortschrittTimer.delete(id); } }
+function beobachteFortschritt(id: string): void {
+  if (fortschrittTimer.has(id)) return;
+  let letzte = -1; let gesendet = 0;
+  const t = setInterval(() => {
+    try {
+      const f = fortschrittVon(id, 8);
+      if (!f.laeuft) { beendeFortschritt(id); return; }
+      const jetzt = Date.now();
+      if (f.werkzeuge === letzte && jetzt - gesendet < 60_000) return;
+      if (gehirnSende?.({ typ: 'fortschritt', auftragId: id, schritte: f.schritte, werkzeuge: f.werkzeuge })) { letzte = f.werkzeuge; gesendet = jetzt; }
+    } catch { /* nächster Takt */ }
+  }, 5_000);
+  t.unref?.();
+  fortschrittTimer.set(id, t);
+}
+function auftragStartenMitFortschritt(o: Parameters<typeof auftragStarten>[0]): ReturnType<typeof auftragStarten> {
+  const m = auftragStarten(o);
+  beobachteFortschritt(m.id);
+  return m;
 }

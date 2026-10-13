@@ -3464,6 +3464,8 @@ export interface GeraetLauf {
   frage?: string; frageArt?: string;
   /** v1415 — Etappe wartet auf das Gerät (seit) */
   wartetAufGeraet?: string;
+  /** v1418 G2 — Live-Aktivität der laufenden Etappe */
+  live?: { zeit: string; schritte: string[]; werkzeuge: number };
 }
 
 // v643 — Per-Phase Commit eines Project-Agent-Laufs

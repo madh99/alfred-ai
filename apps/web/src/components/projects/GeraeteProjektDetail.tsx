@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AlfredClient, ProjectDetail, GeraetLauf } from '@/lib/alfred-client';
 import { ProjectChat } from './ProjectChat';
 
@@ -44,6 +44,9 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
   const [bericht, setBericht] = useState<string | null>(null); // v1417 G1 — aufgeklappte Etappe (lauf:nr)
   const [diff, setDiff] = useState<{ sha: string; dateien: string[]; text: string } | null>(null);
   const laeuftGerade = laeufe.some(l => l.status === 'laeuft' || l.status === 'wartet_owner');
+  // v1418 G2 — läuft eine Etappe, alle 5 s neu laden (Live-Aktivität)
+  const etappeLaeuft = laeufe.some(l => l.status === 'laeuft');
+  useEffect(() => { if (!etappeLaeuft) return; const t = setInterval(onReload, 5000); return () => clearInterval(t); }, [etappeLaeuft, onReload]);
 
   async function weiter() {
     const text = wunsch.trim();
@@ -170,6 +173,12 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
                 <span className="text-xs text-gray-200 flex-1 min-w-[12rem]">{l.ziel.slice(0, 140)}</span>
                 <span className="text-[11px] text-gray-500">{ok}/{l.plan.length} · {usd(l.kostenUsd)} · {datum(l.start)}</span>
               </button>
+              {l.status === 'laeuft' && l.live && l.live.schritte.length > 0 && (
+                <div className="mx-3 mb-2 p-2 rounded bg-black/40 border border-[#222] font-mono text-[11px] text-gray-300 space-y-0.5">
+                  <div className="text-gray-500 font-sans">🔨 Claude Code arbeitet · {l.live.werkzeuge} Schritte</div>
+                  {l.live.schritte.map((z, i) => <div key={i} className="truncate">{z}</div>)}
+                </div>
+              )}
               {l.status === 'angehalten' && (
                 <div className="mx-3 mb-2"><button onClick={() => fortsetzen(l.id)} disabled={busy} className="px-3 py-1 text-xs bg-blue-500/20 text-blue-300 rounded border border-blue-500/40 disabled:opacity-40">▶ Fortsetzen</button></div>
               )}

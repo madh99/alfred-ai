@@ -95,6 +95,19 @@ void main() {
     expect(find.textContaining('src/merkliste.js | 40'), findsOneWidget);
   });
 
+  testWidgets('1.16.1 G2 laufende Etappe zeigt die letzten Schritte', (t) async {
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async =>
+      {'id': 'p1', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [
+        {'id': 'sat-1', 'status': 'laeuft', 'ziel': 'SPAR', 'plan': ['A', 'B'], 'erledigt': [], 'nr': 2, 'kostenUsd': 0.6, 'start': '2026-10-12T23:09:00Z', 'live': {'zeit': 'x', 'werkzeuge': 14, 'schritte': ['📖 liest src/quellen/spar.js', '✏️ ändert src/quellen/spar.js', '▶ npm test']}}]};
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'p1', json: json, zurueck: () {}))));
+    await t.pump(); await t.pump();
+    expect(find.byKey(const Key('live-sat-1')), findsOneWidget);
+    expect(find.text('🔨 Claude Code arbeitet · 14 Schritte'), findsOneWidget);
+    expect(find.text('✏️ ändert src/quellen/spar.js'), findsOneWidget);
+    await t.pumpWidget(const SizedBox()); // Takt beenden
+  });
+
   testWidgets('1.15.1 offene Planfrage: Freigeben direkt in der Projektansicht', (t) async {
     Map<String, dynamic>? gesendet;
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {

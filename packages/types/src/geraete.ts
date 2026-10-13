@@ -50,9 +50,12 @@ export interface GeraetGespraech extends GeraetRahmen { typ: 'gespraech'; faden:
 /** v1342 — Ereignis vom Gerät (Auftrag an Claude Code beendet); das Gehirn setzt in der anfragenden Sitzung fort. */
 export interface GeraetEreignis extends GeraetRahmen { typ: 'ereignis'; art: 'auftrag'; auftragId: string; status: 'fertig' | 'fehler' | 'abgebrochen'; titel: string; projekt: string; text: string; dauerS?: number; kosten?: number; fehler?: string; dateien?: string[]; dateienAnzahl?: number } // v1382 fehler/dateien
 
+/** v1418 G2 — laufender Claude-Code-Auftrag: letzte Schritte (gekürzt, Geheimnisse geschwärzt), höchstens alle 5 s, Lebenszeichen jede Minute */
+export interface GeraetFortschritt extends GeraetRahmen { typ: 'fortschritt'; auftragId: string; schritte: string[]; werkzeuge: number }
+
 export type GeraetNachricht =
   | GeraetHallo | GeraetWillkommen | GeraetPuls | GeraetPulsOk
-  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung | GeraetGespraech | GeraetEreignis;
+  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung | GeraetGespraech | GeraetEreignis | GeraetFortschritt;
 
 /** Eintrag der Geräte-Registry (Gehirn). */
 export interface GeraetEintrag {

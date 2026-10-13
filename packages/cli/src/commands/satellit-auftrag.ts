@@ -482,3 +482,20 @@ export function projektDiff(dir: string, commit: string, datei?: string, git = '
     return { ok: true, text: text.length > 12_000 ? `${text.slice(0, 12_000)}\n… (gekürzt)` : text };
   } catch (err) { return { ok: false, fehler: (err as Error).message.slice(0, 200) }; }
 }
+
+/** v1418 G2 — mögliche Geheimnisse in Befehlen/Texten schwärzen, bevor Schritte das Gerät verlassen. */
+export function schwaerze(t: string): string {
+  return t
+    .replace(/(bearer\s+)[^\s"']+/gi, '$1***')
+    .replace(/((?:token|passwor[dt]|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|auth)[^\s=:]*\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"']+)/gi, '$1***')
+    .replace(/(:\/\/[^:\s/]+:)[^@\s]+@/g, '$1***@');
+}
+
+/** v1418 G2 — Fortschritt eines Auftrags aus seinem Protokoll (letzte n Schritte, geschwärzt) und ob er noch läuft. */
+export function fortschrittVon(id: string, n = 8, home?: string): { laeuft: boolean; schritte: string[]; werkzeuge: number } {
+  const meta = ladeMeta(id, home);
+  let log = '';
+  try { log = readFileSync(logPfad(id, home), 'utf8'); } catch { /* leer */ }
+  const f = fortschrittAus(log, n);
+  return { laeuft: meta?.status === 'laeuft' && laeuft(meta.pid), schritte: f.schritte.map(schwaerze), werkzeuge: f.werkzeuge };
+}

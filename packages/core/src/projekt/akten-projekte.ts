@@ -80,7 +80,7 @@ export class ProjektAktenUeberProjekte {
 }
 
 /** v1401 — ein Lauf für Web und App (Etappen, Kosten, Zustand); gemeinsame Form statt zweier Abbildungen. */
-export function laufAnzeige(l: { id: string; status: string; grund?: string; ziel: string; plan: string[]; erledigt: Array<{ nr: number; ok: boolean; kostenUsd: number; geprueft?: boolean; fixVersuche?: number; zusammenfassung?: string; text?: string; dateien?: string[]; dateienAnzahl?: number; commit?: { sha: string; titel: string }; abnahme?: { ok: boolean; protokoll: string }; dauerS?: number }>; nr: number; kostenUsd: number; start: number; aktualisiert: number; frage?: { text: string; art: string }; wartetAufGeraet?: { seit: number } }) {
+export function laufAnzeige(l: { id: string; status: string; grund?: string; ziel: string; plan: string[]; erledigt: Array<{ nr: number; ok: boolean; kostenUsd: number; geprueft?: boolean; fixVersuche?: number; zusammenfassung?: string; text?: string; dateien?: string[]; dateienAnzahl?: number; commit?: { sha: string; titel: string }; abnahme?: { ok: boolean; protokoll: string }; dauerS?: number }>; nr: number; kostenUsd: number; start: number; aktualisiert: number; frage?: { text: string; art: string }; wartetAufGeraet?: { seit: number } }, live?: { zeit: string; schritte: string[]; werkzeuge: number }) {
   return {
     id: l.id, status: l.status, grund: l.grund, ziel: l.ziel, plan: l.plan, erledigt: l.erledigt.map(e => ({ nr: e.nr, ok: e.ok, kostenUsd: e.kostenUsd,
       // v1417 G1 — Etappenbericht (ältere Läufe: nur der kurze Text)
@@ -89,5 +89,6 @@ export function laufAnzeige(l: { id: string; status: string; grund?: string; zie
     // v1403 — offene Frage (Plan, Weiter, Planänderung) zum Freigeben direkt in der Projektansicht; die Einmal-Kennung bleibt am Server
     ...(l.frage ? { frage: l.frage.text, frageArt: l.frage.art } : {}),
     ...(l.wartetAufGeraet ? { wartetAufGeraet: new Date(l.wartetAufGeraet.seit).toISOString() } : {}), // v1415
+    ...(live && l.status === 'laeuft' ? { live } : {}), // v1418 G2
   };
 }

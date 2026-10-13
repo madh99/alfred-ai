@@ -271,6 +271,9 @@ export class Alfred {
   /** v727 — Late-Wiring von SandboxRepo an Project-Agent-Skill (für dev-safe Build-Detection) */
   private projectAgentSkillRef?: import('@alfred/skills').ProjectAgentSkill;
   private satellitProjekte?: import('./projekt/satellit-projekt.js').SatellitProjekte; // v1387 R2
+  /** v1418 G2 — Live-Stand laufender Projekt-Etappen (Lauf → letzte Schritte) und schon angekündigte Aufträge */
+  private projektLiveStand = new Map<string, { zeit: string; schritte: string[]; werkzeuge: number }>();
+  private projektLiveAuftraege = new Map<string, string>(); // auftragId → laufId
   /** v1403 — offene Frage eines Geräte-Laufs aus App/Web entscheiden (über die Bestätigungs-Queue) */
   private geraeteLaufEntscheiden?: (laufId: string, entscheidung: 'freigeben' | 'ablehnen') => Promise<{ success: boolean; display?: string; error?: string }>;
   /** v762 — Aktive Code-Agent-Runs pro synthetischer task_id, damit Stop-Signal sie killen kann */
@@ -11529,7 +11532,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               const openItems = [...activeItems, ...doneItems, ...cancelledItems];
               // v1399 — Geräte-Projekt: Läufe mit Etappen und Kosten (aus den Laufdateien)
               const { laufAnzeige } = await import('./projekt/akten-projekte.js');
-              const geraetLaeufe = project.geraetId ? (this.satellitProjekte?.laeufeDerAkte(project.id) ?? []).map(laufAnzeige) : undefined;
+              const geraetLaeufe = project.geraetId ? (this.satellitProjekte?.laeufeDerAkte(project.id) ?? []).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))) : undefined;
               return { project, sessions, openItems, decisions, health, openItemTotals: { active: activeItems.length }, ...(geraetLaeufe ? { geraetLaeufe } : {}) };
             } catch (err) { this.logger.warn({ err }, 'Projects API get failed'); return null; }
           },
@@ -13807,6 +13810,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const vorgaengeG = new VRepoG(dbG);
         const gw = new GeraeteGateway({
           // v1415 — wartende Projekt-Etappen starten, sobald das Gerät wieder da ist (kurz warten, bis die Aktionen registriert sind)
+          beiFortschritt: (f) => this.projektLive(f), // v1418 G2
           beiVerbindung: (geraetId: string) => { setTimeout(() => { void this.satellitProjekte?.nachholen(geraetId).then(n => { if (n) this.logger.info({ geraetId, laeufe: n }, 'v1415 wartende Etappen nachgeholt'); }); }, 15_000).unref?.(); },
           logger: this.logger.child({ component: 'geraete' }),
           repo: new GeraeteRepository(dbG),
@@ -13856,6 +13860,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           beiEreignis: async ({ geraet, ereignis, herkunft }) => {
             if (ereignis.art !== 'auftrag') return;
             // v1387 (R2) — Auftrag eines Satelliten-Projekts: dort geht es weiter (Etappenmeldung statt Einzelmeldung)
+            this.projektLiveEnde(ereignis.auftragId); // v1418 G2
             if (this.satellitProjekte?.auftragEnde(ereignis)) { this.logger.info({ geraet, auftrag: ereignis.auftragId, status: ereignis.status }, 'v1387 Auftragsende an Projekt'); return; }
             const { auftragMeldung } = await import('./geraete/auftrag-meldung.js');
             const text = auftragMeldung(geraet, ereignis);
@@ -15636,6 +15641,40 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     });
   }
 
+  /**
+   * v1418 G2 — Live-Aktivität (Owner 13.10.: „besser erkennen, wenn eine Session läuft"): Fortschritt eines Projekt-Auftrags
+   * merken (Projektansicht App/Web) und an die Owner-Geräte als „arbeit" (Projekt) weiterreichen — die App zeigt ihn in der
+   * Leiste „Alfred arbeitet". Nur App/Web (Owner-Entscheidung), nichts im Gespräch gespeichert.
+   */
+  private projektLive(f: { geraetId: string; geraet: string; auftragId: string; schritte: string[]; werkzeuge: number }): void {
+    const s = this.satellitProjekte?.liste().find(x => x.auftragId === f.auftragId && x.status === 'laeuft');
+    if (!s) return;
+    this.projektLiveStand.set(s.id, { zeit: new Date().toISOString(), schritte: f.schritte, werkzeuge: f.werkzeuge });
+    const neu = !this.projektLiveAuftraege.has(f.auftragId);
+    this.projektLiveAuftraege.set(f.auftragId, s.id);
+    const etappe = s.plan[s.nr - 1] ?? '';
+    this.arbeitAnOwnerGeraete({ arbeit: `projekt:${s.id}`, phase: neu ? 'start' : 'status', kanal: `Projekt auf ${s.geraet}`, frage: `${s.akteName ?? 'Projekt'} · Etappe ${s.nr}/${s.plan.length}${s.fixVersuch ? ` (Fix ${s.fixVersuch})` : ''}: ${etappe.slice(0, 80)}`, text: f.schritte.at(-1) ?? `${f.werkzeuge} Schritte`, projekt: s.akteId });
+  }
+
+  private projektLiveEnde(auftragId: string): void {
+    const lauf = this.projektLiveAuftraege.get(auftragId);
+    if (!lauf) return;
+    this.projektLiveAuftraege.delete(auftragId);
+    this.projektLiveStand.delete(lauf);
+    this.arbeitAnOwnerGeraete({ arbeit: `projekt:${lauf}`, phase: 'ende', kanal: 'Projekt', frage: '' });
+  }
+
+  private arbeitAnOwnerGeraete(e: { arbeit: string; phase: 'start' | 'status' | 'ende'; kanal: string; frage: string; text?: string; projekt?: string }): void {
+    const gw = this.geraeteGateway; const istOwner = this.istOwnerGeraetGemerkt;
+    if (!gw || !istOwner) return;
+    void (async () => {
+      for (const id of gw.verbundeneIds()) {
+        if (!(await istOwner(id))) continue;
+        gw.sendeAn(id, { typ: 'arbeit', arbeit: e.arbeit, phase: e.phase, faden: null, von: 'projekt', kanal: e.kanal, frage: e.frage, ...(e.text ? { text: e.text } : {}), ...(e.projekt ? { projekt: e.projekt } : {}) });
+      }
+    })().catch(() => { /* Anzeige */ });
+  }
+
   /** v1417 G1 — Änderungen eines Etappen-Commits (Statistik oder Diff einer Datei) vom Gerät, nur lesend. */
   private async geraeteProjektDiff(projektId: string, commit: string, datei?: string): Promise<{ success: boolean; display?: string; error?: string }> {
     const o = this.ownerMasterUserId ?? this.tryOwner();
@@ -15675,7 +15714,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await repo.getById(owner, id);
         if (!p?.geraetId) return null;
         const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
-        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, laeufe: laeufe(p.id).map(laufAnzeige), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
