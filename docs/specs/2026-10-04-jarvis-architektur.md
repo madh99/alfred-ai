@@ -811,7 +811,19 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
   - Jeder Deploy und jeder Rollback wird bestätigt. „In dev automatisch nach grüner Abnahme“ ist ein Schalter je Projekt (Standard aus).
   - Rollback heute nur `git revert HEAD` ohne docker-compose-Zweig; dafür braucht es den Stand vor dem Deploy und einen Compose-Zweig.
 
-**Reihenfolge (Vorschlag, nicht freigegeben):** 1) B10 + B11 + B12 (nur Beobachter, klein) → 2) B13 Git-Teil → 3) B14 Deploy mit Nachkontrolle.
+**Reihenfolge — FREIGEGEBEN (Owner 13.10. abends „ok freigegeben“):** 1) B10 + B11 + B12 (nur Beobachter, klein) → 2) B13 Git-Teil → 3) B14 Deploy mit Nachkontrolle.
+
+**Umsetzungsstand:**
+
+- **v1433 + App 1.23.0 (13.10.): B10–B12.**
+  - B10: Tabelle `beobachter_geraete`; Schalter in App, Web und Gespräch (`geraet_art`).
+  - B11: `einmalig` und `bis` (tage/stunden/ISO); der Wächter schaltet ab.
+  - B12: Adresse je Mail-Provider über Graph `/me`; Liste „Alfred liest selbst“.
+  - **Beweis 13.10. 19:28–19:30 UTC (Ubuntu-VM):** Konto „default“ → markus@dohnal.co.
+    - Die einmalige Regel schlug bei der ersten Datei an und meldete „v1433 Beobachter beendet“; die zweite Datei blieb ohne Treffer.
+    - Ordner auf der VM aus: Stand „Art am Gerät aus“, `test.nie` ohne Treffer. Wieder an: `jetzt.nie` → Beobachtung.
+    - Probe-Regeln gelöscht.
+  - Nicht live gesehen: Ablauf nach „bis“ (nur Test; Probe hätte 2 h gebraucht).
 
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
