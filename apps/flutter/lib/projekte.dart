@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'aufgaben.dart' show JsonAbruf;
+import 'projekt_deploy.dart'; // 1.24.0
 
 class ProjektKurz {
   ProjektKurz(Map<String, dynamic> j)
@@ -399,6 +400,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
           title: const Text('Protokoll im Projekt'),
           subtitle: Text(protokollAn(j) ? 'An: Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Aus: Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (nicht in git).', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
         ProjektRegeln(konventionen: (j['konventionen'] as Map<String, dynamic>?) ?? const {}, aendern: konventionenSetzen, gesperrt: plant), // 1.19.0
+        ProjektDeploy(id: widget.id, json: widget.json, deploy: j['deploy'] as Map<String, dynamic>?, neuLaden: laden, aufMeldung: widget.aufMeldung), // 1.24.0 v1439
         const SizedBox(height: 12),
         Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Weiterarbeiten', style: theme.textTheme.titleSmall),

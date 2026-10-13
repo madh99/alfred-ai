@@ -52,3 +52,17 @@ describe('v1437 B14 Deploy-Ziel', () => {
     expect(zielPruefen({ host: 'h', bestaetigt: true })).toMatchObject({ ok: true, ziel: expect.not.objectContaining({ bestaetigt: true }) });
   });
 });
+
+import { forgeTokenFuer } from './deploy-ziel.js';
+describe('v1439 Token-Rückfall', () => {
+  const forge = { gitlab: { token: 'gl', baseUrl: 'http://git.lokalkraft.at' }, github: { token: 'gh' } };
+  it('nur für den eigenen Host des Tokens', () => {
+    expect(forgeTokenFuer('http://git.lokalkraft.at/madh/x.git', forge)).toEqual({ token: 'gl', quelle: 'gitlab' });
+    expect(forgeTokenFuer('https://GIT.lokalkraft.at/madh/x', forge)?.quelle).toBe('gitlab');
+    expect(forgeTokenFuer('https://git.lokalkraft.at.boese.example/x.git', forge)).toBeUndefined();
+    expect(forgeTokenFuer('https://boese.example/git.lokalkraft.at/x.git', forge)).toBeUndefined();
+    expect(forgeTokenFuer('https://github.com/madh99/alfred-ai.git', forge)).toEqual({ token: 'gh', quelle: 'github' });
+    expect(forgeTokenFuer('git@git.lokalkraft.at:madh/x.git', forge)).toBeUndefined();
+    expect(forgeTokenFuer('http://git.lokalkraft.at/x.git', {})).toBeUndefined();
+  });
+});

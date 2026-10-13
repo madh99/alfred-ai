@@ -55,6 +55,26 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1439] - 2026-10-13
+
+### Added — Deploy in App und Web (v1439, App 1.24.0)
+
+- Die Projektansicht eines Geräte-Projekts hat in App und Web einen Bereich „Deploy“.
+  - Er zeigt Remote und benutzte Token-Quelle.
+  - Ziel festlegen und ändern: Host, Benutzer, pm2/systemd/Compose, Stufe, Port, Zweig, ENV-Stage, „automatisch in dev“. Das Ziel geht zur Bestätigung.
+  - Knöpfe „Deployen“ und „Rollback“, beide mit Bestätigung.
+  - Der letzte Deploy mit dem Ergebnis der Nachkontrolle wird angezeigt.
+- Es gilt derselbe Weg wie im Gespräch: Die Oberflächen stellen nur Anfragen, eine Bestätigungs-Kennung können sie nicht mitschicken.
+- Routen: App `POST /api/geraete/projekte/<id>` mit `aktion` = deploy_ziel / deploy_ziel_entfernen / deploy / rollback; Web `GET|POST /api/projects/<id>/geraet/deploy`.
+- Der letzte Deploy wird dauerhaft beim Ziel gespeichert (Anzeige; Rollback-Ziel übersteht Neustarts).
+
+### Changed — Token-Rückfall auf das vorhandene GitLab-Token (Owner-Entscheidung 13.10.)
+
+- Für Push (Geräte-Projekte) und Deploy gilt zuerst das Projekt-Token (`GIT_TOKEN` in der Projektumgebung).
+- Fehlt es, nutzt Alfred das vorhandene Forge-Token aus der Konfiguration, aber nur für Repos auf dessen eigenem Host (GitLab-Server bzw. github.com).
+- Für andere Hosts und für `git@`-Adressen gibt Alfred nie ein Token heraus.
+- Die Schutzmaßnahmen aus v1435/v1436 gelten unverändert.
+
 ## [0.19.0-jarvis.1438] - 2026-10-13
 
 ### Security — Deploy-Ziel nur nach Owner-Bestätigung (v1438)

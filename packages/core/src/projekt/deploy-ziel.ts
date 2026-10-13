@@ -108,3 +108,16 @@ export class DeployFreigaben {
 
 /** v1438 — nur ein vom Owner bestätigtes Ziel darf automatisch (auto_dev) beliefert werden; der Merker wird nur beim Speichern nach der Bestätigung gesetzt. */
 export const zielBestaetigt = (roh: Record<string, unknown> | undefined): boolean => roh?.bestaetigt === true;
+
+/**
+ * v1439 (Owner 13.10.) — vorhandenes Forge-Token als Rückfall, aber NUR für Repos auf dessen eigenem Host (GitLab baseUrl bzw.
+ * github.com). git@-Adressen bekommen nie ein Token (Schlüssel des Rechners).
+ */
+export function forgeTokenFuer(repoUrl: string, forge?: { gitlab?: { token?: string; baseUrl?: string }; github?: { token?: string } }): { token: string; quelle: 'gitlab' | 'github' } | undefined {
+  const host = (u: string) => { try { return /^https?:\/\//i.test(u) ? new URL(u).host.toLowerCase() : ''; } catch { return ''; } };
+  const h = host(repoUrl);
+  if (!h) return undefined;
+  if (forge?.gitlab?.token && forge.gitlab.baseUrl && host(forge.gitlab.baseUrl) === h) return { token: forge.gitlab.token, quelle: 'gitlab' };
+  if (forge?.github?.token && h === 'github.com') return { token: forge.github.token, quelle: 'github' };
+  return undefined;
+}

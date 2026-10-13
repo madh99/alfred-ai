@@ -15,7 +15,7 @@ import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
-import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
+import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
 import {
@@ -15738,11 +15738,13 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await repo.getById(owner, id);
         if (!p?.geraetId) return null;
         const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
-        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p) }; // v1439 deploy
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
       weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, ctx(`sitzung:${geraetId}`)),
+      // v1439 — Deploy aus der App: derselbe Weg wie im Gespräch (Ziel, Deploy und Rollback mit Bestätigung)
+      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, ctx(`sitzung:${geraetId}`)),
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, ctx(/^[0-9a-f]{8}/.test(id) ? `owner:faden:projekt-${id.slice(0, 8)}` : `sitzung:${geraetId}`)), // v1404; v1419 G3 Antwort in den Projektfaden
       entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
@@ -16185,7 +16187,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
           this.logger.info({ projekt: p.id, ok: r.success, commit: freigabe.commit?.slice(0, 7) }, 'v1437 Rollback');
           return r.success ? { success: true, display: `⏪ ${p.name} auf ${zp.ziel.host} zurückgesetzt${freigabe.commit ? ` auf ${freigabe.commit.slice(0, 7)}` : ''}.\n${r.display ?? ''}` } : { success: false, error: r.error ?? 'Rollback fehlgeschlagen' };
         }
-        const vorher = this.letzterDeploy.get(p.id)?.vorher;
+        const vorher = this.letzterDeploy.get(p.id)?.vorher ?? ((p.deployZiel?.letzter as { vorher?: string } | undefined)?.vorher); // v1439 auch nach Neustart
         if (!vorher) return { success: false, error: `Für ${p.name} ist kein Stand vor einem Deploy bekannt (seit dem letzten Neustart kein Deploy über Alfred) — Rollback nur über den Deploy-Skill direkt (git revert HEAD)` };
         if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
         const nonce = this.deployFreigaben.stelle(p.id, 'rollback', vorher);
@@ -16296,6 +16298,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
       diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
+      // v1439 — Deploy im Web
+      deployInfo: async (id: string) => { const o = owner(); const p = o ? await this.projectRepo?.getById(o, id) : undefined; return p ? this.projektDeployInfo(p) : { error: 'nicht gefunden' }; },
+      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never),
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never), // v1404; v1419 G3
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
@@ -16319,6 +16324,18 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
   }
 
   /** v1382/v1387 — feste Meldung ohne Modell: Sitzung des Starts plus Owner-Chat als Kopie. */
+  /** v1439 — Deploy-Stand eines Projekts für App und Web: Ziel, bestätigt, Remote, Token-Quelle, letzter Deploy. */
+  private async projektDeployInfo(p: import('@alfred/storage').Project): Promise<Record<string, unknown>> {
+    const roh = p.deployZiel;
+    const z = roh ? zielPruefen(roh) : undefined;
+    const token = p.repoUrl ? await this.gitTokenMitQuelle(p.id, p.repoUrl).catch(() => undefined) : undefined;
+    return {
+      ...(z?.ok ? { ziel: z.ziel, zielText: zielText(z.ziel), bestaetigt: zielBestaetigt(roh) } : {}),
+      repoUrl: p.repoUrl ?? null, token: token?.quelle ?? null,
+      ...(roh && typeof roh.letzter === 'object' && roh.letzter ? { letzter: roh.letzter } : {}),
+    };
+  }
+
   /**
    * v1437 B14 — Deploy eines Geräte-Projekts auf sein Ziel über den Deploy-Skill, danach Nachkontrolle. Liefert den Bericht (Text).
    * Bei Rot und bekanntem Stand davor: Rollback-Bestätigung an den Owner. Aufrufer haben Bestätigung bzw. Auto-dev-Schalter geprüft.
@@ -16349,14 +16366,28 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `rollback-${p.id}-${d.vorher.slice(0, 12)}`, description: `⏪ Rollback ${p.name} auf ${z.host}: zurück auf ${d.vorher.slice(0, 7)} (Stand vor dem Deploy)?`, skillName: 'project_agent', skillParams: { action: 'projekt_rollback', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 72 * 60, ...(herkunft ? { herkunft } : {}) }).catch(() => false);
       zeilen.push(`Rollback auf ${d.vorher.slice(0, 7)} zur Bestätigung gestellt.`);
     }
+    // v1439 — letzter Deploy dauerhaft beim Ziel (App/Web zeigen ihn; Rollback-Ziel übersteht Neustarts)
+    try { const o = this.tryOwner(); const aktuell = o ? await this.projectRepo?.getById(o, p.id) : undefined; if (o && aktuell?.deployZiel) await this.projectRepo!.setzeDeployZiel(o, p.id, { ...aktuell.deployZiel, letzter: { zeit: new Date().toISOString(), ok: k.ok, deployOk: r.success, text: zeilen.join('\n').slice(0, 2000), ...(d.vorher ? { vorher: d.vorher } : {}), ...(d.nachher ? { nachher: d.nachher } : {}) } }); } catch { /* Anzeige */ }
     return { ok: k.ok, text: zeilen.join('\n') };
   }
 
   /**
    * v1434 B13 — Git-Token für ein Repo: aus der Projektumgebung (beliebige Stage, Schlüssel GIT_TOKEN, GITLAB_TOKEN oder GITHUB_TOKEN) —
-   * zuerst des Projekts selbst, sonst eines Projekts des Owners mit derselben Repo-Adresse. Nie das Owner-Token (forge-Konfig).
+   * zuerst des Projekts selbst, sonst eines Projekts des Owners mit derselben Repo-Adresse (v1439: danach Rückfall auf das Forge-Token, nur für dessen Host — gitTokenMitQuelle).
    */
-  private async gitTokenFuer(projektId: string | undefined, repoUrl: string): Promise<string | undefined> {
+  private async gitTokenFuer(projektId: string | undefined, repoUrl: string): Promise<string | undefined> { return (await this.gitTokenMitQuelle(projektId, repoUrl))?.token; }
+
+  /**
+   * v1439 (Owner 13.10.: „Alfred hat diese Token doch schon“) — Projekt-Token zuerst; fehlt es, das vorhandene Forge-Token aus der
+   * Konfiguration, aber NUR für Repos auf dessen eigenem Host (GitLab baseUrl bzw. github.com). Nie für fremde Hosts.
+   */
+  private async gitTokenMitQuelle(projektId: string | undefined, repoUrl: string): Promise<{ token: string; quelle: 'projekt' | 'gitlab' | 'github' } | undefined> {
+    const t = await this.projektGitToken(projektId, repoUrl);
+    if (t) return { token: t, quelle: 'projekt' };
+    return forgeTokenFuer(repoUrl, (this.config as { codeAgents?: { forge?: Parameters<typeof forgeTokenFuer>[1] } }).codeAgents?.forge);
+  }
+
+  private async projektGitToken(projektId: string | undefined, repoUrl: string): Promise<string | undefined> {
     if (!this.envRepoRef || !this.envCryptoRef || !this.projectRepo) return undefined;
     const o = this.tryOwner();
     if (!o) return undefined;

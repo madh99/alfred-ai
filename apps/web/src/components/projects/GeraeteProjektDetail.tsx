@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { ProjectConventionsView } from './ProjectConventionsView'; // v1426
+import { GeraeteProjektDeploy } from './GeraeteProjektDeploy'; // v1439
 import type { AlfredClient, ProjectDetail, GeraetLauf } from '@/lib/alfred-client';
 
 /**
@@ -256,6 +257,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
       {/* v1419 G3 — ein Gespräch zum Projekt für App, Web und Telegram (/faden): der Projektfaden */}
       {/* v1426 — Projektregeln (Konventionen) je Projekt */}
       <ProjectConventionsView project={p} geraet onSaved={() => onReload()} />
+      <GeraeteProjektDeploy client={client} projektId={p.id} />
       <a href={`/alfred/chat/?faden=projekt-${p.id.slice(0, 8)}`} className="inline-flex items-center gap-2 px-3 py-1.5 text-xs bg-[#1a1a1a] text-gray-200 rounded border border-[#2a2a2a] hover:bg-[#222]">💬 Gespräch zum Projekt öffnen</a>
     </div>
   );

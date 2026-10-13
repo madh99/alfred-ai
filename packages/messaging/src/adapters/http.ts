@@ -251,7 +251,7 @@ export interface GeraetOwnerAnsichten {
   befunde(): Promise<unknown>; // v1359
   projekte?(): Promise<unknown>; // v1401
   projekt?(id: string): Promise<unknown | null>;
-  projektAktion?(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown }): Promise<unknown>; // v1426 extra
+  projektAktion?(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown; deploy?: unknown }): Promise<unknown>; // v1426 extra, v1439 deploy
   vorgangAbschliessen(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1362
   regeln(): Promise<unknown>; // v1362
   regelAendern(id: string, aktion: unknown): Promise<unknown | null>; // v1362
@@ -810,7 +810,7 @@ export class HttpAdapter extends MessagingAdapter {
   private geraeteProjektIds = new Set<string>();
   setGeraeteProjektIds(ids: Set<string>): void { this.geraeteProjektIds = ids; }
   /** v1399 — Geräte-Projekt im Web: Stand (Akte mit Commits vom Gerät) und Weiterarbeiten (Plan → Owner-Bestätigung) */
-  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }> };
+  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; /** v1439 */ deployInfo?: (id: string) => Promise<unknown>; deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<unknown> };
   setGeraeteProjektCallbacks(cb: HttpAdapter['geraeteProjektCallbacks']): void { this.geraeteProjektCallbacks = cb; }
   private async handleGeraeteProjekt(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -819,6 +819,18 @@ export class HttpAdapter extends MessagingAdapter {
     const cb = this.geraeteProjektCallbacks;
     const id = decodeURIComponent(url.pathname.split('/')[3] ?? '');
     if (!cb || !this.geraeteProjektIds.has(id)) { antwort(404, { error: 'kein Geräte-Projekt' }); return; }
+    // v1439 — Deploy im Web: GET Stand, POST {aktion: ziel|ziel_entfernen|deploy|rollback, …Felder} (Bestätigung beim Owner)
+    if (url.pathname.endsWith('/deploy')) {
+      if (!cb.deployInfo || !cb.deploy) { antwort(503, { error: 'Deploy nicht verfügbar' }); return; }
+      if (req.method === 'GET') { antwort(200, await cb.deployInfo(id)); return; }
+      let jd: Record<string, unknown> = {};
+      try { jd = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+      const aktion = String(jd.aktion ?? '');
+      if (!['ziel', 'ziel_entfernen', 'deploy', 'rollback'].includes(aktion)) { antwort(400, { error: 'aktion muss ziel, ziel_entfernen, deploy oder rollback sein' }); return; }
+      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name'].filter(k => jd[k] !== undefined && jd[k] !== '').map(k => [k, jd[k]]));
+      antwort(200, await cb.deploy(id, aktion, felder));
+      return;
+    }
     if (req.method === 'GET') { antwort(200, await cb.stand(id)); return; }
     let text = '';
     let j: { text?: unknown; lauf?: unknown; entscheidung?: unknown } = {};
@@ -1361,7 +1373,7 @@ export class HttpAdapter extends MessagingAdapter {
     }
 
     // v1399 — Geräte-Projekte: VOR allen Projekt-Routen (Realfall Live-Test: /environments lag weiter oben in der Kette und lief durch)
-    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage|\/fortsetzen|\/diff|\/protokoll)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage|\/fortsetzen|\/diff|\/protokoll|\/deploy)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err));
       return;
     }
@@ -6941,7 +6953,7 @@ export class HttpAdapter extends MessagingAdapter {
       // v1401 — Geräte-Projekte in der App
       if (bereich === 'projekte' && !id && m === 'GET' && a.projekte) { antwort(200, await a.projekte()); return; }
       if (bereich === 'projekte' && id && m === 'GET' && a.projekt) { const p = await a.projekt(id); antwort(p ? 200 : 404, p ?? { error: 'nicht gefunden' }); return; }
-      if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text, body.lauf, { konventionen: body.konventionen })); return; } // v1426 konventionen
+      if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text, body.lauf, { deploy: body.deploy, konventionen: body.konventionen })); return; } // v1426 konventionen
       // v1362 — Abschluss mit Ergebnis (neu) bzw. Erledigt/Verwerfen (bisherige Clients); Regeln
       if (bereich === 'vorgaenge' && id && m === 'POST' && body.ergebnis) { const v = await a.vorgangAbschliessen(id, body); antwort(v ? 200 : 404, v ? { ok: true, ...(v as object) } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'beobachter' && !id && m === 'GET' && a.beobachter) { antwort(200, await a.beobachter()); return; } // v1429

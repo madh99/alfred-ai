@@ -75,6 +75,8 @@ export interface OwnerAnsichtenDeps {
     protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1426 — Konventionen ändern (Teil-Änderung, Felder siehe projekt/konventionen.ts) */
     konventionen?: (id: string, aenderung: unknown) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1439 — Deploy: aktion ziel | ziel_entfernen | deploy | rollback (Ziel, Deploy und Rollback mit Bestätigung) */
+    deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
   };
   jetzt?: () => Date;
   /** Jede Änderung aus der App ins Server-Log (Beweis, Schicht-4-Signal). */
@@ -184,8 +186,16 @@ export class OwnerAnsichten {
   /** v1401 — Geräte-Projekte (nur Owner-Geräte; Weiterarbeiten plant und fragt den Owner wie im Gespräch) */
   async projekte(): Promise<{ projekte: unknown[] }> { return { projekte: this.d.projekte ? await this.d.projekte.liste() : [] }; }
   async projekt(id: string): Promise<unknown | null> { return this.d.projekte ? this.d.projekte.detail(id) : null; }
-  async projektAktion(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown }): Promise<{ success: boolean; display?: string; error?: string }> {
+  async projektAktion(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown; deploy?: unknown }): Promise<{ success: boolean; display?: string; error?: string }> {
     if (!this.d.projekte) return { success: false, error: 'Projekte nicht verfügbar' };
+    // v1439 — Deploy aus der App; nur bekannte Felder, nie eine Bestätigungs-Kennung
+    if (aktion === 'deploy_ziel' || aktion === 'deploy_ziel_entfernen' || aktion === 'deploy' || aktion === 'rollback') {
+      if (!this.d.projekte.deploy) return { success: false, error: 'Deploy nicht verfügbar' };
+      const roh = (extra?.deploy && typeof extra.deploy === 'object' ? extra.deploy : {}) as Record<string, unknown>;
+      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name'].filter(k => roh[k] !== undefined && roh[k] !== '').map(k => [k, roh[k]]));
+      this.d.protokoll?.('Projekt Deploy', { projekt: id, aktion });
+      return this.d.projekte.deploy(id, aktion === 'deploy_ziel' ? 'ziel' : aktion === 'deploy_ziel_entfernen' ? 'ziel_entfernen' : aktion, felder);
+    }
     if (aktion === 'stand') return this.d.projekte.stand(id);
     if (aktion === 'freigeben' || aktion === 'ablehnen') {
       if (!this.d.projekte.entscheiden || typeof lauf !== 'string' || !lauf) return { success: false, error: 'lauf fehlt' };
