@@ -856,6 +856,16 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
   - v1440: HTTP-Repo-Adressen immer mit `.git` (sonst 301-Weiterleitung, die beim Token-Weg bewusst gesperrt ist).
   - **Beweis 13.10.:** privates Repo `lokalkraftlanding` per Chat auf die VM geholt („mitToken“ true, `.git/config` ohne Zugang, Deploy-Bereich zeigt `token: gitlab`); Probe archiviert, Ordner gelöscht.
   - Nicht gepusht: Das echte Repo des Owners wurde nicht verändert.
+- **v1441/v1442:** Token-Rückfall nur bei passendem Host; Bestätigungen nennen das Konto-Token. Owner: „git.lokalkraft.at ist https“ → Konfig auf https, http-Repo-Adressen werden vor Git mit Token aufgewertet, nie Token über http. Beweis: Klon mit https-Remote, „mitToken“ true.
+- **B15 (Owner 13.10. spät, freigegeben; Werte nie aufs Entwicklungsgerät) — v1443 + App 1.25.0:**
+  - Umgebungen (ENV je Stufe) für Geräte-Projekte in Web (vorhandene Ansicht freigeschaltet), App (Bereich „Umgebungen“, maskiert) und Gespräch (Skill `environments` findet Geräte-Projekte).
+  - Schlüssel erkennen am Gerät nur als Namen (`env_schluessel`; `.env` wird nicht gelesen).
+  - Stages dev/test/prod mit je eigenem Ziel (Bestätigung); Umgebung der Stufe als `.env`.
+  - `projekt_hochstufen` bringt den in der Vorstufe grünen Commit weiter (Bestätigung). Deploy/Rollback je Stufe; letzter Deploy je Stufe dauerhaft.
+  - Deploy-Umgebung findet Geräte-Projekte (vorher still nichts). `.env` über stdin statt SSH-Befehlszeile.
+  - **Beweis 13.10. (Angebots-Radar, nur lesend):** Umgebungs-Route 200 (vorher 409); Erkennen am Gerät lieferte die echten Schlüssel (AKTUALISIERUNG_MIN, BROWSER_* …); Deploy-Stand mit Stufen; Apps 1.25.0 auf allen Plattformen.
+  - Beobachtung: Auf „Welche Umgebungsvariablen braucht Angebots-Radar?“ (außerhalb des Projektfadens) fragte Alfred Claude Code (0,26 $) statt kostenlos zu erkennen.
+  - Nicht live: Stage-Deploy, Hochstufen und Rollback auf einem echten Zielrechner — wartet auf die erste Bestätigung des Owners.
   - **Offen (Owner):** erstes Projekt mit Remote + Deploy-Ziel (z. B. dev auf .96) deployen und bestätigen → Live-Beweis Nachkontrolle/Rollback.
 
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
