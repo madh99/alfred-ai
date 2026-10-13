@@ -4,7 +4,7 @@ import { begrenzePlan, mutationAutomatisch, grenzeErreicht, STANDARD_GRENZEN } f
 import type { GeraetEreignis } from '@alfred/types';
 
 // v1387 (R2) — Projekt-Agent am Satelliten, Ablauf mit simuliertem Gerät
-function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown> } = {}) {
+function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined> } = {}) {
   const aufrufe: Array<{ aktion: string; params: Record<string, unknown> }> = [];
   const fragen: Array<{ text: string; nonce: string }> = [];
   const meldungen: string[] = [];
@@ -22,6 +22,7 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
     frage: async (_s, text, nonce) => { fragen.push({ text, nonce }); },
     melde: async (_s, text) => { meldungen.push(text); },
     ...(o.konventionen ? { konventionen: async () => o.konventionen } : {}), // v1426
+    ...(o.nachAbnahme ? { nachAbnahme: o.nachAbnahme } : {}), // v1434
     logger: { info: () => undefined, warn: () => undefined },
   });
   const ende = async (s: ProjektStand, status: GeraetEreignis['status'] = 'fertig', extra: Partial<GeraetEreignis> = {}) => {
@@ -35,6 +36,19 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
 const start = { geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/home/madh/claudecode/r2', ziel: 'Kleines CLI-Werkzeug', pruefBefehle: ['npm test'] };
 
 describe('Satelliten-Projekt', () => {
+  it('v1434 B13 nach jeder abgenommenen Etappe: Push-Zeile in der Etappenmeldung; rote Etappe ohne Push', async () => {
+    let n = 0;
+    const { p, fragen, meldungen, ende } = aufbau({ pruefung: (k) => k !== 2, nachAbnahme: async () => `📤 Gepusht: main (abc${++n}) → https://git.example/x.git` });
+    const s = await p.starte(start);
+    await p.antwort(s.id, fragen[0]!.nonce);
+    await ende(s);
+    expect(meldungen.find(m => m.startsWith('✅ Etappe 1/3'))).toContain('\n📤 Gepusht: main (abc1)');
+    await ende(s); // Abnahme rot → Fix-Versuch, kein Push
+    expect(n).toBe(1);
+    await ende(s);
+    expect(meldungen.find(m => m.startsWith('✅ Etappe 2/3'))).toContain('📤 Gepusht: main (abc2)');
+  });
+
   it('v1426 Projektregeln: im Auftrag; fehlt CHANGELOG, einmal nachtragen vor der Abnahme; ältere Satelliten ohne Prüfung', async () => {
     const { p, aufrufe, fragen, meldungen, ende } = aufbau({ konventionen: { changelog: { autoUpdate: true }, regeln: ['Commits auf Deutsch'] } });
     const s = await p.starte(start);

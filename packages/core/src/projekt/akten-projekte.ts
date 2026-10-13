@@ -50,9 +50,9 @@ export class ProjektAktenUeberProjekte {
     return p ? akteAusProjekt(p) : null;
   }
 
-  async anlegen(a: { userId: string; name: string; geraetId: string; geraet: string; pfad: string; beschreibung?: string; pruefBefehle: string[]; status?: AktenStatus }): Promise<ProjektAkte> {
+  async anlegen(a: { userId: string; name: string; geraetId: string; geraet: string; pfad: string; beschreibung?: string; pruefBefehle: string[]; status?: AktenStatus; /** v1434 B13 */ repoUrl?: string }): Promise<ProjektAkte> {
     const pfad = a.pfad.trim().length > 1 ? a.pfad.trim().replace(/[\\/]+$/, '') : a.pfad.trim();
-    const p = await this.repo.create(a.userId, { name: a.name, description: a.beschreibung, cwd: pfad, tags: ['geraet'], status: a.status === 'archiviert' ? 'archived' : 'active', geraetId: a.geraetId, geraet: a.geraet, pruefBefehle: a.pruefBefehle });
+    const p = await this.repo.create(a.userId, { name: a.name, description: a.beschreibung, cwd: pfad, tags: ['geraet'], status: a.status === 'archiviert' ? 'archived' : 'active', geraetId: a.geraetId, geraet: a.geraet, pruefBefehle: a.pruefBefehle, ...(a.repoUrl ? { repoUrl: a.repoUrl } : {}) });
     return akteAusProjekt(p);
   }
 

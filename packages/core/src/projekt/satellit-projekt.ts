@@ -81,6 +81,8 @@ export interface SatellitProjektDeps {
   protokollAn?: (s: ProjektStand) => Promise<boolean>;
   /** v1426 — Konventionen des Projekts (README/CHANGELOG/Commits/eigene Regeln), Schalter je Projekt in App und Web */
   konventionen?: (s: ProjektStand) => Promise<Konventionen | undefined>;
+  /** v1434 B13 — nach einer abgenommenen Etappe (z. B. Push zu GitLab); liefert eine Zeile für die Etappenmeldung oder nichts */
+  nachAbnahme?: (s: ProjektStand) => Promise<string | undefined>;
   ordner?: string;
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
   now?: () => number;
@@ -334,7 +336,8 @@ export class SatellitProjekte {
     const protokoll = p.display ?? p.error ?? 'keine Ausgabe';
     if (ok) {
       await this.vermerke(s, { ok: true, geprueft: true, protokoll });
-      await this.d.melde(s, `✅ Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" abgenommen${s.fixVersuch ? ` nach ${s.fixVersuch} Fix-Versuch(en)` : ''} · ${s.etappeKostenUsd.toFixed(2)} USD, gesamt ${s.kostenUsd.toFixed(2)} USD.`);
+      const nach = await this.d.nachAbnahme?.(s).catch((err: Error) => `⚠️ Nach der Abnahme: ${err.message}`); // v1434 B13
+      await this.d.melde(s, `✅ Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" abgenommen${s.fixVersuch ? ` nach ${s.fixVersuch} Fix-Versuch(en)` : ''} · ${s.etappeKostenUsd.toFixed(2)} USD, gesamt ${s.kostenUsd.toFixed(2)} USD.${nach ? `\n${nach}` : ''}`);
       await this.d.vorgang?.schritt(s, `Etappe ${s.nr} abgenommen: ${etappe.slice(0, 160)}`).catch(() => undefined);
       await this.umplanen(s, true, protokoll);
       return;

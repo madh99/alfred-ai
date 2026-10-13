@@ -55,6 +55,27 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1434] - 2026-10-13
+
+### Added — Geräte-Projekte mit GitLab: holen und nach jeder Etappe pushen (v1434, Spec R4-Erweiterung B13)
+
+- **Holen:** `project_agent action=projekt_holen repo=<Adresse oder Server-Projekt> geraet=<Gerät> cwd=<neuer Ordner>` legt das Repository auf dem Gerät an, mit verbleibendem Remote.
+  - Daraus wird ein Geräte-Projekt wie jedes andere: Läufe, Abnahme, Fragen, Projektfaden.
+  - Nennt der Owner ein Server-Projekt, kommen Adresse und Beschreibung von dort.
+- **Push nach jeder abgenommenen Etappe**, wenn das Projekt eine Repo-Adresse hat. Die Etappenmeldung zeigt „📤 Gepusht: <Zweig> (<Commit>) → <Remote>“ oder den Fehler.
+  - Projekt-Tag `push-aus` schaltet das ab.
+  - Projekte ohne Remote laufen unverändert.
+- **Token je Projekt:** `GIT_TOKEN` (oder `GITLAB_TOKEN`/`GITHUB_TOKEN`) aus der Projektumgebung — des Projekts selbst oder eines Projekts mit derselben Repo-Adresse. Nie das Owner-Token.
+  - Der Satellit gibt es git nur als Kopfzeile über die Umgebung: nicht in der Befehlszeile, nicht in `.git/config`, nicht im Remote.
+  - Ausgaben werden geschwärzt.
+- Satellit: Aktionen `git_holen` und `git_push` (Bestätigung bei direktem Aufruf über das Gerätewerkzeug).
+  - Repo-Adressen nur `https://…` oder `git@…`, ohne Zugangsdaten; Zielordner neu oder leer und freigegeben.
+- Werkzeugwahl: „Repo“, „GitLab“, „GitHub“, „klonen“ zusammen mit einem Gerät bringen den Projekt-Agenten mit.
+
+### Security
+
+- Die Logzeile „Aktion …“ des Satelliten zeigte die ersten 160 Zeichen der Parameter roh. Schlüssel wie `token`, `passwort` und `secret` erscheinen dort jetzt als `***`.
+
 ## [0.19.0-jarvis.1433] - 2026-10-13
 
 ### Added — Beobachter: Schalter je Gerät und Art, einmalig/bis, eigene Mailkonten (v1433, App 1.23.0, Spec R4-Erweiterung B10–B12)

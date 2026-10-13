@@ -15898,6 +15898,20 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // dort wie bisher als Bestätigung). Ohne Akte (vor der Freigabe) wie bisher in die Sitzung des Starts.
       // v1425 — Schalter je Projekt (Tag protokoll-aus); ohne Projekt oder Repo: an
       konventionen: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return undefined; return (await this.projectRepo.getById(o, s.akteId).catch(() => null))?.conventions; }, // v1426
+      // v1434 B13 — Projekt mit Remote: nach jeder abgenommenen Etappe pushen (Token aus der Projektumgebung; Tag push-aus schaltet ab)
+      nachAbnahme: async (s) => {
+        const o = this.ownerMasterUserId;
+        if (!s.akteId || !o || !this.projectRepo) return undefined;
+        const p = await this.projectRepo.getById(o, s.akteId).catch(() => null);
+        if (!p?.repoUrl || (p.tags ?? []).includes('push-aus')) return undefined;
+        const g = this.geraeteGateway?.geraetNachName(s.geraetId);
+        if (!g) return '⚠️ Nicht gepusht: Gerät nicht verbunden';
+        if (!g.aktionen.includes('git_push')) return '⚠️ Nicht gepusht: Satellit zu alt (Update ≥ 1434)';
+        const token = await this.gitTokenFuer(p.id, p.repoUrl);
+        const r = await this.geraeteGateway!.sendeAktion(g.id, 'git_push', { projekt: s.projekt, ...(token ? { token } : {}) }, 6 * 60_000);
+        this.logger.info({ lauf: s.id, etappe: s.nr, ok: r.success, mitToken: !!token, ...(r.success ? r.data as object : { fehler: r.error?.slice(0, 200) }) }, 'v1434 Push nach Abnahme');
+        return r.success ? `📤 ${r.display}` : `⚠️ Push fehlgeschlagen: ${r.error}${token ? '' : ' (kein GIT_TOKEN in der Projektumgebung)'}`;
+      },
       protokollAn: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return true; const p = await this.projectRepo.getById(o, s.akteId).catch(() => null); return !(p?.tags ?? []).includes('protokoll-aus'); },
       melde: async (s, text, art) => {
         const faden = projektFaden(s.akteId);
@@ -16093,6 +16107,37 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if ('fehler' in t) return { success: false, error: t.fehler };
         return this.projektKonventionenAendern(t.akte.id, { ...(typeof input.changelog === 'boolean' ? { changelog: input.changelog } : {}), ...(typeof input.readme === 'boolean' ? { readme: input.readme } : {}), ...(typeof input.conventional_commits === 'boolean' ? { conventionalCommits: input.conventional_commits } : {}), ...(typeof input.regel === 'string' ? { regel: input.regel } : {}), ...(input.regel_entfernen !== undefined ? { regelEntfernen: input.regel_entfernen } : {}) });
       },
+      // v1434 B13 — Projekt, das auf GitLab liegt, aufs Gerät holen; danach ein Geräte-Projekt wie jedes andere (Remote bleibt)
+      holen: async (input) => {
+        const o = owner();
+        if (!o || !aktenRepo || !this.projectRepo) return { success: false, error: 'Projektakten nicht verfügbar' };
+        const roh = String(input.repo ?? input.repo_url ?? '').trim();
+        if (!roh) return { success: false, error: 'repo fehlt (Repo-Adresse oder Name eines Server-Projekts mit Repo)' };
+        let url = roh;
+        let quelle: import('@alfred/storage').Project | undefined;
+        if (!/^(https?:\/\/|git@)/i.test(roh)) {
+          const t = (await this.projectRepo.list(o, { limit: 500 })).filter(p => p.repoUrl && (p.name.toLowerCase() === roh.toLowerCase() || p.slug === roh.toLowerCase() || p.name.toLowerCase().includes(roh.toLowerCase())));
+          if (t.length !== 1) return { success: false, error: t.length ? `Mehrere Projekte passen: ${t.map(p => p.name).join(', ')}` : `Kein Server-Projekt „${roh}" mit Repo-Adresse — bitte die Adresse nennen` };
+          quelle = t[0]; url = t[0]!.repoUrl!;
+        }
+        url = url.replace(/^(https?:\/\/)[^@/]+@/, '$1');
+        const g = gw.geraetNachName(String(input.geraet ?? '').trim());
+        if (!g) return { success: false, error: `Gerät fehlt oder nicht verbunden: ${String(input.geraet ?? '')}` };
+        if (!g.aktionen.includes('git_holen')) return { success: false, error: `Der Satellit auf ${g.name} kann noch nicht holen (Update ≥ 1434 nötig)` };
+        const ziel = String(input.cwd ?? input.pfad ?? '').trim().replace(/[\\/]+$/, '');
+        if (!ziel) return { success: false, error: 'cwd fehlt (neuer Zielordner auf dem Gerät, z. B. /home/madh/claudecode/<name>)' };
+        if (await aktenRepo.findePfad(o, g.id, ziel)) return { success: false, error: `Auf ${g.name} gibt es unter ${ziel} schon ein Projekt` };
+        const token = await this.gitTokenFuer(quelle?.id, url);
+        const r = await gw.sendeAktion(g.id, 'git_holen', { url, ziel, ...(token ? { token } : {}) }, 11 * 60_000);
+        if (!r.success) return { success: false, error: `${r.error ?? 'Holen fehlgeschlagen'}${!token ? ' — kein Token gefunden: für private Repos GIT_TOKEN in der Projektumgebung hinterlegen' : ''}` };
+        const repoName = url.replace(/\.git$/, '').split(/[\/:]/).filter(Boolean).pop() ?? '';
+        const name = nameBereinigen(String(input.name ?? quelle?.name ?? repoName), ziel);
+        const befehle = [...((input.buildCommands as string[] | undefined) ?? []), ...((input.testCommands as string[] | undefined) ?? [])].map(String);
+        const akte = await aktenRepo.anlegen({ userId: o, name, geraetId: g.id, geraet: g.name, pfad: ziel, pruefBefehle: befehle, repoUrl: url, ...(quelle?.description ? { beschreibung: quelle.description } : {}) });
+        await namenAuffrischen();
+        this.logger.info({ projekt: akte.id, geraet: g.name, ziel, mitToken: !!token, quelle: quelle?.id }, 'v1434 Projekt geholt');
+        return { success: true, data: { id: akte.id, name, ...(r.data as object | undefined) }, display: `${r.display}\nProjekt „${name}" auf ${g.name} angelegt (Remote ${url}; ${token ? 'Push nach jeder abgenommenen Etappe mit dem Projekt-Token' : 'kein Token gefunden — für den Push GIT_TOKEN in der Projektumgebung hinterlegen'}${befehle.length ? '' : '; noch keine Prüfbefehle — ohne sie fragt Alfred nach jeder Etappe'}). Weiter mit projekt_weiter projekt="${name}" goal=…` };
+      },
       sudoSperre: async (ref, an) => {
         const t = await akteAus(ref);
         if ('fehler' in t) return { success: false, error: t.fehler };
@@ -16188,6 +16233,29 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
   }
 
   /** v1382/v1387 — feste Meldung ohne Modell: Sitzung des Starts plus Owner-Chat als Kopie. */
+  /**
+   * v1434 B13 — Git-Token für ein Repo: aus der Projektumgebung (beliebige Stage, Schlüssel GIT_TOKEN, GITLAB_TOKEN oder GITHUB_TOKEN) —
+   * zuerst des Projekts selbst, sonst eines Projekts des Owners mit derselben Repo-Adresse. Nie das Owner-Token (forge-Konfig).
+   */
+  private async gitTokenFuer(projektId: string | undefined, repoUrl: string): Promise<string | undefined> {
+    if (!this.envRepoRef || !this.envCryptoRef || !this.projectRepo) return undefined;
+    const o = this.tryOwner();
+    if (!o) return undefined;
+    const norm = (u: string) => u.trim().toLowerCase().replace(/^https?:\/\/[^@/]+@/, 'https://').replace(/^http:/, 'https:').replace(/\.git$/, '').replace(/\/+$/, '');
+    const alle = await this.projectRepo.list(o, { limit: 500, mitGeraeten: true }).catch(() => []);
+    const kandidaten = [...alle.filter(p => p.id === projektId), ...alle.filter(p => p.id !== projektId && p.repoUrl && norm(p.repoUrl) === norm(repoUrl))];
+    for (const p of kandidaten) {
+      for (const e of await this.envRepoRef.listForProject(p.id).catch(() => [])) {
+        try {
+          const v = this.envCryptoRef.decrypt(e.varsEncrypted, e.iv, e.authTag) as Record<string, string>;
+          const t = v.GIT_TOKEN ?? v.GITLAB_TOKEN ?? v.GITHUB_TOKEN;
+          if (t) { this.logger.info({ projekt: p.id, stage: e.stage, eigenes: p.id === projektId }, 'v1434 Git-Token aus Projektumgebung'); return t; }
+        } catch { /* nicht lesbar */ }
+      }
+    }
+    return undefined;
+  }
+
   /**
    * v1432 — Antwort auf eine Frage zum Projekt, auf die niemand mehr wartet (länger als 2 min, Neustart, Frage aus der App-Route):
    * Alfred fasst die Antwort von Claude Code zusammen und meldet sie dort, wo gefragt wurde — mit Quellenzeile. Ohne Modell: Rohantwort wie bisher.
