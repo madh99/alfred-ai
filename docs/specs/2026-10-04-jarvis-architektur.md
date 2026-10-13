@@ -604,6 +604,42 @@ Planfrage nennt die Umgebung; ein Plan verlangt kein Werkzeug, das „fehlt“, 
 
 **Umsetzungsstand (13.10.):** R3a v1408 (Umgebung in Planfrage/Planer/Etappe). R3b v1409 (sudo-Sperre je Gerät lokal und je Projekt-Tag; Nachweis VM 01:06: ohne Regel root-Datei, mit `Bash(sudo:*)` abgelehnt; Geräte-Einstellung live 01:16). R3c v1410 (Aktion `installieren` apt/brew/winget/winget-system/npm/pip, Projektfrage bei FEHLT/command not found; Nachweis `tree` per apt nach Bestätigung). R3d v1411–v1413 (Vertrauensstufe nur lokal; nach drei automatischen Sicherheitsprüfungen eng: nur Erlaubnisliste-Befehle ohne Shell-Sonderzeichen, Prüfungen, Excel — nicht `auftrag_starten`, nicht `datei_ablegen`; Nachweis 01:27: git status im Ordner ohne Bestätigung, ls außerhalb → Bestätigung).
 
+## Projekte im Gespräch, nachvollziehbar und live (Entwurf 13.10.2026 — ohne Umsetzung, Owner: „in der App über Projekte zu sprechen ist mühsam … man sieht nach einer Session nicht, was wirklich gemacht wurde … besser erkennen, wenn eine Session läuft, vielleicht durch Streamen der Aktivitäten" — keine Freigabe)
+
+### Ist-Stand (belegt 13.10.)
+
+- **Gespräch zerrissen:** Weiterarbeiten und Fragen stellt man in der App-Projektansicht; Meldungen und Antworten landen im Hauptgespräch (v1406 dort gespeichert) bzw. in der fragenden Sitzung. Rückfragen dazu führt man im Hauptgespräch, ohne dass es weiß, um welches Projekt es geht. Das Web hat einen Projekt-Chat je Projekt (`project:<id>`, v658), die App nicht.
+- **Ergebnis kaum sichtbar:** Je Etappe gespeichert sind nur ✅/❌, Kosten und die letzten 400 Zeichen der Ausgabe von Claude Code (`erledigt[].text`); die geänderten Dateien kennt das Ende-Ereignis (R1) zwar, sie werden aber nicht je Etappe abgelegt; Commits gibt es nur über „Stand laden".
+- **Laufende Session unsichtbar:** Das Fortschrittsprotokoll (stream-json, `fortschrittAus`, v1392) liest Alfred nur auf Nachfrage („Stand"). Die App kennt die Anzeige „Alfred arbeitet gerade auf einem anderen Gerät" (`fremde_arbeit.dart`, Ereignis `arbeit` start/status/ende, v1354) — für Projekte wird sie nicht genutzt.
+
+### Bausteine
+
+1. **Projektfaden als Ort des Gesprächs** (P5 aus „Projekte sichtbar und fortsetzbar"): jedes Geräte-Projekt hat einen Faden (Schlüssel = Projekt-Chat `project:<id>`, im Web schon vorhanden), in der App unter „Gespräche" mit Projektsymbol und Zustandspunkt und in der Projektansicht eingebettet. Dorthin gehen: Planfrage (mit Freigeben/Ablehnen), Etappenmeldungen, Antworten auf Fragen zum Projekt, Endmeldung. Gespräche im Faden haben den Projekt-Kontext (wie der Web-Projekt-Chat: Gerät, Pfad, Läufe, Anweisungen v1399). Das Hauptgespräch bekommt nur eine Zeile mit Rang („Angebots-Radar: fertig, 3/3 — Details im Projekt") und die Rückfragen, die eine Entscheidung brauchen.
+2. **Etappenbericht** je Etappe (deterministisch, ohne Modell): Zusammenfassung von Claude Code (vollständiger Ergebnistext, nicht 400 Zeichen), geänderte Dateien (aus dem Ende-Ereignis), Commit (Kennung + Titel, `git show --stat` über eine Leseaktion), Abnahme (Prüfbefehle mit Ergebnis, bei Rot das Protokoll), Kosten und Dauer. Gespeichert im Laufstand bzw. in der Projekt-Sitzung; in App und Web je Etappe aufklappbar, plus „Was hat sich geändert?" (Diff-Statistik, auf Wunsch der Diff einer Datei, nur lesend).
+3. **Live-Aktivität:** Während ein Auftrag läuft, schickt der Satellit neue Fortschrittsschritte als Ereignis `fortschritt` (gebündelt, höchstens alle 5 s, nur Kurzform: „✏️ schreibt src/merkliste.js", „▶ npm test", „💬 …" gekürzt). Das Gehirn reicht sie an die Owner-Geräte weiter (wie `arbeit`, ohne Speicherung im Gespräch) und hält den letzten Stand für Web/App-Abfragen. Anzeige:
+   - App-Statusleiste/Seitenleiste wie „Alfred arbeitet gerade": „🔨 Angebots-Radar · Etappe 2/3 · ✏️ schreibt src/merkliste.js" — antippen öffnet das Projekt;
+   - Projektansicht: laufende Etappe mit Live-Liste der letzten Schritte (wie ein Terminal-Ticker), Dauer, bisherige Kosten;
+   - Web: dieselbe Liste im Projekt-Detail (Abfrage alle paar Sekunden oder SSE).
+   Fremdinhalt (Befehle, Texte von Claude Code) bleibt gekürzt und als Daten gekennzeichnet; Geheimnisse in Befehlen werden nicht übertragen (Muster wie bei Logs).
+
+### Reihenfolge (nicht freigegeben)
+
+**G1** Etappenbericht (Daten vollständig speichern, Anzeige in App/Web) → **G2** Live-Aktivität (Ereignis `fortschritt`, App-Statusleiste + Projektansicht, Web) → **G3** Projektfaden (Meldungen/Antworten im Faden, Faden in der App, Hauptgespräch nur mit Rang).
+
+### Abnahme (messbar)
+
+Nach einem Lauf zeigt jede Etappe Zusammenfassung, Dateien, Commit und Abnahme ohne „Stand laden"; während eines Laufs erscheint ein neuer Schritt von Claude Code in der App nach höchstens 10 s; eine Frage zum Projekt und ihre Antwort stehen im selben Faden; Rückfragen im Faden kennen das Projekt ohne Nennung.
+
+### Risiken
+
+Datenmenge (Fortschritt nur gebündelt, nicht gespeichert); Fremdinhalt in Anzeige und Projektfaden-Kontext (gekürzt, als Daten); zwei Orte für Projektmeldungen während der Umstellung (Hauptgespräch bekommt weiterhin die Zeile mit Rang).
+
+### Offene Owner-Entscheidungen
+
+1. Reihenfolge G1 → G2 → G3 — oder Projektfaden zuerst?
+2. Was bleibt im Hauptgespräch: nur Ende und Entscheidungen (Empfehlung) — oder auch Etappenstarts?
+3. Live-Aktivität auch in Telegram (eine sich aktualisierende Nachricht) — oder nur App/Web (Empfehlung)?
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
