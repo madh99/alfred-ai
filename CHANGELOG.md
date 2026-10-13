@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1420] - 2026-10-13
+
+### Fixed — Projektfaden trägt von Anfang an den Projektnamen (v1420)
+
+Wurde der Projektfaden durch eine Frage zum Projekt eröffnet, stand im Gesprächsverlauf nur „projekt-<Kennung>“; den Namen bekam er erst mit dem nächsten Lauf. Die Frage setzt den Titel „🔨 <Projektname>“ jetzt selbst.
+
 ## [0.19.0-jarvis.1419] - 2026-10-13
 
 ### Added — Projektfaden: ein Gespräch je Projekt (v1419, App 1.17.0, G3)

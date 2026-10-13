@@ -15996,6 +15996,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const id = (r.data as { id?: string } | undefined)?.id;
         if (!r.success || !id) return { success: false, error: r.error ?? 'Frage nicht gestellt' };
         if (context.chatId) gw.merkeAuftragHerkunft(g.id, id, { chatId: context.chatId, platform: context.platform, userId: context.userId });
+        // v1420 — eröffnet die Frage den Projektfaden, bekommt er gleich den Projektnamen (sonst stünde dort projekt-<id8>)
+        if (/^[0-9a-f]{8}/.test(t.akte.id)) await this.ownerFadenUmbenennen(`projekt-${t.akte.id.slice(0, 8)}`, `🔨 ${t.akte.name}`).catch(() => false);
         this.logger.info({ projekt: t.akte.id, auftrag: id, laenge: frage.length }, 'v1404 Frage zum Projekt gestellt');
         return { success: true, data: { auftrag: id }, display: `Frage zu ${t.akte.name} an Claude Code auf ${g.name} gestellt (nur lesend, höchstens 0,50 $). Die Antwort kommt in etwa einer Minute.` };
       },
