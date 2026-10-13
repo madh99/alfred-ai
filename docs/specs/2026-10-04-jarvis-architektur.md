@@ -749,6 +749,17 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
 5. **Deploy-Ziel fest je Projekt, jeder Deploy bestätigt.** Die Alternative „in dev automatisch nach grüner Abnahme“ ist je Projekt optional einstellbar (Standard aus).
 6. **B9 später.** Bestand: Die Zustellentscheidung kennt die Anwesenheit am Gerät schon (v1198/v1237 `amGeraet`). Aufgeschobene Hinweise werden aber nur nachgeliefert, wenn im Durchlauf (≈ 30 min) eine Chat-Nachricht des Owners in den letzten 30 min liegt. Es fehlt nur das Ereignis „Leerlauf-Ende“ als sofortiger Auslöser.
 
+### Umsetzungsstand
+
+- **v1429 + App 1.20.0 (13.10.): R4a.**
+  - B1 Protokoll als eigene Nachrichtentypen `beobachten` (Gehirn → Gerät) und `beobachtung` (Gerät → Gehirn), statt einer neuen `ereignis`-Art (der Auftrags-Pfad bleibt unberührt).
+  - B2 Regeln in `beobachter_regeln` (PG v141 / SQLite v137), Skill `beobachter`, App-Ansicht und Web-Seite „Beobachter“ mit Schalter je Regel.
+  - B3 Ordner-Beobachter: `cli/satellit-beobachter.ts`.
+  - B7 Wächter-Job `beobachter-waechter` und lokales Veto `alfred einstellungen beobachter aus`.
+  - Wirkungen Hinweis/Vorgang/Aufgabe (synthetische geplante Aufgabe mit fester Werkzeugliste, wie Mail-Regeln)/Projekt (Bestätigung); Drossel 20/h je Regel.
+  - **Beweis 13.10. 14:36 UTC (Ubuntu-VM):** Regel über die Web-Route angelegt → Satellit „läuft“; `probe-rechnung.pdf` → Hinweis nach ≈ 10 s in Telegram/Hauptgespräch, `.txt` nicht gemeldet; im Gespräch „Schalte den Beobachter Probe PDF aus“ → aus, danach angelegte PDF nicht gemeldet. Regel und Dateien danach gelöscht.
+- Offen: R4b (Benachrichtigungen, Outlook), R4c (Deploy-Etappe, Build-Wache), B9.
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
