@@ -55,6 +55,24 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1429] - 2026-10-13
+
+### Added — Beobachter am Satelliten: Ordner (v1429, App 1.20.0, Spec R4a)
+
+Alfred bemerkt selbst, was auf den Geräten des Owners passiert. Eine Beobachter-Regel sagt, welcher Ordner auf welchem Gerät beobachtet wird (Dateimuster, neu/geändert/gelöscht, Unterordner) und was ein Treffer bewirkt:
+
+- **Hinweis:** Meldung an den Owner.
+- **Vorgang:** mit dem eingestellten nächsten Schritt.
+- **Aufgabe:** Alfred erledigt einen festen Auftrag mit fester Werkzeugliste (Gerät, Aufgaben, Erinnerungen, Gedächtnis, Notizen), wie die Mail-Regeln.
+- **Projekt weiterarbeiten:** am Geräte-Projekt, immer mit Bestätigung.
+
+Regeln entstehen im Gespräch („Sag mir, wenn in Downloads eine PDF-Rechnung landet“, Skill `beobachter`), in der App (neue Ansicht „Beobachter“) und im Web (Seite „Beobachter“), jeweils mit sichtbarem Schalter je Regel und dem Stand am Gerät (läuft, gestört, am Gerät aus, Gerät offline).
+
+- **Satellit:** beobachtet nur freigegebene Verzeichnisse. Eine Datei gilt erst als neu, wenn ihre Größe stabil ist; temporäre Dateien werden ignoriert. Gemeldet werden nur Dateiname, Größe und relativer Pfad, nie Inhalte. Gebündelt alle 5 s, höchstens 30 je Minute (Rest als Sammel-Ereignis). Lokales Veto: `alfred einstellungen beobachter aus`.
+- **Gehirn:** schickt jedem Gerät seine aktiven Regeln bei Verbindung und nach jeder Änderung. Doppelte Meldungen werden verworfen; mehr als 20 Wirkungen je Regel und Stunde werden einmal gemeldet und sonst nur gezählt.
+- **Lebenszeichen:** Job `beobachter-waechter` (10 min) meldet gestörte, fehlende oder zu alte Beobachter auf verbundenen Geräten als Befund (Quelle `beobachter`).
+- Neue Tabelle `beobachter_regeln` (PG v141 / SQLite v137), Nachrichten `beobachten` und `beobachtung` im Geräte-Protokoll.
+
 ## [0.19.0-jarvis.1428] - 2026-10-13
 
 ### Changed — Hinweise zu offenen Vorgängen nur bei Zustandswechsel (v1428, Spec „Vom Signal zur Handlung“ V1)

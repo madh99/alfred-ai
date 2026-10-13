@@ -46,6 +46,8 @@ export interface GeraeteGatewayDeps {
   beiFortschritt?: (f: { geraetId: string; geraet: string; auftragId: string; schritte: string[]; werkzeuge: number }) => void;
   /** v1415 — Gerät hat sich (wieder) verbunden (nach dem Willkommen) */
   beiVerbindung?: (geraetId: string) => void;
+  /** v1429 R4a — Beobachtungen eines Geräts (nur Kopfdaten) */
+  beiBeobachtung?: (geraetId: string, ereignisse: Array<{ regel: string; quelle: string; art: string; schluessel: string; zeit: string; kopf: Record<string, unknown> }>) => void;
   beiEreignis?: (e: { geraet: string; skillName: string; ereignis: import('@alfred/types').GeraetEreignis; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   now?: () => number;
@@ -305,6 +307,11 @@ export class GeraeteGateway {
         const herkunft = this.auftraege.nimm(v.eintrag.id, n.auftragId);
         this.deps.logger.info({ geraet: v.eintrag.name, auftrag: n.auftragId, status: n.status, herkunft: herkunft?.chatId }, 'v1342 Auftrag beendet');
         this.deps.beiEreignis?.({ geraet: v.eintrag.name, skillName: v.skillName, ereignis: n, herkunft }).catch(err => this.deps.logger.warn({ err: (err as Error).message }, 'v1342 Ereignis nicht verarbeitet'));
+        return;
+      }
+      case 'beobachtung': { // v1429 R4a
+        const e = Array.isArray(n.ereignisse) ? n.ereignisse.slice(0, 50) : [];
+        try { this.deps.beiBeobachtung?.(v.eintrag.id, e); } catch { /* Folgearbeit */ }
         return;
       }
       case 'sinne':

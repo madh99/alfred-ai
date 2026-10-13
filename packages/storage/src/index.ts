@@ -108,6 +108,8 @@ export type { Vorgang, VorgangSchritt, VorgangStatus, Autonomie, SchrittArt } fr
 export { titelAehnlichkeit, VORGANG_AEHNLICHKEIT_SCHWELLE, themenGleich, titelAnker } from './repositories/vorgaenge-repository.js';
 export { BefundeRepository } from './repositories/befunde-repository.js'; // v1217
 export { RegelnRepository } from './repositories/regeln-repository.js'; // v1362
+export { BeobachterRegelnRepository } from './repositories/beobachter-regeln-repository.js'; // v1429
+export type { BeobachterRegel, BeobachterRegelEingang, BeobachterQuelle, BeobachterWirkung } from './repositories/beobachter-regeln-repository.js';
 export { AnfrageProtokollRepository } from './repositories/anfrage-protokoll-repository.js'; // v1374
 export type { AnfrageEintrag, Folgesignal } from './repositories/anfrage-protokoll-repository.js'; // v1374
 export type { Regel, RegelWirkung, RegelStatus, RegelEingang } from './repositories/regeln-repository.js';

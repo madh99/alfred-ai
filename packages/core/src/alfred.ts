@@ -167,6 +167,7 @@ export class Alfred {
   private readonly formatter = new ResponseFormatter();
   private userRepo!: UserRepository;
   private skillRegistry!: SkillRegistry;
+  private beobachterDienst?: import('./beobachter/dienst.js').BeobachterDienst; // v1429
   private skillSandbox?: SkillSandbox;
   private mcpManager?: import('@alfred/skills').MCPManager;
   private calendarSkill?: CalendarSkill;
@@ -13812,7 +13813,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         const gw = new GeraeteGateway({
           // v1415 — wartende Projekt-Etappen starten, sobald das Gerät wieder da ist (kurz warten, bis die Aktionen registriert sind)
           beiFortschritt: (f) => this.projektLive(f), // v1418 G2
-          beiVerbindung: (geraetId: string) => { setTimeout(() => { void this.satellitProjekte?.nachholen(geraetId).then(n => { if (n) this.logger.info({ geraetId, laeufe: n }, 'v1415 wartende Etappen nachgeholt'); }); }, 15_000).unref?.(); },
+          beiBeobachtung: (geraetId, ereignisse) => { void this.beobachterDienst?.verarbeite(geraetId, ereignisse).catch((err: Error) => this.logger.warn({ err: err.message }, 'v1429 Beobachtungen nicht verarbeitet')); },
+          beiVerbindung: (geraetId: string) => { setTimeout(() => { void this.beobachterDienst?.anGeraet(geraetId).catch(() => false); }, 5_000).unref?.(); setTimeout(() => { void this.satellitProjekte?.nachholen(geraetId).then(n => { if (n) this.logger.info({ geraetId, laeufe: n }, 'v1415 wartende Etappen nachgeholt'); }); }, 15_000).unref?.(); },
           logger: this.logger.child({ component: 'geraete' }),
           repo: new GeraeteRepository(dbG),
           skillRegistry: this.skillRegistry,
@@ -13885,6 +13887,8 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         });
         gw.start();
         this.geraeteGateway = gw;
+        // v1429 R4a — Beobachter am Satelliten (Regeln am Server, Wirkungen deterministisch)
+        try { await this.beobachterAufbauen(gw, vorgaengeG); } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1429 Beobachter nicht verfügbar'); }
         // v1387 (R2) — Projekt-Agent mit Ausführungsziel Satellit (der Server-Runner bleibt unverändert)
         try { await this.satellitProjekteAufbauen(gw, vorgaengeG); } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1387 Satelliten-Projekte nicht verfügbar'); }
         // v1302 — neue Bestätigungen sofort an die Satelliten (Sitzungen am Gerät zeigen sie ohne 4-s-Abfrage)
@@ -15639,6 +15643,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       befunde: this.befundeRepo ? async () => ({ offen: await this.befundeRepo!.offene(owner), erledigt: await this.befundeRepo!.erledigtSeit(owner, new Date(Date.now() - 7 * 86_400_000).toISOString()) }) : undefined,
       protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (App)`),
       projekte: await this.geraeteProjekteFuerApp(owner, geraetId),
+      ...(this.beobachterDienst ? { beobachter: { liste: () => this.beobachterDienst!.liste(), anlegen: (b: Record<string, unknown>) => this.beobachterDienst!.anlegen(b), aendern: (id: string, b: Record<string, unknown>) => this.beobachterDienst!.aendern(id, b) } } : {}), // v1429
     });
   }
 
@@ -16188,6 +16193,49 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     }
     this.logger.info({ geraet: g.name, projekt, abgelegt: pfade.length, fehler }, 'v1424 Anhänge für Claude Code abgelegt');
     return { hinweis: anhangHinweis(pfade), pfade, fehler };
+  }
+
+  /** v1429 R4a — Beobachter-Dienst: Repo, Wirkungen (Hinweis/Vorgang/Aufgabe/Projekt-Bestätigung), Skill, Wächter-Job, App/Web. */
+  private async beobachterAufbauen(gw: import('./geraete/gateway.js').GeraeteGateway, vorgaenge: import('@alfred/storage').VorgaengeRepository): Promise<void> {
+    const { BeobachterRegelnRepository } = await import('@alfred/storage');
+    const { BeobachterDienst } = await import('./beobachter/dienst.js');
+    const { BeobachterSkill } = await import('./beobachter/beobachter-skill.js');
+    const { geraetSkillName } = await import('./geraete/protokoll.js');
+    const repo = new BeobachterRegelnRepository(this.database.getAdapter());
+    const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api') as Platform;
+    const dienst = new BeobachterDienst({
+      repo: repo as never,
+      owner: () => this.tryOwner(),
+      geraete: async () => (await gw.liste()).map(g => ({ id: g.id, name: g.name, online: g.online, sinne: g.sinne, sinneZeit: g.sinneZeit })),
+      projekte: async () => { const o = this.tryOwner(); return o && this.projectRepo ? (await this.projectRepo.list(o, { nurGeraete: true, limit: 200 })).filter(p => p.status !== 'archived').map(p => ({ id: p.id, name: p.name })) : []; },
+      sendeAn: (id, n) => gw.sendeAn(id, n),
+      geraetSkillName,
+      melde: async (text) => { await this.meldeOhneModell(text); },
+      vorgang: async (e) => { const o = this.tryOwner(); if (!o) return; await vorgaenge.anlegen({ userId: o, titel: e.titel, ziel: e.ziel, besitzer: 'user', status: 'offen', naechsterSchritt: e.naechsterSchritt, frist: new Date(Date.now() + 7 * 86_400_000).toISOString(), quelle: 'beobachtung', autonomie: 'bestaetigen', dedupeKey: e.dedupeKey }); },
+      aufgabe: async (r, auftrag, ausloeser, skills) => {
+        const o = this.tryOwner();
+        if (!o || !this.proactiveScheduler) return;
+        // wie Mail-Regeln (v1211): geplante Aufgabe mit fester Werkzeugliste, hier ohne gespeicherte Zeile
+        await this.proactiveScheduler.fuehreAusDurchEreignis({ id: `beobachter-${r.id}`, userId: o, platform: ownerPlatform, chatId: this.config.security?.ownerUserId ?? '', name: `Beobachter: ${r.name}`, description: auftrag.slice(0, 200), scheduleType: 'once', scheduleValue: '', skillName: '', skillInput: '{}', promptTemplate: auftrag, enabled: true, createdAt: new Date().toISOString() } as never, { text: ausloeser, allowedSkills: skills });
+      },
+      bestaetigung: async (r, beschreibung, ziel, sourceId) => {
+        if (!this.confirmationQueue || !r.projektId) return false;
+        return this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: ownerPlatform, source: 'geraet', sourceId, description: beschreibung, skillName: 'project_agent', skillParams: { action: 'projekt_weiter', projekt: r.projektId, goal: ziel }, timeoutMinutes: 720 });
+      },
+      befundeSync: async (b) => { const o = this.tryOwner(); if (o && this.befundeRepo) await this.befundeRepo.sync(o, 'beobachter', b); },
+      logger: this.logger.child({ component: 'beobachter' }),
+    });
+    this.beobachterDienst = dienst;
+    this.skillRegistry.register(new BeobachterSkill(dienst));
+    this.registriereJob({
+      key: 'beobachter-waechter', beschreibung: 'v1429 R4a — gestörte oder fehlende Beobachter auf verbundenen Geräten als Befund (Quelle beobachter)', takt: { art: 'intervall', minuten: 10 }, bereich: 'global', startVerzoegerungMin: 5,
+      run: async () => ({ ok: true, zaehler: { gestoert: await dienst.waechter() } }),
+    });
+    // Web: dieselben Regeln wie App und Gespräch
+    (this.adapters.get('api') as unknown as { setBeobachterCallbacks?: (cb: unknown) => void } | undefined)?.setBeobachterCallbacks?.({
+      liste: () => dienst.liste(), anlegen: (b: Record<string, unknown>) => dienst.anlegen(b), aendern: (id: string, b: Record<string, unknown>) => dienst.aendern(id, b),
+    });
+    this.logger.info({}, 'v1429 Beobachter bereit');
   }
 
   private async meldeInFaden(faden: string, text: string): Promise<void> {

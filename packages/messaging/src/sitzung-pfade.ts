@@ -28,7 +28,7 @@ const SITZUNG_PFADE = [
   /^\/api\/geraete\/(suche|anhaenge)$/, // v1350 — Suche im Verlauf, Übersicht der Anhänge
   /^\/api\/geraete\/meldung$/, // v1351 — Fehlermeldungen der Desktop-App ins Server-Log
   /^\/api\/geraete\/abbrechen$/, // v1352 — laufende Antwort der eigenen Sitzung abbrechen
-  /^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte)(\/[A-Za-z0-9_-]{1,64})?$/, // v1353 — native Ansichten (nur Geräte des Owners); v1359 befunde; v1362 regeln; v1401 projekte
+  /^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte|beobachter)(\/[A-Za-z0-9_-]{1,64})?$/, // v1353 — native Ansichten (nur Geräte des Owners); v1359 befunde; v1362 regeln; v1401 projekte
 ];
 
 export function istSitzungsPfad(url: string | undefined): boolean {

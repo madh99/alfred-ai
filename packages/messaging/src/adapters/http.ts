@@ -255,6 +255,9 @@ export interface GeraetOwnerAnsichten {
   vorgangAbschliessen(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1362
   regeln(): Promise<unknown>; // v1362
   regelAendern(id: string, aktion: unknown): Promise<unknown | null>; // v1362
+  beobachter?(): Promise<unknown>; // v1429 R4a
+  beobachterAnlegen?(b: unknown): Promise<unknown>;
+  beobachterAendern?(id: string, b: unknown): Promise<unknown>;
 }
 
 export class HttpAdapter extends MessagingAdapter {
@@ -828,6 +831,22 @@ export class HttpAdapter extends MessagingAdapter {
     if (!text) { antwort(400, { error: 'text fehlt (was soll als Nächstes passieren?)' }); return; }
     antwort(200, await cb.weiter(id, text));
   }
+  /** v1429 R4a — Beobachter-Regeln fürs Web (dieselben wie App und Gespräch) */
+  private beobachterCallbacks?: { liste: () => Promise<unknown>; anlegen: (b: Record<string, unknown>) => Promise<unknown>; aendern: (id: string, b: Record<string, unknown>) => Promise<unknown> };
+  setBeobachterCallbacks(cb: HttpAdapter['beobachterCallbacks']): void { this.beobachterCallbacks = cb; }
+  private async handleBeobachter(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
+    const cb = this.beobachterCallbacks;
+    if (!cb) { antwort(503, { error: 'Beobachter nicht verfügbar' }); return; }
+    const id = url.pathname.split('/')[3];
+    if (req.method === 'GET') { antwort(200, await cb.liste()); return; }
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    antwort(200, id ? await cb.aendern(id, body) : await cb.anlegen(body));
+  }
+
   /** @internal v1399 — gesperrte Route eines Geräte-Projekts? (exportiert über die Klasse für Tests) */
   geraeteProjektGesperrt(pathname: string): boolean {
     const m = /^\/api\/projects\/([^/]+)\/([^/]+)/.exec(pathname);
@@ -2016,12 +2035,14 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetHinweise(req, res).catch(err => this.safeError(res, err)); // v1343
     } else if (/^\/api\/geraete\/hinweise\/[A-Za-z0-9-]{1,64}$/.test(url.pathname) && req.method === 'POST') {
       this.handleGeraetHinweisEntscheiden(req, res, url).catch(err => this.safeError(res, err)); // v1343
-    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) { // v1401 projekte
+    } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte|beobachter)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) { // v1401 projekte, v1429 beobachter
       this.handleGeraetOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1353
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
       this.handleAppUpdate(req, res, url, url.pathname.endsWith('/datei')).catch(err => this.safeError(res, err)); // v1322
     } else if (url.pathname.match(/^\/api\/geraete\/[^/]+$/) && req.method === 'DELETE') {
       this.handleGeraetWiderruf(req, res, url).catch(err => this.safeError(res, err));
+    } else if (/^\/api\/beobachter(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+      this.handleBeobachter(req, res, url).catch(err => this.safeError(res, err)); // v1429 R4a
     } else if (url.pathname === '/api/vorgaenge' && req.method === 'GET') {
       this.handleVorgaenge(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/vorgaenge\/[^/]+\/entscheidung$/) && req.method === 'POST') {
@@ -6923,6 +6944,9 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text, body.lauf, { konventionen: body.konventionen })); return; } // v1426 konventionen
       // v1362 — Abschluss mit Ergebnis (neu) bzw. Erledigt/Verwerfen (bisherige Clients); Regeln
       if (bereich === 'vorgaenge' && id && m === 'POST' && body.ergebnis) { const v = await a.vorgangAbschliessen(id, body); antwort(v ? 200 : 404, v ? { ok: true, ...(v as object) } : { error: 'nicht gefunden' }); return; }
+      if (bereich === 'beobachter' && !id && m === 'GET' && a.beobachter) { antwort(200, await a.beobachter()); return; } // v1429
+      if (bereich === 'beobachter' && !id && m === 'POST' && a.beobachterAnlegen) { antwort(200, await a.beobachterAnlegen(body)); return; }
+      if (bereich === 'beobachter' && id && m === 'POST' && a.beobachterAendern) { antwort(200, await a.beobachterAendern(id, body)); return; }
       if (bereich === 'regeln' && !id && m === 'GET') { antwort(200, await a.regeln()); return; }
       if (bereich === 'regeln' && id && m === 'POST') { const x = await a.regelAendern(id, body.aktion); antwort(x ? 200 : 404, x ? { ok: true, ...(x as object) } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'vorgaenge' && id && m === 'POST') { const v = await a.vorgangEntscheiden(id, body.status, body.notiz); antwort(v ? 200 : 404, v ? { ok: true, titel: v.titel } : { error: 'nicht gefunden' }); return; }

@@ -53,9 +53,15 @@ export interface GeraetEreignis extends GeraetRahmen { typ: 'ereignis'; art: 'au
 /** v1418 G2 — laufender Claude-Code-Auftrag: letzte Schritte (gekürzt, Geheimnisse geschwärzt), höchstens alle 5 s, Lebenszeichen jede Minute */
 export interface GeraetFortschritt extends GeraetRahmen { typ: 'fortschritt'; auftragId: string; schritte: string[]; werkzeuge: number }
 
+/** v1429 R4a — Gerät → Gehirn: Beobachtungen (nur Kopfdaten, gebündelt) zu Regeln, die das Gehirn mit `beobachten` geschickt hat. */
+export interface GeraetBeobachtung extends GeraetRahmen { typ: 'beobachtung'; ereignisse: Array<{ regel: string; quelle: string; art: string; schluessel: string; zeit: string; kopf: Record<string, unknown> }> }
+/** v1429 R4a — Gehirn → Gerät: aktive Beobachter-Regeln dieses Geräts (ersetzt die bisherigen). */
+export interface GeraetBeobachten extends GeraetRahmen { typ: 'beobachten'; regeln: Array<Record<string, unknown>> }
+
 export type GeraetNachricht =
   | GeraetHallo | GeraetWillkommen | GeraetPuls | GeraetPulsOk
-  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung | GeraetGespraech | GeraetEreignis | GeraetFortschritt;
+  | GeraetAktion | GeraetAktionErgebnis | GeraetSinne | GeraetFehler | GeraetAbgemeldet | GeraetBestaetigung | GeraetGespraech | GeraetEreignis | GeraetFortschritt
+  | GeraetBeobachtung | GeraetBeobachten;
 
 /** Eintrag der Geräte-Registry (Gehirn). */
 export interface GeraetEintrag {

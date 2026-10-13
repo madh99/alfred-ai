@@ -17,6 +17,7 @@ import { installiereStarter } from './satellit-starter.js'; // v1304
 import { installieren, pruefeInstallation, INSTALL_QUELLEN } from './satellit-installieren.js'; // v1410 R3c
 import { aktivesVertrauen } from './satellit-einstellungen.js'; // v1411 R3d
 import { BrowserHand, formatiereSeite } from './satellit-browser.js';
+import { BeobachterVerwaltung, type BeobachterRegel } from './satellit-beobachter.js'; // v1429 R4a
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
@@ -712,7 +713,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
       // v1309 — Einstellungen geändert (Sitzung oder alfred einstellungen): geraet.json neu lesen, Bedienung mit neuer Sperrliste
       if (befehl === 'neuladen') {
         const neu = ladeKonfig();
-        if (neu) { Object.assign(k, neu); if (!neu.vertrauen) k.vertrauen = undefined; bedienung = undefined; log('Einstellungen neu geladen'); sinneSofort?.(); /* v1411 Vertrauen sofort melden */ antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
+        if (neu) { Object.assign(k, neu); if (!neu.vertrauen) k.vertrauen = undefined; if (!neu.beobachterAus) k.beobachterAus = undefined; beobachter.setze(beobachterRegeln); /* v1429 Veto sofort */ bedienung = undefined; log('Einstellungen neu geladen'); sinneSofort?.(); /* v1411 Vertrauen sofort melden */ antworte({ typ: 'ereignis', zeit: new Date().toISOString(), art: 'hinweis', text: 'Einstellungen neu geladen' }); }
       }
     });
     s.start().then(() => { ipc = s; log(`IPC bereit: ${ipcPfadText()}`); }).catch(err => fehler(`IPC nicht verfügbar: ${(err as Error).message}`));
@@ -745,7 +746,15 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
     setTimeout(() => versuch(0), 15_000);
   };
   const sinne = new SinneErfasser({ ohneFenster: (k as GeraetKonfig & { sinneOhneFenster?: boolean }).sinneOhneFenster === true });
-  const stop = () => { laeuft = false; sinne.stop(); try { aktiv?.close(); } catch { /* */ } try { ipc?.stop(); } catch { /* */ } };
+  // v1429 R4a — Beobachter: Regeln kommen vom Gehirn (`beobachten`), nur freigegebene/lesbare Verzeichnisse, lokales Veto
+  let beobachterRegeln: BeobachterRegel[] = [];
+  const beobachter = new BeobachterVerwaltung({
+    senden: (e) => { if (!gehirnSende?.({ typ: 'beobachtung', ereignisse: e })) log(`Beobachtung nicht gesendet (getrennt): ${e.length}`); },
+    erlaubt: (p) => istPfadErlaubt(p, [...k.freigegebeneVerzeichnisse, ...(k.nurLesen ?? [])]),
+    veto: () => k.beobachterAus === true,
+    log,
+  });
+  const stop = () => { laeuft = false; sinne.stop(); beobachter.stopAlle(); try { aktiv?.close(); } catch { /* */ } try { ipc?.stop(); } catch { /* */ } };
 
   log(`Satellit ${k.name} (${manifest.plattform}, v${version}) → ${k.server}`);
   if (process.platform === 'linux') {
@@ -766,7 +775,7 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
         let sinneTimer: ReturnType<typeof setInterval> | undefined;
         const sende = (n: Record<string, unknown>): boolean => { if (ws.readyState !== WebSocket.OPEN) return false; ws.send(JSON.stringify({ id: randomUUID(), zeit: new Date().toISOString(), version: 1, ...n })); return true; };
         // v1411 R3d — aktive Vertrauensstufen mit den Sinnen melden (das Gehirn überspringt damit Einzelbestätigungen im Ordner)
-        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k) }; sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } };
+        const sendeSinne = async () => { try { const w = { ...(await sinne.erfasse()), vertrauen: aktivesVertrauen(k), beobachter: beobachter.stand() }; sende({ typ: 'sinne', werte: w }); } catch { /* nächste Minute */ } }; // v1429 Beobachter-Stand
         sinneSofort = () => { void sendeSinne(); };
         ws.on('open', () => {
           sende({ typ: 'hallo', geraetId: k.geraetId, token: k.token, manifest });
@@ -796,6 +805,12 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
             return;
           }
           if (n.typ === 'puls_ok') return;
+          if (n.typ === 'beobachten') { // v1429 R4a — Regeln vom Gehirn übernehmen, Stand sofort melden
+            beobachterRegeln = Array.isArray(n.regeln) ? (n.regeln as unknown as BeobachterRegel[]) : [];
+            beobachter.setze(beobachterRegeln);
+            setTimeout(() => { void sendeSinne(); }, 500);
+            return;
+          }
           if (n.typ === 'fehler') { fehler(`Fehler vom Gehirn: ${n.grund}`); return; }
           if (n.typ === 'abgemeldet') { fehler(`Abgemeldet: ${n.grund}. Bitte neu koppeln (alfred pair).`); stop(); ws.close(); return; }
           // v1302 — neue Bestätigung vom Gehirn: an angehängte Sitzungen weiterreichen

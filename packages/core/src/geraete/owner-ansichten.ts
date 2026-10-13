@@ -56,6 +56,8 @@ export interface OwnerAnsichtenDeps {
   /** v1359 — Befunde (Schicht 3) des Owners: offene und kürzlich erledigte */
   befunde?: () => Promise<{ offen: BefundLike[]; erledigt: BefundLike[] }>;
   /** v1401 — Geräte-Projekte für die App-Ansicht „Projekte" (Liste, Detail mit Läufen, Stand vom Gerät, Weiterarbeiten) */
+  /** v1429 R4a — Beobachter-Regeln (Liste mit Stand, Anlegen, An/Aus/Löschen) */
+  beobachter?: { liste: () => Promise<unknown>; anlegen: (b: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>; aendern: (id: string, b: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> };
   projekte?: {
     liste: () => Promise<unknown[]>;
     detail: (id: string) => Promise<unknown | null>;
@@ -166,6 +168,19 @@ export class OwnerAnsichten {
   }
 
   /** v1359 — Befunde für die App: offen (älteste zuerst) und in den letzten 7 Tagen erledigt; Regel aus dem Schlüssel (Haus-Check „A1:…"). */
+  /** v1429 R4a — Beobachter */
+  async beobachter(): Promise<unknown> { return this.d.beobachter ? this.d.beobachter.liste() : { regeln: [], geraete: [], projekte: [] }; }
+  async beobachterAnlegen(b: unknown): Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> {
+    if (!this.d.beobachter || !b || typeof b !== 'object') return { success: false, error: 'Beobachter nicht verfügbar' };
+    this.d.protokoll?.('Beobachter angelegt', {});
+    return this.d.beobachter.anlegen(b as Record<string, unknown>);
+  }
+  async beobachterAendern(id: string, b: unknown): Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> {
+    if (!this.d.beobachter || !b || typeof b !== 'object') return { success: false, error: 'Beobachter nicht verfügbar' };
+    this.d.protokoll?.('Beobachter geändert', { id, aktion: (b as { aktion?: unknown }).aktion });
+    return this.d.beobachter.aendern(id, b as Record<string, unknown>);
+  }
+
   /** v1401 — Geräte-Projekte (nur Owner-Geräte; Weiterarbeiten plant und fragt den Owner wie im Gespräch) */
   async projekte(): Promise<{ projekte: unknown[] }> { return { projekte: this.d.projekte ? await this.d.projekte.liste() : [] }; }
   async projekt(id: string): Promise<unknown | null> { return this.d.projekte ? this.d.projekte.detail(id) : null; }

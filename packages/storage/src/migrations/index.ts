@@ -2950,4 +2950,16 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_projects_geraet ON projects(user_id, geraet_id, cwd)');
     },
   },
+  {
+    version: 137,
+    description: 'v1429 R4a — Beobachter-Regeln am Server (SQLite-Spiegel zu PG v141).',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS beobachter_regeln (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, geraet_id TEXT NOT NULL, geraet TEXT, name TEXT NOT NULL, quelle TEXT NOT NULL,
+        filter TEXT, wirkung TEXT NOT NULL, auftrag TEXT, skills TEXT, projekt_id TEXT, aktiv INTEGER NOT NULL DEFAULT 1,
+        erstellt TEXT NOT NULL, geaendert TEXT NOT NULL, letzter_treffer TEXT, treffer INTEGER NOT NULL DEFAULT 0
+      )`);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_beobachter_regeln_geraet ON beobachter_regeln(user_id, geraet_id, aktiv)');
+    },
+  },
 ];

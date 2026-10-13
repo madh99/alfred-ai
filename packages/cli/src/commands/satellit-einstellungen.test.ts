@@ -9,7 +9,7 @@ const konfig = (): GeraetKonfig => ({ server: 'https://s:3420', geraetId: 'abcde
 describe('Satelliten-Einstellungen (v1309)', () => {
   it('listet die Felder mit Werten', () => {
     const l = einstellungen(konfig(), { version: '1309', dienst: 'läuft' });
-    expect(l.map(e => e.schluessel)).toEqual(['geraet', 'server', 'freigabe', 'fenster-sperre', 'foto-sperre', 'wort', 'sinne-fenster', 'oberflaeche', 'vertrauen', 'sudo-sperre']); // v1409 sudo-sperre, v1411 vertrauen
+    expect(l.map(e => e.schluessel)).toEqual(['geraet', 'server', 'freigabe', 'fenster-sperre', 'foto-sperre', 'wort', 'sinne-fenster', 'oberflaeche', 'vertrauen', 'beobachter', 'sudo-sperre']); // v1409 sudo-sperre, v1411 vertrauen, v1429 beobachter
     expect(l[2]!.eintraege).toEqual([`${os.tmpdir()} (schreiben)`]);
     expect(l[5]!.wert).toBe('Alfred');
     expect(l[7]!.wert).toBe('ink');
@@ -52,5 +52,17 @@ describe('Satelliten-Einstellungen (v1309)', () => {
     expect(wendeAn(k, 'quatsch', '').text).toContain('Unbekannt: quatsch');
     expect(trenneBefehl('freigabe C:\\x y schreiben')).toEqual({ befehl: 'freigabe', arg: 'C:\\x y schreiben' });
     expect(trenneBefehl('wort')).toEqual({ befehl: 'wort', arg: '' });
+  });
+});
+
+describe('v1429 Beobachter-Veto', () => {
+  it('beobachter an|aus setzt das lokale Veto', async () => {
+    const { wendeAn } = await import('./satellit-einstellungen.js');
+    const k = { beobachterAus: undefined } as unknown as Parameters<typeof wendeAn>[0];
+    expect(wendeAn(k, 'beobachter', 'aus').ok).toBe(true);
+    expect((k as { beobachterAus?: boolean }).beobachterAus).toBe(true);
+    expect(wendeAn(k, 'beobachter', 'an').ok).toBe(true);
+    expect((k as { beobachterAus?: boolean }).beobachterAus).toBe(false);
+    expect(wendeAn(k, 'beobachter', 'vielleicht').ok).toBe(false);
   });
 });

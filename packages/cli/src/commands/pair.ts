@@ -27,6 +27,8 @@ export interface GeraetKonfig {
   fotoSperre?: string[];
   /** v1409 R3b — Claude-Code-Aufträge ohne sudo (lokale Einstellung, Owner 13.10.: „optional sperrbar") */
   sudoSperre?: boolean;
+  /** v1429 R4a — lokales Veto: alle Beobachter dieses Geräts aus (Regeln bleiben am Server) */
+  beobachterAus?: boolean;
   /** v1411 R3d — Vertrauensstufe „projekt": nur lokal setzbar (alfred einstellungen vertrauen …), Pfad + Ablaufzeit (ISO) */
   vertrauen?: Array<{ pfad: string; bis: string }>;
   erlaubteProgramme: string[];

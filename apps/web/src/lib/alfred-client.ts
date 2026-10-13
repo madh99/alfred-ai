@@ -1697,6 +1697,21 @@ export class AlfredClient {
   }
 
   /** v1185 — Kachel Vorgänge */
+  /** v1429 R4a — Beobachter-Regeln (Liste mit Stand, Geräte, Projekte) */
+  async beobachter(): Promise<BeobachterListe | null> {
+    const res = await fetch(`${this.baseUrl}/api/beobachter`, { headers: this.authHeaders });
+    if (!res.ok) return null;
+    return res.json() as Promise<BeobachterListe>;
+  }
+  async beobachterAnlegen(b: Record<string, unknown>): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/beobachter`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(b) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+  async beobachterAendern(id: string, b: Record<string, unknown>): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/beobachter/${encodeURIComponent(id)}`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(b) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+
   async fetchVorgaenge(): Promise<VorgaengeStatus | null> {
     const res = await fetch(`${this.baseUrl}/api/vorgaenge`, { headers: this.authHeaders });
     if (!res.ok) return null;
@@ -3094,6 +3109,10 @@ export interface ProjectConventions {
   /** v1426 — eigene Regeln des Owners */
   regeln?: string[];
 }
+
+/** v1429 R4a — Beobachter */
+export interface BeobachterRegelDto { id: string; geraetId: string; geraet: string; name: string; quelle: string; filter: Record<string, unknown>; wirkung: string; auftrag?: string; projektId?: string; aktiv: boolean; treffer?: number; letzterTreffer?: string; stand: string; standGrund?: string }
+export interface BeobachterListe { regeln: BeobachterRegelDto[]; geraete: Array<{ id: string; name: string; online: boolean }>; projekte: Array<{ id: string; name: string }> }
 
 // v661 — Todos + Notes Types
 export interface TodoItem {

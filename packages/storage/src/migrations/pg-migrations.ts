@@ -2257,4 +2257,16 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_projects_geraet ON projects(user_id, geraet_id, cwd)', []);
     },
   },
+  {
+    version: 141,
+    description: 'v1429 R4a — Beobachter-Regeln am Server (Satelliten beobachten Ordner u. a.; Wirkung Hinweis/Vorgang/Aufgabe/Projekt) (PG-Spiegel zu SQLite v137).',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS beobachter_regeln (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, geraet_id TEXT NOT NULL, geraet TEXT, name TEXT NOT NULL, quelle TEXT NOT NULL,
+        filter TEXT, wirkung TEXT NOT NULL, auftrag TEXT, skills TEXT, projekt_id TEXT, aktiv INTEGER NOT NULL DEFAULT 1,
+        erstellt TEXT NOT NULL, geaendert TEXT NOT NULL, letzter_treffer TEXT, treffer INTEGER NOT NULL DEFAULT 0
+      )`, []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_beobachter_regeln_geraet ON beobachter_regeln(user_id, geraet_id, aktiv)', []);
+    },
+  },
 ];

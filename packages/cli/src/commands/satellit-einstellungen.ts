@@ -19,6 +19,7 @@ export const EINSTELLUNGEN_HILFE = [
   'sinne-fenster an|aus                     Fenstertitel in den Sinnen mitsenden (aus = nur Leerlauf/Akku)',
   'oberflaeche ink|einfach                  Sitzung mit Ink-Oberfläche oder einfacher Ausgabe starten',
   'sudo-sperre an|aus                       Claude-Code-Aufträge dürfen kein sudo verwenden (Systemänderungen nur über „installieren" mit Bestätigung)',
+  'beobachter an|aus                        Beobachter dieses Geräts (Ordner u. a.) erlauben oder alle abschalten — die Regeln bleiben am Server',
   'vertrauen <pfad> bis <zeit> | - <pfad>   Vertrauensstufe projekt: Entwicklungsbefehle (npm, git, …) und Prüfungen in diesem Ordner ohne Einzelbestätigung (zeit: 18:00, 4h, 2d, 2026-10-20 18:00; höchstens 30 Tage; nur hier am Gerät, nie aus dem Chat)',
 ];
 
@@ -38,6 +39,7 @@ export function einstellungen(k: GeraetKonfig, extra: { version: string; dienst:
     { schluessel: 'sinne-fenster', titel: 'Fenstertitel in den Sinnen', wert: k.sinneOhneFenster ? 'aus' : 'an', art: 'schalter' },
     { schluessel: 'oberflaeche', titel: 'Sitzungs-Oberfläche', wert: k.sitzungEinfach ? 'einfach' : 'ink', art: 'schalter' },
     { schluessel: 'vertrauen', titel: 'Vertrauensstufe projekt', wert: aktivesVertrauen(k).length ? `${aktivesVertrauen(k).length} Ordner` : 'keine', art: 'liste', eintraege: aktivesVertrauen(k).map(v => `${v.pfad} bis ${new Date(v.bis).toLocaleString('de-AT')}`), hinweis: 'nur lokal setzbar; Installieren bleibt bestätigungspflichtig' }, // v1411
+    { schluessel: 'beobachter', titel: 'Beobachter (Ordner u. a.)', wert: k.beobachterAus ? 'aus' : 'an', art: 'schalter', hinweis: 'aus: dieses Gerät beobachtet nichts, egal was am Server eingestellt ist' }, // v1429
     { schluessel: 'sudo-sperre', titel: 'sudo in Claude-Code-Aufträgen', wert: k.sudoSperre ? 'gesperrt' : 'erlaubt', art: 'schalter', hinweis: 'gesperrt: Systemänderungen nur über installieren mit Bestätigung' }, // v1409
   ];
 }
@@ -98,6 +100,11 @@ export function wendeAn(k: GeraetKonfig, befehl: string, arg: string): { ok: boo
       if (!bis) return { ok: false, text: 'Zeit: 18:00, 4h, 2d oder 2026-10-20 18:00 (höchstens 30 Tage)' };
       k.vertrauen = [...(k.vertrauen ?? []).filter(v => !gleich(path.resolve(v.pfad), p) && Date.parse(v.bis) > Date.now()), { pfad: p, bis: bis.toISOString() }];
       return { ok: true, text: `Vertrauensstufe projekt: ${p} bis ${bis.toLocaleString('de-AT')}` };
+    }
+    case 'beobachter': { // v1429 R4a — lokales Veto
+      if (!/^(an|aus)$/i.test(a)) return { ok: false, text: 'beobachter an|aus' };
+      k.beobachterAus = a.toLowerCase() === 'aus';
+      return { ok: true, text: `Beobachter auf diesem Gerät: ${k.beobachterAus ? 'aus (nichts wird beobachtet)' : 'an (Regeln vom Server)'}` };
     }
     case 'sudo-sperre': { // v1409 R3b
       if (!/^(an|aus)$/i.test(a)) return { ok: false, text: 'sudo-sperre an|aus' };
