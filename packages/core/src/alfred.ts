@@ -15,7 +15,7 @@ import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
-import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14
+import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
 import {
@@ -15909,6 +15909,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await this.projectRepo.getById(o, s.akteId).catch(() => null);
         const zp = p?.deployZiel ? zielPruefen(p.deployZiel) : undefined;
         if (!p || !zp?.ok || !zp.ziel.autoDev || zp.ziel.stufe !== 'dev') return;
+        if (!zielBestaetigt(p.deployZiel)) { this.logger.warn({ projekt: p.id }, 'v1438 Auto-dev übersprungen — Deploy-Ziel nicht vom Owner bestätigt'); return; }
         if (!s.erledigt.length || !s.erledigt.every(e => e.ok && e.geprueft)) { this.logger.info({ lauf: s.id }, 'v1437 Auto-dev übersprungen — nicht alle Etappen grün abgenommen'); return; }
         const faden = `owner:faden:projekt-${p.id.slice(0, 8)}`;
         await this.meldeOhneModell(`🚀 ${p.name}: alle Etappen grün — Deploy nach dev (${zp.ziel.host}) startet automatisch (Schalter auto_dev).`, { chatId: faden, platform: 'api' });
@@ -16132,13 +16133,23 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (!p) return { success: false, error: 'Projekt nicht gefunden' };
         const alt = p.deployZiel ? zielPruefen(p.deployZiel) : undefined;
         if (input.entfernen === true) { await this.projectRepo!.setzeDeployZiel(t.o, p.id, null); return { success: true, display: `${p.name}: Deploy-Ziel entfernt — alles wie ohne Deploy.` }; }
+        // v1438 (Sicherheitsprüfung) — ein Ziel bekommt Code, Projekt-Token und .env: neu/geändert nur nach Owner-Bestätigung
+        if (typeof input.bestaetigt === 'string') {
+          const f = this.deployFreigaben.loese(input.bestaetigt, p.id, 'ziel');
+          if (!f?.ziel) return { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
+          await this.projectRepo!.setzeDeployZiel(t.o, p.id, { ...(f.ziel as unknown as Record<string, unknown>), bestaetigt: true });
+          this.logger.info({ projekt: p.id, ziel: zielText(f.ziel) }, 'v1438 Deploy-Ziel nach Bestätigung gespeichert');
+          return { success: true, display: `${p.name} → ${zielText(f.ziel)} gespeichert (bestätigt).` };
+        }
         const neu = ['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name'].some(k => input[k] !== undefined);
         if (!neu) return { success: true, display: alt?.ok ? `${p.name} → ${zielText(alt.ziel)}${p.repoUrl ? `\nRepo: ${p.repoUrl}` : '\n⚠️ kein Remote — Deploy holt aus dem Repo'}` : `${p.name} hat kein Deploy-Ziel.` };
         const z = zielPruefen(input, alt?.ok ? alt.ziel : undefined);
         if (!z.ok) return { success: false, error: z.fehler };
-        await this.projectRepo!.setzeDeployZiel(t.o, p.id, z.ziel as unknown as Record<string, unknown>);
-        this.logger.info({ projekt: p.id, ziel: zielText(z.ziel) }, 'v1437 Deploy-Ziel gesetzt');
-        return { success: true, display: `${p.name} → ${zielText(z.ziel)} gespeichert.${p.repoUrl ? '' : ' ⚠️ Das Projekt hat kein Remote — vor dem ersten Deploy braucht es eins.'} Deploy mit projekt_deploy (immer mit Bestätigung${z.ziel.autoDev ? '; nach grüner Abnahme aller Etappen automatisch' : ''}).` };
+        if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+        const nonce = this.deployFreigaben.stelle(p.id, 'ziel', undefined, 24 * 3_600_000, z.ziel);
+        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `deploy-ziel-${p.id}-${Date.now()}`, description: `🎯 Deploy-Ziel für ${p.name} setzen: ${zielText(z.ziel)}?\nDieser Rechner bekommt den Code${z.ziel.envStage ? `, die Projektumgebung „${z.ziel.envStage}“ als .env` : ''} und beim Holen das Projekt-Token.`, skillName: 'project_agent', skillParams: { action: 'projekt_deploy_ziel', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60 });
+        this.logger.info({ projekt: p.id, ziel: zielText(z.ziel) }, 'v1438 Deploy-Ziel zur Bestätigung gestellt');
+        return ok ? { success: true, data: { bestaetigung: true }, display: `Deploy-Ziel für ${p.name} (${zielText(z.ziel)}) zur Bestätigung gestellt — gespeichert wird es erst nach deinem Ja.${p.repoUrl ? '' : ' ⚠️ Das Projekt hat kein Remote — vor dem ersten Deploy braucht es eins.'}` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
       },
       deploy: async (ref, input, context) => {
         const t = await akteAus(ref);
@@ -16147,6 +16158,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const zp = p?.deployZiel ? zielPruefen(p.deployZiel) : undefined;
         if (!p || !zp?.ok) return { success: false, error: `${t.akte.name} hat kein Deploy-Ziel — erst projekt_deploy_ziel host=… setzen` };
         if (!p.repoUrl) return { success: false, error: `${p.name} hat kein Remote — der Deploy holt den Stand aus dem Repo` };
+        if (!zielBestaetigt(p.deployZiel)) return { success: false, error: `Das Deploy-Ziel von ${p.name} ist nicht bestätigt — erst projekt_deploy_ziel erneut setzen und bestätigen` }; // v1438
         const herkunft = context.chatId ? { chatId: context.chatId, platform: context.platform, userId: context.userId } : undefined;
         if (typeof input.bestaetigt === 'string' && this.deployFreigaben.loese(input.bestaetigt, p.id, 'deploy')) {
           const r = await this.projektDeployAusfuehren(p, zp.ziel, herkunft);

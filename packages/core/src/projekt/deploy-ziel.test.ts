@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben } from './deploy-ziel.js';
+import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt } from './deploy-ziel.js';
 
 describe('v1437 B14 Deploy-Ziel', () => {
   it('prüft Eingaben; auto_dev nur in dev; Teiländerung behält den Rest', () => {
@@ -39,5 +39,16 @@ describe('v1437 B14 Deploy-Ziel', () => {
     jetzt = 2000;
     expect(f.loese(d, 'p1', 'deploy')).toBeUndefined();
     expect(f.loese('deploy-geraten', 'p1', 'deploy')).toBeUndefined();
+    // v1438 — 128 Bit aus dem CSPRNG; vorgeschlagenes Ziel reist mit der Kennung, gespeichert wird erst danach
+    const z = f.stelle('p1', 'ziel', undefined, 1000, { host: 'h', prozess: 'pm2', stufe: 'dev', autoDev: true });
+    expect(z).toMatch(/^ziel-[0-9a-f]{32}$/);
+    expect(f.loese(z, 'p1', 'deploy')).toBeUndefined(); // falsche Art
+    const z2 = f.stelle('p1', 'ziel', undefined, 1000, { host: 'h', prozess: 'pm2', stufe: 'dev' });
+    expect(f.loese(z2, 'p1', 'ziel')).toEqual({ ziel: { host: 'h', prozess: 'pm2', stufe: 'dev' } });
+    expect(zielBestaetigt({ host: 'h', bestaetigt: true })).toBe(true);
+    expect(zielBestaetigt({ host: 'h', bestaetigt: 'true' })).toBe(false);
+    expect(zielBestaetigt(undefined)).toBe(false);
+    // die Prüfung übernimmt den Merker nie aus der Eingabe
+    expect(zielPruefen({ host: 'h', bestaetigt: true })).toMatchObject({ ok: true, ziel: expect.not.objectContaining({ bestaetigt: true }) });
   });
 });

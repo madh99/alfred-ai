@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1438] - 2026-10-13
+
+### Security — Deploy-Ziel nur nach Owner-Bestätigung (v1438)
+
+Die Sicherheitsprüfung von v1437 fand eine Lücke: Ein Deploy-Ziel ließ sich ohne Bestätigung setzen oder ändern, auch durch das Modell, etwa nach einer Prompt-Injection. Mit `auto_dev` hätte der automatische dev-Deploy dann Code, Projekt-Token und `.env` an einen beliebigen Rechner geschickt. Es war noch kein Ziel gespeichert.
+
+- Neue oder geänderte Deploy-Ziele werden erst nach der Bestätigung des Owners gespeichert. Die Bestätigung nennt Rechner, ENV-Stage und Token-Weitergabe, und das Ziel wird als bestätigt markiert. Entfernen geht weiter ohne Bestätigung.
+- Automatischer und manueller Deploy nur für bestätigte Ziele.
+- Die Einmal-Kennungen für Deploy, Rollback und Ziel kommen jetzt aus dem kryptografischen Zufall (128 Bit) statt aus `Math.random`.
+
 ## [0.19.0-jarvis.1437] - 2026-10-13
 
 ### Added — Deploy von Geräte-Projekten mit Nachkontrolle und Rollback (v1437, Spec R4-Erweiterung B14)

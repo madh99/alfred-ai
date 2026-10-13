@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 /**
  * v1437 B14 (Spec R4-Erweiterung, Owner 13.10. „ok freigegeben“) — Deploy eines Geräte-Projekts auf einen anderen Rechner: das Gerät
  * pusht (B13), der vorhandene Deploy-Skill holt den Stand aufs Ziel. Neu: Ziel je Projekt, jeder Deploy und Rollback mit Bestätigung,
@@ -83,20 +85,26 @@ export function nachkontrolle(o: { prozess: Prozess; deployOk: boolean; deployFe
 }
 
 /** Einmal-Kennungen für bestätigte Deploys/Rollbacks (die Bestätigung des Owners trägt sie; das Modell kann sie nicht erraten). */
+export type FreigabeArt = 'deploy' | 'rollback' | 'ziel';
+
 export class DeployFreigaben {
-  private readonly offen = new Map<string, { akteId: string; art: 'deploy' | 'rollback'; commit?: string; bis: number }>();
+  private readonly offen = new Map<string, { akteId: string; art: FreigabeArt; commit?: string; ziel?: DeployZiel; bis: number }>();
   constructor(private readonly now: () => number = Date.now) {}
-  stelle(akteId: string, art: 'deploy' | 'rollback', commit?: string, gueltigMs = 72 * 3_600_000): string {
-    const n = `${art}-${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
-    this.offen.set(n, { akteId, art, ...(commit ? { commit } : {}), bis: this.now() + gueltigMs });
+  /** v1438 — Kennung aus dem CSPRNG (128 Bit); `ziel` = vorgeschlagenes Deploy-Ziel (wird erst nach der Bestätigung gespeichert). */
+  stelle(akteId: string, art: FreigabeArt, commit?: string, gueltigMs = 72 * 3_600_000, ziel?: DeployZiel): string {
+    const n = `${art}-${randomBytes(16).toString('hex')}`;
+    this.offen.set(n, { akteId, art, ...(commit ? { commit } : {}), ...(ziel ? { ziel } : {}), bis: this.now() + gueltigMs });
     return n;
   }
   /** Löst die Kennung genau einmal ein (falsches Projekt, falsche Art oder abgelaufen → undefined). */
-  loese(nonce: string, akteId: string, art: 'deploy' | 'rollback'): { commit?: string } | undefined {
+  loese(nonce: string, akteId: string, art: FreigabeArt): { commit?: string; ziel?: DeployZiel } | undefined {
     const e = this.offen.get(nonce);
     if (!e) return undefined;
     this.offen.delete(nonce);
     if (e.akteId !== akteId || e.art !== art || e.bis < this.now()) return undefined;
-    return e.commit ? { commit: e.commit } : {};
+    return { ...(e.commit ? { commit: e.commit } : {}), ...(e.ziel ? { ziel: e.ziel } : {}) };
   }
 }
+
+/** v1438 — nur ein vom Owner bestätigtes Ziel darf automatisch (auto_dev) beliefert werden; der Merker wird nur beim Speichern nach der Bestätigung gesetzt. */
+export const zielBestaetigt = (roh: Record<string, unknown> | undefined): boolean => roh?.bestaetigt === true;
