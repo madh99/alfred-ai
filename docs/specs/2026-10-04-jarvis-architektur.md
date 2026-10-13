@@ -740,6 +740,15 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
 5. **Deploy-Ziel:** pro Projekt fest hinterlegt und jeder Deploy bestätigt (Empfehlung), oder in dev automatisch nach grüner Abnahme?
 6. **B9 (Sinne-Wechsel)** jetzt mitplanen oder später?
 
+### Owner-Entscheidungen (13.10.2026)
+
+1. **Komplett:** R4a, R4b und R4c, also Ordner, Benachrichtigungen, Outlook, Build-Wache und Deploy-Etappe; jeder Schritt eine eigene Version mit Live-Beweis.
+2. **Regeln am Server** (Gespräch, App, Web) **mit sichtbaren Schaltern** je Regel und je Gerät/Beobachter; lokales Veto am Gerät.
+3. **Outlook nur für Konten, die der Server nicht selbst liest.** Dedup über die Message-ID.
+4. **Wie empfohlen:** Hinweis, Vorgang und Aufgabe automatisch; Projekt-Wunsch, Fix-Lauf, Deploy und Rollback nur mit Bestätigung.
+5. **Deploy-Ziel fest je Projekt, jeder Deploy bestätigt.** Die Alternative „in dev automatisch nach grüner Abnahme“ ist je Projekt optional einstellbar (Standard aus).
+6. **B9 später.** Bestand: Die Zustellentscheidung kennt die Anwesenheit am Gerät schon (v1198/v1237 `amGeraet`). Aufgeschobene Hinweise werden aber nur nachgeliefert, wenn im Durchlauf (≈ 30 min) eine Chat-Nachricht des Owners in den letzten 30 min liegt. Es fehlt nur das Ereignis „Leerlauf-Ende“ als sofortiger Auslöser.
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
