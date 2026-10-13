@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import type { GeraetEreignis } from '@alfred/types';
+import { konventionsBlock, changelogPflicht, changelogAuftrag, type Konventionen } from './konventionen.js'; // v1426
 import {
   STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, etappenBerichtText, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit, fehlendeWerkzeuge, installVorschlag,
   type Grenzen, type MutationsArt,
@@ -30,6 +31,8 @@ export interface ProjektStand {
   herkunft?: Herkunft; ownerId?: string; vorgangId?: string;
   status: ProjektStatus; grund?: string;
   plan: string[]; nr: number; erledigt: EtappenErgebnis[]; fixVersuch: number; kostenUsd: number; etappeKostenUsd: number;
+  /** v1426 — Etappe, in der CHANGELOG.md geändert wurde bzw. für die der Nachtrag schon lief (kein zweiter) */
+  changelogOk?: number; changelogNachgetragen?: number;
   start: number; aktualisiert: number;
   auftragId?: string;
   /** v1394 — Grenzen im neuen Format (Budget/Zeit nur vom Owner) */
@@ -76,6 +79,8 @@ export interface SatellitProjektDeps {
   vorgang?: { anlegen: (s: ProjektStand) => Promise<string | undefined>; schritt: (s: ProjektStand, text: string) => Promise<void>; abschliessen: (s: ProjektStand, text: string) => Promise<void>; /** v1392 — „nächster Schritt" nachführen */ stand?: (s: ProjektStand, text: string, wartet: boolean) => Promise<void> };
   /** v1425 — Protokoll im Projekt an (Auftrag + Bericht je Etappe mit committen) oder aus (nur lokal); Schalter je Projekt, Standard an */
   protokollAn?: (s: ProjektStand) => Promise<boolean>;
+  /** v1426 — Konventionen des Projekts (README/CHANGELOG/Commits/eigene Regeln), Schalter je Projekt in App und Web */
+  konventionen?: (s: ProjektStand) => Promise<Konventionen | undefined>;
   ordner?: string;
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
   now?: () => number;
@@ -256,6 +261,7 @@ export class SatellitProjekte {
     // v1394 — mit Budget: Claude Code bekommt das Restbudget und hält es selbst ein (--max-budget-usd)
     const rest = s.grenzen.budgetUsd !== undefined ? Math.max(0.05, Number((s.grenzen.budgetUsd - s.kostenUsd).toFixed(2))) : undefined;
     const protokoll = { lauf: s.id, nr: s.nr, ...(s.fixVersuch ? { fix: s.fixVersuch } : {}), an: await this.protokollAn(s) }; // v1425
+    if (!auftrag.includes('Projektregeln des Owners (gelten für jede Etappe)')) auftrag = `${auftrag}${konventionsBlock(await this.konventionen(s))}`; // v1426 — jede Etappe, jeder Fix, jeder Nachtrag; nach Warten aufs Gerät nicht doppelt
     const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel, ...(rest !== undefined ? { max_kosten_usd: rest } : {}), ...(s.gitUebernehmen ? { git_uebernehmen: true } : {}), ...(s.sudoSperre ? { sudo_sperre: true } : {}), protokoll }, 150_000);
     const id = (r.data as { id?: string } | undefined)?.id;
     // v1415 — Realfall 13.10. 01:11: Etappe 2 sollte genau starten, als der Satellit für ein Update kurz weg war → Projekt angehalten.
@@ -299,6 +305,19 @@ export class SatellitProjekte {
     this.sichere(s);
     const etappe = s.plan[s.nr - 1]!;
     if (e.status === 'abgebrochen') { await this.beende(s, 'abgebrochen', 'Auftrag am Gerät abgebrochen'); return; }
+    // v1426 — Projektregel „CHANGELOG pflegen": fehlt der Eintrag nach einer erfolgreichen Etappe, einmal nachtragen lassen (vor der Abnahme).
+    // Ältere Satelliten melden changelogGeaendert nicht → keine Prüfung (nie raten).
+    if (e.changelogGeaendert === true) s.changelogOk = s.nr;
+    if (e.status === 'fertig' && e.changelogGeaendert === false && s.changelogOk !== s.nr && s.changelogNachgetragen !== s.nr) {
+      const k = await this.konventionen(s);
+      if (changelogPflicht(k)) {
+        s.changelogNachgetragen = s.nr; this.sichere(s);
+        this.d.logger.info({ id: s.id, etappe: s.nr }, 'v1426 Changelog fehlt — Nachtrag');
+        await this.d.melde(s, `📝 Etappe ${s.nr}: CHANGELOG.md wurde nicht ergänzt — Alfred lässt den Eintrag nachtragen (Projektregel).`);
+        await this.starteAuftrag(s, changelogAuftrag({ nr: s.nr, etappe, format: k?.changelog?.format, zusammenfassung: s.etappeLauf?.text }), `Etappe ${s.nr}: Changelog nachtragen`);
+        return;
+      }
+    }
 
     if (!s.pruefBefehle.length) {
       // v1410 R3c — auch ohne Abnahme: meldet Claude Code ein fehlendes Werkzeug, zuerst nach der Installation fragen
@@ -350,6 +369,10 @@ export class SatellitProjekte {
     await this.protokolliere(s, eintrag); // v1425 — nach dem Commit der Etappe (der Etappen-Commit ist oben schon erkannt)
   }
 
+  private async konventionen(s: ProjektStand): Promise<Konventionen | undefined> {
+    try { return this.d.konventionen ? await this.d.konventionen(s) : undefined; } catch { return undefined; }
+  }
+
   private async protokollAn(s: ProjektStand): Promise<boolean> {
     try { return this.d.protokollAn ? await this.d.protokollAn(s) : true; } catch { return true; }
   }
@@ -366,8 +389,9 @@ export class SatellitProjekte {
   /** v1417 G1 — Commit dieser Etappe (Etappen-Auftrag committet mit „Etappe <n>: …"); nur lesend, Fehler egal. */
   private async letzterEtappenCommit(s: ProjektStand): Promise<{ sha: string; titel: string } | undefined> {
     const r = await this.d.aktion(s.geraetId, 'projekt_lesen', { projekt: s.projekt }, 30_000).catch(() => undefined);
-    const c = (r?.data as { commits?: Array<{ sha: string; message: string }> } | undefined)?.commits?.[0];
-    if (!c || !new RegExp(`^Etappe ${s.nr}\\b`).test(c.message)) return undefined;
+    // v1426 — nicht nur der neueste: Changelog-Nachtrag und Protokoll (v1425) committen danach mit eigenem Text
+    const c = (r?.data as { commits?: Array<{ sha: string; message: string }> } | undefined)?.commits?.slice(0, 5).find(x => new RegExp(`^Etappe ${s.nr}\\b`).test(x.message));
+    if (!c) return undefined;
     if (s.erledigt.some(x => x.nr !== s.nr && x.commit?.sha === c.sha)) return undefined;
     return { sha: c.sha, titel: c.message.split('\n')[0]!.slice(0, 160) };
   }

@@ -70,6 +70,8 @@ export interface ProjectConventions {
     scheme?: 'semver' | 'date' | 'custom';
     autoTag?: boolean;
   };
+  /** v1426 — eigene Regeln des Owners (Server-Agent und Geräte-Projekte) */
+  regeln?: string[];
 }
 
 export interface Project {

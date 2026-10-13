@@ -210,7 +210,16 @@ export function endeEreignis(m: AuftragMeta, erg: AuftragErgebnis): Record<strin
     dauerS: Math.round(((m.ende ? new Date(m.ende).getTime() : Date.now()) - new Date(m.start).getTime()) / 1000),
     ...(erg.kosten !== undefined ? { kosten: erg.kosten } : {}),
     dateien, dateienAnzahl: anzahl,
+    changelogGeaendert: changelogGeaendert(m.projekt, new Date(m.start).getTime()), // v1426
   };
+}
+
+/** v1426 — wurde CHANGELOG.md (Groß/Klein egal, Projektwurzel) seit dem Start geändert? Unabhängig von der gekürzten Dateiliste. */
+export function changelogGeaendert(projekt: string, seitMs: number): boolean {
+  try {
+    const name = readdirSync(projekt).find(x => /^changelog\.md$/i.test(x));
+    return !!name && statSync(path.join(projekt, name)).mtimeMs >= seitMs;
+  } catch { return false; }
 }
 
 /** Als gemeldet markieren — danach sendet der Satellit das Ende nicht noch einmal. */

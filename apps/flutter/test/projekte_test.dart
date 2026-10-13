@@ -115,6 +115,37 @@ void main() {
     expect(laufFortschritt(fertig), '3/3 abgenommen');
   });
 
+  testWidgets('1.19.0 Projektregeln: Schalter, Option, eigene Regel', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    var konv = <String, dynamic>{};
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') {
+        final a = koerper!['konventionen'] as Map<String, dynamic>; gesendet.add(a);
+        if (a['changelog'] == true) konv = {...konv, 'changelog': {'autoUpdate': true, 'format': 'keepachangelog'}};
+        if (a['regel'] != null) konv = {...konv, 'regeln': [...((konv['regeln'] as List?) ?? []), a['regel']]};
+        return {'success': true};
+      }
+      return {'id': 'p1', 'name': 'X', 'geraet': 'VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [], 'konventionen': konv};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'p1', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('projekt-regeln')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('regel-changelog')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'changelog': true});
+    expect(find.byKey(const Key('regel-changelog-format')), findsOneWidget);
+    await t.enterText(find.byKey(const Key('regel-neu')), 'Commits auf Deutsch');
+    await t.tap(find.byKey(const Key('regel-dazu')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'regel': 'Commits auf Deutsch'});
+    expect(find.textContaining('1. Commits auf Deutsch'), findsOneWidget);
+    await t.tap(find.byKey(const Key('regel-weg-0')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'regelEntfernen': '1'});
+  });
+
   testWidgets('1.18.0 Schalter Protokoll im Projekt sendet an/aus', (t) async {
     final gesendet = <Map<String, dynamic>>[];
     var an = true;

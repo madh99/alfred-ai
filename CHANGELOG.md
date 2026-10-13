@@ -55,6 +55,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1426] - 2026-10-13
+
+### Added — Projektregeln für Geräte-Projekte, mit Schaltern in App und Web (v1426, App 1.19.0)
+
+Die vorhandenen Projekt-Konventionen (README, CHANGELOG, Commits) gelten jetzt auch für Projekte auf Geräten, dazu kommen eigene Regeln des Owners. Einstellbar je Projekt in App und Web (Schalter mit Optionen) und im Gespräch („merk dir für Angebots-Radar: immer Changelog führen“).
+
+- Jeder Etappen-, Fix- und Nachtrags-Auftrag bekommt die Regeln fest mitgeliefert. Der Server-Agent nutzt denselben Text, und eigene Regeln gelten auch dort.
+- **CHANGELOG pflegen** wird geprüft: Der Satellit meldet am Ende jedes Auftrags, ob `CHANGELOG.md` geändert wurde. Fehlt der Eintrag nach einer Etappe, lässt Alfred ihn einmal nachtragen, bevor die Abnahme läuft („docs(changelog): Etappe n nachgetragen“). Ältere Satelliten liefern die Angabe nicht; dann entfällt die Prüfung.
+- Die Erkennung des Etappen-Commits sucht unter den letzten fünf Commits, damit Nachtrag und Protokoll (v1425) den Etappenbericht nicht verfälschen.
+- Web: Die Konventionsansicht erscheint im Geräte-Projekt als „Projektregeln“, ohne Branching und Versioning (gelten dort nicht), mit eigenen Regeln. App: Bereich „Projektregeln“ in der Projektansicht. Gespräch: `project_agent` Aktion `projekt_konventionen`.
+
 ## [0.19.0-jarvis.1425] - 2026-10-13
 
 ### Added — Protokoll der Projektläufe im Projekt, mit Schalter je Projekt (v1425, App 1.18.0)

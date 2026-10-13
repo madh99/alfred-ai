@@ -71,6 +71,8 @@ export interface OwnerAnsichtenDeps {
     frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1425 — Schalter „Protokoll im Projekt“ (Aufträge und Berichte mit committen) */
     protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1426 — Konventionen ändern (Teil-Änderung, Felder siehe projekt/konventionen.ts) */
+    konventionen?: (id: string, aenderung: unknown) => Promise<{ success: boolean; display?: string; error?: string }>;
   };
   jetzt?: () => Date;
   /** Jede Änderung aus der App ins Server-Log (Beweis, Schicht-4-Signal). */
@@ -167,7 +169,7 @@ export class OwnerAnsichten {
   /** v1401 — Geräte-Projekte (nur Owner-Geräte; Weiterarbeiten plant und fragt den Owner wie im Gespräch) */
   async projekte(): Promise<{ projekte: unknown[] }> { return { projekte: this.d.projekte ? await this.d.projekte.liste() : [] }; }
   async projekt(id: string): Promise<unknown | null> { return this.d.projekte ? this.d.projekte.detail(id) : null; }
-  async projektAktion(id: string, aktion: unknown, text: unknown, lauf?: unknown): Promise<{ success: boolean; display?: string; error?: string }> {
+  async projektAktion(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown }): Promise<{ success: boolean; display?: string; error?: string }> {
     if (!this.d.projekte) return { success: false, error: 'Projekte nicht verfügbar' };
     if (aktion === 'stand') return this.d.projekte.stand(id);
     if (aktion === 'freigeben' || aktion === 'ablehnen') {
@@ -184,6 +186,11 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt fortsetzen', { projekt: id, lauf });
       return this.d.projekte.fortsetzen(id, lauf);
     }
+    if (aktion === 'konventionen') { // v1426
+      if (!this.d.projekte.konventionen || !extra?.konventionen || typeof extra.konventionen !== 'object') return { success: false, error: 'konventionen fehlt' };
+      this.d.protokoll?.('Projekt Konventionen', { projekt: id });
+      return this.d.projekte.konventionen(id, extra.konventionen);
+    }
     if (aktion === 'protokoll') { // v1425 — text „an“ oder „aus“
       if (!this.d.projekte.protokoll || (text !== 'an' && text !== 'aus')) return { success: false, error: 'text muss an oder aus sein' };
       this.d.protokoll?.('Projekt Protokoll', { projekt: id, an: text === 'an' });
@@ -195,7 +202,7 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt Frage', { projekt: id, laenge: f.length });
       return this.d.projekte.frage(id, f);
     }
-    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, protokoll, freigeben oder ablehnen sein' };
+    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, protokoll, konventionen, freigeben oder ablehnen sein' };
     const t = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     if (!t) return { success: false, error: 'text fehlt (was soll als Nächstes passieren?)' };
     this.d.protokoll?.('Projekt weiter', { projekt: id, laenge: t.length });

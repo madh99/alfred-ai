@@ -15717,7 +15717,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await repo.getById(owner, id);
         if (!p?.geraetId) return null;
         const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
-        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
@@ -15727,7 +15727,21 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
       diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
+      konventionen: async (id: string, aenderung: unknown) => this.projektKonventionenAendern(id, aenderung), // v1426
     };
+  }
+
+  /** v1426 — Konventionen eines Projekts ändern (App, Gespräch; Web nutzt PATCH /api/projects/:id). Ohne Änderung: nur anzeigen. */
+  private async projektKonventionenAendern(id: string, aenderung: unknown): Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> {
+    const o = this.ownerMasterUserId; const repo = this.projectRepo;
+    if (!o || !repo) return { success: false, error: 'Projekte nicht verfügbar' };
+    const p = await repo.getById(o, id);
+    if (!p) return { success: false, error: 'Projekt nicht gefunden' };
+    const { konventionenAendern, konventionenText } = await import('./projekt/konventionen.js');
+    const neu = konventionenAendern(p.conventions, aenderung);
+    const geaendert = JSON.stringify(neu) !== JSON.stringify(p.conventions ?? {});
+    if (geaendert) { await repo.update(o, id, { conventions: neu }); this.logger.info({ projekt: id, konventionen: neu }, 'v1426 Konventionen geändert'); }
+    return { success: true, data: neu, display: `${p.name} — Projektregeln${geaendert ? ' (gespeichert, gelten ab der nächsten Etappe)' : ''}:\n${konventionenText(neu)}` };
   }
 
   /** v1425 — Schalter „Protokoll im Projekt“ (App und Web): Tag protokoll-aus am Projekt; gilt ab der nächsten Etappe. */
@@ -15866,6 +15880,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // v1419 G3 — Owner 13.10.: Projektmeldungen in den Projektfaden; ins Hauptgespräch nur Ende und Entscheidungen (Rückfragen kommen
       // dort wie bisher als Bestätigung). Ohne Akte (vor der Freigabe) wie bisher in die Sitzung des Starts.
       // v1425 — Schalter je Projekt (Tag protokoll-aus); ohne Projekt oder Repo: an
+      konventionen: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return undefined; return (await this.projectRepo.getById(o, s.akteId).catch(() => null))?.conventions; }, // v1426
       protokollAn: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return true; const p = await this.projectRepo.getById(o, s.akteId).catch(() => null); return !(p?.tags ?? []).includes('protokoll-aus'); },
       melde: async (s, text, art) => {
         const faden = projektFaden(s.akteId);
@@ -16024,6 +16039,11 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         return { success: true, data: { auftrag: id, anhaenge: anh.pfade }, display: `Frage zu ${t.akte.name} an Claude Code auf ${g.name} gestellt (nur lesend, höchstens 0,50 $)${anh.pfade.length ? ` mit ${anh.pfade.length} Anhang/Anhängen` : ''}. Die Antwort kommt in etwa einer Minute.${anh.fehler.length ? ` Nicht übergeben: ${anh.fehler.join('; ')}` : ''}` };
       },
       // v1409 R3b — Projekt-Option sudo-Sperre
+      konventionen: async (ref, input) => { // v1426
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        return this.projektKonventionenAendern(t.akte.id, { ...(typeof input.changelog === 'boolean' ? { changelog: input.changelog } : {}), ...(typeof input.readme === 'boolean' ? { readme: input.readme } : {}), ...(typeof input.conventional_commits === 'boolean' ? { conventionalCommits: input.conventional_commits } : {}), ...(typeof input.regel === 'string' ? { regel: input.regel } : {}), ...(input.regel_entfernen !== undefined ? { regelEntfernen: input.regel_entfernen } : {}) });
+      },
       sudoSperre: async (ref, an) => {
         const t = await akteAus(ref);
         if ('fehler' in t) return { success: false, error: t.fehler };

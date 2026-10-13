@@ -29,6 +29,59 @@ String laufFortschritt(Lauf l) => l.status == 'laeuft' && l.nr > 0
 /// 1.18.0 — Schalter „Protokoll im Projekt“ (v1425): Detail liefert protokoll; fehlt das Feld (alter Server), gilt an.
 bool protokollAn(Map<String, dynamic>? d) => d?['protokoll'] != false;
 
+/// 1.19.0 — Projektregeln (v1426, Projekt-Konventionen): Schalter mit Optionen und eigene Regeln; jede Änderung geht sofort an den Server.
+class ProjektRegeln extends StatefulWidget {
+  const ProjektRegeln({super.key, required this.konventionen, required this.aendern, this.gesperrt = false});
+  final Map<String, dynamic> konventionen;
+  final Future<void> Function(Map<String, dynamic> aenderung) aendern;
+  final bool gesperrt;
+  @override
+  State<ProjektRegeln> createState() => _ProjektRegelnState();
+}
+
+class _ProjektRegelnState extends State<ProjektRegeln> {
+  final neu = TextEditingController();
+  @override
+  void dispose() { neu.dispose(); super.dispose(); }
+
+  Map<String, dynamic> teil(String k) => (widget.konventionen[k] as Map<String, dynamic>?) ?? const {};
+
+  Widget auswahl(String wert, Map<String, String> optionen, void Function(String) neuWert, Key key) => DropdownButton<String>(key: key, isDense: true, value: optionen.containsKey(wert) ? wert : optionen.keys.first,
+    items: [for (final e in optionen.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: widget.gesperrt ? null : (v) { if (v != null) neuWert(v); });
+
+  void regelDazu() { final t = neu.text.trim(); if (t.isEmpty) return; neu.clear(); widget.aendern({'regel': t}); }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final dim = theme.colorScheme.onSurfaceVariant;
+    final cl = teil('changelog'), rm = teil('readme'), cm = teil('commits');
+    final clAn = cl['autoUpdate'] == true, rmAn = rm['autoUpdate'] == true, cmAn = cm['convention'] == 'conventional';
+    final regeln = ((widget.konventionen['regeln'] as List<dynamic>?) ?? []).map((e) => '$e').toList();
+    final aktiv = [if (clAn) 'CHANGELOG', if (rmAn) 'README', if (cmAn) 'Conventional Commits', if (regeln.isNotEmpty) '${regeln.length} eigene'];
+    return Card(child: ExpansionTile(key: const Key('projekt-regeln'), title: const Text('Projektregeln'), subtitle: Text(aktiv.isEmpty ? 'keine — gelten für jede Etappe' : aktiv.join(' · '), style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12), expandedCrossAxisAlignment: CrossAxisAlignment.start, children: [
+        SwitchListTile(key: const Key('regel-changelog'), contentPadding: EdgeInsets.zero, dense: true, value: clAn, onChanged: widget.gesperrt ? null : (v) => widget.aendern({'changelog': v}),
+          title: const Text('CHANGELOG pflegen'), subtitle: Text('Fehlt der Eintrag nach einer Etappe, lässt Alfred ihn vor der Abnahme nachtragen.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+        if (clAn) Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [const Text('Format: '), auswahl('${cl['format'] ?? 'keepachangelog'}', const {'keepachangelog': 'Keep a Changelog', 'free': 'frei'}, (v) => widget.aendern({'changelog': {'format': v}}), const Key('regel-changelog-format'))])),
+        SwitchListTile(key: const Key('regel-readme'), contentPadding: EdgeInsets.zero, dense: true, value: rmAn, onChanged: widget.gesperrt ? null : (v) => widget.aendern({'readme': v}), title: const Text('README pflegen')),
+        if (rmAn) Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [const Text('Vorlage: '), auswahl('${rm['template'] ?? 'default'}', const {'default': 'Features/Setup/Usage', 'minimal': 'nur Titel + Beschreibung', 'custom': 'eigene (Alfred greift nicht ein)'}, (v) => widget.aendern({'readme': {'template': v}}), const Key('regel-readme-vorlage'))])),
+        SwitchListTile(key: const Key('regel-commits'), contentPadding: EdgeInsets.zero, dense: true, value: cmAn, onChanged: widget.gesperrt ? null : (v) => widget.aendern({'conventionalCommits': v}), title: const Text('Conventional Commits (feat:/fix:/…)')),
+        if (cmAn) Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [const Text('Scope: '), auswahl('${cm['scopePolicy'] ?? 'optional'}', const {'optional': 'optional', 'required': 'Pflicht', 'forbidden': 'ohne'}, (v) => widget.aendern({'commits': {'scopePolicy': v}}), const Key('regel-commits-scope'))])),
+        const SizedBox(height: 6),
+        Text('Eigene Regeln', style: theme.textTheme.labelLarge),
+        for (var i = 0; i < regeln.length; i++) Row(children: [
+          Expanded(child: Text('${i + 1}. ${regeln[i]}', style: theme.textTheme.bodySmall)),
+          IconButton(key: Key('regel-weg-$i'), tooltip: 'Regel entfernen', iconSize: 18, onPressed: widget.gesperrt ? null : () => widget.aendern({'regelEntfernen': '${i + 1}'}), icon: const Icon(Icons.delete_outline)),
+        ]),
+        if (regeln.length < 12) Row(children: [
+          Expanded(child: TextField(key: const Key('regel-neu'), controller: neu, maxLength: 200, decoration: const InputDecoration(isDense: true, hintText: 'z. B. Commits auf Deutsch', counterText: ''), onSubmitted: (_) => regelDazu())),
+          IconButton(key: const Key('regel-dazu'), tooltip: 'Regel hinzufügen', onPressed: widget.gesperrt ? null : regelDazu, icon: const Icon(Icons.add)),
+        ]),
+      ]));
+  }
+}
+
 class Lauf {
   Lauf(Map<String, dynamic> j)
       : id = '${j['id']}', status = '${j['status'] ?? ''}', grund = j['grund'] as String?, ziel = '${j['ziel'] ?? ''}',
@@ -236,6 +289,19 @@ class _ProjektDetailState extends State<ProjektDetail> {
     }));
   }
 
+  /// 1.19.0 — Projektregeln ändern (v1426)
+  Future<void> konventionenSetzen(Map<String, dynamic> aenderung) async {
+    setState(() { plant = true; meldung = null; });
+    try {
+      final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': 'konventionen', 'konventionen': aenderung});
+      final ok = r['success'] == true;
+      if (!mounted) return;
+      if (!ok) setState(() { meldungOk = false; meldung = '${r['error'] ?? 'Fehler'}'; });
+      if (ok) await laden();
+    } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
+    finally { if (mounted) setState(() => plant = false); }
+  }
+
   /// 1.18.0 — Schalter „Protokoll im Projekt“ (v1425)
   Future<void> protokollSetzen(bool an) async {
     setState(() { plant = true; meldung = null; });
@@ -332,6 +398,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
         SwitchListTile(key: const Key('projekt-protokoll'), contentPadding: EdgeInsets.zero, dense: true, value: protokollAn(j), onChanged: plant ? null : protokollSetzen,
           title: const Text('Protokoll im Projekt'),
           subtitle: Text(protokollAn(j) ? 'An: Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Aus: Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (nicht in git).', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+        ProjektRegeln(konventionen: (j['konventionen'] as Map<String, dynamic>?) ?? const {}, aendern: konventionenSetzen, gesperrt: plant), // 1.19.0
         const SizedBox(height: 12),
         Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Weiterarbeiten', style: theme.textTheme.titleSmall),

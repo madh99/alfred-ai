@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
+import { konventionsZeilen } from './projekt/konventionen.js'; // v1426
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -2098,20 +2099,8 @@ export class ProjectAgentRunner {
     }
 
     // v663a — Project-Conventions als zusätzliche Anweisungen
-    const conventionInstructions: string[] = [];
-    if (conventions?.readme?.autoUpdate) {
-      const template = conventions.readme.template ?? 'default';
-      conventionInstructions.push(`- README.md pflegen (Template: ${template}). Wenn neue Features/Skripte/Setup-Schritte: README.md aktualisieren (Sections: Features / Setup / Usage).`);
-    }
-    if (conventions?.changelog?.autoUpdate) {
-      const fmt = conventions.changelog.format ?? 'keepachangelog';
-      conventionInstructions.push(`- CHANGELOG.md pflegen (Format: ${fmt}). Trage eine Zeile unter "## [Unreleased]" ein die diese Phase beschreibt (z.B. "### Added/Changed/Fixed").`);
-    }
-    if (conventions?.commits?.convention === 'conventional') {
-      const scope = conventions.commits.scopePolicy;
-      conventionInstructions.push(`- Commits: Conventional Commits Format (feat: / fix: / refactor: / test: / docs: / style: / perf: / chore:)${scope === 'required' ? ' mit Scope: feat(scope): …' : scope === 'forbidden' ? ' OHNE Scope' : ''}.`);
-    }
-
+    // v1426 — gemeinsamer Text mit den Geräte-Projekten (projekt/konventionen.ts), plus eigene Regeln des Owners
+    const conventionInstructions: string[] = konventionsZeilen(conventions);
     parts.push(
       'ANWEISUNGEN:',
       '- Implementiere nur diese Phase, nicht das ganze Projekt',

@@ -57,3 +57,15 @@ describe('v1425 — Protokoll eines Projektlaufs im Projekt', () => {
     expect(path.basename(protokollAuftragDatei(dir, { lauf: 'sat-b', nr: 1, an: true }))).toBe('etappe-1-auftrag-2.md');
   });
 });
+
+describe('v1426 — Changelog seit Auftragsstart geändert?', () => {
+  it('erkennt CHANGELOG.md (Groß/Klein egal) nach Zeitstempel, ohne Datei false', async () => {
+    const { changelogGeaendert } = await import('./satellit-auftrag.js');
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'alfred-cl-'));
+    const start = Date.now() - 1000;
+    expect(changelogGeaendert(dir, start)).toBe(false);
+    writeFileSync(path.join(dir, 'changelog.md'), '# x\n');
+    expect(changelogGeaendert(dir, start)).toBe(true);
+    expect(changelogGeaendert(dir, Date.now() + 60_000)).toBe(false);
+  });
+});

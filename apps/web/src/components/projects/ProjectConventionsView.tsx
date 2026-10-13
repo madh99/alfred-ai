@@ -7,15 +7,17 @@ import type { Project, ProjectConventions } from '@/lib/alfred-client';
 interface Props {
   project: Project;
   onSaved?: (p: Project) => void;
+  /** v1426 — Geräte-Projekt: ohne Branching/Versioning (gilt dort nicht), offen, mit Hinweis zur Changelog-Prüfung */
+  geraet?: boolean;
 }
 
 /**
  * v663a — Project Conventions: opt-in Rules für README/CHANGELOG/Versioning/
  * Commits/Branching. Project-Agent respektiert diese bei Phase-Commits.
  */
-export function ProjectConventionsView({ project, onSaved }: Props) {
+export function ProjectConventionsView({ project, onSaved, geraet }: Props) {
   const { client } = useConfig();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(!!geraet);
   const [saving, setSaving] = useState(false);
   const conv: ProjectConventions = project.conventions ?? {};
 
@@ -30,6 +32,8 @@ export function ProjectConventionsView({ project, onSaved }: Props) {
   const [prTarget, setPrTarget] = useState(conv.branching?.prTarget ?? 'main');
   const [versioning, setVersioning] = useState(conv.versioning?.scheme ?? 'semver');
   const [autoTag, setAutoTag] = useState(conv.versioning?.autoTag ?? false);
+  const [regeln, setRegeln] = useState<string[]>(conv.regeln ?? []); // v1426
+  const [neueRegel, setNeueRegel] = useState('');
 
   async function save() {
     if (!client) return;
@@ -41,7 +45,10 @@ export function ProjectConventionsView({ project, onSaved }: Props) {
         commits: { convention: commitsConv as 'free' | 'conventional', scopePolicy: scopePolicy as 'required' | 'optional' | 'forbidden' },
         branching: { strategy: branching as 'main-only' | 'feature-branches' | 'gitflow', prTarget: prTarget || undefined },
         versioning: { scheme: versioning as 'semver' | 'date' | 'custom', autoTag },
+        ...(regeln.length ? { regeln: regeln.map(r => r.trim()).filter(Boolean).slice(0, 12) } : {}),
       };
+      // v1426 — Geräte-Projekt: Branching/Versioning werden dort nicht angeboten → bestehende Werte unverändert lassen
+      if (geraet) { if (conv.branching) newConv.branching = conv.branching; else delete newConv.branching; if (conv.versioning) newConv.versioning = conv.versioning; else delete newConv.versioning; }
       const updated = await client.updateProject(project.id, { conventions: newConv });
       if (updated) {
         onSaved?.(updated);
@@ -58,6 +65,7 @@ export function ProjectConventionsView({ project, onSaved }: Props) {
   if (commitsConv === 'conventional') activeBadges.push('Conventional Commits');
   if (branching !== 'main-only') activeBadges.push(`Branch: ${branching}`);
   if (autoTag) activeBadges.push('Auto-Tag');
+  if (regeln.length) activeBadges.push(`${regeln.length} Regel(n)`);
 
   if (!expanded) {
     return (
@@ -85,8 +93,9 @@ export function ProjectConventionsView({ project, onSaved }: Props) {
         className="w-full text-left flex items-center gap-2 text-sm font-semibold text-gray-400 hover:text-gray-200 mb-3"
       >
         <span>▾</span>
-        <span>⚙️ Conventions</span>
+        <span>⚙️ {geraet ? 'Projektregeln' : 'Conventions'}</span>
       </button>
+      {geraet && <div className="text-[11px] text-gray-500 mb-2">Gelten für jede Etappe von Claude Code auf dem Gerät. Ist „CHANGELOG pflegen" an und fehlt nach einer Etappe der Eintrag, lässt Alfred ihn vor der Abnahme nachtragen.</div>}
 
       <div className="space-y-3 bg-[#0f0f0f] border border-[#222] rounded p-3 text-xs">
         {/* README */}
@@ -162,7 +171,7 @@ export function ProjectConventionsView({ project, onSaved }: Props) {
         </div>
 
         {/* Branching */}
-        <div>
+        {!geraet && <div>
           <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Branching</div>
           <div className="flex items-center gap-3 flex-wrap">
             <label className="flex items-center gap-1.5 text-gray-300">
@@ -192,10 +201,10 @@ export function ProjectConventionsView({ project, onSaved }: Props) {
             PR-Target dient als Fallback für den Deploy-Branch (wenn default_branch des Projekts leer ist):
             Project-Agent warnt beim Start und verweigert Hauptbranch-Pushes auf den falschen Branch.
           </div>
-        </div>
+        </div>}
 
         {/* Versioning */}
-        <div>
+        {!geraet && <div>
           <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Versioning</div>
           <div className="flex items-center gap-3 flex-wrap">
             <label className="flex items-center gap-1.5 text-gray-300">
@@ -214,6 +223,24 @@ export function ProjectConventionsView({ project, onSaved }: Props) {
               <input type="checkbox" checked={autoTag} onChange={(e) => setAutoTag(e.target.checked)} disabled={versioning === 'custom'} />
               Auto-Tag bei erfolgreichem Build
             </label>
+          </div>
+        </div>}
+
+        {/* v1426 — eigene Regeln */}
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Eigene Regeln</div>
+          {regeln.length === 0 && <div className="text-gray-600 italic">keine</div>}
+          {regeln.map((r, i) => (
+            <div key={i} className="flex items-center gap-2 text-gray-300">
+              <span className="flex-1">{i + 1}. {r}</span>
+              <button onClick={() => setRegeln(regeln.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-300" title="Regel entfernen">✕</button>
+            </div>
+          ))}
+          <div className="flex items-center gap-2 mt-1">
+            <input value={neueRegel} onChange={(e) => setNeueRegel(e.target.value)} maxLength={200} placeholder="z. B. Commits auf Deutsch"
+              onKeyDown={(e) => { if (e.key === 'Enter' && neueRegel.trim() && regeln.length < 12) { setRegeln([...regeln, neueRegel.trim()]); setNeueRegel(''); } }}
+              className="flex-1 bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-0.5 text-gray-200" />
+            <button onClick={() => { if (neueRegel.trim() && regeln.length < 12) { setRegeln([...regeln, neueRegel.trim()]); setNeueRegel(''); } }} className="px-2 py-0.5 border border-[#2a2a2a] rounded text-gray-300 hover:bg-[#222]">Hinzufügen</button>
           </div>
         </div>
 

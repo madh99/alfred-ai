@@ -251,7 +251,7 @@ export interface GeraetOwnerAnsichten {
   befunde(): Promise<unknown>; // v1359
   projekte?(): Promise<unknown>; // v1401
   projekt?(id: string): Promise<unknown | null>;
-  projektAktion?(id: string, aktion: unknown, text: unknown, lauf?: unknown): Promise<unknown>;
+  projektAktion?(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown }): Promise<unknown>; // v1426 extra
   vorgangAbschliessen(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1362
   regeln(): Promise<unknown>; // v1362
   regelAendern(id: string, aktion: unknown): Promise<unknown | null>; // v1362
@@ -6920,7 +6920,7 @@ export class HttpAdapter extends MessagingAdapter {
       // v1401 — Geräte-Projekte in der App
       if (bereich === 'projekte' && !id && m === 'GET' && a.projekte) { antwort(200, await a.projekte()); return; }
       if (bereich === 'projekte' && id && m === 'GET' && a.projekt) { const p = await a.projekt(id); antwort(p ? 200 : 404, p ?? { error: 'nicht gefunden' }); return; }
-      if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text, body.lauf)); return; }
+      if (bereich === 'projekte' && id && m === 'POST' && a.projektAktion) { antwort(200, await a.projektAktion(id, body.aktion, body.text, body.lauf, { konventionen: body.konventionen })); return; } // v1426 konventionen
       // v1362 — Abschluss mit Ergebnis (neu) bzw. Erledigt/Verwerfen (bisherige Clients); Regeln
       if (bereich === 'vorgaenge' && id && m === 'POST' && body.ergebnis) { const v = await a.vorgangAbschliessen(id, body); antwort(v ? 200 : 404, v ? { ok: true, ...(v as object) } : { error: 'nicht gefunden' }); return; }
       if (bereich === 'regeln' && !id && m === 'GET') { antwort(200, await a.regeln()); return; }

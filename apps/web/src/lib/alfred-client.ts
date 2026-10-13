@@ -3091,6 +3091,8 @@ export interface ProjectConventions {
   commits?: { convention?: 'conventional' | 'free'; scopePolicy?: 'required' | 'optional' | 'forbidden' };
   branching?: { strategy?: 'main-only' | 'feature-branches' | 'gitflow'; prTarget?: string };
   versioning?: { scheme?: 'semver' | 'date' | 'custom'; autoTag?: boolean };
+  /** v1426 — eigene Regeln des Owners */
+  regeln?: string[];
 }
 
 // v661 — Todos + Notes Types

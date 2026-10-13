@@ -4,7 +4,7 @@ import { begrenzePlan, mutationAutomatisch, grenzeErreicht, STANDARD_GRENZEN } f
 import type { GeraetEreignis } from '@alfred/types';
 
 // v1387 (R2) — Projekt-Agent am Satelliten, Ablauf mit simuliertem Gerät
-function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown> } = {}) {
+function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown> } = {}) {
   const aufrufe: Array<{ aktion: string; params: Record<string, unknown> }> = [];
   const fragen: Array<{ text: string; nonce: string }> = [];
   const meldungen: string[] = [];
@@ -21,11 +21,12 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
     },
     frage: async (_s, text, nonce) => { fragen.push({ text, nonce }); },
     melde: async (_s, text) => { meldungen.push(text); },
+    ...(o.konventionen ? { konventionen: async () => o.konventionen } : {}), // v1426
     logger: { info: () => undefined, warn: () => undefined },
   });
-  const ende = async (s: ProjektStand, status: GeraetEreignis['status'] = 'fertig') => {
+  const ende = async (s: ProjektStand, status: GeraetEreignis['status'] = 'fertig', extra: Partial<GeraetEreignis> = {}) => {
     const id = p.hole(s.id)!.auftragId!;
-    expect(p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: id, status, titel: '', projekt: s.projekt, text: 'erledigt', kosten: o.kosten ?? 0.2 } as GeraetEreignis)).toBe(true);
+    expect(p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: id, status, titel: '', projekt: s.projekt, text: 'erledigt', kosten: o.kosten ?? 0.2, ...extra } as GeraetEreignis)).toBe(true);
     await new Promise(r => setTimeout(r, 5));
   };
   return { p, aufrufe, fragen, meldungen, ende };
@@ -34,6 +35,37 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
 const start = { geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/home/madh/claudecode/r2', ziel: 'Kleines CLI-Werkzeug', pruefBefehle: ['npm test'] };
 
 describe('Satelliten-Projekt', () => {
+  it('v1426 Projektregeln: im Auftrag; fehlt CHANGELOG, einmal nachtragen vor der Abnahme; ältere Satelliten ohne Prüfung', async () => {
+    const { p, aufrufe, fragen, meldungen, ende } = aufbau({ konventionen: { changelog: { autoUpdate: true }, regeln: ['Commits auf Deutsch'] } });
+    const s = await p.starte(start);
+    await p.antwort(s.id, fragen[0]!.nonce);
+    expect(String(aufrufe[0]!.params.auftrag)).toMatch(/Projektregeln des Owners[\s\S]*CHANGELOG\.md pflegen[\s\S]*- Commits auf Deutsch/);
+    await ende(s, 'fertig', { changelogGeaendert: false });
+    const nachtrag = aufrufe.filter(a => a.aktion === 'auftrag_starten')[1]!;
+    expect(nachtrag.params.titel).toBe('Etappe 1: Changelog nachtragen');
+    expect(String(nachtrag.params.auftrag)).toContain('Ändere NUR CHANGELOG.md');
+    expect(String(nachtrag.params.auftrag).match(/Projektregeln des Owners/g)).toHaveLength(1);
+    expect(aufrufe.some(a => a.aktion === 'pruefen_befehl')).toBe(false); // Abnahme erst nach dem Nachtrag
+    expect(meldungen.some(m => m.includes('CHANGELOG.md wurde nicht ergänzt'))).toBe(true);
+    await ende(s, 'fertig', { changelogGeaendert: true });
+    expect(aufrufe.filter(a => a.aktion === 'pruefen_befehl')).toHaveLength(1);
+    expect(p.hole(s.id)!.nr).toBe(2);
+    await ende(s, 'fertig', { changelogGeaendert: true }); // Etappe 2 mit Eintrag: kein Nachtrag
+    expect(p.hole(s.id)!.nr).toBe(3);
+    await ende(s); // Etappe 3, älterer Satellit ohne Angabe: keine Prüfung, kein Nachtrag
+    expect(p.hole(s.id)!.status).toBe('fertig');
+    expect(aufrufe.filter(a => a.aktion === 'auftrag_starten')).toHaveLength(4);
+  });
+
+  it('v1426 ohne Changelog-Regel kein Nachtrag', async () => {
+    const { p, aufrufe, fragen, ende } = aufbau({ konventionen: { readme: { autoUpdate: true } } });
+    const s = await p.starte(start);
+    await p.antwort(s.id, fragen[0]!.nonce);
+    await ende(s, 'fertig', { changelogGeaendert: false });
+    expect(aufrufe.filter(a => a.aktion === 'auftrag_starten')).toHaveLength(2);
+    expect(p.hole(s.id)!.nr).toBe(2);
+  });
+
   it('Plan → eine Bestätigung → Etappen mit Abnahme → fertig; geratene Kennung bewirkt nichts', async () => {
     const { p, aufrufe, fragen, meldungen, ende } = aufbau();
     const s = await p.starte(start);
