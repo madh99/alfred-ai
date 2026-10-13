@@ -652,6 +652,94 @@ Datenmenge (Fortschritt nur gebündelt, nicht gespeichert); Fremdinhalt in Anzei
 
 **Owner-Entscheidungen 13.10. („ok wie vorgeschlagen"):** Reihenfolge G1 → G2 → G3; im Hauptgespräch nur Ende und Entscheidungen; Live-Aktivität nur App/Web. Umsetzung freigegeben.
 
+## R4 Beobachter am Satelliten und Deploy-Etappe (Entwurf 13.10.2026 — ohne Umsetzung, Owner: „ok wie vorgeschlagen … parallel die R4-Spec, ohne Umsetzung")
+
+Ziel: Alfred bemerkt selbst, was auf den Geräten des Owners passiert (neue Datei, wichtige Mail in Outlook, Benachrichtigung, Build rot), und macht daraus nach festen Regeln einen Hinweis, einen Vorgang oder den nächsten Schritt eines Projekts. Dazu kommt die Deploy-Etappe mit Nachkontrolle für Geräte-Projekte. Grundsätze wie überall: Regeln deterministisch (jede Fähigkeit funktioniert mit dem schwächsten Modell), das Modell deutet höchstens im Mini-Pass, nichts Neues am Job-Register vorbei.
+
+### Ist-Stand (belegt 13.10., Bestandsaufnahme im Code)
+
+- **Am Satelliten gibt es keinen Beobachter.** Kein `fs.watch`, keine Abonnements für Outlook oder Benachrichtigungen. Vorhanden sind nur Abfragen auf Zuruf:
+  - `outlook_mails` und `outlook_termine` (Windows, COM über PowerShell, `satellit-office.ts`),
+  - `benachrichtigungen` (Windows `wpndatabase.db`, macOS usernoted, **Linux nicht verfügbar**, mit Bestätigung, `satellit-benachrichtigungen.ts`).
+- **Sinne** (`satellit-sinne.ts`) sind Messwerte, die einmal pro Minute ankommen (Leerlauf, Fenster, Akku, System), keine Ereignisse. Der Server speichert sie nur und deutet sie alle 10 min im Job `geraete-beobachten` (Befunde: getrennt, Akku, Platte). Die Wechsel-Auslöser aus der Geräte-Spec (Zone, Leerlauf-Ende, Akku-Schwelle → Mini-Pass) sind nicht gebaut.
+- **Protokoll:** `GeraetEreignis` kennt nur `art: 'auftrag'`. `gateway.ts` (beiEreignis) und `alfred.ts` (Filter `art === 'auftrag'`) verwerfen alles andere. Ein neues Ereignis braucht an beiden Stellen einen Fall.
+- **Schicht 2 am Server ist da und wird wiederverwendet:**
+  - `WeltmodellBeobachter` (Zustandswechsel → Mini-Pass mit Abkühlzeit → Hinweis) und Befund → Vorgang (`befund:<quelle>:<gegenstand>`, Stumm-Regel des Owners).
+  - Mail-Regeln (v1211, `mail-ereignisse.ts`): Konto/Absender/Betreff → geplante Aufgabe mit fester Werkzeugliste über `fuehreAusDurchEreignis`. Läuft am Server per IMAP, nicht am Satelliten.
+  - Home Assistant in Echtzeit mit Wächter-Job.
+- **Job-Register:** Takte gibt es nur als täglich, wöchentlich oder Intervall. Ereignisquellen erscheinen dort nur als Abfrage-Job oder als Wächter (`ha-ereignisse-watchdog`).
+- **Deploy-Skill** (`deploy.ts`): deploy/status/logs/restart/rollback über SSH. **Projektläufe haben keine Deploy-Etappe**; die Abnahme besteht nur aus Prüfbefehlen auf dem Gerät.
+
+### Bausteine
+
+- **B1 Ereignis „beobachtung" im Protokoll.** Neue `GeraetEreignis`-Art `beobachtung` mit:
+  - `quelle`: ordner | outlook | benachrichtigung | build,
+  - `regel` (Kennung der auslösenden Regel), `schluessel` (eindeutig, für Dedup), `zeit`,
+  - `kopf` (nur Kopfdaten: Dateiname/Größe, Absender/Betreff, App/Titel).
+
+  Inhalte schickt der Satellit nie mit. Braucht eine Regel den Inhalt, holt der Server ihn ausdrücklich mit der vorhandenen Lese-Aktion. Am Satelliten wird gebündelt (5 s) und gedrosselt (höchstens 30 Ereignisse pro Minute und Gerät, darüber ein Sammel-Ereignis „N weitere"). Server: je ein Fall in `gateway.ts` und `alfred.ts`, Dedup über `schluessel`.
+- **B2 Beobachter-Regeln am Server** (nach dem Muster der Mail-Regeln). Felder:
+  - Gerät, Quelle, Filter (Ordner + Muster | Absender/Betreff | App | Projekt),
+  - Wirkung:
+    - `hinweis`: über `pruefeHinweis` → `deliverOrDefer`,
+    - `vorgang`: Befund → Vorgang mit Owner-Entscheidung,
+    - `aufgabe`: geplante Aufgabe mit fester Werkzeugliste, wie Mail v1211,
+    - `projekt`: Wunsch an ein Geräte-Projekt, **immer mit Bestätigung**.
+
+  Anlegen im Gespräch („sag mir, wenn in Downloads eine Rechnung landet"), in der App und im Web. Der Server schickt jedem Satelliten seine Beobachtungsliste (neue Nachricht `beobachten`, bei Verbindung und bei Änderung).
+- **B3 Ordner-Beobachter** (alle Plattformen): `fs.watch` rekursiv, nur in freigegebenen Verzeichnissen. Temporäre Dateien werden ignoriert (`~$*`, `.part`, `.crdownload`, `.tmp`); eine Datei gilt erst als „neu", wenn ihre Größe 3 s stabil bleibt. Ereignisse: neu, geändert, gelöscht, mit Name, Größe und relativem Pfad.
+- **B4 Outlook-Beobachter** (Windows): Abfrage alle 2 min über die vorhandene COM-Lesefunktion, nur Mails nach der letzten EntryID, nur Kopfdaten. Gedacht für Konten, die der Server nicht selbst liest (z. B. Exchange). Dedup mit `mail-ereignisse` über die Message-ID. Ist Outlook geschlossen oder liegt ein Fehler der Integritätsstufe vor (80080005), wird der Beobachter als „gestört" gemeldet statt still zu schweigen.
+- **B5 Benachrichtigungs-Beobachter** (Windows/macOS): Abfrage jede Minute über die vorhandene Lesefunktion, nur neue Einträge. **Nur Apps, die in einer Regel stehen, verlassen das Gerät**; alles andere verwirft der Satellit. Linux bleibt ohne (D-Bus-Mitschnitt wäre ein eigener späterer Schritt).
+- **B6 Build-Beobachter:** Ein Projekt kann einen Prüfbefehl als „Wache" bekommen (z. B. `npm test` alle 30 min oder nach einer Änderung im Projektordner aus B3). Rot → Ereignis `build` → Wirkung laut Regel, typisch Vorgang mit dem Angebot „Fix-Lauf starten" (bestätigen).
+- **B7 Lebenszeichen:**
+  - Jeder Beobachter meldet seinen Stand mit den Sinnen: läuft, gestört mit Grund, letzte Beobachtung.
+  - Der Job `beobachter-waechter` (10 min, Job-Register) macht daraus Befunde („Outlook-Beobachter auf PC-madh seit 25 min gestört").
+  - Kachel und Lage zeigen die Beobachter.
+  - Lokales Veto am Gerät: `alfred einstellungen beobachter aus`, wie beim Vertrauen; das Gerät hat das letzte Wort.
+- **B8 Deploy-Etappe mit Nachkontrolle** (Geräte-Projekte). Ein Projekt bekommt optional ein **Deploy-Ziel**: Host über den Deploy-Skill, Compose-Pfad und Gesundheitsprüfung (HTTP-URL mit erwartetem Status, Log-Muster). Der Planer darf eine letzte Etappe „Deploy" einplanen:
+  - Deploy **immer mit Bestätigung**;
+  - danach automatische Nachkontrolle (Status, HTTP-Probe, Logs ohne Fehlermuster, 3 Proben in 2 min);
+  - bei Rot: Bericht und Frage „Rollback?", ebenfalls mit Bestätigung.
+
+  Das Ergebnis kommt in den Etappenbericht (v1425) und in den Projektfaden.
+- **B9 (optional) Sinne-Wechsel als Ereignis:** Leerlauf-Ende („Owner wieder am PC"), Akku unter Schwelle und Gerät verbunden/getrennt werden zu Zustandswechseln für den `WeltmodellBeobachter`. Damit lassen sich zurückgehaltene Hinweise zustellen, wenn der Owner zurückkommt.
+
+### Reihenfolge (nicht freigegeben)
+
+1. **R4a:** B1, B2, B3 und B7. Ordner auf allen Plattformen, Regeln und Lebenszeichen; das ist der kleinste Weg zum ersten echten Ereignis.
+2. **R4b:** B5 und B4. Benachrichtigungen und Outlook unter Windows und macOS.
+3. **R4c:** B8 und B6. Deploy-Etappe mit Nachkontrolle, Build-Wache.
+4. **R4d (optional):** B9.
+
+Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem Windows-PC.
+
+### Abnahme (messbar)
+
+- Neue Datei in einem beobachteten Ordner → Hinweis oder Vorgang in < 1 min.
+- Mail von einem Regel-Absender in Outlook → Vorgang in < 3 min, ohne Doppelung, wenn der Server dasselbe Konto liest.
+- Ein Beobachter fällt aus → Befund in ≤ 20 min.
+- Kein Ereignis ohne Regel verlässt das Gerät (Probe mit einer fremden App-Benachrichtigung).
+- Deploy-Etappe: Nachkontrolle rot → Rollback-Frage, kein automatischer Rollback.
+- Alle Regeln greifen mit dem Notmodell gleich, nur die Deutung im Mini-Pass hängt am Modell.
+
+### Risiken
+
+- **Fremdinhalte und Datenschutz:** Benachrichtigungen und Mails anderer Personen. Gegenmittel: nur Kopfdaten, Filter am Satelliten, Inhalt nur auf ausdrückliche Anfrage.
+- **Flut:** Bündelung, Drossel, Sammel-Ereignis, Abschalten je Regel.
+- **COM-Fehler und geschlossenes Outlook:** wird als „gestört" gemeldet, nie still.
+- **Linux ohne Benachrichtigungen.**
+- **Doppelte Quellen** (IMAP am Server und Outlook): Dedup über die Message-ID.
+- **Deploy auf falsches Ziel:** Das Ziel liegt fest am Projekt, jeder Deploy wird bestätigt, und prod-Tore bleiben bei R5.
+
+### Offene Owner-Entscheidungen
+
+1. **Reihenfolge:** R4a (Ordner) zuerst wie empfohlen, oder Outlook/Benachrichtigungen zuerst?
+2. **Wo die Regeln entstehen:** am Server (Gespräch, App, Web) mit lokalem Veto am Gerät (Empfehlung), oder nur lokal am Gerät?
+3. **Outlook nur für Konten, die der Server nicht selbst liest?** (Empfehlung ja, sonst doppelt.)
+4. **Was ein Ereignis ohne Rückfrage auslösen darf:** Hinweis, Vorgang und Aufgabe mit fester Werkzeugliste automatisch; Projekt-Wunsch, Fix-Lauf, Deploy und Rollback nur mit Bestätigung (Empfehlung).
+5. **Deploy-Ziel:** pro Projekt fest hinterlegt und jeder Deploy bestätigt (Empfehlung), oder in dev automatisch nach grüner Abnahme?
+6. **B9 (Sinne-Wechsel)** jetzt mitplanen oder später?
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
