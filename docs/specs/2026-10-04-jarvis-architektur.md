@@ -1141,6 +1141,129 @@ Jede Owner-Reaktion trägt eine Art; „gelesen" verfälscht die Präzision nich
 
 - **v1364 + App 1.14.0 (12.10. 10:30):** K1 — Spalten `reaktion`, `reaktion_am` (PG v137 / SQLite v133); Reaktionen nuetzlich, gelesen, nicht_nuetzlich, bekannt, falsch, kein_interesse, zu_oft, besprochen über `/api/geraete/hinweise/<id>` (App bis 1.13: erledigt = gelesen, verwerfen = nicht nützlich); Logzeile „v1364 Hinweis-Reaktion" mit Ankern; Kennzahlen `hinweisNuetzlich`, `hinweisNichtNuetzlich`, `hinweisBekanntBeobachtet`; Telegram 👍/👎 je Hinweis passend zur Zeilennummer (auch aufgeschoben), Grund nach 👎, nur Owner-Chat; Beobachtung „bekannt" (`insights/hinweis-reaktion.ts`). Anker werden aus Titel + Text berechnet statt gespeichert (deterministisch, gleiche Funktion wie v1360). Live geprüft: Route 200, Reaktion in der DB, Logzeile, ungültige Aktion 400; Telegram-Knöpfe erst bei der nächsten Zustellung sichtbar.
 
+## Vom Signal zur Handlung — Abgleich mit dem Bestand und Diagnose (Entwurf 13.10.2026, Schicht 2–4 — ohne Umsetzung, Owner: „mit allem was besteht abgleichen … sollte man nicht auch Diagnose einfügen, also Auffälligkeit → Diagnose → Befund → …?" — keine Freigabe)
+
+### Anlass
+
+Owner-Frage 13.10. nach einem Projekttag:
+- Befunde entstehen aus gesammelten Daten und Ereignissen, daraus entstehen Vorgänge, auf die der Owner oder (je Autonomie) Alfred reagiert, und Hinweise ebenso.
+- Vorgänge sind aber nie so beschrieben, dass man darauf reagieren könnte, und Alfred reagiert nicht.
+- Hinweise kommen mehrfach, auch zu bereits behandelten Themen.
+
+Dieser Abschnitt prüft das gegen alle bestehenden Bausteine und ergänzt „Entscheiden statt Abhaken" (E3–E6), „Nachforschen" und „Auf Hinweise reagieren" (K2/K3). Er ersetzt keinen davon.
+
+### Belege (DB und Code, 13.10.)
+
+**Vorgänge seit 29.09. (≈ 300):**
+- 103 „von selbst erledigt" (Befund wieder unauffällig),
+- 29 „automatisch ausgeführt", davon ausschließlich Erinnerung oder Todo angelegt,
+- 20 vom Owner abgehakt, 25 behoben, 4 entschieden, 81 verworfen.
+- **Keine einzige Gegenmaßnahme** zu einem Befund.
+
+**Offene Vorgänge:**
+- Nächster Schritt fest „Owner entscheidet" bzw. „Bestätigung des Owners".
+- Ziel ist der rohe Befundtext („0x00158d000320aede temperature: 20,5 °C ↳ ⚠️").
+- Dubletten: „Fenster von Lena" 2×, „Proxmox-Replikation" 2×.
+
+**Code:**
+- Befund → Vorgang (`alfred.ts` setBefundeSync) setzt `naechsterSchritt 'Owner entscheidet'` und `autonomie 'bestaetigen'`. Eine Aktion gibt es nicht; ein Vorgang hat kein Aktionsfeld, nur seine Schritte.
+- Autonomie-Klassen wirken nur auf Aktionen, die das Modell im Reasoning vorschlägt.
+- Die Regel `immer_fragen` wird gespeichert, aber nie ausgewertet; E2-Haltefristen laufen nur beobachtend.
+
+**Hinweise 11.–13.10.:**
+- Domains noahhabel 6×, Proxmox-Replikation 4× am 13.10., Fenster Lena und MikroTik mehrfach. Jedes Mal mit neuem Schlüssel `hinweis:<Tag>:<Titel>`, weil jeder Durchlauf den Titel neu formuliert.
+- Zusätzlich wird Erzählung des Modells als Hinweis abgelegt („Ausgelassen habe ich …", „Die beiden Vorab-Auffälligkeiten habe ich …").
+
+### Die Kette (verbindlich ergänzt)
+
+| Stufe | Bedeutung | Heute |
+|---|---|---|
+| **Messung / Ereignis** | Rohdaten aus Quellen (HA, Monitor, Energie, Geräte, Mail …) | vorhanden |
+| **Auffälligkeit** | deterministische Abweichung vom Normalzustand (Schwellen, Baseline z ≥ 3) | vorhanden (`normalzustaende/*`) |
+| **Befund** | Akte der Auffälligkeit: Identität (Quelle + Gegenstand), seit wann, wie oft | vorhanden (`befunde`) |
+| **Diagnose** (neu als Begriff) | Was steckt dahinter? Hypothese, Belege, Sicherheit, was nicht unterscheidbar ist, Optionen, Vorschlag | als **Nachforschen** gebaut, aber nur beobachtend; Ergebnis nur als Schritt bzw. in skill_state |
+| **Vorgang** | Anliegen mit Frage, Lage, Optionen (je Aktion + Autonomie-Klasse), Vorschlag, Frist, Besitzer | Feld-Gerüst vorhanden (E1); Inhalt fehlt (E3) |
+| **Reaktion** | Owner wählt eine Option, oder Alfred führt sie aus (Klasse `auto` bzw. Regel `standard_option`) | fehlt |
+| **Nachprüfen / Abschluss** | Befund wieder unauffällig → Vorgang schließt mit Ergebnis | vorhanden („von selbst erledigt"), Ergebnis-Dialog nur in der App |
+| **Regel** | Entscheidung für die Zukunft (stumm, Schwelle, Standard-Option, immer fragen) | `stumm` wirkt, Rest fehlt |
+
+**Zur Reihenfolge „Auffälligkeit → Diagnose → Befund":** Inhaltlich ist es genau das. Der Befund ist allerdings die *Akte* der Auffälligkeit; die Diagnose braucht diese Identität:
+- um ihr Ergebnis abzulegen,
+- um nicht doppelt zu untersuchen,
+- um Budget und Haltefrist zu führen.
+
+Deshalb hängt die Diagnose **am** Befund. Entscheidend ist: **Vor der Diagnose entsteht kein Vorgang und kein Hinweis.** Ausnahme sind Sicherheitsbefunde, die melden sofort.
+
+**Hinweise gibt es in zwei Arten** (die Festlegung „Hinweis = Information, kein Auftrag" bleibt):
+- **Objekt-Hinweis:** betrifft einen Befund oder Vorgang (Proxmox, Domains, Fenster). Er trägt dessen Identität und entsteht nur bei einem **Zustandswechsel**: neu, schlimmer, Frist naht, Owner-Aktion nötig, erledigt.
+- **Freie Information:** Interessen, Vorausschau, Strompreis, Lern-Telemetrie, Social, Insight-Adapter. Bleibt **unverändert**.
+
+### Abgleich mit dem Bestand — was jeder Baustein heute tut und was sich ändern würde
+
+| # | Bestand | Zweck heute | Wirkung des Vorschlags | Beeinträchtigung? |
+|---|---|---|---|---|
+| 1 | Normalzustände / Weltmodell (`normalzustaende/*`, Baseline MAD) | Auffälligkeit deterministisch erkennen | unverändert; Schwellen künftig per Regel (E5) | nein |
+| 2 | Befunde (`befunde`, Wiederöffnen setzt `vorgang_id` zurück) | Akte mit Identität | erhält Verweis auf die Diagnose | nein |
+| 3 | Befund → Vorgang (setBefundeSync, sofort) | jede Auffälligkeit wird Vorgang | Vorgang erst nach Haltefrist **und** Diagnose (A + E2-Auswertung ~26.10.); Sicherheit sofort | **ja, gewollt:** weniger Vorgänge; Gegenprobe gegen die 103 „von selbst erledigt" (Abnahme E) |
+| 4 | Nachforschen N0–N2 (`nachforschen/*`, beobachtend, Rezepte, Schema mit lage/hypothese/frage/optionen/vorschlag/owner_aufgaben/alfred_schritte, 0,50 USD/Tag) | Diagnose vorbereiten | wird **die Diagnose-Stufe**: Ergebnis füllt Lage, Frage, Optionen und Vorschlag des Vorgangs; Meldung im Nachforschen-Format | Budget steigt mit Zahl der Befunde → Grenze bleibt, ohne Rezept Vorlage statt Modell |
+| 5 | Mini-Pass bei neuem Befund (`zustandswechsel.ts`, „keine Vermutungen über Ursachen") | schnelle Meldung | wird Objekt-Hinweis mit Befund-Schlüssel; bei Befunden mit Haltefrist ersetzt die Diagnose-Meldung den Sofort-Hinweis | Meldung kommt später (Haltefrist); **Sicherheit unverändert sofort** |
+| 6 | Reasoning-Hinweise (`legeHinweiseAb`, Schlüssel Tag + Titel; stille Ablage mit erster Aktion des Durchlaufs; Scan-Punkte) | Information aus dem Rundgang | passt ein Punkt (Anker v1360) zu offenem Befund/Vorgang → **kein neuer Hinweis**, sondern Schritt am Vorgang; neuer Hinweis nur bei Zustandswechsel; Erzählung über Alfreds eigenen Durchlauf wird deterministisch verworfen | weniger, nicht schlechtere Hinweise; Präzisions-Kennzahl (Schicht 4) ändert ihre Basis — als Bruch markieren |
+| 7 | Insight-Vorgänge (`legeInsightVorgaengeAn`, übersprungen bei passendem **Befund**) | Handlungs-Insights werden Vorgänge | zusätzlich Abgleich mit offenen **Vorgängen** über Anker → Schritt statt Dublette | nein |
+| 8 | Interessen (Digest je Thema und Tag), Vorausschau, Lern-Telemetrie, Social / Content-Studio, Insight-Adapter (infra-forecast, open-loop, kg-gap …) | freie Information bzw. eigene Aktionen (kg-gap, social-approval) | **unverändert** | nein — Content-Studio und Interessen bleiben unberührt |
+| 9 | Zustell-Gate `pruefeHinweis` (Korrektur v1148, Wiederholung 48 h v1360, Faktencheck), Reaktionen K1, Beobachtung „bekannt" | Qualität vor Zustellung | Identitätsprüfung (Befund/Vorgang) läuft **vor** dem Textvergleich; K1 bleibt Lernsignal | nein |
+| 10 | Regeln v1362 (`stumm` wirkt; `immer_fragen` gespeichert, nicht ausgewertet) | Entscheidung für die Zukunft | `immer_fragen`, `schwelle`, `standard_option` wirken (D) | nein |
+| 11 | ITSM (dieselben Monitor-Alarme → Incident; Muster → Problem; **Auto-RCA** mit Hypothese und Fix; Tagesreflexion/Hygiene direkt an Telegram) | Störungs- und Problem-Management Infrastruktur | **Überschneidung:** für Infra ist die Auto-RCA bereits eine Diagnose. Vorschlag: Befund verweist auf den Incident, der Vorgang zeigt Incident/Problem und RCA als Diagnose, ITSM-Telegram-Meldungen gelten als Objekt-Hinweise desselben Gegenstands | heute dreifach (Befund-Vorgang, Incident, ITSM-Meldung); **Owner-Entscheidung nötig**, welches System bei Infra führt |
+| 12 | Geplante Aufgaben (v1368, eigene Zustellentscheidung), ITSM-Direktmeldungen | eigene Kanäle | unverändert; nur in der Lage „Nicht zugestellt" mitgezählt | nein |
+| 13 | Ausführen an Hinweisen (Web/App `act` für Nicht-Reasoning-Kategorien; Chat-Skill `insights act` **ohne** v1361-Prüfung) | Aktion aus Hinweis | Ausführen wandert an die **Option des Vorgangs**; Lücke im Chat-Skill schließen | Befund nebenbei: Chat-`act` umgeht v1361 |
+| 14 | Lage, Ausführungsgedächtnis („Bereits getan"), Vorgangsliste | Kontext für Alfred | profitieren von Lage/Optionen im Vorgang | nein |
+| 15 | Web-Vorgänge (nur erledigt/verworfen) | Abschluss | Abschluss-Dialog wie App (E1) | nein |
+
+**Ergebnis der Prüfung:** Der Zweck der Hinweise bleibt erhalten (Information, kein Auftrag; freie Information unverändert). Geändert wird nur, dass Hinweise *über einen bekannten Gegenstand* an dessen Identität hängen. Der einzige echte Zielkonflikt ist ITSM bei Infrastruktur.
+
+### Bausteine
+
+- **V1 Objekt-Identität für Hinweise.**
+  - Vor dem Ablegen oder Zustellen eines Reasoning-Punkts deterministisch prüfen: Passen Anker oder Gegenstand zu einem offenen Befund oder Vorgang? Dann wird ein Schritt `gemeldet` am Vorgang geschrieben.
+  - Ein Hinweis entsteht nur bei Zustandswechsel: neu, schlimmer, Frist < 24 h, Owner-Aktion nötig, erledigt. Schlüssel `objekt:<befund|vorgang>:<id>:<wechsel>`.
+  - Punkte, die Alfreds eigenen Durchlauf beschreiben, werden verworfen (feste Muster, Logzeile).
+- **V2 Diagnose scharf.** Das Nachforschen-Ergebnis füllt am Vorgang `lage`, `frage`, `belege`, `optionen[]` und `vorschlag` (Felder aus B). Gemeldet wird im Nachforschen-Format. Ohne Rezept gelten Vorlagen je Befundart (E3), das Modell nur mit festem Schema. Für Infra mit offenem Incident wird die Auto-RCA übernommen statt neu untersucht (nach Entscheidung zu #11).
+- **V3 Vorgang erst nach Diagnose** (A, Haltefristen aus E2).
+- **V4 Reagieren.** Jede Option trägt eine Aktion mit Vorschau und Autonomie-Klasse; „Ausführen" sitzt an der Option (App, Web, Telegram-Knopf). Die Regel `standard_option` lässt Alfred beim nächsten Auftreten selbst handeln, nur bei Klasse `auto`, sonst als Vorschlag. Danach prüft Alfred selbst nach, ob der Befund verschwindet.
+- **V5 Gespräch und Web.** Vorgangsfaden (E4), Abschluss-Dialog im Web, Chat-`insights act` mit v1361-Prüfung.
+- **V6 ITSM-Brücke.** Befund ↔ Incident verknüpfen; eine Meldung je Gegenstand.
+
+### Reihenfolge (nicht freigegeben)
+
+1. **V1** sofort möglich: rein deterministisch und unabhängig von E2. Am schnellsten spürbar (Domains 6× → 1× + Fristerinnerung).
+2. **V2 + V3** nach der E2-Auswertung (~26.10.).
+3. **V4**.
+4. **V5 / V6**.
+
+Jeder Schritt bekommt eine eigene Version und einen Live-Beweis.
+
+### Abnahme (messbar)
+
+- Je Gegenstand höchstens ein Hinweis pro Zustandswechsel (Gegenprobe mit den Hinweisen vom 11.–13.10.).
+- Kein Erzähl-Hinweis mehr.
+- Keine zwei offenen Vorgänge mit überlappendem Anker.
+- ≥ 80 % der Befund-Vorgänge haben Frage und mindestens zwei Optionen.
+- Mindestens eine Option wird nachweislich von Alfred per Regel ausgeführt und nachgeprüft (Logzeile + Schritt).
+- Freie Informationen (Interessen, Vorausschau, Strompreis) unverändert in Zahl und Zustellung.
+
+### Risiken
+
+- **Verspätete Meldung durch Haltefrist:** Sicherheit bleibt sofort, Ausfall 2 h (Owner-Entscheidung 12.10.).
+- **Falsche Anker-Zuordnung verschluckt einen neuen Punkt:** Zuordnung nur bei eindeutigem Anker, sonst Hinweis wie heute; Logzeile „einem Vorgang zugeordnet" zur Kontrolle.
+- **Diagnosekosten:** Budget je Tag bleibt, Vorlagen zuerst.
+- **Kennzahlen-Bruch in Schicht 4:** Stichtag markieren.
+
+### Offene Owner-Entscheidungen
+
+1. Infrastruktur: Führt ITSM (Incident/Problem mit RCA), und der Vorgang verweist nur darauf (Empfehlung)? Oder ersetzt der Vorgang die ITSM-Meldungen an den Owner?
+2. Liste der Zustandswechsel für Objekt-Hinweise wie oben?
+3. Darf der Sofort-Hinweis bei neuen Befunden mit Haltefrist durch die spätere Diagnose-Meldung ersetzt werden (Empfehlung ja, Sicherheit ausgenommen)?
+4. Reihenfolge: V1 sofort, Rest nach ~26.10. (Empfehlung)?
+
 ## Lernende Helfer neben dem Sprachmodell (Entwurf 12.10.2026, Schicht 4 — ohne Umsetzung, Owner: „ok wie vorgeschlagen, Reihenfolge bestimmst du")
 
 ### Anlass
