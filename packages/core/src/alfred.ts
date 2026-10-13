@@ -15859,7 +15859,10 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (!faden) await this.meldeOhneModell(`[${s.id}] ${text}`, s.herkunft);
         else {
           await this.meldeInFaden(faden, text);
-          if (art === 'ende') await this.meldeOhneModell(`🔨 ${s.akteName ?? 'Projekt'}: ${text.split('\n')[0]!.slice(0, 220)} — Details im Projekt`, s.herkunft);
+          // v1423 — Realfall 13.10. 11:55: Lauf aus dem Projektfaden gestartet → Endzeile landete ein zweites Mal im Faden, das
+          // Hauptgespräch bekam nichts. Herkunft ein Faden (owner:faden:… oder sitzung:<gerät>:<faden>) → ins Hauptgespräch.
+          const imFaden = !!s.herkunft && (/^owner:faden:/.test(s.herkunft.chatId) || /^sitzung:[^:]+:[A-Za-z0-9_-]+$/.test(s.herkunft.chatId));
+          if (art === 'ende') await this.meldeOhneModell(`🔨 ${s.akteName ?? 'Projekt'}: ${text.split('\n')[0]!.slice(0, 220)} — Details im Projekt`, imFaden ? undefined : s.herkunft);
         }
         void this.aktualisiereLage(); // v1393 Lage-Zeile sofort nachziehen
       },

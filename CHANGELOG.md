@@ -55,6 +55,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1423] - 2026-10-13
+
+### Fixed — Projektende erscheint im Hauptgespräch (v1423)
+
+Wurde ein Geräte-Projekt aus dem Projektfaden gestartet, ging die kurze Endzeile („🔨 <Projekt>: 🏁 Projekt fertig … — Details im Projekt“) an die Herkunft des Laufs, also ein zweites Mal in den Projektfaden; das Hauptgespräch bekam nichts. Stammt der Lauf aus einem Faden, geht die Endzeile jetzt ins Hauptgespräch und an den Owner-Kanal.
+
 ## [0.19.0-jarvis.1422] - 2026-10-13
 
 ### Fixed — Live-Anzeige laufender Projekte in der App (v1422, App 1.17.3)
