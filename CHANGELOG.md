@@ -55,6 +55,23 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1436] - 2026-10-13
+
+### Security — Push mit Token nie im Projekt-Repo, keine fremde Git-Konfiguration (v1436)
+
+Eine zweite Sicherheitsprüfung fand zwei Wege, auf denen das Token trotz v1435 hätte abfließen können:
+
+1. `core.hooksPath` zeigte auf einen vorhersagbaren Ordner im gemeinsamen Temp-Verzeichnis. Dort abgelegte Hooks hätten mit dem Token in der Umgebung laufen können.
+2. Die Projekt-Konfiguration (`.git/config`) und die globale `~/.gitconfig` sind für Claude Code schreibbar. Darüber hätten Proxy, Adressauflösung oder eigene Zertifikate das Token umleiten können, besonders bei `http://`-Remotes.
+
+Behoben:
+
+- Der Push läuft aus einem frischen temporären Repo: zuerst den Zweig ohne Token lokal übernehmen, dann an die erwartete Adresse pushen. Danach wird das temporäre Repo gelöscht.
+- Alle git-Aufrufe ohne globale und System-Konfiguration (`GIT_CONFIG_GLOBAL` leer, `GIT_CONFIG_NOSYSTEM`).
+- Hooks zeigen auf das leere Gerät (`/dev/null`, Windows `NUL`).
+- Tests mit echtem git: Der Aufruf mit Token läuft genau einmal, im temporären Repo und nie im Projekt; ein Proxy in der Projekt-Konfiguration bleibt wirkungslos.
+- Vorausgesetzt wird git ≥ 2.32; auf PC, Mac und Ubuntu-VM vorhanden. Älteres git sendet kein Token, der Push scheitert dann sicher.
+
 ## [0.19.0-jarvis.1435] - 2026-10-13
 
 ### Security — Push nur zum Repo des Projekts, Token nur für dessen Host (v1435)

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -22,6 +22,10 @@ export function pruefeRepoUrl(url: string): { ok: true; url: string } | { ok: fa
   return { ok: true, url: `${p.protocol}//${p.host}${p.pathname}` };
 }
 
+/** Leeres Gerät für git (Windows: os.devNull = \.
+ul lehnt git ab, NUL geht). */
+export const LEER = process.platform === 'win32' ? 'NUL' : '/dev/null';
+
 /** Adresse ohne Zugangsdaten (für Anzeige und Speicher). */
 export function ohneZugang(url: string): string { return url.replace(/^(https?:\/\/)[^@/]+@/, '$1'); }
 
@@ -29,16 +33,17 @@ export function ohneZugang(url: string): string { return url.replace(/^(https?:\
 export function repoSchluessel(url: string): string { return ohneZugang(url.trim()).toLowerCase().replace(/\.git$/, '').replace(/\/+$/, ''); }
 
 /**
- * Umgebung für einen git-Aufruf (Sicherheitsprüfung 13.10.): nie Rückfragen, keine Weiterleitungen, keine Hooks und keine Credential-Helper
- * aus dem Projekt (Claude Code arbeitet im Ordner und könnte sie anlegen — sie sähen die Umgebung mit dem Token). Das Token gilt als
- * Kopfzeile NUR für den Host des erwarteten Repos (`http.<schema://host>/.extraHeader`), nie für git@-Adressen.
+ * Umgebung für einen git-Aufruf (Sicherheitsprüfungen 13.10.): nie Rückfragen, keine Weiterleitungen, keine Hooks (Pfad LEER —
+ * dort kann niemand Hooks ablegen), keine Credential-Helper, keine globale und keine System-Konfiguration (~/.gitconfig ist für Claude
+ * Code schreibbar: Proxy, insteadOf, CA …). Das Token gilt als Kopfzeile NUR für den Host des erwarteten Repos, nie für git@-Adressen.
+ * Mit Token nur in einem frischen Repo ohne fremde Konfiguration verwenden (Klon in neuen Ordner, Push aus temporärem Repo).
  */
 export function gitUmgebung(token?: string, fuer?: string): Record<string, string> {
-  const cfg: Array<[string, string]> = [['http.followRedirects', 'false'], ['core.hooksPath', path.join(os.tmpdir(), 'alfred-keine-git-hooks')], ['credential.helper', '']];
+  const cfg: Array<[string, string]> = [['http.followRedirects', 'false'], ['core.hooksPath', LEER], ['credential.helper', '']];
   let basis: string | undefined;
   try { if (fuer && /^https?:\/\//i.test(fuer)) { const u = new URL(fuer); basis = `${u.protocol}//${u.host}/`; } } catch { /* keine */ }
   if (token && basis) cfg.push([`http.${basis}.extraHeader`, `Authorization: Basic ${Buffer.from(`oauth2:${token}`).toString('base64')}`]);
-  const env: Record<string, string> = { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes', GIT_CONFIG_COUNT: String(cfg.length) };
+  const env: Record<string, string> = { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes', GIT_CONFIG_GLOBAL: LEER, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: String(cfg.length) };
   cfg.forEach(([k, v], i) => { env[`GIT_CONFIG_KEY_${i}`] = k; env[`GIT_CONFIG_VALUE_${i}`] = v; });
   return env;
 }
@@ -79,23 +84,35 @@ export async function gitHolen(url: string, ziel: string, token: string | undefi
 }
 
 /**
- * Aktuellen Zweig nach origin pushen — nur wenn die tatsächliche Push-Adresse (nach pushurl/insteadOf) die erwartete Repo-Adresse des
- * Projekts ist. Sonst nichts senden: weder Token noch Code (Claude Code könnte origin im Projekt umgebogen haben).
+ * Aktuellen Zweig zum Repo des Projekts pushen.
+ * - Nur wenn jede Push-Adresse von origin (nach pushurl/insteadOf) die erwartete Repo-Adresse ist — sonst nichts senden (Claude Code
+ *   könnte origin umgebogen haben).
+ * - v1436 — Der Push mit Token läuft NICHT im Projekt-Repo (dessen .git/config ist für Claude Code schreibbar: Proxy, Adressauflösung,
+ *   CA …), sondern aus einem frischen temporären Repo: erst den Zweig ohne Token lokal dorthin holen, dann an die erwartete Adresse pushen.
  */
 export async function gitPush(dir: string, token: string | undefined, erwartet: string | undefined, git: GitAusfuehren = gitAusfuehren): Promise<{ ok: true; branch: string; sha: string; remote: string; text: string } | { ok: false; fehler: string }> {
-  if (!erwartet) return { ok: false, fehler: 'erwartete Repo-Adresse fehlt — ohne sie pusht Alfred nicht' };
+  const ziel = erwartet ? pruefeRepoUrl(erwartet) : undefined;
+  if (!ziel?.ok) return { ok: false, fehler: ziel ? `erwartete Repo-Adresse ungültig: ${ziel.fehler}` : 'erwartete Repo-Adresse fehlt — ohne sie pusht Alfred nicht' };
   const r = await git(['remote', 'get-url', '--push', '--all', 'origin'], dir, gitUmgebung(), 15_000);
   const adressen = r.ausgabe.split('\n').map(x => x.trim()).filter(Boolean);
   if (r.status !== 0 || !adressen.length) return { ok: false, fehler: 'kein Remote origin im Projekt' };
-  if (adressen.some(a => repoSchluessel(a) !== repoSchluessel(erwartet))) return { ok: false, fehler: `Push-Adresse von origin (${adressen.map(ohneZugang).join(', ')}) ist nicht das Repo des Projekts (${ohneZugang(erwartet)}) — nicht gepusht` };
-  const remote = ohneZugang(adressen[0]!);
+  if (adressen.some(a => repoSchluessel(a) !== repoSchluessel(ziel.url))) return { ok: false, fehler: `Push-Adresse von origin (${adressen.map(ohneZugang).join(', ')}) ist nicht das Repo des Projekts (${ohneZugang(ziel.url)}) — nicht gepusht` };
   const b = await git(['rev-parse', '--abbrev-ref', 'HEAD'], dir, gitUmgebung(), 15_000);
   const branch = b.ausgabe.trim();
-  if (b.status !== 0 || !branch || branch === 'HEAD') return { ok: false, fehler: 'kein Zweig ausgecheckt (detached HEAD)' };
-  const p = await git(['push', '--no-verify', 'origin', `HEAD:refs/heads/${branch}`], dir, gitUmgebung(/^https?:\/\//i.test(remote) ? token : undefined, remote), 5 * 60_000);
-  if (p.status !== 0) return { ok: false, fehler: `git push: ${schwaerzeGit(kurz(p.ausgabe), token)}` };
-  const h = await git(['rev-parse', '--short', 'HEAD'], dir, gitUmgebung(), 15_000);
-  return { ok: true, branch, sha: h.ausgabe.trim(), remote, text: schwaerzeGit(kurz(p.ausgabe), token) };
+  if (b.status !== 0 || !branch || branch === 'HEAD' || !/^[A-Za-z0-9._\/-]+$/.test(branch)) return { ok: false, fehler: 'kein gültiger Zweig ausgecheckt (detached HEAD?)' };
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'alfred-push-'));
+  try {
+    const i = await git(['init', '-q', '--bare', tmp], undefined, gitUmgebung(), 30_000);
+    if (i.status !== 0) return { ok: false, fehler: `temporäres Repo: ${kurz(i.ausgabe)}` };
+    const f = await git(['--git-dir', tmp, 'fetch', '-q', '--no-tags', '--', dir, `+HEAD:refs/heads/${branch}`], undefined, gitUmgebung(), 5 * 60_000);
+    if (f.status !== 0) return { ok: false, fehler: `Zweig nicht übernommen: ${kurz(f.ausgabe)}` };
+    const p = await git(['--git-dir', tmp, 'push', '--no-verify', '--', ziel.url, `refs/heads/${branch}:refs/heads/${branch}`], undefined, gitUmgebung(/^https?:\/\//i.test(ziel.url) ? token : undefined, ziel.url), 5 * 60_000);
+    if (p.status !== 0) return { ok: false, fehler: `git push: ${schwaerzeGit(kurz(p.ausgabe), token)}` };
+    const h = await git(['rev-parse', '--short', 'HEAD'], dir, gitUmgebung(), 15_000);
+    return { ok: true, branch, sha: h.ausgabe.trim(), remote: ohneZugang(ziel.url), text: schwaerzeGit(kurz(p.ausgabe), token) };
+  } finally {
+    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* bleibt im Temp */ }
+  }
 }
 
 /** Parameter für Logzeilen: Geheimnisse ersetzen (Token, Passwörter). */

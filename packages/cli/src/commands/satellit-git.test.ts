@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pruefeRepoUrl, ohneZugang, gitUmgebung, schwaerzeGit, gitHolen, gitPush, paramsFuerLog, type GitAusfuehren } from './satellit-git.js';
+import { pruefeRepoUrl, ohneZugang, gitUmgebung, schwaerzeGit, gitHolen, gitPush, paramsFuerLog, LEER, type GitAusfuehren } from './satellit-git.js';
 
 describe('v1434 B13 Git-Teil am Satelliten', () => {
   it('Repo-Adressen: https und git@ ja, Zugangsdaten/lokal/Optionen nein', () => {
@@ -22,7 +22,8 @@ describe('v1434 B13 Git-Teil am Satelliten', () => {
     expect(cfg['http.https://git.lokalkraft.at/.extraHeader']).toBe(`Authorization: Basic ${Buffer.from('oauth2:tok123').toString('base64')}`);
     expect(cfg['http.extraHeader']).toBeUndefined(); // nie für alle Hosts
     expect(cfg).toMatchObject({ 'http.followRedirects': 'false', 'credential.helper': '' });
-    expect(cfg['core.hooksPath']).toContain('alfred-keine-git-hooks');
+    expect(cfg['core.hooksPath']).toBe(LEER); // v1436 — kein vorhersagbarer Ordner, in dem jemand Hooks ablegen könnte
+    expect(e).toMatchObject({ GIT_CONFIG_GLOBAL: LEER, GIT_CONFIG_NOSYSTEM: '1' }); // ~/.gitconfig ist für Claude Code schreibbar
     expect(JSON.stringify(gitUmgebung('tok123', 'git@host:x.git'))).not.toContain(Buffer.from('oauth2:tok123').toString('base64')); // ssh: kein Token
     expect(JSON.stringify(gitUmgebung())).not.toContain('extraHeader');
     expect(schwaerzeGit(`fatal: https://oauth2:tok123@host/x tok123 ${Buffer.from('oauth2:tok123').toString('base64')}`, 'tok123')).toBe('fatal: https://***@host/x *** ***');
@@ -47,8 +48,11 @@ describe('v1434 B13 Git-Teil am Satelliten', () => {
       return { status: r.status, ausgabe: `${r.stdout}${r.stderr}` };
     };
     // Push-Ausführer: nur der eigentliche push geht ans Bare-Repo (die Adressprüfung läuft gegen das echte origin)
+    const pushAufrufe: Array<{ args: string[]; cwd?: string; env: Record<string, string> }> = [];
     const echtPush: GitAusfuehren = async (args, cwd, env) => {
-      const a = args[0] === 'push' ? ['push', bare, args[3]!] : args; // ohne --no-verify: die Hook-Sperre über core.hooksPath muss allein halten
+      pushAufrufe.push({ args, cwd, env });
+      const k = args.indexOf('push');
+      const a = k >= 0 ? args.map((x, i) => (i === k + 3 ? bare : x)) : args; // nur die Zieladresse wird aufs Bare-Repo umgeleitet
       const r = spawnSync('git', a, { cwd, env: { ...process.env, ...env }, encoding: 'utf8' });
       return { status: r.status, ausgabe: `${r.stdout}${r.stderr}` };
     };
@@ -76,7 +80,19 @@ describe('v1434 B13 Git-Teil am Satelliten', () => {
     const p = await gitPush(ziel, 'tok123', 'https://git.example/gruppe/projekt.git', echtPush);
     expect(p).toMatchObject({ ok: true, branch: 'main' });
     expect(existsSync(path.join(ziel, 'hook-lief'))).toBe(false);
-    expect(g(['log', '--oneline', '-1', 'main'], bare).stdout).toContain('Etappe 1: neu');
+    // v1436 — der Aufruf mit Token läuft in einem frischen temporären Repo, nie im Projekt (dessen Konfig Claude Code ändern kann)
+    const mitToken = pushAufrufe.filter(x => JSON.stringify(x.env).includes(Buffer.from('oauth2:tok123').toString('base64')));
+    expect(mitToken).toHaveLength(1);
+    expect(mitToken[0]!.args.slice(0, 3)).toEqual(['--git-dir', expect.stringContaining('alfred-push-'), 'push']);
+    expect(mitToken[0]!.args).toContain('https://git.example/gruppe/projekt.git');
+    expect(mitToken[0]!.cwd).toBeUndefined();
+    expect(existsSync(mitToken[0]!.args[1]!)).toBe(false); // aufgeräumt
+    // Projekt-Konfig mit Proxy: bleibt wirkungslos, weil der Push nicht im Projekt läuft
+    g(['config', 'http.proxy', 'http://127.0.0.1:9'], ziel);
+    writeFileSync(path.join(ziel, 'zwei.txt'), 'x\n'); g(['add', '.'], ziel); g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'Etappe 2: zwei'], ziel);
+    expect(await gitPush(ziel, 'tok123', 'https://git.example/gruppe/projekt.git', echtPush)).toMatchObject({ ok: true });
+    expect(g(['log', '--oneline', '-1', 'main'], bare).stdout).toContain('Etappe 2: zwei');
+    expect(g(['log', '--oneline', '-3', 'main'], bare).stdout).toContain('Etappe 1: neu');
     expect((await gitHolen('https://git.example/gruppe/projekt.git', ziel, undefined, echt))).toMatchObject({ ok: false, fehler: expect.stringContaining('nicht leer') });
   });
 });
