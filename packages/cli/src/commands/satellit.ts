@@ -388,7 +388,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     case 'git_push': {
       const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
-      const r = await gitPush(projekt, typeof params.token === 'string' && params.token ? params.token : undefined);
+      const r = await gitPush(projekt, typeof params.token === 'string' && params.token ? params.token : undefined, typeof params.erwartet === 'string' ? params.erwartet : undefined); // v1435 nur zum Repo des Projekts
       return r.ok ? { success: true, data: { branch: r.branch, sha: r.sha, remote: r.remote }, display: `Gepusht: ${r.branch} (${r.sha}) → ${r.remote}` } : { success: false, error: r.fehler };
     }
     case 'projekt_frage': {

@@ -55,6 +55,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1435] - 2026-10-13
+
+### Security — Push nur zum Repo des Projekts, Token nur für dessen Host (v1435)
+
+Eine Sicherheitsprüfung des Git-Teils (v1434) fand: Der Push ging an das, worauf `origin` im Projektordner zeigte. Claude Code arbeitet dort und hätte `origin` umbiegen können; das Projekt-Token und der Code wären dann an einen fremden Host gegangen. Bisher war kein Projekt-Token hinterlegt, es ist also nichts abgeflossen.
+
+- `git_push` bekommt die erwartete Repo-Adresse des Projekts. Gepusht wird nur, wenn jede tatsächliche Push-Adresse von `origin` (nach `pushurl` und `insteadOf`) genau diese ist; sonst geht nichts raus.
+- Das Token gilt als Kopfzeile nur für den Host des erwarteten Repos (`http.<schema://host>/.extraHeader`). Bei `git@`-Adressen wird es nie übergeben.
+- Weiterleitungen sind aus, ebenso Hooks (`core.hooksPath`, `--no-verify`) und Credential-Helper aus dem Projekt; sie hätten die Umgebung mit dem Token gesehen.
+- Tests mit echtem git: umgebogenes `origin`, eigene `pushurl` und `insteadOf` werden abgewiesen; ein `pre-push`-Hook im Projekt läuft nicht (Gegenprobe ohne Sperre: er läuft).
+
 ## [0.19.0-jarvis.1434] - 2026-10-13
 
 ### Added — Geräte-Projekte mit GitLab: holen und nach jeder Etappe pushen (v1434, Spec R4-Erweiterung B13)

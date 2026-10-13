@@ -15908,7 +15908,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (!g) return '⚠️ Nicht gepusht: Gerät nicht verbunden';
         if (!g.aktionen.includes('git_push')) return '⚠️ Nicht gepusht: Satellit zu alt (Update ≥ 1434)';
         const token = await this.gitTokenFuer(p.id, p.repoUrl);
-        const r = await this.geraeteGateway!.sendeAktion(g.id, 'git_push', { projekt: s.projekt, ...(token ? { token } : {}) }, 6 * 60_000);
+        const r = await this.geraeteGateway!.sendeAktion(g.id, 'git_push', { projekt: s.projekt, erwartet: p.repoUrl, ...(token ? { token } : {}) }, 6 * 60_000); // v1435 — nur zum Repo des Projekts
         this.logger.info({ lauf: s.id, etappe: s.nr, ok: r.success, mitToken: !!token, ...(r.success ? r.data as object : { fehler: r.error?.slice(0, 200) }) }, 'v1434 Push nach Abnahme');
         return r.success ? `📤 ${r.display}` : `⚠️ Push fehlgeschlagen: ${r.error}${token ? '' : ' (kein GIT_TOKEN in der Projektumgebung)'}`;
       },
