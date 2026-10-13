@@ -51,6 +51,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1416] - 2026-10-13
+
+### Fixed — Windows-Satellit wurde abgewiesen (v1416)
+
+Mit den neuen Projekt-Aktionen meldete der Windows-Satellit 41 Aktionen, die Office-Aktionen eingerechnet. Das Gehirn nahm höchstens 40 an und wies das Manifest ab. Der Satellit fiel auf ältere Versionen zurück, und die App auf dem PC blieb ohne Verbindung. Die Grenze liegt jetzt bei 60. Ein Test prüft das Manifest der jeweiligen Plattform gegen die Prüfung des Gehirns.
+
 ## [0.19.0-jarvis.1415] - 2026-10-13
 
 ### Fixed — Projekt wartet auf das Gerät statt anzuhalten; Fortsetzen in App und Web (v1415, App 1.15.3)

@@ -12,6 +12,8 @@ export const PULS_INTERVALL_MS = 30_000;
 export const PULS_TIMEOUT_MS = 90_000;
 export const AKTION_TIMEOUT_MS = 60_000;
 export const SHELL_TIMEOUT_MS = 10 * 60_000;
+/** v1416 — Realfall 13.10. 02:08: der Windows-Satellit (Office-Aktionen + projekt_lesen/projekt_frage/installieren) lag über 40 und wurde abgewiesen. */
+export const MANIFEST_MAX_AKTIONEN = 60;
 
 const PLATTFORMEN: GeraetPlattform[] = ['windows', 'macos', 'linux', 'android', 'ios', 'raspberry'];
 const AUTONOMIEN = new Set(['auto', 'bestaetigen', 'nie']);
@@ -39,7 +41,7 @@ export function pruefeManifest(m: unknown): { ok: true; manifest: GeraetManifest
   const r = m as Record<string, unknown>;
   if (r.protokoll !== 1) return { ok: false, grund: 'Protokollversion nicht unterstützt' };
   if (!PLATTFORMEN.includes(r.plattform as GeraetPlattform)) return { ok: false, grund: 'Plattform unbekannt' };
-  if (!Array.isArray(r.aktionen) || r.aktionen.length > 40) return { ok: false, grund: 'Aktionen fehlen oder zu viele' }; // v1292 — Office-Aktionen: 30 → 40
+  if (!Array.isArray(r.aktionen) || r.aktionen.length > MANIFEST_MAX_AKTIONEN) return { ok: false, grund: 'Aktionen fehlen oder zu viele' }; // v1292 — Office-Aktionen: 30 → 40; v1416 → 60
   const namen = new Set<string>();
   for (const a of r.aktionen as unknown[]) {
     const x = a as Record<string, unknown>;
