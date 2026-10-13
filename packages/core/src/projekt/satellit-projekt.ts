@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 
 import path from 'node:path';
 import type { GeraetEreignis } from '@alfred/types';
 import {
-  STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit, fehlendeWerkzeuge, installVorschlag,
+  STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, etappenBerichtText, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit, fehlendeWerkzeuge, installVorschlag,
   type Grenzen, type MutationsArt,
 } from './satellit-projekt-regeln.js';
 
@@ -74,6 +74,8 @@ export interface SatellitProjektDeps {
   /** v1419 G3 — art: 'ende' (Projekt beendet → auch ins Hauptgespräch), 'frage' (Rückfrage, nur Projektfaden), sonst Etappenmeldung */
   melde: (s: ProjektStand, text: string, art?: 'etappe' | 'ende' | 'frage') => Promise<void>;
   vorgang?: { anlegen: (s: ProjektStand) => Promise<string | undefined>; schritt: (s: ProjektStand, text: string) => Promise<void>; abschliessen: (s: ProjektStand, text: string) => Promise<void>; /** v1392 — „nächster Schritt" nachführen */ stand?: (s: ProjektStand, text: string, wartet: boolean) => Promise<void> };
+  /** v1425 — Protokoll im Projekt an (Auftrag + Bericht je Etappe mit committen) oder aus (nur lokal); Schalter je Projekt, Standard an */
+  protokollAn?: (s: ProjektStand) => Promise<boolean>;
   ordner?: string;
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
   now?: () => number;
@@ -253,7 +255,8 @@ export class SatellitProjekte {
     if (grenze) { await this.beende(s, 'angehalten', grenze); return; }
     // v1394 — mit Budget: Claude Code bekommt das Restbudget und hält es selbst ein (--max-budget-usd)
     const rest = s.grenzen.budgetUsd !== undefined ? Math.max(0.05, Number((s.grenzen.budgetUsd - s.kostenUsd).toFixed(2))) : undefined;
-    const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel, ...(rest !== undefined ? { max_kosten_usd: rest } : {}), ...(s.gitUebernehmen ? { git_uebernehmen: true } : {}), ...(s.sudoSperre ? { sudo_sperre: true } : {}) }, 150_000);
+    const protokoll = { lauf: s.id, nr: s.nr, ...(s.fixVersuch ? { fix: s.fixVersuch } : {}), an: await this.protokollAn(s) }; // v1425
+    const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel, ...(rest !== undefined ? { max_kosten_usd: rest } : {}), ...(s.gitUebernehmen ? { git_uebernehmen: true } : {}), ...(s.sudoSperre ? { sudo_sperre: true } : {}), protokoll }, 150_000);
     const id = (r.data as { id?: string } | undefined)?.id;
     // v1415 — Realfall 13.10. 01:11: Etappe 2 sollte genau starten, als der Satellit für ein Update kurz weg war → Projekt angehalten.
     // Ein nicht verbundenes Gerät hält das Projekt nicht an: die Etappe startet, sobald es wieder da ist (höchstens 24 h).
@@ -337,12 +340,27 @@ export class SatellitProjekte {
   private async vermerke(s: ProjektStand, o: { ok: boolean; geprueft: boolean; protokoll?: string }): Promise<void> {
     const l = s.etappeLauf;
     const commit = await this.letzterEtappenCommit(s);
-    s.erledigt = [...s.erledigt.filter(x => x.nr !== s.nr), {
+    const eintrag: EtappenErgebnis = {
       nr: s.nr, etappe: s.plan[s.nr - 1]!, ok: o.ok, geprueft: o.geprueft, fixVersuche: s.fixVersuch, kostenUsd: s.etappeKostenUsd, text: s.letzterText ?? '',
       ...(l?.text ? { zusammenfassung: l.text } : {}), ...(l ? { dateien: l.dateien, dateienAnzahl: l.dateienAnzahl, dauerS: l.dauerS } : {}),
       ...(commit ? { commit } : {}), ...(o.geprueft && o.protokoll !== undefined ? { abnahme: { ok: o.ok, protokoll: o.protokoll.slice(0, 2000) } } : {}),
-    }];
+    };
+    s.erledigt = [...s.erledigt.filter(x => x.nr !== s.nr), eintrag];
     this.sichere(s);
+    await this.protokolliere(s, eintrag); // v1425 — nach dem Commit der Etappe (der Etappen-Commit ist oben schon erkannt)
+  }
+
+  private async protokollAn(s: ProjektStand): Promise<boolean> {
+    try { return this.d.protokollAn ? await this.d.protokollAn(s) : true; } catch { return true; }
+  }
+
+  /** v1425 — Etappenbericht ins Projekt (Satellit schreibt und committet nur den Protokollordner); ältere Satelliten: nur Logzeile. */
+  private async protokolliere(s: ProjektStand, e: EtappenErgebnis): Promise<void> {
+    const an = await this.protokollAn(s);
+    const bericht = etappenBerichtText({ lauf: s.id, geraet: s.geraet, ziel: s.ziel, plan: s.plan, zeit: new Date(this.jetzt()).toISOString().slice(0, 16).replace('T', ' ') + ' UTC', e });
+    const r = await this.d.aktion(s.geraetId, 'projekt_protokoll', { projekt: s.projekt, lauf: s.id, nr: s.nr, an, bericht, nachricht: `docs(alfred): Protokoll Etappe ${s.nr}/${s.plan.length} (${s.id})` }, 60_000).catch((err: Error) => ({ success: false, error: err.message, data: undefined, display: undefined }));
+    if (r.success) this.d.logger.info({ id: s.id, etappe: s.nr, an, ...(r.data as object | undefined) }, 'v1425 Etappenprotokoll im Projekt');
+    else this.d.logger.info({ id: s.id, etappe: s.nr, an, fehler: r.error }, 'v1425 Etappenprotokoll nicht geschrieben');
   }
 
   /** v1417 G1 — Commit dieser Etappe (Etappen-Auftrag committet mit „Etappe <n>: …"); nur lesend, Fehler egal. */

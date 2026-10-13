@@ -13,6 +13,8 @@ export interface ProjektAkte {
   beschreibung?: string; pruefBefehle: string[]; status: AktenStatus; erstellt: string; aktualisiert: string;
   /** v1409 R3b — Projekt-Option „sudo gesperrt" (Projekt-Tag sudo-sperre) */
   sudoSperre?: boolean;
+  /** v1425 — Protokoll im Projekt (Aufträge + Berichte committen); Standard an, Tag protokoll-aus schaltet ab */
+  protokoll: boolean;
 }
 
 export function akteAusProjekt(p: Project): ProjektAkte {
@@ -21,6 +23,7 @@ export function akteAusProjekt(p: Project): ProjektAkte {
     ...(p.description ? { beschreibung: p.description } : {}), pruefBefehle: p.pruefBefehle ?? [],
     status: p.status === 'archived' ? 'archiviert' : 'aktiv', erstellt: p.createdAt, aktualisiert: p.lastActiveAt,
     ...(p.tags?.includes('sudo-sperre') ? { sudoSperre: true } : {}),
+    protokoll: !(p.tags ?? []).includes('protokoll-aus'),
   };
 }
 
@@ -67,6 +70,15 @@ export class ProjektAktenUeberProjekte {
     if (!p) return;
     const tags = (p.tags ?? []).filter(t => t !== 'sudo-sperre');
     await this.repo.update(userId, id, { tags: an ? [...tags, 'sudo-sperre'] : tags });
+  }
+
+  /** v1425 — Schalter „Protokoll im Projekt“ (Tag protokoll-aus = aus). Liefert false, wenn das Projekt fehlt. */
+  async setzeProtokoll(userId: string, id: string, an: boolean): Promise<boolean> {
+    const p = await this.repo.getById(userId, id);
+    if (!p?.geraetId) return false;
+    const tags = (p.tags ?? []).filter(t => t !== 'protokoll-aus');
+    await this.repo.update(userId, id, { tags: an ? tags : [...tags, 'protokoll-aus'] });
+    return true;
   }
 
   /** Lauf als Projekt-Sitzung: anlegen (einmal je Lauf) bzw. beim Ende zusammenfassen. */

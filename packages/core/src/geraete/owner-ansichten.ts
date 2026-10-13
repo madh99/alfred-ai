@@ -69,6 +69,8 @@ export interface OwnerAnsichtenDeps {
     diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1404 — Frage zum Projekt (Claude Code nur lesend) */
     frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1425 — Schalter „Protokoll im Projekt“ (Aufträge und Berichte mit committen) */
+    protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>;
   };
   jetzt?: () => Date;
   /** Jede Änderung aus der App ins Server-Log (Beweis, Schicht-4-Signal). */
@@ -182,13 +184,18 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt fortsetzen', { projekt: id, lauf });
       return this.d.projekte.fortsetzen(id, lauf);
     }
+    if (aktion === 'protokoll') { // v1425 — text „an“ oder „aus“
+      if (!this.d.projekte.protokoll || (text !== 'an' && text !== 'aus')) return { success: false, error: 'text muss an oder aus sein' };
+      this.d.protokoll?.('Projekt Protokoll', { projekt: id, an: text === 'an' });
+      return this.d.projekte.protokoll(id, text === 'an');
+    }
     if (aktion === 'frage') {
       const f = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
       if (!f || !this.d.projekte.frage) return { success: false, error: 'text fehlt (die Frage)' };
       this.d.protokoll?.('Projekt Frage', { projekt: id, laenge: f.length });
       return this.d.projekte.frage(id, f);
     }
-    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, freigeben oder ablehnen sein' };
+    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, protokoll, freigeben oder ablehnen sein' };
     const t = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     if (!t) return { success: false, error: 'text fehlt (was soll als Nächstes passieren?)' };
     this.d.protokoll?.('Projekt weiter', { projekt: id, laenge: t.length });

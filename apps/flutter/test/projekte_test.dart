@@ -115,6 +115,25 @@ void main() {
     expect(laufFortschritt(fertig), '3/3 abgenommen');
   });
 
+  testWidgets('1.18.0 Schalter Protokoll im Projekt sendet an/aus', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    var an = true;
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet.add(koerper!); an = koerper['text'] == 'an'; return {'success': true, 'display': 'ok'}; }
+      return {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [], 'protokoll': an};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'b77431a2-e388', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-protokoll'))).value, isTrue);
+    await t.tap(find.byKey(const Key('projekt-protokoll')));
+    await t.pumpAndSettle();
+    expect(gesendet.single, {'aktion': 'protokoll', 'text': 'aus'});
+    expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-protokoll'))).value, isFalse);
+    expect(protokollAn({'protokoll': false}), isFalse);
+    expect(protokollAn({}), isTrue);
+  });
+
   testWidgets('1.17.0 G3 Gespräch zum Projekt öffnet den Projektfaden', (t) async {
     String? geoeffnet;
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async => {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': []};

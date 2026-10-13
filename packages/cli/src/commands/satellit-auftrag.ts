@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, readdirSync, statSync, appendFileSync, statfsSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, readdirSync, statSync, appendFileSync, statfsSync, renameSync } from 'node:fs';
 
 /**
  * v1342 — Aufträge an Claude Code im Druckmodus (Owner 10.10.: „erstelle mit der Claude-Code-Session Projekt XY, die
@@ -78,7 +78,7 @@ function laeuft(pid: number | undefined): boolean {
 }
 
 /** Auftrag starten: Spezifikation als AUFTRAG-<id>.md ins Projekt, `claude -p` abgekoppelt, Protokoll in ~/.alfred/auftraege/<id>/. */
-export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean; nurLesen?: boolean; sudoSperre?: boolean }): AuftragMeta {
+export function auftragStarten(opts: { projekt: string; auftrag: string; titel?: string; beiEnde?: (meta: AuftragMeta, ergebnis: AuftragErgebnis) => void; home?: string; claude?: string; maxKostenUsd?: number; gitUebernehmen?: boolean; nurLesen?: boolean; sudoSperre?: boolean; protokoll?: ProtokollAngabe }): AuftragMeta {
   const claude = opts.claude ?? claudePfad();
   if (!claude) throw new Error('Claude Code ist auf diesem Gerät nicht installiert (claude nicht im PATH)');
   // v1391 — Realfall 12.10.: neues Projekt in einem noch nicht vorhandenen Ordner scheiterte an Etappe 1; anlegen (Rechte prüft der Aufrufer)
@@ -96,7 +96,8 @@ export function auftragStarten(opts: { projekt: string; auftrag: string; titel?:
   const ordner = path.join(auftraegeOrdner(opts.home), id);
   mkdirSync(ordner, { recursive: true });
   // v1404 — die Frage liegt im Auftragsordner, nicht im Projekt (nur lesend: das Projekt bleibt unberührt)
-  const auftragDatei = opts.nurLesen ? path.join(ordner, 'FRAGE.md') : path.join(opts.projekt, `AUFTRAG-${id}.md`);
+  // v1425 — Projektlauf: Auftrag im Protokollordner des Laufs (.alfred/laeufe/<lauf>/etappe-<n>-auftrag.md) statt lose in der Projektwurzel
+  const auftragDatei = opts.nurLesen ? path.join(ordner, 'FRAGE.md') : opts.protokoll ? protokollAuftragDatei(opts.projekt, opts.protokoll) : path.join(opts.projekt, `AUFTRAG-${id}.md`);
   writeFileSync(auftragDatei, `# ${opts.titel ?? 'Auftrag'}\n\n${opts.auftrag.trim()}\n`);
   // v1392 — stream-json: Claude Code schreibt jeden Schritt sofort ins Protokoll (Fortschritt sichtbar), die result-Zeile am Ende bleibt gleich
   // v1394 — ohne die Benutzereinstellungen (~/.claude: Hooks, MCP-Server, Umgebung des Owners; Realfall 12.10.: claude-flow-Hook vor jedem
@@ -433,6 +434,76 @@ export function anhangInsProjekt(projekt: string, ordner: string, name: string, 
     }
   } catch { /* Ausschluss ist Komfort — die Datei liegt trotzdem */ }
   return path.posix.join('.alfred-anhaenge', sicherOrdner, n);
+}
+
+/** v1425 — Protokoll eines Projektlaufs im Projekt: Auftrag und Bericht je Etappe; an = mit committen, aus = nur lokal (git-Ausschluss). */
+export interface ProtokollAngabe { lauf: string; nr: number; fix?: number; an: boolean }
+
+const PROTOKOLL_AUSSCHLUSS = '.alfred/laeufe/';
+
+export function protokollOrdner(projekt: string, lauf: string): string {
+  return path.join(projekt, '.alfred', 'laeufe', lauf.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60) || 'lauf');
+}
+
+/** Ausschluss in .git/info/exclude (nie .gitignore des Projekts): aus → Zeile da, an → Zeile weg. Ohne git: nichts. */
+export function protokollAusschluss(projekt: string, an: boolean): void {
+  if (!existsSync(path.join(projekt, '.git'))) return;
+  const datei = path.join(projekt, '.git', 'info', 'exclude');
+  const alt = existsSync(datei) ? readFileSync(datei, 'utf8') : '';
+  const zeilen = alt.split(/\r?\n/);
+  const hat = zeilen.includes(PROTOKOLL_AUSSCHLUSS);
+  if (!an && !hat) { mkdirSync(path.dirname(datei), { recursive: true }); appendFileSync(datei, `${alt && !alt.endsWith('\n') ? '\n' : ''}${PROTOKOLL_AUSSCHLUSS}\n`); }
+  if (an && hat) writeFileSync(datei, zeilen.filter(z => z !== PROTOKOLL_AUSSCHLUSS).join('\n'));
+}
+
+/** Frühere Auftragsdateien (AUFTRAG-*.md in der Projektwurzel) einmalig nach .alfred/laeufe/frueher/ — überschreibt nie. */
+export function alteAuftraegeVerschieben(projekt: string): number {
+  let n = 0;
+  let namen: string[] = [];
+  try { namen = readdirSync(projekt).filter(x => /^AUFTRAG-[\w-]+\.md$/.test(x)); } catch { return 0; }
+  if (!namen.length) return 0;
+  const ziel = path.join(projekt, '.alfred', 'laeufe', 'frueher');
+  mkdirSync(ziel, { recursive: true });
+  for (const x of namen) { if (existsSync(path.join(ziel, x))) continue; try { renameSync(path.join(projekt, x), path.join(ziel, x)); n++; } catch { /* bleibt liegen */ } }
+  return n;
+}
+
+function freierName(ordner: string, wunsch: string): string {
+  if (!existsSync(path.join(ordner, wunsch))) return wunsch;
+  const basis = wunsch.replace(/\.md$/, '');
+  for (let i = 2; i < 100; i++) { const n = `${basis}-${i}.md`; if (!existsSync(path.join(ordner, n))) return n; }
+  return `${basis}-${Date.now()}.md`;
+}
+
+export function protokollAuftragDatei(projekt: string, p: ProtokollAngabe): string {
+  alteAuftraegeVerschieben(projekt);
+  protokollAusschluss(projekt, p.an);
+  const ordner = protokollOrdner(projekt, p.lauf);
+  mkdirSync(ordner, { recursive: true });
+  return path.join(ordner, freierName(ordner, `etappe-${Math.max(1, Math.floor(p.nr))}${p.fix ? `-fix${Math.floor(p.fix)}` : ''}-auftrag.md`));
+}
+
+/**
+ * Bericht einer Etappe schreiben (geschwärzt, ersetzt den Bericht derselben Etappe) und — wenn an und git vorhanden — NUR den
+ * Protokollordner des Laufs committen (`git commit -- <ordner>`; andere Änderungen im Index bleiben unberührt).
+ */
+export function protokollSchreiben(projekt: string, p: { lauf: string; nr: number; an: boolean; bericht: string; nachricht: string }): { pfad: string; commit?: string; hinweis?: string } {
+  protokollAusschluss(projekt, p.an);
+  const ordner = protokollOrdner(projekt, p.lauf);
+  mkdirSync(ordner, { recursive: true });
+  const datei = path.join(ordner, `etappe-${Math.max(1, Math.floor(p.nr))}-bericht.md`);
+  writeFileSync(datei, schwaerze(p.bericht).slice(0, 200_000));
+  const rel = path.relative(projekt, ordner).split(path.sep).join('/');
+  const pfad = path.relative(projekt, datei).split(path.sep).join('/');
+  if (!p.an) return { pfad, hinweis: 'nur lokal (Protokoll im Projekt aus)' };
+  if (!existsSync(path.join(projekt, '.git'))) return { pfad, hinweis: 'kein git im Projekt' };
+  const git = (args: string[]) => spawnSync('git', args, { cwd: projekt, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+  const a = git(['add', '--', rel]);
+  if (a.status !== 0) return { pfad, hinweis: `git add: ${(a.stderr || '').trim().slice(0, 200)}` };
+  const c = git(['commit', '-q', '-m', p.nachricht.slice(0, 200), '--', rel]);
+  if (c.status !== 0) return { pfad, hinweis: /nothing (added )?to commit|nichts zu committen/i.test(`${c.stdout}${c.stderr}`) ? 'nichts Neues zu committen' : `git commit: ${(c.stderr || c.stdout || '').trim().slice(0, 200)}` };
+  const h = git(['rev-parse', '--short', 'HEAD']);
+  return { pfad, ...(h.status === 0 ? { commit: h.stdout.trim() } : {}) };
 }
 
 export function fragePrompt(frage: string, projekt: string): string {

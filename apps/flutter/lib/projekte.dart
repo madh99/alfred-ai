@@ -26,6 +26,9 @@ String laufFortschritt(Lauf l) => l.status == 'laeuft' && l.nr > 0
     ? 'Etappe ${l.nr}/${l.plan.length}${l.ok > 0 ? ' · ${l.ok} abgenommen' : ''}'
     : '${l.ok}/${l.plan.length} abgenommen';
 
+/// 1.18.0 — Schalter „Protokoll im Projekt“ (v1425): Detail liefert protokoll; fehlt das Feld (alter Server), gilt an.
+bool protokollAn(Map<String, dynamic>? d) => d?['protokoll'] != false;
+
 class Lauf {
   Lauf(Map<String, dynamic> j)
       : id = '${j['id']}', status = '${j['status'] ?? ''}', grund = j['grund'] as String?, ziel = '${j['ziel'] ?? ''}',
@@ -233,6 +236,19 @@ class _ProjektDetailState extends State<ProjektDetail> {
     }));
   }
 
+  /// 1.18.0 — Schalter „Protokoll im Projekt“ (v1425)
+  Future<void> protokollSetzen(bool an) async {
+    setState(() { plant = true; meldung = null; });
+    try {
+      final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': 'protokoll', 'text': an ? 'an' : 'aus'});
+      final ok = r['success'] == true;
+      if (!mounted) return;
+      setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Gespeichert.'}' : '${r['error'] ?? 'Fehler'}'; });
+      if (ok) await laden();
+    } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
+    finally { if (mounted) setState(() => plant = false); }
+  }
+
   Future<void> fortsetzen(Lauf l) async {
     setState(() { plant = true; meldung = null; });
     try {
@@ -312,6 +328,10 @@ class _ProjektDetailState extends State<ProjektDetail> {
         Text('📟 ${j['geraet'] ?? ''} · ${j['pfad'] ?? ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         Text('Abnahme: ${befehle.isEmpty ? 'keine — Alfred fragt nach jeder Etappe' : befehle.join(' ; ')}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
         Text('${laeufe.length} ${laeufe.length == 1 ? 'Lauf' : 'Läufe'} · ${usd(kosten)}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+        // 1.18.0 — Schalter je Projekt: Auftrag und Bericht jeder Etappe mit committen (v1425)
+        SwitchListTile(key: const Key('projekt-protokoll'), contentPadding: EdgeInsets.zero, dense: true, value: protokollAn(j), onChanged: plant ? null : protokollSetzen,
+          title: const Text('Protokoll im Projekt'),
+          subtitle: Text(protokollAn(j) ? 'An: Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Aus: Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (nicht in git).', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
         const SizedBox(height: 12),
         Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Weiterarbeiten', style: theme.textTheme.titleSmall),

@@ -55,6 +55,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1425] - 2026-10-13
+
+### Added — Protokoll der Projektläufe im Projekt, mit Schalter je Projekt (v1425, App 1.18.0)
+
+Auftrag und Bericht jeder Etappe eines Geräte-Projekts liegen jetzt im Projekt unter `.alfred/laeufe/<Lauf>/` (`etappe-<n>-auftrag.md`, `etappe-<n>-bericht.md`) statt als `AUFTRAG-….md` lose in der Projektwurzel. So bleibt im Repository nachvollziehbar, welcher Auftrag zu welchem Commit geführt hat.
+
+- **Schalter „Protokoll im Projekt“** je Projekt in App und Web (Standard an). An: Nach jeder Etappe committet der Satellit nur den Protokollordner des Laufs als eigenen Commit („docs(alfred): Protokoll Etappe n/m (sat-…)“); andere Änderungen im Index bleiben unberührt. Aus: die Dateien bleiben lokal und sind per `.git/info/exclude` von git ausgeschlossen. Gilt ab der nächsten Etappe.
+- Der Bericht enthält Ergebnis, Kosten, Dauer, Commit der Etappe, Zusammenfassung von Claude Code, geänderte Dateien und das Abnahmeprotokoll; Geheimnisse werden geschwärzt.
+- Frühere `AUFTRAG-*.md` in der Projektwurzel wandern beim nächsten Lauf einmalig nach `.alfred/laeufe/frueher/`.
+- Claude Code erhält den Hinweis, den Ordner `.alfred/` nicht zu verändern.
+- Neue Satelliten-Aktion `projekt_protokoll`; ältere Satelliten legen den Auftrag wie bisher in die Projektwurzel.
+
 ## [0.19.0-jarvis.1424] - 2026-10-13
 
 ### Added — Anhänge für Claude Code in Geräte-Projekten (v1424)

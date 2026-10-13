@@ -47,7 +47,13 @@ describe('Satelliten-Projekt', () => {
     expect(String(aufrufe[0]!.params.auftrag)).toMatch(/Setze NUR Etappe 1 um: Gerüst anlegen[\s\S]*npm test/);
     for (let i = 0; i < 3; i++) await ende(s);
     expect(p.hole(s.id)!.status).toBe('fertig');
-    expect(aufrufe.map(a => a.aktion).filter(a => a !== 'projekt_lesen')).toEqual(['auftrag_starten', 'pruefen_befehl', 'auftrag_starten', 'pruefen_befehl', 'auftrag_starten', 'pruefen_befehl']); // v1417: nach jeder Etappe liest der Bericht den Commit
+    // v1417: nach jeder Etappe liest der Bericht den Commit; v1425: danach Protokoll ins Projekt
+    expect(aufrufe.map(a => a.aktion).filter(a => a !== 'projekt_lesen')).toEqual(['auftrag_starten', 'pruefen_befehl', 'projekt_protokoll', 'auftrag_starten', 'pruefen_befehl', 'projekt_protokoll', 'auftrag_starten', 'pruefen_befehl', 'projekt_protokoll']);
+    expect(aufrufe[0]!.params.protokoll).toEqual({ lauf: s.id, nr: 1, an: true });
+    const prot = aufrufe.find(a => a.aktion === 'projekt_protokoll')!.params;
+    expect(prot).toMatchObject({ projekt: start.projekt, lauf: s.id, nr: 1, an: true });
+    expect(String(prot.bericht)).toMatch(/^# Etappe 1\/3: Gerüst anlegen[\s\S]*✅ abgenommen/);
+    expect(String(prot.nachricht)).not.toMatch(/^Etappe /); // sonst hielte letzterEtappenCommit den Protokoll-Commit für den Etappen-Commit
     expect(aufrufe[1]!.params).toEqual({ pruefungen: [{ art: 'befehl', ziel: 'npm test', cwd: start.projekt, timeoutS: 600 }] });
     expect(meldungen.at(-1)).toMatch(/Projekt fertig.*3\/3 Etappen ok, 0\.60 USD/);
   });

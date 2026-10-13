@@ -43,6 +43,33 @@ export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pr
     o.pruefBefehle.length ? `Abnahme: Danach müssen diese Befehle im Projektverzeichnis mit Exit 0 laufen: ${o.pruefBefehle.join(' ; ')}` : 'Abnahme: Der Owner prüft diese Etappe selbst; beschreibe am Ende, wie man sie prüft.',
     'Ist das Verzeichnis ein Git-Repository, committe am Ende mit der Nachricht „Etappe ' + o.nr + ': <Kurztitel>".',
     'Arbeite nur in diesem Verzeichnis. Fasse am Ende in wenigen Sätzen zusammen, was du gemacht hast und was offen ist.',
+    'Der Ordner .alfred/ gehört Alfred (Aufträge, Protokoll, Anhänge des Owners): lesen ja, nicht ändern oder löschen.', // v1425
+  ].join('\n');
+}
+
+/**
+ * v1425 — Etappenbericht als Markdown fürs Projekt (.alfred/laeufe/<lauf>/etappe-<n>-bericht.md): was der Auftrag war, was gemacht
+ * wurde, Dateien, Commit, Abnahme, Kosten. Reine Formatierung aus dem gespeicherten Etappenergebnis.
+ */
+export function etappenBerichtText(o: { lauf: string; geraet: string; ziel: string; plan: string[]; zeit: string; e: { nr: number; etappe: string; ok: boolean; geprueft: boolean; fixVersuche: number; kostenUsd: number; text: string; zusammenfassung?: string; dateien?: string[]; dateienAnzahl?: number; commit?: { sha: string; titel: string }; abnahme?: { ok: boolean; protokoll: string }; dauerS?: number } }): string {
+  const e = o.e;
+  const ergebnis = !e.ok ? `❌ nicht abgenommen${e.fixVersuche ? ` (nach ${e.fixVersuche} Fix-Versuch(en))` : ''}` : e.geprueft ? `✅ abgenommen${e.fixVersuche ? ` nach ${e.fixVersuche} Fix-Versuch(en)` : ''}` : '⚠️ fertig, ohne automatische Abnahme';
+  const dauer = e.dauerS !== undefined ? ` · Dauer ${Math.max(1, Math.round(e.dauerS / 60))} min` : '';
+  const dateien = e.dateien?.length ? [...e.dateien.map(d => `- ${d}`), ...((e.dateienAnzahl ?? 0) > e.dateien.length ? [`- … und ${(e.dateienAnzahl ?? 0) - e.dateien.length} weitere`] : [])] : ['- (keine Angabe)'];
+  return [
+    `# Etappe ${e.nr}/${o.plan.length}: ${e.etappe}`,
+    '',
+    `- Lauf: ${o.lauf} · Gerät: ${o.geraet} · ${o.zeit}`,
+    `- Ergebnis: ${ergebnis}`,
+    `- Kosten: ${e.kostenUsd.toFixed(2)} USD${dauer}`,
+    `- Commit: ${e.commit ? `${e.commit.sha} ${e.commit.titel}` : '(keiner erkannt)'}`,
+    '',
+    '## Ziel des Laufs', '', o.ziel.trim(), '',
+    '## Was gemacht wurde', '', (e.zusammenfassung ?? e.text ?? '').trim() || '(keine Zusammenfassung)', '',
+    '## Geänderte Dateien', '', ...dateien, '',
+    ...(e.abnahme ? ['## Abnahme', '', `Ergebnis: ${e.abnahme.ok ? 'grün' : 'rot'}`, '', '```', e.abnahme.protokoll.slice(0, 4000), '```', ''] : []),
+    '_Erstellt von Alfred. Der Auftrag dieser Etappe liegt daneben (etappe-' + e.nr + '-auftrag.md)._',
+    '',
   ].join('\n');
 }
 

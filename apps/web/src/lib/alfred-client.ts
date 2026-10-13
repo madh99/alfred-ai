@@ -1653,6 +1653,11 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/frage`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ text }) });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
+  /** v1425 — Schalter „Protokoll im Projekt“ (Auftrag + Bericht je Etappe mit committen) */
+  async geraetProjektProtokoll(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/protokoll`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ an }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   /** v1417 G1 — Änderungen eines Etappen-Commits (Statistik oder Diff einer Datei) */
   async geraetProjektDiff(id: string, commit: string, datei?: string): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/diff`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ commit, ...(datei ? { datei } : {}) }) });

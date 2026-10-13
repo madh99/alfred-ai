@@ -32,6 +32,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
   const p = detail.project;
   const laeufe = [...(detail.geraetLaeufe ?? [])].sort((a, b) => b.start.localeCompare(a.start));
   const kosten = laeufe.reduce((s, l) => s + l.kostenUsd, 0);
+  const protokollAn = !(p.tags ?? []).includes('protokoll-aus'); // v1425
   const [wunsch, setWunsch] = useState('');
   const [frage, setFrage] = useState(''); // v1404
   const [busy, setBusy] = useState(false);
@@ -134,6 +135,12 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
         <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2"><div className="text-gray-500">Verzeichnis (auf dem Gerät)</div><div className="text-gray-200 font-mono break-all">{p.cwd}</div></div>
         <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2"><div className="text-gray-500">Abnahme je Etappe</div><div className="text-gray-200 font-mono">{p.pruefBefehle?.length ? p.pruefBefehle.join(' ; ') : 'keine — Alfred fragt nach jeder Etappe'}</div></div>
         <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2"><div className="text-gray-500">Bisher</div><div className="text-gray-200">{laeufe.length} {laeufe.length === 1 ? 'Lauf' : 'Läufe'} · {usd(kosten)}</div></div>
+        {/* v1425 — Schalter je Projekt: Auftrag und Bericht jeder Etappe unter .alfred/laeufe/ mit committen */}
+        <label className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2 sm:col-span-2 flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" className="h-4 w-4 accent-blue-500" checked={protokollAn} disabled={busy}
+            onChange={async (ev) => { const an = ev.target.checked; setBusy(true); const r = await client.geraetProjektProtokoll(p.id, an).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Gespeichert.') : (r.error ?? 'Fehler') }); if (r.success) onReload(); }} />
+          <span><span className="text-gray-200">Protokoll im Projekt</span><span className="block text-gray-500">{protokollAn ? 'An: Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Aus: Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (nicht in git).'}</span></span>
+        </label>
       </div>
       {p.description && <div className="text-xs text-gray-400 whitespace-pre-wrap">{p.description}</div>}
 

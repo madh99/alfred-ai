@@ -15717,7 +15717,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await repo.getById(owner, id);
         if (!p?.geraetId) return null;
         const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
-        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })) };
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
@@ -15726,7 +15726,18 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
       diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
+      protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
     };
+  }
+
+  /** v1425 — Schalter „Protokoll im Projekt“ (App und Web): Tag protokoll-aus am Projekt; gilt ab der nächsten Etappe. */
+  private async geraeteProjektProtokoll(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
+    const o = this.ownerMasterUserId; const repo = this.projectRepo;
+    if (!o || !repo) return { success: false, error: 'Projekte nicht verfügbar' };
+    const { ProjektAktenUeberProjekte } = await import('./projekt/akten-projekte.js');
+    if (!(await new ProjektAktenUeberProjekte(repo).setzeProtokoll(o, id, an))) return { success: false, error: 'kein Geräte-Projekt' };
+    this.logger.info({ projekt: id, an }, 'v1425 Protokoll im Projekt umgeschaltet');
+    return { success: true, display: an ? 'Protokoll im Projekt: an — Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Protokoll im Projekt: aus — Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (von git ausgeschlossen).' };
   }
 
   /** v1332 — Fäden eines Nicht-Owner-Geräts: nur seine eigenen Kanal-Gespräche. */
@@ -15854,6 +15865,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       },
       // v1419 G3 — Owner 13.10.: Projektmeldungen in den Projektfaden; ins Hauptgespräch nur Ende und Entscheidungen (Rückfragen kommen
       // dort wie bisher als Bestätigung). Ohne Akte (vor der Freigabe) wie bisher in die Sitzung des Starts.
+      // v1425 — Schalter je Projekt (Tag protokoll-aus); ohne Projekt oder Repo: an
+      protokollAn: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return true; const p = await this.projectRepo.getById(o, s.akteId).catch(() => null); return !(p?.tags ?? []).includes('protokoll-aus'); },
       melde: async (s, text, art) => {
         const faden = projektFaden(s.akteId);
         if (!faden) await this.meldeOhneModell(`[${s.id}] ${text}`, s.herkunft);
@@ -16082,6 +16095,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       entscheiden: async (id: string, lauf: string, e: string) => (projekte.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') ? this.geraeteLaufEntscheiden!(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }), // v1403
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
       diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
+      protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never), // v1404; v1419 G3
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
