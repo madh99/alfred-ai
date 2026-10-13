@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1441] - 2026-10-13
+
+### Security — Token-Rückfall: Schema-Bindung und klare Bestätigung (v1441)
+
+Die Sicherheitsprüfung von v1439 bemängelte, dass das Konto-Token breit wirkt. Der Rückfall bleibt (Owner-Entscheidung 13.10.), wird aber enger gefasst:
+
+- Das vorhandene Forge-Token gilt nur, wenn Host UND Schema der Repo-Adresse zur konfigurierten GitLab-Adresse passen. GitHub nur über https.
+- Die Bestätigungen für Deploy-Ziel und Deploy nennen ausdrücklich, welches Token an den Zielrechner geht. Beim Konto-Token steht „Zugriff auf alle deine Repos“ dabei, bei `http://`-Repos der Hinweis „unverschlüsselt im Netz“.
+
 ## [0.19.0-jarvis.1440] - 2026-10-13
 
 ### Fixed — Repo-Adressen ohne `.git` (v1440)

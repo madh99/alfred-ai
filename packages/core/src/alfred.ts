@@ -15,7 +15,7 @@ import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
-import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
+import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
 import {
@@ -16149,7 +16149,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (!z.ok) return { success: false, error: z.fehler };
         if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
         const nonce = this.deployFreigaben.stelle(p.id, 'ziel', undefined, 24 * 3_600_000, z.ziel);
-        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `deploy-ziel-${p.id}-${Date.now()}`, description: `🎯 Deploy-Ziel für ${p.name} setzen: ${zielText(z.ziel)}?\nDieser Rechner bekommt den Code${z.ziel.envStage ? `, die Projektumgebung „${z.ziel.envStage}“ als .env` : ''} und beim Holen das Projekt-Token.`, skillName: 'project_agent', skillParams: { action: 'projekt_deploy_ziel', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60 });
+        const zq = p.repoUrl ? (await this.gitTokenMitQuelle(p.id, p.repoUrl).catch(() => undefined))?.quelle : undefined; // v1441
+        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `deploy-ziel-${p.id}-${Date.now()}`, description: `🎯 Deploy-Ziel für ${p.name} setzen: ${zielText(z.ziel)}?\nDieser Rechner bekommt den Code${z.ziel.envStage ? `, die Projektumgebung „${z.ziel.envStage}“ als .env` : ''}.\n${tokenHinweis(zq, p.repoUrl ?? undefined)}`, skillName: 'project_agent', skillParams: { action: 'projekt_deploy_ziel', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60 });
         this.logger.info({ projekt: p.id, ziel: zielText(z.ziel) }, 'v1438 Deploy-Ziel zur Bestätigung gestellt');
         return ok ? { success: true, data: { bestaetigung: true }, display: `Deploy-Ziel für ${p.name} (${zielText(z.ziel)}) zur Bestätigung gestellt — gespeichert wird es erst nach deinem Ja.${p.repoUrl ? '' : ' ⚠️ Das Projekt hat kein Remote — vor dem ersten Deploy braucht es eins.'}` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
       },
@@ -16168,7 +16169,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         }
         if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
         const nonce = this.deployFreigaben.stelle(p.id, 'deploy');
-        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `deploy-${p.id}-${Date.now()}`, description: `🚀 Deploy ${p.name} → ${zielText(zp.ziel)}?\nRepo: ${p.repoUrl}${zp.ziel.branch ? ` (${zp.ziel.branch})` : ''}\nDanach Nachkontrolle (Status, HTTP, Logs); bei Rot Rollback-Angebot.`, skillName: 'project_agent', skillParams: { action: 'projekt_deploy', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) });
+        const tq = (await this.gitTokenMitQuelle(p.id, p.repoUrl).catch(() => undefined))?.quelle; // v1441
+        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `deploy-${p.id}-${Date.now()}`, description: `🚀 Deploy ${p.name} → ${zielText(zp.ziel)}?\nRepo: ${p.repoUrl}${zp.ziel.branch ? ` (${zp.ziel.branch})` : ''}\n${tokenHinweis(tq, p.repoUrl)}\nDanach Nachkontrolle (Status, HTTP, Logs); bei Rot Rollback-Angebot.`, skillName: 'project_agent', skillParams: { action: 'projekt_deploy', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) });
         return ok ? { success: true, data: { bestaetigung: true }, display: `Deploy von ${p.name} nach ${zp.ziel.host} (${zp.ziel.stufe}) zur Bestätigung gestellt.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
       },
       rollback: async (ref, input, context) => {

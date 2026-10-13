@@ -53,16 +53,24 @@ describe('v1437 B14 Deploy-Ziel', () => {
   });
 });
 
-import { forgeTokenFuer } from './deploy-ziel.js';
+import { forgeTokenFuer, tokenHinweis } from './deploy-ziel.js';
 describe('v1439 Token-Rückfall', () => {
   const forge = { gitlab: { token: 'gl', baseUrl: 'http://git.lokalkraft.at' }, github: { token: 'gh' } };
   it('nur für den eigenen Host des Tokens', () => {
     expect(forgeTokenFuer('http://git.lokalkraft.at/madh/x.git', forge)).toEqual({ token: 'gl', quelle: 'gitlab' });
-    expect(forgeTokenFuer('https://GIT.lokalkraft.at/madh/x', forge)?.quelle).toBe('gitlab');
+    expect(forgeTokenFuer('http://GIT.lokalkraft.at/madh/x', forge)?.quelle).toBe('gitlab'); // Host ohne Groß/Klein
+    expect(forgeTokenFuer('https://git.lokalkraft.at/madh/x', forge)).toBeUndefined(); // v1441 anderes Schema als konfiguriert
     expect(forgeTokenFuer('https://git.lokalkraft.at.boese.example/x.git', forge)).toBeUndefined();
     expect(forgeTokenFuer('https://boese.example/git.lokalkraft.at/x.git', forge)).toBeUndefined();
     expect(forgeTokenFuer('https://github.com/madh99/alfred-ai.git', forge)).toEqual({ token: 'gh', quelle: 'github' });
     expect(forgeTokenFuer('git@git.lokalkraft.at:madh/x.git', forge)).toBeUndefined();
     expect(forgeTokenFuer('http://git.lokalkraft.at/x.git', {})).toBeUndefined();
+    // v1441 — Schema muss passen
+    expect(forgeTokenFuer('http://git.example/x.git', { gitlab: { token: 'gl', baseUrl: 'https://git.example' } })).toBeUndefined();
+    expect(forgeTokenFuer('https://git.example/x.git', { gitlab: { token: 'gl', baseUrl: 'https://git.example' } })?.quelle).toBe('gitlab');
+    expect(forgeTokenFuer('http://github.com/x/y.git', forge)).toBeUndefined();
+    expect(tokenHinweis('gitlab', 'http://git.lokalkraft.at/x.git')).toContain('Konto-Token (Zugriff auf alle deine Repos)');
+    expect(tokenHinweis('gitlab', 'http://git.lokalkraft.at/x.git')).toContain('unverschlüsselt');
+    expect(tokenHinweis('projekt', 'https://h/x.git')).toBe('Token: Projekt-Token (Projektumgebung).');
   });
 });

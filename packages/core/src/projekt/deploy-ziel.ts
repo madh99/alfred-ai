@@ -114,10 +114,19 @@ export const zielBestaetigt = (roh: Record<string, unknown> | undefined): boolea
  * github.com). git@-Adressen bekommen nie ein Token (Schlüssel des Rechners).
  */
 export function forgeTokenFuer(repoUrl: string, forge?: { gitlab?: { token?: string; baseUrl?: string }; github?: { token?: string } }): { token: string; quelle: 'gitlab' | 'github' } | undefined {
-  const host = (u: string) => { try { return /^https?:\/\//i.test(u) ? new URL(u).host.toLowerCase() : ''; } catch { return ''; } };
-  const h = host(repoUrl);
-  if (!h) return undefined;
-  if (forge?.gitlab?.token && forge.gitlab.baseUrl && host(forge.gitlab.baseUrl) === h) return { token: forge.gitlab.token, quelle: 'gitlab' };
-  if (forge?.github?.token && h === 'github.com') return { token: forge.github.token, quelle: 'github' };
+  // v1441 (Sicherheitsprüfung) — Host UND Schema müssen zur konfigurierten Adresse passen (kein Token über http, wenn GitLab per https läuft)
+  const teile = (u: string) => { try { if (!/^https?:\/\//i.test(u)) return undefined; const x = new URL(u); return { host: x.host.toLowerCase(), schema: x.protocol }; } catch { return undefined; } };
+  const r = teile(repoUrl);
+  if (!r) return undefined;
+  const g = forge?.gitlab?.baseUrl ? teile(forge.gitlab.baseUrl) : undefined;
+  if (forge?.gitlab?.token && g && g.host === r.host && g.schema === r.schema) return { token: forge.gitlab.token, quelle: 'gitlab' };
+  if (forge?.github?.token && r.host === 'github.com' && r.schema === 'https:') return { token: forge.github.token, quelle: 'github' };
   return undefined;
+}
+
+/** v1441 — Klartext für Bestätigungen: welches Token an den Zielrechner geht. */
+export function tokenHinweis(quelle: 'projekt' | 'gitlab' | 'github' | undefined, repoUrl?: string): string {
+  if (!quelle) return 'Kein Token (öffentliches Repo oder Schlüssel des Zielrechners).';
+  const klar = repoUrl && /^http:\/\//i.test(repoUrl) ? ' Achtung: http — unverschlüsselt im Netz.' : '';
+  return quelle === 'projekt' ? `Token: Projekt-Token (Projektumgebung).${klar}` : `Token: dein ${quelle === 'gitlab' ? 'GitLab' : 'GitHub'}-Konto-Token (Zugriff auf alle deine Repos) geht für den Abruf an den Zielrechner (nur als Kopfzeile, nicht gespeichert).${klar}`;
 }
