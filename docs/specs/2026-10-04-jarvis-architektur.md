@@ -758,7 +758,21 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
   - B7 Wächter-Job `beobachter-waechter` und lokales Veto `alfred einstellungen beobachter aus`.
   - Wirkungen Hinweis/Vorgang/Aufgabe (synthetische geplante Aufgabe mit fester Werkzeugliste, wie Mail-Regeln)/Projekt (Bestätigung); Drossel 20/h je Regel.
   - **Beweis 13.10. 14:36 UTC (Ubuntu-VM):** Regel über die Web-Route angelegt → Satellit „läuft“; `probe-rechnung.pdf` → Hinweis nach ≈ 10 s in Telegram/Hauptgespräch, `.txt` nicht gemeldet; im Gespräch „Schalte den Beobachter Probe PDF aus“ → aus, danach angelegte PDF nicht gemeldet. Regel und Dateien danach gelöscht.
-- Offen: R4b (Benachrichtigungen, Outlook), R4c (Deploy-Etappe, Build-Wache), B9.
+- **v1430 + App 1.21.0 (13.10.): R4b.**
+  - Benachrichtigungen (Windows/macOS): nur Apps der Regel, nur App + Titel.
+  - Outlook-Posteingang (Windows): Absender/Betreff, Kopfdaten + EntryID; Konten im Stand. Liest der Server alle Konten selbst → „ohne Wirkung“.
+  - **Beweis 13.10. 14:48 UTC (PC-madh):** Test-Toast → Hinweis über Telegram ins Hauptgespräch.
+  - Outlook live nicht geprüft (PC ohne Mailkonto, Office-VM offline).
+  - Microsoft-Konto „default“ hat keine Adresse in der Konfig und wird beim Doppel-Lesen-Abgleich nicht erkannt.
+- **v1431 + App 1.22.0 (13.10.): R4c Teil B6 Build-Wache.**
+  - Nur die Prüfbefehle des Projekts, 15–1440 min; meldet Wechsel rot/grün; pausiert während eines Laufs.
+  - **Beweis 13.10. 14:59 UTC (Ubuntu-VM, Wegwerf-Projekt):** grün ohne Meldung, rot → „Prüfbefehle rot (test -f ok.txt)“.
+  - Dazu lesbarer App-Name bei Benachrichtigungen.
+- **Offen: R4c Teil B8 Deploy-Etappe — Owner-Entscheidung nötig.**
+  - Der Deploy-Skill holt Code auf dem Ziel per `git clone/pull` aus einer Repo-URL.
+  - Geräte-Projekte haben nur ein lokales Git ohne Remote.
+  - Wege: (a) Ziel = das Gerät selbst (Start/Neustart im Projektordner, Nachkontrolle per HTTP auf dem Gerät und Log-Muster) — sofort baubar; (b) entferntes Ziel über ein Remote (GitLab-Repo je Projekt, Deploy-Token aus den Projektumgebungen, Push vom Gerät) — das ist der Git-Teil von R5.
+- B9 später.
 
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
