@@ -15661,7 +15661,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!lauf) return;
     this.projektLiveAuftraege.delete(auftragId);
     this.projektLiveStand.delete(lauf);
-    this.arbeitAnOwnerGeraete({ arbeit: `projekt:${lauf}`, phase: 'ende', kanal: 'Projekt', frage: '' });
+    const akte = this.satellitProjekte?.liste().find(x => x.id === lauf)?.akteId;
+    this.arbeitAnOwnerGeraete({ arbeit: `projekt:${lauf}`, phase: 'ende', kanal: 'Projekt', frage: '', ...(akte ? { projekt: akte } : {}) });
   }
 
   private arbeitAnOwnerGeraete(e: { arbeit: string; phase: 'start' | 'status' | 'ende'; kanal: string; frage: string; text?: string; projekt?: string }): void {
@@ -15670,7 +15671,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     void (async () => {
       for (const id of gw.verbundeneIds()) {
         if (!(await istOwner(id))) continue;
-        gw.sendeAn(id, { typ: 'arbeit', arbeit: e.arbeit, phase: e.phase, faden: null, von: 'projekt', kanal: e.kanal, frage: e.frage, ...(e.text ? { text: e.text } : {}), ...(e.projekt ? { projekt: e.projekt } : {}) });
+        // v1422 — Faden des Projekts (G3) statt Hauptgespräch
+        const faden = e.projekt && /^[0-9a-f]{8}/.test(e.projekt) ? `projekt-${e.projekt.slice(0, 8)}` : null;
+        gw.sendeAn(id, { typ: 'arbeit', arbeit: e.arbeit, phase: e.phase, faden, von: 'projekt', kanal: e.kanal, frage: e.frage, ...(e.text ? { text: e.text } : {}), ...(e.projekt ? { projekt: e.projekt } : {}) });
       }
     })().catch(() => { /* Anzeige */ });
   }

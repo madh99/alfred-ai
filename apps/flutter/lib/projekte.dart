@@ -21,6 +21,11 @@ class ProjektKurz {
   final DateTime? letzteAktivitaet;
 }
 
+/// 1.17.3 — Owner 13.10.: „läuft 1/3“ las sich wie Etappe 1, war aber die Zahl der abgenommenen Etappen.
+String laufFortschritt(Lauf l) => l.status == 'laeuft' && l.nr > 0
+    ? 'Etappe ${l.nr}/${l.plan.length}${l.ok > 0 ? ' · ${l.ok} abgenommen' : ''}'
+    : '${l.ok}/${l.plan.length} abgenommen';
+
 class Lauf {
   Lauf(Map<String, dynamic> j)
       : id = '${j['id']}', status = '${j['status'] ?? ''}', grund = j['grund'] as String?, ziel = '${j['ziel'] ?? ''}',
@@ -339,7 +344,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
               Row(children: [
                 Text(laufStatusMit(l), style: theme.textTheme.labelMedium),
                 const SizedBox(width: 8),
-                Expanded(child: Text('${l.ok}/${l.plan.length} · ${usd(l.kostenUsd)}${l.start != null ? ' · ${datum(l.start!)}' : ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+                Expanded(child: Text('${laufFortschritt(l)} · ${usd(l.kostenUsd)}${l.start != null ? ' · ${datum(l.start!)}' : ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
               ]),
               if (l.status == 'laeuft' && l.live.isNotEmpty) Container( // 1.16.1 G2 — Live-Aktivität
                 key: Key('live-${l.id}'), margin: const EdgeInsets.only(top: 8), padding: const EdgeInsets.all(8), width: double.infinity,

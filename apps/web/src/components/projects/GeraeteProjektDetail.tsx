@@ -170,7 +170,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
               <button onClick={() => setOffen(offen === l.id ? null : l.id)} className="w-full text-left px-3 py-2 flex items-center gap-2 flex-wrap">
                 <span className={`text-[10px] px-1.5 py-0.5 rounded border ${st.cls}`}>{st.text}</span>
                 <span className="text-xs text-gray-200 flex-1 min-w-[12rem]">{l.ziel.slice(0, 140)}</span>
-                <span className="text-[11px] text-gray-500">{ok}/{l.plan.length} · {usd(l.kostenUsd)} · {datum(l.start)}</span>
+                <span className="text-[11px] text-gray-500">{l.status === 'laeuft' && l.nr > 0 ? `Etappe ${l.nr}/${l.plan.length}${ok > 0 ? ` · ${ok} abgenommen` : ''}` : `${ok}/${l.plan.length} abgenommen`} · {usd(l.kostenUsd)} · {datum(l.start)}</span>
               </button>
               {l.status === 'laeuft' && l.live && l.live.schritte.length > 0 && (
                 <div className="mx-3 mb-2 p-2 rounded bg-black/40 border border-[#222] font-mono text-[11px] text-gray-300 space-y-0.5">

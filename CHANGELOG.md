@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1422] - 2026-10-13
+
+### Fixed — Live-Anzeige laufender Projekte in der App (v1422, App 1.17.3)
+
+- Der Satellit reichte bei der Live-Aktivität die Projektkennung nicht an die App weiter. Die App zeigte einen Projektlauf deshalb als gewöhnliche Anfrage („Alfred arbeitet · aus Projekt auf … · Hauptgespräch“) mit Abbrechen-Knopf.
+- Die Live-Aktivität gehört jetzt zum Projektfaden statt zum Hauptgespräch.
+- Der Start einer Etappe erscheint im offenen Projektfaden nicht mehr als eigene Nachricht des Owners.
+- Fortschritt eines laufenden Projekts in App und Web: „Etappe 2/3 · 1 abgenommen“ statt „1/3“ (das war die Zahl der abgenommenen Etappen); abgeschlossene Läufe zeigen „3/3 abgenommen“.
+
 ## [0.19.0-jarvis.1421] - 2026-10-13
 
 ### Fixed — Projektfaden hat die Projekt-Werkzeuge (v1421)

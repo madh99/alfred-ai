@@ -180,8 +180,9 @@ extension _Gespraeche on _SitzungState {
     final (phase, a) = r;
     if (phase == 'start') {
       // Frage sofort im offenen Gespräch zeigen; die fertige Antwort lädt das Gespräch ohnehin neu (Ereignis „gespraech")
-      if (a.faden == server?.faden && archiv == null && fundstelle == null && a.frage.trim().isNotEmpty) _zeile(Eintrag(Art.du, a.frage));
-      _protokolliere(Eintrag(Art.hinweis, 'Alfred arbeitet an einer Anfrage aus ${a.kanal}${a.faden != server?.faden ? ' (${_gespraechName(a.faden)})' : ''}'));
+      // 1.17.3 — ein Projektlauf ist keine Frage des Owners: nicht als eigene Nachricht einfügen
+      if (a.projekt == null && a.faden == server?.faden && archiv == null && fundstelle == null && a.frage.trim().isNotEmpty) _zeile(Eintrag(Art.du, a.frage));
+      _protokolliere(Eintrag(Art.hinweis, a.projekt != null ? '🔨 ${a.frage}' : 'Alfred arbeitet an einer Anfrage aus ${a.kanal}${a.faden != server?.faden ? ' (${_gespraechName(a.faden)})' : ''}'));
     }
     _neu(() {});
   }

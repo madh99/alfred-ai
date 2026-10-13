@@ -108,6 +108,13 @@ void main() {
     await t.pumpWidget(const SizedBox()); // Takt beenden
   });
 
+  test('1.17.3 Fortschritt: laufende Etappe statt Zahl der abgenommenen', () {
+    final laeuft = Lauf({'id': 'a', 'status': 'laeuft', 'plan': ['x', 'y', 'z'], 'nr': 2, 'erledigt': [{'nr': 1, 'ok': true}]});
+    expect(laufFortschritt(laeuft), 'Etappe 2/3 · 1 abgenommen');
+    final fertig = Lauf({'id': 'b', 'status': 'fertig', 'plan': ['x', 'y', 'z'], 'nr': 3, 'erledigt': [{'nr': 1, 'ok': true}, {'nr': 2, 'ok': true}, {'nr': 3, 'ok': true}]});
+    expect(laufFortschritt(fertig), '3/3 abgenommen');
+  });
+
   testWidgets('1.17.0 G3 Gespräch zum Projekt öffnet den Projektfaden', (t) async {
     String? geoeffnet;
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async => {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': []};

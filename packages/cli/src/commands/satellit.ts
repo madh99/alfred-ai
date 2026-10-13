@@ -787,8 +787,9 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
           }
           // v1354 — Alfred arbeitet an einer Anfrage (auch aus Telegram): Phase, Status, Frage als JSON an die App
           if ((n as { typ: string }).typ === 'arbeit') {
-            const a = n as { arbeit?: string; phase?: string; faden?: string | null; von?: string; kanal?: string; text?: string; frage?: string };
-            ereignis('arbeit', JSON.stringify({ arbeit: a.arbeit, phase: a.phase, von: a.von, kanal: a.kanal, text: a.text, frage: a.frage }), undefined, typeof a.faden === 'string' ? a.faden : undefined);
+            const a = n as { arbeit?: string; phase?: string; faden?: string | null; von?: string; kanal?: string; text?: string; frage?: string; projekt?: string };
+            // v1422 — projekt mitgeben (G2): sonst zeigt die App einen Projektlauf als gewöhnliche Anfrage im Hauptgespräch
+            ereignis('arbeit', JSON.stringify({ arbeit: a.arbeit, phase: a.phase, von: a.von, kanal: a.kanal, text: a.text, frage: a.frage, ...(typeof a.projekt === 'string' ? { projekt: a.projekt } : {}) }), undefined, typeof a.faden === 'string' ? a.faden : undefined);
             return;
           }
           if ((n as { typ: string }).typ === 'nachricht') {
