@@ -639,6 +639,19 @@ Freigabe Owner 13.10. „ok wie vorgeschlagen“: G1 → G2 → G3, Hauptgesprä
 - **G3** v1419 (App 1.17.0) + v1420: Projektfaden `owner:faden:projekt-<id8>` „🔨 <Name>“; Etappen, Fragen und Antworten im Faden, Hauptgespräch nur Ende-Zeile; Knopf „Gespräch zum Projekt“ in App und Web. v1420: Titel wird auch gesetzt, wenn eine Frage den Faden eröffnet.
 - **Beweis G3 13.10. 00:52/00:56 UTC**: zwei Fragen an Angebots-Radar über die Web-Route → Faden angelegt, Titel „🔨 Angebots-Radar Österreich“ (nach v1420), beide Antworten im Faden (0,12 $ / 0,11 $), Zustellung nur `faden:` (Log „v1342 Auftrag beendet“, herkunft owner:faden:projekt-b77431a2). App 1.17.0 für Windows, Linux und macOS im Update-Eingang.
 - Offen: Abnahme „Rückfragen im Faden kennen das Projekt ohne Nennung“ durch den Owner in der App; Live-Aktivität beim nächsten echten Lauf beobachten.
+- **v1432 (13.10. abends, Owner „ja mit der Verbesserung freigegeben“): Frage im Projektfaden = eine Antwort.**
+  - Realfall 18:08/18:14: Alfred schrieb eine eigene Antwort, und eine Minute später kam die Rohantwort von Claude Code.
+  - Jetzt: Der Faden-Kontext enthält eigene Daten (Etappenberichte, Dateien, Commits, letzte Antworten von Claude Code), mit der Anweisung, zuerst dort nachzusehen.
+  - `projekt_frage` wartet bis 2 min und gibt die Antwort als Werkzeug-Ergebnis zurück. Die Quellenzeile setzt Alfred deterministisch darunter.
+  - Steht die Antwort aus, erscheint ein fester Satz. Die Nachlieferung läuft über die gespeicherte Herkunft (übersteht Neustart, gilt auch für die Route der Projektansicht).
+  - Folgefragen laufen per `--resume` in derselben Sitzung (nur lesend). Neu nach einem Lauf oder nach 24 h; ist die Sitzung nicht fortsetzbar, wird einmal frisch gefragt.
+  - Die leeren assistant/user-Zeilen sind kein Fehler: Es ist das gewollte Werkzeugpaar (tool_calls gefüllt), und die Anzeige filtert es.
+  - **Beweis 13.10. 19:04–19:06 UTC (Projektfaden Angebots-Radar, App-Pfad):**
+    - (1) Händler-Frage aus eigenen Daten in 4 s, mit genannter Grundlage.
+    - (2) Spar-Fehlerbehandlung: eine Antwort nach 50 s, „v1432 Antwort auf Projektfrage abgeholt“, keine Ende-Meldung, Quelle 0,39 $.
+    - (3) Folgefrage `folgefrage:true`, Befehl `--resume … --permission-mode plan --disallowedTools …`, 0,51 $, Projekt unverändert.
+  - Nicht live gesehen: Pfad über 2 min mit Nachlieferung (nur per Code und Test belegt).
+  - Beobachtung: Eine Folgefrage kostet mehr (mitgeschleppter Kontext); die 0,50-$-Grenze wird leicht überschritten.
 
 ### Risiken
 
