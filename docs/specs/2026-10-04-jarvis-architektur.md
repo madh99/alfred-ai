@@ -824,6 +824,21 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
     - Ordner auf der VM aus: Stand „Art am Gerät aus“, `test.nie` ohne Treffer. Wieder an: `jetzt.nie` → Beobachtung.
     - Probe-Regeln gelöscht.
   - Nicht live gesehen: Ablauf nach „bis“ (nur Test; Probe hätte 2 h gebraucht).
+- **v1434–v1436 (13.10.): B13 Git-Teil.**
+  - `project_agent projekt_holen` (Repo-Adresse oder Server-Projekt → Gerät, Remote bleibt, Akte mit repoUrl).
+  - Push nach jeder abgenommenen Etappe (Zeile in der Etappenmeldung; Tag `push-aus`).
+  - Token aus der Projektumgebung (`GIT_TOKEN`/`GITLAB_TOKEN`/`GITHUB_TOKEN`), nie das Owner-Token.
+  - Zwei Sicherheitsprüfungen eingearbeitet:
+    - v1435: Push nur zur erwarteten Adresse; Token nur für deren Host; keine Weiterleitungen, Hooks oder Credential-Helper.
+    - v1436: Push mit Token aus einem frischen temporären Repo, ohne globale und System-Konfiguration; Hooks auf `/dev/null` bzw. `NUL`.
+  - Die Aktions-Logzeile des Satelliten schwärzt Geheimnisse.
+  - **Beweis 13.10. (Ubuntu-VM, öffentliches Repo octocat/Hello-World):**
+    - Geholt per Chat („v1434 Projekt geholt“, master 7fd1a60, Remote ohne Zugangsdaten).
+    - Etappe abgenommen → Push versucht, sauber abgelehnt ohne Token.
+    - Umgebogenes origin → „ist nicht das Repo des Projekts — nicht gepusht“.
+    - Probe archiviert, Ordner gelöscht.
+  - Erfolgreicher Push nur per Test gegen ein echtes lokales Repo belegt.
+  - **Offen (Owner):** `GIT_TOKEN` (GitLab-Projekt-Token, Rolle Developer, Bereich write_repository) in der Projektumgebung eines Projekts hinterlegen — dann ist der erfolgreiche Push live prüfbar.
 
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
