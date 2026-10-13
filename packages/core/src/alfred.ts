@@ -15,6 +15,7 @@ import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
+import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
 import {
@@ -278,6 +279,9 @@ export class Alfred {
   private readonly frageWarten = new FrageWarten<import('@alfred/types').GeraetEreignis>();
   /** v1433 B12 — Adressen der Mailkonten, die Alfred selbst liest (aus den Providern ermittelt) */
   private readonly eigeneMailAdressen = new Set<string>();
+  /** v1437 B14 — Einmal-Kennungen bestätigter Deploys/Rollbacks; letzter Deploy je Projekt (Stand davor = Rollback-Ziel) */
+  private readonly deployFreigaben = new DeployFreigaben();
+  private readonly letzterDeploy = new Map<string, { vorher?: string; nachher?: string; zeit: number }>();
   /** v1418 G2 — Live-Stand laufender Projekt-Etappen (Lauf → letzte Schritte) und schon angekündigte Aufträge */
   private projektLiveStand = new Map<string, { zeit: string; schritte: string[]; werkzeuge: number }>();
   private projektLiveAuftraege = new Map<string, string>(); // auftragId → laufId
@@ -12781,7 +12785,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                       `runtime=${input.runtime ?? '?'}`,
                       `pm=${input.process_manager ?? '?'}`,
                       ...(input.app_port ? [`port=${input.app_port}`] : []),
-                      `verified=ok`,
+                      ...((result.data as { verified?: boolean } | undefined)?.verified ? ['verified=ok'] : ['verified=nein']),
                       `am=${now})`,
                     ];
                     if (upsert) await upsert.call(this.memoryRepo, uid, memKey, parts.join(', '), 'deployment', 'fact', 0.95);
@@ -15898,6 +15902,19 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // dort wie bisher als Bestätigung). Ohne Akte (vor der Freigabe) wie bisher in die Sitzung des Starts.
       // v1425 — Schalter je Projekt (Tag protokoll-aus); ohne Projekt oder Repo: an
       konventionen: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return undefined; return (await this.projectRepo.getById(o, s.akteId).catch(() => null))?.conventions; }, // v1426
+      // v1437 B14 — automatisch in dev deployen: nur mit Schalter, nur Stufe dev, nur wenn alle Etappen grün abgenommen sind
+      nachLauf: async (s) => {
+        const o = this.ownerMasterUserId;
+        if (!s.akteId || !o || !this.projectRepo) return;
+        const p = await this.projectRepo.getById(o, s.akteId).catch(() => null);
+        const zp = p?.deployZiel ? zielPruefen(p.deployZiel) : undefined;
+        if (!p || !zp?.ok || !zp.ziel.autoDev || zp.ziel.stufe !== 'dev') return;
+        if (!s.erledigt.length || !s.erledigt.every(e => e.ok && e.geprueft)) { this.logger.info({ lauf: s.id }, 'v1437 Auto-dev übersprungen — nicht alle Etappen grün abgenommen'); return; }
+        const faden = `owner:faden:projekt-${p.id.slice(0, 8)}`;
+        await this.meldeOhneModell(`🚀 ${p.name}: alle Etappen grün — Deploy nach dev (${zp.ziel.host}) startet automatisch (Schalter auto_dev).`, { chatId: faden, platform: 'api' });
+        const r = await this.projektDeployAusfuehren(p, zp.ziel, { chatId: faden, platform: 'api' });
+        await this.meldeOhneModell(r.text, { chatId: faden, platform: 'api' });
+      },
       // v1434 B13 — Projekt mit Remote: nach jeder abgenommenen Etappe pushen (Token aus der Projektumgebung; Tag push-aus schaltet ab)
       nachAbnahme: async (s) => {
         const o = this.ownerMasterUserId;
@@ -16107,6 +16124,63 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if ('fehler' in t) return { success: false, error: t.fehler };
         return this.projektKonventionenAendern(t.akte.id, { ...(typeof input.changelog === 'boolean' ? { changelog: input.changelog } : {}), ...(typeof input.readme === 'boolean' ? { readme: input.readme } : {}), ...(typeof input.conventional_commits === 'boolean' ? { conventionalCommits: input.conventional_commits } : {}), ...(typeof input.regel === 'string' ? { regel: input.regel } : {}), ...(input.regel_entfernen !== undefined ? { regelEntfernen: input.regel_entfernen } : {}) });
       },
+      // v1437 B14 — Deploy-Ziel anzeigen/setzen/entfernen
+      deployZiel: async (ref, input) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        const p = await this.projectRepo!.getById(t.o, t.akte.id);
+        if (!p) return { success: false, error: 'Projekt nicht gefunden' };
+        const alt = p.deployZiel ? zielPruefen(p.deployZiel) : undefined;
+        if (input.entfernen === true) { await this.projectRepo!.setzeDeployZiel(t.o, p.id, null); return { success: true, display: `${p.name}: Deploy-Ziel entfernt — alles wie ohne Deploy.` }; }
+        const neu = ['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name'].some(k => input[k] !== undefined);
+        if (!neu) return { success: true, display: alt?.ok ? `${p.name} → ${zielText(alt.ziel)}${p.repoUrl ? `\nRepo: ${p.repoUrl}` : '\n⚠️ kein Remote — Deploy holt aus dem Repo'}` : `${p.name} hat kein Deploy-Ziel.` };
+        const z = zielPruefen(input, alt?.ok ? alt.ziel : undefined);
+        if (!z.ok) return { success: false, error: z.fehler };
+        await this.projectRepo!.setzeDeployZiel(t.o, p.id, z.ziel as unknown as Record<string, unknown>);
+        this.logger.info({ projekt: p.id, ziel: zielText(z.ziel) }, 'v1437 Deploy-Ziel gesetzt');
+        return { success: true, display: `${p.name} → ${zielText(z.ziel)} gespeichert.${p.repoUrl ? '' : ' ⚠️ Das Projekt hat kein Remote — vor dem ersten Deploy braucht es eins.'} Deploy mit projekt_deploy (immer mit Bestätigung${z.ziel.autoDev ? '; nach grüner Abnahme aller Etappen automatisch' : ''}).` };
+      },
+      deploy: async (ref, input, context) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        const p = await this.projectRepo!.getById(t.o, t.akte.id);
+        const zp = p?.deployZiel ? zielPruefen(p.deployZiel) : undefined;
+        if (!p || !zp?.ok) return { success: false, error: `${t.akte.name} hat kein Deploy-Ziel — erst projekt_deploy_ziel host=… setzen` };
+        if (!p.repoUrl) return { success: false, error: `${p.name} hat kein Remote — der Deploy holt den Stand aus dem Repo` };
+        const herkunft = context.chatId ? { chatId: context.chatId, platform: context.platform, userId: context.userId } : undefined;
+        if (typeof input.bestaetigt === 'string' && this.deployFreigaben.loese(input.bestaetigt, p.id, 'deploy')) {
+          const r = await this.projektDeployAusfuehren(p, zp.ziel, herkunft);
+          return { success: r.ok, ...(r.ok ? { display: r.text } : { error: r.text }) };
+        }
+        if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+        const nonce = this.deployFreigaben.stelle(p.id, 'deploy');
+        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `deploy-${p.id}-${Date.now()}`, description: `🚀 Deploy ${p.name} → ${zielText(zp.ziel)}?\nRepo: ${p.repoUrl}${zp.ziel.branch ? ` (${zp.ziel.branch})` : ''}\nDanach Nachkontrolle (Status, HTTP, Logs); bei Rot Rollback-Angebot.`, skillName: 'project_agent', skillParams: { action: 'projekt_deploy', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) });
+        return ok ? { success: true, data: { bestaetigung: true }, display: `Deploy von ${p.name} nach ${zp.ziel.host} (${zp.ziel.stufe}) zur Bestätigung gestellt.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
+      },
+      rollback: async (ref, input, context) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        const p = await this.projectRepo!.getById(t.o, t.akte.id);
+        const zp = p?.deployZiel ? zielPruefen(p.deployZiel) : undefined;
+        if (!p || !zp?.ok) return { success: false, error: `${t.akte.name} hat kein Deploy-Ziel` };
+        const skill = this.skillRegistry.get('deploy');
+        if (!skill || !this.skillSandbox) return { success: false, error: 'Deploy-Skill nicht verfügbar' };
+        const freigabe = typeof input.bestaetigt === 'string' ? this.deployFreigaben.loese(input.bestaetigt, p.id, 'rollback') : undefined;
+        if (freigabe) {
+          const basis = { project: zielName(zp.ziel, p.cwd ?? p.name), host: zp.ziel.host, user: zp.ziel.user ?? 'root', process_manager: zp.ziel.prozess, ...(zp.ziel.runtime ? { runtime: zp.ziel.runtime } : {}) };
+          const uid = this.tryOwner() ?? '';
+          const r = await this.skillSandbox.execute(skill, { action: 'rollback', ...basis, ...(freigabe.commit ? { commit: freigabe.commit } : {}) }, { userId: uid, masterUserId: uid, chatId: '', platform: 'api', conversationId: '' } as never);
+          this.logger.info({ projekt: p.id, ok: r.success, commit: freigabe.commit?.slice(0, 7) }, 'v1437 Rollback');
+          return r.success ? { success: true, display: `⏪ ${p.name} auf ${zp.ziel.host} zurückgesetzt${freigabe.commit ? ` auf ${freigabe.commit.slice(0, 7)}` : ''}.\n${r.display ?? ''}` } : { success: false, error: r.error ?? 'Rollback fehlgeschlagen' };
+        }
+        const vorher = this.letzterDeploy.get(p.id)?.vorher;
+        if (!vorher) return { success: false, error: `Für ${p.name} ist kein Stand vor einem Deploy bekannt (seit dem letzten Neustart kein Deploy über Alfred) — Rollback nur über den Deploy-Skill direkt (git revert HEAD)` };
+        if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+        const nonce = this.deployFreigaben.stelle(p.id, 'rollback', vorher);
+        const herkunft = context.chatId ? { chatId: context.chatId, platform: context.platform, userId: context.userId } : undefined;
+        await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `rollback-${p.id}-${vorher.slice(0, 12)}-${Date.now()}`, description: `⏪ Rollback ${p.name} auf ${zp.ziel.host}: zurück auf ${vorher.slice(0, 7)} (Stand vor dem letzten Deploy)?`, skillName: 'project_agent', skillParams: { action: 'projekt_rollback', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) });
+        return { success: true, data: { bestaetigung: true }, display: `Rollback von ${p.name} auf ${vorher.slice(0, 7)} zur Bestätigung gestellt.` };
+      },
       // v1434 B13 — Projekt, das auf GitLab liegt, aufs Gerät holen; danach ein Geräte-Projekt wie jedes andere (Remote bleibt)
       holen: async (input) => {
         const o = owner();
@@ -16233,6 +16307,39 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
   }
 
   /** v1382/v1387 — feste Meldung ohne Modell: Sitzung des Starts plus Owner-Chat als Kopie. */
+  /**
+   * v1437 B14 — Deploy eines Geräte-Projekts auf sein Ziel über den Deploy-Skill, danach Nachkontrolle. Liefert den Bericht (Text).
+   * Bei Rot und bekanntem Stand davor: Rollback-Bestätigung an den Owner. Aufrufer haben Bestätigung bzw. Auto-dev-Schalter geprüft.
+   */
+  private async projektDeployAusfuehren(p: import('@alfred/storage').Project, z: DeployZiel, herkunft?: { chatId: string; platform: string; userId?: string }): Promise<{ ok: boolean; text: string }> {
+    const skill = this.skillRegistry.get('deploy');
+    if (!skill || !this.skillSandbox) return { ok: false, text: 'Deploy-Skill nicht verfügbar' };
+    if (!p.repoUrl) return { ok: false, text: 'Das Projekt hat kein Remote — der Deploy holt den Stand aus dem Repo (erst projekt_holen bzw. ein Remote einrichten).' };
+    const name = zielName(z, p.cwd ?? p.name);
+    const uid = this.tryOwner() ?? '';
+    const ctx = { userId: uid, masterUserId: uid, chatId: this.config.security?.ownerUserId ?? '', platform: 'api', conversationId: '' } as never;
+    const basis = { project: name, host: z.host, user: z.user ?? 'root', process_manager: z.prozess, ...(z.runtime ? { runtime: z.runtime } : {}) };
+    const token = await this.gitTokenFuer(p.id, p.repoUrl);
+    this.logger.info({ projekt: p.id, ziel: zielText(z), mitToken: !!token }, 'v1437 Deploy startet');
+    const r = await this.skillSandbox.execute(skill, { action: 'deploy', ...basis, repo_url: p.repoUrl, ...(z.appPort ? { app_port: z.appPort } : {}), ...(z.branch ? { branch: z.branch } : {}), ...(z.envStage ? { env_stage: z.envStage } : { skip_env: true }), ...(token ? { git_token: token } : {}) }, ctx);
+    const d = (r.data ?? {}) as { verified?: boolean; vorher?: string; nachher?: string; steps?: string[] };
+    const status = r.success ? await this.skillSandbox.execute(skill, { action: 'status', ...basis }, ctx).catch(() => undefined) : undefined;
+    const logs = r.success ? await this.skillSandbox.execute(skill, { action: 'logs', ...basis, lines: 200, seit_minuten: 10 }, ctx).catch(() => undefined) : undefined;
+    const k = nachkontrolle({ prozess: z.prozess, deployOk: r.success, deployFehler: r.error, status: status?.display, appPort: z.appPort, httpOk: z.appPort ? d.verified === true : undefined, logs: logs?.display });
+    if (r.success) this.letzterDeploy.set(p.id, { ...(d.vorher ? { vorher: d.vorher } : {}), ...(d.nachher ? { nachher: d.nachher } : {}), zeit: Date.now() });
+    this.logger.info({ projekt: p.id, ok: k.ok, deployOk: r.success, gruende: k.gruende, hinweise: k.hinweise, vorher: d.vorher?.slice(0, 7), nachher: d.nachher?.slice(0, 7) }, 'v1437 Deploy-Nachkontrolle');
+    const stand = d.vorher || d.nachher ? ` (${d.vorher ? d.vorher.slice(0, 7) : 'neu'} → ${d.nachher ? d.nachher.slice(0, 7) : '?'})` : '';
+    const zeilen = [k.ok ? `🚀 ${p.name} auf ${z.host} deployt${stand} — Nachkontrolle grün: läuft${z.appPort ? `, HTTP auf Port ${z.appPort} ok` : ''}, keine Fehler in den Logs.` : `❌ ${p.name} auf ${z.host}${stand}: Nachkontrolle rot — ${k.gruende.join('; ')}.`];
+    if (k.hinweise.length) zeilen.push(`Hinweis: ${k.hinweise.join('; ')}.`);
+    if (k.fehlerzeilen.length) zeilen.push('Logs:', ...k.fehlerzeilen.map(x => `  ${x.slice(0, 200)}`));
+    if (!k.ok && r.success && d.vorher && d.vorher !== d.nachher && this.confirmationQueue) {
+      const nonce = this.deployFreigaben.stelle(p.id, 'rollback', d.vorher);
+      await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `rollback-${p.id}-${d.vorher.slice(0, 12)}`, description: `⏪ Rollback ${p.name} auf ${z.host}: zurück auf ${d.vorher.slice(0, 7)} (Stand vor dem Deploy)?`, skillName: 'project_agent', skillParams: { action: 'projekt_rollback', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 72 * 60, ...(herkunft ? { herkunft } : {}) }).catch(() => false);
+      zeilen.push(`Rollback auf ${d.vorher.slice(0, 7)} zur Bestätigung gestellt.`);
+    }
+    return { ok: k.ok, text: zeilen.join('\n') };
+  }
+
   /**
    * v1434 B13 — Git-Token für ein Repo: aus der Projektumgebung (beliebige Stage, Schlüssel GIT_TOKEN, GITLAB_TOKEN oder GITHUB_TOKEN) —
    * zuerst des Projekts selbst, sonst eines Projekts des Owners mit derselben Repo-Adresse. Nie das Owner-Token (forge-Konfig).

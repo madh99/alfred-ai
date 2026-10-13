@@ -4,7 +4,7 @@ import { begrenzePlan, mutationAutomatisch, grenzeErreicht, STANDARD_GRENZEN } f
 import type { GeraetEreignis } from '@alfred/types';
 
 // v1387 (R2) — Projekt-Agent am Satelliten, Ablauf mit simuliertem Gerät
-function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined> } = {}) {
+function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined>; nachLauf?: (s: ProjektStand) => Promise<void> } = {}) {
   const aufrufe: Array<{ aktion: string; params: Record<string, unknown> }> = [];
   const fragen: Array<{ text: string; nonce: string }> = [];
   const meldungen: string[] = [];
@@ -23,6 +23,7 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
     melde: async (_s, text) => { meldungen.push(text); },
     ...(o.konventionen ? { konventionen: async () => o.konventionen } : {}), // v1426
     ...(o.nachAbnahme ? { nachAbnahme: o.nachAbnahme } : {}), // v1434
+    ...(o.nachLauf ? { nachLauf: o.nachLauf } : {}), // v1437
     logger: { info: () => undefined, warn: () => undefined },
   });
   const ende = async (s: ProjektStand, status: GeraetEreignis['status'] = 'fertig', extra: Partial<GeraetEreignis> = {}) => {
@@ -36,6 +37,23 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
 const start = { geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/home/madh/claudecode/r2', ziel: 'Kleines CLI-Werkzeug', pruefBefehle: ['npm test'] };
 
 describe('Satelliten-Projekt', () => {
+  it('v1437 B14 nachLauf nur nach einem fertigen Lauf, mit allen Etappenergebnissen', async () => {
+    const gesehen: ProjektStand[] = [];
+    const { p, fragen, ende } = aufbau({ nachLauf: async (s) => { gesehen.push(s); } });
+    const s = await p.starte(start);
+    await p.antwort(s.id, fragen[0]!.nonce);
+    await ende(s); await ende(s);
+    expect(gesehen).toHaveLength(0);
+    await ende(s);
+    expect(gesehen).toHaveLength(1);
+    expect(gesehen[0]!.erledigt.every(e => e.ok && e.geprueft)).toBe(true);
+    const b = aufbau({ nachLauf: async (x) => { gesehen.push(x); } });
+    const s2 = await b.p.starte(start);
+    await b.p.antwort(s2.id, b.fragen[0]!.nonce);
+    await b.p.stoppe(s2.id, 'Owner');
+    expect(gesehen).toHaveLength(1); // abgebrochen: nichts
+  });
+
   it('v1434 B13 nach jeder abgenommenen Etappe: Push-Zeile in der Etappenmeldung; rote Etappe ohne Push', async () => {
     let n = 0;
     const { p, fragen, meldungen, ende } = aufbau({ pruefung: (k) => k !== 2, nachAbnahme: async () => `📤 Gepusht: main (abc${++n}) → https://git.example/x.git` });

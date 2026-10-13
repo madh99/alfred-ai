@@ -1,6 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, InfraDefaultsConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 // v840 — Optional Live-Progress via existing SSE-Infrastruktur. opt-in via input.progressTaskId.
@@ -16,6 +16,16 @@ const execFileAsync = promisify(execFile);
  * (Realfall .96 02.07. 20:09). Mit der Klammer endet die Subshell sofort,
  * ssh kehrt in <1s zurück (live auf .96 verifiziert: 0,36s statt Build-Dauer).
  */
+/**
+ * v1437 B14 — git auf dem Ziel mit Projekt-Token: der Basic-Kopf kommt über stdin (nie in Befehlszeile, Prozessliste oder .git/config),
+ * gilt nur für den Host des Repos, ohne Weiterleitungen. `kopfB64` = base64("oauth2:<token>").
+ */
+export function gitMitKopf(repoUrl: string, gitBefehl: string): string {
+  const u = new URL(repoUrl);
+  const basis = `${u.protocol}//${u.host}/`;
+  return `read -r ALFRED_GK; export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0='http.${basis}.extraHeader' GIT_CONFIG_VALUE_0="Authorization: Basic $ALFRED_GK" GIT_CONFIG_KEY_1=http.followRedirects GIT_CONFIG_VALUE_1=false; unset ALFRED_GK; ${gitBefehl}`;
+}
+
 export function buildDetachedLaunch(projectDir: string, command: string, logFile: string): string {
   return `cd ${projectDir} && rm -f ${logFile} && (nohup sh -c "${command} && echo ALFRED_DEPLOY_OK || echo ALFRED_DEPLOY_FAIL" >${logFile} 2>&1 </dev/null &) && echo started`;
 }
@@ -165,11 +175,11 @@ export class DeploySkill extends Skill {
     switch (action) {
       case 'deploy': return this.doDeploy(host, user, input, pm, runtime);
       case 'status': return this.doStatus(host, user, project, pm);
-      case 'logs': return this.doLogs(host, user, project, pm, input.lines as number | undefined);
+      case 'logs': return this.doLogs(host, user, project, pm, input.lines as number | undefined, input.seit_minuten as number | undefined);
       case 'stop': return this.doServiceAction(host, user, project!, pm, 'stop');
       case 'start': return this.doServiceAction(host, user, project!, pm, 'start');
       case 'restart': return this.doServiceAction(host, user, project!, pm, 'restart');
-      case 'rollback': return this.doRollback(host, user, project!, runtime);
+      case 'rollback': return this.doRollback(host, user, project!, runtime, pm, input);
       case 'setup_node': return this.doSetupNode(host, user);
       case 'setup_python': return this.doSetupPython(host, user);
       default: return { success: false, error: `Unknown action: ${String(action)}` };
@@ -189,6 +199,21 @@ export class DeploySkill extends Skill {
     ], { maxBuffer: 5 * 1024 * 1024, timeout: 300_000 });
     if (stderr && !stdout) return stderr.trim();
     return stdout.trim();
+  }
+
+  /** v1437 — SSH mit Eingabe über stdin (für Geheimnisse, die nicht in die Befehlszeile dürfen). */
+  private sshMitEingabe(host: string, user: string, command: string, eingabe: string, timeoutMs = 600_000): Promise<string> {
+    const keyPath = this.defaults.sshKeyPath ?? `${process.env['HOME'] ?? '/root'}/.ssh/id_ed25519`;
+    return new Promise((resolve, reject) => {
+      const k = spawn('ssh', ['-i', keyPath, '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10', `${user}@${host}`, command], { stdio: ['pipe', 'pipe', 'pipe'] });
+      let o = '', e = '';
+      const t = setTimeout(() => { k.kill(); reject(new Error('Zeitlimit')); }, timeoutMs);
+      k.stdout.on('data', (d: Buffer) => { o += d.toString(); });
+      k.stderr.on('data', (d: Buffer) => { e += d.toString(); });
+      k.on('error', (err) => { clearTimeout(t); reject(err); });
+      k.on('close', (code) => { clearTimeout(t); if (code === 0) resolve(o.trim()); else reject(new Error((e || o).trim().slice(-500) || `Exit ${code}`)); });
+      k.stdin.end(`${eingabe}\n`);
+    });
   }
 
   /**
@@ -364,7 +389,11 @@ export class DeploySkill extends Skill {
   private async doDeploy(host: string, user: string, input: Record<string, unknown>, pm: string, runtime: string): Promise<SkillResult> {
     const project = sanitize(input.project as string ?? '');
     const rawRepoUrl = input.repo_url ? sanitize(input.repo_url as string) : undefined;
-    const repoUrl = rawRepoUrl ? this.injectGitToken(rawRepoUrl) : undefined;
+    // v1437 B14 — Projekt-Token (vom Gehirn, aus der Projektumgebung): Kopfzeile über stdin statt Owner-Token in der Adresse
+    const projektToken = typeof input.git_token === 'string' && input.git_token && rawRepoUrl && /^https?:\/\//.test(rawRepoUrl) ? input.git_token : undefined;
+    const kopf = projektToken ? Buffer.from(`oauth2:${projektToken}`).toString('base64') : undefined;
+    const repoUrl = rawRepoUrl ? (kopf ? rawRepoUrl : this.injectGitToken(rawRepoUrl)) : undefined;
+    let vorher: string | undefined; let nachher: string | undefined;
     let branch = input.branch ? sanitize(input.branch as string) : '';
     const appPort = input.app_port as number | undefined;
     if (!project || !validateName(project)) return { success: false, error: 'project erforderlich (nur Buchstaben, Zahlen, Bindestriche, Punkte)' };
@@ -408,19 +437,21 @@ export class DeploySkill extends Skill {
         // Auto-detect default branch if not specified
         if (!branch) {
           try {
-            const refs = await this.ssh(host, user, `git ls-remote --symref ${repoUrl} HEAD 2>/dev/null | head -1`);
+            const refs = kopf ? await this.sshMitEingabe(host, user, gitMitKopf(repoUrl, `git ls-remote --symref ${repoUrl} HEAD 2>/dev/null | head -1`), kopf, 60_000) : await this.ssh(host, user, `git ls-remote --symref ${repoUrl} HEAD 2>/dev/null | head -1`);
             const match = refs.match(/refs\/heads\/(\S+)/);
             branch = match?.[1] ?? 'main';
           } catch { branch = 'main'; }
         }
         emitStep('git-clone', 'started', `Branch ${branch}`);
-        await this.ssh(host, user, `git clone --branch ${branch} ${repoUrl} ${projectDir}`);
+        if (kopf) await this.sshMitEingabe(host, user, gitMitKopf(repoUrl, `git clone --branch ${branch} ${repoUrl} ${projectDir}`), kopf);
+        else await this.ssh(host, user, `git clone --branch ${branch} ${repoUrl} ${projectDir}`);
         steps.push(`📦 Geklont: ${repoUrl} (Branch: ${branch})`);
         emitStep('git-clone', 'done', `Branch ${branch}`);
       } else if (dirExists === 'yes') {
         // Temporarily set remote URL with token for authenticated pull, then restore
         let originalRemoteUrl: string | undefined;
-        if (repoUrl) {
+        try { vorher = (await this.ssh(host, user, `cd ${projectDir} && git rev-parse HEAD`)).trim(); } catch { /* ohne Commit */ } // v1437 — Stand vor dem Deploy (Rollback-Ziel)
+        if (repoUrl && !kopf) {
           try {
             originalRemoteUrl = (await this.ssh(host, user, `cd ${projectDir} && git remote get-url origin`)).trim();
             await this.ssh(host, user, `cd ${projectDir} && git remote set-url origin '${repoUrl}'`);
@@ -433,7 +464,8 @@ export class DeploySkill extends Skill {
         }
         try {
           emitStep('git-pull', 'started', branch);
-          await this.ssh(host, user, `cd ${projectDir} && git fetch origin && git checkout ${branch} && git pull origin ${branch}`);
+          if (kopf && repoUrl) await this.sshMitEingabe(host, user, gitMitKopf(repoUrl, `cd ${projectDir} && git fetch ${repoUrl} ${branch} && git checkout ${branch} && git merge --ff-only FETCH_HEAD`), kopf);
+          else await this.ssh(host, user, `cd ${projectDir} && git fetch origin && git checkout ${branch} && git pull origin ${branch}`);
           steps.push(`📥 Gepullt: ${branch}`);
           emitStep('git-pull', 'done', branch);
         } finally {
@@ -445,8 +477,10 @@ export class DeploySkill extends Skill {
       } else {
         return { success: false, error: `Projekt ${projectDir} existiert nicht und keine repo_url angegeben` };
       }
+      try { nachher = (await this.ssh(host, user, `cd ${projectDir} && git rev-parse HEAD`)).trim(); } catch { /* ohne Commit */ }
     } catch (err) {
-      return { success: false, error: `Git-Operation fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
+      const m = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Git-Operation fehlgeschlagen: ${kopf ? m.split(kopf).join('***') : m}` };
     }
 
     // v733 — 2.5: ENV-File aus project_environments injizieren (opt-out via skip_env)
@@ -568,7 +602,7 @@ export class DeploySkill extends Skill {
     } catch (err) {
       emitStep('service-start', 'failed', err instanceof Error ? err.message.slice(0, 150) : '');
       if (progressTaskId) { try { markOutputEnded(progressTaskId); } catch { /* */ } }
-      return { success: false, error: `Service-Start fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`, data: { steps } };
+      return { success: false, error: `Service-Start fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`, data: { steps, vorher, nachher } };
     }
 
     // 6. Verify
@@ -639,7 +673,7 @@ export class DeploySkill extends Skill {
 
     return {
       success: true,
-      data: { host, project, port: appPort, steps, verified: verifyOk },
+      data: { host, project, port: appPort, steps, verified: verifyOk, vorher, nachher, branch }, // v1437 vorher/nachher
       display: `## Deploy: ${project} → ${host}\n\n${steps.join('\n')}`,
     };
   }
@@ -659,15 +693,16 @@ export class DeploySkill extends Skill {
     return { success: true, display: `## Service Status: ${project ?? 'alle'} auf ${host}\n\n\`\`\`\n${output}\n\`\`\`` };
   }
 
-  private async doLogs(host: string, user: string, project: string | undefined, pm: string, lines?: number): Promise<SkillResult> {
-    const n = lines ?? 50;
+  private async doLogs(host: string, user: string, project: string | undefined, pm: string, lines?: number, seitMinuten?: number): Promise<SkillResult> {
+    const n = Math.max(1, Math.min(2000, Math.round(Number(lines ?? 50)) || 50));
+    const seit = seitMinuten !== undefined && Number.isFinite(Number(seitMinuten)) && Number(seitMinuten) > 0 ? Math.min(1440, Math.round(Number(seitMinuten))) : undefined; // v1437
     let output: string;
     if (pm === 'pm2') {
       output = await this.ssh(host, user, `pm2 logs ${project ?? 'all'} --lines ${n} --nostream 2>/dev/null || echo 'No logs'`);
     } else if (pm === 'systemd') {
-      output = await this.ssh(host, user, `journalctl -u ${project} -n ${n} --no-pager`);
+      output = await this.ssh(host, user, `journalctl -u ${project} -n ${n} --no-pager${seit ? ` --since '${seit} min ago'` : ''}`);
     } else {
-      const composeLogs = await this.composeCmd(host, user, `logs --tail ${n}`);
+      const composeLogs = await this.composeCmd(host, user, `logs --tail ${n}${seit ? ` --since ${seit}m` : ''}`);
       output = await this.ssh(host, user, `cd /home/${user}/${project ?? '.'} && ${composeLogs}`);
     }
     return { success: true, display: `## Logs: ${project ?? 'alle'} auf ${host}\n\n\`\`\`\n${output.slice(0, 3000)}\n\`\`\`` };
@@ -688,25 +723,45 @@ export class DeploySkill extends Skill {
     return { success: true, display: `✅ ${action}: ${project} auf ${host}\n\n${output}` };
   }
 
-  private async doRollback(host: string, user: string, project: string, runtime: string): Promise<SkillResult> {
-    if (!project) return { success: false, error: 'project erforderlich' };
+  /**
+   * Rollback. v1437 B14 — mit `commit` (Stand vor dem Deploy): genau dorthin zurück (`git reset --hard`), sonst wie bisher
+   * `git revert HEAD`. Neu: docker-compose-Zweig, und ein gescheiterter Neustart ist ein Fehlschlag (vorher immer „Erfolg“).
+   */
+  private async doRollback(host: string, user: string, project: string, runtime: string, pm = 'pm2', input: Record<string, unknown> = {}): Promise<SkillResult> {
+    if (!project || !validateName(project)) return { success: false, error: 'project erforderlich' };
     const projectDir = `/home/${user}/${project}`;
     const steps: string[] = [];
+    const commit = typeof input.commit === 'string' ? input.commit.trim() : '';
+    if (commit && !/^[0-9a-f]{7,40}$/i.test(commit)) return { success: false, error: 'commit ungültig (Hex-Kennung)' };
+    try {
+      if (commit) { await this.ssh(host, user, `cd ${projectDir} && git reset --hard ${commit}`); steps.push(`⏪ Git: zurück auf ${commit.slice(0, 7)}`); }
+      else { await this.ssh(host, user, `cd ${projectDir} && git revert --no-edit HEAD`); steps.push('⏪ Git: revert HEAD'); }
+    } catch (err) { return { success: false, error: `Rollback (git) fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` }; }
 
-    await this.ssh(host, user, `cd ${projectDir} && git revert --no-edit HEAD`);
-    steps.push('⏪ Git: revert HEAD');
-
-    if (runtime === 'node') {
-      await this.ssh(host, user, `cd ${projectDir} && npm install && npm run build --if-present`);
-      steps.push('📦 Rebuild');
+    if (runtime === 'node' && pm !== 'docker-compose') {
+      try { await this.ssh(host, user, `cd ${projectDir} && npm install && npm run build --if-present`); steps.push('📦 Rebuild'); }
+      catch (err) { steps.push(`⚠️ Rebuild: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`); }
     }
 
     try {
-      await this.ssh(host, user, `pm2 restart ${project} 2>/dev/null || sudo systemctl restart ${project} 2>/dev/null`);
-      steps.push('🔄 Service restarted');
-    } catch { steps.push('⚠️ Service restart fehlgeschlagen'); }
-
-    return { success: true, display: `## Rollback: ${project} auf ${host}\n\n${steps.join('\n')}` };
+      if (pm === 'docker-compose') {
+        const composeUp = await this.composeCmd(host, user, 'up -d --build');
+        const logFile = `/tmp/alfred-rollback-${project.replace(/[^a-zA-Z0-9_-]/g, '_')}.log`;
+        await this.ssh(host, user, buildDetachedLaunch(projectDir, composeUp, logFile));
+        const r = await this.pollDeployLog(host, user, logFile, 15 * 60_000);
+        if (!r.ok) throw new Error(`compose up: ${r.tail}`);
+        steps.push('🐳 compose up nach Rollback');
+      } else if (pm === 'systemd') {
+        await this.ssh(host, user, `sudo systemctl restart ${project}`);
+        steps.push('🔄 systemd restart');
+      } else {
+        await this.ssh(host, user, `pm2 restart ${project}`);
+        steps.push('🔄 pm2 restart');
+      }
+    } catch (err) {
+      return { success: false, error: `Neustart nach Rollback fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`, data: { steps } };
+    }
+    return { success: true, data: { steps, ...(commit ? { commit } : {}) }, display: `## Rollback: ${project} auf ${host}\n\n${steps.join('\n')}` };
   }
 
   private async doSetupNode(host: string, user: string): Promise<SkillResult> {

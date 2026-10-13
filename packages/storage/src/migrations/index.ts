@@ -2971,4 +2971,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec('CREATE TABLE IF NOT EXISTS beobachter_geraete (user_id TEXT NOT NULL, geraet_id TEXT NOT NULL, arten_aus TEXT NOT NULL, geaendert TEXT NOT NULL, PRIMARY KEY (user_id, geraet_id))');
     },
   },
+  {
+    version: 139,
+    description: 'v1437 B14 — projects.deploy_ziel: Deploy-Ziel eines Projekts (Host, Prozess, Port, Stufe, automatisch in dev) (SQLite-Spiegel zu PG v143).',
+    up(db) {
+      try { db.exec('ALTER TABLE projects ADD COLUMN deploy_ziel TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

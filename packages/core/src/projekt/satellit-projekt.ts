@@ -83,6 +83,8 @@ export interface SatellitProjektDeps {
   konventionen?: (s: ProjektStand) => Promise<Konventionen | undefined>;
   /** v1434 B13 — nach einer abgenommenen Etappe (z. B. Push zu GitLab); liefert eine Zeile für die Etappenmeldung oder nichts */
   nachAbnahme?: (s: ProjektStand) => Promise<string | undefined>;
+  /** v1437 B14 — nach dem Ende eines Laufs (z. B. automatisch in dev deployen, wenn alle Etappen grün abgenommen sind) */
+  nachLauf?: (s: ProjektStand) => Promise<void>;
   ordner?: string;
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
   now?: () => number;
@@ -488,6 +490,7 @@ export class SatellitProjekte {
     await this.d.melde(s, text, 'ende');
     await this.d.vorgang?.abschliessen(s, text).catch(() => undefined);
     await this.d.akte?.beruehren?.(s).catch(() => undefined); // v1398
+    if (status === 'fertig') void this.d.nachLauf?.(s).catch((err: Error) => this.d.logger.warn({ id: s.id, err: err.message }, 'v1437 nach dem Lauf fehlgeschlagen'));
   }
 }
 

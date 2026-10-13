@@ -55,6 +55,29 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1437] - 2026-10-13
+
+### Added — Deploy von Geräte-Projekten mit Nachkontrolle und Rollback (v1437, Spec R4-Erweiterung B14)
+
+- **Deploy-Ziel je Projekt:** `project_agent projekt_deploy_ziel` mit Host, Benutzer, pm2/systemd/docker-compose, Laufzeit, Port, Zweig, ENV-Stage und Stufe dev/test/prod. Ohne Parameter zeigt es das Ziel an, `entfernen=true` löscht es. Ohne Ziel bleibt alles wie bisher.
+- **`projekt_deploy`:** Jeder Deploy braucht die Bestätigung des Owners, über eine Einmal-Kennung, die das Modell nicht setzen kann.
+  - Der vorhandene Deploy-Skill holt den Stand aus dem Repo des Projekts aufs Ziel.
+  - Das Projekt-Token geht als Kopfzeile über stdin (nie in Befehlszeile oder `.git/config`). Ohne Projekt-Token gilt der bisherige Weg.
+- **Nachkontrolle danach:** Dienststatus, HTTP-Antwort am Port und Fehlermuster in den Logs seit dem Deploy (systemd/Compose mit Zeitfilter; pm2 nur als Hinweis).
+  - Bei Grün: „🚀 … deployt (alt → neu) — Nachkontrolle grün“.
+  - Bei Rot: Gründe, Logzeilen und ein Rollback-Angebot zur Bestätigung.
+- **`projekt_rollback`:** zurück auf genau den Commit vor dem Deploy (`git reset --hard`), immer mit Bestätigung.
+  - Der Rollback des Deploy-Skills kennt jetzt docker-compose.
+  - Ein gescheiterter Neustart gilt als Fehlschlag; bisher meldete er immer Erfolg.
+- **Automatisch in dev:** Mit `auto_dev=true` (nur Stufe dev, Standard aus) deployt Alfred nach einem Lauf, dessen Etappen alle grün abgenommen sind, und berichtet im Projektfaden.
+- Deploy-Skill: `logs` mit `seit_minuten`; `deploy` liefert die Commits vor und nach dem Deploy.
+- Speicher: `projects.deploy_ziel` (PG v143 / SQLite v139).
+
+### Fixed
+
+- Der API-Deploy (Projektansicht) merkte sich `verified=ok` auch bei fehlgeschlagener HTTP-Prüfung. Jetzt steht dort das echte Ergebnis.
+- Das Fehlermuster der Nachkontrolle erkennt auch `TypeError`, `ReferenceError` usw.; „0 errors“ zählt nicht.
+
 ## [0.19.0-jarvis.1436] - 2026-10-13
 
 ### Security — Push mit Token nie im Projekt-Repo, keine fremde Git-Konfiguration (v1436)

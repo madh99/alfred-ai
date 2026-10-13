@@ -2278,4 +2278,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE TABLE IF NOT EXISTS beobachter_geraete (user_id TEXT NOT NULL, geraet_id TEXT NOT NULL, arten_aus TEXT NOT NULL, geaendert TEXT NOT NULL, PRIMARY KEY (user_id, geraet_id))', []);
     },
   },
+  {
+    version: 143,
+    description: 'v1437 B14 — projects.deploy_ziel: Deploy-Ziel eines Projekts (PG-Spiegel zu SQLite v139).',
+    async up(db) {
+      await db.execute('ALTER TABLE projects ADD COLUMN IF NOT EXISTS deploy_ziel TEXT', []);
+    },
+  },
 ];

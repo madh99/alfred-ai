@@ -150,6 +150,8 @@ export interface Project {
   geraet?: string;
   /** v1399 — Abnahme je Etappe der Geräte-Läufe */
   pruefBefehle?: string[];
+  /** v1437 B14 — Deploy-Ziel (JSON, geprüft in core/projekt/deploy-ziel.ts) */
+  deployZiel?: Record<string, unknown>;
 }
 
 export interface ProjectSessionSummary {
@@ -290,6 +292,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     persistDbVolumes: Boolean(row.persist_db_volumes),
     dbSeedStrategy: ((row.db_seed_strategy as string | null) ?? 'first-start-only') as 'none' | 'first-start-only' | 'every-start',
     ...(row.geraet_id ? { geraetId: String(row.geraet_id), geraet: String(row.geraet ?? ''), pruefBefehle: parseTags(row.pruef_befehle) } : {}),
+    ...(typeof row.deploy_ziel === 'string' && row.deploy_ziel ? (() => { try { return { deployZiel: JSON.parse(row.deploy_ziel as string) as Record<string, unknown> }; } catch { return {}; } })() : {}),
   };
 }
 
@@ -523,6 +526,11 @@ export class ProjectRepository {
   }
 
   /** v1399 — Gerät/Abnahme eines Geräte-Projekts nachführen. */
+  /** v1437 B14 — Deploy-Ziel setzen (null = entfernen). */
+  async setzeDeployZiel(userId: string, id: string, ziel: Record<string, unknown> | null): Promise<void> {
+    await this.adapter.execute('UPDATE projects SET deploy_ziel = ? WHERE id = ? AND user_id = ?', [ziel ? JSON.stringify(ziel) : null, id, userId]);
+  }
+
   async updateGeraet(id: string, f: { geraet?: string; pruefBefehle?: string[] }): Promise<void> {
     if (f.geraet !== undefined) await this.adapter.execute('UPDATE projects SET geraet = ? WHERE id = ? AND geraet_id IS NOT NULL', [f.geraet, id]);
     if (f.pruefBefehle !== undefined) await this.adapter.execute('UPDATE projects SET pruef_befehle = ? WHERE id = ? AND geraet_id IS NOT NULL', [JSON.stringify(f.pruefBefehle), id]);

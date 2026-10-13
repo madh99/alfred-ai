@@ -56,7 +56,7 @@ export class SkillSandbox {
     const { name } = skill.metadata;
 
     const safeInput = { ...input };
-    for (const key of ['password', 'secret', 'token', 'apiKey', 'api_key', 'accessToken', 'refreshToken', 'clientSecret']) {
+    for (const key of ['password', 'secret', 'token', 'git_token', 'apiKey', 'api_key', 'accessToken', 'refreshToken', 'clientSecret']) {
       if (key in safeInput) safeInput[key] = '[REDACTED]';
     }
     this.logger.info({ skill: name, input: safeInput }, 'Skill execution started');

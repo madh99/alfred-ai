@@ -89,3 +89,19 @@ describe('DeploySkill Metadaten (v931)', () => {
     expect(skill.metadata.timeoutMs).toBeGreaterThanOrEqual(15 * 60_000);
   });
 });
+
+// v1437 B14 — Projekt-Token auf dem Ziel: Kopfzeile über stdin, nur für den Host, nie in der Befehlszeile
+import { gitMitKopf } from './deploy.js';
+import { spawnSync } from 'node:child_process';
+describe('gitMitKopf', () => {
+  it('Befehl ohne Token; Kopf kommt aus stdin und gilt nur für den Repo-Host', () => {
+    const cmd = gitMitKopf('http://git.lokalkraft.at/madh/x.git', 'git clone http://git.lokalkraft.at/madh/x.git /home/u/x');
+    expect(cmd).not.toMatch(/oauth2|Basic [A-Za-z0-9+/=]{8,}/);
+    expect(cmd).toContain("GIT_CONFIG_KEY_0='http.http://git.lokalkraft.at/.extraHeader'");
+    expect(cmd).toContain('http.followRedirects');
+    const kopf = Buffer.from('oauth2:tok123').toString('base64');
+    const r = spawnSync('bash', ['-c', gitMitKopf('https://h.example/x.git', 'echo "$GIT_CONFIG_KEY_0|$GIT_CONFIG_VALUE_0|${ALFRED_GK:-weg}"')], { input: `${kopf}\n`, encoding: 'utf8' });
+    if (r.error) return; // ohne bash (selten): nur der Textteil
+    expect(r.stdout.trim()).toBe(`http.https://h.example/.extraHeader|Authorization: Basic ${kopf}|weg`);
+  });
+});
