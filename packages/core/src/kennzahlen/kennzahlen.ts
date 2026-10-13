@@ -22,6 +22,7 @@ export type KennzahlName =
   | 'vorgaengeZuBefund' // v1222 — Insight einem offenen Befund zugeordnet statt Prosa-Vorgang
   | 'hinweisWiederholung' | 'hinweisWiderspruch' // v1360 — Punkt wiederholt Bekanntes; Ausfall-Behauptung gegen Live-Daten
   | 'hinweisNuetzlich' | 'hinweisNichtNuetzlich' | 'hinweisBekanntBeobachtet' // v1364 — Owner-Reaktion; „wäre als bekannt gesperrt“
+  | 'hinweisObjektBekannt' | 'hinweisObjektGemeldet' | 'vorgaengeZuVorgang' // v1428 — Objekt-Hinweise (V1), Insight zu offenem Vorgang
   | 'miniPassDauerMs';
 
 export const KENNZAHL_NAMEN: readonly KennzahlName[] = [
@@ -33,6 +34,7 @@ export const KENNZAHL_NAMEN: readonly KennzahlName[] = [
   'vorgaengeWiderspruch', 'vorgaengeDubletten', 'vorgaengeZuBefund',
   'hinweisWiederholung', 'hinweisWiderspruch', // v1360
   'hinweisNuetzlich', 'hinweisNichtNuetzlich', 'hinweisBekanntBeobachtet', // v1364
+  'hinweisObjektBekannt', 'hinweisObjektGemeldet', 'vorgaengeZuVorgang', // v1428
   'miniPassDauerMs', // v1192 — Summe der Mini-Pass-Dauern (Ereignis → Reaktion), Ø = Summe / miniPaesse
 ];
 

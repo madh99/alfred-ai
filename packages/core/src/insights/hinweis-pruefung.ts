@@ -122,7 +122,7 @@ export function istMetaText(text: string): boolean {
   // v1380 — Abschnittsüberschriften ohne Inhalt (Realfall 12.10. 14:01: Hinweise „Relevante Information" und „Handlungsbedarf")
   if (!t.includes('\n') && /^(handlungsbedarf|relevante information(en)?|information(en)?|zur information|info|weitere hinweise|wichtig|dringend|offene punkte|sonstiges|(kurz)?überblick|übersicht|ergebnis(se)?|fazit|empfehlung(en)?|nächste schritte|beobachtung(en)?|status)(\s*\([^)]{0,40}\))?\s*:?\s*$/i.test(erste)) return true;
   // Selbstauskunft über die Arbeit statt Inhalt
-  if (/^(hier (sind|ist) (die|meine|deine)\b|ich (habe|erstelle|prüfe|nenne|gehe|liste|fasse|beginne)\b|die (system)?vorgaben\b|die (drei |zwei |vier )?vorab-(auffälligkeiten|analyse)\b|die vorab-analyse\b|die lage nach dem ereignis\b|die zustandsänderung betrifft\b|es gibt keine zeile mit\b|keine (neuen )?insights\b|weitere punkte wie\b)/i.test(erste)) return true;
+  if (/^(hier (sind|ist) (die|meine|deine)\b|ich (habe|erstelle|prüfe|nenne|gehe|liste|fasse|beginne)\b|die (system)?vorgaben\b|die (drei |zwei |vier |beiden |folgenden )?vorab-(auffälligkeiten|analyse|punkte)\b|die vorab-analyse\b|die lage nach dem ereignis\b|die zustandsänderung betrifft\b|es gibt keine zeile mit\b|keine (neuen )?insights\b|weitere punkte wie\b)/i.test(erste)) return true;
   if (/^hinweis:\s*die insight-tracking-liste\b/i.test(erste)) return true;
   // v1365 — Realfälle 12.10. nach v1360: „Nicht als Insight übernommen: …", „Die Hausbatterie-Meldung … habe ich bewusst
   // weggelassen …", „Insights sind nicht immer leicht … deshalb hier meine Auswertung …:", „Keine Artikel im RSS-Feed passen …"
@@ -132,7 +132,8 @@ export function istMetaText(text: string): boolean {
 }
 
 /** v1365 — Selbstauskunft über Weggelassenes oder die eigene Auswertung, irgendwo im ersten Satz. */
-const META_SATZ = /\b(habe ich (bewusst |daher |deshalb )?(weggelassen|ausgelassen|nicht (aufgenommen|gemeldet|übernommen))|lasse (ich )?(diesen punkt|das|sie|ihn) (daher |deshalb )?weg|hier (ist |folgt )?meine auswertung)\b/i;
+// v1428 — Realfälle 13.10.: „Ausgelassen habe ich unter anderem …", „Die beiden Vorab-Auffälligkeiten (…) habe ich …"
+const META_SATZ = /\b((ausgelassen|weggelassen|übersprungen|nicht (aufgenommen|übernommen|gemeldet)) habe ich|habe ich (bewusst |daher |deshalb )?(weggelassen|ausgelassen|nicht (aufgenommen|gemeldet|übernommen))|lasse (ich )?(diesen punkt|das|sie|ihn) (daher |deshalb )?weg|hier (ist |folgt )?meine auswertung)\b/i;
 
 function ersterSatz(zeile: string): string {
   const m = /^(.+?[.;!?])(\s|$)/.exec(zeile);

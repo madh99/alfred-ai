@@ -5,6 +5,9 @@
  * Prozessweit, deterministisch; die Einzelheiten stehen weiter in den Logzeilen der jeweiligen Stelle.
  */
 
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+
 export type ZustellGrund = 'korrektur' | 'aufgabe' | 'abgelaufen' | 'widerspruch' | 'vorrede' | 'wiederholung';
 
 /** Reihenfolge = Bedeutung für den Owner: was echte Inhalte gekostet haben kann, zuerst. */
@@ -21,11 +24,30 @@ const FENSTER_MS = 24 * 3_600_000;
 
 export class ZustellProtokoll {
   private eintraege: Array<{ am: number; grund: ZustellGrund; n: number }> = [];
+  private datei?: string;
+
+  /** v1428 — Lage zeigte nach jedem Neustart 0 („24 h" stimmte nicht): Einträge in einer kleinen Datei halten. Idempotent. */
+  dauerhaft(datei: string, jetzt = Date.now()): void {
+    if (this.datei) return;
+    this.datei = datei;
+    try {
+      const alt = JSON.parse(readFileSync(datei, 'utf8')) as Array<{ am: number; grund: ZustellGrund; n: number }>;
+      if (Array.isArray(alt)) this.eintraege = [...alt.filter(e => typeof e?.am === 'number' && e.grund in TEXT && typeof e.n === 'number'), ...this.eintraege];
+    } catch { /* keine Datei */ }
+    this.eintraege = this.eintraege.filter(e => jetzt - e.am < FENSTER_MS);
+    this.sichere();
+  }
+
+  private sichere(): void {
+    if (!this.datei) return;
+    try { mkdirSync(path.dirname(this.datei), { recursive: true }); writeFileSync(this.datei, JSON.stringify(this.eintraege)); } catch { /* Zähler ist Anzeige */ }
+  }
 
   merke(grund: ZustellGrund, n = 1, jetzt = Date.now()): void {
     if (n <= 0) return;
     this.eintraege.push({ am: jetzt, grund, n });
     this.eintraege = this.eintraege.filter(e => jetzt - e.am < FENSTER_MS);
+    this.sichere();
   }
 
   zaehlung24h(jetzt = Date.now()): Partial<Record<ZustellGrund, number>> {

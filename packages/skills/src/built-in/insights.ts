@@ -113,6 +113,8 @@ export class InsightsSkill extends Skill {
     const i = await this.repo.getById(userId, id);
     if (!i) return { success: false, error: 'Insight nicht gefunden' };
     if (!i.actionSkill) return { success: false, error: 'Insight hat keine gebundene Aktion' };
+    // v1428 — wie App/Web seit v1361: Reasoning-Hinweise haben keine eigene Aktion (die Aktion des Passes läuft über Autonomie/Bestätigung)
+    if (i.category === 'reasoning') return { success: false, error: 'Reasoning-Hinweise haben keine eigene Aktion — die zugehörige Aktion läuft über Vorgänge bzw. Bestätigungen.' };
     // Marker as acted — the actual skill-execution happens via the actAdapter callback set up
     // in alfred.ts (it routes to skill-sandbox).
     await this.repo.markActed(userId, id);

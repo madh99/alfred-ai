@@ -25,6 +25,7 @@ export function formatiereGedaechtnis(schritte: VorgangSchritt[], offene: Vorgan
       zeilen.push(`- [${v.besitzer === 'alfred' ? 'Alfred' : 'User'} · ${v.autonomie}] ${v.titel}${v.naechsterSchritt ? ` → nächster Schritt: ${v.naechsterSchritt}` : ''}${v.frist ? ` (Frist ${zeitKurz(v.frist)})` : ''}`);
     }
   }
+  schritte = schritte.filter(s => s.art !== 'gemeldet'); // v1428 — Meldungen sind keine Taten; Wiederholungen regelt das Zustell-Tor
   if (schritte.length) {
     zeilen.push(`Bereits getan (letzte 14 Tage, ${schritte.length} Schritte) — NICHT erneut vorschlagen:`);
     // gleiche Beschreibung nur einmal, jüngste zuerst

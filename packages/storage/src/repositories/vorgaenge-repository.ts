@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
  */
 export type VorgangStatus = 'offen' | 'wartet' | 'erledigt' | 'verworfen';
 export type Autonomie = 'auto' | 'bestaetigen' | 'nie';
-export type SchrittArt = 'vorgeschlagen' | 'ausgefuehrt' | 'zur_bestaetigung' | 'bestaetigt' | 'abgelehnt' | 'fehlgeschlagen' | 'blockiert' | 'uebersprungen' | 'notiz' | 'abgeschlossen' | 'nachgeforscht'; // v1372 nachgeforscht
+export type SchrittArt = 'vorgeschlagen' | 'ausgefuehrt' | 'zur_bestaetigung' | 'bestaetigt' | 'abgelehnt' | 'fehlgeschlagen' | 'blockiert' | 'uebersprungen' | 'notiz' | 'abgeschlossen' | 'nachgeforscht' | 'gemeldet'; // v1372 nachgeforscht; v1428 gemeldet (Objekt-Hinweis zugestellt)
 
 /** v1362 — „Was war es?" beim Abschluss (Spec „Entscheiden statt Abhaken", Baustein C). */
 export type ErgebnisArt = 'behoben' | 'entschieden' | 'kein_problem' | 'anders';

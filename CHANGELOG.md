@@ -55,6 +55,19 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1428] - 2026-10-13
+
+### Changed — Hinweise zu offenen Vorgängen nur bei Zustandswechsel (v1428, Spec „Vom Signal zur Handlung“ V1)
+
+Dieselben Themen kamen immer wieder als neuer Hinweis (11.–13.10.: Domains noahhabel 6×, Proxmox-Replikation 4× an einem Tag), weil jeder Reasoning-Durchlauf den Titel neu formuliert und die Wiederholungssperre über den Text vergleicht.
+
+- Betrifft ein Hinweis-Punkt einen offenen Vorgang (Zuordnung über die Titelwörter und Anker, kalibriert an 179 echten Punkten: 108 zugeordnet), wird er nur zugestellt, wenn zu diesem Vorgang noch nichts gemeldet wurde, sich sein Zustand (Status, nächster Schritt, Besitzer) geändert hat oder die Frist binnen 24 h fällt. Zugestellte Punkte stehen als Schritt „gemeldet“ am Vorgang. Freie Information ohne passenden Vorgang (Interessen, Vorausschau, Strompreise …) ist nicht betroffen.
+- Handlungs-Insights, die zu einem offenen Vorgang passen, legen keinen zweiten Vorgang mehr an (Realfall: „Fenster von Lena“ und „Proxmox-Replikation“ je doppelt).
+- Weitere Erzählsätze des Modells werden nicht mehr als Hinweis zugestellt („Ausgelassen habe ich …“, „Die beiden Vorab-Auffälligkeiten … habe ich …“).
+- Die Lage-Zeile „Nicht zugestellt (24 h)“ übersteht Neustarts (bisher zählte sie nur seit dem letzten Start).
+- Die Chat-Aktion „Hinweis ausführen“ beachtet dieselbe Sperre wie App und Web seit v1361 (Reasoning-Hinweise ohne eigene Aktion).
+- Kennzahlen `hinweisObjektBekannt`, `hinweisObjektGemeldet`, `vorgaengeZuVorgang`.
+
 ## [0.19.0-jarvis.1427] - 2026-10-13
 
 ### Fixed — Auftragsende nach Satelliten-Neustart (v1427)

@@ -542,6 +542,9 @@ export class ReasoningEngine {
       const { passtZuBefund } = await import('./ereignisse/befunde.js');
       const { themenGleich } = await import('@alfred/storage');
       const offeneBefunde = this.befundeRepo ? await this.befundeRepo.offene(userId).catch(() => []) : [];
+      // v1428 — dieselbe Zuordnung wie bei Objekt-Hinweisen: passt ein Handlungs-Insight zu einem offenen Vorgang, keine Dublette
+      const { objektTreffer, vorgangSignatur } = await import('./insights/objekt-hinweis.js');
+      const offeneVorgaenge = (await this.vorgaengeRepo.offene(userId, 100).catch(() => [])).map(v => ({ art: 'vorgang' as const, id: v.id, titel: v.titel, text: v.ziel, signatur: vorgangSignatur(v), frist: v.frist }));
       for (const insight of insights) {
         if (!istHandlungsInsight(insight)) continue;
         const titel = vorgangTitelAus(insight);
@@ -550,6 +553,12 @@ export class ReasoningEngine {
         if (befund) {
           this.kennzahlen.zaehle('vorgaengeZuBefund');
           this.logger.info({ titel: titel.slice(0, 100), befund: `${befund.quelle}/${befund.gegenstand}`, seit: befund.entstanden, gesehen: befund.gesehenAnzahl }, 'v1222 Insight gehört zu offenem Befund — kein Prosa-Vorgang');
+          continue;
+        }
+        const gleicher = objektTreffer(`${titel}\n${insight.slice(0, 300)}`, offeneVorgaenge);
+        if (gleicher) {
+          this.kennzahlen.zaehle('vorgaengeZuVorgang');
+          this.logger.info({ titel: titel.slice(0, 100), vorgang: gleicher.objekt.id, vorhanden: gleicher.objekt.titel.slice(0, 80) }, 'v1428 Insight gehört zu offenem Vorgang — keine Dublette');
           continue;
         }
         // v1214 — Fakten-Gegenprobe: Ausfall-Behauptung gegen Datenlage NORMAL → kein Vorgang
@@ -1744,9 +1753,57 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       this.logger.info({ hinweis: text.slice(0, 160), sektion: widerspruch.sektion, grund: widerspruch.grund }, 'v1360 Hinweis widerspricht Live-Daten — nicht zugestellt');
       return null;
     }
-    await this.beobachteBekannt(text);
-    imLauf.push(text);
-    return text;
+    // v1428 V1 — Punkte zu offenen Vorgängen nur bei Zustandswechsel (Spec „Vom Signal zur Handlung")
+    const mitObjekt = await this.objektFilter(text);
+    if (!mitObjekt) return null;
+    await this.beobachteBekannt(mitObjekt);
+    imLauf.push(mitObjekt);
+    return mitObjekt;
+  }
+
+  /**
+   * v1428 V1 — Objekt-Hinweise: betrifft ein Punkt einen offenen Vorgang (Titelwörter + Anker, kalibriert an 179 echten
+   * Punkten 06.–13.10.), wird er nur zugestellt, wenn zu diesem Vorgang noch nichts gemeldet wurde, sich sein Zustand geändert
+   * hat oder die Frist binnen 24 h fällt. Zugestellte Punkte stehen als Schritt `gemeldet` am Vorgang. Freie Information
+   * (kein passender Vorgang) bleibt unverändert. Fehler → unverändert zustellen.
+   */
+  private async objektFilter(text: string): Promise<string | null> {
+    if (!this.vorgaengeRepo) return text;
+    try {
+      const userId = this.resolvedOwnerUserId || this.defaultChatId;
+      const { objektTreffer, objektWechsel, vorgangSignatur } = await import('./insights/objekt-hinweis.js');
+      const offene = await this.vorgaengeRepo.offene(userId, 100);
+      if (offene.length === 0) return text;
+      const objekte = offene.map(v => ({ art: 'vorgang' as const, id: v.id, titel: v.titel, text: v.ziel, signatur: vorgangSignatur(v), frist: v.frist }));
+      const letzte = new Map<string, { signatur: string; frist?: boolean }>();
+      for (const s of [...await this.vorgaengeRepo.schritte(userId, 30, 1000)].reverse()) { // älteste zuerst → jüngste gewinnt
+        if (s.art !== 'gemeldet' || !s.vorgangId) continue;
+        const p = (s.params ?? {}) as { signatur?: string; frist?: boolean };
+        letzte.set(s.vorgangId, { signatur: String(p.signatur ?? ''), frist: p.frist === true });
+      }
+      const bleiben: string[] = [];
+      for (const punkt of punkteAus(text)) {
+        const t = objektTreffer(punkt, objekte);
+        if (!t) { bleiben.push(punkt); continue; }
+        const w = objektWechsel(t.objekt, letzte.get(t.objekt.id));
+        if (!w) {
+          this.kennzahlen.zaehle('hinweisObjektBekannt');
+          zustellProtokoll.merke('wiederholung');
+          this.logger.info({ punkt: punkt.slice(0, 140), vorgang: t.objekt.id, titel: t.objekt.titel.slice(0, 80), gemeinsam: t.gemeinsam, anteil: Number(t.anteil.toFixed(2)), anker: t.anker }, 'v1428 Objekt-Hinweis ohne Zustandswechsel — nicht zugestellt');
+          continue;
+        }
+        bleiben.push(punkt);
+        const frist = w === 'frist' || letzte.get(t.objekt.id)?.frist === true;
+        letzte.set(t.objekt.id, { signatur: t.objekt.signatur, frist });
+        await this.vorgaengeRepo.schritt({ vorgangId: t.objekt.id, userId, art: 'gemeldet', beschreibung: punkt.replace(/\s+/g, ' ').slice(0, 300), params: { signatur: t.objekt.signatur, frist, wechsel: w }, quelle: 'hinweis' }).catch(() => undefined);
+        this.kennzahlen.zaehle('hinweisObjektGemeldet');
+        this.logger.info({ vorgang: t.objekt.id, titel: t.objekt.titel.slice(0, 80), wechsel: w }, 'v1428 Objekt-Hinweis zugestellt');
+      }
+      return bleiben.length ? bleiben.join('\n') : null;
+    } catch (err) {
+      this.logger.debug({ err: (err as Error).message }, 'v1428 Objekt-Filter übersprungen');
+      return text;
+    }
   }
 
   /**
