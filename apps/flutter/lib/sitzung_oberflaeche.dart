@@ -91,7 +91,8 @@ extension _Oberflaeche on _SitzungState {
       SizedBox(height: 48, child: Row(children: [
         if (!seitenleisteOffen) IconButton(tooltip: 'Seitenleiste', onPressed: () { _neu(() => seitenleisteOffen = true); seitenleisteSpeichern(true); }, icon: const Icon(Icons.view_sidebar_outlined, size: 20)),
         const SizedBox(width: 12),
-        Text('Chat · $geraet', style: theme.textTheme.titleSmall),
+        // 1.17.2 — Owner 13.10.: welches Gespräch gerade offen ist, steht über dem Chat (Gerät dahinter, gedämpft)
+        Flexible(child: Text.rich(TextSpan(children: [TextSpan(text: _kopfTitel()), TextSpan(text: '  ·  $geraet', style: TextStyle(color: dim))]), key: const Key('chat-kopf'), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmall)),
         const Spacer(),
         if (update != null) Padding(padding: const EdgeInsets.only(right: 8), child: ActionChip(avatar: updateLaeuft ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.system_update_alt, size: 18), label: Text('Update ${update!.version}'), tooltip: 'Herunterladen und installieren (${(update!.groesse / 1024 / 1024).toStringAsFixed(1)} MB)', onPressed: updateLaeuft ? null : _updateInstallieren)),
         IconButton(tooltip: stimme ? 'Antworten vorlesen: an' : 'Antworten vorlesen: aus', onPressed: () => _neu(() => stimme = !stimme), icon: Icon(stimme ? Icons.volume_up : Icons.volume_off, size: 20)),

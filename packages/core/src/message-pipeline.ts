@@ -24,6 +24,7 @@ import type { ActiveLearningService } from './active-learning/active-learning-se
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
 import { werkzeugeFuerNachricht, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300
+import { geraetSkillName } from './geraete/protokoll.js'; // v1421
 import { gespraechsZiel, fadenBefehl, verlaufBefehl, spiegelBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenDeps } from './gespraeche.js'; // v1330, v1334, v1335
 import { randomUUID as arbeitsId } from 'node:crypto';
 import { arbeitsMelder, type ArbeitsEreignis } from './geraete/arbeits-melder.js'; // v1354
@@ -1033,7 +1034,7 @@ export class MessagePipeline {
         ? this.skillRegistry.getAll().map(s => s.metadata)
         : undefined;
       let skillMetas = allSkillMetas;
-      let werkzeugwahl: WerkzeugwahlGrund | 'alle' | 'erlaubt' | 'projekt' = 'alle'; // v1300 — Messgröße im llm_request_prep
+      let werkzeugwahl: WerkzeugwahlGrund | 'alle' | 'erlaubt' | 'projekt' | 'projektfaden' = 'alle'; // v1300 — Messgröße im llm_request_prep
       // v683 — Project-Chat (metadata.projectId gesetzt — NUR vom WebUI ProjectChat-
       // Komponente via HTTP-Adapter, NICHT von Telegram/Matrix/Discord/normalem Web-Chat)
       // bekommt eine kuratierte Whitelist statt der Keyword-basierten selectCategories-
@@ -1069,6 +1070,20 @@ export class MessagePipeline {
           const wahl = werkzeugeFuerNachricht(message.text, recentUserTexts, allSkillMetas);
           skillMetas = wahl.metas;
           werkzeugwahl = wahl.grund;
+          // v1421 — Projektfaden (owner:faden:projekt-<id8>): die Stichwort-Auswahl kennt das Projekt nicht und ließ
+          // project_agent weg (Realfall 13.10.: „App neu starten“ → „kein Zugriff auf das Projekt“). Deterministisch
+          // dazu: Projekt-Werkzeuge und der Skill des Geräts, auf dem das Projekt liegt.
+          const fadenProjekt = /^projekt-([0-9a-f]{8})$/.exec(gespraech?.faden ?? '')?.[1];
+          if (fadenProjekt && this.projectRepo) {
+            const proj = await this.projectRepo.getById(masterUserId, fadenProjekt).catch(() => undefined) as { geraet?: string } | undefined;
+            if (proj) {
+              const dazu = new Set(['project_agent', 'project']);
+              if (proj.geraet) dazu.add(geraetSkillName(proj.geraet));
+              const schon = new Set(skillMetas.map(s => s.name));
+              skillMetas = [...skillMetas, ...allSkillMetas.filter(s => dazu.has(s.name) && !schon.has(s.name))];
+              werkzeugwahl = 'projektfaden';
+            }
+          }
         }
       }
 
@@ -1230,6 +1245,7 @@ export class MessagePipeline {
               lines.push(`- Bauen/Erweitern/Fixen ("baue X ein", "fix Y") → project_agent action=projekt_weiter projekt="${proj.name}" goal=<NUR der Wunsch des Owners>. Gerät, Verzeichnis, Prüfbefehle und Bestand kennt Alfred — nicht nachfragen.`);
               lines.push(`- Stand, Läufe, Etappen, Commits → project_agent action=projekt_akte projekt="${proj.name}".`);
               lines.push(`- Fragen zum Code oder Inhalt ("wie funktioniert …", "woher kommen …") → project_agent action=projekt_frage projekt="${proj.name}" frage=<Frage> (Claude Code nur lesend, Antwort nach ≈1 min).`);
+              lines.push(`- Starten, Neustarten, Status oder einzelne Befehle im Projektordner ("starte die App", "läuft der Server?") → Geräte-Skill ${geraetP.geraet ? geraetSkillName(geraetP.geraet) : 'geraet_<name>'} (action=shell, cwd=${proj.cwd ?? 'Projektordner'}; Dauerprozesse mit nohup … & im Hintergrund starten, Ausgabe in eine Logdatei; der Owner bestätigt). Code ändern → projekt_weiter.`);
               lines.push(`- NIE project_agent.start ohne geraet, NIE code_agent, shell, deploy oder git auf dem Server mit diesem Verzeichnis — es existiert dort nicht.`);
               lines.push(`- "füge … zur Liste" → project.add_open_item.`);
             }

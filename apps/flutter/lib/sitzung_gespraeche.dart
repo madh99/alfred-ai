@@ -2,6 +2,16 @@ part of 'main.dart';
 
 /// C1 (11.10.) — aus main.dart ausgelagert, Verhalten unverändert: Gesprächsfäden, Archiv, Spiegelung, Zähler der Seitenleiste.
 extension _Gespraeche on _SitzungState {
+  /// 1.17.2 — Titel über dem Chat: Hauptgespräch, Name des Fadens oder „Neues Gespräch“ (noch ohne Eintrag in der Liste).
+  String _kopfTitel() {
+    if (archiv != null) { final a = faeden.where((x) => x['archiv'] == archiv).toList(); return 'Archiv: ${a.isEmpty ? 'frühere Sitzung' : a.first['titel'] ?? 'frühere Sitzung'}'; }
+    final faden = server?.faden;
+    if (faden == null) return 'Hauptgespräch';
+    final f = faeden.where((x) => x['faden'] == faden).toList();
+    final t = f.isEmpty ? '' : '${f.first['titel'] ?? ''}'.trim();
+    return t.isEmpty ? 'Neues Gespräch' : t;
+  }
+
   String _fadenTitel(String? faden) {
     if (faden == null) return 'Hauptgespräch';
     final f = faeden.where((x) => x['faden'] == faden).toList();

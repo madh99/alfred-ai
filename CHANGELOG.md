@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1421] - 2026-10-13
+
+### Fixed — Projektfaden hat die Projekt-Werkzeuge (v1421)
+
+Im Projektfaden wählte Alfred die Werkzeuge wie im normalen Gespräch nach Stichworten aus. Bei Nachrichten ohne Bau-Wörter fehlte dadurch der Projekt-Skill, und Alfred antwortete, er habe keinen Zugriff auf das Projekt (Realfall: „App neu starten und im LAN erreichbar machen“). Im Projektfaden kommen jetzt immer der Projekt-Skill und der Skill des Geräts dazu, auf dem das Projekt liegt. Die Projekt-Anweisungen nennen für Starten, Neustarten und einzelne Befehle den Geräte-Skill mit dem Projektordner als Arbeitsverzeichnis (mit Bestätigung des Owners).
+
+### Changed — App: Gesprächsname über dem Chat (App 1.17.2)
+
+Die Kopfzeile zeigt statt „Chat · <Gerät>“ das offene Gespräch: „Hauptgespräch“, den Namen des Fadens (z. B. „🔨 Angebots-Radar Österreich“) oder „Archiv: …“, das Gerät dahinter gedämpft.
+
 ## [0.19.0-jarvis.1420] - 2026-10-13
 
 ### Fixed — Projektfaden trägt von Anfang an den Projektnamen (v1420)
