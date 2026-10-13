@@ -774,6 +774,32 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
   - Wege: (a) Ziel = das Gerät selbst (Start/Neustart im Projektordner, Nachkontrolle per HTTP auf dem Gerät und Log-Muster) — sofort baubar; (b) entferntes Ziel über ein Remote (GitLab-Repo je Projekt, Deploy-Token aus den Projektumgebungen, Push vom Gerät) — das ist der Git-Teil von R5.
 - B9 später.
 
+### Erweiterung nach Owner-Klärung (13.10.2026 abends, „ok“ — Spec festgehalten, Umsetzung nicht freigegeben)
+
+**Grundsätze (Owner):**
+
+1. **Deploy ist optional.** Ohne Deploy bleibt alles wie bisher: Projekt auf dem Gerät, Läufe, Abnahme, Neustart über den Geräte-Skill. Nichts davon hängt an GitLab oder am Deploy.
+2. **Alfreds eigene Mail bleibt unverändert.** Mail-Skill, Mail-Regeln (v1211, geplante Aufgaben `mail`), Hinweise und Vorgänge aus Mails laufen weiter wie heute. Sie werden weder umgebaut noch in die Beobachter übernommen (der frühere Vorschlag „Mail (Server)“ als Beobachter-Quelle ist zurückgezogen).
+3. **Geräte-Mail bleibt getrennt.** Der Outlook-Beobachter gilt nur für Konten, die Alfred nicht selbst konfiguriert hat. Die Welten werden nicht vermischt: keine gemeinsame Liste und keine Mail, die doppelt kommt.
+4. **Jede Beobachtungsart je Gerät einzeln schaltbar.** Ordner, Benachrichtigungen, Outlook und Build-Wache bekommen je Gerät einen eigenen Schalter in App und Web. Ist eine Art aus, läuft dort keine Regel dieser Art. Dazu kommen weiter der Schalter je Regel und das lokale Veto am Gerät, das das letzte Wort hat.
+5. **„einmalig“ und „bis“** für alle Beobachter. „Sag mir Bescheid, sobald …“ schaltet die Regel nach dem ersten Treffer ab und meldet „erledigt“; „die nächsten 3 Tage“ setzt ein Ablaufdatum, danach ist sie automatisch aus.
+
+**Bausteine:**
+
+- **B10 Schalter je Gerät und Art:** am Gerätedatensatz (Server) und in App/Web; die Nutzlast `beobachten` enthält nur Regeln eingeschalteter Arten. Der Stand zeigt „Art am Gerät aus“.
+- **B11 einmalig/bis:** Felder an `beobachter_regeln`; der Dienst schaltet nach dem ersten Treffer bzw. beim Ablauf ab (Wächter-Job), mit Meldung. Im Gespräch: „sobald …“ → einmalig, Zeitangabe → bis.
+- **B12 Eigene Konten zuverlässig kennen:** Beim Start fragt Alfred die Adresse jedes Microsoft-Kontos einmal ab (Graph `/me`). Heute fehlt „default“, weil die Konfiguration keine Adresse enthält. Dazu kommen IMAP-Benutzer und Dienste mit Adresse. Die Liste ist in der Beobachter-Ansicht sichtbar.
+- **B13 Git-Teil (vorgezogen aus R5):**
+  - (a) Ein Projekt, das schon auf GitLab liegt, auf ein Gerät holen (`git clone`, Remote bleibt) und dort wie jedes Geräte-Projekt weiterentwickeln.
+  - Nach jeder abgenommenen Etappe wird zu GitLab gepusht, mit einem Token je Projekt aus den Projektumgebungen (nie das Owner-Token).
+- **B14 Deploy auf einen anderen Rechner (b):**
+  - Das Gerät pusht; der vorhandene Deploy-Skill holt den Stand auf das Ziel.
+  - Danach Nachkontrolle: Status, HTTP-Probe, Logs ohne Fehlermuster (der Deploy-Skill prüft heute nur `curl localhost` und meldet auch bei Fehlschlag Erfolg).
+  - Jeder Deploy und jeder Rollback wird bestätigt. „In dev automatisch nach grüner Abnahme“ ist ein Schalter je Projekt (Standard aus).
+  - Rollback heute nur `git revert HEAD` ohne docker-compose-Zweig; dafür braucht es den Stand vor dem Deploy und einen Compose-Zweig.
+
+**Reihenfolge (Vorschlag, nicht freigegeben):** 1) B10 + B11 + B12 (nur Beobachter, klein) → 2) B13 Git-Teil → 3) B14 Deploy mit Nachkontrolle.
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)
