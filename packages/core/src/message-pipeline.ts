@@ -1162,7 +1162,8 @@ export class MessagePipeline {
       // v658 — Projekt-Chat: bei projectId in metadata den Projekt-Kontext laden
       // und in den System-Prompt injizieren. So weiß der LLM cwd, repo, aktive Sessions,
       // offene Items, letzte Decisions etc. ohne dass der User sie tippen muss.
-      const projectIdForChat = message.metadata?.projectId;
+      // v1419 G3 — im Projektfaden (Owner-Faden projekt-<id8>) gilt der Projekt-Kontext wie im Web-Projekt-Chat
+      const projectIdForChat = message.metadata?.projectId ?? /^projekt-([0-9a-f]{8})$/.exec(gespraech?.faden ?? '')?.[1];
       if (projectIdForChat && this.projectRepo) {
         try {
           // v667 — masterUserId ist hier bereits auf project-owner überschrieben (Fix C oben)

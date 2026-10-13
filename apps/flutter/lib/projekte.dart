@@ -70,8 +70,10 @@ String laufStatus(String s) => switch (s) {
 String zustandText(String z) => switch (z) { 'laeuft' => '▶ läuft', 'wartet' => '⏳ wartet auf dich', _ => 'ruht' };
 
 class Projekte extends StatefulWidget {
-  const Projekte({super.key, required this.json, this.aufMeldung, this.anfang});
+  const Projekte({super.key, required this.json, this.aufMeldung, this.anfang, this.aufGespraech});
   final JsonAbruf json;
+  /// 1.17.0 G3 — Projektfaden öffnen (Owner-Faden projekt-<id8>)
+  final void Function(String faden)? aufGespraech;
   /// 1.16.1 — gleich dieses Projekt öffnen (Live-Leiste)
   final String? anfang;
   final void Function(String text)? aufMeldung;
@@ -99,7 +101,7 @@ class _ProjekteState extends State<Projekte> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     if (gewaehlt != null) {
-      return ProjektDetail(key: ValueKey(gewaehlt), id: gewaehlt!, json: widget.json, aufMeldung: widget.aufMeldung, zurueck: () { setState(() => gewaehlt = null); laden(); });
+      return ProjektDetail(key: ValueKey(gewaehlt), id: gewaehlt!, json: widget.json, aufMeldung: widget.aufMeldung, aufGespraech: widget.aufGespraech, zurueck: () { setState(() => gewaehlt = null); laden(); });
     }
     final l = liste;
     return RefreshIndicator(onRefresh: laden, child: ListView(padding: const EdgeInsets.all(16), children: [
@@ -124,7 +126,8 @@ class _ProjekteState extends State<Projekte> {
 }
 
 class ProjektDetail extends StatefulWidget {
-  const ProjektDetail({super.key, required this.id, required this.json, required this.zurueck, this.aufMeldung});
+  const ProjektDetail({super.key, required this.id, required this.json, required this.zurueck, this.aufMeldung, this.aufGespraech});
+  final void Function(String faden)? aufGespraech;
   final String id;
   final JsonAbruf json;
   final VoidCallback zurueck;
@@ -258,7 +261,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
       final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': 'frage', 'text': t});
       final ok = r['success'] == true;
       if (!mounted) return;
-      setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Gefragt.'}\nDie Antwort kommt als Meldung in den Chat.' : '${r['error'] ?? 'Fehler'}'; });
+      setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Gefragt.'}\nDie Antwort kommt ins Gespräch zum Projekt.' : '${r['error'] ?? 'Fehler'}'; });
       if (ok) frage.clear();
     } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
     finally { if (mounted) setState(() => plant = false); }
@@ -295,6 +298,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
       Row(children: [
         IconButton(tooltip: 'Zurück zur Liste', onPressed: widget.zurueck, icon: const Icon(Icons.arrow_back)),
         Expanded(child: Text('${j?['name'] ?? 'Projekt'}', style: theme.textTheme.titleLarge)),
+        if (widget.aufGespraech != null && RegExp(r'^[0-9a-f]{8}').hasMatch(widget.id)) TextButton.icon(key: const Key('projekt-gespraech'), onPressed: () => widget.aufGespraech!('projekt-${widget.id.substring(0, 8)}'), icon: const Icon(Icons.forum_outlined, size: 18), label: const Text('Gespräch zum Projekt')), // 1.17.0 G3
         IconButton(tooltip: 'Aktualisieren', onPressed: laden, icon: const Icon(Icons.refresh)),
       ]),
       if (fehler != null) Text('Nicht geladen: $fehler', style: TextStyle(color: theme.colorScheme.error)),
@@ -319,7 +323,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
         const SizedBox(height: 8),
         Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Frage zum Projekt', style: theme.textTheme.titleSmall),
-          Text('Claude Code liest im Projekt und antwortet, ändert aber nichts. Die Antwort kommt nach etwa einer Minute als Meldung in den Chat.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+          Text('Claude Code liest im Projekt und antwortet, ändert aber nichts. Die Antwort kommt nach etwa einer Minute ins Gespräch zum Projekt.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
           const SizedBox(height: 8),
           TextField(key: const Key('frage-feld'), controller: frage, minLines: 1, maxLines: 4, enabled: !plant, decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'z. B. Woher holt die App die Hofer-Angebote?')),
           const SizedBox(height: 8),

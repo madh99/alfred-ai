@@ -52,7 +52,7 @@ void main() {
     await t.tap(find.byKey(const Key('fragen')));
     await t.pumpAndSettle();
     expect(gesendet, {'aktion': 'frage', 'text': 'Woher kommen die Hofer-Angebote?'});
-    expect(find.textContaining('Die Antwort kommt als Meldung in den Chat'), findsOneWidget);
+    expect(find.textContaining('Die Antwort kommt ins Gespräch zum Projekt'), findsOneWidget);
   });
 
   testWidgets('1.15.3 angehaltener Lauf: Fortsetzen; wartender Lauf zeigt „wartet auf Gerät"', (t) async {
@@ -106,6 +106,16 @@ void main() {
     expect(find.text('🔨 Claude Code arbeitet · 14 Schritte'), findsOneWidget);
     expect(find.text('✏️ ändert src/quellen/spar.js'), findsOneWidget);
     await t.pumpWidget(const SizedBox()); // Takt beenden
+  });
+
+  testWidgets('1.17.0 G3 Gespräch zum Projekt öffnet den Projektfaden', (t) async {
+    String? geoeffnet;
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async => {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': []};
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'b77431a2-e388', json: json, zurueck: () {}, aufGespraech: (f) => geoeffnet = f))));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('projekt-gespraech')));
+    expect(geoeffnet, 'projekt-b77431a2');
   });
 
   testWidgets('1.15.1 offene Planfrage: Freigeben direkt in der Projektansicht', (t) async {

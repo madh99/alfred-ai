@@ -71,7 +71,8 @@ export interface SatellitProjektDeps {
   anwenden: (rest: string[], erledigt: number, m: Mutation) => string[];
   aktion: (geraetId: string, aktion: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<AktionsErgebnis>;
   frage: (s: ProjektStand, text: string, nonce: string) => Promise<void>;
-  melde: (s: ProjektStand, text: string) => Promise<void>;
+  /** v1419 G3 — art: 'ende' (Projekt beendet → auch ins Hauptgespräch), 'frage' (Rückfrage, nur Projektfaden), sonst Etappenmeldung */
+  melde: (s: ProjektStand, text: string, art?: 'etappe' | 'ende' | 'frage') => Promise<void>;
   vorgang?: { anlegen: (s: ProjektStand) => Promise<string | undefined>; schritt: (s: ProjektStand, text: string) => Promise<void>; abschliessen: (s: ProjektStand, text: string) => Promise<void>; /** v1392 — „nächster Schritt" nachführen */ stand?: (s: ProjektStand, text: string, wartet: boolean) => Promise<void> };
   ordner?: string;
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
@@ -174,6 +175,7 @@ export class SatellitProjekte {
     if (art !== 'plan') s.status = 'wartet_owner';
     this.sichere(s);
     await this.d.frage(s, text, nonce);
+    if (art !== 'plan') await this.d.melde(s, text, 'frage').catch(() => undefined); // v1419 G3 — Rückfrage auch im Projektfaden (die Bestätigung selbst geht wie bisher)
     if (art !== 'plan') await this.d.vorgang?.stand?.(s, `Wartet auf dich: ${text.split('\n')[0]!.slice(0, 150)}`, true).catch(() => undefined);
   }
 
@@ -437,7 +439,7 @@ export class SatellitProjekte {
     const ok = s.erledigt.filter(x => x.ok).length;
     const text = `${status === 'fertig' ? '🏁 Projekt fertig' : status === 'angehalten' ? '⏸ Projekt angehalten' : '⏹ Projekt abgebrochen'}: „${s.ziel.slice(0, 120)}" auf ${s.geraet}${grund ? ` — ${grund}` : ''}. ${ok}/${s.plan.length} Etappen ok, ${s.kostenUsd.toFixed(2)} USD, ${Math.round((this.jetzt() - s.start) / 60_000)} min. Verzeichnis: ${s.projekt}`;
     this.d.logger.info({ id: s.id, status, grund, etappenOk: ok, etappen: s.plan.length, kostenUsd: s.kostenUsd }, 'v1387 Satelliten-Projekt beendet');
-    await this.d.melde(s, text);
+    await this.d.melde(s, text, 'ende');
     await this.d.vorgang?.abschliessen(s, text).catch(() => undefined);
     await this.d.akte?.beruehren?.(s).catch(() => undefined); // v1398
   }

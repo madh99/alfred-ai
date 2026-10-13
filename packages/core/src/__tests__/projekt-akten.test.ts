@@ -307,3 +307,23 @@ describe('Live-Aktivität in der Anzeige', () => {
     expect(laufAnzeige({ ...basis, status: 'fertig' }, live).live).toBeUndefined();
   });
 });
+
+// v1419 G3 — Meldungen tragen ihre Art: Etappe (nur Projektfaden), Frage (Faden, Bestätigung wie bisher), Ende (auch Hauptgespräch)
+describe('Art der Projektmeldungen', () => {
+  it('Etappe, Frage, Ende', async () => {
+    const arten: Array<[string | undefined, string]> = []; const fragen: Array<{ nonce: string }> = []; let n = 0;
+    const p = new SatellitProjekte({
+      planen: async () => ['A'], bewerten: async () => ({ kind: 'proceed' }), anwenden: (r) => r,
+      aktion: async (_g, a) => (a === 'auftrag_starten' ? { success: true, data: { id: `a${++n}` } } : { success: true, data: { ok: true } }),
+      frage: async (_s, _t, nonce) => { fragen.push({ nonce }); }, melde: async (_s, t, art) => { arten.push([art, t.slice(0, 12)]); },
+      logger: { info: () => undefined, warn: () => undefined },
+    });
+    const s = await p.starte({ geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', pruefBefehle: [] });
+    await p.antwort(s.id, fragen[0]!.nonce);
+    p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: 'a1', status: 'fertig', titel: '', projekt: '/x', text: 'ok', kosten: 0 } as GeraetEreignis);
+    await new Promise(r => setTimeout(r, 10));
+    expect(arten.map(a => a[0])).toEqual([undefined, 'frage']); // Etappenstart, dann „weiter?" ohne Abnahme
+    await p.antwort(s.id, fragen.at(-1)!.nonce);
+    expect(arten.at(-1)![0]).toBe('ende');
+  });
+});

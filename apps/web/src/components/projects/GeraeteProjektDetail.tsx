@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import type { AlfredClient, ProjectDetail, GeraetLauf } from '@/lib/alfred-client';
-import { ProjectChat } from './ProjectChat';
 
 /**
  * v1399 — Detailansicht eines Geräte-Projekts (Spec „Projekte sichtbar und fortsetzbar", Owner 12.10.: ins vorhandene Projekt-
@@ -76,7 +75,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
     setBusy(true); setMeldung(null);
     try {
       const r = await client.geraetProjektFrage(p.id, text);
-      setMeldung({ ok: r.success, text: r.success ? `${r.display ?? 'Gefragt.'}\nDie Antwort kommt als Meldung (Telegram/App).` : (r.error ?? 'Fehler') });
+      setMeldung({ ok: r.success, text: r.success ? `${r.display ?? 'Gefragt.'}\nDie Antwort kommt ins Gespräch zum Projekt.` : (r.error ?? 'Fehler') });
       if (r.success) setFrage('');
     } catch (err) { setMeldung({ ok: false, text: err instanceof Error ? err.message : String(err) }); }
     finally { setBusy(false); }
@@ -153,7 +152,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
 
       <div className="bg-[#161616] border border-[#2a2a2a] rounded p-3 space-y-2">
         <div className="text-sm text-gray-200 font-medium">Frage zum Projekt</div>
-        <div className="text-[11px] text-gray-500">Claude Code liest im Projekt und antwortet, ändert aber nichts. Die Antwort kommt nach etwa einer Minute als Meldung.</div>
+        <div className="text-[11px] text-gray-500">Claude Code liest im Projekt und antwortet, ändert aber nichts. Die Antwort kommt nach etwa einer Minute ins Gespräch zum Projekt.</div>
         <div className="flex gap-2">
           <input value={frage} onChange={e => setFrage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') fragen(); }} placeholder="z. B. Woher holt die App die Hofer-Angebote?" className="flex-1 px-3 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-sm text-gray-200" disabled={busy} />
           <button onClick={fragen} disabled={busy || !frage.trim()} className="px-3 py-1.5 text-xs bg-[#1a1a1a] text-gray-200 rounded border border-[#2a2a2a] disabled:opacity-40">Fragen</button>
@@ -246,7 +245,8 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
         </div>
       )}
 
-      <ProjectChat projectId={p.id} projectName={p.name} projectCwd={p.cwd ?? undefined} />
+      {/* v1419 G3 — ein Gespräch zum Projekt für App, Web und Telegram (/faden): der Projektfaden */}
+      <a href={`/alfred/chat/?faden=projekt-${p.id.slice(0, 8)}`} className="inline-flex items-center gap-2 px-3 py-1.5 text-xs bg-[#1a1a1a] text-gray-200 rounded border border-[#2a2a2a] hover:bg-[#222]">💬 Gespräch zum Projekt öffnen</a>
     </div>
   );
 }

@@ -51,6 +51,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1419] - 2026-10-13
+
+### Added — Projektfaden: ein Gespräch je Projekt (v1419, App 1.17.0, G3)
+
+Jedes Geräte-Projekt hat einen eigenen Gesprächsfaden „🔨 <Projektname>“. Er ist in der App, im Web und in Telegram über `/faden` derselbe.
+
+- **Was im Faden steht:** Etappenmeldungen, Rückfragen, Antworten auf Fragen zum Projekt und das Ende. Er bleibt im Verlauf gespeichert und erscheint sofort auf den Geräten des Owners.
+- **Projekt-Kontext:** Rückfragen im Faden kennen das Projekt. Alfred sieht dort Gerät, Verzeichnis und Läufe wie im Projekt-Chat des Webs.
+- **Hauptgespräch:** bekommt nur noch das Ende als kurze Zeile („🔨 Angebots-Radar: … — Details im Projekt“) und die Entscheidungen, die wie bisher als Bestätigung kommen.
+- **Projektansicht in App und Web:** Ein Knopf „Gespräch zum Projekt“ öffnet den Faden. Fragen aus der Projektansicht werden dort beantwortet.
+
 ## [0.19.0-jarvis.1418] - 2026-10-13
 
 ### Added — Live-Aktivität laufender Projekte (v1418, App 1.16.1, G2)

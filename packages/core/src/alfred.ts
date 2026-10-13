@@ -15719,7 +15719,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
       weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, ctx(`sitzung:${geraetId}`)),
-      frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, ctx(`sitzung:${geraetId}`)), // v1404 Antwort in die App-Sitzung
+      frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, ctx(/^[0-9a-f]{8}/.test(id) ? `owner:faden:projekt-${id.slice(0, 8)}` : `sitzung:${geraetId}`)), // v1404; v1419 G3 Antwort in den Projektfaden
       entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
       diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
@@ -15826,12 +15826,19 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       void namenAuffrischen();
       return a.id;
     };
+    /** v1419 G3 — Faden eines Geräte-Projekts (Owner-Faden, in App, Web und Telegram-/faden gleich) */
+    const projektFaden = (akteId?: string): string | undefined => (akteId && /^[0-9a-f]{8}/.test(akteId) ? `projekt-${akteId.slice(0, 8)}` : undefined);
     const projekte = new SatellitProjekte({
       // v1398 — Weiterarbeit: Bestand als Daten an das Ziel, frühere Läufe und Commits über die vorhandenen Blöcke des Planers
       planen: async (ziel, k) => (await createProjectPlan(k?.bestand ? `${ziel}\n\n${k.bestand}` : ziel, this.llmProvider, k?.vorherige, k?.commits)).phases,
       // v1399 — jeder Lauf ist eine Projekt-Sitzung (Typ geraet): angelegt mit der Freigabe, zusammengefasst beim Ende
       akte: {
-        zuordnen: async (s) => { const id = await zuordnen(s); if (id && aktenRepo) await aktenRepo.sitzung(id, s, s.start).catch((err: Error) => this.logger.warn({ err: err.message, lauf: s.id }, 'v1399 Projekt-Sitzung nicht angelegt')); return id; },
+        zuordnen: async (s) => {
+          const id = await zuordnen(s);
+          if (id && aktenRepo) await aktenRepo.sitzung(id, s, s.start).catch((err: Error) => this.logger.warn({ err: err.message, lauf: s.id }, 'v1399 Projekt-Sitzung nicht angelegt'));
+          const f = projektFaden(id); if (f) await this.ownerFadenUmbenennen(f, `🔨 ${s.akteName ?? 'Projekt'}`).catch(() => false); // v1419 G3
+          return id;
+        },
         beruehren: async (s) => { if (!aktenRepo || !s.akteId) return; await aktenRepo.sitzung(s.akteId, s, s.start, Date.now()).catch(() => undefined); await this.projectRepo?.touch(s.akteId).catch(() => undefined); },
       },
       bewerten: async (i) => assessPlanProgress(this.llmProvider, i) as Promise<import('./projekt/satellit-projekt.js').Mutation>,
@@ -15842,7 +15849,17 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const platform = this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api';
         await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform, source: 'geraet', sourceId: `projekt-${s.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'satellit_antwort', task_id: s.id, freigabe: nonce }, timeoutMinutes: 720 });
       },
-      melde: async (s, text) => { await this.meldeOhneModell(`[${s.id}] ${text}`, s.herkunft); void this.aktualisiereLage(); }, // v1393 Lage-Zeile sofort nachziehen
+      // v1419 G3 — Owner 13.10.: Projektmeldungen in den Projektfaden; ins Hauptgespräch nur Ende und Entscheidungen (Rückfragen kommen
+      // dort wie bisher als Bestätigung). Ohne Akte (vor der Freigabe) wie bisher in die Sitzung des Starts.
+      melde: async (s, text, art) => {
+        const faden = projektFaden(s.akteId);
+        if (!faden) await this.meldeOhneModell(`[${s.id}] ${text}`, s.herkunft);
+        else {
+          await this.meldeInFaden(faden, text);
+          if (art === 'ende') await this.meldeOhneModell(`🔨 ${s.akteName ?? 'Projekt'}: ${text.split('\n')[0]!.slice(0, 220)} — Details im Projekt`, s.herkunft);
+        }
+        void this.aktualisiereLage(); // v1393 Lage-Zeile sofort nachziehen
+      },
       vorgang: {
         anlegen: async (s) => { const o = owner(); if (!o) return undefined; return (await vorgaenge.anlegen({ userId: o, titel: `Projekt auf ${s.geraet}: ${s.ziel.slice(0, 80)}`, ziel: s.projekt, besitzer: 'alfred', status: 'offen', quelle: 'projekt', autonomie: 'bestaetigen', kategorie: 'projekt', naechsterSchritt: 'Plan bestätigen' })).id; },
         schritt: async (s, text) => { const o = owner(); if (!o || !s.vorgangId) return; await vorgaenge.schritt({ vorgangId: s.vorgangId, userId: o, art: 'ausgefuehrt', skill: 'project_agent', aktion: 'etappe', beschreibung: text, autonomie: 'bestaetigen', quelle: 'projekt' }); },
@@ -15962,6 +15979,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const n = nameBereinigen(neu, t.akte.pfad);
         if (!neu.trim()) return { success: false, error: 'name fehlt (neuer Projektname)' };
         await aktenRepo!.aendern(t.o, t.akte.id, { name: n });
+        { const f = projektFaden(t.akte.id); if (f) await this.ownerFadenUmbenennen(f, `🔨 ${n}`).catch(() => false); } // v1419 G3
         for (const l of laeufeVon(t.akte.id)) projekte.setzeAkte(l.id, t.akte.id, n);
         await namenAuffrischen();
         return { success: true, display: `Projekt ${t.akte.name} heißt jetzt ${n}.` };
@@ -16053,7 +16071,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       entscheiden: async (id: string, lauf: string, e: string) => (projekte.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') ? this.geraeteLaufEntscheiden!(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }), // v1403
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
       diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
-      frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never), // v1404
+      frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never), // v1404; v1419 G3
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
     // v1393 — Lage nach dem Start einmal berechnen (sonst fehlte sie bis zum nächsten Befund-/Vorgangsereignis; Realfall 12.10.: stand null nach Update)
@@ -16077,6 +16095,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
 
   /** v1382/v1387 — feste Meldung ohne Modell: Sitzung des Starts plus Owner-Chat als Kopie. */
   private async meldeOhneModell(text: string, herkunft?: { chatId: string; platform: string }): Promise<string[]> {
+    // v1419 G3 — Herkunft ein Owner-Faden (Projektfaden): dort speichern und an die Owner-Geräte schieben, keine Kopie ins Hauptgespräch
+    if (herkunft?.chatId?.startsWith('owner:faden:')) { await this.meldeInFaden(herkunft.chatId.slice('owner:faden:'.length), text); return [`faden:${herkunft.chatId}`]; }
     const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.discord?.enabled ? 'discord' : this.config.whatsapp?.enabled ? 'whatsapp' : 'api') as Platform;
     const ownerChatId = this.config.security?.ownerUserId ?? '';
     const ziele: Array<{ platform: Platform; chatId: string }> = [];
@@ -16096,6 +16116,14 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     return zugestellt;
   }
 
+  /** v1419 G3 — Meldung in einen Owner-Faden: im Gespräch speichern, an verbundene Owner-Geräte schieben (die App zeigt sie im Faden). */
+  private async meldeInFaden(faden: string, text: string): Promise<void> {
+    await this.meldungSpeichern(text, { platform: 'api', chatId: `owner:faden:${faden}` }).catch((err: Error) => this.logger.warn({ err: err.message, faden }, 'v1419 Faden-Meldung nicht gespeichert'));
+    const gw = this.geraeteGateway; const istOwner = this.istOwnerGeraetGemerkt;
+    if (!gw || !istOwner) return;
+    for (const id of gw.verbundeneIds()) { if (await istOwner(id).catch(() => false)) gw.sendeAn(id, { typ: 'nachricht', text, faden }); }
+  }
+
   /**
    * v1406 — Realfall 13.10. 00:16–00:35: Etappen- und Endmeldungen eines aus der App gestarteten Laufs gingen nur als Live-Push an die
    * App; nach dem Neustart der App (Update) lud sie den Verlauf vom Server — die Meldungen fehlten dort. Jetzt steht jede Meldung
@@ -16111,7 +16139,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       const owner = await this.geraetGehoertOwner(m[1]!).catch(() => false);
       ziel = !owner ? { platform: 'api', chatId: herkunft!.chatId } : m[2] ? fadenSchluessel(m[2]) : ziel;
     } else if (herkunft?.chatId?.startsWith('owner:faden:')) ziel = { platform: 'api', chatId: herkunft.chatId };
-    const c = await this.conversationRepo.findByPlatformChat(ziel.platform as Platform, ziel.chatId);
+    let c = await this.conversationRepo.findByPlatformChat(ziel.platform as Platform, ziel.chatId);
+    // v1419 G3 — Projektfaden darf entstehen (Owner-Faden), sonst nur bestehende Gespräche
+    if ((!c || c.deletedAt) && ziel.chatId.startsWith('owner:faden:projekt-') && this.ownerMasterUserId) c = await this.conversationRepo.create(ziel.platform as Platform, ziel.chatId, this.ownerMasterUserId);
     if (!c || c.deletedAt) return;
     await this.conversationRepo.addMessage(c.id, 'assistant', text, undefined, 'meldung');
   }
