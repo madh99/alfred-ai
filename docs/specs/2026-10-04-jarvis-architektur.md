@@ -851,11 +851,11 @@ Jeder Schritt ist eine eigene Version mit Live-Beweis auf der Ubuntu-VM bzw. dem
   - Nur Gespräch, keine App-/Web-Maske für das Deploy-Ziel.
   - **v1438 (Sicherheitsprüfung):** Ein Deploy-Ziel wird erst nach der Bestätigung des Owners gespeichert und als bestätigt markiert. Deploys, auch automatische, gibt es nur für bestätigte Ziele. Die Einmal-Kennungen stammen aus randomBytes(16).
 - **v1439/v1440 (13.10. spät, Owner: „Alfred hat diese Token doch schon“ + Deploy-UI fehlt):**
-  - Token: zuerst das Projekt-Token, sonst das vorhandene Forge-Token, nur für dessen Host (). „Nie das Owner-Token“ war meine Annahme, keine Owner-Vorgabe.
+  - Token: zuerst das Projekt-Token, sonst das vorhandene Forge-Token, nur für dessen Host (`forgeTokenFuer`). „Nie das Owner-Token“ war meine Annahme, keine Owner-Vorgabe.
   - Deploy-Bereich in App 1.24.0 und Web: Remote, Token-Quelle, Ziel zur Bestätigung, Deployen/Rollback, letzter Deploy dauerhaft.
-  - v1440: HTTP-Repo-Adressen immer mit  (sonst 301-Weiterleitung, die beim Token-Weg bewusst gesperrt ist).
-  - **Beweis 13.10.:** privates Repo  per Chat auf die VM geholt („mitToken“ true,  ohne Zugang, Deploy-Bereich zeigt ); Probe archiviert, Ordner gelöscht.
-  - Nicht gepusht: dein echtes Repo wurde nicht verändert.
+  - v1440: HTTP-Repo-Adressen immer mit `.git` (sonst 301-Weiterleitung, die beim Token-Weg bewusst gesperrt ist).
+  - **Beweis 13.10.:** privates Repo `lokalkraftlanding` per Chat auf die VM geholt („mitToken“ true, `.git/config` ohne Zugang, Deploy-Bereich zeigt `token: gitlab`); Probe archiviert, Ordner gelöscht.
+  - Nicht gepusht: Das echte Repo des Owners wurde nicht verändert.
   - **Offen (Owner):** erstes Projekt mit Remote + Deploy-Ziel (z. B. dev auf .96) deployen und bestätigen → Live-Beweis Nachkontrolle/Rollback.
 
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
