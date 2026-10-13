@@ -48,7 +48,7 @@ export interface GeraeteGatewayDeps {
   beiVerbindung?: (geraetId: string) => void;
   /** v1429 R4a — Beobachtungen eines Geräts (nur Kopfdaten) */
   beiBeobachtung?: (geraetId: string, ereignisse: Array<{ regel: string; quelle: string; art: string; schluessel: string; zeit: string; kopf: Record<string, unknown> }>) => void;
-  beiEreignis?: (e: { geraet: string; skillName: string; ereignis: import('@alfred/types').GeraetEreignis; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
+  beiEreignis?: (e: { geraet: string; skillName: string; ereignis: import('@alfred/types').GeraetEreignis; herkunft?: import('./auftrag-herkunft.js').Herkunft }) => Promise<void>;
   nachFreigabe?: (v: { geraet: string; skillName: string; beschreibung: string; bis: number; aktionen: string[]; domains: string[]; herkunft?: { chatId: string; platform: string; userId: string } }) => Promise<void>;
   now?: () => number;
 }
@@ -326,7 +326,7 @@ export class GeraeteGateway {
   }
 
   /** v1404 — Herkunft eines vom Gehirn direkt gestarteten Auftrags (Frage zum Projekt): die Ende-Meldung geht in die fragende Sitzung. */
-  merkeAuftragHerkunft(geraetId: string, auftragId: string, h: { chatId: string; platform: string; userId: string }): void { this.auftraege.merke(geraetId, auftragId, h); }
+  merkeAuftragHerkunft(geraetId: string, auftragId: string, h: import('./auftrag-herkunft.js').Herkunft): void { this.auftraege.merke(geraetId, auftragId, h); }
 
   /** v1387 — verbundenes Gerät nach Name (ohne Groß-/Kleinschreibung) oder ID. */
   geraetNachName(name: string): { id: string; name: string; aktionen: string[] } | undefined {

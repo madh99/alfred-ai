@@ -107,6 +107,8 @@ export interface SkillContext {
   };
   /** AbortSignal for cooperative cancellation (e.g. pause). */
   abortSignal?: AbortSignal;
+  /** v1432 — Zusatz zur Antwort dieses Zugs (Pipeline): Quellenzeilen darunter; `ausstehend` ersetzt die Antwort durch einen festen Satz */
+  antwortZusatz?: { quellen: string[]; ausstehend?: string };
   /** v890 — Per-Turn-CLI-Override aus dem Projekt-Chat-Picker. Wenn gesetzt,
    *  nutzen project_agent/code_agent DIESE CLI statt input.agent/agents[0].
    *  Nur der Projekt-Chat setzt ihn (er kennt das Projekt + dessen agentStrategy);

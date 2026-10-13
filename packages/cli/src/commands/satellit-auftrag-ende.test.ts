@@ -44,6 +44,8 @@ describe('Auftragsende (v1382)', () => {
     const e = endeEreignis(m, { text: 'x'.repeat(5000), kosten: 0.5 });
     expect(e).toMatchObject({ typ: 'ereignis', art: 'auftrag', auftragId: 'a1', status: 'fertig', kosten: 0.5, dauerS: 125, dateienAnzahl: 2 });
     expect(String(e.text)).toHaveLength(3000);
+    expect(endeEreignis(m, { text: 'ok', sitzung: 'sess-1' }).sitzung).toBe('sess-1'); // v1432
+    expect('sitzung' in endeEreignis(m, { text: 'ok' })).toBe(false);
   });
 
   it('offene Endmeldungen: beendete ungemeldete, toter Prozess aus dem Protokoll; gemeldete und laufende nicht', () => {

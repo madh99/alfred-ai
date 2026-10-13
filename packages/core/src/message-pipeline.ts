@@ -282,6 +282,9 @@ export class MessagePipeline {
   /** v1347 — Ablage zugestellter Anhänge: die Antwort trägt Verweise, der Verlauf zeigt Fotos auch nach dem Neuladen. */
   private anhangAblage?: { lege(a: SkillResultAttachment[], gespraech: string): Array<{ id: string; name: string; mime: string; groesse: number }> };
   setAnhangAblage(a: NonNullable<MessagePipeline['anhangAblage']>): void { this.anhangAblage = a; }
+  /** v1432 — eigene Daten zu einem Geräte-Projekt (Etappenberichte, Commits, frühere Antworten von Claude Code) für den Projektfaden */
+  private geraeteProjektWissen?: (projektId: string) => string | undefined;
+  setGeraeteProjektWissen(f: (projektId: string) => string | undefined): void { this.geraeteProjektWissen = f; }
 
   /** v1354 — „Alfred arbeitet" an die Geräte des Owners (start/status/ende je Anfrage in einem Owner-Gespräch). */
   private beiArbeit?: (e: ArbeitsEreignis) => void;
@@ -647,6 +650,7 @@ export class MessagePipeline {
       // HA context
       if (this.nodeId !== 'single') {
         baseContext.nodeId = this.nodeId;
+        baseContext.antwortZusatz = { quellen: [] }; // v1432
         baseContext.clusterEnabled = true;
       }
 
@@ -1240,11 +1244,14 @@ export class MessagePipeline {
               if (ab >= 0) lines.splice(ab);
               lines.push(`- Gerät: ${geraetP.geraet ?? 'Satellit'} (Verzeichnis liegt AUF DEM GERÄT, nicht auf dem Server)`);
               if (geraetP.pruefBefehle?.length) lines.push(`- Abnahme je Etappe: ${geraetP.pruefBefehle.join(' ; ')}`);
+              // v1432 — eigene Daten zuerst (Realfall 13.10.: Alfred riet, statt Etappenberichte und frühere Antworten zu nutzen)
+              const wissen = (() => { try { return this.geraeteProjektWissen?.(proj.id); } catch { return undefined; } })();
+              if (wissen) lines.push(`\n### Was Alfred zu diesem Projekt schon weiß (eigene Daten)\n${wissen}`);
               lines.push(`\n### Anweisungen für diesen Projekt-Chat (Projekt auf einem Gerät)`);
               lines.push(`- **ZIEL-BINDUNG**: Arbeite NUR an diesem Projekt.`);
               lines.push(`- Bauen/Erweitern/Fixen ("baue X ein", "fix Y") → project_agent action=projekt_weiter projekt="${proj.name}" goal=<NUR der Wunsch des Owners>. Gerät, Verzeichnis, Prüfbefehle und Bestand kennt Alfred — nicht nachfragen.`);
               lines.push(`- Stand, Läufe, Etappen, Commits → project_agent action=projekt_akte projekt="${proj.name}".`);
-              lines.push(`- Fragen zum Code oder Inhalt ("wie funktioniert …", "woher kommen …") → project_agent action=projekt_frage projekt="${proj.name}" frage=<Frage> (Claude Code nur lesend, Antwort nach ≈1 min).`);
+              lines.push(`- Fragen zum Code, Stand oder Inhalt ("wie funktioniert …", "woher kommen …"): ZUERST im Abschnitt „Was Alfred zu diesem Projekt schon weiß“ nachsehen. Steht die Antwort dort, direkt antworten und sagen, worauf sie beruht (Etappenbericht, Commit oder frühere Antwort von Claude Code mit Datum). Sonst project_agent action=projekt_frage projekt="${proj.name}" frage=<Frage>: Claude Code liest nur, Alfred wartet auf die Antwort (bis ≈2 min) und bekommt sie als Ergebnis — erst DANN antworten, auf Basis dieser Antwort. Vor dem Ergebnis NIE eine eigene Vermutung als Antwort schreiben.`);
               lines.push(`- Projektregeln ("immer Changelog führen", "Commits auf Deutsch", "README pflegen") → project_agent action=projekt_konventionen projekt="${proj.name}" mit changelog/readme/conventional_commits=true|false oder regel=<Text>; ohne Parameter anzeigen.`);
               lines.push(`- Hat der Owner Dateien angehängt (Upload-Zeile „Schlüssel: …“): bei projekt_frage und projekt_weiter anhaenge=[Schlüssel] mitgeben — Alfred legt sie für Claude Code ins Projekt. Nie behaupten, Claude Code könne Anhänge nicht sehen.`);
               lines.push(`- Starten, Neustarten, Status oder einzelne Befehle im Projektordner ("starte die App", "läuft der Server?") → Geräte-Skill ${geraetP.geraet ? geraetSkillName(geraetP.geraet) : 'geraet_<name>'} (action=shell, cwd=${proj.cwd ?? 'Projektordner'}; Dauerprozesse mit nohup … & im Hintergrund starten, Ausgabe in eine Logdatei; der Owner bestätigt). Code ändern → projekt_weiter.`);
@@ -1720,6 +1727,10 @@ export class MessagePipeline {
         }
       }
       if (!responseText) responseText = '(no response)';
+      // v1432 — Frage zum Projekt: Antwort von Claude Code steht noch aus → fester Satz statt eigener Vermutung; sonst Quellenzeile darunter
+      const zusatz = baseContext.antwortZusatz;
+      if (zusatz?.ausstehend && zusatz.quellen.length === 0) responseText = zusatz.ausstehend;
+      else if (zusatz?.quellen.length) for (const q of new Set(zusatz.quellen)) if (!responseText.includes(q)) responseText += `\n\n🔎 ${q}`;
 
       // 7b. Output moderation (optional — skipped when no moderationService configured)
       if (this.moderationService && responseText && responseText !== '(no response)') {
@@ -2303,7 +2314,9 @@ export class MessagePipeline {
 
       const execStart = Date.now();
       try {
-        const result = await this.skillSandbox.execute(skill, toolCall.input, execContext, undefined, tracker);
+        // v1432 — Frage zum Projekt wartet bis ≈2 min auf Claude Code (project_agent sonst 30 s)
+        const zeitLimit = toolCall.name === 'project_agent' && (toolCall.input as { action?: unknown }).action === 'projekt_frage' ? 150_000 : undefined;
+        const result = await this.skillSandbox.execute(skill, toolCall.input, execContext, zeitLimit, tracker);
         // v610 G7 — persist skill input as activity-log details so downstream
         // reasoning sources (v608 F8 "Recent Deploys", SkillFailureReflector)
         // can actually find host/project/cwd. Secrets are redacted up-front.

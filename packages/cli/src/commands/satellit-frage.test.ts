@@ -107,3 +107,13 @@ describe('schwaerze', () => {
     expect(schwaerze('✏️ schreibt src/a.js')).toBe('✏️ schreibt src/a.js');
   });
 });
+
+// v1432 — Folgefrage in derselben Claude-Code-Sitzung (nur lesend bleibt nur lesend)
+describe('Folgefrage', () => {
+  it('--resume nur mit gültiger Sitzungskennung, Plan-Modus und Sperren bleiben', () => {
+    const a = argumenteFuer({ prompt: 'P', nurLesen: true, sitzung: '0f8e2c1a-1234-4abc-9def-001122334455' });
+    expect(a.slice(5, 7)).toEqual(['--resume', '0f8e2c1a-1234-4abc-9def-001122334455']);
+    expect(a).toEqual(expect.arrayContaining(['--permission-mode', 'plan', '--disallowedTools', NUR_LESEN_GESPERRT]));
+    expect(argumenteFuer({ prompt: 'P', nurLesen: true, sitzung: '--dangerously-skip-permissions' })).not.toContain('--resume');
+  });
+});

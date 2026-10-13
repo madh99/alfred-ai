@@ -6,7 +6,9 @@ import { dirname } from 'node:path';
  * auch nach einem Neustart des Gehirns in die richtige Sitzung geht (vorher: nur noch Owner-Chat). Einträge älter als
  * 7 Tage verfallen (so weit reicht auch das Nachreichen am Satelliten).
  */
-export interface Herkunft { chatId: string; platform: string; userId: string }
+/** v1432 — Frage zum Projekt: Alfred liefert seine Antwort nach, wenn niemand mehr auf das Ende wartet (Zeitüberschreitung, Neustart, App-Route) */
+export interface FrageHerkunft { akteId: string; name: string; geraet: string; frage: string; sitzung?: string }
+export interface Herkunft { chatId: string; platform: string; userId: string; frage?: FrageHerkunft }
 interface Eintrag extends Herkunft { seit: number }
 
 const FRIST_MS = 7 * 86_400_000;
@@ -22,7 +24,7 @@ export class AuftragHerkunft {
   }
 
   merke(geraetId: string, auftragId: string, h: Herkunft): void {
-    this.eintraege.set(`${geraetId}:${auftragId}`, { chatId: h.chatId, platform: h.platform, userId: h.userId, seit: this.now() });
+    this.eintraege.set(`${geraetId}:${auftragId}`, { chatId: h.chatId, platform: h.platform, userId: h.userId, ...(h.frage ? { frage: h.frage } : {}), seit: this.now() });
     this.sichere();
   }
 
@@ -33,7 +35,7 @@ export class AuftragHerkunft {
     if (!e) return undefined;
     this.eintraege.delete(k);
     this.sichere();
-    return { chatId: e.chatId, platform: e.platform, userId: e.userId };
+    return { chatId: e.chatId, platform: e.platform, userId: e.userId, ...(e.frage ? { frage: e.frage } : {}) };
   }
 
   private sichere(): void {

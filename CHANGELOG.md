@@ -55,6 +55,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1432] - 2026-10-13
+
+### Changed — Frage zum Projekt: eine Antwort, auf Basis von Claude Code (v1432)
+
+Realfall 13.10.: Bei einer Frage im Projektfaden schrieb Alfred sofort eine eigene Antwort. Etwa eine Minute später kam die Rohantwort von Claude Code als zweite Nachricht.
+
+- **Eigene Daten zuerst:** Der Projektfaden enthält jetzt, was Alfred schon weiß: die letzten Läufe mit Etappenberichten, geänderten Dateien und Commits sowie die letzten Antworten von Claude Code. Steht die Antwort dort, antwortet Alfred direkt und nennt die Grundlage.
+- **Warten statt raten:** `projekt_frage` wartet bis etwa 2 Minuten auf Claude Code und liefert dessen Antwort als Werkzeug-Ergebnis. Alfred antwortet einmal, auf dieser Basis, mit der Quellenzeile „Quelle: Claude Code auf <Gerät>, nur lesend, <Kosten>“.
+- **Länger als 2 Minuten:** Statt einer Vermutung steht fest „Ich lasse Claude Code auf <Gerät> nachsehen …“. Sobald die Antwort da ist, liefert Alfred sie zusammengefasst im selben Gespräch nach. Das gilt auch nach einem Neustart und für Fragen aus der Projektansicht. Ohne Modell kommt die Rohantwort wie bisher.
+- **Folgefragen in derselben Claude-Code-Sitzung** (`--resume`, weiter Plan-Modus mit gesperrten Schreib- und Shell-Werkzeugen). Eine neue Sitzung beginnt, wenn ein Lauf seither am Projekt gearbeitet hat oder die Sitzung älter als 24 h ist. Lässt sich die gemerkte Sitzung nicht fortsetzen, fragt Alfred einmal frisch.
+- Satellit: `projekt_frage` nimmt `sitzung` an; das Ende-Ereignis meldet die Sitzungskennung.
+
 ## [0.19.0-jarvis.1431] - 2026-10-13
 
 ### Added — Build-Wache für Geräte-Projekte (v1431, App 1.22.0, Spec R4c B6)
