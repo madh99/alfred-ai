@@ -1653,6 +1653,11 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/frage`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ text }) });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
+  /** v1417 G1 — Änderungen eines Etappen-Commits (Statistik oder Diff einer Datei) */
+  async geraetProjektDiff(id: string, commit: string, datei?: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/diff`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ commit, ...(datei ? { datei } : {}) }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   /** v1415 — angehaltenen Lauf fortsetzen */
   async geraetLaufFortsetzen(id: string, lauf: string): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/fortsetzen`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ lauf }) });
@@ -3448,10 +3453,13 @@ export interface Project {
   pruefBefehle?: string[];
 }
 
+/** v1417 G1 — Etappenbericht */
+export interface EtappenBericht { geprueft: boolean; fixVersuche: number; zusammenfassung: string; dateien: string[]; dateienAnzahl: number; commit?: { sha: string; titel: string }; abnahme?: { ok: boolean; protokoll: string }; dauerS?: number }
+
 /** v1399 — ein Lauf (Plan mit Etappen) eines Geräte-Projekts */
 export interface GeraetLauf {
   id: string; status: 'wartet_owner' | 'laeuft' | 'fertig' | 'abgebrochen' | 'angehalten'; grund?: string; ziel: string; plan: string[];
-  erledigt: Array<{ nr: number; ok: boolean; kostenUsd: number }>; nr: number; kostenUsd: number; start: string; aktualisiert: string; wartetAufDich: boolean;
+  erledigt: Array<{ nr: number; ok: boolean; kostenUsd: number; bericht?: EtappenBericht }>; nr: number; kostenUsd: number; start: string; aktualisiert: string; wartetAufDich: boolean;
   /** v1403 — offene Frage zum Freigeben in der Projektansicht */
   frage?: string; frageArt?: string;
   /** v1415 — Etappe wartet auf das Gerät (seit) */

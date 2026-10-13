@@ -264,3 +264,36 @@ describe('Etappe wartet auf das Gerät', () => {
     expect(meldungen.at(-1)).toMatch(/24 h nicht erreichbar/);
   });
 });
+
+// v1417 G1 — Etappenbericht
+import { laufAnzeige } from '../projekt/akten-projekte.js';
+describe('Etappenbericht', () => {
+  it('speichert Zusammenfassung, Dateien (über Fix-Versuche), Commit und Abnahme; Anzeige für App/Web', async () => {
+    let pruef = 0; let n = 0; const fragen: Array<{ nonce: string }> = [];
+    const p = new SatellitProjekte({
+      planen: async () => ['Merkliste speichern'], bewerten: async () => ({ kind: 'proceed' }), anwenden: (r) => r,
+      aktion: async (_g, a) => {
+        if (a === 'auftrag_starten') return { success: true, data: { id: `a${++n}` } };
+        if (a === 'pruefen_befehl') { pruef++; return pruef === 1 ? { success: true, data: { ok: false }, display: '❌ npm test — Exit 1' } : { success: true, data: { ok: true }, display: '✅ npm test — Exit 0' }; }
+        if (a === 'projekt_lesen') return { success: true, data: { commits: [{ sha: 'abc1234', message: 'Etappe 1: Merkliste speichern', files: [] }] } };
+        return { success: true };
+      },
+      frage: async (_s, _t, nonce) => { fragen.push({ nonce }); }, melde: async () => undefined,
+      logger: { info: () => undefined, warn: () => undefined },
+    });
+    const s = await p.starte({ geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', pruefBefehle: ['npm test'] });
+    await p.antwort(s.id, fragen[0]!.nonce);
+    p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: 'a1', status: 'fertig', titel: '', projekt: '/x', text: 'Erster Versuch', kosten: 0.5, dauerS: 100, dateien: ['src/a.js'], dateienAnzahl: 1 } as GeraetEreignis);
+    await new Promise(r => setTimeout(r, 10));
+    p.auftragEnde({ typ: 'ereignis', art: 'auftrag', auftragId: 'a2', status: 'fertig', titel: '', projekt: '/x', text: 'Merkliste fertig, Tests ergänzt.', kosten: 0.2, dauerS: 50, dateien: ['src/a.js', 'tests/a.test.js'], dateienAnzahl: 2 } as GeraetEreignis);
+    await new Promise(r => setTimeout(r, 10));
+    const e = p.hole(s.id)!.erledigt[0]!;
+    expect(e).toMatchObject({ ok: true, fixVersuche: 1, zusammenfassung: 'Merkliste fertig, Tests ergänzt.', dateien: ['src/a.js', 'tests/a.test.js'], dauerS: 150, commit: { sha: 'abc1234', titel: 'Etappe 1: Merkliste speichern' }, abnahme: { ok: true, protokoll: '✅ npm test — Exit 0' } });
+    const a = laufAnzeige(p.hole(s.id)!);
+    expect(a.erledigt[0]!.bericht).toMatchObject({ geprueft: true, zusammenfassung: 'Merkliste fertig, Tests ergänzt.', dateienAnzahl: 2, commit: { sha: 'abc1234' } });
+  });
+  it('fremder Commit (andere Etappe) wird nicht zugeordnet; alte Läufe zeigen den kurzen Text', () => {
+    const alt = laufAnzeige({ id: 's', status: 'fertig', ziel: 'Z', plan: ['A'], erledigt: [{ nr: 1, ok: true, kostenUsd: 1, text: 'kurz' }], nr: 1, kostenUsd: 1, start: 0, aktualisiert: 0 });
+    expect(alt.erledigt[0]!.bericht).toMatchObject({ zusammenfassung: 'kurz', dateien: [], dateienAnzahl: 0 });
+  });
+});

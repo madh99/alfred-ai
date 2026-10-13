@@ -65,6 +65,8 @@ export interface OwnerAnsichtenDeps {
     entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1415 — angehaltenen Lauf fortsetzen */
     fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1417 G1 — Änderungen eines Etappen-Commits */
+    diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1404 — Frage zum Projekt (Claude Code nur lesend) */
     frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>;
   };
@@ -171,6 +173,10 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt entschieden', { projekt: id, lauf, aktion });
       return this.d.projekte.entscheiden(id, lauf, aktion);
     }
+    if (aktion === 'diff') { // v1417 G1 — nur lesend; commit kommt als „lauf", Datei als „text"
+      if (!this.d.projekte.diff || typeof lauf !== 'string' || !lauf) return { success: false, error: 'commit fehlt' };
+      return this.d.projekte.diff(id, lauf, typeof text === 'string' && text ? text : undefined);
+    }
     if (aktion === 'fortsetzen') { // v1415
       if (!this.d.projekte.fortsetzen || typeof lauf !== 'string' || !lauf) return { success: false, error: 'lauf fehlt' };
       this.d.protokoll?.('Projekt fortsetzen', { projekt: id, lauf });
@@ -182,7 +188,7 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt Frage', { projekt: id, laenge: f.length });
       return this.d.projekte.frage(id, f);
     }
-    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, freigeben oder ablehnen sein' };
+    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, freigeben oder ablehnen sein' };
     const t = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     if (!t) return { success: false, error: 'text fehlt (was soll als Nächstes passieren?)' };
     this.d.protokoll?.('Projekt weiter', { projekt: id, laenge: t.length });

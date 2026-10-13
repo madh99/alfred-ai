@@ -60,3 +60,24 @@ describe('Umgebung lesen', () => {
     expect(typeof u.freiGb).toBe('number');
   });
 });
+
+// v1417 G1 — Änderungen eines Commits, nur lesend, geprüfte Eingaben
+import { projektDiff } from './satellit-auftrag.js';
+describe('projektDiff', () => {
+  it('weist ungültige Kennungen und Pfade ab', () => {
+    expect(projektDiff(os.tmpdir(), '--output=/tmp/x')).toEqual({ ok: false, fehler: 'commit ungültig' });
+    expect(projektDiff(os.tmpdir(), 'abc1234', '../geheim')).toEqual({ ok: false, fehler: 'datei ungültig' });
+    expect(projektDiff(os.tmpdir(), 'abc1234', '/etc/passwd')).toEqual({ ok: false, fehler: 'datei ungültig' });
+    expect(projektDiff(os.tmpdir(), 'abc1234', '-p')).toEqual({ ok: false, fehler: 'datei ungültig' });
+  });
+  it.skipIf(!gitDa)('Statistik und Diff einer Datei', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'alfred-diff-'));
+    git(dir, 'init', '-q'); git(dir, 'config', 'user.name', 'T'); git(dir, 'config', 'user.email', 't@t');
+    writeFileSync(path.join(dir, 'a.js'), 'eins\n'); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'Etappe 1: a');
+    const sha = git(dir, 'rev-parse', 'HEAD');
+    const st = projektDiff(dir, sha);
+    expect(st.ok && st.text).toMatch(/Etappe 1: a[\s\S]*a\.js \| 1 \+/);
+    const d = projektDiff(dir, sha, 'a.js');
+    expect(d.ok && d.text).toMatch(/\+eins/);
+  });
+});

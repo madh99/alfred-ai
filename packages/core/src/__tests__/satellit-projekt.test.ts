@@ -47,7 +47,7 @@ describe('Satelliten-Projekt', () => {
     expect(String(aufrufe[0]!.params.auftrag)).toMatch(/Setze NUR Etappe 1 um: Gerüst anlegen[\s\S]*npm test/);
     for (let i = 0; i < 3; i++) await ende(s);
     expect(p.hole(s.id)!.status).toBe('fertig');
-    expect(aufrufe.map(a => a.aktion)).toEqual(['auftrag_starten', 'pruefen_befehl', 'auftrag_starten', 'pruefen_befehl', 'auftrag_starten', 'pruefen_befehl']);
+    expect(aufrufe.map(a => a.aktion).filter(a => a !== 'projekt_lesen')).toEqual(['auftrag_starten', 'pruefen_befehl', 'auftrag_starten', 'pruefen_befehl', 'auftrag_starten', 'pruefen_befehl']); // v1417: nach jeder Etappe liest der Bericht den Commit
     expect(aufrufe[1]!.params).toEqual({ pruefungen: [{ art: 'befehl', ziel: 'npm test', cwd: start.projekt, timeoutS: 600 }] });
     expect(meldungen.at(-1)).toMatch(/Projekt fertig.*3\/3 Etappen ok, 0\.60 USD/);
   });

@@ -640,6 +640,8 @@ Datenmenge (Fortschritt nur gebündelt, nicht gespeichert); Fremdinhalt in Anzei
 2. Was bleibt im Hauptgespräch: nur Ende und Entscheidungen (Empfehlung) — oder auch Etappenstarts?
 3. Live-Aktivität auch in Telegram (eine sich aktualisierende Nachricht) — oder nur App/Web (Empfehlung)?
 
+**Owner-Entscheidungen 13.10. („ok wie vorgeschlagen"):** Reihenfolge G1 → G2 → G3; im Hauptgespräch nur Ende und Entscheidungen; Live-Aktivität nur App/Web. Umsetzung freigegeben.
+
 ## Nachforschen vor dem Melden (Entwurf 11.10.2026, Schicht 2/3 — ohne Umsetzung, Owner: „als Spec ausarbeiten, keine Freigabe"; überarbeitet 11.10.: Rezepte dynamisch, Owner: „so überarbeiten, keine Freigabe")
 
 ### Anlass (Realfall 10./11.10.)

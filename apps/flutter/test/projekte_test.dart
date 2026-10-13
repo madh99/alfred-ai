@@ -72,6 +72,29 @@ void main() {
     expect(gesendet, {'aktion': 'fortsetzen', 'lauf': 'sat-1'});
   });
 
+  testWidgets('1.16.0 G1 Etappenbericht aufklappen, Änderungen ansehen', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet.add(koerper!); return {'success': true, 'display': 'abc1234 Etappe 1: Merkliste\n src/merkliste.js | 40 +++'}; }
+      return {'id': 'p1', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': ['npm test'], 'offenePunkte': [], 'laeufe': [
+        {'id': 'sat-1', 'status': 'fertig', 'ziel': 'Merkliste', 'plan': ['Merkliste speichern'], 'nr': 1, 'kostenUsd': 1.2, 'start': '2026-10-12T20:00:00Z', 'erledigt': [
+          {'nr': 1, 'ok': true, 'kostenUsd': 1.2, 'bericht': {'geprueft': true, 'fixVersuche': 0, 'zusammenfassung': 'Merkliste mit Datei-Speicher gebaut, 12 Tests ergänzt.', 'dateien': ['src/merkliste.js', 'tests/merkliste.test.js'], 'dateienAnzahl': 2, 'commit': {'sha': 'abc1234def', 'titel': 'Etappe 1: Merkliste'}, 'abnahme': {'ok': true, 'protokoll': 'ok'}, 'dauerS': 240}}]}]};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'p1', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('etappe-sat-1:0')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Merkliste mit Datei-Speicher gebaut'), findsOneWidget);
+    expect(find.textContaining('Geänderte Dateien (2): src/merkliste.js, tests/merkliste.test.js'), findsOneWidget);
+    expect(find.textContaining('Commit abc1234 · Etappe 1: Merkliste'), findsOneWidget);
+    expect(find.textContaining('Abnahme ✅'), findsOneWidget);
+    await t.tap(find.byKey(const Key('diff-sat-1:0')));
+    await t.pumpAndSettle();
+    expect(gesendet.first, {'aktion': 'diff', 'lauf': 'abc1234def'});
+    expect(find.textContaining('src/merkliste.js | 40'), findsOneWidget);
+  });
+
   testWidgets('1.15.1 offene Planfrage: Freigeben direkt in der Projektansicht', (t) async {
     Map<String, dynamic>? gesendet;
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {

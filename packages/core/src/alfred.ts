@@ -15636,6 +15636,18 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     });
   }
 
+  /** v1417 G1 — Änderungen eines Etappen-Commits (Statistik oder Diff einer Datei) vom Gerät, nur lesend. */
+  private async geraeteProjektDiff(projektId: string, commit: string, datei?: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const o = this.ownerMasterUserId ?? this.tryOwner();
+    const p = o && this.projectRepo ? await this.projectRepo.getById(o, projektId) : null;
+    if (!p?.geraetId || !p.cwd) return { success: false, error: 'kein Geräte-Projekt' };
+    const gw = this.geraeteGateway;
+    const g = gw?.geraetNachName(p.geraetId);
+    if (!gw || !g) return { success: false, error: `${p.geraet ?? 'Gerät'} ist gerade nicht verbunden` };
+    const r = await gw.sendeAktion(g.id, 'projekt_diff', { projekt: p.cwd, commit, ...(datei ? { datei } : {}) }, 30_000);
+    return r.success ? { success: true, display: r.display } : { success: false, error: r.error };
+  }
+
   /** v1415 — angehaltenen Lauf fortsetzen (App/Web „Fortsetzen"): aktuelle Etappe neu, gleiche Freigabe und Grenzen. */
   private async geraeteLaufFortsetzen(projektId: string, laufId: string): Promise<{ success: boolean; display?: string; error?: string }> {
     const s = this.satellitProjekte?.hole(laufId);
@@ -15671,6 +15683,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, ctx(`sitzung:${geraetId}`)), // v1404 Antwort in die App-Sitzung
       entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
+      diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
     };
   }
 
@@ -16000,6 +16013,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       weiter: async (id: string, text: string) => skill.execute({ action: 'projekt_weiter', projekt: id, goal: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never),
       entscheiden: async (id: string, lauf: string, e: string) => (projekte.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') ? this.geraeteLaufEntscheiden!(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }), // v1403
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
+      diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: '' } as never), // v1404
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');

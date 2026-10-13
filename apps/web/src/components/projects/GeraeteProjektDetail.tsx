@@ -41,6 +41,8 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
   const [standLaedt, setStandLaedt] = useState(false);
   const [nameEdit, setNameEdit] = useState<string | null>(null);
   const [offen, setOffen] = useState<string | null>(laeufe[0]?.id ?? null);
+  const [bericht, setBericht] = useState<string | null>(null); // v1417 G1 — aufgeklappte Etappe (lauf:nr)
+  const [diff, setDiff] = useState<{ sha: string; dateien: string[]; text: string } | null>(null);
   const laeuftGerade = laeufe.some(l => l.status === 'laeuft' || l.status === 'wartet_owner');
 
   async function weiter() {
@@ -85,6 +87,12 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
       if (r.success) setTimeout(onReload, 800);
     } catch (err) { setMeldung({ ok: false, text: err instanceof Error ? err.message : String(err) }); }
     finally { setBusy(false); }
+  }
+
+  async function diffLaden(sha: string, dateien: string[], datei?: string) {
+    setDiff({ sha, dateien, text: 'Lade …' });
+    const r: { success: boolean; display?: string; error?: string } = await client.geraetProjektDiff(p.id, sha, datei).catch((e: unknown) => ({ success: false, error: String(e) }));
+    setDiff({ sha, dateien, text: r.success ? (r.display ?? '') : `Fehler: ${r.error ?? ''}` });
   }
 
   async function standLaden() {
@@ -180,7 +188,21 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
                   {l.plan.map((etappe, i) => {
                     const e = l.erledigt.find(x => x.nr === i + 1);
                     const icon = e?.ok ? '✅' : l.status === 'laeuft' && i + 1 === l.nr ? '▶' : e ? '❌' : '·';
-                    return <div key={i} className="text-xs text-gray-300 flex gap-2"><span>{icon}</span><span className="flex-1">{etappe}</span>{e && <span className="text-gray-500">{usd(e.kostenUsd)}</span>}</div>;
+                    const b = e?.bericht; const k = `${l.id}:${i}`;
+                    return (
+                      <div key={i}>
+                        <button onClick={() => b && setBericht(bericht === k ? null : k)} className="w-full text-left text-xs text-gray-300 flex gap-2"><span>{icon}</span><span className="flex-1">{etappe}</span>{e && <span className="text-gray-500">{usd(e.kostenUsd)}</span>}{b && <span className="text-gray-500">{bericht === k ? '▴' : '▾'}</span>}</button>
+                        {b && bericht === k && (
+                          <div className="ml-5 my-1 p-2 rounded bg-[#111] border border-[#222] space-y-1 text-xs">
+                            <div className="text-gray-500">{[b.abnahme ? (b.abnahme.ok ? 'Abnahme ✅' : 'Abnahme ❌') : 'ohne Abnahme', b.fixVersuche ? `${b.fixVersuche} Fix-Versuch(e)` : '', b.dauerS !== undefined ? `${Math.round(b.dauerS / 60)} min` : ''].filter(Boolean).join(' · ')}</div>
+                            {b.zusammenfassung.trim() && <div className="text-gray-200 whitespace-pre-wrap">{b.zusammenfassung.trim()}</div>}
+                            {b.dateienAnzahl > 0 && <div className="text-gray-400">Geänderte Dateien ({b.dateienAnzahl}): {b.dateien.slice(0, 12).join(', ')}{b.dateienAnzahl > 12 ? ' …' : ''}</div>}
+                            {b.commit && <div className="flex items-center gap-2"><span className="text-gray-300 font-mono">{b.commit.sha.slice(0, 7)}</span><span className="text-gray-400 flex-1">{b.commit.titel}</span><button onClick={() => diffLaden(b.commit!.sha, b.dateien)} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-200 hover:bg-[#222]">Änderungen ansehen</button></div>}
+                            {b.abnahme && !b.abnahme.ok && b.abnahme.protokoll && <pre className="text-red-300 whitespace-pre-wrap">{b.abnahme.protokoll}</pre>}
+                          </div>
+                        )}
+                      </div>
+                    );
                   })}
                   <div className="text-[10px] text-gray-600 font-mono">{l.id}</div>
                 </div>
@@ -202,6 +224,16 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
         <div className="space-y-1">
           <div className="text-sm text-gray-200 font-medium">Offene Punkte ({offenePunkte.length})</div>
           {offenePunkte.slice(0, 20).map(i => <div key={i.id} className="text-xs text-gray-300">• {i.title}</div>)}
+        </div>
+      )}
+
+      {diff && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setDiff(null)}>
+          <div className="bg-[#141414] border border-[#2a2a2a] rounded-lg p-4 max-w-4xl w-full max-h-[85vh] overflow-auto space-y-2" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2"><div className="text-sm text-gray-200 flex-1">Änderungen {diff.sha.slice(0, 7)}</div><button onClick={() => setDiff(null)} className="text-gray-400">×</button></div>
+            {diff.dateien.length > 0 && <div className="flex flex-wrap gap-1">{diff.dateien.slice(0, 20).map(d => <button key={d} onClick={() => diffLaden(diff.sha, diff.dateien, d)} className="px-2 py-0.5 text-[11px] rounded border border-[#2a2a2a] text-gray-300 hover:bg-[#222]">{d}</button>)}</div>}
+            <pre className="text-[11px] text-gray-200 whitespace-pre-wrap font-mono">{diff.text}</pre>
+          </div>
         </div>
       )}
 

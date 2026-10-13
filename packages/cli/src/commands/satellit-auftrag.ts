@@ -467,3 +467,18 @@ export function umgebungLesen(dir: string, lauf?: (cmd: string, args: string[]) 
 
 /** v1410 — nach einer Installation die zwischengespeicherte Umgebung verwerfen. */
 export function umgebungNeu(): void { umgebungCache = undefined; }
+
+/**
+ * v1417 G1 — „Was hat sich geändert?": Statistik eines Commits und auf Wunsch der Diff einer Datei (nur lesend, gekürzt).
+ * Commit-Kennung und Dateipfad werden geprüft (keine Optionen, kein .., kein absoluter Pfad).
+ */
+export function projektDiff(dir: string, commit: string, datei?: string, git = 'git'): { ok: true; text: string } | { ok: false; fehler: string } {
+  if (!/^[0-9a-f]{4,40}$/i.test(commit)) return { ok: false, fehler: 'commit ungültig' };
+  if (datei !== undefined && (!datei || datei.startsWith('-') || /(^|[\\/])\.\.([\\/]|$)/.test(datei) || path.isAbsolute(datei))) return { ok: false, fehler: 'datei ungültig' };
+  try {
+    const text = datei
+      ? gitLauf(git, dir, ['show', '--format=%h %s', commit, '--', datei], 30_000)
+      : gitLauf(git, dir, ['show', '--stat', '--format=%h %s%n%n%b', commit], 30_000);
+    return { ok: true, text: text.length > 12_000 ? `${text.slice(0, 12_000)}\n… (gekürzt)` : text };
+  } catch (err) { return { ok: false, fehler: (err as Error).message.slice(0, 200) }; }
+}

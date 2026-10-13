@@ -51,6 +51,20 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1417] - 2026-10-13
+
+### Added — Etappenbericht: sehen, was gemacht wurde (v1417, App 1.16.0, G1)
+
+Jede Etappe eines Geräte-Projekts hat einen Bericht, in App und Web aufklappbar. Er enthält:
+
+- die vollständige Zusammenfassung von Claude Code,
+- die geänderten Dateien, über Fix-Versuche hinweg,
+- den Commit der Etappe,
+- das Ergebnis der Abnahme, bei Rot mit Protokoll,
+- die Fix-Versuche und die Dauer.
+
+„Änderungen ansehen“ zeigt die Statistik des Commits. Ein Klick auf eine Datei zeigt ihren Diff. Beides liest die neue, nur lesende Satellitenaktion `projekt_diff` mit geprüfter Commit-Kennung und geprüftem Dateipfad. Ältere Läufe zeigen weiter den kurzen Text.
+
 ## [0.19.0-jarvis.1416] - 2026-10-13
 
 ### Fixed — Windows-Satellit wurde abgewiesen (v1416)

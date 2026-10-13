@@ -20,7 +20,11 @@ import {
 
 export interface Herkunft { chatId: string; platform: string; userId?: string }
 export type ProjektStatus = 'wartet_owner' | 'laeuft' | 'fertig' | 'abgebrochen' | 'angehalten';
-export interface EtappenErgebnis { nr: number; etappe: string; ok: boolean; geprueft: boolean; fixVersuche: number; kostenUsd: number; text: string }
+export interface EtappenErgebnis {
+  nr: number; etappe: string; ok: boolean; geprueft: boolean; fixVersuche: number; kostenUsd: number; text: string;
+  /** v1417 G1 — Etappenbericht: vollständige Zusammenfassung von Claude Code, geänderte Dateien, Commit, Abnahme, Dauer */
+  zusammenfassung?: string; dateien?: string[]; dateienAnzahl?: number; commit?: { sha: string; titel: string }; abnahme?: { ok: boolean; protokoll: string }; dauerS?: number;
+}
 export interface ProjektStand {
   id: string; geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle: string[]; grenzen: Grenzen;
   herkunft?: Herkunft; ownerId?: string; vorgangId?: string;
@@ -47,6 +51,8 @@ export interface ProjektStand {
   /** v1410 R3c — Werkzeuge, nach deren Installation schon gefragt wurde (keine Schleife); letztes Prüfprotokoll für den Fix-Versuch ohne Installation */
   installiertGefragt?: string[];
   letztesProtokoll?: string;
+  /** v1417 G1 — gesammelt über alle Aufträge der laufenden Etappe (inkl. Fix-Versuche) */
+  etappeLauf?: { text: string; dateien: string[]; dateienAnzahl: number; dauerS: number };
   /** v1415 — Etappe konnte nicht starten, weil das Gerät kurz weg war (Update, Neustart): startet, sobald es wieder verbunden ist */
   wartetAufGeraet?: { auftrag: string; titel: string; seit: number };
   letzterText?: string;
@@ -236,7 +242,7 @@ export class SatellitProjekte {
 
   private async naechsteEtappe(s: ProjektStand): Promise<void> {
     if (s.nr >= s.plan.length) { await this.beende(s, 'fertig'); return; }
-    s.nr += 1; s.fixVersuch = 0; s.etappeKostenUsd = 0;
+    s.nr += 1; s.fixVersuch = 0; s.etappeKostenUsd = 0; s.etappeLauf = undefined;
     await this.starteAuftrag(s, etappenAuftrag({ ziel: s.ziel, plan: s.plan, nr: s.nr, pruefBefehle: s.pruefBefehle, bestehend: s.bestehend, umgebung: s.umgebung }), `Etappe ${s.nr}: ${s.plan[s.nr - 1]!.slice(0, 60)}`);
   }
 
@@ -281,6 +287,10 @@ export class SatellitProjekte {
     const kosten = e.kosten ?? 0;
     s.kostenUsd += kosten; s.etappeKostenUsd += kosten;
     s.letzterText = (e.text ?? '').slice(-400);
+    // v1417 G1 — Bericht der Etappe sammeln (Fix-Versuche ergänzen Dateien und Dauer, der letzte Text zählt)
+    const alt = s.etappeLauf;
+    const dateien = [...new Set([...(alt?.dateien ?? []), ...(e.dateien ?? [])])].slice(0, 200);
+    s.etappeLauf = { text: (e.text ?? '').slice(-8000) || alt?.text || '', dateien, dateienAnzahl: Math.max(dateien.length, (alt?.dateienAnzahl ?? 0) + (e.dateienAnzahl ?? 0) - (e.dateien?.filter(d => alt?.dateien.includes(d)).length ?? 0)), dauerS: (alt?.dauerS ?? 0) + (e.dauerS ?? 0) };
     this.sichere(s);
     const etappe = s.plan[s.nr - 1]!;
     if (e.status === 'abgebrochen') { await this.beende(s, 'abgebrochen', 'Auftrag am Gerät abgebrochen'); return; }
@@ -290,7 +300,7 @@ export class SatellitProjekte {
       const fehltOhne = fehlendeWerkzeuge(e.text ?? '', '').filter(w => !(s.installiertGefragt ?? []).includes(w));
       if (fehltOhne.length) { await this.frageInstallation(s, fehltOhne[0]!, etappe); return; }
       // ohne Abnahme keine automatische nächste Etappe (Owner-Entscheidung 12.10.)
-      this.vermerke(s, { ok: e.status === 'fertig', geprueft: false });
+      await this.vermerke(s, { ok: e.status === 'fertig', geprueft: false });
       await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" ${e.status === 'fertig' ? 'fertig' : 'mit Fehler beendet'} (ungeprüft, ${s.etappeKostenUsd.toFixed(2)} USD). Mit der nächsten Etappe weitermachen?`);
       return;
     }
@@ -298,7 +308,7 @@ export class SatellitProjekte {
     const ok = p.success && (p.data as { ok?: boolean } | undefined)?.ok === true;
     const protokoll = p.display ?? p.error ?? 'keine Ausgabe';
     if (ok) {
-      this.vermerke(s, { ok: true, geprueft: true });
+      await this.vermerke(s, { ok: true, geprueft: true, protokoll });
       await this.d.melde(s, `✅ Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" abgenommen${s.fixVersuch ? ` nach ${s.fixVersuch} Fix-Versuch(en)` : ''} · ${s.etappeKostenUsd.toFixed(2)} USD, gesamt ${s.kostenUsd.toFixed(2)} USD.`);
       await this.d.vorgang?.schritt(s, `Etappe ${s.nr} abgenommen: ${etappe.slice(0, 160)}`).catch(() => undefined);
       await this.umplanen(s, true, protokoll);
@@ -318,13 +328,28 @@ export class SatellitProjekte {
       await this.starteAuftrag(s, fixAuftrag({ ziel: s.ziel, nr: s.nr, etappe, versuch: s.fixVersuch, pruefprotokoll: protokoll }), `Etappe ${s.nr}: Fix ${s.fixVersuch}`);
       return;
     }
-    this.vermerke(s, { ok: false, geprueft: true });
+    await this.vermerke(s, { ok: false, geprueft: true, protokoll });
     await this.stelleFrage(s, 'weiter', `❌ Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" nach ${s.grenzen.maxFixVersuche} Fix-Versuchen weiter rot:\n${protokoll.slice(0, 800)}\nTrotzdem mit der nächsten Etappe weitermachen? (Sonst: stoppen)`);
   }
 
-  private vermerke(s: ProjektStand, o: { ok: boolean; geprueft: boolean }): void {
-    s.erledigt = [...s.erledigt.filter(x => x.nr !== s.nr), { nr: s.nr, etappe: s.plan[s.nr - 1]!, ok: o.ok, geprueft: o.geprueft, fixVersuche: s.fixVersuch, kostenUsd: s.etappeKostenUsd, text: s.letzterText ?? '' }];
+  private async vermerke(s: ProjektStand, o: { ok: boolean; geprueft: boolean; protokoll?: string }): Promise<void> {
+    const l = s.etappeLauf;
+    const commit = await this.letzterEtappenCommit(s);
+    s.erledigt = [...s.erledigt.filter(x => x.nr !== s.nr), {
+      nr: s.nr, etappe: s.plan[s.nr - 1]!, ok: o.ok, geprueft: o.geprueft, fixVersuche: s.fixVersuch, kostenUsd: s.etappeKostenUsd, text: s.letzterText ?? '',
+      ...(l?.text ? { zusammenfassung: l.text } : {}), ...(l ? { dateien: l.dateien, dateienAnzahl: l.dateienAnzahl, dauerS: l.dauerS } : {}),
+      ...(commit ? { commit } : {}), ...(o.geprueft && o.protokoll !== undefined ? { abnahme: { ok: o.ok, protokoll: o.protokoll.slice(0, 2000) } } : {}),
+    }];
     this.sichere(s);
+  }
+
+  /** v1417 G1 — Commit dieser Etappe (Etappen-Auftrag committet mit „Etappe <n>: …"); nur lesend, Fehler egal. */
+  private async letzterEtappenCommit(s: ProjektStand): Promise<{ sha: string; titel: string } | undefined> {
+    const r = await this.d.aktion(s.geraetId, 'projekt_lesen', { projekt: s.projekt }, 30_000).catch(() => undefined);
+    const c = (r?.data as { commits?: Array<{ sha: string; message: string }> } | undefined)?.commits?.[0];
+    if (!c || !new RegExp(`^Etappe ${s.nr}\\b`).test(c.message)) return undefined;
+    if (s.erledigt.some(x => x.nr !== s.nr && x.commit?.sha === c.sha)) return undefined;
+    return { sha: c.sha, titel: c.message.split('\n')[0]!.slice(0, 160) };
   }
 
   private async umplanen(s: ProjektStand, buildOk: boolean, protokoll: string): Promise<void> {
@@ -383,7 +408,7 @@ export class SatellitProjekte {
       // v1410 R3c — ohne Installation: wie bisher Fix-Versuch (mit Abnahme) bzw. Frage nach der nächsten Etappe (ohne)
       const etappe = s.plan[s.nr - 1]!;
       if (s.pruefBefehle.length) { await this.nachRot(s, etappe, s.letztesProtokoll ?? ''); return; }
-      this.vermerke(s, { ok: false, geprueft: false });
+      await this.vermerke(s, { ok: false, geprueft: false });
       await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" ohne Installation (ungeprüft). Mit der nächsten Etappe weitermachen?`);
     }).then(() => true);
   }

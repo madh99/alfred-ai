@@ -38,6 +38,8 @@ class Lauf {
   final double kostenUsd;
   final DateTime? start;
   int get ok => erledigt.where((e) => e['ok'] == true).length;
+  /// 1.16.0 G1 — Etappenbericht (Zusammenfassung, Dateien, Commit, Abnahme) der Etappe i (0-basiert)
+  Map<String, dynamic>? bericht(int i) => erledigt.where((x) => (x['nr'] as num?)?.toInt() == i + 1).firstOrNull?['bericht'] as Map<String, dynamic>?;
   /// Zeichen je Etappe: ✅ abgenommen, ▶ läuft, ❌ nicht abgenommen, · offen.
   String zeichen(int i) {
     final e = erledigt.where((x) => (x['nr'] as num?)?.toInt() == i + 1).firstOrNull;
@@ -129,6 +131,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
   bool standLaedt = false, plant = false, meldungOk = true;
   final wunsch = TextEditingController();
   final frage = TextEditingController(); // 1.15.2
+  final berichtOffen = <String>{}; // 1.16.0 G1 — aufgeklappte Etappen (lauf:nr)
   final offen = <String>{};
 
   @override
@@ -156,6 +159,60 @@ class _ProjektDetailState extends State<ProjektDetail> {
   }
 
   /// 1.15.3 — angehaltenen Lauf fortsetzen (aktuelle Etappe neu, gleiche Freigabe)
+  /// 1.16.0 G1 — eine Etappe: Zeile, aufklappbar mit Bericht
+  Widget _etappe(ThemeData theme, Lauf l, int i) {
+    final b = l.bericht(i);
+    final key = '${l.id}:$i';
+    final auf = berichtOffen.contains(key);
+    final dim = theme.colorScheme.onSurfaceVariant;
+    final dateien = ((b?['dateien'] as List<dynamic>?) ?? []).map((e) => '$e').toList();
+    final anzahl = (b?['dateienAnzahl'] as num?)?.toInt() ?? dateien.length;
+    final commit = b?['commit'] as Map<String, dynamic>?;
+    final abnahme = b?['abnahme'] as Map<String, dynamic>?;
+    final dauer = (b?['dauerS'] as num?)?.toInt();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      InkWell(key: Key('etappe-$key'), onTap: b == null ? null : () => setState(() => auf ? berichtOffen.remove(key) : berichtOffen.add(key)), child: Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(child: Text('${l.zeichen(i)} ${l.plan[i]}', style: theme.textTheme.bodySmall)),
+        if (b != null) Icon(auf ? Icons.expand_less : Icons.expand_more, size: 16, color: dim),
+      ]))),
+      if (auf && b != null) Container(
+        margin: const EdgeInsets.only(left: 18, bottom: 8), padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(8)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text([if (abnahme != null) (abnahme['ok'] == true ? 'Abnahme ✅' : 'Abnahme ❌') else 'ohne Abnahme', if ((b['fixVersuche'] as num? ?? 0) > 0) '${b['fixVersuche']} Fix-Versuch(e)', if (dauer != null) '${(dauer / 60).round()} min'].join(' · '), style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+          if ('${b['zusammenfassung'] ?? ''}'.trim().isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: SelectableText('${b['zusammenfassung']}'.trim(), style: theme.textTheme.bodySmall)),
+          if (anzahl > 0) Padding(padding: const EdgeInsets.only(top: 6), child: Text('Geänderte Dateien ($anzahl): ${dateien.take(12).join(', ')}${anzahl > 12 ? ' …' : ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+          if (commit != null) Padding(padding: const EdgeInsets.only(top: 6), child: Row(children: [
+            Expanded(child: Text('Commit ${'${commit['sha']}'.substring(0, '${commit['sha']}'.length.clamp(0, 7))} · ${commit['titel'] ?? ''}', style: theme.textTheme.bodySmall)),
+            TextButton(key: Key('diff-$key'), onPressed: () => _diffZeigen('${commit['sha']}', dateien), child: const Text('Änderungen ansehen')),
+          ])),
+          if (abnahme != null && abnahme['ok'] != true && '${abnahme['protokoll'] ?? ''}'.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: SelectableText('${abnahme['protokoll']}', style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace', color: theme.colorScheme.error))),
+        ]),
+      ),
+    ]);
+  }
+
+  /// 1.16.0 G1 — Änderungen eines Commits: Statistik; Antippen einer Datei zeigt ihren Diff (nur lesend)
+  Future<void> _diffZeigen(String sha, List<String> dateien) async {
+    var text = '';
+    Future<String> hole([String? datei]) async {
+      try { final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': 'diff', 'lauf': sha, if (datei != null) 'text': datei}); return r['success'] == true ? '${r['display'] ?? ''}' : 'Fehler: ${r['error'] ?? ''}'; } catch (e) { return 'Fehler: $e'; }
+    }
+    text = await hole();
+    if (!mounted) return;
+    await showDialog<void>(context: context, builder: (ctx) => StatefulBuilder(builder: (ctx, setD) {
+      return AlertDialog(
+        title: Text('Änderungen ${sha.substring(0, sha.length.clamp(0, 7))}'),
+        content: SizedBox(width: 720, child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (dateien.isNotEmpty) Wrap(spacing: 6, runSpacing: 4, children: [for (final d in dateien.take(20)) ActionChip(label: Text(d, style: const TextStyle(fontSize: 11)), onPressed: () async { setD(() => text = 'Lade …'); final t = await hole(d); setD(() => text = t); })]),
+          const SizedBox(height: 8),
+          SelectableText(text, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+        ]))),
+        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Schließen'))],
+      );
+    }));
+  }
+
   Future<void> fortsetzen(Lauf l) async {
     setState(() { plant = true; meldung = null; });
     try {
@@ -287,7 +344,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
               if (offen.contains(l.id)) ...[
                 if (l.grund != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text(l.grund!, style: theme.textTheme.bodySmall?.copyWith(color: dim))),
                 const SizedBox(height: 6),
-                for (var i = 0; i < l.plan.length; i++) Padding(padding: const EdgeInsets.only(bottom: 3), child: Text('${l.zeichen(i)} ${l.plan[i]}', style: theme.textTheme.bodySmall)),
+                for (var i = 0; i < l.plan.length; i++) _etappe(theme, l, i),
               ],
             ])),
           )),
