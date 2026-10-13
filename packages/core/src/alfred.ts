@@ -15974,8 +15974,10 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if ('fehler' in t) return { success: false, error: t.fehler };
         const g = gw.geraetNachName(t.akte.geraetId) ?? gw.geraetNachName(t.akte.geraet);
         if (!g) return { success: false, error: `${t.akte.geraet} ist gerade nicht verbunden — ${t.akte.name} kann erst weitergehen, wenn das Gerät online ist` };
-        const ziel = String(input.goal ?? '').trim();
-        if (!ziel) return { success: false, error: `goal fehlt: was soll am Projekt ${t.akte.name} als Nächstes passieren?` };
+        const zielRoh = String(input.goal ?? '').trim();
+        if (!zielRoh) return { success: false, error: `goal fehlt: was soll am Projekt ${t.akte.name} als Nächstes passieren?` };
+        const anh = await this.projektAnhaengeAblegen(g, t.akte.pfad, t.o, zielRoh, input.anhaenge, context); // v1424
+        const ziel = `${zielRoh}${anh.hinweis}`;
         const neu = [...((input.buildCommands as string[] | undefined) ?? []), ...((input.testCommands as string[] | undefined) ?? [])].map(String);
         return planeLauf(g, { projekt: t.akte.pfad, ziel, befehle: neu.length ? neu : t.akte.pruefBefehle, input, context });
       },
@@ -15991,21 +15993,22 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         return { success: true, display: `Projekt ${t.akte.name} heißt jetzt ${n}.` };
       },
       // v1404 — Frage zum Projekt: Claude Code nur lesend auf dem Gerät; Antwort als Ende-Meldung in die fragende Sitzung
-      frage: async (ref, frage, context) => {
+      frage: async (ref, frage, context, anhaenge) => {
         const t = await akteAus(ref);
         if ('fehler' in t) return { success: false, error: t.fehler };
         if (!frage) return { success: false, error: 'frage fehlt' };
         const g = gw.geraetNachName(t.akte.geraetId) ?? gw.geraetNachName(t.akte.geraet);
         if (!g) return { success: false, error: `${t.akte.geraet} ist gerade nicht verbunden` };
         if (!g.aktionen.includes('projekt_frage')) return { success: false, error: `Der Satellit auf ${g.name} kann noch keine Fragen (Update ≥ 1404 nötig)` };
-        const r = await gw.sendeAktion(g.id, 'projekt_frage', { projekt: t.akte.pfad, frage }, 60_000);
+        const anh = await this.projektAnhaengeAblegen(g, t.akte.pfad, t.o, frage, anhaenge, context); // v1424
+        const r = await gw.sendeAktion(g.id, 'projekt_frage', { projekt: t.akte.pfad, frage: `${frage}${anh.hinweis}` }, 60_000);
         const id = (r.data as { id?: string } | undefined)?.id;
         if (!r.success || !id) return { success: false, error: r.error ?? 'Frage nicht gestellt' };
         if (context.chatId) gw.merkeAuftragHerkunft(g.id, id, { chatId: context.chatId, platform: context.platform, userId: context.userId });
         // v1420 — eröffnet die Frage den Projektfaden, bekommt er gleich den Projektnamen (sonst stünde dort projekt-<id8>)
         if (/^[0-9a-f]{8}/.test(t.akte.id)) await this.ownerFadenUmbenennen(`projekt-${t.akte.id.slice(0, 8)}`, `🔨 ${t.akte.name}`).catch(() => false);
         this.logger.info({ projekt: t.akte.id, auftrag: id, laenge: frage.length }, 'v1404 Frage zum Projekt gestellt');
-        return { success: true, data: { auftrag: id }, display: `Frage zu ${t.akte.name} an Claude Code auf ${g.name} gestellt (nur lesend, höchstens 0,50 $). Die Antwort kommt in etwa einer Minute.` };
+        return { success: true, data: { auftrag: id, anhaenge: anh.pfade }, display: `Frage zu ${t.akte.name} an Claude Code auf ${g.name} gestellt (nur lesend, höchstens 0,50 $)${anh.pfade.length ? ` mit ${anh.pfade.length} Anhang/Anhängen` : ''}. Die Antwort kommt in etwa einer Minute.${anh.fehler.length ? ` Nicht übergeben: ${anh.fehler.join('; ')}` : ''}` };
       },
       // v1409 R3b — Projekt-Option sudo-Sperre
       sudoSperre: async (ref, an) => {
@@ -16125,6 +16128,33 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
   }
 
   /** v1419 G3 — Meldung in einen Owner-Faden: im Gespräch speichern, an verbundene Owner-Geräte schieben (die App zeigt sie im Faden). */
+  /**
+   * v1424 — Anhänge des Owners (Dateispeicher-Schlüssel aus Parameter oder Auftragstext, Bilder der Nachricht) ins Projekt auf dem
+   * Gerät legen, bevor Claude Code startet (Realfall 13.10.: „ich kann die Screenshots nicht lesen“). Ohne Anhänge: nichts.
+   */
+  private async projektAnhaengeAblegen(g: { id: string; name: string; aktionen: string[] }, projekt: string, owner: string, text: string, explizit: unknown, context: { messageAttachments?: Array<{ type: string; mimeType: string; data: Buffer }> }): Promise<{ hinweis: string; pfade: string[]; fehler: string[] }> {
+    const { anhangSchluessel, anhangHinweis, anhangName, ANHANG_MAX_DATEIEN } = await import('./projekt/anhaenge.js');
+    const { TRANSFER_MAX_BYTES, sha256Hex } = await import('./geraete/protokoll.js');
+    const dateien: Array<{ name: string; data?: Buffer; fehler?: string }> = [];
+    for (const k of anhangSchluessel(text, owner, explizit)) {
+      try { dateien.push({ name: anhangName(k), data: await this.fileStoreRef!.read(k, owner) }); } catch { dateien.push({ name: anhangName(k), fehler: 'nicht lesbar' }); }
+    }
+    (context.messageAttachments ?? []).filter(a => a.type === 'image').forEach((a, i) => dateien.push({ name: `bild-${i + 1}.${(a.mimeType.split('/')[1] ?? 'png').replace(/[^a-z0-9]/g, '') || 'png'}`, data: a.data }));
+    const pfade: string[] = []; const fehler: string[] = [];
+    if (dateien.length === 0) return { hinweis: '', pfade, fehler };
+    if (!g.aktionen.includes('projekt_anhaenge')) return { hinweis: '', pfade, fehler: [`Der Satellit auf ${g.name} kann noch keine Anhänge übernehmen (Update ≥ 1424 nötig)`] };
+    const ordner = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+    for (const d of dateien.slice(0, ANHANG_MAX_DATEIEN)) {
+      if (!d.data) { fehler.push(`${d.name}: ${d.fehler}`); continue; }
+      if (d.data.length > TRANSFER_MAX_BYTES) { fehler.push(`${d.name}: zu groß`); continue; }
+      const r = await this.geraeteGateway!.sendeAktion(g.id, 'projekt_anhaenge', { projekt, ordner, dateiName: d.name, inhaltBase64: d.data.toString('base64'), sha256: sha256Hex(d.data) }, 60_000).catch((err: Error) => ({ success: false, error: err.message, data: undefined }));
+      const p = (r.data as { pfad?: string } | undefined)?.pfad;
+      if (r.success && p) pfade.push(p); else fehler.push(`${d.name}: ${r.error ?? 'nicht abgelegt'}`);
+    }
+    this.logger.info({ geraet: g.name, projekt, abgelegt: pfade.length, fehler }, 'v1424 Anhänge für Claude Code abgelegt');
+    return { hinweis: anhangHinweis(pfade), pfade, fehler };
+  }
+
   private async meldeInFaden(faden: string, text: string): Promise<void> {
     await this.meldungSpeichern(text, { platform: 'api', chatId: `owner:faden:${faden}` }).catch((err: Error) => this.logger.warn({ err: err.message, faden }, 'v1419 Faden-Meldung nicht gespeichert'));
     const gw = this.geraeteGateway; const istOwner = this.istOwnerGeraetGemerkt;

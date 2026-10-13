@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1424] - 2026-10-13
+
+### Added — Anhänge für Claude Code in Geräte-Projekten (v1424)
+
+Screenshots und Dateien, die der Owner zu einer Frage zum Projekt oder zu „Weiterarbeiten“ mitschickt, lagen bisher nur im Dateispeicher des Servers; Claude Code auf dem Gerät konnte sie nicht sehen. Alfred legt sie jetzt vor dem Start ins Projekt unter `.alfred-anhaenge/<Zeitpunkt>/` (lokal per `.git/info/exclude` von git ausgeschlossen, überschreibt nie) und nennt die Pfade im Auftrag; Claude Code sieht Bilder mit dem Read-Werkzeug.
+
+- Quellen: Parameter `anhaenge` des Projekt-Skills, Dateispeicher-Schlüssel im Auftragstext (feste Regel, kein Modell nötig) und Bilder der Nachricht. Nur Dateien des Owners, höchstens 6, je bis 8 MB.
+- Neue Satelliten-Aktion `projekt_anhaenge` (auto, nur im freigegebenen Projektordner). Ältere Satelliten: Hinweis „Update ≥ 1424 nötig“ statt stillem Weglassen.
+
 ## [0.19.0-jarvis.1423] - 2026-10-13
 
 ### Fixed — Projektende erscheint im Hauptgespräch (v1423)

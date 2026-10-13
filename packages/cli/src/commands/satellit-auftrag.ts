@@ -414,6 +414,27 @@ export function argumenteFuer(o: { prompt: string; nurLesen: boolean; maxKostenU
 }
 
 /** v1404 — Prompt für eine Frage zum Projekt (Frage als Text; Claude Code liest im Projektverzeichnis und antwortet). */
+/**
+ * v1424 — Anhang des Owners ins Projekt legen (für Frage und Weiterarbeit): `<projekt>/.alfred-anhaenge/<ordner>/<name>`,
+ * Ordner lokal von git ausgeschlossen (.git/info/exclude, nie .gitignore des Projekts), überschreibt nie. Rückgabe: relativer Pfad.
+ */
+export function anhangInsProjekt(projekt: string, ordner: string, name: string, inhalt: Buffer, eindeutig: (wunsch: string, belegt: (n: string) => boolean) => string): string {
+  const sicherOrdner = ordner.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'anhang';
+  const sicherName = path.basename(name).replace(/[^A-Za-z0-9._ -]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'anhang';
+  const ziel = path.join(projekt, '.alfred-anhaenge', sicherOrdner);
+  mkdirSync(ziel, { recursive: true });
+  const n = eindeutig(sicherName, x => existsSync(path.join(ziel, x)));
+  writeFileSync(path.join(ziel, n), inhalt, { flag: 'wx' });
+  const exclude = path.join(projekt, '.git', 'info', 'exclude');
+  try {
+    if (existsSync(path.join(projekt, '.git'))) {
+      const alt = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+      if (!alt.split(/\r?\n/).includes('.alfred-anhaenge/')) { mkdirSync(path.dirname(exclude), { recursive: true }); appendFileSync(exclude, `${alt && !alt.endsWith('\n') ? '\n' : ''}.alfred-anhaenge/\n`); }
+    }
+  } catch { /* Ausschluss ist Komfort — die Datei liegt trotzdem */ }
+  return path.posix.join('.alfred-anhaenge', sicherOrdner, n);
+}
+
 export function fragePrompt(frage: string, projekt: string): string {
   return `Beantworte eine Frage zum Projekt im Verzeichnis ${projekt}. Lies dafür, was du brauchst (README, Code, Konfiguration), ändere aber nichts. Antworte auf Deutsch, knapp und konkret, mit Dateinamen und Zeilen, wo hilfreich. Geheimnisse (Schlüssel, Passwörter, Tokens) nie wörtlich wiedergeben.\n\nFrage: ${frage.trim()}`;
 }

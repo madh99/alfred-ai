@@ -314,7 +314,7 @@ export interface SatellitProjektHandler {
   /** v1409 R3b — Projekt-Option sudo-Sperre */
   sudoSperre?: (ref: string, an: boolean) => Promise<SkillResult>;
   /** v1404 — Frage zum Projekt (Claude Code nur lesend) */
-  frage?: (ref: string, frage: string, context: SkillContext) => Promise<SkillResult>;
+  frage?: (ref: string, frage: string, context: SkillContext, anhaenge?: unknown) => Promise<SkillResult>;
 }
 
 export class ProjectAgentSkill extends Skill {
@@ -431,6 +431,7 @@ Actions:
           projekt: { type: 'string', description: 'Für projekt_akte/projekt_weiter/projekt_umbenennen/projekt_archivieren: Projektname, wie der Owner ihn nennt, oder Kennung prj-…' },
           name: { type: 'string', description: 'Projektname: beim start mit geraet, wenn der Owner einen nennt; bei projekt_umbenennen der neue Name' },
           frage: { type: 'string', description: 'Für projekt_frage: die Frage zum Projekt' },
+          anhaenge: { type: 'array', items: { type: 'string' }, description: 'v1424 — Für projekt_frage/projekt_weiter: Dateispeicher-Schlüssel der Dateien, die der Owner mitgeschickt hat (Screenshots, Dokumente). Alfred legt sie für Claude Code ins Projekt' },
           sudo_sperre: { type: 'boolean', description: 'start mit geraet bzw. projekt_sudo_sperre: Claude Code darf in den Aufträgen dieses Projekts kein sudo verwenden (true) bzw. wieder erlauben (false). Nur, wenn der Owner es sagt.' },
           // v851.1 — import_feature params
           feature_id: { type: 'string', description: 'Feature-UUID aus Features-Library (für import_feature)' },
@@ -490,7 +491,7 @@ Actions:
       if (action === 'projekt_umbenennen') return this.satellit.umbenennen!(ref, String(input.name ?? '').trim());
       if (action === 'projekt_archivieren') return this.satellit.archivieren!(ref);
       if (action === 'projekt_sudo_sperre') return this.satellit.sudoSperre ? this.satellit.sudoSperre(ref, input.sudo_sperre !== false) : { success: false, error: 'nicht verfügbar' };
-      if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };
+      if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context, input.anhaenge) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };
       return this.satellit.akte!(ref);
     }
     if (satId.startsWith('sat-') || action === 'satellit_antwort' || action === 'satellit_weiter') {
