@@ -31,7 +31,8 @@ export const LEER = process.platform === 'win32' ? 'NUL' : '/dev/null';
 export function ohneZugang(url: string): string { return url.replace(/^(https?:\/\/)[^@/]+@/, '$1'); }
 
 /** Adresse vergleichbar machen (ohne Zugangsdaten, ohne .git und Schrägstrich am Ende, Kleinschreibung). */
-export function repoSchluessel(url: string): string { return ohneZugang(url.trim()).toLowerCase().replace(/\.git$/, '').replace(/\/+$/, ''); }
+// v1442 — http/https desselben Repos gelten als gleich (gepusht wird ohnehin an die erwartete Adresse, mit Token nur über https)
+export function repoSchluessel(url: string): string { return ohneZugang(url.trim()).toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '').replace(/\.git$/, ''); }
 
 /**
  * Umgebung für einen git-Aufruf (Sicherheitsprüfungen 13.10.): nie Rückfragen, keine Weiterleitungen, keine Hooks (Pfad LEER —

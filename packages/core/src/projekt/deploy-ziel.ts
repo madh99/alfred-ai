@@ -114,13 +114,14 @@ export const zielBestaetigt = (roh: Record<string, unknown> | undefined): boolea
  * github.com). git@-Adressen bekommen nie ein Token (Schlüssel des Rechners).
  */
 export function forgeTokenFuer(repoUrl: string, forge?: { gitlab?: { token?: string; baseUrl?: string }; github?: { token?: string } }): { token: string; quelle: 'gitlab' | 'github' } | undefined {
-  // v1441 (Sicherheitsprüfung) — Host UND Schema müssen zur konfigurierten Adresse passen (kein Token über http, wenn GitLab per https läuft)
+  // v1442 (Owner 13.10.: „git.lokalkraft.at ist https“) — Konto-Token nur über https, nur für den Host der Forge; http-Adressen vorher
+  // mit aufHttps() aufwerten. Über http geht nie ein Konto-Token.
   const teile = (u: string) => { try { if (!/^https?:\/\//i.test(u)) return undefined; const x = new URL(u); return { host: x.host.toLowerCase(), schema: x.protocol }; } catch { return undefined; } };
   const r = teile(repoUrl);
-  if (!r) return undefined;
+  if (!r || r.schema !== 'https:') return undefined;
   const g = forge?.gitlab?.baseUrl ? teile(forge.gitlab.baseUrl) : undefined;
-  if (forge?.gitlab?.token && g && g.host === r.host && g.schema === r.schema) return { token: forge.gitlab.token, quelle: 'gitlab' };
-  if (forge?.github?.token && r.host === 'github.com' && r.schema === 'https:') return { token: forge.github.token, quelle: 'github' };
+  if (forge?.gitlab?.token && g && g.host === r.host) return { token: forge.gitlab.token, quelle: 'gitlab' };
+  if (forge?.github?.token && r.host === 'github.com') return { token: forge.github.token, quelle: 'github' };
   return undefined;
 }
 
@@ -129,4 +130,14 @@ export function tokenHinweis(quelle: 'projekt' | 'gitlab' | 'github' | undefined
   if (!quelle) return 'Kein Token (öffentliches Repo oder Schlüssel des Zielrechners).';
   const klar = repoUrl && /^http:\/\//i.test(repoUrl) ? ' Achtung: http — unverschlüsselt im Netz.' : '';
   return quelle === 'projekt' ? `Token: Projekt-Token (Projektumgebung).${klar}` : `Token: dein ${quelle === 'gitlab' ? 'GitLab' : 'GitHub'}-Konto-Token (Zugriff auf alle deine Repos) geht für den Abruf an den Zielrechner (nur als Kopfzeile, nicht gespeichert).${klar}`;
+}
+
+/** v1442 — http-Adressen auf dem Forge-Host (bzw. github.com) auf https aufwerten; andere Adressen bleiben unverändert. */
+export function aufHttps(url: string, forge?: { gitlab?: { baseUrl?: string } }): string {
+  try {
+    if (!/^http:\/\//i.test(url)) return url;
+    const h = new URL(url).host.toLowerCase();
+    const g = forge?.gitlab?.baseUrl ? new URL(forge.gitlab.baseUrl).host.toLowerCase() : undefined;
+    return h === g || h === 'github.com' ? url.replace(/^http:/i, 'https:') : url;
+  } catch { return url; }
 }

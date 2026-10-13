@@ -15,7 +15,7 @@ import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
-import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
+import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, type DeployZiel } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
 import {
@@ -15928,7 +15928,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (!g) return '⚠️ Nicht gepusht: Gerät nicht verbunden';
         if (!g.aktionen.includes('git_push')) return '⚠️ Nicht gepusht: Satellit zu alt (Update ≥ 1434)';
         const token = await this.gitTokenFuer(p.id, p.repoUrl);
-        const r = await this.geraeteGateway!.sendeAktion(g.id, 'git_push', { projekt: s.projekt, erwartet: p.repoUrl, ...(token ? { token } : {}) }, 6 * 60_000); // v1435 — nur zum Repo des Projekts
+        const r = await this.geraeteGateway!.sendeAktion(g.id, 'git_push', { projekt: s.projekt, erwartet: this.repoSicher(p.repoUrl), ...(token ? { token } : {}) }, 6 * 60_000); // v1435 — nur zum Repo des Projekts
         this.logger.info({ lauf: s.id, etappe: s.nr, ok: r.success, mitToken: !!token, ...(r.success ? r.data as object : { fehler: r.error?.slice(0, 200) }) }, 'v1434 Push nach Abnahme');
         return r.success ? `📤 ${r.display}` : `⚠️ Push fehlgeschlagen: ${r.error}${token ? '' : ' (kein GIT_TOKEN in der Projektumgebung)'}`;
       },
@@ -16210,7 +16210,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
           if (t.length !== 1) return { success: false, error: t.length ? `Mehrere Projekte passen: ${t.map(p => p.name).join(', ')}` : `Kein Server-Projekt „${roh}" mit Repo-Adresse — bitte die Adresse nennen` };
           quelle = t[0]; url = t[0]!.repoUrl!;
         }
-        url = url.replace(/^(https?:\/\/)[^@/]+@/, '$1');
+        url = this.repoSicher(url.replace(/^(https?:\/\/)[^@/]+@/, '$1')); // v1442 https
         const g = gw.geraetNachName(String(input.geraet ?? '').trim());
         if (!g) return { success: false, error: `Gerät fehlt oder nicht verbunden: ${String(input.geraet ?? '')}` };
         if (!g.aktionen.includes('git_holen')) return { success: false, error: `Der Satellit auf ${g.name} kann noch nicht holen (Update ≥ 1434 nötig)` };
@@ -16352,7 +16352,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const basis = { project: name, host: z.host, user: z.user ?? 'root', process_manager: z.prozess, ...(z.runtime ? { runtime: z.runtime } : {}) };
     const token = await this.gitTokenFuer(p.id, p.repoUrl);
     this.logger.info({ projekt: p.id, ziel: zielText(z), mitToken: !!token }, 'v1437 Deploy startet');
-    const r = await this.skillSandbox.execute(skill, { action: 'deploy', ...basis, repo_url: /^https?:\/\//i.test(p.repoUrl) && !/\.git\/?$/i.test(p.repoUrl) ? `${p.repoUrl.replace(/\/+$/, '')}.git` : p.repoUrl, /* v1440 — ohne .git leitet GitLab weiter (301); Weiterleitungen sind beim Token-Weg aus */ ...(z.appPort ? { app_port: z.appPort } : {}), ...(z.branch ? { branch: z.branch } : {}), ...(z.envStage ? { env_stage: z.envStage } : { skip_env: true }), ...(token ? { git_token: token } : {}) }, ctx);
+    const r = await this.skillSandbox.execute(skill, { action: 'deploy', ...basis, repo_url: ((u: string) => /^https?:\/\//i.test(u) && !/\.git\/?$/i.test(u) ? `${u.replace(/\/+$/, '')}.git` : u)(this.repoSicher(p.repoUrl)), /* v1442 https */ /* v1440 — ohne .git leitet GitLab weiter (301); Weiterleitungen sind beim Token-Weg aus */ ...(z.appPort ? { app_port: z.appPort } : {}), ...(z.branch ? { branch: z.branch } : {}), ...(z.envStage ? { env_stage: z.envStage } : { skip_env: true }), ...(token ? { git_token: token } : {}) }, ctx);
     const d = (r.data ?? {}) as { verified?: boolean; vorher?: string; nachher?: string; steps?: string[] };
     const status = r.success ? await this.skillSandbox.execute(skill, { action: 'status', ...basis }, ctx).catch(() => undefined) : undefined;
     const logs = r.success ? await this.skillSandbox.execute(skill, { action: 'logs', ...basis, lines: 200, seit_minuten: 10 }, ctx).catch(() => undefined) : undefined;
@@ -16383,7 +16383,11 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
    * v1439 (Owner 13.10.: „Alfred hat diese Token doch schon“) — Projekt-Token zuerst; fehlt es, das vorhandene Forge-Token aus der
    * Konfiguration, aber NUR für Repos auf dessen eigenem Host (GitLab baseUrl bzw. github.com). Nie für fremde Hosts.
    */
+  /** v1442 — Repo-Adresse für Git mit Token: http auf dem Forge-Host → https (Owner: git.lokalkraft.at ist https). */
+  private repoSicher(url: string): string { return aufHttps(url, (this.config as { codeAgents?: { forge?: { gitlab?: { baseUrl?: string } } } }).codeAgents?.forge); }
+
   private async gitTokenMitQuelle(projektId: string | undefined, repoUrl: string): Promise<{ token: string; quelle: 'projekt' | 'gitlab' | 'github' } | undefined> {
+    repoUrl = this.repoSicher(repoUrl);
     const t = await this.projektGitToken(projektId, repoUrl);
     if (t) return { token: t, quelle: 'projekt' };
     return forgeTokenFuer(repoUrl, (this.config as { codeAgents?: { forge?: Parameters<typeof forgeTokenFuer>[1] } }).codeAgents?.forge);

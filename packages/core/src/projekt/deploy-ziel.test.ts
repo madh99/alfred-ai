@@ -53,18 +53,22 @@ describe('v1437 B14 Deploy-Ziel', () => {
   });
 });
 
-import { forgeTokenFuer, tokenHinweis } from './deploy-ziel.js';
+import { forgeTokenFuer, tokenHinweis, aufHttps } from './deploy-ziel.js';
 describe('v1439 Token-Rückfall', () => {
   const forge = { gitlab: { token: 'gl', baseUrl: 'http://git.lokalkraft.at' }, github: { token: 'gh' } };
   it('nur für den eigenen Host des Tokens', () => {
-    expect(forgeTokenFuer('http://git.lokalkraft.at/madh/x.git', forge)).toEqual({ token: 'gl', quelle: 'gitlab' });
-    expect(forgeTokenFuer('http://GIT.lokalkraft.at/madh/x', forge)?.quelle).toBe('gitlab'); // Host ohne Groß/Klein
-    expect(forgeTokenFuer('https://git.lokalkraft.at/madh/x', forge)).toBeUndefined(); // v1441 anderes Schema als konfiguriert
+    // v1442 — nie über http; https auf dem Forge-Host ja (auch wenn die Konfig noch http nennt)
+    expect(forgeTokenFuer('http://git.lokalkraft.at/madh/x.git', forge)).toBeUndefined();
+    expect(forgeTokenFuer('https://git.lokalkraft.at/madh/x.git', forge)).toEqual({ token: 'gl', quelle: 'gitlab' });
+    expect(forgeTokenFuer('https://GIT.lokalkraft.at/madh/x', forge)?.quelle).toBe('gitlab');
+    expect(aufHttps('http://git.lokalkraft.at/madh/x', forge)).toBe('https://git.lokalkraft.at/madh/x');
+    expect(aufHttps('http://anderer.example/x', forge)).toBe('http://anderer.example/x');
+    expect(aufHttps('git@git.lokalkraft.at:madh/x.git', forge)).toBe('git@git.lokalkraft.at:madh/x.git');
     expect(forgeTokenFuer('https://git.lokalkraft.at.boese.example/x.git', forge)).toBeUndefined();
     expect(forgeTokenFuer('https://boese.example/git.lokalkraft.at/x.git', forge)).toBeUndefined();
     expect(forgeTokenFuer('https://github.com/madh99/alfred-ai.git', forge)).toEqual({ token: 'gh', quelle: 'github' });
     expect(forgeTokenFuer('git@git.lokalkraft.at:madh/x.git', forge)).toBeUndefined();
-    expect(forgeTokenFuer('http://git.lokalkraft.at/x.git', {})).toBeUndefined();
+    expect(forgeTokenFuer('https://git.lokalkraft.at/x.git', {})).toBeUndefined();
     // v1441 — Schema muss passen
     expect(forgeTokenFuer('http://git.example/x.git', { gitlab: { token: 'gl', baseUrl: 'https://git.example' } })).toBeUndefined();
     expect(forgeTokenFuer('https://git.example/x.git', { gitlab: { token: 'gl', baseUrl: 'https://git.example' } })?.quelle).toBe('gitlab');

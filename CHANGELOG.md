@@ -55,6 +55,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1442] - 2026-10-13
+
+### Security — Git-Token nur über https (v1442)
+
+Owner 13.10.: „git.lokalkraft.at ist https“. Der Server antwortet zusätzlich ohne Umleitung per http. Konfiguration und Projekte nannten `http://`, also ging das Token unverschlüsselt durchs Netz.
+
+- Repo-Adressen auf dem Forge-Host (und github.com) werden vor jedem Git-Aufruf mit Token auf `https://` aufgewertet: beim Holen, beim Push nach der Abnahme und beim Deploy.
+- Das Konto-Token wird über `http` nie gesendet.
+- Der Satellit vergleicht Repo-Adressen ohne Schema; ein Klon mit `http`-Remote pusht also an die `https`-Adresse des Projekts.
+- Betrieb: Die Forge-Adresse in der Server-Konfiguration ist auf `https://git.lokalkraft.at` umgestellt. Das betrifft auch den Projekt-Agenten am Server.
+
 ## [0.19.0-jarvis.1441] - 2026-10-13
 
 ### Security — Token-Rückfall: Schema-Bindung und klare Bestätigung (v1441)
