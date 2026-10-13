@@ -16350,7 +16350,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const basis = { project: name, host: z.host, user: z.user ?? 'root', process_manager: z.prozess, ...(z.runtime ? { runtime: z.runtime } : {}) };
     const token = await this.gitTokenFuer(p.id, p.repoUrl);
     this.logger.info({ projekt: p.id, ziel: zielText(z), mitToken: !!token }, 'v1437 Deploy startet');
-    const r = await this.skillSandbox.execute(skill, { action: 'deploy', ...basis, repo_url: p.repoUrl, ...(z.appPort ? { app_port: z.appPort } : {}), ...(z.branch ? { branch: z.branch } : {}), ...(z.envStage ? { env_stage: z.envStage } : { skip_env: true }), ...(token ? { git_token: token } : {}) }, ctx);
+    const r = await this.skillSandbox.execute(skill, { action: 'deploy', ...basis, repo_url: /^https?:\/\//i.test(p.repoUrl) && !/\.git\/?$/i.test(p.repoUrl) ? `${p.repoUrl.replace(/\/+$/, '')}.git` : p.repoUrl, /* v1440 — ohne .git leitet GitLab weiter (301); Weiterleitungen sind beim Token-Weg aus */ ...(z.appPort ? { app_port: z.appPort } : {}), ...(z.branch ? { branch: z.branch } : {}), ...(z.envStage ? { env_stage: z.envStage } : { skip_env: true }), ...(token ? { git_token: token } : {}) }, ctx);
     const d = (r.data ?? {}) as { verified?: boolean; vorher?: string; nachher?: string; steps?: string[] };
     const status = r.success ? await this.skillSandbox.execute(skill, { action: 'status', ...basis }, ctx).catch(() => undefined) : undefined;
     const logs = r.success ? await this.skillSandbox.execute(skill, { action: 'logs', ...basis, lines: 200, seit_minuten: 10 }, ctx).catch(() => undefined) : undefined;

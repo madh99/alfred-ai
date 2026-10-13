@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1440] - 2026-10-13
+
+### Fixed — Repo-Adressen ohne `.git` (v1440)
+
+Live-Test 13.10.: Das Holen von `http://git.lokalkraft.at/madh/lokalkraftlanding` scheiterte mit HTTP 301. GitLab leitet Adressen ohne `.git` weiter, und Weiterleitungen sind für Aufrufe mit Token seit v1435 bewusst aus.
+
+- HTTP-Repo-Adressen bekommen beim Holen und Pushen am Satelliten sowie beim Deploy am Ziel immer `.git`.
+- Weiterleitungen bleiben aus.
+
 ## [0.19.0-jarvis.1439] - 2026-10-13
 
 ### Added — Deploy in App und Web (v1439, App 1.24.0)

@@ -19,7 +19,8 @@ export function pruefeRepoUrl(url: string): { ok: true; url: string } | { ok: fa
   if (p.protocol !== 'https:' && p.protocol !== 'http:') return { ok: false, fehler: 'nur https://… oder git@host:… erlaubt' };
   if (p.username || p.password) return { ok: false, fehler: 'Zugangsdaten gehören nicht in die Adresse — das Token kommt aus der Projektumgebung' };
   if (!/^\/[A-Za-z0-9._\/-]+$/.test(p.pathname) || p.search || p.hash) return { ok: false, fehler: `ungewöhnlicher Repo-Pfad: ${p.pathname}` };
-  return { ok: true, url: `${p.protocol}//${p.host}${p.pathname}` };
+  // v1440 — immer mit .git: ohne leitet GitLab weiter (301), und Weiterleitungen sind für Aufrufe mit Token bewusst aus
+  return { ok: true, url: `${p.protocol}//${p.host}${p.pathname.replace(/\/+$/, '')}${/\.git$/i.test(p.pathname.replace(/\/+$/, '')) ? '' : '.git'}` };
 }
 
 /** Leeres Gerät für git (Windows: os.devNull = \.

@@ -14,6 +14,8 @@ describe('v1434 B13 Git-Teil am Satelliten', () => {
     expect(pruefeRepoUrl('--upload-pack=touch /tmp/x').ok).toBe(false);
     expect(pruefeRepoUrl('ext::sh -c touch% /tmp/x').ok).toBe(false);
     expect(ohneZugang('https://oauth2:abc@host/x.git')).toBe('https://host/x.git');
+    expect(pruefeRepoUrl('http://git.lokalkraft.at/madh/lokalkraftlanding')).toEqual({ ok: true, url: 'http://git.lokalkraft.at/madh/lokalkraftlanding.git' }); // v1440 sonst 301
+    expect(pruefeRepoUrl('https://h/x.git/')).toEqual({ ok: true, url: 'https://h/x.git' });
   });
 
   it('Token nur als Kopfzeile in der Umgebung; Ausgabe und Log ohne Token', () => {
