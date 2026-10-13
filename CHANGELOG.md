@@ -5,6 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — App: Gespräche fehlen nach Start ohne Server (App 1.17.1)
+
+Startete die App, während der Server nicht erreichbar war (z. B. Neustart des Servers), blieben die einmaligen Abrufe beim Start erfolglos: In der Seitenleiste stand nur „Hauptgespräch“, bis die App erneut gestartet wurde. Nach dem Wiederverbinden lädt die App jetzt Gespräche, Spiegel-Schalter und den Verlauf des offenen Gesprächs nach.
+
 ### Fixed — App: Lauf-Kreis um den Stopp-Knopf (App 1.14.1)
 
 Bis App 1.6 lief während einer Antwort ein Kreis im Senden-Knopf; seit 1.7.0 wird Senden zu Stopp, der Kreis fehlte dabei. Jetzt läuft er außen um den Stopp-Knopf — in der Eingabezeile und in der Schnellfrage; antippen bricht die Antwort weiterhin ab.
