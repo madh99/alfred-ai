@@ -98,3 +98,20 @@ describe('v1434 B13 Git-Teil am Satelliten', () => {
     expect((await gitHolen('https://git.example/gruppe/projekt.git', ziel, undefined, echt))).toMatchObject({ ok: false, fehler: expect.stringContaining('nicht leer') });
   });
 });
+
+import { gitRemoteSetzen } from './satellit-git.js';
+describe('v1444 Remote setzen', () => {
+  it('setzt, ändert (ohne abweichende pushurl) und entfernt origin; ohne Git abgelehnt', async () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'b1444-'));
+    const g = (args: string[], cwd?: string) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+    expect(await gitRemoteSetzen(tmp, 'https://h/x.git')).toMatchObject({ ok: false });
+    g(['init', '-q', tmp]);
+    expect(await gitRemoteSetzen(tmp, 'https://git.lokalkraft.at/madh/x')).toEqual({ ok: true, text: 'origin → https://git.lokalkraft.at/madh/x.git' });
+    g(['remote', 'set-url', '--push', 'origin', 'https://boese.example/r.git'], tmp);
+    expect((await gitRemoteSetzen(tmp, 'https://git.lokalkraft.at/madh/y.git')).ok).toBe(true);
+    expect(g(['remote', 'get-url', '--push', 'origin'], tmp).stdout.trim()).toBe('https://git.lokalkraft.at/madh/y.git');
+    expect(await gitRemoteSetzen(tmp, 'https://oauth2:geheim@h/x.git')).toMatchObject({ ok: false });
+    expect(await gitRemoteSetzen(tmp, undefined)).toEqual({ ok: true, text: 'Remote origin entfernt' });
+    expect(g(['remote'], tmp).stdout.trim()).toBe('');
+  });
+});

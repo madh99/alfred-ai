@@ -15,7 +15,7 @@ import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
-import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
+import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, gitlabRepoAnlegen, repoPfad, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
 import {
@@ -15749,7 +15749,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // v1443 B15 — Umgebungen aus der App
       umgebung: async (id: string, aktion: string, felder: Record<string, unknown>) => this.projektUmgebung(owner, id, aktion, felder),
       // v1439 — Deploy aus der App: derselbe Weg wie im Gespräch (Ziel, Deploy und Rollback mit Bestätigung)
-      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, ctx(`sitzung:${geraetId}`)),
+      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : aktion === 'remote' ? 'projekt_remote' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, ctx(`sitzung:${geraetId}`)),
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, ctx(/^[0-9a-f]{8}/.test(id) ? `owner:faden:projekt-${id.slice(0, 8)}` : `sitzung:${geraetId}`)), // v1404; v1419 G3 Antwort in den Projektfaden
       entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
@@ -16194,6 +16194,62 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `deploy-${p.id}-${stufe}-${Date.now()}`, description: `🚀 Deploy ${p.name} nach ${stufe} → ${zielText(e.ziel)}?\nRepo: ${this.repoSicher(p.repoUrl)}${e.ziel.branch ? ` (${e.ziel.branch})` : ''} · Umgebung „${e.ziel.envStage ?? stufe}“\n${tokenHinweis(tq, this.repoSicher(p.repoUrl))}\nDanach Nachkontrolle (Status, HTTP, Logs); bei Rot Rollback-Angebot.`, skillName: 'project_agent', skillParams: { action: 'projekt_deploy', projekt: p.id, stufe, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) });
         return ok ? { success: true, data: { bestaetigung: true }, display: `Deploy von ${p.name} nach ${stufe} (${e.ziel.host}) zur Bestätigung gestellt.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
       },
+      // v1444 — Remote eines bestehenden Geräte-Projekts: Adresse eintragen oder neues privates Repo auf der eigenen GitLab-Instanz
+      // anlegen (Owner 13.10.: beides, unter madh/), immer mit Bestätigung; danach origin am Gerät setzen und einmal pushen.
+      remote: async (ref, input, context) => {
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        const p = await this.projectRepo!.getById(t.o, t.akte.id);
+        if (!p?.geraetId || !p.cwd) return { success: false, error: 'kein Geräte-Projekt' };
+        const g = gw.geraetNachName(p.geraetId);
+        if (!g) return { success: false, error: `${p.geraet ?? 'Gerät'} ist nicht verbunden` };
+        if (!g.aktionen.includes('git_remote')) return { success: false, error: `Satellit auf ${g.name} zu alt (Update ≥ 1444)` };
+        const forge = (this.config as { codeAgents?: { forge?: { gitlab?: { token?: string; baseUrl?: string } } } }).codeAgents?.forge?.gitlab;
+        if (input.entfernen === true) {
+          const r = await gw.sendeAktion(g.id, 'git_remote', { projekt: p.cwd }, 30_000);
+          if (!r.success) return { success: false, error: r.error ?? 'Remote nicht entfernt' };
+          await this.projectRepo!.update(t.o, p.id, { repoUrl: null as never });
+          this.logger.info({ projekt: p.id }, 'v1444 Remote entfernt');
+          return { success: true, display: `${p.name}: Remote entfernt — Push und Deploy ruhen, bis wieder eins eingetragen ist.` };
+        }
+        if (typeof input.bestaetigt === 'string') {
+          const f = this.deployFreigaben.loese(input.bestaetigt, p.id, 'remote');
+          if (!f?.wert) return { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
+          let url = f.wert;
+          if (url.startsWith('anlegen:')) {
+            if (!forge?.token || !forge.baseUrl) return { success: false, error: 'Kein GitLab-Token in der Konfiguration' };
+            const a = await gitlabRepoAnlegen(this.repoSicher(forge.baseUrl), forge.token, url.slice('anlegen:'.length));
+            if (!a.ok) return { success: false, error: a.fehler };
+            this.logger.info({ projekt: p.id, repo: a.pfad }, 'v1444 GitLab-Repo angelegt');
+            url = a.url;
+          }
+          url = this.repoSicher(url);
+          const r1 = await gw.sendeAktion(g.id, 'git_remote', { projekt: p.cwd, url }, 30_000);
+          if (!r1.success) return { success: false, error: r1.error ?? 'Remote nicht gesetzt' };
+          await this.projectRepo!.update(t.o, p.id, { repoUrl: url });
+          const token = await this.gitTokenFuer(p.id, url);
+          const r2 = await gw.sendeAktion(g.id, 'git_push', { projekt: p.cwd, erwartet: url, ...(token ? { token } : {}) }, 6 * 60_000);
+          this.logger.info({ projekt: p.id, url, push: r2.success, mitToken: !!token }, 'v1444 Remote gesetzt, erster Push');
+          return { success: true, display: `🔗 ${p.name}: Remote ${url} gesetzt.\n${r2.success ? `📤 ${r2.display}` : `⚠️ Erster Push fehlgeschlagen: ${r2.error}`}\nAb jetzt: Push nach jeder abgenommenen Etappe, Deploy aus diesem Repo.` };
+        }
+        const anlegen = input.anlegen === true;
+        const roh = String(input.repo ?? input.repo_url ?? '').trim();
+        if (!anlegen && !/^(https?:\/\/[^\s@]+|git@[A-Za-z0-9.-]+:[^\s]+)$/.test(roh)) return { success: false, error: 'repo fehlt (https://… oder git@…) — oder anlegen=true für ein neues Repo auf GitLab' };
+        if (anlegen && (!forge?.token || !forge.baseUrl)) return { success: false, error: 'Kein GitLab-Token in der Konfiguration — Repo selbst anlegen und Adresse eintragen' };
+        if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+        const name = String(input.name ?? p.name).trim().slice(0, 80) || p.name;
+        const url = anlegen ? undefined : this.repoSicher(roh.replace(/^(https?:\/\/)[^@/]+@/, '$1'));
+        const nonce = this.deployFreigaben.stelle(p.id, 'remote', undefined, 24 * 3_600_000, undefined, undefined, anlegen ? `anlegen:${name}` : url);
+        const tq = url ? (await this.gitTokenMitQuelle(p.id, url).catch(() => undefined))?.quelle : 'gitlab';
+        const herkunft = context.chatId ? { chatId: context.chatId, platform: context.platform, userId: context.userId } : undefined;
+        const host = (() => { try { return new URL(this.repoSicher(forge?.baseUrl ?? '')).host; } catch { return 'GitLab'; } })();
+        const beschreibung = anlegen
+          ? `🆕 Neues privates Repo „${repoPfad(name)}“ in deinem Namensraum auf ${host} anlegen und ${p.name} (Gerät ${g.name}) dorthin pushen?`
+          : `🔗 Remote für ${p.name} (Gerät ${g.name}) setzen: ${url} — und den bisherigen Stand dorthin pushen?`;
+        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `remote-${p.id}-${Date.now()}`, description: `${beschreibung}\n${tokenHinweis(tq, url ?? this.repoSicher(forge?.baseUrl ?? ''))}\nDanach: Push nach jeder abgenommenen Etappe, Deploy aus diesem Repo.`, skillName: 'project_agent', skillParams: { action: 'projekt_remote', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) });
+        this.logger.info({ projekt: p.id, anlegen, url }, 'v1444 Remote zur Bestätigung gestellt');
+        return ok ? { success: true, data: { bestaetigung: true }, display: anlegen ? `Neues Repo „${repoPfad(name)}“ für ${p.name} zur Bestätigung gestellt.` : `Remote ${url} für ${p.name} zur Bestätigung gestellt.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
+      },
       // v1443 B15 — Hochstufen: genau den Commit, der in der Stufe davor grün deployt ist, in die nächste Stufe (immer mit Bestätigung)
       hochstufen: async (ref, input, context) => {
         const t = await akteAus(ref);
@@ -16351,7 +16407,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
       // v1439 — Deploy im Web
       deployInfo: async (id: string) => { const o = owner(); const p = o ? await this.projectRepo?.getById(o, id) : undefined; return p ? this.projektDeployInfo(p) : { error: 'nicht gefunden' }; },
-      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never),
+      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : aktion === 'remote' ? 'projekt_remote' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never),
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never), // v1404; v1419 G3
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');

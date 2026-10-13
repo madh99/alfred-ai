@@ -103,3 +103,17 @@ describe('v1443 B15 Stufen', () => {
     expect(f.loese(n, 'p1', 'deploy')).toEqual({ commit: 'abc1234', stufe: 'test' });
   });
 });
+
+import { gitlabRepoAnlegen, repoPfad } from './deploy-ziel.js';
+describe('v1444 Repo anlegen', () => {
+  it('Pfad aus dem Namen; privat, nur https, vorhandener Pfad wird nie überschrieben', async () => {
+    expect(repoPfad('Angebots-Radar Österreich')).toBe('angebots-radar-osterreich');
+    const aufrufe: Array<{ url: string; body: Record<string, unknown>; token: string }> = [];
+    const ok = (async (url: string, o: RequestInit) => { aufrufe.push({ url, body: JSON.parse(String(o.body)), token: String((o.headers as Record<string, string>)['PRIVATE-TOKEN']) }); return new Response(JSON.stringify({ http_url_to_repo: 'https://git.lokalkraft.at/madh/probe.git', path_with_namespace: 'madh/probe' }), { status: 201 }); }) as unknown as typeof fetch;
+    expect(await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', ok)).toEqual({ ok: true, url: 'https://git.lokalkraft.at/madh/probe.git', pfad: 'madh/probe' });
+    expect(aufrufe[0]).toEqual({ url: 'https://git.lokalkraft.at/api/v4/projects', body: { name: 'Probe', path: 'probe', visibility: 'private', initialize_with_readme: false }, token: 'tok' });
+    const belegt = (async () => new Response(JSON.stringify({ message: { path: ['has already been taken'] } }), { status: 400 })) as unknown as typeof fetch;
+    expect(await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', belegt)).toMatchObject({ ok: false, fehler: expect.stringContaining('gibt es „probe“ schon') });
+    expect(await gitlabRepoAnlegen('http://git.lokalkraft.at', 'tok', 'Probe', ok)).toMatchObject({ ok: false, fehler: 'GitLab nur über https' });
+  });
+});

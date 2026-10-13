@@ -78,4 +78,34 @@ void main() {
     await t.pumpAndSettle();
     expect(gesendet.lastWhere((g) => g['aktion'] == 'env_loeschen'), {'aktion': 'env_loeschen', 'deploy': {'stage': 'dev', 'key': 'DATABASE_URL'}});
   });
+
+  testWidgets('1.26.0 Remote: einrichten per Adresse oder neues GitLab-Repo, entfernen', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    var deploy = <String, dynamic>{'repoUrl': null, 'token': null, 'stufen': <String, dynamic>{}};
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async { gesendet.add(koerper ?? {}); return {'success': true, 'display': 'gestellt'}; }
+    Widget app() => MaterialApp(home: Scaffold(body: SingleChildScrollView(child: ProjektDeploy(id: 'p1', json: json, deploy: deploy, neuLaden: () async {}))));
+    await t.binding.setSurfaceSize(const Size(1000, 2400));
+    await t.pumpWidget(app());
+    expect(find.textContaining('Kein Remote'), findsOneWidget);
+    await t.tap(find.byKey(const Key('remote-bearbeiten')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('remote-entfernen')), findsNothing);
+    await t.enterText(find.byKey(const Key('remote-url')), 'https://git.lokalkraft.at/madh/x.git');
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('remote-eintragen')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'remote', 'deploy': {'repo': 'https://git.lokalkraft.at/madh/x.git'}});
+    await t.tap(find.byKey(const Key('remote-bearbeiten')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('remote-anlegen')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'remote', 'deploy': {'anlegen': true}});
+    deploy = {...deploy, 'repoUrl': 'https://git.lokalkraft.at/madh/x.git', 'token': 'gitlab'};
+    await t.pumpWidget(app());
+    await t.tap(find.byKey(const Key('remote-bearbeiten')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('remote-entfernen')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'remote', 'deploy': {'entfernen': true}});
+  });
 }

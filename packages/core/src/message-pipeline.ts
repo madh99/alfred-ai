@@ -1258,6 +1258,7 @@ export class MessagePipeline {
               // v1443 B15 — Deploy je Stufe und Umgebungen
               lines.push(`- Deploy (je Stufe dev/test/prod ein eigenes Ziel, alles mit Bestätigung des Owners): Ziel → project_agent action=projekt_deploy_ziel projekt="${proj.name}" stufe=<dev|test|prod> host=… (ohne host: anzeigen); Deploy → action=projekt_deploy stufe=…; in die nächste Stufe → action=projekt_hochstufen von=dev; zurück → action=projekt_rollback stufe=…. Die Projektumgebung der Stufe geht als .env mit.`);
               lines.push(`- Umgebungen (ENV-Werte je Stufe) → Skill environments mit project="${proj.name}" (set/list/delete/copy_stage; scan_repo erkennt die Schlüssel am Gerät). Werte nie in den Chat schreiben, nie aufs Entwicklungsgerät.`);
+              lines.push(`- Remote (GitLab) für ein Projekt ohne Remote → project_agent action=projekt_remote projekt="${proj.name}" repo=<https://…> oder anlegen=true (neues privates Repo); entfernen=true. Mit Bestätigung, danach erster Push.`); // v1444
               lines.push(`- NIE project_agent.start ohne geraet, NIE code_agent, shell, den deploy-Skill direkt oder git auf dem Server mit diesem Verzeichnis — es existiert dort nicht.`);
               lines.push(`- "füge … zur Liste" → project.add_open_item.`);
             }

@@ -55,6 +55,20 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1444] - 2026-10-13
+
+### Added — Remote für bestehende Geräte-Projekte (v1444, App 1.26.0)
+
+Owner 13.10.: „Wo stellt man für ein Projekt, das man am Gerät ohne Remote verwendet hat, ein Remote ein?“ Bisher ging das nur über `projekt_holen`.
+
+- „Remote einrichten“ in App und Web (Deploy-Bereich) und im Gespräch (`project_agent projekt_remote`):
+  - die Adresse eines vorhandenen Repos eintragen, oder
+  - ein neues privates Repo im eigenen Namensraum auf der GitLab-Instanz anlegen lassen (`anlegen=true`; Pfad aus dem Projektnamen, vorhandene Pfade werden nie überschrieben).
+  - Beides geht zur Bestätigung. Sie nennt das Repo und welches Token benutzt wird.
+- Nach der Bestätigung setzt Alfred `origin` am Gerät, ohne abweichende Push-Adresse, und pusht den bisherigen Stand einmal über den abgesicherten Weg. Danach gibt es Push nach jeder abgenommenen Etappe sowie Deploy und Hochstufen.
+- „Remote ändern“ und „Remote entfernen“; Entfernen braucht keine Bestätigung.
+- Satellit: Aktion `git_remote`. Projektfaden: Anweisung für `projekt_remote`.
+
 ## [0.19.0-jarvis.1443] - 2026-10-13
 
 ### Added — Umgebungen und Stages für Geräte-Projekte (v1443, App 1.25.0, Spec B15)

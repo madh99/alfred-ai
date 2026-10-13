@@ -85,24 +85,24 @@ export function nachkontrolle(o: { prozess: Prozess; deployOk: boolean; deployFe
 }
 
 /** Einmal-Kennungen für bestätigte Deploys/Rollbacks (die Bestätigung des Owners trägt sie; das Modell kann sie nicht erraten). */
-export type FreigabeArt = 'deploy' | 'rollback' | 'ziel';
+export type FreigabeArt = 'deploy' | 'rollback' | 'ziel' | 'remote';
 
 export class DeployFreigaben {
-  private readonly offen = new Map<string, { akteId: string; art: FreigabeArt; commit?: string; ziel?: DeployZiel; stufe?: Stufe; bis: number }>();
+  private readonly offen = new Map<string, { akteId: string; art: FreigabeArt; commit?: string; ziel?: DeployZiel; stufe?: Stufe; wert?: string; bis: number }>();
   constructor(private readonly now: () => number = Date.now) {}
   /** v1438 — Kennung aus dem CSPRNG (128 Bit); `ziel` = vorgeschlagenes Deploy-Ziel (wird erst nach der Bestätigung gespeichert). */
-  stelle(akteId: string, art: FreigabeArt, commit?: string, gueltigMs = 72 * 3_600_000, ziel?: DeployZiel, stufe?: Stufe): string {
+  stelle(akteId: string, art: FreigabeArt, commit?: string, gueltigMs = 72 * 3_600_000, ziel?: DeployZiel, stufe?: Stufe, wert?: string): string {
     const n = `${art}-${randomBytes(16).toString('hex')}`;
-    this.offen.set(n, { akteId, art, ...(commit ? { commit } : {}), ...(ziel ? { ziel } : {}), ...(stufe ? { stufe } : {}), bis: this.now() + gueltigMs });
+    this.offen.set(n, { akteId, art, ...(commit ? { commit } : {}), ...(ziel ? { ziel } : {}), ...(stufe ? { stufe } : {}), ...(wert ? { wert } : {}), bis: this.now() + gueltigMs });
     return n;
   }
   /** Löst die Kennung genau einmal ein (falsches Projekt, falsche Art oder abgelaufen → undefined). */
-  loese(nonce: string, akteId: string, art: FreigabeArt): { commit?: string; ziel?: DeployZiel; stufe?: Stufe } | undefined {
+  loese(nonce: string, akteId: string, art: FreigabeArt): { commit?: string; ziel?: DeployZiel; stufe?: Stufe; wert?: string } | undefined {
     const e = this.offen.get(nonce);
     if (!e) return undefined;
     this.offen.delete(nonce);
     if (e.akteId !== akteId || e.art !== art || e.bis < this.now()) return undefined;
-    return { ...(e.commit ? { commit: e.commit } : {}), ...(e.ziel ? { ziel: e.ziel } : {}), ...(e.stufe ? { stufe: e.stufe } : {}) };
+    return { ...(e.commit ? { commit: e.commit } : {}), ...(e.ziel ? { ziel: e.ziel } : {}), ...(e.stufe ? { stufe: e.stufe } : {}), ...(e.wert ? { wert: e.wert } : {}) };
   }
 }
 
@@ -170,3 +170,27 @@ export function stufenSpeicher(st: Partial<Record<Stufe, StufenEintrag>>): Recor
 }
 
 export const naechsteStufe = (s: Stufe): Stufe | undefined => (s === 'dev' ? 'test' : s === 'test' ? 'prod' : undefined);
+
+/** v1444 — GitLab-Pfad aus dem Projektnamen („Angebots-Radar Österreich“ → „angebots-radar-osterreich“). */
+export function repoPfad(name: string): string {
+  return name.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-._]+|[-._]+$/g, '').slice(0, 80) || 'projekt';
+}
+
+/**
+ * v1444 — neues privates Repo im Namensraum des Token-Benutzers auf der eigenen GitLab-Instanz anlegen (Owner 13.10.: „madh/…“).
+ * Nur über https; vorhandener Pfad → Fehler (nie etwas überschreiben). Liefert die https-Klonadresse.
+ */
+export async function gitlabRepoAnlegen(baseUrl: string, token: string, name: string, f: typeof fetch = fetch): Promise<{ ok: true; url: string; pfad: string } | { ok: false; fehler: string }> {
+  let basis: URL;
+  try { basis = new URL(baseUrl); } catch { return { ok: false, fehler: 'GitLab-Adresse ungültig' }; }
+  if (basis.protocol !== 'https:') return { ok: false, fehler: 'GitLab nur über https' };
+  const pfad = repoPfad(name);
+  const r = await f(`${basis.origin}/api/v4/projects`, { method: 'POST', headers: { 'PRIVATE-TOKEN': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ name, path: pfad, visibility: 'private', initialize_with_readme: false }) });
+  const j = await r.json().catch(() => ({})) as { http_url_to_repo?: string; message?: unknown; path_with_namespace?: string };
+  if (!r.ok) {
+    const m = JSON.stringify(j.message ?? '').slice(0, 200);
+    return { ok: false, fehler: r.status === 400 && /taken|already/i.test(m) ? `Auf GitLab gibt es „${pfad}“ schon — Adresse des vorhandenen Repos eintragen` : `GitLab ${r.status}: ${m}` };
+  }
+  if (!j.http_url_to_repo || !/^https:\/\//.test(j.http_url_to_repo)) return { ok: false, fehler: 'GitLab lieferte keine https-Adresse' };
+  return { ok: true, url: j.http_url_to_repo, pfad: j.path_with_namespace ?? pfad };
+}

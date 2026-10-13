@@ -121,3 +121,24 @@ export async function gitPush(dir: string, token: string | undefined, erwartet: 
 export function paramsFuerLog(params: Record<string, unknown>): string {
   return JSON.stringify(params, (k, v) => (/token|passw|secret|kennwort/i.test(k) && v ? '***' : v));
 }
+
+/**
+ * v1444 — Remote eines bestehenden Projekts setzen bzw. entfernen (Owner 13.10.: „wo stellt man für ein Projekt ohne Remote eins ein?“).
+ * Ohne Token (nur Konfiguration); der erste Push läuft danach über gitPush (temporäres Repo, Token nur für den Host).
+ */
+export async function gitRemoteSetzen(dir: string, url: string | undefined, git: GitAusfuehren = gitAusfuehren): Promise<{ ok: true; text: string } | { ok: false; fehler: string }> {
+  const ist = await git(['rev-parse', '--is-inside-work-tree'], dir, gitUmgebung(), 15_000);
+  if (ist.status !== 0) return { ok: false, fehler: 'kein Git-Repository im Projektordner' };
+  const vorhanden = (await git(['remote'], dir, gitUmgebung(), 15_000)).ausgabe.split('\n').map(x => x.trim()).includes('origin');
+  if (!url) {
+    if (!vorhanden) return { ok: true, text: 'kein Remote gesetzt' };
+    const r = await git(['remote', 'remove', 'origin'], dir, gitUmgebung(), 15_000);
+    return r.status === 0 ? { ok: true, text: 'Remote origin entfernt' } : { ok: false, fehler: kurz(r.ausgabe) };
+  }
+  const p = pruefeRepoUrl(url);
+  if (!p.ok) return { ok: false, fehler: p.fehler };
+  const r = await git(vorhanden ? ['remote', 'set-url', 'origin', p.url] : ['remote', 'add', 'origin', p.url], dir, gitUmgebung(), 15_000);
+  if (r.status !== 0) return { ok: false, fehler: kurz(r.ausgabe) };
+  await git(['config', '--unset-all', 'remote.origin.pushurl'], dir, gitUmgebung(), 15_000); // keine abweichende Push-Adresse
+  return { ok: true, text: `origin → ${p.url}` };
+}

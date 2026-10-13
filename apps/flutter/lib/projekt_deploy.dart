@@ -26,13 +26,15 @@ class _ProjektDeployState extends State<ProjektDeploy> {
   String? meldung;
   bool meldungOk = true;
   final host = TextEditingController(), user = TextEditingController(), port = TextEditingController(), branch = TextEditingController(), env = TextEditingController();
+  final remote = TextEditingController(); // 1.26.0 v1444
+  bool remoteOffen = false;
   String prozess = 'pm2';
   bool autoDev = false;
 
   Map<String, dynamic> stufe(String s) => ((widget.deploy?['stufen'] as Map<String, dynamic>?)?[s] as Map<String, dynamic>?) ?? const {};
 
   @override
-  void dispose() { for (final c in [host, user, port, branch, env]) { c.dispose(); } super.dispose(); }
+  void dispose() { for (final c in [host, user, port, branch, env, remote]) { c.dispose(); } super.dispose(); }
 
   void oeffnen(String s) {
     final z = (stufe(s)['ziel'] as Map<String, dynamic>?) ?? const {};
@@ -48,7 +50,7 @@ class _ProjektDeployState extends State<ProjektDeploy> {
       final ok = r['success'] == true;
       if (!mounted) return;
       setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Gestellt.'}' : '${r['error'] ?? 'Fehler'}'; if (ok) bearbeiten = null; });
-      if (ok) { widget.aufMeldung?.call(aktion == 'deploy' ? '🚀 Deploy zur Bestätigung gestellt' : aktion == 'hochstufen' ? '⬆️ Hochstufen zur Bestätigung gestellt' : aktion == 'rollback' ? '⏪ Rollback zur Bestätigung gestellt' : '🎯 Deploy-Ziel zur Bestätigung gestellt'); await widget.neuLaden(); }
+      if (ok) { widget.aufMeldung?.call(aktion == 'remote' ? '🔗 Remote: ${r['display'] ?? 'gestellt'}' : aktion == 'deploy' ? '🚀 Deploy zur Bestätigung gestellt' : aktion == 'hochstufen' ? '⬆️ Hochstufen zur Bestätigung gestellt' : aktion == 'rollback' ? '⏪ Rollback zur Bestätigung gestellt' : '🎯 Deploy-Ziel zur Bestätigung gestellt'); await widget.neuLaden(); }
     } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
     finally { if (mounted) setState(() => sendet = false); }
   }
@@ -106,7 +108,19 @@ class _ProjektDeployState extends State<ProjektDeploy> {
     final token = d['token'] as String?;
     return Card(key: const Key('projekt-deploy'), margin: const EdgeInsets.only(top: 12), child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('Deploy', style: theme.textTheme.titleSmall),
-      Text(repo == null ? 'Kein Remote — der Deploy holt den Stand aus dem Repo.' : 'Repo: $repo · ${token == null ? 'kein Token gefunden' : 'Token: ${tokenText[token] ?? token}'}', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+      Row(children: [
+        Expanded(child: Text(repo == null ? 'Kein Remote — ohne Remote kein Push und kein Deploy.' : 'Repo: $repo · ${token == null ? 'kein Token gefunden' : 'Token: ${tokenText[token] ?? token}'}', key: const Key('remote-text'), style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+        TextButton(key: const Key('remote-bearbeiten'), onPressed: sendet ? null : () => setState(() => remoteOffen = !remoteOffen), child: Text(remoteOffen ? 'Abbrechen' : repo == null ? 'Remote einrichten' : 'Remote ändern')),
+      ]),
+      if (remoteOffen) ...[
+        TextField(key: const Key('remote-url'), controller: remote, onChanged: (_) => setState(() {}), decoration: const InputDecoration(labelText: 'Adresse eines vorhandenen Repos', hintText: 'https://git.lokalkraft.at/madh/projekt.git')),
+        Wrap(spacing: 8, children: [
+          FilledButton(key: const Key('remote-eintragen'), onPressed: sendet || remote.text.trim().isEmpty ? null : () async { await senden('remote', {'repo': remote.text.trim()}); if (mounted) setState(() => remoteOffen = false); }, child: const Text('Eintragen (zur Bestätigung)')),
+          OutlinedButton(key: const Key('remote-anlegen'), onPressed: sendet ? null : () async { await senden('remote', {'anlegen': true}); if (mounted) setState(() => remoteOffen = false); }, child: const Text('Neues Repo auf GitLab anlegen')),
+          if (repo != null) TextButton(key: const Key('remote-entfernen'), onPressed: sendet ? null : () async { await senden('remote', {'entfernen': true}); if (mounted) setState(() => remoteOffen = false); }, child: const Text('Remote entfernen')),
+        ]),
+        Text('Danach pusht Alfred den bisherigen Stand einmal, dann nach jeder abgenommenen Etappe.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),
+      ],
       for (final s in stufen) _stufe(theme, s, repo),
       const SizedBox(height: 6),
       Text('Ziel, Deploy, Hochstufen und Rollback brauchen deine Bestätigung. Die Umgebung der Stufe geht als .env aufs Ziel; danach prüft Alfred Status, HTTP und Logs.', style: theme.textTheme.bodySmall?.copyWith(color: dim)),

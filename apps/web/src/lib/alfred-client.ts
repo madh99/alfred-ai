@@ -1658,7 +1658,7 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/deploy`, { headers: this.authHeaders });
     return res.json();
   }
-  async geraetProjektDeploy(id: string, aktion: 'ziel' | 'ziel_entfernen' | 'deploy' | 'rollback' | 'hochstufen', felder: Record<string, unknown> = {}): Promise<{ success: boolean; display?: string; error?: string }> {
+  async geraetProjektDeploy(id: string, aktion: 'ziel' | 'ziel_entfernen' | 'deploy' | 'rollback' | 'hochstufen' | 'remote', felder: Record<string, unknown> = {}): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/deploy`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ ...felder, aktion }) });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }

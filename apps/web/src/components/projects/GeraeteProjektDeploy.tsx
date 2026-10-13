@@ -11,11 +11,13 @@ import type { AlfredClient, DeployInfo, DeployStufe } from '@/lib/alfred-client'
 const TOKEN: Record<string, string> = { projekt: 'Projekt-Token (Projektumgebung)', gitlab: 'vorhandenes GitLab-Token', github: 'vorhandenes GitHub-Token' };
 const STUFEN = ['dev', 'test', 'prod'] as const;
 const naechste = (s: string) => (s === 'dev' ? 'test' : s === 'test' ? 'prod' : undefined);
-type Aktion = 'ziel' | 'ziel_entfernen' | 'deploy' | 'rollback' | 'hochstufen';
+type Aktion = 'ziel' | 'ziel_entfernen' | 'deploy' | 'rollback' | 'hochstufen' | 'remote';
 
 export function GeraeteProjektDeploy({ client, projektId }: { client: AlfredClient; projektId: string }) {
   const [d, setD] = useState<DeployInfo | null>(null);
   const [bearbeiten, setBearbeiten] = useState<string | null>(null);
+  const [remoteOffen, setRemoteOffen] = useState(false); // v1444
+  const [remote, setRemote] = useState('');
   const [busy, setBusy] = useState(false);
   const [meldung, setMeldung] = useState<{ ok: boolean; text: string } | null>(null);
   const [f, setF] = useState({ host: '', user: '', process_manager: 'pm2', app_port: '', branch: '', env_stage: '', auto_dev: false });
@@ -43,7 +45,21 @@ export function GeraeteProjektDeploy({ client, projektId }: { client: AlfredClie
   return (
     <div className="bg-[#141414] border border-[#2a2a2a] rounded p-3 space-y-2 text-xs text-gray-300">
       <div className="text-gray-100 text-sm">🚀 Deploy</div>
-      <div className="text-gray-500">{d.repoUrl ? <>Repo: {d.repoUrl} · {d.token ? `Token: ${TOKEN[d.token] ?? d.token}` : 'kein Token gefunden'}</> : 'Kein Remote — der Deploy holt den Stand aus dem Repo.'}</div>
+      <div className="flex items-center gap-2">
+        <div className="text-gray-500 flex-1">{d.repoUrl ? <>Repo: {d.repoUrl} · {d.token ? `Token: ${TOKEN[d.token] ?? d.token}` : 'kein Token gefunden'}</> : 'Kein Remote — ohne Remote kein Push und kein Deploy.'}</div>
+        <button disabled={busy} onClick={() => setRemoteOffen(!remoteOffen)} className={knopf}>{remoteOffen ? 'Abbrechen' : d.repoUrl ? 'Remote ändern' : 'Remote einrichten'}</button>
+      </div>
+      {remoteOffen && (
+        <div className="space-y-2">
+          <input className={`${feld} w-full`} placeholder="Adresse eines vorhandenen Repos, z. B. https://git.lokalkraft.at/madh/projekt.git" value={remote} onChange={x => setRemote(x.target.value)} />
+          <div className="flex items-center gap-2">
+            <button disabled={busy || !remote.trim()} onClick={() => void senden('remote', { repo: remote.trim() }).then(() => setRemoteOffen(false))} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded">Eintragen (zur Bestätigung)</button>
+            <button disabled={busy} onClick={() => void senden('remote', { anlegen: true }).then(() => setRemoteOffen(false))} className={knopf}>Neues Repo auf GitLab anlegen</button>
+            {d.repoUrl && <button disabled={busy} onClick={() => void senden('remote', { entfernen: true }).then(() => setRemoteOffen(false))} className="text-red-400 hover:text-red-300">Remote entfernen</button>}
+          </div>
+          <div className="text-gray-500">Danach pusht Alfred den bisherigen Stand einmal, dann nach jeder abgenommenen Etappe.</div>
+        </div>
+      )}
       {STUFEN.map(s => {
         const e = st[s];
         const l = e?.letzter;
