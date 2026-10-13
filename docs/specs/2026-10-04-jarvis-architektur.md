@@ -1264,6 +1264,13 @@ Jeder Schritt bekommt eine eigene Version und einen Live-Beweis.
 3. Darf der Sofort-Hinweis bei neuen Befunden mit Haltefrist durch die spätere Diagnose-Meldung ersetzt werden (Empfehlung ja, Sicherheit ausgenommen)?
 4. Reihenfolge: V1 sofort, Rest nach ~26.10. (Empfehlung)?
 
+### Owner-Entscheidungen (13.10.2026, „einverstanden wie empfohlen“ — Umsetzung noch nicht freigegeben)
+
+1. Infrastruktur: ITSM führt (Incident/Problem mit RCA), der Vorgang verweist darauf.
+2. Zustandswechsel für Objekt-Hinweise wie vorgeschlagen (neu, schlimmer, Frist < 24 h, Owner-Aktion nötig, erledigt).
+3. Der Sofort-Hinweis bei Befunden mit Haltefrist wird durch die Diagnose-Meldung ersetzt; Sicherheit bleibt sofort.
+4. Reihenfolge: V1 zuerst, V2–V6 nach der E2-Auswertung (~26.10.).
+
 ## Lernende Helfer neben dem Sprachmodell (Entwurf 12.10.2026, Schicht 4 — ohne Umsetzung, Owner: „ok wie vorgeschlagen, Reihenfolge bestimmst du")
 
 ### Anlass
