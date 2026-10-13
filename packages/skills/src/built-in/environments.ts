@@ -66,6 +66,10 @@ export class EnvironmentsSkill extends Skill {
     void this.dbSeedRepo;
   }
 
+  /** v1443 B15 — Geräte-Projekte: Schlüssel am Gerät erkennen (nur Namen), das Verzeichnis liegt nicht auf dem Server */
+  private geraetScan?: (projectId: string) => Promise<{ ok: boolean; keys?: Array<{ key: string; sources: string[] }>; reason?: string }>;
+  setGeraetScan(f: NonNullable<EnvironmentsSkill['geraetScan']>): void { this.geraetScan = f; }
+
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = input.action as EnvAction;
     const userId = context.alfredUserId ?? context.userId;
@@ -91,18 +95,15 @@ export class EnvironmentsSkill extends Skill {
     }
   }
 
-  private async resolveProject(input: Record<string, unknown>): Promise<{ id: string; cwd?: string; name: string } | null> {
+  private async resolveProject(input: Record<string, unknown>): Promise<{ id: string; cwd?: string; name: string; geraetId?: string } | null> {
     const raw = String(input.project ?? '').trim();
     if (!raw) return null;
     const direct = await this.projectRepo.getByIdAnyOwner(raw).catch(() => null);
-    if (direct) return { id: direct.id, cwd: direct.cwd, name: direct.name };
-    // Fallback: über Owner-User-ID + Name/Slug suchen
-    const list = await this.projectRepo.list(this.ownerMasterUserId).catch(() => []);
-    const slugMatch = list.find(p => p.slug === raw);
-    if (slugMatch) return { id: slugMatch.id, cwd: slugMatch.cwd, name: slugMatch.name };
-    const nameMatch = list.find(p => p.name.toLowerCase() === raw.toLowerCase());
-    if (nameMatch) return { id: nameMatch.id, cwd: nameMatch.cwd, name: nameMatch.name };
-    return null;
+    if (direct) return { id: direct.id, cwd: direct.cwd, name: direct.name, ...(direct.geraetId ? { geraetId: direct.geraetId } : {}) };
+    // Fallback: über Owner-User-ID + Name/Slug suchen — v1443 B15: auch Geräte-Projekte
+    const list = await this.projectRepo.list(this.ownerMasterUserId, { limit: 500, mitGeraeten: true }).catch(() => []);
+    const treffer = list.find(p => p.slug === raw) ?? list.find(p => p.name.toLowerCase() === raw.toLowerCase()) ?? (() => { const t = list.filter(p => p.name.toLowerCase().includes(raw.toLowerCase())); return t.length === 1 ? t[0] : undefined; })();
+    return treffer ? { id: treffer.id, cwd: treffer.cwd, name: treffer.name, ...(treffer.geraetId ? { geraetId: treffer.geraetId } : {}) } : null;
   }
 
   private async loadDecrypted(projectId: string, stage: string): Promise<Record<string, string>> {
@@ -264,6 +265,14 @@ export class EnvironmentsSkill extends Skill {
   private async scanRepo(input: Record<string, unknown>): Promise<SkillResult> {
     const proj = await this.resolveProject(input);
     if (!proj || !proj.cwd) return { success: false, error: 'Project oder cwd nicht gefunden' };
+    // v1443 B15 — Geräte-Projekt: am Gerät erkennen (nur Schlüsselnamen)
+    if (proj.geraetId) {
+      if (!this.geraetScan) return { success: false, error: 'Erkennen am Gerät nicht verfügbar' };
+      const r = await this.geraetScan(proj.id);
+      if (!r.ok) return { success: false, error: r.reason ?? 'Gerät nicht erreichbar' };
+      const keys = r.keys ?? [];
+      return { success: true, data: { project: proj.name, keys }, display: [`🔍 ${proj.name}: ${keys.length} ENV-Variablen am Gerät erkannt (nur Namen)`, ...keys.slice(0, 50).map(k => `  ${k.key}${k.sources.length ? ` — ${k.sources.join(', ')}` : ''}`)].join('\n') };
+    }
     if (!existsSync(proj.cwd)) return { success: false, error: `cwd existiert nicht: ${proj.cwd}` };
     const cwd = proj.cwd;
     const found = new Map<string, { fromExample: boolean; fromCode: string[] }>();

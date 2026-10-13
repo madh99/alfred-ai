@@ -77,6 +77,8 @@ export interface OwnerAnsichtenDeps {
     konventionen?: (id: string, aenderung: unknown) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1439 — Deploy: aktion ziel | ziel_entfernen | deploy | rollback (Ziel, Deploy und Rollback mit Bestätigung) */
     deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1443 B15 — Umgebungen (ENV je Stufe): liste | setzen | loeschen | kopieren | erkennen; Werte nur maskiert */
+    umgebung?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>;
   };
   jetzt?: () => Date;
   /** Jede Änderung aus der App ins Server-Log (Beweis, Schicht-4-Signal). */
@@ -188,11 +190,19 @@ export class OwnerAnsichten {
   async projekt(id: string): Promise<unknown | null> { return this.d.projekte ? this.d.projekte.detail(id) : null; }
   async projektAktion(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown; deploy?: unknown }): Promise<{ success: boolean; display?: string; error?: string }> {
     if (!this.d.projekte) return { success: false, error: 'Projekte nicht verfügbar' };
+    // v1443 B15 — Umgebungen aus der App (nur bekannte Felder; Werte kommen nie unmaskiert zurück)
+    if (typeof aktion === 'string' && /^env_(liste|setzen|loeschen|kopieren|erkennen)$/.test(aktion)) {
+      if (!this.d.projekte.umgebung) return { success: false, error: 'Umgebungen nicht verfügbar' };
+      const roh = (extra?.deploy && typeof extra.deploy === 'object' ? extra.deploy : {}) as Record<string, unknown>;
+      const felder = Object.fromEntries(['stage', 'key', 'value', 'von', 'nach'].filter(k => typeof roh[k] === 'string').map(k => [k, roh[k]]));
+      if (aktion !== 'env_liste') this.d.protokoll?.('Projekt Umgebung', { projekt: id, aktion, stage: felder.stage, key: felder.key });
+      return this.d.projekte.umgebung(id, aktion.slice(4), felder);
+    }
     // v1439 — Deploy aus der App; nur bekannte Felder, nie eine Bestätigungs-Kennung
-    if (aktion === 'deploy_ziel' || aktion === 'deploy_ziel_entfernen' || aktion === 'deploy' || aktion === 'rollback') {
+    if (aktion === 'deploy_ziel' || aktion === 'deploy_ziel_entfernen' || aktion === 'deploy' || aktion === 'rollback' || aktion === 'hochstufen') {
       if (!this.d.projekte.deploy) return { success: false, error: 'Deploy nicht verfügbar' };
       const roh = (extra?.deploy && typeof extra.deploy === 'object' ? extra.deploy : {}) as Record<string, unknown>;
-      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name'].filter(k => roh[k] !== undefined && roh[k] !== '').map(k => [k, roh[k]]));
+      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name', 'von', 'nach'].filter(k => roh[k] !== undefined && roh[k] !== '').map(k => [k, roh[k]]));
       this.d.protokoll?.('Projekt Deploy', { projekt: id, aktion });
       return this.d.projekte.deploy(id, aktion === 'deploy_ziel' ? 'ziel' : aktion === 'deploy_ziel_entfernen' ? 'ziel_entfernen' : aktion, felder);
     }

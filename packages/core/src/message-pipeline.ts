@@ -1255,7 +1255,10 @@ export class MessagePipeline {
               lines.push(`- Projektregeln ("immer Changelog führen", "Commits auf Deutsch", "README pflegen") → project_agent action=projekt_konventionen projekt="${proj.name}" mit changelog/readme/conventional_commits=true|false oder regel=<Text>; ohne Parameter anzeigen.`);
               lines.push(`- Hat der Owner Dateien angehängt (Upload-Zeile „Schlüssel: …“): bei projekt_frage und projekt_weiter anhaenge=[Schlüssel] mitgeben — Alfred legt sie für Claude Code ins Projekt. Nie behaupten, Claude Code könne Anhänge nicht sehen.`);
               lines.push(`- Starten, Neustarten, Status oder einzelne Befehle im Projektordner ("starte die App", "läuft der Server?") → Geräte-Skill ${geraetP.geraet ? geraetSkillName(geraetP.geraet) : 'geraet_<name>'} (action=shell, cwd=${proj.cwd ?? 'Projektordner'}; Dauerprozesse mit nohup … & im Hintergrund starten, Ausgabe in eine Logdatei; der Owner bestätigt). Code ändern → projekt_weiter.`);
-              lines.push(`- NIE project_agent.start ohne geraet, NIE code_agent, shell, deploy oder git auf dem Server mit diesem Verzeichnis — es existiert dort nicht.`);
+              // v1443 B15 — Deploy je Stufe und Umgebungen
+              lines.push(`- Deploy (je Stufe dev/test/prod ein eigenes Ziel, alles mit Bestätigung des Owners): Ziel → project_agent action=projekt_deploy_ziel projekt="${proj.name}" stufe=<dev|test|prod> host=… (ohne host: anzeigen); Deploy → action=projekt_deploy stufe=…; in die nächste Stufe → action=projekt_hochstufen von=dev; zurück → action=projekt_rollback stufe=…. Die Projektumgebung der Stufe geht als .env mit.`);
+              lines.push(`- Umgebungen (ENV-Werte je Stufe) → Skill environments mit project="${proj.name}" (set/list/delete/copy_stage; scan_repo erkennt die Schlüssel am Gerät). Werte nie in den Chat schreiben, nie aufs Entwicklungsgerät.`);
+              lines.push(`- NIE project_agent.start ohne geraet, NIE code_agent, shell, den deploy-Skill direkt oder git auf dem Server mit diesem Verzeichnis — es existiert dort nicht.`);
               lines.push(`- "füge … zur Liste" → project.add_open_item.`);
             }
             system += `\n\n${lines.join('\n')}`;

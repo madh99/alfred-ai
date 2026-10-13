@@ -477,6 +477,13 @@ export class DeploySkill extends Skill {
       } else {
         return { success: false, error: `Projekt ${projectDir} existiert nicht und keine repo_url angegeben` };
       }
+      // v1443 B15 — Hochstufen: genau diesen Stand (in der Stufe davor grün) auschecken; der nächste normale Deploy kehrt zum Zweig zurück
+      const commit = typeof input.commit === 'string' ? input.commit.trim() : '';
+      if (commit) {
+        if (!/^[0-9a-f]{7,40}$/i.test(commit)) return { success: false, error: 'commit ungültig (Hex-Kennung)' };
+        await this.ssh(host, user, `cd ${projectDir} && git checkout -q ${commit}`);
+        steps.push(`📌 Stand ${commit.slice(0, 7)} ausgecheckt (Hochstufen)`);
+      }
       try { nachher = (await this.ssh(host, user, `cd ${projectDir} && git rev-parse HEAD`)).trim(); } catch { /* ohne Commit */ }
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -488,13 +495,13 @@ export class DeploySkill extends Skill {
       const stage = typeof input.env_stage === 'string' && input.env_stage.length > 0 ? input.env_stage : 'prod';
       emitStep('env-write', 'started', `stage=${stage}`);
       try {
-        const envs = await this.envProvider(project, stage);
+        const envs = await this.envProvider(typeof input.env_projekt === 'string' && input.env_projekt ? input.env_projekt : project, stage); // v1443 — Projekt-ID (Geräte-Projekte)
         if (envs && Object.keys(envs).length > 0) {
           const lines = Object.entries(envs).map(([k, v]) => `${k}=${this.escapeEnvValue(v)}`);
           const content = lines.join('\n') + '\n';
-          // Heredoc-Write via ssh — safe gegen Sonderzeichen via single-quote-Wrapper
+          // v1443 — Werte über stdin (vorher base64 in der SSH-Befehlszeile: in der Prozessliste von Server und Ziel sichtbar)
           const b64 = Buffer.from(content, 'utf8').toString('base64');
-          await this.ssh(host, user, `echo '${b64}' | base64 -d > ${projectDir}/.env && chmod 600 ${projectDir}/.env`);
+          await this.sshMitEingabe(host, user, `umask 077 && base64 -d > ${projectDir}/.env && chmod 600 ${projectDir}/.env`, b64, 60_000);
           steps.push(`🔐 ENV-File aus stage="${stage}" geschrieben (${lines.length} Keys, chmod 600)`);
           emitStep('env-write', 'done', `${lines.length} Keys`);
         } else {

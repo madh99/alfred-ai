@@ -55,6 +55,33 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1443] - 2026-10-13
+
+### Added — Umgebungen und Stages für Geräte-Projekte (v1443, App 1.25.0, Spec B15)
+
+Owner 13.10.: „Für ein sinnvolles Deploy fehlt die Environment-/Stages-Verwaltung wie im Projektagent.“
+
+- **Umgebungen (ENV je Stufe) auch für Geräte-Projekte**, gespeichert wie bei Server-Projekten (verschlüsselt, `project_environments`):
+  - Web: die vorhandene Umgebungsansicht im Geräte-Projekt (Route nicht mehr gesperrt).
+  - App: neuer Bereich „Umgebungen“ mit Werten nur maskiert, Setzen, Löschen und Stufe kopieren.
+  - Gespräch: Skill `environments` (findet jetzt auch Geräte-Projekte).
+  - „Schlüssel erkennen“ liest am Gerät nur Schlüsselnamen aus `.env.example` und dem Quelltext. `.env` wird dort nie gelesen, und Werte kommen nie aufs Entwicklungsgerät (Owner-Entscheidung).
+- **Stages dev/test/prod mit je eigenem Deploy-Ziel**, jeweils mit Bestätigung. Die Umgebung der Stufe (Standard: ihr Name) geht beim Deploy als `.env` aufs Ziel.
+- **Hochstufen** (`project_agent projekt_hochstufen von=dev [nach=test]`, App/Web „⬆️ nach …“): bringt genau den Commit, der in der Stufe davor grün deployt ist, in die nächste Stufe. Immer mit Bestätigung; automatisch höchstens dev.
+- Deploy und Rollback wirken je Stufe. Der letzte Deploy je Stufe wird dauerhaft gespeichert (Anzeige, Rollback-Ziel, Hochstufen).
+- Das bisherige Einzel-Ziel (v1437/v1438) wird als seine Stufe weitergelesen.
+- Satellit: Aktion `env_schluessel` (nur Namen).
+- Deploy-Skill: `commit` (Hochstufen) und `env_projekt` (Umgebung per Projekt-ID). Die Deploy-Umgebung findet jetzt auch Geräte-Projekte; vorher fand `env_stage` sie nicht und schrieb still nichts.
+- Projektfaden: Anweisungen für Deploy je Stufe und für Umgebungen.
+
+### Security
+
+- Die `.env` am Zielrechner wird über stdin geschrieben. Vorher stand sie base64-kodiert in der SSH-Befehlszeile und war in der Prozessliste von Server und Ziel sichtbar.
+
+### Fixed
+
+- App: „Zur Bestätigung“ im Deploy-Ziel wurde beim Tippen des Rechnernamens nicht aktiv.
+
 ## [0.19.0-jarvis.1442] - 2026-10-13
 
 ### Security — Git-Token nur über https (v1442)

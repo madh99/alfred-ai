@@ -88,21 +88,21 @@ export function nachkontrolle(o: { prozess: Prozess; deployOk: boolean; deployFe
 export type FreigabeArt = 'deploy' | 'rollback' | 'ziel';
 
 export class DeployFreigaben {
-  private readonly offen = new Map<string, { akteId: string; art: FreigabeArt; commit?: string; ziel?: DeployZiel; bis: number }>();
+  private readonly offen = new Map<string, { akteId: string; art: FreigabeArt; commit?: string; ziel?: DeployZiel; stufe?: Stufe; bis: number }>();
   constructor(private readonly now: () => number = Date.now) {}
   /** v1438 — Kennung aus dem CSPRNG (128 Bit); `ziel` = vorgeschlagenes Deploy-Ziel (wird erst nach der Bestätigung gespeichert). */
-  stelle(akteId: string, art: FreigabeArt, commit?: string, gueltigMs = 72 * 3_600_000, ziel?: DeployZiel): string {
+  stelle(akteId: string, art: FreigabeArt, commit?: string, gueltigMs = 72 * 3_600_000, ziel?: DeployZiel, stufe?: Stufe): string {
     const n = `${art}-${randomBytes(16).toString('hex')}`;
-    this.offen.set(n, { akteId, art, ...(commit ? { commit } : {}), ...(ziel ? { ziel } : {}), bis: this.now() + gueltigMs });
+    this.offen.set(n, { akteId, art, ...(commit ? { commit } : {}), ...(ziel ? { ziel } : {}), ...(stufe ? { stufe } : {}), bis: this.now() + gueltigMs });
     return n;
   }
   /** Löst die Kennung genau einmal ein (falsches Projekt, falsche Art oder abgelaufen → undefined). */
-  loese(nonce: string, akteId: string, art: FreigabeArt): { commit?: string; ziel?: DeployZiel } | undefined {
+  loese(nonce: string, akteId: string, art: FreigabeArt): { commit?: string; ziel?: DeployZiel; stufe?: Stufe } | undefined {
     const e = this.offen.get(nonce);
     if (!e) return undefined;
     this.offen.delete(nonce);
     if (e.akteId !== akteId || e.art !== art || e.bis < this.now()) return undefined;
-    return { ...(e.commit ? { commit: e.commit } : {}), ...(e.ziel ? { ziel: e.ziel } : {}) };
+    return { ...(e.commit ? { commit: e.commit } : {}), ...(e.ziel ? { ziel: e.ziel } : {}), ...(e.stufe ? { stufe: e.stufe } : {}) };
   }
 }
 
@@ -141,3 +141,32 @@ export function aufHttps(url: string, forge?: { gitlab?: { baseUrl?: string } })
     return h === g || h === 'github.com' ? url.replace(/^http:/i, 'https:') : url;
   } catch { return url; }
 }
+
+/**
+ * v1443 B15 (Owner 13.10.: „Stages-/ENV-Verwaltung wie im Projektagent“) — je Stage dev/test/prod ein eigenes Ziel. Gespeichert in
+ * projects.deploy_ziel als { stufen: { dev: { …Ziel, bestaetigt, letzter } } }; das Einzel-Ziel von v1437/v1438 wird als seine Stufe gelesen.
+ */
+export const STUFEN: readonly Stufe[] = ['dev', 'test', 'prod'];
+export interface LetzterDeploy { zeit: string; ok: boolean; deployOk?: boolean; text: string; vorher?: string; nachher?: string; commit?: string }
+export interface StufenEintrag { ziel: DeployZiel; bestaetigt: boolean; letzter?: LetzterDeploy }
+
+export function stufenAus(roh: Record<string, unknown> | undefined): Partial<Record<Stufe, StufenEintrag>> {
+  const aus: Partial<Record<Stufe, StufenEintrag>> = {};
+  if (!roh) return aus;
+  const lies = (e: Record<string, unknown>, s?: Stufe) => {
+    const z = zielPruefen({ ...e, ...(s ? { stufe: s } : {}), ...(e.prozess ? { process_manager: e.prozess } : {}), ...(e.appPort ? { app_port: e.appPort } : {}), ...(e.envStage ? { env_stage: e.envStage } : {}), ...(typeof e.autoDev === 'boolean' ? { auto_dev: e.autoDev } : {}) });
+    if (!z.ok) return;
+    aus[z.ziel.stufe] = { ziel: z.ziel, bestaetigt: e.bestaetigt === true, ...(e.letzter && typeof e.letzter === 'object' ? { letzter: e.letzter as LetzterDeploy } : {}) };
+  };
+  if (roh.stufen && typeof roh.stufen === 'object') { for (const s of STUFEN) { const e = (roh.stufen as Record<string, unknown>)[s]; if (e && typeof e === 'object') lies(e as Record<string, unknown>, s); } }
+  else if (typeof roh.host === 'string') lies(roh); // v1437/v1438: ein Ziel
+  return aus;
+}
+
+export function stufenSpeicher(st: Partial<Record<Stufe, StufenEintrag>>): Record<string, unknown> {
+  const stufen: Record<string, unknown> = {};
+  for (const s of STUFEN) { const e = st[s]; if (e) stufen[s] = { ...e.ziel, stufe: s, bestaetigt: e.bestaetigt, ...(e.letzter ? { letzter: e.letzter } : {}) }; }
+  return { stufen };
+}
+
+export const naechsteStufe = (s: Stufe): Stufe | undefined => (s === 'dev' ? 'test' : s === 'test' ? 'prod' : undefined);

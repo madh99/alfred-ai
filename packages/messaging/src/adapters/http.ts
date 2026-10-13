@@ -826,8 +826,8 @@ export class HttpAdapter extends MessagingAdapter {
       let jd: Record<string, unknown> = {};
       try { jd = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
       const aktion = String(jd.aktion ?? '');
-      if (!['ziel', 'ziel_entfernen', 'deploy', 'rollback'].includes(aktion)) { antwort(400, { error: 'aktion muss ziel, ziel_entfernen, deploy oder rollback sein' }); return; }
-      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name'].filter(k => jd[k] !== undefined && jd[k] !== '').map(k => [k, jd[k]]));
+      if (!['ziel', 'ziel_entfernen', 'deploy', 'rollback', 'hochstufen'].includes(aktion)) { antwort(400, { error: 'aktion muss ziel, ziel_entfernen, deploy, rollback oder hochstufen sein' }); return; }
+      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name', 'von', 'nach'].filter(k => jd[k] !== undefined && jd[k] !== '').map(k => [k, jd[k]]));
       antwort(200, await cb.deploy(id, aktion, felder));
       return;
     }
@@ -7027,4 +7027,4 @@ export class HttpAdapter extends MessagingAdapter {
 }
 
 /** v1399 — Unterrouten, die für Geräte-Projekte erlaubt sind (nur Projekt-Daten, nichts im Projektordner auf dem Server). */
-const GERAETE_PROJEKT_ERLAUBT = new Set(['chat-history', 'open-items', 'decisions', 'health-log', 'work-stats', 'chat-actions', 'geraet']);
+const GERAETE_PROJEKT_ERLAUBT = new Set(['chat-history', 'open-items', 'decisions', 'health-log', 'work-stats', 'chat-actions', 'geraet', 'environments']); // v1443 B15 — Umgebungen sind Daten am Server

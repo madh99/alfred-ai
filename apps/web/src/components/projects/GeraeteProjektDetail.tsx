@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ProjectConventionsView } from './ProjectConventionsView'; // v1426
 import { GeraeteProjektDeploy } from './GeraeteProjektDeploy'; // v1439
+import { ProjectEnvironmentsView } from './ProjectEnvironmentsView'; // v1443 B15 — Umgebungen wie beim Projekt-Agenten
 import type { AlfredClient, ProjectDetail, GeraetLauf } from '@/lib/alfred-client';
 
 /**
@@ -258,6 +259,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
       {/* v1426 — Projektregeln (Konventionen) je Projekt */}
       <ProjectConventionsView project={p} geraet onSaved={() => onReload()} />
       <GeraeteProjektDeploy client={client} projektId={p.id} />
+      <ProjectEnvironmentsView projectId={p.id} projectName={p.name} />
       <a href={`/alfred/chat/?faden=projekt-${p.id.slice(0, 8)}`} className="inline-flex items-center gap-2 px-3 py-1.5 text-xs bg-[#1a1a1a] text-gray-200 rounded border border-[#2a2a2a] hover:bg-[#222]">💬 Gespräch zum Projekt öffnen</a>
     </div>
   );

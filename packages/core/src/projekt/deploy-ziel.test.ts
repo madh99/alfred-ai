@@ -78,3 +78,28 @@ describe('v1439 Token-Rückfall', () => {
     expect(tokenHinweis('projekt', 'https://h/x.git')).toBe('Token: Projekt-Token (Projektumgebung).');
   });
 });
+
+import { stufenAus, stufenSpeicher, naechsteStufe, STUFEN } from './deploy-ziel.js';
+describe('v1443 B15 Stufen', () => {
+  it('liest das Einzel-Ziel von v1437/v1438 als seine Stufe; speichert und liest je Stufe', () => {
+    const alt = stufenAus({ host: 'h1', prozess: 'pm2', stufe: 'dev', autoDev: true, bestaetigt: true, letzter: { zeit: 'z', ok: true, text: 't', nachher: 'abc1234' } });
+    expect(alt.dev).toMatchObject({ bestaetigt: true, ziel: { host: 'h1', prozess: 'pm2', stufe: 'dev', autoDev: true }, letzter: { nachher: 'abc1234' } });
+    const st = { ...alt, test: { ziel: { host: 'h2', prozess: 'docker-compose' as const, stufe: 'test' as const, appPort: 3003 }, bestaetigt: false } };
+    const roh = stufenSpeicher(st);
+    const neu = stufenAus(roh);
+    expect(Object.keys(neu)).toEqual(['dev', 'test']);
+    expect(neu.test).toMatchObject({ bestaetigt: false, ziel: { host: 'h2', prozess: 'docker-compose', appPort: 3003, stufe: 'test' } });
+    expect(neu.dev?.letzter?.nachher).toBe('abc1234');
+    // ein ungültiger Eintrag (z. B. manipulierter Host) fällt weg
+    expect(stufenAus({ stufen: { prod: { host: 'x; rm -rf /', prozess: 'pm2' } } }).prod).toBeUndefined();
+    // auto_dev in test/prod wird nie gelesen
+    expect(stufenAus({ stufen: { prod: { host: 'h', prozess: 'pm2', autoDev: true } } }).prod).toBeUndefined();
+    expect(STUFEN.map(naechsteStufe)).toEqual(['test', 'prod', undefined]);
+  });
+
+  it('Freigabe trägt Stufe und Commit (Hochstufen)', () => {
+    const f = new DeployFreigaben();
+    const n = f.stelle('p1', 'deploy', 'abc1234', 1000, undefined, 'test');
+    expect(f.loese(n, 'p1', 'deploy')).toEqual({ commit: 'abc1234', stufe: 'test' });
+  });
+});

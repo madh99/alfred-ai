@@ -1658,7 +1658,7 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/deploy`, { headers: this.authHeaders });
     return res.json();
   }
-  async geraetProjektDeploy(id: string, aktion: 'ziel' | 'ziel_entfernen' | 'deploy' | 'rollback', felder: Record<string, unknown> = {}): Promise<{ success: boolean; display?: string; error?: string }> {
+  async geraetProjektDeploy(id: string, aktion: 'ziel' | 'ziel_entfernen' | 'deploy' | 'rollback' | 'hochstufen', felder: Record<string, unknown> = {}): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/deploy`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ ...felder, aktion }) });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
@@ -3122,7 +3122,9 @@ export interface ProjectConventions {
 /** v1429 R4a — Beobachter */
 export interface BeobachterRegelDto { /** v1433 B11 */ einmalig?: boolean; bis?: string; id: string; geraetId: string; geraet: string; name: string; quelle: string; filter: Record<string, unknown>; wirkung: string; auftrag?: string; projektId?: string; aktiv: boolean; treffer?: number; letzterTreffer?: string; stand: string; standGrund?: string }
 /** v1439 */
-export interface DeployInfo { ziel?: { host: string; user?: string; prozess: string; runtime?: string; appPort?: number; branch?: string; envStage?: string; stufe: string; autoDev?: boolean }; zielText?: string; bestaetigt?: boolean; repoUrl: string | null; token: string | null; letzter?: { zeit: string; ok: boolean; text: string; vorher?: string; nachher?: string } }
+export interface DeployStufe { ziel: { host: string; user?: string; prozess: string; runtime?: string; appPort?: number; branch?: string; envStage?: string; stufe: string; autoDev?: boolean }; zielText: string; bestaetigt: boolean; letzter?: { zeit: string; ok: boolean; text: string; vorher?: string; nachher?: string } }
+/** v1443 B15 — je Stufe ein Ziel */
+export interface DeployInfo { stufen?: Partial<Record<'dev' | 'test' | 'prod', DeployStufe>>; repoUrl: string | null; token: string | null; umgebungen?: string[] }
 export interface BeobachterListe { regeln: BeobachterRegelDto[]; geraete: Array<{ id: string; name: string; online: boolean; /** v1433 B10 */ artenAus?: string[] }>; projekte: Array<{ id: string; name: string }>; /** v1433 B12 */ serverKonten?: string[] }
 
 // v661 — Todos + Notes Types
