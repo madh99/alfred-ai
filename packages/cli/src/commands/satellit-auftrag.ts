@@ -486,6 +486,23 @@ export function alteAuftraegeVerschieben(projekt: string): number {
   return n;
 }
 
+/**
+ * v1448 — die Verschiebung früherer AUFTRAG-*.md auch committen (Befund 13.10.: 23 Einträge in git status bei Angebots-Radar).
+ * Nur Dateien, deren Kopie in .alfred/laeufe/frueher liegt; nur diese Pfade. Protokoll an → Verschiebung (gelöscht + neu);
+ * Protokoll aus → nur das Entfernen aus der Wurzel (die Dateien bleiben lokal im ausgeschlossenen Ordner). Holt Altfälle nach.
+ */
+export function auftraegeVerschiebungCommitten(projekt: string, an: boolean, git = 'git'): number {
+  const lauf = (args: string[]) => gitLauf(git, projekt, args);
+  try { if (lauf(['rev-parse', '--is-inside-work-tree']) !== 'true') return 0; } catch { return 0; }
+  const geloescht = lauf(['ls-files', '--deleted', '--', 'AUFTRAG-*.md']).split('\n').map(x => x.trim())
+    .filter(f => /^AUFTRAG-[\w-]+\.md$/.test(f) && existsSync(path.join(projekt, '.alfred', 'laeufe', 'frueher', f)));
+  if (!geloescht.length) return 0;
+  const neu = an ? geloescht.map(f => `.alfred/laeufe/frueher/${f}`) : [];
+  lauf(['add', '-A', '--', ...geloescht, ...neu]);
+  lauf(['commit', '-q', '-m', `chore(alfred): ${geloescht.length} frühere Auftragsdatei(en) nach .alfred/laeufe/frueher verschoben`, '--', ...geloescht, ...neu]);
+  return geloescht.length;
+}
+
 function freierName(ordner: string, wunsch: string): string {
   if (!existsSync(path.join(ordner, wunsch))) return wunsch;
   const basis = wunsch.replace(/\.md$/, '');
@@ -496,6 +513,7 @@ function freierName(ordner: string, wunsch: string): string {
 export function protokollAuftragDatei(projekt: string, p: ProtokollAngabe): string {
   alteAuftraegeVerschieben(projekt);
   protokollAusschluss(projekt, p.an);
+  try { auftraegeVerschiebungCommitten(projekt, p.an); } catch { /* ohne Git oder ohne Identität: bleibt wie bisher */ }
   const ordner = protokollOrdner(projekt, p.lauf);
   mkdirSync(ordner, { recursive: true });
   return path.join(ordner, freierName(ordner, `etappe-${Math.max(1, Math.floor(p.nr))}${p.fix ? `-fix${Math.floor(p.fix)}` : ''}-auftrag.md`));
@@ -513,12 +531,18 @@ export function protokollSchreiben(projekt: string, p: { lauf: string; nr: numbe
   writeFileSync(datei, schwaerze(p.bericht).slice(0, 200_000));
   const rel = path.relative(projekt, ordner).split(path.sep).join('/');
   const pfad = path.relative(projekt, datei).split(path.sep).join('/');
-  if (!p.an) return { pfad, hinweis: 'nur lokal (Protokoll im Projekt aus)' };
-  if (!existsSync(path.join(projekt, '.git'))) return { pfad, hinweis: 'kein git im Projekt' };
+  if (!existsSync(path.join(projekt, '.git'))) return { pfad, hinweis: p.an ? 'kein git im Projekt' : 'nur lokal (Protokoll im Projekt aus)' };
   const git = (args: string[]) => spawnSync('git', args, { cwd: projekt, encoding: 'utf8', timeout: 30_000, windowsHide: true });
-  const a = git(['add', '--', rel]);
+  // v1448 — die von Alfred angelegte .gitignore mitsichern, falls noch untracked (Befund 13.10.: blieb in neuen Projekten liegen).
+  // Neue Projekte bekommen bewusst keinen eigenen Anlege-Commit (v1397); das erste Etappenprotokoll nimmt sie mit.
+  const ignore = (git(['ls-files', '--others', '--exclude-standard', '--', '.gitignore']).stdout ?? '').trim() ? ['.gitignore'] : [];
+  if (!p.an) {
+    if (ignore.length && git(['add', '--', '.gitignore']).status === 0) git(['commit', '-q', '-m', 'chore(alfred): .gitignore (Abhängigkeiten und Geheimnisse ausschließen)', '--', '.gitignore']);
+    return { pfad, hinweis: 'nur lokal (Protokoll im Projekt aus)' };
+  }
+  const a = git(['add', '--', rel, ...ignore]);
   if (a.status !== 0) return { pfad, hinweis: `git add: ${(a.stderr || '').trim().slice(0, 200)}` };
-  const c = git(['commit', '-q', '-m', p.nachricht.slice(0, 200), '--', rel]);
+  const c = git(['commit', '-q', '-m', p.nachricht.slice(0, 200), '--', rel, ...ignore]);
   if (c.status !== 0) return { pfad, hinweis: /nothing (added )?to commit|nichts zu committen/i.test(`${c.stdout}${c.stderr}`) ? 'nichts Neues zu committen' : `git commit: ${(c.stderr || c.stdout || '').trim().slice(0, 200)}` };
   const h = git(['rev-parse', '--short', 'HEAD']);
   return { pfad, ...(h.status === 0 ? { commit: h.stdout.trim() } : {}) };

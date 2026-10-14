@@ -55,6 +55,20 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1448] - 2026-10-14
+
+### Fixed — Git-Haushalt der Geräte-Projekte (v1448)
+
+- **`.gitignore` wird gesichert:** Die von Alfred angelegte `.gitignore` blieb in neuen Projekten untracked.
+  - Jetzt nimmt das erste Etappenprotokoll sie mit.
+  - Ist das Protokoll aus, bekommt sie einen eigenen kleinen Commit.
+  - Neue Projekte haben weiterhin keinen eigenen Anlege-Commit (v1397).
+- **Verschobene Auftragsdateien werden committet:** Die Verschiebung früherer `AUFTRAG-*.md` nach `.alfred/laeufe/frueher/` (v1425) wurde nicht committet; bei Angebots-Radar standen deshalb 23 Einträge in `git status`.
+  - Jetzt wird sie committet, nur mit diesen Pfaden.
+  - Ist das Protokoll aus, wird nur das Entfernen aus der Wurzel committet, und die Dateien bleiben lokal.
+  - Altfälle werden beim nächsten Lauf nachgeholt.
+  - Andere Änderungen im Projekt bleiben unberührt.
+
 ## [0.19.0-jarvis.1447] - 2026-10-14
 
 ### Fixed — Geplante Aufgaben aus einem App-Faden liefern in den Faden (v1447)
