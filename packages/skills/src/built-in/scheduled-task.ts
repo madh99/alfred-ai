@@ -6,6 +6,9 @@ import { effectiveUserId, allUserIds } from '../user-utils.js';
 type ScheduledTaskAction = 'create' | 'list' | 'enable' | 'disable' | 'delete';
 
 export class ScheduledTaskSkill extends Skill {
+  /** v1447 — App-Faden des Owners (`sitzung:<Gerät>:<Faden>`) als Faden merken (`owner:faden:<Faden>`), damit Ergebnisse im Gespräch landen */
+  private chatNormalisierer?: (chatId: string) => Promise<string>;
+  setChatNormalisierer(f: (chatId: string) => Promise<string>): void { this.chatNormalisierer = f; }
   readonly metadata: SkillMetadata = {
     name: 'scheduled_task',
     category: 'automation',
@@ -204,7 +207,7 @@ export class ScheduledTaskSkill extends Skill {
     const entry = await this.actionRepo.create({
       userId: effectiveUserId(context),
       platform: context.platform,
-      chatId: context.chatId,
+      chatId: this.chatNormalisierer ? await this.chatNormalisierer(context.chatId).catch(() => context.chatId) : context.chatId, // v1447
       name,
       description,
       scheduleType: scheduleType as 'cron' | 'interval' | 'once',

@@ -1140,7 +1140,9 @@ export class Alfred {
     skillRegistry.register(crossPlatformSkill);
     const backgroundTaskSkill = new BackgroundTaskSkill(backgroundTaskRepo, skillRegistry);
     skillRegistry.register(backgroundTaskSkill);
-    skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo, skillRegistry));
+    const scheduledTaskSkill = new ScheduledTaskSkill(scheduledActionRepo, skillRegistry);
+    scheduledTaskSkill.setChatNormalisierer((chatId: string) => this.ownerFadenVon(chatId).then(f => (f ? `owner:faden:${f}` : chatId))); // v1447
+    skillRegistry.register(scheduledTaskSkill);
 
     // 4a. Document intelligence
     const documentRepo = new DocumentRepository(adapter);
@@ -6614,6 +6616,18 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       const lesen = async (userId: string): Promise<Record<string, string>> => {
         try { return JSON.parse((await zustandMeld.get(userId, 'geplante-meldungen', 'kennungen')) ?? '{}') as Record<string, string>; } catch { return {}; }
       };
+      // v1447 — Ergebnisse geplanter Aufgaben aus einem Owner-Faden: in den Faden (gespeichert + Owner-Geräte) und als Kopie an Telegram (Owner 14.10.)
+      this.proactiveScheduler.setFadenZustellung(async (chatId, text, name) => {
+        const f = await this.ownerFadenVon(chatId);
+        if (!f) return false;
+        await this.meldeInFaden(f, text);
+        const tg = this.config.telegram?.enabled ? this.adapters.get('telegram' as Platform) : undefined;
+        const owner = this.config.security?.ownerUserId;
+        let kopie = false;
+        if (tg && owner) { try { const fm = this.formatter.format(text, 'telegram' as Platform); await tg.sendMessage(owner, fm.text, { parseMode: fm.parseMode !== 'text' ? fm.parseMode : undefined }); kopie = true; } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1447 Telegram-Kopie fehlgeschlagen'); } }
+        this.logger.info({ faden: f, name, telegram: kopie }, 'v1447 Geplante Aufgabe in den Faden zugestellt');
+        return true;
+      });
       this.proactiveScheduler.setMeldeGedaechtnis({
         laden: async (userId) => new Set(Object.keys(await lesen(userId))),
         merken: async (userId, kennungen) => {
@@ -15623,6 +15637,15 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
 
   /** v1354 — Owner-Prüfung mit 10-min-Gedächtnis (gesetzt beim Einrichten der Gespräche). */
   private istOwnerGeraetGemerkt?: (geraetId: string) => Promise<boolean>;
+
+  /** v1447 — Faden des Owners zu einer Chat-Kennung: `owner:faden:<f>` oder `sitzung:<Owner-Gerät>:<f>`; sonst undefined. */
+  private async ownerFadenVon(chatId: string): Promise<string | undefined> {
+    const o = /^owner:faden:([A-Za-z0-9_-]{1,40})$/.exec(chatId);
+    if (o) return o[1];
+    const m = /^sitzung:([^:]+):([A-Za-z0-9_-]{1,40})$/.exec(chatId);
+    if (!m || !this.istOwnerGeraetGemerkt) return undefined;
+    return (await this.istOwnerGeraetGemerkt(m[1]!).catch(() => false)) ? m[2] : undefined;
+  }
 
   /** v1332 — Gehört das Gerät dem Owner? Der Sitzungs-Alias `geraet:<id>` ist an den Master des koppelnden Benutzers gebunden (v1233). */
   async geraetGehoertOwner(geraetId: string): Promise<boolean> {

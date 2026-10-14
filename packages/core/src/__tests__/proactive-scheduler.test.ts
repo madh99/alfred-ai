@@ -105,6 +105,21 @@ describe('ProactiveScheduler', () => {
     expect(sandbox.execute).toHaveBeenCalled();
   });
 
+  it('v1447 Ergebnis aus einem Owner-Faden geht über den Faden-Hook, nicht an die rohe Sitzung', async () => {
+    for (const zustaendig of [true, false]) {
+      const adapter = { sendMessage: vi.fn().mockResolvedValue('m'), status: 'connected' };
+      const repo = createMockActionRepo([{ id: 'a1', name: 'Mac-Angebote', userId: 'user-1', platform: 'api', chatId: 'sitzung:g1:mv55pltv', skillName: 'test-skill', skillInput: '{}', scheduleType: 'once', scheduleValue: '' }]);
+      const hook = vi.fn().mockResolvedValue(zustaendig);
+      const s = new ProactiveScheduler(repo, createMockSkillRegistry({ 'test-skill': { metadata: { name: 'test-skill' } } }), createMockSkillSandbox(), createMockLLM(), new Map([['api', adapter]]) as any, createMockUsers(), createMockLogger());
+      s.setFadenZustellung(hook);
+      s.start();
+      await vi.advanceTimersByTimeAsync(60_000);
+      s.stop();
+      expect(hook).toHaveBeenCalledWith('sitzung:g1:mv55pltv', expect.any(String), 'Mac-Angebote');
+      expect(adapter.sendMessage).toHaveBeenCalledTimes(zustaendig ? 0 : 1);
+    }
+  });
+
   it('tick skips non-due actions (empty claimDue)', async () => {
     actionRepo = createMockActionRepo([]);
     const sandbox = createMockSkillSandbox();

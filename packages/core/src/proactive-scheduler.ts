@@ -39,6 +39,13 @@ export class ProactiveScheduler {
    */
   private meldeGedaechtnis?: { laden(userId: string): Promise<Set<string>>; merken(userId: string, kennungen: string[]): Promise<void> };
   setMeldeGedaechtnis(g: NonNullable<ProactiveScheduler['meldeGedaechtnis']>): void { this.meldeGedaechtnis = g; }
+  /**
+   * v1447 — Realfall 14.10.: Aufgabe aus einem App-Faden merkte sich `sitzung:<Gerät>:<Faden>`; das Ergebnis landete in einem
+   * verwaisten Gespräch statt im Faden (`owner:faden:<Faden>`). Der Hook stellt Faden-Ergebnisse zu (Faden + Owner-Geräte +
+   * Telegram-Kopie) und liefert true, wenn er zuständig war.
+   */
+  private fadenZustellung?: (chatId: string, text: string, name: string) => Promise<boolean>;
+  setFadenZustellung(f: NonNullable<ProactiveScheduler['fadenZustellung']>): void { this.fadenZustellung = f; }
 
   start(): void {
     this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
@@ -131,7 +138,8 @@ export class ProactiveScheduler {
           chatType: 'dm',
           userId: platformUserId,
           userName: resolvedUser?.username ?? platformUserId,
-          text: action.promptTemplate + (ausloeser ? '\n\n' + ausloeser.text : '') + '\n\n[Format: Use only Markdown (**, *, ~~, `, ```). Do NOT use HTML tags like <b>, <i>, <code>. The system converts Markdown to platform-specific formatting automatically.]',
+          // v1447 — die Aufgabe weiß, dass sie selbst die geplante Prüfung ist (Realfall 14.10.: bot an, „sie per Scheduled Task zu automatisieren“)
+          text: `[Geplante Aufgabe „${action.name}“ — läuft bereits automatisch nach Plan. Ergebnis liefern; nicht anbieten, sie einzuplanen oder zu automatisieren.]\n\n` + action.promptTemplate + (ausloeser ? '\n\n' + ausloeser.text : '') + '\n\n[Format: Use only Markdown (**, *, ~~, `, ```). Do NOT use HTML tags like <b>, <i>, <code>. The system converts Markdown to platform-specific formatting automatically.]',
           timestamp: new Date(),
           metadata: { scheduled: true, skipHistory: true, tier: 'fast', originalChatId: action.chatId, ...(ausloeser?.allowedSkills ? { allowedSkills: ausloeser.allowedSkills } : {}) },
         };
@@ -213,7 +221,8 @@ export class ProactiveScheduler {
     } else {
       this.logger.info({ actionId: action.id, name: action.name, grund: entscheidung.grund, neu: entscheidung.neu.slice(0, 6) }, 'v1368 Geplante Aufgabe meldet');
       if (action.promptTemplate && this.meldeGedaechtnis) void this.meldeGedaechtnis.merken(action.userId, kennungenAus(trimmed)).catch(() => undefined);
-      const adapter = this.adapters.get(action.platform as Platform);
+      const imFaden = this.fadenZustellung ? await this.fadenZustellung(action.chatId, resultText, action.name).catch((err: Error) => { this.logger.warn({ err: err.message, actionId: action.id }, 'v1447 Faden-Zustellung fehlgeschlagen'); return false; }) : false;
+      const adapter = imFaden ? undefined : this.adapters.get(action.platform as Platform);
       if (adapter) {
         try {
           await adapter.sendMessage(action.chatId, resultText, {

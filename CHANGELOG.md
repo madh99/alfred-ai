@@ -55,6 +55,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1447] - 2026-10-14
+
+### Fixed — Geplante Aufgaben aus einem App-Faden liefern in den Faden (v1447)
+
+Realfall 13./14.10.: „2× täglich 9 Uhr und 19:30 prüfen“ wurde in einem App-Faden eingeplant. Die 09:00-Prüfung lief pünktlich, das Ergebnis landete aber in einem verwaisten Gespräch. Die Aufgabe hatte sich die rohe Sitzungs-Kennung `sitzung:<Gerät>:<Faden>` gemerkt; das Gespräch, das die App zeigt, ist seit v1330 `owner:faden:<Faden>`.
+
+- Ergebnisse von Aufgaben aus einem Owner-Faden werden im Faden gespeichert und an alle Owner-Geräte geschickt, dazu als Kopie an Telegram (Owner 14.10.).
+- Beim Einplanen aus einem Owner-Faden merkt sich Alfred gleich den Faden.
+- Fremde Geräte und andere Kanäle laufen wie bisher.
+- Die Aufgabe weiß, dass sie selbst die geplante Prüfung ist (vorher bot sie an, „sie per Scheduled Task zu automatisieren“).
+- Betrieb: Die beiden betroffenen Aufgaben sind auf den Faden umgestellt; die 09:00-Meldung ist in den Faden verschoben.
+
 ## [0.19.0-jarvis.1446] - 2026-10-14
 
 ### Fixed — „Pfad existiert“ sprachunabhängig erkennen (v1446)
