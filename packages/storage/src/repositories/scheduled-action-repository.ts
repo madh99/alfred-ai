@@ -136,7 +136,15 @@ export class ScheduledActionRepository {
 
   /** v1449 — Vergleichsstand eines Prüfauftrags fortschreiben */
   async setzeStand(id: string, stand: string, zeit = new Date().toISOString()): Promise<void> {
-    await this.adapter.execute('UPDATE scheduled_actions SET stand = ?, stand_zeit = ? WHERE id = ?', [stand, zeit, id]);
+    // v1451 — für die ganze Stand-Gruppe (Geschwister desselben Prüfauftrags), sonst nur diesen Auftrag
+    const row = await this.adapter.queryOne('SELECT stand_gruppe FROM scheduled_actions WHERE id = ?', [id]) as { stand_gruppe?: string | null } | undefined;
+    if (row?.stand_gruppe) await this.adapter.execute('UPDATE scheduled_actions SET stand = ?, stand_zeit = ? WHERE id = ? OR stand_gruppe = ?', [stand, zeit, id, row.stand_gruppe]);
+    else await this.adapter.execute('UPDATE scheduled_actions SET stand = ?, stand_zeit = ? WHERE id = ?', [stand, zeit, id]);
+  }
+
+  /** v1451 — Stand-Gruppe setzen (Geschwister teilen den Stand). */
+  async setzeStandGruppe(ids: string[], gruppe: string): Promise<void> {
+    for (const id of ids) await this.adapter.execute('UPDATE scheduled_actions SET stand_gruppe = ? WHERE id = ?', [gruppe, id]);
   }
 
   async updateLastRun(id: string, lastRunAt: string, nextRunAt: string | null): Promise<void> {
@@ -208,6 +216,7 @@ export class ScheduledActionRepository {
       threadId: row.thread_id as string | undefined,
       ...(typeof row.stand === 'string' ? { stand: row.stand } : {}),
       ...(row.stand_zeit ? { standZeit: String(row.stand_zeit) } : {}),
+      ...(row.stand_gruppe ? { standGruppe: String(row.stand_gruppe) } : {}),
     };
   }
 }

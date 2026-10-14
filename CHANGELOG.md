@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1451] - 2026-10-14
+
+### Fixed — Mehrere Prüfzeiten desselben Auftrags teilen einen Stand (v1451)
+
+„2× täglich 9:00 und 19:30“ ergibt zwei geplante Aufträge. Seit v1449 führte jeder seinen eigenen Stand, und die Stände liefen auseinander: 09:00 vermerkte „verkauft“, 19:30 hätte weiter gegen „online“ verglichen.
+
+- Prüfaufträge, die kurz hintereinander (30 min) im selben Gespräch angelegt werden, bilden eine Stand-Gruppe (`scheduled_actions.stand_gruppe`, PG v145 / SQLite v141).
+- Jeder Lauf schreibt den Stand für die ganze Gruppe fort.
+- Betrieb: Die beiden Mac-Prüfungen sind zu einer Gruppe verbunden; beide stehen auf dem Stand des letzten Laufs.
+
 ## [0.19.0-jarvis.1450] - 2026-10-14
 
 ### Fixed — Doppelte Antworten nach Freigaben (Regression v1449)

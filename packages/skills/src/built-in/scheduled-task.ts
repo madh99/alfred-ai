@@ -223,6 +223,20 @@ export class ScheduledTaskSkill extends Skill {
       ...(typeof input.ausgangsstand === 'string' && input.ausgangsstand.trim() ? { stand: input.ausgangsstand.trim().slice(0, 12_000) } : {}), // v1449
     });
 
+    // v1451 — Realfall 14.10.: „2× täglich 9:00 und 19:30“ ergab zwei Aufträge mit zwei Ständen, die auseinanderliefen. Prüfaufträge,
+    // die kurz hintereinander im selben Gespräch angelegt werden, teilen sich einen Stand (Stand-Gruppe).
+    if (typeof input.ausgangsstand === 'string' && input.ausgangsstand.trim()) {
+      try {
+        const alle = await this.actionRepo.getByUser(effectiveUserId(context));
+        const jetzt = Date.now();
+        const geschwister = alle.filter(a => a.id !== entry.id && a.enabled && a.chatId === entry.chatId && !!a.promptTemplate && jetzt - Date.parse(a.createdAt) < 30 * 60_000);
+        if (geschwister.length) {
+          const gruppe = geschwister.find(a => a.standGruppe)?.standGruppe ?? geschwister[0]!.id;
+          await this.actionRepo.setzeStandGruppe([entry.id, ...geschwister.map(a => a.id)], gruppe);
+        }
+      } catch { /* Gruppe optional */ }
+    }
+
     const scheduleLabel = scheduleType === 'cron'
       ? `cron: ${scheduleValue}`
       : scheduleType === 'interval'

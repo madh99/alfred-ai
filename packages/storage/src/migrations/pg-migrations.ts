@@ -2293,4 +2293,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS stand_zeit TEXT', []);
     },
   },
+  {
+    version: 145,
+    description: 'v1451 — scheduled_actions.stand_gruppe: mehrere Prüfaufträge teilen einen Stand (PG-Spiegel zu SQLite v141).',
+    async up(db) {
+      await db.execute('ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS stand_gruppe TEXT', []);
+    },
+  },
 ];

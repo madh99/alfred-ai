@@ -132,6 +132,8 @@ export interface ScheduledAction {
   /** v1449 — Vergleichsstand eines Prüfauftrags (vom Auftrag selbst geführt); stand_zeit = letzter Lauf, der ihn geschrieben hat */
   stand?: string;
   standZeit?: string;
+  /** v1451 — Prüfaufträge derselben Gruppe teilen den Stand (z. B. 9:00 und 19:30) */
+  standGruppe?: string;
 }
 
 export interface WatchCondition {

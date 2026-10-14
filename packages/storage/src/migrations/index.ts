@@ -2986,4 +2986,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE scheduled_actions ADD COLUMN stand_zeit TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 141,
+    description: 'v1451 — scheduled_actions.stand_gruppe: mehrere Prüfaufträge desselben Auftrags (z. B. 9:00 und 19:30) teilen einen Stand (SQLite-Spiegel zu PG v145).',
+    up(db) {
+      try { db.exec('ALTER TABLE scheduled_actions ADD COLUMN stand_gruppe TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

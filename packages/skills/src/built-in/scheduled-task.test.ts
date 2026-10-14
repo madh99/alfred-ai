@@ -334,3 +334,19 @@ describe('ScheduledTaskSkill', () => {
     expect(result.error).toContain('Unknown action');
   });
 });
+
+// v1451 — „2× täglich 9:00 und 19:30“: beide Prüfaufträge teilen einen Stand
+describe('v1451 Stand-Gruppe', () => {
+  it('zweiter Prüfauftrag mit Ausgangsstand im selben Gespräch → gemeinsame Gruppe; ohne Ausgangsstand keine', async () => {
+    const repo = createMockRepo() as unknown as ScheduledActionRepository & { setzeStandGruppe: ReturnType<typeof vi.fn> };
+    (repo as unknown as Record<string, unknown>).setzeStandGruppe = vi.fn();
+    const skill = new ScheduledTaskSkill(repo, undefined as never);
+    const basis = { action: 'create', description: 'Angebote prüfen', schedule_type: 'cron', prompt_template: 'Prüfe täglich die Angebote', ausgangsstand: '1 | https://h/1 | 100 EUR' };
+    await skill.execute({ ...basis, name: 'Angebote morgens', schedule_value: '0 9 * * *' }, ctx);
+    expect(repo.setzeStandGruppe).not.toHaveBeenCalled();
+    await skill.execute({ ...basis, name: 'Angebote abends', schedule_value: '30 19 * * *' }, ctx);
+    expect(repo.setzeStandGruppe).toHaveBeenCalledWith(['action-2', 'action-1'], 'action-1');
+    await skill.execute({ action: 'create', description: 'Wetter', schedule_type: 'cron', schedule_value: '0 7 * * *', name: 'Wetter', prompt_template: 'Wetter' }, ctx);
+    expect(repo.setzeStandGruppe).toHaveBeenCalledTimes(1);
+  });
+});
