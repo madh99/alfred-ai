@@ -17,7 +17,8 @@ export class ScheduledTaskSkill extends Skill {
       'Supports cron expressions (e.g. "0 9 * * *" for daily at 9 AM), intervals (in minutes), and one-time schedules. ' +
       'Each scheduled action executes a skill or sends a prompt to the LLM at the configured time. ' +
       'Use this for time-based tasks (reports, periodic checks, reminders). ' +
-      'For condition-based alerts ("notify me WHEN X happens"), use the watch tool instead.',
+      'For condition-based alerts ("notify me WHEN X happens"), use the watch tool instead. ' +
+      'v1449 — WIEDERKEHRENDE PRÜFUNG MIT VERGLEICH (z. B. „prüfe diese Angebote täglich“, Preise/Status/neue Treffer): prompt_template = was geprüft wird und die Kriterien; ausgangsstand = der KONKRETE aktuelle Stand aus diesem Gespräch, eine Zeile je Eintrag mit Kennung/Adresse und den zu vergleichenden Werten (z. B. „789898944 | Mac mini M4 Pro 64/512 | 2400 EUR | online“). Den Vergleich, die Fortschreibung des Stands und die Zustellung bei jedem Lauf übernimmt Alfred; im Prompt KEINE Notizen für den Vergleich verlangen.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
@@ -52,6 +53,10 @@ export class ScheduledTaskSkill extends Skill {
         skill_input: {
           type: 'object',
           description: 'Input to pass to the skill (for create)',
+        },
+        ausgangsstand: {
+          type: 'string',
+          description: 'v1449 — Für Prüfungen mit Vergleich: konkreter aktueller Stand aus dem Gespräch, eine Zeile je Eintrag (Kennung | Werte). Wird vom Auftrag geführt und bei jedem Lauf fortgeschrieben.',
         },
         prompt_template: {
           type: 'string',
@@ -215,6 +220,7 @@ export class ScheduledTaskSkill extends Skill {
       skillName: skillName ?? 'llm_prompt',
       skillInput: JSON.stringify(skillInput ?? {}),
       promptTemplate,
+      ...(typeof input.ausgangsstand === 'string' && input.ausgangsstand.trim() ? { stand: input.ausgangsstand.trim().slice(0, 12_000) } : {}), // v1449
     });
 
     const scheduleLabel = scheduleType === 'cron'

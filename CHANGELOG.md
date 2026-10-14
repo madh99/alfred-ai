@@ -55,6 +55,30 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1449] - 2026-10-14
+
+### Changed — Wiederkehrende Prüfungen mit eigenem Vergleichsstand (v1449)
+
+Realfall 14.10.: „Prüfe diese Angebote 2× täglich“.
+- 09:00 verglich korrekt.
+- 19:30 legte eine zweite, anders benannte Notiz an, wertete „in der Suche nicht gefunden“ als weg und lieferte dem Owner nur „Notiz gespeichert“.
+- Der Vergleich hing an „suche Chat-Verlauf/Notizen“.
+- Ohne neue Kennungen hätte die Meldeentscheidung (v1368) spätere Berichte sogar unterdrückt.
+
+Owner: „Wenn man Alfred das nächste Mal so etwas fragt, muss es funktionieren.“ Darum gilt jetzt für jede geplante Aufgabe im Prüfmodus:
+
+- **Der Auftrag führt seinen Stand selbst** (`scheduled_actions.stand`).
+  - Beim Einplanen übernimmt Alfred den konkreten Stand aus dem Gespräch (`scheduled_task ausgangsstand`, eine Zeile je Eintrag mit Kennung und Werten).
+  - Jeder Lauf bekommt ihn fest mitgegeben und liefert am Ende den neuen Stand. Diesen übernimmt der Scheduler selbst; keine Notizen und kein Suchen im Verlauf.
+- **Feste Lauf-Vorgaben:** Jeder Eintrag wird einzeln geprüft und eingestuft (unverändert, geändert mit alt → neu, weg nur wenn bestätigt, nicht prüfbar). „In einer Suche nicht gefunden“ ist nicht „weg“.
+- **Vollständigkeit ohne Modell:**
+  - Fehlen Bericht oder Stand, fordert der Scheduler im selben Lauf einmal nach.
+  - Bleibt der Lauf unvollständig, meldet Alfred das ausdrücklich, und der letzte Stand bleibt.
+  - Jeder vollständige Lauf wird zugestellt, auch ohne neue Kennungen.
+- **Prüfmodus:** gilt bei einem Ausgangsstand oder bei einem Auftrag, der vergleichen, prüfen oder überwachen will (Preisänderungen, neue Treffer …). Bestehende Aufträge dieser Art laufen ab dem nächsten Lauf so.
+- Pipeline: Bei geplanten Aufgaben wird längerer Text früherer Runden mitgeliefert. Vorher kam nur der Text der letzten Runde an, und ein Bericht neben einem Werkzeugaufruf ging verloren.
+- Speicher: `scheduled_actions.stand`/`stand_zeit` (PG v144 / SQLite v140).
+
 ## [0.19.0-jarvis.1448] - 2026-10-14
 
 ### Fixed — Git-Haushalt der Geräte-Projekte (v1448)

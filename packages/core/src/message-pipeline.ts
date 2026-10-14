@@ -1731,6 +1731,16 @@ export class MessagePipeline {
         }
       }
       if (!responseText) responseText = '(no response)';
+      // v1449 — geplante Aufgaben: längere Textblöcke früherer Runden mitliefern (Realfall 14.10. 19:30: Bericht in Runde 1 neben
+      // einem Werkzeugaufruf, Schluss nur „Notiz gespeichert“ — geliefert wurde nur der Schluss)
+      if (message.metadata?.scheduled) {
+        const frueher: string[] = [];
+        for (const m of messages) {
+          if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+          for (const b of m.content) if (b.type === 'text' && 'text' in b && typeof b.text === 'string' && b.text.trim().length >= 200 && !responseText.includes(b.text.trim()) && !frueher.includes(b.text.trim())) frueher.push(b.text.trim());
+        }
+        if (frueher.length) responseText = [...frueher, responseText].join('\n\n');
+      }
       // v1432 — Frage zum Projekt: Antwort von Claude Code steht noch aus → fester Satz statt eigener Vermutung; sonst Quellenzeile darunter
       const zusatz = baseContext.antwortZusatz;
       if (zusatz?.ausstehend && zusatz.quellen.length === 0) responseText = zusatz.ausstehend;

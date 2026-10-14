@@ -2285,4 +2285,12 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE projects ADD COLUMN IF NOT EXISTS deploy_ziel TEXT', []);
     },
   },
+  {
+    version: 144,
+    description: 'v1449 — scheduled_actions.stand/stand_zeit: Vergleichsstand wiederkehrender Prüfaufträge (PG-Spiegel zu SQLite v140).',
+    async up(db) {
+      await db.execute('ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS stand TEXT', []);
+      await db.execute('ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS stand_zeit TEXT', []);
+    },
+  },
 ];

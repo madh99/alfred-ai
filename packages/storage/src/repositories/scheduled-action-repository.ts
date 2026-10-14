@@ -14,6 +14,8 @@ export interface CreateScheduledActionInput {
   skillInput: string;
   promptTemplate?: string;
   threadId?: string;
+  /** v1449 — Ausgangsstand eines Prüfauftrags (aus dem Gespräch) */
+  stand?: string;
 }
 
 export class ScheduledActionRepository {
@@ -35,8 +37,8 @@ export class ScheduledActionRepository {
     await this.adapter.execute(`
       INSERT INTO scheduled_actions
         (id, user_id, platform, chat_id, name, description, schedule_type, schedule_value,
-         skill_name, skill_input, prompt_template, enabled, next_run_at, created_at, thread_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+         skill_name, skill_input, prompt_template, enabled, next_run_at, created_at, thread_id, stand)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
     `, [
       id,
       data.userId,
@@ -52,6 +54,7 @@ export class ScheduledActionRepository {
       nextRunAt,
       now,
       data.threadId ?? null,
+      data.stand ?? null,
     ]);
 
     return {
@@ -131,6 +134,11 @@ export class ScheduledActionRepository {
     return this.getDue();
   }
 
+  /** v1449 — Vergleichsstand eines Prüfauftrags fortschreiben */
+  async setzeStand(id: string, stand: string, zeit = new Date().toISOString()): Promise<void> {
+    await this.adapter.execute('UPDATE scheduled_actions SET stand = ?, stand_zeit = ? WHERE id = ?', [stand, zeit, id]);
+  }
+
   async updateLastRun(id: string, lastRunAt: string, nextRunAt: string | null): Promise<void> {
     await this.adapter.execute(`
       UPDATE scheduled_actions
@@ -198,6 +206,8 @@ export class ScheduledActionRepository {
       nextRunAt: row.next_run_at as string | undefined,
       createdAt: row.created_at as string,
       threadId: row.thread_id as string | undefined,
+      ...(typeof row.stand === 'string' ? { stand: row.stand } : {}),
+      ...(row.stand_zeit ? { standZeit: String(row.stand_zeit) } : {}),
     };
   }
 }

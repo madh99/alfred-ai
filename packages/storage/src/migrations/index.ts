@@ -2978,4 +2978,12 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec('ALTER TABLE projects ADD COLUMN deploy_ziel TEXT'); } catch { /* exists */ }
     },
   },
+  {
+    version: 140,
+    description: 'v1449 — scheduled_actions.stand/stand_zeit: Vergleichsstand wiederkehrender Prüfaufträge (SQLite-Spiegel zu PG v144).',
+    up(db) {
+      try { db.exec('ALTER TABLE scheduled_actions ADD COLUMN stand TEXT'); } catch { /* exists */ }
+      try { db.exec('ALTER TABLE scheduled_actions ADD COLUMN stand_zeit TEXT'); } catch { /* exists */ }
+    },
+  },
 ];

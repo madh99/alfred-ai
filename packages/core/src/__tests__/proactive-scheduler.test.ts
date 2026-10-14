@@ -120,6 +120,40 @@ describe('ProactiveScheduler', () => {
     }
   });
 
+  it('v1449 Prüfauftrag: Rahmen mit Stand, Nachforderung bei „Notiz gespeichert“, Stand fortgeschrieben, Bericht ohne Stand-Block zugestellt', async () => {
+    const adapter = { sendMessage: vi.fn().mockResolvedValue('m'), status: 'connected' };
+    const repo = createMockActionRepo([{ id: 'a1', name: 'Mac-Angebote', userId: 'user-1', platform: 'telegram', chatId: 'c1', skillName: 'llm_prompt', skillInput: '{}', promptTemplate: 'Prüfe täglich live Willhaben-Angebote … Preisänderungen hervorheben', stand: '789898944 | 2400 EUR | online', standZeit: '2026-10-14T07:00:24Z', scheduleType: 'once', scheduleValue: '' }]);
+    repo.setzeStand = vi.fn().mockResolvedValue(undefined);
+    const texte: string[] = [];
+    const voll = 'Änderungen: 789898944 Preis 2400 → 2300 EUR. ' + 'Übersicht … '.repeat(15) + '\n<<<STAND\n789898944 | 2300 EUR | online\nSTAND>>>';
+    const pipeline = { process: vi.fn().mockImplementation(async (m: any) => { texte.push(m.text); return { text: texte.length === 1 ? 'Die Notiz mit dem Prüfstand ist gespeichert. Keine Käufe und keine Verkäuferkontakte.' : voll }; }) } as any;
+    const s = new ProactiveScheduler(repo, createMockSkillRegistry(), createMockSkillSandbox(), createMockLLM(), new Map([['telegram', adapter]]) as any, createMockUsers(), createMockLogger(), pipeline);
+    s.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    s.stop();
+    expect(pipeline.process).toHaveBeenCalledTimes(2);
+    expect(texte[0]).toContain('Letzter Stand (vom 14.10., 09:00):\n789898944 | 2400 EUR | online');
+    expect(texte[0]).toContain('ist NICHT „weg“');
+    expect(texte[1]).toContain('vorige Versuch dieses Laufs lieferte keinen vollständigen Bericht');
+    expect(repo.setzeStand).toHaveBeenCalledWith('a1', '789898944 | 2300 EUR | online');
+    const gesendet = String(adapter.sendMessage.mock.calls[0]?.[1] ?? '');
+    expect(gesendet).toContain('2400 → 2300');
+    expect(gesendet).not.toContain('<<<STAND');
+  });
+
+  it('v1449 Prüfauftrag bleibt unvollständig: ehrliche Meldung, Stand bleibt', async () => {
+    const adapter = { sendMessage: vi.fn().mockResolvedValue('m'), status: 'connected' };
+    const repo = createMockActionRepo([{ id: 'a2', name: 'Mac-Angebote', userId: 'user-1', platform: 'telegram', chatId: 'c1', skillName: 'llm_prompt', skillInput: '{}', promptTemplate: 'Prüfe täglich die Angebote, neue Treffer und Preisänderungen', scheduleType: 'once', scheduleValue: '' }]);
+    repo.setzeStand = vi.fn();
+    const pipeline = { process: vi.fn().mockResolvedValue({ text: 'Notiz gespeichert.' }) } as any;
+    const s = new ProactiveScheduler(repo, createMockSkillRegistry(), createMockSkillSandbox(), createMockLLM(), new Map([['telegram', adapter]]) as any, createMockUsers(), createMockLogger(), pipeline);
+    s.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    s.stop();
+    expect(repo.setzeStand).not.toHaveBeenCalled();
+    expect(String(adapter.sendMessage.mock.calls[0]?.[1] ?? '')).toContain('⚠️ Prüflauf „Mac-Angebote“ unvollständig: Bericht und neuer Stand fehlt');
+  });
+
   it('tick skips non-due actions (empty claimDue)', async () => {
     actionRepo = createMockActionRepo([]);
     const sandbox = createMockSkillSandbox();

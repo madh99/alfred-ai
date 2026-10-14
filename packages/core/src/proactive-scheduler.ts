@@ -12,6 +12,7 @@ import { matchesCron, getNextCronDate } from '@alfred/types';
 import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
 import { entscheideMeldung, kennungenAus } from './geplant/meldung.js'; // v1368
+import { standRahmen, standAus, laufVollstaendig, istPruefAuftrag, NACHFORDERUNG } from './geplant/stand.js'; // v1449
 import { zustellProtokoll } from './zustellung/protokoll.js'; // v1369
 
 export class ProactiveScheduler {
@@ -91,6 +92,7 @@ export class ProactiveScheduler {
 
     let resultText: string;
     let resultParseMode: 'text' | 'markdown' | 'html' = 'text';
+    let pruefLauf = false; // v1449 — Prüfauftrag mit eigenem Stand: jeder vollständige Lauf wird zugestellt
 
     if (action.skillName && this.skillRegistry.has(action.skillName)) {
       // Execute skill directly — preferred path (no LLM overhead).
@@ -129,6 +131,7 @@ export class ProactiveScheduler {
       // Route through the full message pipeline so the LLM can use all tools.
       try {
         const isolatedChatId = `scheduled-${action.id}`;
+        const pruefModus = action.stand !== undefined || istPruefAuftrag(action.promptTemplate); // v1449
         const resolvedUser = await this.users.findById(action.userId);
         const platformUserId = resolvedUser?.platformUserId ?? action.userId;
         const syntheticMessage: NormalizedMessage = {
@@ -138,16 +141,37 @@ export class ProactiveScheduler {
           chatType: 'dm',
           userId: platformUserId,
           userName: resolvedUser?.username ?? platformUserId,
-          // v1447 — die Aufgabe weiß, dass sie selbst die geplante Prüfung ist (Realfall 14.10.: bot an, „sie per Scheduled Task zu automatisieren“)
-          text: `[Geplante Aufgabe „${action.name}“ — läuft bereits automatisch nach Plan. Ergebnis liefern; nicht anbieten, sie einzuplanen oder zu automatisieren.]\n\n` + action.promptTemplate + (ausloeser ? '\n\n' + ausloeser.text : '') + '\n\n[Format: Use only Markdown (**, *, ~~, `, ```). Do NOT use HTML tags like <b>, <i>, <code>. The system converts Markdown to platform-specific formatting automatically.]',
+          // v1447 — die Aufgabe weiß, dass sie selbst die geplante Prüfung ist; v1449 — Prüfauftrag: fester Rahmen mit dem eigenen Stand
+          text: (pruefModus ? `${standRahmen(action.name, action.stand ?? '', action.standZeit)}\n\nAuftrag:\n` : `[Geplante Aufgabe „${action.name}“ — läuft bereits automatisch nach Plan. Ergebnis liefern; nicht anbieten, sie einzuplanen oder zu automatisieren.]\n\n`) + action.promptTemplate + (ausloeser ? '\n\n' + ausloeser.text : '') + '\n\n[Format: Use only Markdown (**, *, ~~, `, ```). Do NOT use HTML tags like <b>, <i>, <code>. The system converts Markdown to platform-specific formatting automatically.]',
           timestamp: new Date(),
           metadata: { scheduled: true, skipHistory: true, tier: 'fast', originalChatId: action.chatId, ...(ausloeser?.allowedSkills ? { allowedSkills: ausloeser.allowedSkills } : {}) },
         };
 
-        const result = await this.pipeline.process(syntheticMessage);
+        let result = await this.pipeline.process(syntheticMessage);
+        let rohText = result.text;
+        if (pruefModus) {
+          // v1449 — Bericht und neuen Stand trennen; unvollständig → einmal nachfordern; sonst ehrlich melden (Stand bleibt)
+          let teil = standAus(result.text);
+          let v = laufVollstaendig(teil);
+          if (!v.ok) {
+            this.logger.warn({ actionId: action.id, name: action.name, fehlt: v.fehlt }, 'v1449 Prüflauf unvollständig — Nachforderung');
+            result = await this.pipeline.process({ ...syntheticMessage, id: `scheduled-${crypto.randomUUID()}`, text: `${NACHFORDERUNG}\n\n${syntheticMessage.text}` });
+            teil = standAus(result.text);
+            v = laufVollstaendig(teil);
+          }
+          if (v.ok) {
+            await this.actionRepo.setzeStand(action.id, teil.stand!);
+            rohText = teil.bericht;
+            this.logger.info({ actionId: action.id, name: action.name, standZeichen: teil.stand!.length }, 'v1449 Prüfstand fortgeschrieben');
+          } else {
+            rohText = `${teil.bericht.trim() || '(kein Bericht geliefert)'}\n\n⚠️ Prüflauf „${action.name}“ unvollständig: ${v.fehlt.join(' und ')} fehlt auch nach Nachforderung — der letzte Stand bleibt; der nächste Lauf prüft erneut.`;
+            this.logger.warn({ actionId: action.id, name: action.name, fehlt: v.fehlt }, 'v1449 Prüflauf unvollständig nach Nachforderung');
+          }
+          pruefLauf = true;
+        }
         const formatted = this.formatter
-          ? this.formatter.format(result.text, action.platform as Platform)
-          : { text: result.text, parseMode: 'text' as const };
+          ? this.formatter.format(rohText, action.platform as Platform)
+          : { text: rohText, parseMode: 'text' as const };
 
         resultText = formatted.text;
         resultParseMode = formatted.parseMode;
@@ -212,7 +236,10 @@ export class ProactiveScheduler {
     const trimmed = resultText.trim();
     let bekannt = new Set<string>();
     if (action.promptTemplate && this.meldeGedaechtnis) { try { bekannt = await this.meldeGedaechtnis.laden(action.userId); } catch { /* ohne Gedächtnis: alles neu */ } }
-    const entscheidung = action.promptTemplate
+    // v1449 — Prüfaufträge melden jeden Lauf („Liefere JEDES MAL“): nicht über das Kennungs-Gedächtnis unterdrücken
+    const entscheidung = pruefLauf && trimmed.length >= 3
+      ? { senden: true, grund: 'Prüfauftrag', neu: [] as string[] }
+      : action.promptTemplate
       ? entscheideMeldung({ text: trimmed, prompt: action.promptTemplate, istFehler: isError || trimmed.startsWith('Scheduled action'), bekannt })
       : { senden: trimmed.length >= 3, grund: trimmed.length >= 3 ? 'Skill-Aufgabe' : 'leer', neu: [] as string[] };
     if (!entscheidung.senden) {

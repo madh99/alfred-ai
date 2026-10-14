@@ -129,6 +129,9 @@ export interface ScheduledAction {
   nextRunAt?: string;
   createdAt: string;
   threadId?: string;
+  /** v1449 — Vergleichsstand eines Prüfauftrags (vom Auftrag selbst geführt); stand_zeit = letzter Lauf, der ihn geschrieben hat */
+  stand?: string;
+  standZeit?: string;
 }
 
 export interface WatchCondition {
