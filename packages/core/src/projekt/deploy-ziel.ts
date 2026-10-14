@@ -126,10 +126,10 @@ export function forgeTokenFuer(repoUrl: string, forge?: { gitlab?: { token?: str
 }
 
 /** v1441 — Klartext für Bestätigungen: welches Token an den Zielrechner geht. */
-export function tokenHinweis(quelle: 'projekt' | 'gitlab' | 'github' | undefined, repoUrl?: string): string {
-  if (!quelle) return 'Kein Token (öffentliches Repo oder Schlüssel des Zielrechners).';
+export function tokenHinweis(quelle: 'projekt' | 'gitlab' | 'github' | undefined, repoUrl?: string, wohin = 'den Zielrechner'): string {
+  if (!quelle) return 'Kein Token (öffentliches Repo oder Schlüssel des Rechners).';
   const klar = repoUrl && /^http:\/\//i.test(repoUrl) ? ' Achtung: http — unverschlüsselt im Netz.' : '';
-  return quelle === 'projekt' ? `Token: Projekt-Token (Projektumgebung).${klar}` : `Token: dein ${quelle === 'gitlab' ? 'GitLab' : 'GitHub'}-Konto-Token (Zugriff auf alle deine Repos) geht für den Abruf an den Zielrechner (nur als Kopfzeile, nicht gespeichert).${klar}`;
+  return quelle === 'projekt' ? `Token: Projekt-Token (Projektumgebung).${klar}` : `Token: dein ${quelle === 'gitlab' ? 'GitLab' : 'GitHub'}-Konto-Token (Zugriff auf alle deine Repos) geht für Abruf/Push an ${wohin} (nur als Kopfzeile, nicht gespeichert).${klar}`;
 }
 
 /** v1442 — http-Adressen auf dem Forge-Host (bzw. github.com) auf https aufwerten; andere Adressen bleiben unverändert. */
@@ -180,17 +180,29 @@ export function repoPfad(name: string): string {
  * v1444 — neues privates Repo im Namensraum des Token-Benutzers auf der eigenen GitLab-Instanz anlegen (Owner 13.10.: „madh/…“).
  * Nur über https; vorhandener Pfad → Fehler (nie etwas überschreiben). Liefert die https-Klonadresse.
  */
-export async function gitlabRepoAnlegen(baseUrl: string, token: string, name: string, f: typeof fetch = fetch): Promise<{ ok: true; url: string; pfad: string } | { ok: false; fehler: string }> {
+export async function gitlabRepoAnlegen(baseUrl: string, token: string, name: string, f: typeof fetch = fetch): Promise<{ ok: true; url: string; pfad: string; vorhanden?: boolean } | { ok: false; fehler: string }> {
   let basis: URL;
   try { basis = new URL(baseUrl); } catch { return { ok: false, fehler: 'GitLab-Adresse ungültig' }; }
   if (basis.protocol !== 'https:') return { ok: false, fehler: 'GitLab nur über https' };
   const pfad = repoPfad(name);
   const r = await f(`${basis.origin}/api/v4/projects`, { method: 'POST', headers: { 'PRIVATE-TOKEN': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ name, path: pfad, visibility: 'private', initialize_with_readme: false }) });
-  const j = await r.json().catch(() => ({})) as { http_url_to_repo?: string; message?: unknown; path_with_namespace?: string };
+  type Antwort = { http_url_to_repo?: string; message?: unknown; path_with_namespace?: string; empty_repo?: boolean };
+  const j = await r.json().catch(() => ({})) as Antwort;
+  // v1445 — Realfall 14.10.: GitLab mit external_url http liefert http://-Klonadressen; derselbe Host → auf https (wie aufHttps)
+  const sicher = (u?: string): string | undefined => { try { if (!u) return undefined; const x = new URL(u); if (x.host.toLowerCase() !== basis.host.toLowerCase()) return undefined; x.protocol = 'https:'; return x.toString(); } catch { return undefined; } };
   if (!r.ok) {
     const m = JSON.stringify(j.message ?? '').slice(0, 200);
-    return { ok: false, fehler: r.status === 400 && /taken|already/i.test(m) ? `Auf GitLab gibt es „${pfad}“ schon — Adresse des vorhandenen Repos eintragen` : `GitLab ${r.status}: ${m}` };
+    if (r.status === 400 && /taken|already/i.test(m)) {
+      // v1445 — Pfad gibt es schon: nur ein LEERES Repo weiterverwenden (z. B. nach abgebrochenem ersten Versuch) — nie etwas überschreiben
+      const v = await f(`${basis.origin}/api/v4/projects/${encodeURIComponent(`${(await (async () => { const u = await f(`${basis.origin}/api/v4/user`, { headers: { 'PRIVATE-TOKEN': token } }); return ((await u.json().catch(() => ({}))) as { username?: string }).username ?? ''; })())}/${pfad}`)}`, { headers: { 'PRIVATE-TOKEN': token } });
+      const vj = await v.json().catch(() => ({})) as Antwort;
+      const url = sicher(vj.http_url_to_repo);
+      if (v.ok && vj.empty_repo === true && url) return { ok: true, url, pfad: vj.path_with_namespace ?? pfad, vorhanden: true };
+      return { ok: false, fehler: `Auf GitLab gibt es „${pfad}“ schon und es ist nicht leer — Adresse des vorhandenen Repos eintragen` };
+    }
+    return { ok: false, fehler: `GitLab ${r.status}: ${m}` };
   }
-  if (!j.http_url_to_repo || !/^https:\/\//.test(j.http_url_to_repo)) return { ok: false, fehler: 'GitLab lieferte keine https-Adresse' };
-  return { ok: true, url: j.http_url_to_repo, pfad: j.path_with_namespace ?? pfad };
+  const url = sicher(j.http_url_to_repo);
+  if (!url) return { ok: false, fehler: 'GitLab lieferte keine Klonadresse auf dem eigenen Host' };
+  return { ok: true, url, pfad: j.path_with_namespace ?? pfad };
 }

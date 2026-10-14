@@ -113,7 +113,16 @@ describe('v1444 Repo anlegen', () => {
     expect(await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', ok)).toEqual({ ok: true, url: 'https://git.lokalkraft.at/madh/probe.git', pfad: 'madh/probe' });
     expect(aufrufe[0]).toEqual({ url: 'https://git.lokalkraft.at/api/v4/projects', body: { name: 'Probe', path: 'probe', visibility: 'private', initialize_with_readme: false }, token: 'tok' });
     const belegt = (async () => new Response(JSON.stringify({ message: { path: ['has already been taken'] } }), { status: 400 })) as unknown as typeof fetch;
-    expect(await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', belegt)).toMatchObject({ ok: false, fehler: expect.stringContaining('gibt es „probe“ schon') });
+    expect((await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', belegt)).ok).toBe(false);
     expect(await gitlabRepoAnlegen('http://git.lokalkraft.at', 'tok', 'Probe', ok)).toMatchObject({ ok: false, fehler: 'GitLab nur über https' });
+    // v1445 — Realfall 14.10.: GitLab liefert http-Klonadresse (external_url http) → https; fremder Host nie
+    const httpAntwort = (async () => new Response(JSON.stringify({ http_url_to_repo: 'http://git.lokalkraft.at/madh/probe.git', path_with_namespace: 'madh/probe' }), { status: 201 })) as unknown as typeof fetch;
+    expect(await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', httpAntwort)).toEqual({ ok: true, url: 'https://git.lokalkraft.at/madh/probe.git', pfad: 'madh/probe' });
+    const fremd = (async () => new Response(JSON.stringify({ http_url_to_repo: 'https://boese.example/madh/probe.git' }), { status: 201 })) as unknown as typeof fetch;
+    expect((await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', fremd)).ok).toBe(false);
+    // vorhandener, LEERER Pfad wird weiterverwendet; nicht leer → Fehler
+    const mitVorhanden = (leer: boolean) => (async (url: string) => url.endsWith('/projects') ? new Response(JSON.stringify({ message: { path: ['has already been taken'] } }), { status: 400 }) : url.endsWith('/user') ? new Response(JSON.stringify({ username: 'madh' })) : new Response(JSON.stringify({ http_url_to_repo: 'http://git.lokalkraft.at/madh/probe.git', path_with_namespace: 'madh/probe', empty_repo: leer }))) as unknown as typeof fetch;
+    expect(await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', mitVorhanden(true))).toEqual({ ok: true, url: 'https://git.lokalkraft.at/madh/probe.git', pfad: 'madh/probe', vorhanden: true });
+    expect(await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', mitVorhanden(false))).toMatchObject({ ok: false, fehler: expect.stringContaining('nicht leer') });
   });
 });

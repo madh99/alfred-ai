@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1445] - 2026-10-14
+
+### Fixed — Neues GitLab-Repo: http-Klonadresse und Wiederholung (v1445)
+
+Realfall 14.10. 08:20: Das Repo `madh/angebots-radar-osterreich` wurde angelegt, danach brach Alfred mit „GitLab lieferte keine https-Adresse“ ab. Die GitLab-Instanz nennt ihre Klonadressen mit `http://` (`external_url`).
+
+- Klonadressen auf dem eigenen GitLab-Host werden auf `https` umgestellt; fremde Hosts werden abgelehnt.
+- Gibt es den Pfad schon und ist das Repo leer (z. B. nach einem abgebrochenen ersten Versuch), verwendet Alfred es weiter. Ein Repo mit Inhalt wird nie überschrieben.
+- Der Token-Hinweis nennt, wohin das Token geht: beim Remote das Gerät, beim Deploy den Zielrechner.
+
 ## [0.19.0-jarvis.1444] - 2026-10-13
 
 ### Added — Remote für bestehende Geräte-Projekte (v1444, App 1.26.0)

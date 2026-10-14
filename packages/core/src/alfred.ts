@@ -16220,7 +16220,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
             if (!forge?.token || !forge.baseUrl) return { success: false, error: 'Kein GitLab-Token in der Konfiguration' };
             const a = await gitlabRepoAnlegen(this.repoSicher(forge.baseUrl), forge.token, url.slice('anlegen:'.length));
             if (!a.ok) return { success: false, error: a.fehler };
-            this.logger.info({ projekt: p.id, repo: a.pfad }, 'v1444 GitLab-Repo angelegt');
+            this.logger.info({ projekt: p.id, repo: a.pfad, vorhanden: !!a.vorhanden }, a.vorhanden ? 'v1445 leeres GitLab-Repo weiterverwendet' : 'v1444 GitLab-Repo angelegt');
             url = a.url;
           }
           url = this.repoSicher(url);
@@ -16246,7 +16246,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const beschreibung = anlegen
           ? `🆕 Neues privates Repo „${repoPfad(name)}“ in deinem Namensraum auf ${host} anlegen und ${p.name} (Gerät ${g.name}) dorthin pushen?`
           : `🔗 Remote für ${p.name} (Gerät ${g.name}) setzen: ${url} — und den bisherigen Stand dorthin pushen?`;
-        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `remote-${p.id}-${Date.now()}`, description: `${beschreibung}\n${tokenHinweis(tq, url ?? this.repoSicher(forge?.baseUrl ?? ''))}\nDanach: Push nach jeder abgenommenen Etappe, Deploy aus diesem Repo.`, skillName: 'project_agent', skillParams: { action: 'projekt_remote', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) });
+        const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `remote-${p.id}-${Date.now()}`, description: `${beschreibung}\n${tokenHinweis(tq, url ?? this.repoSicher(forge?.baseUrl ?? ''), `das Gerät ${g.name}`)}\nDanach: Push nach jeder abgenommenen Etappe, Deploy aus diesem Repo.`, skillName: 'project_agent', skillParams: { action: 'projekt_remote', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) });
         this.logger.info({ projekt: p.id, anlegen, url }, 'v1444 Remote zur Bestätigung gestellt');
         return ok ? { success: true, data: { bestaetigung: true }, display: anlegen ? `Neues Repo „${repoPfad(name)}“ für ${p.name} zur Bestätigung gestellt.` : `Remote ${url} für ${p.name} zur Bestätigung gestellt.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
       },
