@@ -1451,6 +1451,7 @@ export class MessagePipeline {
       // 7. Agentic tool-use loop (timeout-based + repeated-error detection)
       let response: LLMResponse;
       let iteration = 0;
+      const rundenTexte: string[] = []; // v1450 — Texte der Runden DIESER Anfrage (nie aus dem geladenen Verlauf)
       const toolLoopStart = Date.now();
       let lastErrorSignature = '';
       let consecutiveErrors = 0;
@@ -1640,6 +1641,7 @@ export class MessagePipeline {
         const assistantContent: LLMContentBlock[] = [];
         if (response.content) {
           assistantContent.push({ type: 'text', text: response.content });
+          rundenTexte.push(response.content);
         }
         for (const tc of response.toolCalls) {
           assistantContent.push({
@@ -1733,12 +1735,11 @@ export class MessagePipeline {
       if (!responseText) responseText = '(no response)';
       // v1449 — geplante Aufgaben: längere Textblöcke früherer Runden mitliefern (Realfall 14.10. 19:30: Bericht in Runde 1 neben
       // einem Werkzeugaufruf, Schluss nur „Notiz gespeichert“ — geliefert wurde nur der Schluss)
-      if (message.metadata?.scheduled) {
+      // v1450 — Realfall 14.10. 22:27: die Fortsetzung nach einer Freigabe ist auch „scheduled“, lädt aber den Verlauf; die Schleife über
+      // `messages` lieferte alte Faden-Meldungen ein zweites Mal. Jetzt NUR echte geplante Aufgaben (ohne Verlauf) und NUR Runden dieser Anfrage.
+      if (message.metadata?.scheduled && message.metadata?.skipHistory) {
         const frueher: string[] = [];
-        for (const m of messages) {
-          if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
-          for (const b of m.content) if (b.type === 'text' && 'text' in b && typeof b.text === 'string' && b.text.trim().length >= 200 && !responseText.includes(b.text.trim()) && !frueher.includes(b.text.trim())) frueher.push(b.text.trim());
-        }
+        for (const t0 of rundenTexte) { const t = t0.trim(); if (t.length >= 200 && !responseText.includes(t) && !frueher.includes(t)) frueher.push(t); }
         if (frueher.length) responseText = [...frueher, responseText].join('\n\n');
       }
       // v1432 — Frage zum Projekt: Antwort von Claude Code steht noch aus → fester Satz statt eigener Vermutung; sonst Quellenzeile darunter

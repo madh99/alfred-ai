@@ -55,6 +55,34 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1450] - 2026-10-14
+
+### Fixed — Doppelte Antworten nach Freigaben (Regression v1449)
+
+Realfall 14.10. 22:27 im Projektfaden: Die Antwort nach einer Freigabe enthielt alte Faden-Meldungen (Etappenberichte, eine frühere Claude-Antwort) ein zweites Mal.
+
+- Ursache war v1449: Bei geplanten Nachrichten wurden längere Texte früherer Runden mitgeliefert, gelesen aus der ganzen Nachrichtenliste. Die Fortsetzung nach einer Freigabe ist ebenfalls als geplant markiert und lädt den Verlauf.
+- Jetzt gilt das nur für echte geplante Aufgaben (ohne Verlauf) und nur für die Runden dieser Anfrage. Regressionstest mit Gegenprobe gegen den alten Stand.
+
+### Fixed — Fehlgeschlagene Freigabe: Ausgabe und Fortsetzung
+
+Im selben Realfall gelang der App-Neustart, die Prüfung im selben Befehl kam aber zu früh. Gemeldet wurde nur „Command failed: <Befehl>“, danach kam nichts mehr.
+
+- Satellit `shell`: Bei Exit-Code ≠ 0 (oder Zeitlimit) kommen der Exit-Code und die letzten Zeilen von stdout und stderr zurück, statt nur das Kommando zu wiederholen.
+- Nach einer fehlgeschlagenen Freigabe setzt Alfred das Gespräch fort: Er stellt mit der Fehlerausgabe den tatsächlichen Stand fest, ohne die Aktion zu wiederholen, und meldet ihn.
+
+### Fixed — Geplante Aufgaben in der App mit rohem HTML
+
+Das Ergebnis wurde als Telegram-HTML mit dem Präfix „[Automated Scheduled Alert: …]“ ins Gespräch gelegt. Die App zeigte `<b>`/`<code>` deshalb roh an.
+
+- Ins Gespräch (und in den Faden) kommt jetzt der Markdown-Text mit der Kopfzeile „⏰ Geplante Aufgabe „…““.
+- Nur der Versand an Telegram ist HTML.
+
+### Changed — Prüfaufträge: Links
+
+- Der Vergleichsstand führt je Eintrag den Link mit.
+- Der Bericht verlinkt jeden Eintrag, auch in Tabellen, wie bei der ersten Anfrage.
+
 ## [0.19.0-jarvis.1449] - 2026-10-14
 
 ### Changed — Wiederkehrende Prüfungen mit eigenem Vergleichsstand (v1449)

@@ -161,6 +161,30 @@ describe('MessagePipeline', () => {
     expect(mockSkillSandbox.execute).toHaveBeenCalledTimes(1);
   });
 
+  // ---- v1450: frühere Runden nur bei echten geplanten Aufgaben, nie aus dem Verlauf ----
+  for (const fall of [
+    { name: 'geplante Aufgabe (ohne Verlauf): Bericht aus Runde 1 wird mitgeliefert', metadata: { scheduled: true, skipHistory: true }, erwartetBericht: true },
+    { name: 'Fortsetzung nach Freigabe (mit Verlauf): keine alten Texte, nur die Antwort', metadata: { scheduled: true }, erwartetBericht: false },
+  ]) {
+    it(`v1450 ${fall.name}`, async () => {
+      const alt = '✅ Etappe 5/8 alte Meldung aus dem Faden. ' + 'x'.repeat(300);
+      mockConversationManager.getHistory.mockReturnValueOnce([{ id: 'h1', conversationId: 'conv-1', role: 'assistant', content: alt, createdAt: new Date().toISOString() }] as any);
+      const bericht = '## Bericht\n' + 'Zeile mit Inhalt. '.repeat(20);
+      mockLLM.complete.mockResolvedValueOnce({ content: bericht, toolCalls: [{ id: 'tc1', name: 'calculator', input: {} }], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_use' });
+      mockLLM.complete.mockResolvedValueOnce({ content: 'Notiz gespeichert.', usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end_turn' });
+      const skill = { metadata: { name: 'calculator', description: 'c', riskLevel: 'read' as const, version: '1', inputSchema: { type: 'object', properties: {} } }, execute: vi.fn() };
+      const pipeline = new MessagePipeline({
+        llm: mockLLM as any, conversationManager: mockConversationManager as any, users: mockUsers as any, logger: mockLogger as any,
+        skillRegistry: { get: vi.fn(() => skill), getAll: vi.fn(() => [skill]), has: vi.fn(), toToolDefinitions: vi.fn() } as any,
+        skillSandbox: { execute: vi.fn().mockResolvedValue({ success: true, display: 'ok' }) } as any,
+      });
+      const r = await pipeline.process(makeMessage({ metadata: fall.metadata }));
+      expect(r.text).not.toContain('alte Meldung aus dem Faden');
+      expect(r.text.includes('## Bericht')).toBe(fall.erwartetBericht);
+      expect(r.text).toContain('Notiz gespeichert.');
+    });
+  }
+
   // ---- Test 3: Security deny ----
   it('should deny tool execution when security manager denies', async () => {
     // First LLM call returns a tool call

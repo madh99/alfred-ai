@@ -18,7 +18,7 @@ export class ScheduledTaskSkill extends Skill {
       'Each scheduled action executes a skill or sends a prompt to the LLM at the configured time. ' +
       'Use this for time-based tasks (reports, periodic checks, reminders). ' +
       'For condition-based alerts ("notify me WHEN X happens"), use the watch tool instead. ' +
-      'v1449 — WIEDERKEHRENDE PRÜFUNG MIT VERGLEICH (z. B. „prüfe diese Angebote täglich“, Preise/Status/neue Treffer): prompt_template = was geprüft wird und die Kriterien; ausgangsstand = der KONKRETE aktuelle Stand aus diesem Gespräch, eine Zeile je Eintrag mit Kennung/Adresse und den zu vergleichenden Werten (z. B. „789898944 | Mac mini M4 Pro 64/512 | 2400 EUR | online“). Den Vergleich, die Fortschreibung des Stands und die Zustellung bei jedem Lauf übernimmt Alfred; im Prompt KEINE Notizen für den Vergleich verlangen.',
+      'v1449 — WIEDERKEHRENDE PRÜFUNG MIT VERGLEICH (z. B. „prüfe diese Angebote täglich“, Preise/Status/neue Treffer): prompt_template = was geprüft wird und die Kriterien; ausgangsstand = der KONKRETE aktuelle Stand aus diesem Gespräch, eine Zeile je Eintrag mit Kennung, Link und den zu vergleichenden Werten (z. B. „789898944 | https://www.willhaben.at/iad/object?adId=789898944 | Mac mini M4 Pro 64/512 | 2400 EUR | online“) — die Links aus dem Gespräch übernehmen, damit der Bericht jedes Mal verlinkt ist. Den Vergleich, die Fortschreibung des Stands und die Zustellung bei jedem Lauf übernimmt Alfred; im Prompt KEINE Notizen für den Vergleich verlangen.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {

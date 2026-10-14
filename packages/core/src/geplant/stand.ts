@@ -31,8 +31,8 @@ export function standRahmen(name: string, stand: string, standZeit?: string): st
     'Vorgaben für diesen Lauf:',
     '1. Prüfe JEDEN Eintrag des letzten Stands einzeln (direkt, z. B. über seine Kennung/Adresse) und stufe ihn ein: unverändert, geändert (was genau, alter → neuer Wert), weg/verkauft (nur wenn direkt bestätigt) oder nicht prüfbar. „In einer Suche nicht gefunden“ ist NICHT „weg“.',
     '2. Suche danach nach neuen passenden Einträgen.',
-    '3. Antworte mit dem vollständigen Bericht für den Owner (Änderungen zuerst, dann die Übersicht). Kein „Notiz gespeichert“ als Antwort; lege für den Vergleich keine Notizen an — den Stand führt der Auftrag selbst.',
-    `4. Schließe die Antwort IMMER mit dem neuen Stand ab, genau so (eine Zeile je Eintrag mit Kennung und den verglichenen Werten):\n${STAND_ANFANG}\n…\n${STAND_ENDE}`,
+    '3. Antworte mit dem vollständigen Bericht für den Owner (Änderungen zuerst, dann die Übersicht). Jeder Eintrag ist mit seinem Link anklickbar (Markdown [Bezeichnung](Adresse)), auch in Tabellen — wie in der ersten Anfrage. Kein „Notiz gespeichert“ als Antwort; lege für den Vergleich keine Notizen an — den Stand führt der Auftrag selbst.',
+    `4. Schließe die Antwort IMMER mit dem neuen Stand ab, genau so (eine Zeile je Eintrag mit Kennung, Link/Adresse und den verglichenen Werten; Links aus dem letzten Stand übernehmen):\n${STAND_ANFANG}\n…\n${STAND_ENDE}`,
   ].join('\n');
 }
 

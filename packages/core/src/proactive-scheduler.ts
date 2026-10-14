@@ -92,6 +92,7 @@ export class ProactiveScheduler {
 
     let resultText: string;
     let resultParseMode: 'text' | 'markdown' | 'html' = 'text';
+    let rohErgebnis: string | undefined; // v1450 — Markdown vor der Plattform-Formatierung (fürs Gespräch und den Faden)
     let pruefLauf = false; // v1449 — Prüfauftrag mit eigenem Stand: jeder vollständige Lauf wird zugestellt
 
     if (action.skillName && this.skillRegistry.has(action.skillName)) {
@@ -113,6 +114,7 @@ export class ProactiveScheduler {
         const result = await this.skillSandbox.execute(skill, input, context);
         if (result.success) {
           const rawText = result.display ?? JSON.stringify(result.data);
+          rohErgebnis = rawText;
           if (this.formatter) {
             const formatted = this.formatter.format(rawText, action.platform as Platform);
             resultText = formatted.text;
@@ -169,6 +171,7 @@ export class ProactiveScheduler {
           }
           pruefLauf = true;
         }
+        rohErgebnis = rohText;
         const formatted = this.formatter
           ? this.formatter.format(rohText, action.platform as Platform)
           : { text: rohText, parseMode: 'text' as const };
@@ -248,7 +251,7 @@ export class ProactiveScheduler {
     } else {
       this.logger.info({ actionId: action.id, name: action.name, grund: entscheidung.grund, neu: entscheidung.neu.slice(0, 6) }, 'v1368 Geplante Aufgabe meldet');
       if (action.promptTemplate && this.meldeGedaechtnis) void this.meldeGedaechtnis.merken(action.userId, kennungenAus(trimmed)).catch(() => undefined);
-      const imFaden = this.fadenZustellung ? await this.fadenZustellung(action.chatId, resultText, action.name).catch((err: Error) => { this.logger.warn({ err: err.message, actionId: action.id }, 'v1447 Faden-Zustellung fehlgeschlagen'); return false; }) : false;
+      const imFaden = this.fadenZustellung ? await this.fadenZustellung(action.chatId, rohErgebnis ?? resultText, action.name).catch((err: Error) => { this.logger.warn({ err: err.message, actionId: action.id }, 'v1447 Faden-Zustellung fehlgeschlagen'); return false; }) : false;
       const adapter = imFaden ? undefined : this.adapters.get(action.platform as Platform);
       if (adapter) {
         try {
@@ -268,7 +271,9 @@ export class ProactiveScheduler {
               action.chatId,
               action.userId,
             );
-            const alertMsg = `[Automated Scheduled Alert: ${action.name}]\n${resultText}`;
+            // v1450 — Realfall 14.10.: die App zeigte das Hauptgespräch mit rohen <b>/<code> (gespeichert wurde die Telegram-HTML-Fassung)
+            // und dem Präfix „[Automated Scheduled Alert: …]“. Jetzt Markdown wie jede andere Antwort, mit lesbarer Kopfzeile.
+            const alertMsg = `⏰ Geplante Aufgabe „${action.name}“\n\n${rohErgebnis ?? resultText}`;
             await this.conversationManager.addMessage(userConv.id, 'assistant', alertMsg);
           }
         } catch (err) {

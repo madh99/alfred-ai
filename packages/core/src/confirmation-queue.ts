@@ -306,7 +306,7 @@ export class ConfirmationQueue {
   }
 
   /** v1239 — nach einer freigegebenen Ausführung: liefert true, wenn der Aufrufer die Antwort selbst zustellt (Fortsetzung durch die Pipeline). */
-  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown; attachments?: import('@alfred/types').SkillResultAttachment[] } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean>;
+  private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown; error?: string; attachments?: import('@alfred/types').SkillResultAttachment[] } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean>;
   setNachAusfuehrung(fn: NonNullable<ConfirmationQueue['nachAusfuehrung']>): void { this.nachAusfuehrung = fn; }
 
   async enqueuePlan(plan: import('@alfred/types').Plan, display: string): Promise<void> {
@@ -526,6 +526,12 @@ export class ConfirmationQueue {
             await adapter.sendMessage(chatId, `\u274C Aktion fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
           }
           await this.anHerkunft(pending.id, `\u274C Aktion fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`); // v1319
+          // v1450 — Realfall 14.10. 22:27: nach dem Fehlschlag kam nichts mehr (Neustart war in Wahrheit gelungen). Alfred stellt den
+          // tatsächlichen Stand fest und meldet ihn — dieselbe Fortsetzung wie bei Erfolg, mit dem Fehler als Ergebnis.
+          if (this.nachAusfuehrung) {
+            try { await this.nachAusfuehrung(pending as unknown as { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, { success: false, error: err instanceof Error ? err.message : String(err) }, { platform: String(platform), chatId, herkunft: this.herkuenfte.get(pending.id) }); }
+            catch (e) { this.logger.warn({ err: (e as Error).message, confirmationId: pending.id }, 'v1450 Fortsetzung nach Fehlschlag fehlgeschlagen'); }
+          }
           this.activityLogger?.logConfirmation({
             confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
             source: pending.source, sourceId: pending.sourceId, outcome: 'error',

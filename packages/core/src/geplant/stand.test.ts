@@ -13,6 +13,8 @@ describe('v1449 Prüfaufträge mit eigenem Stand', () => {
     expect(r).toContain('Letzter Stand (vom 14.10., 09:00)');
     expect(r).toContain('789898944 mini 2400 EUR online');
     expect(r).toContain('„In einer Suche nicht gefunden“ ist NICHT „weg“');
+    expect(r).toContain('Jeder Eintrag ist mit seinem Link anklickbar'); // v1450
+    expect(r).toContain('Link/Adresse');
     expect(r).toContain(STAND_ANFANG);
     expect(standRahmen('X', '')).toContain('noch keiner');
   });

@@ -154,6 +154,21 @@ describe('ProactiveScheduler', () => {
     expect(String(adapter.sendMessage.mock.calls[0]?.[1] ?? '')).toContain('⚠️ Prüflauf „Mac-Angebote“ unvollständig: Bericht und neuer Stand fehlt');
   });
 
+  it('v1450 Gespräch bekommt Markdown mit Kopfzeile, Telegram die HTML-Fassung', async () => {
+    const adapter = { sendMessage: vi.fn().mockResolvedValue('m'), status: 'connected' };
+    const repo = createMockActionRepo([{ id: 'a3', name: 'aWATTar Rechnung', userId: 'user-1', platform: 'telegram', chatId: 'c1', skillName: 'llm_prompt', skillInput: '{}', promptTemplate: 'Schau nach einer neuen Rechnung', scheduleType: 'once', scheduleValue: '' }]);
+    const pipeline = { process: vi.fn().mockResolvedValue({ text: '**Neue Rechnung:** Nein' }) } as any;
+    const formatter = { format: vi.fn((t: string) => ({ text: t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'), parseMode: 'html' })) } as any;
+    const conv = { getOrCreateConversation: vi.fn().mockResolvedValue({ id: 'conv' }), addMessage: vi.fn(), pruneMessages: vi.fn() } as any;
+    const s = new ProactiveScheduler(repo, createMockSkillRegistry(), createMockSkillSandbox(), createMockLLM(), new Map([['telegram', adapter]]) as any, createMockUsers(), createMockLogger(), pipeline, formatter, conv);
+    s.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    s.stop();
+    expect(String(adapter.sendMessage.mock.calls[0]?.[1])).toContain('<b>Neue Rechnung:</b>');
+    const gespeichert = conv.addMessage.mock.calls.find((c: unknown[]) => c[0] === 'conv')?.[2];
+    expect(gespeichert).toBe('⏰ Geplante Aufgabe „aWATTar Rechnung“\n\n**Neue Rechnung:** Nein');
+  });
+
   it('tick skips non-due actions (empty claimDue)', async () => {
     actionRepo = createMockActionRepo([]);
     const sandbox = createMockSkillSandbox();

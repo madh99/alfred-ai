@@ -517,7 +517,15 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       return await new Promise<Ergebnis>((resolve) => {
         const fertig = (err: Error | null, stdout: string | Buffer, stderr: string | Buffer) => {
           const out = String(stdout).slice(0, 4000); const errOut = String(stderr).slice(0, 2000);
-          if (err) resolve({ success: false, error: `${err.message}\n${errOut}`.trim(), data: { stdout: out, stderr: errOut } });
+          // v1450 — Realfall 14.10.: Neustart gelang, die Prüfung im selben Befehl kam zu früh → nur „Command failed: <Befehl>“, die
+          // Ausgabe (Startprotokoll, Port) ging verloren. Jetzt Exit-Code bzw. Zeitlimit und die letzten Zeilen von stdout/stderr.
+          if (err) {
+            const e = err as Error & { code?: number | string; killed?: boolean; signal?: string };
+            const grund = e.killed ? `Zeitlimit (${Math.round(SHELL_TIMEOUT_MS / 1000)} s) — Befehl abgebrochen` : typeof e.code === 'number' ? `Befehl endete mit Exit-Code ${e.code}` : e.message.split('\n')[0]!.slice(0, 300);
+            const ende = (t: string, n: number) => t.trim().split('\n').slice(-n).join('\n');
+            resolve({ success: false, error: [grund, out.trim() ? `--- Ausgabe (Ende) ---\n${ende(out, 25)}` : '', errOut.trim() ? `--- Fehlerausgabe (Ende) ---\n${ende(errOut, 15)}` : ''].filter(Boolean).join('\n'), data: { stdout: out, stderr: errOut, ...(typeof e.code === 'number' ? { exit: e.code } : {}) } });
+            return;
+          }
           else resolve({ success: true, data: { stdout: out, stderr: errOut, cwd }, display: out || errOut || '(keine Ausgabe)' });
         };
         const opts = { cwd, timeout: SHELL_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true };

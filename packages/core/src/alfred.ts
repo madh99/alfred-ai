@@ -7115,6 +7115,14 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       if (pending.source !== 'geraet') return false;
       if (pending.skillParams?.action === 'vorhaben_freigeben') return false;
       if (pending.skillName === 'selbstupdate') return false; // v1266 — deterministische Meldung statt LLM-Runde
+      // v1450 — Fehlschlag: tatsächlichen Stand feststellen statt still zu enden (Realfall 14.10.: „fehlgeschlagen“, App lief aber)
+      if (result && result.success === false) {
+        const fehler = String((result as { error?: string }).error ?? 'unbekannter Fehler').slice(0, 3500);
+        const t = `Die von mir freigegebene Aktion ist mit einem Fehler zurückgekommen: ${pending.description}.\n\nFehlermeldung und Ausgabe:\n${fehler}\n\nStelle fest, was tatsächlich passiert ist (z. B. läuft der Dienst trotzdem, hat nur eine Prüfung im Befehl versagt?). Führe die Aktion NICHT erneut aus. Wenn eine Prüfung nötig ist, nur lesend und knapp. Melde mir dann in wenigen Sätzen den tatsächlichen Stand und, falls wirklich etwas fehlt, den nächsten Schritt.`;
+        const hk = ziel.herkunft?.userId ? { chatId: ziel.herkunft.chatId, platform: ziel.herkunft.platform, userId: ziel.herkunft.userId } : undefined;
+        this.logger.info({ beschreibung: pending.description.slice(0, 80) }, 'v1450 Fortsetzung nach fehlgeschlagener Freigabe');
+        return this.fortsetzungImOwnerChat(t, { id: 'bestaetigt-fehler', platform: ziel.platform, chatId: ziel.chatId, herkunft: hk });
+      }
       const display = (result?.display ?? (result?.data !== undefined ? JSON.stringify(result.data) : '')).slice(0, 3500);
       const text = `Die von mir freigegebene Aktion wurde gerade ausgeführt: ${pending.description}.\n\nErgebnis:\n${display || '(keine Ausgabe)'}\n\nMach damit weiter: Beantworte meine ursprüngliche Frage bzw. erledige die Aufgabe, für die diese Aktion nötig war — kurz, sauber formatiert, mit den wichtigen Werten. Sind weitere Schritte nötig, führe sie aus.`;
       // v1341 — mit Herkunft (Gerätesitzung, App, Terminal) läuft die Fortsetzung dort, der Owner-Chat bekommt die Kopie (wie Vorhaben, v1324)
