@@ -7,7 +7,7 @@ export interface AkteKurz { id: string; name: string; geraet: string; pfad: stri
 export interface LaufKurz {
   id: string; status: string; ziel: string; plan: string[]; erledigt: Array<{ nr: number; ok: boolean }>; kostenUsd: number; start: number; aktualisiert: number; nr: number;
 }
-export interface Bestand { readme?: string; paket?: string; baum?: string[]; commits?: Array<{ sha: string; message: string; files: string[] }>; git?: boolean; /** v1408 R3a */ umgebung?: { os: string; werkzeuge: Record<string, string | null>; freiGb?: number } }
+export interface Bestand { readme?: string; paket?: string; baum?: string[]; commits?: Array<{ sha: string; message: string; files: string[] }>; git?: boolean; /** v1408 R3a */ umgebung?: { os: string; werkzeuge: Record<string, string | null>; freiGb?: number }; /** v1453 */ offen?: string[] }
 
 /** Ordnername als Rückfall-Name: „/home/madh/claudecode/game" → „Game", „mein-tool" → „Mein Tool". */
 export function nameAusPfad(pfad: string): string {

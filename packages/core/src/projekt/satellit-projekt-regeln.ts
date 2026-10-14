@@ -33,7 +33,13 @@ export function begrenzePlan(phasen: string[], max: number): string[] {
  */
 export const LAUFZEITDATEN_REGEL = 'Laufzeitdaten gehören nie ins Repository: Caches, Datenbanken, Logs, Sicherungen, Uploads und Nutzerdaten, die das Programm im Betrieb erzeugt oder ändert. Trag sie in die .gitignore ein; ist eine davon schon eingecheckt, nimm sie mit „git rm --cached“ aus dem Repository (die Datei selbst bleibt liegen). Beispieldaten oder Fixtures für Tests sind keine Laufzeitdaten.';
 
-export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pruefBefehle: string[]; bestehend?: boolean; umgebung?: string }): string {
+/** v1453 — vor dem Lauf vorgefundene Änderungen gehören dem Owner; die Etappen lassen sie liegen. */
+export function vorgefundenRegel(v?: string[]): string[] {
+  if (!v?.length) return [];
+  return [`Vor dem Lauf lagen diese nicht eingecheckten Änderungen schon vor; sie gehören dem Owner: ${v.join('; ')}. Ändere sie nicht, setze sie nicht zurück und committe sie nicht mit (git add nur für deine eigenen Dateien, kein „git add -A“ oder „git add .“). Einzige Ausnahme: Laufzeitdaten nach der Regel oben aus dem Repository nehmen.`];
+}
+
+export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pruefBefehle: string[]; bestehend?: boolean; umgebung?: string; vorgefunden?: string[] }): string {
   const etappe = o.plan[o.nr - 1]!;
   return [
     `Projektziel: ${o.ziel}`,
@@ -49,6 +55,7 @@ export function etappenAuftrag(o: { ziel: string; plan: string[]; nr: number; pr
     o.pruefBefehle.length ? `Abnahme: Danach müssen diese Befehle im Projektverzeichnis mit Exit 0 laufen: ${o.pruefBefehle.join(' ; ')}` : 'Abnahme: Der Owner prüft diese Etappe selbst; beschreibe am Ende, wie man sie prüft.',
     'Ist das Verzeichnis ein Git-Repository, committe am Ende mit der Nachricht „Etappe ' + o.nr + ': <Kurztitel>".',
     LAUFZEITDATEN_REGEL,
+    ...vorgefundenRegel(o.vorgefunden),
     'Arbeite nur in diesem Verzeichnis. Fasse am Ende in wenigen Sätzen zusammen, was du gemacht hast und was offen ist.',
     'Der Ordner .alfred/ gehört Alfred (Aufträge, Protokoll, Anhänge des Owners): lesen ja, nicht ändern oder löschen.', // v1425
   ].join('\n');
@@ -80,7 +87,7 @@ export function etappenBerichtText(o: { lauf: string; geraet: string; ziel: stri
   ].join('\n');
 }
 
-export function fixAuftrag(o: { ziel: string; nr: number; etappe: string; versuch: number; pruefprotokoll: string }): string {
+export function fixAuftrag(o: { ziel: string; nr: number; etappe: string; versuch: number; pruefprotokoll: string; vorgefunden?: string[] }): string {
   return [
     `Projektziel: ${o.ziel}`,
     `Etappe ${o.nr}: ${o.etappe}`,
@@ -90,10 +97,11 @@ export function fixAuftrag(o: { ziel: string; nr: number; etappe: string; versuc
     '',
     'Behebe die Ursache, ohne die Prüfbefehle zu ändern oder Tests abzuschwächen. Committe am Ende (falls Git-Repository) mit „Etappe ' + o.nr + ': Korrektur".',
     LAUFZEITDATEN_REGEL,
+    ...vorgefundenRegel(o.vorgefunden),
   ].join('\n');
 }
 
-export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; name?: string; nameNeu?: boolean; laeufeBisher?: number; umgebung?: string; sudoSperre?: 'projekt' | 'geraet' }): string {
+export function planFrage(o: { geraet: string; projekt: string; ziel: string; plan: string[]; pruefBefehle: string[]; g: Grenzen; gekuerzt: boolean; verzeichnisNeu?: boolean; gitUebernehmen?: boolean; name?: string; nameNeu?: boolean; laeufeBisher?: number; umgebung?: string; sudoSperre?: 'projekt' | 'geraet'; vorgefunden?: string[] }): string {
   return [
     `🧭 Projekt auf ${o.geraet} starten?`,
     // v1398 — Projektakte: Name (Vorschlag oder vom Owner), Weiterarbeit mit früheren Läufen
@@ -103,6 +111,8 @@ export function planFrage(o: { geraet: string; projekt: string; ziel: string; pl
     // v1397 — bestehendes Verzeichnis ohne Git
     ...(o.gitUebernehmen ? ['Kein Git-Repository: wird angelegt, der jetzige Stand als Ausgangs-Commit „Stand vor Alfred" gesichert (ohne node_modules, .env, Logs und Dateien über 10 MB), danach jede Etappe ein Commit.'] : []),
     ...(o.umgebung ? [`Umgebung: ${o.umgebung}`] : []), // v1408 R3a
+    // v1453 — vorgefundene Änderungen gleich hier nennen, nicht erst im Bericht von Etappe 1
+    ...(o.vorgefunden?.length ? [`Vorgefunden, nicht eingecheckt (${o.vorgefunden.length}): ${o.vorgefunden.slice(0, 8).join(', ')}${o.vorgefunden.length > 8 ? ', …' : ''} — die Etappen lassen sie liegen und committen sie nicht mit.`] : []),
     `Systemrechte: ${o.sudoSperre ? `sudo gesperrt (${o.sudoSperre === 'geraet' ? 'Einstellung am Gerät' : 'Projekt-Option'})` : 'sudo erlaubt (sperrbar je Projekt oder am Gerät)'}`, // v1409 R3b
     `Etappen${o.gekuerzt ? ` (auf ${o.g.maxEtappen} gekürzt)` : ''}:`,
     ...o.plan.map((p, i) => `${i + 1}. ${p.slice(0, 200)}`),

@@ -363,7 +363,27 @@ export function gitUebernehmen(dir: string, git = 'git', maxBytes = 10 * 1024 * 
   }
 }
 
-export interface ProjektBestand { readme?: string; paket?: string; baum: string[]; commits: Array<{ sha: string; message: string; files: string[] }>; git: boolean; /** v1408 R3a */ umgebung?: Umgebung }
+export interface ProjektBestand { readme?: string; paket?: string; baum: string[]; commits: Array<{ sha: string; message: string; files: string[] }>; git: boolean; /** v1408 R3a */ umgebung?: Umgebung; /** v1453 — vor dem Lauf vorgefundene, nicht eingecheckte Änderungen */ offen?: string[] }
+
+/**
+ * v1453 — `git status --porcelain=v1 -z` in Zeilen „<pfad> (<art>)“; Alfreds eigene Dateien (.alfred/, .alfred-anhaenge/, AUFTRAG-*.md)
+ * zählen nicht (Realfall 14.10.: vom Owner gelöschte SPAR-Dokumente fielen erst im Bericht von Etappe 1 auf).
+ */
+export function offeneAenderungen(roh: string, max = 40): string[] {
+  const teile = roh.split('\0');
+  const z: string[] = [];
+  for (let i = 0; i < teile.length; i++) {
+    const t = teile[i]!;
+    if (t.length < 4) continue;
+    const xy = t.slice(0, 2);
+    const pfad = t.slice(3);
+    if (xy[0] === 'R' || xy[0] === 'C') i++; // -z: bei Umbenennung folgt der alte Pfad als eigener Eintrag
+    if (/^\.alfred(-anhaenge)?\//.test(pfad) || /^AUFTRAG-[\w-]+\.md$/.test(pfad)) continue;
+    const art = xy === '??' ? 'neu, nicht eingecheckt' : xy.includes('D') ? 'gelöscht' : xy[0] === 'R' ? 'umbenannt' : xy[0] === 'A' ? 'hinzugefügt' : 'geändert';
+    z.push(`${pfad} (${art})`);
+  }
+  return z.length > max ? [...z.slice(0, max), `… und ${z.length - max} weitere`] : z;
+}
 
 /**
  * v1398 — Spec „Projekte sichtbar und fortsetzbar" P2: Bestand eines Projektordners nur lesend — README (≤ 4 KB), Paket und
@@ -410,7 +430,12 @@ export function projektLesen(dir: string, git = 'git'): ProjektBestand {
       }
     }
   } catch { /* kein Git oder noch keine Commits */ }
-  return { ...(readme ? { readme } : {}), ...(paket ? { paket } : {}), baum, commits, git: istGit, umgebung: umgebungLesen(dir) };
+  let offen: string[] = [];
+  if (istGit) {
+    // ohne trim(): die erste Zeile beginnt bei „ D …“ mit einem Leerzeichen
+    try { offen = offeneAenderungen(execFileSync(git, ['-C', dir, 'status', '--porcelain=v1', '-z'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }).toString()); } catch { /* ohne Status */ }
+  }
+  return { ...(readme ? { readme } : {}), ...(paket ? { paket } : {}), baum, commits, git: istGit, umgebung: umgebungLesen(dir), ...(offen.length ? { offen } : {}) };
 }
 
 /** v1404 — Werkzeuge, die eine Frage zum Projekt nicht hat (Nachweis VM 13.10. 00:02: Datei unverändert, nichts angelegt, git status leer). */

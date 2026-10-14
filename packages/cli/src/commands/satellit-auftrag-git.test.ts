@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
-import { gitAnlegen, gitUebernehmen } from './satellit-auftrag.js';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { gitAnlegen, gitUebernehmen, offeneAenderungen, projektLesen } from './satellit-auftrag.js';
 
 const git = (dir: string, ...a: string[]) => execFileSync('git', ['-C', dir, ...a], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
 let gitDa = true;
@@ -64,5 +64,26 @@ describe('v1396 — neue Projektverzeichnisse als Git-Repository', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'alfred-git3-'));
     expect(gitAnlegen(dir, 'git-gibt-es-nicht-xyz')).toBe('ohne-git');
     expect(existsSync(path.join(dir, '.git'))).toBe(false);
+  });
+});
+
+describe('v1453 — vorgefundene, nicht eingecheckte Änderungen', () => {
+  it('liest porcelain -z: führendes Leerzeichen, Umbenennung, Alfreds eigene Dateien ausgenommen', () => {
+    const roh = [' D docs/SPAR-ANFRAGE.md', ' M daten/cache.json', '?? daten/merkliste.json', 'R  neu.md', 'alt.md', '?? .alfred/laeufe/x.md', ' D AUFTRAG-2026-ab.md', 'A  src/a.js', ''].join('\0');
+    expect(offeneAenderungen(roh)).toEqual(['docs/SPAR-ANFRAGE.md (gelöscht)', 'daten/cache.json (geändert)', 'daten/merkliste.json (neu, nicht eingecheckt)', 'neu.md (umbenannt)', 'src/a.js (hinzugefügt)']);
+    expect(offeneAenderungen('')).toEqual([]);
+    expect(offeneAenderungen(['?? a', '?? b', '?? c', ''].join('\0'), 2)).toEqual(['a (neu, nicht eingecheckt)', 'b (neu, nicht eingecheckt)', '… und 1 weitere']);
+  });
+  it.skipIf(!gitDa)('projektLesen meldet sie aus einem echten Repository (leer, wenn sauber)', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'alfred-offen-'));
+    git(dir, 'init', '-q');
+    mkdirSync(path.join(dir, 'docs'));
+    writeFileSync(path.join(dir, 'docs', 'a.md'), 'a');
+    git(dir, 'add', '.');
+    git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init');
+    expect(projektLesen(dir).offen).toBeUndefined();
+    rmSync(path.join(dir, 'docs', 'a.md'));
+    writeFileSync(path.join(dir, 'neu.txt'), 'n');
+    expect(projektLesen(dir).offen).toEqual(['docs/a.md (gelöscht)', 'neu.txt (neu, nicht eingecheckt)']);
   });
 });

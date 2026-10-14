@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { etappenBerichtText, etappenAuftrag, fixAuftrag, LAUFZEITDATEN_REGEL } from '../satellit-projekt-regeln.js';
+import { etappenBerichtText, etappenAuftrag, fixAuftrag, LAUFZEITDATEN_REGEL, planFrage, STANDARD_GRENZEN } from '../satellit-projekt-regeln.js';
 
 const basis = { lauf: 'sat-383930d6', geraet: 'Ubuntu-VM', ziel: 'SPAR-Abruf reparieren', plan: ['Diagnose', 'Beheben', 'Prüfen'], zeit: '2026-10-13 09:48 UTC' };
 
@@ -31,5 +31,19 @@ describe('v1425 Etappenbericht fürs Projekt', () => {
     expect(etappenAuftrag({ ziel: 'z', plan: ['a'], nr: 1, pruefBefehle: [] })).toContain(LAUFZEITDATEN_REGEL);
     expect(fixAuftrag({ ziel: 'z', nr: 1, etappe: 'a', versuch: 1, pruefprotokoll: 'p' })).toContain(LAUFZEITDATEN_REGEL);
     expect(LAUFZEITDATEN_REGEL).toMatch(/git rm --cached/);
+  });
+});
+
+describe('v1453 — vorgefundene Änderungen gehören dem Owner', () => {
+  const v = ['docs/SPAR-ANFRAGE.md (gelöscht)', 'daten/merkliste.json (neu, nicht eingecheckt)'];
+  it('Startfrage nennt sie, Etappe und Fix lassen sie liegen', () => {
+    const basis = { geraet: 'Ubuntu-VM', projekt: '/x', ziel: 'Z', plan: ['A'], pruefBefehle: [], g: STANDARD_GRENZEN, gekuerzt: false };
+    expect(planFrage({ ...basis, vorgefunden: v })).toContain('Vorgefunden, nicht eingecheckt (2): docs/SPAR-ANFRAGE.md (gelöscht), daten/merkliste.json (neu, nicht eingecheckt) — die Etappen lassen sie liegen');
+    expect(planFrage(basis)).not.toContain('Vorgefunden');
+    const e = etappenAuftrag({ ziel: 'Z', plan: ['A'], nr: 1, pruefBefehle: [], vorgefunden: v });
+    expect(e).toContain('docs/SPAR-ANFRAGE.md (gelöscht); daten/merkliste.json');
+    expect(e).toMatch(/committe sie nicht mit/);
+    expect(fixAuftrag({ ziel: 'Z', nr: 1, etappe: 'A', versuch: 1, pruefprotokoll: 'p', vorgefunden: v })).toMatch(/gehören dem Owner/);
+    expect(etappenAuftrag({ ziel: 'Z', plan: ['A'], nr: 1, pruefBefehle: [] })).not.toMatch(/gehören dem Owner/);
   });
 });

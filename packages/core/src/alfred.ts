@@ -16050,7 +16050,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       const grenzen: Record<string, number> = {};
       if (typeof input.budget_usd === 'number' && input.budget_usd > 0) grenzen.budgetUsd = Math.min(input.budget_usd, 50);
       if (typeof input.max_stunden === 'number' && input.max_stunden > 0) grenzen.maxStunden = Math.min(input.max_stunden, 24);
-      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext, umgebung: umgebungZeile(bestand?.umgebung),
+      const s = await projekte.starte({ geraetId: g.id, geraet: g.name, projekt, ziel, pruefBefehle: befehle, grenzen, herkunft: context.chatId ? { chatId: context.chatId, platform: context.platform } : undefined, ownerId: owner(), verzeichnisNeu, gitUebernehmen, akteId: akte?.id, akteName, nameNeu: !akte && !o.name?.trim(), kontext, umgebung: umgebungZeile(bestand?.umgebung), vorgefunden: bestand?.offen,
         // v1409 R3b — Projekt-Option (Tag) oder Start-Option; die Geräte-Einstellung meldet der Satellit beim Lesen
         sudoSperre: akte?.sudoSperre || input.sudo_sperre === true ? 'projekt' : (lesen?.data as { sudoSperreGeraet?: boolean } | undefined)?.sudoSperreGeraet ? 'geraet' : undefined });
       if (input.sudo_sperre === true && akte && !akte.sudoSperre && ow && aktenRepo) await aktenRepo.setzeSudoSperre(ow, akte.id, true).catch(() => undefined);

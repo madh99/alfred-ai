@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1453] - 2026-10-15
+
+### Added — Vorgefundene Änderungen schon in der Startfrage
+
+Realfall Angebots-Radar: Vom Owner gelöschte Dokumente fielen erst im Bericht von Etappe 1 auf. Ob die Etappen sie mitcommitten, hing allein von Claude Code ab.
+
+- Beim Lesen des Projekts meldet der Satellit die nicht eingecheckten Änderungen (`git status`) mit Art: gelöscht, geändert, neu, umbenannt. Alfreds eigene Dateien (`.alfred/`, `AUFTRAG-*.md`) zählen nicht dazu.
+- Die Startfrage nennt sie („Vorgefunden, nicht eingecheckt (N): …“).
+- Jede Etappe und jeder Fix-Versuch bekommt sie als Besitz des Owners: nicht ändern, nicht zurücksetzen, nicht mitcommitten, kein `git add -A`. Einzige Ausnahme sind Laufzeitdaten nach der Regel aus v1452.
+
 ## [0.19.0-jarvis.1452] - 2026-10-14
 
 ### Changed — Laufzeitdaten kommen nie ins Repository
