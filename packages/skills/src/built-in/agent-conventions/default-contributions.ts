@@ -86,6 +86,15 @@ export const DEFAULT_CONTRIBUTIONS: SkillConventionsContribution[] = [
     },
   },
   {
+    // v1452 — Owner 14.10.: Laufzeitdaten kommen nie ins Repository, in jedem Projekt
+    skillName: 'laufzeitdaten-nicht-im-repo',
+    detectIfUsed: () => true,
+    contribution: {
+      section: 'doNotTouch',
+      markdown: `- **Laufzeitdaten:** Caches, Datenbanken, Logs, Sicherungen, Uploads und Nutzerdaten, die das Programm im Betrieb erzeugt, kommen NIE ins Repository. In die \`.gitignore\` eintragen; schon eingecheckte mit \`git rm --cached\` herausnehmen. Test-Fixtures und Beispieldaten sind keine Laufzeitdaten.`,
+    },
+  },
+  {
     skillName: 'env-example-secrets',
     detectIfUsed: (scan) => (scan.envExampleKeys?.length ?? 0) > 0,
     contribution: {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { etappenBerichtText, etappenAuftrag } from '../satellit-projekt-regeln.js';
+import { etappenBerichtText, etappenAuftrag, fixAuftrag, LAUFZEITDATEN_REGEL } from '../satellit-projekt-regeln.js';
 
 const basis = { lauf: 'sat-383930d6', geraet: 'Ubuntu-VM', ziel: 'SPAR-Abruf reparieren', plan: ['Diagnose', 'Beheben', 'Prüfen'], zeit: '2026-10-13 09:48 UTC' };
 
@@ -27,5 +27,9 @@ describe('v1425 Etappenbericht fürs Projekt', () => {
 
   it('Etappenauftrag schützt den .alfred-Ordner', () => {
     expect(etappenAuftrag({ ziel: 'z', plan: ['a'], nr: 1, pruefBefehle: [] })).toContain('.alfred/ gehört Alfred');
+    // v1452 — Laufzeitdaten nie ins Repository, in jeder Etappe und jedem Fix-Versuch
+    expect(etappenAuftrag({ ziel: 'z', plan: ['a'], nr: 1, pruefBefehle: [] })).toContain(LAUFZEITDATEN_REGEL);
+    expect(fixAuftrag({ ziel: 'z', nr: 1, etappe: 'a', versuch: 1, pruefprotokoll: 'p' })).toContain(LAUFZEITDATEN_REGEL);
+    expect(LAUFZEITDATEN_REGEL).toMatch(/git rm --cached/);
   });
 });

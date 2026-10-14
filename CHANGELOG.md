@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1452] - 2026-10-14
+
+### Changed — Laufzeitdaten kommen nie ins Repository
+
+Realfall Angebots-Radar: `daten/angebote-cache.json` (2,2 MB) war eingecheckt und änderte sich bei jedem Lauf. Laufzeitdaten sind jetzt eine feste Projektregel, nicht nur im Einzelfall.
+
+- Jede Etappe und jeder Fix-Versuch auf einem Satelliten enthält die Regel: Caches, Datenbanken, Logs, Sicherungen, Uploads und Nutzerdaten gehören in die `.gitignore`. Schon eingecheckte werden mit `git rm --cached` herausgenommen; Test-Fixtures und Beispieldaten bleiben.
+- Der Server-Projekt-Agent hat dieselbe Regel als feste Konvention, unabhängig vom Stack.
+
 ## [0.19.0-jarvis.1451] - 2026-10-14
 
 ### Fixed — Mehrere Prüfzeiten desselben Auftrags teilen einen Stand (v1451)
