@@ -55,6 +55,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1446] - 2026-10-14
+
+### Fixed — „Pfad existiert“ sprachunabhängig erkennen (v1446)
+
+Realfall 14.10. 08:34: Die deutsche GitLab-Oberfläche meldet einen vorhandenen Pfad als „ist bereits vergeben“. Die Erkennung kannte nur englische Texte, darum wurde das leere Repo aus dem ersten Versuch nicht weiterverwendet. Jetzt gilt ein 400-Fehler an den Feldern `path`, `name` oder `project_namespace.name` als vorhandener Pfad, in jeder Sprache.
+
 ## [0.19.0-jarvis.1445] - 2026-10-14
 
 ### Fixed — Neues GitLab-Repo: http-Klonadresse und Wiederholung (v1445)

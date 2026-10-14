@@ -192,7 +192,9 @@ export async function gitlabRepoAnlegen(baseUrl: string, token: string, name: st
   const sicher = (u?: string): string | undefined => { try { if (!u) return undefined; const x = new URL(u); if (x.host.toLowerCase() !== basis.host.toLowerCase()) return undefined; x.protocol = 'https:'; return x.toString(); } catch { return undefined; } };
   if (!r.ok) {
     const m = JSON.stringify(j.message ?? '').slice(0, 200);
-    if (r.status === 400 && /taken|already/i.test(m)) {
+    // v1446 — sprachunabhängig (Realfall 14.10.: deutsche GitLab-Oberfläche meldet „ist bereits vergeben“): Fehler am Feld path/name
+    const felder = j.message && typeof j.message === 'object' ? Object.keys(j.message as Record<string, unknown>) : [];
+    if (r.status === 400 && (felder.some(k => /^(path|name|project_namespace\.name)$/.test(k)) || /taken|already|vergeben/i.test(m))) {
       // v1445 — Pfad gibt es schon: nur ein LEERES Repo weiterverwenden (z. B. nach abgebrochenem ersten Versuch) — nie etwas überschreiben
       const v = await f(`${basis.origin}/api/v4/projects/${encodeURIComponent(`${(await (async () => { const u = await f(`${basis.origin}/api/v4/user`, { headers: { 'PRIVATE-TOKEN': token } }); return ((await u.json().catch(() => ({}))) as { username?: string }).username ?? ''; })())}/${pfad}`)}`, { headers: { 'PRIVATE-TOKEN': token } });
       const vj = await v.json().catch(() => ({})) as Antwort;
