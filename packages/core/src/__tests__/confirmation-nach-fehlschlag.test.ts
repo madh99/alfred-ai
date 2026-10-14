@@ -19,3 +19,33 @@ describe('v1450 Fortsetzung auch nach einer fehlgeschlagenen Freigabe', () => {
     });
   }
 });
+
+// v1454 — Realfall 15.10.: „Nein“ auf der Bestätigungsseite erreichte das Geräte-Projekt nicht (Plan blieb „wartet auf dich“).
+describe('v1454 Ablehnung und Ablauf erreichen den Auftraggeber', () => {
+  const bau = () => {
+    const pending = { id: 'k2', chatId: 'c1', platform: 'telegram', source: 'geraet', sourceId: 'projekt-sat-1-1', description: 'Projekt starten?', skillName: 'project_agent', skillParams: { action: 'satellit_antwort', task_id: 'sat-1', freigabe: 'n1' }, status: 'pending', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
+    const repo = { getById: vi.fn().mockResolvedValue(pending), getByIdAnyStatus: vi.fn(), findPending: vi.fn().mockResolvedValue([pending]), findPendingBySentMessageId: vi.fn(), resolve: vi.fn().mockResolvedValue(undefined), expireOld: vi.fn().mockResolvedValue([pending]) };
+    const adapter = { sendMessage: vi.fn().mockResolvedValue('m'), sendPhoto: vi.fn(), sendFile: vi.fn() };
+    const execute = vi.fn();
+    const q = new ConfirmationQueue(repo as never, { get: () => ({ metadata: { name: 'project_agent' } }) } as never, { execute } as never, new Map([['telegram', adapter]]) as never, { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as never);
+    const ohne = vi.fn().mockResolvedValue(undefined);
+    q.setNachOhneAusfuehrung(ohne);
+    return { q, ohne, execute };
+  };
+  it('Nein → abgelehnt, ohne Ausführung', async () => {
+    const { q, ohne, execute } = bau();
+    await q.checkForConfirmation('c1', 'telegram', 'confirm:k2:reject', { userId: 'u', chatId: 'c1', platform: 'telegram' } as never);
+    await new Promise(r => setTimeout(r, 5));
+    expect(execute).not.toHaveBeenCalled();
+    expect(ohne).toHaveBeenCalledTimes(1);
+    expect(ohne.mock.calls[0]![0]).toMatchObject({ skillName: 'project_agent', skillParams: { task_id: 'sat-1', freigabe: 'n1' } });
+    expect(ohne.mock.calls[0]![1]).toBe('abgelehnt');
+  });
+  it('abgelaufen → abgelaufen', async () => {
+    const { q, ohne } = bau();
+    await (q as unknown as { expireTick: () => Promise<void> }).expireTick();
+    await new Promise(r => setTimeout(r, 5));
+    expect(ohne).toHaveBeenCalledTimes(1);
+    expect(ohne.mock.calls[0]![1]).toBe('abgelaufen');
+  });
+});

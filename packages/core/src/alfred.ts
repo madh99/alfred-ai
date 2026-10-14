@@ -16004,12 +16004,19 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       if (!row?.id) return { success: false, error: 'Keine offene Bestätigung für diesen Lauf (abgelaufen oder schon entschieden)' };
       const r = await this.confirmationQueue.handleWebDecision({ id: String(row.id), decision: entscheidung === 'freigeben' ? 'approve' : 'reject', userId: o });
       if (!r.ok) return { success: false, error: `Nicht entschieden (${r.reason ?? 'unbekannt'})` };
-      const art = s.frage?.art;
-      if (entscheidung === 'ablehnen' && art === 'plan') await projekte.stoppe(laufId, 'Plan vom Owner abgelehnt');
-      if (entscheidung === 'ablehnen' && (art === 'installieren' || art === 'mutation')) await projekte.weiterOhneAenderung(laufId); // v1410 R3c: ohne Installation weiter
+      // v1454 — die Ablehnung wirkt jetzt über setNachOhneAusfuehrung (für jeden Kanal gleich), hier nicht noch einmal
       this.logger.info({ lauf: laufId, entscheidung, art: s.frage?.art }, 'v1403 Lauf aus der Projektansicht entschieden');
       return { success: true, display: entscheidung === 'freigeben' ? 'Freigegeben — es geht weiter.' : 'Abgelehnt.' };
     };
+    // v1454 — „Nein“ (Telegram, Web, App) oder Ablauf einer Projekt-Rückfrage erreicht den Lauf
+    if (!this.confirmationQueue) this.logger.warn('v1454 Projekt-Ablehnung nicht verdrahtet — keine Bestätigungs-Queue');
+    else this.logger.info('v1454 Projekt-Ablehnung verdrahtet');
+    this.confirmationQueue?.setNachOhneAusfuehrung(async (p, wie) => {
+      if (p.skillName !== 'project_agent' || p.skillParams.action !== 'satellit_antwort') return;
+      const id = String(p.skillParams.task_id ?? ''); const nonce = String(p.skillParams.freigabe ?? '');
+      const ok = await projekte.abgelehnt(id, nonce, wie);
+      this.logger.info({ lauf: id, wie, ok }, 'v1454 Projekt-Rückfrage ohne Freigabe beendet');
+    });
     const laeufeVon = (akteId: string) => projekte.laeufeDerAkte(akteId);
     this.pipeline?.setGeraeteProjektWissen((pid) => projektWissen(laeufeVon(pid), this.projektFragen.antworten(pid))); // v1432
     const akteAus = async (ref: string): Promise<{ o: string; akte: import('./projekt/akten-projekte.js').ProjektAkte } | { fehler: string }> => {

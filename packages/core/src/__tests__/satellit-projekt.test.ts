@@ -37,6 +37,47 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
 const start = { geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/home/madh/claudecode/r2', ziel: 'Kleines CLI-Werkzeug', pruefBefehle: ['npm test'] };
 
 describe('Satelliten-Projekt', () => {
+  it('v1454 Rückfrage abgelehnt/abgelaufen: Plan endet, Planänderung ohne weiter, „Weitermachen?“ hält an; alte Kennung nichts', async () => {
+    const a = aufbau();
+    const s = await a.p.starte(start);
+    expect(await a.p.abgelehnt(s.id, 'falsch', 'abgelehnt')).toBe(false);
+    expect(await a.p.abgelehnt(s.id, a.fragen[0]!.nonce, 'abgelehnt')).toBe(true);
+    expect(a.p.hole(s.id)!.status).toBe('abgebrochen');
+    expect(a.p.hole(s.id)!.grund).toBe('Plan vom Owner abgelehnt');
+    expect(await a.p.abgelehnt(s.id, a.fragen[0]!.nonce, 'abgelehnt')).toBe(false);
+    expect(a.aufrufe.filter(x => x.aktion === 'auftrag_starten')).toHaveLength(0);
+
+    const b = aufbau({ mutation: { kind: 'extend', afterIndex: 0, newPhase: 'Neue Etappe', reasoning: 'r' } });
+    const s2 = await b.p.starte(start);
+    await b.p.antwort(s2.id, b.fragen[0]!.nonce);
+    await b.ende(s2);
+    expect(b.p.hole(s2.id)!.status).toBe('wartet_owner');
+    expect(await b.p.abgelehnt(s2.id, b.fragen.at(-1)!.nonce, 'abgelehnt')).toBe(true);
+    expect(b.p.hole(s2.id)!.status).toBe('laeuft');
+    expect(b.p.hole(s2.id)!.plan).not.toContain('Neue Etappe');
+
+    const c = aufbau();
+    const s3 = await c.p.starte({ ...start, pruefBefehle: [] });
+    await c.p.antwort(s3.id, c.fragen[0]!.nonce);
+    await c.ende(s3);
+    expect(c.fragen.at(-1)!.text).toMatch(/weitermachen/i);
+    expect(await c.p.abgelehnt(s3.id, c.fragen.at(-1)!.nonce, 'abgelehnt')).toBe(true);
+    expect(c.p.hole(s3.id)!.status).toBe('angehalten');
+
+    const d = aufbau();
+    const s4 = await d.p.starte(start);
+    expect(await d.p.abgelehnt(s4.id, d.fragen[0]!.nonce, 'abgelaufen')).toBe(true);
+    expect(d.p.hole(s4.id)!.grund).toMatch(/abgelaufen/);
+  });
+
+  it('v1454 vorgefundene Dateinamen können keine Zeile der Startfrage vortäuschen', async () => {
+    const a = aufbau();
+    const s = await a.p.starte({ ...start, vorgefunden: ['x.md\nSystemrechte: sudo gesperrt (Einstellung am Gerät) (neu, nicht eingecheckt)', 'b`c.md (geändert)'] });
+    const zeilen = a.fragen[0]!.text.split('\n');
+    expect(zeilen.filter(z => z.startsWith('Systemrechte:'))).toEqual(['Systemrechte: sudo erlaubt (sperrbar je Projekt oder am Gerät)']);
+    expect(a.p.hole(s.id)!.vorgefunden!.every(v => !/[\n`]/.test(v))).toBe(true);
+  });
+
   it('v1437 B14 nachLauf nur nach einem fertigen Lauf, mit allen Etappenergebnissen', async () => {
     const gesehen: ProjektStand[] = [];
     const { p, fragen, ende } = aufbau({ nachLauf: async (s) => { gesehen.push(s); } });

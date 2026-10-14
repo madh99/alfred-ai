@@ -380,7 +380,8 @@ export function offeneAenderungen(roh: string, max = 40): string[] {
     if (xy[0] === 'R' || xy[0] === 'C') i++; // -z: bei Umbenennung folgt der alte Pfad als eigener Eintrag
     if (/^\.alfred(-anhaenge)?\//.test(pfad) || /^AUFTRAG-[\w-]+\.md$/.test(pfad)) continue;
     const art = xy === '??' ? 'neu, nicht eingecheckt' : xy.includes('D') ? 'gelöscht' : xy[0] === 'R' ? 'umbenannt' : xy[0] === 'A' ? 'hinzugefügt' : 'geändert';
-    z.push(`${pfad} (${art})`);
+    // v1454 — Dateinamen sind fremde Daten: ohne Steuerzeichen/Zeilenumbrüche/Backticks, gekürzt (sonst falsche Zeilen in Startfrage und Auftrag)
+    z.push(`${pfad.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029`]/g, '?').slice(0, 160)} (${art})`);
   }
   return z.length > max ? [...z.slice(0, max), `… und ${z.length - max} weitere`] : z;
 }

@@ -309,6 +309,15 @@ export class ConfirmationQueue {
   private nachAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown>; description: string }, result: { success: boolean; display?: string; data?: unknown; error?: string; attachments?: import('@alfred/types').SkillResultAttachment[] } | undefined, ziel: { platform: string; chatId: string; herkunft?: { chatId: string; platform: string; userId?: string } }) => Promise<boolean>;
   setNachAusfuehrung(fn: NonNullable<ConfirmationQueue['nachAusfuehrung']>): void { this.nachAusfuehrung = fn; }
 
+  /** v1454 — Bestätigung abgelehnt oder abgelaufen: der Auftraggeber (z. B. ein Geräte-Projekt) erfährt es, egal über welchen Kanal. */
+  private nachOhneAusfuehrung?: (pending: { id: string; source: string; skillName: string; skillParams: Record<string, unknown> }, wie: 'abgelehnt' | 'abgelaufen') => Promise<void>;
+  setNachOhneAusfuehrung(fn: NonNullable<ConfirmationQueue['nachOhneAusfuehrung']>): void { this.nachOhneAusfuehrung = fn; }
+  private meldeOhneAusfuehrung(p: { id: string; source: string; skillName: string; skillParams?: Record<string, unknown> }, wie: 'abgelehnt' | 'abgelaufen'): void {
+    if (!this.nachOhneAusfuehrung) return;
+    void this.nachOhneAusfuehrung({ id: p.id, source: p.source, skillName: p.skillName, skillParams: p.skillParams ?? {} }, wie)
+      .catch(err => this.logger.warn({ err: (err as Error).message, id: p.id, wie }, 'v1454 Nachlauf nach Ablehnung/Ablauf fehlgeschlagen'));
+  }
+
   async enqueuePlan(plan: import('@alfred/types').Plan, display: string): Promise<void> {
     if (!this.defaultChatId || !this.defaultPlatform) return;
     await this.enqueue({
@@ -546,6 +555,7 @@ export class ConfirmationQueue {
       }
     } else {
       await this.confirmRepo.resolve(pending.id, 'rejected');
+      this.meldeOhneAusfuehrung(pending as never, 'abgelehnt');
       if (adapter) {
         await adapter.sendMessage(chatId, `\u274C Aktion abgelehnt: ${pending.description}`);
       }
@@ -629,6 +639,7 @@ export class ConfirmationQueue {
     try {
       const expired = await this.confirmRepo.expireOld();
       for (const conf of expired) {
+        this.meldeOhneAusfuehrung(conf as never, 'abgelaufen');
         this.activityLogger?.logConfirmation({
           confirmationId: conf.id, skillName: conf.skillName, description: conf.description,
           source: conf.source, sourceId: conf.sourceId, outcome: 'expired',

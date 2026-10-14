@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { GeraetEreignis } from '@alfred/types';
 import { konventionsBlock, changelogPflicht, changelogAuftrag, type Konventionen } from './konventionen.js'; // v1426
 import {
-  STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, etappenBerichtText, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit, fehlendeWerkzeuge, installVorschlag,
+  STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, etappenBerichtText, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit, fehlendeWerkzeuge, installVorschlag, pfadeSicher,
   type Grenzen, type MutationsArt,
 } from './satellit-projekt-regeln.js';
 
@@ -172,7 +172,7 @@ export class SatellitProjekte {
     const s: ProjektStand = {
       id: `sat-${randomUUID().slice(0, 8)}`, geraetId: o.geraetId, geraet: o.geraet, projekt: o.projekt, ziel: o.ziel,
       pruefBefehle: [...new Set((o.pruefBefehle ?? []).map(b => b.trim()).filter(Boolean))] /* v1390 doppelte (Build = Test) nur einmal */, grenzen: g, herkunft: o.herkunft, ownerId: o.ownerId,
-      ...(o.gitUebernehmen && !o.verzeichnisNeu ? { gitUebernehmen: true } : {}), ...(o.akteId ? { akteId: o.akteId } : {}), ...(o.akteName ? { akteName: o.akteName } : {}), ...(o.umgebung ? { umgebung: o.umgebung } : {}), ...(o.sudoSperre === 'projekt' ? { sudoSperre: true } : {}), ...(o.vorgefunden?.length ? { vorgefunden: o.vorgefunden } : {}), ...(o.kontext?.vorherige?.length || o.kontext?.bestand ? { bestehend: true } : {}), grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
+      ...(o.gitUebernehmen && !o.verzeichnisNeu ? { gitUebernehmen: true } : {}), ...(o.akteId ? { akteId: o.akteId } : {}), ...(o.akteName ? { akteName: o.akteName } : {}), ...(o.umgebung ? { umgebung: o.umgebung } : {}), ...(o.sudoSperre === 'projekt' ? { sudoSperre: true } : {}), ...(o.vorgefunden?.length ? { vorgefunden: pfadeSicher(o.vorgefunden) } : {}), ...(o.kontext?.vorherige?.length || o.kontext?.bestand ? { bestehend: true } : {}), grenzenStand: 1394, status: 'wartet_owner', plan, nr: 0, erledigt: [], fixVersuch: 0, kostenUsd: 0, etappeKostenUsd: 0, start: this.jetzt(), aktualisiert: this.jetzt(),
     };
     const text = planFrage({ geraet: s.geraet, projekt: s.projekt, ziel: s.ziel, plan, pruefBefehle: s.pruefBefehle, g, gekuerzt: roh.length > plan.length, verzeichnisNeu: o.verzeichnisNeu, gitUebernehmen: s.gitUebernehmen, name: s.akteName, nameNeu: o.nameNeu, laeufeBisher: o.kontext?.vorherige?.length, umgebung: o.umgebung, sudoSperre: o.sudoSperre, vorgefunden: s.vorgefunden });
     await this.stelleFrage(s, 'plan', text);
@@ -213,6 +213,24 @@ export class SatellitProjekte {
       }
       s.status = 'laeuft';
       await this.naechsteEtappe(s);
+    }).then(() => true);
+  }
+
+  /**
+   * v1454 — Rückfrage per „Nein“ abgelehnt oder unbeantwortet abgelaufen (Bestätigungs-Queue, egal ob Telegram, Web oder App).
+   * Realfall 15.10.: ein abgelehnter Plan blieb ohne Ende „wartet auf dich“ — nur die Projektansicht kannte die Ablehnung.
+   * Plan → abgebrochen; Installation/Planänderung abgelehnt → ohne sie weiter; „Weitermachen?“ abgelehnt oder jede Rückfrage
+   * abgelaufen → angehalten (fortsetzbar). Falsche oder alte Kennungen bewirken nichts.
+   */
+  abgelehnt(id: string, nonce: string, wie: 'abgelehnt' | 'abgelaufen'): Promise<boolean> {
+    const s = this.staende.get(id);
+    if (!s?.frage || s.frage.nonce !== nonce || s.status === 'fertig' || s.status === 'abgebrochen') return Promise.resolve(false);
+    const art = s.frage.art;
+    if (art === 'plan') return this.stoppe(id, wie === 'abgelehnt' ? 'Plan vom Owner abgelehnt' : 'Plan nicht bestätigt (Rückfrage abgelaufen)');
+    if (wie === 'abgelehnt' && (art === 'installieren' || art === 'mutation')) return this.weiterOhneAenderung(id);
+    s.frage = undefined;
+    return this.seriell(id, async () => {
+      await this.beende(s, 'angehalten', wie === 'abgelehnt' ? 'Owner: nicht weitermachen' : 'Rückfrage unbeantwortet abgelaufen');
     }).then(() => true);
   }
 
