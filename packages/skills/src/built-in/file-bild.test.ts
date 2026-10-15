@@ -27,6 +27,19 @@ describe('v1470 Datei-Werkzeug: Bilder fürs Modell', () => {
     expect(r.display).toContain('Binary file');
   });
 
+  it('v1471 list_store ohne Pfad, unter der Master-UUID, neueste zuerst', async () => {
+    let gefragt = '';
+    const store = { list: async (u: string) => { gefragt = u; return [
+      { key: `${u}/a.png`, fileName: 'a.png', userId: u, size: 1, createdAt: '2026-10-14T10:00:00.000Z' },
+      { key: `${u}/b.png`, fileName: 'b.png', userId: u, size: 1, createdAt: '2026-10-15T10:00:00.000Z' },
+    ]; } };
+    const ctx = { userId: 'api-user', masterUserId: 'f165df7a-8689-49b6-9318-41839913846f', fileStore: store } as unknown as SkillContext;
+    const r = await new FileSkill().execute({ action: 'list_store' }, ctx);
+    expect(r.success).toBe(true);
+    expect(gefragt).toBe('f165df7a-8689-49b6-9318-41839913846f');
+    expect(r.display!.indexOf('b.png')).toBeLessThan(r.display!.indexOf('a.png'));
+  });
+
   it('read: lokales Bild ebenso', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v1470-'));
     const p = path.join(dir, 'bild.png');

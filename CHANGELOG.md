@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1471] - 2026-10-15
+
+### Fixed — Dateispeicher: Auflisten, Schreiben und Löschen unter der Owner-Identität
+
+Bei der Live-Prüfung von 1470 meldete `list_store` den Dateispeicher als leer, und ein Aufruf ohne Pfad wurde abgelehnt. Alfred konnte ältere Dateien also nicht finden.
+
+- `list_store`, `write_store` und `delete_store` arbeiten wie `read_store` (seit 1323) unter der Master-UUID statt unter dem Plattform-Alias. Vorher konnte `read_store` mit `write_store` geschriebene Dateien nicht lesen.
+- `list_store` braucht keinen Pfad mehr. Die Liste zeigt die neuesten 50 Dateien zuerst.
+
 ## [0.19.0-jarvis.1470] - 2026-10-15
 
 ### Added — Bilder aus dem Dateispeicher ansehen, große Bilder verkleinern

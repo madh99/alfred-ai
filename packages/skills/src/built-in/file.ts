@@ -146,6 +146,8 @@ export class FileSkill extends Skill {
     const content = input.content as string | undefined;
     const destination = input.destination as string | undefined;
 
+    // v1471 — list_store braucht keinen Pfad (Realfall 15.10.: Aufruf ohne path scheiterte an der Pflichtfeld-Prüfung)
+    if (action === 'list_store') return this.listFromStore(_context);
     if (!action || !rawPath) {
       return { success: false, error: 'Missing required fields "action" and "path"' };
     }
@@ -525,7 +527,7 @@ export class FileSkill extends Skill {
         const isBase64 = /^[A-Za-z0-9+/]+=*$/.test(stripped) && stripped.length > 100;
         data = isBase64 ? Buffer.from(content, 'base64') : Buffer.from(content, 'utf-8');
       }
-      const stored = await store.save(context.userId, storeKey, data);
+      const stored = await store.save(context.masterUserId ?? context.userId, storeKey, data); // v1471 — Master-UUID (sonst findet read_store die Datei nicht)
       return {
         success: true,
         data: { key: stored.key, fileName: stored.fileName, size: stored.size },
@@ -542,12 +544,15 @@ export class FileSkill extends Skill {
       return { success: false, error: 'No FileStore configured. Use action "list" with a directory path.' };
     }
     try {
-      const files = await store.list(context.userId);
+      // v1471 — Dateien des Owners liegen unter der Master-UUID (wie read_store seit v1323); der Plattform-Alias sah „leer“
+      const files = (await store.list(context.masterUserId ?? context.userId))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       if (files.length === 0) {
         return { success: true, data: { files: [] }, display: 'No files in your inbox.' };
       }
-      const display = files.map(f => `• ${f.fileName} (${f.size} bytes, ${f.createdAt})\n  key: ${f.key}`).join('\n');
-      return { success: true, data: { files }, display: `${files.length} file(s):\n${display}` };
+      const LIMIT = 50; // neueste zuerst; ältere würden die Antwort sprengen
+      const display = files.slice(0, LIMIT).map(f => `• ${f.fileName} (${f.size} bytes, ${f.createdAt})\n  key: ${f.key}`).join('\n');
+      return { success: true, data: { files: files.slice(0, LIMIT), total: files.length }, display: `${files.length} file(s)${files.length > LIMIT ? `, newest ${LIMIT} shown` : ''}:\n${display}` };
     } catch (err) {
       return { success: false, error: `Cannot list store: ${(err as Error).message}` };
     }
@@ -559,7 +564,7 @@ export class FileSkill extends Skill {
       return this.deleteFile(this.resolvePath(key));
     }
     try {
-      const deleted = await store.delete(key, context.userId);
+      const deleted = await store.delete(key, context.masterUserId ?? context.userId); // v1471 — Master-UUID wie read_store
       return deleted
         ? { success: true, data: { key }, display: `Deleted from store: ${key}` }
         : { success: false, error: `Key "${key}" not found in store` };
