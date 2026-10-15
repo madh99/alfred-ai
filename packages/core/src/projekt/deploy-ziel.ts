@@ -85,7 +85,7 @@ export function nachkontrolle(o: { prozess: Prozess; deployOk: boolean; deployFe
 }
 
 /** Einmal-Kennungen für bestätigte Deploys/Rollbacks (die Bestätigung des Owners trägt sie; das Modell kann sie nicht erraten). */
-export type FreigabeArt = 'deploy' | 'rollback' | 'ziel' | 'remote' | 'loeschen' | 'zusammenfuehren'; // v1457, v1458
+export type FreigabeArt = 'deploy' | 'rollback' | 'ziel' | 'remote' | 'loeschen' | 'zusammenfuehren' | 'dev_start'; // v1457, v1458, v1460
 
 export class DeployFreigaben {
   private readonly offen = new Map<string, { akteId: string; art: FreigabeArt; commit?: string; ziel?: DeployZiel; stufe?: Stufe; wert?: string; bis: number }>();
@@ -163,10 +163,10 @@ export function stufenAus(roh: Record<string, unknown> | undefined): Partial<Rec
   return aus;
 }
 
-export function stufenSpeicher(st: Partial<Record<Stufe, StufenEintrag>>): Record<string, unknown> {
+export function stufenSpeicher(st: Partial<Record<Stufe, StufenEintrag>>, alt?: Record<string, unknown>): Record<string, unknown> {
   const stufen: Record<string, unknown> = {};
   for (const s of STUFEN) { const e = st[s]; if (e) stufen[s] = { ...e.ziel, stufe: s, bestaetigt: e.bestaetigt, ...(e.letzter ? { letzter: e.letzter } : {}) }; }
-  return { stufen };
+  return { ...(alt?.geraetDev ? { geraetDev: alt.geraetDev } : {}), stufen }; // v1460 — dev am Gerät bleibt erhalten
 }
 
 export const naechsteStufe = (s: Stufe): Stufe | undefined => (s === 'dev' ? 'test' : s === 'test' ? 'prod' : undefined);

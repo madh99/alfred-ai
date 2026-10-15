@@ -4,7 +4,7 @@ import { begrenzePlan, mutationAutomatisch, grenzeErreicht, STANDARD_GRENZEN } f
 import type { GeraetEreignis } from '@alfred/types';
 
 // v1387 (R2) — Projekt-Agent am Satelliten, Ablauf mit simuliertem Gerät
-function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined>; nachLauf?: (s: ProjektStand) => Promise<void>; vorEtappe?: (s: ProjektStand) => Promise<{ hinweise?: string; meldung?: string } | undefined> } = {}) {
+function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined>; nachLauf?: (s: ProjektStand) => Promise<void>; vorEtappe?: (s: ProjektStand) => Promise<{ hinweise?: string; meldung?: string } | undefined>; devAktiv?: (s: ProjektStand) => Promise<boolean>; devNachEtappe?: (s: ProjektStand) => Promise<string | undefined> } = {}) {
   const aufrufe: Array<{ aktion: string; params: Record<string, unknown> }> = [];
   const fragen: Array<{ text: string; nonce: string }> = [];
   const meldungen: string[] = [];
@@ -25,6 +25,7 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
     ...(o.nachAbnahme ? { nachAbnahme: o.nachAbnahme } : {}), // v1434
     ...(o.nachLauf ? { nachLauf: o.nachLauf } : {}), // v1437
     ...(o.vorEtappe ? { vorEtappe: o.vorEtappe } : {}), // v1455
+    ...(o.devAktiv ? { devAktiv: o.devAktiv } : {}), ...(o.devNachEtappe ? { devNachEtappe: o.devNachEtappe } : {}), // v1460
     logger: { info: () => undefined, warn: () => undefined },
   });
   const ende = async (s: ProjektStand, status: GeraetEreignis['status'] = 'fertig', extra: Partial<GeraetEreignis> = {}) => {
@@ -38,6 +39,23 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
 const start = { geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/home/madh/claudecode/r2', ziel: 'Kleines CLI-Werkzeug', pruefBefehle: ['npm test'] };
 
 describe('Satelliten-Projekt', () => {
+  it('v1460 Startregel: neues Projekt immer, übernommenes nur mit dev am Gerät; dev auch nach Etappe ohne Abnahme', async () => {
+    const a = aufbau();
+    const s = await a.p.starte(start);
+    await a.p.antwort(s.id, a.fragen[0]!.nonce);
+    expect(String(a.aufrufe.find(x => x.aktion === 'auftrag_starten')!.params.auftrag)).toContain('.alfred-start.json');
+    const b = aufbau({ devAktiv: async () => false });
+    const s2 = await b.p.starte({ ...start, kontext: { bestand: 'README' } });
+    await b.p.antwort(s2.id, b.fragen[0]!.nonce);
+    expect(String(b.aufrufe.find(x => x.aktion === 'auftrag_starten')!.params.auftrag)).not.toContain('.alfred-start.json');
+    const c = aufbau({ devAktiv: async () => true, devNachEtappe: async () => '🟢 dev läuft: http://x:3000' });
+    const s3 = await c.p.starte({ ...start, pruefBefehle: [], kontext: { bestand: 'README' } });
+    await c.p.antwort(s3.id, c.fragen[0]!.nonce);
+    expect(String(c.aufrufe.find(x => x.aktion === 'auftrag_starten')!.params.auftrag)).toContain('.alfred-start.json');
+    await c.ende(s3);
+    expect(c.meldungen).toContain('🟢 dev läuft: http://x:3000');
+  });
+
   it('v1457 Läufe eines gelöschten Projekts entfernen — nie, solange einer läuft oder wartet', async () => {
     const a = aufbau();
     const s = await a.p.starte(start);

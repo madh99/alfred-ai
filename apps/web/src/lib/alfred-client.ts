@@ -1658,7 +1658,7 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/deploy`, { headers: this.authHeaders });
     return res.json();
   }
-  async geraetProjektDeploy(id: string, aktion: 'ziel' | 'ziel_entfernen' | 'deploy' | 'rollback' | 'hochstufen' | 'remote', felder: Record<string, unknown> = {}): Promise<{ success: boolean; display?: string; error?: string }> {
+  async geraetProjektDeploy(id: string, aktion: 'ziel' | 'ziel_entfernen' | 'deploy' | 'rollback' | 'hochstufen' | 'remote' | 'dev', felder: Record<string, unknown> = {}): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/deploy`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ ...felder, aktion }) });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
@@ -3465,6 +3465,8 @@ export interface Project {
   description?: string;
   cwd?: string;
   repoUrl?: string;
+  /** v1460 — Stufen und dev am Gerät (geraetDev) */
+  deployZiel?: { geraetDev?: { art?: 'geraet' | 'host'; aktiv?: boolean; angabe?: { dienst: boolean; start?: string; port?: number; pruefung?: string }; quelle?: string; zuletzt?: { ok: boolean; url?: string; text: string } }; stufen?: Record<string, unknown> };
   /** v643 — Default-Branch (HEAD), auto-detected vom Project-Agent. */
   defaultBranch?: string;
   /** v726 — Default-ENV-Stage für Sandbox-Erstellung. */

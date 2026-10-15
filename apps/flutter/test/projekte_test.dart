@@ -184,6 +184,34 @@ void main() {
     expect(mergeRequestsAn({}), isFalse);
   });
 
+  testWidgets('1.30.0 dev am Gerät: Einschalten, Angabe mit Herkunft, Neu starten, Eintragen', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    var dev = <String, dynamic>{'art': 'geraet'};
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet.add(koerper!); final f = koerper['deploy'] as Map<String, dynamic>; if (f['dev_aktion'] == 'einschalten') dev = {'art': 'geraet', 'aktiv': true, 'angabe': {'dienst': true, 'start': 'npm start', 'port': 3000, 'pruefung': '/api/gesundheit'}, 'quelle': 'erkannt', 'zuletzt': {'ok': true, 'url': 'https://192.168.1.178:3000', 'text': 'läuft'}}; return {'success': true, 'display': 'ok'}; }
+      return {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [], 'protokoll': true, 'dev': dev};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3600));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'b77431a2-e388', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    expect(find.text('noch keine bestätigte Startangabe'), findsOneWidget);
+    expect(find.byKey(const Key('dev-neustart')), findsNothing);
+    await t.tap(find.byKey(const Key('dev-aktiv')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'dev', 'deploy': {'dev_aktion': 'einschalten'}});
+    expect(find.textContaining('Start „npm start“ · Port 3000 · Prüfadresse /api/gesundheit (erkannt)'), findsOneWidget);
+    expect(find.textContaining('https://192.168.1.178:3000'), findsOneWidget);
+    await t.tap(find.byKey(const Key('dev-neustart')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'dev', 'deploy': {'dev_aktion': 'neustart'}});
+    await t.tap(find.byKey(const Key('dev-eintragen')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('dev-port')), '3001');
+    await t.tap(find.byKey(const Key('dev-eintragen-ok')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'dev', 'deploy': {'dev_aktion': 'setzen', 'start': 'npm start', 'port': 3001, 'pruefung': '/api/gesundheit'}});
+  });
+
   testWidgets('1.29.0 Schalter automatisch zusammenführen nur mit Merge Requests', (t) async {
     final gesendet = <Map<String, dynamic>>[];
     var mr = false; var auto = false;

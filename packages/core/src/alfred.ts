@@ -16,6 +16,7 @@ import { Database, ConversationRepository, UserRepository, AuditRepository, Memo
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
 import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, gitlabRepoAnlegen, repoPfad, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
+import { geraetDevAus, angabeGleich, angabeText, vorschlagText, type GeraetDev, type StartAngabe } from './projekt/geraet-dev.js'; // v1460
 import { MR_TAG, MR_AUTO_TAG, mrZweig, gitlabPfadAus, mrBeschreibung, gitlabMrSichern, gitlabMrKommentare, gitlabMrZusammenfuehren, gitlabMrStatus, gitlabStandardZweig, gitlabBenutzer, mrHinweisBlock } from './projekt/merge-request.js'; // v1455, v1458
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -15775,7 +15776,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await repo.getById(owner, id);
         if (!p?.geraetId) return null;
         const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
-        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), mergeRequests: (p.tags ?? []).includes(MR_TAG), mergeRequestsAuto: (p.tags ?? []).includes(MR_AUTO_TAG), repo: p.repoUrl ?? null, konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p) }; // v1439 deploy
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), mergeRequests: (p.tags ?? []).includes(MR_TAG), mergeRequestsAuto: (p.tags ?? []).includes(MR_AUTO_TAG), dev: geraetDevAus(p.deployZiel, !!stufenAus(p.deployZiel).dev), repo: p.repoUrl ?? null, konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p) }; // v1439 deploy
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
@@ -15783,7 +15784,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // v1443 B15 — Umgebungen aus der App
       umgebung: async (id: string, aktion: string, felder: Record<string, unknown>) => this.projektUmgebung(owner, id, aktion, felder),
       // v1439 — Deploy aus der App: derselbe Weg wie im Gespräch (Ziel, Deploy und Rollback mit Bestätigung)
-      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : aktion === 'remote' ? 'projekt_remote' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, ctx(`sitzung:${geraetId}`)),
+      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => aktion === 'dev' ? this.geraetDevAktion(id, felder) : skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : aktion === 'remote' ? 'projekt_remote' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, ctx(`sitzung:${geraetId}`)),
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, ctx(/^[0-9a-f]{8}/.test(id) ? `owner:faden:projekt-${id.slice(0, 8)}` : `sitzung:${geraetId}`)), // v1404; v1419 G3 Antwort in den Projektfaden
       entscheiden: async (id: string, lauf: string, e: string) => (this.satellitProjekte?.hole(lauf)?.akteId === id && (e === 'freigeben' || e === 'ablehnen') && this.geraeteLaufEntscheiden ? this.geraeteLaufEntscheiden(lauf, e) : { success: false, error: 'Lauf gehört nicht zu diesem Projekt' }),
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
@@ -15817,6 +15818,145 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!(await new ProjektAktenUeberProjekte(repo).setzeProtokoll(o, id, an))) return { success: false, error: 'kein Geräte-Projekt' };
     this.logger.info({ projekt: id, an }, 'v1425 Protokoll im Projekt umgeschaltet');
     return { success: true, display: an ? 'Protokoll im Projekt: an — Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Protokoll im Projekt: aus — Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (von git ausgeschlossen).' };
+  }
+
+  /** v1434 B13 — Projekt mit Remote: nach jeder abgenommenen Etappe pushen (v1460 als eigene Methode, dev folgt danach). */
+  private async pushNachAbnahme(s: import('./projekt/satellit-projekt.js').ProjektStand): Promise<string | undefined> {
+    const o = this.ownerMasterUserId;
+    if (!s.akteId || !o || !this.projectRepo) return undefined;
+    const p = await this.projectRepo.getById(o, s.akteId).catch(() => null);
+    if (p?.repoUrl && (p.tags ?? []).includes('push-aus') && s.mr?.zweig && !s.mr.aus) return '⚠️ Merge Request nicht nachgeführt: Push ist für dieses Projekt aus (Schalter push-aus)'; // v1455
+    if (!p?.repoUrl || (p.tags ?? []).includes('push-aus')) return undefined;
+    const g = this.geraeteGateway?.geraetNachName(s.geraetId);
+    if (!g) return '⚠️ Nicht gepusht: Gerät nicht verbunden';
+    if (!g.aktionen.includes('git_push')) return '⚠️ Nicht gepusht: Satellit zu alt (Update ≥ 1434)';
+    const token = await this.gitTokenFuer(p.id, p.repoUrl);
+    const r = await this.geraeteGateway!.sendeAktion(g.id, 'git_push', { projekt: s.projekt, erwartet: this.repoSicher(p.repoUrl), ...(token ? { token } : {}) }, 6 * 60_000); // v1435 — nur zum Repo des Projekts
+    this.logger.info({ lauf: s.id, etappe: s.nr, ok: r.success, mitToken: !!token, ...(r.success ? r.data as object : { fehler: r.error?.slice(0, 200) }) }, 'v1434 Push nach Abnahme');
+    const zeile = r.success ? `📤 ${r.display}` : `⚠️ Push fehlgeschlagen: ${r.error}${token ? '' : ' (kein GIT_TOKEN in der Projektumgebung)'}`;
+    return r.success && s.mr?.zweig && !s.mr.aus ? `${zeile}\n${await this.mrNachfuehren(s, p.name)}` : zeile; // v1455
+  }
+
+  /** v1460 — Projekt, Gerät und dev-Einstellung eines Geräte-Projekts. */
+  private async devKontext(id: string | undefined): Promise<{ o: string; p: import('@alfred/storage').Project; gd: GeraetDev } | { fehler: string } | undefined> {
+    const o = this.ownerMasterUserId;
+    if (!id || !o || !this.projectRepo) return undefined;
+    const p = await this.projectRepo.getById(o, id).catch(() => null);
+    if (!p) return { fehler: 'Projekt nicht gefunden' };
+    if (!p.geraetId || !p.cwd) return { fehler: 'kein Geräte-Projekt' };
+    return { o, p, gd: geraetDevAus(p.deployZiel, !!stufenAus(p.deployZiel).dev) };
+  }
+
+  private async devSpeichern(o: string, id: string, gd: GeraetDev): Promise<void> {
+    const p = await this.projectRepo!.getById(o, id);
+    await this.projectRepo!.setzeDeployZiel(o, id, { ...(p?.deployZiel ?? {}), geraetDev: gd });
+  }
+
+  /** v1460 — Startangabe zur Bestätigung stellen (nichts wird ohne Ja gestartet). */
+  private async devVorschlagen(k: { o: string; p: import('@alfred/storage').Project; gd: GeraetDev }, angabe: StartAngabe, quelle: GeraetDev['quelle'], hinweise: string[], herkunft?: { chatId: string; platform: string; userId?: string }): Promise<{ success: boolean; display?: string; error?: string }> {
+    if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+    const nonce = this.deployFreigaben.stelle(k.p.id, 'dev_start', undefined, 72 * 3_600_000, undefined, undefined, JSON.stringify({ angabe, quelle }));
+    const text = vorschlagText({ name: k.p.name, geraet: k.p.geraet ?? 'Gerät', pfad: k.p.cwd ?? '', angabe, quelle: quelle ?? 'erkannt', hinweise, ...(k.gd.angabe && !angabeGleich(k.gd.angabe, angabe) ? { geaendert: k.gd.angabe } : {}) });
+    const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `dev-${k.p.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'projekt_dev', projekt: k.p.id, bestaetigt: nonce }, timeoutMinutes: 72 * 60, ...(herkunft ? { herkunft } : {}) } as never);
+    if (!ok) return { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
+    await this.devSpeichern(k.o, k.p.id, { ...k.gd, vorgeschlagen: angabe });
+    this.logger.info({ projekt: k.p.id, angabe, quelle }, 'v1460 Startangabe zur Bestätigung gestellt');
+    return { success: true, data: { bestaetigung: true, angabe }, display: `${angabeText(angabe)} — zur Bestätigung gestellt (${hinweise.join('; ') || quelle}).` } as never;
+  }
+
+  /** v1460 — dev am Gerät starten (bestätigte Angabe); Ergebnis wird gespeichert. */
+  private async devStartenMitAngabe(k: { o: string; p: import('@alfred/storage').Project; gd: GeraetDev }, angabe: StartAngabe): Promise<{ ok: boolean; text: string; url?: string }> {
+    if (!angabe.dienst || !angabe.start) return { ok: true, text: 'kein Dienst — nichts zu starten' };
+    const g = this.geraeteGateway?.geraetNachName(k.p.geraetId!);
+    if (!g) return { ok: false, text: `${k.p.geraet ?? 'Gerät'} ist nicht verbunden` };
+    if (!g.aktionen.includes('dev_start')) return { ok: false, text: 'Satellit zu alt (Update ≥ 1460)' };
+    const r = await this.geraeteGateway!.sendeAktion(g.id, 'dev_start', { projekt: k.p.cwd, start: angabe.start, ...(angabe.port ? { port: angabe.port } : {}), ...(angabe.pruefung ? { pruefung: angabe.pruefung } : {}) }, 3 * 60_000);
+    const url = (r.data as { url?: string } | undefined)?.url;
+    const ergebnis = { zeit: new Date().toISOString(), ok: r.success, ...(url ? { url } : {}), text: String(r.success ? r.display ?? '' : r.error ?? '').slice(0, 1500) };
+    const frisch = await this.devKontext(k.p.id);
+    if (frisch && !('fehler' in frisch)) await this.devSpeichern(k.o, k.p.id, { ...frisch.gd, zuletzt: ergebnis });
+    this.logger.info({ projekt: k.p.id, ok: r.success, url, fehler: r.success ? undefined : r.error?.slice(0, 200) }, 'v1460 dev am Gerät gestartet');
+    return { ok: r.success, text: ergebnis.text, ...(url ? { url } : {}) };
+  }
+
+  /** v1460 — Aktionen „dev“ (App, Web, Gespräch): stand, einschalten, ausschalten, art, erkennen, setzen, neustart, stoppen; bestaetigt = Ja zur Startangabe. */
+  async geraetDevAktion(id: string, felder: Record<string, unknown>, herkunft?: { chatId: string; platform: string; userId?: string }): Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> {
+    const k = await this.devKontext(id);
+    if (!k) return { success: false, error: 'Projekte nicht verfügbar' };
+    if ('fehler' in k) return { success: false, error: k.fehler };
+    const was = String(felder.dev_aktion ?? (typeof felder.bestaetigt === 'string' ? 'bestaetigt' : 'stand'));
+    const g = this.geraeteGateway?.geraetNachName(k.p.geraetId!);
+    if (was === 'bestaetigt') {
+      const f = this.deployFreigaben.loese(String(felder.bestaetigt ?? ''), k.p.id, 'dev_start');
+      if (!f?.wert) return { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
+      const { angabe, quelle } = JSON.parse(f.wert) as { angabe: StartAngabe; quelle: GeraetDev['quelle'] };
+      const gd: GeraetDev = { ...k.gd, art: 'geraet', aktiv: true, angabe, ...(quelle ? { quelle } : {}) };
+      await this.devSpeichern(k.o, k.p.id, gd);
+      const r = await this.devStartenMitAngabe({ ...k, gd }, angabe);
+      return { success: r.ok, ...(r.ok ? { display: `${k.p.name}: ${angabeText(angabe)} übernommen. ${r.text}` } : { error: `${k.p.name}: Angabe übernommen, aber dev startet nicht: ${r.text}` }) };
+    }
+    if (was === 'art') {
+      const art = felder.art === 'host' ? 'host' : 'geraet';
+      if (art === 'host' && !stufenAus(k.p.deployZiel).dev) return { success: false, error: 'Für „eigener Host“ zuerst ein dev-Ziel eintragen (Deploy-Ziel Stufe dev)' };
+      await this.devSpeichern(k.o, k.p.id, { ...k.gd, art });
+      return { success: true, display: art === 'host' ? 'dev: eigener Host — Deploy nach dev wie bisher über das dev-Ziel.' : 'dev: am Gerät — die App läuft im Arbeitsordner und wird nach jeder grünen Etappe neu gestartet (sobald die Startangabe bestätigt ist).' };
+    }
+    if (was === 'ausschalten') { await this.devSpeichern(k.o, k.p.id, { ...k.gd, aktiv: false }); return { success: true, display: 'dev am Gerät: aus — Alfred startet nichts mehr automatisch (eine laufende Instanz läuft weiter; „stoppen“ beendet sie).' }; }
+    if (was === 'stoppen') {
+      if (!g?.aktionen.includes('dev_stop')) return { success: false, error: 'Gerät nicht verbunden oder Satellit zu alt' };
+      const r = await this.geraeteGateway!.sendeAktion(g.id, 'dev_stop', { projekt: k.p.cwd }, 60_000);
+      return r.success ? { success: true, display: r.display } : { success: false, error: r.error };
+    }
+    if (was === 'neustart') {
+      if (!k.gd.angabe) return { success: false, error: 'Noch keine bestätigte Startangabe — erst „erkennen“ oder eintragen' };
+      const r = await this.devStartenMitAngabe(k, k.gd.angabe);
+      return { success: r.ok, ...(r.ok ? { display: r.text } : { error: r.text }) };
+    }
+    if (was === 'setzen') {
+      const angabe: StartAngabe | undefined = felder.kein_dienst === true ? { dienst: false } : (() => { const st = typeof felder.start === 'string' ? felder.start.trim() : ''; const port = felder.port === undefined || felder.port === '' ? undefined : Number(felder.port); const pr = typeof felder.pruefung === 'string' && felder.pruefung.trim() ? felder.pruefung.trim() : undefined; if (!st || st.length > 300 || /[\r\n\0]/.test(st) || (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) || (pr && !/^\/\S{0,199}$/.test(pr))) return undefined; return { dienst: true, start: st, ...(port ? { port } : {}), ...(pr ? { pruefung: pr } : {}) }; })();
+      if (!angabe) return { success: false, error: 'Angabe ungültig: Startbefehl (eine Zeile), Port 1–65535, Prüfadresse ab / — oder kein_dienst' };
+      if (!angabe.dienst) { await this.devSpeichern(k.o, k.p.id, { ...k.gd, aktiv: true, angabe, quelle: 'manuell' }); return { success: true, display: `${k.p.name}: kein Dienst — dev heißt hier Build und Tests grün.` }; }
+      return this.devVorschlagen(k, angabe, 'manuell', [], herkunft);
+    }
+    if (was === 'einschalten' || was === 'erkennen') {
+      if (was === 'einschalten') await this.devSpeichern(k.o, k.p.id, { ...k.gd, art: 'geraet', aktiv: true });
+      if (!g?.aktionen.includes('start_erkennen')) return { success: false, error: `${k.p.geraet ?? 'Gerät'} nicht verbunden oder Satellit zu alt (Update ≥ 1460)` };
+      const r = await this.geraeteGateway!.sendeAktion(g.id, 'start_erkennen', { projekt: k.p.cwd, mit_claude: felder.mit_claude !== false }, 4 * 60_000);
+      const e = r.data as { gefunden?: boolean; angabe?: StartAngabe; quelle?: GeraetDev['quelle']; hinweise?: string[] } | undefined;
+      this.logger.info({ projekt: k.p.id, ok: r.success, gefunden: e?.gefunden, quelle: e?.quelle }, 'v1460 Startangabe erkannt');
+      if (!r.success || !e?.gefunden || !e.angabe) return { success: false, error: `Nicht erkannt${e?.hinweise?.length ? ` (${e.hinweise.join('; ')})` : r.error ? ` (${r.error})` : ''} — bitte Startbefehl, Port und Prüfadresse eintragen` };
+      const frisch = await this.devKontext(k.p.id);
+      const kk = frisch && !('fehler' in frisch) ? frisch : k;
+      if (!e.angabe.dienst) { await this.devSpeichern(kk.o, kk.p.id, { ...kk.gd, aktiv: true, angabe: e.angabe, ...(e.quelle ? { quelle: e.quelle } : {}) }); return { success: true, display: `${k.p.name}: kein Dienst erkannt (${(e.hinweise ?? []).join('; ')}) — dev heißt hier Build und Tests grün.` }; }
+      return this.devVorschlagen(kk, e.angabe, e.quelle, e.hinweise ?? [], herkunft);
+    }
+    // stand
+    let geraet = '';
+    if (g?.aktionen.includes('dev_stand')) { const r = await this.geraeteGateway!.sendeAktion(g.id, 'dev_stand', { projekt: k.p.cwd }, 30_000).catch(() => undefined); geraet = r?.display ?? ''; }
+    return { success: true, data: k.gd, display: [`dev: ${k.gd.art === 'host' ? 'eigener Host' : `am Gerät${k.gd.aktiv ? '' : ' (aus)'}`}`, k.gd.angabe ? angabeText(k.gd.angabe) : 'noch keine bestätigte Startangabe', ...(geraet ? [geraet] : [])].join(' · ') };
+  }
+
+  /**
+   * v1460 — nach einer abgenommenen Etappe: dev am Gerät. Neues Projekt (mit Alfred begonnen) → aktiv. Liegt eine (neue) Startangabe
+   * im Projekt, zur Bestätigung stellen; mit bestätigter Angabe neu starten. Liefert die Zeile für die Etappenmeldung.
+   */
+  private async devNachEtappe(s: import('./projekt/satellit-projekt.js').ProjektStand): Promise<string | undefined> {
+    let k = await this.devKontext(s.akteId);
+    if (!k || 'fehler' in k || k.gd.art !== 'geraet') return undefined;
+    if (k.gd.aktiv === undefined && !s.bestehend) { await this.devSpeichern(k.o, k.p.id, { ...k.gd, aktiv: true }); k = { ...k, gd: { ...k.gd, aktiv: true } }; }
+    if (!k.gd.aktiv) return undefined;
+    const g = this.geraeteGateway?.geraetNachName(k.p.geraetId!);
+    if (!g?.aktionen.includes('start_erkennen')) return undefined;
+    const r = await this.geraeteGateway!.sendeAktion(g.id, 'start_erkennen', { projekt: k.p.cwd }, 60_000).catch(() => undefined);
+    const e = r?.data as { gefunden?: boolean; angabe?: StartAngabe; quelle?: GeraetDev['quelle']; hinweise?: string[] } | undefined;
+    const zeilen: string[] = [];
+    if (e?.gefunden && e.angabe && !angabeGleich(e.angabe, k.gd.angabe) && !angabeGleich(e.angabe, k.gd.vorgeschlagen) && (e.quelle === 'datei' || !k.gd.angabe)) {
+      if (!e.angabe.dienst) { await this.devSpeichern(k.o, k.p.id, { ...k.gd, angabe: e.angabe, ...(e.quelle ? { quelle: e.quelle } : {}) }); return '▶ dev: kein Dienst — Build und Tests grün genügen.'; }
+      const v = await this.devVorschlagen(k, e.angabe, e.quelle, e.hinweise ?? []);
+      zeilen.push(v.success ? `▶ dev: ${k.gd.angabe ? 'Startangabe geändert' : 'Startangabe gefunden'} (${angabeText(e.angabe)}) — Bestätigung gestellt` : `⚠️ dev: ${v.error}`);
+    }
+    if (k.gd.angabe?.dienst) { const d = await this.devStartenMitAngabe(k, k.gd.angabe); zeilen.push(d.ok ? `🟢 dev läuft${d.url ? `: ${d.url}` : ''}` : `🔴 dev startet nicht: ${d.text.split('\n')[0]}`); }
+    return zeilen.length ? zeilen.join('\n') : undefined;
   }
 
   /**
@@ -16058,20 +16198,11 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       },
       // v1434 B13 — Projekt mit Remote: nach jeder abgenommenen Etappe pushen (Token aus der Projektumgebung; Tag push-aus schaltet ab)
       nachAbnahme: async (s) => {
-        const o = this.ownerMasterUserId;
-        if (!s.akteId || !o || !this.projectRepo) return undefined;
-        const p = await this.projectRepo.getById(o, s.akteId).catch(() => null);
-        if (p?.repoUrl && (p.tags ?? []).includes('push-aus') && s.mr?.zweig && !s.mr.aus) return '⚠️ Merge Request nicht nachgeführt: Push ist für dieses Projekt aus (Schalter push-aus)'; // v1455
-        if (!p?.repoUrl || (p.tags ?? []).includes('push-aus')) return undefined;
-        const g = this.geraeteGateway?.geraetNachName(s.geraetId);
-        if (!g) return '⚠️ Nicht gepusht: Gerät nicht verbunden';
-        if (!g.aktionen.includes('git_push')) return '⚠️ Nicht gepusht: Satellit zu alt (Update ≥ 1434)';
-        const token = await this.gitTokenFuer(p.id, p.repoUrl);
-        const r = await this.geraeteGateway!.sendeAktion(g.id, 'git_push', { projekt: s.projekt, erwartet: this.repoSicher(p.repoUrl), ...(token ? { token } : {}) }, 6 * 60_000); // v1435 — nur zum Repo des Projekts
-        this.logger.info({ lauf: s.id, etappe: s.nr, ok: r.success, mitToken: !!token, ...(r.success ? r.data as object : { fehler: r.error?.slice(0, 200) }) }, 'v1434 Push nach Abnahme');
-        const zeile = r.success ? `📤 ${r.display}` : `⚠️ Push fehlgeschlagen: ${r.error}${token ? '' : ' (kein GIT_TOKEN in der Projektumgebung)'}`;
-        return r.success && s.mr?.zweig && !s.mr.aus ? `${zeile}\n${await this.mrNachfuehren(s, p.name)}` : zeile; // v1455
+        const zeilen = [await this.pushNachAbnahme(s).catch((err: Error) => `⚠️ Nach der Abnahme: ${err.message}`), await this.devNachEtappe(s).catch((err: Error) => `⚠️ dev: ${err.message}`)].filter((z): z is string => !!z); // v1460
+        return zeilen.length ? zeilen.join('\n') : undefined;
       },
+      devAktiv: async (s) => { const k = await this.devKontext(s.akteId); return !!k && !('fehler' in k) && k.gd.art === 'geraet' && k.gd.aktiv === true; }, // v1460
+      devNachEtappe: async (s) => this.devNachEtappe(s), // v1460 — auch ohne Abnahme
       protokollAn: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return true; const p = await this.projectRepo.getById(o, s.akteId).catch(() => null); return !(p?.tags ?? []).includes('protokoll-aus'); },
       melde: async (s, text, art) => {
         const faden = projektFaden(s.akteId);
@@ -16294,14 +16425,14 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
           const f = this.deployFreigaben.loese(input.bestaetigt, p.id, 'ziel');
           if (!f?.ziel || !f.stufe) return { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
           stufen[f.stufe] = { ziel: { ...f.ziel, stufe: f.stufe }, bestaetigt: true, ...(stufen[f.stufe]?.letzter && stufen[f.stufe]!.ziel.host === f.ziel.host ? { letzter: stufen[f.stufe]!.letzter } : {}) };
-          await this.projectRepo!.setzeDeployZiel(t.o, p.id, stufenSpeicher(stufen));
+          await this.projectRepo!.setzeDeployZiel(t.o, p.id, stufenSpeicher(stufen, p.deployZiel));
           this.logger.info({ projekt: p.id, stufe: f.stufe, ziel: zielText(f.ziel) }, 'v1443 Deploy-Ziel der Stufe nach Bestätigung gespeichert');
           return { success: true, display: `${p.name} → ${f.stufe}: ${zielText(f.ziel)} gespeichert (bestätigt).` };
         }
         const stufe = (typeof input.stufe === 'string' && (STUFEN as readonly string[]).includes(input.stufe) ? input.stufe : 'dev') as Stufe;
         if (input.entfernen === true) {
           delete stufen[stufe];
-          await this.projectRepo!.setzeDeployZiel(t.o, p.id, STUFEN.some(x => stufen[x]) ? stufenSpeicher(stufen) : null);
+          await this.projectRepo!.setzeDeployZiel(t.o, p.id, STUFEN.some(x => stufen[x]) || p.deployZiel?.geraetDev ? stufenSpeicher(stufen, p.deployZiel) : null);
           return { success: true, display: `${p.name}: Deploy-Ziel der Stufe ${stufe} entfernt.` };
         }
         const neu = ['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'auto_dev', 'name'].some(k => input[k] !== undefined);
@@ -16484,6 +16615,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         this.logger.info({ projekt: akte.id, geraet: g.name, ziel, mitToken: !!token, quelle: quelle?.id }, 'v1434 Projekt geholt');
         return { success: true, data: { id: akte.id, name, ...(r.data as object | undefined) }, display: `${r.display}\nProjekt „${name}" auf ${g.name} angelegt (Remote ${url}; ${token ? 'Push nach jeder abgenommenen Etappe mit dem Projekt-Token' : 'kein Token gefunden — für den Push GIT_TOKEN in der Projektumgebung hinterlegen'}${befehle.length ? '' : '; noch keine Prüfbefehle — ohne sie fragt Alfred nach jeder Etappe'}). Weiter mit projekt_weiter projekt="${name}" goal=…` };
       },
+      // v1460 — dev am Gerät im Gespräch
+      dev: async (ref, input, context) => { const t = await akteAus(ref); if ('fehler' in t) return { success: false, error: t.fehler }; return this.geraetDevAktion(t.akte.id, input, context.chatId ? { chatId: context.chatId, platform: context.platform, userId: context.userId } : undefined); },
       // v1458 — Zusammenführen nach dem Ja des Owners (nur mit Kennung aus der Bestätigung)
       mrZusammenfuehren: async (_ref, input) => this.mrZusammenfuehrenNachJa(String(input.lauf ?? ''), typeof input.bestaetigt === 'string' ? input.bestaetigt : ''),
       // v1457 — endgültig löschen: Name oder Kennung (auch Server-Projekte); erst Bestätigung, nach dem Ja mit Kennung
@@ -16577,7 +16710,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       mrAuto: async (id: string, an: boolean) => this.geraeteProjektMrAuto(id, an), // v1458
       // v1439 — Deploy im Web
       deployInfo: async (id: string) => { const o = owner(); const p = o ? await this.projectRepo?.getById(o, id) : undefined; return p ? this.projektDeployInfo(p) : { error: 'nicht gefunden' }; },
-      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : aktion === 'remote' ? 'projekt_remote' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never),
+      deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => aktion === 'dev' ? this.geraetDevAktion(id, felder) : skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : aktion === 'remote' ? 'projekt_remote' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never),
       frage: async (id: string, text: string) => skill.execute({ action: 'projekt_frage', projekt: id, frage: text }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never), // v1404; v1419 G3
     });
     this.logger.info({ projekte: projekte.liste().length }, 'v1387 Satelliten-Projekte bereit');
@@ -16703,7 +16836,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     // letzter Deploy dauerhaft bei der Stufe (App/Web; Rollback-Ziel und Hochstufen überstehen Neustarts)
     try {
       const o = this.tryOwner(); const aktuell = o ? await this.projectRepo?.getById(o, p.id) : undefined;
-      if (o && aktuell) { const st = stufenAus(aktuell.deployZiel); const e = st[stufe]; if (e) { e.letzter = { zeit: new Date().toISOString(), ok: k.ok, deployOk: r.success, text: zeilen.join('\n').slice(0, 2000), ...(d.vorher ? { vorher: d.vorher } : {}), ...(d.nachher ? { nachher: d.nachher } : {}), ...(commit ? { commit } : {}) }; await this.projectRepo!.setzeDeployZiel(o, p.id, stufenSpeicher(st)); } }
+      if (o && aktuell) { const st = stufenAus(aktuell.deployZiel); const e = st[stufe]; if (e) { e.letzter = { zeit: new Date().toISOString(), ok: k.ok, deployOk: r.success, text: zeilen.join('\n').slice(0, 2000), ...(d.vorher ? { vorher: d.vorher } : {}), ...(d.nachher ? { nachher: d.nachher } : {}), ...(commit ? { commit } : {}) }; await this.projectRepo!.setzeDeployZiel(o, p.id, stufenSpeicher(st, aktuell.deployZiel)); } }
     } catch { /* Anzeige */ }
     return { ok: k.ok, text: zeilen.join('\n') };
   }
@@ -16832,6 +16965,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     const p = await this.projectRepo.getById(o, s.akteId).catch(() => null);
     const dev = p ? stufenAus(p.deployZiel).dev : undefined; // v1443 B15 — Stufe dev
     if (!p || !dev?.ziel.autoDev) return;
+    if (geraetDevAus(p.deployZiel, true).art !== 'host') { this.logger.info({ projekt: p.id }, 'v1460 Auto-dev übersprungen — dev läuft am Gerät'); return; }
     if (!dev.bestaetigt) { this.logger.warn({ projekt: p.id }, 'v1438 Auto-dev übersprungen — Deploy-Ziel nicht vom Owner bestätigt'); return; }
     if (!s.erledigt.length || !s.erledigt.every(e => e.ok && e.geprueft)) { this.logger.info({ lauf: s.id }, 'v1437 Auto-dev übersprungen — nicht alle Etappen grün abgenommen'); return; }
     const faden = `owner:faden:projekt-${p.id.slice(0, 8)}`;

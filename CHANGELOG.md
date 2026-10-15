@@ -55,6 +55,25 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1460] - 2026-10-15
+
+### Added — dev am Gerät oder auf eigenem Host, Startangabe erkennt Alfred selbst (App 1.30.0)
+
+Bisher war dev nur ein Deploy-Ziel per SSH; ohne eigenen dev-Rechner ließ es sich nicht testen. dev ist jetzt je Projekt wählbar:
+
+- **„Am Gerät“ (Standard):** Die App läuft im Arbeitsordner des Geräts, auf dem gebaut wird. Alfred startet sie über den Satelliten nach jeder grünen Etappe neu, auch nach Etappen ohne Abnahme. Er wartet, bis sie antwortet (https mit eigenem Zertifikat oder http), und meldet den Link in der Etappenmeldung.
+- **„Eigener Host“:** das dev-Ziel per SSH wie bisher. Auto-dev gilt nur noch in dieser Art. Projekte mit eingetragenem dev-Host behalten diese Art.
+- **Startangabe** (Befehl, Port, Prüfadresse oder „kein Dienst“):
+  - Projekte, die mit Alfred beginnen: Claude Code hält sie in `.alfred-start.json` fest (neue Etappenregel). Alfred liest die Datei ohne Modell.
+  - Übernommene Projekte: beim Einschalten feste Erkennung aus Startdatei, `package.json` (Port und Prüfadresse aus dem Code, nie aus `.env`), `Procfile` und docker-compose. Reicht das nicht, fragt Alfred Claude Code im reinen Lesemodus.
+  - Manuell: jederzeit in App, Web oder im Gespräch.
+- **Ausgeführt wird erst nach der Owner-Bestätigung:** Die Bestätigung nennt Herkunft und Hinweise, etwa „Port 3000 aus src/start.js“. Ändert sich die Startdatei, fragt Alfred erneut, und dev läuft bis dahin mit der bisherigen Angabe.
+- **Neustart:** Alfred ersetzt nur Instanzen dieses Projekts, auch eine von Hand gestartete, deren Arbeitsordner im Projekt liegt. Einen fremden Prozess auf dem Port beendet er nie und meldet stattdessen. Protokoll unter `.alfred/dev.log`, lokal von git ausgeschlossen.
+- **Neue Wege:**
+  - Satelliten-Aktionen `start_erkennen`, `dev_start`, `dev_stop`, `dev_stand`.
+  - Skill-Aktion `projekt_dev` (einschalten, ausschalten, art, erkennen, setzen, neustart, stoppen, stand).
+  - App und Web: Bereich „dev“ in der Projektansicht.
+
 ## [0.19.0-jarvis.1459] - 2026-10-15
 
 ### Fixed — Prüfaufträge: Status von willhaben-Inseraten unabhängig vom gewählten Werkzeug

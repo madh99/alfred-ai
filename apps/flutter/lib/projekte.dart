@@ -5,6 +5,7 @@
 library;
 
 import 'dart:async';
+import 'projekt_dev.dart'; // 1.30.0 v1460
 
 import 'package:flutter/material.dart';
 
@@ -456,6 +457,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
           title: const Text('Automatisch zusammenführen'),
           subtitle: Text(mrAutoAn(j) ? 'An: bei grünem Lauf ohne Rückfrage zusammenführen.' : 'Aus: Alfred fragt dich, bevor er zusammenführt; bei Nein bleibt der MR offen und der nächste Lauf arbeitet auf demselben Zweig weiter.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
         ProjektRegeln(konventionen: (j['konventionen'] as Map<String, dynamic>?) ?? const {}, aendern: konventionenSetzen, gesperrt: plant), // 1.19.0
+        ProjektDev(id: widget.id, json: widget.json, dev: j['dev'] as Map<String, dynamic>?, neuLaden: laden, aufMeldung: widget.aufMeldung), // 1.30.0 v1460
         ProjektDeploy(id: widget.id, json: widget.json, deploy: j['deploy'] as Map<String, dynamic>?, neuLaden: laden, aufMeldung: widget.aufMeldung), // 1.24.0 v1439
         ProjektUmgebungen(id: widget.id, json: widget.json), // 1.25.0 v1443 B15
         const SizedBox(height: 12),

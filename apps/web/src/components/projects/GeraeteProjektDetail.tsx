@@ -38,6 +38,9 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
   const protokollAn = !(p.tags ?? []).includes('protokoll-aus'); // v1425
   const mergeRequestsAn = (p.tags ?? []).includes('merge-requests'); // v1455
   const mrAutoAn = (p.tags ?? []).includes('mr-auto-merge'); // v1458
+  const dev = p.deployZiel?.geraetDev ?? { art: p.deployZiel?.stufen && (p.deployZiel.stufen as Record<string, unknown>).dev ? 'host' as const : 'geraet' as const }; // v1460
+  async function devAktion(felder: Record<string, unknown>) { setBusy(true); const r = await client.geraetProjektDeploy(p.id, 'dev', felder).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Erledigt.') : (r.error ?? 'Fehler') }); if (r.success) onReload(); }
+  function devEintragen() { const a = dev.angabe; const kein = confirm('Ist das Projekt KEIN Dienst (Bibliothek, Kommandozeile, Desktop-App)? OK = kein Dienst, Abbrechen = Startbefehl eintragen'); if (kein) { void devAktion({ dev_aktion: 'setzen', kein_dienst: true }); return; } const start = prompt('Startbefehl im Projektordner', a?.start ?? 'npm start'); if (!start) return; const port = prompt('Port (leer = ohne)', a?.port ? String(a.port) : ''); const pruefung = prompt('Prüfadresse (leer = ohne, z. B. /api/status)', a?.pruefung ?? ''); void devAktion({ dev_aktion: 'setzen', start, ...(port ? { port: Number(port) } : {}), ...(pruefung ? { pruefung } : {}) }); }
   const [wunsch, setWunsch] = useState('');
   const [frage, setFrage] = useState(''); // v1404
   const [busy, setBusy] = useState(false);
@@ -156,6 +159,23 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
             onChange={async (ev) => { const an = ev.target.checked; setBusy(true); const r = await client.geraetProjektMergeRequests(p.id, an).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Gespeichert.') : (r.error ?? 'Fehler') }); if (r.success) onReload(); }} />
           <span><span className="text-gray-200">Merge Requests</span><span className="block text-gray-500">{mergeRequestsAn ? `An: eigener Zweig je Lauf, Merge Request in GitLab${p.repoUrl ? '' : ' (braucht ein GitLab-Repository — Remote fehlt)'}; deine Kommentare dort gehen in die nächste Etappe. Sind alle Etappen grün, ${mrAutoAn ? 'führt Alfred automatisch zusammen' : 'fragt Alfred dich vor dem Zusammenführen'}.` : 'Aus: Etappen laufen direkt auf dem aktuellen Zweig.'}</span></span>
         </label>
+        {/* v1460 — dev: am Gerät oder eigener Host */}
+        <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2 sm:col-span-2 space-y-2">
+          <div className="flex items-center gap-2"><span className="text-gray-200">dev</span>
+            {(['geraet', 'host'] as const).map(a => <button key={a} disabled={busy} onClick={() => devAktion({ dev_aktion: 'art', art: a })} className={`px-2 py-0.5 rounded border ${dev.art === a ? 'border-blue-500 text-blue-300' : 'border-[#2a2a2a] text-gray-400'}`}>{a === 'geraet' ? 'Am Gerät' : 'Eigener Host'}</button>)}
+          </div>
+          {dev.art === 'host' ? <div className="text-gray-500">dev wird über das dev-Ziel im Deploy-Bereich ausgerollt.</div> : <>
+            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="h-4 w-4 accent-blue-500" checked={dev.aktiv === true} disabled={busy} onChange={(ev) => devAktion({ dev_aktion: ev.target.checked ? 'einschalten' : 'ausschalten' })} /><span className="text-gray-200">dev am Gerät</span><span className="text-gray-500">{dev.aktiv ? 'Alfred startet die App nach jeder grünen Etappe im Arbeitsordner neu.' : 'Einschalten erkennt, wie das Projekt startet, und fragt dich.'}</span></label>
+            <div className="text-gray-300">{!dev.angabe ? 'noch keine bestätigte Startangabe' : dev.angabe.dienst === false ? 'kein Dienst — dev heißt hier: Build und Tests grün' : `Start „${dev.angabe.start}“${dev.angabe.port ? ` · Port ${dev.angabe.port}` : ''}${dev.angabe.pruefung ? ` · Prüfadresse ${dev.angabe.pruefung}` : ''}`}{dev.quelle ? <span className="text-gray-500"> ({dev.quelle})</span> : null}</div>
+            {dev.zuletzt && <div className="text-gray-400">{dev.zuletzt.ok ? '🟢' : '🔴'} {dev.zuletzt.url ? <a className="text-blue-400 hover:underline" href={dev.zuletzt.url} target="_blank" rel="noreferrer">{dev.zuletzt.url}</a> : dev.zuletzt.text}</div>}
+            <div className="flex flex-wrap gap-2">
+              <button disabled={busy} onClick={() => devAktion({ dev_aktion: 'erkennen' })} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-300">Erkennen</button>
+              <button disabled={busy} onClick={devEintragen} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-300">Eintragen</button>
+              {dev.angabe?.dienst && <button disabled={busy} onClick={() => devAktion({ dev_aktion: 'neustart' })} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-300">Neu starten</button>}
+              {dev.angabe?.dienst && <button disabled={busy} onClick={() => devAktion({ dev_aktion: 'stoppen' })} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-300">Stoppen</button>}
+            </div>
+          </>}
+        </div>
         {/* v1458 — automatisch zusammenführen (nur mit Merge Requests) */}
         {mergeRequestsAn && (
           <label className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2 sm:col-span-2 flex items-center gap-3 cursor-pointer">

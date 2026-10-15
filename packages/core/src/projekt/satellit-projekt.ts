@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync
 import path from 'node:path';
 import type { GeraetEreignis } from '@alfred/types';
 import { konventionsBlock, changelogPflicht, changelogAuftrag, type Konventionen } from './konventionen.js'; // v1426
+import { START_REGEL } from './geraet-dev.js'; // v1460
 import {
   STANDARD_GRENZEN, begrenzePlan, etappenAuftrag, etappenBerichtText, fixAuftrag, grenzeErreicht, mutationAutomatisch, mutationText, planFrage, projektZeile, uhrzeit, fehlendeWerkzeuge, installVorschlag, pfadeSicher,
   type Grenzen, type MutationsArt,
@@ -91,6 +92,10 @@ export interface SatellitProjektDeps {
   nachLauf?: (s: ProjektStand) => Promise<void>;
   /** v1455 — vor jedem Auftrag (Merge-Request-Modus: Zweig anlegen, neue MR-Kommentare des Owners als Hinweise); Meldung geht in den Faden */
   vorEtappe?: (s: ProjektStand) => Promise<{ hinweise?: string; meldung?: string } | undefined>;
+  /** v1460 — dev am Gerät für ein übernommenes Projekt eingeschaltet → Startregel in den Auftrag (neue Projekte bekommen sie immer) */
+  devAktiv?: (s: ProjektStand) => Promise<boolean>;
+  /** v1460 — Etappe ohne Abnahme (Owner prüft selbst): dev am Gerät trotzdem neu starten; liefert eine Meldezeile */
+  devNachEtappe?: (s: ProjektStand) => Promise<string | undefined>;
   ordner?: string;
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
   now?: () => number;
@@ -303,6 +308,7 @@ export class SatellitProjekte {
     const protokoll = { lauf: s.id, nr: s.nr, ...(s.fixVersuch ? { fix: s.fixVersuch } : {}), an: await this.protokollAn(s) }; // v1425
     if (!auftrag.includes('Projektregeln des Owners (gelten für jede Etappe)')) auftrag = `${auftrag}${konventionsBlock(await this.konventionen(s))}`; // v1426 — jede Etappe, jeder Fix, jeder Nachtrag; nach Warten aufs Gerät nicht doppelt
     // v1455 — Merge-Request-Modus: Zweig vor dem ersten Auftrag, Kommentare des Owners aus dem MR in den Auftrag
+    if (!auftrag.includes('Startangabe: Ist das Projekt') && (!s.bestehend || await this.d.devAktiv?.(s).catch(() => false))) auftrag = `${auftrag}\n${START_REGEL}`; // v1460
     const vor: { hinweise?: string; meldung?: string } | undefined = await this.d.vorEtappe?.(s).catch((err: Error) => ({ meldung: `⚠️ Merge Request: ${err.message}` }));
     if (vor?.hinweise) auftrag = `${auftrag}${vor.hinweise}`;
     if (vor?.meldung) await this.d.melde(s, vor.meldung).catch(() => undefined);
@@ -369,6 +375,8 @@ export class SatellitProjekte {
       if (fehltOhne.length) { await this.frageInstallation(s, fehltOhne[0]!, etappe); return; }
       // ohne Abnahme keine automatische nächste Etappe (Owner-Entscheidung 12.10.)
       await this.vermerke(s, { ok: e.status === 'fertig', geprueft: false });
+      // v1460 — gerade ohne Abnahme prüft der Owner selbst: dev am Gerät vorher neu starten
+      if (e.status === 'fertig') { const dz = await this.d.devNachEtappe?.(s).catch((err: Error) => `⚠️ dev: ${err.message}`); if (dz) await this.d.melde(s, dz).catch(() => undefined); }
       await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" ${e.status === 'fertig' ? 'fertig' : 'mit Fehler beendet'} (ungeprüft, ${s.etappeKostenUsd.toFixed(2)} USD). Mit der nächsten Etappe weitermachen?`);
       return;
     }

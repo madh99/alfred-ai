@@ -126,3 +126,11 @@ describe('v1444 Repo anlegen', () => {
     expect(await gitlabRepoAnlegen('https://git.lokalkraft.at', 'tok', 'Probe', mitVorhanden(false))).toMatchObject({ ok: false, fehler: expect.stringContaining('nicht leer') });
   });
 });
+
+describe('v1460 Stufen speichern behält dev am Gerät', () => {
+  it('geraetDev bleibt beim Speichern der Stufen erhalten', async () => {
+    const { stufenSpeicher: sp } = await import('./deploy-ziel.js');
+    expect(sp({}, { geraetDev: { art: 'geraet', aktiv: true }, stufen: {} })).toEqual({ geraetDev: { art: 'geraet', aktiv: true }, stufen: {} });
+    expect(sp({})).toEqual({ stufen: {} });
+  });
+});

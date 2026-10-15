@@ -31,6 +31,7 @@ import { linuxSitzungsUmgebung } from './satellit-bedienen-linux.js'; // v1339
 import { IpcServer, type IpcEreignisArt, type IpcAnhang, type SatellitStatus } from './satellit-ipc.js'; // v1302, v1325 Anhang
 import { heimInParams } from './satellit-pfad.js'; // v1303
 import { gitHolen, gitPush, gitRemoteSetzen, gitZweig, gitAktualisieren, paramsFuerLog } from './satellit-git.js'; // v1434 B13, v1444, v1455
+import { startErkennen, startErkennenClaude, startAngabePruefen, devStarten, devStoppen, devStand } from './satellit-dev.js'; // v1460
 import { envSchluessel } from './satellit-env.js'; // v1443 B15
 import { pruefungenAus, pruefeAlle, type PruefMittel } from './satellit-pruefen.js'; // v1383 R1
 import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookKonten, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
@@ -120,6 +121,10 @@ export function baueManifest(version: string): GeraetManifest {
         { name: 'env_schluessel', beschreibung: 'v1443 — Schlüsselnamen der Umgebung eines Projekts erkennen (.env.example, process.env.X …) — nur Namen, nie Werte; .env wird nicht gelesen', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' } } },
         { name: 'git_holen', beschreibung: 'v1434 — Git-Repository (https://… oder git@…) in einen neuen, freigegebenen Ordner holen; Remote bleibt. Token nur vom Gehirn (Projektumgebung)', autonomie: 'bestaetigen' as const, parameter: { url: { type: 'string', description: 'Repo-Adresse ohne Zugangsdaten' }, ziel: { type: 'string', description: 'Absoluter Zielordner (neu oder leer, freigegeben)' } } },
         { name: 'git_remote', beschreibung: 'v1444 — Remote origin eines Projekts setzen (url) oder entfernen (ohne url); nur Konfiguration, kein Push', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, url: { type: 'string', description: 'Repo-Adresse ohne Zugangsdaten; leer = entfernen' } } },
+        { name: 'start_erkennen', beschreibung: 'v1460 — erkennen, wie ein Projekt lokal startet (Startdatei, package.json, Procfile, docker-compose; mit_claude: Claude Code nur lesend als Rückfall) — ändert nichts', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner' }, mit_claude: { type: 'boolean', description: 'Rückfall Claude Code (nur lesend, ≤ 0,30 $)' } } },
+        { name: 'dev_start', beschreibung: 'v1460 — dev am Gerät starten bzw. neu starten (Startbefehl im Projektordner, abgekoppelt; beendet nur Instanzen dieses Projekts; wartet, bis es antwortet)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, start: { type: 'string', description: 'Startbefehl' }, port: { type: 'number', description: 'Port' }, pruefung: { type: 'string', description: 'Prüfadresse, z. B. /api/status' } } },
+        { name: 'dev_stop', beschreibung: 'v1460 — dev am Gerät stoppen (nur die von Alfred gestartete Instanz)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' } } },
+        { name: 'dev_stand', beschreibung: 'v1460 — läuft dev am Gerät, antwortet es, Link und letzte Protokollzeilen', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner' } } },
         { name: 'git_zweig', beschreibung: 'v1455 — Merge-Request-Modus: Zweig alfred/<lauf> im Projekt anlegen bzw. auschecken (ohne Netz, nicht eingecheckte Änderungen bleiben)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, zweig: { type: 'string', description: 'alfred/<lauf>' } } },
         { name: 'git_aktualisieren', beschreibung: 'v1455 — nach dem Zusammenführen den Zielzweig aus GitLab holen und auschecken (nur Vorspulen; Token nur vom Gehirn, nie im Projekt-Repo)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, zweig: { type: 'string', description: 'Zielzweig, z. B. main' } } },
         { name: 'git_push', beschreibung: 'v1434 — aktuellen Zweig eines Projekts nach origin pushen (Token nur vom Gehirn)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' } } },
@@ -401,6 +406,33 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = await gitRemoteSetzen(projekt, typeof params.url === 'string' && params.url.trim() ? params.url.trim() : undefined);
       return r.ok ? { success: true, display: r.text } : { success: false, error: r.fehler };
+    }
+    case 'start_erkennen': { // v1460 — nur lesend
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      if (!projekt || !istPfadErlaubt(projekt, lesbar) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
+      let e = startErkennen(projekt);
+      if (!e.gefunden && params.mit_claude === true) e = await startErkennenClaude(projekt);
+      return { success: true, data: e, display: e.gefunden ? `${e.angabe!.dienst ? `Start: ${e.angabe!.start}${e.angabe!.port ? `, Port ${e.angabe!.port}` : ''}${e.angabe!.pruefung ? `, Prüfadresse ${e.angabe!.pruefung}` : ''}` : 'kein Dienst'} (${e.hinweise.join('; ')})` : `Nicht erkannt: ${e.hinweise.join('; ')}` };
+    }
+    case 'dev_start': { // v1460
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben (Schreibrecht nötig) oder fehlt: ${projekt}` };
+      const a = startAngabePruefen({ dienst: true, start: params.start, port: params.port, pruefung: params.pruefung });
+      if (!a?.start) return { success: false, error: 'start fehlt oder ungültig (ein Befehl ohne Zeilenumbruch, Port 1–65535, Prüfadresse ab /)' };
+      const r = await devStarten(projekt, a);
+      return r.ok ? { success: true, data: { pid: r.pid, url: r.url }, display: r.text } : { success: false, error: `${r.fehler}${r.log ? `\n--- dev.log (Ende) ---\n${r.log}` : ''}` };
+    }
+    case 'dev_stop': { // v1460
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
+      const r = await devStoppen(projekt);
+      return { success: r.ok, ...(r.ok ? { display: r.text } : { error: r.text }) };
+    }
+    case 'dev_stand': { // v1460
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      if (!projekt || !istPfadErlaubt(projekt, lesbar) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
+      const r = await devStand(projekt);
+      return { success: true, data: r, display: r.laeuft ? `dev läuft (PID ${r.pid})${r.url ? `: ${r.url}` : r.antwortet === false ? ' — antwortet nicht' : ''}` : 'dev läuft nicht' };
     }
     case 'git_zweig': { // v1455
       const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
