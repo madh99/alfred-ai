@@ -738,7 +738,22 @@ export class MessagePipeline {
       // v1336 — synthetische Nachrichten (Fortsetzung nach Freigabe/Vorhaben, geplante Aufgaben) als „intern", damit die
       // Oberflächen sie als Hinweis zeigen und nicht als Worte des Owners — Owner-Befund 09.10. 19:16)
       const herkunft = `${message.metadata?.scheduled ? 'intern:' : ''}${message.platform}:${message.chatId}`;
-      await this.conversationManager.addMessage(conversation.id, 'user', message.text, undefined, herkunft);
+      // v1467 — eingehende Bilder (Telegram & Co.) in den Dateispeicher und den Schlüssel im Verlauf vermerken: Folgefragen sehen sie wieder
+      let gespeicherterText = message.text;
+      const bilderGespraech = await import('./interaktion/bilder-im-gespraech.js');
+      const eingehendeBilder = (message.attachments ?? []).filter(a => a.type === 'image' && a.data && a.data.length <= bilderGespraech.BILD_MAX_BYTES);
+      if (eingehendeBilder.length && this.fileStore && masterUserId) {
+        const keys: string[] = [];
+        for (const [i, a] of eingehendeBilder.slice(0, bilderGespraech.BILDER_MAX).entries()) {
+          try {
+            const endung = a.mimeType === 'image/png' ? 'png' : a.mimeType === 'image/webp' ? 'webp' : a.mimeType === 'image/gif' ? 'gif' : 'jpg';
+            const name = a.fileName && bilderGespraech.istBild(a.fileName) ? a.fileName : `bild-${i + 1}.${endung}`;
+            keys.push((await this.fileStore.save(masterUserId, name, a.data!)).key);
+          } catch (err) { this.logger.debug({ err }, 'v1467 Bild nicht im Dateispeicher abgelegt'); }
+        }
+        gespeicherterText = `${message.text ?? ''}${bilderGespraech.bildVermerk(keys)}`;
+      }
+      await this.conversationManager.addMessage(conversation.id, 'user', gespeicherterText, undefined, herkunft);
       tracePhase('conversation', { convId: conversation.id, historyLen: history.length, hasSummary: !!summary, ...(gespraech ? { gespraech: gespraech.chatId, faden: gespraech.faden } : {}) });
 
       // 5. Kontext laden — v1210: PARALLEL statt nacheinander.
@@ -1275,6 +1290,7 @@ export class MessagePipeline {
       // als strukturierter Markdown-Block in die User-Message eingefügt, damit der LLM
       // den Kontext sieht ohne dass der User ihn kopieren/tippen muss.
       const contextRefs = message.metadata?.contextRefs as Array<{ kind: string; refId: string; label?: string }> | undefined;
+      const textVorRefs = message.text ?? ''; // v1467 — Bild-Schlüssel nur aus dem Text des Owners, nicht aus dem Ref-Block
       if (Array.isArray(contextRefs) && contextRefs.length > 0 && message.text != null) {
         try {
           const refBlocks: string[] = [];
@@ -1342,6 +1358,39 @@ export class MessagePipeline {
         }
       }
       tracePhase('context_refs_resolved', { count: contextRefs?.length ?? 0 });
+
+      // v1467 — Bilder aus Dateispeicher-Schlüsseln im Text (Upload-Zeile der App) und für Folgefragen aus den letzten Nachrichten
+      // als echte Bilder anhängen (Realfall 15.10.: vier Screenshots „angekommen“, aber nie angesehen; dann read_store → „Binary file“).
+      if (this.fileStore && masterUserId && message.text != null) {
+        try {
+          const schon = new Set((contextRefs ?? []).map(r => r.refId));
+          const vorhanden = (message.attachments ?? []).filter(a => a.type === 'image' && a.data).length;
+          let keys = bilderGespraech.bildSchluessel(textVorRefs, masterUserId).filter(k => !schon.has(k));
+          let nachfass = false;
+          if (!keys.length && vorhanden === 0 && !message.metadata?.scheduled) {
+            keys = bilderGespraech.nachfassSchluessel({ text: textVorRefs, owner: masterUserId, verlauf: history, jetzt: new Date() });
+            nachfass = keys.length > 0;
+          }
+          const angehaengt: string[] = [];
+          const zuGross: string[] = [];
+          for (const k of keys.slice(0, Math.max(0, bilderGespraech.BILDER_MAX - vorhanden))) {
+            try {
+              const buf = await this.fileStore.read(k, masterUserId);
+              if (buf.length === 0) continue;
+              if (buf.length > bilderGespraech.BILD_MAX_BYTES) { zuGross.push(k); continue; }
+              message.attachments = [...(message.attachments ?? []), { type: 'image', mimeType: bilderGespraech.bildMime(k), fileName: k.split('/').pop(), size: buf.length, data: buf }];
+              angehaengt.push(k);
+            } catch (err) { this.logger.debug({ err, key: k }, 'v1467 Bild nicht lesbar'); }
+          }
+          const hinweise: string[] = [];
+          if (angehaengt.length) hinweise.push(`[${angehaengt.length === 1 ? 'Ein Bild' : `${angehaengt.length} Bilder`} ${nachfass ? 'aus den letzten Nachrichten erneut' : 'aus dem Dateispeicher'} angehängt — du siehst sie direkt. Nicht per Datei- oder Shell-Werkzeug lesen.]`);
+          if (zuGross.length) hinweise.push(`[Zu groß zum Ansehen (über 5 MB): ${zuGross.join(', ')}]`);
+          if (hinweise.length) message.text = `${message.text}\n\n${hinweise.join('\n')}`;
+          if (angehaengt.length || zuGross.length) this.logger.info({ angehaengt: angehaengt.length, zuGross: zuGross.length, nachfass }, 'v1467 Bilder aus dem Dateispeicher angehängt');
+        } catch (err) {
+          this.logger.debug({ err }, 'v1467 Bilder anhängen fehlgeschlagen (nicht kritisch)');
+        }
+      }
 
       // Inject active ITSM incidents into system prompt so the LLM can reference
       // correct incident IDs when updating. Without this, the LLM guesses IDs and fails.
@@ -2870,7 +2919,7 @@ export class MessagePipeline {
     // Fallbacks when no real user text is present
     const hasTextBlock = blocks.some(b => b.type === 'text');
     if (blocks.some(b => b.type === 'image') && !hasTextBlock) {
-      blocks.push({ type: 'text', text: 'What do you see in this image?' });
+      blocks.push({ type: 'text', text: 'Der Owner hat ein Bild ohne Text geschickt. Beschreibe kurz auf Deutsch, was darauf zu sehen ist, und beziehe dich auf das bisherige Gespräch, falls es dazu passt.' }); // v1467 — Deutsch statt englischer Vorgabe
     } else if (isSynthetic && blocks.some(b => b.type === 'text' && (b as { text: string }).text.startsWith('[File received:'))) {
       // File sent without any accompanying text.
       const hasIndexedDoc = blocks.some(b => b.type === 'text' && (b as { text: string }).text.includes('document is already indexed'));
@@ -2896,7 +2945,7 @@ export class MessagePipeline {
    */
   private isSyntheticLabel(text: string | undefined): boolean {
     if (!text) return true;
-    const prefixes = ['[Photo', '[Voice message', '[Video', '[Document', '[File', '[Sticker', '[Audio'];
+    const prefixes = ['[Photo', '[Voice message', '[Video', '[Document', '[File', '[Sticker', '[Audio', '[Album', '[Foto', '[Sprachnachricht', '[Dokument', '[Datei'];
     return prefixes.some(p => text.startsWith(p));
   }
 

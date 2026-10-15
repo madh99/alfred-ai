@@ -6333,6 +6333,7 @@ Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 
       speechTranscriber.setUsageCallback((model, units) => {
         serviceUsageRepo.record('stt', model, units).catch(() => {});
       });
+      speechTranscriber.setSprache(SpeechTranscriber.spracheIso(this.config.personality?.language)); // v1467
       const effectiveSttProvider = this.config.speech.sttProvider ?? this.config.speech.provider;
       this.logger.info({ provider: effectiveSttProvider }, 'Speech-to-text initialized');
 
@@ -14001,6 +14002,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           authentifiziere: (t: string) => gw.authentifiziere(t),
           mistralKey: sttKey,
           maxMinutenProTag: Number(process.env.ALFRED_HOEREN_MAX_MIN_TAG ?? '') || 180,
+          sprache: SpeechTranscriber.spracheIso(this.config.personality?.language), // v1467 — feste Sprache statt Raten
           verbuche: (sekunden: number, modell: string) => { this.serviceUsageRepo?.record('stt-realtime', modell, sekunden / 60).catch(() => {}); }, // Minuten wie die Preistabelle
         });
         this.hoerRelais = hoerRelais;

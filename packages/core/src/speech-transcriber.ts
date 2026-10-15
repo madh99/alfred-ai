@@ -14,6 +14,10 @@ export class SpeechTranscriber {
   /** Set callback for tracking service usage (called with model + estimated audio seconds). */
   setUsageCallback(cb: (model: string, units: number) => void): void { this.usageCallback = cb; }
 
+  /** v1467 — feste Sprache (ISO 639-1) aus personality.language. */
+  private sprache?: string;
+  setSprache(sprache: string | undefined): void { this.sprache = sprache; }
+
   constructor(
     config: SpeechConfig,
     private readonly logger: Logger,
@@ -46,6 +50,7 @@ export class SpeechTranscriber {
     const formData = new FormData();
     formData.append('file', new Blob([audioBuffer], { type: mimeType }), `audio.${ext}`);
     formData.append('model', this.model);
+    if (this.sprache) formData.append('language', this.sprache); // v1467 — sonst rät die Erkennung (Realfall: „Two shortest meters for the Dacia“)
 
     try {
       const response = await fetch(`${this.baseUrl}/audio/transcriptions`, {
@@ -72,6 +77,16 @@ export class SpeechTranscriber {
       this.logger.error({ err, provider: this.sttProvider }, 'Voice transcription failed');
       throw err;
     }
+  }
+
+  /** v1467 — „Deutsch“/„German“/„de-AT“ → „de“; unbekannt → undefined (dann rät die Erkennung wie bisher). */
+  static spracheIso(sprache: string | undefined): string | undefined {
+    const s = (sprache ?? '').trim().toLowerCase();
+    if (!s) return undefined;
+    const namen: Record<string, string> = { deutsch: 'de', german: 'de', englisch: 'en', english: 'en', französisch: 'fr', french: 'fr', italienisch: 'it', italian: 'it', spanisch: 'es', spanish: 'es' };
+    if (namen[s]) return namen[s];
+    const m = /^([a-z]{2})(?:[-_][a-z]{2})?$/.exec(s);
+    return m ? m[1] : undefined;
   }
 
   private mimeToExtension(mimeType: string): string {

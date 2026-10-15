@@ -55,6 +55,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1467] - 2026-10-15
+
+### Fixed — Bilder werden angesehen, Antworten auf Deutsch
+
+Realfall 15.10.: Zu vier Screenshots aus der App kam nur „Alle vier Screenshots sind angekommen“. Auf Nachfrage las Alfred die Dateien als Binärdaten und rief Shell-Befehle auf. Ein Telegram-Foto ohne Text wurde auf Englisch beantwortet.
+
+- **Bilder aus dem Dateispeicher:** Nennt eine Nachricht Dateispeicher-Schlüssel eigener Bilder (Upload-Zeile der App), werden die Bilder als echte Bilder angehängt. Das gilt in jedem Gespräch, nicht nur im Projekt-Chat, für höchstens 6 Bilder zu je 5 MB. Größere Bilder werden als Hinweis genannt.
+- **Folgefragen:** Eingehende Bilder (Telegram & Co.) landen im Dateispeicher, ihr Schlüssel steht im Verlauf. Eine Folgefrage ohne eigene Bilder bekommt die Bilder der jüngsten Nachricht erneut angehängt: binnen 10 Minuten immer, binnen 30 Minuten bei ausdrücklichem Bezug („Bild“, „Screenshot“, „schau …“).
+- **Sprache:** Mit gesetzter Persönlichkeitssprache antwortet Alfred in dieser Sprache. Eine andere Sprache wählt er nur, wenn der Nutzer selbst erkennbar so schreibt. Platzhalter wie [Photo], Bilder und Dateien zählen nicht als Sprache des Nutzers. Die Vorgabe für Bilder ohne Text ist jetzt deutsch.
+- **Spracherkennung:** Sprachnachrichten und das Live-Hören am Gerät nutzen die eingestellte Sprache fest, statt sie zu raten.
+
 ## [0.19.0-jarvis.1466] - 2026-10-15
 
 ### Fixed — Prüfbericht: Einschätzung nur aus ihrem Block, keine Füllwörter

@@ -240,7 +240,7 @@ export class PromptBuilder {
 - **Do NOT ask for confirmation** when the user explicitly requests an action you can perform with your tools. This includes: creating/modifying calendar entries, setting reminders, creating todos, sending/searching emails, route calculations, file searches, web searches, running read-only commands. The user's message IS the confirmation.
 - Do exactly what the user asks. If the user asks for X, don't install Y instead. If you think an alternative is better, **recommend it first** and let the user decide.
 - **Use your memories** about the user proactively. If you know the user's home address, workplace, preferences, or other facts from memory, USE them automatically instead of asking. For example, if the user says "route from home to X", look up their home address from your memories.
-- Respond in the same language the user writes in.
+- ${context.personality?.language ? `Antworte auf ${context.personality.language}. Nur wenn der Nutzer selbst erkennbar in einer anderen Sprache schreibt, antworte in dieser. Platzhalter wie [Photo] oder [Video], Bilder, Dateien und Transkripte zählen nicht als Sprache des Nutzers.` : 'Respond in the same language the user writes in.'}
 - Be concise. No filler text, no unnecessary explanations.
 - **NEVER guess or estimate** facts that a tool can provide (travel times, prices, weather, dates, counts, etc.). ALWAYS call the appropriate tool first. A wrong answer is worse than a tool call.
 - If a tool fails or is denied, explain why and try an alternative approach.
