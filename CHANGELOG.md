@@ -55,6 +55,19 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1456] - 2026-10-15
+
+### Fixed — Etappenprotokoll in Repositories ohne Git-Identität
+
+Realfall 15.10. im Probe-Projekt des Merge-Request-Modus: Das Repository hatte kein `user.email`. Der Commit des Etappenprotokolls scheiterte mit „Identität des Autors unbekannt“, die Protokolle blieben nur gestaget. Der Fehler stand nur als Hinweis im Log. Betroffen ist jedes Projekt, dessen Repository nicht von Alfred angelegt wurde und keine Identität hat.
+
+- Fehlt die Identität, committet der Satellit Protokoll und verschobene Aufträge als „Alfred“, nur für diesen Aufruf über die Umgebung.
+- Die Konfiguration des Repositorys bleibt unverändert; eine vorhandene Identität gilt wie bisher.
+
+### Fixed — Merge-Request-Link über https
+
+- GitLab mit `external_url` http liefert `http://…`-Links. Links auf der eigenen Instanz zeigt Alfred jetzt immer mit https, wie bei Klonadressen (v1445).
+
 ## [0.19.0-jarvis.1455] - 2026-10-15
 
 ### Added — Etappen über Branch und Merge Request (Schalter je Projekt, App 1.27.0)

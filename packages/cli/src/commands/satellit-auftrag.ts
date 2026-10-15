@@ -306,8 +306,21 @@ export function fortschrittAus(protokoll: string, n = 10): { schritte: string[];
  * - fehlt eine Git-Identität, eine lokale für dieses Repository (sonst scheitern die Commits still);
  * - ohne installiertes Git oder bei Fehlern: weiter ohne Repository (der Auftrag läuft trotzdem).
  */
-function gitLauf(git: string, dir: string, args: string[], timeoutMs = 15_000): string {
-  return execFileSync(git, ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }).toString().trim();
+function gitLauf(git: string, dir: string, args: string[], timeoutMs = 15_000, env?: Record<string, string>): string {
+  return execFileSync(git, ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true, maxBuffer: 32 * 1024 * 1024, ...(env ? { env: { ...process.env, ...env } } : {}) }).toString().trim();
+}
+
+/**
+ * v1456 — Commits des Satelliten (Etappenprotokoll, verschobene Aufträge) in einem Repository ohne Git-Identität. Realfall 15.10.
+ * (Probe-Repo ohne user.email): „Identität des Autors unbekannt“, die Protokolle blieben nur gestaget. Autor „Alfred“ nur für diesen
+ * Aufruf über die Umgebung — die Konfiguration des Repos bleibt unverändert; eine vorhandene Identität gilt wie bisher.
+ */
+export function identitaetUmgebung(dir: string, git = 'git'): Record<string, string> {
+  let email = '';
+  try { email = gitLauf(git, dir, ['config', 'user.email']); } catch { /* keine Identität */ }
+  if (email) return {};
+  const e = `alfred@${os.hostname()}.local`;
+  return { GIT_AUTHOR_NAME: 'Alfred', GIT_AUTHOR_EMAIL: e, GIT_COMMITTER_NAME: 'Alfred', GIT_COMMITTER_EMAIL: e };
 }
 
 /** Schutzzeilen der .gitignore; fehlende werden an eine vorhandene angehängt. */
@@ -518,7 +531,8 @@ export function alteAuftraegeVerschieben(projekt: string): number {
  * Protokoll aus → nur das Entfernen aus der Wurzel (die Dateien bleiben lokal im ausgeschlossenen Ordner). Holt Altfälle nach.
  */
 export function auftraegeVerschiebungCommitten(projekt: string, an: boolean, git = 'git'): number {
-  const lauf = (args: string[]) => gitLauf(git, projekt, args);
+  const id = identitaetUmgebung(projekt, git); // v1456
+  const lauf = (args: string[]) => gitLauf(git, projekt, args, 15_000, id);
   try { if (lauf(['rev-parse', '--is-inside-work-tree']) !== 'true') return 0; } catch { return 0; }
   const geloescht = lauf(['ls-files', '--deleted', '--', 'AUFTRAG-*.md']).split('\n').map(x => x.trim())
     .filter(f => /^AUFTRAG-[\w-]+\.md$/.test(f) && existsSync(path.join(projekt, '.alfred', 'laeufe', 'frueher', f)));
@@ -558,7 +572,8 @@ export function protokollSchreiben(projekt: string, p: { lauf: string; nr: numbe
   const rel = path.relative(projekt, ordner).split(path.sep).join('/');
   const pfad = path.relative(projekt, datei).split(path.sep).join('/');
   if (!existsSync(path.join(projekt, '.git'))) return { pfad, hinweis: p.an ? 'kein git im Projekt' : 'nur lokal (Protokoll im Projekt aus)' };
-  const git = (args: string[]) => spawnSync('git', args, { cwd: projekt, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+  const id = identitaetUmgebung(projekt); // v1456 — ohne Identität im Repo scheiterte der Commit
+  const git = (args: string[]) => spawnSync('git', args, { cwd: projekt, encoding: 'utf8', timeout: 30_000, windowsHide: true, env: { ...process.env, ...id } });
   // v1448 — die von Alfred angelegte .gitignore mitsichern, falls noch untracked (Befund 13.10.: blieb in neuen Projekten liegen).
   // Neue Projekte bekommen bewusst keinen eigenen Anlege-Commit (v1397); das erste Etappenprotokoll nimmt sie mit.
   const ignore = (git(['ls-files', '--others', '--exclude-standard', '--', '.gitignore']).stdout ?? '').trim() ? ['.gitignore'] : [];

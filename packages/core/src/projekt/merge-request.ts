@@ -46,6 +46,8 @@ type F = typeof fetch;
 const kopf = (token: string, json = false): Record<string, string> => ({ 'PRIVATE-TOKEN': token, ...(json ? { 'Content-Type': 'application/json' } : {}) });
 function basis(baseUrl: string): string | undefined { try { const u = new URL(baseUrl); return u.protocol === 'https:' ? u.origin : undefined; } catch { return undefined; } }
 const api = (b: string, pfad: string) => `${b}/api/v4/projects/${encodeURIComponent(pfad)}`;
+/** v1456 — Link auf derselben Instanz immer https (Realfall 15.10.: web_url kam als http://git.lokalkraft.at/…). */
+export function linkSicher(url: string | undefined, b: string): string { try { if (!url) return ''; const u = new URL(url); if (u.host.toLowerCase() !== new URL(b).host.toLowerCase()) return url; u.protocol = 'https:'; return u.toString(); } catch { return url ?? ''; } }
 
 /** Standardzweig des GitLab-Projekts (Ziel des Merge Requests). */
 export async function gitlabStandardZweig(baseUrl: string, token: string, pfad: string, f: F = fetch): Promise<string | undefined> {
@@ -77,12 +79,12 @@ export async function gitlabMrSichern(baseUrl: string, token: string, pfad: stri
     const u = await f(`${api(b, pfad)}/merge_requests/${iid}`, { method: 'PUT', headers: kopf(token, true), body: JSON.stringify({ description: mr.beschreibung }) });
     const j = await u.json().catch(() => ({})) as { web_url?: string; state?: string; message?: unknown };
     if (!u.ok) return { ok: false, fehler: `GitLab ${u.status}: ${JSON.stringify(j.message ?? '').slice(0, 200)}` };
-    return { ok: true, iid, url: j.web_url ?? '', neu: false };
+    return { ok: true, iid, url: linkSicher(j.web_url, b), neu: false };
   }
   const c = await f(`${api(b, pfad)}/merge_requests`, { method: 'POST', headers: kopf(token, true), body: JSON.stringify({ source_branch: mr.quelle, target_branch: mr.ziel, title: mr.titel.slice(0, 250), description: mr.beschreibung, remove_source_branch: true }) });
   const j = await c.json().catch(() => ({})) as { iid?: number; web_url?: string; message?: unknown };
   if (!c.ok || typeof j.iid !== 'number') return { ok: false, fehler: `GitLab ${c.status}: ${JSON.stringify(j.message ?? '').slice(0, 200)}` };
-  return { ok: true, iid: j.iid, url: j.web_url ?? '', neu: true };
+  return { ok: true, iid: j.iid, url: linkSicher(j.web_url, b), neu: true };
 }
 
 /** Neue Kommentare (nach `seit`) des Owners im MR — ohne Systemnotizen, nur vom Token-Benutzer. */

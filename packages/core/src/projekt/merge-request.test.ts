@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mrZweig, gitlabPfadAus, mrBeschreibung, gitlabMrSichern, gitlabMrKommentare, gitlabMrZusammenfuehren, gitlabStandardZweig, mrHinweisBlock } from './merge-request.js';
+import { linkSicher, mrZweig, gitlabPfadAus, mrBeschreibung, gitlabMrSichern, gitlabMrKommentare, gitlabMrZusammenfuehren, gitlabStandardZweig, mrHinweisBlock } from './merge-request.js';
 
 // v1455 — Etappen über Branch und Merge Request (Owner 15.10.)
 type Aufruf = { url: string; method: string; body?: unknown };
@@ -74,5 +74,12 @@ describe('v1455 Merge Request je Lauf', () => {
     expect(await gitlabStandardZweig(B, 't', 'madh/x', a.f)).toBe('master');
     expect(mrHinweisBlock([])).toBe('');
     expect(mrHinweisBlock(['a\nb'])).toContain('- a\n  b');
+  });
+
+  it('v1456 Link auf der eigenen Instanz immer https', async () => {
+    expect(linkSicher('http://git.example/madh/x/-/merge_requests/1', B)).toBe('https://git.example/madh/x/-/merge_requests/1');
+    expect(linkSicher('http://fremd.example/x', B)).toBe('http://fremd.example/x');
+    const a = attrappe([{ match: /merge_requests\/7$/, method: 'PUT', json: { web_url: 'http://git.example/madh/x/-/merge_requests/7' } }]);
+    expect(await gitlabMrSichern(B, 't', 'madh/x', { quelle: 'q', ziel: 'main', titel: 'T', beschreibung: 'D', iid: 7 }, a.f)).toMatchObject({ url: 'https://git.example/madh/x/-/merge_requests/7' });
   });
 });

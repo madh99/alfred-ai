@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
-import { gitAnlegen, protokollSchreiben, protokollAuftragDatei, auftraegeVerschiebungCommitten } from './satellit-auftrag.js';
+import { gitAnlegen, protokollSchreiben, protokollAuftragDatei, auftraegeVerschiebungCommitten, identitaetUmgebung } from './satellit-auftrag.js';
 
 const g = (dir: string, args: string[]) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
 const status = (dir: string) => g(dir, ['status', '--porcelain']).stdout.trim();
@@ -44,6 +44,28 @@ describe('v1448 Git-Haushalt der Geräte-Projekte', () => {
       expect(status(d)).toContain('code.js'); // nicht mitcommittet
       expect(status(d)).not.toContain('AUFTRAG-');
       expect(auftraegeVerschiebungCommitten(d, an)).toBe(0); // nichts mehr offen
+    }
+  });
+});
+
+// v1456 — Realfall 15.10.: Repo ohne Git-Identität, Etappenprotokoll blieb gestaget („Identität des Autors unbekannt“)
+describe('v1456 Protokoll-Commit ohne Git-Identität', () => {
+  it('committet als Alfred, ohne die Konfiguration des Repos zu ändern', () => {
+    const vorher = { g: process.env.GIT_CONFIG_GLOBAL, s: process.env.GIT_CONFIG_NOSYSTEM };
+    process.env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null'; process.env.GIT_CONFIG_NOSYSTEM = '1';
+    try {
+      const d = mkdtempSync(path.join(os.tmpdir(), 'alfred-ohne-id-'));
+      expect(g(d, ['init', '-q']).status).toBe(0);
+      expect(identitaetUmgebung(d)).toMatchObject({ GIT_AUTHOR_NAME: 'Alfred' });
+      const r = protokollSchreiben(d, { lauf: 'sat-x', nr: 1, an: true, bericht: '# B', nachricht: 'docs(alfred): Protokoll' });
+      expect(r.commit).toMatch(/^[0-9a-f]{7,}$/);
+      expect(g(d, ['log', '--format=%an']).stdout.trim()).toBe('Alfred');
+      expect(g(d, ['config', '--local', 'user.email']).stdout.trim()).toBe('');
+      g(d, ['config', 'user.email', 'owner@example']);
+      expect(identitaetUmgebung(d)).toEqual({});
+    } finally {
+      if (vorher.g === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = vorher.g;
+      if (vorher.s === undefined) delete process.env.GIT_CONFIG_NOSYSTEM; else process.env.GIT_CONFIG_NOSYSTEM = vorher.s;
     }
   });
 });
