@@ -9,7 +9,7 @@
  *  - Vollständigkeit deterministisch: ohne Bericht oder ohne neuen Stand → einmal nachfordern, sonst als unvollständig melden.
  */
 
-import { standLesen } from './bericht.js'; // v1465
+import { standLesen, EINSCHAETZUNG_ANFANG, EINSCHAETZUNG_ENDE } from './bericht.js'; // v1465, v1466
 
 export const STAND_ANFANG = '<<<STAND';
 export const STAND_ENDE = 'STAND>>>';
@@ -34,7 +34,7 @@ export function standRahmen(name: string, stand: string, standZeit?: string): st
     '1. Prüfe JEDEN Eintrag des letzten Stands einzeln (direkt, z. B. über seine Kennung/Adresse) und stufe ihn ein: unverändert, geändert (was genau, alter → neuer Wert), weg/verkauft (nur wenn direkt bestätigt) oder nicht prüfbar. „In einer Suche nicht gefunden“ ist NICHT „weg“. Bei Marktplatz-Inseraten (z. B. willhaben) nutze die Detailabfrage des Marktplatz-Werkzeugs — sie meldet den Status (aktiv, verkauft, reserviert, nicht mehr abrufbar) direkt.',
     '2. Suche danach nach neuen passenden Einträgen.',
     // v1465 — den Bericht baut Alfred nach fester Vorlage; das Modell liefert Daten und höchstens eine kurze Einschätzung
-    '3. Schreibe KEINEN eigenen Bericht und keine Tabelle — Alfred baut den Bericht aus dem Stand nach fester Vorlage (Änderungen, aktuelle Einträge, nicht prüfbar). Optional davor eine kurze Einschätzung für den Owner (höchstens 5 Sätze, z. B. welches Angebot am interessantesten ist). Lege keine Notizen an — den Stand führt der Auftrag selbst.',
+    `3. Schreibe KEINEN eigenen Bericht und keine Tabelle — Alfred baut den Bericht aus dem Stand nach fester Vorlage (Änderungen, aktuelle Einträge, nicht prüfbar). Optional davor eine kurze Einschätzung für den Owner (höchstens 5 Sätze, z. B. welches Angebot am interessantesten ist) — NUR in diesem Block: ${EINSCHAETZUNG_ANFANG} … ${EINSCHAETZUNG_ENDE}. Alles außerhalb der beiden Blöcke wird verworfen. Lege keine Notizen an — den Stand führt der Auftrag selbst.`,
     `4. Schließe die Antwort IMMER mit dem vollständigen neuen Stand ab — alle Einträge des letzten Stands plus neue, eine Zeile je Eintrag, genau 8 Spalten: Kennung | Link | Bezeichnung | Wert (z. B. Preis mit Währung) | Ort | Status | Notiz | (leer). Status genau eines von: aktiv, reserviert, verkauft, weg, nicht prüfbar — „nicht prüfbar“ nur, wenn die Abfrage selbst fehlschlägt; „in der Suche nicht gefunden“ ist kein Status. Links aus dem letzten Stand übernehmen.\n${STAND_ANFANG}\n…\n${STAND_ENDE}`,
   ].join('\n');
 }

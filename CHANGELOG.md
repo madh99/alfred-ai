@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1466] - 2026-10-15
+
+### Fixed — Prüfbericht: Einschätzung nur aus ihrem Block, keine Füllwörter
+
+Realfall 15.10., erster Lauf mit fester Vorlage: Das Modell schrieb trotz Vorgabe eigene Änderungslisten und eine Stand-Überschrift in die Einschätzung. Die Kürzung schnitt mitten im Satz ab, und die Spalte „Hinweis“ stand voller „unverändert“.
+
+- Die Einschätzung kommt nur noch aus dem Block `<<<EINSCHAETZUNG … EINSCHAETZUNG>>>` und wird an einer Satzgrenze auf höchstens 800 Zeichen gekürzt. Freier Text außerhalb der Blöcke wird verworfen; fehlt der Block, entfällt der Abschnitt.
+- Füllwörter wie „unverändert“ oder „online“ erscheinen nicht mehr als Hinweis.
+
 ## [0.19.0-jarvis.1465] - 2026-10-15
 
 ### Changed — Prüfberichte nach fester Vorlage

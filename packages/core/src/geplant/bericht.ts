@@ -62,6 +62,23 @@ export function standLesen(text: string | undefined): Eintrag[] {
 
 const zelle = (s: string | undefined) => (s ?? '').replace(/\|/g, '/').replace(/\s+/g, ' ').trim();
 
+/** v1466 — Füllwörter in der Notiz („unverändert“, „online“) sind kein Hinweis (Realfall 15.10.: Spalte voller „unverändert“). */
+export function notizSauber(n: string | undefined): string | undefined { const t = notizAus(n ?? ''); return t ? t : undefined; }
+
+export const EINSCHAETZUNG_ANFANG = '<<<EINSCHAETZUNG';
+export const EINSCHAETZUNG_ENDE = 'EINSCHAETZUNG>>>';
+/**
+ * v1466 — Einschätzung NUR aus ihrem Block (Realfall 15.10.: das Modell schrieb trotz Vorgabe eigene Änderungslisten und Stand-Überschriften
+ * davor). Fehlt der Block, gibt es keine Einschätzung — der Bericht aus den Daten ist vollständig. Gekürzt an einer Satzgrenze.
+ */
+export function einschaetzungAus(text: string | undefined): string | undefined {
+  const t = text ?? ''; const i = t.lastIndexOf(EINSCHAETZUNG_ANFANG); if (i < 0) return undefined;
+  const j = t.indexOf(EINSCHAETZUNG_ENDE, i); let e = t.slice(i + EINSCHAETZUNG_ANFANG.length, j < 0 ? undefined : j).replace(/^\s*\*{0,2}Einsch(ä|ae)tzung:?\*{0,2}\s*/i, '').trim();
+  if (!e) return undefined;
+  if (e.length > 800) { const k = e.slice(0, 800); const p = Math.max(k.lastIndexOf('. '), k.lastIndexOf('! '), k.lastIndexOf('? ')); e = p > 200 ? k.slice(0, p + 1) : `${k.trimEnd()}…`; }
+  return e;
+}
+
 /** Stand in der festen Form speichern. */
 export function standSchreiben(e: Eintrag[]): string {
   return e.map(x => [x.kennung, x.link, x.bezeichnung, x.wert, x.ort, x.status, x.notiz, x.seit].map(zelle).join(' | ')).join('\n');
@@ -82,7 +99,8 @@ export function berichtBauen(o: { alt: Eintrag[]; neu: Eintrag[]; einschaetzung?
   const aenderungen: string[] = [];
   for (const n of o.neu) {
     const a = alt.get(n.kennung);
-    const e: Eintrag = { ...n, link: n.link ?? a?.link, seit: a?.seit ?? n.seit ?? heute };
+    const e: Eintrag = { ...n, link: n.link ?? a?.link, seit: a?.seit ?? n.seit ?? heute, notiz: notizSauber(n.notiz) }; // v1466 Füllwörter raus
+    if (!e.notiz) delete e.notiz;
     if (a && WEG.includes(a.status) && WEG.includes(e.status)) continue; // schon gemeldet
     stand.push(e);
     if (!a) { if (!WEG.includes(e.status)) aenderungen.push(`🆕 **Neu:** ${verweis(e)}${e.wert ? ` — ${zelle(e.wert)}` : ''}${e.ort ? `, ${zelle(e.ort)}` : ''}`); continue; }
@@ -113,6 +131,6 @@ export function berichtBauen(o: { alt: Eintrag[]; neu: Eintrag[]; einschaetzung?
   } else teile.push('Keine aktiven Einträge.');
   if (offen.length) teile.push('', '## Nicht prüfbar', '', ...offen.map(e => `- ${verweis(e)}${e.notiz ? ` — ${zelle(e.notiz)}` : ''}`));
   const ein = (o.einschaetzung ?? '').trim();
-  if (ein) teile.push('', '## Einschätzung', '', ein.length > 1500 ? `${ein.slice(0, 1497)}…` : ein);
+  if (ein) teile.push('', '## Einschätzung', '', ein); // v1466 — schon aus dem eigenen Block, gekürzt
   return { bericht: teile.join('\n'), stand };
 }

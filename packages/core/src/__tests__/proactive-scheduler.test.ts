@@ -140,7 +140,7 @@ describe('ProactiveScheduler', () => {
     const gesendet = String(adapter.sendMessage.mock.calls[0]?.[1] ?? '');
     expect(gesendet).toContain('Preis gesenkt');
     expect(gesendet).toContain('2400 EUR → ');
-    expect(gesendet).toContain('Einschätzung');
+    expect(gesendet).not.toContain('Übersicht …'); // v1466 — freier Text außerhalb der Blöcke wird verworfen
     expect(gesendet).not.toContain('<<<STAND');
   });
 

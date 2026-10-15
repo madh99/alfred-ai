@@ -62,4 +62,16 @@ describe('v1465 Prüfbericht nach fester Vorlage', () => {
     expect(r.stand.find(e => e.kennung === '789898944')).toBeUndefined(); // verkauft und nicht genannt: fällt heraus
     expect(r.bericht).not.toContain('## Einschätzung');
   });
+  it('v1466 Einschätzung nur aus ihrem Block, an einer Satzgrenze gekürzt; Füllwörter nicht als Hinweis', async () => {
+    const { einschaetzungAus, notizSauber } = await import('./bericht.js');
+    const roh = '**Änderungen zum letzten Stand:** - Verkauft: …\n<<<EINSCHAETZUNG\n**Einschätzung:** Der 128/1TB ist am interessantesten.\nEINSCHAETZUNG>>>\n**Stand (8 Spalten):**\n<<<STAND\nA | | B | 1 EUR | | aktiv | | \nSTAND>>>';
+    expect(einschaetzungAus(roh)).toBe('Der 128/1TB ist am interessantesten.');
+    expect(einschaetzungAus('nur freier Text ohne Block')).toBeUndefined();
+    const lang = `<<<EINSCHAETZUNG\n${'Ein ganzer Satz mit Inhalt. '.repeat(60)}\nEINSCHAETZUNG>>>`;
+    const k = einschaetzungAus(lang)!;
+    expect(k.length).toBeLessThanOrEqual(800);
+    expect(k.endsWith('Inhalt.')).toBe(true);
+    expect(notizSauber('unverändert')).toBeUndefined();
+    expect(notizSauber('online, außerhalb Filter (36 GB)')).toBe('außerhalb Filter (36 GB)');
+  });
 });

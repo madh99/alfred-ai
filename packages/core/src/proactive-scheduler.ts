@@ -13,7 +13,7 @@ import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
 import { entscheideMeldung, kennungenAus } from './geplant/meldung.js'; // v1368
 import { standRahmen, standAus, laufVollstaendig, istPruefAuftrag, NACHFORDERUNG } from './geplant/stand.js'; // v1449
-import { standLesen, standSchreiben, berichtBauen } from './geplant/bericht.js'; // v1465
+import { standLesen, standSchreiben, berichtBauen, einschaetzungAus } from './geplant/bericht.js'; // v1465, v1466
 import { zustellProtokoll } from './zustellung/protokoll.js'; // v1369
 
 export class ProactiveScheduler {
@@ -164,7 +164,7 @@ export class ProactiveScheduler {
           }
           if (v.ok) {
             // v1465 — Bericht nach fester Vorlage aus altem und neuem Stand; die freie Antwort des Modells wird nur noch „Einschätzung“
-            const b = berichtBauen({ alt: standLesen(action.stand), neu: standLesen(teil.stand), einschaetzung: teil.bericht, jetzt: new Date() });
+            const b = berichtBauen({ alt: standLesen(action.stand), neu: standLesen(teil.stand), einschaetzung: einschaetzungAus(result.text), jetzt: new Date() }); // v1466 nur aus dem Block
             const neuerStand = standSchreiben(b.stand);
             await this.actionRepo.setzeStand(action.id, neuerStand);
             rohText = b.bericht;
