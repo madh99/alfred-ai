@@ -30,6 +30,8 @@ String laufFortschritt(Lauf l) => l.status == 'laeuft' && l.nr > 0
 
 /// 1.18.0 — Schalter „Protokoll im Projekt“ (v1425): Detail liefert protokoll; fehlt das Feld (alter Server), gilt an.
 bool protokollAn(Map<String, dynamic>? d) => d?['protokoll'] != false;
+/// 1.27.0 — Schalter „Merge Requests“ (v1455): Detail liefert mergeRequests; fehlt das Feld (alter Server), gilt aus.
+bool mergeRequestsAn(Map<String, dynamic>? d) => d?['mergeRequests'] == true;
 
 /// 1.19.0 — Projektregeln (v1426, Projekt-Konventionen): Schalter mit Optionen und eigene Regeln; jede Änderung geht sofort an den Server.
 class ProjektRegeln extends StatefulWidget {
@@ -317,6 +319,19 @@ class _ProjektDetailState extends State<ProjektDetail> {
     finally { if (mounted) setState(() => plant = false); }
   }
 
+  /// 1.27.0 — Schalter „Merge Requests“ (v1455)
+  Future<void> mergeRequestsSetzen(bool an) async {
+    setState(() { plant = true; meldung = null; });
+    try {
+      final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': 'merge_requests', 'text': an ? 'an' : 'aus'});
+      final ok = r['success'] == true;
+      if (!mounted) return;
+      setState(() { meldungOk = ok; meldung = ok ? '${r['display'] ?? 'Gespeichert.'}' : '${r['error'] ?? 'Fehler'}'; });
+      if (ok) await laden();
+    } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
+    finally { if (mounted) setState(() => plant = false); }
+  }
+
   Future<void> fortsetzen(Lauf l) async {
     setState(() { plant = true; meldung = null; });
     try {
@@ -400,6 +415,10 @@ class _ProjektDetailState extends State<ProjektDetail> {
         SwitchListTile(key: const Key('projekt-protokoll'), contentPadding: EdgeInsets.zero, dense: true, value: protokollAn(j), onChanged: plant ? null : protokollSetzen,
           title: const Text('Protokoll im Projekt'),
           subtitle: Text(protokollAn(j) ? 'An: Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Aus: Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (nicht in git).', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+        // 1.27.0 — Schalter je Projekt: Etappen über eigenen Zweig und Merge Request in GitLab (v1455)
+        SwitchListTile(key: const Key('projekt-merge-requests'), contentPadding: EdgeInsets.zero, dense: true, value: mergeRequestsAn(j), onChanged: plant ? null : mergeRequestsSetzen,
+          title: const Text('Merge Requests'),
+          subtitle: Text(mergeRequestsAn(j) ? 'An: eigener Zweig je Lauf, Merge Request in GitLab${j['repo'] == null ? ' (braucht ein GitLab-Repository — Remote fehlt)' : ''}; Kommentare dort gehen in die nächste Etappe, zusammengeführt wird, wenn alle Etappen grün sind.' : 'Aus: Etappen laufen direkt auf dem aktuellen Zweig.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
         ProjektRegeln(konventionen: (j['konventionen'] as Map<String, dynamic>?) ?? const {}, aendern: konventionenSetzen, gesperrt: plant), // 1.19.0
         ProjektDeploy(id: widget.id, json: widget.json, deploy: j['deploy'] as Map<String, dynamic>?, neuLaden: laden, aufMeldung: widget.aufMeldung), // 1.24.0 v1439
         ProjektUmgebungen(id: widget.id, json: widget.json), // 1.25.0 v1443 B15

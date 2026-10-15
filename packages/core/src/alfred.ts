@@ -16,6 +16,7 @@ import { Database, ConversationRepository, UserRepository, AuditRepository, Memo
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
 import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, gitlabRepoAnlegen, repoPfad, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
+import { MR_TAG, mrZweig, gitlabPfadAus, mrBeschreibung, gitlabMrSichern, gitlabMrKommentare, gitlabMrZusammenfuehren, gitlabStandardZweig, gitlabBenutzer, mrHinweisBlock } from './projekt/merge-request.js'; // v1455
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
 import {
@@ -15772,7 +15773,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const p = await repo.getById(owner, id);
         if (!p?.geraetId) return null;
         const offen = await repo.listOpenItemsForProject(p.id, ['open', 'in_progress']).catch(() => []);
-        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p) }; // v1439 deploy
+        return { id: p.id, name: p.name, geraet: p.geraet, pfad: p.cwd, beschreibung: p.description, pruefBefehle: p.pruefBefehle ?? [], status: p.status, protokoll: !(p.tags ?? []).includes('protokoll-aus'), mergeRequests: (p.tags ?? []).includes(MR_TAG), repo: p.repoUrl ?? null, konventionen: p.conventions ?? {}, laeufe: laeufe(p.id).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))), offenePunkte: offen.map(i => ({ id: i.id, titel: i.title })), deploy: await this.projektDeployInfo(p) }; // v1439 deploy
       },
       stand: async (id: string) => skill.execute({ action: 'projekt_akte', projekt: id }, ctx(`project:${id}`)),
       // v1403 — Realfall 12.10. 23:42: aus der App gestartet, kein Ende im App-Chat (Meldungen nur an Telegram) → Herkunft = App-Sitzung
@@ -15787,6 +15788,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
       konventionen: async (id: string, aenderung: unknown) => this.projektKonventionenAendern(id, aenderung), // v1426
+      mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
     };
   }
 
@@ -15811,6 +15813,19 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!(await new ProjektAktenUeberProjekte(repo).setzeProtokoll(o, id, an))) return { success: false, error: 'kein Geräte-Projekt' };
     this.logger.info({ projekt: id, an }, 'v1425 Protokoll im Projekt umgeschaltet');
     return { success: true, display: an ? 'Protokoll im Projekt: an — Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Protokoll im Projekt: aus — Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (von git ausgeschlossen).' };
+  }
+
+  /** v1455 — Schalter „Merge Requests“ je Projekt (App, Web, Gespräch): Tag merge-requests; gilt ab dem nächsten Lauf. */
+  private async geraeteProjektMergeRequests(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
+    const o = this.ownerMasterUserId; const repo = this.projectRepo;
+    if (!o || !repo) return { success: false, error: 'Projekte nicht verfügbar' };
+    const { ProjektAktenUeberProjekte } = await import('./projekt/akten-projekte.js');
+    if (!(await new ProjektAktenUeberProjekte(repo).setzeMergeRequests(o, id, an))) return { success: false, error: 'kein Geräte-Projekt' };
+    this.logger.info({ projekt: id, an }, 'v1455 Merge Requests umgeschaltet');
+    if (!an) return { success: true, display: 'Merge Requests: aus — Etappen laufen direkt auf dem aktuellen Zweig (gilt ab dem nächsten Lauf).' };
+    const k = await this.mrKontext(id);
+    const hinweis = k && 'grund' in k ? ` Achtung: ${k.grund} — so läuft der nächste Lauf noch ohne Merge Request.` : '';
+    return { success: true, display: `Merge Requests: an — ab dem nächsten Lauf arbeitet Claude Code auf einem eigenen Zweig; Alfred öffnet nach der ersten abgenommenen Etappe einen Merge Request in GitLab, liest deine Kommentare vor jeder Etappe und führt zusammen, wenn alle Etappen grün sind.${hinweis}` };
   }
 
   /** v1332 — Fäden eines Nicht-Owner-Geräts: nur seine eigenen Kanal-Gespräche. */
@@ -15944,6 +15959,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       nachLauf: async (s) => {
         const o = this.ownerMasterUserId;
         if (!s.akteId || !o || !this.projectRepo) return;
+        await this.mrAmEnde(s, gw).catch((err: Error) => this.logger.warn({ lauf: s.id, err: err.message }, 'v1455 Merge Request am Ende fehlgeschlagen')); // v1455 — vor Auto-dev
         const p = await this.projectRepo.getById(o, s.akteId).catch(() => null);
         const dev = p ? stufenAus(p.deployZiel).dev : undefined; // v1443 B15 — Stufe dev
         if (!p || !dev?.ziel.autoDev) return;
@@ -15954,11 +15970,40 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const r = await this.projektDeployAusfuehren(p, 'dev', dev.ziel, undefined, { chatId: faden, platform: 'api' });
         await this.meldeOhneModell(r.text, { chatId: faden, platform: 'api' });
       },
+      // v1455 — Merge-Request-Modus (Tag merge-requests): vor dem ersten Auftrag Zweig alfred/<lauf>, danach neue MR-Kommentare des Owners
+      vorEtappe: async (s) => {
+        if (s.mr?.aus || s.mr?.zusammengefuehrt) return undefined;
+        const k = await this.mrKontext(s.akteId);
+        if (!k) return undefined;
+        const aus = (grund: string) => { s.mr = { zweig: '', aus: grund }; this.logger.info({ lauf: s.id, grund }, 'v1455 Merge Request für diesen Lauf aus'); return { meldung: `🔀 Merge Request für diesen Lauf aus: ${grund}. Die Etappen laufen wie bisher auf dem aktuellen Zweig.` }; };
+        if ('grund' in k) return s.mr ? undefined : aus(k.grund);
+        if (!s.mr?.zweig) {
+          const g = gw.geraetNachName(s.geraetId);
+          if (!g) return undefined; // Gerät gerade weg: beim nächsten Start der Etappe erneut
+          if (!g.aktionen.includes('git_zweig')) return aus('Satellit zu alt (Update ≥ 1455)');
+          const zweig = mrZweig(s.id);
+          const r = await gw.sendeAktion(g.id, 'git_zweig', { projekt: s.projekt, zweig }, 60_000);
+          if (!r.success) return /nicht verbunden|antwortete nicht/i.test(r.error ?? '') ? undefined : aus(`Zweig nicht angelegt — ${String(r.error ?? '').slice(0, 200)}`);
+          const ziel = (await gitlabStandardZweig(k.base, k.token, k.pfad).catch(() => undefined)) ?? (r.data as { vorher?: string } | undefined)?.vorher ?? 'main';
+          s.mr = { zweig, ziel };
+          this.logger.info({ lauf: s.id, zweig, ziel, repo: k.pfad }, 'v1455 Zweig für den Merge Request');
+          return { meldung: `🔀 Merge-Request-Modus: Die Etappen laufen auf dem Zweig ${zweig}. Nach der ersten abgenommenen Etappe öffnet Alfred den Merge Request nach ${ziel}; Kommentare dort gehen in die nächste Etappe.` };
+        }
+        if (!s.mr.iid) return undefined;
+        const owner = await this.gitlabBenutzerName(k.base, k.token);
+        if (!owner) return undefined;
+        const neu = await gitlabMrKommentare(k.base, k.token, k.pfad, s.mr.iid, owner, s.mr.kommentarBis ?? 0).catch(() => []);
+        if (!neu.length) return undefined;
+        s.mr.kommentarBis = Math.max(...neu.map(n => n.id));
+        this.logger.info({ lauf: s.id, mr: s.mr.iid, kommentare: neu.length }, 'v1455 MR-Kommentare in den Auftrag');
+        return { hinweise: mrHinweisBlock(neu.map(n => n.text)), meldung: `💬 ${neu.length} Kommentar${neu.length === 1 ? '' : 'e'} aus Merge Request !${s.mr.iid} ${neu.length === 1 ? 'geht' : 'gehen'} in diesen Auftrag.` };
+      },
       // v1434 B13 — Projekt mit Remote: nach jeder abgenommenen Etappe pushen (Token aus der Projektumgebung; Tag push-aus schaltet ab)
       nachAbnahme: async (s) => {
         const o = this.ownerMasterUserId;
         if (!s.akteId || !o || !this.projectRepo) return undefined;
         const p = await this.projectRepo.getById(o, s.akteId).catch(() => null);
+        if (p?.repoUrl && (p.tags ?? []).includes('push-aus') && s.mr?.zweig && !s.mr.aus) return '⚠️ Merge Request nicht nachgeführt: Push ist für dieses Projekt aus (Schalter push-aus)'; // v1455
         if (!p?.repoUrl || (p.tags ?? []).includes('push-aus')) return undefined;
         const g = this.geraeteGateway?.geraetNachName(s.geraetId);
         if (!g) return '⚠️ Nicht gepusht: Gerät nicht verbunden';
@@ -15966,7 +16011,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const token = await this.gitTokenFuer(p.id, p.repoUrl);
         const r = await this.geraeteGateway!.sendeAktion(g.id, 'git_push', { projekt: s.projekt, erwartet: this.repoSicher(p.repoUrl), ...(token ? { token } : {}) }, 6 * 60_000); // v1435 — nur zum Repo des Projekts
         this.logger.info({ lauf: s.id, etappe: s.nr, ok: r.success, mitToken: !!token, ...(r.success ? r.data as object : { fehler: r.error?.slice(0, 200) }) }, 'v1434 Push nach Abnahme');
-        return r.success ? `📤 ${r.display}` : `⚠️ Push fehlgeschlagen: ${r.error}${token ? '' : ' (kein GIT_TOKEN in der Projektumgebung)'}`;
+        const zeile = r.success ? `📤 ${r.display}` : `⚠️ Push fehlgeschlagen: ${r.error}${token ? '' : ' (kein GIT_TOKEN in der Projektumgebung)'}`;
+        return r.success && s.mr?.zweig && !s.mr.aus ? `${zeile}\n${await this.mrNachfuehren(s, p.name)}` : zeile; // v1455
       },
       protokollAn: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return true; const p = await this.projectRepo.getById(o, s.akteId).catch(() => null); return !(p?.tags ?? []).includes('protokoll-aus'); },
       melde: async (s, text, art) => {
@@ -16371,6 +16417,12 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         this.logger.info({ projekt: akte.id, geraet: g.name, ziel, mitToken: !!token, quelle: quelle?.id }, 'v1434 Projekt geholt');
         return { success: true, data: { id: akte.id, name, ...(r.data as object | undefined) }, display: `${r.display}\nProjekt „${name}" auf ${g.name} angelegt (Remote ${url}; ${token ? 'Push nach jeder abgenommenen Etappe mit dem Projekt-Token' : 'kein Token gefunden — für den Push GIT_TOKEN in der Projektumgebung hinterlegen'}${befehle.length ? '' : '; noch keine Prüfbefehle — ohne sie fragt Alfred nach jeder Etappe'}). Weiter mit projekt_weiter projekt="${name}" goal=…` };
       },
+      mergeRequests: async (ref, an) => { // v1455
+        const t = await akteAus(ref);
+        if ('fehler' in t) return { success: false, error: t.fehler };
+        const r = await this.geraeteProjektMergeRequests(t.akte.id, an);
+        return r.success ? { success: true, display: `${t.akte.name} — ${r.display}` } : { success: false, error: r.error };
+      },
       sudoSperre: async (ref, an) => {
         const t = await akteAus(ref);
         if ('fehler' in t) return { success: false, error: t.fehler };
@@ -16443,6 +16495,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       fortsetzen: async (id: string, lauf: string) => this.geraeteLaufFortsetzen(id, lauf), // v1415
       diff: async (id: string, commit: string, datei?: string) => this.geraeteProjektDiff(id, commit, datei), // v1417
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
+      mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
       // v1439 — Deploy im Web
       deployInfo: async (id: string) => { const o = owner(); const p = o ? await this.projectRepo?.getById(o, id) : undefined; return p ? this.projektDeployInfo(p) : { error: 'nicht gefunden' }; },
       deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : aktion === 'remote' ? 'projekt_remote' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never),
@@ -16586,6 +16639,72 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
    * v1439 (Owner 13.10.: „Alfred hat diese Token doch schon“) — Projekt-Token zuerst; fehlt es, das vorhandene Forge-Token aus der
    * Konfiguration, aber NUR für Repos auf dessen eigenem Host (GitLab baseUrl bzw. github.com). Nie für fremde Hosts.
    */
+  /**
+   * v1455 — Merge-Request-Modus eines Laufs: Projekt mit Tag merge-requests, GitLab-Repo auf der eigenen Instanz, GitLab-Token der
+   * Konfiguration (API: MR anlegen, Kommentare lesen, zusammenführen). undefined = Modus aus; grund = an, aber nicht möglich.
+   */
+  private async mrKontext(akteId: string | undefined): Promise<{ p: import('@alfred/storage').Project; base: string; token: string; pfad: string } | { grund: string } | undefined> {
+    const o = this.ownerMasterUserId;
+    if (!akteId || !o || !this.projectRepo) return undefined;
+    const p = await this.projectRepo.getById(o, akteId).catch(() => null);
+    if (!p || !(p.tags ?? []).includes(MR_TAG)) return undefined;
+    if (!p.repoUrl) return { grund: 'das Projekt hat kein GitLab-Repository (Remote fehlt)' };
+    const gl = (this.config as { codeAgents?: { forge?: { gitlab?: { token?: string; baseUrl?: string } } } }).codeAgents?.forge?.gitlab;
+    if (!gl?.token || !gl.baseUrl) return { grund: 'kein GitLab-Token in der Konfiguration' };
+    const base = this.repoSicher(gl.baseUrl);
+    const pfad = gitlabPfadAus(this.repoSicher(p.repoUrl), base);
+    if (!pfad) return { grund: 'das Repository liegt nicht auf der eigenen GitLab-Instanz' };
+    return { p, base, token: gl.token, pfad };
+  }
+
+  private gitlabBenutzerGemerkt?: string;
+  private async gitlabBenutzerName(base: string, token: string): Promise<string | undefined> {
+    if (!this.gitlabBenutzerGemerkt) this.gitlabBenutzerGemerkt = await gitlabBenutzer(base, token).catch(() => undefined);
+    return this.gitlabBenutzerGemerkt;
+  }
+
+  private mrText(s: import('./projekt/satellit-projekt.js').ProjektStand): string {
+    return mrBeschreibung({ projekt: s.akteName ?? s.projekt, lauf: s.id, ziel: s.ziel, plan: s.plan, pruefBefehle: s.pruefBefehle, erledigt: s.erledigt.map(e => ({ nr: e.nr, ok: e.ok, geprueft: !!e.geprueft, etappe: e.etappe ?? '', kostenUsd: e.kostenUsd, ...(e.zusammenfassung ? { zusammenfassung: e.zusammenfassung } : {}), ...(e.commit?.sha ? { commit: e.commit.sha } : {}) })) });
+  }
+
+  /** v1455 — nach einem Push: MR anlegen bzw. Beschreibung nachführen; liefert die Zeile für die Etappenmeldung. */
+  private async mrNachfuehren(s: import('./projekt/satellit-projekt.js').ProjektStand, name: string): Promise<string> {
+    const k = await this.mrKontext(s.akteId);
+    if (!k || 'grund' in k || !s.mr?.zweig) return k && 'grund' in k ? `⚠️ Merge Request: ${k.grund}` : '';
+    const titel = `${name}: ${s.ziel.replace(/\s+/g, ' ').trim().slice(0, 120)}`;
+    const m = await gitlabMrSichern(k.base, k.token, k.pfad, { quelle: s.mr.zweig, ziel: s.mr.ziel ?? 'main', titel, beschreibung: this.mrText(s), ...(s.mr.iid ? { iid: s.mr.iid } : {}) }).catch((err: Error) => ({ ok: false as const, fehler: err.message }));
+    this.logger.info({ lauf: s.id, etappe: s.nr, ok: m.ok, ...(m.ok ? { mr: m.iid, neu: m.neu } : { fehler: m.fehler }) }, 'v1455 Merge Request nachgeführt');
+    if (!m.ok) return `⚠️ Merge Request nicht nachgeführt: ${m.fehler}`;
+    s.mr.iid = m.iid; s.mr.url = m.url;
+    return `🔀 Merge Request !${m.iid} ${m.neu ? 'geöffnet' : 'nachgeführt'}: ${m.url}`;
+  }
+
+  /** v1455 — Laufende: alle Etappen grün abgenommen → MR in GitLab zusammenführen und den Zielzweig ans Gerät holen; sonst bleibt er offen. */
+  private async mrAmEnde(s: import('./projekt/satellit-projekt.js').ProjektStand, gw: import('./geraete/gateway.js').GeraeteGateway): Promise<void> {
+    if (!s.mr?.iid || s.mr.aus || s.mr.zusammengefuehrt) return;
+    const k = await this.mrKontext(s.akteId);
+    if (!k || 'grund' in k) return;
+    const faden = { chatId: `owner:faden:projekt-${k.p.id.slice(0, 8)}`, platform: 'api' };
+    const gruen = s.plan.every((_, i) => { const e = s.erledigt.find(x => x.nr === i + 1); return !!e?.ok && !!e.geprueft; });
+    await gitlabMrSichern(k.base, k.token, k.pfad, { quelle: s.mr.zweig, ziel: s.mr.ziel ?? 'main', titel: '', beschreibung: this.mrText(s), iid: s.mr.iid }).catch(() => undefined);
+    if (!gruen) { await this.meldeOhneModell(`🔀 Merge Request !${s.mr.iid} bleibt offen: nicht alle Etappen sind grün abgenommen. Zusammenführen in GitLab oder weiterarbeiten — ${s.mr.url ?? ''}`, faden); return; }
+    const m = await gitlabMrZusammenfuehren(k.base, k.token, k.pfad, s.mr.iid).catch((err: Error) => ({ ok: false as const, fehler: err.message }));
+    this.logger.info({ lauf: s.id, mr: s.mr.iid, ok: m.ok, ...(m.ok ? { sha: m.sha } : { fehler: m.fehler }) }, 'v1455 Merge Request zusammengeführt');
+    if (!m.ok) { await this.meldeOhneModell(`⚠️ Merge Request !${s.mr.iid} nicht zusammengeführt (${m.fehler}) — er bleibt offen: ${s.mr.url ?? ''}`, faden); return; }
+    s.mr.zusammengefuehrt = true;
+    this.satellitProjekte?.merke(s);
+    const g = gw.geraetNachName(s.geraetId);
+    const ziel = s.mr.ziel ?? 'main';
+    let amGeraet = `Am Gerät bleibt der Zweig ${s.mr.zweig} ausgecheckt (Gerät nicht erreichbar oder Satellit zu alt).`;
+    if (g?.aktionen.includes('git_aktualisieren') && k.p.repoUrl) {
+      const token = await this.gitTokenFuer(k.p.id, k.p.repoUrl);
+      const a = await gw.sendeAktion(g.id, 'git_aktualisieren', { projekt: s.projekt, erwartet: this.repoSicher(k.p.repoUrl), zweig: ziel, ...(token ? { token } : {}) }, 6 * 60_000);
+      this.logger.info({ lauf: s.id, ok: a.success, ...(a.success ? a.data as object : { fehler: a.error?.slice(0, 200) }) }, 'v1455 Zielzweig am Gerät aktualisiert');
+      amGeraet = a.success ? `Am Gerät ist jetzt ${ziel} ausgecheckt (${(a.data as { sha?: string } | undefined)?.sha ?? ''}) — der nächste Lauf beginnt dort.` : `Am Gerät bleibt ${s.mr.zweig} ausgecheckt: ${a.error}`;
+    }
+    await this.meldeOhneModell(`✅ Merge Request !${s.mr.iid} nach ${ziel} zusammengeführt${m.sha ? ` (${m.sha})` : ''}. ${amGeraet}`, faden);
+  }
+
   /** v1442 — Repo-Adresse für Git mit Token: http auf dem Forge-Host → https (Owner: git.lokalkraft.at ist https). */
   private repoSicher(url: string): string { return aufHttps(url, (this.config as { codeAgents?: { forge?: { gitlab?: { baseUrl?: string } } } }).codeAgents?.forge); }
 

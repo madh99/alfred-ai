@@ -117,6 +117,54 @@ export async function gitPush(dir: string, token: string | undefined, erwartet: 
   }
 }
 
+const ZWEIG_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,120}$/;
+
+/**
+ * v1455 — Merge-Request-Modus: vor der ersten Etappe den Zweig des Laufs (`alfred/<lauf>`) anlegen bzw. auschecken. Nicht eingecheckte
+ * Änderungen bleiben in der Arbeitskopie (git nimmt sie mit). Ohne Token, ohne Netz.
+ */
+export async function gitZweig(dir: string, zweig: string, git: GitAusfuehren = gitAusfuehren): Promise<{ ok: true; zweig: string; vorher: string; neu: boolean } | { ok: false; fehler: string }> {
+  if (!/^alfred\/[A-Za-z0-9._-]{1,80}$/.test(zweig)) return { ok: false, fehler: `ungültiger Zweigname: ${zweig}` };
+  const b = await git(['rev-parse', '--abbrev-ref', 'HEAD'], dir, gitUmgebung(), 15_000);
+  const vorher = b.ausgabe.trim();
+  if (b.status !== 0 || !vorher || vorher === 'HEAD') return { ok: false, fehler: 'kein Zweig ausgecheckt (kein Git-Repository, noch kein Commit oder detached HEAD)' };
+  if (vorher === zweig) return { ok: true, zweig, vorher, neu: false };
+  const da = (await git(['rev-parse', '--verify', '--quiet', `refs/heads/${zweig}`], dir, gitUmgebung(), 15_000)).status === 0;
+  const c = await git(da ? ['checkout', '-q', zweig] : ['checkout', '-q', '-b', zweig], dir, gitUmgebung(), 60_000);
+  if (c.status !== 0) return { ok: false, fehler: `git checkout ${zweig}: ${kurz(c.ausgabe)}` };
+  return { ok: true, zweig, vorher, neu: !da };
+}
+
+/**
+ * v1455 — nach dem Zusammenführen in GitLab den Zielzweig ans Gerät holen und auschecken (nur Vorspulen). Wie beim Push nie mit Token
+ * im Projekt-Repo: erst mit Token in ein frisches temporäres Repo, von dort ohne Token ins Projekt (refs/remotes/origin/<zweig>).
+ */
+export async function gitAktualisieren(dir: string, token: string | undefined, erwartet: string | undefined, zweig: string, git: GitAusfuehren = gitAusfuehren): Promise<{ ok: true; zweig: string; sha: string } | { ok: false; fehler: string }> {
+  const ziel = erwartet ? pruefeRepoUrl(erwartet) : undefined;
+  if (!ziel?.ok) return { ok: false, fehler: ziel ? `erwartete Repo-Adresse ungültig: ${ziel.fehler}` : 'erwartete Repo-Adresse fehlt' };
+  if (!ZWEIG_NAME.test(zweig) || zweig.includes('..')) return { ok: false, fehler: `ungültiger Zweigname: ${zweig}` };
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'alfred-holen-'));
+  try {
+    const i = await git(['init', '-q', '--bare', tmp], undefined, gitUmgebung(), 30_000);
+    if (i.status !== 0) return { ok: false, fehler: `temporäres Repo: ${kurz(i.ausgabe)}` };
+    const f = await git(['--git-dir', tmp, 'fetch', '-q', '--no-tags', '--', ziel.url, `+refs/heads/${zweig}:refs/heads/${zweig}`], undefined, gitUmgebung(/^https?:\/\//i.test(ziel.url) ? token : undefined, ziel.url), 5 * 60_000);
+    if (f.status !== 0) return { ok: false, fehler: `git fetch: ${schwaerzeGit(kurz(f.ausgabe), token)}` };
+    const l = await git(['fetch', '-q', '--no-tags', '--', tmp, `+refs/heads/${zweig}:refs/remotes/origin/${zweig}`], dir, gitUmgebung(), 5 * 60_000);
+    if (l.status !== 0) return { ok: false, fehler: `Stand nicht übernommen: ${kurz(l.ausgabe)}` };
+  } finally {
+    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* bleibt im Temp */ }
+  }
+  const da = (await git(['rev-parse', '--verify', '--quiet', `refs/heads/${zweig}`], dir, gitUmgebung(), 15_000)).status === 0;
+  const c = await git(da ? ['checkout', '-q', zweig] : ['checkout', '-q', '-b', zweig, `refs/remotes/origin/${zweig}`], dir, gitUmgebung(), 60_000);
+  if (c.status !== 0) return { ok: false, fehler: `git checkout ${zweig}: ${kurz(c.ausgabe)}` };
+  if (da) {
+    const m = await git(['merge', '-q', '--ff-only', `refs/remotes/origin/${zweig}`], dir, gitUmgebung(), 60_000);
+    if (m.status !== 0) return { ok: false, fehler: `${zweig} am Gerät weicht vom GitLab-Stand ab (nur Vorspulen erlaubt): ${kurz(m.ausgabe)}` };
+  }
+  const h = await git(['rev-parse', '--short', 'HEAD'], dir, gitUmgebung(), 15_000);
+  return { ok: true, zweig, sha: h.ausgabe.trim() };
+}
+
 /** Parameter für Logzeilen: Geheimnisse ersetzen (Token, Passwörter). */
 export function paramsFuerLog(params: Record<string, unknown>): string {
   return JSON.stringify(params, (k, v) => (/token|passw|secret|kennwort/i.test(k) && v ? '***' : v));

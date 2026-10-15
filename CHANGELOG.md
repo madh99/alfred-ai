@@ -55,6 +55,23 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1455] - 2026-10-15
+
+### Added — Etappen über Branch und Merge Request (Schalter je Projekt, App 1.27.0)
+
+Geräte-Projekte können ihre Etappen jetzt über einen eigenen Zweig und einen Merge Request in GitLab laufen lassen. Der Modus ist optional, Standard aus. Ein- und ausschalten lässt er sich je Projekt in der App, im Web („Merge Requests“) und im Gespräch („Merge Requests für … einschalten“). Er gilt ab dem nächsten Lauf.
+
+- Vor der ersten Etappe legt der Satellit den Zweig `alfred/<lauf>` an. Nicht eingecheckte Änderungen bleiben unberührt.
+- Nach jeder abgenommenen Etappe wird wie bisher gepusht. Danach öffnet Alfred den Merge Request zum Standardzweig des GitLab-Projekts bzw. führt ihn nach. Die Beschreibung enthält Ziel, Etappen mit Stand, Commit, Zusammenfassung und Abnahme. Der Link steht in der Etappenmeldung.
+- Vor jeder weiteren Etappe liest Alfred neue Kommentare im Merge Request und gibt sie als Hinweise des Owners in den Auftrag. Es zählen nur Kommentare des GitLab-Kontos, dem das konfigurierte Token gehört; Systemnotizen nicht.
+- Am Ende des Laufs:
+  - Sind alle Etappen grün abgenommen, führt Alfred den Merge Request in GitLab zusammen und holt den Zielzweig ans Gerät. Der nächste Lauf beginnt dort.
+  - Sonst bleibt der Merge Request offen, mit Hinweis im Projektfaden.
+  - Zusammengeführt wird vor einem automatischen Deploy nach dev.
+- Ist der Modus an, aber nicht möglich, läuft der Lauf wie bisher und Alfred nennt den Grund. Mögliche Gründe: kein Remote, Repository nicht auf der eigenen GitLab-Instanz, kein Token, Satellit zu alt.
+- Sicherheit: GitLab nur über https auf dem eigenen Host. Das Token kommt nie in das Projekt-Repository: Geholt wird wie beim Push über ein temporäres Repository, im Projekt nur ohne Token und nur durch Vorspulen.
+- Neue Satelliten-Aktionen `git_zweig` und `git_aktualisieren`; neue Skill-Aktion `projekt_merge_requests`.
+
 ## [0.19.0-jarvis.1454] - 2026-10-15
 
 ### Fixed — Abgelehnte Projekt-Rückfragen bleiben nicht mehr hängen

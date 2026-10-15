@@ -165,6 +165,25 @@ void main() {
     expect(protokollAn({}), isTrue);
   });
 
+  testWidgets('1.27.0 Schalter Merge Requests sendet an/aus, Hinweis ohne Repository', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    var an = false;
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet.add(koerper!); an = koerper['text'] == 'an'; return {'success': true, 'display': 'ok'}; }
+      return {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [], 'protokoll': true, 'mergeRequests': an, 'repo': null};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'b77431a2-e388', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-merge-requests'))).value, isFalse);
+    await t.tap(find.byKey(const Key('projekt-merge-requests')));
+    await t.pumpAndSettle();
+    expect(gesendet.single, {'aktion': 'merge_requests', 'text': 'an'});
+    expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-merge-requests'))).value, isTrue);
+    expect(find.textContaining('Remote fehlt'), findsOneWidget);
+    expect(mergeRequestsAn({}), isFalse);
+  });
+
   testWidgets('1.17.0 G3 Gespräch zum Projekt öffnet den Projektfaden', (t) async {
     String? geoeffnet;
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async => {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': []};

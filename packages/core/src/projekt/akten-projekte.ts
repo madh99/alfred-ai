@@ -15,6 +15,8 @@ export interface ProjektAkte {
   sudoSperre?: boolean;
   /** v1425 — Protokoll im Projekt (Aufträge + Berichte committen); Standard an, Tag protokoll-aus schaltet ab */
   protokoll: boolean;
+  /** v1455 — Etappen über Branch und Merge Request (Tag merge-requests); Standard aus */
+  mergeRequests: boolean;
 }
 
 export function akteAusProjekt(p: Project): ProjektAkte {
@@ -24,6 +26,7 @@ export function akteAusProjekt(p: Project): ProjektAkte {
     status: p.status === 'archived' ? 'archiviert' : 'aktiv', erstellt: p.createdAt, aktualisiert: p.lastActiveAt,
     ...(p.tags?.includes('sudo-sperre') ? { sudoSperre: true } : {}),
     protokoll: !(p.tags ?? []).includes('protokoll-aus'),
+    mergeRequests: (p.tags ?? []).includes('merge-requests'),
   };
 }
 
@@ -78,6 +81,15 @@ export class ProjektAktenUeberProjekte {
     if (!p?.geraetId) return false;
     const tags = (p.tags ?? []).filter(t => t !== 'protokoll-aus');
     await this.repo.update(userId, id, { tags: an ? tags : [...tags, 'protokoll-aus'] });
+    return true;
+  }
+
+  /** v1455 — Schalter „Merge Requests“ (Tag merge-requests = an). Liefert false, wenn das Projekt fehlt oder kein Geräte-Projekt ist. */
+  async setzeMergeRequests(userId: string, id: string, an: boolean): Promise<boolean> {
+    const p = await this.repo.getById(userId, id);
+    if (!p?.geraetId) return false;
+    const tags = (p.tags ?? []).filter(t => t !== 'merge-requests');
+    await this.repo.update(userId, id, { tags: an ? [...tags, 'merge-requests'] : tags });
     return true;
   }
 

@@ -27,7 +27,7 @@ describe('OwnerAnsichten: Projekte', () => {
   it('ohne Text oder unbekannte Aktion: nichts ausgelöst', async () => {
     aufrufe.length = 0;
     expect((await a.projektAktion('p1', 'weiter', '   ')).error).toMatch(/text fehlt/);
-    expect((await a.projektAktion('p1', 'loeschen', 'x')).error).toMatch(/stand, weiter, frage, fortsetzen, diff, protokoll, konventionen, freigeben oder ablehnen/);
+    expect((await a.projektAktion('p1', 'loeschen', 'x')).error).toMatch(/stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, konventionen, freigeben oder ablehnen/);
     expect(aufrufe).toEqual([]);
   });
 });
@@ -47,5 +47,21 @@ describe('OwnerAnsichten: Lauf entscheiden', () => {
     expect((await a.projektAktion('p1', 'ablehnen', undefined, 'sat-9')).success).toBe(true);
     expect((await a.projektAktion('p1', 'freigeben', undefined, undefined)).error).toBe('lauf fehlt');
     expect(aufrufe).toEqual(['p1 sat-9 freigeben', 'p1 sat-9 ablehnen']);
+  });
+});
+
+// v1455 — Schalter „Merge Requests“ aus der App
+describe('OwnerAnsichten: Merge Requests', () => {
+  const gesetzt: Array<[string, boolean]> = [];
+  const a = new OwnerAnsichten({
+    owner: 'u', todos: {} as never, erinnerungen: {} as never, db: {} as never, vorgangEntscheiden: async () => null,
+    projekte: { liste: async () => [], detail: async () => null, stand: async () => ({ success: true }), weiter: async () => ({ success: true }),
+      mergeRequests: async (id, an) => { gesetzt.push([id, an]); return { success: true, display: an ? 'an' : 'aus' }; } },
+  });
+  it('an/aus wird durchgereicht, anderer Text nicht', async () => {
+    expect((await a.projektAktion('p1', 'merge_requests', 'an')).display).toBe('an');
+    expect((await a.projektAktion('p1', 'merge_requests', 'aus')).display).toBe('aus');
+    expect((await a.projektAktion('p1', 'merge_requests', 'ja')).error).toMatch(/an oder aus/);
+    expect(gesetzt).toEqual([['p1', true], ['p1', false]]);
   });
 });

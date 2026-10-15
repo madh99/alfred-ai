@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { nameAusPfad, nameBereinigen, akteTreffer, namensMuster, vorherigeLaeufe, bestandsBlock, akteDetail, akteZeile, aktenZustand, type LaufKurz } from '../projekt/akten.js';
 import { SatellitProjekte, type ProjektStand } from '../projekt/satellit-projekt.js';
 import { etappenAuftrag } from '../projekt/satellit-projekt-regeln.js';
-import { werkzeugeFuerNachricht, setzeProjektNamenMuster } from '../skill-filter.js';
+import { werkzeugeFuerNachricht, setzeProjektNamenMuster, PROJEKT_AUF_GERAET } from '../skill-filter.js';
 import type { GeraetEreignis } from '@alfred/types';
 
 // v1398 — Spec „Projekte sichtbar und fortsetzbar" P1/P2
@@ -325,5 +325,13 @@ describe('Art der Projektmeldungen', () => {
     expect(arten.map(a => a[0])).toEqual([undefined, 'frage']); // Etappenstart, dann „weiter?" ohne Abnahme
     await p.antwort(s.id, fragen.at(-1)!.nonce);
     expect(arten.at(-1)![0]).toBe('ende');
+  });
+});
+
+describe('v1455 Merge Requests im Gespräch', () => {
+  it('„Merge Request“ bringt den Projekt-Agenten mit', () => {
+    expect(PROJEKT_AUF_GERAET.test('Schalte Merge Requests für das Radar ein')).toBe(true);
+    expect(PROJEKT_AUF_GERAET.test('mit merge-request bitte')).toBe(true);
+    expect(PROJEKT_AUF_GERAET.test('Wie wird das Wetter morgen?')).toBe(false);
   });
 });

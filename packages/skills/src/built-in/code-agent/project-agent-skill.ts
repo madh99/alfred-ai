@@ -313,6 +313,8 @@ export interface SatellitProjektHandler {
   archivieren?: (ref: string) => Promise<SkillResult>;
   /** v1409 R3b — Projekt-Option sudo-Sperre */
   sudoSperre?: (ref: string, an: boolean) => Promise<SkillResult>;
+  /** v1455 — Etappen über Branch und Merge Request (an/aus je Projekt) */
+  mergeRequests?: (ref: string, an: boolean) => Promise<SkillResult>;
   /** v1426 — Konventionen des Projekts lesen/ändern (CHANGELOG, README, Commits, eigene Regeln) */
   konventionen?: (ref: string, input: Record<string, unknown>) => Promise<SkillResult>;
   /** v1404 — Frage zum Projekt (Claude Code nur lesend) */
@@ -429,7 +431,7 @@ Actions:
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_holen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote'],
+            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_holen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests'],
             description: 'Project agent action',
           },
           goal: { type: 'string', description: 'What to build (for start)' },
@@ -464,6 +466,7 @@ Actions:
           regel: { type: 'string', description: 'v1426 — Für projekt_konventionen: eigene Regel hinzufügen (z. B. „Commits auf Deutsch“)' },
           regel_entfernen: { type: 'string', description: 'v1426 — Für projekt_konventionen: Regel entfernen (Text oder Nummer)' },
           anhaenge: { type: 'array', items: { type: 'string' }, description: 'v1424 — Für projekt_frage/projekt_weiter: Dateispeicher-Schlüssel der Dateien, die der Owner mitgeschickt hat (Screenshots, Dokumente). Alfred legt sie für Claude Code ins Projekt' },
+          merge_requests: { type: 'boolean', description: 'v1455 — Für projekt_merge_requests: Etappen über einen eigenen Zweig und Merge Request in GitLab (true = an, false = aus). Kommentare des Owners im MR gehen in die nächste Etappe; zusammengeführt wird, wenn alle Etappen grün sind.' },
           sudo_sperre: { type: 'boolean', description: 'start mit geraet bzw. projekt_sudo_sperre: Claude Code darf in den Aufträgen dieses Projekts kein sudo verwenden (true) bzw. wieder erlauben (false). Nur, wenn der Owner es sagt.' },
           // v851.1 — import_feature params
           feature_id: { type: 'string', description: 'Feature-UUID aus Features-Library (für import_feature)' },
@@ -516,7 +519,7 @@ Actions:
     // v1434 B13 — Projekt von GitLab aufs Gerät holen (danach ein Geräte-Projekt wie jedes andere)
     if (action === 'projekt_holen') return this.satellit?.holen ? this.satellit.holen(input, context) : { success: false, error: 'Projekte holen ist nicht verfügbar (Geräte-Gateway fehlt)' };
     // v1398 — Projektakten
-    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote'].includes(action) || satId.startsWith('prj-')) {
+    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests'].includes(action) || satId.startsWith('prj-')) {
       if (!this.satellit?.projekte) return { success: false, error: 'Projektakten sind nicht verfügbar' };
       const ref = String(input.projekt ?? input.task_id ?? '').trim();
       if (action === 'projekte') return this.satellit.projekte();
@@ -530,6 +533,7 @@ Actions:
       if (action === 'projekt_hochstufen') return this.satellit.hochstufen ? this.satellit.hochstufen(ref, input, context) : { success: false, error: 'nicht verfügbar' }; // v1443
       if (action === 'projekt_rollback') return this.satellit.rollback ? this.satellit.rollback(ref, input, context) : { success: false, error: 'nicht verfügbar' };
       if (action === 'projekt_konventionen') return this.satellit.konventionen ? this.satellit.konventionen(ref, input) : { success: false, error: 'nicht verfügbar' }; // v1426
+      if (action === 'projekt_merge_requests') return this.satellit.mergeRequests ? this.satellit.mergeRequests(ref, input.merge_requests !== false) : { success: false, error: 'nicht verfügbar' }; // v1455
       if (action === 'projekt_sudo_sperre') return this.satellit.sudoSperre ? this.satellit.sudoSperre(ref, input.sudo_sperre !== false) : { success: false, error: 'nicht verfügbar' };
       if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context, input.anhaenge) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };
       return this.satellit.akte!(ref);

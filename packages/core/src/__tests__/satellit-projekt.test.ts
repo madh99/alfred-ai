@@ -4,7 +4,7 @@ import { begrenzePlan, mutationAutomatisch, grenzeErreicht, STANDARD_GRENZEN } f
 import type { GeraetEreignis } from '@alfred/types';
 
 // v1387 (R2) — Projekt-Agent am Satelliten, Ablauf mit simuliertem Gerät
-function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined>; nachLauf?: (s: ProjektStand) => Promise<void> } = {}) {
+function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kosten?: number; git?: Record<string, unknown>; konventionen?: Record<string, unknown>; nachAbnahme?: () => Promise<string | undefined>; nachLauf?: (s: ProjektStand) => Promise<void>; vorEtappe?: (s: ProjektStand) => Promise<{ hinweise?: string; meldung?: string } | undefined> } = {}) {
   const aufrufe: Array<{ aktion: string; params: Record<string, unknown> }> = [];
   const fragen: Array<{ text: string; nonce: string }> = [];
   const meldungen: string[] = [];
@@ -24,6 +24,7 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
     ...(o.konventionen ? { konventionen: async () => o.konventionen } : {}), // v1426
     ...(o.nachAbnahme ? { nachAbnahme: o.nachAbnahme } : {}), // v1434
     ...(o.nachLauf ? { nachLauf: o.nachLauf } : {}), // v1437
+    ...(o.vorEtappe ? { vorEtappe: o.vorEtappe } : {}), // v1455
     logger: { info: () => undefined, warn: () => undefined },
   });
   const ende = async (s: ProjektStand, status: GeraetEreignis['status'] = 'fertig', extra: Partial<GeraetEreignis> = {}) => {
@@ -37,6 +38,23 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
 const start = { geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/home/madh/claudecode/r2', ziel: 'Kleines CLI-Werkzeug', pruefBefehle: ['npm test'] };
 
 describe('Satelliten-Projekt', () => {
+  it('v1455 vor jedem Auftrag: Hinweise aus dem Merge Request in den Auftrag, Meldung in den Faden; Fehler hält den Lauf nicht an', async () => {
+    let n = 0;
+    const a = aufbau({ vorEtappe: async (s) => { n++; if (n === 1) { s.mr = { zweig: 'alfred/x', ziel: 'main' }; return { meldung: 'Zweig angelegt' }; } if (n === 2) return { hinweise: '\n\nHinweise des Owners aus dem Merge Request: bitte Logging', meldung: '💬 1 Kommentar' }; throw new Error('GitLab weg'); } });
+    const s = await a.p.starte(start);
+    await a.p.antwort(s.id, a.fragen[0]!.nonce);
+    expect(a.meldungen).toContain('Zweig angelegt');
+    expect(a.p.hole(s.id)!.mr).toEqual({ zweig: 'alfred/x', ziel: 'main' });
+    await a.ende(s);
+    const auftraege = a.aufrufe.filter(x => x.aktion === 'auftrag_starten').map(x => String(x.params.auftrag));
+    expect(auftraege[0]).not.toContain('bitte Logging');
+    expect(auftraege[1]).toContain('Hinweise des Owners aus dem Merge Request: bitte Logging');
+    expect(a.meldungen).toContain('💬 1 Kommentar');
+    await a.ende(s);
+    expect(a.meldungen.some(m => m.includes('⚠️ Merge Request: GitLab weg'))).toBe(true);
+    expect(a.aufrufe.filter(x => x.aktion === 'auftrag_starten')).toHaveLength(3);
+  });
+
   it('v1454 Rückfrage abgelehnt/abgelaufen: Plan endet, Planänderung ohne weiter, „Weitermachen?“ hält an; alte Kennung nichts', async () => {
     const a = aufbau();
     const s = await a.p.starte(start);

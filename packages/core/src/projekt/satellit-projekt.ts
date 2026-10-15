@@ -52,6 +52,8 @@ export interface ProjektStand {
   sudoSperre?: boolean;
   /** v1453 — beim Start vorgefundene, nicht eingecheckte Änderungen (gehören dem Owner) */
   vorgefunden?: string[];
+  /** v1455 — Merge-Request-Modus dieses Laufs: Zweig, Ziel, MR, gelesene Kommentare; `aus` = für diesen Lauf nicht möglich (Grund) */
+  mr?: { zweig: string; ziel?: string; iid?: number; url?: string; kommentarBis?: number; zusammengefuehrt?: boolean; aus?: string };
   frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation' | 'installieren'; mutation?: Mutation; text: string; /** v1410 R3c */ installation?: { werkzeug: string; quelle: string; paket: string } };
   /** v1410 R3c — Werkzeuge, nach deren Installation schon gefragt wurde (keine Schleife); letztes Prüfprotokoll für den Fix-Versuch ohne Installation */
   installiertGefragt?: string[];
@@ -87,6 +89,8 @@ export interface SatellitProjektDeps {
   nachAbnahme?: (s: ProjektStand) => Promise<string | undefined>;
   /** v1437 B14 — nach dem Ende eines Laufs (z. B. automatisch in dev deployen, wenn alle Etappen grün abgenommen sind) */
   nachLauf?: (s: ProjektStand) => Promise<void>;
+  /** v1455 — vor jedem Auftrag (Merge-Request-Modus: Zweig anlegen, neue MR-Kommentare des Owners als Hinweise); Meldung geht in den Faden */
+  vorEtappe?: (s: ProjektStand) => Promise<{ hinweise?: string; meldung?: string } | undefined>;
   ordner?: string;
   logger: { info: (o: object, m: string) => void; warn: (o: object, m: string) => void };
   now?: () => number;
@@ -160,6 +164,9 @@ export class SatellitProjekte {
   laeufeDerAkte(akteId: string): ProjektStand[] { return this.liste().filter(s => s.akteId === akteId); }
   ohneAkte(): ProjektStand[] { return this.liste().filter(s => !s.akteId && s.status !== 'wartet_owner'); }
   setzeAkte(id: string, akteId: string, akteName?: string): void { const s = this.staende.get(id); if (!s) return; s.akteId = akteId; if (akteName) s.akteName = akteName; this.sichere(s); }
+
+  /** v1455 — Laufstand nach einer Änderung von außen (z. B. Merge Request zusammengeführt) speichern. */
+  merke(s: ProjektStand): void { if (this.staende.get(s.id) === s) this.sichere(s); }
 
   gehoertZuProjekt(auftragId: string): boolean { return [...this.staende.values()].some(s => s.auftragId === auftragId && s.status === 'laeuft'); }
 
@@ -287,6 +294,10 @@ export class SatellitProjekte {
     const rest = s.grenzen.budgetUsd !== undefined ? Math.max(0.05, Number((s.grenzen.budgetUsd - s.kostenUsd).toFixed(2))) : undefined;
     const protokoll = { lauf: s.id, nr: s.nr, ...(s.fixVersuch ? { fix: s.fixVersuch } : {}), an: await this.protokollAn(s) }; // v1425
     if (!auftrag.includes('Projektregeln des Owners (gelten für jede Etappe)')) auftrag = `${auftrag}${konventionsBlock(await this.konventionen(s))}`; // v1426 — jede Etappe, jeder Fix, jeder Nachtrag; nach Warten aufs Gerät nicht doppelt
+    // v1455 — Merge-Request-Modus: Zweig vor dem ersten Auftrag, Kommentare des Owners aus dem MR in den Auftrag
+    const vor: { hinweise?: string; meldung?: string } | undefined = await this.d.vorEtappe?.(s).catch((err: Error) => ({ meldung: `⚠️ Merge Request: ${err.message}` }));
+    if (vor?.hinweise) auftrag = `${auftrag}${vor.hinweise}`;
+    if (vor?.meldung) await this.d.melde(s, vor.meldung).catch(() => undefined);
     const r = await this.d.aktion(s.geraetId, 'auftrag_starten', { projekt: s.projekt, auftrag, titel, ...(rest !== undefined ? { max_kosten_usd: rest } : {}), ...(s.gitUebernehmen ? { git_uebernehmen: true } : {}), ...(s.sudoSperre ? { sudo_sperre: true } : {}), protokoll }, 150_000);
     const id = (r.data as { id?: string } | undefined)?.id;
     // v1415 — Realfall 13.10. 01:11: Etappe 2 sollte genau starten, als der Satellit für ein Update kurz weg war → Projekt angehalten.

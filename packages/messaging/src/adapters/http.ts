@@ -810,7 +810,7 @@ export class HttpAdapter extends MessagingAdapter {
   private geraeteProjektIds = new Set<string>();
   setGeraeteProjektIds(ids: Set<string>): void { this.geraeteProjektIds = ids; }
   /** v1399 — Geräte-Projekt im Web: Stand (Akte mit Commits vom Gerät) und Weiterarbeiten (Plan → Owner-Bestätigung) */
-  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; /** v1439 */ deployInfo?: (id: string) => Promise<unknown>; deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<unknown> };
+  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; mergeRequests?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; /** v1439 */ deployInfo?: (id: string) => Promise<unknown>; deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<unknown> };
   setGeraeteProjektCallbacks(cb: HttpAdapter['geraeteProjektCallbacks']): void { this.geraeteProjektCallbacks = cb; }
   private async handleGeraeteProjekt(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -836,6 +836,7 @@ export class HttpAdapter extends MessagingAdapter {
     let j: { text?: unknown; lauf?: unknown; entscheidung?: unknown } = {};
     try { j = JSON.parse((await this.readBody(req)) || '{}') as typeof j; text = typeof j.text === 'string' ? j.text.trim().slice(0, 4000) : ''; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
     if (url.pathname.endsWith('/diff')) { const jd = j as { commit?: unknown; datei?: unknown }; antwort(200, cb.diff && typeof jd.commit === 'string' ? await cb.diff(id, jd.commit, typeof jd.datei === 'string' ? jd.datei : undefined) : { success: false, error: 'commit fehlt' }); return; } // v1417
+    if (url.pathname.endsWith('/merge-requests')) { const jp = j as { an?: unknown }; antwort(200, cb.mergeRequests && typeof jp.an === 'boolean' ? await cb.mergeRequests(id, jp.an) : { success: false, error: 'an (true|false) nötig' }); return; } // v1455
     if (url.pathname.endsWith('/protokoll')) { const jp = j as { an?: unknown }; antwort(200, cb.protokoll && typeof jp.an === 'boolean' ? await cb.protokoll(id, jp.an) : { success: false, error: 'an (true|false) nötig' }); return; } // v1425
     if (url.pathname.endsWith('/fortsetzen')) { antwort(200, cb.fortsetzen && typeof j.lauf === 'string' ? await cb.fortsetzen(id, j.lauf) : { success: false, error: 'lauf fehlt' }); return; } // v1415
     if (url.pathname.endsWith('/frage')) { antwort(200, cb.frage && text ? await cb.frage(id, text) : { success: false, error: 'text fehlt (die Frage)' }); return; } // v1404
@@ -1373,7 +1374,7 @@ export class HttpAdapter extends MessagingAdapter {
     }
 
     // v1399 — Geräte-Projekte: VOR allen Projekt-Routen (Realfall Live-Test: /environments lag weiter oben in der Kette und lief durch)
-    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage|\/fortsetzen|\/diff|\/protokoll|\/deploy)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage|\/fortsetzen|\/diff|\/protokoll|\/merge-requests|\/deploy)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err));
       return;
     }

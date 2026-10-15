@@ -116,7 +116,7 @@ export type WerkzeugwahlGrund = 'geraet_genannt' | 'nachricht' | 'verlauf' | 'ru
  * v1388 — Realfall 12.10.: „Bau mir auf der Ubuntu-VM … ein Werkzeug, Abnahme je Etappe" — Hebel 1 gab NUR das Gerätewerkzeug,
  * der Projekt-Agent mit Gerät (v1387) war nie wählbar. Beschreibt die Nachricht ein Bau-Projekt, kommt project_agent dazu.
  */
-export const PROJEKT_AUF_GERAET = /(^|[^\p{L}])(projekt\w*|etapp\w*|abnahme\w*|claude.?code\w*|programmier\w*|entwickl\w*|bau(e|en|t)?|baue?\s+mir|repo\w*|gitlab|github|klon\w*|clone\w*)(?![\p{L}])/iu; // v1434 B13 Repo holen
+export const PROJEKT_AUF_GERAET = /(^|[^\p{L}])(projekt\w*|etapp\w*|abnahme\w*|claude.?code\w*|programmier\w*|entwickl\w*|bau(e|en|t)?|baue?\s+mir|repo\w*|gitlab|github|klon\w*|clone\w*|merge.?requests?|mr)(?![\p{L}])/iu; // v1434 B13 Repo holen; v1455 Merge Requests
 
 /**
  * v1398 — Projektakten: Namen der aktiven Projekte (Teile ≥ 4 Buchstaben). Nennt der Owner eines („am Supermarkt-Projekt
