@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'aufgaben.dart' show JsonAbruf;
 
+/// 1.31.0 — test am Gerät (v1462): eigener Ordner aus dem Hauptzweig, eigener Port, aktualisiert nach dem Zusammenführen.
 /// 1.30.0 — dev je Projekt (v1460): „am Gerät“ (die App läuft im Arbeitsordner, Alfred startet sie nach jeder grünen Etappe neu)
 /// oder „eigener Host“ (das dev-Ziel im Deploy-Bereich). Die Startangabe erkennt Alfred selbst (Startdatei, package.json …, sonst
 /// Claude Code nur lesend) oder man trägt sie ein; ausgeführt wird sie erst nach der Bestätigung des Owners.
@@ -45,6 +46,24 @@ class _ProjektDevState extends State<ProjektDev> {
     if (felder != null) await senden(felder);
   }
 
+  /// 1.31.0 — test am Gerät (nur mit bestätigter dev-Startangabe)
+  List<Widget> _test(ThemeData theme, Color dim, Map<String, dynamic>? t) {
+    final an = t?['aktiv'] == true;
+    final z = t?['zuletzt'] as Map<String, dynamic>?;
+    return [
+      const Divider(height: 20),
+      SwitchListTile(key: const Key('test-aktiv'), contentPadding: EdgeInsets.zero, dense: true, value: an, onChanged: sendet ? null : (v) => senden({'dev_aktion': v ? 'test_einschalten' : 'test_ausschalten'}),
+        title: const Text('test am Gerät'),
+        subtitle: Text(an ? 'Eigener Ordner aus dem Hauptzweig — wird nach jedem Zusammenführen und nach grünen Läufen aktualisiert.' : 'Einschalten schlägt Ordner und Port vor und fragt dich.', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
+      if (t != null) Text('Ordner ${t['ordner'] ?? ''}${t['port'] != null ? ' · Port ${t['port']}' : ''}${t['zweig'] != null ? ' · Zweig ${t['zweig']}' : ''}', key: const Key('test-angabe'), style: theme.textTheme.bodySmall),
+      if (z != null) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('${z['ok'] == true ? '🟢' : '🔴'} ${z['url'] ?? z['text'] ?? ''}${z['sha'] != null ? ' (${z['sha']})' : ''}', style: theme.textTheme.bodySmall)),
+      if (t != null) Padding(padding: const EdgeInsets.only(top: 6), child: Wrap(spacing: 8, children: [
+        OutlinedButton(key: const Key('test-aktualisieren'), onPressed: sendet ? null : () => senden({'dev_aktion': 'test_aktualisieren'}), child: const Text('test aktualisieren')),
+        OutlinedButton(key: const Key('test-stoppen'), onPressed: sendet ? null : () => senden({'dev_aktion': 'test_stoppen'}), child: const Text('test stoppen')),
+      ])),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -74,6 +93,7 @@ class _ProjektDevState extends State<ProjektDev> {
           if (dienst) OutlinedButton(key: const Key('dev-neustart'), onPressed: sendet ? null : () => senden({'dev_aktion': 'neustart'}), child: const Text('Neu starten')),
           if (dienst) OutlinedButton(key: const Key('dev-stoppen'), onPressed: sendet ? null : () => senden({'dev_aktion': 'stoppen'}), child: const Text('Stoppen')),
         ]),
+        if (dienst) ..._test(theme, dim, d['test'] as Map<String, dynamic>?),
       ],
       if (meldung != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(meldung!, style: theme.textTheme.bodySmall?.copyWith(color: meldungOk ? dim : theme.colorScheme.error))),
     ])));

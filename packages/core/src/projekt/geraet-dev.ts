@@ -19,6 +19,8 @@ export interface GeraetDev {
   /** zuletzt zur Bestätigung gestellte Angabe (gegen wiederholte Fragen) */
   vorgeschlagen?: StartAngabe;
   zuletzt?: { zeit: string; ok: boolean; url?: string; text: string };
+  /** v1462 — test am Gerät: eigener Ordner aus dem Zielzweig, eigener Port, Start wie dev */
+  test?: { aktiv?: boolean; ordner: string; port?: number; zweig?: string; zuletzt?: { zeit: string; ok: boolean; url?: string; sha?: string; text: string } };
 }
 
 /** Aus deploy_ziel; ohne Eintrag: am Gerät, außer ein dev-Host ist schon eingetragen (bisheriges Verhalten bleibt). */
@@ -50,4 +52,17 @@ export function vorschlagText(o: { name: string; geraet: string; pfad: string; a
     ...(o.geaendert ? [`Bisher: ${angabeText(o.geaendert)}`] : []),
     o.angabe.dienst ? 'Ja: so übernehmen und starten — Alfred startet dev nach jeder grünen Etappe neu (eine laufende Instanz dieses Projekts wird ersetzt, fremde Prozesse nie).' : 'Ja: so übernehmen (es wird nichts gestartet).',
   ].join('\n');
+}
+
+/** v1462 — Vorschlag für test am Gerät: Ordner neben dem Projekt (…-test), Port dev + 1000 (sonst + 1). */
+export function testVorschlag(cwd: string, devPort?: number): { ordner: string; port?: number } {
+  const ordner = `${cwd.replace(/[\\/]+$/, '')}-test`;
+  if (!devPort) return { ordner };
+  return { ordner, port: devPort + 1000 < 65536 ? devPort + 1000 : devPort + 1 };
+}
+
+/** v1462 — .env-Inhalt aus einer Projektumgebung (gleiche Maskierung wie der Deploy-Skill). */
+export function envText(vars: Record<string, string>): string {
+  const wert = (v: string) => { const s = v.replace(/[\r\n]/g, ''); return /[\s"'$`\\#]/.test(s) ? `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`')}"` : s; };
+  return Object.entries(vars).filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).map(([k, v]) => `${k}=${wert(v)}`).join('\n') + '\n';
 }

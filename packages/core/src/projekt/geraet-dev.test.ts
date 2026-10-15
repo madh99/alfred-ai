@@ -20,4 +20,11 @@ describe('v1460 dev am Gerät', () => {
     expect(t).toMatch(/fremde Prozesse nie/);
     expect(START_REGEL).toContain('.alfred-start.json');
   });
+  it('v1462 test-Vorschlag und .env aus der Umgebung test', async () => {
+    const { testVorschlag, envText } = await import('./geraet-dev.js');
+    expect(testVorschlag('/home/madh/claudecode/game/', 3000)).toEqual({ ordner: '/home/madh/claudecode/game-test', port: 4000 });
+    expect(testVorschlag('/x', 65000)).toEqual({ ordner: '/x-test', port: 65001 });
+    expect(testVorschlag('/x')).toEqual({ ordner: '/x-test' });
+    expect(envText({ MODUS: 'test', SATZ: 'a b', 'kaputt-name': 'x', PFAD: 'c:\\x' })).toBe('MODUS=test\nSATZ="a b"\nPFAD="c:\\\\x"\n');
+  });
 });

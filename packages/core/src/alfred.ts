@@ -16,7 +16,7 @@ import { Database, ConversationRepository, UserRepository, AuditRepository, Memo
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
 import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, gitlabRepoAnlegen, repoPfad, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
-import { geraetDevAus, angabeGleich, angabeText, vorschlagText, type GeraetDev, type StartAngabe } from './projekt/geraet-dev.js'; // v1460
+import { geraetDevAus, angabeGleich, angabeText, vorschlagText, testVorschlag, envText, type GeraetDev, type StartAngabe } from './projekt/geraet-dev.js'; // v1460, v1462
 import { MR_TAG, MR_AUTO_TAG, mrZweig, gitlabPfadAus, mrBeschreibung, gitlabMrSichern, gitlabMrKommentare, gitlabMrZusammenfuehren, gitlabMrStatus, gitlabStandardZweig, gitlabBenutzer, mrHinweisBlock } from './projekt/merge-request.js'; // v1455, v1458
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -15930,10 +15930,76 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       if (!e.angabe.dienst) { await this.devSpeichern(kk.o, kk.p.id, { ...kk.gd, aktiv: true, angabe: e.angabe, ...(e.quelle ? { quelle: e.quelle } : {}) }); return { success: true, display: `${k.p.name}: kein Dienst erkannt (${(e.hinweise ?? []).join('; ')}) — dev heißt hier Build und Tests grün.` }; }
       return this.devVorschlagen(kk, e.angabe, e.quelle, e.hinweise ?? [], herkunft);
     }
+    // v1462 — test am Gerät
+    if (was === 'test_einschalten') {
+      if (!k.gd.angabe?.dienst || !k.gd.angabe.start) return { success: false, error: 'Erst die dev-Startangabe bestätigen — test startet genauso, nur mit eigenem Ordner und Port' };
+      if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+      const v = testVorschlag(k.p.cwd!, k.gd.angabe.port);
+      const ordner = typeof felder.test_ordner === 'string' && felder.test_ordner.trim() ? felder.test_ordner.trim() : k.gd.test?.ordner ?? v.ordner;
+      const port = felder.test_port !== undefined && felder.test_port !== '' ? Number(felder.test_port) : k.gd.test?.port ?? v.port;
+      if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536 && port !== k.gd.angabe.port)) return { success: false, error: 'Port für test ungültig oder gleich dem dev-Port' };
+      const zweig = typeof felder.test_zweig === 'string' && felder.test_zweig.trim() ? felder.test_zweig.trim() : k.gd.test?.zweig;
+      const umgebung = !!(this.envRepoRef && await this.envRepoRef.get(k.p.id, 'test').catch(() => null));
+      const nonce = this.deployFreigaben.stelle(k.p.id, 'test_start', undefined, 72 * 3_600_000, undefined, undefined, JSON.stringify({ ordner, port, zweig }));
+      const text = [`🧪 test am Gerät für „${k.p.name}“ (${k.p.geraet ?? 'Gerät'}):`, `Ordner ${ordner} — Stand ${zweig ? `von ${zweig}` : 'des Hauptzweigs'} (eigene Kopie, ohne deine Arbeitsänderungen)`, `Start wie dev (\`${k.gd.angabe.start}\`)${port ? `, Port ${port}` : ''}${k.gd.angabe.pruefung ? `, Prüfadresse ${k.gd.angabe.pruefung}` : ''}`, umgebung ? '.env aus der Projektumgebung „test“' : 'ohne .env — die .env von dev wird nicht übernommen (eigene Werte: Projektumgebung „test“ anlegen)', 'Ja: Ordner anlegen und starten. Aktualisiert wird nach jedem Zusammenführen und nach grünen Läufen (oder per Knopf).'].join('\n');
+      const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `test-${k.p.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'projekt_dev', projekt: k.p.id, dev_aktion: 'test_bestaetigt', bestaetigt: nonce }, timeoutMinutes: 72 * 60, ...(herkunft ? { herkunft } : {}) } as never);
+      this.logger.info({ projekt: k.p.id, ordner, port, zweig }, 'v1462 test am Gerät zur Bestätigung gestellt');
+      return ok ? { success: true, display: `test am Gerät für ${k.p.name}: Ordner ${ordner}${port ? `, Port ${port}` : ''} — zur Bestätigung gestellt.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
+    }
+    if (was === 'test_bestaetigt') {
+      const f = this.deployFreigaben.loese(String(felder.bestaetigt ?? ''), k.p.id, 'test_start');
+      if (!f?.wert) return { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
+      const t = JSON.parse(f.wert) as { ordner: string; port?: number; zweig?: string };
+      await this.devSpeichern(k.o, k.p.id, { ...k.gd, test: { ...(k.gd.test ?? {}), aktiv: true, ordner: t.ordner, ...(t.port ? { port: t.port } : {}), ...(t.zweig ? { zweig: t.zweig } : {}) } });
+      const r = await this.testAktualisieren(k.p.id);
+      return { success: r.ok, ...(r.ok ? { display: `${k.p.name}: test am Gerät eingerichtet — ${r.text}` } : { error: `${k.p.name}: test eingerichtet, aber ${r.text}` }) };
+    }
+    if (was === 'test_aktualisieren') { const r = await this.testAktualisieren(k.p.id); return { success: r.ok, ...(r.ok ? { display: r.text } : { error: r.text }) }; }
+    if (was === 'test_stoppen' || was === 'test_ausschalten') {
+      if (was === 'test_ausschalten' && k.gd.test) await this.devSpeichern(k.o, k.p.id, { ...k.gd, test: { ...k.gd.test, aktiv: false } });
+      if (!k.gd.test?.ordner) return { success: true, display: 'test am Gerät ist nicht eingerichtet' };
+      if (!g?.aktionen.includes('dev_stop')) return { success: false, error: 'Gerät nicht verbunden oder Satellit zu alt' };
+      const r = await this.geraeteGateway!.sendeAktion(g.id, 'dev_stop', { projekt: k.gd.test.ordner }, 60_000);
+      return r.success ? { success: true, display: `test: ${r.display}${was === 'test_ausschalten' ? ' — automatisches Aktualisieren aus (der Ordner bleibt)' : ''}` } : { success: false, error: r.error };
+    }
     // stand
     let geraet = '';
     if (g?.aktionen.includes('dev_stand')) { const r = await this.geraeteGateway!.sendeAktion(g.id, 'dev_stand', { projekt: k.p.cwd }, 30_000).catch(() => undefined); geraet = r?.display ?? ''; }
     return { success: true, data: k.gd, display: [`dev: ${k.gd.art === 'host' ? 'eigener Host' : `am Gerät${k.gd.aktiv ? '' : ' (aus)'}`}`, k.gd.angabe ? angabeText(k.gd.angabe) : 'noch keine bestätigte Startangabe', ...(geraet ? [geraet] : [])].join(' · ') };
+  }
+
+  /** v1462 — test am Gerät auf den Stand des Zielzweigs bringen und neu starten (Ordner, .env aus Umgebung test, Abhängigkeiten). */
+  private async testAktualisieren(id: string): Promise<{ ok: boolean; text: string; url?: string }> {
+    const k = await this.devKontext(id);
+    if (!k || 'fehler' in k) return { ok: false, text: k && 'fehler' in k ? k.fehler : 'nicht verfügbar' };
+    const t = k.gd.test; const a = k.gd.angabe;
+    if (!t?.ordner || !a?.dienst || !a.start) return { ok: false, text: 'test am Gerät ist nicht eingerichtet' };
+    const g = this.geraeteGateway?.geraetNachName(k.p.geraetId!);
+    if (!g) return { ok: false, text: `${k.p.geraet ?? 'Gerät'} ist nicht verbunden` };
+    if (!g.aktionen.includes('test_bereitstellen')) return { ok: false, text: 'Satellit zu alt (Update ≥ 1462)' };
+    let env: string | undefined;
+    try { const e = this.envRepoRef ? await this.envRepoRef.get(k.p.id, 'test') : null; if (e && this.envCryptoRef) env = envText(this.envCryptoRef.decrypt(e.varsEncrypted, e.iv, e.authTag)); } catch (err) { this.logger.warn({ projekt: k.p.id, err: (err as Error).message }, 'v1462 Umgebung test nicht lesbar'); }
+    const b = await this.geraeteGateway!.sendeAktion(g.id, 'test_bereitstellen', { projekt: k.p.cwd, ordner: t.ordner, ...(t.zweig ? { zweig: t.zweig } : {}), ...(env !== undefined ? { env } : {}) }, 20 * 60_000);
+    let erg: { ok: boolean; text: string; url?: string; sha?: string };
+    if (!b.success) erg = { ok: false, text: `test nicht bereitgestellt: ${String(b.error ?? '').slice(0, 500)}` };
+    else {
+      const sha = (b.data as { sha?: string } | undefined)?.sha;
+      const r = await this.geraeteGateway!.sendeAktion(g.id, 'dev_start', { projekt: t.ordner, start: a.start, ...(t.port ? { port: t.port } : {}), ...(a.pruefung ? { pruefung: a.pruefung } : {}) }, 3 * 60_000);
+      const url = (r.data as { url?: string } | undefined)?.url;
+      erg = r.success ? { ok: true, text: `🧪 test läuft${url ? `: ${url}` : ''} (${b.display})`, ...(url ? { url } : {}), ...(sha ? { sha } : {}) } : { ok: false, text: `🔴 test startet nicht (${b.display}): ${String(r.error ?? '').split('\n')[0]}`, ...(sha ? { sha } : {}) };
+    }
+    const frisch = await this.devKontext(id);
+    if (frisch && !('fehler' in frisch) && frisch.gd.test) await this.devSpeichern(frisch.o, id, { ...frisch.gd, test: { ...frisch.gd.test, zuletzt: { zeit: new Date().toISOString(), ok: erg.ok, ...(erg.url ? { url: erg.url } : {}), ...(erg.sha ? { sha: erg.sha } : {}), text: erg.text.slice(0, 1500) } } });
+    this.logger.info({ projekt: id, ok: erg.ok, url: erg.url, sha: erg.sha }, 'v1462 test am Gerät aktualisiert');
+    return erg;
+  }
+
+  /** v1462 — nach dem Zusammenführen bzw. einem grünen Lauf ohne MR: test aktualisieren, Zeile in den Projektfaden. */
+  private async testNachHauptzweig(akteId: string | undefined): Promise<void> {
+    const k = await this.devKontext(akteId);
+    if (!k || 'fehler' in k || !k.gd.test?.aktiv) return;
+    const r = await this.testAktualisieren(k.p.id);
+    await this.meldeOhneModell(r.text, { chatId: `owner:faden:projekt-${k.p.id.slice(0, 8)}`, platform: 'api' });
   }
 
   /**
@@ -15979,6 +16045,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       let devHinweis = '';
       if (p.geraetId && p.cwd) {
         const g = this.geraeteGateway?.geraetNachName(p.geraetId);
+        const testOrdner = geraetDevAus(p.deployZiel, false).test?.ordner;
+        if (testOrdner && g?.aktionen.includes('dev_stop')) await this.geraeteGateway!.sendeAktion(g.id, 'dev_stop', { projekt: testOrdner }, 60_000).catch(() => undefined); // v1462 — test-Instanz auch
         if (g?.aktionen.includes('dev_stop')) { const r = await this.geraeteGateway!.sendeAktion(g.id, 'dev_stop', { projekt: p.cwd }, 60_000).catch((err: Error) => ({ success: false, error: err.message, display: undefined })); devHinweis = r.success ? (/gestoppt/.test(r.display ?? '') ? ' dev am Gerät gestoppt.' : '') : ` ⚠️ dev am Gerät nicht gestoppt: ${r.error}.`; this.logger.info({ projekt: p.id, ok: r.success, text: r.display ?? r.error }, 'v1461 dev vor dem Löschen gestoppt'); }
         else if (geraetDevAus(p.deployZiel, false).zuletzt?.ok) devHinweis = ` ⚠️ ${p.geraet ?? 'Gerät'} nicht verbunden — eine laufende dev-Instanz läuft weiter.`;
       }
@@ -16157,6 +16225,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (!s.akteId || !o || !this.projectRepo) return;
         const mr = await this.mrAmEnde(s, gw).catch((err: Error) => { this.logger.warn({ lauf: s.id, err: err.message }, 'v1455 Merge Request am Ende fehlgeschlagen'); return 'offen' as const; });
         if (mr === 'wartet' || mr === 'offen') { this.logger.info({ lauf: s.id, mr }, 'v1458 Auto-dev wartet auf das Zusammenführen'); return; } // v1458 — dev nie mit einem Stand, den main nicht hat
+        // v1462 — ohne Merge Request: ein grüner Lauf liegt schon im Hauptzweig → test aktualisieren
+        if (mr === undefined && s.plan.every((_, i) => { const e = s.erledigt.find(x => x.nr === i + 1); return !!e?.ok && !!e.geprueft; })) await this.testNachHauptzweig(s.akteId).catch(() => undefined);
         await this.autoDevNachLauf(s);
       },
       // v1455 — Merge-Request-Modus (Tag merge-requests): vor dem ersten Auftrag Zweig alfred/<lauf>, danach neue MR-Kommentare des Owners
@@ -16962,6 +17032,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       amGeraet = a.success ? `Am Gerät ist jetzt ${ziel} ausgecheckt (${(a.data as { sha?: string } | undefined)?.sha ?? ''}) — der nächste Lauf beginnt dort.` : `Am Gerät bleibt ${s.mr.zweig} ausgecheckt: ${a.error}`;
     }
     await this.meldeOhneModell(`✅ Merge Request !${s.mr.iid} nach ${ziel} zusammengeführt${m.sha ? ` (${m.sha})` : ''}. ${amGeraet}`, faden);
+    await this.testNachHauptzweig(s.akteId).catch((err: Error) => this.logger.warn({ lauf: s.id, err: err.message }, 'v1462 test nach dem Zusammenführen fehlgeschlagen')); // v1462
     return true;
   }
 

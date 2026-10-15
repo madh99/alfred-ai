@@ -1,13 +1,15 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { startErkennen, startAngabePruefen, devStarten, devStoppen, devStand, prozessLebt, portBelegt } from './satellit-dev.js';
+import { startErkennen, startAngabePruefen, devStarten, devStoppen, devStand, prozessLebt, portBelegt, registerPfad, autostartPruefen, testBereitstellen } from './satellit-dev.js';
 
 // v1460 — dev am Gerät: Erkennung (ohne Modell) und echter Start/Neustart/Stopp eines kleinen Servers
 const neu = () => mkdtempSync(path.join(os.tmpdir(), 'alfred-dev-'));
+const HOME = mkdtempSync(path.join(os.tmpdir(), 'alfred-home-')); // v1462 — Register nie im echten Home
 const freierPort = () => new Promise<number>((r) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = (s.address() as net.AddressInfo).port; s.close(() => r(p)); }); });
 
 describe('v1460 Start erkennen', () => {
@@ -49,17 +51,17 @@ describe('v1460 dev starten, neu starten, stoppen', () => {
     const port = await freierPort();
     writeFileSync(path.join(d, 'server.js'), "require('http').createServer((q, r) => { r.statusCode = q.url === '/ok' ? 200 : 404; r.end('ok'); }).listen(Number(process.env.PORT));");
     const a = { dienst: true, start: 'node server.js', port, pruefung: '/ok' };
-    const r1 = await devStarten(d, a, 20_000);
+    const r1 = await devStarten(d, a, 20_000, HOME);
     expect(r1.ok).toBe(true);
     if (!r1.ok) return;
     expect(r1.url).toMatch(new RegExp(`^http://[\\d.]+:${port}$`));
     expect((await devStand(d))).toMatchObject({ laeuft: true, antwortet: true });
-    const r2 = await devStarten(d, a, 20_000);
+    const r2 = await devStarten(d, a, 20_000, HOME);
     expect(r2.ok).toBe(true);
     if (!r2.ok) return;
     expect(r2.pid).not.toBe(r1.pid);
     expect(prozessLebt(r1.pid)).toBe(false);
-    expect((await devStoppen(d)).ok).toBe(true);
+    expect((await devStoppen(d, HOME)).ok).toBe(true);
     expect(prozessLebt(r2.pid)).toBe(false);
     expect(await portBelegt(port)).toBe(false);
     expect(readFileSync(path.join(d, '.alfred', 'dev.log'), 'utf8')).toContain('Alfred startet: node server.js');
@@ -70,11 +72,57 @@ describe('v1460 dev starten, neu starten, stoppen', () => {
     const port = await freierPort();
     const s = http.createServer((_q, r) => r.end('fremd')); fremd.push(s);
     await new Promise<void>(r => s.listen(port, '127.0.0.1', () => r()));
-    const r = await devStarten(d, { dienst: true, start: 'node server.js', port }, 5000);
+    const r = await devStarten(d, { dienst: true, start: 'node server.js', port }, 5000, HOME);
     expect(r).toMatchObject({ ok: false, fehler: expect.stringContaining(`Port ${port} ist belegt`) });
     expect(s.listening).toBe(true);
-    const k = await devStarten(neu(), { dienst: true, start: 'node gibt-es-nicht.js', port: await freierPort() }, 10_000);
+    const k = await devStarten(neu(), { dienst: true, start: 'node gibt-es-nicht.js', port: await freierPort() }, 10_000, HOME);
     expect(k).toMatchObject({ ok: false, fehler: 'Prozess hat sich beendet' });
     expect(k.ok ? '' : k.log).toMatch(/gibt-es-nicht|Cannot find/);
+  }, 60_000);
+});
+
+describe('v1462 Autostart und test am Gerät', () => {
+  it('Register: Start trägt ein, tote Instanz wird wieder gestartet (höchstens 3×/h), Stopp trägt aus', async () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'alfred-home-'));
+    const d = neu(); const port = await freierPort();
+    writeFileSync(path.join(d, 'server.js'), "require('http').createServer((q, r) => r.end('ok')).listen(Number(process.env.PORT));");
+    const r = await devStarten(d, { dienst: true, start: 'node server.js', port }, 20_000, home);
+    expect(r.ok).toBe(true); if (!r.ok) return;
+    expect(JSON.parse(readFileSync(registerPfad(home), 'utf8'))).toEqual([{ dir: path.resolve(d), start: 'node server.js', port }]);
+    expect(await autostartPruefen(() => undefined, home)).toBe(0); // läuft: nichts zu tun
+    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(r.pid), '/T', '/F']); else process.kill(-r.pid, 'SIGTERM'); // „Absturz“: ganze Gruppe weg
+    for (let i = 0; i < 40 && await portBelegt(port); i++) await new Promise(x => setTimeout(x, 250));
+    const zeilen: string[] = [];
+    expect(await autostartPruefen(z => zeilen.push(z), home)).toBe(1);
+    expect(zeilen[0]).toMatch(/läuft/);
+    expect((await devStand(d)).laeuft).toBe(true);
+    const t = Date.now();
+    expect(await autostartPruefen(() => undefined, home, t + 1)).toBe(0); // läuft wieder
+    expect((await devStoppen(d, home)).ok).toBe(true);
+    expect(JSON.parse(readFileSync(registerPfad(home), 'utf8'))).toEqual([]);
+  }, 90_000);
+
+  it('test-Ordner: worktree auf dem Zweig, aktualisiert ohne Netz, .env nur aus der Umgebung test, Ordner im Projekt verboten', async () => {
+    const projekt = neu();
+    const g = (a: string[], cwd = projekt) => spawnSync('git', a, { cwd, encoding: 'utf8' });
+    g(['init', '-q', '-b', 'main']); g(['config', 'user.name', 't']); g(['config', 'user.email', 't@t']);
+    writeFileSync(path.join(projekt, 'a.txt'), 'eins'); writeFileSync(path.join(projekt, '.env'), 'GEHEIM=dev'); writeFileSync(path.join(projekt, '.gitignore'), '.env\n');
+    g(['add', '.']); g(['commit', '-q', '-m', 'A']);
+    const ordner = path.join(path.dirname(projekt), `${path.basename(projekt)}-test`);
+    const r1 = await testBereitstellen(projekt, ordner, 'main', 'MODUS=test\n');
+    expect(r1).toMatchObject({ ok: true, neu: true, installiert: false });
+    expect(readFileSync(path.join(ordner, 'a.txt'), 'utf8')).toBe('eins');
+    expect(readFileSync(path.join(ordner, '.env'), 'utf8')).toBe('MODUS=test\n');
+    writeFileSync(path.join(projekt, 'a.txt'), 'zwei'); g(['commit', '-q', '-am', 'B']);
+    const r2 = await testBereitstellen(projekt, ordner, 'main');
+    expect(r2).toMatchObject({ ok: true, neu: false });
+    expect(readFileSync(path.join(ordner, 'a.txt'), 'utf8')).toBe('zwei');
+    expect(readFileSync(path.join(ordner, '.env'), 'utf8')).toBe('MODUS=test\n'); // ohne neue Umgebung bleibt die alte
+    expect((await testBereitstellen(projekt, path.join(projekt, 'test'), 'main')).ok).toBe(false);
+    expect((await testBereitstellen(projekt, ordner, 'gibt-es-nicht')).ok).toBe(false);
+    expect((await testBereitstellen(projekt, ordner, '../x')).ok).toBe(false);
+    const fremd = neu(); writeFileSync(path.join(fremd, 'x'), '1');
+    expect(await testBereitstellen(projekt, fremd, 'main')).toMatchObject({ ok: false, fehler: expect.stringContaining('kein test-Ordner von Alfred') });
+    expect(existsSync(path.join(projekt, '.env')) && readFileSync(path.join(projekt, '.env'), 'utf8')).toBe('GEHEIM=dev');
   }, 60_000);
 });

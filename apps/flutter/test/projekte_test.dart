@@ -212,6 +212,27 @@ void main() {
     expect(gesendet.last, {'aktion': 'dev', 'deploy': {'dev_aktion': 'setzen', 'start': 'npm start', 'port': 3001, 'pruefung': '/api/gesundheit'}});
   });
 
+  testWidgets('1.31.0 test am Gerät: nur mit dev-Startangabe, Einschalten, Aktualisieren', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    var dev = <String, dynamic>{'art': 'geraet', 'aktiv': true, 'angabe': {'dienst': true, 'start': 'npm start', 'port': 3000}};
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet.add(koerper!); if ((koerper['deploy'] as Map)['dev_aktion'] == 'test_einschalten') dev = {...dev, 'test': {'aktiv': true, 'ordner': '/x-test', 'port': 4000, 'zuletzt': {'ok': true, 'url': 'https://192.168.1.178:4000', 'sha': 'abc12345'}}}; return {'success': true, 'display': 'ok'}; }
+      return {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [], 'protokoll': true, 'dev': dev};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 4000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'b77431a2-e388', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('test-aktualisieren')), findsNothing);
+    await t.tap(find.byKey(const Key('test-aktiv')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'dev', 'deploy': {'dev_aktion': 'test_einschalten'}});
+    expect(find.textContaining('Ordner /x-test · Port 4000'), findsOneWidget);
+    expect(find.textContaining('https://192.168.1.178:4000 (abc12345)'), findsOneWidget);
+    await t.tap(find.byKey(const Key('test-aktualisieren')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'dev', 'deploy': {'dev_aktion': 'test_aktualisieren'}});
+  });
+
   testWidgets('1.29.0 Schalter automatisch zusammenführen nur mit Merge Requests', (t) async {
     final gesendet = <Map<String, dynamic>>[];
     var mr = false; var auto = false;

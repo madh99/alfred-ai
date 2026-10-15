@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, openSync, closeSync, statSync, readlinkSync, appendFileSync, truncateSync, readdirSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
@@ -207,7 +208,41 @@ function devMeta(dir: string): { pid?: number; start?: string; port?: number; pr
  * dev starten bzw. neu starten. Eigene frühere Instanz (dev.json) beenden; lauscht auf dem Port ein Prozess AUS DIESEM PROJEKTORDNER
  * (z. B. von Hand gestartet), wird er ebenfalls beendet — ein fremder Prozess nie. Dann abgekoppelt starten und warten, bis er antwortet.
  */
-export async function devStarten(dir: string, a: StartAngabe, wartenMs = 60_000): Promise<{ ok: true; pid: number; url?: string; text: string } | { ok: false; fehler: string; log?: string }> {
+// ── v1462 Autostart: bestätigte Instanzen lokal merken, nach Neustart des Geräts/Satelliten wieder hochfahren ──
+
+interface RegisterEintrag { dir: string; start: string; port?: number; pruefung?: string; versuche?: number[] }
+export function registerPfad(home = os.homedir()): string { return path.join(home, '.alfred', 'dev-autostart.json'); }
+function registerLesen(home?: string): RegisterEintrag[] { try { const j = JSON.parse(readFileSync(registerPfad(home), 'utf8')); return Array.isArray(j) ? j as RegisterEintrag[] : []; } catch { return []; } }
+function registerSchreiben(e: RegisterEintrag[], home?: string): void { mkdirSync(path.dirname(registerPfad(home)), { recursive: true }); writeFileSync(registerPfad(home), JSON.stringify(e, null, 1)); }
+function registrieren(dir: string, a: StartAngabe, home?: string): void {
+  const r = registerLesen(home).filter(x => path.resolve(x.dir) !== path.resolve(dir));
+  registerSchreiben([...r, { dir: path.resolve(dir), start: a.start!, ...(a.port ? { port: a.port } : {}), ...(a.pruefung ? { pruefung: a.pruefung } : {}) }], home);
+}
+function austragen(dir: string, home?: string): void { const r = registerLesen(home); const n = r.filter(x => path.resolve(x.dir) !== path.resolve(dir)); if (n.length !== r.length) registerSchreiben(n, home); }
+
+/**
+ * Läuft eine gemerkte Instanz nicht (Gerät neu gestartet, abgestürzt), wieder starten — höchstens 3 Mal je Stunde und Instanz
+ * (eine App, die immer gleich abstürzt, soll nicht endlos neu starten). Ordner weg → austragen. Port fremd belegt → überspringen.
+ */
+export async function autostartPruefen(log: (z: string) => void, home?: string, jetzt = Date.now()): Promise<number> {
+  const liste = registerLesen(home);
+  let n = 0;
+  for (const e of liste) {
+    if (!existsSync(e.dir)) { austragen(e.dir, home); log(`Autostart: ${e.dir} fehlt — ausgetragen`); continue; }
+    if (prozessLebt(devMeta(e.dir).pid)) continue;
+    if (e.port && await portBelegt(e.port)) continue;
+    const versuche = (e.versuche ?? []).filter(t => jetzt - t < 3_600_000);
+    if (versuche.length >= 3) continue;
+    const aktuell = registerLesen(home);
+    registerSchreiben(aktuell.map(x => (path.resolve(x.dir) === path.resolve(e.dir) ? { ...x, versuche: [...versuche, jetzt] } : x)), home);
+    const r = await devStarten(e.dir, { dienst: true, start: e.start, ...(e.port ? { port: e.port } : {}), ...(e.pruefung ? { pruefung: e.pruefung } : {}) }, 60_000, home);
+    n++;
+    log(`Autostart ${e.dir}: ${r.ok ? r.text : r.fehler}`);
+  }
+  return n;
+}
+
+export async function devStarten(dir: string, a: StartAngabe, wartenMs = 60_000, home?: string): Promise<{ ok: true; pid: number; url?: string; text: string } | { ok: false; fehler: string; log?: string }> {
   if (!a.dienst || !a.start) return { ok: false, fehler: 'kein Dienst — nichts zu starten' };
   mkdirSync(path.join(dir, '.alfred'), { recursive: true });
   devAusschluss(dir);
@@ -239,14 +274,15 @@ export async function devStarten(dir: string, a: StartAngabe, wartenMs = 60_000)
   while (Date.now() < bis) {
     await new Promise(r => setTimeout(r, 1000));
     if (!prozessLebt(pid)) return { ok: false, fehler: 'Prozess hat sich beendet', log: logEnde(dir) };
-    if (!a.port) { if (Date.now() - ab >= 5000) return { ok: true, pid, text: [`läuft (PID ${pid}, ohne Port)`, ...hinweise].join(' · ') }; continue; }
+    if (!a.port) { if (Date.now() - ab >= 5000) { registrieren(dir, a, home); return { ok: true, pid, text: [`läuft (PID ${pid}, ohne Port)`, ...hinweise].join(' · ') }; } continue; }
     const r = await antwortet(a.port, a.pruefung ?? '/');
-    if (r.ok) { const url = `${r.schema}://${lanAdresse()}:${a.port}`; return { ok: true, pid, url, text: [`läuft: ${url}${a.pruefung ? ` (${a.pruefung} → ${r.status})` : ''}`, ...hinweise].join(' · ') }; }
+    if (r.ok) { registrieren(dir, a, home); const url = `${r.schema}://${lanAdresse()}:${a.port}`; return { ok: true, pid, url, text: [`läuft: ${url}${a.pruefung ? ` (${a.pruefung} → ${r.status})` : ''}`, ...hinweise].join(' · ') }; }
   }
   return { ok: false, fehler: `antwortet nach ${Math.round(wartenMs / 1000)} s nicht${a.port ? ` auf Port ${a.port}` : ''} (Prozess läuft weiter)`, log: logEnde(dir) };
 }
 
-export async function devStoppen(dir: string): Promise<{ ok: boolean; text: string }> {
+export async function devStoppen(dir: string, home?: string): Promise<{ ok: boolean; text: string }> {
+  austragen(dir, home); // v1462 — gestoppt heißt: auch nicht mehr automatisch starten
   const m = devMeta(dir);
   if (!m.pid || !prozessLebt(m.pid)) return { ok: true, text: 'dev lief nicht' };
   await beendenUndWarten(m.pid, true);
@@ -259,4 +295,60 @@ export async function devStand(dir: string): Promise<{ laeuft: boolean; pid?: nu
   let url: string | undefined; let ok: boolean | undefined;
   if (laeuft && m.port) { const r = await antwortet(m.port, m.pruefung ?? '/'); ok = r.ok; if (r.ok) url = `${r.schema}://${lanAdresse()}:${m.port}`; }
   return { laeuft, ...(m.pid ? { pid: m.pid } : {}), ...(url ? { url } : {}), ...(ok !== undefined ? { antwortet: ok } : {}), ...(m.start ? { start: m.start } : {}), log: logEnde(dir, 8) };
+}
+
+// ── v1462 test am Gerät: eigener Ordner aus dem Zielzweig (git worktree, ohne Netz und Token), eigener Port ──
+
+const REF = /^(?!-)(?!.*\.\.)[A-Za-z0-9._\/-]{1,120}$/;
+const git = (args: string[], cwd: string, ms = 60_000) => spawnSync('git', args, { cwd, encoding: 'utf8', timeout: ms, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+
+/** Hash der Abhängigkeits-Angaben (Lock-Datei, sonst package.json) — installiert wird nur bei Änderung oder fehlendem node_modules. */
+function depsHash(dir: string): string | undefined {
+  const pj = lies(path.join(dir, 'package.json'));
+  if (!pj) return undefined;
+  try { const j = JSON.parse(pj) as { dependencies?: object; devDependencies?: object }; if (!Object.keys({ ...(j.dependencies ?? {}), ...(j.devDependencies ?? {}) }).length) return undefined; } catch { return undefined; }
+  const lock = lies(path.join(dir, 'package-lock.json'), 50_000_000);
+  return createHash('sha256').update(lock || pj).digest('hex').slice(0, 16);
+}
+
+/**
+ * test-Ordner anlegen bzw. auf den Stand von `ref` bringen (detached, --force: test hat keine eigenen Änderungen), Abhängigkeiten bei
+ * Bedarf installieren (npm ci / npm install), .env aus der Umgebung „test“ schreiben (0600) — die .env von dev wird nie kopiert.
+ */
+export async function testBereitstellen(projekt: string, ordner: string, ref: string, envText?: string): Promise<{ ok: true; sha: string; zweig: string; neu: boolean; installiert: boolean; text: string } | { ok: false; fehler: string }> {
+  const p = path.resolve(projekt); const o = path.resolve(ordner);
+  // ohne Angabe: der ausgecheckte Zweig des Projekts — außer einem Lauf-Zweig (alfred/…), dann main bzw. master
+  if (!ref) { const b = git(['rev-parse', '--abbrev-ref', 'HEAD'], p).stdout.trim(); ref = b && b !== 'HEAD' && !b.startsWith('alfred/') ? b : ['main', 'master'].find(z => git(['rev-parse', '--verify', '--quiet', `refs/heads/${z}`], p).status === 0) ?? ''; }
+  if (!REF.test(ref)) return { ok: false, fehler: ref ? `ungültiger Zweig: ${ref}` : 'Zielzweig nicht erkennbar — bitte angeben' };
+  if (innerhalb(p, o) || innerhalb(o, p)) return { ok: false, fehler: 'Der test-Ordner darf nicht im Projektordner liegen (und umgekehrt)' };
+  if (git(['rev-parse', '--is-inside-work-tree'], p).stdout.trim() !== 'true') return { ok: false, fehler: 'Projektordner ist kein Git-Repository' };
+  const ziel = git(['rev-parse', '--verify', '--quiet', `refs/heads/${ref}`], p).status === 0 ? `refs/heads/${ref}` : git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${ref}`], p).status === 0 ? `refs/remotes/origin/${ref}` : undefined;
+  if (!ziel) return { ok: false, fehler: `Zweig ${ref} gibt es im Projekt nicht` };
+  const sha = git(['rev-parse', ziel], p).stdout.trim();
+  let neu = false;
+  if (!existsSync(path.join(o, '.git'))) {
+    if (existsSync(o) && readdirSync(o).length > 0) return { ok: false, fehler: `${o} gibt es schon und ist kein test-Ordner von Alfred — bitte leeren oder einen anderen Ordner wählen` };
+    git(['worktree', 'prune'], p);
+    const w = git(['worktree', 'add', '--detach', '--force', o, sha], p, 5 * 60_000);
+    if (w.status !== 0) return { ok: false, fehler: `git worktree add: ${(w.stderr || w.stdout).trim().slice(-400)}` };
+    neu = true;
+  } else {
+    const c = git(['checkout', '--detach', '--force', sha], o, 5 * 60_000);
+    if (c.status !== 0) return { ok: false, fehler: `git checkout: ${(c.stderr || c.stdout).trim().slice(-400)}` };
+  }
+  mkdirSync(path.join(o, '.alfred'), { recursive: true });
+  devAusschluss(p);
+  if (envText !== undefined) writeFileSync(path.join(o, '.env'), envText, { mode: 0o600 });
+  let installiert = false;
+  const h = depsHash(o);
+  const merk = path.join(o, '.alfred', 'dev.test.json');
+  let alt: { deps?: string } = {}; try { alt = JSON.parse(readFileSync(merk, 'utf8')); } catch { /* neu */ }
+  if (h && (alt.deps !== h || !existsSync(path.join(o, 'node_modules')))) {
+    const befehl = existsSync(path.join(o, 'package-lock.json')) ? 'npm ci' : 'npm install';
+    const r = process.platform === 'win32' ? spawnSync('cmd.exe', ['/c', befehl], { cwd: o, encoding: 'utf8', timeout: 15 * 60_000, windowsHide: true }) : spawnSync('/bin/sh', ['-c', befehl], { cwd: o, encoding: 'utf8', timeout: 15 * 60_000 });
+    if (r.status !== 0) return { ok: false, fehler: `${befehl} fehlgeschlagen: ${(r.stderr || r.stdout || '').trim().slice(-600)}` };
+    installiert = true;
+  }
+  writeFileSync(merk, JSON.stringify({ deps: h ?? null, sha, ref, zeit: new Date().toISOString() }, null, 1));
+  return { ok: true, sha: sha.slice(0, 8), zweig: ref, neu, installiert, text: `test auf ${ref} (${sha.slice(0, 8)})${neu ? ', Ordner angelegt' : ''}${installiert ? ', Abhängigkeiten installiert' : ''}${envText !== undefined ? ', .env aus der Umgebung test' : ''}` };
 }

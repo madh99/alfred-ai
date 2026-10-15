@@ -55,6 +55,25 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1462] - 2026-10-15
+
+### Added — test am Gerät (App 1.31.0)
+
+test braucht keinen eigenen Rechner, sondern einen eigenen Ort mit festem Stand.
+
+- Ein eigener Ordner neben dem Projekt (Standard `<Projekt>-test`) als git worktree auf dem Hauptzweig, ohne Netz und Token. Dazu ein eigener Port (Standard dev-Port + 1000) und derselbe Startbefehl wie dev.
+- Einschalten stellt eine Bestätigung mit Ordner, Port, Zweig und Umgebung.
+- Die `.env` kommt nur aus der Projektumgebung „test“. Die `.env` von dev wird nie kopiert, damit test zum Beispiel keine Benachrichtigungen doppelt verschickt.
+- Abhängigkeiten installiert Alfred nur bei Bedarf (`npm ci`/`npm install`), wenn sich die Lock-Datei geändert hat oder `node_modules` fehlt.
+- Aktualisiert wird nach jedem Zusammenführen (nach dem Ja oder automatisch), nach grünen Läufen ohne Merge Request und per Knopf. Danach folgen Neustart, Gesundheitsprüfung und der Link im Projektfaden.
+- Endgültiges Löschen stoppt auch die test-Instanz.
+- Wege: Bereich „test am Gerät“ in App und Web; im Gespräch `projekt_dev` mit `test_einschalten`, `test_ausschalten`, `test_aktualisieren`, `test_stoppen`.
+
+### Added — dev/test nach einem Neustart des Geräts wieder starten
+
+- Der Satellit merkt sich bestätigte Instanzen lokal in `~/.alfred/dev-autostart.json`. Nach seinem Start und alle 10 Minuten fährt er nicht laufende Instanzen wieder hoch, höchstens 3 Mal je Stunde und Instanz.
+- „Stoppen“ trägt eine Instanz aus. Ein fehlender Ordner wird ausgetragen, ein fremd belegter Port übersprungen.
+
 ## [0.19.0-jarvis.1461] - 2026-10-15
 
 ### Fixed — Endgültig löschen stoppt dev am Gerät

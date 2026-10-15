@@ -174,6 +174,13 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
               {dev.angabe?.dienst && <button disabled={busy} onClick={() => devAktion({ dev_aktion: 'neustart' })} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-300">Neu starten</button>}
               {dev.angabe?.dienst && <button disabled={busy} onClick={() => devAktion({ dev_aktion: 'stoppen' })} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-300">Stoppen</button>}
             </div>
+            {/* v1462 — test am Gerät */}
+            {dev.angabe?.dienst && <div className="border-t border-[#2a2a2a] pt-2 space-y-1">
+              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="h-4 w-4 accent-blue-500" checked={dev.test?.aktiv === true} disabled={busy} onChange={(ev) => devAktion({ dev_aktion: ev.target.checked ? 'test_einschalten' : 'test_ausschalten' })} /><span className="text-gray-200">test am Gerät</span><span className="text-gray-500">{dev.test?.aktiv ? 'Eigener Ordner aus dem Hauptzweig — aktualisiert nach jedem Zusammenführen und nach grünen Läufen.' : 'Einschalten schlägt Ordner und Port vor und fragt dich.'}</span></label>
+              {dev.test && <div className="text-gray-300">Ordner {dev.test.ordner}{dev.test.port ? ` · Port ${dev.test.port}` : ''}{dev.test.zweig ? ` · Zweig ${dev.test.zweig}` : ''}</div>}
+              {dev.test?.zuletzt && <div className="text-gray-400">{dev.test.zuletzt.ok ? '🟢' : '🔴'} {dev.test.zuletzt.url ? <a className="text-blue-400 hover:underline" href={dev.test.zuletzt.url} target="_blank" rel="noreferrer">{dev.test.zuletzt.url}</a> : dev.test.zuletzt.text}{dev.test.zuletzt.sha ? ` (${dev.test.zuletzt.sha})` : ''}</div>}
+              {dev.test && <div className="flex flex-wrap gap-2"><button disabled={busy} onClick={() => devAktion({ dev_aktion: 'test_aktualisieren' })} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-300">test aktualisieren</button><button disabled={busy} onClick={() => devAktion({ dev_aktion: 'test_stoppen' })} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-300">test stoppen</button></div>}
+            </div>}
           </>}
         </div>
         {/* v1458 — automatisch zusammenführen (nur mit Merge Requests) */}

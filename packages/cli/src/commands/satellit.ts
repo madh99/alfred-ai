@@ -31,7 +31,7 @@ import { linuxSitzungsUmgebung } from './satellit-bedienen-linux.js'; // v1339
 import { IpcServer, type IpcEreignisArt, type IpcAnhang, type SatellitStatus } from './satellit-ipc.js'; // v1302, v1325 Anhang
 import { heimInParams } from './satellit-pfad.js'; // v1303
 import { gitHolen, gitPush, gitRemoteSetzen, gitZweig, gitAktualisieren, paramsFuerLog } from './satellit-git.js'; // v1434 B13, v1444, v1455
-import { startErkennen, startErkennenClaude, startAngabePruefen, devStarten, devStoppen, devStand } from './satellit-dev.js'; // v1460
+import { startErkennen, startErkennenClaude, startAngabePruefen, devStarten, devStoppen, devStand, testBereitstellen, autostartPruefen } from './satellit-dev.js'; // v1460, v1462
 import { envSchluessel } from './satellit-env.js'; // v1443 B15
 import { pruefungenAus, pruefeAlle, type PruefMittel } from './satellit-pruefen.js'; // v1383 R1
 import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookKonten, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
@@ -123,6 +123,7 @@ export function baueManifest(version: string): GeraetManifest {
         { name: 'git_remote', beschreibung: 'v1444 — Remote origin eines Projekts setzen (url) oder entfernen (ohne url); nur Konfiguration, kein Push', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, url: { type: 'string', description: 'Repo-Adresse ohne Zugangsdaten; leer = entfernen' } } },
         { name: 'start_erkennen', beschreibung: 'v1460 — erkennen, wie ein Projekt lokal startet (Startdatei, package.json, Procfile, docker-compose; mit_claude: Claude Code nur lesend als Rückfall) — ändert nichts', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner' }, mit_claude: { type: 'boolean', description: 'Rückfall Claude Code (nur lesend, ≤ 0,30 $)' } } },
         { name: 'dev_start', beschreibung: 'v1460 — dev am Gerät starten bzw. neu starten (Startbefehl im Projektordner, abgekoppelt; beendet nur Instanzen dieses Projekts; wartet, bis es antwortet)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, start: { type: 'string', description: 'Startbefehl' }, port: { type: 'number', description: 'Port' }, pruefung: { type: 'string', description: 'Prüfadresse, z. B. /api/status' } } },
+        { name: 'test_bereitstellen', beschreibung: 'v1462 — test am Gerät: eigenen Ordner (git worktree) auf den Stand des Zielzweigs bringen, Abhängigkeiten bei Bedarf installieren, .env aus der Umgebung test schreiben — ohne Netz und Token', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Projektordner (Repo)' }, ordner: { type: 'string', description: 'test-Ordner (freigegeben, außerhalb des Projekts)' }, zweig: { type: 'string', description: 'Zielzweig, z. B. main' } } },
         { name: 'dev_stop', beschreibung: 'v1460 — dev am Gerät stoppen (nur die von Alfred gestartete Instanz)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' } } },
         { name: 'dev_stand', beschreibung: 'v1460 — läuft dev am Gerät, antwortet es, Link und letzte Protokollzeilen', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner' } } },
         { name: 'git_zweig', beschreibung: 'v1455 — Merge-Request-Modus: Zweig alfred/<lauf> im Projekt anlegen bzw. auschecken (ohne Netz, nicht eingecheckte Änderungen bleiben)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, zweig: { type: 'string', description: 'alfred/<lauf>' } } },
@@ -194,6 +195,7 @@ export function pfadVon(params: Record<string, unknown>, ...namen: string[]): st
  */
 let gehirnSende: ((n: Record<string, unknown>) => boolean) | undefined;
 let endeWaechter: ReturnType<typeof setInterval> | undefined; // v1394
+let autostartWaechter: ReturnType<typeof setInterval> | undefined; // v1462
 let sinneSofort: (() => void) | undefined; // v1411
 function meldeAuftragEnde(m: AuftragMeta, erg: AuftragErgebnis, log?: (t: string) => void): void {
   beendeFortschritt(m.id); // v1418
@@ -421,6 +423,14 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!a?.start) return { success: false, error: 'start fehlt oder ungültig (ein Befehl ohne Zeilenumbruch, Port 1–65535, Prüfadresse ab /)' };
       const r = await devStarten(projekt, a);
       return r.ok ? { success: true, data: { pid: r.pid, url: r.url }, display: r.text } : { success: false, error: `${r.fehler}${r.log ? `\n--- dev.log (Ende) ---\n${r.log}` : ''}` };
+    }
+    case 'test_bereitstellen': { // v1462
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const ordner = pfadVon(params, 'ordner', 'ziel');
+      if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Projektordner nicht freigegeben oder fehlt: ${projekt}` };
+      if (!ordner || !istPfadErlaubt(ordner, frei)) return { success: false, error: `test-Ordner nicht freigegeben (Schreibrecht nötig): ${ordner}` };
+      const r = await testBereitstellen(projekt, ordner, String(params.zweig ?? ''), typeof params.env === 'string' ? params.env : undefined);
+      return r.ok ? { success: true, data: { sha: r.sha, zweig: r.zweig, neu: r.neu, installiert: r.installiert }, display: r.text } : { success: false, error: r.fehler };
     }
     case 'dev_stop': { // v1460
       const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
@@ -786,6 +796,12 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
   const log = opts.log ?? (() => undefined);
   const fehler = opts.fehler ?? log;
   const version = getVersion();
+  // v1462 — bestätigte dev-/test-Instanzen nach einem Neustart des Geräts wieder hochfahren (und alle 10 min nachsehen)
+  if (!opts.einmal && !autostartWaechter && !process.env.ALFRED_KEIN_AUTOSTART) {
+    const pruefe = () => { void autostartPruefen(log).catch((err: Error) => fehler(`Autostart: ${err.message}`)); };
+    setTimeout(pruefe, 20_000);
+    autostartWaechter = setInterval(pruefe, 10 * 60_000);
+  }
   // v1302 — lokales IPC: Status, Ereignisse und Bestätigungen für Sitzungen am Gerät (Spec §8)
   let verbunden = false; let serverVersion: string | undefined; let verbundenSeit: string | undefined;
   const status = (): SatellitStatus => ({ name: k.name, version, pid: process.pid, verbunden, serverVersion, verbundenSeit, aktionenLaufend });

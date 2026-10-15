@@ -3466,7 +3466,7 @@ export interface Project {
   cwd?: string;
   repoUrl?: string;
   /** v1460 — Stufen und dev am Gerät (geraetDev) */
-  deployZiel?: { geraetDev?: { art?: 'geraet' | 'host'; aktiv?: boolean; angabe?: { dienst: boolean; start?: string; port?: number; pruefung?: string }; quelle?: string; zuletzt?: { ok: boolean; url?: string; text: string } }; stufen?: Record<string, unknown> };
+  deployZiel?: { geraetDev?: { art?: 'geraet' | 'host'; aktiv?: boolean; angabe?: { dienst: boolean; start?: string; port?: number; pruefung?: string }; quelle?: string; zuletzt?: { ok: boolean; url?: string; text: string }; test?: { aktiv?: boolean; ordner: string; port?: number; zweig?: string; zuletzt?: { ok: boolean; url?: string; sha?: string; text: string } } }; stufen?: Record<string, unknown> };
   /** v643 — Default-Branch (HEAD), auto-detected vom Project-Agent. */
   defaultBranch?: string;
   /** v726 — Default-ENV-Stage für Sandbox-Erstellung. */
