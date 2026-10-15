@@ -7,6 +7,13 @@
 /** Dateispeicher-Schlüssel `<Owner-UUID>/<Datei mit Endung>`, wie sie die Upload-Zeile der Nachricht nennt. */
 const SCHLUESSEL = /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[^\s"'„“”‚‘,;()<>[\]]+?\.[A-Za-z0-9]{1,8})(?=$|[\s"'„“”‚‘,;()<>[\]]|\.(?:\s|$))/g;
 
+/**
+ * v1467 — Upload-Zeile der App „… Schlüssel: <Schlüssel>.“ bis zum Zeilenende: Dateinamen enthalten Leerzeichen
+ * (Realfall 15.10.: `…_Screenshot 2026-10-15 202133.png` — das Muster oben bricht am Leerzeichen ab und fand nichts).
+ * Ebenso der Verlaufsvermerk „(Bild: <Schlüssel>)“ eingehender Bilder.
+ */
+const ZEILE = /(?:Schlüssel:|\(Bild:)[ \t]*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[^\n]+?\.[A-Za-z0-9]{1,8})(?:\.|\))?[ \t]*$/gm;
+
 export const ANHANG_MAX_DATEIEN = 6;
 
 /**
@@ -17,7 +24,9 @@ export function anhangSchluessel(text: string, owner: string, explizit?: unknown
   const roh: string[] = [];
   if (Array.isArray(explizit)) roh.push(...explizit.map(x => String(x)));
   else if (typeof explizit === 'string' && explizit.trim()) roh.push(...explizit.split(/[\s,]+/));
-  for (const m of text.matchAll(SCHLUESSEL)) roh.push(m[1]!);
+  const zeilen = [...text.matchAll(ZEILE)].map(m => m[1]!);
+  roh.push(...zeilen);
+  for (const m of text.matchAll(SCHLUESSEL)) if (!zeilen.some(z => z !== m[1] && z.startsWith(m[1]!))) roh.push(m[1]!); // kein abgeschnittenes Stück eines Zeilen-Schlüssels
   const aus: string[] = [];
   for (const r of roh) {
     const k = r.trim();

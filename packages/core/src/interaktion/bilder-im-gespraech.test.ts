@@ -15,6 +15,15 @@ describe('v1467 Bilder im Gespräch', () => {
     expect(bildMime('x/y.JPG')).toBe('image/jpeg');
   });
 
+  it('Realfall 15.10.: Schlüssel mit Leerzeichen aus der Upload-Zeile, mehrere Zeilen', () => {
+    const a = `${OWNER}/2026-10-15T18-21-52-740Z_Screenshot 2026-10-15 202133.png`;
+    const b = `${OWNER}/2026-10-15T18-21-52-801Z_Screenshot 2026-10-15 202140.png`;
+    const t = `Datei „Screenshot 2026-10-15 202133.png“ (1 Bytes, SHA-256 ab) liegt in deinem Dateispeicher, Schlüssel: ${a}.\nDatei „Screenshot 2026-10-15 202140.png“ (1 Bytes, SHA-256 cd) liegt in deinem Dateispeicher, Schlüssel: ${b}.\nWas siehst du?`;
+    expect(bildSchluessel(t, OWNER)).toEqual([a, b]);
+    expect(bildSchluessel(`[Photo]${bildVermerk([a])}`, OWNER)).toEqual([a]);
+    expect(bildSchluessel(`Schlüssel: ${OWNER}/x_mein.datei name.png.`, OWNER)).toEqual([`${OWNER}/x_mein.datei name.png`]);
+  });
+
   it('Vermerk im Verlauf wird wiedergefunden', () => {
     const k = `${OWNER}/2026-10-15T18-14-00-000Z_bild-1.jpg`;
     expect(bildSchluessel(`[Photo]${bildVermerk([k])}`, OWNER)).toEqual([k]);

@@ -55,6 +55,14 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1468] - 2026-10-15
+
+### Fixed — Dateispeicher-Schlüssel mit Leerzeichen
+
+Dateinamen aus der App enthalten Leerzeichen, z. B. `Screenshot 2026-10-15 202133.png`. Die Schlüssel-Erkennung brach dort ab und fand nichts. Betroffen waren die Bilder im Gespräch (1467) und die Anhänge für Claude-Code-Aufträge auf Geräten (seit 1424).
+
+- Die Upload-Zeile „… Schlüssel: <Schlüssel>.“ und der Verlaufsvermerk „(Bild: <Schlüssel>)“ werden bis zum Zeilenende gelesen.
+
 ## [0.19.0-jarvis.1467] - 2026-10-15
 
 ### Fixed — Bilder werden angesehen, Antworten auf Deutsch
