@@ -55,6 +55,22 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1465] - 2026-10-15
+
+### Changed — Prüfberichte nach fester Vorlage
+
+Realfall 15.10. 19:30: Der Mac-Bericht sah wieder ganz anders aus als die vorigen, weil das Modell das Aussehen bei jedem Lauf neu bestimmte. Außerdem stand ein laut Detailabfrage aktives Inserat unter „nicht prüfbar“.
+
+- Das Modell liefert nur noch Daten: den Stand mit 8 festen Spalten (Kennung, Link, Bezeichnung, Wert, Ort, Status, Notiz, seit) und optional eine kurze Einschätzung. Der Status ist ein festes Wort: aktiv, reserviert, verkauft, weg oder nicht prüfbar.
+- Alfred baut den Bericht selbst, jedes Mal gleich:
+  - **Änderungen** (neu, verkauft/weg, reserviert, Preis gesenkt/erhöht, wieder aktiv) aus dem Vergleich mit dem letzten Stand
+  - **Tabelle der aktuellen Einträge** mit Link, Preis, Ort, Hinweis und „bekannt seit“
+  - **Nicht prüfbar**
+  - zuletzt die **Einschätzung** des Modells, klar getrennt
+- Einträge, die das Modell nicht mehr nennt: Aktive bleiben als „nicht prüfbar“ im Stand. Verkauftes wird einmal gemeldet und fällt danach heraus.
+- Ältere Stände in freier Form werden weiter gelesen und beim ersten Lauf in die feste Form gebracht.
+- Gilt für alle Prüfaufträge.
+
 ## [0.19.0-jarvis.1464] - 2026-10-15
 
 ### Added — Einrichtungsschritte für test am Gerät (App 1.32.0)

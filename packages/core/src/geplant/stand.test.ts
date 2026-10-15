@@ -13,8 +13,9 @@ describe('v1449 Prüfaufträge mit eigenem Stand', () => {
     expect(r).toContain('Letzter Stand (vom 14.10., 09:00)');
     expect(r).toContain('789898944 mini 2400 EUR online');
     expect(r).toContain('„In einer Suche nicht gefunden“ ist NICHT „weg“');
-    expect(r).toContain('Jeder Eintrag ist mit seinem Link anklickbar'); // v1450
-    expect(r).toContain('Link/Adresse');
+    expect(r).toContain('Schreibe KEINEN eigenen Bericht'); // v1465 — Bericht nach fester Vorlage
+    expect(r).toContain('genau 8 Spalten: Kennung | Link | Bezeichnung');
+    expect(r).toContain('Status genau eines von: aktiv, reserviert, verkauft, weg, nicht prüfbar');
     expect(r).toContain(STAND_ANFANG);
     expect(standRahmen('X', '')).toContain('noch keiner');
   });
@@ -28,7 +29,7 @@ describe('v1449 Prüfaufträge mit eigenem Stand', () => {
   });
 
   it('Vollständigkeit: „Notiz gespeichert“ ohne Bericht/Stand ist unvollständig', () => {
-    expect(laufVollstaendig(standAus('Die Notiz mit dem Prüfstand ist gespeichert. Keine Käufe und keine Verkäuferkontakte.'))).toEqual({ ok: false, fehlt: ['Bericht', 'neuer Stand'] });
+    expect(laufVollstaendig(standAus('Die Notiz mit dem Prüfstand ist gespeichert. Keine Käufe und keine Verkäuferkontakte.'))).toEqual({ ok: false, fehlt: ['neuer Stand'] }); // v1465 — den Bericht baut Alfred
     const voll = `${'Änderungen: … '.repeat(20)}\n${STAND_ANFANG}\nA | 1\n${STAND_ENDE}`;
     expect(laufVollstaendig(standAus(voll)).ok).toBe(true);
   });

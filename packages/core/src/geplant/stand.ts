@@ -9,6 +9,8 @@
  *  - Vollständigkeit deterministisch: ohne Bericht oder ohne neuen Stand → einmal nachfordern, sonst als unvollständig melden.
  */
 
+import { standLesen } from './bericht.js'; // v1465
+
 export const STAND_ANFANG = '<<<STAND';
 export const STAND_ENDE = 'STAND>>>';
 const STAND_MAX = 12_000;
@@ -31,8 +33,9 @@ export function standRahmen(name: string, stand: string, standZeit?: string): st
     'Vorgaben für diesen Lauf:',
     '1. Prüfe JEDEN Eintrag des letzten Stands einzeln (direkt, z. B. über seine Kennung/Adresse) und stufe ihn ein: unverändert, geändert (was genau, alter → neuer Wert), weg/verkauft (nur wenn direkt bestätigt) oder nicht prüfbar. „In einer Suche nicht gefunden“ ist NICHT „weg“. Bei Marktplatz-Inseraten (z. B. willhaben) nutze die Detailabfrage des Marktplatz-Werkzeugs — sie meldet den Status (aktiv, verkauft, reserviert, nicht mehr abrufbar) direkt.',
     '2. Suche danach nach neuen passenden Einträgen.',
-    '3. Antworte mit dem vollständigen Bericht für den Owner (Änderungen zuerst, dann die Übersicht). Jeder Eintrag ist mit seinem Link anklickbar (Markdown [Bezeichnung](Adresse)), auch in Tabellen — wie in der ersten Anfrage. Kein „Notiz gespeichert“ als Antwort; lege für den Vergleich keine Notizen an — den Stand führt der Auftrag selbst.',
-    `4. Schließe die Antwort IMMER mit dem neuen Stand ab, genau so (eine Zeile je Eintrag mit Kennung, Link/Adresse und den verglichenen Werten; Links aus dem letzten Stand übernehmen):\n${STAND_ANFANG}\n…\n${STAND_ENDE}`,
+    // v1465 — den Bericht baut Alfred nach fester Vorlage; das Modell liefert Daten und höchstens eine kurze Einschätzung
+    '3. Schreibe KEINEN eigenen Bericht und keine Tabelle — Alfred baut den Bericht aus dem Stand nach fester Vorlage (Änderungen, aktuelle Einträge, nicht prüfbar). Optional davor eine kurze Einschätzung für den Owner (höchstens 5 Sätze, z. B. welches Angebot am interessantesten ist). Lege keine Notizen an — den Stand führt der Auftrag selbst.',
+    `4. Schließe die Antwort IMMER mit dem vollständigen neuen Stand ab — alle Einträge des letzten Stands plus neue, eine Zeile je Eintrag, genau 8 Spalten: Kennung | Link | Bezeichnung | Wert (z. B. Preis mit Währung) | Ort | Status | Notiz | (leer). Status genau eines von: aktiv, reserviert, verkauft, weg, nicht prüfbar — „nicht prüfbar“ nur, wenn die Abfrage selbst fehlschlägt; „in der Suche nicht gefunden“ ist kein Status. Links aus dem letzten Stand übernehmen.\n${STAND_ANFANG}\n…\n${STAND_ENDE}`,
   ].join('\n');
 }
 
@@ -51,9 +54,9 @@ export function standAus(text: string): { bericht: string; stand?: string } {
 
 export function laufVollstaendig(r: { bericht: string; stand?: string }): { ok: boolean; fehlt: string[] } {
   const fehlt: string[] = [];
-  if (r.bericht.trim().length < BERICHT_MIN) fehlt.push('Bericht');
-  if (!r.stand) fehlt.push('neuer Stand');
+  // v1465 — den Bericht baut Alfred; vollständig heißt: ein lesbarer Stand mit mindestens einem Eintrag
+  if (!r.stand || !standLesen(r.stand).length) fehlt.push('neuer Stand');
   return { ok: fehlt.length === 0, fehlt };
 }
 
-export const NACHFORDERUNG = 'Hinweis: Der vorige Versuch dieses Laufs lieferte keinen vollständigen Bericht bzw. keinen Stand-Block. Führe die Prüfung vollständig aus und halte dich genau an die Vorgaben 1–4.';
+export const NACHFORDERUNG = 'Hinweis: Der vorige Versuch dieses Laufs lieferte keinen lesbaren Stand-Block. Führe die Prüfung vollständig aus und halte dich genau an die Vorgaben 1–4 (Stand: 8 Spalten, Status als festes Wort).';

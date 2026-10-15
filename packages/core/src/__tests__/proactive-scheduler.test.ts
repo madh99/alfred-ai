@@ -134,10 +134,13 @@ describe('ProactiveScheduler', () => {
     expect(pipeline.process).toHaveBeenCalledTimes(2);
     expect(texte[0]).toContain('Letzter Stand (vom 14.10., 09:00):\n789898944 | 2400 EUR | online');
     expect(texte[0]).toContain('ist NICHT „weg“');
-    expect(texte[1]).toContain('vorige Versuch dieses Laufs lieferte keinen vollständigen Bericht');
-    expect(repo.setzeStand).toHaveBeenCalledWith('a1', '789898944 | 2300 EUR | online');
+    expect(texte[1]).toContain('vorige Versuch dieses Laufs lieferte keinen lesbaren Stand-Block');
+    // v1465 — Stand in fester Form (8 Spalten, seit heute), Bericht nach Vorlage
+    expect(repo.setzeStand).toHaveBeenCalledWith('a1', expect.stringMatching(/^789898944 \|  \| 789898944 \| 2300 EUR \|  \| aktiv \|  \| \d{4}-\d{2}-\d{2}$/));
     const gesendet = String(adapter.sendMessage.mock.calls[0]?.[1] ?? '');
-    expect(gesendet).toContain('2400 → 2300');
+    expect(gesendet).toContain('Preis gesenkt');
+    expect(gesendet).toContain('2400 EUR → ');
+    expect(gesendet).toContain('Einschätzung');
     expect(gesendet).not.toContain('<<<STAND');
   });
 
@@ -151,7 +154,7 @@ describe('ProactiveScheduler', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     s.stop();
     expect(repo.setzeStand).not.toHaveBeenCalled();
-    expect(String(adapter.sendMessage.mock.calls[0]?.[1] ?? '')).toContain('⚠️ Prüflauf „Mac-Angebote“ unvollständig: Bericht und neuer Stand fehlt');
+    expect(String(adapter.sendMessage.mock.calls[0]?.[1] ?? '')).toContain('⚠️ Prüflauf „Mac-Angebote“ unvollständig: neuer Stand fehlt');
   });
 
   it('v1450 Gespräch bekommt Markdown mit Kopfzeile, Telegram die HTML-Fassung', async () => {

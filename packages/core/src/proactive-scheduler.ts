@@ -13,6 +13,7 @@ import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
 import { entscheideMeldung, kennungenAus } from './geplant/meldung.js'; // v1368
 import { standRahmen, standAus, laufVollstaendig, istPruefAuftrag, NACHFORDERUNG } from './geplant/stand.js'; // v1449
+import { standLesen, standSchreiben, berichtBauen } from './geplant/bericht.js'; // v1465
 import { zustellProtokoll } from './zustellung/protokoll.js'; // v1369
 
 export class ProactiveScheduler {
@@ -162,9 +163,12 @@ export class ProactiveScheduler {
             v = laufVollstaendig(teil);
           }
           if (v.ok) {
-            await this.actionRepo.setzeStand(action.id, teil.stand!);
-            rohText = teil.bericht;
-            this.logger.info({ actionId: action.id, name: action.name, standZeichen: teil.stand!.length }, 'v1449 Prüfstand fortgeschrieben');
+            // v1465 — Bericht nach fester Vorlage aus altem und neuem Stand; die freie Antwort des Modells wird nur noch „Einschätzung“
+            const b = berichtBauen({ alt: standLesen(action.stand), neu: standLesen(teil.stand), einschaetzung: teil.bericht, jetzt: new Date() });
+            const neuerStand = standSchreiben(b.stand);
+            await this.actionRepo.setzeStand(action.id, neuerStand);
+            rohText = b.bericht;
+            this.logger.info({ actionId: action.id, name: action.name, standZeichen: neuerStand.length, eintraege: b.stand.length }, 'v1449 Prüfstand fortgeschrieben');
           } else {
             rohText = `${teil.bericht.trim() || '(kein Bericht geliefert)'}\n\n⚠️ Prüflauf „${action.name}“ unvollständig: ${v.fehlt.join(' und ')} fehlt auch nach Nachforderung — der letzte Stand bleibt; der nächste Lauf prüft erneut.`;
             this.logger.warn({ actionId: action.id, name: action.name, fehlt: v.fehlt }, 'v1449 Prüflauf unvollständig nach Nachforderung');
