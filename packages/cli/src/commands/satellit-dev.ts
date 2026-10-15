@@ -194,7 +194,8 @@ export function lanAdresse(): string {
 
 function devAusschluss(dir: string): void {
   const datei = path.join(dir, '.git', 'info', 'exclude');
-  if (!existsSync(path.join(dir, '.git'))) return;
+  // v1463 — in einem git worktree ist .git eine Datei (Realfall 15.10.: ENOTDIR beim Start von test); dort gilt der Ausschluss des Haupt-Repos
+  try { if (!statSync(path.join(dir, '.git')).isDirectory()) return; } catch { return; }
   const alt = existsSync(datei) ? readFileSync(datei, 'utf8') : '';
   if (alt.split(/\r?\n/).includes(DEV_AUSSCHLUSS)) return;
   mkdirSync(path.dirname(datei), { recursive: true });

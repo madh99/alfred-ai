@@ -55,6 +55,14 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1463] - 2026-10-15
+
+### Fixed — test am Gerät startet im worktree
+
+- Realfall 15.10. bei der ersten echten Probe: Der test-Ordner wurde korrekt angelegt, der Start brach aber mit „ENOTDIR … .git/info“ ab.
+- In einem git worktree ist `.git` eine Datei. Der Ausschluss von `.alfred/dev.*` gilt dort über das Haupt-Repo und wird im worktree nicht mehr angelegt.
+- Regressionstest: Start in einem worktree.
+
 ## [0.19.0-jarvis.1462] - 2026-10-15
 
 ### Added — test am Gerät (App 1.31.0)

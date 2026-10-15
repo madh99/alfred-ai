@@ -121,6 +121,13 @@ describe('v1462 Autostart und test am Gerät', () => {
     expect((await testBereitstellen(projekt, path.join(projekt, 'test'), 'main')).ok).toBe(false);
     expect((await testBereitstellen(projekt, ordner, 'gibt-es-nicht')).ok).toBe(false);
     expect((await testBereitstellen(projekt, ordner, '../x')).ok).toBe(false);
+    // v1463 — Realfall 15.10.: Start im worktree (.git ist dort eine Datei) brach mit ENOTDIR ab
+    writeFileSync(path.join(projekt, 'server.js'), "require('http').createServer((q, r) => r.end('test')).listen(Number(process.env.PORT));"); g(['add', 'server.js']); g(['commit', '-q', '-m', 'S']);
+    expect((await testBereitstellen(projekt, ordner, 'main')).ok).toBe(true);
+    const port = await freierPort();
+    const st = await devStarten(ordner, { dienst: true, start: 'node server.js', port }, 20_000, HOME);
+    expect(st.ok).toBe(true);
+    expect((await devStoppen(ordner, HOME)).ok).toBe(true);
     const fremd = neu(); writeFileSync(path.join(fremd, 'x'), '1');
     expect(await testBereitstellen(projekt, fremd, 'main')).toMatchObject({ ok: false, fehler: expect.stringContaining('kein test-Ordner von Alfred') });
     expect(existsSync(path.join(projekt, '.env')) && readFileSync(path.join(projekt, '.env'), 'utf8')).toBe('GEHEIM=dev');
