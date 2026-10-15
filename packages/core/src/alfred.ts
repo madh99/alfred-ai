@@ -15975,6 +15975,13 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (hindernisse.length) return { success: false, error: `${p.name} hängt noch an ${hindernisse.join(' und ')} — erst dort lösen` };
     if (typeof bestaetigt === 'string') {
       if (!this.deployFreigaben.loese(bestaetigt, p.id, 'loeschen')) return { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
+      // v1461 — eine von Alfred gestartete dev-Instanz am Gerät zuerst stoppen (sonst läuft sie ohne Projekt weiter)
+      let devHinweis = '';
+      if (p.geraetId && p.cwd) {
+        const g = this.geraeteGateway?.geraetNachName(p.geraetId);
+        if (g?.aktionen.includes('dev_stop')) { const r = await this.geraeteGateway!.sendeAktion(g.id, 'dev_stop', { projekt: p.cwd }, 60_000).catch((err: Error) => ({ success: false, error: err.message, display: undefined })); devHinweis = r.success ? (/gestoppt/.test(r.display ?? '') ? ' dev am Gerät gestoppt.' : '') : ` ⚠️ dev am Gerät nicht gestoppt: ${r.error}.`; this.logger.info({ projekt: p.id, ok: r.success, text: r.display ?? r.error }, 'v1461 dev vor dem Löschen gestoppt'); }
+        else if (geraetDevAus(p.deployZiel, false).zuletzt?.ok) devHinweis = ` ⚠️ ${p.geraet ?? 'Gerät'} nicht verbunden — eine laufende dev-Instanz läuft weiter.`;
+      }
       const n = await repo.endgueltigLoeschen(o, p.id);
       if (!n) return { success: false, error: 'Projekt nicht gefunden' };
       const entfernt = this.satellitProjekte?.entferneLaeufe(p.id) ?? 0;
@@ -15982,11 +15989,11 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       if (this.conversationRepo) { const c = await this.conversationRepo.findByPlatformChat('api' as never, `owner:faden:projekt-${p.id.slice(0, 8)}`).catch(() => null); if (c) { await this.conversationRepo.hardDelete(c.id).catch(() => undefined); faden = 1; } }
       this.logger.info({ projekt: p.id, name: p.name, zeilen: n, laeufe: entfernt, faden }, 'v1457 Projekt endgültig gelöscht');
       await this.geraeteProjektNamenAuffrischen?.().catch(() => undefined);
-      return { success: true, display: `🗑 ${p.name} endgültig gelöscht (Projekt, ${entfernt} Läufe, ${faden ? 'Projektfaden, ' : ''}${n.project_environments ? 'Umgebungen, ' : ''}Sitzungen und offene Punkte).${p.cwd ? ` Der Ordner ${p.geraet ? `auf ${p.geraet} ` : ''}(${p.cwd}) bleibt.` : ''}${p.repoUrl ? ` Das Repository ${p.repoUrl} bleibt.` : ''}` };
+      return { success: true, display: `🗑 ${p.name} endgültig gelöscht (Projekt, ${entfernt} Läufe, ${faden ? 'Projektfaden, ' : ''}${n.project_environments ? 'Umgebungen, ' : ''}Sitzungen und offene Punkte).${p.cwd ? ` Der Ordner ${p.geraet ? `auf ${p.geraet} ` : ''}(${p.cwd}) bleibt.` : ''}${p.repoUrl ? ` Das Repository ${p.repoUrl} bleibt.` : ''}${devHinweis}` };
     }
     if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
     const nonce = this.deployFreigaben.stelle(p.id, 'loeschen', undefined, 24 * 3_600_000);
-    const text = [`🗑 Projekt „${p.name}“ endgültig löschen?`, `Gelöscht werden: Projekt, ${laeufe.length} Läufe mit Protokoll, Sitzungen, offene Punkte, Entscheidungen, Umgebungen (auch gespeicherte Secrets) und der Projektfaden.`, `Bleiben: ${[p.cwd ? `Ordner ${p.geraet ? `auf ${p.geraet} ` : ''}(${p.cwd})` : '', p.repoUrl ? `Repository ${p.repoUrl}` : ''].filter(Boolean).join(', ') || 'nichts weiter'}.`, 'Das lässt sich nicht rückgängig machen. (Nur ausblenden: archivieren.)'].join('\n');
+    const text = [`🗑 Projekt „${p.name}“ endgültig löschen?`, `Gelöscht werden: Projekt, ${laeufe.length} Läufe mit Protokoll, Sitzungen, offene Punkte, Entscheidungen, Umgebungen (auch gespeicherte Secrets) und der Projektfaden${p.geraetId ? '; eine von Alfred gestartete dev-Instanz am Gerät wird gestoppt' : ''}.`, `Bleiben: ${[p.cwd ? `Ordner ${p.geraet ? `auf ${p.geraet} ` : ''}(${p.cwd})` : '', p.repoUrl ? `Repository ${p.repoUrl}` : ''].filter(Boolean).join(', ') || 'nichts weiter'}.`, 'Das lässt sich nicht rückgängig machen. (Nur ausblenden: archivieren.)'].join('\n');
     const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `loeschen-${p.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'projekt_loeschen', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) } as never);
     this.logger.info({ projekt: p.id, name: p.name }, 'v1457 Löschen zur Bestätigung gestellt');
     return ok ? { success: true, data: { bestaetigung: true }, display: `Endgültiges Löschen von ${p.name} zur Bestätigung gestellt — erst nach deinem Ja wird gelöscht.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
