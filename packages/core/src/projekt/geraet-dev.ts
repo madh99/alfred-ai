@@ -7,7 +7,7 @@
  * Gespeichert unter projects.deploy_ziel.geraetDev (neben den Stufen). Ein Startbefehl wird nur nach Owner-Bestätigung ausgeführt.
  */
 
-export interface StartAngabe { dienst: boolean; start?: string; port?: number; pruefung?: string }
+export interface StartAngabe { dienst: boolean; start?: string; port?: number; pruefung?: string; /** v1464 — einmalige Einrichtung frischer Ordner (test) */ einrichten?: string[] }
 
 export interface GeraetDev {
   art: 'geraet' | 'host';
@@ -32,16 +32,16 @@ export function geraetDevAus(deployZiel: Record<string, unknown> | undefined, de
 
 export function angabeGleich(a: StartAngabe | undefined, b: StartAngabe | undefined): boolean {
   if (!a || !b) return !a && !b;
-  return a.dienst === b.dienst && (a.start ?? '') === (b.start ?? '') && (a.port ?? 0) === (b.port ?? 0) && (a.pruefung ?? '') === (b.pruefung ?? '');
+  return a.dienst === b.dienst && (a.start ?? '') === (b.start ?? '') && (a.port ?? 0) === (b.port ?? 0) && (a.pruefung ?? '') === (b.pruefung ?? '') && (a.einrichten ?? []).join('\n') === (b.einrichten ?? []).join('\n');
 }
 
 export function angabeText(a: StartAngabe): string {
   if (!a.dienst) return 'kein Dienst (dev heißt hier: Build und Tests grün)';
-  return `Start \`${a.start}\`${a.port ? `, Port ${a.port}` : ''}${a.pruefung ? `, Prüfadresse ${a.pruefung}` : ''}`;
+  return `Start \`${a.start}\`${a.port ? `, Port ${a.port}` : ''}${a.pruefung ? `, Prüfadresse ${a.pruefung}` : ''}${a.einrichten?.length ? `, Einrichtung ${a.einrichten.map(b => `\`${b}\``).join(', ')}` : ''}`;
 }
 
 /** Etappenregel: wie das Projekt startet, hält Claude Code an fester Stelle fest (Alfred liest es danach ohne Modell). */
-export const START_REGEL = 'Startangabe: Ist das Projekt ein Dienst (Server, Web-App, API) oder wird es einer, halte in der Datei .alfred-start.json im Projektordner fest, wie es lokal startet — {"dienst": true, "start": "<Befehl im Projektordner>", "port": <Port>, "pruefung": "<Pfad, der mit Status 2xx antwortet>"}; sonst {"dienst": false}. Halte die Datei aktuell, wenn sich Start, Port oder Prüfadresse ändern. Starte den Dienst nicht dauerhaft selbst — das übernimmt Alfred.';
+export const START_REGEL = 'Startangabe: Ist das Projekt ein Dienst (Server, Web-App, API) oder wird es einer, halte in der Datei .alfred-start.json im Projektordner fest, wie es lokal startet — {"dienst": true, "start": "<Befehl im Projektordner>", "port": <Port>, "pruefung": "<Pfad, der mit Status 2xx antwortet>", "einrichten": ["<einmalige Befehle für einen frischen Ordner, z. B. Browser-Installation — nur wenn nötig>"]}; sonst {"dienst": false}. Halte die Datei aktuell, wenn sich Start, Port oder Prüfadresse ändern. Starte den Dienst nicht dauerhaft selbst — das übernimmt Alfred.';
 
 /** Bestätigungstext für eine Startangabe. */
 export function vorschlagText(o: { name: string; geraet: string; pfad: string; angabe: StartAngabe; quelle: string; hinweise: string[]; geaendert?: StartAngabe }): string {

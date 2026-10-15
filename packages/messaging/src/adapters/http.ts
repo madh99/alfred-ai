@@ -837,7 +837,7 @@ export class HttpAdapter extends MessagingAdapter {
       try { jd = JSON.parse((await this.readBody(req)) || '{}') as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
       const aktion = String(jd.aktion ?? '');
       if (!['ziel', 'ziel_entfernen', 'deploy', 'rollback', 'hochstufen', 'remote', 'dev'].includes(aktion)) { antwort(400, { error: 'aktion muss ziel, ziel_entfernen, deploy, rollback, hochstufen, remote oder dev sein' }); return; }
-      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name', 'von', 'nach', 'repo', 'anlegen', 'entfernen', 'dev_aktion', 'start', 'port', 'pruefung', 'kein_dienst', 'art', 'mit_claude', 'test_ordner', 'test_port', 'test_zweig'].filter(k => jd[k] !== undefined && jd[k] !== '').map(k => [k, jd[k]]));
+      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name', 'von', 'nach', 'repo', 'anlegen', 'entfernen', 'dev_aktion', 'start', 'port', 'pruefung', 'kein_dienst', 'art', 'mit_claude', 'test_ordner', 'test_port', 'test_zweig', 'einrichten'].filter(k => jd[k] !== undefined && jd[k] !== '').map(k => [k, jd[k]]));
       antwort(200, await cb.deploy(id, aktion, felder));
       return;
     }

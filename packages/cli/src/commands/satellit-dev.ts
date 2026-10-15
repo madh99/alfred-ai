@@ -20,7 +20,16 @@ const DEV_DATEI = path.join('.alfred', 'dev.json');
 const DEV_LOG = path.join('.alfred', 'dev.log');
 const DEV_AUSSCHLUSS = '/.alfred/dev.*';
 
-export interface StartAngabe { dienst: boolean; start?: string; port?: number; pruefung?: string }
+/** v1464 — einrichten: einmalige Befehle für einen frischen Ordner (z. B. „npm run browser:einrichten“), höchstens 5 */
+export interface StartAngabe { dienst: boolean; start?: string; port?: number; pruefung?: string; einrichten?: string[] }
+
+function einrichtenPruefen(roh: unknown): string[] | undefined | false {
+  if (roh === undefined || roh === null) return undefined;
+  const l = Array.isArray(roh) ? roh : typeof roh === 'string' ? roh.split('\n') : [];
+  const z = l.map(x => String(x).trim()).filter(Boolean);
+  if (z.length > 5 || z.some(x => x.length > 300 || /[\r\n\0]/.test(x))) return false;
+  return z.length ? z : undefined;
+}
 export interface Erkennung { gefunden: boolean; angabe?: StartAngabe; quelle?: 'datei' | 'erkannt' | 'claude'; hinweise: string[] }
 
 /** Angabe prüfen (Datei, Claude-Antwort, manuelle Eingabe): ein Befehl ohne Zeilenumbruch, Port 1–65535, Prüfadresse ab „/“. */
@@ -33,7 +42,9 @@ export function startAngabePruefen(roh: unknown): StartAngabe | undefined {
   const port = r.port === undefined || r.port === null || r.port === '' ? undefined : Number(r.port);
   if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) return undefined;
   const pruefung = typeof r.pruefung === 'string' && /^\/\S{0,199}$/.test(r.pruefung) ? r.pruefung : undefined;
-  return { dienst: true, start, ...(port ? { port } : {}), ...(pruefung ? { pruefung } : {}) };
+  const einrichten = einrichtenPruefen(r.einrichten);
+  if (einrichten === false) return undefined;
+  return { dienst: true, start, ...(port ? { port } : {}), ...(pruefung ? { pruefung } : {}), ...(einrichten ? { einrichten } : {}) };
 }
 
 const lies = (p: string, max = 200_000): string => { try { const s = statSync(p); return s.isFile() && s.size <= max ? readFileSync(p, 'utf8') : ''; } catch { return ''; } };
@@ -88,7 +99,9 @@ export function startErkennen(dir: string): Erkennung {
         const deps = Object.keys({ ...(j.dependencies ?? {}), ...(j.devDependencies ?? {}) });
         const webDep = deps.some(d => /^(express|fastify|koa|hono|next|nuxt|vite|@nestjs\/core|http-server|serve|astro|@sveltejs\/kit)$/.test(d));
         const serverCode = haupt ? /createServer|\.listen\(/.test(lies(path.join(dir, haupt))) : false;
-        if (pp.port || webDep || serverCode) return { gefunden: true, angabe: { dienst: true, start: skript === 'start' ? 'npm start' : 'npm run dev', ...(pp.port ? { port: pp.port } : {}), ...(pp.pruefung ? { pruefung: pp.pruefung } : {}) }, quelle: 'erkannt', hinweise: [`Start aus package.json (scripts.${skript}: ${befehl.slice(0, 80)})`, ...pp.hinweise] };
+        // v1464 — Einrichtungs-Skripte (einmalig für einen frischen Ordner): Namen wie browser:einrichten, setup, install-browsers
+        const einr = Object.keys(j.scripts ?? {}).filter(n => /(^|:)(einrichten|setup|install-browsers?|browsers?:install)$/i.test(n)).slice(0, 5).map(n => `npm run ${n}`);
+        if (pp.port || webDep || serverCode) return { gefunden: true, angabe: { dienst: true, start: skript === 'start' ? 'npm start' : 'npm run dev', ...(pp.port ? { port: pp.port } : {}), ...(pp.pruefung ? { pruefung: pp.pruefung } : {}), ...(einr.length ? { einrichten: einr } : {}) }, quelle: 'erkannt', hinweise: [`Start aus package.json (scripts.${skript}: ${befehl.slice(0, 80)})`, ...pp.hinweise, ...(einr.length ? [`Einrichtung: ${einr.join(', ')}`] : [])] };
         if (j.bin) return { gefunden: true, angabe: { dienst: false }, quelle: 'erkannt', hinweise: ['package.json: Kommandozeilenwerkzeug (bin), kein Dienst'] };
       } else if (j.bin || !j.scripts?.start) {
         return { gefunden: true, angabe: { dienst: false }, quelle: 'erkannt', hinweise: ['package.json ohne start-Skript: kein Dienst'] };
@@ -316,7 +329,7 @@ function depsHash(dir: string): string | undefined {
  * test-Ordner anlegen bzw. auf den Stand von `ref` bringen (detached, --force: test hat keine eigenen Änderungen), Abhängigkeiten bei
  * Bedarf installieren (npm ci / npm install), .env aus der Umgebung „test“ schreiben (0600) — die .env von dev wird nie kopiert.
  */
-export async function testBereitstellen(projekt: string, ordner: string, ref: string, envText?: string): Promise<{ ok: true; sha: string; zweig: string; neu: boolean; installiert: boolean; text: string } | { ok: false; fehler: string }> {
+export async function testBereitstellen(projekt: string, ordner: string, ref: string, envText?: string, einrichten?: string[]): Promise<{ ok: true; sha: string; zweig: string; neu: boolean; installiert: boolean; text: string } | { ok: false; fehler: string }> {
   const p = path.resolve(projekt); const o = path.resolve(ordner);
   // ohne Angabe: der ausgecheckte Zweig des Projekts — außer einem Lauf-Zweig (alfred/…), dann main bzw. master
   if (!ref) { const b = git(['rev-parse', '--abbrev-ref', 'HEAD'], p).stdout.trim(); ref = b && b !== 'HEAD' && !b.startsWith('alfred/') ? b : ['main', 'master'].find(z => git(['rev-parse', '--verify', '--quiet', `refs/heads/${z}`], p).status === 0) ?? ''; }
@@ -350,6 +363,16 @@ export async function testBereitstellen(projekt: string, ordner: string, ref: st
     if (r.status !== 0) return { ok: false, fehler: `${befehl} fehlgeschlagen: ${(r.stderr || r.stdout || '').trim().slice(-600)}` };
     installiert = true;
   }
-  writeFileSync(merk, JSON.stringify({ deps: h ?? null, sha, ref, zeit: new Date().toISOString() }, null, 1));
-  return { ok: true, sha: sha.slice(0, 8), zweig: ref, neu, installiert, text: `test auf ${ref} (${sha.slice(0, 8)})${neu ? ', Ordner angelegt' : ''}${installiert ? ', Abhängigkeiten installiert' : ''}${envText !== undefined ? ', .env aus der Umgebung test' : ''}` };
+  // v1464 — Einrichtung (einmalig je Ordner bzw. bei geänderten Befehlen): nach den Abhängigkeiten, vor dem Start
+  const eh = einrichten?.length ? createHash('sha256').update(einrichten.join('\n')).digest('hex').slice(0, 16) : undefined;
+  let eingerichtet = false;
+  if (eh && (alt as { einrichten?: string }).einrichten !== eh) {
+    for (const b of einrichten!) {
+      const r = process.platform === 'win32' ? spawnSync('cmd.exe', ['/c', b], { cwd: o, encoding: 'utf8', timeout: 15 * 60_000, windowsHide: true }) : spawnSync('/bin/sh', ['-c', b], { cwd: o, encoding: 'utf8', timeout: 15 * 60_000 });
+      if (r.status !== 0) return { ok: false, fehler: `Einrichtung „${b}“ fehlgeschlagen: ${(r.stderr || r.stdout || '').trim().slice(-600)}` };
+    }
+    eingerichtet = true;
+  }
+  writeFileSync(merk, JSON.stringify({ deps: h ?? null, einrichten: eh ?? (alt as { einrichten?: string }).einrichten ?? null, sha, ref, zeit: new Date().toISOString() }, null, 1));
+  return { ok: true, sha: sha.slice(0, 8), zweig: ref, neu, installiert, text: `test auf ${ref} (${sha.slice(0, 8)})${neu ? ', Ordner angelegt' : ''}${installiert ? ', Abhängigkeiten installiert' : ''}${eingerichtet ? `, eingerichtet (${einrichten!.join('; ')})` : ''}${envText !== undefined ? ', .env aus der Umgebung test' : ''}` };
 }

@@ -8,7 +8,8 @@ import 'aufgaben.dart' show JsonAbruf;
 String devAngabeText(Map<String, dynamic>? a) {
   if (a == null) return 'noch keine bestätigte Startangabe';
   if (a['dienst'] == false) return 'kein Dienst — dev heißt hier: Build und Tests grün';
-  return 'Start „${a['start'] ?? ''}“${a['port'] != null ? ' · Port ${a['port']}' : ''}${a['pruefung'] != null ? ' · Prüfadresse ${a['pruefung']}' : ''}';
+  final einr = (a['einrichten'] as List?)?.map((e) => '$e').toList() ?? const <String>[];
+  return 'Start „${a['start'] ?? ''}“${a['port'] != null ? ' · Port ${a['port']}' : ''}${a['pruefung'] != null ? ' · Prüfadresse ${a['pruefung']}' : ''}${einr.isNotEmpty ? ' · Einrichtung: ${einr.join('; ')}' : ''}';
 }
 
 const quelleText = {'datei': 'aus .alfred-start.json', 'erkannt': 'erkannt', 'claude': 'von Claude Code ermittelt', 'manuell': 'von dir eingetragen'};
@@ -112,10 +113,11 @@ class _DevEintragenDialogState extends State<DevEintragenDialog> {
   late final start = TextEditingController(text: '${widget.angabe?['start'] ?? ''}');
   late final port = TextEditingController(text: widget.angabe?['port'] != null ? '${widget.angabe!['port']}' : '');
   late final pruefung = TextEditingController(text: '${widget.angabe?['pruefung'] ?? ''}');
+  late final einrichten = TextEditingController(text: ((widget.angabe?['einrichten'] as List?) ?? const []).join('\n')); // 1.32.0
   late bool keinDienst = widget.angabe?['dienst'] == false;
 
   @override
-  void dispose() { for (final c in [start, port, pruefung]) { c.dispose(); } super.dispose(); }
+  void dispose() { for (final c in [start, port, pruefung, einrichten]) { c.dispose(); } super.dispose(); }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
@@ -126,11 +128,12 @@ class _DevEintragenDialogState extends State<DevEintragenDialog> {
         TextField(key: const Key('dev-start'), controller: start, decoration: const InputDecoration(labelText: 'Startbefehl im Projektordner', hintText: 'npm start')),
         TextField(key: const Key('dev-port'), controller: port, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Port', hintText: '3000')),
         TextField(key: const Key('dev-pruefung'), controller: pruefung, decoration: const InputDecoration(labelText: 'Prüfadresse (optional)', hintText: '/api/status')),
+        TextField(key: const Key('dev-einrichten'), controller: einrichten, minLines: 1, maxLines: 4, decoration: const InputDecoration(labelText: 'Einrichtung für test (optional, je Zeile ein Befehl)', hintText: 'npm run browser:einrichten')),
       ],
     ]),
     actions: [
       TextButton(onPressed: () => Navigator.pop(context), child: const Text('Abbrechen')),
-      FilledButton(key: const Key('dev-eintragen-ok'), onPressed: () => Navigator.pop(context, keinDienst ? {'dev_aktion': 'setzen', 'kein_dienst': true} : {'dev_aktion': 'setzen', 'start': start.text.trim(), if (port.text.trim().isNotEmpty) 'port': int.tryParse(port.text.trim()) ?? port.text.trim(), if (pruefung.text.trim().isNotEmpty) 'pruefung': pruefung.text.trim()}), child: const Text('Zur Bestätigung')),
+      FilledButton(key: const Key('dev-eintragen-ok'), onPressed: () => Navigator.pop(context, keinDienst ? {'dev_aktion': 'setzen', 'kein_dienst': true} : {'dev_aktion': 'setzen', 'start': start.text.trim(), if (port.text.trim().isNotEmpty) 'port': int.tryParse(port.text.trim()) ?? port.text.trim(), if (pruefung.text.trim().isNotEmpty) 'pruefung': pruefung.text.trim(), if (einrichten.text.trim().isNotEmpty) 'einrichten': einrichten.text.split('\n').map((z) => z.trim()).where((z) => z.isNotEmpty).toList()}), child: const Text('Zur Bestätigung')),
     ],
   );
 }

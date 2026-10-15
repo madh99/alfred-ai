@@ -208,7 +208,7 @@ export class OwnerAnsichten {
     if (aktion === 'deploy_ziel' || aktion === 'deploy_ziel_entfernen' || aktion === 'deploy' || aktion === 'rollback' || aktion === 'hochstufen' || aktion === 'remote' || aktion === 'dev') { // v1460 dev
       if (!this.d.projekte.deploy) return { success: false, error: 'Deploy nicht verfügbar' };
       const roh = (extra?.deploy && typeof extra.deploy === 'object' ? extra.deploy : {}) as Record<string, unknown>;
-      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name', 'von', 'nach', 'repo', 'anlegen', 'entfernen', 'dev_aktion', 'start', 'port', 'pruefung', 'kein_dienst', 'art', 'mit_claude', 'test_ordner', 'test_port', 'test_zweig'].filter(k => roh[k] !== undefined && roh[k] !== '').map(k => [k, roh[k]]));
+      const felder = Object.fromEntries(['host', 'user', 'process_manager', 'runtime', 'app_port', 'branch', 'env_stage', 'stufe', 'auto_dev', 'name', 'von', 'nach', 'repo', 'anlegen', 'entfernen', 'dev_aktion', 'start', 'port', 'pruefung', 'kein_dienst', 'art', 'mit_claude', 'test_ordner', 'test_port', 'test_zweig', 'einrichten'].filter(k => roh[k] !== undefined && roh[k] !== '').map(k => [k, roh[k]]));
       this.d.protokoll?.('Projekt Deploy', { projekt: id, aktion });
       return this.d.projekte.deploy(id, aktion === 'deploy_ziel' ? 'ziel' : aktion === 'deploy_ziel_entfernen' ? 'ziel_entfernen' : aktion, felder);
     }

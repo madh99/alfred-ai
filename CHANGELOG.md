@@ -55,6 +55,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1464] - 2026-10-15
+
+### Added — Einrichtungsschritte für test am Gerät (App 1.32.0)
+
+Manche Projekte brauchen in einem frischen Ordner einmalige Schritte, die nicht im Repository liegen. Bei Angebots-Radar ist das `npm run browser:einrichten` für die SPAR-Quelle.
+
+- Die Startangabe hat ein optionales Feld „Einrichtung“: höchstens 5 Befehle, je eine Zeile.
+- Quellen: `.alfred-start.json` (die Etappenregel nennt das Feld), manuelle Eingabe in App, Web und Gespräch, oder erkannt aus `package.json`-Skripten wie `browser:einrichten`, `setup`, `install-browsers`.
+- Wie jede Startangabe erst nach Owner-Bestätigung.
+- Beim Bereitstellen von test laufen die Schritte nach den Abhängigkeiten und vor dem Start: beim ersten Anlegen und wieder, wenn sie sich ändern. Ein Fehler stoppt mit der Ausgabe.
+
 ## [0.19.0-jarvis.1463] - 2026-10-15
 
 ### Fixed — test am Gerät startet im worktree

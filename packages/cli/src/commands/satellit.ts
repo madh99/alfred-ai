@@ -429,7 +429,8 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       const ordner = pfadVon(params, 'ordner', 'ziel');
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Projektordner nicht freigegeben oder fehlt: ${projekt}` };
       if (!ordner || !istPfadErlaubt(ordner, frei)) return { success: false, error: `test-Ordner nicht freigegeben (Schreibrecht nötig): ${ordner}` };
-      const r = await testBereitstellen(projekt, ordner, String(params.zweig ?? ''), typeof params.env === 'string' ? params.env : undefined);
+      const einrichten = Array.isArray(params.einrichten) ? (params.einrichten as unknown[]).map(String).filter(x => x.trim() && x.length <= 300 && !/[\r\n\0]/.test(x)).slice(0, 5) : undefined; // v1464
+      const r = await testBereitstellen(projekt, ordner, String(params.zweig ?? ''), typeof params.env === 'string' ? params.env : undefined, einrichten?.length ? einrichten : undefined);
       return r.ok ? { success: true, data: { sha: r.sha, zweig: r.zweig, neu: r.neu, installiert: r.installiert }, display: r.text } : { success: false, error: r.fehler };
     }
     case 'dev_stop': { // v1460

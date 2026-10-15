@@ -15,13 +15,13 @@ const freierPort = () => new Promise<number>((r) => { const s = net.createServer
 describe('v1460 Start erkennen', () => {
   it('wie Angebots-Radar: npm start, Port aus dem Code, Prüfadresse aus dem Server', () => {
     const d = neu();
-    writeFileSync(path.join(d, 'package.json'), JSON.stringify({ scripts: { start: 'node --env-file-if-exists=.env src/start.js', test: 'node --test' } }));
+    writeFileSync(path.join(d, 'package.json'), JSON.stringify({ scripts: { start: 'node --env-file-if-exists=.env src/start.js', test: 'node --test', 'browser:einrichten': 'node scripts/browser-einrichten.js' } }));
     mkdirSync(path.join(d, 'src'));
     writeFileSync(path.join(d, 'src', 'start.js'), "const port = Number(process.env.PORT) || 3000;\nserver.listen(port);");
     writeFileSync(path.join(d, 'src', 'server.js'), "const GESUNDHEIT_PFAD = '/api/gesundheit';\nhttp.createServer();");
     writeFileSync(path.join(d, '.env'), 'PORT=9999\nGEHEIM=x'); // .env wird nie gelesen
     const e = startErkennen(d);
-    expect(e).toMatchObject({ gefunden: true, quelle: 'erkannt', angabe: { dienst: true, start: 'npm start', port: 3000, pruefung: '/api/gesundheit' } });
+    expect(e).toMatchObject({ gefunden: true, quelle: 'erkannt', angabe: { dienst: true, start: 'npm start', port: 3000, pruefung: '/api/gesundheit', einrichten: ['npm run browser:einrichten'] } });
   });
   it('Startdatei geht vor; ohne start-Skript kein Dienst; nichts → nicht gefunden', () => {
     const d = neu();
@@ -39,6 +39,8 @@ describe('v1460 Start erkennen', () => {
     expect(startAngabePruefen({ start: 'npm start', port: 70000 })).toBeUndefined();
     expect(startAngabePruefen({ start: 'npm start', pruefung: 'http://evil' })).toEqual({ dienst: true, start: 'npm start' });
     expect(startAngabePruefen({ dienst: false })).toEqual({ dienst: false });
+    expect(startAngabePruefen({ start: 'npm start', einrichten: ['npm run a', ''] })).toEqual({ dienst: true, start: 'npm start', einrichten: ['npm run a'] });
+    expect(startAngabePruefen({ start: 'npm start', einrichten: ['a', 'b', 'c', 'd', 'e', 'f'] })).toBeUndefined();
   });
 });
 
@@ -113,9 +115,15 @@ describe('v1462 Autostart und test am Gerät', () => {
     expect(r1).toMatchObject({ ok: true, neu: true, installiert: false });
     expect(readFileSync(path.join(ordner, 'a.txt'), 'utf8')).toBe('eins');
     expect(readFileSync(path.join(ordner, '.env'), 'utf8')).toBe('MODUS=test\n');
-    writeFileSync(path.join(projekt, 'a.txt'), 'zwei'); g(['commit', '-q', '-am', 'B']);
-    const r2 = await testBereitstellen(projekt, ordner, 'main');
-    expect(r2).toMatchObject({ ok: true, neu: false });
+    writeFileSync(path.join(projekt, 'a.txt'), 'zwei');
+    writeFileSync(path.join(projekt, 'einr.js'), "require('fs').appendFileSync('einr.txt', 'x');"); writeFileSync(path.join(projekt, 'fehl.js'), 'process.exit(3);');
+    g(['add', '.']); g(['commit', '-q', '-m', 'B']);
+    const r2 = await testBereitstellen(projekt, ordner, 'main', undefined, ['node einr.js']);
+    expect(r2).toMatchObject({ ok: true, neu: false, text: expect.stringContaining('eingerichtet') });
+    expect(readFileSync(path.join(ordner, 'einr.txt'), 'utf8')).toBe('x');
+    expect((await testBereitstellen(projekt, ordner, 'main', undefined, ['node einr.js'])).ok).toBe(true);
+    expect(readFileSync(path.join(ordner, 'einr.txt'), 'utf8')).toBe('x'); // unverändert: nicht erneut
+    expect(await testBereitstellen(projekt, ordner, 'main', undefined, ['node fehl.js'])).toMatchObject({ ok: false, fehler: expect.stringContaining('Einrichtung') });
     expect(readFileSync(path.join(ordner, 'a.txt'), 'utf8')).toBe('zwei');
     expect(readFileSync(path.join(ordner, '.env'), 'utf8')).toBe('MODUS=test\n'); // ohne neue Umgebung bleibt die alte
     expect((await testBereitstellen(projekt, path.join(projekt, 'test'), 'main')).ok).toBe(false);

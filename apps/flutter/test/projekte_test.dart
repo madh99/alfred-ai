@@ -207,9 +207,10 @@ void main() {
     await t.tap(find.byKey(const Key('dev-eintragen')));
     await t.pumpAndSettle();
     await t.enterText(find.byKey(const Key('dev-port')), '3001');
+    await t.enterText(find.byKey(const Key('dev-einrichten')), 'npm run browser:einrichten\n');
     await t.tap(find.byKey(const Key('dev-eintragen-ok')));
     await t.pumpAndSettle();
-    expect(gesendet.last, {'aktion': 'dev', 'deploy': {'dev_aktion': 'setzen', 'start': 'npm start', 'port': 3001, 'pruefung': '/api/gesundheit'}});
+    expect(gesendet.last, {'aktion': 'dev', 'deploy': {'dev_aktion': 'setzen', 'start': 'npm start', 'port': 3001, 'pruefung': '/api/gesundheit', 'einrichten': ['npm run browser:einrichten']}});
   });
 
   testWidgets('1.31.0 test am Gerät: nur mit dev-Startangabe, Einschalten, Aktualisieren', (t) async {

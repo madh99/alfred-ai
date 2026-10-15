@@ -480,6 +480,7 @@ Actions:
           start: { type: 'string', description: 'v1460 — Für projekt_dev setzen: Startbefehl im Projektordner' },
           port: { type: 'number', description: 'v1460 — Für projekt_dev setzen: Port' },
           pruefung: { type: 'string', description: 'v1460 — Für projekt_dev setzen: Prüfadresse (Pfad, z. B. /api/status)' },
+          einrichten: { type: 'array', items: { type: 'string' }, description: 'v1464 — Für projekt_dev setzen: einmalige Einrichtungsbefehle für einen frischen Ordner (test), z. B. npm run browser:einrichten' },
           kein_dienst: { type: 'boolean', description: 'v1460 — Für projekt_dev setzen: das Projekt ist kein Dienst' },
           auto_zusammenfuehren: { type: 'boolean', description: 'v1458 — Für projekt_merge_requests: bei grünem Lauf automatisch zusammenführen (true) oder vorher den Owner fragen (false, Standard).' },
           lauf: { type: 'string', description: 'Nur intern (Bestätigung „zusammenführen“) — nie selbst setzen' },

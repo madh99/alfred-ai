@@ -15913,8 +15913,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       return { success: r.ok, ...(r.ok ? { display: r.text } : { error: r.text }) };
     }
     if (was === 'setzen') {
-      const angabe: StartAngabe | undefined = felder.kein_dienst === true ? { dienst: false } : (() => { const st = typeof felder.start === 'string' ? felder.start.trim() : ''; const port = felder.port === undefined || felder.port === '' ? undefined : Number(felder.port); const pr = typeof felder.pruefung === 'string' && felder.pruefung.trim() ? felder.pruefung.trim() : undefined; if (!st || st.length > 300 || /[\r\n\0]/.test(st) || (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) || (pr && !/^\/\S{0,199}$/.test(pr))) return undefined; return { dienst: true, start: st, ...(port ? { port } : {}), ...(pr ? { pruefung: pr } : {}) }; })();
-      if (!angabe) return { success: false, error: 'Angabe ungültig: Startbefehl (eine Zeile), Port 1–65535, Prüfadresse ab / — oder kein_dienst' };
+      const angabe: StartAngabe | undefined = felder.kein_dienst === true ? { dienst: false } : (() => { const st = typeof felder.start === 'string' ? felder.start.trim() : ''; const port = felder.port === undefined || felder.port === '' ? undefined : Number(felder.port); const pr = typeof felder.pruefung === 'string' && felder.pruefung.trim() ? felder.pruefung.trim() : undefined; const einr = (Array.isArray(felder.einrichten) ? felder.einrichten.map(String) : typeof felder.einrichten === 'string' ? felder.einrichten.split('\n') : []).map(x => x.trim()).filter(Boolean); if (!st || st.length > 300 || /[\r\n\0]/.test(st) || (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) || (pr && !/^\/\S{0,199}$/.test(pr)) || einr.length > 5 || einr.some(x => x.length > 300)) return undefined; return { dienst: true, start: st, ...(port ? { port } : {}), ...(pr ? { pruefung: pr } : {}), ...(einr.length ? { einrichten: einr } : {}) }; })(); // v1464 einrichten
+      if (!angabe) return { success: false, error: 'Angabe ungültig: Startbefehl (eine Zeile), Port 1–65535, Prüfadresse ab /, höchstens 5 Einrichtungsbefehle — oder kein_dienst' };
       if (!angabe.dienst) { await this.devSpeichern(k.o, k.p.id, { ...k.gd, aktiv: true, angabe, quelle: 'manuell' }); return { success: true, display: `${k.p.name}: kein Dienst — dev heißt hier Build und Tests grün.` }; }
       return this.devVorschlagen(k, angabe, 'manuell', [], herkunft);
     }
@@ -15979,7 +15979,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!g.aktionen.includes('test_bereitstellen')) return { ok: false, text: 'Satellit zu alt (Update ≥ 1462)' };
     let env: string | undefined;
     try { const e = this.envRepoRef ? await this.envRepoRef.get(k.p.id, 'test') : null; if (e && this.envCryptoRef) env = envText(this.envCryptoRef.decrypt(e.varsEncrypted, e.iv, e.authTag)); } catch (err) { this.logger.warn({ projekt: k.p.id, err: (err as Error).message }, 'v1462 Umgebung test nicht lesbar'); }
-    const b = await this.geraeteGateway!.sendeAktion(g.id, 'test_bereitstellen', { projekt: k.p.cwd, ordner: t.ordner, ...(t.zweig ? { zweig: t.zweig } : {}), ...(env !== undefined ? { env } : {}) }, 20 * 60_000);
+    const b = await this.geraeteGateway!.sendeAktion(g.id, 'test_bereitstellen', { projekt: k.p.cwd, ordner: t.ordner, ...(t.zweig ? { zweig: t.zweig } : {}), ...(env !== undefined ? { env } : {}), ...(a.einrichten?.length ? { einrichten: a.einrichten } : {}) }, 30 * 60_000); // v1464 Einrichtung
     let erg: { ok: boolean; text: string; url?: string; sha?: string };
     if (!b.success) erg = { ok: false, text: `test nicht bereitgestellt: ${String(b.error ?? '').slice(0, 500)}` };
     else {
