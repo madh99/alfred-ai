@@ -469,6 +469,18 @@ Jede Stage ist zugleich ein CMDB-Eintrag (Quelle: Projektvorgang) und erscheint 
 **Was das bringt:** Jede Etappe ist nachvollziehbar (Diff, Prüfprotokoll, Entscheidung in der MR-Beschreibung), der Owner kann im GitLab lesen und eingreifen (MR kommentieren = Rückfrage an Alfred; `interject` des Code-Agents), Stages sind reproduzierbar (Tag statt Arbeitskopie), und der Mac-/PC-/VM-Satellit arbeitet nie auf dem einzigen Stand — der Satellit kann abgebaut werden, das Repo bleibt.
 
 **Zu bauen (gehört zu R2/R5):** GitLab-Aktionen im Forge-Client für Repo anlegen, Branch, MR erstellen/lesen/zusammenführen, Tag, Pipeline-Status (falls CI); Satelliten-Auftrag bekommt `repo` + `branch` (Klonen/Auschecken vor dem Auftrag, Push danach — mit Deploy-Token je Projekt aus den Projektumgebungen, nie dem Owner-Token); MR-Kommentare als Ereignisquelle (Schicht 2). Autonomie: Branch/Push/MR anlegen `auto` im Projekt; Merge nach `main` `auto` nur bei grünem Tor und dev/test, prod-Tag und -Deploy `bestaetigen`; Repo löschen `nie`.
+
+**Umsetzungsstand (15.10.2026, Owner: „2. ok aber optional einschaltbar web app und per chat pro projekt“):**
+- **v1455 + App 1.27.0 — Etappen über Branch und Merge Request.** Je Lauf ein Zweig `alfred/<lauf>` und ein MR (nicht je Etappe).
+  - Schalter je Projekt: Tag `merge-requests`, Standard aus; in App, Web und Gespräch (`projekt_merge_requests`).
+  - Satellit `git_zweig` vor der ersten Etappe.
+  - Nach jeder Abnahme Push wie bisher, dann MR anlegen/nachführen; Ziel = Standardzweig in GitLab, Beschreibung aus dem Laufstand.
+  - Vor jeder weiteren Etappe neue MR-Kommentare des Token-Benutzers als „Hinweise des Owners“ in den Auftrag. Das ist der Leseweg statt einer Ereignisquelle.
+  - Laufende mit allen Etappen grün: Merge in GitLab (API), dann `git_aktualisieren`. Das Token liegt nur im temporären Repo, im Projekt wird nur vorgespult. Sonst bleibt der MR offen. Merge vor Auto-dev.
+  - Abweichungen von „Zu bauen“: Die GitLab-API nutzt das Forge-Token der Konfiguration (eigener Host, nur https), Pushes wie bisher das Projekt-Token bzw. den Rückfall (v1439). Tags und Pipeline-Status sind noch offen.
+  - Ohne Prüfbefehle gibt es keinen Push und damit keinen MR (bestehende Push-Semantik).
+- **Beweis 15.10. (Projekt „Probe MR“, Repo `madh/probe-mr`, Lauf sat-b1d54c57):** Zweig angelegt → MR !1 nach Etappe 1 geöffnet, nach Etappe 2 nachgeführt → zusammengeführt (52a96ae3) → am Gerät `main` auf 52a96ae. Kommentar-API live geprüft (Owner-Kommentar `system:false`, Autor = Token-Benutzer).
+- **v1456:** Protokoll-Commit in Repos ohne Git-Identität (Autor „Alfred“ nur über die Umgebung); MR-Links immer https.
 ### Einordnung: Alfred bleibt der persönliche Assistent (10.10.2026, Owner-Frage „läuft das auseinander?")
 
 **Antwort:** Nein — wenn die Schichtung eingehalten wird. Der Assistent ist das Gesicht und das Urteil (Gespräch, Ton, Prioritäten, Einfühlung in den Tag des Owners); Jarvis ist das Nervensystem darunter (Lebenszeichen, Weltmodell, Ereignisse, Vorgänge, Lernen); der Projektvorgang ist **eine Vorgangsart unter vielen** — neben Haushalt, Auto, Energie, Kalender, Familie, Gesundheit, Infrastruktur. Es gibt kein zweites Programm „Projektleiter", nur eine weitere Quelle und Handlungsklasse in derselben Maschine. Der große Plan ist deshalb kein Richtungswechsel, sondern die Nutzung der vorhandenen Schichten für eine neue Domäne.
