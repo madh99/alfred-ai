@@ -163,6 +163,7 @@ export function useChat() {
     error: null,
   }));
   const cancelRef = useRef<(() => void) | null>(null);
+  const gesendetRef = useRef<{ anzeige: string; server: string } | null>(null); // v1469
 
   // Persist messages to localStorage (B6 - state-persist across reloads)
   useEffect(() => {
@@ -204,23 +205,37 @@ export function useChat() {
     replyTo?: { messageId?: string; text?: string; from?: string },
   ) => {
     if ((!text.trim() && (!attachments || attachments.length === 0)) || state.streaming) return;
-    // v644 — Bilder als Markdown ![]() inlinen, andere Files als download-Tag (best-effort —
-    // bei größeren Files sollte später ein Upload-Endpoint genutzt werden).
-    let fullText = text.trim();
-    if (attachments && attachments.length > 0) {
-      const lines: string[] = [];
-      for (const a of attachments) {
-        if (a.mime.startsWith('image/')) {
-          lines.push(`![${a.name}](${a.dataUrl})`);
-        } else {
-          lines.push(`[📄 ${a.name}](${a.dataUrl})`);
-        }
-      }
-      fullText = fullText ? `${fullText}\n\n${lines.join('\n')}` : lines.join('\n');
-    }
-    dispatch({ type: 'ADD_USER', text: fullText });
+    const eingabe = text.trim();
+    if (!attachments || attachments.length === 0) { senden(eingabe, eingabe, replyTo); return; }
+    // v1469 — Anhänge in den Dateispeicher hochladen und wie die App nur die Upload-Zeile mit dem Schlüssel schicken
+    // (vorher Base64 im Text: über ~750 KB scheiterte das 1-MB-Limit, darunter sah das Modell nur Zeichensalat).
+    // Die Anzeige im Chat behält die lokale Vorschau.
+    const vorschau = attachments.map(a => (a.mime.startsWith('image/') ? `![${a.name}](${a.dataUrl})` : `📎 ${a.name}`)).join('\n');
+    const anzeige = eingabe ? `${eingabe}\n\n${vorschau}` : vorschau;
+    dispatch({ type: 'ADD_USER', text: anzeige });
     dispatch({ type: 'START_ASSISTANT' });
-    cancelRef.current = client.streamMessage(fullText, chatId, userId, {
+    dispatch({ type: 'SET_STATUS', text: `⬆ ${attachments.length === 1 ? 'Anhang wird' : `${attachments.length} Anhänge werden`} hochgeladen …` });
+    void (async () => {
+      const zeilen: string[] = [];
+      for (const a of attachments) {
+        const i = a.dataUrl.indexOf(',');
+        const hoch = await client.uploadFileBase64(a.name, a.mime, i >= 0 ? a.dataUrl.slice(i + 1) : a.dataUrl).catch(() => null);
+        if (!hoch) { dispatch({ type: 'ERROR', error: `Upload von „${a.name}“ fehlgeschlagen — Nachricht nicht gesendet.` }); return; }
+        zeilen.push(`Datei „${a.name}“ (${hoch.size} Bytes) liegt in deinem Dateispeicher, Schlüssel: ${hoch.key}.`);
+      }
+      const serverText = eingabe ? `${zeilen.join('\n')}\n${eingabe}` : zeilen.join('\n');
+      gesendetRef.current = { anzeige, server: serverText }; // v1469 — „erneut senden“ schickt die Upload-Zeilen, nicht die lokale Vorschau
+      senden(serverText, undefined, replyTo);
+    })();
+  }, [client, chatId, userId, state.streaming]);
+
+  /** Nachricht an den Server; anzeigeText gesetzt = Nutzerzeile hier anlegen (sonst schon angelegt). */
+  const senden = useCallback((serverText: string, anzeigeText: string | undefined, replyTo?: { messageId?: string; text?: string; from?: string }) => {
+    if (anzeigeText !== undefined) {
+      dispatch({ type: 'ADD_USER', text: anzeigeText });
+      dispatch({ type: 'START_ASSISTANT' });
+    }
+    cancelRef.current = client.streamMessage(serverText, chatId, userId, {
       onStatus: (t) => dispatch({ type: 'SET_STATUS', text: t }),
       onResponse: (t) => dispatch({ type: 'APPEND_RESPONSE', text: t }),
       onAttachment: (a) => dispatch({ type: 'ADD_ATTACHMENT', attachment: a }),
@@ -242,7 +257,7 @@ export function useChat() {
     dispatch({ type: 'DROP_LAST_ASSISTANT' });
     // re-fire — but skip ADD_USER since user message remains
     dispatch({ type: 'START_ASSISTANT' });
-    cancelRef.current = client.streamMessage(lastUser.content, chatId, userId, {
+    cancelRef.current = client.streamMessage(gesendetRef.current?.anzeige === lastUser.content ? gesendetRef.current.server : lastUser.content, chatId, userId, {
       onStatus: (t) => dispatch({ type: 'SET_STATUS', text: t }),
       onResponse: (t) => dispatch({ type: 'APPEND_RESPONSE', text: t }),
       onAttachment: (a) => dispatch({ type: 'ADD_ATTACHMENT', attachment: a }),

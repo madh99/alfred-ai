@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1469] - 2026-10-15
+
+### Fixed — Web-Chat: Anhänge über den Dateispeicher
+
+Der normale Web-Chat schickte Bilder und Dateien als Base64-Text in der Nachricht. Ab etwa 750 KB scheiterte das an der 1-MB-Grenze der Nachricht. Darunter sah das Modell nur Zeichensalat statt eines Bildes, und der Text blähte den Verlauf auf.
+
+- Anhänge werden vor dem Senden in den Dateispeicher hochgeladen (bis 25 MB). Die Nachricht trägt wie in der App nur die Zeile „Datei … liegt in deinem Dateispeicher, Schlüssel: …“. Damit sieht Alfred Bilder direkt (1467), auch bei Folgefragen.
+- Im Chat bleibt die lokale Vorschau. Scheitert ein Upload, wird die Nachricht nicht gesendet und der Fehler angezeigt. „Erneut senden“ schickt die Upload-Zeilen.
+
 ## [0.19.0-jarvis.1468] - 2026-10-15
 
 ### Fixed — Dateispeicher-Schlüssel mit Leerzeichen
