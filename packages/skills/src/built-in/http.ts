@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
+import { willhabenStatusAusHtml, willhabenStatusZeile } from './marketplace/willhaben-status.js'; // v1459
 
 const MAX_RESPONSE_SIZE = 100_000; // 100KB text limit
 
@@ -96,6 +97,10 @@ export class HttpSkill extends Skill {
       let display = responseBody;
       if (contentType.includes('text/html')) {
         display = this.stripHtml(responseBody).slice(0, 10_000);
+        // v1459 — willhaben-Inserat: Status aus den Seitendaten voranstellen (sonst nur aus rohem HTML zu erraten)
+        let host = ''; try { host = new URL(res.url || url).hostname; } catch { /* keine */ }
+        const wh = /(^|\.)willhaben\.at$/i.test(host) ? willhabenStatusAusHtml(text) : undefined;
+        if (wh) display = `${willhabenStatusZeile(wh)}\n\n${display}`;
       }
 
       const data = {

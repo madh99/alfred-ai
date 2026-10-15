@@ -254,6 +254,9 @@ export class MarketplaceSkill extends Skill {
 
     // Build display with all fields the LLM needs for analysis/scam assessment
     const displayLines: string[] = [];
+    // v1459 — Status zuerst: das braucht eine Prüfung (aktiv/verkauft/reserviert/nicht mehr abrufbar)
+    if (detail.status) displayLines.push(`Status: ${detail.status}${detail.statusGrund ? ` (${detail.statusGrund})` : ''}`);
+    if (detail.status === 'nicht mehr abrufbar') { displayLines.push(`Link: ${detail.url}`); return { success: true, data: { id: detail.id, status: detail.status, statusGrund: detail.statusGrund, url: detail.url }, display: displayLines.join('\n') }; }
     displayLines.push(`**${detail.title}** — ${formatPrice(detail.price, detail.currency)}`);
     displayLines.push(`📍 ${detail.location ?? 'k.A.'}`);
     if (detail.condition) displayLines.push(`Zustand: ${detail.condition}`);
@@ -273,6 +276,7 @@ export class MarketplaceSkill extends Skill {
       success: true,
       data: {
         id: detail.id,
+        ...(detail.status ? { status: detail.status, statusGrund: detail.statusGrund } : {}), // v1459
         title: detail.title,
         price: detail.price,
         currency: detail.currency,

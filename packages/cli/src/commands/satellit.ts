@@ -21,7 +21,7 @@ import { BeobachterVerwaltung, type BeobachterRegel } from './satellit-beobachte
 import { SinneErfasser } from './satellit-sinne.js'; // v1237
 import { bildschirmfoto, aktivesFensterTitel } from './satellit-bildschirm.js'; // v1268, v1281
 import { kameraFoto, kameraVerfuegbar } from './satellit-kamera.js'; // v1325, v1328
-import { claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, fortschrittVon, projektLesen, projektDiff, kurzTitel, anhangInsProjekt, protokollSchreiben, schwaerze, umgebungLesen, umgebungNeu, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
+import { laufendeAuftraege, claudeVerfuegbar, auftragStarten, auftragStand, auftragErgebnis, auftragAbbrechen, auftraege, formatiereMeta, endeEreignis, markiereGemeldet, offeneEndmeldungen, fortschrittVon, projektLesen, projektDiff, kurzTitel, anhangInsProjekt, protokollSchreiben, schwaerze, umgebungLesen, umgebungNeu, type AuftragMeta, type AuftragErgebnis } from './satellit-auftrag.js'; // v1342
 import { fensterListe, programmStarten, programmBeenden, fensterVordergrund } from './satellit-fenster.js'; // v1271, v1327
 import { zwischenablageLesen, zwischenablageSetzen, ZWISCHENABLAGE_MAX_ZEICHEN } from './satellit-zwischenablage.js'; // v1273
 import { benachrichtigungen, appName } from './satellit-benachrichtigungen.js'; // v1275, v1431 appName
@@ -789,6 +789,9 @@ export function starteSatellit(k: GeraetKonfig, opts: { einmal?: boolean; log?: 
     log(`Server ${serverVersion} ist neuer als ${version} — Update in 15 s`); // v1262 — sichtbar machen
     const versuch = async (runde: number) => {
       if (aktionenLaufend > 0) { log(`Update wartet: ${aktionenLaufend} Aktion(en) laufen (Runde ${runde + 1})`); if (runde < 60) setTimeout(() => versuch(runde + 1), 30_000); else updateLaeuft = false; return; }
+      // v1459 — Update-Sperre: nicht während einer Claude-Code-Etappe (höchstens 6 h warten, dann beim nächsten Server-Hinweis erneut)
+      let auftr = 0; try { auftr = laufendeAuftraege(); } catch { /* Ordner nicht lesbar: nicht blockieren */ }
+      if (auftr > 0) { if (runde === 0 || runde % 10 === 0) log(`Update wartet: ${auftr} Claude-Code-Auftrag/Aufträge laufen (Runde ${runde + 1})`); if (runde === 0) ereignis('update', `Update auf ${serverVersion} wartet, bis der laufende Auftrag fertig ist`); if (runde < 360) setTimeout(() => versuch(runde + 1), 60_000); else updateLaeuft = false; return; }
       log('Update-Prüfung beim Server …');
       try {
         const neu = await aktualisiereWennNeuer(k, version, log);

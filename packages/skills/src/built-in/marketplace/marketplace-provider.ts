@@ -44,6 +44,9 @@ export interface MarketplaceListingDetail {
   description: string;
   attributes: Record<string, string>;
   platform: 'willhaben' | 'ebay';
+  /** v1459 — Status laut Plattform (aktiv, verkauft, reserviert, nicht mehr abrufbar) und Grund */
+  status?: string;
+  statusGrund?: string;
 }
 
 export abstract class MarketplaceProvider {

@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
-import { gitAnlegen, protokollSchreiben, protokollAuftragDatei, auftraegeVerschiebungCommitten, identitaetUmgebung } from './satellit-auftrag.js';
+import { mkdtempSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { gitAnlegen, protokollSchreiben, protokollAuftragDatei, auftraegeVerschiebungCommitten, identitaetUmgebung, laufendeAuftraege } from './satellit-auftrag.js';
 
 const g = (dir: string, args: string[]) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
 const status = (dir: string) => g(dir, ['status', '--porcelain']).stdout.trim();
@@ -67,5 +67,19 @@ describe('v1456 Protokoll-Commit ohne Git-Identität', () => {
       if (vorher.g === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = vorher.g;
       if (vorher.s === undefined) delete process.env.GIT_CONFIG_NOSYSTEM; else process.env.GIT_CONFIG_NOSYSTEM = vorher.s;
     }
+  });
+});
+
+// v1459 — Update-Sperre: nur Aufträge mit lebendem Prozess zählen
+describe('v1459 laufende Aufträge', () => {
+  it('zählt Status läuft mit lebendem Prozess, nicht tote oder fertige', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'alfred-home-'));
+    const o = path.join(home, '.alfred', 'auftraege');
+    const lege = (id: string, m: Record<string, unknown>) => { mkdirSync(path.join(o, id), { recursive: true }); writeFileSync(path.join(o, id, 'meta.json'), JSON.stringify({ id, titel: 't', projekt: '/p', start: new Date().toISOString(), ...m })); };
+    expect(laufendeAuftraege(home)).toBe(0);
+    lege('a1', { status: 'laeuft', pid: process.pid });
+    lege('a2', { status: 'laeuft', pid: 999_999_9 });
+    lege('a3', { status: 'fertig', pid: process.pid });
+    expect(laufendeAuftraege(home)).toBe(1);
   });
 });

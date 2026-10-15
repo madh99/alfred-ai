@@ -29,7 +29,7 @@ export function standRahmen(name: string, stand: string, standZeit?: string): st
     `[Geplante Prüfung „${name}“ — läuft bereits automatisch nach Plan. Nicht anbieten, sie einzuplanen.]`,
     letzter,
     'Vorgaben für diesen Lauf:',
-    '1. Prüfe JEDEN Eintrag des letzten Stands einzeln (direkt, z. B. über seine Kennung/Adresse) und stufe ihn ein: unverändert, geändert (was genau, alter → neuer Wert), weg/verkauft (nur wenn direkt bestätigt) oder nicht prüfbar. „In einer Suche nicht gefunden“ ist NICHT „weg“.',
+    '1. Prüfe JEDEN Eintrag des letzten Stands einzeln (direkt, z. B. über seine Kennung/Adresse) und stufe ihn ein: unverändert, geändert (was genau, alter → neuer Wert), weg/verkauft (nur wenn direkt bestätigt) oder nicht prüfbar. „In einer Suche nicht gefunden“ ist NICHT „weg“. Bei Marktplatz-Inseraten (z. B. willhaben) nutze die Detailabfrage des Marktplatz-Werkzeugs — sie meldet den Status (aktiv, verkauft, reserviert, nicht mehr abrufbar) direkt.',
     '2. Suche danach nach neuen passenden Einträgen.',
     '3. Antworte mit dem vollständigen Bericht für den Owner (Änderungen zuerst, dann die Übersicht). Jeder Eintrag ist mit seinem Link anklickbar (Markdown [Bezeichnung](Adresse)), auch in Tabellen — wie in der ersten Anfrage. Kein „Notiz gespeichert“ als Antwort; lege für den Vergleich keine Notizen an — den Stand führt der Auftrag selbst.',
     `4. Schließe die Antwort IMMER mit dem neuen Stand ab, genau so (eine Zeile je Eintrag mit Kennung, Link/Adresse und den verglichenen Werten; Links aus dem letzten Stand übernehmen):\n${STAND_ANFANG}\n…\n${STAND_ENDE}`,

@@ -1,5 +1,6 @@
 import { MarketplaceProvider } from './marketplace-provider.js';
 import type { MarketplaceSearchParams, MarketplaceSearchResult, MarketplaceListing, MarketplaceListingDetail } from './marketplace-provider.js';
+import { willhabenStatusAus } from './willhaben-status.js'; // v1459
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -49,6 +50,8 @@ export class WillhabenProvider extends MarketplaceProvider {
       headers: { 'User-Agent': USER_AGENT, 'Accept': 'text/html' },
       redirect: 'follow',
     });
+    // v1459 — gelöschtes Inserat: kein Fehler, sondern ein Status (die Prüfung braucht „nicht mehr abrufbar“ als Ergebnis)
+    if (res.status === 404 || res.status === 410) return { id, title: '', price: null, currency: 'EUR', url, imageUrls: [], description: '', attributes: {}, platform: 'willhaben', status: 'nicht mehr abrufbar', statusGrund: `HTTP ${res.status}` };
     if (!res.ok) throw new Error(`willhaben detail HTTP ${res.status}`);
 
     const html = await res.text();
@@ -122,6 +125,7 @@ export class WillhabenProvider extends MarketplaceProvider {
       description,
       attributes: allAttributes,
       platform: 'willhaben',
+      ...(() => { const st = willhabenStatusAus(ad); return st ? { status: st.status, ...(st.grund ? { statusGrund: st.grund } : {}) } : {}; })(), // v1459
     };
   }
 

@@ -55,6 +55,26 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1459] - 2026-10-15
+
+### Fixed — Prüfaufträge: Status von willhaben-Inseraten unabhängig vom gewählten Werkzeug
+
+Realfall 15.10. 09:00: Die geplante Mac-Prüfung las die Inserate mit dem rohen `http`-Werkzeug und konnte „verkauft“ nicht sicher ablesen. Am Vorabend hatte sie `marketplace detail` genutzt und es ging. Das Ergebnis hing also davon ab, welches Werkzeug das Modell wählt.
+
+- Neuer Baustein liest den Status aus den Seitendaten: `advertStatus` (aktiv, verkauft, reserviert) und `deleteReason`. An echten Seiten geprüft.
+- `marketplace detail` zeigt den Status zuerst. Ein gelöschtes Inserat (HTTP 404/410) ist jetzt der Status „nicht mehr abrufbar“ statt eines Fehlers.
+- Das `http`-Werkzeug stellt bei willhaben-Seiten „Status laut willhaben: …“ vor den Text.
+- Der feste Prüf-Rahmen nennt für Marktplatz-Inserate die Detailabfrage des Marktplatz-Werkzeugs.
+
+### Fixed — Geplante Aufgaben im Faden mit Kopfzeile
+
+- Ergebnisse, die in einen App-Faden gehen, beginnen wie im Gespräch mit „⏰ Geplante Aufgabe „…““. Bisher fehlte die Kopfzeile dort, wo der Owner liest.
+
+### Changed — Update-Sperre während Claude-Code-Aufträgen
+
+- Der Satellit installiert ein Update erst, wenn kein Claude-Code-Auftrag mehr läuft. Er prüft jede Minute erneut und wartet höchstens 6 h; das Warten meldet er einmal als Ereignis.
+- Unter Windows läuft Claude Code nicht abgekoppelt und würde sonst mit beendet. Unter Linux und macOS übernimmt der Satellit das Ende eines solchen Auftrags schon seit v1394 nach einem Neustart.
+
 ## [0.19.0-jarvis.1458] - 2026-10-15
 
 ### Changed — Merge Request: Zusammenführen erst nach dem Ja des Owners (App 1.29.0)

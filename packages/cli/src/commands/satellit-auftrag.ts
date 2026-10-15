@@ -178,6 +178,18 @@ export function auftraege(home?: string, n = 10): AuftragMeta[] {
   return readdirSync(o).sort().reverse().slice(0, n).map(id => ladeMeta(id, home)).filter((m): m is AuftragMeta => !!m).map(m => (m.status === 'laeuft' && !laeuft(m.pid) ? { ...m, status: 'fehler' as const } : m));
 }
 
+/**
+ * v1459 — Owner 15.10. (Update-Sperre): Zahl der Claude-Code-Aufträge, die auf diesem Gerät gerade laufen (Status läuft und Prozess
+ * lebt). Das Selbstupdate wartet, bis sie fertig sind — unter Windows läuft Claude Code nicht abgekoppelt und würde mit beendet.
+ */
+export function laufendeAuftraege(home?: string): number {
+  const o = auftraegeOrdner(home);
+  if (!existsSync(o)) return 0;
+  let n = 0;
+  for (const id of readdirSync(o).sort().reverse().slice(0, 50)) { const m = ladeMeta(id, home); if (m?.status === 'laeuft' && laeuft(m.pid)) n++; }
+  return n;
+}
+
 export function formatiereMeta(m: AuftragMeta): string {
   const dauer = Math.round(((m.ende ? new Date(m.ende).getTime() : Date.now()) - new Date(m.start).getTime()) / 1000);
   return `${m.id} · ${m.titel} · ${m.projekt} · ${m.status} · ${dauer} s`;

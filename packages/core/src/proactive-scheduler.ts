@@ -251,7 +251,8 @@ export class ProactiveScheduler {
     } else {
       this.logger.info({ actionId: action.id, name: action.name, grund: entscheidung.grund, neu: entscheidung.neu.slice(0, 6) }, 'v1368 Geplante Aufgabe meldet');
       if (action.promptTemplate && this.meldeGedaechtnis) void this.meldeGedaechtnis.merken(action.userId, kennungenAus(trimmed)).catch(() => undefined);
-      const imFaden = this.fadenZustellung ? await this.fadenZustellung(action.chatId, rohErgebnis ?? resultText, action.name).catch((err: Error) => { this.logger.warn({ err: err.message, actionId: action.id }, 'v1447 Faden-Zustellung fehlgeschlagen'); return false; }) : false;
+      // v1459 — Realfall 15.10.: im Faden fehlte die Kopfzeile (dort liest der Owner); gleiche Form wie im Gespräch gespeichert
+      const imFaden = this.fadenZustellung ? await this.fadenZustellung(action.chatId, `⏰ Geplante Aufgabe „${action.name}“\n\n${rohErgebnis ?? resultText}`, action.name).catch((err: Error) => { this.logger.warn({ err: err.message, actionId: action.id }, 'v1447 Faden-Zustellung fehlgeschlagen'); return false; }) : false;
       const adapter = imFaden ? undefined : this.adapters.get(action.platform as Platform);
       if (adapter) {
         try {

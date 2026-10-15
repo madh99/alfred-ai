@@ -115,7 +115,7 @@ describe('ProactiveScheduler', () => {
       s.start();
       await vi.advanceTimersByTimeAsync(60_000);
       s.stop();
-      expect(hook).toHaveBeenCalledWith('sitzung:g1:mv55pltv', expect.any(String), 'Mac-Angebote');
+      expect(hook).toHaveBeenCalledWith('sitzung:g1:mv55pltv', expect.stringMatching(/^⏰ Geplante Aufgabe „Mac-Angebote“\n\n/), 'Mac-Angebote'); // v1459 Kopfzeile auch im Faden
       expect(adapter.sendMessage).toHaveBeenCalledTimes(zustaendig ? 0 : 1);
     }
   });
