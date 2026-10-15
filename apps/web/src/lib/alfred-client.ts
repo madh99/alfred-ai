@@ -1672,6 +1672,11 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/endgueltig-loeschen`, { method: 'POST', headers: this.jsonHeaders, body: '{}' });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
+  /** v1458 — Schalter „automatisch zusammenführen“ (sonst fragt Alfred vor dem Zusammenführen) */
+  async geraetProjektMrAuto(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/mr-auto`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ an }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   /** v1455 — Schalter „Merge Requests“ (Etappen über eigenen Zweig und Merge Request in GitLab) */
   async geraetProjektMergeRequests(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/merge-requests`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ an }) });

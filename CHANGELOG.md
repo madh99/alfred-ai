@@ -55,6 +55,19 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1458] - 2026-10-15
+
+### Changed — Merge Request: Zusammenführen erst nach dem Ja des Owners (App 1.29.0)
+
+Bisher führte Alfred den Merge Request bei grünem Lauf sofort selbst zusammen. Die Etappen laufen ohne Pause hintereinander, also hatte der Owner praktisch keine Gelegenheit, den MR vor `main` zu prüfen.
+
+- Neuer Standard: Sind alle Etappen grün, stellt Alfred die Bestätigung „Merge Request !n nach main zusammenführen?“ mit Link. Sie gilt 72 h, und das Ja gilt einmal und nur für diesen Lauf.
+  - Ja: zusammenführen, den Stand aufs Gerät holen, danach gegebenenfalls Auto-dev.
+  - Nein oder keine Antwort: Der MR bleibt offen, mit Hinweis im Projektfaden.
+- Der nächste Lauf übernimmt einen offenen MR eines früheren Laufs: gleicher Zweig, gleicher MR, und die Kommentare seit dem letzten Lesen gehen schon in die erste Etappe. Die Beschreibung nennt die fortgesetzten Läufe.
+- Optionaler Schalter je Projekt „Automatisch zusammenführen“ (Tag `mr-auto-merge`): bei grünem Lauf ohne Rückfrage wie bisher. Zu finden in App, Web und Gespräch (`projekt_merge_requests` mit `auto_zusammenfuehren`).
+- Auto-dev läuft erst nach dem Zusammenführen. dev bekommt so nie einen Stand, den `main` nicht hat.
+
 ## [0.19.0-jarvis.1457] - 2026-10-15
 
 ### Added — Projekte endgültig löschen, mit Bestätigung (App 1.28.0)

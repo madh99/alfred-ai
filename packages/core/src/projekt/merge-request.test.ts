@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { linkSicher, mrZweig, gitlabPfadAus, mrBeschreibung, gitlabMrSichern, gitlabMrKommentare, gitlabMrZusammenfuehren, gitlabStandardZweig, mrHinweisBlock } from './merge-request.js';
+import { gitlabMrStatus, linkSicher, mrZweig, gitlabPfadAus, mrBeschreibung, gitlabMrSichern, gitlabMrKommentare, gitlabMrZusammenfuehren, gitlabStandardZweig, mrHinweisBlock } from './merge-request.js';
 
 // v1455 — Etappen über Branch und Merge Request (Owner 15.10.)
 type Aufruf = { url: string; method: string; body?: unknown };
@@ -81,5 +81,15 @@ describe('v1455 Merge Request je Lauf', () => {
     expect(linkSicher('http://fremd.example/x', B)).toBe('http://fremd.example/x');
     const a = attrappe([{ match: /merge_requests\/7$/, method: 'PUT', json: { web_url: 'http://git.example/madh/x/-/merge_requests/7' } }]);
     expect(await gitlabMrSichern(B, 't', 'madh/x', { quelle: 'q', ziel: 'main', titel: 'T', beschreibung: 'D', iid: 7 }, a.f)).toMatchObject({ url: 'https://git.example/madh/x/-/merge_requests/7' });
+  });
+
+  it('v1458 Fortsetzung und Zusammenführen auf Ja in der Beschreibung; MR-Zustand', async () => {
+    const t = mrBeschreibung({ projekt: 'P', lauf: 'sat-2', ziel: 'Z', plan: ['A'], pruefBefehle: [], erledigt: [], fortsetzungVon: ['sat-1'], auto: false });
+    expect(t).toContain('Fortsetzung von Lauf sat-1 auf demselben Zweig');
+    expect(t).toContain('fragt Alfred den Owner, ob zusammengeführt wird');
+    expect(mrBeschreibung({ projekt: 'P', lauf: 'sat-2', ziel: 'Z', plan: ['A'], pruefBefehle: [], erledigt: [] })).not.toContain('Fortsetzung');
+    const a = attrappe([{ match: /merge_requests\/7$/, json: { state: 'opened' } }]);
+    expect(await gitlabMrStatus(B, 't', 'madh/x', 7, a.f)).toBe('opened');
+    expect(await gitlabMrStatus(B, 't', 'madh/x', 8, a.f)).toBeUndefined();
   });
 });

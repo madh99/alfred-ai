@@ -53,7 +53,7 @@ export interface ProjektStand {
   /** v1453 — beim Start vorgefundene, nicht eingecheckte Änderungen (gehören dem Owner) */
   vorgefunden?: string[];
   /** v1455 — Merge-Request-Modus dieses Laufs: Zweig, Ziel, MR, gelesene Kommentare; `aus` = für diesen Lauf nicht möglich (Grund) */
-  mr?: { zweig: string; ziel?: string; iid?: number; url?: string; kommentarBis?: number; zusammengefuehrt?: boolean; aus?: string };
+  mr?: { zweig: string; ziel?: string; iid?: number; url?: string; kommentarBis?: number; zusammengefuehrt?: boolean; aus?: string; /** v1458 — Lauf setzt den offenen MR früherer Läufe fort */ fortsetzungVon?: string[]; /** v1458 — Zusammenführen wartet auf das Ja des Owners */ wartetAufJa?: boolean };
   frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation' | 'installieren'; mutation?: Mutation; text: string; /** v1410 R3c */ installation?: { werkzeug: string; quelle: string; paket: string } };
   /** v1410 R3c — Werkzeuge, nach deren Installation schon gefragt wurde (keine Schleife); letztes Prüfprotokoll für den Fix-Versuch ohne Installation */
   installiertGefragt?: string[];

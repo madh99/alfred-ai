@@ -314,7 +314,9 @@ export interface SatellitProjektHandler {
   /** v1409 R3b — Projekt-Option sudo-Sperre */
   sudoSperre?: (ref: string, an: boolean) => Promise<SkillResult>;
   /** v1455 — Etappen über Branch und Merge Request (an/aus je Projekt) */
-  mergeRequests?: (ref: string, an: boolean) => Promise<SkillResult>;
+  mergeRequests?: (ref: string, an: boolean | undefined, auto?: boolean) => Promise<SkillResult>;
+  /** v1458 — Merge Request nach dem Ja des Owners zusammenführen (nur aus der Bestätigung) */
+  mrZusammenfuehren?: (ref: string, input: Record<string, unknown>) => Promise<SkillResult>;
   /** v1457 — Projekt endgültig löschen (erst Owner-Bestätigung; bestaetigt = Kennung aus der Bestätigung) */
   loeschen?: (ref: string, input: Record<string, unknown>, context: SkillContext) => Promise<SkillResult>;
   /** v1426 — Konventionen des Projekts lesen/ändern (CHANGELOG, README, Commits, eigene Regeln) */
@@ -433,7 +435,7 @@ Actions:
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_holen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen'],
+            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_holen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen', 'projekt_mr_zusammenfuehren'],
             description: 'Project agent action',
           },
           goal: { type: 'string', description: 'What to build (for start)' },
@@ -468,7 +470,9 @@ Actions:
           regel: { type: 'string', description: 'v1426 — Für projekt_konventionen: eigene Regel hinzufügen (z. B. „Commits auf Deutsch“)' },
           regel_entfernen: { type: 'string', description: 'v1426 — Für projekt_konventionen: Regel entfernen (Text oder Nummer)' },
           anhaenge: { type: 'array', items: { type: 'string' }, description: 'v1424 — Für projekt_frage/projekt_weiter: Dateispeicher-Schlüssel der Dateien, die der Owner mitgeschickt hat (Screenshots, Dokumente). Alfred legt sie für Claude Code ins Projekt' },
-          merge_requests: { type: 'boolean', description: 'v1455 — Für projekt_merge_requests: Etappen über einen eigenen Zweig und Merge Request in GitLab (true = an, false = aus). Kommentare des Owners im MR gehen in die nächste Etappe; zusammengeführt wird, wenn alle Etappen grün sind.' },
+          auto_zusammenfuehren: { type: 'boolean', description: 'v1458 — Für projekt_merge_requests: bei grünem Lauf automatisch zusammenführen (true) oder vorher den Owner fragen (false, Standard).' },
+          lauf: { type: 'string', description: 'Nur intern (Bestätigung „zusammenführen“) — nie selbst setzen' },
+          merge_requests: { type: 'boolean', description: 'v1455 — Für projekt_merge_requests: Etappen über einen eigenen Zweig und Merge Request in GitLab (true = an, false = aus). Kommentare des Owners im MR gehen in die nächste Etappe; sind alle Etappen grün, fragt Alfred vor dem Zusammenführen (außer auto_zusammenfuehren).' },
           sudo_sperre: { type: 'boolean', description: 'start mit geraet bzw. projekt_sudo_sperre: Claude Code darf in den Aufträgen dieses Projekts kein sudo verwenden (true) bzw. wieder erlauben (false). Nur, wenn der Owner es sagt.' },
           // v851.1 — import_feature params
           feature_id: { type: 'string', description: 'Feature-UUID aus Features-Library (für import_feature)' },
@@ -521,7 +525,7 @@ Actions:
     // v1434 B13 — Projekt von GitLab aufs Gerät holen (danach ein Geräte-Projekt wie jedes andere)
     if (action === 'projekt_holen') return this.satellit?.holen ? this.satellit.holen(input, context) : { success: false, error: 'Projekte holen ist nicht verfügbar (Geräte-Gateway fehlt)' };
     // v1398 — Projektakten
-    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen'].includes(action) || satId.startsWith('prj-')) {
+    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen', 'projekt_mr_zusammenfuehren'].includes(action) || satId.startsWith('prj-')) {
       if (!this.satellit?.projekte) return { success: false, error: 'Projektakten sind nicht verfügbar' };
       const ref = String(input.projekt ?? input.task_id ?? '').trim();
       if (action === 'projekte') return this.satellit.projekte();
@@ -536,7 +540,12 @@ Actions:
       if (action === 'projekt_rollback') return this.satellit.rollback ? this.satellit.rollback(ref, input, context) : { success: false, error: 'nicht verfügbar' };
       if (action === 'projekt_konventionen') return this.satellit.konventionen ? this.satellit.konventionen(ref, input) : { success: false, error: 'nicht verfügbar' }; // v1426
       if (action === 'projekt_loeschen') return this.satellit.loeschen ? this.satellit.loeschen(ref, input, context) : { success: false, error: 'nicht verfügbar' }; // v1457
-      if (action === 'projekt_merge_requests') return this.satellit.mergeRequests ? this.satellit.mergeRequests(ref, input.merge_requests !== false) : { success: false, error: 'nicht verfügbar' }; // v1455
+      if (action === 'projekt_merge_requests') { // v1455, v1458 auto_zusammenfuehren
+        const auto = typeof input.auto_zusammenfuehren === 'boolean' ? input.auto_zusammenfuehren : undefined;
+        const an = typeof input.merge_requests === 'boolean' ? input.merge_requests : auto !== undefined ? undefined : true;
+        return this.satellit.mergeRequests ? this.satellit.mergeRequests(ref, an, auto) : { success: false, error: 'nicht verfügbar' };
+      }
+      if (action === 'projekt_mr_zusammenfuehren') return this.satellit.mrZusammenfuehren ? this.satellit.mrZusammenfuehren(ref, input) : { success: false, error: 'nicht verfügbar' }; // v1458 — nur aus der Bestätigung
       if (action === 'projekt_sudo_sperre') return this.satellit.sudoSperre ? this.satellit.sudoSperre(ref, input.sudo_sperre !== false) : { success: false, error: 'nicht verfügbar' };
       if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context, input.anhaenge) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };
       return this.satellit.akte!(ref);

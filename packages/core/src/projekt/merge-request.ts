@@ -10,6 +10,8 @@
  */
 
 export const MR_TAG = 'merge-requests';
+/** v1458 — Owner 15.10.: Zusammenführen standardmäßig erst nach seinem Ja; dieser Tag schaltet das automatische Zusammenführen bei grünem Lauf ein. */
+export const MR_AUTO_TAG = 'mr-auto-merge';
 
 /** Zweig eines Laufs am Gerät (je Lauf ein Zweig, ein Merge Request). */
 export function mrZweig(laufId: string): string { return `alfred/${laufId.replace(/[^A-Za-z0-9._-]/g, '-')}`; }
@@ -27,7 +29,7 @@ export function gitlabPfadAus(repoUrl: string, baseUrl: string): string | undefi
 export interface MrEtappe { nr: number; ok: boolean; geprueft: boolean; etappe: string; zusammenfassung?: string; commit?: string; kostenUsd: number }
 
 /** Beschreibung des Merge Requests: Ziel, Plan mit Stand je Etappe, Abnahme, Hinweis auf Kommentare. Rein aus dem Laufstand. */
-export function mrBeschreibung(o: { projekt: string; lauf: string; ziel: string; plan: string[]; erledigt: MrEtappe[]; pruefBefehle: string[] }): string {
+export function mrBeschreibung(o: { projekt: string; lauf: string; ziel: string; plan: string[]; erledigt: MrEtappe[]; pruefBefehle: string[]; fortsetzungVon?: string[]; auto?: boolean }): string {
   const z = (s: string, n: number) => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
   const zeilen = o.plan.map((p, i) => {
     const e = [...o.erledigt].reverse().find(x => x.nr === i + 1);
@@ -36,9 +38,10 @@ export function mrBeschreibung(o: { projekt: string; lauf: string; ziel: string;
   });
   return [
     `**Ziel:** ${z(o.ziel, 600)}`, '',
+    ...(o.fortsetzungVon?.length ? [`_Fortsetzung von Lauf ${o.fortsetzungVon.join(', ')} auf demselben Zweig — deren Etappen stehen in den Commits._`, ''] : []),
     `**Etappen** (✅ abgenommen · ⚠️ ohne Abnahme · ❌ rot · ⏳ offen):`, ...zeilen, '',
     `**Abnahme:** ${o.pruefBefehle.length ? o.pruefBefehle.map(b => `\`${b}\``).join(' ; ') : 'keine Prüfbefehle — der Owner prüft selbst'}`, '',
-    `_Lauf ${o.lauf} · ${o.projekt} · von Alfred nachgeführt. Kommentare hier liest Alfred vor der nächsten Etappe als Hinweise. Zusammengeführt wird automatisch, wenn alle Etappen grün abgenommen sind._`,
+    `_Lauf ${o.lauf} · ${o.projekt} · von Alfred nachgeführt. Kommentare hier liest Alfred vor der nächsten Etappe als Hinweise. ${o.auto === false ? 'Sind alle Etappen grün, fragt Alfred den Owner, ob zusammengeführt wird._' : 'Zusammengeführt wird automatisch, wenn alle Etappen grün abgenommen sind._'}`,
   ].join('\n');
 }
 
@@ -95,6 +98,15 @@ export async function gitlabMrKommentare(baseUrl: string, token: string, pfad: s
   const j = await r.json().catch(() => []) as Array<{ id?: number; body?: string; system?: boolean; author?: { username?: string } }>;
   return j.filter(n => typeof n.id === 'number' && n.id > seit && !n.system && n.author?.username === owner && typeof n.body === 'string' && n.body.trim())
     .map(n => ({ id: n.id!, text: n.body!.trim().slice(0, 2000) }));
+}
+
+/** v1458 — Zustand eines MR (opened, merged, closed …); undefined bei Fehler. */
+export async function gitlabMrStatus(baseUrl: string, token: string, pfad: string, iid: number, f: F = fetch): Promise<string | undefined> {
+  const b = basis(baseUrl); if (!b) return undefined;
+  const r = await f(`${api(b, pfad)}/merge_requests/${iid}`, { headers: kopf(token) });
+  if (!r.ok) return undefined;
+  const j = await r.json().catch(() => ({})) as { state?: string };
+  return typeof j.state === 'string' ? j.state : undefined;
 }
 
 /** MR in GitLab zusammenführen (Quellzweig danach entfernen). */

@@ -37,6 +37,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
   const kosten = laeufe.reduce((s, l) => s + l.kostenUsd, 0);
   const protokollAn = !(p.tags ?? []).includes('protokoll-aus'); // v1425
   const mergeRequestsAn = (p.tags ?? []).includes('merge-requests'); // v1455
+  const mrAutoAn = (p.tags ?? []).includes('mr-auto-merge'); // v1458
   const [wunsch, setWunsch] = useState('');
   const [frage, setFrage] = useState(''); // v1404
   const [busy, setBusy] = useState(false);
@@ -153,8 +154,16 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
         <label className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2 sm:col-span-2 flex items-center gap-3 cursor-pointer">
           <input type="checkbox" className="h-4 w-4 accent-blue-500" checked={mergeRequestsAn} disabled={busy}
             onChange={async (ev) => { const an = ev.target.checked; setBusy(true); const r = await client.geraetProjektMergeRequests(p.id, an).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Gespeichert.') : (r.error ?? 'Fehler') }); if (r.success) onReload(); }} />
-          <span><span className="text-gray-200">Merge Requests</span><span className="block text-gray-500">{mergeRequestsAn ? `An: eigener Zweig je Lauf, Merge Request in GitLab${p.repoUrl ? '' : ' (braucht ein GitLab-Repository — Remote fehlt)'}; deine Kommentare dort gehen in die nächste Etappe, zusammengeführt wird, wenn alle Etappen grün sind.` : 'Aus: Etappen laufen direkt auf dem aktuellen Zweig.'}</span></span>
+          <span><span className="text-gray-200">Merge Requests</span><span className="block text-gray-500">{mergeRequestsAn ? `An: eigener Zweig je Lauf, Merge Request in GitLab${p.repoUrl ? '' : ' (braucht ein GitLab-Repository — Remote fehlt)'}; deine Kommentare dort gehen in die nächste Etappe. Sind alle Etappen grün, ${mrAutoAn ? 'führt Alfred automatisch zusammen' : 'fragt Alfred dich vor dem Zusammenführen'}.` : 'Aus: Etappen laufen direkt auf dem aktuellen Zweig.'}</span></span>
         </label>
+        {/* v1458 — automatisch zusammenführen (nur mit Merge Requests) */}
+        {mergeRequestsAn && (
+          <label className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2 sm:col-span-2 flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" className="h-4 w-4 accent-blue-500" checked={mrAutoAn} disabled={busy}
+              onChange={async (ev) => { const an = ev.target.checked; setBusy(true); const r = await client.geraetProjektMrAuto(p.id, an).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Gespeichert.') : (r.error ?? 'Fehler') }); if (r.success) onReload(); }} />
+            <span><span className="text-gray-200">Automatisch zusammenführen</span><span className="block text-gray-500">{mrAutoAn ? 'An: bei grünem Lauf ohne Rückfrage zusammenführen.' : 'Aus (Standard): Alfred fragt dich, bevor er zusammenführt; bei Nein bleibt der MR offen und der nächste Lauf arbeitet auf demselben Zweig weiter.'}</span></span>
+          </label>
+        )}
       </div>
       {p.description && <div className="text-xs text-gray-400 whitespace-pre-wrap">{p.description}</div>}
 

@@ -17,6 +17,8 @@ export interface ProjektAkte {
   protokoll: boolean;
   /** v1455 — Etappen über Branch und Merge Request (Tag merge-requests); Standard aus */
   mergeRequests: boolean;
+  /** v1458 — bei grünem Lauf automatisch zusammenführen (Tag mr-auto-merge); Standard aus = nach dem Ja des Owners */
+  mergeRequestsAuto: boolean;
 }
 
 export function akteAusProjekt(p: Project): ProjektAkte {
@@ -27,6 +29,7 @@ export function akteAusProjekt(p: Project): ProjektAkte {
     ...(p.tags?.includes('sudo-sperre') ? { sudoSperre: true } : {}),
     protokoll: !(p.tags ?? []).includes('protokoll-aus'),
     mergeRequests: (p.tags ?? []).includes('merge-requests'),
+    mergeRequestsAuto: (p.tags ?? []).includes('mr-auto-merge'),
   };
 }
 
@@ -85,11 +88,11 @@ export class ProjektAktenUeberProjekte {
   }
 
   /** v1455 — Schalter „Merge Requests“ (Tag merge-requests = an). Liefert false, wenn das Projekt fehlt oder kein Geräte-Projekt ist. */
-  async setzeMergeRequests(userId: string, id: string, an: boolean): Promise<boolean> {
+  async setzeMergeRequests(userId: string, id: string, an: boolean, tag: 'merge-requests' | 'mr-auto-merge' = 'merge-requests'): Promise<boolean> {
     const p = await this.repo.getById(userId, id);
     if (!p?.geraetId) return false;
-    const tags = (p.tags ?? []).filter(t => t !== 'merge-requests');
-    await this.repo.update(userId, id, { tags: an ? [...tags, 'merge-requests'] : tags });
+    const tags = (p.tags ?? []).filter(t => t !== tag);
+    await this.repo.update(userId, id, { tags: an ? [...tags, tag] : tags });
     return true;
   }
 

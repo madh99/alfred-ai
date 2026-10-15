@@ -184,6 +184,27 @@ void main() {
     expect(mergeRequestsAn({}), isFalse);
   });
 
+  testWidgets('1.29.0 Schalter automatisch zusammenführen nur mit Merge Requests', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    var mr = false; var auto = false;
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet.add(koerper!); if (koerper['aktion'] == 'merge_requests') mr = koerper['text'] == 'an'; if (koerper['aktion'] == 'mr_auto') auto = koerper['text'] == 'an'; return {'success': true, 'display': 'ok'}; }
+      return {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [], 'protokoll': true, 'mergeRequests': mr, 'mergeRequestsAuto': auto, 'repo': 'https://git/x.git'};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'b77431a2-e388', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('projekt-mr-auto')), findsNothing);
+    await t.tap(find.byKey(const Key('projekt-merge-requests')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('fragt Alfred dich vor dem Zusammenführen'), findsOneWidget);
+    expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-mr-auto'))).value, isFalse);
+    await t.tap(find.byKey(const Key('projekt-mr-auto')));
+    await t.pumpAndSettle();
+    expect(gesendet.last, {'aktion': 'mr_auto', 'text': 'an'});
+    expect(t.widget<SwitchListTile>(find.byKey(const Key('projekt-mr-auto'))).value, isTrue);
+  });
+
   testWidgets('1.28.0 Endgültig löschen: erst Dialog, dann nur die Anfrage (Bestätigung beim Owner)', (t) async {
     final gesendet = <Map<String, dynamic>>[];
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
