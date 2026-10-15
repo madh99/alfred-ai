@@ -27,7 +27,7 @@ describe('OwnerAnsichten: Projekte', () => {
   it('ohne Text oder unbekannte Aktion: nichts ausgelöst', async () => {
     aufrufe.length = 0;
     expect((await a.projektAktion('p1', 'weiter', '   ')).error).toMatch(/text fehlt/);
-    expect((await a.projektAktion('p1', 'loeschen', 'x')).error).toMatch(/stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, konventionen, freigeben oder ablehnen/);
+    expect((await a.projektAktion('p1', 'zerstoeren', 'x')).error).toMatch(/stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, loeschen, konventionen, freigeben oder ablehnen/);
     expect(aufrufe).toEqual([]);
   });
 });
@@ -56,12 +56,16 @@ describe('OwnerAnsichten: Merge Requests', () => {
   const a = new OwnerAnsichten({
     owner: 'u', todos: {} as never, erinnerungen: {} as never, db: {} as never, vorgangEntscheiden: async () => null,
     projekte: { liste: async () => [], detail: async () => null, stand: async () => ({ success: true }), weiter: async () => ({ success: true }),
-      mergeRequests: async (id, an) => { gesetzt.push([id, an]); return { success: true, display: an ? 'an' : 'aus' }; } },
+      mergeRequests: async (id, an) => { gesetzt.push([id, an]); return { success: true, display: an ? 'an' : 'aus' }; },
+      loeschen: async (id) => ({ success: true, display: `Löschen von ${id} zur Bestätigung gestellt` }) },
   });
   it('an/aus wird durchgereicht, anderer Text nicht', async () => {
     expect((await a.projektAktion('p1', 'merge_requests', 'an')).display).toBe('an');
     expect((await a.projektAktion('p1', 'merge_requests', 'aus')).display).toBe('aus');
     expect((await a.projektAktion('p1', 'merge_requests', 'ja')).error).toMatch(/an oder aus/);
     expect(gesetzt).toEqual([['p1', true], ['p1', false]]);
+  });
+  it('v1457 loeschen stellt nur die Bestätigung', async () => {
+    expect((await a.projektAktion('p1', 'loeschen', undefined)).display).toBe('Löschen von p1 zur Bestätigung gestellt');
   });
 });

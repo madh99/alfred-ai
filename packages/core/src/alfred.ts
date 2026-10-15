@@ -288,6 +288,8 @@ export class Alfred {
   private projektLiveAuftraege = new Map<string, string>(); // auftragId → laufId
   /** v1403 — offene Frage eines Geräte-Laufs aus App/Web entscheiden (über die Bestätigungs-Queue) */
   private geraeteLaufEntscheiden?: (laufId: string, entscheidung: 'freigeben' | 'ablehnen') => Promise<{ success: boolean; display?: string; error?: string }>;
+  /** v1457 — Projektnamen für den Filter und gesperrte Web-Routen neu laden (nach endgültigem Löschen) */
+  private geraeteProjektNamenAuffrischen?: () => Promise<void>;
   /** v762 — Aktive Code-Agent-Runs pro synthetischer task_id, damit Stop-Signal sie killen kann */
   private codeAgentTaskAborts = new Map<string, AbortController>();
 
@@ -15789,6 +15791,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
       konventionen: async (id: string, aenderung: unknown) => this.projektKonventionenAendern(id, aenderung), // v1426
       mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
+      loeschen: async (id: string) => this.projektEndgueltigLoeschen(id), // v1457
     };
   }
 
@@ -15813,6 +15816,39 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
     if (!(await new ProjektAktenUeberProjekte(repo).setzeProtokoll(o, id, an))) return { success: false, error: 'kein Geräte-Projekt' };
     this.logger.info({ projekt: id, an }, 'v1425 Protokoll im Projekt umgeschaltet');
     return { success: true, display: an ? 'Protokoll im Projekt: an — Auftrag und Bericht jeder Etappe werden unter .alfred/laeufe/ mit committet.' : 'Protokoll im Projekt: aus — Auftrag und Bericht bleiben nur lokal unter .alfred/laeufe/ (von git ausgeschlossen).' };
+  }
+
+  /**
+   * v1457 — Projekt endgültig löschen (Owner 15.10.: „echtes Löschen mit Bestätigung“). Ohne Kennung: Owner-Bestätigung stellen (Liste,
+   * was gelöscht wird und was bleibt); mit eingelöster Kennung: löschen. Nicht bei laufenden/wartenden Läufen, Social-Kanälen oder Sandboxen.
+   * Ordner am Gerät und Repository bleiben (Repo löschen ist nie automatisch).
+   */
+  async projektEndgueltigLoeschen(id: string, bestaetigt?: string, herkunft?: { chatId: string; platform: string; userId?: string }): Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> {
+    const o = this.ownerMasterUserId; const repo = this.projectRepo;
+    if (!o || !repo) return { success: false, error: 'Projekte nicht verfügbar' };
+    const p = await repo.getById(o, id).catch(() => null);
+    if (!p) return { success: false, error: 'Projekt nicht gefunden' };
+    const laeufe = this.satellitProjekte?.laeufeDerAkte(p.id) ?? [];
+    if (laeufe.some(l => l.status === 'laeuft' || l.status === 'wartet_owner')) return { success: false, error: `${p.name} hat einen laufenden oder wartenden Lauf — erst stoppen` };
+    const hindernisse = await repo.loeschHindernisse(p.id);
+    if (hindernisse.length) return { success: false, error: `${p.name} hängt noch an ${hindernisse.join(' und ')} — erst dort lösen` };
+    if (typeof bestaetigt === 'string') {
+      if (!this.deployFreigaben.loese(bestaetigt, p.id, 'loeschen')) return { success: false, error: 'Bestätigung ungültig oder abgelaufen' };
+      const n = await repo.endgueltigLoeschen(o, p.id);
+      if (!n) return { success: false, error: 'Projekt nicht gefunden' };
+      const entfernt = this.satellitProjekte?.entferneLaeufe(p.id) ?? 0;
+      let faden = 0;
+      if (this.conversationRepo) { const c = await this.conversationRepo.findByPlatformChat('api' as never, `owner:faden:projekt-${p.id.slice(0, 8)}`).catch(() => null); if (c) { await this.conversationRepo.hardDelete(c.id).catch(() => undefined); faden = 1; } }
+      this.logger.info({ projekt: p.id, name: p.name, zeilen: n, laeufe: entfernt, faden }, 'v1457 Projekt endgültig gelöscht');
+      await this.geraeteProjektNamenAuffrischen?.().catch(() => undefined);
+      return { success: true, display: `🗑 ${p.name} endgültig gelöscht (Projekt, ${entfernt} Läufe, ${faden ? 'Projektfaden, ' : ''}${n.project_environments ? 'Umgebungen, ' : ''}Sitzungen und offene Punkte).${p.cwd ? ` Der Ordner ${p.geraet ? `auf ${p.geraet} ` : ''}(${p.cwd}) bleibt.` : ''}${p.repoUrl ? ` Das Repository ${p.repoUrl} bleibt.` : ''}` };
+    }
+    if (!this.confirmationQueue) return { success: false, error: 'Bestätigungen nicht verfügbar' };
+    const nonce = this.deployFreigaben.stelle(p.id, 'loeschen', undefined, 24 * 3_600_000);
+    const text = [`🗑 Projekt „${p.name}“ endgültig löschen?`, `Gelöscht werden: Projekt, ${laeufe.length} Läufe mit Protokoll, Sitzungen, offene Punkte, Entscheidungen, Umgebungen (auch gespeicherte Secrets) und der Projektfaden.`, `Bleiben: ${[p.cwd ? `Ordner ${p.geraet ? `auf ${p.geraet} ` : ''}(${p.cwd})` : '', p.repoUrl ? `Repository ${p.repoUrl}` : ''].filter(Boolean).join(', ') || 'nichts weiter'}.`, 'Das lässt sich nicht rückgängig machen. (Nur ausblenden: archivieren.)'].join('\n');
+    const ok = await this.confirmationQueue.enqueue({ chatId: this.config.security?.ownerUserId ?? '', platform: (this.config.telegram?.enabled ? 'telegram' : 'api'), source: 'geraet', sourceId: `loeschen-${p.id}-${Date.now()}`, description: text, skillName: 'project_agent', skillParams: { action: 'projekt_loeschen', projekt: p.id, bestaetigt: nonce }, timeoutMinutes: 24 * 60, ...(herkunft ? { herkunft } : {}) } as never);
+    this.logger.info({ projekt: p.id, name: p.name }, 'v1457 Löschen zur Bestätigung gestellt');
+    return ok ? { success: true, data: { bestaetigung: true }, display: `Endgültiges Löschen von ${p.name} zur Bestätigung gestellt — erst nach deinem Ja wird gelöscht.` } : { success: false, error: 'Bestätigung konnte nicht gestellt werden' };
   }
 
   /** v1455 — Schalter „Merge Requests“ je Projekt (App, Web, Gespräch): Tag merge-requests; gilt ab dem nächsten Lauf. */
@@ -15912,6 +15948,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         (this.adapters.get('api') as unknown as { setGeraeteProjektIds?: (x: Set<string>) => void } | undefined)?.setGeraeteProjektIds?.(new Set(ids));
       } catch (err) { this.logger.warn({ err: (err as Error).message }, 'v1399 Geräte-Projekte für die Web-API nicht geladen'); }
     };
+    this.geraeteProjektNamenAuffrischen = namenAuffrischen; // v1457
+    (this.adapters.get('api') as unknown as { setProjektLoeschen?: (fn: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>) => void } | undefined)?.setProjektLoeschen?.((id) => this.projektEndgueltigLoeschen(id)); // v1457 Web
     const zuordnen = async (s: import('./projekt/satellit-projekt.js').ProjektStand): Promise<string | undefined> => {
       const o = owner();
       if (!o || !aktenRepo) return undefined;
@@ -16416,6 +16454,13 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         await namenAuffrischen();
         this.logger.info({ projekt: akte.id, geraet: g.name, ziel, mitToken: !!token, quelle: quelle?.id }, 'v1434 Projekt geholt');
         return { success: true, data: { id: akte.id, name, ...(r.data as object | undefined) }, display: `${r.display}\nProjekt „${name}" auf ${g.name} angelegt (Remote ${url}; ${token ? 'Push nach jeder abgenommenen Etappe mit dem Projekt-Token' : 'kein Token gefunden — für den Push GIT_TOKEN in der Projektumgebung hinterlegen'}${befehle.length ? '' : '; noch keine Prüfbefehle — ohne sie fragt Alfred nach jeder Etappe'}). Weiter mit projekt_weiter projekt="${name}" goal=…` };
+      },
+      // v1457 — endgültig löschen: Name oder Kennung (auch Server-Projekte); erst Bestätigung, nach dem Ja mit Kennung
+      loeschen: async (ref, input, context) => {
+        const o = owner();
+        let id = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(ref) && o ? (await this.projectRepo?.getById(o, ref).catch(() => null))?.id : undefined;
+        if (!id) { const t = await akteAus(ref); if ('fehler' in t) return { success: false, error: t.fehler }; id = t.akte.id; }
+        return this.projektEndgueltigLoeschen(id, typeof input.bestaetigt === 'string' ? input.bestaetigt : undefined, context.chatId ? { chatId: context.chatId, platform: context.platform, userId: context.userId } : undefined);
       },
       mergeRequests: async (ref, an) => { // v1455
         const t = await akteAus(ref);

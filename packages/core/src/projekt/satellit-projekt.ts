@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import type { GeraetEreignis } from '@alfred/types';
 import { konventionsBlock, changelogPflicht, changelogAuftrag, type Konventionen } from './konventionen.js'; // v1426
@@ -164,6 +164,14 @@ export class SatellitProjekte {
   laeufeDerAkte(akteId: string): ProjektStand[] { return this.liste().filter(s => s.akteId === akteId); }
   ohneAkte(): ProjektStand[] { return this.liste().filter(s => !s.akteId && s.status !== 'wartet_owner'); }
   setzeAkte(id: string, akteId: string, akteName?: string): void { const s = this.staende.get(id); if (!s) return; s.akteId = akteId; if (akteName) s.akteName = akteName; this.sichere(s); }
+
+  /** v1457 — Läufe eines endgültig gelöschten Projekts entfernen (Speicher und Dateien); nur beendete — sonst 0 und nichts. */
+  entferneLaeufe(akteId: string): number {
+    const l = this.laeufeDerAkte(akteId);
+    if (l.some(x => x.status === 'laeuft' || x.status === 'wartet_owner')) return 0;
+    for (const x of l) { this.staende.delete(x.id); if (this.d.ordner) { try { rmSync(path.join(this.d.ordner, `${x.id}.json`), { force: true }); } catch { /* bleibt */ } } }
+    return l.length;
+  }
 
   /** v1455 — Laufstand nach einer Änderung von außen (z. B. Merge Request zusammengeführt) speichern. */
   merke(s: ProjektStand): void { if (this.staende.get(s.id) === s) this.sichere(s); }

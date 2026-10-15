@@ -55,6 +55,22 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1457] - 2026-10-15
+
+### Added — Projekte endgültig löschen, mit Bestätigung (App 1.28.0)
+
+Bisher hieß „Löschen“ in Web und App nur Archivieren. Projekte lassen sich jetzt wirklich löschen. Wege: Web „Endgültig löschen“ (alle Projekte), App „Endgültig löschen“ (Geräte-Projekte) und Gespräch („lösche das Projekt … endgültig“).
+
+- Jeder Weg stellt zuerst eine Owner-Bestätigung. Sie nennt, was gelöscht wird und was bleibt, und ist 24 h gültig. Gelöscht wird erst nach dem Ja; die Kennung gilt einmal und nur für dieses Projekt.
+- Gelöscht werden:
+  - Projekt, Sitzungen, offene Punkte, Entscheidungen, Automationen
+  - Umgebungen, auch gespeicherte Secrets
+  - Agent-Commits, Seeds, Konventionen, CLI-Agent-Läufe, Projekt-Gespräche
+  - die Läufe am Gerät (Stand und Protokolldateien bei Alfred) und der Projektfaden
+- Es bleiben der Ordner am Gerät und das Repository; ein Repository löscht Alfred nie automatisch.
+- Nicht möglich bei laufendem oder wartendem Lauf, verknüpften Social-Kanälen oder Sandboxen. Alfred nennt dann den Grund.
+- Archivieren bleibt wie bisher für „nur ausblenden“.
+
 ## [0.19.0-jarvis.1456] - 2026-10-15
 
 ### Fixed — Etappenprotokoll in Repositories ohne Git-Identität

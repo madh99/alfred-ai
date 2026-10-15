@@ -543,6 +543,35 @@ export class ProjectRepository {
     );
   }
 
+  /**
+   * v1457 — Owner 15.10.: „echtes Löschen mit Bestätigung“. Tabellen mit project_id OHNE Fremdschlüssel (die mit Fremdschlüssel
+   * löschen per CASCADE mit): Umgebungen (verschlüsselte Secrets), Agent-Commits, Seeds, Konventionen, Läufe der CLI-Agenten, Projekt-Gespräche.
+   * Fehlt eine Tabelle (SQLite-Stand), wird sie übersprungen.
+   */
+  static readonly LOESCH_TABELLEN = ['project_environments', 'project_agent_commits', 'project_db_seeds', 'agent_conventions_history', 'agent_conventions', 'convention_pattern_sources', 'convention_violations', 'convention_test_runs', 'cli_agent_runs', 'sandbox_templates', 'conversations'] as const;
+
+  /** v1457 — was ein endgültiges Löschen verhindert: verknüpfte Social-Kanäle und Sandboxen (dort laufen ggf. Container). */
+  async loeschHindernisse(id: string): Promise<string[]> {
+    const h: string[] = [];
+    for (const [t, text] of [['social_channels', 'Social-Kanäle'], ['project_agent_sandboxes', 'Sandboxen']] as const) {
+      try { const r = await this.adapter.queryOne(`SELECT count(*) AS n FROM ${t} WHERE project_id = ?`, [id]) as { n?: number | string } | undefined; const n = Number(r?.n ?? 0); if (n > 0) h.push(`${n} ${text}`); } catch { /* Tabelle fehlt */ }
+    }
+    return h;
+  }
+
+  /** v1457 — Projekt mit allen Daten endgültig löschen. Liefert gelöschte Zeilen je Tabelle oder null (Projekt fehlt). */
+  async endgueltigLoeschen(userId: string, id: string): Promise<Record<string, number> | null> {
+    const existing = await this.getById(userId, id);
+    if (!existing) return null;
+    const n: Record<string, number> = {};
+    for (const t of ProjectRepository.LOESCH_TABELLEN) {
+      try { const r = await this.adapter.execute(`DELETE FROM ${t} WHERE project_id = ?`, [existing.id]); if (r.changes) n[t] = r.changes; } catch { /* Tabelle fehlt */ }
+    }
+    const r = await this.adapter.execute('DELETE FROM projects WHERE id = ?', [existing.id]);
+    n.projects = r.changes;
+    return n;
+  }
+
   async delete(userId: string, id: string): Promise<boolean> {
     const existing = await this.getById(userId, id);
     if (!existing) return false;

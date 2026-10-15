@@ -184,6 +184,29 @@ void main() {
     expect(mergeRequestsAn({}), isFalse);
   });
 
+  testWidgets('1.28.0 Endgültig löschen: erst Dialog, dann nur die Anfrage (Bestätigung beim Owner)', (t) async {
+    final gesendet = <Map<String, dynamic>>[];
+    Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async {
+      if (methode == 'POST') { gesendet.add(koerper!); return {'success': true, 'display': 'Endgültiges Löschen von Angebots-Radar zur Bestätigung gestellt'}; }
+      return {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': [], 'protokoll': true};
+    }
+    await t.binding.setSurfaceSize(const Size(1200, 3000));
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ProjektDetail(id: 'b77431a2-e388', json: json, zurueck: () {}))));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('projekt-loeschen')));
+    await t.pumpAndSettle();
+    expect(find.text('Projekt endgültig löschen?'), findsOneWidget);
+    await t.tap(find.text('Abbrechen'));
+    await t.pumpAndSettle();
+    expect(gesendet, isEmpty);
+    await t.tap(find.byKey(const Key('projekt-loeschen')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('loeschen-ja')));
+    await t.pumpAndSettle();
+    expect(gesendet.single, {'aktion': 'loeschen'});
+    expect(find.textContaining('zur Bestätigung gestellt'), findsOneWidget);
+  });
+
   testWidgets('1.17.0 G3 Gespräch zum Projekt öffnet den Projektfaden', (t) async {
     String? geoeffnet;
     Future<Map<String, dynamic>> json(String pfad, {String methode = 'GET', Map<String, dynamic>? koerper}) async => {'id': 'b77431a2-e388', 'name': 'Angebots-Radar', 'geraet': 'Ubuntu-VM', 'pfad': '/x', 'pruefBefehle': [], 'offenePunkte': [], 'laeufe': []};

@@ -319,6 +319,23 @@ class _ProjektDetailState extends State<ProjektDetail> {
     finally { if (mounted) setState(() => plant = false); }
   }
 
+  /// 1.28.0 — endgültig löschen (v1457): erst hier bestätigen, dann stellt Alfred die Owner-Bestätigung; gelöscht wird nach dem Ja
+  Future<void> endgueltigLoeschen(String name) async {
+    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('Projekt endgültig löschen?'),
+      content: Text('„$name“ mit Läufen, Protokoll, Umgebungen und Projektfaden. Ordner am Gerät und Repository bleiben. Danach kommt eine Bestätigung — erst nach deinem Ja wird gelöscht.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Abbrechen')), FilledButton(key: const Key('loeschen-ja'), onPressed: () => Navigator.pop(ctx, true), child: const Text('Löschen anfragen'))],
+    ));
+    if (ok != true) return;
+    setState(() { plant = true; meldung = null; });
+    try {
+      final r = await widget.json('/api/geraete/projekte/${widget.id}', methode: 'POST', koerper: {'aktion': 'loeschen'});
+      if (!mounted) return;
+      setState(() { meldungOk = r['success'] == true; meldung = r['success'] == true ? '${r['display'] ?? 'Zur Bestätigung gestellt.'}' : '${r['error'] ?? 'Fehler'}'; });
+    } catch (e) { if (mounted) setState(() { meldungOk = false; meldung = '$e'; }); }
+    finally { if (mounted) setState(() => plant = false); }
+  }
+
   /// 1.27.0 — Schalter „Merge Requests“ (v1455)
   Future<void> mergeRequestsSetzen(bool an) async {
     setState(() { plant = true; meldung = null; });
@@ -498,6 +515,10 @@ class _ProjektDetailState extends State<ProjektDetail> {
           Text('Offene Punkte (${punkte.length})', style: theme.textTheme.titleSmall),
           for (final p in punkte.take(20)) Text('• ${p['titel'] ?? ''}', style: theme.textTheme.bodySmall),
         ],
+        // 1.28.0 — endgültig löschen (v1457), nicht während eines Laufs
+        const SizedBox(height: 16),
+        Align(alignment: Alignment.centerLeft, child: OutlinedButton.icon(key: const Key('projekt-loeschen'), onPressed: plant || laeuftGerade ? null : () => endgueltigLoeschen('${j['name'] ?? ''}'),
+          icon: const Icon(Icons.delete_forever, size: 18), label: const Text('Endgültig löschen'), style: OutlinedButton.styleFrom(foregroundColor: Colors.red.shade300))),
       ],
     ]));
   }

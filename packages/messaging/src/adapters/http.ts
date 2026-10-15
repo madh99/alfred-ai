@@ -812,6 +812,16 @@ export class HttpAdapter extends MessagingAdapter {
   /** v1399 — Geräte-Projekt im Web: Stand (Akte mit Commits vom Gerät) und Weiterarbeiten (Plan → Owner-Bestätigung) */
   private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; mergeRequests?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; /** v1439 */ deployInfo?: (id: string) => Promise<unknown>; deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<unknown> };
   setGeraeteProjektCallbacks(cb: HttpAdapter['geraeteProjektCallbacks']): void { this.geraeteProjektCallbacks = cb; }
+  /** v1457 — Projekt endgültig löschen (jedes Projekt; stellt nur die Owner-Bestätigung, gelöscht wird nach dem Ja) */
+  private projektLoeschenFn?: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>;
+  setProjektLoeschen(fn: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>): void { this.projektLoeschenFn = fn; }
+  private async handleProjektLoeschen(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
+    if (!this.projektLoeschenFn) { antwort(404, { error: 'nicht verfügbar' }); return; }
+    antwort(200, await this.projektLoeschenFn(decodeURIComponent(url.pathname.split('/')[3] ?? '')));
+  }
   private async handleGeraeteProjekt(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (!(await this.checkAuth(req, res))) return;
@@ -1878,6 +1888,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'PATCH') {
       this.handleProjectsUpdate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (/^\/api\/projects\/[^/]+\/endgueltig-loeschen$/.test(url.pathname) && req.method === 'POST') { // v1457
+      this.handleProjektLoeschen(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'DELETE') {
       this.handleProjectsArchive(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/open-items$/) && req.method === 'POST') {

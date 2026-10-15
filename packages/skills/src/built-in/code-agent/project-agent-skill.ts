@@ -315,6 +315,8 @@ export interface SatellitProjektHandler {
   sudoSperre?: (ref: string, an: boolean) => Promise<SkillResult>;
   /** v1455 — Etappen über Branch und Merge Request (an/aus je Projekt) */
   mergeRequests?: (ref: string, an: boolean) => Promise<SkillResult>;
+  /** v1457 — Projekt endgültig löschen (erst Owner-Bestätigung; bestaetigt = Kennung aus der Bestätigung) */
+  loeschen?: (ref: string, input: Record<string, unknown>, context: SkillContext) => Promise<SkillResult>;
   /** v1426 — Konventionen des Projekts lesen/ändern (CHANGELOG, README, Commits, eigene Regeln) */
   konventionen?: (ref: string, input: Record<string, unknown>) => Promise<SkillResult>;
   /** v1404 — Frage zum Projekt (Claude Code nur lesend) */
@@ -431,7 +433,7 @@ Actions:
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_holen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests'],
+            enum: ['start', 'status', 'interject', 'stop', 'resume', 'import_feature', 'satellit_antwort', 'satellit_weiter', 'projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_holen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen'],
             description: 'Project agent action',
           },
           goal: { type: 'string', description: 'What to build (for start)' },
@@ -519,7 +521,7 @@ Actions:
     // v1434 B13 — Projekt von GitLab aufs Gerät holen (danach ein Geräte-Projekt wie jedes andere)
     if (action === 'projekt_holen') return this.satellit?.holen ? this.satellit.holen(input, context) : { success: false, error: 'Projekte holen ist nicht verfügbar (Geräte-Gateway fehlt)' };
     // v1398 — Projektakten
-    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests'].includes(action) || satId.startsWith('prj-')) {
+    if (['projekte', 'projekt_akte', 'projekt_weiter', 'projekt_umbenennen', 'projekt_archivieren', 'projekt_frage', 'projekt_sudo_sperre', 'projekt_konventionen', 'projekt_deploy_ziel', 'projekt_deploy', 'projekt_rollback', 'projekt_hochstufen', 'projekt_remote', 'projekt_merge_requests', 'projekt_loeschen'].includes(action) || satId.startsWith('prj-')) {
       if (!this.satellit?.projekte) return { success: false, error: 'Projektakten sind nicht verfügbar' };
       const ref = String(input.projekt ?? input.task_id ?? '').trim();
       if (action === 'projekte') return this.satellit.projekte();
@@ -533,6 +535,7 @@ Actions:
       if (action === 'projekt_hochstufen') return this.satellit.hochstufen ? this.satellit.hochstufen(ref, input, context) : { success: false, error: 'nicht verfügbar' }; // v1443
       if (action === 'projekt_rollback') return this.satellit.rollback ? this.satellit.rollback(ref, input, context) : { success: false, error: 'nicht verfügbar' };
       if (action === 'projekt_konventionen') return this.satellit.konventionen ? this.satellit.konventionen(ref, input) : { success: false, error: 'nicht verfügbar' }; // v1426
+      if (action === 'projekt_loeschen') return this.satellit.loeschen ? this.satellit.loeschen(ref, input, context) : { success: false, error: 'nicht verfügbar' }; // v1457
       if (action === 'projekt_merge_requests') return this.satellit.mergeRequests ? this.satellit.mergeRequests(ref, input.merge_requests !== false) : { success: false, error: 'nicht verfügbar' }; // v1455
       if (action === 'projekt_sudo_sperre') return this.satellit.sudoSperre ? this.satellit.sudoSperre(ref, input.sudo_sperre !== false) : { success: false, error: 'nicht verfügbar' };
       if (action === 'projekt_frage') return this.satellit.frage ? this.satellit.frage(ref, String(input.frage ?? input.goal ?? '').trim(), context, input.anhaenge) : { success: false, error: 'Fragen zum Projekt sind nicht verfügbar' };

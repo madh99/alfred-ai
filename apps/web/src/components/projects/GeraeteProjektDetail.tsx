@@ -131,6 +131,10 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
           {p.status !== 'archived' && !laeuftGerade && (
             <button onClick={onArchive} className="px-3 py-1 text-xs text-red-400 hover:bg-red-500/10 rounded border border-red-500/30">Archivieren</button>
           )}
+          {/* v1457 — endgültig löschen (mit Owner-Bestätigung) */}
+          {!laeuftGerade && (
+            <button disabled={busy} onClick={async () => { if (!confirm(`Projekt "${p.name}" endgültig löschen? Du bekommst danach eine Bestätigung — erst nach deinem Ja wird gelöscht. Ordner und Repository bleiben.`)) return; setBusy(true); const r = await client.projektEndgueltigLoeschen(p.id).catch((e: Error) => ({ success: false, error: e.message, display: undefined })); setBusy(false); setMeldung({ ok: r.success, text: r.success ? (r.display ?? 'Zur Bestätigung gestellt.') : (r.error ?? 'Fehler') }); }} className="px-3 py-1 text-xs text-red-300 hover:bg-red-500/20 rounded border border-red-500/50">Endgültig löschen</button>
+          )}
         </div>
       </div>
 

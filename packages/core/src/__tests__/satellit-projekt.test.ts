@@ -38,6 +38,18 @@ function aufbau(o: { pruefung?: (n: number) => boolean; mutation?: Mutation; kos
 const start = { geraetId: 'g1', geraet: 'Ubuntu-VM', projekt: '/home/madh/claudecode/r2', ziel: 'Kleines CLI-Werkzeug', pruefBefehle: ['npm test'] };
 
 describe('Satelliten-Projekt', () => {
+  it('v1457 Läufe eines gelöschten Projekts entfernen — nie, solange einer läuft oder wartet', async () => {
+    const a = aufbau();
+    const s = await a.p.starte(start);
+    a.p.setzeAkte(s.id, 'akte-1');
+    expect(a.p.entferneLaeufe('akte-1')).toBe(0); // wartet auf den Owner
+    expect(a.p.hole(s.id)).toBeDefined();
+    await a.p.stoppe(s.id, 'Owner');
+    expect(a.p.entferneLaeufe('akte-1')).toBe(1);
+    expect(a.p.hole(s.id)).toBeUndefined();
+    expect(a.p.laeufeDerAkte('akte-1')).toEqual([]);
+  });
+
   it('v1455 vor jedem Auftrag: Hinweise aus dem Merge Request in den Auftrag, Meldung in den Faden; Fehler hält den Lauf nicht an', async () => {
     let n = 0;
     const a = aufbau({ vorEtappe: async (s) => { n++; if (n === 1) { s.mr = { zweig: 'alfred/x', ziel: 'main' }; return { meldung: 'Zweig angelegt' }; } if (n === 2) return { hinweise: '\n\nHinweise des Owners aus dem Merge Request: bitte Logging', meldung: '💬 1 Kommentar' }; throw new Error('GitLab weg'); } });

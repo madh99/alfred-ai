@@ -1667,6 +1667,11 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/protokoll`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ an }) });
     return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
   }
+  /** v1457 — Projekt endgültig löschen: stellt die Owner-Bestätigung (gelöscht wird erst nach dem Ja) */
+  async projektEndgueltigLoeschen(id: string): Promise<{ success: boolean; display?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/endgueltig-loeschen`, { method: 'POST', headers: this.jsonHeaders, body: '{}' });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
   /** v1455 — Schalter „Merge Requests“ (Etappen über eigenen Zweig und Merge Request in GitLab) */
   async geraetProjektMergeRequests(id: string, an: boolean): Promise<{ success: boolean; display?: string; error?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/merge-requests`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ an }) });

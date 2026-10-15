@@ -75,6 +75,8 @@ export interface OwnerAnsichtenDeps {
     protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1455 — Schalter „Merge Requests“ (Etappen über Branch und MR) */
     mergeRequests?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>;
+    /** v1457 — endgültig löschen: stellt nur die Owner-Bestätigung */
+    loeschen?: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1426 — Konventionen ändern (Teil-Änderung, Felder siehe projekt/konventionen.ts) */
     konventionen?: (id: string, aenderung: unknown) => Promise<{ success: boolean; display?: string; error?: string }>;
     /** v1439 — Deploy: aktion ziel | ziel_entfernen | deploy | rollback (Ziel, Deploy und Rollback mit Bestätigung) */
@@ -233,6 +235,11 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt Protokoll', { projekt: id, an: text === 'an' });
       return this.d.projekte.protokoll(id, text === 'an');
     }
+    if (aktion === 'loeschen') { // v1457 — stellt nur die Bestätigung; gelöscht wird erst nach dem Ja
+      if (!this.d.projekte.loeschen) return { success: false, error: 'nicht verfügbar' };
+      this.d.protokoll?.('Projekt löschen angefragt', { projekt: id });
+      return this.d.projekte.loeschen(id);
+    }
     if (aktion === 'merge_requests') { // v1455 — text „an“ oder „aus“
       if (!this.d.projekte.mergeRequests || (text !== 'an' && text !== 'aus')) return { success: false, error: 'text muss an oder aus sein' };
       this.d.protokoll?.('Projekt Merge Requests', { projekt: id, an: text === 'an' });
@@ -244,7 +251,7 @@ export class OwnerAnsichten {
       this.d.protokoll?.('Projekt Frage', { projekt: id, laenge: f.length });
       return this.d.projekte.frage(id, f);
     }
-    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, konventionen, freigeben oder ablehnen sein' };
+    if (aktion !== 'weiter') return { success: false, error: 'aktion muss stand, weiter, frage, fortsetzen, diff, protokoll, merge_requests, loeschen, konventionen, freigeben oder ablehnen sein' };
     const t = typeof text === 'string' ? text.trim().slice(0, 4000) : '';
     if (!t) return { success: false, error: 'text fehlt (was soll als Nächstes passieren?)' };
     this.d.protokoll?.('Projekt weiter', { projekt: id, laenge: t.length });

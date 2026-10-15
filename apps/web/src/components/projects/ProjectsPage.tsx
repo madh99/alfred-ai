@@ -355,6 +355,14 @@ export function ProjectsPage() {
     setEditingName(false);
   }
 
+  /** v1457 — stellt die Owner-Bestätigung; gelöscht wird erst nach dem Ja (Telegram, App oder Bestätigungen) */
+  async function endgueltigLoeschen(p: Project) {
+    if (!client) return;
+    if (!confirm(`Projekt "${p.name}" endgültig löschen? Du bekommst danach eine Bestätigung — erst nach deinem Ja wird gelöscht. Ordner und Repository bleiben.`)) return;
+    const r = await client.projektEndgueltigLoeschen(p.id).catch((e: Error) => ({ success: false, error: e.message, display: undefined }));
+    alert(r.success ? (r.display ?? 'Zur Bestätigung gestellt.') : (r.error ?? 'Fehler'));
+  }
+
   async function archiveProject(p: Project) {
     if (!client) return;
     if (!confirm(`Projekt "${p.name}" archivieren?`)) return;
@@ -819,6 +827,8 @@ export function ProjectsPage() {
                   {detail.project.status !== 'archived' && (
                     <button onClick={() => archiveProject(detail.project)} className="px-3 py-1 text-xs text-red-400 hover:bg-red-500/10 rounded border border-red-500/30">Archivieren</button>
                   )}
+                  {/* v1457 — endgültig löschen (mit Owner-Bestätigung) */}
+                  <button onClick={() => endgueltigLoeschen(detail.project)} className="px-3 py-1 text-xs text-red-300 hover:bg-red-500/20 rounded border border-red-500/50">Endgültig löschen</button>
                 </div>
               </div>
 
