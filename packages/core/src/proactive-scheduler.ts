@@ -186,7 +186,7 @@ export class ProactiveScheduler {
         // Send file attachments if any — to the USER's original chatId
         const adapter = this.adapters.get(action.platform as Platform);
         if (adapter && result.attachments) {
-          for (const att of result.attachments) {
+          for (const att of result.attachments.filter(a => !a.nurModell)) { // v1470 — „nur fürs Modell“ nie zustellen
             try {
               const isImage = att.mimeType.startsWith('image/');
               const isVoice = att.mimeType === 'audio/ogg' || att.mimeType === 'audio/opus';

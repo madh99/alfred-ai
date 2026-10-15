@@ -134,6 +134,8 @@ export interface SkillResultAttachment {
   fileName: string;
   data: Buffer;
   mimeType: string;
+  /** v1470 — nur fürs Modell (z. B. read_store-Bild): wird nicht zugestellt und nicht abgelegt. */
+  nurModell?: boolean;
 }
 
 export interface SkillResult {

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { bildBloeckeAusAnhaengen, ohneBilder } from './interaktion/werkzeug-bilder.js'; // v1268
+import { bildBloeckeAusAnhaengen, ohneBilder, zuzustellen, WERKZEUG_BILD_MAX_BYTES } from './interaktion/werkzeug-bilder.js'; // v1268, v1470
+import { bildFuersModell } from './interaktion/bild-verkleinern.js'; // v1470
 import type {
   NormalizedMessage,
   LLMResponse,
@@ -218,6 +219,9 @@ interface ActiveAgent {
   tracker: import('@alfred/skills').ActivityTracker;
   startedAt: number;
 }
+
+/** v1470 — Grenze je Bild in der Nachricht ans Modell (nach dem Verkleinern). */
+const NACHRICHT_BILD_MAX_BYTES = 5 * 1024 * 1024;
 
 export class MessagePipeline {
   private readonly promptBuilder: PromptBuilder;
@@ -741,7 +745,7 @@ export class MessagePipeline {
       // v1467 — eingehende Bilder (Telegram & Co.) in den Dateispeicher und den Schlüssel im Verlauf vermerken: Folgefragen sehen sie wieder
       let gespeicherterText = message.text;
       const bilderGespraech = await import('./interaktion/bilder-im-gespraech.js');
-      const eingehendeBilder = (message.attachments ?? []).filter(a => a.type === 'image' && a.data && a.data.length <= bilderGespraech.BILD_MAX_BYTES);
+      const eingehendeBilder = (message.attachments ?? []).filter(a => a.type === 'image' && a.data && a.data.length <= bilderGespraech.BILD_LESEN_MAX_BYTES); // v1470 — Verkleinern erst fürs Modell
       if (eingehendeBilder.length && this.fileStore && masterUserId) {
         const keys: string[] = [];
         for (const [i, a] of eingehendeBilder.slice(0, bilderGespraech.BILDER_MAX).entries()) {
@@ -1320,7 +1324,7 @@ export class MessagePipeline {
                 if (imgMatch && this.fileStore && imagesSoFar < 3) {
                   try {
                     const buf = await this.fileStore.read(ref.refId, baseContext.masterUserId);
-                    if (buf.length > 0 && buf.length <= 5 * 1024 * 1024) {
+                    if (buf.length > 0 && buf.length <= 25 * 1024 * 1024) { // v1470 — verkleinert wird in buildUserContent
                       const ext = imgMatch[1].toLowerCase();
                       const mime = ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
                       message.attachments = [...(message.attachments ?? []), {
@@ -1377,14 +1381,14 @@ export class MessagePipeline {
             try {
               const buf = await this.fileStore.read(k, masterUserId);
               if (buf.length === 0) continue;
-              if (buf.length > bilderGespraech.BILD_MAX_BYTES) { zuGross.push(k); continue; }
+              if (buf.length > bilderGespraech.BILD_LESEN_MAX_BYTES) { zuGross.push(k); continue; } // v1470 — darunter verkleinert buildUserContent
               message.attachments = [...(message.attachments ?? []), { type: 'image', mimeType: bilderGespraech.bildMime(k), fileName: k.split('/').pop(), size: buf.length, data: buf }];
               angehaengt.push(k);
             } catch (err) { this.logger.debug({ err, key: k }, 'v1467 Bild nicht lesbar'); }
           }
           const hinweise: string[] = [];
           if (angehaengt.length) hinweise.push(`[${angehaengt.length === 1 ? 'Ein Bild' : `${angehaengt.length} Bilder`} ${nachfass ? 'aus den letzten Nachrichten erneut' : 'aus dem Dateispeicher'} angehängt — du siehst sie direkt. Nicht per Datei- oder Shell-Werkzeug lesen.]`);
-          if (zuGross.length) hinweise.push(`[Zu groß zum Ansehen (über 5 MB): ${zuGross.join(', ')}]`);
+          if (zuGross.length) hinweise.push(`[Zu groß zum Ansehen (über 25 MB): ${zuGross.join(', ')}]`);
           if (hinweise.length) message.text = `${message.text}\n\n${hinweise.join('\n')}`;
           if (angehaengt.length || zuGross.length) this.logger.info({ angehaengt: angehaengt.length, zuGross: zuGross.length, nachfass }, 'v1467 Bilder aus dem Dateispeicher angehängt');
         } catch (err) {
@@ -2166,8 +2170,10 @@ export class MessagePipeline {
       let content = result.content;
       if (result.attachments && result.attachments.length > 0) {
         allAttachments.push(...result.attachments);
-        const names = result.attachments.map(a => a.fileName).join(', ');
-        content += `\n\n[${result.attachments.length} Datei(en) werden dem User gesendet: ${names}]`;
+        const raus = zuzustellen(result.attachments); // v1470 — „nur fürs Modell“ geht nicht an den User
+        if (raus.length) content += `\n\n[${raus.length} Datei(en) werden dem User gesendet: ${raus.map(a => a.fileName).join(', ')}]`;
+        const intern = result.attachments.filter(a => a.nurModell);
+        if (intern.length) content += `\n\n[Nur für dich, NICHT an den User gesendet: ${intern.map(a => a.fileName).join(', ')} — Bilder siehst du direkt nach den Werkzeugergebnissen]`;
       }
       // Redact sensitive secrets from tool results before sending to LLM
       content = redactSecrets(content);
@@ -2207,7 +2213,8 @@ export class MessagePipeline {
       onProgress?.(result.isError
         ? { kind: 'tool_error', text: `${tc.name} fehlgeschlagen`, tool: tc.name, durationMs }
         : { kind: 'tool_done',  text: `${tc.name} fertig`, tool: tc.name, durationMs });
-      return { blocks: [buildBlock(tc, result), ...bildBloeckeAusAnhaengen(allAttachments)], attachments: allAttachments }; // v1268 — Bilder sieht das Modell
+      const block = buildBlock(tc, result);
+      return { blocks: [block, ...bildBloeckeAusAnhaengen(await this.werkzeugBilderFuersModell(allAttachments))], attachments: zuzustellen(allAttachments) }; // v1268 — Bilder sieht das Modell; v1470 verkleinert, „nur fürs Modell“ nicht zustellen
     }
 
     // Multiple tool calls: execute with per-skill concurrency limit
@@ -2292,7 +2299,7 @@ export class MessagePipeline {
       }
     });
 
-    return { blocks: [...blocks, ...bildBloeckeAusAnhaengen(allAttachments)], attachments: allAttachments }; // v1268
+    return { blocks: [...blocks, ...bildBloeckeAusAnhaengen(await this.werkzeugBilderFuersModell(allAttachments))], attachments: zuzustellen(allAttachments) }; // v1268, v1470
   }
 
   private async executeToolCall(
@@ -2800,6 +2807,18 @@ export class MessagePipeline {
     return `[Der User ANTWORTET DIREKT auf folgende vorherige Nachricht von ${from} — beziehe dich konkret darauf:\n"${raw}${message.replyToText.length > CAP ? '…' : ''}"]\n\n`;
   }
 
+  /** v1470 — Werkzeugbilder auf die Grenze verkleinern (vorher fielen Bilder über 2 MB weg). Andere Anhänge bleiben unverändert. */
+  private async werkzeugBilderFuersModell(anhaenge: SkillResultAttachment[]): Promise<SkillResultAttachment[]> {
+    const aus: SkillResultAttachment[] = [];
+    for (const a of anhaenge) {
+      if (!/^image\//i.test(a.mimeType ?? '') || !a.data) { aus.push(a); continue; }
+      const b = await bildFuersModell(a.data, a.mimeType, WERKZEUG_BILD_MAX_BYTES);
+      if (b) aus.push({ ...a, data: b.data, mimeType: b.mimeType });
+      else this.logger.info({ fileName: a.fileName, size: a.data.length }, 'v1470 Werkzeugbild nicht verwendbar (zu groß)');
+    }
+    return aus;
+  }
+
   private async buildUserContent(
     message: NormalizedMessage,
     onProgress?: ProgressCallback,
@@ -2819,15 +2838,22 @@ export class MessagePipeline {
     // Process attachments
     for (const attachment of attachments) {
       if (attachment.type === 'image' && attachment.data) {
+        // v1470 — auf lange Kante 2000 px / 5 MB verkleinern statt große Bilder wegfallen zu lassen
+        const bild = await bildFuersModell(attachment.data, attachment.mimeType ?? 'image/jpeg', NACHRICHT_BILD_MAX_BYTES);
+        if (!bild) {
+          blocks.push({ type: 'text', text: `[Bild „${attachment.fileName ?? 'Bild'}“ (${this.formatBytes(attachment.data.length)}) konnte nicht für dich aufbereitet werden — zu groß.]` });
+          this.logger.info({ size: attachment.data.length }, 'v1470 Nachrichtenbild nicht verwendbar');
+          continue;
+        }
         blocks.push({
           type: 'image',
           source: {
             type: 'base64',
-            media_type: attachment.mimeType ?? 'image/jpeg',
-            data: attachment.data.toString('base64'),
+            media_type: bild.mimeType,
+            data: bild.data.toString('base64'),
           },
         });
-        this.logger.info({ mimeType: attachment.mimeType, size: attachment.size }, 'Image attached to LLM request');
+        this.logger.info({ mimeType: bild.mimeType, size: attachment.data.length, gesendet: bild.data.length, verkleinert: bild.verkleinert }, 'Image attached to LLM request');
       } else if (attachment.type === 'audio' && attachment.data) {
         // Transcribe audio via Whisper
         if (this.speechTranscriber) {

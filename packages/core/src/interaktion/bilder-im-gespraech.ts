@@ -9,6 +9,8 @@ import { anhangSchluessel } from '../projekt/anhaenge.js';
 
 export const BILDER_MAX = 6;
 export const BILD_MAX_BYTES = 5 * 1024 * 1024;
+/** v1470 — bis zu dieser Größe wird gelesen und gespeichert; ans Modell geht das Bild verkleinert (bild-verkleinern.ts). */
+export const BILD_LESEN_MAX_BYTES = 25 * 1024 * 1024;
 /** Bilder der letzten Nachricht gelten so lange als Teil des Gesprächs … */
 export const NACHFASS_MIN = 10;
 /** … und mit ausdrücklichem Bezug („auf dem Bild“, „schau dir … an“) so lange. */

@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1470] - 2026-10-15
+
+### Added — Bilder aus dem Dateispeicher ansehen, große Bilder verkleinern
+
+Realfall 15.10.: `read_store` lieferte bei Screenshots nur „Binary file“, danach griff Alfred zur Shell. Große Handy- und Retina-Screenshots fielen an den Größengrenzen ganz weg.
+
+- **Nur fürs Modell:** Werkzeuganhänge können als „nur fürs Modell“ gekennzeichnet werden. Das Modell sieht sie, sie werden aber weder zugestellt noch abgelegt. Das gilt in der Pipeline, in der Bestätigungs-Warteschlange und bei geplanten Aufgaben.
+- **`read_store` und `read`:** Bei Bildern (png, jpg, gif, webp, bis 25 MB) geben beide das Bild mit diesem Kennzeichen zurück. Alfred sieht es im nächsten Schritt, der Nutzer bekommt es nicht zugeschickt. Andere Binärdateien bleiben beim bisherigen Hinweis.
+- **Verkleinern:** Bilder für das Modell werden auf höchstens 2000 px an der langen Kante verkleinert. PNG bleibt PNG; wird es zu groß, wird es als JPEG gespeichert. Das gilt für Werkzeugbilder (Grenze 2 MB) und Nachrichtenbilder (Grenze 5 MB). Nachrichtenbilder werden bis 25 MB angenommen statt bisher 5 MB. Ein Bild, das sich nicht passend aufbereiten lässt, erscheint als Hinweis.
+
 ## [0.19.0-jarvis.1469] - 2026-10-15
 
 ### Fixed — Web-Chat: Anhänge über den Dateispeicher

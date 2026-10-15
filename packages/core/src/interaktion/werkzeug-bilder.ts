@@ -18,6 +18,11 @@ export function bildBloeckeAusAnhaengen(anhaenge: SkillResultAttachment[] | unde
   return out;
 }
 
+/** v1470 — nur Anhänge, die an den Nutzer gehen (ohne „nur fürs Modell“). */
+export function zuzustellen<T extends { nurModell?: boolean }>(anhaenge: T[] | undefined): T[] {
+  return (anhaenge ?? []).filter(a => !a.nurModell);
+}
+
 /** Entfernt Bild- und Begleittextblöcke, bevor Werkzeugergebnisse in die Historie geschrieben werden. */
 export function ohneBilder(bloecke: LLMContentBlock[]): LLMContentBlock[] {
   return bloecke.filter(b => b.type === 'tool_result' || b.type === 'tool_use');

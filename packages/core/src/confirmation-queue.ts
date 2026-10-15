@@ -292,8 +292,8 @@ export class ConfirmationQueue {
    * v1236 — Anhänge des nach Freigabe ausgeführten Skills (geholte Datei, Screenshot, Sprachnachricht) zustellen.
    * Vorher kam nur der Text; derselbe Fehler wie bei delegate (v1234): ein Wrapper verwarf attachments.
    */
-  private async sendeAnhaenge(adapter: MessagingAdapter, chatId: string, attachments?: Array<{ fileName?: string; mimeType?: string; data: Buffer }>): Promise<void> {
-    for (const att of attachments ?? []) {
+  private async sendeAnhaenge(adapter: MessagingAdapter, chatId: string, attachments?: Array<{ fileName?: string; mimeType?: string; data: Buffer; nurModell?: boolean }>): Promise<void> {
+    for (const att of (attachments ?? []).filter(a => !a.nurModell)) { // v1470
       try {
         const mime = att.mimeType ?? '';
         if (mime.startsWith('image/')) await adapter.sendPhoto(chatId, att.data, att.fileName);

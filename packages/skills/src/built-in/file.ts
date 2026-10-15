@@ -5,6 +5,25 @@ import { Skill } from '../skill.js';
 
 const MAX_READ_SIZE = 500_000; // 500KB
 const MAX_SEND_SIZE = 50_000_000; // 50MB
+/** v1470 — Bilder bis zu dieser Größe gibt read/read_store dem Modell zum Ansehen (verkleinert wird in der Pipeline). */
+const MAX_BILD_SIZE = 25 * 1024 * 1024;
+const BILD_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+
+/**
+ * v1470 — Bild „nur fürs Modell“: Alfred sieht es im nächsten Schritt, der Nutzer bekommt es nicht zugestellt
+ * (Realfall 15.10.: read_store lieferte bei Screenshots nur „Binary file“, Alfred griff danach zur Shell).
+ */
+function bildErgebnis(name: string, data: Buffer, extra: Record<string, unknown>): SkillResult | undefined {
+  const mime = BILD_MIME[path.extname(name).toLowerCase()];
+  if (!mime || data.length === 0 || data.length > MAX_BILD_SIZE) return undefined;
+  const fileName = path.basename(name);
+  return {
+    success: true,
+    data: { ...extra, size: data.length, mimeType: mime, bild: true },
+    display: `Bild „${fileName}“ (${data.length} Bytes) — du siehst es direkt nach diesem Ergebnis. Es wird NICHT an den Nutzer geschickt (dafür action "send").`,
+    attachments: [{ fileName, data, mimeType: mime, nurModell: true }],
+  };
+}
 
 const MIME_MAP: Record<string, string> = {
   // Documents
@@ -89,6 +108,7 @@ export class FileSkill extends Skill {
       'Use "send" to deliver a file to the user in the chat (PDF, images, etc.) — works with both local paths and FileStore keys. ' +
       'Use "read_store" / "list_store" / "delete_store" to access files in the FileStore (S3/NFS) — e.g. inbox attachments the user sent. ' +
       'When a message contains [Saved to FileStore ... key="<key>"], use "read_store" or "send" with that key. ' +
+      'Images (png/jpg/gif/webp) via "read" or "read_store" are shown to YOU only (not sent to the user) — use this to look at a screenshot. ' +
       'IMPORTANT: For large content (HTML pages, long text), use code_sandbox instead to generate the file programmatically.',
     riskLevel: 'write',
     version: '2.0.0',
@@ -213,6 +233,10 @@ export class FileSkill extends Skill {
       const stat = fs.statSync(filePath);
       if (stat.isDirectory()) {
         return { success: false, error: `"${filePath}" is a directory, not a file. Use action "list" instead.` };
+      }
+      if (BILD_MIME[path.extname(filePath).toLowerCase()] && stat.size <= MAX_BILD_SIZE) { // v1470
+        const bild = bildErgebnis(filePath, fs.readFileSync(filePath), { path: filePath });
+        if (bild) return bild;
       }
       if (stat.size > MAX_READ_SIZE) {
         const content = fs.readFileSync(filePath, 'utf-8').slice(0, MAX_READ_SIZE);
@@ -455,6 +479,8 @@ export class FileSkill extends Skill {
     }
     try {
       const data = await store.read(key, context.masterUserId ?? context.userId); // v1323 — Master-UUID statt Alias
+      const bild = bildErgebnis(key, data, { key }); // v1470
+      if (bild) return bild;
       const isText = data.length < MAX_READ_SIZE && !data.includes(0);
       if (isText) {
         const text = data.toString('utf-8');
