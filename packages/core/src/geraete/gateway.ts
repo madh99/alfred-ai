@@ -70,6 +70,8 @@ export class GeraeteGateway {
   /** v1342/v1382 — gestartete Aufträge (Claude Code) je Gerät und die Sitzung, aus der sie kamen: das Ende wird dort gemeldet.
    *  Am Gateway statt an der Verbindung, damit ein Wiederverbinden des Satelliten die Zuordnung nicht verliert. */
   private readonly auftraege: AuftragHerkunft;
+  /** v1490 — schon verarbeitete Auftragsenden (Gerät:Auftrag:Status → Zeit), gegen doppelte Meldungen */
+  private readonly gemeldeteEnden: Map<string, number>;
   private readonly verbindungen = new Map<string, Verbindung>();
   private readonly pairingCodes = new Map<string, { userId: string; gueltigBis: number; fehlversuche: number }>();
   /** v1225 — Fehlversuche je Absender: nach 10 in 10 Minuten wird das Pairing für diesen Absender abgelehnt. */
@@ -86,6 +88,7 @@ export class GeraeteGateway {
 
   constructor(private readonly deps: GeraeteGatewayDeps) {
     this.auftraege = new AuftragHerkunft(this.deps.auftraegeDatei); // v1383
+    this.gemeldeteEnden = new Map(); // v1490
     this.vorhaben = new VorhabenFreigaben(() => this.deps.now?.() ?? Date.now(), this.deps.vorhabenDatei ? vorhabenDateiSpeicher(this.deps.vorhabenDatei) : undefined); // v1240
     this.transfers = new Transfers(this.deps.transferOrdner ?? path.join(os.tmpdir(), 'alfred-transfers'), () => this.deps.now?.() ?? Date.now()); // v1249
   }
@@ -303,6 +306,11 @@ export class GeraeteGateway {
         return;
       }
       case 'ereignis': {
+        // v1490 — Realfall 16.10. 20:03:49: dasselbe Auftragsende zweimal (Ende-Rückruf und Minuten-Wächter am Satelliten) → zwei Meldungen
+        const schluessel = `${v.eintrag.id}:${String(n.auftragId)}:${String(n.status)}`;
+        if (this.gemeldeteEnden.has(schluessel)) { this.deps.logger.info({ geraet: v.eintrag.name, auftrag: n.auftragId, status: n.status }, 'v1490 Auftragsende doppelt gemeldet — ignoriert'); return; }
+        this.gemeldeteEnden.set(schluessel, Date.now());
+        for (const [k, z] of this.gemeldeteEnden) if (Date.now() - z > 6 * 3_600_000) this.gemeldeteEnden.delete(k);
         // v1342 — Auftrag (Claude Code) auf dem Gerät beendet → Fortsetzung in der Sitzung, aus der er gestartet wurde
         const herkunft = this.auftraege.nimm(v.eintrag.id, n.auftragId);
         this.deps.logger.info({ geraet: v.eintrag.name, auftrag: n.auftragId, status: n.status, herkunft: herkunft?.chatId }, 'v1342 Auftrag beendet');

@@ -109,6 +109,8 @@ export interface SkillContext {
   abortSignal?: AbortSignal;
   /** v1432 — Zusatz zur Antwort dieses Zugs (Pipeline): Quellenzeilen darunter; `ausstehend` ersetzt die Antwort durch einen festen Satz */
   antwortZusatz?: { quellen: string[]; ausstehend?: string };
+  /** v1490 — nach der Freigabe: die Sitzung, aus der die Anfrage kam (die Ausführung selbst läuft im Chat der Bestätigung) */
+  herkunftNachFreigabe?: { chatId: string; platform: string; userId?: string };
   /** v890 — Per-Turn-CLI-Override aus dem Projekt-Chat-Picker. Wenn gesetzt,
    *  nutzen project_agent/code_agent DIESE CLI statt input.agent/agents[0].
    *  Nur der Projekt-Chat setzt ihn (er kennt das Projekt + dessen agentStrategy);

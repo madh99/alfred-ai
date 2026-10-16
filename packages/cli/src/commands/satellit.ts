@@ -198,11 +198,13 @@ let gehirnSende: ((n: Record<string, unknown>) => boolean) | undefined;
 let endeWaechter: ReturnType<typeof setInterval> | undefined; // v1394
 let autostartWaechter: ReturnType<typeof setInterval> | undefined; // v1462
 let sinneSofort: (() => void) | undefined; // v1411
+/** v1490 — in diesem Prozess schon gemeldete Enden: Ende-Rückruf und Minuten-Wächter trafen sich (Realfall 16.10. 20:03:49, zwei Meldungen) */
+const gemeldetImProzess = new Set<string>();
 function meldeAuftragEnde(m: AuftragMeta, erg: AuftragErgebnis, log?: (t: string) => void): void {
   beendeFortschritt(m.id); // v1418
-  if (m.gemeldet) return;
+  if (m.gemeldet || gemeldetImProzess.has(m.id)) return;
   try {
-    if (gehirnSende?.(endeEreignis(m, erg))) { markiereGemeldet(m.id); log?.(`Auftrag ${m.id} (${m.status}) ans Gehirn gemeldet`); }
+    if (gehirnSende?.(endeEreignis(m, erg))) { gemeldetImProzess.add(m.id); markiereGemeldet(m.id); log?.(`Auftrag ${m.id} (${m.status}) ans Gehirn gemeldet`); }
   } catch (err) { log?.(`Ende von Auftrag ${m.id} nicht gemeldet: ${(err as Error).message}`); }
 }
 

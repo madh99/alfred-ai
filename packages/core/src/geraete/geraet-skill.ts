@@ -84,7 +84,10 @@ export class GeraetSkill extends Skill {
     // die Sitzung sah „noch ist nichts übertragen". Die Herkunft wandert mit der Bestätigung.
     // v1324 — mit userId: die Fortsetzung eines Vorhabens läuft als Nachricht in dieser Sitzung (Realfall 09.10. 13:44: Foto-Auftrag
     // aus der PC-App, Ergebnis nur in Telegram, die Rückfrage in der App fand kein MacBook-Werkzeug).
-    const herkunft = _context?.chatId && _context?.platform ? { chatId: String(_context.chatId), platform: String(_context.platform), userId: String(_context.userId ?? _context.chatId) } : undefined;
+    // v1490 — nach einer Freigabe zählt die Sitzung der Anfrage, nicht der Chat, in dem bestätigt wurde
+    const vorher = _context?.herkunftNachFreigabe;
+    const herkunft = vorher?.chatId && vorher.platform ? { chatId: String(vorher.chatId), platform: String(vorher.platform), userId: String(vorher.userId ?? _context?.userId ?? vorher.chatId) }
+      : _context?.chatId && _context?.platform ? { chatId: String(_context.chatId), platform: String(_context.platform), userId: String(_context.userId ?? _context.chatId) } : undefined;
     // v1268 — Sicherheitsbefund: Geräte gehören dem Owner; andere Nutzer (Familie, Gäste) bekommen weder Dateien noch Bildschirm
     if (this.deps.istOwner && !this.deps.istOwner(_context)) {
       return { success: false, error: `Das Gerät ${this.deps.name} gehört dem Owner — nur er kann es bedienen.` };

@@ -504,7 +504,10 @@ export class ConfirmationQueue {
       const skill = this.skillRegistry.get(pending.skillName);
       if (skill) {
         try {
-          const result = await this.skillSandbox.execute(skill, pending.skillParams, context);
+          // v1490 — Realfall 16.10. 22:01: Auftrag aus dem App-Faden, „Ja“ in Telegram → das Auftragsende ging nur nach Telegram.
+          // Die Herkunft der Anfrage geht mit in die Ausführung (Geräte merken sich so die richtige Sitzung für spätere Meldungen).
+          const herkunftAnfrage = this.herkuenfte.get(pending.id);
+          const result = await this.skillSandbox.execute(skill, pending.skillParams, herkunftAnfrage ? { ...context, herkunftNachFreigabe: herkunftAnfrage } : context);
           if (result && !result.success) {
             throw new Error(result.error ?? 'Skill returned success=false');
           }

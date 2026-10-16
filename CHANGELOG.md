@@ -55,6 +55,21 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1490] - 2026-10-16
+
+### Fixed — Claude-Code-Aufträge: Fertig-Meldung kommt in der Sitzung an, aus der der Auftrag kam, und nur einmal
+
+Realfall 16.10. 22:01: Ein Auftrag fürs Iconset wurde aus einem App-Faden gestellt und in Telegram freigegeben. Die Meldung „✅ fertig … was erledigt wurde“ kam nur in Telegram an, nicht im Faden, und dort zweimal.
+
+- **Ziel:**
+  - Die Bestätigungs-Queue merkte sich zwar die Sitzung der Anfrage (deshalb stand Alfreds Antwort nach dem Ja richtig im Faden), führte den Start aber im Telegram-Kontext aus. Deshalb wurde Telegram als Herkunft des Auftrags gemerkt.
+  - Jetzt geht die Herkunft der Anfrage mit in die Ausführung (`herkunftNachFreigabe`). Der Geräte-Skill merkt den Auftrag unter dieser Sitzung.
+  - Die Fertig-Meldung erscheint wie in v1382 vorgesehen im Faden; Telegram bekommt die Kopie.
+- **Doppelt:**
+  - Der Satellit meldet ein Auftragsende auf zwei Wegen: Ende-Rückruf und Minuten-Wächter für ungemeldete Enden. Fallen beide in dieselbe Sekunde, wurde zweimal gemeldet.
+  - Der Satellit sendet jetzt jedes Ende nur einmal je Prozess.
+  - Der Server ignoriert ein zweites Ende desselben Auftrags (Logzeile „v1490 Auftragsende doppelt gemeldet — ignoriert“), auch bei älteren Satelliten.
+
 ## [0.19.0-jarvis.1489] - 2026-10-16
 
 ### Fixed — Selbstauskünfte des Modells kommen nicht mehr als Hinweis an; Begründungen fürs Weglassen nur im Protokoll
