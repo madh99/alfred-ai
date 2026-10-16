@@ -24,7 +24,7 @@ import type { EmbeddingService } from './embedding-service.js';
 import type { ActiveLearningService } from './active-learning/active-learning-service.js';
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
-import { werkzeugeFuerNachricht, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300
+import { werkzeugeFuerNachricht, zuletztBenutzteWerkzeuge, type WerkzeugwahlGrund } from './skill-filter.js'; // v1300, v1472
 import { geraetSkillName } from './geraete/protokoll.js'; // v1421
 import { gespraechsZiel, fadenBefehl, verlaufBefehl, spiegelBefehl, type GespraechsOptionen, type GespraechsZiel, type FadenDeps } from './gespraeche.js'; // v1330, v1334, v1335
 import { randomUUID as arbeitsId } from 'node:crypto';
@@ -1090,7 +1090,9 @@ export class MessagePipeline {
           // Default (alle anderen Chats: Telegram, Matrix, Web, Signal, …)
           // v1300 — Gerät genannt → nur Geräte-Werkzeuge; sonst Kategorien aus der Nachricht, Verlauf nur als Rückfall
           const recentUserTexts = history.filter(m => m.role === 'user').slice(-3).map(m => m.content);
-          const wahl = werkzeugeFuerNachricht(message.text, recentUserTexts, allSkillMetas);
+          const benutzt = zuletztBenutzteWerkzeuge(history, new Date()); // v1472 — zuletzt aufgerufene Werkzeuge bleiben verfügbar
+          const wahl = werkzeugeFuerNachricht(message.text, recentUserTexts, allSkillMetas, benutzt);
+          if (benutzt.length) tracePhase('werkzeuge_benutzt', { benutzt });
           skillMetas = wahl.metas;
           werkzeugwahl = wahl.grund;
           // v1421 — Projektfaden (owner:faden:projekt-<id8>): die Stichwort-Auswahl kennt das Projekt nicht und ließ

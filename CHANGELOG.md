@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1472] - 2026-10-16
+
+### Fixed — Werkzeugwahl: benutzte Werkzeuge bleiben verfügbar
+
+Realfall 16.10.: Nach zwei erzeugten Icon-Entwürfen antwortete Alfred auf „ja“, die Bildgenerierung sei nicht verfügbar. Die Icon-Anfrage war aus den letzten drei Nutzernachrichten gerutscht. Die kleine Rückfall-Auswahl enthält keine Medien-Werkzeuge.
+
+- Werkzeuge, die im selben Gespräch in der letzten Stunde aufgerufen wurden (bis zu 8, gelesen aus den gespeicherten Werkzeugaufrufen), sind in jeder Auswahl dabei. Interne Hilfswerkzeuge wie help, memory und chat_history zählen nicht.
+- Die Kategorie Medien erkennt zusätzlich Icon, Logo, Grafik, Entwurf/entwerfen, Design und zeichnen.
+
 ## [0.19.0-jarvis.1471] - 2026-10-15
 
 ### Fixed — Dateispeicher: Auflisten, Schreiben und Löschen unter der Owner-Identität

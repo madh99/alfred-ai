@@ -7,7 +7,7 @@ import type { SkillCategory, SkillMetadata } from '@alfred/types';
 const CATEGORY_KEYWORDS: Record<Exclude<SkillCategory, 'core'>, RegExp> = {
   productivity: /\b(todos?\w*|notes?\w*|notiz\w*|remind\w*|erinner\w*|calend\w*|kalender\w*|termin\w*|events?\w*|e?-?mail\w*|kontakt\w*|contact\w*|briefing\w*|einkauf\w*|shopping\w*|liste\w*|rezept\w*|koch\w*|zutat\w*|küche\w*|meals?\w*|mahlzeit\w*|frühstück\w*|mittag\w*|abendessen\w*|wochenplan\w*|diät\w*|ernähr\w*|nährwert\w*|vegetari\w*|vegan\w*|reis\w{2,}|flug\w*|flüge\w*|hotels?\w*|urlaub\w*|reiseplan\w*|packli\w*|mietwag\w*|buch\w{3,}|barcelona|lissabon|airport\w*|flughafen\w*)\b/i,
   information:  /\b(search\w*|such\w*|weather|wetter\w*|calculat\w*|rechn\w*|time|date|zeit\w*|datum|uhrzeit|system.?info|transit\w*|bahn\w*|zug\w*|bus\w*|tram|u.?bahn|s.?bahn|abfahrt\w*|verbindung\w*|haltestell\w*|öffi\w*|fahrplan\w*|rout\w*|fahrzeit\w*|anfahrt|heimfahrt|fahrt\w*|navig\w*|navi|strom\w*|energy|preis\w*|price\w*|kwh|awattar|marktpreis\w*|spot|günstig\w*|cheapest|netzentgelt\w*|rss|feed\w*|atom|news|nachricht\w*|schlagzeil\w*|headline\w*|interesse\w*|themen?\w*|topics?\w*|dossier\w*|beobacht\w*|entwicklung\w*|youtube|video\w*|transkript\w*|transcript\w*|channel|kanal\w*|zusammenfass\w*|crypto\w*|krypto\w*|bitcoin|btc|ethereum|eth|coin\w*|token|blockchain|solana|cardano|altcoin\w*|market.?cap|bitpanda|portfolio\w*|aktie\w*|stock\w*|etf|gold|silber|metall\w*|depot|holding\w*|trad\w{2,}|exchange\w*|binance|kraken|coinbase|order\w*|limit.?order|kauf\w*|verkauf\w*|preisvergleich\w*|geizhals\w*|produkt\w*|notebook\w*|laptop\w*|smartphone\w*|handy\w*|fernseh\w*|grafikkart\w*|gpu\w*|cpu\w*|prozessor\w*|monitor\w*|ssd\w*|festplatt\w*|kopfhörer\w*|tablet\w*|smartwatch\w*|staubsaug\w*|waschmaschine\w*|kühlschrank\w*|kaffeemaschine\w*)\b/i,
-  media:        /\b(voice\w*|stimme\w*|tts|speak\w*|sprech\w*|sprich\w*|spiel\w*|durchsage\w*|ansage\w*|vorlesen\w*|klonen\w*|clone\w*|screenshot\w*|clipboard|zwischenablage|brows\w*|öffne\w*|webseite\w*|website\w*|seite\w*|url|bild\w*|image\w*|generier\w*|photo\w*|foto\w*|spotify\w*|musik\w*|music\w*|songs?\w*|tracks?\w*|artists?\w*|albums?\w*|playlists?\w*|wiedergab\w*|abspiel\w*|pause\w*|skip\w*|lautstärke\w*|volume\w*|shuffle|repeat|sonos\w*|speaker\w*|lautsprech\w*|gruppier\w*|raum\w*|radio\w*|tunein|sleep.?timer|nachtmodus|stereo|halle|küche|wohnzimmer|schlafzimmer|bad)\b/i,
+  media:        /\b(voice\w*|stimme\w*|tts|speak\w*|sprech\w*|sprich\w*|spiel\w*|durchsage\w*|ansage\w*|vorlesen\w*|klonen\w*|clone\w*|screenshot\w*|clipboard|zwischenablage|icons?\w*|logos?\w*|grafik\w*|entwerf\w*|entw(u|ü)rf\w*|design\w*|zeichn\w*|brows\w*|öffne\w*|webseite\w*|website\w*|seite\w*|url|bild\w*|image\w*|generier\w*|photo\w*|foto\w*|spotify\w*|musik\w*|music\w*|songs?\w*|tracks?\w*|artists?\w*|albums?\w*|playlists?\w*|wiedergab\w*|abspiel\w*|pause\w*|skip\w*|lautstärke\w*|volume\w*|shuffle|repeat|sonos\w*|speaker\w*|lautsprech\w*|gruppier\w*|raum\w*|radio\w*|tunein|sleep.?timer|nachtmodus|stereo|halle|küche|wohnzimmer|schlafzimmer|bad)\b/i,
   // automation: shell/code-agent/script keywords select category but DON'T trigger superset.
   // Only watch/schedule keywords (in SUPERSET_KEYWORDS below) trigger the cross-category superset.
   // v945: +social\w*|post\w*|… — der social-Skill (Kategorie automation) wurde sonst
@@ -125,8 +125,35 @@ export const PROJEKT_AUF_GERAET = /(^|[^\p{L}])(projekt\w*|etapp\w*|abnahme\w*|c
 let projektNamenMuster: RegExp | undefined;
 export function setzeProjektNamenMuster(m: RegExp | undefined): void { projektNamenMuster = m; }
 
-export function werkzeugeFuerNachricht<T extends SkillMetadata>(text: string, verlauf: string[], alle: T[]): { metas: T[]; grund: WerkzeugwahlGrund } {
-  const r = werkzeugeOhneAkten(text, verlauf, alle);
+/**
+ * v1472 — Realfall 16.10. 08:47: Icon-Entwurf mit zwei image_generate-Aufrufen, dann „freigegeben“, „oder doch … flutter“, „ja“ —
+ * die Anfrage rutschte aus den letzten 3 Nutzernachrichten, der Rückfall hatte keine Medien, Alfred sagte „Bildgenerierung nicht verfügbar“.
+ * Werkzeuge, die im selben Gespräch zuletzt tatsächlich aufgerufen wurden, bleiben deshalb in jeder Auswahl.
+ */
+export const BENUTZT_FENSTER_MIN = 60;
+export const BENUTZT_MAX = 8;
+export function zuletztBenutzteWerkzeuge(verlauf: Array<{ role: string; toolCalls?: string; createdAt?: string }>, jetzt: Date, interne: ReadonlySet<string> = new Set(['help', 'memory', 'chat_history'])): string[] {
+  const namen: string[] = [];
+  for (let i = verlauf.length - 1; i >= 0 && namen.length < BENUTZT_MAX; i--) {
+    const m = verlauf[i]!;
+    if (m.role !== 'assistant' || !m.toolCalls) continue;
+    const t = m.createdAt ? Date.parse(m.createdAt.includes('T') || m.createdAt.endsWith('Z') ? m.createdAt : `${m.createdAt.replace(' ', 'T')}Z`) : NaN;
+    if (Number.isFinite(t) && (jetzt.getTime() - t) / 60_000 > BENUTZT_FENSTER_MIN) break;
+    let calls: unknown;
+    try { calls = JSON.parse(m.toolCalls); } catch { continue; }
+    if (!Array.isArray(calls)) continue;
+    for (const c of calls) {
+      const n = (c as { name?: unknown })?.name;
+      if (typeof n === 'string' && !interne.has(n) && !namen.includes(n) && namen.length < BENUTZT_MAX) namen.push(n);
+    }
+  }
+  return namen;
+}
+
+export function werkzeugeFuerNachricht<T extends SkillMetadata>(text: string, verlauf: string[], alle: T[], benutzt: string[] = []): { metas: T[]; grund: WerkzeugwahlGrund } {
+  const r0 = werkzeugeOhneAkten(text, verlauf, alle);
+  const fehlend = benutzt.map(n => alle.find(m => m.name === n)).filter((m): m is T => !!m && !r0.metas.includes(m)); // v1472
+  const r = fehlend.length ? { metas: [...r0.metas, ...fehlend], grund: r0.grund } : r0;
   if (!projektNamenMuster?.test(text) || r.metas.some(m => m.name === 'project_agent')) return r;
   const pa = alle.find(m => m.name === 'project_agent');
   return pa ? { metas: [...r.metas, pa], grund: r.grund } : r;
