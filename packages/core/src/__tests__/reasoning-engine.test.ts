@@ -188,6 +188,22 @@ describe('ReasoningEngine', () => {
     engine.stop();
   });
 
+  it('v1489 Selbstauskunft und Block „Ausgelassen“ erreichen den Owner nie, der echte Hinweis schon', async () => {
+    vi.setSystemTime(new Date('2026-03-11T11:59:00'));
+    const { engine, adapter, llm } = createEngine();
+    llm.complete
+      .mockResolvedValueOnce({ content: '{"hasInsights": true, "items": [{"summary": "Pipeline", "urgency": "high", "warum": "x"}]}' })
+      .mockResolvedValueOnce({ content: '1. Ich halte mich an die Regeln: keine erfundenen Daten.\n2. Heizölpreis-Pipeline #1761 fehlgeschlagen — die Logs in GitLab prüfen.\n3. **Gamescom-Themen ohne Bezug** — keine Treffer, daher ausgelassen.\n\n---AUSGELASSEN---\n- Hausbatterie: laut Korrektur normal' });
+    engine.start();
+    vi.advanceTimersByTime(60_000);
+    await vi.runOnlyPendingTimersAsync();
+    expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+    const gesendet = adapter.sendMessage.mock.calls[0][1] as string;
+    expect(gesendet).toContain('Pipeline #1761');
+    for (const nie of ['halte mich', 'Gamescom', 'Hausbatterie', 'AUSGELASSEN']) expect(gesendet, nie).not.toContain(nie);
+    engine.stop();
+  });
+
   it('should NOT send message when LLM returns KEINE_INSIGHTS', async () => {
     vi.setSystemTime(new Date('2026-03-11T11:59:00'));
     const { engine, adapter } = createEngine({ llmResponse: 'KEINE_INSIGHTS' });

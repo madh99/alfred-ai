@@ -113,7 +113,8 @@ export function entferneWiederholungen(neu: string, frueher: string[]): { text: 
  * „Die Systemvorgaben sind umfangreich …", „Hinweis: Die Insight-Tracking-Liste zeigt …", „**Aktionen:**", „**Insights**".
  */
 export function istMetaText(text: string): boolean {
-  const t = text.replace(/\*\*/g, '').replace(/^[\s#>\-*•]+/, '').trim();
+  // v1489 — auch die Listennummer („4. …“): sonst endete der erste Satz schon nach „4.“ (Realfall 16.10. „… daher ausgelassen“)
+  const t = text.replace(/\*\*/g, '').replace(/^[\s#>\-*•]+/, '').replace(/^\d{1,2}[.)]\s+/, '').trim();
   if (t.length === 0) return true;
   const erste = t.split('\n')[0]!.trim();
   // reine Überschrift: eine Zeile, endet auf Doppelpunkt oder ist nur ein Abschnittswort
@@ -123,6 +124,9 @@ export function istMetaText(text: string): boolean {
   if (!t.includes('\n') && /^(handlungsbedarf|relevante information(en)?|information(en)?|zur information|info|weitere hinweise|wichtig|dringend|offene punkte|sonstiges|(kurz)?überblick|übersicht|ergebnis(se)?|fazit|empfehlung(en)?|nächste schritte|beobachtung(en)?|status)(\s*\([^)]{0,40}\))?\s*:?\s*$/i.test(erste)) return true;
   // Selbstauskunft über die Arbeit statt Inhalt
   if (/^(hier (sind|ist) (die|meine|deine)\b|ich (habe|erstelle|prüfe|nenne|gehe|liste|fasse|beginne)\b|die (system)?vorgaben\b|die (drei |zwei |vier |beiden |folgenden )?vorab-(auffälligkeiten|analyse|punkte)\b|die vorab-analyse\b|die lage nach dem ereignis\b|die zustandsänderung betrifft\b|es gibt keine zeile mit\b|keine (neuen )?insights\b|weitere punkte wie\b)/i.test(erste)) return true;
+  // v1489 — Realfälle 15./16.10.: „Ich halte mich an die Regeln …“, „Das Prompt enthält viele Regeln …“, „Hier ist das Ergebnis,
+  // streng nach den Regeln …“, „Keine weiteren Insights …“, „Keine Aktionen vorgeschlagen“, „Ich kann diese Vorab-Analyse nicht …“
+  if (/^(ich (halte mich|beachte|berücksichtige|analysiere|formuliere|kann\b[^.]{0,80}\bnicht\b)|(das|der) prompt\b|hier ist das ergebnis\b|keine (weiteren|neuen) (insights|punkte|hinweise)\b|keine aktionen\b|die übrigen (daten|punkte|auffälligkeiten)\b|die (drei |zwei |vier |beiden )?(\[?high\]?[- ]|vorab-)?(auffälligkeiten|punkte) sind\b|relevante information(en)? aus (den )?rss)/i.test(erste)) return true;
   if (/^hinweis:\s*die insight-tracking-liste\b/i.test(erste)) return true;
   // v1365 — Realfälle 12.10. nach v1360: „Nicht als Insight übernommen: …", „Die Hausbatterie-Meldung … habe ich bewusst
   // weggelassen …", „Insights sind nicht immer leicht … deshalb hier meine Auswertung …:", „Keine Artikel im RSS-Feed passen …"
@@ -133,7 +137,7 @@ export function istMetaText(text: string): boolean {
 
 /** v1365 — Selbstauskunft über Weggelassenes oder die eigene Auswertung, irgendwo im ersten Satz. */
 // v1428 — Realfälle 13.10.: „Ausgelassen habe ich unter anderem …", „Die beiden Vorab-Auffälligkeiten (…) habe ich …"
-const META_SATZ = /\b((ausgelassen|weggelassen|übersprungen|nicht (aufgenommen|übernommen|gemeldet)) habe ich|habe ich (bewusst |daher |deshalb )?(weggelassen|ausgelassen|nicht (aufgenommen|gemeldet|übernommen))|lasse (ich )?(diesen punkt|das|sie|ihn) (daher |deshalb )?weg|hier (ist |folgt )?meine auswertung)\b/i;
+const META_SATZ = /\b((ausgelassen|weggelassen|übersprungen|nicht (aufgenommen|übernommen|gemeldet)) habe ich|habe ich (bewusst |daher |deshalb )?(weggelassen|ausgelassen|nicht (aufgenommen|gemeldet|übernommen))|lasse (ich )?(diesen punkt|das|sie|ihn) (daher |deshalb )?weg|hier (ist |folgt )?meine auswertung|(daher|deshalb|darum) (ausgelassen|weggelassen|übersprungen|nicht (aufgenommen|übernommen|gemeldet))|ich halte mich (strikt |streng )?an|(streng|strikt) nach den regeln|daher kein (insight|hinweis))\b/i; // v1489 „… keine Treffer, daher ausgelassen“
 
 function ersterSatz(zeile: string): string {
   const m = /^(.+?[.;!?])(\s|$)/.exec(zeile);

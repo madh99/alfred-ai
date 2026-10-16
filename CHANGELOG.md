@@ -55,6 +55,24 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1489] - 2026-10-16
+
+### Fixed — Selbstauskünfte des Modells kommen nicht mehr als Hinweis an; Begründungen fürs Weglassen nur im Protokoll
+
+Zwischen 10. und 16.10. waren 39 von 293 Reasoning-Hinweisen keine Hinweise, sondern Arbeitsnotizen des Modells. Beispiele: „Ich halte mich an die Regeln: keine erfundenen Daten …“, „Gamescom-Themen ohne Bezug — keine Treffer, daher ausgelassen“, „Keine weiteren Insights …“. Sie wurden zugestellt und standen im Eingang.
+
+Die Muster dagegen waren schon viermal nachgezogen worden (v1360, v1365, v1380, v1428). Die Ursache lag aber im Ablauf:
+- Der Prompt lädt das Modell dazu ein, jeden Punkt der Vorab-Analyse zu begründen, und für „weggelassen, weil …“ gab es keinen Platz.
+- Blieb nach dem Entfernen von Wiederholungen nur eine Selbstauskunft übrig, wurde dieser Rest nicht mehr geprüft (Realfall 14.10.: „Keine neuen Insights aus Kalender/Wetter …“).
+- Eine Listennummer („4. …“) beendete den ersten Satz schon nach „4.“.
+
+Änderungen:
+- **Eigener Block „Ausgelassen“:** Vollpass, Ereignis-Pass und Mini-Pass dürfen Begründungen fürs Weglassen und Probleme mit den Daten in einen Block `---AUSGELASSEN---` nach den Insights schreiben, im festen Teil des Prompts erklärt. Der Block wird abgetrennt und geht nur ins Protokoll (Logzeile „v1489 Vom Modell bewusst ausgelassen (nur Protokoll)“), nie in eine Meldung oder die Hinweis-Sammlung.
+- **Erkennung erweitert** und kalibriert an 295 Reasoning-Hinweisen der letzten 30 Tage: Bekenntnisse zu den Regeln, „daher ausgelassen/kein Insight“, „Keine weiteren Insights“, „Keine Aktionen vorgeschlagen“, „Die beiden HIGH-Auffälligkeiten sind …“, „Relevante Information aus RSS: keine Treffer …“, Listennummern am Anfang. Erkannt werden jetzt 56 statt 39, ohne einen echten Hinweis zu treffen.
+- Zusammenfassungen mit Inhalt („Die einzige echte Auffälligkeit ist das Anthropic-Guthaben …“) bleiben bewusst, sonst ginge der einzige Hinweis verloren.
+- **Rest nach dem Kürzen wird geprüft:** Bleibt nur eine Selbstauskunft, wird sie nicht zugestellt (Logzeile „v1489 Nach dem Kürzen blieb nur eine Selbstauskunft“).
+- **Protokoll:** Verworfene Selbstauskünfte stehen vollständig im Log, nicht mehr auf 60 Zeichen gekürzt. Meldet das Modell ein Problem mit den Eingabedaten („Ich kann diese Vorab-Analyse nicht … übersetzen“), entsteht eine Warnung im Log.
+
 ## [0.19.0-jarvis.1488] - 2026-10-16
 
 ### Fixed — Eingang: Hinweise ohne Markdown-Reste und ohne doppelten Titel (App 1.39.0)

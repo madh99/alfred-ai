@@ -107,5 +107,6 @@ ${korr}
 Aufgabe: Formuliere höchstens 2 Stichpunkte für den Owner — NUR zu den als ⚠️ markierten Punkten,
 mit konkreter Handlung (prüfen / tauschen / planen). Keine Wiederholung von NORMAL-Zeilen,
 keine Vermutungen über Ursachen, keine Rohzahlen ohne Bedeutung.
+Keine Sätze über deine Arbeitsweise oder die Regeln.
 Wenn nichts Handlungsrelevantes übrig bleibt: antworte exakt KEINE_INSIGHTS.`;
 }

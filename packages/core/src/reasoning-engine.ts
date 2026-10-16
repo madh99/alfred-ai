@@ -22,6 +22,7 @@ import type { ConfirmationQueue } from './confirmation-queue.js';
 import { istGleicheConfirmationsIdentitaet } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { entferneWiederholungen, istMetaText, ohneMetaVorsatz, punkteAus, texteAusJson } from './insights/hinweis-pruefung.js'; // v1360, v1365
+import { AUSGELASSEN_MARKER, trenneAusgelassen } from './insights/ausgelassen.js'; // v1489
 import { hinweisKnoepfe, gezeigteIds, bekanntTreffer } from './insights/hinweis-reaktion.js'; // v1364
 import { istSicherheitsText } from './vorgaenge/regeln.js'; // v1368
 import { zustellProtokoll } from './zustellung/protokoll.js'; // v1369
@@ -1482,6 +1483,11 @@ KEIN Insight:
 Bei RSS-Artikeln: Titel + URL + warum relevant (1 Satz).
 Max 5, aber Qualität vor Quantität. Lieber 2 gute als 5 mittelmäßige.
 
+AUSGELASSEN (nur für Alfreds Protokoll, der User sieht das NIE):
+- Insights enthalten NUR Inhalt für den User. KEINE Sätze über deine Arbeitsweise, die Regeln oder die Vorab-Analyse.
+- Warum du etwas NICHT meldest (Korrektur, kein Bezug, keine Treffer, schon bekannt) und Probleme mit den Daten: NACH den Insights in einen Block, der mit "${AUSGELASSEN_MARKER}" beginnt, eine Zeile je Punkt.
+- Gibt es nichts zu melden: keine Insights schreiben, höchstens den ${AUSGELASSEN_MARKER}-Block.
+
 REGELN:
 - Nutze die VERBINDUNGSKARTE als Basis — dort sind Cross-Domain-Entities strukturiert
 - Nutze VERTIEFTE DATEN (falls vorhanden) für konkrete Zahlen
@@ -1685,6 +1691,7 @@ Formuliere daraus max 2 konkrete, actionable Insights.
 - Alle Domains kombinierbar, aber Typen nicht verwechseln (Fahrzeug-Akku ≠ Hausbatterie, RSS ≠ Monitor)
 - Nicht raten, nicht vermuten — nur was aus den Daten hervorgeht
 - Max 1-2 Sätze pro Insight, auf Deutsch
+- Keine Sätze über deine Arbeitsweise oder die Regeln; Begründungen fürs Weglassen nur in einem Block nach den Insights, der mit "${AUSGELASSEN_MARKER}" beginnt (v1489, nur Protokoll)
 
 ${this.formatSections(ctx)}
 ${enrichedSection}
@@ -1711,7 +1718,9 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // v1360 — Vorreden und Selbstauskünfte des Modells sind keine Hinweise (Realfälle 11.10.: „Hier sind die Insights …")
     const inhalt = segmente.filter(s => !istMetaText(s));
     if (inhalt.length < segmente.length) zustellProtokoll.merke('vorrede', segmente.length - inhalt.length); // v1369
-    if (inhalt.length < segmente.length) this.logger.info({ verworfen: segmente.filter(s => istMetaText(s)).map(s => s.slice(0, 60)) }, 'v1360 Vorrede des Modells verworfen');
+    if (inhalt.length < segmente.length) this.logger.info({ verworfen: segmente.filter(s => istMetaText(s)).map(s => s.slice(0, 400)) }, 'v1360 Vorrede des Modells verworfen'); // v1489 ganz (nur Protokoll)
+    // v1489 — Realfall 15.10. 19:30: „Ich kann diese Vorab-Analyse nicht sinnvoll in Insights übersetzen, weil …“ = Problem mit den Eingabedaten
+    for (const s of segmente) if (/^\W*ich kann\b[^.]{0,80}\bnicht\b/i.test(s)) this.logger.warn({ text: s.slice(0, 400) }, 'v1489 Modell meldet ein Problem mit den Eingabedaten');
     return inhalt;
   }
 
@@ -1745,6 +1754,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       this.logger.info({ punkt: e.punkt.slice(0, 140), wie: e.w.gegen.slice(0, 100), anker: e.w.anker, ueberlappung: Number(e.w.ueberlappung.toFixed(2)) }, 'v1360 Hinweis wiederholt Bekanntes — Punkt nicht zugestellt');
     }
     if (!text) return null;
+    // v1489 — Realfall 14.10. 05:01: Wiederholungen/Korrekturen entfernten die echten Punkte, übrig blieb nur „Keine neuen Insights …“
+    if (text !== insight && istMetaText(text)) {
+      zustellProtokoll.merke('vorrede');
+      this.logger.info({ rest: text.slice(0, 400) }, 'v1489 Nach dem Kürzen blieb nur eine Selbstauskunft — nicht zugestellt');
+      return null;
+    }
     const { widersprichtWeltmodell } = await import('./vorgaenge/faktenpruefung.js');
     const widerspruch = widersprichtWeltmodell(text, (k) => this.datenlageFuer(k));
     if (widerspruch) {
@@ -1974,7 +1989,10 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   private static readonly ACTIONS_HEADER_TRAILING_REGEX =
     /\n\s*(?:\*{1,2}ACTIONS?\*{1,2}|#{1,3}[^\w\n]*ACTIONS?)\s*$/i;
 
-  private parseReasoningResponse(text: string): ParsedReasoningResponse {
+  private parseReasoningResponse(antwort: string): ParsedReasoningResponse {
+    // v1489 — bewusst Ausgelassenes (Begründungen, Selbstauskünfte) steht in eigenem Block: nur Protokoll, nie Meldung
+    const { rest: text, ausgelassen } = trenneAusgelassen(antwort);
+    if (ausgelassen.length) this.logger.info({ ausgelassen: ausgelassen.slice(0, 15).map(a => a.slice(0, 400)) }, 'v1489 Vom Modell bewusst ausgelassen (nur Protokoll)');
     // Find actions separator — LLM might use exact marker, markdown header, or variations
     let markerIdx = text.indexOf(ACTION_MARKER);
     let markerLen = ACTION_MARKER.length;
