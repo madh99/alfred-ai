@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'befunde.dart'; // 1.35.0
+import 'markdown.dart'; // 1.35.0
 import 'server.dart';
 import 'vorgaenge.dart'; // 1.9.0 A4
 
@@ -81,11 +83,20 @@ class _KachelnState extends State<Kacheln> {
     final offene = ((vorgaenge?['offene'] as List<dynamic>?) ?? []).cast<Map<String, dynamic>>();
     final breit = MediaQuery.of(context).size.width >= 900;
     final kacheln = <Widget>[
-      _kachel(theme, 'Lage', Icons.radar, child: SelectableText(lage.replaceFirst(RegExp(r'^###\s*'), ''), style: theme.textTheme.bodyMedium), fuss: stand == null ? null : 'Stand ${_zeit(stand!)}${kosten != null ? ' · heute ${_kosten(kosten)}' : ''}'),
+      _kachel(theme, 'Lage', Icons.radar, child: AlfredText(lage.replaceFirst(RegExp(r'^###\s*[^\n]*\n'), '')), fuss: stand == null ? null : 'Stand ${_zeit(stand!)}${kosten != null ? ' · heute ${_kosten(kosten)}' : ''}'), // 1.35.0 — Markdown statt Rohtext (Überschrift steht im Kachelkopf)
       _kachel(theme, 'Befunde (${alleBefunde.length})', Icons.report_problem_outlined, child: alleBefunde.isEmpty ? const Text('Keine offenen Befunde.') : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (hausCheck > 0) InkWell(onTap: widget.aufBefunde == null ? null : () => widget.aufBefunde!('haus-check'), child: Padding(padding: const EdgeInsets.only(bottom: 6), child: Text('• [Haus-Check] $hausCheck Punkte — öffnen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)))),
-        for (final b in befunde.take(12)) Padding(padding: const EdgeInsets.only(bottom: 6), child: Text('• [${b['quelle'] ?? '?'}] ${b['titel'] ?? ''}', style: theme.textTheme.bodySmall)),
-        if (befunde.length > 12) Text('… +${befunde.length - 12} weitere', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        // 1.35.0 — Befunde anklickbar: Einzelheiten und Aktionen (nicht mehr melden, Vorgang daraus, Nachfragen)
+        for (final b in befunde.take(12)) InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () async { if (await zeigeBefund(context, b: b, json: widget.server.json, aufMeldung: (t) => widget.aufMeldung?.call(t), aufNachfragen: widget.aufNachfragen, aufVorgaenge: widget.aufVorgaenge)) await _laden(); },
+          child: Padding(padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(margin: const EdgeInsets.only(top: 1, right: 6), padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1), decoration: BoxDecoration(color: theme.colorScheme.secondaryContainer, borderRadius: BorderRadius.circular(6)), child: Text(befundQuelle('${b['quelle'] ?? '?'}'), style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSecondaryContainer))),
+            Expanded(child: Text('${b['titel'] ?? ''}', style: theme.textTheme.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis)),
+            Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onSurfaceVariant),
+          ])),
+        ),
+        if (befunde.length > 12) InkWell(onTap: widget.aufBefunde == null ? null : () => widget.aufBefunde!(null), child: Text('… +${befunde.length - 12} weitere — alle anzeigen', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary))),
       ])),
       _kachel(theme, 'Vorgänge (${offene.length})', Icons.assignment_outlined, child: offene.isEmpty ? const Text('Keine offenen Vorgänge.') : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         for (final v in offene.take(12)) InkWell(onTap: () => _vorgang(v), child: Padding(padding: const EdgeInsets.only(bottom: 8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [ // 1.9.0 A4 — Klick: Details, Entscheidung

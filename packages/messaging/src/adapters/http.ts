@@ -249,6 +249,7 @@ export interface GeraetOwnerAnsichten {
   gedaechtnisLoeschen(id: string): Promise<boolean>;
   vorgangEntscheiden(id: string, status: unknown, notiz: unknown): Promise<{ titel: string } | null>;
   befunde(): Promise<unknown>; // v1359
+  befundAktion?(id: string, body: Record<string, unknown>): Promise<unknown | null>; // v1481
   projekte?(): Promise<unknown>; // v1401
   projekt?(id: string): Promise<unknown | null>;
   projektAktion?(id: string, aktion: unknown, text: unknown, lauf?: unknown, extra?: { konventionen?: unknown; deploy?: unknown }): Promise<unknown>; // v1426 extra, v1439 deploy
@@ -6966,6 +6967,7 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'gedaechtnis' && id && m === 'POST') { const ok = await a.gedaechtnisAendern(id, body.text); antwort(ok ? 200 : 404, { ok }); return; }
       if (bereich === 'gedaechtnis' && id && m === 'DELETE') { const ok = await a.gedaechtnisLoeschen(id); antwort(ok ? 200 : 404, { ok }); return; }
       if (bereich === 'befunde' && !id && m === 'GET') { antwort(200, await a.befunde()); return; } // v1359
+      if (bereich === 'befunde' && id && m === 'POST' && a.befundAktion) { const x = await a.befundAktion(id, body); antwort(x ? 200 : 404, x ? { ok: true, ...(x as object) } : { error: 'nicht gefunden' }); return; } // v1481
       // v1401 — Geräte-Projekte in der App
       if (bereich === 'projekte' && !id && m === 'GET' && a.projekte) { antwort(200, await a.projekte()); return; }
       if (bereich === 'projekte' && id && m === 'GET' && a.projekt) { const p = await a.projekt(id); antwort(p ? 200 : 404, p ?? { error: 'nicht gefunden' }); return; }

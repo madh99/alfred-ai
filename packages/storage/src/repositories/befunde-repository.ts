@@ -94,6 +94,12 @@ export class BefundeRepository {
     await this.db.execute('UPDATE befunde SET vorgang_id = ? WHERE id = ?', [vorgangId, id]);
   }
 
+  /** v1481 — einzelner Befund des Owners (App: Aktionen am Befund) */
+  async hole(userId: string, id: string): Promise<Befund | null> {
+    const r = await this.db.queryOne('SELECT * FROM befunde WHERE user_id = ? AND id = ?', [userId, id]) as Record<string, unknown> | undefined;
+    return r ? this.map(r) : null;
+  }
+
   async offene(userId: string): Promise<Befund[]> {
     const rows = await this.db.query('SELECT * FROM befunde WHERE user_id = ? AND zustand = ? ORDER BY entstanden ASC', [userId, 'offen']) as Record<string, unknown>[];
     return rows.map(r => this.map(r));

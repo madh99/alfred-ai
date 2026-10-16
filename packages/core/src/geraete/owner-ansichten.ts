@@ -33,7 +33,7 @@ interface ReminderLike { id: string; userId: string; message: string; triggerAt:
 interface MemoryRow { id: string; user_id: string; key: string; value: string; type: string; source: string; updated_at: string }
 
 export interface BefundLike { id: string; quelle: string; gegenstand: string; titel: string; detail?: string; entstanden: string; zuletztGesehen: string; erledigtAm?: string; gesehenAnzahl: number; vorgangId?: string }
-export interface BefundZeile { id: string; quelle: string; regel?: string; titel: string; detail?: string; entstanden: string; zuletzt: string; erledigt?: string; anzahl: number; vorgang: boolean }
+export interface BefundZeile { id: string; quelle: string; regel?: string; titel: string; detail?: string; entstanden: string; zuletzt: string; erledigt?: string; anzahl: number; vorgang: boolean; vorgangId?: string; nieStumm?: boolean }
 
 export interface OwnerAnsichtenDeps {
   owner: string;
@@ -58,6 +58,9 @@ export interface OwnerAnsichtenDeps {
   regeln?: RegelnDeps;
   /** v1359 — Befunde (Schicht 3) des Owners: offene und kürzlich erledigte */
   befunde?: () => Promise<{ offen: BefundLike[]; erledigt: BefundLike[] }>;
+  /** v1481 — Aktionen am Befund aus der App: einzelnen Befund holen, Vorgang dazu anlegen (oder vorhandenen offenen liefern) */
+  befundHolen?: (id: string) => Promise<BefundLike | null>;
+  befundVorgang?: (befund: BefundLike) => Promise<{ id: string; titel: string; neu: boolean }>;
   /** v1401 — Geräte-Projekte für die App-Ansicht „Projekte" (Liste, Detail mit Läufen, Stand vom Gerät, Weiterarbeiten) */
   /** v1429 R4a — Beobachter-Regeln (Liste mit Stand, Anlegen, An/Aus/Löschen) */
   beobachter?: { liste: () => Promise<unknown>; anlegen: (b: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>; aendern: (id: string, b: Record<string, unknown>) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }> };
@@ -274,6 +277,7 @@ export class OwnerAnsichten {
     const zeile = (x: BefundLike): BefundZeile => ({
       id: x.id, quelle: x.quelle, regel: /^[A-Z]\d:/.test(x.gegenstand) ? x.gegenstand.slice(0, 2) : undefined, titel: x.titel, detail: x.detail,
       entstanden: x.entstanden, zuletzt: x.zuletztGesehen, erledigt: x.erledigtAm, anzahl: x.gesehenAnzahl, vorgang: !!x.vorgangId,
+      ...(x.vorgangId ? { vorgangId: x.vorgangId } : {}), nieStumm: nieStummschaltbar({ quelle: x.quelle, gegenstand: x.gegenstand }), // v1481
     });
     return { offen: b.offen.map(zeile), erledigt: b.erledigt.map(zeile) };
   }
@@ -327,6 +331,36 @@ export class OwnerAnsichten {
     }
     this.d.protokoll?.('Vorgang abgeschlossen', { id, art, kuenftig, titel: fertig.titel.slice(0, 80), ergebnis: fertig.ergebnis?.slice(0, 160) });
     return { titel: fertig.titel, ergebnis: fertig.ergebnis, regel, vorschlag };
+  }
+
+  /**
+   * v1481 — Aktionen am Befund (Owner 16.10.: „in der Lage-Befund-Kachel sieht man nur Überschriften“):
+   * „stumm“ (nicht mehr melden 7/30/90 Tage — eine Regel des Owners, wirkt beim nächsten Auftreten; Sicherheit nie) und
+   * „vorgang“ (Vorgang zum Befund anlegen bzw. den vorhandenen offenen liefern).
+   */
+  async befundAktion(id: string, body: Record<string, unknown>): Promise<{ titel: string; regel?: string; vorgangId?: string; neu?: boolean } | null> {
+    if (!this.d.befundHolen) throw new Error('Befund-Aktionen nicht verfügbar');
+    const b = await this.d.befundHolen(id);
+    if (!b) return null;
+    const schluessel = { quelle: b.quelle, gegenstand: b.gegenstand };
+    if (body.aktion === 'stumm') {
+      if (!this.d.regeln) throw new Error('Regeln nicht verfügbar');
+      if (nieStummschaltbar(schluessel)) throw new Error('Dieser Befund ist nicht stummschaltbar (Sicherheit bzw. Alfreds eigener Zustand)');
+      const tage = body.tage === undefined ? STUMM_STANDARD_TAGE : Number(body.tage);
+      if (!(STUMM_TAGE as readonly number[]).includes(tage)) throw new Error(`tage: ${STUMM_TAGE.join(' | ')}`);
+      const jetzt = this.d.jetzt?.() ?? new Date();
+      const rg = await this.d.regeln.anlegen({ ...schluessel, titel: b.titel, wirkung: 'stumm', herkunft: 'owner', bis: new Date(jetzt.getTime() + tage * 86_400_000).toISOString(), begruendung: 'in der App: nicht mehr melden', ...(b.vorgangId ? { vorgangId: b.vorgangId } : {}) });
+      const regel = regelText(rg, jetzt);
+      this.d.protokoll?.('Befund stumm', { id, regel, befund: `${b.quelle}/${b.gegenstand}` });
+      return { titel: b.titel, regel };
+    }
+    if (body.aktion === 'vorgang') {
+      if (!this.d.befundVorgang) throw new Error('Vorgang anlegen nicht verfügbar');
+      const v = await this.d.befundVorgang(b);
+      this.d.protokoll?.('Befund → Vorgang', { id, vorgang: v.id, neu: v.neu, befund: `${b.quelle}/${b.gegenstand}` });
+      return { titel: b.titel, vorgangId: v.id, neu: v.neu };
+    }
+    throw new Error('aktion: stumm | vorgang');
   }
 
   /** v1480 — „Ausführen“ aus der App: die zuletzt vorgeschlagene Aktion des Vorgangs (Prüfung im Aufrufer). */

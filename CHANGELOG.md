@@ -55,6 +55,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1481] - 2026-10-16
+
+### Added — Befunde: Einzelheiten und Aktionen, Lage als Markdown (App 1.35.0)
+
+Owner 16.10.: „In der Lage-Befund-Kachelansicht sieht man nur Überschriften.“ Die Kachel war reiner Text, nicht anklickbar und auf 12 Einträge begrenzt. Dabei haben alle offenen Befunde einen Detailtext. Auch in der Ansicht „Befunde“ gab es als Reaktion nur „Nachfragen“.
+
+- **Server:** `POST /api/geraete/befunde/:id` mit `aktion: stumm, tage 7 | 30 | 90` legt eine Regel des Owners „nicht mehr melden“ an. Sie wirkt beim nächsten Auftreten, Sicherheitsbefunde und Alfreds eigener Zustand sind ausgenommen. `aktion: vorgang` legt einen Vorgang zum Befund an oder liefert den vorhandenen offenen. Die Befundliste nennt `vorgangId` und `nieStumm`.
+- **App 1.35.0:**
+  - Befunde in der Lage-Kachel sind anklickbar und öffnen einen Dialog mit Quelle, Dauer, Häufigkeit und Einzelheiten.
+  - Der Dialog bietet „Nicht mehr melden“ (7/30/90 Tage), „Vorgang daraus“ bzw. „Vorgang öffnen“ und „Nachfragen“. Dieselben Aktionen stehen direkt an den Karten der Ansicht „Befunde“.
+  - „+N weitere“ führt in die Ansicht. Die Lage wird als formatiertes Markdown statt als Rohtext gezeigt.
+
 ## [0.19.0-jarvis.1480] - 2026-10-16
 
 ### Added — Auf alle offenen Vorgänge reagieren (App 1.34.0)

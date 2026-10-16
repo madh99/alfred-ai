@@ -13,12 +13,67 @@ class Befund {
       : id = '${j['id']}', quelle = '${j['quelle'] ?? ''}', regel = j['regel'] as String?, titel = '${j['titel'] ?? ''}',
         detail = j['detail'] as String?, entstanden = DateTime.tryParse('${j['entstanden'] ?? ''}')?.toLocal(),
         erledigt = DateTime.tryParse('${j['erledigt'] ?? ''}')?.toLocal(), anzahl = (j['anzahl'] as num?)?.toInt() ?? 1,
-        vorgang = j['vorgang'] == true;
+        vorgang = j['vorgang'] == true, vorgangId = j['vorgangId'] as String?, nieStumm = j['nieStumm'] == true;
   final String id, quelle, titel;
-  final String? regel, detail;
+  final String? regel, detail, vorgangId;
   final DateTime? entstanden, erledigt;
   final int anzahl;
-  final bool vorgang;
+  final bool vorgang, nieStumm;
+}
+
+/// 1.35.0 — Aktionen am Befund (Server v1481): „nicht mehr melden" für 7/30/90 Tage (Sicherheit nie) und „Vorgang daraus".
+const stummTage = <int, String>{7: '7 Tage', 30: '30 Tage', 90: '90 Tage'};
+
+Future<bool> befundStumm(String id, int tage, {required JsonAbruf json, required void Function(String) aufMeldung}) async {
+  try {
+    final r = await json('/api/geraete/befunde/$id', methode: 'POST', koerper: {'aktion': 'stumm', 'tage': tage});
+    aufMeldung('🔕 ${r['regel'] ?? 'Nicht mehr melden'}');
+    return true;
+  } catch (e) { aufMeldung('🔕 Nicht geändert: $e'); return false; }
+}
+
+Future<bool> befundVorgang(String id, {required JsonAbruf json, required void Function(String) aufMeldung}) async {
+  try {
+    final r = await json('/api/geraete/befunde/$id', methode: 'POST', koerper: {'aktion': 'vorgang'});
+    aufMeldung(r['neu'] == true ? '📋 Vorgang angelegt: ${r['titel'] ?? ''}' : '📋 Vorgang gibt es schon: ${r['titel'] ?? ''}');
+    return true;
+  } catch (e) { aufMeldung('📋 Kein Vorgang: $e'); return false; }
+}
+
+/// Befund im Dialog: Quelle, seit, wie oft, Einzelheiten — und die Aktionen. Liefert true, wenn sich etwas geändert hat.
+Future<bool> zeigeBefund(BuildContext context, {required Map<String, dynamic> b, required JsonAbruf json, required void Function(String) aufMeldung, void Function(String text)? aufNachfragen, VoidCallback? aufVorgaenge}) async {
+  final r = await showDialog<bool>(context: context, builder: (ctx) {
+    final t = Theme.of(ctx);
+    final dim = t.colorScheme.onSurfaceVariant;
+    final entstanden = DateTime.tryParse('${b['entstanden'] ?? ''}')?.toLocal();
+    final anzahl = b['anzahl'] ?? b['gesehenAnzahl'];
+    final hatVorgang = b['vorgang'] == true || b['vorgangId'] != null;
+    final nieStumm = b['nieStumm'] == true;
+    return AlertDialog(
+      title: Text('${b['titel'] ?? 'Befund'}'),
+      content: SizedBox(width: 600, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text([befundQuelle('${b['quelle'] ?? ''}'), if (entstanden != null) 'seit ${entstanden.day}.${entstanden.month}.', if (anzahl != null) '$anzahl× gesehen', if (hatVorgang) 'mit Vorgang'].join(' · '), style: t.textTheme.labelMedium?.copyWith(color: dim)),
+        const SizedBox(height: 10),
+        if ((b['detail'] ?? '').toString().trim().isNotEmpty && b['detail'] != b['titel']) SelectableText('${b['detail']}', style: t.textTheme.bodyMedium)
+        else Text('Keine weiteren Einzelheiten.', style: t.textTheme.bodySmall?.copyWith(color: dim)),
+        const SizedBox(height: 10),
+        Text('Befunde erledigen sich von selbst, sobald die Ursache weg ist.', style: t.textTheme.bodySmall?.copyWith(color: dim)),
+      ]))),
+      actions: [
+        if (aufNachfragen != null) TextButton.icon(onPressed: () { Navigator.pop(ctx, false); aufNachfragen('Zum Befund „${b['titel']}"${b['detail'] != null && b['detail'] != b['titel'] ? ' (${b['detail']})' : ''}: '); }, icon: const Icon(Icons.question_answer_outlined, size: 16), label: const Text('Nachfragen')),
+        Tooltip(message: nieStumm ? 'Sicherheitsbefunde und Alfreds eigener Zustand lassen sich nicht stummschalten' : 'Beim nächsten Auftreten kein Vorgang und keine Meldung', child: PopupMenuButton<int>(
+          enabled: !nieStumm,
+          onSelected: (tage) async { if (await befundStumm('${b['id']}', tage, json: json, aufMeldung: aufMeldung) && ctx.mounted) Navigator.pop(ctx, true); },
+          itemBuilder: (_) => [for (final e in stummTage.entries) PopupMenuItem(value: e.key, child: Text('Nicht mehr melden: ${e.value}'))],
+          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8), child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.notifications_off_outlined, size: 16, color: nieStumm ? dim : t.colorScheme.primary), const SizedBox(width: 6), Text('Nicht mehr melden', style: t.textTheme.labelLarge?.copyWith(color: nieStumm ? dim : t.colorScheme.primary))])),
+        )),
+        if (hatVorgang && aufVorgaenge != null) TextButton.icon(onPressed: () { Navigator.pop(ctx, false); aufVorgaenge(); }, icon: const Icon(Icons.assignment_outlined, size: 16), label: const Text('Vorgang öffnen'))
+        else if (!hatVorgang) FilledButton.tonalIcon(onPressed: () async { if (await befundVorgang('${b['id']}', json: json, aufMeldung: aufMeldung) && ctx.mounted) Navigator.pop(ctx, true); }, icon: const Icon(Icons.add_task, size: 16), label: const Text('Vorgang daraus')),
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Schließen')),
+      ],
+    );
+  });
+  return r == true;
 }
 
 /// Anzeigename je Quelle (befunde.quelle).
@@ -151,6 +206,14 @@ class _BefundeState extends State<Befunde> {
             if (b.vorgang) 'mit Vorgang',
             if (b.detail != null && !auf) 'Klick: Einzelheiten',
           ].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: dim))),
+          // 1.35.0 — Aktionen direkt an der Karte (Server v1481)
+          if (!istErledigt && !b.nieStumm) PopupMenuButton<int>(
+            tooltip: 'Nicht mehr melden', icon: const Icon(Icons.notifications_off_outlined, size: 18),
+            onSelected: (tage) async { if (await befundStumm(b.id, tage, json: widget.json, aufMeldung: (t) => widget.aufMeldung?.call(t))) await laden(); },
+            itemBuilder: (_) => [for (final e in stummTage.entries) PopupMenuItem(value: e.key, child: Text('Nicht mehr melden: ${e.value}'))],
+          ),
+          if (!istErledigt && !b.vorgang) IconButton(tooltip: 'Vorgang daraus', icon: const Icon(Icons.add_task, size: 18),
+              onPressed: () async { if (await befundVorgang(b.id, json: widget.json, aufMeldung: (t) => widget.aufMeldung?.call(t))) await laden(); }),
           if (widget.aufNachfragen != null && !istErledigt)
             IconButton(tooltip: 'Nachfragen: im Chat mit Bezug weiterfragen', icon: const Icon(Icons.question_answer_outlined, size: 18),
                 onPressed: () => widget.aufNachfragen!('Zum Befund „${b.titel}"${b.detail != null ? ' (${b.detail})' : ''}: ')),

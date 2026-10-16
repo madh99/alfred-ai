@@ -15741,6 +15741,21 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         setzeStatus: async (id, s, bis) => { const r = await this.regelnRepo!.setzeStatus(owner, id, s, bis); void this.aktualisiereLage(); return r; },
         hole: (id) => this.regelnRepo!.hole(owner, id),
       } : undefined,
+      // v1481 — Aktionen am Befund: holen und Vorgang anlegen (gleiche Felder wie beim Weltmodell-Abgleich)
+      befundHolen: this.befundeRepo ? (id) => this.befundeRepo!.hole(owner, id) : undefined,
+      befundVorgang: this.befundeRepo ? async (b) => {
+        const vr = new VorgaengeRepository(db);
+        if (b.vorgangId) { const alt = await vr.hole(owner, b.vorgangId); if (alt && (alt.status === 'offen' || alt.status === 'wartet')) return { id: alt.id, titel: alt.titel, neu: false }; }
+        const { quelleZuKategorie } = await import('./ereignisse/befunde.js');
+        const v = await vr.anlegen({
+          userId: owner, titel: b.titel.slice(0, 200), ziel: b.detail?.split('\n')[0] ?? `Befund ${b.quelle}/${b.gegenstand}`, besitzer: 'user', status: 'offen',
+          naechsterSchritt: 'Owner entscheidet', frist: new Date(Date.now() + 14 * 86_400_000).toISOString(), quelle: 'befund', autonomie: 'bestaetigen',
+          dedupeKey: `befund:${b.quelle}:${b.gegenstand}`, kategorie: quelleZuKategorie(b.quelle), begruendung: `Befund ${b.quelle}/${b.gegenstand} — vom Owner in der App als Vorgang angelegt`,
+        });
+        await this.befundeRepo!.setzeVorgang(b.id, v.id);
+        void this.aktualisiereLage();
+        return { id: v.id, titel: v.titel, neu: true };
+      } : undefined,
       // v1359 — Befunde aller Quellen für die App-Ansicht „Befunde" (offen + 7 Tage erledigt)
       befunde: this.befundeRepo ? async () => ({ offen: await this.befundeRepo!.offene(owner), erledigt: await this.befundeRepo!.erledigtSeit(owner, new Date(Date.now() - 7 * 86_400_000).toISOString()) }) : undefined,
       protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (App)`),
