@@ -55,6 +55,15 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1483] - 2026-10-16
+
+### Fixed — Interne Nachrichten werden nicht mehr als Korrektur des Owners gelernt
+
+Das aktive Lernen wertete jede verarbeitete Nachricht aus, auch die internen. Dazu gehören Fortsetzungen nach einer Freigabe („Die von mir freigegebene Aktion wurde gerade ausgeführt …“) und geplante Aufgaben. Zwischen 12. und 16.10. wurden so fünf solcher Texte als Korrektur des Owners gespeichert und flossen danach als Regel in Antworten ein.
+
+- Nachrichten mit `metadata.scheduled` gehen nicht mehr ins aktive Lernen. Echte Nachrichten des Owners werden weiter ausgewertet.
+- Die fünf falschen Korrektur-Einträge werden entfernt.
+
 ## [0.19.0-jarvis.1482] - 2026-10-16
 
 ### Changed — App 1.36.0: Navigation, Erscheinungsbild, Eingang

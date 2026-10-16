@@ -185,6 +185,23 @@ describe('MessagePipeline', () => {
     });
   }
 
+  // ---- v1483: interne Nachrichten (metadata.scheduled) lernen keine Korrekturen ----
+  for (const fall of [
+    { name: 'Owner-Nachricht wird ausgewertet', metadata: undefined, erwartet: 1 },
+    { name: 'Fortsetzung nach Freigabe wird nicht ausgewertet', metadata: { scheduled: true }, erwartet: 0 },
+  ]) {
+    it(`v1483 ${fall.name}`, async () => {
+      mockLLM.complete.mockResolvedValueOnce({ content: 'Erledigt.', usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end_turn' });
+      const activeLearning = { onMessageProcessed: vi.fn() };
+      const pipeline = new MessagePipeline({
+        llm: mockLLM as any, conversationManager: mockConversationManager as any, users: mockUsers as any, logger: mockLogger as any,
+        activeLearning: activeLearning as any,
+      });
+      await pipeline.process(makeMessage({ text: 'Die von mir freigegebene Aktion wurde gerade ausgeführt.', metadata: fall.metadata }));
+      expect(activeLearning.onMessageProcessed).toHaveBeenCalledTimes(fall.erwartet);
+    });
+  }
+
   // ---- Test 3: Security deny ----
   it('should deny tool execution when security manager denies', async () => {
     // First LLM call returns a tool call

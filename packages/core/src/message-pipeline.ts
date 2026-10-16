@@ -1867,7 +1867,9 @@ export class MessagePipeline {
       }
 
       // 9. Active learning: extract memories from conversation (fire-and-forget)
-      if (this.activeLearning) {
+      // v1483 — interne Nachrichten (Fortsetzung nach Freigabe, geplante Aufgaben: metadata.scheduled) sind keine Worte des Owners
+      // (Realfall 12.–16.10.: „Die von mir freigegebene Aktion wurde gerade ausgeführt …" 5× als Nutzer-Korrektur gespeichert)
+      if (this.activeLearning && !message.metadata?.scheduled) {
         this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
       }
 
