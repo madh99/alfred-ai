@@ -250,7 +250,12 @@ class _SitzungState extends State<Sitzung> with WindowListener, TrayListener {
       aufBestaetigung: _meldeNeu,
       aufKonfig: (k) {
         final erste = server == null;
-        setState(() { konfig = k; server = Server(k); });
+        // 1.33.0 — Realfall 16.10.: nach jedem Satelliten-Neustart (Selbst-Update) fragt die App die Konfiguration neu ab; die neue
+        // Serververbindung begann mit faden = null, die Ansicht zeigte weiter den offenen Faden — Nachrichten landeten still im
+        // Hauptgespräch. Gleiche Konfiguration: Verbindung bleibt. Geänderte: neue Verbindung, der offene Faden bleibt gesetzt.
+        final alt = server;
+        final gleich = alt != null && alt.k.server == k.server && alt.k.geraetId == k.geraetId && alt.k.token == k.token && alt.k.insecure == k.insecure;
+        setState(() { konfig = k; if (!gleich) server = Server(k)..faden = alt?.faden; });
         _titel();
         if (erste) _holeVerlauf(); // v1314 — was zuletzt besprochen wurde
         _holeBestaetigungen();

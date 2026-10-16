@@ -55,6 +55,16 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1476] - 2026-10-16
+
+### Changed — Neues App-Icon; App 1.33.0: Gespräch bleibt beim Neuverbinden
+
+- **Icon:** Das neue Alfred-Icon (cyanfarbenes A auf blau-violettem Verlauf) gilt überall:
+  - Desktop-App: Windows-Programm und Installer, Tray, macOS-Dock-Iconset, Linux-Paket.
+  - Weboberfläche: Favicon, Apple-Touch-Icon, Web-Manifest mit 192/512 px, auch maskierbar.
+  - Logo in der Seitenleiste und Icon der Browser-Benachrichtigung.
+- **App 1.33.0 – offenes Gespräch bleibt:** Realfall 16.10. Nach jedem Neustart des Satelliten (Selbst-Update) holt die App die Konfiguration neu. Die Serververbindung begann dabei im Hauptgespräch, die Ansicht zeigte aber weiter das offene Gespräch. Antworten landeten still im Hauptgespräch. Bei gleicher Konfiguration bleibt die Verbindung jetzt bestehen. Ändert sie sich, bleibt das offene Gespräch gesetzt.
+
 ## [0.19.0-jarvis.1475] - 2026-10-16
 
 ### Fixed — Dokumente: Identität, Suche, fehlende Embeddings, Dubletten

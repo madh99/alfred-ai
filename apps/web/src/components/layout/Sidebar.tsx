@@ -196,7 +196,8 @@ export function Sidebar() {
       {/* Logo */}
       <div className="px-4 pt-4 pb-2">
         <a href={`${BASE}/`} className="flex items-center gap-2">
-          <span className="text-xl font-bold text-blue-500 font-mono">A</span>
+          {/* v1476 — App-Icon statt Buchstabe */}
+          <img src={`${BASE}/icon-192.png`} alt="" width={24} height={24} className="w-6 h-6 rounded-md" />
           <span className="text-sm font-semibold text-gray-200">Alfred</span>
         </a>
       </div>

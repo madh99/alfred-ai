@@ -255,7 +255,7 @@ export default function InteractivePage() {
             phase === 'done' ? `✅ Agent fertig — ${sandbox.branchName.slice(-30)}` : `❌ Agent failed — ${sandbox.branchName.slice(-30)}`,
             {
               body: latestAgentMsg?.text?.slice(0, 150) ?? '',
-              icon: '/favicon.ico',
+              icon: '/alfred/icon-192.png', // v1476 — mit basePath (vorher /favicon.ico → 404)
               tag: `alfred-sandbox-${sandbox.id}`,
             },
           );
