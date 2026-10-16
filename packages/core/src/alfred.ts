@@ -17,6 +17,7 @@ import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { ProjektFragen, FrageWarten, projektWissen, quelleZeile } from './projekt/projekt-fragen.js'; // v1432
 import { zielPruefen, zielText, zielName, nachkontrolle, DeployFreigaben, zielBestaetigt, forgeTokenFuer, tokenHinweis, aufHttps, stufenAus, stufenSpeicher, naechsteStufe, STUFEN, gitlabRepoAnlegen, repoPfad, type DeployZiel, type Stufe } from './projekt/deploy-ziel.js'; // v1437 B14, v1438
 import { geraetDevAus, angabeGleich, angabeText, vorschlagText, testVorschlag, envText, type GeraetDev, type StartAngabe } from './projekt/geraet-dev.js'; // v1460, v1462
+import { WEB_OWNER_QUELLE } from '@alfred/types'; // v1487
 import { MR_TAG, MR_AUTO_TAG, mrZweig, gitlabPfadAus, mrBeschreibung, gitlabMrSichern, gitlabMrKommentare, gitlabMrZusammenfuehren, gitlabMrStatus, gitlabStandardZweig, gitlabBenutzer, mrHinweisBlock } from './projekt/merge-request.js'; // v1455, v1458
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -11581,9 +11582,9 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               ]);
               const openItems = [...activeItems, ...doneItems, ...cancelledItems];
               // v1399 — Geräte-Projekt: Läufe mit Etappen und Kosten (aus den Laufdateien)
-              const { laufAnzeige } = await import('./projekt/akten-projekte.js');
+              const { laufAnzeige, einrichtungStand } = await import('./projekt/akten-projekte.js');
               const geraetLaeufe = project.geraetId ? (this.satellitProjekte?.laeufeDerAkte(project.id) ?? []).map(l => laufAnzeige(l, this.projektLiveStand.get(l.id))) : undefined;
-              return { project, sessions, openItems, decisions, health, openItemTotals: { active: activeItems.length }, ...(geraetLaeufe ? { geraetLaeufe } : {}) };
+              return { project, sessions, openItems, decisions, health, openItemTotals: { active: activeItems.length }, ...(geraetLaeufe ? { geraetLaeufe } : {}), ...(project.geraetId ? { einrichtung: einrichtungStand(project) } : {}) }; // v1487 Einrichtung im Web
             } catch (err) { this.logger.warn({ err }, 'Projects API get failed'); return null; }
           },
           create: async (input: Record<string, unknown>) => {
@@ -14132,7 +14133,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           // Ab Einführung (kein Altbestand), nur Geräte des Owners. Entscheidungen sind Ergebnis-Signale für Schicht 4
           // (Logzeile; Drosselung erst nach Beobachtung, Grundsatz „Baselines erst beobachtend").
           hinweise: async (geraetId: string) => {
-            if (!this.insightsRepo || !this.ownerMasterUserId || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+            if (!this.insightsRepo || !this.ownerMasterUserId || !(await this.ownerQuelle(geraetId))) return undefined; // v1487 auch Web
             // v1344 — Themen-Digests und Quellen-Pflege (Kategorie „interests") nicht in der Sammlung: Lesestoff, keine Entscheidung
             // (Owner 10.10.). Nur ausgeblendet — Themen, Dossiers und Content-Studio bleiben unberührt; Vorschläge
             // („interest-suggestion", mit Aktion „Thema anlegen") bleiben sichtbar.
@@ -14144,7 +14145,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           },
           hinweisEntscheiden: async (geraetId: string, id: string, aktion: string) => {
             const repo = this.insightsRepo; const owner = this.ownerMasterUserId;
-            if (!repo || !owner || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+            if (!repo || !owner || !(await this.ownerQuelle(geraetId))) return undefined; // v1487 auch Web
             const insight = await repo.getById(owner, id);
             if (!insight) return { ok: false, grund: 'nicht gefunden' };
             if (aktion === 'spaeter') { this.logger.info({ id, quelle: insight.category, aktion, vorher: insight.status }, 'v1343 Hinweis entschieden'); await repo.snooze(owner, id, 24); return { ok: true }; }
@@ -15673,6 +15674,9 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
   }
 
   /** v1332 — Gehört das Gerät dem Owner? Der Sitzungs-Alias `geraet:<id>` ist an den Master des koppelnden Benutzers gebunden (v1233). */
+  /** v1487 — Owner-Ansichten: ein Gerät des Owners oder die Web-App des Owners (Kennung nur nach der Owner-Prüfung der Web-Route). */
+  private async ownerQuelle(geraetId: string): Promise<boolean> { return geraetId === WEB_OWNER_QUELLE || this.geraetGehoertOwner(geraetId); }
+
   async geraetGehoertOwner(geraetId: string): Promise<boolean> {
     if (!this.ownerMasterUserId || !this.userRepo) return false;
     try {
@@ -15717,7 +15721,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
 
   async ownerAnsichten(geraetId: string): Promise<import('./geraete/owner-ansichten.js').OwnerAnsichten | undefined> {
     const owner = this.ownerMasterUserId;
-    if (!owner || !this.todoRepo || !this.reminderRepo || !this.database || !(await this.geraetGehoertOwner(geraetId))) return undefined;
+    if (!owner || !this.todoRepo || !this.reminderRepo || !this.database || !(await this.ownerQuelle(geraetId))) return undefined; // v1487 auch Web
     const { OwnerAnsichten } = await import('./geraete/owner-ansichten.js');
     const { VorgaengeRepository } = await import('@alfred/storage');
     const db = this.database.getAdapter();
@@ -15758,8 +15762,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       } : undefined,
       // v1359 — Befunde aller Quellen für die App-Ansicht „Befunde" (offen + 7 Tage erledigt)
       befunde: this.befundeRepo ? async () => ({ offen: await this.befundeRepo!.offene(owner), erledigt: await this.befundeRepo!.erledigtSeit(owner, new Date(Date.now() - 7 * 86_400_000).toISOString()) }) : undefined,
-      protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (App)`),
-      projekte: await this.geraeteProjekteFuerApp(owner, geraetId),
+      protokoll: (was, daten) => this.logger.info({ geraetId, ...daten }, `v1353 ${was} (${geraetId === WEB_OWNER_QUELLE ? 'Web' : 'App'})`),
+      projekte: geraetId === WEB_OWNER_QUELLE ? undefined : await this.geraeteProjekteFuerApp(owner, geraetId), // v1487 — das Web hat eigene Projekt-Routen
       ...(this.beobachterDienst ? { beobachter: { liste: () => this.beobachterDienst!.liste(), anlegen: (b: Record<string, unknown>) => this.beobachterDienst!.anlegen(b), aendern: (id: string, b: Record<string, unknown>) => this.beobachterDienst!.aendern(id, b) } } : {}), // v1429
     });
   }
@@ -16904,6 +16908,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       protokoll: async (id: string, an: boolean) => this.geraeteProjektProtokoll(id, an), // v1425
       mergeRequests: async (id: string, an: boolean) => this.geraeteProjektMergeRequests(id, an), // v1455
       mrAuto: async (id: string, an: boolean) => this.geraeteProjektMrAuto(id, an), // v1458
+      einrichtung: async (id: string, was: string, befehle?: string[]) => this.geraeteProjektEinrichtung(id, was, befehle), // v1487
       // v1439 — Deploy im Web
       deployInfo: async (id: string) => { const o = owner(); const p = o ? await this.projectRepo?.getById(o, id) : undefined; return p ? this.projektDeployInfo(p) : { error: 'nicht gefunden' }; },
       deploy: async (id: string, aktion: string, felder: Record<string, unknown>) => aktion === 'dev' ? this.geraetDevAktion(id, felder) : skill.execute({ ...felder, action: aktion === 'ziel' ? 'projekt_deploy_ziel' : aktion === 'rollback' ? 'projekt_rollback' : aktion === 'hochstufen' ? 'projekt_hochstufen' : aktion === 'remote' ? 'projekt_remote' : 'projekt_deploy', projekt: id, ...(aktion === 'ziel_entfernen' ? { action: 'projekt_deploy_ziel', entfernen: true } : {}), bestaetigt: undefined }, { userId: owner() ?? '', masterUserId: owner(), platform: 'api', chatId: projektFaden(id) ? `owner:faden:${projektFaden(id)}` : '' } as never),

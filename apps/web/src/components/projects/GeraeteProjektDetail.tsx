@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ProjectConventionsView } from './ProjectConventionsView'; // v1426
 import { GeraeteProjektDeploy } from './GeraeteProjektDeploy'; // v1439
 import { ProjectEnvironmentsView } from './ProjectEnvironmentsView'; // v1443 B15 — Umgebungen wie beim Projekt-Agenten
+import { GeraeteProjektEinrichtung } from './GeraeteProjektEinrichtung'; // v1487
 import type { AlfredClient, ProjectDetail, GeraetLauf } from '@/lib/alfred-client';
 
 /**
@@ -142,6 +143,8 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
         </div>
       </div>
 
+      <GeraeteProjektEinrichtung client={client} projektId={p.id} einrichtung={detail.einrichtung} onReload={onReload} />
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
         <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2"><div className="text-gray-500">Gerät</div><div className="text-gray-200">📟 {p.geraet ?? '—'}</div></div>
         <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded p-2"><div className="text-gray-500">Verzeichnis (auf dem Gerät)</div><div className="text-gray-200 font-mono break-all">{p.cwd}</div></div>
@@ -259,7 +262,7 @@ export function GeraeteProjektDetail({ client, detail, onReload, onArchive, onRe
                         <button onClick={() => b && setBericht(bericht === k ? null : k)} className="w-full text-left text-xs text-gray-300 flex gap-2"><span>{icon}</span><span className="flex-1">{etappe}</span>{e && <span className="text-gray-500">{usd(e.kostenUsd)}</span>}{b && <span className="text-gray-500">{bericht === k ? '▴' : '▾'}</span>}</button>
                         {b && bericht === k && (
                           <div className="ml-5 my-1 p-2 rounded bg-[#111] border border-[#222] space-y-1 text-xs">
-                            <div className="text-gray-500">{[b.abnahme ? (b.abnahme.ok ? 'Abnahme ✅' : 'Abnahme ❌') : 'ohne Abnahme', b.fixVersuche ? `${b.fixVersuche} Fix-Versuch(e)` : '', b.dauerS !== undefined ? `${Math.round(b.dauerS / 60)} min` : ''].filter(Boolean).join(' · ')}</div>
+                            <div className="text-gray-500">{[b.abnahme ? (b.abnahme.ok ? 'Abnahme ✅' : 'Abnahme ❌') : b.ownerAbgenommen ? 'von dir abgenommen (ungeprüft)' : 'ohne Abnahme', b.fixVersuche ? `${b.fixVersuche} Fix-Versuch(e)` : '', b.dauerS !== undefined ? `${Math.round(b.dauerS / 60)} min` : ''].filter(Boolean).join(' · ')}</div>
                             {b.zusammenfassung.trim() && <div className="text-gray-200 whitespace-pre-wrap">{b.zusammenfassung.trim()}</div>}
                             {b.dateienAnzahl > 0 && <div className="text-gray-400">Geänderte Dateien ({b.dateienAnzahl}): {b.dateien.slice(0, 12).join(', ')}{b.dateienAnzahl > 12 ? ' …' : ''}</div>}
                             {b.commit && <div className="flex items-center gap-2"><span className="text-gray-300 font-mono">{b.commit.sha.slice(0, 7)}</span><span className="text-gray-400 flex-1">{b.commit.titel}</span><button onClick={() => diffLaden(b.commit!.sha, b.dateien)} className="px-2 py-0.5 rounded border border-[#2a2a2a] text-gray-200 hover:bg-[#222]">Änderungen ansehen</button></div>}

@@ -75,3 +75,9 @@ export interface GeraetEintrag {
   zuletztGesehen?: string;
   erstellt: string;
 }
+
+/**
+ * v1487 — Web-App des Owners: interne Kennung an Stelle einer Geräte-ID für die Owner-Ansichten (Vorgänge, Befunde, Regeln,
+ * Hinweise, Aufgaben). Setzt nur die Web-Route /api/owner/* nach der Owner-Prüfung der Web-Anmeldung; nie aus einem Gerätetoken.
+ */
+export const WEB_OWNER_QUELLE = 'web:owner';

@@ -1712,6 +1712,33 @@ export class AlfredClient {
   }
 
   // v866 — Globale CLI-Agent-Usage (eigene Subscriptions/Keys, getrennt vom Alfred-Usage-Tracking)
+  // ── v1487 — Owner-Ansichten wie in der App (Server: /api/owner/*, nur Owner, gleiche Logik wie /api/geraete/*) ──
+  private async ownerAbruf<T>(pfad: string, koerper?: Record<string, unknown>): Promise<T> {
+    const res = await fetch(`${this.baseUrl}/api/owner/${pfad}`, koerper ? { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(koerper) } : { headers: this.authHeaders });
+    const j = await res.json().catch(() => ({})) as Record<string, unknown>;
+    if (!res.ok) throw new Error(String(j.error ?? j.grund ?? `HTTP ${res.status}`));
+    return j as T;
+  }
+  /** Vorgang: vorgeschlagene Aktion ausführen (der Klick ist die Bestätigung) */
+  vorgangAusfuehren(id: string): Promise<{ ok: boolean; titel: string; erfolg: boolean; text: string }> { return this.ownerAbruf(`vorgaenge/${encodeURIComponent(id)}`, { aktion: 'ausfuehren' }); }
+  /** Vorgang zurückstellen: stunden (3, 72, 168) oder bis 'morgen' | 'zurueck' (wieder aufnehmen) */
+  vorgangSpaeter(id: string, w: { stunden?: number; bis?: 'morgen' | 'zurueck' }): Promise<{ ok: boolean; titel: string; zurueckBis?: string }> { return this.ownerAbruf(`vorgaenge/${encodeURIComponent(id)}`, { aktion: 'spaeter', ...w }); }
+  /** Vorgang abschließen mit Ergebnis und Regel für künftig */
+  vorgangAbschliessen(id: string, e: { ergebnis: VorgangErgebnisEingabe; kuenftig?: { art: 'wie_heute' | 'stumm' | 'immer_fragen'; tage?: number } }): Promise<{ ok: boolean; titel: string; ergebnis?: string; regel?: string; vorschlag?: string }> { return this.ownerAbruf(`vorgaenge/${encodeURIComponent(id)}`, e as unknown as Record<string, unknown>); }
+  fetchBefunde(): Promise<{ offen: BefundZeile[]; erledigt: BefundZeile[] }> { return this.ownerAbruf('befunde'); }
+  befundAktion(id: string, b: { aktion: 'stumm'; tage: 7 | 30 | 90 } | { aktion: 'vorgang' }): Promise<{ ok: boolean; titel: string; regel?: string; vorgangId?: string; neu?: boolean }> { return this.ownerAbruf(`befunde/${encodeURIComponent(id)}`, b); }
+  fetchRegeln(): Promise<{ vorschlaege: RegelZeile[]; aktiv: RegelZeile[] }> { return this.ownerAbruf('regeln'); }
+  regelAendern(id: string, aktion: 'uebernehmen' | 'ablehnen' | 'widerrufen'): Promise<{ ok: boolean; text: string }> { return this.ownerAbruf(`regeln/${encodeURIComponent(id)}`, { aktion }); }
+  fetchHinweise(): Promise<{ hinweise: HinweisZeile[] }> { return this.ownerAbruf('hinweise'); }
+  hinweisReagieren(id: string, aktion: 'ausfuehren' | 'gelesen' | 'nuetzlich' | 'nicht_nuetzlich' | 'bekannt' | 'falsch' | 'kein_interesse' | 'zu_oft' | 'besprochen' | 'spaeter'): Promise<{ ok: boolean; grund?: string }> { return this.ownerAbruf(`hinweise/${encodeURIComponent(id)}`, { aktion }); }
+  fetchOwnerAufgaben(): Promise<{ aufgaben: AufgabeZeile[]; erinnerungen: Array<{ id: string; text: string; zeit: string }> }> { return this.ownerAbruf('aufgaben'); }
+  aufgabeErledigt(id: string): Promise<{ aufgabe: AufgabeZeile }> { return this.ownerAbruf(`aufgaben/${encodeURIComponent(id)}`, { erledigt: true }); }
+  /** v1487 — Einrichtung eines Geräte-Projekts: ok:<schritt> (passt so), pruefung_vorschlag, pruefung_setzen */
+  async geraetProjektEinrichtung(id: string, text: string, befehle?: string[]): Promise<{ success: boolean; display?: string; error?: string; data?: { befehle: string[]; quelle?: string; hinweise: string[] } }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${encodeURIComponent(id)}/geraet/einrichtung`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ text, ...(befehle ? { befehle } : {}) }) });
+    return res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
+  }
+
   /** v1186 — Entscheidung des Owners zu einem Vorgang */
   async entscheideVorgang(id: string, status: 'erledigt' | 'verworfen', notiz?: string): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/vorgaenge/${encodeURIComponent(id)}/entscheidung`, {
@@ -3230,7 +3257,15 @@ export interface CliUsageGroupRow {
   costUsd: number;
 }
 // v1185 — Jarvis Schicht 3: Kachel Vorgänge
-export interface VorgangDto { id: string; titel: string; ziel?: string; besitzer: 'alfred' | 'user'; status: 'offen' | 'wartet' | 'erledigt' | 'verworfen'; naechsterSchritt?: string; frist?: string; quelle: string; ergebnis?: string; autonomie: 'auto' | 'bestaetigen' | 'nie'; kategorie?: string; begruendung?: string; erstellt: string; aktualisiert: string }
+export interface VorgangDto { id: string; titel: string; ziel?: string; besitzer: 'alfred' | 'user'; status: 'offen' | 'wartet' | 'erledigt' | 'verworfen'; naechsterSchritt?: string; frist?: string; quelle: string; ergebnis?: string; autonomie: 'auto' | 'bestaetigen' | 'nie'; kategorie?: string; begruendung?: string; erstellt: string; aktualisiert: string;
+  /** v1480 — ausführbare vorgeschlagene Aktion, zurückgestellt bis; v1362 — Befund-Bezug für den Abschluss */
+  vorschlag?: { ausfuehrbar: boolean; text: string; grund?: string }; zurueckBis?: string; befund?: string; nieStumm?: boolean; keinProblemBisher?: number }
+/** v1487 — Abschluss eines Vorgangs (wie App): was war es? */
+export interface VorgangErgebnisEingabe { art: 'behoben' | 'entschieden' | 'kein_problem' | 'anders'; ursache?: string; massnahme?: string; entscheidung?: string; text?: string }
+export interface BefundZeile { id: string; quelle: string; regel?: string; titel: string; detail?: string; entstanden: string; zuletzt: string; erledigt?: string; anzahl: number; vorgang: boolean; vorgangId?: string; nieStumm?: boolean }
+export interface RegelZeile { id: string; text: string; wirkung: string; bis?: string; begruendung?: string; herkunft: string; status: string; abgelaufen: boolean; erstellt: string }
+export interface HinweisZeile { id: string; quelle: string; titel: string; text: string; status: string; zeit: string; dringlichkeit: string | null; zugestellt: string | null; aktion: string | null; reaktion: string | null }
+export interface AufgabeZeile { id: string; titel: string; beschreibung?: string; prioritaet: string; faellig?: string; liste: string; erledigt: boolean }
 export interface VorgangSchrittDto { id: string; vorgangId?: string; zeit: string; art: string; skill?: string; aktion?: string; beschreibung: string; ergebnis?: string; autonomie?: string; quelle: string }
 export interface VorgaengeStatus { offene: VorgangDto[]; abgeschlossene: VorgangDto[]; schritte: VorgangSchrittDto[] }
 
@@ -3259,6 +3294,8 @@ export interface LebenszeichenStatus {
   adapter?: Array<{ platform: string; status: string; getrenntSeitMs?: number }>;
   /** v1217 — Befunde mit Identität: offene und seit 24 h erledigte Auffälligkeiten des Weltmodells */
   befunde?: { offen: LebenszeichenBefund[]; erledigt24h: LebenszeichenBefund[] } | null;
+  /** v1393 — Lage (Text für Modell und Anzeige; Web zeigt sie zeilenweise wie die App) */
+  lage?: { stand?: string; text?: string } | null;
   /** v1224/v1231 — gekoppelte Geräte (Satelliten) und laufende Vorhaben */
   geraete?: LebenszeichenGeraet[];
   vorhaben?: Array<{ geraet: string; beschreibung: string; aktionen: string[]; domains: string[]; bis: string; schritte: number }>;
@@ -3510,7 +3547,7 @@ export interface Project {
 }
 
 /** v1417 G1 — Etappenbericht */
-export interface EtappenBericht { geprueft: boolean; fixVersuche: number; zusammenfassung: string; dateien: string[]; dateienAnzahl: number; commit?: { sha: string; titel: string }; abnahme?: { ok: boolean; protokoll: string }; dauerS?: number }
+export interface EtappenBericht { /** v1484 — ohne Prüfbefehle vom Owner abgenommen (bleibt ungeprüft) */ ownerAbgenommen?: boolean; geprueft: boolean; fixVersuche: number; zusammenfassung: string; dateien: string[]; dateienAnzahl: number; commit?: { sha: string; titel: string }; abnahme?: { ok: boolean; protokoll: string }; dauerS?: number }
 
 /** v1399 — ein Lauf (Plan mit Etappen) eines Geräte-Projekts */
 export interface GeraetLauf {
@@ -3620,7 +3657,10 @@ export interface ProjectDetail {
   health: Partial<Record<HealthProbe, ProjectHealthEntry>>;
   /** v1399 — nur bei Geräte-Projekten */
   geraetLaeufe?: GeraetLauf[];
+  /** v1487 — Einrichtung eines Geräte-Projekts (wie App 1.37.0) */
+  einrichtung?: EinrichtungStand;
 }
+export interface EinrichtungStand { schritte: Array<{ schritt: 'repo' | 'pruefung' | 'mr' | 'regeln' | 'protokoll'; titel: string; erledigt: boolean; stand: string }>; erledigt: number; gesamt: number }
 
 /** v872 — frischer Git-Zustand für die Repo-Status-Karte. */
 export interface ProjectRepoStatus {

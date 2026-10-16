@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
+import { eingangEintraege, hinweisOffen, vorgaengeFuerDich } from '@/components/eingang/eingang-logik';
 
 const BASE = '/alfred';
 
@@ -24,8 +25,13 @@ const TOOLS = [
   { href: `${BASE}/docs/`, label: 'Docs', icon: '📄' },
   { href: `${BASE}/logs/`, label: 'Logs', icon: '📋' },
   { href: `${BASE}/cluster/`, label: 'Cluster', icon: '🔗' },
-  { href: `${BASE}/lebenszeichen/`, label: 'Lebenszeichen', icon: '💓' },
-  { href: `${BASE}/vorgaenge/`, label: 'Vorgänge', icon: '🗂️' },
+  // v1487 — Lebenszeichen (Lage), Vorgänge, Beobachter stehen jetzt in den Gruppen „Eingang" und „Haus & Systeme"
+];
+
+// v1487 — Gruppe „Haus & Systeme" wie in der App
+const HAUS = [
+  { href: `${BASE}/lebenszeichen/`, label: 'Lage', icon: '💓' },
+  { href: `${BASE}/befunde/`, label: 'Befunde', icon: '⚠️' },
   { href: `${BASE}/beobachter/`, label: 'Beobachter', icon: '🔭' }, // v1429
 ];
 
@@ -33,6 +39,9 @@ interface Counts {
   insights: number;
   goals: number;
 }
+
+// v1487 — Zähler der Gruppe „Eingang" (null = Quelle nicht verfügbar, z. B. 403 für Nicht-Owner)
+interface EingangCounts { eingang: number; vorgaenge: number; bestaetigungen: number; hinweise: number | null }
 
 interface ProjectItem { id: string; name: string; status: string }
 interface ConvItem { id: string; chatId: string; customLabel?: string; platform: string; pinnedAt?: string; lastMessageAt?: string; messageCount: number }
@@ -45,6 +54,11 @@ export function Sidebar() {
   // v668 — Chats & Projekte collapsible (Listen können lang werden)
   const [chatsOpen, setChatsOpen] = useState(true);
   const [projectsOpen, setProjectsOpen] = useState(true);
+  // v1487 — Gruppen Eingang / Haus & Systeme, default offen
+  const [eingangOpen, setEingangOpen] = useState(true);
+  const [hausOpen, setHausOpen] = useState(true);
+  const [eingangCounts, setEingangCounts] = useState<EingangCounts>({ eingang: 0, vorgaenge: 0, bestaetigungen: 0, hinweise: null });
+  const [suche, setSuche] = useState('');
   const [counts, setCounts] = useState<Counts>({ insights: 0, goals: 0 });
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [chats, setChats] = useState<ConvItem[]>([]);
@@ -77,7 +91,12 @@ export function Sidebar() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     setPathname(window.location.pathname);
+    setSuche(window.location.search);
     try {
+      const e = localStorage.getItem('alfred-sidebar-eingang-open');
+      if (e !== null) setEingangOpen(e === '1');
+      const h = localStorage.getItem('alfred-sidebar-haus-open');
+      if (h !== null) setHausOpen(h === '1');
       setToolsOpen(localStorage.getItem('alfred-sidebar-tools-open') === '1');
       // v668 — Chats/Projekte default offen, aber persistierter Zustand gewinnt
       const c = localStorage.getItem('alfred-sidebar-chats-open');
@@ -99,6 +118,40 @@ export function Sidebar() {
     if (typeof window === 'undefined') return;
     try { localStorage.setItem('alfred-sidebar-projects-open', projectsOpen ? '1' : '0'); } catch {}
   }, [projectsOpen]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('alfred-sidebar-eingang-open', eingangOpen ? '1' : '0'); } catch {}
+  }, [eingangOpen]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('alfred-sidebar-haus-open', hausOpen ? '1' : '0'); } catch {}
+  }, [hausOpen]);
+
+  // v1487 — Zähler für Eingang, Vorgänge, Bestätigungen; alle 60 s, Fehler still
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    const laden = async () => {
+      const [b, v, a, h] = await Promise.all([
+        client.fetchPendingConfirmations().then(l => l.filter(x => x.status === 'pending')).catch(() => null),
+        client.fetchVorgaenge().catch(() => null),
+        client.fetchOwnerAufgaben().catch(() => null),
+        client.fetchHinweise().catch(() => null),
+      ]);
+      if (cancelled) return;
+      const jetzt = new Date();
+      const offene = v?.offene ?? [];
+      setEingangCounts({
+        eingang: eingangEintraege({ bestaetigungen: b ?? [], vorgaenge: offene, aufgaben: a?.aufgaben ?? [], hinweise: h?.hinweise ?? [], jetzt }).length,
+        vorgaenge: vorgaengeFuerDich(offene, jetzt).length,
+        bestaetigungen: b?.length ?? 0,
+        hinweise: h ? h.hinweise.filter(hinweisOffen).length : null,
+      });
+    };
+    laden();
+    const t = setInterval(laden, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [client]);
 
   useEffect(() => {
     if (!client) return;
@@ -138,6 +191,40 @@ export function Sidebar() {
     const path = href.replace(/\/$/, '');
     return pathname === path || (pathname.startsWith(path + '/') && path !== BASE);
   };
+
+  // v1487 — Eintrag einer Navigationsgruppe mit optionalem Zähler
+  function gruppenEintrag(href: string, icon: string, label: string, aktiv: boolean, zaehler = 0, title?: string) {
+    return (
+      <a
+        key={href}
+        href={href}
+        title={title}
+        className={clsx('flex items-center gap-3 px-3 py-1.5 rounded-lg text-[13px] transition-colors',
+          aktiv ? 'bg-blue-500/10 text-blue-400' : 'text-gray-300 hover:bg-[#1a1a1a]')}
+      >
+        <span className="text-base">{icon}</span>
+        <span className="flex-1 text-left truncate">{label}</span>
+        {zaehler > 0 && (
+          <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded px-1.5 py-0.5">{zaehler}</span>
+        )}
+      </a>
+    );
+  }
+  function gruppenKopf(name: string, offen: boolean, umschalten: () => void, zaehler = 0) {
+    return (
+      <button
+        onClick={umschalten}
+        className="w-full flex items-center justify-between px-3 py-1 text-[11px] uppercase tracking-wide text-gray-500 hover:text-gray-300 font-semibold"
+      >
+        <span className="flex items-center gap-2">
+          <span>{offen ? '▼' : '▶'}</span>
+          <span>{name}</span>
+        </span>
+        {!offen && zaehler > 0 && <span className="text-[10px] text-amber-300/80 normal-case font-normal">{zaehler}</span>}
+      </button>
+    );
+  }
+  const bestaetigungenAktiv = isActive(`${BASE}/eingang`) && new URLSearchParams(suche).get('art') === 'bestaetigung';
 
   const platformIcon = (p: string): string => ({
     telegram: '✈️', matrix: '🔷', api: '🌐', discord: '🎮', whatsapp: '💚', signal: '🔵',
@@ -236,17 +323,6 @@ export function Sidebar() {
           <span>Suche &amp; History</span>
         </a>
         <a
-          href={`${BASE}/insights/`}
-          className={clsx('w-full flex items-center gap-3 px-3 py-1.5 rounded-lg transition-colors',
-            isActive(`${BASE}/insights`) ? 'bg-blue-500/10 text-blue-400' : 'text-gray-300 hover:bg-[#1a1a1a]')}
-        >
-          <span className="text-base">💡</span>
-          <span className="flex-1 text-left">Insights</span>
-          {counts.insights > 0 && (
-            <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded px-1.5 py-0.5">{counts.insights}</span>
-          )}
-        </a>
-        <a
           href={`${BASE}/interests/`}
           className={clsx('w-full flex items-center gap-3 px-3 py-1.5 rounded-lg transition-colors',
             isActive(`${BASE}/interests`) ? 'bg-blue-500/10 text-blue-400' : 'text-gray-300 hover:bg-[#1a1a1a]')}
@@ -277,6 +353,30 @@ export function Sidebar() {
 
       {/* Scrollable area with Projekte / Chats / Tools */}
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-3">
+        {/* v1487 — Gruppe „Eingang" wie in der App: alles, was den Owner braucht */}
+        <div>
+          {gruppenKopf('Eingang', eingangOpen, () => setEingangOpen(o => !o), eingangCounts.eingang)}
+          {eingangOpen && (
+            <div className="space-y-0.5 mt-1">
+              {gruppenEintrag(`${BASE}/eingang/`, '📥', 'Eingang', isActive(`${BASE}/eingang`) && !bestaetigungenAktiv, eingangCounts.eingang, 'Alles, was dich braucht — das Dringendste zuerst')}
+              {gruppenEintrag(`${BASE}/vorgaenge/`, '🗂️', 'Vorgänge', isActive(`${BASE}/vorgaenge`), eingangCounts.vorgaenge, 'Offene Vorgänge für dich')}
+              {gruppenEintrag(`${BASE}/insights/`, '💡', 'Hinweise', isActive(`${BASE}/insights`), eingangCounts.hinweise ?? counts.insights)}
+              {/* Bestätigungen haben keine eigene Seite — der Eintrag zeigt den Eingang gefiltert, nur wenn welche offen sind */}
+              {eingangCounts.bestaetigungen > 0 && gruppenEintrag(`${BASE}/eingang/?art=bestaetigung`, '🔔', 'Bestätigungen', bestaetigungenAktiv, eingangCounts.bestaetigungen, 'Offene Bestätigungen')}
+            </div>
+          )}
+        </div>
+
+        {/* v1487 — Gruppe „Haus & Systeme" */}
+        <div>
+          {gruppenKopf('Haus & Systeme', hausOpen, () => setHausOpen(o => !o))}
+          {hausOpen && (
+            <div className="space-y-0.5 mt-1">
+              {HAUS.map(h => gruppenEintrag(h.href, h.icon, h.label, isActive(h.href)))}
+            </div>
+          )}
+        </div>
+
         {/* Projekte (collapsible) */}
         {projects.length > 0 && (
           <div>

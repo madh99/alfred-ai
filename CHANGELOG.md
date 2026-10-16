@@ -55,6 +55,36 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1487] - 2026-10-16
+
+### Added — Web-App: Vorgänge, Befunde, Lage, Eingang und Einrichtung wie in der App (App 1.38.0)
+
+Die Web-App war bei den Ansichten aus App 1.34 bis 1.37 stehen geblieben. Vorgänge ließen sich nur abhaken. Befunde, Regeln, Eingang und die Einrichtung eines Geräte-Projekts fehlten ganz.
+
+- **Server:**
+  - Neue Routen `/api/owner/(vorgaenge|befunde|regeln|hinweise|aufgaben|erinnerungen|gedaechtnis)` für die Web-Anmeldung des Owners (bzw. das API-Token). Sie nutzen dieselbe Logik wie die App-Routen `/api/geraete/*`; der Verteiler ist gemeinsam.
+  - Gerätetoken und Web-Nutzer, die nicht der Owner sind, werden abgewiesen.
+  - Das Web-Projekt liefert jetzt `einrichtung`, und es gibt die Route `POST /api/projects/:id/geraet/einrichtung`.
+- **Vorgänge:**
+  - Gruppen: Für dich, Bei Alfred, Zurückgestellt, dazu die abgeschlossenen der letzten 7 Tage.
+  - Aktionen: Ausführen der vorgeschlagenen Aktion (mit Rückfrage), Später, Wieder aufnehmen, Nachfragen.
+  - Abschließen mit „Was war es?“ und „Und künftig?“.
+  - Detail mit Schritten; Hinweis auf ähnliche Vorgänge; Direktlink `?id=`.
+- **Befunde (neue Seite):**
+  - Filter je Quelle; Haus-Check nach Regel gruppiert; Einzelheiten.
+  - Aktionen: Nicht mehr melden (7, 30 oder 90 Tage), Als Vorgang, Nachfragen.
+  - Karte Regeln: Vorschläge übernehmen oder ablehnen, aktive Regeln widerrufen.
+  - Erledigte der letzten 7 Tage; Direktlinks `?id=` und `?quelle=`.
+- **Lage:** Auf der Lebenszeichen-Seite steht oben die Lage, Zeile für Zeile wie in der App. Befunde verlinken auf die Befunde-Seite, der Haus-Check erscheint als eine Zeile.
+- **Eingang (neue Seite):**
+  - Alles, was den Owner braucht, in der Reihenfolge der App: Bestätigungen, wartende Vorgänge, fällige Aufgaben, Hinweise.
+  - Filter, „Alle Hinweise gelesen“ und die Aktionen je Eintrag.
+- **Navigation:** Gruppen „Eingang“ (Eingang, Vorgänge, Hinweise, Bestätigungen) und „Haus & Systeme“ (Lage, Befunde, Beobachter), mit Zählern im Minutentakt.
+- **Geräte-Projekt:**
+  - Karte „Einrichtung n/m“ wie in der App.
+  - Im Etappenbericht steht „von dir abgenommen (ungeprüft)“, in der App ab 1.38.0 ebenso.
+- **Fix:** „Mit Alfred besprechen“ bei den Insights führte ohne Basispfad ins Leere.
+
 ## [0.19.0-jarvis.1486] - 2026-10-16
 
 ### Added — Geräte-Projekte: Einrichtung (App 1.37.0)

@@ -50,6 +50,8 @@ describe('istSitzungsPfad', () => {
     expect(istSitzungsPfad('/api/app/update/datei?plattform=macos')).toBe(true);
     expect(istSitzungsPfad('/api/conversations')).toBe(false);
     expect(istSitzungsPfad('/api/vorgaenge/abc/entscheidung')).toBe(false);
+    // v1487 — Web-Owner-Ansichten: nie mit Gerätetoken (Geräte haben /api/geraete/*)
+    for (const p of ['/api/owner/vorgaenge', '/api/owner/befunde/abc', '/api/owner/hinweise', '/api/owner/regeln/x', '/api/owner/aufgaben']) expect(istSitzungsPfad(p), p).toBe(false);
   });
   it('sperrt alles andere', () => {
     expect(istSitzungsPfad('/api/geraete/abc')).toBe(false); // Widerruf

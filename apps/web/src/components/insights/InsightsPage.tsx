@@ -248,7 +248,7 @@ export function InsightsPage() {
 
   function discussHref(i: InsightItem): string {
     const draft = `Ich möchte dieses Insight besprechen:\n\n**${i.title}**\n${i.body.slice(0, 600)}`;
-    return `/chat?draft=${encodeURIComponent(draft)}`;
+    return `/alfred/chat/?draft=${encodeURIComponent(draft)}`; // v1487 — Basispfad (Link führte ins Leere)
   }
 
   function toggleExpand(id: string) {

@@ -11,6 +11,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import clsx from 'clsx';
 import { useConfig } from '@/context/ConfigContext';
+import { befundQuelle } from '@/components/befunde/BefundePage';
 import type { LebenszeichenStatus, LebenszeichenJob, LebenszeichenPuls, LebenszeichenProbe } from '@/lib/alfred-client';
 
 function alter(iso?: string | null): string {
@@ -65,6 +66,18 @@ const KENNZAHL_LABELS: Array<[string, string]> = [
   ['vorgaengeAngelegt', 'Vorgänge angelegt'],
 ];
 
+/** v1487 — Lage zeilenweise wie in der App (lageZeilen): ohne ###-Überschriften und ohne die Anweisungszeile fürs Modell */
+function lageZeilen(lage: string): Array<{ stichwort?: string; text: string }> {
+  const aus: Array<{ stichwort?: string; text: string }> = [];
+  for (const roh of lage.split('\n')) {
+    const z = roh.trim();
+    if (!z || z.startsWith('###') || z.startsWith('Hinweis: Das ist der belegte Stand')) continue;
+    const i = z.indexOf(': ');
+    aus.push(i > 0 && i <= 40 ? { stichwort: z.slice(0, i), text: z.slice(i + 2) } : { text: z });
+  }
+  return aus;
+}
+
 function Punkt({ zustand }: { zustand: 'ok' | 'warn' | 'bad' }) {
   return <span className={clsx('inline-block w-2.5 h-2.5 rounded-full', AMPEL[zustand])} />;
 }
@@ -108,6 +121,19 @@ export function LebenszeichenPage() {
 
       {data && (
         <>
+          {/* Lage (v1487 — wie die Kachel in der App) */}
+          {data.lage?.text && (
+            <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <h2 className="text-sm font-semibold text-gray-300 mb-2">Lage</h2>
+              <div className="space-y-1.5 text-xs text-gray-300 leading-relaxed">
+                {lageZeilen(data.lage.text).map((z, i) => (
+                  <div key={i}>{z.stichwort && <span className="font-semibold text-blue-300 mr-1.5">{z.stichwort}</span>}{z.text}</div>
+                ))}
+              </div>
+              {data.lage.stand && <div className="mt-2 text-[11px] text-gray-500">Stand: {new Date(data.lage.stand).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} ({alter(data.lage.stand)})</div>}
+            </section>
+          )}
+
           {/* Offene Meldungen */}
           <div className={clsx('rounded-lg px-4 py-2.5 text-xs border', offen.length ? 'bg-red-500/5 border-red-500/30 text-red-300' : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-300/80')}>
             {offen.length === 0
@@ -184,20 +210,25 @@ export function LebenszeichenPage() {
             <section className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
               <h2 className="text-sm font-semibold text-gray-300 mb-1">Befunde</h2>
               <div className="text-xs text-gray-500 mb-3">Was das Weltmodell gerade als auffällig führt — je Gegenstand genau einmal, mit Dauer und Zahl der Beobachtungen.</div>
+              {/* v1487 — anklickbar (Einzelheiten und Aktionen in der Ansicht Befunde); Haus-Check gebündelt auf eine Zeile */}
               {data.befunde.offen.length > 0 && (
                 <ul className="text-xs text-gray-300 space-y-1">
-                  {data.befunde.offen.map(b => (
-                    <li key={b.id}>⚠️ <span className="text-gray-500">[{b.quelle}]</span> {b.titel} <span className="text-gray-500">(seit {alter(b.entstanden)}, {b.gesehenAnzahl}× gesehen)</span></li>
+                  {(() => { const n = data.befunde.offen.filter(b => b.quelle === 'haus-check').length; return n > 0 ? (
+                    <li><a href="/alfred/befunde/?quelle=haus-check" className="text-blue-300 hover:underline">⚠️ [Haus-Check] {n} Punkte — öffnen</a></li>
+                  ) : null; })()}
+                  {data.befunde.offen.filter(b => b.quelle !== 'haus-check').map(b => (
+                    <li key={b.id}><a href={`/alfred/befunde/?id=${encodeURIComponent(b.id)}`} className="hover:text-gray-100 hover:underline">⚠️ <span className="text-gray-500">[{befundQuelle(b.quelle)}]</span> {b.titel} <span className="text-gray-500">(seit {alter(b.entstanden)}, {b.gesehenAnzahl}× gesehen)</span></a></li>
                   ))}
                 </ul>
               )}
               {data.befunde.erledigt24h.length > 0 && (
                 <ul className="text-xs text-gray-500 space-y-1 mt-2">
                   {data.befunde.erledigt24h.map(b => (
-                    <li key={b.id}>✓ <span>[{b.quelle}]</span> {b.titel} <span>(erledigt {alter(b.erledigtAm)})</span></li>
+                    <li key={b.id}><a href={`/alfred/befunde/?id=${encodeURIComponent(b.id)}`} className="hover:text-gray-300 hover:underline">✓ <span>[{befundQuelle(b.quelle)}]</span> {b.titel} <span>(erledigt {alter(b.erledigtAm)})</span></a></li>
                   ))}
                 </ul>
               )}
+              <a href="/alfred/befunde/" className="inline-block mt-3 px-2 py-0.5 text-[11px] rounded border border-[#2a2a2a] text-gray-400 hover:text-gray-200">Alle Befunde öffnen</a>
             </section>
           )}
 

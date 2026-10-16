@@ -8,6 +8,9 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import type { Platform, NormalizedMessage, SendMessageOptions } from '@alfred/types';
+import { WEB_OWNER_QUELLE } from '@alfred/types'; // v1487
+/** v1364 Reaktionen auf Hinweise; erledigt/verwerfen = App bis 1.13 (App und Web, v1487) */
+const HINWEIS_AKTIONEN = ['nuetzlich', 'gelesen', 'nicht_nuetzlich', 'bekannt', 'falsch', 'kein_interesse', 'zu_oft', 'besprochen', 'spaeter', 'ausfuehren', 'erledigt', 'verwerfen'];
 import { MessagingAdapter } from '../adapter.js';
 
 const MIME_TYPES: Record<string, string> = {
@@ -813,7 +816,7 @@ export class HttpAdapter extends MessagingAdapter {
   private geraeteProjektIds = new Set<string>();
   setGeraeteProjektIds(ids: Set<string>): void { this.geraeteProjektIds = ids; }
   /** v1399 — Geräte-Projekt im Web: Stand (Akte mit Commits vom Gerät) und Weiterarbeiten (Plan → Owner-Bestätigung) */
-  private geraeteProjektCallbacks?: { stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; mrAuto?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; mergeRequests?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; /** v1439 */ deployInfo?: (id: string) => Promise<unknown>; deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<unknown> };
+  private geraeteProjektCallbacks?: { einrichtung?: (id: string, was: string, befehle?: string[]) => Promise<{ success: boolean; display?: string; error?: string; data?: unknown }>; stand: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>; weiter: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; entscheiden?: (id: string, lauf: string, entscheidung: string) => Promise<{ success: boolean; display?: string; error?: string }>; frage?: (id: string, text: string) => Promise<{ success: boolean; display?: string; error?: string }>; fortsetzen?: (id: string, lauf: string) => Promise<{ success: boolean; display?: string; error?: string }>; diff?: (id: string, commit: string, datei?: string) => Promise<{ success: boolean; display?: string; error?: string }>; mrAuto?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; mergeRequests?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; protokoll?: (id: string, an: boolean) => Promise<{ success: boolean; display?: string; error?: string }>; /** v1439 */ deployInfo?: (id: string) => Promise<unknown>; deploy?: (id: string, aktion: string, felder: Record<string, unknown>) => Promise<unknown> };
   setGeraeteProjektCallbacks(cb: HttpAdapter['geraeteProjektCallbacks']): void { this.geraeteProjektCallbacks = cb; }
   /** v1457 — Projekt endgültig löschen (jedes Projekt; stellt nur die Owner-Bestätigung, gelöscht wird nach dem Ja) */
   private projektLoeschenFn?: (id: string) => Promise<{ success: boolean; display?: string; error?: string }>;
@@ -849,6 +852,12 @@ export class HttpAdapter extends MessagingAdapter {
     let j: { text?: unknown; lauf?: unknown; entscheidung?: unknown } = {};
     try { j = JSON.parse((await this.readBody(req)) || '{}') as typeof j; text = typeof j.text === 'string' ? j.text.trim().slice(0, 4000) : ''; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
     if (url.pathname.endsWith('/diff')) { const jd = j as { commit?: unknown; datei?: unknown }; antwort(200, cb.diff && typeof jd.commit === 'string' ? await cb.diff(id, jd.commit, typeof jd.datei === 'string' ? jd.datei : undefined) : { success: false, error: 'commit fehlt' }); return; } // v1417
+    if (url.pathname.endsWith('/einrichtung')) { // v1487 — Einrichtung im Web (wie App: ok:<schritt>, pruefung_vorschlag, pruefung_setzen)
+      const je = j as { befehle?: unknown };
+      const befehle = Array.isArray(je.befehle) ? je.befehle.filter((b): b is string => typeof b === 'string').map(b => b.trim()).filter(Boolean) : undefined;
+      antwort(200, cb.einrichtung && /^(ok:(repo|pruefung|mr|regeln|protokoll)|pruefung_vorschlag|pruefung_setzen)$/.test(text) ? await cb.einrichtung(id, text, befehle) : { success: false, error: 'text muss ok:<schritt>, pruefung_vorschlag oder pruefung_setzen sein' });
+      return;
+    }
     if (url.pathname.endsWith('/mr-auto')) { const jp = j as { an?: unknown }; antwort(200, cb.mrAuto && typeof jp.an === 'boolean' ? await cb.mrAuto(id, jp.an) : { success: false, error: 'an (true|false) nötig' }); return; } // v1458
     if (url.pathname.endsWith('/merge-requests')) { const jp = j as { an?: unknown }; antwort(200, cb.mergeRequests && typeof jp.an === 'boolean' ? await cb.mergeRequests(id, jp.an) : { success: false, error: 'an (true|false) nötig' }); return; } // v1455
     if (url.pathname.endsWith('/protokoll')) { const jp = j as { an?: unknown }; antwort(200, cb.protokoll && typeof jp.an === 'boolean' ? await cb.protokoll(id, jp.an) : { success: false, error: 'an (true|false) nötig' }); return; } // v1425
@@ -1388,7 +1397,7 @@ export class HttpAdapter extends MessagingAdapter {
     }
 
     // v1399 — Geräte-Projekte: VOR allen Projekt-Routen (Realfall Live-Test: /environments lag weiter oben in der Kette und lief durch)
-    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage|\/fortsetzen|\/diff|\/protokoll|\/merge-requests|\/mr-auto|\/deploy)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
+    if (/^\/api\/projects\/[^/]+\/geraet(\/weiter|\/entscheiden|\/frage|\/fortsetzen|\/diff|\/protokoll|\/merge-requests|\/mr-auto|\/deploy|\/einrichtung)?$/.test(url.pathname) && (req.method === 'GET' || req.method === 'POST')) {
       this.handleGeraeteProjekt(req, res, url).catch(err => this.safeError(res, err));
       return;
     }
@@ -2064,6 +2073,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleGeraetHinweise(req, res).catch(err => this.safeError(res, err)); // v1343
     } else if (/^\/api\/geraete\/hinweise\/[A-Za-z0-9-]{1,64}$/.test(url.pathname) && req.method === 'POST') {
       this.handleGeraetHinweisEntscheiden(req, res, url).catch(err => this.safeError(res, err)); // v1343
+    } else if (/^\/api\/owner\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|hinweise)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) {
+      this.handleWebOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1487
     } else if (/^\/api\/geraete\/(aufgaben|erinnerungen|gedaechtnis|vorgaenge|befunde|regeln|projekte|beobachter)(\/[A-Za-z0-9_-]{1,64})?$/.test(url.pathname)) { // v1401 projekte, v1429 beobachter
       this.handleGeraetOwnerAnsicht(req, res, url).catch(err => this.safeError(res, err)); // v1353
     } else if ((url.pathname === '/api/app/update' || url.pathname === '/api/app/update/datei') && req.method === 'GET') {
@@ -6924,7 +6935,7 @@ export class HttpAdapter extends MessagingAdapter {
     const body = await this.readBody(req).catch(() => '');
     let aktion = '';
     try { aktion = String((JSON.parse(body || '{}') as { aktion?: unknown }).aktion ?? ''); } catch { /* leer */ }
-    const AKTIONEN = ['nuetzlich', 'gelesen', 'nicht_nuetzlich', 'bekannt', 'falsch', 'kein_interesse', 'zu_oft', 'besprochen', 'spaeter', 'ausfuehren', 'erledigt', 'verwerfen']; // v1364 Reaktionen; erledigt/verwerfen = App bis 1.13
+    const AKTIONEN = HINWEIS_AKTIONEN;
     if (!AKTIONEN.includes(aktion)) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: `aktion: ${AKTIONEN.join(' | ')}` })); return; }
     const r = await this.geraeteCallbacks.hinweisEntscheiden(geraet.geraetId, id, aktion);
     if (r === undefined) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nur Geräte des Owners' })); return; }
@@ -6958,6 +6969,11 @@ export class HttpAdapter extends MessagingAdapter {
       if (roh.length > 20_000) { antwort(413, { error: 'zu groß' }); return; }
       try { const j = JSON.parse(roh || '{}'); if (j && typeof j === 'object' && !Array.isArray(j)) body = j as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
     }
+    await this.ownerAnsichtBedienen(a, bereich ?? '', id, m, body, url, antwort);
+  }
+
+  /** v1487 — gemeinsamer Teil der Owner-Ansichten für App (/api/geraete/*) und Web (/api/owner/*). */
+  private async ownerAnsichtBedienen(a: GeraetOwnerAnsichten, bereich: string, id: string | undefined, m: string | undefined, body: Record<string, unknown>, url: URL, antwort: (code: number, body: unknown) => void): Promise<void> {
     try {
       if (bereich === 'aufgaben' && !id && m === 'GET') { antwort(200, await a.aufgaben()); return; }
       if (bereich === 'aufgaben' && !id && m === 'POST') { antwort(200, { aufgabe: await a.aufgabeNeu(body) }); return; }
@@ -6985,6 +7001,38 @@ export class HttpAdapter extends MessagingAdapter {
       if (bereich === 'vorgaenge' && id && m === 'POST') { const v = await a.vorgangEntscheiden(id, body.status, body.notiz); antwort(v ? 200 : 404, v ? { ok: true, titel: v.titel } : { error: 'nicht gefunden' }); return; }
     } catch (err) { antwort(400, { error: (err as Error).message }); return; }
     antwort(405, { error: 'Methode nicht erlaubt' });
+  }
+
+  /**
+   * v1487 — Owner-Ansichten für die Web-App (gleiche Logik wie die App): nur die Web-Anmeldung des Owners bzw. das API-Token,
+   * nie ein Gerätetoken (die Geräte haben /api/geraete/*). Projekte bleiben bei /api/projects/*.
+   */
+  private async handleWebOwnerAnsicht(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    const antwort = (code: number, body: unknown) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (!(await this.checkAuth(req, res))) return;
+    if (this.geraetIdentitaet.get(req)) { antwort(403, { error: 'nicht mit Gerätetoken' }); return; }
+    if (!(await this.istOwnerAnfrage(req))) { antwort(403, { error: 'nur für den Owner' }); return; }
+    const [, , , bereich, id] = url.pathname.split('/');
+    const m = req.method;
+    let body: Record<string, unknown> = {};
+    if (m === 'POST') {
+      const roh = await this.readBody(req).catch(() => '');
+      if (roh.length > 20_000) { antwort(413, { error: 'zu groß' }); return; }
+      try { const j = JSON.parse(roh || '{}'); if (j && typeof j === 'object' && !Array.isArray(j)) body = j as Record<string, unknown>; } catch { antwort(400, { error: 'JSON erwartet' }); return; }
+    }
+    if (bereich === 'hinweise') {
+      if (!id && m === 'GET' && this.geraeteCallbacks?.hinweise) { const l = await this.geraeteCallbacks.hinweise(WEB_OWNER_QUELLE); antwort(l ? 200 : 503, l ? { hinweise: l } : { error: 'nicht verfügbar' }); return; }
+      if (id && m === 'POST' && this.geraeteCallbacks?.hinweisEntscheiden) {
+        const aktion = String(body.aktion ?? '');
+        if (!HINWEIS_AKTIONEN.includes(aktion)) { antwort(400, { error: `aktion: ${HINWEIS_AKTIONEN.join(' | ')}` }); return; }
+        const r = await this.geraeteCallbacks.hinweisEntscheiden(WEB_OWNER_QUELLE, id, aktion);
+        antwort(r ? (r.ok ? 200 : 409) : 503, r ?? { error: 'nicht verfügbar' }); return;
+      }
+      antwort(405, { error: 'Methode nicht erlaubt' }); return;
+    }
+    const a = await this.geraeteCallbacks?.ownerAnsichten?.(WEB_OWNER_QUELLE);
+    if (!a) { antwort(503, { error: 'nicht verfügbar' }); return; }
+    await this.ownerAnsichtBedienen(a, bereich ?? '', id, m, body, url, antwort);
   }
 
   /** v1335 — Faden umbenennen: PATCH {"titel": "…"} */

@@ -263,7 +263,7 @@ class _ProjektDetailState extends State<ProjektDetail> {
         margin: const EdgeInsets.only(left: 18, bottom: 8), padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(8)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text([if (abnahme != null) (abnahme['ok'] == true ? 'Abnahme ✅' : 'Abnahme ❌') else 'ohne Abnahme', if ((b['fixVersuche'] as num? ?? 0) > 0) '${b['fixVersuche']} Fix-Versuch(e)', if (dauer != null) '${(dauer / 60).round()} min'].join(' · '), style: theme.textTheme.labelSmall?.copyWith(color: dim)),
+          Text([if (abnahme != null) (abnahme['ok'] == true ? 'Abnahme ✅' : 'Abnahme ❌') else if (b['ownerAbgenommen'] == true) 'von dir abgenommen (ungeprüft)' else 'ohne Abnahme', if ((b['fixVersuche'] as num? ?? 0) > 0) '${b['fixVersuche']} Fix-Versuch(e)', if (dauer != null) '${(dauer / 60).round()} min'].join(' · '), style: theme.textTheme.labelSmall?.copyWith(color: dim)),
           if ('${b['zusammenfassung'] ?? ''}'.trim().isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: SelectableText('${b['zusammenfassung']}'.trim(), style: theme.textTheme.bodySmall)),
           if (anzahl > 0) Padding(padding: const EdgeInsets.only(top: 6), child: Text('Geänderte Dateien ($anzahl): ${dateien.take(12).join(', ')}${anzahl > 12 ? ' …' : ''}', style: theme.textTheme.bodySmall?.copyWith(color: dim))),
           if (commit != null) Padding(padding: const EdgeInsets.only(top: 6), child: Row(children: [
