@@ -51,3 +51,22 @@ describe('v1490 Herkunft der Anfrage geht mit in die Ausführung nach der Freiga
     expect(execute.mock.calls[0]![2].herkunftNachFreigabe).toBeUndefined();
   });
 });
+
+// v1491 — Realfall 16.10. 22:15: Ordner als `cwd` statt `projekt` → Satellit: „projekt fehlt“
+describe('v1491 Projektordner unter anderem Namen', () => {
+  it('cwd wird projekt (vor Bestätigung und Ausführung); eigenes pfad und fremde Aktionen bleiben', async () => {
+    const { projektParameterAngleichen } = await import('../geraete/geraet-skill.js');
+    const a: Record<string, unknown> = { cwd: '/home/madh/claudecode/probe-1490', auftrag: 'x' };
+    projektParameterAngleichen(a, { projekt: { type: 'string' }, auftrag: { type: 'string' } });
+    expect(a).toEqual({ projekt: '/home/madh/claudecode/probe-1490', auftrag: 'x' });
+    const b: Record<string, unknown> = { projekt: '/p', ordner: '/q' };
+    projektParameterAngleichen(b, { projekt: { type: 'string' } });
+    expect(b.projekt).toBe('/p');
+    const c: Record<string, unknown> = { pfad: 'src/a.ts' };
+    projektParameterAngleichen(c, { projekt: { type: 'string' }, pfad: { type: 'string' } });
+    expect(c).toEqual({ pfad: 'src/a.ts' });
+    const d: Record<string, unknown> = { cwd: '/x' };
+    projektParameterAngleichen(d, { befehl: { type: 'string' } });
+    expect(d).toEqual({ cwd: '/x' });
+  });
+});

@@ -143,6 +143,7 @@ export class GeraetSkill extends Skill {
     const def = this.deps.manifest.aktionen.find(a => a.name === aktion);
     if (!def) return { success: false, error: `Unbekannte Aktion „${aktion}" auf ${this.deps.name}. Verfügbar: ${this.deps.manifest.aktionen.map(a => a.name).join(', ')}` };
     const params: Record<string, unknown> = { ...input };
+    projektParameterAngleichen(params, def.parameter); // v1491
     // v1225 — Sicherheitsbefund: `confirmed: true` konnte auch das Modell setzen. Jetzt zählt nur eine
     // Einmal-Freigabe, die das Gehirn beim Einreihen erzeugt hat und die an Aktion + Parameter gebunden ist.
     const freigabe = params.freigabe;
@@ -214,5 +215,22 @@ export class GeraetSkill extends Skill {
       return { success: true, data: { geraet: this.deps.name, aktion, breite: (d as { breite?: number }).breite, hoehe: (d as { hoehe?: number }).hoehe, titel: (d as { titel?: string }).titel }, display: `${r.display ?? 'Screenshot'} — das Bild siehst du gleich; beschreibe, was darauf zu sehen ist, wenn der Owner danach gefragt hat.`, attachments: [{ fileName: dateiName, mimeType: d.mimeType ?? 'image/jpeg', data: Buffer.from(d.screenshotBase64, 'base64') }] };
     }
     return { success: true, data: r.data, display: r.display ?? `${beschreibung} — ausgeführt (${r.dauerMs} ms)` };
+  }
+}
+
+/**
+ * v1491 — Realfall 16.10. 22:15: das Modell übergab den Ordner eines Claude-Code-Auftrags als `cwd` statt `projekt`; der Satellit
+ * brach mit „projekt fehlt“ ab, obwohl der Owner freigegeben hatte. Hat die Aktion einen Parameter `projekt` und fehlt er, wird ein
+ * gleichbedeutender Name übernommen — nur Namen, die die Aktion nicht selbst kennt (`pfad` heißt bei manchen Aktionen „Datei im
+ * Projekt“ und bleibt deshalb außen vor). Vor Bestätigung und Freigabe-Prüfung, damit beide dieselben Parameter sehen.
+ */
+export const PROJEKT_ERSATZNAMEN = ['cwd', 'ordner', 'projektordner', 'arbeitsverzeichnis', 'workdir', 'working_directory', 'verzeichnis'] as const;
+export function projektParameterAngleichen(params: Record<string, unknown>, deklariert: Record<string, unknown> | undefined): void {
+  if (!deklariert || !('projekt' in deklariert)) return;
+  if (typeof params.projekt === 'string' && params.projekt.trim()) return;
+  for (const n of PROJEKT_ERSATZNAMEN) {
+    if (n in deklariert) continue;
+    const v = params[n];
+    if (typeof v === 'string' && v.trim()) { params.projekt = v.trim(); delete params[n]; return; }
   }
 }

@@ -55,6 +55,18 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1491] - 2026-10-16
+
+### Fixed — Geräte-Aufträge: Projektordner auch unter anderem Namen (`cwd`, `ordner` …)
+
+Realfall 16.10. 22:15: Das Modell übergab den Ordner eines Claude-Code-Auftrags als `cwd` statt `projekt`. Die Bestätigung wurde gestellt und freigegeben, danach brach der Satellit mit „projekt fehlt“ ab, und der Auftrag lief nie.
+
+- **Server (Geräte-Skill):**
+  - Hat eine Geräteaktion einen Parameter `projekt` und fehlt er, wird ein gleichbedeutender Name übernommen: `cwd`, `ordner`, `projektordner`, `arbeitsverzeichnis`, `workdir`, `working_directory`, `verzeichnis`.
+  - Das passiert vor Bestätigung und Freigabe-Prüfung, so zeigt auch die Bestätigung `projekt=…`, und die Vertrauensstufen sehen den richtigen Ordner.
+  - Namen, die eine Aktion selbst kennt (etwa `pfad` als Datei im Projekt), bleiben unberührt.
+- **Satellit:** Alle Projekt-Aktionen verstehen dieselben Namen, als Netz für andere Wege und ältere Server.
+
 ## [0.19.0-jarvis.1490] - 2026-10-16
 
 ### Fixed — Claude-Code-Aufträge: Fertig-Meldung kommt in der Sitzung an, aus der der Auftrag kam, und nur einmal

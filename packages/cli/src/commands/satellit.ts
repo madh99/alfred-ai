@@ -184,6 +184,9 @@ export function entkoppleLokal(): string[] {
   return schritte;
 }
 
+/** v1491 — weitere Namen, unter denen Modelle den Projektordner übergeben (Realfall 16.10.: `cwd`) */
+const PROJEKT_ERSATZ = ['cwd', 'ordner', 'projektordner', 'arbeitsverzeichnis', 'workdir', 'working_directory'];
+
 /** v1318 — erster nicht-leerer String unter mehreren Parameternamen (das Modell schreibt „pfad", „ziel", „datei" statt „path"). */
 export function pfadVon(params: Record<string, unknown>, ...namen: string[]): string {
   for (const n of namen) { const v = params[n]; if (typeof v === 'string' && v.trim()) return v.trim(); }
@@ -347,7 +350,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     }
     // v1342 — Aufträge an Claude Code (Druckmodus, abgekoppelt); Stand und Ergebnis werden abgefragt (auftrag_stand/auftrag_ergebnis)
     case 'auftrag_starten': {
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis', ...PROJEKT_ERSATZ);
       const auftrag = String(params.auftrag ?? params.spezifikation ?? params.text ?? '').trim();
       if (!projekt) return { success: false, error: 'projekt fehlt (absoluter Pfad eines freigegebenen Verzeichnisses)' };
       if (!auftrag) return { success: false, error: 'auftrag fehlt (Spezifikation als Text)' };
@@ -371,7 +374,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     }
     // v1404 — Frage zum Projekt: Claude Code nur lesend (Plan-Modus + gesperrte Schreib-/Shell-Werkzeuge), Kosten je Frage gedeckelt
     case 'projekt_protokoll': { // v1425 — Etappenbericht ins Projekt (an: mit committen)
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Projektverzeichnis nicht freigegeben (Schreibrecht nötig) oder fehlt: ${projekt ?? '-'}` };
       const lauf = String(params.lauf ?? ''); const nr = Number(params.nr); const bericht = String(params.bericht ?? '');
       if (!lauf || !Number.isFinite(nr) || !bericht) return { success: false, error: 'lauf, nr und bericht nötig' };
@@ -381,7 +384,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
     case 'projekt_anhaenge': { // v1424 — Anhänge des Owners für Claude Code (Frage/Weiterarbeit)
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Projektverzeichnis nicht freigegeben (Schreibrecht nötig) oder fehlt: ${projekt ?? '-'}` };
       const inhalt = typeof params.inhaltBase64 === 'string' ? Buffer.from(params.inhaltBase64, 'base64') : undefined;
       if (!inhalt || inhalt.length === 0) return { success: false, error: 'Kein Inhalt' };
@@ -393,7 +396,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       } catch (err) { return { success: false, error: (err as Error).message }; }
     }
     case 'env_schluessel': { // v1443 B15 — nur lesend, nur Schlüsselnamen
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, lesbar) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const keys = envSchluessel(projekt);
       return { success: true, data: { keys }, display: `${keys.length} Umgebungs-Schlüssel erkannt` };
@@ -407,26 +410,26 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       return r.ok ? { success: true, data: { branch: r.branch, sha: r.sha, ziel }, display: `Geholt: ${r.text} (Zweig ${r.branch}${r.sha ? `, ${r.sha}` : ''})` } : { success: false, error: r.fehler };
     }
     case 'git_remote': { // v1444
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = await gitRemoteSetzen(projekt, typeof params.url === 'string' && params.url.trim() ? params.url.trim() : undefined);
       return r.ok ? { success: true, display: r.text } : { success: false, error: r.fehler };
     }
     case 'pruefung_erkennen': { // v1485 F2 — nur lesend
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, lesbar) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const e = pruefBefehleErkennen(projekt);
       return { success: true, data: e, display: e.befehle.length ? `${e.befehle.join(', ')} (aus ${e.quelle})` : e.hinweise.join('; ') };
     }
     case 'start_erkennen': { // v1460 — nur lesend
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, lesbar) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       let e = startErkennen(projekt);
       if (!e.gefunden && params.mit_claude === true) e = await startErkennenClaude(projekt);
       return { success: true, data: e, display: e.gefunden ? `${e.angabe!.dienst ? `Start: ${e.angabe!.start}${e.angabe!.port ? `, Port ${e.angabe!.port}` : ''}${e.angabe!.pruefung ? `, Prüfadresse ${e.angabe!.pruefung}` : ''}` : 'kein Dienst'} (${e.hinweise.join('; ')})` : `Nicht erkannt: ${e.hinweise.join('; ')}` };
     }
     case 'dev_start': { // v1460
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben (Schreibrecht nötig) oder fehlt: ${projekt}` };
       const a = startAngabePruefen({ dienst: true, start: params.start, port: params.port, pruefung: params.pruefung });
       if (!a?.start) return { success: false, error: 'start fehlt oder ungültig (ein Befehl ohne Zeilenumbruch, Port 1–65535, Prüfadresse ab /)' };
@@ -434,7 +437,7 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       return r.ok ? { success: true, data: { pid: r.pid, url: r.url }, display: r.text } : { success: false, error: `${r.fehler}${r.log ? `\n--- dev.log (Ende) ---\n${r.log}` : ''}` };
     }
     case 'test_bereitstellen': { // v1462
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       const ordner = pfadVon(params, 'ordner', 'ziel');
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Projektordner nicht freigegeben oder fehlt: ${projekt}` };
       if (!ordner || !istPfadErlaubt(ordner, frei)) return { success: false, error: `test-Ordner nicht freigegeben (Schreibrecht nötig): ${ordner}` };
@@ -443,37 +446,37 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       return r.ok ? { success: true, data: { sha: r.sha, zweig: r.zweig, neu: r.neu, installiert: r.installiert }, display: r.text } : { success: false, error: r.fehler };
     }
     case 'dev_stop': { // v1460
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = await devStoppen(projekt);
       return { success: r.ok, ...(r.ok ? { display: r.text } : { error: r.text }) };
     }
     case 'dev_stand': { // v1460
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, lesbar) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = await devStand(projekt);
       return { success: true, data: r, display: r.laeuft ? `dev läuft (PID ${r.pid})${r.url ? `: ${r.url}` : r.antwortet === false ? ' — antwortet nicht' : ''}` : 'dev läuft nicht' };
     }
     case 'git_zweig': { // v1455
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = await gitZweig(projekt, String(params.zweig ?? ''));
       return r.ok ? { success: true, data: { zweig: r.zweig, vorher: r.vorher, neu: r.neu }, display: `Zweig ${r.zweig} ${r.neu ? 'angelegt' : 'ausgecheckt'} (vorher ${r.vorher})` } : { success: false, error: r.fehler };
     }
     case 'git_aktualisieren': { // v1455
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = await gitAktualisieren(projekt, typeof params.token === 'string' && params.token ? params.token : undefined, typeof params.erwartet === 'string' ? params.erwartet : undefined, String(params.zweig ?? ''));
       return r.ok ? { success: true, data: { zweig: r.zweig, sha: r.sha }, display: `${r.zweig} am Gerät auf dem GitLab-Stand (${r.sha})` } : { success: false, error: r.fehler };
     }
     case 'git_push': {
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = await gitPush(projekt, typeof params.token === 'string' && params.token ? params.token : undefined, typeof params.erwartet === 'string' ? params.erwartet : undefined); // v1435 nur zum Repo des Projekts
       return r.ok ? { success: true, data: { branch: r.branch, sha: r.sha, remote: r.remote }, display: `Gepusht: ${r.branch} (${r.sha}) → ${r.remote}` } : { success: false, error: r.fehler };
     }
     case 'projekt_frage': {
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis', ...PROJEKT_ERSATZ);
       const frage = String(params.frage ?? params.text ?? '').trim().slice(0, 4000);
       if (!projekt) return { success: false, error: 'projekt fehlt (absoluter Pfad)' };
       if (!frage) return { success: false, error: 'frage fehlt' };
@@ -486,13 +489,13 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
     }
     // v1398 — Projekte sichtbar und fortsetzbar: Bestand lesen (nur lesend, nur freigegebene Verzeichnisse)
     case 'projekt_diff': { // v1417 G1 — nur lesend
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt || !istPfadErlaubt(projekt, lesbar) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = projektDiff(projekt, String(params.commit ?? ''), params.datei !== undefined ? String(params.datei) : undefined);
       return r.ok ? { success: true, display: r.text } : { success: false, error: r.fehler };
     }
     case 'projekt_lesen': {
-      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis');
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'path', 'verzeichnis', ...PROJEKT_ERSATZ);
       if (!projekt) return { success: false, error: 'projekt fehlt (absoluter Pfad)' };
       if (!istPfadErlaubt(projekt, lesbar)) return { success: false, error: `Verzeichnis nicht freigegeben: ${projekt}` };
       // v1408 R3a — fehlt das Verzeichnis (neues Projekt), trotzdem die Umgebung des Geräts liefern
