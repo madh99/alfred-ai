@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { STARTER_JS, wmiStartBefehl } from './satellit-auftrag.js';
+import { STARTER_JS, WMI_START_BEFEHL, wmiStartUmgebung } from './satellit-auftrag.js';
 
 // v1478 — Starter für Aufträge außerhalb des Satelliten (Windows-WMI-Start): Ausgabe ins Protokoll, Exit-Code in exit.json
 describe('v1478 Auftrags-Starter', () => {
@@ -31,10 +31,13 @@ describe('v1478 Auftrags-Starter', () => {
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 
-  it('WMI-Befehl verdoppelt Hochkommas und versteckt das Fenster', () => {
-    const b = wmiStartBefehl(`"C:\\node.exe" "C:\\Users\\O'Neil\\starter.cjs"`, "C:\\Users\\O'Neil");
-    expect(b).toContain("CommandLine='\"C:\\node.exe\" \"C:\\Users\\O''Neil\\starter.cjs\"'");
-    expect(b).toContain("CurrentDirectory='C:\\Users\\O''Neil'");
-    expect(b).toContain('ShowWindow=[uint16]0');
+  it('v1479 WMI-Befehl ist fest: Werte nur über Umgebungsvariablen, nie eingebettet', () => {
+    const boese = "C:\\Users\\x\u2019; Remove-Item C:\\ -Recurse; \u2019";
+    const e = wmiStartUmgebung('"C:\\node.exe" "C:\\a\\starter.cjs"', boese);
+    expect(e.ALFRED_WMI_VERZEICHNIS).toBe(boese);
+    expect(WMI_START_BEFEHL).not.toContain('Remove-Item');
+    expect(WMI_START_BEFEHL).toContain('CommandLine=$env:ALFRED_WMI_KOMMANDOZEILE');
+    expect(WMI_START_BEFEHL).toContain('CurrentDirectory=$env:ALFRED_WMI_VERZEICHNIS');
+    expect(WMI_START_BEFEHL).toContain('ShowWindow=[uint16]0');
   });
 });

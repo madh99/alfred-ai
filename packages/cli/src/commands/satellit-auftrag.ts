@@ -52,10 +52,14 @@ export const STARTER_JS = [
   '',
 ].join('\n');
 
-/** PowerShell-Befehl für WMI Win32_Process.Create (unsichtbares Fenster); Ausgabe „<ReturnValue> <ProcessId>“. */
-export function wmiStartBefehl(kommandozeile: string, cwd: string): string {
-  const q = (s: string) => s.replace(/'/g, "''");
-  return `$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}; $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${q(kommandozeile)}'; CurrentDirectory='${q(cwd)}'; ProcessStartupInformation=$si}; "$($r.ReturnValue) $($r.ProcessId)"`;
+/**
+ * PowerShell-Befehl für WMI Win32_Process.Create (unsichtbares Fenster); Ausgabe „<ReturnValue> <ProcessId>“.
+ * v1479 — fester Befehl ohne eingebettete Werte: Kommandozeile und Verzeichnis kommen über Umgebungsvariablen
+ * (Sicherheitsprüfung v1478: in '…'-Zeichenketten zählen auch ‘ ’ ‚ ‛ als Hochkomma — ein Projektordner damit hätte ausbrechen können).
+ */
+export const WMI_START_BEFEHL = '$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}; $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=$env:ALFRED_WMI_KOMMANDOZEILE; CurrentDirectory=$env:ALFRED_WMI_VERZEICHNIS; ProcessStartupInformation=$si}; "$($r.ReturnValue) $($r.ProcessId)"';
+export function wmiStartUmgebung(kommandozeile: string, cwd: string): NodeJS.ProcessEnv {
+  return { ...process.env, ALFRED_WMI_KOMMANDOZEILE: kommandozeile, ALFRED_WMI_VERZEICHNIS: cwd };
 }
 
 function starteAusserhalbWindows(o: { befehl: string; args: string[]; cwd: string; log: string; ordner: string; env: Record<string, string> }): number | undefined {
@@ -64,7 +68,8 @@ function starteAusserhalbWindows(o: { befehl: string; args: string[]; cwd: strin
     const starter = path.join(o.ordner, 'starter.cjs');
     writeFileSync(startJson, JSON.stringify({ befehl: o.befehl, args: o.args, cwd: o.cwd, log: o.log, env: o.env, exitDatei: path.join(o.ordner, 'exit.json') }));
     writeFileSync(starter, STARTER_JS);
-    const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', wmiStartBefehl(`"${process.execPath}" "${starter}" "${startJson}"`, o.cwd)], { windowsHide: true, timeout: 30_000 }).toString();
+    // Pfade in der Kommandozeile stammen aus dem eigenen Auftragsordner; Windows-Pfade können kein " enthalten
+    const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WMI_START_BEFEHL], { windowsHide: true, timeout: 30_000, env: wmiStartUmgebung(`"${process.execPath}" "${starter}" "${startJson}"`, o.cwd) }).toString();
     const m = /(\d+)\s+(\d+)\s*$/.exec(out.trim());
     return m && m[1] === '0' && Number(m[2]) > 0 ? Number(m[2]) : undefined;
   } catch { return undefined; }

@@ -55,6 +55,12 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1479] - 2026-10-16
+
+### Security — WMI-Start ohne eingebettete Werte
+
+- Der PowerShell-Befehl für den WMI-Start (1478) ist jetzt fest. Kommandozeile und Arbeitsverzeichnis kommen über Umgebungsvariablen. Vorher wurden sie in Zeichenketten mit einfachen Anführungszeichen eingebettet. Dort zählen in PowerShell auch die typografischen Varianten ‘ ’ ‚ ‛ als Hochkomma, ein Projektordner mit einem solchen Zeichen hätte ausbrechen können.
+
 ## [0.19.0-jarvis.1478] - 2026-10-16
 
 ### Fixed — Windows: Claude-Aufträge überleben einen Neustart des Satelliten
