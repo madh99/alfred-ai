@@ -119,6 +119,36 @@ export function startErkennen(dir: string): Erkennung {
   return { gefunden: false, hinweise: ['nichts Eindeutiges gefunden (package.json, Procfile, docker-compose, ' + START_DATEI + ')'] };
 }
 
+/**
+ * v1485 F2 — Prüfbefehle aus dem Projekt vorschlagen (ohne Modell, nur lesend). Realfall 16.10. (Heizölpreis): ohne Prüfbefehle
+ * wurde keine Etappe abgenommen, obwohl package.json typecheck/lint/test kannte. Reihenfolge schnell → langsam; Watch-Skripte und
+ * der npm-Platzhalter „no test specified“ nie. `next build` nie (schreibt in .next, das ein laufendes `next dev` am Gerät nutzt);
+ * build sonst nur, wenn es weder typecheck noch test gibt.
+ */
+export function pruefBefehleErkennen(dir: string): { befehle: string[]; quelle?: string; hinweise: string[] } {
+  const hinweise: string[] = [];
+  const pj = lies(path.join(dir, 'package.json'));
+  if (pj) {
+    let scripts: Record<string, string> = {};
+    try { scripts = (JSON.parse(pj) as { scripts?: Record<string, string> }).scripts ?? {}; } catch { return { befehle: [], hinweise: ['package.json nicht lesbar'] }; }
+    const pm = existsSync(path.join(dir, 'pnpm-lock.yaml')) ? 'pnpm' : existsSync(path.join(dir, 'yarn.lock')) ? 'yarn' : existsSync(path.join(dir, 'bun.lockb')) || existsSync(path.join(dir, 'bun.lock')) ? 'bun' : 'npm';
+    const lauf = (n: string) => n === 'test' ? `${pm} test` : pm === 'yarn' ? `yarn ${n}` : `${pm} run ${n}`;
+    const brauchbar = (n: string) => { const b = scripts[n]; return !!b && !/--watch\b|\bwatch\b|no test specified/i.test(b); };
+    const typ = ['typecheck', 'type-check', 'check-types', 'tsc'].find(brauchbar);
+    const lint = ['lint'].find(brauchbar);
+    const test = ['test'].find(brauchbar);
+    const build = brauchbar('build') && !/\bnext\s+build\b/.test(scripts.build!) && !typ && !test ? 'build' : undefined;
+    if (brauchbar('build') && /\bnext\s+build\b/.test(scripts.build!)) hinweise.push('build (next build) nicht vorgeschlagen: teilt .next mit next dev');
+    const namen = [typ, lint, test, build].filter((n): n is string => !!n);
+    return { befehle: namen.map(lauf), quelle: 'package.json', hinweise: [...hinweise, ...namen.map(n => `scripts.${n}: ${scripts[n]!.slice(0, 60)}`)] };
+  }
+  if (existsSync(path.join(dir, 'Cargo.toml'))) return { befehle: ['cargo build', 'cargo test'], quelle: 'Cargo.toml', hinweise: [] };
+  if (existsSync(path.join(dir, 'go.mod'))) return { befehle: ['go vet ./...', 'go test ./...'], quelle: 'go.mod', hinweise: [] };
+  const py = lies(path.join(dir, 'pyproject.toml'));
+  if (existsSync(path.join(dir, 'pytest.ini')) || /\[tool\.pytest/.test(py)) return { befehle: [`${process.platform === 'win32' ? 'python' : 'python3'} -m pytest -q`], quelle: existsSync(path.join(dir, 'pytest.ini')) ? 'pytest.ini' : 'pyproject.toml', hinweise: [] };
+  return { befehle: [], hinweise: ['nichts Eindeutiges gefunden (package.json, Cargo.toml, go.mod, pytest)'] };
+}
+
 /** Rückfall: Claude Code nur lesend (Plan-Modus, ohne Schreib-/Shell-Werkzeuge, höchstens 0,30 $), Antwort als eine JSON-Zeile. */
 export function startErkennenClaude(dir: string, timeoutMs = 180_000): Promise<Erkennung> {
   const claude = claudePfad();

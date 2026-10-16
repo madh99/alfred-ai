@@ -16342,6 +16342,16 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         const zeilen = [await this.pushNachAbnahme(s).catch((err: Error) => `⚠️ Nach der Abnahme: ${err.message}`), opt?.ohneDev ? undefined : await this.devNachEtappe(s).catch((err: Error) => `⚠️ dev: ${err.message}`)] // v1484 F1 — Owner-Abnahme: dev lief schon vor der Frage.filter((z): z is string => !!z); // v1460
         return zeilen.length ? zeilen.join('\n') : undefined;
       },
+      pruefVorschlag: async (s) => { // v1485 F2 — nur lesend am Gerät
+        const g = this.geraeteGateway?.geraetNachName(s.geraetId);
+        if (!g?.aktionen.includes('pruefung_erkennen')) return undefined;
+        const r = await this.geraeteGateway!.sendeAktion(g.id, 'pruefung_erkennen', { projekt: s.projekt }, 60_000).catch(() => undefined);
+        const d = r?.success ? r.data as { befehle?: unknown; quelle?: unknown } | undefined : undefined;
+        const befehle = Array.isArray(d?.befehle) ? d.befehle.filter((b): b is string => typeof b === 'string' && b.trim().length > 0 && b.length < 200 && !/[\r\n\0]/.test(b)).slice(0, 6) : [];
+        this.logger.info({ lauf: s.id, etappe: s.nr, befehle, ok: r?.success ?? false }, 'v1485 Prüfbefehl-Vorschlag vom Gerät');
+        return befehle.length ? { befehle, ...(typeof d?.quelle === 'string' ? { quelle: d.quelle.slice(0, 40) } : {}) } : undefined;
+      },
+      pruefBefehleSetzen: async (s, befehle) => { const o = owner(); if (!o || !aktenRepo || !s.akteId) throw new Error('keine Projektakte'); await aktenRepo.aendern(o, s.akteId, { pruefBefehle: befehle }); }, // v1485 F2
       devAktiv: async (s) => { const k = await this.devKontext(s.akteId); return !!k && !('fehler' in k) && k.gd.art === 'geraet' && k.gd.aktiv === true; }, // v1460
       devNachEtappe: async (s) => this.devNachEtappe(s), // v1460 — auch ohne Abnahme
       protokollAn: async (s) => { const o = this.ownerMasterUserId; if (!s.akteId || !o || !this.projectRepo) return true; const p = await this.projectRepo.getById(o, s.akteId).catch(() => null); return !(p?.tags ?? []).includes('protokoll-aus'); },

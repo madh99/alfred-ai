@@ -57,7 +57,9 @@ export interface ProjektStand {
   vorgefunden?: string[];
   /** v1455 — Merge-Request-Modus dieses Laufs: Zweig, Ziel, MR, gelesene Kommentare; `aus` = für diesen Lauf nicht möglich (Grund) */
   mr?: { zweig: string; ziel?: string; iid?: number; url?: string; kommentarBis?: number; zusammengefuehrt?: boolean; aus?: string; /** v1458 — Lauf setzt den offenen MR früherer Läufe fort */ fortsetzungVon?: string[]; /** v1458 — Zusammenführen wartet auf das Ja des Owners */ wartetAufJa?: boolean };
-  frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation' | 'installieren'; mutation?: Mutation; text: string; /** v1410 R3c */ installation?: { werkzeug: string; quelle: string; paket: string }; /** v1484 F1 — „Weiter?“ nach fertiger Etappe ohne Prüfbefehle: Ja = Abnahme durch den Owner */ ownerAbnahme?: boolean };
+  frage?: { nonce: string; art: FrageArt; mutation?: Mutation; text: string; /** v1410 R3c */ installation?: { werkzeug: string; quelle: string; paket: string }; /** v1484 F1 — „Weiter?“ nach fertiger Etappe ohne Prüfbefehle: Ja = Abnahme durch den Owner */ ownerAbnahme?: boolean; /** v1485 F2 — vorgeschlagene Prüfbefehle (Ja = übernehmen) */ pruefVorschlag?: string[] };
+  /** v1485 F2 — Vorschlag für Prüfbefehle in diesem Lauf abgelehnt (nicht noch einmal fragen) */
+  pruefVorschlagAus?: boolean;
   /** v1410 R3c — Werkzeuge, nach deren Installation schon gefragt wurde (keine Schleife); letztes Prüfprotokoll für den Fix-Versuch ohne Installation */
   installiertGefragt?: string[];
   letztesProtokoll?: string;
@@ -69,6 +71,8 @@ export interface ProjektStand {
 }
 /** v1398 — Kontext für den Planer bei Weiterarbeit: frühere Läufe, letzte Commits, Bestand (als Daten). */
 export interface PlanKontext { vorherige?: Array<{ goal: string; milestones: string[] }>; commits?: Array<{ sha: string; message: string; files: string[] }>; bestand?: string }
+
+export type FrageArt = 'plan' | 'weiter' | 'mutation' | 'installieren' | 'pruefung';
 
 export interface Mutation { kind: MutationsArt; reasoning?: string; phaseIndices?: number[]; newPhase?: string; newPhases?: string[]; afterIndex?: number }
 type AktionsErgebnis = { success: boolean; data?: unknown; display?: string; error?: string };
@@ -90,6 +94,10 @@ export interface SatellitProjektDeps {
   konventionen?: (s: ProjektStand) => Promise<Konventionen | undefined>;
   /** v1434 B13 — nach einer abgenommenen Etappe (z. B. Push zu GitLab); liefert eine Zeile für die Etappenmeldung oder nichts */
   nachAbnahme?: (s: ProjektStand, o?: { ohneDev?: boolean }) => Promise<string | undefined>;
+  /** v1485 F2 — Prüfbefehle aus dem Projekt am Gerät vorschlagen (Satellit ≥ 1485, sonst undefined) */
+  pruefVorschlag?: (s: ProjektStand) => Promise<{ befehle: string[]; quelle?: string } | undefined>;
+  /** v1485 F2 — übernommene Prüfbefehle in die Projektakte (gelten für spätere Läufe) */
+  pruefBefehleSetzen?: (s: ProjektStand, befehle: string[]) => Promise<void>;
   /** v1437 B14 — nach dem Ende eines Laufs (z. B. automatisch in dev deployen, wenn alle Etappen grün abgenommen sind) */
   nachLauf?: (s: ProjektStand) => Promise<void>;
   /** v1455 — vor jedem Auftrag (Merge-Request-Modus: Zweig anlegen, neue MR-Kommentare des Owners als Hinweise); Meldung geht in den Faden */
@@ -204,9 +212,9 @@ export class SatellitProjekte {
     return s;
   }
 
-  private async stelleFrage(s: ProjektStand, art: 'plan' | 'weiter' | 'mutation' | 'installieren', text: string, mutation?: Mutation, installation?: { werkzeug: string; quelle: string; paket: string }, ownerAbnahme?: boolean): Promise<void> {
+  private async stelleFrage(s: ProjektStand, art: FrageArt, text: string, mutation?: Mutation, installation?: { werkzeug: string; quelle: string; paket: string }, extra?: { ownerAbnahme?: boolean; pruefVorschlag?: string[] }): Promise<void> {
     const nonce = randomUUID();
-    s.frage = { nonce, art, text, ...(mutation ? { mutation } : {}), ...(installation ? { installation } : {}), ...(ownerAbnahme ? { ownerAbnahme } : {}) };
+    s.frage = { nonce, art, text, ...(mutation ? { mutation } : {}), ...(installation ? { installation } : {}), ...(extra?.ownerAbnahme ? { ownerAbnahme: true } : {}), ...(extra?.pruefVorschlag?.length ? { pruefVorschlag: extra.pruefVorschlag } : {}) };
     if (art !== 'plan') s.status = 'wartet_owner';
     this.sichere(s);
     await this.d.frage(s, text, nonce);
@@ -234,6 +242,7 @@ export class SatellitProjekte {
         await this.d.melde(s, `Plan geändert nach deiner Bestätigung (${f.mutation.kind}); jetzt ${s.plan.length} Etappen.`);
       }
       if (f.art === 'weiter' && f.ownerAbnahme) { await this.ownerAbnahme(s); return; } // v1484 F1
+      if (f.art === 'pruefung' && f.pruefVorschlag?.length) { await this.uebernimmPruefbefehle(s, f.pruefVorschlag); return; } // v1485 F2
       s.status = 'laeuft';
       await this.naechsteEtappe(s);
     }).then(() => true);
@@ -251,6 +260,7 @@ export class SatellitProjekte {
     const art = s.frage.art;
     if (art === 'plan') return this.stoppe(id, wie === 'abgelehnt' ? 'Plan vom Owner abgelehnt' : 'Plan nicht bestätigt (Rückfrage abgelaufen)');
     if (wie === 'abgelehnt' && (art === 'installieren' || art === 'mutation')) return this.weiterOhneAenderung(id);
+    if (wie === 'abgelehnt' && art === 'pruefung') return this.ohneVorschlag(id); // v1485 F2
     s.frage = undefined;
     return this.seriell(id, async () => {
       await this.beende(s, 'angehalten', wie === 'abgelehnt' ? 'Owner: nicht weitermachen' : 'Rückfrage unbeantwortet abgelaufen');
@@ -376,20 +386,35 @@ export class SatellitProjekte {
       // v1410 R3c — auch ohne Abnahme: meldet Claude Code ein fehlendes Werkzeug, zuerst nach der Installation fragen
       const fehltOhne = fehlendeWerkzeuge(e.text ?? '', '').filter(w => !(s.installiertGefragt ?? []).includes(w));
       if (fehltOhne.length) { await this.frageInstallation(s, fehltOhne[0]!, etappe); return; }
-      // ohne Abnahme keine automatische nächste Etappe (Owner-Entscheidung 12.10.)
-      await this.vermerke(s, { ok: e.status === 'fertig', geprueft: false });
-      // v1460 — gerade ohne Abnahme prüft der Owner selbst: dev am Gerät vorher neu starten
-      if (e.status === 'fertig') { const dz = await this.d.devNachEtappe?.(s).catch((err: Error) => `⚠️ dev: ${err.message}`); if (dz) await this.d.melde(s, dz).catch(() => undefined); }
-      // v1484 F1 — Realfall 16.10. (Heizölpreis): ohne Prüfbefehle wurde nie gepusht, die Commits blieben lokal. Das Ja zu einer
-      // fertigen Etappe ist jetzt die Abnahme durch den Owner (Push/MR wie bei einer geprüften Etappe); die Frage sagt das.
-      if (e.status === 'fertig') {
-        const letzte = s.nr >= s.plan.length;
-        await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" fertig (ungeprüft: keine Prüfbefehle, ${s.etappeKostenUsd.toFixed(2)} USD).\nJa = du nimmst sie ab: wie bei einer geprüften Etappe wird gepusht bzw. der Merge Request nachgeführt (wenn ein Repo eingerichtet ist), ${letzte ? 'dann ist das Projekt fertig' : 'dann folgt die nächste Etappe'}. Nein = das Projekt hält an.\n${letzte ? 'Abnehmen und abschließen?' : 'Abnehmen und weitermachen?'}`, undefined, undefined, true);
-        return;
+      // v1485 F2 — Prüfbefehle aus dem Projekt vorschlagen (einmal je Lauf, nur nach einer fertigen Etappe)
+      if (e.status === 'fertig' && !s.pruefVorschlagAus && this.d.pruefVorschlag) {
+        const v = await this.d.pruefVorschlag(s).catch(() => undefined);
+        if (v?.befehle.length) { await this.frageVorschlag(s, etappe, v); return; }
       }
-      await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" mit Fehler beendet (ungeprüft, ${s.etappeKostenUsd.toFixed(2)} USD). Mit der nächsten Etappe weitermachen?`);
+      await this.ohnePruefbefehle(s, etappe, e.status === 'fertig');
       return;
     }
+    await this.pruefeEtappe(s, etappe, e.text ?? '');
+  }
+
+  /** Etappe ohne Prüfbefehle: vermerken (ungeprüft), dev neu starten, den Owner fragen. */
+  private async ohnePruefbefehle(s: ProjektStand, etappe: string, fertig: boolean): Promise<void> {
+    // ohne Abnahme keine automatische nächste Etappe (Owner-Entscheidung 12.10.)
+    await this.vermerke(s, { ok: fertig, geprueft: false });
+    // v1460 — gerade ohne Abnahme prüft der Owner selbst: dev am Gerät vorher neu starten
+    if (fertig) { const dz = await this.d.devNachEtappe?.(s).catch((err: Error) => `⚠️ dev: ${err.message}`); if (dz) await this.d.melde(s, dz).catch(() => undefined); }
+    // v1484 F1 — Realfall 16.10. (Heizölpreis): ohne Prüfbefehle wurde nie gepusht, die Commits blieben lokal. Das Ja zu einer
+    // fertigen Etappe ist jetzt die Abnahme durch den Owner (Push/MR wie bei einer geprüften Etappe); die Frage sagt das.
+    if (fertig) {
+      const letzte = s.nr >= s.plan.length;
+      await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" fertig (ungeprüft: keine Prüfbefehle, ${s.etappeKostenUsd.toFixed(2)} USD).\nJa = du nimmst sie ab: wie bei einer geprüften Etappe wird gepusht bzw. der Merge Request nachgeführt (wenn ein Repo eingerichtet ist), ${letzte ? 'dann ist das Projekt fertig' : 'dann folgt die nächste Etappe'}. Nein = das Projekt hält an.\n${letzte ? 'Abnehmen und abschließen?' : 'Abnehmen und weitermachen?'}`, undefined, undefined, { ownerAbnahme: true });
+      return;
+    }
+    await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" mit Fehler beendet (ungeprüft, ${s.etappeKostenUsd.toFixed(2)} USD). Mit der nächsten Etappe weitermachen?`);
+  }
+
+  /** Abnahme mit den Prüfbefehlen am Gerät: grün → abgenommen (Push/MR), rot → Installation oder Fix-Versuch. */
+  private async pruefeEtappe(s: ProjektStand, etappe: string, text: string): Promise<void> {
     const p = await this.d.aktion(s.geraetId, 'pruefen_befehl', { pruefungen: s.pruefBefehle.map(b => ({ art: 'befehl', ziel: b, cwd: s.projekt, timeoutS: 600 })) }, PRUEF_TIMEOUT_MS);
     const ok = p.success && (p.data as { ok?: boolean } | undefined)?.ok === true;
     const protokoll = p.display ?? p.error ?? 'keine Ausgabe';
@@ -402,7 +427,7 @@ export class SatellitProjekte {
       return;
     }
     // v1410 R3c — fehlt ein Werkzeug, statt Fix-Versuch fragen, ob installiert werden soll (einmal je Werkzeug)
-    const fehlt = fehlendeWerkzeuge(e.text ?? '', protokoll).filter(w => !(s.installiertGefragt ?? []).includes(w));
+    const fehlt = fehlendeWerkzeuge(text, protokoll).filter(w => !(s.installiertGefragt ?? []).includes(w));
     if (fehlt.length) { s.letztesProtokoll = protokoll; await this.frageInstallation(s, fehlt[0]!, etappe); return; }
     await this.nachRot(s, etappe, protokoll);
   }
@@ -417,6 +442,33 @@ export class SatellitProjekte {
     }
     await this.vermerke(s, { ok: false, geprueft: true, protokoll });
     await this.stelleFrage(s, 'weiter', `❌ Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" nach ${s.grenzen.maxFixVersuche} Fix-Versuchen weiter rot:\n${protokoll.slice(0, 800)}\nTrotzdem mit der nächsten Etappe weitermachen? (Sonst: stoppen)`);
+  }
+
+  /** v1485 F2 — Rückfrage: vorgeschlagene Prüfbefehle übernehmen? */
+  private async frageVorschlag(s: ProjektStand, etappe: string, v: { befehle: string[]; quelle?: string }): Promise<void> {
+    this.d.logger.info({ id: s.id, etappe: s.nr, befehle: v.befehle, quelle: v.quelle }, 'v1485 Prüfbefehle vorgeschlagen');
+    await this.stelleFrage(s, 'pruefung', `🧪 Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 100)}" fertig. Für dieses Projekt sind keine Prüfbefehle eingerichtet.\nVorschlag${v.quelle ? ` aus ${v.quelle}` : ''}: ${v.befehle.join(' · ')}\nJa = übernehmen: Sie prüfen gleich diese Etappe und danach jede weitere. Grün wird automatisch abgenommen und gepusht, rot führt wie gewohnt zu einem Fix-Versuch. Sie gelten auch für spätere Läufe.\nNein = ohne Prüfbefehle weiter: du nimmst jede Etappe selbst ab.`, undefined, undefined, { pruefVorschlag: v.befehle });
+  }
+
+  /** v1485 F2 — Ja: Prüfbefehle übernehmen (Lauf + Akte) und die fertige Etappe gleich damit abnehmen. */
+  private async uebernimmPruefbefehle(s: ProjektStand, befehle: string[]): Promise<void> {
+    s.pruefBefehle = [...befehle]; s.status = 'laeuft'; this.sichere(s);
+    this.d.logger.info({ id: s.id, etappe: s.nr, befehle }, 'v1485 Prüfbefehle übernommen');
+    const fehler = await this.d.pruefBefehleSetzen?.(s, befehle).then(() => undefined, (err: Error) => err.message);
+    if (fehler) this.d.logger.warn({ id: s.id, err: fehler }, 'v1485 Prüfbefehle nicht in die Akte geschrieben');
+    await this.d.melde(s, `🧪 Prüfbefehle übernommen: ${befehle.join(' · ')}${fehler ? ' (nur für diesen Lauf, Projektakte nicht geändert)' : ''}. Sie prüfen jetzt Etappe ${s.nr}.`);
+    await this.pruefeEtappe(s, s.plan[s.nr - 1]!, s.etappeLauf?.text ?? s.letzterText ?? '');
+  }
+
+  /** v1485 F2 — Nein: ohne Prüfbefehle weiter (Owner-Abnahme), in diesem Lauf nicht noch einmal vorschlagen. */
+  ohneVorschlag(id: string): Promise<boolean> {
+    const s = this.staende.get(id);
+    if (s?.frage?.art !== 'pruefung') return Promise.resolve(false);
+    s.frage = undefined;
+    return this.seriell(id, async () => {
+      s.pruefVorschlagAus = true; s.status = 'laeuft';
+      await this.ohnePruefbefehle(s, s.plan[s.nr - 1]!, true);
+    }).then(() => true);
   }
 
   /** v1484 F1 — Etappe ohne Prüfbefehle: das Ja des Owners ist die Abnahme. Bleibt ungeprüft (kein Auto-Merge, kein Auto-dev), wird aber gepusht. */

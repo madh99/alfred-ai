@@ -5,12 +5,42 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { startErkennen, startAngabePruefen, devStarten, devStoppen, devStand, prozessLebt, portBelegt, registerPfad, autostartPruefen, testBereitstellen } from './satellit-dev.js';
+import { startErkennen, pruefBefehleErkennen, startAngabePruefen, devStarten, devStoppen, devStand, prozessLebt, portBelegt, registerPfad, autostartPruefen, testBereitstellen } from './satellit-dev.js';
 
 // v1460 — dev am Gerät: Erkennung (ohne Modell) und echter Start/Neustart/Stopp eines kleinen Servers
 const neu = () => mkdtempSync(path.join(os.tmpdir(), 'alfred-dev-'));
 const HOME = mkdtempSync(path.join(os.tmpdir(), 'alfred-home-')); // v1462 — Register nie im echten Home
 const freierPort = () => new Promise<number>((r) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = (s.address() as net.AddressInfo).port; s.close(() => r(p)); }); });
+
+describe('v1485 Prüfbefehle vorschlagen', () => {
+  it('wie Heizölpreis: typecheck, lint, test; next build nie, Watch nie', () => {
+    const d = neu();
+    writeFileSync(path.join(d, 'package.json'), JSON.stringify({ scripts: { dev: 'next dev -p 3010', build: 'next build', lint: 'eslint .', typecheck: 'tsc --noEmit', test: 'vitest run', 'test:watch': 'vitest' } }));
+    writeFileSync(path.join(d, 'package-lock.json'), '{}');
+    const e = pruefBefehleErkennen(d);
+    expect(e.befehle).toEqual(['npm run typecheck', 'npm run lint', 'npm test']);
+    expect(e.quelle).toBe('package.json');
+    expect(e.hinweise.join(' ')).toMatch(/next build/);
+  });
+  it('pnpm; build nur ohne typecheck/test; npm-Platzhalter und Watch-Test nie', () => {
+    const d = neu();
+    writeFileSync(path.join(d, 'package.json'), JSON.stringify({ scripts: { build: 'tsc', test: 'echo "Error: no test specified" && exit 1' } }));
+    writeFileSync(path.join(d, 'pnpm-lock.yaml'), '');
+    expect(pruefBefehleErkennen(d).befehle).toEqual(['pnpm run build']);
+    const w = neu();
+    writeFileSync(path.join(w, 'package.json'), JSON.stringify({ scripts: { test: 'jest --watch' } }));
+    expect(pruefBefehleErkennen(w).befehle).toEqual([]);
+  });
+  it('Cargo, Go, pytest; leerer Ordner: nichts', () => {
+    const c = neu(); writeFileSync(path.join(c, 'Cargo.toml'), '[package]');
+    expect(pruefBefehleErkennen(c).befehle).toEqual(['cargo build', 'cargo test']);
+    const g = neu(); writeFileSync(path.join(g, 'go.mod'), 'module x');
+    expect(pruefBefehleErkennen(g).befehle).toEqual(['go vet ./...', 'go test ./...']);
+    const p = neu(); writeFileSync(path.join(p, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
+    expect(pruefBefehleErkennen(p).befehle[0]).toMatch(/-m pytest -q$/);
+    expect(pruefBefehleErkennen(neu()).befehle).toEqual([]);
+  });
+});
 
 describe('v1460 Start erkennen', () => {
   it('wie Angebots-Radar: npm start, Port aus dem Code, Prüfadresse aus dem Server', () => {

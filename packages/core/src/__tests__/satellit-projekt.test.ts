@@ -276,6 +276,41 @@ describe('Satelliten-Projekt', () => {
     expect(opts).toHaveLength(2);
   });
 
+  it('v1485 F2 Prüfbefehl-Vorschlag: Ja übernimmt (Lauf + Akte) und prüft die Etappe gleich; Nein → Owner-Abnahme, kein zweiter Vorschlag', async () => {
+    type D = { pruefVorschlag: (s: ProjektStand) => Promise<{ befehle: string[]; quelle?: string } | undefined>; pruefBefehleSetzen: (s: ProjektStand, b: string[]) => Promise<void> };
+    const gesetzt: string[][] = []; let gefragt = 0;
+    const mit = (x: ReturnType<typeof aufbau>) => { const d = (x.p as unknown as { d: D }).d; d.pruefVorschlag = async () => { gefragt++; return { befehle: ['npm run typecheck', 'npm test'], quelle: 'package.json' }; }; d.pruefBefehleSetzen = async (_s, b) => { gesetzt.push(b); }; return x; };
+
+    const a = mit(aufbau({ nachAbnahme: async () => '📤 Gepusht: master (abc1)' }));
+    const s = await a.p.starte({ ...start, pruefBefehle: [] });
+    await a.p.antwort(s.id, a.fragen[0]!.nonce);
+    await a.ende(s);
+    expect(a.fragen.at(-1)!.text).toMatch(/keine Prüfbefehle eingerichtet[\s\S]*aus package\.json: npm run typecheck · npm test[\s\S]*Ja = übernehmen/);
+    expect(a.p.hole(s.id)!.frage!.art).toBe('pruefung');
+    expect(a.aufrufe.some(x => x.aktion === 'pruefen_befehl')).toBe(false);
+    await a.p.antwort(s.id, a.fragen.at(-1)!.nonce);
+    expect(gesetzt).toEqual([['npm run typecheck', 'npm test']]);
+    const pr = a.aufrufe.filter(x => x.aktion === 'pruefen_befehl');
+    expect(pr).toHaveLength(1);
+    expect((pr[0]!.params.pruefungen as Array<{ ziel: string }>).map(x => x.ziel)).toEqual(['npm run typecheck', 'npm test']);
+    expect(a.meldungen.some(m => m.startsWith('🧪 Prüfbefehle übernommen'))).toBe(true);
+    expect(a.meldungen.find(m => m.startsWith('✅ Etappe 1/3'))).toMatch(/abgenommen[\s\S]*📤 Gepusht/);
+    expect(a.p.hole(s.id)!.nr).toBe(2);
+    expect(gefragt).toBe(1);
+
+    const b = mit(aufbau());
+    const s2 = await b.p.starte({ ...start, pruefBefehle: [] });
+    await b.p.antwort(s2.id, b.fragen[0]!.nonce);
+    await b.ende(s2);
+    expect(await b.p.abgelehnt(s2.id, b.fragen.at(-1)!.nonce, 'abgelehnt')).toBe(true);
+    expect(b.fragen.at(-1)!.text).toMatch(/Ja = du nimmst sie ab/);
+    await b.p.antwort(s2.id, b.fragen.at(-1)!.nonce);
+    await b.ende(s2);
+    expect(b.fragen.at(-1)!.text).toMatch(/Ja = du nimmst sie ab/);
+    expect(gefragt).toBe(2);
+    expect(b.aufrufe.some(x => x.aktion === 'pruefen_befehl')).toBe(false);
+  });
+
   it('ohne Prüfbefehle: nach jeder Etappe fragen; Budget hält an', async () => {
     const a = aufbau();
     const s = await a.p.starte({ ...start, pruefBefehle: [] });

@@ -55,6 +55,26 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1485] - 2026-10-16
+
+### Added — Geräte-Projekte: Prüfbefehle aus dem Projekt vorschlagen
+
+Prüfbefehle entstanden bisher nur beim Start eines Projekts aus dem Modell. Fehlten sie dort, blieb das Projekt dauerhaft ungeprüft, auch wenn es eigene Prüfskripte hatte. „Heizölpreis Österreich“ hatte zum Beispiel `typecheck`, `lint` und `test` in der package.json.
+
+- Der Satellit erkennt Prüfbefehle ohne Modell und nur lesend (neue Geräteaktion `pruefung_erkennen`):
+  - package.json: typecheck, lint, test (npm, pnpm, yarn oder bun je nach Lockfile).
+  - Cargo.toml: `cargo build`, `cargo test`.
+  - go.mod: `go vet`, `go test`.
+  - pytest: `python -m pytest -q`.
+- Nie vorgeschlagen werden:
+  - Watch-Skripte und der npm-Platzhalter „no test specified“.
+  - `next build`, weil es in `.next` schreibt, das ein laufendes `next dev` am Gerät nutzt.
+  - build, wenn es typecheck oder test gibt.
+- Nach einer fertigen Etappe ohne Prüfbefehle fragt Alfred einmal je Lauf, ob der Vorschlag übernommen werden soll.
+  - Ja: Die Befehle gelten ab sofort und werden in die Projektakte geschrieben, also auch für spätere Läufe. Sie prüfen gleich die fertige Etappe. Grün wird abgenommen und gepusht, rot führt wie gewohnt zu einem Fix-Versuch.
+  - Nein: Es geht ohne Prüfbefehle weiter, und du nimmst jede Etappe selbst ab (v1484).
+- Ältere Satelliten (vor 1485) liefern keinen Vorschlag. Dann bleibt alles wie in v1484.
+
 ## [0.19.0-jarvis.1484] - 2026-10-16
 
 ### Fixed — Geräte-Projekte ohne Prüfbefehle: das Ja des Owners ist die Abnahme, danach wird gepusht

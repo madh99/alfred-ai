@@ -31,7 +31,7 @@ import { linuxSitzungsUmgebung } from './satellit-bedienen-linux.js'; // v1339
 import { IpcServer, type IpcEreignisArt, type IpcAnhang, type SatellitStatus } from './satellit-ipc.js'; // v1302, v1325 Anhang
 import { heimInParams } from './satellit-pfad.js'; // v1303
 import { gitHolen, gitPush, gitRemoteSetzen, gitZweig, gitAktualisieren, paramsFuerLog } from './satellit-git.js'; // v1434 B13, v1444, v1455
-import { startErkennen, startErkennenClaude, startAngabePruefen, devStarten, devStoppen, devStand, testBereitstellen, autostartPruefen } from './satellit-dev.js'; // v1460, v1462
+import { startErkennen, startErkennenClaude, pruefBefehleErkennen, startAngabePruefen, devStarten, devStoppen, devStand, testBereitstellen, autostartPruefen } from './satellit-dev.js'; // v1460, v1462
 import { envSchluessel } from './satellit-env.js'; // v1443 B15
 import { pruefungenAus, pruefeAlle, type PruefMittel } from './satellit-pruefen.js'; // v1383 R1
 import { outlookVorhanden, excelVorhanden, outlookPosteingang, outlookKonten, outlookMailLesen, outlookEntwurf, outlookSenden, outlookTermine, outlookTerminAnlegen, excelLesen, excelSchreiben } from './satellit-office.js'; // v1292
@@ -121,6 +121,7 @@ export function baueManifest(version: string): GeraetManifest {
         { name: 'env_schluessel', beschreibung: 'v1443 — Schlüsselnamen der Umgebung eines Projekts erkennen (.env.example, process.env.X …) — nur Namen, nie Werte; .env wird nicht gelesen', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' } } },
         { name: 'git_holen', beschreibung: 'v1434 — Git-Repository (https://… oder git@…) in einen neuen, freigegebenen Ordner holen; Remote bleibt. Token nur vom Gehirn (Projektumgebung)', autonomie: 'bestaetigen' as const, parameter: { url: { type: 'string', description: 'Repo-Adresse ohne Zugangsdaten' }, ziel: { type: 'string', description: 'Absoluter Zielordner (neu oder leer, freigegeben)' } } },
         { name: 'git_remote', beschreibung: 'v1444 — Remote origin eines Projekts setzen (url) oder entfernen (ohne url); nur Konfiguration, kein Push', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, url: { type: 'string', description: 'Repo-Adresse ohne Zugangsdaten; leer = entfernen' } } },
+        { name: 'pruefung_erkennen', beschreibung: 'v1485 — Prüfbefehle aus dem Projekt vorschlagen (package.json typecheck/lint/test, Cargo, Go, pytest) — ändert nichts', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner' } } },
         { name: 'start_erkennen', beschreibung: 'v1460 — erkennen, wie ein Projekt lokal startet (Startdatei, package.json, Procfile, docker-compose; mit_claude: Claude Code nur lesend als Rückfall) — ändert nichts', autonomie: 'auto' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner' }, mit_claude: { type: 'boolean', description: 'Rückfall Claude Code (nur lesend, ≤ 0,30 $)' } } },
         { name: 'dev_start', beschreibung: 'v1460 — dev am Gerät starten bzw. neu starten (Startbefehl im Projektordner, abgekoppelt; beendet nur Instanzen dieses Projekts; wartet, bis es antwortet)', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Absoluter Projektordner (freigegeben)' }, start: { type: 'string', description: 'Startbefehl' }, port: { type: 'number', description: 'Port' }, pruefung: { type: 'string', description: 'Prüfadresse, z. B. /api/status' } } },
         { name: 'test_bereitstellen', beschreibung: 'v1462 — test am Gerät: eigenen Ordner (git worktree) auf den Stand des Zielzweigs bringen, Abhängigkeiten bei Bedarf installieren, .env aus der Umgebung test schreiben — ohne Netz und Token', autonomie: 'bestaetigen' as const, parameter: { projekt: { type: 'string', description: 'Projektordner (Repo)' }, ordner: { type: 'string', description: 'test-Ordner (freigegeben, außerhalb des Projekts)' }, zweig: { type: 'string', description: 'Zielzweig, z. B. main' } } },
@@ -408,6 +409,12 @@ export async function fuehreAus(k: GeraetKonfig, aktion: string, params: Record<
       if (!projekt || !istPfadErlaubt(projekt, frei) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
       const r = await gitRemoteSetzen(projekt, typeof params.url === 'string' && params.url.trim() ? params.url.trim() : undefined);
       return r.ok ? { success: true, display: r.text } : { success: false, error: r.fehler };
+    }
+    case 'pruefung_erkennen': { // v1485 F2 — nur lesend
+      const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
+      if (!projekt || !istPfadErlaubt(projekt, lesbar) || !existsSync(projekt)) return { success: false, error: `Verzeichnis nicht freigegeben oder fehlt: ${projekt}` };
+      const e = pruefBefehleErkennen(projekt);
+      return { success: true, data: e, display: e.befehle.length ? `${e.befehle.join(', ')} (aus ${e.quelle})` : e.hinweise.join('; ') };
     }
     case 'start_erkennen': { // v1460 — nur lesend
       const projekt = pfadVon(params, 'projekt', 'pfad', 'verzeichnis');
