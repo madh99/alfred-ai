@@ -55,6 +55,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1475] - 2026-10-16
+
+### Fixed — Dokumente: Identität, Suche, fehlende Embeddings, Dubletten
+
+Analyse 16.10.: 14 von 28 Dokumenten waren für die Suche unsichtbar. Die Suche fand Dokumente zwischen über 4 000 Erinnerungen kaum, ihr Zugriffsfilter griff nie. Dokumente über Telegram landeten unter der Plattform-ID, und das Indexieren aus dem Dateispeicher scheiterte.
+
+- **Identität:** Automatisch indexierte Dokumente (Telegram & Co.) landen unter der Master-UUID statt unter der Plattform-ID. Das Dokument-Werkzeug liest beim Indexieren aus dem Dateispeicher mit der Master-UUID; alte Schlüssel werden abgebildet.
+- **Suche:** Die Suche filtert in der Datenbank auf Dokument-Embeddings, statt die nächsten Treffer aller Arten zu holen. Jeder Treffer nennt Dateiname, Dokument-ID und Abschnitt. Der Zugriff wird wirklich geprüft: eigene, freigegebene und öffentliche Dokumente. Lesen und Zusammenfassen erlauben auch freigegebene Dokumente.
+- **Fehlende Embeddings:** Beim Start werden Abschnitte ohne Embedding nachberechnet. Ursache war der Modellwechsel vom 30.03.: Er verwarf alle Embeddings, neu berechnet wurden nur die Erinnerungen. Das gilt jetzt auch für künftige Modellwechsel.
+- **Dubletten:** Gleichzeitige Indexierung derselben Datei legt nur noch ein Dokument an.
+
 ## [0.19.0-jarvis.1474] - 2026-10-16
 
 ### Fixed — Alte Dateischlüssel und beim Namen genannte Werkzeuge

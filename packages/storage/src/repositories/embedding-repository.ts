@@ -32,7 +32,8 @@ export class EmbeddingRepository {
    * pgvector-accelerated nearest neighbor search (PG only).
    * Falls back to null if pgvector is not available — caller should use JS-side cosine.
    */
-  async vectorSearch(userId: string, queryEmbedding: number[], limit = 10): Promise<EmbeddingEntry[] | null> {
+  /** v1475 — sourceType filtert in der Datenbank (vorher: nächste N aller Arten, Dokumente gingen unter 4 000 Erinnerungen unter). */
+  async vectorSearch(userId: string, queryEmbedding: number[], limit = 10, sourceType?: string): Promise<EmbeddingEntry[] | null> {
     if (this.adapter.type !== 'postgres') return null;
 
     // Check pgvector availability once
@@ -79,8 +80,8 @@ export class EmbeddingRepository {
       // pgvector cosine distance search
       const vecStr = `[${queryEmbedding.join(',')}]`;
       const results = await this.adapter.query(
-        `SELECT *, embedding_vec <=> ?::vector AS distance FROM embeddings WHERE user_id = ? AND embedding_vec IS NOT NULL ORDER BY distance LIMIT ?`,
-        [vecStr, userId, limit],
+        `SELECT *, embedding_vec <=> ?::vector AS distance FROM embeddings WHERE user_id = ? AND embedding_vec IS NOT NULL${sourceType ? ' AND source_type = ?' : ''} ORDER BY distance LIMIT ?`,
+        sourceType ? [vecStr, userId, sourceType, limit] : [vecStr, userId, limit],
       ) as Record<string, unknown>[];
 
       return results.map(row => this.mapRow(row));

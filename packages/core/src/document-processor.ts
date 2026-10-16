@@ -10,6 +10,8 @@ export interface OcrServiceInterface {
 
 export class DocumentProcessor {
   private ocrService?: OcrServiceInterface;
+  /** v1475 — laufende Indexierungen je Kennung + Inhalt (Realfall: 4 Dokumente doppelt, 8–15 s auseinander). */
+  private readonly laufend = new Map<string, Promise<{ documentId: string; chunkCount: number; existing?: boolean }>>();
 
   constructor(
     private readonly docRepo: DocumentRepository,
@@ -35,6 +37,15 @@ export class DocumentProcessor {
     // 1. Compute content hash for deduplication
     const fileBuffer = fileData ?? fs.readFileSync(filePath);
     const contentHash = createHash('sha256').update(fileBuffer).digest('hex');
+    const sperre = `${userId}:${contentHash}`;
+    const schon = this.laufend.get(sperre);
+    if (schon) { const r = await schon; return { ...r, existing: true }; } // v1475 — gleiche Datei läuft gerade
+    const lauf = this.ingestOhneSperre(userId, filePath, filename, mimeType, fileBuffer, contentHash);
+    this.laufend.set(sperre, lauf);
+    try { return await lauf; } finally { this.laufend.delete(sperre); }
+  }
+
+  private async ingestOhneSperre(userId: string, filePath: string, filename: string, mimeType: string, fileBuffer: Buffer, contentHash: string): Promise<{ documentId: string; chunkCount: number; existing?: boolean }> {
 
     // 2. Check for existing document with same content
     const existing = await this.docRepo.findByContentHash(userId, contentHash);
@@ -73,6 +84,26 @@ export class DocumentProcessor {
     this.logger.info({ documentId: doc.id, filename, chunkCount: chunks.length }, 'Document ingested');
 
     return { documentId: doc.id, chunkCount: chunks.length };
+  }
+
+  /**
+   * v1475 — fehlende Embeddings von Dokument-Abschnitten nachholen (nach einem Modellwechsel oder fehlgeschlagener Einbettung).
+   * Läuft beim Start; ohne Lücken nur eine Abfrage.
+   */
+  async fehlendeEmbeddingsNachholen(): Promise<{ offen: number; nachgeholt: number; fehler: number }> {
+    const repo = this.docRepo as DocumentRepository & { listChunksOhneEmbedding?: DocumentRepository['listChunksOhneEmbedding'] };
+    if (!repo.listChunksOhneEmbedding) return { offen: 0, nachgeholt: 0, fehler: 0 };
+    const offen = await repo.listChunksOhneEmbedding();
+    let nachgeholt = 0; let fehler = 0;
+    for (const c of offen) {
+      try {
+        const id = await this.embeddingService.embedAndStore(c.userId, c.content, 'document', `${c.documentId}:${c.chunkIndex}`);
+        if (!id) { fehler++; if (nachgeholt === 0 && fehler >= 3) break; continue; } // Embeddings nicht verfügbar
+        await this.docRepo.setChunkEmbedding(c.id, id);
+        nachgeholt++;
+      } catch (err) { fehler++; this.logger.debug({ err, chunk: c.id }, 'v1475 Embedding nachholen fehlgeschlagen'); }
+    }
+    return { offen: offen.length, nachgeholt, fehler };
   }
 
   async extractText(filePath: string, mimeType: string, fileBuffer?: Buffer): Promise<string> {

@@ -2,10 +2,13 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { DocumentRepository, SharedResourceRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
+import { eigenerSchluessel } from './file.js';
 
 /** Minimal embedding service interface to avoid circular dep on @alfred/core. */
 export interface EmbeddingSearchService {
   semanticSearch(userId: string, query: string, limit?: number): Promise<{ key: string; value: string; category: string; score: number }[]>;
+  /** v1475 — Suche je Quellart; sourceId = `<Dokument-ID>:<Abschnitt>`. */
+  semanticSearchByType?(userId: string, query: string, sourceType: string, limit?: number, minScore?: number): Promise<Array<{ sourceId: string; content: string; score: number }>>;
 }
 
 export interface DocumentProcessorInterface {
@@ -119,7 +122,8 @@ export class DocumentSkill extends Skill {
       const effectiveFilename = filename ?? storeKey.split('/').pop() ?? storeKey;
       const effectiveMime = mimeType ?? this.guessMimeType(effectiveFilename);
       try {
-        const fileData = await store.read(storeKey, context.userId);
+        // v1475 — Dateien liegen unter der Master-UUID (vorher Plattform-Kennung → „Access denied“ in jedem Kanal)
+        const fileData = await store.read(eigenerSchluessel(storeKey, context.masterUserId), effectiveUserId(context));
         const result = await this.processor.ingest(effectiveUserId(context), storeKey, effectiveFilename, effectiveMime, fileData);
         const display = result.existing
           ? `Document "${effectiveFilename}" already ingested (${result.chunkCount} chunks). Ready for search. ID: ${result.documentId.slice(0, 8)}...`
@@ -199,6 +203,8 @@ export class DocumentSkill extends Skill {
       return { success: false, error: 'Embedding service not available for document search' };
     }
 
+    if (this.embeddingService.semanticSearchByType) return this.sucheDokumente(query, limit, context);
+
     // Search across all linked user IDs for cross-platform document access
     const allIds = allUserIds(context);
     const seen = new Set<string>();
@@ -243,6 +249,39 @@ export class DocumentSkill extends Skill {
     };
   }
 
+  /**
+   * v1475 — Dokumentsuche: nur Dokument-Embeddings (in der DB gefiltert), über eigene Kennungen und die Besitzer freigegebener
+   * bzw. öffentlicher Dokumente; jeder Treffer nennt Dokument-ID und Dateinamen und ist gegen den Zugriff geprüft.
+   * Vorher: Filter erwartete `doc:<id>`, bekam Textstücke → Prüfung griff nie, Treffer ohne Zuordnung.
+   */
+  private async sucheDokumente(query: string, limit: number, context: SkillContext): Promise<SkillResult> {
+    const userId = effectiveUserId(context);
+    const eigene = new Set(allUserIds(context));
+    const sharedDocIds = await this.getSharedDocIds(context);
+    const zugaenglich = await this.docRepo.listAccessible(userId, sharedDocIds);
+    const docs = new Map(zugaenglich.map(d => [d.id, d]));
+    const kennungen = new Set([...eigene, ...zugaenglich.map(d => d.userId)]);
+    const treffer = new Map<string, { docId: string; abschnitt: number; content: string; score: number }>();
+    for (const uid of kennungen) {
+      for (const r of await this.embeddingService!.semanticSearchByType!(uid, query, 'document', limit, 0)) {
+        const [docId, ab] = r.sourceId.split(':');
+        if (!docId || treffer.has(r.sourceId)) continue;
+        let doc = docs.get(docId);
+        if (!doc) { const d = await this.docRepo.getDocument(docId); if (d && eigene.has(d.userId)) { doc = d; docs.set(docId, d); } }
+        if (!doc) continue; // kein Zugriff oder verwaist
+        treffer.set(r.sourceId, { docId, abschnitt: Number(ab) || 0, content: r.content, score: r.score });
+      }
+    }
+    const liste = [...treffer.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+    if (liste.length === 0) return { success: true, data: [], display: `No document matches found for "${query}".` };
+    const display = liste.map((t, i) => `${i + 1}. **${docs.get(t.docId)!.filename}** [id=${t.docId}] Abschnitt ${t.abschnitt + 1} (score: ${t.score.toFixed(3)})\n${t.content.slice(0, 300)}${t.content.length > 300 ? '…' : ''}`).join('\n\n');
+    return {
+      success: true,
+      data: liste.map(t => ({ documentId: t.docId, filename: docs.get(t.docId)!.filename, chunkIndex: t.abschnitt, score: t.score, content: t.content })),
+      display: `Found ${liste.length} relevant chunk(s) — für den ganzen Text action "read" mit der id:\n\n${display}`,
+    };
+  }
+
   private async readDocument(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const documentId = input.document_id as string | undefined;
     if (!documentId) return { success: false, error: 'Missing required field "document_id" for read action. Use "list" to find document IDs.' };
@@ -251,7 +290,7 @@ export class DocumentSkill extends Skill {
     if (!doc) return { success: false, error: `Document "${documentId}" not found` };
 
     const userId = effectiveUserId(context);
-    if (!await this.docRepo.canAccess(documentId, userId)) {
+    if (!await this.docRepo.canAccess(documentId, userId, await this.getSharedDocIds(context))) { // v1475 — auch freigegebene
       return { success: false, error: 'Kein Zugriff auf dieses Dokument.' };
     }
 
@@ -283,7 +322,7 @@ export class DocumentSkill extends Skill {
 
     // Access check: only owner, admin, or if document is public/shared
     const userId = effectiveUserId(context);
-    if (!await this.docRepo.canAccess(documentId, userId)) {
+    if (!await this.docRepo.canAccess(documentId, userId, await this.getSharedDocIds(context))) { // v1475 — auch freigegebene
       return { success: false, error: 'Kein Zugriff auf dieses Dokument.' };
     }
 

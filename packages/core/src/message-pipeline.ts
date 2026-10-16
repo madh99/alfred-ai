@@ -2911,7 +2911,7 @@ export class MessagePipeline {
           if (this.documentProcessor && this.isIngestable(attachment.mimeType)) {
             try {
               const result = await this.documentProcessor.ingest(
-                message.userId,
+                ablageUserId ?? message.userId, // v1475 — Master-UUID (vorher Plattform-ID: Dokument in Liste/Lesen/Web unsichtbar)
                 savedPath,
                 attachment.fileName ?? 'unknown',
                 attachment.mimeType ?? 'application/octet-stream',

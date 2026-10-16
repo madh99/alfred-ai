@@ -115,7 +115,7 @@ export class EmbeddingService {
       const abfrage = await this.embedAbfrage(query);
       if (!abfrage) return [];
       const queryResult = { embedding: abfrage };
-      const pgResults = await this.embeddingRepo.vectorSearch(userId, queryResult.embedding, limit * 6);
+      const pgResults = await this.embeddingRepo.vectorSearch(userId, queryResult.embedding, limit, sourceType); // v1475 — Quellart in der DB filtern
       let kandidaten: Array<{ sourceType: string; sourceId: string; content: string; score: number }>;
       if (pgResults) {
         kandidaten = pgResults.map(r => ({

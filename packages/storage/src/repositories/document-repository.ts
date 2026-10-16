@@ -149,6 +149,22 @@ export class DocumentRepository {
     });
   }
 
+  /**
+   * v1475 — Abschnitte, deren Embedding fehlt (Realfall: Modellwechsel 30.03. löschte alle Embeddings, nachgebaut wurden nur
+   * Erinnerungen — 14 Dokumente waren seitdem für die Suche unsichtbar).
+   */
+  async listChunksOhneEmbedding(limit = 500): Promise<Array<{ id: string; documentId: string; chunkIndex: number; content: string; userId: string }>> {
+    const rows = await this.adapter.query(
+      'SELECT c.id, c.document_id, c.chunk_index, c.content, d.user_id FROM document_chunks c JOIN documents d ON d.id = c.document_id LEFT JOIN embeddings e ON e.id = c.embedding_id WHERE e.id IS NULL ORDER BY c.document_id, c.chunk_index LIMIT ?',
+      [limit],
+    ) as Record<string, unknown>[];
+    return rows.map(r => ({ id: r.id as string, documentId: r.document_id as string, chunkIndex: r.chunk_index as number, content: r.content as string, userId: r.user_id as string }));
+  }
+
+  async setChunkEmbedding(chunkId: string, embeddingId: string): Promise<void> {
+    await this.adapter.execute('UPDATE document_chunks SET embedding_id = ? WHERE id = ?', [embeddingId, chunkId]);
+  }
+
   async getChunksByEmbeddingIds(embeddingIds: string[]): Promise<DocumentChunk[]> {
     if (embeddingIds.length === 0) return [];
 

@@ -1155,6 +1155,12 @@ export class Alfred {
     const { AttachmentRepository } = await import('@alfred/storage');
     this.attachmentRepo = new AttachmentRepository(adapter);
     const documentProcessor = new DocumentProcessor(documentRepo, embeddingService, this.logger.child({ component: 'documents' }));
+    // v1475 — fehlende Dokument-Embeddings nachholen (auch nach einem Modellwechsel, der oben alle Embeddings verwirft)
+    if (llmProvider.supportsEmbeddings()) {
+      void documentProcessor.fehlendeEmbeddingsNachholen()
+        .then(r => this.logger.info(r, 'v1475 Dokument-Embeddings geprüft'))
+        .catch(err => this.logger.warn({ err }, 'v1475 Dokument-Embeddings nachholen fehlgeschlagen'));
+    }
 
     // 4a-ocr. Wire up Mistral OCR if a Mistral LLM provider is configured
     const mistralApiKey = this.detectMistralApiKey();
