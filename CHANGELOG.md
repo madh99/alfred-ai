@@ -55,6 +55,17 @@ Ist der Server nicht erreichbar (etwa während eines Neustarts), geht eine Nachr
 
 Windows und macOS installieren ein neues App-Update ohne Klick, wenn die App seit 10 Minuten nicht benutzt wird, nicht im Vordergrund ist und weder eine Antwort noch Zuhören, Aufnahme oder Schnellfrage läuft. Abschaltbar in den Einstellungen; unter Linux bleibt der Knopf, weil die Paketinstallation nach dem Passwort fragt. Jedes stille Update erscheint im Server-Log.
 
+## [0.19.0-jarvis.1484] - 2026-10-16
+
+### Fixed — Geräte-Projekte ohne Prüfbefehle: das Ja des Owners ist die Abnahme, danach wird gepusht
+
+Gepusht wurde bisher nur nach einer grün geprüften Etappe. In einem Projekt ohne Prüfbefehle fragte Alfred nach jeder Etappe „Mit der nächsten Etappe weitermachen?“, und ein Ja startete nur die nächste Etappe. Im Projekt „Heizölpreis Österreich“ blieben so alle Commits lokal, obwohl die Remote-Bestätigung „Push nach jeder abgenommenen Etappe“ zusagte.
+
+- Nach einer fertigen Etappe ohne Prüfbefehle sagt die Frage, was ein Ja bewirkt: Du nimmst die Etappe ab. Wie bei einer geprüften Etappe wird gepusht bzw. der Merge Request nachgeführt, wenn ein Repo eingerichtet ist. Danach folgt die nächste Etappe, bei der letzten ist das Projekt fertig. Ein Nein hält das Projekt an.
+- Die Etappe bleibt „ungeprüft“ vermerkt, mit dem Zusatz „vom Owner abgenommen“ (auch im Etappenbericht der Projektansicht). Automatisches Zusammenführen und Auto-dev setzen weiter echte Prüfungen voraus.
+- Der dev-Neustart nach der Etappe läuft nur einmal, schon vor der Frage.
+- Eine mit Fehler beendete Etappe wird durch ein Ja nicht abgenommen. Es geht nur weiter, wie bisher.
+
 ## [0.19.0-jarvis.1483] - 2026-10-16
 
 ### Fixed — Interne Nachrichten werden nicht mehr als Korrektur des Owners gelernt

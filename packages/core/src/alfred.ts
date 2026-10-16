@@ -16338,8 +16338,8 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         return meldungen.length || hinweise ? { ...(hinweise ? { hinweise } : {}), ...(meldungen.length ? { meldung: meldungen.join('\n') } : {}) } : undefined;
       },
       // v1434 B13 — Projekt mit Remote: nach jeder abgenommenen Etappe pushen (Token aus der Projektumgebung; Tag push-aus schaltet ab)
-      nachAbnahme: async (s) => {
-        const zeilen = [await this.pushNachAbnahme(s).catch((err: Error) => `⚠️ Nach der Abnahme: ${err.message}`), await this.devNachEtappe(s).catch((err: Error) => `⚠️ dev: ${err.message}`)].filter((z): z is string => !!z); // v1460
+      nachAbnahme: async (s, opt) => {
+        const zeilen = [await this.pushNachAbnahme(s).catch((err: Error) => `⚠️ Nach der Abnahme: ${err.message}`), opt?.ohneDev ? undefined : await this.devNachEtappe(s).catch((err: Error) => `⚠️ dev: ${err.message}`)] // v1484 F1 — Owner-Abnahme: dev lief schon vor der Frage.filter((z): z is string => !!z); // v1460
         return zeilen.length ? zeilen.join('\n') : undefined;
       },
       devAktiv: async (s) => { const k = await this.devKontext(s.akteId); return !!k && !('fehler' in k) && k.gd.art === 'geraet' && k.gd.aktiv === true; }, // v1460

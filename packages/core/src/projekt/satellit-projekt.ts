@@ -26,6 +26,8 @@ export interface EtappenErgebnis {
   nr: number; etappe: string; ok: boolean; geprueft: boolean; fixVersuche: number; kostenUsd: number; text: string;
   /** v1417 G1 — Etappenbericht: vollständige Zusammenfassung von Claude Code, geänderte Dateien, Commit, Abnahme, Dauer */
   zusammenfassung?: string; dateien?: string[]; dateienAnzahl?: number; commit?: { sha: string; titel: string }; abnahme?: { ok: boolean; protokoll: string }; dauerS?: number;
+  /** v1484 F1 — ohne Prüfbefehle: der Owner hat die Etappe mit seinem Ja abgenommen (bleibt ungeprüft) */
+  ownerAbgenommen?: boolean;
 }
 export interface ProjektStand {
   id: string; geraetId: string; geraet: string; projekt: string; ziel: string; pruefBefehle: string[]; grenzen: Grenzen;
@@ -55,7 +57,7 @@ export interface ProjektStand {
   vorgefunden?: string[];
   /** v1455 — Merge-Request-Modus dieses Laufs: Zweig, Ziel, MR, gelesene Kommentare; `aus` = für diesen Lauf nicht möglich (Grund) */
   mr?: { zweig: string; ziel?: string; iid?: number; url?: string; kommentarBis?: number; zusammengefuehrt?: boolean; aus?: string; /** v1458 — Lauf setzt den offenen MR früherer Läufe fort */ fortsetzungVon?: string[]; /** v1458 — Zusammenführen wartet auf das Ja des Owners */ wartetAufJa?: boolean };
-  frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation' | 'installieren'; mutation?: Mutation; text: string; /** v1410 R3c */ installation?: { werkzeug: string; quelle: string; paket: string } };
+  frage?: { nonce: string; art: 'plan' | 'weiter' | 'mutation' | 'installieren'; mutation?: Mutation; text: string; /** v1410 R3c */ installation?: { werkzeug: string; quelle: string; paket: string }; /** v1484 F1 — „Weiter?“ nach fertiger Etappe ohne Prüfbefehle: Ja = Abnahme durch den Owner */ ownerAbnahme?: boolean };
   /** v1410 R3c — Werkzeuge, nach deren Installation schon gefragt wurde (keine Schleife); letztes Prüfprotokoll für den Fix-Versuch ohne Installation */
   installiertGefragt?: string[];
   letztesProtokoll?: string;
@@ -87,7 +89,7 @@ export interface SatellitProjektDeps {
   /** v1426 — Konventionen des Projekts (README/CHANGELOG/Commits/eigene Regeln), Schalter je Projekt in App und Web */
   konventionen?: (s: ProjektStand) => Promise<Konventionen | undefined>;
   /** v1434 B13 — nach einer abgenommenen Etappe (z. B. Push zu GitLab); liefert eine Zeile für die Etappenmeldung oder nichts */
-  nachAbnahme?: (s: ProjektStand) => Promise<string | undefined>;
+  nachAbnahme?: (s: ProjektStand, o?: { ohneDev?: boolean }) => Promise<string | undefined>;
   /** v1437 B14 — nach dem Ende eines Laufs (z. B. automatisch in dev deployen, wenn alle Etappen grün abgenommen sind) */
   nachLauf?: (s: ProjektStand) => Promise<void>;
   /** v1455 — vor jedem Auftrag (Merge-Request-Modus: Zweig anlegen, neue MR-Kommentare des Owners als Hinweise); Meldung geht in den Faden */
@@ -202,9 +204,9 @@ export class SatellitProjekte {
     return s;
   }
 
-  private async stelleFrage(s: ProjektStand, art: 'plan' | 'weiter' | 'mutation' | 'installieren', text: string, mutation?: Mutation, installation?: { werkzeug: string; quelle: string; paket: string }): Promise<void> {
+  private async stelleFrage(s: ProjektStand, art: 'plan' | 'weiter' | 'mutation' | 'installieren', text: string, mutation?: Mutation, installation?: { werkzeug: string; quelle: string; paket: string }, ownerAbnahme?: boolean): Promise<void> {
     const nonce = randomUUID();
-    s.frage = { nonce, art, text, ...(mutation ? { mutation } : {}), ...(installation ? { installation } : {}) };
+    s.frage = { nonce, art, text, ...(mutation ? { mutation } : {}), ...(installation ? { installation } : {}), ...(ownerAbnahme ? { ownerAbnahme } : {}) };
     if (art !== 'plan') s.status = 'wartet_owner';
     this.sichere(s);
     await this.d.frage(s, text, nonce);
@@ -231,6 +233,7 @@ export class SatellitProjekte {
         s.plan = [...s.plan.slice(0, s.nr), ...this.d.anwenden(rest, s.nr, f.mutation)];
         await this.d.melde(s, `Plan geändert nach deiner Bestätigung (${f.mutation.kind}); jetzt ${s.plan.length} Etappen.`);
       }
+      if (f.art === 'weiter' && f.ownerAbnahme) { await this.ownerAbnahme(s); return; } // v1484 F1
       s.status = 'laeuft';
       await this.naechsteEtappe(s);
     }).then(() => true);
@@ -377,7 +380,14 @@ export class SatellitProjekte {
       await this.vermerke(s, { ok: e.status === 'fertig', geprueft: false });
       // v1460 — gerade ohne Abnahme prüft der Owner selbst: dev am Gerät vorher neu starten
       if (e.status === 'fertig') { const dz = await this.d.devNachEtappe?.(s).catch((err: Error) => `⚠️ dev: ${err.message}`); if (dz) await this.d.melde(s, dz).catch(() => undefined); }
-      await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" ${e.status === 'fertig' ? 'fertig' : 'mit Fehler beendet'} (ungeprüft, ${s.etappeKostenUsd.toFixed(2)} USD). Mit der nächsten Etappe weitermachen?`);
+      // v1484 F1 — Realfall 16.10. (Heizölpreis): ohne Prüfbefehle wurde nie gepusht, die Commits blieben lokal. Das Ja zu einer
+      // fertigen Etappe ist jetzt die Abnahme durch den Owner (Push/MR wie bei einer geprüften Etappe); die Frage sagt das.
+      if (e.status === 'fertig') {
+        const letzte = s.nr >= s.plan.length;
+        await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" fertig (ungeprüft: keine Prüfbefehle, ${s.etappeKostenUsd.toFixed(2)} USD).\nJa = du nimmst sie ab: wie bei einer geprüften Etappe wird gepusht bzw. der Merge Request nachgeführt (wenn ein Repo eingerichtet ist), ${letzte ? 'dann ist das Projekt fertig' : 'dann folgt die nächste Etappe'}. Nein = das Projekt hält an.\n${letzte ? 'Abnehmen und abschließen?' : 'Abnehmen und weitermachen?'}`, undefined, undefined, true);
+        return;
+      }
+      await this.stelleFrage(s, 'weiter', `Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" mit Fehler beendet (ungeprüft, ${s.etappeKostenUsd.toFixed(2)} USD). Mit der nächsten Etappe weitermachen?`);
       return;
     }
     const p = await this.d.aktion(s.geraetId, 'pruefen_befehl', { pruefungen: s.pruefBefehle.map(b => ({ art: 'befehl', ziel: b, cwd: s.projekt, timeoutS: 600 })) }, PRUEF_TIMEOUT_MS);
@@ -407,6 +417,18 @@ export class SatellitProjekte {
     }
     await this.vermerke(s, { ok: false, geprueft: true, protokoll });
     await this.stelleFrage(s, 'weiter', `❌ Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" nach ${s.grenzen.maxFixVersuche} Fix-Versuchen weiter rot:\n${protokoll.slice(0, 800)}\nTrotzdem mit der nächsten Etappe weitermachen? (Sonst: stoppen)`);
+  }
+
+  /** v1484 F1 — Etappe ohne Prüfbefehle: das Ja des Owners ist die Abnahme. Bleibt ungeprüft (kein Auto-Merge, kein Auto-dev), wird aber gepusht. */
+  private async ownerAbnahme(s: ProjektStand): Promise<void> {
+    const etappe = s.plan[s.nr - 1]!;
+    s.erledigt = s.erledigt.map(x => x.nr === s.nr ? { ...x, ownerAbgenommen: true } : x);
+    s.status = 'laeuft'; this.sichere(s);
+    this.d.logger.info({ id: s.id, etappe: s.nr }, 'v1484 Etappe vom Owner abgenommen (ohne Prüfbefehle)');
+    const nach = await this.d.nachAbnahme?.(s, { ohneDev: true }).catch((err: Error) => `⚠️ Nach der Abnahme: ${err.message}`); // dev lief schon vor der Frage
+    await this.d.melde(s, `✅ Etappe ${s.nr}/${s.plan.length} „${etappe.slice(0, 120)}" von dir abgenommen (ungeprüft) · ${s.etappeKostenUsd.toFixed(2)} USD, gesamt ${s.kostenUsd.toFixed(2)} USD.${nach ? `\n${nach}` : ''}`);
+    await this.d.vorgang?.schritt(s, `Etappe ${s.nr} vom Owner abgenommen: ${etappe.slice(0, 160)}`).catch(() => undefined);
+    await this.umplanen(s, true, 'Etappe vom Owner abgenommen (keine Prüfbefehle eingerichtet)');
   }
 
   private async vermerke(s: ProjektStand, o: { ok: boolean; geprueft: boolean; protokoll?: string }): Promise<void> {

@@ -248,6 +248,34 @@ describe('Satelliten-Projekt', () => {
     expect(String(b.aufrufe.at(-1)!.params.auftrag)).toMatch(/Etappe 2 um: Funktion bauen/);
   });
 
+  it('v1484 F1 ohne Prüfbefehle: Ja zur fertigen Etappe ist die Abnahme — Push ohne zweiten dev-Neustart, ungeprüft vermerkt; Fehler-Etappe ohne Abnahme', async () => {
+    const opts: Array<{ ohneDev?: boolean } | undefined> = [];
+    const a = aufbau({ nachAbnahme: async () => '📤 Gepusht: master (abc1)' });
+    (a.p as unknown as { d: { nachAbnahme: (s: ProjektStand, o?: { ohneDev?: boolean }) => Promise<string> } }).d.nachAbnahme = async (_s, o) => { opts.push(o); return '📤 Gepusht: master (abc1)'; };
+    const s = await a.p.starte({ ...start, pruefBefehle: [] });
+    await a.p.antwort(s.id, a.fragen[0]!.nonce);
+    await a.ende(s);
+    expect(a.fragen.at(-1)!.text).toMatch(/Ja = du nimmst sie ab[\s\S]*gepusht[\s\S]*Abnehmen und weitermachen\?/);
+    expect(opts).toHaveLength(0);
+    expect(await a.p.antwort(s.id, a.fragen.at(-1)!.nonce)).toBe(true);
+    expect(opts).toEqual([{ ohneDev: true }]);
+    expect(a.meldungen.find(m => m.startsWith('✅ Etappe 1/3'))).toMatch(/von dir abgenommen \(ungeprüft\)[\s\S]*📤 Gepusht: master/);
+    const e1 = a.p.hole(s.id)!.erledigt.find(x => x.nr === 1)!;
+    expect(e1.ownerAbgenommen).toBe(true);
+    expect(e1.geprueft).toBe(false);
+    expect(a.p.hole(s.id)!.nr).toBe(2);
+    await a.ende(s, 'fehler');
+    expect(a.fragen.at(-1)!.text).toMatch(/mit Fehler beendet[\s\S]*weitermachen\?/);
+    expect(a.fragen.at(-1)!.text).not.toMatch(/nimmst sie ab/);
+    await a.p.antwort(s.id, a.fragen.at(-1)!.nonce);
+    expect(opts).toHaveLength(1);
+    await a.ende(s);
+    expect(a.fragen.at(-1)!.text).toMatch(/Abnehmen und abschließen\?/);
+    await a.p.antwort(s.id, a.fragen.at(-1)!.nonce);
+    expect(a.p.hole(s.id)!.status).toBe('fertig');
+    expect(opts).toHaveLength(2);
+  });
+
   it('ohne Prüfbefehle: nach jeder Etappe fragen; Budget hält an', async () => {
     const a = aufbau();
     const s = await a.p.starte({ ...start, pruefBefehle: [] });
